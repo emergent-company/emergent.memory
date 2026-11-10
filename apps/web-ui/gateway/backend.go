@@ -171,7 +171,7 @@ type MemoryBackend interface {
 	GetLatestDSSyncJob(ctx context.Context, id string) (*DSSyncJob, error)
 	GetDSSyncJob(ctx context.Context, id, jobID string) (*DSSyncJob, error)
 	CancelDSSyncJob(ctx context.Context, id, jobID string) (*DSCancelSyncJobResponse, error)
-	StartDSOAuth(ctx context.Context, providerType string, config map[string]any, scopes []string, reconnectSourceID string) (*DSOAuthAuthorizeResponse, error)
+	StartDSOAuth(ctx context.Context, providerType string, config map[string]any, scopes []string, oauthAppID, reconnectSourceID string) (*DSOAuthAuthorizeResponse, error)
 	PreviewDSFilter(ctx context.Context, providerType string, config map[string]any) (string, error)
 	PreviewDSScope(ctx context.Context, id string, req *DSScopeRequest) (*DSScopePreview, error)
 	UpdateDSScope(ctx context.Context, id string, req *DSScopeRequest, previewHash, baseScopeHash string) (*DSScopePreview, error)
@@ -179,6 +179,16 @@ type MemoryBackend interface {
 	GetDSOAuthClient(ctx context.Context, orgID, providerType string) (*DSOAuthClientConfig, error)
 	UpsertDSOAuthClient(ctx context.Context, orgID, providerType string, req *DSSetOAuthClientRequest) (*DSOAuthClientConfig, error)
 	DeleteDSOAuthClient(ctx context.Context, orgID, providerType string) error
+	ListOrgDSOAuthApps(ctx context.Context, orgID string) ([]DSOAuthApp, error)
+	CreateOrgDSOAuthApp(ctx context.Context, orgID string, req *DSCreateOAuthAppRequest) (*DSOAuthApp, error)
+	GetOrgDSOAuthApp(ctx context.Context, orgID, appID string) (*DSOAuthApp, error)
+	UpdateOrgDSOAuthApp(ctx context.Context, orgID, appID string, req *DSUpdateOAuthAppRequest) (*DSOAuthApp, error)
+	DeleteOrgDSOAuthApp(ctx context.Context, orgID, appID string) error
+	ListProjectDSOAuthApps(ctx context.Context, projectID string) ([]DSOAuthApp, error)
+	CreateProjectDSOAuthApp(ctx context.Context, projectID string, req *DSCreateOAuthAppRequest) (*DSOAuthApp, error)
+	GetProjectDSOAuthApp(ctx context.Context, projectID, appID string) (*DSOAuthApp, error)
+	UpdateProjectDSOAuthApp(ctx context.Context, projectID, appID string, req *DSUpdateOAuthAppRequest) (*DSOAuthApp, error)
+	DeleteProjectDSOAuthApp(ctx context.Context, projectID, appID string) error
 	ListProjectDSOAuthClients(ctx context.Context, projectID string) ([]DSOAuthClientConfig, error)
 	GetProjectDSOAuthClient(ctx context.Context, projectID, providerType string) (*DSOAuthClientConfig, error)
 	UpsertProjectDSOAuthClient(ctx context.Context, projectID, providerType string, req *DSSetOAuthClientRequest) (*DSOAuthClientConfig, error)

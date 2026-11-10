@@ -147,6 +147,7 @@ func (r *Repository) Update(ctx context.Context, src *Source) (*Source, error) {
 		Set("sync_policy = ?", src.SyncPolicy).
 		Set("sync_interval_minutes = ?", src.SyncIntervalMinutes).
 		Set("credential_id = ?", src.CredentialID).
+		Set("oauth_app_id = ?", src.OAuthAppID).
 		Set("updated_at = now()").
 		Where("id = ?", src.ID).
 		Where("project_id = ?", src.ProjectID)
@@ -299,6 +300,27 @@ func (r *Repository) ReplaceOAuthGrant(ctx context.Context, id, projectID uuid.U
 	if err != nil {
 		r.log.Error("failed to replace source oauth grant", logger.Error(err))
 		return apperror.NewDatabase("failed to replace source oauth grant", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return apperror.ErrNotFound
+	}
+	return nil
+}
+
+// SetSourceOAuthApp binds a source to a named OAuth app (or clears it with nil)
+// without touching the source's config or sync state. Used by reconnect so a
+// re-consent can also switch the app the source uses.
+func (r *Repository) SetSourceOAuthApp(ctx context.Context, id, projectID uuid.UUID, appID *uuid.UUID) error {
+	res, err := r.db.NewUpdate().
+		Model((*Source)(nil)).
+		Set("oauth_app_id = ?", appID).
+		Set("updated_at = now()").
+		Where("id = ?", id).
+		Where("project_id = ?", projectID).
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to set source oauth app", logger.Error(err))
+		return apperror.NewDatabase("failed to set source oauth app", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return apperror.ErrNotFound

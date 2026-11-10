@@ -36,7 +36,7 @@ func (s *Service) PickerSession(ctx context.Context, projectID, id uuid.UUID) (*
 	if !ok {
 		return nil, apperror.NewValidation("provider " + src.Provider + " has no folder picker")
 	}
-	client, err := s.resolveOAuthClient(ctx, projectID, src.Provider)
+	client, err := s.resolveOAuthClient(ctx, projectID, src.Provider, src.OAuthAppID)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +56,7 @@ func (s *Service) PickerSession(ctx context.Context, projectID, id uuid.UUID) (*
 	// the configured strategy for sources connected before the grant was stored.
 	strategy := configString(src.Config, oauthGrantedStrategyKey)
 	if strategy == "" {
-		strategy = s.effectiveOAuthStrategy(ctx, projectID, src.Provider)
+		strategy = s.effectiveOAuthStrategy(ctx, projectID, src.Provider, src.OAuthAppID)
 	}
 	session, err := picker.PickerSession(ctx, creds, src.Config, PickerConfig{
 		DeveloperKey: developerKey,

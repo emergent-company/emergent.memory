@@ -116,6 +116,9 @@ type Source struct {
 	// CredentialID references a project-scoped saved credential. When set, the
 	// source uses that credential instead of its legacy inline blob.
 	CredentialID *uuid.UUID `bun:"credential_id,type:uuid" json:"credentialId,omitempty"`
+	// OAuthAppID references the named, vendor-level OAuth app this source uses.
+	// NULL means resolve from the sole project/org app or the deployment default.
+	OAuthAppID *uuid.UUID `bun:"oauth_app_id,type:uuid" json:"oauthAppId,omitempty"`
 	// McpSlug is the immutable MCP server/tool-name segment for this source.
 	// Null for providers that do not expose source-backed MCP tools.
 	McpSlug             *string        `bun:"mcp_slug" json:"mcpSlug,omitempty"`
@@ -136,34 +139,6 @@ type Source struct {
 	CreatedAt            time.Time  `bun:"created_at,notnull,default:now()" json:"createdAt"`
 	UpdatedAt            time.Time  `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
 }
-
-// SourceObject maps an external source item to the graph object created from
-// it. It is the idempotency key and deletion-reconciliation ledger for typed
-// source sync.
-type SourceObject struct {
-	bun.BaseModel `bun:"table:kb.source_objects,alias:so"`
-
-	ID                uuid.UUID  `bun:"id,pk,type:uuid" json:"id"`
-	ProjectID         uuid.UUID  `bun:"project_id,type:uuid,notnull" json:"projectId"`
-	SourceID          uuid.UUID  `bun:"source_id,type:uuid,notnull" json:"sourceId"`
-	ExternalID        string     `bun:"external_id,notnull" json:"externalId"`
-	ObjectType        string     `bun:"object_type,notnull" json:"objectType"`
-	ObjectKey         string     `bun:"object_key,notnull" json:"objectKey"`
-	ObjectID          uuid.UUID  `bun:"object_id,type:uuid,notnull" json:"objectId"`
-	ObjectCanonicalID uuid.UUID  `bun:"object_canonical_id,type:uuid,notnull" json:"objectCanonicalId"`
-	DocumentID        *uuid.UUID `bun:"document_id,type:uuid" json:"documentId,omitempty"`
-	RevisionID        *string    `bun:"revision_id" json:"revisionId,omitempty"`
-	Status            string     `bun:"status,notnull" json:"status"`
-	SyncedAt          time.Time  `bun:"synced_at,notnull" json:"syncedAt"`
-	CreatedAt         time.Time  `bun:"created_at,notnull" json:"createdAt"`
-	UpdatedAt         time.Time  `bun:"updated_at,notnull" json:"updatedAt"`
-}
-
-// SourceObject status values.
-const (
-	SourceObjectStatusActive            = "active"
-	SourceObjectStatusDeletedFromSource = "deleted_from_source"
-)
 
 // SourceCredential is the kb.source_credentials row model. A saved credential
 // is a reusable, project-scoped credential payload for one provider. The
@@ -250,8 +225,7 @@ type Integration struct {
 	SourceType          string  `json:"sourceType"`
 	SyncMode            string  `json:"syncMode"`
 	SyncIntervalMinutes *int    `json:"syncIntervalMinutes,omitempty"`
-	// McpSlug is the immutable MCP tool-name segment for a source-backed MCP
-	// server (Gmail). Empty for providers without source tools.
+	// McpSlug is the immutable MCP tool-name segment for a source-backed server.
 	McpSlug *string `json:"mcpSlug,omitempty"`
 	// Config carries the non-secret config values (credential keys stripped) so
 	// the connect/edit UI can round-trip a source's persisted settings without
@@ -279,7 +253,11 @@ type Integration struct {
 	// CredentialID names the project-scoped saved credential backing this
 	// source, when it uses one. Omitted for legacy sources whose credentials
 	// were stored inline. It is a reference, not secret material.
-	CredentialID *string   `json:"credentialId,omitempty"`
+	CredentialID *string `json:"credentialId,omitempty"`
+	// OAuthAppID/OAuthAppName name the vendor-level OAuth app the source uses.
+	// OAuthAppID is empty when the source resolves to the deployment default.
+	OAuthAppID   *string   `json:"oauthAppId,omitempty"`
+	OAuthAppName string    `json:"oauthAppName,omitempty"`
 	CreatedAt    time.Time `json:"createdAt"`
 	UpdatedAt    time.Time `json:"updatedAt"`
 }
@@ -311,6 +289,9 @@ type CreateIntegrationRequest struct {
 	// SavedCredentialID references a project-scoped saved credential. When set,
 	// the source references it instead of storing an inline credential copy.
 	SavedCredentialID *string `json:"credentialId,omitempty"`
+	// OAuthAppID selects the named OAuth app this source uses. Empty lets the
+	// resolver pick the sole project/org app or the deployment default.
+	OAuthAppID *string `json:"oauthAppId,omitempty"`
 	// AllowIncompleteConfig lets a caller (the OAuth callback) create a source
 	// whose config is missing its sync target (folder_id/repo). The target is
 	// selected after consent and applied via a later update, so config
@@ -329,6 +310,9 @@ type UpdateIntegrationRequest struct {
 	// SavedCredentialID references a project-scoped saved credential. An empty
 	// string clears the reference and returns the source to its inline blob.
 	SavedCredentialID *string `json:"credentialId,omitempty"`
+	// OAuthAppID selects the named OAuth app. An empty string clears the explicit
+	// selection and returns the source to automatic resolution.
+	OAuthAppID *string `json:"oauthAppId,omitempty"`
 }
 
 // TestConfigRequest mirrors pkg/sdk/datasources.TestConfigRequest.

@@ -11,12 +11,12 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/testdb"
 )
 
-// TestMigration00285BackfillKeepsLabelOnlyScope covers must-fix 3: the legacy
+// TestMigration00286BackfillKeepsLabelOnlyScope covers must-fix 3: the legacy
 // backfill stamps `in:inbox` on a Gmail source that has no persisted scope, but a
 // label-only source (config.label_ids, no query, no filter) is a complete scope
 // under the validator. Narrowing it to the inbox would drop archived mail the
 // source already synced.
-func TestMigration00285BackfillKeepsLabelOnlyScope(t *testing.T) {
+func TestMigration00286BackfillKeepsLabelOnlyScope(t *testing.T) {
 	if testing.Short() {
 		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
 	}
@@ -28,7 +28,7 @@ func TestMigration00285BackfillKeepsLabelOnlyScope(t *testing.T) {
 	mig := migrate.NewMigrator(db, zap.NewNop())
 	// The test database is migrated to head, so the backfill has already run.
 	// Roll it back before seeding the rows it is about to inspect.
-	if err := mig.DownTo(ctx, 284); err != nil {
+	if err := mig.DownTo(ctx, 285); err != nil {
 		t.Fatalf("DownTo(286): %v", err)
 	}
 
@@ -56,7 +56,7 @@ func TestMigration00285BackfillKeepsLabelOnlyScope(t *testing.T) {
 	// A legacy row with a malformed label_ids must not abort the migration.
 	malformedLabels := seed(`{"label_ids":"Label_9"}`)
 
-	if err := mig.UpTo(ctx, 285); err != nil {
+	if err := mig.UpTo(ctx, 286); err != nil {
 		t.Fatalf("UpTo(287): %v", err)
 	}
 

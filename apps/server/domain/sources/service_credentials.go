@@ -57,8 +57,20 @@ func (s *Service) DescribeOAuthCredentials(ctx context.Context, projectID uuid.U
 		}
 		providerType := p.Catalog().Type
 		desc := &OAuthCredentialDescription{ProviderType: providerType}
+		vendor, _, _ := s.vendorForProvider(providerType)
 
-		if s.projectOAuth != nil || s.repo != nil {
+		if pst, ok := s.projectAppStore(); ok {
+			apps, lerr := pst.ListProjectOAuthClientConfigsByVendor(ctx, projectID, vendor)
+			if lerr != nil {
+				return nil, lerr
+			}
+			if len(apps) > 0 {
+				if dto, derr := s.toOAuthAppDTO(ctx, apps[0], CredentialScopeProject); derr == nil {
+					updated := apps[0].UpdatedAt
+					desc.Project = OAuthCredentialSource{Configured: true, ClientID: dto.ClientID, UpdatedAt: &updated}
+				}
+			}
+		} else if s.projectOAuth != nil || s.repo != nil {
 			row, err := s.projectStore().GetProjectOAuthClientConfig(ctx, projectID, providerType)
 			switch {
 			case err == nil:
@@ -73,7 +85,24 @@ func (s *Service) DescribeOAuthCredentials(ctx context.Context, projectID uuid.U
 			}
 		}
 
-		if s.orgOAuth != nil || s.repo != nil {
+		if ost, ok := s.orgAppStore(); ok {
+			orgID, orgErr := s.orgStore().ResolveOrgID(ctx, projectID)
+			switch {
+			case orgErr == nil:
+				apps, lerr := ost.ListOAuthClientConfigsByVendor(ctx, orgID, vendor)
+				if lerr != nil {
+					return nil, lerr
+				}
+				if len(apps) > 0 {
+					if dto, derr := s.toOAuthAppDTO(ctx, apps[0], CredentialScopeOrganization); derr == nil {
+						updated := apps[0].UpdatedAt
+						desc.Organization = OAuthCredentialSource{Configured: true, ClientID: dto.ClientID, UpdatedAt: &updated}
+					}
+				}
+			case !errors.Is(orgErr, apperror.ErrNotFound):
+				return nil, orgErr
+			}
+		} else if s.orgOAuth != nil || s.repo != nil {
 			orgID, orgErr := s.orgStore().ResolveOrgID(ctx, projectID)
 			switch {
 			case orgErr == nil:

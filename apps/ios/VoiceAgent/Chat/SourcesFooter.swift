@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 /// A reply's grounded references as a collapsed footer under its markdown:
@@ -18,6 +19,9 @@ struct SourcesFooter: View {
     let messageID: String
 
     @Environment(\.toolActivityDisclosure) private var disclosure
+    /// The label's plural rule is chosen in the reader's language, including a
+    /// locale a parent view overrides.
+    @Environment(\.locale) private var locale
     /// Used only outside a chat list, where no disclosure store is provided.
     @State private var localExpanded = false
 
@@ -33,7 +37,7 @@ struct SourcesFooter: View {
                 .padding(.top, 2 * .grid)
             } label: {
                 Label {
-                    Text("chat.sources.count \(rows.count)")
+                    Text(verbatim: SourcesCountLabel.text(for: rows.count, locale: locale))
                 } icon: {
                     Image(systemName: "link")
                 }
@@ -68,6 +72,16 @@ struct SourcesFooter: View {
                 }
             }
         )
+    }
+}
+
+/// The footer's label: "1 source", "3 sources", from the string catalog's
+/// `one`/`other` plural variations (the same rule as the web's
+/// `sourceLabel`). Split out of the view so a test can pin the wording
+/// without rendering.
+enum SourcesCountLabel {
+    static func text(for count: Int, locale: Locale = .current) -> String {
+        String(localized: "chat.sources.count \(count)", locale: locale)
     }
 }
 

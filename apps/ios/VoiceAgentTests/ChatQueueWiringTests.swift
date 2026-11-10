@@ -61,7 +61,7 @@ private struct WiredChat {
 }
 
 @MainActor
-private func makeWiredChat() -> WiredChat {
+private func makeWiredChat(alsoOnTurnFinished: (() -> Void)? = nil) -> WiredChat {
     let suite = "ChatQueueWiringTests.\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suite)!
     defaults.removePersistentDomain(forName: suite)
@@ -80,7 +80,12 @@ private func makeWiredChat() -> WiredChat {
         activeSession: ActiveSessionStore(),
         route: ChatRoute(agentName: "", conversationID: "conv-1", title: nil)
     )
-    let pump = ChatQueuePump.install(on: transport, queue: queue, sender: sender)
+    let pump = ChatQueuePump.install(
+        on: transport,
+        queue: queue,
+        sender: sender,
+        alsoOnTurnFinished: alsoOnTurnFinished
+    )
     return WiredChat(
         stream: stream,
         transport: transport,
@@ -119,6 +124,20 @@ private func waitForQueueWiring(_ condition: () -> Bool) async {
         #expect(chat.userTexts == ["hello", "follow up"])
         // The row became a real turn, not just a store mutation.
         #expect(chat.transport.isStreaming)
+        chat.transport.reset()
+    }
+
+    /// A finished turn runs the pump's other listener too (the plan card's
+    /// refresh, `emergent.memory#440`) — exactly once, and still after the
+    /// queue's own release.
+    @Test func finishedTurnAlsoRunsTheSecondListener() async throws {
+        var planRefreshes = 0
+        let chat = makeWiredChat(alsoOnTurnFinished: { planRefreshes += 1 })
+        let turn = try #require(await chat.startTurn("hello"))
+
+        await chat.endTurn(turn)
+
+        #expect(planRefreshes == 1)
         chat.transport.reset()
     }
 
