@@ -275,7 +275,17 @@ func (s *Service) ListProjectOAuthApps(ctx context.Context, projectID uuid.UUID)
 	if err != nil {
 		return nil, err
 	}
-	return s.toOAuthAppDTOs(ctx, rows, CredentialScopeProject), nil
+	out := s.toOAuthAppDTOs(ctx, rows, CredentialScopeProject)
+	// Organization apps are usable by every project in the org, so the member-safe
+	// project list includes them (the route enforces project membership).
+	if _, ok := s.orgAppStore(); ok {
+		if orgID, oerr := s.orgStore().ResolveOrgID(ctx, projectID); oerr == nil {
+			if orgRows, lerr := s.orgStore().ListOAuthClientConfigs(ctx, orgID); lerr == nil {
+				out = append(out, s.toOAuthAppDTOs(ctx, orgRows, CredentialScopeOrganization)...)
+			}
+		}
+	}
+	return out, nil
 }
 
 // GetProjectOAuthApp returns one project app by id. Member-readable.

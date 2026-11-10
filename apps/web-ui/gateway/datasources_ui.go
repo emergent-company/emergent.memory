@@ -1406,7 +1406,7 @@ func (s *Server) uiOrgOAuthClients(c echo.Context) error {
 		{key: "saved", msg: "OAuth app saved."},
 		{key: "deleted", msg: "OAuth app removed."},
 	})
-	rows := dsOAuthAppRows(apps, dsCredentialScopeOrganization, true, "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-apps")
+	rows := dsOAuthAppRows(apps, false, true, orgID, "")
 	return s.page(c, pageTitle("OAuth apps"), OrgOAuthAppsPage(orgID, orgName, rows, err, flashMsg, flashError(c)))
 }
 
@@ -2073,15 +2073,10 @@ func (s *Server) uiProjectCredentials(c echo.Context) error {
 	if aerr != nil {
 		captureError(aerr)
 	}
-	rows := dsOAuthAppRows(apps, dsCredentialScopeProject, isProjectAdmin, "/settings/credentials/apps")
+	rows := dsOAuthAppRows(apps, isProjectAdmin, isOrgAdmin, project.OrgID, "/settings/credentials/apps")
 	deploymentNote := ""
 	if len(apps) == 0 {
 		deploymentNote = "No project OAuth apps yet. Data sources use the organization app or the deployment's built-in app when one is configured."
-	}
-	if isOrgAdmin && project.OrgID != "" {
-		if orgApps, oerr := s.memory.ListOrgDSOAuthApps(ctx, project.OrgID); oerr == nil {
-			rows = append(rows, dsOAuthAppRows(orgApps, dsCredentialScopeOrganization, true, "/orgs/"+url.PathEscape(project.OrgID)+"/settings/oauth-apps")...)
-		}
 	}
 	_ = creds
 	credProviders := dsCredentialProviders(providers)
@@ -2823,9 +2818,13 @@ func dsOAuthVendors(providers []DSProvider) []dsOAuthVendor {
 	return out
 }
 
-func dsOAuthAppRows(apps []DSOAuthApp, scope string, canManage bool, manageBase string) []dsCredentialRow {
+func dsOAuthAppRows(apps []DSOAuthApp, canManageProject, canManageOrg bool, orgID, projectBase string) []dsCredentialRow {
 	rows := make([]dsCredentialRow, 0, len(apps))
 	for _, app := range apps {
+		scope := app.Scope
+		if scope == "" {
+			scope = dsCredentialScopeProject
+		}
 		row := dsCredentialRow{
 			ProviderType: app.ID,
 			ScopeKey:     scope,
@@ -2836,9 +2835,13 @@ func dsOAuthAppRows(apps []DSOAuthApp, scope string, canManage bool, manageBase 
 			UpdatedAt:    app.UpdatedAt,
 			Resolved:     app.UsedBy > 0,
 		}
+		canManage := canManageProject
+		manageBase := projectBase
 		if scope == dsCredentialScopeOrganization {
 			row.ScopeIcon = "lucide--building-2"
 			row.ScopeLabel = "Organization"
+			canManage = canManageOrg
+			manageBase = "/orgs/" + url.PathEscape(orgID) + "/settings/oauth-apps"
 		} else {
 			row.ScopeIcon = "lucide--folder"
 			row.ScopeLabel = "Project"

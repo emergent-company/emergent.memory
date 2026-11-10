@@ -2905,8 +2905,6 @@ func TestUIProjectCredentialsOrgAdminCannotManageProjectApps(t *testing.T) {
 		}},
 		dsProjectOAuthApps: []DSOAuthApp{
 			{ID: "app-1", Scope: "project", Vendor: "google", VendorName: "Google", Name: "Project app", ClientID: "pcid", Configured: true},
-		},
-		dsOrgOAuthApps: []DSOAuthApp{
 			{ID: "app-org", Scope: "organization", Vendor: "google", VendorName: "Google", Name: "Org app", ClientID: "ocid", Configured: true},
 		},
 	}

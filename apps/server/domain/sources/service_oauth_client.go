@@ -232,7 +232,7 @@ func (s *Service) DeleteOrgOAuthClient(ctx context.Context, orgID uuid.UUID, use
 		case 1:
 			return s.DeleteOrgOAuthApp(ctx, orgID, userID, apps[0].ID.String())
 		default:
-			return ambiguousAppError(vendor, apps)
+			return ambiguousAppConflict(vendor, apps)
 		}
 	}
 	return s.orgStore().DeleteOAuthClientConfig(ctx, orgID, providerType)
@@ -434,7 +434,7 @@ func (s *Service) DeleteProjectOAuthClient(ctx context.Context, projectID uuid.U
 		case 1:
 			return s.DeleteProjectOAuthApp(ctx, projectID, userID, apps[0].ID.String())
 		default:
-			return ambiguousAppError(vendor, apps)
+			return ambiguousAppConflict(vendor, apps)
 		}
 	}
 	return s.projectStore().DeleteProjectOAuthClientConfig(ctx, projectID, providerType)

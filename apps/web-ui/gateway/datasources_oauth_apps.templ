@@ -244,24 +244,6 @@ templ OAuthAppChoicePage(providerType string, apps []DSOAuthApp) {
 					</div>
 				}
 			}
-			@components.PanelCard("", nil) {
-				<div class="flex flex-wrap items-center justify-between gap-3">
-					<div>
-						<h2 class="text-base font-semibold">Deployment default</h2>
-						@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) { The built-in app configured by the operator. }
-					</div>
-					@ui.Button(ui.ButtonProps{
-						Type:    ui.ButtonTypeLink,
-						Href:    "/data-sources/oauth/start?providerType=" + url.QueryEscape(providerType) + "&oauthAppId=00000000-0000-0000-0000-000000000000",
-						Variant: ui.ButtonOutline,
-						Size:    ui.ButtonSM,
-						Icon:    "lucide--server",
-						Attrs:   templ.Attributes{"hx-boost": "false", "data-testid": "ds-oauth-app-choice-deployment"},
-					}) {
-						Use deployment default
-					}
-				</div>
-			}
 		</div>
 	}
 }
