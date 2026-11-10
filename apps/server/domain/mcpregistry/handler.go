@@ -408,6 +408,9 @@ func (h *Handler) InspectServer(c echo.Context) error {
 		if errors.Is(err, ErrOutboundURLNotAllowed) {
 			return apperror.NewBadRequest(err.Error())
 		}
+		if errors.Is(err, ErrServerNotInspectable) {
+			return apperror.New(http.StatusConflict, "mcp_server_not_inspectable", err.Error())
+		}
 		return apperror.NewInternal("failed to inspect MCP server", err)
 	}
 	if result == nil {

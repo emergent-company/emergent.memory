@@ -193,9 +193,10 @@ func (pm *ProxyManager) resolveServerForTool(ctx context.Context, projectID, pre
 		if err != nil {
 			return nil, "", fmt.Errorf("looking up server %q: %w", rawServerName, err)
 		}
-		// Device-targeted rows are never connected outbound by the server; a raw
-		// name hit on one falls through to slug mode (which also excludes them).
-		if server != nil && server.Target != TargetDevice {
+		// Device-targeted rows and in-process rows (builtin/source) are never
+		// connected outbound by the server; a raw name hit on one falls through
+		// to slug mode (which also excludes them).
+		if server != nil && server.Target != TargetDevice && server.Type.contract().registryManaged {
 			return server, prefixedToolName[idx+1:], nil
 		}
 	}

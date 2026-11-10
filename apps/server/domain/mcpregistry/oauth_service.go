@@ -153,7 +153,7 @@ func discoverServerAuthRequirement(ctx context.Context, server *MCPServer) (*aut
 	if server == nil {
 		return nil, fmt.Errorf("server is required")
 	}
-	if server.Type != ServerTypeHTTP && server.Type != ServerTypeSSE {
+	if !server.Type.contract().remote {
 		return nil, ErrOAuthNotSupported
 	}
 	if server.URL == nil || strings.TrimSpace(*server.URL) == "" {
@@ -568,7 +568,7 @@ func (s *Service) ProvisionOAuthClient(ctx context.Context, projectID, serverID,
 	if server == nil {
 		return nil, ErrServerNotFound
 	}
-	if server.Type != ServerTypeHTTP && server.Type != ServerTypeSSE {
+	if !server.Type.contract().remote {
 		return nil, ErrOAuthNotSupported
 	}
 
@@ -689,7 +689,7 @@ func withDeviceAuthorization(headers map[string]any, auth string) map[string]any
 func (s *Service) oauthSummaries(ctx context.Context, projectID, userID string, servers []*MCPServer) (map[string]*MCPServerOAuthSummaryDTO, error) {
 	ids := make([]string, 0, len(servers))
 	for _, srv := range servers {
-		if srv == nil || srv.Type == ServerTypeBuiltin || srv.Type == ServerTypeStdio {
+		if srv == nil || !srv.Type.contract().remote {
 			continue
 		}
 		ids = append(ids, srv.ID)

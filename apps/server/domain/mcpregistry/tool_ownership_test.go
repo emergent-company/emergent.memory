@@ -192,9 +192,16 @@ func (s *MCPRegistryToolOwnershipSuite) TestSyncServerToolsForeignServerRefused(
 }
 
 // TestSyncServerToolsOwnProjectOK proves the legitimate manual-sync path still
-// works for the caller's own server.
+// works for the caller's own server. The fixture is an external (http) server:
+// builtin/source rows are provisioned in-process and refuse registry-side sync.
 func (s *MCPRegistryToolOwnershipSuite) TestSyncServerToolsOwnProjectOK() {
-	serverAID, _ := s.seedServerAndTool(s.ProjectID, "own-tool")
+	serverAID := uuid.New().String()
+	_, err := s.DB().NewRaw(`
+		INSERT INTO kb.mcp_servers (id, project_id, name, enabled, type, url, created_at, updated_at)
+		VALUES (?, ?, ?, true, 'http', 'https://mcp.example.com/mcp', NOW(), NOW())
+	`, serverAID, s.ProjectID, "external-own").Exec(s.Ctx)
+	s.Require().NoError(err)
+	s.seedToolOnServer(serverAID, "own-tool")
 
 	svc, err := mcpregistry.NewService(mcpregistry.NewRepository(s.DB()), nil, nil, slog.Default())
 	s.Require().NoError(err)
