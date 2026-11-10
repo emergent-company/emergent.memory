@@ -26,10 +26,10 @@ struct SessionSummary: Identifiable, Codable, Equatable, Sendable {
     /// True when the conversation is archived (hidden from the default list).
     var isArchived: Bool = false
     /// Parent conversation when this row is a sub-chat spawned by an agent run.
-    var parentConversationID: String? = nil
+    var parentConversationID: String?
     /// Run-state bucket, the same value the web rail badge reads:
     /// `needs_input`, `failed`, `running`, or `done`. Nil/empty hides the badge.
-    var bucket: String? = nil
+    var bucket: String?
     /// Pending tool approvals for this conversation (part of the waiting count).
     var pendingApprovals: Int = 0
     /// Pending ask-user questions for this conversation.

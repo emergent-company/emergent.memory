@@ -164,12 +164,12 @@ final class SessionsStore: ObservableObject {
     /// live room for the conversation they just closed.
     @discardableResult
     func archive(id: String) async -> Bool {
-        let ok = await perform { try await client.archiveConversation(id: id) }
-        if ok, !includeArchived {
+        let succeeded = await perform { try await client.archiveConversation(id: id) }
+        if succeeded, !includeArchived {
             locallyArchivedIDs.insert(id)
             sessions.removeAll { $0.id == id }
         }
-        return ok
+        return succeeded
     }
 
     /// Bulk archive: hides every selected row immediately, fires the requests

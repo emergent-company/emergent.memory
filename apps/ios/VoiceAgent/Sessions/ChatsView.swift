@@ -1,11 +1,5 @@
 import SwiftUI
 
-/// Route to one recorded session's read-only detail (pushed from Chats for
-/// scheduled and board sessions).
-struct SessionRoute: Hashable {
-    let room: String
-}
-
 /// Chats destination (second level): the conversations for the selected agent,
 /// most recently active first, via ``SessionsStore``.
 ///
@@ -19,24 +13,24 @@ struct ChatsView: View {
     /// The agent definition id used to scope the list, when known.
     let agentID: String
 
-    @Environment(ActiveSessionStore.self) private var activeSession
-    @EnvironmentObject private var controller: MemorySessionController
+    @Environment(ActiveSessionStore.self) var activeSession
+    @EnvironmentObject var controller: MemorySessionController
     @Environment(\.dismiss) private var dismiss
 
-    @StateObject private var store = SessionsStore()
+    @StateObject var store = SessionsStore()
     /// Whether archived conversations are listed. Toggled from the header menu.
-    @State private var includeArchived = false
+    @State var includeArchived = false
     /// Conversation awaiting delete confirmation.
-    @State private var pendingDelete: SessionSummary?
+    @State var pendingDelete: SessionSummary?
     /// Parents whose sub-chat disclosure is open. Empty by default; the branch
     /// belonging to the currently open chat is opened on load.
-    @State private var expandedThreads: Set<String> = []
+    @State var expandedThreads: Set<String> = []
     /// Multi-select bulk-archive mode.
-    @State private var isSelecting = false
-    @State private var selectedIDs: Set<String> = []
+    @State var isSelecting = false
+    @State var selectedIDs: Set<String> = []
     /// Error shown after a partial bulk archive; the failed rows are already
     /// back in the list.
-    @State private var archiveError: String?
+    @State var archiveError: String?
 
     private var agentFilter: String? {
         agentID.isEmpty ? nil : agentID
@@ -285,19 +279,6 @@ struct ChatsView: View {
         }
     }
 
-    private func expansionBinding(for parentID: String) -> Binding<Bool> {
-        Binding(
-            get: { expandedThreads.contains(parentID) },
-            set: { isExpanded in
-                if isExpanded {
-                    expandedThreads.insert(parentID)
-                } else {
-                    expandedThreads.remove(parentID)
-                }
-            }
-        )
-    }
-
     /// Opens the branch containing the chat the user currently has open, so a
     /// sub-chat launched from elsewhere is visible (not stranded under a
     /// collapsed parent).
@@ -309,294 +290,6 @@ struct ChatsView: View {
             if let parent = summary.parentConversationID, !parent.isEmpty {
                 expandedThreads.insert(parent)
             }
-        }
-    }
-
-    private var emptyView: some View {
-        EmptyStateView(
-            title: "chats.empty",
-            description: "chats.empty.description",
-            systemImage: "bubble.left.and.bubble.right"
-        )
-    }
-
-    private func failureView(_ message: String) -> some View {
-        ErrorStateView(
-            title: "chats.error",
-            description: "chats.error.description",
-            message: message,
-            retryLabel: "sessions.retry",
-            retry: {
-                Task {
-                    await store.load(agentID: agentFilter, includeArchived: includeArchived)
-                }
-            }
-        )
-    }
-
-    // MARK: - Row route
-
-    /// Manual conversations open the chat room (they can continue); scheduled
-    /// and board sessions open the read-only transcript.
-    private func route(for summary: SessionSummary) -> AppRoute {
-        switch summary.origin {
-        case "scheduled", "board":
-            .session(SessionRoute(room: summary.room))
-        default:
-            .chat(ChatRoute(
-                agentName: agentName,
-                conversationID: summary.room,
-                title: summary.title ?? summary.preview
-            ))
-        }
-    }
-
-    // MARK: - Selection / bulk archive
-
-    private func enterSelection() {
-        selectedIDs.removeAll()
-        isSelecting = true
-    }
-
-    private func exitSelection() {
-        isSelecting = false
-        selectedIDs.removeAll()
-    }
-
-    /// Number of sub-chats the delete dialog must warn about for the pending
-    /// parent. Zero for a leaf row (and for a parent whose children are not in
-    /// the current list).
-    private var pendingDeleteChildCount: Int? {
-        guard let id = pendingDelete?.room else { return nil }
-        let count = store.sessions.filter { $0.parentConversationID == id }.count
-        return count > 0 ? count : nil
-    }
-
-    private func archiveSelected() {
-        let ids = Array(selectedIDs)
-        guard !ids.isEmpty else { return }
-        let activeIDs = ids.filter {
-            activeSession.liveConversationID == $0 || activeSession.launchConversationID == $0
-        }
-        // Leave selection mode immediately: the rows are already hidden, so the
-        // list must not sit in a mode pointing at gone rows while requests run.
-        exitSelection()
-        Task {
-            let result = await store.archive(ids: ids)
-            for id in activeIDs {
-                await endSessionIfActive(id)
-            }
-            if result.didFail {
-                archiveError = String(
-                    localized: "chats.archive.failed \(result.failedCount)",
-                    comment: "Rows that could not be archived in a bulk archive."
-                )
-            }
-        }
-    }
-
-    // MARK: - Lifecycle actions
-
-    private var deleteDialogBinding: Binding<Bool> {
-        Binding(
-            get: { pendingDelete != nil },
-            set: {
-                if !$0 {
-                    pendingDelete = nil
-                }
-            }
-        )
-    }
-
-    private func archive(_ summary: SessionSummary) {
-        Task {
-            if await store.archive(id: summary.room) {
-                await endSessionIfActive(summary.room)
-            }
-        }
-    }
-
-    private func unarchive(_ summary: SessionSummary) {
-        Task {
-            if await store.unarchive(id: summary.room) {
-                await endSessionIfActive(summary.room)
-            }
-        }
-    }
-
-    private func delete(_ summary: SessionSummary) {
-        pendingDelete = nil
-        Task {
-            if await store.delete(id: summary.room) {
-                await endSessionIfActive(summary.room)
-            }
-        }
-    }
-
-    /// Ends the live room when the conversation it belongs to is archived or
-    /// deleted, so the app never keeps talking in a room the user just closed.
-    private func endSessionIfActive(_ conversationID: String) async {
-        guard activeSession.liveConversationID == conversationID
-            || activeSession.launchConversationID == conversationID
-        else { return }
-        await controller.endSession()
-    }
-}
-
-// MARK: - Row
-
-/// One conversation row: where it came from, its title (or first message),
-/// started time, turn/tool-call counts, and the archived/live state.
-private struct ChatRow: View {
-    let summary: SessionSummary
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2 * .grid) {
-            HStack(spacing: 2 * .grid) {
-                originBadge
-                title
-                if summary.isArchived {
-                    archivedBadge
-                }
-                Spacer(minLength: 0)
-                if summary.endedAt == nil {
-                    liveBadge
-                }
-                SessionRunBadge(summary: summary)
-            }
-
-            if showsSeparatePreview, let preview = summary.preview, !preview.isEmpty {
-                Text(preview)
-                    .font(MemoryFont.bodySmall)
-                    .foregroundStyle(.fg2)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-            }
-
-            HStack(spacing: 2 * .grid) {
-                if let startedAt = summary.startedAt {
-                    Text("sessions.started \(DateFormatting.formatSessionDate(startedAt) ?? startedAt)")
-                }
-                Text("sessions.turns.count \(summary.turns)")
-                Text("sessions.toolCalls.count \(summary.toolCalls)")
-            }
-            .font(MemoryFont.meta)
-            .foregroundStyle(.fg3)
-        }
-        .padding(.vertical, 1 * .grid)
-    }
-
-    /// The title line: the conversation title when there is one, otherwise the
-    /// first message, otherwise a neutral placeholder.
-    @ViewBuilder
-    private var title: some View {
-        if let title = summary.title, !title.isEmpty {
-            Text(title)
-                .font(MemoryFont.cardHeader)
-                .foregroundStyle(.fg0)
-                .lineLimit(1)
-        } else if let preview = summary.preview, !preview.isEmpty {
-            Text(preview)
-                .font(MemoryFont.cardHeader)
-                .foregroundStyle(.fg0)
-                .lineLimit(1)
-        } else {
-            Text("chats.preview.placeholder")
-                .font(MemoryFont.cardHeader)
-                .foregroundStyle(.fg3)
-                .lineLimit(1)
-        }
-    }
-
-    /// The preview becomes a second line only when the title is not already the
-    /// first message.
-    private var showsSeparatePreview: Bool {
-        guard let title = summary.title, !title.isEmpty else { return false }
-        return title != summary.preview
-    }
-
-    private var originBadge: some View {
-        Text(originKey)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(.fg2)
-            .padding(.horizontal, 2 * .grid)
-            .padding(.vertical, 1)
-            .overlay(Capsule().stroke(.separator1, lineWidth: 1))
-    }
-
-    private var originKey: LocalizedStringKey {
-        switch summary.origin {
-        case "scheduled":
-            "chats.origin.scheduled"
-        case "board":
-            "chats.origin.board"
-        default:
-            "chats.origin.chat"
-        }
-    }
-
-    private var archivedBadge: some View {
-        Label("chats.archived", systemImage: "archivebox")
-            .font(MemoryFont.meta)
-            .foregroundStyle(.fg3)
-            .labelStyle(.titleAndIcon)
-    }
-
-    private var liveBadge: some View {
-        HStack(spacing: 1 * .grid) {
-            Circle()
-                .fill(.fgSuccess)
-                .frame(width: 6, height: 6)
-            Text("sessions.live")
-        }
-        .font(MemoryFont.meta)
-        .foregroundStyle(.fg3)
-    }
-}
-
-/// The row's run-state badge. It mirrors the web rail's three states from the
-/// gateway `bucket` field: Working, Waiting on you (with the combined pending
-/// decision count), and Failed. A done/absent bucket renders nothing.
-private struct SessionRunBadge: View {
-    let summary: SessionSummary
-
-    private var pendingCount: Int {
-        summary.pendingApprovals + summary.pendingQuestions
-    }
-
-    var body: some View {
-        if let label {
-            Text(label)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(tint)
-                .padding(.horizontal, 2 * .grid)
-                .padding(.vertical, 1)
-                .background(tint.opacity(0.12), in: Capsule())
-        }
-    }
-
-    /// `nil` for done or an unknown/absent bucket, so no empty badge is drawn.
-    private var label: String? {
-        switch summary.bucket {
-        case "needs_input":
-            pendingCount > 0
-                ? String(localized: "chats.badge.waiting.count \(pendingCount)")
-                : String(localized: "chats.badge.waiting")
-        case "running":
-            String(localized: "chats.badge.working")
-        case "failed":
-            String(localized: "chats.badge.failed")
-        default:
-            nil
-        }
-    }
-
-    private var tint: Color {
-        switch summary.bucket {
-        case "failed": .fgSerious
-        case "needs_input": .fgModerate
-        case "running": .fgAccent
-        default: .fg3
         }
     }
 }
