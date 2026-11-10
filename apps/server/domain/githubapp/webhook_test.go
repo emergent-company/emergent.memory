@@ -80,12 +80,33 @@ func TestShouldSkipPullRequest(t *testing.T) {
 		"draft":  {Draft: true},
 		"merged": {Merged: true},
 		"closed": {State: "closed"},
-		"bot":    {State: "open", User: WebhookUser{Type: "Bot"}},
+		// Other bots must still be reviewed; only the integration's own bot is
+		// skipped by the producer via AuthoredBy.
+		"other-bot": {State: "open", User: WebhookUser{Login: "dependabot[bot]", Type: "Bot"}},
 	}
 	for name, pr := range cases {
 		p := &WebhookPayload{Action: "opened", PullRequest: pr}
+		if name == "other-bot" {
+			if p.ShouldSkipPullRequest() {
+				t.Error("other-bot: must not be skipped")
+			}
+			continue
+		}
 		if !p.ShouldSkipPullRequest() {
 			t.Errorf("%s: expected skip", name)
 		}
+	}
+}
+
+func TestAuthoredBy(t *testing.T) {
+	p := &WebhookPayload{PullRequest: WebhookPullRequest{User: WebhookUser{Login: "memory-reviewer[bot]"}}}
+	if !p.AuthoredBy("memory-reviewer") {
+		t.Fatal("App bot form must match")
+	}
+	if p.AuthoredBy("dependabot") {
+		t.Fatal("a different bot must not match")
+	}
+	if p.AuthoredBy("") {
+		t.Fatal("empty login must not match")
 	}
 }

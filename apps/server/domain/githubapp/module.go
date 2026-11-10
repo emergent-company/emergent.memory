@@ -1,6 +1,8 @@
 package githubapp
 
 import (
+	"context"
+	"errors"
 	"log/slog"
 
 	"go.uber.org/fx"
@@ -16,10 +18,15 @@ var Module = fx.Module("githubapp",
 		provideTokenMinter,
 		provideCredentialCipher,
 	),
+	fx.Invoke(registerCredentialGuard),
 )
 
-func provideTokenMinter() *TokenMinter {
-	return NewTokenMinter("", nil)
+func provideTokenMinter(cfg *config.Config) *TokenMinter {
+	baseURL := ""
+	if cfg != nil {
+		baseURL = cfg.GitHubSource.APIBaseURL
+	}
+	return NewTokenMinter(baseURL, nil)
 }
 
 // provideCredentialCipher returns nil when the encryption key is unset; the
@@ -35,4 +42,25 @@ func provideCredentialCipher(cfg *config.Config, log *slog.Logger) *CredentialCi
 		return nil
 	}
 	return cipher
+}
+
+// registerCredentialGuard fails startup when credentials already exist but the
+// encryption key is missing: the rows would be unreadable and every integration
+// would fail closed at runtime instead.
+func registerCredentialGuard(lc fx.Lifecycle, repo *Repository, cfg *config.Config) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			if cfg == nil || cfg.Sandbox.GitHubAppEncryptionKey != "" {
+				return nil
+			}
+			n, err := repo.CountApps(ctx)
+			if err != nil {
+				return err
+			}
+			if n > 0 {
+				return errors.New("githubapp: GITHUB_APP_ENCRYPTION_KEY is required when GitHub App credentials exist")
+			}
+			return nil
+		},
+	})
 }

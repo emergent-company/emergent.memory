@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -33,6 +34,9 @@ type TokenMinter struct {
 
 	mu    sync.Mutex
 	cache map[string]cachedToken
+	// locks serializes minting per cache key so concurrent misses do not mint
+	// several tokens for the same scope.
+	locks map[string]*sync.Mutex
 }
 
 // NewTokenMinter builds a minter. Empty baseURL means github.com; a nil client
@@ -49,6 +53,7 @@ func NewTokenMinter(baseURL string, client *http.Client) *TokenMinter {
 		client:  client,
 		now:     time.Now,
 		cache:   make(map[string]cachedToken),
+		locks:   make(map[string]*sync.Mutex),
 	}
 }
 
@@ -62,8 +67,33 @@ func (m *TokenMinter) MintInstallationToken(
 	repos []string,
 	permissions map[string]string,
 ) (string, error) {
+	// Least privilege is mandatory: an empty scope would mint a token for every
+	// repository and every App permission.
+	if len(repos) == 0 {
+		return "", errors.New("githubapp: installation token requires an explicit repository list")
+	}
+	if len(permissions) == 0 {
+		return "", errors.New("githubapp: installation token requires an explicit permission set")
+	}
+
 	key := tokenCacheKey(appID, installationID, repos, permissions)
 
+	m.mu.Lock()
+	if entry, ok := m.cache[key]; ok && entry.expiresAt.Sub(m.now()) > tokenRefreshSkew {
+		m.mu.Unlock()
+		return entry.token, nil
+	}
+	lock := m.locks[key]
+	if lock == nil {
+		lock = new(sync.Mutex)
+		m.locks[key] = lock
+	}
+	m.mu.Unlock()
+
+	lock.Lock()
+	defer lock.Unlock()
+
+	// Another caller may have minted while this one waited.
 	m.mu.Lock()
 	if entry, ok := m.cache[key]; ok && entry.expiresAt.Sub(m.now()) > tokenRefreshSkew {
 		m.mu.Unlock()
@@ -108,7 +138,14 @@ func (m *TokenMinter) MintInstallationToken(
 		return "", fmt.Errorf("githubapp: read token response: %w", err)
 	}
 	if resp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("githubapp: mint installation token: status %d: %s", resp.StatusCode, truncate(raw, 300))
+		// Never echo the body: a proxy or GHES misconfiguration could return a
+		// 200/201-shaped token body under a different status. Surface GitHub's
+		// message field only.
+		var apiErr struct {
+			Message string `json:"message"`
+		}
+		_ = json.Unmarshal(raw, &apiErr)
+		return "", fmt.Errorf("githubapp: mint installation token: status %d: %s", resp.StatusCode, truncate([]byte(apiErr.Message), 300))
 	}
 
 	var out struct {

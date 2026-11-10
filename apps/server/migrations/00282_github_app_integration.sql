@@ -10,7 +10,7 @@
 
 CREATE TABLE IF NOT EXISTS core.github_apps (
     id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    org_id                   UUID NOT NULL,
+    org_id                   UUID NOT NULL REFERENCES kb.orgs (id) ON DELETE CASCADE,
     app_id                   BIGINT NOT NULL,
     slug                     TEXT NOT NULL DEFAULT '',
     private_key_encrypted    TEXT NOT NULL,
@@ -25,11 +25,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_github_apps_org_app
 CREATE TABLE IF NOT EXISTS core.github_app_installations (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     app_pk          UUID NOT NULL REFERENCES core.github_apps (id) ON DELETE CASCADE,
-    org_id          UUID NOT NULL,
-    project_id      UUID NOT NULL,
+    org_id          UUID NOT NULL REFERENCES kb.orgs (id) ON DELETE CASCADE,
+    project_id      UUID NOT NULL REFERENCES kb.projects (id) ON DELETE CASCADE,
     installation_id BIGINT NOT NULL,
     repos           TEXT[] NOT NULL DEFAULT '{}',
-    agent_id        UUID NOT NULL,
+    agent_id        UUID NOT NULL REFERENCES kb.agents (id) ON DELETE CASCADE,
     queue           TEXT NOT NULL DEFAULT 'default',
     enabled         BOOLEAN NOT NULL DEFAULT TRUE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),

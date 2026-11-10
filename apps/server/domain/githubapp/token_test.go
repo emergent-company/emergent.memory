@@ -92,6 +92,17 @@ func TestMintInstallationToken(t *testing.T) {
 	}
 }
 
+func TestMintInstallationTokenRequiresExplicitScope(t *testing.T) {
+	key := testRSAKey(t)
+	m := NewTokenMinter("http://127.0.0.1:1", nil)
+	if _, err := m.MintInstallationToken(context.Background(), 1, pkcs1PEM(key), 2, nil, map[string]string{"contents": "read"}); err == nil {
+		t.Fatal("expected an error for an empty repository list")
+	}
+	if _, err := m.MintInstallationToken(context.Background(), 1, pkcs1PEM(key), 2, []string{"owner/repo"}, nil); err == nil {
+		t.Fatal("expected an error for an empty permission set")
+	}
+}
+
 func TestMintInstallationTokenError(t *testing.T) {
 	key := testRSAKey(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

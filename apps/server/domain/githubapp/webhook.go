@@ -108,12 +108,21 @@ func (p *WebhookPayload) IsRelevantPullRequestAction() bool {
 }
 
 // ShouldSkipPullRequest reports PR states that must not produce a review.
+// Bot-authored PRs are not skipped here: only the integration's own bot must be
+// skipped, which the producer checks with AuthoredBy.
 func (p *WebhookPayload) ShouldSkipPullRequest() bool {
 	if p.PullRequest.Draft || p.PullRequest.Merged {
 		return true
 	}
-	if p.PullRequest.State != "" && p.PullRequest.State != "open" {
-		return true
+	return p.PullRequest.State != "" && p.PullRequest.State != "open"
+}
+
+// AuthoredBy reports whether the PR was authored by login or its App bot form
+// ("<login>[bot]").
+func (p *WebhookPayload) AuthoredBy(login string) bool {
+	if login == "" {
+		return false
 	}
-	return p.PullRequest.User.Type == "Bot"
+	author := p.PullRequest.User.Login
+	return strings.EqualFold(author, login) || strings.EqualFold(author, login+"[bot]")
 }
