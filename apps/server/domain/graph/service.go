@@ -5190,6 +5190,9 @@ func (s *Service) applyMerge(
 					[]uuid.UUID{src.ID}, clone.ID, clone.BranchID); err != nil {
 					return 0, fmt.Errorf("clone object %s: %w", cid, err)
 				}
+				if err := s.markMergedOutcomes(ctx, tx.Tx, projectID, ContributionSubjectObject, clone.ID, clone.CanonicalID); err != nil {
+					return 0, fmt.Errorf("clone object %s: merged outcome: %w", cid, err)
+				}
 
 				// Stamp the merge ledger on the source object so future merges/diffs
 				// recognize it as already merged instead of "added".
@@ -5259,6 +5262,9 @@ func (s *Service) applyMerge(
 			if err := s.unionMergeContributions(ctx, tx.Tx, projectID, ContributionSubjectObject,
 				[]uuid.UUID{src.ID, prevHead.ID}, newVersion.ID, newVersion.BranchID); err != nil {
 				return 0, fmt.Errorf("fast-forward object %s: %w", cid, err)
+			}
+			if err := s.markMergedOutcomes(ctx, tx.Tx, projectID, ContributionSubjectObject, newVersion.ID, newVersion.CanonicalID); err != nil {
+				return 0, fmt.Errorf("fast-forward object %s: merged outcome: %w", cid, err)
 			}
 			appliedCount++
 			// Use physical version ID — graph_embedding_jobs.object_id FK references graph_objects.id.
@@ -5358,6 +5364,9 @@ func (s *Service) applyMerge(
 				[]uuid.UUID{src.ID, prevHead.ID}, newVersion.ID, newVersion.BranchID); err != nil {
 				return 0, fmt.Errorf("conflict-resolve object %s: %w", cid, err)
 			}
+			if err := s.markMergedOutcomes(ctx, tx.Tx, projectID, ContributionSubjectObject, newVersion.ID, newVersion.CanonicalID); err != nil {
+				return 0, fmt.Errorf("conflict-resolve object %s: merged outcome: %w", cid, err)
+			}
 			appliedCount++
 			// Use physical version ID — graph_embedding_jobs.object_id FK references graph_objects.id.
 			embeddingIDs = append(embeddingIDs, newVersion.ID.String())
@@ -5453,6 +5462,9 @@ func (s *Service) applyMerge(
 					[]uuid.UUID{src.ID, existingTarget.ID}, newVersion.ID, newVersion.BranchID); err != nil {
 					return 0, fmt.Errorf("absorb similar object %s into %s: %w", cid, *summary.SimilarTargetID, err)
 				}
+				if err := s.markMergedOutcomes(ctx, tx.Tx, projectID, ContributionSubjectObject, newVersion.ID, newVersion.CanonicalID); err != nil {
+					return 0, fmt.Errorf("absorb similar object %s into %s: merged outcome: %w", cid, *summary.SimilarTargetID, err)
+				}
 				appliedCount++
 				embeddingIDs = append(embeddingIDs, newVersion.ID.String())
 			}
@@ -5523,6 +5535,14 @@ func (s *Service) applyMerge(
 									[]uuid.UUID{src.ID, similarRel.ID}, newRelVersion.ID, newRelVersion.BranchID); err != nil {
 									s.log.Warn("similar rel: failed to copy contributions", logger.Error(err))
 								} else {
+									if err := s.markMergedOutcomes(ctx, tx.Tx, projectID, ContributionSubjectRelationship, newRelVersion.ID, similarRel.CanonicalID); err != nil {
+										// Unlike the contribution copy above, this is
+										// the decision record: commit the merge
+										// without it and the source is never told
+										// it moved. Fail the transaction, as every
+										// other merge site does.
+										return 0, fmt.Errorf("absorb similar relationship %s into %s: merged outcome: %w", cid, similarRel.CanonicalID, err)
+									}
 									appliedCount++
 									relEmbeddingIDs = append(relEmbeddingIDs, newRelVersion.ID.String())
 									continue // absorbed — skip create below
@@ -5569,6 +5589,9 @@ func (s *Service) applyMerge(
 				[]uuid.UUID{src.ID}, rel.ID, rel.BranchID); err != nil {
 				return 0, fmt.Errorf("clone relationship %s: %w", cid, err)
 			}
+			if err := s.markMergedOutcomes(ctx, tx.Tx, projectID, ContributionSubjectRelationship, rel.ID, rel.CanonicalID); err != nil {
+				return 0, fmt.Errorf("clone relationship %s: merged outcome: %w", cid, err)
+			}
 			appliedCount++
 			relEmbeddingIDs = append(relEmbeddingIDs, rel.ID.String())
 
@@ -5602,6 +5625,9 @@ func (s *Service) applyMerge(
 			if err := s.unionMergeContributions(ctx, tx.Tx, projectID, ContributionSubjectRelationship,
 				[]uuid.UUID{src.ID, prevHead.ID}, newVersion.ID, newVersion.BranchID); err != nil {
 				return 0, fmt.Errorf("fast-forward relationship %s: %w", cid, err)
+			}
+			if err := s.markMergedOutcomes(ctx, tx.Tx, projectID, ContributionSubjectRelationship, newVersion.ID, prevHead.CanonicalID); err != nil {
+				return 0, fmt.Errorf("fast-forward relationship %s: merged outcome: %w", cid, err)
 			}
 			appliedCount++
 			relEmbeddingIDs = append(relEmbeddingIDs, newVersion.ID.String())
