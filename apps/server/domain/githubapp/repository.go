@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/uptrace/bun"
 )
 
@@ -64,6 +65,20 @@ func (r *Repository) ListAppsByOrg(ctx context.Context, orgID uuid.UUID) ([]*Git
 	return apps, nil
 }
 
+// FindAnyAppByOrg returns the org's first App row. Installations are bound to a
+// project, not to a specific App id in the admin API.
+func (r *Repository) FindAnyAppByOrg(ctx context.Context, orgID uuid.UUID) (*GitHubApp, error) {
+	app := new(GitHubApp)
+	if err := r.db.NewSelect().Model(app).
+		Where("ga.org_id = ?", orgID).
+		Order("ga.created_at ASC").
+		Limit(1).
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+	return app, nil
+}
+
 func (r *Repository) CountApps(ctx context.Context) (int, error) {
 	return r.db.NewSelect().Table("core.github_apps").Count(ctx)
 }
@@ -115,6 +130,17 @@ func (r *Repository) ListInstallationsByProject(ctx context.Context, projectID u
 	return insts, nil
 }
 
+func (r *Repository) ListInstallationsByOrg(ctx context.Context, orgID uuid.UUID) ([]*Installation, error) {
+	var insts []*Installation
+	if err := r.db.NewSelect().Model(&insts).
+		Where("gi.org_id = ?", orgID).
+		Order("gi.created_at ASC").
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+	return insts, nil
+}
+
 func (r *Repository) UpdateInstallation(ctx context.Context, inst *Installation) error {
 	_, err := r.db.NewUpdate().Model(inst).
 		Column("repos", "agent_id", "queue", "enabled").
@@ -148,6 +174,40 @@ func (r *Repository) DisableInstallationByInstallationID(ctx context.Context, in
 	return err
 }
 
+// UpdateInstallationRepos rewrites the allowlist for an installation.
+func (r *Repository) UpdateInstallationRepos(ctx context.Context, installationID int64, repos []string) error {
+	_, err := r.db.NewUpdate().
+		Table("core.github_app_installations").
+		Set("repos = ?", pq.StringArray(repos)).
+		Set("updated_at = now()").
+		Where("installation_id = ?", installationID).
+		Where("enabled = true").
+		Exec(ctx)
+	return err
+}
+
+// DeleteInstallation removes an installation row.
+func (r *Repository) DeleteInstallation(ctx context.Context, id uuid.UUID) error {
+	_, err := r.db.NewDelete().Table("core.github_app_installations").Where("id = ?", id).Exec(ctx)
+	return err
+}
+
+// DeleteApp removes an App and, by cascade, its installations.
+func (r *Repository) DeleteApp(ctx context.Context, id uuid.UUID) error {
+	_, err := r.db.NewDelete().Table("core.github_apps").Where("id = ?", id).Exec(ctx)
+	return err
+}
+
+// ProjectOrgID returns a project's owning org, used to reject cross-org
+// installation bindings.
+func (r *Repository) ProjectOrgID(ctx context.Context, projectID uuid.UUID) (uuid.UUID, error) {
+	var orgID uuid.UUID
+	if err := r.db.NewSelect().Table("kb.projects").Column("organization_id").Where("id = ?", projectID).Scan(ctx, &orgID); err != nil {
+		return uuid.Nil, err
+	}
+	return orgID, nil
+}
+
 // --- Deliveries ---
 
 // InsertDelivery records a delivery id and reports whether it was new. A
@@ -164,6 +224,13 @@ func (r *Repository) InsertDelivery(ctx context.Context, d *Delivery) (bool, err
 		return false, err
 	}
 	return n > 0, nil
+}
+
+// DeleteDelivery removes a dedupe row after a processing failure so GitHub's
+// retry can re-attempt the delivery.
+func (r *Repository) DeleteDelivery(ctx context.Context, deliveryID string) error {
+	_, err := r.db.NewDelete().Table("core.github_app_deliveries").Where("delivery_id = ?", deliveryID).Exec(ctx)
+	return err
 }
 
 // --- Review claims ---
@@ -249,6 +316,54 @@ func (r *Repository) ClaimReview(ctx context.Context, installationID int64, repo
 	return claim, superseded, nil
 }
 
+// SupersedeActivePR cancels every pending/running claim for a PR (closed or
+// converted to draft) and returns their run ids for cancellation.
+func (r *Repository) SupersedeActivePR(ctx context.Context, installationID int64, repo string, pullRequest int) ([]uuid.UUID, error) {
+	var superseded []uuid.UUID
+	lockKey := prLockKey(installationID, repo, pullRequest)
+
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", lockKey).Exec(ctx); err != nil {
+			return err
+		}
+		var active []ReviewClaim
+		if err := tx.NewSelect().Model(&active).
+			Where("installation_id = ?", installationID).
+			Where("repo = ?", repo).
+			Where("pull_request = ?", pullRequest).
+			Where("state IN (?)", bun.In([]string{ClaimPending, ClaimRunning})).
+			For("UPDATE").
+			Scan(ctx); err != nil {
+			return err
+		}
+		if len(active) == 0 {
+			return nil
+		}
+		ids := make([]uuid.UUID, 0, len(active))
+		for _, c := range active {
+			ids = append(ids, c.ID)
+			if c.RunID != nil {
+				superseded = append(superseded, *c.RunID)
+			}
+		}
+		_, err := tx.NewUpdate().
+			Table("core.github_pr_review_claims").
+			Set("state = ?", ClaimCancelled).
+			Set("updated_at = now()").
+			Where("id IN (?)", bun.In(ids)).
+			Exec(ctx)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return superseded, nil
+}
+
+func prLockKey(installationID int64, repo string, pullRequest int) string {
+	return fmt.Sprintf("githubapp:%d:%s:%d", installationID, repo, pullRequest)
+}
+
 // SetClaimRun attaches a run to a pending/running claim. A terminal claim is
 // left untouched; false reports the cancel/supersede-wins outcome.
 func (r *Repository) SetClaimRun(ctx context.Context, claimID, runID uuid.UUID, state string) (bool, error) {
@@ -258,7 +373,8 @@ func (r *Repository) SetClaimRun(ctx context.Context, claimID, runID uuid.UUID, 
 		Set("state = ?", state).
 		Set("updated_at = now()").
 		Where("id = ?", claimID).
-		Where("state IN (?)", bun.In([]string{ClaimPending, ClaimRunning})).
+		Where("run_id IS NULL").
+		Where("state = ?", ClaimPending).
 		Exec(ctx)
 	if err != nil {
 		return false, err

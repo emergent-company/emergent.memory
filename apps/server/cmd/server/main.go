@@ -288,7 +288,7 @@ func featureFxOptions(f config.FeatureSet) []fx.Option {
 	if f.MCPRegistry {
 		opts = append(opts, mcpregistry.Module)
 	}
-	if f.GitHubApp {
+	if f.GitHubApp && f.Agents {
 		opts = append(opts, githubapp.Module)
 	}
 	if f.MCPRelay {
