@@ -35,12 +35,14 @@ type QuestionCard struct {
 	ProposalHTML string
 }
 
-// TodoItem is one session todo rendered by the todo card.
+// TodoItem is one session todo rendered by the todo card. The JSON tags are the
+// wire contract of GET /api/conversations/:id/todos (issue #440): the iOS client
+// decodes exactly `id`, `content`, `status`, `order`.
 type TodoItem struct {
-	ID      string
-	Content string
-	Status  string
-	Order   int
+	ID      string `json:"id"`
+	Content string `json:"content"`
+	Status  string `json:"status"`
+	Order   int    `json:"order"`
 }
 
 // argsSummaryString renders a tool approval's args map as a compact JSON

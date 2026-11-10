@@ -55,6 +55,11 @@ func TestDeviceSurfacePath(t *testing.T) {
 		// iOS timeline and reattach lanes depend on.
 		{"GET", "/api/conversations/abc/history", true},
 		{"GET", "/api/conversations/abc/events", true},
+		// The agent's plan (#440) is the third read-only conversation action.
+		{"GET", "/api/conversations/abc/todos", true},
+		{"GET", "/api/conversations/abc/todos/x", false},
+		{"GET", "/api/conversations//todos", false},
+		{"POST", "/api/conversations/abc/todos", false},
 		{"GET", "/api/conversations/abc/dump", false},
 		{"GET", "/api/conversations/abc/history/x", false},
 		{"GET", "/api/conversations//history", false},
@@ -271,6 +276,7 @@ func deviceConversationEcho(f *fakeMemory) (*Server, *echo.Echo) {
 	e.Use(s.requireSessionOrKey)
 	e.GET("/api/conversations/:id/history", s.getConversationHistory)
 	e.GET("/api/conversations/:id/events", s.conversationEvents)
+	e.GET("/api/conversations/:id/todos", s.getConversationTodos)
 	return s, e
 }
 

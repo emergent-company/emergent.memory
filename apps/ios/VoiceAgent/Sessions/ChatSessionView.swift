@@ -47,6 +47,8 @@ struct ChatSessionView: View {
     @State var historyReloadPending = false
     /// Messages staged while a turn is running, released when it ends.
     @State var queue = ChatQueueStore()
+    /// The agent's plan for this conversation, shown above the composer (#440).
+    @State var plan = ChatPlanStore()
     /// The turn-end hook's target. The transport holds the hook, and the hook
     /// only holds this pump weakly, so the view's state is what keeps it alive
     /// after `start()` returns — a local there would be released immediately.
@@ -268,8 +270,7 @@ extension ChatSessionView {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // The in-call surface ignores the safe area; clip it so it cannot draw
-        // under the header or the controls.
+        // The in-call surface ignores the safe area: clip it under header/controls.
         .clipped()
     }
 
@@ -277,10 +278,10 @@ extension ChatSessionView {
 
     private var bottomBar: some View {
         VStack(spacing: 0) {
-            // Live child/subagent runs stay visible across text and voice modes.
+            // The plan and live subagent runs stay visible across both modes.
+            ChatPlanCard(store: plan, conversationID: openConversationID)
             SubagentTrackView()
-            // Hang-up belongs to a call, not to a chat: a text session has no
-            // room to leave.
+            // Hang-up belongs to a call: a text session has no room to leave.
             if activeSession.mode == .voice, session.isConnected {
                 ChatSessionControls(mode: activeSession.mode, onHangUp: hangUp)
             }
@@ -315,11 +316,10 @@ extension ChatSessionView {
                     text: $messageText,
                     onSend: sendText,
                     onEnqueue: enqueueText,
-                    // A text turn can be cancelled: the stream's `meta` frame or
-                    // a conversation refresh gives the run id and the transport
-                    // cancels it. While a run is in flight (own or attached),
-                    // Return and Send stage the next message in the queue
-                    // instead of dropping it; the stop button stays.
+                    // A text turn can be cancelled: the `meta` frame or a
+                    // refresh gives the run id and the transport cancels it.
+                    // While a run is in flight (own or attached), Return and
+                    // Send stage the next message instead of dropping it.
                     mode: isTextRunActive ? .running : .idle,
                     onStop: stopTextTurn
                 )

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -757,5 +758,93 @@ func TestSetupClientTTSStrategy(t *testing.T) {
 	}
 	if got["ttsStrategy"] != "client" {
 		t.Errorf("ttsStrategy = %q, want client for TTS_PROVIDER=none", got["ttsStrategy"])
+	}
+}
+
+// --- device credential: the conversation plan route (#440) ---
+
+// TestDeviceConversationTodosOwnConversationReadable is the positive half of the
+// #440 boundary: a device credential on GET /api/conversations/:id/todos reads
+// the plan of a conversation its own memory scope can see, exactly as it reads
+// that conversation's history and events.
+func TestDeviceConversationTodosOwnConversationReadable(t *testing.T) {
+	f := &fakeMemory{
+		introspectInfo: testDeviceTokenInfo(),
+		details:        map[string]*ConversationDetail{"own": {ID: "own", SessionID: "s1"}},
+		sessionTodos: []SessionTodo{
+			{ID: "t1", Content: "Write tests", Status: "in_progress", Order: 1},
+			{ID: "t2", Content: "Ship", Status: "pending", Order: 2},
+		},
+	}
+	_, e := deviceConversationEcho(f)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/conversations/own/todos", nil)
+	req.Header.Set("X-API-Key", "emt_dev")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Todos []TodoItem `json:"todos"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body is not JSON: %v (%s)", err, rec.Body.String())
+	}
+	if len(body.Todos) != 2 {
+		t.Fatalf("todos = %d, want 2; body=%s", len(body.Todos), rec.Body.String())
+	}
+	if body.Todos[0].ID != "t1" || body.Todos[0].Status != "in_progress" || body.Todos[0].Content != "Write tests" {
+		t.Errorf("todos[0] = %+v", body.Todos[0])
+	}
+	if f.lastTodosSessionID != "s1" {
+		t.Errorf("todos fetched for session %q, want s1", f.lastTodosSessionID)
+	}
+}
+
+// TestDeviceConversationTodosForeignConversationRefused pins the cross-tenant
+// half: a device token asking for a conversation its bound user cannot see gets
+// no plan. Memory answers 404 for such an id under its owner-or-shared scope,
+// and this route maps every lookup failure to an empty list (as the
+// /partial/chat-todos fragment does), so the refusal surfaces as
+// `{"todos":[]}` — never another tenant's plan, and never a 500.
+func TestDeviceConversationTodosForeignConversationRefused(t *testing.T) {
+	notFound := errors.New("memory: GET /api/chat/foreign: 404 not_found")
+	f := &fakeMemory{introspectInfo: testDeviceTokenInfo(), detailErr: notFound}
+	_, e := deviceConversationEcho(f)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/conversations/foreign/todos", nil)
+	req.Header.Set("X-API-Key", "emt_dev")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (the route degrades, it does not error); body=%s",
+			rec.Code, rec.Body.String())
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != `{"todos":[]}` {
+		t.Fatalf("body = %s, want an empty plan for a conversation the device cannot see", got)
+	}
+	if f.lastTodosSessionID != "" {
+		t.Errorf("a failed conversation read still fetched todos for session %q", f.lastTodosSessionID)
+	}
+}
+
+// TestDeviceConversationTodosOffSurfaceRejected keeps the route on the GET
+// surface only: the same path with a write method is not something a device
+// credential may reach.
+func TestDeviceConversationTodosOffSurfaceRejected(t *testing.T) {
+	f := &fakeMemory{introspectInfo: testDeviceTokenInfo()}
+	_, e := deviceConversationEcho(f)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/conversations/own/todos", nil)
+	req.Header.Set("X-API-Key", "emt_dev")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 for a device credential off the surface; body=%s",
+			rec.Code, rec.Body.String())
 	}
 }
