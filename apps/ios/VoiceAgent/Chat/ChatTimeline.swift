@@ -74,8 +74,9 @@ final class ChatTimelineStore {
     private(set) var historyIDs: Set<String> = []
 
     /// Clock for row timestamps and tool durations. Injectable so a test can
-    /// assert an exact duration.
-    @ObservationIgnored private let now: () -> Date
+    /// assert an exact duration, and read by both mappers (``ChatTimelineLive``
+    /// stamps every live row with it).
+    @ObservationIgnored let now: () -> Date
     /// Run id the live turn is streaming into (`meta` frame).
     @ObservationIgnored private var liveRunID: String?
     /// Counts live assistant rows, so a reply that restarts after a tool call
@@ -191,8 +192,9 @@ extension ChatTimelineStore {
         liveRunID
     }
 
-    /// Starts a live run; its rows carry this id so a reload can replace them.
-    func beginLiveRun(_ runID: String) {
+    /// Starts a live run (the `meta` frame names it, when it names one); its
+    /// rows carry this id so a reload can replace them.
+    func beginLiveRun(_ runID: String?) {
         liveRunID = runID
     }
 
