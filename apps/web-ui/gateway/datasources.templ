@@ -644,6 +644,67 @@ templ dsConfigFieldInput(f dsConfigField) {
 				@components.HelpTip(f.Description, components.HelpTipProps{ID: tipID})
 			}
 		</div>
+	} else if f.Select != nil {
+		<div class="flex flex-col gap-1">
+			<label class="text-sm font-medium" for={ f.Key }>
+				{ f.Label }
+				if f.Required {
+					<span class="text-error" aria-hidden="true">*</span>
+				}
+			</label>
+			if f.Description != "" {
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+					{ f.Description }
+				}
+			}
+			if f.Select.LoadErr != nil {
+				<div data-testid={ "ds-field-" + f.Key + "-error" }>
+					@ui.Alert(ui.AlertProps{
+						Type:    ui.AlertWarning,
+						Style:   ui.AlertStyleSoft,
+						Icon:    "lucide--alert-triangle",
+						Message: "The organization's registered Apps could not be loaded: " + f.Select.LoadErr.Error(),
+					})
+				</div>
+				if f.Select.EmptyHref != "" {
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeLink,
+						Href:    f.Select.EmptyHref,
+						Variant: ui.ButtonOutline,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--settings",
+						Attrs:   templ.Attributes{"data-testid": "ds-field-" + f.Key + "-settings"},
+					}) {
+						{ f.Select.EmptyLabel }
+					}
+				}
+			} else if len(f.Select.Options) == 0 {
+				<div class="flex flex-col gap-2" data-testid={ "ds-field-" + f.Key + "-empty" }>
+					@ui.EmptyNote(ui.EmptyNoteProps{}) {
+						{ f.Select.EmptyMessage }
+					}
+					if f.Select.EmptyHref != "" {
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeLink,
+							Href:    f.Select.EmptyHref,
+							Variant: ui.ButtonPrimary,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--plus",
+							Attrs:   templ.Attributes{"data-testid": "ds-field-" + f.Key + "-settings"},
+						}) {
+							{ f.Select.EmptyLabel }
+						}
+					}
+				</div>
+			} else {
+				<select id={ f.Key } name={ f.Key } class="select w-full" data-testid={ "ds-field-" + f.Key }>
+					<option value="">{ f.Select.Placeholder }</option>
+					for _, option := range f.Select.Options {
+						<option value={ option.Value } selected?={ option.Value == f.Value }>{ option.Label }</option>
+					}
+				</select>
+			}
+		</div>
 	} else if f.dsIsPicker() && f.Type == "array" && f.SourceID != "" {
 		{{
 			/* An array field collects several values, so the picker appends a
@@ -843,7 +904,7 @@ templ DSTestResultPartial(resp *DSTestConnectionResponse, err error) {
 // test, settings, and sync-job history. A nil src renders the load-error state.
 // resourcePrompt, when non-nil, is the banner prompting the user to finish
 // connecting by choosing a sync target (folder/repo).
-templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields, credentialFields []dsConfigField, picker dsSavedCredentialPicker, jobs *dsSyncHistoryView, loadErr error, resourcePrompt *dsResourcePrompt, credentialSummary *dsCredentialSummary, flashMsg string, flashErr error) {
+templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields, credentialFields []dsConfigField, picker dsSavedCredentialPicker, jobs *dsSyncHistoryView, loadErr error, resourcePrompt *dsResourcePrompt, credentialSummary *dsCredentialSummary, triggers *dsSourceTriggersView, flashMsg string, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
 		if src == nil {
 			@pageError("Data source unavailable", loadErr)
@@ -862,6 +923,12 @@ templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields
 				@dsGmailDetailCard(src)
 			}
 			@dsConnectionCard(src)
+			// A trigger-only source starts agent runs instead of syncing
+			// documents, so its event bindings are part of the source's
+			// configuration and sit above the settings form.
+			if triggers != nil {
+				@dsSourceTriggersPanel(*triggers)
+			}
 			// The credentials card is an OAuth-app summary; a config/credentials
 			// provider has no OAuth app to resolve, so showing it (and its "set one
 			// up" warning) would report a healthy source as broken (#2295).
@@ -879,6 +946,149 @@ templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields
 			}
 		}
 	}
+}
+
+// dsSourceTriggersPanel is the github_app source's trigger surface: the
+// event→agent bindings, their enabled state, and the create form. It renders on
+// the source detail page only for the trigger-only provider, whose sources have
+// no document sync to show instead.
+templ dsSourceTriggersPanel(view dsSourceTriggersView) {
+	<div class="mb-4" id="triggers" data-testid="ds-triggers">
+		@components.PanelCard("", nil) {
+			<div class="flex items-start gap-3">
+				@ui.IconTile("lucide--webhook", ui.IconTileProps{Tone: "info"})
+				<div>
+					<h2 class="text-base font-semibold">Triggers</h2>
+					@ui.EmptyNote() {
+						Pull-request events on this source's repositories start an agent run. A source has one binding per event type.
+					}
+				</div>
+			</div>
+			if view.LoadErr != nil {
+				<div class="mt-3">
+					@ui.Alert(ui.AlertProps{
+						Type:    ui.AlertWarning,
+						Style:   ui.AlertStyleSoft,
+						Icon:    "lucide--alert-triangle",
+						Message: "Triggers could not be loaded: " + view.LoadErr.Error(),
+					})
+				</div>
+			} else if len(view.Triggers) == 0 {
+				<div class="mt-3" data-testid="ds-triggers-empty">
+					@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
+						No triggers yet. Add one below to start an agent when a pull request event arrives.
+					}
+				</div>
+			} else {
+				<ul class="mt-3 flex flex-col gap-2" data-testid="ds-trigger-list">
+					for _, trigger := range view.Triggers {
+						@dsSourceTriggerRow(view, trigger)
+					}
+				</ul>
+			}
+			@dsSourceTriggerCreateForm(view)
+		}
+	</div>
+}
+
+// dsSourceTriggerRow is one binding: the event, the agent that runs, the queue,
+// and the enabled state with its toggle and delete actions.
+templ dsSourceTriggerRow(view dsSourceTriggersView, trigger DSSourceTrigger) {
+	<li
+		class="flex flex-wrap items-center justify-between gap-3 rounded-box border border-base-content/10 px-3 py-2.5"
+		data-testid="ds-trigger-row"
+		data-trigger-id={ trigger.ID }
+		data-enabled={ strconv.FormatBool(trigger.Enabled) }
+	>
+		<div class="flex min-w-0 flex-wrap items-center gap-2">
+			@ui.Badge(ui.BadgeProps{
+				Label:   trigger.EventType,
+				Variant: ui.BadgeNeutral,
+				Size:    ui.BadgeSizeSM,
+				Icon:    "lucide--git-pull-request",
+			})
+			<span class="text-sm font-medium" data-testid="ds-trigger-agent">{ dsTriggerAgentName(view.Agents, trigger.AgentID) }</span>
+			<code class="text-xs text-muted" data-testid="ds-trigger-agent-id">{ trigger.AgentID }</code>
+			<span class="text-xs text-muted" data-testid="ds-trigger-queue">Queue: { dsTriggerQueueLabel(trigger.Queue) }</span>
+		</div>
+		<div class="flex flex-wrap items-center gap-2">
+			if trigger.Enabled {
+				@ui.Badge(ui.BadgeProps{Label: "Enabled", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeXS, Icon: "lucide--check"})
+			} else {
+				@ui.Badge(ui.BadgeProps{Label: "Disabled", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Icon: "lucide--pause"})
+			}
+			<form method="post" action={ templ.URL("/data-sources/" + url.PathEscape(view.SourceID) + "/triggers/" + url.PathEscape(trigger.ID) + "/toggle") } class="inline-flex">
+				<input type="hidden" name="enabled" value={ dsTriggerNextEnabled(trigger.Enabled) }/>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonOutline,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--power",
+					Attrs:   templ.Attributes{"data-testid": "ds-trigger-toggle"},
+				}) {
+					{ dsTriggerToggleLabel(trigger.Enabled) }
+				}
+			</form>
+			<form method="post" action={ templ.URL("/data-sources/" + url.PathEscape(view.SourceID) + "/triggers/" + url.PathEscape(trigger.ID) + "/delete") } class="inline-flex" hx-confirm="Delete this trigger? The source stays connected, but pull-request events will no longer start this agent.">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--trash-2",
+					Attrs:   templ.Attributes{"data-testid": "ds-trigger-delete"},
+				}) {
+					Delete
+				}
+			</form>
+		</div>
+	</li>
+}
+
+// dsSourceTriggerCreateForm binds pull_request to one of the project's agents.
+// The event type is fixed: github_app accepts nothing else, so offering a choice
+// would only let the user submit a value the API rejects.
+templ dsSourceTriggerCreateForm(view dsSourceTriggersView) {
+	<form method="post" action={ templ.URL("/data-sources/" + url.PathEscape(view.SourceID) + "/triggers") } class="mt-4 flex flex-col gap-3 border-t border-base-content/10 pt-4" data-testid="ds-trigger-form">
+		<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+			<div class="flex flex-col gap-1">
+				<label class="text-sm font-medium" for="trigger-event-type">Event</label>
+				<select id="trigger-event-type" name="eventType" class="select w-full" data-testid="ds-trigger-event-type">
+					<option value="pull_request">pull_request</option>
+				</select>
+			</div>
+			<div class="flex flex-col gap-1">
+				<label class="text-sm font-medium" for="trigger-agent">Agent <span class="text-error" aria-hidden="true">*</span></label>
+				if len(view.Agents) == 0 {
+					@ui.EmptyNote(ui.EmptyNoteProps{Attrs: templ.Attributes{"data-testid": "ds-trigger-agents-empty"}}) {
+						This project has no agents yet. Create one before binding a trigger.
+					}
+				} else {
+					<select id="trigger-agent" name="agentId" required class="select w-full" data-testid="ds-trigger-agent-select">
+						<option value="">Select an agent</option>
+						for _, agent := range view.Agents {
+							<option value={ agent.ID }>{ agent.Name }</option>
+						}
+					</select>
+				}
+			</div>
+			<div class="flex flex-col gap-1">
+				<label class="text-sm font-medium" for="trigger-queue">Queue</label>
+				<input id="trigger-queue" name="queue" type="text" class="input w-full" placeholder="default" data-testid="ds-trigger-queue-input"/>
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Optional. Leave blank for the default queue. }
+			</div>
+		</div>
+		<div>
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeSubmit,
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--plus",
+				Attrs:   templ.Attributes{"data-testid": "ds-trigger-create"},
+			}) {
+				Add trigger
+			}
+		</div>
+	</form>
 }
 
 // dsResourceNeededBanner prompts the user to finish a source whose config is

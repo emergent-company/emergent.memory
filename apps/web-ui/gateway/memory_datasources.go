@@ -961,3 +961,109 @@ func (m *MemoryClient) DeleteProjectDSOAuthApp(ctx context.Context, projectID, a
 	path := "/api/projects/" + url.PathEscape(projectID) + "/data-source-integrations/oauth-apps/" + url.PathEscape(appID)
 	return m.doH(ctx, http.MethodDelete, path, nil, m.documentHeaders(ctx), nil)
 }
+
+// --- org source Apps (GitHub App credentials) ---
+
+// SourceApp is an org-scoped provider App credential
+// (GET /api/orgs/:orgId/source-apps). The App's private key and webhook secret
+// are sealed server-side and never returned, so this shape carries none.
+type SourceApp struct {
+	ID         string `json:"id"`
+	OrgID      string `json:"orgId"`
+	Provider   string `json:"provider"`
+	AppID      int64  `json:"appId"`
+	Slug       string `json:"slug"`
+	WebhookKey string `json:"webhookKey"`
+	CreatedAt  string `json:"createdAt"`
+	UpdatedAt  string `json:"updatedAt"`
+}
+
+// DSSourceAppRequest is the register body for an org source App.
+type DSSourceAppRequest struct {
+	Provider      string `json:"provider"`
+	AppID         int64  `json:"appId"`
+	Slug          string `json:"slug"`
+	PrivateKey    string `json:"privateKey"`
+	WebhookSecret string `json:"webhookSecret"`
+}
+
+// DSSourceTrigger is one source event → agent binding
+// (GET /api/data-source-integrations/:id/triggers).
+type DSSourceTrigger struct {
+	ID          string         `json:"id"`
+	ProjectID   string         `json:"projectId"`
+	SourceID    string         `json:"sourceId"`
+	EventType   string         `json:"eventType"`
+	AgentID     string         `json:"agentId"`
+	Queue       string         `json:"queue"`
+	EventFilter map[string]any `json:"eventFilter,omitempty"`
+	Enabled     bool           `json:"enabled"`
+	CreatedAt   string         `json:"createdAt"`
+	UpdatedAt   string         `json:"updatedAt"`
+}
+
+// DSSourceTriggerRequest is the create/PATCH body. Every field is omitted when
+// empty, so a toggle sends only enabled and leaves the binding's other columns
+// untouched (PATCH is partial on the server).
+type DSSourceTriggerRequest struct {
+	EventType   string         `json:"eventType,omitempty"`
+	AgentID     string         `json:"agentId,omitempty"`
+	Queue       string         `json:"queue,omitempty"`
+	EventFilter map[string]any `json:"eventFilter,omitempty"`
+	Enabled     *bool          `json:"enabled,omitempty"`
+}
+
+func (m *MemoryClient) ListOrgSourceApps(ctx context.Context, orgID string) ([]SourceApp, error) {
+	var out []SourceApp
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/source-apps"
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (m *MemoryClient) CreateOrgSourceApp(ctx context.Context, orgID string, req *DSSourceAppRequest) (*SourceApp, error) {
+	var out SourceApp
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/source-apps"
+	if err := m.doH(ctx, http.MethodPost, path, req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (m *MemoryClient) DeleteOrgSourceApp(ctx context.Context, orgID, appID string) error {
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/source-apps/" + url.PathEscape(appID)
+	return m.doH(ctx, http.MethodDelete, path, nil, m.documentHeaders(ctx), nil)
+}
+
+func (m *MemoryClient) ListSourceTriggers(ctx context.Context, sourceID string) ([]DSSourceTrigger, error) {
+	var out []DSSourceTrigger
+	path := "/api/data-source-integrations/" + url.PathEscape(sourceID) + "/triggers"
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (m *MemoryClient) CreateSourceTrigger(ctx context.Context, sourceID string, req *DSSourceTriggerRequest) (*DSSourceTrigger, error) {
+	var out DSSourceTrigger
+	path := "/api/data-source-integrations/" + url.PathEscape(sourceID) + "/triggers"
+	if err := m.doH(ctx, http.MethodPost, path, req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (m *MemoryClient) UpdateSourceTrigger(ctx context.Context, sourceID, triggerID string, req *DSSourceTriggerRequest) (*DSSourceTrigger, error) {
+	var out DSSourceTrigger
+	path := "/api/data-source-integrations/" + url.PathEscape(sourceID) + "/triggers/" + url.PathEscape(triggerID)
+	if err := m.doH(ctx, http.MethodPatch, path, req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (m *MemoryClient) DeleteSourceTrigger(ctx context.Context, sourceID, triggerID string) error {
+	path := "/api/data-source-integrations/" + url.PathEscape(sourceID) + "/triggers/" + url.PathEscape(triggerID)
+	return m.doH(ctx, http.MethodDelete, path, nil, m.documentHeaders(ctx), nil)
+}

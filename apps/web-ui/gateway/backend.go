@@ -189,6 +189,16 @@ type MemoryBackend interface {
 	GetProjectDSOAuthApp(ctx context.Context, projectID, appID string) (*DSOAuthApp, error)
 	UpdateProjectDSOAuthApp(ctx context.Context, projectID, appID string, req *DSUpdateOAuthAppRequest) (*DSOAuthApp, error)
 	DeleteProjectDSOAuthApp(ctx context.Context, projectID, appID string) error
+	// Org source Apps (GitHub App credentials; org-admin only) and the
+	// github_app trigger bindings on a source (see memory_datasources.go and
+	// source_apps.go). App secrets are write-only: no read returns them.
+	ListOrgSourceApps(ctx context.Context, orgID string) ([]SourceApp, error)
+	CreateOrgSourceApp(ctx context.Context, orgID string, req *DSSourceAppRequest) (*SourceApp, error)
+	DeleteOrgSourceApp(ctx context.Context, orgID, appID string) error
+	ListSourceTriggers(ctx context.Context, sourceID string) ([]DSSourceTrigger, error)
+	CreateSourceTrigger(ctx context.Context, sourceID string, req *DSSourceTriggerRequest) (*DSSourceTrigger, error)
+	UpdateSourceTrigger(ctx context.Context, sourceID, triggerID string, req *DSSourceTriggerRequest) (*DSSourceTrigger, error)
+	DeleteSourceTrigger(ctx context.Context, sourceID, triggerID string) error
 	ListProjectDSOAuthClients(ctx context.Context, projectID string) ([]DSOAuthClientConfig, error)
 	GetProjectDSOAuthClient(ctx context.Context, projectID, providerType string) (*DSOAuthClientConfig, error)
 	UpsertProjectDSOAuthClient(ctx context.Context, projectID, providerType string, req *DSSetOAuthClientRequest) (*DSOAuthClientConfig, error)
