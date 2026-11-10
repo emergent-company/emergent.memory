@@ -32,7 +32,7 @@ struct ChatsView: View {
     /// back in the list.
     @State var archiveError: String?
 
-    private var agentFilter: String? {
+    var agentFilter: String? {
         agentID.isEmpty ? nil : agentID
     }
 
