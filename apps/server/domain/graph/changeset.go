@@ -244,49 +244,9 @@ func (s *Service) ApplyChangeset(ctx context.Context, projectID uuid.UUID, req *
 	}
 	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
 
-	results := make([]ChangesetItemResult, 0, len(req.Objects)+len(req.Relationships)+len(req.Withdrawals))
-	objByRef := make(map[string]*GraphObject, len(req.Objects))
-	objectEmbedIDs := make([]string, 0, len(req.Objects))
-	relEmbedIDs := make([]string, 0, len(req.Relationships))
-
-	for i, objItem := range req.Objects {
-		res, obj, err := s.applyChangesetObject(ctx, tx.Tx, projectID, req.BranchID, req.SourceID, &objItem, schemas, actorType, actorUUID, credentialKind, credentialID)
-		if err != nil {
-			return nil, fmt.Errorf("objects[%d] (%s): %w", i, objItem.ExternalID, err)
-		}
-		results = append(results, res)
-		if objItem.Ref != "" && obj != nil {
-			objByRef[objItem.Ref] = obj
-		}
-		if obj != nil && (res.Outcome == ChangesetOutcomeCreated || res.Outcome == ChangesetOutcomeUpdated) {
-			objectEmbedIDs = append(objectEmbedIDs, obj.ID.String())
-		}
-	}
-
-	for i, relItem := range req.Relationships {
-		res, relID, err := s.applyChangesetRelationship(ctx, tx.Tx, projectID, req.BranchID, req.SourceID, &relItem, objByRef, schemas, actorType, actorUUID)
-		if err != nil {
-			return nil, fmt.Errorf("relationships[%d] (%s): %w", i, relItem.ExternalID, err)
-		}
-		results = append(results, res)
-		if relID != nil && (res.Outcome == ChangesetOutcomeCreated || res.Outcome == ChangesetOutcomeUpdated) {
-			relEmbedIDs = append(relEmbedIDs, relID.String())
-		}
-	}
-
-	now := time.Now()
-	for i, w := range req.Withdrawals {
-		kind := w.SubjectKind
-		if kind == "" {
-			kind = ContributionSubjectObject
-		}
-		res, err := s.applyChangesetWithdrawal(ctx, tx.Tx, projectID, req.BranchID, req.SourceID, kind, w.ExternalID, now)
-		if err != nil {
-			return nil, fmt.Errorf("withdrawals[%d] (%s): %w", i, w.ExternalID, err)
-		}
-		results = append(results, res)
-	}
-
+	// Allocate the generation before the items are applied, not after: each
+	// item's outcome records the generation that produced it (task 1.1), and the
+	// counter read and the generation insert still share this transaction.
 	generation := int64(0)
 	if req.Generation != nil && *req.Generation > 0 {
 		var last int64
@@ -305,6 +265,49 @@ func (s *Service) ApplyChangeset(ctx context.Context, projectID uuid.UUID, req *
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	results := make([]ChangesetItemResult, 0, len(req.Objects)+len(req.Relationships)+len(req.Withdrawals))
+	objByRef := make(map[string]*GraphObject, len(req.Objects))
+	objectEmbedIDs := make([]string, 0, len(req.Objects))
+	relEmbedIDs := make([]string, 0, len(req.Relationships))
+
+	for i, objItem := range req.Objects {
+		res, obj, err := s.applyChangesetObject(ctx, tx.Tx, projectID, req.BranchID, req.SourceID, &objItem, schemas, actorType, actorUUID, credentialKind, credentialID, generation)
+		if err != nil {
+			return nil, fmt.Errorf("objects[%d] (%s): %w", i, objItem.ExternalID, err)
+		}
+		results = append(results, res)
+		if objItem.Ref != "" && obj != nil {
+			objByRef[objItem.Ref] = obj
+		}
+		if obj != nil && (res.Outcome == ChangesetOutcomeCreated || res.Outcome == ChangesetOutcomeUpdated) {
+			objectEmbedIDs = append(objectEmbedIDs, obj.ID.String())
+		}
+	}
+
+	for i, relItem := range req.Relationships {
+		res, relID, err := s.applyChangesetRelationship(ctx, tx.Tx, projectID, req.BranchID, req.SourceID, &relItem, objByRef, schemas, actorType, actorUUID, generation)
+		if err != nil {
+			return nil, fmt.Errorf("relationships[%d] (%s): %w", i, relItem.ExternalID, err)
+		}
+		results = append(results, res)
+		if relID != nil && (res.Outcome == ChangesetOutcomeCreated || res.Outcome == ChangesetOutcomeUpdated) {
+			relEmbedIDs = append(relEmbedIDs, relID.String())
+		}
+	}
+
+	now := time.Now()
+	for i, w := range req.Withdrawals {
+		kind := w.SubjectKind
+		if kind == "" {
+			kind = ContributionSubjectObject
+		}
+		res, err := s.applyChangesetWithdrawal(ctx, tx.Tx, projectID, req.BranchID, req.SourceID, kind, w.ExternalID, now, generation)
+		if err != nil {
+			return nil, fmt.Errorf("withdrawals[%d] (%s): %w", i, w.ExternalID, err)
+		}
+		results = append(results, res)
 	}
 
 	// ItemCount is the number of items that actually changed state, not the
@@ -367,6 +370,7 @@ func (s *Service) applyChangesetObject(
 	actorID *uuid.UUID,
 	credentialKind string,
 	credentialID *uuid.UUID,
+	generation int64,
 ) (ChangesetItemResult, *GraphObject, error) {
 	result := ChangesetItemResult{Kind: ContributionSubjectObject, ExternalID: item.ExternalID}
 	seq := revisionSeq(item.ExternalRevisionSeq)
@@ -382,6 +386,23 @@ func (s *Service) applyChangesetObject(
 			result.Outcome = ChangesetOutcomeSkipped
 			result.SubjectID = &subjectID
 			result.Reason = fmt.Sprintf("stored revision sequence %d is not older than %d", contrib.ExternalRevisionSeq, seq)
+			// The skip is the record's outcome, not just the response's: a
+			// source that only pulls feedback learns why its revision was not
+			// applied (task 3.1).
+			if err := s.recordOutcome(ctx, tx, &SourceOutcome{
+				ProjectID:           projectID,
+				SourceID:            sourceID,
+				SubjectKind:         ContributionSubjectObject,
+				ExternalID:          item.ExternalID,
+				State:               SourceOutcomeSkipped,
+				CanonicalID:         s.canonicalForVersion(ctx, tx, projectID, ContributionSubjectObject, contrib.SubjectVersionID),
+				ExternalRevision:    revisionString(item.ExternalRevision),
+				ExternalRevisionSeq: seq,
+				Generation:          generation,
+				Reason:              result.Reason,
+			}); err != nil {
+				return result, nil, err
+			}
 			return result, nil, nil
 		}
 
@@ -418,6 +439,21 @@ func (s *Service) applyChangesetObject(
 			if !granted {
 				result.Outcome = ChangesetOutcomeRefused
 				result.Reason = "object is owned by another source and the caller holds no grant for it"
+				headCanonical := head.CanonicalID
+				if err := s.recordOutcome(ctx, tx, &SourceOutcome{
+					ProjectID:           projectID,
+					SourceID:            sourceID,
+					SubjectKind:         ContributionSubjectObject,
+					ExternalID:          item.ExternalID,
+					State:               SourceOutcomeSkipped,
+					CanonicalID:         &headCanonical,
+					ExternalRevision:    revisionString(item.ExternalRevision),
+					ExternalRevisionSeq: seq,
+					Generation:          generation,
+					Reason:              result.Reason,
+				}); err != nil {
+					return result, nil, err
+				}
 				return result, nil, nil
 			}
 			adopt = true
@@ -443,9 +479,32 @@ func (s *Service) applyChangesetObject(
 			return result, nil, err
 		}
 
+		// The caller's record materialized at the version it just wrote. This is
+		// the adopter's own outcome as well: adoption changes who owns the row,
+		// and the adopter's record is the one now backing it.
+		canonicalID := version.CanonicalID
+		if err := s.recordOutcome(ctx, tx, &SourceOutcome{
+			ProjectID:           projectID,
+			SourceID:            sourceID,
+			SubjectKind:         ContributionSubjectObject,
+			ExternalID:          item.ExternalID,
+			State:               SourceOutcomeMaterialized,
+			CanonicalID:         &canonicalID,
+			ExternalRevision:    revisionString(item.ExternalRevision),
+			ExternalRevisionSeq: seq,
+			Generation:          generation,
+		}); err != nil {
+			return result, nil, err
+		}
+		if adopt && head.OwnerSourceID != nil {
+			if err := s.recordAdoptedOutcome(ctx, tx, projectID, *head.OwnerSourceID, sourceID, version.ID, canonicalID, generation); err != nil {
+				return result, nil, err
+			}
+		}
+
 		result.Outcome = ChangesetOutcomeUpdated
-		subjectID, canonicalID, v := version.ID, version.CanonicalID, version.Version
-		result.SubjectID, result.CanonicalID, result.Version = &subjectID, &canonicalID, &v
+		subjectID, canonicalIDResp, v := version.ID, version.CanonicalID, version.Version
+		result.SubjectID, result.CanonicalID, result.Version = &subjectID, &canonicalIDResp, &v
 		return result, version, nil
 	}
 
@@ -461,9 +520,24 @@ func (s *Service) applyChangesetObject(
 		return result, nil, err
 	}
 
+	canonicalID := obj.CanonicalID
+	if err := s.recordOutcome(ctx, tx, &SourceOutcome{
+		ProjectID:           projectID,
+		SourceID:            sourceID,
+		SubjectKind:         ContributionSubjectObject,
+		ExternalID:          item.ExternalID,
+		State:               SourceOutcomeMaterialized,
+		CanonicalID:         &canonicalID,
+		ExternalRevision:    revisionString(item.ExternalRevision),
+		ExternalRevisionSeq: seq,
+		Generation:          generation,
+	}); err != nil {
+		return result, nil, err
+	}
+
 	result.Outcome = ChangesetOutcomeCreated
-	subjectID, canonicalID, v := obj.ID, obj.CanonicalID, obj.Version
-	result.SubjectID, result.CanonicalID, result.Version = &subjectID, &canonicalID, &v
+	subjectID, canonicalIDResp, v := obj.ID, obj.CanonicalID, obj.Version
+	result.SubjectID, result.CanonicalID, result.Version = &subjectID, &canonicalIDResp, &v
 	return result, obj, nil
 }
 
@@ -478,6 +552,7 @@ func (s *Service) applyChangesetRelationship(
 	schemas *ExtractionSchemas,
 	actorType string,
 	actorID *uuid.UUID,
+	generation int64,
 ) (ChangesetItemResult, *uuid.UUID, error) {
 	result := ChangesetItemResult{Kind: ContributionSubjectRelationship, ExternalID: item.ExternalID}
 	seq := revisionSeq(item.ExternalRevisionSeq)
@@ -498,6 +573,20 @@ func (s *Service) applyChangesetRelationship(
 		result.Outcome = ChangesetOutcomeSkipped
 		result.SubjectID = &subjectID
 		result.Reason = fmt.Sprintf("stored revision sequence %d is not older than %d", contrib.ExternalRevisionSeq, seq)
+		if err := s.recordOutcome(ctx, tx, &SourceOutcome{
+			ProjectID:           projectID,
+			SourceID:            sourceID,
+			SubjectKind:         ContributionSubjectRelationship,
+			ExternalID:          item.ExternalID,
+			State:               SourceOutcomeSkipped,
+			CanonicalID:         s.canonicalForVersion(ctx, tx, projectID, ContributionSubjectRelationship, contrib.SubjectVersionID),
+			ExternalRevision:    revisionString(item.ExternalRevision),
+			ExternalRevisionSeq: seq,
+			Generation:          generation,
+			Reason:              result.Reason,
+		}); err != nil {
+			return result, nil, err
+		}
 		return result, nil, nil
 	}
 
@@ -590,9 +679,24 @@ func (s *Service) applyChangesetRelationship(
 			return result, nil, err
 		}
 
+		canonicalID := version.CanonicalID
+		if err := s.recordOutcome(ctx, tx, &SourceOutcome{
+			ProjectID:           projectID,
+			SourceID:            sourceID,
+			SubjectKind:         ContributionSubjectRelationship,
+			ExternalID:          item.ExternalID,
+			State:               SourceOutcomeMaterialized,
+			CanonicalID:         &canonicalID,
+			ExternalRevision:    revisionString(item.ExternalRevision),
+			ExternalRevisionSeq: seq,
+			Generation:          generation,
+		}); err != nil {
+			return result, nil, err
+		}
+
 		result.Outcome = ChangesetOutcomeUpdated
-		subjectID, canonicalID, v := version.ID, version.CanonicalID, version.Version
-		result.SubjectID, result.CanonicalID, result.Version = &subjectID, &canonicalID, &v
+		subjectID, canonicalIDResp, v := version.ID, version.CanonicalID, version.Version
+		result.SubjectID, result.CanonicalID, result.Version = &subjectID, &canonicalIDResp, &v
 		return result, &version.ID, nil
 	}
 
@@ -631,9 +735,24 @@ func (s *Service) applyChangesetRelationship(
 		return result, nil, err
 	}
 
+	canonicalID := rel.CanonicalID
+	if err := s.recordOutcome(ctx, tx, &SourceOutcome{
+		ProjectID:           projectID,
+		SourceID:            sourceID,
+		SubjectKind:         ContributionSubjectRelationship,
+		ExternalID:          item.ExternalID,
+		State:               SourceOutcomeMaterialized,
+		CanonicalID:         &canonicalID,
+		ExternalRevision:    revisionString(item.ExternalRevision),
+		ExternalRevisionSeq: seq,
+		Generation:          generation,
+	}); err != nil {
+		return result, nil, err
+	}
+
 	result.Outcome = ChangesetOutcomeCreated
-	subjectID, canonicalID, v := rel.ID, rel.CanonicalID, rel.Version
-	result.SubjectID, result.CanonicalID, result.Version = &subjectID, &canonicalID, &v
+	subjectID, canonicalIDResp, v := rel.ID, rel.CanonicalID, rel.Version
+	result.SubjectID, result.CanonicalID, result.Version = &subjectID, &canonicalIDResp, &v
 	return result, &rel.ID, nil
 }
 
@@ -645,6 +764,7 @@ func (s *Service) applyChangesetWithdrawal(
 	sourceID uuid.UUID,
 	kind, externalID string,
 	at time.Time,
+	generation int64,
 ) (ChangesetItemResult, error) {
 	result := ChangesetItemResult{Kind: kind, ExternalID: externalID}
 
@@ -655,9 +775,25 @@ func (s *Service) applyChangesetWithdrawal(
 	if contrib == nil {
 		result.Outcome = ChangesetOutcomeNotFound
 		result.Reason = "no present contribution for this external id"
+		// No outcome row is written: a withdrawal for a record the source never
+		// contributed would invent an outcome for a record that does not exist.
 		return result, nil
 	}
 	if err := s.repo.WithdrawContribution(ctx, tx, contrib.ID, at); err != nil {
+		return result, err
+	}
+
+	if err := s.recordOutcome(ctx, tx, &SourceOutcome{
+		ProjectID:           projectID,
+		SourceID:            sourceID,
+		SubjectKind:         kind,
+		ExternalID:          externalID,
+		State:               SourceOutcomeWithdrawn,
+		CanonicalID:         s.canonicalForVersion(ctx, tx, projectID, kind, contrib.SubjectVersionID),
+		ExternalRevision:    contrib.ExternalRevision,
+		ExternalRevisionSeq: contrib.ExternalRevisionSeq,
+		Generation:          generation,
+	}); err != nil {
 		return result, err
 	}
 
@@ -891,6 +1027,16 @@ func revisionSeq(seq *int64) int64 {
 		return 0
 	}
 	return *seq
+}
+
+// revisionString renders the optional opaque revision a source sent. It is
+// recorded on the outcome but never compared: only external_revision_seq can
+// answer "is this push older".
+func revisionString(revision *string) string {
+	if revision == nil {
+		return ""
+	}
+	return *revision
 }
 
 // changesetValidationView adapts object items to the shapes the shared subgraph

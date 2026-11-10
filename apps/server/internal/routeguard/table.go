@@ -42,6 +42,16 @@ const tableHeader = `# Route -> authority conformance table.
 # /api/superadmin/* is NOT in that list: it is middleware-gated since #1086
 # (RequireSuperadmin for reads, RequireSuperadminFull for mutations), with
 # /api/superadmin/me the single RequireAuth-only exception.
+#
+# Decided scopes, recorded so a new surface copies a decision instead of
+# inventing a scope:
+#   - /api/graph/sources/:id/outcomes is project-member, matching the source
+#     changeset apply (/api/graph/changesets) whose records it reports on. It is
+#     a graph read scoped to one project-owned source; it deliberately does not
+#     require a source grant (a grant authorizes acting AS the source, not
+#     reading the project's graph feedback) and no graph-source scope was
+#     invented for it. The handler additionally refuses a source id that does
+#     not belong to the caller's project.
 `
 
 // Table is the on-disk route→authority expectations file.
