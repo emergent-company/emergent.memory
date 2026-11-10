@@ -1817,10 +1817,15 @@ Table "kb"."oauth_client_configs" {
   "updated_at" timestamptz [not null, default: `now()`]
   "config" jsonb [not null, default: '{}']
   "project_id" uuid
+  "vendor" text [not null, default: '']
+  "name" text [not null, default: '']
+  "provider_configs" jsonb [not null, default: '{}']
 
   Indexes {
     (organization_id, provider) [name: "idx_oauth_client_configs_org_provider", unique]
+    (organization_id, vendor, `lower(name)`) [name: "idx_oauth_client_configs_org_vendor_name", unique, note: '(project_id IS NULL)']
     (project_id, provider) [name: "idx_oauth_client_configs_project_provider", unique, note: '(project_id IS NOT NULL)']
+    (project_id, vendor, `lower(name)`) [name: "idx_oauth_client_configs_project_vendor_name", unique, note: '(project_id IS NOT NULL)']
   }
 }
 
@@ -2779,9 +2784,11 @@ Table "kb"."sources" {
   "updated_at" timestamptz [not null, default: `now()`]
   "credential_id" uuid
   "credentials_updated_at" timestamptz [not null, default: `now()`]
+  "oauth_app_id" uuid
 
   Indexes {
     (credential_id) [name: "idx_sources_credential_id", note: '(credential_id IS NOT NULL)']
+    (oauth_app_id) [name: "idx_sources_oauth_app_id", note: '(oauth_app_id IS NOT NULL)']
   }
 }
 
@@ -3104,6 +3111,7 @@ Ref: "kb"."source_generations"."source_id" > "kb"."sources"."id"
 Ref: "kb"."source_grants"."source_id" > "kb"."sources"."id"
 Ref: "kb"."source_sync_jobs"."source_id" > "kb"."sources"."id"
 Ref: "kb"."sources"."credential_id" > "kb"."source_credentials"."id"
+Ref: "kb"."sources"."oauth_app_id" > "kb"."oauth_client_configs"."id"
 Ref: "kb"."tags"."project_id" > "kb"."projects"."id"
 Ref: "kb"."tasks"."project_id" > "kb"."projects"."id"
 Ref: "kb"."user_activity_daily"."organization_id" > "kb"."orgs"."id"
