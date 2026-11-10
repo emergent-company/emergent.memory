@@ -110,6 +110,20 @@ func TestSourceAppRegistrationAndGitHubAppSource(t *testing.T) {
 	require.True(t, updated.Enabled)
 	require.NoError(t, svc.DeleteSourceTrigger(ctx, projectID, src.ID, trigger.ID))
 
+	// A non-github_app source can change its event type; the column must persist.
+	webSource := uuid.New()
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.sources (id, project_id, provider, display_name, config, status)
+		VALUES (?, ?, 'web', 'web', '{}'::jsonb, 'active')`, webSource, projectID)
+	require.NoError(t, err)
+	webTrigger, err := svc.CreateSourceTrigger(ctx, projectID, webSource, SourceTriggerInput{EventType: "pull_request", AgentID: agentID.String()})
+	require.NoError(t, err)
+	webTrigger, err = svc.UpdateSourceTrigger(ctx, projectID, webSource, webTrigger.ID, SourceTriggerInput{EventType: "issue"})
+	require.NoError(t, err)
+	require.Equal(t, "issue", webTrigger.EventType)
+	reloaded, err := repo.FindSourceTriggerByID(ctx, webTrigger.ID)
+	require.NoError(t, err)
+	require.Equal(t, "issue", reloaded.EventType)
+
 }
 
 func boolPtr(v bool) *bool { return &v }

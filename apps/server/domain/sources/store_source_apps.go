@@ -189,7 +189,7 @@ func (r *Repository) UpdateSourceTrigger(ctx context.Context, trigger *SourceTri
 	}
 	err := r.projectTx(ctx, trigger.ProjectID, func(ctx context.Context, tx bun.Tx) error {
 		_, err := tx.NewUpdate().Model(trigger).
-			Column("agent_id", "queue", "event_filter", "enabled").
+			Column("event_type", "agent_id", "queue", "event_filter", "enabled").
 			Set("updated_at = now()").
 			Where("id = ?", trigger.ID).
 			Exec(ctx)
