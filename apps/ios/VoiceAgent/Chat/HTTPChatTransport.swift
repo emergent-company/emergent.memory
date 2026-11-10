@@ -43,6 +43,10 @@ final class HTTPChatTransport {
     /// parked behind it. Not called for an aborted turn (`stop()`, `reset()`).
     var onTurnFinished: (() -> Void)?
 
+    /// The ordered timeline this turn also feeds. Set by the chat view; optional
+    /// so callers that only exercise the stream (and their tests) need none.
+    var timeline: ChatTimelineStore?
+
     /// The turn whose reply was cut off mid-stream, set only once text is on
     /// screen. The run continues server-side and is recorded when it ends, so
     /// the view waits for that record and swaps it in
@@ -125,6 +129,7 @@ final class HTTPChatTransport {
             anchorMessageID = userMessageID
             liveMessages.append(LiveTranscriptMessage(id: userMessageID, role: .user, text: message))
             transcript.syncLive(liveMessages)
+            timeline?.appendUserMessage(id: userMessageID, text: message)
             activity.userTurnStarted(anchorMessageID: userMessageID)
         }
 
@@ -329,6 +334,10 @@ final class HTTPChatTransport {
         activity: ChatActivityStore
     ) {
         state.sawFrame = true
+        // The timeline consumes the same frames, so a streamed turn and a
+        // reloaded one have one shape: text stays where it arrived, between the
+        // tool calls it followed.
+        timeline?.apply(event)
         switch event {
         case let .meta(learnedConversationID, runID):
             // Keep the run id: it is the only handle on the server-side run,

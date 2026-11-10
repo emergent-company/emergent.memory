@@ -106,6 +106,7 @@ extension ChatSessionView {
         guard let events = liveRun.takePendingReplay() else { return }
         beginAttachedRunIfNeeded()
         activity.applyReplay(events)
+        timeline.apply(.replay(events))
     }
 
     /// Reloads the recorded transcript after a refresh, with one request in
@@ -119,11 +120,11 @@ extension ChatSessionView {
         }
         historyReloadInFlight = true
         Task { @MainActor in
-            await history.load(conversationID: conversationID, force: true, into: transcript)
+            await history.load(conversationID: conversationID, force: true, into: transcript, timeline: timeline)
             while historyReloadPending {
                 historyReloadPending = false
                 guard let id = openConversationID else { continue }
-                await history.load(conversationID: id, force: true, into: transcript)
+                await history.load(conversationID: id, force: true, into: transcript, timeline: timeline)
             }
             historyReloadInFlight = false
             flushPendingReplayIfReady()

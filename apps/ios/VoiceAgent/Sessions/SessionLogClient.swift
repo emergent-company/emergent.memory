@@ -87,6 +87,21 @@ struct SessionLogClient: SessionLogFetching {
         try await detail(room: room).records
     }
 
+    /// Returns the conversation's ordered history (`GET /api/conversations/:id/history`):
+    /// the transcript the web chat renders, already merged and deduped by the
+    /// gateway. A device credential may read it (`emergent.memory#431`).
+    func history(conversationID: String) async throws -> ConversationHistory {
+        let url = try conversationURL(id: conversationID, suffix: "history")
+        let data = try await send(url: url)
+        do {
+            return try JSONDecoder().decode(ConversationHistory.self, from: data)
+        } catch {
+            throw GatewayError.decode(
+                "Session log returned an unexpected conversation history: \(error.localizedDescription)"
+            )
+        }
+    }
+
     // MARK: - Conversation lifecycle
 
     func archiveConversation(id: String) async throws {
