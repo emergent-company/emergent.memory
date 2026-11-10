@@ -2629,18 +2629,18 @@ func (s *Server) uiDataSourceUpdate(c echo.Context) error {
 	}
 	if providerType == "gmail" {
 		cfg := dsGmailConfigFromForm(c)
-		if dsGmailScopeChanged(src.Config, cfg) {
-			scope := &DSScopeRequest{
-				Filter:      mapStringAny(cfg["filter"]),
-				ObjectTypes: mapStringSlice(cfg["object_types"]),
-			}
-			if v, ok := cfg["mcp_write_tools_enabled"].(bool); ok {
-				scope.MCPWriteToolsEnabled = &v
-			}
-			preview, perr := s.memory.PreviewDSScope(ctx, id, scope)
-			if perr != nil {
-				return redirectWithError(c, detailPath, dsFormError(perr))
-			}
+		scope := &DSScopeRequest{
+			Filter:      mapStringAny(cfg["filter"]),
+			ObjectTypes: mapStringSlice(cfg["object_types"]),
+		}
+		if v, ok := cfg["mcp_write_tools_enabled"].(bool); ok {
+			scope.MCPWriteToolsEnabled = &v
+		}
+		preview, perr := s.memory.PreviewDSScope(ctx, id, scope)
+		if perr != nil {
+			return redirectWithError(c, detailPath, dsFormError(perr))
+		}
+		if preview.Changed {
 			if _, uerr := s.memory.UpdateDSScope(ctx, id, scope, preview.PreviewHash, preview.BaseScopeHash); uerr != nil {
 				return redirectWithError(c, detailPath, dsFormError(uerr))
 			}
@@ -2932,20 +2932,4 @@ func mapStringSlice(v any) []string {
 	default:
 		return nil
 	}
-}
-
-func dsGmailScopeChanged(current, next map[string]any) bool {
-	cur := map[string]any{
-		"filter":                  current["filter"],
-		"object_types":            current["object_types"],
-		"mcp_write_tools_enabled": current["mcp_write_tools_enabled"] == true,
-	}
-	nxt := map[string]any{
-		"filter":                  next["filter"],
-		"object_types":            next["object_types"],
-		"mcp_write_tools_enabled": next["mcp_write_tools_enabled"] == true,
-	}
-	a, _ := json.Marshal(cur)
-	b, _ := json.Marshal(nxt)
-	return string(a) != string(b)
 }

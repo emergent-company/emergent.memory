@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/google/uuid"
+
 	"github.com/emergent-company/emergent.memory/domain/schemas"
 )
 
@@ -78,4 +80,21 @@ func (p *schemaProvisioner) EnsureObjectTypes(ctx context.Context, projectID str
 		Merge:    true,
 	})
 	return err
+}
+
+// ensureObjectTypes installs a typed provider's declared pack when the
+// provisioner is configured. It is idempotent.
+func (s *Service) ensureObjectTypes(ctx context.Context, projectID uuid.UUID, p SourceProvider) error {
+	if s.objectTypes == nil {
+		return nil
+	}
+	typed, ok := p.(TypedObjectProvider)
+	if !ok {
+		return nil
+	}
+	pack := typed.ObjectTypes()
+	if pack == nil {
+		return nil
+	}
+	return s.objectTypes.EnsureObjectTypes(ctx, projectID.String(), pack)
 }

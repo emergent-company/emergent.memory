@@ -139,3 +139,17 @@ func (r *Repository) SetMcpSlug(ctx context.Context, projectID, sourceID uuid.UU
 	}
 	return nil
 }
+
+// McpServerNameExists reports whether any MCP server row (of any type) already
+// uses the name in the project.
+func (r *Repository) McpServerNameExists(ctx context.Context, projectID uuid.UUID, name string) (bool, error) {
+	exists, err := r.db.NewSelect().
+		TableExpr("kb.mcp_servers").
+		Where("project_id = ?", projectID).
+		Where("name = ?", name).
+		Exists(ctx)
+	if err != nil {
+		return false, apperror.NewDatabase("check mcp server name", err)
+	}
+	return exists, nil
+}

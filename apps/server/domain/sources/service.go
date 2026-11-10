@@ -506,12 +506,8 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 	// Typed providers declare their own schema pack; install it before the
 	// source row exists so a failed install cannot leave a source that syncs
 	// objects no schema knows about.
-	if typed, ok := p.(TypedObjectProvider); ok && s.objectTypes != nil {
-		if pack := typed.ObjectTypes(); pack != nil {
-			if err := s.objectTypes.EnsureObjectTypes(ctx, projectID.String(), pack); err != nil {
-				return nil, apperror.NewInternal("install source schema pack", err)
-			}
-		}
+	if err := s.ensureObjectTypes(ctx, projectID, p); err != nil {
+		return nil, apperror.NewInternal("install source schema pack", err)
 	}
 
 	now := s.now()
@@ -674,6 +670,11 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 	existing, err := s.repo.GetByIDWithCredentials(ctx, id, projectID)
 	if err != nil {
 		return nil, err
+	}
+	if p, ok := s.providers.Get(existing.Provider); ok {
+		if err := s.ensureObjectTypes(ctx, projectID, p); err != nil {
+			return nil, apperror.NewInternal("install source schema pack", err)
+		}
 	}
 
 	if req.Name != nil {

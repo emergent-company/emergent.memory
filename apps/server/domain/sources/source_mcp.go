@@ -49,19 +49,26 @@ func (s *Service) deriveMcpSlug(ctx context.Context, src *Source) string {
 	if base == "source-admin" {
 		base = "source-admin-" + src.ID.String()[:4]
 	}
-	if !s.mcpSlugTaken(ctx, src.ProjectID, base, src.ID) {
+	if s.mcpSlugAvailable(ctx, src, base) {
 		return base
 	}
-	short := src.ID.String()[:4]
-	return base + "-" + short
+	for _, n := range []int{4, 6, 8} {
+		candidate := base + "-" + src.ID.String()[:n]
+		if s.mcpSlugAvailable(ctx, src, candidate) {
+			return candidate
+		}
+	}
+	return base + "-" + src.ID.String()[:12]
 }
 
-func (s *Service) mcpSlugTaken(ctx context.Context, projectID uuid.UUID, slug string, exceptID uuid.UUID) bool {
-	exists, err := s.repo.McpSlugExists(ctx, projectID, slug, exceptID)
-	if err != nil {
-		return true
+func (s *Service) mcpSlugAvailable(ctx context.Context, src *Source, slug string) bool {
+	if taken, err := s.repo.McpSlugExists(ctx, src.ProjectID, slug, src.ID); err != nil || taken {
+		return false
 	}
-	return exists
+	if taken, err := s.repo.McpServerNameExists(ctx, src.ProjectID, slug); err != nil || taken {
+		return false
+	}
+	return true
 }
 
 // provisionSourceMCP creates or refreshes a source's MCP server and tools.
@@ -113,6 +120,9 @@ func (s *Service) BackfillSourceMCP(ctx context.Context) {
 		}
 		if _, ok := provider.(SourceToolProvider); !ok {
 			continue
+		}
+		if err := s.ensureObjectTypes(ctx, src.ProjectID, provider); err != nil {
+			s.log.Warn("source MCP backfill: schema pack failed", "source_id", src.ID, "error", err)
 		}
 		if src.McpSlug == nil {
 			slug := s.deriveMcpSlug(ctx, src)

@@ -468,10 +468,13 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 	// can only be created after every item has been processed.
 	objectIDs := make(map[string]uuid.UUID)
 	var pendingRels []pendingSourceRelationship
-	typedBackfill := false
-	if _, typed := provider.(TypedObjectProvider); typed && w.svc.graph != nil {
-		if existing, oerr := w.svc.repo.ListActiveSourceObjects(ctx, job.ProjectID, job.SourceID); oerr == nil && len(existing) == 0 {
-			typedBackfill = true
+	_, typedProvider := provider.(TypedObjectProvider)
+	mappedExternalIDs := map[string]bool{}
+	if typedProvider && w.svc.graph != nil {
+		if existing, oerr := w.svc.repo.ListActiveSourceObjects(ctx, job.ProjectID, job.SourceID); oerr == nil {
+			for _, obj := range existing {
+				mappedExternalIDs[obj.ExternalID] = true
+			}
 		}
 	}
 
@@ -508,7 +511,7 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 		// HEAD marked deleted_from_source is never skipped either — a revived
 		// item (e.g. restored from trash) may keep the same head revision and
 		// still needs ApplySourceItem to reactivate it.
-		if !typedBackfill && item.RevisionID != "" {
+		if (!typedProvider || mappedExternalIDs[item.ID]) && item.RevisionID != "" {
 			if rev, ok := headRevs[item.ID]; ok && rev == item.RevisionID && !deletedHeads[item.ID] {
 				ids, rels, recErr := w.applyItemRecords(ctx, job, src, item, "")
 				for k, v := range ids {
