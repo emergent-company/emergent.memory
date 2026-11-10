@@ -2689,6 +2689,24 @@ Table "kb"."skills" {
 }
 // kb.skills: Reusable Markdown workflow instructions (skills) for agents. Global when project_id IS NULL; project-scoped otherwise.
 
+Table "kb"."source_apps" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "org_id" uuid [not null]
+  "provider" text [not null]
+  "app_id" bigint [not null]
+  "slug" text [not null, default: '']
+  "private_key_encrypted" bytea [not null]
+  "webhook_secret_encrypted" bytea [not null]
+  "webhook_key" uuid [not null, default: `gen_random_uuid()`]
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (org_id, provider, app_id) [name: "uq_source_apps_org_provider_app", unique]
+    (webhook_key) [name: "uq_source_apps_webhook_key", unique]
+  }
+}
+
 Table "kb"."source_credentials" {
   "id" uuid [pk, default: `uuid_generate_v4()`]
   "project_id" uuid [not null]
@@ -2701,6 +2719,46 @@ Table "kb"."source_credentials" {
   Indexes {
     (project_id, provider, name) [unique]
     (project_id, provider) [name: "idx_source_credentials_project_provider"]
+  }
+}
+
+Table "kb"."source_event_claims" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid [not null]
+  "source_id" uuid [not null]
+  "subject_ref" text [not null]
+  "head_sha" text [not null]
+  "run_id" uuid
+  "state" text [not null, default: 'pending']
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (source_id, subject_ref, state) [name: "idx_source_event_claims_active"]
+    (source_id, subject_ref, head_sha) [name: "uq_source_event_claims_head", unique]
+  }
+}
+
+Table "kb"."source_events" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid [not null]
+  "source_id" uuid [not null]
+  "delivery_id" text [not null]
+  "event_type" text [not null]
+  "action" text [not null, default: '']
+  "subject_type" text [not null]
+  "subject_ref" text [not null]
+  "head_sha" text [not null, default: '']
+  "payload" jsonb [not null, default: '{}']
+  "state" text [not null, default: 'received']
+  "run_id" uuid
+  "error" text
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (source_id, subject_ref) [name: "idx_source_events_subject"]
+    (source_id, delivery_id) [name: "uq_source_events_delivery", unique]
   }
 }
 
@@ -2816,6 +2874,24 @@ Table "kb"."source_sync_jobs" {
   }
 }
 
+Table "kb"."source_triggers" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid [not null]
+  "source_id" uuid [not null]
+  "event_type" text [not null]
+  "agent_id" uuid [not null]
+  "queue" text [not null, default: 'default']
+  "event_filter" jsonb [not null, default: '{}']
+  "enabled" boolean [not null, default: true]
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (project_id) [name: "idx_source_triggers_project"]
+    (source_id, event_type) [name: "uq_source_triggers_source_event", unique]
+  }
+}
+
 Table "kb"."sources" {
   "id" uuid [pk, default: `uuid_generate_v4()`]
   "project_id" uuid [not null]
@@ -2838,8 +2914,11 @@ Table "kb"."sources" {
   "oauth_app_id" uuid
   "last_probed_at" timestamptz
   "mcp_slug" text
+  "app_id" uuid
+  "external_account_id" text
 
   Indexes {
+    (app_id, external_account_id) [name: "idx_sources_app_account"]
     (credential_id) [name: "idx_sources_credential_id", note: '(credential_id IS NOT NULL)']
     (oauth_app_id) [name: "idx_sources_oauth_app_id", note: '(oauth_app_id IS NOT NULL)']
     (project_id, mcp_slug) [name: "idx_sources_project_mcp_slug", unique, note: '(mcp_slug IS NOT NULL)']
@@ -3162,12 +3241,21 @@ Ref: "kb"."skill_usage"."project_id" > "kb"."projects"."id"
 Ref: "kb"."skill_usage"."skill_id" > "kb"."skills"."id"
 Ref: "kb"."skills"."org_id" > "kb"."orgs"."id"
 Ref: "kb"."skills"."project_id" > "kb"."projects"."id"
+Ref: "kb"."source_apps"."org_id" > "kb"."orgs"."id"
+Ref: "kb"."source_event_claims"."project_id" > "kb"."projects"."id"
+Ref: "kb"."source_event_claims"."source_id" > "kb"."sources"."id"
+Ref: "kb"."source_events"."project_id" > "kb"."projects"."id"
+Ref: "kb"."source_events"."source_id" > "kb"."sources"."id"
 Ref: "kb"."source_generations"."source_id" > "kb"."sources"."id"
 Ref: "kb"."source_grants"."source_id" > "kb"."sources"."id"
 Ref: "kb"."source_objects"."source_id" > "kb"."sources"."id"
 Ref: "kb"."source_outcomes"."adopted_by_source_id" > "kb"."sources"."id"
 Ref: "kb"."source_outcomes"."source_id" > "kb"."sources"."id"
 Ref: "kb"."source_sync_jobs"."source_id" > "kb"."sources"."id"
+Ref: "kb"."source_triggers"."agent_id" > "kb"."agents"."id"
+Ref: "kb"."source_triggers"."project_id" > "kb"."projects"."id"
+Ref: "kb"."source_triggers"."source_id" > "kb"."sources"."id"
+Ref: "kb"."sources"."app_id" > "kb"."source_apps"."id"
 Ref: "kb"."sources"."credential_id" > "kb"."source_credentials"."id"
 Ref: "kb"."sources"."oauth_app_id" > "kb"."oauth_client_configs"."id"
 Ref: "kb"."tags"."project_id" > "kb"."projects"."id"

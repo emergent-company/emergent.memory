@@ -1,0 +1,293 @@
+package sources
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/google/uuid"
+	"github.com/uptrace/bun"
+)
+
+// --- Source Apps ---
+
+func (r *Repository) CreateSourceApp(ctx context.Context, app *SourceApp) error {
+	_, err := r.db.NewInsert().Model(app).Returning("*").Exec(ctx)
+	return err
+}
+
+func (r *Repository) FindSourceAppByID(ctx context.Context, id uuid.UUID) (*SourceApp, error) {
+	app := new(SourceApp)
+	if err := r.db.NewSelect().Model(app).Where("sa.id = ?", id).Scan(ctx); err != nil {
+		return nil, err
+	}
+	return app, nil
+}
+
+func (r *Repository) FindSourceAppByWebhookKey(ctx context.Context, key uuid.UUID) (*SourceApp, error) {
+	app := new(SourceApp)
+	if err := r.db.NewSelect().Model(app).Where("sa.webhook_key = ?", key).Scan(ctx); err != nil {
+		return nil, err
+	}
+	return app, nil
+}
+
+func (r *Repository) FindSourceAppByOrgAppID(ctx context.Context, orgID uuid.UUID, provider string, appID int64) (*SourceApp, error) {
+	app := new(SourceApp)
+	if err := r.db.NewSelect().Model(app).
+		Where("sa.org_id = ?", orgID).
+		Where("sa.provider = ?", provider).
+		Where("sa.app_id = ?", appID).
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+	return app, nil
+}
+
+func (r *Repository) ListSourceAppsByOrg(ctx context.Context, orgID uuid.UUID) ([]*SourceApp, error) {
+	var apps []*SourceApp
+	if err := r.db.NewSelect().Model(&apps).
+		Where("sa.org_id = ?", orgID).
+		Order("sa.created_at ASC").
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+	return apps, nil
+}
+
+func (r *Repository) DeleteSourceApp(ctx context.Context, id uuid.UUID) error {
+	_, err := r.db.NewDelete().Model((*SourceApp)(nil)).Where("id = ?", id).Exec(ctx)
+	return err
+}
+
+// --- Triggers ---
+
+func (r *Repository) CreateSourceTrigger(ctx context.Context, trigger *SourceTrigger) error {
+	if trigger.EventFilter == nil {
+		trigger.EventFilter = map[string]any{}
+	}
+	_, err := r.db.NewInsert().Model(trigger).Returning("*").Exec(ctx)
+	return err
+}
+
+func (r *Repository) ListEnabledTriggersForSource(ctx context.Context, sourceID uuid.UUID) ([]*SourceTrigger, error) {
+	var triggers []*SourceTrigger
+	if err := r.db.NewSelect().Model(&triggers).
+		Where("st.source_id = ?", sourceID).
+		Where("st.enabled = true").
+		Order("st.created_at ASC").
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+	return triggers, nil
+}
+
+func (r *Repository) ListSourceTriggers(ctx context.Context, sourceID uuid.UUID) ([]*SourceTrigger, error) {
+	var triggers []*SourceTrigger
+	if err := r.db.NewSelect().Model(&triggers).
+		Where("st.source_id = ?", sourceID).
+		Order("st.event_type ASC").
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+	return triggers, nil
+}
+
+func (r *Repository) UpdateSourceTrigger(ctx context.Context, trigger *SourceTrigger) error {
+	if trigger.EventFilter == nil {
+		trigger.EventFilter = map[string]any{}
+	}
+	_, err := r.db.NewUpdate().Model(trigger).
+		Column("agent_id", "queue", "event_filter", "enabled").
+		Set("updated_at = now()").
+		Where("id = ?", trigger.ID).
+		Exec(ctx)
+	return err
+}
+
+func (r *Repository) DeleteSourceTrigger(ctx context.Context, id uuid.UUID) error {
+	_, err := r.db.NewDelete().Model((*SourceTrigger)(nil)).Where("id = ?", id).Exec(ctx)
+	return err
+}
+
+// --- Events and claims ---
+
+// InsertSourceEvent records a delivery and reports whether it was new. The
+// claim (per subject/head) is separate.
+func (r *Repository) InsertSourceEvent(ctx context.Context, ev *SourceEvent) (bool, error) {
+	if ev.Payload == nil {
+		ev.Payload = map[string]any{}
+	}
+	if ev.State == "" {
+		ev.State = SourceEventReceived
+	}
+	res, err := r.db.NewInsert().Model(ev).
+		On("CONFLICT (source_id, delivery_id) DO NOTHING").
+		Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+func (r *Repository) FindSourceEventByID(ctx context.Context, id uuid.UUID) (*SourceEvent, error) {
+	ev := new(SourceEvent)
+	if err := r.db.NewSelect().Model(ev).Where("se.id = ?", id).Scan(ctx); err != nil {
+		return nil, err
+	}
+	return ev, nil
+}
+
+// ClaimSourceSubject records one active claim per subject/head and supersedes
+// claims for older heads, returning their run ids for cancellation.
+func (r *Repository) ClaimSourceSubject(ctx context.Context, projectID, sourceID uuid.UUID, subjectRef, headSHA string) (*SourceEventClaim, []uuid.UUID, error) {
+	if subjectRef == "" || headSHA == "" {
+		return nil, nil, fmt.Errorf("sources: subject and head are required")
+	}
+	claim := new(SourceEventClaim)
+	var superseded []uuid.UUID
+	lockKey := fmt.Sprintf("source-claim:%s:%s", sourceID, subjectRef)
+
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", lockKey).Exec(ctx); err != nil {
+			return err
+		}
+
+		var stale []SourceEventClaim
+		if err := tx.NewSelect().Model(&stale).
+			Where("source_id = ?", sourceID).
+			Where("subject_ref = ?", subjectRef).
+			Where("head_sha <> ?", headSHA).
+			Where("state IN (?)", bun.In([]string{SourceClaimPending, SourceClaimRunning})).
+			For("UPDATE").
+			Scan(ctx); err != nil {
+			return err
+		}
+		if len(stale) > 0 {
+			ids := make([]uuid.UUID, 0, len(stale))
+			for _, c := range stale {
+				ids = append(ids, c.ID)
+				if c.RunID != nil {
+					superseded = append(superseded, *c.RunID)
+				}
+			}
+			if _, err := tx.NewUpdate().
+				Table("kb.source_event_claims").
+				Set("state = ?", SourceClaimSuperseded).
+				Set("updated_at = now()").
+				Where("id IN (?)", bun.In(ids)).
+				Exec(ctx); err != nil {
+				return err
+			}
+		}
+
+		if _, err := tx.NewRaw(`INSERT INTO kb.source_event_claims AS c
+			(project_id, source_id, subject_ref, head_sha, state)
+			VALUES (?, ?, ?, ?, 'pending')
+			ON CONFLICT (source_id, subject_ref, head_sha) DO UPDATE
+			SET state = 'pending', run_id = NULL, updated_at = now()
+			WHERE c.state IN ('superseded', 'cancelled', 'done')`,
+			projectID, sourceID, subjectRef, headSHA).Exec(ctx); err != nil {
+			return err
+		}
+
+		return tx.NewSelect().Model(claim).
+			Where("source_id = ?", sourceID).
+			Where("subject_ref = ?", subjectRef).
+			Where("head_sha = ?", headSHA).
+			Scan(ctx)
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return claim, superseded, nil
+}
+
+// SetSourceEventClaimRun binds a run to a pending claim (one binder wins).
+func (r *Repository) SetSourceEventClaimRun(ctx context.Context, claimID, runID uuid.UUID, state string) (bool, error) {
+	res, err := r.db.NewUpdate().
+		Table("kb.source_event_claims").
+		Set("run_id = ?", runID).
+		Set("state = ?", state).
+		Set("updated_at = now()").
+		Where("id = ?", claimID).
+		Where("run_id IS NULL").
+		Where("state = ?", SourceClaimPending).
+		Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+func (r *Repository) SetSourceEventClaimState(ctx context.Context, claimID uuid.UUID, state string) (bool, error) {
+	res, err := r.db.NewUpdate().
+		Table("kb.source_event_claims").
+		Set("state = ?", state).
+		Set("updated_at = now()").
+		Where("id = ?", claimID).
+		Where("state IN (?)", bun.In([]string{SourceClaimPending, SourceClaimRunning})).
+		Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// CancelSourceSubjectClaims cancels active claims for a subject (closed/draft)
+// and returns their run ids.
+func (r *Repository) CancelSourceSubjectClaims(ctx context.Context, sourceID uuid.UUID, subjectRef string) ([]uuid.UUID, error) {
+	var cancelled []uuid.UUID
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var active []SourceEventClaim
+		if err := tx.NewSelect().Model(&active).
+			Where("source_id = ?", sourceID).
+			Where("subject_ref = ?", subjectRef).
+			Where("state IN (?)", bun.In([]string{SourceClaimPending, SourceClaimRunning})).
+			For("UPDATE").
+			Scan(ctx); err != nil {
+			return err
+		}
+		if len(active) == 0 {
+			return nil
+		}
+		ids := make([]uuid.UUID, 0, len(active))
+		for _, c := range active {
+			ids = append(ids, c.ID)
+			if c.RunID != nil {
+				cancelled = append(cancelled, *c.RunID)
+			}
+		}
+		_, err := tx.NewUpdate().
+			Table("kb.source_event_claims").
+			Set("state = ?", SourceClaimCancelled).
+			Set("updated_at = now()").
+			Where("id IN (?)", bun.In(ids)).
+			Exec(ctx)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cancelled, nil
+}
+
+// FindSourceEventClaimByRunID resolves the claim bound to a run.
+func (r *Repository) FindSourceEventClaimByRunID(ctx context.Context, runID uuid.UUID) (*SourceEventClaim, error) {
+	claim := new(SourceEventClaim)
+	if err := r.db.NewSelect().Model(claim).Where("sc.run_id = ?", runID).Limit(1).Scan(ctx); err != nil {
+		return nil, err
+	}
+	return claim, nil
+}
