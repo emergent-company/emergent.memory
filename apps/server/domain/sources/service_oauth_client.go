@@ -459,8 +459,7 @@ func (s *Service) resolveOAuthClient(ctx context.Context, projectID uuid.UUID, p
 		return OAuthClient{}, apperror.NewValidation("unsupported providerType: " + providerType)
 	}
 
-	forceDeployment := appID != nil && *appID == uuid.Nil
-	if appID != nil && *appID != uuid.Nil {
+	if appID != nil {
 		row, err := s.getVisibleApp(ctx, projectID, *appID)
 		if err != nil {
 			return OAuthClient{}, err
@@ -471,7 +470,7 @@ func (s *Service) resolveOAuthClient(ctx context.Context, projectID uuid.UUID, p
 		return s.clientFromApp(row, providerType, s.orgStrategyForVendor(ctx, projectID, vendor, providerType))
 	}
 
-	if pst, ok := s.projectAppStore(); ok && !forceDeployment {
+	if pst, ok := s.projectAppStore(); ok {
 		apps, err := pst.ListProjectOAuthClientConfigsByVendor(ctx, projectID, vendor)
 		if err != nil {
 			return OAuthClient{}, err
@@ -484,7 +483,7 @@ func (s *Service) resolveOAuthClient(ctx context.Context, projectID uuid.UUID, p
 		}
 	}
 
-	if ost, ok := s.orgAppStore(); ok && !forceDeployment {
+	if ost, ok := s.orgAppStore(); ok {
 		orgID, err := s.orgStore().ResolveOrgID(ctx, projectID)
 		switch {
 		case err == nil:

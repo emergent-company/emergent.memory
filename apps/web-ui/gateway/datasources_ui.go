@@ -2076,7 +2076,7 @@ func (s *Server) uiProjectCredentials(c echo.Context) error {
 	rows := dsOAuthAppRows(apps, isProjectAdmin, isOrgAdmin, project.OrgID, "/settings/credentials/apps")
 	deploymentNote := ""
 	if len(apps) == 0 {
-		deploymentNote = "No project OAuth apps yet. Data sources use the organization app or the deployment's built-in app when one is configured."
+		deploymentNote = "No OAuth apps yet. Data sources use the deployment's built-in app when one is configured."
 	}
 	_ = creds
 	credProviders := dsCredentialProviders(providers)

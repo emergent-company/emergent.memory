@@ -258,21 +258,3 @@ func TestResolveOAuthClient_CrossProviderDoesNotLeakScopes(t *testing.T) {
 		t.Fatalf("gmail resolved with Drive scopes %v/%q", got.Scopes, got.Strategy)
 	}
 }
-
-func TestResolveOAuthClient_ZeroAppIDForcesDeploymentDefault(t *testing.T) {
-	orgID, projectID := uuid.New(), uuid.New()
-	store := &namedAppStore{orgID: orgID, projectApps: map[uuid.UUID][]*OAuthClientConfig{}}
-	svc := newNamedAppService(t, store)
-	store.projectApps[projectID] = []*OAuthClientConfig{
-		namedApp(t, svc, orgID, &projectID, "google", "One", "one"),
-		namedApp(t, svc, orgID, &projectID, "google", "Two", "two"),
-	}
-	zero := uuid.Nil
-	got, err := svc.resolveOAuthClient(context.Background(), projectID, ProviderTypeGoogleDrive, &zero)
-	if err != nil {
-		t.Fatalf("forced deployment: %v", err)
-	}
-	if got.ClientID != "deploy-id" {
-		t.Fatalf("ClientID = %q, want the deployment default", got.ClientID)
-	}
-}
