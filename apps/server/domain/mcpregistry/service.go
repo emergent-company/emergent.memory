@@ -238,7 +238,7 @@ func (s *Service) ListDeviceServers(ctx context.Context, projectID string, insta
 // and are skipped. It wraps the shared SSRF guard and returns
 // ErrOutboundURLNotAllowed so handlers map the rejection to 400.
 func guardOutboundFetchURL(ctx context.Context, serverType MCPServerType, rawURL *string) error {
-	if serverType != ServerTypeSSE && serverType != ServerTypeHTTP {
+	if !serverType.contract().remote {
 		return nil
 	}
 	if rawURL == nil || strings.TrimSpace(*rawURL) == "" {
@@ -251,9 +251,16 @@ func guardOutboundFetchURL(ctx context.Context, serverType MCPServerType, rawURL
 }
 
 func (s *Service) CreateServer(ctx context.Context, projectID string, dto *CreateMCPServerDTO) (*MCPServer, error) {
-	// Validate: cannot create builtin type via API
-	if dto.Type == ServerTypeBuiltin {
-		return nil, fmt.Errorf("cannot create servers of type 'builtin' via API")
+	// Only registry-managed types can be created through the API. In-process
+	// rows (builtin, source) are provisioned by their owning domain; accepting
+	// one here would create an orphan that looks provisioned. An unknown type
+	// is rejected by the same contract.
+	typeContract := dto.Type.contract()
+	if !typeContract.known {
+		return nil, fmt.Errorf("unsupported server type %q", dto.Type)
+	}
+	if !typeContract.registryManaged {
+		return nil, fmt.Errorf("cannot create servers of type %q via API", dto.Type)
 	}
 
 	// Normalize + validate the delivery target (defaults to 'server').
@@ -263,11 +270,6 @@ func (s *Service) CreateServer(ctx context.Context, projectID string, dto *Creat
 	}
 	if !ValidTarget(target) {
 		return nil, fmt.Errorf("invalid target %q: must be 'server' or 'device'", target)
-	}
-	// A builtin server cannot be device-targeted (already rejected above, but
-	// guard the invariant explicitly for clarity).
-	if target == TargetDevice && dto.Type == ServerTypeBuiltin {
-		return nil, fmt.Errorf("cannot target a builtin server at a device")
 	}
 	// An instance id is only meaningful for a device target.
 	if target == TargetServer && dto.TargetInstanceID != nil {
@@ -383,12 +385,13 @@ func (s *Service) UpdateServer(ctx context.Context, id string, projectID string,
 		return nil, nil
 	}
 
-	// Cannot modify builtin servers (except enable/disable)
-	if server.Type == ServerTypeBuiltin || server.Type == ServerTypeSource {
+	// In-process servers (builtin/source) are provisioned by their owning
+	// domain: no configuration field may be changed here, only enable/disable.
+	if !server.Type.contract().registryManaged {
 		if dto.Name != nil || dto.Command != nil || dto.URL != nil || dto.Args != nil || dto.Env != nil || dto.Headers != nil ||
 			dto.SecretEnvKeys != nil || dto.SecretHeadersKeys != nil || dto.Type != nil ||
 			dto.Target != nil || dto.TargetInstanceID != nil {
-			return nil, fmt.Errorf("cannot modify builtin server configuration — only enable/disable is allowed")
+			return nil, fmt.Errorf("cannot modify %s server configuration — only enable/disable is allowed", server.Type)
 		}
 	}
 
@@ -489,9 +492,9 @@ func (s *Service) UpdateServer(ctx context.Context, id string, projectID string,
 	if server.Target == "" {
 		server.Target = TargetServer
 	}
-	// A device-targeted row must not be a builtin server.
-	if server.Target == TargetDevice && server.Type == ServerTypeBuiltin {
-		return nil, fmt.Errorf("cannot target a builtin server at a device")
+	// A device-targeted row must be a registry-managed external server.
+	if server.Target == TargetDevice && !server.Type.contract().registryManaged {
+		return nil, fmt.Errorf("cannot target a %s server at a device", server.Type)
 	}
 	// An instance id is only meaningful for a device target.
 	if server.Target == TargetServer && server.TargetInstanceID != nil {
@@ -550,9 +553,11 @@ func (s *Service) DeleteServer(ctx context.Context, id string, projectID string)
 		return fmt.Errorf("server not found")
 	}
 
-	// Cannot delete builtin server
-	if server.Type == ServerTypeBuiltin {
-		return fmt.Errorf("cannot delete builtin server")
+	// In-process rows (builtin/source) are provisioned by their owning domain;
+	// deleting one here would be reverted on the next provisioning pass, so it
+	// is refused rather than allowed to flap.
+	if !server.Type.contract().registryManaged {
+		return fmt.Errorf("cannot delete %s server — it is managed by its owning domain", server.Type)
 	}
 
 	// Authorize device-targeted writes: only the device's owner or a project
@@ -834,6 +839,12 @@ func (s *Service) SyncServerTools(ctx context.Context, projectID, serverID strin
 		return ErrServerNotFound
 	}
 
+	// In-process rows (builtin/source) have their tools provisioned by the
+	// owning domain; a registry-side sync would overwrite them.
+	if !server.Type.contract().registryManaged {
+		return fmt.Errorf("cannot sync tools for %s server — its tools are provisioned by the owning domain", server.Type)
+	}
+
 	// Device-targeted rows are never tool-synced server-side: their tools are
 	// served by the device through the relay.
 	if server.Target == TargetDevice {
@@ -948,8 +959,12 @@ func (s *Service) InspectServer(ctx context.Context, serverID string, projectID 
 		return nil, ErrDeviceServerNotOutbound
 	}
 
-	// Builtin servers don't have external connections to inspect
-	if server.Type == ServerTypeBuiltin {
+	// In-process servers have no external connection to probe. Builtin answers a
+	// synthetic OK (there is a fixed in-process handshake to report); a source
+	// server has neither, so it is refused instead of being dialed as if it were
+	// an external server with an empty URL.
+	typeContract := server.Type.contract()
+	if typeContract.syntheticInspect {
 		return &MCPServerInspectDTO{
 			ServerID:          server.ID,
 			ServerName:        server.Name,
@@ -970,6 +985,9 @@ func (s *Service) InspectServer(ctx context.Context, serverID string, projectID 
 			},
 		}, nil
 	}
+	if !typeContract.registryManaged {
+		return nil, fmt.Errorf("%w: %s", ErrServerNotInspectable, server.Type)
+	}
 
 	// SSRF guard: inspect opens an outbound connection to the stored URL.
 	if err := guardOutboundFetchURL(ctx, server.Type, server.URL); err != nil {
@@ -986,6 +1004,12 @@ func (s *Service) InspectServer(ctx context.Context, serverID string, projectID 
 // required keys left blank in the draft are backfilled from the stored server's
 // secrets (edit-mode test). The probe never writes to the repository.
 func (s *Service) TestServerConfig(ctx context.Context, projectID string, dto *CreateMCPServerDTO, serverID *string) (*MCPServerInspectDTO, error) {
+	// A draft probe of an in-process type would fall through to the outbound
+	// proxy; refuse it before building a transient server or dialing anything.
+	if !dto.Type.contract().registryManaged {
+		return nil, fmt.Errorf("cannot test %s server configuration — it is managed by its owning domain", dto.Type)
+	}
+
 	// Validate transport-specific fields exactly like CreateServer.
 	switch dto.Type {
 	case ServerTypeStdio:
@@ -1157,7 +1181,10 @@ func (s *Service) CallToolOnServer(ctx context.Context, projectID, serverID, too
 		return nil, ErrToolForbidden
 	}
 
-	if server.Type == ServerTypeBuiltin {
+	// In-process tool servers (builtin and source) execute through mcp.Service,
+	// which owns their dispatch and authority checks. Only registry-managed
+	// types reach the outbound proxy below.
+	if server.Type.contract().inProcess {
 		if err := s.mcpService.AuthorizeToolCall(ctx, toolName, scopes); err != nil {
 			if errors.Is(err, mcp.ErrToolForbidden) {
 				return nil, ErrToolForbidden
@@ -1210,8 +1237,8 @@ func (s *Service) DiscoverAndSyncTools(ctx context.Context, serverID string, pro
 	if server.Target == TargetDevice {
 		return nil, fmt.Errorf("%w: device-targeted servers have no server-side tools to discover", ErrDeviceServerNotOutbound)
 	}
-	if server.Type == ServerTypeBuiltin {
-		return nil, fmt.Errorf("cannot discover tools from builtin server — use EnsureBuiltinServer instead")
+	if !server.Type.contract().registryManaged {
+		return nil, fmt.Errorf("cannot discover tools from %s server — its tools are provisioned by the owning domain", server.Type)
 	}
 
 	// Connect and discover tools

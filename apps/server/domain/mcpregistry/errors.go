@@ -40,6 +40,12 @@ var ErrUpstreamFailure = errors.New("MCP upstream failure")
 // over the relay, never connected outbound by the server.
 var ErrDeviceServerNotOutbound = errors.New("device-targeted MCP server is not connected outbound by the server")
 
+// ErrServerNotInspectable is returned when inspect targets an in-process server
+// type (source) that has no outbound connection to probe. Handlers map it to
+// 409 (Conflict): the server exists, but the operation does not apply to its
+// type.
+var ErrServerNotInspectable = errors.New("in-process MCP server has no external connection to inspect")
+
 // ErrDeviceTargetForbidden is returned when a caller is not the target device's
 // owner (or a project admin) for a device-targeted write.
 var ErrDeviceTargetForbidden = errors.New("not authorized to target this device")
