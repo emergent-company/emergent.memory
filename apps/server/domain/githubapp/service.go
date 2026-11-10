@@ -429,7 +429,20 @@ func (s *Service) handlePullRequest(ctx context.Context, v *VerifiedDelivery) er
 		Queue:           defaultQueue(inst.Queue),
 		TriggerMessage:  &message,
 		TriggerMetadata: metadata,
-		TrustedInternal: false,
+		// The webhook is HMAC-verified server ingress. The review run needs
+		// trusted in-process authority to call the GitHub review tools. That is a
+		// genuine widening — the run can reach every AgentOnly and RequiredScope
+		// tool for the project, not just the two review tools — so the review
+		// boundary is enforced where it matters instead of by lowering trust:
+		//   * the security-review system prompt treats PR text (title, body,
+		//     commit messages, diffs, code) as untrusted data that never
+		//     overrides the prompt, the tools or the reviewed SHA; and
+		//   * github-review-submit refuses a SHA whose non-empty diff this run did
+		//     not read through github-pr-diff (tools.go).
+		// Keep both in step with this flag: TrustedInternal here is what a
+		// fork-PR author's prompt injection would otherwise turn into review
+		// authority.
+		TrustedInternal: true,
 	})
 	if err != nil {
 		return fmt.Errorf("githubapp: enqueue review run: %w", err)

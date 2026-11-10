@@ -119,6 +119,31 @@ func (r *Repository) FindEnabledInstallationByInstallationID(ctx context.Context
 	return inst, nil
 }
 
+// FindEnabledInstallationForRepo resolves the project installation whose repo
+// allowlist contains repo (case-insensitive).
+func (r *Repository) FindEnabledInstallationForRepo(ctx context.Context, projectID uuid.UUID, repo string) (*Installation, error) {
+	inst := new(Installation)
+	err := r.db.NewSelect().Model(inst).
+		Where("gi.project_id = ?", projectID).
+		Where("gi.enabled = true").
+		Where("EXISTS (SELECT 1 FROM unnest(gi.repos) AS rp WHERE lower(rp) = lower(?))", repo).
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return inst, nil
+}
+
+// CountEnabledInstallationsByProject gates tool advertising.
+func (r *Repository) CountEnabledInstallationsByProject(ctx context.Context, projectID uuid.UUID) (int, error) {
+	return r.db.NewSelect().
+		Table("core.github_app_installations").
+		Where("project_id = ?", projectID).
+		Where("enabled = true").
+		Count(ctx)
+}
+
 func (r *Repository) ListInstallationsByProject(ctx context.Context, projectID uuid.UUID) ([]*Installation, error) {
 	var insts []*Installation
 	if err := r.db.NewSelect().Model(&insts).

@@ -49,9 +49,15 @@ type Principal struct {
 //
 //   - SuperadminOnly requires the platform grant (terminal; also short-circuits
 //     the agent-only / scope gates, since a platform principal may do anything).
-//   - A transport-enforced dispatch was already authorized by the HTTP transport
-//     and is not re-gated.
-//   - AgentOnly requires a trusted caller.
+//   - AgentOnly requires a trusted caller, even for a transport-enforced
+//     dispatch. This ordering is deliberate: a transport may only set the
+//     transport-enforced marker after it resolved the tool's definition and
+//     refused AgentOnly itself, so a marker on an agent-only tool means the
+//     transport did not see the definition (a dynamic/handler-supplied tool
+//     absent from the static index). Short-circuiting transports before the
+//     AgentOnly test would let exactly that miss bypass the boundary.
+//   - A transport-enforced dispatch of any other tool was already authorized by
+//     the HTTP transport and is not re-gated.
 //   - RequiredScope requires a trusted caller (the in-process trust primitive:
 //     token scopes do not exist on the agent-run path, so a trusted run carries
 //     the session user's project authority and an untrusted run holds nothing).
@@ -65,11 +71,11 @@ func AuthorizeTool(a ToolAuthority, p Principal) error {
 		}
 		return nil
 	}
-	if p.TransportEnforced {
-		return nil
-	}
 	if a.AgentOnly && !p.Trusted {
 		return fmt.Errorf("tool %q is agent-only and not reachable from an untrusted surface", a.Name)
+	}
+	if p.TransportEnforced {
+		return nil
 	}
 	if a.RequiredScope != "" && !p.Trusted {
 		if a.RequiredScope == "admin" {
