@@ -155,6 +155,17 @@ type MCPRegistryToolHandler interface {
 	ResolveBuiltinToolConfig(ctx context.Context, projectID, toolName string) (config map[string]any, source string, err error)
 }
 
+// GitHubAppToolHandler is the interface for GitHub App review tools. It is
+// implemented by the githubapp domain to avoid a circular import (githubapp
+// imports agents, which the MCP layer must not import back).
+type GitHubAppToolHandler interface {
+	// HandlesGitHubAppTool reports whether the name belongs to this handler.
+	HandlesGitHubAppTool(toolName string) bool
+	// ExecuteGitHubAppTool resolves the project's installation, mints a scoped
+	// token, and runs the tool.
+	ExecuteGitHubAppTool(ctx context.Context, projectID, toolName string, args map[string]any) (*ToolResult, error)
+}
+
 // SourceToolHandler is the interface for source-backed MCP tools (Gmail etc.).
 // Implemented by the sources domain to avoid a circular import.
 type SourceToolHandler interface {

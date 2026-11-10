@@ -90,6 +90,7 @@ func TestAgentOnlyParityHTTPInProcess(t *testing.T) {
 		"mcp-server-list", "mcp-device-server-list", "mcp-server-get", "mcp-server-create",
 		"update_mcp_server", "mcp-server-delete", "toggle_mcp_server_tool",
 		"sync_mcp_server_tools",
+		"github-pr-diff", "github-review-submit",
 	}, agentOnly, "agent-only set must be exactly the web + mcpregistry tools")
 }
 

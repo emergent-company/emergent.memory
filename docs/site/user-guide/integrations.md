@@ -7,52 +7,72 @@ Integrations connect Memory to third-party services at the project or organizati
 
 ---
 
-## GitHub App
+## GitHub App (review integration)
 
-The GitHub App integration allows Memory to connect to your GitHub repositories — enabling repo-aware agents, automated knowledge extraction from code and issues, and OAuth-based repository access.
+Memory connects a GitHub App to review pull requests with an agent. The App
+receives `pull_request` webhooks, Memory enqueues the configured review agent,
+and the agent posts a review bound to the reviewed head SHA.
 
-### Connect GitHub
-
-=== "Admin UI"
-    Go to **Project Settings → Integrations → GitHub** and click **Connect**.
-
-=== "API"
-    ```http
-    POST /api/v1/settings/github/connect
-    ```
-
-    This returns an authorization URL. Visit it to grant access via GitHub OAuth.
-
-### OAuth callback
-
-GitHub redirects back to:
-
-```
-GET /api/v1/settings/github/callback?code=...
-```
-
-The platform exchanges the code for an access token and stores it.
-
-### CLI setup (API key mode)
-
-For non-browser environments:
+### Register the App (organization admin)
 
 ```http
-POST /api/v1/settings/github/cli
-{ "token": "<github-personal-access-token>" }
+POST /api/orgs/{orgId}/github-app
+Content-Type: application/json
+
+{
+  "appId": 123456,
+  "slug": "memory-reviewer",
+  "privateKey": "-----BEGIN RSA PRIVATE KEY-----\n...",
+  "webhookSecret": "<the App webhook secret>"
+}
 ```
 
-### Check connection status
+The private key and webhook secret are encrypted at rest with
+`GITHUB_APP_ENCRYPTION_KEY` and never returned. The App must be granted
+`contents: read`, `pull_requests: write`, `issues: write`, and `checks: write`.
+Installation tokens are minted per review, scoped to one repository.
+
+### Bind an installation
 
 ```http
-GET /api/v1/settings/github
+POST /api/orgs/{orgId}/github-app/installations
+Content-Type: application/json
+
+{
+  "projectId": "<uuid>",
+  "installationId": 987654,
+  "repos": ["owner/repo"],
+  "agentId": "<runtime agent uuid>",
+  "queue": "security-review"
+}
 ```
 
-### Disconnect
+`agentId` is a runtime agent in that project. Memory only reviews repositories
+in the allowlist.
+
+### Webhook
+
+Point the App's webhook URL at:
+
+```
+POST /api/webhooks/github/app
+```
+
+Use the same webhook secret and subscribe to `pull_request`, `installation`, and
+`installation_repositories`. The endpoint verifies `X-Hub-Signature-256` and
+deduplicates `X-GitHub-Delivery`.
+
+### Status and disconnect
 
 ```http
-DELETE /api/v1/settings/github
+GET    /api/orgs/{orgId}/github-app
+PATCH  /api/orgs/{orgId}/github-app/installations/{id}
+DELETE /api/orgs/{orgId}/github-app/installations/{id}
+DELETE /api/orgs/{orgId}/github-app/{appPK}
 ```
+
+!!! note "Legacy routes removed"
+    The old `/api/v1/settings/github/*` OAuth routes no longer exist.
 
 ---
 

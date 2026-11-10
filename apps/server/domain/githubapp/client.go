@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -140,6 +141,40 @@ func (c *Client) GetPullRequest(ctx context.Context, repo string, number int) (*
 		HeadRef:   raw.Head.Ref,
 		BaseRef:   raw.Base.Ref,
 	}, nil
+}
+
+// CommitFile is one changed file in a commit diff.
+type CommitFile struct {
+	Filename  string `json:"filename"`
+	Status    string `json:"status"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	Patch     string `json:"patch"`
+}
+
+// CommitDiff is the diff and metadata for one commit SHA.
+type CommitDiff struct {
+	SHA     string       `json:"sha"`
+	Message string       `json:"-"`
+	Files   []CommitFile `json:"files"`
+}
+
+// GetCommit reads the diff for a specific commit. Reviewing a commit (not the
+// moving PR head) keeps the diff aligned with the reviewed SHA. The SHA is
+// validated at the tool boundary and path-escaped here so a crafted value cannot
+// retarget the request (e.g. at a branch name).
+func (c *Client) GetCommit(ctx context.Context, repo, sha string) (*CommitDiff, error) {
+	var raw struct {
+		SHA    string `json:"sha"`
+		Commit struct {
+			Message string `json:"message"`
+		} `json:"commit"`
+		Files []CommitFile `json:"files"`
+	}
+	if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/commits/%s", repo, url.PathEscape(sha)), nil, &raw); err != nil {
+		return nil, err
+	}
+	return &CommitDiff{SHA: raw.SHA, Message: raw.Commit.Message, Files: raw.Files}, nil
 }
 
 // CreateReview posts an APPROVE or REQUEST_CHANGES review bound to headSHA.
