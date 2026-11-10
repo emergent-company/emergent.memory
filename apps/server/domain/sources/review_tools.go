@@ -113,7 +113,7 @@ func (h *ReviewToolHandler) HandlesGitHubAppTool(name string) bool {
 // Run metadata: the mcp dispatch context carries the run id but not the run's
 // TriggerMetadata, so the run's sourceId is not reachable here. Resolution is
 // therefore the (project, repo) allowlist lookup, and it fails closed on zero
-// or multiple candidates instead of guessing (#579, infra #1111).
+// or multiple candidates instead of guessing (#579).
 func (h *ReviewToolHandler) ExecuteGitHubAppTool(ctx context.Context, projectID, toolName string, args map[string]any) (*mcp.ToolResult, error) {
 	if !h.HandlesGitHubAppTool(toolName) {
 		return nil, fmt.Errorf("sources: unsupported review tool %q", toolName)
