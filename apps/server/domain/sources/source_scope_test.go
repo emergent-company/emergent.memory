@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
@@ -88,19 +89,25 @@ func TestScopeRequestFromArgsStructured(t *testing.T) {
 	}
 }
 
-func TestRequireUserScope(t *testing.T) {
+func TestRequireSourceToolScope(t *testing.T) {
 	reader := auth.ContextWithUser(context.Background(), &auth.AuthUser{Scopes: []string{"documents:read"}})
-	if err := requireUserScope(reader, "sources:write"); err == nil {
+	reader = mcp.ContextWithTransportEnforced(reader)
+	if err := requireSourceToolScope(reader, "sources:write"); err == nil {
 		t.Fatal("documents:read must not satisfy sources:write")
 	}
-	if err := requireUserScope(reader, "email:read"); err == nil {
+	if err := requireSourceToolScope(reader, "email:read"); err == nil {
 		t.Fatal("documents:read must not satisfy email:read")
 	}
 	writer := auth.ContextWithUser(context.Background(), &auth.AuthUser{Scopes: []string{"sources:write"}})
-	if err := requireUserScope(writer, "sources:write"); err != nil {
+	writer = mcp.ContextWithTransportEnforced(writer)
+	if err := requireSourceToolScope(writer, "sources:write"); err != nil {
 		t.Fatalf("sources:write rejected: %v", err)
 	}
-	if err := requireUserScope(context.Background(), "sources:write"); err != nil {
-		t.Fatalf("internal context should be allowed: %v", err)
+	trusted := mcp.ContextWithTrustedInternal(context.Background(), true)
+	if err := requireSourceToolScope(trusted, "sources:write"); err != nil {
+		t.Fatalf("trusted agent context rejected: %v", err)
+	}
+	if err := requireSourceToolScope(context.Background(), "sources:write"); err == nil {
+		t.Fatal("untrusted in-process context must be rejected")
 	}
 }

@@ -2629,22 +2629,24 @@ func (s *Server) uiDataSourceUpdate(c echo.Context) error {
 	}
 	if providerType == "gmail" {
 		cfg := dsGmailConfigFromForm(c)
-		scope := &DSScopeRequest{
-			Filter:      mapStringAny(cfg["filter"]),
-			ObjectTypes: mapStringSlice(cfg["object_types"]),
+		if dsGmailScopeChanged(src.Config, cfg) {
+			scope := &DSScopeRequest{
+				Filter:      mapStringAny(cfg["filter"]),
+				ObjectTypes: mapStringSlice(cfg["object_types"]),
+			}
+			if v, ok := cfg["mcp_write_tools_enabled"].(bool); ok {
+				scope.MCPWriteToolsEnabled = &v
+			}
+			preview, perr := s.memory.PreviewDSScope(ctx, id, scope)
+			if perr != nil {
+				return redirectWithError(c, detailPath, dsFormError(perr))
+			}
+			if _, uerr := s.memory.UpdateDSScope(ctx, id, scope, preview.PreviewHash, preview.BaseScopeHash); uerr != nil {
+				return redirectWithError(c, detailPath, dsFormError(uerr))
+			}
 		}
-		if v, ok := cfg["mcp_write_tools_enabled"].(bool); ok {
-			scope.MCPWriteToolsEnabled = &v
-		}
-		preview, perr := s.memory.PreviewDSScope(ctx, id, scope)
-		if perr != nil {
-			return redirectWithError(c, detailPath, dsFormError(perr))
-		}
-		if _, uerr := s.memory.UpdateDSScope(ctx, id, scope, preview.PreviewHash, preview.BaseScopeHash); uerr != nil {
-			return redirectWithError(c, detailPath, dsFormError(uerr))
-		}
-		// Scope is persisted by the dedicated endpoint; the generic update only
-		// carries name and cadence and must not carry config again.
+		// Scope is persisted by the dedicated endpoint when it changed; the
+		// generic update only carries name and cadence and never config.
 	} else {
 		cfg, cfgErr := s.dsFormConfig(ctx, c, providerType)
 		if cfgErr != nil {
@@ -2930,4 +2932,20 @@ func mapStringSlice(v any) []string {
 	default:
 		return nil
 	}
+}
+
+func dsGmailScopeChanged(current, next map[string]any) bool {
+	cur := map[string]any{
+		"filter":                  current["filter"],
+		"object_types":            current["object_types"],
+		"mcp_write_tools_enabled": current["mcp_write_tools_enabled"] == true,
+	}
+	nxt := map[string]any{
+		"filter":                  next["filter"],
+		"object_types":            next["object_types"],
+		"mcp_write_tools_enabled": next["mcp_write_tools_enabled"] == true,
+	}
+	a, _ := json.Marshal(cur)
+	b, _ := json.Marshal(nxt)
+	return string(a) != string(b)
 }

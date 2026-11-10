@@ -17,7 +17,7 @@ func (s *Service) GetSourceToolDefinitionsForProject(ctx context.Context, projec
 	if err != nil {
 		return nil
 	}
-	sources, err := s.repo.ListMcpSources(ctx, pid)
+	sources, err := s.repo.List(ctx, pid)
 	if err != nil {
 		s.log.Warn("failed to list source tools", "error", err)
 		return nil
@@ -29,12 +29,23 @@ func (s *Service) GetSourceToolDefinitionsForProject(ctx context.Context, projec
 			continue
 		}
 		stp, ok := provider.(SourceToolProvider)
-		if !ok || src.McpSlug == nil {
+		if !ok {
 			continue
+		}
+		if src.McpSlug == nil {
+			slug := s.deriveMcpSlug(ctx, src)
+			if err := s.repo.SetMcpSlug(ctx, src.ProjectID, src.ID, slug); err != nil {
+				s.log.Warn("failed to assign source MCP slug", "source_id", src.ID, "error", err)
+				continue
+			}
+			src.McpSlug = &slug
+			if err := s.provisionSourceMCP(ctx, src); err != nil {
+				s.log.Warn("failed to provision source MCP server", "source_id", src.ID, "error", err)
+			}
 		}
 		out = append(out, stp.ToolDefinitions(*src.McpSlug, sourceWriteToolsEnabled(src.Config))...)
 	}
-	if all, err := s.repo.List(ctx, pid); err == nil && len(all) > 0 {
+	if len(sources) > 0 {
 		out = append(out, sourceAdminToolDefinitions()...)
 	}
 	return out
@@ -72,7 +83,7 @@ func (s *Service) ExecuteSourceTool(ctx context.Context, projectID, toolName str
 		if isGmailWriteAction(action) {
 			scope = "email:write"
 		}
-		if err := requireUserScope(ctx, scope); err != nil {
+		if err := requireSourceToolScope(ctx, scope); err != nil {
 			return nil, err
 		}
 		if isGmailWriteAction(action) && !sourceWriteToolsEnabled(listed.Config) {
@@ -111,15 +122,19 @@ func isGmailWriteAction(action string) bool {
 	return action == "message-send" || strings.HasPrefix(action, "draft-")
 }
 
-// requireUserScope enforces a scope for HTTP MCP callers. Internal agent runs
-// have no user in context; their tool pool is already restricted by enablement.
-func requireUserScope(ctx context.Context, scope string) error {
-	u := auth.UserFromContext(ctx)
-	if u == nil {
+// requireSourceToolScope enforces token scopes on the HTTP MCP transports and
+// fails closed for untrusted in-process callers. Trusted agent runs rely on
+// tool enablement/policy, matching authz.AuthorizeTool's seam.
+func requireSourceToolScope(ctx context.Context, scope string) error {
+	if mcp.TransportEnforcedFromContext(ctx) {
+		u := auth.UserFromContext(ctx)
+		if u == nil || !u.HasScope(scope) {
+			return apperror.NewForbidden("missing required scope: " + scope)
+		}
 		return nil
 	}
-	if !u.HasScope(scope) {
-		return apperror.NewForbidden("missing required scope: " + scope)
+	if mcp.TrustedInternalFromContext(ctx) {
+		return nil
 	}
-	return nil
+	return apperror.NewForbidden("source tool is not reachable from an untrusted surface")
 }

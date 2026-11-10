@@ -46,6 +46,9 @@ func (s *Service) deriveMcpSlug(ctx context.Context, src *Source) string {
 	if base == "" {
 		base = src.Provider
 	}
+	if base == "source-admin" {
+		base = "source-admin-" + src.ID.String()[:4]
+	}
 	if !s.mcpSlugTaken(ctx, src.ProjectID, base, src.ID) {
 		return base
 	}
@@ -90,4 +93,37 @@ func (s *Service) deleteSourceMCP(ctx context.Context, projectID, sourceID uuid.
 		s.log.Warn("failed to delete source MCP server", "source_id", sourceID, "error", err)
 	}
 	return nil
+}
+
+// BackfillSourceMCP provisions MCP servers/tools for sources created before
+// source-backed tooling existed. It is best-effort and idempotent.
+func (s *Service) BackfillSourceMCP(ctx context.Context) {
+	if s.mcpServers == nil {
+		return
+	}
+	sources, err := s.repo.ListAllSources(ctx)
+	if err != nil {
+		s.log.Warn("source MCP backfill: list failed", "error", err)
+		return
+	}
+	for _, src := range sources {
+		provider, ok := s.providers.Get(src.Provider)
+		if !ok {
+			continue
+		}
+		if _, ok := provider.(SourceToolProvider); !ok {
+			continue
+		}
+		if src.McpSlug == nil {
+			slug := s.deriveMcpSlug(ctx, src)
+			if err := s.repo.SetMcpSlug(ctx, src.ProjectID, src.ID, slug); err != nil {
+				s.log.Warn("source MCP backfill: set slug failed", "source_id", src.ID, "error", err)
+				continue
+			}
+			src.McpSlug = &slug
+		}
+		if err := s.provisionSourceMCP(ctx, src); err != nil {
+			s.log.Warn("source MCP backfill: provision failed", "source_id", src.ID, "error", err)
+		}
+	}
 }

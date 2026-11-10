@@ -894,6 +894,9 @@ func TestGmailDataSource_ScopeAPI(t *testing.T) {
 	bypass := doAPILogged(t, rl, "PATCH", "/api/data-source-integrations/"+sourceID, e2eTestToken(), projectID,
 		jsonBody(map[string]any{"config": map[string]any{"filter": map[string]any{"categories": []any{"Social"}}}}))
 	mustStatus(t, bypass, http.StatusUnprocessableEntity)
+	legacyBypass := doAPILogged(t, rl, "PATCH", "/api/data-source-integrations/"+sourceID, e2eTestToken(), projectID,
+		jsonBody(map[string]any{"config": map[string]any{"query": "in:anywhere"}}))
+	mustStatus(t, legacyBypass, http.StatusUnprocessableEntity)
 
 	staleResp := doAPILogged(t, rl, "PATCH", "/api/data-source-integrations/"+sourceID+"/scope", e2eTestToken(), projectID,
 		jsonBody(map[string]any{

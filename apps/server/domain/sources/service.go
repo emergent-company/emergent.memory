@@ -760,7 +760,7 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 			normalizer.NormalizeConfig(cfg)
 		}
 		if _, typed := p.(TypedObjectProvider); typed {
-			for _, key := range []string{"filter", "object_types", "mcp_write_tools_enabled"} {
+			for _, key := range []string{"filter", "object_types", "mcp_write_tools_enabled", "query", "label_ids", "since"} {
 				if _, present := cfg[key]; present {
 					return nil, apperror.NewValidation("sync scope must be changed through the scope endpoint (PATCH /api/data-source-integrations/:id/scope), not the generic config update")
 				}

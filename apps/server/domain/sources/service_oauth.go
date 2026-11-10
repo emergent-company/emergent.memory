@@ -367,6 +367,11 @@ func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code s
 		return &OAuthCompletion{Integration: updated, Reconnected: true}, nil
 	}
 
+	if _, typed := p.(TypedObjectProvider); typed {
+		if verr := p.ValidateConfig(cfg); verr != nil {
+			return nil, fail(verr)
+		}
+	}
 	integration, err := s.Create(ctx, pending.ProjectID, &CreateIntegrationRequest{
 		Name:                  name,
 		ProviderType:          pending.Provider,

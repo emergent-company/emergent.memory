@@ -85,7 +85,7 @@ func (s *Service) executeSourceAdminTool(ctx context.Context, projectID, toolNam
 	if toolName == "source-scope-update" || toolName == "source-sync-trigger" {
 		scope = "sources:write"
 	}
-	if err := requireUserScope(ctx, scope); err != nil {
+	if err := requireSourceToolScope(ctx, scope); err != nil {
 		return nil, err
 	}
 	switch toolName {

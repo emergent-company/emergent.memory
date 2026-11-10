@@ -109,3 +109,33 @@ func (r *Repository) McpSlugExists(ctx context.Context, projectID uuid.UUID, slu
 	}
 	return exists, nil
 }
+
+// ListAllSources returns every source without credential blobs, for startup
+// backfills of source-backed MCP tooling.
+func (r *Repository) ListAllSources(ctx context.Context) ([]*Source, error) {
+	var sources []*Source
+	err := r.db.NewSelect().
+		Model(&sources).
+		ExcludeColumn("encrypted_credentials").
+		Scan(ctx)
+	if err != nil {
+		r.log.Error("failed to list all sources", "error", err)
+		return nil, apperror.NewDatabase("failed to list all sources", err)
+	}
+	return sources, nil
+}
+
+// SetMcpSlug updates only the source's MCP slug.
+func (r *Repository) SetMcpSlug(ctx context.Context, projectID, sourceID uuid.UUID, slug string) error {
+	_, err := r.db.NewUpdate().
+		Model((*Source)(nil)).
+		Set("mcp_slug = ?", slug).
+		Set("updated_at = now()").
+		Where("id = ?", sourceID).
+		Where("project_id = ?", projectID).
+		Exec(ctx)
+	if err != nil {
+		return apperror.NewDatabase("set source mcp slug", err)
+	}
+	return nil
+}

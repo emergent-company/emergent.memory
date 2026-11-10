@@ -30,6 +30,7 @@ var Module = fx.Module("sources",
 		RegisterSyncWorkerLifecycle,
 		RegisterSyncSchedulerTask,
 		RegisterSourceToolHandler,
+		RegisterSourceMCPBackfill,
 	),
 )
 
@@ -99,4 +100,13 @@ func RegisterSyncWorkerLifecycle(lc fx.Lifecycle, worker *SyncWorker) {
 			return worker.Stop(ctx)
 		},
 	})
+}
+
+// RegisterSourceMCPBackfill provisions source-backed MCP servers for rows that
+// predate the feature. Runs in the background so startup is not blocked.
+func RegisterSourceMCPBackfill(lc fx.Lifecycle, svc *Service) {
+	lc.Append(fx.Hook{OnStart: func(context.Context) error {
+		go svc.BackfillSourceMCP(context.Background())
+		return nil
+	}})
 }
