@@ -92,11 +92,14 @@ func hashShareToken(token string) string {
 // carries a share cookie. On trip it returns 429 with the client-facing
 // rate-limited code.
 //
-// The client IP is resolved via c.RealIP(), backed by the echo IPExtractor set
-// in main.go (ExtractIPFromXFFHeader), so behind traefik the bucket keys on the
-// real client IP from X-Forwarded-For rather than collapsing every visitor into
-// the proxy's socket address. The per-link bucket (SHA-256 of the share token)
-// remains the authoritative, non-spoofable dimension.
+// The client IP is resolved via c.RealIP(), backed by the explicit IPExtractor
+// set in main.go from TRUSTED_PROXY_CIDRS: behind a configured proxy (Caddy in
+// production) the bucket keys on the real client from X-Forwarded-For rather
+// than collapsing every visitor into the proxy's socket address, while an
+// untrusted caller cannot move its bucket by sending the header. Unset
+// TRUSTED_PROXY_CIDRS fails closed on the socket peer. The per-link bucket
+// (SHA-256 of the share token) remains the authoritative, non-spoofable
+// dimension.
 func (s *Server) shareRateLimit(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		if s.shareIPLimiter == nil || s.shareLinkLimiter == nil {

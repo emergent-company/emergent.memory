@@ -59,11 +59,22 @@ func main() {
 	e := echo.New()
 	e.HideBanner = true
 	installErrorHandler(e)
-	// Resolve the real client IP from X-Forwarded-For set by traefik. The default
-	// extractor trusts loopback/private/link-local peers, so the gateway — always
-	// reached through traefik on a private network — keys rate limits (and any
-	// future RealIP() use) on the client rather than traefik's socket address.
-	e.IPExtractor = echo.ExtractIPFromXFFHeader()
+	// Client-IP trust is explicit and configured, never echo v4's permissive
+	// default (which trusts loopback/private/link-local peers, the trust model
+	// in GHSA-246p-cpwv-v3jq / GHSA-99jh-6h7p-pp36). With TRUSTED_PROXY_CIDRS
+	// naming the proxy hop (e.g. Caddy on 127.0.0.1/32 in production), RealIP()
+	// resolves X-Forwarded-For to the right-most untrusted hop, so the share
+	// rate limiter keys on the real client. Unset fails closed: RealIP() is the
+	// socket peer, so a forwarded header cannot move a bucket. That is the
+	// interim mitigation for issue #26 while the echo v5 rewrite lands.
+	ipExtractor, ipTrustMode, err := newIPExtractor(cfg.TrustedProxyCIDRs)
+	if err != nil {
+		// Config.Validate already rejected this at startup; keep the failure
+		// loud rather than falling back to a different trust model.
+		log.Fatalf("invalid %s: %v", trustedProxyEnvVar, err)
+	}
+	e.IPExtractor = ipExtractor
+	log.Printf("client IP trust: %s", ipTrustMode)
 	// Annotate every go-daisy component root with data-component="pkg/Component"
 	// so the element-level feedback overlay can name the component instead of a
 	// raw CSS selector. Always on: names only (no data-props); see componentAnnotations.
