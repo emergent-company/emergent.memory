@@ -136,6 +136,12 @@ jobs:
       # together; this fails early when they drift (see #auto-tag dead-path).
       - name: Version drift guard
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          # PR labels feed the release-attribution escape in the guard (#1074):
+          # a bump whose PR carries the `release` label is the release PR, even
+          # if its commit subjects were rewritten. A push has no PR context, so
+          # the list is empty there and commit subjects decide.
+          PR_LABELS: ${{ github.event_name == 'pull_request' && join(github.event.pull_request.labels.*.name, ',') || '' }}
         run: bash scripts/preflight/version-drift.sh
       - name: Setup Go
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
