@@ -120,5 +120,5 @@ var SourceEventsModule = fx.Module("source-events",
 		NewSourceEventDispatcher,
 		NewSourceEventHandler,
 	),
-	fx.Invoke(RegisterSourceEventRoutes),
+	fx.Invoke(RegisterSourceEventRoutes, WireAgentRepository),
 )

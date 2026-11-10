@@ -131,7 +131,7 @@ func (s *Service) CreateSourceTrigger(ctx context.Context, projectID, sourceID u
 	if err != nil {
 		return nil, err
 	}
-	if err := s.validateTriggerInput(ctx, projectID, src, in); err != nil {
+	if err := s.validateTriggerInput(ctx, projectID, src, in, true); err != nil {
 		return nil, err
 	}
 	enabled := true
@@ -169,7 +169,7 @@ func (s *Service) UpdateSourceTrigger(ctx context.Context, projectID, sourceID, 
 	if in.EventType != "" {
 		in.EventType = strings.TrimSpace(in.EventType)
 	}
-	if err := s.validateTriggerInput(ctx, projectID, src, in); err != nil {
+	if err := s.validateTriggerInput(ctx, projectID, src, in, false); err != nil {
 		return nil, err
 	}
 	if in.EventType != "" {
@@ -205,16 +205,19 @@ func (s *Service) DeleteSourceTrigger(ctx context.Context, projectID, sourceID, 
 	return s.repo.DeleteSourceTrigger(ctx, triggerID)
 }
 
-func (s *Service) validateTriggerInput(ctx context.Context, projectID uuid.UUID, src *Source, in SourceTriggerInput) error {
+func (s *Service) validateTriggerInput(ctx context.Context, projectID uuid.UUID, src *Source, in SourceTriggerInput, requireAll bool) error {
 	eventType := strings.TrimSpace(in.EventType)
-	if eventType == "" {
+	if eventType == "" && requireAll {
 		return apperror.NewValidation("eventType is required")
 	}
-	if src.Provider == ProviderTypeGitHubApp && eventType != "pull_request" {
+	if eventType != "" && src.Provider == ProviderTypeGitHubApp && eventType != "pull_request" {
 		return apperror.NewValidation("github_app supports only the pull_request event")
 	}
 	if strings.TrimSpace(in.AgentID) == "" {
-		return apperror.NewValidation("agentId is required")
+		if requireAll {
+			return apperror.NewValidation("agentId is required")
+		}
+		return nil
 	}
 	agentID, err := uuid.Parse(in.AgentID)
 	if err != nil {

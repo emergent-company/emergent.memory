@@ -854,6 +854,20 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 		if normalizer, ok := p.(ConfigNormalizer); ok {
 			normalizer.NormalizeConfig(cfg)
 		}
+		if existing.Provider == ProviderTypeGitHubApp {
+			if v, ok := cfg["app_id"]; ok && existing.AppID != nil && strings.TrimSpace(fmt.Sprint(v)) != existing.AppID.String() {
+				return nil, apperror.NewValidation("the App cannot be changed on an existing source; create a new source")
+			}
+			if v, ok := cfg["installation_id"]; ok && existing.ExternalAccountID != nil && strings.TrimSpace(fmt.Sprint(v)) != *existing.ExternalAccountID {
+				return nil, apperror.NewValidation("the installation cannot be changed on an existing source; create a new source")
+			}
+			if existing.AppID != nil {
+				cfg["app_id"] = existing.AppID.String()
+			}
+			if existing.ExternalAccountID != nil {
+				cfg["installation_id"] = *existing.ExternalAccountID
+			}
+		}
 		if _, typed := p.(TypedObjectProvider); typed {
 			for _, key := range []string{"filter", "object_types", "mcp_write_tools_enabled", "query", "label_ids", "since"} {
 				if _, present := cfg[key]; present {
@@ -1224,4 +1238,13 @@ func (s *Service) PreviewFilter(ctx context.Context, providerType string, cfg ma
 		return "", apperror.NewValidation("provider does not support filter preview: " + providerType)
 	}
 	return preview.FilterPreview(cfg)
+}
+
+// WireAgentRepository attaches the runtime-agent resolver used by trigger APIs.
+// It is invoked only when FEATURE_AGENTS is on (see SourceEventsModule), so the
+// sources module itself does not require the agents domain.
+func WireAgentRepository(svc *Service, repo *agents.Repository) {
+	if svc != nil && repo != nil {
+		svc.agentRepo = repo
+	}
 }

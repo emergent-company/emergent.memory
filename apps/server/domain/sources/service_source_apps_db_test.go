@@ -85,6 +85,12 @@ func TestSourceAppRegistrationAndGitHubAppSource(t *testing.T) {
 	require.NotNil(t, src.ExternalAccountID)
 	require.Equal(t, "42", *src.ExternalAccountID)
 
+	// The App/installation cannot be swapped through a config update.
+	_, err = svc.Update(ctx, projectID, src.ID, &UpdateIntegrationRequest{Config: map[string]any{
+		"app_id": uuid.New().String(), "installation_id": "42", "repos": []any{"owner/repo"},
+	}})
+	require.Error(t, err)
+
 	// Trigger CRUD validates the runtime agent and event type.
 	trigger, err := svc.CreateSourceTrigger(ctx, projectID, src.ID, SourceTriggerInput{
 		EventType: "pull_request", AgentID: agentID.String(), Queue: "review", Enabled: boolPtr(true),
@@ -96,9 +102,12 @@ func TestSourceAppRegistrationAndGitHubAppSource(t *testing.T) {
 	require.Len(t, listed, 1)
 	_, err = svc.CreateSourceTrigger(ctx, projectID, src.ID, SourceTriggerInput{EventType: "issue", AgentID: agentID.String()})
 	require.Error(t, err)
-	updated, err := svc.UpdateSourceTrigger(ctx, projectID, src.ID, trigger.ID, SourceTriggerInput{EventType: "pull_request", AgentID: agentID.String(), Enabled: boolPtr(false)})
+	updated, err := svc.UpdateSourceTrigger(ctx, projectID, src.ID, trigger.ID, SourceTriggerInput{Enabled: boolPtr(false)})
 	require.NoError(t, err)
 	require.False(t, updated.Enabled)
+	updated, err = svc.UpdateSourceTrigger(ctx, projectID, src.ID, trigger.ID, SourceTriggerInput{EventType: "pull_request", AgentID: agentID.String(), Enabled: boolPtr(true)})
+	require.NoError(t, err)
+	require.True(t, updated.Enabled)
 	require.NoError(t, svc.DeleteSourceTrigger(ctx, projectID, src.ID, trigger.ID))
 
 }
