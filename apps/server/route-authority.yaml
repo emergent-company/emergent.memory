@@ -1186,22 +1186,6 @@ routes:
       level: auth
       note: RequireAuth
     - method: GET
-      path: /api/orgs/:orgId/data-source-integrations/oauth-clients
-      level: auth
-      note: RequireAuth
-    - method: DELETE
-      path: /api/orgs/:orgId/data-source-integrations/oauth-clients/:providerType
-      level: auth
-      note: RequireAuth
-    - method: GET
-      path: /api/orgs/:orgId/data-source-integrations/oauth-clients/:providerType
-      level: auth
-      note: RequireAuth
-    - method: PUT
-      path: /api/orgs/:orgId/data-source-integrations/oauth-clients/:providerType
-      level: auth
-      note: RequireAuth
-    - method: GET
       path: /api/orgs/:orgId/data-source-integrations/oauth-apps
       level: auth
       note: RequireAuth
@@ -1219,6 +1203,22 @@ routes:
       note: RequireAuth
     - method: PUT
       path: /api/orgs/:orgId/data-source-integrations/oauth-apps/:appId
+      level: auth
+      note: RequireAuth
+    - method: GET
+      path: /api/orgs/:orgId/data-source-integrations/oauth-clients
+      level: auth
+      note: RequireAuth
+    - method: DELETE
+      path: /api/orgs/:orgId/data-source-integrations/oauth-clients/:providerType
+      level: auth
+      note: RequireAuth
+    - method: GET
+      path: /api/orgs/:orgId/data-source-integrations/oauth-clients/:providerType
+      level: auth
+      note: RequireAuth
+    - method: PUT
+      path: /api/orgs/:orgId/data-source-integrations/oauth-clients/:providerType
       level: auth
       note: RequireAuth
     - method: GET
@@ -1546,41 +1546,41 @@ routes:
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(chat:use)
     - method: GET
-      path: /api/projects/:projectId/data-source-integrations/oauth-clients
-      level: auth
-      note: RequireAuth
-    - method: DELETE
-      path: /api/projects/:projectId/data-source-integrations/oauth-clients/:providerType
-      level: auth
-      note: RequireAuth
-    - method: GET
-      path: /api/projects/:projectId/data-source-integrations/oauth-clients/:providerType
-      level: auth
-      note: RequireAuth
-    - method: PUT
-      path: /api/projects/:projectId/data-source-integrations/oauth-clients/:providerType
-      level: auth
-      note: RequireAuth
-    - method: GET
       path: /api/projects/:projectId/data-source-integrations/oauth-apps
-      level: auth
-      note: RequireAuth
+      level: project-member
+      note: RequireAuth, RequireProjectMember
     - method: POST
       path: /api/projects/:projectId/data-source-integrations/oauth-apps
-      level: auth
-      note: RequireAuth
+      level: project-member
+      note: RequireAuth, RequireProjectMember
     - method: DELETE
       path: /api/projects/:projectId/data-source-integrations/oauth-apps/:appId
-      level: auth
-      note: RequireAuth
+      level: project-member
+      note: RequireAuth, RequireProjectMember
     - method: GET
       path: /api/projects/:projectId/data-source-integrations/oauth-apps/:appId
-      level: auth
-      note: RequireAuth
+      level: project-member
+      note: RequireAuth, RequireProjectMember
     - method: PUT
       path: /api/projects/:projectId/data-source-integrations/oauth-apps/:appId
-      level: auth
-      note: RequireAuth
+      level: project-member
+      note: RequireAuth, RequireProjectMember
+    - method: GET
+      path: /api/projects/:projectId/data-source-integrations/oauth-clients
+      level: project-member
+      note: RequireAuth, RequireProjectMember
+    - method: DELETE
+      path: /api/projects/:projectId/data-source-integrations/oauth-clients/:providerType
+      level: project-member
+      note: RequireAuth, RequireProjectMember
+    - method: GET
+      path: /api/projects/:projectId/data-source-integrations/oauth-clients/:providerType
+      level: project-member
+      note: RequireAuth, RequireProjectMember
+    - method: PUT
+      path: /api/projects/:projectId/data-source-integrations/oauth-clients/:providerType
+      level: project-member
+      note: RequireAuth, RequireProjectMember
     - method: POST
       path: /api/projects/:projectId/device-tokens
       level: project-member
