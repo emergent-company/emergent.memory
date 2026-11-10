@@ -39,6 +39,10 @@ type FeatureSet struct {
 	// Monitoring enables the run-monitoring domain (agent health alerts).
 	Monitoring bool `env:"FEATURE_MONITORING" envDefault:"true"`
 
+	// GitHubApp enables the GitHub App review integration: App credentials,
+	// installations, webhook ingress, and the review producer.
+	GitHubApp bool `env:"FEATURE_GITHUBAPP" envDefault:"true"`
+
 	// Tracing enables OpenTelemetry tracing routes and span storage.
 	Tracing bool `env:"FEATURE_TRACING" envDefault:"true"`
 
