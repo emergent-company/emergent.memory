@@ -1004,6 +1004,12 @@ func (s *Service) InspectServer(ctx context.Context, serverID string, projectID 
 // required keys left blank in the draft are backfilled from the stored server's
 // secrets (edit-mode test). The probe never writes to the repository.
 func (s *Service) TestServerConfig(ctx context.Context, projectID string, dto *CreateMCPServerDTO, serverID *string) (*MCPServerInspectDTO, error) {
+	// A draft probe of an in-process type would fall through to the outbound
+	// proxy; refuse it before building a transient server or dialing anything.
+	if !dto.Type.contract().registryManaged {
+		return nil, fmt.Errorf("cannot test %s server configuration — it is managed by its owning domain", dto.Type)
+	}
+
 	// Validate transport-specific fields exactly like CreateServer.
 	switch dto.Type {
 	case ServerTypeStdio:

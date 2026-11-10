@@ -27,7 +27,12 @@ type serverTypeContract struct {
 	// inProcess means tool calls are dispatched in-process by domain/mcp
 	// (mcp.Service), never over an outbound proxy connection.
 	inProcess bool
-	// syntheticInspect means InspectServer answers with a synthetic OK instead
+	// listed means the row appears in the registry list reads that back the
+	// settings/UI. Builtin is listed because it is a user-visible, read-only
+	// catalogue; source rows are not, because they are per-account tool servers
+	// owned by domain/sources and must not look user-editable.
+	listed bool
+	// syntheticInspect means InspectServer answers a synthetic OK instead
 	// of dialing, because the server has no external connection to probe.
 	syntheticInspect bool
 	// remote means the type talks to an HTTP(S)/SSE endpoint, so the outbound
@@ -42,16 +47,18 @@ type serverTypeContract struct {
 func (t MCPServerType) contract() serverTypeContract {
 	switch t {
 	case ServerTypeStdio:
-		return serverTypeContract{known: true, registryManaged: true}
+		return serverTypeContract{known: true, registryManaged: true, listed: true}
 	case ServerTypeSSE, ServerTypeHTTP:
-		return serverTypeContract{known: true, registryManaged: true, remote: true}
+		return serverTypeContract{known: true, registryManaged: true, listed: true, remote: true}
 	case ServerTypeBuiltin:
 		// In-process tool server owned by domain/mcp. Inspect has no external
-		// connection, so it answers synthetically (the historical behaviour).
-		return serverTypeContract{known: true, inProcess: true, syntheticInspect: true}
+		// connection, so it answers synthetically (the historical behaviour);
+		// it is intentionally listed read-only in the registry UI.
+		return serverTypeContract{known: true, inProcess: true, listed: true, syntheticInspect: true}
 	case ServerTypeSource:
 		// In-process tool server owned by domain/sources. It has no external
-		// connection and no inspectable handshake, so inspect refuses it.
+		// connection and no inspectable handshake, so inspect refuses it. It is
+		// not listed: source rows must never look user-editable.
 		return serverTypeContract{known: true, inProcess: true}
 	}
 	// Unknown type: deny everything. It is not user-creatable, not deletable,
@@ -90,6 +97,18 @@ func inProcessServerTypes() []MCPServerType {
 	types := make([]MCPServerType, 0, len(allServerTypes()))
 	for _, t := range allServerTypes() {
 		if t.contract().inProcess {
+			types = append(types, t)
+		}
+	}
+	return types
+}
+
+// listedServerTypes returns the types the registry list reads expose: the
+// external types plus the read-only builtin catalogue, but never source rows.
+func listedServerTypes() []MCPServerType {
+	types := make([]MCPServerType, 0, len(allServerTypes()))
+	for _, t := range allServerTypes() {
+		if t.contract().listed {
 			types = append(types, t)
 		}
 	}

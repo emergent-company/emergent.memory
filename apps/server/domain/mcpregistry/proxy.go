@@ -216,6 +216,12 @@ func (pm *ProxyManager) resolveServerForTool(ctx context.Context, projectID, pre
 			// outbound by the server.
 			continue
 		}
+		if !srv.Type.contract().registryManaged {
+			// In-process rows (builtin/source) are served by mcp.Service, never
+			// the outbound proxy. FindAllServers includes the builtin row for
+			// the UI, so slug mode must skip it explicitly.
+			continue
+		}
 		slug := SlugifyServerName(srv.Name)
 		prefix := slug + "_"
 		if !strings.HasPrefix(prefixedToolName, prefix) {

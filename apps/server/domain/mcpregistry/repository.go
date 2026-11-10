@@ -21,15 +21,17 @@ func NewRepository(db bun.IDB) *Repository {
 
 // --- MCP Servers ---
 
-// FindAllServers returns the registry-managed MCP servers for a project.
-// In-process rows (builtin/source) are provisioned by their owning domain and
-// are not user-editable, so they are excluded here as well as from the list UI.
+// FindAllServers returns the registry list servers for a project: the external
+// types the user manages plus the read-only builtin catalogue. Source rows are
+// owned by domain/sources and are deliberately excluded so they never look
+// user-editable. NOTE: the proxy also uses this read for slug resolution; it
+// skips non-registry-managed rows itself (proxy.resolveServerForTool).
 func (r *Repository) FindAllServers(ctx context.Context, projectID string) ([]*MCPServer, error) {
 	var servers []*MCPServer
 	err := r.db.NewSelect().
 		Model(&servers).
 		Where("project_id = ?", projectID).
-		Where("type IN (?)", bun.In(registryManagedServerTypes())).
+		Where("type IN (?)", bun.In(listedServerTypes())).
 		Order("name ASC").
 		Scan(ctx)
 	if err != nil {
@@ -38,9 +40,10 @@ func (r *Repository) FindAllServers(ctx context.Context, projectID string) ([]*M
 	return servers, nil
 }
 
-// FindAllServersWithTools returns the registry-managed MCP servers for a
-// project with their tools eager-loaded. In-process (builtin/source) rows are
-// excluded so the MCP-server UI never lists them as user-editable.
+// FindAllServersWithTools returns the registry list servers for a project with
+// their tools eager-loaded: external types plus the read-only builtin row.
+// Source rows are excluded so the MCP-server UI never lists them as
+// user-editable.
 func (r *Repository) FindAllServersWithTools(ctx context.Context, projectID string) ([]*MCPServer, error) {
 	var servers []*MCPServer
 	err := r.db.NewSelect().
@@ -49,7 +52,7 @@ func (r *Repository) FindAllServersWithTools(ctx context.Context, projectID stri
 			return q.Order("tool_name ASC")
 		}).
 		Where("ms.project_id = ?", projectID).
-		Where("ms.type IN (?)", bun.In(registryManagedServerTypes())).
+		Where("ms.type IN (?)", bun.In(listedServerTypes())).
 		Order("ms.name ASC").
 		Scan(ctx)
 	if err != nil {
@@ -58,16 +61,15 @@ func (r *Repository) FindAllServersWithTools(ctx context.Context, projectID stri
 	return servers, nil
 }
 
-// FindEnabledServers returns the enabled registry-managed MCP servers for a
-// project. In-process (builtin/source) rows are served by mcp.Service, not the
-// registry, and are excluded.
+// FindEnabledServers returns the enabled registry list servers for a project:
+// external types plus the read-only builtin row. Source rows are excluded.
 func (r *Repository) FindEnabledServers(ctx context.Context, projectID string) ([]*MCPServer, error) {
 	var servers []*MCPServer
 	err := r.db.NewSelect().
 		Model(&servers).
 		Where("project_id = ?", projectID).
 		Where("enabled = true").
-		Where("type IN (?)", bun.In(registryManagedServerTypes())).
+		Where("type IN (?)", bun.In(listedServerTypes())).
 		Order("name ASC").
 		Scan(ctx)
 	if err != nil {

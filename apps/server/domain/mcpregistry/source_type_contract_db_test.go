@@ -104,10 +104,10 @@ func assertNames(t *testing.T, got, want []string) {
 	}
 }
 
-// TestRegistryListReadsExcludeInProcessRows pins repository.go:25,39,56: the
-// list/UI/pool reads must not expose builtin or source rows as user-editable
-// external servers.
-func TestRegistryListReadsExcludeInProcessRows(t *testing.T) {
+// TestRegistryListReadsExcludeSourceRows pins repository.go:25,39,56: the
+// list/UI reads expose the read-only builtin catalogue plus external servers,
+// but must not expose source rows as user-editable servers.
+func TestRegistryListReadsExcludeSourceRows(t *testing.T) {
 	r := newTypeContractRig(t, "type_contract_lists")
 	ctx := context.Background()
 
@@ -121,19 +121,19 @@ func TestRegistryListReadsExcludeInProcessRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindAllServers: %v", err)
 	}
-	assertNames(t, sortedServerNames(all), []string{"http-srv", "sse-srv", "stdio-srv"})
+	assertNames(t, sortedServerNames(all), []string{"builtin", "http-srv", "sse-srv", "stdio-srv"})
 
 	withTools, err := r.repo.FindAllServersWithTools(ctx, r.projectID)
 	if err != nil {
 		t.Fatalf("FindAllServersWithTools: %v", err)
 	}
-	assertNames(t, sortedServerNames(withTools), []string{"http-srv", "sse-srv", "stdio-srv"})
+	assertNames(t, sortedServerNames(withTools), []string{"builtin", "http-srv", "sse-srv", "stdio-srv"})
 
 	enabled, err := r.repo.FindEnabledServers(ctx, r.projectID)
 	if err != nil {
 		t.Fatalf("FindEnabledServers: %v", err)
 	}
-	assertNames(t, sortedServerNames(enabled), []string{"http-srv", "stdio-srv"})
+	assertNames(t, sortedServerNames(enabled), []string{"builtin", "http-srv", "stdio-srv"})
 
 	tools, err := r.repo.FindAllEnabledTools(ctx, r.projectID)
 	if err != nil {
@@ -214,6 +214,15 @@ func TestSourceRowsAreReadOnlyThroughRegistryAPI(t *testing.T) {
 	}
 	if inspected == nil || inspected.Status != "ok" || inspected.ServerType != mcpregistry.ServerTypeBuiltin {
 		t.Fatalf("InspectServer(builtin) = %+v, want synthetic ok result", inspected)
+	}
+
+	// A draft probe of each in-process type is refused before the proxy is
+	// reached (source previously fell through to "unsupported server type").
+	if _, err := r.svc.TestServerConfig(ctx, r.projectID, &mcpregistry.CreateMCPServerDTO{
+		Name: "draft-source",
+		Type: mcpregistry.ServerTypeSource,
+	}, nil); err == nil {
+		t.Fatal("TestServerConfig(source draft) succeeded, want refusal")
 	}
 
 	// Discover and manual sync both refuse: source tools are provisioned by

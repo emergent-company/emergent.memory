@@ -236,9 +236,10 @@ func (h *Handler) ListServerTools(c echo.Context) error {
 	dtos := make([]*MCPServerToolDTO, 0, len(tools))
 	for _, t := range tools {
 		dto := t.ToDTO()
-		// For builtin servers, enrich each tool with its resolved enabled state and
-		// inheritance source so org-level defaults are surfaced truthfully (#988).
-		if server.Type == ServerTypeBuiltin {
+		// In-process servers (builtin and source) resolve enabled/config through
+		// the same project → org → global setting seam; an external server's tool
+		// row is the source of truth.
+		if server.Type.contract().inProcess {
 			resolvedEnabled, _, source, resolveErr := h.svc.ResolveBuiltinToolSettings(c.Request().Context(), user.ProjectID, t.ToolName)
 			if resolveErr == nil {
 				dto.Enabled = resolvedEnabled
