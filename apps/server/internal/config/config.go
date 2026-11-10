@@ -612,8 +612,6 @@ type SandboxConfig struct {
 	DefaultDisk string `env:"WORKSPACE_DEFAULT_DISK" envDefault:"10G"`
 	// E2BAPIKey is the API key for E2B managed sandbox provider
 	E2BAPIKey string `env:"E2B_API_KEY" envDefault:""`
-	// GitHubAppEncryptionKey is the AES-256 encryption key for GitHub App credentials (64-char hex)
-	GitHubAppEncryptionKey string `env:"GITHUB_APP_ENCRYPTION_KEY" envDefault:""`
 	// NetworkName is the Docker network to attach workspace containers to for isolation
 	NetworkName string `env:"WORKSPACE_NETWORK_NAME" envDefault:""`
 	// MemoryAPIURL is the API endpoint injected into sandbox containers as
