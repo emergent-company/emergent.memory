@@ -1,6 +1,34 @@
 package mcp
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
+
+// singleReviewProvider is an inert GitHubAppToolHandler for wiring tests.
+type singleReviewProvider struct{}
+
+func (singleReviewProvider) HandlesGitHubAppTool(string) bool { return false }
+
+func (singleReviewProvider) ExecuteGitHubAppTool(context.Context, string, string, map[string]any) (*ToolResult, error) {
+	return nil, nil
+}
+
+// TestGitHubAppReviewHandlerRegistrationRejectsSecondProvider pins the single
+// owner rule: moving the executor to sources must not leave two providers able
+// to claim github-pr-diff / github-review-submit. A second registration panics at
+// startup instead of silently replacing the first (#579).
+func TestGitHubAppReviewHandlerRegistrationRejectsSecondProvider(t *testing.T) {
+	svc := &Service{}
+	svc.RegisterGitHubAppToolHandler(singleReviewProvider{})
+
+	defer func() {
+		if recover() == nil {
+			t.Fatal("second GitHubAppToolHandler registration must fail loudly")
+		}
+	}()
+	svc.RegisterGitHubAppToolHandler(singleReviewProvider{})
+}
 
 // TestGitHubAppToolsAreInBuiltinCatalog pins the tool-pool fix: the builtin MCP
 // server (which backs the in-process agent tool pool) seeds from the internal

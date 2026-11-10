@@ -7,7 +7,6 @@ import (
 
 	"go.uber.org/fx"
 
-	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/internal/config"
 )
 
@@ -25,7 +24,6 @@ var Module = fx.Module("githubapp",
 	fx.Invoke(
 		registerCredentialGuard,
 		RegisterRoutes,
-		registerMCPToolHandler,
 	),
 )
 
@@ -50,12 +48,6 @@ func provideCredentialCipher(cfg *config.Config, log *slog.Logger) *CredentialCi
 		return nil
 	}
 	return cipher
-}
-
-// registerMCPToolHandler exposes the review tools to the in-process agent
-// runtime (githubapp -> agents -> mcp, deferred to fx.Invoke to break the cycle).
-func registerMCPToolHandler(mcpSvc *mcp.Service, svc *Service) {
-	mcpSvc.RegisterGitHubAppToolHandler(svc)
 }
 
 // registerCredentialGuard fails startup when credentials already exist but the

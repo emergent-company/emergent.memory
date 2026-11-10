@@ -1,4 +1,4 @@
-package githubapp
+package sources
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 )
 
-// staticReviewToolsHandler supplies the real review-tool definitions to an MCP
+// staticReviewToolsHandler supplies the real review-tool names to an MCP
 // service without a database. Every method the authority path needs is local;
 // dispatch is recorded and never allowed to succeed.
 type staticReviewToolsHandler struct {
@@ -34,7 +34,7 @@ var reviewToolNames = []string{toolPRDiff, toolReviewSubmit}
 
 // TestGitHubAppReviewToolsAreAgentOnlyInProjectCatalog pins the declared
 // authority of the real definitions and proves they reach the project catalog
-// (the catalog tools/call resolves) even with no agent handler registered.
+// (the catalog tools/call resolves) now that the executor lives in sources.
 func TestGitHubAppReviewToolsAreAgentOnlyInProjectCatalog(t *testing.T) {
 	svc := &mcp.Service{}
 	svc.RegisterGitHubAppToolHandler(&staticReviewToolsHandler{})

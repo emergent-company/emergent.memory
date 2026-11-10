@@ -438,7 +438,7 @@ func (s *Service) handlePullRequest(ctx context.Context, v *VerifiedDelivery) er
 		//     commit messages, diffs, code) as untrusted data that never
 		//     overrides the prompt, the tools or the reviewed SHA; and
 		//   * github-review-submit refuses a SHA whose non-empty diff this run did
-		//     not read through github-pr-diff (tools.go).
+		//     not read through github-pr-diff (domain/sources/review_tools.go).
 		// Keep both in step with this flag: TrustedInternal here is what a
 		// fork-PR author's prompt injection would otherwise turn into review
 		// authority.
