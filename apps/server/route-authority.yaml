@@ -1222,6 +1222,32 @@ routes:
       level: auth
       note: RequireAuth
     - method: GET
+      path: /api/orgs/:orgId/github-app
+      level: auth
+      note: RequireAuth
+    - method: POST
+      path: /api/orgs/:orgId/github-app
+      level: auth
+      note: RequireAuth
+    - method: DELETE
+      path: /api/orgs/:orgId/github-app/:appPK
+      level: auth
+      note: RequireAuth
+    - method: POST
+      path: /api/orgs/:orgId/github-app/installations
+      level: auth
+      note: RequireAuth
+    - method: DELETE
+      path: /api/orgs/:orgId/github-app/installations/:id
+      level: auth
+      note: RequireAuth
+    - method: PATCH
+      path: /api/orgs/:orgId/github-app/installations/:id
+      level: auth
+      note: RequireAuth
+      level: auth
+      note: RequireAuth
+    - method: GET
       path: /api/orgs/:orgId/skills
       level: auth
       note: RequireAuth
@@ -2467,6 +2493,10 @@ routes:
       note: RequireAuth
     - method: POST
       path: /api/webhooks/agents/:hookId
+      level: public
+      note: ""
+    - method: POST
+      path: /api/webhooks/github/app
       level: public
       note: ""
     - method: POST

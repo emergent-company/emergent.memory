@@ -70,6 +70,9 @@ func TestRepositoryDeliveryDedupeAndClaims(t *testing.T) {
 	ok, err := repo.SetClaimRun(ctx, claim1.ID, runID, ClaimRunning)
 	require.NoError(t, err)
 	require.True(t, ok)
+	ok, err = repo.SetClaimRun(ctx, claim1.ID, uuid.New(), ClaimRunning)
+	require.NoError(t, err)
+	require.False(t, ok, "a claim that already has a run must not accept another")
 
 	claim1b, superseded, err := repo.ClaimReview(ctx, 42, "owner/repo", 7, "h1", "h1")
 	require.NoError(t, err)

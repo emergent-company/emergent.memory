@@ -10,15 +10,21 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/config"
 )
 
-// Module provides the GitHub App connection model: credential storage,
-// installation routing, delivery dedupe, and per-head review claims.
+// Module provides the GitHub App connection model and the review producer:
+// credential storage, installation routing, delivery dedupe, per-head review
+// claims, the admin surface, and the session-less webhook ingress.
 var Module = fx.Module("githubapp",
 	fx.Provide(
 		NewRepository,
 		provideTokenMinter,
 		provideCredentialCipher,
+		NewService,
+		NewHandler,
 	),
-	fx.Invoke(registerCredentialGuard),
+	fx.Invoke(
+		registerCredentialGuard,
+		RegisterRoutes,
+	),
 )
 
 func provideTokenMinter(cfg *config.Config) *TokenMinter {
