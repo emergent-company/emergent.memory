@@ -367,7 +367,7 @@ func (r *Repository) getProjectApp(ctx context.Context, db bun.IDB, projectID, i
 
 // upsertLock takes a transaction-scoped advisory lock on the logical
 // (scope, owner, provider) key. The legacy per-provider upsert no longer has a
-// matching unique index after 00284 (a vendor may hold several named apps), so
+// matching unique index after 00283 (a vendor may hold several named apps), so
 // this serializes concurrent upserts instead of racing select-then-insert.
 func upsertLock(ctx context.Context, db bun.IDB, key string) error {
 	if _, err := db.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", key); err != nil {

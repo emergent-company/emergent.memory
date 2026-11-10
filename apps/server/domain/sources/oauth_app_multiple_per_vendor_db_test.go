@@ -15,7 +15,7 @@ import (
 )
 
 // TestNamedOAuthApps_MultiplePerVendorOnRealSchema is the regression guard for
-// migration 00284. Before that migration qualified the legacy index drops, the
+// migration 00283. Before that migration qualified the legacy index drops, the
 // unique indexes on (scope, provider) survived it and a second named app for the
 // same vendor in the same scope failed with 23505 — which defeats the whole
 // point of named, vendor-level apps. The test runs against the real, fully
@@ -36,7 +36,7 @@ func TestNamedOAuthApps_MultiplePerVendorOnRealSchema(t *testing.T) {
 		OrgID: orgID.String(),
 	}, ""))
 
-	// The legacy unique indexes must not exist after 00284. If they do, the
+	// The legacy unique indexes must not exist after 00283. If they do, the
 	// inserts below fail, so this is the direct assertion of the migration fix.
 	var legacyIndexes int
 	require.NoError(t, tdb.DB.NewRaw(`
