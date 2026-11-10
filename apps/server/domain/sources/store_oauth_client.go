@@ -653,6 +653,9 @@ func (r *Repository) CountProjectSourcesUsingOAuthConfig(ctx context.Context, pr
 
 // SourcesUsingOAuthConfig names the data sources that reference an app (any
 // project), ordered oldest first so a delete refusal reads predictably.
+// Deliberately unscoped: an org app can be used by sources in any of the org's
+// projects, so an org delete must see all of them. Do not "fix" this to match
+// the project variant below.
 func (r *Repository) SourcesUsingOAuthConfig(ctx context.Context, id uuid.UUID) ([]OAuthAppSourceRef, error) {
 	refs := []OAuthAppSourceRef{}
 	if err := r.db.NewSelect().

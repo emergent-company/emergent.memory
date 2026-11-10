@@ -726,14 +726,15 @@ func (s *Service) legacyFromAppDTO(dto *OAuthAppDTO, providerType string) *OAuth
 }
 
 // implicitSourceAppID returns the sole app a provider would resolve to at
-// project or org scope. It is persisted on new sources so adding a second app
-// later cannot silently change an existing source's client.
+// project or org scope. It is persisted on OAuth-completed sources so adding a
+// second app later cannot silently change an existing source's client.
 //
-// Only a provider that actually offers OAuth may be bound. A credentials (PAT)
-// or config-only source never reads oauth_app_id, so binding it would make the
-// app undeletable while the refusal names a source that does not use OAuth at
-// all (#554). The gate uses the same AuthMethods vocabulary the connect flow
-// advertises, so it cannot drift from the catalog.
+// The caller must be an OAuth completion (Create is only reached that way with
+// oauthCompletion set): a credentials (PAT) or config-only source never reads
+// oauth_app_id, so binding it would make the app undeletable while the refusal
+// names a source that does not use OAuth at all (#554). The AuthMethods check
+// below is belt-and-braces so a non-OAuth provider can never be bound even if a
+// future caller passes the completion flag.
 func (s *Service) implicitSourceAppID(ctx context.Context, projectID uuid.UUID, providerType string) *uuid.UUID {
 	p, found := s.providers.Get(providerType)
 	if !found || !slices.Contains(p.AuthMethods(), AuthMethodOAuth) {

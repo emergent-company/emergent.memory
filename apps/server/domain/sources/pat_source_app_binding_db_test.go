@@ -18,55 +18,6 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
-// patTestProvider stands in for a credentials-only (PAT/API-key) provider. It
-// shares the "github" vendor with the real OAuth GitHub provider, so a sole
-// github app is visible to implicit resolution — exactly the shape #554 is
-// about — but it advertises no OAuth auth method.
-type patTestProvider struct{}
-
-const patTestProviderType = "github_pat_test"
-
-func (p *patTestProvider) Catalog() Provider {
-	return Provider{
-		Type:        patTestProviderType,
-		Name:        "GitHub (PAT test)",
-		Description: "Credentials-only provider used by the #554 regression test.",
-		SourceType:  SourceTypeRepo,
-		Vendor:      "github",
-		VendorName:  "GitHub",
-		Available:   true,
-	}
-}
-
-func (p *patTestProvider) ConfigSchema() ProviderSchema {
-	return ProviderSchema{Type: patTestProviderType}
-}
-
-func (p *patTestProvider) CredentialFields() []ProviderField {
-	return []ProviderField{{Key: "access_token", Label: "Personal access token", Type: "string", WriteOnly: true, Required: true}}
-}
-
-func (p *patTestProvider) AuthMethods() []AuthMethod { return []AuthMethod{AuthMethodCredentials} }
-
-func (p *patTestProvider) OAuth() (OAuthStrategy, bool) { return nil, false }
-
-func (p *patTestProvider) ValidateConfig(map[string]any) error { return nil }
-
-func (p *patTestProvider) ExtractCredentials(cfg map[string]any) (Credentials, error) {
-	token, _ := cfg["access_token"].(string)
-	return Credentials{"access_token": token}, nil
-}
-
-func (p *patTestProvider) CredentialKeys() []string { return []string{"access_token"} }
-
-func (p *patTestProvider) ListResources(context.Context, Credentials, map[string]any, string, ConnectorDeps) ([]Resource, bool, error) {
-	return nil, false, nil
-}
-
-func (p *patTestProvider) NewConnector(context.Context, Credentials, ConnectorDeps) (Connector, error) {
-	return nil, errors.New("not implemented in test provider")
-}
-
 // createVendorApp inserts a named, vendor-level app encrypted with the
 // fixture's key, exactly as the create path would store it.
 func createVendorApp(t *testing.T, fx *oauthAppRouteFixture, vendor, name, clientID, clientSecret string) *OAuthClientConfig {
@@ -110,27 +61,21 @@ func grantOrgAdmin(t *testing.T, fx *oauthAppRouteFixture, userID uuid.UUID) {
 	}
 }
 
-// TestCreateSource_NonOAuthProviderNotBoundToVendorApp is the regression guard
-// for #554: a credentials-only source created while its vendor has exactly one
-// app must not be persisted with oauth_app_id, and the app must stay deletable.
-func TestCreateSource_NonOAuthProviderNotBoundToVendorApp(t *testing.T) {
-	fx := newOAuthAppRouteFixture(t, "nonoauthbind", "", nil)
+// TestCreateSource_PATSourceNotBoundToVendorApp is the #554 regression guard:
+// a GitHub personal-access-token source created while its vendor has exactly
+// one app must not be persisted with oauth_app_id, and the app must stay
+// deletable. GitHub advertises both OAuth and credentials, so this is the
+// per-source gate, not a provider one.
+func TestCreateSource_PATSourceNotBoundToVendorApp(t *testing.T) {
+	fx := newOAuthAppRouteFixture(t, "patbind", "", nil)
 	ctx := context.Background()
 	app := createVendorApp(t, fx, "github", "Acme GitHub", "gh-cid", "gh-secret")
-	fx.svc.providers.Register(&patTestProvider{})
-
-	// The sole github app is visible to the old implicit path: the real github
-	// provider (which offers OAuth) resolves it. The NULL asserted below comes
-	// from the credentials-only provider's auth methods, not a failed lookup.
-	if got := fx.svc.implicitSourceAppID(ctx, fx.projectID, ProviderTypeGitHub); got == nil || *got != app.ID {
-		t.Fatalf("implicitSourceAppID(github) = %v, want the sole app %s; the fixture is not exercising the bug", got, app.ID)
-	}
 
 	created, err := fx.svc.Create(ctx, fx.projectID, &CreateIntegrationRequest{
 		Name:         "Docs via PAT",
-		ProviderType: patTestProviderType,
+		ProviderType: ProviderTypeGitHub,
 		Config: map[string]any{
-			"repository":   "acme/docs",
+			"repo":         "acme/docs",
 			"access_token": "ghp_test",
 		},
 	})
@@ -138,12 +83,12 @@ func TestCreateSource_NonOAuthProviderNotBoundToVendorApp(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 	if created.OAuthAppID != nil {
-		t.Fatalf("Create() oauthAppId = %v, want nil for a credentials-only source", *created.OAuthAppID)
+		t.Fatalf("Create() oauthAppId = %v, want nil for a PAT source", *created.OAuthAppID)
 	}
 
 	src := mustGetSource(t, ctx, fx.repo, fx.projectID, uuid.MustParse(created.ID))
 	if src.OAuthAppID != nil {
-		t.Fatalf("stored oauth_app_id = %v, want NULL for a credentials-only source", *src.OAuthAppID)
+		t.Fatalf("stored oauth_app_id = %v, want NULL for a PAT source", *src.OAuthAppID)
 	}
 
 	// The whole point: the app the old implicit path would have attached is now
@@ -158,33 +103,37 @@ func TestCreateSource_NonOAuthProviderNotBoundToVendorApp(t *testing.T) {
 	}
 }
 
-// TestCreateSource_OAuthProviderStillImplicitlyBound pins the load-bearing half
-// of implicitSourceAppID: an OAuth source created without an explicit app is
+// TestCompleteOAuth_NoChosenAppStillImplicitlyBound pins the load-bearing half
+// of implicitSourceAppID: an OAuth completion that did not choose an app is
 // still bound to the vendor's sole app, and deleting that app is still refused
 // with a message that names the source.
-func TestCreateSource_OAuthProviderStillImplicitlyBound(t *testing.T) {
-	fx := newOAuthAppRouteFixture(t, "oauthimplicit", "", nil)
+func TestCompleteOAuth_NoChosenAppStillImplicitlyBound(t *testing.T) {
+	tokens := newTokenServer(t)
+	fx := newOAuthAppRouteFixture(t, "oauthimplicit", tokens.URL, tokens.Client())
 	ctx := context.Background()
 	app := createVendorApp(t, fx, "google", "Acme Google", "app-cid", "app-secret")
 
-	created, err := fx.svc.Create(ctx, fx.projectID, &CreateIntegrationRequest{
-		Name:         "Team drive",
-		ProviderType: ProviderTypeGoogleDrive,
-		Config: map[string]any{
-			"folder_id":     "folder-a",
-			"refresh_token": "rt",
-			"client_id":     "app-cid",
-			"client_secret": "app-secret",
-		},
+	start, err := fx.svc.StartOAuth(ctx, fx.projectID, ProviderTypeGoogleDrive, StartOAuthRequest{
+		Config: map[string]any{"name": "Team drive"},
 	})
 	if err != nil {
-		t.Fatalf("Create() error = %v", err)
+		t.Fatalf("StartOAuth() error = %v", err)
 	}
-	if created.OAuthAppID == nil || *created.OAuthAppID != app.ID.String() {
-		t.Fatalf("Create() oauthAppId = %v, want the sole google app %s", created.OAuthAppID, app.ID)
+	completion, err := fx.svc.CompleteOAuth(ctx, ProviderTypeGoogleDrive, authorizeState(t, start.AuthorizeURL), "code-1")
+	if err != nil {
+		t.Fatalf("CompleteOAuth() error = %v", err)
+	}
+	if completion.Reconnected {
+		t.Error("a fresh connect must not report itself as a reconnect")
+	}
+	if completion.Integration.OAuthAppID == nil || *completion.Integration.OAuthAppID != app.ID.String() {
+		t.Fatalf("created source oauthAppId = %v, want the sole google app %s", completion.Integration.OAuthAppID, app.ID)
+	}
+	if gotID, _ := tokens.lastClient(t); gotID != "app-cid" {
+		t.Errorf("token exchange used %q, want the sole app's client", gotID)
 	}
 
-	src := mustGetSource(t, ctx, fx.repo, fx.projectID, uuid.MustParse(created.ID))
+	src := mustGetSource(t, ctx, fx.repo, fx.projectID, uuid.MustParse(completion.Integration.ID))
 	if src.OAuthAppID == nil || *src.OAuthAppID != app.ID {
 		t.Fatalf("stored oauth_app_id = %v, want %s", src.OAuthAppID, app.ID)
 	}
@@ -195,7 +144,7 @@ func TestCreateSource_OAuthProviderStillImplicitlyBound(t *testing.T) {
 	if err == nil {
 		t.Fatal("DeleteOrgOAuthApp() succeeded while an OAuth source uses the app")
 	}
-	if !strings.Contains(err.Error(), "Team drive") || !strings.Contains(err.Error(), created.ID) {
+	if !strings.Contains(err.Error(), "Team drive") || !strings.Contains(err.Error(), completion.Integration.ID) {
 		t.Fatalf("delete refusal = %q, want it to name the source (name and id)", err.Error())
 	}
 	if _, gerr := fx.repo.GetOAuthClientConfigByID(ctx, fx.orgID, app.ID); gerr != nil {
@@ -203,9 +152,9 @@ func TestCreateSource_OAuthProviderStillImplicitlyBound(t *testing.T) {
 	}
 }
 
-// TestMigration00290_UnbindsNonOAuthSources covers the backfill: a pre-fix row
-// that points a non-OAuth source at an app is detached, a genuine OAuth binding
-// survives, and the detached app becomes deletable.
+// TestMigration00290_UnbindsNonOAuthSources covers the backfill: a pre-fix
+// GitHub PAT row that points at an app is detached, genuine OAuth rows keep
+// their bindings, and the detached app becomes deletable.
 func TestMigration00290_UnbindsNonOAuthSources(t *testing.T) {
 	if testing.Short() {
 		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
@@ -230,7 +179,7 @@ func TestMigration00290_UnbindsNonOAuthSources(t *testing.T) {
 	}
 
 	mig := migrate.NewMigrator(db, zap.NewNop())
-	// The test database is migrated to head; roll the backfill far enough back
+	// The test database is migrated to head; roll the backfill back far enough
 	// that the seeded pre-fix rows are the ones it sees.
 	if err := mig.DownTo(ctx, 289); err != nil {
 		t.Fatalf("DownTo(289): %v", err)
@@ -248,25 +197,31 @@ func TestMigration00290_UnbindsNonOAuthSources(t *testing.T) {
 		}
 		return id
 	}
-	// One app referenced only by non-OAuth rows (the reported bug) and one app
-	// that still backs a genuine OAuth source.
+	// One app referenced only by the pre-fix PAT row and one app still backing
+	// genuine OAuth sources.
 	patApp := insertApp("PAT-bound app")
 	oauthApp := insertApp("OAuth-backed app")
 
-	insertSource := func(provider, name string, appID uuid.UUID) uuid.UUID {
+	insertSource := func(provider, name, configJSON string, appID uuid.UUID) uuid.UUID {
 		t.Helper()
 		id := uuid.New()
 		if _, err := db.NewRaw(`
-			INSERT INTO kb.sources (id, project_id, provider, display_name, oauth_app_id)
-			VALUES (?, ?, ?, ?, ?)
-		`, id, projectID, provider, name, appID).Exec(ctx); err != nil {
+			INSERT INTO kb.sources (id, project_id, provider, display_name, config, oauth_app_id)
+			VALUES (?, ?, ?, ?, ?::jsonb, ?)
+		`, id, projectID, provider, name, configJSON, appID).Exec(ctx); err != nil {
 			t.Fatalf("insert %s source: %v", provider, err)
 		}
 		return id
 	}
-	webSource := insertSource(ProviderTypeWeb, "Docs site", patApp)
-	appSource := insertSource("github_app", "GitHub App bot", patApp)
-	driveSource := insertSource(ProviderTypeGoogleDrive, "Team drive", oauthApp)
+	// The reported case: a real GitHub PAT source carries no OAuth grant
+	// metadata, so the old code bound it to the sole github app.
+	patSource := insertSource(ProviderTypeGitHub, "Docs via PAT", `{"repo":"acme/docs"}`, patApp)
+	// A GitHub OAuth completion records the granted scope; it must survive.
+	githubOAuth := insertSource(ProviderTypeGitHub, "GitHub repo", `{"repo":"acme/docs","oauth_granted_scopes":["repo"]}`, oauthApp)
+	// A Drive OAuth source records scope + strategy; it must survive too.
+	driveSource := insertSource(ProviderTypeGoogleDrive, "Team drive",
+		`{"folder_id":"folder-a","oauth_granted_scopes":["https://www.googleapis.com/auth/drive.readonly"],"oauth_granted_strategy":"drive.file"}`,
+		oauthApp)
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	repo := NewRepository(db, log)
@@ -293,13 +248,13 @@ func TestMigration00290_UnbindsNonOAuthSources(t *testing.T) {
 		t.Fatalf("insert org_admin membership: %v", err)
 	}
 
-	// Before the backfill the pre-fix rows pin the app, so the delete is refused
-	// and the message names a source that never reads an OAuth client.
+	// Before the backfill the PAT row pins the app, so the delete is refused and
+	// the message names a source that never reads an OAuth client.
 	beforeErr := svc.DeleteOrgOAuthApp(ctx, orgID, admin.String(), patApp.String())
 	if beforeErr == nil {
 		t.Fatal("DeleteOrgOAuthApp() succeeded before the backfill; the seeded rows do not reproduce #554")
 	}
-	if !strings.Contains(beforeErr.Error(), "Docs site") {
+	if !strings.Contains(beforeErr.Error(), "Docs via PAT") {
 		t.Fatalf("pre-backfill refusal = %q, want it to name the PAT source", beforeErr.Error())
 	}
 
@@ -318,27 +273,28 @@ func TestMigration00290_UnbindsNonOAuthSources(t *testing.T) {
 		return row.OAuthAppID
 	}
 
-	if got := appIDOf(webSource); got != nil {
-		t.Fatalf("web source oauth_app_id = %v, want NULL after the backfill", *got)
+	if got := appIDOf(patSource); got != nil {
+		t.Fatalf("PAT source oauth_app_id = %v, want NULL after the backfill", *got)
 	}
-	if got := appIDOf(appSource); got != nil {
-		t.Fatalf("github_app source oauth_app_id = %v, want NULL after the backfill", *got)
+	if got := appIDOf(githubOAuth); got == nil || *got != oauthApp {
+		t.Fatalf("GitHub OAuth source oauth_app_id = %v, want its binding %s preserved", got, oauthApp)
 	}
 	if got := appIDOf(driveSource); got == nil || *got != oauthApp {
-		t.Fatalf("google_drive source oauth_app_id = %v, want the genuine binding %s preserved", got, oauthApp)
+		t.Fatalf("google_drive source oauth_app_id = %v, want its binding %s preserved", got, oauthApp)
 	}
 
-	// The previously PAT-bound app is now deletable, and the old refusal is
-	// gone because no source references it...
+	// The previously PAT-bound app is now deletable...
 	if err := svc.DeleteOrgOAuthApp(ctx, orgID, admin.String(), patApp.String()); err != nil {
 		t.Fatalf("DeleteOrgOAuthApp(PAT-bound app) error = %v, want success", err)
 	}
-	// ...while the app a genuine OAuth source still uses is not.
+	// ...while the app the OAuth sources still use is not.
 	err := svc.DeleteOrgOAuthApp(ctx, orgID, admin.String(), oauthApp.String())
 	if err == nil {
 		t.Fatal("DeleteOrgOAuthApp(OAuth-backed app) succeeded, want a refusal")
 	}
-	if !strings.Contains(err.Error(), "Team drive") || !strings.Contains(err.Error(), driveSource.String()) {
-		t.Fatalf("delete refusal = %q, want it to name the OAuth source (name and id)", err.Error())
+	for _, want := range []string{"GitHub repo", "Team drive", githubOAuth.String(), driveSource.String()} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("delete refusal = %q, want it to name %q", err.Error(), want)
+		}
 	}
 }

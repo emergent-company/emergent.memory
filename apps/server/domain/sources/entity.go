@@ -325,6 +325,11 @@ type CreateIntegrationRequest struct {
 	// OAuthAppID selects the named OAuth app this source uses. Empty lets the
 	// resolver pick the sole project/org app or the deployment default.
 	OAuthAppID *string `json:"oauthAppId,omitempty"`
+	// oauthCompletion marks a create issued by the OAuth callback. Only that
+	// path resolved an OAuth client, so only it may pin the resolved app
+	// implicitly; a credentials (PAT) create must not, even when the provider
+	// also supports OAuth (#554). Never serialised, so a caller cannot claim it.
+	oauthCompletion bool
 	// AllowIncompleteConfig lets a caller (the OAuth callback) create a source
 	// whose config is missing its sync target (folder_id/repo). The target is
 	// selected after consent and applied via a later update, so config
