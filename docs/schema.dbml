@@ -2735,7 +2735,9 @@ Table "kb"."source_event_claims" {
 
   Indexes {
     (source_id, subject_ref, state) [name: "idx_source_event_claims_active"]
+    (project_id) [name: "idx_source_event_claims_project"]
     (source_id, subject_ref, head_sha) [name: "uq_source_event_claims_head", unique]
+    (run_id) [name: "uq_source_event_claims_run", unique, note: '(run_id IS NOT NULL)']
   }
 }
 
@@ -2757,6 +2759,7 @@ Table "kb"."source_events" {
   "updated_at" timestamptz [not null, default: `now()`]
 
   Indexes {
+    (project_id) [name: "idx_source_events_project"]
     (source_id, subject_ref) [name: "idx_source_events_subject"]
     (source_id, delivery_id) [name: "uq_source_events_delivery", unique]
   }
@@ -2922,6 +2925,7 @@ Table "kb"."sources" {
     (credential_id) [name: "idx_sources_credential_id", note: '(credential_id IS NOT NULL)']
     (oauth_app_id) [name: "idx_sources_oauth_app_id", note: '(oauth_app_id IS NOT NULL)']
     (project_id, mcp_slug) [name: "idx_sources_project_mcp_slug", unique, note: '(mcp_slug IS NOT NULL)']
+    (id, project_id) [name: "uq_sources_id_project", unique]
   }
 }
 
@@ -3242,19 +3246,19 @@ Ref: "kb"."skill_usage"."skill_id" > "kb"."skills"."id"
 Ref: "kb"."skills"."org_id" > "kb"."orgs"."id"
 Ref: "kb"."skills"."project_id" > "kb"."projects"."id"
 Ref: "kb"."source_apps"."org_id" > "kb"."orgs"."id"
+Ref: "kb"."source_event_claims".("source_id", "project_id") > "kb"."sources".("id", "project_id")
 Ref: "kb"."source_event_claims"."project_id" > "kb"."projects"."id"
-Ref: "kb"."source_event_claims"."source_id" > "kb"."sources"."id"
+Ref: "kb"."source_events".("source_id", "project_id") > "kb"."sources".("id", "project_id")
 Ref: "kb"."source_events"."project_id" > "kb"."projects"."id"
-Ref: "kb"."source_events"."source_id" > "kb"."sources"."id"
 Ref: "kb"."source_generations"."source_id" > "kb"."sources"."id"
 Ref: "kb"."source_grants"."source_id" > "kb"."sources"."id"
 Ref: "kb"."source_objects"."source_id" > "kb"."sources"."id"
 Ref: "kb"."source_outcomes"."adopted_by_source_id" > "kb"."sources"."id"
 Ref: "kb"."source_outcomes"."source_id" > "kb"."sources"."id"
 Ref: "kb"."source_sync_jobs"."source_id" > "kb"."sources"."id"
+Ref: "kb"."source_triggers".("source_id", "project_id") > "kb"."sources".("id", "project_id")
 Ref: "kb"."source_triggers"."agent_id" > "kb"."agents"."id"
 Ref: "kb"."source_triggers"."project_id" > "kb"."projects"."id"
-Ref: "kb"."source_triggers"."source_id" > "kb"."sources"."id"
 Ref: "kb"."sources"."app_id" > "kb"."source_apps"."id"
 Ref: "kb"."sources"."credential_id" > "kb"."source_credentials"."id"
 Ref: "kb"."sources"."oauth_app_id" > "kb"."oauth_client_configs"."id"

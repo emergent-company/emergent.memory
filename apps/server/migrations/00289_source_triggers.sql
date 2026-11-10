@@ -34,18 +34,24 @@ ALTER TABLE kb.sources
 
 CREATE INDEX IF NOT EXISTS idx_sources_app_account
     ON kb.sources (app_id, external_account_id);
+-- Composite key lets child rows prove the source belongs to the same project
+-- their RLS predicate uses.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_sources_id_project
+    ON kb.sources (id, project_id);
 
 CREATE TABLE IF NOT EXISTS kb.source_triggers (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id   UUID NOT NULL REFERENCES kb.projects (id) ON DELETE CASCADE,
-    source_id    UUID NOT NULL REFERENCES kb.sources (id) ON DELETE CASCADE,
+    source_id    UUID NOT NULL,
     event_type   TEXT NOT NULL,
     agent_id     UUID NOT NULL REFERENCES kb.agents (id) ON DELETE CASCADE,
     queue        TEXT NOT NULL DEFAULT 'default',
     event_filter JSONB NOT NULL DEFAULT '{}'::jsonb,
     enabled      BOOLEAN NOT NULL DEFAULT TRUE,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT fk_source_triggers_source_project
+        FOREIGN KEY (source_id, project_id) REFERENCES kb.sources (id, project_id) ON DELETE CASCADE
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_source_triggers_source_event
@@ -56,7 +62,7 @@ CREATE INDEX IF NOT EXISTS idx_source_triggers_project
 CREATE TABLE IF NOT EXISTS kb.source_events (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id   UUID NOT NULL REFERENCES kb.projects (id) ON DELETE CASCADE,
-    source_id    UUID NOT NULL REFERENCES kb.sources (id) ON DELETE CASCADE,
+    source_id    UUID NOT NULL,
     delivery_id  TEXT NOT NULL,
     event_type   TEXT NOT NULL,
     action       TEXT NOT NULL DEFAULT '',
@@ -69,6 +75,8 @@ CREATE TABLE IF NOT EXISTS kb.source_events (
     error        TEXT,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT fk_source_events_source_project
+        FOREIGN KEY (source_id, project_id) REFERENCES kb.sources (id, project_id) ON DELETE CASCADE,
     CONSTRAINT chk_source_events_state
         CHECK (state IN ('received', 'dispatched', 'skipped', 'failed', 'superseded', 'cancelled'))
 );
@@ -77,6 +85,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_source_events_delivery
     ON kb.source_events (source_id, delivery_id);
 CREATE INDEX IF NOT EXISTS idx_source_events_subject
     ON kb.source_events (source_id, subject_ref);
+CREATE INDEX IF NOT EXISTS idx_source_events_project
+    ON kb.source_events (project_id);
 
 -- One active claim per subject/head replaces core.github_pr_review_claims.
 -- Deliveries stay in source_events (one row per delivery id); claims are the
@@ -84,13 +94,15 @@ CREATE INDEX IF NOT EXISTS idx_source_events_subject
 CREATE TABLE IF NOT EXISTS kb.source_event_claims (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id   UUID NOT NULL REFERENCES kb.projects (id) ON DELETE CASCADE,
-    source_id    UUID NOT NULL REFERENCES kb.sources (id) ON DELETE CASCADE,
+    source_id    UUID NOT NULL,
     subject_ref  TEXT NOT NULL,
     head_sha     TEXT NOT NULL,
     run_id       UUID,
     state        TEXT NOT NULL DEFAULT 'pending',
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT fk_source_event_claims_source_project
+        FOREIGN KEY (source_id, project_id) REFERENCES kb.sources (id, project_id) ON DELETE CASCADE,
     CONSTRAINT chk_source_event_claims_state
         CHECK (state IN ('pending', 'running', 'done', 'superseded', 'cancelled'))
 );
@@ -99,6 +111,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_source_event_claims_head
     ON kb.source_event_claims (source_id, subject_ref, head_sha);
 CREATE INDEX IF NOT EXISTS idx_source_event_claims_active
     ON kb.source_event_claims (source_id, subject_ref, state);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_source_event_claims_run
+    ON kb.source_event_claims (run_id)
+    WHERE run_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_source_event_claims_project
+    ON kb.source_event_claims (project_id);
 
 -- Project RLS mirrors kb.sources: an empty app.current_project_id is the
 -- system/worker bypass, otherwise rows are scoped to the setting.

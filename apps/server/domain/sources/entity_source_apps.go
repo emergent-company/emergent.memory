@@ -45,7 +45,7 @@ type SourceTrigger struct {
 	AgentID     uuid.UUID      `bun:"agent_id,notnull,type:uuid" json:"agentId"`
 	Queue       string         `bun:"queue,notnull,default:'default'" json:"queue"`
 	EventFilter map[string]any `bun:"event_filter,type:jsonb,notnull" json:"eventFilter"`
-	Enabled     bool           `bun:"enabled,notnull,default:true" json:"enabled"`
+	Enabled     bool           `bun:"enabled,notnull" json:"enabled"`
 	CreatedAt   time.Time      `bun:"created_at,notnull,default:now()" json:"createdAt"`
 	UpdatedAt   time.Time      `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
 }

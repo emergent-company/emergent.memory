@@ -44,9 +44,10 @@ func TestSourceAppsTriggersAndClaims(t *testing.T) {
 	require.Equal(t, app1.ID, byKey.ID)
 
 	// Trigger binding.
-	trigger := &SourceTrigger{ProjectID: projectID, SourceID: sourceID, EventType: "pull_request", AgentID: agentID, Queue: "security-review", EventFilter: map[string]any{}}
+	trigger := &SourceTrigger{ProjectID: projectID, SourceID: sourceID, EventType: "pull_request", AgentID: agentID, Queue: "security-review", EventFilter: map[string]any{}, Enabled: true}
 	require.NoError(t, repo.CreateSourceTrigger(ctx, trigger))
 	require.Error(t, repo.CreateSourceTrigger(ctx, &SourceTrigger{ProjectID: projectID, SourceID: sourceID, EventType: "pull_request", AgentID: agentID, Queue: "default"}))
+	require.NoError(t, repo.CreateSourceTrigger(ctx, &SourceTrigger{ProjectID: projectID, SourceID: sourceID, EventType: "issue", AgentID: agentID, Queue: "default", Enabled: false}))
 	enabled, err := repo.ListEnabledTriggersForSource(ctx, sourceID)
 	require.NoError(t, err)
 	require.Len(t, enabled, 1)
@@ -56,12 +57,13 @@ func TestSourceAppsTriggersAndClaims(t *testing.T) {
 	inserted, err := repo.InsertSourceEvent(ctx, ev)
 	require.NoError(t, err)
 	require.True(t, inserted)
+	require.NotEqual(t, uuid.Nil, ev.ID, "insert must return the generated id")
 	inserted, err = repo.InsertSourceEvent(ctx, &SourceEvent{ProjectID: projectID, SourceID: sourceID, DeliveryID: "d1", EventType: "pull_request", SubjectType: "pull_request", SubjectRef: "owner/repo#1", HeadSHA: "aaaa"})
 	require.NoError(t, err)
 	require.False(t, inserted)
 
 	// One claim per head; retry reuses it; a newer head supersedes it.
-	claim1, superseded, err := repo.ClaimSourceSubject(ctx, projectID, sourceID, "owner/repo#1", "aaaa")
+	claim1, superseded, err := repo.ClaimSourceSubject(ctx, projectID, sourceID, "owner/repo#1", "aaaa", "aaaa")
 	require.NoError(t, err)
 	require.Empty(t, superseded)
 	runID := uuid.New()
@@ -72,29 +74,43 @@ func TestSourceAppsTriggersAndClaims(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok)
 
-	claim1b, superseded, err := repo.ClaimSourceSubject(ctx, projectID, sourceID, "owner/repo#1", "aaaa")
+	claim1b, superseded, err := repo.ClaimSourceSubject(ctx, projectID, sourceID, "owner/repo#1", "aaaa", "aaaa")
 	require.NoError(t, err)
 	require.Empty(t, superseded)
 	require.Equal(t, claim1.ID, claim1b.ID)
 
-	claim2, superseded, err := repo.ClaimSourceSubject(ctx, projectID, sourceID, "owner/repo#1", "bbbb")
+	claim2, superseded, err := repo.ClaimSourceSubject(ctx, projectID, sourceID, "owner/repo#1", "bbbb", "bbbb")
 	require.NoError(t, err)
 	require.Contains(t, superseded, runID)
 	require.NotEqual(t, claim1.ID, claim2.ID)
 	require.Equal(t, SourceClaimSuperseded, sourceClaimState(t, db, claim1.ID))
-
-	// Cancelling a subject returns the active run for cancellation.
 	runID2 := uuid.New()
 	ok, err = repo.SetSourceEventClaimRun(ctx, claim2.ID, runID2, SourceClaimRunning)
 	require.NoError(t, err)
 	require.True(t, ok)
+
+	// An out-of-order delivery for an older head is rejected without touching
+	// the live claim.
+	_, _, err = repo.ClaimSourceSubject(ctx, projectID, sourceID, "owner/repo#1", "bbbb", "aaaa")
+	require.ErrorIs(t, err, ErrSourceEventStaleHead)
+	require.Equal(t, SourceClaimRunning, sourceClaimState(t, db, claim2.ID))
+
+	// Claims are per source: another source with the same subject gets its own.
+	source2 := uuid.New()
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.sources (id, project_id, provider, display_name) VALUES (?, ?, 'github_app', 'bot-2')`, source2, projectID)
+	require.NoError(t, err)
+	claimOther, _, err := repo.ClaimSourceSubject(ctx, projectID, source2, "owner/repo#1", "aaaa", "aaaa")
+	require.NoError(t, err)
+	require.NotEqual(t, claim1.ID, claimOther.ID)
+
+	// Cancelling a subject returns the active run for cancellation.
 	cancelled, err := repo.CancelSourceSubjectClaims(ctx, sourceID, "owner/repo#1")
 	require.NoError(t, err)
 	require.Contains(t, cancelled, runID2)
 	require.Equal(t, SourceClaimCancelled, sourceClaimState(t, db, claim2.ID))
 
 	// A head that moves back reactivates the prior claim row.
-	claim1c, _, err := repo.ClaimSourceSubject(ctx, projectID, sourceID, "owner/repo#1", "aaaa")
+	claim1c, _, err := repo.ClaimSourceSubject(ctx, projectID, sourceID, "owner/repo#1", "aaaa", "aaaa")
 	require.NoError(t, err)
 	require.Equal(t, claim1.ID, claim1c.ID)
 	require.Equal(t, SourceClaimPending, claim1c.State)

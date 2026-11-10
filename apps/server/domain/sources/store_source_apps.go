@@ -2,17 +2,26 @@ package sources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
+
+// ErrSourceEventStaleHead is returned when the delivered head is not the
+// subject's current head (out-of-order or replayed delivery).
+var ErrSourceEventStaleHead = errors.New("sources: delivered head is not the current subject head")
 
 // --- Source Apps ---
 
 func (r *Repository) CreateSourceApp(ctx context.Context, app *SourceApp) error {
-	_, err := r.db.NewInsert().Model(app).Returning("*").Exec(ctx)
-	return err
+	if _, err := r.db.NewInsert().Model(app).Returning("*").Exec(ctx); err != nil {
+		return apperror.NewDatabase("failed to create source app", err)
+	}
+	return nil
 }
 
 func (r *Repository) FindSourceAppByID(ctx context.Context, id uuid.UUID) (*SourceApp, error) {
@@ -55,8 +64,10 @@ func (r *Repository) ListSourceAppsByOrg(ctx context.Context, orgID uuid.UUID) (
 }
 
 func (r *Repository) DeleteSourceApp(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.NewDelete().Model((*SourceApp)(nil)).Where("id = ?", id).Exec(ctx)
-	return err
+	if _, err := r.db.NewDelete().Model((*SourceApp)(nil)).Where("id = ?", id).Exec(ctx); err != nil {
+		return apperror.NewDatabase("failed to delete source app", err)
+	}
+	return nil
 }
 
 // --- Triggers ---
@@ -65,8 +76,10 @@ func (r *Repository) CreateSourceTrigger(ctx context.Context, trigger *SourceTri
 	if trigger.EventFilter == nil {
 		trigger.EventFilter = map[string]any{}
 	}
-	_, err := r.db.NewInsert().Model(trigger).Returning("*").Exec(ctx)
-	return err
+	if _, err := r.db.NewInsert().Model(trigger).Returning("*").Exec(ctx); err != nil {
+		return apperror.NewDatabase("failed to create source trigger", err)
+	}
+	return nil
 }
 
 func (r *Repository) ListEnabledTriggersForSource(ctx context.Context, sourceID uuid.UUID) ([]*SourceTrigger, error) {
@@ -96,17 +109,21 @@ func (r *Repository) UpdateSourceTrigger(ctx context.Context, trigger *SourceTri
 	if trigger.EventFilter == nil {
 		trigger.EventFilter = map[string]any{}
 	}
-	_, err := r.db.NewUpdate().Model(trigger).
+	if _, err := r.db.NewUpdate().Model(trigger).
 		Column("agent_id", "queue", "event_filter", "enabled").
 		Set("updated_at = now()").
 		Where("id = ?", trigger.ID).
-		Exec(ctx)
-	return err
+		Exec(ctx); err != nil {
+		return apperror.NewDatabase("failed to update source trigger", err)
+	}
+	return nil
 }
 
 func (r *Repository) DeleteSourceTrigger(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.NewDelete().Model((*SourceTrigger)(nil)).Where("id = ?", id).Exec(ctx)
-	return err
+	if _, err := r.db.NewDelete().Model((*SourceTrigger)(nil)).Where("id = ?", id).Exec(ctx); err != nil {
+		return apperror.NewDatabase("failed to delete source trigger", err)
+	}
+	return nil
 }
 
 // --- Events and claims ---
@@ -121,6 +138,7 @@ func (r *Repository) InsertSourceEvent(ctx context.Context, ev *SourceEvent) (bo
 		ev.State = SourceEventReceived
 	}
 	res, err := r.db.NewInsert().Model(ev).
+		Returning("*").
 		On("CONFLICT (source_id, delivery_id) DO NOTHING").
 		Exec(ctx)
 	if err != nil {
@@ -143,9 +161,12 @@ func (r *Repository) FindSourceEventByID(ctx context.Context, id uuid.UUID) (*So
 
 // ClaimSourceSubject records one active claim per subject/head and supersedes
 // claims for older heads, returning their run ids for cancellation.
-func (r *Repository) ClaimSourceSubject(ctx context.Context, projectID, sourceID uuid.UUID, subjectRef, headSHA string) (*SourceEventClaim, []uuid.UUID, error) {
+func (r *Repository) ClaimSourceSubject(ctx context.Context, projectID, sourceID uuid.UUID, subjectRef, currentHead, headSHA string) (*SourceEventClaim, []uuid.UUID, error) {
 	if subjectRef == "" || headSHA == "" {
 		return nil, nil, fmt.Errorf("sources: subject and head are required")
+	}
+	if currentHead == "" || currentHead != headSHA {
+		return nil, nil, ErrSourceEventStaleHead
 	}
 	claim := new(SourceEventClaim)
 	var superseded []uuid.UUID
@@ -249,7 +270,11 @@ func (r *Repository) SetSourceEventClaimState(ctx context.Context, claimID uuid.
 // and returns their run ids.
 func (r *Repository) CancelSourceSubjectClaims(ctx context.Context, sourceID uuid.UUID, subjectRef string) ([]uuid.UUID, error) {
 	var cancelled []uuid.UUID
+	lockKey := fmt.Sprintf("source-claim:%s:%s", sourceID, subjectRef)
 	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", lockKey).Exec(ctx); err != nil {
+			return err
+		}
 		var active []SourceEventClaim
 		if err := tx.NewSelect().Model(&active).
 			Where("source_id = ?", sourceID).
