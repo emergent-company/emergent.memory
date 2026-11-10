@@ -1263,6 +1263,28 @@
         }
       }
     },
+    "objects.card.unassigned": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unassigned"
+          }
+        }
+      }
+    },
+    "objects.card.updateFailed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not update the work item"
+          }
+        }
+      }
+    },
     "objects.card.labels": {
       "extractionState": "manual",
       "localizations": {

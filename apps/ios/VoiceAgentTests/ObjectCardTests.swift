@@ -72,6 +72,52 @@ struct ObjectCardDecodingTests {
         #expect(card.type.label == "task")
     }
 
+    @Test func workflowPickersDecodeTheirOptions() throws {
+        let json = #"""
+        {"id":"o1","title":"Ship it","key":"TASK-1","type":{"name":"task"},
+         "workflow":{
+           "status":{"value":"review","label":"Review","tone":"warning"},
+           "assignee":"diane",
+           "allowed_statuses":[
+             {"value":"ready","label":"Ready","tone":"neutral"},
+             {"value":"review","label":"Review","tone":"warning"},
+             {"value":"done","label":"Done","tone":"success"}
+           ],
+           "assignees":[{"value":"agent-a","label":"agent-a"},{"value":"Alice","label":"Alice"}]
+         },
+         "sections":[],"labels":[]}
+        """#
+        let card = try JSONDecoder().decode(ObjectCard.self, from: Data(json.utf8))
+        guard let workflow = card.workflow else {
+            Issue.record("workflow strip missing")
+            return
+        }
+        #expect(workflow.allowedStatuses.map(\.value) == ["ready", "review", "done"])
+        #expect(workflow.allowedStatuses[1].label == "Review")
+        #expect(workflow.allowedStatuses[1].tone == "warning")
+        #expect(workflow.assignees.map(\.value) == ["agent-a", "Alice"])
+        #expect(card.canEditWorkflow)
+    }
+
+    @Test func keylessOrOptionlessWorkflowIsReadOnly() throws {
+        // No key: the write routes have no work item to act on.
+        let keyless = try JSONDecoder().decode(ObjectCard.self, from: Data(#"""
+        {"id":"o1","title":"Note","type":{"name":"note"},
+         "workflow":{"status":{"value":"ready","label":"Ready"},
+                     "allowed_statuses":[{"value":"ready","label":"Ready"}]},
+         "sections":[],"labels":[]}
+        """#.utf8))
+        #expect(!keyless.canEditWorkflow)
+
+        // A key but no declared statuses: nothing to pick.
+        let optionless = try JSONDecoder().decode(ObjectCard.self, from: Data(#"""
+        {"id":"o1","title":"Task","key":"TASK-1","type":{"name":"task"},
+         "workflow":{"status":{"value":"ready","label":"Ready"}},
+         "sections":[],"labels":[]}
+        """#.utf8))
+        #expect(!optionless.canEditWorkflow)
+    }
+
     @Test func sparseCardStillOpens() throws {
         let card = try JSONDecoder().decode(ObjectCard.self, from: Data(#"{"id":"o1"}"#.utf8))
         #expect(card.title == "o1")
@@ -141,12 +187,23 @@ struct ObjectTypeAppearanceTests {
 final class FakeObjectCardClient: ObjectCardFetching {
     var cards: [Result<ObjectCard, Error>]
     var histories: [Result<[ObjectCardVersion], Error>]
+    var statusUpdates: [Result<ObjectCard, Error>]
+    var assigneeUpdates: [Result<ObjectCard, Error>]
     private(set) var cardCalls: [ObjectReference] = []
     private(set) var historyCalls = 0
+    private(set) var statusCalls: [String] = []
+    private(set) var assigneeCalls: [String] = []
 
-    init(cards: [Result<ObjectCard, Error>], histories: [Result<[ObjectCardVersion], Error>] = []) {
+    init(
+        cards: [Result<ObjectCard, Error>],
+        histories: [Result<[ObjectCardVersion], Error>] = [],
+        statusUpdates: [Result<ObjectCard, Error>] = [],
+        assigneeUpdates: [Result<ObjectCard, Error>] = []
+    ) {
         self.cards = cards
         self.histories = histories
+        self.statusUpdates = statusUpdates
+        self.assigneeUpdates = assigneeUpdates
     }
 
     func card(for reference: ObjectReference) async throws -> ObjectCard {
@@ -158,6 +215,22 @@ final class FakeObjectCardClient: ObjectCardFetching {
         historyCalls += 1
         guard !histories.isEmpty else { return [] }
         return try (histories.count > 1 ? histories.removeFirst() : histories[0]).get()
+    }
+
+    func setStatus(_ status: String, for _: ObjectReference) async throws -> ObjectCard {
+        statusCalls.append(status)
+        guard !statusUpdates.isEmpty else {
+            throw GatewayError.httpStatus(500, "no queued status update")
+        }
+        return try (statusUpdates.count > 1 ? statusUpdates.removeFirst() : statusUpdates[0]).get()
+    }
+
+    func setAssignee(_ assignee: String, for _: ObjectReference) async throws -> ObjectCard {
+        assigneeCalls.append(assignee)
+        guard !assigneeUpdates.isEmpty else {
+            throw GatewayError.httpStatus(500, "no queued assignee update")
+        }
+        return try (assigneeUpdates.count > 1 ? assigneeUpdates.removeFirst() : assigneeUpdates[0]).get()
     }
 }
 
@@ -204,6 +277,71 @@ struct ObjectCardStoreTests {
         #expect(store.history.map(\.version) == [1])
         await store.loadHistoryIfNeeded()
         #expect(fake.historyCalls == 2)
+    }
+
+    @Test func statusUpdateAdoptsTheRefreshedCard() async {
+        let ready = workItemCard(status: ObjectCardStatus(value: "ready", label: "Ready"))
+        let done = workItemCard(status: ObjectCardStatus(value: "done", label: "Done", tone: "success"))
+        let fake = FakeObjectCardClient(cards: [.success(ready)], statusUpdates: [.success(done)])
+        let store = ObjectCardStore(reference: reference, client: fake)
+        await store.load()
+
+        await store.setStatus("done")
+        #expect(fake.statusCalls == ["done"])
+        #expect(store.card == done)
+        #expect(store.actionError == nil)
+        #expect(store.isSaving == false)
+    }
+
+    @Test func failedStatusUpdateKeepsTheOldValueAndShowsTheError() async {
+        let workItem = workItemCard(status: ObjectCardStatus(value: "ready", label: "Ready"))
+        let fake = FakeObjectCardClient(
+            cards: [.success(workItem)],
+            statusUpdates: [.failure(GatewayError.httpStatus(400, "status is not in the type's allowed work-status set: shipped"))]
+        )
+        let store = ObjectCardStore(reference: reference, client: fake)
+        await store.load()
+
+        await store.setStatus("shipped")
+        // The stored value is untouched: the drawer never guesses, so there is
+        // nothing to revert.
+        #expect(store.card == workItem)
+        #expect(store.actionError == "status is not in the type's allowed work-status set: shipped")
+        #expect(store.isSaving == false)
+    }
+
+    @Test func assigneeUpdateSendsTheExactValue() async {
+        let workItem = workItemCard(status: ObjectCardStatus(value: "ready", label: "Ready"))
+        let fake = FakeObjectCardClient(
+            cards: [.success(workItem)],
+            assigneeUpdates: [.success(workItem), .success(workItem)]
+        )
+        let store = ObjectCardStore(reference: reference, client: fake)
+        await store.load()
+
+        await store.setAssignee("agent-a")
+        await store.setAssignee("")
+        #expect(fake.assigneeCalls == ["agent-a", ""])
+        #expect(store.actionError == nil)
+    }
+
+    /// A work-item card with the statuses and candidates the pickers need.
+    private func workItemCard(status: ObjectCardStatus) -> ObjectCard {
+        ObjectCard(
+            id: "o1",
+            copyID: "o1",
+            title: "sam",
+            key: "TASK-1",
+            type: ObjectCardType(name: "task"),
+            workflow: ObjectCardWorkflow(
+                status: status,
+                allowedStatuses: [
+                    ObjectCardStatus(value: "ready", label: "Ready", tone: "neutral"),
+                    ObjectCardStatus(value: "done", label: "Done", tone: "success"),
+                ],
+                assignees: [ObjectCardAssignee(value: "agent-a")]
+            )
+        )
     }
 }
 
