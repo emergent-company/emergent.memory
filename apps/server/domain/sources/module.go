@@ -24,12 +24,14 @@ var Module = fx.Module("sources",
 		NewHandler,
 		NewDiscoveryStarter,
 		NewSyncWorker,
+		NewReviewToolHandler,
 	),
 	fx.Invoke(
 		RegisterRoutes,
 		RegisterSyncWorkerLifecycle,
 		RegisterSyncSchedulerTask,
 		RegisterSourceToolHandler,
+		RegisterReviewToolHandler,
 		RegisterSourceMCPBackfill,
 		RegisterProbeSchedulerTask,
 	),
@@ -52,6 +54,14 @@ func ProvideService(repo *Repository, cfg *config.Config, log *slog.Logger, regi
 // agent tool pool.
 func RegisterSourceToolHandler(mcpSvc *mcp.Service, svc *Service) {
 	mcpSvc.RegisterSourceToolHandler(svc)
+}
+
+// RegisterReviewToolHandler exposes github-pr-diff / github-review-submit. It is
+// unconditional: the sources module is always loaded, unlike the githubapp
+// module it replaces, so the static catalog never advertises a tool without an
+// executor (#579). mcp refuses a second provider claiming these names.
+func RegisterReviewToolHandler(mcpSvc *mcp.Service, h *ReviewToolHandler) {
+	mcpSvc.RegisterGitHubAppToolHandler(h)
 }
 
 // driveAccountEmailResolver reads the account email through a short-lived Drive

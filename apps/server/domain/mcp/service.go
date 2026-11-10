@@ -95,7 +95,7 @@ type Service struct {
 	blueprintToolHandler BlueprintToolHandler
 
 	// GitHub App review tool handler (injected to break the
-	// githubapp -> agents -> mcp dependency direction).
+	// sources -> agents -> mcp dependency direction).
 	githubAppToolHandler GitHubAppToolHandler
 
 	// Brave Search API configuration
@@ -353,8 +353,19 @@ func (s *Service) RegisterMCPRegistryToolHandler(h MCPRegistryToolHandler) {
 }
 
 // RegisterGitHubAppToolHandler wires the GitHub App review tools after
-// construction (githubapp -> agents -> mcp, so no constructor cycle).
+// construction (sources -> agents -> mcp, so no constructor cycle).
+//
+// Exactly one provider may own github-pr-diff / github-review-submit. A second
+// registration panics instead of silently replacing the first: the review tools
+// must never route to an executor whose backing tables or credentials the
+// deployment is mid-migration away from (#579).
 func (s *Service) RegisterGitHubAppToolHandler(h GitHubAppToolHandler) {
+	if h == nil {
+		return
+	}
+	if s.githubAppToolHandler != nil {
+		panic("mcp: github app review tool handler already registered; exactly one provider may own github-pr-diff/github-review-submit")
+	}
 	s.githubAppToolHandler = h
 }
 

@@ -1,4 +1,4 @@
-package githubapp
+package sources
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/emergent-company/emergent.memory/domain/githubapp"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 )
 
@@ -55,8 +56,8 @@ func TestReviewSubmitRequiresDiffInSameRun(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewClient(srv.URL, "ghs_test", srv.Client())
-	svc := &Service{}
+	client := githubapp.NewClient(srv.URL, "ghs_test", srv.Client())
+	h := &ReviewToolHandler{}
 	args := func() map[string]any {
 		return map[string]any{
 			"repo": "owner/repo", "number": float64(7), "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -65,21 +66,21 @@ func TestReviewSubmitRequiresDiffInSameRun(t *testing.T) {
 	}
 
 	// No run cache at all: no evidence can exist, so the submit fails closed.
-	_, err := svc.executeReviewSubmit(context.Background(), client, "owner/repo", args())
+	_, err := h.executeReviewSubmit(context.Background(), client, "owner/repo", args())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "github-pr-diff")
 
 	// A run that read nothing is refused.
 	ctx := mcp.ContextWithNewToolResultCache(context.Background())
-	_, err = svc.executeReviewSubmit(ctx, client, "owner/repo", args())
+	_, err = h.executeReviewSubmit(ctx, client, "owner/repo", args())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "github-pr-diff")
 	require.Equal(t, 0, reviews, "no review may be posted without reading the diff")
 
 	// Reading the exact commit records evidence; the same run may now submit.
-	_, err = svc.executePRDiff(ctx, client, "owner/repo", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	_, err = h.executePRDiff(ctx, client, "owner/repo", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	require.NoError(t, err)
-	_, err = svc.executeReviewSubmit(ctx, client, "owner/repo", args())
+	_, err = h.executeReviewSubmit(ctx, client, "owner/repo", args())
 	require.NoError(t, err)
 	require.Equal(t, 1, reviews)
 	require.Equal(t, 1, checks)
@@ -90,9 +91,9 @@ func TestReviewSubmitRequiresDiffInSameRun(t *testing.T) {
 	head = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	files = nil
 	emptyCtx := mcp.ContextWithNewToolResultCache(context.Background())
-	_, err = svc.executePRDiff(emptyCtx, client, "owner/repo", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	_, err = h.executePRDiff(emptyCtx, client, "owner/repo", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 	require.NoError(t, err)
-	_, err = svc.executeReviewSubmit(emptyCtx, client, "owner/repo", map[string]any{
+	_, err = h.executeReviewSubmit(emptyCtx, client, "owner/repo", map[string]any{
 		"repo": "owner/repo", "number": float64(7), "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		"verdict": "MERGE", "summary": "approved without reading anything",
 	})
@@ -101,7 +102,7 @@ func TestReviewSubmitRequiresDiffInSameRun(t *testing.T) {
 	require.Equal(t, 1, reviews)
 
 	// A branch name is not a commit: the diff tool refuses it before any request.
-	_, err = svc.executePRDiff(context.Background(), client, "owner/repo", "main")
+	_, err = h.executePRDiff(context.Background(), client, "owner/repo", "main")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not a commit SHA")
 }

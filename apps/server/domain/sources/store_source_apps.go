@@ -460,6 +460,33 @@ func (r *Repository) FindSourceByAppAndInstallation(ctx context.Context, appID u
 	return src, nil
 }
 
+// FindGitHubAppSourcesForRepo returns every github_app source in the project
+// whose repo allowlist covers repo (case-insensitively, through the same
+// repoAllowed helper the dispatcher uses). It returns the candidates rather
+// than one row so the caller can distinguish "exactly one" from "ambiguous":
+// two Apps may serve the same repo, and a tool must fail closed instead of
+// taking the first. Ordered oldest first like the dispatcher's resolution.
+func (r *Repository) FindGitHubAppSourcesForRepo(ctx context.Context, projectID uuid.UUID, repo string) ([]Source, error) {
+	var rows []Source
+	if err := r.db.NewSelect().Model(&rows).
+		Where("s.project_id = ?", projectID).
+		Where("s.provider = ?", ProviderTypeGitHubApp).
+		Where("s.status <> ?", SourceStatusDisabled).
+		Where("s.app_id IS NOT NULL").
+		Where("s.external_account_id IS NOT NULL").
+		Order("s.created_at ASC").
+		Scan(ctx); err != nil {
+		return nil, apperror.NewDatabase("failed to list github_app sources for repo", err)
+	}
+	matches := make([]Source, 0, len(rows))
+	for _, src := range rows {
+		if repoAllowed(src.Config, repo) {
+			matches = append(matches, src)
+		}
+	}
+	return matches, nil
+}
+
 // UpdateSourceRepos rewrites the github_app repo allowlist in the source config.
 func (r *Repository) UpdateSourceRepos(ctx context.Context, sourceID uuid.UUID, repos []string) error {
 	src, err := r.FindSourceByID(ctx, sourceID)
