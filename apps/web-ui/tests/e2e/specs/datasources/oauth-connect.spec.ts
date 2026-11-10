@@ -327,3 +327,4 @@ test.describe('provider-generic OAuth data-source connect', () => {
     await expect(page.getByTestId('ds-oauth-app-client-secret')).toHaveValue('');
     await expect(page.getByTestId('ds-oauth-app-client-id')).toHaveValue('e2e-oauth-client-id');
   });
+});
