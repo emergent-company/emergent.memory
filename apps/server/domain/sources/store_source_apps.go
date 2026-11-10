@@ -9,11 +9,35 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/pgutils"
 )
 
 // ErrSourceEventStaleHead is returned when the delivered head is not the
 // subject's current head (out-of-order or replayed delivery).
 var ErrSourceEventStaleHead = errors.New("sources: delivered head is not the current subject head")
+
+// projectTx runs fn inside a transaction whose app.current_project_id is
+// projectID, written with set_config(..., is_local = true).
+//
+// The 00291 policies on kb.source_triggers, kb.source_events and
+// kb.source_event_claims are fail-closed: they match nothing (and refuse
+// unset-context writes) unless the transaction carries the project. The
+// session-less webhook ingress resolves the project from kb.sources (still on
+// its baseline fail-open policy) and then opens this transaction for every
+// read/write of the three child tables. is_local = true makes the setting die
+// with the transaction, so it can never leak across a pooled connection into
+// another project's request.
+func (r *Repository) projectTx(ctx context.Context, projectID uuid.UUID, fn func(ctx context.Context, tx bun.Tx) error) error {
+	if projectID == uuid.Nil {
+		return errors.New("sources: project context is required for source trigger/event rows")
+	}
+	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw("SELECT set_config('app.current_project_id', ?, true)", projectID.String()).Exec(ctx); err != nil {
+			return fmt.Errorf("sources: set source event project context: %w", err)
+		}
+		return fn(ctx, tx)
+	})
+}
 
 // --- Source Apps ---
 
@@ -63,11 +87,55 @@ func (r *Repository) ListSourceAppsByOrg(ctx context.Context, orgID uuid.UUID) (
 	return apps, nil
 }
 
+// DeleteSourceApp removes an org-scoped App credential. It refuses while
+// project sources are still bound to the App, naming them in the error: the
+// App is org-scoped while the sources are project-scoped, so a delete must not
+// silently destroy project data (issue #565).
 func (r *Repository) DeleteSourceApp(ctx context.Context, id uuid.UUID) error {
+	bound, err := r.listSourcesBoundToApp(ctx, id)
+	if err != nil {
+		return err
+	}
+	if len(bound) > 0 {
+		return sourceAppInUseError(bound)
+	}
 	if _, err := r.db.NewDelete().Model((*SourceApp)(nil)).Where("id = ?", id).Exec(ctx); err != nil {
+		if pgutils.IsForeignKeyViolation(err) {
+			// Lost the race against a concurrent source bind: report the same
+			// nameable refusal the precheck would have produced.
+			bound, _ = r.listSourcesBoundToApp(ctx, id)
+			return sourceAppInUseError(bound)
+		}
 		return apperror.NewDatabase("failed to delete source app", err)
 	}
 	return nil
+}
+
+func (r *Repository) listSourcesBoundToApp(ctx context.Context, appID uuid.UUID) ([]OAuthAppSourceRef, error) {
+	refs := []OAuthAppSourceRef{}
+	if err := r.db.NewSelect().
+		TableExpr("kb.sources").
+		ColumnExpr("id").
+		ColumnExpr("coalesce(display_name, '') AS display_name").
+		Where("app_id = ?", appID).
+		OrderExpr("created_at, id").
+		Scan(ctx, &refs); err != nil {
+		return nil, apperror.NewDatabase("failed to list sources bound to source app", err)
+	}
+	return refs, nil
+}
+
+// sourceAppInUseError mirrors oauthAppInUseError for kb.source_apps: it names
+// the project sources still bound to the org App so the operator can detach
+// them instead of chasing a bare count. The kb.sources.app_id foreign key is
+// ON DELETE RESTRICT as the database-level backstop (migration 00291).
+func sourceAppInUseError(refs []OAuthAppSourceRef) error {
+	if len(refs) == 0 {
+		return apperror.NewConflict("source app is still referenced by a project source; detach it first")
+	}
+	return apperror.NewConflict(fmt.Sprintf(
+		"source app is bound to %d project source(s): %s; detach them before deleting",
+		len(refs), namedOAuthAppSources(refs)))
 }
 
 // --- Triggers ---
@@ -76,30 +144,40 @@ func (r *Repository) CreateSourceTrigger(ctx context.Context, trigger *SourceTri
 	if trigger.EventFilter == nil {
 		trigger.EventFilter = map[string]any{}
 	}
-	if _, err := r.db.NewInsert().Model(trigger).Returning("*").Exec(ctx); err != nil {
+	err := r.projectTx(ctx, trigger.ProjectID, func(ctx context.Context, tx bun.Tx) error {
+		_, err := tx.NewInsert().Model(trigger).Returning("*").Exec(ctx)
+		return err
+	})
+	if err != nil {
 		return apperror.NewDatabase("failed to create source trigger", err)
 	}
 	return nil
 }
 
-func (r *Repository) ListEnabledTriggersForSource(ctx context.Context, sourceID uuid.UUID) ([]*SourceTrigger, error) {
+func (r *Repository) ListEnabledTriggersForSource(ctx context.Context, projectID, sourceID uuid.UUID) ([]*SourceTrigger, error) {
 	var triggers []*SourceTrigger
-	if err := r.db.NewSelect().Model(&triggers).
-		Where("st.source_id = ?", sourceID).
-		Where("st.enabled = true").
-		Order("st.created_at ASC").
-		Scan(ctx); err != nil {
+	err := r.projectTx(ctx, projectID, func(ctx context.Context, tx bun.Tx) error {
+		return tx.NewSelect().Model(&triggers).
+			Where("st.source_id = ?", sourceID).
+			Where("st.enabled = true").
+			Order("st.created_at ASC").
+			Scan(ctx)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return triggers, nil
 }
 
-func (r *Repository) ListSourceTriggers(ctx context.Context, sourceID uuid.UUID) ([]*SourceTrigger, error) {
+func (r *Repository) ListSourceTriggers(ctx context.Context, projectID, sourceID uuid.UUID) ([]*SourceTrigger, error) {
 	var triggers []*SourceTrigger
-	if err := r.db.NewSelect().Model(&triggers).
-		Where("st.source_id = ?", sourceID).
-		Order("st.event_type ASC").
-		Scan(ctx); err != nil {
+	err := r.projectTx(ctx, projectID, func(ctx context.Context, tx bun.Tx) error {
+		return tx.NewSelect().Model(&triggers).
+			Where("st.source_id = ?", sourceID).
+			Order("st.event_type ASC").
+			Scan(ctx)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return triggers, nil
@@ -109,18 +187,26 @@ func (r *Repository) UpdateSourceTrigger(ctx context.Context, trigger *SourceTri
 	if trigger.EventFilter == nil {
 		trigger.EventFilter = map[string]any{}
 	}
-	if _, err := r.db.NewUpdate().Model(trigger).
-		Column("agent_id", "queue", "event_filter", "enabled").
-		Set("updated_at = now()").
-		Where("id = ?", trigger.ID).
-		Exec(ctx); err != nil {
+	err := r.projectTx(ctx, trigger.ProjectID, func(ctx context.Context, tx bun.Tx) error {
+		_, err := tx.NewUpdate().Model(trigger).
+			Column("agent_id", "queue", "event_filter", "enabled").
+			Set("updated_at = now()").
+			Where("id = ?", trigger.ID).
+			Exec(ctx)
+		return err
+	})
+	if err != nil {
 		return apperror.NewDatabase("failed to update source trigger", err)
 	}
 	return nil
 }
 
-func (r *Repository) DeleteSourceTrigger(ctx context.Context, id uuid.UUID) error {
-	if _, err := r.db.NewDelete().Model((*SourceTrigger)(nil)).Where("id = ?", id).Exec(ctx); err != nil {
+func (r *Repository) DeleteSourceTrigger(ctx context.Context, projectID, id uuid.UUID) error {
+	err := r.projectTx(ctx, projectID, func(ctx context.Context, tx bun.Tx) error {
+		_, err := tx.NewDelete().Model((*SourceTrigger)(nil)).Where("id = ?", id).Exec(ctx)
+		return err
+	})
+	if err != nil {
 		return apperror.NewDatabase("failed to delete source trigger", err)
 	}
 	return nil
@@ -137,23 +223,34 @@ func (r *Repository) InsertSourceEvent(ctx context.Context, ev *SourceEvent) (bo
 	if ev.State == "" {
 		ev.State = SourceEventReceived
 	}
-	res, err := r.db.NewInsert().Model(ev).
-		Returning("*").
-		On("CONFLICT (source_id, delivery_id) DO NOTHING").
-		Exec(ctx)
+	var inserted bool
+	err := r.projectTx(ctx, ev.ProjectID, func(ctx context.Context, tx bun.Tx) error {
+		res, err := tx.NewInsert().Model(ev).
+			Returning("*").
+			On("CONFLICT (source_id, delivery_id) DO NOTHING").
+			Exec(ctx)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		inserted = n > 0
+		return nil
+	})
 	if err != nil {
 		return false, err
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	return n > 0, nil
+	return inserted, nil
 }
 
-func (r *Repository) FindSourceEventByID(ctx context.Context, id uuid.UUID) (*SourceEvent, error) {
+func (r *Repository) FindSourceEventByID(ctx context.Context, projectID, id uuid.UUID) (*SourceEvent, error) {
 	ev := new(SourceEvent)
-	if err := r.db.NewSelect().Model(ev).Where("se.id = ?", id).Scan(ctx); err != nil {
+	err := r.projectTx(ctx, projectID, func(ctx context.Context, tx bun.Tx) error {
+		return tx.NewSelect().Model(ev).Where("se.id = ?", id).Scan(ctx)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return ev, nil
@@ -172,7 +269,7 @@ func (r *Repository) ClaimSourceSubject(ctx context.Context, projectID, sourceID
 	var superseded []uuid.UUID
 	lockKey := fmt.Sprintf("source-claim:%s:%s", sourceID, subjectRef)
 
-	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+	err := r.projectTx(ctx, projectID, func(ctx context.Context, tx bun.Tx) error {
 		if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", lockKey).Exec(ctx); err != nil {
 			return err
 		}
@@ -228,50 +325,66 @@ func (r *Repository) ClaimSourceSubject(ctx context.Context, projectID, sourceID
 }
 
 // SetSourceEventClaimRun binds a run to a pending claim (one binder wins).
-func (r *Repository) SetSourceEventClaimRun(ctx context.Context, claimID, runID uuid.UUID, state string) (bool, error) {
-	res, err := r.db.NewUpdate().
-		Table("kb.source_event_claims").
-		Set("run_id = ?", runID).
-		Set("state = ?", state).
-		Set("updated_at = now()").
-		Where("id = ?", claimID).
-		Where("run_id IS NULL").
-		Where("state = ?", SourceClaimPending).
-		Exec(ctx)
+func (r *Repository) SetSourceEventClaimRun(ctx context.Context, projectID, claimID, runID uuid.UUID, state string) (bool, error) {
+	var updated bool
+	err := r.projectTx(ctx, projectID, func(ctx context.Context, tx bun.Tx) error {
+		res, err := tx.NewUpdate().
+			Table("kb.source_event_claims").
+			Set("run_id = ?", runID).
+			Set("state = ?", state).
+			Set("updated_at = now()").
+			Where("id = ?", claimID).
+			Where("run_id IS NULL").
+			Where("state = ?", SourceClaimPending).
+			Exec(ctx)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		updated = n > 0
+		return nil
+	})
 	if err != nil {
 		return false, err
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	return n > 0, nil
+	return updated, nil
 }
 
-func (r *Repository) SetSourceEventClaimState(ctx context.Context, claimID uuid.UUID, state string) (bool, error) {
-	res, err := r.db.NewUpdate().
-		Table("kb.source_event_claims").
-		Set("state = ?", state).
-		Set("updated_at = now()").
-		Where("id = ?", claimID).
-		Where("state IN (?)", bun.In([]string{SourceClaimPending, SourceClaimRunning})).
-		Exec(ctx)
+func (r *Repository) SetSourceEventClaimState(ctx context.Context, projectID, claimID uuid.UUID, state string) (bool, error) {
+	var updated bool
+	err := r.projectTx(ctx, projectID, func(ctx context.Context, tx bun.Tx) error {
+		res, err := tx.NewUpdate().
+			Table("kb.source_event_claims").
+			Set("state = ?", state).
+			Set("updated_at = now()").
+			Where("id = ?", claimID).
+			Where("state IN (?)", bun.In([]string{SourceClaimPending, SourceClaimRunning})).
+			Exec(ctx)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		updated = n > 0
+		return nil
+	})
 	if err != nil {
 		return false, err
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	return n > 0, nil
+	return updated, nil
 }
 
 // CancelSourceSubjectClaims cancels active claims for a subject (closed/draft)
 // and returns their run ids.
-func (r *Repository) CancelSourceSubjectClaims(ctx context.Context, sourceID uuid.UUID, subjectRef string) ([]uuid.UUID, error) {
+func (r *Repository) CancelSourceSubjectClaims(ctx context.Context, projectID, sourceID uuid.UUID, subjectRef string) ([]uuid.UUID, error) {
 	var cancelled []uuid.UUID
 	lockKey := fmt.Sprintf("source-claim:%s:%s", sourceID, subjectRef)
-	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+	err := r.projectTx(ctx, projectID, func(ctx context.Context, tx bun.Tx) error {
 		if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", lockKey).Exec(ctx); err != nil {
 			return err
 		}
@@ -309,9 +422,12 @@ func (r *Repository) CancelSourceSubjectClaims(ctx context.Context, sourceID uui
 }
 
 // FindSourceEventClaimByRunID resolves the claim bound to a run.
-func (r *Repository) FindSourceEventClaimByRunID(ctx context.Context, runID uuid.UUID) (*SourceEventClaim, error) {
+func (r *Repository) FindSourceEventClaimByRunID(ctx context.Context, projectID, runID uuid.UUID) (*SourceEventClaim, error) {
 	claim := new(SourceEventClaim)
-	if err := r.db.NewSelect().Model(claim).Where("sc.run_id = ?", runID).Limit(1).Scan(ctx); err != nil {
+	err := r.projectTx(ctx, projectID, func(ctx context.Context, tx bun.Tx) error {
+		return tx.NewSelect().Model(claim).Where("sc.run_id = ?", runID).Limit(1).Scan(ctx)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return claim, nil
@@ -380,38 +496,48 @@ func (r *Repository) DisableSourcesByInstallation(ctx context.Context, appID uui
 }
 
 // SetSourceEventState records the dispatch outcome on a delivery row.
-func (r *Repository) SetSourceEventState(ctx context.Context, id uuid.UUID, state string, runID *uuid.UUID, errMsg *string) error {
-	if _, err := r.db.NewUpdate().
-		Table("kb.source_events").
-		Set("state = ?", state).
-		Set("run_id = ?", runID).
-		Set("error = ?", errMsg).
-		Set("updated_at = now()").
-		Where("id = ?", id).
-		Exec(ctx); err != nil {
+func (r *Repository) SetSourceEventState(ctx context.Context, projectID, id uuid.UUID, state string, runID *uuid.UUID, errMsg *string) error {
+	err := r.projectTx(ctx, projectID, func(ctx context.Context, tx bun.Tx) error {
+		_, err := tx.NewUpdate().
+			Table("kb.source_events").
+			Set("state = ?", state).
+			Set("run_id = ?", runID).
+			Set("error = ?", errMsg).
+			Set("updated_at = now()").
+			Where("id = ?", id).
+			Exec(ctx)
+		return err
+	})
+	if err != nil {
 		return apperror.NewDatabase("failed to update source event", err)
 	}
 	return nil
 }
 
-func (r *Repository) FindSourceEventByDelivery(ctx context.Context, sourceID uuid.UUID, deliveryID string) (*SourceEvent, error) {
+func (r *Repository) FindSourceEventByDelivery(ctx context.Context, projectID, sourceID uuid.UUID, deliveryID string) (*SourceEvent, error) {
 	ev := new(SourceEvent)
-	if err := r.db.NewSelect().Model(ev).
-		Where("se.source_id = ?", sourceID).
-		Where("se.delivery_id = ?", deliveryID).
-		Scan(ctx); err != nil {
+	err := r.projectTx(ctx, projectID, func(ctx context.Context, tx bun.Tx) error {
+		return tx.NewSelect().Model(ev).
+			Where("se.source_id = ?", sourceID).
+			Where("se.delivery_id = ?", deliveryID).
+			Scan(ctx)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return ev, nil
 }
 
-func (r *Repository) FindSourceEventClaim(ctx context.Context, sourceID uuid.UUID, subjectRef, headSHA string) (*SourceEventClaim, error) {
+func (r *Repository) FindSourceEventClaim(ctx context.Context, projectID, sourceID uuid.UUID, subjectRef, headSHA string) (*SourceEventClaim, error) {
 	claim := new(SourceEventClaim)
-	if err := r.db.NewSelect().Model(claim).
-		Where("sc.source_id = ?", sourceID).
-		Where("sc.subject_ref = ?", subjectRef).
-		Where("sc.head_sha = ?", headSHA).
-		Scan(ctx); err != nil {
+	err := r.projectTx(ctx, projectID, func(ctx context.Context, tx bun.Tx) error {
+		return tx.NewSelect().Model(claim).
+			Where("sc.source_id = ?", sourceID).
+			Where("sc.subject_ref = ?", subjectRef).
+			Where("sc.head_sha = ?", headSHA).
+			Scan(ctx)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return claim, nil
@@ -435,28 +561,32 @@ func (r *Repository) ListSourcesByAppAndInstallation(ctx context.Context, appID 
 
 // DeleteSourceEvent removes a delivery row after a processing failure so the
 // provider's retry can re-attempt it.
-func (r *Repository) DeleteSourceEvent(ctx context.Context, id uuid.UUID) error {
-	if _, err := r.db.NewDelete().Table("kb.source_events").Where("id = ?", id).Exec(ctx); err != nil {
+func (r *Repository) DeleteSourceEvent(ctx context.Context, projectID, id uuid.UUID) error {
+	err := r.projectTx(ctx, projectID, func(ctx context.Context, tx bun.Tx) error {
+		_, err := tx.NewDelete().Table("kb.source_events").Where("id = ?", id).Exec(ctx)
+		return err
+	})
+	if err != nil {
 		return apperror.NewDatabase("failed to delete source event", err)
 	}
 	return nil
 }
 
 // CancelAllSourceClaims cancels every active claim for a source (uninstall).
-func (r *Repository) CancelAllSourceClaims(ctx context.Context, sourceID uuid.UUID) ([]uuid.UUID, error) {
-	return r.cancelClaims(ctx, sourceID, "", "")
+func (r *Repository) CancelAllSourceClaims(ctx context.Context, projectID, sourceID uuid.UUID) ([]uuid.UUID, error) {
+	return r.cancelClaims(ctx, projectID, sourceID, "", "")
 }
 
 // CancelSourceClaimsForRepo cancels active claims whose subject is in a repo
 // (repository removed from the installation).
-func (r *Repository) CancelSourceClaimsForRepo(ctx context.Context, sourceID uuid.UUID, repo string) ([]uuid.UUID, error) {
-	return r.cancelClaims(ctx, sourceID, "prefix", repo+"#")
+func (r *Repository) CancelSourceClaimsForRepo(ctx context.Context, projectID, sourceID uuid.UUID, repo string) ([]uuid.UUID, error) {
+	return r.cancelClaims(ctx, projectID, sourceID, "prefix", repo+"#")
 }
 
-func (r *Repository) cancelClaims(ctx context.Context, sourceID uuid.UUID, mode, value string) ([]uuid.UUID, error) {
+func (r *Repository) cancelClaims(ctx context.Context, projectID, sourceID uuid.UUID, mode, value string) ([]uuid.UUID, error) {
 	var cancelled []uuid.UUID
 	lockKey := fmt.Sprintf("source-claim-all:%s:%s:%s", sourceID, mode, value)
-	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+	err := r.projectTx(ctx, projectID, func(ctx context.Context, tx bun.Tx) error {
 		if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", lockKey).Exec(ctx); err != nil {
 			return err
 		}

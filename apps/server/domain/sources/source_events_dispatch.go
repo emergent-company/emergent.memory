@@ -160,7 +160,7 @@ func (d *SourceEventDispatcher) handlePullRequest(ctx context.Context, v *Verifi
 	subject := fmt.Sprintf("%s#%d", repoName, p.PullNumber())
 	if p.Action == "closed" || p.Action == "converted_to_draft" {
 		for _, src := range allowed {
-			runs, err := d.repo.CancelSourceSubjectClaims(ctx, src.ID, subject)
+			runs, err := d.repo.CancelSourceSubjectClaims(ctx, src.ProjectID, src.ID, subject)
 			if err != nil {
 				return err
 			}
@@ -226,7 +226,7 @@ func (d *SourceEventDispatcher) dispatchPullRequestSource(ctx context.Context, v
 	}
 	if err := d.processPullRequestSource(ctx, v, src, subject, state, ev); err != nil {
 		// Leave no row behind: a redelivery must be able to retry.
-		_ = d.repo.DeleteSourceEvent(ctx, ev.ID)
+		_ = d.repo.DeleteSourceEvent(ctx, src.ProjectID, ev.ID)
 		return err
 	}
 	return nil
@@ -236,26 +236,26 @@ func (d *SourceEventDispatcher) processPullRequestSource(ctx context.Context, v 
 	p := v.Payload
 	claim, superseded, err := d.repo.ClaimSourceSubject(ctx, src.ProjectID, src.ID, subject, state.HeadSHA, p.PullRequest.Head.SHA)
 	if errors.Is(err, ErrSourceEventStaleHead) {
-		d.markEvent(ctx, ev.ID, SourceEventSkipped, nil, nil)
+		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventSkipped, nil, nil)
 		return nil
 	}
 	if err != nil {
-		d.markEvent(ctx, ev.ID, SourceEventFailed, nil, err)
+		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
 		return err
 	}
 	d.cancelRuns(ctx, superseded)
 	if claim.RunID != nil {
-		d.markEvent(ctx, ev.ID, SourceEventDispatched, claim.RunID, nil)
+		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventDispatched, claim.RunID, nil)
 		return nil
 	}
 
-	trigger, err := d.matchingTrigger(ctx, src.ID, "pull_request", p.Action)
+	trigger, err := d.matchingTrigger(ctx, src.ProjectID, src.ID, "pull_request", p.Action)
 	if err != nil {
-		d.markEvent(ctx, ev.ID, SourceEventFailed, nil, err)
+		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
 		return err
 	}
 	if trigger == nil {
-		d.markEvent(ctx, ev.ID, SourceEventSkipped, nil, nil)
+		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventSkipped, nil, nil)
 		return nil
 	}
 
@@ -283,26 +283,26 @@ func (d *SourceEventDispatcher) processPullRequestSource(ctx context.Context, v 
 		TrustedInternal: false,
 	})
 	if err != nil {
-		_, _ = d.repo.SetSourceEventClaimState(ctx, claim.ID, SourceClaimPending)
-		d.markEvent(ctx, ev.ID, SourceEventFailed, nil, err)
+		_, _ = d.repo.SetSourceEventClaimState(ctx, claim.ProjectID, claim.ID, SourceClaimPending)
+		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
 		return fmt.Errorf("sources: enqueue source trigger: %w", err)
 	}
 	runID, err := uuid.Parse(run.ID)
 	if err != nil {
-		d.markEvent(ctx, ev.ID, SourceEventFailed, nil, err)
+		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
 		return err
 	}
-	attached, err := d.repo.SetSourceEventClaimRun(ctx, claim.ID, runID, SourceClaimRunning)
+	attached, err := d.repo.SetSourceEventClaimRun(ctx, claim.ProjectID, claim.ID, runID, SourceClaimRunning)
 	if err != nil {
-		d.markEvent(ctx, ev.ID, SourceEventFailed, nil, err)
+		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
 		return err
 	}
 	if !attached {
 		_, _ = d.agents.RequestRunCancellation(ctx, run.ID)
-		d.markEvent(ctx, ev.ID, SourceEventSkipped, nil, nil)
+		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventSkipped, nil, nil)
 		return nil
 	}
-	d.markEvent(ctx, ev.ID, SourceEventDispatched, &runID, nil)
+	d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventDispatched, &runID, nil)
 	return nil
 }
 
@@ -316,7 +316,7 @@ func (d *SourceEventDispatcher) handleInstallation(ctx context.Context, v *Verif
 	switch p.Action {
 	case "deleted", "suspend":
 		for _, src := range sources {
-			runs, err := d.repo.CancelAllSourceClaims(ctx, src.ID)
+			runs, err := d.repo.CancelAllSourceClaims(ctx, src.ProjectID, src.ID)
 			if err != nil {
 				return err
 			}
@@ -353,7 +353,7 @@ func (d *SourceEventDispatcher) handleInstallationRepositories(ctx context.Conte
 			if removed.FullName == "" {
 				continue
 			}
-			runs, err := d.repo.CancelSourceClaimsForRepo(ctx, src.ID, removed.FullName)
+			runs, err := d.repo.CancelSourceClaimsForRepo(ctx, src.ProjectID, src.ID, removed.FullName)
 			if err != nil {
 				return err
 			}
@@ -363,8 +363,8 @@ func (d *SourceEventDispatcher) handleInstallationRepositories(ctx context.Conte
 	return nil
 }
 
-func (d *SourceEventDispatcher) matchingTrigger(ctx context.Context, sourceID uuid.UUID, eventType, action string) (*SourceTrigger, error) {
-	triggers, err := d.repo.ListEnabledTriggersForSource(ctx, sourceID)
+func (d *SourceEventDispatcher) matchingTrigger(ctx context.Context, projectID, sourceID uuid.UUID, eventType, action string) (*SourceTrigger, error) {
+	triggers, err := d.repo.ListEnabledTriggersForSource(ctx, projectID, sourceID)
 	if err != nil {
 		return nil, err
 	}
@@ -396,13 +396,13 @@ func (d *SourceEventDispatcher) mintToken(ctx context.Context, app *SourceApp, i
 		})
 }
 
-func (d *SourceEventDispatcher) markEvent(ctx context.Context, id uuid.UUID, state string, runID *uuid.UUID, cause error) {
+func (d *SourceEventDispatcher) markEvent(ctx context.Context, projectID, id uuid.UUID, state string, runID *uuid.UUID, cause error) {
 	var msg *string
 	if cause != nil {
 		s := cause.Error()
 		msg = &s
 	}
-	if err := d.repo.SetSourceEventState(ctx, id, state, runID, msg); err != nil && d.log != nil {
+	if err := d.repo.SetSourceEventState(ctx, projectID, id, state, runID, msg); err != nil && d.log != nil {
 		d.log.Warn("failed to record source event state", "event", id, "error", err)
 	}
 }

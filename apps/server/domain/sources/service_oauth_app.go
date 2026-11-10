@@ -433,8 +433,17 @@ func (s *Service) DeleteProjectOAuthApp(ctx context.Context, projectID uuid.UUID
 
 // oauthAppInUseError refuses a delete while real sources use the app and names
 // them, so the operator can disconnect or repoint each one instead of chasing a
-// bare count (#554). At most five are named; the rest collapse into a count.
+// bare count (#554).
 func oauthAppInUseError(refs []OAuthAppSourceRef) error {
+	return apperror.NewConflict(fmt.Sprintf(
+		"OAuth app is used by %d data source(s): %s; disconnect or repoint them before deleting",
+		len(refs), namedOAuthAppSources(refs)))
+}
+
+// namedOAuthAppSources renders source references for a delete refusal. At most
+// five are named; the rest collapse into a count. Shared by the OAuth-app and
+// source-App refusals so both name the bound sources the same way.
+func namedOAuthAppSources(refs []OAuthAppSourceRef) string {
 	const maxNamed = 5
 	labels := make([]string, 0, min(len(refs), maxNamed)+1)
 	for i, ref := range refs {
@@ -448,9 +457,7 @@ func oauthAppInUseError(refs []OAuthAppSourceRef) error {
 		}
 		labels = append(labels, fmt.Sprintf("%s (%s)", name, ref.ID))
 	}
-	return apperror.NewConflict(fmt.Sprintf(
-		"OAuth app is used by %d data source(s): %s; disconnect or repoint them before deleting",
-		len(refs), strings.Join(labels, ", ")))
+	return strings.Join(labels, ", ")
 }
 
 func parseAppID(raw string) (uuid.UUID, error) {
