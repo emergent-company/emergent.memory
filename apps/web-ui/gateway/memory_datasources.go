@@ -92,6 +92,8 @@ type DSIntegration struct {
 	SourceType          string  `json:"sourceType"`
 	SyncMode            string  `json:"syncMode"`
 	SyncIntervalMinutes *int    `json:"syncIntervalMinutes,omitempty"`
+	// McpSlug is the immutable MCP tool-name segment for a source-backed server.
+	McpSlug *string `json:"mcpSlug,omitempty"`
 	// Config carries the non-secret config values (credential keys stripped) so
 	// the edit UI can round-trip a source's persisted settings.
 	Config map[string]any `json:"config,omitempty"`
@@ -765,6 +767,72 @@ func (m *MemoryClient) ListDocumentVersions(ctx context.Context, documentID stri
 		return nil, err
 	}
 	return out.Versions, nil
+}
+
+// PreviewDSFilter validates an unsaved provider filter and returns the compiled
+// query. Used by the Gmail connect form before starting OAuth.
+func (m *MemoryClient) PreviewDSFilter(ctx context.Context, providerType string, config map[string]any) (string, error) {
+	path := "/api/data-source-integrations/providers/" + url.PathEscape(providerType) + "/filter-preview"
+	var out struct {
+		Query string `json:"query"`
+	}
+	if err := m.doH(ctx, http.MethodPost, path, map[string]any{"providerType": providerType, "config": config}, m.documentHeaders(ctx), &out); err != nil {
+		return "", err
+	}
+	return out.Query, nil
+}
+
+// DSScopeRequest is a partial source-scope change.
+type DSScopeRequest struct {
+	Filter               map[string]any `json:"filter,omitempty"`
+	ObjectTypes          []string       `json:"objectTypes,omitempty"`
+	MCPWriteToolsEnabled *bool          `json:"mcpWriteToolsEnabled,omitempty"`
+	// Since and LabelIDs are the legacy per-source scope keys; they are part of
+	// the scope contract and travel with it.
+	Since    *string  `json:"since,omitempty"`
+	LabelIDs []string `json:"labelIds,omitempty"`
+}
+
+// DSScopePreview is the API's scope preview/update result.
+type DSScopePreview struct {
+	CompiledQuery string         `json:"compiledQuery"`
+	PreviewHash   string         `json:"previewHash"`
+	BaseScopeHash string         `json:"baseScopeHash"`
+	Changed       bool           `json:"changed"`
+	Proposed      DSScopeRequest `json:"proposed"`
+}
+
+// PreviewDSScope validates a proposed source scope.
+func (m *MemoryClient) PreviewDSScope(ctx context.Context, id string, req *DSScopeRequest) (*DSScopePreview, error) {
+	var out DSScopePreview
+	path := "/api/data-source-integrations/" + url.PathEscape(id) + "/scope/preview"
+	if err := m.doH(ctx, http.MethodPost, path, req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// UpdateDSScope applies a hash-guarded source scope change.
+func (m *MemoryClient) UpdateDSScope(ctx context.Context, id string, req *DSScopeRequest, previewHash, baseScopeHash string) (*DSScopePreview, error) {
+	body := map[string]any{
+		"filter": req.Filter, "objectTypes": req.ObjectTypes,
+		"previewHash": previewHash, "baseScopeHash": baseScopeHash,
+	}
+	if req.MCPWriteToolsEnabled != nil {
+		body["mcpWriteToolsEnabled"] = *req.MCPWriteToolsEnabled
+	}
+	if req.Since != nil {
+		body["since"] = *req.Since
+	}
+	if req.LabelIDs != nil {
+		body["labelIds"] = req.LabelIDs
+	}
+	var out DSScopePreview
+	path := "/api/data-source-integrations/" + url.PathEscape(id) + "/scope"
+	if err := m.doH(ctx, http.MethodPatch, path, body, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // DSOAuthProviderConfig is one provider's scope configuration inside a named

@@ -28,6 +28,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	framework "github.com/emergent-company/emergent.memory/e2e/framework"
 )
 
 const (
@@ -589,4 +591,318 @@ func hasGmailStatus(requests []gmailStubRequest, status int) bool {
 		}
 	}
 	return false
+}
+
+// listTypedSourceObjects returns graph objects of one type for a project.
+func listTypedSourceObjects(t *testing.T, rl *runLog, projectID, typ string) []map[string]any {
+	t.Helper()
+	resp := doAPILogged(t, rl, "GET", "/api/graph/objects/search?type="+url.QueryEscape(typ), e2eTestToken(), projectID, nil)
+	body := mustStatus(t, resp, http.StatusOK)
+	var out struct {
+		Items []map[string]any `json:"items"`
+	}
+	parseBodyJSON(t, body, &out)
+	return out.Items
+}
+
+// TestGmailDataSource_TypedObjectsAndMCPTools proves the typed-sync path and the
+// per-account MCP surface: EmailMessage/EmailThread objects are created, the
+// account's read tools are listed on the official /api/mcp endpoint, and write
+// tools stay hidden until the source opts in.
+func TestGmailDataSource_TypedObjectsAndMCPTools(t *testing.T) {
+	stub := skipWithoutGmailStub(t)
+
+	rl := newRunLog(t)
+	skipIfServerDown(t, rl)
+	projectID, _ := setupProjectLogged(t, rl)
+
+	seedGmailMailbox(t, stub, []gmailSeedThread{{
+		ID: "thread-typed", Snippet: "Typed metadata", Labels: []string{"INBOX", "CATEGORY_PERSONAL"},
+		Messages: []gmailSeedMessage{{
+			ID: "msg-typed-1", From: "alice@example.com", To: "e2e@example.com",
+			Subject: "Typed metadata", DaysAgo: 1, Text: "Structured body.\n",
+		}},
+	}})
+
+	sourceID := createGmailSource(t, rl, projectID,
+		fmt.Sprintf("gmail-typed-%d", time.Now().UnixMilli()),
+		gmailSourceConfig(map[string]any{
+			"filter":       map[string]any{"categories": []any{"Primary"}},
+			"object_types": []any{"EmailMessage", "EmailThread"},
+			"mcp_alias":    "e2e",
+		}))
+
+	job := waitForSyncJob(t, rl, projectID, sourceID, triggerDataSourceSync(t, rl, projectID, sourceID))
+	assertSyncCounts(t, job, 1, 1, 0, 0)
+
+	msgs := listTypedSourceObjects(t, rl, projectID, "EmailMessage")
+	if len(msgs) != 1 {
+		t.Fatalf("EmailMessage objects = %d, want 1: %+v", len(msgs), msgs)
+	}
+	props, _ := msgs[0]["properties"].(map[string]any)
+	if got := fmt.Sprint(props["subject"]); got != "Typed metadata" {
+		t.Errorf("EmailMessage.subject = %q", got)
+	}
+	if got := fmt.Sprint(props["threadId"]); got != "thread-typed" {
+		t.Errorf("EmailMessage.threadId = %q", got)
+	}
+	threads := listTypedSourceObjects(t, rl, projectID, "EmailThread")
+	if len(threads) != 1 {
+		t.Fatalf("EmailThread objects = %d, want 1", len(threads))
+	}
+
+	// Official MCP surface: the account's read tools are listed with the slug.
+	sessionID := initAPIUnifiedMCPSession(t, projectID)
+	listResp := framework.DoMCPJSON(t, serverURL()+"/api/mcp", e2eTestToken(), projectID, sessionID, "2025-11-25",
+		jsonBody(map[string]any{"jsonrpc": "2.0", "method": "tools/list", "id": 2}))
+	listBody := mustStatus(t, listResp, http.StatusOK)
+	var listed struct {
+		Result struct {
+			Tools []struct {
+				Name string `json:"name"`
+			} `json:"tools"`
+		} `json:"result"`
+	}
+	parseBodyJSON(t, listBody, &listed)
+	names := map[string]bool{}
+	for _, tool := range listed.Result.Tools {
+		names[tool.Name] = true
+	}
+	for _, want := range []string{"gmail-e2e-message-search", "gmail-e2e-thread-get", "gmail-e2e-label-list"} {
+		if !names[want] {
+			t.Errorf("tools/list missing %q", want)
+		}
+	}
+	if names["gmail-e2e-message-send"] {
+		t.Error("write tool listed before the source opted in")
+	}
+
+	// Read tool executes through the source credentials.
+	res := callAPIMCPTool(t, projectID, sessionID, "gmail-e2e-message-search", map[string]any{"query": "in:inbox"})
+	if txt := fmt.Sprint(res); !strings.Contains(txt, "thread-typed") {
+		t.Fatalf("message-search result = %s, want thread-typed", txt)
+	}
+
+	// Opting in enables the write surface (email:write is held by the test token).
+	previewResp := doAPILogged(t, rl, "POST", "/api/data-source-integrations/"+sourceID+"/scope/preview", e2eTestToken(), projectID,
+		jsonBody(map[string]any{
+			"filter":               map[string]any{"categories": []any{"Primary"}},
+			"objectTypes":          []any{"EmailMessage", "EmailThread"},
+			"mcpWriteToolsEnabled": true,
+		}))
+	previewBody := mustStatus(t, previewResp, http.StatusOK)
+	var scopePreview struct {
+		PreviewHash   string `json:"previewHash"`
+		BaseScopeHash string `json:"baseScopeHash"`
+	}
+	parseBodyJSON(t, previewBody, &scopePreview)
+	resp := doAPILogged(t, rl, "PATCH", "/api/data-source-integrations/"+sourceID+"/scope", e2eTestToken(), projectID,
+		jsonBody(map[string]any{
+			"filter":               map[string]any{"categories": []any{"Primary"}},
+			"objectTypes":          []any{"EmailMessage", "EmailThread"},
+			"mcpWriteToolsEnabled": true,
+			"previewHash":          scopePreview.PreviewHash,
+			"baseScopeHash":        scopePreview.BaseScopeHash,
+		}))
+	mustStatus(t, resp, http.StatusOK)
+
+	listResp = framework.DoMCPJSON(t, serverURL()+"/api/mcp", e2eTestToken(), projectID, sessionID, "2025-11-25",
+		jsonBody(map[string]any{"jsonrpc": "2.0", "method": "tools/list", "id": 3}))
+	listBody = mustStatus(t, listResp, http.StatusOK)
+	listed = struct {
+		Result struct {
+			Tools []struct {
+				Name string `json:"name"`
+			} `json:"tools"`
+		} `json:"result"`
+	}{}
+	parseBodyJSON(t, listBody, &listed)
+	names = map[string]bool{}
+	for _, tool := range listed.Result.Tools {
+		names[tool.Name] = true
+	}
+	if !names["gmail-e2e-message-send"] {
+		t.Error("write tool not listed after opting in")
+	}
+
+	sendRes := callAPIMCPTool(t, projectID, sessionID, "gmail-e2e-message-send", map[string]any{
+		"to": "bob@example.com", "subject": "Hello", "text": "Body",
+	})
+	if txt := fmt.Sprint(sendRes); !strings.Contains(txt, "sent-1") {
+		t.Fatalf("message-send result = %s, want sent-1", txt)
+	}
+	draftRes := callAPIMCPTool(t, projectID, sessionID, "gmail-e2e-draft-create", map[string]any{
+		"to": "bob@example.com", "subject": "Draft", "text": "Draft body",
+	})
+	if txt := fmt.Sprint(draftRes); !strings.Contains(txt, "draft-1") {
+		t.Fatalf("draft-create result = %s, want draft-1", txt)
+	}
+	draftSendRes := callAPIMCPTool(t, projectID, sessionID, "gmail-e2e-draft-send", map[string]any{"draft_id": "draft-1"})
+	if txt := fmt.Sprint(draftSendRes); !strings.Contains(txt, "sent-draft-1") {
+		t.Fatalf("draft-send result = %s, want sent-draft-1", txt)
+	}
+}
+
+// TestGmailDataSource_AgentScopeChange proves an agent can narrow/adjust the
+// sync scope through the MCP tools: preview, hash-guarded update, then trigger.
+func TestGmailDataSource_AgentScopeChange(t *testing.T) {
+	stub := skipWithoutGmailStub(t)
+
+	rl := newRunLog(t)
+	skipIfServerDown(t, rl)
+	projectID, _ := setupProjectLogged(t, rl)
+
+	seedGmailMailbox(t, stub, []gmailSeedThread{
+		{
+			ID: "thread-primary", Snippet: "Primary mail", Labels: []string{"INBOX", "CATEGORY_PERSONAL"},
+			Messages: []gmailSeedMessage{{ID: "msg-primary", Subject: "Primary mail", DaysAgo: 1, Text: "primary\n"}},
+		},
+		{
+			ID: "thread-updates", Snippet: "Update mail", Labels: []string{"INBOX", "CATEGORY_UPDATES"},
+			Messages: []gmailSeedMessage{{ID: "msg-updates", Subject: "Update mail", DaysAgo: 2, Text: "updates\n"}},
+		},
+	})
+
+	sourceID := createGmailSource(t, rl, projectID,
+		fmt.Sprintf("gmail-scope-%d", time.Now().UnixMilli()),
+		gmailSourceConfig(map[string]any{
+			"filter":       map[string]any{"categories": []any{"Primary"}},
+			"object_types": []any{"EmailMessage", "EmailThread"},
+			"mcp_alias":    "scope",
+		}))
+
+	job := waitForSyncJob(t, rl, projectID, sourceID, triggerDataSourceSync(t, rl, projectID, sourceID))
+	assertSyncCounts(t, job, 1, 1, 0, 0)
+	if got := len(listSourceDocuments(t, projectID, sourceID)); got != 1 {
+		t.Fatalf("primary sync documents = %d, want 1", got)
+	}
+
+	sessionID := initAPIUnifiedMCPSession(t, projectID)
+
+	listRes := parseAPIMCPToolResultText(t, callAPIMCPTool(t, projectID, sessionID, "source-list", map[string]any{}))
+	listText := fmt.Sprint(listRes["sources"])
+	if !strings.Contains(listText, sourceID) {
+		t.Fatalf("source-list did not include %s: %s", sourceID, listText)
+	}
+
+	preview := parseAPIMCPToolResultText(t, callAPIMCPTool(t, projectID, sessionID, "source-scope-preview", map[string]any{
+		"source_id":    sourceID,
+		"filter":       map[string]any{"categories": []any{"Updates"}},
+		"object_types": []any{"EmailMessage", "EmailThread"},
+	}))
+	previewHash, _ := preview["previewHash"].(string)
+	baseHash, _ := preview["baseScopeHash"].(string)
+	if previewHash == "" || baseHash == "" {
+		t.Fatalf("preview hashes missing: %v", preview)
+	}
+
+	// No hashes: hard reject.
+	noHash := callAPIMCPTool(t, projectID, sessionID, "source-scope-update", map[string]any{
+		"source_id": sourceID,
+		"filter":    map[string]any{"categories": []any{"Updates"}},
+	})
+	if noHash["error"] == nil {
+		t.Fatal("source-scope-update accepted a request without preview hashes")
+	}
+
+	updated := parseAPIMCPToolResultText(t, callAPIMCPTool(t, projectID, sessionID, "source-scope-update", map[string]any{
+		"source_id":       sourceID,
+		"filter":          map[string]any{"categories": []any{"Updates"}},
+		"object_types":    []any{"EmailMessage", "EmailThread"},
+		"preview_hash":    previewHash,
+		"base_scope_hash": baseHash,
+	}))
+	if changed, _ := updated["changed"].(bool); !changed {
+		t.Fatalf("scope update reported no change: %v", updated)
+	}
+
+	trigger := parseAPIMCPToolResultText(t, callAPIMCPTool(t, projectID, sessionID, "source-sync-trigger", map[string]any{"source_id": sourceID}))
+	jobID, _ := trigger["jobId"].(string)
+	if jobID == "" {
+		t.Fatalf("source-sync-trigger returned no job: %v", trigger)
+	}
+	job = waitForSyncJob(t, rl, projectID, sourceID, jobID)
+	assertSyncCounts(t, job, 1, 1, 0, 0)
+	if got := len(listSourceDocuments(t, projectID, sourceID)); got != 2 {
+		t.Fatalf("documents after scope change = %d, want 2 (old retained, new ingested)", got)
+	}
+	findSourceDocument(t, projectID, sourceID, "thread-updates")
+}
+
+// TestGmailDataSource_ScopeAPI proves the narrow scope API: preview returns
+// hashes, a hash-guarded update persists only scope keys, and a stale base hash
+// conflicts.
+func TestGmailDataSource_ScopeAPI(t *testing.T) {
+	stub := skipWithoutGmailStub(t)
+
+	rl := newRunLog(t)
+	skipIfServerDown(t, rl)
+	projectID, _ := setupProjectLogged(t, rl)
+	seedGmailMailbox(t, stub, nil)
+
+	sourceID := createGmailSource(t, rl, projectID,
+		fmt.Sprintf("gmail-scope-api-%d", time.Now().UnixMilli()),
+		gmailSourceConfig(map[string]any{
+			"filter":       map[string]any{"categories": []any{"Primary"}},
+			"object_types": []any{"EmailMessage"},
+			"mcp_alias":    "keepme",
+		}))
+
+	previewResp := doAPILogged(t, rl, "POST", "/api/data-source-integrations/"+sourceID+"/scope/preview", e2eTestToken(), projectID,
+		jsonBody(map[string]any{"filter": map[string]any{"categories": []any{"Updates"}}, "objectTypes": []any{"EmailMessage", "EmailThread"}}))
+	previewBody := mustStatus(t, previewResp, http.StatusOK)
+	var preview struct {
+		CompiledQuery string `json:"compiledQuery"`
+		PreviewHash   string `json:"previewHash"`
+		BaseScopeHash string `json:"baseScopeHash"`
+	}
+	parseBodyJSON(t, previewBody, &preview)
+	if preview.CompiledQuery == "" || preview.PreviewHash == "" || preview.BaseScopeHash == "" {
+		t.Fatalf("preview = %+v", preview)
+	}
+
+	updateResp := doAPILogged(t, rl, "PATCH", "/api/data-source-integrations/"+sourceID+"/scope", e2eTestToken(), projectID,
+		jsonBody(map[string]any{
+			"filter":        map[string]any{"categories": []any{"Updates"}},
+			"objectTypes":   []any{"EmailMessage", "EmailThread"},
+			"previewHash":   preview.PreviewHash,
+			"baseScopeHash": preview.BaseScopeHash,
+		}))
+	updateBody := mustStatus(t, updateResp, http.StatusOK)
+	var updated struct {
+		Changed bool `json:"changed"`
+	}
+	parseBodyJSON(t, updateBody, &updated)
+	if !updated.Changed {
+		t.Fatalf("update did not report a change: %s", updateBody)
+	}
+
+	getResp := doAPILogged(t, rl, "GET", "/api/data-source-integrations/"+sourceID, e2eTestToken(), projectID, nil)
+	getBody := mustStatus(t, getResp, http.StatusOK)
+	var src struct {
+		Config map[string]any `json:"config"`
+	}
+	parseBodyJSON(t, getBody, &src)
+	if fmt.Sprint(src.Config["filter"]) == "" || !strings.Contains(fmt.Sprint(src.Config["filter"]), "Updates") {
+		t.Fatalf("stored filter not updated: %v", src.Config["filter"])
+	}
+	if fmt.Sprint(src.Config["mcp_alias"]) != "keepme" {
+		t.Fatalf("non-scope config was clobbered: %v", src.Config)
+	}
+
+	// The generic update path must not bypass the scope guard.
+	bypass := doAPILogged(t, rl, "PATCH", "/api/data-source-integrations/"+sourceID, e2eTestToken(), projectID,
+		jsonBody(map[string]any{"config": map[string]any{"filter": map[string]any{"categories": []any{"Social"}}}}))
+	mustStatus(t, bypass, http.StatusUnprocessableEntity)
+	legacyBypass := doAPILogged(t, rl, "PATCH", "/api/data-source-integrations/"+sourceID, e2eTestToken(), projectID,
+		jsonBody(map[string]any{"config": map[string]any{"query": "in:anywhere"}}))
+	mustStatus(t, legacyBypass, http.StatusUnprocessableEntity)
+
+	staleResp := doAPILogged(t, rl, "PATCH", "/api/data-source-integrations/"+sourceID+"/scope", e2eTestToken(), projectID,
+		jsonBody(map[string]any{
+			"filter":        map[string]any{"categories": []any{"Primary"}},
+			"previewHash":   preview.PreviewHash,
+			"baseScopeHash": preview.BaseScopeHash,
+		}))
+	mustStatus(t, staleResp, http.StatusConflict)
 }

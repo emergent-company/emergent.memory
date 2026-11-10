@@ -404,8 +404,8 @@ func (r *Repository) FindAllEnabledTools(ctx context.Context, projectID string) 
 		Where("ms.project_id = ?", projectID).
 		Where("ms.enabled = true").
 		Where("mst.enabled = true").
-		Where("ms.type != ?", ServerTypeBuiltin). // exclude builtins — they come from mcp.Service
-		Where("ms.target != ?", TargetDevice).    // exclude device rows — never connected outbound
+		Where("ms.type NOT IN (?)", bun.In([]MCPServerType{ServerTypeBuiltin, ServerTypeSource})). // builtins and source tools come from mcp.Service
+		Where("ms.target != ?", TargetDevice).                                                     // exclude device rows — never connected outbound
 		Order("ms.name ASC", "mst.tool_name ASC").
 		Scan(ctx, &tools)
 	if err != nil {
@@ -436,7 +436,7 @@ func (r *Repository) FindAllEnabledBuiltinTools(ctx context.Context, projectID s
 		ColumnExpr("mst.config AS config").
 		Where("ms.project_id = ?", projectID).
 		Where("ms.enabled = true").
-		Where("ms.type = ?", ServerTypeBuiltin).
+		Where("ms.type IN (?)", bun.In([]MCPServerType{ServerTypeBuiltin, ServerTypeSource})).
 		Where("COALESCE(mst.enabled_override, ots.enabled, true) = true").
 		Order("mst.tool_name ASC").
 		Scan(ctx, &tools)
@@ -478,7 +478,7 @@ func (r *Repository) FindBuiltinToolByProjectAndName(ctx context.Context, projec
 		Model(&tool).
 		Join("JOIN kb.mcp_servers AS ms ON ms.id = mst.server_id").
 		Where("ms.project_id = ?", projectID).
-		Where("ms.type = ?", ServerTypeBuiltin).
+		Where("ms.type IN (?)", bun.In([]MCPServerType{ServerTypeBuiltin, ServerTypeSource})).
 		Where("mst.tool_name = ?", toolName).
 		Scan(ctx)
 	if err != nil {

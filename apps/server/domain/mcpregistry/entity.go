@@ -56,6 +56,9 @@ const (
 	ServerTypeStdio   MCPServerType = "stdio"
 	ServerTypeSSE     MCPServerType = "sse"
 	ServerTypeHTTP    MCPServerType = "http"
+	// ServerTypeSource is an in-process server backed by a data source's
+	// credentials (one row per connected account).
+	ServerTypeSource MCPServerType = "source"
 )
 
 // MCPServerTarget defines whether a registry row is connected outbound by the
@@ -102,6 +105,9 @@ type MCPServer struct {
 	// transport's declaration; empty for manual creates. JSONB:
 	// [{"name","kind","isSecret","isRequired"}].
 	RequiredConfig []RequiredConfigKey `bun:"required_config,type:jsonb,default:'[]'" json:"requiredConfig"`
+	// SourceID links a type=source row to the data source whose credentials its
+	// tools use. Nil for every other server type.
+	SourceID *string `bun:"source_id,type:uuid" json:"sourceId,omitempty"`
 	// Target selects the delivery mode: 'server' (connected outbound) or
 	// 'device' (pushed over the relay). TargetInstanceID is the relay instance_id
 	// for a device row; nil means every eligible device of the project.

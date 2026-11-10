@@ -273,6 +273,20 @@ func (s *stub) serveAPI(w http.ResponseWriter, r *http.Request, rest []string) {
 		s.serveThreads(w, r, kind)
 	case kind == "threads.get" && r.Method == http.MethodGet:
 		s.serveThread(w, r, rest[1], kind)
+	case kind == "messages.send" && r.Method == http.MethodPost:
+		s.serveWrite(w, r, kind, map[string]any{"id": "sent-1", "threadId": "thread-sent", "labelIds": []string{"SENT"}})
+	case kind == "drafts.create" && r.Method == http.MethodPost:
+		s.serveWrite(w, r, "drafts.create", map[string]any{"id": "draft-1", "message": map[string]any{"id": "msg-draft-1", "threadId": "thread-draft"}})
+	case kind == "drafts.list" && r.Method == http.MethodPost:
+		s.serveWrite(w, r, "drafts.create", map[string]any{"id": "draft-1", "message": map[string]any{"id": "msg-draft-1", "threadId": "thread-draft"}})
+	case kind == "drafts.list" && r.Method == http.MethodGet:
+		s.serveWrite(w, r, kind, map[string]any{"drafts": []any{map[string]any{"id": "draft-1", "message": map[string]any{"id": "msg-draft-1", "threadId": "thread-draft"}}}})
+	case kind == "drafts.update" && r.Method == http.MethodPut:
+		s.serveWrite(w, r, kind, map[string]any{"id": "draft-1", "message": map[string]any{"id": "msg-draft-1", "threadId": "thread-draft"}})
+	case kind == "drafts.send" && r.Method == http.MethodPost:
+		s.serveWrite(w, r, kind, map[string]any{"id": "sent-draft-1", "threadId": "thread-draft", "labelIds": []string{"SENT"}})
+	case kind == "drafts.update" && r.Method == http.MethodDelete:
+		s.serveWrite(w, r, "drafts.delete", map[string]any{})
 	default:
 		writeGmailError(w, http.StatusNotFound, "Not Found", "")
 	}
@@ -294,6 +308,24 @@ func apiKind(rest []string) string {
 		}
 		if len(rest) == 2 {
 			return "threads.get"
+		}
+	case "messages":
+		if len(rest) == 2 && rest[1] == "send" {
+			return "messages.send"
+		}
+	case "drafts":
+		switch len(rest) {
+		case 1:
+			return "drafts.list"
+		case 2:
+			if rest[1] == "send" {
+				return "drafts.send"
+			}
+			return "drafts.update"
+		case 3:
+			if rest[2] == "send" {
+				return "drafts.send"
+			}
 		}
 	}
 	return ""
@@ -553,6 +585,10 @@ func parseGmailQuery(q string) (after, before time.Time, labels []string, text s
 	words := strings.Fields(q)
 	free := make([]string, 0, len(words))
 	for _, w := range words {
+		w = strings.Trim(w, "()")
+		if strings.EqualFold(w, "OR") {
+			continue
+		}
 		lower := strings.ToLower(w)
 		switch {
 		case strings.HasPrefix(lower, "after:"):
@@ -570,6 +606,19 @@ func parseGmailQuery(q string) (after, before time.Time, labels []string, text s
 			}
 			if value != "" {
 				labels = append(labels, value)
+			}
+		case strings.HasPrefix(lower, "category:"):
+			switch strings.ToLower(w[strings.Index(w, ":")+1:]) {
+			case "primary":
+				labels = append(labels, "CATEGORY_PERSONAL")
+			case "social":
+				labels = append(labels, "CATEGORY_SOCIAL")
+			case "promotions":
+				labels = append(labels, "CATEGORY_PROMOTIONS")
+			case "updates":
+				labels = append(labels, "CATEGORY_UPDATES")
+			case "forums":
+				labels = append(labels, "CATEGORY_FORUMS")
 			}
 		default:
 			free = append(free, w)
@@ -1056,4 +1105,11 @@ func decodePathSegment(s string) (string, error) {
 		i += 2
 	}
 	return b.String(), nil
+}
+
+func (s *stub) serveWrite(w http.ResponseWriter, r *http.Request, kind string, payload map[string]any) {
+	s.mu.Lock()
+	s.recordLocked(r, kind, http.StatusOK)
+	s.mu.Unlock()
+	writeJSON(w, http.StatusOK, payload)
 }

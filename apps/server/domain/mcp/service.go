@@ -87,6 +87,10 @@ type Service struct {
 	// MCP registry tool handler (injected to break import cycle)
 	mcpRegistryToolHandler MCPRegistryToolHandler
 
+	// Source-backed MCP tool handler (Gmail etc.), injected to break the
+	// sources -> mcpregistry -> mcp dependency direction.
+	sourceToolHandler SourceToolHandler
+
 	// Blueprint tool handler (injected to break import cycle)
 	blueprintToolHandler BlueprintToolHandler
 
@@ -342,6 +346,12 @@ func (s *Service) RegisterAgentToolHandler(h AgentToolHandler) {
 // Deferred to fx.Invoke to break the mcpregistry ↔ mcp constructor cycle.
 func (s *Service) RegisterMCPRegistryToolHandler(h MCPRegistryToolHandler) {
 	s.mcpRegistryToolHandler = h
+}
+
+// RegisterSourceToolHandler wires the source-backed tool handler after
+// construction (sources -> mcpregistry -> mcp, so no constructor cycle).
+func (s *Service) RegisterSourceToolHandler(h SourceToolHandler) {
+	s.sourceToolHandler = h
 }
 
 // dynamicToolBuilders is the ordered list of package-level tool builders that
@@ -1981,33 +1991,32 @@ func (s *Service) GetInternalToolDefinitionsForProject(ctx context.Context, proj
 // project content applied (enriched agent tools, relay-session tools). Both
 // public getters consolidate — or deliberately do not consolidate — on top.
 func (s *Service) legacyToolDefinitionsForProject(ctx context.Context, projectID string) []ToolDefinition {
-	if projectID == "" || s.agentToolHandler == nil {
-		return s.legacyToolDefinitions()
-	}
-
 	// Start with the full static tool list (includes static agent tools). This
 	// must be the legacy list: project enrichment below matches agent tools by
 	// their legacy names, and consolidation runs after it.
 	tools := s.legacyToolDefinitions()
 
-	// Find the range of agent tools and replace them with project-enriched versions
-	enriched := s.agentToolHandler.GetAgentToolDefinitionsForProject(ctx, projectID)
-	enrichedByName := make(map[string]ToolDefinition, len(enriched))
-	for _, t := range enriched {
-		enrichedByName[t.Name] = t
-	}
-
-	for i, tool := range tools {
-		if et, ok := enrichedByName[tool.Name]; ok {
-			tools[i] = et
+	if projectID != "" && s.agentToolHandler != nil {
+		// Find the range of agent tools and replace them with project-enriched versions
+		enriched := s.agentToolHandler.GetAgentToolDefinitionsForProject(ctx, projectID)
+		enrichedByName := make(map[string]ToolDefinition, len(enriched))
+		for _, t := range enriched {
+			enrichedByName[t.Name] = t
 		}
+		for i, tool := range tools {
+			if et, ok := enrichedByName[tool.Name]; ok {
+				tools[i] = et
+			}
+		}
+		// Re-apply scopes: the enrichment above replaces every handler-provided
+		// agent tool with its project-enriched definition, which carries no
+		// RequiredScope.
+		applyRequiredScopes(tools)
 	}
 
-	// Re-apply scopes: the enrichment above replaces every handler-provided
-	// agent tool with its project-enriched definition, which carries no
-	// RequiredScope. Re-apply so the tools/call scope gate sees the same
-	// authority as the tools/list (GetToolDefinitions) path.
-	applyRequiredScopes(tools)
+	if projectID != "" && s.sourceToolHandler != nil {
+		tools = append(tools, s.sourceToolHandler.GetSourceToolDefinitionsForProject(ctx, projectID)...)
+	}
 
 	// Append tools from connected relay sessions for this project.
 	if s.relaySvc != nil && projectID != "" {
@@ -3011,6 +3020,9 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 		return s.delegateBlueprintTool(ctx, projectID, toolName, args)
 
 	default:
+		if s.sourceToolHandler != nil && s.sourceToolHandler.HandlesSourceTool(ctx, projectID, toolName) {
+			return s.sourceToolHandler.ExecuteSourceTool(ctx, projectID, toolName, args)
+		}
 		// Attempt to route to a connected relay. Relay tools are named
 		// "{instanceID}_{toolName}" where instanceID may itself contain underscores.
 		// We try each connected session to find one whose prefix matches.

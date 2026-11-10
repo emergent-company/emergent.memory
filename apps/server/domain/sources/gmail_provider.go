@@ -90,22 +90,46 @@ func (p *gmailProvider) ConfigSchema() ProviderSchema {
 	return ProviderSchema{
 		Type: ProviderTypeGmail,
 		Properties: map[string]any{
-			"query": map[string]any{
-				"type":        "string",
-				"description": "Gmail search expression selecting which threads to sync (default \"in:inbox\").",
+			"filter": map[string]any{
+				"type":        "object",
+				"description": "Required mailbox scope. An empty filter is rejected: Gmail sources never sync the whole mailbox.",
+				"properties": map[string]any{
+					"categories":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Primary, Social, Promotions, Updates, Forums."},
+					"labels":          map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Include messages carrying any of these labels."},
+					"excludeLabels":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"senders":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"excludeSenders":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"domains":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"excludeDomains":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"subjectContains": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"hasAttachment":   map[string]any{"type": "boolean"},
+					"unreadOnly":      map[string]any{"type": "boolean"},
+					"starredOnly":     map[string]any{"type": "boolean"},
+					"after":           map[string]any{"type": "string", "description": "YYYY-MM-DD."},
+					"before":          map[string]any{"type": "string", "description": "YYYY-MM-DD."},
+					"query":           map[string]any{"type": "string", "description": "Raw Gmail q, ANDed with the other filter groups."},
+				},
 			},
-			"label_ids": map[string]any{
+			"object_types": map[string]any{
 				"type":        "array",
-				"items":       map[string]any{"type": "string"},
-				"description": "Optional label ids; a thread must carry every listed label.",
+				"items":       map[string]any{"type": "string", "enum": []string{"EmailMessage", "EmailThread"}},
+				"description": "Typed email objects to create. Default: both.",
+			},
+			"mcp_write_tools_enabled": map[string]any{
+				"type":        "boolean",
+				"description": "Expose send/draft MCP tools for this account. Default false.",
+			},
+			"mcp_alias": map[string]any{
+				"type":        "string",
+				"description": "Optional short alias used in this account's MCP tool names. Immutable after create.",
 			},
 			"since": map[string]any{
 				"type":        "string",
-				"description": "Optional start date (YYYY-MM-DD). Threads dated before it are never synced. It is fixed at configuration time, so the window only grows and previously synced threads never fall out of scope.",
+				"description": "Optional absolute start date (YYYY-MM-DD) for the backfill floor.",
 			},
 			"max_threads": map[string]any{
 				"type":        "integer",
-				"description": fmt.Sprintf("Maximum threads one pass enumerates: the newest threads listed on every sync, and the budget for the backfill windows that sync walks. A mailbox holding more than this is backfilled window by window on successive syncs until the whole scope is covered. Default %d; ceiling %d.", gmail.DefaultMaxThreads, gmail.MaxThreadsLimit),
+				"description": fmt.Sprintf("Maximum threads one pass enumerates. Default %d; ceiling %d.", gmail.DefaultMaxThreads, gmail.MaxThreadsLimit),
 			},
 		},
 	}
@@ -123,6 +147,65 @@ func (p *gmailProvider) OAuth() (OAuthStrategy, bool) {
 // CredentialKeys returns the write-only credential keys the generic OAuth
 // callback copies into the stored credential map.
 func (p *gmailProvider) CredentialKeys() []string { return credentialKeyNames }
+
+// ObjectTypes declares the email schema pack installed when a Gmail source is
+// connected. Extraction is disabled for these types so the LLM does not produce
+// duplicate email metadata objects.
+func (p *gmailProvider) ObjectTypes() *ObjectTypePack {
+	return &ObjectTypePack{
+		Name:          "email-core",
+		Version:       "1.0.0",
+		Description:   "Email message and thread objects synced from a mailbox.",
+		SkipDiscovery: true,
+		ObjectTypes: []ObjectTypeDefinition{
+			{
+				Name:           "EmailMessage",
+				Label:          "Email message",
+				Description:    "One email message with its mailbox metadata.",
+				SkipExtraction: true,
+				Required:       []string{"subject", "sentAt"},
+				Properties: map[string]any{
+					"subject":         map[string]any{"type": "string"},
+					"from":            map[string]any{"type": "string"},
+					"to":              map[string]any{"type": "string"},
+					"cc":              map[string]any{"type": "string"},
+					"bcc":             map[string]any{"type": "string"},
+					"sentAt":          map[string]any{"type": "string", "format": "date-time"},
+					"threadId":        map[string]any{"type": "string"},
+					"labelIds":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"hasAttachments":  map[string]any{"type": "boolean"},
+					"attachmentNames": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"webUrl":          map[string]any{"type": "string"},
+					"messageIdHeader": map[string]any{"type": "string"},
+					"inReplyTo":       map[string]any{"type": "string"},
+					"provider":        map[string]any{"type": "string"},
+					"account":         map[string]any{"type": "string"},
+				},
+			},
+			{
+				Name:           "EmailThread",
+				Label:          "Email thread",
+				Description:    "A conversation thread grouping email messages.",
+				SkipExtraction: true,
+				Required:       []string{"subject"},
+				Properties: map[string]any{
+					"subject":       map[string]any{"type": "string"},
+					"snippet":       map[string]any{"type": "string"},
+					"participants":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"messageCount":  map[string]any{"type": "integer"},
+					"lastMessageAt": map[string]any{"type": "string", "format": "date-time"},
+					"labelIds":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"webUrl":        map[string]any{"type": "string"},
+					"provider":      map[string]any{"type": "string"},
+					"account":       map[string]any{"type": "string"},
+				},
+			},
+		},
+		RelationshipTypes: []RelationshipTypeDefinition{
+			{Name: "HAS_MESSAGE", SourceType: "EmailThread", TargetType: "EmailMessage", Description: "A thread contains a message."},
+		},
+	}
+}
 
 // gmailReconnectRequired is the remediation for a source whose stored refresh
 // token Google no longer accepts (revoked or expired). No retry recovers the
@@ -494,15 +577,151 @@ func gmailDay(t time.Time) time.Time {
 }
 
 func (c *gmailConnector) Fetch(ctx context.Context, item SourceItem) (content, mimeType string, err error) {
+	content, mimeType, _, err = c.FetchWithRecords(ctx, item)
+	return content, mimeType, err
+}
+
+// FetchWithRecords fetches a thread once and derives both its document body and
+// the typed EmailThread/EmailMessage records the user selected.
+func (c *gmailConnector) FetchWithRecords(ctx context.Context, item SourceItem) (content, mimeType string, records []ObjectRecord, err error) {
 	thread, err := c.client.GetThread(ctx, item.ID)
 	if err != nil {
-		return "", "", gmailGrantOrRaw(err)
+		return "", "", nil, gmailGrantOrRaw(err)
 	}
 	content, err = gmailThreadMarkdown(thread)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
-	return content, "text/markdown", nil
+	// The typed-record selection is the source's stored config, carried on the
+	// connector's deps. Fetch has no cfg argument, and caching the cfg of one
+	// earlier enumeration call on the connector made a fetch depend on whether an
+	// enumeration had happened to run first in the same run.
+	parsed, err := parseGmailConfig(c.deps.SourceConfig)
+	if err != nil {
+		return "", "", nil, apperror.NewInternal("gmail connector is missing its source config", err)
+	}
+	return content, "text/markdown", gmailThreadRecords(thread, parsed), nil
+}
+
+// gmailThreadRecords builds the typed records for one thread.
+func gmailThreadRecords(t *gmail.Thread, cfg gmailConfig) []ObjectRecord {
+	if t == nil {
+		return nil
+	}
+	selected := cfg.ObjectTypes
+	if selected == nil {
+		selected = gmailAllObjectTypes
+	}
+	account := cfg.Account
+	subject := gmailThreadSubject(t)
+	lastAt := gmailThreadLastDate(t)
+
+	var records []ObjectRecord
+	if selected["EmailThread"] {
+		rec := ObjectRecord{
+			Type: "EmailThread",
+			Key:  t.ID,
+			Properties: map[string]any{
+				"subject":       subject,
+				"snippet":       t.Snippet,
+				"participants":  anyStrings(gmailParticipants(t.Messages)),
+				"messageCount":  len(t.Messages),
+				"lastMessageAt": lastAt.UTC().Format(time.RFC3339),
+				"labelIds":      anyStrings(gmailThreadLabelIDs(t.Messages)),
+				"webUrl":        "https://mail.google.com/mail/u/0/#all/" + t.ID,
+				"provider":      "gmail",
+			},
+		}
+		if account != "" {
+			rec.Properties["account"] = account
+		}
+		for _, m := range t.Messages {
+			if m.ID == "" {
+				continue
+			}
+			rec.Relationships = append(rec.Relationships, ObjectRelationship{
+				Type:       "HAS_MESSAGE",
+				TargetType: "EmailMessage",
+				TargetKey:  m.ID,
+			})
+		}
+		records = append(records, rec)
+	}
+
+	if selected["EmailMessage"] {
+		for _, m := range t.Messages {
+			if m.ID == "" {
+				continue
+			}
+			sentAt := m.Date
+			if sentAt.IsZero() {
+				sentAt = lastAt
+			}
+			msgSubject := strings.TrimSpace(m.Subject)
+			if msgSubject == "" {
+				msgSubject = "(no subject)"
+			}
+			props := map[string]any{
+				"subject":         msgSubject,
+				"from":            m.From,
+				"to":              m.To,
+				"cc":              m.Cc,
+				"bcc":             m.Bcc,
+				"sentAt":          sentAt.UTC().Format(time.RFC3339),
+				"threadId":        t.ID,
+				"labelIds":        anyStrings(m.Labels),
+				"hasAttachments":  m.Attachments > 0,
+				"attachmentNames": anyStrings(m.AttachmentNames),
+				"webUrl":          "https://mail.google.com/mail/u/0/#all/" + m.ID,
+				"provider":        "gmail",
+			}
+			if m.MessageIDHeader != "" {
+				props["messageIdHeader"] = m.MessageIDHeader
+			}
+			if m.InReplyTo != "" {
+				props["inReplyTo"] = m.InReplyTo
+			}
+			if account != "" {
+				props["account"] = account
+			}
+			records = append(records, ObjectRecord{Type: "EmailMessage", Key: m.ID, Properties: props})
+		}
+	}
+	return records
+}
+
+func gmailThreadSubject(t *gmail.Thread) string {
+	for _, m := range t.Messages {
+		if s := strings.TrimSpace(m.Subject); s != "" {
+			return s
+		}
+	}
+	return "(no subject)"
+}
+
+func gmailThreadLastDate(t *gmail.Thread) time.Time {
+	var out time.Time
+	for _, m := range t.Messages {
+		if m.Date.After(out) {
+			out = m.Date
+		}
+	}
+	return out
+}
+
+func gmailThreadLabelIDs(messages []gmail.Message) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, m := range messages {
+		for _, id := range m.Labels {
+			if id == "" || seen[id] {
+				continue
+			}
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func (c *gmailConnector) TestConnection(ctx context.Context, _ map[string]any) error {
@@ -524,30 +743,51 @@ type gmailConfig struct {
 	LabelIDs   []string
 	Since      time.Time
 	MaxThreads int
+	Filter     gmailFilter
+	// ObjectTypes selects which typed records the connector emits.
+	ObjectTypes map[string]bool
+	// MCPWriteTools enables send/draft tools for this account.
+	MCPWriteTools bool
+	// MCPAlias is the operator-visible account alias used in MCP tool names.
+	MCPAlias string
+	// Account is the connected mailbox address, when known.
+	Account string
 }
 
-// parseGmailConfig enforces the Gmail config contract: query and label_ids
-// optional, since (when present) a calendar date or RFC 3339 timestamp,
-// max_threads an integer within the advertised range. Unknown keys are ignored,
-// matching the other providers.
-//
-// Scope precedence: an explicit query is used as given; a label filter with no
-// explicit query means "everything carrying those labels" (the default inbox
-// query would otherwise AND with the labels and silently narrow a picked label);
-// with neither, the default inbox query applies.
+// gmailAllObjectTypes is the default object-type selection.
+var gmailAllObjectTypes = map[string]bool{"EmailMessage": true, "EmailThread": true}
+
+// parseGmailConfig enforces the Gmail config contract. A sync scope is
+// mandatory: an empty query/filter is rejected so a source never syncs the whole
+// mailbox. Structured filters compile into the same Gmail query the client runs.
 func parseGmailConfig(cfg map[string]any) (gmailConfig, error) {
-	out := gmailConfig{MaxThreads: gmail.DefaultMaxThreads}
-	querySet := false
+	out := gmailConfig{
+		MaxThreads:  gmail.DefaultMaxThreads,
+		ObjectTypes: cloneBoolMap(gmailAllObjectTypes),
+	}
 
 	if v, ok := cfg["query"]; ok && v != nil {
 		s, ok := v.(string)
 		if !ok {
 			return out, apperror.NewValidation("config.query must be a string")
 		}
-		if strings.TrimSpace(s) != "" {
-			out.Query = strings.TrimSpace(s)
-			querySet = true
-		}
+		out.Query = strings.TrimSpace(s)
+	}
+
+	filter, err := parseGmailFilter(cfg["filter"])
+	if err != nil {
+		return out, err
+	}
+	out.Filter = filter
+	compiled, err := filter.compile()
+	if err != nil {
+		return out, err
+	}
+	switch {
+	case out.Query != "" && compiled != "":
+		out.Query = out.Query + " " + compiled
+	case compiled != "":
+		out.Query = compiled
 	}
 
 	labelIDs, err := stringList(cfg["label_ids"])
@@ -556,8 +796,43 @@ func parseGmailConfig(cfg map[string]any) (gmailConfig, error) {
 	}
 	out.LabelIDs = labelIDs
 
-	if !querySet && len(out.LabelIDs) == 0 {
-		out.Query = gmailDefaultQuery
+	if strings.TrimSpace(out.Query) == "" && len(out.LabelIDs) == 0 {
+		return out, apperror.NewValidation("config.filter or config.query is required: a Gmail source never syncs the whole mailbox; add categories, labels, senders, a date range, or a raw query")
+	}
+
+	if v, ok := cfg["object_types"]; ok && v != nil {
+		types, listErr := stringList(v)
+		if listErr != nil || len(types) == 0 {
+			return out, apperror.NewValidation("config.object_types must be a non-empty array containing EmailMessage and/or EmailThread")
+		}
+		selected := map[string]bool{}
+		for _, t := range types {
+			if _, ok := gmailAllObjectTypes[t]; !ok {
+				return out, apperror.NewValidation("config.object_types contains unknown type: " + t)
+			}
+			selected[t] = true
+		}
+		out.ObjectTypes = selected
+	}
+
+	if v, ok := cfg["mcp_write_tools_enabled"]; ok && v != nil {
+		b, ok := v.(bool)
+		if !ok {
+			return out, apperror.NewValidation("config.mcp_write_tools_enabled must be a boolean")
+		}
+		out.MCPWriteTools = b
+	}
+	if v, ok := cfg["mcp_alias"]; ok && v != nil {
+		s, ok := v.(string)
+		if !ok {
+			return out, apperror.NewValidation("config.mcp_alias must be a string")
+		}
+		out.MCPAlias = strings.TrimSpace(s)
+	}
+	if v, ok := cfg[oauthAccountEmailKey]; ok {
+		if s, ok := v.(string); ok {
+			out.Account = strings.TrimSpace(s)
+		}
 	}
 
 	if v, ok := cfg["since"]; ok && v != nil {
@@ -587,6 +862,14 @@ func parseGmailConfig(cfg map[string]any) (gmailConfig, error) {
 	}
 
 	return out, nil
+}
+
+func cloneBoolMap(in map[string]bool) map[string]bool {
+	out := make(map[string]bool, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // parseSinceDate accepts a calendar date (the documented form) or an RFC 3339
@@ -826,5 +1109,13 @@ func gmailThreadLabels(messages []gmail.Message) []string {
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+func anyStrings(in []string) []any {
+	out := make([]any, 0, len(in))
+	for _, v := range in {
+		out = append(out, v)
+	}
 	return out
 }
