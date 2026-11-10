@@ -3,6 +3,7 @@ package sources
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -276,10 +277,12 @@ func (s *Service) DeleteOrgOAuthApp(ctx context.Context, orgID uuid.UUID, userID
 	if !ok {
 		return apperror.NewInternal("delete OAuth app: OAuth app store is not configured", nil)
 	}
-	if n, cerr := st.CountSourcesUsingOAuthConfig(ctx, appID); cerr != nil {
-		return cerr
-	} else if n > 0 {
-		return apperror.NewConflict(fmt.Sprintf("OAuth app is used by %d data source(s); detach it first", n))
+	refs, err := st.SourcesUsingOAuthConfig(ctx, appID)
+	if err != nil {
+		return err
+	}
+	if len(refs) > 0 {
+		return oauthAppInUseError(refs)
 	}
 	return st.DeleteOAuthClientConfigByID(ctx, orgID, appID)
 }
@@ -416,15 +419,39 @@ func (s *Service) DeleteProjectOAuthApp(ctx context.Context, projectID uuid.UUID
 	if !ok {
 		return apperror.NewInternal("OAuth apps are not supported by this store", nil)
 	}
-	if n, cerr := pst.CountProjectSourcesUsingOAuthConfig(ctx, projectID, appID); cerr != nil {
-		return cerr
-	} else if n > 0 {
-		return apperror.NewConflict(fmt.Sprintf("OAuth app is used by %d data source(s); detach it first", n))
+	refs, err := pst.SourcesUsingProjectOAuthConfig(ctx, projectID, appID)
+	if err != nil {
+		return err
+	}
+	if len(refs) > 0 {
+		return oauthAppInUseError(refs)
 	}
 	return pst.DeleteProjectOAuthClientConfigByID(ctx, projectID, appID)
 }
 
 // ---- helpers ----
+
+// oauthAppInUseError refuses a delete while real sources use the app and names
+// them, so the operator can disconnect or repoint each one instead of chasing a
+// bare count (#554). At most five are named; the rest collapse into a count.
+func oauthAppInUseError(refs []OAuthAppSourceRef) error {
+	const maxNamed = 5
+	labels := make([]string, 0, min(len(refs), maxNamed)+1)
+	for i, ref := range refs {
+		if i == maxNamed {
+			labels = append(labels, fmt.Sprintf("and %d more", len(refs)-maxNamed))
+			break
+		}
+		name := strings.TrimSpace(ref.DisplayName)
+		if name == "" {
+			name = "untitled source"
+		}
+		labels = append(labels, fmt.Sprintf("%s (%s)", name, ref.ID))
+	}
+	return apperror.NewConflict(fmt.Sprintf(
+		"OAuth app is used by %d data source(s): %s; disconnect or repoint them before deleting",
+		len(refs), strings.Join(labels, ", ")))
+}
 
 func parseAppID(raw string) (uuid.UUID, error) {
 	id, err := uuid.Parse(strings.TrimSpace(raw))
@@ -699,9 +726,20 @@ func (s *Service) legacyFromAppDTO(dto *OAuthAppDTO, providerType string) *OAuth
 }
 
 // implicitSourceAppID returns the sole app a provider would resolve to at
-// project or org scope. It is persisted on new sources so adding a second app
-// later cannot silently change an existing source's client.
+// project or org scope. It is persisted on OAuth-completed sources so adding a
+// second app later cannot silently change an existing source's client.
+//
+// The caller must be an OAuth completion (Create is only reached that way with
+// oauthCompletion set): a credentials (PAT) or config-only source never reads
+// oauth_app_id, so binding it would make the app undeletable while the refusal
+// names a source that does not use OAuth at all (#554). The AuthMethods check
+// below is belt-and-braces so a non-OAuth provider can never be bound even if a
+// future caller passes the completion flag.
 func (s *Service) implicitSourceAppID(ctx context.Context, projectID uuid.UUID, providerType string) *uuid.UUID {
+	p, found := s.providers.Get(providerType)
+	if !found || !slices.Contains(p.AuthMethods(), AuthMethodOAuth) {
+		return nil
+	}
 	vendor, _, ok := s.vendorForProvider(providerType)
 	if !ok {
 		return nil

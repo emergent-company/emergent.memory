@@ -431,6 +431,7 @@ func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code s
 		Config:                cfg,
 		OAuthAppID:            appIDStr,
 		AllowIncompleteConfig: true,
+		oauthCompletion:       true,
 	})
 	if err != nil {
 		// The token exchange succeeded but the source could not be stored: still

@@ -544,7 +544,11 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 	if err != nil {
 		return nil, err
 	}
-	if oauthAppID == nil {
+	// Only an OAuth completion may pin the app its client resolution used. A
+	// credentials (PAT) create never reads oauth_app_id, so binding it would
+	// make the app undeletable and the refusal would name a source that does
+	// not use OAuth (#554).
+	if oauthAppID == nil && req.oauthCompletion {
 		oauthAppID = s.implicitSourceAppID(ctx, projectID, req.ProviderType)
 	}
 
