@@ -684,13 +684,26 @@ func TestGmailDataSource_TypedObjectsAndMCPTools(t *testing.T) {
 	}
 
 	// Opting in enables the write surface (email:write is held by the test token).
-	resp := doAPILogged(t, rl, "PATCH", "/api/data-source-integrations/"+sourceID, e2eTestToken(), projectID,
-		jsonBody(map[string]any{"config": map[string]any{
-			"filter":                  map[string]any{"categories": []any{"Primary"}},
-			"object_types":            []any{"EmailMessage", "EmailThread"},
-			"mcp_alias":               "e2e",
-			"mcp_write_tools_enabled": true,
-		}}))
+	previewResp := doAPILogged(t, rl, "POST", "/api/data-source-integrations/"+sourceID+"/scope/preview", e2eTestToken(), projectID,
+		jsonBody(map[string]any{
+			"filter":               map[string]any{"categories": []any{"Primary"}},
+			"objectTypes":          []any{"EmailMessage", "EmailThread"},
+			"mcpWriteToolsEnabled": true,
+		}))
+	previewBody := mustStatus(t, previewResp, http.StatusOK)
+	var scopePreview struct {
+		PreviewHash   string `json:"previewHash"`
+		BaseScopeHash string `json:"baseScopeHash"`
+	}
+	parseBodyJSON(t, previewBody, &scopePreview)
+	resp := doAPILogged(t, rl, "PATCH", "/api/data-source-integrations/"+sourceID+"/scope", e2eTestToken(), projectID,
+		jsonBody(map[string]any{
+			"filter":               map[string]any{"categories": []any{"Primary"}},
+			"objectTypes":          []any{"EmailMessage", "EmailThread"},
+			"mcpWriteToolsEnabled": true,
+			"previewHash":          scopePreview.PreviewHash,
+			"baseScopeHash":        scopePreview.BaseScopeHash,
+		}))
 	mustStatus(t, resp, http.StatusOK)
 
 	listResp = framework.DoMCPJSON(t, serverURL()+"/api/mcp", e2eTestToken(), projectID, sessionID, "2025-11-25",
@@ -880,7 +893,7 @@ func TestGmailDataSource_ScopeAPI(t *testing.T) {
 	// The generic update path must not bypass the scope guard.
 	bypass := doAPILogged(t, rl, "PATCH", "/api/data-source-integrations/"+sourceID, e2eTestToken(), projectID,
 		jsonBody(map[string]any{"config": map[string]any{"filter": map[string]any{"categories": []any{"Social"}}}}))
-	mustStatus(t, bypass, http.StatusBadRequest)
+	mustStatus(t, bypass, http.StatusUnprocessableEntity)
 
 	staleResp := doAPILogged(t, rl, "PATCH", "/api/data-source-integrations/"+sourceID+"/scope", e2eTestToken(), projectID,
 		jsonBody(map[string]any{
