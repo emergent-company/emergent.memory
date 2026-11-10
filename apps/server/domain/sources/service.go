@@ -416,10 +416,48 @@ func (s *Service) List(ctx context.Context, projectID uuid.UUID) ([]*Integration
 		return nil, err
 	}
 	out := make([]*Integration, len(srcs))
+	needsAppNames := false
 	for i, src := range srcs {
 		out[i] = s.toIntegration(src)
+		if src.OAuthAppID != nil {
+			needsAppNames = true
+		}
+	}
+	if needsAppNames {
+		names := s.oauthAppNames(ctx, projectID)
+		for i, src := range srcs {
+			if src.OAuthAppID != nil {
+				out[i].OAuthAppName = names[*src.OAuthAppID]
+			}
+		}
 	}
 	return out, nil
+}
+
+// oauthAppNames loads the display names of every app a project can see in two
+// queries (its project apps, then its org's apps), so listing N sources costs
+// two lookups instead of up to two per source.
+func (s *Service) oauthAppNames(ctx context.Context, projectID uuid.UUID) map[uuid.UUID]string {
+	names := map[uuid.UUID]string{}
+	if pst, ok := s.projectAppStore(); ok {
+		if rows, err := pst.ListProjectOAuthClientConfigs(ctx, projectID); err == nil {
+			for _, row := range rows {
+				names[row.ID] = row.Name
+			}
+		}
+	}
+	if ost, ok := s.orgAppStore(); ok {
+		if orgID, err := s.orgStore().ResolveOrgID(ctx, projectID); err == nil {
+			if rows, lerr := ost.ListOAuthClientConfigs(ctx, orgID); lerr == nil {
+				for _, row := range rows {
+					if _, seen := names[row.ID]; !seen {
+						names[row.ID] = row.Name
+					}
+				}
+			}
+		}
+	}
+	return names
 }
 
 // Create validates the request, encrypts the supplied credentials, strips the
@@ -477,6 +515,13 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 	if err != nil {
 		return nil, err
 	}
+	oauthAppID, err := s.validateSourceApp(ctx, projectID, req.ProviderType, req.OAuthAppID)
+	if err != nil {
+		return nil, err
+	}
+	if oauthAppID == nil {
+		oauthAppID = s.implicitSourceAppID(ctx, projectID, req.ProviderType)
+	}
 
 	now := s.now()
 	src := &Source{
@@ -487,6 +532,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 		Config:               stripCredentialKeys(cfg, p.CredentialKeys()),
 		EncryptedCredentials: blob,
 		CredentialID:         credentialID,
+		OAuthAppID:           oauthAppID,
 		SyncPolicy:           mode,
 		SyncIntervalMinutes:  interval,
 		Cursor:               map[string]any{},
@@ -561,12 +607,13 @@ func (s *Service) Get(ctx context.Context, projectID, id uuid.UUID) (*Integratio
 		return nil, err
 	}
 	out := s.toIntegration(src)
+	s.fillOAuthAppName(ctx, projectID, out, src.OAuthAppID)
 	// Report the effective scope strategy so the UI can explain an empty
 	// resource listing caused by a scope that cannot list (drive.file without
 	// the Google Picker) instead of re-deriving the resolution itself.
 	if p, ok := s.providers.Get(src.Provider); ok {
 		if _, oauth := p.OAuth(); oauth {
-			out.OAuthStrategy = s.effectiveOAuthStrategy(ctx, projectID, src.Provider)
+			out.OAuthStrategy = s.effectiveOAuthStrategy(ctx, projectID, src.Provider, src.OAuthAppID)
 			if g, ok := src.Config[oauthGrantedStrategyKey].(string); ok {
 				out.OAuthGrantedStrategy = g
 			}
@@ -703,6 +750,28 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 			existing.EncryptedCredentials = nil
 			savedRefActive = true
 		}
+	}
+	if req.OAuthAppID != nil {
+		appID, aerr := s.validateSourceApp(ctx, projectID, existing.Provider, req.OAuthAppID)
+		if aerr != nil {
+			return nil, aerr
+		}
+		oldID := uuid.Nil
+		if existing.OAuthAppID != nil {
+			oldID = *existing.OAuthAppID
+		}
+		newID := uuid.Nil
+		if appID != nil {
+			newID = *appID
+		}
+		if oldID != newID && (existing.CredentialID != nil || len(existing.EncryptedCredentials) > 0) {
+			// The stored grant belongs to the old client. Park the source so the
+			// scheduler cannot use it until the user reconnects; StartOAuth pins
+			// the new app id on the source.
+			status := SourceStatusNeedsReconnect
+			statusChange = &status
+		}
+		existing.OAuthAppID = appID
 	}
 	if req.Config != nil {
 		p, ok := s.providers.Get(existing.Provider)
@@ -980,6 +1049,28 @@ func (s *Service) publicConfig(src *Source) map[string]any {
 	return src.Config
 }
 
+// fillOAuthAppName adds the display name of the source's OAuth app. The name is
+// not stored on the source; it is resolved from the app row so a rename is
+// reflected immediately.
+func (s *Service) fillOAuthAppName(ctx context.Context, projectID uuid.UUID, out *Integration, appID *uuid.UUID) {
+	if out == nil || appID == nil {
+		return
+	}
+	if pst, ok := s.projectAppStore(); ok {
+		if row, err := pst.GetProjectOAuthClientConfigByID(ctx, projectID, *appID); err == nil {
+			out.OAuthAppName = row.Name
+			return
+		}
+	}
+	if ost, ok := s.orgAppStore(); ok {
+		if orgID, err := s.orgStore().ResolveOrgID(ctx, projectID); err == nil {
+			if row, gerr := ost.GetOAuthClientConfigByID(ctx, orgID, *appID); gerr == nil {
+				out.OAuthAppName = row.Name
+			}
+		}
+	}
+}
+
 // toIntegration maps a persisted source to the SDK integration shape. It never
 // includes credential material, and derives the source type from the provider
 // catalog so it stays provider-agnostic.
@@ -992,6 +1083,11 @@ func (s *Service) toIntegration(src *Source) *Integration {
 	if src.CredentialID != nil {
 		id := src.CredentialID.String()
 		credentialID = &id
+	}
+	var oauthAppID *string
+	if src.OAuthAppID != nil {
+		id := src.OAuthAppID.String()
+		oauthAppID = &id
 	}
 	return &Integration{
 		ID:                  src.ID.String(),
@@ -1007,6 +1103,7 @@ func (s *Service) toIntegration(src *Source) *Integration {
 		ErrorMessage:        src.LastError,
 		ErrorCount:          src.ErrorCount,
 		CredentialID:        credentialID,
+		OAuthAppID:          oauthAppID,
 		CreatedAt:           src.CreatedAt,
 		UpdatedAt:           src.UpdatedAt,
 	}
