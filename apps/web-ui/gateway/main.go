@@ -62,11 +62,12 @@ func main() {
 	// Client-IP trust is explicit and configured, never echo v4's permissive
 	// default (which trusts loopback/private/link-local peers, the trust model
 	// in GHSA-246p-cpwv-v3jq / GHSA-99jh-6h7p-pp36). With TRUSTED_PROXY_CIDRS
-	// naming the proxy hop (e.g. Caddy on 127.0.0.1/32 in production), RealIP()
-	// resolves X-Forwarded-For to the right-most untrusted hop, so the share
-	// rate limiter keys on the real client. Unset fails closed: RealIP() is the
-	// socket peer, so a forwarded header cannot move a bucket. That is the
-	// interim mitigation for issue #26 while the echo v5 rewrite lands.
+	// naming the proxy hop (e.g. the compose network gateway 172.18.0.1/32 in
+	// production), RealIP() resolves X-Forwarded-For to the right-most
+	// untrusted hop, so the share rate limiter keys on the real client. Unset
+	// fails closed: RealIP() is the socket peer, so a forwarded header cannot
+	// move a bucket. That is the interim mitigation for issue #26 while the
+	// echo v5 rewrite lands.
 	ipExtractor, ipTrustMode, err := newIPExtractor(cfg.TrustedProxyCIDRs)
 	if err != nil {
 		// Config.Validate already rejected this at startup; keep the failure
