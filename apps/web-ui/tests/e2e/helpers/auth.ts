@@ -3,7 +3,7 @@ import { BASE_URL, getTestUserCredentials, TestUserCredentials } from '../consta
 
 // The Zitadel authorization endpoint (issuer) redirects to the hosted login
 // UI on a separate host. Match either so the helper works across environments.
-const LOGIN_ORIGIN = /(?:login|zitadel)\.dev\.emergent-company\.ai/;
+const LOGIN_ORIGIN = /(?:login|zitadel)\.dev\.memory\.emergent-company\.ai/;
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
