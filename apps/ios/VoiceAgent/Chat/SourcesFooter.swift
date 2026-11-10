@@ -17,7 +17,7 @@ struct SourcesFooter: View {
     /// The reply this footer belongs to: the key its open state is kept under.
     let messageID: String
 
-    @Environment(\.toolActivityDisclosure) private var disclosure
+    @Environment(\.chatDisclosure) private var disclosure
     /// Used only outside a chat list, where no disclosure store is provided.
     @State private var localExpanded = false
 

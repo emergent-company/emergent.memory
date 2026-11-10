@@ -6,17 +6,36 @@ import SwiftUI
 /// is its own block; deltas accumulate into the block's `text` store-side. The
 /// block starts collapsed so a long reasoning trace does not push the reply off
 /// the screen.
+///
+/// The open state lives in the chat's ``ChatDisclosure``, keyed by the block's
+/// stable id: a `LazyVStack` rebuilds a row that scrolls off screen, so a
+/// block's own `@State` would fold an opened trace shut under the reader.
 struct ThinkingBlockView: View {
+    /// The block's stable id (`ThinkingBlock.id`), the key its open state is
+    /// kept under.
+    let id: String
     let text: String
     var isLive: Bool = false
 
+    @Environment(\.chatDisclosure) private var disclosure
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var expanded = false
+    /// Used only outside a chat list, where no disclosure store is provided.
+    @State private var localExpanded = false
+
+    private var expanded: Bool {
+        disclosure?.isThinkingExpanded(id) ?? localExpanded
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1 * .grid) {
             Button {
-                withAnimation(reduceMotion ? nil : .snappy) { expanded.toggle() }
+                withAnimation(reduceMotion ? nil : .snappy) {
+                    if let disclosure {
+                        disclosure.toggleThinking(id)
+                    } else {
+                        localExpanded.toggle()
+                    }
+                }
             } label: {
                 HStack(spacing: 2 * .grid) {
                     Image(systemName: "chevron.right")

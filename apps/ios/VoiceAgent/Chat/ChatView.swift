@@ -27,9 +27,10 @@ struct ChatView: View {
     /// Scroll anchor pinned at the bottom of the message list.
     private static let bottomAnchorID = "chat.bottom"
 
-    /// Which step runs the reader has opened or closed, kept here so it
-    /// outlives the rows (they are rebuilt as steps settle).
-    @State private var disclosure = ToolActivityDisclosure()
+    /// Which step runs, thinking blocks and Sources footers the reader has
+    /// opened or closed, kept here so the choices outlive the rows (they are
+    /// rebuilt as steps settle).
+    @State private var disclosure = ChatDisclosure()
 
     var body: some View {
         Group {
@@ -39,7 +40,7 @@ struct ChatView: View {
                 messageList()
             }
         }
-        .environment(\.toolActivityDisclosure, disclosure)
+        .environment(\.chatDisclosure, disclosure)
         // Object links in a reply open the object card, as in the text chat.
         .presentsObjectReferences()
         .onChange(of: store.turns.isEmpty) { _, empty in
@@ -161,10 +162,10 @@ struct ChatView: View {
     private func turnActivity(_ turn: ChatActivityStore.Turn) -> some View {
         VStack(alignment: .leading, spacing: 1 * .grid) {
             ForEach(turn.thinkingBlocks) { block in
-                ThinkingBlockView(text: block.text, isLive: block.isLive)
+                ThinkingBlockView(id: block.id, text: block.text, isLive: block.isLive)
             }
             ForEach(turn.toolGroups) { group in
-                ToolActivityGroup(tools: group.tools, turnID: turn.id)
+                ToolActivityGroup(tools: group.tools, groupID: group.id)
             }
             if let approval = turn.approval {
                 ApprovalCardView(request: approval) { decision in

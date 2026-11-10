@@ -33,12 +33,12 @@ struct ToolActivitySummaryAccessibilityTests {
     }
 
     @Test func activationFlipsTheValueWithoutChangingTheLabel() {
-        let turnID = UUID()
-        let disclosure = ToolActivityDisclosure()
+        let groupID = "call-1"
+        let disclosure = ChatDisclosure()
 
         func summary() -> ToolActivityRun.SummaryAccessibility {
             failedRun.summaryAccessibility(
-                expanded: disclosure.isExpanded(turnID, default: false),
+                expanded: disclosure.isExpanded(groupID, default: false),
                 locale: english
             )
         }
@@ -47,12 +47,12 @@ struct ToolActivitySummaryAccessibilityTests {
         #expect(collapsed.value == "Collapsed")
 
         // The same toggle the summary button runs on tap.
-        disclosure.toggle(turnID, default: false)
+        disclosure.toggle(groupID, default: false)
         let expanded = summary()
         #expect(expanded.value == "Expanded")
         #expect(expanded.label == collapsed.label)
 
-        disclosure.toggle(turnID, default: false)
+        disclosure.toggle(groupID, default: false)
         #expect(summary().value == "Collapsed")
     }
 

@@ -20,9 +20,10 @@ struct ChatTranscriptView: View {
 
     @Environment(ChatActivityStore.self) private var activity
 
-    /// Which step runs the reader has opened or closed, kept here so it outlives
-    /// the rows (they are rebuilt as steps settle). The chat route keeps its own.
-    @State private var toolDisclosure = ToolActivityDisclosure()
+    /// Which step runs, thinking blocks and Sources footers the reader has
+    /// opened or closed, kept here so the choices outlive the rows (they are
+    /// rebuilt as steps settle). The chat route keeps its own.
+    @State private var chatDisclosure = ChatDisclosure()
 
     private static let bottomAnchorID = "chat-session.bottom"
 
@@ -58,10 +59,10 @@ struct ChatTranscriptView: View {
             // is never moved (`emergent.memory#434`), and the last growth can no
             // longer land short of the newest row (`emergent.memory#446`).
             .modifier(ChatAutoScroll(proxy: proxy, bottomAnchorID: Self.bottomAnchorID))
-            .environment(\.toolActivityDisclosure, toolDisclosure)
+            .environment(\.chatDisclosure, chatDisclosure)
             .onChange(of: activity.turns.isEmpty) { _, empty in
                 if empty {
-                    toolDisclosure.clear()
+                    chatDisclosure.clear()
                 }
             }
             .overlay {
@@ -258,10 +259,10 @@ struct ChatTurnActivityView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 1 * .grid) {
             ForEach(turn.thinkingBlocks) { block in
-                ThinkingBlockView(text: block.text, isLive: block.isLive)
+                ThinkingBlockView(id: block.id, text: block.text, isLive: block.isLive)
             }
             ForEach(turn.toolGroups) { group in
-                ToolActivityGroup(tools: group.tools, turnID: turn.id)
+                ToolActivityGroup(tools: group.tools, groupID: group.id)
             }
             if let approval = turn.approval {
                 ApprovalCardView(request: approval) { decision in
