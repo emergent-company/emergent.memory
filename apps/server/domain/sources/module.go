@@ -25,6 +25,7 @@ var Module = fx.Module("sources",
 		RegisterRoutes,
 		RegisterSyncWorkerLifecycle,
 		RegisterSyncSchedulerTask,
+		RegisterProbeSchedulerTask,
 	),
 )
 

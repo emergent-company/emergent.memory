@@ -2811,6 +2811,7 @@ Table "kb"."sources" {
   "credential_id" uuid
   "credentials_updated_at" timestamptz [not null, default: `now()`]
   "oauth_app_id" uuid
+  "last_probed_at" timestamptz
 
   Indexes {
     (credential_id) [name: "idx_sources_credential_id", note: '(credential_id IS NOT NULL)']
