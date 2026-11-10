@@ -31,6 +31,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/email"
 	"github.com/emergent-company/emergent.memory/domain/embeddingpolicies"
 	"github.com/emergent-company/emergent.memory/domain/extraction"
+	"github.com/emergent-company/emergent.memory/domain/githubapp"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/invites"
 	"github.com/emergent-company/emergent.memory/domain/journal"
@@ -284,4 +285,10 @@ var models = []any{
 	// domain/discoveryjobs
 	(*discoveryjobs.DiscoveryJob)(nil),
 	(*discoveryjobs.DiscoveryTypeCandidate)(nil),
+
+	// domain/githubapp
+	(*githubapp.GitHubApp)(nil),
+	(*githubapp.Installation)(nil),
+	(*githubapp.Delivery)(nil),
+	(*githubapp.ReviewClaim)(nil),
 }
