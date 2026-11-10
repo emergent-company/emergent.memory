@@ -441,6 +441,14 @@ routes:
       path: /api/data-source-integrations/:id/resources
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:read)
+    - method: PATCH
+      path: /api/data-source-integrations/:id/scope
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(sources:write)
+    - method: POST
+      path: /api/data-source-integrations/:id/scope/preview
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:read)
     - method: POST
       path: /api/data-source-integrations/:id/sync
       level: project-member
@@ -497,6 +505,10 @@ routes:
       path: /api/data-source-integrations/providers
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:read)
+    - method: POST
+      path: /api/data-source-integrations/providers/:providerType/filter-preview
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
     - method: GET
       path: /api/data-source-integrations/providers/:providerType/oauth/authorize
       level: project-member
