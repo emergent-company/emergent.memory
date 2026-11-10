@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/uptrace/bun"
 )
 
@@ -177,7 +178,7 @@ func (r *Repository) DisableInstallationByInstallationID(ctx context.Context, in
 func (r *Repository) UpdateInstallationRepos(ctx context.Context, installationID int64, repos []string) error {
 	_, err := r.db.NewUpdate().
 		Table("core.github_app_installations").
-		Set("repos = ?", repos).
+		Set("repos = ?", pq.StringArray(repos)).
 		Set("updated_at = now()").
 		Where("installation_id = ?", installationID).
 		Where("enabled = true").
@@ -197,6 +198,16 @@ func (r *Repository) DeleteApp(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+// ProjectOrgID returns a project's owning org, used to reject cross-org
+// installation bindings.
+func (r *Repository) ProjectOrgID(ctx context.Context, projectID uuid.UUID) (uuid.UUID, error) {
+	var orgID uuid.UUID
+	if err := r.db.NewSelect().Table("kb.projects").Column("organization_id").Where("id = ?", projectID).Scan(ctx, &orgID); err != nil {
+		return uuid.Nil, err
+	}
+	return orgID, nil
+}
+
 // --- Deliveries ---
 
 // InsertDelivery records a delivery id and reports whether it was new. A
@@ -213,6 +224,13 @@ func (r *Repository) InsertDelivery(ctx context.Context, d *Delivery) (bool, err
 		return false, err
 	}
 	return n > 0, nil
+}
+
+// DeleteDelivery removes a dedupe row after a processing failure so GitHub's
+// retry can re-attempt the delivery.
+func (r *Repository) DeleteDelivery(ctx context.Context, deliveryID string) error {
+	_, err := r.db.NewDelete().Table("core.github_app_deliveries").Where("delivery_id = ?", deliveryID).Exec(ctx)
+	return err
 }
 
 // --- Review claims ---
@@ -355,7 +373,8 @@ func (r *Repository) SetClaimRun(ctx context.Context, claimID, runID uuid.UUID, 
 		Set("state = ?", state).
 		Set("updated_at = now()").
 		Where("id = ?", claimID).
-		Where("state IN (?)", bun.In([]string{ClaimPending, ClaimRunning})).
+		Where("run_id IS NULL").
+		Where("state = ?", ClaimPending).
 		Exec(ctx)
 	if err != nil {
 		return false, err

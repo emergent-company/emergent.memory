@@ -46,13 +46,15 @@ func (h *Handler) Webhook(c echo.Context) error {
 	if err != nil {
 		return c.String(http.StatusBadRequest, "cannot read request body")
 	}
-	err = h.svc.HandleWebhook(c.Request().Context(),
+	verified, err := h.svc.Verify(c.Request().Context(),
 		c.Request().Header.Get(eventHeader),
 		c.Request().Header.Get(DeliveryHeader),
 		c.Request().Header.Get(SignatureHeader),
 		body,
 	)
 	switch {
+	case errors.Is(err, ErrMalformedPayload):
+		return c.String(http.StatusBadRequest, "malformed payload")
 	case errors.Is(err, ErrInvalidSignature):
 		return c.String(http.StatusUnauthorized, "invalid signature")
 	case errors.Is(err, ErrUnknownInstallation):
@@ -60,7 +62,10 @@ func (h *Handler) Webhook(c echo.Context) error {
 	case errors.Is(err, ErrMissingCredentials), errors.Is(err, ErrWebhookNotConfigured):
 		return c.String(http.StatusServiceUnavailable, "github app is not configured")
 	case err != nil:
-		return c.String(http.StatusBadRequest, "cannot process delivery")
+		return c.String(http.StatusInternalServerError, "cannot accept delivery")
+	}
+	if verified != nil {
+		go h.svc.ProcessAsync(verified)
 	}
 	return c.NoContent(http.StatusAccepted)
 }

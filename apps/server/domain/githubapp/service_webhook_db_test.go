@@ -39,8 +39,7 @@ func TestHandleWebhookEnqueuesOneReviewPerHead(t *testing.T) {
 	require.NoError(t, err)
 	cipher, err := NewCredentialCipher(key)
 	require.NoError(t, err)
-	rsaKey := testRSAKey(t)
-	sealedKey, err := cipher.Seal(string(pkcs1PEM(rsaKey)))
+	sealedKey, err := cipher.Seal(string(pkcs1PEM(testRSAKey(t))))
 	require.NoError(t, err)
 	const webhookSecret = "whsec"
 	sealedSecret, err := cipher.Seal(webhookSecret)
@@ -67,17 +66,21 @@ func TestHandleWebhookEnqueuesOneReviewPerHead(t *testing.T) {
 	}
 	require.NoError(t, repo.CreateInstallation(ctx, inst))
 
-	// Fake GitHub: token mint + live PR head.
+	// Fake GitHub: token mint + live PR head per number.
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/app/installations/42/access_tokens":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{"token": "ghs_test", "expires_at": time.Now().Add(time.Hour)})
-		case "/repos/owner/repo/pulls/7":
+		case "/repos/owner/repo/pulls/7", "/repos/owner/repo/pulls/8":
+			number, head := 7, "h1"
+			if r.URL.Path == "/repos/owner/repo/pulls/8" {
+				number, head = 8, "h8"
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"number": 7, "title": "fix", "state": "open",
+				"number": number, "title": "fix", "state": "open",
 				"user": map[string]any{"login": "mkucharz", "type": "User"},
-				"head": map[string]any{"sha": "h1", "ref": "feat/x"},
+				"head": map[string]any{"sha": head, "ref": "feat/x"},
 				"base": map[string]any{"ref": "dev"},
 			})
 		default:
@@ -86,19 +89,18 @@ func TestHandleWebhookEnqueuesOneReviewPerHead(t *testing.T) {
 	}))
 	defer fake.Close()
 
-	agentsRepo := agents.NewRepository(db.DB)
-	svc := NewService(repo, agentsRepo, cipher, NewTokenMinter(fake.URL, fake.Client()), &config.Config{}, nil)
+	svc := NewService(repo, agents.NewRepository(db.DB), cipher, NewTokenMinter(fake.URL, fake.Client()), &config.Config{}, nil)
 	svc.newClient = func(_, token string) *Client { return NewClient(fake.URL, token, fake.Client()) }
 
-	body := func(action, head, repoName string) []byte {
-		return []byte(fmt.Sprintf(`{"action":%q,"installation":{"id":42},"repository":{"full_name":%q},"pull_request":{"number":7,"title":"fix","state":"open","user":{"login":"mkucharz","type":"User"},"base":{"ref":"dev","sha":"b0"},"head":{"ref":"feat/x","sha":%q}}}`,
-			action, repoName, head))
+	body := func(action, state string, pr int, head, repoName string, draft bool) []byte {
+		return []byte(fmt.Sprintf(`{"action":%q,"installation":{"id":42},"repository":{"full_name":%q},"pull_request":{"number":%d,"title":"fix","state":%q,"draft":%t,"user":{"login":"mkucharz","type":"User"},"base":{"ref":"dev","sha":"b0"},"head":{"ref":"feat/x","sha":%q}}}`,
+			action, repoName, pr, state, draft, head))
 	}
-	deliver := func(delivery string, payload []byte) error {
-		return svc.HandleWebhook(ctx, "pull_request", delivery, signed(webhookSecret, payload), payload)
+	deliver := func(delivery string, event string, payload []byte) error {
+		return svc.HandleWebhook(ctx, event, delivery, signed(webhookSecret, payload), payload)
 	}
 
-	require.NoError(t, deliver("d1", body("opened", "h1", "owner/repo")))
+	require.NoError(t, deliver("d1", "pull_request", body("opened", "open", 7, "h1", "owner/repo", false)))
 	claim := findClaim(t, db, 42, "owner/repo", 7, "h1")
 	require.Equal(t, ClaimRunning, claim.State)
 	require.NotNil(t, claim.RunID)
@@ -108,23 +110,48 @@ func TestHandleWebhookEnqueuesOneReviewPerHead(t *testing.T) {
 	require.Equal(t, "pull_request", run.TriggerMetadata["subjectType"])
 	require.Equal(t, "owner/repo#7", run.TriggerMetadata["subjectRef"])
 	require.Equal(t, "h1", run.TriggerMetadata["headSha"])
+	require.Equal(t, "d1", run.TriggerMetadata["deliveryId"])
 
 	// Duplicate delivery is a no-op.
-	require.NoError(t, deliver("d1", body("opened", "h1", "owner/repo")))
+	require.NoError(t, deliver("d1", "pull_request", body("opened", "open", 7, "h1", "owner/repo", false)))
 	require.Equal(t, 1, countRuns(t, db, agentID))
 
 	// An out-of-order delivery for an older head is ignored.
-	require.NoError(t, deliver("d2", body("synchronize", "old", "owner/repo")))
+	require.NoError(t, deliver("d2", "pull_request", body("synchronize", "open", 7, "old", "owner/repo", false)))
 	require.Equal(t, ClaimRunning, findClaim(t, db, 42, "owner/repo", 7, "h1").State)
 	require.Equal(t, 1, countRuns(t, db, agentID))
 
 	// A repo outside the allowlist is ignored.
-	require.NoError(t, deliver("d3", body("opened", "h1", "other/repo")))
+	require.NoError(t, deliver("d3", "pull_request", body("opened", "open", 7, "h1", "other/repo", false)))
 	require.Equal(t, 1, countRuns(t, db, agentID))
 
-	// Closing the PR cancels the active claim and its run.
-	require.NoError(t, deliver("d4", body("closed", "h1", "owner/repo")))
+	// Invalid signature and unknown installation fail closed.
+	require.ErrorIs(t, svc.HandleWebhook(ctx, "pull_request", "d-bad", "sha256=deadbeef",
+		body("opened", "open", 7, "h1", "owner/repo", false)), ErrInvalidSignature)
+	unknown := []byte(`{"action":"opened","installation":{"id":999},"repository":{"full_name":"owner/repo"}}`)
+	require.ErrorIs(t, svc.HandleWebhook(ctx, "pull_request", "d-unknown", signed(webhookSecret, unknown), unknown), ErrUnknownInstallation)
+
+	// Converted-to-draft cancels the active claim for a second PR.
+	require.NoError(t, deliver("d5", "pull_request", body("opened", "open", 8, "h8", "owner/repo", false)))
+	require.NoError(t, deliver("d6", "pull_request", body("converted_to_draft", "open", 8, "h8", "owner/repo", true)))
+	require.Equal(t, ClaimCancelled, findClaim(t, db, 42, "owner/repo", 8, "h8").State)
+
+	// Closed cancels the first claim.
+	require.NoError(t, deliver("d7", "pull_request", body("closed", "closed", 7, "h1", "owner/repo", false)))
 	require.Equal(t, ClaimCancelled, findClaim(t, db, 42, "owner/repo", 7, "h1").State)
+
+	// installation_repositories deltas are top-level, not nested.
+	delta := []byte(`{"action":"added","installation":{"id":42},"repository":{"full_name":"owner/repo"},"repositories_added":[{"full_name":"owner/other"}],"repositories_removed":[]}`)
+	require.NoError(t, deliver("d8", "installation_repositories", delta))
+	updated, err := repo.FindEnabledInstallationByInstallationID(ctx, 42)
+	require.NoError(t, err)
+	require.Contains(t, updated.Repos, "owner/other")
+
+	// installation.deleted disables the installation.
+	deleted := []byte(`{"action":"deleted","installation":{"id":42}}`)
+	require.NoError(t, deliver("d9", "installation", deleted))
+	_, err = repo.FindEnabledInstallationByInstallationID(ctx, 42)
+	require.Error(t, err)
 }
 
 func findClaim(t *testing.T, db *testutil.TestDB, installationID int64, repo string, pr int, head string) *ReviewClaim {

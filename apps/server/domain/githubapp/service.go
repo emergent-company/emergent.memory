@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -21,7 +23,11 @@ var (
 	ErrUnknownInstallation  = errors.New("githubapp: unknown or disabled installation")
 	ErrInvalidSignature     = errors.New("githubapp: invalid webhook signature")
 	ErrMissingCredentials   = errors.New("githubapp: app credentials are not readable")
+	ErrMalformedPayload     = errors.New("githubapp: malformed webhook payload")
 )
+
+// asyncProcessTimeout bounds background delivery processing after the 202.
+const asyncProcessTimeout = 2 * time.Minute
 
 // Service implements App registration, installation routing, webhook ingress,
 // and the review-queue producer.
@@ -33,6 +39,9 @@ type Service struct {
 	apiBaseURL string
 	log        *slog.Logger
 	newClient  func(baseURL, token string) *Client
+
+	mu      sync.Mutex
+	prLocks map[string]*sync.Mutex
 }
 
 // NewService builds the service. A nil cipher is valid and fails closed.
@@ -58,6 +67,7 @@ func NewService(
 		newClient: func(baseURL, token string) *Client {
 			return NewClient(baseURL, token, nil)
 		},
+		prLocks: make(map[string]*sync.Mutex),
 	}
 }
 
@@ -134,7 +144,8 @@ type CreateInstallationRequest struct {
 	Queue          string
 }
 
-// CreateInstallation validates the runtime agent belongs to the project.
+// CreateInstallation validates the project belongs to the org and the runtime
+// agent belongs to that project.
 func (s *Service) CreateInstallation(ctx context.Context, orgID uuid.UUID, userID string, req CreateInstallationRequest) (*Installation, error) {
 	if err := s.requireOrgAdmin(ctx, orgID, userID); err != nil {
 		return nil, err
@@ -144,6 +155,10 @@ func (s *Service) CreateInstallation(ctx context.Context, orgID uuid.UUID, userI
 	}
 	if len(req.Repos) == 0 {
 		return nil, apperror.NewValidation("repos must not be empty")
+	}
+	projectOrg, err := s.repo.ProjectOrgID(ctx, req.ProjectID)
+	if err != nil || projectOrg != orgID {
+		return nil, apperror.NewNotFound("Project", req.ProjectID.String())
 	}
 	projectIDStr := req.ProjectID.String()
 	agent, err := s.agents.FindByID(ctx, req.AgentID.String(), &projectIDStr)
@@ -234,29 +249,39 @@ func (s *Service) DeleteApp(ctx context.Context, orgID uuid.UUID, userID string,
 	return s.repo.DeleteApp(ctx, appPK)
 }
 
-// HandleWebhook verifies and processes one GitHub delivery.
-func (s *Service) HandleWebhook(ctx context.Context, event, delivery, signature string, body []byte) error {
+// VerifiedDelivery is an authenticated, deduped delivery ready for processing.
+type VerifiedDelivery struct {
+	Event        string
+	DeliveryID   string
+	Payload      *WebhookPayload
+	App          *GitHubApp
+	Installation *Installation
+}
+
+// Verify parses the delivery, selects the installation, verifies HMAC with that
+// App's secret, and records the delivery id. A duplicate returns (nil, nil).
+func (s *Service) Verify(ctx context.Context, event, delivery, signature string, body []byte) (*VerifiedDelivery, error) {
 	payload, err := ParseWebhook(body)
 	if err != nil {
-		return fmt.Errorf("githubapp: malformed payload: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrMalformedPayload, err)
 	}
 	inst, err := s.repo.FindEnabledInstallationByInstallationID(ctx, payload.Installation.ID)
 	if err != nil {
-		return ErrUnknownInstallation
+		return nil, ErrUnknownInstallation
 	}
 	app, err := s.repo.FindAppByID(ctx, inst.AppPK)
 	if err != nil {
-		return ErrUnknownInstallation
+		return nil, ErrUnknownInstallation
 	}
 	if s.cipher == nil {
-		return ErrMissingCredentials
+		return nil, ErrMissingCredentials
 	}
 	secret, err := s.cipher.Open(app.WebhookSecretEncrypted)
 	if err != nil {
-		return ErrMissingCredentials
+		return nil, ErrMissingCredentials
 	}
 	if !VerifyWebhook(secret, body, signature) {
-		return ErrInvalidSignature
+		return nil, ErrInvalidSignature
 	}
 
 	if delivery != "" {
@@ -268,37 +293,86 @@ func (s *Service) HandleWebhook(ctx context.Context, event, delivery, signature 
 			HeadSHA:        payload.PullRequest.Head.SHA,
 		})
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if !inserted {
-			return nil
+			return nil, nil
 		}
 	}
+	return &VerifiedDelivery{Event: event, DeliveryID: delivery, Payload: payload, App: app, Installation: inst}, nil
+}
 
-	switch event {
+// Process runs the verified delivery. A failure deletes the dedupe row so a
+// GitHub retry can re-attempt it.
+func (s *Service) Process(ctx context.Context, v *VerifiedDelivery) error {
+	var err error
+	switch v.Event {
 	case "pull_request":
-		return s.handlePullRequest(ctx, app, inst, delivery, payload)
+		err = s.handlePullRequest(ctx, v)
 	case "installation":
-		if payload.Action == "deleted" {
-			return s.repo.DisableInstallationByInstallationID(ctx, inst.InstallationID)
-		}
-		return nil
+		err = s.handleInstallation(ctx, v)
 	case "installation_repositories":
-		repos := applyRepoDelta(inst.Repos, payload.Repositories.Added, payload.Repositories.Removed)
-		return s.repo.UpdateInstallationRepos(ctx, inst.InstallationID, repos)
-	default:
-		return nil
+		err = s.handleInstallationRepositories(ctx, v)
+	}
+	if err != nil && v.DeliveryID != "" {
+		_ = s.repo.DeleteDelivery(ctx, v.DeliveryID)
+	}
+	return err
+}
+
+// ProcessAsync processes a verified delivery in the background after the 202.
+func (s *Service) ProcessAsync(v *VerifiedDelivery) {
+	ctx, cancel := context.WithTimeout(context.Background(), asyncProcessTimeout)
+	defer cancel()
+	if err := s.Process(ctx, v); err != nil && s.log != nil {
+		s.log.Warn("githubapp: delivery processing failed", "event", v.Event, "delivery", v.DeliveryID, "error", err)
 	}
 }
 
-func (s *Service) handlePullRequest(ctx context.Context, app *GitHubApp, inst *Installation, delivery string, p *WebhookPayload) error {
+// HandleWebhook is the synchronous verify+process path used by tests.
+func (s *Service) HandleWebhook(ctx context.Context, event, delivery, signature string, body []byte) error {
+	v, err := s.Verify(ctx, event, delivery, signature, body)
+	if err != nil || v == nil {
+		return err
+	}
+	return s.Process(ctx, v)
+}
+
+func (s *Service) handleInstallation(ctx context.Context, v *VerifiedDelivery) error {
+	p, inst := v.Payload, v.Installation
+	switch p.Action {
+	case "deleted":
+		return s.repo.DisableInstallationByInstallationID(ctx, inst.InstallationID)
+	case "created", "new_permissions_accepted", "unsuspended":
+		if len(p.Repositories) > 0 {
+			repos := make([]string, 0, len(p.Repositories))
+			for _, repo := range p.Repositories {
+				if repo.FullName != "" {
+					repos = append(repos, repo.FullName)
+				}
+			}
+			return s.repo.UpdateInstallationRepos(ctx, inst.InstallationID, normalizeRepos(repos))
+		}
+	}
+	return nil
+}
+
+func (s *Service) handleInstallationRepositories(ctx context.Context, v *VerifiedDelivery) error {
+	repos := applyRepoDelta(v.Installation.Repos, v.Payload.RepositoriesAdded, v.Payload.RepositoriesRemoved)
+	return s.repo.UpdateInstallationRepos(ctx, v.Installation.InstallationID, repos)
+}
+
+func (s *Service) handlePullRequest(ctx context.Context, v *VerifiedDelivery) error {
+	p, inst, app := v.Payload, v.Installation, v.App
 	repo := p.Repository.FullName
 	if !inst.RepoAllowed(repo) {
 		return nil
 	}
-	if p.ShouldSkipPullRequest() || p.AuthoredBy(app.Slug) {
+	if p.AuthoredBy(app.Slug) {
 		return nil
 	}
+	// Lifecycle actions must run before the draft/closed skip predicate: a
+	// closed PR carries state "closed" and converted_to_draft carries draft=true.
 	if p.Action == "closed" || p.Action == "converted_to_draft" {
 		runs, err := s.repo.SupersedeActivePR(ctx, inst.InstallationID, repo, p.PullNumber())
 		if err != nil {
@@ -307,9 +381,12 @@ func (s *Service) handlePullRequest(ctx context.Context, app *GitHubApp, inst *I
 		s.cancelRuns(ctx, runs)
 		return nil
 	}
-	if !p.IsRelevantPullRequestAction() {
+	if p.ShouldSkipPullRequest() || !p.IsRelevantPullRequestAction() {
 		return nil
 	}
+
+	unlock := s.lockPR(inst.InstallationID, repo, p.PullNumber())
+	defer unlock()
 
 	token, err := s.mintToken(ctx, app, inst, repo)
 	if err != nil {
@@ -346,7 +423,7 @@ func (s *Service) handlePullRequest(ctx context.Context, app *GitHubApp, inst *I
 		"baseRef":        state.BaseRef,
 		"headRef":        state.HeadRef,
 		"installationId": inst.InstallationID,
-		"deliveryId":     delivery,
+		"deliveryId":     v.DeliveryID,
 	}
 	run, err := s.agents.CreateRunQueued(ctx, inst.AgentID.String(), 1, agents.CreateRunQueuedOptions{
 		Queue:           defaultQueue(inst.Queue),
@@ -392,6 +469,21 @@ func (s *Service) cancelRuns(ctx context.Context, runIDs []uuid.UUID) {
 			s.log.Warn("githubapp: failed to cancel superseded review run", "runId", id, "error", err)
 		}
 	}
+}
+
+// lockPR serializes claim+enqueue for one PR within this process. Cross-instance
+// safety also relies on the claim's run_id IS NULL guard.
+func (s *Service) lockPR(installationID int64, repo string, pr int) func() {
+	key := prLockKey(installationID, repo, pr)
+	s.mu.Lock()
+	lock := s.prLocks[key]
+	if lock == nil {
+		lock = new(sync.Mutex)
+		s.prLocks[key] = lock
+	}
+	s.mu.Unlock()
+	lock.Lock()
+	return lock.Unlock
 }
 
 func (s *Service) requireOrgAdmin(ctx context.Context, orgID uuid.UUID, userID string) error {

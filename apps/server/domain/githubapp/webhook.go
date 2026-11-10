@@ -73,11 +73,11 @@ type WebhookPayload struct {
 	Repository  WebhookRepo        `json:"repository"`
 	PullRequest WebhookPullRequest `json:"pull_request"`
 	Sender      WebhookUser        `json:"sender"`
-	// Repositories carries the installation_repositories delta.
-	Repositories struct {
-		Added   []WebhookRepo `json:"repositories_added"`
-		Removed []WebhookRepo `json:"repositories_removed"`
-	} `json:"installation_repositories"`
+	// Repositories is the full selection on an installation event.
+	Repositories []WebhookRepo `json:"repositories"`
+	// installation_repositories deltas are top-level in that payload.
+	RepositoriesAdded   []WebhookRepo `json:"repositories_added"`
+	RepositoriesRemoved []WebhookRepo `json:"repositories_removed"`
 }
 
 // ParseWebhook unmarshals a verified delivery body.
