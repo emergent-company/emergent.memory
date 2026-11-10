@@ -27,7 +27,10 @@ Content-Type: application/json
 }
 ```
 
-The private key and webhook secret are encrypted at rest and never returned.
+The private key and webhook secret are encrypted at rest with
+`GITHUB_APP_ENCRYPTION_KEY` and never returned. The App must be granted
+`contents: read`, `pull_requests: write`, `issues: write`, and `checks: write`.
+Installation tokens are minted per review, scoped to one repository.
 
 ### Bind an installation
 

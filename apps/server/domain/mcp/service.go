@@ -1931,6 +1931,7 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 	// session_todo_tools.go). Registered here so they dispatch through the same
 	// ExecuteTool switch as every other tool.
 	tools = append(tools, sessionTodoToolDefinitions()...)
+	tools = append(tools, githubAppToolDefinitions()...)
 
 	// Apply RequiredScope from the central static map and the agent-tool map to
 	// any tool that doesn't already declare one. Tools in dynamic *_tools.go
@@ -2029,11 +2030,6 @@ func (s *Service) legacyToolDefinitionsForProject(ctx context.Context, projectID
 		// RequiredScope. Re-apply so the tools/call scope gate sees the same
 		// authority as the tools/list (GetToolDefinitions) path.
 		applyRequiredScopes(tools)
-	}
-
-	// Append the GitHub App review tools for projects with an installation.
-	if s.githubAppToolHandler != nil {
-		tools = append(tools, s.githubAppToolHandler.GetGitHubAppToolDefinitionsForProject(ctx, projectID)...)
 	}
 
 	// Append source-backed tools (Gmail etc.) for the project's connected accounts.
@@ -2515,9 +2511,9 @@ func lookupToolIndex(name string) *ToolDefinition {
 
 // GetToolByNameForProject resolves a tool definition the way this project's call
 // path sees it: the process-global index first (the whole static catalog plus the
-// deprecated aliases), then the project-scoped catalog for the
-// handler-supplied dynamic tools the global index cannot hold (GitHub App review
-// tools, relay-session tools).
+// deprecated aliases, including the static GitHub review tools), then the
+// project-scoped catalog for the handler-supplied dynamic tools the global index
+// cannot hold (source-backed and relay-session tools).
 //
 // The global index is last-writer-wins across projects and is rebuilt without
 // dynamic tools by any static-catalog lookup, so it is not a sound source for an
@@ -2545,9 +2541,6 @@ func (s *Service) GetToolByNameForProject(ctx context.Context, projectID, name s
 // project-catalog build (one installation query, agent enrichment) off the path
 // for a genuinely unknown tool name.
 func (s *Service) isProjectDynamicTool(ctx context.Context, projectID, name string) bool {
-	if s.githubAppToolHandler != nil && s.githubAppToolHandler.HandlesGitHubAppTool(name) {
-		return true
-	}
 	if s.sourceToolHandler != nil && s.sourceToolHandler.HandlesSourceTool(ctx, projectID, name) {
 		return true
 	}
@@ -2703,9 +2696,9 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	// own per-tool check, so that is an equally-authorized origin.
 	//
 	// Resolve through the PROJECT-scoped catalog, not the process-global index:
-	// handler-supplied dynamic tools (GitHub App review tools, relay tools) are
-	// absent from the static index, and a nil definition would skip the seam
-	// below entirely. The seam also refuses an AgentOnly tool for a
+	// handler-supplied dynamic tools (source-backed and relay tools) are absent
+	// from the static index, and a nil definition would skip the seam below
+	// entirely. The seam also refuses an AgentOnly tool for a
 	// transport-enforced dispatch, so a transport that missed the definition
 	// cannot authorize one (authz.AuthorizeTool).
 	toolDef := s.GetToolByNameForProject(ctx, projectID, toolName)
@@ -3102,12 +3095,10 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 			return s.sourceToolHandler.ExecuteSourceTool(ctx, projectID, toolName, args)
 		}
 		if s.githubAppToolHandler != nil && s.githubAppToolHandler.HandlesGitHubAppTool(toolName) {
-			// The review tools are agent-only and dynamic: absent from the static
-			// index, so the transports' own AgentOnly check cannot see them. The
-			// reloaded authority seam above refuses an untrusted caller (including a
-			// transport-enforced one); this gate is the defence-in-depth mirror of
-			// the relay branch below and holds even if the definition lookup ever
-			// regresses (issues #994, #1017).
+			// The review tools are static AgentOnly entries, so the transports
+			// already hide and refuse them; the authority seam above enforces the
+			// same rule in-process. This gate is defence in depth and holds even
+			// if the definition lookup ever regresses (issues #994, #1017).
 			if !TrustedInternalFromContext(ctx) {
 				return nil, fmt.Errorf("github app tool %q is not reachable from an untrusted surface", toolName)
 			}

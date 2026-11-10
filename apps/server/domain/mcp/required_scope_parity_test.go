@@ -122,13 +122,6 @@ type fakeGitHubAppHandler struct {
 	dispatched bool
 }
 
-func (h *fakeGitHubAppHandler) GetGitHubAppToolDefinitionsForProject(context.Context, string) []mcp.ToolDefinition {
-	return []mcp.ToolDefinition{
-		{Name: "github-pr-diff", AgentOnly: true, InputSchema: mcp.InputSchema{Type: "object"}},
-		{Name: "github-review-submit", AgentOnly: true, InputSchema: mcp.InputSchema{Type: "object"}},
-	}
-}
-
 func (h *fakeGitHubAppHandler) HandlesGitHubAppTool(name string) bool {
 	return name == "github-pr-diff" || name == "github-review-submit"
 }
