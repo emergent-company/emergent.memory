@@ -488,6 +488,22 @@ routes:
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
     - method: GET
+      path: /api/data-source-integrations/:id/triggers
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:read)
+    - method: POST
+      path: /api/data-source-integrations/:id/triggers
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
+    - method: DELETE
+      path: /api/data-source-integrations/:id/triggers/:triggerId
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
+    - method: PATCH
+      path: /api/data-source-integrations/:id/triggers/:triggerId
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
+    - method: GET
       path: /api/data-source-integrations/credentials
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:read)
@@ -1285,6 +1301,18 @@ routes:
       note: RequireAuth
     - method: PATCH
       path: /api/orgs/:orgId/skills/:id
+      level: auth
+      note: RequireAuth
+    - method: GET
+      path: /api/orgs/:orgId/source-apps
+      level: auth
+      note: RequireAuth
+    - method: POST
+      path: /api/orgs/:orgId/source-apps
+      level: auth
+      note: RequireAuth
+    - method: DELETE
+      path: /api/orgs/:orgId/source-apps/:appId
       level: auth
       note: RequireAuth
     - method: GET

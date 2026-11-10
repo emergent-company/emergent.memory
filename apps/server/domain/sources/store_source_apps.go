@@ -623,3 +623,20 @@ func (r *Repository) cancelClaims(ctx context.Context, projectID, sourceID uuid.
 	}
 	return cancelled, nil
 }
+
+// ProjectOrgID returns a project's owning org for source-app binding checks.
+func (r *Repository) ProjectOrgID(ctx context.Context, projectID uuid.UUID) (uuid.UUID, error) {
+	var orgID uuid.UUID
+	if err := r.db.NewSelect().Table("kb.projects").Column("organization_id").Where("id = ?", projectID).Scan(ctx, &orgID); err != nil {
+		return uuid.Nil, err
+	}
+	return orgID, nil
+}
+
+func (r *Repository) FindSourceTriggerByID(ctx context.Context, id uuid.UUID) (*SourceTrigger, error) {
+	trigger := new(SourceTrigger)
+	if err := r.db.NewSelect().Model(trigger).Where("st.id = ?", id).Scan(ctx); err != nil {
+		return nil, err
+	}
+	return trigger, nil
+}

@@ -403,6 +403,7 @@ func defaultProviders(gmailBaseURL, gmailTokenURL, githubBaseURL string, webPoli
 		newGoogleDriveProvider(),
 		newGmailProvider(gmailBaseURL, gmailTokenURL),
 		newGitHubProvider(githubBaseURL),
+		newGitHubAppProvider(),
 		newTraleProvider(),
 		newWebProvider(webPolicy),
 	}

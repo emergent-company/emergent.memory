@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
@@ -59,6 +60,10 @@ type Service struct {
 
 	// mcpServers owns per-account MCP server rows. Optional.
 	mcpServers SourceMCPServerManager
+
+	// agentRepo resolves runtime agents for source triggers. Optional; trigger
+	// APIs fail closed without it.
+	agentRepo *agents.Repository
 }
 
 // carriedConfigKeys are non-secret config keys owned by dedicated flows rather
@@ -125,6 +130,16 @@ func WithProjectOAuthClientStore(store ProjectOAuthClientStore) ServiceOption {
 	return func(s *Service) {
 		if store != nil {
 			s.projectOAuth = store
+		}
+	}
+}
+
+// WithAgentRepository supplies the runtime-agent resolver used by source
+// trigger APIs.
+func WithAgentRepository(repo *agents.Repository) ServiceOption {
+	return func(s *Service) {
+		if repo != nil {
+			s.agentRepo = repo
 		}
 	}
 }
@@ -576,6 +591,12 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 		CreatedAt:            now,
 		UpdatedAt:            now,
 	}
+	if req.ProviderType == ProviderTypeGitHubApp {
+		if err := s.bindGitHubAppSource(ctx, projectID, src, cfg); err != nil {
+			return nil, err
+		}
+	}
+
 	if _, ok := p.(SourceToolProvider); ok {
 		slug := s.deriveMcpSlug(ctx, src)
 		src.McpSlug = &slug

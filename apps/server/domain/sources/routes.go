@@ -36,6 +36,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	readGroup.GET("/:id/sync-jobs", h.ListSyncJobs)
 	readGroup.GET("/:id/sync-jobs/latest", h.GetLatestSyncJob)
 	readGroup.GET("/:id/sync-jobs/:jobId", h.GetSyncJob)
+	readGroup.GET("/:id/triggers", h.ListSourceTriggers)
 	readGroup.POST("/:id/scope/preview", h.PreviewSourceScope)
 
 	// Write operations (create/update/test + sync trigger/cancel).
@@ -57,6 +58,9 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	writeGroup.GET("/:id/picker-session", h.PickerSession)
 	writeGroup.PUT("/:id/sync-targets", h.SaveSyncTargets)
 	writeGroup.POST("/:id/sync", h.TriggerSync)
+	writeGroup.POST("/:id/triggers", h.CreateSourceTrigger)
+	writeGroup.PATCH("/:id/triggers/:triggerId", h.UpdateSourceTrigger)
+	writeGroup.DELETE("/:id/triggers/:triggerId", h.DeleteSourceTrigger)
 	writeGroup.POST("/:id/sync-jobs/:jobId/cancel", h.CancelSyncJob)
 	writeGroup.GET("/providers/:providerType/oauth/authorize", h.StartOAuth)
 
@@ -81,6 +85,14 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// addressed org is explicit; only RequireAuth is applied at the route layer —
 	// org-admin authority is enforced inside the handler via the shared
 	// org-administration check (pkg/auth.CanAdministerOrg).
+	// Org-scoped source Apps (credentials). Org-admin authority is enforced in
+	// the service; only RequireAuth is applied at the route layer.
+	sourceApps := e.Group("/api/orgs/:orgId/source-apps")
+	sourceApps.Use(authMiddleware.RequireAuth())
+	sourceApps.GET("", h.ListSourceApps)
+	sourceApps.POST("", h.RegisterSourceApp)
+	sourceApps.DELETE("/:appId", h.DeleteSourceApp)
+
 	orgClients := e.Group("/api/orgs/:orgId/data-source-integrations/oauth-clients")
 	orgClients.Use(authMiddleware.RequireAuth())
 	orgClients.GET("", h.ListOrgOAuthClients)
