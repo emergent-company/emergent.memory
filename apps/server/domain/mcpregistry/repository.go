@@ -404,8 +404,8 @@ func (r *Repository) FindAllEnabledTools(ctx context.Context, projectID string) 
 		Where("ms.project_id = ?", projectID).
 		Where("ms.enabled = true").
 		Where("mst.enabled = true").
-		Where("ms.type != ?", ServerTypeBuiltin). // exclude builtins — they come from mcp.Service
-		Where("ms.target != ?", TargetDevice).    // exclude device rows — never connected outbound
+		Where("ms.type NOT IN (?)", bun.In([]MCPServerType{ServerTypeBuiltin, ServerTypeSource})). // builtins and source tools come from mcp.Service
+		Where("ms.target != ?", TargetDevice).                                                     // exclude device rows — never connected outbound
 		Order("ms.name ASC", "mst.tool_name ASC").
 		Scan(ctx, &tools)
 	if err != nil {

@@ -77,20 +77,13 @@ func (s *Service) EnsureSourceServer(ctx context.Context, projectID, sourceID st
 			ToolName:    def.Name,
 			Description: &desc,
 			InputSchema: in,
-			Enabled:     def.RequiredScope != "email:write",
+			Enabled:     true,
 			ConfigKeys:  []string{},
 		})
 		names = append(names, def.Name)
 	}
 	if err := s.repo.BulkUpsertTools(ctx, tools); err != nil {
 		return fmt.Errorf("upserting source tools: %w", err)
-	}
-	for _, def := range defs {
-		if def.RequiredScope == "email:write" {
-			if err := s.repo.SetToolEnabledByServerAndName(ctx, server.ID, def.Name, true); err != nil {
-				return err
-			}
-		}
 	}
 	if _, err := s.repo.DeleteStaleTools(ctx, server.ID, names); err != nil {
 		return fmt.Errorf("pruning source tools: %w", err)

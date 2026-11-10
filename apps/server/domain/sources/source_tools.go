@@ -70,44 +70,49 @@ func (s *Service) ExecuteSourceTool(ctx context.Context, projectID, toolName str
 	if err != nil {
 		return nil, err
 	}
+	var matched *Source
+	bestPrefix := ""
 	for _, listed := range sources {
 		if listed.McpSlug == nil {
 			continue
 		}
 		prefix := listed.Provider + "-" + *listed.McpSlug + "-"
-		if !strings.HasPrefix(toolName, prefix) {
-			continue
+		if strings.HasPrefix(toolName, prefix) && len(prefix) > len(bestPrefix) {
+			matched = listed
+			bestPrefix = prefix
 		}
-		action := strings.TrimPrefix(toolName, prefix)
-		scope := "email:read"
-		if isGmailWriteAction(action) {
-			scope = "email:write"
-		}
-		if err := requireSourceToolScope(ctx, scope); err != nil {
-			return nil, err
-		}
-		if isGmailWriteAction(action) && !sourceWriteToolsEnabled(listed.Config) {
-			return nil, apperror.NewValidation("write tools are not enabled for this Gmail source")
-		}
-		src, err := s.repo.GetByIDWithCredentials(ctx, listed.ID, pid)
-		if err != nil {
-			return nil, err
-		}
-		provider, ok := s.providers.Get(src.Provider)
-		if !ok {
-			return nil, apperror.NewValidation("unsupported provider")
-		}
-		stp, ok := provider.(SourceToolProvider)
-		if !ok {
-			return nil, apperror.NewValidation("provider does not expose tools")
-		}
-		creds, err := s.credentialsForSource(ctx, src)
-		if err != nil {
-			return nil, err
-		}
-		return stp.ExecuteTool(ctx, creds, src.Config, action, args)
 	}
-	return nil, apperror.ErrNotFound
+	if matched == nil {
+		return nil, apperror.ErrNotFound
+	}
+	action := strings.TrimPrefix(toolName, bestPrefix)
+	scope := "email:read"
+	if isGmailWriteAction(action) {
+		scope = "email:write"
+	}
+	if err := requireSourceToolScope(ctx, scope); err != nil {
+		return nil, err
+	}
+	if isGmailWriteAction(action) && !sourceWriteToolsEnabled(matched.Config) {
+		return nil, apperror.NewValidation("write tools are not enabled for this Gmail source")
+	}
+	src, err := s.repo.GetByIDWithCredentials(ctx, matched.ID, pid)
+	if err != nil {
+		return nil, err
+	}
+	provider, ok := s.providers.Get(src.Provider)
+	if !ok {
+		return nil, apperror.NewValidation("unsupported provider")
+	}
+	stp, ok := provider.(SourceToolProvider)
+	if !ok {
+		return nil, apperror.NewValidation("provider does not expose tools")
+	}
+	creds, err := s.credentialsForSource(ctx, src)
+	if err != nil {
+		return nil, err
+	}
+	return stp.ExecuteTool(ctx, creds, src.Config, action, args)
 }
 
 func sourceWriteToolsEnabled(cfg map[string]any) bool {

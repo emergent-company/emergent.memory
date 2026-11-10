@@ -54,7 +54,7 @@ func sourceAdminToolDefinitions() []mcp.ToolDefinition {
 		{Name: "source-list", RequiredScope: read, Description: "List data sources in this project with their sync scope summary.", InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]mcp.PropertySchema{}}},
 		{Name: "source-get", RequiredScope: read, Description: "Get one data source's non-secret config and sync scope hashes.", InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]mcp.PropertySchema{"source_id": {Type: "string"}}, Required: []string{"source_id"}}},
 		{Name: "source-scope-preview", RequiredScope: read, Description: "Validate a proposed Gmail sync scope and return the compiled query, a preview hash, and the current base hash. Call this before source-scope-update.", InputSchema: mcp.InputSchema{Type: "object", Properties: scopeProps, Required: []string{"source_id"}}},
-		{Name: "source-scope-update", RequiredScope: write, Description: "Update a Gmail source's sync scope. Requires preview_hash and base_scope_hash from source-scope-preview. Structured filters only; raw Gmail query is rejected.", InputSchema: mcp.InputSchema{Type: "object", Properties: updateProps, Required: []string{"source_id", "preview_hash", "base_scope_hash"}}},
+		{Name: "source-scope-update", RequiredScope: write, Description: "Update a Gmail source's filter/object types. Requires preview_hash and base_scope_hash from source-scope-preview. Structured filters only; raw Gmail query and write-tool enablement are rejected.", InputSchema: mcp.InputSchema{Type: "object", Properties: updateProps, Required: []string{"source_id", "preview_hash", "base_scope_hash"}}},
 		{Name: "source-sync-trigger", RequiredScope: write, Description: "Trigger a sync for a data source after changing its scope.", InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]mcp.PropertySchema{"source_id": {Type: "string"}}, Required: []string{"source_id"}}},
 	}
 }
@@ -189,12 +189,8 @@ func scopeRequestFromArgs(args map[string]any) (*SourceScopeRequest, error) {
 	if _, ok := args["query"]; ok {
 		return nil, apperror.NewValidation("raw Gmail query is not accepted by MCP; use structured filter fields")
 	}
-	if v, ok := args["mcp_write_tools_enabled"]; ok {
-		b, ok := v.(bool)
-		if !ok {
-			return nil, apperror.NewValidation("mcp_write_tools_enabled must be a boolean")
-		}
-		req.MCPWriteToolsEnabled = &b
+	if _, ok := args["mcp_write_tools_enabled"]; ok {
+		return nil, apperror.NewValidation("mcp_write_tools_enabled is not editable through MCP; use the API/UI")
 	}
 	return req, nil
 }
