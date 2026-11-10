@@ -580,10 +580,10 @@ func deviceCredentialToken(c echo.Context) string {
 // deviceSurfacePath reports whether a gateway request path/method is within the
 // device surface: room-token mint, agent picker (list/detail), the per-agent
 // object browser, chat relay + its run-cancel route, conversation lifecycle
-// (archive/unarchive/delete), session log/records, memory browsing, and the
-// share-capture writes (a link/note or a photo/PDF). A device credential is
-// rejected on everything else (defence in depth over the server's own surface
-// guard).
+// (archive/unarchive/delete), session log/records, memory browsing, the share-
+// capture writes (a link/note or a photo/PDF), and the object card's two work
+// writes (status/assignee). A device credential is rejected on everything else
+// (defence in depth over the server's own surface guard).
 func deviceSurfacePath(method, path string) bool {
 	switch method {
 	case http.MethodGet:
@@ -628,6 +628,12 @@ func deviceSurfacePath(method, path string) bool {
 		// shared photo/PDF. Both are exact shapes bound to exactly one project
 		// id; memory re-checks the same shapes against the same credential.
 		if deviceProjectRememberPath(path) {
+			return true
+		}
+		// Work writes from the object card (issue #454): exactly one object ref,
+		// then status or assignee. Memory admits, for the same credential, only
+		// the two work-item routes these call for a keyed object.
+		if deviceObjectWritePath(path) {
 			return true
 		}
 		// Stopping a chat run the credential's user owns (#81). The gateway
@@ -676,6 +682,21 @@ func deviceObjectReadPath(path string) bool {
 	}
 	parts := strings.Split(rest, "/")
 	return len(parts) == 2 && parts[0] != "" && (parts[1] == "card" || parts[1] == "history")
+}
+
+// deviceObjectWritePath reports whether path is exactly
+// `/api/objects/{ref}/status` or `/api/objects/{ref}/assignee` — the two work
+// writes the object card's editable strip makes (issue #454). One non-empty ref
+// segment, nothing deeper. These are POST-only in practice: the matcher is
+// called from the POST branch of deviceSurfacePath, and every other generation
+// of /api/objects/{ref}/… stays off-surface.
+func deviceObjectWritePath(path string) bool {
+	rest, ok := strings.CutPrefix(path, "/api/objects/")
+	if !ok {
+		return false
+	}
+	parts := strings.Split(rest, "/")
+	return len(parts) == 2 && parts[0] != "" && (parts[1] == "status" || parts[1] == "assignee")
 }
 
 // deviceQuestionActionPath reports whether path is exactly

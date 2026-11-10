@@ -15,6 +15,12 @@ final class ObjectCardStore {
     private(set) var loadState: LoadState = .idle
     private(set) var history: [ObjectCardVersion] = []
     private(set) var historyState: LoadState = .idle
+    /// The last workflow write's failure, shown inline in the strip. Cleared
+    /// when the next write starts; the card's old value is never replaced by a
+    /// guess, so there is nothing to revert.
+    private(set) var actionError: String?
+    /// A workflow write is in flight; the pickers are disabled meanwhile.
+    private(set) var isSaving = false
 
     @ObservationIgnored private let client: any ObjectCardFetching
     @ObservationIgnored private var generation = GenerationGuard()
@@ -65,5 +71,38 @@ final class ObjectCardStore {
             return true
         }
         return false
+    }
+
+    // MARK: - Workflow writes
+
+    /// Sets the work item's status through the gateway and adopts the refreshed
+    /// card it answers with. On failure the card keeps its old status and
+    /// ``actionError`` carries the reason, exactly as the web drawer re-renders
+    /// with its action error.
+    func setStatus(_ value: String) async {
+        await write {
+            try await self.client.setStatus(value, for: self.reference)
+        }
+    }
+
+    /// Sets (or clears, with an empty value) the work item's assignee. Same
+    /// failure contract as ``setStatus(_:)``.
+    func setAssignee(_ value: String) async {
+        await write {
+            try await self.client.setAssignee(value, for: self.reference)
+        }
+    }
+
+    private func write(_ update: () async throws -> ObjectCard) async {
+        isSaving = true
+        actionError = nil
+        defer { isSaving = false }
+        do {
+            card = try await update()
+            loadState = .loaded
+        } catch {
+            Log.net.error("object card update failed: \(error.localizedDescription)")
+            actionError = error.localizedDescription
+        }
     }
 }

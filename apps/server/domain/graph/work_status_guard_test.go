@@ -2,9 +2,11 @@ package graph
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/stretchr/testify/require"
 )
@@ -267,4 +269,30 @@ func TestValidateSubgraphWorkStatus(t *testing.T) {
 			{Type: "Task", Status: &shipped},
 		}))
 	})
+}
+
+// TestValidateWorkObjectStatus pins the handler-side allowed-set check the two
+// device work-item writes inherit (issue #454). A status outside the type's
+// declared allowedStatuses is refused before any graph write; an unconstrained
+// or non-board type accepts it, exactly as the web status control does.
+func TestValidateWorkObjectStatus(t *testing.T) {
+	board := &agents.ObjectTypeWorkConfig{
+		BoardEnabled:    true,
+		AllowedStatuses: []string{"ready", "in_progress", "review", "done"},
+	}
+	require.NoError(t, ValidateWorkObjectStatus(board, "done"))
+	require.NoError(t, ValidateWorkObjectStatus(board, "review"))
+
+	err := ValidateWorkObjectStatus(board, "shipped")
+	require.Error(t, err)
+	var appErr *apperror.Error
+	require.ErrorAs(t, err, &appErr)
+	require.Equal(t, http.StatusBadRequest, appErr.HTTPStatus)
+	require.Equal(t, "work_status_not_allowed", appErr.Code)
+
+	// No declared set on a board-enabled type: any status is accepted.
+	require.NoError(t, ValidateWorkObjectStatus(&agents.ObjectTypeWorkConfig{BoardEnabled: true}, "shipped"))
+	// Not a board type: any status is accepted.
+	require.NoError(t, ValidateWorkObjectStatus(&agents.ObjectTypeWorkConfig{AllowedStatuses: []string{"ready"}}, "shipped"))
+	require.NoError(t, ValidateWorkObjectStatus(nil, "shipped"))
 }

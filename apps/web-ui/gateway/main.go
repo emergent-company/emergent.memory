@@ -159,6 +159,13 @@ func main() {
 	// deviceObjectReadPath (auth.go).
 	api.GET("/objects/:id/card", s.getObjectCard)
 	api.GET("/objects/:id/history", s.getObjectCardHistory)
+	// Device-reachable work writes from the object card (see object_work.go):
+	// the editable half of the workflow strip. Both mirror the drawer's
+	// uiObjectStatus / uiObjectAssignee and answer with the refreshed card.
+	// Device access via deviceObjectWritePath (auth.go); memory admits only the
+	// two work-item path shapes for a device credential.
+	api.POST("/objects/:id/status", s.postObjectStatus)
+	api.POST("/objects/:id/assignee", s.postObjectAssignee)
 	api.POST("/chat", s.chat)
 	// Share capture (iOS share extension): a link/note, or a photo/PDF/audio
 	// memo. Device-reachable — see deviceSurfacePath and remember.go.

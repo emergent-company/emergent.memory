@@ -1,14 +1,14 @@
 import SwiftUI
 
-/// One object's read-only card: the native counterpart of the web chat's
-/// object preview drawer (`object_preview.templ`), with the same sections in
-/// the same order — header, workflow, Properties, "<Type> Properties", Labels,
-/// History.
+/// One object's card: the native counterpart of the web chat's object preview
+/// drawer (`object_preview.templ`), with the same sections in the same order —
+/// header, workflow, Properties, "<Type> Properties", Labels, History.
 ///
 /// It is the body both presentations share: ``ObjectCardSheet`` (opened from a
 /// chat reference) and ``ObjectCardScreen`` (pushed from the object browser).
-/// The workflow strip, editable in the web drawer, is read-only here, like the
-/// rest of the card.
+/// The workflow strip is editable for a work item (a status picker and an
+/// assignee picker, see ``ObjectCardWorkControls``); every other object keeps
+/// the read-only strip, like the rest of the card.
 ///
 /// Every value is agent-written and untrusted. It is shown through plain
 /// `Text(verbatim:)`, so nothing in it is interpreted as markup or a link.
@@ -65,7 +65,7 @@ struct ObjectCardView: View {
             }
 
             if let workflow = card.workflow {
-                workflowSection(workflow)
+                workflowSection(workflow, card: card)
             }
 
             ForEach(card.sections) { section in
@@ -91,22 +91,27 @@ struct ObjectCardView: View {
         .background(.bg1)
     }
 
-    /// The workflow strip of a workflow-declaring type, read-only here.
-    private func workflowSection(_ workflow: ObjectCardWorkflow) -> some View {
+    /// The workflow strip of a workflow-declaring type: editable pickers for a
+    /// work item, read-only rows otherwise.
+    private func workflowSection(_ workflow: ObjectCardWorkflow, card: ObjectCard) -> some View {
         Section("objects.card.workflow") {
-            LabeledContent("objects.card.status") {
-                if let status = workflow.status {
-                    ObjectStatusBadge(status: status)
-                } else {
-                    emptyDash
+            if card.canEditWorkflow {
+                ObjectCardWorkControls(store: store, workflow: workflow)
+            } else {
+                LabeledContent("objects.card.status") {
+                    if let status = workflow.status {
+                        ObjectStatusBadge(status: status)
+                    } else {
+                        emptyDash
+                    }
                 }
-            }
-            LabeledContent("objects.card.assignee") {
-                if workflow.assignee.isEmpty {
-                    emptyDash
-                } else {
-                    Text(verbatim: workflow.assignee)
-                        .textSelection(.enabled)
+                LabeledContent("objects.card.assignee") {
+                    if workflow.assignee.isEmpty {
+                        emptyDash
+                    } else {
+                        Text(verbatim: workflow.assignee)
+                            .textSelection(.enabled)
+                    }
                 }
             }
         }

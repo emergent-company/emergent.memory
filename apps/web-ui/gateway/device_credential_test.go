@@ -80,6 +80,19 @@ func TestDeviceSurfacePath(t *testing.T) {
 		{"POST", "/api/objects/o1/card", false},
 		{"GET", "/api/blueprints/compiled-types", false},
 
+		// Object-card work writes (issue #454): exactly one ref segment, then
+		// status or assignee, POST only. Everything else under /api/objects
+		// stays off-surface.
+		{"POST", "/api/objects/o1/status", true},
+		{"POST", "/api/objects/o1/assignee", true},
+		{"POST", "/api/objects//status", false},
+		{"POST", "/api/objects/o1/status/x", false},
+		{"POST", "/api/objects/o1/approve", false},
+		{"POST", "/api/objects/o1/assignee/clear", false},
+		{"GET", "/api/objects/o1/status", false},
+		{"PUT", "/api/objects/o1/assignee", false},
+		{"DELETE", "/api/objects/o1/status", false},
+
 		// Share capture: exactly two shapes, one non-empty project id.
 		{"POST", "/api/projects/p1/remember", true},
 		{"POST", "/api/projects/p1/remember/file", true},
