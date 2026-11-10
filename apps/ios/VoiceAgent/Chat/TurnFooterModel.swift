@@ -58,7 +58,8 @@ struct TurnFooterModel {
     var line: String? {
         guard let duration, let endClock else { return nil }
         let name = run.model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return [name.isEmpty ? nil : name, duration, endClock]
+        let parts: [String?] = [name.isEmpty ? nil : name, duration, endClock]
+        return parts
             .compactMap(\.self)
             .joined(separator: " · ")
     }
