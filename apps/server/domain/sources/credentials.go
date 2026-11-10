@@ -61,6 +61,17 @@ func encryptBlob(key []byte, plaintext []byte) ([]byte, error) {
 	return blob, nil
 }
 
+// SealSourceBlob encrypts an arbitrary source/app secret with the deployment
+// key. It is the same blob format as provider credentials.
+func SealSourceBlob(key []byte, plaintext []byte) ([]byte, error) {
+	return encryptBlob(key, plaintext)
+}
+
+// OpenSourceBlob decrypts a blob produced by SealSourceBlob.
+func OpenSourceBlob(key []byte, blob []byte) ([]byte, error) {
+	return decryptBlob(key, blob)
+}
+
 // decryptBlob reverses encryptBlob.
 func decryptBlob(key []byte, blob []byte) ([]byte, error) {
 	if len(key) == 0 {

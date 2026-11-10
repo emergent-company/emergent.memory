@@ -111,3 +111,14 @@ func RegisterSourceMCPBackfill(lc fx.Lifecycle, svc *Service) {
 		return nil
 	}})
 }
+
+// SourceEventsModule provides the App-scoped webhook ingress and the source
+// event dispatcher. It depends on the agents repository (enqueue) so it is
+// loaded only when FEATURE_AGENTS is on.
+var SourceEventsModule = fx.Module("source-events",
+	fx.Provide(
+		NewSourceEventDispatcher,
+		NewSourceEventHandler,
+	),
+	fx.Invoke(RegisterSourceEventRoutes),
+)

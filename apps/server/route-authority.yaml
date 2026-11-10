@@ -2527,6 +2527,10 @@ routes:
       path: /api/webhooks/mailgun
       level: public
       note: ""
+    - method: POST
+      path: /api/webhooks/source-apps/:webhookKey
+      level: public
+      note: ""
     - method: GET
       path: /coverage
       level: public
