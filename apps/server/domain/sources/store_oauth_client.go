@@ -59,6 +59,14 @@ type OAuthClientConfig struct {
 	UpdatedAt time.Time      `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
 }
 
+// OAuthAppSourceRef identifies a stored data source that references an OAuth
+// app. A delete refusal names them so the operator knows what to disconnect or
+// repoint instead of chasing a bare count (#554).
+type OAuthAppSourceRef struct {
+	ID          uuid.UUID `bun:"id,type:uuid" json:"id"`
+	DisplayName string    `bun:"display_name" json:"displayName"`
+}
+
 // OrgOAuthAppStore is the named-app surface layered over OrgOAuthClientStore.
 // It is optional: the legacy per-provider resolution path keeps working when a
 // store only implements the old interface.
@@ -70,6 +78,8 @@ type OrgOAuthAppStore interface {
 	UpdateOAuthClientConfig(ctx context.Context, cfg *OAuthClientConfig) (*OAuthClientConfig, error)
 	DeleteOAuthClientConfigByID(ctx context.Context, orgID, id uuid.UUID) error
 	CountSourcesUsingOAuthConfig(ctx context.Context, id uuid.UUID) (int, error)
+	// SourcesUsingOAuthConfig names the sources behind that count.
+	SourcesUsingOAuthConfig(ctx context.Context, id uuid.UUID) ([]OAuthAppSourceRef, error)
 }
 
 // ProjectOAuthAppStore is the project-scoped mirror of OrgOAuthAppStore.
@@ -83,6 +93,8 @@ type ProjectOAuthAppStore interface {
 	// CountProjectSourcesUsingOAuthConfig reports how many sources of projectID
 	// reference the app, so a project delete can refuse while it is in use.
 	CountProjectSourcesUsingOAuthConfig(ctx context.Context, projectID, id uuid.UUID) (int, error)
+	// SourcesUsingProjectOAuthConfig names the sources behind that count.
+	SourcesUsingProjectOAuthConfig(ctx context.Context, projectID, id uuid.UUID) ([]OAuthAppSourceRef, error)
 }
 
 // OrgOAuthClientStore is the persistence + authorization surface the Service
@@ -637,6 +649,41 @@ func (r *Repository) CountProjectSourcesUsingOAuthConfig(ctx context.Context, pr
 		return 0, apperror.NewDatabase("failed to count project sources using oauth app", err)
 	}
 	return n, nil
+}
+
+// SourcesUsingOAuthConfig names the data sources that reference an app (any
+// project), ordered oldest first so a delete refusal reads predictably.
+func (r *Repository) SourcesUsingOAuthConfig(ctx context.Context, id uuid.UUID) ([]OAuthAppSourceRef, error) {
+	refs := []OAuthAppSourceRef{}
+	if err := r.db.NewSelect().
+		TableExpr("kb.sources").
+		ColumnExpr("id").
+		ColumnExpr("coalesce(display_name, '') AS display_name").
+		Where("oauth_app_id = ?", id).
+		OrderExpr("created_at, id").
+		Scan(ctx, &refs); err != nil {
+		r.log.Error("failed to list sources using oauth app", logger.Error(err))
+		return nil, apperror.NewDatabase("failed to list sources using oauth app", err)
+	}
+	return refs, nil
+}
+
+// SourcesUsingProjectOAuthConfig names the project's own data sources that
+// reference an app.
+func (r *Repository) SourcesUsingProjectOAuthConfig(ctx context.Context, projectID, id uuid.UUID) ([]OAuthAppSourceRef, error) {
+	refs := []OAuthAppSourceRef{}
+	if err := r.db.NewSelect().
+		TableExpr("kb.sources").
+		ColumnExpr("id").
+		ColumnExpr("coalesce(display_name, '') AS display_name").
+		Where("project_id = ?", projectID).
+		Where("oauth_app_id = ?", id).
+		OrderExpr("created_at, id").
+		Scan(ctx, &refs); err != nil {
+		r.log.Error("failed to list project sources using oauth app", logger.Error(err))
+		return nil, apperror.NewDatabase("failed to list project sources using oauth app", err)
+	}
+	return refs, nil
 }
 
 // GetProjectOAuthClientConfigByID returns one project app by id.

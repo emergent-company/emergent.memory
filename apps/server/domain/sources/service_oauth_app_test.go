@@ -93,6 +93,9 @@ func (f *namedAppStore) DeleteOAuthClientConfigByID(context.Context, uuid.UUID, 
 func (f *namedAppStore) CountSourcesUsingOAuthConfig(context.Context, uuid.UUID) (int, error) {
 	return 0, nil
 }
+func (f *namedAppStore) SourcesUsingOAuthConfig(context.Context, uuid.UUID) ([]OAuthAppSourceRef, error) {
+	return nil, nil
+}
 
 func (f *namedAppStore) GetProjectOAuthClientConfigByID(_ context.Context, projectID, id uuid.UUID) (*OAuthClientConfig, error) {
 	for _, app := range f.projectApps[projectID] {
@@ -128,6 +131,9 @@ func (f *namedAppStore) DeleteProjectOAuthClientConfigByID(context.Context, uuid
 }
 func (f *namedAppStore) CountProjectSourcesUsingOAuthConfig(context.Context, uuid.UUID, uuid.UUID) (int, error) {
 	return 0, nil
+}
+func (f *namedAppStore) SourcesUsingProjectOAuthConfig(context.Context, uuid.UUID, uuid.UUID) ([]OAuthAppSourceRef, error) {
+	return nil, nil
 }
 
 func newNamedAppService(t *testing.T, store *namedAppStore) *Service {
