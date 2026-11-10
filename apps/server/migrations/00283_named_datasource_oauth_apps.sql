@@ -58,8 +58,8 @@ FROM dup
 WHERE c.id = dup.id
   AND dup.rn > 1;
 
-DROP INDEX IF EXISTS idx_oauth_client_configs_org_provider;
-DROP INDEX IF EXISTS idx_oauth_client_configs_project_provider;
+DROP INDEX IF EXISTS kb.idx_oauth_client_configs_org_provider;
+DROP INDEX IF EXISTS kb.idx_oauth_client_configs_project_provider;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_client_configs_org_vendor_name
     ON kb.oauth_client_configs (organization_id, vendor, lower(name))
@@ -147,8 +147,8 @@ SET provider = COALESCE(
     )
 WHERE provider = vendor AND provider_configs <> '{}'::jsonb;
 
-DROP INDEX IF EXISTS idx_oauth_client_configs_org_vendor_name;
-DROP INDEX IF EXISTS idx_oauth_client_configs_project_vendor_name;
+DROP INDEX IF EXISTS kb.idx_oauth_client_configs_org_vendor_name;
+DROP INDEX IF EXISTS kb.idx_oauth_client_configs_project_vendor_name;
 
 ALTER TABLE kb.oauth_client_configs DROP COLUMN IF EXISTS provider_configs;
 ALTER TABLE kb.oauth_client_configs DROP COLUMN IF EXISTS name;

@@ -2051,7 +2051,7 @@ func (s *Server) uiProjectCredentials(c echo.Context) error {
 	if perr != nil {
 		perr = userFacingError(perr)
 	}
-	creds, cerr := s.memory.ListDSCredentials(ctx)
+	_, cerr := s.memory.ListDSCredentials(ctx)
 	if cerr != nil {
 		cerr = userFacingError(cerr)
 	}
@@ -2078,7 +2078,6 @@ func (s *Server) uiProjectCredentials(c echo.Context) error {
 	if len(apps) == 0 {
 		deploymentNote = "No OAuth apps yet. Data sources use the deployment's built-in app when one is configured."
 	}
-	_ = creds
 	credProviders := dsCredentialProviders(providers)
 	savedPicker := dsSavedCredentialPicker{
 		Providers: credProviders,

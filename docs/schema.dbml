@@ -1822,9 +1822,7 @@ Table "kb"."oauth_client_configs" {
   "provider_configs" jsonb [not null, default: '{}']
 
   Indexes {
-    (organization_id, provider) [name: "idx_oauth_client_configs_org_provider", unique]
     (organization_id, vendor, `lower(name)`) [name: "idx_oauth_client_configs_org_vendor_name", unique, note: '(project_id IS NULL)']
-    (project_id, provider) [name: "idx_oauth_client_configs_project_provider", unique, note: '(project_id IS NOT NULL)']
     (project_id, vendor, `lower(name)`) [name: "idx_oauth_client_configs_project_vendor_name", unique, note: '(project_id IS NOT NULL)']
   }
 }

@@ -385,11 +385,12 @@ func (s *Service) DeleteProjectOAuthApp(ctx context.Context, projectID uuid.UUID
 	if err != nil {
 		return err
 	}
-	ost, _ := s.orgAppStore()
-	if n, cerr := ost.CountSourcesUsingOAuthConfig(ctx, appID); cerr != nil {
-		return cerr
-	} else if n > 0 {
-		return apperror.NewConflict(fmt.Sprintf("OAuth app is used by %d data source(s); detach it first", n))
+	if ost, ok := s.orgAppStore(); ok {
+		if n, cerr := ost.CountSourcesUsingOAuthConfig(ctx, appID); cerr != nil {
+			return cerr
+		} else if n > 0 {
+			return apperror.NewConflict(fmt.Sprintf("OAuth app is used by %d data source(s); detach it first", n))
+		}
 	}
 	pst, _ := s.projectAppStore()
 	return pst.DeleteProjectOAuthClientConfigByID(ctx, projectID, appID)
@@ -528,10 +529,7 @@ func (s *Service) toOAuthAppDTO(ctx context.Context, row *OAuthClientConfig, sco
 		return nil, err
 	}
 	vendor := s.appVendor(row)
-	_, vendorName, _ := s.vendorForProvider(row.Provider)
-	if vendorName == "" {
-		vendorName = vendor
-	}
+	vendorName := s.vendorDisplayName(vendor)
 	redirects := map[string]string{}
 	for _, p := range s.vendorProviders(vendor) {
 		pt := p.Catalog().Type
@@ -718,4 +716,18 @@ func (s *Service) ensureAppNameFree(ctx context.Context, isOrg bool, projectID, 
 		}
 	}
 	return nil
+}
+
+// vendorDisplayName resolves the human label for a vendor from the catalog,
+// independent of which provider row happens to be stored on the app.
+func (s *Service) vendorDisplayName(vendor string) string {
+	for _, p := range s.vendorProviders(vendor) {
+		if name := strings.TrimSpace(p.Catalog().VendorName); name != "" {
+			return name
+		}
+	}
+	if vendor == "" {
+		return ""
+	}
+	return strings.ToUpper(vendor[:1]) + vendor[1:]
 }
