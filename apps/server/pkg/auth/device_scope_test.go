@@ -1,8 +1,11 @@
 package auth
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -92,6 +95,22 @@ func TestRejectDeviceTokenOutsideSurface(t *testing.T) {
 		{"agent run read stays closed", "GET", "/api/projects/p1/agent-runs/r1", deviceScopes, true},
 		{"agent-scoped cancel stays closed", "POST", "/api/projects/p1/agents/a1/runs/r1/cancel", deviceScopes, true},
 
+		// Work-item writes from the iOS object card (issue #454): exactly the
+		// status and reassign shapes, POST only, one project + one canonical id.
+		{"work item status write allowed", "POST", "/api/projects/p1/work-items/c1/status", deviceScopes, false},
+		{"work item reassign write allowed", "POST", "/api/projects/p1/work-items/c1/reassign", deviceScopes, false},
+		{"work item status write without canonical id rejected", "POST", "/api/projects/p1/work-items//status", deviceScopes, true},
+		{"work item status write without project rejected", "POST", "/api/projects//work-items/c1/status", deviceScopes, true},
+		{"work item status write deeper path rejected", "POST", "/api/projects/p1/work-items/c1/status/x", deviceScopes, true},
+		{"work item status write wrong method rejected", "GET", "/api/projects/p1/work-items/c1/status", deviceScopes, true},
+		{"work item approve stays closed", "POST", "/api/projects/p1/work-items/c1/approve", deviceScopes, true},
+		{"work item request-changes stays closed", "POST", "/api/projects/p1/work-items/c1/request-changes", deviceScopes, true},
+		{"work item retry stays closed", "POST", "/api/projects/p1/work-items/c1/retry", deviceScopes, true},
+		{"work item unblock stays closed", "POST", "/api/projects/p1/work-items/c1/unblock", deviceScopes, true},
+		{"work item cancel stays closed", "POST", "/api/projects/p1/work-items/c1/cancel", deviceScopes, true},
+		{"work item comments stay closed", "POST", "/api/projects/p1/work-items/c1/comments", deviceScopes, true},
+		{"work item runs write stays closed", "POST", "/api/projects/p1/work-items/runs", deviceScopes, true},
+
 		// Capture writes (iOS share extension): exactly two shapes, one project id.
 		{"remember text allowed", "POST", "/api/projects/p1/remember", deviceScopes, false},
 		{"remember file allowed", "POST", "/api/projects/p1/remember/file", deviceScopes, false},
@@ -142,6 +161,84 @@ func TestRejectDeviceTokenOutsideSurface(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 			}
+		})
+	}
+}
+
+// TestDeviceWorkItemWriteScopeCarveOut pins the one place a device credential
+// gets past the agents:write gate: exactly the two work-item write shapes the
+// iOS object card posts to (issue #454). The ceiling itself is unchanged — the
+// token still carries no agents:write — and every sibling work-item write is
+// still refused. Only the two exact path shapes are admitted.
+func TestDeviceWorkItemWriteScopeCarveOut(t *testing.T) {
+	deviceUser := &AuthUser{
+		ID:                "u1",
+		Scopes:            []string{"device:api", "agents:read", "data:read"},
+		APITokenID:        "tok1",
+		APITokenProjectID: "p1",
+	}
+
+	newEcho := func(user *AuthUser) *echo.Echo {
+		m := &Middleware{}
+		e := echo.New()
+		e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+			return func(c echo.Context) error {
+				c.Set(string(UserContextKey), user)
+				return next(c)
+			}
+		})
+		work := e.Group("/api/projects/:projectId/work-items")
+		work.Use(m.RequireProjectTokenScope())
+		work.Use(m.RequireAPITokenScopes("agents:write"))
+		for _, action := range []string{
+			"status", "reassign", "approve", "request-changes",
+			"retry", "unblock", "cancel", "comments",
+		} {
+			path := "/:canonicalId/" + action
+			work.POST(path, func(c echo.Context) error {
+				return c.NoContent(http.StatusNoContent)
+			})
+		}
+		return e
+	}
+
+	cases := []struct {
+		name       string
+		user       *AuthUser
+		path       string
+		wantStatus int
+	}{
+		{"device status admitted", deviceUser, "/api/projects/p1/work-items/c1/status", http.StatusNoContent},
+		{"device reassign admitted", deviceUser, "/api/projects/p1/work-items/c1/reassign", http.StatusNoContent},
+		{"device approve refused", deviceUser, "/api/projects/p1/work-items/c1/approve", http.StatusForbidden},
+		{"device request-changes refused", deviceUser, "/api/projects/p1/work-items/c1/request-changes", http.StatusForbidden},
+		{"device retry refused", deviceUser, "/api/projects/p1/work-items/c1/retry", http.StatusForbidden},
+		{"device unblock refused", deviceUser, "/api/projects/p1/work-items/c1/unblock", http.StatusForbidden},
+		{"device cancel refused", deviceUser, "/api/projects/p1/work-items/c1/cancel", http.StatusForbidden},
+		{"device comments refused", deviceUser, "/api/projects/p1/work-items/c1/comments", http.StatusForbidden},
+		{"device foreign project status refused", deviceUser, "/api/projects/p2/work-items/c1/status", http.StatusForbidden},
+		{"device foreign project reassign refused", deviceUser, "/api/projects/p2/work-items/c1/reassign", http.StatusForbidden},
+		{
+			"non-device token still refused",
+			&AuthUser{ID: "u2", Scopes: []string{"data:read"}, APITokenID: "tok2", APITokenProjectID: "p1"},
+			"/api/projects/p1/work-items/c1/status",
+			http.StatusForbidden,
+		},
+		{
+			"agents:write token unaffected",
+			&AuthUser{ID: "u3", Scopes: []string{"agents:write"}, APITokenID: "tok3", APITokenProjectID: "p1"},
+			"/api/projects/p1/work-items/c1/status",
+			http.StatusNoContent,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEcho(tc.user)
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, tc.path, nil)
+			e.ServeHTTP(rec, req)
+			assert.Equal(t, tc.wantStatus, rec.Code, "body=%s", rec.Body.String())
 		})
 	}
 }
