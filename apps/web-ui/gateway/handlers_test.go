@@ -5200,7 +5200,6 @@ func (f *fakeMemory) UpdateDSScope(ctx context.Context, id string, req *DSScopeR
 	return &DSScopePreview{PreviewHash: previewHash, BaseScopeHash: baseScopeHash, Changed: true}, nil
 }
 
-
 func (f *fakeMemory) ListOrgDSOAuthApps(ctx context.Context, orgID string) ([]DSOAuthApp, error) {
 	if f.dsOrgOAuthApps != nil {
 		return f.dsOrgOAuthApps, nil

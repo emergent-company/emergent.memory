@@ -768,6 +768,7 @@ func (m *MemoryClient) ListDocumentVersions(ctx context.Context, documentID stri
 	}
 	return out.Versions, nil
 }
+
 // PreviewDSFilter validates an unsaved provider filter and returns the compiled
 // query. Used by the Gmail connect form before starting OAuth.
 func (m *MemoryClient) PreviewDSFilter(ctx context.Context, providerType string, config map[string]any) (string, error) {
@@ -833,6 +834,7 @@ func (m *MemoryClient) UpdateDSScope(ctx context.Context, id string, req *DSScop
 	}
 	return &out, nil
 }
+
 // DSOAuthProviderConfig is one provider's scope configuration inside a named
 // vendor-level OAuth app.
 type DSOAuthProviderConfig struct {
