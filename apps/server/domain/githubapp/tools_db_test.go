@@ -115,7 +115,7 @@ func TestGitHubAppReviewTools(t *testing.T) {
 	require.Equal(t, "APPROVE", reviewBody["event"])
 	require.Equal(t, "success", checkBody["conclusion"])
 	require.Equal(t, "abc1234", checkBody["head_sha"])
-	require.Contains(t, commentBody["body"], "Reviewed-SHA: head-sha")
+	require.Contains(t, commentBody["body"], "Reviewed-SHA: abc1234")
 	require.Contains(t, commentBody["body"], "Verdict: MERGE")
 	require.Equal(t, "MERGE", res.StructuredContent["verdict"])
 
@@ -127,7 +127,7 @@ func TestGitHubAppReviewTools(t *testing.T) {
 		"verdict": "MERGE", "summary": "stale",
 	})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "PR head is new-head")
+	require.Contains(t, err.Error(), "PR head is "+currentHead)
 	require.Equal(t, beforeCalls, reviewCalls)
 
 	// No installation for a different repo means no tools/failure.
