@@ -189,7 +189,7 @@ func (r *Repository) UpdateSourceTrigger(ctx context.Context, trigger *SourceTri
 	}
 	err := r.projectTx(ctx, trigger.ProjectID, func(ctx context.Context, tx bun.Tx) error {
 		_, err := tx.NewUpdate().Model(trigger).
-			Column("agent_id", "queue", "event_filter", "enabled").
+			Column("event_type", "agent_id", "queue", "event_filter", "enabled").
 			Set("updated_at = now()").
 			Where("id = ?", trigger.ID).
 			Exec(ctx)
@@ -622,4 +622,24 @@ func (r *Repository) cancelClaims(ctx context.Context, projectID, sourceID uuid.
 		return nil, err
 	}
 	return cancelled, nil
+}
+
+// ProjectOrgID returns a project's owning org for source-app binding checks.
+func (r *Repository) ProjectOrgID(ctx context.Context, projectID uuid.UUID) (uuid.UUID, error) {
+	var orgID uuid.UUID
+	if err := r.db.NewSelect().Table("kb.projects").Column("organization_id").Where("id = ?", projectID).Scan(ctx, &orgID); err != nil {
+		return uuid.Nil, err
+	}
+	return orgID, nil
+}
+
+func (r *Repository) FindSourceTriggerByID(ctx context.Context, projectID, id uuid.UUID) (*SourceTrigger, error) {
+	trigger := new(SourceTrigger)
+	err := r.projectTx(ctx, projectID, func(ctx context.Context, tx bun.Tx) error {
+		return tx.NewSelect().Model(trigger).Where("st.id = ?", id).Scan(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return trigger, nil
 }

@@ -445,6 +445,11 @@ func (r *Repository) ListDueSources(ctx context.Context, now time.Time) ([]*Sour
 		Where("sync_interval_minutes IS NOT NULL").
 		Where("sync_interval_minutes > 0").
 		Where("last_synced_at IS NULL OR last_synced_at < now() - make_interval(mins => sync_interval_minutes)").
+		// Mirrors TriggerOnlyProvider: an event-driven provider never writes
+		// last_synced_at, so it would be due on every sweep and each job would
+		// fail. The service refuses a scheduled mode for it; a row edited
+		// directly by SQL must not be admitted either.
+		Where("provider <> ?", ProviderTypeGitHubApp).
 		ExcludeColumn("encrypted_credentials").
 		Order("created_at ASC").
 		Scan(ctx)

@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
@@ -59,6 +60,10 @@ type Service struct {
 
 	// mcpServers owns per-account MCP server rows. Optional.
 	mcpServers SourceMCPServerManager
+
+	// agentRepo resolves runtime agents for source triggers. Optional; trigger
+	// APIs fail closed without it.
+	agentRepo *agents.Repository
 }
 
 // carriedConfigKeys are non-secret config keys owned by dedicated flows rather
@@ -125,6 +130,16 @@ func WithProjectOAuthClientStore(store ProjectOAuthClientStore) ServiceOption {
 	return func(s *Service) {
 		if store != nil {
 			s.projectOAuth = store
+		}
+	}
+}
+
+// WithAgentRepository supplies the runtime-agent resolver used by source
+// trigger APIs.
+func WithAgentRepository(repo *agents.Repository) ServiceOption {
+	return func(s *Service) {
+		if repo != nil {
+			s.agentRepo = repo
 		}
 	}
 }
@@ -576,6 +591,12 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 		CreatedAt:            now,
 		UpdatedAt:            now,
 	}
+	if req.ProviderType == ProviderTypeGitHubApp {
+		if err := s.bindGitHubAppSource(ctx, projectID, src, cfg); err != nil {
+			return nil, err
+		}
+	}
+
 	if _, ok := p.(SourceToolProvider); ok {
 		slug := s.deriveMcpSlug(ctx, src)
 		src.McpSlug = &slug
@@ -736,6 +757,11 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 		if err != nil {
 			return nil, err
 		}
+		if p, ok := s.providers.Get(existing.Provider); ok {
+			if err := rejectScheduledForTriggerOnly(p, mode); err != nil {
+				return nil, err
+			}
+		}
 		existing.SyncPolicy = mode
 	}
 	// The policy owns the interval. A source switched back to manual keeps no
@@ -832,6 +858,26 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 		cfg := cloneConfig(req.Config)
 		if normalizer, ok := p.(ConfigNormalizer); ok {
 			normalizer.NormalizeConfig(cfg)
+		}
+		if existing.Provider == ProviderTypeGitHubApp {
+			if v, ok := cfg["app_id"]; ok && existing.AppID != nil && strings.TrimSpace(fmt.Sprint(v)) != existing.AppID.String() {
+				return nil, apperror.NewValidation("the App cannot be changed on an existing source; create a new source")
+			}
+			if v, ok := cfg["installation_id"]; ok && existing.ExternalAccountID != nil {
+				normalized, nerr := normalizeInstallationID(v)
+				if nerr != nil {
+					return nil, apperror.NewValidation("github_app: " + nerr.Error())
+				}
+				if normalized != *existing.ExternalAccountID {
+					return nil, apperror.NewValidation("the installation cannot be changed on an existing source; create a new source")
+				}
+			}
+			if existing.AppID != nil {
+				cfg["app_id"] = existing.AppID.String()
+			}
+			if existing.ExternalAccountID != nil {
+				cfg["installation_id"] = *existing.ExternalAccountID
+			}
 		}
 		if _, typed := p.(TypedObjectProvider); typed {
 			for _, key := range []string{"filter", "object_types", "mcp_write_tools_enabled", "query", "label_ids", "since"} {
@@ -1087,12 +1133,33 @@ func NormalizeSyncMode(mode string) (string, error) {
 // when triggered.
 func defaultSyncMode(p SourceProvider, requested *string) (string, error) {
 	if requested != nil && *requested != "" {
-		return NormalizeSyncMode(*requested)
+		mode, err := NormalizeSyncMode(*requested)
+		if err != nil {
+			return "", err
+		}
+		if err := rejectScheduledForTriggerOnly(p, mode); err != nil {
+			return "", err
+		}
+		return mode, nil
 	}
 	if _, ok := p.(SyncIntervalBoundsProvider); ok {
 		return SyncPolicyScheduled, nil
 	}
 	return SyncPolicyManual, nil
+}
+
+// rejectScheduledForTriggerOnly refuses a scheduled mode on a provider that has
+// no document sync. Without this an explicit syncMode=scheduled would persist an
+// interval the scheduler honours, while the source never writes last_synced_at,
+// so every sweep would enqueue a job that must fail.
+func rejectScheduledForTriggerOnly(p SourceProvider, mode string) error {
+	if mode != SyncPolicyScheduled {
+		return nil
+	}
+	if tp, ok := p.(TriggerOnlyProvider); !ok || !tp.TriggerOnly() {
+		return nil
+	}
+	return apperror.NewValidation(p.Catalog().Type + " is event-driven and does not sync; syncMode must be manual")
 }
 
 // applyScheduledInterval resolves the interval to persist for a source in the
@@ -1203,4 +1270,13 @@ func (s *Service) PreviewFilter(ctx context.Context, providerType string, cfg ma
 		return "", apperror.NewValidation("provider does not support filter preview: " + providerType)
 	}
 	return preview.FilterPreview(cfg)
+}
+
+// WireAgentRepository attaches the runtime-agent resolver used by trigger APIs.
+// It is invoked only when FEATURE_AGENTS is on (see SourceEventsModule), so the
+// sources module itself does not require the agents domain.
+func WireAgentRepository(svc *Service, repo *agents.Repository) {
+	if svc != nil && repo != nil {
+		svc.agentRepo = repo
+	}
 }
