@@ -24,12 +24,6 @@ final class MemorySessionController: ObservableObject {
     /// Memory's text-stream topics (see the worker protocol in `agent/main.py`).
     static let agentReadyTopic = "lk.agent.ready"
     static let agentEventsTopic = "lk.agent.events"
-    /// Rich chat activity (worker → client): one JSON `ChatEvent` per message.
-    static let chatEventsTopic = "lk.chat.events"
-    /// Decisions on approval/question cards (client → worker), JSON per message.
-    static let chatDecisionTopic = "lk.chat.decision"
-    /// Interrupt the current generation (client → worker): empty text payload.
-    static let chatInterruptTopic = "lk.chat.interrupt"
 
     let session: Session
     let localMedia: LocalMediaModel
@@ -41,6 +35,10 @@ final class MemorySessionController: ObservableObject {
     /// into the environment by `AgentSessionRoot` so chat surfaces observe it
     /// directly (the controller feeds it via `apply`/`reset`).
     let chatActivity = ChatActivityStore()
+
+    /// The ordered chat timeline the voice surface renders (`emergent.memory#435`),
+    /// fed the same events as `chatActivity` plus the room's messages.
+    let chatTimeline = ChatTimelineStore()
 
     @Published private(set) var phase: Phase = .idle
 
@@ -155,6 +153,7 @@ final class MemorySessionController: ObservableObject {
         session.restoreMessageHistory([])
         lastTracedMessageCount = 0
         chatActivity.reset()
+        chatTimeline.reset()
 
         await session.start()
 
@@ -189,6 +188,7 @@ final class MemorySessionController: ObservableObject {
         seenTranscriptIDs.removeAll()
         lastMessageCount = 0
         chatActivity.reset()
+        chatTimeline.reset()
         await session.end()
     }
 
@@ -294,6 +294,10 @@ final class MemorySessionController: ObservableObject {
                     case .userInput(_), .userTranscript:
                         if message.isFinal {
                             chatActivity.userTurnStarted(anchorMessageID: message.id)
+                            // Open the timeline row in the order the room
+                            // delivered it, before any reasoning or tool row
+                            // for this turn arrives.
+                            chatTimeline.appendUserMessage(id: message.id, text: text)
                         }
                     case .agentTranscript:
                         chatActivity.agentReplyStarted()

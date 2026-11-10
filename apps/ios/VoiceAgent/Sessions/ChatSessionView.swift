@@ -30,6 +30,8 @@ struct ChatSessionView: View {
     @EnvironmentObject private var localMedia: LocalMediaModel
     @EnvironmentObject var projectStore: MemoryProjectStore
     @Environment(ChatActivityStore.self) var activity
+    /// The ordered chat timeline: history and the live turn in one list.
+    @Environment(ChatTimelineStore.self) var timeline
     @Environment(\.voiceEnabled) private var voiceEnabled
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dismiss) private var dismiss
@@ -235,7 +237,7 @@ extension ChatSessionView {
                 voiceRoom
             } else {
                 ChatTranscriptView(
-                    transcript: transcript,
+                    timeline: timeline,
                     agentName: route.agentName,
                     showsSuggestions: route.conversationID == nil,
                     onSuggestion: { prompt in
@@ -258,20 +260,6 @@ extension ChatSessionView {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var voiceRoom: some View {
-        ZStack {
-            VoiceInteractionView()
-            if controller.phase == .connecting {
-                LoadingStateView(title: "chat.connecting")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(.bg1)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // The in-call surface ignores the safe area: clip it under header/controls.
-        .clipped()
     }
 
     // MARK: - Bottom bar
@@ -335,6 +323,9 @@ extension ChatSessionView {
     /// route, fetch recorded history once, and connect only if the session is in
     /// voice mode. Text needs no connection.
     private func start() async {
+        // Every live frame the HTTP turn produces also lands in the ordered
+        // timeline, so a streamed turn and its reload have one shape.
+        transport.timeline = timeline
         transport.onConversationLearned = { conversationID in
             activeSession.learnConversationID(conversationID)
             queue.learnConversationID(conversationID)
@@ -385,7 +376,7 @@ extension ChatSessionView {
             ?? activeSession.launchConversationID
             ?? activeSession.liveConversationID
         else { return }
-        await history.load(conversationID: conversationID, force: force, into: transcript)
+        await history.load(conversationID: conversationID, force: force, into: transcript, timeline: timeline)
     }
 
     private func retryHistory() {

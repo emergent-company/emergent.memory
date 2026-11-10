@@ -12,6 +12,13 @@ private struct AgentEvent: Decodable {
 }
 
 extension MemorySessionController {
+    /// Rich chat activity (worker → client): one JSON `ChatEvent` per message.
+    static let chatEventsTopic = "lk.chat.events"
+    /// Decisions on approval/question cards (client → worker), JSON per message.
+    static let chatDecisionTopic = "lk.chat.decision"
+    /// Interrupt the current generation (client → worker): empty text payload.
+    static let chatInterruptTopic = "lk.chat.interrupt"
+
     func handleAgentEvent(_ body: String) {
         guard
             let data = body.data(using: .utf8),
@@ -48,6 +55,7 @@ extension MemorySessionController {
             return
         }
         chatActivity.apply(event)
+        chatTimeline.apply(event)
     }
 
     // MARK: - Rich-chat decisions (iOS chat parity)

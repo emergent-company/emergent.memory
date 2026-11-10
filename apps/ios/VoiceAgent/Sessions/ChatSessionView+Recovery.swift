@@ -23,6 +23,24 @@ import Foundation
 ///   (the text the user already saw) rather than surfacing an error: there is
 ///   nothing actionable to tell them, and reopening the chat loads the record.
 extension ChatSessionView {
+    /// Refreshes the rendered timeline from the record.
+    ///
+    /// The recovery and resumed-run paths apply a `SessionDetail` to the
+    /// transcript directly, because that is the record-growth signal they poll.
+    /// The rows on screen come from the ordered history endpoint, so that is
+    /// refetched here; a reload replaces the run's rows by id/run id, so the
+    /// partial (or the live copy) is superseded rather than stacked.
+    func refreshTimelineFromRecord(conversationID: String) {
+        Task { @MainActor in
+            await history.load(
+                conversationID: conversationID,
+                force: true,
+                into: transcript,
+                timeline: timeline
+            )
+        }
+    }
+
     func recoverInterruptedTurn() async {
         guard
             let interrupted = transport.interruptedTurn,
@@ -41,6 +59,7 @@ extension ChatSessionView {
             },
             apply: { detail in
                 transcript.loadHistory(from: detail)
+                refreshTimelineFromRecord(conversationID: conversationID)
                 // Also clears this drop's banner: the record now supersedes the
                 // partial, so the failure message would be the only thing still
                 // claiming the turn was cut short. Only this drop's — a later
@@ -83,6 +102,7 @@ extension ChatSessionView {
             accept: { ChatSessionTranscriptStore.recordedUnseenReply(in: $0, since: baseline) },
             apply: { detail in
                 transcript.loadHistory(from: detail)
+                refreshTimelineFromRecord(conversationID: conversationID)
                 // Also drops the live copy of this turn and clears this turn's
                 // banner: the record now holds both halves (#213: only this
                 // turn's — a later one may have failed over the same slot).
