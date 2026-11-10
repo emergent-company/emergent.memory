@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
+	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/testdb"
 	"github.com/emergent-company/emergent.memory/internal/testutil"
@@ -23,6 +24,9 @@ func TestGitHubAppReviewTools(t *testing.T) {
 		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
 	}
 	ctx := context.Background()
+	// The review tools are run-scoped: tests that call them directly must carry
+	// the per-run cache the executor installs, or submit fails closed.
+	ctx = mcp.ContextWithNewToolResultCache(ctx)
 	db := testutil.SetupTestDBOrFail(t, ctx, "githubapp_tools")
 	defer db.Close()
 
@@ -49,7 +53,7 @@ func TestGitHubAppReviewTools(t *testing.T) {
 	inst := &Installation{AppPK: app.ID, OrgID: orgID, ProjectID: projectID, InstallationID: 42, Repos: []string{"owner/repo"}, AgentID: agentID, Queue: "security-review", Enabled: true}
 	require.NoError(t, repo.CreateInstallation(ctx, inst))
 
-	currentHead := "head-sha"
+	currentHead := "abc1234"
 	reviewCalls := 0
 	var reviewBody, checkBody, commentBody map[string]any
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -59,7 +63,7 @@ func TestGitHubAppReviewTools(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"token": "ghs_test", "expires_at": time.Now().Add(time.Hour)})
 		case r.URL.Path == "/repos/owner/repo/commits/head-sha":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"sha": "head-sha", "commit": map[string]any{"message": "fix"},
+				"sha": "abc1234", "commit": map[string]any{"message": "fix"},
 				"files": []map[string]any{{"filename": "a.go", "status": "modified", "additions": 1, "deletions": 0, "patch": "@@ -1 +1 @@"}},
 			})
 		case r.URL.Path == "/repos/owner/repo/pulls/7":
@@ -97,29 +101,29 @@ func TestGitHubAppReviewTools(t *testing.T) {
 	require.True(t, svc.HandlesGitHubAppTool(toolReviewSubmit))
 	require.False(t, svc.HandlesGitHubAppTool("graph-write"))
 
-	diff, err := svc.ExecuteGitHubAppTool(ctx, projectID.String(), toolPRDiff, map[string]any{"repo": "owner/repo", "head_sha": "head-sha"})
+	diff, err := svc.ExecuteGitHubAppTool(ctx, projectID.String(), toolPRDiff, map[string]any{"repo": "owner/repo", "head_sha": "abc1234"})
 	require.NoError(t, err)
 	require.Contains(t, diff.Content[0].Text, "a.go")
 	require.Contains(t, diff.Content[0].Text, "@@ -1 +1 @@")
 
 	res, err := svc.ExecuteGitHubAppTool(ctx, projectID.String(), toolReviewSubmit, map[string]any{
-		"repo": "owner/repo", "number": float64(7), "head_sha": "head-sha",
+		"repo": "owner/repo", "number": float64(7), "head_sha": "abc1234",
 		"verdict": "MERGE", "summary": "looks good",
 	})
 	require.NoError(t, err)
-	require.Equal(t, "head-sha", reviewBody["commit_id"])
+	require.Equal(t, "abc1234", reviewBody["commit_id"])
 	require.Equal(t, "APPROVE", reviewBody["event"])
 	require.Equal(t, "success", checkBody["conclusion"])
-	require.Equal(t, "head-sha", checkBody["head_sha"])
+	require.Equal(t, "abc1234", checkBody["head_sha"])
 	require.Contains(t, commentBody["body"], "Reviewed-SHA: head-sha")
 	require.Contains(t, commentBody["body"], "Verdict: MERGE")
 	require.Equal(t, "MERGE", res.StructuredContent["verdict"])
 
 	// A moved head fails closed and posts nothing new.
-	currentHead = "new-head"
+	currentHead = "def5678"
 	beforeCalls := reviewCalls
 	_, err = svc.ExecuteGitHubAppTool(ctx, projectID.String(), toolReviewSubmit, map[string]any{
-		"repo": "owner/repo", "number": float64(7), "head_sha": "head-sha",
+		"repo": "owner/repo", "number": float64(7), "head_sha": "abc1234",
 		"verdict": "MERGE", "summary": "stale",
 	})
 	require.Error(t, err)
@@ -127,6 +131,6 @@ func TestGitHubAppReviewTools(t *testing.T) {
 	require.Equal(t, beforeCalls, reviewCalls)
 
 	// No installation for a different repo means no tools/failure.
-	_, err = svc.ExecuteGitHubAppTool(ctx, projectID.String(), toolPRDiff, map[string]any{"repo": "other/repo", "head_sha": "head-sha"})
+	_, err = svc.ExecuteGitHubAppTool(ctx, projectID.String(), toolPRDiff, map[string]any{"repo": "other/repo", "head_sha": "abc1234"})
 	require.Error(t, err)
 }

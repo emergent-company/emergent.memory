@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -159,7 +160,9 @@ type CommitDiff struct {
 }
 
 // GetCommit reads the diff for a specific commit. Reviewing a commit (not the
-// moving PR head) keeps the diff aligned with the reviewed SHA.
+// moving PR head) keeps the diff aligned with the reviewed SHA. The SHA is
+// validated at the tool boundary and path-escaped here so a crafted value cannot
+// retarget the request (e.g. at a branch name).
 func (c *Client) GetCommit(ctx context.Context, repo, sha string) (*CommitDiff, error) {
 	var raw struct {
 		SHA    string `json:"sha"`
@@ -168,7 +171,7 @@ func (c *Client) GetCommit(ctx context.Context, repo, sha string) (*CommitDiff, 
 		} `json:"commit"`
 		Files []CommitFile `json:"files"`
 	}
-	if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/commits/%s", repo, sha), nil, &raw); err != nil {
+	if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/commits/%s", repo, url.PathEscape(sha)), nil, &raw); err != nil {
 		return nil, err
 	}
 	return &CommitDiff{SHA: raw.SHA, Message: raw.Commit.Message, Files: raw.Files}, nil

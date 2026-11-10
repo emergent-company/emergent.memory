@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -21,6 +23,34 @@ const (
 	maxPatchBytes = 6000
 	maxDiffBytes  = 200000
 )
+
+// commitSHARe pins head_sha to a commit id before it reaches a URL path or the
+// review API. A ref name ("main") must never be accepted: the diff and the
+// review are bound to one immutable commit, not to whatever a branch points at
+// when the request lands.
+var commitSHARe = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+
+func validCommitSHA(sha string) bool {
+	return commitSHARe.MatchString(sha)
+}
+
+// diffEvidenceKey names the run-scoped fact "github-pr-diff returned a non-empty
+// diff for repo@sha". executeReviewSubmit requires it so a review verdict can
+// only be posted for a commit this run actually read.
+func diffEvidenceKey(repo, sha string) string {
+	return "githubapp:diff:" + strings.ToLower(repo) + "@" + sha
+}
+
+// truncateUTF8 cuts s to at most max bytes without splitting a UTF-8 sequence.
+func truncateUTF8(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	for max > 0 && !utf8.RuneStart(s[max]) {
+		max--
+	}
+	return s[:max]
+}
 
 func githubAppToolDefinitions() []mcp.ToolDefinition {
 	return []mcp.ToolDefinition{
@@ -116,16 +146,25 @@ func (s *Service) executePRDiff(ctx context.Context, client *Client, repo, headS
 	if headSHA == "" {
 		return nil, fmt.Errorf("github app tool: head_sha is required")
 	}
+	if !validCommitSHA(headSHA) {
+		return nil, fmt.Errorf("github app tool: head_sha %q is not a commit SHA (7-40 lowercase hex)", headSHA)
+	}
 	diff, err := client.GetCommit(ctx, repo, headSHA)
 	if err != nil {
 		return nil, err
+	}
+	// Record that this run saw a real (non-empty) diff for this commit. The
+	// review submit tool requires this evidence so a prompt-injected run cannot
+	// post a verdict without reading the change it approves.
+	if len(diff.Files) > 0 {
+		mcp.MarkRunEvidence(ctx, diffEvidenceKey(repo, diff.SHA))
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "commit %s\n%s\n\n", diff.SHA, strings.TrimSpace(diff.Message))
 	for _, file := range diff.Files {
 		patch := file.Patch
 		if len(patch) > maxPatchBytes {
-			patch = patch[:maxPatchBytes] + "\n… patch truncated"
+			patch = truncateUTF8(patch, maxPatchBytes) + "\n… patch truncated"
 		}
 		fmt.Fprintf(&b, "--- %s (%s, +%d/-%d)\n%s\n\n", file.Filename, file.Status, file.Additions, file.Deletions, patch)
 		if b.Len() >= maxDiffBytes {
@@ -135,7 +174,7 @@ func (s *Service) executePRDiff(ctx context.Context, client *Client, repo, headS
 	}
 	text := b.String()
 	if len(text) > maxDiffBytes {
-		text = text[:maxDiffBytes] + "\n… diff truncated"
+		text = truncateUTF8(text, maxDiffBytes) + "\n… diff truncated"
 	}
 	return &mcp.ToolResult{
 		Content: []mcp.ContentBlock{{Type: "text", Text: text}},
@@ -157,6 +196,9 @@ func (s *Service) executeReviewSubmit(ctx context.Context, client *Client, repo 
 	if headSHA == "" || summary == "" {
 		return nil, fmt.Errorf("github app tool: head_sha and summary are required")
 	}
+	if !validCommitSHA(headSHA) {
+		return nil, fmt.Errorf("github app tool: head_sha %q is not a commit SHA (7-40 lowercase hex)", headSHA)
+	}
 	var event, conclusion, checkTitle string
 	switch verdict {
 	case "MERGE":
@@ -173,6 +215,13 @@ func (s *Service) executeReviewSubmit(ctx context.Context, client *Client, repo 
 	}
 	if state.HeadSHA != headSHA {
 		return nil, fmt.Errorf("github app tool: PR head is %s, not the reviewed %s; re-review the new head", state.HeadSHA, headSHA)
+	}
+	// Same-run binding: the verdict may only name a commit whose non-empty diff
+	// this run read through github-pr-diff. A prompt injection in PR text cannot
+	// make the agent approve a change it never fetched (and an empty diff has
+	// nothing to approve). Fail closed when the run carries no evidence.
+	if !mcp.RunHasEvidence(ctx, diffEvidenceKey(repo, headSHA)) {
+		return nil, fmt.Errorf("github app tool: no non-empty github-pr-diff result for %s@%s in this run; fetch the diff for the exact reviewed commit before submitting", repo, headSHA)
 	}
 
 	if err := client.CreateReview(ctx, repo, number, headSHA, event, summary); err != nil {
