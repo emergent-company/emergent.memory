@@ -2145,7 +2145,14 @@ func (s *Server) uiProjectCredentials(c echo.Context) error {
 
 // legacyAppRedirect maps a deprecated per-provider editor URL to the named-app
 // surface: the sole app's editor when there is one, otherwise the app list.
-// Empty means "no named apps yet; render the legacy create form".
+// Empty means no eligible app for this editor; the caller then renders the
+// per-provider form (whose inheritance note explains an org app, if one owns
+// the vendor).
+//
+// At project scope only project-owned apps are eligible. The project detail
+// route reads through the project store, so redirecting to an organization app
+// there lands on not-found; the project editor instead renders the inheritance
+// note that explains the organization app is in use.
 func (s *Server) legacyAppRedirect(c echo.Context, ctx context.Context, isOrg bool, projectID string, orgID, vendor, providerType, listHref string) string {
 	vendor = strings.TrimSpace(vendor)
 	if vendor == "" {
@@ -2157,9 +2164,13 @@ func (s *Server) legacyAppRedirect(c echo.Context, ctx context.Context, isOrg bo
 	}
 	matches := make([]DSOAuthApp, 0)
 	for _, app := range apps {
-		if app.Vendor == vendor {
-			matches = append(matches, app)
+		if app.Vendor != vendor {
+			continue
 		}
+		if !isOrg && app.Scope == dsCredentialScopeOrganization {
+			continue
+		}
+		matches = append(matches, app)
 	}
 	switch len(matches) {
 	case 0:

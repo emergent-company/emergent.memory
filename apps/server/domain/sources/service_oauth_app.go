@@ -174,7 +174,10 @@ func (s *Service) GetOrgOAuthApp(ctx context.Context, orgID uuid.UUID, userID, i
 	if err != nil {
 		return nil, err
 	}
-	st, _ := s.orgAppStore()
+	st, ok := s.orgAppStore()
+	if !ok {
+		return nil, apperror.NewInternal("load OAuth app: OAuth app store is not configured", nil)
+	}
 	row, err := st.GetOAuthClientConfigByID(ctx, orgID, appID)
 	if err != nil {
 		return nil, err
@@ -202,7 +205,10 @@ func (s *Service) CreateOrgOAuthApp(ctx context.Context, orgID uuid.UUID, userID
 	if err != nil {
 		return nil, err
 	}
-	st, _ := s.orgAppStore()
+	st, ok := s.orgAppStore()
+	if !ok {
+		return nil, apperror.NewInternal("create OAuth app: OAuth app store is not configured", nil)
+	}
 	row, err := st.CreateOAuthClientConfig(ctx, &OAuthClientConfig{
 		OrganizationID:  orgID,
 		Vendor:          vendor,
@@ -230,7 +236,10 @@ func (s *Service) UpdateOrgOAuthApp(ctx context.Context, orgID uuid.UUID, userID
 	if err != nil {
 		return nil, err
 	}
-	st, _ := s.orgAppStore()
+	st, ok := s.orgAppStore()
+	if !ok {
+		return nil, apperror.NewInternal("update OAuth app: OAuth app store is not configured", nil)
+	}
 	existing, err := st.GetOAuthClientConfigByID(ctx, orgID, appID)
 	if err != nil {
 		return nil, err
@@ -263,7 +272,10 @@ func (s *Service) DeleteOrgOAuthApp(ctx context.Context, orgID uuid.UUID, userID
 	if err != nil {
 		return err
 	}
-	st, _ := s.orgAppStore()
+	st, ok := s.orgAppStore()
+	if !ok {
+		return apperror.NewInternal("delete OAuth app: OAuth app store is not configured", nil)
+	}
 	if n, cerr := st.CountSourcesUsingOAuthConfig(ctx, appID); cerr != nil {
 		return cerr
 	} else if n > 0 {
@@ -300,7 +312,10 @@ func (s *Service) GetProjectOAuthApp(ctx context.Context, projectID uuid.UUID, i
 	if err != nil {
 		return nil, err
 	}
-	st, _ := s.projectAppStore()
+	st, ok := s.projectAppStore()
+	if !ok {
+		return nil, apperror.NewInternal("load project OAuth app: OAuth app store is not configured", nil)
+	}
 	row, err := st.GetProjectOAuthClientConfigByID(ctx, projectID, appID)
 	if err != nil {
 		return nil, err
@@ -328,7 +343,10 @@ func (s *Service) CreateProjectOAuthApp(ctx context.Context, projectID uuid.UUID
 	if err != nil {
 		return nil, err
 	}
-	st, _ := s.projectAppStore()
+	st, ok := s.projectAppStore()
+	if !ok {
+		return nil, apperror.NewInternal("create project OAuth app: OAuth app store is not configured", nil)
+	}
 	row, err := st.CreateProjectOAuthClientConfig(ctx, &OAuthClientConfig{
 		OrganizationID:  orgID,
 		ProjectID:       &projectID,
@@ -357,7 +375,10 @@ func (s *Service) UpdateProjectOAuthApp(ctx context.Context, projectID uuid.UUID
 	if err != nil {
 		return nil, err
 	}
-	st, _ := s.projectAppStore()
+	st, ok := s.projectAppStore()
+	if !ok {
+		return nil, apperror.NewInternal("update project OAuth app: OAuth app store is not configured", nil)
+	}
 	existing, err := st.GetProjectOAuthClientConfigByID(ctx, projectID, appID)
 	if err != nil {
 		return nil, err
@@ -719,10 +740,16 @@ func (s *Service) ensureAppNameFree(ctx context.Context, isOrg bool, projectID, 
 	var apps []*OAuthClientConfig
 	var err error
 	if isOrg {
-		st, _ := s.orgAppStore()
+		st, ok := s.orgAppStore()
+		if !ok {
+			return apperror.NewInternal("check OAuth app name: OAuth app store is not configured", nil)
+		}
 		apps, err = st.ListOAuthClientConfigsByVendor(ctx, orgID, vendor)
 	} else {
-		st, _ := s.projectAppStore()
+		st, ok := s.projectAppStore()
+		if !ok {
+			return apperror.NewInternal("check project OAuth app name: OAuth app store is not configured", nil)
+		}
 		apps, err = st.ListProjectOAuthClientConfigsByVendor(ctx, projectID, vendor)
 	}
 	if err != nil {
