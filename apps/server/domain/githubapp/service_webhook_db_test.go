@@ -15,7 +15,6 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/testdb"
-	"github.com/emergent-company/emergent.memory/internal/testutil"
 	"github.com/emergent-company/emergent.memory/pkg/crypto"
 )
 
@@ -24,7 +23,7 @@ func TestHandleWebhookEnqueuesOneReviewPerHead(t *testing.T) {
 		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
 	}
 	ctx := context.Background()
-	db := testutil.SetupTestDBOrFail(t, ctx, "githubapp_webhook")
+	db := testdb.SetupTestDBOrFail(t, ctx, "githubapp_webhook")
 	defer db.Close()
 
 	orgID, projectID, agentID := uuid.New(), uuid.New(), uuid.New()
@@ -155,7 +154,7 @@ func TestHandleWebhookEnqueuesOneReviewPerHead(t *testing.T) {
 	require.Error(t, err)
 }
 
-func findClaim(t *testing.T, db *testutil.TestDB, installationID int64, repo string, pr int, head string) *ReviewClaim {
+func findClaim(t *testing.T, db *testdb.TestDB, installationID int64, repo string, pr int, head string) *ReviewClaim {
 	t.Helper()
 	claim := new(ReviewClaim)
 	require.NoError(t, db.DB.NewSelect().Model(claim).
@@ -167,7 +166,7 @@ func findClaim(t *testing.T, db *testutil.TestDB, installationID int64, repo str
 	return claim
 }
 
-func countRuns(t *testing.T, db *testutil.TestDB, agentID uuid.UUID) int {
+func countRuns(t *testing.T, db *testdb.TestDB, agentID uuid.UUID) int {
 	t.Helper()
 	n, err := db.DB.NewSelect().Table("kb.agent_runs").Where("agent_id = ?", agentID).Count(context.Background())
 	require.NoError(t, err)

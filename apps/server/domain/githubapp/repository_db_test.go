@@ -9,7 +9,6 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/internal/testdb"
-	"github.com/emergent-company/emergent.memory/internal/testutil"
 )
 
 func TestRepositoryDeliveryDedupeAndClaims(t *testing.T) {
@@ -17,7 +16,7 @@ func TestRepositoryDeliveryDedupeAndClaims(t *testing.T) {
 		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
 	}
 	ctx := context.Background()
-	db := testutil.SetupTestDBOrFail(t, ctx, "githubapp_repo")
+	db := testdb.SetupTestDBOrFail(t, ctx, "githubapp_repo")
 	defer db.Close()
 	repo := NewRepository(db.DB)
 
