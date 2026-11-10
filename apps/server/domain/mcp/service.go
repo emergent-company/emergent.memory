@@ -3020,7 +3020,7 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 		return s.delegateBlueprintTool(ctx, projectID, toolName, args)
 
 	default:
-		if s.sourceToolHandler != nil && s.sourceToolHandler.HandlesSourceTool(toolName) {
+		if s.sourceToolHandler != nil && s.sourceToolHandler.HandlesSourceTool(ctx, projectID, toolName) {
 			return s.sourceToolHandler.ExecuteSourceTool(ctx, projectID, toolName, args)
 		}
 		// Attempt to route to a connected relay. Relay tools are named

@@ -162,8 +162,10 @@ type SourceToolHandler interface {
 	// project (one set per connected account).
 	GetSourceToolDefinitionsForProject(ctx context.Context, projectID string) []ToolDefinition
 	// HandlesSourceTool reports whether the tool name belongs to a source-backed
-	// server in this build.
-	HandlesSourceTool(toolName string) bool
+	// server registered in this build for the project. It must not match a name
+	// by prefix alone: dispatch asks it before the relay/registry fallbacks, so a
+	// broad claim would hijack a foreign tool that happens to share the prefix.
+	HandlesSourceTool(ctx context.Context, projectID, toolName string) bool
 	// ExecuteSourceTool runs a source tool using the owning source's credentials.
 	ExecuteSourceTool(ctx context.Context, projectID, toolName string, args map[string]any) (*ToolResult, error)
 }

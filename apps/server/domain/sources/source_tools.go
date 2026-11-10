@@ -51,52 +51,150 @@ func (s *Service) GetSourceToolDefinitionsForProject(ctx context.Context, projec
 	return out
 }
 
-// HandlesSourceTool reports whether a tool name belongs to a source-backed
-// server in this build.
-func (s *Service) HandlesSourceTool(toolName string) bool {
-	return strings.HasPrefix(toolName, "gmail-") || strings.HasPrefix(toolName, "source-")
+// sourceAdminToolNames is the fixed set of project-level source tool names. A
+// name outside it is never claimed by this domain.
+var sourceAdminToolNames = func() map[string]bool {
+	defs := sourceAdminToolDefinitions()
+	out := make(map[string]bool, len(defs))
+	for _, def := range defs {
+		out[def.Name] = true
+	}
+	return out
+}()
+
+// HandlesSourceTool implements mcp.SourceToolHandler. It claims a name only when
+// this build registered it for the project: dispatchTool's default branch asks
+// before the relay/registry fallbacks, so a broad prefix claim would hijack a
+// foreign tool that happens to be called gmail-* or source-* and answer it
+// ErrNotFound/forbidden instead of by its own handler.
+func (s *Service) HandlesSourceTool(ctx context.Context, projectID, toolName string) bool {
+	ref, err := s.resolveSourceTool(ctx, projectID, toolName)
+	return err == nil && ref != nil
 }
 
-// ExecuteSourceTool implements mcp.SourceToolHandler.
-func (s *Service) ExecuteSourceTool(ctx context.Context, projectID, toolName string, args map[string]any) (*mcp.ToolResult, error) {
-	if strings.HasPrefix(toolName, "source-") {
-		return s.executeSourceAdminTool(ctx, projectID, toolName, args)
-	}
+// sourceToolRef is what a source tool name resolves to: one provider action on
+// one connected account, or a project-level admin tool.
+type sourceToolRef struct {
+	// source is nil for a project-level admin tool.
+	source *Source
+	// action is the provider action (e.g. message-search) or the admin tool name.
+	action string
+	admin  bool
+}
+
+// resolveSourceTool maps a registered source tool name to its target. It returns
+// (nil, nil) for a name this build did not register.
+func (s *Service) resolveSourceTool(ctx context.Context, projectID, toolName string) (*sourceToolRef, error) {
 	pid, err := uuid.Parse(projectID)
 	if err != nil {
 		return nil, apperror.NewValidation("invalid project id")
+	}
+	if sourceAdminToolNames[toolName] {
+		return &sourceToolRef{action: toolName, admin: true}, nil
+	}
+	if !s.mayBeSourceTool(toolName) {
+		return nil, nil
 	}
 	sources, err := s.repo.ListMcpSources(ctx, pid)
 	if err != nil {
 		return nil, err
 	}
-	var matched *Source
-	bestPrefix := ""
-	for _, listed := range sources {
-		if listed.McpSlug == nil {
+	return matchSourceTool(toolName, sources, s.providers), nil
+}
+
+// mayBeSourceTool is a cheap prefix gate: a per-account tool name starts with
+// the type of a provider that exposes such tools. It only avoids a lookup —
+// matchSourceTool still requires the name to be a registered definition.
+func (s *Service) mayBeSourceTool(toolName string) bool {
+	for _, p := range s.providers.List() {
+		if _, ok := p.(SourceToolProvider); !ok {
 			continue
 		}
-		prefix := listed.Provider + "-" + *listed.McpSlug + "-"
-		if strings.HasPrefix(toolName, prefix) && len(prefix) > len(bestPrefix) {
-			matched = listed
-			bestPrefix = prefix
+		if strings.HasPrefix(toolName, p.Catalog().Type+"-") {
+			return true
 		}
 	}
-	if matched == nil {
+	return false
+}
+
+// matchSourceTool resolves toolName against the project's registered source
+// servers. Provider tool names are "<provider>-<slug>-<action>", and one slug
+// may be a dash-prefix of another (alice and alice-work from alice@ and
+// alice.work@), so the longest matching slug wins: taking the first match would
+// resolve gmail-alice-work-thread-get to the alice source and fail it as an
+// unknown action. A name resolves only when that server registered it.
+func matchSourceTool(toolName string, sources []*Source, providers *Registry) *sourceToolRef {
+	var best *sourceToolRef
+	bestSlug := -1
+	for _, src := range sources {
+		if src == nil || src.McpSlug == nil || *src.McpSlug == "" {
+			continue
+		}
+		slug := *src.McpSlug
+		if len(slug) <= bestSlug {
+			continue
+		}
+		provider, ok := providers.Get(src.Provider)
+		if !ok {
+			continue
+		}
+		stp, ok := provider.(SourceToolProvider)
+		if !ok {
+			continue
+		}
+		prefix := src.Provider + "-" + slug + "-"
+		if !strings.HasPrefix(toolName, prefix) {
+			continue
+		}
+		action := strings.TrimPrefix(toolName, prefix)
+		if action == "" || !sourceToolDefinitionRegistered(stp, slug, toolName) {
+			continue
+		}
+		bestSlug = len(slug)
+		best = &sourceToolRef{source: src, action: action}
+	}
+	return best
+}
+
+// sourceToolDefinitionRegistered reports whether the account registers toolName.
+// Write definitions are generated as well: whether a write tool may run is an
+// execution-time decision (the source's opt-in), not part of the naming contract.
+func sourceToolDefinitionRegistered(stp SourceToolProvider, slug, toolName string) bool {
+	for _, def := range stp.ToolDefinitions(slug, true) {
+		if def.Name == toolName {
+			return true
+		}
+	}
+	return false
+}
+
+// ExecuteSourceTool implements mcp.SourceToolHandler.
+func (s *Service) ExecuteSourceTool(ctx context.Context, projectID, toolName string, args map[string]any) (*mcp.ToolResult, error) {
+	ref, err := s.resolveSourceTool(ctx, projectID, toolName)
+	if err != nil {
+		return nil, err
+	}
+	if ref == nil {
 		return nil, apperror.ErrNotFound
 	}
-	action := strings.TrimPrefix(toolName, bestPrefix)
+	if ref.admin {
+		return s.executeSourceAdminTool(ctx, projectID, ref.action, args)
+	}
+	pid, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, apperror.NewValidation("invalid project id")
+	}
 	scope := "email:read"
-	if isGmailWriteAction(action) {
+	if isGmailWriteAction(ref.action) {
 		scope = "email:write"
 	}
 	if err := requireSourceToolScope(ctx, scope); err != nil {
 		return nil, err
 	}
-	if isGmailWriteAction(action) && !sourceWriteToolsEnabled(matched.Config) {
+	if isGmailWriteAction(ref.action) && !sourceWriteToolsEnabled(ref.source.Config) {
 		return nil, apperror.NewValidation("write tools are not enabled for this Gmail source")
 	}
-	src, err := s.repo.GetByIDWithCredentials(ctx, matched.ID, pid)
+	src, err := s.repo.GetByIDWithCredentials(ctx, ref.source.ID, pid)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +210,7 @@ func (s *Service) ExecuteSourceTool(ctx context.Context, projectID, toolName str
 	if err != nil {
 		return nil, err
 	}
-	return stp.ExecuteTool(ctx, creds, src.Config, action, args)
+	return stp.ExecuteTool(ctx, creds, src.Config, ref.action, args)
 }
 
 func sourceWriteToolsEnabled(cfg map[string]any) bool {
@@ -123,8 +221,15 @@ func sourceWriteToolsEnabled(cfg map[string]any) bool {
 	return v
 }
 
+// isGmailWriteAction reports whether an action mutates the mailbox. It is the
+// gate for both email:write and the source's write-tool opt-in, so a read that
+// happens to share the draft- prefix (draft-list) must not be included.
 func isGmailWriteAction(action string) bool {
-	return action == "message-send" || strings.HasPrefix(action, "draft-")
+	switch action {
+	case "message-send", "draft-create", "draft-update", "draft-send", "draft-delete":
+		return true
+	}
+	return false
 }
 
 // requireSourceToolScope enforces token scopes on the HTTP MCP transports and
