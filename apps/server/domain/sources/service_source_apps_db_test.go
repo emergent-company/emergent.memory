@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -84,6 +85,54 @@ func TestSourceAppRegistrationAndGitHubAppSource(t *testing.T) {
 	require.Equal(t, app.ID, *src.AppID)
 	require.NotNil(t, src.ExternalAccountID)
 	require.Equal(t, "42", *src.ExternalAccountID)
+	// The provider is trigger-only: no cadence, and an explicit scheduled mode
+	// is refused instead of leaving a source the sweep can never satisfy.
+	require.Equal(t, SyncPolicyManual, src.SyncPolicy)
+	require.Nil(t, src.SyncIntervalMinutes)
+	scheduled := SyncPolicyScheduled
+	_, err = svc.Create(ctx, projectID, &CreateIntegrationRequest{
+		Name: "sched", ProviderType: ProviderTypeGitHubApp, SyncMode: &scheduled,
+		Config: map[string]any{"app_id": app.ID.String(), "installation_id": "42", "repos": []any{"owner/repo"}},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "event-driven")
+
+	// Without a mode the source defaults to manual with no interval, so nothing
+	// can schedule it.
+	defaulted, err := svc.Create(ctx, projectID, &CreateIntegrationRequest{
+		Name: "defaulted", ProviderType: ProviderTypeGitHubApp,
+		Config: map[string]any{"app_id": app.ID.String(), "installation_id": "42", "repos": []any{"owner/repo"}},
+	})
+	require.NoError(t, err)
+	defaultedSrc, err := repo.FindSourceByID(ctx, uuid.MustParse(defaulted.ID))
+	require.NoError(t, err)
+	require.Equal(t, SyncPolicyManual, defaultedSrc.SyncPolicy)
+	require.Nil(t, defaultedSrc.SyncIntervalMinutes)
+	require.NoError(t, svc.Delete(ctx, projectID, defaultedSrc.ID))
+
+	// An explicit OAuth app cannot be pinned to a config-only provider (#554).
+	_, err = svc.Create(ctx, projectID, &CreateIntegrationRequest{
+		Name: "pinned", ProviderType: ProviderTypeGitHubApp, SyncMode: &mode, OAuthAppID: strPtr(uuid.New().String()),
+		Config: map[string]any{"app_id": app.ID.String(), "installation_id": "42", "repos": []any{"owner/repo"}},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "does not use OAuth")
+
+	// A numeric installation id (float64 after JSON decode) is stored as the
+	// digits the webhook dispatcher compares against, not fmt.Sprint's 1.2e+07.
+	numericApp, err := svc.RegisterSourceApp(ctx, orgID, userID.String(), RegisterSourceAppRequest{
+		Provider: "github", AppID: 100, Slug: "numeric", PrivateKey: string(rsaPEMForTest(t)), WebhookSecret: "whsec2",
+	})
+	require.NoError(t, err)
+	numeric, err := svc.Create(ctx, projectID, &CreateIntegrationRequest{
+		Name: "numeric", ProviderType: ProviderTypeGitHubApp, SyncMode: &mode,
+		Config: map[string]any{"app_id": numericApp.ID.String(), "installation_id": float64(12345678), "repos": []any{"owner/repo"}},
+	})
+	require.NoError(t, err)
+	numericSrc, err := repo.FindSourceByID(ctx, uuid.MustParse(numeric.ID))
+	require.NoError(t, err)
+	require.NotNil(t, numericSrc.ExternalAccountID)
+	require.Equal(t, "12345678", *numericSrc.ExternalAccountID)
 
 	// The App/installation cannot be swapped through a config update.
 	_, err = svc.Update(ctx, projectID, src.ID, &UpdateIntegrationRequest{Config: map[string]any{
@@ -97,6 +146,12 @@ func TestSourceAppRegistrationAndGitHubAppSource(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.True(t, trigger.Enabled)
+	// A second binding for the same event is a unique violation mapped to 409.
+	_, err = svc.CreateSourceTrigger(ctx, projectID, src.ID, SourceTriggerInput{EventType: "pull_request", AgentID: agentID.String()})
+	require.Error(t, err)
+	var duplicate *apperror.Error
+	require.ErrorAs(t, err, &duplicate)
+	require.Equal(t, 409, duplicate.HTTPStatus)
 	listed, err := svc.ListSourceTriggers(ctx, projectID, src.ID)
 	require.NoError(t, err)
 	require.Len(t, listed, 1)
@@ -120,13 +175,39 @@ func TestSourceAppRegistrationAndGitHubAppSource(t *testing.T) {
 	webTrigger, err = svc.UpdateSourceTrigger(ctx, projectID, webSource, webTrigger.ID, SourceTriggerInput{EventType: "issue"})
 	require.NoError(t, err)
 	require.Equal(t, "issue", webTrigger.EventType)
-	reloaded, err := repo.FindSourceTriggerByID(ctx, webTrigger.ID)
+	reloaded, err := repo.FindSourceTriggerByID(ctx, projectID, webTrigger.ID)
 	require.NoError(t, err)
 	require.Equal(t, "issue", reloaded.EventType)
 
+	// The org Apps DELETE endpoint refuses while the App is bound to a project
+	// source, naming it, and succeeds once the source is detached (#570).
+	err = svc.DeleteSourceApp(ctx, orgID, userID.String(), app.ID)
+	require.Error(t, err)
+	var inUse *apperror.Error
+	require.ErrorAs(t, err, &inUse)
+	require.Equal(t, 409, inUse.HTTPStatus)
+	require.Contains(t, inUse.Message, "bot")
+	require.Contains(t, inUse.Message, src.ID.String())
+
+	require.NoError(t, svc.Delete(ctx, projectID, src.ID))
+	require.NoError(t, svc.DeleteSourceApp(ctx, orgID, userID.String(), app.ID))
+	_, err = svc.ListSourceApps(ctx, orgID, userID.String())
+	require.NoError(t, err)
+
+	// The scheduler never admits a trigger-only row, even one edited directly to
+	// scheduled: it never writes last_synced_at, so it would be due every pass.
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.sources (id, project_id, provider, display_name, config, status, sync_policy, sync_interval_minutes)
+		VALUES (?, ?, 'github_app', 'swept', '{}'::jsonb, 'active', 'scheduled', 60)`, uuid.New(), projectID)
+	require.NoError(t, err)
+	due, err := repo.ListDueSources(ctx, time.Now())
+	require.NoError(t, err)
+	for _, d := range due {
+		require.NotEqual(t, ProviderTypeGitHubApp, d.Provider)
+	}
 }
 
-func boolPtr(v bool) *bool { return &v }
+func boolPtr(v bool) *bool    { return &v }
+func strPtr(v string) *string { return &v }
 
 func rsaPEMForTest(t *testing.T) []byte {
 	t.Helper()

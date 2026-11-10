@@ -672,6 +672,14 @@ func (s *Service) validateSourceApp(ctx context.Context, projectID uuid.UUID, pr
 	if err != nil {
 		return nil, apperror.NewValidation("invalid OAuth app id")
 	}
+	// A config-only provider never reads oauth_app_id. Accepting an explicit id
+	// would pin the source to an OAuth app it does not use, and the app-delete
+	// refusal would then name a source that never consumes it (#554 via the
+	// explicit path). This guard must precede the store probe below: a build
+	// without app stores would otherwise accept the id unchecked.
+	if p, ok := s.providers.Get(providerType); ok && !slices.Contains(p.AuthMethods(), AuthMethodOAuth) {
+		return nil, apperror.NewValidation("providerType " + providerType + " does not use OAuth; omit oauthAppId")
+	}
 	_, hasProjectApps := s.projectAppStore()
 	_, hasOrgApps := s.orgAppStore()
 	if !hasProjectApps && !hasOrgApps {

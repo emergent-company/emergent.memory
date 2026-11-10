@@ -256,6 +256,15 @@ type SyncIntervalBoundsProvider interface {
 	SyncIntervalBounds() (minMinutes, defaultMinutes int)
 }
 
+// TriggerOnlyProvider is implemented by providers that are driven by inbound
+// events and have no document sync (the GitHub App bot). The Service refuses an
+// explicit scheduled mode for them: applyScheduledInterval would give the row a
+// cadence the scheduler honours, last_synced_at would stay NULL, and every sweep
+// would admit a job that fails with the provider's trigger-only error, forever.
+type TriggerOnlyProvider interface {
+	TriggerOnly() bool
+}
+
 // ConfigNormalizer is implemented by a provider whose config accepts a legacy
 // shape alongside its canonical one. The core calls it before validating and
 // persisting a create/update so stored rows converge on the canonical shape;

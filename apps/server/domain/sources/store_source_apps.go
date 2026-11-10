@@ -633,9 +633,12 @@ func (r *Repository) ProjectOrgID(ctx context.Context, projectID uuid.UUID) (uui
 	return orgID, nil
 }
 
-func (r *Repository) FindSourceTriggerByID(ctx context.Context, id uuid.UUID) (*SourceTrigger, error) {
+func (r *Repository) FindSourceTriggerByID(ctx context.Context, projectID, id uuid.UUID) (*SourceTrigger, error) {
 	trigger := new(SourceTrigger)
-	if err := r.db.NewSelect().Model(trigger).Where("st.id = ?", id).Scan(ctx); err != nil {
+	err := r.projectTx(ctx, projectID, func(ctx context.Context, tx bun.Tx) error {
+		return tx.NewSelect().Model(trigger).Where("st.id = ?", id).Scan(ctx)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return trigger, nil

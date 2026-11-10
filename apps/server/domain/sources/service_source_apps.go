@@ -9,6 +9,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/pgutils"
 )
 
 // RegisterSourceAppRequest is the org-admin source App registration payload.
@@ -50,9 +51,9 @@ func (s *Service) bindGitHubAppSource(ctx context.Context, projectID uuid.UUID, 
 	if app.OrgID != projectOrg {
 		return apperror.NewForbidden("github_app: the App belongs to another organization")
 	}
-	installationID := strings.TrimSpace(fmt.Sprint(cfg["installation_id"]))
-	if installationID == "" || installationID == "<nil>" {
-		return apperror.NewValidation("github_app: installation_id is required")
+	installationID, err := normalizeInstallationID(cfg["installation_id"])
+	if err != nil {
+		return apperror.NewValidation("github_app: " + err.Error())
 	}
 	src.AppID = &app.ID
 	src.ExternalAccountID = &installationID
@@ -105,7 +106,9 @@ func (s *Service) ListSourceApps(ctx context.Context, orgID uuid.UUID, userID st
 	return s.repo.ListSourceAppsByOrg(ctx, orgID)
 }
 
-// DeleteSourceApp removes an App and its installations (FK cascade).
+// DeleteSourceApp removes an App credential. It refuses with a 409 naming the
+// bound project sources while any kb.sources row still references the App (the
+// kb.sources.app_id FK is ON DELETE RESTRICT); the caller detaches them first.
 func (s *Service) DeleteSourceApp(ctx context.Context, orgID uuid.UUID, userID string, id uuid.UUID) error {
 	if err := s.requireSourceAppAdmin(ctx, orgID, userID); err != nil {
 		return err
@@ -122,7 +125,7 @@ func (s *Service) ListSourceTriggers(ctx context.Context, projectID, sourceID uu
 	if _, err := s.sourceForProject(ctx, projectID, sourceID); err != nil {
 		return nil, err
 	}
-	return s.repo.ListSourceTriggers(ctx, sourceID)
+	return s.repo.ListSourceTriggers(ctx, projectID, sourceID)
 }
 
 // CreateSourceTrigger binds an event type to a runtime agent and queue.
@@ -162,7 +165,7 @@ func (s *Service) UpdateSourceTrigger(ctx context.Context, projectID, sourceID, 
 	if err != nil {
 		return nil, err
 	}
-	trigger, err := s.repo.FindSourceTriggerByID(ctx, triggerID)
+	trigger, err := s.repo.FindSourceTriggerByID(ctx, projectID, triggerID)
 	if err != nil || trigger.SourceID != sourceID {
 		return nil, apperror.NewNotFound("SourceTrigger", triggerID.String())
 	}
@@ -198,11 +201,11 @@ func (s *Service) DeleteSourceTrigger(ctx context.Context, projectID, sourceID, 
 	if _, err := s.sourceForProject(ctx, projectID, sourceID); err != nil {
 		return err
 	}
-	trigger, err := s.repo.FindSourceTriggerByID(ctx, triggerID)
+	trigger, err := s.repo.FindSourceTriggerByID(ctx, projectID, triggerID)
 	if err != nil || trigger.SourceID != sourceID {
 		return apperror.NewNotFound("SourceTrigger", triggerID.String())
 	}
-	return s.repo.DeleteSourceTrigger(ctx, triggerID)
+	return s.repo.DeleteSourceTrigger(ctx, projectID, triggerID)
 }
 
 func (s *Service) validateTriggerInput(ctx context.Context, projectID uuid.UUID, src *Source, in SourceTriggerInput, requireAll bool) error {
@@ -259,7 +262,7 @@ func mustUUID(raw string) uuid.UUID {
 }
 
 func mapSourceConflict(err error, message string) error {
-	if err != nil && strings.Contains(err.Error(), "23505") {
+	if pgutils.IsUniqueViolation(err) {
 		return apperror.NewConflict(message)
 	}
 	return apperror.NewInternal("database error", err)

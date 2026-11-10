@@ -26,18 +26,6 @@ type sourceTriggerDTO struct {
 	Enabled     *bool          `json:"enabled"`
 }
 
-func (h *Handler) currentProjectID(c echo.Context) (uuid.UUID, error) {
-	raw, err := auth.GetProjectID(c)
-	if err != nil {
-		return uuid.Nil, apperror.ErrBadRequest
-	}
-	id, err := uuid.Parse(raw)
-	if err != nil {
-		return uuid.Nil, apperror.ErrBadRequest
-	}
-	return id, nil
-}
-
 // RegisterSourceApp handles POST /api/orgs/:orgId/source-apps.
 // @Summary      Register a source App
 // @Description  Stores org-level App credentials (encrypted). Org admin only.
@@ -94,11 +82,14 @@ func (h *Handler) ListSourceApps(c echo.Context) error {
 
 // DeleteSourceApp handles DELETE /api/orgs/:orgId/source-apps/:appId.
 // @Summary      Delete a source App
-// @Description  Removes the App and its installations. Org admin only.
+// @Description  Removes an org App credential. Refused with 409 while project sources are still bound to the App; the error names them. Org admin only.
 // @Tags         data-source-integrations
 // @Param        orgId path string true "Organization ID (UUID)"
 // @Param        appId path string true "App row ID (UUID)"
 // @Success      204
+// @Failure      403 {object} apperror.Error
+// @Failure      404 {object} apperror.Error
+// @Failure      409 {object} apperror.Error "App still bound to project sources"
 // @Router       /api/orgs/{orgId}/source-apps/{appId} [delete]
 // @Security     bearerAuth
 func (h *Handler) DeleteSourceApp(c echo.Context) error {
@@ -127,7 +118,7 @@ func (h *Handler) DeleteSourceApp(c echo.Context) error {
 // @Router       /api/data-source-integrations/{id}/triggers [get]
 // @Security     bearerAuth
 func (h *Handler) ListSourceTriggers(c echo.Context) error {
-	projectID, err := h.currentProjectID(c)
+	projectID, err := h.projectID(c)
 	if err != nil {
 		return err
 	}
@@ -154,7 +145,7 @@ func (h *Handler) ListSourceTriggers(c echo.Context) error {
 // @Router       /api/data-source-integrations/{id}/triggers [post]
 // @Security     bearerAuth
 func (h *Handler) CreateSourceTrigger(c echo.Context) error {
-	projectID, err := h.currentProjectID(c)
+	projectID, err := h.projectID(c)
 	if err != nil {
 		return err
 	}
@@ -188,7 +179,7 @@ func (h *Handler) CreateSourceTrigger(c echo.Context) error {
 // @Router       /api/data-source-integrations/{id}/triggers/{triggerId} [patch]
 // @Security     bearerAuth
 func (h *Handler) UpdateSourceTrigger(c echo.Context) error {
-	projectID, err := h.currentProjectID(c)
+	projectID, err := h.projectID(c)
 	if err != nil {
 		return err
 	}
@@ -223,7 +214,7 @@ func (h *Handler) UpdateSourceTrigger(c echo.Context) error {
 // @Router       /api/data-source-integrations/{id}/triggers/{triggerId} [delete]
 // @Security     bearerAuth
 func (h *Handler) DeleteSourceTrigger(c echo.Context) error {
-	projectID, err := h.currentProjectID(c)
+	projectID, err := h.projectID(c)
 	if err != nil {
 		return err
 	}

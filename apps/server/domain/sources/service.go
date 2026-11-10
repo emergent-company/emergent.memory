@@ -757,6 +757,11 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 		if err != nil {
 			return nil, err
 		}
+		if p, ok := s.providers.Get(existing.Provider); ok {
+			if err := rejectScheduledForTriggerOnly(p, mode); err != nil {
+				return nil, err
+			}
+		}
 		existing.SyncPolicy = mode
 	}
 	// The policy owns the interval. A source switched back to manual keeps no
@@ -858,8 +863,14 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 			if v, ok := cfg["app_id"]; ok && existing.AppID != nil && strings.TrimSpace(fmt.Sprint(v)) != existing.AppID.String() {
 				return nil, apperror.NewValidation("the App cannot be changed on an existing source; create a new source")
 			}
-			if v, ok := cfg["installation_id"]; ok && existing.ExternalAccountID != nil && strings.TrimSpace(fmt.Sprint(v)) != *existing.ExternalAccountID {
-				return nil, apperror.NewValidation("the installation cannot be changed on an existing source; create a new source")
+			if v, ok := cfg["installation_id"]; ok && existing.ExternalAccountID != nil {
+				normalized, nerr := normalizeInstallationID(v)
+				if nerr != nil {
+					return nil, apperror.NewValidation("github_app: " + nerr.Error())
+				}
+				if normalized != *existing.ExternalAccountID {
+					return nil, apperror.NewValidation("the installation cannot be changed on an existing source; create a new source")
+				}
 			}
 			if existing.AppID != nil {
 				cfg["app_id"] = existing.AppID.String()
@@ -1122,12 +1133,33 @@ func NormalizeSyncMode(mode string) (string, error) {
 // when triggered.
 func defaultSyncMode(p SourceProvider, requested *string) (string, error) {
 	if requested != nil && *requested != "" {
-		return NormalizeSyncMode(*requested)
+		mode, err := NormalizeSyncMode(*requested)
+		if err != nil {
+			return "", err
+		}
+		if err := rejectScheduledForTriggerOnly(p, mode); err != nil {
+			return "", err
+		}
+		return mode, nil
 	}
 	if _, ok := p.(SyncIntervalBoundsProvider); ok {
 		return SyncPolicyScheduled, nil
 	}
 	return SyncPolicyManual, nil
+}
+
+// rejectScheduledForTriggerOnly refuses a scheduled mode on a provider that has
+// no document sync. Without this an explicit syncMode=scheduled would persist an
+// interval the scheduler honours, while the source never writes last_synced_at,
+// so every sweep would enqueue a job that must fail.
+func rejectScheduledForTriggerOnly(p SourceProvider, mode string) error {
+	if mode != SyncPolicyScheduled {
+		return nil
+	}
+	if tp, ok := p.(TriggerOnlyProvider); !ok || !tp.TriggerOnly() {
+		return nil
+	}
+	return apperror.NewValidation(p.Catalog().Type + " is event-driven and does not sync; syncMode must be manual")
 }
 
 // applyScheduledInterval resolves the interval to persist for a source in the
