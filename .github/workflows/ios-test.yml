@@ -22,18 +22,40 @@ on:
     paths:
       - 'apps/ios/**'
       - '.github/workflows/ios-test.yml'
-  # No `pull_request` trigger: feature PRs go to `dev` for a fast lane. Runs on
-  # the `dev -> main` promotion/hotfix PR via promotion.yml and on pushes to main.
+  # Compile + run the simulator tests on feature PRs too (#561). Without this,
+  # nothing type-checked `apps/ios/**` before `dev`, so an access-level or
+  # availability error (e.g. #557) and a test broken by its own change (#558)
+  # were green on the PR and first failed at promotion — blocking the whole
+  # `dev -> main` batch. Path-filtered like ios-lint so non-iOS PRs are
+  # unaffected.
+  #
+  # `branches: [dev]` deliberately excludes main-targeting PRs: those already
+  # run this suite through promotion.yml, which calls this workflow as part of
+  # the promotion gate. Triggering here as well would queue the same job twice
+  # on the single Mac runner.
+  #
+  # `ready_for_review` is not a default `pull_request` type, and the job is
+  # skipped for drafts (no point compiling a draft), so it must be listed or a
+  # draft opened and then marked ready would never get a run.
+  pull_request:
+    branches: [dev]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'apps/ios/**'
+      - '.github/workflows/ios-test.yml'
   workflow_call:
   workflow_dispatch:
 
+# Least privilege: the checkout is read-only and no job needs a secret, so a
+# PR run of this workflow cannot write to the repo.
 permissions:
   contents: read
 
-# One in-flight run per ref; a new push/PR update supersedes the previous run.
+# Cancel superseded PR runs; never cancel a default-branch run (a merge to main
+# should always finish and report its status).
 concurrency:
   group: ios-test-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   ios-test:
@@ -97,11 +119,13 @@ jobs:
   ios-test-status:
     name: ios-test-status
     # Always-run, hosted aggregate so a fork PR (whose self-hosted macOS job is
-    # skipped by the fork guard) still yields a single satisfiable status check.
-    # 'skipped' is treated as pass — the guarded job is legitimately skipped on
-    # fork PRs — so only 'failure'/'cancelled' fail the gate. ubuntu-latest keeps
-    # this summary off the macOS signing box and it needs no secrets.
+    # skipped by the fork guard) or a draft PR still yields a single satisfiable
+    # status check. 'skipped' is treated as pass — the guarded job is
+    # legitimately skipped on fork and draft PRs — so only
+    # 'failure'/'cancelled' fail the gate. ubuntu-latest keeps this summary off
+    # the macOS signing box and it needs no secrets.
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     if: always()
     needs: [ios-test]
     steps:
