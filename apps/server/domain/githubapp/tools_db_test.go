@@ -92,7 +92,7 @@ func TestGitHubAppReviewTools(t *testing.T) {
 	}))
 	defer fake.Close()
 
-	svc := NewService(repo, agents.NewRepository(db.DB), nil, cipher, NewTokenMinter(fake.URL, fake.Client()), &config.Config{}, nil)
+	svc := NewService(repo, agents.NewRepository(db.DB), cipher, NewTokenMinter(fake.URL, fake.Client()), &config.Config{}, nil)
 	svc.newClient = func(_, token string) *Client { return NewClient(fake.URL, token, fake.Client()) }
 
 	require.True(t, svc.HandlesGitHubAppTool(toolPRDiff))
@@ -116,6 +116,14 @@ func TestGitHubAppReviewTools(t *testing.T) {
 	require.Contains(t, commentBody["body"], "Reviewed-SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	require.Contains(t, commentBody["body"], "Verdict: MERGE")
 	require.Equal(t, "MERGE", res.StructuredContent["verdict"])
+
+	// The reviewed SHA must be a full commit id, not a ref or abbreviation.
+	_, err = svc.ExecuteGitHubAppTool(ctx, projectID.String(), toolReviewSubmit, map[string]any{
+		"repo": "owner/repo", "number": float64(7), "head_sha": "abc1234",
+		"verdict": "MERGE", "summary": "short sha",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "40 lowercase hex")
 
 	// A moved head fails closed and posts nothing new.
 	currentHead = "def5678"

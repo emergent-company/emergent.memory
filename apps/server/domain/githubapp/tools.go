@@ -96,7 +96,7 @@ func (s *Service) executePRDiff(ctx context.Context, client *Client, repo, headS
 		return nil, fmt.Errorf("github app tool: head_sha is required")
 	}
 	if !validCommitSHA(headSHA) {
-		return nil, fmt.Errorf("github app tool: head_sha %q is not a commit SHA (7-40 lowercase hex)", headSHA)
+		return nil, fmt.Errorf("github app tool: head_sha %q is not a commit SHA (40 lowercase hex)", headSHA)
 	}
 	diff, err := client.GetCommit(ctx, repo, headSHA)
 	if err != nil {
@@ -146,7 +146,7 @@ func (s *Service) executeReviewSubmit(ctx context.Context, client *Client, repo 
 		return nil, fmt.Errorf("github app tool: head_sha and summary are required")
 	}
 	if !validCommitSHA(headSHA) {
-		return nil, fmt.Errorf("github app tool: head_sha %q is not a commit SHA (7-40 lowercase hex)", headSHA)
+		return nil, fmt.Errorf("github app tool: head_sha %q is not a commit SHA (40 lowercase hex)", headSHA)
 	}
 	var event, conclusion, checkTitle string
 	switch verdict {

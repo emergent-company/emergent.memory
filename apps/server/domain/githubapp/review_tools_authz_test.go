@@ -75,7 +75,7 @@ func TestGitHubAppReviewToolsRefuseUntrustedCallers(t *testing.T) {
 
 			for _, name := range reviewToolNames {
 				args := map[string]any{
-					"repo": "owner/repo", "number": float64(7), "head_sha": "abc1234",
+					"repo": "owner/repo", "number": float64(7), "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 					"verdict": "MERGE", "summary": "injected approval",
 				}
 				_, err := svc.ExecuteTool(tc.ctx, testReviewProjectID, name, args)
@@ -101,7 +101,7 @@ func TestGitHubAppReviewToolsSurviveIndexEviction(t *testing.T) {
 	require.Nil(t, svc.GetToolByName("zzz-unknown-tool"))
 
 	_, err := svc.ExecuteTool(context.Background(), testReviewProjectID, toolReviewSubmit, map[string]any{
-		"repo": "owner/repo", "number": float64(7), "head_sha": "abc1234",
+		"repo": "owner/repo", "number": float64(7), "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"verdict": "MERGE", "summary": "injected approval",
 	})
 	require.Error(t, err)

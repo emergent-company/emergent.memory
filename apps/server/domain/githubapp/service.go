@@ -31,16 +31,9 @@ const asyncProcessTimeout = 2 * time.Minute
 
 // Service implements App registration, installation routing, webhook ingress,
 // and the review-queue producer.
-// BuiltinToolRefresher re-seeds a project's builtin MCP tool catalog after an
-// installation change, so the review tools reach the agent tool pool.
-type BuiltinToolRefresher interface {
-	RefreshBuiltinServer(ctx context.Context, projectID string) error
-}
-
 type Service struct {
 	repo       *Repository
 	agents     *agents.Repository
-	refresher  BuiltinToolRefresher
 	cipher     *CredentialCipher
 	minter     *TokenMinter
 	apiBaseURL string
@@ -55,7 +48,6 @@ type Service struct {
 func NewService(
 	repo *Repository,
 	agentsRepo *agents.Repository,
-	refresher BuiltinToolRefresher,
 	cipher *CredentialCipher,
 	minter *TokenMinter,
 	cfg *config.Config,
@@ -68,7 +60,6 @@ func NewService(
 	return &Service{
 		repo:       repo,
 		agents:     agentsRepo,
-		refresher:  refresher,
 		cipher:     cipher,
 		minter:     minter,
 		apiBaseURL: baseURL,
@@ -191,7 +182,6 @@ func (s *Service) CreateInstallation(ctx context.Context, orgID uuid.UUID, userI
 	if err := s.repo.CreateInstallation(ctx, inst); err != nil {
 		return nil, mapConflict(err, "installation is already bound")
 	}
-	s.refreshBuiltinTools(ctx, inst.ProjectID)
 	return inst, nil
 }
 
@@ -232,7 +222,6 @@ func (s *Service) UpdateInstallation(ctx context.Context, orgID uuid.UUID, userI
 	if err := s.repo.UpdateInstallation(ctx, inst); err != nil {
 		return nil, apperror.NewInternal("failed to update installation", err)
 	}
-	s.refreshBuiltinTools(ctx, inst.ProjectID)
 	return inst, nil
 }
 
@@ -245,11 +234,7 @@ func (s *Service) DeleteInstallation(ctx context.Context, orgID uuid.UUID, userI
 	if err != nil || inst.OrgID != orgID {
 		return apperror.NewNotFound("Installation", id.String())
 	}
-	if err := s.repo.DeleteInstallation(ctx, id); err != nil {
-		return err
-	}
-	s.refreshBuiltinTools(ctx, inst.ProjectID)
-	return nil
+	return s.repo.DeleteInstallation(ctx, id)
 }
 
 // DeleteApp removes the org's App and its installations.
@@ -512,15 +497,6 @@ func (s *Service) lockPR(installationID int64, repo string, pr int) func() {
 	s.mu.Unlock()
 	lock.Lock()
 	return lock.Unlock
-}
-
-func (s *Service) refreshBuiltinTools(ctx context.Context, projectID uuid.UUID) {
-	if s.refresher == nil {
-		return
-	}
-	if err := s.refresher.RefreshBuiltinServer(ctx, projectID.String()); err != nil && s.log != nil {
-		s.log.Warn("githubapp: failed to refresh builtin tools", "projectId", projectID, "error", err)
-	}
 }
 
 func (s *Service) requireOrgAdmin(ctx context.Context, orgID uuid.UUID, userID string) error {
