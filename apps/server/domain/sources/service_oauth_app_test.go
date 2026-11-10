@@ -3,6 +3,7 @@ package sources
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -17,11 +18,17 @@ type namedAppStore struct {
 	orgID       uuid.UUID
 	orgApps     []*OAuthClientConfig
 	projectApps map[uuid.UUID][]*OAuthClientConfig
+	// denyOrgAdmin/denyProjectAdmin let a test drive the refusal branches; the
+	// zero value grants, which keeps the resolution tests focused on selection.
+	denyOrgAdmin     bool
+	denyProjectAdmin bool
 }
 
-func (f *namedAppStore) IsOrgAdmin(context.Context, string, string) (bool, error) { return true, nil }
+func (f *namedAppStore) IsOrgAdmin(context.Context, string, string) (bool, error) {
+	return !f.denyOrgAdmin, nil
+}
 func (f *namedAppStore) IsProjectAdmin(context.Context, string, string) (bool, error) {
-	return true, nil
+	return !f.denyProjectAdmin, nil
 }
 func (f *namedAppStore) ResolveOrgID(context.Context, uuid.UUID) (uuid.UUID, error) {
 	return f.orgID, nil
@@ -260,4 +267,70 @@ func TestResolveOAuthClient_CrossProviderDoesNotLeakScopes(t *testing.T) {
 	if len(got.Scopes) != 0 || got.Strategy != "" {
 		t.Fatalf("gmail resolved with Drive scopes %v/%q", got.Scopes, got.Strategy)
 	}
+}
+
+// TestOAuthAppCRUD_RefusesNonAdmin drives the authorization branches the fake
+// store used to skip by always reporting admin=true. Every named-app CRUD entry
+// point must refuse before it touches a row, and an empty user is unauthorized
+// rather than forbidden.
+func TestOAuthAppCRUD_RefusesNonAdmin(t *testing.T) {
+	orgID, projectID := uuid.New(), uuid.New()
+	store := &namedAppStore{
+		orgID:            orgID,
+		projectApps:      map[uuid.UUID][]*OAuthClientConfig{},
+		denyOrgAdmin:     true,
+		denyProjectAdmin: true,
+	}
+	svc := newNamedAppService(t, store)
+	ctx := context.Background()
+	app := namedApp(t, svc, orgID, &projectID, "google", "Existing", "cid")
+	store.projectApps[projectID] = []*OAuthClientConfig{app}
+
+	requireForbidden := func(t *testing.T, err error) {
+		t.Helper()
+		if !errors.Is(err, apperror.ErrForbidden) {
+			t.Fatalf("error = %v, want forbidden", err)
+		}
+	}
+
+	t.Run("organization app surface", func(t *testing.T) {
+		_, err := svc.ListOrgOAuthApps(ctx, orgID, "user-1")
+		requireForbidden(t, err)
+		_, err = svc.GetOrgOAuthApp(ctx, orgID, "user-1", app.ID.String())
+		requireForbidden(t, err)
+		_, err = svc.CreateOrgOAuthApp(ctx, orgID, "user-1", &CreateOAuthAppRequest{
+			Vendor: "google", Name: "New", ClientID: "cid", ClientSecret: "secret",
+		})
+		requireForbidden(t, err)
+		_, err = svc.UpdateOrgOAuthApp(ctx, orgID, "user-1", app.ID.String(), &UpdateOAuthAppRequest{})
+		requireForbidden(t, err)
+		requireForbidden(t, svc.DeleteOrgOAuthApp(ctx, orgID, "user-1", app.ID.String()))
+	})
+
+	t.Run("project app surface", func(t *testing.T) {
+		_, err := svc.ListProjectOAuthApps(ctx, projectID)
+		if err != nil {
+			t.Fatalf("ListProjectOAuthApps is member-readable; error = %v", err)
+		}
+		// Listing is deliberately member-readable, but reading one app and every
+		// write still require project admin authority.
+		_, err = svc.GetProjectOAuthApp(ctx, projectID, app.ID.String())
+		if err != nil {
+			t.Fatalf("GetProjectOAuthApp is member-readable; error = %v", err)
+		}
+		_, err = svc.CreateProjectOAuthApp(ctx, projectID, "user-1", &CreateOAuthAppRequest{
+			Vendor: "google", Name: "New", ClientID: "cid", ClientSecret: "secret",
+		})
+		requireForbidden(t, err)
+		_, err = svc.UpdateProjectOAuthApp(ctx, projectID, "user-1", app.ID.String(), &UpdateOAuthAppRequest{})
+		requireForbidden(t, err)
+		requireForbidden(t, svc.DeleteProjectOAuthApp(ctx, projectID, "user-1", app.ID.String()))
+	})
+
+	t.Run("empty user is unauthorized", func(t *testing.T) {
+		_, err := svc.ListOrgOAuthApps(ctx, orgID, "")
+		if !errors.Is(err, apperror.ErrUnauthorized) {
+			t.Fatalf("error = %v, want unauthorized", err)
+		}
+	})
 }

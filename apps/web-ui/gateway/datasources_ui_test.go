@@ -2980,6 +2980,73 @@ func TestUIProjectCredentialsOrgAdminCannotManageProjectApps(t *testing.T) {
 	}
 }
 
+// TestUIProjectCredentialOrgAppFilteredFromLegacyRedirect asserts the project
+// per-provider URL never redirects into an organization-scoped app's editor.
+// The member-safe project app list includes org apps, but the project detail
+// route reads project rows only, so an org app there would 404. The filter keeps
+// the project editor readable and explains that an administrator manages it.
+func TestUIProjectCredentialOrgAppFilteredFromLegacyRedirect(t *testing.T) {
+	base := func() *fakeMemory {
+		return &fakeMemory{
+			project: &Project{ID: "p1", Name: "Home", OrgID: "o1"},
+			orgsAndProjects: []OrgWithProjectsDto{{
+				ID: "o1", Name: "Acme", Role: "org_member",
+				Projects: []ProjectAccessDto{{ID: "p1", Name: "Home", OrgID: "o1", Role: "project_admin"}},
+			}},
+			dsProviders: []DSProvider{
+				{Type: "google_drive", Name: "Google Drive", Vendor: "google", VendorName: "Google", AuthMethods: []string{"oauth"}},
+			},
+			dsCredentials: []DSOAuthCredentialDescription{{
+				ProviderType:  "google_drive",
+				Organization:  DSOAuthCredentialSource{Configured: true, ClientID: "ocid"},
+				ResolvedScope: dsCredentialScopeOrganization,
+			}},
+		}
+	}
+
+	// Only an organization app: no redirect into a route the project cannot read.
+	f := base()
+	f.dsProjectOAuthApps = []DSOAuthApp{
+		{ID: "app-org", Scope: "organization", Vendor: "google", VendorName: "Google", Name: "Org app", ClientID: "ocid", Configured: true},
+	}
+	e := newDSUIServer(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/credentials/google_drive", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("org-only legacy editor status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, `settings/credentials/apps/app-org`) {
+		t.Error("must not redirect or link to the unreadable org app through the project editor")
+	}
+	for _, want := range []string{
+		"uses the organization-wide app",
+		`data-testid="ds-credential-org-ask-admin"`,
+		"Ask an organization administrator to change it.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("org-only project editor missing %q", want)
+		}
+	}
+
+	// A project app alongside the org app still resolves to the project app:
+	// filtering must not turn a readable sole match into the list.
+	f = base()
+	f.dsProjectOAuthApps = []DSOAuthApp{
+		{ID: "app-1", Scope: "project", Vendor: "google", VendorName: "Google", Name: "Project app", ClientID: "pcid", Configured: true},
+		{ID: "app-org", Scope: "organization", Vendor: "google", VendorName: "Google", Name: "Org app", ClientID: "ocid", Configured: true},
+	}
+	e = newDSUIServer(f)
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/credentials/google_drive", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("project+org legacy editor status = %d, want 303; body=%s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/settings/credentials/apps/app-1" {
+		t.Errorf("legacy editor redirect = %q, want the project app", loc)
+	}
+}
+
 func TestUIProjectOAuthClientUpsertAndDelete(t *testing.T) {
 	f := projectCredentialsAdminFake()
 	e := newDSUIServer(f)
