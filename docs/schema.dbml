@@ -2837,6 +2837,7 @@ Table "kb"."sources" {
   "credentials_updated_at" timestamptz [not null, default: `now()`]
   "mcp_slug" text
   "oauth_app_id" uuid
+  "last_probed_at" timestamptz
 
   Indexes {
     (credential_id) [name: "idx_sources_credential_id", note: '(credential_id IS NOT NULL)']

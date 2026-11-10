@@ -232,6 +232,20 @@ type ResourceRefLister interface {
 	ListRefs(ctx context.Context, creds Credentials, cfg map[string]any) (items []Resource, truncated bool, err error)
 }
 
+// GrantProber is implemented by providers that can prove a stored grant is
+// still accepted with a cheap, read-only metadata call — Drive's `about.get`,
+// Gmail's `users.getProfile`. It backs the proactive probe (#23): a source whose
+// next scheduled sync is hours or a day away is revalidated on a cadence, so a
+// dead grant is discovered before the sync that would have discovered it.
+//
+// It is deliberately optional. A provider that cannot answer cheaply (a web
+// crawl fetches a page; Trale opens an MCP session; a GitHub connector validates
+// a repository and ref) simply does not implement it and is never probed — the
+// probe must not become a hidden second sync.
+type GrantProber interface {
+	ProbeGrant(ctx context.Context, creds Credentials, deps ConnectorDeps) error
+}
+
 // SyncIntervalBoundsProvider is implemented by providers that impose a default
 // and minimum sync cadence (the web crawler defaults to 60 minutes and rejects
 // intervals below 15). The Service applies the bounds when a source sets a sync

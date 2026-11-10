@@ -280,6 +280,18 @@ func (p *gmailProvider) NewConnector(ctx context.Context, creds Credentials, dep
 	return &gmailConnector{client: client, deps: deps}, nil
 }
 
+// ProbeGrant implements GrantProber with Gmail's `users.getProfile` — the same
+// bounded call the connect form's connection test makes. It reads no mail and
+// ignores the source config: the question is whether the grant is still
+// accepted, not whether the saved query still matches anything.
+func (p *gmailProvider) ProbeGrant(ctx context.Context, creds Credentials, deps ConnectorDeps) error {
+	connector, err := p.NewConnector(ctx, creds, deps)
+	if err != nil {
+		return err
+	}
+	return connector.TestConnection(ctx, nil)
+}
+
 // SyncIntervalBounds implements SyncIntervalBoundsProvider: a Gmail source
 // syncs every 60 minutes by default and may not be scheduled faster than every
 // 15 (Gmail's per-user quota punishes tighter polling).

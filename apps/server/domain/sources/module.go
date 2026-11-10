@@ -31,6 +31,7 @@ var Module = fx.Module("sources",
 		RegisterSyncSchedulerTask,
 		RegisterSourceToolHandler,
 		RegisterSourceMCPBackfill,
+		RegisterProbeSchedulerTask,
 	),
 )
 
