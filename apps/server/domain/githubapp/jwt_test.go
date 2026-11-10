@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -102,4 +103,40 @@ func TestSignAppJWTRejectsBadPEM(t *testing.T) {
 	if _, err := SignAppJWT(1, block, time.Now()); err == nil {
 		t.Fatal("expected error for unsupported PEM type")
 	}
+}
+
+// TestParseRSAPrivateKeyRejectsWeakKey pins the shared floor: a 1024-bit key is
+// parsed and structurally valid, but neither the minter nor registration may
+// use it.
+func TestParseRSAPrivateKeyRejectsWeakKey(t *testing.T) {
+	key := testRSAKeyWithBits(t, 1024)
+	for name, pemBytes := range map[string][]byte{
+		"pkcs1": pkcs1PEM(key),
+		"pkcs8": pkcs8PEM(t, key),
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ParseRSAPrivateKey(pemBytes)
+			if !errors.Is(err, ErrPrivateKeyTooWeak) {
+				t.Fatalf("err = %v, want ErrPrivateKeyTooWeak", err)
+			}
+			var weak *WeakPrivateKeyError
+			if !errors.As(err, &weak) || weak.Bits != 1024 {
+				t.Fatalf("err = %v, want WeakPrivateKeyError{Bits: 1024}", err)
+			}
+			if !strings.Contains(err.Error(), "1024") || !strings.Contains(err.Error(), "2048") {
+				t.Fatalf("err = %q, want observed and minimum sizes", err)
+			}
+		})
+	}
+}
+
+// testRSAKeyWithBits generates a key of an explicit size. 1024 is the smallest
+// rsa.GenerateKey still accepts, which is exactly what the weak-key cases need.
+func testRSAKeyWithBits(t *testing.T, bits int) *rsa.PrivateKey {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, bits)
+	if err != nil {
+		t.Fatalf("generate %d-bit key: %v", bits, err)
+	}
+	return key
 }

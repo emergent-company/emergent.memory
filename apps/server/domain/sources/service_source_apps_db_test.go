@@ -239,6 +239,16 @@ func ecPKCS8PEMForTest(t *testing.T) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
 }
 
+// weakRSAPEMForTest is a syntactically perfect 1024-bit PKCS#1 key: it proves
+// registration rejects on modulus size, not on encoding. 1024 is the floor
+// rsa.GenerateKey still accepts on the Go version this repo pins.
+func weakRSAPEMForTest(t *testing.T) []byte {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 1024)
+	require.NoError(t, err)
+	return pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+}
+
 // TestRegisterSourceAppValidatesKeyAndProvider pins the registration contract:
 // a credential or provider the dispatcher cannot use is rejected with a 400
 // naming the field, before anything is sealed, and leaves no row behind — the
@@ -266,14 +276,16 @@ func TestRegisterSourceAppValidatesKeyAndProvider(t *testing.T) {
 		name   string
 		key    string
 		reason string
+		also   []string
 	}{
-		{"arbitrary text", "definitely not a pem", "not PEM encoded"},
-		{"unsupported PEM block type", string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: []byte("x")})), "unsupported PEM block type"},
-		{"EC key in a PKCS#8 PEM", string(ecPKCS8PEMForTest(t)), "not an RSA key"},
-		{"corrupt base64 body", "-----BEGIN RSA PRIVATE KEY-----\nnot base64 at all!!\n-----END RSA PRIVATE KEY-----\n", "not PEM encoded"},
-		{"valid PEM, malformed DER", string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: []byte("not der")})), "could not be parsed"},
+		{"arbitrary text", "definitely not a pem", "not PEM encoded", nil},
+		{"unsupported PEM block type", string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: []byte("x")})), "unsupported PEM block type", nil},
+		{"EC key in a PKCS#8 PEM", string(ecPKCS8PEMForTest(t)), "not an RSA key", nil},
+		{"corrupt base64 body", "-----BEGIN RSA PRIVATE KEY-----\nnot base64 at all!!\n-----END RSA PRIVATE KEY-----\n", "not PEM encoded", nil},
+		{"valid PEM, malformed DER", string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: []byte("not der")})), "could not be parsed", nil},
+		{"1024-bit PKCS#1 RSA key", string(weakRSAPEMForTest(t)), "too weak", []string{"1024", "2048"}},
 		// Empty is caught by the required-field check, not the parser.
-		{"empty", "", "required"},
+		{"empty", "", "required", nil},
 	}
 	for i, tc := range rejected {
 		t.Run("rejects "+tc.name, func(t *testing.T) {
@@ -288,6 +300,9 @@ func TestRegisterSourceAppValidatesKeyAndProvider(t *testing.T) {
 			// The error names the field and the reason, never the key bytes.
 			require.Contains(t, appErr.Message, "privateKey")
 			require.Contains(t, appErr.Message, tc.reason)
+			for _, want := range tc.also {
+				require.Contains(t, appErr.Message, want)
+			}
 			if tc.key != "" {
 				require.NotContains(t, appErr.Message, tc.key)
 			}

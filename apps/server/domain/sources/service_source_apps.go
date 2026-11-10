@@ -152,6 +152,15 @@ func validateSourceAppPrivateKey(raw string) error {
 		return apperror.NewBadRequest("privateKey has an unsupported PEM block type; only \"RSA PRIVATE KEY\" (PKCS#1) and \"PRIVATE KEY\" (PKCS#8) are accepted")
 	case errors.Is(err, githubapp.ErrPrivateKeyNotRSA):
 		return apperror.NewBadRequest("privateKey is not an RSA key; GitHub App private keys must be RSA")
+	case errors.Is(err, githubapp.ErrPrivateKeyTooWeak):
+		var weak *githubapp.WeakPrivateKeyError
+		if errors.As(err, &weak) {
+			return apperror.NewBadRequest(fmt.Sprintf(
+				"privateKey is too weak; the RSA modulus must be at least %d bits, but this key is %d bits",
+				githubapp.MinRSAPrivateKeyBits, weak.Bits))
+		}
+		return apperror.NewBadRequest(fmt.Sprintf(
+			"privateKey is too weak; the RSA modulus must be at least %d bits", githubapp.MinRSAPrivateKeyBits))
 	default:
 		return apperror.NewBadRequest(fmt.Sprintf("privateKey could not be parsed as a PKCS#1 or PKCS#8 RSA private key: %v", err))
 	}
