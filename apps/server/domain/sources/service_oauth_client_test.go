@@ -106,7 +106,7 @@ func TestResolveOAuthClient_OrgOverridesDeploymentDefault(t *testing.T) {
 		oauthClientIDKey: "org-id", oauthClientSecretKey: "org-secret",
 	})
 
-	got, err := svc.resolveOAuthClient(context.Background(), uuid.New(), ProviderTypeGoogleDrive)
+	got, err := svc.resolveOAuthClient(context.Background(), uuid.New(), ProviderTypeGoogleDrive, nil)
 	if err != nil {
 		t.Fatalf("resolveOAuthClient() error = %v", err)
 	}
@@ -119,7 +119,7 @@ func TestResolveOAuthClient_FallsBackToDeploymentDefault(t *testing.T) {
 	store := &fakeOrgOAuthStore{orgID: uuid.New(), clients: map[string]*OAuthClientConfig{}}
 	svc := newOrgClientService(store, config.SourceOAuthConfig{GoogleClientID: "deploy", GoogleClientSecret: "deploy-secret"})
 
-	got, err := svc.resolveOAuthClient(context.Background(), uuid.New(), ProviderTypeGoogleDrive)
+	got, err := svc.resolveOAuthClient(context.Background(), uuid.New(), ProviderTypeGoogleDrive, nil)
 	if err != nil {
 		t.Fatalf("resolveOAuthClient() error = %v", err)
 	}
@@ -132,7 +132,7 @@ func TestResolveOAuthClient_NoClientIsActionableError(t *testing.T) {
 	store := &fakeOrgOAuthStore{orgID: uuid.New(), clients: map[string]*OAuthClientConfig{}}
 	svc := newOrgClientService(store, config.SourceOAuthConfig{})
 
-	_, err := svc.resolveOAuthClient(context.Background(), uuid.New(), ProviderTypeGoogleDrive)
+	_, err := svc.resolveOAuthClient(context.Background(), uuid.New(), ProviderTypeGoogleDrive, nil)
 	if err == nil {
 		t.Fatal("resolveOAuthClient() with no org and no deployment default = nil, want error")
 	}
@@ -159,7 +159,7 @@ func TestResolveOAuthClient_NoClient_NoDeploymentDefaultOmitsEnvVar(t *testing.T
 	store := &fakeOrgOAuthStore{orgID: uuid.New(), clients: map[string]*OAuthClientConfig{}}
 	svc := newOrgClientService(store, config.SourceOAuthConfig{})
 
-	_, err := svc.resolveOAuthClient(context.Background(), uuid.New(), ProviderTypeGitHub)
+	_, err := svc.resolveOAuthClient(context.Background(), uuid.New(), ProviderTypeGitHub, nil)
 	if err == nil {
 		t.Fatal("resolveOAuthClient(github) with no org and no deployment default = nil, want error")
 	}
@@ -358,7 +358,7 @@ func TestResolveOAuthClient_AppliesOrgStrategy(t *testing.T) {
 	})
 	store.clients[orgClientKey(orgID, ProviderTypeGoogleDrive)].Strategy = string(ScopeStrategyDriveReadonly)
 
-	got, err := svc.resolveOAuthClient(context.Background(), uuid.New(), ProviderTypeGoogleDrive)
+	got, err := svc.resolveOAuthClient(context.Background(), uuid.New(), ProviderTypeGoogleDrive, nil)
 	if err != nil {
 		t.Fatalf("resolveOAuthClient() error = %v", err)
 	}
@@ -369,7 +369,7 @@ func TestResolveOAuthClient_AppliesOrgStrategy(t *testing.T) {
 	// An explicit scope set wins over the strategy.
 	row := store.clients[orgClientKey(orgID, ProviderTypeGoogleDrive)]
 	row.Scopes = []string{"explicit-scope"}
-	got, err = svc.resolveOAuthClient(context.Background(), uuid.New(), ProviderTypeGoogleDrive)
+	got, err = svc.resolveOAuthClient(context.Background(), uuid.New(), ProviderTypeGoogleDrive, nil)
 	if err != nil {
 		t.Fatalf("resolveOAuthClient() error = %v", err)
 	}
@@ -530,7 +530,7 @@ func TestResolveOAuthClient_ProjectOverridesOrg(t *testing.T) {
 		oauthClientIDKey: "proj-id", oauthClientSecretKey: "proj-secret",
 	})
 
-	got, err := svc.resolveOAuthClient(context.Background(), projectID, ProviderTypeGoogleDrive)
+	got, err := svc.resolveOAuthClient(context.Background(), projectID, ProviderTypeGoogleDrive, nil)
 	if err != nil {
 		t.Fatalf("resolveOAuthClient() error = %v", err)
 	}
@@ -550,7 +550,7 @@ func TestResolveOAuthClient_ProjectMissingFallsBackToOrg(t *testing.T) {
 		oauthClientIDKey: "org-id", oauthClientSecretKey: "org-secret",
 	})
 
-	got, err := svc.resolveOAuthClient(context.Background(), projectID, ProviderTypeGoogleDrive)
+	got, err := svc.resolveOAuthClient(context.Background(), projectID, ProviderTypeGoogleDrive, nil)
 	if err != nil {
 		t.Fatalf("resolveOAuthClient() error = %v", err)
 	}
@@ -565,7 +565,7 @@ func TestResolveOAuthClient_ProjectMissingAndOrgMissingFallsBackToEnv(t *testing
 	projStore := &fakeProjectOAuthStore{orgID: uuid.New(), clients: map[string]*OAuthClientConfig{}}
 	svc := newOrgAndProjectClientService(orgStore, projStore, config.SourceOAuthConfig{GoogleClientID: "deploy", GoogleClientSecret: "deploy-secret"})
 
-	got, err := svc.resolveOAuthClient(context.Background(), projectID, ProviderTypeGoogleDrive)
+	got, err := svc.resolveOAuthClient(context.Background(), projectID, ProviderTypeGoogleDrive, nil)
 	if err != nil {
 		t.Fatalf("resolveOAuthClient() error = %v", err)
 	}
@@ -586,7 +586,7 @@ func TestResolveOAuthClient_ProjectStoreErrorPropagates(t *testing.T) {
 		EncryptedClient: []byte("not-a-valid-blob"),
 	}
 
-	_, err := svc.resolveOAuthClient(context.Background(), projectID, ProviderTypeGoogleDrive)
+	_, err := svc.resolveOAuthClient(context.Background(), projectID, ProviderTypeGoogleDrive, nil)
 	if err == nil {
 		t.Fatal("resolveOAuthClient() with undecryptable project row = nil, want error")
 	}
@@ -609,7 +609,7 @@ func TestResolveOAuthClient_ProjectEmptyStrategyInheritsOrgStrategy(t *testing.T
 	})
 	// Project strategy left empty → inherits the org drive.file strategy.
 
-	got, err := svc.resolveOAuthClient(context.Background(), projectID, ProviderTypeGoogleDrive)
+	got, err := svc.resolveOAuthClient(context.Background(), projectID, ProviderTypeGoogleDrive, nil)
 	if err != nil {
 		t.Fatalf("resolveOAuthClient() error = %v", err)
 	}
@@ -638,7 +638,7 @@ func TestResolveOAuthClient_ProjectExplicitStrategyOverridesOrg(t *testing.T) {
 	})
 	projStore.clients[projectClientKey(projectID, ProviderTypeGoogleDrive)].Strategy = string(ScopeStrategyDriveReadonly)
 
-	got, err := svc.resolveOAuthClient(context.Background(), projectID, ProviderTypeGoogleDrive)
+	got, err := svc.resolveOAuthClient(context.Background(), projectID, ProviderTypeGoogleDrive, nil)
 	if err != nil {
 		t.Fatalf("resolveOAuthClient() error = %v", err)
 	}
@@ -659,7 +659,7 @@ func TestResolveOAuthClient_ProjectEmptyStrategyNoOrgFallsBackToDefault(t *testi
 	})
 	// No org row and no project strategy → provider default (drive.readonly).
 
-	got, err := svc.resolveOAuthClient(context.Background(), projectID, ProviderTypeGoogleDrive)
+	got, err := svc.resolveOAuthClient(context.Background(), projectID, ProviderTypeGoogleDrive, nil)
 	if err != nil {
 		t.Fatalf("resolveOAuthClient() error = %v", err)
 	}
@@ -795,7 +795,7 @@ func TestEffectiveOAuthStrategy(t *testing.T) {
 			oauthClientIDKey: "proj-id", oauthClientSecretKey: "proj-secret",
 		})
 
-		if got := svc.effectiveOAuthStrategy(ctx, projectID, ProviderTypeGoogleDrive); got != string(ScopeStrategyDriveFile) {
+		if got := svc.effectiveOAuthStrategy(ctx, projectID, ProviderTypeGoogleDrive, nil); got != string(ScopeStrategyDriveFile) {
 			t.Fatalf("effectiveOAuthStrategy() = %q, want %q", got, ScopeStrategyDriveFile)
 		}
 	})
@@ -811,7 +811,7 @@ func TestEffectiveOAuthStrategy(t *testing.T) {
 		})
 		projStore.clients[projectClientKey(projectID, ProviderTypeGoogleDrive)].Scopes = []string{googleDriveReadonly}
 
-		if got := svc.effectiveOAuthStrategy(ctx, projectID, ProviderTypeGoogleDrive); got != string(ScopeStrategyDriveReadonly) {
+		if got := svc.effectiveOAuthStrategy(ctx, projectID, ProviderTypeGoogleDrive, nil); got != string(ScopeStrategyDriveReadonly) {
 			t.Fatalf("effectiveOAuthStrategy() = %q, want %q", got, ScopeStrategyDriveReadonly)
 		}
 	})
@@ -822,7 +822,7 @@ func TestEffectiveOAuthStrategy(t *testing.T) {
 		projStore := &fakeProjectOAuthStore{orgID: orgID, clients: map[string]*OAuthClientConfig{}}
 		svc := newOrgAndProjectClientService(orgStore, projStore, config.SourceOAuthConfig{})
 
-		if got := svc.effectiveOAuthStrategy(ctx, projectID, ProviderTypeGoogleDrive); got != "" {
+		if got := svc.effectiveOAuthStrategy(ctx, projectID, ProviderTypeGoogleDrive, nil); got != "" {
 			t.Fatalf("effectiveOAuthStrategy() = %q, want the empty (default) strategy", got)
 		}
 	})

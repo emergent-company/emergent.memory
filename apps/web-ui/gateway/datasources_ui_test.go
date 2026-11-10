@@ -2309,6 +2309,9 @@ func orgOAuthAdminFake() *fakeMemory {
 		dsOrgOAuthClients: []DSOAuthClientConfig{
 			{ProviderType: "google_drive", ClientID: "cid-123", Strategy: "drive.file", Config: map[string]any{"unmanaged": "keep-me"}, Configured: true},
 		},
+		dsOrgOAuthApps: []DSOAuthApp{
+			{ID: "app-1", Scope: "organization", Vendor: "google", VendorName: "Google", Name: "Google", ClientID: "cid-123", Configured: true},
+		},
 	}
 }
 
@@ -2320,7 +2323,7 @@ func TestUIOrgOAuthClientsPageAdminAndNonAdmin(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("admin status = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	if body := rec.Body.String(); !strings.Contains(body, "Google Drive") || !strings.Contains(body, "cid-123") {
+	if body := rec.Body.String(); !strings.Contains(body, "Google") || !strings.Contains(body, "cid-123") {
 		t.Errorf("admin body = %s", body)
 	}
 
@@ -2584,6 +2587,9 @@ func projectCredentialsAdminFake() *fakeMemory {
 		dsProjectOAuthClients: []DSOAuthClientConfig{
 			{ProviderType: "google_drive", ClientID: "pcid", RedirectURI: "https://api.example/api/data-source-integrations/oauth/google_drive/callback", JavascriptOrigin: "https://admin.example", Configured: true},
 		},
+		dsProjectOAuthApps: []DSOAuthApp{
+			{ID: "app-1", Scope: "project", Vendor: "google", VendorName: "Google", Name: "Google OAuth app", ClientID: "pcid", Configured: true},
+		},
 	}
 }
 
@@ -2826,6 +2832,9 @@ func TestUIProjectCredentialsPageAdminAndMember(t *testing.T) {
 			ProviderType: "google_drive",
 			Project:      DSOAuthCredentialSource{Configured: true, ClientID: "pcid"},
 		}},
+		dsProjectOAuthApps: []DSOAuthApp{
+			{ID: "app-1", Scope: "project", Vendor: "google", VendorName: "Google", Name: "Google OAuth app", ClientID: "pcid", Configured: true},
+		},
 	})
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/credentials", nil))
@@ -2833,10 +2842,10 @@ func TestUIProjectCredentialsPageAdminAndMember(t *testing.T) {
 		t.Fatalf("member status = %d, want 200", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Managed by project admins") {
+	if !strings.Contains(body, "Managed by admins") {
 		t.Error("member table should be read-only")
 	}
-	if strings.Contains(body, `href="/settings/credentials/google_drive"`) {
+	if strings.Contains(body, `href="/settings/credentials/apps/app-1"`) {
 		t.Error("member table must not link to the admin editor")
 	}
 
@@ -2847,15 +2856,15 @@ func TestUIProjectCredentialsPageAdminAndMember(t *testing.T) {
 		t.Fatalf("member editor status = %d, want 404", rec.Code)
 	}
 
-	// Admin editor resolves the provider from the catalog.
+	// The legacy per-provider editor redirects to the sole named app.
 	e = newDSUIServer(projectCredentialsAdminFake())
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/credentials/google_drive", nil))
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("admin editor status = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	if body := rec.Body.String(); !strings.Contains(body, "Google OAuth app") {
-		t.Errorf("editor body missing the vendor label: %s", body)
+	if loc := rec.Header().Get("Location"); loc != "/settings/credentials/apps/app-1" {
+		t.Errorf("legacy editor redirect = %q", loc)
 	}
 
 	// Unknown provider is a 404, not an empty editor.
@@ -2894,6 +2903,10 @@ func TestUIProjectCredentialsOrgAdminCannotManageProjectApps(t *testing.T) {
 			Organization:  DSOAuthCredentialSource{Configured: true, ClientID: "ocid"},
 			ResolvedScope: dsCredentialScopeProject,
 		}},
+		dsProjectOAuthApps: []DSOAuthApp{
+			{ID: "app-1", Scope: "project", Vendor: "google", VendorName: "Google", Name: "Project app", ClientID: "pcid", Configured: true},
+			{ID: "app-org", Scope: "organization", Vendor: "google", VendorName: "Google", Name: "Org app", ClientID: "ocid", Configured: true},
+		},
 	}
 	e := newDSUIServer(f)
 
@@ -2903,16 +2916,16 @@ func TestUIProjectCredentialsOrgAdminCannotManageProjectApps(t *testing.T) {
 		t.Fatalf("org admin credentials status = %d, want 200", rec.Code)
 	}
 	body := rec.Body.String()
-	if strings.Contains(body, `href="/settings/credentials/google_drive"`) {
+	if strings.Contains(body, `href="/settings/credentials/apps/app-1"`) {
 		t.Error("org_admin/project_user must not get the project editor link")
 	}
-	if !strings.Contains(body, "Managed by project admins") {
+	if !strings.Contains(body, "Managed by admins") {
 		t.Error("org_admin/project_user should see the project row as read-only")
 	}
 	// The org-wide app stays manageable by the org admin, through the
 	// per-provider org editor rather than an anchor on a stacked form page.
 	// (Rendered links are canonicalised from /orgs/{id} to /o/{id}.)
-	if !strings.Contains(body, `/o/o1/settings/oauth-clients/google_drive`) {
+	if !strings.Contains(body, `/o/o1/settings/oauth-apps/app-org`) {
 		t.Error("org_admin should still get the organization editor link")
 	}
 

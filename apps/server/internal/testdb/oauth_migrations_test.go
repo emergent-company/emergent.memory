@@ -88,6 +88,28 @@ func TestOAuthClientConfigMigrationUpDown(t *testing.T) {
 		t.Fatalf("expected kb.oauth_client_configs to exist after applying migrations to head")
 	}
 
+	// The vendor model must allow two named apps for the same vendor in one org.
+	// The legacy unique (organization_id, provider) indexes have to be gone, or
+	// the second insert fails. This is a DB-backed guard for 00283: a fake store
+	// cannot see the index.
+	if indexExists(ctx, pool, "kb", "idx_oauth_client_configs_org_provider") {
+		t.Fatalf("legacy idx_oauth_client_configs_org_provider still exists after 00283")
+	}
+	if !indexExists(ctx, pool, "kb", "idx_oauth_client_configs_org_vendor_name") {
+		t.Fatalf("idx_oauth_client_configs_org_vendor_name is missing after 00283")
+	}
+	var orgID string
+	if err := pool.QueryRow(ctx, "INSERT INTO kb.orgs (name) VALUES ('oauth-app-index-test') RETURNING id::text").Scan(&orgID); err != nil {
+		t.Fatalf("insert org: %v", err)
+	}
+	for _, name := range []string{"One", "Two"} {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO kb.oauth_client_configs (organization_id, vendor, name, provider, encrypted_client, provider_configs)
+			VALUES ($1, 'google', $2, 'google', '\x00'::bytea, '{}'::jsonb)`, orgID, name); err != nil {
+			t.Fatalf("insert app %s: %v", name, err)
+		}
+	}
+
 	// Open a database/sql handle for goose, which tracks its version in the
 	// database itself, so a fresh handle resumes from the same applied state.
 	sqlDB := stdlib.OpenDBFromPool(pool)
@@ -160,4 +182,11 @@ func tableExists(ctx context.Context, pool *pgxpool.Pool, schema, name string) b
 		return false
 	}
 	return exists
+}
+
+func indexExists(ctx context.Context, pool *pgxpool.Pool, schema, name string) bool {
+	var dummy int
+	err := pool.QueryRow(ctx,
+		"SELECT 1 FROM pg_indexes WHERE schemaname = $1 AND indexname = $2", schema, name).Scan(&dummy)
+	return err == nil
 }

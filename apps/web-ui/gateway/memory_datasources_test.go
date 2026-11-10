@@ -256,7 +256,7 @@ func TestStartDSOAuth(t *testing.T) {
 	defer srv.Close()
 
 	m := NewMemoryClient(srv.URL, "proj")
-	resp, err := m.StartDSOAuth(context.Background(), "google_drive", map[string]any{"name": "Team Drive"}, []string{"scope-a"}, "")
+	resp, err := m.StartDSOAuth(context.Background(), "google_drive", map[string]any{"name": "Team Drive"}, []string{"scope-a"}, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +288,7 @@ func TestStartDSOAuth_ReconnectCarriesTheSource(t *testing.T) {
 	defer srv.Close()
 
 	m := NewMemoryClient(srv.URL, "proj")
-	if _, err := m.StartDSOAuth(context.Background(), "google_drive", nil, nil, "src-1"); err != nil {
+	if _, err := m.StartDSOAuth(context.Background(), "google_drive", nil, nil, "", "src-1"); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := gotBody["reconnectSourceId"].(string); got != "src-1" {
