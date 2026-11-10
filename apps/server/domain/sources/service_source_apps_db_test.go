@@ -2,6 +2,8 @@ package sources
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -214,4 +216,177 @@ func rsaPEMForTest(t *testing.T) []byte {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 	return pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+}
+
+// rsaPKCS8PEMForTest is the "PRIVATE KEY" (PKCS#8) encoding GitHub also issues,
+// as opposed to rsaPEMForTest's PKCS#1.
+func rsaPKCS8PEMForTest(t *testing.T) []byte {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	require.NoError(t, err)
+	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+}
+
+// ecPKCS8PEMForTest is a structurally valid PKCS#8 PEM that is not an RSA key.
+func ecPKCS8PEMForTest(t *testing.T) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	require.NoError(t, err)
+	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+}
+
+// weakRSAPEMForTest is a syntactically perfect 1024-bit PKCS#1 key: it proves
+// registration rejects on modulus size, not on encoding. 1024 is the floor
+// rsa.GenerateKey still accepts on the Go version this repo pins.
+func weakRSAPEMForTest(t *testing.T) []byte {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 1024)
+	require.NoError(t, err)
+	return pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+}
+
+// TestRegisterSourceAppValidatesKeyAndProvider pins the registration contract:
+// a credential or provider the dispatcher cannot use is rejected with a 400
+// naming the field, before anything is sealed, and leaves no row behind — the
+// sealed columns are write-only, so a bad key stored cleanly is undiagnosable.
+func TestRegisterSourceAppValidatesKeyAndProvider(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	ctx, svc, orgID, userID := newSourceAppValidationService(t)
+
+	request := func(appID int64) RegisterSourceAppRequest {
+		return RegisterSourceAppRequest{
+			Provider: "github", AppID: appID, Slug: "validation",
+			PrivateKey: string(rsaPEMForTest(t)), WebhookSecret: "whsec",
+		}
+	}
+	countApps := func() int {
+		t.Helper()
+		apps, err := svc.ListSourceApps(ctx, orgID, userID)
+		require.NoError(t, err)
+		return len(apps)
+	}
+
+	rejected := []struct {
+		name   string
+		key    string
+		reason string
+		also   []string
+	}{
+		{"arbitrary text", "definitely not a pem", "not PEM encoded", nil},
+		{"unsupported PEM block type", string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: []byte("x")})), "unsupported PEM block type", nil},
+		{"EC key in a PKCS#8 PEM", string(ecPKCS8PEMForTest(t)), "not an RSA key", nil},
+		{"corrupt base64 body", "-----BEGIN RSA PRIVATE KEY-----\nnot base64 at all!!\n-----END RSA PRIVATE KEY-----\n", "not PEM encoded", nil},
+		{"valid PEM, malformed DER", string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: []byte("not der")})), "could not be parsed", nil},
+		{"1024-bit PKCS#1 RSA key", string(weakRSAPEMForTest(t)), "too weak", []string{"1024", "2048"}},
+		// Empty is caught by the required-field check, not the parser.
+		{"empty", "", "required", nil},
+	}
+	for i, tc := range rejected {
+		t.Run("rejects "+tc.name, func(t *testing.T) {
+			before := countApps()
+			req := request(int64(600 + i))
+			req.PrivateKey = tc.key
+			app, err := svc.RegisterSourceApp(ctx, orgID, userID, req)
+			require.Nil(t, app)
+			var appErr *apperror.Error
+			require.ErrorAs(t, err, &appErr)
+			require.Equal(t, 400, appErr.HTTPStatus)
+			// The error names the field and the reason, never the key bytes.
+			require.Contains(t, appErr.Message, "privateKey")
+			require.Contains(t, appErr.Message, tc.reason)
+			for _, want := range tc.also {
+				require.Contains(t, appErr.Message, want)
+			}
+			if tc.key != "" {
+				require.NotContains(t, appErr.Message, tc.key)
+			}
+			// A rejected registration must leave no row behind.
+			require.Equal(t, before, countApps(), "rejected registration created a row")
+		})
+	}
+
+	// Providers are matched exactly, not folded: a typo must not become a row
+	// that bindGitHubAppSource refuses forever while occupying the unique
+	// (org_id, provider, app_id) index.
+	for i, provider := range []string{"gitlab", "gihub", "GitHub", " github-app "} {
+		t.Run("rejects provider "+provider, func(t *testing.T) {
+			before := countApps()
+			req := request(int64(650 + i))
+			req.Provider = provider
+			app, err := svc.RegisterSourceApp(ctx, orgID, userID, req)
+			require.Nil(t, app)
+			var appErr *apperror.Error
+			require.ErrorAs(t, err, &appErr)
+			require.Equal(t, 400, appErr.HTTPStatus)
+			require.Contains(t, appErr.Message, "provider")
+			require.Equal(t, before, countApps(), "rejected provider created a row")
+		})
+	}
+
+	accepted := []struct {
+		name     string
+		provider string
+		key      []byte
+		appID    int64
+	}{
+		{"PKCS#1 RSA", "github", rsaPEMForTest(t), 700},
+		{"PKCS#8 RSA", "github", rsaPKCS8PEMForTest(t), 701},
+		{"default provider", "", rsaPEMForTest(t), 702},
+	}
+	for _, tc := range accepted {
+		t.Run("accepts "+tc.name, func(t *testing.T) {
+			before := countApps()
+			req := request(tc.appID)
+			req.Provider = tc.provider
+			req.PrivateKey = string(tc.key)
+			app, err := svc.RegisterSourceApp(ctx, orgID, userID, req)
+			require.NoError(t, err)
+			require.Equal(t, SourceAppProviderGitHub, app.Provider)
+			require.Equal(t, before+1, countApps())
+			// Sealed, not stored plaintext: no readable key material.
+			require.NotEmpty(t, app.PrivateKeyEncrypted)
+			require.NotContains(t, string(app.PrivateKeyEncrypted), "PRIVATE KEY")
+			require.NotContains(t, string(app.PrivateKeyEncrypted), "BEGIN")
+		})
+	}
+
+	// Registration accepts exactly what the binder serves: every accepted App
+	// has a provider SourceAppProviderSupported reports as bindable.
+	apps, err := svc.ListSourceApps(ctx, orgID, userID)
+	require.NoError(t, err)
+	require.Len(t, apps, len(accepted))
+	for _, app := range apps {
+		require.True(t, SourceAppProviderSupported(app.Provider), "registered provider %q is not bindable", app.Provider)
+	}
+}
+
+// newSourceAppValidationService builds a fresh database with one org and one
+// org admin, and a service wired for registration. It reuses the same fixtures
+// and harness as TestSourceAppRegistrationAndGitHubAppSource.
+func newSourceAppValidationService(t *testing.T) (context.Context, *Service, uuid.UUID, string) {
+	t.Helper()
+	ctx := context.Background()
+	db := testdb.SetupTestDBOrFail(t, ctx, "source_app_validation")
+	t.Cleanup(db.Close)
+	repo := NewRepository(db.DB, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	orgID, userID := uuid.New(), uuid.New()
+	_, err := db.DB.ExecContext(ctx, `INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgID, "validation-org")
+	require.NoError(t, err)
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO core.user_profiles (id, zitadel_user_id) VALUES (?, ?)`, userID, "zitadel-validation-admin")
+	require.NoError(t, err)
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.organization_memberships (organization_id, user_id, role) VALUES (?, ?, 'org_admin')`, orgID, userID)
+	require.NoError(t, err)
+
+	keyHex, err := cryptoutil.GenerateKey()
+	require.NoError(t, err)
+	svc := NewService(repo, &config.Config{LLMProvider: config.LLMProviderConfig{EncryptionKey: keyHex}},
+		slog.New(slog.NewTextHandler(io.Discard, nil)), NewRegistry(newGitHubAppProvider()))
+	return ctx, svc, orgID, userID.String()
 }

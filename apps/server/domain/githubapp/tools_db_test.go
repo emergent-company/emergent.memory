@@ -15,7 +15,6 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/testdb"
-	"github.com/emergent-company/emergent.memory/internal/testutil"
 	"github.com/emergent-company/emergent.memory/pkg/crypto"
 )
 
@@ -27,7 +26,7 @@ func TestGitHubAppReviewTools(t *testing.T) {
 	// The review tools are run-scoped: tests that call them directly must carry
 	// the per-run cache the executor installs, or submit fails closed.
 	ctx = mcp.ContextWithNewToolResultCache(ctx)
-	db := testutil.SetupTestDBOrFail(t, ctx, "githubapp_tools")
+	db := testdb.SetupTestDBOrFail(t, ctx, "githubapp_tools")
 	defer db.Close()
 
 	orgID, projectID, agentID := uuid.New(), uuid.New(), uuid.New()

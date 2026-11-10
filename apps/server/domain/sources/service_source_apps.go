@@ -2,15 +2,36 @@ package sources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
 
+	"github.com/emergent-company/emergent.memory/domain/githubapp"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/pgutils"
 )
+
+// SourceAppProviderGitHub is the only App provider the platform serves today.
+const SourceAppProviderGitHub = "github"
+
+// sourceAppProviders is the single list of App providers registration accepts
+// and bindGitHubAppSource can bind. Both sides consult it so a provider cannot
+// be accepted at registration and then refused at bind time, leaving a row that
+// occupies the unique (org_id, provider, app_id) index forever.
+var sourceAppProviders = map[string]struct{}{
+	SourceAppProviderGitHub: {},
+}
+
+// SourceAppProviderSupported reports whether provider is served. Matching is
+// exact: a typo or a different case is rejected, never folded into a supported
+// provider, because the stored value is what a later bind must match.
+func SourceAppProviderSupported(provider string) bool {
+	_, ok := sourceAppProviders[provider]
+	return ok
+}
 
 // RegisterSourceAppRequest is the org-admin source App registration payload.
 type RegisterSourceAppRequest struct {
@@ -41,7 +62,11 @@ func (s *Service) bindGitHubAppSource(ctx context.Context, projectID uuid.UUID, 
 	if err != nil {
 		return apperror.NewValidation("github_app: register the App under Organization → Apps first")
 	}
-	if app.Provider != "github" {
+	// Membership in the shared set, not a literal: registration accepts exactly
+	// what this binder accepts, so a provider cannot create a row that is
+	// un-bindable forever. Today that is only SourceAppProviderGitHub; a provider
+	// added to the set must be reviewed here too.
+	if !SourceAppProviderSupported(app.Provider) {
 		return apperror.NewValidation("github_app: selected App is not a GitHub App")
 	}
 	projectOrg, err := s.repo.ProjectOrgID(ctx, projectID)
@@ -68,10 +93,23 @@ func (s *Service) RegisterSourceApp(ctx context.Context, orgID uuid.UUID, userID
 	}
 	provider := strings.TrimSpace(req.Provider)
 	if provider == "" {
-		provider = "github"
+		provider = SourceAppProviderGitHub
 	}
+	// Caller-input checks return 400 (the status this route documents), not the
+	// 422 of apperror.NewValidation.
 	if req.AppID <= 0 || strings.TrimSpace(req.PrivateKey) == "" || strings.TrimSpace(req.WebhookSecret) == "" {
-		return nil, apperror.NewValidation("appId, privateKey, and webhookSecret are required")
+		return nil, apperror.NewBadRequest("appId, privateKey, and webhookSecret are required")
+	}
+	if !SourceAppProviderSupported(provider) {
+		return nil, apperror.NewBadRequest(fmt.Sprintf(
+			"provider %q is not supported; the only App provider served is %q", provider, SourceAppProviderGitHub))
+	}
+	// Validate the key while it is still readable and before anything is sealed
+	// or written. The sealed columns are write-only, so a bad key is invisible
+	// after registration; and a rejected registration must leave no row and no
+	// ciphertext behind. Hence this ordering is deliberate: validate first.
+	if err := validateSourceAppPrivateKey(req.PrivateKey); err != nil {
+		return nil, err
 	}
 	if len(s.key) == 0 {
 		return nil, apperror.NewValidation("LLM_ENCRYPTION_KEY is not configured")
@@ -96,6 +134,36 @@ func (s *Service) RegisterSourceApp(ctx context.Context, orgID uuid.UUID, userID
 		return nil, mapSourceConflict(err, "an App with this id is already registered for the organization")
 	}
 	return app, nil
+}
+
+// validateSourceAppPrivateKey rejects a credential that cannot mint an App JWT,
+// naming the field and the reason. It shares githubapp.ParseRSAPrivateKey with
+// the JWT minter, so registration accepts exactly what the dispatcher can use.
+// No branch echoes key bytes; the parse detail is an x509/asn1 description of
+// the DER structure only.
+func validateSourceAppPrivateKey(raw string) error {
+	_, err := githubapp.ParseRSAPrivateKey([]byte(raw))
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, githubapp.ErrPrivateKeyNotPEM):
+		return apperror.NewBadRequest("privateKey is not PEM encoded; paste the whole PEM file, beginning with -----BEGIN RSA PRIVATE KEY----- or -----BEGIN PRIVATE KEY-----")
+	case errors.Is(err, githubapp.ErrPrivateKeyUnsupportedPEMType):
+		return apperror.NewBadRequest("privateKey has an unsupported PEM block type; only \"RSA PRIVATE KEY\" (PKCS#1) and \"PRIVATE KEY\" (PKCS#8) are accepted")
+	case errors.Is(err, githubapp.ErrPrivateKeyNotRSA):
+		return apperror.NewBadRequest("privateKey is not an RSA key; GitHub App private keys must be RSA")
+	case errors.Is(err, githubapp.ErrPrivateKeyTooWeak):
+		var weak *githubapp.WeakPrivateKeyError
+		if errors.As(err, &weak) {
+			return apperror.NewBadRequest(fmt.Sprintf(
+				"privateKey is too weak; the RSA modulus must be at least %d bits, but this key is %d bits",
+				githubapp.MinRSAPrivateKeyBits, weak.Bits))
+		}
+		return apperror.NewBadRequest(fmt.Sprintf(
+			"privateKey is too weak; the RSA modulus must be at least %d bits", githubapp.MinRSAPrivateKeyBits))
+	default:
+		return apperror.NewBadRequest(fmt.Sprintf("privateKey could not be parsed as a PKCS#1 or PKCS#8 RSA private key: %v", err))
+	}
 }
 
 // ListSourceApps returns the org's Apps without sealed credentials.
