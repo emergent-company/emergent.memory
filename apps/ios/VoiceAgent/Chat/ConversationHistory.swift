@@ -194,6 +194,11 @@ extension JSONValue {
 
 /// Lenient date decoding for record timestamps: RFC 3339 with or without
 /// fractional seconds, then a plain ISO 8601 date.
+///
+/// The record's times come from Go's `time.Time`, which marshals RFC 3339 with a
+/// variable-length fractional part (`.2Z`, `.500000Z`, `.123456789Z`);
+/// `ISO8601DateFormatter` is happiest with milliseconds, so a longer fraction is
+/// truncated before the last attempt.
 enum TimelineDate {
     static func parse(_ text: String?) -> Date? {
         guard let text, !text.isEmpty else { return nil }
@@ -204,6 +209,22 @@ enum TimelineDate {
         }
         let plain = ISO8601DateFormatter()
         plain.formatOptions = [.withInternetDateTime]
-        return plain.date(from: text)
+        if let date = plain.date(from: text) {
+            return date
+        }
+        let normalized = millisecondFraction(of: text)
+        return normalized == text ? nil : fractional.date(from: normalized)
+    }
+
+    /// `2026-01-01T00:00:01.123456789Z` → `2026-01-01T00:00:01.123Z`; the text
+    /// is returned unchanged when it has no fraction or one of at most three
+    /// digits.
+    static func millisecondFraction(of text: String) -> String {
+        guard let dot = text.firstIndex(of: "."),
+              let end = text[dot...].firstIndex(where: { $0 == "Z" || $0 == "+" || $0 == "-" })
+        else { return text }
+        let digits = text[text.index(after: dot) ..< end]
+        guard digits.count > 3 else { return text }
+        return String(text[..<dot]) + "." + String(digits.prefix(3)) + String(text[end...])
     }
 }

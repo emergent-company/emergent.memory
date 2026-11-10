@@ -42,8 +42,55 @@ struct ChatTimelineTests {
         #expect(boundaries.count == 2)
         #expect(boundaries.first?.id == "r1")
         #expect(boundaries.last?.status == "completed")
-        // Measured across the two boundary items.
+        // `run_end.created_at` is the run's start; the length comes from
+        // `completed_at`, which is what the web's runDurationMs reads too.
         #expect(boundaries.last?.duration == 10)
+    }
+
+    /// The reply role is the ADK author, not `"assistant"` (`#1832`): the
+    /// fixture's two replies are authored by `coder` and a Norwegian agent.
+    @Test func anyAuthorOtherThanUserOrToolIsAReply() throws {
+        let items = try Fixture.recorded()
+
+        #expect(Fixture.assistantTexts(items) == ["Let me check…", "Here is the answer."])
+        // `user` stays a user row; nothing is dropped for want of a literal
+        // "assistant" role.
+        #expect(Fixture.labels(items).first == "user")
+    }
+
+    /// Stored rows (the synthesised, run-less transcript) carry no `id`, an
+    /// empty `run_id` and `step_number: 0`; their identities must still be
+    /// distinct or `ForEach` sees duplicates and `historyIDs` collapses.
+    @Test func storedRowsWithoutIDsGetDistinctIdentities() throws {
+        let json = """
+        {"conversation_id": "conv-2", "items": [
+          {"kind": "message", "run_id": "", "step_number": 0,
+           "created_at": "2026-01-01T00:00:00Z", "role": "user", "content": {"text": "hi"}},
+          {"kind": "message", "run_id": "", "step_number": 0,
+           "created_at": "2026-01-01T00:00:01Z", "role": "assistant", "content": {"text": "hello"}},
+          {"kind": "message", "run_id": "", "step_number": 0,
+           "created_at": "2026-01-01T00:00:02Z", "role": "system", "content": {"text": "prompt"}},
+          {"kind": "message", "run_id": "", "step_number": 0,
+           "created_at": "2026-01-01T00:00:03Z", "role": "tool", "content": {"text": "{}"}}
+        ]}
+        """
+        let history = try JSONDecoder().decode(ConversationHistory.self, from: Data(json.utf8))
+        let items = ChatTimelineHistory.items(from: history)
+
+        #expect(Set(items.map(\.id)).count == items.count)
+        // `system`/`tool` rows carry no chat text: they are skipped, the stored
+        // literal `assistant` row is the reply.
+        #expect(Fixture.labels(items) == ["user", "assistant"])
+        #expect(Fixture.assistantTexts(items) == ["hello"])
+    }
+
+    /// Go marshals times as RFC 3339 with a variable-length fraction; the record
+    /// reader has to accept all of them or `created_at`/`completed_at` are nil.
+    @Test func recordTimestampsWithAnyFractionPrecisionParse() {
+        #expect(TimelineDate.parse("2026-01-01T00:00:01.2Z") != nil)
+        #expect(TimelineDate.parse("2026-01-01T00:00:01.500000Z") != nil)
+        #expect(TimelineDate.parse("2026-01-01T00:00:01.123456789Z") != nil)
+        #expect(TimelineDate.parse(nil) == nil)
     }
 
     @Test func answeredAskUserBecomesAQuestionCardWithItsAnswer() throws {
@@ -126,32 +173,49 @@ struct ChatTimelineTests {
 
 /// One recorded turn (think → tool → text → tool → text) and the small readers
 /// each assertion uses. Shared with the live-parity suite.
+///
+/// The payload mirrors what memory's `GET /api/chat/:id/history` actually sends
+/// (`chat.Handler.GetConversationHistory` marshals `ConversationHistoryItem`
+/// directly): `run_id` is always present (empty for a stored row),
+/// `step_number` is always present, agent messages carry the **ADK author**
+/// (`coder`, `Norwegian_Law_Assistant`) rather than `"assistant"`, message rows
+/// carry no `id` (only tool calls do), and `run_end.created_at` is the run's
+/// *start* with the end time in `completed_at`.
 @MainActor
 enum Fixture {
     static let historyJSON = """
     {
       "conversation_id": "conv-1",
+      "session_id": "sess-1",
       "items": [
-        {"kind": "message", "id": "m0", "role": "user", "content": {"text": "hi"}},
-        {"kind": "run_start", "run_id": "r1", "run_status": "running",
-         "run_model": "test-model", "created_at": "2026-01-01T00:00:00Z"},
-        {"kind": "message", "id": "m1", "run_id": "r1", "step_number": 1, "role": "assistant",
-         "content": {"text": "", "reasoning": "thinking one"},
-         "created_at": "2026-01-01T00:00:01Z"},
-        {"kind": "tool_call", "id": "t1", "run_id": "r1", "step_number": 2,
-         "tool_name": "entity_search", "tool_input": {"query": "a"}, "tool_output": {"items": []},
-         "tool_status": "completed", "duration_ms": 1200,
-         "created_at": "2026-01-01T00:00:02Z"},
-        {"kind": "message", "id": "m2", "run_id": "r1", "step_number": 3, "role": "assistant",
-         "content": {"text": "Let me check…"}, "created_at": "2026-01-01T00:00:03Z"},
-        {"kind": "tool_call", "id": "t2", "run_id": "r1", "step_number": 4,
-         "tool_name": "entity_search", "tool_input": {"query": "b"}, "tool_output": {"items": []},
-         "tool_status": "completed", "duration_ms": 800,
-         "created_at": "2026-01-01T00:00:04Z"},
-        {"kind": "message", "id": "m3", "run_id": "r1", "step_number": 5, "role": "assistant",
-         "content": {"text": "Here is the answer."}, "created_at": "2026-01-01T00:00:05Z"},
-        {"kind": "run_end", "run_id": "r1", "run_status": "completed",
-         "created_at": "2026-01-01T00:00:10Z"}
+        {"kind": "message", "run_id": "", "step_number": 0,
+         "created_at": "2025-12-31T23:59:59.500000Z", "role": "user",
+         "content": {"text": "hi"}},
+        {"kind": "run_start", "run_id": "r1", "step_number": 0,
+         "created_at": "2026-01-01T00:00:00Z", "run_status": "completed",
+         "run_model": "test-model"},
+        {"kind": "message", "run_id": "r1", "step_number": 1,
+         "created_at": "2026-01-01T00:00:01.200000Z", "role": "coder",
+         "content": {"reasoning": "thinking one"}},
+        {"kind": "tool_call", "run_id": "r1", "step_number": 2,
+         "created_at": "2026-01-01T00:00:02Z", "id": "t1",
+         "tool_name": "entity_search", "tool_input": {"query": "a"},
+         "tool_output": {"items": []}, "tool_status": "completed",
+         "duration_ms": 1200},
+        {"kind": "message", "run_id": "r1", "step_number": 3,
+         "created_at": "2026-01-01T00:00:03.400000Z", "role": "coder",
+         "content": {"text": "Let me check…"}},
+        {"kind": "tool_call", "run_id": "r1", "step_number": 4,
+         "created_at": "2026-01-01T00:00:04Z", "id": "t2",
+         "tool_name": "entity_search", "tool_input": {"query": "b"},
+         "tool_output": {"items": []}, "tool_status": "completed",
+         "duration_ms": 800},
+        {"kind": "message", "run_id": "r1", "step_number": 5,
+         "created_at": "2026-01-01T00:00:05.900000Z", "role": "Norwegian_Law_Assistant",
+         "content": {"text": "Here is the answer."}},
+        {"kind": "run_end", "run_id": "r1", "step_number": 0,
+         "created_at": "2026-01-01T00:00:00Z", "run_status": "completed",
+         "completed_at": "2026-01-01T00:00:10Z"}
       ],
       "pending_approvals": []
     }

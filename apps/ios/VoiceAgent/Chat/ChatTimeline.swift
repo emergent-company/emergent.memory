@@ -23,9 +23,9 @@ struct RunWindow: Equatable {
 /// One row of the ordered chat timeline: history and the live turn share one
 /// list, in arrival order.
 ///
-/// `id` is the server's identity when there is one (message id, tool call id,
-/// run id), never a position, so a reload replaces items in place instead of
-/// renumbering them.
+/// `id` is the server's identity when it sends one (tool call, run), and a
+/// content-derived identity for messages, which carry none — never a bare
+/// position for recorded rows, so a reload replaces them in place.
 struct TimelineItem: Identifiable, Equatable {
     enum Kind: Equatable {
         case userMessage(text: String)
@@ -40,7 +40,10 @@ struct TimelineItem: Identifiable, Equatable {
         case runBoundary(RunWindow)
     }
 
-    /// Server id when known: message id, tool call id, run id.
+    /// The row's identity: the server id for tool calls and runs, and for
+    /// messages — which the endpoint sends no id for — the created-at stamp
+    /// plus the item's position in the response, so two stored rows cannot
+    /// collide. Never a bare position, so a reload replaces rows in place.
     let id: String
     let runID: String?
     let createdAt: Date?
@@ -143,5 +146,60 @@ final class ChatTimelineStore {
         else { return }
         request.submittedAnswer = answer
         items[index].kind = .question(request)
+    }
+}
+
+// MARK: - Mutation for the history and live mappers
+
+/// The two mappers that feed this store live in their own files
+/// (``ChatTimelineHistory``, ``ChatTimelineLive``) and Swift `private` is
+/// file-scoped for a type member, so the rows are written through these
+/// primitives rather than the storage. Readers still see `items`/`historyIDs`
+/// directly; this file remains the only writer.
+extension ChatTimelineStore {
+    /// The newest row. Only it can still take a streaming delta.
+    var lastItem: TimelineItem? {
+        items.last
+    }
+
+    /// Appends one row in arrival order.
+    func appendRow(_ item: TimelineItem) {
+        items.append(item)
+    }
+
+    /// Replaces the kind of the newest row: a token, a settle, a shimmer stop.
+    func replaceLastKind(_ kind: TimelineItem.Kind) {
+        guard !items.isEmpty else { return }
+        items[items.count - 1].kind = kind
+    }
+
+    /// Replaces the kind of the row at `index`: a card answer, a settle by id.
+    func replaceKind(at index: Int, with kind: TimelineItem.Kind) {
+        guard items.indices.contains(index) else { return }
+        items[index].kind = kind
+    }
+
+    /// Replaces every row in one step and records which ids came from the
+    /// record (a history reload).
+    func replaceRows(_ rows: [TimelineItem], historyIDs recorded: Set<String>) {
+        items = rows
+        historyIDs = recorded
+    }
+
+    /// The run the live turn is streaming into (the last `meta` frame).
+    var liveRun: String? {
+        liveRunID
+    }
+
+    /// Starts a live run; its rows carry this id so a reload can replace them.
+    func beginLiveRun(_ runID: String) {
+        liveRunID = runID
+    }
+
+    /// Reserves a positional id for a new live assistant row. Positional is
+    /// safe here: a reload removes live rows by run id, never by this id.
+    func nextLiveAssistantID() -> String {
+        liveAssistantCounter += 1
+        return "live-assistant-\(liveAssistantCounter)"
     }
 }

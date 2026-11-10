@@ -7,7 +7,7 @@ extension ChatTimelineStore {
     func apply(_ event: ChatStreamEvent) {
         switch event {
         case let .meta(_, runID):
-            liveRunID = runID
+            beginLiveRun(runID)
         case let .text(delta):
             appendToken(delta)
         case let .activity(activity):
@@ -31,15 +31,14 @@ extension ChatTimelineStore {
     /// tools in place instead of piling every token at the end of the turn.
     func appendToken(_ delta: String) {
         guard !delta.isEmpty else { return }
-        if let last = items.last, case let .assistantText(markdown, citations) = last.kind {
-            items[items.count - 1].kind = .assistantText(markdown: markdown + delta, citations: citations)
+        if let last = lastItem, case let .assistantText(markdown, citations) = last.kind {
+            replaceLastKind(.assistantText(markdown: markdown + delta, citations: citations))
             return
         }
         closeReasoning()
-        liveAssistantCounter += 1
-        items.append(TimelineItem(
-            id: "live-assistant-\(liveAssistantCounter)",
-            runID: liveRunID,
+        appendRow(TimelineItem(
+            id: nextLiveAssistantID(),
+            runID: liveRun,
             createdAt: now(),
             kind: .assistantText(markdown: delta, citations: [])
         ))
@@ -54,9 +53,12 @@ extension ChatTimelineStore {
             return false
         }), case let .assistantText(markdown, existing) = items[index].kind
         else { return }
-        items[index].kind = .assistantText(
-            markdown: markdown,
-            citations: ChatCitation.deduplicated(existing + citations)
+        replaceKind(
+            at: index,
+            with: .assistantText(
+                markdown: markdown,
+                citations: ChatCitation.deduplicated(existing + citations)
+            )
         )
     }
 
@@ -67,12 +69,12 @@ extension ChatTimelineStore {
     func appendUserMessage(id: String, text: String) {
         guard !text.isEmpty else { return }
         if let index = items.firstIndex(where: { $0.id == id }) {
-            items[index].kind = .userMessage(text: text)
+            replaceKind(at: index, with: .userMessage(text: text))
             return
         }
-        items.append(TimelineItem(
+        appendRow(TimelineItem(
             id: id,
-            runID: liveRunID,
+            runID: liveRun,
             createdAt: now(),
             kind: .userMessage(text: text)
         ))
@@ -109,13 +111,13 @@ extension ChatTimelineStore {
         guard !delta.isEmpty else { return }
         // A reasoning delta after an answer is a new segment; the answer row
         // stays exactly where it was, which is the whole point of the list.
-        if let last = items.last, case let .reasoning(text, _, isOpen) = last.kind, isOpen {
-            items[items.count - 1].kind = .reasoning(text: text + delta, isLive: true, isOpen: true)
+        if let last = lastItem, case let .reasoning(text, _, isOpen) = last.kind, isOpen {
+            replaceLastKind(.reasoning(text: text + delta, isLive: true, isOpen: true))
             return
         }
-        items.append(TimelineItem(
+        appendRow(TimelineItem(
             id: id.flatMap { $0.isEmpty ? nil : $0 } ?? "live-reasoning-\(UUID().uuidString)",
-            runID: liveRunID,
+            runID: liveRun,
             createdAt: now(),
             kind: .reasoning(text: delta, isLive: true, isOpen: true)
         ))
@@ -124,15 +126,15 @@ extension ChatTimelineStore {
     /// A `done` frame stops the shimmer without ending the segment: the next
     /// delta before an activity boundary joins the same row.
     private func stopReasoningShimmer() {
-        guard let last = items.last, case let .reasoning(text, _, isOpen) = last.kind else { return }
-        items[items.count - 1].kind = .reasoning(text: text, isLive: false, isOpen: isOpen)
+        guard let last = lastItem, case let .reasoning(text, _, isOpen) = last.kind else { return }
+        replaceLastKind(.reasoning(text: text, isLive: false, isOpen: isOpen))
     }
 
     private func appendToolCall(_ call: ChatToolCallEvent) {
         closeReasoning()
-        items.append(TimelineItem(
+        appendRow(TimelineItem(
             id: call.id,
-            runID: liveRunID,
+            runID: liveRun,
             createdAt: now(),
             kind: .tool(ToolCallInfo(
                 id: call.id,
@@ -151,9 +153,9 @@ extension ChatTimelineStore {
 
     private func appendApproval(_ approval: ChatApprovalEvent) {
         closeReasoning()
-        items.append(TimelineItem(
+        appendRow(TimelineItem(
             id: approval.questionId,
-            runID: liveRunID,
+            runID: liveRun,
             createdAt: now(),
             kind: .approval(ApprovalRequest(
                 questionId: approval.questionId,
@@ -165,9 +167,9 @@ extension ChatTimelineStore {
 
     private func appendQuestion(_ question: ChatQuestionEvent) {
         closeReasoning()
-        items.append(TimelineItem(
+        appendRow(TimelineItem(
             id: question.questionId,
-            runID: liveRunID,
+            runID: liveRun,
             createdAt: now(),
             kind: .question(QuestionRequest(
                 questionId: question.questionId,
@@ -190,7 +192,7 @@ extension ChatTimelineStore {
             return false
         }), case let .tool(existing) = items[index].kind
         else { return }
-        items[index].kind = .tool(ToolCallInfo(
+        replaceKind(at: index, with: .tool(ToolCallInfo(
             id: existing.id,
             name: existing.name,
             arguments: existing.arguments,
@@ -204,14 +206,14 @@ extension ChatTimelineStore {
             category: result.category ?? existing.serverCategory,
             subject: existing.serverSubject,
             presentation: result.view?.presentation
-        ))
+        )))
     }
 
     /// Closes the open reasoning row at an activity boundary. A segment that is
     /// not last is untouched: only the newest row can still take deltas.
     private func closeReasoning() {
-        guard let last = items.last, case let .reasoning(text, _, _) = last.kind else { return }
-        items[items.count - 1].kind = .reasoning(text: text, isLive: false, isOpen: false)
+        guard let last = lastItem, case let .reasoning(text, _, _) = last.kind else { return }
+        replaceLastKind(.reasoning(text: text, isLive: false, isOpen: false))
     }
 }
 
@@ -229,11 +231,11 @@ extension ChatTimelineStore {
                 .assistantText(markdown: message.text, citations: message.citations)
             }
             if let index = items.firstIndex(where: { $0.id == message.id }) {
-                items[index].kind = kind
+                replaceKind(at: index, with: kind)
             } else {
-                items.append(TimelineItem(
+                appendRow(TimelineItem(
                     id: message.id,
-                    runID: liveRunID,
+                    runID: liveRun,
                     createdAt: now(),
                     kind: kind
                 ))

@@ -41,8 +41,7 @@ extension ChatTimelineStore {
 
         var merged = history
         markOpenReasoning(merged: &merged)
-        items = merged + kept
-        historyIDs = Set(history.map(\.id))
+        replaceRows(merged + kept, historyIDs: Set(history.map(\.id)))
     }
 
     /// Keeps a reasoning row open when the live copy of the same segment was
@@ -72,7 +71,6 @@ extension ChatTimelineStore {
 enum ChatTimelineHistory {
     static func items(from history: ConversationHistory) -> [TimelineItem] {
         var rows: [TimelineItem] = []
-        var runStarts: [String: Date] = [:]
 
         for (index, item) in history.items.enumerated() {
             let context = Context(item: item, index: index)
@@ -82,9 +80,9 @@ enum ChatTimelineHistory {
             case "tool_call":
                 appendTool(context, to: &rows)
             case "run_start":
-                appendRunStart(context, startedAt: &runStarts, to: &rows)
+                appendRunStart(context, to: &rows)
             case "run_end":
-                appendRunEnd(context, startedAt: runStarts, to: &rows)
+                appendRunEnd(context, to: &rows)
             default:
                 continue
             }
@@ -93,8 +91,14 @@ enum ChatTimelineHistory {
         return rows
     }
 
-    /// One item's resolved identity and timing: the server id when it sends
-    /// one, otherwise run id + step (never just a position).
+    /// One item's resolved identity and timing: the server id when it sends one
+    /// (tool calls and runs only), otherwise the created-at stamp plus the
+    /// item's position in the response.
+    ///
+    /// Message rows carry **no** id (`id` is populated for tool calls only) and
+    /// `step_number` is always present (`0` for the stored, run-less rows), so a
+    /// step-based fallback would give every message the same id — a duplicate
+    /// `Identifiable` in `ForEach`, and one collapsed `historyIDs` entry.
     private struct Context {
         let item: HistoryItem
         let id: String
@@ -106,7 +110,8 @@ enum ChatTimelineHistory {
             let runID = item.runID?.isEmpty == false ? item.runID : nil
             self.runID = runID
             createdAt = TimelineDate.parse(item.createdAt)
-            let fallback = "\(runID ?? "conversation"):\(item.stepNumber ?? index):\(item.kind)"
+            let stamp = item.createdAt ?? "row-\(index)"
+            let fallback = "\(runID ?? "conversation"):\(stamp):\(index):\(item.kind)"
             id = item.id.flatMap { $0.isEmpty ? nil : $0 } ?? fallback
         }
     }
@@ -124,15 +129,15 @@ enum ChatTimelineHistory {
         }
         let text = content.text ?? ""
         guard !text.isEmpty else { return }
-        switch context.item.role {
-        case "user":
+        switch roleKind(context.item.role) {
+        case .user:
             rows.append(TimelineItem(
                 id: context.id,
                 runID: context.runID,
                 createdAt: context.createdAt,
                 kind: .userMessage(text: text)
             ))
-        case "assistant":
+        case .reply:
             rows.append(TimelineItem(
                 id: context.id,
                 runID: context.runID,
@@ -142,9 +147,36 @@ enum ChatTimelineHistory {
                     citations: ChatCitation.deduplicated(context.item.citations ?? [])
                 )
             ))
-        default:
+        case .ignored:
             // Tool/system rows carry no chat text of their own.
             return
+        }
+    }
+
+    /// How a recorded `role` classifies, ported from the server's
+    /// `IsAgentReplyRole` (`apps/server/domain/agents/agent_run_once.go`).
+    ///
+    /// An agent turn's role is the **ADK author** — the sanitised agent name
+    /// (`coder`, `Norwegian_Law_Assistant`) — not the literal `assistant`, which
+    /// only the `kb.chat_messages` rows use. Only the empty role, `user`, `tool`,
+    /// `tool_result` and `system` are not a reply; every other author is one.
+    /// Do not "tidy" this into `role == "assistant"`: that drops every real
+    /// agent reply, which is why the server has a runrole-guard gate for it
+    /// (`emergent.memory#1832`).
+    private enum RoleKind {
+        case user
+        case reply
+        case ignored
+    }
+
+    private static func roleKind(_ role: String?) -> RoleKind {
+        switch role ?? "" {
+        case "user":
+            .user
+        case "", "tool", "tool_result", "system":
+            .ignored
+        default:
+            .reply
         }
     }
 
@@ -184,14 +216,7 @@ enum ChatTimelineHistory {
         ))
     }
 
-    private static func appendRunStart(
-        _ context: Context,
-        startedAt runStarts: inout [String: Date],
-        to rows: inout [TimelineItem]
-    ) {
-        if let runID = context.runID {
-            runStarts[runID] = context.createdAt
-        }
+    private static func appendRunStart(_ context: Context, to rows: inout [TimelineItem]) {
         rows.append(TimelineItem(
             id: "run-start-\(context.runID ?? context.id)",
             runID: context.runID,
@@ -205,12 +230,7 @@ enum ChatTimelineHistory {
         ))
     }
 
-    private static func appendRunEnd(
-        _ context: Context,
-        startedAt runStarts: [String: Date],
-        to rows: inout [TimelineItem]
-    ) {
-        let started = context.runID.flatMap { runStarts[$0] }
+    private static func appendRunEnd(_ context: Context, to rows: inout [TimelineItem]) {
         rows.append(TimelineItem(
             id: "run-end-\(context.runID ?? context.id)",
             runID: context.runID,
@@ -219,13 +239,25 @@ enum ChatTimelineHistory {
                 id: context.runID ?? context.id,
                 model: context.item.runModel,
                 status: context.item.runStatus,
-                startedAt: started,
-                duration: started.flatMap { start in
-                    context.createdAt.map { max(0, $0.timeIntervalSince(start)) }
-                },
+                startedAt: context.createdAt,
+                duration: runDuration(context),
                 error: context.item.errorMessage
             ))
         ))
+    }
+
+    /// A run's wall-clock length.
+    ///
+    /// The record sets `created_at` on the `run_end` item to the run's **start**
+    /// (`GetConversationFullHistory`), so the end time is `completed_at`;
+    /// measuring the boundary item against itself would always be 0 (the web's
+    /// `runDurationMs` uses `completed_at` too).
+    private static func runDuration(_ context: Context) -> TimeInterval? {
+        guard
+            let start = context.createdAt,
+            let completed = TimelineDate.parse(context.item.completedAt)
+        else { return nil }
+        return max(0, completed.timeIntervalSince(start))
     }
 
     private static func appendApprovals(
@@ -248,6 +280,8 @@ enum ChatTimelineHistory {
 
     /// Appends a reasoning segment, merging into the previous one of the same
     /// run; a tool call (or any other row) between them starts a new segment.
+    /// A recorded item with no run id joins whatever came before it, which is
+    /// the web's rule (`sameRun = !item.run_id || …`) for stored rows.
     private static func appendReasoning(
         _ text: String,
         runID: String?,
@@ -255,7 +289,7 @@ enum ChatTimelineHistory {
         id: String,
         to rows: inout [TimelineItem]
     ) {
-        if let last = rows.last, last.runID == runID,
+        if let last = rows.last, runID == nil || last.runID == runID,
            case let .reasoning(existing, live, open) = last.kind
         {
             rows[rows.count - 1].kind = .reasoning(
