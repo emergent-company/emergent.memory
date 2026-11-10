@@ -91,6 +91,15 @@ const (
 	// provider (and future meeting-intelligence providers).
 	SourceTypeMeeting = "meeting"
 
+	// ProviderTypeGitHubApp is the GitHub App bot: an installation-bound source
+	// that receives webhooks and triggers agent runs. It is distinct from the
+	// docs-sync ProviderTypeGitHub (OAuth/PAT, poll).
+	ProviderTypeGitHubApp = "github_app"
+
+	// SourceTypeApp is the source-type category advertised for the GitHub App bot
+	// and future webhook-backed providers.
+	SourceTypeApp = "app"
+
 	// ProviderTypeWeb crawls a website and syncs its pages into the knowledge
 	// base. It is config-only: no credentials are collected or stored, and every
 	// fetch runs through the deployment's SSRF guard.
@@ -116,6 +125,12 @@ type Source struct {
 	// CredentialID references a project-scoped saved credential. When set, the
 	// source uses that credential instead of its legacy inline blob.
 	CredentialID *uuid.UUID `bun:"credential_id,type:uuid" json:"credentialId,omitempty"`
+	// AppID references the org-level source App credential for a trigger-backed
+	// source (github_app).
+	AppID *uuid.UUID `bun:"app_id,type:uuid" json:"appId,omitempty"`
+	// ExternalAccountID is the provider's installation/account id (GitHub
+	// installation id) for a trigger-backed source.
+	ExternalAccountID *string `bun:"external_account_id" json:"externalAccountId,omitempty"`
 	// McpSlug is the immutable MCP server/tool-name segment for this source.
 	// Null for providers that do not expose source-backed MCP tools.
 	McpSlug *string `bun:"mcp_slug" json:"mcpSlug,omitempty"`

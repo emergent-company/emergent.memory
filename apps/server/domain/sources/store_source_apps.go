@@ -316,3 +316,180 @@ func (r *Repository) FindSourceEventClaimByRunID(ctx context.Context, runID uuid
 	}
 	return claim, nil
 }
+
+// --- Trigger-backed source lookups ---
+
+func (r *Repository) FindSourceByID(ctx context.Context, id uuid.UUID) (*Source, error) {
+	src := new(Source)
+	if err := r.db.NewSelect().Model(src).Where("s.id = ?", id).Scan(ctx); err != nil {
+		return nil, err
+	}
+	return src, nil
+}
+
+// FindSourceByAppAndInstallation resolves the enabled github_app source for an
+// App installation (the webhook routing row).
+func (r *Repository) FindSourceByAppAndInstallation(ctx context.Context, appID uuid.UUID, installationID string) (*Source, error) {
+	src := new(Source)
+	if err := r.db.NewSelect().Model(src).
+		Where("s.app_id = ?", appID).
+		Where("s.external_account_id = ?", installationID).
+		Where("s.provider = ?", ProviderTypeGitHubApp).
+		Where("s.status <> ?", SourceStatusDisabled).
+		Order("s.created_at ASC").
+		Limit(1).
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+	return src, nil
+}
+
+// UpdateSourceRepos rewrites the github_app repo allowlist in the source config.
+func (r *Repository) UpdateSourceRepos(ctx context.Context, sourceID uuid.UUID, repos []string) error {
+	src, err := r.FindSourceByID(ctx, sourceID)
+	if err != nil {
+		return err
+	}
+	if src.Config == nil {
+		src.Config = map[string]any{}
+	}
+	src.Config["repos"] = repos
+	if _, err := r.db.NewUpdate().Model(src).
+		Column("config").
+		Set("updated_at = now()").
+		Where("id = ?", sourceID).
+		Exec(ctx); err != nil {
+		return apperror.NewDatabase("failed to update source repos", err)
+	}
+	return nil
+}
+
+// DisableSourcesByInstallation disables every source bound to a GitHub
+// installation (the installation.deleted webhook path).
+func (r *Repository) DisableSourcesByInstallation(ctx context.Context, appID uuid.UUID, installationID string) error {
+	if _, err := r.db.NewUpdate().
+		Table("kb.sources").
+		Set("status = ?", SourceStatusDisabled).
+		Set("updated_at = now()").
+		Where("app_id = ?", appID).
+		Where("external_account_id = ?", installationID).
+		Exec(ctx); err != nil {
+		return apperror.NewDatabase("failed to disable sources for installation", err)
+	}
+	return nil
+}
+
+// SetSourceEventState records the dispatch outcome on a delivery row.
+func (r *Repository) SetSourceEventState(ctx context.Context, id uuid.UUID, state string, runID *uuid.UUID, errMsg *string) error {
+	if _, err := r.db.NewUpdate().
+		Table("kb.source_events").
+		Set("state = ?", state).
+		Set("run_id = ?", runID).
+		Set("error = ?", errMsg).
+		Set("updated_at = now()").
+		Where("id = ?", id).
+		Exec(ctx); err != nil {
+		return apperror.NewDatabase("failed to update source event", err)
+	}
+	return nil
+}
+
+func (r *Repository) FindSourceEventByDelivery(ctx context.Context, sourceID uuid.UUID, deliveryID string) (*SourceEvent, error) {
+	ev := new(SourceEvent)
+	if err := r.db.NewSelect().Model(ev).
+		Where("se.source_id = ?", sourceID).
+		Where("se.delivery_id = ?", deliveryID).
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+	return ev, nil
+}
+
+func (r *Repository) FindSourceEventClaim(ctx context.Context, sourceID uuid.UUID, subjectRef, headSHA string) (*SourceEventClaim, error) {
+	claim := new(SourceEventClaim)
+	if err := r.db.NewSelect().Model(claim).
+		Where("sc.source_id = ?", sourceID).
+		Where("sc.subject_ref = ?", subjectRef).
+		Where("sc.head_sha = ?", headSHA).
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+	return claim, nil
+}
+
+// ListSourcesByAppAndInstallation returns every enabled github_app source for
+// an installation (one installation may serve several projects/repos).
+func (r *Repository) ListSourcesByAppAndInstallation(ctx context.Context, appID uuid.UUID, installationID string) ([]*Source, error) {
+	var sources []*Source
+	if err := r.db.NewSelect().Model(&sources).
+		Where("s.app_id = ?", appID).
+		Where("s.external_account_id = ?", installationID).
+		Where("s.provider = ?", ProviderTypeGitHubApp).
+		Where("s.status <> ?", SourceStatusDisabled).
+		Order("s.created_at ASC").
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+	return sources, nil
+}
+
+// DeleteSourceEvent removes a delivery row after a processing failure so the
+// provider's retry can re-attempt it.
+func (r *Repository) DeleteSourceEvent(ctx context.Context, id uuid.UUID) error {
+	if _, err := r.db.NewDelete().Table("kb.source_events").Where("id = ?", id).Exec(ctx); err != nil {
+		return apperror.NewDatabase("failed to delete source event", err)
+	}
+	return nil
+}
+
+// CancelAllSourceClaims cancels every active claim for a source (uninstall).
+func (r *Repository) CancelAllSourceClaims(ctx context.Context, sourceID uuid.UUID) ([]uuid.UUID, error) {
+	return r.cancelClaims(ctx, sourceID, "", "")
+}
+
+// CancelSourceClaimsForRepo cancels active claims whose subject is in a repo
+// (repository removed from the installation).
+func (r *Repository) CancelSourceClaimsForRepo(ctx context.Context, sourceID uuid.UUID, repo string) ([]uuid.UUID, error) {
+	return r.cancelClaims(ctx, sourceID, "prefix", repo+"#")
+}
+
+func (r *Repository) cancelClaims(ctx context.Context, sourceID uuid.UUID, mode, value string) ([]uuid.UUID, error) {
+	var cancelled []uuid.UUID
+	lockKey := fmt.Sprintf("source-claim-all:%s:%s:%s", sourceID, mode, value)
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", lockKey).Exec(ctx); err != nil {
+			return err
+		}
+		q := tx.NewSelect().Model((*SourceEventClaim)(nil)).
+			Where("source_id = ?", sourceID).
+			Where("state IN (?)", bun.In([]string{SourceClaimPending, SourceClaimRunning}))
+		if mode == "prefix" {
+			q = q.Where("subject_ref LIKE ?", value+"%")
+		}
+		var active []SourceEventClaim
+		if err := q.For("UPDATE").Scan(ctx, &active); err != nil {
+			return err
+		}
+		if len(active) == 0 {
+			return nil
+		}
+		ids := make([]uuid.UUID, 0, len(active))
+		for _, c := range active {
+			ids = append(ids, c.ID)
+			if c.RunID != nil {
+				cancelled = append(cancelled, *c.RunID)
+			}
+		}
+		_, err := tx.NewUpdate().
+			Table("kb.source_event_claims").
+			Set("state = ?", SourceClaimCancelled).
+			Set("updated_at = now()").
+			Where("id IN (?)", bun.In(ids)).
+			Exec(ctx)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cancelled, nil
+}
