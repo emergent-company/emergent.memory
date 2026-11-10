@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
@@ -63,6 +64,7 @@ type OAuthClientConfig struct {
 // store only implements the old interface.
 type OrgOAuthAppStore interface {
 	GetOAuthClientConfigByID(ctx context.Context, orgID, id uuid.UUID) (*OAuthClientConfig, error)
+	ListOAuthClientConfigs(ctx context.Context, orgID uuid.UUID) ([]*OAuthClientConfig, error)
 	ListOAuthClientConfigsByVendor(ctx context.Context, orgID uuid.UUID, vendor string) ([]*OAuthClientConfig, error)
 	CreateOAuthClientConfig(ctx context.Context, cfg *OAuthClientConfig) (*OAuthClientConfig, error)
 	UpdateOAuthClientConfig(ctx context.Context, cfg *OAuthClientConfig) (*OAuthClientConfig, error)
@@ -73,10 +75,14 @@ type OrgOAuthAppStore interface {
 // ProjectOAuthAppStore is the project-scoped mirror of OrgOAuthAppStore.
 type ProjectOAuthAppStore interface {
 	GetProjectOAuthClientConfigByID(ctx context.Context, projectID, id uuid.UUID) (*OAuthClientConfig, error)
+	ListProjectOAuthClientConfigs(ctx context.Context, projectID uuid.UUID) ([]*OAuthClientConfig, error)
 	ListProjectOAuthClientConfigsByVendor(ctx context.Context, projectID uuid.UUID, vendor string) ([]*OAuthClientConfig, error)
 	CreateProjectOAuthClientConfig(ctx context.Context, cfg *OAuthClientConfig) (*OAuthClientConfig, error)
 	UpdateProjectOAuthClientConfig(ctx context.Context, cfg *OAuthClientConfig) (*OAuthClientConfig, error)
 	DeleteProjectOAuthClientConfigByID(ctx context.Context, projectID, id uuid.UUID) error
+	// CountProjectSourcesUsingOAuthConfig reports how many sources of projectID
+	// reference the app, so a project delete can refuse while it is in use.
+	CountProjectSourcesUsingOAuthConfig(ctx context.Context, projectID, id uuid.UUID) (int, error)
 }
 
 // OrgOAuthClientStore is the persistence + authorization surface the Service
@@ -220,6 +226,156 @@ func (r *Repository) ListOAuthClientConfigs(ctx context.Context, orgID uuid.UUID
 	return cfgs, nil
 }
 
+// orgAppColumns fills the defaults a new named-app row must not leave NULL.
+func orgAppColumns(cfg *OAuthClientConfig) {
+	if cfg.ID == uuid.Nil {
+		cfg.ID = uuid.New()
+	}
+	if cfg.Provider == "" {
+		cfg.Provider = cfg.Vendor
+	}
+	if cfg.ProviderConfigs == nil {
+		cfg.ProviderConfigs = map[string]OAuthProviderConfig{}
+	}
+	if cfg.Config == nil {
+		cfg.Config = map[string]any{}
+	}
+	if cfg.Scopes == nil {
+		cfg.Scopes = []string{}
+	}
+}
+
+// insertOrgApp writes one org-wide app on db (a pool or a transaction).
+func (r *Repository) insertOrgApp(ctx context.Context, db bun.IDB, cfg *OAuthClientConfig) error {
+	orgAppColumns(cfg)
+	if _, err := db.NewInsert().Model(cfg).Exec(ctx); err != nil {
+		r.log.Error("failed to create oauth app", logger.Error(err))
+		return apperror.NewDatabase("failed to create oauth app", err)
+	}
+	return nil
+}
+
+// updateOrgApp updates one org-wide app by id on db.
+func (r *Repository) updateOrgApp(ctx context.Context, db bun.IDB, cfg *OAuthClientConfig) error {
+	res, err := db.NewUpdate().
+		Model((*OAuthClientConfig)(nil)).
+		Set("name = ?", cfg.Name).
+		Set("encrypted_client = ?", cfg.EncryptedClient).
+		Set("scopes = ?", cfg.Scopes).
+		Set("strategy = ?", cfg.Strategy).
+		Set("provider_configs = ?", cfg.ProviderConfigs).
+		Set("config = ?", cfg.Config).
+		Set("updated_at = now()").
+		Where("organization_id = ?", cfg.OrganizationID).
+		Where("project_id IS NULL").
+		Where("id = ?", cfg.ID).
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to update oauth app", logger.Error(err))
+		return apperror.NewDatabase("failed to update oauth app", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return apperror.ErrNotFound
+	}
+	return nil
+}
+
+// getOrgApp reads one org-wide app by id on db.
+func (r *Repository) getOrgApp(ctx context.Context, db bun.IDB, orgID, id uuid.UUID) (*OAuthClientConfig, error) {
+	cfg := &OAuthClientConfig{}
+	err := db.NewSelect().
+		Model(cfg).
+		Where("organization_id = ?", orgID).
+		Where("project_id IS NULL").
+		Where("id = ?", id).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, apperror.ErrNotFound
+		}
+		r.log.Error("failed to get oauth app by id", logger.Error(err))
+		return nil, apperror.NewDatabase("failed to get oauth app by id", err)
+	}
+	return cfg, nil
+}
+
+// projectAppColumns fills the defaults a new project-app row must not leave NULL.
+func projectAppColumns(cfg *OAuthClientConfig) {
+	if cfg.ProjectID == nil {
+		return // the caller reports the missing project_id
+	}
+	orgAppColumns(cfg)
+}
+
+// insertProjectApp writes one project app on db (a pool or a transaction).
+func (r *Repository) insertProjectApp(ctx context.Context, db bun.IDB, cfg *OAuthClientConfig) error {
+	if cfg.ProjectID == nil {
+		return apperror.NewInternal("project oauth app is missing project_id", nil)
+	}
+	projectAppColumns(cfg)
+	if _, err := db.NewInsert().Model(cfg).Exec(ctx); err != nil {
+		r.log.Error("failed to create project oauth app", logger.Error(err))
+		return apperror.NewDatabase("failed to create project oauth app", err)
+	}
+	return nil
+}
+
+// updateProjectApp updates one project app by id on db.
+func (r *Repository) updateProjectApp(ctx context.Context, db bun.IDB, cfg *OAuthClientConfig) error {
+	if cfg.ProjectID == nil {
+		return apperror.NewInternal("project oauth app is missing project_id", nil)
+	}
+	res, err := db.NewUpdate().
+		Model((*OAuthClientConfig)(nil)).
+		Set("name = ?", cfg.Name).
+		Set("encrypted_client = ?", cfg.EncryptedClient).
+		Set("scopes = ?", cfg.Scopes).
+		Set("strategy = ?", cfg.Strategy).
+		Set("provider_configs = ?", cfg.ProviderConfigs).
+		Set("config = ?", cfg.Config).
+		Set("updated_at = now()").
+		Where("project_id = ?", *cfg.ProjectID).
+		Where("id = ?", cfg.ID).
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to update project oauth app", logger.Error(err))
+		return apperror.NewDatabase("failed to update project oauth app", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return apperror.ErrNotFound
+	}
+	return nil
+}
+
+// getProjectApp reads one project app by id on db.
+func (r *Repository) getProjectApp(ctx context.Context, db bun.IDB, projectID, id uuid.UUID) (*OAuthClientConfig, error) {
+	cfg := &OAuthClientConfig{}
+	err := db.NewSelect().
+		Model(cfg).
+		Where("project_id = ?", projectID).
+		Where("id = ?", id).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, apperror.ErrNotFound
+		}
+		r.log.Error("failed to get project oauth app by id", logger.Error(err))
+		return nil, apperror.NewDatabase("failed to get project oauth app by id", err)
+	}
+	return cfg, nil
+}
+
+// upsertLock takes a transaction-scoped advisory lock on the logical
+// (scope, owner, provider) key. The legacy per-provider upsert no longer has a
+// matching unique index after 00284 (a vendor may hold several named apps), so
+// this serializes concurrent upserts instead of racing select-then-insert.
+func upsertLock(ctx context.Context, db bun.IDB, key string) error {
+	if _, err := db.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", key); err != nil {
+		return apperror.NewDatabase("failed to lock oauth client upsert", err)
+	}
+	return nil
+}
+
 // UpsertOAuthClientConfig creates or replaces the (org, provider) client. It is
 // the legacy per-provider path; the new app surface uses Create/Update by id.
 func (r *Repository) UpsertOAuthClientConfig(ctx context.Context, cfg *OAuthClientConfig) (*OAuthClientConfig, error) {
@@ -232,23 +388,40 @@ func (r *Repository) UpsertOAuthClientConfig(ctx context.Context, cfg *OAuthClie
 	if cfg.Name == "" {
 		cfg.Name = cfg.Vendor
 	}
-	var existing OAuthClientConfig
-	err := r.db.NewSelect().
-		Model(&existing).
-		Where("organization_id = ?", cfg.OrganizationID).
-		Where("project_id IS NULL").
-		Where("provider = ?", cfg.Provider).
-		Limit(1).
-		Scan(ctx)
-	switch {
-	case err == nil:
-		cfg.ID = existing.ID
-		return r.UpdateOAuthClientConfig(ctx, cfg)
-	case !errors.Is(err, sql.ErrNoRows):
-		r.log.Error("failed to look up oauth client config", logger.Error(err))
-		return nil, apperror.NewDatabase("failed to look up oauth client config", err)
+	var out *OAuthClientConfig
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := upsertLock(ctx, tx, "oauth_client_config:org:"+cfg.OrganizationID.String()+":"+cfg.Provider); err != nil {
+			return err
+		}
+		var existing OAuthClientConfig
+		err := tx.NewSelect().
+			Model(&existing).
+			Where("organization_id = ?", cfg.OrganizationID).
+			Where("project_id IS NULL").
+			Where("provider = ?", cfg.Provider).
+			Limit(1).
+			Scan(ctx)
+		switch {
+		case err == nil:
+			cfg.ID = existing.ID
+			if err := r.updateOrgApp(ctx, tx, cfg); err != nil {
+				return err
+			}
+		case errors.Is(err, sql.ErrNoRows):
+			if err := r.insertOrgApp(ctx, tx, cfg); err != nil {
+				return err
+			}
+		default:
+			r.log.Error("failed to look up oauth client config", logger.Error(err))
+			return apperror.NewDatabase("failed to look up oauth client config", err)
+		}
+		out, err = r.getOrgApp(ctx, tx, cfg.OrganizationID, cfg.ID)
+		return err
+	})
+	if err != nil {
+		return nil, err
 	}
-	return r.CreateOAuthClientConfig(ctx, cfg)
+	return out, nil
 }
 
 // DeleteOAuthClientConfig removes the (org, provider) client. A missing row
@@ -324,22 +497,39 @@ func (r *Repository) UpsertProjectOAuthClientConfig(ctx context.Context, cfg *OA
 	if cfg.Name == "" {
 		cfg.Name = cfg.Vendor
 	}
-	var existing OAuthClientConfig
-	err := r.db.NewSelect().
-		Model(&existing).
-		Where("project_id = ?", *cfg.ProjectID).
-		Where("provider = ?", cfg.Provider).
-		Limit(1).
-		Scan(ctx)
-	switch {
-	case err == nil:
-		cfg.ID = existing.ID
-		return r.UpdateProjectOAuthClientConfig(ctx, cfg)
-	case !errors.Is(err, sql.ErrNoRows):
-		r.log.Error("failed to look up project oauth client config", logger.Error(err))
-		return nil, apperror.NewDatabase("failed to look up project oauth client config", err)
+	var out *OAuthClientConfig
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := upsertLock(ctx, tx, "oauth_client_config:project:"+cfg.ProjectID.String()+":"+cfg.Provider); err != nil {
+			return err
+		}
+		var existing OAuthClientConfig
+		err := tx.NewSelect().
+			Model(&existing).
+			Where("project_id = ?", *cfg.ProjectID).
+			Where("provider = ?", cfg.Provider).
+			Limit(1).
+			Scan(ctx)
+		switch {
+		case err == nil:
+			cfg.ID = existing.ID
+			if err := r.updateProjectApp(ctx, tx, cfg); err != nil {
+				return err
+			}
+		case errors.Is(err, sql.ErrNoRows):
+			if err := r.insertProjectApp(ctx, tx, cfg); err != nil {
+				return err
+			}
+		default:
+			r.log.Error("failed to look up project oauth client config", logger.Error(err))
+			return apperror.NewDatabase("failed to look up project oauth client config", err)
+		}
+		out, err = r.getProjectApp(ctx, tx, *cfg.ProjectID, cfg.ID)
+		return err
+	})
+	if err != nil {
+		return nil, err
 	}
-	return r.CreateProjectOAuthClientConfig(ctx, cfg)
+	return out, nil
 }
 
 // DeleteProjectOAuthClientConfig removes the (project, provider) client. A
@@ -364,21 +554,7 @@ func (r *Repository) DeleteProjectOAuthClientConfig(ctx context.Context, project
 
 // GetOAuthClientConfigByID returns one org-wide app by id.
 func (r *Repository) GetOAuthClientConfigByID(ctx context.Context, orgID, id uuid.UUID) (*OAuthClientConfig, error) {
-	cfg := &OAuthClientConfig{}
-	err := r.db.NewSelect().
-		Model(cfg).
-		Where("organization_id = ?", orgID).
-		Where("project_id IS NULL").
-		Where("id = ?", id).
-		Scan(ctx)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, apperror.ErrNotFound
-		}
-		r.log.Error("failed to get oauth app by id", logger.Error(err))
-		return nil, apperror.NewDatabase("failed to get oauth app by id", err)
-	}
-	return cfg, nil
+	return r.getOrgApp(ctx, r.db, orgID, id)
 }
 
 // ListOAuthClientConfigsByVendor returns the org-wide apps for a vendor.
@@ -403,49 +579,16 @@ func (r *Repository) ListOAuthClientConfigsByVendor(ctx context.Context, orgID u
 
 // CreateOAuthClientConfig inserts one org-wide app.
 func (r *Repository) CreateOAuthClientConfig(ctx context.Context, cfg *OAuthClientConfig) (*OAuthClientConfig, error) {
-	if cfg.ID == uuid.Nil {
-		cfg.ID = uuid.New()
-	}
-	if cfg.Provider == "" {
-		cfg.Provider = cfg.Vendor
-	}
-	if cfg.ProviderConfigs == nil {
-		cfg.ProviderConfigs = map[string]OAuthProviderConfig{}
-	}
-	if cfg.Config == nil {
-		cfg.Config = map[string]any{}
-	}
-	if cfg.Scopes == nil {
-		cfg.Scopes = []string{}
-	}
-	if _, err := r.db.NewInsert().Model(cfg).Exec(ctx); err != nil {
-		r.log.Error("failed to create oauth app", logger.Error(err))
-		return nil, apperror.NewDatabase("failed to create oauth app", err)
+	if err := r.insertOrgApp(ctx, r.db, cfg); err != nil {
+		return nil, err
 	}
 	return r.GetOAuthClientConfigByID(ctx, cfg.OrganizationID, cfg.ID)
 }
 
 // UpdateOAuthClientConfig updates one org-wide app by id.
 func (r *Repository) UpdateOAuthClientConfig(ctx context.Context, cfg *OAuthClientConfig) (*OAuthClientConfig, error) {
-	res, err := r.db.NewUpdate().
-		Model((*OAuthClientConfig)(nil)).
-		Set("name = ?", cfg.Name).
-		Set("encrypted_client = ?", cfg.EncryptedClient).
-		Set("scopes = ?", cfg.Scopes).
-		Set("strategy = ?", cfg.Strategy).
-		Set("provider_configs = ?", cfg.ProviderConfigs).
-		Set("config = ?", cfg.Config).
-		Set("updated_at = now()").
-		Where("organization_id = ?", cfg.OrganizationID).
-		Where("project_id IS NULL").
-		Where("id = ?", cfg.ID).
-		Exec(ctx)
-	if err != nil {
-		r.log.Error("failed to update oauth app", logger.Error(err))
-		return nil, apperror.NewDatabase("failed to update oauth app", err)
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return nil, apperror.ErrNotFound
+	if err := r.updateOrgApp(ctx, r.db, cfg); err != nil {
+		return nil, err
 	}
 	return r.GetOAuthClientConfigByID(ctx, cfg.OrganizationID, cfg.ID)
 }
@@ -481,22 +624,24 @@ func (r *Repository) CountSourcesUsingOAuthConfig(ctx context.Context, id uuid.U
 	return n, nil
 }
 
+// CountProjectSourcesUsingOAuthConfig reports how many of a project's own data
+// sources reference an app.
+func (r *Repository) CountProjectSourcesUsingOAuthConfig(ctx context.Context, projectID, id uuid.UUID) (int, error) {
+	n, err := r.db.NewSelect().
+		TableExpr("kb.sources").
+		Where("project_id = ?", projectID).
+		Where("oauth_app_id = ?", id).
+		Count(ctx)
+	if err != nil {
+		r.log.Error("failed to count project sources using oauth app", logger.Error(err))
+		return 0, apperror.NewDatabase("failed to count project sources using oauth app", err)
+	}
+	return n, nil
+}
+
 // GetProjectOAuthClientConfigByID returns one project app by id.
 func (r *Repository) GetProjectOAuthClientConfigByID(ctx context.Context, projectID, id uuid.UUID) (*OAuthClientConfig, error) {
-	cfg := &OAuthClientConfig{}
-	err := r.db.NewSelect().
-		Model(cfg).
-		Where("project_id = ?", projectID).
-		Where("id = ?", id).
-		Scan(ctx)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, apperror.ErrNotFound
-		}
-		r.log.Error("failed to get project oauth app by id", logger.Error(err))
-		return nil, apperror.NewDatabase("failed to get project oauth app by id", err)
-	}
-	return cfg, nil
+	return r.getProjectApp(ctx, r.db, projectID, id)
 }
 
 // ListProjectOAuthClientConfigsByVendor returns the project's apps for a vendor.
@@ -523,24 +668,8 @@ func (r *Repository) CreateProjectOAuthClientConfig(ctx context.Context, cfg *OA
 	if cfg.ProjectID == nil {
 		return nil, apperror.NewInternal("project oauth app is missing project_id", nil)
 	}
-	if cfg.ID == uuid.Nil {
-		cfg.ID = uuid.New()
-	}
-	if cfg.Provider == "" {
-		cfg.Provider = cfg.Vendor
-	}
-	if cfg.ProviderConfigs == nil {
-		cfg.ProviderConfigs = map[string]OAuthProviderConfig{}
-	}
-	if cfg.Config == nil {
-		cfg.Config = map[string]any{}
-	}
-	if cfg.Scopes == nil {
-		cfg.Scopes = []string{}
-	}
-	if _, err := r.db.NewInsert().Model(cfg).Exec(ctx); err != nil {
-		r.log.Error("failed to create project oauth app", logger.Error(err))
-		return nil, apperror.NewDatabase("failed to create project oauth app", err)
+	if err := r.insertProjectApp(ctx, r.db, cfg); err != nil {
+		return nil, err
 	}
 	return r.GetProjectOAuthClientConfigByID(ctx, *cfg.ProjectID, cfg.ID)
 }
@@ -550,24 +679,8 @@ func (r *Repository) UpdateProjectOAuthClientConfig(ctx context.Context, cfg *OA
 	if cfg.ProjectID == nil {
 		return nil, apperror.NewInternal("project oauth app is missing project_id", nil)
 	}
-	res, err := r.db.NewUpdate().
-		Model((*OAuthClientConfig)(nil)).
-		Set("name = ?", cfg.Name).
-		Set("encrypted_client = ?", cfg.EncryptedClient).
-		Set("scopes = ?", cfg.Scopes).
-		Set("strategy = ?", cfg.Strategy).
-		Set("provider_configs = ?", cfg.ProviderConfigs).
-		Set("config = ?", cfg.Config).
-		Set("updated_at = now()").
-		Where("project_id = ?", *cfg.ProjectID).
-		Where("id = ?", cfg.ID).
-		Exec(ctx)
-	if err != nil {
-		r.log.Error("failed to update project oauth app", logger.Error(err))
-		return nil, apperror.NewDatabase("failed to update project oauth app", err)
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return nil, apperror.ErrNotFound
+	if err := r.updateProjectApp(ctx, r.db, cfg); err != nil {
+		return nil, err
 	}
 	return r.GetProjectOAuthClientConfigByID(ctx, *cfg.ProjectID, cfg.ID)
 }
@@ -589,12 +702,23 @@ func (r *Repository) DeleteProjectOAuthClientConfigByID(ctx context.Context, pro
 	return nil
 }
 
-// duplicateError reports a PostgreSQL unique violation so callers can answer
-// 409 instead of leaking a 500 for a concurrent duplicate app name.
+// duplicateError reports a PostgreSQL unique violation on one of the named-app
+// indexes so callers can answer 409 instead of leaking a 500 for a concurrent
+// duplicate app name. It keys off the SQLSTATE and the index name, not a
+// free-form message match, so an unrelated unique violation (a legacy
+// (scope, provider) row, a race on the sources table) is not turned into a
+// misleading "an OAuth app named X already exists".
 func duplicateError(err error) bool {
 	if err == nil {
 		return false
 	}
+	const namedAppIndexPrefix = "idx_oauth_client_configs_"
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505" && strings.Contains(pgErr.ConstraintName, namedAppIndexPrefix)
+	}
+	// A wrapper that lost the typed error still carries the SQLSTATE and index
+	// name in its text; require both so an unrelated violation stays a 500.
 	msg := err.Error()
-	return strings.Contains(msg, "23505") || strings.Contains(msg, "duplicate key value")
+	return strings.Contains(msg, "23505") && strings.Contains(msg, namedAppIndexPrefix)
 }

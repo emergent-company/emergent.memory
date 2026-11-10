@@ -416,11 +416,48 @@ func (s *Service) List(ctx context.Context, projectID uuid.UUID) ([]*Integration
 		return nil, err
 	}
 	out := make([]*Integration, len(srcs))
+	needsAppNames := false
 	for i, src := range srcs {
 		out[i] = s.toIntegration(src)
-		s.fillOAuthAppName(ctx, projectID, out[i], src.OAuthAppID)
+		if src.OAuthAppID != nil {
+			needsAppNames = true
+		}
+	}
+	if needsAppNames {
+		names := s.oauthAppNames(ctx, projectID)
+		for i, src := range srcs {
+			if src.OAuthAppID != nil {
+				out[i].OAuthAppName = names[*src.OAuthAppID]
+			}
+		}
 	}
 	return out, nil
+}
+
+// oauthAppNames loads the display names of every app a project can see in two
+// queries (its project apps, then its org's apps), so listing N sources costs
+// two lookups instead of up to two per source.
+func (s *Service) oauthAppNames(ctx context.Context, projectID uuid.UUID) map[uuid.UUID]string {
+	names := map[uuid.UUID]string{}
+	if pst, ok := s.projectAppStore(); ok {
+		if rows, err := pst.ListProjectOAuthClientConfigs(ctx, projectID); err == nil {
+			for _, row := range rows {
+				names[row.ID] = row.Name
+			}
+		}
+	}
+	if ost, ok := s.orgAppStore(); ok {
+		if orgID, err := s.orgStore().ResolveOrgID(ctx, projectID); err == nil {
+			if rows, lerr := ost.ListOAuthClientConfigs(ctx, orgID); lerr == nil {
+				for _, row := range rows {
+					if _, seen := names[row.ID]; !seen {
+						names[row.ID] = row.Name
+					}
+				}
+			}
+		}
+	}
+	return names
 }
 
 // Create validates the request, encrypts the supplied credentials, strips the

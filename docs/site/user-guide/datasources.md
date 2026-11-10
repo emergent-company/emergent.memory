@@ -90,8 +90,10 @@ provider — and an **Add OAuth app** action opens the editor.
 
 Adding an app asks for a **vendor**, a **name**, the client id and secret, and — for Google — the
 Drive scope (`drive.readonly` by default, or `drive.file`). The same app then serves Drive and Gmail;
-Gmail always requests its read-only scope. Edit an app to rotate its secret or change its Drive
-scope. Deleting an app is refused while a data source still uses it.
+Gmail always requests its read-only scope. Edit an app to change its name or its Drive scope.
+Replacing the client id or secret does not update data sources already connected through it: each
+source keeps the grant it received at connect time, so reconnect those sources after a rotation.
+Deleting an app is refused while a data source still uses it.
 
 Every project member can view the table. Only a `project_admin` can add or change project apps;
 organization apps are managed by org admins.

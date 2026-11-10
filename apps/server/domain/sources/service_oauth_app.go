@@ -6,11 +6,17 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
+
+// maxOAuthAppNameLength bounds the user-supplied app name before storage and
+// render. It matches the org-name bound (domain/orgs.MaxOrgNameLength) so a name
+// that fits that picker fits an OAuth app too.
+const maxOAuthAppNameLength = 120
 
 // OAuthAppDTO is the redacted API shape of a named, vendor-level OAuth app. The
 // client secret is write-only and never appears here.
@@ -385,14 +391,15 @@ func (s *Service) DeleteProjectOAuthApp(ctx context.Context, projectID uuid.UUID
 	if err != nil {
 		return err
 	}
-	if ost, ok := s.orgAppStore(); ok {
-		if n, cerr := ost.CountSourcesUsingOAuthConfig(ctx, appID); cerr != nil {
-			return cerr
-		} else if n > 0 {
-			return apperror.NewConflict(fmt.Sprintf("OAuth app is used by %d data source(s); detach it first", n))
-		}
+	pst, ok := s.projectAppStore()
+	if !ok {
+		return apperror.NewInternal("OAuth apps are not supported by this store", nil)
 	}
-	pst, _ := s.projectAppStore()
+	if n, cerr := pst.CountProjectSourcesUsingOAuthConfig(ctx, projectID, appID); cerr != nil {
+		return cerr
+	} else if n > 0 {
+		return apperror.NewConflict(fmt.Sprintf("OAuth app is used by %d data source(s); detach it first", n))
+	}
 	return pst.DeleteProjectOAuthClientConfigByID(ctx, projectID, appID)
 }
 
@@ -418,6 +425,9 @@ func (s *Service) validateAppRequest(vendor, name, clientID, secret string, conf
 	}
 	if name == "" {
 		return "", "", "", "", nil, apperror.NewValidation("name is required")
+	}
+	if utf8.RuneCountInString(name) > maxOAuthAppNameLength {
+		return "", "", "", "", nil, apperror.NewValidation(fmt.Sprintf("name must be %d characters or fewer", maxOAuthAppNameLength))
 	}
 	if clientID == "" {
 		return "", "", "", "", nil, apperror.NewValidation("clientId is required")
@@ -458,12 +468,20 @@ func (s *Service) normalizeProviderConfigs(vendor string, configs map[string]OAu
 	return out, nil
 }
 
+// applyAppUpdate merges a partial update into the stored row. Rotating the
+// client id or secret only changes the app: sources keep the encrypted grant
+// they received at connect time (service_oauth.go merge) and keep refreshing
+// with the old client until they are reconnected. Do not claim otherwise in the
+// UI or docs.
 func (s *Service) applyAppUpdate(existing *OAuthClientConfig, req *UpdateOAuthAppRequest) (*OAuthClientConfig, error) {
 	updated := *existing
 	if req.Name != nil {
 		name := strings.TrimSpace(*req.Name)
 		if name == "" {
 			return nil, apperror.NewValidation("name is required")
+		}
+		if utf8.RuneCountInString(name) > maxOAuthAppNameLength {
+			return nil, apperror.NewValidation(fmt.Sprintf("name must be %d characters or fewer", maxOAuthAppNameLength))
 		}
 		updated.Name = name
 	}

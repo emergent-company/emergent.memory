@@ -119,6 +119,9 @@ func (f *namedAppStore) UpdateProjectOAuthClientConfig(_ context.Context, cfg *O
 func (f *namedAppStore) DeleteProjectOAuthClientConfigByID(context.Context, uuid.UUID, uuid.UUID) error {
 	return nil
 }
+func (f *namedAppStore) CountProjectSourcesUsingOAuthConfig(context.Context, uuid.UUID, uuid.UUID) (int, error) {
+	return 0, nil
+}
 
 func newNamedAppService(t *testing.T, store *namedAppStore) *Service {
 	t.Helper()
