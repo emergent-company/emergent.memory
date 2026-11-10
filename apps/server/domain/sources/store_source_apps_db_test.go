@@ -48,7 +48,7 @@ func TestSourceAppsTriggersAndClaims(t *testing.T) {
 	require.NoError(t, repo.CreateSourceTrigger(ctx, trigger))
 	require.Error(t, repo.CreateSourceTrigger(ctx, &SourceTrigger{ProjectID: projectID, SourceID: sourceID, EventType: "pull_request", AgentID: agentID, Queue: "default"}))
 	require.NoError(t, repo.CreateSourceTrigger(ctx, &SourceTrigger{ProjectID: projectID, SourceID: sourceID, EventType: "issue", AgentID: agentID, Queue: "default", Enabled: false}))
-	enabled, err := repo.ListEnabledTriggersForSource(ctx, sourceID)
+	enabled, err := repo.ListEnabledTriggersForSource(ctx, projectID, sourceID)
 	require.NoError(t, err)
 	require.Len(t, enabled, 1)
 
@@ -67,10 +67,10 @@ func TestSourceAppsTriggersAndClaims(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, superseded)
 	runID := uuid.New()
-	ok, err := repo.SetSourceEventClaimRun(ctx, claim1.ID, runID, SourceClaimRunning)
+	ok, err := repo.SetSourceEventClaimRun(ctx, projectID, claim1.ID, runID, SourceClaimRunning)
 	require.NoError(t, err)
 	require.True(t, ok)
-	ok, err = repo.SetSourceEventClaimRun(ctx, claim1.ID, uuid.New(), SourceClaimRunning)
+	ok, err = repo.SetSourceEventClaimRun(ctx, projectID, claim1.ID, uuid.New(), SourceClaimRunning)
 	require.NoError(t, err)
 	require.False(t, ok)
 
@@ -85,7 +85,7 @@ func TestSourceAppsTriggersAndClaims(t *testing.T) {
 	require.NotEqual(t, claim1.ID, claim2.ID)
 	require.Equal(t, SourceClaimSuperseded, sourceClaimState(t, db, claim1.ID))
 	runID2 := uuid.New()
-	ok, err = repo.SetSourceEventClaimRun(ctx, claim2.ID, runID2, SourceClaimRunning)
+	ok, err = repo.SetSourceEventClaimRun(ctx, projectID, claim2.ID, runID2, SourceClaimRunning)
 	require.NoError(t, err)
 	require.True(t, ok)
 
@@ -104,7 +104,7 @@ func TestSourceAppsTriggersAndClaims(t *testing.T) {
 	require.NotEqual(t, claim1.ID, claimOther.ID)
 
 	// Cancelling a subject returns the active run for cancellation.
-	cancelled, err := repo.CancelSourceSubjectClaims(ctx, sourceID, "owner/repo#1")
+	cancelled, err := repo.CancelSourceSubjectClaims(ctx, projectID, sourceID, "owner/repo#1")
 	require.NoError(t, err)
 	require.Contains(t, cancelled, runID2)
 	require.Equal(t, SourceClaimCancelled, sourceClaimState(t, db, claim2.ID))

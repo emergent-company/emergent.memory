@@ -98,10 +98,10 @@ func TestSourceEventDispatcher(t *testing.T) {
 	}
 
 	require.NoError(t, deliver("d1", payload("opened", currentHead)))
-	ev, err := repo.FindSourceEventByDelivery(ctx, sourceID, "d1")
+	ev, err := repo.FindSourceEventByDelivery(ctx, projectID, sourceID, "d1")
 	require.NoError(t, err)
 	require.Equal(t, SourceEventDispatched, ev.State)
-	claim, err := repo.FindSourceEventClaim(ctx, sourceID, "owner/repo#7", currentHead)
+	claim, err := repo.FindSourceEventClaim(ctx, projectID, sourceID, "owner/repo#7", currentHead)
 	require.NoError(t, err)
 	require.Equal(t, SourceClaimRunning, claim.State)
 	require.NotNil(t, claim.RunID)
@@ -116,7 +116,7 @@ func TestSourceEventDispatcher(t *testing.T) {
 
 	// Out-of-order head is skipped and does not disturb the active claim.
 	require.NoError(t, deliver("d2", payload("synchronize", strings.Repeat("b", 40))))
-	ev2, err := repo.FindSourceEventByDelivery(ctx, sourceID, "d2")
+	ev2, err := repo.FindSourceEventByDelivery(ctx, projectID, sourceID, "d2")
 	require.NoError(t, err)
 	require.Equal(t, SourceEventSkipped, ev2.State)
 	require.Equal(t, 1, countSourceRuns(t, db, agentID))
@@ -130,7 +130,7 @@ func TestSourceEventDispatcher(t *testing.T) {
 	require.NoError(t, repo.UpdateSourceTrigger(ctx, trigger))
 	currentHead = strings.Repeat("c", 40)
 	require.NoError(t, deliver("d3", payload("opened", currentHead)))
-	ev3, err := repo.FindSourceEventByDelivery(ctx, sourceID, "d3")
+	ev3, err := repo.FindSourceEventByDelivery(ctx, projectID, sourceID, "d3")
 	require.NoError(t, err)
 	require.Equal(t, SourceEventSkipped, ev3.State)
 	require.Equal(t, 1, countSourceRuns(t, db, agentID))
@@ -141,6 +141,91 @@ func TestSourceEventDispatcher(t *testing.T) {
 		[]byte(`{"action":"deleted","installation":{"id":42}}`)))
 	_, err = repo.FindSourceByAppAndInstallation(ctx, app.ID, "42")
 	require.Error(t, err)
+}
+
+// TestSourceEventDispatcherDedupesUnderFailClosedRLS drives the ingress as a
+// non-superuser, non-BYPASSRLS role so the 00291 policies are actually
+// enforced. Two identical deliveries must still produce exactly one run and
+// one event row: the dedupe INSERT must carry the project GUC or WITH CHECK
+// refuses it (a 500 on every retry), and the claim/trigger reads must carry it
+// or they silently see zero rows.
+func TestSourceEventDispatcherDedupesUnderFailClosedRLS(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	ctx := context.Background()
+	db := testdb.SetupTestDBOrFail(t, ctx, "source_events_rls_dedupe")
+	defer db.Close()
+	setupRepo := NewRepository(db.DB, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	orgID, projectID, agentID, sourceID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	_, err := db.DB.ExecContext(ctx, `INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgID, "rls-dedupe-org")
+	require.NoError(t, err)
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`, projectID, orgID, "rls-dedupe-project")
+	require.NoError(t, err)
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.agents (id, name, strategy_type, cron_schedule, project_id) VALUES (?, ?, 'definition', '', ?)`,
+		agentID, "review-agent", projectID)
+	require.NoError(t, err)
+
+	keyHex, err := cryptoutil.GenerateKey()
+	require.NoError(t, err)
+	keyBytes, _ := hex.DecodeString(keyHex)
+	sealedKey, err := SealSourceBlob(keyBytes, rsaPEM(t))
+	require.NoError(t, err)
+	sealedSecret, err := SealSourceBlob(keyBytes, []byte("whsec"))
+	require.NoError(t, err)
+	app := &SourceApp{OrgID: orgID, Provider: "github", AppID: 88, Slug: "memory-reviewer", PrivateKeyEncrypted: sealedKey, WebhookSecretEncrypted: sealedSecret}
+	require.NoError(t, setupRepo.CreateSourceApp(ctx, app))
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.sources (id, project_id, provider, display_name, app_id, external_account_id, config, status)
+		VALUES (?, ?, 'github_app', 'bot', ?, '42', '{"repos":["owner/repo"]}'::jsonb, 'active')`, sourceID, projectID, app.ID)
+	require.NoError(t, err)
+	require.NoError(t, setupRepo.CreateSourceTrigger(ctx, &SourceTrigger{
+		ProjectID: projectID, SourceID: sourceID, EventType: "pull_request",
+		AgentID: agentID, Queue: "review", EventFilter: map[string]any{}, Enabled: true,
+	}))
+
+	currentHead := strings.Repeat("a", 40)
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app/installations/42/access_tokens":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"token":"ghs_test","expires_at":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `"}`))
+		case "/repos/owner/repo/pulls/7":
+			_, _ = fmt.Fprintf(w, `{"number":7,"title":"fix","state":"open","user":{"login":"mkucharz","type":"User"},"head":{"sha":%q,"ref":"feat/x"},"base":{"ref":"dev"}}`, currentHead)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer fake.Close()
+
+	// The ingress itself runs as a role that RLS applies to.
+	probe := probeBunDB(t, ctx, db, createRLSProbeRole(t, ctx, db.DB, "dispatch"))
+	dispatcher := NewSourceEventDispatcher(
+		NewRepository(probe, slog.New(slog.NewTextHandler(io.Discard, nil))),
+		agents.NewRepository(probe),
+		&config.Config{
+			LLMProvider:  config.LLMProviderConfig{EncryptionKey: keyHex},
+			GitHubSource: config.GitHubSourceConfig{APIBaseURL: fake.URL},
+		},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	dispatcher.minter = githubapp.NewTokenMinter(fake.URL, fake.Client())
+	dispatcher.newClient = func(_, token string) *githubapp.Client {
+		return githubapp.NewClient(fake.URL, token, fake.Client())
+	}
+
+	body := []byte(fmt.Sprintf(`{"action":"opened","installation":{"id":42},"repository":{"full_name":"owner/repo"},"pull_request":{"number":7,"title":"fix","state":"open","draft":false,"user":{"login":"mkucharz","type":"User"},"base":{"ref":"dev","sha":"b0"},"head":{"ref":"feat/x","sha":%q}}}`, currentHead))
+	deliver := func() error {
+		return dispatcher.HandleWebhook(ctx, app.WebhookKey, "pull_request", "d1", signWebhook("whsec", body), body)
+	}
+
+	require.NoError(t, deliver(), "the dedupe INSERT must be allowed with the project GUC")
+	require.NoError(t, deliver(), "the retry must be a dedupe no-op, not a 500")
+	require.Equal(t, 1, countSourceRuns(t, db, agentID), "two identical deliveries must enqueue exactly one run")
+
+	var events int
+	require.NoError(t, db.DB.NewRaw(`SELECT count(*) FROM kb.source_events WHERE source_id = ?`, sourceID).Scan(ctx, &events))
+	require.Equal(t, 1, events, "two identical deliveries must leave exactly one event row")
 }
 
 func testutilDB(t *testing.T, ctx context.Context, suffix string) *testdb.TestDB {
@@ -245,7 +330,7 @@ func TestSourceEventDispatcherFansOutAndLifecycle(t *testing.T) {
 	// Closing cancels both claims.
 	require.NoError(t, deliver("pull_request", "d2", payload("closed", "mkucharz", "owner/repo", currentHead)))
 	for _, sourceID := range []uuid.UUID{source1, source2} {
-		claim, err := repo.FindSourceEventClaim(ctx, sourceID, "owner/repo#7", currentHead)
+		claim, err := repo.FindSourceEventClaim(ctx, projectID, sourceID, "owner/repo#7", currentHead)
 		require.NoError(t, err)
 		require.Equal(t, SourceClaimCancelled, claim.State)
 	}
