@@ -113,6 +113,31 @@ func (fakeAgentHandler) ResolveAgentDefinitionID(context.Context, string, string
 
 var errNotDispatched = errors.New("tool dispatch must not be reached in the parity test")
 
+// fakeGitHubAppHandler is the dynamic-tool counterpart of fakeAgentHandler: it
+// supplies the GitHub App review definitions the static catalog cannot hold, so
+// the parity invariants walk handler-supplied definitions instead of silently
+// covering only the static catalog (the gap that let the review tools ship
+// without an enforceable AgentOnly gate).
+type fakeGitHubAppHandler struct {
+	dispatched bool
+}
+
+func (h *fakeGitHubAppHandler) GetGitHubAppToolDefinitionsForProject(context.Context, string) []mcp.ToolDefinition {
+	return []mcp.ToolDefinition{
+		{Name: "github-pr-diff", AgentOnly: true, InputSchema: mcp.InputSchema{Type: "object"}},
+		{Name: "github-review-submit", AgentOnly: true, InputSchema: mcp.InputSchema{Type: "object"}},
+	}
+}
+
+func (h *fakeGitHubAppHandler) HandlesGitHubAppTool(name string) bool {
+	return name == "github-pr-diff" || name == "github-review-submit"
+}
+
+func (h *fakeGitHubAppHandler) ExecuteGitHubAppTool(context.Context, string, string, map[string]any) (*mcp.ToolResult, error) {
+	h.dispatched = true
+	return nil, errNotDispatched
+}
+
 // #1135 scope hygiene: the registry browse/install tools previously declared no
 // RequiredScope (implicitly open in-process), and seven tools declared the
 // deprecated bare `admin` scope. This table pins the corrected authority so a
@@ -279,8 +304,15 @@ func TestRequiredScopeInProcessParity(t *testing.T) {
 	svc := &mcp.Service{}
 	svc.RegisterAgentToolHandler(fakeAgentHandler{})
 	svc.RegisterMCPRegistryToolHandler(fakeRegistryHandler{})
+	ghHandler := &fakeGitHubAppHandler{}
+	svc.RegisterGitHubAppToolHandler(ghHandler)
 
-	defs := svc.GetToolDefinitions()
+	projectID := "00000000-0000-0000-0000-000000000000"
+
+	// The PROJECT-scoped catalog, not the static GetToolDefinitions: the parity
+	// set must include handler-supplied dynamic tools (GitHub App review tools,
+	// relay tools) or the invariant passes vacuously for them.
+	defs := svc.GetToolDefinitionsForProject(context.Background(), projectID)
 	require.NotEmpty(t, defs, "tool catalog must be non-empty")
 
 	var scoped, agentOnly, superadmin []string
@@ -301,11 +333,13 @@ func TestRequiredScopeInProcessParity(t *testing.T) {
 	// scoped tools, so a missing handler cannot silently shrink the parity set.
 	require.Contains(t, scoped, "agent-write", "agent handler must contribute scoped agent tools")
 	require.Contains(t, agentOnly, "mcp-server-create", "registry handler must contribute agent-only registry tools")
+	require.Contains(t, agentOnly, "github-review-submit", "dynamic GitHub App tools must be in the parity set")
+	require.Contains(t, agentOnly, "github-pr-diff", "dynamic GitHub App tools must be in the parity set")
 	require.Contains(t, scoped, "blueprint-write", "blueprint tools must be in the scoped set")
 	require.Contains(t, scoped, "entity", "core graph tools must be in the scoped set")
 
-	projectID := "00000000-0000-0000-0000-000000000000"
 	untrustedCtx := context.Background()
+	transportCtx := mcp.ContextWithTransportEnforced(context.Background())
 
 	for _, name := range scoped {
 		name, scope := name, scopedByScope[name]
@@ -323,12 +357,24 @@ func TestRequiredScopeInProcessParity(t *testing.T) {
 	}
 
 	for _, name := range agentOnly {
-		t.Run("untrusted refused on agent-only "+name, func(t *testing.T) {
-			_, err := svc.ExecuteTool(untrustedCtx, projectID, name, map[string]any{})
-			require.Error(t, err, "in-process agent-only %s by an untrusted run must be refused", name)
-			require.Contains(t, err.Error(), "agent-only", "%s refusal must name the agent-only boundary", name)
-		})
+		for _, tc := range []struct {
+			label string
+			ctx   context.Context
+		}{
+			{label: "untrusted", ctx: untrustedCtx},
+			// A transport that could not resolve the (dynamic) definition still
+			// sets the transport-enforced marker; AgentOnly must outrank it.
+			{label: "transport-enforced", ctx: transportCtx},
+		} {
+			name, ctx, label := name, tc.ctx, tc.label
+			t.Run(label+" refused on agent-only "+name, func(t *testing.T) {
+				_, err := svc.ExecuteTool(ctx, projectID, name, map[string]any{})
+				require.Error(t, err, "in-process agent-only %s by a %s caller must be refused", name, label)
+				require.Contains(t, err.Error(), "agent-only", "%s refusal must name the agent-only boundary", name)
+			})
+		}
 	}
+	require.False(t, ghHandler.dispatched, "no handler-supplied tool may reach dispatch from an untrusted caller")
 
 	for _, name := range superadmin {
 		t.Run("untrusted refused on superadmin "+name, func(t *testing.T) {
