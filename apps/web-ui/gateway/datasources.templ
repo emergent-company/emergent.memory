@@ -922,8 +922,8 @@ templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields
 			@pageError("Data source unavailable", loadErr)
 		} else {
 			{{ /* A github_app source is trigger-only: it never syncs documents, so
-			      the sync action and history would only produce a job that fails
-			      (or an empty card inviting it). */ }}
+			      the sync action would only produce a job that fails. Sync
+			      history is gated separately, on the provider alone. */ }}
 			{{ canSync := resourcePrompt == nil && src.ProviderType != dsProviderTypeGitHubApp }}
 			@dataSourceDetailHeader(src, providerName, canSync)
 			@flashToasts(flashMsg, flashErr)
@@ -938,7 +938,11 @@ templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields
 			if src.ProviderType == "gmail" {
 				@dsGmailDetailCard(src)
 			}
-			@dsConnectionCard(src)
+			if src.ProviderType == dsProviderTypeGitHubApp {
+				@dsTriggerOnlyConnectionNote()
+			} else {
+				@dsConnectionCard(src)
+			}
 			// A trigger-only source starts agent runs instead of syncing
 			// documents, so its event bindings are part of the source's
 			// configuration and sit above the settings form.
@@ -953,7 +957,11 @@ templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields
 			}
 			@dsEditCard(src, dsSyncOptionsNote(configFields, credentialFields), dsSettingsConfigFields(configFields), credentialFields, picker)
 			<script src={ templ.SafeURL(webui.AssetPath("/js/datasource-config-picker.js")) }></script>
-			if canSync {
+			// A trigger-only source can never have sync jobs, so it shows no
+			// history card. Every syncing provider keeps its history even while
+			// the sync-target prompt is up — that is where a failed sync is
+			// diagnosed.
+			if src.ProviderType != dsProviderTypeGitHubApp {
 				@dsSyncHistory(src.ID, jobs)
 			}
 			if picker.ShowModal {
@@ -1535,6 +1543,24 @@ templ dataSourceDetailHeader(src *DSIntegration, providerName string, canSync bo
 					Delete
 				}
 			</form>
+		</div>
+	}
+}
+
+// dsTriggerOnlyConnectionNote stands in for dsConnectionCard on a trigger-only
+// source: github_app's TestConnection returns errTriggerOnlyTest (the App key
+// lives in the org's source Apps, not the source), so the card's button could
+// only fail and its copy would describe the wrong credentials.
+templ dsTriggerOnlyConnectionNote() {
+	@components.PanelCard("", nil) {
+		<div class="flex items-center gap-3" data-testid="ds-connection-note">
+			@ui.IconTile("lucide--plug-zap", ui.IconTileProps{Tone: "neutral"})
+			<div>
+				<h2 class="text-base font-semibold">Connection</h2>
+				@ui.EmptyNote() {
+					GitHub App credentials are not tested here: the App key and webhook secret live in the organization's source Apps and are exercised on every webhook delivery.
+				}
+			</div>
 		</div>
 	}
 }

@@ -407,17 +407,23 @@ func TestDataSourceDetailRendersTriggersForGitHubApp(t *testing.T) {
 	if strings.Contains(body, `data-testid="ds-trigger-agents-empty"`) {
 		t.Error("agent picker reported an empty project though agents exist")
 	}
-	// A trigger-only source never syncs documents: no sync action, and no
-	// history card inviting the action that can only fail.
+	// A trigger-only source never syncs documents: no sync action, no history
+	// card inviting the action that can only fail, and no connection test (the
+	// App credentials live in the org registry, not this source).
 	for _, dead := range []string{
 		`data-testid="ds-trigger-sync"`,
 		`data-testid="ds-sync-history"`,
 		`data-testid="ds-sync-empty"`,
 		`data-testid="ds-field-sync-mode"`,
+		`data-testid="ds-test-connection"`,
+		`id="ds-test-result"`,
 	} {
 		if strings.Contains(body, dead) {
 			t.Errorf("github_app detail rendered %q", dead)
 		}
+	}
+	if !strings.Contains(body, `data-testid="ds-connection-note"`) {
+		t.Error("github_app detail lost the trigger-only connection explanation")
 	}
 }
 
@@ -468,9 +474,16 @@ func TestDataSourceConnectHidesSyncModeForGitHubApp(t *testing.T) {
 	if !strings.Contains(body, `data-testid="ds-connect-form"`) {
 		t.Fatalf("github_app connect form did not render: %s", body)
 	}
-	// The app_id picker is still the org-App select special case.
+	// The app_id picker is still the org-App select special case, and its help
+	// text points at the registry page instead of the API contract.
 	if !strings.Contains(body, `data-testid="ds-field-app_id-empty"`) {
 		t.Errorf("app_id field did not render its empty registry state: %s", body)
+	}
+	if strings.Contains(body, "/api/orgs/") {
+		t.Errorf("connect form leaked the API contract text: %s", body)
+	}
+	if !strings.Contains(body, "Manage Apps under Settings") {
+		t.Errorf("connect form missing the app_id remediation copy: %s", body)
 	}
 	for _, dead := range []string{`data-testid="ds-field-sync-mode"`, `data-testid="ds-field-sync-interval"`} {
 		if strings.Contains(body, dead) {
@@ -512,15 +525,20 @@ func TestDataSourceDetailOmitsTriggersForOtherProviders(t *testing.T) {
 		t.Error("non-github_app source rendered the trigger panel")
 	}
 	// The sync affordances the trigger-only provider hides stay for a syncing
-	// provider: the canSync condition must not switch them off globally.
+	// provider: the canSync/history conditions must not switch them off
+	// globally.
 	for _, want := range []string{
 		`data-testid="ds-trigger-sync"`,
 		`data-testid="ds-sync-history"`,
 		`data-testid="ds-field-sync-mode"`,
+		`data-testid="ds-test-connection"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("google_drive detail missing %q", want)
 		}
+	}
+	if strings.Contains(body, `data-testid="ds-connection-note"`) {
+		t.Error("google_drive detail rendered the trigger-only connection note")
 	}
 }
 
@@ -616,6 +634,17 @@ func TestDsAttachSourceAppSelect(t *testing.T) {
 		}
 		if sel.EmptyHref != dsSourceAppsPath {
 			t.Errorf("empty href = %q", sel.EmptyHref)
+		}
+		// The schema's description is the API contract (it names the endpoint),
+		// so the gateway replaces both label and help text for this form.
+		if got[0].Label != "App ID" {
+			t.Errorf("label = %q, want App ID", got[0].Label)
+		}
+		if !strings.Contains(got[0].Description, "Manage Apps under Settings") {
+			t.Errorf("description = %q", got[0].Description)
+		}
+		if strings.Contains(got[0].Description, "/api/") {
+			t.Errorf("description leaked the API contract: %q", got[0].Description)
 		}
 	})
 

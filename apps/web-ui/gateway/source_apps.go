@@ -403,6 +403,11 @@ func (s *Server) dsAttachSourceAppSelect(ctx context.Context, providerType strin
 	if index < 0 {
 		return fields
 	}
+	// The provider schema's description is the API contract (it names the
+	// endpoint), which is not help text for this form; point at the registry
+	// page instead. The label fixes the derived "App Id" casing too.
+	fields[index].Label = "App ID"
+	fields[index].Description = "The GitHub App this source uses. Manage Apps under Settings → Source apps."
 	sel := &dsFieldSelect{
 		Placeholder:  "Select a registered App",
 		EmptyHref:    dsSourceAppsPath,

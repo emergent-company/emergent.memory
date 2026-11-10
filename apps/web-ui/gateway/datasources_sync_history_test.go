@@ -35,7 +35,7 @@ func dsTestSyncJobs(n int) []DSSyncJob {
 // next page through the htmx partial and disappears on the last page.
 func TestUISyncHistoryPagesFiveAndLoadsMore(t *testing.T) {
 	f := &fakeMemory{
-		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive", Status: "active", Config: map[string]any{"folder_id": "f1"}}},
+		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive", Status: "active"}},
 		dsSyncJobs:     map[string][]DSSyncJob{"s1": dsTestSyncJobs(12)},
 	}
 	e := newDSUIServer(f)
@@ -52,15 +52,23 @@ func TestUISyncHistoryPagesFiveAndLoadsMore(t *testing.T) {
 		t.Errorf("default page rendered %d job rows, want 5\n%s", got, body)
 	}
 	for _, want := range []string{
+		`data-testid="ds-sync-history"`,
 		`data-testid="ds-sync-history-load-more"`,
 		`hx-get="/data-sources/s1/sync-jobs/partial?offset=5"`,
 		`hx-target="#ds-sync-jobs-list"`,
 		`hx-swap="beforeend"`,
 		`12 jobs`,
+		// This source has no sync target yet (the fixture sets no folder_id),
+		// so the resource prompt is up and the sync action is hidden — but the
+		// history must still render: that is where a failed sync is diagnosed.
+		`data-testid="ds-resource-needed"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("default page missing %q", want)
 		}
+	}
+	if strings.Contains(body, `data-testid="ds-trigger-sync"`) {
+		t.Error("unresolved-target page rendered the sync action")
 	}
 	for i := 1; i <= 5; i++ {
 		if !strings.Contains(body, fmt.Sprintf("sync job %d", i)) {
