@@ -32,7 +32,7 @@ func (h *SourceEventHandler) Webhook(c echo.Context) error {
 	if err != nil {
 		return c.String(http.StatusBadRequest, "cannot read request body")
 	}
-	err = h.dispatcher.HandleWebhook(c.Request().Context(), key,
+	verified, err := h.dispatcher.Verify(c.Request().Context(), key,
 		c.Request().Header.Get("X-GitHub-Event"),
 		c.Request().Header.Get("X-GitHub-Delivery"),
 		c.Request().Header.Get("X-Hub-Signature-256"),
@@ -49,6 +49,9 @@ func (h *SourceEventHandler) Webhook(c echo.Context) error {
 		return c.String(http.StatusServiceUnavailable, "source app is not configured")
 	case err != nil:
 		return c.String(http.StatusInternalServerError, "cannot accept delivery")
+	}
+	if verified != nil {
+		go h.dispatcher.ProcessAsync(verified)
 	}
 	return c.NoContent(http.StatusAccepted)
 }

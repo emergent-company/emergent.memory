@@ -416,3 +416,80 @@ func (r *Repository) FindSourceEventClaim(ctx context.Context, sourceID uuid.UUI
 	}
 	return claim, nil
 }
+
+// ListSourcesByAppAndInstallation returns every enabled github_app source for
+// an installation (one installation may serve several projects/repos).
+func (r *Repository) ListSourcesByAppAndInstallation(ctx context.Context, appID uuid.UUID, installationID string) ([]*Source, error) {
+	var sources []*Source
+	if err := r.db.NewSelect().Model(&sources).
+		Where("s.app_id = ?", appID).
+		Where("s.external_account_id = ?", installationID).
+		Where("s.provider = ?", ProviderTypeGitHubApp).
+		Where("s.status <> ?", SourceStatusDisabled).
+		Order("s.created_at ASC").
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+	return sources, nil
+}
+
+// DeleteSourceEvent removes a delivery row after a processing failure so the
+// provider's retry can re-attempt it.
+func (r *Repository) DeleteSourceEvent(ctx context.Context, id uuid.UUID) error {
+	if _, err := r.db.NewDelete().Table("kb.source_events").Where("id = ?", id).Exec(ctx); err != nil {
+		return apperror.NewDatabase("failed to delete source event", err)
+	}
+	return nil
+}
+
+// CancelAllSourceClaims cancels every active claim for a source (uninstall).
+func (r *Repository) CancelAllSourceClaims(ctx context.Context, sourceID uuid.UUID) ([]uuid.UUID, error) {
+	return r.cancelClaims(ctx, sourceID, "", "")
+}
+
+// CancelSourceClaimsForRepo cancels active claims whose subject is in a repo
+// (repository removed from the installation).
+func (r *Repository) CancelSourceClaimsForRepo(ctx context.Context, sourceID uuid.UUID, repo string) ([]uuid.UUID, error) {
+	return r.cancelClaims(ctx, sourceID, "prefix", repo+"#")
+}
+
+func (r *Repository) cancelClaims(ctx context.Context, sourceID uuid.UUID, mode, value string) ([]uuid.UUID, error) {
+	var cancelled []uuid.UUID
+	lockKey := fmt.Sprintf("source-claim-all:%s:%s:%s", sourceID, mode, value)
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", lockKey).Exec(ctx); err != nil {
+			return err
+		}
+		q := tx.NewSelect().Model((*SourceEventClaim)(nil)).
+			Where("source_id = ?", sourceID).
+			Where("state IN (?)", bun.In([]string{SourceClaimPending, SourceClaimRunning}))
+		if mode == "prefix" {
+			q = q.Where("subject_ref LIKE ?", value+"%")
+		}
+		var active []SourceEventClaim
+		if err := q.For("UPDATE").Scan(ctx, &active); err != nil {
+			return err
+		}
+		if len(active) == 0 {
+			return nil
+		}
+		ids := make([]uuid.UUID, 0, len(active))
+		for _, c := range active {
+			ids = append(ids, c.ID)
+			if c.RunID != nil {
+				cancelled = append(cancelled, *c.RunID)
+			}
+		}
+		_, err := tx.NewUpdate().
+			Table("kb.source_event_claims").
+			Set("state = ?", SourceClaimCancelled).
+			Set("updated_at = now()").
+			Where("id IN (?)", bun.In(ids)).
+			Exec(ctx)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cancelled, nil
+}

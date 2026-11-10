@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -25,6 +26,8 @@ var (
 	ErrSourceEventMalformed        = errors.New("sources: malformed webhook payload")
 	ErrSourceEventNoCredentials    = errors.New("sources: source app credentials are not readable")
 )
+
+const asyncSourceEventTimeout = 2 * time.Minute
 
 // SourceEventDispatcher verifies provider webhooks and dispatches matching
 // source triggers to agent runs.
@@ -45,7 +48,11 @@ func NewSourceEventDispatcher(repo *Repository, agentsRepo *agents.Repository, c
 		keyHex = cfg.LLMProvider.EncryptionKey
 		baseURL = cfg.GitHubSource.APIBaseURL
 	}
-	key, _ := hex.DecodeString(keyHex)
+	key, err := hex.DecodeString(keyHex)
+	if err != nil && log != nil {
+		log.Error("sources: invalid LLM_ENCRYPTION_KEY; source app credentials are unreadable", "error", err)
+		key = nil
+	}
 	return &SourceEventDispatcher{
 		repo:       repo,
 		agents:     agentsRepo,
@@ -59,77 +66,140 @@ func NewSourceEventDispatcher(repo *Repository, agentsRepo *agents.Repository, c
 	}
 }
 
-// HandleWebhook verifies and dispatches one provider delivery.
-func (d *SourceEventDispatcher) HandleWebhook(ctx context.Context, webhookKey uuid.UUID, event, delivery, signature string, body []byte) error {
+// VerifiedSourceEvent is an authenticated, parsed delivery ready to process.
+type VerifiedSourceEvent struct {
+	Event    string
+	Delivery string
+	App      *SourceApp
+	Payload  *githubapp.WebhookPayload
+}
+
+// Verify resolves the App, verifies the signature, and parses the payload. It
+// never trusts the body before the App's secret is verified.
+func (d *SourceEventDispatcher) Verify(ctx context.Context, webhookKey uuid.UUID, event, delivery, signature string, body []byte) (*VerifiedSourceEvent, error) {
 	app, err := d.repo.FindSourceAppByWebhookKey(ctx, webhookKey)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return ErrSourceAppNotFound
+			return nil, ErrSourceAppNotFound
 		}
-		return err
+		return nil, err
 	}
 	if len(d.key) == 0 {
-		return ErrSourceEventNoCredentials
+		return nil, ErrSourceEventNoCredentials
 	}
 	secret, err := OpenSourceBlob(d.key, app.WebhookSecretEncrypted)
 	if err != nil {
-		return ErrSourceEventNoCredentials
+		return nil, ErrSourceEventNoCredentials
 	}
 	if !githubapp.VerifyWebhook(string(secret), body, signature) {
-		return ErrSourceEventInvalidSignature
+		return nil, ErrSourceEventInvalidSignature
+	}
+	if strings.TrimSpace(delivery) == "" {
+		return nil, fmt.Errorf("%w: missing delivery id", ErrSourceEventMalformed)
 	}
 	payload, err := githubapp.ParseWebhook(body)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrSourceEventMalformed, err)
+		return nil, fmt.Errorf("%w: %v", ErrSourceEventMalformed, err)
 	}
+	return &VerifiedSourceEvent{Event: event, Delivery: delivery, App: app, Payload: payload}, nil
+}
 
-	switch event {
+// Process routes a verified delivery. It is safe to run after the inbound
+// request has returned 202.
+func (d *SourceEventDispatcher) Process(ctx context.Context, v *VerifiedSourceEvent) error {
+	switch v.Event {
 	case "pull_request":
-		return d.handlePullRequest(ctx, app, delivery, payload)
+		return d.handlePullRequest(ctx, v)
 	case "installation":
-		return d.handleInstallation(ctx, app, payload)
+		return d.handleInstallation(ctx, v)
 	case "installation_repositories":
-		return d.handleInstallationRepositories(ctx, app, payload)
+		return d.handleInstallationRepositories(ctx, v)
 	default:
 		return nil
 	}
 }
 
-func (d *SourceEventDispatcher) handlePullRequest(ctx context.Context, app *SourceApp, delivery string, p *githubapp.WebhookPayload) error {
-	instKey := strconv.FormatInt(p.Installation.ID, 10)
-	src, err := d.repo.FindSourceByAppAndInstallation(ctx, app.ID, instKey)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
+// ProcessAsync processes a verified delivery on a detached, bounded context.
+func (d *SourceEventDispatcher) ProcessAsync(v *VerifiedSourceEvent) {
+	ctx, cancel := context.WithTimeout(context.Background(), asyncSourceEventTimeout)
+	defer cancel()
+	if err := d.Process(ctx, v); err != nil && d.log != nil {
+		d.log.Warn("source event processing failed", "event", v.Event, "delivery", v.Delivery, "error", err)
+	}
+}
+
+// HandleWebhook is the synchronous verify+process path.
+func (d *SourceEventDispatcher) HandleWebhook(ctx context.Context, webhookKey uuid.UUID, event, delivery, signature string, body []byte) error {
+	v, err := d.Verify(ctx, webhookKey, event, delivery, signature, body)
+	if err != nil || v == nil {
 		return err
 	}
-	repoName := p.Repository.FullName
-	if !repoAllowed(src.Config, repoName) {
-		return nil
-	}
-	if p.AuthoredBy(app.Slug) {
-		return nil
-	}
-	subject := fmt.Sprintf("%s#%d", repoName, p.PullNumber())
+	return d.Process(ctx, v)
+}
 
-	// Lifecycle actions run before the draft/closed skip predicate.
-	if p.Action == "closed" || p.Action == "converted_to_draft" {
-		runs, err := d.repo.CancelSourceSubjectClaims(ctx, src.ID, subject)
-		if err != nil {
-			return err
+func (d *SourceEventDispatcher) handlePullRequest(ctx context.Context, v *VerifiedSourceEvent) error {
+	p := v.Payload
+	repoName := p.Repository.FullName
+	if p.AuthoredBy(v.App.Slug) {
+		return nil
+	}
+	sources, err := d.repo.ListSourcesByAppAndInstallation(ctx, v.App.ID, strconv.FormatInt(p.Installation.ID, 10))
+	if err != nil {
+		return err
+	}
+	allowed := make([]*Source, 0, len(sources))
+	for _, src := range sources {
+		if repoAllowed(src.Config, repoName) {
+			allowed = append(allowed, src)
 		}
-		d.cancelRuns(ctx, runs)
+	}
+	if len(allowed) == 0 {
+		return nil
+	}
+
+	subject := fmt.Sprintf("%s#%d", repoName, p.PullNumber())
+	if p.Action == "closed" || p.Action == "converted_to_draft" {
+		for _, src := range allowed {
+			runs, err := d.repo.CancelSourceSubjectClaims(ctx, src.ID, subject)
+			if err != nil {
+				return err
+			}
+			d.cancelRuns(ctx, runs)
+		}
 		return nil
 	}
 	if p.ShouldSkipPullRequest() || !p.IsRelevantPullRequestAction() {
 		return nil
 	}
 
+	// One installation token scoped to the event repo is enough for every source.
+	token, err := d.mintToken(ctx, v.App, p.Installation.ID, repoName)
+	if err != nil {
+		return err
+	}
+	state, err := d.newClient(d.apiBaseURL, token).GetPullRequest(ctx, repoName, p.PullNumber())
+	if err != nil {
+		return err
+	}
+	if state.Draft || state.Merged || (state.State != "" && state.State != "open") {
+		return nil
+	}
+
+	for _, src := range allowed {
+		if err := d.dispatchPullRequestSource(ctx, v, src, subject, state); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *SourceEventDispatcher) dispatchPullRequestSource(ctx context.Context, v *VerifiedSourceEvent, src *Source, subject string, state *githubapp.PullRequestState) error {
+	p := v.Payload
+	repoName := p.Repository.FullName
 	ev := &SourceEvent{
 		ProjectID:   src.ProjectID,
 		SourceID:    src.ID,
-		DeliveryID:  delivery,
+		DeliveryID:  v.Delivery,
 		EventType:   "pull_request",
 		Action:      p.Action,
 		SubjectType: "pull_request",
@@ -144,7 +214,7 @@ func (d *SourceEventDispatcher) handlePullRequest(ctx context.Context, app *Sour
 			"baseRef":  p.PullRequest.Base.Ref,
 			"headRef":  p.PullRequest.Head.Ref,
 			"action":   p.Action,
-			"delivery": delivery,
+			"delivery": v.Delivery,
 		},
 	}
 	inserted, err := d.repo.InsertSourceEvent(ctx, ev)
@@ -154,22 +224,16 @@ func (d *SourceEventDispatcher) handlePullRequest(ctx context.Context, app *Sour
 	if !inserted {
 		return nil
 	}
-
-	token, err := d.mintToken(ctx, app, p.Installation.ID, repoName)
-	if err != nil {
-		d.markEvent(ctx, ev.ID, SourceEventFailed, nil, err)
+	if err := d.processPullRequestSource(ctx, v, src, subject, state, ev); err != nil {
+		// Leave no row behind: a redelivery must be able to retry.
+		_ = d.repo.DeleteSourceEvent(ctx, ev.ID)
 		return err
 	}
-	state, err := d.newClient(d.apiBaseURL, token).GetPullRequest(ctx, repoName, p.PullNumber())
-	if err != nil {
-		d.markEvent(ctx, ev.ID, SourceEventFailed, nil, err)
-		return err
-	}
-	if state.Draft || state.Merged || (state.State != "" && state.State != "open") {
-		d.markEvent(ctx, ev.ID, SourceEventSkipped, nil, nil)
-		return nil
-	}
+	return nil
+}
 
+func (d *SourceEventDispatcher) processPullRequestSource(ctx context.Context, v *VerifiedSourceEvent, src *Source, subject string, state *githubapp.PullRequestState, ev *SourceEvent) error {
+	p := v.Payload
 	claim, superseded, err := d.repo.ClaimSourceSubject(ctx, src.ProjectID, src.ID, subject, state.HeadSHA, p.PullRequest.Head.SHA)
 	if errors.Is(err, ErrSourceEventStaleHead) {
 		d.markEvent(ctx, ev.ID, SourceEventSkipped, nil, nil)
@@ -195,6 +259,7 @@ func (d *SourceEventDispatcher) handlePullRequest(ctx context.Context, app *Sour
 		return nil
 	}
 
+	repoName := p.Repository.FullName
 	message := fmt.Sprintf("Handle github_app pull_request %s (%s) for %s at %s", p.Action, subject, repoName, state.HeadSHA)
 	metadata := map[string]any{
 		"sourceId":       src.ID.String(),
@@ -209,7 +274,7 @@ func (d *SourceEventDispatcher) handlePullRequest(ctx context.Context, app *Sour
 		"baseRef":        state.BaseRef,
 		"headRef":        state.HeadRef,
 		"installationId": p.Installation.ID,
-		"deliveryId":     delivery,
+		"deliveryId":     v.Delivery,
 	}
 	run, err := d.agents.CreateRunQueued(ctx, trigger.AgentID.String(), 1, agents.CreateRunQueuedOptions{
 		Queue:           defaultSourceQueue(trigger.Queue),
@@ -241,39 +306,61 @@ func (d *SourceEventDispatcher) handlePullRequest(ctx context.Context, app *Sour
 	return nil
 }
 
-func (d *SourceEventDispatcher) handleInstallation(ctx context.Context, app *SourceApp, p *githubapp.WebhookPayload) error {
+func (d *SourceEventDispatcher) handleInstallation(ctx context.Context, v *VerifiedSourceEvent) error {
+	p := v.Payload
 	instKey := strconv.FormatInt(p.Installation.ID, 10)
+	sources, err := d.repo.ListSourcesByAppAndInstallation(ctx, v.App.ID, instKey)
+	if err != nil {
+		return err
+	}
 	switch p.Action {
-	case "deleted":
-		return d.repo.DisableSourcesByInstallation(ctx, app.ID, instKey)
-	case "created", "new_permissions_accepted", "unsuspended":
+	case "deleted", "suspend":
+		for _, src := range sources {
+			runs, err := d.repo.CancelAllSourceClaims(ctx, src.ID)
+			if err != nil {
+				return err
+			}
+			d.cancelRuns(ctx, runs)
+		}
+		return d.repo.DisableSourcesByInstallation(ctx, v.App.ID, instKey)
+	case "created", "new_permissions_accepted", "unsuspend":
 		if len(p.Repositories) == 0 {
 			return nil
 		}
-		src, err := d.repo.FindSourceByAppAndInstallation(ctx, app.ID, instKey)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
+		for _, src := range sources {
+			if err := d.repo.UpdateSourceRepos(ctx, src.ID, webhookRepoNames(p.Repositories)); err != nil {
+				return err
+			}
 		}
-		if err != nil {
-			return err
-		}
-		return d.repo.UpdateSourceRepos(ctx, src.ID, webhookRepoNames(p.Repositories))
+		return nil
 	default:
 		return nil
 	}
 }
 
-func (d *SourceEventDispatcher) handleInstallationRepositories(ctx context.Context, app *SourceApp, p *githubapp.WebhookPayload) error {
-	instKey := strconv.FormatInt(p.Installation.ID, 10)
-	src, err := d.repo.FindSourceByAppAndInstallation(ctx, app.ID, instKey)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
+func (d *SourceEventDispatcher) handleInstallationRepositories(ctx context.Context, v *VerifiedSourceEvent) error {
+	p := v.Payload
+	sources, err := d.repo.ListSourcesByAppAndInstallation(ctx, v.App.ID, strconv.FormatInt(p.Installation.ID, 10))
 	if err != nil {
 		return err
 	}
-	repos := applySourceRepoDelta(sourceRepoList(src.Config), p.RepositoriesAdded, p.RepositoriesRemoved)
-	return d.repo.UpdateSourceRepos(ctx, src.ID, repos)
+	for _, src := range sources {
+		repos := applySourceRepoDelta(sourceRepoList(src.Config), p.RepositoriesAdded, p.RepositoriesRemoved)
+		if err := d.repo.UpdateSourceRepos(ctx, src.ID, repos); err != nil {
+			return err
+		}
+		for _, removed := range p.RepositoriesRemoved {
+			if removed.FullName == "" {
+				continue
+			}
+			runs, err := d.repo.CancelSourceClaimsForRepo(ctx, src.ID, removed.FullName)
+			if err != nil {
+				return err
+			}
+			d.cancelRuns(ctx, runs)
+		}
+	}
+	return nil
 }
 
 func (d *SourceEventDispatcher) matchingTrigger(ctx context.Context, sourceID uuid.UUID, eventType, action string) (*SourceTrigger, error) {

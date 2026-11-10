@@ -167,3 +167,106 @@ func countSourceRuns(t *testing.T, db *testdb.TestDB, agentID uuid.UUID) int {
 	require.NoError(t, err)
 	return n
 }
+
+func TestSourceEventDispatcherFansOutAndLifecycle(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	ctx := context.Background()
+	db := testdb.SetupTestDBOrFail(t, ctx, "source_events_fanout")
+	defer db.Close()
+	repo := NewRepository(db.DB, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	orgID, projectID := uuid.New(), uuid.New()
+	agent1, agent2 := uuid.New(), uuid.New()
+	source1, source2 := uuid.New(), uuid.New()
+	_, err := db.DB.ExecContext(ctx, `INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgID, "fanout-org")
+	require.NoError(t, err)
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`, projectID, orgID, "fanout-project")
+	require.NoError(t, err)
+	for _, agentID := range []uuid.UUID{agent1, agent2} {
+		_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.agents (id, name, strategy_type, cron_schedule, project_id) VALUES (?, ?, 'definition', '', ?)`, agentID, "agent-"+agentID.String()[:6], projectID)
+		require.NoError(t, err)
+	}
+
+	keyHex, err := cryptoutil.GenerateKey()
+	require.NoError(t, err)
+	keyBytes, _ := hex.DecodeString(keyHex)
+	sealedKey, err := SealSourceBlob(keyBytes, rsaPEM(t))
+	require.NoError(t, err)
+	sealedSecret, err := SealSourceBlob(keyBytes, []byte("whsec"))
+	require.NoError(t, err)
+	app := &SourceApp{OrgID: orgID, Provider: "github", AppID: 77, Slug: "memory-reviewer", PrivateKeyEncrypted: sealedKey, WebhookSecretEncrypted: sealedSecret}
+	require.NoError(t, repo.CreateSourceApp(ctx, app))
+
+	for _, spec := range []struct {
+		id, agent uuid.UUID
+	}{{source1, agent1}, {source2, agent2}} {
+		_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.sources (id, project_id, provider, display_name, app_id, external_account_id, config, status)
+			VALUES (?, ?, 'github_app', 'bot', ?, '42', '{"repos":["owner/repo"]}'::jsonb, 'active')`, spec.id, projectID, app.ID)
+		require.NoError(t, err)
+		require.NoError(t, repo.CreateSourceTrigger(ctx, &SourceTrigger{ProjectID: projectID, SourceID: spec.id, EventType: "pull_request", AgentID: spec.agent, Queue: "review", EventFilter: map[string]any{}, Enabled: true}))
+	}
+
+	currentHead := strings.Repeat("a", 40)
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app/installations/42/access_tokens":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"token":"ghs_test","expires_at":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `"}`))
+		case "/repos/owner/repo/pulls/7":
+			_, _ = fmt.Fprintf(w, `{"number":7,"title":"fix","state":"open","user":{"login":"mkucharz","type":"User"},"head":{"sha":%q,"ref":"feat/x"},"base":{"ref":"dev"}}`, currentHead)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer fake.Close()
+
+	d := NewSourceEventDispatcher(repo, agents.NewRepository(db.DB), &config.Config{
+		LLMProvider:  config.LLMProviderConfig{EncryptionKey: keyHex},
+		GitHubSource: config.GitHubSourceConfig{APIBaseURL: fake.URL},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	d.minter = githubapp.NewTokenMinter(fake.URL, fake.Client())
+	d.newClient = func(_, token string) *githubapp.Client { return githubapp.NewClient(fake.URL, token, fake.Client()) }
+
+	payload := func(action, login, repoName, head string) []byte {
+		return []byte(fmt.Sprintf(`{"action":%q,"installation":{"id":42},"repository":{"full_name":%q},"pull_request":{"number":7,"title":"fix","state":"open","draft":false,"user":{"login":%q,"type":"User"},"base":{"ref":"dev","sha":"b0"},"head":{"ref":"feat/x","sha":%q}}}`,
+			action, repoName, login, head))
+	}
+	deliver := func(event, delivery string, body []byte) error {
+		return d.HandleWebhook(ctx, app.WebhookKey, event, delivery, signWebhook("whsec", body), body)
+	}
+
+	// One delivery fans out to both sources.
+	require.NoError(t, deliver("pull_request", "d1", payload("opened", "mkucharz", "owner/repo", currentHead)))
+	require.Equal(t, 1, countSourceRuns(t, db, agent1))
+	require.Equal(t, 1, countSourceRuns(t, db, agent2))
+
+	// Closing cancels both claims.
+	require.NoError(t, deliver("pull_request", "d2", payload("closed", "mkucharz", "owner/repo", currentHead)))
+	for _, sourceID := range []uuid.UUID{source1, source2} {
+		claim, err := repo.FindSourceEventClaim(ctx, sourceID, "owner/repo#7", currentHead)
+		require.NoError(t, err)
+		require.Equal(t, SourceClaimCancelled, claim.State)
+	}
+
+	// Repo allowlist and App-authored PRs are ignored.
+	require.NoError(t, deliver("pull_request", "d3", payload("opened", "mkucharz", "other/repo", currentHead)))
+	require.NoError(t, deliver("pull_request", "d4", payload("opened", "memory-reviewer[bot]", "owner/repo", currentHead)))
+	require.Equal(t, 1, countSourceRuns(t, db, agent1))
+
+	// Repository deltas update every source.
+	delta := []byte(`{"action":"added","installation":{"id":42},"repository":{"full_name":"owner/repo"},"repositories_added":[{"full_name":"owner/other"}],"repositories_removed":[]}`)
+	require.NoError(t, deliver("installation_repositories", "d5", delta))
+	for _, sourceID := range []uuid.UUID{source1, source2} {
+		src, err := repo.FindSourceByID(ctx, sourceID)
+		require.NoError(t, err)
+		require.Contains(t, sourceRepoList(src.Config), "owner/other")
+	}
+
+	// Uninstall disables both sources.
+	require.NoError(t, deliver("installation", "d6", []byte(`{"action":"deleted","installation":{"id":42}}`)))
+	remaining, err := repo.ListSourcesByAppAndInstallation(ctx, app.ID, "42")
+	require.NoError(t, err)
+	require.Empty(t, remaining)
+}
