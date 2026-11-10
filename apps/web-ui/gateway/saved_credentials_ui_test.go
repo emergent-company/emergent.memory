@@ -528,6 +528,9 @@ func TestUIProjectCredentialsSurvivesSavedCredentialReadFailure(t *testing.T) {
 		dsProviders:          savedCredentialProviders(),
 		dsSchema:             githubSchema(),
 		dsSavedCredentialErr: &memoryHTTPError{Status: http.StatusBadGateway, Message: "upstream unavailable"},
+		dsProjectOAuthApps: []DSOAuthApp{
+			{ID: "app-1", Scope: "project", Vendor: "google", VendorName: "Google", Name: "Google OAuth app", ClientID: "cid", Configured: true},
+		},
 	}
 	e := newDSUIServer(f)
 	rec := httptest.NewRecorder()

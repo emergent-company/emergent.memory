@@ -37,6 +37,62 @@ type SourceItem struct {
 	RevisionID   string
 	Trashed      bool
 	ModifiedTime time.Time
+	// Records carries structured graph records derived from source metadata.
+	// The sync worker upserts them alongside the item's document.
+	Records []ObjectRecord
+}
+
+// ObjectRecord is one structured graph object emitted by a provider.
+type ObjectRecord struct {
+	Type          string
+	Key           string
+	Properties    map[string]any
+	Labels        []string
+	DocumentID    string
+	Relationships []ObjectRelationship
+}
+
+// ObjectRelationship links this record to another record in the same sync.
+type ObjectRelationship struct {
+	Type       string
+	TargetType string
+	TargetKey  string
+}
+
+// ObjectTypePack is a provider-declared schema pack installed on connect.
+type ObjectTypePack struct {
+	Name              string
+	Version           string
+	Description       string
+	ObjectTypes       []ObjectTypeDefinition
+	RelationshipTypes []RelationshipTypeDefinition
+	// SkipDiscovery suppresses automatic schema discovery for this provider:
+	// the declared pack (or a user schema) owns the types.
+	SkipDiscovery bool
+}
+
+// ObjectTypeDefinition is one object type in a pack.
+type ObjectTypeDefinition struct {
+	Name           string
+	Label          string
+	Description    string
+	Properties     map[string]any
+	Required       []string
+	SkipExtraction bool
+}
+
+// RelationshipTypeDefinition is one relationship type in a pack.
+type RelationshipTypeDefinition struct {
+	Name        string
+	SourceType  string
+	TargetType  string
+	Description string
+}
+
+// TypedObjectProvider is implemented by providers that emit structured records
+// and declare the schema types those records use.
+type TypedObjectProvider interface {
+	ObjectTypes() *ObjectTypePack
 }
 
 // ConnectorDeps carries the generic collaborators a provider's connector may
@@ -58,6 +114,15 @@ type ConnectorDeps struct {
 	// source at the next expiry (#2091), but a failed write must not fail the work
 	// that just succeeded.
 	PersistCredentials func(ctx context.Context, creds Credentials) error
+
+	// SourceConfig is the stored, non-secret config of the source this connector
+	// was built for. A connector whose fetch-time behaviour depends on config
+	// (Gmail derives the typed records to emit from the selected object types)
+	// reads it here instead of caching the cfg of one enumeration call, which made
+	// a fetch depend on whether an enumeration had run first. It is nil for work
+	// against a form the user is still filling in; a connector that needs it must
+	// fail loudly rather than silently pick defaults.
+	SourceConfig map[string]any
 }
 
 // Connector is the provider-neutral transport the sync worker drives: it
@@ -83,6 +148,13 @@ type Connector interface {
 // A connector that does not implement it is enumerated from scratch each run.
 type CursorConnector interface {
 	EnumerateWithCursor(ctx context.Context, cfg map[string]any, cursor map[string]any) (items []SourceItem, nextCursor map[string]any, err error)
+}
+
+// RecordFetchConnector is implemented by a connector that derives typed records
+// while fetching an item (Gmail decodes message metadata from the same thread
+// response it uses for the document body).
+type RecordFetchConnector interface {
+	FetchWithRecords(ctx context.Context, item SourceItem) (content, mimeType string, records []ObjectRecord, err error)
 }
 
 // Resource is a provider-neutral selectable sync target (a Drive folder, a
@@ -158,6 +230,20 @@ type ResourceRefLister interface {
 	// ListRefs lists refs for the resource named in cfg. truncated reports that
 	// the provider has more refs than it returned.
 	ListRefs(ctx context.Context, creds Credentials, cfg map[string]any) (items []Resource, truncated bool, err error)
+}
+
+// GrantProber is implemented by providers that can prove a stored grant is
+// still accepted with a cheap, read-only metadata call — Drive's `about.get`,
+// Gmail's `users.getProfile`. It backs the proactive probe (#23): a source whose
+// next scheduled sync is hours or a day away is revalidated on a cadence, so a
+// dead grant is discovered before the sync that would have discovered it.
+//
+// It is deliberately optional. A provider that cannot answer cheaply (a web
+// crawl fetches a page; Trale opens an MCP session; a GitHub connector validates
+// a repository and ref) simply does not implement it and is never probed — the
+// probe must not become a hidden second sync.
+type GrantProber interface {
+	ProbeGrant(ctx context.Context, creds Credentials, deps ConnectorDeps) error
 }
 
 // SyncIntervalBoundsProvider is implemented by providers that impose a default

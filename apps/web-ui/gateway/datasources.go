@@ -230,8 +230,9 @@ func (s *Server) startDSOAuth(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "providerType is required"})
 	}
 	var req struct {
-		Config map[string]any `json:"config,omitempty"`
-		Scopes []string       `json:"scopes,omitempty"`
+		Config     map[string]any `json:"config,omitempty"`
+		Scopes     []string       `json:"scopes,omitempty"`
+		OAuthAppID string         `json:"oauthAppId,omitempty"`
 	}
 	if c.Request().ContentLength > 0 {
 		if err := c.Bind(&req); err != nil {
@@ -240,7 +241,7 @@ func (s *Server) startDSOAuth(c echo.Context) error {
 	}
 	// The legacy JSON proxy has no reconnect concept: a source's grant is
 	// re-minted through the UI action, which carries the source id.
-	resp, err := s.memory.StartDSOAuth(c.Request().Context(), providerType, req.Config, req.Scopes, "")
+	resp, err := s.memory.StartDSOAuth(c.Request().Context(), providerType, req.Config, req.Scopes, req.OAuthAppID, "")
 	if err != nil {
 		return dsError(c, err)
 	}
@@ -351,4 +352,106 @@ func (s *Server) listDocumentVersions(c echo.Context) error {
 		versions = []DocumentVersion{}
 	}
 	return c.JSON(http.StatusOK, map[string]any{"versions": versions})
+}
+
+// --- named OAuth apps (proxy) ---
+
+func (s *Server) listDSOAuthApps(c echo.Context) error {
+	items, err := s.memory.ListOrgDSOAuthApps(c.Request().Context(), c.Param("orgId"))
+	if err != nil {
+		return dsError(c, err)
+	}
+	if items == nil {
+		items = []DSOAuthApp{}
+	}
+	return c.JSON(http.StatusOK, items)
+}
+
+func (s *Server) createDSOAuthApp(c echo.Context) error {
+	var req DSCreateOAuthAppRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+	item, err := s.memory.CreateOrgDSOAuthApp(c.Request().Context(), c.Param("orgId"), &req)
+	if err != nil {
+		return dsError(c, err)
+	}
+	return c.JSON(http.StatusCreated, item)
+}
+
+func (s *Server) getDSOAuthApp(c echo.Context) error {
+	item, err := s.memory.GetOrgDSOAuthApp(c.Request().Context(), c.Param("orgId"), c.Param("appId"))
+	if err != nil {
+		return dsError(c, err)
+	}
+	return c.JSON(http.StatusOK, item)
+}
+
+func (s *Server) updateDSOAuthApp(c echo.Context) error {
+	var req DSUpdateOAuthAppRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+	item, err := s.memory.UpdateOrgDSOAuthApp(c.Request().Context(), c.Param("orgId"), c.Param("appId"), &req)
+	if err != nil {
+		return dsError(c, err)
+	}
+	return c.JSON(http.StatusOK, item)
+}
+
+func (s *Server) deleteDSOAuthApp(c echo.Context) error {
+	if err := s.memory.DeleteOrgDSOAuthApp(c.Request().Context(), c.Param("orgId"), c.Param("appId")); err != nil {
+		return dsError(c, err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (s *Server) listProjectDSOAuthApps(c echo.Context) error {
+	items, err := s.memory.ListProjectDSOAuthApps(c.Request().Context(), c.Param("projectId"))
+	if err != nil {
+		return dsError(c, err)
+	}
+	if items == nil {
+		items = []DSOAuthApp{}
+	}
+	return c.JSON(http.StatusOK, items)
+}
+
+func (s *Server) createProjectDSOAuthApp(c echo.Context) error {
+	var req DSCreateOAuthAppRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+	item, err := s.memory.CreateProjectDSOAuthApp(c.Request().Context(), c.Param("projectId"), &req)
+	if err != nil {
+		return dsError(c, err)
+	}
+	return c.JSON(http.StatusCreated, item)
+}
+
+func (s *Server) getProjectDSOAuthApp(c echo.Context) error {
+	item, err := s.memory.GetProjectDSOAuthApp(c.Request().Context(), c.Param("projectId"), c.Param("appId"))
+	if err != nil {
+		return dsError(c, err)
+	}
+	return c.JSON(http.StatusOK, item)
+}
+
+func (s *Server) updateProjectDSOAuthApp(c echo.Context) error {
+	var req DSUpdateOAuthAppRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+	item, err := s.memory.UpdateProjectDSOAuthApp(c.Request().Context(), c.Param("projectId"), c.Param("appId"), &req)
+	if err != nil {
+		return dsError(c, err)
+	}
+	return c.JSON(http.StatusOK, item)
+}
+
+func (s *Server) deleteProjectDSOAuthApp(c echo.Context) error {
+	if err := s.memory.DeleteProjectDSOAuthApp(c.Request().Context(), c.Param("projectId"), c.Param("appId")); err != nil {
+		return dsError(c, err)
+	}
+	return c.NoContent(http.StatusNoContent)
 }

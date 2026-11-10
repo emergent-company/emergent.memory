@@ -683,11 +683,52 @@ func isMissingDSOAuthClient(err error) bool {
 // other failure redirects back with the sanitized backend message, never the
 // internal "memory <status> <code>:" prefix.
 func (s *Server) uiDataSourceOAuthStart(c echo.Context) error {
+	ctx := c.Request().Context()
 	providerType := strings.TrimSpace(c.QueryParam("providerType"))
+	var config map[string]any
+	if c.Request().Method == http.MethodPost {
+		providerType = strings.TrimSpace(c.FormValue("providerType"))
+		if providerType == "gmail" {
+			config = dsGmailConfigFromForm(c)
+			if _, err := s.memory.PreviewDSFilter(c.Request().Context(), providerType, config); err != nil {
+				return redirectWithError(c, "/data-sources/new?providerType=gmail", dsFormError(err))
+			}
+		} else {
+			cfg, err := s.dsFormConfig(c.Request().Context(), c, providerType)
+			if err != nil {
+				return redirectWithError(c, "/data-sources/new", err)
+			}
+			config = cfg
+		}
+	}
 	if providerType == "" {
 		return redirectWithError(c, "/data-sources/new", errors.New("providerType is required"))
 	}
-	resp, err := s.memory.StartDSOAuth(c.Request().Context(), providerType, nil, nil, "")
+	oauthAppID := strings.TrimSpace(c.QueryParam("oauthAppId"))
+	if oauthAppID == "" {
+		project, _ := s.memory.GetCurrentProject(ctx)
+		if project != nil {
+			if apps, aerr := s.memory.ListProjectDSOAuthApps(ctx, project.ID); aerr == nil {
+				providers, _ := s.memory.ListDSProviders(ctx)
+				vendor := dsProviderVendor(providers, providerType)
+				matches := make([]DSOAuthApp, 0)
+				for _, app := range apps {
+					if app.Vendor == vendor {
+						matches = append(matches, app)
+					}
+				}
+				switch len(matches) {
+				case 1:
+					oauthAppID = matches[0].ID
+				default:
+					if len(matches) > 1 {
+						return s.page(c, pageTitle("Choose an OAuth app"), OAuthAppChoicePage(providerType, matches))
+					}
+				}
+			}
+		}
+	}
+	resp, err := s.memory.StartDSOAuth(ctx, providerType, config, nil, oauthAppID, "")
 	if err != nil {
 		if isMissingDSOAuthClient(err) {
 			return s.renderDSOAuthClientMissing(c, providerType)
@@ -718,7 +759,7 @@ func (s *Server) uiDataSourceReconnect(c echo.Context) error {
 	if err != nil {
 		return redirectWithError(c, s.dsScoped("/data-sources", c), userFacingError(err))
 	}
-	resp, err := s.memory.StartDSOAuth(ctx, src.ProviderType, nil, nil, src.ID)
+	resp, err := s.memory.StartDSOAuth(ctx, src.ProviderType, nil, nil, "", src.ID)
 	if err != nil {
 		// A reconnect is an action on an existing source, so every failure lands
 		// there. The creation page renderDSOAuthClientMissing builds is for the
@@ -1369,34 +1410,20 @@ func (s *Server) uiOrgOAuthClients(c echo.Context) error {
 	if !s.orgAdminForCaller(c, orgID) {
 		return c.NoContent(http.StatusNotFound)
 	}
-	providers, err := s.memory.ListDSProviders(ctx)
+	apps, err := s.memory.ListOrgDSOAuthApps(ctx, orgID)
 	if err != nil {
 		err = userFacingError(err)
-	}
-	// Self-registering providers (Trale) register their own OAuth client at
-	// connect time; there is no client id/secret to manage, so they have no card
-	// on this org-wide app editor.
-	providers = dsOAuthAppProviders(providers)
-	clients, cerr := s.memory.ListDSOAuthClients(ctx, orgID)
-	if cerr != nil {
-		cerr = userFacingError(cerr)
-	}
-	byType := make(map[string]DSOAuthClientConfig, len(clients))
-	for _, cl := range clients {
-		byType[cl.ProviderType] = cl
 	}
 	orgName := ""
 	if org, oerr := s.memory.GetOrg(ctx, orgID); oerr == nil && org != nil {
 		orgName = org.Name
 	}
-	if err == nil {
-		err = cerr
-	}
 	flashMsg := flashFromQuery(c, []flashParam{
-		{key: "saved", msg: "OAuth client saved."},
-		{key: "deleted", msg: "OAuth client removed."},
+		{key: "saved", msg: "OAuth app saved."},
+		{key: "deleted", msg: "OAuth app removed."},
 	})
-	return s.page(c, pageTitle("OAuth clients"), OrgOAuthClientsPage(orgID, orgName, providers, byType, err, flashMsg, flashError(c)))
+	rows := dsOAuthAppRows(apps, false, true, orgID, "")
+	return s.page(c, pageTitle("OAuth apps"), OrgOAuthAppsPage(orgID, orgName, rows, err, flashMsg, flashError(c)))
 }
 
 // uiOrgOAuthClientDetail renders the org per-provider OAuth app editor: the same
@@ -1417,6 +1444,9 @@ func (s *Server) uiOrgOAuthClientDetail(c echo.Context) error {
 	provider := dsOAuthAppProviderFor(providers, providerType)
 	if provider == nil {
 		return c.NoContent(http.StatusNotFound)
+	}
+	if redirect := s.legacyAppRedirect(c, ctx, true, "", orgID, provider.Vendor, provider.Type, "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients"); redirect != "" {
+		return c.Redirect(http.StatusSeeOther, redirect)
 	}
 	cfg, cerr := s.memory.GetDSOAuthClient(ctx, orgID, providerType)
 	if cerr != nil {
@@ -2037,7 +2067,7 @@ func (s *Server) uiProjectCredentials(c echo.Context) error {
 	if perr != nil {
 		perr = userFacingError(perr)
 	}
-	creds, cerr := s.memory.ListDSCredentials(ctx)
+	_, cerr := s.memory.ListDSCredentials(ctx)
 	if cerr != nil {
 		cerr = userFacingError(cerr)
 	}
@@ -2053,7 +2083,17 @@ func (s *Server) uiProjectCredentials(c echo.Context) error {
 			captureError(oerr)
 		}
 	}
-	rows, deploymentNote := dsCredentialRows(providers, creds, s.strictProjectAdminForCaller(c, project.ID), s.orgAdminForCaller(c, project.OrgID), project.OrgID)
+	isProjectAdmin := s.strictProjectAdminForCaller(c, project.ID)
+	isOrgAdmin := s.orgAdminForCaller(c, project.OrgID)
+	apps, aerr := s.memory.ListProjectDSOAuthApps(ctx, project.ID)
+	if aerr != nil {
+		captureError(aerr)
+	}
+	rows := dsOAuthAppRows(apps, isProjectAdmin, isOrgAdmin, project.OrgID, "/settings/credentials/apps")
+	deploymentNote := ""
+	if len(apps) == 0 {
+		deploymentNote = "No OAuth apps yet. Data sources use the deployment's built-in app when one is configured."
+	}
 	credProviders := dsCredentialProviders(providers)
 	savedPicker := dsSavedCredentialPicker{
 		Providers: credProviders,
@@ -2103,6 +2143,45 @@ func (s *Server) uiProjectCredentials(c echo.Context) error {
 	}))
 }
 
+// legacyAppRedirect maps a deprecated per-provider editor URL to the named-app
+// surface: the sole app's editor when there is one, otherwise the app list.
+// Empty means "no named apps yet; render the legacy create form".
+func (s *Server) legacyAppRedirect(c echo.Context, ctx context.Context, isOrg bool, projectID string, orgID, vendor, providerType, listHref string) string {
+	vendor = strings.TrimSpace(vendor)
+	if vendor == "" {
+		vendor = providerType
+	}
+	apps, err := s.listOAuthApps(ctx, isOrg, projectID, orgID)
+	if err != nil {
+		return ""
+	}
+	matches := make([]DSOAuthApp, 0)
+	for _, app := range apps {
+		if app.Vendor == vendor {
+			matches = append(matches, app)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return ""
+	case 1:
+		base := "/settings/credentials/apps"
+		if isOrg {
+			base = "/orgs/" + url.PathEscape(orgID) + "/settings/oauth-apps"
+		}
+		return base + "/" + url.PathEscape(matches[0].ID)
+	default:
+		return listHref
+	}
+}
+
+func (s *Server) listOAuthApps(ctx context.Context, isOrg bool, projectID string, orgID string) ([]DSOAuthApp, error) {
+	if isOrg {
+		return s.memory.ListOrgDSOAuthApps(ctx, orgID)
+	}
+	return s.memory.ListProjectDSOAuthApps(ctx, projectID)
+}
+
 // uiProjectCredential renders the per-provider project OAuth app editor
 // (project-admin only; hidden and 404 for everyone else). The org-wide app's
 // configured flag comes from the member-safe endpoint so a project admin who is
@@ -2132,6 +2211,9 @@ func (s *Server) uiProjectCredential(c echo.Context) error {
 	}
 	if provider == nil {
 		return c.NoContent(http.StatusNotFound)
+	}
+	if redirect := s.legacyAppRedirect(c, ctx, false, project.ID, "", provider.Vendor, provider.Type, "/settings/credentials"); redirect != "" {
+		return c.Redirect(http.StatusSeeOther, redirect)
 	}
 	cfg, cerr := s.memory.GetProjectDSOAuthClient(ctx, project.ID, providerType)
 	if cerr != nil {
@@ -2611,12 +2693,34 @@ func (s *Server) uiDataSourceUpdate(c echo.Context) error {
 	if providerType == "" {
 		return redirectWithError(c, detailPath, errors.New("providerType is required"))
 	}
-	cfg, err := s.dsFormConfig(ctx, c, providerType)
-	if err != nil {
-		return redirectWithError(c, detailPath, err)
-	}
-	if len(cfg) > 0 {
-		req.Config = cfg
+	if providerType == "gmail" {
+		cfg := dsGmailConfigFromForm(c)
+		scope := &DSScopeRequest{
+			Filter:      mapStringAny(cfg["filter"]),
+			ObjectTypes: mapStringSlice(cfg["object_types"]),
+		}
+		if v, ok := cfg["mcp_write_tools_enabled"].(bool); ok {
+			scope.MCPWriteToolsEnabled = &v
+		}
+		preview, perr := s.memory.PreviewDSScope(ctx, id, scope)
+		if perr != nil {
+			return redirectWithError(c, detailPath, dsFormError(perr))
+		}
+		if preview.Changed {
+			if _, uerr := s.memory.UpdateDSScope(ctx, id, scope, preview.PreviewHash, preview.BaseScopeHash); uerr != nil {
+				return redirectWithError(c, detailPath, dsFormError(uerr))
+			}
+		}
+		// Scope is persisted by the dedicated endpoint when it changed; the
+		// generic update only carries name and cadence and never config.
+	} else {
+		cfg, cfgErr := s.dsFormConfig(ctx, c, providerType)
+		if cfgErr != nil {
+			return redirectWithError(c, detailPath, cfgErr)
+		}
+		if len(cfg) > 0 {
+			req.Config = cfg
+		}
 	}
 	req.CredentialID = strings.TrimSpace(c.FormValue("credential_id"))
 	if _, err := s.memory.UpdateDSIntegration(ctx, id, req); err != nil {
@@ -2697,4 +2801,525 @@ func (s *Server) uiDocumentVersions(c echo.Context) error {
 		slices.Reverse(versions)
 	}
 	return s.page(c, pageTitle(documentName(*doc), "Versions"), DocumentVersionsPage(doc, versions, err))
+}
+
+// dsGmailConfigFromForm builds the nested Gmail config object from the connect
+// and edit forms. The filter is required: the backend rejects an empty scope.
+func dsGmailConfigFromForm(c echo.Context) map[string]any {
+	_ = c.Request().ParseForm()
+	cfg := map[string]any{}
+	filter := map[string]any{}
+	if v := dsFormMultiValues(c, "filter.categories"); len(v) > 0 {
+		filter["categories"] = v
+	}
+	for _, key := range []string{"filter.labels", "filter.excludeLabels", "filter.senders", "filter.excludeSenders", "filter.domains", "filter.excludeDomains", "filter.subjectContains"} {
+		if v := dsFormTerms(c, key); len(v) > 0 {
+			filter[strings.TrimPrefix(key, "filter.")] = v
+		}
+	}
+	for _, key := range []string{"hasAttachment", "unreadOnly", "starredOnly"} {
+		if c.FormValue("filter."+key) == "true" {
+			filter[key] = true
+		}
+	}
+	for _, key := range []string{"after", "before", "query"} {
+		if v := strings.TrimSpace(c.FormValue("filter." + key)); v != "" {
+			filter[key] = v
+		}
+	}
+	if len(filter) > 0 {
+		cfg["filter"] = filter
+	}
+	if types := dsFormMultiValues(c, "object_types"); len(types) > 0 {
+		cfg["object_types"] = types
+	}
+	cfg["mcp_write_tools_enabled"] = c.FormValue("mcp_write_tools_enabled") == "true"
+	if alias := strings.TrimSpace(c.FormValue("mcp_alias")); alias != "" {
+		cfg["mcp_alias"] = alias
+	}
+	return cfg
+}
+
+func dsFormMultiValues(c echo.Context, key string) []string {
+	raw := c.Request().Form[key]
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		if s := strings.TrimSpace(v); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func dsFormTerms(c echo.Context, key string) []string {
+	raw := strings.TrimSpace(c.FormValue(key))
+	if raw == "" {
+		return nil
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool { return r == '\n' || r == ',' })
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if s := strings.TrimSpace(p); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// dsGmailFilterSummary renders the persisted filter as human lines for the
+// source detail card.
+func dsGmailFilterSummary(cfg map[string]any) []string {
+	filter, _ := cfg["filter"].(map[string]any)
+	if len(filter) == 0 {
+		return []string{"No filter configured — sync will fail until a scope is set."}
+	}
+	var out []string
+	add := func(label string, v any) {
+		switch val := v.(type) {
+		case string:
+			if strings.TrimSpace(val) != "" {
+				out = append(out, label+": "+val)
+			}
+		case []any:
+			parts := make([]string, 0, len(val))
+			for _, item := range val {
+				if s, ok := item.(string); ok && s != "" {
+					parts = append(parts, s)
+				}
+			}
+			if len(parts) > 0 {
+				out = append(out, label+": "+strings.Join(parts, ", "))
+			}
+		case bool:
+			if val {
+				out = append(out, label)
+			}
+		}
+	}
+	for _, key := range []string{"categories", "labels", "excludeLabels", "senders", "excludeSenders", "domains", "excludeDomains", "subjectContains", "after", "before", "query"} {
+		add(key, filter[key])
+	}
+	if v, _ := filter["hasAttachment"].(bool); v {
+		out = append(out, "hasAttachment")
+	}
+	if v, _ := filter["unreadOnly"].(bool); v {
+		out = append(out, "unreadOnly")
+	}
+	if v, _ := filter["starredOnly"].(bool); v {
+		out = append(out, "starredOnly")
+	}
+	return out
+}
+
+func dsGmailObjectTypes(cfg map[string]any) string {
+	v, _ := cfg["object_types"].([]any)
+	if len(v) == 0 {
+		return "EmailMessage, EmailThread"
+	}
+	parts := make([]string, 0, len(v))
+	for _, item := range v {
+		if s, ok := item.(string); ok {
+			parts = append(parts, s)
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+func dsGmailWriteEnabled(cfg map[string]any) bool {
+	v, _ := cfg["mcp_write_tools_enabled"].(bool)
+	return v
+}
+
+func dsGmailFormList(cfg map[string]any, filterKey string) string {
+	filter, _ := cfg["filter"].(map[string]any)
+	v, _ := filter[filterKey].([]any)
+	parts := make([]string, 0, len(v))
+	for _, item := range v {
+		if s, ok := item.(string); ok {
+			parts = append(parts, s)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func dsGmailFormString(cfg map[string]any, filterKey string) string {
+	filter, _ := cfg["filter"].(map[string]any)
+	s, _ := filter[filterKey].(string)
+	return s
+}
+
+func dsGmailFormBool(cfg map[string]any, filterKey string) bool {
+	filter, _ := cfg["filter"].(map[string]any)
+	b, _ := filter[filterKey].(bool)
+	return b
+}
+
+func dsGmailHasCategory(cfg map[string]any, category string) bool {
+	filter, _ := cfg["filter"].(map[string]any)
+	v, _ := filter["categories"].([]any)
+	for _, item := range v {
+		if s, ok := item.(string); ok && strings.EqualFold(s, category) {
+			return true
+		}
+	}
+	return false
+}
+
+func dsGmailHasObjectType(cfg map[string]any, typ string) bool {
+	v, _ := cfg["object_types"].([]any)
+	if len(v) == 0 {
+		return true
+	}
+	for _, item := range v {
+		if s, ok := item.(string); ok && s == typ {
+			return true
+		}
+	}
+	return false
+}
+
+func mapStringAny(v any) map[string]any {
+	m, _ := v.(map[string]any)
+	return m
+}
+
+func mapStringSlice(v any) []string {
+	switch val := v.(type) {
+	case []string:
+		return val
+	case []any:
+		out := make([]string, 0, len(val))
+		for _, item := range val {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+// --- named OAuth app settings (project + organization) ---
+
+type dsOAuthVendor struct {
+	Vendor     string
+	VendorName string
+	Providers  []DSProvider
+}
+
+type dsOAuthAppFormData struct {
+	Nav        settingsNavCommon
+	OrgID      string
+	OrgName    string
+	Action     string
+	BackHref   string
+	DeleteHref string
+	App        *DSOAuthApp
+	Vendors    []dsOAuthVendor
+	ScopeLabel string
+	LoadErr    error
+	FlashErr   error
+}
+
+func dsOAuthVendors(providers []DSProvider) []dsOAuthVendor {
+	byVendor := map[string]*dsOAuthVendor{}
+	for _, p := range providers {
+		if p.DSProviderSelfRegistering() || !p.DSProviderSupportsOAuth() {
+			continue
+		}
+		vendor := strings.TrimSpace(p.Vendor)
+		if vendor == "" {
+			vendor = p.Type
+		}
+		name := strings.TrimSpace(p.VendorName)
+		if name == "" {
+			name = vendor
+		}
+		v, ok := byVendor[vendor]
+		if !ok {
+			v = &dsOAuthVendor{Vendor: vendor, VendorName: name}
+			byVendor[vendor] = v
+		}
+		v.Providers = append(v.Providers, p)
+	}
+	out := make([]dsOAuthVendor, 0, len(byVendor))
+	for _, v := range byVendor {
+		slices.SortFunc(v.Providers, func(a, b DSProvider) int { return strings.Compare(a.Type, b.Type) })
+		out = append(out, *v)
+	}
+	slices.SortFunc(out, func(a, b dsOAuthVendor) int { return strings.Compare(a.VendorName, b.VendorName) })
+	return out
+}
+
+func dsOAuthAppRows(apps []DSOAuthApp, canManageProject, canManageOrg bool, orgID, projectBase string) []dsCredentialRow {
+	rows := make([]dsCredentialRow, 0, len(apps))
+	for _, app := range apps {
+		scope := app.Scope
+		if scope == "" {
+			scope = dsCredentialScopeProject
+		}
+		row := dsCredentialRow{
+			ProviderType: app.ID,
+			ScopeKey:     scope,
+			App:          app.Name,
+			DataSource:   app.VendorName,
+			Configured:   app.Configured,
+			ClientID:     app.ClientID,
+			UpdatedAt:    app.UpdatedAt,
+			Resolved:     app.UsedBy > 0,
+		}
+		canManage := canManageProject
+		manageBase := projectBase
+		if scope == dsCredentialScopeOrganization {
+			row.ScopeIcon = "lucide--building-2"
+			row.ScopeLabel = "Organization"
+			canManage = canManageOrg
+			manageBase = "/orgs/" + url.PathEscape(orgID) + "/settings/oauth-apps"
+		} else {
+			row.ScopeIcon = "lucide--folder"
+			row.ScopeLabel = "Project"
+		}
+		if canManage {
+			row.ManageHref = manageBase + "/" + url.PathEscape(app.ID)
+			row.ManageLabel = "Manage"
+		} else {
+			row.ManagedNote = "Managed by admins"
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func (s *Server) uiProjectOAuthAppNew(c echo.Context) error {
+	ctx := c.Request().Context()
+	project, _ := s.memory.GetCurrentProject(ctx)
+	if project == nil || !s.strictProjectAdminForCaller(c, project.ID) {
+		return c.NoContent(http.StatusNotFound)
+	}
+	providers, err := s.memory.ListDSProviders(ctx)
+	if err != nil {
+		return redirectWithError(c, "/settings/credentials", userFacingError(err))
+	}
+	orgName := ""
+	orgID := ""
+	if project != nil {
+		orgID = project.OrgID
+		if org, oerr := s.memory.GetOrg(c.Request().Context(), project.OrgID); oerr == nil && org != nil {
+			orgName = org.Name
+		}
+	}
+	return s.page(c, pageTitle("Add OAuth app"), OAuthAppFormPage(dsOAuthAppFormData{
+		Nav:        s.settingsNavPayload(c, c.Request().Context()),
+		OrgID:      orgID,
+		OrgName:    orgName,
+		Action:     "/settings/credentials/apps",
+		BackHref:   "/settings/credentials",
+		Vendors:    dsOAuthVendors(providers),
+		ScopeLabel: "project",
+	}))
+}
+
+func (s *Server) uiProjectOAuthAppDetail(c echo.Context) error {
+	ctx := c.Request().Context()
+	project, _ := s.memory.GetCurrentProject(ctx)
+	if project == nil || !s.strictProjectAdminForCaller(c, project.ID) {
+		return c.NoContent(http.StatusNotFound)
+	}
+	app, err := s.memory.GetProjectDSOAuthApp(ctx, project.ID, c.Param("appId"))
+	if err != nil {
+		return redirectWithError(c, "/settings/credentials", userFacingError(err))
+	}
+	providers, _ := s.memory.ListDSProviders(ctx)
+	orgName, orgID := "", ""
+	orgID = project.OrgID
+	if org, oerr := s.memory.GetOrg(ctx, project.OrgID); oerr == nil && org != nil {
+		orgName = org.Name
+	}
+	return s.page(c, pageTitle("OAuth app"), OAuthAppFormPage(dsOAuthAppFormData{
+		Nav:        s.settingsNavPayload(c, ctx),
+		OrgID:      orgID,
+		OrgName:    orgName,
+		Action:     "/settings/credentials/apps/" + url.PathEscape(app.ID),
+		BackHref:   "/settings/credentials",
+		DeleteHref: "/settings/credentials/apps/" + url.PathEscape(app.ID) + "/delete",
+		App:        app,
+		Vendors:    dsOAuthVendors(providers),
+		ScopeLabel: "project",
+	}))
+}
+
+func (s *Server) uiProjectOAuthAppCreate(c echo.Context) error {
+	ctx := c.Request().Context()
+	project, _ := s.memory.GetCurrentProject(ctx)
+	if project == nil || !s.strictProjectAdminForCaller(c, project.ID) {
+		return c.NoContent(http.StatusNotFound)
+	}
+	req := dsOAuthAppRequestFromForm(c)
+	_, err := s.memory.CreateProjectDSOAuthApp(ctx, project.ID, req)
+	if err != nil {
+		return redirectWithError(c, "/settings/credentials/apps/new", userFacingError(err))
+	}
+	return c.Redirect(http.StatusSeeOther, "/settings/credentials?saved=1")
+}
+
+func (s *Server) uiProjectOAuthAppUpdate(c echo.Context) error {
+	ctx := c.Request().Context()
+	project, _ := s.memory.GetCurrentProject(ctx)
+	if project == nil || !s.strictProjectAdminForCaller(c, project.ID) {
+		return c.NoContent(http.StatusNotFound)
+	}
+	req := dsOAuthAppUpdateFromForm(c)
+	_, err := s.memory.UpdateProjectDSOAuthApp(ctx, project.ID, c.Param("appId"), req)
+	if err != nil {
+		return redirectWithError(c, "/settings/credentials/apps/"+url.PathEscape(c.Param("appId")), userFacingError(err))
+	}
+	return c.Redirect(http.StatusSeeOther, "/settings/credentials?saved=1")
+}
+
+func (s *Server) uiProjectOAuthAppDelete(c echo.Context) error {
+	ctx := c.Request().Context()
+	project, _ := s.memory.GetCurrentProject(ctx)
+	if project == nil || !s.strictProjectAdminForCaller(c, project.ID) {
+		return c.NoContent(http.StatusNotFound)
+	}
+	if err := s.memory.DeleteProjectDSOAuthApp(ctx, project.ID, c.Param("appId")); err != nil {
+		return redirectWithError(c, "/settings/credentials", userFacingError(err))
+	}
+	return c.Redirect(http.StatusSeeOther, "/settings/credentials?deleted=1")
+}
+
+func (s *Server) uiOrgOAuthAppNew(c echo.Context) error {
+	ctx := c.Request().Context()
+	orgID := c.Param("id")
+	if !s.orgAdminForCaller(c, orgID) {
+		return c.NoContent(http.StatusNotFound)
+	}
+	providers, err := s.memory.ListDSProviders(ctx)
+	if err != nil {
+		return redirectWithError(c, "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients", userFacingError(err))
+	}
+	orgName := ""
+	if org, oerr := s.memory.GetOrg(ctx, orgID); oerr == nil && org != nil {
+		orgName = org.Name
+	}
+	return s.page(c, pageTitle("Add OAuth app"), OAuthAppFormPage(dsOAuthAppFormData{
+		Nav:        s.settingsNavPayload(c, ctx),
+		OrgID:      orgID,
+		OrgName:    orgName,
+		Action:     "/orgs/" + url.PathEscape(orgID) + "/settings/oauth-apps",
+		BackHref:   "/orgs/" + url.PathEscape(orgID) + "/settings/oauth-clients",
+		Vendors:    dsOAuthVendors(providers),
+		ScopeLabel: "organization",
+	}))
+}
+
+func (s *Server) uiOrgOAuthAppDetail(c echo.Context) error {
+	ctx := c.Request().Context()
+	orgID := c.Param("id")
+	if !s.orgAdminForCaller(c, orgID) {
+		return c.NoContent(http.StatusNotFound)
+	}
+	app, err := s.memory.GetOrgDSOAuthApp(ctx, orgID, c.Param("appId"))
+	if err != nil {
+		return redirectWithError(c, "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients", userFacingError(err))
+	}
+	providers, _ := s.memory.ListDSProviders(ctx)
+	orgName := ""
+	if org, oerr := s.memory.GetOrg(ctx, orgID); oerr == nil && org != nil {
+		orgName = org.Name
+	}
+	return s.page(c, pageTitle("OAuth app"), OAuthAppFormPage(dsOAuthAppFormData{
+		Nav:        s.settingsNavPayload(c, ctx),
+		OrgID:      orgID,
+		OrgName:    orgName,
+		Action:     "/orgs/" + url.PathEscape(orgID) + "/settings/oauth-apps/" + url.PathEscape(app.ID),
+		BackHref:   "/orgs/" + url.PathEscape(orgID) + "/settings/oauth-clients",
+		DeleteHref: "/orgs/" + url.PathEscape(orgID) + "/settings/oauth-apps/" + url.PathEscape(app.ID) + "/delete",
+		App:        app,
+		Vendors:    dsOAuthVendors(providers),
+		ScopeLabel: "organization",
+	}))
+}
+
+func (s *Server) uiOrgOAuthAppCreate(c echo.Context) error {
+	orgID := c.Param("id")
+	if !s.orgAdminForCaller(c, orgID) {
+		return c.NoContent(http.StatusNotFound)
+	}
+	if _, err := s.memory.CreateOrgDSOAuthApp(c.Request().Context(), orgID, dsOAuthAppRequestFromForm(c)); err != nil {
+		return redirectWithError(c, "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-apps/new", userFacingError(err))
+	}
+	return c.Redirect(http.StatusSeeOther, "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients?saved=1")
+}
+
+func (s *Server) uiOrgOAuthAppUpdate(c echo.Context) error {
+	orgID := c.Param("id")
+	if !s.orgAdminForCaller(c, orgID) {
+		return c.NoContent(http.StatusNotFound)
+	}
+	if _, err := s.memory.UpdateOrgDSOAuthApp(c.Request().Context(), orgID, c.Param("appId"), dsOAuthAppUpdateFromForm(c)); err != nil {
+		return redirectWithError(c, "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-apps/"+url.PathEscape(c.Param("appId")), userFacingError(err))
+	}
+	return c.Redirect(http.StatusSeeOther, "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients?saved=1")
+}
+
+func (s *Server) uiOrgOAuthAppDelete(c echo.Context) error {
+	orgID := c.Param("id")
+	if !s.orgAdminForCaller(c, orgID) {
+		return c.NoContent(http.StatusNotFound)
+	}
+	if err := s.memory.DeleteOrgDSOAuthApp(c.Request().Context(), orgID, c.Param("appId")); err != nil {
+		return redirectWithError(c, "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients", userFacingError(err))
+	}
+	return c.Redirect(http.StatusSeeOther, "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients?deleted=1")
+}
+
+func dsOAuthAppRequestFromForm(c echo.Context) *DSCreateOAuthAppRequest {
+	vendor := strings.TrimSpace(c.FormValue("vendor"))
+	req := &DSCreateOAuthAppRequest{
+		Name:         strings.TrimSpace(c.FormValue("name")),
+		Vendor:       vendor,
+		ClientID:     strings.TrimSpace(c.FormValue("client_id")),
+		ClientSecret: c.FormValue("client_secret"),
+	}
+	req.ProviderConfigs = dsOAuthProviderConfigsFromForm(c, vendor)
+	return req
+}
+
+func dsOAuthAppUpdateFromForm(c echo.Context) *DSUpdateOAuthAppRequest {
+	name := strings.TrimSpace(c.FormValue("name"))
+	clientID := strings.TrimSpace(c.FormValue("client_id"))
+	req := &DSUpdateOAuthAppRequest{
+		Name:         &name,
+		ClientID:     &clientID,
+		ClientSecret: c.FormValue("client_secret"),
+	}
+	if v := strings.TrimSpace(c.FormValue("vendor")); v != "" {
+		req.ProviderConfigs = dsOAuthProviderConfigsFromForm(c, v)
+	}
+	return req
+}
+
+func dsOAuthProviderConfigsFromForm(c echo.Context, vendor string) map[string]DSOAuthProviderConfig {
+	configs := map[string]DSOAuthProviderConfig{}
+	if vendor == "google" {
+		if strategy := strings.TrimSpace(c.FormValue("google_drive_strategy")); strategy != "" {
+			configs["google_drive"] = DSOAuthProviderConfig{Strategy: strategy}
+		}
+	}
+	return configs
+}
+
+func dsProviderVendor(providers []DSProvider, providerType string) string {
+	for _, p := range providers {
+		if p.Type != providerType {
+			continue
+		}
+		if v := strings.TrimSpace(p.Vendor); v != "" {
+			return v
+		}
+		return p.Type
+	}
+	return ""
 }

@@ -11,7 +11,7 @@ import (
 
 func TestOAuthClient_Unconfigured(t *testing.T) {
 	svc := NewService(nil, &config.Config{}, discardLog(), NewDefaultRegistry())
-	if _, err := svc.resolveOAuthClient(context.Background(), uuid.Nil, ProviderTypeGoogleDrive); err == nil {
+	if _, err := svc.resolveOAuthClient(context.Background(), uuid.Nil, ProviderTypeGoogleDrive, nil); err == nil {
 		t.Fatal("resolveOAuthClient(google_drive) with no client = nil, want actionable error")
 	}
 }
@@ -21,7 +21,7 @@ func TestOAuthClient_ConfiguredFromDeploymentDefault(t *testing.T) {
 		GoogleClientID:     "cid",
 		GoogleClientSecret: "cs",
 	}}, discardLog(), NewDefaultRegistry())
-	c, err := svc.resolveOAuthClient(context.Background(), uuid.Nil, ProviderTypeGoogleDrive)
+	c, err := svc.resolveOAuthClient(context.Background(), uuid.Nil, ProviderTypeGoogleDrive, nil)
 	if err != nil {
 		t.Fatalf("resolveOAuthClient() error = %v", err)
 	}

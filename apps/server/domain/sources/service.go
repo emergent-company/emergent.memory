@@ -49,6 +49,16 @@ type Service struct {
 	// stops being parked. It is optional: nil means "do not publish", which is
 	// what the CLI, the dev MCP and every unit test get.
 	publisher NotificationPublisher
+
+	// graph persists typed source records. Optional: nil disables typed sync
+	// (unit tests that exercise document-only paths).
+	graph *graph.Service
+
+	// objectTypes installs provider-declared schema packs. Optional.
+	objectTypes ObjectTypeProvisioner
+
+	// mcpServers owns per-account MCP server rows. Optional.
+	mcpServers SourceMCPServerManager
 }
 
 // carriedConfigKeys are non-secret config keys owned by dedicated flows rather
@@ -73,6 +83,21 @@ type ServiceOption func(*Service)
 // WithOAuthClients overrides the deployment-default OAuth clients by provider.
 func WithOAuthClients(clients map[string]OAuthClient) ServiceOption {
 	return func(s *Service) { s.oauthClients = clients }
+}
+
+// WithGraphService wires the graph writer used for typed source records.
+func WithGraphService(g *graph.Service) ServiceOption {
+	return func(s *Service) { s.graph = g }
+}
+
+// WithObjectTypeProvisioner wires schema-pack installation for typed providers.
+func WithObjectTypeProvisioner(p ObjectTypeProvisioner) ServiceOption {
+	return func(s *Service) { s.objectTypes = p }
+}
+
+// WithSourceMCPServers wires per-account MCP server provisioning.
+func WithSourceMCPServers(m SourceMCPServerManager) ServiceOption {
+	return func(s *Service) { s.mcpServers = m }
 }
 
 // WithOAuthHTTPClient overrides the HTTP client used for token exchange.
@@ -416,10 +441,48 @@ func (s *Service) List(ctx context.Context, projectID uuid.UUID) ([]*Integration
 		return nil, err
 	}
 	out := make([]*Integration, len(srcs))
+	needsAppNames := false
 	for i, src := range srcs {
 		out[i] = s.toIntegration(src)
+		if src.OAuthAppID != nil {
+			needsAppNames = true
+		}
+	}
+	if needsAppNames {
+		names := s.oauthAppNames(ctx, projectID)
+		for i, src := range srcs {
+			if src.OAuthAppID != nil {
+				out[i].OAuthAppName = names[*src.OAuthAppID]
+			}
+		}
 	}
 	return out, nil
+}
+
+// oauthAppNames loads the display names of every app a project can see in two
+// queries (its project apps, then its org's apps), so listing N sources costs
+// two lookups instead of up to two per source.
+func (s *Service) oauthAppNames(ctx context.Context, projectID uuid.UUID) map[uuid.UUID]string {
+	names := map[uuid.UUID]string{}
+	if pst, ok := s.projectAppStore(); ok {
+		if rows, err := pst.ListProjectOAuthClientConfigs(ctx, projectID); err == nil {
+			for _, row := range rows {
+				names[row.ID] = row.Name
+			}
+		}
+	}
+	if ost, ok := s.orgAppStore(); ok {
+		if orgID, err := s.orgStore().ResolveOrgID(ctx, projectID); err == nil {
+			if rows, lerr := ost.ListOAuthClientConfigs(ctx, orgID); lerr == nil {
+				for _, row := range rows {
+					if _, seen := names[row.ID]; !seen {
+						names[row.ID] = row.Name
+					}
+				}
+			}
+		}
+	}
+	return names
 }
 
 // Create validates the request, encrypts the supplied credentials, strips the
@@ -477,6 +540,20 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 	if err != nil {
 		return nil, err
 	}
+	oauthAppID, err := s.validateSourceApp(ctx, projectID, req.ProviderType, req.OAuthAppID)
+	if err != nil {
+		return nil, err
+	}
+	if oauthAppID == nil {
+		oauthAppID = s.implicitSourceAppID(ctx, projectID, req.ProviderType)
+	}
+
+	// Typed providers declare their own schema pack; install it before the
+	// source row exists so a failed install cannot leave a source that syncs
+	// objects no schema knows about.
+	if err := s.ensureObjectTypes(ctx, projectID, p); err != nil {
+		return nil, apperror.NewInternal("install source schema pack", err)
+	}
 
 	now := s.now()
 	src := &Source{
@@ -487,12 +564,17 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 		Config:               stripCredentialKeys(cfg, p.CredentialKeys()),
 		EncryptedCredentials: blob,
 		CredentialID:         credentialID,
+		OAuthAppID:           oauthAppID,
 		SyncPolicy:           mode,
 		SyncIntervalMinutes:  interval,
 		Cursor:               map[string]any{},
 		Status:               "active",
 		CreatedAt:            now,
 		UpdatedAt:            now,
+	}
+	if _, ok := p.(SourceToolProvider); ok {
+		slug := s.deriveMcpSlug(ctx, src)
+		src.McpSlug = &slug
 	}
 
 	// Bind the creating credential to the new source (slice 2 of #2376, issue
@@ -534,6 +616,10 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 	if err != nil {
 		return nil, err
 	}
+	if err := s.provisionSourceMCP(ctx, created); err != nil {
+		_ = s.repo.Delete(ctx, created.ID, created.ProjectID)
+		return nil, apperror.NewInternal("provision source MCP server", err)
+	}
 
 	return s.toIntegration(created), nil
 }
@@ -561,12 +647,13 @@ func (s *Service) Get(ctx context.Context, projectID, id uuid.UUID) (*Integratio
 		return nil, err
 	}
 	out := s.toIntegration(src)
+	s.fillOAuthAppName(ctx, projectID, out, src.OAuthAppID)
 	// Report the effective scope strategy so the UI can explain an empty
 	// resource listing caused by a scope that cannot list (drive.file without
 	// the Google Picker) instead of re-deriving the resolution itself.
 	if p, ok := s.providers.Get(src.Provider); ok {
 		if _, oauth := p.OAuth(); oauth {
-			out.OAuthStrategy = s.effectiveOAuthStrategy(ctx, projectID, src.Provider)
+			out.OAuthStrategy = s.effectiveOAuthStrategy(ctx, projectID, src.Provider, src.OAuthAppID)
 			if g, ok := src.Config[oauthGrantedStrategyKey].(string); ok {
 				out.OAuthGrantedStrategy = g
 			}
@@ -630,6 +717,11 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 	existing, err := s.repo.GetByIDWithCredentials(ctx, id, projectID)
 	if err != nil {
 		return nil, err
+	}
+	if p, ok := s.providers.Get(existing.Provider); ok {
+		if err := s.ensureObjectTypes(ctx, projectID, p); err != nil {
+			return nil, apperror.NewInternal("install source schema pack", err)
+		}
 	}
 
 	if req.Name != nil {
@@ -704,6 +796,28 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 			savedRefActive = true
 		}
 	}
+	if req.OAuthAppID != nil {
+		appID, aerr := s.validateSourceApp(ctx, projectID, existing.Provider, req.OAuthAppID)
+		if aerr != nil {
+			return nil, aerr
+		}
+		oldID := uuid.Nil
+		if existing.OAuthAppID != nil {
+			oldID = *existing.OAuthAppID
+		}
+		newID := uuid.Nil
+		if appID != nil {
+			newID = *appID
+		}
+		if oldID != newID && (existing.CredentialID != nil || len(existing.EncryptedCredentials) > 0) {
+			// The stored grant belongs to the old client. Park the source so the
+			// scheduler cannot use it until the user reconnects; StartOAuth pins
+			// the new app id on the source.
+			status := SourceStatusNeedsReconnect
+			statusChange = &status
+		}
+		existing.OAuthAppID = appID
+	}
 	if req.Config != nil {
 		p, ok := s.providers.Get(existing.Provider)
 		if !ok {
@@ -714,6 +828,13 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 		cfg := cloneConfig(req.Config)
 		if normalizer, ok := p.(ConfigNormalizer); ok {
 			normalizer.NormalizeConfig(cfg)
+		}
+		if _, typed := p.(TypedObjectProvider); typed {
+			for _, key := range []string{"filter", "object_types", "mcp_write_tools_enabled", "query", "label_ids", "since"} {
+				if _, present := cfg[key]; present {
+					return nil, apperror.NewValidation("sync scope must be changed through the scope endpoint (PATCH /api/data-source-integrations/:id/scope), not the generic config update")
+				}
+			}
 		}
 		stored := cloneConfig(existing.Config)
 		if normalizer, ok := p.(ConfigNormalizer); ok {
@@ -769,6 +890,21 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 			return nil, err
 		}
 	}
+	if provider, ok := s.providers.Get(updated.Provider); ok {
+		if _, toolProvider := provider.(SourceToolProvider); toolProvider {
+			if updated.McpSlug == nil {
+				slug := s.deriveMcpSlug(ctx, updated)
+				updated.McpSlug = &slug
+				if _, uerr := s.repo.Update(ctx, updated); uerr != nil {
+					return nil, uerr
+				}
+			}
+			if perr := s.provisionSourceMCP(ctx, updated); perr != nil {
+				return nil, apperror.NewInternal("provision source MCP server", perr)
+			}
+		}
+	}
+
 	// An update that leaves the source not parked has nothing left to act on: an
 	// explicit enable retries the credential, an explicit disable stops the
 	// source, and a settings save preserves the status another writer chose.
@@ -790,8 +926,18 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 
 // Delete removes a source scoped by project.
 func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID) error {
+	if err := s.deleteSourceMCP(ctx, projectID, id); err != nil {
+		return err
+	}
 	if err := s.repo.Delete(ctx, id, projectID); err != nil {
 		return err
+	}
+	if s.mcpServers != nil {
+		if remaining, rerr := s.repo.List(ctx, projectID); rerr == nil && len(remaining) == 0 {
+			if derr := s.mcpServers.DeleteSourceAdminServer(ctx, projectID.String()); derr != nil {
+				s.log.Warn("failed to delete source-admin MCP server", "project_id", projectID, "error", derr)
+			}
+		}
 	}
 	// A deleted source must not leave an actionable item behind: the member can
 	// no longer fix it, so the item is resolved rather than left pointing at a
@@ -980,6 +1126,28 @@ func (s *Service) publicConfig(src *Source) map[string]any {
 	return src.Config
 }
 
+// fillOAuthAppName adds the display name of the source's OAuth app. The name is
+// not stored on the source; it is resolved from the app row so a rename is
+// reflected immediately.
+func (s *Service) fillOAuthAppName(ctx context.Context, projectID uuid.UUID, out *Integration, appID *uuid.UUID) {
+	if out == nil || appID == nil {
+		return
+	}
+	if pst, ok := s.projectAppStore(); ok {
+		if row, err := pst.GetProjectOAuthClientConfigByID(ctx, projectID, *appID); err == nil {
+			out.OAuthAppName = row.Name
+			return
+		}
+	}
+	if ost, ok := s.orgAppStore(); ok {
+		if orgID, err := s.orgStore().ResolveOrgID(ctx, projectID); err == nil {
+			if row, gerr := ost.GetOAuthClientConfigByID(ctx, orgID, *appID); gerr == nil {
+				out.OAuthAppName = row.Name
+			}
+		}
+	}
+}
+
 // toIntegration maps a persisted source to the SDK integration shape. It never
 // includes credential material, and derives the source type from the provider
 // catalog so it stays provider-agnostic.
@@ -993,6 +1161,11 @@ func (s *Service) toIntegration(src *Source) *Integration {
 		id := src.CredentialID.String()
 		credentialID = &id
 	}
+	var oauthAppID *string
+	if src.OAuthAppID != nil {
+		id := src.OAuthAppID.String()
+		oauthAppID = &id
+	}
 	return &Integration{
 		ID:                  src.ID.String(),
 		ProjectID:           src.ProjectID.String(),
@@ -1001,13 +1174,29 @@ func (s *Service) toIntegration(src *Source) *Integration {
 		SourceType:          sourceType,
 		SyncMode:            src.SyncPolicy,
 		SyncIntervalMinutes: src.SyncIntervalMinutes,
+		McpSlug:             src.McpSlug,
 		Config:              s.publicConfig(src),
 		LastSyncedAt:        src.LastSyncedAt,
 		Status:              src.Status,
 		ErrorMessage:        src.LastError,
 		ErrorCount:          src.ErrorCount,
 		CredentialID:        credentialID,
+		OAuthAppID:          oauthAppID,
 		CreatedAt:           src.CreatedAt,
 		UpdatedAt:           src.UpdatedAt,
 	}
+}
+
+// PreviewFilter validates an unsaved provider filter and returns its compiled
+// query. Providers without a filter preview return a validation error.
+func (s *Service) PreviewFilter(ctx context.Context, providerType string, cfg map[string]any) (string, error) {
+	p, ok := s.providers.Get(providerType)
+	if !ok {
+		return "", apperror.NewValidation("unsupported providerType: " + providerType)
+	}
+	preview, ok := p.(FilterPreviewProvider)
+	if !ok {
+		return "", apperror.NewValidation("provider does not support filter preview: " + providerType)
+	}
+	return preview.FilterPreview(cfg)
 }

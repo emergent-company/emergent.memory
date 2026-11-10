@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -808,6 +809,7 @@ func newDSUIServer(f *fakeMemory) *echo.Echo {
 	e.POST("/data-sources/refs", s.uiDataSourceRefs)
 	e.POST("/data-sources/:id/field-options", s.uiDataSourceFieldOptions)
 	e.GET("/data-sources/oauth/start", s.uiDataSourceOAuthStart)
+	e.POST("/data-sources/oauth/start", s.uiDataSourceOAuthStart)
 	e.GET("/data-sources/oauth/callback", s.uiDataSourceOAuthCallback)
 	e.GET("/data-sources/:id", s.uiDataSourceDetail)
 	e.GET("/data-sources/:id/reconnect", s.uiDataSourceReconnect)
@@ -2309,6 +2311,9 @@ func orgOAuthAdminFake() *fakeMemory {
 		dsOrgOAuthClients: []DSOAuthClientConfig{
 			{ProviderType: "google_drive", ClientID: "cid-123", Strategy: "drive.file", Config: map[string]any{"unmanaged": "keep-me"}, Configured: true},
 		},
+		dsOrgOAuthApps: []DSOAuthApp{
+			{ID: "app-1", Scope: "organization", Vendor: "google", VendorName: "Google", Name: "Google", ClientID: "cid-123", Configured: true},
+		},
 	}
 }
 
@@ -2320,7 +2325,7 @@ func TestUIOrgOAuthClientsPageAdminAndNonAdmin(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("admin status = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	if body := rec.Body.String(); !strings.Contains(body, "Google Drive") || !strings.Contains(body, "cid-123") {
+	if body := rec.Body.String(); !strings.Contains(body, "Google") || !strings.Contains(body, "cid-123") {
 		t.Errorf("admin body = %s", body)
 	}
 
@@ -2584,6 +2589,9 @@ func projectCredentialsAdminFake() *fakeMemory {
 		dsProjectOAuthClients: []DSOAuthClientConfig{
 			{ProviderType: "google_drive", ClientID: "pcid", RedirectURI: "https://api.example/api/data-source-integrations/oauth/google_drive/callback", JavascriptOrigin: "https://admin.example", Configured: true},
 		},
+		dsProjectOAuthApps: []DSOAuthApp{
+			{ID: "app-1", Scope: "project", Vendor: "google", VendorName: "Google", Name: "Google OAuth app", ClientID: "pcid", Configured: true},
+		},
 	}
 }
 
@@ -2826,6 +2834,9 @@ func TestUIProjectCredentialsPageAdminAndMember(t *testing.T) {
 			ProviderType: "google_drive",
 			Project:      DSOAuthCredentialSource{Configured: true, ClientID: "pcid"},
 		}},
+		dsProjectOAuthApps: []DSOAuthApp{
+			{ID: "app-1", Scope: "project", Vendor: "google", VendorName: "Google", Name: "Google OAuth app", ClientID: "pcid", Configured: true},
+		},
 	})
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/credentials", nil))
@@ -2833,10 +2844,10 @@ func TestUIProjectCredentialsPageAdminAndMember(t *testing.T) {
 		t.Fatalf("member status = %d, want 200", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Managed by project admins") {
+	if !strings.Contains(body, "Managed by admins") {
 		t.Error("member table should be read-only")
 	}
-	if strings.Contains(body, `href="/settings/credentials/google_drive"`) {
+	if strings.Contains(body, `href="/settings/credentials/apps/app-1"`) {
 		t.Error("member table must not link to the admin editor")
 	}
 
@@ -2847,15 +2858,15 @@ func TestUIProjectCredentialsPageAdminAndMember(t *testing.T) {
 		t.Fatalf("member editor status = %d, want 404", rec.Code)
 	}
 
-	// Admin editor resolves the provider from the catalog.
+	// The legacy per-provider editor redirects to the sole named app.
 	e = newDSUIServer(projectCredentialsAdminFake())
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/credentials/google_drive", nil))
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("admin editor status = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	if body := rec.Body.String(); !strings.Contains(body, "Google OAuth app") {
-		t.Errorf("editor body missing the vendor label: %s", body)
+	if loc := rec.Header().Get("Location"); loc != "/settings/credentials/apps/app-1" {
+		t.Errorf("legacy editor redirect = %q", loc)
 	}
 
 	// Unknown provider is a 404, not an empty editor.
@@ -2894,6 +2905,10 @@ func TestUIProjectCredentialsOrgAdminCannotManageProjectApps(t *testing.T) {
 			Organization:  DSOAuthCredentialSource{Configured: true, ClientID: "ocid"},
 			ResolvedScope: dsCredentialScopeProject,
 		}},
+		dsProjectOAuthApps: []DSOAuthApp{
+			{ID: "app-1", Scope: "project", Vendor: "google", VendorName: "Google", Name: "Project app", ClientID: "pcid", Configured: true},
+			{ID: "app-org", Scope: "organization", Vendor: "google", VendorName: "Google", Name: "Org app", ClientID: "ocid", Configured: true},
+		},
 	}
 	e := newDSUIServer(f)
 
@@ -2903,16 +2918,16 @@ func TestUIProjectCredentialsOrgAdminCannotManageProjectApps(t *testing.T) {
 		t.Fatalf("org admin credentials status = %d, want 200", rec.Code)
 	}
 	body := rec.Body.String()
-	if strings.Contains(body, `href="/settings/credentials/google_drive"`) {
+	if strings.Contains(body, `href="/settings/credentials/apps/app-1"`) {
 		t.Error("org_admin/project_user must not get the project editor link")
 	}
-	if !strings.Contains(body, "Managed by project admins") {
+	if !strings.Contains(body, "Managed by admins") {
 		t.Error("org_admin/project_user should see the project row as read-only")
 	}
 	// The org-wide app stays manageable by the org admin, through the
 	// per-provider org editor rather than an anchor on a stacked form page.
 	// (Rendered links are canonicalised from /orgs/{id} to /o/{id}.)
-	if !strings.Contains(body, `/o/o1/settings/oauth-clients/google_drive`) {
+	if !strings.Contains(body, `/o/o1/settings/oauth-apps/app-org`) {
 		t.Error("org_admin should still get the organization editor link")
 	}
 
@@ -4054,4 +4069,70 @@ func elementText(n *html.Node) string {
 	}
 	walk(n)
 	return strings.TrimSpace(b.String())
+}
+
+func TestUIDataSourceGmailOAuthStartCarriesFilter(t *testing.T) {
+	f := &fakeMemory{dsOAuthAuthorizeResp: &DSOAuthAuthorizeResponse{AuthorizeURL: "https://accounts.example/authorize?state=g1"}}
+	e := newDSUIServer(f)
+
+	form := url.Values{
+		"providerType":            {"gmail"},
+		"filter.categories":       {"Primary", "Updates"},
+		"filter.labels":           {"Label_7"},
+		"filter.hasAttachment":    {"true"},
+		"filter.after":            {"2025-01-01"},
+		"object_types":            {"EmailMessage"},
+		"mcp_write_tools_enabled": {"true"},
+		"mcp_alias":               {"work"},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/data-sources/oauth/start", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if f.dsLastOAuthProvider != "gmail" {
+		t.Fatalf("provider = %q, want gmail", f.dsLastOAuthProvider)
+	}
+	filter, _ := f.dsLastOAuthConfig["filter"].(map[string]any)
+	if cats := filter["categories"]; fmt.Sprint(cats) != "[Primary Updates]" {
+		t.Errorf("categories = %v", cats)
+	}
+	if f.dsLastOAuthConfig["mcp_write_tools_enabled"] != true {
+		t.Errorf("mcp_write_tools_enabled = %v", f.dsLastOAuthConfig["mcp_write_tools_enabled"])
+	}
+}
+
+func TestUIDataSourceGmailConnectFormRendered(t *testing.T) {
+	gmail := &DSProvider{Type: "gmail", Name: "Gmail", AuthMethods: []string{"oauth"}}
+	html := renderHTML(t, DataSourceNewPage([]DSProvider{*gmail}, gmail, nil, nil, dsSavedCredentialPicker{}, nil, nil, nil))
+	for _, want := range []string{
+		`data-testid="ds-gmail-filter-form"`,
+		`name="filter.categories"`,
+		`name="object_types"`,
+		`name="mcp_write_tools_enabled"`,
+		"Mailbox scope",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("gmail connect form missing %q", want)
+		}
+	}
+}
+
+func TestGmailEditFieldsPreserveAllFilterKeys(t *testing.T) {
+	src := &DSIntegration{ProviderType: "gmail", Config: map[string]any{
+		"filter": map[string]any{
+			"excludeSenders": []any{"blocked@example.com"},
+			"domains":        []any{"example.com"},
+			"excludeDomains": []any{"spam.example.com"},
+		},
+	}}
+	html := renderHTML(t, dsGmailEditFields(src))
+	for _, want := range []string{`name="filter.excludeSenders"`, `name="filter.domains"`, `name="filter.excludeDomains"`, "blocked@example.com", "spam.example.com"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("gmail edit fields missing %q", want)
+		}
+	}
 }
