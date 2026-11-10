@@ -421,18 +421,6 @@ func (r *Repository) CancelSourceSubjectClaims(ctx context.Context, projectID, s
 	return cancelled, nil
 }
 
-// FindSourceEventClaimByRunID resolves the claim bound to a run.
-func (r *Repository) FindSourceEventClaimByRunID(ctx context.Context, projectID, runID uuid.UUID) (*SourceEventClaim, error) {
-	claim := new(SourceEventClaim)
-	err := r.projectTx(ctx, projectID, func(ctx context.Context, tx bun.Tx) error {
-		return tx.NewSelect().Model(claim).Where("sc.run_id = ?", runID).Limit(1).Scan(ctx)
-	})
-	if err != nil {
-		return nil, err
-	}
-	return claim, nil
-}
-
 // --- Trigger-backed source lookups ---
 
 func (r *Repository) FindSourceByID(ctx context.Context, id uuid.UUID) (*Source, error) {
