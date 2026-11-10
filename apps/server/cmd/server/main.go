@@ -46,6 +46,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/email"
 	"github.com/emergent-company/emergent.memory/domain/embeddingpolicies"
 	"github.com/emergent-company/emergent.memory/domain/events"
+	"github.com/emergent-company/emergent.memory/domain/githubapp"
 	"github.com/emergent-company/emergent.memory/domain/extraction"
 	"github.com/emergent-company/emergent.memory/domain/feedback"
 	"github.com/emergent-company/emergent.memory/domain/graph"
@@ -286,6 +287,9 @@ func featureFxOptions(f config.FeatureSet) []fx.Option {
 	}
 	if f.MCPRegistry {
 		opts = append(opts, mcpregistry.Module)
+	}
+	if f.GitHubApp {
+		opts = append(opts, githubapp.Module)
 	}
 	if f.MCPRelay {
 		opts = append(opts, mcprelay.Module)
