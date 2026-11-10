@@ -15,7 +15,8 @@ env:
 jobs:
   build-server:
     name: Build and Push Server Image
-    runs-on: ubuntu-latest
+    # Runs on the self-hosted memory pool; buildx + multi-arch QEMU verified there 2026-11-10.
+    runs-on: [self-hosted, linux, x64, memory]
     permissions:
       contents: write
       packages: write
