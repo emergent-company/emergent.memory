@@ -90,13 +90,13 @@ func TestOAuthClientConfigMigrationUpDown(t *testing.T) {
 
 	// The vendor model must allow two named apps for the same vendor in one org.
 	// The legacy unique (organization_id, provider) indexes have to be gone, or
-	// the second insert fails. This is a DB-backed guard for 00283: a fake store
+	// the second insert fails. This is a DB-backed guard for 00284: a fake store
 	// cannot see the index.
 	if indexExists(ctx, pool, "kb", "idx_oauth_client_configs_org_provider") {
-		t.Fatalf("legacy idx_oauth_client_configs_org_provider still exists after 00283")
+		t.Fatalf("legacy idx_oauth_client_configs_org_provider still exists after 00284")
 	}
 	if !indexExists(ctx, pool, "kb", "idx_oauth_client_configs_org_vendor_name") {
-		t.Fatalf("idx_oauth_client_configs_org_vendor_name is missing after 00283")
+		t.Fatalf("idx_oauth_client_configs_org_vendor_name is missing after 00284")
 	}
 	var orgID string
 	if err := pool.QueryRow(ctx, "INSERT INTO kb.orgs (name) VALUES ('oauth-app-index-test') RETURNING id::text").Scan(&orgID); err != nil {
