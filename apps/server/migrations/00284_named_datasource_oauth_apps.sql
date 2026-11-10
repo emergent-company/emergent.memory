@@ -124,7 +124,7 @@ WHERE s.oauth_app_id IS NULL
 -- (scope, provider) can be represented after the vendor model is removed.
 -- Legacy Drive and Gmail rows survive because their provider values differ.
 -- Per-provider scope configuration collapses to the legacy columns.
-DROP INDEX IF EXISTS idx_sources_oauth_app_id;
+DROP INDEX IF EXISTS kb.idx_sources_oauth_app_id;
 ALTER TABLE kb.sources DROP COLUMN IF EXISTS oauth_app_id;
 
 WITH ranked AS (
