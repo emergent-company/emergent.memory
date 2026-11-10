@@ -28,7 +28,7 @@ const (
 // review API. A ref name ("main") must never be accepted: the diff and the
 // review are bound to one immutable commit, not to whatever a branch points at
 // when the request lands.
-var commitSHARe = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+var commitSHARe = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 func validCommitSHA(sha string) bool {
 	return commitSHARe.MatchString(sha)
@@ -50,57 +50,6 @@ func truncateUTF8(s string, max int) string {
 		max--
 	}
 	return s[:max]
-}
-
-func githubAppToolDefinitions() []mcp.ToolDefinition {
-	return []mcp.ToolDefinition{
-		{
-			Name:        toolPRDiff,
-			AgentOnly:   true,
-			Description: "Read the diff and changed files for one commit SHA of a GitHub repository connected to this project. Review the exact SHA named by the review subject; do not assume the PR's current head.",
-			InputSchema: mcp.InputSchema{
-				Type: "object",
-				Properties: map[string]mcp.PropertySchema{
-					"repo":     {Type: "string", Description: "Repository as owner/name"},
-					"head_sha": {Type: "string", Description: "Commit SHA to review (the reviewed head)"},
-				},
-				Required: []string{"repo", "head_sha"},
-			},
-		},
-		{
-			Name:        toolReviewSubmit,
-			AgentOnly:   true,
-			Description: "Submit a review verdict for a GitHub pull request at an exact commit SHA. Posts the review, a head-bound `reviewed` check, and the `Reviewed-SHA` merge-guard marker. Fails closed if the PR head moved.",
-			InputSchema: mcp.InputSchema{
-				Type: "object",
-				Properties: map[string]mcp.PropertySchema{
-					"repo":     {Type: "string", Description: "Repository as owner/name"},
-					"number":   {Type: "number", Description: "Pull request number"},
-					"head_sha": {Type: "string", Description: "Reviewed commit SHA"},
-					"verdict":  {Type: "string", Description: "MERGE or CHANGES_REQUESTED", Enum: []string{"MERGE", "CHANGES_REQUESTED"}},
-					"summary":  {Type: "string", Description: "Review summary, including blocking findings when rejecting"},
-				},
-				Required: []string{"repo", "number", "head_sha", "verdict", "summary"},
-			},
-		},
-	}
-}
-
-// GetGitHubAppToolDefinitionsForProject advertises the review tools only for a
-// project with an enabled installation and readable credentials.
-func (s *Service) GetGitHubAppToolDefinitionsForProject(ctx context.Context, projectID string) []mcp.ToolDefinition {
-	if s.cipher == nil {
-		return nil
-	}
-	projectUUID, err := uuid.Parse(projectID)
-	if err != nil {
-		return nil
-	}
-	n, err := s.repo.CountEnabledInstallationsByProject(ctx, projectUUID)
-	if err != nil || n == 0 {
-		return nil
-	}
-	return githubAppToolDefinitions()
 }
 
 // HandlesGitHubAppTool reports whether name belongs to this handler.

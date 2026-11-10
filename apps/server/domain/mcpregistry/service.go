@@ -883,6 +883,16 @@ func (s *Service) GetEnabledToolsForProject(ctx context.Context, projectID strin
 	return s.repo.FindAllEnabledTools(ctx, projectID)
 }
 
+// RefreshBuiltinServer invalidates the per-project once-only guard and re-seeds
+// the builtin tool catalog. Used when a capability adds or removes tools after a
+// project's builtin server already exists (e.g. a GitHub App installation).
+func (s *Service) RefreshBuiltinServer(ctx context.Context, projectID string) error {
+	s.mu.Lock()
+	delete(s.builtinRegistered, projectID)
+	s.mu.Unlock()
+	return s.EnsureBuiltinServer(ctx, projectID)
+}
+
 // GetEnabledBuiltinToolsForProject calls EnsureBuiltinServer (so all tools exist in DB)
 // then returns only the enabled builtin tools for a project from the DB.
 // This lets per-project enable/disable overrides be honoured by ToolPool.

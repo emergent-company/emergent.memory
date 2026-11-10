@@ -52,10 +52,16 @@ jobs:
             exit 0
           fi
 
-          sha=$(printf '%s\n' "${BODY}" | sed -n 's/^Reviewed-SHA: \([0-9a-f]\{40\}\)[[:space:]]*$/\1/p' | tail -1)
-          verdict=$(printf '%s\n' "${BODY}" | sed -n 's/^Verdict: \([A-Za-z_][A-Za-z_ ]*\)[[:space:]]*$/\1/p' | tail -1)
-          if [[ -z "${sha}" || -z "${verdict}" ]]; then
+          sha=$(printf '%s\n' "${BODY}" | sed -n 's/^Reviewed-SHA: \([0-9a-f]\{40\}\)[[:space:]]*$/\1/p' | head -1)
+          verdicts=$(printf '%s\n' "${BODY}" | sed -n 's/^Verdict: \([A-Za-z_][A-Za-z_ ]*\)[[:space:]]*$/\1/p')
+          if [[ -z "${sha}" || -z "${verdicts}" ]]; then
             exit 0
+          fi
+          # Any non-MERGE verdict in the comment rejects, matching merge-guard.
+          if printf '%s\n' "${verdicts}" | grep -qv '^MERGE$'; then
+            verdict=CHANGES_REQUESTED
+          else
+            verdict=MERGE
           fi
 
           head=$(gh pr view "${PR}" --repo "${REPO}" --json headRefOid --jq '.headRefOid')

@@ -89,7 +89,7 @@ func TestHandleWebhookEnqueuesOneReviewPerHead(t *testing.T) {
 	}))
 	defer fake.Close()
 
-	svc := NewService(repo, agents.NewRepository(db.DB), cipher, NewTokenMinter(fake.URL, fake.Client()), &config.Config{}, nil)
+	svc := NewService(repo, agents.NewRepository(db.DB), nil, cipher, NewTokenMinter(fake.URL, fake.Client()), &config.Config{}, nil)
 	svc.newClient = func(_, token string) *Client { return NewClient(fake.URL, token, fake.Client()) }
 
 	body := func(action, state string, pr int, head, repoName string, draft bool) []byte {

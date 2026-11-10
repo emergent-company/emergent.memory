@@ -19,6 +19,10 @@ const InternalToolPrefix = "memory_"
 // When a request contains tools[], any name that collides with the
 // "memory_<name>" form is rejected as a conflict.
 var internalToolNames = map[string]struct{}{
+	// ── GitHub review ───────────────────────────────────────────────────────
+	"github-pr-diff":       {},
+	"github-review-submit": {},
+
 	// ── Graph / entity ─────────────────────────────────────────────────────
 	"project-get":          {},
 	"project-create":       {},

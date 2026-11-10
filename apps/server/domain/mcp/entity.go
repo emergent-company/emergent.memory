@@ -159,9 +159,6 @@ type MCPRegistryToolHandler interface {
 // implemented by the githubapp domain to avoid a circular import (githubapp
 // imports agents, which the MCP layer must not import back).
 type GitHubAppToolHandler interface {
-	// GetGitHubAppToolDefinitionsForProject returns the review tools enabled for
-	// a project with an active GitHub App installation.
-	GetGitHubAppToolDefinitionsForProject(ctx context.Context, projectID string) []ToolDefinition
 	// HandlesGitHubAppTool reports whether the name belongs to this handler.
 	HandlesGitHubAppTool(toolName string) bool
 	// ExecuteGitHubAppTool resolves the project's installation, mints a scoped

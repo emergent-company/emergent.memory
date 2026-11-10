@@ -1931,6 +1931,7 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 	// session_todo_tools.go). Registered here so they dispatch through the same
 	// ExecuteTool switch as every other tool.
 	tools = append(tools, sessionTodoToolDefinitions()...)
+	tools = append(tools, githubAppToolDefinitions()...)
 
 	// Apply RequiredScope from the central static map and the agent-tool map to
 	// any tool that doesn't already declare one. Tools in dynamic *_tools.go
@@ -2029,11 +2030,6 @@ func (s *Service) legacyToolDefinitionsForProject(ctx context.Context, projectID
 		// RequiredScope. Re-apply so the tools/call scope gate sees the same
 		// authority as the tools/list (GetToolDefinitions) path.
 		applyRequiredScopes(tools)
-	}
-
-	// Append the GitHub App review tools for projects with an installation.
-	if s.githubAppToolHandler != nil {
-		tools = append(tools, s.githubAppToolHandler.GetGitHubAppToolDefinitionsForProject(ctx, projectID)...)
 	}
 
 	// Append source-backed tools (Gmail etc.) for the project's connected accounts.

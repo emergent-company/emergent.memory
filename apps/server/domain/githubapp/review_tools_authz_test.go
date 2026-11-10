@@ -17,10 +17,6 @@ type staticReviewToolsHandler struct {
 	calls int
 }
 
-func (h *staticReviewToolsHandler) GetGitHubAppToolDefinitionsForProject(context.Context, string) []mcp.ToolDefinition {
-	return githubAppToolDefinitions()
-}
-
 func (h *staticReviewToolsHandler) HandlesGitHubAppTool(name string) bool {
 	return name == toolPRDiff || name == toolReviewSubmit
 }

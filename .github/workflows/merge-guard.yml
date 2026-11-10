@@ -39,8 +39,9 @@ run-name: merge-guard PR ${{ github.event.inputs.pr || github.event.pull_request
 # The guard passes only when the most recent TRUSTED marker equals the PR head.
 # A marker is trusted only when its author is OWNER/COLLABORATOR or their
 # immutable user id is in the MERGE_GUARD_TRUSTED_USER_IDS repository variable
-# (MEMBER alone is org membership, not write access). Fork contributors and bots
-# cannot mint one.
+# (MEMBER alone is org membership, not write access). Fork contributors cannot
+# mint one; a GitHub App bot can only when its immutable user id is allowlisted
+# (the review-app path does exactly that).
 #
 # A push changes the head, so the automatic run has no marker that can name it.
 # On that path the published `merge-guard` CHECK RUN stays **neutral** ("awaiting

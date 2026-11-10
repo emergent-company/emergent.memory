@@ -18,7 +18,7 @@ import (
 // It is DB-free: the client is pointed at an httptest server and the methods
 // under test never touch a repository.
 func TestReviewSubmitRequiresDiffInSameRun(t *testing.T) {
-	head := "abc1234"
+	head := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	files := []map[string]any{{
 		"filename": "a.go", "status": "modified", "additions": 1, "deletions": 0, "patch": "@@ -1 +1 @@",
 	}}
@@ -59,7 +59,7 @@ func TestReviewSubmitRequiresDiffInSameRun(t *testing.T) {
 	svc := &Service{}
 	args := func() map[string]any {
 		return map[string]any{
-			"repo": "owner/repo", "number": float64(7), "head_sha": "abc1234",
+			"repo": "owner/repo", "number": float64(7), "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			"verdict": "MERGE", "summary": "looks good",
 		}
 	}
@@ -77,7 +77,7 @@ func TestReviewSubmitRequiresDiffInSameRun(t *testing.T) {
 	require.Equal(t, 0, reviews, "no review may be posted without reading the diff")
 
 	// Reading the exact commit records evidence; the same run may now submit.
-	_, err = svc.executePRDiff(ctx, client, "owner/repo", "abc1234")
+	_, err = svc.executePRDiff(ctx, client, "owner/repo", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	require.NoError(t, err)
 	_, err = svc.executeReviewSubmit(ctx, client, "owner/repo", args())
 	require.NoError(t, err)
@@ -87,13 +87,13 @@ func TestReviewSubmitRequiresDiffInSameRun(t *testing.T) {
 
 	// An empty diff is not reviewable: it records no evidence, so a submit for
 	// that commit is refused even in a run that successfully called the diff.
-	head = "def5678"
+	head = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	files = nil
 	emptyCtx := mcp.ContextWithNewToolResultCache(context.Background())
-	_, err = svc.executePRDiff(emptyCtx, client, "owner/repo", "def5678")
+	_, err = svc.executePRDiff(emptyCtx, client, "owner/repo", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 	require.NoError(t, err)
 	_, err = svc.executeReviewSubmit(emptyCtx, client, "owner/repo", map[string]any{
-		"repo": "owner/repo", "number": float64(7), "head_sha": "def5678",
+		"repo": "owner/repo", "number": float64(7), "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		"verdict": "MERGE", "summary": "approved without reading anything",
 	})
 	require.Error(t, err)

@@ -8,6 +8,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
 	"github.com/emergent-company/emergent.memory/internal/config"
 )
 
@@ -19,6 +20,7 @@ var Module = fx.Module("githubapp",
 		NewRepository,
 		provideTokenMinter,
 		provideCredentialCipher,
+		provideBuiltinToolRefresher,
 		NewService,
 		NewHandler,
 	),
@@ -28,6 +30,12 @@ var Module = fx.Module("githubapp",
 		registerMCPToolHandler,
 	),
 )
+
+// provideBuiltinToolRefresher maps the registry service onto the narrow
+// interface the producer uses to re-seed a project's builtin tools.
+func provideBuiltinToolRefresher(svc *mcpregistry.Service) BuiltinToolRefresher {
+	return svc
+}
 
 func provideTokenMinter(cfg *config.Config) *TokenMinter {
 	baseURL := ""

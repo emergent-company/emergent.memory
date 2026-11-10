@@ -53,7 +53,7 @@ func TestGitHubAppReviewTools(t *testing.T) {
 	inst := &Installation{AppPK: app.ID, OrgID: orgID, ProjectID: projectID, InstallationID: 42, Repos: []string{"owner/repo"}, AgentID: agentID, Queue: "security-review", Enabled: true}
 	require.NoError(t, repo.CreateInstallation(ctx, inst))
 
-	currentHead := "abc1234"
+	currentHead := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	reviewCalls := 0
 	var reviewBody, checkBody, commentBody map[string]any
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -61,9 +61,9 @@ func TestGitHubAppReviewTools(t *testing.T) {
 		case r.URL.Path == "/app/installations/42/access_tokens":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{"token": "ghs_test", "expires_at": time.Now().Add(time.Hour)})
-		case r.URL.Path == "/repos/owner/repo/commits/abc1234":
+		case r.URL.Path == "/repos/owner/repo/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"sha": "abc1234", "commit": map[string]any{"message": "fix"},
+				"sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "commit": map[string]any{"message": "fix"},
 				"files": []map[string]any{{"filename": "a.go", "status": "modified", "additions": 1, "deletions": 0, "patch": "@@ -1 +1 @@"}},
 			})
 		case r.URL.Path == "/repos/owner/repo/pulls/7":
@@ -92,30 +92,28 @@ func TestGitHubAppReviewTools(t *testing.T) {
 	}))
 	defer fake.Close()
 
-	svc := NewService(repo, agents.NewRepository(db.DB), cipher, NewTokenMinter(fake.URL, fake.Client()), &config.Config{}, nil)
+	svc := NewService(repo, agents.NewRepository(db.DB), nil, cipher, NewTokenMinter(fake.URL, fake.Client()), &config.Config{}, nil)
 	svc.newClient = func(_, token string) *Client { return NewClient(fake.URL, token, fake.Client()) }
 
-	defs := svc.GetGitHubAppToolDefinitionsForProject(ctx, projectID.String())
-	require.Len(t, defs, 2)
 	require.True(t, svc.HandlesGitHubAppTool(toolPRDiff))
 	require.True(t, svc.HandlesGitHubAppTool(toolReviewSubmit))
 	require.False(t, svc.HandlesGitHubAppTool("graph-write"))
 
-	diff, err := svc.ExecuteGitHubAppTool(ctx, projectID.String(), toolPRDiff, map[string]any{"repo": "owner/repo", "head_sha": "abc1234"})
+	diff, err := svc.ExecuteGitHubAppTool(ctx, projectID.String(), toolPRDiff, map[string]any{"repo": "owner/repo", "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})
 	require.NoError(t, err)
 	require.Contains(t, diff.Content[0].Text, "a.go")
 	require.Contains(t, diff.Content[0].Text, "@@ -1 +1 @@")
 
 	res, err := svc.ExecuteGitHubAppTool(ctx, projectID.String(), toolReviewSubmit, map[string]any{
-		"repo": "owner/repo", "number": float64(7), "head_sha": "abc1234",
+		"repo": "owner/repo", "number": float64(7), "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"verdict": "MERGE", "summary": "looks good",
 	})
 	require.NoError(t, err)
-	require.Equal(t, "abc1234", reviewBody["commit_id"])
+	require.Equal(t, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", reviewBody["commit_id"])
 	require.Equal(t, "APPROVE", reviewBody["event"])
 	require.Equal(t, "success", checkBody["conclusion"])
-	require.Equal(t, "abc1234", checkBody["head_sha"])
-	require.Contains(t, commentBody["body"], "Reviewed-SHA: abc1234")
+	require.Equal(t, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", checkBody["head_sha"])
+	require.Contains(t, commentBody["body"], "Reviewed-SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	require.Contains(t, commentBody["body"], "Verdict: MERGE")
 	require.Equal(t, "MERGE", res.StructuredContent["verdict"])
 
@@ -123,7 +121,7 @@ func TestGitHubAppReviewTools(t *testing.T) {
 	currentHead = "def5678"
 	beforeCalls := reviewCalls
 	_, err = svc.ExecuteGitHubAppTool(ctx, projectID.String(), toolReviewSubmit, map[string]any{
-		"repo": "owner/repo", "number": float64(7), "head_sha": "abc1234",
+		"repo": "owner/repo", "number": float64(7), "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"verdict": "MERGE", "summary": "stale",
 	})
 	require.Error(t, err)
@@ -131,6 +129,6 @@ func TestGitHubAppReviewTools(t *testing.T) {
 	require.Equal(t, beforeCalls, reviewCalls)
 
 	// No installation for a different repo means no tools/failure.
-	_, err = svc.ExecuteGitHubAppTool(ctx, projectID.String(), toolPRDiff, map[string]any{"repo": "other/repo", "head_sha": "abc1234"})
+	_, err = svc.ExecuteGitHubAppTool(ctx, projectID.String(), toolPRDiff, map[string]any{"repo": "other/repo", "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})
 	require.Error(t, err)
 }
