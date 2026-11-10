@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -586,4 +587,14 @@ func (r *Repository) DeleteProjectOAuthClientConfigByID(ctx context.Context, pro
 		return apperror.ErrNotFound
 	}
 	return nil
+}
+
+// duplicateError reports a PostgreSQL unique violation so callers can answer
+// 409 instead of leaking a 500 for a concurrent duplicate app name.
+func duplicateError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "23505") || strings.Contains(msg, "duplicate key value")
 }

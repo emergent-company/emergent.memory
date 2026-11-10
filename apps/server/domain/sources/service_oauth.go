@@ -154,7 +154,7 @@ func (s *Service) StartOAuth(ctx context.Context, projectID uuid.UUID, providerT
 		if err != nil {
 			return nil, err
 		}
-		if appID != nil && *appID != uuid.Nil {
+		if appID != nil {
 			req.Config = cloneConfig(req.Config)
 			req.Config[oauthPendingAppKey] = appID.String()
 		}
@@ -302,11 +302,6 @@ func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code s
 			}
 			appID = &id
 		}
-		// A zero id means "use the deployment default" and is never persisted on
-		// the source.
-		if appID != nil && *appID == uuid.Nil {
-			appID = nil
-		}
 		client, err = s.resolveOAuthClient(ctx, pending.ProjectID, pending.Provider, appID)
 		if err != nil {
 			return nil, fail(err)
@@ -337,7 +332,7 @@ func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code s
 	delete(cfg, oauthReconnectKey)
 	var chosenAppID *uuid.UUID
 	if raw, ok := cfg[oauthPendingAppKey].(string); ok && strings.TrimSpace(raw) != "" {
-		if id, perr := uuid.Parse(raw); perr == nil {
+		if id, perr := uuid.Parse(raw); perr == nil && id != uuid.Nil {
 			chosenAppID = &id
 		}
 	}

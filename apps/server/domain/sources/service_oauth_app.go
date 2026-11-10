@@ -189,6 +189,9 @@ func (s *Service) CreateOrgOAuthApp(ctx context.Context, orgID uuid.UUID, userID
 	if err != nil {
 		return nil, err
 	}
+	if err := s.ensureAppNameFree(ctx, true, uuid.Nil, orgID, vendor, name, uuid.Nil); err != nil {
+		return nil, err
+	}
 	blob, err := s.encryptCredentials(Credentials{oauthClientIDKey: clientID, oauthClientSecretKey: secret})
 	if err != nil {
 		return nil, err
@@ -204,6 +207,9 @@ func (s *Service) CreateOrgOAuthApp(ctx context.Context, orgID uuid.UUID, userID
 		Config:          req.Config,
 	})
 	if err != nil {
+		if duplicateError(err) {
+			return nil, apperror.NewConflict("an OAuth app named " + name + " already exists for " + vendor)
+		}
 		return nil, err
 	}
 	return s.toOAuthAppDTO(ctx, row, CredentialScopeOrganization)
@@ -227,8 +233,16 @@ func (s *Service) UpdateOrgOAuthApp(ctx context.Context, orgID uuid.UUID, userID
 	if err != nil {
 		return nil, err
 	}
+	if updated.Name != existing.Name {
+		if err := s.ensureAppNameFree(ctx, true, uuid.Nil, orgID, s.appVendor(existing), updated.Name, existing.ID); err != nil {
+			return nil, err
+		}
+	}
 	saved, err := st.UpdateOAuthClientConfig(ctx, updated)
 	if err != nil {
+		if duplicateError(err) {
+			return nil, apperror.NewConflict("an OAuth app named " + updated.Name + " already exists for " + s.appVendor(existing))
+		}
 		return nil, err
 	}
 	return s.toOAuthAppDTO(ctx, saved, CredentialScopeOrganization)
@@ -310,6 +324,9 @@ func (s *Service) CreateProjectOAuthApp(ctx context.Context, projectID uuid.UUID
 		Config:          req.Config,
 	})
 	if err != nil {
+		if duplicateError(err) {
+			return nil, apperror.NewConflict("an OAuth app named " + name + " already exists for " + vendor)
+		}
 		return nil, err
 	}
 	return s.toOAuthAppDTO(ctx, row, CredentialScopeProject)
@@ -333,8 +350,16 @@ func (s *Service) UpdateProjectOAuthApp(ctx context.Context, projectID uuid.UUID
 	if err != nil {
 		return nil, err
 	}
+	if updated.Name != existing.Name {
+		if err := s.ensureAppNameFree(ctx, false, projectID, uuid.Nil, s.appVendor(existing), updated.Name, existing.ID); err != nil {
+			return nil, err
+		}
+	}
 	saved, err := st.UpdateProjectOAuthClientConfig(ctx, updated)
 	if err != nil {
+		if duplicateError(err) {
+			return nil, apperror.NewConflict("an OAuth app named " + updated.Name + " already exists for " + s.appVendor(existing))
+		}
 		return nil, err
 	}
 	return s.toOAuthAppDTO(ctx, saved, CredentialScopeProject)

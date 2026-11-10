@@ -728,7 +728,11 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 			newID = *appID
 		}
 		if oldID != newID && (existing.CredentialID != nil || len(existing.EncryptedCredentials) > 0) {
-			return nil, apperror.NewValidation("switching OAuth apps requires reconnecting the source")
+			// The stored grant belongs to the old client. Park the source so the
+			// scheduler cannot use it until the user reconnects; StartOAuth pins
+			// the new app id on the source.
+			status := SourceStatusNeedsReconnect
+			statusChange = &status
 		}
 		existing.OAuthAppID = appID
 	}
