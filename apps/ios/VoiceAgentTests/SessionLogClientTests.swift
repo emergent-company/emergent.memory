@@ -112,6 +112,30 @@ struct SessionLogClientTests {
         #expect(archived.isArchived == true)
     }
 
+    @Test func decodesSummaryParentAndRunState() throws {
+        let json = #"""
+        {"room":"child","turns":1,"tool_calls":0,
+         "parent_conversation_id":"parent",
+         "bucket":"needs_input",
+         "pending_approvals":2,
+         "pending_questions":1}
+        """#
+        let summary = try JSONDecoder().decode(SessionSummary.self, from: Data(json.utf8))
+        #expect(summary.parentConversationID == "parent")
+        #expect(summary.bucket == "needs_input")
+        #expect(summary.pendingApprovals == 2)
+        #expect(summary.pendingQuestions == 1)
+    }
+
+    @Test func decodesSummaryRunStateToleratesOlderGateway() throws {
+        let json = #"{"room":"conv-1","turns":0,"tool_calls":0}"#
+        let summary = try JSONDecoder().decode(SessionSummary.self, from: Data(json.utf8))
+        #expect(summary.parentConversationID == nil)
+        #expect(summary.bucket == nil)
+        #expect(summary.pendingApprovals == 0)
+        #expect(summary.pendingQuestions == 0)
+    }
+
     @Test func decodesDetailPendingApprovalsAndRecords() throws {
         let json = #"""
         {"room":"conv-1","agent_definition_id":"agent-a","title":"Greeting",

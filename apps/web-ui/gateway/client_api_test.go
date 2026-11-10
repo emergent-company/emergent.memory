@@ -842,3 +842,71 @@ func TestMessageRecordCarriesAssistantCitations(t *testing.T) {
 		t.Errorf("record without citations marshals %s", out)
 	}
 }
+
+// TestListSessionsParentAndRunState pins the additive fields the iOS Chats list
+// needs: the sub-chat parent id, and the rail badge inputs (bucket + pending
+// decision counts) derived from the same state the web rail shows. A nested
+// child uses only its pending decisions (the rail never loads a nested
+// transcript); an orphan whose parent is missing from the response keeps its
+// own run state.
+func TestListSessionsParentAndRunState(t *testing.T) {
+	runEnd := func(id, status string) json.RawMessage {
+		return json.RawMessage(`{"kind":"run_end","run_id":"` + id + `","run_status":"` + status + `"}`)
+	}
+	f := &fakeMemory{
+		convs: []Conversation{
+			{ID: "parent", CreatedAt: "2026-08-26T10:00:00Z", UpdatedAt: "2026-08-26T10:05:00Z"},
+			{ID: "child", ParentConversationID: "parent", CreatedAt: "2026-08-26T10:01:00Z", UpdatedAt: "2026-08-26T10:04:00Z"},
+			{ID: "orphan", ParentConversationID: "missing", CreatedAt: "2026-08-26T10:02:00Z", UpdatedAt: "2026-08-26T10:03:00Z"},
+		},
+		histories: map[string]*ConversationHistory{
+			"parent": {Items: []json.RawMessage{runEnd("r1", "failed")}},
+			// The child's own history is a failed run, but nested rows take the
+			// pending-decisions branch instead.
+			"child":  {Items: []json.RawMessage{runEnd("r2", "failed")}},
+			"orphan": {Items: []json.RawMessage{runEnd("r3", "failed")}},
+		},
+		approvals: []ToolApprovalItem{{ConversationID: "child", Decision: "pending", QuestionID: "a1"}},
+	}
+	_, e := newClientEcho(f, Config{})
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/sessions", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Sessions []struct {
+			Room                 string `json:"room"`
+			ParentConversationID string `json:"parent_conversation_id"`
+			Bucket               string `json:"bucket"`
+			PendingApprovals     int    `json:"pending_approvals"`
+			PendingQuestions     int    `json:"pending_questions"`
+		} `json:"sessions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	byRoom := make(map[string]struct {
+		Parent   string
+		Bucket   string
+		Approval int
+		Question int
+	}, len(got.Sessions))
+	for _, s := range got.Sessions {
+		byRoom[s.Room] = struct {
+			Parent   string
+			Bucket   string
+			Approval int
+			Question int
+		}{s.ParentConversationID, s.Bucket, s.PendingApprovals, s.PendingQuestions}
+	}
+	if p := byRoom["parent"]; p.Parent != "" || p.Bucket != runBucketFailed {
+		t.Errorf("parent = %+v, want no parent and failed bucket", p)
+	}
+	if c := byRoom["child"]; c.Parent != "parent" || c.Bucket != runBucketNeedsInput || c.Approval != 1 {
+		t.Errorf("child = %+v, want parent=parent bucket=needs_input approvals=1", c)
+	}
+	if o := byRoom["orphan"]; o.Parent != "missing" || o.Bucket != runBucketFailed {
+		t.Errorf("orphan = %+v, want its own failed state", o)
+	}
+}

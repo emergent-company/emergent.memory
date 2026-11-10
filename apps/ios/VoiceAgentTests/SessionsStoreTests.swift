@@ -8,10 +8,18 @@ import Testing
 /// Main-actor isolated (the app builds with `-default-isolation=MainActor` and
 /// ``SessionLogFetching`` is a main-actor protocol), so it is a class rather
 /// than an actor.
+/// Thrown by the fake when an archive is scripted to fail.
+struct ArchiveFailure: Error {}
+
 @MainActor
 final class FakeSessionLogClient: SessionLogFetching {
-    let sessionsResult: Result<[SessionSummary], Error>
+    var sessionsResult: Result<[SessionSummary], Error>
     let timelineResult: Result<[SessionRecord], Error>
+    /// Ids whose archive must fail, so partial-failure tests can pin rollback.
+    var archiveFailures: Set<String> = []
+    /// When false the fake returns `sessionsResult` verbatim, simulating a list
+    /// refresh that lands before the server has caught up with an archive.
+    var respectsArchiveFilter = true
     private(set) var listCallCount = 0
     private(set) var timelineCallCount = 0
     private(set) var listAgentIDs: [String?] = []
@@ -32,7 +40,9 @@ final class FakeSessionLogClient: SessionLogFetching {
         listCallCount += 1
         listAgentIDs.append(agentID)
         listIncludeArchived.append(includeArchived)
-        return try sessionsResult.get()
+        let all = try sessionsResult.get()
+        guard respectsArchiveFilter, !includeArchived else { return all }
+        return all.filter { !archivedIDs.contains($0.id) }
     }
 
     func detail(room: String) async throws -> SessionDetail {
@@ -45,11 +55,15 @@ final class FakeSessionLogClient: SessionLogFetching {
     }
 
     func archiveConversation(id: String) async throws {
+        if archiveFailures.contains(id) {
+            throw ArchiveFailure()
+        }
         archivedIDs.append(id)
     }
 
     func unarchiveConversation(id: String) async throws {
         unarchivedIDs.append(id)
+        archivedIDs.removeAll { $0 == id }
     }
 
     func deleteConversation(id: String) async throws {
@@ -172,5 +186,75 @@ struct SessionsStoreTests {
 
         #expect(store.includeArchived == true)
         #expect(fake.listIncludeArchived == [true])
+    }
+
+    // MARK: - Sub-chat grouping
+
+    @Test func threadsNestChildrenUnderTheirParent() {
+        let parent = summary("parent")
+        var child = summary("child")
+        child.parentConversationID = "parent"
+        let other = summary("other")
+
+        let threads = SessionThreading.threads(from: [parent, child, other])
+
+        #expect(threads.map(\.id) == ["parent", "other"])
+        #expect(threads[0].children.map(\.id) == ["child"])
+        #expect(threads[0].childCount == 1)
+        #expect(threads[1].children.isEmpty)
+    }
+
+    @Test func threadsPromoteAnOrphanChildToRoot() {
+        var orphan = summary("orphan")
+        orphan.parentConversationID = "missing"
+
+        let threads = SessionThreading.threads(from: [orphan])
+
+        #expect(threads.map(\.id) == ["orphan"])
+        #expect(threads[0].children.isEmpty)
+    }
+
+    @Test func threadsKeepParentVisibleWhenOnlyAChildMatches() {
+        let parent = summary("parent")
+        var child = summary("child")
+        child.parentConversationID = "parent"
+        let other = summary("other")
+
+        let threads = SessionThreading.threads(from: [parent, child, other]) { $0.room == "child" }
+
+        #expect(threads.map(\.id) == ["parent"])
+        #expect(threads[0].children.map(\.id) == ["child"])
+    }
+
+    // MARK: - Bulk archive
+
+    @Test func bulkArchiveHidesRowsAndRestoresOnlyFailures() async {
+        let fake = FakeSessionLogClient(sessions: .success([summary("a"), summary("b"), summary("c")]))
+        fake.archiveFailures = ["b"]
+        let store = SessionsStore(client: fake)
+        await store.load()
+
+        let result = await store.archive(ids: ["a", "b"])
+
+        #expect(result.requested == ["a", "b"])
+        #expect(result.failed == ["b"])
+        #expect(fake.archivedIDs == ["a"])
+        // The success stays archived; only the failed row comes back.
+        #expect(store.sessions.map(\.room) == ["b", "c"])
+    }
+
+    @Test func bulkArchiveRefreshCannotResurrectAHiddenRow() async {
+        // `respectsArchiveFilter = false` models a list refresh that still
+        // includes the row while the archive is settling (or a lagging server).
+        let fake = FakeSessionLogClient(sessions: .success([summary("a"), summary("b")]))
+        fake.respectsArchiveFilter = false
+        let store = SessionsStore(client: fake)
+        await store.load()
+        await store.archive(ids: ["a"])
+
+        fake.sessionsResult = .success([summary("a"), summary("b")])
+        await store.load()
+
+        #expect(store.sessions.map(\.room) == ["b"])
     }
 }
