@@ -2627,17 +2627,32 @@ func (s *Server) uiDataSourceUpdate(c echo.Context) error {
 	if providerType == "" {
 		return redirectWithError(c, detailPath, errors.New("providerType is required"))
 	}
-	var cfg map[string]any
 	if providerType == "gmail" {
-		cfg = dsGmailConfigFromForm(c)
-	} else {
-		cfg, err = s.dsFormConfig(ctx, c, providerType)
-		if err != nil {
-			return redirectWithError(c, detailPath, err)
+		cfg := dsGmailConfigFromForm(c)
+		scope := &DSScopeRequest{
+			Filter:      mapStringAny(cfg["filter"]),
+			ObjectTypes: mapStringSlice(cfg["object_types"]),
 		}
-	}
-	if len(cfg) > 0 {
-		req.Config = cfg
+		if v, ok := cfg["mcp_write_tools_enabled"].(bool); ok {
+			scope.MCPWriteToolsEnabled = &v
+		}
+		preview, perr := s.memory.PreviewDSScope(ctx, id, scope)
+		if perr != nil {
+			return redirectWithError(c, detailPath, dsFormError(perr))
+		}
+		if _, uerr := s.memory.UpdateDSScope(ctx, id, scope, preview.PreviewHash, preview.BaseScopeHash); uerr != nil {
+			return redirectWithError(c, detailPath, dsFormError(uerr))
+		}
+		// Scope is persisted by the dedicated endpoint; the generic update only
+		// carries name and cadence and must not carry config again.
+	} else {
+		cfg, cfgErr := s.dsFormConfig(ctx, c, providerType)
+		if cfgErr != nil {
+			return redirectWithError(c, detailPath, cfgErr)
+		}
+		if len(cfg) > 0 {
+			req.Config = cfg
+		}
 	}
 	req.CredentialID = strings.TrimSpace(c.FormValue("credential_id"))
 	if _, err := s.memory.UpdateDSIntegration(ctx, id, req); err != nil {
@@ -2893,4 +2908,26 @@ func dsGmailHasObjectType(cfg map[string]any, typ string) bool {
 		}
 	}
 	return false
+}
+
+func mapStringAny(v any) map[string]any {
+	m, _ := v.(map[string]any)
+	return m
+}
+
+func mapStringSlice(v any) []string {
+	switch val := v.(type) {
+	case []string:
+		return val
+	case []any:
+		out := make([]string, 0, len(val))
+		for _, item := range val {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }

@@ -81,6 +81,13 @@ func (s *Service) executeSourceAdminTool(ctx context.Context, projectID, toolNam
 	if err != nil {
 		return nil, apperror.NewValidation("invalid project id")
 	}
+	scope := "documents:read"
+	if toolName == "source-scope-update" || toolName == "source-sync-trigger" {
+		scope = "sources:write"
+	}
+	if err := requireUserScope(ctx, scope); err != nil {
+		return nil, err
+	}
 	switch toolName {
 	case "source-list":
 		sources, err := s.repo.List(ctx, pid)

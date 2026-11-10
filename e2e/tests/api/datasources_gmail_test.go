@@ -832,6 +832,7 @@ func TestGmailDataSource_ScopeAPI(t *testing.T) {
 		gmailSourceConfig(map[string]any{
 			"filter":       map[string]any{"categories": []any{"Primary"}},
 			"object_types": []any{"EmailMessage"},
+			"mcp_alias":    "keepme",
 		}))
 
 	previewResp := doAPILogged(t, rl, "POST", "/api/data-source-integrations/"+sourceID+"/scope/preview", e2eTestToken(), projectID,
@@ -872,6 +873,14 @@ func TestGmailDataSource_ScopeAPI(t *testing.T) {
 	if fmt.Sprint(src.Config["filter"]) == "" || !strings.Contains(fmt.Sprint(src.Config["filter"]), "Updates") {
 		t.Fatalf("stored filter not updated: %v", src.Config["filter"])
 	}
+	if fmt.Sprint(src.Config["mcp_alias"]) != "keepme" {
+		t.Fatalf("non-scope config was clobbered: %v", src.Config)
+	}
+
+	// The generic update path must not bypass the scope guard.
+	bypass := doAPILogged(t, rl, "PATCH", "/api/data-source-integrations/"+sourceID, e2eTestToken(), projectID,
+		jsonBody(map[string]any{"config": map[string]any{"filter": map[string]any{"categories": []any{"Social"}}}}))
+	mustStatus(t, bypass, http.StatusBadRequest)
 
 	staleResp := doAPILogged(t, rl, "PATCH", "/api/data-source-integrations/"+sourceID+"/scope", e2eTestToken(), projectID,
 		jsonBody(map[string]any{

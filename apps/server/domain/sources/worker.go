@@ -467,7 +467,6 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 	// Typed-object batch state: object ids by (type,key) and relationships that
 	// can only be created after every item has been processed.
 	objectIDs := make(map[string]uuid.UUID)
-	seenRecords := make(map[string]bool)
 	var pendingRels []pendingSourceRelationship
 
 	// progress builds a full durable-progress snapshot from the local counters so
@@ -510,9 +509,6 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 					objectIDs[k] = v
 				}
 				pendingRels = append(pendingRels, rels...)
-				if recErr == nil {
-					markSeenRecords(seenRecords, item)
-				}
 				if recErr != nil {
 					failed++
 					failedItems[item.ID] = true
@@ -546,7 +542,6 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 				objectIDs[k] = v
 			}
 			pendingRels = append(pendingRels, rels...)
-			markSeenRecords(seenRecords, item)
 			if uerr := w.svc.repo.UpdateSyncJobProgress(ctx, job.ID, progress(nil, nil)); uerr != nil {
 				return w.failJob(ctx, job, src, uerr)
 			}
@@ -573,9 +568,6 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 			objectIDs[k] = v
 		}
 		pendingRels = append(pendingRels, rels...)
-		if recErr == nil {
-			markSeenRecords(seenRecords, item)
-		}
 
 		if err != nil {
 			failed++
@@ -652,7 +644,7 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 	// Typed-object removals use the same completeness rule as documents: an
 	// incomplete enumeration cannot prove a record is gone.
 	if complete && w.svc.graph != nil {
-		w.reconcileSourceObjects(ctx, job, seenRecords, jobLog)
+		w.reconcileSourceObjects(ctx, job, seen, jobLog)
 	}
 
 	deleted, skippedRemovals := planRemovals(headIDs, seen, complete, tombstones)
@@ -849,19 +841,6 @@ func sourceObjectNamespace(sourceID uuid.UUID) string { return "src:" + sourceID
 
 func recordKey(objectType, key string) string { return objectType + "\x00" + key }
 
-func recordSeenKey(externalID, objectType, key string) string {
-	return externalID + "\x00" + objectType + "\x00" + key
-}
-
-func markSeenRecords(seen map[string]bool, item SourceItem) {
-	for _, rec := range item.Records {
-		if rec.Type == "" || rec.Key == "" {
-			continue
-		}
-		seen[recordSeenKey(item.ID, rec.Type, rec.Key)] = true
-	}
-}
-
 // applyItemRecords upserts an item's typed records into the graph and records
 // their mapping rows. It returns object ids keyed by (type,key) and any
 // relationships that need a second pass.
@@ -974,7 +953,7 @@ func (w *SyncWorker) reconcileSourceObjects(ctx context.Context, job *SyncJob, s
 	var mappingIDs []uuid.UUID
 	var objectIDs []uuid.UUID
 	for _, obj := range active {
-		if seen[recordSeenKey(obj.ExternalID, obj.ObjectType, obj.ObjectKey)] {
+		if seen[obj.ExternalID] {
 			continue
 		}
 		mappingIDs = append(mappingIDs, obj.ID)

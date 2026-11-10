@@ -585,6 +585,10 @@ func parseGmailQuery(q string) (after, before time.Time, labels []string, text s
 	words := strings.Fields(q)
 	free := make([]string, 0, len(words))
 	for _, w := range words {
+		w = strings.Trim(w, "()")
+		if strings.EqualFold(w, "OR") {
+			continue
+		}
 		lower := strings.ToLower(w)
 		switch {
 		case strings.HasPrefix(lower, "after:"):

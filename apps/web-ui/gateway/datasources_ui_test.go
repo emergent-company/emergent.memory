@@ -4107,3 +4107,19 @@ func TestUIDataSourceGmailConnectFormRendered(t *testing.T) {
 		}
 	}
 }
+
+func TestGmailEditFieldsPreserveAllFilterKeys(t *testing.T) {
+	src := &DSIntegration{ProviderType: "gmail", Config: map[string]any{
+		"filter": map[string]any{
+			"excludeSenders": []any{"blocked@example.com"},
+			"domains":        []any{"example.com"},
+			"excludeDomains": []any{"spam.example.com"},
+		},
+	}}
+	html := renderHTML(t, dsGmailEditFields(src))
+	for _, want := range []string{`name="filter.excludeSenders"`, `name="filter.domains"`, `name="filter.excludeDomains"`, "blocked@example.com", "spam.example.com"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("gmail edit fields missing %q", want)
+		}
+	}
+}

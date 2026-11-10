@@ -271,7 +271,7 @@ func TestAPITokenScopesPinned(t *testing.T) {
 		"skills:read", "skills:write",
 		"documents:read", "documents:write",
 		// REST scopes the retired data:read/data:write umbrellas used to imply
-		"documents:delete", "email:write", "sources:write", "ingest:write",
+		"documents:delete", "email:read", "email:write", "sources:write", "ingest:write",
 		"chunks:read", "chunks:write",
 		"search:read", "graph:search:read",
 		"extraction:read", "extraction:write",

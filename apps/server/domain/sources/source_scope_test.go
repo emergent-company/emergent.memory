@@ -1,8 +1,11 @@
 package sources
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 func TestSourceScopeHashIsStable(t *testing.T) {
@@ -82,5 +85,22 @@ func TestScopeRequestFromArgsStructured(t *testing.T) {
 	}
 	if _, err := scopeRequestFromArgs(map[string]any{"query": "in:anywhere"}); err == nil || !strings.Contains(err.Error(), "raw Gmail query") {
 		t.Fatalf("top-level query rejection = %v", err)
+	}
+}
+
+func TestRequireUserScope(t *testing.T) {
+	reader := auth.ContextWithUser(context.Background(), &auth.AuthUser{Scopes: []string{"documents:read"}})
+	if err := requireUserScope(reader, "sources:write"); err == nil {
+		t.Fatal("documents:read must not satisfy sources:write")
+	}
+	if err := requireUserScope(reader, "email:read"); err == nil {
+		t.Fatal("documents:read must not satisfy email:read")
+	}
+	writer := auth.ContextWithUser(context.Background(), &auth.AuthUser{Scopes: []string{"sources:write"}})
+	if err := requireUserScope(writer, "sources:write"); err != nil {
+		t.Fatalf("sources:write rejected: %v", err)
+	}
+	if err := requireUserScope(context.Background(), "sources:write"); err != nil {
+		t.Fatalf("internal context should be allowed: %v", err)
 	}
 }

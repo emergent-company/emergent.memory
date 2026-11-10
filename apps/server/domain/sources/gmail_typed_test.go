@@ -107,7 +107,7 @@ func TestGmailToolNamesIncludeAlias(t *testing.T) {
 		if !strings.HasPrefix(def.Name, "gmail-alice-") {
 			t.Errorf("tool %q does not carry the account alias", def.Name)
 		}
-		if def.RequiredScope != "documents:read" {
+		if def.RequiredScope != "email:read" {
 			t.Errorf("tool %q scope = %q", def.Name, def.RequiredScope)
 		}
 	}

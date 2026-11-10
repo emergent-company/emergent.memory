@@ -118,7 +118,7 @@ func (f gmailFilter) compile() (string, error) {
 		for _, cat := range f.Categories {
 			terms = append(terms, "category:"+strings.ToLower(strings.TrimSpace(cat)))
 		}
-		parts = append(parts, strings.Join(terms, " OR "))
+		parts = append(parts, "("+strings.Join(terms, " OR ")+")")
 	}
 	for _, l := range f.Labels {
 		parts = append(parts, "label:"+gmailQuote(l))

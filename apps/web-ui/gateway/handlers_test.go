@@ -5189,3 +5189,11 @@ func (f *fakeMemory) SaveDSResource(ctx context.Context, id string, cfg map[stri
 	}
 	return nil, &memoryHTTPError{Status: http.StatusNotFound, Message: "source not found"}
 }
+
+func (f *fakeMemory) PreviewDSScope(ctx context.Context, id string, req *DSScopeRequest) (*DSScopePreview, error) {
+	return &DSScopePreview{PreviewHash: "p", BaseScopeHash: "b", Changed: true}, nil
+}
+
+func (f *fakeMemory) UpdateDSScope(ctx context.Context, id string, req *DSScopeRequest, previewHash, baseScopeHash string) (*DSScopePreview, error) {
+	return &DSScopePreview{PreviewHash: previewHash, BaseScopeHash: baseScopeHash, Changed: true}, nil
+}

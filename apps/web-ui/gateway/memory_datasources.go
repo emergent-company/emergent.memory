@@ -769,3 +769,46 @@ func (m *MemoryClient) PreviewDSFilter(ctx context.Context, providerType string,
 	}
 	return out.Query, nil
 }
+
+// DSScopeRequest is a partial source-scope change.
+type DSScopeRequest struct {
+	Filter               map[string]any `json:"filter,omitempty"`
+	ObjectTypes          []string       `json:"objectTypes,omitempty"`
+	MCPWriteToolsEnabled *bool          `json:"mcpWriteToolsEnabled,omitempty"`
+}
+
+// DSScopePreview is the API's scope preview/update result.
+type DSScopePreview struct {
+	CompiledQuery string         `json:"compiledQuery"`
+	PreviewHash   string         `json:"previewHash"`
+	BaseScopeHash string         `json:"baseScopeHash"`
+	Changed       bool           `json:"changed"`
+	Proposed      DSScopeRequest `json:"proposed"`
+}
+
+// PreviewDSScope validates a proposed source scope.
+func (m *MemoryClient) PreviewDSScope(ctx context.Context, id string, req *DSScopeRequest) (*DSScopePreview, error) {
+	var out DSScopePreview
+	path := "/api/data-source-integrations/" + url.PathEscape(id) + "/scope/preview"
+	if err := m.doH(ctx, http.MethodPost, path, req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// UpdateDSScope applies a hash-guarded source scope change.
+func (m *MemoryClient) UpdateDSScope(ctx context.Context, id string, req *DSScopeRequest, previewHash, baseScopeHash string) (*DSScopePreview, error) {
+	body := map[string]any{
+		"filter": req.Filter, "objectTypes": req.ObjectTypes,
+		"previewHash": previewHash, "baseScopeHash": baseScopeHash,
+	}
+	if req.MCPWriteToolsEnabled != nil {
+		body["mcpWriteToolsEnabled"] = *req.MCPWriteToolsEnabled
+	}
+	var out DSScopePreview
+	path := "/api/data-source-integrations/" + url.PathEscape(id) + "/scope"
+	if err := m.doH(ctx, http.MethodPatch, path, body, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}

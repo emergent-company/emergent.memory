@@ -30,7 +30,7 @@ type gmailWriteClient interface {
 
 func (p *gmailProvider) ToolDefinitions(alias string, writeEnabled bool) []mcp.ToolDefinition {
 	prefix := "gmail-" + alias + "-"
-	read := "documents:read"
+	read := "email:read"
 	write := "email:write"
 
 	defs := []mcp.ToolDefinition{

@@ -166,7 +166,7 @@ func TestGmailParseConfigDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseGmailConfig: %v", err)
 	}
-	if parsed.Query != "category:primary" {
+	if parsed.Query != "(category:primary)" {
 		t.Errorf("query = %q, want the compiled category filter", parsed.Query)
 	}
 	if parsed.MaxThreads != gmail.DefaultMaxThreads {

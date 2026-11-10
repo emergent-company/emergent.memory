@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"mime"
+	"net/mail"
 	"strings"
 	"time"
 
@@ -195,6 +196,19 @@ func draftRef(d *gapi.Draft) *DraftRef {
 func buildRawMessage(msg OutgoingMessage) (string, error) {
 	if strings.TrimSpace(msg.To) == "" && strings.TrimSpace(msg.Cc) == "" && strings.TrimSpace(msg.Bcc) == "" {
 		return "", errors.New("gmail: at least one recipient is required")
+	}
+	for _, list := range []string{msg.To, msg.Cc, msg.Bcc} {
+		if strings.ContainsAny(list, "\r\n") {
+			return "", errors.New("gmail: recipient header must not contain CR/LF")
+		}
+		if strings.TrimSpace(list) != "" {
+			if _, err := mail.ParseAddressList(list); err != nil {
+				return "", fmt.Errorf("gmail: invalid recipient list: %w", err)
+			}
+		}
+	}
+	if strings.ContainsAny(msg.Subject, "\r\n") {
+		return "", errors.New("gmail: subject must not contain CR/LF")
 	}
 	subject := mime.QEncoding.Encode("utf-8", msg.Subject)
 	if strings.TrimSpace(msg.Subject) == "" {

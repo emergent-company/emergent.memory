@@ -8,6 +8,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // GetSourceToolDefinitionsForProject implements mcp.SourceToolHandler.
@@ -67,6 +68,13 @@ func (s *Service) ExecuteSourceTool(ctx context.Context, projectID, toolName str
 			continue
 		}
 		action := strings.TrimPrefix(toolName, prefix)
+		scope := "email:read"
+		if isGmailWriteAction(action) {
+			scope = "email:write"
+		}
+		if err := requireUserScope(ctx, scope); err != nil {
+			return nil, err
+		}
 		if isGmailWriteAction(action) && !sourceWriteToolsEnabled(listed.Config) {
 			return nil, apperror.NewValidation("write tools are not enabled for this Gmail source")
 		}
@@ -101,4 +109,17 @@ func sourceWriteToolsEnabled(cfg map[string]any) bool {
 
 func isGmailWriteAction(action string) bool {
 	return action == "message-send" || strings.HasPrefix(action, "draft-")
+}
+
+// requireUserScope enforces a scope for HTTP MCP callers. Internal agent runs
+// have no user in context; their tool pool is already restricted by enablement.
+func requireUserScope(ctx context.Context, scope string) error {
+	u := auth.UserFromContext(ctx)
+	if u == nil {
+		return nil
+	}
+	if !u.HasScope(scope) {
+		return apperror.NewForbidden("missing required scope: " + scope)
+	}
+	return nil
 }

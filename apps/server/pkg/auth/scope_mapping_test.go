@@ -172,7 +172,7 @@ func TestResolveOIDCScopes(t *testing.T) {
 			rawScopes:  []string{"openid"},
 			projectID:  projectID,
 			roleLookup: roleOK(RoleProjectAdmin),
-			want:       []string{"data:read", "schema:read", "agents:read", "projects:read", "data:write", "agents:write", "schema:write", "email:write", "sources:write"},
+			want:       []string{"data:read", "schema:read", "agents:read", "projects:read", "data:write", "agents:write", "schema:write", "email:read", "email:write", "sources:write"},
 		},
 		{
 			name:       "legacy owner role yields no scopes without a default",
@@ -275,7 +275,7 @@ func TestRoleToScopes(t *testing.T) {
 		},
 		{
 			role: RoleProjectAdmin,
-			want: []string{"data:read", "schema:read", "agents:read", "projects:read", "data:write", "agents:write", "schema:write", "email:write", "sources:write"},
+			want: []string{"data:read", "schema:read", "agents:read", "projects:read", "data:write", "agents:write", "schema:write", "email:read", "email:write", "sources:write"},
 		},
 	}
 
@@ -350,7 +350,7 @@ func TestRoleScopeSetsDoNotShareBackingArray(t *testing.T) {
 	want := map[string][]string{
 		RoleProjectViewer: {"data:read", "schema:read", "agents:read", "projects:read"},
 		RoleProjectUser:   {"data:read", "schema:read", "agents:read", "projects:read", "data:write"},
-		RoleProjectAdmin:  {"data:read", "schema:read", "agents:read", "projects:read", "data:write", "agents:write", "schema:write", "email:write", "sources:write"},
+		RoleProjectAdmin:  {"data:read", "schema:read", "agents:read", "projects:read", "data:write", "agents:write", "schema:write", "email:read", "email:write", "sources:write"},
 	}
 
 	// 1. Independently fetched slices must not alias across roles: overwriting
@@ -432,7 +432,7 @@ func TestRoleScopeUmbrellaExpansionIsPinned(t *testing.T) {
 				"data:write", "documents:write", "documents:delete", "chunks:write",
 				"graph:write", "ingest:write", "extraction:write", "tasks:write",
 				"user-activity:write", "notifications:write", "schema:write", "journal:write",
-				"agents:write", "chat:admin", "skills:write", "schema:migrate", "email:write", "sources:write",
+				"agents:write", "chat:admin", "skills:write", "schema:migrate", "email:read", "email:write", "sources:write",
 			},
 		},
 	}
@@ -547,7 +547,7 @@ func TestValidateTokenIntrospectionPath(t *testing.T) {
 		}
 		wantScopeSet(t, user.Scopes, []string{
 			"data:read", "schema:read", "agents:read", "projects:read",
-			"data:write", "agents:write", "schema:write", "email:write", "sources:write",
+			"data:write", "agents:write", "schema:write", "email:read", "email:write", "sources:write",
 		})
 	})
 
@@ -757,7 +757,7 @@ func TestValidateTokenDevTestTokenBypassesResolution(t *testing.T) {
 
 func TestPrivilegedWriteScopesAreNotImpliedByDataWrite(t *testing.T) {
 	expanded := expandScopes([]string{"data:write"})
-	for _, forbidden := range []string{"email:write", "sources:write"} {
+	for _, forbidden := range []string{"email:read", "email:write", "sources:write"} {
 		if _, ok := expanded[forbidden]; ok {
 			t.Fatalf("data:write must not imply %q", forbidden)
 		}

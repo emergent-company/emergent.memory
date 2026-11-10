@@ -1788,6 +1788,18 @@ templ dsGmailEditFields(src *DSIntegration) {
 				<textarea id="edit-gmail-senders" name="filter.senders" class="textarea w-full" rows="2">{ dsGmailFormList(src.Config, "senders") }</textarea>
 			</div>
 			<div class="flex flex-col gap-1">
+				<label class="text-sm font-medium" for="edit-gmail-exclude-senders">Exclude senders</label>
+				<textarea id="edit-gmail-exclude-senders" name="filter.excludeSenders" class="textarea w-full" rows="2">{ dsGmailFormList(src.Config, "excludeSenders") }</textarea>
+			</div>
+			<div class="flex flex-col gap-1">
+				<label class="text-sm font-medium" for="edit-gmail-domains">Domains</label>
+				<textarea id="edit-gmail-domains" name="filter.domains" class="textarea w-full" rows="2">{ dsGmailFormList(src.Config, "domains") }</textarea>
+			</div>
+			<div class="flex flex-col gap-1">
+				<label class="text-sm font-medium" for="edit-gmail-exclude-domains">Exclude domains</label>
+				<textarea id="edit-gmail-exclude-domains" name="filter.excludeDomains" class="textarea w-full" rows="2">{ dsGmailFormList(src.Config, "excludeDomains") }</textarea>
+			</div>
+			<div class="flex flex-col gap-1">
 				<label class="text-sm font-medium" for="edit-gmail-subject">Subject contains</label>
 				<textarea id="edit-gmail-subject" name="filter.subjectContains" class="textarea w-full" rows="2">{ dsGmailFormList(src.Config, "subjectContains") }</textarea>
 			</div>
