@@ -1245,8 +1245,6 @@ routes:
       path: /api/orgs/:orgId/github-app/installations/:id
       level: auth
       note: RequireAuth
-      level: auth
-      note: RequireAuth
     - method: GET
       path: /api/orgs/:orgId/skills
       level: auth
