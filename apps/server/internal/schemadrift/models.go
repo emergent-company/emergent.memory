@@ -106,6 +106,7 @@ var models = []any{
 	(*graph.ProvenanceContribution)(nil),
 	(*graph.SourceGeneration)(nil),
 	(*graph.SourceGrant)(nil),
+	(*graph.SourceOutcome)(nil),
 	(*graph.SynthesisLineage)(nil),
 
 	// domain/apitoken
@@ -207,6 +208,7 @@ var models = []any{
 
 	// domain/sources
 	(*sources.Source)(nil),
+	(*sources.SourceObject)(nil),
 	(*sources.SourceCredential)(nil),
 	(*sources.SyncJob)(nil),
 	(*sources.OAuthPendingState)(nil),

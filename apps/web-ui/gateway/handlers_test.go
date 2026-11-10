@@ -5075,6 +5075,10 @@ func (f *fakeMemory) StartDSOAuth(ctx context.Context, providerType string, conf
 	return &DSOAuthAuthorizeResponse{AuthorizeURL: "https://accounts.example/authorize?state=s1"}, nil
 }
 
+func (f *fakeMemory) PreviewDSFilter(ctx context.Context, providerType string, config map[string]any) (string, error) {
+	return "in:inbox", nil
+}
+
 func (f *fakeMemory) ListDSOAuthClients(ctx context.Context, orgID string) ([]DSOAuthClientConfig, error) {
 	if f.dsOrgOAuthClientErr != nil {
 		return nil, f.dsOrgOAuthClientErr
@@ -5186,6 +5190,14 @@ func (f *fakeMemory) SaveDSResource(ctx context.Context, id string, cfg map[stri
 		}
 	}
 	return nil, &memoryHTTPError{Status: http.StatusNotFound, Message: "source not found"}
+}
+
+func (f *fakeMemory) PreviewDSScope(ctx context.Context, id string, req *DSScopeRequest) (*DSScopePreview, error) {
+	return &DSScopePreview{PreviewHash: "p", BaseScopeHash: "b", Changed: true}, nil
+}
+
+func (f *fakeMemory) UpdateDSScope(ctx context.Context, id string, req *DSScopeRequest, previewHash, baseScopeHash string) (*DSScopePreview, error) {
+	return &DSScopePreview{PreviewHash: previewHash, BaseScopeHash: baseScopeHash, Changed: true}, nil
 }
 
 func (f *fakeMemory) ListOrgDSOAuthApps(ctx context.Context, orgID string) ([]DSOAuthApp, error) {

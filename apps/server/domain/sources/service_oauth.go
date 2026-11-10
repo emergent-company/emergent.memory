@@ -414,6 +414,12 @@ func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code s
 		return &OAuthCompletion{Integration: updated, Reconnected: true}, nil
 	}
 
+	if _, typed := p.(TypedObjectProvider); typed {
+		if verr := p.ValidateConfig(cfg); verr != nil {
+			return nil, fail(verr)
+		}
+	}
+
 	var appIDStr *string
 	if chosenAppID != nil {
 		raw := chosenAppID.String()

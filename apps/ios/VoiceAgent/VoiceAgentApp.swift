@@ -82,6 +82,7 @@ private struct AgentSessionRoot: View {
                     .environmentObject(controller.localMedia)
                     .environment(audioOptions)
                     .environment(controller.chatActivity)
+                    .environment(controller.chatTimeline)
                     .environmentObject(shareInbox)
                     // A project with voice disabled must not offer Start call
                     // or audio options anywhere in the app.

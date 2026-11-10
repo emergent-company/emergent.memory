@@ -1,6 +1,8 @@
 import Foundation
 
-/// Loads one conversation's recorded transcript into ``ChatSessionTranscriptStore``.
+/// Loads one conversation's recorded transcript into ``ChatSessionTranscriptStore``
+/// (the record-growth baseline the recovery waits read) and its ordered
+/// timeline into ``ChatTimelineStore`` (what the chat renders).
 ///
 /// The fetch used to live in the view, keyed on the loaded conversation id. Two
 /// things followed from that, and both are why this type exists:
@@ -23,15 +25,23 @@ import Foundation
 @MainActor
 final class ChatSessionHistoryLoader {
     private let client: any SessionLogFetching
+    /// The ordered-history source (`GET /api/conversations/:id/history`). It is
+    /// fetched only when a timeline is supplied, so the record-only callers
+    /// (and their tests) are unchanged.
+    private let historyClient: any ConversationHistoryFetching
     /// The conversation whose records are currently applied.
     private(set) var loadedConversationID: String?
     /// Invalidates in-flight loads on ``reset()`` and on every new load.
     private var generation = 0
 
     /// The client seam keeps this testable without a network; the default is the
-    /// live session-log client.
-    init(client: any SessionLogFetching = SessionLogClient(config: MemoryConfig())) {
+    /// live session-log client for both sources.
+    init(
+        client: any SessionLogFetching = SessionLogClient(config: MemoryConfig()),
+        historyClient: any ConversationHistoryFetching = SessionLogClient(config: MemoryConfig())
+    ) {
         self.client = client
+        self.historyClient = historyClient
     }
 
     /// Forgets the loaded conversation, so the next load fetches again.
@@ -40,7 +50,8 @@ final class ChatSessionHistoryLoader {
         loadedConversationID = nil
     }
 
-    /// Fetches `GET /api/session?room=` and applies it to `transcript`.
+    /// Fetches `GET /api/session?room=` (record baseline) and, when `timeline`
+    /// is supplied, `GET /api/conversations/:id/history` (the rendered rows).
     ///
     /// Returns whether records were applied. `force` refetches a conversation
     /// that is already loaded, because a call in between may have appended
@@ -49,7 +60,8 @@ final class ChatSessionHistoryLoader {
     func load(
         conversationID: String,
         force: Bool = false,
-        into transcript: ChatSessionTranscriptStore
+        into transcript: ChatSessionTranscriptStore,
+        timeline: ChatTimelineStore? = nil
     ) async -> Bool {
         if !force, loadedConversationID == conversationID {
             return false
@@ -57,33 +69,49 @@ final class ChatSessionHistoryLoader {
         generation += 1
         let loadGeneration = generation
         transcript.beginHistoryLoad()
+        timeline?.beginHistoryLoad()
         do {
             let detail = try await client.detail(room: conversationID)
             // A reset or a newer load superseded this one while it was in
             // flight; its records belong to a transcript that has moved on.
             guard loadGeneration == generation, !Cancellation.isCurrentTaskCancelled else {
-                abandon(loadGeneration, transcript)
+                abandon(loadGeneration, transcript, timeline)
                 return false
             }
-            loadedConversationID = conversationID
             transcript.loadHistory(from: detail)
+            if let timeline {
+                let recorded = try await historyClient.history(conversationID: conversationID)
+                guard loadGeneration == generation, !Cancellation.isCurrentTaskCancelled else {
+                    abandon(loadGeneration, transcript, timeline)
+                    return false
+                }
+                timeline.replaceHistory(ChatTimelineHistory.items(from: recorded))
+                timeline.cancelHistoryLoad()
+            }
+            loadedConversationID = conversationID
             return true
         } catch {
             guard loadGeneration == generation else { return false }
             if Cancellation.isCancellation(error) || Cancellation.isCurrentTaskCancelled {
-                abandon(loadGeneration, transcript)
+                abandon(loadGeneration, transcript, timeline)
             } else {
                 loadedConversationID = nil
                 transcript.historyLoadFailed(error.localizedDescription)
+                timeline?.historyLoadFailed(error.localizedDescription)
             }
             return false
         }
     }
 
     /// Drops a load that is still the current one, without reporting it.
-    private func abandon(_ loadGeneration: Int, _ transcript: ChatSessionTranscriptStore) {
+    private func abandon(
+        _ loadGeneration: Int,
+        _ transcript: ChatSessionTranscriptStore,
+        _ timeline: ChatTimelineStore?
+    ) {
         guard loadGeneration == generation else { return }
         loadedConversationID = nil
         transcript.cancelHistoryLoad()
+        timeline?.cancelHistoryLoad()
     }
 }

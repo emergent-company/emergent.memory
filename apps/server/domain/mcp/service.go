@@ -87,6 +87,10 @@ type Service struct {
 	// MCP registry tool handler (injected to break import cycle)
 	mcpRegistryToolHandler MCPRegistryToolHandler
 
+	// Source-backed MCP tool handler (Gmail etc.), injected to break the
+	// sources -> mcpregistry -> mcp dependency direction.
+	sourceToolHandler SourceToolHandler
+
 	// Blueprint tool handler (injected to break import cycle)
 	blueprintToolHandler BlueprintToolHandler
 
@@ -352,6 +356,12 @@ func (s *Service) RegisterMCPRegistryToolHandler(h MCPRegistryToolHandler) {
 // construction (githubapp -> agents -> mcp, so no constructor cycle).
 func (s *Service) RegisterGitHubAppToolHandler(h GitHubAppToolHandler) {
 	s.githubAppToolHandler = h
+}
+
+// RegisterSourceToolHandler wires the source-backed tool handler after
+// construction (sources -> mcpregistry -> mcp, so no constructor cycle).
+func (s *Service) RegisterSourceToolHandler(h SourceToolHandler) {
+	s.sourceToolHandler = h
 }
 
 // dynamicToolBuilders is the ordered list of package-level tool builders that
@@ -2026,6 +2036,11 @@ func (s *Service) legacyToolDefinitionsForProject(ctx context.Context, projectID
 		tools = append(tools, s.githubAppToolHandler.GetGitHubAppToolDefinitionsForProject(ctx, projectID)...)
 	}
 
+	// Append source-backed tools (Gmail etc.) for the project's connected accounts.
+	if s.sourceToolHandler != nil {
+		tools = append(tools, s.sourceToolHandler.GetSourceToolDefinitionsForProject(ctx, projectID)...)
+	}
+
 	// Append tools from connected relay sessions for this project.
 	if s.relaySvc != nil {
 		for _, sess := range s.relaySvc.ListByProject(projectID) {
@@ -2513,7 +2528,7 @@ func (s *Service) GetToolByNameForProject(ctx context.Context, projectID, name s
 	if def := s.GetToolByName(name); def != nil {
 		return def
 	}
-	if projectID == "" || !s.isProjectDynamicTool(projectID, name) {
+	if projectID == "" || !s.isProjectDynamicTool(ctx, projectID, name) {
 		return nil
 	}
 	for _, def := range s.legacyToolDefinitionsForProject(ctx, projectID) {
@@ -2529,8 +2544,11 @@ func (s *Service) GetToolByNameForProject(ctx context.Context, projectID, name s
 // consulted by legacyToolDefinitionsForProject. It keeps the on-demand
 // project-catalog build (one installation query, agent enrichment) off the path
 // for a genuinely unknown tool name.
-func (s *Service) isProjectDynamicTool(projectID, name string) bool {
+func (s *Service) isProjectDynamicTool(ctx context.Context, projectID, name string) bool {
 	if s.githubAppToolHandler != nil && s.githubAppToolHandler.HandlesGitHubAppTool(name) {
+		return true
+	}
+	if s.sourceToolHandler != nil && s.sourceToolHandler.HandlesSourceTool(ctx, projectID, name) {
 		return true
 	}
 	if s.relaySvc != nil {
@@ -3080,6 +3098,9 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 		return s.delegateBlueprintTool(ctx, projectID, toolName, args)
 
 	default:
+		if s.sourceToolHandler != nil && s.sourceToolHandler.HandlesSourceTool(ctx, projectID, toolName) {
+			return s.sourceToolHandler.ExecuteSourceTool(ctx, projectID, toolName, args)
+		}
 		if s.githubAppToolHandler != nil && s.githubAppToolHandler.HandlesGitHubAppTool(toolName) {
 			// The review tools are agent-only and dynamic: absent from the static
 			// index, so the transports' own AgentOnly check cannot see them. The

@@ -461,6 +461,19 @@ func (p *googleDriveProvider) NewConnector(ctx context.Context, creds Credential
 	return &googleDriveConnector{client: client, deps: deps}, nil
 }
 
+// ProbeGrant implements GrantProber with Drive's `about.get` — the same bounded
+// call the connect form's connection test makes, and the cheapest way to learn
+// whether the stored grant is still accepted. It reads no user content and
+// ignores the source config: the question is about the credential, not the
+// folders it targets.
+func (p *googleDriveProvider) ProbeGrant(ctx context.Context, creds Credentials, deps ConnectorDeps) error {
+	connector, err := p.NewConnector(ctx, creds, deps)
+	if err != nil {
+		return err
+	}
+	return connector.TestConnection(ctx, nil)
+}
+
 // driveCredentials projects the opaque credential map onto the Drive client's
 // typed credential struct. The stored scope (from the org-selected strategy at
 // connect time) is carried through so the client refreshes with the same scope

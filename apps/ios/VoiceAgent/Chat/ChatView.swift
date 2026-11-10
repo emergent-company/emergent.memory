@@ -10,6 +10,9 @@ struct ChatView: View {
     @EnvironmentObject private var controller: MemorySessionController
     @Environment(AgentStore.self) private var agentStore
     @Environment(ChatActivityStore.self) private var store
+    /// The one ordered timeline: the room's messages and the live activity are
+    /// the same list, so thinking and tools stay between the text they followed.
+    @Environment(ChatTimelineStore.self) private var timeline
 
     /// Invoked when the user taps a suggested prompt (fills the composer).
     var onSuggestion: ((String) -> Void)?
@@ -33,7 +36,7 @@ struct ChatView: View {
 
     var body: some View {
         Group {
-            if session.messages.isEmpty {
+            if timeline.items.isEmpty {
                 emptyState()
             } else {
                 messageList()
@@ -42,9 +45,17 @@ struct ChatView: View {
         .environment(\.toolActivityDisclosure, disclosure)
         // Object links in a reply open the object card, as in the text chat.
         .presentsObjectReferences()
-        .onChange(of: store.turns.isEmpty) { _, empty in
+        .onChange(of: timeline.items.isEmpty) { _, empty in
             if empty {
                 disclosure.clear()
+            }
+        }
+        // The room's transcript is the text half of the timeline; activity
+        // events feed the other half from the controller, in arrival order.
+        .onReceive(session.objectWillChange) { _ in
+            Task { @MainActor in
+                await Task.yield()
+                timeline.syncLiveMessages(Self.liveMessages(from: session.messages))
             }
         }
     }
@@ -55,15 +66,19 @@ struct ChatView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 2 * .grid) {
-                    ForEach(session.messages) { item in
-                        message(item)
-                        // The turn this message started streams its activity
-                        // in here, above the reply.
-                        activity(for: item)
-                    }
+                    ChatTimelineView(
+                        store: timeline,
+                        onApproval: decideApproval,
+                        onQuestion: answerQuestion,
+                        onSurfaceAction: submitSurfaceAction
+                    )
 
-                    trailingActivity()
                     surfaceCards()
+
+                    WorkingLine(
+                        state: TurnWorkingState.of(awaitingFirstReply: store.isAwaitingFirstReply, turn: store.liveTurn),
+                        since: store.liveTurn?.startedAt
+                    )
 
                     Color.clear
                         .frame(height: 1)
@@ -85,99 +100,17 @@ struct ChatView: View {
         .id(ObjectIdentifier(controller))
     }
 
-    // MARK: - Messages
-
-    @ViewBuilder
-    private func message(_ message: ReceivedMessage) -> some View {
-        switch message.content {
-        case let .userTranscript(text), let .userInput(text):
-            userBubble(text)
-        case let .agentTranscript(text):
-            agentMessage(text)
-        }
-    }
-
-    /// The user's message stays a right-aligned accent bubble. The visible role
-    /// label is gone; the bubble's accessibility label keeps the speaker clear.
-    @ViewBuilder
-    private func userBubble(_ text: String) -> some View {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
-            HStack {
-                Spacer(minLength: 4 * .grid)
-                Text(trimmed)
-                    .font(MemoryFont.conversationBody)
-                    .foregroundStyle(.fg1)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 3 * .grid)
-                    .padding(.vertical, 2 * .grid)
-                    .bubbleBackground(.user, cornerRadius: .cornerRadiusMedium)
-                    .containerRelativeFrame(.horizontal, count: 5, span: 4, spacing: 0, alignment: .trailing)
-                    .accessibilityLabel(Text(ConversationRole.user.labelKey) + Text(": ") + Text(trimmed))
+    /// Maps the room's messages onto the store's SDK-independent transcript
+    /// shape, keyed by the LiveKit message id so a partial replaces in place.
+    private static func liveMessages(from messages: [ReceivedMessage]) -> [LiveTranscriptMessage] {
+        messages.map { message in
+            switch message.content {
+            case let .agentTranscript(text):
+                LiveTranscriptMessage(id: message.id, role: .assistant, text: text)
+            case let .userInput(text), let .userTranscript(text):
+                LiveTranscriptMessage(id: message.id, role: .user, text: text)
             }
         }
-    }
-
-    /// Assistant replies render as plain leading-aligned Markdown: no bubble,
-    /// no role label. The rendered markdown keeps its own VoiceOver structure.
-    @ViewBuilder
-    private func agentMessage(_ text: String) -> some View {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
-            MarkdownRenderer(text: trimmed)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    // MARK: - Activity (tools / thinking / cards)
-
-    /// The live/archived activity of the turn anchored to a user message.
-    @ViewBuilder
-    private func activity(for message: ReceivedMessage) -> some View {
-        if let turn = store.turn(anchoredTo: message.id), turn.hasContent {
-            turnActivity(turn)
-        }
-    }
-
-    /// The still-live turn when it has no anchor message in the list yet
-    /// (activity arriving before its user message is traced), plus the working
-    /// line at the agent position.
-    @ViewBuilder
-    private func trailingActivity() -> some View {
-        if let live = store.liveTurn, live.anchorMessageID == nil, live.hasContent {
-            turnActivity(live)
-        }
-        // The working line shows only while the turn has no live row of its
-        // own to speak for it.
-        WorkingLine(
-            state: TurnWorkingState.of(awaitingFirstReply: store.isAwaitingFirstReply, turn: store.liveTurn),
-            since: store.liveTurn?.startedAt
-        )
-    }
-
-    /// Renders one turn's accumulated activity: thinking blocks, contiguous
-    /// tool-call runs, then the interactive card.
-    private func turnActivity(_ turn: ChatActivityStore.Turn) -> some View {
-        VStack(alignment: .leading, spacing: 1 * .grid) {
-            ForEach(turn.thinkingBlocks) { block in
-                ThinkingBlockView(text: block.text, isLive: block.isLive)
-            }
-            ForEach(turn.toolGroups) { group in
-                ToolActivityGroup(tools: group.tools, turnID: turn.id)
-            }
-            if let approval = turn.approval {
-                ApprovalCardView(request: approval) { decision in
-                    decideApproval(approval, decision)
-                }
-            }
-            if let question = turn.question {
-                QuestionCardView(request: question) { answer in
-                    answerQuestion(question, answer: answer)
-                }
-            }
-        }
-        .padding(.leading, 1 * .grid)
     }
 
     // MARK: - A2UI surfaces
@@ -211,6 +144,7 @@ struct ChatView: View {
     private func decideApproval(_ request: ApprovalRequest, _ decision: ApprovalDecision) {
         guard !request.isAnswered else { return }
         store.submitApproval(questionId: request.questionId, decision: decision)
+        timeline.submitApproval(questionId: request.questionId, decision: decision)
         let chatDecision: ChatDecision = switch decision {
         case .approve:
             .approve(questionId: request.questionId)
@@ -223,6 +157,7 @@ struct ChatView: View {
     private func answerQuestion(_ request: QuestionRequest, answer: String) {
         guard !request.isAnswered else { return }
         store.submitQuestion(questionId: request.questionId, answer: answer)
+        timeline.submitQuestion(questionId: request.questionId, answer: answer)
         Task { await controller.sendDecision(.answer(questionId: request.questionId, value: answer)) }
     }
 
@@ -318,17 +253,5 @@ struct SuggestedPromptsView: View {
             }
         }
         .frame(maxWidth: 64 * .grid)
-    }
-}
-
-private extension ReceivedMessage.Content {
-    /// The raw text of the message, regardless of its kind.
-    var text: String {
-        switch self {
-        case let .agentTranscript(text),
-             let .userTranscript(text),
-             let .userInput(text):
-            text
-        }
     }
 }

@@ -458,6 +458,56 @@ func (r *Repository) ListDueSources(ctx context.Context, now time.Time) ([]*Sour
 	return srcs, nil
 }
 
+// ListProbeCandidates returns the sources the proactive grant probe may
+// revalidate: active, scheduled sources whose sync interval is at least
+// minIntervalMinutes. A shorter interval already surfaces a dead grant soon
+// enough through its own sync, so probing it would only spend the same provider
+// call twice.
+//
+// The credential blob is excluded: the probe re-reads the one row it acts on
+// with its credentials, so a sweep never loads every secret. The time-based
+// cadence (last_probed_at) is applied by the caller, where it is a pure function
+// the tests can drive with a fixed clock.
+func (r *Repository) ListProbeCandidates(ctx context.Context, minIntervalMinutes int) ([]*Source, error) {
+	var srcs []*Source
+	err := r.db.NewSelect().
+		Model(&srcs).
+		Where("status = ?", SourceStatusActive).
+		Where("sync_policy = ?", SyncPolicyScheduled).
+		Where("sync_interval_minutes IS NOT NULL").
+		Where("sync_interval_minutes >= ?", minIntervalMinutes).
+		ExcludeColumn("encrypted_credentials").
+		Order("last_probed_at ASC NULLS FIRST").
+		Scan(ctx)
+	if err != nil {
+		r.log.Error("failed to list probe candidates", "error", err)
+		return nil, apperror.NewDatabase("failed to list probe candidates", err)
+	}
+	if srcs == nil {
+		srcs = []*Source{}
+	}
+	return srcs, nil
+}
+
+// MarkSourceProbed records that the proactive probe asked the provider about the
+// source's grant. It is written for every attempt, including a failed one, so a
+// provider that is down is not probed on every sweep. It deliberately does not
+// move updated_at or last_synced_at: a probe is neither a user edit nor a sync.
+// A row deleted mid-probe is a no-op.
+func (r *Repository) MarkSourceProbed(ctx context.Context, projectID, sourceID uuid.UUID, at time.Time) error {
+	_, err := r.db.NewUpdate().
+		Model((*Source)(nil)).
+		Set("last_probed_at = ?", at).
+		Where("id = ?", sourceID).
+		Where("project_id = ?", projectID).
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to record source probe", "source_id", sourceID, "error", err)
+		return apperror.NewDatabase("failed to record source probe", err)
+	}
+	return nil
+}
+
 // ListHeadSourceRevisions returns externalID → headRevisionID for the HEAD
 // documents (supersedes_id IS NULL) of a source. The keys are the currently
 // ingested external ids (used for removals); the values are the cheap revision

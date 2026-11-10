@@ -75,6 +75,13 @@ func gmailTestCredentials() Credentials {
 	return Credentials{"refresh_token": "rt", "client_id": "cid", "client_secret": "secret", "scope": gmailReadonlyScope}
 }
 
+// gmailTestDeps returns connector deps that carry a valid stored source config.
+// FetchWithRecords reads the typed-record selection from ConnectorDeps, so a
+// connector built without it fails loudly rather than picking defaults.
+func gmailTestDeps() ConnectorDeps {
+	return ConnectorDeps{SourceConfig: map[string]any{"query": "in:inbox"}}
+}
+
 func TestGmailProviderCatalog(t *testing.T) {
 	p := newGmailProvider("", "")
 	cat := p.Catalog()
@@ -106,13 +113,13 @@ func TestGmailProviderCatalog(t *testing.T) {
 
 func TestGmailProviderSchema(t *testing.T) {
 	schema := newGmailProvider("", "").ConfigSchema()
-	for _, key := range []string{"query", "label_ids", "since", "max_threads"} {
+	for _, key := range []string{"filter", "object_types", "mcp_write_tools_enabled", "since", "max_threads"} {
 		if _, ok := schema.Properties[key]; !ok {
 			t.Errorf("schema missing %q", key)
 		}
 	}
 	if len(schema.Required) != 0 {
-		t.Errorf("required = %v, want nothing (a default query applies)", schema.Required)
+		t.Errorf("required = %v, want nothing (query-or-filter is validated at runtime)", schema.Required)
 	}
 }
 
@@ -123,7 +130,7 @@ func TestGmailValidateConfig(t *testing.T) {
 		cfg     map[string]any
 		wantErr string
 	}{
-		{name: "empty applies defaults", cfg: map[string]any{}},
+		{name: "empty is rejected", cfg: map[string]any{}, wantErr: "config.filter or config.query"},
 		{name: "full config", cfg: map[string]any{
 			"query":       "label:work",
 			"label_ids":   []any{"INBOX", "Label_7"},
@@ -134,12 +141,12 @@ func TestGmailValidateConfig(t *testing.T) {
 		{name: "query wrong type", cfg: map[string]any{"query": 5}, wantErr: "config.query"},
 		{name: "labels wrong type", cfg: map[string]any{"label_ids": "INBOX"}, wantErr: "config.label_ids"},
 		{name: "labels empty entry", cfg: map[string]any{"label_ids": []any{"INBOX", ""}}, wantErr: "config.label_ids"},
-		{name: "since wrong type", cfg: map[string]any{"since": 20250101}, wantErr: "config.since"},
-		{name: "since bad date", cfg: map[string]any{"since": "31/01/2025"}, wantErr: "config.since"},
-		{name: "max_threads zero", cfg: map[string]any{"max_threads": 0}, wantErr: "config.max_threads"},
-		{name: "max_threads negative", cfg: map[string]any{"max_threads": -1}, wantErr: "config.max_threads"},
-		{name: "max_threads fractional", cfg: map[string]any{"max_threads": 1.5}, wantErr: "config.max_threads"},
-		{name: "max_threads over ceiling", cfg: map[string]any{"max_threads": 50001}, wantErr: "config.max_threads"},
+		{name: "since wrong type", cfg: map[string]any{"query": "in:inbox", "since": 20250101}, wantErr: "config.since"},
+		{name: "since bad date", cfg: map[string]any{"query": "in:inbox", "since": "31/01/2025"}, wantErr: "config.since"},
+		{name: "max_threads zero", cfg: map[string]any{"query": "in:inbox", "max_threads": 0}, wantErr: "config.max_threads"},
+		{name: "max_threads negative", cfg: map[string]any{"query": "in:inbox", "max_threads": -1}, wantErr: "config.max_threads"},
+		{name: "max_threads fractional", cfg: map[string]any{"query": "in:inbox", "max_threads": 1.5}, wantErr: "config.max_threads"},
+		{name: "max_threads over ceiling", cfg: map[string]any{"query": "in:inbox", "max_threads": 50001}, wantErr: "config.max_threads"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -158,12 +165,16 @@ func TestGmailValidateConfig(t *testing.T) {
 }
 
 func TestGmailParseConfigDefaults(t *testing.T) {
-	parsed, err := parseGmailConfig(map[string]any{})
+	if _, err := parseGmailConfig(map[string]any{}); err == nil {
+		t.Fatal("parseGmailConfig accepted a source with no sync scope")
+	}
+
+	parsed, err := parseGmailConfig(map[string]any{"filter": map[string]any{"categories": []any{"Primary"}}})
 	if err != nil {
 		t.Fatalf("parseGmailConfig: %v", err)
 	}
-	if parsed.Query != gmailDefaultQuery {
-		t.Errorf("query = %q, want %q", parsed.Query, gmailDefaultQuery)
+	if parsed.Query != "(category:primary)" {
+		t.Errorf("query = %q, want the compiled category filter", parsed.Query)
 	}
 	if parsed.MaxThreads != gmail.DefaultMaxThreads {
 		t.Errorf("max_threads = %d, want %d", parsed.MaxThreads, gmail.DefaultMaxThreads)
@@ -172,18 +183,18 @@ func TestGmailParseConfigDefaults(t *testing.T) {
 		t.Errorf("since = %v, want zero", parsed.Since)
 	}
 
-	parsed, err = parseGmailConfig(map[string]any{"since": "2024-02-29", "query": "  "})
+	parsed, err = parseGmailConfig(map[string]any{"since": "2024-02-29", "query": "in:inbox"})
 	if err != nil {
 		t.Fatalf("parseGmailConfig: %v", err)
 	}
 	if want := time.Date(2024, 2, 29, 0, 0, 0, 0, time.UTC); !parsed.Since.Equal(want) {
 		t.Errorf("since = %v, want %v", parsed.Since, want)
 	}
-	if parsed.Query != gmailDefaultQuery {
-		t.Errorf("blank query = %q, want the default", parsed.Query)
+	if parsed.Query != "in:inbox" {
+		t.Errorf("query = %q, want the explicit value", parsed.Query)
 	}
 
-	if _, err := parseGmailConfig(map[string]any{"since": "2024-13-01"}); err == nil {
+	if _, err := parseGmailConfig(map[string]any{"since": "2024-13-01", "query": "in:inbox"}); err == nil {
 		t.Fatal("parseGmailConfig accepted an impossible date")
 	}
 }
@@ -270,7 +281,7 @@ func TestGmailEnumerate(t *testing.T) {
 		{ID: "t1", HistoryID: 4242, Snippet: "Quarterly\n  planning notes"},
 		{ID: "t2", HistoryID: 0, Snippet: ""},
 	}}
-	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), ConnectorDeps{})
+	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), gmailTestDeps())
 	if err != nil {
 		t.Fatalf("NewConnector: %v", err)
 	}
@@ -317,11 +328,11 @@ func TestGmailEnumerate(t *testing.T) {
 
 func TestGmailEnumerateError(t *testing.T) {
 	f := &fakeGmailTransport{listErr: errors.New("boom")}
-	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), ConnectorDeps{})
+	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), gmailTestDeps())
 	if err != nil {
 		t.Fatalf("NewConnector: %v", err)
 	}
-	if _, err := conn.Enumerate(context.Background(), map[string]any{}); err == nil {
+	if _, err := conn.Enumerate(context.Background(), map[string]any{"query": "in:inbox"}); err == nil {
 		t.Fatal("Enumerate returned nil error for a failed listing")
 	}
 }
@@ -353,7 +364,7 @@ func TestGmailFetchMarkdown(t *testing.T) {
 			},
 		},
 	}}
-	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), ConnectorDeps{})
+	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), gmailTestDeps())
 	if err != nil {
 		t.Fatalf("NewConnector: %v", err)
 	}
@@ -407,7 +418,7 @@ func TestGmailFetchPlaceholderBody(t *testing.T) {
 			Date:    time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
 		}}},
 	}}
-	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), ConnectorDeps{})
+	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), gmailTestDeps())
 	if err != nil {
 		t.Fatalf("NewConnector: %v", err)
 	}
@@ -425,7 +436,7 @@ func TestGmailFetchPlaceholderBody(t *testing.T) {
 
 func TestGmailFetchEmptyThreadFails(t *testing.T) {
 	f := &fakeGmailTransport{threads: map[string]*gmail.Thread{"t1": {ID: "t1"}}}
-	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), ConnectorDeps{})
+	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), gmailTestDeps())
 	if err != nil {
 		t.Fatalf("NewConnector: %v", err)
 	}
@@ -438,7 +449,7 @@ func TestGmailFetchEmptyThreadFails(t *testing.T) {
 // filter over a live mailbox, so absence can mean "archived", not "deleted".
 func TestGmailNeverDeletes(t *testing.T) {
 	f := &fakeGmailTransport{}
-	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), ConnectorDeps{})
+	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), gmailTestDeps())
 	if err != nil {
 		t.Fatalf("NewConnector: %v", err)
 	}
@@ -451,7 +462,7 @@ func TestGmailNeverDeletes(t *testing.T) {
 	}
 
 	f.truncated = true
-	if _, err := conn.Enumerate(context.Background(), map[string]any{}); err != nil {
+	if _, err := conn.Enumerate(context.Background(), map[string]any{"query": "in:inbox"}); err != nil {
 		t.Fatalf("Enumerate: %v", err)
 	}
 	if complete.EnumerationComplete() {
@@ -483,7 +494,7 @@ func TestGmailListResources(t *testing.T) {
 func TestGmailGrantRejectedIsActionable(t *testing.T) {
 	rejected := &oauth2.RetrieveError{ErrorCode: "invalid_grant"}
 	f := &fakeGmailTransport{testErr: rejected}
-	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), ConnectorDeps{})
+	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), gmailTestDeps())
 	if err != nil {
 		t.Fatalf("NewConnector: %v", err)
 	}
@@ -494,7 +505,7 @@ func TestGmailGrantRejectedIsActionable(t *testing.T) {
 
 	// A transient failure keeps its raw error so the caller retries.
 	f2 := &fakeGmailTransport{testErr: errors.New("503 backend error")}
-	conn2, err := gmailProviderWith(f2).NewConnector(context.Background(), gmailTestCredentials(), ConnectorDeps{})
+	conn2, err := gmailProviderWith(f2).NewConnector(context.Background(), gmailTestCredentials(), gmailTestDeps())
 	if err != nil {
 		t.Fatalf("NewConnector: %v", err)
 	}
@@ -521,8 +532,8 @@ func TestGmailOAuthStrategyScopes(t *testing.T) {
 		t.Fatal("gmail provider has no OAuth strategy")
 	}
 	scopes := strategy.DefaultScopes()
-	if len(scopes) != 1 || scopes[0] != "https://www.googleapis.com/auth/gmail.readonly" {
-		t.Fatalf("scopes = %v, want the Gmail readonly scope", scopes)
+	if len(scopes) != 2 || scopes[0] != "https://www.googleapis.com/auth/gmail.readonly" || scopes[1] != "https://www.googleapis.com/auth/gmail.compose" {
+		t.Fatalf("scopes = %v, want readonly + compose", scopes)
 	}
 
 	// The Drive strategy stays on the Drive scope: the shared Google protocol
@@ -579,7 +590,7 @@ func (w *windowGmailTransport) TestConnection(_ context.Context) error { return 
 
 func newWindowConnector(t *testing.T, f GmailTransport) CursorConnector {
 	t.Helper()
-	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), ConnectorDeps{})
+	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), gmailTestDeps())
 	if err != nil {
 		t.Fatalf("NewConnector: %v", err)
 	}
@@ -608,6 +619,7 @@ func TestGmailBackfillWalksOlderWindows(t *testing.T) {
 	conn := newWindowConnector(t, f)
 
 	items, cursor, err := conn.EnumerateWithCursor(context.Background(), map[string]any{
+		"query":       "in:inbox",
 		"max_threads": float64(500),
 		"since":       since.Format("2006-01-02"),
 	}, nil)
@@ -671,7 +683,7 @@ func TestGmailBackfillResumesFromWatermark(t *testing.T) {
 	}
 	conn := newWindowConnector(t, f)
 
-	_, next, err := conn.EnumerateWithCursor(context.Background(), map[string]any{}, cursor)
+	_, next, err := conn.EnumerateWithCursor(context.Background(), map[string]any{"query": "in:inbox"}, cursor)
 	if err != nil {
 		t.Fatalf("EnumerateWithCursor: %v", err)
 	}
@@ -703,7 +715,7 @@ func TestGmailBackfillCompletesOnWholeScope(t *testing.T) {
 	}
 	conn := newWindowConnector(t, f)
 
-	items, cursor, err := conn.EnumerateWithCursor(context.Background(), map[string]any{}, nil)
+	items, cursor, err := conn.EnumerateWithCursor(context.Background(), map[string]any{"query": "in:inbox"}, nil)
 	if err != nil {
 		t.Fatalf("EnumerateWithCursor: %v", err)
 	}
@@ -767,7 +779,7 @@ func TestGmailBackfillShrinksTruncatedWindow(t *testing.T) {
 	}
 	conn := newWindowConnector(t, f)
 
-	_, cursor, err := conn.EnumerateWithCursor(context.Background(), map[string]any{"max_threads": float64(2)}, nil)
+	_, cursor, err := conn.EnumerateWithCursor(context.Background(), map[string]any{"query": "in:inbox", "max_threads": float64(2)}, nil)
 	if err != nil {
 		t.Fatalf("EnumerateWithCursor: %v", err)
 	}
@@ -793,7 +805,7 @@ func TestGmailBackfillStopsAtSinceFloor(t *testing.T) {
 	}
 	conn := newWindowConnector(t, f)
 
-	items, cursor, err := conn.EnumerateWithCursor(context.Background(), map[string]any{"since": today.Format("2006-01-02")}, nil)
+	items, cursor, err := conn.EnumerateWithCursor(context.Background(), map[string]any{"query": "in:inbox", "since": today.Format("2006-01-02")}, nil)
 	if err != nil {
 		t.Fatalf("EnumerateWithCursor: %v", err)
 	}
@@ -818,7 +830,7 @@ func TestGmailBackfillStopsAtSinceFloor(t *testing.T) {
 func TestGmailBackfillErrorIsActionable(t *testing.T) {
 	revoked := &oauth2.RetrieveError{ErrorCode: "invalid_grant"}
 	conn := newWindowConnector(t, &fakeGmailTransport{listErr: revoked})
-	_, _, err := conn.EnumerateWithCursor(context.Background(), map[string]any{}, nil)
+	_, _, err := conn.EnumerateWithCursor(context.Background(), map[string]any{"query": "in:inbox"}, nil)
 	if err == nil {
 		t.Fatal("EnumerateWithCursor returned nil error for a failed listing")
 	}
@@ -828,7 +840,7 @@ func TestGmailBackfillErrorIsActionable(t *testing.T) {
 
 	transient := errors.New("gmail: list threads: 503 backend unavailable")
 	conn = newWindowConnector(t, &fakeGmailTransport{listErr: transient})
-	_, _, err = conn.EnumerateWithCursor(context.Background(), map[string]any{}, nil)
+	_, _, err = conn.EnumerateWithCursor(context.Background(), map[string]any{"query": "in:inbox"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "503") {
 		t.Fatalf("error = %v, want the transient failure passed through unchanged", err)
 	}
@@ -884,7 +896,7 @@ func TestGmailBackfillRestartsAfterOutgrowingCeiling(t *testing.T) {
 	}
 	conn := newWindowConnector(t, f)
 
-	_, next, err := conn.EnumerateWithCursor(context.Background(), map[string]any{}, complete)
+	_, next, err := conn.EnumerateWithCursor(context.Background(), map[string]any{"query": "in:inbox"}, complete)
 	if err != nil {
 		t.Fatalf("EnumerateWithCursor: %v", err)
 	}

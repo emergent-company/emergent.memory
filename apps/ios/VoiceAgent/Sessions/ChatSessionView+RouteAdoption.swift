@@ -58,6 +58,7 @@ extension ChatSessionView {
     func resetTranscript() {
         stopConversationEvents()
         transcript.reset()
+        timeline.reset()
         transport.reset()
         history.reset()
     }

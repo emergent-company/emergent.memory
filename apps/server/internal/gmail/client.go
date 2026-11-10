@@ -83,9 +83,15 @@ type Message struct {
 	From    string
 	To      string
 	Cc      string
+	Bcc     string
 	Subject string
 	Date    time.Time
 	Labels  []string
+	// MessageIDHeader, InReplyTo, and References are the RFC 5322 threading
+	// headers, carried for typed email objects.
+	MessageIDHeader string
+	InReplyTo       string
+	References      string
 	// Text is the message's text/plain body (empty when the message has none).
 	Text string
 	// HTML is the message's text/html body (empty when the message has none).
@@ -93,6 +99,8 @@ type Message struct {
 	// Attachments counts parts that carry attachment content. Their payloads are
 	// never downloaded.
 	Attachments int
+	// AttachmentNames lists attachment filenames (metadata only).
+	AttachmentNames []string
 }
 
 // Thread is one fully fetched Gmail thread.
@@ -475,12 +483,16 @@ func (c *Client) parseThread(raw *gapi.Thread) *Thread {
 			continue
 		}
 		msg := Message{
-			ID:      m.Id,
-			Labels:  append([]string(nil), m.LabelIds...),
-			Subject: headerValue(m.Payload, "Subject"),
-			From:    headerValue(m.Payload, "From"),
-			To:      headerValue(m.Payload, "To"),
-			Cc:      headerValue(m.Payload, "Cc"),
+			ID:              m.Id,
+			Labels:          append([]string(nil), m.LabelIds...),
+			Subject:         headerValue(m.Payload, "Subject"),
+			From:            headerValue(m.Payload, "From"),
+			To:              headerValue(m.Payload, "To"),
+			Cc:              headerValue(m.Payload, "Cc"),
+			Bcc:             headerValue(m.Payload, "Bcc"),
+			MessageIDHeader: headerValue(m.Payload, "Message-ID"),
+			InReplyTo:       headerValue(m.Payload, "In-Reply-To"),
+			References:      headerValue(m.Payload, "References"),
 		}
 		msg.Date = messageDate(m)
 		if m.Payload != nil {
@@ -504,6 +516,7 @@ func (c *Client) walkParts(part *gapi.MessagePart, msg *Message) {
 	// id; it is counted and skipped whichever MIME type it declares.
 	if part.Filename != "" && part.Body != nil && part.Body.AttachmentId != "" {
 		msg.Attachments++
+		msg.AttachmentNames = append(msg.AttachmentNames, part.Filename)
 		return
 	}
 

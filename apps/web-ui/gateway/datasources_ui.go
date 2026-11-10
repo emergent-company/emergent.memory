@@ -685,6 +685,22 @@ func isMissingDSOAuthClient(err error) bool {
 func (s *Server) uiDataSourceOAuthStart(c echo.Context) error {
 	ctx := c.Request().Context()
 	providerType := strings.TrimSpace(c.QueryParam("providerType"))
+	var config map[string]any
+	if c.Request().Method == http.MethodPost {
+		providerType = strings.TrimSpace(c.FormValue("providerType"))
+		if providerType == "gmail" {
+			config = dsGmailConfigFromForm(c)
+			if _, err := s.memory.PreviewDSFilter(c.Request().Context(), providerType, config); err != nil {
+				return redirectWithError(c, "/data-sources/new?providerType=gmail", dsFormError(err))
+			}
+		} else {
+			cfg, err := s.dsFormConfig(c.Request().Context(), c, providerType)
+			if err != nil {
+				return redirectWithError(c, "/data-sources/new", err)
+			}
+			config = cfg
+		}
+	}
 	if providerType == "" {
 		return redirectWithError(c, "/data-sources/new", errors.New("providerType is required"))
 	}
@@ -712,7 +728,7 @@ func (s *Server) uiDataSourceOAuthStart(c echo.Context) error {
 			}
 		}
 	}
-	resp, err := s.memory.StartDSOAuth(ctx, providerType, nil, nil, oauthAppID, "")
+	resp, err := s.memory.StartDSOAuth(ctx, providerType, config, nil, oauthAppID, "")
 	if err != nil {
 		if isMissingDSOAuthClient(err) {
 			return s.renderDSOAuthClientMissing(c, providerType)
@@ -2677,12 +2693,34 @@ func (s *Server) uiDataSourceUpdate(c echo.Context) error {
 	if providerType == "" {
 		return redirectWithError(c, detailPath, errors.New("providerType is required"))
 	}
-	cfg, err := s.dsFormConfig(ctx, c, providerType)
-	if err != nil {
-		return redirectWithError(c, detailPath, err)
-	}
-	if len(cfg) > 0 {
-		req.Config = cfg
+	if providerType == "gmail" {
+		cfg := dsGmailConfigFromForm(c)
+		scope := &DSScopeRequest{
+			Filter:      mapStringAny(cfg["filter"]),
+			ObjectTypes: mapStringSlice(cfg["object_types"]),
+		}
+		if v, ok := cfg["mcp_write_tools_enabled"].(bool); ok {
+			scope.MCPWriteToolsEnabled = &v
+		}
+		preview, perr := s.memory.PreviewDSScope(ctx, id, scope)
+		if perr != nil {
+			return redirectWithError(c, detailPath, dsFormError(perr))
+		}
+		if preview.Changed {
+			if _, uerr := s.memory.UpdateDSScope(ctx, id, scope, preview.PreviewHash, preview.BaseScopeHash); uerr != nil {
+				return redirectWithError(c, detailPath, dsFormError(uerr))
+			}
+		}
+		// Scope is persisted by the dedicated endpoint when it changed; the
+		// generic update only carries name and cadence and never config.
+	} else {
+		cfg, cfgErr := s.dsFormConfig(ctx, c, providerType)
+		if cfgErr != nil {
+			return redirectWithError(c, detailPath, cfgErr)
+		}
+		if len(cfg) > 0 {
+			req.Config = cfg
+		}
 	}
 	req.CredentialID = strings.TrimSpace(c.FormValue("credential_id"))
 	if _, err := s.memory.UpdateDSIntegration(ctx, id, req); err != nil {
@@ -2763,6 +2801,203 @@ func (s *Server) uiDocumentVersions(c echo.Context) error {
 		slices.Reverse(versions)
 	}
 	return s.page(c, pageTitle(documentName(*doc), "Versions"), DocumentVersionsPage(doc, versions, err))
+}
+
+// dsGmailConfigFromForm builds the nested Gmail config object from the connect
+// and edit forms. The filter is required: the backend rejects an empty scope.
+func dsGmailConfigFromForm(c echo.Context) map[string]any {
+	_ = c.Request().ParseForm()
+	cfg := map[string]any{}
+	filter := map[string]any{}
+	if v := dsFormMultiValues(c, "filter.categories"); len(v) > 0 {
+		filter["categories"] = v
+	}
+	for _, key := range []string{"filter.labels", "filter.excludeLabels", "filter.senders", "filter.excludeSenders", "filter.domains", "filter.excludeDomains", "filter.subjectContains"} {
+		if v := dsFormTerms(c, key); len(v) > 0 {
+			filter[strings.TrimPrefix(key, "filter.")] = v
+		}
+	}
+	for _, key := range []string{"hasAttachment", "unreadOnly", "starredOnly"} {
+		if c.FormValue("filter."+key) == "true" {
+			filter[key] = true
+		}
+	}
+	for _, key := range []string{"after", "before", "query"} {
+		if v := strings.TrimSpace(c.FormValue("filter." + key)); v != "" {
+			filter[key] = v
+		}
+	}
+	if len(filter) > 0 {
+		cfg["filter"] = filter
+	}
+	if types := dsFormMultiValues(c, "object_types"); len(types) > 0 {
+		cfg["object_types"] = types
+	}
+	cfg["mcp_write_tools_enabled"] = c.FormValue("mcp_write_tools_enabled") == "true"
+	if alias := strings.TrimSpace(c.FormValue("mcp_alias")); alias != "" {
+		cfg["mcp_alias"] = alias
+	}
+	return cfg
+}
+
+func dsFormMultiValues(c echo.Context, key string) []string {
+	raw := c.Request().Form[key]
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		if s := strings.TrimSpace(v); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func dsFormTerms(c echo.Context, key string) []string {
+	raw := strings.TrimSpace(c.FormValue(key))
+	if raw == "" {
+		return nil
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool { return r == '\n' || r == ',' })
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if s := strings.TrimSpace(p); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// dsGmailFilterSummary renders the persisted filter as human lines for the
+// source detail card.
+func dsGmailFilterSummary(cfg map[string]any) []string {
+	filter, _ := cfg["filter"].(map[string]any)
+	if len(filter) == 0 {
+		return []string{"No filter configured — sync will fail until a scope is set."}
+	}
+	var out []string
+	add := func(label string, v any) {
+		switch val := v.(type) {
+		case string:
+			if strings.TrimSpace(val) != "" {
+				out = append(out, label+": "+val)
+			}
+		case []any:
+			parts := make([]string, 0, len(val))
+			for _, item := range val {
+				if s, ok := item.(string); ok && s != "" {
+					parts = append(parts, s)
+				}
+			}
+			if len(parts) > 0 {
+				out = append(out, label+": "+strings.Join(parts, ", "))
+			}
+		case bool:
+			if val {
+				out = append(out, label)
+			}
+		}
+	}
+	for _, key := range []string{"categories", "labels", "excludeLabels", "senders", "excludeSenders", "domains", "excludeDomains", "subjectContains", "after", "before", "query"} {
+		add(key, filter[key])
+	}
+	if v, _ := filter["hasAttachment"].(bool); v {
+		out = append(out, "hasAttachment")
+	}
+	if v, _ := filter["unreadOnly"].(bool); v {
+		out = append(out, "unreadOnly")
+	}
+	if v, _ := filter["starredOnly"].(bool); v {
+		out = append(out, "starredOnly")
+	}
+	return out
+}
+
+func dsGmailObjectTypes(cfg map[string]any) string {
+	v, _ := cfg["object_types"].([]any)
+	if len(v) == 0 {
+		return "EmailMessage, EmailThread"
+	}
+	parts := make([]string, 0, len(v))
+	for _, item := range v {
+		if s, ok := item.(string); ok {
+			parts = append(parts, s)
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+func dsGmailWriteEnabled(cfg map[string]any) bool {
+	v, _ := cfg["mcp_write_tools_enabled"].(bool)
+	return v
+}
+
+func dsGmailFormList(cfg map[string]any, filterKey string) string {
+	filter, _ := cfg["filter"].(map[string]any)
+	v, _ := filter[filterKey].([]any)
+	parts := make([]string, 0, len(v))
+	for _, item := range v {
+		if s, ok := item.(string); ok {
+			parts = append(parts, s)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func dsGmailFormString(cfg map[string]any, filterKey string) string {
+	filter, _ := cfg["filter"].(map[string]any)
+	s, _ := filter[filterKey].(string)
+	return s
+}
+
+func dsGmailFormBool(cfg map[string]any, filterKey string) bool {
+	filter, _ := cfg["filter"].(map[string]any)
+	b, _ := filter[filterKey].(bool)
+	return b
+}
+
+func dsGmailHasCategory(cfg map[string]any, category string) bool {
+	filter, _ := cfg["filter"].(map[string]any)
+	v, _ := filter["categories"].([]any)
+	for _, item := range v {
+		if s, ok := item.(string); ok && strings.EqualFold(s, category) {
+			return true
+		}
+	}
+	return false
+}
+
+func dsGmailHasObjectType(cfg map[string]any, typ string) bool {
+	v, _ := cfg["object_types"].([]any)
+	if len(v) == 0 {
+		return true
+	}
+	for _, item := range v {
+		if s, ok := item.(string); ok && s == typ {
+			return true
+		}
+	}
+	return false
+}
+
+func mapStringAny(v any) map[string]any {
+	m, _ := v.(map[string]any)
+	return m
+}
+
+func mapStringSlice(v any) []string {
+	switch val := v.(type) {
+	case []string:
+		return val
+	case []any:
+		out := make([]string, 0, len(val))
+		for _, item := range val {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 // --- named OAuth app settings (project + organization) ---
