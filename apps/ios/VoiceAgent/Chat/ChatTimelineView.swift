@@ -64,10 +64,13 @@ struct ChatTimelineView: View {
     var onHistoryApproval: ((ApprovalRequest, ApprovalDecision) -> Void)?
 
     var body: some View {
+        // One footer per ended run, on its last reply. The boundary rows below
+        // draw nothing themselves; they only feed this map.
+        let footers = TurnFooterPlacement.byAssistant(from: store.items)
         ForEach(ChatTimelineRows.rows(from: store.items)) { row in
             switch row {
             case let .item(item):
-                itemRow(item)
+                itemRow(item, footers: footers)
             case let .tools(id, tools):
                 ToolActivityGroup(tools: tools, turnKey: id)
             }
@@ -75,7 +78,7 @@ struct ChatTimelineView: View {
     }
 
     @ViewBuilder
-    private func itemRow(_ item: TimelineItem) -> some View {
+    private func itemRow(_ item: TimelineItem, footers: [String: TurnRunInfo]) -> some View {
         switch item.kind {
         case let .userMessage(text):
             ChatMessageBubble(message: ChatMessage(
@@ -90,6 +93,11 @@ struct ChatTimelineView: View {
                 text: markdown,
                 citations: citations
             ))
+            // `model · duration · end time` and Copy turn, only once this
+            // run's last reply is known to belong to an ended run.
+            if let run = footers[item.id] {
+                TurnFooterView(run: run, text: { markdown })
+            }
         case let .reasoning(text, isLive, _):
             ThinkingBlockView(text: text, isLive: isLive)
         case .tool:
@@ -110,7 +118,8 @@ struct ChatTimelineView: View {
         case let .surface(surface):
             surfaceCards(surface)
         case .runBoundary:
-            // Feeds the turn footer / status rows, not a transcript row.
+            // Feeds the turn footer through ``TurnFooterPlacement``, not a
+            // transcript row — the web hides these rows too.
             EmptyView()
         }
     }

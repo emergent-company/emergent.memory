@@ -45,6 +45,9 @@ struct ChatTimelineTests {
         // `run_end.created_at` is the run's start; the length comes from
         // `completed_at`, which is what the web's runDurationMs reads too.
         #expect(boundaries.last?.duration == 10)
+        #expect(boundaries.last?.completedAt != nil)
+        // The model is announced on `run_start`; the end window borrows it.
+        #expect(boundaries.last?.model == "test-model")
     }
 
     /// The reply role is the ADK author, not `"assistant"` (`#1832`): the

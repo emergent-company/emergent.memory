@@ -4,20 +4,49 @@ import Observation
 // MARK: - Model
 
 /// One run of the agent: the `run_start`/`run_end` pair the history endpoint
-/// records. Not drawn by default; it feeds the turn footer and status rows.
+/// records, or the window a live turn opens at `meta` and closes at `done`.
+/// Not drawn by default; it feeds the turn footer and status rows.
 struct RunWindow: Equatable {
     /// The run id both boundary items carry.
     let id: String
-    /// Model that produced the run, when the record names one.
+    /// Model that produced the run, when the record names one. A live run does
+    /// not: the stream forwards neither a model nor a duration, so its window
+    /// gets one only after the recorded history reloads.
     var model: String?
     /// `running`, `completed`, `failed`, … as the server recorded it.
     var status: String?
     /// When the run started.
     var startedAt: Date?
-    /// How long it ran, measured across its two boundary items.
-    var duration: TimeInterval?
+    /// When the run ended. Nil while it is still going (a `run_start`) or when
+    /// the record has no `completed_at`, which is exactly when no footer may
+    /// appear.
+    var completedAt: Date?
     /// The failure reason of a failed run.
     var error: String?
+
+    init(
+        id: String,
+        model: String? = nil,
+        status: String? = nil,
+        startedAt: Date? = nil,
+        completedAt: Date? = nil,
+        error: String? = nil
+    ) {
+        self.id = id
+        self.model = model
+        self.status = status
+        self.startedAt = startedAt
+        self.completedAt = completedAt
+        self.error = error
+    }
+
+    /// How long it ran, measured across its two boundaries — the web's
+    /// `runDurationMs` (`completed_at − created_at`). Nil until both are known
+    /// and ordered.
+    var duration: TimeInterval? {
+        guard let startedAt, let completedAt, completedAt >= startedAt else { return nil }
+        return completedAt.timeIntervalSince(startedAt)
+    }
 }
 
 /// One row of the ordered chat timeline: history and the live turn share one
@@ -79,6 +108,10 @@ final class ChatTimelineStore {
     @ObservationIgnored let now: () -> Date
     /// Run id the live turn is streaming into (`meta` frame).
     @ObservationIgnored private var liveRunID: String?
+    /// When that run opened, for its turn-footer window.
+    @ObservationIgnored private var liveStartedAt: Date?
+    /// Whether a terminal frame already claimed the live run's one window.
+    @ObservationIgnored private var liveClosed = false
     /// Counts live assistant rows, so a reply that restarts after a tool call
     /// gets its own id.
     @ObservationIgnored private var liveAssistantCounter = 0
@@ -110,6 +143,8 @@ final class ChatTimelineStore {
         historyError = nil
         isLoadingHistory = false
         liveRunID = nil
+        liveStartedAt = nil
+        liveClosed = false
         liveAssistantCounter = 0
     }
 
@@ -196,6 +231,19 @@ extension ChatTimelineStore {
     /// rows carry this id so a reload can replace them.
     func beginLiveRun(_ runID: String?) {
         liveRunID = runID
+        liveStartedAt = runID == nil ? nil : now()
+        liveClosed = false
+    }
+
+    /// Claims the end of the live run for its footer window: the run id and the
+    /// moment the run began, or nil when no run was named or a terminal frame
+    /// already claimed it. Only the first terminal frame of a live run appends
+    /// a window; a replay of the same `done` must not add a second one.
+    func claimLiveRunEnd() -> (id: String, startedAt: Date?)? {
+        guard !liveClosed, let id = liveRunID else { return nil }
+        liveClosed = true
+        let started = liveStartedAt ?? items.first { $0.runID == id }?.createdAt
+        return (id, started)
     }
 
     /// Reserves a positional id for a new live assistant row. Positional is

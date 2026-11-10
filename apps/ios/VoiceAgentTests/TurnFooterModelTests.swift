@@ -3,7 +3,8 @@ import Foundation
 import Testing
 
 /// The turn-footer line: the web's compact duration, the end clock in an
-/// injected zone and locale, and the rule that a partial footer is suppressed.
+/// injected zone and locale, and the rule that a line needs an end boundary
+/// while the model may be absent (a live run has none).
 struct TurnFooterModelTests {
     private let gmt = TimeZone.gmt
     private let british = Locale(identifier: "en_GB")
@@ -31,6 +32,8 @@ struct TurnFooterModelTests {
     @Test func durationUnderAnHourIsMinutesColonSeconds() {
         #expect(TurnFooterModel.format(duration: 0) == "0:00")
         #expect(TurnFooterModel.format(duration: 7) == "0:07")
+        #expect(TurnFooterModel.format(duration: 59) == "0:59")
+        #expect(TurnFooterModel.format(duration: 60) == "1:00")
         #expect(TurnFooterModel.format(duration: 152) == "2:32")
     }
 
@@ -50,9 +53,15 @@ struct TurnFooterModelTests {
         #expect(model.line == "deepseek-v4-flash · 2:03 · 10:02")
     }
 
-    @Test func lineIsNilWhenAnyPartIsMissing() {
-        #expect(footer(model: nil).line == nil)
-        #expect(footer(model: "   ").line == nil)
+    /// A live run has no model: the stream never sends one. The footer still
+    /// carries what the run does know, as the web's `turnFooter` does, and
+    /// gains the model when the recorded history reloads.
+    @Test func aLineWithoutAModelKeepsTheDurationAndEndClock() {
+        #expect(footer(model: nil).line == "2:03 · 10:02")
+        #expect(footer(model: "   ").line == "2:03 · 10:02")
+    }
+
+    @Test func lineIsNilWithoutBothBoundaries() {
         #expect(footer(start: nil).line == nil)
         #expect(footer(end: nil).line == nil)
     }

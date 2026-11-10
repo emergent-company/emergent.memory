@@ -231,33 +231,37 @@ enum ChatTimelineHistory {
     }
 
     private static func appendRunEnd(_ context: Context, to rows: inout [TimelineItem]) {
+        // Read the pair before appending: the end window borrows `rows` while
+        // `append` needs exclusive access to it.
+        let model = context.item.runModel ?? recordedModel(for: context.runID, in: rows)
         rows.append(TimelineItem(
             id: "run-end-\(context.runID ?? context.id)",
             runID: context.runID,
             createdAt: context.createdAt,
             kind: .runBoundary(RunWindow(
                 id: context.runID ?? context.id,
-                model: context.item.runModel,
+                // `run_start` is where the record puts the model; `run_end`
+                // usually carries none, so fall back to the run's start window.
+                model: model,
                 status: context.item.runStatus,
                 startedAt: context.createdAt,
-                duration: runDuration(context),
+                completedAt: TimelineDate.parse(context.item.completedAt),
                 error: context.item.errorMessage
             ))
         ))
     }
 
-    /// A run's wall-clock length.
-    ///
-    /// The record sets `created_at` on the `run_end` item to the run's **start**
-    /// (`GetConversationFullHistory`), so the end time is `completed_at`;
-    /// measuring the boundary item against itself would always be 0 (the web's
-    /// `runDurationMs` uses `completed_at` too).
-    private static func runDuration(_ context: Context) -> TimeInterval? {
-        guard
-            let start = context.createdAt,
-            let completed = TimelineDate.parse(context.item.completedAt)
-        else { return nil }
-        return max(0, completed.timeIntervalSince(start))
+    /// The model a run announced on its `run_start` item, for the `run_end`
+    /// window that shares its id.
+    private static func recordedModel(for runID: String?, in rows: [TimelineItem]) -> String? {
+        guard let runID else { return nil }
+        for row in rows.reversed() {
+            guard case let .runBoundary(window) = row.kind else { continue }
+            if window.id == runID, let model = window.model {
+                return model
+            }
+        }
+        return nil
     }
 
     private static func appendApprovals(

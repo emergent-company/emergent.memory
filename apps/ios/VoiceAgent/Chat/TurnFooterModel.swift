@@ -3,11 +3,11 @@ import Foundation
 /// What a finished turn publishes about its run: the model that answered, when
 /// it started, and when it ended.
 ///
-/// None of it reaches iOS today. `run_start`/`run_end` are history timeline
-/// items served by `/api/conversations/:id/history`, which iOS cannot reach yet
-/// (`emergent.memory#431`) and does not decode (`emergent.memory#435`), and the
-/// live SSE forwards neither a model nor a duration. The footer therefore
-/// renders nothing until that plumbing lands — see ``TurnFooterView``.
+/// The recorded history supplies all three (`run_start` names the model,
+/// `run_end` carries `completed_at`), and the timeline's ``RunWindow`` keeps
+/// them. A live run has only its two boundaries: the stream forwards neither a
+/// model nor a server duration, so its footer shows the duration and end clock
+/// until the record reloads and adds the model.
 struct TurnRunInfo: Equatable, Sendable {
     var model: String?
     var startedAt: Date?
@@ -48,16 +48,19 @@ struct TurnFooterModel {
         return Self.format(clock: endedAt, timeZone: timeZone, locale: locale)
     }
 
-    /// Every part present, or nothing. A footer with only a duration reads as a
-    /// stray number and disappears on reload; the web footer was built to carry
-    /// all three, so a partial one is deliberately suppressed here.
+    /// Every part that exists, joined with the web footer's separator: the
+    /// model when the run named one, then the duration and the end clock.
+    ///
+    /// Duration and end time are required — a run with no end boundary has no
+    /// footer — while the model is not: a live run has none until the recorded
+    /// history reloads, and the web's `turnFooter` omits it the same way rather
+    /// than dropping the whole line.
     var line: String? {
-        guard let model = run.model?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !model.isEmpty,
-              let duration,
-              let endClock
-        else { return nil }
-        return "\(model) · \(duration) · \(endClock)"
+        guard let duration, let endClock else { return nil }
+        let name = run.model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return [name.isEmpty ? nil : name, duration, endClock]
+            .compactMap(\.self)
+            .joined(separator: " · ")
     }
 
     /// A span in the web's compact form: `m:ss`, and `h:mm:ss` from one hour.
