@@ -608,11 +608,15 @@ func deviceSurfacePath(method, path string) bool {
 		case deviceObjectReadPath(path):
 			// The object card a chat reference opens (object_card.go).
 			return true
-		case deviceConversationReadPath(path, "history"), deviceConversationReadPath(path, "events"):
-			// The recorded timeline and the live conversation stream the iOS
-			// chat reattaches to (issues #431/#437). Both are read-only; the
+		case deviceConversationReadPath(path, "history"),
+			deviceConversationReadPath(path, "events"),
+			deviceConversationReadPath(path, "todos"):
+			// The recorded timeline, the live conversation stream the iOS chat
+			// reattaches to (issues #431/#437), and the agent's plan for the
+			// conversation's session (#440). All three are read-only; the
 			// device token's own memory scope decides which conversations it
-			// may read (see streamEvents / getConversationHistory).
+			// may read (see streamEvents / getConversationHistory /
+			// getConversationTodos).
 			return true
 		}
 		return false

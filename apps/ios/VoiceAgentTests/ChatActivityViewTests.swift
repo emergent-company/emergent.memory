@@ -25,4 +25,13 @@ struct ChatActivityViewTests {
     @Test func subagentTrackConstructs() {
         _ = SubagentTrackView()
     }
+
+    /// The plan card (#440) constructs both before and after a new chat learns
+    /// its conversation id.
+    @MainActor
+    @Test func planCardConstructs() {
+        let store = ChatPlanStore(client: FakeSessionTodoFetcher([.success([])]))
+        _ = ChatPlanCard(store: store, conversationID: "conv-1")
+        _ = ChatPlanCard(store: store, conversationID: nil)
+    }
 }

@@ -172,6 +172,10 @@ func main() {
 	api.GET("/conversations/:id/history", s.getConversationHistory)
 	api.GET("/conversations/:id/dump", s.getConversationDump)
 	api.GET("/conversations/:id/events", s.conversationEvents)
+	// The agent's plan for the conversation's ACP session, as JSON (the twin of
+	// the /partial/chat-todos fragment, issue #440). Device-reachable via
+	// deviceConversationReadPath (auth.go).
+	api.GET("/conversations/:id/todos", s.getConversationTodos)
 	// Session lifecycle (chat-conversation-lifecycle): the rail's per-row
 	// Archive / Unarchive / Delete actions. Delete is permanent and is the only
 	// irreversible one; the client confirms before calling it.
