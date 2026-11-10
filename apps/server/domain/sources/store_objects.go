@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
@@ -110,17 +111,26 @@ func (r *Repository) McpSlugExists(ctx context.Context, projectID uuid.UUID, slu
 	return exists, nil
 }
 
-// ListAllSources returns every source without credential blobs, for startup
-// backfills of source-backed MCP tooling.
-func (r *Repository) ListAllSources(ctx context.Context) ([]*Source, error) {
+// ListSourcesMissingMcpSlug pages the sources of the given provider types that
+// still have no MCP slug, for the startup backfill. Scoping the query to rows
+// that need work keeps a boot from listing every source in every project and
+// re-provisioning servers that already exist.
+func (r *Repository) ListSourcesMissingMcpSlug(ctx context.Context, providers []string, limit int) ([]*Source, error) {
+	if len(providers) == 0 || limit <= 0 {
+		return nil, nil
+	}
 	var sources []*Source
 	err := r.db.NewSelect().
 		Model(&sources).
+		Where("provider IN (?)", bun.In(providers)).
+		Where("mcp_slug IS NULL").
 		ExcludeColumn("encrypted_credentials").
+		Order("created_at ASC", "id ASC").
+		Limit(limit).
 		Scan(ctx)
 	if err != nil {
-		r.log.Error("failed to list all sources", "error", err)
-		return nil, apperror.NewDatabase("failed to list all sources", err)
+		r.log.Error("failed to list sources missing an mcp slug", "error", err)
+		return nil, apperror.NewDatabase("failed to list sources missing an mcp slug", err)
 	}
 	return sources, nil
 }

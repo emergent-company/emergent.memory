@@ -31,10 +31,9 @@ func sourceAdminToolDefinitions() []mcp.ToolDefinition {
 		"before":          {Type: "string", Description: "YYYY-MM-DD."},
 	}
 	scopeProps := map[string]mcp.PropertySchema{
-		"source_id":               {Type: "string", Description: "Data source id."},
-		"filter":                  {Type: "object", Description: "Structured Gmail filter. Raw query is not accepted."},
-		"object_types":            {Type: "array", Items: &mcp.PropertySchema{Type: "string", Enum: []string{"EmailMessage", "EmailThread"}}},
-		"mcp_write_tools_enabled": {Type: "boolean"},
+		"source_id":    {Type: "string", Description: "Data source id."},
+		"filter":       {Type: "object", Description: "Structured Gmail filter. Raw query is not accepted."},
+		"object_types": {Type: "array", Items: &mcp.PropertySchema{Type: "string", Enum: []string{"EmailMessage", "EmailThread"}}},
 	}
 	// Flattened scalar/array fields are also accepted by the executor; the
 	// object above is the primary shape an LLM should use.
@@ -54,7 +53,7 @@ func sourceAdminToolDefinitions() []mcp.ToolDefinition {
 		{Name: "source-list", RequiredScope: read, Description: "List data sources in this project with their sync scope summary.", InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]mcp.PropertySchema{}}},
 		{Name: "source-get", RequiredScope: read, Description: "Get one data source's non-secret config and sync scope hashes.", InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]mcp.PropertySchema{"source_id": {Type: "string"}}, Required: []string{"source_id"}}},
 		{Name: "source-scope-preview", RequiredScope: read, Description: "Validate a proposed Gmail sync scope and return the compiled query, a preview hash, and the current base hash. Call this before source-scope-update.", InputSchema: mcp.InputSchema{Type: "object", Properties: scopeProps, Required: []string{"source_id"}}},
-		{Name: "source-scope-update", RequiredScope: write, Description: "Update a Gmail source's filter/object types. Requires preview_hash and base_scope_hash from source-scope-preview. Structured filters only; raw Gmail query and write-tool enablement are rejected.", InputSchema: mcp.InputSchema{Type: "object", Properties: updateProps, Required: []string{"source_id", "preview_hash", "base_scope_hash"}}},
+		{Name: "source-scope-update", RequiredScope: write, Description: "Update a Gmail source's sync scope. Requires preview_hash and base_scope_hash from source-scope-preview. Structured filters only; raw Gmail query is rejected.", InputSchema: mcp.InputSchema{Type: "object", Properties: updateProps, Required: []string{"source_id", "preview_hash", "base_scope_hash"}}},
 		{Name: "source-sync-trigger", RequiredScope: write, Description: "Trigger a sync for a data source after changing its scope.", InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]mcp.PropertySchema{"source_id": {Type: "string"}}, Required: []string{"source_id"}}},
 	}
 }
@@ -189,8 +188,22 @@ func scopeRequestFromArgs(args map[string]any) (*SourceScopeRequest, error) {
 	if _, ok := args["query"]; ok {
 		return nil, apperror.NewValidation("raw Gmail query is not accepted by MCP; use structured filter fields")
 	}
+	// The legacy scope keys stay admin-editable (since is expressed to an agent
+	// as filter.after, label_ids as filter.labels), so an agent that sends them
+	// is told rather than silently ignored: an ignored key would not change the
+	// scope hash and the update would look like a no-op.
+	for _, key := range []string{"since", "label_ids"} {
+		if _, ok := args[key]; ok {
+			return nil, apperror.NewValidation(key + " is not accepted by MCP; use the structured filter (after/before, labels)")
+		}
+	}
+	// Write-tool enablement is an administrator decision, not an agent one: an
+	// agent run reaching source-scope-update bypasses the token-scope check
+	// (TrustedInternal), so accepting the switch here would let an agent grant
+	// itself send/draft access with no human in the loop. It stays on the admin
+	// route only (PATCH /api/data-source-integrations/:id/scope).
 	if _, ok := args["mcp_write_tools_enabled"]; ok {
-		return nil, apperror.NewValidation("mcp_write_tools_enabled is not editable through MCP; use the API/UI")
+		return nil, apperror.NewValidation("mcp_write_tools_enabled is an administrator setting and cannot be changed through MCP; use PATCH /api/data-source-integrations/:id/scope")
 	}
 	return req, nil
 }

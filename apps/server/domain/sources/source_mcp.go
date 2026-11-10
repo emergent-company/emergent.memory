@@ -13,7 +13,7 @@ import (
 // SourceMCPServerManager owns the per-account MCP server rows. Implemented by
 // mcpregistry.Service.
 type SourceMCPServerManager interface {
-	EnsureSourceServer(ctx context.Context, projectID, sourceID string, defs []mcp.ToolDefinition) error
+	EnsureSourceServer(ctx context.Context, projectID, sourceID string, defs []mcp.ToolDefinition, writeToolsEnabled bool) error
 	DeleteSourceServer(ctx context.Context, projectID, sourceID string) error
 	EnsureSourceAdminServer(ctx context.Context, projectID string, defs []mcp.ToolDefinition) error
 	DeleteSourceAdminServer(ctx context.Context, projectID string) error
@@ -84,8 +84,9 @@ func (s *Service) provisionSourceMCP(ctx context.Context, src *Source) error {
 	if !ok {
 		return nil
 	}
-	defs := stp.ToolDefinitions(*src.McpSlug, sourceWriteToolsEnabled(src.Config))
-	if err := s.mcpServers.EnsureSourceServer(ctx, src.ProjectID.String(), src.ID.String(), defs); err != nil {
+	writeEnabled := sourceWriteToolsEnabled(src.Config)
+	defs := stp.ToolDefinitions(*src.McpSlug, writeEnabled)
+	if err := s.mcpServers.EnsureSourceServer(ctx, src.ProjectID.String(), src.ID.String(), defs, writeEnabled); err != nil {
 		return err
 	}
 	return s.mcpServers.EnsureSourceAdminServer(ctx, src.ProjectID.String(), sourceAdminToolDefinitions())
@@ -104,36 +105,75 @@ func (s *Service) deleteSourceMCP(ctx context.Context, projectID, sourceID uuid.
 
 // BackfillSourceMCP provisions MCP servers/tools for sources created before
 // source-backed tooling existed. It is best-effort and idempotent.
+//
+// It is scoped to rows that still need work — a source-tool provider type with
+// no mcp_slug — and pages them, so a boot on a large installation does not list
+// every source in every project and re-provision servers that already exist.
+// Each row it handles leaves the predicate (it gains a slug), so it always
+// re-reads the first page; maxBackfillPages bounds a run that keeps failing to
+// write slugs.
 func (s *Service) BackfillSourceMCP(ctx context.Context) {
 	if s.mcpServers == nil {
 		return
 	}
-	sources, err := s.repo.ListAllSources(ctx)
-	if err != nil {
-		s.log.Warn("source MCP backfill: list failed", "error", err)
+	var providers []string
+	for _, p := range s.providers.List() {
+		if _, ok := p.(SourceToolProvider); ok {
+			providers = append(providers, p.Catalog().Type)
+		}
+	}
+	if len(providers) == 0 {
 		return
 	}
-	for _, src := range sources {
-		provider, ok := s.providers.Get(src.Provider)
-		if !ok {
-			continue
+	const pageSize = 100
+	const maxBackfillPages = 100
+	for page := 0; page < maxBackfillPages; page++ {
+		sources, err := s.repo.ListSourcesMissingMcpSlug(ctx, providers, pageSize)
+		if err != nil {
+			s.log.Warn("source MCP backfill: list failed", "error", err)
+			return
 		}
-		if _, ok := provider.(SourceToolProvider); !ok {
-			continue
+		if len(sources) == 0 {
+			return
 		}
-		if err := s.ensureObjectTypes(ctx, src.ProjectID, provider); err != nil {
-			s.log.Warn("source MCP backfill: schema pack failed", "source_id", src.ID, "error", err)
-		}
-		if src.McpSlug == nil {
-			slug := s.deriveMcpSlug(ctx, src)
-			if err := s.repo.SetMcpSlug(ctx, src.ProjectID, src.ID, slug); err != nil {
-				s.log.Warn("source MCP backfill: set slug failed", "source_id", src.ID, "error", err)
+		progressed := 0
+		for _, src := range sources {
+			handled, err := s.provisionMissingSourceMCP(ctx, src)
+			if err != nil {
+				s.log.Warn("source MCP backfill: provision failed", "source_id", src.ID, "error", err)
 				continue
 			}
-			src.McpSlug = &slug
+			if handled {
+				progressed++
+			}
 		}
-		if err := s.provisionSourceMCP(ctx, src); err != nil {
-			s.log.Warn("source MCP backfill: provision failed", "source_id", src.ID, "error", err)
+		if progressed == 0 || len(sources) < pageSize {
+			return
 		}
 	}
+}
+
+// provisionMissingSourceMCP assigns a source its slug and provisions its MCP
+// server. handled reports whether the row left the backfill predicate, so the
+// caller can stop when a page makes no progress.
+func (s *Service) provisionMissingSourceMCP(ctx context.Context, src *Source) (handled bool, err error) {
+	provider, ok := s.providers.Get(src.Provider)
+	if !ok {
+		return false, nil
+	}
+	if _, ok := provider.(SourceToolProvider); !ok {
+		return false, nil
+	}
+	// A legacy source predates its provider's schema pack; install it before the
+	// source starts syncing typed objects. Best-effort, like the rest of the
+	// backfill: a failed pack must not keep the row out of the predicate forever.
+	if err := s.ensureObjectTypes(ctx, src.ProjectID, provider); err != nil {
+		s.log.Warn("source MCP backfill: schema pack failed", "source_id", src.ID, "error", err)
+	}
+	slug := s.deriveMcpSlug(ctx, src)
+	if err := s.repo.SetMcpSlug(ctx, src.ProjectID, src.ID, slug); err != nil {
+		return false, err
+	}
+	src.McpSlug = &slug
+	return true, s.provisionSourceMCP(ctx, src)
 }

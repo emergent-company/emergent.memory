@@ -30,21 +30,19 @@ func (r *Repository) FindServerBySourceID(ctx context.Context, projectID, source
 	return server, nil
 }
 
-// SetToolEnabledByServerAndName sets a tool row's enabled flag.
-func (r *Repository) SetToolEnabledByServerAndName(ctx context.Context, serverID, toolName string, enabled bool) error {
-	_, err := r.db.NewUpdate().
-		Model((*MCPServerTool)(nil)).
-		Set("enabled = ?", enabled).
-		Where("server_id = ?", serverID).
-		Where("tool_name = ?", toolName).
-		Exec(ctx)
-	return err
-}
-
 // EnsureSourceServer creates or updates the per-account MCP server row and its
 // tool rows. Tool enablement follows the definition's required scope: write
 // tools are disabled unless the source opted in.
-func (s *Service) EnsureSourceServer(ctx context.Context, projectID, sourceID string, defs []mcp.ToolDefinition) error {
+//
+// The opt-in is written as the row's project override (enabled_override), which
+// is the gate the agent tool pool applies (FindAllEnabledBuiltinTools:
+// COALESCE(enabled_override, org setting, true)). It is set when the row is
+// first created and never rewritten afterwards — re-running provisioning must
+// not discard an administrator's explicit disablement. A source that turns its
+// opt-in off drops the write definitions entirely, so their rows are pruned by
+// DeleteStaleTools and re-appear (disabled or enabled, per the opt-in) on the
+// next provision.
+func (s *Service) EnsureSourceServer(ctx context.Context, projectID, sourceID string, defs []mcp.ToolDefinition, writeToolsEnabled bool) error {
 	server, err := s.repo.FindServerBySourceID(ctx, projectID, sourceID)
 	if err != nil {
 		return fmt.Errorf("finding source server: %w", err)
@@ -71,15 +69,20 @@ func (s *Service) EnsureSourceServer(ctx context.Context, projectID, sourceID st
 	names := make([]string, 0, len(defs))
 	for _, def := range defs {
 		desc := def.Description
-		in := schemaToMap(def.InputSchema)
-		tools = append(tools, &MCPServerTool{
+		row := &MCPServerTool{
 			ServerID:    server.ID,
 			ToolName:    def.Name,
 			Description: &desc,
-			InputSchema: in,
+			InputSchema: schemaToMap(def.InputSchema),
 			Enabled:     true,
 			ConfigKeys:  []string{},
-		})
+		}
+		if def.RequiredScope == "email:write" {
+			row.Enabled = writeToolsEnabled
+			enabled := writeToolsEnabled
+			row.EnabledOverride = &enabled
+		}
+		tools = append(tools, row)
 		names = append(names, def.Name)
 	}
 	if err := s.repo.BulkUpsertTools(ctx, tools); err != nil {
