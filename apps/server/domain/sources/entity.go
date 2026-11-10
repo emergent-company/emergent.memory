@@ -132,9 +132,13 @@ type Source struct {
 	ErrorCount           int        `bun:"error_count,notnull" json:"errorCount"`
 	LastError            *string    `bun:"last_error" json:"lastError,omitempty"`
 	LastErrorAt          *time.Time `bun:"last_error_at" json:"lastErrorAt,omitempty"`
-	LastSyncedAt         *time.Time `bun:"last_synced_at" json:"lastSyncedAt,omitempty"`
-	CreatedAt            time.Time  `bun:"created_at,notnull,default:now()" json:"createdAt"`
-	UpdatedAt            time.Time  `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+	// LastProbedAt is when the proactive grant probe last asked the provider
+	// whether the stored credential is still accepted. It is not a sync: the
+	// scheduler does not read it, and a probe does not move LastSyncedAt.
+	LastProbedAt *time.Time `bun:"last_probed_at" json:"-"`
+	LastSyncedAt *time.Time `bun:"last_synced_at" json:"lastSyncedAt,omitempty"`
+	CreatedAt    time.Time  `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	UpdatedAt    time.Time  `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
 }
 
 // SourceCredential is the kb.source_credentials row model. A saved credential
