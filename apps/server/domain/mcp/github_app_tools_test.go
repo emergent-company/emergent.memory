@@ -30,6 +30,20 @@ func TestGitHubAppReviewHandlerRegistrationRejectsSecondProvider(t *testing.T) {
 	svc.RegisterGitHubAppToolHandler(singleReviewProvider{})
 }
 
+// TestRunSourceIDContext pins the absent/present behaviour of the run source id
+// the review tools prefer: absent resolves to "" so callers fall back to their
+// project-scoped resolution, present round-trips unchanged.
+func TestRunSourceIDContext(t *testing.T) {
+	ctx := context.Background()
+	if got := RunSourceIDFromContext(ctx); got != "" {
+		t.Fatalf("absent run source id resolved to %q, want empty", got)
+	}
+	ctx = ContextWithRunSourceID(ctx, "11111111-1111-1111-1111-111111111111")
+	if got := RunSourceIDFromContext(ctx); got != "11111111-1111-1111-1111-111111111111" {
+		t.Fatalf("run source id did not round-trip: %q", got)
+	}
+}
+
 // TestGitHubAppToolsAreInBuiltinCatalog pins the tool-pool fix: the builtin MCP
 // server (which backs the in-process agent tool pool) seeds from the internal
 // catalog, so the review tools must be static entries there — a

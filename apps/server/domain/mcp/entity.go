@@ -66,6 +66,25 @@ func SessionIDFromContext(ctx context.Context) string {
 	return v
 }
 
+// runSourceIDKey is the context key for the source that triggered the run.
+type runSourceIDKey struct{}
+
+// ContextWithRunSourceID stores the triggering source id in the tool-dispatch
+// context. Source-bound tools (the GitHub review tools) prefer it over scanning
+// the project repo allowlist, because a repo may be served by more than one
+// source and only the run knows which one fired it (issue #579).
+func ContextWithRunSourceID(ctx context.Context, sourceID string) context.Context {
+	return context.WithValue(ctx, runSourceIDKey{}, sourceID)
+}
+
+// RunSourceIDFromContext returns the triggering source id, or "" when the run
+// carries none. The zero value means "no preference": callers fall back to
+// their project-scoped resolution rather than guessing.
+func RunSourceIDFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(runSourceIDKey{}).(string)
+	return v
+}
+
 // trustedInternalKey is the context key for propagating the run's trust marker
 // into tool execution, so the in-process dispatch path (ExecuteTool) can enforce
 // AgentOnly consistently with the HTTP transports. It mirrors the fail-closed

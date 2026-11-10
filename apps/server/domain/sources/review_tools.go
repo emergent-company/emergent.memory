@@ -110,10 +110,10 @@ func (h *ReviewToolHandler) HandlesGitHubAppTool(name string) bool {
 // ExecuteGitHubAppTool resolves the repo's github_app source, mints a token
 // scoped to that repo, and runs the review tool.
 //
-// Run metadata: the mcp dispatch context carries the run id but not the run's
-// TriggerMetadata, so the run's sourceId is not reachable here. Resolution is
-// therefore the (project, repo) allowlist lookup, and it fails closed on zero
-// or multiple candidates instead of guessing (#579).
+// The run's sourceId, when the agent executor injected it from TriggerMetadata,
+// takes precedence and is validated against this project and repo. Without it,
+// resolution falls back to the (project, repo) allowlist and fails closed on
+// zero or multiple candidates instead of guessing (#579).
 func (h *ReviewToolHandler) ExecuteGitHubAppTool(ctx context.Context, projectID, toolName string, args map[string]any) (*mcp.ToolResult, error) {
 	if !h.HandlesGitHubAppTool(toolName) {
 		return nil, fmt.Errorf("sources: unsupported review tool %q", toolName)
@@ -164,11 +164,18 @@ func (h *ReviewToolHandler) ExecuteGitHubAppTool(ctx context.Context, projectID,
 	}
 }
 
-// resolveSource maps a repo to its single github_app source. Exactly one
-// allowlist match is required: zero is "no source", more than one is ambiguous
-// because the deployment may run two Apps against the same repo. Both fail
-// closed with an error that names what was found.
+// resolveSource maps a repo to its github_app source. The run's sourceId wins
+// when the dispatch context carries one; only without it does the project repo
+// allowlist act as the fallback.
+//
+// The sourceId path never falls back to another source: a run whose own source
+// cannot serve its repo is a misconfiguration, and guessing could post a review
+// through the wrong App. The fallback requires exactly one allowlist match;
+// zero or many fail closed naming what was found.
 func (h *ReviewToolHandler) resolveSource(ctx context.Context, projectID uuid.UUID, repo string) (*Source, *SourceApp, error) {
+	if sourceID := mcp.RunSourceIDFromContext(ctx); sourceID != "" {
+		return h.resolveRunSource(ctx, projectID, repo, sourceID)
+	}
 	candidates, err := h.repo.FindGitHubAppSourcesForRepo(ctx, projectID, repo)
 	if err != nil {
 		return nil, nil, fmt.Errorf("sources: resolve github_app source for %s: %w", repo, err)
@@ -182,17 +189,64 @@ func (h *ReviewToolHandler) resolveSource(ctx context.Context, projectID uuid.UU
 			repo, len(candidates), namedSourceCandidates(candidates))
 	}
 	src := candidates[0]
+	app, err := h.resolveSourceApp(ctx, &src)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &src, app, nil
+}
+
+// resolveRunSource loads the run's own source inside the project and validates
+// that it can serve repo. Every mismatch fails closed naming the source and the
+// reason; there is deliberately no fallback to the allowlist scan.
+func (h *ReviewToolHandler) resolveRunSource(ctx context.Context, projectID uuid.UUID, repo, sourceID string) (*Source, *SourceApp, error) {
+	id, err := uuid.Parse(sourceID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("sources: run sourceId %q is not a valid source id", sourceID)
+	}
+	src, err := h.repo.GetByID(ctx, id, projectID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("sources: run sourceId %s is not a source in this project: %w", id, err)
+	}
+	if src.Provider != ProviderTypeGitHubApp {
+		return nil, nil, fmt.Errorf("sources: run sourceId %s is a %s source, not github_app", sourceLabel(src), src.Provider)
+	}
+	if src.Status == SourceStatusDisabled {
+		return nil, nil, fmt.Errorf("sources: run sourceId %s is disabled", sourceLabel(src))
+	}
+	if !repoAllowed(src.Config, repo) {
+		return nil, nil, fmt.Errorf("sources: run sourceId %s does not allow repo %s", sourceLabel(src), repo)
+	}
+	app, err := h.resolveSourceApp(ctx, src)
+	if err != nil {
+		return nil, nil, err
+	}
+	return src, app, nil
+}
+
+// resolveSourceApp validates the source's App/installation binding and loads
+// the sealed key row. The cause is wrapped so the operator log keeps the DB
+// error while the agent-facing text stays readable.
+func (h *ReviewToolHandler) resolveSourceApp(ctx context.Context, src *Source) (*SourceApp, error) {
 	if src.AppID == nil {
-		return nil, nil, fmt.Errorf("sources: github_app source %s has no app", src.ID)
+		return nil, fmt.Errorf("sources: github_app source %s has no app", sourceLabel(src))
 	}
 	if src.ExternalAccountID == nil || strings.TrimSpace(*src.ExternalAccountID) == "" {
-		return nil, nil, fmt.Errorf("sources: github_app source %s has no installation id", src.ID)
+		return nil, fmt.Errorf("sources: github_app source %s has no installation id", sourceLabel(src))
 	}
 	app, err := h.repo.FindSourceAppByID(ctx, *src.AppID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("sources: github_app source %s references an unreadable app", src.ID)
+		return nil, fmt.Errorf("sources: github_app source %s references an unreadable app: %w", sourceLabel(src), err)
 	}
-	return &src, app, nil
+	return app, nil
+}
+
+// sourceLabel renders a source id with its display name for diagnostics.
+func sourceLabel(src *Source) string {
+	if name := strings.TrimSpace(src.DisplayName); name != "" {
+		return fmt.Sprintf("%s (%s)", src.ID, name)
+	}
+	return src.ID.String()
 }
 
 // namedSourceCandidates renders the ambiguity error's source ids/names.

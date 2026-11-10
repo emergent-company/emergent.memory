@@ -2599,6 +2599,13 @@ func (ae *AgentExecutor) runPipeline(
 	// Inject the current run ID into context so downstream tools (e.g. trigger_agent)
 	// can propagate it as the parent_run_id when spawning child runs.
 	ctx = contextWithCallerRunID(ctx, run.ID)
+	// Inject the source that triggered this run so source-bound tools resolve
+	// against that exact source instead of guessing from the project repo
+	// allowlist (a repo may be served by more than one github_app source). A
+	// non-string or empty value leaves the fallback path unchanged (issue #579).
+	if sourceID, ok := run.TriggerMetadata["sourceId"].(string); ok && sourceID != "" {
+		ctx = mcp.ContextWithRunSourceID(ctx, sourceID)
+	}
 	// Inject session ID into context so built-in tools (e.g. set_session_title)
 	// can update session metadata. If the run was created without the session ID set
 	// in-memory (e.g. via trigger_agent async path), fetch it from DB as a fallback.

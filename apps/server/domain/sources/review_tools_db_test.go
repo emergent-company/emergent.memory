@@ -377,6 +377,80 @@ func TestReviewToolsTwoSourcesTwoApps(t *testing.T) {
 	require.Zero(t, api.mintCount(44), "another project's installation must never be used")
 }
 
+// TestReviewToolsRunSourceIDWins pins the spec's two-Apps-on-one-repo scenario:
+// each run's TriggerMetadata sourceId selects its own installation even though
+// the repo is ambiguous by allowlist, and a bad sourceId fails closed instead of
+// falling back to a source that could serve the repo.
+func TestReviewToolsRunSourceIDWins(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	f := newReviewToolsFixture(t, "review_tools_source_id")
+	appA := f.addApp(t, 401, "bot-a")
+	appB := f.addApp(t, 402, "bot-b")
+	srcA := f.addSource(t, f.project, appA, "bot-a", "42", []string{"owner/repo"}, SourceStatusActive)
+	srcB := f.addSource(t, f.project, appB, "bot-b", "43", []string{"owner/repo"}, SourceStatusActive)
+	srcOtherRepo := f.addSource(t, f.project, appA, "other-bot", "45", []string{"other/repo"}, SourceStatusActive)
+	srcDisabled := f.addSource(t, f.project, appB, "disabled-bot", "46", []string{"owner/repo"}, SourceStatusDisabled)
+
+	otherProject := uuid.New()
+	_, err := f.db.DB.ExecContext(f.ctx, `INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`,
+		otherProject, f.orgID, "source-id-other-project")
+	require.NoError(t, err)
+	srcOtherProject := f.addSource(t, otherProject, appA, "other-project-bot", "44", []string{"owner/repo"}, SourceStatusActive)
+
+	api := newReviewToolsAPI(t)
+	f.buildHandler(t, api)
+	head := strings.Repeat("a", 40)
+	call := func(ctx context.Context) error {
+		_, err := f.handler.ExecuteGitHubAppTool(ctx, f.project.String(), toolPRDiff,
+			map[string]any{"repo": "owner/repo", "head_sha": head})
+		return err
+	}
+
+	// Run fired by source A mints installation 42; run fired by source B mints
+	// installation 43. The repo allowlist alone would be ambiguous here.
+	require.NoError(t, call(mcp.ContextWithRunSourceID(f.ctx, srcA.String())))
+	require.Equal(t, 1, api.mintCount(42), "source A must mint for installation 42")
+	require.Zero(t, api.mintCount(43))
+	require.NoError(t, call(mcp.ContextWithRunSourceID(f.ctx, srcB.String())))
+	require.Equal(t, 1, api.mintCount(42))
+	require.Equal(t, 1, api.mintCount(43), "source B must mint for installation 43")
+
+	// No source id: the same two sources still refuse as ambiguous, naming both.
+	before42, before43 := api.mintCount(42), api.mintCount(43)
+	err = call(f.ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "refusing to guess")
+	require.Contains(t, err.Error(), srcA.String())
+	require.Contains(t, err.Error(), srcB.String())
+	require.Equal(t, before42, api.mintCount(42))
+	require.Equal(t, before43, api.mintCount(43))
+
+	// A source id from another project is refused inside this project.
+	err = call(mcp.ContextWithRunSourceID(f.ctx, srcOtherProject.String()))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), srcOtherProject.String())
+	require.Contains(t, err.Error(), "not a source in this project")
+	require.Zero(t, api.mintCount(44), "another project's installation must not mint")
+	require.Equal(t, before42, api.mintCount(42))
+
+	// A source id whose allowlist does not cover the repo is refused; it must not
+	// fall back to the sources that do cover it.
+	err = call(mcp.ContextWithRunSourceID(f.ctx, srcOtherRepo.String()))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "does not allow repo owner/repo")
+	require.Zero(t, api.mintCount(45))
+	require.Equal(t, before42, api.mintCount(42))
+	require.Equal(t, before43, api.mintCount(43))
+
+	// A disabled source id is refused.
+	err = call(mcp.ContextWithRunSourceID(f.ctx, srcDisabled.String()))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "disabled")
+	require.Zero(t, api.mintCount(46), "a disabled source must not mint")
+}
+
 func TestReviewToolsAmbiguousSourceFailsClosed(t *testing.T) {
 	if testing.Short() {
 		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
