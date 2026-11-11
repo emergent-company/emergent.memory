@@ -23,6 +23,28 @@ const DefaultVersion = "v0.9.1"
 // referenced by createSurface.catalogId in emitted surfaces.
 const CatalogID = "memory-basic"
 
+// supportedCatalogIDs is the closed set of catalog ids this server can resolve.
+// createSurface.catalogId must name one of them: the renderer's capabilities are
+// exactly the catalog's, so an unknown id has no fallback (A2UI v1.0, #593).
+var supportedCatalogIDs = []string{CatalogID}
+
+// SupportedCatalogIDs returns the catalog ids createSurface.catalogId may name,
+// canonical first. It is the one list behind the prompt, the AgentCard and the
+// validator, so they cannot drift.
+func SupportedCatalogIDs() []string {
+	return append([]string(nil), supportedCatalogIDs...)
+}
+
+// ResolvesCatalog reports whether id names a catalog this server serves.
+func ResolvesCatalog(id string) bool {
+	for _, c := range supportedCatalogIDs {
+		if id == c {
+			return true
+		}
+	}
+	return false
+}
+
 // DefaultSurfaceID is the stable surface identifier used when a block's
 // messages carry no createSurface (e.g. updateComponents-only blocks). It keeps
 // the progressive surface parser and the finished-response extractor on the
@@ -467,6 +489,11 @@ func validateMessage(idx int, m Message) (Issues, string) {
 		}
 		if m.CreateSurface.CatalogID == "" {
 			return Issues{{Message: idx, Detail: "createSurface: catalogId must be non-empty"}}, m.CreateSurface.SurfaceID
+		}
+		if !ResolvesCatalog(m.CreateSurface.CatalogID) {
+			return Issues{{Message: idx, Detail: fmt.Sprintf(
+				"createSurface: unknown catalogId %q (supported: %s)",
+				m.CreateSurface.CatalogID, strings.Join(SupportedCatalogIDs(), ", "))}}, m.CreateSurface.SurfaceID
 		}
 		return nil, m.CreateSurface.SurfaceID
 	case m.UpdateComponents != nil:

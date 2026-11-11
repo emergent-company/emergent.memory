@@ -9,7 +9,7 @@ import (
 
 func TestFinalResponseStreamEvents_ExtractsA2UI(t *testing.T) {
 	block := "```a2ui\n" +
-		"{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"basic\"}}\n" +
+		"{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"memory-basic\"}}\n" +
 		"{\"updateComponents\":{\"surfaceId\":\"s1\",\"components\":[{\"id\":\"p1\",\"component\":\"proposal\",\"kind\":\"change\",\"summary\":\"hi\"}]}}\n" +
 		"```"
 	parts := []*genai.Part{{Text: "Here is a proposal:\n" + block}}
