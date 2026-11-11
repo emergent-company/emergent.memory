@@ -386,7 +386,8 @@ func (r *Repository) GetByContentHash(ctx context.Context, projectID, contentHas
 // job has not run yet, which is exactly the window the cost is paid in. It does
 // not qualify when its parse reached a terminal failure: an empty document must
 // not be handed back as if the retry succeeded, so a retry re-uploads and the
-// pipeline gets another attempt.
+// pipeline gets another attempt. HEAD only (supersedes_id IS NULL), like every
+// other read: an older version is not what the caller's bytes produced.
 //
 // Best-effort by design — there is no unique index on (project_id, file_hash)
 // since uploads stopped being deduplicated at insert time, so two concurrent
@@ -404,6 +405,7 @@ func (r *Repository) FindUploadByFileHash(ctx context.Context, projectID, fileHa
 		ModelTableExpr("kb.documents AS document").
 		Where("document.project_id = ?", projectID).
 		Where("document.file_hash = ?", fileHash).
+		Where("document.supersedes_id IS NULL").
 		Where("document.source_status <> ?", SourceStatusDeletedFromSource).
 		Where("document.conversion_status IS DISTINCT FROM 'failed'").
 		Where(`document.content IS NOT NULL OR EXISTS (
@@ -415,7 +417,7 @@ func (r *Repository) FindUploadByFileHash(ctx context.Context, projectID, fileHa
 		Scan(ctx)
 
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("find upload by file hash: %w", err)

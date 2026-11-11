@@ -71,6 +71,19 @@ func TestDocumentParsingSweepTask_Run(t *testing.T) {
 	orphan := seed(documentRow{filename: "orphan.md", sourceType: "upload",
 		conversionStatus: "not_required", sourceStatus: "active", createdAt: old})
 
+	// An old upload with no project at all. kb.documents.project_id is nullable
+	// while kb.document_parsing_jobs.project_id is NOT NULL, so no job can name
+	// it; the sweep must skip it and still enqueue the valid orphan beside it.
+	// With a LEFT JOIN this single row failed the whole multi-row INSERT and the
+	// sweep healed nothing.
+	unowned := uuid.New().String()
+	_, err = db.NewRaw(
+		`INSERT INTO kb.documents
+		   (id, project_id, filename, mime_type, content, source_type, conversion_status, source_status, storage_key, created_at)
+		 VALUES (?, NULL, 'unowned.md', 'text/markdown', NULL, 'upload', 'not_required', 'active', 'uploads/unowned.md', ?)`,
+		unowned, old).Exec(ctx)
+	require.NoError(t, err)
+
 	// Neighbours that must be left alone.
 	tooRecent := seed(documentRow{filename: "fresh.md", sourceType: "upload",
 		conversionStatus: "not_required", sourceStatus: "active", createdAt: time.Now().Add(-time.Minute)})
@@ -108,6 +121,7 @@ func TestDocumentParsingSweepTask_Run(t *testing.T) {
 	}
 
 	assert.Equal(t, 1, jobCount(orphan), "the orphaned upload must get exactly one parsing job")
+	assert.Equal(t, 0, jobCount(unowned), "a document with no project cannot name one on a job, so it is skipped")
 	assert.Equal(t, 0, jobCount(tooRecent), "an upload that is still in flight must not be swept")
 	assert.Equal(t, 0, jobCount(hasContent), "a document with content is already parsed")
 	assert.Equal(t, 0, jobCount(failedConversion), "a permanently failed parse must not be retried by the sweep")

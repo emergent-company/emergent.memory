@@ -71,14 +71,23 @@ func NewDocumentParsingSweepTask(db *bun.DB, log *slog.Logger, minAge time.Durat
 // either still there or was purged on retention) and re-running it would only
 // fail again; source_type 'upload' excludes rows a data source owns, whose
 // re-parse is that source's sync's job.
+//
+// The JOIN on kb.projects is an inner join, not a LEFT JOIN: a document with no
+// project_id has no organization to enqueue under, and
+// kb.document_parsing_jobs.project_id is NOT NULL. A LEFT JOIN would select a
+// NULL project_id for that row, and one such row would fail the whole
+// multi-row INSERT — so the sweep would error on every run and heal nothing,
+// which is the exact failure it exists to prevent. Such a row is out of scope:
+// nothing else can be enqueued for it either.
 const documentParsingSweepQuery = `INSERT INTO kb.document_parsing_jobs
 	(organization_id, project_id, status, source_type, source_filename, mime_type,
 	 file_size_bytes, storage_key, document_id, metadata)
 SELECT p.organization_id, d.project_id, 'pending', 'file_upload', d.filename, d.mime_type,
        d.file_size_bytes, d.storage_key, d.id, jsonb_build_object('swept', true)
 FROM kb.documents d
-LEFT JOIN kb.projects p ON p.id = d.project_id
+JOIN kb.projects p ON p.id = d.project_id
 WHERE d.content IS NULL
+  AND d.project_id IS NOT NULL
   AND d.source_type = 'upload'
   AND d.conversion_status IS DISTINCT FROM 'failed'
   AND d.source_status <> 'deleted_from_source'

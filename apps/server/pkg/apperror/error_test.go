@@ -2,6 +2,7 @@ package apperror
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 )
@@ -531,6 +532,39 @@ func TestPredefinedErrors(t *testing.T) {
 			}
 			if tt.err.Code != tt.wantCode {
 				t.Errorf("%s.Code = %q, want %q", tt.name, tt.err.Code, tt.wantCode)
+			}
+		})
+	}
+}
+
+// TestPublicMessage pins the one property that matters for client-facing text:
+// an error this package did not construct can never contribute to it. Upload and
+// tool-result paths show PublicMessage to the client while logging the full
+// error, so a raw driver or wrapped internal error must collapse to the constant
+// internal message rather than reaching the response body.
+func TestPublicMessage(t *testing.T) {
+	driverErr := errors.New(`pq: relation "kb.documents" does not exist`)
+
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"nil", nil, ""},
+		{"app error keeps its message", New(http.StatusUnprocessableEntity, "validation_error", "filename is required"), "filename is required"},
+		{"wrapped app error keeps its message", fmt.Errorf("validate upload: %w", ErrNotFound), ErrNotFound.Message},
+		{"unknown error collapses to the constant", driverErr, ErrInternal.Message},
+		{"wrapped unknown error collapses to the constant", fmt.Errorf("insert document: %w", driverErr), ErrInternal.Message},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := PublicMessage(tt.err)
+			if got != tt.want {
+				t.Fatalf("PublicMessage() = %q, want %q", got, tt.want)
+			}
+			if tt.err != nil && !errors.As(tt.err, new(*Error)) && got == driverErr.Error() {
+				t.Fatalf("PublicMessage leaked the raw error text %q", got)
 			}
 		})
 	}
