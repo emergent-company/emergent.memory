@@ -419,6 +419,18 @@ npx playwright test --config=js-dom.config.ts   # or: task e2e:js
   identifier) is raised. It also asserts an unknown component degrades to a
   summary card without throwing, and that the `result`/`proposal`/`approval`
   structured props render as key/value rows (not raw JSON).
+- `specs/js/a2ui-surface-lifecycle.spec.ts` covers two A2UI renderer
+  regressions. First, a history replay with two card answers that both name
+  their surface `s1` (the id the prompt teaches) used to keep only the newest
+  card, because the surface registry was keyed by `surfaceId` across the whole
+  transcript; the spec replays two such turns and asserts both cards render.
+  Second, a card that streamed in was silent to assistive tech: the spec drives
+  the real live frame sequence (createSurface alone, then components, then a
+  later frame) and asserts exactly one hidden `role=status`
+  `aria-live=polite` announcement (`New card 1: Result card.`) that does not
+  change on later progressive frames, that a second surface of the same kind
+  announces distinct text, that each card is a `role=group` with its kind as
+  `aria-label`, and that history replay announces nothing.
 - `specs/js/chat-session-lifecycle.spec.ts` drives the session-rail lifecycle
   wiring (#1318): the delete confirmation is shown with the session title and
   sends no request until confirmed, dismissing it keeps the session, confirming
