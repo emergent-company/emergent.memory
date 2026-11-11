@@ -8,7 +8,7 @@ import (
 )
 
 func TestTestModelGenerateContent(t *testing.T) {
-	m := newTestModel("test-llm")
+	m := newTestModel("test-llm", TestLLMResponse{})
 	if m.Name() != "test-llm" {
 		t.Fatalf("Name() = %q, want test-llm", m.Name())
 	}

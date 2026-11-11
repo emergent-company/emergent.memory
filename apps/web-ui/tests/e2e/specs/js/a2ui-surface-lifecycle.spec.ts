@@ -131,13 +131,58 @@ test.describe('A2UI surfaces (chat-components.js)', () => {
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
 
-  test('names each card as a navigable group', async ({ page }) => {
+  test('names each card as a group', async ({ page }) => {
     await loadScripts(page);
     await replayItems(page, [cardTurn(1, 'FIRST_CARD')]);
 
     const card = page.locator('#chat-messages .memory-card').first();
     await expect(card).toHaveAttribute('role', 'group');
     await expect(card).toHaveAttribute('aria-label', 'Result card');
+  });
+
+  test('keeps two live turns apart when the server scopes their surface ids', async ({ page }) => {
+    await loadScripts(page);
+
+    // #592 on the live path: the model names both surfaces "s1", and the server
+    // scopes each to its run+step, so the renderer receives two distinct ids.
+    // Keyed by surfaceId alone, two distinct ids are two cards; the same id
+    // twice (the pre-fix wire shape) would leave one card, which is the bug.
+    const result = await page.evaluate(
+      ({ one, two }) => {
+        const container = document.getElementById('chat-messages') as HTMLElement;
+        const ctx = { messages: container, hideEmpty() {}, scrollToBottom() {} };
+        const api = (
+          window as unknown as {
+            MemoryChatComponents: {
+              renderA2UISurface: (id: string, msgs: unknown, ctx: unknown) => void;
+            };
+          }
+        ).MemoryChatComponents;
+        api.renderA2UISurface('run-1.0:s1', one, ctx);
+        api.renderA2UISurface('run-2.0:s1', two, ctx);
+        const node = document.querySelector('.memory-a2ui-announcer');
+        return {
+          cards: document.querySelectorAll('#chat-messages .card-body').length,
+          texts: Array.from(
+            document.querySelectorAll('#chat-messages .card-body'),
+          ).map((el) => el.textContent),
+          announced: node ? node.textContent : null,
+        };
+      },
+      {
+        one: surfaceFrame('run-1.0:s1', [
+          { id: 'r1', component: 'result', rows: [{ label: 'status', value: 'FIRST' }] },
+        ]),
+        two: surfaceFrame('run-2.0:s1', [
+          { id: 'r2', component: 'result', rows: [{ label: 'status', value: 'SECOND' }] },
+        ]),
+      },
+    );
+
+    expect(result.cards).toBe(2);
+    expect(result.texts.join(' | ')).toContain('FIRST');
+    expect(result.texts.join(' | ')).toContain('SECOND');
+    expect(result.announced).toBe('New card 2: Result card.');
   });
 
   test('announces a card that streams in, once, and stays silent on replay', async ({ page }) => {
@@ -232,6 +277,83 @@ test.describe('A2UI surfaces (chat-components.js)', () => {
 
     expect(text.cards).toBe(2);
     expect(text.text).toBe('New card 2: Result card.');
+  });
+
+  test('announces a multi-kind surface with singular copy', async ({ page }) => {
+    await loadScripts(page);
+
+    // A surface may carry several kinds in one updateComponents. The ordinal
+    // counts surfaces, not cards, so the sentence stays singular — "New cards 1"
+    // reads as a count and a plural noun with 1 is wrong for AT (#597).
+    const text = await page.evaluate(
+      (frame) => {
+        const container = document.getElementById('chat-messages') as HTMLElement;
+        const ctx = { messages: container, hideEmpty() {}, scrollToBottom() {} };
+        const api = (
+          window as unknown as {
+            MemoryChatComponents: {
+              renderA2UISurface: (id: string, msgs: unknown, ctx: unknown) => void;
+            };
+          }
+        ).MemoryChatComponents;
+        api.renderA2UISurface('s1', frame, ctx);
+        const node = document.querySelector('.memory-a2ui-announcer');
+        return {
+          text: node ? node.textContent : null,
+          cards: document.querySelectorAll('#chat-messages .card-body').length,
+        };
+      },
+      surfaceFrame('s1', [
+        { id: 'r1', component: 'result', rows: [{ label: 'status', value: 'OK' }] },
+        { id: 's1', component: 'sources', items: [{ title: 'Doc', url: 'https://example.test' }] },
+      ]),
+    );
+
+    expect(text.cards).toBe(2);
+    expect(text.text).toBe('New card 1: Result card, Sources card.');
+  });
+
+  test('restarts the ordinal when the transcript is cleared', async ({ page }) => {
+    await loadScripts(page);
+
+    // The ordinal is conversation-lifetime, not page-lifetime: clearing the
+    // transcript (how a new conversation starts) resets the renderer's A2UI
+    // state, so the next card is "New card 1" again instead of a page-lifetime
+    // ordinal such as "New card 47" (#597).
+    const result = await page.evaluate(
+      ({ first, second }) => {
+        const container = document.getElementById('chat-messages') as HTMLElement;
+        const ctx = { messages: container, hideEmpty() {}, scrollToBottom() {} };
+        const api = (
+          window as unknown as {
+            MemoryChatComponents: {
+              renderA2UISurface: (id: string, msgs: unknown, ctx: unknown) => void;
+              resetA2UI: (container: HTMLElement) => void;
+            };
+          }
+        ).MemoryChatComponents;
+        api.renderA2UISurface('s1', first, ctx);
+        container.innerHTML = '';
+        api.resetA2UI(container);
+        api.renderA2UISurface('s1', second, ctx);
+        const node = document.querySelector('.memory-a2ui-announcer');
+        return {
+          text: node ? node.textContent : null,
+          announcers: document.querySelectorAll('.memory-a2ui-announcer').length,
+        };
+      },
+      {
+        first: surfaceFrame('s1', [
+          { id: 'r1', component: 'result', rows: [{ label: 'status', value: 'ONE' }] },
+        ]),
+        second: surfaceFrame('s1', [
+          { id: 'r1', component: 'result', rows: [{ label: 'status', value: 'TWO' }] },
+        ]),
+      },
+    );
+
+    expect(result.announcers).toBe(1);
+    expect(result.text).toBe('New card 1: Result card.');
   });
 
   test('does not announce cards during history replay', async ({ page }) => {

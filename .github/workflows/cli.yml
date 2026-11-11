@@ -46,8 +46,16 @@ jobs:
 
       - name: Install golangci-lint
         run: |
+          # Run-scoped install dir. On the self-hosted pool `go env GOPATH` is a
+          # shared, persistent path, so two jobs that install the same version
+          # write the same binary — one execs it while the other rewrites it and
+          # dies with "Text file busy" before linting anything (#1124, same class
+          # as #178). RUNNER_TEMP is per-job; GOMODCACHE stays shared on purpose,
+          # which is why the install is still fast.
+          export GOBIN="$RUNNER_TEMP/bin"
+          mkdir -p "$GOBIN"
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          echo "$GOBIN" >> "$GITHUB_PATH"
 
       # The previous golangci-lint-action pin used `install-mode: goinstall`,
       # which compiles golangci-lint v1 and needs a cgo toolchain (gcc) the

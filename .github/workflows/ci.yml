@@ -467,6 +467,17 @@ jobs:
       - name: Merge guard awaiting-review tests
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: .github/scripts/merge-guard-awaiting.test.sh
+      # Both Swift lint scripts pipe `swiftformat --lint` through
+      # scripts/lib/swiftformat-lint.sh, which retries a *crashed* tool (exit
+      # 139) and never a real finding (exit 1). `ios-lint` is only advisory on a
+      # `dev` PR but runs inside the required `promotion` context, so getting that
+      # distinction backwards either fails a release on a tool flake or hides
+      # formatting drift behind a retry — both silent. No Swift toolchain is
+      # installed here: the test drives a stub binary that exits a scripted
+      # status, so it belongs with the other hermetic shell self-tests.
+      - name: SwiftFormat crash-retry helper tests
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: bash scripts/lib/swiftformat-lint.test.sh
       # The deploy/self-hosted helpers are shell and run inside image builds,
       # where their failure modes are silent: sleeping after the last attempt
       # only slows a build, a swallowed status reports success after a real

@@ -445,6 +445,40 @@ func deriveSurfaceID(msgs []a2ui.Message) string {
 	return a2ui.SurfaceIDOf(msgs)
 }
 
+// a2uiNamespace scopes the surfaces a run emits to the run and step that emitted
+// them. The prompt teaches every turn the same surfaceId ("s1"), and A2UI
+// requires a surfaceId to be unique for the renderer's lifetime: without a
+// scope, a second answer's createSurface for "s1" replaces the first answer's
+// card in place (issue #592). A run id is a UUID and the step is monotonic
+// within it, so "<runID>.<step>" is globally unique.
+func a2uiNamespace(runID string, step int) string {
+	return fmt.Sprintf("%s.%d", runID, step)
+}
+
+// namespaceA2UIEvents scopes the surfaceId of every A2UI event to ns, rewriting
+// the ids inside its message payload too so the frame and its messages agree.
+// It is applied to the authoritative final frame as well as to the persisted
+// row, so a reload replays exactly the surface the live stream showed.
+func namespaceA2UIEvents(events []StreamEvent, ns string) {
+	if ns == "" {
+		return
+	}
+	for i := range events {
+		if events[i].Type != StreamEventA2UI {
+			continue
+		}
+		events[i].SurfaceID = a2ui.NamespaceID(ns, events[i].SurfaceID)
+		events[i].A2UI = a2ui.NamespaceMessages(ns, events[i].A2UI)
+	}
+}
+
+// persistedSurfaces scopes the surfaces stored on an assistant row exactly like
+// the frames of the run that produced them, so history replay and the live
+// stream agree on every surface id (#592).
+func persistedSurfaces(runID string, step int, surfaces []a2ui.Message) []a2ui.Message {
+	return a2ui.NamespaceMessages(a2uiNamespace(runID, step), surfaces)
+}
+
 // answerTextEvents filters one streamed answer chunk through the A2UI surface
 // filter. It is the only place partial answer text becomes a StreamEvent, so a
 // call site cannot bypass the filter and paint raw protocol JSONL mid-stream.
@@ -4108,7 +4142,10 @@ func (ae *AgentExecutor) runPipeline(
 			if event.Partial && event.Content != nil && req.StreamCallback != nil {
 				if step := tracker.current(); step != filterStep {
 					textFilter = a2ui.NewTextFilter()
-					a2uiStream = a2ui.NewSurfaceStream()
+					// Scope the surface to the run and step: the model names
+					// every surface "s1", so two answers would otherwise reach
+					// the renderer as the same surface (issue #592).
+					a2uiStream = a2ui.NewNamespacedSurfaceStream(a2uiNamespace(run.ID, step))
 					filterStep = step
 				}
 				for _, part := range event.Content.Parts {
@@ -4184,6 +4221,7 @@ func (ae *AgentExecutor) runPipeline(
 				if event.Content != nil && req.StreamCallback != nil {
 					step := tracker.current()
 					finalEvents := finalResponseStreamEvents(event.Content.Parts)
+					namespaceA2UIEvents(finalEvents, a2uiNamespace(run.ID, step))
 					for _, streamEvent := range finalEvents {
 						if streamEvent.Type == StreamEventThinking {
 							thinkTrack.emit(step, streamEvent.Role, streamEvent.Text)
@@ -4203,7 +4241,7 @@ func (ae *AgentExecutor) runPipeline(
 				// began a surface without closing it cannot swallow the next
 				// step's answer, and reset the progressive stream with it.
 				textFilter = a2ui.NewTextFilter()
-				a2uiStream = a2ui.NewSurfaceStream()
+				a2uiStream = a2ui.NewNamespacedSurfaceStream(a2uiNamespace(run.ID, tracker.current()))
 			}
 
 			// Track the last non-partial event that carries text — used as fallback
@@ -5505,10 +5543,14 @@ func (ae *AgentExecutor) persistEventContent(ctx context.Context, runID string, 
 	// is only a surface). Strip any A2UI block here so neither path can show raw
 	// JSONL; the extracted surfaces ride along so citation derivation on reload
 	// still sees them.
+	//
+	// The stored surfaces are scoped to this run and step exactly like the live
+	// and final frames, so a reloaded transcript renders the same distinct cards
+	// the stream showed rather than two answers colliding on "s1" (#592).
 	if stored, surfaces, hasBlock := replyForStorage(text); hasBlock {
 		text = stored
 		if len(surfaces) > 0 {
-			contentMap["a2ui"] = surfaces
+			contentMap["a2ui"] = persistedSurfaces(runID, stepNumber, surfaces)
 		}
 	}
 	if text != "" {
