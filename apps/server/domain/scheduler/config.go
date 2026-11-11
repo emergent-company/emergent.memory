@@ -110,6 +110,25 @@ type Config struct {
 	// EmbeddingJobPurgeInterval is the fallback interval used when the cron
 	// schedule is unset or invalid. Default: 24h.
 	EmbeddingJobPurgeInterval time.Duration
+
+	// DocumentParsingSweepInterval is the interval for the reconciliation sweep
+	// that enqueues a parsing job for an uploaded document that never got one.
+	// Default: 10 minutes.
+	DocumentParsingSweepInterval time.Duration
+
+	// DocumentParsingSweepSchedule is the cron schedule override for the parsing
+	// sweep. Empty string means use the interval.
+	DocumentParsingSweepSchedule string
+
+	// DocumentParsingSweepMinAgeMinutes is how old an unparsed upload must be
+	// before the sweep enqueues a job, so an upload whose job is still about to
+	// be enqueued is not swept. Default: 15.
+	DocumentParsingSweepMinAgeMinutes int
+
+	// DocumentParsingSweepBatchSize bounds how many documents one sweep run
+	// enqueues, so healing a large backlog cannot flood the queue in one tick.
+	// Default: 100.
+	DocumentParsingSweepBatchSize int
 }
 
 // NewConfig creates a new Config from environment variables
@@ -147,6 +166,12 @@ func NewConfig() *Config {
 		EmbeddingJobPurgeInterval:    getEnvDuration("EMBEDDING_JOB_PURGE_INTERVAL", 24*time.Hour),
 		SkillCuratorSchedule:         getEnvString("SKILL_CURATOR_SCHEDULE", "0 30 3 * * *"),
 		SkillCuratorInterval:         getEnvDuration("SKILL_CURATOR_INTERVAL", 24*time.Hour),
+		// Document parsing sweep: a Go duration string, so it can be set to
+		// "1m" for a quick check without multiplying milliseconds by hand.
+		DocumentParsingSweepInterval:      getEnvDurationString("DOCUMENT_PARSING_SWEEP_INTERVAL", 10*time.Minute),
+		DocumentParsingSweepSchedule:      getEnvString("DOCUMENT_PARSING_SWEEP_SCHEDULE", ""),
+		DocumentParsingSweepMinAgeMinutes: getEnvInt("DOCUMENT_PARSING_SWEEP_MIN_AGE_MINUTES", 15),
+		DocumentParsingSweepBatchSize:     getEnvInt("DOCUMENT_PARSING_SWEEP_BATCH_SIZE", 100),
 	}
 }
 
