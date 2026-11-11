@@ -24,12 +24,19 @@ test.describe('project credentials', () => {
     await expect(page.getByTestId('ds-saved-credential-add')).toBeVisible();
 
     // Saved credentials are the reusable, per-project tokens; the OAuth apps
-    // table below them is a separate section, not the same list.
-    await expect(page.getByTestId('ds-oauth-apps')).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'OAuth apps' })).toBeVisible();
-    await expect(page.getByTestId('ds-credentials-table')).toBeVisible();
+    // section below them is a separate surface, not the same list. That list is
+    // app-scoped and starts empty in the harness (`Add OAuth app` is the entry
+    // point), so the section — not a pre-seeded table — is what proves the
+    // ordering here.
+    const oauthApps = page.getByTestId('ds-oauth-apps');
+    await expect(oauthApps).toBeVisible();
+    // `exact` matters: the empty state's own heading is "No OAuth apps yet", so
+    // a substring match on "OAuth apps" resolves to two headings.
+    await expect(page.getByRole('heading', { name: 'OAuth apps', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'No OAuth apps yet' })).toBeVisible();
+    await expect(page.getByTestId('ds-credentials-table')).toHaveCount(0);
     const savedBox = await saved.boundingBox();
-    const oauthBox = await page.getByTestId('ds-credentials-table').boundingBox();
+    const oauthBox = await oauthApps.boundingBox();
     expect(savedBox && oauthBox && savedBox.y < oauthBox.y).toBe(true);
   });
 
@@ -37,11 +44,13 @@ test.describe('project credentials', () => {
     await page.goto('/settings/credentials');
 
     await expect(page.getByTestId('ds-oauth-apps')).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'OAuth apps' })).toBeVisible();
+    // `exact`: the empty state's heading ("No OAuth apps yet") also matches a
+    // substring search for "OAuth apps", which makes the locator ambiguous.
+    await expect(page.getByRole('heading', { name: 'OAuth apps', exact: true })).toBeVisible();
     await expect(page.getByTestId('ds-oauth-app-add')).toBeVisible();
     // No catalog rows are pre-rendered: the list starts empty.
     await expect(page.getByTestId('ds-credential-row')).toHaveCount(0);
-    await expect(page.getByText('No OAuth apps yet')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'No OAuth apps yet' })).toBeVisible();
 
     // Credential configuration never appears on the connections table.
     await page.goto('/data-sources');
@@ -180,10 +189,14 @@ test.describe('project credentials', () => {
     const name = `e2e-org-google-${Date.now()}`;
     await page.goto('/orgs/org-1/settings/oauth-clients');
     await expect(page.getByTestId('ds-oauth-app-add')).toBeVisible();
-    await expect(page.getByTestId('ds-credentials-table')).toBeVisible();
+    // The named-app list is app-scoped and starts empty in the harness, so the
+    // section — not a pre-seeded table row — is what proves the page rendered.
+    await expect(page.getByTestId('ds-oauth-apps')).toBeVisible();
 
     await page.getByTestId('ds-oauth-app-add').click();
-    await expect(page).toHaveURL(/\/orgs\/org-1\/settings\/oauth-apps\/new$/);
+    // The canonical org scope prefix is `/o/<org>`: a legacy `/orgs/<org>` path
+    // is 302'd there, so only the tail of the editor route is asserted.
+    await expect(page).toHaveURL(/\/settings\/oauth-apps\/new$/);
     await page.getByTestId('ds-oauth-app-vendor').selectOption('google');
     await page.getByTestId('ds-oauth-app-name').fill(name);
     await page.getByTestId('ds-oauth-app-client-id').fill('e2e-org-client-id');
@@ -204,6 +217,7 @@ test.describe('project credentials', () => {
   test('the retired OAuth-clients URL redirects to credentials', async ({ page }) => {
     await page.goto('/settings/oauth-clients');
     await expect(page).toHaveURL(/\/settings\/credentials$/);
-    await expect(page.getByTestId('ds-credentials-table')).toBeVisible();
+    await expect(page.getByTestId('ds-credentials')).toBeVisible();
+    await expect(page.getByTestId('ds-oauth-apps')).toBeVisible();
   });
 });

@@ -294,11 +294,13 @@ test.describe('provider-generic OAuth data-source connect', () => {
     // The org-admin gate passes (mock /api/user/orgs-and-projects marks org-1
     // org_admin). The page lists named apps and offers an add action; no
     // credential form is rendered on the list itself.
-    await expect(page.getByTestId('ds-credentials-table')).toBeVisible();
+    await expect(page.getByTestId('ds-oauth-apps')).toBeVisible();
     await expect(page.getByTestId('ds-oauth-app-add')).toBeVisible();
     await expect(page.getByTestId('ds-oauth-app-form')).toHaveCount(0);
     await page.getByTestId('ds-oauth-app-add').click();
-    await expect(page).toHaveURL(/\/orgs\/org-1\/settings\/oauth-apps\/new$/);
+    // The canonical org scope prefix is `/o/<org>`: a legacy `/orgs/<org>` path
+    // is 302'd there, so only the tail of the editor route is asserted.
+    await expect(page).toHaveURL(/\/settings\/oauth-apps\/new$/);
     await expect(page.getByTestId('ds-oauth-app-form')).toBeVisible();
 
     const secret = page.getByTestId('ds-oauth-app-client-secret');
