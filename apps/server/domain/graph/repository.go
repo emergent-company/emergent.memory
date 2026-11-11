@@ -553,6 +553,22 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*GraphObjec
 	return r.list(ctx, r.db, params)
 }
 
+// graphObjectListColumns is the projection for List queries, named so the
+// column-coverage test can hold it to the model: a column that is left out of a
+// full-object projection scans as its zero value on every row. migration_archive
+// is appended on request only, because it is a large column (see
+// ListParams.IncludeMigrationArchive).
+var graphObjectListColumns = []string{"id", "project_id", "branch_id", "canonical_id", "supersedes_id", "version",
+	"type", "name", "key", "status", "properties", "labels", "change_summary",
+	"created_at", "updated_at", "deleted_at", "actor_type", "actor_id", "schema_version",
+	"extraction_job_id", "extraction_confidence", "needs_review", "reviewed_by", "reviewed_at",
+	"content_hash", "embedding_updated_at",
+	// Write stamp (#2376). Selected here as well as in the detail list: a
+	// stale list/GET projection would make an edit read DataClass = "" and
+	// silently re-default a source-owned object to synthesized.
+	"credential_kind", "credential_id", "run_id", "root_run_id",
+	"data_class", "owner_source_id", "input_hash"}
+
 // list runs a single List query against the given handle. It is shared by List
 // (r.db) and the streaming batch iterators (ListEachTx), which pass a bun.Tx.
 func (r *Repository) list(ctx context.Context, db bun.IDB, params ListParams) ([]*GraphObject, error) {
@@ -568,16 +584,7 @@ func (r *Repository) list(ctx context.Context, db bun.IDB, params ListParams) ([
 		params.Order = "desc"
 	}
 
-	columns := []string{"id", "project_id", "branch_id", "canonical_id", "supersedes_id", "version",
-		"type", "key", "status", "properties", "labels", "change_summary",
-		"created_at", "updated_at", "deleted_at", "actor_type", "actor_id", "schema_version",
-		"extraction_job_id", "extraction_confidence", "needs_review", "reviewed_by", "reviewed_at",
-		"content_hash", "embedding_updated_at",
-		// Write stamp (#2376). Selected here as well as in the detail list: a
-		// stale list/GET projection would make an edit read DataClass = "" and
-		// silently re-default a source-owned object to synthesized.
-		"credential_kind", "credential_id", "run_id", "root_run_id",
-		"data_class", "owner_source_id", "input_hash"}
+	columns := append([]string(nil), graphObjectListColumns...)
 	if params.IncludeMigrationArchive {
 		// Opt-in only — see ListParams.IncludeMigrationArchive. Without this the
 		// column is omitted and obj.MigrationArchive always scans as empty.
@@ -736,7 +743,7 @@ func (r *Repository) Count(ctx context.Context, params ListParams) (int, error) 
 // fail the scan with "does not have column embedding_v2".
 var graphObjectDetailColumns = []string{
 	"id", "project_id", "branch_id", "canonical_id", "supersedes_id", "version",
-	"merged_to_canonical_id", "type", "key", "status", "assignee", "namespace",
+	"merged_to_canonical_id", "type", "name", "key", "status", "assignee", "namespace",
 	"properties", "labels", "change_summary", "content_hash",
 	"created_at", "updated_at", "deleted_at", "delete_reason", "last_accessed_at",
 	"fts", "embedding_updated_at",
@@ -2619,7 +2626,7 @@ END`
 // data_class, an out-of-enum value that contradicts what GET returns for the
 // same row (#2376).
 const graphObjectColumns = `id, project_id, branch_id, canonical_id, supersedes_id, version,
-	type, key, status, namespace, properties, labels, change_summary, content_hash,
+	type, name, key, status, namespace, properties, labels, change_summary, content_hash,
 	created_at, updated_at, deleted_at, fts, embedding_updated_at,
 	extraction_job_id, extraction_confidence, needs_review, reviewed_by, reviewed_at,
 	actor_type, actor_id, schema_version,
@@ -2641,7 +2648,7 @@ func scanGraphObject(rows *sql.Rows, obj *GraphObject, extraDest ...any) error {
 
 	dest := []any{
 		&obj.ID, &obj.ProjectID, &obj.BranchID, &obj.CanonicalID, &obj.SupersedesID, &obj.Version,
-		&obj.Type, &obj.Key, &obj.Status, &obj.Namespace, &props, &labels, &changeSummary, &obj.ContentHash,
+		&obj.Type, &obj.Name, &obj.Key, &obj.Status, &obj.Namespace, &props, &labels, &changeSummary, &obj.ContentHash,
 		&obj.CreatedAt, &obj.UpdatedAt, &obj.DeletedAt, &obj.FTS, &obj.EmbeddingUpdatedAt,
 		&obj.ExtractionJobID, &obj.ExtractionConfidence, &obj.NeedsReview, &obj.ReviewedBy, &obj.ReviewedAt,
 		&obj.ActorType, &obj.ActorID, &obj.SchemaVersion,
