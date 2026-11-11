@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/emergent-company/emergent.memory/apps/web-ui/webui"
+	"github.com/emergent-company/go-daisy/components/ui"
 )
 
 // DeployPortalPage is the public /deploy landing + Railway connection state.
@@ -20,7 +21,7 @@ templ DeployPortalPage(data deployPortalData) {
 		<body class="min-h-dvh bg-base-100 text-base-content">
 			<main class="mx-auto flex w-full max-w-screen-md flex-col gap-8 px-6 py-16">
 				<header class="flex flex-col gap-3">
-					<span class="badge badge-outline">Memory</span>
+					@ui.Badge(ui.BadgeProps{Label: "Memory", Style: ui.BadgeStyleOutline})
 					<h1 class="text-4xl font-semibold tracking-tight">Deploy Memory on Railway</h1>
 					<p class="text-muted-strong max-w-2xl">
 						Connect your Railway account, choose your email and AI providers, and we create a
@@ -42,32 +43,30 @@ templ DeployPortalPage(data deployPortalData) {
 
 				if !data.SignedIn {
 					<div class="grid gap-4 sm:grid-cols-3">
-						<div class="card bg-base-200">
-							<div class="card-body gap-2">
-								<span class="text-xs text-muted-faint">STEP 1</span>
-								<h2 class="card-title text-base">Connect Railway</h2>
-								<p class="text-sm text-base-content/80">Sign in with Railway and choose a workspace.</p>
-							</div>
-						</div>
-						<div class="card bg-base-200">
-							<div class="card-body gap-2">
-								<span class="text-xs text-muted-faint">STEP 2</span>
-								<h2 class="card-title text-base">Pick providers</h2>
-								<p class="text-sm text-base-content/80">Resend, Mailgun or Gmail for email; Google, OpenAI or DeepSeek for AI.</p>
-							</div>
-						</div>
-						<div class="card bg-base-200">
-							<div class="card-body gap-2">
-								<span class="text-xs text-muted-faint">STEP 3</span>
-								<h2 class="card-title text-base">Deploy</h2>
-								<p class="text-sm text-base-content/80">We provision the stack and hand you the URL and credentials.</p>
-							</div>
-						</div>
+						@ui.CardRaw(ui.CardRawProps{Surface: ui.CardSurfaceBase200, Border: ui.CardBorderNone, BodyClass: "gap-2"}) {
+							<span class="text-xs text-muted-faint">STEP 1</span>
+							<h2 class="card-title text-base">Connect Railway</h2>
+							<p class="text-sm text-base-content/80">Sign in with Railway and choose a workspace.</p>
+						}
+						@ui.CardRaw(ui.CardRawProps{Surface: ui.CardSurfaceBase200, Border: ui.CardBorderNone, BodyClass: "gap-2"}) {
+							<span class="text-xs text-muted-faint">STEP 2</span>
+							<h2 class="card-title text-base">Pick providers</h2>
+							<p class="text-sm text-base-content/80">Resend, Mailgun or Gmail for email; Google, OpenAI or DeepSeek for AI.</p>
+						}
+						@ui.CardRaw(ui.CardRawProps{Surface: ui.CardSurfaceBase200, Border: ui.CardBorderNone, BodyClass: "gap-2"}) {
+							<span class="text-xs text-muted-faint">STEP 3</span>
+							<h2 class="card-title text-base">Deploy</h2>
+							<p class="text-sm text-base-content/80">We provision the stack and hand you the URL and credentials.</p>
+						}
 					</div>
 					if data.Configured {
-						<a class="btn btn-primary w-fit" href="/deploy/oauth/start">Connect Railway</a>
+						@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/deploy/oauth/start", Variant: ui.ButtonPrimary, ExtraClass: "w-fit"}) {
+							Connect Railway
+						}
 					} else {
-						<button class="btn btn-primary w-fit" disabled="disabled">Connect Railway</button>
+						@ui.Button(ui.ButtonProps{Variant: ui.ButtonPrimary, ExtraClass: "w-fit", Attrs: templ.Attributes{"disabled": "disabled"}}) {
+							Connect Railway
+						}
 					}
 				} else {
 					<div class="flex flex-col gap-4">
@@ -95,7 +94,9 @@ templ DeployPortalPage(data deployPortalData) {
 						<div class="alert">
 							<span>Deployment orchestration is the next step: provider selection, template creation and the Zitadel bootstrap.</span>
 						</div>
-						<a class="btn btn-ghost w-fit" href="/deploy/oauth/logout">Disconnect Railway</a>
+						@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/deploy/oauth/logout", Variant: ui.ButtonGhost, ExtraClass: "w-fit"}) {
+							Disconnect Railway
+						}
 					</div>
 				}
 
