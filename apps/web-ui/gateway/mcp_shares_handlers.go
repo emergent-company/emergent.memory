@@ -82,11 +82,13 @@ type mcpShareFormData struct {
 // held only for the lifetime of that one response. EmailsSent lists the invite
 // recipients the key was queued to; EmailWarn reports a delivery problem.
 type mcpShareReveal struct {
-	Heading    string
-	Name       string
-	Token      string
-	MCPURL     string
-	BundleURL  string
+	Heading   string
+	Name      string
+	Token     string
+	MCPURL    string
+	BundleURL string
+	// InstallURL is the private claude:// install redirect for this key.
+	InstallURL string
 	EmailsSent []string
 	EmailWarn  string
 	Snippets   []mcpShareSnippet
@@ -672,6 +674,7 @@ func (s *Server) mcpShareRevealFromCreated(heading string, created *MCPShareCrea
 		Token:      created.Token,
 		MCPURL:     created.MCPURL,
 		BundleURL:  s.serverPublicBaseURL() + "/api/mcp/bundle?token=" + url.QueryEscape(created.Token),
+		InstallURL: mcpInstallURL(s.serverPublicBaseURL(), created.MCPURL, created.Token),
 		EmailsSent: created.EmailsSent,
 		EmailWarn:  created.EmailError,
 		Snippets:   mcpShareSnippets(created.MCPShareSecret),
