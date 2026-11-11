@@ -152,11 +152,18 @@ if [ "$refused" -gt 0 ]; then
 fi
 
 # ── SwiftFormat — changed/new files only (untouched debt ignored) ────────────
+# The invocation goes through a shared runner that retries a CRASHED swiftformat
+# (exit 139, SIGSEGV) and never retries a real finding (exit 1) — see
+# scripts/lib/swiftformat-lint.sh.
+# shellcheck source=../../scripts/lib/swiftformat-lint.sh
+# shellcheck disable=SC1091
+. "${repo_root}/scripts/lib/swiftformat-lint.sh"
+
 if [ "${#swift_files[@]}" -eq 0 ]; then
   echo "lint-swift: no changed Swift files; skipping swiftformat"
 else
   echo "lint-swift: swiftformat on ${#swift_files[@]} changed file(s)"
-  swiftformat --lint --config "${ios_dir}/.swiftformat" "${swift_files[@]}"
+  swiftformat_lint_retry_on_crash "${ios_dir}/.swiftformat" "${swift_files[@]}"
 fi
 
 # ── SwiftLint — whole tree for the no-arg ratchet, explicit files otherwise ──
