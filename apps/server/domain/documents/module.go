@@ -12,10 +12,15 @@ var Module = fx.Module("documents",
 	fx.Provide(
 		// Adapt *storage.Service to the private uploadStorage interface.
 		func(s *storage.Service) uploadStorage { return s },
+		// Adapt *Service to the ingestor's narrow document-creator port.
+		func(s *Service) DocumentCreator { return s },
 		NewRepository,
 		provideService,
 		NewHandler,
 		NewUploadHandler,
+		// The shared upload pipeline: HTTP handlers, chat attachments and MCP
+		// document-upload all go through this one ingestor (#586).
+		NewUploadIngestor,
 	),
 	fx.Invoke(RegisterRoutes),
 )

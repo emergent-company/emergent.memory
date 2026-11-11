@@ -113,6 +113,15 @@ type Service struct {
 	// Storage service (for document upload to object store)
 	storageSvc *storage.Service
 
+	// Shared upload ingestor: the one path that stores an upload, creates the
+	// document row and queues its parsing job (documents.UploadIngestor). Nil
+	// when the deployment has no document upload wiring.
+	uploadIngestor *documents.UploadIngestor
+
+	// Project auto-extract default for MCP uploads, so an MCP upload behaves
+	// like a REST upload. Nil is treated as "off".
+	projectAutoExtract documents.ProjectAutoExtractReader
+
 	// Skills repository (for skill CRUD tools)
 	skillsRepo *skills.Repository
 
@@ -233,8 +242,13 @@ type ServiceParams struct {
 	Cfg          *config.Config
 	Log          *slog.Logger
 
-	DocumentsSvc       *documents.Service
-	StorageSvc         *storage.Service
+	DocumentsSvc *documents.Service
+	StorageSvc   *storage.Service
+	// UploadIngestor is the shared documents upload pipeline. If omitted, the
+	// document-upload tool fails closed instead of writing an unparsed row.
+	UploadIngestor *documents.UploadIngestor `optional:"true"`
+	// ProjectAutoExtract supplies the project default for MCP uploads.
+	ProjectAutoExtract documents.ProjectAutoExtractReader `optional:"true"`
 	SkillsRepo         *skills.Repository
 	BranchSvc          *branches.Service
 	ProviderCredSvc    *provider.CredentialService
@@ -291,6 +305,8 @@ func NewService(p ServiceParams) *Service {
 		log:                       p.Log.With(logger.Scope("mcp.svc")),
 		documentsSvc:              p.DocumentsSvc,
 		storageSvc:                p.StorageSvc,
+		uploadIngestor:            p.UploadIngestor,
+		projectAutoExtract:        p.ProjectAutoExtract,
 		skillsRepo:                p.SkillsRepo,
 		branchSvc:                 p.BranchSvc,
 		providerCredSvc:           p.ProviderCredSvc,
