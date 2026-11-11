@@ -154,7 +154,7 @@ fi
 # ── SwiftFormat — changed/new files only (untouched debt ignored) ────────────
 # The invocation goes through a shared runner that retries a CRASHED swiftformat
 # (exit 139, SIGSEGV) and never retries a real finding (exit 1) — see
-# scripts/lib/swiftformat-lint.sh for why (static-SDK crashes, infra#1133).
+# scripts/lib/swiftformat-lint.sh.
 # shellcheck source=../../scripts/lib/swiftformat-lint.sh
 # shellcheck disable=SC1091
 . "${repo_root}/scripts/lib/swiftformat-lint.sh"

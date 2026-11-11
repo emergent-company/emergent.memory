@@ -141,7 +141,7 @@ printf '  %s\n' "${swift_files[@]}"
 echo "— swiftformat --lint"
 # Retry a CRASHED swiftformat (exit 139, SIGSEGV) but never a real finding
 # (exit 1); shared with apps/ios/Scripts/lint-swift.sh — see
-# scripts/lib/swiftformat-lint.sh (static-SDK crashes, infra#1133).
+# scripts/lib/swiftformat-lint.sh.
 # shellcheck source=../../scripts/lib/swiftformat-lint.sh
 # shellcheck disable=SC1091
 . "${repo_root}/scripts/lib/swiftformat-lint.sh"
