@@ -109,14 +109,16 @@ func TestClassifyInvalidOutputIsQueueAware(t *testing.T) {
 }
 
 // TestClassifyNilEventIsNotRetryable pins that a deterministic pipeline crash
-// does not invite a retry that will fail the same way.
+// stays out of automatic and unconfirmed bulk retries: the classifier alone
+// cannot know the build was fixed, so a human confirms the per-row retry the
+// panel offers. It is therefore still Retryable=false, not "never retryable".
 func TestClassifyNilEventIsNotRetryable(t *testing.T) {
 	got := Classify(QueueObjectExtraction, `adk: agent "ExtractionPipeline" yielded a nil event`)
 	if got.Class != ClassInternal {
 		t.Fatalf("class = %q, want %q", got.Class, ClassInternal)
 	}
 	if got.Retryable {
-		t.Fatal("retryable = true: a deterministic nil-event crash should not offer Retry")
+		t.Fatal("retryable = true: a nil-event crash must not join an unconfirmed bulk retry")
 	}
 }
 

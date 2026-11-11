@@ -201,7 +201,7 @@ func Classify(queue, message string) Failure {
 		return Failure{
 			Class:       ClassInternal,
 			Summary:     "The extraction pipeline stopped before saving results.",
-			Remediation: "This is a bug in Memory, not your document. Retrying the same input will not fix it — report it with the technical detail.",
+			Remediation: "This is a bug in Memory, not your document. Retrying runs the same input again on the current build; report it with the technical detail if it stops in the same place.",
 			Retryable:   false,
 		}
 
