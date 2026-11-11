@@ -448,13 +448,17 @@ func (s *Service) emitInviteReceived(ctx context.Context, invite *Invite, projec
 	})
 	category := "invites"
 
+	// The row's title carries the invitation itself, naming the project: the
+	// inbox showed a bare "Project invitation" over a duplicate line, which
+	// made the invite indistinguishable from unrelated project activity
+	// (issue #599). The project chip already renders the name beside it, so the
+	// message line is left empty rather than repeating the sentence.
 	_, err = s.notificationsSvc.Create(ctx, notifications.CreateInput{
 		UserID:         targetUserID,
 		ProjectID:      invite.ProjectID,
 		Scope:          notifications.ScopeAccount,
 		EventKey:       "invite.received",
-		Title:          "Project invitation",
-		Message:        fmt.Sprintf("You've been invited to join %s.", projectName),
+		Title:          fmt.Sprintf("You've been invited to %s", projectName),
 		Severity:       "info",
 		Category:       &category,
 		RequiresAction: true,

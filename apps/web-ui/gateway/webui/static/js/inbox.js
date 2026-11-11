@@ -237,7 +237,10 @@
   }
 
   // sendAction performs one notification mutation, then reconciles + refreshes.
-  function sendAction(el, method, url, body) {
+  // after optionally runs on success before the refresh, so a mutation that
+  // implies further state (a resolve also marks the row read and archives it)
+  // lands in the same refresh instead of a second round trip.
+  function sendAction(el, method, url, body, after) {
     el.setAttribute("aria-busy", "true");
     fetch(url, {
       method: method,
@@ -247,6 +250,9 @@
     })
       .then(function (r) {
         if (!r.ok) throw new Error("HTTP " + r.status);
+        return after ? after() : undefined;
+      })
+      .then(function () {
         reconcile();
         refreshList();
       })
@@ -284,6 +290,40 @@
       }).catch(function () {});
     }
     window.location.assign(href);
+  }
+
+  // resolveAction records the outcome of an actionable notification's button
+  // and then finishes the item: a resolved action is done, so the row is also
+  // marked read and archived (cleared). Without that it stayed in the Action
+  // required tab after Accept — that tab filters on requires_action alone, not
+  // action_status — which read as "the button does nothing" (issue #599).
+  //
+  // The verb travels in `action`, the field this gateway route binds
+  // (notifications_handlers.go); the gateway translates it to memory's
+  // `status` field itself. `status` here would bind nothing and the resolve
+  // would go upstream verb-less.
+  function resolveAction(el, base, verb) {
+    sendAction(el, "POST", base + "/resolve", { action: verb }, function () {
+      return markReadAndArchive(base);
+    });
+  }
+
+  // markReadAndArchive marks a notification read and then archives it. Both
+  // are best-effort: a resolve already succeeded, so a failed follow-up must
+  // not surface as a broken row — the next reconcile re-syncs it.
+  function markReadAndArchive(base) {
+    return fetch(base + "/read", {
+      method: "PATCH",
+      credentials: "same-origin",
+    })
+      .catch(function () {})
+      .then(function () {
+        return fetch(base + "/clear", {
+          method: "POST",
+          credentials: "same-origin",
+        });
+      })
+      .catch(function () {});
   }
 
   function onClick(ev) {
@@ -328,9 +368,7 @@
         sendAction(el, "POST", base + "/restore", null);
         break;
       case "resolve":
-        sendAction(el, "POST", base + "/resolve", {
-          action: el.getAttribute("data-notif-verb") || "",
-        });
+        resolveAction(el, base, el.getAttribute("data-notif-verb") || "");
         break;
     }
   }
