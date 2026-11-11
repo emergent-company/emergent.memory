@@ -391,6 +391,7 @@ func main() {
 	e.POST("/projects/activate", s.uiActivateProject)
 	e.POST("/projects/delete", s.uiDeleteProjects)
 	e.POST("/projects/restore", s.uiRestoreProject)
+	e.POST("/projects/rename", s.uiRenameProject)
 	e.POST("/projects/transfer", s.uiTransferProject)
 	// OAuth callback landing (see oauth_landing.go): global routes that map an
 	// API-server callback back into the caller's org/project scope.

@@ -516,6 +516,7 @@ type fakeMemory struct {
 	projectErr       error          // GetCurrentProject failure
 	updateErr        error          // UpdateProject failure
 	updatedProject   *ProjectUpdate // last update passed to UpdateProject
+	updatedProjectID string         // id passed to UpdateProject
 	overrides        []AgentOverrideEntry
 	overrideErr      error                                // failure for any agent-override method
 	overrideAgent    string                               // last agentName passed to Set/DeleteAgentOverride
@@ -2466,6 +2467,7 @@ func (f *fakeMemory) UpdateProject(ctx context.Context, id string, in *ProjectUp
 		return nil, f.updateErr
 	}
 	f.updatedProject = in
+	f.updatedProjectID = id
 	return f.project, nil
 }
 

@@ -147,7 +147,7 @@ func (m *MemoryClient) GetCurrentProject(ctx context.Context) (*Project, error) 
 // error.
 func (m *MemoryClient) UpdateProject(ctx context.Context, id string, in *ProjectUpdate) (*Project, error) {
 	var out Project
-	if err := m.do(ctx, http.MethodPatch, "/api/projects/"+id, in, &out); err != nil {
+	if err := m.do(ctx, http.MethodPatch, "/api/projects/"+url.PathEscape(id), in, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

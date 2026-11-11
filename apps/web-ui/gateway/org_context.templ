@@ -80,7 +80,7 @@ func projectDeletionScheduledLabel(p ProjectRef) string {
 
 // OrgLandingPage renders the active org's projects (GET /orgs/:id): a
 // multi-select data table with a bulk-delete toolbar and per-row action menus
-// (open / delete), or an empty state with a create CTA.
+// (open / rename / transfer / delete), or an empty state with a create CTA.
 templ OrgLandingPage(data orgPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		if data.LoadErr != nil {
@@ -104,6 +104,9 @@ templ OrgLandingPage(data orgPageData) {
 			@flashToasts(data.FlashMsg, data.FlashErr)
 			if data.CanTransfer {
 				@transferProjectModal(data.Org.ID, data.TransferOrgs)
+			}
+			if data.IsOrgAdmin && len(data.Projects) > 0 {
+				@renameProjectModal(data.Org.ID)
 			}
 			@ui.PopoverScript()
 			<script>
@@ -156,6 +159,31 @@ templ OrgLandingPage(data orgPageData) {
 				}
 				function closeTransferProjectDialog() {
 					var d = document.getElementById('transfer-project-modal');
+					if (d) d.close();
+				}
+
+				// Rename dialog: openRenameProjectDialog copies the row's id
+				// into the hidden field and prefills the name input with the
+				// row's current name; closeRenameProjectDialog dismisses it.
+				function openRenameProjectDialog(btn) {
+					orgClosePopovers();
+					var t = document.activeElement;
+					if (t && typeof t.blur === 'function') t.blur();
+					var id = document.getElementById('rename-project-id');
+					if (id) id.value = btn.getAttribute('data-project-id') || '';
+					var name = btn.getAttribute('data-project-name') || '';
+					var label = document.getElementById('rename-project-name');
+					if (label) label.textContent = name;
+					var input = document.getElementById('rename-project-input');
+					if (input) input.value = name;
+					window.MemoryApp.openDialog('rename-project-modal');
+					if (input) {
+						input.focus();
+						if (typeof input.select === 'function') input.select();
+					}
+				}
+				function closeRenameProjectDialog() {
+					var d = document.getElementById('rename-project-modal');
 					if (d) d.close();
 				}
 
@@ -364,9 +392,9 @@ templ orgProjectsToolbar(deletableCount int) {
 
 // orgProjectsTable is the org-landing projects table. isAdmin gates the
 // select-checkbox column, the bulk toolbar's select-all cell, and the per-row
-// actions menu (Open / Transfer / Delete / Cancel deletion); canTransfer gates
-// the Transfer row action specifically. A plain member sees a read-only,
-// single-column table whose rows are still openable.
+// actions menu (Open / Rename / Transfer / Delete / Cancel deletion);
+// canTransfer gates the Transfer row action specifically. A plain member sees a
+// read-only, single-column table whose rows are still openable.
 templ orgProjectsTable(projects []ProjectRef, isAdmin, canTransfer bool) {
 	{{ deletableCount := projectDeletableCount(projects) }}
 	{{ stackStyle := "--h1:'Project';--h2:''"
@@ -521,6 +549,18 @@ templ orgProjectsTable(projects []ProjectRef, isAdmin, canTransfer bool) {
 												<button type="button" class="flex items-center gap-2 text-sm" hx-post={ templ.URL("/projects/activate?projectId=" + p.ID) }>
 													<span class="iconify size-4 lucide--folder-open"></span>
 													Open
+												</button>
+											</li>
+											<li>
+												<button
+													type="button"
+													class="flex items-center gap-2 text-sm"
+													data-project-id={ p.ID }
+													data-project-name={ p.Name }
+													onclick="openRenameProjectDialog(this)"
+												>
+													<span class="iconify size-4 lucide--pencil"></span>
+													Rename
 												</button>
 											</li>
 											if canTransfer {
@@ -1235,6 +1275,61 @@ templ transferProjectModal(sourceOrgID string, orgs []Org) {
 					Size:    ui.ButtonSM,
 				}) {
 					Transfer
+				}
+			}
+		</form>
+	}
+}
+
+// renameProjectModal is the shared rename dialog behind the per-project Rename
+// row action (org landing; rendered once per page for an org_admin with at
+// least one project). openRenameProjectDialog(button) copies the clicked row's
+// data-project-id into the hidden projectId field and prefills the name input
+// with the row's current name, so the dialog always starts from the name on
+// screen. The form posts projectId + orgId + name to /projects/rename — a plain
+// POST: ui.Dialog disables hx-boost (like the transfer dialog), so the browser
+// submits normally and the handler's PRG 303 sends the user back to the org
+// view with the "Project renamed." flash.
+templ renameProjectModal(orgID string) {
+	@ui.Dialog(ui.DialogProps{ID: "rename-project-modal", BoxClass: "w-full max-w-sm"}) {
+		<div class="mb-5 flex items-start justify-between gap-4">
+			<div>
+				@ui.DialogTitle() { Rename <span id="rename-project-name" class="text-base-content"></span> }
+				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-0.5"}) {
+					The new name replaces this project's name everywhere it appears.
+				}
+			</div>
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeButton,
+				Variant:   ui.ButtonGhost,
+				Size:      ui.ButtonSM,
+				Shape:     ui.ButtonShapeCircle,
+				Icon:      "lucide--x",
+				AriaLabel: "Close",
+				Attrs:     templ.Attributes{"onclick": "closeRenameProjectDialog()"},
+			})
+		</div>
+		<form method="post" action="/projects/rename" class="flex flex-col gap-4">
+			<input type="hidden" name="orgId" value={ orgID }/>
+			<input type="hidden" id="rename-project-id" name="projectId" value=""/>
+			@form.FormControl("rename-project-input", "Project name", form.LabelAbove, "", "", nil) {
+				<input id="rename-project-input" name="name" type="text" required maxlength="120" value="" class="input w-full"/>
+			}
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"onclick": "closeRenameProjectDialog()"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+				}) {
+					Rename
 				}
 			}
 		</form>
