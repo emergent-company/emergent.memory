@@ -25,7 +25,9 @@ import { addProvider, setDefaultEmbeddingModel, setDefaultGenerativeModel } from
 // the gateway to offer it. Producing actual extraction RESULTS needs the
 // provider to run a real model, so the results test drives that through the
 // settings UI and polls for the summary. A third test covers the blocked state
-// unconditionally (no LLM key) on a fresh provider-less project.
+// unconditionally (no LLM key) on a fresh provider-less project — scoped all the
+// way to the document detail page, because the shared bootstrap project has a
+// provider and can never render the blocked card (#584).
 //
 // Env (see tests/e2e/.env.e2e.example), shared with the scenario suite:
 //   E2E_SCENARIO_LLM_PROVIDER         default 'openai' (the dev litellm slot)
@@ -241,6 +243,14 @@ test.describe('Document upload + extraction', () => {
   test('disables extraction when the project has no generative model', async ({ page }) => {
     // Unconditional (no LLM key): a fresh, provider-less project must render the
     // blocked extraction card — disabled button, guidance copy, providers link.
+    //
+    // The scratch project is not decoration: the model state under test is
+    // per-project (memory `ResolveGenerativeModel` = project config → that
+    // project's provider credentials → none), and the bootstrap `E2E Main`
+    // project has a provider configured by the other extraction tests. #584 was
+    // this spec uploading into the bootstrap project (the scoped path is
+    // authoritative over the session cookie) and then asserting the *shared*
+    // project's extraction state, which is of course unblocked.
     const bootstrap = readBootstrap();
     test.skip(!bootstrap, 'setup project must run first');
     const orgId = bootstrap!.orgId;
@@ -252,9 +262,16 @@ test.describe('Document upload + extraction', () => {
 
     try {
       projectId = await createProject(page, orgId, base);
+      const scope = { orgId, projectId };
 
-      await uploadDocumentViaForm(page, name, body);
+      await uploadDocumentViaForm(page, name, body, scope);
       await openUploadedDocument(page, name);
+
+      // Prove the document — and therefore the extraction card asserted below —
+      // lives in the fresh project, not in the bootstrap one.
+      await expect(page).toHaveURL(
+        new RegExp(`/o/${orgId}/p/${projectId}/documents/[^/]+$`),
+      );
 
       const extract = page.getByRole('button', { name: 'Extract data' });
       await expect(extract).toBeDisabled();

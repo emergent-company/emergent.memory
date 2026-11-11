@@ -177,8 +177,16 @@ test.describe('A2UI surface cards', () => {
       // approval
       const approval = card(page, SENTINEL.approval);
       await expect(approval).toHaveCount(1);
+      // The approval card mirrors the canonical chat approval card
+      // (chat-stream.js renderApproval): Cancel / Reject / Approve, pinned by
+      // testid in specs/js/a2ui-wiring.spec.ts. It has never rendered a "Deny"
+      // action — the old assertion here named a control the renderer does not
+      // have, which is what made the scheduled lane red (#584).
+      await expect(approval.getByTestId('chat-approval-cancel')).toBeVisible();
+      await expect(approval.getByTestId('chat-approval-reject')).toBeVisible();
+      await expect(approval.getByTestId('chat-approval-approve')).toBeVisible();
       await expect(approval.getByRole('button', { name: 'Approve' })).toBeVisible();
-      await expect(approval.getByRole('button', { name: 'Deny' })).toBeVisible();
+      await expect(approval.getByRole('button', { name: 'Reject' })).toBeVisible();
       // input renders as key/value rows (label + value), not a single JSON blob.
       await expect(approval.getByText('path', { exact: true })).toBeVisible();
       await expect(approval.getByText('/tmp/x', { exact: true })).toBeVisible();

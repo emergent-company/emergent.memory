@@ -300,7 +300,12 @@ all nine catalog components plus an unknown one, then asserts each card's DOM
 `sources`), the unknown-component summary fallback, and that a card action emits
 the `a2ui:action` CustomEvent carrying the `surfaceId` and the
 `{componentId, response}` action — for both the proposal/approval action row
-(`a2uiActions`) and the question-option path (`a2uiQuestion`). It also asserts a
+(`a2uiActions`) and the question-option path (`a2uiQuestion`). The approval card's
+decision set is the canonical one shared with `chat-stream.js` (Cancel / Reject /
+Approve, by `chat-approval-*` testid); the scheduled spec asserts those, and
+`specs/js/a2ui-wiring.spec.ts` pins the same set hermetically so a spec that names
+a control the renderer does not have fails in the per-PR `js` gate instead of the
+schedule lane (#584). It also asserts a
 UI-only turn leaves no empty assistant text bubble, and that the `result`/`proposal`/
 `approval` structured props (`rows`, `body`, `input`) render as key/value rows rather
 than a single raw-JSON `<pre>`. Deterministic and ungated — no provider, no LLM, no
@@ -368,7 +373,12 @@ test is env-gated on `E2E_SCENARIO_LLM_API_KEY`: it configures a provider throug
 the settings UI and asserts the `Extraction results` section actually lands. The
 trigger only enqueues a job (memory does not validate a provider at creation), so
 the round-trip needs no LLM; producing results does, which is why the results
-test skips fast without the key.
+test skips fast without the key. A third test — the blocked state, disabled
+button + "Extraction needs a generative model." — creates a fresh provider-less
+project **and navigates with that project's scope**, because the model config is
+per project and the bootstrap `E2E Main` project always has a provider: without
+the explicit `{orgId, projectId}` the scoped path still points at the bootstrap
+project, so the card renders unblocked (#584).
 
 Out of scope (need seeded schema or a live LLM): schema object-type detail,
 session detail page (the scenario covers one live turn but not session-detail
@@ -587,8 +597,12 @@ trigger), the chat session rail overlay, and the Providers settings save
 (`specs/gateway-smoke/provider-add-scope.spec.ts`: adding a provider from a
 scoped page must land back on `/o/{org}/p/{project}/settings/providers` — a
 flat PRG target is the #2479 class that 404s in session mode after a successful
-save). The session-mode `*-ui` mutations suite stays schedule-only because it
-needs Zitadel; this lane is what makes dialog/markup drift fail before merge.
+save). It also pins the documents toolbar's control shape — one search field,
+with an applied `?q=` also mirrored as a hidden input in the sibling filter form
+— so a `input[name="q"]` selector is ambiguous by design and specs must scope it
+(`helpers/documents.ts` `DOCUMENTS_SEARCH_INPUT`), the #584 failure class. The
+session-mode `*-ui` mutations suite stays schedule-only because it needs
+Zitadel; this lane is what makes dialog/markup drift fail before merge.
 
 ```bash
 cd tests/e2e

@@ -43,6 +43,31 @@ test.describe('list filters refresh only the results region', () => {
     });
   }
 
+  test('the documents toolbar has a single search control, with the applied query mirrored as a hidden input', async ({
+    page,
+  }) => {
+    // #584: the scheduled mutations suite filled `input[name="q"]` and Playwright
+    // rejected it as ambiguous on a `?q=` URL. The duplicate is intentional —
+    // the search form and the sibling filter form each carry the other's state —
+    // so this pins the shape that makes a bare `input[name="q"]` selector
+    // ambiguous, and keeps the selectors used by specs (and by
+    // helpers/documents.ts DOCUMENTS_SEARCH_INPUT) honest.
+    await page.goto('/documents?q=quarterly');
+
+    const search = page.locator('input[type="search"][name="q"]');
+    await expect(search).toHaveCount(1);
+    await expect(search).toHaveValue('quarterly');
+
+    // Exactly one *visible* control named q; the other match is the hidden
+    // mirror inside the filter form.
+    await expect(page.locator('input[name="q"]:visible')).toHaveCount(1);
+    await expect(
+      page
+        .getByTestId('documents-filter-form')
+        .locator('input[type="hidden"][name="q"]'),
+    ).toHaveValue('quarterly');
+  });
+
   test('the documents status filter swaps the listing without reloading the document', async ({
     page,
   }) => {

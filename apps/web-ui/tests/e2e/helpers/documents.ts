@@ -19,7 +19,12 @@ export const DOCUMENTS_MOBILE_LIST = '#documents-mobile-list';
 export const DOCUMENTS_STATS = '[data-testid="documents-stats"]';
 export const DOCUMENTS_STATUS_FILTER = '[data-testid="documents-status-filter"]';
 export const DOCUMENTS_LOAD_MORE = '[data-testid="documents-load-more"]';
-export const DOCUMENTS_SEARCH_INPUT = 'input[name="q"]';
+// The toolbar's search field. Scoped to `type="search"` because the sibling
+// filter form mirrors the query in a hidden `<input name="q">`
+// (documents.templ `documentsFilterHiddenFilters`) whenever `?q=` is set — a
+// bare `input[name="q"]` therefore resolves to two elements on exactly the URL
+// shape the search tests use, and Playwright's strict mode rejects it (#584).
+export const DOCUMENTS_SEARCH_INPUT = 'input[type="search"][name="q"]';
 /** The header button that opens the upload dialog. */
 export const DOCUMENTS_UPLOAD_OPEN = '[data-testid="documents-upload-open"]';
 /** The upload dialog (closed until the header button is used). */
@@ -65,8 +70,13 @@ export async function uploadDocumentViaForm(
   page: Page,
   name: string,
   body = `# ${name}\n\nSeeded by the documents e2e suite.`,
+  scope?: { orgId?: string; projectId?: string },
 ): Promise<void> {
-  await goto(page, '/documents');
+  // `scope` targets a scratch project instead of the bootstrap one. The scoped
+  // path is authoritative over the session cookie (gateway scope.go), so without
+  // it the upload — and the detail page it leads to — would still be the shared
+  // project's.
+  await goto(page, '/documents', scope);
   await expectAppPage(page, /Documents/);
   await page.locator(DOCUMENTS_UPLOAD_OPEN).click();
   const modal = page.locator(DOCUMENTS_UPLOAD_MODAL);

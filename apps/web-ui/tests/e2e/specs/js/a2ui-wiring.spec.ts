@@ -164,6 +164,34 @@ test.describe('A2UI action wiring (chat-components.js)', () => {
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
 
+  test('the approval card carries the canonical decision set', async ({ page }) => {
+    const errors = await bootstrap(page);
+
+    await render(page, [
+      {
+        id: 'approval-1',
+        component: 'approval',
+        tool: 'APPROVAL_TOOL_SENTINEL',
+        input: { path: '/tmp/x' },
+      },
+    ]);
+
+    // The A2UI approval card mirrors the canonical chat approval card
+    // (chat-stream.js renderApproval) down to the hook testids: Cancel, Reject,
+    // Approve. Pinned here because the scheduled session-mode spec
+    // (specs/chat/a2ui-widgets-ui.spec.ts) asserted a "Deny" action that this
+    // renderer has never emitted, and only a hermetic run can tell the two
+    // apart without a live stack (#584).
+    const approval = card(page, 'APPROVAL_TOOL_SENTINEL');
+    await expect(approval).toHaveCount(1);
+    await expect(approval.getByTestId('chat-approval-cancel')).toHaveText('Cancel');
+    await expect(approval.getByTestId('chat-approval-reject')).toHaveText('Reject');
+    await expect(approval.getByTestId('chat-approval-approve')).toHaveText('Approve');
+    await expect(approval.getByRole('button')).toHaveCount(3);
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
   test('structured props render as key/value rows, not raw JSON', async ({ page }) => {
     const errors = await bootstrap(page);
 
