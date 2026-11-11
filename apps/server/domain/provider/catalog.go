@@ -439,7 +439,9 @@ func staticModels(p ProviderType) []ProviderSupportedModel {
 		modelType   ModelType
 	}
 
-	// These models are provider-agnostic; both Google AI and Vertex AI support them.
+	// These models are provider-agnostic; both Google AI and Vertex AI support
+	// them, except where a provider filter below removes a model its client
+	// cannot serve.
 	known := []entry{
 		{"gemini-1.5-flash", "Gemini 1.5 Flash", ModelTypeGenerative},
 		{"gemini-1.5-flash-8b", "Gemini 1.5 Flash 8B", ModelTypeGenerative},
@@ -471,6 +473,21 @@ func staticModels(p ProviderType) []ProviderSupportedModel {
 		known = []entry{
 			{"rerank-v3.5", "Rerank v3.5", ModelTypeRerank},
 		}
+	}
+
+	// gemini-embedding-2 is Google AI only: the Vertex client calls :predict
+	// with a hardcoded RETRIEVAL_DOCUMENT task_type, so it cannot serve the GA
+	// model's documented :embedContent/prefix contract. Follow-up: add the
+	// Vertex row once that client supports the GA family.
+	if p == ProviderVertexAI {
+		filtered := make([]entry, 0, len(known))
+		for _, e := range known {
+			if e.name == "gemini-embedding-2" {
+				continue
+			}
+			filtered = append(filtered, e)
+		}
+		known = filtered
 	}
 
 	models := make([]ProviderSupportedModel, 0, len(known))

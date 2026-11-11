@@ -189,36 +189,38 @@ func TestStaticModels(t *testing.T) {
 		}
 	})
 
-	t.Run("static models count matches between providers", func(t *testing.T) {
+	t.Run("Vertex AI omits Google AI only models", func(t *testing.T) {
 		googleModels := staticModels(ProviderGoogleAI)
 		vertexModels := staticModels(ProviderVertexAI)
-		if len(googleModels) != len(vertexModels) {
-			t.Errorf("expected same number of models for both providers, got Google AI=%d, Vertex AI=%d",
-				len(googleModels), len(vertexModels))
+		// gemini-embedding-2 is Google AI only until the Vertex client supports
+		// the GA family (see the filter in staticModels).
+		if want := len(googleModels) - 1; len(vertexModels) != want {
+			t.Errorf("expected %d Vertex AI models (Google AI minus one), got Google AI=%d, Vertex AI=%d",
+				want, len(googleModels), len(vertexModels))
+		}
+		if m := findModel(vertexModels, "gemini-embedding-2"); m != nil {
+			t.Error("Vertex AI static models must not offer gemini-embedding-2")
 		}
 	})
 }
 
 // TestStaticModelsIncludesGAEmbeddingModel guards the catalog entry for the GA
 // gemini-embedding-2 id (issue #587): it must resolve as an embedding model for
-// both Google backends, with a display name and the embedded retail price row.
+// Google AI, with a display name and the embedded retail price row. Vertex AI
+// deliberately omits it until its :predict client supports the GA family.
 func TestStaticModelsIncludesGAEmbeddingModel(t *testing.T) {
-	for _, provider := range []ProviderType{ProviderGoogleAI, ProviderVertexAI} {
-		t.Run(string(provider), func(t *testing.T) {
-			m := findModel(staticModels(provider), "gemini-embedding-2")
-			if m == nil {
-				t.Fatalf("staticModels(%s) missing GA id gemini-embedding-2", provider)
-			}
-			if m.ModelType != ModelTypeEmbedding {
-				t.Errorf("gemini-embedding-2 type = %q, want %q", m.ModelType, ModelTypeEmbedding)
-			}
-			if m.DisplayName != "Gemini Embedding 2" {
-				t.Errorf("gemini-embedding-2 display = %q, want %q", m.DisplayName, "Gemini Embedding 2")
-			}
-			if m.Provider != provider {
-				t.Errorf("gemini-embedding-2 provider = %q, want %q", m.Provider, provider)
-			}
-		})
+	m := findModel(staticModels(ProviderGoogleAI), "gemini-embedding-2")
+	if m == nil {
+		t.Fatal("staticModels(google) missing GA id gemini-embedding-2")
+	}
+	if m.ModelType != ModelTypeEmbedding {
+		t.Errorf("gemini-embedding-2 type = %q, want %q", m.ModelType, ModelTypeEmbedding)
+	}
+	if m.DisplayName != "Gemini Embedding 2" {
+		t.Errorf("gemini-embedding-2 display = %q, want %q", m.DisplayName, "Gemini Embedding 2")
+	}
+	if m.Provider != ProviderGoogleAI {
+		t.Errorf("gemini-embedding-2 provider = %q, want %q", m.Provider, ProviderGoogleAI)
 	}
 
 	// The GA id must also carry a retail rate so embedding usage events resolve

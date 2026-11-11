@@ -35,8 +35,10 @@ const (
 	DefaultBatchSize = 100
 
 	// taskTypeQuery and taskTypeDocument are the task_type values used for the
-	// models whose API documents that field (gemini-embedding-001,
-	// gemini-embedding-2-preview, text-embedding-*).
+	// ids kept on the pre-existing task_type path. Only gemini-embedding-001
+	// documents that field in the current embeddings guide; the other ids are
+	// left as-is because Google still accepts task_type for them and no prefix
+	// contract is documented.
 	taskTypeQuery    = "RETRIEVAL_QUERY"
 	taskTypeDocument = "RETRIEVAL_DOCUMENT"
 
@@ -294,10 +296,10 @@ func (c *Client) embedBatch(ctx context.Context, texts []string, taskType string
 //
 // gemini-embedding-2 documents its task as a text prefix and says task_type
 // cannot be used with it, so that model gets the documented prefix and no
-// TaskType. Every other family keeps the pre-existing task_type field:
-// text-embedding-004, gemini-embedding-001 and gemini-embedding-2-preview all
-// document that field, and any other id the client can be configured with is
-// left on the previous behaviour because its request contract is unverified.
+// TaskType. Every other family keeps the pre-existing task_type field: only
+// gemini-embedding-001 documents that field today, while the other ids are
+// left unchanged because Google accepts task_type for them and no prefix
+// contract is documented.
 func embedRequest(model, text, taskType string) (string, *genai.EmbedContentConfig) {
 	outputDim := int32(DefaultDimension)
 	cfg := &genai.EmbedContentConfig{OutputDimensionality: &outputDim}

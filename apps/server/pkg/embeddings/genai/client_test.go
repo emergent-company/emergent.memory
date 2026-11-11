@@ -153,8 +153,8 @@ func TestEmbedRequestTaskInstructionPerModelFamily(t *testing.T) {
 			if doc.text != wantDocText {
 				t.Errorf("document text = %q, want %q", doc.text, wantDocText)
 			}
-			if query.outputDim != DefaultDimension || doc.outputDim != DefaultDimension {
-				t.Errorf("output dimensionality = (%d, %d), want %d", query.outputDim, doc.outputDim, DefaultDimension)
+			if query.outputDim != 768 || doc.outputDim != 768 {
+				t.Errorf("output dimensionality = (%d, %d), want 768 (kb vector(768) columns)", query.outputDim, doc.outputDim)
 			}
 		})
 	}
