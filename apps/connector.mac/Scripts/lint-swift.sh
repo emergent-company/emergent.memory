@@ -139,7 +139,13 @@ echo "lint-swift: checking ${#swift_files[@]} file(s)"
 printf '  %s\n' "${swift_files[@]}"
 
 echo "— swiftformat --lint"
-swiftformat --lint --config "${connector_dir}/.swiftformat" "${swift_files[@]}"
+# Retry a CRASHED swiftformat (exit 139, SIGSEGV) but never a real finding
+# (exit 1); shared with apps/ios/Scripts/lint-swift.sh — see
+# scripts/lib/swiftformat-lint.sh (static-SDK crashes, infra#1133).
+# shellcheck source=../../scripts/lib/swiftformat-lint.sh
+# shellcheck disable=SC1091
+. "${repo_root}/scripts/lib/swiftformat-lint.sh"
+swiftformat_lint_retry_on_crash "${connector_dir}/.swiftformat" "${swift_files[@]}"
 
 echo "— swiftlint"
 swiftlint lint --strict --config "${connector_dir}/.swiftlint.yml" \
