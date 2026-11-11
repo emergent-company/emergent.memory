@@ -334,7 +334,9 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      # ── Suite 3: per-PR gateway browser smoke (#564) ───────────────────────
+      # ── Suite 3: gateway browser smoke (#564) ──────────────────────────────
+      # Runs on the `dev -> main` promotion PR and on pushes to `main`, not on a
+      # feature PR (this workflow has no `pull_request` trigger).
       # The `*-ui.spec.ts` mutations specs are the only real gateway-UI coverage
       # but need a session-mode gateway + Zitadel user and run only on a
       # schedule, so dialog/markup regressions (#2287) merged green. This suite

@@ -909,7 +909,7 @@ function discoveryResult(job) {
 // status is failed: that is the shape that used to send the panel's "View all"
 // link to /documents?status=failed, a filter that can never match it, leaving
 // the reader on "No documents match" under a non-zero count. Seeded here so the
-// per-PR gateway-smoke lane renders the panel on every documents visit.
+// gateway-smoke lane renders the panel on every documents visit.
 const mockProcessingProblems = {
   projectId: "p1",
   total: 13,
@@ -2300,8 +2300,8 @@ const server = http.createServer((req, res) => {
 
   // Extraction trigger (uiTriggerExtraction → POST /documents/:id/extract →
   // memory's admin extraction-jobs endpoint → PRG /documents/:id?extracted=1).
-  // A deterministic success lets the per-PR lane assert that the redirect lands
-  // on the RENDERED document page instead of only matching the URL.
+  // A deterministic success lets the gateway-smoke lane assert that the redirect
+  // lands on the RENDERED document page instead of only matching the URL.
   if (path === "/api/admin/extraction-jobs" && req.method === "POST") {
     return json(res, { success: true, data: { id: "extract-job-1" } });
   }
