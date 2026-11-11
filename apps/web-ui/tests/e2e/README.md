@@ -301,11 +301,14 @@ all nine catalog components plus an unknown one, then asserts each card's DOM
 the `a2ui:action` CustomEvent carrying the `surfaceId` and the
 `{componentId, response}` action — for both the proposal/approval action row
 (`a2uiActions`) and the question-option path (`a2uiQuestion`). The approval card's
-decision set is the canonical one shared with `chat-stream.js` (Cancel / Reject /
-Approve, by `chat-approval-*` testid); the scheduled spec asserts those, and
-`specs/js/a2ui-wiring.spec.ts` pins the same set hermetically so a spec that names
-a control the renderer does not have fails in the per-PR `js` gate instead of the
-schedule lane (#584). It also asserts a
+decision set (Cancel / Reject / Approve, by `chat-approval-*` testid) has a single
+owner, `helpers/approval-controls.ts`; both this spec and
+`specs/js/a2ui-approvals-gate.spec.ts` assert from it, and the gate is the one that
+runs the shipped `chat-components.js`, so a renderer change breaks there first. That
+gate runs on the `dev -> main` promotion PR and on pushes to `main` — `web-ui.yml`
+has no `pull_request` trigger — while the scheduled `mutations` lane fires on `dev`
+daily, so this is the pre-production backstop, not an earlier detector of a
+schedule-lane red (#584). It also asserts a
 UI-only turn leaves no empty assistant text bubble, and that the `result`/`proposal`/
 `approval` structured props (`rows`, `body`, `input`) render as key/value rows rather
 than a single raw-JSON `<pre>`. Deterministic and ungated — no provider, no LLM, no
@@ -582,8 +585,11 @@ excluded from the live session-mode `playwright.config.ts` via `testIgnore`
 
 ### Hermetic gateway browser smoke gate
 
-`specs/gateway-smoke/*` under `gateway-smoke.config.ts` is the per-PR browser
-gate (#564): the highest-risk UI contracts run on every PR without credentials.
+`specs/gateway-smoke/*` under `gateway-smoke.config.ts` is the browser gate
+(#564): the highest-risk UI contracts run without credentials on the
+`dev -> main` promotion/hotfix PR and on pushes to `main` (`web-ui.yml` has no
+`pull_request` trigger, so a feature PR to `dev` does not run it; the scheduled
+`mutations` lane is what covers `dev`).
 It boots the same `run-e2e.sh` mock harness (`AUTH_MODE=dev`) on a
 gateway/mock pair derived at run time (see **Ports for the hermetic suites**
 above). Each invocation selects its own pair; safety comes from the probe plus
@@ -601,6 +607,9 @@ save). It also pins the documents toolbar's control shape — one search field,
 with an applied `?q=` also mirrored as a hidden input in the sibling filter form
 — so a `input[name="q"]` selector is ambiguous by design and specs must scope it
 (`helpers/documents.ts` `DOCUMENTS_SEARCH_INPUT`), the #584 failure class. The
+same `?q=`-only hidden mirror exists on `/objects`
+(`objects_browser.templ` `objectsFilterHiddenFilters`), so the trap is not
+documents-only: scope any `name="q"` selector to `input[type="search"]`. The
 session-mode `*-ui` mutations suite stays schedule-only because it needs
 Zitadel; this lane is what makes dialog/markup drift fail before merge.
 

@@ -270,7 +270,9 @@ test.describe('Document upload + extraction', () => {
       // Prove the document — and therefore the extraction card asserted below —
       // lives in the fresh project, not in the bootstrap one.
       await expect(page).toHaveURL(
-        new RegExp(`/o/${orgId}/p/${projectId}/documents/[^/]+$`),
+        new RegExp(
+          `/o/${escapeRe(orgId)}/p/${escapeRe(projectId)}/documents/[^/]+$`,
+        ),
       );
 
       const extract = page.getByRole('button', { name: 'Extract data' });
