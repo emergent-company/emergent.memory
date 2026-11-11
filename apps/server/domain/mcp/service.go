@@ -4595,7 +4595,16 @@ func (s *Service) branchRefAllowedByScope(ctx context.Context, projectID string,
 // Returns nil when branchRef is empty (meaning: use main branch).
 func (s *Service) resolveOrCreateBranchID(ctx context.Context, projectID, branchRef string) (*uuid.UUID, error) {
 	if branchRef == "" {
-		return nil, nil
+		// An agent-run extraction writes into the job's staging branch by default:
+		// the worker installs it in context so the agent cannot accidentally write
+		// reviewable output onto the main graph (and cannot be trusted to remember
+		// to pass `branch` on every call).
+		if run, ok := ExtractionRunFromContext(ctx); ok && run.BranchRef != "" {
+			branchRef = run.BranchRef
+		}
+		if branchRef == "" {
+			return nil, nil
+		}
 	}
 	// Try parsing as UUID first — if it's a UUID and not found, don't auto-create.
 	if id, err := uuid.Parse(branchRef); err == nil {
@@ -4621,6 +4630,13 @@ func (s *Service) resolveOrCreateBranchID(ctx context.Context, projectID, branch
 			return nil, err
 		}
 		return &row.ID, nil
+	}
+	// An agent-run extraction may only write to the job's staging branch. That
+	// branch is created by the worker before the run, so a name that does not
+	// resolve is either a model mistake or an attempt to write elsewhere: refuse
+	// instead of auto-creating and escaping the job.
+	if _, ok := ExtractionRunFromContext(ctx); ok {
+		return nil, fmt.Errorf("branch %q is outside this extraction job's scope", branchRef)
 	}
 	// Branch not found — auto-create it. A branch this run is creating itself is
 	// not gated by the read scope: the scope says which existing branches the run
@@ -5293,13 +5309,13 @@ func (s *Service) updateEntityOne(ctx context.Context, projectUUID uuid.UUID, pr
 		}
 	}
 
-	// Resolve optional branch param — auto-creates the branch if it does not exist.
+	// Resolve the branch param. Passing it to the resolver even when omitted lets
+	// an agent-run extraction inherit the job's staging branch as its write target.
 	var branchID *uuid.UUID
-	if branchRef, _ := args["branch"].(string); branchRef != "" {
-		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
-		if err != nil {
-			return nil, fmt.Errorf("resolve branch: %w", err)
-		}
+	branchRef, _ := args["branch"].(string)
+	branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+	if err != nil {
+		return nil, fmt.Errorf("resolve branch: %w", err)
 	}
 
 	req := &graph.PatchGraphObjectRequest{
@@ -5470,13 +5486,12 @@ func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, arg
 				return nil
 			}
 			branchResolved = true
-			if branchRef, _ := args["branch"].(string); branchRef != "" {
-				id, rerr := s.resolveOrCreateBranchID(ctx, projectID, branchRef)
-				if rerr != nil {
-					return fmt.Errorf("resolve branch: %w", rerr)
-				}
-				branchID = id
+			branchRef, _ := args["branch"].(string)
+			id, rerr := s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+			if rerr != nil {
+				return fmt.Errorf("resolve branch: %w", rerr)
 			}
+			branchID = id
 			return nil
 		}
 		reason := reasonFromArgs(args)
@@ -5528,14 +5543,13 @@ func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, arg
 		return nil, fmt.Errorf("missing required parameter: entity_id")
 	}
 
-	// Resolve optional branch param — auto-creates the branch if it does not exist,
-	// matching entity-create/entity-update.
+	// Resolve the branch param (see entity-update: an omitted branch inherits an
+	// agent-run extraction's staging branch).
 	var branchID *uuid.UUID
-	if branchRef, _ := args["branch"].(string); branchRef != "" {
-		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
-		if err != nil {
-			return nil, fmt.Errorf("resolve branch: %w", err)
-		}
+	branchRef, _ := args["branch"].(string)
+	branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+	if err != nil {
+		return nil, fmt.Errorf("resolve branch: %w", err)
 	}
 
 	entityID, err := s.deleteEntityOne(ctx, projectUUID, projectID, entityIDStr, branchID, reasonFromArgs(args))
@@ -5882,13 +5896,13 @@ func (s *Service) executeRestoreEntity(ctx context.Context, projectID string, ar
 		entityID = resolved
 	}
 
-	// Resolve optional branch param — auto-creates the branch if it does not exist.
+	// Resolve the branch param (an omitted branch inherits an agent-run
+	// extraction's staging branch).
 	var branchID *uuid.UUID
-	if branchRef, _ := args["branch"].(string); branchRef != "" {
-		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
-		if err != nil {
-			return nil, fmt.Errorf("resolve branch: %w", err)
-		}
+	branchRef, _ := args["branch"].(string)
+	branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+	if err != nil {
+		return nil, fmt.Errorf("resolve branch: %w", err)
 	}
 
 	// Scope gate: restoring echoes the object (incl. its type), so a scoped agent
@@ -6373,13 +6387,13 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 
 	scope := TypeScopeFromContext(ctx)
 
-	// Resolve optional branch param — auto-creates the branch if it does not exist.
+	// Resolve the branch param (an omitted branch inherits an agent-run
+	// extraction's staging branch).
 	var branchID *uuid.UUID
-	if branchRef, _ := args["branch"].(string); branchRef != "" {
-		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
-		if err != nil {
-			return nil, fmt.Errorf("resolve branch: %w", err)
-		}
+	branchRef, _ := args["branch"].(string)
+	branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+	if err != nil {
+		return nil, fmt.Errorf("resolve branch: %w", err)
 	}
 
 	// Support flat single-entity form for backward compat
@@ -6595,7 +6609,6 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 		} else if st, ok := properties["status"].(string); ok && st != "" {
 			status = &st
 		}
-
 		if err := writeRules.CheckFields(typeName, properties); err != nil {
 			results = append(results, batchResult{
 				Ok:    false,
@@ -6614,13 +6627,30 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 			}
 		}
 
+		// Agent-run extraction job defaults are applied AFTER the definition's field
+		// rules (they are system provenance, not agent output) and they OVERWRITE
+		// model-supplied values: the job owns its branch, status and provenance, so
+		// the agent can neither land output on main nor forge another job's id.
+		extractionJobID := extractionJobIDFromContext(ctx)
+		if run, ok := ExtractionRunFromContext(ctx); ok {
+			if run.Status != "" {
+				st := run.Status
+				status = &st
+				properties["status"] = st
+			}
+			for k, v := range run.Provenance {
+				properties[k] = v
+			}
+		}
+
 		req := &graph.CreateGraphObjectRequest{
-			Type:       typeName,
-			Key:        key,
-			Status:     status,
-			Properties: properties,
-			Labels:     labels,
-			BranchID:   branchID,
+			Type:            typeName,
+			Key:             key,
+			Status:          status,
+			Properties:      properties,
+			Labels:          labels,
+			BranchID:        branchID,
+			ExtractionJobID: extractionJobID,
 		}
 
 		// Propagate namespace from context (set by RememberStream or API caller).
@@ -6773,15 +6803,13 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 
 	scope := TypeScopeFromContext(ctx)
 
-	// Resolve optional branch param — auto-creates the branch if it does not exist,
-	// matching entity-create. The graph service requires both endpoints to be on
-	// the same branch as the new relationship.
+	// Resolve the branch param, matching entity-create. The graph service requires
+	// both endpoints to be on the same branch as the new relationship.
 	var branchID *uuid.UUID
-	if branchRef, _ := args["branch"].(string); branchRef != "" {
-		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
-		if err != nil {
-			return nil, fmt.Errorf("resolve branch: %w", err)
-		}
+	branchRef, _ := args["branch"].(string)
+	branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+	if err != nil {
+		return nil, fmt.Errorf("resolve branch: %w", err)
 	}
 
 	// Support flat single-relationship form for backward compat
@@ -6908,6 +6936,14 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 		properties, _ := relMap["properties"].(map[string]any)
 		if properties == nil {
 			properties = make(map[string]any)
+		}
+		// Agent-run extraction defaults: stamp the job's provenance on each
+		// relationship the agent creates (relationships carry no job column, so
+		// the properties key is what the review/merge tooling reads).
+		if run, ok := ExtractionRunFromContext(ctx); ok {
+			for k, v := range run.Provenance {
+				properties[k] = v
+			}
 		}
 
 		// Guard: self-referential relationships are not meaningful.

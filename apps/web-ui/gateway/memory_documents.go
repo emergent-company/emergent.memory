@@ -268,7 +268,7 @@ func (m *MemoryClient) RollbackChunk(ctx context.Context, chunkID string, seq in
 
 // UploadDocument uploads a file as a new document (multipart POST
 // /api/documents/upload) and returns the new document id.
-func (m *MemoryClient) UploadDocument(ctx context.Context, filename string, r io.Reader) (UploadResult, error) {
+func (m *MemoryClient) UploadDocument(ctx context.Context, filename string, r io.Reader, autoExtract *bool) (UploadResult, error) {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	part, err := w.CreateFormFile("file", filename)
@@ -277,6 +277,14 @@ func (m *MemoryClient) UploadDocument(ctx context.Context, filename string, r io
 	}
 	if _, err := io.Copy(part, r); err != nil {
 		return UploadResult{}, err
+	}
+	// A nil value omits the field, so memory applies the project's
+	// auto_extract_objects default; true/false is an explicit per-upload
+	// override.
+	if autoExtract != nil {
+		if err := w.WriteField("autoExtract", strconv.FormatBool(*autoExtract)); err != nil {
+			return UploadResult{}, err
+		}
 	}
 	if err := w.Close(); err != nil {
 		return UploadResult{}, err

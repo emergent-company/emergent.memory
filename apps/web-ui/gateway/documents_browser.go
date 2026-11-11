@@ -198,6 +198,11 @@ type documentPageData struct {
 	// embedding retrigger.
 	CanManage bool
 
+	// AutoExtractDefault is the project's auto_extract_objects setting, used to
+	// pre-select the upload dialog's extraction override. The override stays
+	// explicit-but-tri-state: "project default" is the empty value.
+	AutoExtractDefault bool
+
 	LoadErr  error
 	FlashMsg string
 	FlashErr error
@@ -565,6 +570,11 @@ func (s *Server) uiDocuments(c echo.Context) error {
 	}
 	ctx := c.Request().Context()
 	data.CanManage = s.projectAdminForCaller(c, s.currentProjectID(ctx))
+	if project, perr := s.memory.GetCurrentProject(ctx); perr == nil && project != nil {
+		data.AutoExtractDefault = project.AutoExtractObjects != nil && *project.AutoExtractObjects
+	} else if perr != nil {
+		captureError(perr)
+	}
 	if err := s.loadDocumentsPage(ctx, &data, data.Cursor); err != nil {
 		data.LoadErr = userFacingError(err)
 	} else {

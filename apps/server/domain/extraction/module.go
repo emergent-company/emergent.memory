@@ -10,6 +10,7 @@ import (
 	"github.com/uptrace/bun"
 	"go.uber.org/fx"
 
+	domainagents "github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/domain/chunking"
 	"github.com/emergent-company/emergent.memory/domain/documents"
@@ -487,6 +488,8 @@ func provideObjectExtractionWorker(
 	limitResolver adk.ModelLimitResolver,
 	notificationsSvc *notifications.Service,
 	runRecorder *RunRecorder,
+	agentsRepo *domainagents.Repository,
+	agentExecutor *domainagents.AgentExecutor,
 ) *ObjectExtractionWorker {
 	workerConfig := &ObjectExtractionWorkerConfig{
 		PollInterval:      time.Duration(cfg.ObjectExtraction.WorkerIntervalMs) * time.Millisecond,
@@ -507,7 +510,8 @@ func provideObjectExtractionWorker(
 	return NewObjectExtractionWorker(jobs, graphService, branchService, docService, projectsRepo, schemaProvider, modelFactory, embeds, workerConfig, log, scaler).
 		WithLimitResolver(limitResolver).
 		WithNotifications(notificationsSvc).
-		WithRunRecorder(runRecorder)
+		WithRunRecorder(runRecorder).
+		WithAgentExtraction(agentsRepo, agentExecutor)
 }
 
 // RegisterObjectExtractionWorkerLifecycle registers the object extraction worker with fx lifecycle

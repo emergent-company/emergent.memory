@@ -2227,6 +2227,7 @@ Table "kb"."projects" {
   "deletion_scheduled_for" timestamptz
   "auto_discovery_enabled" boolean [not null, default: true]
   "skill_capture" jsonb [not null, default: '{}']
+  "auto_extract_source_syncs" boolean [not null, default: false]
 
   Indexes {
     (deleted_at) [name: "idx_projects_deleted_at", note: '(deleted_at IS NULL)']

@@ -650,3 +650,7 @@ Content-Type: application/json
 
 !!! note
     Deleting a data source does **not** delete the documents already imported from it. Those remain in the project.
+
+## Extraction after sync
+
+A source sync always chunks and embeds what it ingests, so the content is searchable. Object extraction is a separate, per-project switch: **Settings → Extraction → Auto-extract objects after a data-source sync** (`auto_extract_source_syncs`). It is off by default, applies to every synced item and every new version, and can be turned off to stop a high-volume source (mail, large drives) from spending extraction tokens. With the switch off, select an individual document and trigger extraction from its detail view.

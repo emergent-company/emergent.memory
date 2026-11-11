@@ -31,7 +31,7 @@ templ DocumentsPage(data documentPageData) {
 			@documentsStats(data)
 			@documentsToolbar(data)
 			@documentsResults(data)
-			@documentUploadDialog()
+			@documentUploadDialog(data.AutoExtractDefault)
 		}
 	}
 }
@@ -76,7 +76,11 @@ templ documentsStats(data documentPageData) {
 // the vertical space it needs instead of paying for an always-open drop zone.
 // Its submit handler (below) opens the file picker when no file is chosen, so
 // an empty submit never reaches the API.
-templ documentUploadDialog() {
+templ documentUploadDialog(autoExtractDefault bool) {
+	{{ defaultLabel := "currently off"
+	if autoExtractDefault {
+		defaultLabel = "currently on"
+	} }}
 	@ui.Dialog(ui.DialogProps{
 		ID:       "document-upload-modal",
 		BoxClass: "max-w-lg",
@@ -88,6 +92,15 @@ templ documentUploadDialog() {
 		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) { Single file up to 10 MB. Text-based files chunk and extract best. }
 		<form method="post" action="/documents" enctype="multipart/form-data" data-document-upload class="mt-4 flex flex-col gap-4">
 			<input type="file" name="file" class="file-input file-input-bordered w-full" data-testid="documents-upload-input"/>
+			<label class="flex flex-col gap-1">
+				<span class="text-sm font-medium">Extraction after upload</span>
+				<select name="autoExtract" class="select w-full" data-testid="documents-upload-auto-extract">
+					<option value="">Project default ({ defaultLabel })</option>
+					<option value="true">Extract now</option>
+					<option value="false">Don't extract</option>
+				</select>
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { The project default is set in Settings → Extraction. }
+			</label>
 			@fm.FormActions("", "") {
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeButton,
