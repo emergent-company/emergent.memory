@@ -1388,9 +1388,6 @@ func (s *ObjectExtractionJobsService) SetTraceID(ctx context.Context, jobID, tra
 	return nil
 }
 
-// UpdateStagingBranchID records the staging branch that was created for this
-// extraction job. Called after the branch is successfully created so reviewers
-// can locate pending extractions via the branch.
 // SetRunID links the job to the agent run that executed it. Agent-run
 // extraction gets a real executor run (not the synthetic pipeline transcript),
 // so this is what makes the job debuggable as a chat session and lets the run
@@ -1408,6 +1405,9 @@ func (s *ObjectExtractionJobsService) SetRunID(ctx context.Context, jobID, runID
 	return nil
 }
 
+// UpdateStagingBranchID records the staging branch that was created for this
+// extraction job. Called after the branch is successfully created so reviewers
+// can locate pending extractions via the branch.
 func (s *ObjectExtractionJobsService) UpdateStagingBranchID(ctx context.Context, jobID string, branchID string) error {
 	now := time.Now().UTC()
 	_, err := s.db.NewUpdate().
