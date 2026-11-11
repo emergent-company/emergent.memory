@@ -83,10 +83,11 @@ func newTestUploadHandler(t *testing.T, stor uploadStorage, allowedMIME string) 
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 	cfg := &config.Config{}
 	cfg.Storage.AllowedMIMETypes = allowedMIME
-	// svc = nil because tests below don't reach CreateFromUpload
+	// The document service is a stub: these tests never persist a row, but the
+	// ingestor correctly refuses to start without one (fail closed, #586).
 	h := &UploadHandler{
-		svc:     nil,
 		storage: stor,
+		ingest:  NewUploadIngestor(&stubDocumentCreator{}, stor, nil, nil, log),
 		log:     log,
 	}
 	return h.WithAllowedMIMETypes(cfg.Storage.AllowedMIMETypes)

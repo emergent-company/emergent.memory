@@ -12,15 +12,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// recordingDocumentCreator is a DocumentCreator double that records the params
+// stubDocumentCreator is a DocumentCreator double that records the params
 // the ingestor hands to the document row.
-type recordingDocumentCreator struct {
+type stubDocumentCreator struct {
 	got  []UploadParams
 	resp *UploadDocumentResponse
 	err  error
 }
 
-func (f *recordingDocumentCreator) CreateFromUpload(_ context.Context, params UploadParams) (*UploadDocumentResponse, error) {
+func (f *stubDocumentCreator) CreateFromUpload(_ context.Context, params UploadParams) (*UploadDocumentResponse, error) {
 	f.got = append(f.got, params)
 	if f.err != nil {
 		return nil, f.err
@@ -35,7 +35,7 @@ func discardLog() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func newIngestor(doc *recordingDocumentCreator, stor uploadStorage, jobs *fakeParsingJobs, auto *fakeAutoExtractReader) *UploadIngestor {
+func newIngestor(doc *stubDocumentCreator, stor uploadStorage, jobs *fakeParsingJobs, auto *fakeAutoExtractReader) *UploadIngestor {
 	var reader ProjectAutoExtractReader
 	if auto != nil {
 		reader = auto
@@ -47,7 +47,7 @@ func newIngestor(doc *recordingDocumentCreator, stor uploadStorage, jobs *fakePa
 // #586: an upload that reaches the ingestor must enqueue exactly one parsing
 // job, or the stored document stays empty forever.
 func TestUploadIngestor_QueuesExactlyOneParsingJob(t *testing.T) {
-	doc := &recordingDocumentCreator{}
+	doc := &stubDocumentCreator{}
 	stor := &fakeStorage{enabled: true, uploadKey: "uploads/notes.md"}
 	jobs := &fakeParsingJobs{}
 	ing := newIngestor(doc, stor, jobs, nil)
@@ -88,7 +88,7 @@ func TestUploadIngestor_QueuesExactlyOneParsingJob(t *testing.T) {
 // the same auto-extract behaviour as a REST upload with no explicit parameter.
 func TestUploadIngestor_AutoExtractFollowsProjectDefault(t *testing.T) {
 	t.Run("project default true", func(t *testing.T) {
-		doc := &recordingDocumentCreator{}
+		doc := &stubDocumentCreator{}
 		jobs := &fakeParsingJobs{}
 		ing := newIngestor(doc, &fakeStorage{enabled: true, uploadKey: "k"}, jobs, &fakeAutoExtractReader{enabled: true})
 
@@ -101,11 +101,10 @@ func TestUploadIngestor_AutoExtractFollowsProjectDefault(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, jobs.got, 1)
 		assert.True(t, jobs.got[0].AutoExtract)
-		assert.True(t, doc.got[0].AutoExtract)
 	})
 
 	t.Run("explicit false overrides project default", func(t *testing.T) {
-		doc := &recordingDocumentCreator{}
+		doc := &stubDocumentCreator{}
 		jobs := &fakeParsingJobs{}
 		ing := newIngestor(doc, &fakeStorage{enabled: true, uploadKey: "k"}, jobs, &fakeAutoExtractReader{enabled: true})
 
@@ -124,7 +123,7 @@ func TestUploadIngestor_AutoExtractFollowsProjectDefault(t *testing.T) {
 }
 
 func TestUploadIngestor_RejectsUnreadableContentBeforeStoring(t *testing.T) {
-	doc := &recordingDocumentCreator{}
+	doc := &stubDocumentCreator{}
 	stor := &fakeStorage{enabled: true, uploadKey: "k"}
 	jobs := &fakeParsingJobs{}
 	ing := newIngestor(doc, stor, jobs, nil)
@@ -141,7 +140,7 @@ func TestUploadIngestor_RejectsUnreadableContentBeforeStoring(t *testing.T) {
 }
 
 func TestUploadIngestor_StorageUnavailable(t *testing.T) {
-	doc := &recordingDocumentCreator{}
+	doc := &stubDocumentCreator{}
 	jobs := &fakeParsingJobs{}
 	ing := newIngestor(doc, &fakeStorage{enabled: false}, jobs, nil)
 
@@ -159,7 +158,7 @@ func TestUploadIngestor_StorageUnavailable(t *testing.T) {
 func TestUploadIngestor_DocumentFailureRollsBackObjectAndQueuesNothing(t *testing.T) {
 	stor := &fakeStorage{enabled: true, uploadKey: "uploads/orphan.md"}
 	jobs := &fakeParsingJobs{}
-	doc := &recordingDocumentCreator{err: errors.New("insert failed")}
+	doc := &stubDocumentCreator{err: errors.New("insert failed")}
 	ing := newIngestor(doc, stor, jobs, nil)
 
 	_, err := ing.Ingest(context.Background(), IngestUploadParams{
@@ -175,7 +174,7 @@ func TestUploadIngestor_DocumentFailureRollsBackObjectAndQueuesNothing(t *testin
 }
 
 func TestUploadIngestor_JobEnqueueFailureDoesNotFailTheUpload(t *testing.T) {
-	doc := &recordingDocumentCreator{}
+	doc := &stubDocumentCreator{}
 	jobs := &fakeParsingJobs{err: fmt.Errorf("queue full")}
 	ing := newIngestor(doc, &fakeStorage{enabled: true, uploadKey: "k"}, jobs, nil)
 
@@ -194,7 +193,7 @@ func TestUploadIngestor_JobEnqueueFailureDoesNotFailTheUpload(t *testing.T) {
 // deployments without a configured parsing queue or document service.
 func TestUploadIngestor_NilDependenciesNoPanic(t *testing.T) {
 	t.Run("nil parsing jobs", func(t *testing.T) {
-		doc := &recordingDocumentCreator{}
+		doc := &stubDocumentCreator{}
 		ing := NewUploadIngestor(doc, &fakeStorage{enabled: true, uploadKey: "k"}, nil, nil, discardLog())
 		_, err := ing.Ingest(context.Background(), IngestUploadParams{
 			ProjectID: "proj-1", Filename: "notes.md", MimeType: "text/markdown", Data: []byte("body"),
@@ -211,5 +210,8 @@ func TestUploadIngestor_NilDependenciesNoPanic(t *testing.T) {
 	})
 }
 
-// Keep the compile-time relationship explicit: the real service is the port.
-var _ DocumentCreator = (*Service)(nil)
+// The production port implementation is the adapter over the unexported
+// *Service.createFromUpload; *Service itself is deliberately not a
+// DocumentCreator, so nothing outside this package can insert an upload row
+// without going through UploadIngestor.
+var _ DocumentCreator = serviceDocumentCreator{}

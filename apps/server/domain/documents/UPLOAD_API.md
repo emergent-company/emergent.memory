@@ -8,9 +8,11 @@ All upload routes require auth + `X-Project-ID` header + `documents:write` scope
 Every upload entry point — the three REST routes above and the MCP
 `document-write` tool's `upload` action — goes through `documents.UploadIngestor`
 (`upload_ingestor.go`), which stores the object, creates the document row and
-queues exactly one parsing job. Do not re-implement that sequence in a new
-entry point: an upload that skips the parsing job is stored but never parsed and
-stays empty (#586).
+queues exactly one parsing job. The row insert itself
+(`Service.createFromUpload`) is unexported, so a new entry point cannot create a
+document from an upload without going through the ingestor and queueing its
+parse — an upload that skips the parsing job is stored but never parsed and stays
+empty (#586).
 
 ---
 

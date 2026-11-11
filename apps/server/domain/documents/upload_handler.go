@@ -59,7 +59,7 @@ func (h *UploadHandler) ingestor() *UploadIngestor {
 	if h.ingest != nil {
 		return h.ingest
 	}
-	return NewUploadIngestor(h.svc, h.storage, h.parsingJobsService, h.projectAutoExtract, h.log)
+	return NewUploadIngestor(documentCreatorFor(h.svc), h.storage, h.parsingJobsService, h.projectAutoExtract, h.log)
 }
 
 // ParsingJobCreator is an interface for creating document parsing jobs.
@@ -108,7 +108,7 @@ func NewUploadHandler(
 		parsingJobsService:    parsingJobsService,
 		extractionJobsService: extractionJobsService,
 		projectAutoExtract:    projectAutoExtract,
-		ingest:                NewUploadIngestor(svc, storageSvc, parsingJobsService, projectAutoExtract, log),
+		ingest:                NewUploadIngestor(documentCreatorFor(svc), storageSvc, parsingJobsService, projectAutoExtract, log),
 		log:                   log,
 	}
 	return h.WithAllowedMIMETypes(cfg.Storage.AllowedMIMETypes)

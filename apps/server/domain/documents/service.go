@@ -287,11 +287,15 @@ func (s *Service) BulkDelete(ctx context.Context, projectID string, documentIDs 
 	return response, nil
 }
 
-// CreateFromUpload creates a document record from a file upload.
+// createFromUpload creates a document record from a file upload. It is
+// unexported on purpose: the only public way to create a document from an
+// upload is documents.UploadIngestor, which also queues the parsing job. A
+// caller that could reach this method directly could repeat #586 (stored but
+// never parsed), so the compiler now prevents it.
 // Every upload creates a new document — uploads are not deduplicated by file
 // hash. Silently collapsing an identical-content upload returned the existing
 // document's id, which surfaced to clients as a "stale id" (issue #381).
-func (s *Service) CreateFromUpload(ctx context.Context, params UploadParams) (*UploadDocumentResponse, error) {
+func (s *Service) createFromUpload(ctx context.Context, params UploadParams) (*UploadDocumentResponse, error) {
 	// Apply defaults
 	filename := strings.TrimSpace(params.Filename)
 	if filename == "" {

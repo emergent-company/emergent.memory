@@ -12,8 +12,8 @@ var Module = fx.Module("documents",
 	fx.Provide(
 		// Adapt *storage.Service to the private uploadStorage interface.
 		func(s *storage.Service) uploadStorage { return s },
-		// Adapt *Service to the ingestor's narrow document-creator port.
-		func(s *Service) DocumentCreator { return s },
+		// Adapt *Service's unexported createFromUpload to the ingestor's port.
+		provideDocumentCreator,
 		NewRepository,
 		provideService,
 		NewHandler,

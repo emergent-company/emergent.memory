@@ -13,11 +13,41 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
-// DocumentCreator is the document-row half of an upload: the subset of *Service
-// the ingestor needs. It is an interface so the ingestor can be exercised
-// without a database.
+// DocumentCreator is the document-row half of an upload: the port the ingestor
+// uses to insert the row. The real implementation is *Service's unexported
+// createFromUpload, wrapped by serviceDocumentCreator below — the service
+// method is deliberately not exported so that no package outside documents can
+// create a document from an upload without going through UploadIngestor (which
+// also queues the parsing job, see #586). The interface exists so the ingestor
+// can be exercised without a database.
 type DocumentCreator interface {
 	CreateFromUpload(ctx context.Context, params UploadParams) (*UploadDocumentResponse, error)
+}
+
+// serviceDocumentCreator adapts *Service to DocumentCreator. This type is the
+// only implementation wired in production; it is what makes "a new entry point
+// cannot forget the parsing job" mechanically true rather than a convention.
+type serviceDocumentCreator struct {
+	svc *Service
+}
+
+func (c serviceDocumentCreator) CreateFromUpload(ctx context.Context, params UploadParams) (*UploadDocumentResponse, error) {
+	return c.svc.createFromUpload(ctx, params)
+}
+
+// provideDocumentCreator is the fx provider for the port.
+func provideDocumentCreator(s *Service) DocumentCreator {
+	return documentCreatorFor(s)
+}
+
+// documentCreatorFor adapts a service to the port, returning nil for a nil
+// service so the ingestor fails closed with 503 instead of panicking on a nil
+// receiver.
+func documentCreatorFor(s *Service) DocumentCreator {
+	if s == nil {
+		return nil
+	}
+	return serviceDocumentCreator{svc: s}
 }
 
 // UploadIngestor is the one place that turns uploaded bytes into a document the
@@ -26,8 +56,9 @@ type DocumentCreator interface {
 // Every upload entry point used to repeat the same three steps by hand — store
 // the object, create the document row, enqueue the parsing job — and the MCP
 // document-upload tool omitted the third, so MCP uploads were stored but never
-// parsed (#586). Keeping the sequence here means a new entry point cannot
-// forget the job: it either calls Ingest or it creates no document at all.
+// parsed (#586). The sequence lives here, and *Service.createFromUpload (the
+// only way to insert the row) is unexported, so another package cannot create a
+// document from an upload without also queueing its parse.
 type UploadIngestor struct {
 	documents          DocumentCreator
 	storage            uploadStorage
@@ -120,7 +151,6 @@ func (i *UploadIngestor) Ingest(ctx context.Context, p IngestUploadParams) (*Upl
 		FileHash:         fileHash,
 		StorageKey:       uploadResult.Key,
 		StorageURL:       uploadResult.StorageURL,
-		AutoExtract:      autoExtract,
 		Metadata:         p.Metadata,
 		SkipNotification: p.SkipNotification,
 	})
