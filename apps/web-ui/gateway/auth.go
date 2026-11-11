@@ -439,6 +439,7 @@ func (s *Server) refreshOnce(old *sessionClaims) (*sessionClaims, error) {
 			Picture:           old.Picture,
 			AvatarOverrideURL: old.AvatarOverrideURL,
 			Sub:               old.Sub,
+			Issuer:            s.configuredIssuer(),
 			ExpiresAt:         now.Add(time.Duration(expiresIn) * time.Second).Unix(),
 		}
 		return &claims, nil
@@ -458,6 +459,16 @@ func (s *Server) refreshOnce(old *sessionClaims) (*sessionClaims, error) {
 func (s *Server) ensureFreshSession(c echo.Context) (*sessionClaims, error) {
 	claims, err := s.currentSession(c)
 	if err == nil {
+		// A session minted under a different ZITADEL_ISSUER carries a token the
+		// memory server rejects as invalid_token (e.g. after the public-domain
+		// cutover), but its expiry may still be far away. Refresh it now
+		// instead of forwarding a token we know the backend will 401 on. A
+		// legacy cookie with no recorded issuer refreshes once to migrate; a
+		// failed refresh returns the error so the caller logs the user out
+		// cleanly rather than rendering a generic backend error.
+		if s.sessionIssuerStale(claims) {
+			return s.refreshSessionClaims(c, claims)
+		}
 		// Live session: only refresh inside the grace window so the access
 		// token never dies mid-request (e.g. on a long-lived page).
 		if claims.RefreshToken != "" && claims.ExpiresAt-time.Now().Unix() < 300 {
@@ -475,6 +486,23 @@ func (s *Server) ensureFreshSession(c echo.Context) (*sessionClaims, error) {
 		return nil, err // authentic but refreshless — logged out
 	}
 	return s.refreshSessionClaims(c, old)
+}
+
+// configuredIssuer returns the normalized ZITADEL_ISSUER advertised to clients.
+func (s *Server) configuredIssuer() string {
+	return strings.TrimSuffix(strings.TrimSpace(s.cfg.ZitadelIssuer), "/")
+}
+
+// sessionIssuerStale reports whether the session's tokens were minted by a
+// different issuer than the one currently configured. An empty configured
+// issuer disables the check; a session with no recorded issuer (a cookie from
+// before issuer tracking) is treated as stale so it refreshes once to migrate.
+func (s *Server) sessionIssuerStale(claims *sessionClaims) bool {
+	want := s.configuredIssuer()
+	if want == "" {
+		return false
+	}
+	return strings.TrimSuffix(strings.TrimSpace(claims.Issuer), "/") != want
 }
 
 // Middlewares ---
