@@ -280,17 +280,16 @@ func mcpShareSameToolSet(a, b []string) bool {
 
 // mcpShareSelectedLabel seeds the picker's live counter server-side, so a
 // preselected preset never renders "0 selected" until the first interaction.
-// It counts selected tools the catalog actually offers, matching the checkboxes
-// the browser can see.
-func mcpShareSelectedLabel(catalog []MCPShareTool, tools []string) string {
-	set := mcpShareToolSet(tools)
-	count := 0
-	for _, tool := range catalog {
-		if set[tool.Name] {
-			count++
+// Every selected tool is rendered by the edit form: catalog entries as normal
+// options and saved-but-unlisted aliases in the deprecated section.
+func mcpShareSelectedLabel(tools []string) string {
+	seen := make(map[string]bool, len(tools))
+	for _, name := range tools {
+		if name != "" {
+			seen[name] = true
 		}
 	}
-	return fmt.Sprintf("%d selected", count)
+	return fmt.Sprintf("%d selected", len(seen))
 }
 
 // mcpShareTemplateActiveClass marks the preset whose tools exactly match the
@@ -498,6 +497,35 @@ func mcpShareLastUsedLabel(inst MCPShareInstance) string {
 		return "never used"
 	}
 	return relTime(*inst.LastUsedAt)
+}
+
+// mcpShareMissingCatalogTools returns the selected tool names the advertised
+// catalog does not offer, preserving their stored order. Shares minted before
+// the catalog consolidation can carry per-verb names (entity-search,
+// schema-list, …) that remain callable aliases but are no longer listed. The
+// edit form must render them so a save resubmits them instead of silently
+// dropping the share's existing access.
+func mcpShareMissingCatalogTools(catalog []MCPShareTool, tools []string) []string {
+	if len(tools) == 0 {
+		return nil
+	}
+	offered := make(map[string]bool, len(catalog))
+	for _, tool := range catalog {
+		offered[tool.Name] = true
+	}
+	missing := make([]string, 0)
+	seen := make(map[string]bool, len(tools))
+	for _, name := range tools {
+		if offered[name] || seen[name] {
+			continue
+		}
+		seen[name] = true
+		missing = append(missing, name)
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return missing
 }
 
 // mcpShareContains reports whether list holds value.

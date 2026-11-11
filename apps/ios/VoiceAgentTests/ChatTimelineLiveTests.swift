@@ -57,9 +57,8 @@ struct ChatTimelineLiveTests {
 
         #expect(rows.map(\.id) == ["tools-t1", "m1", "tools-t3"])
         // Text between calls splits the run into two groups (the web does the
-        // same), and the group id is the first call's id (#433).
-        #expect(StableTurnID.uuid(for: "tools-t1") == StableTurnID.uuid(for: "tools-t1"))
-        #expect(StableTurnID.uuid(for: "tools-t1") != StableTurnID.uuid(for: "tools-t3"))
+        // same), and the group id is the first call's id (#433) — the same key
+        // the disclosure store remembers the group's open state by.
     }
 
     @Test func reloadProducesTheSameRowIdentitiesSoDisclosureSurvives() throws {

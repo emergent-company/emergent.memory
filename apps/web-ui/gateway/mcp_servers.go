@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/url"
@@ -124,6 +126,65 @@ type mcpKVField struct {
 	AuthScheme  string
 }
 
+// mcpImportPageData backs the Claude-config import page. Config is the pasted
+// document; Target is "auto" (remote → shared host, stdio → connector),
+// "server", or "device"; DeviceInstanceID binds device entries. Result is
+// populated after a POST so the created/skipped/failed report is visible
+// without a round trip.
+type mcpImportPageData struct {
+	Config           string
+	Target           string
+	DeviceInstanceID string
+	Overwrite        bool
+	DryRun           bool
+	Devices          []RelaySession
+	DevicesErr       error
+	FieldErrConfig   string
+	FieldErrTarget   string
+	GeneralErr       error
+	FlashErr         error
+	Result           *MCPImportResult
+}
+
+// mcpImportTargets are the accepted delivery-target choices.
+func mcpImportTargets() []string { return []string{"auto", "server", "device"} }
+
+// validateImportDraft checks the import form before calling memory. The
+// per-entry transport rules are memory's job; this only rejects an empty or
+// non-JSON document and an unknown target.
+func (d *mcpImportPageData) validate() {
+	d.FieldErrConfig = ""
+	d.FieldErrTarget = ""
+	if strings.TrimSpace(d.Config) == "" {
+		d.FieldErrConfig = "Paste a Claude MCP config document."
+	} else if !json.Valid([]byte(d.Config)) {
+		d.FieldErrConfig = "That is not valid JSON."
+	}
+	if d.Target == "" {
+		d.Target = "auto"
+	}
+	if !slices.Contains(mcpImportTargets(), d.Target) {
+		d.FieldErrTarget = "Choose auto, server, or device."
+	}
+}
+
+// Summary renders the one-line import outcome.
+func (r *MCPImportResult) Summary() string {
+	if r == nil {
+		return ""
+	}
+	prefix := ""
+	if r.DryRun {
+		prefix = "Dry run: "
+	}
+	return fmt.Sprintf("%s%d created, %d updated, %d skipped, %d failed",
+		prefix, len(r.Created), len(r.Updated), len(r.Skipped), len(r.Failed))
+}
+
+func (d *mcpImportPageData) hasFieldErrs() bool {
+	return d.FieldErrConfig != "" || d.FieldErrTarget != ""
+}
+
 // mcpServerSettingsBase is the base path for the MCP Servers management area.
 const mcpServerSettingsBase = "/settings/mcp-servers"
 
@@ -175,6 +236,54 @@ func mcpServerOAuthShown(s MCPServer) bool {
 		return false
 	}
 	return s.OAuth != nil
+}
+
+// mcpServerAuthBadge returns the list summary's at-a-glance operational-state
+// badge for a server whose "enabled" state alone can be misleading.
+//
+// "Needs auth" requires positive OAuth evidence: memory's list DTO attaches an
+// OAuth summary to every remote server, including header-auth and public ones,
+// so an empty summary is NOT evidence that a server needs authorization. Only
+// a registered client row (Configured) or a stored authorization server means
+// the server has an OAuth credential that is not connected yet.
+//
+// "Connected" means a token set is stored (the server was authorized at least
+// once). Without positive OAuth evidence, an external row with no cached tools
+// has never completed a successful sync/probe and renders "Never tested".
+//
+// This derives entirely from existing list-DTO state: OAuth summary
+// (configured/connected/authorization-server) and the cached tool rows. It
+// deliberately does not invent a persisted last-tested/last-connected field —
+// the backend has none (see PR notes), so "Connected" means a token set is
+// stored and "Never tested" means no tools have ever been cached.
+//
+// Disabled rows already say "disabled", and builtin/device rows carry their own
+// state; rows that already carry a "Needs configuration" warning are skipped
+// (one warning per row is enough).
+func mcpServerAuthBadge(s MCPServer) (label string, variant ui.BadgeIntent, icon string, ok bool) {
+	if !s.Enabled || mcpServerIsBuiltin(s) || mcpServerIsDevice(s) || s.NeedsConfiguration {
+		return "", "", "", false
+	}
+	if s.OAuth != nil {
+		if s.OAuth.Connected {
+			return "Connected", ui.BadgeSuccess, "lucide--shield-check", true
+		}
+		if mcpServerOAuthRequirementKnown(s) {
+			return "Needs auth", ui.BadgeWarning, "lucide--key-round", true
+		}
+	}
+	if len(s.Tools) == 0 && s.ToolCount == 0 {
+		return "Never tested", ui.BadgeNeutral, "lucide--circle-help", true
+	}
+	return "", "", "", false
+}
+
+// mcpServerOAuthRequirementKnown reports positive evidence that a server has an
+// OAuth credential requirement: a registered client row (Configured) or a
+// stored authorization server. The list decorator attaches an OAuth summary to
+// every remote server, so a non-nil summary alone is not evidence.
+func mcpServerOAuthRequirementKnown(s MCPServer) bool {
+	return s.OAuth != nil && (s.OAuth.Configured || s.OAuth.AuthorizationServer != nil)
 }
 
 // mcpServerDisplayName is the list summary's label for a server. The builtin

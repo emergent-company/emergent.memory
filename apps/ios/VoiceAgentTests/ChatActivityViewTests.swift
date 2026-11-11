@@ -12,13 +12,13 @@ struct ChatActivityViewTests {
         // stay constructible from the store's data shape.
         _ = ChatView()
         _ = ChatView(onSuggestion: { _ in })
-        _ = ThinkingBlockView(text: "reasoning", isLive: true)
-        _ = ThinkingBlockView(text: "reasoning", isLive: false)
+        _ = ThinkingBlockView(id: "thinking-1", text: "reasoning", isLive: true)
+        _ = ThinkingBlockView(id: "thinking-1", text: "reasoning", isLive: false)
 
         let first = ToolCallInfo(id: "t1", name: "web_search", arguments: "{}", result: "ok", isError: false)
         let second = ToolCallInfo(id: "t2", name: "read_file", arguments: "{}", result: nil, isError: false, isRunning: true)
         _ = LiveToolChip(tool: first)
-        _ = ToolActivityGroup(tools: [first, second], turnID: UUID())
+        _ = ToolActivityGroup(tools: [first, second], groupID: "group")
     }
 
     @MainActor

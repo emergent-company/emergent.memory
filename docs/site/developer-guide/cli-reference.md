@@ -151,3 +151,32 @@ memory install-memory-skills --force
 ```
 
 Existing skill directories are skipped by default. Use `--force` to update them to the latest embedded versions.
+
+
+---
+
+## `memory agents mcp-servers import`
+
+Import MCP servers from a Claude-format config document (`mcpServers`).
+
+**Flags**
+
+| Flag | Description |
+|---|---|
+| `--from-claude <path|->` | Claude config file, or `-` for stdin (required) |
+| `--device <instance-id>` | Connector instance for device-targeted (stdio) servers |
+| `--target <auto\|server\|device>` | Delivery target (default `auto`) |
+| `--overwrite` | Update servers whose name already exists instead of skipping |
+| `--dry-run` | Validate and plan without writing |
+| `--json` | Emit the per-entry result as JSON |
+
+`auto` creates remote `http`/`sse` servers on the Memory host and pushes local
+`stdio` servers to the connector named by `--device`. `${VAR}` placeholders are
+stored literally.
+
+**Example**
+
+```bash
+memory agents mcp-servers import --from-claude ~/.claude.json --device laptop-connector
+cat claude_desktop_config.json | memory agents mcp-servers import --from-claude - --dry-run
+```

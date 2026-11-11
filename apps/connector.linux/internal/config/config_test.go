@@ -182,6 +182,17 @@ func TestSaveCreatesParentDirAndMode0600(t *testing.T) {
 	if !reflect.DeepEqual(got, cfg) {
 		t.Errorf("round trip mismatch: got %+v, want %+v", got, cfg)
 	}
+
+	// The atomic write must not leave its temp file behind.
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".config-") {
+			t.Errorf("temp config file left behind: %s", entry.Name())
+		}
+	}
 }
 
 func TestSaveDefaultPathWritesLane(t *testing.T) {

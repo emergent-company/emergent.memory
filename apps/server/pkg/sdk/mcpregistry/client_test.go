@@ -484,3 +484,76 @@ func TestMCPRegistryOAuthDisconnect(t *testing.T) {
 	err := client.MCPRegistry.Disconnect(context.Background(), "srv-1")
 	assert.NoError(t, err)
 }
+
+func TestMCPRegistryImport(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	mock.On("POST", "/api/admin/mcp-servers/import", func(w http.ResponseWriter, r *http.Request) {
+		testutil.AssertHeader(t, r, "X-Project-ID", "proj_test123")
+		testutil.AssertHeader(t, r, "Content-Type", "application/json")
+
+		var body mcpregistry.ImportMCPServersRequest
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.JSONEq(t, `{"mcpServers":{"github":{"command":"npx"}}}`, string(body.Config))
+		assert.Equal(t, "device", body.Target)
+		assert.Equal(t, "dev-1", body.TargetInstanceID)
+		assert.True(t, body.Overwrite)
+
+		resp := mcpregistry.APIResponse[mcpregistry.ImportResult]{
+			Success: true,
+			Data: mcpregistry.ImportResult{
+				Created: []string{"github"},
+				Skipped: []mcpregistry.ImportSkip{{Name: "old", Reason: "already exists"}},
+				Failed:  []mcpregistry.ImportFailure{{Name: "bad", Error: "no transport"}},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	})
+
+	client := newTestClient(t, mock)
+	result, err := client.MCPRegistry.Import(context.Background(), &mcpregistry.ImportMCPServersRequest{
+		Config:           json.RawMessage(`{"mcpServers":{"github":{"command":"npx"}}}`),
+		Target:           "device",
+		TargetInstanceID: "dev-1",
+		Overwrite:        true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"github"}, result.Data.Created)
+	require.Len(t, result.Data.Skipped, 1)
+	require.Len(t, result.Data.Failed, 1)
+}
+
+func TestMCPRegistryCreateSendsTargetAndSecrets(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	mock.On("POST", "/api/admin/mcp-servers", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.Equal(t, "device", body["target"])
+		assert.Equal(t, "dev-1", body["targetInstanceId"])
+		assert.Equal(t, []any{"Authorization"}, body["secretHeadersKeys"])
+		assert.Equal(t, map[string]any{"Authorization": "Bearer x"}, body["headers"])
+
+		resp := mcpregistry.APIResponse[mcpregistry.MCPServer]{Success: true, Data: mcpregistry.MCPServer{ID: "srv-1", Name: "x"}}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(resp)
+	})
+
+	client := newTestClient(t, mock)
+	instance := "dev-1"
+	cmd := "npx"
+	_, err := client.MCPRegistry.Create(context.Background(), &mcpregistry.CreateMCPServerRequest{
+		Name:              "x",
+		Type:              mcpregistry.ServerTypeStdio,
+		Command:           &cmd,
+		Headers:           map[string]any{"Authorization": "Bearer x"},
+		SecretHeadersKeys: []string{"Authorization"},
+		Target:            "device",
+		TargetInstanceID:  &instance,
+	})
+	require.NoError(t, err)
+}

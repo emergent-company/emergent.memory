@@ -129,6 +129,19 @@ templ mcpServerAddDialog() {
 					</span>
 				}
 			</a>
+			<a class="group block" href={ templ.URL(mcpServerSettingsBase + "/import") } data-testid="mcp-server-add-import">
+				@ui.SoftBox(ui.SoftBoxProps{Class: "hover:border-primary/40 flex items-start gap-3 transition-colors"}) {
+					@ui.IconSpan("lucide--file-json", "mt-0.5 size-4 shrink-0 text-muted-faint")
+					<span class="flex min-w-0 flex-1 flex-col gap-0.5">
+						<span class="text-sm font-medium">Import from Claude</span>
+						<span class="text-muted text-xs leading-tight">Paste a claude_desktop_config.json or .mcp.json and register every server in one go.</span>
+					</span>
+					<span class="text-primary inline-flex shrink-0 items-center gap-1 text-xs font-medium">
+						Import
+						@ui.IconSpan("lucide--chevron-right", "size-3.5")
+					</span>
+				}
+			</a>
 			<a class="group block" href={ templ.URL(mcpRegistrySettingsBase) } data-testid="mcp-server-add-registry">
 				@ui.SoftBox(ui.SoftBoxProps{Class: "hover:border-primary/40 flex items-start gap-3 transition-colors"}) {
 					@ui.IconSpan("lucide--globe", "mt-0.5 size-4 shrink-0 text-muted-faint")
@@ -184,6 +197,16 @@ templ mcpServerRow(srv MCPServer) {
 				@ui.Badge(ui.BadgeProps{Label: "enabled", Variant: ui.BadgeSuccess, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--check"})
 			} else {
 				@ui.Badge(ui.BadgeProps{Label: "disabled", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Icon: "lucide--pause"})
+			}
+			if label, variant, icon, ok := mcpServerAuthBadge(srv); ok {
+				@ui.Badge(ui.BadgeProps{
+					Label:   label,
+					Variant: variant,
+					Style:   ui.BadgeStyleSoft,
+					Size:    ui.BadgeSizeXS,
+					Icon:    icon,
+					Attrs:   templ.Attributes{"data-testid": "mcp-auth-badge", "data-mcp-auth-state": label},
+				})
 			}
 			if mcpServerIsDevice(srv) {
 				@ui.Badge(ui.BadgeProps{
@@ -769,6 +792,150 @@ templ MCPServerNewPage(data mcpServerFormData) {
 	@mcpServersScript()
 }
 
+// MCPServerImportPage renders the Claude-config import form and, after a
+// POST, the created/updated/skipped/failed report.
+templ MCPServerImportPage(data mcpImportPageData) {
+	<div class={ pageFormChromeClass } data-mcp-import="">
+		{{ crumbs := crumbsActive(nav.Crumbs("Settings", "/settings", "MCP Servers", mcpServerSettingsBase, "Import")) }}
+		@detailHeader(crumbs, "", "Import MCP servers", "Paste a Claude MCP config. Remote http/sse servers are created on the Memory host; local stdio commands are pushed to a connector device.", detailHeaderOpts{Margin: "mb-6"}) {}
+		@flashToasts("", data.FlashErr)
+	</div>
+	<form method="post" action={ templ.URL(mcpServerSettingsBase + "/import") } data-mcp-import-form="">
+		<div class={ pageFormFieldsClass }>
+			@components.PanelCard("", nil) {
+				<div class="flex flex-col gap-4">
+					@form.FormControl("mcp-import-config", "Claude config", form.LabelAbove, "The full claude_desktop_config.json, .mcp.json, or a single server object.", data.FieldErrConfig, nil) {
+						<textarea id="mcp-import-config" name="config" rows="12" required class="textarea w-full resize-y font-mono text-xs" placeholder={ "{\"mcpServers\": {...}}" }>{ data.Config }</textarea>
+					}
+					<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+						@form.FormControl("mcp-import-target", "Delivery target", form.LabelAbove, "Auto sends remote servers to the Memory host and local commands to a connector.", data.FieldErrTarget, nil) {
+							<select id="mcp-import-target" name="target" class="select w-full">
+								for _, t := range mcpImportTargets() {
+									<option value={ t } selected?={ data.Target == t }>{ t }</option>
+								}
+							</select>
+						}
+						@form.FormControl("mcp-import-device", "Connector device", form.LabelAbove, "Binds device-targeted servers to one connector. Broadcast is restricted to project admins.", "", nil) {
+							<select id="mcp-import-device" name="device" class="select w-full">
+								<option value="" selected?={ data.DeviceInstanceID == "" }>Broadcast (admins only)</option>
+								for _, d := range data.Devices {
+									<option value={ d.InstanceID } selected?={ data.DeviceInstanceID == d.InstanceID }>{ mcpRegistryDeviceLabel(d) }</option>
+								}
+							</select>
+							if data.DevicesErr != nil {
+								<p class="text-error mt-1 text-xs">Could not load connected devices: { data.DevicesErr.Error() }</p>
+							} else if len(data.Devices) == 0 {
+								@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-2"}) {
+									No connector is connected. Local stdio servers need one — connect a device or import remote servers only.
+								}
+							}
+						}
+					</div>
+					<label class="label flex w-full justify-between gap-3">
+						<span class="text-sm font-medium">Overwrite existing servers</span>
+						<input id="mcp-import-overwrite" name="overwrite" type="checkbox" checked?={ data.Overwrite } class="checkbox"/>
+					</label>
+					<label class="label flex w-full justify-between gap-3">
+						<span class="text-sm font-medium">Dry run — validate without writing</span>
+						<input id="mcp-import-dry-run" name="dryRun" type="checkbox" checked?={ data.DryRun } class="checkbox"/>
+					</label>
+					if data.GeneralErr != nil {
+						@ui.Alert(ui.AlertProps{
+							Type:    ui.AlertError,
+							Style:   ui.AlertStyleOutline,
+							Icon:    "lucide--alert-triangle",
+							Message: data.GeneralErr.Error(),
+						})
+					}
+				</div>
+			}
+			if data.Result != nil {
+				@mcpImportResultPanel(data.Result)
+			}
+		</div>
+		@components.StickyFormActions(components.StickyFormActionsProps{}) {
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    mcpServerSettingsBase,
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--x",
+			}) {
+				Cancel
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeSubmit,
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--file-json",
+			}) {
+				Import servers
+			}
+		}
+	</form>
+}
+
+// mcpImportResultPanel renders an import outcome. Names are listed per bucket
+// so a partial import is actionable without re-running.
+templ mcpImportResultPanel(result *MCPImportResult) {
+	@components.PanelCard("", nil) {
+		<div class="flex flex-col gap-3" data-testid="mcp-import-result">
+			@ui.Eyebrow("Import result", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
+			<p class="text-sm font-medium">{ result.Summary() }</p>
+			if len(result.Created) > 0 {
+				<div>
+					<p class="text-xs font-medium">Created</p>
+					<ul class="text-muted mt-1 flex flex-col gap-0.5 text-xs">
+						for _, name := range result.Created {
+							<li class="font-mono">{ name }</li>
+						}
+					</ul>
+				</div>
+			}
+			if len(result.Updated) > 0 {
+				<div>
+					<p class="text-xs font-medium">Updated</p>
+					<ul class="text-muted mt-1 flex flex-col gap-0.5 text-xs">
+						for _, name := range result.Updated {
+							<li class="font-mono">{ name }</li>
+						}
+					</ul>
+				</div>
+			}
+			if len(result.Skipped) > 0 {
+				<div>
+					<p class="text-xs font-medium">Skipped</p>
+					<ul class="text-muted mt-1 flex flex-col gap-0.5 text-xs">
+						for _, skip := range result.Skipped {
+							<li><span class="font-mono">{ skip.Name }</span> — { skip.Reason }</li>
+						}
+					</ul>
+				</div>
+			}
+			if len(result.Warnings) > 0 {
+				<div>
+					<p class="text-xs font-medium">Warnings</p>
+					<ul class="text-muted mt-1 flex flex-col gap-0.5 text-xs">
+						for _, warning := range result.Warnings {
+							<li><span class="font-mono">{ warning.Name }</span> — { warning.Message }</li>
+						}
+					</ul>
+				</div>
+			}
+			if len(result.Failed) > 0 {
+				<div>
+					<p class="text-error text-xs font-medium">Failed</p>
+					<ul class="text-error mt-1 flex flex-col gap-0.5 text-xs">
+						for _, failure := range result.Failed {
+							<li><span class="font-mono">{ failure.Name }</span> — { failure.Error }</li>
+						}
+					</ul>
+				</div>
+			}
+		</div>
+	}
+}
+
 // MCPServerEditPage renders the edit page (GET /settings/mcp-servers/:id/edit):
 // the server's connection details pre-filled, posting to POST .../:id/update.
 // LoadErr / NotFound render their own states; ?err= surfaces PRG feedback.
@@ -862,7 +1029,7 @@ templ mcpServerFormBody(data mcpServerFormData, editing bool) {
 						<span class="text-sm font-medium">Enabled</span>
 						<input id="mcp-server-enabled" name="enabled" type="checkbox" checked?={ data.Enabled } class="checkbox"/>
 					</label>
-					<div data-mcp-test-result hidden></div>
+					<div data-mcp-test-result role="status" aria-live="polite" hidden></div>
 				</div>
 			}
 		</div>
@@ -1214,7 +1381,7 @@ templ mcpServersScript() {
 					if (!area) return;
 					var row = rowFor(btn);
 					if (row) row.open = true;
-					renderInspect(area, j);
+					renderInspect(area, j, 'Inspect');
 				} finally {
 					setBusy(btn, false);
 				}
@@ -1237,18 +1404,26 @@ templ mcpServersScript() {
 					});
 					var j = await readJSON(resp);
 					if (!resp.ok) {
-						toast('error', j.error || ('Test failed (' + resp.status + ').'));
+						// A non-2xx test response carries the real failure in
+						// {"error": ...}. Render it in the form's result area, not
+						// only a toast: the toast is easy to miss and the user was
+						// left looking at a form that appeared to succeed.
+						var msg = j.error || ('Test failed (' + resp.status + ').');
+						if (area) renderCheckError(area, 'Test failed', msg);
+						toast('error', msg);
 						return;
 					}
-					if (area) renderInspect(area, j);
+					if (area) renderInspect(area, j, 'Test');
 				} catch (e) {
-					toast('error', 'Test failed: ' + (e && e.message ? e.message : 'network error'));
+					var msg = 'Test failed: ' + (e && e.message ? e.message : 'network error');
+					if (area) renderCheckError(area, 'Test failed', msg);
+					toast('error', msg);
 				} finally {
 					setBusy(btn, false);
 				}
 			}
 
-			function renderInspect(area, r) {
+			function renderInspect(area, r, actionLabel) {
 				area.hidden = false;
 				area.innerHTML = '';
 				var box = document.createElement('div');
@@ -1322,7 +1497,7 @@ templ mcpServersScript() {
 				if (r.status !== 'ok') {
 					box.className += ' border-error/25 bg-error/5';
 					head.appendChild(icon('lucide--circle-x'));
-					head.appendChild(textNode('Inspect failed'));
+					head.appendChild(textNode((actionLabel || 'Inspect') + ' failed'));
 					box.appendChild(head);
 					var err = document.createElement('p');
 					err.className = 'text-error mt-1';
@@ -1365,6 +1540,27 @@ templ mcpServersScript() {
 					none.textContent = 'No tools, prompts, or resources advertised.';
 					box.appendChild(none);
 				}
+			}
+
+			// renderCheckError writes a transport/handler failure into the form's
+			// result area. The message is untrusted (it can carry an upstream
+			// error body), so it is set via textContent only.
+			function renderCheckError(area, heading, msg) {
+				if (!area) return;
+				area.hidden = false;
+				area.replaceChildren();
+				var box = document.createElement('div');
+				box.className = 'rounded-box border border-error/25 bg-error/5 px-3 py-2.5 text-xs';
+				var head = document.createElement('p');
+				head.className = 'flex items-center gap-1.5 text-sm font-semibold text-error';
+				head.appendChild(icon('lucide--circle-x'));
+				head.appendChild(textNode(heading));
+				box.appendChild(head);
+				var err = document.createElement('p');
+				err.className = 'text-error mt-1 break-words';
+				err.textContent = msg || 'connection error';
+				box.appendChild(err);
+				area.appendChild(box);
 			}
 
 			function icon(name) {

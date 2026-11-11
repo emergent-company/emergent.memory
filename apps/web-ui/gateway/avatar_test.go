@@ -21,8 +21,9 @@ func TestResolveAvatar(t *testing.T) {
 		picture  string
 		want     string
 	}{
-		{"override wins when both set", "/api/user/avatar?v=k1", "https://idp/x.png", "/api/user/avatar?v=k1"},
-		{"override wins over empty picture", "/api/user/avatar?v=k1", "", "/api/user/avatar?v=k1"},
+		{"session-scoped override falls back to IdP picture", "/api/user/avatar?v=k1", "https://idp/x.png", "https://idp/x.png"},
+		{"session-scoped override with no picture falls back to initials", "/api/user/avatar?v=k1", "", ""},
+		{"portable override wins when both set", "https://cdn/x.png", "https://idp/x.png", "https://cdn/x.png"},
 		{"picture used when no override", "", "https://idp/x.png", "https://idp/x.png"},
 		{"bare picture key falls back to initials", "", "avatars/abc.png", ""},
 		{"neither set", "", "", ""},
@@ -63,7 +64,9 @@ func TestAvatarSrc(t *testing.T) {
 	}{
 		{"absolute URL", "https://idp/x.png", "https://idp/x.png"},
 		{"protocol-relative URL", "//cdn/x.png", "//cdn/x.png"},
-		{"root-relative path", "/api/user/avatar?v=k1", "/api/user/avatar?v=k1"},
+		{"root-relative path", "/static/x.png", "/static/x.png"},
+		{"session-scoped avatar proxy is dropped", "/api/user/avatar?v=k1", ""},
+		{"absolute avatar proxy is dropped", "https://app.dev.memory.emergent-company.ai/api/user/avatar?v=k1", ""},
 		{"data URI", "data:image/png;base64,AAA", "data:image/png;base64,AAA"},
 		{"bare object key is not a URL", "avatars/abc.png", ""},
 		{"empty", "", ""},

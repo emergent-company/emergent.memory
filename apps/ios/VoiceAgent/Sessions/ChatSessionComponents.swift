@@ -22,9 +22,10 @@ struct ChatTranscriptView: View {
 
     @Environment(ChatActivityStore.self) private var activity
 
-    /// Which step runs the reader has opened or closed, kept here so it outlives
-    /// the rows (they are rebuilt as steps settle). The chat route keeps its own.
-    @State private var toolDisclosure = ToolActivityDisclosure()
+    /// Which step runs, thinking blocks and Sources footers the reader has
+    /// opened or closed, kept here so the choices outlive the rows (they are
+    /// rebuilt as steps settle). The chat route keeps its own.
+    @State private var chatDisclosure = ChatDisclosure()
 
     private static let bottomAnchorID = "chat-session.bottom"
 
@@ -72,10 +73,10 @@ struct ChatTranscriptView: View {
             // is never moved (`emergent.memory#434`), and the last growth can no
             // longer land short of the newest row (`emergent.memory#446`).
             .modifier(ChatAutoScroll(proxy: proxy, bottomAnchorID: Self.bottomAnchorID))
-            .environment(\.toolActivityDisclosure, toolDisclosure)
+            .environment(\.chatDisclosure, chatDisclosure)
             .onChange(of: timeline.items.isEmpty) { _, empty in
                 if empty {
-                    toolDisclosure.clear()
+                    chatDisclosure.clear()
                 }
             }
             .overlay {

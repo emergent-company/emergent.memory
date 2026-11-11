@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -53,6 +55,28 @@ Examples:
  memory agents mcp-servers create --name "stdio-server" --type stdio --command "npx" --args "-y,@modelcontextprotocol/server-github"
  memory agents mcp-servers create --name "my-server" --type http --url "http://localhost:8080/mcp" --env "API_KEY=abc123"`,
 	RunE: runCreateMCPServer,
+}
+
+var importMCPServersCmd = &cobra.Command{
+	Use:   "import",
+	Short: "Import MCP servers from a Claude config",
+	Long: `Import MCP servers from a Claude-format config document.
+
+Accepts the mcpServers object used by Claude Desktop
+(claude_desktop_config.json), Claude Code (.mcp.json / ~/.claude.json), and
+claude mcp add-json. Remote http/sse servers are created on the Memory host;
+local stdio commands are pushed to a connector device, because that is the only
+place they can run.
+
+Existing servers are skipped unless --overwrite is set. The command reports
+created, updated, skipped, and failed entries; valid entries are imported even
+when others fail.
+
+Examples:
+  memory agents mcp-servers import --from-claude ~/Library/Application Support/Claude/claude_desktop_config.json --device laptop-connector
+  memory agents mcp-servers import --from-claude ./.mcp.json
+  cat claude_desktop_config.json | memory agents mcp-servers import --from-claude - --dry-run`,
+	RunE: runImportMCPServers,
 }
 
 var deleteMCPServerCmd = &cobra.Command{
@@ -780,6 +804,102 @@ func runMCPOAuthDisconnect(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func runImportMCPServers(cmd *cobra.Command, args []string) error {
+	data, err := readMCPImportSource(mcpImportPath)
+	if err != nil {
+		return err
+	}
+
+	switch mcpImportTarget {
+	case "", "auto", "server", "device":
+	default:
+		return fmt.Errorf("invalid --target %q: must be auto, server, or device", mcpImportTarget)
+	}
+
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	req := &mcpregistry.ImportMCPServersRequest{
+		Config:    data,
+		Target:    mcpImportTarget,
+		Overwrite: mcpImportOverwrite,
+		DryRun:    mcpImportDryRun,
+	}
+	if mcpImportDevice != "" {
+		req.TargetInstanceID = mcpImportDevice
+	}
+
+	result, err := c.SDK.MCPRegistry.Import(context.Background(), req)
+	if err != nil {
+		return fmt.Errorf("failed to import MCP servers: %w", err)
+	}
+
+	if mcpImportJSON {
+		b, err := json.MarshalIndent(result.Data, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to encode result: %w", err)
+		}
+		fmt.Println(string(b))
+	} else {
+		printMCPImportResult(&result.Data)
+	}
+
+	if len(result.Data.Created) == 0 && len(result.Data.Updated) == 0 && len(result.Data.Failed) > 0 {
+		return fmt.Errorf("no MCP servers were imported (%d failed)", len(result.Data.Failed))
+	}
+	return nil
+}
+
+// readMCPImportSource reads the Claude config from a file, or stdin for "-".
+func readMCPImportSource(path string) (json.RawMessage, error) {
+	var b []byte
+	var err error
+	if path == "-" {
+		b, err = io.ReadAll(os.Stdin)
+	} else {
+		b, err = os.ReadFile(path)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading Claude config %q: %w", path, err)
+	}
+	if len(strings.TrimSpace(string(b))) == 0 {
+		return nil, fmt.Errorf("claude config %q is empty", path)
+	}
+	return json.RawMessage(b), nil
+}
+
+func printMCPImportResult(result *mcpregistry.ImportResult) {
+	prefix := ""
+	if result.DryRun {
+		prefix = "[dry run] "
+	}
+	fmt.Printf("%sImported MCP servers: %d created, %d updated, %d skipped, %d failed\n",
+		prefix, len(result.Created), len(result.Updated), len(result.Skipped), len(result.Failed))
+	for _, name := range result.Created {
+		fmt.Printf("  + %s\n", name)
+	}
+	for _, name := range result.Updated {
+		fmt.Printf("  ~ %s\n", name)
+	}
+	for _, skip := range result.Skipped {
+		fmt.Printf("  - %s (%s)\n", skip.Name, skip.Reason)
+	}
+	for _, failure := range result.Failed {
+		fmt.Printf("  ! %s: %s\n", failure.Name, failure.Error)
+	}
+	for _, warning := range result.Warnings {
+		fmt.Printf("  ? %s: %s\n", warning.Name, warning.Message)
+	}
+}
+
 func init() {
 	// Create command flags
 	createMCPServerCmd.Flags().StringVar(&mcpServerName, "name", "", "Server name (required)")
@@ -794,6 +914,15 @@ func init() {
 	_ = createMCPServerCmd.MarkFlagRequired("name")
 	_ = createMCPServerCmd.MarkFlagRequired("type")
 
+	// Import command flags
+	importMCPServersCmd.Flags().StringVar(&mcpImportPath, "from-claude", "", "Claude config file path, or - for stdin (required)")
+	importMCPServersCmd.Flags().StringVar(&mcpImportDevice, "device", "", "Connector instance id for device-targeted (stdio) servers")
+	importMCPServersCmd.Flags().StringVar(&mcpImportTarget, "target", "auto", "Delivery target for imported servers: auto, server, or device")
+	importMCPServersCmd.Flags().BoolVar(&mcpImportOverwrite, "overwrite", false, "Update servers whose name already exists instead of skipping them")
+	importMCPServersCmd.Flags().BoolVar(&mcpImportDryRun, "dry-run", false, "Validate and plan the import without writing anything")
+	importMCPServersCmd.Flags().BoolVar(&mcpImportJSON, "json", false, "Emit the import result as JSON")
+	_ = importMCPServersCmd.MarkFlagRequired("from-claude")
+
 	// Add subcommands
 	mcpServersCmd.AddCommand(listMCPServersCmd)
 	mcpServersCmd.AddCommand(getMCPServerCmd)
@@ -803,6 +932,7 @@ func init() {
 	mcpServersCmd.AddCommand(inspectMCPServerCmd)
 	mcpServersCmd.AddCommand(toolsMCPServerCmd)
 	mcpServersCmd.AddCommand(configureMCPServerCmd)
+	mcpServersCmd.AddCommand(importMCPServersCmd)
 
 	mcpOAuthCmd.AddCommand(mcpOAuthConnectCmd)
 	mcpOAuthCmd.AddCommand(mcpOAuthStatusCmd)
@@ -812,6 +942,15 @@ func init() {
 	// Register with agents command
 	agentsCmd.AddCommand(mcpServersCmd)
 }
+
+var (
+	mcpImportPath      string
+	mcpImportDevice    string
+	mcpImportTarget    string
+	mcpImportOverwrite bool
+	mcpImportDryRun    bool
+	mcpImportJSON      bool
+)
 
 var configureMCPServerCmd = &cobra.Command{
 	Use:   "configure [tool-name] [key=value ...]",

@@ -121,6 +121,23 @@ type ProjectStats struct {
 	RunningJobs       int               `json:"runningJobs"`
 	QueuedJobs        int               `json:"queuedJobs"`
 	InstalledSchemas  []InstalledSchema `json:"installedSchemas"`
+	// PendingExtractionMerge reports extraction output that is still on unmerged
+	// staging branches and therefore invisible to default graph reads (#496).
+	// Populated only for include_stats requests.
+	PendingExtractionMerge *PendingExtractionMergeStats `json:"pendingExtractionMerge,omitempty"`
+}
+
+// PendingExtractionMergeStats is the project-level extraction backlog: live
+// objects and relationships on unmerged extraction branches, and how many
+// objects a default read can actually see.
+type PendingExtractionMergeStats struct {
+	BranchCount          int `json:"branchCount"`
+	ObjectCount          int `json:"objectCount"`
+	RelationshipCount    int `json:"relationshipCount"`
+	MainGraphObjectCount int `json:"mainGraphObjectCount"`
+	// Stranded is true when extraction produced objects but the main graph is
+	// empty, so every default read reports nothing.
+	Stranded bool `json:"stranded"`
 }
 
 // ProjectDTO is the response DTO for project endpoints
@@ -187,6 +204,11 @@ type UpdateMemberRoleRequest struct {
 type CreateProjectRequest struct {
 	Name  string `json:"name" validate:"required,min=1"`
 	OrgID string `json:"orgId" validate:"required,uuid"`
+	// AutoMergeExtractionBranches opts a new project into merging extraction
+	// staging branches into the main graph after extraction completes. It is
+	// explicit (nil keeps the opt-in default of false) so creating a project
+	// never silently changes what default graph reads return (#496).
+	AutoMergeExtractionBranches *bool `json:"auto_merge_extraction_branches,omitempty"`
 }
 
 // TransferProjectRequest is the request body for transferring a project to another org.

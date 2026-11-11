@@ -88,6 +88,8 @@ var userVisibleRoutes = []gatewayRoute{
 	{method: "POST", path: "/orgs/:id/delete", handler: "uiDeleteOrg"},
 
 	// Project settings hub and approvals.
+	{method: "GET", path: "/settings/mcp-servers/import", handler: "uiMCPImportPage"},
+	{method: "POST", path: "/settings/mcp-servers/import", handler: "uiMCPImport"},
 	{method: "GET", path: "/settings", handler: "uiProjectSettings"},
 	{method: "GET", path: "/settings/assistant", handler: "uiProjectAssistantSettings"},
 	{method: "GET", path: "/settings/extraction", handler: "uiProjectExtractionSettings"},
