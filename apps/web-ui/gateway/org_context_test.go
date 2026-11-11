@@ -41,6 +41,7 @@ func orgContextUIServer(s *Server) *echo.Echo {
 	e.POST("/orgs/:id/tool-settings/:toolName/delete", s.uiOrgToolSettingDelete)
 	e.POST("/orgs/:id/delete", s.uiDeleteOrg)
 	e.POST("/projects/delete", s.uiDeleteProjects)
+	e.POST("/projects/rename", s.uiRenameProject)
 	e.POST("/projects/transfer", s.uiTransferProject)
 	e.GET("/agents", s.uiAgents)
 	return e
@@ -1076,6 +1077,91 @@ func TestUITransferProject(t *testing.T) {
 	})
 }
 
+// TestUIRenameProject covers the rename-project flow on the org landing:
+// success via plain POST (303) and HTMX (200 + HX-Redirect) with the exact
+// UpdateProject args, the local guards (blank name, missing project) that never
+// reach the backend, and the backend-error path (error flash, no state change).
+func TestUIRenameProject(t *testing.T) {
+	t.Run("success via plain form", func(t *testing.T) {
+		f := &fakeMemory{}
+		s := &Server{cfg: sessionCfg(), memory: f}
+		e := orgContextUIServer(s)
+		rec := orgPost(t, e, "/projects/rename", "orgId=o1&projectId=p1&name=Home+Renamed")
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/o/o1?renamed=1" {
+			t.Errorf("rename = %d %q, want 303 /o/o1?renamed=1", rec.Code, rec.Header().Get("Location"))
+		}
+		if f.updatedProjectID != "p1" || f.updatedProject == nil || f.updatedProject.Name != "Home Renamed" {
+			t.Errorf("UpdateProject = (%q, %+v), want (p1, name Home Renamed)", f.updatedProjectID, f.updatedProject)
+		}
+	})
+
+	t.Run("success via HTMX", func(t *testing.T) {
+		f := &fakeMemory{}
+		s := &Server{cfg: sessionCfg(), memory: f}
+		e := orgContextUIServer(s)
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/projects/rename?orgId=o1&projectId=p1&name=Home+Renamed", nil)
+		req.Header.Set("HX-Request", "true")
+		req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+			AccessToken: "at",
+			OrgID:       "o1",
+			ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+		}))
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK || rec.Header().Get("HX-Redirect") != "/o/o1?renamed=1" {
+			t.Errorf("HTMX rename = %d HX-Redirect %q, want 200 /o/o1?renamed=1", rec.Code, rec.Header().Get("HX-Redirect"))
+		}
+		if f.updatedProjectID != "p1" || f.updatedProject == nil || f.updatedProject.Name != "Home Renamed" {
+			t.Errorf("UpdateProject = (%q, %+v), want (p1, name Home Renamed)", f.updatedProjectID, f.updatedProject)
+		}
+	})
+
+	t.Run("blank name is rejected locally", func(t *testing.T) {
+		f := &fakeMemory{}
+		s := &Server{cfg: sessionCfg(), memory: f}
+		e := orgContextUIServer(s)
+		rec := orgPost(t, e, "/projects/rename", "orgId=o1&projectId=p1&name=+")
+		if rec.Code != http.StatusSeeOther {
+			t.Errorf("blank name = %d, want 303", rec.Code)
+		}
+		if loc := rec.Header().Get("Location"); !strings.Contains(loc, "?err=") {
+			t.Errorf("blank name Location = %q, want ?err= flash", loc)
+		}
+		if f.updatedProjectID != "" || f.updatedProject != nil {
+			t.Errorf("UpdateProject called with (%q, %+v), want none (local guard)", f.updatedProjectID, f.updatedProject)
+		}
+	})
+
+	t.Run("missing project is rejected locally", func(t *testing.T) {
+		f := &fakeMemory{}
+		s := &Server{cfg: sessionCfg(), memory: f}
+		e := orgContextUIServer(s)
+		rec := orgPost(t, e, "/projects/rename", "orgId=o1&name=Home")
+		if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "?err=") {
+			t.Errorf("missing project = %d %q, want 303 with ?err= flash", rec.Code, rec.Header().Get("Location"))
+		}
+		if f.updatedProjectID != "" || f.updatedProject != nil {
+			t.Errorf("UpdateProject called with (%q, %+v), want none (local guard)", f.updatedProjectID, f.updatedProject)
+		}
+	})
+
+	t.Run("backend error surfaces and leaves state unchanged", func(t *testing.T) {
+		f := &fakeMemory{updateErr: fmt.Errorf("memory 403 forbidden: not an admin of the org")}
+		s := &Server{cfg: sessionCfg(), memory: f}
+		e := orgContextUIServer(s)
+		rec := orgPost(t, e, "/projects/rename", "orgId=o1&projectId=p1&name=Home+Renamed")
+		if rec.Code != http.StatusSeeOther {
+			t.Errorf("backend error = %d, want 303", rec.Code)
+		}
+		if loc := rec.Header().Get("Location"); !strings.Contains(loc, "?err=") {
+			t.Errorf("backend error Location = %q, want ?err= flash", loc)
+		}
+		if f.updatedProjectID != "" || f.updatedProject != nil {
+			t.Errorf("UpdateProject recorded (%q, %+v) after error, want none", f.updatedProjectID, f.updatedProject)
+		}
+	})
+}
+
 // TestTransferState covers the org-landing transfer affordance derivation from
 // the access tree: candidates are the user's orgs minus the source, and the
 // action shows only for an org_admin of the source with ≥1 candidate.
@@ -1136,8 +1222,10 @@ func TestUIOrgLandingTransferAffordance(t *testing.T) {
 		t.Fatalf("GET /orgs/o1 = %d, want 200", rec.Code)
 	}
 	body := rec.Body.String()
-	// Transfer row action carries the row's project id/name for the dialog.
-	for _, want := range []string{`data-project-id="p1"`, `data-project-name="Home"`, `id="transfer-project-modal"`, `name="destinationOrgId"`, `name="projectId"`, `<option value="o2">Globex</option>`} {
+	// Transfer and Rename row actions carry the row's project id/name for their
+	// dialogs; rename is available to any org_admin, transfer only with a
+	// destination.
+	for _, want := range []string{`data-project-id="p1"`, `data-project-name="Home"`, `id="transfer-project-modal"`, `name="destinationOrgId"`, `name="projectId"`, `<option value="o2">Globex</option>`, `id="rename-project-modal"`, `action="/projects/rename"`, `id="rename-project-input"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("org landing with transfer missing %q", want)
 		}
@@ -1154,6 +1242,12 @@ func TestUIOrgLandingTransferAffordance(t *testing.T) {
 	rec = orgGet(t, e, "/orgs/o1?moved=o2&project=p1")
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Home moved to Globex.") {
 		t.Errorf("moved flash = %d, want 200 with %q", rec.Code, "Home moved to Globex.")
+	}
+
+	// Success flash after a rename.
+	rec = orgGet(t, e, "/orgs/o1?renamed=1")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Project renamed.") {
+		t.Errorf("renamed flash = %d, want 200 with %q", rec.Code, "Project renamed.")
 	}
 
 	// Non-admin: no Transfer row action and no dialog. (The id string also
@@ -1177,10 +1271,15 @@ func TestUIOrgLandingTransferAffordance(t *testing.T) {
 		orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}},
 	}
 	rec = orgGet(t, orgContextUIServer(&Server{cfg: sessionCfg(), memory: fSolo}), "/orgs/o1")
-	for _, absent := range []string{`id="transfer-project-modal"`, `action="/projects/transfer"`, `data-project-id="p1"`, `name="destinationOrgId"`} {
+	for _, absent := range []string{`id="transfer-project-modal"`, `action="/projects/transfer"`, `name="destinationOrgId"`} {
 		if strings.Contains(rec.Body.String(), absent) {
 			t.Errorf("solo-org admin org landing must not render the transfer dialog, found %q", absent)
 		}
+	}
+	// Rename does not depend on a transfer destination: a solo-org admin still
+	// gets the row action and its dialog.
+	if body := rec.Body.String(); !strings.Contains(body, `id="rename-project-modal"`) || !strings.Contains(body, `action="/projects/rename"`) {
+		t.Error("solo-org admin org landing must render the rename dialog")
 	}
 }
 
