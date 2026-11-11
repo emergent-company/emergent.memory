@@ -278,7 +278,7 @@ func (s *Server) deployTokenRequest(ctx context.Context, form url.Values) (*depl
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("railway token endpoint returned %d", resp.StatusCode)
@@ -318,7 +318,7 @@ func (s *Server) deployWorkspaces(ctx context.Context, accessToken string) ([]de
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode == http.StatusUnauthorized {
 		return nil, errors.New("railway token rejected")
