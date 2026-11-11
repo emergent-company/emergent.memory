@@ -1,16 +1,12 @@
 package mcp
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"strings"
 
 	"github.com/emergent-company/emergent.memory/domain/documents"
-	"github.com/emergent-company/emergent.memory/internal/storage"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
@@ -71,7 +67,8 @@ func documentsToolDefinitions() []ToolDefinition {
 			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "documents:write",
 			Description: "Upload a document to the current project by providing its content as a base64-encoded string. " +
-				"The decoded content must not exceed 10 MB. Returns the created document id, title, and conversion status.",
+				"The decoded content must not exceed 10 MB. The document is stored and parsed asynchronously: its text and chunks appear once the parsing job finishes (poll document-get). " +
+				"Returns the created document id, title, and conversion status.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -249,49 +246,25 @@ func (s *Service) executeUploadDocument(ctx context.Context, projectID string, a
 		mimeType = inferMIMEType(filename)
 	}
 
-	// Same guard as the HTTP upload paths: an empty or unreadable file would
-	// otherwise become a document that is Ready with zero chunks (#243).
-	if err := documents.ValidateUploadContent(mimeType, filename, int64(len(decoded))); err != nil {
-		return nil, fmt.Errorf("upload_document: %w", err)
+	// One shared ingestor for every upload entry point (#586). It validates the
+	// content, stores the object, creates the document row and queues the
+	// parsing job — the step this tool used to omit, leaving MCP uploads stored
+	// but with zero characters and zero chunks.
+	if s.uploadIngestor == nil {
+		return nil, fmt.Errorf("upload_document: document upload is not configured in this deployment")
 	}
 
-	// Compute file hash for deduplication
-	hashSum := sha256.Sum256(decoded)
-	fileHash := hex.EncodeToString(hashSum[:])
-
-	// Resolve org ID from auth context
-	orgID := auth.OrgIDFromContext(ctx)
-
-	uploadParams := documents.UploadParams{
+	resp, err := s.uploadIngestor.Ingest(ctx, documents.IngestUploadParams{
 		ProjectID:       projectID,
-		OrgID:           orgID,
+		OrgID:           auth.OrgIDFromContext(ctx),
 		CreatedByUserID: documents.OptionalUserID(auth.UserIDFromContext(ctx)),
 		Filename:        filename,
 		MimeType:        mimeType,
-		FileSize:        int64(len(decoded)),
-		FileHash:        fileHash,
-	}
-
-	// Upload to storage. Fail loudly when storage is unavailable instead of
-	// silently creating an unusable document record with no content.
-	if s.storageSvc == nil || !s.storageSvc.Enabled() {
-		return nil, fmt.Errorf("upload_document: object storage is not configured — document content cannot be stored")
-	}
-	uploadResult, err := s.storageSvc.UploadDocument(ctx, bytes.NewReader(decoded), int64(len(decoded)), storage.DocumentUploadOptions{
-		OrgID:     orgID,
-		ProjectID: projectID,
-		Filename:  filename,
-		UploadOptions: storage.UploadOptions{
-			ContentType: mimeType,
-		},
+		Data:            decoded,
+		// nil = honour the project's auto_extract_objects default, exactly like
+		// a REST upload with no explicit autoExtract parameter.
+		RequestedAutoExtract: nil,
 	})
-	if err != nil {
-		return nil, fmt.Errorf("upload_document: storage upload failed: %w", err)
-	}
-	uploadParams.StorageKey = uploadResult.Key
-	uploadParams.StorageURL = uploadResult.StorageURL
-
-	resp, err := s.documentsSvc.CreateFromUpload(ctx, uploadParams)
 	if err != nil {
 		return nil, fmt.Errorf("upload_document: %w", err)
 	}

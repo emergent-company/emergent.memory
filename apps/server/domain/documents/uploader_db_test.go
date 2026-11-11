@@ -129,7 +129,7 @@ func TestCreateFromUploadRecordsUploader(t *testing.T) {
 	svc := newUploaderService(db)
 
 	storageKey := "uploads/project/grace.pdf"
-	resp, err := svc.CreateFromUpload(ctx, UploadParams{
+	resp, err := svc.createFromUpload(ctx, UploadParams{
 		ProjectID:       projectID,
 		OrgID:           uploaderID,
 		CreatedByUserID: &uploaderID,

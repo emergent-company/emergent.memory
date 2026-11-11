@@ -412,7 +412,6 @@ type UploadParams struct {
 	FileHash        string
 	StorageKey      string
 	StorageURL      string
-	AutoExtract     bool
 	Metadata        map[string]any
 	// SkipNotification suppresses the per-document upload announcement. The
 	// batch endpoint sets it and emits one digest for the whole request instead.
