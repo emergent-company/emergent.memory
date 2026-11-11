@@ -35,6 +35,14 @@ type Config struct {
 	// TTL.
 	WorkerIdleTTL time.Duration
 
+	// VoiceDisabled gates the whole voice surface (settings section, chat call
+	// controls, /api/token, voice bindings, bridge workers). It is the inverse
+	// of the VOICE_SUPPORTED env var, so the zero-value Config keeps voice on
+	// and only an explicit VOICE_SUPPORTED=false disables it. Deployments
+	// without a LiveKit SFU set that var so no voice or LiveKit option is
+	// exposed anywhere in the UI or API.
+	VoiceDisabled bool
+
 	LiveKitAPIKey     string
 	LiveKitAPISecret  string
 	LiveKitURL        string
@@ -177,6 +185,8 @@ func LoadConfig() Config {
 		BridgeWorkdir:      os.Getenv("BRIDGE_WORKDIR"),
 		SupervisorInterval: durationOr("SUPERVISOR_INTERVAL", 5*time.Second),
 		WorkerIdleTTL:      durationOr("WORKER_IDLE_TTL", 0),
+
+		VoiceDisabled: !envBoolOr("VOICE_SUPPORTED", true),
 
 		LiveKitAPIKey:     os.Getenv("LIVEKIT_API_KEY"),
 		LiveKitAPISecret:  os.Getenv("LIVEKIT_API_SECRET"),

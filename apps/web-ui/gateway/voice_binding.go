@@ -129,6 +129,9 @@ func (r *workerRegistry) authenticate(cred string) (string, bool) {
 // the worker registry — not a shared key, and not the web session. The binding
 // is consumed only if the authenticated agent matches the binding's agent.
 func (s *Server) voiceBindingHandler(c echo.Context) error {
+	if s.cfg.VoiceDisabled {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "voice is not supported"})
+	}
 	cred := c.Request().Header.Get("X-Worker-Key")
 	agent, ok := s.authenticateWorker(cred)
 	if !ok {

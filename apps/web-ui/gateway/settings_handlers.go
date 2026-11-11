@@ -735,6 +735,9 @@ func (s *Server) uiProjectProviderEdit(c echo.Context) error {
 // uiProjectVoiceSettings renders the Voice settings page. ?updated=1 / ?err=1
 // surface PRG feedback from the voice save flow.
 func (s *Server) uiProjectVoiceSettings(c echo.Context) error {
+	if s.cfg.VoiceDisabled {
+		return echo.ErrNotFound
+	}
 	ctx := c.Request().Context()
 	data := voiceSettingsPageData{}
 	if c.QueryParam("updated") != "" {
@@ -1216,9 +1219,13 @@ func persistVoiceSettings(ctx context.Context, mem MemoryBackend, v voiceSetting
 	return nil
 }
 
-// voiceEnabled reports whether voice is enabled for the current project
-// (stored setting over env default; defaults to off for a fresh project).
+// voiceEnabled reports whether voice is available and enabled for the current
+// project. A deployment without an SFU (VOICE_SUPPORTED=false) is never
+// voice-enabled, regardless of the stored project setting.
 func (s *Server) voiceEnabled(ctx context.Context) bool {
+	if s.cfg.VoiceDisabled {
+		return false
+	}
 	return resolveVoiceSettings(ctx, s.cfg, s.memory).Enabled
 }
 
@@ -1229,6 +1236,10 @@ func (s *Server) voiceEnabled(ctx context.Context) bool {
 // validation runs before anything is written so an invalid value never
 // persists a partial write.
 func (s *Server) uiProjectSettingsVoice(c echo.Context) error {
+	if s.cfg.VoiceDisabled {
+		return echo.ErrNotFound
+	}
+
 	ctx := c.Request().Context()
 	v := voiceSettings{
 		Enabled:              c.FormValue("voice_enabled") == "on",
@@ -1342,6 +1353,10 @@ func alertTrigger(c echo.Context, kind, title, msg string) error {
 // non-negative float when non-empty; booleans are stored as value == "on".
 // Rejected values persist nothing and return an inline error fragment.
 func (s *Server) uiProjectVoiceField(c echo.Context) error {
+	if s.cfg.VoiceDisabled {
+		return echo.ErrNotFound
+	}
+
 	ctx := c.Request().Context()
 	key := c.Param("key")
 	val := strings.TrimSpace(c.FormValue(key))
@@ -1392,6 +1407,10 @@ func (s *Server) uiProjectVoiceField(c echo.Context) error {
 //
 // Unknown groups and validation failures return an inline error fragment.
 func (s *Server) uiProjectVoiceGroup(c echo.Context) error {
+	if s.cfg.VoiceDisabled {
+		return echo.ErrNotFound
+	}
+
 	ctx := c.Request().Context()
 	group := c.Param("group")
 

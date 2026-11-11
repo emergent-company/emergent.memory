@@ -24,6 +24,9 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("invalid configuration: %v", err)
 	}
+	if !setVoiceSupported(!cfg.VoiceDisabled) {
+		log.Printf("VOICE_SUPPORTED=false — voice, LiveKit settings and token endpoints are disabled")
+	}
 	// Provider probe egress defaults to public-only; PROVIDER_PROBE_ALLOW
 	// exempts internal gateways (e.g. litellm) from the SSRF guard.
 	providerProbeHTTPClient = newSSRFSafeHTTPClient(10*time.Second, newDialAllowlist(cfg.ProviderProbeAllow))

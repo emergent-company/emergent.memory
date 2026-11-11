@@ -36,6 +36,9 @@ var errVoiceAgentDisabled = errors.New("voice agent is disabled")
 // derived (client defaults to "web") so each client session gets its own
 // agent-dispatch room. Fail-closed when unconfigured.
 func (s *Server) mintToken(c echo.Context) error {
+	if s.cfg.VoiceDisabled {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "voice is not supported"})
+	}
 	if s.cfg.LiveKitAPIKey == "" || s.cfg.LiveKitAPISecret == "" {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "token service not configured"})
 	}

@@ -24,6 +24,9 @@ import (
 // than a silent "off": the device keeps its last known value instead of hiding
 // a working call affordance because the backend blipped.
 func (s *Server) projectConfig(c echo.Context) error {
+	if s.cfg.VoiceDisabled {
+		return c.JSON(http.StatusOK, map[string]bool{"voiceEnabled": false})
+	}
 	ctx := c.Request().Context()
 	ps, err := s.memory.GetProjectSetting(ctx, voiceCategory, voiceKeyEnabled)
 	if err != nil {
