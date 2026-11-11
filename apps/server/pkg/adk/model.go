@@ -58,6 +58,7 @@ type ModelFactory struct {
 	wrapper       ModelWrapper        // optional; nil → no usage tracking
 	modelResolver ModelResolver       // optional; nil → env default only
 	testLLM       TestLLMChecker      // optional; nil → no test-LLM mode
+	testLLMResp   TestLLMResponse     // optional; zero → the fixed default answer
 	envVendors    EnvVendorResolver   // optional; nil → legacy env providers only
 	envLookup     func(string) string // optional test seam; nil → os.Getenv
 }
@@ -81,6 +82,15 @@ func NewModelFactory(cfg *config.LLMConfig, log *slog.Logger, resolver Credentia
 // canned model instead of a real provider-backed model.
 func (f *ModelFactory) WithTestLLMChecker(c TestLLMChecker) {
 	f.testLLM = c
+}
+
+// WithTestLLMResponse replaces the deterministic test model's fixed answer with
+// the given scripted response. It exists so an integration test can carry an
+// ```a2ui block (streamed as partial chunks, then as the final response) through
+// the real pipeline without a provider. An unset response keeps the fixed
+// default text.
+func (f *ModelFactory) WithTestLLMResponse(resp TestLLMResponse) {
+	f.testLLMResp = resp
 }
 
 // WithEnvVendorResolver sets the optional registry-backed vendor resolver used
@@ -107,7 +117,7 @@ func (f *ModelFactory) maybeTestLLM(ctx context.Context) model.LLM {
 		return nil
 	}
 	if f.testLLM.IsTestLLM(ctx, pid) {
-		return newTestModel("test-llm")
+		return newTestModel("test-llm", f.testLLMResp)
 	}
 	return nil
 }
