@@ -31,10 +31,25 @@ type pageCardRawBudgetEntry struct {
 }
 
 // pageCardRawBudget is seeded at the 8 pre-adoption page sites. Every site
-// migrated to components.PanelCard / TableCard (task 1.1), so the budget is now
-// empty: no page-level authored .templ opens the raw ui.CardRaw shell directly.
+// migrated to components.PanelCard / TableCard (task 1.1), so the budget is
+// empty except for the one site components.PanelCard cannot express (below).
 func pageCardRawBudget() []pageCardRawBudgetEntry {
-	return []pageCardRawBudgetEntry{}
+	return []pageCardRawBudgetEntry{
+		// The deploy portal's three step cards (deploy_portal.templ, the 3-up
+		// "Connect Railway / Pick providers / Deploy" grid). They are borderless
+		// bg-base-200 cards, and components.PanelCard cannot produce that: it
+		// calls ui.CardRaw with only Class/BodyClass/Attrs, so Border is the zero
+		// value and card.go:cardBorderClass maps that to the default "edge-line"
+		// outline, while Surface is not a prop at all (zero value -> bg-base-100).
+		// Rendering PanelCard here would add an outline the design does not have.
+		//
+		// Budgeted rather than reverted to raw `<div class="card">` markup on
+		// purpose: that would put a false class:card entry back in the adoption
+		// budget, claiming a component gap that does not exist — the exact failure
+		// mode adoptionBudget() exists to catch. This entry stays exact in both
+		// directions, so the three sites cannot grow unnoticed.
+		{file: "deploy_portal.templ", count: 3},
+	}
 }
 
 // uiCardRawRE matches a direct ui.CardRaw invocation (word-bounded, so
