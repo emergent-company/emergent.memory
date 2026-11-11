@@ -1,6 +1,7 @@
 package apperror
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -82,6 +83,25 @@ func New(status int, code, message string) *Error {
 		Code:       code,
 		Message:    message,
 	}
+}
+
+// PublicMessage returns the text that is safe to show a client for err.
+//
+// An *Error contributes only its Message — the client-facing string — never the
+// "code: message (internal detail)" form Error() renders for logs, which carries
+// the wrapped cause (a SQL error, an upstream response body). Anything that is
+// not an *Error is not known to be safe, so it collapses to ErrInternal's
+// message. Use this wherever a handler stringifies an error into a response
+// (a per-item result, a tool result) instead of calling err.Error().
+func PublicMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	var appErr *Error
+	if errors.As(err, &appErr) && appErr.Message != "" {
+		return appErr.Message
+	}
+	return ErrInternal.Message
 }
 
 // Common error definitions
