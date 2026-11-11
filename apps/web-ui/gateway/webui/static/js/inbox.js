@@ -295,14 +295,15 @@
   // resolveAction records the outcome of an actionable notification's button
   // and then finishes the item: a resolved action is done, so the row is also
   // marked read and archived (cleared). Without that it stayed in the Action
-  // required tab after Accept, which read as "the button does nothing"
-  // (issue #599).
+  // required tab after Accept — that tab filters on requires_action alone, not
+  // action_status — which read as "the button does nothing" (issue #599).
   //
-  // The API takes the outcome as `status`; sending it under any other key is a
-  // 400 and the click silently no-ops, so the verb travels verbatim in the
-  // documented field.
+  // The verb travels in `action`, the field this gateway route binds
+  // (notifications_handlers.go); the gateway translates it to memory's
+  // `status` field itself. `status` here would bind nothing and the resolve
+  // would go upstream verb-less.
   function resolveAction(el, base, verb) {
-    sendAction(el, "POST", base + "/resolve", { status: verb }, function () {
+    sendAction(el, "POST", base + "/resolve", { action: verb }, function () {
       return markReadAndArchive(base);
     });
   }

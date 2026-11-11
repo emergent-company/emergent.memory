@@ -1023,29 +1023,89 @@ func TestDocumentPreviewSrcScoped(t *testing.T) {
 // reuses the Extraction card's header row: title block on the left, action
 // button as the row's trailing item, so both boxes read the same and the button
 // sits on the right (issue #589).
+//
+// The assertion walks the DOM rather than matching a class string: the action
+// form's parent must BE the justify-between row and the form must be that row's
+// last element child. Moving the form inside the left title column — the
+// plausible way to lose right alignment — changes both, so it fails here.
 func TestDocumentCardsPinActionOnTheRight(t *testing.T) {
 	doc := &Document{ID: "d1", Filename: "Spec.md", MimeType: "text/markdown", Chunks: 2, ExtractionStatus: "completed", ObjectsCreated: 15}
 
-	const rowOpen = `<div class="flex flex-wrap items-center justify-between gap-3"><div class="flex items-center gap-3">`
-
-	// Each tail proves the action form is the header row's last child, which is
-	// what `justify-between` right-aligns. A form moved above the description,
-	// or replaced by a full-width button underneath, breaks it.
 	for _, tc := range []struct {
-		name string
-		html string
-		tail string
+		name   string
+		html   string
+		action string
+		label  string
 	}{
-		{"extraction", renderHTML(t, extractionCard(doc, "", nil, false)), `Extract data</button></form></div>`},
-		{"discovery", renderHTML(t, documentDiscoveryCard(doc)), `Discover from this document</button></form></div><p class="text-faint`},
+		{"extraction", renderHTML(t, extractionCard(doc, "", nil, false)), "/documents/d1/extract", "Extract data"},
+		{"discovery", renderHTML(t, documentDiscoveryCard(doc)), "/documents/d1/discover", "Discover from this document"},
 	} {
-		if !strings.Contains(tc.html, rowOpen) {
-			t.Errorf("%s card should open the shared two-column header row", tc.name)
-		}
-		if !strings.Contains(tc.html, tc.tail) {
-			t.Errorf("%s card: action form is not the header row's trailing item; missing %q", tc.name, tc.tail)
+		t.Run(tc.name, func(t *testing.T) {
+			dom := parseDOM(t, tc.html)
+			form := findElementByAttrValue(dom, "action", tc.action)
+			if form == nil || form.Data != "form" {
+				t.Fatalf("action form %q not found (got %s)", tc.action, nodeDesc(form))
+			}
+
+			row := form.Parent
+			if !hasClasses(row, "flex", "flex-wrap", "items-center", "justify-between", "gap-3") {
+				t.Fatalf("action form's parent must be the shared header row, got %s", nodeDesc(row))
+			}
+			if last := lastElementChild(row); last != form {
+				t.Errorf("action form must be the row's trailing child (justify-between right-aligns it); trailing child is %s", nodeDesc(last))
+			}
+
+			// The title block is the row's leading child, so the description and
+			// the button stay on opposite ends of one line.
+			title := firstElementChild(row)
+			if !hasClasses(title, "flex", "items-center", "gap-3") || findElementByTag(title, "h2") == nil {
+				t.Errorf("row's leading child must be the icon + title block, got %s", nodeDesc(title))
+			}
+
+			if btn := findElementByTag(form, "button"); btn == nil || !strings.Contains(elementText(btn), tc.label) {
+				t.Errorf("action form must contain the %q button, got %s", tc.label, nodeDesc(btn))
+			}
+		})
+	}
+}
+
+// findElementByAttrValue returns the first element (depth-first) carrying
+// attr with exactly the given value, or nil.
+func findElementByAttrValue(n *html.Node, attr, value string) *html.Node {
+	if n.Type == html.ElementNode {
+		for _, a := range n.Attr {
+			if a.Key == attr && a.Val == value {
+				return n
+			}
 		}
 	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if found := findElementByAttrValue(c, attr, value); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+// firstElementChild returns n's first element child, or nil.
+func firstElementChild(n *html.Node) *html.Node {
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == html.ElementNode {
+			return c
+		}
+	}
+	return nil
+}
+
+// lastElementChild returns n's last element child, or nil.
+func lastElementChild(n *html.Node) *html.Node {
+	var last *html.Node
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == html.ElementNode {
+			last = c
+		}
+	}
+	return last
 }
 
 // TestDocumentPreviewUnavailable asserts a failed server-side text fetch

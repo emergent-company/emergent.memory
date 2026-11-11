@@ -3,12 +3,16 @@ import path from 'node:path';
 
 // Hermetic DOM-level regression spec for the inbox action buttons (#599).
 //
-// Accepting a project invitation from the inbox appeared to do nothing: the
-// click sent its outcome as `action` where POST /api/notifications/:id/resolve
-// reads `status`, so every resolve was a 400 that the catch block swallowed.
-// Accepting must (a) record the outcome in the documented field and (b) finish
-// the item — mark it read and archive it — so it leaves the Action required
-// tab instead of sitting there unresolved.
+// Accepting a project invitation from the inbox read as "nothing happened":
+// the click resolved the item, but the Action required tab filters on
+// `requires_action` alone (not `action_status`), so the row stayed put, unread
+// and still actionable. Accepting must record the outcome AND finish the item —
+// mark it read and archive it — so it leaves that tab.
+//
+// The payload assertion is on the browser→gateway contract: `action`. The
+// gateway's resolve route binds that field and forwards it to memory as
+// `status`; apps/web-ui/gateway/notifications_handlers_test.go pins the
+// translation (`{"action":"accept"}` → `resolve:n1:accept`).
 //
 // The shipped inbox.js is loaded verbatim into a bare page with EventSource,
 // htmx and fetch stubbed; a synthetic click on the row's Accept button is
@@ -89,8 +93,9 @@ test('accepting an invitation records the outcome and finishes the item', async 
   const resolve = calls.filter((c) => c.url.endsWith('/api/notifications/n-invite/resolve'));
   expect(resolve).toHaveLength(1);
   expect(resolve[0].method).toBe('POST');
-  // The documented field is `status`; `action` is a 400 and a silent no-op.
-  expect(JSON.parse(resolve[0].body || '{}')).toEqual({ status: 'accept' });
+  // The gateway's resolve route binds `action` (and forwards it to memory as
+  // `status`). Sending `status` here binds nothing and resolves verb-less.
+  expect(JSON.parse(resolve[0].body || '{}')).toEqual({ action: 'accept' });
 
   const read = calls.filter((c) => c.url.endsWith('/api/notifications/n-invite/read'));
   expect(read).toHaveLength(1);
