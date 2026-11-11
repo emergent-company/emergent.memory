@@ -25,7 +25,7 @@ func TestTextFilterPassesPlainText(t *testing.T) {
 
 func TestTextFilterRemovesSurface(t *testing.T) {
 	block := "```a2ui\n" +
-		`{"createSurface":{"surfaceId":"s1","catalogId":"basic"}}` + "\n" +
+		`{"createSurface":{"surfaceId":"s1","catalogId":"memory-basic"}}` + "\n" +
 		`{"updateComponents":{"surfaceId":"s1","components":[{"id":"p1","component":"proposal","kind":"change","summary":"hi"}]}}` + "\n" +
 		"```\n"
 
@@ -37,7 +37,7 @@ func TestTextFilterRemovesSurface(t *testing.T) {
 	// Split on arbitrary boundaries, including inside the fence marker.
 	chunks := []string{
 		"before\n", "``", "`a2", "ui", "\n",
-		`{"createSurface":{"surface`, `Id":"s1","catalogId":"basic"}}`,
+		`{"createSurface":{"surface`, `Id":"s1","catalogId":"memory-basic"}}`,
 		"\n```", "\nafter",
 	}
 	if got, want := streamAll(NewTextFilter(), chunks...), "before\nafter"; got != want {
@@ -85,12 +85,12 @@ func TestTextFilterEmitsNonFencePartialLine(t *testing.T) {
 // the extractor's stripped text, never contains the fence.
 func TestTextFilterAgreesWithExtractor(t *testing.T) {
 	full := "Answer first.\n\n```a2ui\n" +
-		`{"createSurface":{"surfaceId":"s1","catalogId":"basic"}}` + "\n```\n\nAnd after."
+		`{"createSurface":{"surfaceId":"s1","catalogId":"memory-basic"}}` + "\n```\n\nAnd after."
 	msgs, rest, found := ExtractFromText(full)
 	if !found || len(msgs) != 1 {
 		t.Fatalf("extractor found=%v msgs=%d", found, len(msgs))
 	}
-	streamed := streamAll(NewTextFilter(), "Answer first.\n\n", "```a2ui\n", `{"createSurface":{"surfaceId":"s1","catalogId":"basic"}}`, "\n```", "\n\nAnd after.")
+	streamed := streamAll(NewTextFilter(), "Answer first.\n\n", "```a2ui\n", `{"createSurface":{"surfaceId":"s1","catalogId":"memory-basic"}}`, "\n```", "\n\nAnd after.")
 	if strings.Contains(streamed, "```a2ui") {
 		t.Fatalf("streamed text leaked the fence: %q", streamed)
 	}

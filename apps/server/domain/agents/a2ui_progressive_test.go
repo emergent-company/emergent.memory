@@ -38,7 +38,7 @@ func TestA2UIProgressiveEvents_EmitsCumulativeFrames(t *testing.T) {
 	th := newA2UIFrameThrottle(0) // interval 0 = never throttle
 
 	events := a2uiProgressiveEvents(s, th,
-		"```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"basic\"}}\n")
+		"```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"memory-basic\"}}\n")
 	if len(events) != 1 {
 		t.Fatalf("createSurface frame = %d events, want 1", len(events))
 	}
@@ -69,7 +69,7 @@ func TestA2UIProgressiveEvents_ThrottledFrameDroppedButRetained(t *testing.T) {
 	s := a2ui.NewSurfaceStream()
 
 	events := a2uiProgressiveEvents(s, th,
-		"```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"basic\"}}\n")
+		"```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"memory-basic\"}}\n")
 	if len(events) != 1 {
 		t.Fatalf("first frame = %d, want 1", len(events))
 	}
@@ -96,7 +96,7 @@ func TestA2UITeardownEvents(t *testing.T) {
 	// A surface shown progressively, but the finished response did not validate
 	// a surface (invalid block): tear the card down.
 	s := a2ui.NewSurfaceStream()
-	s.Feed("```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"basic\"}}\n")
+	s.Feed("```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"memory-basic\"}}\n")
 	final := finalResponseStreamEvents([]*genai.Part{{Text: "```a2ui\nnot json\n```"}})
 	if finalResponseHasSurface(final) {
 		t.Fatal("invalid final response unexpectedly has a surface")
@@ -112,8 +112,8 @@ func TestA2UITeardownEvents(t *testing.T) {
 	// A surface shown progressively, and the finished response validated it: the
 	// complete frame supersedes the partials, so no teardown.
 	s2 := a2ui.NewSurfaceStream()
-	s2.Feed("```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"basic\"}}\n")
-	valid := finalResponseStreamEvents([]*genai.Part{{Text: "```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"basic\"}}\n```"}})
+	s2.Feed("```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"memory-basic\"}}\n")
+	valid := finalResponseStreamEvents([]*genai.Part{{Text: "```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"memory-basic\"}}\n```"}})
 	if !finalResponseHasSurface(valid) {
 		t.Fatal("valid final response should have a surface")
 	}
@@ -129,7 +129,7 @@ func TestA2UISurfacesAreScopedPerTurn(t *testing.T) {
 	// (which keys its surface registry by surfaceId) replaced the first turn's
 	// card with the second one's and the transcript kept only one card.
 	block := "```a2ui\n" +
-		`{"createSurface":{"surfaceId":"s1","catalogId":"basic"}}` + "\n" +
+		`{"createSurface":{"surfaceId":"s1","catalogId":"` + a2ui.CatalogID + `"}}` + "\n" +
 		`{"updateComponents":{"surfaceId":"s1","components":[{"id":"r1","component":"result","rows":[]}]}}` + "\n" +
 		"```\n"
 	parts := []*genai.Part{{Text: block}}

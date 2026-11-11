@@ -6,7 +6,7 @@ func TestSurfaceStream_ProgressiveParse(t *testing.T) {
 	s := NewSurfaceStream()
 
 	block := "```a2ui\n" +
-		`{"createSurface":{"surfaceId":"s1","catalogId":"basic"}}` + "\n" +
+		`{"createSurface":{"surfaceId":"s1","catalogId":"memory-basic"}}` + "\n" +
 		`{"updateComponents":{"surfaceId":"s1","components":[{"id":"p1","component":"proposal","kind":"change","summary":"hi"}]}}` + "\n" +
 		"```\n"
 
@@ -40,7 +40,7 @@ func TestSurfaceStream_ChunkBoundarySplitsLine(t *testing.T) {
 	if got := s.Feed("```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\""); got != nil {
 		t.Fatalf("partial line yielded %+v, want nil", got)
 	}
-	got := s.Feed(",\"catalogId\":\"basic\"}}\n```\n")
+	got := s.Feed(",\"catalogId\":\"memory-basic\"}}\n```\n")
 	if len(got) != 1 || got[0].CreateSurface == nil {
 		t.Fatalf("completed line yielded %+v, want one createSurface", got)
 	}
@@ -65,7 +65,7 @@ func TestSurfaceStream_IgnoresOrdinaryText(t *testing.T) {
 func TestSurfaceStream_InvalidLineMarksInvalid(t *testing.T) {
 	s := NewSurfaceStream()
 	s.Feed("```a2ui\n")
-	s.Feed(`{"createSurface":{"surfaceId":"s1","catalogId":"basic"}}` + "\n")
+	s.Feed(`{"createSurface":{"surfaceId":"s1","catalogId":"memory-basic"}}` + "\n")
 
 	if !s.Opened() {
 		t.Fatal("Opened() = false before the invalid line")
@@ -107,7 +107,7 @@ func TestSurfaceStream_DefaultSurfaceID(t *testing.T) {
 func TestSurfaceStream_UnterminatedFence(t *testing.T) {
 	s := NewSurfaceStream()
 	s.Feed("```a2ui\n")
-	s.Feed(`{"createSurface":{"surfaceId":"s1","catalogId":"basic"}}` + "\n")
+	s.Feed(`{"createSurface":{"surfaceId":"s1","catalogId":"memory-basic"}}` + "\n")
 	if !s.InFence() {
 		t.Fatal("InFence() = false while the block is unterminated")
 	}
@@ -122,7 +122,7 @@ func TestSurfaceStream_ScopesSurfaceIDs(t *testing.T) {
 	one := NewNamespacedSurfaceStream("run-1.0")
 	two := NewNamespacedSurfaceStream("run-2.0")
 	block := "```a2ui\n" +
-		`{"createSurface":{"surfaceId":"s1","catalogId":"basic"}}` + "\n" +
+		`{"createSurface":{"surfaceId":"s1","catalogId":"` + CatalogID + `"}}` + "\n" +
 		`{"updateComponents":{"surfaceId":"s1","components":[{"id":"r1","component":"result","rows":[]}]}}` + "\n" +
 		"```\n"
 
@@ -163,7 +163,7 @@ func TestSurfaceStream_ScopedDefaultSurfaceID(t *testing.T) {
 func TestSurfaceStream_MessagesReturnsCopy(t *testing.T) {
 	s := NewSurfaceStream()
 	s.Feed("```a2ui\n")
-	s.Feed(`{"createSurface":{"surfaceId":"s1","catalogId":"basic"}}` + "\n")
+	s.Feed(`{"createSurface":{"surfaceId":"s1","catalogId":"memory-basic"}}` + "\n")
 
 	first := s.Messages()
 	if len(first) != 1 {
@@ -181,7 +181,7 @@ func TestSurfaceStream_InvalidResetsAtNextFence(t *testing.T) {
 
 	// Block 1: valid createSurface, then a malformed line → invalid.
 	s.Feed("```a2ui\n")
-	s.Feed(`{"createSurface":{"surfaceId":"s1","catalogId":"basic"}}` + "\n")
+	s.Feed(`{"createSurface":{"surfaceId":"s1","catalogId":"memory-basic"}}` + "\n")
 	s.Feed("not json\n```\n")
 	if !s.Invalid() {
 		t.Fatal("Invalid() = false after a malformed line, want true")

@@ -31,7 +31,7 @@ func TestValidate(t *testing.T) {
 		{
 			name: "valid createSurface",
 			msgs: []Message{
-				{CreateSurface: &CreateSurface{SurfaceID: "s1", CatalogID: "basic"}},
+				{CreateSurface: &CreateSurface{SurfaceID: "s1", CatalogID: CatalogID}},
 			},
 			wantErr: false,
 		},
@@ -85,7 +85,7 @@ func TestValidate(t *testing.T) {
 		{
 			name: "two members set",
 			msgs: []Message{{
-				CreateSurface: &CreateSurface{SurfaceID: "s1", CatalogID: "basic"},
+				CreateSurface: &CreateSurface{SurfaceID: "s1", CatalogID: CatalogID},
 				DeleteSurface: &DeleteSurface{SurfaceID: "s1"},
 			}},
 			wantErr: true,
@@ -93,7 +93,7 @@ func TestValidate(t *testing.T) {
 		{
 			name: "createSurface missing surfaceId",
 			msgs: []Message{
-				{CreateSurface: &CreateSurface{SurfaceID: "", CatalogID: "basic"}},
+				{CreateSurface: &CreateSurface{SurfaceID: "", CatalogID: CatalogID}},
 			},
 			wantErr: true,
 		},
@@ -101,6 +101,13 @@ func TestValidate(t *testing.T) {
 			name: "createSurface missing catalogId",
 			msgs: []Message{
 				{CreateSurface: &CreateSurface{SurfaceID: "s1", CatalogID: ""}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "createSurface unknown catalogId",
+			msgs: []Message{
+				{CreateSurface: &CreateSurface{SurfaceID: "s1", CatalogID: "basic"}},
 			},
 			wantErr: true,
 		},
@@ -169,9 +176,33 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+// TestValidateCatalogIDResolution pins the A2UI v1.0 rule (#593) that
+// createSurface.catalogId must name a catalog this server resolves: the
+// canonical id validates, an unknown id is rejected with no fallback, and the
+// error names the ids that do resolve so a repair turn can fix it.
+func TestValidateCatalogIDResolution(t *testing.T) {
+	if err := Validate([]Message{{CreateSurface: &CreateSurface{SurfaceID: "s1", CatalogID: CatalogID}}}); err != nil {
+		t.Fatalf("Validate(%q) = %v, want nil", CatalogID, err)
+	}
+
+	err := Validate([]Message{{CreateSurface: &CreateSurface{SurfaceID: "s1", CatalogID: "basic"}}})
+	if err == nil {
+		t.Fatal(`Validate("basic") = nil, want an unknown-catalogId error`)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, `unknown catalogId "basic"`) {
+		t.Fatalf("error %q does not name the offending catalogId", msg)
+	}
+	for _, id := range SupportedCatalogIDs() {
+		if !strings.Contains(msg, id) {
+			t.Fatalf("error %q does not name the resolvable catalog %q", msg, id)
+		}
+	}
+}
+
 func TestExtractFromText(t *testing.T) {
 	validBlock := "```a2ui\n" +
-		"{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"basic\"}}\n" +
+		"{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"memory-basic\"}}\n" +
 		"{\"updateComponents\":{\"surfaceId\":\"s1\",\"components\":[{\"id\":\"p1\",\"component\":\"proposal\",\"kind\":\"change\",\"summary\":\"hi\"}]}}\n" +
 		"```"
 
@@ -204,6 +235,13 @@ func TestExtractFromText(t *testing.T) {
 			wantRest:  "plain text\nno fences",
 		},
 		{
+			name:      "unknown catalogId fence is stripped",
+			text:      "```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"basic\"}}\n```",
+			wantFound: false,
+			wantMsgN:  0,
+			wantRest:  "",
+		},
+		{
 			name:      "unknown component fence is stripped",
 			text:      "```a2ui\n{\"updateComponents\":{\"surfaceId\":\"s1\",\"components\":[{\"id\":\"x\",\"component\":\"bogus\"}]}}\n```",
 			wantFound: false,
@@ -219,7 +257,7 @@ func TestExtractFromText(t *testing.T) {
 		},
 		{
 			name:      "unterminated fence is stripped to end of text",
-			text:      "before\n```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"basic\"}}",
+			text:      "before\n```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"memory-basic\"}}",
 			wantFound: false,
 			wantMsgN:  0,
 			wantRest:  "before",
@@ -462,7 +500,7 @@ func TestSummaryText(t *testing.T) {
 
 func TestMessageVersionDefaults(t *testing.T) {
 	var m Message
-	if err := json.Unmarshal([]byte(`{"createSurface":{"surfaceId":"s1","catalogId":"basic"}}`), &m); err != nil {
+	if err := json.Unmarshal([]byte(`{"createSurface":{"surfaceId":"s1","catalogId":"memory-basic"}}`), &m); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if m.Version != DefaultVersion {
