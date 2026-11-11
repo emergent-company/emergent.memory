@@ -3712,7 +3712,8 @@ with <code>blueprint-publish</code>, then <code>blueprint-apply</code>.</p>
 <a id="__codelineno-2-42" name="__codelineno-2-42" href="#__codelineno-2-42"></a><span class="w">      </span><span class="nt">dstKey</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">acme</span>
 </code></pre></div>
 <p>Property <code>title</code> is the label the UI shows (the key stays visible beneath it);
-<code>url</code>, <code>sha256</code>, and <code>date</code> are validated property types. See
+<code>url</code>, <code>sha256</code>, and <code>date</code> are validated property types, and <code>enum</code> constrains
+a primitive property to a fixed set of values. See
 <a href="../../developer-guide/schema/#property-definitions">Schema § Property definitions</a> for the full vocabulary.</p>
 <h3 id="with-the-cli-a-directory">With the CLI (a directory)<a class="headerlink" href="#with-the-cli-a-directory" title="Permanent link">&para;</a></h3>
 <p>The CLI applies a directory (or GitHub repo) directly — it does not go through

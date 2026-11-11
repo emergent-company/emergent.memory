@@ -4156,6 +4156,10 @@ round-trip.</p>
 <td>Element schema for <code>array</code>; every element is coerced (a wrong element fails with its index)</td>
 </tr>
 <tr>
+<td><code>enum</code></td>
+<td>Allowed values for a primitive property (<code>string</code>-backed, <code>number</code>, <code>integer</code>, <code>boolean</code>), enforced on object and relationship writes after coercion. An array's <code>items.enum</code> constrains every element. On <code>array</code>/<code>object</code> itself it is documentation only</td>
+</tr>
+<tr>
 <td><code>format</code></td>
 <td>On a <code>string</code> property, validates like the matching type for <code>email</code>, <code>phone</code>, <code>country</code>, <code>currency</code> and <code>time</code>. Any other format is documentation only</td>
 </tr>
@@ -4185,6 +4189,11 @@ round-trip.</p>
 <li><strong><code>country</code></strong> — ISO 3166-1 alpha-2 or alpha-3 country code; stored as the
   canonical two-letter upper-case code.</li>
 <li><strong><code>currency</code></strong> — ISO 4217 currency code; stored upper-case.</li>
+<li><strong><code>enum</code></strong> — the supplied value must be one of the declared values. Matching
+  runs after coercion, so <code>"de"</code> passes a <code>country</code> enum of <code>["DE"]</code> and stores
+  <code>"DE"</code>. A value outside the list fails the whole write with the allowed
+  values named. Enum is supported on primitive types only; an empty enum list
+  on a primitive property is rejected when the schema is created or updated.</li>
 <li><strong><code>number</code> / <code>integer</code></strong> — <code>minimum</code>/<code>maximum</code>, when declared, are enforced;
   <code>integer</code> also rejects a fractional value.</li>
 </ul>
@@ -4212,6 +4221,10 @@ round-trip.</p>
 <a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a><span class="w">    </span><span class="nt">minimum</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-90</span>
 <a id="__codelineno-5-23" name="__codelineno-5-23" href="#__codelineno-5-23"></a><span class="w">    </span><span class="nt">maximum</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">90</span>
 <a id="__codelineno-5-24" name="__codelineno-5-24" href="#__codelineno-5-24"></a><span class="w">    </span><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Latitude</span>
+<a id="__codelineno-5-25" name="__codelineno-5-25" href="#__codelineno-5-25"></a><span class="w">  </span><span class="nt">status</span><span class="p">:</span>
+<a id="__codelineno-5-26" name="__codelineno-5-26" href="#__codelineno-5-26"></a><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">string</span>
+<a id="__codelineno-5-27" name="__codelineno-5-27" href="#__codelineno-5-27"></a><span class="w">    </span><span class="nt">enum</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">draft</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">published</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">archived</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-5-28" name="__codelineno-5-28" href="#__codelineno-5-28"></a><span class="w">    </span><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Status</span>
 </code></pre></div>
 <p>Label every key a reader cannot scan at a glance — any <code>snake_case</code> key, or one
 with an internal capital. <code>event_time</code> → <code>Event time</code>, <code>tokensUsed</code> →

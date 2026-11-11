@@ -1440,22 +1440,22 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#github-app" class="md-nav__link">
+  <a href="#github-app-source-review-integration" class="md-nav__link">
     <span class="md-ellipsis">
       
-        GitHub App
+        GitHub App source (review integration)
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="GitHub App">
+    <nav class="md-nav" aria-label="GitHub App source (review integration)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#connect-github" class="md-nav__link">
+  <a href="#register-the-app-organization-admin" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Connect GitHub
+        Register the App (organization admin)
       
     </span>
   </a>
@@ -1463,10 +1463,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#oauth-callback" class="md-nav__link">
+  <a href="#create-the-source" class="md-nav__link">
     <span class="md-ellipsis">
       
-        OAuth callback
+        Create the source
       
     </span>
   </a>
@@ -1474,10 +1474,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#cli-setup-api-key-mode" class="md-nav__link">
+  <a href="#bind-a-trigger" class="md-nav__link">
     <span class="md-ellipsis">
       
-        CLI setup (API key mode)
+        Bind a trigger
       
     </span>
   </a>
@@ -1485,21 +1485,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#check-connection-status" class="md-nav__link">
+  <a href="#webhook" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Check connection status
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#disconnect" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Disconnect
+        Webhook
       
     </span>
   </a>
@@ -3121,22 +3110,22 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#github-app" class="md-nav__link">
+  <a href="#github-app-source-review-integration" class="md-nav__link">
     <span class="md-ellipsis">
       
-        GitHub App
+        GitHub App source (review integration)
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="GitHub App">
+    <nav class="md-nav" aria-label="GitHub App source (review integration)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#connect-github" class="md-nav__link">
+  <a href="#register-the-app-organization-admin" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Connect GitHub
+        Register the App (organization admin)
       
     </span>
   </a>
@@ -3144,10 +3133,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#oauth-callback" class="md-nav__link">
+  <a href="#create-the-source" class="md-nav__link">
     <span class="md-ellipsis">
       
-        OAuth callback
+        Create the source
       
     </span>
   </a>
@@ -3155,10 +3144,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#cli-setup-api-key-mode" class="md-nav__link">
+  <a href="#bind-a-trigger" class="md-nav__link">
     <span class="md-ellipsis">
       
-        CLI setup (API key mode)
+        Bind a trigger
       
     </span>
   </a>
@@ -3166,21 +3155,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#check-connection-status" class="md-nav__link">
+  <a href="#webhook" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Check connection status
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#disconnect" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Disconnect
+        Webhook
       
     </span>
   </a>
@@ -3335,37 +3313,72 @@
 <p>For importing content from Gmail, Google Drive, GitHub, and similar sources, see <a href="../datasources/">Data Sources</a>.</p>
 </div>
 <hr />
-<h2 id="github-app">GitHub App<a class="headerlink" href="#github-app" title="Permanent link">&para;</a></h2>
-<p>The GitHub App integration allows Memory to connect to your GitHub repositories — enabling repo-aware agents, automated knowledge extraction from code and issues, and OAuth-based repository access.</p>
-<h3 id="connect-github">Connect GitHub<a class="headerlink" href="#connect-github" title="Permanent link">&para;</a></h3>
-<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Admin UI</label><label for="__tabbed_1_2">API</label></div>
-<div class="tabbed-content">
-<div class="tabbed-block">
-<p>Go to <strong>Project Settings → Integrations → GitHub</strong> and click <strong>Connect</strong>.</p>
+<h2 id="github-app-source-review-integration">GitHub App source (review integration)<a class="headerlink" href="#github-app-source-review-integration" title="Permanent link">&para;</a></h2>
+<p>Memory connects a GitHub App as a project source. The App receives
+<code>pull_request</code> webhooks, a source trigger starts a run for the configured agent,
+and the agent posts a review bound to the reviewed head SHA.</p>
+<h3 id="register-the-app-organization-admin">Register the App (organization admin)<a class="headerlink" href="#register-the-app-organization-admin" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="err">POST /api/orgs/{orgId}/source-apps</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="err">Content-Type: application/json</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="err">{</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="err">  "provider": "github",</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="err">  "appId": 123456,</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="err">  "slug": "memory-reviewer",</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="err">  "privateKey": "-----BEGIN RSA PRIVATE KEY-----\n...",</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="err">  "webhookSecret": "&lt;the App webhook secret&gt;"</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="err">}</span>
+</code></pre></div>
+<p>The private key and webhook secret are sealed at rest with
+<code>LLM_ENCRYPTION_KEY</code> and never returned. The <code>201</code> response carries the App row
+id and its <code>webhookKey</code>. The App must be granted <code>contents: read</code>,
+<code>pull_requests: write</code>, <code>issues: write</code>, and <code>checks: write</code>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="err">GET    /api/orgs/{orgId}/source-apps</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="err">DELETE /api/orgs/{orgId}/source-apps/{appId}</span>
+</code></pre></div>
+<h3 id="create-the-source">Create the source<a class="headerlink" href="#create-the-source" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="err">POST /api/data-source-integrations</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="err">Content-Type: application/json</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="err">{</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="err">  "name": "GitHub reviews",</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="err">  "providerType": "github_app",</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="err">  "sourceType": "app",</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="err">  "config": {</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="err">    "app_id": "&lt;App row id from the registration response&gt;",</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="err">    "installation_id": "987654",</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="err">    "repos": ["owner/repo"]</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="err">  }</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="err">}</span>
+</code></pre></div>
+<p><code>github_app</code> is trigger-only: it never syncs documents, and webhooks for
+repositories outside the allowlist are ignored.</p>
+<h3 id="bind-a-trigger">Bind a trigger<a class="headerlink" href="#bind-a-trigger" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="err">POST /api/data-source-integrations/{sourceId}/triggers</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="err">Content-Type: application/json</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="err">{</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="err">  "eventType": "pull_request",</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="err">  "agentId": "&lt;runtime agent uuid&gt;",</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="err">  "queue": "security-review"</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="err">}</span>
+</code></pre></div>
+<p>Use <code>GET</code>, <code>PATCH</code>, and <code>DELETE</code> on
+<code>/api/data-source-integrations/{sourceId}/triggers[/{triggerId}]</code> to manage the
+binding. <code>agentId</code> is a runtime agent in the source's project.</p>
+<h3 id="webhook">Webhook<a class="headerlink" href="#webhook" title="Permanent link">&para;</a></h3>
+<p>Point the App's webhook URL at:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>POST /api/webhooks/source-apps/{webhookKey}
+</code></pre></div>
+<p>using the <code>webhookKey</code> returned by the App registration/list response.
+Subscribe to <code>pull_request</code>; the endpoint verifies <code>X-Hub-Signature-256</code> and
+deduplicates <code>X-GitHub-Delivery</code>.</p>
+<div class="admonition note">
+<p class="admonition-title">Legacy routes removed</p>
+<p>The old <code>/api/v1/settings/github/*</code> OAuth routes no longer exist. The
+earlier <code>/api/orgs/{orgId}/github-app</code> surface and
+<code>POST /api/webhooks/github/app</code> were replaced by source apps above (#574).</p>
 </div>
-<div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="err">POST /api/v1/settings/github/connect</span>
-</code></pre></div>
-<p>This returns an authorization URL. Visit it to grant access via GitHub OAuth.</p>
-</div>
-</div>
-</div>
-<h3 id="oauth-callback">OAuth callback<a class="headerlink" href="#oauth-callback" title="Permanent link">&para;</a></h3>
-<p>GitHub redirects back to:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>GET /api/v1/settings/github/callback?code=...
-</code></pre></div>
-<p>The platform exchanges the code for an access token and stores it.</p>
-<h3 id="cli-setup-api-key-mode">CLI setup (API key mode)<a class="headerlink" href="#cli-setup-api-key-mode" title="Permanent link">&para;</a></h3>
-<p>For non-browser environments:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="err">POST /api/v1/settings/github/cli</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="err">{ "token": "&lt;github-personal-access-token&gt;" }</span>
-</code></pre></div>
-<h3 id="check-connection-status">Check connection status<a class="headerlink" href="#check-connection-status" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="err">GET /api/v1/settings/github</span>
-</code></pre></div>
-<h3 id="disconnect">Disconnect<a class="headerlink" href="#disconnect" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="err">DELETE /api/v1/settings/github</span>
-</code></pre></div>
 <hr />
 <h2 id="general-integrations">General Integrations<a class="headerlink" href="#general-integrations" title="Permanent link">&para;</a></h2>
 <p>These are named integration configurations — typically used for custom LLM backends, vector stores, or webhooks.</p>

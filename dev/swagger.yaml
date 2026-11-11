@@ -1482,8 +1482,19 @@ definitions:
         type: string
       imageDigest:
         type: string
+      ownerRunId:
+        description: |-
+          OwnerRunID is the run that provisioned and owns a shared workspace's
+          container. Empty when the run owns its own workspace.
+        type: string
       provider:
         type: string
+      shared:
+        description: |-
+          Shared is true when the run used a sandbox that belongs to an ancestor run
+          (spawn_agents shared mode) instead of provisioning its own. The container
+          is the same one; only its owner differs.
+        type: boolean
     type: object
   domain_agents.ToolGroupDTO:
     properties:
@@ -4440,6 +4451,9 @@ definitions:
           type: string
         maxItems: 32
         type: array
+      name:
+        maxLength: 512
+        type: string
       namespace:
         maxLength: 128
         type: string
@@ -4518,6 +4532,24 @@ definitions:
           $ref: '#/definitions/domain_graph.GraphRelationshipResponse'
         type: array
     type: object
+  domain_graph.DerivedFromInput:
+    properties:
+      derived_at:
+        type: string
+      id:
+        type: string
+      kind:
+        type: string
+    type: object
+  domain_graph.DerivedFromResponse:
+    properties:
+      inputs:
+        items:
+          $ref: '#/definitions/domain_graph.DerivedFromInput'
+        type: array
+      known:
+        type: boolean
+    type: object
   domain_graph.EdgePhase:
     properties:
       direction:
@@ -4545,6 +4577,108 @@ definitions:
     required:
     - direction
     - maxDepth
+    type: object
+  domain_graph.ExtractionBacklogBranch:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      object_count:
+        type: integer
+      origin_label:
+        type: string
+      relationship_count:
+        type: integer
+    type: object
+  domain_graph.ExtractionBacklogMergeItem:
+    properties:
+      branch_id:
+        type: string
+      error:
+        description: Error is set when this branch could not be merged; other branches
+          still run.
+        type: string
+      name:
+        type: string
+      result:
+        allOf:
+        - $ref: '#/definitions/domain_graph.BranchMergeResponse'
+        description: Result is the normal merge response for a successful (or dry-run)
+          merge.
+    type: object
+  domain_graph.ExtractionBacklogMergeRequest:
+    properties:
+      execute:
+        type: boolean
+      limit:
+        description: |-
+          Limit bounds how many branches one call merges (default 25, max 100).
+          Callers repeat the request while BranchesRemaining is non-zero.
+        type: integer
+      wait_for_embeddings:
+        description: |-
+          WaitForEmbeddings refuses to merge a branch whose objects are not fully
+          embedded, so similarity classification has full coverage.
+        type: boolean
+    type: object
+  domain_graph.ExtractionBacklogMergeResponse:
+    properties:
+      branches_processed:
+        type: integer
+      branches_remaining:
+        type: integer
+      branches_total:
+        type: integer
+      dry_run:
+        type: boolean
+      left_for_review_count:
+        description: |-
+          LeftForReviewCount aggregates the objects the partial policy deliberately
+          left on their branch, so a caller can tell a complete merge from a
+          merge that needs human review.
+        type: integer
+      results:
+        items:
+          $ref: '#/definitions/domain_graph.ExtractionBacklogMergeItem'
+        type: array
+    type: object
+  domain_graph.ExtractionBacklogResponse:
+    properties:
+      branch_count:
+        description: |-
+          BranchCount is the number of unmerged extraction branches that still hold
+          at least one live HEAD object or relationship.
+        type: integer
+      branches:
+        description: |-
+          Branches is capped at extractionBacklogBranchPageSize; the aggregate counts
+          above always cover every branch.
+        items:
+          $ref: '#/definitions/domain_graph.ExtractionBacklogBranch'
+        type: array
+      branches_truncated:
+        type: boolean
+      main_graph_object_count:
+        description: |-
+          MainGraphObjectCount is the number of live HEAD objects visible to a
+          default read (branch_id IS NULL).
+        type: integer
+      object_count:
+        description: |-
+          ObjectCount and RelationshipCount are live HEAD rows on those branches that
+          have not already been cloned to the main graph (the merge ledger is
+          excluded, so the count shrinks as branches are merged).
+        type: integer
+      relationship_count:
+        type: integer
+      stranded:
+        description: |-
+          Stranded is true when extraction produced objects but the main graph is
+          empty, i.e. every default read reports an empty knowledge base.
+        type: boolean
     type: object
   domain_graph.ForkBranchRequest:
     properties:
@@ -4732,6 +4866,11 @@ definitions:
           additionalProperties: {}
           type: object
         type: array
+      name:
+        description: |-
+          Name is the first-class human title. Key stays the internal dedup/upsert
+          identity and is not the user-facing label.
+        type: string
       namespace:
         type: string
       needs_review:
@@ -4824,6 +4963,14 @@ definitions:
         type: string
       deleted_at:
         type: string
+      derived_from:
+        allOf:
+        - $ref: '#/definitions/domain_graph.DerivedFromResponse'
+        description: |-
+          DerivedFrom names the inputs this synthesized version was derived from —
+          document, extraction job, and the version row it was derived from. Like
+          contributions it is keyed to the version row and populated on the read
+          paths from one batched query per request. Absent on write responses.
       embedding_status:
         description: 'Embedding status (computed): embedded | pending | processing
           | failed | dead_letter | missing'
@@ -4851,6 +4998,11 @@ definitions:
         items:
           type: string
         type: array
+      name:
+        description: |-
+          Name is the human title; Ref is the display-only reference derived from
+          CanonicalID. Key is the internal dedup identity (deprecated for display).
+        type: string
       namespace:
         type: string
       org_id:
@@ -4862,6 +5014,8 @@ definitions:
       properties:
         additionalProperties: {}
         type: object
+      ref:
+        type: string
       relationship_count:
         type: integer
       revision_count:
@@ -5139,6 +5293,9 @@ definitions:
         items:
           type: string
         type: array
+      name:
+        maxLength: 512
+        type: string
       properties:
         additionalProperties: {}
         type: object
@@ -5277,6 +5434,46 @@ definitions:
     required:
     - query
     type: object
+  domain_graph.SourceOutcomeItem:
+    properties:
+      adopted_by_source_id:
+        type: string
+      canonical_id:
+        type: string
+      external_id:
+        type: string
+      external_revision:
+        type: string
+      external_revision_seq:
+        type: integer
+      generation:
+        type: integer
+      reason:
+        type: string
+      source_id:
+        type: string
+      state:
+        type: string
+      subject_kind:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  domain_graph.SourceOutcomesResponse:
+    properties:
+      has_more:
+        type: boolean
+      next_cursor:
+        description: |-
+          NextCursor is the opaque cursor of the last outcome in the page. It is
+          returned even when HasMore is false, so a source can persist it as its
+          high-water mark and resume from the same place after a restart.
+        type: string
+      outcomes:
+        items:
+          $ref: '#/definitions/domain_graph.SourceOutcomeItem'
+        type: array
+    type: object
   domain_graph.SubgraphObjectRequest:
     properties:
       _ref:
@@ -5292,6 +5489,9 @@ definitions:
           type: string
         maxItems: 32
         type: array
+      name:
+        maxLength: 512
+        type: string
       properties:
         additionalProperties: {}
         type: object
@@ -6581,12 +6781,14 @@ definitions:
     - stdio
     - sse
     - http
+    - source
     type: string
     x-enum-varnames:
     - ServerTypeBuiltin
     - ServerTypeStdio
     - ServerTypeSSE
     - ServerTypeHTTP
+    - ServerTypeSource
   domain_mcpregistry.ProvisionMCPOAuthClientDTO:
     properties:
       clientId:
@@ -6990,7 +7192,10 @@ definitions:
       requiresAction:
         description: |-
           RequiresAction counts the action-required notifications in the current
-          scope: not cleared, not snoozed, requires_action = true.
+          scope: not cleared, not snoozed, requires_action = true, and no recorded
+          action_status. It is the badge for the Action-required tab and applies the
+          same predicate as that tab's list (actionRequiredPredicate), so it cannot
+          count a row the list does not show — notably one that was acted on.
         type: integer
       snoozed:
         type: integer
@@ -7565,6 +7770,13 @@ definitions:
     type: object
   domain_projects.CreateProjectRequest:
     properties:
+      auto_merge_extraction_branches:
+        description: |-
+          AutoMergeExtractionBranches opts a new project into merging extraction
+          staging branches into the main graph after extraction completes. It is
+          explicit (nil keeps the opt-in default of false) so creating a project
+          never silently changes what default graph reads return (#496).
+        type: boolean
       name:
         minLength: 1
         type: string
@@ -7589,6 +7801,22 @@ definitions:
       version:
         type: string
     type: object
+  domain_projects.PendingExtractionMergeStats:
+    properties:
+      branchCount:
+        type: integer
+      mainGraphObjectCount:
+        type: integer
+      objectCount:
+        type: integer
+      relationshipCount:
+        type: integer
+      stranded:
+        description: |-
+          Stranded is true when extraction produced objects but the main graph is
+          empty, so every default read reports nothing.
+        type: boolean
+    type: object
   domain_projects.Project:
     properties:
       auto_discovery_enabled:
@@ -7602,6 +7830,14 @@ definitions:
         additionalProperties: {}
         type: object
       auto_extract_objects:
+        type: boolean
+      auto_extract_source_syncs:
+        description: |-
+          AutoExtractSourceSyncs runs object extraction after a data-source sync
+          ingests an item or appends a new version (added in migration 00293). It is
+          separate from AutoExtractObjects, which governs uploaded/created
+          documents. Defaults to false: synced items still chunk and embed, but
+          extraction is opt-in so a sync never spends tokens unasked.
         type: boolean
       auto_merge_extraction_branches:
         description: |-
@@ -7668,6 +7904,11 @@ definitions:
         additionalProperties: {}
         type: object
       auto_extract_objects:
+        type: boolean
+      auto_extract_source_syncs:
+        description: |-
+          AutoExtractSourceSyncs is emitted only when true: the column defaults to
+          false, so an absent field correctly reads as "off".
         type: boolean
       auto_merge_extraction_branches:
         description: AutoMergeExtractionBranches is emitted only when true.
@@ -7751,6 +7992,13 @@ definitions:
         type: array
       objectCount:
         type: integer
+      pendingExtractionMerge:
+        allOf:
+        - $ref: '#/definitions/domain_projects.PendingExtractionMergeStats'
+        description: |-
+          PendingExtractionMerge reports extraction output that is still on unmerged
+          staging branches and therefore invisible to default graph reads (#496).
+          Populated only for include_stats requests.
       queuedJobs:
         type: integer
       relationshipCount:
@@ -7780,6 +8028,8 @@ definitions:
         additionalProperties: {}
         type: object
       auto_extract_objects:
+        type: boolean
+      auto_extract_source_syncs:
         type: boolean
       auto_merge_extraction_branches:
         type: boolean
@@ -10852,6 +11102,11 @@ definitions:
         type: string
       name:
         type: string
+      oauthAppId:
+        description: |-
+          OAuthAppID selects the named OAuth app this source uses. Empty lets the
+          resolver pick the sole project/org app or the deployment default.
+        type: string
       providerType:
         type: string
       sourceType:
@@ -10859,6 +11114,24 @@ definitions:
       syncIntervalMinutes:
         type: integer
       syncMode:
+        type: string
+    type: object
+  domain_sources.CreateOAuthAppRequest:
+    properties:
+      clientId:
+        type: string
+      clientSecret:
+        type: string
+      config:
+        additionalProperties: {}
+        type: object
+      name:
+        type: string
+      providerConfigs:
+        additionalProperties:
+          $ref: '#/definitions/domain_sources.OAuthProviderConfig'
+        type: object
+      vendor:
         type: string
     type: object
   domain_sources.CreateSavedCredentialRequest:
@@ -10899,9 +11172,21 @@ definitions:
         type: string
       lastSyncedAt:
         type: string
+      mcpSlug:
+        description: |-
+          McpSlug is the immutable MCP tool-name segment for a source-backed MCP
+          server (Gmail). Empty for providers without source tools.
+        type: string
       name:
         type: string
       nextSyncAt:
+        type: string
+      oauthAppId:
+        description: |-
+          OAuthAppID/OAuthAppName name the vendor-level OAuth app the source uses.
+          OAuthAppID is empty when the source resolves to the deployment default.
+        type: string
+      oauthAppName:
         type: string
       oauthGrantedStrategy:
         description: |-
@@ -10943,6 +11228,42 @@ definitions:
         type: array
       total:
         type: integer
+    type: object
+  domain_sources.OAuthAppDTO:
+    properties:
+      clientId:
+        type: string
+      config:
+        additionalProperties: {}
+        type: object
+      configured:
+        type: boolean
+      createdAt:
+        type: string
+      id:
+        type: string
+      javascriptOrigin:
+        type: string
+      name:
+        type: string
+      providerConfigs:
+        additionalProperties:
+          $ref: '#/definitions/domain_sources.OAuthProviderConfig'
+        type: object
+      redirectUris:
+        additionalProperties:
+          type: string
+        type: object
+      scope:
+        type: string
+      updatedAt:
+        type: string
+      usedBy:
+        type: integer
+      vendor:
+        type: string
+      vendorName:
+        type: string
     type: object
   domain_sources.OAuthClientConfigDTO:
     properties:
@@ -10993,6 +11314,18 @@ definitions:
       configured:
         type: boolean
       updatedAt:
+        type: string
+    type: object
+  domain_sources.OAuthProviderConfig:
+    properties:
+      scopes:
+        description: Scopes overrides the provider default when non-empty.
+        items:
+          type: string
+        type: array
+      strategy:
+        description: Strategy is the provider's named scope strategy (e.g. Drive's
+          drive.file).
         type: string
     type: object
   domain_sources.PickerSession:
@@ -11120,6 +11453,49 @@ definitions:
       strategy:
         type: string
     type: object
+  domain_sources.SourceApp:
+    properties:
+      appId:
+        type: integer
+      createdAt:
+        type: string
+      id:
+        type: string
+      orgId:
+        type: string
+      provider:
+        type: string
+      slug:
+        type: string
+      updatedAt:
+        type: string
+      webhookKey:
+        type: string
+    type: object
+  domain_sources.SourceTrigger:
+    properties:
+      agentId:
+        type: string
+      createdAt:
+        type: string
+      enabled:
+        type: boolean
+      eventFilter:
+        additionalProperties: {}
+        type: object
+      eventType:
+        type: string
+      id:
+        type: string
+      projectId:
+        type: string
+      queue:
+        type: string
+      sourceId:
+        type: string
+      updatedAt:
+        type: string
+    type: object
   domain_sources.SourceType:
     properties:
       documentCount:
@@ -11211,10 +11587,31 @@ definitions:
         type: boolean
       name:
         type: string
+      oauthAppId:
+        description: |-
+          OAuthAppID selects the named OAuth app. An empty string clears the explicit
+          selection and returns the source to automatic resolution.
+        type: string
       syncIntervalMinutes:
         type: integer
       syncMode:
         type: string
+    type: object
+  domain_sources.UpdateOAuthAppRequest:
+    properties:
+      clientId:
+        type: string
+      clientSecret:
+        type: string
+      config:
+        additionalProperties: {}
+        type: object
+      name:
+        type: string
+      providerConfigs:
+        additionalProperties:
+          $ref: '#/definitions/domain_sources.OAuthProviderConfig'
+        type: object
     type: object
   domain_sources.UpdateSavedCredentialRequest:
     properties:
@@ -11224,11 +11621,41 @@ definitions:
       name:
         type: string
     type: object
+  domain_sources.registerSourceAppDTO:
+    properties:
+      appId:
+        type: integer
+      privateKey:
+        type: string
+      provider:
+        type: string
+      slug:
+        type: string
+      webhookSecret:
+        type: string
+    type: object
+  domain_sources.sourceTriggerDTO:
+    properties:
+      agentId:
+        type: string
+      enabled:
+        type: boolean
+      eventFilter:
+        additionalProperties: {}
+        type: object
+      eventType:
+        type: string
+      queue:
+        type: string
+    type: object
   domain_sources.startOAuthBody:
     properties:
       config:
         additionalProperties: {}
         type: object
+      oauthAppId:
+        description: OAuthAppID selects a named OAuth app for this connection.
+        type: string
       reconnectSourceId:
         description: |-
           ReconnectSourceID re-runs consent for an existing source; the callback
@@ -15034,6 +15461,112 @@ paths:
       summary: Update project chunking configuration
       tags:
       - chunking
+  /api/data-source-integrations/{id}/triggers:
+    get:
+      description: Returns a source's event-to-agent bindings.
+      parameters:
+      - description: Source ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/domain_sources.SourceTrigger'
+            type: array
+      security:
+      - bearerAuth: []
+      summary: List source triggers
+      tags:
+      - data-source-integrations
+    post:
+      consumes:
+      - application/json
+      description: Binds an event type to a runtime agent and queue.
+      parameters:
+      - description: Source ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Trigger binding
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_sources.sourceTriggerDTO'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/domain_sources.SourceTrigger'
+      security:
+      - bearerAuth: []
+      summary: Create a source trigger
+      tags:
+      - data-source-integrations
+  /api/data-source-integrations/{id}/triggers/{triggerId}:
+    delete:
+      description: Removes the binding.
+      parameters:
+      - description: Source ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Trigger ID (UUID)
+        in: path
+        name: triggerId
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      security:
+      - bearerAuth: []
+      summary: Delete a source trigger
+      tags:
+      - data-source-integrations
+    patch:
+      consumes:
+      - application/json
+      description: Patches the event, agent, queue, filter, or enabled state.
+      parameters:
+      - description: Source ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Trigger ID (UUID)
+        in: path
+        name: triggerId
+        required: true
+        type: string
+      - description: Patch
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_sources.sourceTriggerDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_sources.SourceTrigger'
+      security:
+      - bearerAuth: []
+      summary: Update a source trigger
+      tags:
+      - data-source-integrations
   /api/diagnostics:
     get:
       responses: {}
@@ -16577,6 +17110,56 @@ paths:
       security:
       - bearerAuth: []
       summary: Expand graph from root nodes
+      tags:
+      - graph
+  /api/graph/extraction-backlog:
+    get:
+      description: Returns the count of unmerged extraction branches and the live
+        objects/relationships on them, plus whether the main graph is empty.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_graph.ExtractionBacklogResponse'
+        "400":
+          description: Invalid project
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Extraction merge backlog
+      tags:
+      - graph
+  /api/graph/extraction-backlog/merge:
+    post:
+      consumes:
+      - application/json
+      description: Merges up to `limit` unmerged extraction branches into the main
+        graph using the non-destructive "partial" policy. Dry run unless execute=true.
+        Repeat while branches_remaining > 0.
+      parameters:
+      - description: Merge options
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_graph.ExtractionBacklogMergeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_graph.ExtractionBacklogMergeResponse'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Merge pending extraction branches
       tags:
       - graph
   /api/graph/journal:
@@ -18429,6 +19012,57 @@ paths:
       security:
       - bearerAuth: []
       summary: Search with graph neighbors
+      tags:
+      - graph
+  /api/graph/sources/{id}/outcomes:
+    get:
+      description: Returns the current outcome (materialized, merged, adopted, withdrawn,
+        skipped) of each record the source pushed, ordered by a project-scoped sequence.
+        Pass the opaque since cursor from the previous response to page; a resumed
+        cursor neither skips nor duplicates a record. Records pushed before outcomes
+        existed have no entry and are not invented.
+      parameters:
+      - description: Source ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Opaque cursor from a previous response's next_cursor (omit for
+          the first page)
+        in: query
+        name: since
+        type: string
+      - description: Max outcomes (default 100, max 500)
+        in: query
+        name: limit
+        type: integer
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: One page of outcomes and the cursor to resume from
+          schema:
+            $ref: '#/definitions/domain_graph.SourceOutcomesResponse'
+        "400":
+          description: Invalid source id or cursor
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Source not found in this project
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List the outcomes of a source's records
       tags:
       - graph
   /api/graph/subgraph:
@@ -20562,6 +21196,134 @@ paths:
       summary: Update organization member role
       tags:
       - organizations
+  /api/orgs/{orgId}/data-source-integrations/oauth-apps:
+    get:
+      description: Returns the org's named, vendor-level OAuth apps (secrets redacted).
+        Org admin only.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Org OAuth apps
+          schema:
+            items:
+              $ref: '#/definitions/domain_sources.OAuthAppDTO'
+            type: array
+      security:
+      - bearerAuth: []
+      summary: List org OAuth apps
+      tags:
+      - data-source-integrations
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgId
+        required: true
+        type: string
+      - description: OAuth app material
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_sources.CreateOAuthAppRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created org OAuth app
+          schema:
+            $ref: '#/definitions/domain_sources.OAuthAppDTO'
+      security:
+      - bearerAuth: []
+      summary: Create an org OAuth app
+      tags:
+      - data-source-integrations
+  /api/orgs/{orgId}/data-source-integrations/oauth-apps/{appId}:
+    delete:
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgId
+        required: true
+        type: string
+      - description: OAuth app ID (UUID)
+        in: path
+        name: appId
+        required: true
+        type: string
+      responses:
+        "204":
+          description: Deleted
+      security:
+      - bearerAuth: []
+      summary: Delete an org OAuth app
+      tags:
+      - data-source-integrations
+    get:
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgId
+        required: true
+        type: string
+      - description: OAuth app ID (UUID)
+        in: path
+        name: appId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Org OAuth app
+          schema:
+            $ref: '#/definitions/domain_sources.OAuthAppDTO'
+      security:
+      - bearerAuth: []
+      summary: Get an org OAuth app
+      tags:
+      - data-source-integrations
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgId
+        required: true
+        type: string
+      - description: OAuth app ID (UUID)
+        in: path
+        name: appId
+        required: true
+        type: string
+      - description: OAuth app fields
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_sources.UpdateOAuthAppRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Updated org OAuth app
+          schema:
+            $ref: '#/definitions/domain_sources.OAuthAppDTO'
+      security:
+      - bearerAuth: []
+      summary: Update an org OAuth app
+      tags:
+      - data-source-integrations
   /api/orgs/{orgId}/data-source-integrations/oauth-clients:
     get:
       description: Returns the org's configured OAuth clients (secrets redacted).
@@ -20887,6 +21649,100 @@ paths:
       summary: Update an org skill
       tags:
       - skills
+  /api/orgs/{orgId}/source-apps:
+    get:
+      description: Returns org Apps without credentials. Org admin only.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/domain_sources.SourceApp'
+            type: array
+      security:
+      - bearerAuth: []
+      summary: List source Apps
+      tags:
+      - data-source-integrations
+    post:
+      consumes:
+      - application/json
+      description: Stores org-level App credentials (encrypted). Org admin only.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgId
+        required: true
+        type: string
+      - description: App credentials
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_sources.registerSourceAppDTO'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/domain_sources.SourceApp'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Register a source App
+      tags:
+      - data-source-integrations
+  /api/orgs/{orgId}/source-apps/{appId}:
+    delete:
+      description: Removes an org App credential. Refused with 409 while project sources
+        are still bound to the App; the error names them. Org admin only.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgId
+        required: true
+        type: string
+      - description: App row ID (UUID)
+        in: path
+        name: appId
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: App still bound to project sources
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Delete a source App
+      tags:
+      - data-source-integrations
   /api/projects:
     get:
       description: Returns all projects the authenticated user is a member of. Supports
@@ -22094,6 +22950,132 @@ paths:
       summary: Enable an agent
       tags:
       - agents
+  /api/projects/{projectId}/data-source-integrations/oauth-apps:
+    get:
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Project OAuth apps
+          schema:
+            items:
+              $ref: '#/definitions/domain_sources.OAuthAppDTO'
+            type: array
+      security:
+      - bearerAuth: []
+      summary: List project OAuth apps
+      tags:
+      - data-source-integrations
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: OAuth app material
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_sources.CreateOAuthAppRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created project OAuth app
+          schema:
+            $ref: '#/definitions/domain_sources.OAuthAppDTO'
+      security:
+      - bearerAuth: []
+      summary: Create a project OAuth app
+      tags:
+      - data-source-integrations
+  /api/projects/{projectId}/data-source-integrations/oauth-apps/{appId}:
+    delete:
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: OAuth app ID (UUID)
+        in: path
+        name: appId
+        required: true
+        type: string
+      responses:
+        "204":
+          description: Deleted
+      security:
+      - bearerAuth: []
+      summary: Delete a project OAuth app
+      tags:
+      - data-source-integrations
+    get:
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: OAuth app ID (UUID)
+        in: path
+        name: appId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Project OAuth app
+          schema:
+            $ref: '#/definitions/domain_sources.OAuthAppDTO'
+      security:
+      - bearerAuth: []
+      summary: Get a project OAuth app
+      tags:
+      - data-source-integrations
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: OAuth app ID (UUID)
+        in: path
+        name: appId
+        required: true
+        type: string
+      - description: OAuth app fields
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_sources.UpdateOAuthAppRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Updated project OAuth app
+          schema:
+            $ref: '#/definitions/domain_sources.OAuthAppDTO'
+      security:
+      - bearerAuth: []
+      summary: Update a project OAuth app
+      tags:
+      - data-source-integrations
   /api/projects/{projectId}/data-source-integrations/oauth-clients:
     get:
       description: Returns the project's configured OAuth clients (secrets redacted).

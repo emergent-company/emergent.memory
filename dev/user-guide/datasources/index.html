@@ -1603,6 +1603,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#extraction-after-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extraction after sync
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -3540,6 +3551,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#extraction-after-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extraction after sync
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -3636,24 +3658,27 @@ sources use it, and when it was last changed; the token itself is never displaye
 <p>On a credentials connect form you can either select one of these saved credentials or create a new
 one without leaving the page — the new credential is selected for you when you return.</p>
 <h2 id="credentials-oauth-apps">Credentials (OAuth apps)<a class="headerlink" href="#credentials-oauth-apps" title="Permanent link">&para;</a></h2>
-<p>OAuth-based providers (Google Drive, GitHub) need an OAuth 2.0 <strong>app</strong> — a client that Memory uses
-to obtain access. Credentials are keyed by <strong>vendor</strong>, not by data source: one <strong>Google OAuth app</strong>
-can back Google Drive, and one <strong>GitHub OAuth app</strong> backs GitHub. The <strong>Data source</strong> column tells
-you which connection type the app backs.</p>
+<p>OAuth-based providers (Google Drive, Gmail, GitHub) need an OAuth 2.0 <strong>app</strong> — a client that Memory
+uses to obtain access. An app is keyed by <strong>vendor</strong>, not by data source: one <strong>Google app</strong> can back
+Google Drive and Gmail, and a <strong>GitHub app</strong> backs GitHub. A scope can hold several named apps per
+vendor, and each data source chooses which one it uses.</p>
 <p>The app can be configured at three levels, resolved in this order when a connection starts:</p>
 <ol>
-<li><strong>Project</strong> — a project-level app, managed by a <code>project_admin</code> on the project's
-   <strong>Settings → Credentials</strong> page. It overrides everything else for that project.</li>
-<li><strong>Organization</strong> — an org-level app, managed by an <code>org_admin</code> under
-   <strong>Organization Settings → Data source OAuth clients</strong>. That page is a table of providers, and each
-   row opens that provider's editor — the same editor shape as the project page.</li>
+<li><strong>The data source's own selected app</strong> — chosen on the connect/edit form when more than one app
+   applies.</li>
+<li><strong>Project</strong> — the only project-level app for the vendor. Managed by a <code>project_admin</code> on
+   <strong>Settings → Credentials</strong>. If the project has several apps for that vendor, connecting without a
+   selection fails with an error asking you to choose one.</li>
+<li><strong>Organization</strong> — the only org-level app for the vendor. Managed by an <code>org_admin</code> under
+   <strong>Organization Settings → Data source OAuth apps</strong>.</li>
 <li><strong>Deployment default</strong> — a centrally configured app set via <code>SOURCES_OAUTH_GOOGLE_CLIENT_ID</code> /
    <code>SOURCES_OAUTH_GOOGLE_CLIENT_SECRET</code> (no setup needed by users).</li>
 </ol>
 <p>If none is configured, connecting fails with an actionable message linking to the credentials page.</p>
 <h3 id="the-credentials-table">The Credentials table<a class="headerlink" href="#the-credentials-table" title="Permanent link">&para;</a></h3>
-<p><strong>Project Settings → Credentials</strong> lists every OAuth-capable vendor as a table. Each provider has a
-project row, and gains an organization row only once an organization app is configured:</p>
+<p><strong>Project Settings → Credentials</strong> lists the OAuth apps that exist in the project, plus the
+organization apps an org admin can manage. The list starts empty — it does not pre-render one row per
+provider — and an <strong>Add OAuth app</strong> action opens the editor.</p>
 <table>
 <thead>
 <tr>
@@ -3664,11 +3689,11 @@ project row, and gains an organization row only once an organization app is conf
 <tbody>
 <tr>
 <td>App</td>
-<td>The vendor-level app label, e.g. <strong>Google OAuth app</strong></td>
+<td>The app's name, e.g. <strong>Production Google</strong></td>
 </tr>
 <tr>
 <td>Data source</td>
-<td>The connection type the app backs, e.g. <strong>Google Drive</strong></td>
+<td>The vendor, e.g. <strong>Google</strong></td>
 </tr>
 <tr>
 <td>Scope</td>
@@ -3680,7 +3705,7 @@ project row, and gains an organization row only once an organization app is conf
 </tr>
 <tr>
 <td>Status</td>
-<td><strong>In use</strong> for the scope that wins resolution, <strong>Configured</strong> when it exists but is overridden, otherwise <strong>Not configured</strong></td>
+<td><strong>In use</strong> when at least one data source uses it, otherwise <strong>Configured</strong></td>
 </tr>
 <tr>
 <td>Updated</td>
@@ -3688,38 +3713,38 @@ project row, and gains an organization row only once an organization app is conf
 </tr>
 <tr>
 <td>Actions</td>
-<td><strong>Manage</strong> / <strong>Set up</strong> for admins; a role note for everyone else</td>
+<td><strong>Manage</strong> for admins; a role note for everyone else</td>
 </tr>
 </tbody>
 </table>
-<p>A provider with no project and no organization app still shows its project row, so <strong>Set up</strong> stays
-reachable. The organization row appears only when that org app exists, which keeps the table one row
-per provider until someone configures the org scope. An admin's organization-row action opens the
-org's per-provider editor.</p>
-<p>Every project member can view the table and see which app is in use. Only a <code>project_admin</code> can open
-the per-provider editor and change the project app; organization-wide apps are managed by org admins.
-Opening a per-provider editor as a non-admin returns 404.</p>
+<p>Adding an app asks for a <strong>vendor</strong>, a <strong>name</strong>, the client id and secret, and — for Google — the
+Drive scope (<code>drive.readonly</code> by default, or <code>drive.file</code>). The same app then serves Drive and Gmail;
+Gmail always requests its read-only scope. Edit an app to change its name or its Drive scope.
+Replacing the client id or secret does not update data sources already connected through it: each
+source keeps the grant it received at connect time, so reconnect those sources after a rotation.
+Deleting an app is refused while a data source still uses it.</p>
+<p>Every project member can view the table. Only a <code>project_admin</code> can add or change project apps;
+organization apps are managed by org admins.</p>
 <h3 id="the-organization-oauth-apps-table">The organization OAuth apps table<a class="headerlink" href="#the-organization-oauth-apps-table" title="Permanent link">&para;</a></h3>
-<p><strong>Organization Settings → Data source OAuth clients</strong> lists each OAuth-capable provider as a row — app,
-data source, status, client id, updated — with a <strong>Set up</strong> or <strong>Manage</strong> action. That action opens
-<code>/o/&lt;org&gt;/settings/oauth-clients/&lt;provider&gt;</code>: the same OAuth-client card the project editor uses
-(client id, write-only secret, scopes, strategy, and the vendor console guide), with a back link to the
-table. Saving returns you to the table with a confirmation, and the stored secret is never shown again.</p>
+<p><strong>Organization Settings → Data source OAuth apps</strong> is the same list at organization scope, with an
+<strong>Add OAuth app</strong> action. The editor shows the authorized redirect URIs for every provider of the
+vendor, so one Google app can be registered for both the Drive and Gmail callbacks.</p>
 <p>When no project or organization app exists and the deployment does not provide one, the page carries
-a note naming the providers that fall back to the deployment default.</p>
+a note explaining that the connection will fail until an app is added.</p>
 <p>The <strong>Data Sources</strong> page is a plain connections table (name, provider, status, sync mode, last sync)
 with a <strong>New data source</strong> action. It never asks you to configure credentials.</p>
 <h3 id="create-the-app-in-the-vendor-console">Create the app in the vendor console<a class="headerlink" href="#create-the-app-in-the-vendor-console" title="Permanent link">&para;</a></h3>
-<p>For Google Drive:</p>
+<p>For Google (one app can back Drive and Gmail):</p>
 <ol>
 <li>Go to <a href="https://console.cloud.google.com/">Google Cloud Console</a> and create or select a project.</li>
-<li>Enable the <strong>Google Drive API</strong>.</li>
+<li>Enable the <strong>Google Drive API</strong> and, if you use Gmail sources, the <strong>Gmail API</strong>.</li>
 <li>Configure the <strong>OAuth consent screen</strong> (External or Internal; for Workspace-internal apps use
    Internal).</li>
 <li>Under <strong>Credentials → Create credentials → OAuth client ID</strong>, choose <strong>Web application</strong>.</li>
-<li>Under <strong>Authorized redirect URIs</strong>, add the <strong>Redirect URI</strong> shown on the credentials editor
-   (it points at the Memory API callback, e.g.
-   <code>https://&lt;api-host&gt;/api/data-source-integrations/oauth/google_drive/callback</code>).</li>
+<li>Under <strong>Authorized redirect URIs</strong>, add every <strong>Redirect URI</strong> shown on the app editor (one per
+   data source the app backs, e.g.
+   <code>https://&lt;api-host&gt;/api/data-source-integrations/oauth/google_drive/callback</code> and
+   <code>https://&lt;api-host&gt;/api/data-source-integrations/oauth/gmail/callback</code>).</li>
 <li>Under <strong>Authorized JavaScript origins</strong>, add the <strong>JavaScript origin</strong> shown on the same page
    (the Memory UI origin).</li>
 <li>Copy the <strong>Client ID</strong> and <strong>Client secret</strong>.</li>
@@ -4299,6 +4324,8 @@ page length). Pass <code>status</code> to filter the listing.</p>
 <p class="admonition-title">Note</p>
 <p>Deleting a data source does <strong>not</strong> delete the documents already imported from it. Those remain in the project.</p>
 </div>
+<h2 id="extraction-after-sync">Extraction after sync<a class="headerlink" href="#extraction-after-sync" title="Permanent link">&para;</a></h2>
+<p>A source sync always chunks and embeds what it ingests, so the content is searchable. Object extraction is a separate, per-project switch: <strong>Settings → Extraction → Auto-extract objects after a data-source sync</strong> (<code>auto_extract_source_syncs</code>). It is off by default, applies to every synced item and every new version, and can be turned off to stop a high-volume source (mail, large drives) from spending extraction tokens. With the switch off, select an individual document and trigger extraction from its detail view.</p>
 
 
 

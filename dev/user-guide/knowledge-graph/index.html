@@ -3573,8 +3573,20 @@
 <td>Optional status flag (e.g. <code>draft</code>, <code>approved</code>, <code>archived</code>)</td>
 </tr>
 <tr>
+<td><code>name</code></td>
+<td>Human-readable title shown in the UI and ranked first in search</td>
+</tr>
+<tr>
+<td><code>ref</code></td>
+<td>Read-only display reference (<code>#</code> + last 12 hex of the canonical ID); never used for writes</td>
+</tr>
+<tr>
+<td><code>canonical_id</code> / <code>entity_id</code></td>
+<td>Stable canonical UUID — the addressable handle for reads, writes, and relationships (<code>id</code> is the version id)</td>
+</tr>
+<tr>
 <td><code>key</code></td>
-<td>Optional human-readable unique key within the project</td>
+<td>Internal dedup/upsert identity; not a display label</td>
 </tr>
 </tbody>
 </table>
