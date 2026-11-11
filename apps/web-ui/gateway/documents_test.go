@@ -1019,6 +1019,35 @@ func TestDocumentPreviewSrcScoped(t *testing.T) {
 	}
 }
 
+// TestDocumentCardsPinActionOnTheRight pins that the Schema discovery card
+// reuses the Extraction card's header row: title block on the left, action
+// button as the row's trailing item, so both boxes read the same and the button
+// sits on the right (issue #589).
+func TestDocumentCardsPinActionOnTheRight(t *testing.T) {
+	doc := &Document{ID: "d1", Filename: "Spec.md", MimeType: "text/markdown", Chunks: 2, ExtractionStatus: "completed", ObjectsCreated: 15}
+
+	const rowOpen = `<div class="flex flex-wrap items-center justify-between gap-3"><div class="flex items-center gap-3">`
+
+	// Each tail proves the action form is the header row's last child, which is
+	// what `justify-between` right-aligns. A form moved above the description,
+	// or replaced by a full-width button underneath, breaks it.
+	for _, tc := range []struct {
+		name string
+		html string
+		tail string
+	}{
+		{"extraction", renderHTML(t, extractionCard(doc, "", nil, false)), `Extract data</button></form></div>`},
+		{"discovery", renderHTML(t, documentDiscoveryCard(doc)), `Discover from this document</button></form></div><p class="text-faint`},
+	} {
+		if !strings.Contains(tc.html, rowOpen) {
+			t.Errorf("%s card should open the shared two-column header row", tc.name)
+		}
+		if !strings.Contains(tc.html, tc.tail) {
+			t.Errorf("%s card: action form is not the header row's trailing item; missing %q", tc.name, tc.tail)
+		}
+	}
+}
+
 // TestDocumentPreviewUnavailable asserts a failed server-side text fetch
 // degrades to a note with a Chunks link rather than an error.
 func TestDocumentPreviewUnavailable(t *testing.T) {
