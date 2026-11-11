@@ -38,6 +38,10 @@ final class MCPServersStore {
     /// rebuild the complete config without losing any field.
     private(set) var details: [String: HostedMCPServerDetail] = [:]
 
+    /// Last Claude-config import report, so the import sheet can list what
+    /// changed. Reset by `clear()` and on a new import.
+    private(set) var importResult: HostedMCPImportResult?
+
     /// Discovered tools per server, keyed by name. Kept alongside the cached
     /// detail so the detail view reflects a toggle's refreshed tool set.
     private(set) var toolsByServer: [String: [HostedMCPTool]] = [:]
@@ -63,34 +67,6 @@ final class MCPServersStore {
     /// URL when the active project changes.
     func setBaseURL(_ baseURL: String) {
         client = MCPServersAPIClient(baseURL: baseURL, session: client.session)
-    }
-
-    /// Names of currently configured servers, for form validation (duplicate
-    /// names are rejected by the engine with HTTP 409).
-    var existingNames: Set<String> {
-        Set(servers.map(\.name))
-    }
-
-    /// Names of servers configured in Memory. These are read-only locally and
-    /// cannot be edited, toggled, deleted, or tool-toggled from the app.
-    var managedNames: Set<String> {
-        Set(servers.filter(\.managed).map(\.name))
-    }
-
-    /// Names the Add form must treat as taken. Every configured server is
-    /// reserved, including Memory-managed ones — a new local server may not
-    /// reuse a managed name.
-    var reservedNames: Set<String> {
-        existingNames.union(managedNames)
-    }
-
-    /// Whether `name` is a Memory-managed server. Checks the list first, then
-    /// any cached detail (so a detail-only view still knows).
-    func isManaged(_ name: String) -> Bool {
-        if let server = servers.first(where: { $0.name == name }) {
-            return server.managed
-        }
-        return details[name]?.managed ?? false
     }
 
     // MARK: - Load
@@ -129,6 +105,7 @@ final class MCPServersStore {
         servers = []
         status = nil
         errorMessage = nil
+        importResult = nil
         phase = .idle
         lastUpdated = nil
     }
@@ -141,6 +118,27 @@ final class MCPServersStore {
     func create(_ config: HostedMCPServerConfig) async -> Bool {
         do {
             _ = try await client.create(config)
+            return await didMutate()
+        } catch {
+            return didFail(error)
+        }
+    }
+
+    /// Clears the last import report (called when the import sheet opens so a
+    /// previous run's result is not shown as if it were current).
+    func clearImportResult() {
+        importResult = nil
+    }
+
+    /// `POST /api/mcp-servers/import` — merge a Claude-format config document
+    /// into the local hosted-server set. Returns `true` on success and refreshes
+    /// the list; the per-name report is available in `importResult`.
+    @discardableResult
+    func importClaudeConfig(config: Data, overwrite: Bool, dryRun: Bool) async -> Bool {
+        do {
+            importResult = try await client.importClaudeConfig(config: config,
+                                                               overwrite: overwrite,
+                                                               dryRun: dryRun)
             return await didMutate()
         } catch {
             return didFail(error)
@@ -330,17 +328,6 @@ final class MCPServersStore {
     private func didFail(_ error: Error) -> Bool {
         errorMessage = Self.userMessage(for: error)
         return false
-    }
-
-    /// User-facing message for an error, collapsing the raw loopback-connection
-    /// failure into a generic unavailable message so internal transport detail
-    /// never reaches the user. Server/validation messages pass through verbatim.
-    /// Pure and testable.
-    nonisolated static func userMessage(for error: Error) -> String {
-        if let api = error as? MCPServersAPIError, case .unreachable = api {
-            return "The connector isn't available right now."
-        }
-        return error.localizedDescription
     }
 
     /// Managed servers are configured in Memory and read-only locally, so every

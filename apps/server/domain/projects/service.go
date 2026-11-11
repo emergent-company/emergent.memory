@@ -278,6 +278,9 @@ func (s *Service) Create(ctx context.Context, req CreateProjectRequest, userID s
 		BudgetUSD:            &defaultBudget,
 		BudgetAlertThreshold: defaultAlertThreshold,
 	}
+	if req.AutoMergeExtractionBranches != nil {
+		project.AutoMergeExtractionBranches = *req.AutoMergeExtractionBranches
+	}
 	if err := s.repo.Create(ctx, tx.Tx, project); err != nil {
 		return nil, err
 	}

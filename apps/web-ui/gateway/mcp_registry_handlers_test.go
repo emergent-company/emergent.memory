@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -58,6 +59,15 @@ type mcpRegistryTestBackend struct {
 	deviceInstallCalls  int
 	lastDeviceRegName   string
 	lastInstanceID      string
+
+	importResult     *MCPImportResult
+	importErr        error
+	importCalls      int
+	lastImportConfig json.RawMessage
+	lastImportTarget string
+	lastImportDevice string
+	lastImportOver   bool
+	lastImportDryRun bool
 }
 
 func newMCPRegistryTestBackend() *mcpRegistryTestBackend {
@@ -100,6 +110,23 @@ func (b *mcpRegistryTestBackend) InstallRegistryServerToDevice(ctx context.Conte
 		return b.deviceInstallResult, nil
 	}
 	return &MCPRegistryInstallResult{}, nil
+}
+
+// ImportMCPServers records the import call and returns the configured result.
+func (b *mcpRegistryTestBackend) ImportMCPServers(ctx context.Context, config json.RawMessage, target, instanceID string, overwrite, dryRun bool) (*MCPImportResult, error) {
+	b.importCalls++
+	b.lastImportConfig = config
+	b.lastImportTarget = target
+	b.lastImportDevice = instanceID
+	b.lastImportOver = overwrite
+	b.lastImportDryRun = dryRun
+	if b.importErr != nil {
+		return nil, b.importErr
+	}
+	if b.importResult != nil {
+		return b.importResult, nil
+	}
+	return &MCPImportResult{}, nil
 }
 
 // mcpRegistryRemoteResult is a success install result with two required env vars.

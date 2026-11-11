@@ -4633,6 +4633,120 @@ func (s *Service) BranchMergeReadiness(ctx context.Context, projectID, branchID 
 	return total, pending, nil
 }
 
+// Extraction backlog bounds. The branch list in the status response is capped
+// so a project with thousands of staging branches still renders; the aggregate
+// counts cover every branch regardless. A merge call processes a bounded slice
+// so one HTTP request cannot hold a transaction for the whole backlog.
+const (
+	extractionBacklogBranchPageSize    = 200
+	defaultExtractionBacklogMergeLimit = 25
+	maxExtractionBacklogMergeLimit     = 100
+)
+
+// ExtractionBacklog reports extraction output that is invisible to default
+// graph reads because it still lives on unmerged staging branches. Default reads
+// resolve to the main graph (branch_id IS NULL), so a project whose extraction
+// ran with auto-merge off appears empty even though the pipeline succeeded.
+func (s *Service) ExtractionBacklog(ctx context.Context, projectID uuid.UUID) (*ExtractionBacklogResponse, error) {
+	branches, err := s.repo.PendingExtractionBranches(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	mainCount, err := s.repo.CountMainGraphObjects(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	return buildExtractionBacklogResponse(branches, mainCount, extractionBacklogBranchPageSize), nil
+}
+
+// buildExtractionBacklogResponse folds per-branch rows into the response. It is
+// pure so the aggregate/truncation contract is unit-testable without a database.
+func buildExtractionBacklogResponse(branches []*PendingExtractionBranch, mainGraphObjectCount, pageSize int) *ExtractionBacklogResponse {
+	resp := &ExtractionBacklogResponse{
+		Branches:             make([]*ExtractionBacklogBranch, 0),
+		MainGraphObjectCount: mainGraphObjectCount,
+	}
+	for _, b := range branches {
+		resp.BranchCount++
+		resp.ObjectCount += b.ObjectCount
+		resp.RelationshipCount += b.RelationshipCount
+		if pageSize > 0 && len(resp.Branches) >= pageSize {
+			resp.BranchesTruncated = true
+			continue
+		}
+		resp.Branches = append(resp.Branches, &ExtractionBacklogBranch{
+			ID:                b.ID,
+			Name:              b.Name,
+			OriginLabel:       b.OriginLabel,
+			CreatedAt:         b.CreatedAt,
+			ObjectCount:       b.ObjectCount,
+			RelationshipCount: b.RelationshipCount,
+		})
+	}
+	// "Stranded" is the failure mode in issue #496: extraction produced objects
+	// but every default read resolves to an empty main graph.
+	resp.Stranded = resp.ObjectCount > 0 && mainGraphObjectCount == 0
+	return resp
+}
+
+// MergeExtractionBacklog merges pending extraction branches into the main graph
+// in bounded batches. It is an explicit, manual action: Execute defaults to
+// false (dry run), and the merge policy is fixed to "partial" — clean additions
+// and fast-forwards are applied while conflicts and near-duplicates stay on the
+// branch for review. It therefore never discards data and never changes the
+// default behaviour for a project that has not asked for it.
+func (s *Service) MergeExtractionBacklog(ctx context.Context, projectID uuid.UUID, req *ExtractionBacklogMergeRequest) (*ExtractionBacklogMergeResponse, error) {
+	if req == nil {
+		req = &ExtractionBacklogMergeRequest{}
+	}
+
+	branches, err := s.repo.PendingExtractionBranches(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	limit := req.Limit
+	if limit <= 0 {
+		limit = defaultExtractionBacklogMergeLimit
+	}
+	if limit > maxExtractionBacklogMergeLimit {
+		limit = maxExtractionBacklogMergeLimit
+	}
+
+	process := branches
+	if len(process) > limit {
+		process = process[:limit]
+	}
+
+	resp := &ExtractionBacklogMergeResponse{
+		DryRun:        !req.Execute,
+		BranchesTotal: len(branches),
+		Results:       make([]*ExtractionBacklogMergeItem, 0, len(process)),
+	}
+	for _, b := range process {
+		item := &ExtractionBacklogMergeItem{BranchID: b.ID, Name: b.Name}
+		result, mergeErr := s.MergeBranch(ctx, projectID, nil, &BranchMergeRequest{
+			SourceBranchID:    b.ID,
+			Execute:           req.Execute,
+			Policy:            "partial",
+			WaitForEmbeddings: req.WaitForEmbeddings,
+		})
+		if mergeErr != nil {
+			// One branch must not stop the backlog. Record the failure and keep
+			// going; the branch stays pending for a later retry.
+			item.Error = mergeErr.Error()
+		} else {
+			item.Result = result
+			resp.LeftForReviewCount += result.LeftForReviewCount
+		}
+		resp.Results = append(resp.Results, item)
+	}
+
+	resp.BranchesProcessed = len(process)
+	resp.BranchesRemaining = len(branches) - len(process)
+	return resp, nil
+}
+
 // MergeBranch performs dry-run or actual merge of a source branch into target branch.
 func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBranchID *uuid.UUID, req *BranchMergeRequest) (*BranchMergeResponse, error) {
 	// Reject a policy the caller could not have meant. Both Policy and the legacy

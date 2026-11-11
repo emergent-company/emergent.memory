@@ -105,6 +105,14 @@ func (pm *ProxyManager) oauthAuthorizationHeader(ctx context.Context, server *MC
 	if server == nil || !server.Type.contract().remote {
 		return "", nil
 	}
+	// A transient draft server (the save-less /test probe builds one) has no
+	// stored identity, so there is no authorization row to look up. Querying
+	// server_id = '' makes Postgres raise "invalid input syntax for type uuid",
+	// which used to leak to the user as a raw database error from Test
+	// connection; treat it as "no credential" instead.
+	if strings.TrimSpace(server.ID) == "" {
+		return "", nil
+	}
 	userID := userIDFromContext(ctx)
 	row, err := pm.repo.FindOAuthForUser(ctx, server.ID, userID)
 	if err != nil {

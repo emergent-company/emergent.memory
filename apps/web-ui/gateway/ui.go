@@ -644,15 +644,28 @@ func absoluteAvatarSrc(raw string) (string, bool) {
 }
 
 // avatarSrc returns a safe <img src> for an avatar value, or "" when the value
-// is a bare object key. Member/list avatars are raw storage keys today (see
-// MemoryClient.ListMembers) and there is no cross-user serve route, so a
-// relative key must fall back to initials rather than request a 404 under the
-// current page path. Absolute and root-relative URLs pass through unchanged.
+// cannot be served for the current request. Bare object keys and the gateway's
+// own session-scoped avatar proxy (/api/user/avatar) are dropped for arbitrary
+// accounts: that route always serves the signed-in user's photo, so replaying
+// another account's URL would show the wrong image or 404. Absolute and
+// root-relative URLs that are not the avatar proxy pass through unchanged.
 func avatarSrc(raw string) string {
-	if v, ok := absoluteAvatarSrc(raw); ok {
-		return v
+	v, ok := absoluteAvatarSrc(raw)
+	if !ok || isAvatarProxyURL(v) {
+		return ""
 	}
-	return ""
+	return v
+}
+
+// isAvatarProxyURL reports whether raw points at the gateway's own avatar proxy
+// (/api/user/avatar; its query is a cache-buster, not an object selector). Only
+// the signed-in user can be served from it, so it is not a portable avatar URL.
+func isAvatarProxyURL(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	return u.Path == "/api/user/avatar"
 }
 
 // selfAvatarSrc is avatarSrc for the signed-in user, whose relative key can be
@@ -667,22 +680,25 @@ func selfAvatarSrc(raw string) string {
 
 // resolveAvatar picks the avatar URL to display for an arbitrary cached
 // account: the uploaded Memory photo (override) wins when present, else the IdP
-// picture, else "" (initials). Bare object keys are dropped (avatarSrc): only
-// the signed-in user has a serving route, and a cached account's key would
-// otherwise resolve against the current page path.
+// picture, else "" (initials). The upload's URL points at the session-scoped
+// avatar proxy, so it is dropped for a cached account that is not active
+// (avatarSrc); falling back to the IdP picture avoids rendering the active
+// user's photo — or a 404 when that user has none.
 func resolveAvatar(override, picture string) string {
-	if override != "" {
-		return avatarSrc(override)
+	if v := avatarSrc(override); v != "" {
+		return v
 	}
 	return avatarSrc(picture)
 }
 
-// resolveSelfAvatar is resolveAvatar for the signed-in user: their relative IdP
-// picture is their own memory avatar key and can be served by the authenticated
-// avatar proxy.
+// resolveSelfAvatar is resolveAvatar for the signed-in user. Their uploaded
+// photo URL points at the authenticated avatar proxy and is kept as-is: the
+// proxy serves this session's own avatar, so the URL is valid. Without an
+// upload, a relative IdP picture is the user's own memory avatar key and is
+// routed through the same proxy.
 func resolveSelfAvatar(override, picture string) string {
-	if override != "" {
-		return avatarSrc(override)
+	if v, ok := absoluteAvatarSrc(override); ok {
+		return v
 	}
 	if picture == "" {
 		return ""

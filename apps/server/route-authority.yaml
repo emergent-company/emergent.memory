@@ -188,6 +188,10 @@ routes:
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: POST
+      path: /api/admin/mcp-servers/import
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: POST
       path: /api/admin/mcp-servers/test
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
@@ -797,6 +801,14 @@ routes:
       note: RequireAuth, RequireAPITokenScopes(graph:write)
     - method: POST
       path: /api/graph/expand
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: GET
+      path: /api/graph/extraction-backlog
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: POST
+      path: /api/graph/extraction-backlog/merge
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: GET

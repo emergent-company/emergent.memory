@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -81,7 +83,7 @@ func TestMCPServersCommandStructure(t *testing.T) {
 		subcommandNames[cmd.Name()] = true
 	}
 
-	expected := []string{"list", "get", "create", "delete", "sync", "inspect", "tools", "oauth"}
+	expected := []string{"list", "get", "create", "delete", "sync", "inspect", "tools", "configure", "import", "oauth"}
 	for _, name := range expected {
 		assert.True(t, subcommandNames[name], "expected subcommand %q to be registered", name)
 	}
@@ -148,4 +150,36 @@ func TestMCPServersRootCommand(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "mcp-servers command should be registered under agents")
+}
+
+func TestMCPServersImportFlags(t *testing.T) {
+	cmd := importMCPServersCmd
+	require.NotNil(t, cmd.Flags().Lookup("from-claude"))
+	require.NotNil(t, cmd.Flags().Lookup("device"))
+	require.NotNil(t, cmd.Flags().Lookup("target"))
+	require.NotNil(t, cmd.Flags().Lookup("overwrite"))
+	require.NotNil(t, cmd.Flags().Lookup("dry-run"))
+	require.NotNil(t, cmd.Flags().Lookup("json"))
+}
+
+func TestReadMCPImportSourceFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"mcpServers":{"x":{"command":"run"}}}`), 0o600))
+
+	data, err := readMCPImportSource(path)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"mcpServers":{"x":{"command":"run"}}}`, string(data))
+}
+
+func TestReadMCPImportSourceEmpty(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(path, []byte("  \n"), 0o600))
+
+	_, err := readMCPImportSource(path)
+	require.Error(t, err)
+}
+
+func TestReadMCPImportSourceMissing(t *testing.T) {
+	_, err := readMCPImportSource(filepath.Join(t.TempDir(), "nope.json"))
+	require.Error(t, err)
 }

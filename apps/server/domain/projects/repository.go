@@ -49,7 +49,40 @@ type projectWithStats struct {
 	RunningJobs       int    `bun:"running_jobs"`
 	QueuedJobs        int    `bun:"queued_jobs"`
 	InstalledSchemas  []byte `bun:"installed_schemas"` // Raw JSON
+
+	PendingExtractionBranchCount       int `bun:"pending_extraction_branch_count"`
+	PendingExtractionObjectCount       int `bun:"pending_extraction_object_count"`
+	PendingExtractionRelationshipCount int `bun:"pending_extraction_relationship_count"`
+	MainGraphObjectCount               int `bun:"main_graph_object_count"`
 }
+
+// pendingExtractionMergeStatsColumns appends the four correlated counts that
+// describe extraction output still awaiting merge (#496). They mirror
+// graph.Repository.PendingExtractionBranches: unmerged extraction branches,
+// live HEAD rows only, and merged ledger rows excluded.
+const pendingExtractionMergeStatsColumns = `
+	(SELECT COUNT(*) FROM kb.branches b
+	 WHERE b.project_id = p.id AND b.origin = 'extraction' AND b.merged_at IS NULL
+	   AND (EXISTS (SELECT 1 FROM kb.graph_objects go
+	                WHERE go.project_id = p.id AND go.branch_id = b.id
+	                  AND go.supersedes_id IS NULL AND go.merged_to_canonical_id IS NULL AND go.deleted_at IS NULL)
+	     OR EXISTS (SELECT 1 FROM kb.graph_relationships gr
+	                WHERE gr.project_id = p.id AND gr.branch_id = b.id
+	                  AND gr.supersedes_id IS NULL AND gr.deleted_at IS NULL))
+	) AS pending_extraction_branch_count,
+	(SELECT COUNT(*) FROM kb.graph_objects go
+	 JOIN kb.branches b ON b.id = go.branch_id AND b.project_id = go.project_id
+	 WHERE go.project_id = p.id AND b.origin = 'extraction' AND b.merged_at IS NULL
+	   AND go.supersedes_id IS NULL AND go.merged_to_canonical_id IS NULL AND go.deleted_at IS NULL
+	) AS pending_extraction_object_count,
+	(SELECT COUNT(*) FROM kb.graph_relationships gr
+	 JOIN kb.branches b ON b.id = gr.branch_id AND b.project_id = gr.project_id
+	 WHERE gr.project_id = p.id AND b.origin = 'extraction' AND b.merged_at IS NULL
+	   AND gr.supersedes_id IS NULL AND gr.deleted_at IS NULL
+	) AS pending_extraction_relationship_count,
+	(SELECT COUNT(*) FROM kb.graph_objects
+	 WHERE project_id = p.id AND branch_id IS NULL AND supersedes_id IS NULL AND deleted_at IS NULL
+	) AS main_graph_object_count`
 
 func (p *projectWithStats) populateStats() {
 	if p.Project.ID == "" {
@@ -63,6 +96,13 @@ func (p *projectWithStats) populateStats() {
 		RunningJobs:       p.RunningJobs,
 		QueuedJobs:        p.QueuedJobs,
 		InstalledSchemas:  []InstalledSchema{},
+		PendingExtractionMerge: &PendingExtractionMergeStats{
+			BranchCount:          p.PendingExtractionBranchCount,
+			ObjectCount:          p.PendingExtractionObjectCount,
+			RelationshipCount:    p.PendingExtractionRelationshipCount,
+			MainGraphObjectCount: p.MainGraphObjectCount,
+			Stranded:             p.PendingExtractionObjectCount > 0 && p.MainGraphObjectCount == 0,
+		},
 	}
 	if len(p.InstalledSchemas) > 0 {
 		_ = json.Unmarshal(p.InstalledSchemas, &p.Project.Stats.InstalledSchemas)
@@ -113,7 +153,8 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Project, er
 			 )), '[]'::json)
 			 FROM kb.project_schemas ps
 			 JOIN kb.graph_schemas gs ON gs.id = ps.schema_id
-			 WHERE ps.project_id = p.id AND ps.active = true) AS installed_schemas`)
+			 WHERE ps.project_id = p.id AND ps.active = true) AS installed_schemas`).
+			ColumnExpr(pendingExtractionMergeStatsColumns)
 	} else {
 		query = query.ColumnExpr("p.*")
 	}
@@ -182,7 +223,8 @@ func (r *Repository) GetByID(ctx context.Context, id string, includeStats bool) 
 			 )), '[]'::json)
 			 FROM kb.project_schemas ps
 			 JOIN kb.graph_schemas gs ON gs.id = ps.schema_id
-			 WHERE ps.project_id = p.id AND ps.active = true) AS installed_schemas`)
+			 WHERE ps.project_id = p.id AND ps.active = true) AS installed_schemas`).
+			ColumnExpr(pendingExtractionMergeStatsColumns)
 	} else {
 		query = query.ColumnExpr("p.*")
 	}

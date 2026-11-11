@@ -208,20 +208,55 @@ func Load(path string) (*Config, error) {
 }
 
 // Save writes c to path as YAML with mode 0600, creating the parent directory
-// if missing.
+// if missing. The write is crash-atomic: the document goes to a temp file in
+// the same directory, is fsynced, then renamed over the target, so a crash
+// mid-write leaves either the old file or the new one — never a truncated
+// config.
 func (c *Config) Save(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create config dir for %s: %w", path, err)
 	}
 	b, err := yaml.Marshal(c)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
-	if err := os.WriteFile(path, b, 0o600); err != nil {
-		return fmt.Errorf("write config %s: %w", path, err)
+	tmp, err := os.CreateTemp(dir, ".config-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp config in %s: %w", dir, err)
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		return fmt.Errorf("chmod config %s: %w", path, err)
+	tmpName := tmp.Name()
+	// Remove the temp file on every failure path; after a successful rename
+	// this is a harmless ENOENT.
+	defer func() { _ = os.Remove(tmpName) }()
+	cleanup := func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		cleanup()
+		return fmt.Errorf("chmod temp config %s: %w", tmpName, err)
+	}
+	if _, err := tmp.Write(b); err != nil {
+		cleanup()
+		return fmt.Errorf("write temp config %s: %w", tmpName, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		cleanup()
+		return fmt.Errorf("sync temp config %s: %w", tmpName, err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("close temp config %s: %w", tmpName, err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("replace config %s: %w", path, err)
+	}
+	// Best-effort directory fsync so the rename itself is durable.
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		_ = d.Close()
 	}
 	return nil
 }

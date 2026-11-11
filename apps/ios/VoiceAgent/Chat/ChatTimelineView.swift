@@ -72,7 +72,7 @@ struct ChatTimelineView: View {
             case let .item(item):
                 itemRow(item, footers: footers)
             case let .tools(id, tools):
-                ToolActivityGroup(tools: tools, turnKey: id)
+                ToolActivityGroup(tools: tools, groupID: id)
             }
         }
     }
@@ -99,7 +99,7 @@ struct ChatTimelineView: View {
                 TurnFooterView(run: run, text: { markdown })
             }
         case let .reasoning(text, isLive, _):
-            ThinkingBlockView(text: text, isLive: isLive)
+            ThinkingBlockView(id: item.id, text: text, isLive: isLive)
         case .tool:
             // Folded into a ToolActivityGroup by the rows walker.
             EmptyView()

@@ -172,62 +172,6 @@ extension ToolActivityRun {
     }
 }
 
-// MARK: - Disclosure
-
-/// Which runs the reader has opened or closed, remembered outside the rows.
-///
-/// A step's `ToolCallInfo` is replaced wholesale when its result arrives, so a
-/// row's own `@State` is lost at exactly the moment it changes from running to
-/// done. A group that kept its state in the view would therefore fold shut
-/// under the reader as the last step settled. The choice is remembered by turn
-/// instead, so settling a step can never change it.
-@MainActor
-@Observable
-final class ToolActivityDisclosure {
-    private var states: [UUID: Bool] = [:]
-
-    /// The reader's choice, or the caller's default: open while a step runs,
-    /// closed once the run has settled.
-    func isExpanded(_ turnID: UUID, default defaultValue: Bool) -> Bool {
-        states[turnID] ?? defaultValue
-    }
-
-    func setExpanded(_ expanded: Bool, for turnID: UUID) {
-        states[turnID] = expanded
-    }
-
-    /// Flips the choice exactly as tapping the summary line does, so a test can
-    /// follow the same activation path the button uses (#2192).
-    func toggle(_ turnID: UUID, default defaultValue: Bool) {
-        setExpanded(!isExpanded(turnID, default: defaultValue), for: turnID)
-    }
-
-    /// Drops every choice, for a new conversation.
-    func clear() {
-        states.removeAll()
-        sourcesStates.removeAll()
-    }
-
-    // MARK: Sources footers
-
-    /// Opened Sources footers by message id, kept here like the runs so a
-    /// recycled row cannot fold shut under the reader. Closed by default.
-    private var sourcesStates: [String: Bool] = [:]
-
-    func isSourcesExpanded(_ messageID: String) -> Bool {
-        sourcesStates[messageID] ?? false
-    }
-
-    func setSourcesExpanded(_ expanded: Bool, for messageID: String) {
-        sourcesStates[messageID] = expanded
-    }
-}
-
-extension EnvironmentValues {
-    /// Nil outside the chat list, where a run simply follows its default.
-    @Entry var toolActivityDisclosure: ToolActivityDisclosure?
-}
-
 // MARK: - Group
 
 /// A turn's tool calls as one run: how many calls it holds, which tools they
@@ -235,9 +179,11 @@ extension EnvironmentValues {
 /// the web console's line, drawn natively.
 struct ToolActivityGroup: View {
     let tools: [ToolCallInfo]
-    let turnID: UUID
+    /// The group's stable id: the first call's id. Keyed per group, not per
+    /// turn, so tapping one run cannot open the other runs in the same turn.
+    let groupID: String
 
-    @Environment(\.toolActivityDisclosure) private var disclosure
+    @Environment(\.chatDisclosure) private var disclosure
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.locale) private var locale
@@ -252,7 +198,7 @@ struct ToolActivityGroup: View {
     }
 
     private var isExpanded: Bool {
-        disclosure?.isExpanded(turnID, default: isRunning) ?? isRunning
+        disclosure?.isExpanded(groupID, default: isRunning) ?? isRunning
     }
 
     private var summaryAccessibility: ToolActivityRun.SummaryAccessibility {
@@ -296,7 +242,7 @@ struct ToolActivityGroup: View {
     private var header: some View {
         Button {
             withAnimation(reduceMotion ? nil : .snappy) {
-                disclosure?.toggle(turnID, default: isRunning)
+                disclosure?.toggle(groupID, default: isRunning)
             }
         } label: {
             HStack(spacing: 2 * .grid) {

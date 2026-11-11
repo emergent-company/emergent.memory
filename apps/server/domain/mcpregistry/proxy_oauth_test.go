@@ -3,6 +3,7 @@ package mcpregistry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -594,4 +595,64 @@ func TestClassifyInstallAuth_NonAuthErrorIsNeither(t *testing.T) {
 	if requiresTokenHeader {
 		t.Error("requiresTokenHeader = true, want false for a non-auth error")
 	}
+}
+
+// emptyServerIDRejectingRepo mirrors the real store's Postgres behaviour: a
+// server_id comparison against an empty string raises the uuid cast error. It
+// pins the #515 regression where a transient /test draft server (ID "") made
+// Test connection surface `invalid input syntax for type uuid: ""`.
+type emptyServerIDRejectingRepo struct {
+	*fakeProxyRepo
+}
+
+func (r emptyServerIDRejectingRepo) FindOAuthForUser(ctx context.Context, serverID, userID string) (*MCPServerOAuth, error) {
+	if serverID == "" {
+		return nil, errors.New(`ERROR: invalid input syntax for type uuid: "" (SQLSTATE 22P02)`)
+	}
+	return r.fakeProxyRepo.FindOAuthForUser(ctx, serverID, userID)
+}
+
+func TestOAuthAuthorizationHeader_TransientServerHasNoCredential(t *testing.T) {
+	pm := &ProxyManager{
+		repo:      emptyServerIDRejectingRepo{&fakeProxyRepo{}},
+		encryptor: testEncryptor(t),
+		log:       slog.Default(),
+		conns:     make(map[string]*mcpConnection),
+	}
+
+	got, err := pm.oauthAuthorizationHeader(context.Background(), remoteServer("", "p1", "draft", "https://mcp.test/mcp"))
+	require.NoError(t, err)
+	if got != "" {
+		t.Errorf("header = %q, want empty for a transient draft server", got)
+	}
+}
+
+// TestRequestHeaders_ChangedDraftURLGetsNoStoredCredential pins the
+// save-less /test probe contract: the draft probe has no server identity, so a
+// stored OAuth token must never be attached to a draft URL the user may have
+// changed (and no refresh/write path may run).
+func TestRequestHeaders_ChangedDraftURLGetsNoStoredCredential(t *testing.T) {
+	repo := &fakeProxyRepo{}
+	pm := oauthTestProxy(t, repo)
+	expiry := time.Now().UTC().Add(time.Hour)
+	repo.oauth = map[string]*MCPServerOAuth{
+		"s1": oauthRow(t, pm, "s1", "stored-access", "rt", "https://auth.test/token", "https://mcp.test/mcp", &expiry),
+	}
+
+	// Edited draft: same form as the stored server but a different URL, and no
+	// stored ID (buildTransientServer never carries one).
+	draft := remoteServer("", "p1", "draft", "https://changed.example/mcp")
+	headers, err := pm.requestHeaders(context.Background(), draft)
+	require.NoError(t, err)
+	if got := headers["Authorization"]; got != "" {
+		t.Fatalf("draft request carried stored credential %q", got)
+	}
+
+	// The stored credential is untouched: no refresh happened on the probe.
+	stored, err := repo.FindOAuthForUser(context.Background(), "s1", "")
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	token, err := decryptSecretValue(pm.encryptor, stored.AccessToken)
+	require.NoError(t, err)
+	require.Equal(t, "stored-access", token)
 }

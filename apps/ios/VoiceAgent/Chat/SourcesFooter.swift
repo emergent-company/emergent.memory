@@ -18,7 +18,7 @@ struct SourcesFooter: View {
     /// The reply this footer belongs to: the key its open state is kept under.
     let messageID: String
 
-    @Environment(\.toolActivityDisclosure) private var disclosure
+    @Environment(\.chatDisclosure) private var disclosure
     /// The label's plural rule is chosen in the reader's language, including a
     /// locale a parent view overrides.
     @Environment(\.locale) private var locale
