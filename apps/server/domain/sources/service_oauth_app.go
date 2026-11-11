@@ -36,9 +36,6 @@ type OAuthAppDTO struct {
 	UsedBy           int                            `json:"usedBy"`
 	CreatedAt        time.Time                      `json:"createdAt"`
 	UpdatedAt        time.Time                      `json:"updatedAt"`
-	// legacyProviderType is set when this DTO came through the per-provider
-	// compatibility API.
-	legacyProviderType string
 }
 
 // CreateOAuthAppRequest is the write shape for a new named OAuth app.

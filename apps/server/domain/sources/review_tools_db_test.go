@@ -187,12 +187,6 @@ func newReviewToolsAPI(t *testing.T) *reviewToolsAPI {
 	return api
 }
 
-func (a *reviewToolsAPI) head() string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.currentHead
-}
-
 func (a *reviewToolsAPI) setHead(sha string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
