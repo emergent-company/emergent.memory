@@ -664,10 +664,10 @@ Examples:
 		fmt.Fprintf(out, "Version ID:  %s\n", obj.VersionID)
 		fmt.Fprintf(out, "Type:        %s\n", obj.Type)
 		if obj.Ref != "" {
-			fmt.Fprintf(out, "Ref:         %s\n", obj.Ref)
+			_, _ = fmt.Fprintf(out, "Ref:         %s\n", obj.Ref)
 		}
 		if obj.Name != nil && *obj.Name != "" {
-			fmt.Fprintf(out, "Name:        %s\n", *obj.Name)
+			_, _ = fmt.Fprintf(out, "Name:        %s\n", *obj.Name)
 		}
 		fmt.Fprintf(out, "Version:     %d\n", obj.Version)
 		if key != "" {
