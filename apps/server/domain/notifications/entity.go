@@ -105,7 +105,10 @@ type NotificationCounts struct {
 	Snoozed   int64 `json:"snoozed"`
 	Cleared   int64 `json:"cleared"`
 	// RequiresAction counts the action-required notifications in the current
-	// scope: not cleared, not snoozed, requires_action = true.
+	// scope: not cleared, not snoozed, requires_action = true, and no recorded
+	// action_status. It is the badge for the Action-required tab and applies the
+	// same predicate as that tab's list (actionRequiredPredicate), so it cannot
+	// count a row the list does not show — notably one that was acted on.
 	RequiresAction int64 `json:"requiresAction"`
 }
 
@@ -122,19 +125,25 @@ const (
 
 // ListParams contains parameters for listing notifications
 type ListParams struct {
-	Tab            NotificationTab
-	Category       string
-	UnreadOnly     bool
-	Search         string
-	Scope          Scope
-	ProjectID      *string
+	Tab        NotificationTab
+	Category   string
+	UnreadOnly bool
+	Search     string
+	Scope      Scope
+	ProjectID  *string
+	// RequiresAction narrows the list to rows that still need the user's
+	// action (requires_action AND action_status IS NULL) — the Action-required
+	// tab. It is authoritative on the recorded outcome, so a resolved row leaves
+	// the tab even when the client's follow-up read/clear never landed.
 	RequiresAction bool
 }
 
 // CountParams contains parameters for counting notifications.
 type CountParams struct {
-	Scope          Scope
-	ProjectID      *string
+	Scope     Scope
+	ProjectID *string
+	// RequiresAction applies the same action-required predicate as
+	// ListParams.RequiresAction, so a scoped count agrees with the list.
 	RequiresAction bool
 }
 
