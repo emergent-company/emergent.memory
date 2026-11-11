@@ -3,6 +3,8 @@ package mcp
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/internal/storage"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
@@ -32,11 +35,24 @@ func (s *uploadTestStorage) Delete(context.Context, string) error { return nil }
 
 type uploadTestDocCreator struct {
 	got []documents.UploadParams
+	// existing is what an identical upload already produced, if any; findCalls
+	// counts the dedupe lookups.
+	existing  *documents.UploadDocumentResponse
+	findCalls int
+	err       error
 }
 
 func (c *uploadTestDocCreator) CreateFromUpload(_ context.Context, params documents.UploadParams) (*documents.UploadDocumentResponse, error) {
 	c.got = append(c.got, params)
+	if c.err != nil {
+		return nil, c.err
+	}
 	return &documents.UploadDocumentResponse{Document: &documents.DocumentSummary{ID: "doc-mcp-1"}}, nil
+}
+
+func (c *uploadTestDocCreator) FindExistingUploadByHash(_ context.Context, _, _ string) (*documents.UploadDocumentResponse, error) {
+	c.findCalls++
+	return c.existing, nil
 }
 
 type uploadTestParsingJobs struct {
@@ -164,4 +180,121 @@ func TestExecuteUploadDocument_FailsClosedWithoutIngestor(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not configured")
+}
+
+// TestExecuteUploadDocument_AutoExtractOverride is the regression test for the
+// per-call extraction override: an agent must be able to store a file without
+// spending extraction tokens even in a project that extracts by default, and to
+// request extraction in a project that does not.
+func TestExecuteUploadDocument_AutoExtractOverride(t *testing.T) {
+	t.Run("explicit false overrides a project default of on", func(t *testing.T) {
+		svc, _, jobs := newUploadTestService(t, &uploadTestAutoExtract{enabled: true})
+
+		_, err := svc.executeUploadDocument(context.Background(), "proj-1", map[string]any{
+			"filename":       "notes.md",
+			"content_base64": base64.StdEncoding.EncodeToString([]byte("body")),
+			"auto_extract":   false,
+		})
+		require.NoError(t, err)
+		require.Len(t, jobs.got, 1)
+		assert.False(t, jobs.got[0].AutoExtract,
+			"an explicit auto_extract=false must win over the project default")
+	})
+
+	t.Run("explicit true overrides a project default of off", func(t *testing.T) {
+		svc, _, jobs := newUploadTestService(t, &uploadTestAutoExtract{enabled: false})
+
+		_, err := svc.executeUploadDocument(context.Background(), "proj-1", map[string]any{
+			"filename":       "notes.md",
+			"content_base64": base64.StdEncoding.EncodeToString([]byte("body")),
+			"auto_extract":   true,
+		})
+		require.NoError(t, err)
+		require.Len(t, jobs.got, 1)
+		assert.True(t, jobs.got[0].AutoExtract)
+	})
+
+	t.Run("absent still follows the project default", func(t *testing.T) {
+		svc, _, jobs := newUploadTestService(t, &uploadTestAutoExtract{enabled: true})
+
+		_, err := svc.executeUploadDocument(context.Background(), "proj-1", map[string]any{
+			"filename":       "notes.md",
+			"content_base64": base64.StdEncoding.EncodeToString([]byte("body")),
+		})
+		require.NoError(t, err)
+		require.Len(t, jobs.got, 1)
+		assert.True(t, jobs.got[0].AutoExtract)
+	})
+
+	t.Run("a non-boolean value is refused, not coerced", func(t *testing.T) {
+		svc, creator, jobs := newUploadTestService(t, nil)
+
+		_, err := svc.executeUploadDocument(context.Background(), "proj-1", map[string]any{
+			"filename":       "notes.md",
+			"content_base64": base64.StdEncoding.EncodeToString([]byte("body")),
+			"auto_extract":   "false",
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "boolean")
+		assert.Empty(t, creator.got, "nothing may be stored for a rejected argument")
+		assert.Empty(t, jobs.got)
+	})
+}
+
+// TestExecuteUploadDocument_RetryDoesNotReparse is the regression test for the
+// retry cost: an MCP client that resends the same bytes (timeout, reconnect,
+// unsure the call landed) must get the document the first attempt created, not a
+// second row and a second parse.
+func TestExecuteUploadDocument_RetryDoesNotReparse(t *testing.T) {
+	svc, creator, jobs := newUploadTestService(t, &uploadTestAutoExtract{enabled: true})
+	args := map[string]any{
+		"filename":       "notes.md",
+		"content_base64": base64.StdEncoding.EncodeToString([]byte("# once")),
+	}
+
+	first, err := svc.executeUploadDocument(context.Background(), "proj-1", args)
+	require.NoError(t, err)
+	require.Len(t, creator.got, 1)
+	require.Len(t, jobs.got, 1)
+	require.Equal(t, 1, creator.findCalls, "the MCP path must ask whether these bytes already exist")
+	_ = first
+
+	// The first upload is now a document in the project; the retry must find it.
+	existingID := "doc-mcp-1"
+	creator.existing = &documents.UploadDocumentResponse{
+		Document:           &documents.DocumentSummary{ID: existingID},
+		IsDuplicate:        true,
+		ExistingDocumentID: &existingID,
+	}
+
+	res, err := svc.executeUploadDocument(context.Background(), "proj-1", args)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Len(t, creator.got, 1, "the retry must not create a second document")
+	require.Len(t, jobs.got, 1, "the retry must not enqueue a second parse")
+
+	require.NotEmpty(t, res.Content)
+	var payload documents.UploadDocumentResponse
+	require.NoError(t, json.Unmarshal([]byte(res.Content[0].Text), &payload))
+	assert.True(t, payload.IsDuplicate, "a retry must be reported as a duplicate, never silently")
+	require.NotNil(t, payload.ExistingDocumentID)
+	assert.Equal(t, existingID, *payload.ExistingDocumentID)
+}
+
+// TestExecuteUploadDocument_DoesNotLeakInternalDetail: the tool result is
+// client-visible, so a failed ingest must report the stable message and keep the
+// wrapped cause (SQL text, upstream bodies) in the log.
+func TestExecuteUploadDocument_DoesNotLeakInternalDetail(t *testing.T) {
+	svc, creator, _ := newUploadTestService(t, nil)
+	creator.err = apperror.ErrInternal.WithInternal(errors.New(`pq: relation "kb.documents" does not exist`))
+
+	_, err := svc.executeUploadDocument(context.Background(), "proj-1", map[string]any{
+		"filename":       "notes.md",
+		"content_base64": base64.StdEncoding.EncodeToString([]byte("body")),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "upload_document:")
+	assert.Contains(t, err.Error(), apperror.ErrInternal.Message)
+	assert.NotContains(t, err.Error(), `pq: relation`)
+	assert.NotContains(t, err.Error(), "internal_error:")
 }
