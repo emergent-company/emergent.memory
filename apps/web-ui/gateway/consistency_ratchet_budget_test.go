@@ -35,6 +35,18 @@ func adoptionBudget() []adoptionBudgetEntry {
 			note: "<form class='card border border-line'>; ui.CardRaw has no <form> element variant (As: div/a/button/section/article/li), so the form element itself cannot be the card"},
 		{file: "share_page.templ", marker: "class:alert", count: 1,
 			note: "the inline terminal is role=status, not role=alert, and needs its own share-inline-terminal/items-start/gap-3/hidden classes; ui.Alert hardcodes role=alert and has no Class prop"},
+		// The deploy portal is a standalone public document rendered before any
+		// session/app shell exists. It intentionally uses daisy primitives
+		// directly: the shared components assume the shell/layout context and
+		// several lack the Class/role knobs this landing page needs.
+		{file: "deploy_portal.templ", marker: "class:alert", count: 5,
+			note: "standalone pre-session portal; ui.Alert hardcodes role=alert and has no Class prop for the landing states"},
+		{file: "deploy_portal.templ", marker: "class:badge", count: 1,
+			note: "standalone pre-session portal; ui.Badge has no Class prop for the landing eyebrow"},
+		{file: "deploy_portal.templ", marker: "class:btn", count: 3,
+			note: "standalone pre-session portal; ui.Button requires shell context and cannot render the disabled OAuth CTA branch cleanly"},
+		{file: "deploy_portal.templ", marker: "class:card", count: 4,
+			note: "standalone pre-session portal; ui.Card* assumes the app shell and has no Class prop for the step/workspace cards"},
 	}
 }
 
