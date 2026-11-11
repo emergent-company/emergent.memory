@@ -1,197 +1,109 @@
 package agents
 
 import (
-	"context"
-	"strconv"
-	"strings"
+	"bytes"
+	"go/ast"
+	"go/format"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"regexp"
 	"testing"
-
-	"github.com/stretchr/testify/require"
-	"google.golang.org/adk/v2/session"
-
-	"github.com/emergent-company/emergent.memory/internal/config"
-	"github.com/emergent-company/emergent.memory/internal/testdb"
-	"github.com/emergent-company/emergent.memory/pkg/a2ui"
-	"github.com/emergent-company/emergent.memory/pkg/adk"
 )
 
-// These tests drive the real pipeline (Execute → runPipeline → the ADK runner)
-// with the deterministic canned model, so they exercise the three executor call
-// sites that own surface identity — the progressive stream namespace, the
-// authoritative final frame and the persisted row — instead of re-deriving the
-// ids in the test. Reverting any of those call sites makes them RED.
+// renderA2UISet matches a RenderA2UI:true assignment, tolerating the gofmt
+// column alignment of composite-literal fields (single or multiple spaces).
+var renderA2UISet = regexp.MustCompile(`RenderA2UI:\s+true`)
 
-const (
-	a2uiWiringCreate = `{"createSurface":{"surfaceId":"s1","catalogId":"memory-basic"}}`
-	a2uiWiringUpdate = `{"updateComponents":{"surfaceId":"s1","components":[{"id":"r1","component":"result","rows":[{"label":"status","value":"OK"}]}]}}`
-)
-
-// a2uiWiringBlock is one answer's card, named "s1" exactly as the prompt
-// teaches.
-const a2uiWiringBlock = "```a2ui\n" + a2uiWiringCreate + "\n" + a2uiWiringUpdate + "\n```\n"
-
-// a2uiWiringPartials splits the answer and its block into the chunks a
-// streaming model emits, one complete line at a time, so the progressive parser
-// sees the surface mid-stream rather than only in the finished response.
-func a2uiWiringPartials(answer string) []string {
-	return []string{
-		answer + "```a2ui\n",
-		a2uiWiringCreate + "\n",
-		a2uiWiringUpdate + "\n",
-		"```\n",
+// TestRenderA2UIWiring pins the surface wiring for issue #414: every transport
+// that renders A2UI cards — or resumes a run that lives on such a surface — must
+// set RenderA2UI:true on the ExecuteRequest it hands the executor, and the
+// text-only surfaces (agentcompat, non-stream A2A) must not. Deleting any one of
+// the positive assignments (or adding one to a negative surface) makes the
+// corresponding function-body check fail, so a surface cannot silently lose the
+// catalog instruction (and resume legs cannot drop it, nor a carrier-less
+// transport gain it). It mirrors the fail-first wiring tests
+// (transport_enforced_wiring_test.go, webhook_trust_test.go): it fails when the
+// wiring regresses, not when behavior drifts.
+func TestRenderA2UIWiring(t *testing.T) {
+	// file → functions whose ExecuteRequest must carry RenderA2UI: true.
+	sites := map[string][]string{
+		filepath.Join("..", "chat", "handler.go"): {"streamAgentChat", "resumeForAnswer"},
+		"a2a_stream.go":    {"streamNewTask", "streamResumeTask"},
+		"share_service.go": {"buildShareExecuteRequest"},
+		"executor.go":      {"maybeWakeParent"},
+		"handler.go":       {"resumeQuestionRun"},
 	}
-}
 
-// a2uiWiringExecutor returns an executor whose model factory serves the given
-// scripted deterministic answer (no provider, no network) over the real repo.
-func a2uiWiringExecutor(repo *Repository, resp adk.TestLLMResponse) *AgentExecutor {
-	mf := adk.NewModelFactory(&config.LLMConfig{}, testAgentLogger(), nil, nil, nil)
-	mf.WithTestLLMChecker(alwaysTestLLM{})
-	mf.WithTestLLMResponse(resp)
-	return &AgentExecutor{
-		repo:           repo,
-		modelFactory:   mf,
-		toolPool:       &capturingToolPool{},
-		sessionService: session.InMemoryService(),
-		safeguards:     config.AgentSafeguardsConfig{ExecutionEnabled: true},
-		log:            testAgentLogger(),
-	}
-}
-
-// runA2UIWiring runs one canned answer through Execute and returns the run id,
-// the A2UI stream events it produced, and the repo the run was persisted into.
-func runA2UIWiring(t *testing.T, resp adk.TestLLMResponse) (runID string, events []StreamEvent, repo *Repository) {
-	t.Helper()
-	if testing.Short() {
-		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
-	}
-	tdb := testdb.SetupTestDBOrFail(t, context.Background(), "agents_a2ui_wiring")
-	t.Cleanup(tdb.Close)
-	ctx := context.Background()
-
-	_, projectID := insertOrgAndProject(t, tdb.DB, ctx)
-	agentID := insertRuntimeAgent(t, tdb.DB, ctx, projectID, "a2ui-wiring-agent")
-
-	repo = NewRepository(tdb.DB)
-	ae := a2uiWiringExecutor(repo, resp)
-	res, err := ae.Execute(ctx, ExecuteRequest{
-		Agent:       &Agent{ID: agentID, ProjectID: projectID, Name: "a2ui-wiring-agent"},
-		ProjectID:   projectID,
-		UserMessage: "show me a card",
-		StreamCallback: func(ev StreamEvent) {
-			if ev.Type == StreamEventA2UI {
-				events = append(events, ev)
+	for file, funcs := range sites {
+		src, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		for _, fn := range funcs {
+			body := a2uiRenderFuncBody(t, file, string(src), fn)
+			if body == "" {
+				t.Errorf("%s: function %s not found", file, fn)
+				continue
 			}
-		},
-	})
-	require.NoError(t, err, "pipeline run should complete")
-	require.NotNil(t, res)
-	require.NotEmpty(t, res.RunID)
-	return res.RunID, events, repo
-}
-
-// splitOneScope asserts id is exactly `<run>.<step>:<bare>` and returns the two
-// halves. More than one ':' means the id nested under a previous scope.
-func splitOneScope(t *testing.T, id, runID, bare string) (scope string) {
-	t.Helper()
-	require.Equal(t, 1, strings.Count(id, ":"),
-		"surface id %q carries more than one scope layer", id)
-	scope, modelID, ok := strings.Cut(id, ":")
-	require.True(t, ok, "surface id %q is not `<run>.<step>:<model id>`", id)
-	require.Equal(t, bare, modelID, "the model's own id must be preserved inside the scope")
-	require.True(t, strings.HasPrefix(scope, runID+"."),
-		"surface id %q is not scoped to run %s", id, runID)
-	step := strings.TrimPrefix(scope, runID+".")
-	_, err := strconv.Atoi(step)
-	require.NoError(t, err, "scope step %q is not a decimal step", step)
-	return scope
-}
-
-// TestA2UISurfaceIDsAreScopedThroughThePipeline is the wiring guard for #592:
-// one answer both streams a surface and finishes with it. The progressive frame,
-// the authoritative final frame and the persisted row that history replay reads
-// must all carry the same run+step-scoped id, and that id must differ from the
-// model's bare "s1". Reverting the progressive-stream namespace, the
-// final-frame namespace or the persisted-surfaces rewrite makes this RED.
-func TestA2UISurfaceIDsAreScopedThroughThePipeline(t *testing.T) {
-	const answer = "Here is your card.\n"
-	runID, events, repo := runA2UIWiring(t, adk.TestLLMResponse{
-		Partials: a2uiWiringPartials(answer),
-		Final:    answer + a2uiWiringBlock,
-	})
-
-	var progressive, final []StreamEvent
-	for _, ev := range events {
-		if ev.Final {
-			final = append(final, ev)
-		} else {
-			progressive = append(progressive, ev)
+			if !renderA2UISet.MatchString(body) {
+				t.Errorf("%s: %s must set RenderA2UI: true on its ExecuteRequest (deleting it drops the catalog instruction on an A2UI surface)", file, fn)
+			}
 		}
 	}
-	require.NotEmpty(t, progressive, "the streamed answer must emit a progressive surface frame")
-	require.NotEmpty(t, final, "the finished answer must emit the authoritative surface frame")
 
-	progressiveID := progressive[0].SurfaceID
-	finalID := final[0].SurfaceID
-	require.Equal(t, progressiveID, finalID,
-		"the final frame must address the surface the progressive frame created")
-	scope := splitOneScope(t, progressiveID, runID, "s1")
-
-	// The frame and the message payload inside it must agree, or the renderer
-	// registers the card under one id and updates it under another.
-	require.NotEmpty(t, final[0].A2UI)
-	require.NotNil(t, final[0].A2UI[0].CreateSurface)
-	require.Equal(t, finalID, final[0].A2UI[0].CreateSurface.SurfaceID,
-		"the frame id and the createSurface payload id must agree")
-	require.NotNil(t, final[0].A2UI[1].UpdateComponents)
-	require.Equal(t, finalID, final[0].A2UI[1].UpdateComponents.SurfaceID)
-
-	// The persisted row is what a reload replays: same id, same messages.
-	msgs, err := repo.FindMessagesByRunID(context.Background(), runID)
-	require.NoError(t, err)
-	var persisted []a2ui.Message
-	for _, msg := range msgs {
-		if surfaces := storedSurfaces(msg.Content["a2ui"]); len(surfaces) > 0 {
-			persisted = surfaces
-		}
+	// Negative pins: surfaces with no A2UI carrier must never set the flag.
+	// - agentcompat forwards only text deltas, so a card-only reply would strand
+	//   an empty content delta.
+	// - the non-stream A2A transport (startA2ATask/resumeA2ATask) has no
+	//   a2uiDataPart carrier: RunToA2ATask/finalTextArtifact read Content["text"],
+	//   which replyForStorage strips, so a card-only continuation would strand a
+	//   completed task with no result artifact. Only the streaming A2A translator
+	//   carries cards (a2a_stream.go), which is why those are positive pins above.
+	compat, err := os.ReadFile(filepath.Join("..", "agentcompat", "service.go"))
+	if err != nil {
+		t.Fatalf("read agentcompat/service.go: %v", err)
 	}
-	require.NotEmpty(t, persisted, "the assistant turn must persist its surface for reload")
-	require.NotNil(t, persisted[0].CreateSurface)
-	require.Equal(t, progressiveID, persisted[0].CreateSurface.SurfaceID,
-		"the persisted surface id must match the streamed frame")
-	require.Equal(t, scope, strings.SplitN(progressiveID, ":", 2)[0])
-	require.NotNil(t, persisted[1].UpdateComponents)
-	require.Equal(t, progressiveID, persisted[1].UpdateComponents.SurfaceID,
-		"the persisted payload must use one id throughout")
-	require.NotContains(t, persisted[0].CreateSurface.SurfaceID, "s1:s1",
-		"the persisted id must not nest the model id under itself")
-}
+	if renderA2UISet.MatchString(string(compat)) {
+		t.Errorf("agentcompat/service.go must NOT set RenderA2UI: true (it is a text-only surface)")
+	}
 
-// TestA2UITeardownUsesTheScopedProgressiveID covers the third call site from the
-// other direction: a surface streamed progressively but absent from the finished
-// response must be torn down under the exact id the renderer knows. A teardown
-// that dropped the namespace would delete nothing (or worse, a bare "s1" that
-// some other run rendered).
-func TestA2UITeardownUsesTheScopedProgressiveID(t *testing.T) {
-	const answer = "Here is your card.\n"
-	runID, events, _ := runA2UIWiring(t, adk.TestLLMResponse{
-		Partials: a2uiWiringPartials(answer),
-		// The finished answer drops the card: only the progressive surface ever
-		// existed, so the run must delete it.
-		Final: answer,
-	})
-
-	var teardown *StreamEvent
-	for i := range events {
-		if ev := events[i]; ev.Final || len(ev.A2UI) != 1 || ev.A2UI[0].DeleteSurface == nil {
+	a2aMsgSrc, err := os.ReadFile("a2a_message.go")
+	if err != nil {
+		t.Fatalf("read a2a_message.go: %v", err)
+	}
+	for _, fn := range []string{"startA2ATask", "resumeA2ATask"} {
+		body := a2uiRenderFuncBody(t, "a2a_message.go", string(a2aMsgSrc), fn)
+		if body == "" {
+			t.Errorf("a2a_message.go: function %s not found", fn)
 			continue
 		}
-		teardown = &events[i]
+		if renderA2UISet.MatchString(body) {
+			t.Errorf("a2a_message.go: %s must NOT set RenderA2UI: true (non-stream A2A has no A2UI carrier)", fn)
+		}
 	}
-	require.NotNil(t, teardown, "a progressive surface missing from the final answer must be torn down")
+}
 
-	progressiveID := teardown.SurfaceID
-	splitOneScope(t, progressiveID, runID, "s1")
-	require.Equal(t, progressiveID, teardown.A2UI[0].DeleteSurface.SurfaceID,
-		"the deleteSurface payload must use the id the frame names")
+// a2uiRenderFuncBody returns the gofmt'd source of the named function's body, or
+// "" if the function is not present in src.
+func a2uiRenderFuncBody(t *testing.T, file, src, name string) string {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, file, src, 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", file, err)
+	}
+	for _, decl := range f.Decls {
+		fd, ok := decl.(*ast.FuncDecl)
+		if !ok || fd.Name.Name != name || fd.Body == nil {
+			continue
+		}
+		var buf bytes.Buffer
+		if err := format.Node(&buf, fset, fd.Body); err != nil {
+			t.Fatalf("format %s body: %v", file, err)
+		}
+		return buf.String()
+	}
+	return ""
 }
