@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strings"
 	"time"
 
 	"google.golang.org/genai"
@@ -32,6 +33,20 @@ const (
 	// DefaultBatchSize is the maximum batch size per request
 	// Google Generative AI supports up to 100 texts per request
 	DefaultBatchSize = 100
+
+	// taskTypeQuery and taskTypeDocument are the task_type values used for the
+	// models whose API documents that field (gemini-embedding-001,
+	// gemini-embedding-2-preview, text-embedding-*).
+	taskTypeQuery    = "RETRIEVAL_QUERY"
+	taskTypeDocument = "RETRIEVAL_DOCUMENT"
+
+	// taskPrefixQuery and taskPrefixDocument are the documented gemini-embedding-2
+	// task instructions. Google's embeddings guide says task_type cannot be used
+	// with gemini-embedding-2; the task is part of the text instead:
+	//   query:    task: search result | query: {content}
+	//   document: title: {title} | text: {content}  (title: none when absent)
+	taskPrefixQuery    = "task: search result | query: "
+	taskPrefixDocument = "title: none | text: "
 )
 
 // Config holds the configuration for the Generative AI client
@@ -40,11 +55,21 @@ type Config struct {
 	Model  string
 }
 
+// embedContentCaller is the subset of *genai.Models the client uses. It is an
+// interface so tests can capture the exact request shape without calling the
+// real Google API.
+type embedContentCaller interface {
+	EmbedContent(ctx context.Context, model string, contents []*genai.Content, config *genai.EmbedContentConfig) (*genai.EmbedContentResponse, error)
+}
+
 // Client is a Google Generative AI embeddings client
 type Client struct {
-	client *genai.Client
-	model  string
-	log    *slog.Logger
+	model string
+	log   *slog.Logger
+
+	// models issues the embedContent calls. In production it is the SDK's
+	// Models service; tests substitute a recorder.
+	models embedContentCaller
 
 	// Retry configuration
 	maxRetries int
@@ -102,9 +127,9 @@ func NewClient(ctx context.Context, cfg Config, opts ...ClientOption) (*Client, 
 	}
 
 	c := &Client{
-		client:     client,
 		model:      cfg.Model,
 		log:        slog.Default(),
+		models:     client.Models,
 		maxRetries: DefaultMaxRetries,
 		baseDelay:  DefaultBaseDelay,
 		maxDelay:   DefaultMaxDelay,
@@ -239,18 +264,15 @@ func (c *Client) embedWithRetry(ctx context.Context, texts []string, taskType st
 
 func (c *Client) embedBatch(ctx context.Context, texts []string, taskType string) ([][]float32, int, error) {
 	embeddings := make([][]float32, 0, len(texts))
-	outputDim := int32(DefaultDimension)
 	totalTokens := 0
 
 	for _, text := range texts {
-		result, err := c.client.Models.EmbedContent(
+		input, cfg := embedRequest(c.model, text, taskType)
+		result, err := c.models.EmbedContent(
 			ctx,
 			c.model,
-			genai.Text(text),
-			&genai.EmbedContentConfig{
-				TaskType:             taskType,
-				OutputDimensionality: &outputDim,
-			},
+			genai.Text(input),
+			cfg,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to embed text: %w", err)
@@ -266,6 +288,55 @@ func (c *Client) embedBatch(ctx context.Context, texts []string, taskType string
 	}
 
 	return embeddings, totalTokens, nil
+}
+
+// embedRequest builds the text and configuration for one embedContent call.
+//
+// gemini-embedding-2 documents its task as a text prefix and says task_type
+// cannot be used with it, so that model gets the documented prefix and no
+// TaskType. Every other family keeps the pre-existing task_type field:
+// text-embedding-004, gemini-embedding-001 and gemini-embedding-2-preview all
+// document that field, and any other id the client can be configured with is
+// left on the previous behaviour because its request contract is unverified.
+func embedRequest(model, text, taskType string) (string, *genai.EmbedContentConfig) {
+	outputDim := int32(DefaultDimension)
+	cfg := &genai.EmbedContentConfig{OutputDimensionality: &outputDim}
+	if usesTaskPrefix(model) {
+		return taskPrefixFor(taskType) + text, cfg
+	}
+	cfg.TaskType = taskType
+	return text, cfg
+}
+
+// usesTaskPrefix reports whether model documents the task as a text prefix
+// rather than a task_type field. Only the GA gemini-embedding-2 does: "You
+// cannot use the task_type field for the gemini-embedding-2 model. Instead,
+// include the task as an instruction in your prompt."
+func usesTaskPrefix(model string) bool {
+	return canonicalModelID(model) == "gemini-embedding-2"
+}
+
+// canonicalModelID reduces a configured model id to its short name so
+// "models/gemini-embedding-2" matches "gemini-embedding-2".
+func canonicalModelID(model string) string {
+	m := strings.ToLower(strings.TrimSpace(model))
+	if idx := strings.LastIndex(m, "/models/"); idx != -1 {
+		m = m[idx+len("/models/"):]
+	}
+	return strings.TrimPrefix(m, "models/")
+}
+
+// taskPrefixFor maps a task_type value to its documented gemini-embedding-2
+// text prefix. An unknown task type yields no prefix rather than a wrong one.
+func taskPrefixFor(taskType string) string {
+	switch taskType {
+	case taskTypeQuery:
+		return taskPrefixQuery
+	case taskTypeDocument:
+		return taskPrefixDocument
+	default:
+		return ""
+	}
 }
 
 // embeddingPromptTokens extracts the prompt-token count reported for a single

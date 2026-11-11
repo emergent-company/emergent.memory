@@ -452,6 +452,7 @@ func staticModels(p ProviderType) []ProviderSupportedModel {
 		{"gemini-3.1-pro", "Gemini 3.1 Pro", ModelTypeGenerative},
 		{"text-embedding-004", "Text Embedding 004", ModelTypeEmbedding},
 		{"gemini-embedding-001", "Gemini Embedding 001", ModelTypeEmbedding},
+		{"gemini-embedding-2", "Gemini Embedding 2", ModelTypeEmbedding},
 		{"gemini-embedding-2-preview", "Gemini Embedding 2 Preview", ModelTypeEmbedding},
 	}
 

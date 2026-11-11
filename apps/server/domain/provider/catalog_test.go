@@ -199,6 +199,46 @@ func TestStaticModels(t *testing.T) {
 	})
 }
 
+// TestStaticModelsIncludesGAEmbeddingModel guards the catalog entry for the GA
+// gemini-embedding-2 id (issue #587): it must resolve as an embedding model for
+// both Google backends, with a display name and the embedded retail price row.
+func TestStaticModelsIncludesGAEmbeddingModel(t *testing.T) {
+	for _, provider := range []ProviderType{ProviderGoogleAI, ProviderVertexAI} {
+		t.Run(string(provider), func(t *testing.T) {
+			m := findModel(staticModels(provider), "gemini-embedding-2")
+			if m == nil {
+				t.Fatalf("staticModels(%s) missing GA id gemini-embedding-2", provider)
+			}
+			if m.ModelType != ModelTypeEmbedding {
+				t.Errorf("gemini-embedding-2 type = %q, want %q", m.ModelType, ModelTypeEmbedding)
+			}
+			if m.DisplayName != "Gemini Embedding 2" {
+				t.Errorf("gemini-embedding-2 display = %q, want %q", m.DisplayName, "Gemini Embedding 2")
+			}
+			if m.Provider != provider {
+				t.Errorf("gemini-embedding-2 provider = %q, want %q", m.Provider, provider)
+			}
+		})
+	}
+
+	// The GA id must also carry a retail rate so embedding usage events resolve
+	// a cost (768-dim MRL output is requested by the client, not the catalog).
+	for _, provider := range []ProviderType{ProviderGoogleAI, ProviderVertexAI} {
+		var found bool
+		for _, p := range staticPricing {
+			if p.Provider == provider && p.Model == "gemini-embedding-2" {
+				found = true
+				if p.TextInputPrice != 0.20 {
+					t.Errorf("staticPricing(%s, gemini-embedding-2) TextInputPrice = %v, want 0.20", provider, p.TextInputPrice)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("staticPricing missing GA id gemini-embedding-2 for %s", provider)
+		}
+	}
+}
+
 func newTestCatalogService() *ModelCatalogService {
 	return NewModelCatalogService(nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
