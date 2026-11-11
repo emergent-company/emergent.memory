@@ -158,7 +158,7 @@ func (s *Server) uiSourceAppCreate(c echo.Context) error {
 	}
 	slug := strings.TrimSpace(c.FormValue("slug"))
 	if slug == "" {
-		return redirectWithError(c, back, errors.New("App slug is required"))
+		return redirectWithError(c, back, errors.New("app slug is required"))
 	}
 	privateKey := c.FormValue("privateKey")
 	webhookSecret := c.FormValue("webhookSecret")
@@ -208,11 +208,13 @@ func (s *Server) sourceAppsOrgForCaller(c echo.Context, back string) (string, bo
 	ctx := c.Request().Context()
 	project, err := s.memory.GetCurrentProject(ctx)
 	if err != nil || project == nil || project.OrgID == "" {
-		redirectWithError(c, back, errors.New("no active project organization"))
+		// redirectWithError always returns nil; the caller reports the fault
+		// through its own bool, so the redirect result is deliberately dropped.
+		_ = redirectWithError(c, back, errors.New("no active project organization"))
 		return "", false
 	}
 	if !s.orgAdminForCaller(c, project.OrgID) {
-		redirectWithError(c, back, errors.New("source Apps can only be changed by an organization administrator"))
+		_ = redirectWithError(c, back, errors.New("source Apps can only be changed by an organization administrator"))
 		return "", false
 	}
 	return project.OrgID, true
