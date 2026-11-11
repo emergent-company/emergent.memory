@@ -217,6 +217,7 @@ func (s *Server) deployOAuthCallback(c echo.Context) error {
 		return echo.ErrNotFound
 	}
 	if errCode := c.QueryParam("error"); errCode != "" {
+		c.SetCookie(&http.Cookie{Name: deployStateCookie, Value: "", Path: deployCookiePath, MaxAge: -1, HttpOnly: true, Secure: s.deployCookieSecure(), SameSite: http.SameSiteLaxMode})
 		return c.Redirect(http.StatusFound, "/deploy?error="+url.QueryEscape(errCode))
 	}
 	code := c.QueryParam("code")

@@ -967,7 +967,7 @@ func publicAuthPath(p string) bool {
 	case "/auth/login", "/auth/start", "/auth/add", "/auth/callback", "/auth/logout",
 		"/auth/switch", "/api/setup", "/api/health",
 		// Public deploy portal and its Railway OAuth callback.
-		"/deploy", "/deploy/oauth/start", "/deploy/oauth/callback", "/deploy/oauth/logout",
+		"/deploy", "/deploy/", "/deploy/oauth/start", "/deploy/oauth/callback", "/deploy/oauth/logout",
 		// GitHub webhook ingress authenticates via HMAC signature, not session.
 		"/webhooks/github":
 		return true

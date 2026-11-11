@@ -258,6 +258,16 @@ func LoadConfig() Config {
 		AgentTriggerToken:   os.Getenv("AGENT_TRIGGER_TOKEN"),
 		ProviderProbeAllow:  splitCSV(os.Getenv("PROVIDER_PROBE_ALLOW")),
 		TrustedProxyCIDRs:   splitCSV(os.Getenv("TRUSTED_PROXY_CIDRS")),
+
+		DeployPortalEnabled:      envBoolOr("DEPLOY_PORTAL_ENABLED", false),
+		RailwayOAuthClientID:     os.Getenv("RAILWAY_OAUTH_CLIENT_ID"),
+		RailwayOAuthClientSecret: os.Getenv("RAILWAY_OAUTH_CLIENT_SECRET"),
+		RailwayOAuthRedirectURI:  deployRedirect,
+		RailwayOAuthAuthorizeURL: envOr("RAILWAY_OAUTH_AUTHORIZE_URL", "https://backboard.railway.com/oauth/auth"),
+		RailwayOAuthTokenURL:     envOr("RAILWAY_OAUTH_TOKEN_URL", "https://backboard.railway.com/oauth/token"),
+		RailwayGraphQLURL:        envOr("RAILWAY_GRAPHQL_URL", "https://backboard.railway.com/graphql/v2"),
+		RailwayOAuthScopes:       splitCSV(envOr("RAILWAY_OAUTH_SCOPES", "openid,email,profile,offline_access,workspace:admin,project:admin")),
+		DeploySessionSecret:      os.Getenv("DEPLOY_SESSION_SECRET"),
 	}
 }
 

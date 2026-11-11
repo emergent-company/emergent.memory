@@ -173,6 +173,32 @@ func TestDeployPortalPageSignedOut(t *testing.T) {
 	}
 }
 
+func TestDeployPortalLoadConfig(t *testing.T) {
+	t.Setenv("AUTH_MODE", "dev")
+	t.Setenv("DEPLOY_PORTAL_ENABLED", "true")
+	t.Setenv("RAILWAY_OAUTH_CLIENT_ID", "client-1")
+	t.Setenv("RAILWAY_OAUTH_CLIENT_SECRET", "secret-1")
+	t.Setenv("PUBLIC_BASE_URL", "https://app.example.com")
+	t.Setenv("RAILWAY_OAUTH_REDIRECT_URI", "")
+	t.Setenv("DEPLOY_SESSION_SECRET", "01234567890123456789012345678901")
+	c := LoadConfig()
+	if !c.DeployPortalEnabled {
+		t.Fatal("LoadConfig did not read DEPLOY_PORTAL_ENABLED")
+	}
+	if c.RailwayOAuthClientID != "client-1" || c.RailwayOAuthClientSecret != "secret-1" {
+		t.Fatalf("OAuth client not wired: %+v", c)
+	}
+	if c.RailwayOAuthRedirectURI != "https://app.example.com/deploy/oauth/callback" {
+		t.Fatalf("redirect = %q", c.RailwayOAuthRedirectURI)
+	}
+	if c.RailwayOAuthAuthorizeURL == "" || c.RailwayOAuthTokenURL == "" || c.RailwayGraphQLURL == "" {
+		t.Fatalf("Railway endpoints not defaulted: %+v", c)
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
 func TestDeployPortalConfigValidation(t *testing.T) {
 	base := deployTestConfig("https://railway.test/token", "https://railway.test/graphql")
 	if err := base.Validate(); err != nil {
