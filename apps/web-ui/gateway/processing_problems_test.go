@@ -500,8 +500,11 @@ func TestProcessingAreaCountLabelIsHonest(t *testing.T) {
 }
 
 // TestDocumentsProblemsPanelExplainsInternalFailure pins the copy that replaced
-// the cryptic "after 3 attempts": a deterministic pipeline crash says so, shows
-// the run count, deep-links the run, and does not offer a futile Retry.
+// the cryptic "after 3 attempts" — a deterministic pipeline crash says so, shows
+// the run count, and deep-links the run — and that the row still offers Retry.
+// The class no longer hides the button: once we ship the fix for the crash, the
+// retry the panel used to refuse is the way the row recovers, so the class only
+// contributes the confirmation prompt.
 func TestDocumentsProblemsPanelExplainsInternalFailure(t *testing.T) {
 	report := &ProcessingProblemsReport{
 		Total: 1,
@@ -519,7 +522,7 @@ func TestDocumentsProblemsPanelExplainsInternalFailure(t *testing.T) {
 				Failure: ProcessingProblemFailure{
 					Class:       "internal",
 					Summary:     "The extraction pipeline stopped before saving results.",
-					Remediation: "This is a bug in Memory, not your document. Retrying the same input will not fix it — report it with the technical detail.",
+					Remediation: "This is a bug in Memory, not your document. Retrying runs the same input again on the current build; report it with the technical detail if it stops in the same place.",
 					Retryable:   false,
 				},
 				Action: ProcessingProblemAction{Kind: "retry_extraction", Label: "Retry extraction"},
@@ -533,13 +536,22 @@ func TestDocumentsProblemsPanelExplainsInternalFailure(t *testing.T) {
 		"3 automatic runs exhausted",
 		"not your document",
 		"/documents/doc-1/extractions/job-1",
+		"/documents/doc-1/extractions/job-1/retry",
+		// The button is a confirmed action, never a one-click loop on a build
+		// that has not changed.
+		"Retry only if Memory has been updated since this run",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("internal-failure row missing %q", want)
 		}
 	}
-	if strings.Contains(html, "/extractions/job-1/retry") {
-		t.Errorf("internal-failure row offered a retry that cannot succeed: %s", html)
+	if !strings.Contains(html, "hx-confirm") {
+		t.Errorf("internal-failure retry carried no confirmation: %s", html)
+	}
+	// A non-retryable class must not reach the unconfirmed project-wide bulk
+	// action; that path would loop the whole batch with no prompt.
+	if strings.Contains(html, `action="/documents/retry-extraction-failures"`) {
+		t.Errorf("internal-failure area offered the unconfirmed bulk extraction retry: %s", html)
 	}
 }
 
