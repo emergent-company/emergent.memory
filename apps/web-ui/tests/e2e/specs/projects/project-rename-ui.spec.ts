@@ -88,7 +88,9 @@ test.describe('Project rename', () => {
       // Cancel is a no-op: still the old name, no request submitted.
       await dialog.getByRole('button', { name: 'Cancel' }).click();
       await expect(dialog).not.toBeVisible();
-      await expect(page.getByText(oldName, { exact: true })).toBeVisible();
+      // Scope to the row: the dialog keeps the name it was filled with in the
+      // DOM after close, so a page-wide text match resolves to two elements.
+      await expect(rowForProject(page, oldName)).toBeVisible();
 
       // Submit the rename.
       const reopened = await openRowMenu(page, oldName);
@@ -117,7 +119,7 @@ test.describe('Project rename', () => {
           { timeout: 8000, intervals: [200, 300, 500] },
         )
         .toBeTruthy();
-      await expect(page.getByText(newName, { exact: true })).toBeVisible();
+      await expect(rowForProject(page, newName)).toBeVisible();
       expect(resp.status()).toBe(303);
 
       // The API agrees: the same project now carries the new name.

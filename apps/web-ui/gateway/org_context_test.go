@@ -287,6 +287,16 @@ func TestUIOrgLanding(t *testing.T) {
 	if strings.Contains(body, `data-activate-url="/projects/activate?projectId=p3"`) {
 		t.Errorf("org landing must not render a clickable row for pending project p3")
 	}
+	// Active rows carry the Rename action and the shared dialog; a
+	// pending-deletion row offers no actions menu at all.
+	for _, want := range []string{`onclick="openRenameProjectDialog(this)"`, `data-project-name="Home"`, `id="rename-project-modal"`, `action="/projects/rename"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("org landing missing rename affordance %q", want)
+		}
+	}
+	if strings.Contains(body, `data-project-name="Archived"`) {
+		t.Error("pending-deletion row must not offer the Rename action")
+	}
 	if !strings.Contains(body, `<tr id="p3">`) {
 		t.Errorf("pending project row must render without clickable affordances, want <tr id=\"p3\">")
 	}
@@ -1326,6 +1336,7 @@ func TestUIOrgLandingNonAdmin(t *testing.T) {
 		`aria-label="Select all projects"`,
 		`aria-label="Actions for Home"`,
 		`id="project-delete-modal"`, `id="project-restore-form"`,
+		`id="rename-project-modal"`, `action="/projects/rename"`,
 	} {
 		if strings.Contains(body, absent) {
 			t.Errorf("non-admin landing must not render %q", absent)
