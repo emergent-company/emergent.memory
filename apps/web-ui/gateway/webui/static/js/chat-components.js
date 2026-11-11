@@ -1557,12 +1557,24 @@
 
     var list = Array.isArray(messages) ? messages : [];
 
+    // The wire surfaceId identifies a surface to the server; the registry key
+    // identifies its rendered nodes inside one transcript container. They are
+    // not the same thing on replay: two answers may both name the surface "s1"
+    // (the prompt teaches that id), and keying the registry by surfaceId alone
+    // made the second render replace the first card in place, so the transcript
+    // kept only the newest card. A host rendering one surface per transcript
+    // item passes ctx.surfaceKey (the item id) to scope the nodes to that item;
+    // the live stream passes nothing, so its progressive frames keep updating
+    // one surface in place.
+    var replay = ctx.surfaceKey != null && ctx.surfaceKey !== "";
+    var surfaceKey = replay ? surfaceId + "\u0000" + ctx.surfaceKey : surfaceId;
+
     // deleteSurface tears the card down — the server sends it when a surface it
     // showed progressively later fails validation, so a half-rendered card must
     // not outlive the run.
     for (var d = 0; d < list.length; d++) {
       if (list[d] && list[d].deleteSurface) {
-        removeA2UISurface(container, surfaceId);
+        removeA2UISurface(container, surfaceKey);
         if (hideEmpty) hideEmpty();
         scrollToBottom();
         return;
@@ -1584,7 +1596,15 @@
 
     // Update in place: a progressive frame for a surface we already rendered
     // replaces its cards rather than appending a second instance.
-    replaceA2UISurface(container, surfaceId, components, canDecide);
+    var isNewSurface = !a2uiSurfaceRegistry(container)[surfaceKey];
+    replaceA2UISurface(container, surfaceId, surfaceKey, components, canDecide);
+    // Announce only a surface that just arrived, and only on the live stream:
+    // the transcript is deliberately not a live region (announcing a whole
+    // replayed history would be noise), so a card that streams in would
+    // otherwise be silent to assistive tech.
+    if (!replay && isNewSurface && components.length) {
+      announceA2UI(container, "New card: " + a2uiCardKindLabel(components[0] && components[0].component) + ".");
+    }
     if (hideEmpty) hideEmpty();
     scrollToBottom();
   }
@@ -1610,10 +1630,12 @@
   }
 
   // replaceA2UISurface swaps a surface's cards for the newly accumulated
-  // components, preserving the surface's position in the transcript.
-  function replaceA2UISurface(container, surfaceId, components, canDecide) {
+  // components, preserving the surface's position in the transcript. surfaceKey
+  // scopes the rendered nodes to one transcript item (see renderA2UISurface);
+  // surfaceId is what a card action reports back to the server.
+  function replaceA2UISurface(container, surfaceId, surfaceKey, components, canDecide) {
     var registry = a2uiSurfaceRegistry(container);
-    var old = registry[surfaceId] || [];
+    var old = registry[surfaceKey] || [];
     var anchor = old.length ? old[0] : null;
 
     var nodes = [];
@@ -1627,22 +1649,67 @@
     for (var r = 0; r < old.length; r++) {
       if (old[r] && old[r].parentNode) old[r].parentNode.removeChild(old[r]);
     }
-    registry[surfaceId] = nodes;
+    registry[surfaceKey] = nodes;
   }
 
   // removeA2UISurface tears a surface's cards down (deleteSurface).
-  function removeA2UISurface(container, surfaceId) {
+  function removeA2UISurface(container, surfaceKey) {
     var registry = a2uiSurfaceRegistry(container);
-    var old = registry[surfaceId];
+    var old = registry[surfaceKey];
     if (old) {
       for (var r = 0; r < old.length; r++) {
         if (old[r] && old[r].parentNode) old[r].parentNode.removeChild(old[r]);
       }
     }
-    delete registry[surfaceId];
+    delete registry[surfaceKey];
+  }
+
+  // announceA2UI tells assistive tech that a card arrived. One visually hidden
+  // polite status node per transcript carries the message; only a newly arrived
+  // surface updates it, so a streamed turn announces each card once rather than
+  // re-reading the surface on every progressive frame.
+  function announceA2UI(container, text) {
+    if (!container || !text) return;
+    var node = container.querySelector(".memory-a2ui-announcer");
+    if (!node) {
+      node = document.createElement("div");
+      node.className = "memory-a2ui-announcer sr-only";
+      node.setAttribute("role", "status");
+      node.setAttribute("aria-live", "polite");
+      container.appendChild(node);
+    }
+    node.textContent = text;
+  }
+
+  // a2uiCardKindLabel names a card the way a screen reader should hear it, so
+  // the card's group is identifiable by type before its body is read out.
+  function a2uiCardKindLabel(kind) {
+    switch (kind) {
+      case "proposal": return "Proposal card";
+      case "approval": return "Approval card";
+      case "question": return "Question card";
+      case "code": return "Code card";
+      case "entity": return "Graph object card";
+      case "object-form": return "Form card";
+      case "todo": return "Task list card";
+      case "result": return "Result card";
+      case "sources": return "Sources card";
+      default: return "Card";
+    }
   }
 
   function buildA2UICard(comp, surfaceId, canDecide) {
+    var node = a2uiCardNode(comp, surfaceId, canDecide);
+    if (node) {
+      // Group semantics: the card boundary and its type are announced before
+      // the body, and a screen-reader user can jump card to card.
+      node.setAttribute("role", "group");
+      node.setAttribute("aria-label", a2uiCardKindLabel(comp && comp.component));
+    }
+    return node;
+  }
+
+  function a2uiCardNode(comp, surfaceId, canDecide) {
     switch (comp && comp.component) {
       case "proposal": return a2uiProposal(comp, surfaceId, canDecide);
       case "approval": return a2uiApproval(comp, surfaceId, canDecide);
@@ -2601,6 +2668,10 @@
               item.role !== "system" && item.role !== "user" && item.role !== "tool") {
             renderA2UISurface(a2uiSurfaceIDOf(content.a2ui), content.a2ui, {
               messages: container,
+              // Scope the surface's rendered nodes to this timeline item: two
+              // turns may both name their surface "s1", and the registry must
+              // not let the later render replace the earlier card.
+              surfaceKey: item.id != null && item.id !== "" ? String(item.id) : "item-" + i,
               hideEmpty: ctx.hideEmpty,
               scrollToBottom: silent ? function () {} : (ctx.scrollToBottom || function () {}),
             });
