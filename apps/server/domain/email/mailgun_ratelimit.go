@@ -24,12 +24,13 @@ type clientLimiter struct {
 // webhookRateLimiter enforces a per-client and a global request budget on the
 // public Mailgun webhook (#1223).
 //
-// The per-client key is echo's RealIP(), which honours X-Forwarded-For and is
-// only trustworthy behind a proxy that overwrites the header. The global
-// limiter therefore backstops a spoofed key: a caller cannot escape the global
-// cap by rotating the per-client key. The upstream WAF/proxy remains the coarse
-// first layer of defence; these in-process limiters bound the per-request work
-// a flood can force.
+// The per-client key is echo's RealIP(): the socket peer, or — when
+// TRUSTED_PROXY_CIDRS names the proxy hop — the right-most untrusted
+// X-Forwarded-For entry (see internal/proxytrust). The global limiter still
+// backstops the key: a caller cannot escape the global cap by rotating the
+// per-client key even where a proxy is configured. The upstream WAF/proxy
+// remains the coarse first layer of defence; these in-process limiters bound
+// the per-request work a flood can force.
 type webhookRateLimiter struct {
 	mu      sync.Mutex
 	clients map[string]*clientLimiter

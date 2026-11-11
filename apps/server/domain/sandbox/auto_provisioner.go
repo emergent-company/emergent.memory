@@ -15,6 +15,14 @@ type ProvisioningResult struct {
 	ProviderType ProviderType // Provider used for this attempt
 	Degraded     bool         // True if provisioning failed and session started without workspace
 	Error        error        // Non-nil if provisioning failed
+
+	// Borrowed is true when Workspace is leased from another run instead of
+	// provisioned by this one (see WorkspaceLease). A borrowing run must not
+	// tear the workspace down and must not relink it to itself.
+	Borrowed bool
+	// BorrowedFromRunID is the run that owns a borrowed workspace (empty when
+	// the workspace was provisioned by this run).
+	BorrowedFromRunID string
 }
 
 // ResolvedImage contains the result of resolving a base_image name through the image catalog.

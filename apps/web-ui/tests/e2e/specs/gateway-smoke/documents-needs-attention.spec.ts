@@ -1,8 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
 
-// Per-PR browser smoke for the Needs attention panel on /documents (gateway/
-// processing_problems.templ). Regression cover for the dead ends a reader hit
-// against a real project:
+// Browser smoke for the Needs attention panel on /documents (gateway/
+// processing_problems.templ). Runs in the gateway-smoke suite, i.e. on the
+// `dev -> main` promotion PR and on pushes to `main` — not on a feature PR.
+// Regression cover for the dead ends a reader hit against a real project:
 //
 //   1. "View all 12 in Documents →" landed on /documents?status=failed and the
 //      page answered "No documents match". The panel aggregates run failures

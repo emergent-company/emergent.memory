@@ -25,6 +25,17 @@ const (
 	SettingsCategoryAgentOverride  = "agent_override"
 	SettingsCategoryRememberConfig = "remember_config"
 	SettingsCategoryFeatureFlags   = "feature_flags"
+	// SettingsCategoryExtraction holds the project's extraction agent and its
+	// run budget. The agent choice is a definition ID; the limits are
+	// {"value": N} entries consumed only by agent-run extraction.
+	SettingsCategoryExtraction = "extraction"
+)
+
+// Extraction project-setting keys (SettingsCategoryExtraction).
+const (
+	SettingsKeyExtractionAgentID        = "agent_id"
+	SettingsKeyExtractionMaxSteps       = "max_steps"
+	SettingsKeyExtractionTimeoutSeconds = "timeout_seconds"
 )
 
 // SettingsKeyRememberAgentName is the project setting key that overrides which

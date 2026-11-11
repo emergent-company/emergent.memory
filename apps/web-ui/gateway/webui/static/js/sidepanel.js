@@ -510,6 +510,7 @@
     pendingCitations = [];
     setStreaming(false);
     if (messages) messages.innerHTML = "";
+    MemoryChatComponents.resetA2UI(messages);
     if (empty) empty.classList.remove("hidden");
     persist();
     renderSessionPicker();

@@ -3,8 +3,6 @@ package documents
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -49,8 +47,19 @@ type UploadHandler struct {
 	parsingJobsService    ParsingJobCreator
 	extractionJobsService ExtractionJobCreator
 	projectAutoExtract    ProjectAutoExtractReader
+	ingest                *UploadIngestor
 	allowedMIMETypes      map[string]struct{} // nil = unrestricted
 	log                   *slog.Logger
+}
+
+// ingestor returns the shared upload ingestor. NewUploadHandler builds it once;
+// handlers assembled field-by-field (tests) get an equivalent one on demand, so
+// no path can bypass the parsing-job enqueue.
+func (h *UploadHandler) ingestor() *UploadIngestor {
+	if h.ingest != nil {
+		return h.ingest
+	}
+	return NewUploadIngestor(documentCreatorFor(h.svc), h.storage, h.parsingJobsService, h.projectAutoExtract, h.log)
 }
 
 // ParsingJobCreator is an interface for creating document parsing jobs.
@@ -92,13 +101,15 @@ func NewUploadHandler(
 	cfg *config.Config,
 	log *slog.Logger,
 ) *UploadHandler {
+	log = log.With(logger.Scope("upload"))
 	h := &UploadHandler{
 		svc:                   svc,
 		storage:               storageSvc,
 		parsingJobsService:    parsingJobsService,
 		extractionJobsService: extractionJobsService,
 		projectAutoExtract:    projectAutoExtract,
-		log:                   log.With(logger.Scope("upload")),
+		ingest:                NewUploadIngestor(documentCreatorFor(svc), storageSvc, parsingJobsService, projectAutoExtract, log),
+		log:                   log,
 	}
 	return h.WithAllowedMIMETypes(cfg.Storage.AllowedMIMETypes)
 }
@@ -151,7 +162,7 @@ func (h *UploadHandler) Upload(c echo.Context) error {
 	}
 	defer src.Close()
 
-	fileBytes, n, err := readFileBytes(src)
+	fileBytes, _, err := readFileBytes(src)
 	if err != nil {
 		return apperror.ErrInternal.WithInternal(err)
 	}
@@ -161,49 +172,19 @@ func (h *UploadHandler) Upload(c echo.Context) error {
 	if err := h.validateMIMEType(mimeType); err != nil {
 		return err
 	}
-	if err := ValidateUploadContent(mimeType, file.Filename, n); err != nil {
-		return err
-	}
 
-	fileHash := computeFileHash(fileBytes)
-	requestedAutoExtract := requestedAutoExtractFromForm(c)
-	autoExtract := h.effectiveAutoExtract(c.Request().Context(), user.ProjectID, requestedAutoExtract)
-
-	uploadResult, err := h.storage.UploadDocument(
-		c.Request().Context(),
-		bytes.NewReader(fileBytes),
-		n,
-		storage.DocumentUploadOptions{
-			OrgID:     user.OrgID,
-			ProjectID: user.ProjectID,
-			Filename:  file.Filename,
-			UploadOptions: storage.UploadOptions{
-				ContentType: mimeType,
-			},
-		},
-	)
-	if err != nil {
-		return apperror.ErrInternal.WithInternal(err)
-	}
-
-	response, err := h.svc.CreateFromUpload(c.Request().Context(), UploadParams{
-		ProjectID:       user.ProjectID,
-		OrgID:           user.OrgID,
-		CreatedByUserID: OptionalUserID(user.ID),
-		Filename:        file.Filename,
-		MimeType:        mimeType,
-		FileSize:        n,
-		FileHash:        fileHash,
-		StorageKey:      uploadResult.Key,
-		StorageURL:      uploadResult.StorageURL,
-		AutoExtract:     autoExtract,
+	response, err := h.ingestor().Ingest(c.Request().Context(), IngestUploadParams{
+		ProjectID:            user.ProjectID,
+		OrgID:                user.OrgID,
+		CreatedByUserID:      OptionalUserID(user.ID),
+		Filename:             file.Filename,
+		MimeType:             mimeType,
+		Data:                 fileBytes,
+		RequestedAutoExtract: requestedAutoExtractFromForm(c),
 	})
 	if err != nil {
-		h.deleteStorageObject(c.Request().Context(), uploadResult.Key)
 		return err
 	}
-
-	h.createParsingJob(c.Request().Context(), user.OrgID, user.ProjectID, response.Document.ID, file.Filename, mimeType, n, uploadResult.Key, autoExtract)
 
 	return c.JSON(http.StatusCreated, response)
 }
@@ -313,7 +294,7 @@ func (h *UploadHandler) processFileUpload(ctx context.Context, user *auth.AuthUs
 	}
 	defer src.Close()
 
-	fileBytes, n, err := readFileBytes(src)
+	fileBytes, _, err := readFileBytes(src)
 	if err != nil {
 		errMsg := "failed to read file content"
 		return BatchUploadFileResult{Filename: filename, Status: "failed", Error: &errMsg}
@@ -325,53 +306,34 @@ func (h *UploadHandler) processFileUpload(ctx context.Context, user *auth.AuthUs
 		errMsg := "file type not allowed: " + mimeType
 		return BatchUploadFileResult{Filename: filename, Status: "failed", Error: &errMsg}
 	}
-	if err := ValidateUploadContent(mimeType, filename, n); err != nil {
-		errMsg := err.Error()
-		return BatchUploadFileResult{Filename: filename, Status: "failed", Error: &errMsg}
-	}
 
-	fileHash := computeFileHash(fileBytes)
-
-	uploadResult, err := h.storage.UploadDocument(
-		ctx,
-		bytes.NewReader(fileBytes),
-		n,
-		storage.DocumentUploadOptions{
-			OrgID:     user.OrgID,
-			ProjectID: user.ProjectID,
-			Filename:  filename,
-			UploadOptions: storage.UploadOptions{
-				ContentType: mimeType,
-			},
-		},
-	)
-	if err != nil {
-		errMsg := "failed to upload to storage: " + err.Error()
-		return BatchUploadFileResult{Filename: filename, Status: "failed", Error: &errMsg}
-	}
-
-	response, err := h.svc.CreateFromUpload(ctx, UploadParams{
-		ProjectID:       user.ProjectID,
-		OrgID:           user.OrgID,
-		CreatedByUserID: OptionalUserID(user.ID),
-		Filename:        filename,
-		MimeType:        mimeType,
-		FileSize:        n,
-		FileHash:        fileHash,
-		StorageKey:      uploadResult.Key,
-		StorageURL:      uploadResult.StorageURL,
-		AutoExtract:     autoExtract,
+	// The batch resolves the project default once and passes it down as an
+	// explicit value, so each file does not re-read the project setting.
+	response, err := h.ingestor().Ingest(ctx, IngestUploadParams{
+		ProjectID:            user.ProjectID,
+		OrgID:                user.OrgID,
+		CreatedByUserID:      OptionalUserID(user.ID),
+		Filename:             filename,
+		MimeType:             mimeType,
+		Data:                 fileBytes,
+		RequestedAutoExtract: &autoExtract,
 		// One digest for the whole batch is emitted by UploadBatch; a row per
 		// file would arrive unordered and bury the inbox.
 		SkipNotification: true,
 	})
 	if err != nil {
-		h.deleteStorageObject(ctx, uploadResult.Key)
-		errMsg := "failed to create document record"
+		// The batch endpoint is called directly by API clients, so the per-file
+		// error it reports must be the client-facing message only. err.Error()
+		// would carry the apperror's "code: message (internal detail)" form —
+		// and any non-apperror straight through — putting SQL text and internal
+		// codes in a response body. The detail belongs in the log.
+		h.log.Error("batch upload: file ingest failed",
+			slog.String("filename", filename),
+			slog.String("project_id", user.ProjectID),
+			logger.Error(err))
+		errMsg := apperror.PublicMessage(err)
 		return BatchUploadFileResult{Filename: filename, Status: "failed", Error: &errMsg}
 	}
-
-	h.createParsingJob(ctx, user.OrgID, user.ProjectID, response.Document.ID, filename, mimeType, n, uploadResult.Key, autoExtract)
 
 	docID := response.Document.ID
 	return BatchUploadFileResult{Filename: filename, Status: "success", DocumentID: &docID}
@@ -407,7 +369,7 @@ func (h *UploadHandler) UploadForRemember(ctx context.Context, orgID, projectID,
 	}
 	defer src.Close()
 
-	fileBytes, n, err := readFileBytes(src)
+	fileBytes, _, err := readFileBytes(src)
 	if err != nil {
 		return nil, apperror.ErrInternal.WithInternal(err)
 	}
@@ -417,48 +379,23 @@ func (h *UploadHandler) UploadForRemember(ctx context.Context, orgID, projectID,
 	if err := h.validateMIMEType(mimeType); err != nil {
 		return nil, err
 	}
-	if err := ValidateUploadContent(mimeType, filename, n); err != nil {
-		return nil, err
-	}
 
-	fileHash := computeFileHash(fileBytes)
-
-	uploadResult, err := h.storage.UploadDocument(
-		ctx,
-		bytes.NewReader(fileBytes),
-		n,
-		storage.DocumentUploadOptions{
-			OrgID:     orgID,
-			ProjectID: projectID,
-			Filename:  filename,
-			UploadOptions: storage.UploadOptions{
-				ContentType: mimeType,
-			},
-		},
-	)
-	if err != nil {
-		return nil, apperror.ErrInternal.WithInternal(err)
-	}
-
-	response, err := h.svc.CreateFromUpload(ctx, UploadParams{
-		ProjectID:       projectID,
-		OrgID:           orgID,
-		CreatedByUserID: OptionalUserID(userID),
-		Filename:        filename,
-		MimeType:        mimeType,
-		FileSize:        n,
-		FileHash:        fileHash,
-		StorageKey:      uploadResult.Key,
-		StorageURL:      uploadResult.StorageURL,
-		AutoExtract:     false,
-		Metadata:        metadata,
+	// Remember attachments are parsed and chunked but never auto-extracted: the
+	// caller waits for conversion to complete and does its own extraction.
+	noAutoExtract := false
+	response, err := h.ingestor().Ingest(ctx, IngestUploadParams{
+		ProjectID:            projectID,
+		OrgID:                orgID,
+		CreatedByUserID:      OptionalUserID(userID),
+		Filename:             filename,
+		MimeType:             mimeType,
+		Data:                 fileBytes,
+		RequestedAutoExtract: &noAutoExtract,
+		Metadata:             metadata,
 	})
 	if err != nil {
-		h.deleteStorageObject(ctx, uploadResult.Key)
 		return nil, err
 	}
-
-	h.createParsingJob(ctx, orgID, projectID, response.Document.ID, filename, mimeType, n, uploadResult.Key, false)
 
 	return &RememberUploadResult{DocumentID: response.Document.ID, IsDuplicate: false}, nil
 }
@@ -526,48 +463,6 @@ func (h *UploadHandler) validateMIMEType(mimeType string) error {
 			"file type not allowed: "+mimeType)
 	}
 	return nil
-}
-
-// createParsingJob queues a document parsing job and logs (but does not fail on) errors.
-// A failed enqueue means the document stays unparsed — callers already returned success.
-func (h *UploadHandler) createParsingJob(ctx context.Context, orgID, projectID, documentID, filename, mimeType string, sizeBytes int64, storageKey string, autoExtract bool) {
-	if h.parsingJobsService == nil {
-		return
-	}
-	if err := h.parsingJobsService.CreateJob(ctx, ParsingJobOptions{
-		OrganizationID: orgID,
-		ProjectID:      projectID,
-		DocumentID:     documentID,
-		SourceType:     "file_upload",
-		SourceFilename: &filename,
-		MimeType:       &mimeType,
-		FileSizeBytes:  &sizeBytes,
-		StorageKey:     &storageKey,
-		AutoExtract:    autoExtract,
-	}); err != nil {
-		h.log.Error("failed to create parsing job",
-			slog.String("document_id", documentID),
-			logger.Error(err),
-		)
-	}
-}
-
-// deleteStorageObject deletes a storage object and logs any error.
-// Errors are non-fatal: the upload already succeeded; orphaned objects are a
-// storage-hygiene concern, not a user-visible failure.
-func (h *UploadHandler) deleteStorageObject(ctx context.Context, key string) {
-	if err := h.storage.Delete(ctx, key); err != nil {
-		h.log.Error("failed to delete storage object",
-			slog.String("key", key),
-			logger.Error(err),
-		)
-	}
-}
-
-// computeFileHash computes SHA-256 hash of file bytes.
-func computeFileHash(data []byte) string {
-	hash := sha256.Sum256(data)
-	return hex.EncodeToString(hash[:])
 }
 
 // refineMimeTypeByExtension corrects MIME types that Go's http.DetectContentType

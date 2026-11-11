@@ -1,16 +1,23 @@
 import Foundation
 
-/// Fetching seam for the object card, so ``ObjectCardStore`` is testable
-/// without a network. ``ObjectCardClient`` is the live implementation.
+/// Fetching and writing seam for the object card, so ``ObjectCardStore`` is
+/// testable without a network. ``ObjectCardClient`` is the live implementation.
 protocol ObjectCardFetching: Sendable {
     func card(for reference: ObjectReference) async throws -> ObjectCard
     func history(for reference: ObjectReference) async throws -> [ObjectCardVersion]
+    /// Sets the work item's status and returns the refreshed card.
+    func setStatus(_ status: String, for reference: ObjectReference) async throws -> ObjectCard
+    /// Sets (or clears, with an empty value) the work item's assignee and
+    /// returns the refreshed card.
+    func setAssignee(_ assignee: String, for reference: ObjectReference) async throws -> ObjectCard
 }
 
 /// Talks to the gateway's device object-card routes:
 ///
 /// - `GET /api/objects/{ref}/card[?rel=<relationship-id>]` → ``ObjectCard``
 /// - `GET /api/objects/{ref}/history` → `{"versions": [ObjectCardVersion]}`
+/// - `POST /api/objects/{ref}/status` `{"status":"…"}` → the refreshed card
+/// - `POST /api/objects/{ref}/assignee` `{"assignee":"…"}` → the refreshed card
 ///
 /// The base is ``MemoryConfig/gatewayBaseURL``, the gateway the chat stream
 /// talks to, because a card is opened from that chat's content.
@@ -24,11 +31,7 @@ struct ObjectCardClient: ObjectCardFetching {
             query.append(URLQueryItem(name: "rel", value: rel))
         }
         let data = try await send(makeURL(reference, tail: "card", query: query))
-        do {
-            return try JSONDecoder().decode(ObjectCard.self, from: data)
-        } catch {
-            throw GatewayError.decode("Gateway returned an unexpected object card: \(error.localizedDescription)")
-        }
+        return try decodeCard(data)
     }
 
     func history(for reference: ObjectReference) async throws -> [ObjectCardVersion] {
@@ -37,6 +40,43 @@ struct ObjectCardClient: ObjectCardFetching {
             return try JSONDecoder().decode(HistoryResponse.self, from: data).versions
         } catch {
             throw GatewayError.decode("Gateway returned an unexpected object history: \(error.localizedDescription)")
+        }
+    }
+
+    func setStatus(_ status: String, for reference: ObjectReference) async throws -> ObjectCard {
+        try await write(["status": status], tail: "status", reference: reference)
+    }
+
+    func setAssignee(_ assignee: String, for reference: ObjectReference) async throws -> ObjectCard {
+        try await write(["assignee": assignee], tail: "assignee", reference: reference)
+    }
+
+    /// Posts one write body and decodes the refreshed card the gateway answers
+    /// with, so the store never has to guess the stored value.
+    private func write(_ body: [String: String], tail: String, reference: ObjectReference) async throws -> ObjectCard {
+        let url = try makeURL(reference, tail: tail, query: [])
+        let payload: Data
+        do {
+            payload = try JSONEncoder().encode(body)
+        } catch {
+            throw GatewayError.decode("Could not encode the object card update: \(error.localizedDescription)")
+        }
+        let request = GatewayHTTP.makeRequest(
+            method: "POST",
+            url: url,
+            apiKey: config.apiKey,
+            body: payload,
+            contentType: "application/json"
+        )
+        let data = try await GatewayHTTP.sendChecked(request, service: service, session: session)
+        return try decodeCard(data)
+    }
+
+    private func decodeCard(_ data: Data) throws -> ObjectCard {
+        do {
+            return try JSONDecoder().decode(ObjectCard.self, from: data)
+        } catch {
+            throw GatewayError.decode("Gateway returned an unexpected object card: \(error.localizedDescription)")
         }
     }
 

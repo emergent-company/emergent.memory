@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -692,4 +693,114 @@ func TestChatScheduledRunsResolveAppearance(t *testing.T) {
 	if got.Icon != "" || got.Color != "" {
 		t.Errorf("unlinked run appearance = %q/%q, want empty (neutral bot)", got.Icon, got.Color)
 	}
+}
+
+// --- GET /api/conversations/:id/todos (the JSON twin of the todo card, #440) ---
+
+func newConvTodosEcho(f MemoryBackend) (*Server, *echo.Echo) {
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.GET("/api/conversations/:id/todos", s.getConversationTodos)
+	return s, e
+}
+
+// TestGetConversationTodos pins the route contract the iOS client decodes:
+// `{"todos":[{"id","content","status","order"}]}`, in the server's order.
+func TestGetConversationTodos(t *testing.T) {
+	t.Run("shape and order", func(t *testing.T) {
+		f := &fakeMemory{
+			details: map[string]*ConversationDetail{"c1": {ID: "c1", SessionID: "s1"}},
+			sessionTodos: []SessionTodo{
+				{ID: "t2", Content: "Second thing", Status: "pending", Order: 2},
+				{ID: "t1", Content: "First thing", Status: "in_progress", Order: 1},
+				{ID: "t3", Content: "Third thing", Status: "completed", Order: 3},
+			},
+		}
+		_, e := newConvTodosEcho(f)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/conversations/c1/todos", nil))
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+		}
+		if ct := rec.Header().Get(echo.HeaderContentType); !strings.HasPrefix(ct, echo.MIMEApplicationJSON) {
+			t.Errorf("content-type = %q, want JSON", ct)
+		}
+		var body struct {
+			Todos []TodoItem `json:"todos"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("body is not JSON: %v (%s)", err, rec.Body.String())
+		}
+		if len(body.Todos) != 3 {
+			t.Fatalf("todos = %d, want 3; body=%s", len(body.Todos), rec.Body.String())
+		}
+		// The server's order is preserved: the partial renders it as given.
+		for idx, want := range []string{"t2", "t1", "t3"} {
+			if body.Todos[idx].ID != want {
+				t.Errorf("todos[%d].id = %q, want %q (order must be preserved)", idx, body.Todos[idx].ID, want)
+			}
+		}
+		first := body.Todos[1]
+		if first.Content != "First thing" || first.Status != "in_progress" || first.Order != 1 {
+			t.Errorf("todos[1] = %+v, want the full item shape", first)
+		}
+		if f.lastTodosSessionID != "s1" {
+			t.Errorf("todos fetched for session %q, want s1", f.lastTodosSessionID)
+		}
+		// The wire keys are the contract the iOS decoder reads: lowercase names,
+		// never the Go field names.
+		for _, key := range []string{`"id":`, `"content":`, `"status":`, `"order":`} {
+			if !strings.Contains(rec.Body.String(), key) {
+				t.Errorf("body is missing the %s key: %s", key, rec.Body.String())
+			}
+		}
+		if strings.Contains(rec.Body.String(), `"ID":`) {
+			t.Errorf("body leaked Go field names: %s", rec.Body.String())
+		}
+	})
+
+	t.Run("empty is an array, not null", func(t *testing.T) {
+		f := &fakeMemory{details: map[string]*ConversationDetail{"c1": {ID: "c1", SessionID: "s1"}}}
+		_, e := newConvTodosEcho(f)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/conversations/c1/todos", nil))
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		if got := strings.TrimSpace(rec.Body.String()); got != `{"todos":[]}` {
+			t.Errorf("body = %s, want {\"todos\":[]}", got)
+		}
+	})
+
+	// Every lookup failure degrades to the empty plan, as uiChatTodos does —
+	// never a 5xx, so a memory hiccup cannot paint an error banner over a chat.
+	t.Run("lookup failures stay 200 empty", func(t *testing.T) {
+		cases := map[string]*fakeMemory{
+			"conversation read fails": {
+				detailErr: errors.New("memory: GET /api/chat/c1: 502 bad_gateway"),
+			},
+			"no ACP session": {
+				details: map[string]*ConversationDetail{"c1": {ID: "c1"}},
+			},
+			"todos read fails": {
+				details:         map[string]*ConversationDetail{"c1": {ID: "c1", SessionID: "s1"}},
+				sessionTodosErr: errors.New("memory: GET /api/v1/agent/sessions/s1/todos: 500"),
+			},
+		}
+		for name, f := range cases {
+			t.Run(name, func(t *testing.T) {
+				_, e := newConvTodosEcho(f)
+				rec := httptest.NewRecorder()
+				e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/conversations/c1/todos", nil))
+				if rec.Code != http.StatusOK {
+					t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+				}
+				if got := strings.TrimSpace(rec.Body.String()); got != `{"todos":[]}` {
+					t.Errorf("body = %s, want {\"todos\":[]}", got)
+				}
+			})
+		}
+	})
 }

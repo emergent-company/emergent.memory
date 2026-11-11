@@ -30,6 +30,8 @@ struct ChatSessionView: View {
     @EnvironmentObject private var localMedia: LocalMediaModel
     @EnvironmentObject var projectStore: MemoryProjectStore
     @Environment(ChatActivityStore.self) var activity
+    /// The ordered chat timeline: history and the live turn in one list.
+    @Environment(ChatTimelineStore.self) var timeline
     @Environment(\.voiceEnabled) private var voiceEnabled
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dismiss) private var dismiss
@@ -47,6 +49,8 @@ struct ChatSessionView: View {
     @State var historyReloadPending = false
     /// Messages staged while a turn is running, released when it ends.
     @State var queue = ChatQueueStore()
+    /// The agent's plan for this conversation, shown above the composer (#440).
+    @State var plan = ChatPlanStore()
     /// The turn-end hook's target. The transport holds the hook, and the hook
     /// only holds this pump weakly, so the view's state is what keeps it alive
     /// after `start()` returns — a local there would be released immediately.
@@ -233,7 +237,7 @@ extension ChatSessionView {
                 voiceRoom
             } else {
                 ChatTranscriptView(
-                    transcript: transcript,
+                    timeline: timeline,
                     agentName: route.agentName,
                     showsSuggestions: route.conversationID == nil,
                     onSuggestion: { prompt in
@@ -258,29 +262,14 @@ extension ChatSessionView {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var voiceRoom: some View {
-        ZStack {
-            VoiceInteractionView()
-            if controller.phase == .connecting {
-                LoadingStateView(title: "chat.connecting")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(.bg1)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // The in-call surface ignores the safe area; clip it so it cannot draw
-        // under the header or the controls.
-        .clipped()
-    }
-
     // MARK: - Bottom bar
 
     private var bottomBar: some View {
         VStack(spacing: 0) {
-            // Live child/subagent runs stay visible across text and voice modes.
+            // The plan and live subagent runs stay visible across both modes.
+            ChatPlanCard(store: plan, conversationID: openConversationID)
             SubagentTrackView()
-            // Hang-up belongs to a call, not to a chat: a text session has no
-            // room to leave.
+            // Hang-up belongs to a call: a text session has no room to leave.
             if activeSession.mode == .voice, session.isConnected {
                 ChatSessionControls(mode: activeSession.mode, onHangUp: hangUp)
             }
@@ -315,11 +304,10 @@ extension ChatSessionView {
                     text: $messageText,
                     onSend: sendText,
                     onEnqueue: enqueueText,
-                    // A text turn can be cancelled: the stream's `meta` frame or
-                    // a conversation refresh gives the run id and the transport
-                    // cancels it. While a run is in flight (own or attached),
-                    // Return and Send stage the next message in the queue
-                    // instead of dropping it; the stop button stays.
+                    // A text turn can be cancelled: the `meta` frame or a
+                    // refresh gives the run id and the transport cancels it.
+                    // While a run is in flight (own or attached), Return and
+                    // Send stage the next message instead of dropping it.
                     mode: isTextRunActive ? .running : .idle,
                     onStop: stopTextTurn
                 )
@@ -335,6 +323,9 @@ extension ChatSessionView {
     /// route, fetch recorded history once, and connect only if the session is in
     /// voice mode. Text needs no connection.
     private func start() async {
+        // Every live frame the HTTP turn produces also lands in the ordered
+        // timeline, so a streamed turn and its reload have one shape.
+        transport.timeline = timeline
         transport.onConversationLearned = { conversationID in
             activeSession.learnConversationID(conversationID)
             queue.learnConversationID(conversationID)
@@ -385,7 +376,7 @@ extension ChatSessionView {
             ?? activeSession.launchConversationID
             ?? activeSession.liveConversationID
         else { return }
-        await history.load(conversationID: conversationID, force: force, into: transcript)
+        await history.load(conversationID: conversationID, force: force, into: transcript, timeline: timeline)
     }
 
     private func retryHistory() {

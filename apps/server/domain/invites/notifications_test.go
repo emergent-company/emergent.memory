@@ -83,6 +83,10 @@ func TestEmitInviteReceived(t *testing.T) {
 	require.Equal(t, notifications.ScopeAccount, in.Scope)
 	require.True(t, in.RequiresAction)
 	require.Equal(t, "target-1", in.UserID)
+	// The title names the project the invitation is for; the message line stays
+	// empty so the row does not repeat the same sentence (issue #599).
+	require.Equal(t, "You've been invited to ACME", in.Title)
+	require.Empty(t, in.Message)
 	require.NotNil(t, in.ActionURL)
 	require.Contains(t, *in.ActionURL, "/invites/accept?token=tok123")
 	require.NotEmpty(t, in.Actions)

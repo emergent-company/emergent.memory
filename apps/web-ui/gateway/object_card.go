@@ -72,10 +72,27 @@ type objectCardSection struct {
 }
 
 // objectCardWorkflow is the work strip of a workflow-declaring type. The web
-// drawer renders it as editable controls; the card carries it read-only.
+// drawer renders it as editable controls; the card carries the current values
+// plus the option lists the native pickers need, so the client never guesses
+// which statuses or assignees are valid.
 type objectCardWorkflow struct {
 	Status   *objectCardStatus `json:"status,omitempty"`
 	Assignee string            `json:"assignee,omitempty"`
+	// AllowedStatuses is the status picker's options in board order (the
+	// drawer's work strip vocabulary: declared allowedStatuses, else the
+	// canonical board order). Empty for a type that declares no workflow.
+	AllowedStatuses []objectCardStatus `json:"allowed_statuses,omitempty"`
+	// Assignees is the assignee picker's candidates for a work item: runtime
+	// agents by name, then project members by display name, in the drawer's
+	// order. Empty for a non-work item, which has no editable strip.
+	Assignees []objectCardAssignee `json:"assignees,omitempty"`
+}
+
+// objectCardAssignee is one assignee picker option. Value is the exact string
+// the reassign route expects (an agent name or a member display name).
+type objectCardAssignee struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
 }
 
 // objectCard is the GET /api/objects/:id/card response.
@@ -131,7 +148,14 @@ func (s *Server) getObjectCard(c echo.Context) error {
 	if obj == nil {
 		return c.JSON(status, map[string]string{"error": msg})
 	}
+	return c.JSON(http.StatusOK, s.objectCardFor(ctx, obj, c.QueryParam("rel")))
+}
 
+// objectCardFor assembles one object's card with the drawer's own helpers. The
+// card GET and both device work-writes answer with it, so a write re-renders
+// from the server rather than from the client's guess. relID is the optional
+// relationship the chat reference pointed at.
+func (s *Server) objectCardFor(ctx context.Context, obj *GraphObject, relID string) objectCard {
 	schema := objectPreviewSchema{TypeLabel: obj.Type}
 	var typeUIByType map[string]typeUI
 	statusControl := &objectStatusControl{}
@@ -149,8 +173,46 @@ func (s *Server) getObjectCard(c echo.Context) error {
 		}
 	}
 
-	return c.JSON(http.StatusOK, buildDeviceObjectCard(obj, typeUIByType, schema,
-		s.objectPreviewRelationshipLabel(ctx, obj.ID, c.QueryParam("rel"))))
+	// The assignee picker's candidates are needed only for a work item: the two
+	// write routes require a key, so a keyless object keeps a read-only strip
+	// and there is nothing to offer.
+	var assignees []objectCardAssignee
+	if obj.Key != "" && !objectWorkControlDisabled(statusControl) {
+		assignees = s.objectCardAssigneeCandidates(ctx)
+	}
+
+	return buildDeviceObjectCard(obj, typeUIByType, schema,
+		s.objectPreviewRelationshipLabel(ctx, obj.ID, relID), statusControl, assignees)
+}
+
+// objectCardAssigneeCandidates fetches the assignee picker's options the way
+// the drawer does: runtime agents first, then project members. The members
+// half is skipped for a device credential — /api/projects/{id}/members is not
+// on the device surface, so asking would only earn a captured 403 on every card
+// open. A device therefore sees the project agents it can already list through
+// /api/projects/{id}/agents, and a member's name stays visible as the current
+// assignee.
+func (s *Server) objectCardAssigneeCandidates(ctx context.Context) []objectCardAssignee {
+	agents, agentsErr := s.memory.ListScheduledAgents(ctx)
+	if agentsErr != nil {
+		captureError(agentsErr)
+		agents = nil
+	}
+	var members []ProjectMemberDto
+	if sc, ok := sessionContextFrom(ctx); !ok || !sc.Device {
+		var membersErr error
+		members, membersErr = s.memory.ListMembers(ctx)
+		if membersErr != nil {
+			captureError(membersErr)
+			members = nil
+		}
+	}
+	built := buildBoardAssigneeCandidates(agents, members)
+	out := make([]objectCardAssignee, 0, len(built))
+	for _, c := range built {
+		out = append(out, objectCardAssignee{Value: c.Value, Label: c.Label})
+	}
+	return out
 }
 
 // getObjectCardHistory implements GET /api/objects/:id/history: the version
@@ -203,7 +265,7 @@ func (s *Server) resolveCardObject(ctx context.Context, ref string) (*GraphObjec
 }
 
 // buildDeviceObjectCard assembles the card from the drawer's own helpers.
-func buildDeviceObjectCard(obj *GraphObject, typeUIByType map[string]typeUI, schema objectPreviewSchema, relLabel string) objectCard {
+func buildDeviceObjectCard(obj *GraphObject, typeUIByType map[string]typeUI, schema objectPreviewSchema, relLabel string, statusControl *objectStatusControl, assignees []objectCardAssignee) objectCard {
 	tui := typeUIOf(typeUIByType, obj.Type)
 	card := objectCard{
 		ID:            obj.ID,
@@ -224,6 +286,14 @@ func buildDeviceObjectCard(obj *GraphObject, typeUIByType map[string]typeUI, sch
 		if obj.Status != "" {
 			wf.Status = objectCardStatusOf(obj.Status)
 		}
+		// The options the pickers show, in board order, from the same
+		// resolution the web strip uses (objectStatusControlFor).
+		if statusControl != nil {
+			for _, value := range statusControl.Options {
+				wf.AllowedStatuses = append(wf.AllowedStatuses, *objectCardStatusOf(value))
+			}
+		}
+		wf.Assignees = assignees
 		card.Workflow = wf
 	} else if obj.Status != "" {
 		card.Status = objectCardStatusOf(obj.Status)

@@ -287,51 +287,46 @@ test.describe('provider-generic OAuth data-source connect', () => {
     await expect(page.getByTestId('ds-sync-scope')).toBeVisible();
   });
 
-  test('org OAuth-client settings keep the secret write-only', async ({ page }) => {
+  test('org OAuth apps keep the secret write-only', async ({ page }) => {
+    const name = `e2e-org-${Date.now()}`;
     await page.goto('/orgs/org-1/settings/oauth-clients');
 
     // The org-admin gate passes (mock /api/user/orgs-and-projects marks org-1
-    // org_admin), so the page renders the provider table — with no credential
-    // form on it — and each row opens that provider's editor.
-    await expect(page.getByTestId('ds-oauth-apps-table')).toBeVisible();
-    await expect(page.getByTestId('ds-oauth-client-form')).toHaveCount(0);
-    await page
-      .getByTestId('ds-oauth-app-row')
-      .filter({ hasText: 'Google Drive' })
-      .getByTestId('ds-oauth-app-manage')
-      .click();
-    await expect(page).toHaveURL(/\/o\/org-1\/settings\/oauth-clients\/google_drive$/);
-    await expect(page.getByTestId('ds-oauth-app-back')).toBeVisible();
+    // org_admin). The page lists named apps and offers an add action; no
+    // credential form is rendered on the list itself.
+    await expect(page.getByTestId('ds-oauth-apps')).toBeVisible();
+    await expect(page.getByTestId('ds-oauth-app-add')).toBeVisible();
+    await expect(page.getByTestId('ds-oauth-app-form')).toHaveCount(0);
+    await page.getByTestId('ds-oauth-app-add').click();
+    // The canonical org scope prefix is `/o/<org>`: a legacy `/orgs/<org>` path
+    // is 302'd there, so only the tail of the editor route is asserted.
+    await expect(page).toHaveURL(/\/settings\/oauth-apps\/new$/);
+    await expect(page.getByTestId('ds-oauth-app-form')).toBeVisible();
 
-    const secret = page.getByTestId('ds-field-client_secret').first();
-    await expect(secret).toBeVisible();
+    const secret = page.getByTestId('ds-oauth-app-client-secret');
     await expect(secret).toHaveAttribute('type', 'password');
-    // Write-only: the secret is never prefilled.
     await expect(secret).toHaveValue('');
 
-    const form = secret.locator('xpath=ancestor::form[1]');
-    await expect(form).toHaveAttribute('data-testid', 'ds-oauth-client-form');
-    await form.getByTestId('ds-field-client_id').fill('e2e-oauth-client-id');
+    await page.getByTestId('ds-oauth-app-vendor').selectOption('google');
+    await page.getByTestId('ds-oauth-app-name').fill(name);
+    await page.getByTestId('ds-oauth-app-client-id').fill('e2e-oauth-client-id');
     await secret.fill('super-secret-e2e-value');
     // Google Drive advertises org-selectable scope strategies.
-    await form.getByTestId('ds-field-strategy').selectOption('drive.file');
-    await form.getByRole('button', { name: 'Save' }).click();
+    await page.getByTestId('ds-oauth-app-drive-strategy').selectOption('drive.file');
+    await page.getByTestId('ds-oauth-app-save').click();
 
-    // PRG round trip: redirect to ?saved=1 with the "OAuth client saved." flash.
+    // PRG round trip: redirect to ?saved=1 with the flash.
     await expect(page).toHaveURL(/oauth-clients\?saved=1/);
-    await expect(page.getByText('OAuth client saved.')).toBeVisible();
+    await expect(page.getByText('OAuth app saved.')).toBeVisible();
 
     // The submitted secret is never echoed back into the page.
     expect(await page.content()).not.toContain('super-secret-e2e-value');
-    // The table now shows the provider as configured.
-    await expect(page.getByTestId('ds-oauth-app-row').filter({ hasText: 'Google Drive' })).toContainText('Configured');
-    // Re-opening the editor renders a blank secret field: write-only, not stored in the page.
-    await page
-      .getByTestId('ds-oauth-app-row')
-      .filter({ hasText: 'Google Drive' })
-      .getByTestId('ds-oauth-app-manage')
-      .click();
-    await expect(page.getByTestId('ds-field-client_secret').first()).toHaveValue('');
-    await expect(page.getByTestId('ds-field-client_id').first()).toHaveValue('e2e-oauth-client-id');
+    const row = page.getByTestId('ds-credential-row').filter({ hasText: name });
+    await expect(row).toHaveCount(1);
+
+    // Re-opening the editor renders a blank secret field: write-only.
+    await row.getByTestId('ds-credential-manage').click();
+    await expect(page.getByTestId('ds-oauth-app-client-secret')).toHaveValue('');
+    await expect(page.getByTestId('ds-oauth-app-client-id')).toHaveValue('e2e-oauth-client-id');
   });
 });

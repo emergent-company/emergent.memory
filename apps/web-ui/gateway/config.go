@@ -35,6 +35,14 @@ type Config struct {
 	// TTL.
 	WorkerIdleTTL time.Duration
 
+	// VoiceDisabled gates the whole voice surface (settings section, chat call
+	// controls, /api/token, voice bindings, bridge workers). It is the inverse
+	// of the VOICE_SUPPORTED env var, so the zero-value Config keeps voice on
+	// and only an explicit VOICE_SUPPORTED=false disables it. Deployments
+	// without a LiveKit SFU set that var so no voice or LiveKit option is
+	// exposed anywhere in the UI or API.
+	VoiceDisabled bool
+
 	LiveKitAPIKey     string
 	LiveKitAPISecret  string
 	LiveKitURL        string
@@ -150,6 +158,26 @@ type Config struct {
 	// (self-hosted gateways such as litellm). Empty = strict public-only
 	// (SSRF guard default).
 	ProviderProbeAllow []string
+
+	// TrustedProxyCIDRs (TRUSTED_PROXY_CIDRS, comma-separated) names the
+	// networks a forwarding proxy connects from. c.RealIP() reads
+	// X-Forwarded-For only when the socket peer is inside one of them,
+	// resolving the right-most untrusted hop; empty = fail closed on the socket
+	// peer address and ignore forwarded headers. See ip_trust.go and issue #26.
+	TrustedProxyCIDRs []string
+
+	// Deploy portal (public /deploy wizard). Disabled unless explicitly
+	// enabled; the Railway OAuth client is separate from the Memory login
+	// client. Tokens are sealed in a short-lived cookie, never logged.
+	DeployPortalEnabled      bool
+	RailwayOAuthClientID     string
+	RailwayOAuthClientSecret string
+	RailwayOAuthRedirectURI  string
+	RailwayOAuthAuthorizeURL string
+	RailwayOAuthTokenURL     string
+	RailwayGraphQLURL        string
+	RailwayOAuthScopes       []string
+	DeploySessionSecret      string
 }
 
 func LoadConfig() Config {
@@ -159,6 +187,11 @@ func LoadConfig() Config {
 		tracesRate, replayRate = 1.0, 1.0
 	}
 	memoryURL := envOr("MEMORY_URL", "https://memory.emergent-company.ai")
+	publicBase := strings.TrimRight(os.Getenv("PUBLIC_BASE_URL"), "/")
+	deployRedirect := os.Getenv("RAILWAY_OAUTH_REDIRECT_URI")
+	if deployRedirect == "" && publicBase != "" {
+		deployRedirect = publicBase + "/deploy/oauth/callback"
+	}
 	return Config{
 		Port:               envOr("MEMORY_PORT", "8095"),
 		MemoryURL:          memoryURL,
@@ -170,6 +203,8 @@ func LoadConfig() Config {
 		BridgeWorkdir:      os.Getenv("BRIDGE_WORKDIR"),
 		SupervisorInterval: durationOr("SUPERVISOR_INTERVAL", 5*time.Second),
 		WorkerIdleTTL:      durationOr("WORKER_IDLE_TTL", 0),
+
+		VoiceDisabled: !envBoolOr("VOICE_SUPPORTED", true),
 
 		LiveKitAPIKey:     os.Getenv("LIVEKIT_API_KEY"),
 		LiveKitAPISecret:  os.Getenv("LIVEKIT_API_SECRET"),
@@ -222,6 +257,17 @@ func LoadConfig() Config {
 		GitHubReviewRepos:   os.Getenv("GITHUB_REVIEW_REPOS"),
 		AgentTriggerToken:   os.Getenv("AGENT_TRIGGER_TOKEN"),
 		ProviderProbeAllow:  splitCSV(os.Getenv("PROVIDER_PROBE_ALLOW")),
+		TrustedProxyCIDRs:   splitCSV(os.Getenv("TRUSTED_PROXY_CIDRS")),
+
+		DeployPortalEnabled:      envBoolOr("DEPLOY_PORTAL_ENABLED", false),
+		RailwayOAuthClientID:     os.Getenv("RAILWAY_OAUTH_CLIENT_ID"),
+		RailwayOAuthClientSecret: os.Getenv("RAILWAY_OAUTH_CLIENT_SECRET"),
+		RailwayOAuthRedirectURI:  deployRedirect,
+		RailwayOAuthAuthorizeURL: envOr("RAILWAY_OAUTH_AUTHORIZE_URL", "https://backboard.railway.com/oauth/auth"),
+		RailwayOAuthTokenURL:     envOr("RAILWAY_OAUTH_TOKEN_URL", "https://backboard.railway.com/oauth/token"),
+		RailwayGraphQLURL:        envOr("RAILWAY_GRAPHQL_URL", "https://backboard.railway.com/graphql/v2"),
+		RailwayOAuthScopes:       splitCSV(envOr("RAILWAY_OAUTH_SCOPES", "openid,email,profile,offline_access,workspace:admin,project:admin")),
+		DeploySessionSecret:      os.Getenv("DEPLOY_SESSION_SECRET"),
 	}
 }
 
@@ -344,11 +390,43 @@ func (c Config) Validate() error {
 	default:
 		return fmt.Errorf("unknown AUTH_MODE %q (want \"session\" or \"dev\")", c.AuthMode)
 	}
+	if c.DeployPortalEnabled {
+		var missing []string
+		if c.RailwayOAuthClientID == "" {
+			missing = append(missing, "RAILWAY_OAUTH_CLIENT_ID")
+		}
+		if c.RailwayOAuthClientSecret == "" {
+			missing = append(missing, "RAILWAY_OAUTH_CLIENT_SECRET")
+		}
+		if c.RailwayOAuthRedirectURI == "" {
+			missing = append(missing, "RAILWAY_OAUTH_REDIRECT_URI")
+		}
+		if len(c.DeploySessionSecret) < 32 {
+			missing = append(missing, "DEPLOY_SESSION_SECRET (>=32 bytes)")
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("DEPLOY_PORTAL_ENABLED=true requires: %s", strings.Join(missing, ", "))
+		}
+		for name, u := range map[string]string{
+			"RAILWAY_OAUTH_AUTHORIZE_URL": c.RailwayOAuthAuthorizeURL,
+			"RAILWAY_OAUTH_TOKEN_URL":     c.RailwayOAuthTokenURL,
+			"RAILWAY_GRAPHQL_URL":         c.RailwayGraphQLURL,
+		} {
+			if !strings.HasPrefix(u, "https://") && c.SentryEnvironment != "development" {
+				return fmt.Errorf("%s must be https in %s", name, c.SentryEnvironment)
+			}
+		}
+	}
 	// The GitHub webhook is the one session-less memory caller; without its
 	// dedicated trigger token the trigger fails asynchronously after the 202,
 	// which is invisible to GitHub and unretryable. Fail fast instead.
 	if c.GitHubWebhookSecret != "" && c.AgentTriggerToken == "" {
 		return fmt.Errorf("GITHUB_WEBHOOK_SECRET is set but AGENT_TRIGGER_TOKEN is empty")
+	}
+	// A malformed TRUSTED_PROXY_CIDRS entry must be a boot error: silently
+	// ignoring it would change which peer may set the rate-limit key.
+	if _, err := parseTrustedProxyCIDRs(c.TrustedProxyCIDRs); err != nil {
+		return err
 	}
 	return nil
 }

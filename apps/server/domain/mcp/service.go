@@ -87,8 +87,16 @@ type Service struct {
 	// MCP registry tool handler (injected to break import cycle)
 	mcpRegistryToolHandler MCPRegistryToolHandler
 
+	// Source-backed MCP tool handler (Gmail etc.), injected to break the
+	// sources -> mcpregistry -> mcp dependency direction.
+	sourceToolHandler SourceToolHandler
+
 	// Blueprint tool handler (injected to break import cycle)
 	blueprintToolHandler BlueprintToolHandler
+
+	// GitHub App review tool handler (injected to break the
+	// sources -> agents -> mcp dependency direction).
+	githubAppToolHandler GitHubAppToolHandler
 
 	// Brave Search API configuration
 	braveSearchAPIKey  string
@@ -104,6 +112,11 @@ type Service struct {
 
 	// Storage service (for document upload to object store)
 	storageSvc *storage.Service
+
+	// Shared upload ingestor: the one path that stores an upload, creates the
+	// document row and queues its parsing job (documents.UploadIngestor). Nil
+	// when the deployment has no document upload wiring.
+	uploadIngestor *documents.UploadIngestor
 
 	// Skills repository (for skill CRUD tools)
 	skillsRepo *skills.Repository
@@ -225,8 +238,11 @@ type ServiceParams struct {
 	Cfg          *config.Config
 	Log          *slog.Logger
 
-	DocumentsSvc       *documents.Service
-	StorageSvc         *storage.Service
+	DocumentsSvc *documents.Service
+	StorageSvc   *storage.Service
+	// UploadIngestor is the shared documents upload pipeline. If omitted, the
+	// document-upload tool fails closed instead of writing an unparsed row.
+	UploadIngestor     *documents.UploadIngestor `optional:"true"`
 	SkillsRepo         *skills.Repository
 	BranchSvc          *branches.Service
 	ProviderCredSvc    *provider.CredentialService
@@ -283,6 +299,7 @@ func NewService(p ServiceParams) *Service {
 		log:                       p.Log.With(logger.Scope("mcp.svc")),
 		documentsSvc:              p.DocumentsSvc,
 		storageSvc:                p.StorageSvc,
+		uploadIngestor:            p.UploadIngestor,
 		skillsRepo:                p.SkillsRepo,
 		branchSvc:                 p.BranchSvc,
 		providerCredSvc:           p.ProviderCredSvc,
@@ -342,6 +359,29 @@ func (s *Service) RegisterAgentToolHandler(h AgentToolHandler) {
 // Deferred to fx.Invoke to break the mcpregistry ↔ mcp constructor cycle.
 func (s *Service) RegisterMCPRegistryToolHandler(h MCPRegistryToolHandler) {
 	s.mcpRegistryToolHandler = h
+}
+
+// RegisterGitHubAppToolHandler wires the GitHub App review tools after
+// construction (sources -> agents -> mcp, so no constructor cycle).
+//
+// Exactly one provider may own github-pr-diff / github-review-submit. A second
+// registration panics instead of silently replacing the first: the review tools
+// must never route to an executor whose backing tables or credentials the
+// deployment is mid-migration away from (#579).
+func (s *Service) RegisterGitHubAppToolHandler(h GitHubAppToolHandler) {
+	if h == nil {
+		return
+	}
+	if s.githubAppToolHandler != nil {
+		panic("mcp: github app review tool handler already registered; exactly one provider may own github-pr-diff/github-review-submit")
+	}
+	s.githubAppToolHandler = h
+}
+
+// RegisterSourceToolHandler wires the source-backed tool handler after
+// construction (sources -> mcpregistry -> mcp, so no constructor cycle).
+func (s *Service) RegisterSourceToolHandler(h SourceToolHandler) {
+	s.sourceToolHandler = h
 }
 
 // dynamicToolBuilders is the ordered list of package-level tool builders that
@@ -1911,6 +1951,7 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 	// session_todo_tools.go). Registered here so they dispatch through the same
 	// ExecuteTool switch as every other tool.
 	tools = append(tools, sessionTodoToolDefinitions()...)
+	tools = append(tools, githubAppToolDefinitions()...)
 
 	// Apply RequiredScope from the central static map and the agent-tool map to
 	// any tool that doesn't already declare one. Tools in dynamic *_tools.go
@@ -1981,7 +2022,7 @@ func (s *Service) GetInternalToolDefinitionsForProject(ctx context.Context, proj
 // project content applied (enriched agent tools, relay-session tools). Both
 // public getters consolidate — or deliberately do not consolidate — on top.
 func (s *Service) legacyToolDefinitionsForProject(ctx context.Context, projectID string) []ToolDefinition {
-	if projectID == "" || s.agentToolHandler == nil {
+	if projectID == "" {
 		return s.legacyToolDefinitions()
 	}
 
@@ -1991,26 +2032,33 @@ func (s *Service) legacyToolDefinitionsForProject(ctx context.Context, projectID
 	tools := s.legacyToolDefinitions()
 
 	// Find the range of agent tools and replace them with project-enriched versions
-	enriched := s.agentToolHandler.GetAgentToolDefinitionsForProject(ctx, projectID)
-	enrichedByName := make(map[string]ToolDefinition, len(enriched))
-	for _, t := range enriched {
-		enrichedByName[t.Name] = t
-	}
-
-	for i, tool := range tools {
-		if et, ok := enrichedByName[tool.Name]; ok {
-			tools[i] = et
+	if s.agentToolHandler != nil {
+		enriched := s.agentToolHandler.GetAgentToolDefinitionsForProject(ctx, projectID)
+		enrichedByName := make(map[string]ToolDefinition, len(enriched))
+		for _, t := range enriched {
+			enrichedByName[t.Name] = t
 		}
+
+		for i, tool := range tools {
+			if et, ok := enrichedByName[tool.Name]; ok {
+				tools[i] = et
+			}
+		}
+
+		// Re-apply scopes: the enrichment above replaces every handler-provided
+		// agent tool with its project-enriched definition, which carries no
+		// RequiredScope. Re-apply so the tools/call scope gate sees the same
+		// authority as the tools/list (GetToolDefinitions) path.
+		applyRequiredScopes(tools)
 	}
 
-	// Re-apply scopes: the enrichment above replaces every handler-provided
-	// agent tool with its project-enriched definition, which carries no
-	// RequiredScope. Re-apply so the tools/call scope gate sees the same
-	// authority as the tools/list (GetToolDefinitions) path.
-	applyRequiredScopes(tools)
+	// Append source-backed tools (Gmail etc.) for the project's connected accounts.
+	if s.sourceToolHandler != nil {
+		tools = append(tools, s.sourceToolHandler.GetSourceToolDefinitionsForProject(ctx, projectID)...)
+	}
 
 	// Append tools from connected relay sessions for this project.
-	if s.relaySvc != nil && projectID != "" {
+	if s.relaySvc != nil {
 		for _, sess := range s.relaySvc.ListByProject(projectID) {
 			tools = append(tools, relaySessionTools(sess)...)
 		}
@@ -2481,6 +2529,51 @@ func lookupToolIndex(name string) *ToolDefinition {
 	return nil
 }
 
+// GetToolByNameForProject resolves a tool definition the way this project's call
+// path sees it: the process-global index first (the whole static catalog plus the
+// deprecated aliases, including the static GitHub review tools), then the
+// project-scoped catalog for the handler-supplied dynamic tools the global index
+// cannot hold (source-backed and relay-session tools).
+//
+// The global index is last-writer-wins across projects and is rebuilt without
+// dynamic tools by any static-catalog lookup, so it is not a sound source for an
+// authority decision on a dynamic tool. Callers that gate a tool call MUST use
+// this resolver and not GetToolByName: a miss there is indistinguishable from an
+// unknown tool and would skip the AgentOnly/RequiredScope gate entirely.
+func (s *Service) GetToolByNameForProject(ctx context.Context, projectID, name string) *ToolDefinition {
+	if def := s.GetToolByName(name); def != nil {
+		return def
+	}
+	if projectID == "" || !s.isProjectDynamicTool(ctx, projectID, name) {
+		return nil
+	}
+	for _, def := range s.legacyToolDefinitionsForProject(ctx, projectID) {
+		if def.Name == name {
+			d := def
+			return &d
+		}
+	}
+	return nil
+}
+
+// isProjectDynamicTool reports whether name can only come from a handler
+// consulted by legacyToolDefinitionsForProject. It keeps the on-demand
+// project-catalog build (one installation query, agent enrichment) off the path
+// for a genuinely unknown tool name.
+func (s *Service) isProjectDynamicTool(ctx context.Context, projectID, name string) bool {
+	if s.sourceToolHandler != nil && s.sourceToolHandler.HandlesSourceTool(ctx, projectID, name) {
+		return true
+	}
+	if s.relaySvc != nil {
+		for _, sess := range s.relaySvc.ListByProject(projectID) {
+			if strings.HasPrefix(name, sess.InstanceID+"_") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ErrToolForbidden is returned by AuthorizeToolCall when a caller is not
 // authorized to invoke a tool (agent-only, superadmin-only, or a RequiredScope
 // the caller lacks). Callers map it to an HTTP 403 without revealing which
@@ -2621,7 +2714,14 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	// A2A, agentcompat, public share). Fail-closed: an absent marker resolves to
 	// untrusted. An HTTP transport marks its dispatch TransportEnforced after its
 	// own per-tool check, so that is an equally-authorized origin.
-	toolDef := s.GetToolByName(toolName)
+	//
+	// Resolve through the PROJECT-scoped catalog, not the process-global index:
+	// handler-supplied dynamic tools (source-backed and relay tools) are absent
+	// from the static index, and a nil definition would skip the seam below
+	// entirely. The seam also refuses an AgentOnly tool for a
+	// transport-enforced dispatch, so a transport that missed the definition
+	// cannot authorize one (authz.AuthorizeTool).
+	toolDef := s.GetToolByNameForProject(ctx, projectID, toolName)
 	principal := authz.Principal{
 		Trusted:           TrustedInternalFromContext(ctx),
 		TransportEnforced: TransportEnforcedFromContext(ctx),
@@ -3011,6 +3111,19 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 		return s.delegateBlueprintTool(ctx, projectID, toolName, args)
 
 	default:
+		if s.sourceToolHandler != nil && s.sourceToolHandler.HandlesSourceTool(ctx, projectID, toolName) {
+			return s.sourceToolHandler.ExecuteSourceTool(ctx, projectID, toolName, args)
+		}
+		if s.githubAppToolHandler != nil && s.githubAppToolHandler.HandlesGitHubAppTool(toolName) {
+			// The review tools are static AgentOnly entries, so the transports
+			// already hide and refuse them; the authority seam above enforces the
+			// same rule in-process. This gate is defence in depth and holds even
+			// if the definition lookup ever regresses (issues #994, #1017).
+			if !TrustedInternalFromContext(ctx) {
+				return nil, fmt.Errorf("github app tool %q is not reachable from an untrusted surface", toolName)
+			}
+			return s.githubAppToolHandler.ExecuteGitHubAppTool(ctx, projectID, toolName, args)
+		}
 		// Attempt to route to a connected relay. Relay tools are named
 		// "{instanceID}_{toolName}" where instanceID may itself contain underscores.
 		// We try each connected session to find one whose prefix matches.
@@ -3977,7 +4090,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 				go.id,
 				go.canonical_id,
 				go.key,
-				COALESCE(go.properties->>'name', '') as name,
+				COALESCE(NULLIF(go.name, ''), go.properties->>'name', '') as name,
 				go.version,
 				`+fieldProjection+` as properties,
 				go.created_at,
@@ -4032,6 +4145,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	for i, e := range entities {
 		resultEntities[i] = Entity{
 			ID:         e.CanonicalID.String(),
+			Ref:        graph.ObjectRef(e.CanonicalID),
 			Key:        e.Key,
 			Name:       e.Name,
 			Type:       e.TypeName,
@@ -4280,7 +4394,7 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 				go.id,
 				go.canonical_id,
 				go.key,
-				COALESCE(go.properties->>'name', '') as name,
+				COALESCE(NULLIF(go.name, ''), go.properties->>'name', '') as name,
 				go.version,
 				`+propsProjection+` as properties,
 				go.created_at,
@@ -4305,6 +4419,7 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 		}
 		resultEntities = append(resultEntities, Entity{
 			ID:         e.CanonicalID.String(),
+			Ref:        graph.ObjectRef(e.CanonicalID),
 			Key:        e.Key,
 			Name:       e.Name,
 			Type:       e.TypeName,
@@ -4489,7 +4604,16 @@ func (s *Service) branchRefAllowedByScope(ctx context.Context, projectID string,
 // Returns nil when branchRef is empty (meaning: use main branch).
 func (s *Service) resolveOrCreateBranchID(ctx context.Context, projectID, branchRef string) (*uuid.UUID, error) {
 	if branchRef == "" {
-		return nil, nil
+		// An agent-run extraction writes into the job's staging branch by default:
+		// the worker installs it in context so the agent cannot accidentally write
+		// reviewable output onto the main graph (and cannot be trusted to remember
+		// to pass `branch` on every call).
+		if run, ok := ExtractionRunFromContext(ctx); ok && run.BranchRef != "" {
+			branchRef = run.BranchRef
+		}
+		if branchRef == "" {
+			return nil, nil
+		}
 	}
 	// Try parsing as UUID first — if it's a UUID and not found, don't auto-create.
 	if id, err := uuid.Parse(branchRef); err == nil {
@@ -4515,6 +4639,13 @@ func (s *Service) resolveOrCreateBranchID(ctx context.Context, projectID, branch
 			return nil, err
 		}
 		return &row.ID, nil
+	}
+	// An agent-run extraction may only write to the job's staging branch. That
+	// branch is created by the worker before the run, so a name that does not
+	// resolve is either a model mistake or an attempt to write elsewhere: refuse
+	// instead of auto-creating and escaping the job.
+	if _, ok := ExtractionRunFromContext(ctx); ok {
+		return nil, fmt.Errorf("branch %q is outside this extraction job's scope", branchRef)
 	}
 	// Branch not found — auto-create it. A branch this run is creating itself is
 	// not gated by the read scope: the scope says which existing branches the run
@@ -4645,7 +4776,7 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			SELECT 
 				go.canonical_id,
 				go.key,
-				COALESCE(go.properties->>'name', '') as name,
+				COALESCE(NULLIF(go.name, ''), go.properties->>'name', '') as name,
 				go.version,
 				go.properties,
 				go.type as type_name,
@@ -4744,6 +4875,7 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 		}
 		resultEntities = append(resultEntities, Entity{
 			ID:         e.CanonicalID.String(),
+			Ref:        graph.ObjectRef(e.CanonicalID),
 			Key:        e.Key,
 			Name:       e.Name,
 			Type:       e.TypeName,
@@ -4865,15 +4997,18 @@ func (s *Service) executeGetEntityEdges(ctx context.Context, projectID string, a
 
 func (s *Service) getEntityBasicInfo(ctx context.Context, projectID, entityID uuid.UUID) (*ConnectedEntity, error) {
 	type entityRow struct {
-		ID         uuid.UUID      `bun:"id"`
-		Type       string         `bun:"type"`
-		Key        string         `bun:"key"`
-		Properties map[string]any `bun:"properties,type:jsonb"`
+		ID          uuid.UUID      `bun:"id"`
+		CanonicalID uuid.UUID      `bun:"canonical_id"`
+		Type        string         `bun:"type"`
+		Key         string         `bun:"key"`
+		Name        string         `bun:"name"`
+		Properties  map[string]any `bun:"properties,type:jsonb"`
 	}
 
 	var entity entityRow
 	err := s.db.NewRaw(`
-		SELECT id, type, COALESCE(key, '') as key, properties
+		SELECT id, canonical_id, type, COALESCE(key, '') as key,
+		       COALESCE(NULLIF(name, ''), properties->>'name', '') as name, properties
 		FROM kb.graph_objects
 		WHERE id = ? AND project_id = ? AND deleted_at IS NULL
 	`, entityID, projectID).Scan(ctx, &entity)
@@ -4882,16 +5017,12 @@ func (s *Service) getEntityBasicInfo(ctx context.Context, projectID, entityID uu
 		return nil, err
 	}
 
-	name := ""
-	if n, ok := entity.Properties["name"].(string); ok {
-		name = n
-	}
-
 	return &ConnectedEntity{
 		ID:         entity.ID.String(),
+		Ref:        graph.ObjectRef(entity.CanonicalID),
 		Type:       entity.Type,
 		Key:        entity.Key,
-		Name:       name,
+		Name:       entity.Name,
 		Properties: truncateProperties(s.graphService.NormaliseDatePropertyValues(ctx, projectID, entity.Type, entity.Properties)),
 	}, nil
 }
@@ -5187,13 +5318,13 @@ func (s *Service) updateEntityOne(ctx context.Context, projectUUID uuid.UUID, pr
 		}
 	}
 
-	// Resolve optional branch param — auto-creates the branch if it does not exist.
+	// Resolve the branch param. Passing it to the resolver even when omitted lets
+	// an agent-run extraction inherit the job's staging branch as its write target.
 	var branchID *uuid.UUID
-	if branchRef, _ := args["branch"].(string); branchRef != "" {
-		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
-		if err != nil {
-			return nil, fmt.Errorf("resolve branch: %w", err)
-		}
+	branchRef, _ := args["branch"].(string)
+	branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+	if err != nil {
+		return nil, fmt.Errorf("resolve branch: %w", err)
 	}
 
 	req := &graph.PatchGraphObjectRequest{
@@ -5364,13 +5495,12 @@ func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, arg
 				return nil
 			}
 			branchResolved = true
-			if branchRef, _ := args["branch"].(string); branchRef != "" {
-				id, rerr := s.resolveOrCreateBranchID(ctx, projectID, branchRef)
-				if rerr != nil {
-					return fmt.Errorf("resolve branch: %w", rerr)
-				}
-				branchID = id
+			branchRef, _ := args["branch"].(string)
+			id, rerr := s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+			if rerr != nil {
+				return fmt.Errorf("resolve branch: %w", rerr)
 			}
+			branchID = id
 			return nil
 		}
 		reason := reasonFromArgs(args)
@@ -5422,14 +5552,13 @@ func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, arg
 		return nil, fmt.Errorf("missing required parameter: entity_id")
 	}
 
-	// Resolve optional branch param — auto-creates the branch if it does not exist,
-	// matching entity-create/entity-update.
+	// Resolve the branch param (see entity-update: an omitted branch inherits an
+	// agent-run extraction's staging branch).
 	var branchID *uuid.UUID
-	if branchRef, _ := args["branch"].(string); branchRef != "" {
-		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
-		if err != nil {
-			return nil, fmt.Errorf("resolve branch: %w", err)
-		}
+	branchRef, _ := args["branch"].(string)
+	branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+	if err != nil {
+		return nil, fmt.Errorf("resolve branch: %w", err)
 	}
 
 	entityID, err := s.deleteEntityOne(ctx, projectUUID, projectID, entityIDStr, branchID, reasonFromArgs(args))
@@ -5776,13 +5905,13 @@ func (s *Service) executeRestoreEntity(ctx context.Context, projectID string, ar
 		entityID = resolved
 	}
 
-	// Resolve optional branch param — auto-creates the branch if it does not exist.
+	// Resolve the branch param (an omitted branch inherits an agent-run
+	// extraction's staging branch).
 	var branchID *uuid.UUID
-	if branchRef, _ := args["branch"].(string); branchRef != "" {
-		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
-		if err != nil {
-			return nil, fmt.Errorf("resolve branch: %w", err)
-		}
+	branchRef, _ := args["branch"].(string)
+	branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+	if err != nil {
+		return nil, fmt.Errorf("resolve branch: %w", err)
 	}
 
 	// Scope gate: restoring echoes the object (incl. its type), so a scoped agent
@@ -6267,13 +6396,13 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 
 	scope := TypeScopeFromContext(ctx)
 
-	// Resolve optional branch param — auto-creates the branch if it does not exist.
+	// Resolve the branch param (an omitted branch inherits an agent-run
+	// extraction's staging branch).
 	var branchID *uuid.UUID
-	if branchRef, _ := args["branch"].(string); branchRef != "" {
-		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
-		if err != nil {
-			return nil, fmt.Errorf("resolve branch: %w", err)
-		}
+	branchRef, _ := args["branch"].(string)
+	branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+	if err != nil {
+		return nil, fmt.Errorf("resolve branch: %w", err)
 	}
 
 	// Support flat single-entity form for backward compat
@@ -6306,7 +6435,9 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 	// silently dropped (issue #401).
 	type slimEntity struct {
 		ID                  string                     `json:"id"`
+		Ref                 string                     `json:"ref,omitempty"`
 		Type                string                     `json:"type"`
+		Name                string                     `json:"name,omitempty"`
 		Key                 string                     `json:"key,omitempty"`
 		Relationships       []inlineRelationship       `json:"relationships,omitempty"`
 		RelationshipResults []inlineRelationshipResult `json:"relationship_results,omitempty"`
@@ -6487,7 +6618,6 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 		} else if st, ok := properties["status"].(string); ok && st != "" {
 			status = &st
 		}
-
 		if err := writeRules.CheckFields(typeName, properties); err != nil {
 			results = append(results, batchResult{
 				Ok:    false,
@@ -6506,13 +6636,30 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 			}
 		}
 
+		// Agent-run extraction job defaults are applied AFTER the definition's field
+		// rules (they are system provenance, not agent output) and they OVERWRITE
+		// model-supplied values: the job owns its branch, status and provenance, so
+		// the agent can neither land output on main nor forge another job's id.
+		extractionJobID := extractionJobIDFromContext(ctx)
+		if run, ok := ExtractionRunFromContext(ctx); ok {
+			if run.Status != "" {
+				st := run.Status
+				status = &st
+				properties["status"] = st
+			}
+			for k, v := range run.Provenance {
+				properties[k] = v
+			}
+		}
+
 		req := &graph.CreateGraphObjectRequest{
-			Type:       typeName,
-			Key:        key,
-			Status:     status,
-			Properties: properties,
-			Labels:     labels,
-			BranchID:   branchID,
+			Type:            typeName,
+			Key:             key,
+			Status:          status,
+			Properties:      properties,
+			Labels:          labels,
+			BranchID:        branchID,
+			ExtractionJobID: extractionJobID,
 		}
 
 		// Propagate namespace from context (set by RememberStream or API caller).
@@ -6533,7 +6680,11 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 
 		slim := &slimEntity{
 			ID:   result.CanonicalID.String(),
+			Ref:  result.Ref,
 			Type: result.Type,
+		}
+		if result.Name != nil {
+			slim.Name = *result.Name
 		}
 		if result.Key != nil {
 			slim.Key = *result.Key
@@ -6661,15 +6812,13 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 
 	scope := TypeScopeFromContext(ctx)
 
-	// Resolve optional branch param — auto-creates the branch if it does not exist,
-	// matching entity-create. The graph service requires both endpoints to be on
-	// the same branch as the new relationship.
+	// Resolve the branch param, matching entity-create. The graph service requires
+	// both endpoints to be on the same branch as the new relationship.
 	var branchID *uuid.UUID
-	if branchRef, _ := args["branch"].(string); branchRef != "" {
-		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
-		if err != nil {
-			return nil, fmt.Errorf("resolve branch: %w", err)
-		}
+	branchRef, _ := args["branch"].(string)
+	branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+	if err != nil {
+		return nil, fmt.Errorf("resolve branch: %w", err)
 	}
 
 	// Support flat single-relationship form for backward compat
@@ -6796,6 +6945,14 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 		properties, _ := relMap["properties"].(map[string]any)
 		if properties == nil {
 			properties = make(map[string]any)
+		}
+		// Agent-run extraction defaults: stamp the job's provenance on each
+		// relationship the agent creates (relationships carry no job column, so
+		// the properties key is what the review/merge tooling reads).
+		if run, ok := ExtractionRunFromContext(ctx); ok {
+			for k, v := range run.Provenance {
+				properties[k] = v
+			}
 		}
 
 		// Guard: self-referential relationships are not meaningful.

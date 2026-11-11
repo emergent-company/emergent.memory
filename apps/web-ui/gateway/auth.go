@@ -439,6 +439,7 @@ func (s *Server) refreshOnce(old *sessionClaims) (*sessionClaims, error) {
 			Picture:           old.Picture,
 			AvatarOverrideURL: old.AvatarOverrideURL,
 			Sub:               old.Sub,
+			Issuer:            s.configuredIssuer(),
 			ExpiresAt:         now.Add(time.Duration(expiresIn) * time.Second).Unix(),
 		}
 		return &claims, nil
@@ -458,6 +459,16 @@ func (s *Server) refreshOnce(old *sessionClaims) (*sessionClaims, error) {
 func (s *Server) ensureFreshSession(c echo.Context) (*sessionClaims, error) {
 	claims, err := s.currentSession(c)
 	if err == nil {
+		// A session minted under a different ZITADEL_ISSUER carries a token the
+		// memory server rejects as invalid_token (e.g. after the public-domain
+		// cutover), but its expiry may still be far away. Refresh it now
+		// instead of forwarding a token we know the backend will 401 on. A
+		// legacy cookie with no recorded issuer refreshes once to migrate; a
+		// failed refresh returns the error so the caller logs the user out
+		// cleanly rather than rendering a generic backend error.
+		if s.sessionIssuerStale(claims) {
+			return s.refreshSessionClaims(c, claims)
+		}
 		// Live session: only refresh inside the grace window so the access
 		// token never dies mid-request (e.g. on a long-lived page).
 		if claims.RefreshToken != "" && claims.ExpiresAt-time.Now().Unix() < 300 {
@@ -475,6 +486,23 @@ func (s *Server) ensureFreshSession(c echo.Context) (*sessionClaims, error) {
 		return nil, err // authentic but refreshless — logged out
 	}
 	return s.refreshSessionClaims(c, old)
+}
+
+// configuredIssuer returns the normalized ZITADEL_ISSUER advertised to clients.
+func (s *Server) configuredIssuer() string {
+	return strings.TrimSuffix(strings.TrimSpace(s.cfg.ZitadelIssuer), "/")
+}
+
+// sessionIssuerStale reports whether the session's tokens were minted by a
+// different issuer than the one currently configured. An empty configured
+// issuer disables the check; a session with no recorded issuer (a cookie from
+// before issuer tracking) is treated as stale so it refreshes once to migrate.
+func (s *Server) sessionIssuerStale(claims *sessionClaims) bool {
+	want := s.configuredIssuer()
+	if want == "" {
+		return false
+	}
+	return strings.TrimSuffix(strings.TrimSpace(claims.Issuer), "/") != want
 }
 
 // Middlewares ---
@@ -580,10 +608,10 @@ func deviceCredentialToken(c echo.Context) string {
 // deviceSurfacePath reports whether a gateway request path/method is within the
 // device surface: room-token mint, agent picker (list/detail), the per-agent
 // object browser, chat relay + its run-cancel route, conversation lifecycle
-// (archive/unarchive/delete), session log/records, memory browsing, and the
-// share-capture writes (a link/note or a photo/PDF). A device credential is
-// rejected on everything else (defence in depth over the server's own surface
-// guard).
+// (archive/unarchive/delete), session log/records, memory browsing, the share-
+// capture writes (a link/note or a photo/PDF), and the object card's two work
+// writes (status/assignee). A device credential is rejected on everything else
+// (defence in depth over the server's own surface guard).
 func deviceSurfacePath(method, path string) bool {
 	switch method {
 	case http.MethodGet:
@@ -608,11 +636,15 @@ func deviceSurfacePath(method, path string) bool {
 		case deviceObjectReadPath(path):
 			// The object card a chat reference opens (object_card.go).
 			return true
-		case deviceConversationReadPath(path, "history"), deviceConversationReadPath(path, "events"):
-			// The recorded timeline and the live conversation stream the iOS
-			// chat reattaches to (issues #431/#437). Both are read-only; the
+		case deviceConversationReadPath(path, "history"),
+			deviceConversationReadPath(path, "events"),
+			deviceConversationReadPath(path, "todos"):
+			// The recorded timeline, the live conversation stream the iOS chat
+			// reattaches to (issues #431/#437), and the agent's plan for the
+			// conversation's session (#440). All three are read-only; the
 			// device token's own memory scope decides which conversations it
-			// may read (see streamEvents / getConversationHistory).
+			// may read (see streamEvents / getConversationHistory /
+			// getConversationTodos).
 			return true
 		}
 		return false
@@ -624,6 +656,12 @@ func deviceSurfacePath(method, path string) bool {
 		// shared photo/PDF. Both are exact shapes bound to exactly one project
 		// id; memory re-checks the same shapes against the same credential.
 		if deviceProjectRememberPath(path) {
+			return true
+		}
+		// Work writes from the object card (issue #454): exactly one object ref,
+		// then status or assignee. Memory admits, for the same credential, only
+		// the two work-item routes these call for a keyed object.
+		if deviceObjectWritePath(path) {
 			return true
 		}
 		// Stopping a chat run the credential's user owns (#81). The gateway
@@ -672,6 +710,21 @@ func deviceObjectReadPath(path string) bool {
 	}
 	parts := strings.Split(rest, "/")
 	return len(parts) == 2 && parts[0] != "" && (parts[1] == "card" || parts[1] == "history")
+}
+
+// deviceObjectWritePath reports whether path is exactly
+// `/api/objects/{ref}/status` or `/api/objects/{ref}/assignee` — the two work
+// writes the object card's editable strip makes (issue #454). One non-empty ref
+// segment, nothing deeper. These are POST-only in practice: the matcher is
+// called from the POST branch of deviceSurfacePath, and every other generation
+// of /api/objects/{ref}/… stays off-surface.
+func deviceObjectWritePath(path string) bool {
+	rest, ok := strings.CutPrefix(path, "/api/objects/")
+	if !ok {
+		return false
+	}
+	parts := strings.Split(rest, "/")
+	return len(parts) == 2 && parts[0] != "" && (parts[1] == "status" || parts[1] == "assignee")
 }
 
 // deviceQuestionActionPath reports whether path is exactly
@@ -913,6 +966,8 @@ func publicAuthPath(p string) bool {
 	switch p {
 	case "/auth/login", "/auth/start", "/auth/add", "/auth/callback", "/auth/logout",
 		"/auth/switch", "/api/setup", "/api/health",
+		// Public deploy portal and its Railway OAuth callback.
+		"/deploy", "/deploy/", "/deploy/oauth/start", "/deploy/oauth/callback", "/deploy/oauth/logout",
 		// GitHub webhook ingress authenticates via HMAC signature, not session.
 		"/webhooks/github":
 		return true

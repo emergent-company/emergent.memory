@@ -304,6 +304,10 @@ type ApplySourceItemParams struct {
 	// "drive") so source-type listings/counts attribute it correctly. Optional;
 	// empty leaves source_type NULL (including all pre-existing calls).
 	SourceType string
+	// Extract runs object extraction after the document/version is written and
+	// chunked. The source worker resolves the project's auto_extract_source_syncs
+	// setting once per job and passes it here; false still chunks and embeds.
+	Extract bool
 }
 
 // ApplySourceItemResult is the outcome of applying a source item to the
@@ -408,7 +412,6 @@ type UploadParams struct {
 	FileHash        string
 	StorageKey      string
 	StorageURL      string
-	AutoExtract     bool
 	Metadata        map[string]any
 	// SkipNotification suppresses the per-document upload announcement. The
 	// batch endpoint sets it and emits one digest for the whole request instead.

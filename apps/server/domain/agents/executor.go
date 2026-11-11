@@ -445,6 +445,40 @@ func deriveSurfaceID(msgs []a2ui.Message) string {
 	return a2ui.SurfaceIDOf(msgs)
 }
 
+// a2uiNamespace scopes the surfaces a run emits to the run and step that emitted
+// them. The prompt teaches every turn the same surfaceId ("s1"), and A2UI
+// requires a surfaceId to be unique for the renderer's lifetime: without a
+// scope, a second answer's createSurface for "s1" replaces the first answer's
+// card in place (issue #592). A run id is a UUID and the step is monotonic
+// within it, so "<runID>.<step>" is globally unique.
+func a2uiNamespace(runID string, step int) string {
+	return fmt.Sprintf("%s.%d", runID, step)
+}
+
+// namespaceA2UIEvents scopes the surfaceId of every A2UI event to ns, rewriting
+// the ids inside its message payload too so the frame and its messages agree.
+// It is applied to the authoritative final frame as well as to the persisted
+// row, so a reload replays exactly the surface the live stream showed.
+func namespaceA2UIEvents(events []StreamEvent, ns string) {
+	if ns == "" {
+		return
+	}
+	for i := range events {
+		if events[i].Type != StreamEventA2UI {
+			continue
+		}
+		events[i].SurfaceID = a2ui.NamespaceID(ns, events[i].SurfaceID)
+		events[i].A2UI = a2ui.NamespaceMessages(ns, events[i].A2UI)
+	}
+}
+
+// persistedSurfaces scopes the surfaces stored on an assistant row exactly like
+// the frames of the run that produced them, so history replay and the live
+// stream agree on every surface id (#592).
+func persistedSurfaces(runID string, step int, surfaces []a2ui.Message) []a2ui.Message {
+	return a2ui.NamespaceMessages(a2uiNamespace(runID, step), surfaces)
+}
+
 // answerTextEvents filters one streamed answer chunk through the A2UI surface
 // filter. It is the only place partial answer text becomes a StreamEvent, so a
 // call site cannot bypass the filter and paint raw protocol JSONL mid-stream.
@@ -634,6 +668,12 @@ type ExecuteRequest struct {
 	// EphemeralTokenID is the DB id of the token; the executor revokes it on workspace teardown.
 	AuthToken        string
 	EphemeralTokenID string
+
+	// WorkspaceLease, when set, attaches this run to a sandbox owned by another
+	// live run instead of provisioning its own container. spawn_agents sets it in
+	// shared mode; the owner keeps teardown and the workspace's run linkage.
+	// The run's own sandbox_config still decides which workspace tools it gets.
+	WorkspaceLease *sandbox.WorkspaceLease
 
 	// EnvVars are runtime environment variables passed per-run by the caller.
 	// They are merged into the sandbox container environment with lower priority
@@ -2231,6 +2271,35 @@ func (ae *AgentExecutor) maybeWakeParent(ctx context.Context, childRunID string,
 	}()
 }
 
+// sharedWorkspaceResult turns a lease into the borrowed provisioning result for
+// a run that attaches to another run's sandbox. It returns (nil, reason) when
+// the lease cannot be used — no workspace, the delegate has no enabled sandbox
+// config, or the owner's container is no longer ready — so the caller can fall
+// back to provisioning. A nil lease returns (nil, ""): no sharing was requested.
+func sharedWorkspaceResult(lease *sandbox.WorkspaceLease, def *AgentDefinition) (*sandbox.ProvisioningResult, string) {
+	if lease == nil {
+		return nil, ""
+	}
+	ws := lease.Workspace
+	if ws == nil {
+		return nil, "lease carries no workspace"
+	}
+	if !definitionSandboxEnabled(def) {
+		return nil, "agent has no enabled sandbox config"
+	}
+	if ws.Status != sandbox.StatusReady {
+		return nil, fmt.Sprintf("workspace %s is %q, not ready", ws.ID, ws.Status)
+	}
+	return &sandbox.ProvisioningResult{
+		Workspace:         ws,
+		ProviderType:      ws.Provider,
+		RepoURL:           derefString(ws.RepositoryURL),
+		Branch:            derefString(ws.Branch),
+		Borrowed:          true,
+		BorrowedFromRunID: lease.OwnerRunID,
+	}, ""
+}
+
 // provisionWorkspace provisions a workspace for the agent run if configured.
 // Returns (nil, nil) if workspace provisioning is disabled, not configured, or not needed.
 // Returns (result, nil) on success or degraded provisioning.
@@ -2243,6 +2312,39 @@ func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, r
 	}
 	if req.AgentDefinition == nil || len(req.AgentDefinition.SandboxConfig) == 0 {
 		return nil, nil
+	}
+
+	// Shared-sandbox path: a delegating run handed us a lease on its live
+	// workspace. Attach instead of provisioning, provided this run's own config
+	// enables a sandbox (a delegate with no sandbox must not gain filesystem
+	// access merely by being spawned) and the owner's container is still usable.
+	// A lease that cannot be used falls through to normal provisioning so the
+	// child keeps the behaviour it had before sharing existed.
+	if lease := req.WorkspaceLease; lease != nil {
+		if res, reason := sharedWorkspaceResult(lease, req.AgentDefinition); res != nil {
+			ae.log.Info("attaching agent run to shared sandbox",
+				slog.String("run_id", runID),
+				slog.String("workspace_id", res.Workspace.ID),
+				slog.String("owner_run_id", res.BorrowedFromRunID),
+			)
+			// Persist the borrow marker while the run is live and again on
+			// completion (the final summary repeats it), so run responses can
+			// distinguish a shared child from an isolated or sandbox-less one.
+			if ae.repo != nil {
+				if markErr := ae.repo.MarkRunWorkspaceShared(ctx, runID, res.BorrowedFromRunID); markErr != nil {
+					ae.log.Warn("failed to mark run as using a shared workspace",
+						slog.String("run_id", runID),
+						slog.String("error", markErr.Error()),
+					)
+				}
+			}
+			return res, nil
+		} else if reason != "" {
+			ae.log.Warn("shared sandbox unavailable; falling back to normal provisioning",
+				slog.String("run_id", runID),
+				slog.String("reason", reason),
+			)
+		}
 	}
 
 	ae.log.Info("provisioning workspace for agent run",
@@ -2322,6 +2424,17 @@ func (ae *AgentExecutor) teardownWorkspace(ctx context.Context, result *sandbox.
 	}
 
 	if result == nil || result.Workspace == nil || ae.provisioner == nil {
+		return
+	}
+
+	// A borrowed sandbox belongs to the run that provisioned it. Destroying it
+	// here would kill the delegating run's workspace (and any siblings still
+	// using it), so teardown stops at revoking this run's own token.
+	if result.Borrowed {
+		ae.log.Info("skipping teardown of borrowed sandbox",
+			slog.String("workspace_id", result.Workspace.ID),
+			slog.String("owner_run_id", result.BorrowedFromRunID),
+		)
 		return
 	}
 
@@ -2520,6 +2633,13 @@ func (ae *AgentExecutor) runPipeline(
 	// Inject the current run ID into context so downstream tools (e.g. trigger_agent)
 	// can propagate it as the parent_run_id when spawning child runs.
 	ctx = contextWithCallerRunID(ctx, run.ID)
+	// Inject the source that triggered this run so source-bound tools resolve
+	// against that exact source instead of guessing from the project repo
+	// allowlist (a repo may be served by more than one github_app source). A
+	// non-string or empty value leaves the fallback path unchanged (issue #579).
+	if sourceID, ok := run.TriggerMetadata["sourceId"].(string); ok && sourceID != "" {
+		ctx = mcp.ContextWithRunSourceID(ctx, sourceID)
+	}
 	// Inject session ID into context so built-in tools (e.g. set_session_title)
 	// can update session metadata. If the run was created without the session ID set
 	// in-memory (e.g. via trigger_agent async path), fetch it from DB as a fallback.
@@ -2539,6 +2659,23 @@ func (ae *AgentExecutor) runPipeline(
 	if req.RootRunID != nil {
 		ctx = provider.ContextWithRootRunID(ctx, *req.RootRunID)
 	}
+
+	// Expose this run's sandbox lease so coordination tools can let spawned
+	// children attach to the same container instead of each provisioning one.
+	// A run that is itself borrowing re-publishes the owner's lease unchanged:
+	// grandchildren share the same workspace and the original owner still owns
+	// teardown. Only a run that provisioned the container becomes the owner.
+	var lease *sandbox.WorkspaceLease
+	if wsResult != nil && wsResult.Workspace != nil && !wsResult.Degraded {
+		lease = &sandbox.WorkspaceLease{Workspace: wsResult.Workspace, OwnerRunID: run.ID}
+		if wsResult.Borrowed {
+			lease.OwnerRunID = wsResult.BorrowedFromRunID
+		}
+	}
+	// Always install, including a nil lease: a run with no workspace must clear
+	// any lease inherited from its delegating run, or a sandbox-less child would
+	// pass its parent's workspace to its own children.
+	ctx = ContextWithWorkspaceLease(ctx, lease)
 
 	// Inject project and org IDs into context so the credential resolver can look up
 	// the org-level provider config via the DB hierarchy (project → org), and so
@@ -4005,7 +4142,10 @@ func (ae *AgentExecutor) runPipeline(
 			if event.Partial && event.Content != nil && req.StreamCallback != nil {
 				if step := tracker.current(); step != filterStep {
 					textFilter = a2ui.NewTextFilter()
-					a2uiStream = a2ui.NewSurfaceStream()
+					// Scope the surface to the run and step: the model names
+					// every surface "s1", so two answers would otherwise reach
+					// the renderer as the same surface (issue #592).
+					a2uiStream = a2ui.NewNamespacedSurfaceStream(a2uiNamespace(run.ID, step))
 					filterStep = step
 				}
 				for _, part := range event.Content.Parts {
@@ -4081,6 +4221,7 @@ func (ae *AgentExecutor) runPipeline(
 				if event.Content != nil && req.StreamCallback != nil {
 					step := tracker.current()
 					finalEvents := finalResponseStreamEvents(event.Content.Parts)
+					namespaceA2UIEvents(finalEvents, a2uiNamespace(run.ID, step))
 					for _, streamEvent := range finalEvents {
 						if streamEvent.Type == StreamEventThinking {
 							thinkTrack.emit(step, streamEvent.Role, streamEvent.Text)
@@ -4100,7 +4241,7 @@ func (ae *AgentExecutor) runPipeline(
 				// began a surface without closing it cannot swallow the next
 				// step's answer, and reset the progressive stream with it.
 				textFilter = a2ui.NewTextFilter()
-				a2uiStream = a2ui.NewSurfaceStream()
+				a2uiStream = a2ui.NewNamespacedSurfaceStream(a2uiNamespace(run.ID, tracker.current()))
 			}
 
 			// Track the last non-partial event that carries text — used as fallback
@@ -4301,6 +4442,12 @@ func (ae *AgentExecutor) runPipeline(
 		if wsResult.Degraded {
 			summary["workspace_degraded"] = true
 		}
+		if wsResult.Borrowed {
+			summary["workspace_shared"] = true
+			if wsResult.BorrowedFromRunID != "" {
+				summary["workspace_owner_run_id"] = wsResult.BorrowedFromRunID
+			}
+		}
 	}
 
 	// If workspace was required but ended up degraded, mark as error.
@@ -4369,6 +4516,15 @@ func (ae *AgentExecutor) augmentInstructionWithWorkspace(instruction string, wsR
 	wsContext := "\n\n## Workspace Environment\n" +
 		"You have a sandboxed workspace container available for this run.\n" +
 		fmt.Sprintf("- Workspace ID: %s\n", wsResult.Workspace.ID)
+
+	if wsResult.Borrowed {
+		wsContext += "- Shared: this workspace is the delegating run's live sandbox, also used by the delegating agent"
+		if wsResult.BorrowedFromRunID != "" {
+			wsContext += fmt.Sprintf(" (owner run %s)", wsResult.BorrowedFromRunID)
+		}
+		wsContext += " and any sibling agents running at the same time.\n" +
+			"- Changes you make to files are immediately visible to those agents, and theirs to you. Do not reset, clean, or rewrite the working tree wholesale; use destructive git commands only when the task explicitly requires them.\n"
+	}
 
 	if wsResult.RepoURL != "" {
 		wsContext += fmt.Sprintf("- Repository: %s\n", wsResult.RepoURL)
@@ -4535,6 +4691,16 @@ func (ae *AgentExecutor) buildCoordinationTools(ctx context.Context, req Execute
 		SpawnPolicy:     extractSpawnPolicy(req.AgentDefinition),
 		TrustedInternal: req.TrustedInternal,
 		ParentMetadata:  req.TriggerMetadata,
+		// Shared-sandbox context: a spawned child may attach to this run's live
+		// workspace instead of provisioning one. The lease is nil when this run
+		// has no workspace (sandbox disabled, unconfigured, or degraded).
+		WorkspaceLease: WorkspaceLeaseFromContext(ctx),
+		// ParentAuthToken lets a shared child's workspace tools authenticate
+		// against the API from inside the already-warm container. It is the
+		// parent's raw token, never a newly minted one, so teardown does not
+		// revoke credentials the parent still needs.
+		ParentAuthToken: auth.RawTokenFromContext(ctx),
+		ParentEnvVars:   req.EnvVars,
 	}
 	// Project spawned children's lifecycle onto the parent run's stream. The
 	// emitter is the run's shared, serialized one (install by runPipeline and
@@ -5377,10 +5543,14 @@ func (ae *AgentExecutor) persistEventContent(ctx context.Context, runID string, 
 	// is only a surface). Strip any A2UI block here so neither path can show raw
 	// JSONL; the extracted surfaces ride along so citation derivation on reload
 	// still sees them.
+	//
+	// The stored surfaces are scoped to this run and step exactly like the live
+	// and final frames, so a reloaded transcript renders the same distinct cards
+	// the stream showed rather than two answers colliding on "s1" (#592).
 	if stored, surfaces, hasBlock := replyForStorage(text); hasBlock {
 		text = stored
 		if len(surfaces) > 0 {
-			contentMap["a2ui"] = surfaces
+			contentMap["a2ui"] = persistedSurfaces(runID, stepNumber, surfaces)
 		}
 	}
 	if text != "" {

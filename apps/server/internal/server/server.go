@@ -12,6 +12,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/proxytrust"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -42,6 +43,20 @@ func NewEcho(p EchoParams) *echo.Echo {
 	e.Debug = cfg.Debug
 	e.HideBanner = true
 	e.HidePort = !cfg.Debug
+
+	// Client-IP trust is explicit, never echo v4's permissive default (which
+	// trusts loopback/private/link-local peers — GHSA-246p-cpwv-v3jq /
+	// GHSA-99jh-6h7p-pp36). With TRUSTED_PROXY_CIDRS set, X-Forwarded-For is
+	// resolved to the right-most untrusted hop; unset fails closed to the
+	// socket peer address. NewConfig rejects malformed CIDRs, so the error
+	// branch below only guards direct NewEcho callers (tests).
+	ipExtractor, ipTrustMode, err := proxytrust.New(cfg.TrustedProxyCIDRs)
+	if err != nil {
+		log.Error("invalid TRUSTED_PROXY_CIDRS; failing closed to the direct peer IP", logger.Error(err))
+		ipExtractor, ipTrustMode = echo.ExtractIPDirect(), proxytrust.DirectMode
+	}
+	e.IPExtractor = ipExtractor
+	log.Info("client IP trust", slog.String("mode", ipTrustMode))
 
 	// Custom error handler matching NestJS format
 	e.HTTPErrorHandler = apperror.HTTPErrorHandler(log)

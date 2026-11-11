@@ -83,7 +83,9 @@ func (f *fakeProxyRepo) UpdateOAuthTokens(_ context.Context, serverID, userID st
 }
 
 func server(id, projectID, name string, enabled bool) *MCPServer {
-	return &MCPServer{ID: id, ProjectID: projectID, Name: name, Enabled: enabled}
+	// External stdio is the fixture's transport: the resolver must treat it as
+	// registry-managed (an empty/unknown type is fail-closed and never resolves).
+	return &MCPServer{ID: id, ProjectID: projectID, Name: name, Enabled: enabled, Type: ServerTypeStdio}
 }
 
 // fakeMCPClient records the tool call it receives so tests can assert exactly
@@ -206,6 +208,29 @@ func TestResolveServerForTool_EmptyToolRemainder_NoMatch(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, srv)
 	assert.Empty(t, tool)
+}
+
+// TestResolveServerForTool_IgnoresInProcessRows proves that restoring builtin to
+// FindAllServers (for the UI list) does not let the proxy resolve a builtin or
+// source row and dial it outbound. Both raw-name and slug mode must skip
+// non-registry-managed rows.
+func TestResolveServerForTool_IgnoresInProcessRows(t *testing.T) {
+	repo := &fakeProxyRepo{servers: []*MCPServer{
+		{ID: "b", ProjectID: "p1", Name: "builtin", Enabled: true, Type: ServerTypeBuiltin},
+		{ID: "a", ProjectID: "p1", Name: "source-admin", Enabled: true, Type: ServerTypeSource},
+		server("s1", "p1", "external", true),
+	}}
+	pm := newTestProxyManager(repo)
+
+	for _, key := range []string{
+		"builtin_schema-icon-list", // raw-name hit on the builtin row
+		"source_admin_list",        // slug-mode hit on the source row
+	} {
+		srv, tool, err := pm.resolveServerForTool(context.Background(), "p1", key)
+		require.Error(t, err, "in-process key %q must not resolve", key)
+		assert.Nil(t, srv)
+		assert.Empty(t, tool)
+	}
 }
 
 // --- CallTool tests (fake repo + fake connection) ---

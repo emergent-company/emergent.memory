@@ -20,3 +20,14 @@ func RegisterSyncSchedulerTask(sched *scheduler.Scheduler, svc *Service) error {
 	}
 	return sched.AddIntervalTask("source_sync_admit", syncAdmitInterval, svc.AdmitDueSources)
 }
+
+// RegisterProbeSchedulerTask registers the proactive grant probe. It is a
+// separate task from admission on purpose: admitting a sync and asking whether
+// the grant is alive are different decisions with different cadences, and a
+// probe must run even when the source is nowhere near due (#23).
+func RegisterProbeSchedulerTask(sched *scheduler.Scheduler, svc *Service) error {
+	if sched == nil {
+		return nil
+	}
+	return sched.AddIntervalTask("source_grant_probe", probeSweepInterval, svc.ProbeDueSources)
+}

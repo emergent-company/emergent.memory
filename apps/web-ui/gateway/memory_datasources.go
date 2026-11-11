@@ -92,6 +92,8 @@ type DSIntegration struct {
 	SourceType          string  `json:"sourceType"`
 	SyncMode            string  `json:"syncMode"`
 	SyncIntervalMinutes *int    `json:"syncIntervalMinutes,omitempty"`
+	// McpSlug is the immutable MCP tool-name segment for a source-backed server.
+	McpSlug *string `json:"mcpSlug,omitempty"`
 	// Config carries the non-secret config values (credential keys stripped) so
 	// the edit UI can round-trip a source's persisted settings.
 	Config map[string]any `json:"config,omitempty"`
@@ -99,6 +101,10 @@ type DSIntegration struct {
 	// connected with one. The saved credential's secret fields are never
 	// returned — only this metadata id.
 	CredentialID string `json:"credentialId,omitempty"`
+	// OAuthAppID names the named OAuth app the source uses; empty means the
+	// deployment default or automatic resolution.
+	OAuthAppID   string `json:"oauthAppId,omitempty"`
+	OAuthAppName string `json:"oauthAppName,omitempty"`
 	// OAuthStrategy is the effective scope strategy the server resolved for this
 	// source (project → org → provider default). Present on the single-source
 	// read only; empty means the provider default applies.
@@ -203,6 +209,8 @@ type DSCreateIntegrationRequest struct {
 	// CredentialID references a project-scoped saved credential instead of
 	// carrying secret material in Config.
 	CredentialID string `json:"credentialId,omitempty"`
+	// OAuthAppID selects a named OAuth app; empty uses automatic resolution.
+	OAuthAppID string `json:"oauthAppId,omitempty"`
 }
 
 // DSUpdateIntegrationRequest is the partial update body. Omitted fields are left
@@ -215,6 +223,9 @@ type DSUpdateIntegrationRequest struct {
 	SyncIntervalMinutes *int           `json:"syncIntervalMinutes,omitempty"`
 	// CredentialID switches the source to another saved credential.
 	CredentialID string `json:"credentialId,omitempty"`
+	// OAuthAppID switches the source to another named OAuth app; nil leaves the
+	// selection unchanged and an empty string clears it.
+	OAuthAppID *string `json:"oauthAppId,omitempty"`
 }
 
 // DSTestConfigRequest tests an unsaved provider config.
@@ -425,11 +436,14 @@ func (m *MemoryClient) ListDSProviders(ctx context.Context) ([]DSProvider, error
 // intended (non-secret) source config; scopes optionally overrides the default.
 // A non-empty reconnectSourceID re-runs consent for that existing source, whose
 // grant the callback replaces in place instead of creating another source.
-func (m *MemoryClient) StartDSOAuth(ctx context.Context, providerType string, config map[string]any, scopes []string, reconnectSourceID string) (*DSOAuthAuthorizeResponse, error) {
+func (m *MemoryClient) StartDSOAuth(ctx context.Context, providerType string, config map[string]any, scopes []string, oauthAppID, reconnectSourceID string) (*DSOAuthAuthorizeResponse, error) {
 	path := "/api/data-source-integrations/providers/" + url.PathEscape(providerType) + "/oauth/authorize"
 	var body any
-	if len(config) > 0 || len(scopes) > 0 || reconnectSourceID != "" {
+	if len(config) > 0 || len(scopes) > 0 || oauthAppID != "" || reconnectSourceID != "" {
 		payload := map[string]any{"config": config, "scopes": scopes}
+		if oauthAppID != "" {
+			payload["oauthAppId"] = oauthAppID
+		}
 		if reconnectSourceID != "" {
 			payload["reconnectSourceId"] = reconnectSourceID
 		}
@@ -753,4 +767,303 @@ func (m *MemoryClient) ListDocumentVersions(ctx context.Context, documentID stri
 		return nil, err
 	}
 	return out.Versions, nil
+}
+
+// PreviewDSFilter validates an unsaved provider filter and returns the compiled
+// query. Used by the Gmail connect form before starting OAuth.
+func (m *MemoryClient) PreviewDSFilter(ctx context.Context, providerType string, config map[string]any) (string, error) {
+	path := "/api/data-source-integrations/providers/" + url.PathEscape(providerType) + "/filter-preview"
+	var out struct {
+		Query string `json:"query"`
+	}
+	if err := m.doH(ctx, http.MethodPost, path, map[string]any{"providerType": providerType, "config": config}, m.documentHeaders(ctx), &out); err != nil {
+		return "", err
+	}
+	return out.Query, nil
+}
+
+// DSScopeRequest is a partial source-scope change.
+type DSScopeRequest struct {
+	Filter               map[string]any `json:"filter,omitempty"`
+	ObjectTypes          []string       `json:"objectTypes,omitempty"`
+	MCPWriteToolsEnabled *bool          `json:"mcpWriteToolsEnabled,omitempty"`
+	// Since and LabelIDs are the legacy per-source scope keys; they are part of
+	// the scope contract and travel with it.
+	Since    *string  `json:"since,omitempty"`
+	LabelIDs []string `json:"labelIds,omitempty"`
+}
+
+// DSScopePreview is the API's scope preview/update result.
+type DSScopePreview struct {
+	CompiledQuery string         `json:"compiledQuery"`
+	PreviewHash   string         `json:"previewHash"`
+	BaseScopeHash string         `json:"baseScopeHash"`
+	Changed       bool           `json:"changed"`
+	Proposed      DSScopeRequest `json:"proposed"`
+}
+
+// PreviewDSScope validates a proposed source scope.
+func (m *MemoryClient) PreviewDSScope(ctx context.Context, id string, req *DSScopeRequest) (*DSScopePreview, error) {
+	var out DSScopePreview
+	path := "/api/data-source-integrations/" + url.PathEscape(id) + "/scope/preview"
+	if err := m.doH(ctx, http.MethodPost, path, req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// UpdateDSScope applies a hash-guarded source scope change.
+func (m *MemoryClient) UpdateDSScope(ctx context.Context, id string, req *DSScopeRequest, previewHash, baseScopeHash string) (*DSScopePreview, error) {
+	body := map[string]any{
+		"filter": req.Filter, "objectTypes": req.ObjectTypes,
+		"previewHash": previewHash, "baseScopeHash": baseScopeHash,
+	}
+	if req.MCPWriteToolsEnabled != nil {
+		body["mcpWriteToolsEnabled"] = *req.MCPWriteToolsEnabled
+	}
+	if req.Since != nil {
+		body["since"] = *req.Since
+	}
+	if req.LabelIDs != nil {
+		body["labelIds"] = req.LabelIDs
+	}
+	var out DSScopePreview
+	path := "/api/data-source-integrations/" + url.PathEscape(id) + "/scope"
+	if err := m.doH(ctx, http.MethodPatch, path, body, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DSOAuthProviderConfig is one provider's scope configuration inside a named
+// vendor-level OAuth app.
+type DSOAuthProviderConfig struct {
+	Scopes   []string `json:"scopes,omitempty"`
+	Strategy string   `json:"strategy,omitempty"`
+}
+
+// DSOAuthApp is a named, vendor-level OAuth app. The client secret is never
+// returned; redirect URIs are the deployment's resolved callback values.
+type DSOAuthApp struct {
+	ID               string                           `json:"id"`
+	Scope            string                           `json:"scope"`
+	Vendor           string                           `json:"vendor"`
+	VendorName       string                           `json:"vendorName"`
+	Name             string                           `json:"name"`
+	ClientID         string                           `json:"clientId"`
+	RedirectURIs     map[string]string                `json:"redirectUris,omitempty"`
+	JavascriptOrigin string                           `json:"javascriptOrigin,omitempty"`
+	ProviderConfigs  map[string]DSOAuthProviderConfig `json:"providerConfigs,omitempty"`
+	Config           map[string]any                   `json:"config,omitempty"`
+	Configured       bool                             `json:"configured"`
+	UsedBy           int                              `json:"usedBy"`
+	CreatedAt        string                           `json:"createdAt"`
+	UpdatedAt        string                           `json:"updatedAt"`
+}
+
+// DSCreateOAuthAppRequest is the write body for a named OAuth app.
+type DSCreateOAuthAppRequest struct {
+	Name            string                           `json:"name"`
+	Vendor          string                           `json:"vendor"`
+	ClientID        string                           `json:"clientId"`
+	ClientSecret    string                           `json:"clientSecret"`
+	ProviderConfigs map[string]DSOAuthProviderConfig `json:"providerConfigs,omitempty"`
+	Config          map[string]any                   `json:"config,omitempty"`
+}
+
+// DSUpdateOAuthAppRequest is the partial-update body.
+type DSUpdateOAuthAppRequest struct {
+	Name            *string                          `json:"name,omitempty"`
+	ClientID        *string                          `json:"clientId,omitempty"`
+	ClientSecret    string                           `json:"clientSecret,omitempty"`
+	ProviderConfigs map[string]DSOAuthProviderConfig `json:"providerConfigs,omitempty"`
+	Config          map[string]any                   `json:"config,omitempty"`
+}
+
+func (m *MemoryClient) ListOrgDSOAuthApps(ctx context.Context, orgID string) ([]DSOAuthApp, error) {
+	var out []DSOAuthApp
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/data-source-integrations/oauth-apps"
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (m *MemoryClient) CreateOrgDSOAuthApp(ctx context.Context, orgID string, req *DSCreateOAuthAppRequest) (*DSOAuthApp, error) {
+	var out DSOAuthApp
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/data-source-integrations/oauth-apps"
+	if err := m.doH(ctx, http.MethodPost, path, req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (m *MemoryClient) GetOrgDSOAuthApp(ctx context.Context, orgID, appID string) (*DSOAuthApp, error) {
+	var out DSOAuthApp
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/data-source-integrations/oauth-apps/" + url.PathEscape(appID)
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (m *MemoryClient) UpdateOrgDSOAuthApp(ctx context.Context, orgID, appID string, req *DSUpdateOAuthAppRequest) (*DSOAuthApp, error) {
+	var out DSOAuthApp
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/data-source-integrations/oauth-apps/" + url.PathEscape(appID)
+	if err := m.doH(ctx, http.MethodPut, path, req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (m *MemoryClient) DeleteOrgDSOAuthApp(ctx context.Context, orgID, appID string) error {
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/data-source-integrations/oauth-apps/" + url.PathEscape(appID)
+	return m.doH(ctx, http.MethodDelete, path, nil, m.documentHeaders(ctx), nil)
+}
+
+func (m *MemoryClient) ListProjectDSOAuthApps(ctx context.Context, projectID string) ([]DSOAuthApp, error) {
+	var out []DSOAuthApp
+	path := "/api/projects/" + url.PathEscape(projectID) + "/data-source-integrations/oauth-apps"
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (m *MemoryClient) CreateProjectDSOAuthApp(ctx context.Context, projectID string, req *DSCreateOAuthAppRequest) (*DSOAuthApp, error) {
+	var out DSOAuthApp
+	path := "/api/projects/" + url.PathEscape(projectID) + "/data-source-integrations/oauth-apps"
+	if err := m.doH(ctx, http.MethodPost, path, req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (m *MemoryClient) GetProjectDSOAuthApp(ctx context.Context, projectID, appID string) (*DSOAuthApp, error) {
+	var out DSOAuthApp
+	path := "/api/projects/" + url.PathEscape(projectID) + "/data-source-integrations/oauth-apps/" + url.PathEscape(appID)
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (m *MemoryClient) UpdateProjectDSOAuthApp(ctx context.Context, projectID, appID string, req *DSUpdateOAuthAppRequest) (*DSOAuthApp, error) {
+	var out DSOAuthApp
+	path := "/api/projects/" + url.PathEscape(projectID) + "/data-source-integrations/oauth-apps/" + url.PathEscape(appID)
+	if err := m.doH(ctx, http.MethodPut, path, req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (m *MemoryClient) DeleteProjectDSOAuthApp(ctx context.Context, projectID, appID string) error {
+	path := "/api/projects/" + url.PathEscape(projectID) + "/data-source-integrations/oauth-apps/" + url.PathEscape(appID)
+	return m.doH(ctx, http.MethodDelete, path, nil, m.documentHeaders(ctx), nil)
+}
+
+// --- org source Apps (GitHub App credentials) ---
+
+// SourceApp is an org-scoped provider App credential
+// (GET /api/orgs/:orgId/source-apps). The App's private key and webhook secret
+// are sealed server-side and never returned, so this shape carries none.
+type SourceApp struct {
+	ID         string `json:"id"`
+	OrgID      string `json:"orgId"`
+	Provider   string `json:"provider"`
+	AppID      int64  `json:"appId"`
+	Slug       string `json:"slug"`
+	WebhookKey string `json:"webhookKey"`
+	CreatedAt  string `json:"createdAt"`
+	UpdatedAt  string `json:"updatedAt"`
+}
+
+// DSSourceAppRequest is the register body for an org source App.
+type DSSourceAppRequest struct {
+	Provider      string `json:"provider"`
+	AppID         int64  `json:"appId"`
+	Slug          string `json:"slug"`
+	PrivateKey    string `json:"privateKey"`
+	WebhookSecret string `json:"webhookSecret"`
+}
+
+// DSSourceTrigger is one source event → agent binding
+// (GET /api/data-source-integrations/:id/triggers).
+type DSSourceTrigger struct {
+	ID          string         `json:"id"`
+	ProjectID   string         `json:"projectId"`
+	SourceID    string         `json:"sourceId"`
+	EventType   string         `json:"eventType"`
+	AgentID     string         `json:"agentId"`
+	Queue       string         `json:"queue"`
+	EventFilter map[string]any `json:"eventFilter,omitempty"`
+	Enabled     bool           `json:"enabled"`
+	CreatedAt   string         `json:"createdAt"`
+	UpdatedAt   string         `json:"updatedAt"`
+}
+
+// DSSourceTriggerRequest is the create/PATCH body. Every field is omitted when
+// empty, so a toggle sends only enabled and leaves the binding's other columns
+// untouched (PATCH is partial on the server).
+type DSSourceTriggerRequest struct {
+	EventType   string         `json:"eventType,omitempty"`
+	AgentID     string         `json:"agentId,omitempty"`
+	Queue       string         `json:"queue,omitempty"`
+	EventFilter map[string]any `json:"eventFilter,omitempty"`
+	Enabled     *bool          `json:"enabled,omitempty"`
+}
+
+func (m *MemoryClient) ListOrgSourceApps(ctx context.Context, orgID string) ([]SourceApp, error) {
+	var out []SourceApp
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/source-apps"
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (m *MemoryClient) CreateOrgSourceApp(ctx context.Context, orgID string, req *DSSourceAppRequest) (*SourceApp, error) {
+	var out SourceApp
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/source-apps"
+	if err := m.doH(ctx, http.MethodPost, path, req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (m *MemoryClient) DeleteOrgSourceApp(ctx context.Context, orgID, appID string) error {
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/source-apps/" + url.PathEscape(appID)
+	return m.doH(ctx, http.MethodDelete, path, nil, m.documentHeaders(ctx), nil)
+}
+
+func (m *MemoryClient) ListSourceTriggers(ctx context.Context, sourceID string) ([]DSSourceTrigger, error) {
+	var out []DSSourceTrigger
+	path := "/api/data-source-integrations/" + url.PathEscape(sourceID) + "/triggers"
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (m *MemoryClient) CreateSourceTrigger(ctx context.Context, sourceID string, req *DSSourceTriggerRequest) (*DSSourceTrigger, error) {
+	var out DSSourceTrigger
+	path := "/api/data-source-integrations/" + url.PathEscape(sourceID) + "/triggers"
+	if err := m.doH(ctx, http.MethodPost, path, req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (m *MemoryClient) UpdateSourceTrigger(ctx context.Context, sourceID, triggerID string, req *DSSourceTriggerRequest) (*DSSourceTrigger, error) {
+	var out DSSourceTrigger
+	path := "/api/data-source-integrations/" + url.PathEscape(sourceID) + "/triggers/" + url.PathEscape(triggerID)
+	if err := m.doH(ctx, http.MethodPatch, path, req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (m *MemoryClient) DeleteSourceTrigger(ctx context.Context, sourceID, triggerID string) error {
+	path := "/api/data-source-integrations/" + url.PathEscape(sourceID) + "/triggers/" + url.PathEscape(triggerID)
+	return m.doH(ctx, http.MethodDelete, path, nil, m.documentHeaders(ctx), nil)
 }

@@ -185,6 +185,9 @@ func (s *Server) uiOrg(c echo.Context) error {
 	if c.QueryParam("restored") != "" {
 		data.FlashMsg = "Deletion cancelled."
 	}
+	if c.QueryParam("renamed") != "" {
+		data.FlashMsg = "Project renamed."
+	}
 	if q := c.QueryParam("moved"); q != "" {
 		data.FlashMsg = transferMovedMessage(projects, tree, c.QueryParam("project"), q)
 	}
@@ -680,6 +683,39 @@ func (s *Server) uiRestoreProject(c echo.Context) error {
 		return redirectWithError(c, back, err)
 	}
 	redirectAfterMutation(c, back+"?restored=1")
+	return nil
+}
+
+// uiRenameProject renames one project (POST /projects/rename; form fields
+// projectId and name, plus orgId for the redirect back — read like
+// uiDeleteProjects, so a plain form post or an htmx submit both work). A
+// missing project or an empty name is rejected locally with an error flash;
+// everything else — existence, name validation and authorization — is delegated
+// to the memory service, whose errors surface via the standard ?err= flash with
+// no state change. On success the redirect (HTMX submit via
+// redirectAfterMutation, plain form posts get the PRG 303 fallback) returns to
+// the org view with a ?renamed=1 confirmation flash.
+func (s *Server) uiRenameProject(c echo.Context) error {
+	orgID := strings.TrimSpace(c.FormValue("orgId"))
+	if orgID == "" {
+		orgID = strings.TrimSpace(c.QueryParam("orgId"))
+	}
+	back := orgScopeURL(orgID)
+	projectID := strings.TrimSpace(c.FormValue("projectId"))
+	if projectID == "" {
+		projectID = strings.TrimSpace(c.QueryParam("projectId"))
+	}
+	if projectID == "" {
+		return redirectWithError(c, back, fmt.Errorf("no project selected"))
+	}
+	name := strings.TrimSpace(c.FormValue("name"))
+	if name == "" {
+		return redirectWithError(c, back, fmt.Errorf("project name is required"))
+	}
+	if _, err := s.memory.UpdateProject(c.Request().Context(), projectID, &ProjectUpdate{Name: name}); err != nil {
+		return redirectWithError(c, back, err)
+	}
+	redirectAfterMutation(c, back+"?renamed=1")
 	return nil
 }
 

@@ -84,8 +84,14 @@ unset _port
     # own dependencies through the caller's module graph, which does not carry
     # them; a versioned `go install` brings its own. The version comes from
     # gateway/go.mod, like the image and the `gateway` CI job (#2314).
+    #
+    # Honour an explicit GOBIN: on the CI pool `$(go env GOPATH)` is shared and
+    # persistent across runner slots, so two jobs installing templ at once can
+    # write the same binary while the other execs it ("Text file busy"). CI
+    # points GOBIN at a per-job directory; a local run keeps the old location.
+    templ_bin="${GOBIN:-$(go env GOPATH)/bin}/templ"
     go install "github.com/a-h/templ/cmd/templ@$(GOWORK=off go list -m -f '{{.Version}}' github.com/a-h/templ)"
-    "$(go env GOPATH)/bin/templ" generate ./...
+    "$templ_bin" generate ./...
   fi
   # componentgraph derives the gallery graph from the *_templ.go call sites, so
   # this must follow templ generate above.

@@ -1,5 +1,6 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import path from 'node:path';
+import { APPROVAL_DECISIONS } from '../../helpers/approval-controls';
 
 // Hermetic DOM-level spec for the A2UI read-only gate (#1892).
 //
@@ -106,9 +107,9 @@ test.describe('A2UI read-only gate (chat-components.js)', () => {
     await expect(page.locator(CARD_BODIES)).toHaveCount(3);
 
     // No decision control survives anywhere in the surface.
-    await expect(page.locator('[data-testid="chat-approval-approve"]')).toHaveCount(0);
-    await expect(page.locator('[data-testid="chat-approval-reject"]')).toHaveCount(0);
-    await expect(page.locator('[data-testid="chat-approval-cancel"]')).toHaveCount(0);
+    for (const { testid } of APPROVAL_DECISIONS) {
+      await expect(page.locator(`[data-testid="${testid}"]`)).toHaveCount(0);
+    }
     await expect(page.locator('[data-testid="chat-question-option"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="chat-question-submit"]')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Accept' })).toHaveCount(0);
@@ -129,9 +130,17 @@ test.describe('A2UI read-only gate (chat-components.js)', () => {
     await render(page, DECISION_COMPONENTS, {});
 
     await expect(page.locator(CARD_BODIES)).toHaveCount(3);
-    await expect(page.locator('[data-testid="chat-approval-approve"]')).toHaveCount(1);
-    await expect(page.locator('[data-testid="chat-approval-reject"]')).toHaveCount(1);
-    await expect(page.locator('[data-testid="chat-approval-cancel"]')).toHaveCount(1);
+    // The decision set is asserted from its single owner
+    // (helpers/approval-controls.ts): this is the spec that runs the shipped
+    // renderer, so a renderer change should break here and nowhere else.
+    for (const { testid, label } of APPROVAL_DECISIONS) {
+      const control = page.locator(`[data-testid="${testid}"]`);
+      await expect(control).toHaveCount(1);
+      await expect(control).toHaveText(label);
+    }
+    await expect(
+      card(page, 'APPROVAL_TOOL_SENTINEL').getByRole('button'),
+    ).toHaveCount(APPROVAL_DECISIONS.length);
     await expect(page.locator('[data-testid="chat-question-option"]')).toHaveCount(2);
     await expect(page.getByRole('button', { name: 'Accept' })).toHaveCount(1);
     await expect(page.getByText(DISABLED_NOTE)).toHaveCount(0);

@@ -430,6 +430,15 @@ func (s *Service) excludedSearchTypes(ctx context.Context, projectID uuid.UUID) 
 }
 
 // nameFromProps extracts the "name" property from a properties map, or returns an empty string.
+// objectTitle prefers the first-class name and falls back to the properties
+// convention, for event metadata that still reports a human title.
+func objectTitle(o *GraphObject) string {
+	if o.Name != nil {
+		return *o.Name
+	}
+	return nameFromProps(o.Properties)
+}
+
 func nameFromProps(props map[string]any) string {
 	if props == nil {
 		return ""
@@ -949,6 +958,11 @@ func (s *Service) GetByID(ctx context.Context, projectID, id uuid.UUID, resolveH
 	if err := s.fillObjectContributions(ctx, projectID, []*GraphObjectResponse{resp}); err != nil {
 		return nil, err
 	}
+	// "Derived from what" is answered beside the contributions, from the same
+	// single-version read path (#153).
+	if err := s.fillObjectSynthesisLineage(ctx, projectID, []*GraphObjectResponse{resp}); err != nil {
+		return nil, err
+	}
 	return resp, nil
 }
 
@@ -1055,6 +1069,12 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 	if err := validateTypeStatus(workCfg, req.Status, req.Properties); err != nil {
 		return nil, err
 	}
+	// Board-enabled items need a claimable key; mint an internal one when the
+	// caller did not supply it (users only see name/ref).
+	if isBoardEnabledConfig(workCfg) && (req.Key == nil || *req.Key == "") {
+		k := autoWorkKey(req.Type, resolveObjectName(req.Name, req.Properties))
+		req.Key = &k
+	}
 	if err := requireBoardEnabledKey(workCfg, req.Key); err != nil {
 		return nil, err
 	}
@@ -1073,6 +1093,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 		ProjectID:       projectID,
 		BranchID:        req.BranchID,
 		Type:            req.Type,
+		Name:            resolveObjectName(req.Name, validatedProps),
 		Key:             req.Key,
 		Status:          createStatus,
 		Assignee:        req.Assignee,
@@ -1110,7 +1131,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 			ActorID:    actorID,
 			Metadata: map[string]any{
 				"key":         *obj.Key,
-				"name":        nameFromProps(obj.Properties),
+				"name":        objectTitle(obj),
 				"object_type": obj.Type,
 			},
 		})
@@ -1186,6 +1207,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 			ProjectID:       projectID,
 			BranchID:        req.BranchID,
 			Type:            req.Type,
+			Name:            resolveObjectName(req.Name, validatedProps),
 			Key:             req.Key,
 			Status:          statusForWrite(validatedProps, createStatus),
 			Assignee:        req.Assignee,
@@ -1220,6 +1242,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 		// Was deleted, create new version to "restore" with new properties
 		newVersion := &GraphObject{
 			Type:            req.Type,
+			Name:            resolveObjectName(req.Name, validatedProps),
 			Key:             req.Key,
 			Status:          statusForWrite(validatedProps, req.Status),
 			Assignee:        req.Assignee,
@@ -1290,6 +1313,16 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 		}
 	}
 
+	// Title: an explicit name wins; otherwise backfill from the merged
+	// properties the first time a title is available.
+	newName := existing.Name
+	if req.Name != nil {
+		newName = trimName(*req.Name)
+	} else if newName == nil {
+		newName = resolveObjectName(nil, newProps)
+	}
+	nameChanged := !namesEqual(newName, existing.Name)
+
 	// Cheap property-change probe. When status and labels are unchanged the
 	// stored ContentHash isolates the properties (it hashes props+status+key+
 	// labels, and upsert's key is fixed): a matching hash proves the properties
@@ -1305,7 +1338,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 		diff = computeChangeSummary(existing.Properties, newProps)
 	}
 
-	if diff == nil && !statusChanged && !labelsChanged && !assigneeChanged {
+	if diff == nil && !statusChanged && !labelsChanged && !assigneeChanged && !nameChanged {
 		// No change - return existing (no-op)
 		if existing.ExtractionJobID == nil && req.ExtractionJobID != nil {
 			if _, err := tx.NewUpdate().Model((*GraphObject)(nil)).
@@ -1314,6 +1347,17 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 				return nil, false, fmt.Errorf("backfill extraction job id: %w", err)
 			}
 			existing.ExtractionJobID = req.ExtractionJobID
+		}
+		// A synthesis write that re-produces identical content takes the no-op
+		// path and mints no version. Record its inputs on the existing version
+		// row anyway: the row was still derived from this job, and the
+		// re-extraction's supersede rule must see it as re-produced rather than
+		// stale (#153).
+		if lineageAppliesTo(existing.DataClass) {
+			if err := s.repo.insertSynthesisLineage(ctx, tx.Tx, projectID, ContributionSubjectObject,
+				existing.ID, synthesisInputsFromContext(ctx)); err != nil {
+				return nil, false, fmt.Errorf("write object synthesis lineage: %w", err)
+			}
 		}
 		if err := tx.Commit(); err != nil {
 			return nil, false, apperror.ErrDatabase.WithInternal(err)
@@ -1330,6 +1374,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 	// Properties, status, labels, or assignee differ - create new version
 	newVersion := &GraphObject{
 		Type:            existing.Type,
+		Name:            newName,
 		Key:             existing.Key,
 		Status:          newStatus,
 		Assignee:        newAssignee,
@@ -1347,7 +1392,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 
 	// If properties/status/labels are unchanged (only the assignee changed), the
 	// stored content hash is still valid — reuse it instead of re-marshalling.
-	if diff == nil && !statusChanged && !labelsChanged {
+	if diff == nil && !statusChanged && !labelsChanged && !nameChanged {
 		newVersion.ContentHash = existing.ContentHash
 	}
 
@@ -1441,7 +1486,7 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 
 	// Fast no-op: a patch that touches no property/status/label/key/assignee field
 	// cannot produce a new version. Skip building the merged map and the diff.
-	if len(req.Properties) == 0 && req.Status == nil && req.Key == nil && req.Assignee == nil && !req.ReplaceLabels && len(req.Labels) == 0 {
+	if len(req.Properties) == 0 && req.Status == nil && req.Name == nil && req.Key == nil && req.Assignee == nil && !req.ReplaceLabels && len(req.Labels) == 0 {
 		if err := tx.Commit(); err != nil {
 			return nil, apperror.ErrDatabase.WithInternal(err)
 		}
@@ -1535,6 +1580,15 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		newKey = req.Key
 	}
 
+	// Handle title: explicit name wins; otherwise preserve, backfilling from
+	// merged properties when the object never had a title.
+	newName := current.Name
+	if req.Name != nil {
+		newName = trimName(*req.Name)
+	} else if newName == nil {
+		newName = resolveObjectName(nil, newProps)
+	}
+
 	// Handle assignee: use req.Assignee if provided, otherwise preserve current.
 	newAssignee := current.Assignee
 	if req.Assignee != nil {
@@ -1543,6 +1597,7 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 
 	newVersion := &GraphObject{
 		Type:       current.Type,
+		Name:       newName,
 		Key:        newKey,
 		Status:     newStatus,
 		Assignee:   newAssignee,
@@ -1583,8 +1638,11 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		}
 	}
 
+	// Check if title changed
+	nameChanged := !namesEqual(newName, current.Name)
+
 	// No effective change — return existing version without creating a new one
-	if newVersion.ChangeSummary == nil && !statusChanged && !labelsChanged && !keyChanged && !assigneeChanged {
+	if newVersion.ChangeSummary == nil && !statusChanged && !labelsChanged && !keyChanged && !assigneeChanged && !nameChanged {
 		if err := tx.Commit(); err != nil {
 			return nil, apperror.ErrDatabase.WithInternal(err)
 		}
@@ -1595,7 +1653,7 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 
 	// Only the assignee changed (no props/status/labels/key) → the stored content
 	// hash still describes this version; reuse it instead of re-marshalling.
-	if newVersion.ChangeSummary == nil && !statusChanged && !labelsChanged && !keyChanged {
+	if newVersion.ChangeSummary == nil && !statusChanged && !labelsChanged && !keyChanged && !nameChanged {
 		newVersion.ContentHash = current.ContentHash
 	}
 
@@ -1637,7 +1695,7 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 			ActorID:    actorID,
 			Metadata: map[string]any{
 				"key":            *newVersion.Key,
-				"name":           nameFromProps(newVersion.Properties),
+				"name":           objectTitle(newVersion),
 				"object_type":    newVersion.Type,
 				"fields_changed": fieldsChanged,
 			},
@@ -1738,7 +1796,7 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 			ActorID:    actorID,
 			Metadata: map[string]any{
 				"key":         *current.Key,
-				"name":        nameFromProps(current.Properties),
+				"name":        objectTitle(current),
 				"object_type": current.Type,
 			},
 		})
@@ -1805,7 +1863,7 @@ func (s *Service) Restore(ctx context.Context, projectID, id uuid.UUID, actorID 
 			ActorID:    actorID,
 			Metadata: map[string]any{
 				"key":         *restored.Key,
-				"name":        nameFromProps(restored.Properties),
+				"name":        objectTitle(restored),
 				"object_type": restored.Type,
 			},
 		})
@@ -1844,6 +1902,11 @@ func (s *Service) GetHistory(ctx context.Context, projectID, id uuid.UUID) (*Obj
 	// history — the version row is what the contributions are keyed to, so a
 	// superseded version keeps the rows it arrived with.
 	if err := s.fillObjectContributions(ctx, projectID, data); err != nil {
+		return nil, err
+	}
+	// Each version also reports the inputs it was derived from, in the same one
+	// query for the whole history (#153).
+	if err := s.fillObjectSynthesisLineage(ctx, projectID, data); err != nil {
 		return nil, err
 	}
 
@@ -4173,6 +4236,8 @@ func (s *Service) FindSimilarObjects(ctx context.Context, projectID, objectID uu
 			ProjectID:   &r.ProjectID,
 			BranchID:    r.BranchID,
 			Type:        r.Type,
+			Name:        r.Name,
+			Ref:         ObjectRef(r.CanonicalID),
 			Key:         r.Key,
 			Status:      r.Status,
 			Properties:  s.NormaliseDatePropertyValues(ctx, projectID, r.Type, r.Properties),
@@ -5057,6 +5122,22 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 		response.Applied = true
 		response.AppliedObjects = &appliedCount
 
+		// A merge that landed everything is the point where a re-extraction's
+		// output is authoritative on the target: supersede the rows the same
+		// documents previously produced, keeping what this extraction re-produced
+		// (#153). Best-effort — the merge is already committed.
+		if leftForReview == 0 && relConflict == 0 {
+			if n, err := s.SupersedeStaleAfterBranchMerge(ctx, projectID, targetBranchID, &req.SourceBranchID); err != nil {
+				s.log.Warn("supersede stale derived rows after merge failed",
+					slog.String("source_branch_id", req.SourceBranchID.String()),
+					logger.Error(err))
+			} else if n > 0 {
+				s.log.Info("superseded stale rows derived from merged documents",
+					slog.String("source_branch_id", req.SourceBranchID.String()),
+					slog.Int("superseded", n))
+			}
+		}
+
 		{
 			relsMerged := 0
 			if response.RelationshipsTotal != nil {
@@ -5184,6 +5265,7 @@ func (s *Service) applyMerge(
 				BranchID:        targetBranchID,
 				Version:         1,
 				Type:            src.Type,
+				Name:            src.Name,
 				Key:             src.Key,
 				Status:          src.Status,
 				Namespace:       src.Namespace,
@@ -5221,6 +5303,9 @@ func (s *Service) applyMerge(
 				if err := s.unionMergeContributions(ctx, tx.Tx, projectID, ContributionSubjectObject,
 					[]uuid.UUID{src.ID}, clone.ID, clone.BranchID); err != nil {
 					return 0, fmt.Errorf("clone object %s: %w", cid, err)
+				}
+				if err := s.markMergedOutcomes(ctx, tx.Tx, projectID, ContributionSubjectObject, clone.ID, clone.CanonicalID); err != nil {
+					return 0, fmt.Errorf("clone object %s: merged outcome: %w", cid, err)
 				}
 
 				// Stamp the merge ledger on the source object so future merges/diffs
@@ -5265,6 +5350,7 @@ func (s *Service) applyMerge(
 			}
 			newVersion := &GraphObject{
 				Type:       prevHead.Type,
+				Name:       src.Name,
 				Key:        src.Key,
 				Status:     targetStatus,
 				Namespace:  src.Namespace,
@@ -5290,6 +5376,9 @@ func (s *Service) applyMerge(
 			if err := s.unionMergeContributions(ctx, tx.Tx, projectID, ContributionSubjectObject,
 				[]uuid.UUID{src.ID, prevHead.ID}, newVersion.ID, newVersion.BranchID); err != nil {
 				return 0, fmt.Errorf("fast-forward object %s: %w", cid, err)
+			}
+			if err := s.markMergedOutcomes(ctx, tx.Tx, projectID, ContributionSubjectObject, newVersion.ID, newVersion.CanonicalID); err != nil {
+				return 0, fmt.Errorf("fast-forward object %s: merged outcome: %w", cid, err)
 			}
 			appliedCount++
 			// Use physical version ID — graph_embedding_jobs.object_id FK references graph_objects.id.
@@ -5334,8 +5423,10 @@ func (s *Service) applyMerge(
 			mergedProps = applyProvenanceUnion(mergedProps, tgt.Properties, src.Properties)
 			// Status: preserve target unless overwrite.
 			resolvedStatus := tgt.Status
+			resolvedName := tgt.Name
 			if strategy == "overwrite" {
 				resolvedStatus = src.Status
+				resolvedName = src.Name
 			}
 			labels := tgt.Labels
 			if strategy == "overwrite" {
@@ -5359,6 +5450,7 @@ func (s *Service) applyMerge(
 			}
 			newVersion := &GraphObject{
 				Type:          prevHead.Type,
+				Name:          resolvedName,
 				Key:           tgt.Key,
 				Status:        resolvedStatus,
 				Namespace:     src.Namespace,
@@ -5385,6 +5477,9 @@ func (s *Service) applyMerge(
 			if err := s.unionMergeContributions(ctx, tx.Tx, projectID, ContributionSubjectObject,
 				[]uuid.UUID{src.ID, prevHead.ID}, newVersion.ID, newVersion.BranchID); err != nil {
 				return 0, fmt.Errorf("conflict-resolve object %s: %w", cid, err)
+			}
+			if err := s.markMergedOutcomes(ctx, tx.Tx, projectID, ContributionSubjectObject, newVersion.ID, newVersion.CanonicalID); err != nil {
+				return 0, fmt.Errorf("conflict-resolve object %s: merged outcome: %w", cid, err)
 			}
 			appliedCount++
 			// Use physical version ID — graph_embedding_jobs.object_id FK references graph_objects.id.
@@ -5452,6 +5547,7 @@ func (s *Service) applyMerge(
 				}
 				newVersion := &GraphObject{
 					Type:          existingTarget.Type,
+					Name:          existingTarget.Name,
 					Key:           existingTarget.Key,
 					Status:        existingTarget.Status,
 					Namespace:     existingTarget.Namespace,
@@ -5479,6 +5575,9 @@ func (s *Service) applyMerge(
 				if err := s.unionMergeContributions(ctx, tx.Tx, projectID, ContributionSubjectObject,
 					[]uuid.UUID{src.ID, existingTarget.ID}, newVersion.ID, newVersion.BranchID); err != nil {
 					return 0, fmt.Errorf("absorb similar object %s into %s: %w", cid, *summary.SimilarTargetID, err)
+				}
+				if err := s.markMergedOutcomes(ctx, tx.Tx, projectID, ContributionSubjectObject, newVersion.ID, newVersion.CanonicalID); err != nil {
+					return 0, fmt.Errorf("absorb similar object %s into %s: merged outcome: %w", cid, *summary.SimilarTargetID, err)
 				}
 				appliedCount++
 				embeddingIDs = append(embeddingIDs, newVersion.ID.String())
@@ -5550,6 +5649,14 @@ func (s *Service) applyMerge(
 									[]uuid.UUID{src.ID, similarRel.ID}, newRelVersion.ID, newRelVersion.BranchID); err != nil {
 									s.log.Warn("similar rel: failed to copy contributions", logger.Error(err))
 								} else {
+									if err := s.markMergedOutcomes(ctx, tx.Tx, projectID, ContributionSubjectRelationship, newRelVersion.ID, similarRel.CanonicalID); err != nil {
+										// Unlike the contribution copy above, this is
+										// the decision record: commit the merge
+										// without it and the source is never told
+										// it moved. Fail the transaction, as every
+										// other merge site does.
+										return 0, fmt.Errorf("absorb similar relationship %s into %s: merged outcome: %w", cid, similarRel.CanonicalID, err)
+									}
 									appliedCount++
 									relEmbeddingIDs = append(relEmbeddingIDs, newRelVersion.ID.String())
 									continue // absorbed — skip create below
@@ -5596,6 +5703,9 @@ func (s *Service) applyMerge(
 				[]uuid.UUID{src.ID}, rel.ID, rel.BranchID); err != nil {
 				return 0, fmt.Errorf("clone relationship %s: %w", cid, err)
 			}
+			if err := s.markMergedOutcomes(ctx, tx.Tx, projectID, ContributionSubjectRelationship, rel.ID, rel.CanonicalID); err != nil {
+				return 0, fmt.Errorf("clone relationship %s: merged outcome: %w", cid, err)
+			}
 			appliedCount++
 			relEmbeddingIDs = append(relEmbeddingIDs, rel.ID.String())
 
@@ -5629,6 +5739,9 @@ func (s *Service) applyMerge(
 			if err := s.unionMergeContributions(ctx, tx.Tx, projectID, ContributionSubjectRelationship,
 				[]uuid.UUID{src.ID, prevHead.ID}, newVersion.ID, newVersion.BranchID); err != nil {
 				return 0, fmt.Errorf("fast-forward relationship %s: %w", cid, err)
+			}
+			if err := s.markMergedOutcomes(ctx, tx.Tx, projectID, ContributionSubjectRelationship, newVersion.ID, prevHead.CanonicalID); err != nil {
+				return 0, fmt.Errorf("fast-forward relationship %s: merged outcome: %w", cid, err)
 			}
 			appliedCount++
 			relEmbeddingIDs = append(relEmbeddingIDs, newVersion.ID.String())
@@ -5891,8 +6004,9 @@ func classifyMergeObject(sourceHead, targetHead *BranchObjectHead) (status strin
 		// Exists only on source — added.
 		return "added", nil
 	case sourceHead != nil && targetHead != nil:
-		// Exists on both — compare content hash (covers properties, status, key, labels).
-		if bytesEqual(sourceHead.ContentHash, targetHead.ContentHash) {
+		// Exists on both — compare content hash (covers properties, status, key,
+		// labels) and the title (the hash predates `name`, so it does not cover it).
+		if bytesEqual(sourceHead.ContentHash, targetHead.ContentHash) && namesEqual(sourceHead.Name, targetHead.Name) {
 			return "unchanged", nil
 		}
 		// Content differs — find which property keys have conflicting values.
@@ -6040,9 +6154,11 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 	}
 
 	// Guard: board-enabled object types require a stable key, matching the
-	// single-create path (issue #1655). Validate every object up front, before
-	// the transaction, so a keyless board-enabled object rejects the whole batch
-	// atomically with no partial writes.
+	// single-create path (issue #1655). Batch/subgraph callers are programmatic
+	// and supply keys; the UI's single-create path mints one automatically.
+	// Validate every object up front, before the transaction, so a keyless
+	// board-enabled object rejects the whole batch atomically with no partial
+	// writes.
 	if err := validateSubgraphObjectKeys(schemas, req.Objects); err != nil {
 		return nil, err
 	}
@@ -6105,6 +6221,7 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 			ProjectID:  projectID,
 			BranchID:   objReq.BranchID,
 			Type:       objReq.Type,
+			Name:       resolveObjectName(objReq.Name, validatedProps),
 			Key:        objReq.Key,
 			Status:     statusForWrite(validatedProps, createStatus),
 			Properties: validatedProps,
@@ -6176,13 +6293,24 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: branch mismatch between src %q and dst %q", i, srcLabel, dstLabel))
 		}
 
+		validatedProps := relReq.Properties
+		if schemas != nil {
+			validated, err := validateRelationshipProperties(relType, srcObj.Type, dstObj.Type, relReq.Properties, schemas)
+			if err != nil {
+				return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d] (%s->%s): %s", i, relReq.SrcRef, relReq.DstRef, err.Error()))
+			}
+			if relReq.Properties != nil {
+				validatedProps = validated
+			}
+		}
+
 		rel := &GraphRelationship{
 			ProjectID:  projectID,
 			BranchID:   srcObj.BranchID,
 			Type:       relType,
 			SrcID:      srcObj.CanonicalID,
 			DstID:      dstObj.CanonicalID,
-			Properties: relReq.Properties,
+			Properties: validatedProps,
 			Weight:     relReq.Weight,
 			Namespace:  srcObj.Namespace,
 			ActorType:  &actorType,
@@ -6190,7 +6318,7 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 		}
 
 		// Compute change summary
-		rel.ChangeSummary = computeChangeSummary(nil, relReq.Properties)
+		rel.ChangeSummary = computeChangeSummary(nil, validatedProps)
 
 		if _, err := s.repo.CreateRelationship(ctx, tx.Tx, rel); err != nil {
 			return nil, apperror.ErrDatabase.WithMessage(fmt.Sprintf("relationships[%d] (%s->%s): %s", i, relReq.SrcRef, relReq.DstRef, err.Error()))
@@ -6200,7 +6328,7 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 		var inverseResponse *GraphRelationshipResponse
 		var inverseRelID string
 		if s.inverseTypeProvider != nil {
-			inverseResponse, inverseRelID = s.maybeCreateInverse(ctx, tx.Tx, projectID, srcObj.BranchID, relType, srcObj, dstObj, relReq.Properties, relReq.Weight, actorType, actorID)
+			inverseResponse, inverseRelID = s.maybeCreateInverse(ctx, tx.Tx, projectID, srcObj.BranchID, relType, srcObj, dstObj, validatedProps, relReq.Weight, actorType, actorID)
 		}
 
 		resp := rel.ToResponse()
@@ -6378,7 +6506,7 @@ func (s *Service) MoveObject(ctx context.Context, projectID, objectID uuid.UUID,
 			ActorID:    actorID,
 			Metadata: map[string]any{
 				"key":                 *current.Key,
-				"name":                nameFromProps(current.Properties),
+				"name":                objectTitle(current),
 				"object_type":         current.Type,
 				"source_branch":       branchLabel(sourceBranchID),
 				"target_branch":       branchLabel(targetBranchID),

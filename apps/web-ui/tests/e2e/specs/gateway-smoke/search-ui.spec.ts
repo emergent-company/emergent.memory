@@ -1,6 +1,8 @@
 import { test, expect } from '@playwright/test';
 
-// Per-PR browser smoke for project search (/search).
+// Browser smoke for project search (/search). Runs in the gateway-smoke suite,
+// i.e. on the `dev -> main` promotion PR and on pushes to `main` — not on a
+// feature PR.
 //
 // This is the one UI surface that renders POST /api/search/unified's TEXT hits.
 // The objects browser calls the same endpoint with resultTypes=graph, so a

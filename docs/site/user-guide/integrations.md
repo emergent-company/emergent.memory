@@ -7,52 +7,91 @@ Integrations connect Memory to third-party services at the project or organizati
 
 ---
 
-## GitHub App
+## GitHub App source (review integration)
 
-The GitHub App integration allows Memory to connect to your GitHub repositories — enabling repo-aware agents, automated knowledge extraction from code and issues, and OAuth-based repository access.
+Memory connects a GitHub App as a project source. The App receives
+`pull_request` webhooks, a source trigger starts a run for the configured agent,
+and the agent posts a review bound to the reviewed head SHA.
 
-### Connect GitHub
-
-=== "Admin UI"
-    Go to **Project Settings → Integrations → GitHub** and click **Connect**.
-
-=== "API"
-    ```http
-    POST /api/v1/settings/github/connect
-    ```
-
-    This returns an authorization URL. Visit it to grant access via GitHub OAuth.
-
-### OAuth callback
-
-GitHub redirects back to:
-
-```
-GET /api/v1/settings/github/callback?code=...
-```
-
-The platform exchanges the code for an access token and stores it.
-
-### CLI setup (API key mode)
-
-For non-browser environments:
+### Register the App (organization admin)
 
 ```http
-POST /api/v1/settings/github/cli
-{ "token": "<github-personal-access-token>" }
+POST /api/orgs/{orgId}/source-apps
+Content-Type: application/json
+
+{
+  "provider": "github",
+  "appId": 123456,
+  "slug": "memory-reviewer",
+  "privateKey": "-----BEGIN RSA PRIVATE KEY-----\n...",
+  "webhookSecret": "<the App webhook secret>"
+}
 ```
 
-### Check connection status
+The private key and webhook secret are sealed at rest with
+`LLM_ENCRYPTION_KEY` and never returned. The `201` response carries the App row
+id and its `webhookKey`. The App must be granted `contents: read`,
+`pull_requests: write`, `issues: write`, and `checks: write`.
 
 ```http
-GET /api/v1/settings/github
+GET    /api/orgs/{orgId}/source-apps
+DELETE /api/orgs/{orgId}/source-apps/{appId}
 ```
 
-### Disconnect
+### Create the source
 
 ```http
-DELETE /api/v1/settings/github
+POST /api/data-source-integrations
+Content-Type: application/json
+
+{
+  "name": "GitHub reviews",
+  "providerType": "github_app",
+  "sourceType": "app",
+  "config": {
+    "app_id": "<App row id from the registration response>",
+    "installation_id": "987654",
+    "repos": ["owner/repo"]
+  }
+}
 ```
+
+`github_app` is trigger-only: it never syncs documents, and webhooks for
+repositories outside the allowlist are ignored.
+
+### Bind a trigger
+
+```http
+POST /api/data-source-integrations/{sourceId}/triggers
+Content-Type: application/json
+
+{
+  "eventType": "pull_request",
+  "agentId": "<runtime agent uuid>",
+  "queue": "security-review"
+}
+```
+
+Use `GET`, `PATCH`, and `DELETE` on
+`/api/data-source-integrations/{sourceId}/triggers[/{triggerId}]` to manage the
+binding. `agentId` is a runtime agent in the source's project.
+
+### Webhook
+
+Point the App's webhook URL at:
+
+```
+POST /api/webhooks/source-apps/{webhookKey}
+```
+
+using the `webhookKey` returned by the App registration/list response.
+Subscribe to `pull_request`; the endpoint verifies `X-Hub-Signature-256` and
+deduplicates `X-GitHub-Delivery`.
+
+!!! note "Legacy routes removed"
+    The old `/api/v1/settings/github/*` OAuth routes no longer exist. The
+    earlier `/api/orgs/{orgId}/github-app` surface and
+    `POST /api/webhooks/github/app` were replaced by source apps above (#574).
 
 ---
 

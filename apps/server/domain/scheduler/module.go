@@ -186,6 +186,21 @@ func RegisterTasks(p TaskParams) error {
 		}
 	}
 
+	// Register the document parsing sweep (every 10 minutes by default). An
+	// upload enqueues its parsing job outside the document insert's transaction,
+	// so a crash or a cancelled request in between leaves a document with no
+	// job and no content; this is the reconciliation that gives it one.
+	documentParsingSweep := NewDocumentParsingSweepTask(
+		p.DB, p.Log,
+		time.Duration(p.Cfg.DocumentParsingSweepMinAgeMinutes)*time.Minute,
+		p.Cfg.DocumentParsingSweepBatchSize,
+	)
+	if err := addScheduledTask(p.Scheduler, p.Log, "document_parsing_sweep",
+		p.Cfg.DocumentParsingSweepSchedule, p.Cfg.DocumentParsingSweepInterval, documentParsingSweep.Run); err != nil {
+		p.Log.Error("failed to register document parsing sweep task",
+			slog.String("error", err.Error()))
+	}
+
 	p.Log.Info("registered scheduled tasks",
 		slog.Any("tasks", p.Scheduler.ListTasks()))
 

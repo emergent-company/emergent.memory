@@ -77,6 +77,10 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware, g
 	// pushing source's own external ids and revisions (#2376, PR B).
 	g.POST("/changesets", bulkAdmit(gov, h.ApplyChangeset))
 
+	// Source outcome feedback: what became of each record a source pushed
+	// (#2376, slice 5). A pull surface with a cursor; no webhooks in v1.
+	g.GET("/sources/:id/outcomes", h.ListSourceOutcomes)
+
 	// Reindex missing embeddings (recovery for ingest-without-schema scenarios)
 	g.POST("/reindex-embeddings", bulkAdmit(gov, h.ReindexEmbeddings))
 

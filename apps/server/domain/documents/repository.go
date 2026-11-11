@@ -376,6 +376,56 @@ func (r *Repository) GetByContentHash(ctx context.Context, projectID, contentHas
 	return &doc, nil
 }
 
+// FindUploadByFileHash returns the newest live document in the project whose
+// stored bytes match fileHash, for best-effort upload dedupe (it is what keeps
+// an agent's retried upload from paying for a second parse and a second
+// extraction).
+//
+// A document qualifies when its parse is either still in flight or already
+// produced text — a retry seconds after a timeout must match a document whose
+// job has not run yet, which is exactly the window the cost is paid in. It does
+// not qualify when its parse reached a terminal failure: an empty document must
+// not be handed back as if the retry succeeded, so a retry re-uploads and the
+// pipeline gets another attempt. HEAD only (supersedes_id IS NULL), like every
+// other read: an older version is not what the caller's bytes produced.
+//
+// Best-effort by design — there is no unique index on (project_id, file_hash)
+// since uploads stopped being deduplicated at insert time, so two concurrent
+// identical uploads can both create a row. The caller that matters is a retry,
+// which is sequential.
+func (r *Repository) FindUploadByFileHash(ctx context.Context, projectID, fileHash string) (*Document, error) {
+	if fileHash == "" {
+		return nil, nil
+	}
+	var doc Document
+	err := r.db.NewSelect().
+		Model(&doc).
+		// The alias must match the one bun qualifies the selected columns with,
+		// so the EXISTS below can refer to the outer row.
+		ModelTableExpr("kb.documents AS document").
+		Where("document.project_id = ?", projectID).
+		Where("document.file_hash = ?", fileHash).
+		Where("document.supersedes_id IS NULL").
+		Where("document.source_status <> ?", SourceStatusDeletedFromSource).
+		Where("document.conversion_status IS DISTINCT FROM 'failed'").
+		Where(`document.content IS NOT NULL OR EXISTS (
+			SELECT 1 FROM kb.document_parsing_jobs dpj
+			WHERE dpj.document_id = document.id
+			  AND dpj.status IN ('pending', 'processing', 'retry_pending'))`).
+		Order("document.created_at DESC").
+		Limit(1).
+		Scan(ctx)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("find upload by file hash: %w", err)
+	}
+
+	return &doc, nil
+}
+
 // GetDistinctSourceTypes returns all distinct source types with document counts for a project.
 // The population matches a default listing (HEAD-only, documents removed at the
 // source excluded) so the counts line up with the rows a client can see.

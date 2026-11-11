@@ -1,10 +1,11 @@
 import { test, expect } from '@playwright/test';
 
-// Per-PR browser smoke for the documents surface (#564): the upload form lives
-// in a dialog now (#2287). The mutations suite caught that regression only by
-// reading the specs; this runs on every PR against the hermetic dev-mode
-// harness and fails if the opener, dialog, file input, or submit button drift
-// apart again.
+// Browser smoke for the documents surface (#564): the upload form lives in a
+// dialog now (#2287). Runs in the gateway-smoke suite, i.e. on the `dev -> main`
+// promotion PR and on pushes to `main` — not on a feature PR. The mutations
+// suite caught that regression only by reading the specs; this drives it
+// against the hermetic dev-mode harness and fails if the opener, dialog, file
+// input, or submit button drift apart again.
 test.describe('Documents upload dialog', () => {
   test('the header opener owns a real dialog with the file input and submit', async ({
     page,

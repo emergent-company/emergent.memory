@@ -52,6 +52,17 @@ const (
 	settingsMergeKey      = "agent_id"
 )
 
+// settingsExtractionCategory is the generic-settings category of the
+// extraction controls that are not project-record columns: the agent that runs
+// extraction and its run budget. The agent selection is keyed by definition ID
+// (like the editor/merge flows) so a rename cannot break a stored choice.
+const (
+	settingsExtractionCategory   = "extraction"
+	settingsExtractionAgentKey   = "agent_id"
+	settingsExtractionStepsKey   = "max_steps"
+	settingsExtractionTimeoutKey = "timeout_seconds"
+)
+
 // defaultRememberAgent is the canonical agent definition that powers the
 // remember pipeline when no override is set (memory's
 // agents.CanonicalRememberAgentName). An override to this name, or an unset
@@ -222,6 +233,25 @@ type overridesSettingsPageData struct {
 	Overrides []AgentOverrideEntry
 	FlashMsg  string
 	FlashErr  error
+}
+
+// extractionSettingsPageData is the payload for ExtractionSettingsPage: every
+// extraction-related project setting plus the agent selector. The project
+// record carries the boolean toggles and the whisper prompt; the agent choice
+// and its run budget live in generic project settings.
+type extractionSettingsPageData struct {
+	settingsNavCommon
+	Project                *Project
+	AgentOptions           []agentOption
+	ExtractionAgent        string
+	ExtractionAgentWarning string
+	AgentsUnavailable      bool
+	WhisperInitialPrompt   string
+	AgentMaxSteps          string
+	AgentTimeoutSeconds    string
+	LoadErr                error
+	FlashMsg               string
+	FlashErr               error
 }
 
 // providersSettingsPageData is the payload for ProvidersSettingsPage: the
@@ -481,6 +511,180 @@ func (s *Server) uiProjectOverridesSettings(c echo.Context) error {
 	return s.page(c, pageTitle("Agent overrides"), OverridesSettingsPage(data))
 }
 
+// uiProjectExtractionSettings renders the Extraction settings page: the
+// automatic-extraction switches, post-extraction behaviour, schema discovery,
+// the audio transcription prompt, and the agent that runs extraction (empty =
+// built-in pipeline). ?updated=1 / ?err=1 surface PRG feedback.
+func (s *Server) uiProjectExtractionSettings(c echo.Context) error {
+	ctx := c.Request().Context()
+	data := extractionSettingsPageData{}
+	if c.QueryParam("updated") != "" {
+		data.FlashMsg = "Extraction settings saved."
+	}
+	data.FlashErr = flashError(c)
+	data.settingsNavCommon = s.settingsNavPayload(c, ctx)
+
+	project, err := s.memory.GetCurrentProject(ctx)
+	if err != nil {
+		data.LoadErr = userFacingError(err)
+		return s.page(c, pageTitle("Extraction"), ExtractionSettingsPage(data))
+	}
+	if project == nil {
+		return c.Redirect(http.StatusSeeOther, "/orgs")
+	}
+	data.Project = project
+
+	agents, aErr := s.memory.ListAgentDefinitions(ctx)
+	captureError(aErr)
+	data.AgentsUnavailable = aErr != nil
+	defs := newAgentDefinitionCache(s, ctx)
+	if aErr == nil {
+		data.AgentOptions = agentFlowOptions(agents, extractionRequirement, defs)
+	}
+
+	if ps, perr := s.memory.GetProjectSetting(ctx, settingsExtractionCategory, settingsExtractionAgentKey); perr == nil && ps != nil {
+		if id, ok := ps.Value["agentId"].(string); ok {
+			data.ExtractionAgent = id
+		}
+	}
+	if data.ExtractionAgent != "" {
+		def, dErr := defs.get(data.ExtractionAgent)
+		switch {
+		case data.AgentsUnavailable:
+			data.ExtractionAgentWarning = "The agent list could not be loaded, so this selection could not be checked."
+		case dErr != nil || def == nil:
+			data.ExtractionAgentWarning = "The selected agent no longer exists; extraction falls back to the built-in pipeline until you pick another."
+		case !def.Enabled:
+			data.ExtractionAgentWarning = "The selected agent is disabled; extraction falls back to the built-in pipeline until you enable it or pick another."
+		default:
+			if missing, _ := extractionAgentEligibility(def); len(missing) > 0 {
+				data.ExtractionAgentWarning = "The selected agent cannot run extraction — missing: " + strings.Join(missing, ", ") + "."
+			}
+		}
+	}
+
+	data.WhisperInitialPrompt = autoExtractConfigString(project.AutoExtractConfig, "whisper_initial_prompt")
+	if ps, perr := s.memory.GetProjectSetting(ctx, settingsExtractionCategory, settingsExtractionStepsKey); perr == nil && ps != nil {
+		data.AgentMaxSteps = projectSettingIntString(ps)
+	}
+	if ps, perr := s.memory.GetProjectSetting(ctx, settingsExtractionCategory, settingsExtractionTimeoutKey); perr == nil && ps != nil {
+		data.AgentTimeoutSeconds = projectSettingIntString(ps)
+	}
+
+	return s.page(c, pageTitle("Extraction"), ExtractionSettingsPage(data))
+}
+
+// autoExtractConfigString reads a string leaf out of the auto_extract_config
+// JSONB map. Numbers are formatted so a JSON-decoded value does not render as
+// "<nil>" when the same key is reused for a numeric setting.
+func autoExtractConfigString(cfg map[string]any, key string) string {
+	if cfg == nil {
+		return ""
+	}
+	switch v := cfg[key].(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	default:
+		return ""
+	}
+}
+
+// projectSettingIntString formats a generic-settings {"value": N} payload.
+func projectSettingIntString(ps *ProjectSetting) string {
+	if ps == nil {
+		return ""
+	}
+	if v, ok := ps.Value["value"].(float64); ok {
+		return strconv.Itoa(int(v))
+	}
+	return ""
+}
+
+// uiProjectExtractionAgent saves or clears the agent that runs extraction
+// (HTMX → POST /settings/extraction/agent). Empty clears the selection and
+// restores the built-in pipeline. A non-empty definition ID is re-validated
+// here: the selector disables ineligible agents, but a stale page or crafted
+// request must not store an agent that cannot write entities and relationships.
+func (s *Server) uiProjectExtractionAgent(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := strings.TrimSpace(c.FormValue("extraction_agent"))
+	if id == "" {
+		if err := s.memory.DeleteProjectSetting(ctx, settingsExtractionCategory, settingsExtractionAgentKey); err != nil {
+			return toastTrigger(c, "error", err.Error())
+		}
+		return toastTrigger(c, "success", "Saved")
+	}
+	def, err := s.memory.GetAgentDefinition(ctx, id)
+	if err != nil || def == nil {
+		return toastTrigger(c, "error", "That agent definition could not be loaded — pick another extraction agent.")
+	}
+	if !def.Enabled {
+		return toastTrigger(c, "error", def.Name+" is disabled — enable it before using it for extraction.")
+	}
+	if missing, _ := extractionAgentEligibility(def); len(missing) > 0 {
+		return toastTrigger(c, "error", fmt.Sprintf("%s cannot run extraction — missing: %s.", def.Name, strings.Join(missing, ", ")))
+	}
+	if err := s.memory.SetProjectSetting(ctx, settingsExtractionCategory, settingsExtractionAgentKey, map[string]any{"agentId": id}); err != nil {
+		return toastTrigger(c, "error", err.Error())
+	}
+	return toastTrigger(c, "success", "Saved")
+}
+
+// uiProjectExtractionWhisper saves the per-project Whisper initial prompt. The
+// prompt lives inside auto_extract_config, which memory REPLACES wholesale on
+// PATCH, so the current map is copied and only this key changed. An empty value
+// stores an empty string rather than deleting the key: an all-empty map would be
+// omitted by omitempty and the old prompt would survive the save.
+func (s *Server) uiProjectExtractionWhisper(c echo.Context) error {
+	ctx := c.Request().Context()
+	project, err := s.memory.GetCurrentProject(ctx)
+	if err != nil || project == nil {
+		return toastTrigger(c, "error", "Project could not be loaded — reload the page.")
+	}
+	prompt := strings.TrimSpace(c.FormValue("whisper_initial_prompt"))
+	cfg := capturePolicyWith(project.AutoExtractConfig, "whisper_initial_prompt", prompt)
+	if _, err := s.memory.UpdateProject(ctx, project.ID, &ProjectUpdate{AutoExtractConfig: cfg}); err != nil {
+		return toastTrigger(c, "error", err.Error())
+	}
+	return toastTrigger(c, "success", "Saved")
+}
+
+// uiProjectExtractionLimits saves the agent-run extraction budget (max steps and
+// timeout seconds) in generic project settings. Empty clears a limit so the
+// server default applies.
+func (s *Server) uiProjectExtractionLimits(c echo.Context) error {
+	ctx := c.Request().Context()
+	if raw := strings.TrimSpace(c.FormValue("agent_max_steps")); raw == "" {
+		if err := s.memory.DeleteProjectSetting(ctx, settingsExtractionCategory, settingsExtractionStepsKey); err != nil {
+			return toastTrigger(c, "error", err.Error())
+		}
+	} else {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 200 {
+			return toastTrigger(c, "error", "Max steps must be a whole number between 1 and 200.")
+		}
+		if err := s.memory.SetProjectSetting(ctx, settingsExtractionCategory, settingsExtractionStepsKey, map[string]any{"value": n}); err != nil {
+			return toastTrigger(c, "error", err.Error())
+		}
+	}
+	if raw := strings.TrimSpace(c.FormValue("agent_timeout_seconds")); raw == "" {
+		if err := s.memory.DeleteProjectSetting(ctx, settingsExtractionCategory, settingsExtractionTimeoutKey); err != nil {
+			return toastTrigger(c, "error", err.Error())
+		}
+	} else {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 10 || n > 3600 {
+			return toastTrigger(c, "error", "Timeout must be a whole number between 10 and 3600 seconds.")
+		}
+		if err := s.memory.SetProjectSetting(ctx, settingsExtractionCategory, settingsExtractionTimeoutKey, map[string]any{"value": n}); err != nil {
+			return toastTrigger(c, "error", err.Error())
+		}
+	}
+	return toastTrigger(c, "success", "Saved")
+}
+
 // uiProjectProvidersSettings renders the Providers settings page. ?updated=1 /
 // ?err=1 surface PRG feedback from the provider rate override flow.
 func (s *Server) uiProjectProvidersSettings(c echo.Context) error {
@@ -531,6 +735,9 @@ func (s *Server) uiProjectProviderEdit(c echo.Context) error {
 // uiProjectVoiceSettings renders the Voice settings page. ?updated=1 / ?err=1
 // surface PRG feedback from the voice save flow.
 func (s *Server) uiProjectVoiceSettings(c echo.Context) error {
+	if s.cfg.VoiceDisabled {
+		return echo.ErrNotFound
+	}
 	ctx := c.Request().Context()
 	data := voiceSettingsPageData{}
 	if c.QueryParam("updated") != "" {
@@ -653,6 +860,8 @@ func (s *Server) uiProjectSettingsProjectField(c echo.Context) error {
 		upd.AutoMergeExtractionBranches = boolPtr(c.FormValue("auto_merge_extraction_branches") == "on")
 	case "auto_discovery_enabled":
 		upd.AutoDiscoveryEnabled = boolPtr(c.FormValue("auto_discovery_enabled") == "on")
+	case "auto_extract_source_syncs":
+		upd.AutoExtractSourceSyncs = boolPtr(c.FormValue("auto_extract_source_syncs") == "on")
 	case "skill_capture_mode":
 		mode := strings.ToLower(strings.TrimSpace(c.FormValue("mode")))
 		switch mode {
@@ -1010,9 +1219,13 @@ func persistVoiceSettings(ctx context.Context, mem MemoryBackend, v voiceSetting
 	return nil
 }
 
-// voiceEnabled reports whether voice is enabled for the current project
-// (stored setting over env default; defaults to off for a fresh project).
+// voiceEnabled reports whether voice is available and enabled for the current
+// project. A deployment without an SFU (VOICE_SUPPORTED=false) is never
+// voice-enabled, regardless of the stored project setting.
 func (s *Server) voiceEnabled(ctx context.Context) bool {
+	if s.cfg.VoiceDisabled {
+		return false
+	}
 	return resolveVoiceSettings(ctx, s.cfg, s.memory).Enabled
 }
 
@@ -1023,6 +1236,10 @@ func (s *Server) voiceEnabled(ctx context.Context) bool {
 // validation runs before anything is written so an invalid value never
 // persists a partial write.
 func (s *Server) uiProjectSettingsVoice(c echo.Context) error {
+	if s.cfg.VoiceDisabled {
+		return echo.ErrNotFound
+	}
+
 	ctx := c.Request().Context()
 	v := voiceSettings{
 		Enabled:              c.FormValue("voice_enabled") == "on",
@@ -1136,6 +1353,10 @@ func alertTrigger(c echo.Context, kind, title, msg string) error {
 // non-negative float when non-empty; booleans are stored as value == "on".
 // Rejected values persist nothing and return an inline error fragment.
 func (s *Server) uiProjectVoiceField(c echo.Context) error {
+	if s.cfg.VoiceDisabled {
+		return echo.ErrNotFound
+	}
+
 	ctx := c.Request().Context()
 	key := c.Param("key")
 	val := strings.TrimSpace(c.FormValue(key))
@@ -1186,6 +1407,10 @@ func (s *Server) uiProjectVoiceField(c echo.Context) error {
 //
 // Unknown groups and validation failures return an inline error fragment.
 func (s *Server) uiProjectVoiceGroup(c echo.Context) error {
+	if s.cfg.VoiceDisabled {
+		return echo.ErrNotFound
+	}
+
 	ctx := c.Request().Context()
 	group := c.Param("group")
 

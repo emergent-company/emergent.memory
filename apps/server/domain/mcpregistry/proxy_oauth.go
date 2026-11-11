@@ -102,7 +102,7 @@ func (pm *ProxyManager) requestHeaders(ctx context.Context, server *MCPServer) (
 // ErrOAuthNeedsReconnect so the caller can tell the user to authorize the server
 // again rather than reporting a bare 401.
 func (pm *ProxyManager) oauthAuthorizationHeader(ctx context.Context, server *MCPServer) (string, error) {
-	if server == nil || server.Type == ServerTypeStdio || server.Type == ServerTypeBuiltin {
+	if server == nil || !server.Type.contract().remote {
 		return "", nil
 	}
 	// A transient draft server (the save-less /test probe builds one) has no

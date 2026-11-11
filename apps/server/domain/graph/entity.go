@@ -26,7 +26,10 @@ type GraphObject struct {
 	// from pending.
 	MergedToCanonicalID *uuid.UUID `bun:"merged_to_canonical_id,type:uuid" json:"merged_to_canonical_id,omitempty"`
 
-	Type   string  `bun:"type,notnull" json:"type"`
+	Type string `bun:"type,notnull" json:"type"`
+	// Name is the first-class human title. Key stays the internal dedup/upsert
+	// identity and is not the user-facing label.
+	Name   *string `bun:"name" json:"name,omitempty"`
 	Key    *string `bun:"key" json:"key,omitempty"`
 	Status *string `bun:"status" json:"status,omitempty"`
 	// Assignee is the work lane for board-enabled types (the agent identity

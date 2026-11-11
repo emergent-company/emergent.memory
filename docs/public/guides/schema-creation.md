@@ -185,7 +185,7 @@ Entity type schemas use **JSON Schema** to define object properties, validation 
 | **Currency**   | `currency`  | `"type": "currency"` (ISO 4217; `usd` stored as `USD`) |
 | **Array**      | `array`     | `"type": "array", "items": {"type": "string"}` |
 | **Object**     | `object`    | `"type": "object", "properties": {...}`        |
-| **Enum**       | `enum`      | `"enum": ["draft", "published", "archived"]`   |
+| **Enum**       | `enum`      | `"enum": ["draft", "published", "archived"]` (write-time validated on primitive types; drives the editor's select) |
 | **Format**     | `format`    | `"format": "email"` on a `string` property validates like `type: email` (`phone`, `country`, `currency`, `time` too) |
 | **Validation** | constraints | `minimum`/`maximum` are enforced on `number`/`integer`; `minLength`, `maxLength`, `minItems`, `maxItems` are documentation only |
 | **Required**   | `required`  | `"required": ["field1", "field2"]`             |
@@ -196,14 +196,21 @@ Only the types above are interpreted: `type` drives coercion and validation for
 array's `items.type` is interpreted as well: every element is coerced to that
 type, and an element of the wrong type is rejected with its index
 (`authors: element 2: expected string, got float64`). A nested array's own
-`items` recurses the same way; an `items` schema with no `type` constrains
-nothing. `required` is interpreted per property, `default` is applied when an
-object is created, and `enum` drives the editor's select. The remaining
-JSON-Schema keywords (`pattern`, `minLength`, `maxLength`, `minItems`,
-`maxItems`) are carried through for documentation and tooling but are **not**
-enforced when an object is written — including `enum`: a write that bypasses
-the form is not rejected. Use `date`, `url`, a semantic or hex-digest type, or
-an array's `items` when you need write-time validation.
+`items` recurses the same way; an `items` schema with no `type` **and no
+`enum`** constrains nothing. `required` is interpreted per property, `default`
+is applied when an object is created, and `enum` is enforced on writes and
+drives the editor's select. The remaining JSON-Schema keywords (`pattern`,
+`minLength`, `maxLength`, `minItems`, `maxItems`) are carried through for
+documentation and tooling but are **not** enforced when an object is written.
+
+`enum` is enforced on primitive property types: `string` (including the
+semantic and hex-digest spellings) and `number`/`integer`/`boolean`, on object
+and relationship properties alike. A write whose value is not in the list is
+rejected with the allowed values named. Matching runs after type coercion, so
+a `country` enum of `["DE"]` accepts `"de"` and stores `"DE"`. An array's
+`items.enum` constrains every element. An enum on `array`/`object` itself is
+documentation only, because the list would have to match a whole compound
+value. An empty enum list on a primitive property is rejected when the schema is installed or updated.
 
 `minimum` and `maximum` are enforced on `number` and `integer` properties: a
 write above or below the bound is rejected. `format` on a `string` property is

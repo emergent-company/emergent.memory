@@ -284,6 +284,9 @@ func featureFxOptions(f config.FeatureSet) []fx.Option {
 			return agentsRepo
 		}))
 	}
+	if f.Agents {
+		opts = append(opts, sources.SourceEventsModule)
+	}
 	if f.MCPRegistry {
 		opts = append(opts, mcpregistry.Module)
 	}

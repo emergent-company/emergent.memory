@@ -548,20 +548,23 @@ func sessionFilterQuery(value string) string {
 // is gone for good.
 templ agentMCPRevealModal(r agentMCPReveal) {
 	@components.SecretRevealModal(components.SecretRevealProps{
-		Heading:      r.Heading,
-		Name:         r.Label,
-		SecretID:     "agent-mcp-key-secret",
-		SecretTestID: "agent-mcp-key-secret",
-		Secret:       r.Token,
-		EndpointID:   "agent-mcp-reveal-endpoint",
-		Endpoint:     r.MCPURL,
-		Warning:      "This secret will not be shown again. If you lose it, rotate the key to issue a new one.",
-		BundleURL:    r.BundleURL,
-		BundleTestID: "agent-mcp-bundle-link",
-		DialogID:     "agent-mcp-reveal-modal",
-		Attrs:        templ.Attributes{"data-agent-mcp-reveal": "true"},
-		Snippets:     agentMCPKeySnippetBlocks(r.Snippets),
-		AutoOpen:     true,
+		Heading:          r.Heading,
+		Name:             r.Label,
+		SecretID:         "agent-mcp-key-secret",
+		SecretTestID:     "agent-mcp-key-secret",
+		Secret:           r.Token,
+		EndpointID:       "agent-mcp-reveal-endpoint",
+		Endpoint:         r.MCPURL,
+		Warning:          "This secret will not be shown again. If you lose it, rotate the key to issue a new one.",
+		BundleURL:        r.BundleURL,
+		BundleTestID:     "agent-mcp-bundle-link",
+		BundleCopyTestID: "agent-mcp-bundle-copy",
+		InstallURL:       r.InstallURL,
+		InstallTestID:    "agent-mcp-install-copy",
+		DialogID:         "agent-mcp-reveal-modal",
+		Attrs:            templ.Attributes{"data-agent-mcp-reveal": "true"},
+		Snippets:         agentMCPKeySnippetBlocks(r.Snippets),
+		AutoOpen:         true,
 	})
 }
 

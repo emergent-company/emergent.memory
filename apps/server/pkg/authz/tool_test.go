@@ -33,7 +33,11 @@ func TestAuthorizeToolDecisionMatrix(t *testing.T) {
 		{name: "superadmin tool allowed with platform", auth: super, p: platform},
 		{name: "agent-only denied untrusted", auth: agentOnly, p: untrusted, want: "agent-only"},
 		{name: "agent-only allowed trusted", auth: agentOnly, p: trusted},
-		{name: "agent-only transport-enforced treated as authorized", auth: agentOnly, p: transport},
+		// A transport that did not resolve the definition (a dynamic tool absent
+		// from the static index) must not be able to claim transport-enforced
+		// authorization for an agent-only tool. AgentOnly outranks TransportEnforced.
+		{name: "agent-only denied for transport-enforced non-trusted caller", auth: agentOnly, p: transport, want: "agent-only"},
+		{name: "agent-only allowed for trusted transport-enforced caller", auth: agentOnly, p: Principal{Trusted: true, TransportEnforced: true}},
 		{name: "scoped denied untrusted", auth: scoped, p: untrusted, want: "graph:read"},
 		{name: "scoped allowed trusted", auth: scoped, p: trusted},
 		{name: "scoped allowed transport", auth: scoped, p: transport},

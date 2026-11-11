@@ -193,9 +193,10 @@ func (pm *ProxyManager) resolveServerForTool(ctx context.Context, projectID, pre
 		if err != nil {
 			return nil, "", fmt.Errorf("looking up server %q: %w", rawServerName, err)
 		}
-		// Device-targeted rows are never connected outbound by the server; a raw
-		// name hit on one falls through to slug mode (which also excludes them).
-		if server != nil && server.Target != TargetDevice {
+		// Device-targeted rows and in-process rows (builtin/source) are never
+		// connected outbound by the server; a raw name hit on one falls through
+		// to slug mode (which also excludes them).
+		if server != nil && server.Target != TargetDevice && server.Type.contract().registryManaged {
 			return server, prefixedToolName[idx+1:], nil
 		}
 	}
@@ -213,6 +214,12 @@ func (pm *ProxyManager) resolveServerForTool(ctx context.Context, projectID, pre
 		if srv.Target == TargetDevice {
 			// Device-targeted rows are delivered over the relay, never connected
 			// outbound by the server.
+			continue
+		}
+		if !srv.Type.contract().registryManaged {
+			// In-process rows (builtin/source) are served by mcp.Service, never
+			// the outbound proxy. FindAllServers includes the builtin row for
+			// the UI, so slug mode must skip it explicitly.
 			continue
 		}
 		slug := SlugifyServerName(srv.Name)

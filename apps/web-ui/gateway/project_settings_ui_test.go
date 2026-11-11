@@ -32,15 +32,12 @@ func TestRenderProjectSettingsPage(t *testing.T) {
 		"Project Settings", "Project info", "Remember &amp; dedup",
 		`name="name"`, `value="Home"`, `name="project_info"`, "family",
 		`name="chat_prompt_template"`, "be helpful",
-		`name="auto_extract_objects"`, `name="auto_merge_extraction_branches"`,
-		`name="auto_discovery_enabled"`,
-		`hx-post="/settings/project/auto_discovery_enabled"`,
 		`hx-post="/settings/project/name"`,
 		`name="remember_agent"`, `value="memory"`,
 		`name="dedup_threshold"`, `value="0.8"`,
 		`hx-post="/settings/remember/agent"`, `hx-post="/settings/remember/dedup"`,
 		// settings sub-nav is present on the General page
-		`href="/settings"`, `href="/settings/assistant"`, `href="/settings/overrides"`,
+		`href="/settings"`, `href="/settings/assistant"`, `href="/settings/extraction"`, `href="/settings/overrides"`,
 		`href="/settings/providers"`, `href="/settings/voice"`, `href="/settings/devices"`,
 	} {
 		if !strings.Contains(html, want) {
@@ -51,15 +48,6 @@ func TestRenderProjectSettingsPage(t *testing.T) {
 	if strings.Contains(html, `checked="false"`) {
 		t.Error("toggles must not render checked=\"false\" (boolean-attribute bug)")
 	}
-	if !strings.Contains(html, `name="auto_extract_objects" class="toggle" checked`) {
-		t.Error("on toggle should render checked")
-	}
-	if strings.Contains(html, `name="auto_merge_extraction_branches" class="toggle" checked`) {
-		t.Error("off toggle must not render checked")
-	}
-	if !strings.Contains(html, `name="auto_discovery_enabled" class="toggle" checked`) {
-		t.Error("auto-discovery defaults on, so an on value must render checked")
-	}
 }
 
 // TestRenderSettingsSubNav covers the Settings sub-navigation rail: all
@@ -69,6 +57,7 @@ func TestRenderSettingsSubNav(t *testing.T) {
 	for _, want := range []string{
 		`href="/settings"`, "General",
 		`href="/settings/assistant"`, "Assistant",
+		`href="/settings/extraction"`, "Extraction",
 		`href="/settings/overrides"`, "Overrides",
 		`href="/settings/providers"`, "Providers",
 		`href="/settings/voice"`, "Voice",
@@ -181,7 +170,7 @@ func TestRenderVoiceSettingsPage(t *testing.T) {
 		"Voice",
 		`hx-post="/settings/voice/enabled"`, `hx-swap="none"`,
 		`hx-post="/settings/voice/group/tts"`, `hx-post="/settings/voice/group/endpoint_delays"`,
-		`href="/settings"`, `href="/settings/assistant"`, `href="/settings/overrides"`,
+		`href="/settings"`, `href="/settings/assistant"`, `href="/settings/extraction"`, `href="/settings/overrides"`,
 		`href="/settings/providers"`, `href="/settings/voice"`, `href="/settings/devices"`,
 	} {
 		if !strings.Contains(html, want) {
@@ -206,7 +195,7 @@ func TestRenderAssistantSettingsPage(t *testing.T) {
 	for _, want := range []string{
 		"Assistant", `hx-post="/settings/assistant"`, `name="assistant_agent"`,
 		`<option value="a2" selected>diane</option>`, `hx-swap="none"`,
-		`href="/settings"`, `href="/settings/assistant"`, `href="/settings/overrides"`,
+		`href="/settings"`, `href="/settings/assistant"`, `href="/settings/extraction"`, `href="/settings/overrides"`,
 		`href="/settings/providers"`, `href="/settings/voice"`, `href="/settings/devices"`,
 	} {
 		if !strings.Contains(html, want) {
@@ -239,7 +228,7 @@ func TestRenderOverridesSettingsPage(t *testing.T) {
 		`action="/settings/overrides/memory/delete"`,
 		`name="agentName"`, `name="systemPrompt"`, `name="model"`, `name="tools"`, `name="maxSteps"`,
 		`action="/settings/overrides"`,
-		`href="/settings"`, `href="/settings/assistant"`, `href="/settings/overrides"`,
+		`href="/settings"`, `href="/settings/assistant"`, `href="/settings/extraction"`, `href="/settings/overrides"`,
 		`href="/settings/providers"`, `href="/settings/voice"`, `href="/settings/devices"`,
 	} {
 		if !strings.Contains(html, want) {
@@ -255,7 +244,7 @@ func TestRenderProvidersSettingsPage(t *testing.T) {
 	html := renderHTML(t, ProvidersSettingsPage(data))
 	for _, want := range []string{
 		"Providers", "openai", "gpt-4o", "custom", "auto",
-		`href="/settings"`, `href="/settings/assistant"`, `href="/settings/overrides"`,
+		`href="/settings"`, `href="/settings/assistant"`, `href="/settings/extraction"`, `href="/settings/overrides"`,
 		`href="/settings/providers"`, `href="/settings/voice"`, `href="/settings/devices"`,
 	} {
 		if !strings.Contains(html, want) {
@@ -642,8 +631,6 @@ func TestRenderSettingsFieldTooltips(t *testing.T) {
 		`data-tip="Display name shown in the UI and briefings. Purely cosmetic — the project ID is stable, so renaming never breaks stored data or links."`,
 		`data-tip="Free-form background about this project. Surfaces to agents via the project briefing, so a good summary here noticeably improves agent context and answer quality."`,
 		`data-tip="Prepended to every chat prompt in this project. Re-primes the model for all conversations — a wrong template degrades every response, not just one."`,
-		`data-tip="When on, newly uploaded documents run LLM extraction automatically. Keeps the graph current but spends tokens on every upload; when off you trigger extraction manually."`,
-		`data-tip="When on, extraction staging branches merge into the main graph automatically once extraction completes. Saves a manual merge but skips the review step — bad extractions reach the main graph unchecked."`,
 		`data-tip="The agent whose prompt, model, and tools run the remember pipeline that turns conversations into memories. A wrong choice yields low-quality or mis-structured memories."`,
 		`data-tip="Cosine-similarity cutoff (0.0–1.0) for near-duplicate detection when creating entities. Higher merges more aggressively (fewer duplicates, risk of combining distinct similar items); lower keeps more near-duplicates."`,
 	} {
@@ -734,8 +721,75 @@ func TestRenderAssistantPanel(t *testing.T) {
 // column defaults to true server-side, so an unset pointer must not read as off
 // and silently contradict the server's behaviour.
 func TestRenderProjectSettingsPageAutoDiscoveryDefaultsOn(t *testing.T) {
-	html := renderHTML(t, ProjectSettingsPage(projectSettingsData{Project: &Project{ID: "p1", Name: "Home"}}))
+	html := renderHTML(t, ExtractionSettingsPage(extractionSettingsPageData{Project: &Project{ID: "p1", Name: "Home"}}))
 	if !strings.Contains(html, `name="auto_discovery_enabled" class="toggle" checked`) {
 		t.Error("absent auto_discovery_enabled must render checked (the server default is on)")
+	}
+	if strings.Contains(html, `name="auto_extract_source_syncs" class="toggle" checked`) {
+		t.Error("absent auto_extract_source_syncs must render unchecked (the server default is off)")
+	}
+}
+
+// TestRenderExtractionSettingsPage covers the dedicated Extraction page: every
+// extraction control lives there, the agent selector defaults to the built-in
+// pipeline, and the run budget fields round-trip.
+func TestRenderExtractionSettingsPage(t *testing.T) {
+	data := extractionSettingsPageData{
+		Project: &Project{
+			ID:                     "p1",
+			Name:                   "Home",
+			AutoExtractObjects:     boolPtr(true),
+			AutoExtractSourceSyncs: boolPtr(true),
+			AutoDiscoveryEnabled:   boolPtr(false),
+		},
+		AgentOptions:         []agentOption{{ID: "a1", Name: "extractor", Eligible: true}},
+		WhisperInitialPrompt: "Javu, Monica",
+		AgentMaxSteps:        "20",
+		AgentTimeoutSeconds:  "120",
+	}
+	html := renderHTML(t, ExtractionSettingsPage(data))
+	for _, want := range []string{
+		"Extraction", "Automatic extraction", "After extraction", "Extraction agent", "Audio transcription",
+		`name="auto_extract_objects" class="toggle" checked`,
+		`name="auto_extract_source_syncs" class="toggle" checked`,
+		`hx-post="/settings/project/auto_extract_source_syncs"`,
+		`name="auto_merge_extraction_branches"`,
+		`name="auto_discovery_enabled"`,
+		`name="extraction_agent"`, `hx-post="/settings/extraction/agent"`,
+		`Built-in extraction pipeline (default)`,
+		`<option value="a1">extractor</option>`,
+		`name="whisper_initial_prompt"`, `hx-post="/settings/extraction/whisper"`,
+		"Javu, Monica",
+		`name="agent_max_steps"`, `value="20"`,
+		`name="agent_timeout_seconds"`, `value="120"`,
+		`hx-post="/settings/extraction/limits"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("extraction page missing %q", want)
+		}
+	}
+	for _, want := range []string{
+		`data-tip="When on, newly uploaded documents run LLM extraction automatically. Keeps the graph current but spends tokens on every upload; when off you trigger extraction manually (each upload can also override this)."`,
+		`data-tip="When on, extraction staging branches merge into the main graph automatically once extraction completes. Saves a manual merge but skips the review step — bad extractions reach the main graph unchecked."`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("extraction page tooltip missing %q", want)
+		}
+	}
+}
+
+// TestRenderExtractionAgentUnlisted pins the (unlisted) fallback for a stored
+// definition the list no longer carries, plus the warning line.
+func TestRenderExtractionAgentUnlisted(t *testing.T) {
+	html := renderHTML(t, ExtractionSettingsPage(extractionSettingsPageData{
+		Project:                &Project{ID: "p1", Name: "Home"},
+		ExtractionAgent:        "gone",
+		ExtractionAgentWarning: "The selected agent no longer exists.",
+	}))
+	if !strings.Contains(html, `<option value="gone" selected>gone (unlisted)</option>`) {
+		t.Error("stored extraction agent missing from the list should render as an (unlisted) selected option")
+	}
+	if !strings.Contains(html, `data-testid="extraction-agent-warning"`) {
+		t.Error("extraction agent warning missing")
 	}
 }

@@ -280,8 +280,10 @@ var consolidatedFamilies = []consolidatedFamily{
 	{
 		Name:  "document-write",
 		Scope: "documents:write",
-		Description: "Add or remove documents. action=upload takes base64 content (max 10 MB decoded); action=delete " +
-			"removes a document and its chunks.",
+		Description: "Add or remove documents. action=upload takes base64 content (max 10 MB decoded) and accepts auto_extract " +
+			"to override the project's extraction default for that call; identical bytes already in the project are returned " +
+			"as-is (isDuplicate=true) instead of being stored and parsed again, so retrying an upload is cheap. " +
+			"action=delete removes a document and its chunks.",
 		Actions: []consolidatedAction{
 			{Action: "upload", Handler: "document-upload", Description: "upload a document"},
 			{Action: "delete", Handler: "document-delete", Description: "delete a document"},

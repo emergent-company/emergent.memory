@@ -226,3 +226,58 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+// TestObjectCardWorkflowCarriesPickerOptions pins the contract the iOS pickers
+// read (issue #454): allowed_statuses in the type's declared board order, plus
+// the assignee candidates for a work item (agents, then members). A keyless
+// workflow object keeps the status options but offers no assignee candidates:
+// the write routes require a key, so the strip stays read-only there.
+func TestObjectCardWorkflowCarriesPickerOptions(t *testing.T) {
+	t.Run("work item", func(t *testing.T) {
+		f := cardFixture()
+		f.objects[0].Status = "review"
+		f.compiled.ObjectTypes[0].AllowedStatuses = []string{"ready", "review", "done"}
+		f.scheduledAgents = []ScheduledAgent{{Name: "agent-a"}}
+		f.members = []ProjectMemberDto{{DisplayName: "Alice"}}
+		_, card := getCard(t, newObjectCardEcho(f), "/api/objects/"+cardObjectID+"/card")
+
+		if card.Workflow == nil {
+			t.Fatal("workflow = nil, want the work strip")
+		}
+		want := []string{"ready", "review", "done"}
+		if len(card.Workflow.AllowedStatuses) != len(want) {
+			t.Fatalf("allowed_statuses = %+v, want %v", card.Workflow.AllowedStatuses, want)
+		}
+		for i, v := range want {
+			if card.Workflow.AllowedStatuses[i].Value != v {
+				t.Errorf("allowed_statuses[%d] = %q, want %q", i, card.Workflow.AllowedStatuses[i].Value, v)
+			}
+		}
+		if got := card.Workflow.AllowedStatuses[1]; got.Label != "Review" || got.Tone != "warning" {
+			t.Errorf("review option = %+v, want the board label and tone", got)
+		}
+		if len(card.Workflow.Assignees) != 2 ||
+			card.Workflow.Assignees[0].Value != "agent-a" ||
+			card.Workflow.Assignees[1].Value != "Alice" {
+			t.Errorf("assignees = %+v, want agent-a then Alice", card.Workflow.Assignees)
+		}
+	})
+
+	t.Run("keyless workflow object", func(t *testing.T) {
+		f := cardFixture()
+		f.objects[0].Key = ""
+		f.compiled.ObjectTypes[0].AllowedStatuses = []string{"ready", "done"}
+		f.scheduledAgents = []ScheduledAgent{{Name: "agent-a"}}
+		_, card := getCard(t, newObjectCardEcho(f), "/api/objects/"+cardObjectID+"/card")
+
+		if card.Workflow == nil {
+			t.Fatal("workflow = nil, want the work strip")
+		}
+		if len(card.Workflow.AllowedStatuses) != 2 {
+			t.Errorf("allowed_statuses = %+v, want the type's two statuses", card.Workflow.AllowedStatuses)
+		}
+		if len(card.Workflow.Assignees) != 0 {
+			t.Errorf("assignees = %+v, want none for a keyless object", card.Workflow.Assignees)
+		}
+	})
+}

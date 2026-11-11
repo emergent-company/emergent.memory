@@ -78,7 +78,7 @@ tasks:
       - npx playwright test --config=datasources.config.ts
 
   e2e:smoke:
-    desc: Run the per-PR gateway browser smoke (upload dialog, mobile shell, chat rail) against the hermetic mock harness (starts run-e2e.sh; run `npm ci` + `npx playwright install chromium` first)
+    desc: Run the gateway browser smoke (upload dialog, mobile shell, chat rail) against the hermetic mock harness — the suite CI runs on the dev -> main promotion PR, not on a feature PR (starts run-e2e.sh; run `npm ci` + `npx playwright install chromium` first)
     dir: tests/e2e
     cmds:
       - npx playwright test --config=gateway-smoke.config.ts

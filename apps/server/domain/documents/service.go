@@ -287,11 +287,39 @@ func (s *Service) BulkDelete(ctx context.Context, projectID string, documentIDs 
 	return response, nil
 }
 
-// CreateFromUpload creates a document record from a file upload.
+// findExistingUploadByHash returns the document an identical upload already
+// produced, if any. Only uploads that ask for dedupe reach it (the MCP
+// document-upload tool: an agent retrying a call it is unsure landed), so the
+// HTTP upload contract keeps creating a row per request, which is what clients
+// expect after uploads stopped being deduplicated at insert time (#381).
+//
+// The response is explicit: IsDuplicate is true and ExistingDocumentID names
+// the row the caller already has. Nothing is collapsed silently.
+func (s *Service) findExistingUploadByHash(ctx context.Context, projectID, fileHash string) (*UploadDocumentResponse, error) {
+	existing, err := s.repo.FindUploadByFileHash(ctx, projectID, fileHash)
+	if err != nil {
+		return nil, err
+	}
+	if existing == nil {
+		return nil, nil
+	}
+	id := existing.ID
+	return &UploadDocumentResponse{
+		Document:           toDocumentSummary(existing),
+		IsDuplicate:        true,
+		ExistingDocumentID: &id,
+	}, nil
+}
+
+// createFromUpload creates a document record from a file upload. It is
+// unexported on purpose: the only public way to create a document from an
+// upload is documents.UploadIngestor, which also queues the parsing job. A
+// caller that could reach this method directly could repeat #586 (stored but
+// never parsed), so the compiler now prevents it.
 // Every upload creates a new document — uploads are not deduplicated by file
 // hash. Silently collapsing an identical-content upload returned the existing
 // document's id, which surfaced to clients as a "stale id" (issue #381).
-func (s *Service) CreateFromUpload(ctx context.Context, params UploadParams) (*UploadDocumentResponse, error) {
+func (s *Service) createFromUpload(ctx context.Context, params UploadParams) (*UploadDocumentResponse, error) {
 	// Apply defaults
 	filename := strings.TrimSpace(params.Filename)
 	if filename == "" {
@@ -597,7 +625,7 @@ func (s *Service) ApplySourceItem(ctx context.Context, p ApplySourceItemParams) 
 		if err := s.repo.InsertDocument(ctx, doc); err != nil {
 			return nil, err
 		}
-		s.processSourceDocument(ctx, p.ProjectID, doc.ID)
+		s.processSourceDocument(ctx, p.ProjectID, doc.ID, p.Extract)
 		// A first ingest is not announced: the member who connected the source
 		// already knows, and a newly connected source would otherwise dump one
 		// row per item into the inbox. Only subsequent versions announce.
@@ -638,7 +666,7 @@ func (s *Service) ApplySourceItem(ctx context.Context, p ApplySourceItemParams) 
 	if err := s.repo.CreateVersion(ctx, newVersion); err != nil {
 		return nil, err
 	}
-	s.processSourceDocument(ctx, p.ProjectID, newVersion.ID)
+	s.processSourceDocument(ctx, p.ProjectID, newVersion.ID, p.Extract)
 	// Scheduled source syncs have no actor: nothing is excluded.
 	s.notifyDocumentEvent(ctx, p.ProjectID, versionSyncedNotice(newVersion.ID, p.Filename, newVersion.Version, p.SourceID))
 	return &ApplySourceItemResult{DocumentID: newVersion.ID, Version: newVersion.Version, NewVersion: true}, nil
@@ -708,10 +736,12 @@ func (s *Service) GetVersionHistory(ctx context.Context, projectID, documentID s
 }
 
 // processSourceDocument runs the post-write pipeline for a source document:
-// mark conversion completed → recreate chunks → trigger extraction. Errors are
-// logged but not returned — the document/version write already succeeded,
-// mirroring the raw-content create path.
-func (s *Service) processSourceDocument(ctx context.Context, projectID, documentID string) {
+// mark conversion completed → recreate chunks → optionally trigger extraction.
+// errors are logged but not returned — the document/version write already
+// succeeded, mirroring the raw-content create path. extract is the project's
+// auto_extract_source_syncs setting, resolved once by the sync worker; false
+// still chunks and embeds so search works without spending extraction tokens.
+func (s *Service) processSourceDocument(ctx context.Context, projectID, documentID string, extract bool) {
 	if err := s.MarkConversionCompleted(ctx, documentID); err != nil {
 		s.log.Warn("failed to mark conversion completed for source document",
 			slog.String("document_id", documentID),
@@ -728,7 +758,7 @@ func (s *Service) processSourceDocument(ctx context.Context, projectID, document
 			logger.Error(err))
 	}
 
-	if s.extractionJobs == nil {
+	if !extract || s.extractionJobs == nil {
 		return
 	}
 	if err := s.extractionJobs.TriggerForDocument(ctx, projectID, documentID); err != nil {

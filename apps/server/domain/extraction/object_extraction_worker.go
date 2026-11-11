@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
+	domainagents "github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
@@ -110,6 +111,8 @@ type ObjectExtractionWorker struct {
 	pipelineInputModifier PipelineInputModifier  // optional; nil → no modification
 	notificationsSvc      projectNotifier        // optional; nil → no review-ready/lifecycle notifications
 	runRecorder           *RunRecorder           // optional; nil → extraction transcripts are not recorded
+	agentsRepo            extractionAgentStore   // optional; nil → agent-run extraction unavailable
+	agentRunner           extractionAgentRunner  // optional; nil → agent-run extraction unavailable
 	config                *ObjectExtractionWorkerConfig
 	log                   *slog.Logger
 	scaler                *syshealth.ConcurrencyScaler
@@ -150,6 +153,30 @@ func NewObjectExtractionWorker(
 		scaler:         scaler,
 		stopCh:         make(chan struct{}),
 	}
+}
+
+// extractionAgentRunner is the executor subset agent-run extraction needs.
+// *domainagents.AgentExecutor satisfies it; tests inject a fake.
+type extractionAgentRunner interface {
+	Execute(ctx context.Context, req domainagents.ExecuteRequest) (*domainagents.ExecuteResult, error)
+}
+
+// extractionAgentStore is the repository subset agent-run extraction reads: the
+// project setting that selects the definition, the definition itself, and the
+// runtime agent row a run needs. Implemented by *domainagents.Repository.
+type extractionAgentStore interface {
+	GetProjectSetting(ctx context.Context, projectID, category, key string) (*domainagents.ProjectSetting, error)
+	FindDefinitionByID(ctx context.Context, id string, projectID *string) (*domainagents.AgentDefinition, error)
+	FindByID(ctx context.Context, id string, projectID *string) (*domainagents.Agent, error)
+}
+
+// WithAgentExtraction wires the agent definition repository and executor used
+// when a project selects a custom agent for extraction. Nil (the default) keeps
+// every job on the built-in pipeline.
+func (w *ObjectExtractionWorker) WithAgentExtraction(repo extractionAgentStore, runner extractionAgentRunner) *ObjectExtractionWorker {
+	w.agentsRepo = repo
+	w.agentRunner = runner
+	return w
 }
 
 // WithLimitResolver sets an optional ModelLimitResolver on the worker.
@@ -538,9 +565,17 @@ func (e *extractionBatchError) Unwrap() error { return e.Err }
 
 // processJob processes a single extraction job.
 func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtractionJob) (result *ObjectExtractionResults, err error) {
+	// Resolve the project's extraction agent before opening the transcript run:
+	// agent-run mode gets a real agent run from the executor, so the synthetic
+	// pipeline transcript (and its run) must not be created for it.
+	selection := w.selectedExtractionAgent(ctx, job)
+
 	// Open the job's transcript run first, so even a job that fails while loading
 	// its document leaves a run with a failure message rather than nothing.
-	runID, transcriptHeader := w.startExtractionRun(ctx, job)
+	runID, transcriptHeader := "", ""
+	if selection == nil {
+		runID, transcriptHeader = w.startExtractionRun(ctx, job)
+	}
 	if runID != "" {
 		defer func() {
 			finishCtx := context.WithoutCancel(ctx)
@@ -652,92 +687,102 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 		}
 	}
 
-	var traceLogger agents.TraceLogger
-	documentID := ""
-	if job.DocumentID != nil {
-		documentID = *job.DocumentID
-	}
-	if tl, err := agents.NewExtractionTraceLogger(agents.TraceLoggerConfig{
-		JobID:      job.ID,
-		DocumentID: documentID,
-		ProjectID:  job.ProjectID,
-	}); err != nil {
-		w.log.Warn("failed to create trace logger, continuing without tracing",
-			slog.String("error", err.Error()),
-		)
-		traceLogger = &agents.NullTraceLogger{}
-	} else {
-		traceLogger = tl
-		defer tl.Close()
-	}
-	// Bridge the pipeline's stage callbacks to the job's run so the prompts and
-	// model responses render as a chat transcript. The file logger above stays
-	// the full-fidelity record; the transcript stores the prompt and answer
-	// whole (only a runaway-output guard cuts one).
-	if runID != "" {
-		traceLogger = newRunTraceLogger(w.runRecorder, runID, traceLogger, transcriptHeader, w.log)
-	}
-
-	// Create extraction pipeline (shared across all batches).
-	pipeline, err := agents.NewExtractionPipeline(agents.ExtractionPipelineConfig{
-		ModelFactory:        w.modelFactory,
-		ObjectSchemas:       schemas.ObjectSchemas,
-		RelationshipSchemas: schemas.RelationshipSchemas,
-		OrphanThreshold:     w.config.OrphanThreshold,
-		MaxRetries:          w.config.MaxRetries,
-		Logger:              w.log,
-		TraceLogger:         traceLogger,
-	})
-	if err != nil {
-		// Pipeline creation failed — delete the (empty) staging branch to avoid clutter.
-		w.deleteStagingBranch(ctx, job, stagingBranchID)
-		return nil, fmt.Errorf("create pipeline: %w", err)
-	}
-
-	// Run extraction over each batch, accumulating results.
-	// persistResults upserts by (project_id, type, name) so duplicate entities
-	// across overlapping batches are merged naturally.
-
 	// Resolve the source document's version once per job (not per batch) so the
 	// provenance stamp is consistent across all batches of this job.
 	documentVersion := w.resolveDocumentVersion(ctx, job)
 
 	var totalResult *ObjectExtractionResults
-	for i, batch := range batches {
-		if len(batches) > 1 {
-			w.log.Info("processing extraction batch",
-				slog.Int("batch", i+1),
-				slog.Int("total_batches", len(batches)),
-				slog.Int("chars", len(batch)),
+	if selection != nil {
+		// A project-selected agent runs the job as a real agent run, writing into
+		// the same staging branch with the same provenance the pipeline uses.
+		totalResult, err = w.runAgentExtraction(ctx, job, selection, stagingBranchID, schemas, batches, documentVersion)
+		if err != nil {
+			w.deleteStagingBranch(ctx, job, stagingBranchID)
+			return nil, err
+		}
+	} else {
+		var traceLogger agents.TraceLogger
+		documentID := ""
+		if job.DocumentID != nil {
+			documentID = *job.DocumentID
+		}
+		if tl, err := agents.NewExtractionTraceLogger(agents.TraceLoggerConfig{
+			JobID:      job.ID,
+			DocumentID: documentID,
+			ProjectID:  job.ProjectID,
+		}); err != nil {
+			w.log.Warn("failed to create trace logger, continuing without tracing",
+				slog.String("error", err.Error()),
 			)
+			traceLogger = &agents.NullTraceLogger{}
+		} else {
+			traceLogger = tl
+			defer tl.Close()
+		}
+		// Bridge the pipeline's stage callbacks to the job's run so the prompts and
+		// model responses render as a chat transcript. The file logger above stays
+		// the full-fidelity record; the transcript stores the prompt and answer
+		// whole (only a runaway-output guard cuts one).
+		if runID != "" {
+			traceLogger = newRunTraceLogger(w.runRecorder, runID, traceLogger, transcriptHeader, w.log)
 		}
 
-		pipelineInput := agents.ExtractionPipelineInput{
-			DocumentText:        batch,
+		// Create extraction pipeline (shared across all batches).
+		pipeline, err := agents.NewExtractionPipeline(agents.ExtractionPipelineConfig{
+			ModelFactory:        w.modelFactory,
 			ObjectSchemas:       schemas.ObjectSchemas,
 			RelationshipSchemas: schemas.RelationshipSchemas,
-			AllowedTypes:        job.EnabledTypes,
-			DomainGuidance:      classificationResult.DomainGuidance,
-		}
-		if w.pipelineInputModifier != nil {
-			pipelineInput = w.pipelineInputModifier(pipelineInput)
-		}
-		pipelineOutput, err := pipeline.Run(ctx, pipelineInput)
+			OrphanThreshold:     w.config.OrphanThreshold,
+			MaxRetries:          w.config.MaxRetries,
+			Logger:              w.log,
+			TraceLogger:         traceLogger,
+		})
 		if err != nil {
+			// Pipeline creation failed — delete the (empty) staging branch to avoid clutter.
 			w.deleteStagingBranch(ctx, job, stagingBranchID)
-			return nil, &extractionBatchError{Batch: i + 1, Total: len(batches), Err: err}
+			return nil, fmt.Errorf("create pipeline: %w", err)
 		}
 
-		result, err := w.persistResults(ctx, job, pipelineOutput, stagingBranchID, documentVersion)
-		if err != nil {
-			w.deleteStagingBranch(ctx, job, stagingBranchID)
-			return nil, fmt.Errorf("persist results (batch %d/%d): %w", i+1, len(batches), err)
-		}
+		// Run extraction over each batch, accumulating results.
+		// persistResults upserts by (project_id, type, name) so duplicate entities
+		// across overlapping batches are merged naturally.
 
-		if totalResult == nil {
-			totalResult = result
-		} else {
-			accumulateBatchResults(totalResult, result)
+		for i, batch := range batches {
+			if len(batches) > 1 {
+				w.log.Info("processing extraction batch",
+					slog.Int("batch", i+1),
+					slog.Int("total_batches", len(batches)),
+					slog.Int("chars", len(batch)),
+				)
+			}
+
+			pipelineInput := agents.ExtractionPipelineInput{
+				DocumentText:        batch,
+				ObjectSchemas:       schemas.ObjectSchemas,
+				RelationshipSchemas: schemas.RelationshipSchemas,
+				AllowedTypes:        job.EnabledTypes,
+				DomainGuidance:      classificationResult.DomainGuidance,
+			}
+			if w.pipelineInputModifier != nil {
+				pipelineInput = w.pipelineInputModifier(pipelineInput)
+			}
+			pipelineOutput, err := pipeline.Run(ctx, pipelineInput)
+			if err != nil {
+				w.deleteStagingBranch(ctx, job, stagingBranchID)
+				return nil, &extractionBatchError{Batch: i + 1, Total: len(batches), Err: err}
+			}
+
+			result, err := w.persistResults(ctx, job, pipelineOutput, stagingBranchID, documentVersion)
+			if err != nil {
+				w.deleteStagingBranch(ctx, job, stagingBranchID)
+				return nil, fmt.Errorf("persist results (batch %d/%d): %w", i+1, len(batches), err)
+			}
+
+			if totalResult == nil {
+				totalResult = result
+			} else {
+				accumulateBatchResults(totalResult, result)
+			}
 		}
 	}
 
@@ -747,8 +792,17 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 
 	// Auto-merge the staging branch into main when the project opts in.
 	// Best-effort: failures are logged and the branch is left for manual review.
+	mergedToMain := stagingBranchID == nil
 	if stagingBranchID != nil && w.autoMergeEnabled(ctx, job.ProjectID) {
-		w.autoMergeExtractionBranch(ctx, job, *stagingBranchID)
+		mergedToMain = w.autoMergeExtractionBranch(ctx, job, *stagingBranchID)
+	}
+
+	// A re-extraction replaces what the same document previously produced. Once
+	// its output is on main, find those earlier rows through recorded lineage and
+	// supersede exactly the ones this job did not re-produce (#153). A manual
+	// merge later runs the same rule at merge completion.
+	if mergedToMain {
+		w.supersedeStaleExtractionOutput(ctx, job, totalResult)
 	}
 
 	// A skipExtraction type and a run that produced nothing are both legitimate
@@ -795,12 +849,12 @@ func (w *ObjectExtractionWorker) autoMergeEnabled(ctx context.Context, projectID
 // then performs a partial merge into the main graph: clean additions and
 // fast-forwards are applied, while conflicting/similar objects are left on the
 // branch for human review. It is best-effort — failures never block extraction.
-func (w *ObjectExtractionWorker) autoMergeExtractionBranch(ctx context.Context, job *ObjectExtractionJob, branchID uuid.UUID) {
+func (w *ObjectExtractionWorker) autoMergeExtractionBranch(ctx context.Context, job *ObjectExtractionJob, branchID uuid.UUID) bool {
 	projectID, err := uuid.Parse(job.ProjectID)
 	if err != nil {
 		w.log.Warn("auto-merge skipped: invalid project id",
 			slog.String("job_id", job.ID), logger.Error(err))
-		return
+		return false
 	}
 
 	if err := w.waitForEmbeddings(ctx, projectID, branchID); err != nil {
@@ -808,7 +862,7 @@ func (w *ObjectExtractionWorker) autoMergeExtractionBranch(ctx context.Context, 
 			slog.String("job_id", job.ID),
 			slog.String("branch_id", branchID.String()),
 			logger.Error(err))
-		return
+		return false
 	}
 
 	req := &graph.BranchMergeRequest{
@@ -823,7 +877,7 @@ func (w *ObjectExtractionWorker) autoMergeExtractionBranch(ctx context.Context, 
 			slog.String("job_id", job.ID),
 			slog.String("branch_id", branchID.String()),
 			logger.Error(err))
-		return
+		return false
 	}
 
 	w.log.Info("extraction branch auto-merged",
@@ -834,6 +888,82 @@ func (w *ObjectExtractionWorker) autoMergeExtractionBranch(ctx context.Context, 
 		slog.Int("conflicts", result.ConflictCount),
 		slog.Int("similar", result.SimilarCount),
 		slog.Int("left_for_review", result.LeftForReviewCount))
+
+	// A partial merge that left objects for review did not fully replace the
+	// document's previous output; superseding the unmatched rows would delete
+	// the old content while its replacement is still awaiting a decision.
+	if result.LeftForReviewCount > 0 {
+		return false
+	}
+	return true
+}
+
+// supersedeStaleExtractionOutput is the supersede-by-lineage half of a
+// re-extraction (#153). The rows this job produced are known from the lineage
+// input extraction_job; the rows the document produced earlier are known from
+// input document. Everything in the second set that the job did not re-produce
+// is superseded; rows derived from a different document never name this input.
+func (w *ObjectExtractionWorker) supersedeStaleExtractionOutput(ctx context.Context, job *ObjectExtractionJob, results *ObjectExtractionResults) {
+	if job.DocumentID == nil {
+		return
+	}
+	// Only a complete run may supersede: a job that failed to persist some
+	// entities, or produced nothing at all, has not replaced the document's
+	// previous output. Deleting the old rows in that state would remove content
+	// whose successor was never written.
+	if results == nil || results.SuccessfulItems == 0 || results.FailedItems != 0 {
+		return
+	}
+	projectID, err := uuid.Parse(job.ProjectID)
+	if err != nil {
+		w.log.Warn("stale-output supersede skipped: invalid project id",
+			slog.String("job_id", job.ID), logger.Error(err))
+		return
+	}
+	documentID, err := uuid.Parse(*job.DocumentID)
+	if err != nil {
+		w.log.Warn("stale-output supersede skipped: invalid document id",
+			slog.String("job_id", job.ID), logger.Error(err))
+		return
+	}
+	jobID, err := uuid.Parse(job.ID)
+	if err != nil {
+		w.log.Warn("stale-output supersede skipped: invalid job id",
+			slog.String("job_id", job.ID), logger.Error(err))
+		return
+	}
+
+	// The extraction worker writes as system, including the tombstone versions.
+	ctx = auth.WithActor(ctx, graph.ActorSystem, nil)
+
+	keep, err := w.graphService.CanonicalIDsDerivedFromInput(ctx, projectID, graph.LineageInputExtractionJob, jobID, nil)
+	if err != nil {
+		w.log.Warn("stale-output supersede skipped: read job lineage",
+			slog.String("job_id", job.ID), logger.Error(err))
+		return
+	}
+	// No row on main names this job, so its output did not land (still on a
+	// staging branch, or nothing was created). Nothing is authoritative yet.
+	if len(keep) == 0 {
+		w.log.Info("stale-output supersede skipped: job output not on main",
+			slog.String("job_id", job.ID))
+		return
+	}
+	reason := "superseded by re-extraction of document " + documentID.String()
+	n, err := w.graphService.SupersedeStaleDerivedVersions(ctx, projectID, graph.LineageInputDocument, documentID, nil, keep, job.EnabledTypes, reason)
+	if err != nil {
+		w.log.Warn("stale-output supersede failed",
+			slog.String("job_id", job.ID),
+			slog.String("document_id", documentID.String()),
+			logger.Error(err))
+		return
+	}
+	if n > 0 {
+		w.log.Info("superseded stale rows derived from document",
+			slog.String("job_id", job.ID),
+			slog.String("document_id", documentID.String()),
+			slog.Int("superseded", n))
+	}
 }
 
 // maybeWarnPendingExtractionBacklog logs the project-level extraction backlog
@@ -1111,6 +1241,21 @@ func (w *ObjectExtractionWorker) persistResults(
 	// objects/relationships this job persists are attributed to `system` (NULL
 	// actor_id) rather than any HTTP principal (issue #1193).
 	ctx = auth.WithActor(ctx, graph.ActorSystem, nil)
+
+	// Declare this job's synthesis inputs once. Every version written below
+	// records them beside the version row (#153), so an object or relationship
+	// cannot be created without saying which document and job produced it.
+	lineageInputs := []graph.SynthesisInput{
+		{Kind: graph.LineageInputExtractionJob, ID: jobUUID},
+	}
+	if job.DocumentID != nil {
+		if docID, parseErr := uuid.Parse(*job.DocumentID); parseErr == nil {
+			lineageInputs = append([]graph.SynthesisInput{
+				{Kind: graph.LineageInputDocument, ID: docID},
+			}, lineageInputs...)
+		}
+	}
+	ctx = graph.WithSynthesisInputs(ctx, lineageInputs...)
 
 	// Map temp_id -> created object ID
 	tempIDToObjectID := make(map[string]uuid.UUID)

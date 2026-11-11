@@ -355,6 +355,106 @@ func TestValidateProperties(t *testing.T) {
 	})
 }
 
+func TestValidatePropertiesEnum(t *testing.T) {
+	schema := agents.ObjectSchema{
+		Name: "Task",
+		Properties: map[string]agents.PropertyDef{
+			"status":   {Type: "string", Enum: []any{"draft", "published"}},
+			"priority": {Type: "integer", Enum: []any{float64(1), float64(2), float64(3)}},
+			"urgent":   {Type: "boolean", Enum: []any{false, true}},
+			"country":  {Type: "country", Enum: []any{"DE", "PL"}},
+			"tags": {
+				Type:  "array",
+				Items: &agents.PropertyDef{Type: "string", Enum: []any{"a", "b"}},
+			},
+		},
+	}
+
+	t.Run("accepts declared values", func(t *testing.T) {
+		out, err := validateProperties(map[string]any{
+			"status":   "draft",
+			"priority": "2",
+			"urgent":   true,
+			"tags":     []any{"a", "b"},
+		}, schema)
+		assert.NoError(t, err)
+		assert.Equal(t, "draft", out["status"])
+		assert.Equal(t, 2.0, out["priority"])
+	})
+
+	t.Run("rejects a value outside the enum", func(t *testing.T) {
+		_, err := validateProperties(map[string]any{"status": "archived"}, schema)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "status")
+		assert.Contains(t, err.Error(), `"draft"`)
+		assert.Contains(t, err.Error(), `"published"`)
+	})
+
+	t.Run("matches after coercion", func(t *testing.T) {
+		out, err := validateProperties(map[string]any{"country": "de"}, schema)
+		assert.NoError(t, err)
+		assert.Equal(t, "DE", out["country"])
+	})
+
+	t.Run("non-canonical declared enum is canonicalised", func(t *testing.T) {
+		nonCanonical := agents.ObjectSchema{
+			Name: "Thing",
+			Properties: map[string]agents.PropertyDef{
+				"country": {Type: "country", Enum: []any{"de"}},
+			},
+		}
+		out, err := validateProperties(map[string]any{"country": "de"}, nonCanonical)
+		assert.NoError(t, err)
+		assert.Equal(t, "DE", out["country"])
+	})
+
+	t.Run("items enum without an item type still constrains elements", func(t *testing.T) {
+		enumOnly := agents.ObjectSchema{
+			Name: "Thing",
+			Properties: map[string]agents.PropertyDef{
+				"tags": {Type: "array", Items: &agents.PropertyDef{Enum: []any{"a", "b"}}},
+			},
+		}
+		if _, err := validateProperties(map[string]any{"tags": []any{"a", "b"}}, enumOnly); err != nil {
+			t.Fatalf("expected valid enum-only items: %v", err)
+		}
+		_, err := validateProperties(map[string]any{"tags": []any{"a", "c"}}, enumOnly)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "element 1")
+	})
+
+	t.Run("rejects an array element outside the item enum", func(t *testing.T) {
+		_, err := validateProperties(map[string]any{"tags": []any{"a", "c"}}, schema)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "element 1")
+		assert.Contains(t, err.Error(), `"a"`)
+	})
+
+	t.Run("absent and null values stay allowed", func(t *testing.T) {
+		out, err := validateProperties(map[string]any{"status": nil}, schema)
+		assert.NoError(t, err)
+		assert.Nil(t, out["status"])
+	})
+
+	t.Run("enum on a non-primitive type is not enforced", func(t *testing.T) {
+		objEnumSchema := agents.ObjectSchema{
+			Name: "Thing",
+			Properties: map[string]agents.PropertyDef{
+				"meta": {Type: "object", Enum: []any{"not-an-object"}},
+			},
+		}
+		out, err := validateProperties(map[string]any{"meta": map[string]any{"a": 1}}, objEnumSchema)
+		assert.NoError(t, err)
+		assert.Equal(t, map[string]any{"a": 1}, out["meta"])
+	})
+
+	t.Run("patch delta is enforced", func(t *testing.T) {
+		_, err := validatePatchProperties(map[string]any{"status": "archived"}, schema)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "status")
+	})
+}
+
 func TestValidateRelationship(t *testing.T) {
 	schemas := &ExtractionSchemas{
 		RelationshipSchemas: map[string]agents.RelationshipSchema{

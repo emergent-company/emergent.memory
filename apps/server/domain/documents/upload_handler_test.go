@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -31,12 +32,14 @@ type fakeStorage struct {
 	uploadKey   string
 	uploadErr   error
 	deleteErr   error
+	uploadCalls int
 	deletedKeys []string
 }
 
 func (f *fakeStorage) Enabled() bool { return f.enabled }
 
 func (f *fakeStorage) UploadDocument(_ context.Context, _ io.Reader, _ int64, _ storage.DocumentUploadOptions) (*storage.UploadResult, error) {
+	f.uploadCalls++
 	if f.uploadErr != nil {
 		return nil, f.uploadErr
 	}
@@ -83,10 +86,11 @@ func newTestUploadHandler(t *testing.T, stor uploadStorage, allowedMIME string) 
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 	cfg := &config.Config{}
 	cfg.Storage.AllowedMIMETypes = allowedMIME
-	// svc = nil because tests below don't reach CreateFromUpload
+	// The document service is a stub: these tests never persist a row, but the
+	// ingestor correctly refuses to start without one (fail closed, #586).
 	h := &UploadHandler{
-		svc:     nil,
 		storage: stor,
+		ingest:  NewUploadIngestor(&stubDocumentCreator{}, stor, nil, nil, log),
 		log:     log,
 	}
 	return h.WithAllowedMIMETypes(cfg.Storage.AllowedMIMETypes)
@@ -288,8 +292,58 @@ func TestUploadBatch_EmptyFile_IsPerFileFailure(t *testing.T) {
 	assert.Contains(t, *got.Results[0].Error, "file is empty")
 }
 
-func TestComputeFileHash_KnownSHA256(t *testing.T) {
-	// SHA-256("hello world") = b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9
+// errStubDocumentCreator is a DocumentCreator whose insert always fails, so the
+// batch path's error reporting can be exercised without a database.
+type errStubDocumentCreator struct {
+	err error
+}
+
+func (f *errStubDocumentCreator) CreateFromUpload(_ context.Context, _ UploadParams) (*UploadDocumentResponse, error) {
+	return nil, f.err
+}
+
+// TestUploadBatch_IngestFailure_DoesNotLeakInternalDetail is the regression test
+// for the batch endpoint stringifying the ingest error: an internal failure used
+// to reach the client as "internal_error: An internal error occurred (pq: …)".
+// The response must carry the stable client-facing message and none of the
+// wrapped detail, which belongs in the log.
+func TestUploadBatch_IngestFailure_DoesNotLeakInternalDetail(t *testing.T) {
+	stor := &fakeStorage{enabled: true, uploadKey: "uploads/leak.md"}
+	internal := errors.New(`pq: relation "kb.documents" does not exist`)
+	h := &UploadHandler{
+		storage: stor,
+		ingest: NewUploadIngestor(
+			&errStubDocumentCreator{err: apperror.ErrInternal.WithInternal(internal)},
+			stor, &fakeParsingJobs{}, nil, discardLog()),
+		log: discardLog(),
+	}
+
+	body, ct := batchMultipartBody(t, map[string][]byte{"report.md": []byte("# report")})
+	req := httptest.NewRequest(http.MethodPost, "/upload/batch", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	e := echo.New()
+	c := e.NewContext(req, rec)
+	c.Set(string(auth.UserContextKey), &auth.AuthUser{ID: "u", OrgID: "o", ProjectID: "p"})
+
+	require.NoError(t, h.UploadBatch(c))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var got BatchUploadResult
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Equal(t, 1, got.Summary.Failed)
+	require.Len(t, got.Results, 1)
+	require.NotNil(t, got.Results[0].Error)
+
+	errText := *got.Results[0].Error
+	assert.Equal(t, apperror.ErrInternal.Message, errText,
+		"the client must get the stable message, not the internal form")
+	assert.NotContains(t, errText, `pq: relation`)
+	assert.NotContains(t, errText, "internal_error:", "the internal code prefix is not part of the client contract")
+	assert.NotContains(t, rec.Body.String(), `pq: relation`)
+}
+
+func TestComputeFileHash_KnownSHA256(t *testing.T) { // SHA-256("hello world") = b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9
 	h := computeFileHash([]byte("hello world"))
 	assert.Equal(t, "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9", h)
 }
@@ -378,35 +432,34 @@ func TestNewUploadHandler_EmptyAllowedMIMETypes_NoRestriction(t *testing.T) {
 }
 
 // ============================================================================
-// Unit tests — deleteStorageObject / createParsingJob
+// Unit tests — upload path wiring
 // ============================================================================
 
-func TestDeleteStorageObject_ErrorIsLoggedNotPropagated(t *testing.T) {
+// TestUploadHandler_IngestorWiresParsingJobs guards the wiring, not just the
+// logic: NewUploadHandler must hand the parsing-job queue to the shared
+// ingestor, otherwise every HTTP upload silently stops being parsed again
+// (#586).
+func TestUploadHandler_IngestorWiresParsingJobs(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
-	stor := &fakeStorage{enabled: true, deleteErr: fmt.Errorf("network error")}
-	h := &UploadHandler{storage: stor, log: log}
-	assert.NotPanics(t, func() {
-		h.deleteStorageObject(context.Background(), "some-key")
-	})
-	assert.Equal(t, []string{"some-key"}, stor.deletedKeys)
+	parsing := &fakeParsingJobs{}
+	h := NewUploadHandler(nil, &fakeStorage{enabled: true}, parsing, nil, nil, &config.Config{}, log)
+
+	require.NotNil(t, h.ingest, "NewUploadHandler must build the shared upload ingestor")
+	assert.Same(t, parsing, h.ingest.parsingJobs)
 }
 
-func TestCreateParsingJob_NilService_NoPanic(t *testing.T) {
+// TestUploadHandler_IngestorBuiltOnDemand covers handlers assembled without
+// NewUploadHandler: the accessor must still produce a wired ingestor.
+func TestUploadHandler_IngestorBuiltOnDemand(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
-	h := &UploadHandler{parsingJobsService: nil, log: log}
-	assert.NotPanics(t, func() {
-		h.createParsingJob(context.Background(), "org", "proj", "doc", "file.pdf", "application/pdf", 100, "key", false)
-	})
-}
-
-func TestCreateParsingJob_ErrorIsLoggedNotReturned(t *testing.T) {
-	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
-	parsing := &fakeParsingJobs{err: fmt.Errorf("queue full")}
+	parsing := &fakeParsingJobs{}
 	h := &UploadHandler{parsingJobsService: parsing, log: log}
+
+	require.NotNil(t, h.ingestor())
+	assert.Same(t, parsing, h.ingestor().parsingJobs)
 	assert.NotPanics(t, func() {
-		h.createParsingJob(context.Background(), "org", "proj", "doc", "file.pdf", "application/pdf", 100, "key", false)
+		h.ingestor().deleteStorageObject(context.Background(), "key")
 	})
-	assert.True(t, parsing.called)
 }
 
 // ============================================================================

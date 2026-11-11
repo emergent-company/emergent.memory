@@ -75,7 +75,7 @@ func (s *TraleSyncSuite) newDocsService() *documents.Service {
 // domain tests do.
 func (s *TraleSyncSuite) newWorker(srv *httptest.Server) *sources.SyncWorker {
 	svc := s.newServiceWith(sources.NewRegistry(sources.NewTraleProvider(srv.Client())))
-	return sources.NewSyncWorker(svc, s.newDocsService(), nil, nil, s.log)
+	return sources.NewSyncWorker(svc, s.newDocsService(), nil, nil, nil, s.log)
 }
 
 func (s *TraleSyncSuite) createSource(svc *sources.Service, resourceURL string) string {

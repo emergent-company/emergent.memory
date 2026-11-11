@@ -14,9 +14,18 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/emergent-company/emergent.memory/domain/documents"
+	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/xberg"
 )
+
+// pendingSourceRelationship is a relationship to create after every record in
+// the batch has an object id.
+type pendingSourceRelationship struct {
+	srcID uuid.UUID
+	rel   ObjectRelationship
+}
 
 // DiscoveryStarter delegates schema discovery to domain/discoveryjobs after a
 // sync ingests new documents. It is optional (nil-safe): a source with no new
@@ -29,16 +38,24 @@ type DiscoveryStarter interface {
 	AutoDiscoveryEnabled(ctx context.Context, projectID uuid.UUID) (bool, error)
 }
 
+// SourceExtractReader reports the project's auto-extract-after-source-sync
+// setting. The worker resolves it once per sync job, so a settings change
+// applies from the next run and every item in one run shares one decision.
+type SourceExtractReader interface {
+	AutoExtractSourceSyncs(ctx context.Context, projectID uuid.UUID) (bool, error)
+}
+
 // SyncWorker polls for pending sync jobs and drives them through
 // pending → processing → completed|failed|cancelled, isolating per-item errors
 // and persisting durable progress as it advances. It is provider-agnostic: it
 // resolves the source's provider from the registry and drives its Connector.
 type SyncWorker struct {
-	svc       *Service
-	docs      *documents.Service
-	xberg     *xberg.Client
-	discovery DiscoveryStarter
-	log       *slog.Logger
+	svc        *Service
+	docs       *documents.Service
+	xberg      *xberg.Client
+	discovery  DiscoveryStarter
+	sourceSync SourceExtractReader
+	log        *slog.Logger
 
 	interval          time.Duration
 	batchSize         int
@@ -51,14 +68,15 @@ type SyncWorker struct {
 	wg        sync.WaitGroup
 }
 
-// NewSyncWorker creates a sync worker. The xberg client and discovery starter
-// are constructor-injected (not setters) so tests can substitute fakes. A nil
-// discovery/xberg is handled by skipping those paths.
+// NewSyncWorker creates a sync worker. The xberg client, discovery starter and
+// source-extract reader are constructor-injected (not setters) so tests can
+// substitute fakes. A nil dependency is handled by skipping its path.
 func NewSyncWorker(
 	svc *Service,
 	docs *documents.Service,
 	xbergClient *xberg.Client,
 	discovery DiscoveryStarter,
+	sourceSync SourceExtractReader,
 	log *slog.Logger,
 ) *SyncWorker {
 	return &SyncWorker{
@@ -66,6 +84,7 @@ func NewSyncWorker(
 		docs:              docs,
 		xberg:             xbergClient,
 		discovery:         discovery,
+		sourceSync:        sourceSync,
 		log:               log.With(logger.Scope("sources.worker")),
 		interval:          5 * time.Second,
 		batchSize:         10,
@@ -399,6 +418,7 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 	// sync continues — and credentialDeps logs it (#2091).
 	deps := w.svc.credentialDeps(job.ProjectID, src.ID)
 	deps.Extract = w.extractText
+	deps.SourceConfig = src.Config
 	connector, err := provider.NewConnector(ctx, creds, deps)
 	if err != nil {
 		return w.failJob(ctx, job, src, fmt.Errorf("initialize connector: %w", err))
@@ -416,6 +436,21 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 	deletedHeads, err := w.svc.repo.ListDeletedHeadSourceIDs(ctx, job.ProjectID, job.SourceID)
 	if err != nil {
 		return w.failJob(ctx, job, src, err)
+	}
+
+	// Resolve the project's extraction switch once for the whole run: it is a
+	// project intent (not per item), and a read failure fails closed so a
+	// transient settings outage cannot start an unasked token spend. Chunking
+	// and embedding still run when extraction stays off.
+	extractItems := false
+	if w.sourceSync != nil {
+		enabled, sErr := w.sourceSync.AutoExtractSourceSyncs(ctx, job.ProjectID)
+		if sErr != nil {
+			jobLog.Warn("failed to resolve auto_extract_source_syncs; skipping extraction for this sync",
+				logger.Error(sErr))
+		} else {
+			extractItems = enabled
+		}
 	}
 
 	enumerating := "enumerating"
@@ -455,6 +490,20 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 	failedItems := make(map[string]bool)
 	processed, successful, failed, skipped := 0, 0, 0, 0
 
+	// Typed-object batch state: object ids by (type,key) and relationships that
+	// can only be created after every item has been processed.
+	objectIDs := make(map[string]uuid.UUID)
+	var pendingRels []pendingSourceRelationship
+	_, typedProvider := provider.(TypedObjectProvider)
+	mappedExternalIDs := map[string]bool{}
+	if typedProvider && w.svc.graph != nil {
+		if existing, oerr := w.svc.repo.ListActiveSourceObjects(ctx, job.ProjectID, job.SourceID); oerr == nil {
+			for _, obj := range existing {
+				mappedExternalIDs[obj.ExternalID] = true
+			}
+		}
+	}
+
 	// progress builds a full durable-progress snapshot from the local counters so
 	// each persisted update carries every counter (the store replaces them).
 	progress := func(phase, message *string) SyncProgress {
@@ -488,9 +537,20 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 		// HEAD marked deleted_from_source is never skipped either — a revived
 		// item (e.g. restored from trash) may keep the same head revision and
 		// still needs ApplySourceItem to reactivate it.
-		if item.RevisionID != "" {
+		if (!typedProvider || mappedExternalIDs[item.ID]) && item.RevisionID != "" {
 			if rev, ok := headRevs[item.ID]; ok && rev == item.RevisionID && !deletedHeads[item.ID] {
-				skipped++
+				ids, rels, recErr := w.applyItemRecords(ctx, job, src, item, "")
+				for k, v := range ids {
+					objectIDs[k] = v
+				}
+				pendingRels = append(pendingRels, rels...)
+				if recErr != nil {
+					failed++
+					failedItems[item.ID] = true
+					itemErrors = append(itemErrors, map[string]any{"externalId": item.ID, "error": recErr.Error()})
+				} else {
+					skipped++
+				}
 				if err := w.svc.repo.UpdateSyncJobProgress(ctx, job.ID, progress(nil, nil)); err != nil {
 					return w.failJob(ctx, job, src, err)
 				}
@@ -498,11 +558,34 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 			}
 		}
 
-		content, mimeType, err := connector.Fetch(ctx, item)
+		var content, mimeType string
+		if rf, ok := connector.(RecordFetchConnector); ok {
+			var records []ObjectRecord
+			content, mimeType, records, err = rf.FetchWithRecords(ctx, item)
+			item.Records = records
+		} else {
+			content, mimeType, err = connector.Fetch(ctx, item)
+		}
 		if err != nil {
 			failed++
 			failedItems[item.ID] = true
-			itemErrors = append(itemErrors, map[string]any{"externalId": item.ID, "error": err.Error()})
+			// A failed body fetch can still carry metadata records (a connector
+			// that returns partial records alongside its error). Keep that graph
+			// metadata current, but fold a metadata failure into the item's error
+			// instead of discarding it; on a plain failure Records is nil and this
+			// branch does nothing.
+			itemErr := err.Error()
+			if len(item.Records) > 0 {
+				ids, rels, recErr := w.applyItemRecords(ctx, job, src, item, "")
+				for k, v := range ids {
+					objectIDs[k] = v
+				}
+				pendingRels = append(pendingRels, rels...)
+				if recErr != nil {
+					itemErr = itemErr + "; metadata: " + recErr.Error()
+				}
+			}
+			itemErrors = append(itemErrors, map[string]any{"externalId": item.ID, "error": itemErr})
 			if uerr := w.svc.repo.UpdateSyncJobProgress(ctx, job.ID, progress(nil, nil)); uerr != nil {
 				return w.failJob(ctx, job, src, uerr)
 			}
@@ -518,11 +601,32 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 			MimeType:   mimeType,
 			Content:    content,
 			SourceType: provider.Catalog().SourceType,
+			Extract:    extractItems,
 		})
+		docID := ""
+		if err == nil {
+			docID = result.DocumentID
+		}
+
+		ids, rels, recErr := w.applyItemRecords(ctx, job, src, item, docID)
+		for k, v := range ids {
+			objectIDs[k] = v
+		}
+		pendingRels = append(pendingRels, rels...)
+
 		if err != nil {
 			failed++
 			failedItems[item.ID] = true
 			itemErrors = append(itemErrors, map[string]any{"externalId": item.ID, "error": err.Error()})
+			if uerr := w.svc.repo.UpdateSyncJobProgress(ctx, job.ID, progress(nil, nil)); uerr != nil {
+				return w.failJob(ctx, job, src, uerr)
+			}
+			continue
+		}
+		if recErr != nil {
+			failed++
+			failedItems[item.ID] = true
+			itemErrors = append(itemErrors, map[string]any{"externalId": item.ID, "error": recErr.Error()})
 			if uerr := w.svc.repo.UpdateSyncJobProgress(ctx, job.ID, progress(nil, nil)); uerr != nil {
 				return w.failJob(ctx, job, src, uerr)
 			}
@@ -534,6 +638,28 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 		}
 		if err := w.svc.repo.UpdateSyncJobProgress(ctx, job.ID, progress(nil, nil)); err != nil {
 			return w.failJob(ctx, job, src, err)
+		}
+	}
+
+	// Relationship creation runs after every record has an object id so a
+	// target defined by a later item resolves correctly.
+	for _, pr := range pendingRels {
+		dst, ok := objectIDs[recordKey(pr.rel.TargetType, pr.rel.TargetKey)]
+		if !ok {
+			jobLog.Debug("source relationship target not found",
+				slog.String("type", pr.rel.Type),
+				slog.String("target_type", pr.rel.TargetType),
+				slog.String("target_key", pr.rel.TargetKey))
+			continue
+		}
+		if _, _, err := w.svc.graph.UpsertRelationship(ctx, job.ProjectID, &graph.CreateGraphRelationshipRequest{
+			Type:   pr.rel.Type,
+			SrcID:  pr.srcID,
+			DstID:  dst,
+			Upsert: true,
+		}, nil); err != nil {
+			jobLog.Warn("failed to upsert source relationship",
+				slog.String("type", pr.rel.Type), "error", err)
 		}
 	}
 
@@ -558,6 +684,12 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 	var tombstones []string
 	if c, ok := connector.(SourceTombstones); ok {
 		tombstones = c.Tombstones()
+	}
+
+	// Typed-object removals use the same completeness rule as documents: an
+	// incomplete enumeration cannot prove a record is gone.
+	if complete && w.svc.graph != nil {
+		w.reconcileSourceObjects(ctx, job, seen, jobLog)
 	}
 
 	deleted, skippedRemovals := planRemovals(headIDs, seen, complete, tombstones)
@@ -640,8 +772,17 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 	w.svc.resolveSourceNotification(ctx, job.ProjectID, job.SourceID)
 
 	// Delegate schema discovery with newly ingested documents, unless the
-	// project has turned automatic discovery off.
-	w.delegateDiscovery(ctx, job.ProjectID, createdDocIDs, jobLog)
+	// project has turned automatic discovery off or the provider declares its
+	// own typed schema pack.
+	skipDiscovery := false
+	if typed, ok := provider.(TypedObjectProvider); ok {
+		if pack := typed.ObjectTypes(); pack != nil && pack.SkipDiscovery {
+			skipDiscovery = true
+		}
+	}
+	if !skipDiscovery {
+		w.delegateDiscovery(ctx, job.ProjectID, createdDocIDs, jobLog)
+	}
 
 	jobLog.Info("sync completed",
 		slog.Int("processed", processed),
@@ -738,6 +879,154 @@ func credentialEpoch(src *Source) *time.Time {
 	epoch := src.CredentialsUpdatedAt
 	return &epoch
 }
+
+// sourceObjectNamespace isolates one source's typed objects from every other
+// source in the project, so identical external ids never collide.
+func sourceObjectNamespace(sourceID uuid.UUID) string { return "src:" + sourceID.String() }
+
+func recordKey(objectType, key string) string { return objectType + "\x00" + key }
+
+// applyItemRecords upserts an item's typed records into the graph and records
+// their mapping rows. It returns object ids keyed by (type,key) and any
+// relationships that need a second pass.
+func (w *SyncWorker) applyItemRecords(ctx context.Context, job *SyncJob, src *Source, item SourceItem, documentID string) (map[string]uuid.UUID, []pendingSourceRelationship, error) {
+	out := make(map[string]uuid.UUID)
+	if w.svc.graph == nil || len(item.Records) == 0 {
+		return out, nil, nil
+	}
+
+	ctx = auth.WithActor(ctx, graph.ActorSystem, nil)
+	namespace := sourceObjectNamespace(job.SourceID)
+	now := time.Now().UTC()
+
+	var docUUID *uuid.UUID
+	if documentID != "" {
+		if id, err := uuid.Parse(documentID); err == nil {
+			docUUID = &id
+		}
+	}
+
+	var rels []pendingSourceRelationship
+	var firstErr error
+
+	for start := 0; start < len(item.Records); start += 100 {
+		end := start + 100
+		if end > len(item.Records) {
+			end = len(item.Records)
+		}
+		chunk := item.Records[start:end]
+
+		reqs := make([]graph.CreateGraphObjectRequest, 0, len(chunk))
+		for _, rec := range chunk {
+			props := make(map[string]any, len(rec.Properties)+4)
+			for k, v := range rec.Properties {
+				props[k] = v
+			}
+			props["_source_id"] = job.SourceID.String()
+			props["_source_provider"] = src.Provider
+			// The record's own external id. A thread item emits one record per
+			// message, so stamping the item id (the thread id) on an EmailMessage
+			// whose key is the message id would name the wrong object.
+			externalID := item.ID
+			if rec.Key != "" {
+				externalID = rec.Key
+			}
+			props["_source_external_id"] = externalID
+			if documentID != "" {
+				props["_document_id"] = documentID
+			}
+			ns := namespace
+			reqs = append(reqs, graph.CreateGraphObjectRequest{
+				Type:       rec.Type,
+				Key:        stringPtr(rec.Key),
+				Properties: props,
+				Labels:     rec.Labels,
+				Namespace:  &ns,
+			})
+		}
+
+		resp, err := w.svc.graph.BulkUpsertObjects(ctx, job.ProjectID, &graph.BulkUpsertObjectsRequest{Items: reqs}, nil)
+		if err != nil {
+			return out, rels, fmt.Errorf("upsert typed objects: %w", err)
+		}
+
+		mappings := make([]*SourceObject, 0, len(chunk))
+		for i, result := range resp.Results {
+			rec := chunk[i]
+			if !result.Success || result.Object == nil {
+				if firstErr == nil {
+					msg := "typed object upsert failed"
+					if result.Error != nil {
+						msg = *result.Error
+					}
+					firstErr = fmt.Errorf("%s/%s: %s", rec.Type, rec.Key, msg)
+				}
+				continue
+			}
+			obj := result.Object
+			out[recordKey(rec.Type, rec.Key)] = obj.ID
+			revision := item.RevisionID
+			mappings = append(mappings, &SourceObject{
+				ID:                uuid.New(),
+				ProjectID:         job.ProjectID,
+				SourceID:          job.SourceID,
+				ExternalID:        item.ID,
+				ObjectType:        rec.Type,
+				ObjectKey:         rec.Key,
+				ObjectID:          obj.ID,
+				ObjectCanonicalID: obj.CanonicalID,
+				DocumentID:        docUUID,
+				RevisionID:        &revision,
+				Status:            SourceObjectStatusActive,
+				SyncedAt:          now,
+				CreatedAt:         now,
+				UpdatedAt:         now,
+			})
+			for _, rel := range rec.Relationships {
+				rels = append(rels, pendingSourceRelationship{srcID: obj.ID, rel: rel})
+			}
+		}
+		if err := w.svc.repo.UpsertSourceObjects(ctx, mappings); err != nil {
+			return out, rels, err
+		}
+	}
+
+	return out, rels, firstErr
+}
+
+// reconcileSourceObjects marks mappings and graph objects absent from a
+// complete enumeration as deleted-from-source.
+func (w *SyncWorker) reconcileSourceObjects(ctx context.Context, job *SyncJob, seen map[string]bool, log *slog.Logger) {
+	active, err := w.svc.repo.ListActiveSourceObjects(ctx, job.ProjectID, job.SourceID)
+	if err != nil {
+		log.Warn("failed to list source objects for reconciliation", "error", err)
+		return
+	}
+	var mappingIDs []uuid.UUID
+	var objectIDs []uuid.UUID
+	for _, obj := range active {
+		if seen[obj.ExternalID] {
+			continue
+		}
+		mappingIDs = append(mappingIDs, obj.ID)
+		objectIDs = append(objectIDs, obj.ObjectID)
+	}
+	if len(mappingIDs) == 0 {
+		return
+	}
+	if err := w.svc.repo.MarkSourceObjectsDeleted(ctx, mappingIDs); err != nil {
+		log.Warn("failed to mark source object mappings deleted", "error", err)
+	}
+	ctx = auth.WithActor(ctx, graph.ActorSystem, nil)
+	reason := "deleted from source"
+	for _, id := range objectIDs {
+		if err := w.svc.graph.Delete(ctx, job.ProjectID, id, nil, nil, &reason); err != nil {
+			log.Debug("failed to soft-delete source object", "object_id", id, "error", err)
+		}
+	}
+}
+
+func stringPtr(v string) *string { return &v }
 
 // extractText adapts the xberg client to the connector's generic text-extraction
 // dependency. A nil client reports extraction as unavailable, which the provider

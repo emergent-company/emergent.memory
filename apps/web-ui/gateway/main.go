@@ -24,6 +24,9 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("invalid configuration: %v", err)
 	}
+	if !setVoiceSupported(!cfg.VoiceDisabled) {
+		log.Printf("VOICE_SUPPORTED=false — voice, LiveKit settings and token endpoints are disabled")
+	}
 	// Provider probe egress defaults to public-only; PROVIDER_PROBE_ALLOW
 	// exempts internal gateways (e.g. litellm) from the SSRF guard.
 	providerProbeHTTPClient = newSSRFSafeHTTPClient(10*time.Second, newDialAllowlist(cfg.ProviderProbeAllow))
@@ -59,11 +62,23 @@ func main() {
 	e := echo.New()
 	e.HideBanner = true
 	installErrorHandler(e)
-	// Resolve the real client IP from X-Forwarded-For set by traefik. The default
-	// extractor trusts loopback/private/link-local peers, so the gateway — always
-	// reached through traefik on a private network — keys rate limits (and any
-	// future RealIP() use) on the client rather than traefik's socket address.
-	e.IPExtractor = echo.ExtractIPFromXFFHeader()
+	// Client-IP trust is explicit and configured, never echo v4's permissive
+	// default (which trusts loopback/private/link-local peers, the trust model
+	// in GHSA-246p-cpwv-v3jq / GHSA-99jh-6h7p-pp36). With TRUSTED_PROXY_CIDRS
+	// naming the proxy hop (e.g. the compose network gateway 172.18.0.1/32 in
+	// production), RealIP() resolves X-Forwarded-For to the right-most
+	// untrusted hop, so the share rate limiter keys on the real client. Unset
+	// fails closed: RealIP() is the socket peer, so a forwarded header cannot
+	// move a bucket. That is the interim mitigation for issue #26 while the
+	// echo v5 rewrite lands.
+	ipExtractor, ipTrustMode, err := newIPExtractor(cfg.TrustedProxyCIDRs)
+	if err != nil {
+		// Config.Validate already rejected this at startup; keep the failure
+		// loud rather than falling back to a different trust model.
+		log.Fatalf("invalid %s: %v", trustedProxyEnvVar, err)
+	}
+	e.IPExtractor = ipExtractor
+	log.Printf("client IP trust: %s", ipTrustMode)
 	// Annotate every go-daisy component root with data-component="pkg/Component"
 	// so the element-level feedback overlay can name the component instead of a
 	// raw CSS selector. Always on: names only (no data-props); see componentAnnotations.
@@ -147,6 +162,13 @@ func main() {
 	// deviceObjectReadPath (auth.go).
 	api.GET("/objects/:id/card", s.getObjectCard)
 	api.GET("/objects/:id/history", s.getObjectCardHistory)
+	// Device-reachable work writes from the object card (see object_work.go):
+	// the editable half of the workflow strip. Both mirror the drawer's
+	// uiObjectStatus / uiObjectAssignee and answer with the refreshed card.
+	// Device access via deviceObjectWritePath (auth.go); memory admits only the
+	// two work-item path shapes for a device credential.
+	api.POST("/objects/:id/status", s.postObjectStatus)
+	api.POST("/objects/:id/assignee", s.postObjectAssignee)
 	api.POST("/chat", s.chat)
 	// Share capture (iOS share extension): a link/note, or a photo/PDF/audio
 	// memo. Device-reachable — see deviceSurfacePath and remember.go.
@@ -160,6 +182,10 @@ func main() {
 	api.GET("/conversations/:id/history", s.getConversationHistory)
 	api.GET("/conversations/:id/dump", s.getConversationDump)
 	api.GET("/conversations/:id/events", s.conversationEvents)
+	// The agent's plan for the conversation's ACP session, as JSON (the twin of
+	// the /partial/chat-todos fragment, issue #440). Device-reachable via
+	// deviceConversationReadPath (auth.go).
+	api.GET("/conversations/:id/todos", s.getConversationTodos)
 	// Session lifecycle (chat-conversation-lifecycle): the rail's per-row
 	// Archive / Unarchive / Delete actions. Delete is permanent and is the only
 	// irreversible one; the client confirms before calling it.
@@ -250,12 +276,22 @@ func main() {
 	api.GET("/orgs/:orgId/data-source-integrations/oauth-clients/:providerType", s.getDSOAuthClient)
 	api.PUT("/orgs/:orgId/data-source-integrations/oauth-clients/:providerType", s.upsertDSOAuthClient)
 	api.DELETE("/orgs/:orgId/data-source-integrations/oauth-clients/:providerType", s.deleteDSOAuthClient)
+	api.GET("/orgs/:orgId/data-source-integrations/oauth-apps", s.listDSOAuthApps)
+	api.POST("/orgs/:orgId/data-source-integrations/oauth-apps", s.createDSOAuthApp)
+	api.GET("/orgs/:orgId/data-source-integrations/oauth-apps/:appId", s.getDSOAuthApp)
+	api.PUT("/orgs/:orgId/data-source-integrations/oauth-apps/:appId", s.updateDSOAuthApp)
+	api.DELETE("/orgs/:orgId/data-source-integrations/oauth-apps/:appId", s.deleteDSOAuthApp)
 	// Project-scoped OAuth-client config (project_admin only; the handler
 	// enforces it). A project client overrides the org-wide one.
 	api.GET("/projects/:projectId/data-source-integrations/oauth-clients", s.listProjectDSOAuthClients)
 	api.GET("/projects/:projectId/data-source-integrations/oauth-clients/:providerType", s.getProjectDSOAuthClient)
 	api.PUT("/projects/:projectId/data-source-integrations/oauth-clients/:providerType", s.upsertProjectDSOAuthClient)
 	api.DELETE("/projects/:projectId/data-source-integrations/oauth-clients/:providerType", s.deleteProjectDSOAuthClient)
+	api.GET("/projects/:projectId/data-source-integrations/oauth-apps", s.listProjectDSOAuthApps)
+	api.POST("/projects/:projectId/data-source-integrations/oauth-apps", s.createProjectDSOAuthApp)
+	api.GET("/projects/:projectId/data-source-integrations/oauth-apps/:appId", s.getProjectDSOAuthApp)
+	api.PUT("/projects/:projectId/data-source-integrations/oauth-apps/:appId", s.updateProjectDSOAuthApp)
+	api.DELETE("/projects/:projectId/data-source-integrations/oauth-apps/:appId", s.deleteProjectDSOAuthApp)
 	api.GET("/blueprints/installed", s.listInstalledBlueprints)
 	api.GET("/blueprints/available", s.listAvailableBlueprints)
 	api.GET("/blueprints/compiled-types", s.getCompiledTypes)
@@ -321,6 +357,13 @@ func main() {
 	e.GET("/auth/callback", s.authCallback)
 	e.POST("/auth/logout", s.authLogout)
 	e.POST("/auth/switch", s.authSwitch)
+	// Public Railway deploy portal (see deploy_portal.go). The Railway OAuth
+	// client is separate from the Memory login client; tokens live only in a
+	// short-lived sealed cookie.
+	e.GET("/deploy", s.deployPortalPage)
+	e.GET("/deploy/oauth/start", s.deployOAuthStart)
+	e.GET("/deploy/oauth/callback", s.deployOAuthCallback)
+	e.GET("/deploy/oauth/logout", s.deployOAuthLogout)
 	// OAuth 2.1 authorization-server consent (session-gated by authDispatch).
 	e.GET("/oauth/authorize", s.uiOAuthAuthorize)
 	e.POST("/oauth/authorize", s.uiOAuthAuthorizeDecision)
@@ -358,6 +401,7 @@ func main() {
 	e.POST("/projects/activate", s.uiActivateProject)
 	e.POST("/projects/delete", s.uiDeleteProjects)
 	e.POST("/projects/restore", s.uiRestoreProject)
+	e.POST("/projects/rename", s.uiRenameProject)
 	e.POST("/projects/transfer", s.uiTransferProject)
 	// OAuth callback landing (see oauth_landing.go): global routes that map an
 	// API-server callback back into the caller's org/project scope.
@@ -429,6 +473,7 @@ func main() {
 	e.POST("/data-sources/refs", s.uiDataSourceRefs)
 	e.POST("/data-sources/:id/field-options", s.uiDataSourceFieldOptions)
 	e.GET("/data-sources/oauth/start", s.uiDataSourceOAuthStart)
+	e.POST("/data-sources/oauth/start", s.uiDataSourceOAuthStart)
 	e.GET("/data-sources/oauth/callback", s.uiDataSourceOAuthCallback)
 	e.GET("/data-sources/:id", s.uiDataSourceDetail)
 	e.GET("/data-sources/:id/reconnect", s.uiDataSourceReconnect)
@@ -443,6 +488,12 @@ func main() {
 	e.GET("/data-sources/:id/sync-jobs/partial", s.uiDataSourceSyncJobsPartial)
 	e.POST("/data-sources/:id/sync-jobs/:jobId/cancel", s.uiDataSourceCancelSync)
 	e.POST("/data-sources/:id/delete", s.uiDataSourceDelete)
+	// github_app trigger bindings (event → agent) on the source detail page.
+	// Project-scoped and documents:write on the API side; the UI follows the
+	// same form/redirect/flash conventions as the source's other actions.
+	e.POST("/data-sources/:id/triggers", s.uiDataSourceTriggerCreate)
+	e.POST("/data-sources/:id/triggers/:triggerId/toggle", s.uiDataSourceTriggerToggle)
+	e.POST("/data-sources/:id/triggers/:triggerId/delete", s.uiDataSourceTriggerDelete)
 	e.GET("/objects", s.uiObjects)
 	e.GET("/objects/partial", s.uiObjectsPartial)
 	e.GET("/objects/stats", s.uiObjectsStatsPartial)
@@ -535,6 +586,7 @@ func main() {
 	e.GET("/runs/:runId", s.uiRun)
 	e.GET("/settings", s.uiProjectSettings)
 	e.GET("/settings/assistant", s.uiProjectAssistantSettings)
+	e.GET("/settings/extraction", s.uiProjectExtractionSettings)
 	e.GET("/settings/overrides", s.uiProjectOverridesSettings)
 	e.GET("/settings/providers", s.uiProjectProvidersSettings)
 	e.GET("/settings/providers/new", s.uiProjectProviderNew)
@@ -555,11 +607,23 @@ func main() {
 	e.POST("/settings/credentials/saved", s.uiSavedCredentialCreate)
 	e.POST("/settings/credentials/saved/:id/update", s.uiSavedCredentialUpdate)
 	e.POST("/settings/credentials/saved/:id/delete", s.uiSavedCredentialDelete)
+	e.GET("/settings/credentials/apps/new", s.uiProjectOAuthAppNew)
+	e.POST("/settings/credentials/apps", s.uiProjectOAuthAppCreate)
+	e.GET("/settings/credentials/apps/:appId", s.uiProjectOAuthAppDetail)
+	e.POST("/settings/credentials/apps/:appId", s.uiProjectOAuthAppUpdate)
+	e.POST("/settings/credentials/apps/:appId/delete", s.uiProjectOAuthAppDelete)
 	e.GET("/settings/credentials/:providerType", s.uiProjectCredential)
 	e.POST("/settings/credentials/:providerType", s.uiProjectOAuthClientUpsert)
 	e.POST("/settings/credentials/:providerType/delete", s.uiProjectOAuthClientDelete)
 	// Retired URL: the project OAuth-client page became the Credentials table.
 	e.GET("/settings/oauth-clients", s.uiProjectOAuthClientsRedirect)
+	// Organization source Apps (GitHub App credentials) + the github_app
+	// trigger bindings on a source (see source_apps.go). The Apps page lives in
+	// the project settings rail because the org is taken from the active
+	// project; its writes are org-admin only and the page says so.
+	e.GET("/settings/source-apps", s.uiSourceApps)
+	e.POST("/settings/source-apps", s.uiSourceAppCreate)
+	e.POST("/settings/source-apps/:appId/delete", s.uiSourceAppDelete)
 	e.GET("/settings/approvals", s.uiApprovals)
 	e.GET("/settings/mcp-nodes", s.uiMCPNodesRedirect)
 	e.POST("/settings/mcp-nodes/remove", s.uiMCPNodesRemove)
@@ -572,6 +636,9 @@ func main() {
 	e.POST("/settings/assistant", s.uiProjectSettingsAssistant)
 	e.POST("/settings/editor", s.uiProjectSettingsEditor)
 	e.POST("/settings/merge", s.uiProjectSettingsMerge)
+	e.POST("/settings/extraction/agent", s.uiProjectExtractionAgent)
+	e.POST("/settings/extraction/whisper", s.uiProjectExtractionWhisper)
+	e.POST("/settings/extraction/limits", s.uiProjectExtractionLimits)
 	e.POST("/settings/voice", s.uiProjectSettingsVoice)
 	e.POST("/settings/voice/:key", s.uiProjectVoiceField)
 	e.POST("/settings/voice/group/:group", s.uiProjectVoiceGroup)
@@ -664,6 +731,11 @@ func main() {
 	e.GET("/orgs/:id/settings/oauth-clients", s.uiOrgOAuthClients)
 	// Per-provider org OAuth app editor: the same shared card the project editor
 	// uses, so each provider is edited on its own page instead of a stacked form.
+	e.GET("/orgs/:id/settings/oauth-apps/new", s.uiOrgOAuthAppNew)
+	e.POST("/orgs/:id/settings/oauth-apps", s.uiOrgOAuthAppCreate)
+	e.GET("/orgs/:id/settings/oauth-apps/:appId", s.uiOrgOAuthAppDetail)
+	e.POST("/orgs/:id/settings/oauth-apps/:appId", s.uiOrgOAuthAppUpdate)
+	e.POST("/orgs/:id/settings/oauth-apps/:appId/delete", s.uiOrgOAuthAppDelete)
 	e.GET("/orgs/:id/settings/oauth-clients/:providerType", s.uiOrgOAuthClientDetail)
 	e.POST("/orgs/:id/settings/oauth-clients/:providerType", s.uiOrgOAuthClientUpsert)
 	e.POST("/orgs/:id/settings/oauth-clients/:providerType/delete", s.uiOrgOAuthClientDelete)

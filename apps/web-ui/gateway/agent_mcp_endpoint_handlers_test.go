@@ -597,10 +597,12 @@ func TestAgentMCPExternalOrigin(t *testing.T) {
 
 // TestAgentMCPRevealBundleLink asserts the key reveal renders a one-click
 // Claude Desktop .mcpb bundle download link on the memory-server public origin
-// with the expected /api/mcp/agents/<id>/bundle path.
+// with the expected /api/mcp/agents/<id>/bundle path, plus copy controls for
+// the two private links (bundle + Claude install) that carry the key.
 func TestAgentMCPRevealBundleLink(t *testing.T) {
 	f := agentMCPFixture()
 	f.mcpToken = "emt_secret_once"
+	f.mcpURL = "https://mem.example/api/mcp/agents/a1"
 	s := &Server{cfg: Config{DefaultAgent: "memory", MemoryPublicURL: "https://mcp.example.com"}, memory: f}
 	e := agentMCPTestServer(s)
 
@@ -612,9 +614,15 @@ func TestAgentMCPRevealBundleLink(t *testing.T) {
 	for _, want := range []string{
 		`data-testid="agent-mcp-bundle-link"`,
 		`href="https://mcp.example.com/api/mcp/agents/a1/bundle?token=emt_secret_once"`,
+		`data-testid="agent-mcp-bundle-copy"`,
+		`data-testid="agent-mcp-install-copy"`,
+		`id="agent-mcp-reveal-modal-bundle-url"`,
+		`id="agent-mcp-reveal-modal-install-url"`,
+		`value="https://mcp.example.com/api/mcp/agents/a1/bundle?token=emt_secret_once"`,
+		`value="https://mcp.example.com/api/mcp/install?name=memory&amp;token=emt_secret_once&amp;url=https%3A%2F%2Fmcp.example.com%2Fapi%2Fmcp%2Fagents%2Fa1"`,
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("bundle link missing %q in %s", want, body)
+			t.Errorf("reveal missing %q in %s", want, body)
 		}
 	}
 }

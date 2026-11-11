@@ -38,7 +38,7 @@ func TestA2UIProgressiveEvents_EmitsCumulativeFrames(t *testing.T) {
 	th := newA2UIFrameThrottle(0) // interval 0 = never throttle
 
 	events := a2uiProgressiveEvents(s, th,
-		"```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"basic\"}}\n")
+		"```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"memory-basic\"}}\n")
 	if len(events) != 1 {
 		t.Fatalf("createSurface frame = %d events, want 1", len(events))
 	}
@@ -69,7 +69,7 @@ func TestA2UIProgressiveEvents_ThrottledFrameDroppedButRetained(t *testing.T) {
 	s := a2ui.NewSurfaceStream()
 
 	events := a2uiProgressiveEvents(s, th,
-		"```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"basic\"}}\n")
+		"```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"memory-basic\"}}\n")
 	if len(events) != 1 {
 		t.Fatalf("first frame = %d, want 1", len(events))
 	}
@@ -96,7 +96,7 @@ func TestA2UITeardownEvents(t *testing.T) {
 	// A surface shown progressively, but the finished response did not validate
 	// a surface (invalid block): tear the card down.
 	s := a2ui.NewSurfaceStream()
-	s.Feed("```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"basic\"}}\n")
+	s.Feed("```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"memory-basic\"}}\n")
 	final := finalResponseStreamEvents([]*genai.Part{{Text: "```a2ui\nnot json\n```"}})
 	if finalResponseHasSurface(final) {
 		t.Fatal("invalid final response unexpectedly has a surface")
@@ -112,13 +112,102 @@ func TestA2UITeardownEvents(t *testing.T) {
 	// A surface shown progressively, and the finished response validated it: the
 	// complete frame supersedes the partials, so no teardown.
 	s2 := a2ui.NewSurfaceStream()
-	s2.Feed("```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"basic\"}}\n")
-	valid := finalResponseStreamEvents([]*genai.Part{{Text: "```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"basic\"}}\n```"}})
+	s2.Feed("```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"memory-basic\"}}\n")
+	valid := finalResponseStreamEvents([]*genai.Part{{Text: "```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"memory-basic\"}}\n```"}})
 	if !finalResponseHasSurface(valid) {
 		t.Fatal("valid final response should have a surface")
 	}
 	if evs := a2uiTeardownEvents(s2, valid); evs != nil {
 		t.Fatalf("valid surface → teardown = %+v, want nil", evs)
+	}
+}
+
+func TestA2UISurfacesAreScopedPerTurn(t *testing.T) {
+	// The #592 repro at the seam where the collision happened: two turns of one
+	// conversation, both taught by the prompt to name their surface "s1". Before
+	// scoping, both produced the wire surfaceId "s1", so the live renderer
+	// (which keys its surface registry by surfaceId) replaced the first turn's
+	// card with the second one's and the transcript kept only one card.
+	block := "```a2ui\n" +
+		`{"createSurface":{"surfaceId":"s1","catalogId":"` + a2ui.CatalogID + `"}}` + "\n" +
+		`{"updateComponents":{"surfaceId":"s1","components":[{"id":"r1","component":"result","rows":[]}]}}` + "\n" +
+		"```\n"
+	parts := []*genai.Part{{Text: block}}
+
+	turn := func(runID string) (progressive, final StreamEvent) {
+		s := a2ui.NewNamespacedSurfaceStream(a2uiNamespace(runID, 0))
+		events := a2uiProgressiveEvents(s, nil, block)
+		if len(events) != 1 {
+			t.Fatalf("%s: progressive frames = %d, want 1", runID, len(events))
+		}
+		finalEvents := finalResponseStreamEvents(parts)
+		namespaceA2UIEvents(finalEvents, a2uiNamespace(runID, 0))
+		var finalEvent StreamEvent
+		for _, ev := range finalEvents {
+			if ev.Type == StreamEventA2UI {
+				finalEvent = ev
+			}
+		}
+		if finalEvent.Type != StreamEventA2UI {
+			t.Fatalf("%s: final response produced no A2UI event", runID)
+		}
+		return events[0], finalEvent
+	}
+
+	firstProgressive, firstFinal := turn("11111111-1111-1111-1111-111111111111")
+	secondProgressive, secondFinal := turn("22222222-2222-2222-2222-222222222222")
+
+	// The two turns are distinct surfaces on the wire — both live frames and the
+	// authoritative final frames.
+	if firstProgressive.SurfaceID == secondProgressive.SurfaceID {
+		t.Fatalf("both live frames scoped to %q", firstProgressive.SurfaceID)
+	}
+	if firstFinal.SurfaceID == secondFinal.SurfaceID {
+		t.Fatalf("both final frames scoped to %q", firstFinal.SurfaceID)
+	}
+
+	// One turn's progressive frame and its final frame agree, so the final frame
+	// updates the card the stream already showed instead of appending another.
+	if firstProgressive.SurfaceID != firstFinal.SurfaceID {
+		t.Fatalf("progressive id %q != final id %q", firstProgressive.SurfaceID, firstFinal.SurfaceID)
+	}
+
+	// The ids inside the messages agree with the frame, so a reload of the
+	// persisted payload and a card action report the same surface.
+	for _, ev := range []StreamEvent{firstProgressive, firstFinal} {
+		if len(ev.A2UI) == 0 || ev.A2UI[0].CreateSurface == nil {
+			t.Fatalf("%q: payload = %+v, want createSurface", ev.SurfaceID, ev.A2UI)
+		}
+		if got := ev.A2UI[0].CreateSurface.SurfaceID; got != ev.SurfaceID {
+			t.Fatalf("payload surfaceId = %q, frame surfaceId = %q", got, ev.SurfaceID)
+		}
+	}
+}
+
+func TestA2UINamespaceIncludesTheStep(t *testing.T) {
+	// A run may answer more than once (a plan step and the final answer), so the
+	// scope is per run *and* step, not per run.
+	if a2uiNamespace("run-1", 0) == a2uiNamespace("run-1", 1) {
+		t.Fatal("two steps of the same run share a surface namespace")
+	}
+}
+
+func TestPersistedSurfacesAreScopedLikeTheFrames(t *testing.T) {
+	// The reload path reads surfaces from the persisted row, so it must carry the
+	// same scoped ids the live and final frames carried (#592).
+	surfaces := []a2ui.Message{
+		{CreateSurface: &a2ui.CreateSurface{SurfaceID: "s1", CatalogID: a2ui.CatalogID}},
+		{UpdateComponents: &a2ui.UpdateComponents{SurfaceID: "s1"}},
+	}
+	got := persistedSurfaces("run-9", 2, surfaces)
+	if len(got) != 2 {
+		t.Fatalf("persistedSurfaces = %d messages, want 2", len(got))
+	}
+	if got[0].CreateSurface == nil || got[0].CreateSurface.SurfaceID != "run-9.2:s1" {
+		t.Fatalf("persisted createSurface = %+v, want run-9.2:s1", got[0].CreateSurface)
+	}
+	if got[1].UpdateComponents == nil || got[1].UpdateComponents.SurfaceID != "run-9.2:s1" {
+		t.Fatalf("persisted updateComponents = %+v, want run-9.2:s1", got[1].UpdateComponents)
 	}
 }
 

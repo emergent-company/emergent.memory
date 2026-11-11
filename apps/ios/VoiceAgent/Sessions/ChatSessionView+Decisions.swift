@@ -12,6 +12,7 @@ extension ChatSessionView {
     func decideApproval(_ request: ApprovalRequest, _ decision: ApprovalDecision) {
         guard !request.isAnswered else { return }
         activity.submitApproval(questionId: request.questionId, decision: decision)
+        timeline.submitApproval(questionId: request.questionId, decision: decision)
         if activeSession.mode == .text {
             let response: String
             let message: String
@@ -58,6 +59,9 @@ extension ChatSessionView {
                 await pollResumedHistory(client: client, scope: scope, parkedRecordCount: parkedRecordCount)
             } catch {
                 transcript.historyLoadFailed(error.localizedDescription)
+                // The banner reads the timeline's error now, so a decision whose
+                // follow-up read failed says so where the reader looks.
+                timeline.historyLoadFailed(error.localizedDescription)
             }
         }
     }
@@ -73,6 +77,7 @@ extension ChatSessionView {
         let client = SessionLogClient(config: MemoryConfig())
         let scope = TranscriptWaitScope(conversationID: conversationID, baseline: transcript.lastRecordCount)
         transcript.markApprovalAnswered(questionId: request.questionId)
+        timeline.submitApproval(questionId: request.questionId, decision: decision)
         Task {
             // The parked record count, read before the decision for the same
             // reason as `respondOverHTTP` (#228).
@@ -97,6 +102,9 @@ extension ChatSessionView {
                 await pollResumedHistory(client: client, scope: scope, parkedRecordCount: parkedRecordCount)
             } catch {
                 transcript.historyLoadFailed(error.localizedDescription)
+                // The banner reads the timeline's error now, so a decision whose
+                // follow-up read failed says so where the reader looks.
+                timeline.historyLoadFailed(error.localizedDescription)
             }
         }
     }
@@ -120,7 +128,10 @@ extension ChatSessionView {
             scope: scope,
             parkedRecordCount: parkedRecordCount,
             isCurrent: { scopeIsCurrent(scope) },
-            apply: { transcript.loadHistory(from: $0) }
+            apply: { detail in
+                transcript.loadHistory(from: detail)
+                refreshTimelineFromRecord(conversationID: scope.conversationID)
+            }
         )
         // The parked run the user just answered has been recorded: a queue held
         // behind that decision can go now (the wait above ends when the resumed
@@ -140,6 +151,7 @@ extension ChatSessionView {
     func answerQuestion(_ request: QuestionRequest, answer: String) {
         guard !request.isAnswered else { return }
         activity.submitQuestion(questionId: request.questionId, answer: answer)
+        timeline.submitQuestion(questionId: request.questionId, answer: answer)
         if activeSession.mode == .text {
             respondOverHTTP(questionId: request.questionId, response: answer, message: "")
             return

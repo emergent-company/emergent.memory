@@ -300,7 +300,15 @@ all nine catalog components plus an unknown one, then asserts each card's DOM
 `sources`), the unknown-component summary fallback, and that a card action emits
 the `a2ui:action` CustomEvent carrying the `surfaceId` and the
 `{componentId, response}` action — for both the proposal/approval action row
-(`a2uiActions`) and the question-option path (`a2uiQuestion`). It also asserts a
+(`a2uiActions`) and the question-option path (`a2uiQuestion`). The approval card's
+decision set (Cancel / Reject / Approve, by `chat-approval-*` testid) has a single
+owner, `helpers/approval-controls.ts`; both this spec and
+`specs/js/a2ui-approvals-gate.spec.ts` assert from it, and the gate is the one that
+runs the shipped `chat-components.js`, so a renderer change breaks there first. That
+gate runs on the `dev -> main` promotion PR and on pushes to `main` — `web-ui.yml`
+has no `pull_request` trigger — while the scheduled `mutations` lane fires on `dev`
+daily, so this is the pre-production backstop, not an earlier detector of a
+schedule-lane red (#584). It also asserts a
 UI-only turn leaves no empty assistant text bubble, and that the `result`/`proposal`/
 `approval` structured props (`rows`, `body`, `input`) render as key/value rows rather
 than a single raw-JSON `<pre>`. Deterministic and ungated — no provider, no LLM, no
@@ -368,7 +376,12 @@ test is env-gated on `E2E_SCENARIO_LLM_API_KEY`: it configures a provider throug
 the settings UI and asserts the `Extraction results` section actually lands. The
 trigger only enqueues a job (memory does not validate a provider at creation), so
 the round-trip needs no LLM; producing results does, which is why the results
-test skips fast without the key.
+test skips fast without the key. A third test — the blocked state, disabled
+button + "Extraction needs a generative model." — creates a fresh provider-less
+project **and navigates with that project's scope**, because the model config is
+per project and the bootstrap `E2E Main` project always has a provider: without
+the explicit `{orgId, projectId}` the scoped path still points at the bootstrap
+project, so the card renders unblocked (#584).
 
 Out of scope (need seeded schema or a live LLM): schema object-type detail,
 session detail page (the scenario covers one live turn but not session-detail
@@ -419,6 +432,18 @@ npx playwright test --config=js-dom.config.ts   # or: task e2e:js
   identifier) is raised. It also asserts an unknown component degrades to a
   summary card without throwing, and that the `result`/`proposal`/`approval`
   structured props render as key/value rows (not raw JSON).
+- `specs/js/a2ui-surface-lifecycle.spec.ts` covers two A2UI renderer
+  regressions. First, a history replay with two card answers that both name
+  their surface `s1` (the id the prompt teaches) used to keep only the newest
+  card, because the surface registry was keyed by `surfaceId` across the whole
+  transcript; the spec replays two such turns and asserts both cards render.
+  Second, a card that streamed in was silent to assistive tech: the spec drives
+  the real live frame sequence (createSurface alone, then components, then a
+  later frame) and asserts exactly one hidden `role=status`
+  `aria-live=polite` announcement (`New card 1: Result card.`) that does not
+  change on later progressive frames, that a second surface of the same kind
+  announces distinct text, that each card is a `role=group` with its kind as
+  `aria-label`, and that history replay announces nothing.
 - `specs/js/chat-session-lifecycle.spec.ts` drives the session-rail lifecycle
   wiring (#1318): the delete confirmation is shown with the session title and
   sends no request until confirmed, dismissing it keeps the session, confirming
@@ -560,8 +585,11 @@ excluded from the live session-mode `playwright.config.ts` via `testIgnore`
 
 ### Hermetic gateway browser smoke gate
 
-`specs/gateway-smoke/*` under `gateway-smoke.config.ts` is the per-PR browser
-gate (#564): the highest-risk UI contracts run on every PR without credentials.
+`specs/gateway-smoke/*` under `gateway-smoke.config.ts` is the browser gate
+(#564): the highest-risk UI contracts run without credentials on the
+`dev -> main` promotion/hotfix PR and on pushes to `main` (`web-ui.yml` has no
+`pull_request` trigger, so a feature PR to `dev` does not run it; the scheduled
+`mutations` lane is what covers `dev`).
 It boots the same `run-e2e.sh` mock harness (`AUTH_MODE=dev`) on a
 gateway/mock pair derived at run time (see **Ports for the hermetic suites**
 above). Each invocation selects its own pair; safety comes from the probe plus
@@ -575,8 +603,15 @@ trigger), the chat session rail overlay, and the Providers settings save
 (`specs/gateway-smoke/provider-add-scope.spec.ts`: adding a provider from a
 scoped page must land back on `/o/{org}/p/{project}/settings/providers` — a
 flat PRG target is the #2479 class that 404s in session mode after a successful
-save). The session-mode `*-ui` mutations suite stays schedule-only because it
-needs Zitadel; this lane is what makes dialog/markup drift fail before merge.
+save). It also pins the documents toolbar's control shape — one search field,
+with an applied `?q=` also mirrored as a hidden input in the sibling filter form
+— so a `input[name="q"]` selector is ambiguous by design and specs must scope it
+(`helpers/documents.ts` `DOCUMENTS_SEARCH_INPUT`), the #584 failure class. The
+same `?q=`-only hidden mirror exists on `/objects`
+(`objects_browser.templ` `objectsFilterHiddenFilters`), so the trap is not
+documents-only: scope any `name="q"` selector to `input[type="search"]`. The
+session-mode `*-ui` mutations suite stays schedule-only because it needs
+Zitadel; this lane is what makes dialog/markup drift fail before merge.
 
 ```bash
 cd tests/e2e

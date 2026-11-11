@@ -55,6 +55,11 @@ func TestDeviceSurfacePath(t *testing.T) {
 		// iOS timeline and reattach lanes depend on.
 		{"GET", "/api/conversations/abc/history", true},
 		{"GET", "/api/conversations/abc/events", true},
+		// The agent's plan (#440) is the third read-only conversation action.
+		{"GET", "/api/conversations/abc/todos", true},
+		{"GET", "/api/conversations/abc/todos/x", false},
+		{"GET", "/api/conversations//todos", false},
+		{"POST", "/api/conversations/abc/todos", false},
 		{"GET", "/api/conversations/abc/dump", false},
 		{"GET", "/api/conversations/abc/history/x", false},
 		{"GET", "/api/conversations//history", false},
@@ -74,6 +79,19 @@ func TestDeviceSurfacePath(t *testing.T) {
 		{"GET", "/api/objects/o1/edges", false},
 		{"POST", "/api/objects/o1/card", false},
 		{"GET", "/api/blueprints/compiled-types", false},
+
+		// Object-card work writes (issue #454): exactly one ref segment, then
+		// status or assignee, POST only. Everything else under /api/objects
+		// stays off-surface.
+		{"POST", "/api/objects/o1/status", true},
+		{"POST", "/api/objects/o1/assignee", true},
+		{"POST", "/api/objects//status", false},
+		{"POST", "/api/objects/o1/status/x", false},
+		{"POST", "/api/objects/o1/approve", false},
+		{"POST", "/api/objects/o1/assignee/clear", false},
+		{"GET", "/api/objects/o1/status", false},
+		{"PUT", "/api/objects/o1/assignee", false},
+		{"DELETE", "/api/objects/o1/status", false},
 
 		// Share capture: exactly two shapes, one non-empty project id.
 		{"POST", "/api/projects/p1/remember", true},
@@ -271,6 +289,7 @@ func deviceConversationEcho(f *fakeMemory) (*Server, *echo.Echo) {
 	e.Use(s.requireSessionOrKey)
 	e.GET("/api/conversations/:id/history", s.getConversationHistory)
 	e.GET("/api/conversations/:id/events", s.conversationEvents)
+	e.GET("/api/conversations/:id/todos", s.getConversationTodos)
 	return s, e
 }
 

@@ -16,6 +16,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -155,6 +156,7 @@ func (s *DocumentSourceIngestionSuite) TestApplySourceItem_CreateSkipAndVersion(
 		RevisionID: "rev-1",
 		Filename:   "notes.txt",
 		MimeType:   "text/plain",
+		Extract:    true,
 	}
 
 	// First ingest: creates v1 with chunks and triggers extraction.
@@ -238,6 +240,28 @@ func (s *DocumentSourceIngestionSuite) TestApplySourceItem_CreateSkipAndVersion(
 // default source_type. kb.documents.source_type defaults to 'upload' for every
 // row, including manual text creates, so the content-hash dedupe scope must
 // exclude file uploads by file_hash, not by source_type.
+func (s *DocumentSourceIngestionSuite) TestApplySourceItem_ExtractOffStillChunks() {
+	svc, rec := s.newSeamService()
+	sourceID := s.insertSource("test")
+
+	p := documents.ApplySourceItemParams{
+		ProjectID:  s.ProjectID,
+		SourceID:   sourceID,
+		ExternalID: "extract-off",
+		RevisionID: "rev-1",
+		Filename:   "off.txt",
+		MimeType:   "text/plain",
+		Content:    strings.Repeat("the project keeps search working without paying for extraction. ", 40),
+		Extract:    false,
+	}
+	res, err := svc.ApplySourceItem(s.Ctx, p)
+	s.Require().NoError(err)
+	s.True(res.Created)
+
+	s.Empty(rec.documentIDs, "Extract=false must not schedule object extraction")
+	s.Greater(s.countChunks(res.DocumentID), 0, "chunks must still be created so search works")
+}
+
 func (s *DocumentSourceIngestionSuite) TestCreate_DeduplicatesManualDocument() {
 	svc, _ := s.newSeamService()
 	content := "manual document content that must deduplicate"
@@ -280,6 +304,7 @@ func (s *DocumentSourceIngestionSuite) TestApplySourceItem_BypassesContentHashDe
 			RevisionID: "rev-1",
 			Filename:   "doc.txt",
 			MimeType:   "text/plain",
+			Extract:    true,
 			Content:    content,
 		}
 	}
@@ -306,6 +331,7 @@ func (s *DocumentSourceIngestionSuite) TestMarkSourceItemDeleted_AndReapplyReact
 		RevisionID: "rev-1",
 		Filename:   "doc.txt",
 		MimeType:   "text/plain",
+		Extract:    true,
 		Content:    "original parsed text body for the delete/reactivate flow",
 	}
 	r1, err := svc.ApplySourceItem(s.Ctx, base)

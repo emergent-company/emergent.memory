@@ -265,10 +265,11 @@ func deviceScopesMatchCeiling(scopes []string) bool {
 // archive/unarchive/delete, memory browsing, and the /api/auth/me introspection
 // the gateway uses to recognise the token). It also admits the device's own
 // capture writes: the chat-scoped run cancellation route (issue #81), which is
-// owner-checked in the chat handler, and the two remember paths the iOS share
+// owner-checked in the chat handler, the two remember paths the iOS share
 // extension posts to (one project id, exact tails — see
-// deviceProjectRememberPath). Everything else — token mint, members,
-// org/project admin, other writes — is out.
+// deviceProjectRememberPath), and the two work-item writes the iOS object card
+// makes (issue #454, see deviceWorkItemWritePath). Everything else — token
+// mint, members, org/project admin, other writes — is out.
 func deviceSurfaceAllowed(method, path string) bool {
 	switch method {
 	case http.MethodGet:
@@ -328,6 +329,13 @@ func deviceSurfaceAllowed(method, path string) bool {
 		// a chat run the credential's user owns. The handler owns the ownership
 		// check; this only bounds the route shape.
 		if deviceChatRunCancelPath(path) {
+			return true
+		}
+		// Moving a work item the reader is looking at in the iOS object card
+		// (issue #454): exactly the status and reassign writes, by path shape.
+		// Sibling work-item writes (approve, request-changes, retry, unblock,
+		// cancel, comments) stay off-surface, as does every graph-object write.
+		if deviceWorkItemWritePath(method, path) {
 			return true
 		}
 		if deviceConversationLifecyclePath(path, "archive") ||
@@ -427,6 +435,35 @@ func deviceProjectQuestionActionPath(path, action string) bool {
 	return len(parts) == 4 &&
 		parts[0] != "" && parts[1] == "agent-questions" &&
 		parts[2] != "" && parts[3] == action
+}
+
+// deviceWorkItemWritePath reports whether method/path is exactly one of the two
+// work-item writes the iOS object card makes (issue #454):
+//
+//	POST /api/projects/{projectId}/work-items/{canonicalId}/status
+//	POST /api/projects/{projectId}/work-items/{canonicalId}/reassign
+//
+// These are the only server routes the gateway's `POST /api/objects/:id/status`
+// and `/assignee` handlers call for an object that has a work-item key. Every
+// segment must be non-empty and the tail must be exactly `status` or `reassign`,
+// so the sibling writes (approve, request-changes, retry, unblock, cancel,
+// comments) and the deeper work-item reads stay off-surface. The project id is
+// bound to the credential by RequireProjectTokenScope, and the work-item
+// handlers keep their own project/ownership checks; this matcher only bounds
+// the route shape.
+func deviceWorkItemWritePath(method, path string) bool {
+	if method != http.MethodPost {
+		return false
+	}
+	rest, ok := strings.CutPrefix(path, "/api/projects/")
+	if !ok {
+		return false
+	}
+	// modelref:allow — URL path segmentation, not a routed model name.
+	parts := strings.Split(rest, "/")
+	return len(parts) == 4 &&
+		parts[0] != "" && parts[1] == "work-items" &&
+		parts[2] != "" && (parts[3] == "status" || parts[3] == "reassign")
 }
 
 // deviceProjectRememberPath reports whether path is exactly
@@ -1061,7 +1098,7 @@ var ScopeImplies = map[string][]string{
 		"chunks:read", "chunks:write",
 		"data:read", "data:write",
 		"discovery:read", "discovery:write",
-		"documents:delete", "documents:read", "documents:write",
+		"documents:delete", "documents:read", "documents:write", "email:read", "email:write", "sources:write",
 		"extraction:read", "extraction:write",
 		"graph:read", "graph:search:debug", "graph:search:read", "graph:write",
 		"ingest:write",
@@ -1130,6 +1167,27 @@ func (m *Middleware) RequireAPITokenScopes(scopes ...string) echo.MiddlewareFunc
 			}
 
 			if len(missing) > 0 {
+				// Bounded device carve-out (issue #454): a device credential may
+				// move a work item it is looking at in the iOS object card —
+				// exactly the status and reassign write shapes, nothing else.
+				//
+				// This is deliberately a path shape and NOT a scope. The device
+				// ceiling is an exact-set match (deviceScopesMatchCeiling), so
+				// adding agents:write (or any scope) to it would invalidate
+				// every device credential already paired to an installed app —
+				// silently, fleet-wide, and only recoverable by re-pairing. The
+				// token still does not carry agents:write: the route shape is
+				// the grant, and RequireProjectTokenScope plus the handlers' own
+				// project/ownership checks stay authoritative.
+				//
+				// The carve-out names the gate it exists for (the work-item
+				// write group's agents:write), so it can never satisfy some
+				// other scope requirement that happens to share a path.
+				if hasDeviceAPIScope(user.Scopes) &&
+					len(scopes) == 1 && scopes[0] == "agents:write" &&
+					deviceWorkItemWritePath(c.Request().Method, c.Request().URL.Path) {
+					return next(c)
+				}
 				return echo.NewHTTPError(http.StatusForbidden, map[string]any{
 					"error": map[string]any{
 						"code":    "forbidden",
@@ -1866,6 +1924,9 @@ func GetAllScopes() []string {
 		"documents:read",
 		"documents:write",
 		"documents:delete",
+		"email:read",
+		"email:write",
+		"sources:write",
 		"ingest:write",
 		"search:read",
 		"search:debug",

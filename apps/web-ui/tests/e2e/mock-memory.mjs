@@ -423,6 +423,46 @@ const dsOAuthState = {
   project: new Map(),
 };
 
+const dsOAuthAppState = {
+  org: new Map(),
+  project: new Map(),
+};
+
+let dsAppCounter = 0;
+function dsStoreOAuthApp(payload, scope) {
+  dsAppCounter += 1;
+  const vendor = String(payload.vendor || "google");
+  return {
+    id: `app-${scope}-${dsAppCounter}`,
+    scope,
+    vendor,
+    vendorName: vendor === "google" ? "Google" : vendor === "github" ? "GitHub" : vendor,
+    name: String(payload.name || "OAuth app"),
+    clientId: String(payload.clientId || ""),
+    providerConfigs: payload.providerConfigs || {},
+    config: payload.config || {},
+    configured: true,
+    usedBy: 0,
+    redirectUris: { [`${vendor === "google" ? "google_drive" : vendor}`]: `${GATEWAY_ORIGIN}/api/data-source-integrations/oauth/${vendor === "google" ? "google_drive" : vendor}/callback` },
+    javascriptOrigin: GATEWAY_ORIGIN,
+    createdAt: "2026-09-01T00:00:00Z",
+    updatedAt: "2026-09-01T00:00:00Z",
+  };
+}
+function dsUpdateOAuthApp(current, payload) {
+  return {
+    ...current,
+    name: payload.name != null ? String(payload.name) : current.name,
+    clientId: payload.clientId != null ? String(payload.clientId) : current.clientId,
+    providerConfigs: payload.providerConfigs || current.providerConfigs,
+    config: payload.config || current.config,
+    updatedAt: "2026-09-01T00:00:01Z",
+  };
+}
+function dsUnconfiguredOAuthApp() {
+  return { id: "", configured: false, vendor: "", vendorName: "", name: "", clientId: "", providerConfigs: {} };
+}
+
 function dsStoreOAuthClient(payload, providerType) {
   return {
     providerType,
@@ -869,7 +909,7 @@ function discoveryResult(job) {
 // status is failed: that is the shape that used to send the panel's "View all"
 // link to /documents?status=failed, a filter that can never match it, leaving
 // the reader on "No documents match" under a non-zero count. Seeded here so the
-// per-PR gateway-smoke lane renders the panel on every documents visit.
+// gateway-smoke lane renders the panel on every documents visit.
 const mockProcessingProblems = {
   projectId: "p1",
   total: 13,
@@ -1367,6 +1407,72 @@ const server = http.createServer((req, res) => {
         : "connected=s1";
       return json(res, { authorizeUrl: `${GATEWAY_ORIGIN}/data-sources/oauth/callback?${outcome}` });
     });
+  }
+
+  // --- named OAuth apps (vendor-level, multiple per scope) ------------------
+  //
+  // The current credentials surface. The per-provider oauth-clients handlers
+  // below remain for the deprecated shims; these app endpoints are what the UI
+  // calls. IDs are stable within a run.
+
+  const dsOrgAppsList = path.match(/^\/api\/orgs\/([^/]+)\/data-source-integrations\/oauth-apps$/);
+  if (dsOrgAppsList && req.method === "GET") {
+    return json(res, [...dsOAuthAppState.org.values()]);
+  }
+  if (dsOrgAppsList && req.method === "POST") {
+    return readBody(req, (payload) => {
+      const app = dsStoreOAuthApp(payload, "organization");
+      dsOAuthAppState.org.set(app.id, app);
+      res.statusCode = 201;
+      return json(res, app);
+    });
+  }
+  const dsOrgAppMatch = path.match(/^\/api\/orgs\/([^/]+)\/data-source-integrations\/oauth-apps\/([^/]+)$/);
+  if (dsOrgAppMatch && req.method === "GET") {
+    return json(res, dsOAuthAppState.org.get(dsOrgAppMatch[2]) || dsUnconfiguredOAuthApp());
+  }
+  if (dsOrgAppMatch && req.method === "PUT") {
+    return readBody(req, (payload) => {
+      const current = dsOAuthAppState.org.get(dsOrgAppMatch[2]) || dsUnconfiguredOAuthApp();
+      const app = dsUpdateOAuthApp(current, payload);
+      dsOAuthAppState.org.set(app.id, app);
+      return json(res, app);
+    });
+  }
+  if (dsOrgAppMatch && req.method === "DELETE") {
+    dsOAuthAppState.org.delete(dsOrgAppMatch[2]);
+    res.statusCode = 204;
+    return res.end();
+  }
+
+  const dsProjectAppsList = path.match(/^\/api\/projects\/([^/]+)\/data-source-integrations\/oauth-apps$/);
+  if (dsProjectAppsList && req.method === "GET") {
+    return json(res, [...dsOAuthAppState.project.values()]);
+  }
+  if (dsProjectAppsList && req.method === "POST") {
+    return readBody(req, (payload) => {
+      const app = dsStoreOAuthApp(payload, "project");
+      dsOAuthAppState.project.set(app.id, app);
+      res.statusCode = 201;
+      return json(res, app);
+    });
+  }
+  const dsProjectAppMatch = path.match(/^\/api\/projects\/([^/]+)\/data-source-integrations\/oauth-apps\/([^/]+)$/);
+  if (dsProjectAppMatch && req.method === "GET") {
+    return json(res, dsOAuthAppState.project.get(dsProjectAppMatch[2]) || dsUnconfiguredOAuthApp());
+  }
+  if (dsProjectAppMatch && req.method === "PUT") {
+    return readBody(req, (payload) => {
+      const current = dsOAuthAppState.project.get(dsProjectAppMatch[2]) || dsUnconfiguredOAuthApp();
+      const app = dsUpdateOAuthApp(current, payload);
+      dsOAuthAppState.project.set(app.id, app);
+      return json(res, app);
+    });
+  }
+  if (dsProjectAppMatch && req.method === "DELETE") {
+    dsOAuthAppState.project.delete(dsProjectAppMatch[2]);
+    res.statusCode = 204;
+    return res.end();
   }
 
   // --- org OAuth-client config (org-admin only; write-only secret) -----------
@@ -2194,8 +2300,8 @@ const server = http.createServer((req, res) => {
 
   // Extraction trigger (uiTriggerExtraction → POST /documents/:id/extract →
   // memory's admin extraction-jobs endpoint → PRG /documents/:id?extracted=1).
-  // A deterministic success lets the per-PR lane assert that the redirect lands
-  // on the RENDERED document page instead of only matching the URL.
+  // A deterministic success lets the gateway-smoke lane assert that the redirect
+  // lands on the RENDERED document page instead of only matching the URL.
   if (path === "/api/admin/extraction-jobs" && req.method === "POST") {
     return json(res, { success: true, data: { id: "extract-job-1" } });
   }

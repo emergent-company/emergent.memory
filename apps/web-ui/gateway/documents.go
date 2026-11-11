@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/labstack/echo/v4"
@@ -127,7 +128,7 @@ func (s *Server) uploadDocument(c echo.Context) error {
 	}
 	defer func() { _ = src.Close() }()
 
-	result, err := s.memory.UploadDocument(c.Request().Context(), file.Filename, src)
+	result, err := s.memory.UploadDocument(c.Request().Context(), file.Filename, src, requestedAutoExtract(c))
 	if err != nil {
 		return documentError(c, err)
 	}
@@ -144,6 +145,26 @@ func (s *Server) uploadDocument(c echo.Context) error {
 		resp["existingDocumentId"] = result.ExistingDocumentID
 	}
 	return c.JSON(status, resp)
+}
+
+// requestedAutoExtract parses the optional per-upload autoExtract override as a
+// tri-state: nil when the caller did not send it (memory applies the project
+// default), true/false when it did. Presence is checked on the parsed form so an
+// explicit "false" is not confused with an absent field.
+func requestedAutoExtract(c echo.Context) *bool {
+	params, err := c.FormParams()
+	if err != nil || !params.Has("autoExtract") {
+		return nil
+	}
+	// The upload dialog submits an empty value for "project default"; treat it
+	// (and an explicit "default" token) as no override so the select does not
+	// silently turn the project's default off.
+	raw := params.Get("autoExtract")
+	if raw == "" || raw == "default" {
+		return nil
+	}
+	v := raw == "true"
+	return &v
 }
 
 // errNoGenerativeModel is the client-facing reason extraction is refused when
@@ -214,8 +235,14 @@ func (s *Server) collectExtractionRelationships(ctx context.Context, branchID st
 // common to all types: its key, else the type + short id. It deliberately does
 // NOT fall back to type-specific properties (name/title/summary/content), which
 // can be arbitrarily long and are not present on every object type.
+var machineObjectKey = regexp.MustCompile(`^[a-z0-9_-]+-[0-9a-f]{12}$`)
+
 func graphObjectLabel(o GraphObject) string {
-	if o.Key != "" {
+	if o.Name != "" {
+		return o.Name
+	}
+	// Machine keys (the old generated "<type>-<12 hex>") are never titles.
+	if o.Key != "" && !machineObjectKey.MatchString(o.Key) {
 		return o.Key
 	}
 	if o.Type != "" {

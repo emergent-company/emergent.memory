@@ -103,6 +103,13 @@ type RunWorkspaceDTO struct {
 	ContainerID string `json:"containerId,omitempty"`
 	BaseImage   string `json:"baseImage,omitempty"`
 	ImageDigest string `json:"imageDigest,omitempty"`
+	// Shared is true when the run used a sandbox that belongs to an ancestor run
+	// (spawn_agents shared mode) instead of provisioning its own. The container
+	// is the same one; only its owner differs.
+	Shared bool `json:"shared,omitempty"`
+	// OwnerRunID is the run that provisioned and owns a shared workspace's
+	// container. Empty when the run owns its own workspace.
+	OwnerRunID string `json:"ownerRunId,omitempty"`
 }
 
 // RunTokenUsage holds aggregated LLM token counts and estimated cost for a run.

@@ -1,0 +1,109 @@
+package main
+
+import (
+	"github.com/emergent-company/emergent.memory/apps/web-ui/webui"
+	"github.com/emergent-company/go-daisy/components/ui"
+)
+
+// DeployPortalPage is the public /deploy landing + Railway connection state.
+// It is a full document (no app shell) because it is reachable before sign-in.
+templ DeployPortalPage(data deployPortalData) {
+	<!DOCTYPE html>
+	<html lang="en" data-theme="dark" class="group/html">
+		<head>
+			<meta charset="UTF-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+			<meta name="color-scheme" content="dark"/>
+			<title>{ pageTitle("Deploy on Railway") }</title>
+			@foucBackgroundGuard()
+			<link rel="stylesheet" href={ templ.SafeURL(webui.AssetPath("/css/app.css")) }/>
+		</head>
+		<body class="min-h-dvh bg-base-100 text-base-content">
+			<main class="mx-auto flex w-full max-w-screen-md flex-col gap-8 px-6 py-16">
+				<header class="flex flex-col gap-3">
+					@ui.Badge(ui.BadgeProps{Label: "Memory", Style: ui.BadgeStyleOutline})
+					<h1 class="text-4xl font-semibold tracking-tight">Deploy Memory on Railway</h1>
+					<p class="text-muted-strong max-w-2xl">
+						Connect your Railway account, choose your email and AI providers, and we create a
+						ready-to-use Memory stack in your workspace.
+					</p>
+				</header>
+
+				if !data.Configured {
+					<div class="alert alert-warning">
+						<span>The deploy portal is not configured on this deployment.</span>
+					</div>
+				}
+
+				if data.Error != "" {
+					<div class="alert alert-error">
+						<span>{ data.Error }</span>
+					</div>
+				}
+
+				if !data.SignedIn {
+					<div class="grid gap-4 sm:grid-cols-3">
+						@ui.CardRaw(ui.CardRawProps{Surface: ui.CardSurfaceBase200, Border: ui.CardBorderNone, BodyClass: "gap-2"}) {
+							<span class="text-xs text-muted-faint">STEP 1</span>
+							<h2 class="card-title text-base">Connect Railway</h2>
+							<p class="text-sm text-base-content/80">Sign in with Railway and choose a workspace.</p>
+						}
+						@ui.CardRaw(ui.CardRawProps{Surface: ui.CardSurfaceBase200, Border: ui.CardBorderNone, BodyClass: "gap-2"}) {
+							<span class="text-xs text-muted-faint">STEP 2</span>
+							<h2 class="card-title text-base">Pick providers</h2>
+							<p class="text-sm text-base-content/80">Resend, Mailgun or Gmail for email; Google, OpenAI or DeepSeek for AI.</p>
+						}
+						@ui.CardRaw(ui.CardRawProps{Surface: ui.CardSurfaceBase200, Border: ui.CardBorderNone, BodyClass: "gap-2"}) {
+							<span class="text-xs text-muted-faint">STEP 3</span>
+							<h2 class="card-title text-base">Deploy</h2>
+							<p class="text-sm text-base-content/80">We provision the stack and hand you the URL and credentials.</p>
+						}
+					</div>
+					if data.Configured {
+						@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/deploy/oauth/start", Variant: ui.ButtonPrimary, ExtraClass: "w-fit"}) {
+							Connect Railway
+						}
+					} else {
+						@ui.Button(ui.ButtonProps{Variant: ui.ButtonPrimary, ExtraClass: "w-fit", Attrs: templ.Attributes{"disabled": "disabled"}}) {
+							Connect Railway
+						}
+					}
+				} else {
+					<div class="flex flex-col gap-4">
+						<div class="alert alert-success">
+							<span>Railway connected. Choose a workspace to deploy into.</span>
+						</div>
+						<div class="grid gap-3">
+							for _, w := range data.Workspaces {
+								<label class="card bg-base-200 cursor-pointer">
+									<div class="card-body flex-row items-center justify-between py-4">
+										<div>
+											<div class="font-medium">{ w.Name }</div>
+											<div class="text-xs text-muted-faint">{ w.ID }</div>
+										</div>
+										<input type="radio" name="workspace" class="radio radio-primary" value={ w.ID }/>
+									</div>
+								</label>
+							}
+						</div>
+						if len(data.Workspaces) == 0 {
+							<div class="alert alert-warning">
+								<span>No workspaces were returned for this Railway account.</span>
+							</div>
+						}
+						<div class="alert">
+							<span>Deployment orchestration is the next step: provider selection, template creation and the Zitadel bootstrap.</span>
+						</div>
+						@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/deploy/oauth/logout", Variant: ui.ButtonGhost, ExtraClass: "w-fit"}) {
+							Disconnect Railway
+						}
+					</div>
+				}
+
+				<footer class="text-xs text-muted-faint">
+					Railway access is used only to create and configure the deployment you request.
+				</footer>
+			</main>
+		</body>
+	</html>
+}

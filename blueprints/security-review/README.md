@@ -69,6 +69,8 @@ curl -sS -X POST "$MEMORY_SERVER_URL/api/projects/$MEMORY_PROJECT_ID/agent-queue
 
 ## Findings
 
-In phase 1 the agent records findings through the graph write tools. A dedicated
-`kb.review_findings` store and configurable output actions (GitHub comment,
-triage task, notification) are specified in `add-agent-review-queues` phases 2–3.
+The agent posts its verdict and blocking findings through
+`github-review-submit` (review + head-bound check + merge marker). The graph
+write tools are no longer in its tool list. A dedicated `kb.review_findings`
+store and configurable output actions are specified in
+`add-agent-review-queues` phases 2–3.

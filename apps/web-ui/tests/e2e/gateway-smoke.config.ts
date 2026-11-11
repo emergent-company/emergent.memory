@@ -2,7 +2,9 @@ import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { defineConfig } from '@playwright/test';
 
-// Per-PR hermetic gateway browser smoke (#564).
+// Hermetic gateway browser smoke (#564) — the browser gate that runs on the
+// `dev -> main` promotion PR and on pushes to `main`, not on a feature PR
+// (`web-ui.yml` has no `pull_request` trigger).
 //
 // The `*-ui.spec.ts` mutations suite is the only coverage of real gateway UI
 // behaviour, but it needs a session-mode gateway + Zitadel test user and runs

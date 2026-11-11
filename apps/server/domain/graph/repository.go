@@ -553,6 +553,22 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*GraphObjec
 	return r.list(ctx, r.db, params)
 }
 
+// graphObjectListColumns is the projection for List queries, named so the
+// column-coverage test can hold it to the model: a column that is left out of a
+// full-object projection scans as its zero value on every row. migration_archive
+// is appended on request only, because it is a large column (see
+// ListParams.IncludeMigrationArchive).
+var graphObjectListColumns = []string{"id", "project_id", "branch_id", "canonical_id", "supersedes_id", "version",
+	"type", "name", "key", "status", "properties", "labels", "change_summary",
+	"created_at", "updated_at", "deleted_at", "actor_type", "actor_id", "schema_version",
+	"extraction_job_id", "extraction_confidence", "needs_review", "reviewed_by", "reviewed_at",
+	"content_hash", "embedding_updated_at",
+	// Write stamp (#2376). Selected here as well as in the detail list: a
+	// stale list/GET projection would make an edit read DataClass = "" and
+	// silently re-default a source-owned object to synthesized.
+	"credential_kind", "credential_id", "run_id", "root_run_id",
+	"data_class", "owner_source_id", "input_hash"}
+
 // list runs a single List query against the given handle. It is shared by List
 // (r.db) and the streaming batch iterators (ListEachTx), which pass a bun.Tx.
 func (r *Repository) list(ctx context.Context, db bun.IDB, params ListParams) ([]*GraphObject, error) {
@@ -568,16 +584,7 @@ func (r *Repository) list(ctx context.Context, db bun.IDB, params ListParams) ([
 		params.Order = "desc"
 	}
 
-	columns := []string{"id", "project_id", "branch_id", "canonical_id", "supersedes_id", "version",
-		"type", "key", "status", "properties", "labels", "change_summary",
-		"created_at", "updated_at", "deleted_at", "actor_type", "actor_id", "schema_version",
-		"extraction_job_id", "extraction_confidence", "needs_review", "reviewed_by", "reviewed_at",
-		"content_hash", "embedding_updated_at",
-		// Write stamp (#2376). Selected here as well as in the detail list: a
-		// stale list/GET projection would make an edit read DataClass = "" and
-		// silently re-default a source-owned object to synthesized.
-		"credential_kind", "credential_id", "run_id", "root_run_id",
-		"data_class", "owner_source_id", "input_hash"}
+	columns := append([]string(nil), graphObjectListColumns...)
 	if params.IncludeMigrationArchive {
 		// Opt-in only — see ListParams.IncludeMigrationArchive. Without this the
 		// column is omitted and obj.MigrationArchive always scans as empty.
@@ -736,7 +743,7 @@ func (r *Repository) Count(ctx context.Context, params ListParams) (int, error) 
 // fail the scan with "does not have column embedding_v2".
 var graphObjectDetailColumns = []string{
 	"id", "project_id", "branch_id", "canonical_id", "supersedes_id", "version",
-	"merged_to_canonical_id", "type", "key", "status", "assignee", "namespace",
+	"merged_to_canonical_id", "type", "name", "key", "status", "assignee", "namespace",
 	"properties", "labels", "change_summary", "content_hash",
 	"created_at", "updated_at", "deleted_at", "delete_reason", "last_accessed_at",
 	"fts", "embedding_updated_at",
@@ -968,6 +975,17 @@ func (r *Repository) insertGraphObject(ctx context.Context, db bun.IDB, obj *Gra
 		r.log.Error("failed to create graph object", logger.Error(err))
 		return apperror.ErrDatabase.WithInternal(err)
 	}
+
+	// Input lineage is written beside the version write, from the inputs the
+	// synthesis path declared on the context (#153). A synthesis path that
+	// creates a version through this primitive cannot forget the lineage write:
+	// there is no separate write to forget.
+	if lineageAppliesTo(obj.DataClass) {
+		if err := r.insertSynthesisLineage(ctx, db, obj.ProjectID, ContributionSubjectObject,
+			obj.ID, synthesisInputsFromContext(ctx)); err != nil {
+			return fmt.Errorf("write object synthesis lineage: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -977,9 +995,11 @@ func (r *Repository) Create(ctx context.Context, obj *GraphObject) error {
 	// Bulk endpoints attach a statement_timeout to ctx via BulkContext so each
 	// item transaction is bounded. Create is otherwise a bare single-statement
 	// insert with no transaction to carry the setting, so when a bound is
-	// present run the insert in a transaction to apply it. Ordinary creates
-	// carry no bound and keep the single-statement path (no extra round trip).
-	if _, ok := database.StatementTimeoutFromContext(ctx); ok {
+	// present run the insert in a transaction to apply it. A synthesis write
+	// with declared inputs also gets a transaction so the version row and its
+	// lineage rows commit together rather than one without the other (#153).
+	_, hasTimeout := database.StatementTimeoutFromContext(ctx)
+	if hasTimeout || len(synthesisInputsFromContext(ctx)) > 0 {
 		tx, err := database.BeginSafeTx(ctx, r.db)
 		if err != nil {
 			return fmt.Errorf("begin create transaction: %w", err)
@@ -1106,6 +1126,26 @@ func (r *Repository) CreateVersion(ctx context.Context, tx bun.Tx, prevHead *Gra
 		return fmt.Errorf("carry forward object contributions: %w", err)
 	}
 
+	// Input lineage follows the same rule as contributions (#153): a new
+	// version inherits the content inputs of the version it derives from and
+	// names that version row as its direct input, so an ordinary edit keeps the
+	// provenance of the content that survived it. The version write and its
+	// lineage are in the caller's transaction, so a reader never sees one
+	// without the other.
+	if lineageAppliesTo(newVersion.DataClass) {
+		if _, err := r.carryForwardSynthesisLineage(ctx, tx, ContributionSubjectObject,
+			prevHead.ID, newVersion.ID); err != nil {
+			return fmt.Errorf("carry forward object synthesis lineage: %w", err)
+		}
+		inputs := append([]SynthesisInput{
+			{Kind: LineageInputVersion, ID: prevHead.ID},
+		}, synthesisInputsFromContext(ctx)...)
+		if err := r.insertSynthesisLineage(ctx, tx, newVersion.ProjectID, ContributionSubjectObject,
+			newVersion.ID, inputs); err != nil {
+			return fmt.Errorf("write object synthesis lineage: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -1138,6 +1178,7 @@ func (r *Repository) SoftDelete(ctx context.Context, tx bun.Tx, obj *GraphObject
 	now := time.Now()
 	tombstone := &GraphObject{
 		Type:         obj.Type,
+		Name:         obj.Name,
 		Key:          obj.Key,
 		Status:       obj.Status,
 		Properties:   obj.Properties,
@@ -1162,6 +1203,7 @@ func (r *Repository) SoftDeleteOnBranch(ctx context.Context, tx bun.Tx, mainHead
 		ProjectID:       mainHead.ProjectID,
 		BranchID:        branchID,
 		Type:            mainHead.Type,
+		Name:            mainHead.Name,
 		Key:             mainHead.Key,
 		Status:          mainHead.Status,
 		Namespace:       mainHead.Namespace,
@@ -1197,6 +1239,19 @@ func (r *Repository) SoftDeleteOnBranch(ctx context.Context, tx bun.Tx, mainHead
 		[]uuid.UUID{mainHead.ID}, tombstone.ID, tombstone.BranchID, false); err != nil {
 		return fmt.Errorf("carry forward branch tombstone contributions: %w", err)
 	}
+
+	// The branch tombstone is a version of the main head, so it inherits the
+	// content lineage and names the main version row it was derived from.
+	if lineageAppliesTo(tombstone.DataClass) {
+		if _, err := r.carryForwardSynthesisLineage(ctx, tx, ContributionSubjectObject,
+			mainHead.ID, tombstone.ID); err != nil {
+			return fmt.Errorf("carry forward branch tombstone synthesis lineage: %w", err)
+		}
+		if err := r.insertSynthesisLineage(ctx, tx, tombstone.ProjectID, ContributionSubjectObject,
+			tombstone.ID, []SynthesisInput{{Kind: LineageInputVersion, ID: mainHead.ID}}); err != nil {
+			return fmt.Errorf("write branch tombstone synthesis lineage: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -1204,6 +1259,7 @@ func (r *Repository) SoftDeleteOnBranch(ctx context.Context, tx bun.Tx, mainHead
 func (r *Repository) Restore(ctx context.Context, tx bun.Tx, obj *GraphObject, actorType string, actorID *uuid.UUID) error {
 	restored := &GraphObject{
 		Type:       obj.Type,
+		Name:       obj.Name,
 		Key:        obj.Key,
 		Status:     obj.Status,
 		Properties: obj.Properties,
@@ -2217,7 +2273,18 @@ func (r *Repository) CreateRelationship(ctx context.Context, tx bun.Tx, rel *Gra
 	}
 
 	rowsAffected, _ := res.RowsAffected()
-	return rowsAffected > 0, nil
+	if rowsAffected == 0 {
+		return false, nil
+	}
+
+	// Same rule as object creates (#153): the synthesis inputs on the context
+	// are written beside the relationship version, so extraction's relationships
+	// are traceable to their document and job too.
+	if err := r.insertSynthesisLineage(ctx, tx, rel.ProjectID, ContributionSubjectRelationship,
+		rel.ID, synthesisInputsFromContext(ctx)); err != nil {
+		return false, fmt.Errorf("write relationship synthesis lineage: %w", err)
+	}
+	return true, nil
 }
 
 // CreateRelationshipVersion creates a new version of an existing relationship.
@@ -2283,6 +2350,20 @@ func (r *Repository) CreateRelationshipVersion(ctx context.Context, tx bun.Tx, p
 	if _, err := r.copyContributions(ctx, tx, newVersion.ProjectID, ContributionSubjectRelationship,
 		[]uuid.UUID{prevHead.ID}, newVersion.ID, newVersion.BranchID, false); err != nil {
 		return fmt.Errorf("carry forward relationship contributions: %w", err)
+	}
+
+	// Relationships carry input lineage beside their version writes too (#153),
+	// with the same inheritance rule as objects.
+	if _, err := r.carryForwardSynthesisLineage(ctx, tx, ContributionSubjectRelationship,
+		prevHead.ID, newVersion.ID); err != nil {
+		return fmt.Errorf("carry forward relationship synthesis lineage: %w", err)
+	}
+	inputs := append([]SynthesisInput{
+		{Kind: LineageInputVersion, ID: prevHead.ID},
+	}, synthesisInputsFromContext(ctx)...)
+	if err := r.insertSynthesisLineage(ctx, tx, newVersion.ProjectID, ContributionSubjectRelationship,
+		newVersion.ID, inputs); err != nil {
+		return fmt.Errorf("write relationship synthesis lineage: %w", err)
 	}
 
 	return nil
@@ -2545,7 +2626,7 @@ END`
 // data_class, an out-of-enum value that contradicts what GET returns for the
 // same row (#2376).
 const graphObjectColumns = `id, project_id, branch_id, canonical_id, supersedes_id, version,
-	type, key, status, namespace, properties, labels, change_summary, content_hash,
+	type, name, key, status, namespace, properties, labels, change_summary, content_hash,
 	created_at, updated_at, deleted_at, fts, embedding_updated_at,
 	extraction_job_id, extraction_confidence, needs_review, reviewed_by, reviewed_at,
 	actor_type, actor_id, schema_version,
@@ -2567,7 +2648,7 @@ func scanGraphObject(rows *sql.Rows, obj *GraphObject, extraDest ...any) error {
 
 	dest := []any{
 		&obj.ID, &obj.ProjectID, &obj.BranchID, &obj.CanonicalID, &obj.SupersedesID, &obj.Version,
-		&obj.Type, &obj.Key, &obj.Status, &obj.Namespace, &props, &labels, &changeSummary, &obj.ContentHash,
+		&obj.Type, &obj.Name, &obj.Key, &obj.Status, &obj.Namespace, &props, &labels, &changeSummary, &obj.ContentHash,
 		&obj.CreatedAt, &obj.UpdatedAt, &obj.DeletedAt, &obj.FTS, &obj.EmbeddingUpdatedAt,
 		&obj.ExtractionJobID, &obj.ExtractionConfidence, &obj.NeedsReview, &obj.ReviewedBy, &obj.ReviewedAt,
 		&obj.ActorType, &obj.ActorID, &obj.SchemaVersion,
@@ -3091,6 +3172,7 @@ type SimilarSearchResult struct {
 	ProjectID   uuid.UUID
 	BranchID    *uuid.UUID
 	Type        string
+	Name        *string
 	Key         *string
 	Status      *string
 	Properties  map[string]any
@@ -3184,11 +3266,11 @@ func (r *Repository) FindSimilarObjects(ctx context.Context, params SimilarSearc
 	// applies the deterministic (distance, id) tie-break on the limited window.
 	query := `
 		SELECT id, canonical_id, version, project_id, branch_id,
-			type, key, status, properties, labels, created_at,
+			type, name, key, status, properties, labels, created_at,
 			_dist AS distance
 		FROM (
 			SELECT id, canonical_id, version, project_id, branch_id,
-				type, key, status, properties, labels, created_at,
+				type, name, key, status, properties, labels, created_at,
 				(embedding_v2 <=> ?::vector) AS _dist
 			FROM kb.graph_objects
 			` + whereClause + `
@@ -3794,6 +3876,7 @@ type BranchObjectHead struct {
 	ID          uuid.UUID
 	ContentHash []byte
 	Type        string
+	Name        *string
 	Key         *string
 	Status      *string
 	Namespace   *string
@@ -3818,7 +3901,7 @@ func (r *Repository) GetBranchObjectHeads(ctx context.Context, projectID uuid.UU
 
 	q := r.db.NewSelect().
 		Model(&objects).
-		Column("id", "canonical_id", "content_hash", "type", "key", "status", "namespace", "labels", "properties", "deleted_at", "merged_to_canonical_id", "extraction_job_id", "actor_type", "actor_id", "data_class", "owner_source_id").
+		Column("id", "canonical_id", "content_hash", "type", "name", "key", "status", "namespace", "labels", "properties", "deleted_at", "merged_to_canonical_id", "extraction_job_id", "actor_type", "actor_id", "data_class", "owner_source_id").
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL")
 
@@ -3840,6 +3923,7 @@ func (r *Repository) GetBranchObjectHeads(ctx context.Context, projectID uuid.UU
 			ID:                  obj.ID,
 			ContentHash:         obj.ContentHash,
 			Type:                obj.Type,
+			Name:                obj.Name,
 			Key:                 obj.Key,
 			Status:              obj.Status,
 			Namespace:           obj.Namespace,
@@ -4091,6 +4175,7 @@ func (r *Repository) BulkCopyObjectsToBranch(ctx context.Context, projectID uuid
 			CanonicalID:     obj.CanonicalID, // Preserve canonical ID for merge-back support
 			Version:         1,
 			Type:            obj.Type,
+			Name:            obj.Name,
 			Key:             obj.Key,
 			Status:          obj.Status,
 			Properties:      obj.Properties,
@@ -4123,6 +4208,9 @@ func (r *Repository) BulkCopyObjectsToBranch(ctx context.Context, projectID uuid
 			if err := r.bulkCopyContributions(ctx, projectID, targetBranchID, ContributionSubjectObject, pairs); err != nil {
 				return nil, 0, err
 			}
+			if err := r.bulkCopySynthesisLineage(ctx, ContributionSubjectObject, pairs); err != nil {
+				return nil, 0, err
+			}
 			batch = batch[:0]
 			pairs = make(map[uuid.UUID]uuid.UUID, 100)
 		}
@@ -4132,6 +4220,9 @@ func (r *Repository) BulkCopyObjectsToBranch(ctx context.Context, projectID uuid
 			return nil, 0, apperror.ErrDatabase.WithInternal(err)
 		}
 		if err := r.bulkCopyContributions(ctx, projectID, targetBranchID, ContributionSubjectObject, pairs); err != nil {
+			return nil, 0, err
+		}
+		if err := r.bulkCopySynthesisLineage(ctx, ContributionSubjectObject, pairs); err != nil {
 			return nil, 0, err
 		}
 	}
@@ -4213,6 +4304,9 @@ func (r *Repository) BulkCopyRelationshipsToBranch(ctx context.Context, projectI
 			if err := r.bulkCopyContributions(ctx, projectID, targetBranchID, ContributionSubjectRelationship, pairs); err != nil {
 				return 0, 0, err
 			}
+			if err := r.bulkCopySynthesisLineage(ctx, ContributionSubjectRelationship, pairs); err != nil {
+				return 0, 0, err
+			}
 			batch = batch[:0]
 			pairs = make(map[uuid.UUID]uuid.UUID, 100)
 		}
@@ -4222,6 +4316,9 @@ func (r *Repository) BulkCopyRelationshipsToBranch(ctx context.Context, projectI
 			return 0, 0, apperror.ErrDatabase.WithInternal(err)
 		}
 		if err := r.bulkCopyContributions(ctx, projectID, targetBranchID, ContributionSubjectRelationship, pairs); err != nil {
+			return 0, 0, err
+		}
+		if err := r.bulkCopySynthesisLineage(ctx, ContributionSubjectRelationship, pairs); err != nil {
 			return 0, 0, err
 		}
 	}

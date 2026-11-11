@@ -36,6 +36,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	readGroup.GET("/:id/sync-jobs", h.ListSyncJobs)
 	readGroup.GET("/:id/sync-jobs/latest", h.GetLatestSyncJob)
 	readGroup.GET("/:id/sync-jobs/:jobId", h.GetSyncJob)
+	readGroup.GET("/:id/triggers", h.ListSourceTriggers)
+	readGroup.POST("/:id/scope/preview", h.PreviewSourceScope)
 
 	// Write operations (create/update/test + sync trigger/cancel).
 	writeGroup := g.Group("")
@@ -43,6 +45,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	writeGroup.POST("", h.Create)
 	writeGroup.PATCH("/:id", h.Update)
 	writeGroup.POST("/test-config", h.TestConfig)
+	writeGroup.POST("/providers/:providerType/filter-preview", h.PreviewFilter)
 	writeGroup.POST("/resources", h.ListProviderResources)
 	writeGroup.POST("/refs", h.ListProviderRefs)
 	writeGroup.POST("/credentials/saved", h.CreateSavedCredential)
@@ -55,8 +58,17 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	writeGroup.GET("/:id/picker-session", h.PickerSession)
 	writeGroup.PUT("/:id/sync-targets", h.SaveSyncTargets)
 	writeGroup.POST("/:id/sync", h.TriggerSync)
+	writeGroup.POST("/:id/triggers", h.CreateSourceTrigger)
+	writeGroup.PATCH("/:id/triggers/:triggerId", h.UpdateSourceTrigger)
+	writeGroup.DELETE("/:id/triggers/:triggerId", h.DeleteSourceTrigger)
 	writeGroup.POST("/:id/sync-jobs/:jobId/cancel", h.CancelSyncJob)
 	writeGroup.GET("/providers/:providerType/oauth/authorize", h.StartOAuth)
+
+	// Scope changes are ingestion-affecting and use the dedicated sources:write
+	// scope rather than the broad documents:write grant used by CRUD.
+	scopeGroup := g.Group("")
+	scopeGroup.Use(authMiddleware.RequireAPITokenScopes("sources:write"))
+	scopeGroup.PATCH("/:id/scope", h.UpdateSourceScope)
 
 	// Delete operation.
 	deleteGroup := g.Group("")
@@ -73,6 +85,14 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// addressed org is explicit; only RequireAuth is applied at the route layer —
 	// org-admin authority is enforced inside the handler via the shared
 	// org-administration check (pkg/auth.CanAdministerOrg).
+	// Org-scoped source Apps (credentials). Org-admin authority is enforced in
+	// the service; only RequireAuth is applied at the route layer.
+	sourceApps := e.Group("/api/orgs/:orgId/source-apps")
+	sourceApps.Use(authMiddleware.RequireAuth())
+	sourceApps.GET("", h.ListSourceApps)
+	sourceApps.POST("", h.RegisterSourceApp)
+	sourceApps.DELETE("/:appId", h.DeleteSourceApp)
+
 	orgClients := e.Group("/api/orgs/:orgId/data-source-integrations/oauth-clients")
 	orgClients.Use(authMiddleware.RequireAuth())
 	orgClients.GET("", h.ListOrgOAuthClients)
@@ -85,9 +105,27 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// layer — project-admin authority is enforced inside the handler via the
 	// shared project-administration check (pkg/auth.CanAdministerProject).
 	projectClients := e.Group("/api/projects/:projectId/data-source-integrations/oauth-clients")
-	projectClients.Use(authMiddleware.RequireAuth())
+	projectClients.Use(authMiddleware.RequireAuth(), authMiddleware.RequireProjectMember())
 	projectClients.GET("", h.ListProjectOAuthClients)
 	projectClients.GET("/:providerType", h.GetProjectOAuthClient)
 	projectClients.PUT("/:providerType", h.UpsertProjectOAuthClient)
 	projectClients.DELETE("/:providerType", h.DeleteProjectOAuthClient)
+
+	// Named, vendor-level OAuth apps. These are the current surface; the
+	// per-provider groups above are deprecated shims over the vendor's sole app.
+	orgApps := e.Group("/api/orgs/:orgId/data-source-integrations/oauth-apps")
+	orgApps.Use(authMiddleware.RequireAuth())
+	orgApps.GET("", h.ListOrgOAuthApps)
+	orgApps.POST("", h.CreateOrgOAuthApp)
+	orgApps.GET("/:appId", h.GetOrgOAuthApp)
+	orgApps.PUT("/:appId", h.UpdateOrgOAuthApp)
+	orgApps.DELETE("/:appId", h.DeleteOrgOAuthApp)
+
+	projectApps := e.Group("/api/projects/:projectId/data-source-integrations/oauth-apps")
+	projectApps.Use(authMiddleware.RequireAuth(), authMiddleware.RequireProjectMember())
+	projectApps.GET("", h.ListProjectOAuthApps)
+	projectApps.POST("", h.CreateProjectOAuthApp)
+	projectApps.GET("/:appId", h.GetProjectOAuthApp)
+	projectApps.PUT("/:appId", h.UpdateProjectOAuthApp)
+	projectApps.DELETE("/:appId", h.DeleteProjectOAuthApp)
 }

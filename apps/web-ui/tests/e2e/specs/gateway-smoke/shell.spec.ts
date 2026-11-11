@@ -1,9 +1,11 @@
 import { test, expect } from '@playwright/test';
 
-// Per-PR mobile shell smoke (#564). These are the browser contracts the
-// session-mode shell suite pins but which never ran per PR: pinch-zoom meta,
-// no horizontal overflow at a phone width, a keyboard-operable sidebar trigger,
-// and the chat session rail as a bounded overlay.
+// Mobile shell smoke (#564). Runs in the gateway-smoke suite, i.e. on the
+// `dev -> main` promotion PR and on pushes to `main` — not on a feature PR.
+// These are the browser contracts the session-mode shell suite pins but which
+// no gate covered: pinch-zoom meta, no horizontal overflow at a phone width, a
+// keyboard-operable sidebar trigger, and the chat session rail as a bounded
+// overlay.
 const PHONE = { width: 390, height: 844 };
 
 async function noHorizontalOverflow(page: import('@playwright/test').Page) {

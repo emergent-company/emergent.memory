@@ -52,6 +52,11 @@ type ToolResultCache struct {
 	curBytes   int
 	maxEntries int
 	maxBytes   int
+	// evidence holds run-scoped, non-result facts (for example "this run
+	// fetched the diff for repo@sha"). It is deliberately NOT cleared by
+	// invalidate(): a mutation must drop stale reads, not the record of what the
+	// run actually observed. It is bounded only by the tools that write it.
+	evidence map[string]struct{}
 }
 
 type toolResultCacheEntry struct {
@@ -70,6 +75,7 @@ func NewToolResultCache() *ToolResultCache {
 		order:      list.New(),
 		maxEntries: defaultToolResultCacheMaxEntries,
 		maxBytes:   defaultToolResultCacheMaxBytes,
+		evidence:   make(map[string]struct{}),
 	}
 }
 
@@ -91,6 +97,39 @@ func ContextWithNewToolResultCache(ctx context.Context) context.Context {
 func toolResultCacheFromContext(ctx context.Context) *ToolResultCache {
 	c, _ := ctx.Value(toolResultCacheContextKey{}).(*ToolResultCache)
 	return c
+}
+
+// MarkRunEvidence records a run-scoped, non-result fact in the run's cache (for
+// example "this run fetched the diff for repo@sha"). Evidence is keyed
+// independently of cached tool results, is never cleared by invalidate(), and is
+// never shared across runs. It is a no-op when ctx carries no run cache (HTTP
+// transports, bare tests), so callers that REQUIRE evidence must treat its
+// absence as "not observed" (see RunHasEvidence).
+func MarkRunEvidence(ctx context.Context, key string) {
+	c := toolResultCacheFromContext(ctx)
+	if c == nil || key == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.evidence == nil {
+		c.evidence = make(map[string]struct{})
+	}
+	c.evidence[key] = struct{}{}
+}
+
+// RunHasEvidence reports whether MarkRunEvidence recorded key in this run's
+// cache. It is false when ctx carries no run cache: evidence never leaks between
+// runs and is never assumed.
+func RunHasEvidence(ctx context.Context, key string) bool {
+	c := toolResultCacheFromContext(ctx)
+	if c == nil || key == "" {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.evidence[key]
+	return ok
 }
 
 // get returns a fresh copy of the cached result. Each entry is stored as

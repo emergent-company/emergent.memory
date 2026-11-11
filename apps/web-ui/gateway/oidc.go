@@ -433,6 +433,7 @@ func (s *Server) authCallback(c echo.Context) error {
 		Email:           email,
 		Picture:         picture,
 		Sub:             sub,
+		Issuer:          s.configuredIssuer(),
 		ExpiresAt:       now.Add(time.Duration(expiresIn) * time.Second).Unix(),
 	}
 	// Resolve the avatar override (and any missing display name) from the

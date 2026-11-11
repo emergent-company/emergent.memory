@@ -105,7 +105,7 @@ func GlobalAgentCard() AgentCard {
 			ExtendedAgentCard: true,
 			Extensions: []AgentExtension{{
 				URI:    A2UIA2AExtensionURI,
-				Params: map[string]any{"supportedCatalogIds": []string{a2ui.CatalogID}},
+				Params: map[string]any{"supportedCatalogIds": a2ui.SupportedCatalogIDs()},
 			}},
 		},
 		DefaultInputModes:  []string{"application/json", "text/plain"},

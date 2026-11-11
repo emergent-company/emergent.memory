@@ -66,6 +66,25 @@ func SessionIDFromContext(ctx context.Context) string {
 	return v
 }
 
+// runSourceIDKey is the context key for the source that triggered the run.
+type runSourceIDKey struct{}
+
+// ContextWithRunSourceID stores the triggering source id in the tool-dispatch
+// context. Source-bound tools (the GitHub review tools) prefer it over scanning
+// the project repo allowlist, because a repo may be served by more than one
+// source and only the run knows which one fired it (issue #579).
+func ContextWithRunSourceID(ctx context.Context, sourceID string) context.Context {
+	return context.WithValue(ctx, runSourceIDKey{}, sourceID)
+}
+
+// RunSourceIDFromContext returns the triggering source id, or "" when the run
+// carries none. The zero value means "no preference": callers fall back to
+// their project-scoped resolution rather than guessing.
+func RunSourceIDFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(runSourceIDKey{}).(string)
+	return v
+}
+
 // trustedInternalKey is the context key for propagating the run's trust marker
 // into tool execution, so the in-process dispatch path (ExecuteTool) can enforce
 // AgentOnly consistently with the HTTP transports. It mirrors the fail-closed
@@ -153,6 +172,32 @@ type MCPRegistryToolHandler interface {
 
 	// ResolveBuiltinToolConfig resolves only the effective config map for a builtin tool.
 	ResolveBuiltinToolConfig(ctx context.Context, projectID, toolName string) (config map[string]any, source string, err error)
+}
+
+// GitHubAppToolHandler is the interface for GitHub App review tools. It is
+// implemented by the sources domain (github_app sources) to avoid a circular
+// import (sources imports agents, which the MCP layer must not import back).
+type GitHubAppToolHandler interface {
+	// HandlesGitHubAppTool reports whether the name belongs to this handler.
+	HandlesGitHubAppTool(toolName string) bool
+	// ExecuteGitHubAppTool resolves the project's installation, mints a scoped
+	// token, and runs the tool.
+	ExecuteGitHubAppTool(ctx context.Context, projectID, toolName string, args map[string]any) (*ToolResult, error)
+}
+
+// SourceToolHandler is the interface for source-backed MCP tools (Gmail etc.).
+// Implemented by the sources domain to avoid a circular import.
+type SourceToolHandler interface {
+	// GetSourceToolDefinitionsForProject returns the enabled source tools for the
+	// project (one set per connected account).
+	GetSourceToolDefinitionsForProject(ctx context.Context, projectID string) []ToolDefinition
+	// HandlesSourceTool reports whether the tool name belongs to a source-backed
+	// server registered in this build for the project. It must not match a name
+	// by prefix alone: dispatch asks it before the relay/registry fallbacks, so a
+	// broad claim would hijack a foreign tool that happens to share the prefix.
+	HandlesSourceTool(ctx context.Context, projectID, toolName string) bool
+	// ExecuteSourceTool runs a source tool using the owning source's credentials.
+	ExecuteSourceTool(ctx context.Context, projectID, toolName string, args map[string]any) (*ToolResult, error)
 }
 
 // AgentToolHandler is the interface for executing agent-related MCP tools.
@@ -503,6 +548,7 @@ type EntityTypesResult struct {
 // Entity represents a graph entity
 type Entity struct {
 	ID         string         `json:"id"`
+	Ref        string         `json:"ref"`
 	Key        string         `json:"key"`
 	Name       string         `json:"name"`
 	Type       string         `json:"type"`
@@ -573,6 +619,7 @@ type EdgeInfo struct {
 // ConnectedEntity represents basic info about an entity connected via an edge
 type ConnectedEntity struct {
 	ID         string         `json:"id"`
+	Ref        string         `json:"ref,omitempty"`
 	Type       string         `json:"type"`
 	Key        string         `json:"key,omitempty"`
 	Name       string         `json:"name,omitempty"`

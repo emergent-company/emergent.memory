@@ -80,6 +80,13 @@ struct ObjectCard: Decodable, Equatable, Sendable {
         sections = (try? container.decodeIfPresent([ObjectCardSection].self, forKey: .sections)) ?? []
         labels = (try? container.decodeIfPresent([String].self, forKey: .labels)) ?? []
     }
+
+    /// Whether the workflow strip is editable on the phone. The server reports
+    /// a work-item key — the two write routes require one — and the type's
+    /// allowed statuses; both must be present for the pickers to mean anything.
+    var canEditWorkflow: Bool {
+        !key.isEmpty && !(workflow?.allowedStatuses.isEmpty ?? true)
+    }
 }
 
 /// The type chip and icon tile of the card header.
@@ -144,24 +151,69 @@ struct ObjectCardStatus: Decodable, Equatable, Sendable {
     }
 }
 
-/// The workflow strip, read-only on the phone.
+/// The workflow strip: the current status and assignee, plus the option lists a
+/// native picker needs. The web drawer's strip is editable when the object is a
+/// work item; the card reports enough for the phone to decide the same.
 struct ObjectCardWorkflow: Decodable, Equatable, Sendable {
     var status: ObjectCardStatus?
     var assignee: String
+    /// The statuses the picker offers, in board order. Empty for a type that
+    /// declares no workflow.
+    var allowedStatuses: [ObjectCardStatus]
+    /// The assignee picker's candidates (runtime agents, then project members).
+    /// Empty for a non-work item, whose strip stays read-only.
+    var assignees: [ObjectCardAssignee]
 
-    init(status: ObjectCardStatus? = nil, assignee: String = "") {
+    init(
+        status: ObjectCardStatus? = nil,
+        assignee: String = "",
+        allowedStatuses: [ObjectCardStatus] = [],
+        assignees: [ObjectCardAssignee] = []
+    ) {
         self.status = status
         self.assignee = assignee
+        self.allowedStatuses = allowedStatuses
+        self.assignees = assignees
     }
 
     private enum CodingKeys: String, CodingKey {
-        case status, assignee
+        case status, assignee, assignees
+        case allowedStatuses = "allowed_statuses"
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         status = (try? container.decodeIfPresent(ObjectCardStatus.self, forKey: .status)) ?? nil
         assignee = (try? container.decodeIfPresent(String.self, forKey: .assignee)) ?? ""
+        allowedStatuses = (try? container.decodeIfPresent([ObjectCardStatus].self, forKey: .allowedStatuses)) ?? []
+        assignees = (try? container.decodeIfPresent([ObjectCardAssignee].self, forKey: .assignees)) ?? []
+    }
+}
+
+/// One assignee picker option: `value` is the exact string the reassign route
+/// expects (an agent name or a member display name).
+struct ObjectCardAssignee: Decodable, Equatable, Sendable, Identifiable {
+    var value: String
+    var label: String
+
+    var id: String {
+        value
+    }
+
+    init(value: String, label: String = "") {
+        self.value = value
+        self.label = label.isEmpty ? value : label
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case value, label
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        value = (try? container.decodeIfPresent(String.self, forKey: .value)) ?? ""
+        let display = (try? container.decodeIfPresent(String.self, forKey: .label)) ?? ""
+        label = display.isEmpty ? value : display
     }
 }
 

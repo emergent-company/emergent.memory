@@ -195,7 +195,9 @@ test.describe('Trale data source', () => {
 
   test('is absent from the project credentials surface (self-registering)', async ({ page }) => {
     await page.goto('/settings/credentials');
-    await expect(page.getByTestId('ds-credentials-table')).toBeVisible();
+    // The list is app-scoped and starts empty in the harness; the surface is
+    // present regardless, and Trale never contributes a row to it.
+    await expect(page.getByTestId('ds-oauth-apps')).toBeVisible();
     // Trale registers its own OAuth client at connect time, so there is no
     // client id/secret for an admin to manage and no table row for it.
     await expect(page.getByTestId('ds-credential-row').filter({ hasText: 'Trale' })).toHaveCount(0);

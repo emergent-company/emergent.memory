@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/emergent-company/emergent.memory/pkg/a2ui"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
@@ -340,6 +341,49 @@ func TestA2UIActionMessage(t *testing.T) {
 	bare := A2UIActionMessage(A2UIAction{SurfaceID: "s2"}, "")
 	assert.Contains(t, bare, "{}")
 	assert.NotContains(t, bare, "null")
+}
+
+// TestA2UIActionMessage_FramesTheBareSurfaceID is the transcript side of the
+// #592 nesting guard: the renderer reports the scoped wire id, but the model
+// must be shown its own bare id so its echo does not acquire another scope — and
+// the persisted user turn must not carry a raw run UUID.
+func TestA2UIActionMessage_FramesTheBareSurfaceID(t *testing.T) {
+	scoped := "3f2a8c10-0000-4000-8000-000000000001.2:s1"
+	msg := A2UIActionMessage(A2UIAction{SurfaceID: scoped, Action: map[string]any{"name": "approve"}}, "")
+
+	assert.Contains(t, msg, `"s1"`)
+	assert.NotContains(t, msg, scoped)
+	assert.NotContains(t, msg, "3f2a8c10-0000-4000-8000-000000000001")
+}
+
+// TestA2UIActionMessage_ThreeTurnsKeepOneSurfacePerCard walks the round trip that
+// produced reviewer 2's 1 → 2 → 3 cards: three turns, each framing the id the
+// renderer reported and then scoping what the model echoed.
+func TestA2UIActionMessage_ThreeTurnsKeepOneSurfacePerCard(t *testing.T) {
+	const bareID = "s1"
+	runs := []string{"run-a.0", "run-b.0", "run-c.0"}
+
+	// Turn 0 starts from the prompt-taught bare id; each later turn scopes the
+	// id the client reported on the previous one.
+	wire := bareID
+	seen := map[string]bool{}
+	for turn, ns := range runs {
+		wire = a2ui.NamespaceID(ns, wire)
+		if got := strings.Count(wire, ":"); got != 1 {
+			t.Fatalf("turn %d surface id %q has %d scope layers, want 1", turn, wire, got)
+		}
+		if seen[wire] {
+			t.Fatalf("turn %d re-rendered surface %q: the renderer would append a second card", turn, wire)
+		}
+		seen[wire] = true
+
+		// The client reports the wire id; the transcript must show the bare id,
+		// so the model's echo cannot acquire another scope.
+		framed := A2UIActionMessage(A2UIAction{SurfaceID: wire}, "")
+		if !strings.Contains(framed, `"`+bareID+`"`) {
+			t.Fatalf("turn %d framed %q, want the bare %q", turn, framed, bareID)
+		}
+	}
 }
 
 func TestA2ASendMessage_SurfaceAction_NoTextPart_ReachesRepo(t *testing.T) {

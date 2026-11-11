@@ -1,11 +1,13 @@
 import { test, expect, type Page } from '@playwright/test';
 
-// A real gateway rendering a seeded recorded session (#27).
+// A real gateway rendering a seeded recorded session (#27). Runs in the
+// gateway-smoke suite, i.e. on the `dev -> main` promotion PR and on pushes to
+// `main` — not on a feature PR.
 //
 // The session (`conv-tool-steps`) is seeded into the mock memory service this
 // lane boots (`mock-memory.mjs` + `run-e2e.sh`): the real gateway binary, the
 // real templ output, the shipped chat JS and AUTH_MODE=dev. The live dev stack
-// has no API that writes run history, so this per-PR hermetic lane is where a
+// has no API that writes run history, so this hermetic lane is where a
 // recorded session can be seeded deterministically; it still catches the
 // template↔JS wiring regressions the live suite would.
 //

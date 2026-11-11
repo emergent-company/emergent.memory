@@ -8,7 +8,9 @@ import SwiftUI
 /// turn stitched into one timeline. Suggestions only appear for a brand-new
 /// conversation with nothing in it yet.
 struct ChatTranscriptView: View {
-    let transcript: ChatSessionTranscriptStore
+    /// The one ordered list of rows this chat draws: recorded history and the
+    /// live turn already merged, in arrival order.
+    let timeline: ChatTimelineStore
     let agentName: String
     let showsSuggestions: Bool
     let onSuggestion: (String) -> Void
@@ -32,14 +34,26 @@ struct ChatTranscriptView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2 * .grid) {
                     historyStatus
-                    historyEntries
 
-                    // Approvals recorded before the live room opened.
-                    historyApprovals
-                    liveEntries
+                    // History, the live turn, reasoning, tools and cards: one
+                    // list, walked in arrival order.
+                    ChatTimelineView(
+                        store: timeline,
+                        onApproval: onLiveApproval,
+                        onQuestion: onQuestion,
+                        onSurfaceAction: onSurfaceAction,
+                        onHistoryApproval: onHistoryApproval
+                    )
 
-                    trailingActivity
                     surfaceCards()
+
+                    WorkingLine(
+                        state: TurnWorkingState.of(
+                            awaitingFirstReply: activity.isAwaitingFirstReply,
+                            turn: activity.liveTurn
+                        ),
+                        since: activity.liveTurn?.startedAt
+                    )
 
                     Color.clear
                         .frame(height: 1)
@@ -60,7 +74,7 @@ struct ChatTranscriptView: View {
             // longer land short of the newest row (`emergent.memory#446`).
             .modifier(ChatAutoScroll(proxy: proxy, bottomAnchorID: Self.bottomAnchorID))
             .environment(\.chatDisclosure, chatDisclosure)
-            .onChange(of: activity.turns.isEmpty) { _, empty in
+            .onChange(of: timeline.items.isEmpty) { _, empty in
                 if empty {
                     chatDisclosure.clear()
                 }
@@ -82,91 +96,21 @@ struct ChatTranscriptView: View {
 
     @ViewBuilder
     private var historyStatus: some View {
-        if let error = transcript.historyError {
+        if let error = timeline.historyError {
             ChatHistoryErrorBanner(message: error, onRetry: onHistoryRetry)
         }
-        if transcript.isLoadingHistory, transcript.history.isEmpty {
+        if timeline.isLoadingHistory, timeline.items.isEmpty {
             LoadingStateView(title: "chats.history.loading", fillsHeight: false)
         }
     }
 
-    private var historyEntries: some View {
-        ForEach(Array(transcript.history.enumerated()), id: \.offset) { _, entry in
-            historyEntry(entry)
-        }
-    }
-
-    private var historyApprovals: some View {
-        ForEach(transcript.pendingApprovals) { request in
-            ApprovalCardView(request: request) { decision in
-                onHistoryApproval(request, decision)
-            }
-        }
-    }
-
-    private var liveEntries: some View {
-        ForEach(transcript.liveMessages) { message in
-            ChatMessageBubble(message: message)
-            anchoredActivity(for: message)
-        }
-    }
-
-    @ViewBuilder
-    private func historyEntry(_ entry: HistoryEntry) -> some View {
-        switch entry {
-        case let .message(message):
-            ChatMessageBubble(message: message)
-        case let .tools(tools):
-            ToolCallsCard(tools: tools)
-        }
-    }
-
     private var showsEmptyState: Bool {
-        guard transcript.historyError == nil, !transcript.isLoadingHistory,
+        guard timeline.historyError == nil, !timeline.isLoadingHistory,
               !activity.isAwaitingFirstReply
         else { return false }
-        return transcript.history.isEmpty
-            && transcript.liveMessages.isEmpty
-            && transcript.pendingApprovals.isEmpty
+        return timeline.items.isEmpty
             && activity.surfaces.isEmpty
             && !activity.hasVisibleActivity
-    }
-
-    @ViewBuilder
-    private func anchoredActivity(for message: ChatMessage) -> some View {
-        if message.role == .user,
-           let turn = activity.turn(anchoredTo: message.id),
-           turn.hasContent
-        {
-            ChatTurnActivityView(
-                turn: turn,
-                onApproval: { request, decision in onLiveApproval(request, decision) },
-                onQuestion: { request, answer in onQuestion(request, answer) }
-            )
-        }
-    }
-
-    /// The current turn's activity when its anchor message is not in the live
-    /// list (activity can arrive before the transcript), plus the working line
-    /// while the agent has not answered yet.
-    @ViewBuilder
-    private var trailingActivity: some View {
-        if let turn = activity.liveTurn, turn.hasContent,
-           turn.anchorMessageID == nil || !transcript.liveMessages.contains(where: { $0.id == turn.anchorMessageID })
-        {
-            ChatTurnActivityView(
-                turn: turn,
-                onApproval: { request, decision in onLiveApproval(request, decision) },
-                onQuestion: { request, answer in onQuestion(request, answer) }
-            )
-        }
-        WorkingLine(
-            state: TurnWorkingState.of(
-                awaitingFirstReply: activity.isAwaitingFirstReply,
-                turn: activity.liveTurn
-            ),
-            since: activity.liveTurn?.startedAt
-        )
     }
 
     private func surfaceCards() -> some View {
@@ -247,35 +191,6 @@ struct ChatMessageBubble: View {
                 }
             }
         }
-    }
-}
-
-/// One live turn's activity: thinking, tool chips, and its interactive card.
-struct ChatTurnActivityView: View {
-    let turn: ChatActivityStore.Turn
-    let onApproval: (ApprovalRequest, ApprovalDecision) -> Void
-    let onQuestion: (QuestionRequest, String) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 1 * .grid) {
-            ForEach(turn.thinkingBlocks) { block in
-                ThinkingBlockView(id: block.id, text: block.text, isLive: block.isLive)
-            }
-            ForEach(turn.toolGroups) { group in
-                ToolActivityGroup(tools: group.tools, groupID: group.id)
-            }
-            if let approval = turn.approval {
-                ApprovalCardView(request: approval) { decision in
-                    onApproval(approval, decision)
-                }
-            }
-            if let question = turn.question {
-                QuestionCardView(request: question) { answer in
-                    onQuestion(question, answer)
-                }
-            }
-        }
-        .padding(.leading, 1 * .grid)
     }
 }
 

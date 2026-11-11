@@ -117,7 +117,7 @@ type MemoryBackend interface {
 	ListChunkRevisions(ctx context.Context, chunkID string) ([]ChunkRevision, error)
 	DiffChunkRevisions(ctx context.Context, chunkID string, from, to int) (ChunkDiff, error)
 	RollbackChunk(ctx context.Context, chunkID string, seq int) (ChunkEditResult, error)
-	UploadDocument(ctx context.Context, filename string, r io.Reader) (UploadResult, error)
+	UploadDocument(ctx context.Context, filename string, r io.Reader, autoExtract *bool) (UploadResult, error)
 	// Share capture (iOS share extension). Both return memory's raw status and
 	// body so the handler passes its JSON through unchanged — the device must
 	// see memory's own {run_id, status} or {error:{code,message}}.
@@ -174,11 +174,34 @@ type MemoryBackend interface {
 	GetLatestDSSyncJob(ctx context.Context, id string) (*DSSyncJob, error)
 	GetDSSyncJob(ctx context.Context, id, jobID string) (*DSSyncJob, error)
 	CancelDSSyncJob(ctx context.Context, id, jobID string) (*DSCancelSyncJobResponse, error)
-	StartDSOAuth(ctx context.Context, providerType string, config map[string]any, scopes []string, reconnectSourceID string) (*DSOAuthAuthorizeResponse, error)
+	StartDSOAuth(ctx context.Context, providerType string, config map[string]any, scopes []string, oauthAppID, reconnectSourceID string) (*DSOAuthAuthorizeResponse, error)
+	PreviewDSFilter(ctx context.Context, providerType string, config map[string]any) (string, error)
+	PreviewDSScope(ctx context.Context, id string, req *DSScopeRequest) (*DSScopePreview, error)
+	UpdateDSScope(ctx context.Context, id string, req *DSScopeRequest, previewHash, baseScopeHash string) (*DSScopePreview, error)
 	ListDSOAuthClients(ctx context.Context, orgID string) ([]DSOAuthClientConfig, error)
 	GetDSOAuthClient(ctx context.Context, orgID, providerType string) (*DSOAuthClientConfig, error)
 	UpsertDSOAuthClient(ctx context.Context, orgID, providerType string, req *DSSetOAuthClientRequest) (*DSOAuthClientConfig, error)
 	DeleteDSOAuthClient(ctx context.Context, orgID, providerType string) error
+	ListOrgDSOAuthApps(ctx context.Context, orgID string) ([]DSOAuthApp, error)
+	CreateOrgDSOAuthApp(ctx context.Context, orgID string, req *DSCreateOAuthAppRequest) (*DSOAuthApp, error)
+	GetOrgDSOAuthApp(ctx context.Context, orgID, appID string) (*DSOAuthApp, error)
+	UpdateOrgDSOAuthApp(ctx context.Context, orgID, appID string, req *DSUpdateOAuthAppRequest) (*DSOAuthApp, error)
+	DeleteOrgDSOAuthApp(ctx context.Context, orgID, appID string) error
+	ListProjectDSOAuthApps(ctx context.Context, projectID string) ([]DSOAuthApp, error)
+	CreateProjectDSOAuthApp(ctx context.Context, projectID string, req *DSCreateOAuthAppRequest) (*DSOAuthApp, error)
+	GetProjectDSOAuthApp(ctx context.Context, projectID, appID string) (*DSOAuthApp, error)
+	UpdateProjectDSOAuthApp(ctx context.Context, projectID, appID string, req *DSUpdateOAuthAppRequest) (*DSOAuthApp, error)
+	DeleteProjectDSOAuthApp(ctx context.Context, projectID, appID string) error
+	// Org source Apps (GitHub App credentials; org-admin only) and the
+	// github_app trigger bindings on a source (see memory_datasources.go and
+	// source_apps.go). App secrets are write-only: no read returns them.
+	ListOrgSourceApps(ctx context.Context, orgID string) ([]SourceApp, error)
+	CreateOrgSourceApp(ctx context.Context, orgID string, req *DSSourceAppRequest) (*SourceApp, error)
+	DeleteOrgSourceApp(ctx context.Context, orgID, appID string) error
+	ListSourceTriggers(ctx context.Context, sourceID string) ([]DSSourceTrigger, error)
+	CreateSourceTrigger(ctx context.Context, sourceID string, req *DSSourceTriggerRequest) (*DSSourceTrigger, error)
+	UpdateSourceTrigger(ctx context.Context, sourceID, triggerID string, req *DSSourceTriggerRequest) (*DSSourceTrigger, error)
+	DeleteSourceTrigger(ctx context.Context, sourceID, triggerID string) error
 	ListProjectDSOAuthClients(ctx context.Context, projectID string) ([]DSOAuthClientConfig, error)
 	GetProjectDSOAuthClient(ctx context.Context, projectID, providerType string) (*DSOAuthClientConfig, error)
 	UpsertProjectDSOAuthClient(ctx context.Context, projectID, providerType string, req *DSSetOAuthClientRequest) (*DSOAuthClientConfig, error)

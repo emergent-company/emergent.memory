@@ -1220,6 +1220,12 @@ func TestMCPShareExternalOriginAndBundle(t *testing.T) {
 		"https://mcp.example.com/api/mcp",
 		`data-testid="mcp-share-bundle-link"`,
 		`href="https://mcp.example.com/api/mcp/bundle?token=emt_new_secret"`,
+		`data-testid="mcp-share-bundle-copy"`,
+		`data-testid="mcp-share-install-copy"`,
+		`id="mcp-share-reveal-modal-bundle-url"`,
+		`id="mcp-share-reveal-modal-install-url"`,
+		`value="https://mcp.example.com/api/mcp/bundle?token=emt_new_secret"`,
+		`value="https://mcp.example.com/api/mcp/install?name=memory&amp;token=emt_new_secret&amp;url=https%3A%2F%2Fmcp.example.com%2Fapi%2Fmcp"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("reveal missing %q in %s", want, body)

@@ -6,7 +6,7 @@ func TestSurfaceStream_ProgressiveParse(t *testing.T) {
 	s := NewSurfaceStream()
 
 	block := "```a2ui\n" +
-		`{"createSurface":{"surfaceId":"s1","catalogId":"basic"}}` + "\n" +
+		`{"createSurface":{"surfaceId":"s1","catalogId":"memory-basic"}}` + "\n" +
 		`{"updateComponents":{"surfaceId":"s1","components":[{"id":"p1","component":"proposal","kind":"change","summary":"hi"}]}}` + "\n" +
 		"```\n"
 
@@ -40,7 +40,7 @@ func TestSurfaceStream_ChunkBoundarySplitsLine(t *testing.T) {
 	if got := s.Feed("```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\""); got != nil {
 		t.Fatalf("partial line yielded %+v, want nil", got)
 	}
-	got := s.Feed(",\"catalogId\":\"basic\"}}\n```\n")
+	got := s.Feed(",\"catalogId\":\"memory-basic\"}}\n```\n")
 	if len(got) != 1 || got[0].CreateSurface == nil {
 		t.Fatalf("completed line yielded %+v, want one createSurface", got)
 	}
@@ -65,7 +65,7 @@ func TestSurfaceStream_IgnoresOrdinaryText(t *testing.T) {
 func TestSurfaceStream_InvalidLineMarksInvalid(t *testing.T) {
 	s := NewSurfaceStream()
 	s.Feed("```a2ui\n")
-	s.Feed(`{"createSurface":{"surfaceId":"s1","catalogId":"basic"}}` + "\n")
+	s.Feed(`{"createSurface":{"surfaceId":"s1","catalogId":"memory-basic"}}` + "\n")
 
 	if !s.Opened() {
 		t.Fatal("Opened() = false before the invalid line")
@@ -107,7 +107,7 @@ func TestSurfaceStream_DefaultSurfaceID(t *testing.T) {
 func TestSurfaceStream_UnterminatedFence(t *testing.T) {
 	s := NewSurfaceStream()
 	s.Feed("```a2ui\n")
-	s.Feed(`{"createSurface":{"surfaceId":"s1","catalogId":"basic"}}` + "\n")
+	s.Feed(`{"createSurface":{"surfaceId":"s1","catalogId":"memory-basic"}}` + "\n")
 	if !s.InFence() {
 		t.Fatal("InFence() = false while the block is unterminated")
 	}
@@ -116,10 +116,54 @@ func TestSurfaceStream_UnterminatedFence(t *testing.T) {
 	}
 }
 
+func TestSurfaceStream_ScopesSurfaceIDs(t *testing.T) {
+	// Two streams of the same conversation, both naming their surface "s1" (the
+	// id the prompt teaches), must yield different wire ids (#592).
+	one := NewNamespacedSurfaceStream("run-1.0")
+	two := NewNamespacedSurfaceStream("run-2.0")
+	block := "```a2ui\n" +
+		`{"createSurface":{"surfaceId":"s1","catalogId":"` + CatalogID + `"}}` + "\n" +
+		`{"updateComponents":{"surfaceId":"s1","components":[{"id":"r1","component":"result","rows":[]}]}}` + "\n" +
+		"```\n"
+
+	got := one.Feed(block)
+	if len(got) != 2 {
+		t.Fatalf("Feed returned %d messages, want 2", len(got))
+	}
+	if got[0].CreateSurface == nil || got[0].CreateSurface.SurfaceID != "run-1.0:s1" {
+		t.Fatalf("first message = %+v, want createSurface run-1.0:s1", got[0])
+	}
+	if got[1].UpdateComponents == nil || got[1].UpdateComponents.SurfaceID != "run-1.0:s1" {
+		t.Fatalf("second message = %+v, want updateComponents run-1.0:s1", got[1])
+	}
+	if one.SurfaceID() != "run-1.0:s1" {
+		t.Fatalf("SurfaceID() = %q, want run-1.0:s1", one.SurfaceID())
+	}
+	if len(one.Messages()) != 2 || one.Messages()[0].CreateSurface.SurfaceID != "run-1.0:s1" {
+		t.Fatalf("Messages() = %+v, want the scoped cumulative set", one.Messages())
+	}
+
+	two.Feed(block)
+	if one.SurfaceID() == two.SurfaceID() {
+		t.Fatalf("both streams scoped to the same surface id %q", one.SurfaceID())
+	}
+}
+
+func TestSurfaceStream_ScopedDefaultSurfaceID(t *testing.T) {
+	// A block with no createSurface derives DefaultSurfaceID; the namespace must
+	// still make it distinct from another turn's block.
+	s := NewNamespacedSurfaceStream("run-3.1")
+	s.Feed("```a2ui\n")
+	s.Feed(`{"updateComponents":{"surfaceId":"s1","components":[]}}` + "\n")
+	if got, want := s.SurfaceID(), "run-3.1:"+DefaultSurfaceID; got != want {
+		t.Fatalf("SurfaceID() = %q, want %q", got, want)
+	}
+}
+
 func TestSurfaceStream_MessagesReturnsCopy(t *testing.T) {
 	s := NewSurfaceStream()
 	s.Feed("```a2ui\n")
-	s.Feed(`{"createSurface":{"surfaceId":"s1","catalogId":"basic"}}` + "\n")
+	s.Feed(`{"createSurface":{"surfaceId":"s1","catalogId":"memory-basic"}}` + "\n")
 
 	first := s.Messages()
 	if len(first) != 1 {
@@ -137,7 +181,7 @@ func TestSurfaceStream_InvalidResetsAtNextFence(t *testing.T) {
 
 	// Block 1: valid createSurface, then a malformed line → invalid.
 	s.Feed("```a2ui\n")
-	s.Feed(`{"createSurface":{"surfaceId":"s1","catalogId":"basic"}}` + "\n")
+	s.Feed(`{"createSurface":{"surfaceId":"s1","catalogId":"memory-basic"}}` + "\n")
 	s.Feed("not json\n```\n")
 	if !s.Invalid() {
 		t.Fatal("Invalid() = false after a malformed line, want true")

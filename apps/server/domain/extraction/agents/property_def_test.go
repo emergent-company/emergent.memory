@@ -60,6 +60,22 @@ func TestPropertyDefFromMap(t *testing.T) {
 		def := PropertyDefFromMap(map[string]any{"type": "array"})
 		assert.Nil(t, def.Items)
 	})
+
+	t.Run("copies enum values", func(t *testing.T) {
+		def := PropertyDefFromMap(map[string]any{
+			"type": "string",
+			"enum": []any{"draft", "published"},
+		})
+		assert.Equal(t, []any{"draft", "published"}, def.Enum)
+	})
+
+	t.Run("accepts a string-slice enum", func(t *testing.T) {
+		def := PropertyDefFromMap(map[string]any{
+			"type": "string",
+			"enum": []string{"low", "high"},
+		})
+		assert.Equal(t, []any{"low", "high"}, def.Enum)
+	})
 }
 
 // A schema pack decoded into PropertyDef directly must carry the same items
@@ -75,6 +91,18 @@ func TestPropertyDefJSONItems(t *testing.T) {
 	require.NotNil(t, nested.Items)
 	require.NotNil(t, nested.Items.Items)
 	assert.Equal(t, "number", nested.Items.Items.Type)
+}
+
+// A schema pack decoded directly into PropertyDef must carry the same enum the
+// map-based decoder does, including numeric and boolean values.
+func TestPropertyDefJSONEnum(t *testing.T) {
+	var def PropertyDef
+	require.NoError(t, json.Unmarshal([]byte(`{"type":"string","enum":["draft","published"]}`), &def))
+	assert.Equal(t, []any{"draft", "published"}, def.Enum)
+
+	var numeric PropertyDef
+	require.NoError(t, json.Unmarshal([]byte(`{"type":"integer","enum":[1,2,3]}`), &numeric))
+	assert.Equal(t, []any{float64(1), float64(2), float64(3)}, numeric.Enum)
 }
 
 // Non-object items forms are valid JSON Schema that this codebase does not
@@ -127,4 +155,30 @@ func TestPropertyDefPromptTypeLabel_Constraints(t *testing.T) {
 		Minimum: &zero,
 		Maximum: &ten,
 	}.promptTypeLabel(), "bounds declared on the array render after its element type")
+}
+
+// Enum values are enforced at write time too, so the prompt must name them or
+// it asks the model for a value it cannot know is invalid.
+func TestPropertyDefPromptTypeLabel_Enum(t *testing.T) {
+	assert.Equal(t, "string, one of: draft, published", PropertyDef{
+		Type: "string",
+		Enum: []any{"draft", "published"},
+	}.promptTypeLabel())
+	assert.Equal(t, "integer, one of: 1, 2", PropertyDef{
+		Type: "integer",
+		Enum: []any{float64(1), float64(2)},
+	}.promptTypeLabel())
+	assert.Equal(t, "array of string, elements one of: a, b", PropertyDef{
+		Type:  "array",
+		Items: &PropertyDef{Type: "string", Enum: []any{"a", "b"}},
+	}.promptTypeLabel())
+	assert.Equal(t, "array of string, elements one of: \"a,b\", c", PropertyDef{
+		Type:  "array",
+		Items: &PropertyDef{Type: "string", Enum: []any{"a,b", "c"}},
+	}.promptTypeLabel(), "ambiguous string values are quoted")
+	assert.Equal(t, "array of string, elements one of: a, b", PropertyDef{
+		Type:  "array",
+		Enum:  []any{"whole-array-value"},
+		Items: &PropertyDef{Type: "string", Enum: []any{"a", "b"}},
+	}.promptTypeLabel(), "array-level enum is documentation-only and does not hide the item enum")
 }

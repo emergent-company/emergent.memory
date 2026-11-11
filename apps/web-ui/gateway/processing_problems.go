@@ -377,18 +377,26 @@ type processingRetryAction struct {
 // decision, not a reason to leave the user without a button after they fixed
 // Providers. Queues with no safe retry (schema migrations, blueprints, email,
 // sessions) return false and keep navigation only.
+//
+// Internal failures are offered here too. "Retrying cannot work" assumed a
+// pipeline crash reproduces for ever, but the crash has a cause we ship a fix
+// for — after that update the same row is exactly what the reader wants to
+// re-run. Gating on the class left the row with nothing to click once the
+// build was fixed, so the class only decides the confirmation, not whether a
+// button exists.
 func processingProblemRetry(p ProcessingProblem) (processingRetryAction, bool) {
-	// An internal failure is a bug in the pipeline: re-running the same input
-	// reproducibly stops in the same place, so the row keeps the remediation
-	// ("report it with the technical detail") and no button that cannot work.
-	if p.Failure.Class == "internal" {
-		return processingRetryAction{}, false
-	}
-
 	confirm := ""
 	if !p.Failure.Retryable {
-		confirm = "This run stopped on a " + strings.ToLower(processingClassLabel(p.Failure.Class)) +
-			" problem. Retrying before fixing the cause will likely fail the same way. Retry anyway?"
+		if p.Failure.Class == "internal" {
+			// The cause is the build, not the document or a setting, so ask
+			// whether Memory has been updated rather than whether the user
+			// fixed something they own.
+			confirm = "This run stopped on a bug in Memory, not on your document or your settings. " +
+				"Retry only if Memory has been updated since this run — otherwise it will stop in the same place. Retry anyway?"
+		} else {
+			confirm = "This run stopped on a " + strings.ToLower(processingClassLabel(p.Failure.Class)) +
+				" problem. Retrying before fixing the cause will likely fail the same way. Retry anyway?"
+		}
 	}
 
 	switch p.Queue {

@@ -141,6 +141,11 @@ func TestSecretRevealModalRendersRevealAnatomy(t *testing.T) {
 	p.EndpointID = "mcp-share-endpoint"
 	p.Endpoint = "https://example.test/mcp"
 	p.Warning = "This key will not be shown again."
+	p.BundleURL = "https://example.test/api/mcp/bundle?token=secret-value"
+	p.BundleTestID = "bundle-download"
+	p.BundleCopyTestID = "bundle-copy"
+	p.InstallURL = "https://example.test/api/mcp/install?name=memory&token=secret-value&url=https%3A%2F%2Fexample.test%2Fmcp"
+	p.InstallTestID = "install-copy"
 	p.DialogID = "mcp-share-reveal-modal"
 	p.Attrs = templ.Attributes{"data-mcp-share-reveal": "true"}
 	p.Snippets = templ.Raw("<div class=\"snippet-slot\">snippet</div>")
@@ -164,7 +169,23 @@ func TestSecretRevealModalRendersRevealAnatomy(t *testing.T) {
 		"Client setup",
 		"snippet-slot",
 		"Done — I've saved the key",
+		// Claude Desktop block: the download anchor plus a copy control for
+		// each private link that carries the key.
+		`data-testid="bundle-download"`,
+		`href="https://example.test/api/mcp/bundle?token=secret-value"`,
+		`data-testid="bundle-copy"`,
+		`data-testid="install-copy"`,
+		`id="mcp-share-reveal-modal-bundle-url"`,
+		`id="mcp-share-reveal-modal-install-url"`,
+		`value="https://example.test/api/mcp/bundle?token=secret-value"`,
+		`value="https://example.test/api/mcp/install?name=memory&amp;token=secret-value&amp;url=https%3A%2F%2Fexample.test%2Fmcp"`,
+		"Bundle link (private — contains this key)",
+		"Install link (private — contains this key)",
+		"Copy link",
 	)
+	// The key-bearing URLs stay in the read-only inputs; inlining them into a
+	// clipboardCopyText onclick would put the key in the markup twice.
+	assertNotContains(t, html, `clipboardCopyText(&#39;https://example.test`)
 }
 
 func TestSecretRevealModalNounAndTestID(t *testing.T) {

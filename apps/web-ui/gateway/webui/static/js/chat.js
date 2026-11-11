@@ -735,6 +735,7 @@
     updateUrl();
     clearActiveRailItem();
     if (messages) messages.innerHTML = "";
+    MemoryChatComponents.resetA2UI(messages);
     bubble = null; bubbleHTML = ""; bubbleText = "";
     if (empty) empty.classList.remove("hidden");
     liveTurn = false;
@@ -2090,6 +2091,7 @@
     updateUrl();
     updateChatHeader();
     if (messages) messages.innerHTML = "";
+    MemoryChatComponents.resetA2UI(messages);
     bubble = null; bubbleHTML = ""; bubbleText = "";
   }
 

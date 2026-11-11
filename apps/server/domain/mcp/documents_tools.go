@@ -1,17 +1,16 @@
 package mcp
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/emergent-company/emergent.memory/domain/documents"
-	"github.com/emergent-company/emergent.memory/internal/storage"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
 const maxUploadBytes = 10 * 1024 * 1024 // 10 MB
@@ -71,7 +70,10 @@ func documentsToolDefinitions() []ToolDefinition {
 			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "documents:write",
 			Description: "Upload a document to the current project by providing its content as a base64-encoded string. " +
-				"The decoded content must not exceed 10 MB. Returns the created document id, title, and conversion status.",
+				"The decoded content must not exceed 10 MB. The document is stored and parsed asynchronously: its text and chunks appear once the parsing job finishes (poll document-get). " +
+				"Identical bytes already uploaded to this project are not uploaded, stored or parsed again: the existing document is returned with isDuplicate=true and existingDocumentId set, so retrying this call is cheap. " +
+				"Object extraction follows the project's auto_extract_objects setting unless auto_extract overrides it for this call. " +
+				"Returns the created (or existing) document id, title, and conversion status.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -86,6 +88,12 @@ func documentsToolDefinitions() []ToolDefinition {
 					"mime_type": {
 						Type:        "string",
 						Description: "MIME type of the file (e.g. 'application/pdf', 'text/markdown'). Optional — inferred from filename if omitted.",
+					},
+					"auto_extract": {
+						Type: "boolean",
+						Description: "Optional per-call override of the project's auto_extract_objects setting. " +
+							"Pass false to store and parse this file without spending extraction tokens; pass true to extract even when the project default is off. " +
+							"Omit to use the project default.",
 					},
 				},
 				Required: []string{"filename", "content_base64"},
@@ -249,51 +257,49 @@ func (s *Service) executeUploadDocument(ctx context.Context, projectID string, a
 		mimeType = inferMIMEType(filename)
 	}
 
-	// Same guard as the HTTP upload paths: an empty or unreadable file would
-	// otherwise become a document that is Ready with zero chunks (#243).
-	if err := documents.ValidateUploadContent(mimeType, filename, int64(len(decoded))); err != nil {
+	// Per-call opt-out (and opt-in) for object extraction. Absent means "use the
+	// project's auto_extract_objects default", which is what this tool did
+	// before; an explicit false is the only way an agent can store a file
+	// without spending extraction tokens, and an explicit true can request
+	// extraction in a project that defaults to off.
+	requestedAutoExtract, err := boolToolArgPtr(args, "auto_extract")
+	if err != nil {
 		return nil, fmt.Errorf("upload_document: %w", err)
 	}
 
-	// Compute file hash for deduplication
-	hashSum := sha256.Sum256(decoded)
-	fileHash := hex.EncodeToString(hashSum[:])
-
-	// Resolve org ID from auth context
-	orgID := auth.OrgIDFromContext(ctx)
-
-	uploadParams := documents.UploadParams{
-		ProjectID:       projectID,
-		OrgID:           orgID,
-		CreatedByUserID: documents.OptionalUserID(auth.UserIDFromContext(ctx)),
-		Filename:        filename,
-		MimeType:        mimeType,
-		FileSize:        int64(len(decoded)),
-		FileHash:        fileHash,
+	// One shared ingestor for every upload entry point (#586). It validates the
+	// content, stores the object, creates the document row and queues the
+	// parsing job — the step this tool used to omit, leaving MCP uploads stored
+	// but with zero characters and zero chunks.
+	if s.uploadIngestor == nil {
+		return nil, fmt.Errorf("upload_document: document upload is not configured in this deployment")
 	}
 
-	// Upload to storage. Fail loudly when storage is unavailable instead of
-	// silently creating an unusable document record with no content.
-	if s.storageSvc == nil || !s.storageSvc.Enabled() {
-		return nil, fmt.Errorf("upload_document: object storage is not configured — document content cannot be stored")
-	}
-	uploadResult, err := s.storageSvc.UploadDocument(ctx, bytes.NewReader(decoded), int64(len(decoded)), storage.DocumentUploadOptions{
-		OrgID:     orgID,
-		ProjectID: projectID,
-		Filename:  filename,
-		UploadOptions: storage.UploadOptions{
-			ContentType: mimeType,
-		},
+	resp, err := s.uploadIngestor.Ingest(ctx, documents.IngestUploadParams{
+		ProjectID:            projectID,
+		OrgID:                auth.OrgIDFromContext(ctx),
+		CreatedByUserID:      documents.OptionalUserID(auth.UserIDFromContext(ctx)),
+		Filename:             filename,
+		MimeType:             mimeType,
+		Data:                 decoded,
+		RequestedAutoExtract: requestedAutoExtract,
+		// An MCP client retries — a timeout, a reconnect, a client that is not
+		// sure the call landed. Re-parsing and re-extracting the same bytes on
+		// every retry charges the project's budget for one upload, so this path
+		// (and only this path) asks the ingestor to return the document the
+		// bytes already produced.
+		DedupeByFileHash: true,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("upload_document: storage upload failed: %w", err)
-	}
-	uploadParams.StorageKey = uploadResult.Key
-	uploadParams.StorageURL = uploadResult.StorageURL
-
-	resp, err := s.documentsSvc.CreateFromUpload(ctx, uploadParams)
-	if err != nil {
-		return nil, fmt.Errorf("upload_document: %w", err)
+		// The tool result is client-visible: report the client-facing message and
+		// keep the wrapped detail (SQL text, upstream bodies) in the log.
+		if s.log != nil {
+			s.log.Error("MCP document upload failed",
+				slog.String("project_id", projectID),
+				slog.String("filename", filename),
+				logger.Error(err))
+		}
+		return nil, fmt.Errorf("upload_document: %s", apperror.PublicMessage(err))
 	}
 	return s.wrapResult(resp)
 }

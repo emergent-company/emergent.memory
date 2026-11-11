@@ -22,7 +22,7 @@ func TestAnswerTextEventsFiltersSurfaces(t *testing.T) {
 	// The fence marker and everything inside it produce no answer text.
 	for _, chunk := range []string{
 		"```a2ui\n",
-		`{"createSurface":{"surfaceId":"s1","catalogId":"basic"}}` + "\n",
+		`{"createSurface":{"surfaceId":"s1","catalogId":"memory-basic"}}` + "\n",
 		`{"updateComponents":{"surfaceId":"s1","components":[{"id":"p1","component":"proposal","kind":"change","summary":"hi"}]}}` + "\n",
 		"```\n",
 	} {
@@ -50,7 +50,7 @@ func TestFlushAnswerText(t *testing.T) {
 	// An unterminated surface holds only the surface: nothing to show.
 	open := a2ui.NewTextFilter()
 	answerTextEvents(open, "done:\n```a2ui\n")
-	answerTextEvents(open, `{"createSurface":{"surfaceId":"s1","catalogId":"basic"}}`)
+	answerTextEvents(open, `{"createSurface":{"surfaceId":"s1","catalogId":"memory-basic"}}`)
 	if evs := flushAnswerText(open); len(evs) != 0 {
 		t.Fatalf("flush of an unterminated surface = %+v, want nothing", evs)
 	}
@@ -65,7 +65,7 @@ func TestFlushAnswerText(t *testing.T) {
 
 func TestReplyForStorage(t *testing.T) {
 	valid := "```a2ui\n" +
-		`{"createSurface":{"surfaceId":"s1","catalogId":"basic"}}` + "\n```"
+		`{"createSurface":{"surfaceId":"s1","catalogId":"memory-basic"}}` + "\n```"
 
 	// Prose plus a valid surface: prose kept, surface extracted.
 	stored, surfaces, hasBlock := replyForStorage("Prose before.\n" + valid + "\nProse after.")

@@ -244,49 +244,9 @@ func (s *Service) ApplyChangeset(ctx context.Context, projectID uuid.UUID, req *
 	}
 	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
 
-	results := make([]ChangesetItemResult, 0, len(req.Objects)+len(req.Relationships)+len(req.Withdrawals))
-	objByRef := make(map[string]*GraphObject, len(req.Objects))
-	objectEmbedIDs := make([]string, 0, len(req.Objects))
-	relEmbedIDs := make([]string, 0, len(req.Relationships))
-
-	for i, objItem := range req.Objects {
-		res, obj, err := s.applyChangesetObject(ctx, tx.Tx, projectID, req.BranchID, req.SourceID, &objItem, schemas, actorType, actorUUID, credentialKind, credentialID)
-		if err != nil {
-			return nil, fmt.Errorf("objects[%d] (%s): %w", i, objItem.ExternalID, err)
-		}
-		results = append(results, res)
-		if objItem.Ref != "" && obj != nil {
-			objByRef[objItem.Ref] = obj
-		}
-		if obj != nil && (res.Outcome == ChangesetOutcomeCreated || res.Outcome == ChangesetOutcomeUpdated) {
-			objectEmbedIDs = append(objectEmbedIDs, obj.ID.String())
-		}
-	}
-
-	for i, relItem := range req.Relationships {
-		res, relID, err := s.applyChangesetRelationship(ctx, tx.Tx, projectID, req.BranchID, req.SourceID, &relItem, objByRef, schemas, actorType, actorUUID)
-		if err != nil {
-			return nil, fmt.Errorf("relationships[%d] (%s): %w", i, relItem.ExternalID, err)
-		}
-		results = append(results, res)
-		if relID != nil && (res.Outcome == ChangesetOutcomeCreated || res.Outcome == ChangesetOutcomeUpdated) {
-			relEmbedIDs = append(relEmbedIDs, relID.String())
-		}
-	}
-
-	now := time.Now()
-	for i, w := range req.Withdrawals {
-		kind := w.SubjectKind
-		if kind == "" {
-			kind = ContributionSubjectObject
-		}
-		res, err := s.applyChangesetWithdrawal(ctx, tx.Tx, projectID, req.BranchID, req.SourceID, kind, w.ExternalID, now)
-		if err != nil {
-			return nil, fmt.Errorf("withdrawals[%d] (%s): %w", i, w.ExternalID, err)
-		}
-		results = append(results, res)
-	}
-
+	// Allocate the generation before the items are applied, not after: each
+	// item's outcome records the generation that produced it (task 1.1), and the
+	// counter read and the generation insert still share this transaction.
 	generation := int64(0)
 	if req.Generation != nil && *req.Generation > 0 {
 		var last int64
@@ -305,6 +265,49 @@ func (s *Service) ApplyChangeset(ctx context.Context, projectID uuid.UUID, req *
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	results := make([]ChangesetItemResult, 0, len(req.Objects)+len(req.Relationships)+len(req.Withdrawals))
+	objByRef := make(map[string]*GraphObject, len(req.Objects))
+	objectEmbedIDs := make([]string, 0, len(req.Objects))
+	relEmbedIDs := make([]string, 0, len(req.Relationships))
+
+	for i, objItem := range req.Objects {
+		res, obj, err := s.applyChangesetObject(ctx, tx.Tx, projectID, req.BranchID, req.SourceID, &objItem, schemas, actorType, actorUUID, credentialKind, credentialID, generation)
+		if err != nil {
+			return nil, fmt.Errorf("objects[%d] (%s): %w", i, objItem.ExternalID, err)
+		}
+		results = append(results, res)
+		if objItem.Ref != "" && obj != nil {
+			objByRef[objItem.Ref] = obj
+		}
+		if obj != nil && (res.Outcome == ChangesetOutcomeCreated || res.Outcome == ChangesetOutcomeUpdated) {
+			objectEmbedIDs = append(objectEmbedIDs, obj.ID.String())
+		}
+	}
+
+	for i, relItem := range req.Relationships {
+		res, relID, err := s.applyChangesetRelationship(ctx, tx.Tx, projectID, req.BranchID, req.SourceID, &relItem, objByRef, schemas, actorType, actorUUID, generation)
+		if err != nil {
+			return nil, fmt.Errorf("relationships[%d] (%s): %w", i, relItem.ExternalID, err)
+		}
+		results = append(results, res)
+		if relID != nil && (res.Outcome == ChangesetOutcomeCreated || res.Outcome == ChangesetOutcomeUpdated) {
+			relEmbedIDs = append(relEmbedIDs, relID.String())
+		}
+	}
+
+	now := time.Now()
+	for i, w := range req.Withdrawals {
+		kind := w.SubjectKind
+		if kind == "" {
+			kind = ContributionSubjectObject
+		}
+		res, err := s.applyChangesetWithdrawal(ctx, tx.Tx, projectID, req.BranchID, req.SourceID, kind, w.ExternalID, now, generation)
+		if err != nil {
+			return nil, fmt.Errorf("withdrawals[%d] (%s): %w", i, w.ExternalID, err)
+		}
+		results = append(results, res)
 	}
 
 	// ItemCount is the number of items that actually changed state, not the
@@ -367,6 +370,7 @@ func (s *Service) applyChangesetObject(
 	actorID *uuid.UUID,
 	credentialKind string,
 	credentialID *uuid.UUID,
+	generation int64,
 ) (ChangesetItemResult, *GraphObject, error) {
 	result := ChangesetItemResult{Kind: ContributionSubjectObject, ExternalID: item.ExternalID}
 	seq := revisionSeq(item.ExternalRevisionSeq)
@@ -382,6 +386,23 @@ func (s *Service) applyChangesetObject(
 			result.Outcome = ChangesetOutcomeSkipped
 			result.SubjectID = &subjectID
 			result.Reason = fmt.Sprintf("stored revision sequence %d is not older than %d", contrib.ExternalRevisionSeq, seq)
+			// The skip is the record's outcome, not just the response's: a
+			// source that only pulls feedback learns why its revision was not
+			// applied (task 3.1).
+			if err := s.recordOutcome(ctx, tx, &SourceOutcome{
+				ProjectID:           projectID,
+				SourceID:            sourceID,
+				SubjectKind:         ContributionSubjectObject,
+				ExternalID:          item.ExternalID,
+				State:               SourceOutcomeSkipped,
+				CanonicalID:         s.canonicalForVersion(ctx, tx, projectID, ContributionSubjectObject, contrib.SubjectVersionID),
+				ExternalRevision:    revisionString(item.ExternalRevision),
+				ExternalRevisionSeq: seq,
+				Generation:          generation,
+				Reason:              result.Reason,
+			}); err != nil {
+				return result, nil, err
+			}
 			return result, nil, nil
 		}
 
@@ -418,12 +439,30 @@ func (s *Service) applyChangesetObject(
 			if !granted {
 				result.Outcome = ChangesetOutcomeRefused
 				result.Reason = "object is owned by another source and the caller holds no grant for it"
+				headCanonical := head.CanonicalID
+				if err := s.recordOutcome(ctx, tx, &SourceOutcome{
+					ProjectID:           projectID,
+					SourceID:            sourceID,
+					SubjectKind:         ContributionSubjectObject,
+					ExternalID:          item.ExternalID,
+					State:               SourceOutcomeSkipped,
+					CanonicalID:         &headCanonical,
+					ExternalRevision:    revisionString(item.ExternalRevision),
+					ExternalRevisionSeq: seq,
+					Generation:          generation,
+					Reason:              result.Reason,
+				}); err != nil {
+					return result, nil, err
+				}
 				return result, nil, nil
 			}
 			adopt = true
 		}
 
-		version := buildChangesetObjectVersion(head, item, sourceID, schemas, actorType, actorID, adopt, s)
+		version, err := buildChangesetObjectVersion(head, item, sourceID, schemas, actorType, actorID, adopt, s)
+		if err != nil {
+			return result, nil, err
+		}
 		if err := s.repo.CreateVersion(ctx, tx, head, version); err != nil {
 			return result, nil, err
 		}
@@ -440,9 +479,32 @@ func (s *Service) applyChangesetObject(
 			return result, nil, err
 		}
 
+		// The caller's record materialized at the version it just wrote. This is
+		// the adopter's own outcome as well: adoption changes who owns the row,
+		// and the adopter's record is the one now backing it.
+		canonicalID := version.CanonicalID
+		if err := s.recordOutcome(ctx, tx, &SourceOutcome{
+			ProjectID:           projectID,
+			SourceID:            sourceID,
+			SubjectKind:         ContributionSubjectObject,
+			ExternalID:          item.ExternalID,
+			State:               SourceOutcomeMaterialized,
+			CanonicalID:         &canonicalID,
+			ExternalRevision:    revisionString(item.ExternalRevision),
+			ExternalRevisionSeq: seq,
+			Generation:          generation,
+		}); err != nil {
+			return result, nil, err
+		}
+		if adopt && head.OwnerSourceID != nil {
+			if err := s.recordAdoptedOutcome(ctx, tx, projectID, *head.OwnerSourceID, sourceID, version.ID, canonicalID, generation); err != nil {
+				return result, nil, err
+			}
+		}
+
 		result.Outcome = ChangesetOutcomeUpdated
-		subjectID, canonicalID, v := version.ID, version.CanonicalID, version.Version
-		result.SubjectID, result.CanonicalID, result.Version = &subjectID, &canonicalID, &v
+		subjectID, canonicalIDResp, v := version.ID, version.CanonicalID, version.Version
+		result.SubjectID, result.CanonicalID, result.Version = &subjectID, &canonicalIDResp, &v
 		return result, version, nil
 	}
 
@@ -458,9 +520,24 @@ func (s *Service) applyChangesetObject(
 		return result, nil, err
 	}
 
+	canonicalID := obj.CanonicalID
+	if err := s.recordOutcome(ctx, tx, &SourceOutcome{
+		ProjectID:           projectID,
+		SourceID:            sourceID,
+		SubjectKind:         ContributionSubjectObject,
+		ExternalID:          item.ExternalID,
+		State:               SourceOutcomeMaterialized,
+		CanonicalID:         &canonicalID,
+		ExternalRevision:    revisionString(item.ExternalRevision),
+		ExternalRevisionSeq: seq,
+		Generation:          generation,
+	}); err != nil {
+		return result, nil, err
+	}
+
 	result.Outcome = ChangesetOutcomeCreated
-	subjectID, canonicalID, v := obj.ID, obj.CanonicalID, obj.Version
-	result.SubjectID, result.CanonicalID, result.Version = &subjectID, &canonicalID, &v
+	subjectID, canonicalIDResp, v := obj.ID, obj.CanonicalID, obj.Version
+	result.SubjectID, result.CanonicalID, result.Version = &subjectID, &canonicalIDResp, &v
 	return result, obj, nil
 }
 
@@ -475,6 +552,7 @@ func (s *Service) applyChangesetRelationship(
 	schemas *ExtractionSchemas,
 	actorType string,
 	actorID *uuid.UUID,
+	generation int64,
 ) (ChangesetItemResult, *uuid.UUID, error) {
 	result := ChangesetItemResult{Kind: ContributionSubjectRelationship, ExternalID: item.ExternalID}
 	seq := revisionSeq(item.ExternalRevisionSeq)
@@ -495,6 +573,20 @@ func (s *Service) applyChangesetRelationship(
 		result.Outcome = ChangesetOutcomeSkipped
 		result.SubjectID = &subjectID
 		result.Reason = fmt.Sprintf("stored revision sequence %d is not older than %d", contrib.ExternalRevisionSeq, seq)
+		if err := s.recordOutcome(ctx, tx, &SourceOutcome{
+			ProjectID:           projectID,
+			SourceID:            sourceID,
+			SubjectKind:         ContributionSubjectRelationship,
+			ExternalID:          item.ExternalID,
+			State:               SourceOutcomeSkipped,
+			CanonicalID:         s.canonicalForVersion(ctx, tx, projectID, ContributionSubjectRelationship, contrib.SubjectVersionID),
+			ExternalRevision:    revisionString(item.ExternalRevision),
+			ExternalRevisionSeq: seq,
+			Generation:          generation,
+			Reason:              result.Reason,
+		}); err != nil {
+			return result, nil, err
+		}
 		return result, nil, nil
 	}
 
@@ -557,8 +649,17 @@ func (s *Service) applyChangesetRelationship(
 		// Look the schema up by head.Type, not version.Type: the repository
 		// inherits the head's type (it is part of the edge's identity), so a
 		// pushed type that differs is not the type the row is stored with.
+		validated := version.Properties
+		if item.Properties != nil {
+			var err error
+			validated, err = validateChangesetRelationshipProperties(
+				version.Properties, schemas, head.Type, srcObj.Type, dstObj.Type)
+			if err != nil {
+				return result, nil, apperror.NewBadRequest("property validation failed: " + err.Error())
+			}
+		}
 		version.Properties = normaliseChangesetRelationshipDateProperties(
-			version.Properties, schemas, head.Type, srcObj.Type, dstObj.Type)
+			validated, schemas, head.Type, srcObj.Type, dstObj.Type)
 		if item.Weight != nil {
 			version.Weight = item.Weight
 		}
@@ -578,9 +679,24 @@ func (s *Service) applyChangesetRelationship(
 			return result, nil, err
 		}
 
+		canonicalID := version.CanonicalID
+		if err := s.recordOutcome(ctx, tx, &SourceOutcome{
+			ProjectID:           projectID,
+			SourceID:            sourceID,
+			SubjectKind:         ContributionSubjectRelationship,
+			ExternalID:          item.ExternalID,
+			State:               SourceOutcomeMaterialized,
+			CanonicalID:         &canonicalID,
+			ExternalRevision:    revisionString(item.ExternalRevision),
+			ExternalRevisionSeq: seq,
+			Generation:          generation,
+		}); err != nil {
+			return result, nil, err
+		}
+
 		result.Outcome = ChangesetOutcomeUpdated
-		subjectID, canonicalID, v := version.ID, version.CanonicalID, version.Version
-		result.SubjectID, result.CanonicalID, result.Version = &subjectID, &canonicalID, &v
+		subjectID, canonicalIDResp, v := version.ID, version.CanonicalID, version.Version
+		result.SubjectID, result.CanonicalID, result.Version = &subjectID, &canonicalIDResp, &v
 		return result, &version.ID, nil
 	}
 
@@ -588,7 +704,11 @@ func (s *Service) applyChangesetRelationship(
 	if props == nil {
 		props = map[string]any{}
 	}
-	props = normaliseChangesetRelationshipDateProperties(props, schemas, relType, srcObj.Type, dstObj.Type)
+	validated, err := validateChangesetRelationshipProperties(props, schemas, relType, srcObj.Type, dstObj.Type)
+	if err != nil {
+		return result, nil, apperror.NewBadRequest("property validation failed: " + err.Error())
+	}
+	props = normaliseChangesetRelationshipDateProperties(validated, schemas, relType, srcObj.Type, dstObj.Type)
 	rel := &GraphRelationship{
 		ProjectID:     projectID,
 		BranchID:      srcObj.BranchID,
@@ -615,9 +735,24 @@ func (s *Service) applyChangesetRelationship(
 		return result, nil, err
 	}
 
+	canonicalID := rel.CanonicalID
+	if err := s.recordOutcome(ctx, tx, &SourceOutcome{
+		ProjectID:           projectID,
+		SourceID:            sourceID,
+		SubjectKind:         ContributionSubjectRelationship,
+		ExternalID:          item.ExternalID,
+		State:               SourceOutcomeMaterialized,
+		CanonicalID:         &canonicalID,
+		ExternalRevision:    revisionString(item.ExternalRevision),
+		ExternalRevisionSeq: seq,
+		Generation:          generation,
+	}); err != nil {
+		return result, nil, err
+	}
+
 	result.Outcome = ChangesetOutcomeCreated
-	subjectID, canonicalID, v := rel.ID, rel.CanonicalID, rel.Version
-	result.SubjectID, result.CanonicalID, result.Version = &subjectID, &canonicalID, &v
+	subjectID, canonicalIDResp, v := rel.ID, rel.CanonicalID, rel.Version
+	result.SubjectID, result.CanonicalID, result.Version = &subjectID, &canonicalIDResp, &v
 	return result, &rel.ID, nil
 }
 
@@ -629,6 +764,7 @@ func (s *Service) applyChangesetWithdrawal(
 	sourceID uuid.UUID,
 	kind, externalID string,
 	at time.Time,
+	generation int64,
 ) (ChangesetItemResult, error) {
 	result := ChangesetItemResult{Kind: kind, ExternalID: externalID}
 
@@ -639,9 +775,25 @@ func (s *Service) applyChangesetWithdrawal(
 	if contrib == nil {
 		result.Outcome = ChangesetOutcomeNotFound
 		result.Reason = "no present contribution for this external id"
+		// No outcome row is written: a withdrawal for a record the source never
+		// contributed would invent an outcome for a record that does not exist.
 		return result, nil
 	}
 	if err := s.repo.WithdrawContribution(ctx, tx, contrib.ID, at); err != nil {
+		return result, err
+	}
+
+	if err := s.recordOutcome(ctx, tx, &SourceOutcome{
+		ProjectID:           projectID,
+		SourceID:            sourceID,
+		SubjectKind:         kind,
+		ExternalID:          externalID,
+		State:               SourceOutcomeWithdrawn,
+		CanonicalID:         s.canonicalForVersion(ctx, tx, projectID, kind, contrib.SubjectVersionID),
+		ExternalRevision:    contrib.ExternalRevision,
+		ExternalRevisionSeq: contrib.ExternalRevisionSeq,
+		Generation:          generation,
+	}); err != nil {
 		return result, err
 	}
 
@@ -695,6 +847,7 @@ func buildChangesetObject(projectID uuid.UUID, branchID *uuid.UUID, sourceID uui
 		ProjectID:     projectID,
 		BranchID:      branchID,
 		Type:          item.Type,
+		Name:          resolveObjectName(nil, props),
 		Key:           item.Key,
 		Status:        statusForWrite(props, item.Status),
 		Properties:    props,
@@ -714,7 +867,7 @@ func buildChangesetObject(projectID uuid.UUID, branchID *uuid.UUID, sourceID uui
 // push is authoritative for the content it owns, but never rewrites the
 // `_sources` array: that array belongs to the document-extraction path and this
 // capability leaves it alone.
-func buildChangesetObjectVersion(head *GraphObject, item *ChangesetObjectItem, sourceID uuid.UUID, schemas *ExtractionSchemas, actorType string, actorID *uuid.UUID, adopt bool, s *Service) *GraphObject {
+func buildChangesetObjectVersion(head *GraphObject, item *ChangesetObjectItem, sourceID uuid.UUID, schemas *ExtractionSchemas, actorType string, actorID *uuid.UUID, adopt bool, s *Service) (*GraphObject, error) {
 	version := *head
 	version.ID = uuid.Nil
 	version.SupersedesID = nil
@@ -754,21 +907,33 @@ func buildChangesetObjectVersion(head *GraphObject, item *ChangesetObjectItem, s
 			props[provenanceSourcesKey] = sources
 		}
 		version.Properties = props
+		if n := resolveObjectName(nil, props); n != nil {
+			version.Name = n
+		}
 	}
 
 	if schema, ok := objectSchema(schemas, version.Type); ok {
 		schemaVersion := schema.Version
 		version.SchemaVersion = &schemaVersion
-		// Normalise dates in place of full validation: a source push replaces
-		// the property map and may legitimately be partial, so required-field
-		// enforcement must not start failing here. (A brand-new object through
+		// A source push replaces the property map and may legitimately be
+		// partial, so validate the supplied delta without enforcing required
+		// fields. Type coercion and enums still apply, exactly as they do on
+		// the ordinary patch path. (A brand-new object through
 		// buildChangesetObject still runs full validation.) Date values still
 		// converge to YYYY-MM-DD (issue #402).
 		//
 		// Copy first: when the push omits properties, version.Properties still
-		// aliases head.Properties, and normalising in place would mutate the
-		// previous head the caller is holding.
-		version.Properties = normaliseDateProperties(copyProperties(version.Properties), schema)
+		// aliases head.Properties, and validating/normalising in place would
+		// mutate the previous head the caller is holding.
+		version.Properties = copyProperties(version.Properties)
+		if item.Properties != nil {
+			validated, err := validatePatchProperties(version.Properties, schema)
+			if err != nil {
+				return nil, apperror.NewBadRequest("property validation failed: " + err.Error())
+			}
+			version.Properties = validated
+		}
+		version.Properties = normaliseDateProperties(version.Properties, schema)
 	}
 
 	// A source push is authoritative for its own record: the row stays
@@ -782,7 +947,7 @@ func buildChangesetObjectVersion(head *GraphObject, item *ChangesetObjectItem, s
 		version.DataClass = DataClassSource
 	}
 	version.OwnerSourceID = &sourceID
-	return &version
+	return &version, nil
 }
 
 func objectSchema(schemas *ExtractionSchemas, objectType string) (agents.ObjectSchema, bool) {
@@ -791,6 +956,20 @@ func objectSchema(schemas *ExtractionSchemas, objectType string) (agents.ObjectS
 	}
 	schema, ok := schemas.ObjectSchemas[objectType]
 	return schema, ok
+}
+
+// validateChangesetRelationshipProperties coerces and validates the supplied
+// edge-property delta against the matched relationship schema. Required fields
+// are not enforced because a source push may legitimately send a partial map.
+func validateChangesetRelationshipProperties(props map[string]any, schemas *ExtractionSchemas, relType, srcType, dstType string) (map[string]any, error) {
+	if len(props) == 0 || schemas == nil || schemas.RelationshipSchemas == nil || relType == "" {
+		return props, nil
+	}
+	relSchema, ok := relationshipSchemaFor(schemas.RelationshipSchemas, relType, srcType, dstType)
+	if !ok || len(relSchema.Properties) == 0 {
+		return props, nil
+	}
+	return validatePatchProperties(props, agents.ObjectSchema{Properties: relSchema.Properties})
 }
 
 // normaliseChangesetRelationshipDateProperties normalises an edge's date
@@ -848,6 +1027,16 @@ func revisionSeq(seq *int64) int64 {
 		return 0
 	}
 	return *seq
+}
+
+// revisionString renders the optional opaque revision a source sent. It is
+// recorded on the outcome but never compared: only external_revision_seq can
+// answer "is this push older".
+func revisionString(revision *string) string {
+	if revision == nil {
+		return ""
+	}
+	return *revision
 }
 
 // changesetValidationView adapts object items to the shapes the shared subgraph
@@ -948,6 +1137,12 @@ func (s *Service) unionMergeContributions(
 ) error {
 	if _, err := s.repo.CopyContributionsToVersion(ctx, tx, projectID, kind, fromVersionIDs, toVersionID, toBranchID); err != nil {
 		return fmt.Errorf("copy %s contributions: %w", kind, err)
+	}
+	// A merge unions the recorded synthesis inputs of both sides the same way:
+	// the merged version was derived from the source document/job as well as the
+	// target head, and a reader must be able to say so (#153).
+	if _, err := s.repo.copySynthesisLineageToVersion(ctx, tx, kind, fromVersionIDs, toVersionID); err != nil {
+		return fmt.Errorf("copy %s synthesis lineage: %w", kind, err)
 	}
 	return nil
 }

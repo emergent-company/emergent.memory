@@ -39,16 +39,27 @@ templ settingsSubNav(active string, providersMissing bool) {
 	{{ items := []components.RailItem{
 		{Key: "general", Href: "/settings", Icon: "lucide--settings", Label: "General"},
 		{Key: "assistant", Href: "/settings/assistant", Icon: "lucide--bot", Label: "Assistant"},
+		{Key: "extraction", Href: "/settings/extraction", Icon: "lucide--sparkles", Label: "Extraction"},
 		{Key: "members", Href: "/settings/members", Icon: "lucide--users", Label: "Members"},
 		{Key: "overrides", Href: "/settings/overrides", Icon: "lucide--wrench", Label: "Overrides"},
 		{Custom: providersRailItem(active, providersMissing)},
-		{Key: "voice", Href: "/settings/voice", Icon: "lucide--mic", Label: "Voice"},
-		{Key: "devices", Href: "/settings/devices", Icon: "lucide--monitor-smartphone", Label: "Connected devices"},
-		{Key: "connected-apps", Href: "/settings/connected-apps", Icon: "lucide--link", Label: "Connected apps"},
+	}
+	// Voice is a deployment capability: when VOICE_SUPPORTED=false there is no
+	// SFU, so the section is absent rather than a dead page.
+	if voiceSupported.Load() {
+		items = append(items, components.RailItem{Key: "voice", Href: "/settings/voice", Icon: "lucide--mic", Label: "Voice"})
+	}
+	items = append(items,
+		components.RailItem{Key: "devices", Href: "/settings/devices", Icon: "lucide--monitor-smartphone", Label: "Connected devices"},
+		components.RailItem{Key: "connected-apps", Href: "/settings/connected-apps", Icon: "lucide--link", Label: "Connected apps"},
 		// Credentials are visible to every project member; the per-provider
 		// editor and writes stay project-admin only.
-		{Key: "credentials", Href: "/settings/credentials", Icon: "lucide--key-round", Label: "Credentials"},
-	}
+		components.RailItem{Key: "credentials", Href: "/settings/credentials", Icon: "lucide--key-round", Label: "Credentials"},
+		// Source Apps are organization-scoped GitHub App credentials. Every
+		// member can open the page; the register/delete controls and the App
+		// list are org-admin only (the page renders the forbidden state).
+		components.RailItem{Key: "source-apps", Href: "/settings/source-apps", Icon: "lucide--webhook", Label: "Source apps"},
+	)
 	items = append(items, components.RailItem{Key: "budget", Href: "/settings/budget", Icon: "lucide--wallet", Label: "Budget"}) }}
 	@components.SettingsRail("Settings sections", active, items)
 }
@@ -108,6 +119,29 @@ templ AssistantSettingsPage(data assistantSettingsPageData) {
 		@flashToasts(data.FlashMsg, data.FlashErr)
 		@layout.Rail(settingsSubNav("assistant", data.ProvidersMissing), nil) {
 			@assistantPanel(data.AssistantAgent, data.Agents)
+		}
+	}
+}
+
+// ExtractionSettingsPage renders the Extraction section: every extraction
+// control in one place — automatic extraction for uploads and data-source
+// syncs, post-extraction merge, schema discovery, the agent that runs
+// extraction (empty = built-in pipeline), its run budget, and the audio
+// transcription prompt.
+templ ExtractionSettingsPage(data extractionSettingsPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Extraction")), "", "Extraction", "Automatic object extraction, review, discovery, and the agent that runs it.", detailHeaderOpts{Margin: "mb-6"}) {
+		}
+		@flashToasts(data.FlashMsg, data.FlashErr)
+		if data.LoadErr != nil {
+			@pageErrorNotice("Extraction settings unavailable", data.LoadErr)
+		} else {
+			@layout.Rail(settingsSubNav("extraction", data.ProvidersMissing), nil) {
+				@extractionAutomationPanel(data.Project)
+				@extractionReviewPanel(data.Project)
+				@extractionAgentPanel(data)
+				@extractionAudioPanel(data)
+			}
 		}
 	}
 }
@@ -244,8 +278,9 @@ templ projectSettingsHeader() {
 	@pageHeader("Project", "Project Settings", "Project-level Memory configuration — the project record and the remember pipeline.")
 }
 
-// projectInfoPanel edits the project record itself: name, project info, chat
-// prompt template, and extraction toggles. The name is required; the free-text
+// projectInfoPanel edits the project record itself: name, project info and the
+// chat prompt template. Extraction toggles live on the dedicated Extraction
+// page (settingsSubNav "extraction") so every extraction control sits together. The name is required; the free-text
 // fields are always submitted so clearing them clears the value.
 templ projectInfoPanel(p *Project) {
 	@ui.Section("Project info", ui.SectionProps{
@@ -262,11 +297,6 @@ templ projectInfoPanel(p *Project) {
 			@settingsField("chat-prompt-template", "Chat prompt template", "Prepended to every chat prompt in this project. Re-primes the model for all conversations — a wrong template degrades every response, not just one.", "Template used for chat prompts.", nil) {
 				<textarea id="chat-prompt-template" name="chat_prompt_template" rows="3" placeholder="You are chatting within {project_name}…" class="textarea w-full resize-none" hx-post="/settings/project/chat_prompt_template" hx-trigger="change delay:400ms" hx-include="this" hx-swap="none">{ p.ChatPromptTemplate }</textarea>
 			}
-			<div class="flex flex-wrap gap-x-8 gap-y-2">
-@components.ToggleField("auto_extract_objects", "Auto-extract objects from new documents", "When on, newly uploaded documents run LLM extraction automatically. Keeps the graph current but spends tokens on every upload; when off you trigger extraction manually.", p.AutoExtractObjects != nil && *p.AutoExtractObjects, templ.Attributes{"hx-post": "/settings/project/auto_extract_objects", "hx-trigger": "change", "hx-include": "this", "hx-swap": "none"})
-@components.ToggleField("auto_merge_extraction_branches", "Auto-merge extraction branches", "When on, extraction staging branches merge into the main graph automatically once extraction completes. Saves a manual merge but skips the review step — bad extractions reach the main graph unchecked.", p.AutoMergeExtractionBranches != nil && *p.AutoMergeExtractionBranches, templ.Attributes{"hx-post": "/settings/project/auto_merge_extraction_branches", "hx-trigger": "change", "hx-include": "this", "hx-swap": "none"})
-@components.ToggleField("auto_discovery_enabled", "Auto-discover schema after sync", "When on, a source sync that adds documents also runs schema discovery on them, proposing entity types for review. Turning it off stops discovery from spending tokens on every sync — run it yourself from Schema → Schema discovery, or per document from the document page.", p.AutoDiscoveryEnabled == nil || *p.AutoDiscoveryEnabled, templ.Attributes{"hx-post": "/settings/project/auto_discovery_enabled", "hx-trigger": "change", "hx-include": "this", "hx-swap": "none"})
-			</div>
 		</div>
 	}
 }
@@ -524,6 +554,137 @@ templ rememberDedupPanel(rememberAgent, dedupThreshold string, agents []AgentDef
 				<input id="dedup-threshold" name="dedup_threshold" type="number" step="0.01" min="0" max="1" value={ dedupThreshold } placeholder="0.8" class="input w-full" hx-post="/settings/remember/dedup" hx-trigger="change delay:400ms" hx-include="this" hx-swap="none"/>
 			}
 		</div>
+	}
+}
+
+// extractionAutomationPanel is the "what runs automatically" half of the
+// extraction page: uploads and data-source syncs are independent switches
+// because a sync item is often noise a project does not want to pay to
+// extract, while an explicitly uploaded document usually is not.
+templ extractionAutomationPanel(p *Project) {
+	@ui.Section("Automatic extraction", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "memory-density-comfortable",
+	}) {
+		<div class="flex flex-col gap-4">
+			<div class="flex flex-wrap gap-x-8 gap-y-2">
+				@components.ToggleField("auto_extract_objects", "Auto-extract objects from new documents", "When on, newly uploaded documents run LLM extraction automatically. Keeps the graph current but spends tokens on every upload; when off you trigger extraction manually (each upload can also override this).", p.AutoExtractObjects != nil && *p.AutoExtractObjects, templ.Attributes{"hx-post": "/settings/project/auto_extract_objects", "hx-trigger": "change", "hx-include": "this", "hx-swap": "none"})
+				@components.ToggleField("auto_extract_source_syncs", "Auto-extract objects after a data-source sync", "When on, every synced item and every new version appends extraction. Off keeps chunking and embedding (search still works) without spending tokens; extraction stays available per document. Default off.", p.AutoExtractSourceSyncs != nil && *p.AutoExtractSourceSyncs, templ.Attributes{"hx-post": "/settings/project/auto_extract_source_syncs", "hx-trigger": "change", "hx-include": "this", "hx-swap": "none"})
+			</div>
+		</div>
+	}
+}
+
+// extractionReviewPanel holds the post-extraction behaviours: merging staging
+// branches into the main graph and running schema discovery on synced
+// documents.
+templ extractionReviewPanel(p *Project) {
+	@ui.Section("After extraction", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "memory-density-comfortable",
+	}) {
+		<div class="flex flex-wrap gap-x-8 gap-y-2">
+			@components.ToggleField("auto_merge_extraction_branches", "Auto-merge extraction branches", "When on, extraction staging branches merge into the main graph automatically once extraction completes. Saves a manual merge but skips the review step — bad extractions reach the main graph unchecked.", p.AutoMergeExtractionBranches != nil && *p.AutoMergeExtractionBranches, templ.Attributes{"hx-post": "/settings/project/auto_merge_extraction_branches", "hx-trigger": "change", "hx-include": "this", "hx-swap": "none"})
+			@components.ToggleField("auto_discovery_enabled", "Auto-discover schema after sync", "When on, a source sync that adds documents also runs schema discovery on them, proposing entity types for review. Turning it off stops discovery from spending tokens on every sync — run it yourself from Schema → Schema discovery, or per document from the document page.", p.AutoDiscoveryEnabled == nil || *p.AutoDiscoveryEnabled, templ.Attributes{"hx-post": "/settings/project/auto_discovery_enabled", "hx-trigger": "change", "hx-include": "this", "hx-swap": "none"})
+		</div>
+	}
+}
+
+// extractionAgentPanel selects the agent that runs an extraction job. Empty
+// means the built-in staged pipeline (the current, deterministic extractor);
+// selecting a project agent definition runs the job as a real agent run, so the
+// definition's prompt, model, tools and skills apply. Ineligible definitions
+// (no entity/relationship write tools) stay visible but disabled with their
+// missing tools, so the page explains why one cannot be picked.
+templ extractionAgentPanel(data extractionSettingsPageData) {
+	@ui.Section("Extraction agent", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "memory-density-comfortable",
+	}) {
+		<div class="flex flex-col gap-4">
+			@settingsField("extraction-agent", "Extraction agent", "Which agent runs extraction jobs. The built-in pipeline is the staged, structured extractor used by default; a project agent runs the job with its own prompt, model, tools and skills and must be able to create entities and relationships. Extraction uses the project's generative model (Settings → Providers).", "Built-in extraction pipeline when empty.", nil) {
+				<select
+					id="extraction-agent"
+					name="extraction_agent"
+					class="select w-full"
+					disabled?={ data.AgentsUnavailable }
+					hx-post="/settings/extraction/agent"
+					hx-trigger="change"
+					hx-include="this"
+					hx-swap="none"
+					data-testid="extraction-agent-select"
+				>
+					<option value="" selected?={ data.ExtractionAgent == "" }>Built-in extraction pipeline (default)</option>
+					for _, o := range data.AgentOptions {
+						<option value={ o.ID } selected?={ o.ID == data.ExtractionAgent } disabled?={ !o.Eligible }>{ agentOptionLabel(o, "run extraction") }</option>
+					}
+					if data.ExtractionAgent != "" && !agentOptionListed(data.AgentOptions, data.ExtractionAgent) {
+						<option value={ data.ExtractionAgent } selected>{ data.ExtractionAgent } (unlisted)</option>
+					}
+				</select>
+			}
+			if data.ExtractionAgentWarning != "" {
+				<p class="text-warning text-xs" data-testid="extraction-agent-warning">{ data.ExtractionAgentWarning }</p>
+			}
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "-mt-2"}) {
+				Requires { extractionCapabilityRequirement }. Branch routing, job provenance and the suggested status are supplied by the job, not the agent. Agents missing required tools are listed but cannot be selected.
+			}
+			<form
+				hx-post="/settings/extraction/limits"
+				hx-trigger="submit"
+				hx-swap="none"
+				class="flex flex-col gap-3 border-t border-base-content/10 pt-4"
+				data-testid="extraction-limits-form"
+			>
+				<p class="text-sm font-medium">Agent run budget</p>
+				<div class="flex flex-col gap-3 sm:flex-row sm:items-end">
+					<div class="flex grow flex-col gap-1">
+						<label class="text-sm font-medium" for="agent-max-steps">Max steps</label>
+						<input id="agent-max-steps" name="agent_max_steps" type="number" min="1" max="200" step="1" class="input w-full" value={ data.AgentMaxSteps } placeholder="server default" data-testid="extraction-max-steps"/>
+					</div>
+					<div class="flex grow flex-col gap-1">
+						<label class="text-sm font-medium" for="agent-timeout-seconds">Timeout (seconds)</label>
+						<input id="agent-timeout-seconds" name="agent_timeout_seconds" type="number" min="10" max="3600" step="1" class="input w-full" value={ data.AgentTimeoutSeconds } placeholder="server default" data-testid="extraction-timeout-seconds"/>
+					</div>
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonOutline,
+						Size:    ui.ButtonSM,
+						Attrs:   templ.Attributes{"data-testid": "extraction-limits-save"},
+					}) {
+						Save limits
+					}
+				</div>
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "-mt-1"}) {
+					Applies only to agent-run extraction. Empty fields use the server defaults.
+				}
+			</form>
+		</div>
+	}
+}
+
+// extractionAudioPanel exposes the per-project Whisper initial prompt, which
+// suppresses hallucinated names in transcribed audio (the same prompt is used
+// by both Whisper and the ASR adapters that accept one).
+templ extractionAudioPanel(data extractionSettingsPageData) {
+	@ui.Section("Audio transcription", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "memory-density-comfortable",
+	}) {
+		@settingsField("whisper-initial-prompt", "Whisper initial prompt", "Optional context prepended to audio transcription (names, jargon, expected vocabulary). Cuts hallucinated proper nouns in meeting and voice-note transcripts. Empty leaves the provider default.", "Vocabulary and names to expect.", nil) {
+			<textarea
+				id="whisper-initial-prompt"
+				name="whisper_initial_prompt"
+				rows="3"
+				class="textarea w-full resize-none"
+				placeholder="e.g. Product names, team member names, acronyms…"
+				hx-post="/settings/extraction/whisper"
+				hx-trigger="change delay:500ms"
+				hx-include="this"
+				hx-swap="none"
+				data-testid="extraction-whisper-prompt"
+			>{ data.WhisperInitialPrompt }</textarea>
+		}
 	}
 }
 

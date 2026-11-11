@@ -33,7 +33,12 @@ type sessionClaims struct {
 	// (/api/user/avatar?v=<key>) when the user uploaded a profile photo; it
 	// wins over the IdP picture when both are present.
 	AvatarOverrideURL string `json:"avatar_override_url,omitempty"`
-	ExpiresAt         int64  `json:"exp"` // unix seconds
+	// Issuer is the ZITADEL_ISSUER that minted this session's tokens. A changed
+	// issuer (e.g. the public-domain cutover) makes the access token invalid at
+	// the memory server, so ensureFreshSession refreshes when it differs.
+	// Legacy cookies carry no issuer and refresh once to migrate.
+	Issuer    string `json:"iss,omitempty"`
+	ExpiresAt int64  `json:"exp"` // unix seconds
 }
 
 const (
