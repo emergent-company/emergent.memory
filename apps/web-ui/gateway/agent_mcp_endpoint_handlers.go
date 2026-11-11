@@ -52,7 +52,9 @@ type agentMCPReveal struct {
 	Token     string
 	MCPURL    string
 	BundleURL string
-	Snippets  []agentMCPKeySnippet
+	// InstallURL is the private claude:// install redirect for this key.
+	InstallURL string
+	Snippets   []agentMCPKeySnippet
 }
 
 // --- endpoint flows ---
@@ -112,13 +114,15 @@ func (s *Server) uiAgentMCPKeyCreate(c echo.Context) error {
 		return s.renderAgentSettingsWithMCPKeyErr(c, id, "Could not create the key", err, label)
 	}
 	secret.MCPURL = s.externalMCPURL(secret.MCPURL)
+	mcpURL := cmpOrStr(secret.MCPURL, s.externalMCPURL(ep.MCPURL))
 	return s.renderAgentSettingsWithMCP(c, id, agentSettingsData{MCPReveal: &agentMCPReveal{
-		Heading:   "Key created",
-		Label:     label,
-		Token:     secret.Token,
-		MCPURL:    cmpOrStr(secret.MCPURL, s.externalMCPURL(ep.MCPURL)),
-		BundleURL: s.serverPublicBaseURL() + "/api/mcp/agents/" + url.PathEscape(id) + "/bundle?token=" + url.QueryEscape(secret.Token),
-		Snippets:  agentMCPKeySnippets(*secret),
+		Heading:    "Key created",
+		Label:      label,
+		Token:      secret.Token,
+		MCPURL:     mcpURL,
+		BundleURL:  s.serverPublicBaseURL() + "/api/mcp/agents/" + url.PathEscape(id) + "/bundle?token=" + url.QueryEscape(secret.Token),
+		InstallURL: mcpInstallURL(s.serverPublicBaseURL(), mcpURL, secret.Token),
+		Snippets:   agentMCPKeySnippets(*secret),
 	}})
 }
 
@@ -154,12 +158,13 @@ func (s *Server) uiAgentMCPKeyRotate(c echo.Context) error {
 	}
 	secret.MCPURL = s.externalMCPURL(secret.MCPURL)
 	return s.renderAgentSettingsWithMCP(c, id, agentSettingsData{MCPReveal: &agentMCPReveal{
-		Heading:   "Key rotated",
-		Label:     secret.Label,
-		Token:     secret.Token,
-		MCPURL:    secret.MCPURL,
-		BundleURL: s.serverPublicBaseURL() + "/api/mcp/agents/" + url.PathEscape(id) + "/bundle?token=" + url.QueryEscape(secret.Token),
-		Snippets:  agentMCPKeySnippets(*secret),
+		Heading:    "Key rotated",
+		Label:      secret.Label,
+		Token:      secret.Token,
+		MCPURL:     secret.MCPURL,
+		BundleURL:  s.serverPublicBaseURL() + "/api/mcp/agents/" + url.PathEscape(id) + "/bundle?token=" + url.QueryEscape(secret.Token),
+		InstallURL: mcpInstallURL(s.serverPublicBaseURL(), secret.MCPURL, secret.Token),
+		Snippets:   agentMCPKeySnippets(*secret),
 	}})
 }
 
