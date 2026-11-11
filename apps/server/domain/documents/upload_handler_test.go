@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -31,12 +32,14 @@ type fakeStorage struct {
 	uploadKey   string
 	uploadErr   error
 	deleteErr   error
+	uploadCalls int
 	deletedKeys []string
 }
 
 func (f *fakeStorage) Enabled() bool { return f.enabled }
 
 func (f *fakeStorage) UploadDocument(_ context.Context, _ io.Reader, _ int64, _ storage.DocumentUploadOptions) (*storage.UploadResult, error) {
+	f.uploadCalls++
 	if f.uploadErr != nil {
 		return nil, f.uploadErr
 	}
@@ -289,8 +292,58 @@ func TestUploadBatch_EmptyFile_IsPerFileFailure(t *testing.T) {
 	assert.Contains(t, *got.Results[0].Error, "file is empty")
 }
 
-func TestComputeFileHash_KnownSHA256(t *testing.T) {
-	// SHA-256("hello world") = b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9
+// errStubDocumentCreator is a DocumentCreator whose insert always fails, so the
+// batch path's error reporting can be exercised without a database.
+type errStubDocumentCreator struct {
+	err error
+}
+
+func (f *errStubDocumentCreator) CreateFromUpload(_ context.Context, _ UploadParams) (*UploadDocumentResponse, error) {
+	return nil, f.err
+}
+
+// TestUploadBatch_IngestFailure_DoesNotLeakInternalDetail is the regression test
+// for the batch endpoint stringifying the ingest error: an internal failure used
+// to reach the client as "internal_error: An internal error occurred (pq: …)".
+// The response must carry the stable client-facing message and none of the
+// wrapped detail, which belongs in the log.
+func TestUploadBatch_IngestFailure_DoesNotLeakInternalDetail(t *testing.T) {
+	stor := &fakeStorage{enabled: true, uploadKey: "uploads/leak.md"}
+	internal := errors.New(`pq: relation "kb.documents" does not exist`)
+	h := &UploadHandler{
+		storage: stor,
+		ingest: NewUploadIngestor(
+			&errStubDocumentCreator{err: apperror.ErrInternal.WithInternal(internal)},
+			stor, &fakeParsingJobs{}, nil, discardLog()),
+		log: discardLog(),
+	}
+
+	body, ct := batchMultipartBody(t, map[string][]byte{"report.md": []byte("# report")})
+	req := httptest.NewRequest(http.MethodPost, "/upload/batch", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	e := echo.New()
+	c := e.NewContext(req, rec)
+	c.Set(string(auth.UserContextKey), &auth.AuthUser{ID: "u", OrgID: "o", ProjectID: "p"})
+
+	require.NoError(t, h.UploadBatch(c))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var got BatchUploadResult
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Equal(t, 1, got.Summary.Failed)
+	require.Len(t, got.Results, 1)
+	require.NotNil(t, got.Results[0].Error)
+
+	errText := *got.Results[0].Error
+	assert.Equal(t, apperror.ErrInternal.Message, errText,
+		"the client must get the stable message, not the internal form")
+	assert.NotContains(t, errText, `pq: relation`)
+	assert.NotContains(t, errText, "internal_error:", "the internal code prefix is not part of the client contract")
+	assert.NotContains(t, rec.Body.String(), `pq: relation`)
+}
+
+func TestComputeFileHash_KnownSHA256(t *testing.T) { // SHA-256("hello world") = b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9
 	h := computeFileHash([]byte("hello world"))
 	assert.Equal(t, "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9", h)
 }

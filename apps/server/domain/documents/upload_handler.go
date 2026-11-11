@@ -322,7 +322,16 @@ func (h *UploadHandler) processFileUpload(ctx context.Context, user *auth.AuthUs
 		SkipNotification: true,
 	})
 	if err != nil {
-		errMsg := err.Error()
+		// The batch endpoint is called directly by API clients, so the per-file
+		// error it reports must be the client-facing message only. err.Error()
+		// would carry the apperror's "code: message (internal detail)" form —
+		// and any non-apperror straight through — putting SQL text and internal
+		// codes in a response body. The detail belongs in the log.
+		h.log.Error("batch upload: file ingest failed",
+			slog.String("filename", filename),
+			slog.String("project_id", user.ProjectID),
+			logger.Error(err))
+		errMsg := apperror.PublicMessage(err)
 		return BatchUploadFileResult{Filename: filename, Status: "failed", Error: &errMsg}
 	}
 
