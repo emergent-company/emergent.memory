@@ -36,6 +36,13 @@ type Project struct {
 	// discovery only runs through the explicit start/retry endpoints.
 	AutoDiscoveryEnabled bool `bun:"auto_discovery_enabled,notnull,default:true" json:"auto_discovery_enabled"`
 
+	// AutoExtractSourceSyncs runs object extraction after a data-source sync
+	// ingests an item or appends a new version (added in migration 00293). It is
+	// separate from AutoExtractObjects, which governs uploaded/created
+	// documents. Defaults to false: synced items still chunk and embed, but
+	// extraction is opt-in so a sync never spends tokens unasked.
+	AutoExtractSourceSyncs bool `bun:"auto_extract_source_syncs,notnull,default:false" json:"auto_extract_source_syncs"`
+
 	// SkillCapture is the project-level automatic skill-capture policy (added in
 	// migration 00270_add_agent_skill_capture.sql). The zero value means "off",
 	// so the feature is opt-in.
@@ -135,6 +142,9 @@ type ProjectDTO struct {
 	// column defaults to true, so an absent field would read as "off" in a UI
 	// that renders a toggle and silently disable discovery for every project.
 	AutoDiscoveryEnabled *bool `json:"auto_discovery_enabled,omitempty"`
+	// AutoExtractSourceSyncs is emitted only when true: the column defaults to
+	// false, so an absent field correctly reads as "off".
+	AutoExtractSourceSyncs *bool `json:"auto_extract_source_syncs,omitempty"`
 	// MainBranchID is the UUID of the project's root branch (parent_branch_id IS NULL).
 	// Callers can use this as targetBranchID when merging without knowing the branch UUID,
 	// or pass the magic string "main" to the merge endpoint directly.
@@ -195,6 +205,7 @@ type UpdateProjectRequest struct {
 	BudgetAlertThreshold        *float64       `json:"budget_alert_threshold,omitempty"`
 	AutoMergeExtractionBranches *bool          `json:"auto_merge_extraction_branches,omitempty"`
 	AutoDiscoveryEnabled        *bool          `json:"auto_discovery_enabled,omitempty"`
+	AutoExtractSourceSyncs      *bool          `json:"auto_extract_source_syncs,omitempty"`
 	// SkillCapture replaces the project capture policy when present. An object
 	// with mode "off" disables capture; omitting the field leaves it untouched.
 	SkillCapture *skills.ProjectSkillCaptureConfig `json:"skill_capture,omitempty"`
@@ -223,6 +234,10 @@ func (p *Project) ToDTO() ProjectDTO {
 	if p.AutoMergeExtractionBranches {
 		val := p.AutoMergeExtractionBranches
 		dto.AutoMergeExtractionBranches = &val
+	}
+	if p.AutoExtractSourceSyncs {
+		val := p.AutoExtractSourceSyncs
+		dto.AutoExtractSourceSyncs = &val
 	}
 
 	// AutoDiscoveryEnabled is emitted whether true or false: the column defaults

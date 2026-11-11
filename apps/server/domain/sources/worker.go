@@ -38,16 +38,24 @@ type DiscoveryStarter interface {
 	AutoDiscoveryEnabled(ctx context.Context, projectID uuid.UUID) (bool, error)
 }
 
+// SourceExtractReader reports the project's auto-extract-after-source-sync
+// setting. The worker resolves it once per sync job, so a settings change
+// applies from the next run and every item in one run shares one decision.
+type SourceExtractReader interface {
+	AutoExtractSourceSyncs(ctx context.Context, projectID uuid.UUID) (bool, error)
+}
+
 // SyncWorker polls for pending sync jobs and drives them through
 // pending → processing → completed|failed|cancelled, isolating per-item errors
 // and persisting durable progress as it advances. It is provider-agnostic: it
 // resolves the source's provider from the registry and drives its Connector.
 type SyncWorker struct {
-	svc       *Service
-	docs      *documents.Service
-	xberg     *xberg.Client
-	discovery DiscoveryStarter
-	log       *slog.Logger
+	svc        *Service
+	docs       *documents.Service
+	xberg      *xberg.Client
+	discovery  DiscoveryStarter
+	sourceSync SourceExtractReader
+	log        *slog.Logger
 
 	interval          time.Duration
 	batchSize         int
@@ -60,14 +68,15 @@ type SyncWorker struct {
 	wg        sync.WaitGroup
 }
 
-// NewSyncWorker creates a sync worker. The xberg client and discovery starter
-// are constructor-injected (not setters) so tests can substitute fakes. A nil
-// discovery/xberg is handled by skipping those paths.
+// NewSyncWorker creates a sync worker. The xberg client, discovery starter and
+// source-extract reader are constructor-injected (not setters) so tests can
+// substitute fakes. A nil dependency is handled by skipping its path.
 func NewSyncWorker(
 	svc *Service,
 	docs *documents.Service,
 	xbergClient *xberg.Client,
 	discovery DiscoveryStarter,
+	sourceSync SourceExtractReader,
 	log *slog.Logger,
 ) *SyncWorker {
 	return &SyncWorker{
@@ -75,6 +84,7 @@ func NewSyncWorker(
 		docs:              docs,
 		xberg:             xbergClient,
 		discovery:         discovery,
+		sourceSync:        sourceSync,
 		log:               log.With(logger.Scope("sources.worker")),
 		interval:          5 * time.Second,
 		batchSize:         10,
@@ -428,6 +438,21 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 		return w.failJob(ctx, job, src, err)
 	}
 
+	// Resolve the project's extraction switch once for the whole run: it is a
+	// project intent (not per item), and a read failure fails closed so a
+	// transient settings outage cannot start an unasked token spend. Chunking
+	// and embedding still run when extraction stays off.
+	extractItems := false
+	if w.sourceSync != nil {
+		enabled, sErr := w.sourceSync.AutoExtractSourceSyncs(ctx, job.ProjectID)
+		if sErr != nil {
+			jobLog.Warn("failed to resolve auto_extract_source_syncs; skipping extraction for this sync",
+				logger.Error(sErr))
+		} else {
+			extractItems = enabled
+		}
+	}
+
 	enumerating := "enumerating"
 	if err := w.svc.repo.UpdateSyncJobProgress(ctx, job.ID, SyncProgress{Phase: &enumerating}); err != nil {
 		return w.failJob(ctx, job, src, err)
@@ -576,6 +601,7 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 			MimeType:   mimeType,
 			Content:    content,
 			SourceType: provider.Catalog().SourceType,
+			Extract:    extractItems,
 		})
 		docID := ""
 		if err == nil {

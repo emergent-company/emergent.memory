@@ -597,7 +597,7 @@ func (s *Service) ApplySourceItem(ctx context.Context, p ApplySourceItemParams) 
 		if err := s.repo.InsertDocument(ctx, doc); err != nil {
 			return nil, err
 		}
-		s.processSourceDocument(ctx, p.ProjectID, doc.ID)
+		s.processSourceDocument(ctx, p.ProjectID, doc.ID, p.Extract)
 		// A first ingest is not announced: the member who connected the source
 		// already knows, and a newly connected source would otherwise dump one
 		// row per item into the inbox. Only subsequent versions announce.
@@ -638,7 +638,7 @@ func (s *Service) ApplySourceItem(ctx context.Context, p ApplySourceItemParams) 
 	if err := s.repo.CreateVersion(ctx, newVersion); err != nil {
 		return nil, err
 	}
-	s.processSourceDocument(ctx, p.ProjectID, newVersion.ID)
+	s.processSourceDocument(ctx, p.ProjectID, newVersion.ID, p.Extract)
 	// Scheduled source syncs have no actor: nothing is excluded.
 	s.notifyDocumentEvent(ctx, p.ProjectID, versionSyncedNotice(newVersion.ID, p.Filename, newVersion.Version, p.SourceID))
 	return &ApplySourceItemResult{DocumentID: newVersion.ID, Version: newVersion.Version, NewVersion: true}, nil
@@ -708,10 +708,12 @@ func (s *Service) GetVersionHistory(ctx context.Context, projectID, documentID s
 }
 
 // processSourceDocument runs the post-write pipeline for a source document:
-// mark conversion completed → recreate chunks → trigger extraction. Errors are
-// logged but not returned — the document/version write already succeeded,
-// mirroring the raw-content create path.
-func (s *Service) processSourceDocument(ctx context.Context, projectID, documentID string) {
+// mark conversion completed → recreate chunks → optionally trigger extraction.
+// errors are logged but not returned — the document/version write already
+// succeeded, mirroring the raw-content create path. extract is the project's
+// auto_extract_source_syncs setting, resolved once by the sync worker; false
+// still chunks and embeds so search works without spending extraction tokens.
+func (s *Service) processSourceDocument(ctx context.Context, projectID, documentID string, extract bool) {
 	if err := s.MarkConversionCompleted(ctx, documentID); err != nil {
 		s.log.Warn("failed to mark conversion completed for source document",
 			slog.String("document_id", documentID),
@@ -728,7 +730,7 @@ func (s *Service) processSourceDocument(ctx context.Context, projectID, document
 			logger.Error(err))
 	}
 
-	if s.extractionJobs == nil {
+	if !extract || s.extractionJobs == nil {
 		return
 	}
 	if err := s.extractionJobs.TriggerForDocument(ctx, projectID, documentID); err != nil {

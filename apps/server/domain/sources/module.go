@@ -11,6 +11,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
+	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/gdrive"
@@ -23,6 +24,7 @@ var Module = fx.Module("sources",
 		ProvideService,
 		NewHandler,
 		NewDiscoveryStarter,
+		NewSourceExtractReader,
 		NewSyncWorker,
 		NewReviewToolHandler,
 	),
@@ -97,6 +99,22 @@ func (a *discoveryStarterAdapter) AutoDiscoveryEnabled(ctx context.Context, proj
 // NewDiscoveryStarter provides DiscoveryStarter backed by the discovery module.
 func NewDiscoveryStarter(svc *discoveryjobs.Service) DiscoveryStarter {
 	return &discoveryStarterAdapter{svc: svc}
+}
+
+// sourceExtractAdapter adapts *projects.Repository to SourceExtractReader so the
+// sync worker can honour the project's extraction switch without importing the
+// projects domain itself.
+type sourceExtractAdapter struct {
+	repo *projects.Repository
+}
+
+func (a *sourceExtractAdapter) AutoExtractSourceSyncs(ctx context.Context, projectID uuid.UUID) (bool, error) {
+	return a.repo.AutoExtractSourceSyncs(ctx, projectID.String())
+}
+
+// NewSourceExtractReader provides SourceExtractReader backed by projects.
+func NewSourceExtractReader(repo *projects.Repository) SourceExtractReader {
+	return &sourceExtractAdapter{repo: repo}
 }
 
 // RegisterSyncWorkerLifecycle registers the sync worker with the fx lifecycle.

@@ -1568,7 +1568,7 @@ func (s *Server) uiUploadDocument(c echo.Context) error {
 	}
 	defer func() { _ = src.Close() }()
 
-	res, err := s.memory.UploadDocument(c.Request().Context(), file.Filename, src)
+	res, err := s.memory.UploadDocument(c.Request().Context(), file.Filename, src, requestedAutoExtract(c))
 	if err != nil {
 		return redirectWithError(c, "/documents", err)
 	}

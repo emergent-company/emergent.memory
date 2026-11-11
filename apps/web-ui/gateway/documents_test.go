@@ -238,7 +238,7 @@ func TestUploadDocument(t *testing.T) {
 	defer srv.Close()
 
 	m := NewMemoryClient(srv.URL, "proj-1")
-	res, err := m.UploadDocument(context.Background(), "hello.txt", strings.NewReader("hello world"))
+	res, err := m.UploadDocument(context.Background(), "hello.txt", strings.NewReader("hello world"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestUploadDocumentDuplicate(t *testing.T) {
 	defer srv.Close()
 
 	m := NewMemoryClient(srv.URL, "proj-1")
-	res, err := m.UploadDocument(context.Background(), "hello.txt", strings.NewReader("hello world"))
+	res, err := m.UploadDocument(context.Background(), "hello.txt", strings.NewReader("hello world"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +291,7 @@ func TestUploadDocumentError(t *testing.T) {
 	}))
 	defer srv.Close()
 	m := NewMemoryClient(srv.URL, "proj")
-	if _, err := m.UploadDocument(context.Background(), "x.txt", strings.NewReader("x")); err == nil {
+	if _, err := m.UploadDocument(context.Background(), "x.txt", strings.NewReader("x"), nil); err == nil {
 		t.Fatal("want error, got nil")
 	}
 }

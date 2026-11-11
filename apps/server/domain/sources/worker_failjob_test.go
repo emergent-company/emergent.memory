@@ -56,7 +56,7 @@ func TestFailJob_ParksOnlyTerminalFailures(t *testing.T) {
 	key := make([]byte, 32)
 	cfg := &config.Config{LLMProvider: config.LLMProviderConfig{EncryptionKey: hex.EncodeToString(key)}}
 	svc := NewService(repo, cfg, log, NewDefaultRegistry())
-	worker := NewSyncWorker(svc, nil, nil, nil, log)
+	worker := NewSyncWorker(svc, nil, nil, nil, nil, log)
 
 	projectID := uuid.New()
 	interval := 60
@@ -126,7 +126,7 @@ func TestFailJob_LeavesTheSourceActiveWhenTheGrantWasReplaced(t *testing.T) {
 	key := make([]byte, 32)
 	cfg := &config.Config{LLMProvider: config.LLMProviderConfig{EncryptionKey: hex.EncodeToString(key)}}
 	svc := NewService(repo, cfg, log, NewDefaultRegistry())
-	worker := NewSyncWorker(svc, nil, nil, nil, log)
+	worker := NewSyncWorker(svc, nil, nil, nil, nil, log)
 
 	projectID := uuid.New()
 	interval := 60

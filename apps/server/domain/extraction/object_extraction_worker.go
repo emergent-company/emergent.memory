@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
+	domainagents "github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
@@ -110,6 +111,8 @@ type ObjectExtractionWorker struct {
 	pipelineInputModifier PipelineInputModifier  // optional; nil → no modification
 	notificationsSvc      projectNotifier        // optional; nil → no review-ready/lifecycle notifications
 	runRecorder           *RunRecorder           // optional; nil → extraction transcripts are not recorded
+	agentsRepo            extractionAgentStore   // optional; nil → agent-run extraction unavailable
+	agentRunner           extractionAgentRunner  // optional; nil → agent-run extraction unavailable
 	config                *ObjectExtractionWorkerConfig
 	log                   *slog.Logger
 	scaler                *syshealth.ConcurrencyScaler
@@ -150,6 +153,30 @@ func NewObjectExtractionWorker(
 		scaler:         scaler,
 		stopCh:         make(chan struct{}),
 	}
+}
+
+// extractionAgentRunner is the executor subset agent-run extraction needs.
+// *domainagents.AgentExecutor satisfies it; tests inject a fake.
+type extractionAgentRunner interface {
+	Execute(ctx context.Context, req domainagents.ExecuteRequest) (*domainagents.ExecuteResult, error)
+}
+
+// extractionAgentStore is the repository subset agent-run extraction reads: the
+// project setting that selects the definition, the definition itself, and the
+// runtime agent row a run needs. Implemented by *domainagents.Repository.
+type extractionAgentStore interface {
+	GetProjectSetting(ctx context.Context, projectID, category, key string) (*domainagents.ProjectSetting, error)
+	FindDefinitionByID(ctx context.Context, id string, projectID *string) (*domainagents.AgentDefinition, error)
+	FindByID(ctx context.Context, id string, projectID *string) (*domainagents.Agent, error)
+}
+
+// WithAgentExtraction wires the agent definition repository and executor used
+// when a project selects a custom agent for extraction. Nil (the default) keeps
+// every job on the built-in pipeline.
+func (w *ObjectExtractionWorker) WithAgentExtraction(repo extractionAgentStore, runner extractionAgentRunner) *ObjectExtractionWorker {
+	w.agentsRepo = repo
+	w.agentRunner = runner
+	return w
 }
 
 // WithLimitResolver sets an optional ModelLimitResolver on the worker.
@@ -538,9 +565,17 @@ func (e *extractionBatchError) Unwrap() error { return e.Err }
 
 // processJob processes a single extraction job.
 func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtractionJob) (result *ObjectExtractionResults, err error) {
+	// Resolve the project's extraction agent before opening the transcript run:
+	// agent-run mode gets a real agent run from the executor, so the synthetic
+	// pipeline transcript (and its run) must not be created for it.
+	selection := w.selectedExtractionAgent(ctx, job)
+
 	// Open the job's transcript run first, so even a job that fails while loading
 	// its document leaves a run with a failure message rather than nothing.
-	runID, transcriptHeader := w.startExtractionRun(ctx, job)
+	runID, transcriptHeader := "", ""
+	if selection == nil {
+		runID, transcriptHeader = w.startExtractionRun(ctx, job)
+	}
 	if runID != "" {
 		defer func() {
 			finishCtx := context.WithoutCancel(ctx)
@@ -652,92 +687,102 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 		}
 	}
 
-	var traceLogger agents.TraceLogger
-	documentID := ""
-	if job.DocumentID != nil {
-		documentID = *job.DocumentID
-	}
-	if tl, err := agents.NewExtractionTraceLogger(agents.TraceLoggerConfig{
-		JobID:      job.ID,
-		DocumentID: documentID,
-		ProjectID:  job.ProjectID,
-	}); err != nil {
-		w.log.Warn("failed to create trace logger, continuing without tracing",
-			slog.String("error", err.Error()),
-		)
-		traceLogger = &agents.NullTraceLogger{}
-	} else {
-		traceLogger = tl
-		defer tl.Close()
-	}
-	// Bridge the pipeline's stage callbacks to the job's run so the prompts and
-	// model responses render as a chat transcript. The file logger above stays
-	// the full-fidelity record; the transcript stores the prompt and answer
-	// whole (only a runaway-output guard cuts one).
-	if runID != "" {
-		traceLogger = newRunTraceLogger(w.runRecorder, runID, traceLogger, transcriptHeader, w.log)
-	}
-
-	// Create extraction pipeline (shared across all batches).
-	pipeline, err := agents.NewExtractionPipeline(agents.ExtractionPipelineConfig{
-		ModelFactory:        w.modelFactory,
-		ObjectSchemas:       schemas.ObjectSchemas,
-		RelationshipSchemas: schemas.RelationshipSchemas,
-		OrphanThreshold:     w.config.OrphanThreshold,
-		MaxRetries:          w.config.MaxRetries,
-		Logger:              w.log,
-		TraceLogger:         traceLogger,
-	})
-	if err != nil {
-		// Pipeline creation failed — delete the (empty) staging branch to avoid clutter.
-		w.deleteStagingBranch(ctx, job, stagingBranchID)
-		return nil, fmt.Errorf("create pipeline: %w", err)
-	}
-
-	// Run extraction over each batch, accumulating results.
-	// persistResults upserts by (project_id, type, name) so duplicate entities
-	// across overlapping batches are merged naturally.
-
 	// Resolve the source document's version once per job (not per batch) so the
 	// provenance stamp is consistent across all batches of this job.
 	documentVersion := w.resolveDocumentVersion(ctx, job)
 
 	var totalResult *ObjectExtractionResults
-	for i, batch := range batches {
-		if len(batches) > 1 {
-			w.log.Info("processing extraction batch",
-				slog.Int("batch", i+1),
-				slog.Int("total_batches", len(batches)),
-				slog.Int("chars", len(batch)),
+	if selection != nil {
+		// A project-selected agent runs the job as a real agent run, writing into
+		// the same staging branch with the same provenance the pipeline uses.
+		totalResult, err = w.runAgentExtraction(ctx, job, selection, stagingBranchID, schemas, batches, documentVersion)
+		if err != nil {
+			w.deleteStagingBranch(ctx, job, stagingBranchID)
+			return nil, err
+		}
+	} else {
+		var traceLogger agents.TraceLogger
+		documentID := ""
+		if job.DocumentID != nil {
+			documentID = *job.DocumentID
+		}
+		if tl, err := agents.NewExtractionTraceLogger(agents.TraceLoggerConfig{
+			JobID:      job.ID,
+			DocumentID: documentID,
+			ProjectID:  job.ProjectID,
+		}); err != nil {
+			w.log.Warn("failed to create trace logger, continuing without tracing",
+				slog.String("error", err.Error()),
 			)
+			traceLogger = &agents.NullTraceLogger{}
+		} else {
+			traceLogger = tl
+			defer tl.Close()
+		}
+		// Bridge the pipeline's stage callbacks to the job's run so the prompts and
+		// model responses render as a chat transcript. The file logger above stays
+		// the full-fidelity record; the transcript stores the prompt and answer
+		// whole (only a runaway-output guard cuts one).
+		if runID != "" {
+			traceLogger = newRunTraceLogger(w.runRecorder, runID, traceLogger, transcriptHeader, w.log)
 		}
 
-		pipelineInput := agents.ExtractionPipelineInput{
-			DocumentText:        batch,
+		// Create extraction pipeline (shared across all batches).
+		pipeline, err := agents.NewExtractionPipeline(agents.ExtractionPipelineConfig{
+			ModelFactory:        w.modelFactory,
 			ObjectSchemas:       schemas.ObjectSchemas,
 			RelationshipSchemas: schemas.RelationshipSchemas,
-			AllowedTypes:        job.EnabledTypes,
-			DomainGuidance:      classificationResult.DomainGuidance,
-		}
-		if w.pipelineInputModifier != nil {
-			pipelineInput = w.pipelineInputModifier(pipelineInput)
-		}
-		pipelineOutput, err := pipeline.Run(ctx, pipelineInput)
+			OrphanThreshold:     w.config.OrphanThreshold,
+			MaxRetries:          w.config.MaxRetries,
+			Logger:              w.log,
+			TraceLogger:         traceLogger,
+		})
 		if err != nil {
+			// Pipeline creation failed — delete the (empty) staging branch to avoid clutter.
 			w.deleteStagingBranch(ctx, job, stagingBranchID)
-			return nil, &extractionBatchError{Batch: i + 1, Total: len(batches), Err: err}
+			return nil, fmt.Errorf("create pipeline: %w", err)
 		}
 
-		result, err := w.persistResults(ctx, job, pipelineOutput, stagingBranchID, documentVersion)
-		if err != nil {
-			w.deleteStagingBranch(ctx, job, stagingBranchID)
-			return nil, fmt.Errorf("persist results (batch %d/%d): %w", i+1, len(batches), err)
-		}
+		// Run extraction over each batch, accumulating results.
+		// persistResults upserts by (project_id, type, name) so duplicate entities
+		// across overlapping batches are merged naturally.
 
-		if totalResult == nil {
-			totalResult = result
-		} else {
-			accumulateBatchResults(totalResult, result)
+		for i, batch := range batches {
+			if len(batches) > 1 {
+				w.log.Info("processing extraction batch",
+					slog.Int("batch", i+1),
+					slog.Int("total_batches", len(batches)),
+					slog.Int("chars", len(batch)),
+				)
+			}
+
+			pipelineInput := agents.ExtractionPipelineInput{
+				DocumentText:        batch,
+				ObjectSchemas:       schemas.ObjectSchemas,
+				RelationshipSchemas: schemas.RelationshipSchemas,
+				AllowedTypes:        job.EnabledTypes,
+				DomainGuidance:      classificationResult.DomainGuidance,
+			}
+			if w.pipelineInputModifier != nil {
+				pipelineInput = w.pipelineInputModifier(pipelineInput)
+			}
+			pipelineOutput, err := pipeline.Run(ctx, pipelineInput)
+			if err != nil {
+				w.deleteStagingBranch(ctx, job, stagingBranchID)
+				return nil, &extractionBatchError{Batch: i + 1, Total: len(batches), Err: err}
+			}
+
+			result, err := w.persistResults(ctx, job, pipelineOutput, stagingBranchID, documentVersion)
+			if err != nil {
+				w.deleteStagingBranch(ctx, job, stagingBranchID)
+				return nil, fmt.Errorf("persist results (batch %d/%d): %w", i+1, len(batches), err)
+			}
+
+			if totalResult == nil {
+				totalResult = result
+			} else {
+				accumulateBatchResults(totalResult, result)
+			}
 		}
 	}
 

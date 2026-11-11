@@ -188,7 +188,7 @@ func (s *SourceSyncSuite) newWorker(fake *fakeDrive) *sources.SyncWorker {
 		return fake, nil
 	})
 	svc := s.newServiceWith(sources.NewRegistry(provider))
-	return sources.NewSyncWorker(svc, s.newDocsService(), nil, nil, s.log)
+	return sources.NewSyncWorker(svc, s.newDocsService(), nil, nil, nil, s.log)
 }
 
 // ---------------------------------------------------------------------------

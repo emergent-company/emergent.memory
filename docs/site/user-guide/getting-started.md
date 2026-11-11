@@ -63,7 +63,8 @@ A **project** is your isolated knowledge workspace. Objects, documents, agents, 
 |---|---|
 | `name` | Display name for the project |
 | `kb_purpose` | Optional: describes what knowledge this project holds (used as context by AI features) |
-| `auto_extract_objects` | If true, documents are automatically processed for entity extraction on upload |
+| `auto_extract_objects` | If true, uploaded documents are automatically processed for entity extraction (each upload can override it) |
+| `auto_extract_source_syncs` | If true, every data-source item and new version is extracted after a sync (off by default) |
 | `chat_prompt_template` | Optional: custom system prompt for chat conversations in this project |
 
 ---

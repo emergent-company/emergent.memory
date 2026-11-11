@@ -90,7 +90,7 @@ func newNotifyFixtureWithRegistry(t *testing.T, suffix string, publisher Notific
 		ctx:       ctx,
 		repo:      repo,
 		svc:       svc,
-		worker:    NewSyncWorker(svc, nil, nil, nil, log),
+		worker:    NewSyncWorker(svc, nil, nil, nil, nil, log),
 		projectID: uuid.New(),
 		interval:  60,
 	}

@@ -60,7 +60,7 @@ func TestUIProjectSettingsRoute(t *testing.T) {
 	for _, want := range []string{
 		"Project Settings", "Project info", "Remember &amp; dedup",
 		`value="Home"`, "family", "hi",
-		`name="auto_extract_objects"`,
+		`href="/settings/extraction"`,
 		`value="memory"`, `value="0.8"`,
 		`hx-post="/settings/project/name"`,
 		`hx-post="/settings/remember/agent"`, `hx-post="/settings/remember/dedup"`,
@@ -71,10 +71,6 @@ func TestUIProjectSettingsRoute(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("settings route missing %q", want)
 		}
-	}
-	// the checked toggle renders a bare `checked` attribute
-	if !strings.Contains(body, `name="auto_extract_objects" class="toggle" checked`) {
-		t.Error("auto-extract toggle should render checked")
 	}
 }
 
@@ -1467,5 +1463,49 @@ func TestUIProjectSettingsProjectFieldAutoDiscovery(t *testing.T) {
 				t.Errorf("name should not be touched by a toggle save, got %q", f.updatedProject.Name)
 			}
 		})
+	}
+}
+
+// TestUIProjectExtractionSettingsRoute covers the dedicated Extraction page
+// loader: moved toggles, the whisper prompt, and the agent selector state.
+func TestUIProjectExtractionSettingsRoute(t *testing.T) {
+	f := &fakeMemory{
+		project: &Project{
+			ID:                     "p1",
+			Name:                   "Home",
+			AutoExtractObjects:     boolPtr(true),
+			AutoExtractSourceSyncs: boolPtr(true),
+			AutoExtractConfig:      map[string]any{"whisper_initial_prompt": "Javu"},
+		},
+		settings: map[string]map[string]map[string]any{
+			"extraction": {
+				"agent_id":        {"agentId": "a1"},
+				"max_steps":       {"value": float64(20)},
+				"timeout_seconds": {"value": float64(120)},
+			},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/settings/extraction", s.uiProjectExtractionSettings)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/extraction", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Extraction", "Automatic extraction", "After extraction", "Extraction agent", "Audio transcription",
+		`name="auto_extract_objects" class="toggle" checked`,
+		`name="auto_extract_source_syncs" class="toggle" checked`,
+		`name="extraction_agent"`, `value="a1" selected`,
+		"Javu",
+		`name="agent_max_steps"`, `value="20"`,
+		`name="agent_timeout_seconds"`, `value="120"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("extraction route missing %q", want)
+		}
 	}
 }

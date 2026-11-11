@@ -1444,7 +1444,7 @@ func (f *fakeMemory) RollbackChunk(ctx context.Context, chunkID string, seq int)
 	return ChunkEditResult{ChunkID: chunkID, Revision: seq + 1}, nil
 }
 
-func (f *fakeMemory) UploadDocument(ctx context.Context, filename string, r io.Reader) (UploadResult, error) {
+func (f *fakeMemory) UploadDocument(ctx context.Context, filename string, r io.Reader, autoExtract *bool) (UploadResult, error) {
 	if f.docErr != nil {
 		return UploadResult{}, f.docErr
 	}

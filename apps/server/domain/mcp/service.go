@@ -4595,7 +4595,16 @@ func (s *Service) branchRefAllowedByScope(ctx context.Context, projectID string,
 // Returns nil when branchRef is empty (meaning: use main branch).
 func (s *Service) resolveOrCreateBranchID(ctx context.Context, projectID, branchRef string) (*uuid.UUID, error) {
 	if branchRef == "" {
-		return nil, nil
+		// An agent-run extraction writes into the job's staging branch by default:
+		// the worker installs it in context so the agent cannot accidentally write
+		// reviewable output onto the main graph (and cannot be trusted to remember
+		// to pass `branch` on every call).
+		if run, ok := ExtractionRunFromContext(ctx); ok && run.BranchRef != "" {
+			branchRef = run.BranchRef
+		}
+		if branchRef == "" {
+			return nil, nil
+		}
 	}
 	// Try parsing as UUID first — if it's a UUID and not found, don't auto-create.
 	if id, err := uuid.Parse(branchRef); err == nil {
@@ -6595,6 +6604,22 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 		} else if st, ok := properties["status"].(string); ok && st != "" {
 			status = &st
 		}
+		// Agent-run extraction job defaults: force the review status, stamp the
+		// job's provenance, and let the tools inherit the job's staging branch
+		// (resolved above) so the run cannot write unreviewed output to main.
+		extractionJobID := extractionJobIDFromContext(ctx)
+		if run, ok := ExtractionRunFromContext(ctx); ok {
+			if status == nil && run.Status != "" {
+				st := run.Status
+				status = &st
+				properties["status"] = st
+			}
+			for k, v := range run.Provenance {
+				if _, exists := properties[k]; !exists {
+					properties[k] = v
+				}
+			}
+		}
 
 		if err := writeRules.CheckFields(typeName, properties); err != nil {
 			results = append(results, batchResult{
@@ -6615,12 +6640,13 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 		}
 
 		req := &graph.CreateGraphObjectRequest{
-			Type:       typeName,
-			Key:        key,
-			Status:     status,
-			Properties: properties,
-			Labels:     labels,
-			BranchID:   branchID,
+			Type:            typeName,
+			Key:             key,
+			Status:          status,
+			Properties:      properties,
+			Labels:          labels,
+			BranchID:        branchID,
+			ExtractionJobID: extractionJobID,
 		}
 
 		// Propagate namespace from context (set by RememberStream or API caller).
@@ -6908,6 +6934,16 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 		properties, _ := relMap["properties"].(map[string]any)
 		if properties == nil {
 			properties = make(map[string]any)
+		}
+		// Agent-run extraction defaults: stamp the job's provenance on each
+		// relationship the agent creates (relationships carry no job column, so
+		// the properties key is what the review/merge tooling reads).
+		if run, ok := ExtractionRunFromContext(ctx); ok {
+			for k, v := range run.Provenance {
+				if _, exists := properties[k]; !exists {
+					properties[k] = v
+				}
+			}
 		}
 
 		// Guard: self-referential relationships are not meaningful.

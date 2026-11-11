@@ -90,6 +90,7 @@ var userVisibleRoutes = []gatewayRoute{
 	// Project settings hub and approvals.
 	{method: "GET", path: "/settings", handler: "uiProjectSettings"},
 	{method: "GET", path: "/settings/assistant", handler: "uiProjectAssistantSettings"},
+	{method: "GET", path: "/settings/extraction", handler: "uiProjectExtractionSettings"},
 	{method: "GET", path: "/settings/overrides", handler: "uiProjectOverridesSettings"},
 	{method: "GET", path: "/settings/providers", handler: "uiProjectProvidersSettings"},
 	{method: "GET", path: "/settings/providers/new", handler: "uiProjectProviderNew"},
@@ -128,6 +129,9 @@ var userVisibleRoutes = []gatewayRoute{
 	{method: "POST", path: "/settings/assistant", handler: "uiProjectSettingsAssistant"},
 	{method: "POST", path: "/settings/editor", handler: "uiProjectSettingsEditor"},
 	{method: "POST", path: "/settings/merge", handler: "uiProjectSettingsMerge"},
+	{method: "POST", path: "/settings/extraction/agent", handler: "uiProjectExtractionAgent"},
+	{method: "POST", path: "/settings/extraction/whisper", handler: "uiProjectExtractionWhisper"},
+	{method: "POST", path: "/settings/extraction/limits", handler: "uiProjectExtractionLimits"},
 	{method: "POST", path: "/settings/voice", handler: "uiProjectSettingsVoice"},
 	{method: "POST", path: "/settings/voice/:key", handler: "uiProjectVoiceField"},
 	{method: "POST", path: "/settings/voice/group/:group", handler: "uiProjectVoiceGroup"},

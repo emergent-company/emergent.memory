@@ -20,6 +20,7 @@ type Project struct {
 	ProjectInfo                 string         `json:"project_info,omitempty"`
 	ChatPromptTemplate          string         `json:"chat_prompt_template,omitempty"`
 	AutoExtractObjects          *bool          `json:"auto_extract_objects,omitempty"`
+	AutoExtractSourceSyncs      *bool          `json:"auto_extract_source_syncs,omitempty"`
 	AutoExtractConfig           map[string]any `json:"auto_extract_config,omitempty"`
 	BudgetUSD                   *float64       `json:"budget_usd,omitempty"`
 	BudgetAlertThreshold        *float64       `json:"budget_alert_threshold,omitempty"`
@@ -75,6 +76,7 @@ type ProjectUpdate struct {
 	ProjectInfo                 *string        `json:"project_info,omitempty"`
 	ChatPromptTemplate          *string        `json:"chat_prompt_template,omitempty"`
 	AutoExtractObjects          *bool          `json:"auto_extract_objects,omitempty"`
+	AutoExtractSourceSyncs      *bool          `json:"auto_extract_source_syncs,omitempty"`
 	AutoExtractConfig           map[string]any `json:"auto_extract_config,omitempty"`
 	BudgetUSD                   *float64       `json:"budget_usd,omitempty"`
 	BudgetAlertThreshold        *float64       `json:"budget_alert_threshold,omitempty"`

@@ -184,12 +184,21 @@ GET /api/documents/{id}/download
 
 ## Automatic Extraction
 
-If the project has `auto_extract_objects` enabled, the platform runs AI extraction on every new document to populate the knowledge graph with typed objects and relationships.
+Extraction turns document text into typed knowledge-graph objects and relationships. A project has two independent switches, both on **Settings → Extraction**:
 
-You can also trigger extraction manually from the document detail view in the admin UI, or via the extraction API.
+| Switch | Applies to | Default |
+|---|---|---|
+| `auto_extract_objects` | uploaded / created documents | off |
+| `auto_extract_source_syncs` | every data-source item and every new version | off |
+
+The upload dialog carries a per-upload override — **Project default**, **Extract now**, or **Don't extract** — so one document can be extracted without changing the project. When a switch is off the document still chunks and embeds, so search keeps working; extraction can be triggered per document from its detail view or via the extraction API.
 
 !!! info "Extraction pipeline"
     Extraction runs asynchronously. Monitor progress via [Tasks](tasks.md) or the admin extraction panel.
+
+### Extraction agent
+
+By default extraction uses the built-in staged pipeline. A project can instead select an agent definition as the **extraction agent** (Settings → Extraction): the job then runs as a real agent run with that definition's prompt, model, tools and skills, and must grant `entity-create` and `relationship-create`. Branch routing, job provenance and the review status are supplied by the job, so agent output lands on the same staging branch and goes through the same review/merge flow. The optional **agent run budget** caps steps and timeout; an unset budget uses the server defaults. A stored selection that is deleted or disabled falls back to the built-in pipeline until it is fixed.
 
 ---
 

@@ -30,6 +30,15 @@ var (
 	// (the object itself is already in the prompt), and the instruction only
 	// asks it to search when it can.
 	editorRecommendedTools = []string{"entity-search", "entity-edges-get"}
+
+	// extractionRequiredTools: the agent-run extraction contract writes entities
+	// and the relationships between them, so both write paths are mandatory.
+	// Branch routing, job provenance and the suggested status are supplied by
+	// the run context, not by the agent.
+	extractionRequiredTools = []string{"entity-create", "relationship-create"}
+	// extractionRecommendedTools: update lets a re-run merge into an existing
+	// object, and search/edges help the agent avoid duplicates.
+	extractionRecommendedTools = []string{"entity-update", "entity-search", "entity-edges-get"}
 )
 
 // toolRequirement is the tool set one agent-driven flow needs: each AnyOf group
@@ -51,6 +60,10 @@ var (
 		AnyOf:       [][]string{editorWriteAnyTools},
 		Required:    editorRequiredTools,
 		Recommended: editorRecommendedTools,
+	}
+	extractionRequirement = toolRequirement{
+		Required:    extractionRequiredTools,
+		Recommended: extractionRecommendedTools,
 	}
 )
 
@@ -95,6 +108,12 @@ func mergeAgentEligibility(def *AgentDefinition) (missing, recommended []string)
 
 func editorAgentEligibility(def *AgentDefinition) (missing, recommended []string) {
 	return agentToolEligibility(def, editorRequirement)
+}
+
+// extractionAgentEligibility gates the agent-run extraction selector: the
+// definition must be able to write entities and relationships.
+func extractionAgentEligibility(def *AgentDefinition) (missing, recommended []string) {
+	return agentToolEligibility(def, extractionRequirement)
 }
 
 // agentToolGranted reports whether def grants toolName. It mirrors the
@@ -197,3 +216,7 @@ const mergeCapabilityRequirement = "entity-create or entity-update, entity-delet
 
 // editorCapabilityRequirement is the same for the object-editing chat.
 const editorCapabilityRequirement = "entity-create or entity-update, and relationship-create"
+
+// extractionCapabilityRequirement is the tool set an agent-run extraction
+// needs.
+const extractionCapabilityRequirement = "entity-create and relationship-create"

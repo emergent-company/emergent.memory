@@ -229,6 +229,31 @@ func (r *Repository) GetOrganizationID(ctx context.Context, projectID string) (s
 	return orgID, true, nil
 }
 
+// AutoExtractSourceSyncs reports the project's auto-extract-after-source-sync
+// setting. The sync worker reads it once per job so it can pass the resolved
+// flag to the document ingestion seam; a missing project is an error because a
+// sync job cannot exist without one.
+func (r *Repository) AutoExtractSourceSyncs(ctx context.Context, projectID string) (bool, error) {
+	var enabled bool
+
+	err := r.db.NewSelect().
+		TableExpr("kb.projects").
+		Column("auto_extract_source_syncs").
+		Where("id = ?", projectID).
+		Limit(1).
+		Scan(ctx, &enabled)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false, apperror.ErrNotFound.WithMessage("project not found")
+		}
+		r.log.Error("failed to read auto_extract_source_syncs", logger.Error(err), slog.String("id", projectID))
+		return false, apperror.NewDatabase("failed to read auto_extract_source_syncs", err)
+	}
+
+	return enabled, nil
+}
+
 // GetByIDWithLock returns a project by ID with a pessimistic lock (FOR UPDATE)
 func (r *Repository) GetByIDWithLock(ctx context.Context, tx bun.Tx, id string) (*Project, error) {
 	var project Project
@@ -295,7 +320,7 @@ func (r *Repository) CheckDuplicateName(ctx context.Context, db bun.IDB, orgID, 
 func (r *Repository) Create(ctx context.Context, tx bun.Tx, project *Project) error {
 	_, err := tx.NewInsert().
 		Model(project).
-		Returning("id, organization_id, name, project_info, chat_prompt_template, auto_extract_objects, auto_extract_config, created_at, updated_at, auto_merge_extraction_branches, auto_discovery_enabled").
+		Returning("id, organization_id, name, project_info, chat_prompt_template, auto_extract_objects, auto_extract_config, created_at, updated_at, auto_merge_extraction_branches, auto_discovery_enabled, auto_extract_source_syncs").
 		Exec(ctx)
 
 	if err != nil {
@@ -332,7 +357,7 @@ func (r *Repository) Update(ctx context.Context, project *Project) error {
 	_, err := r.db.NewUpdate().
 		Model(project).
 		WherePK().
-		Returning("id, organization_id, name, project_info, chat_prompt_template, auto_extract_objects, auto_extract_config, created_at, updated_at, auto_merge_extraction_branches, auto_discovery_enabled").
+		Returning("id, organization_id, name, project_info, chat_prompt_template, auto_extract_objects, auto_extract_config, created_at, updated_at, auto_merge_extraction_branches, auto_discovery_enabled, auto_extract_source_syncs").
 		Exec(ctx)
 
 	if err != nil {
