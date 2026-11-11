@@ -49,9 +49,7 @@ func (h *Handler) RegisterSourceApp(c echo.Context) error {
 		return apperror.ErrBadRequest
 	}
 	user := auth.MustGetUser(c)
-	app, err := h.svc.RegisterSourceApp(c.Request().Context(), orgID, user.ID, RegisterSourceAppRequest{
-		Provider: dto.Provider, AppID: dto.AppID, Slug: dto.Slug, PrivateKey: dto.PrivateKey, WebhookSecret: dto.WebhookSecret,
-	})
+	app, err := h.svc.RegisterSourceApp(c.Request().Context(), orgID, user.ID, RegisterSourceAppRequest(dto))
 	if err != nil {
 		return err
 	}
@@ -157,9 +155,7 @@ func (h *Handler) CreateSourceTrigger(c echo.Context) error {
 	if err := c.Bind(&dto); err != nil {
 		return apperror.ErrBadRequest
 	}
-	trigger, err := h.svc.CreateSourceTrigger(c.Request().Context(), projectID, sourceID, SourceTriggerInput{
-		EventType: dto.EventType, AgentID: dto.AgentID, Queue: dto.Queue, EventFilter: dto.EventFilter, Enabled: dto.Enabled,
-	})
+	trigger, err := h.svc.CreateSourceTrigger(c.Request().Context(), projectID, sourceID, SourceTriggerInput(dto))
 	if err != nil {
 		return err
 	}
@@ -195,9 +191,7 @@ func (h *Handler) UpdateSourceTrigger(c echo.Context) error {
 	if err := c.Bind(&dto); err != nil {
 		return apperror.ErrBadRequest
 	}
-	trigger, err := h.svc.UpdateSourceTrigger(c.Request().Context(), projectID, sourceID, triggerID, SourceTriggerInput{
-		EventType: dto.EventType, AgentID: dto.AgentID, Queue: dto.Queue, EventFilter: dto.EventFilter, Enabled: dto.Enabled,
-	})
+	trigger, err := h.svc.UpdateSourceTrigger(c.Request().Context(), projectID, sourceID, triggerID, SourceTriggerInput(dto))
 	if err != nil {
 		return err
 	}

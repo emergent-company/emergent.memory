@@ -39,7 +39,6 @@ func TestSourceNotificationPublisher_Lifecycle(t *testing.T) {
 		VALUES (?, 'Adapter Project', ?, now(), now())`, projectID, orgID).Exec(ctx)
 	require.NoError(t, err)
 
-	members := make([]string, 0, 2)
 	for i := 0; i < 2; i++ {
 		userID := uuid.NewString()
 		_, err = db.NewRaw(`INSERT INTO core.user_profiles (id, zitadel_user_id, display_name, created_at, updated_at)
@@ -48,7 +47,6 @@ func TestSourceNotificationPublisher_Lifecycle(t *testing.T) {
 		_, err = db.NewRaw(`INSERT INTO kb.project_memberships (project_id, user_id, role, created_at)
 			VALUES (?, ?, 'member', now())`, projectID, userID).Exec(ctx)
 		require.NoError(t, err)
-		members = append(members, userID)
 	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
