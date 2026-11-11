@@ -4,10 +4,13 @@ import path from 'node:path';
 // Hermetic DOM-level regression spec for the inbox action buttons (#599).
 //
 // Accepting a project invitation from the inbox read as "nothing happened":
-// the click resolved the item, but the Action required tab filters on
+// the click resolved the item, but the Action required tab filtered on
 // `requires_action` alone (not `action_status`), so the row stayed put, unread
 // and still actionable. Accepting must record the outcome AND finish the item —
-// mark it read and archive it — so it leaves that tab.
+// mark it read and archive it — so it leaves that tab. The server side now also
+// filters that tab on `action_status IS NULL`, so the follow-up read/clear are
+// convenience rather than the only thing keeping the tab honest; the second test
+// below covers the other half of that contract: one click, one resolve.
 //
 // The payload assertion is on the browser→gateway contract: `action`. The
 // gateway's resolve route binds that field and forwards it to memory as
@@ -110,5 +113,26 @@ test('accepting an invitation records the outcome and finishes the item', async 
   const order = calls.map((c) => c.url.split('/').pop());
   expect(order.indexOf('resolve')).toBeLessThan(order.indexOf('read'));
   expect(order.indexOf('read')).toBeLessThan(order.indexOf('clear'));
+  expect(errors).toEqual([]);
+});
+
+test('a double click on an action submits one resolve', async ({ page }) => {
+  const errors = await boot(page);
+  const calls = await page.evaluate(async () => {
+    const el = document.querySelector('[data-notif-action="resolve"]');
+    if (!el) throw new Error('resolve button not found');
+    // Two clicks in the same task: the second lands while the first request is
+    // still in flight, which is exactly the double-submit window. Before the
+    // fix every action button stayed clickable (aria-busy does not disable), so
+    // both submits went out and the last one won the recorded verb.
+    for (let i = 0; i < 2; i++) {
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return (window as unknown as { __calls: Call[] }).__calls;
+  });
+
+  const resolve = calls.filter((c) => c.url.endsWith('/api/notifications/n-invite/resolve'));
+  expect(resolve).toHaveLength(1);
   expect(errors).toEqual([]);
 });

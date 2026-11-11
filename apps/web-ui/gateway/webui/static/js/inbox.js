@@ -236,12 +236,37 @@
     }
   }
 
+  // setRowBusy marks every action button in a row busy and disabled (or clears
+  // it). aria-busy alone does not disable a button, so a second click could
+  // still submit — the resolve path would then race the recorded verb. An
+  // element outside a row (mark-all-read) is handled on its own.
+  function setRowBusy(el, busy) {
+    var row = el.closest("[data-notification-id]");
+    var targets = row ? qsa("[data-notif-action]", row) : [el];
+    targets.forEach(function (btn) {
+      if (busy) {
+        btn.setAttribute("aria-busy", "true");
+        btn.setAttribute("disabled", "disabled");
+      } else {
+        btn.removeAttribute("aria-busy");
+        btn.removeAttribute("disabled");
+      }
+    });
+  }
+
   // sendAction performs one notification mutation, then reconciles + refreshes.
   // after optionally runs on success before the refresh, so a mutation that
   // implies further state (a resolve also marks the row read and archives it)
   // lands in the same refresh instead of a second round trip.
+  //
+  // A row is single-flight: while one request is in flight every action button
+  // in it is disabled, so a double click (or Accept followed by Decline) cannot
+  // fire a second competing submit. The server also refuses a verb that differs
+  // from the recorded one, so a second tab is safe even if this guard is
+  // bypassed.
   function sendAction(el, method, url, body, after) {
-    el.setAttribute("aria-busy", "true");
+    if (el.getAttribute("aria-busy") === "true") return;
+    setRowBusy(el, true);
     fetch(url, {
       method: method,
       headers: body ? { "Content-Type": "application/json" } : {},
@@ -256,11 +281,19 @@
         reconcile();
         refreshList();
       })
-      .catch(function () {
-        // Leave the row as-is; the next event/reconcile re-syncs state.
+      .catch(function (err) {
+        // Leave the row as-is; the next event/reconcile re-syncs state. A failed
+        // mutation is not silent any more: the earlier swallowed error is what
+        // made a broken resolve impossible to report.
+        if (window.MemoryApp && window.MemoryApp.toast) {
+          window.MemoryApp.toast(
+            "error",
+            "Could not update the notification" + (err && err.message ? " (" + err.message + ")" : "") + "."
+          );
+        }
       })
       .finally(function () {
-        el.removeAttribute("aria-busy");
+        setRowBusy(el, false);
       });
   }
 
@@ -295,8 +328,10 @@
   // resolveAction records the outcome of an actionable notification's button
   // and then finishes the item: a resolved action is done, so the row is also
   // marked read and archived (cleared). Without that it stayed in the Action
-  // required tab after Accept — that tab filters on requires_action alone, not
-  // action_status — which read as "the button does nothing" (issue #599).
+  // required tab after Accept (issue #599) — that tab used to filter on
+  // requires_action alone; the server now also requires action_status IS NULL,
+  // so these follow-ups are convenience and the tab leaves the row even when
+  // they fail.
   //
   // The verb travels in `action`, the field this gateway route binds
   // (notifications_handlers.go); the gateway translates it to memory's

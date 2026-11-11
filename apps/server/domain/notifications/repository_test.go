@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -13,6 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 func newRepoMock(t *testing.T) (*Repository, sqlmock.Sqlmock) {
@@ -180,6 +183,122 @@ func TestRestoreResetsDismissed(t *testing.T) {
 	mock.ExpectExec(".*").WillReturnResult(sqlmock.NewResult(0, 1))
 
 	require.NoError(t, repo.Restore(context.Background(), "u1", "n1"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// wantActionRequiredSQL is the predicate the Action-required tab and its badge
+// must both emit. Spelled out rather than referenced from the package so the
+// test pins the SQL contract itself.
+const wantActionRequiredSQL = "requires_action = true AND action_status IS NULL"
+
+// TestListActionRequiredExcludesResolved pins the Action-required tab's
+// predicate. The tab used to filter on requires_action alone, so a row whose
+// resolve succeeded but whose client follow-up read/clear never landed stayed
+// live there and only the client could remove it. The server must be
+// authoritative on the recorded outcome instead.
+func TestListActionRequiredExcludesResolved(t *testing.T) {
+	repo, mock := newRepoMock(t)
+
+	mock.ExpectQuery(`SELECT[\s\S]*requires_action = true[\s\S]*action_status IS NULL[\s\S]*`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+
+	got, err := repo.List(context.Background(), "u1", ListParams{Tab: TabAll, RequiresAction: true})
+	require.NoError(t, err)
+	require.Empty(t, got)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestListPlainTabKeepsResolvedRows is the other half: a resolved row is still
+// an ordinary inbox row until it is cleared, so the fix must not filter it out
+// of the unfiltered tabs.
+func TestListPlainTabKeepsResolvedRows(t *testing.T) {
+	repo, _ := newRepoMock(t)
+
+	q := applyScopeFilter(repo.db.NewSelect().Model((*Notification)(nil)), "", nil, false)
+	require.NotContains(t, q.String(), "action_status IS NULL",
+		"a list without the action filter must not filter on the recorded outcome")
+}
+
+// TestGetCountsActionRequiredMatchesListPredicate asserts the badge and the tab
+// it labels are built from the same predicate, so the count can never include a
+// row the list does not show. applyScopeFilter adds it for the Action-required
+// tab; the bucket must not append a second, different copy.
+func TestGetCountsActionRequiredMatchesListPredicate(t *testing.T) {
+	repo, _ := newRepoMock(t)
+
+	for _, requiresAction := range []bool{false, true} {
+		sql := repo.countBaseActionRequired("u1", CountParams{RequiresAction: requiresAction}).String()
+		require.Equal(t, 1, strings.Count(sql, wantActionRequiredSQL),
+			"RequiresAction=%v: action-required predicate must appear exactly once\nSQL: %s", requiresAction, sql)
+	}
+}
+
+// TestResolveActionWritesOnlyWhenUnresolved asserts the recorded verb is
+// first-write-wins: the UPDATE is conditional on action_status IS NULL, so a
+// second submit cannot overwrite the outcome that already landed.
+func TestResolveActionWritesOnlyWhenUnresolved(t *testing.T) {
+	repo, mock := newRepoMock(t)
+
+	mock.ExpectExec(`UPDATE[\s\S]*action_status = 'accept'[\s\S]*action_status IS NULL[\s\S]*`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	require.NoError(t, repo.ResolveAction(context.Background(), "u1", "n1", "accept"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestResolveActionReplaySameVerbIsIdempotent: a double submit carries the same
+// verb, so the second call finds its own outcome stored and must succeed rather
+// than 404 (the row is unreachable for writing, but the request is satisfied).
+func TestResolveActionReplaySameVerbIsIdempotent(t *testing.T) {
+	repo, mock := newRepoMock(t)
+
+	mock.ExpectExec(`UPDATE[\s\S]*`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT[\s\S]*action_status[\s\S]*`).
+		WillReturnRows(sqlmock.NewRows([]string{"action_status"}).AddRow("accept"))
+
+	require.NoError(t, repo.ResolveAction(context.Background(), "u1", "n1", "accept"),
+		"a retry of the verb that already landed is an idempotent success")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestResolveActionRefusesDifferentVerb: a concurrent resolve landed accept
+// first, so this decline must be refused, not silently overwrite it. This is the
+// half that survives a second tab, where the client in-flight guard does not
+// apply.
+func TestResolveActionRefusesDifferentVerb(t *testing.T) {
+	repo, mock := newRepoMock(t)
+
+	mock.ExpectExec(`UPDATE[\s\S]*action_status = 'decline'[\s\S]*`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT[\s\S]*action_status[\s\S]*`).
+		WillReturnRows(sqlmock.NewRows([]string{"action_status"}).AddRow("accept"))
+
+	err := repo.ResolveAction(context.Background(), "u1", "n1", "decline")
+	require.Error(t, err)
+
+	var appErr *apperror.Error
+	require.ErrorAs(t, err, &appErr)
+	require.Equal(t, http.StatusConflict, appErr.HTTPStatus)
+	require.Equal(t, "notification_action_already_resolved", appErr.Code)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestResolveActionUnknownNotification keeps the 404 for a row that is absent
+// (or belongs to someone else) once the write is conditional: nothing was
+// written and there is no stored outcome to reconcile against.
+func TestResolveActionUnknownNotification(t *testing.T) {
+	repo, mock := newRepoMock(t)
+
+	mock.ExpectExec(`UPDATE[\s\S]*`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT[\s\S]*action_status[\s\S]*`).
+		WillReturnRows(sqlmock.NewRows([]string{"action_status"}))
+
+	err := repo.ResolveAction(context.Background(), "u1", "n1", "accept")
+	require.Error(t, err)
+
+	var appErr *apperror.Error
+	require.ErrorAs(t, err, &appErr)
+	require.Equal(t, http.StatusNotFound, appErr.HTTPStatus)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

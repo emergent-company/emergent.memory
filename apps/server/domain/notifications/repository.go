@@ -29,6 +29,18 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 	}
 }
 
+// actionRequiredPredicate is the server-side definition of "this row still
+// needs the user's action": it was produced as actionable and no outcome has
+// been recorded yet.
+//
+// Both the Action-required tab (List) and its badge (GetCounts) apply this exact
+// predicate, so the count and the rows it labels cannot disagree, and a row
+// leaves the tab the moment ResolveAction writes action_status — independently
+// of whether the client's follow-up read/clear requests land. A resolved but
+// uncleared row is still an ordinary inbox row: it stays in All and Unread, it
+// just no longer demands action.
+const actionRequiredPredicate = "requires_action = true AND action_status IS NULL"
+
 // applyScopeFilter adds scope / project / requires_action predicates to a
 // select query. Empty scope and nil project leave the query unchanged so the
 // existing unscoped call sites keep their semantics.
@@ -40,7 +52,7 @@ func applyScopeFilter(q *bun.SelectQuery, scope Scope, projectID *string, requir
 		q = q.Where("project_id = ?", *projectID)
 	}
 	if requiresAction {
-		q = q.Where("requires_action = true")
+		q = q.Where(actionRequiredPredicate)
 	}
 	return q
 }
@@ -200,15 +212,16 @@ func (r *Repository) countBase(userID string, params CountParams) *bun.SelectQue
 }
 
 // countBaseActionRequired builds the base query for the Action-required bucket.
-// That bucket always needs requires_action = true, but applyScopeFilter already
-// adds the predicate when the caller asked for it (the Action required tab), so
-// add it here only when it is absent. Appending it unconditionally produced the
-// same clause twice and made the SQL depend on the caller in a way that was easy
-// to misread.
+// That bucket always needs the action-required predicate, but applyScopeFilter
+// already adds it when the caller asked for it (the Action required tab), so add
+// it here only when it is absent. Appending it unconditionally produced the same
+// clause twice and made the SQL depend on the caller in a way that was easy to
+// misread. It comes from actionRequiredPredicate in both paths, so the badge and
+// the list it counts are filtered identically.
 func (r *Repository) countBaseActionRequired(userID string, params CountParams) *bun.SelectQuery {
 	q := r.countBase(userID, params)
 	if !params.RequiresAction {
-		q = q.Where("requires_action = true")
+		q = q.Where(actionRequiredPredicate)
 	}
 	return q
 }
@@ -568,7 +581,27 @@ func (r *Repository) Restore(ctx context.Context, userID, notificationID string)
 	return nil
 }
 
+// ErrActionAlreadyResolved is returned by ResolveAction when the notification
+// already carries a different action_status.
+//
+// The recorded verb is first-write-wins: a repeat of the verb that landed is an
+// idempotent success, a different verb is refused instead of silently
+// overwriting it. A double click, an Accept followed by a Decline, or a second
+// tab therefore cannot leave the verb the user did not choose — the invariant
+// does not depend on the client's in-flight guard.
+var ErrActionAlreadyResolved = apperror.New(
+	http.StatusConflict,
+	"notification_action_already_resolved",
+	"this notification's action was already resolved with a different outcome",
+)
+
 // ResolveAction records the outcome of an actionable notification.
+//
+// The UPDATE is conditional on action_status IS NULL, so the first statement to
+// land wins and concurrent submits cannot overwrite each other. When nothing was
+// written the stored value decides the response: absent or someone else's row is
+// a 404, the same verb again is nil (idempotent), a different verb is
+// ErrActionAlreadyResolved.
 func (r *Repository) ResolveAction(ctx context.Context, userID, notificationID, status string) error {
 	now := time.Now()
 
@@ -580,6 +613,7 @@ func (r *Repository) ResolveAction(ctx context.Context, userID, notificationID, 
 		Set("updated_at = ?", now).
 		Where("id = ?", notificationID).
 		Where("user_id = ?", userID).
+		Where("action_status IS NULL").
 		Exec(ctx)
 
 	if err != nil {
@@ -588,11 +622,32 @@ func (r *Repository) ResolveAction(ctx context.Context, userID, notificationID, 
 	}
 
 	rowsAffected, _ := result.RowsAffected()
-	if rowsAffected == 0 {
-		return apperror.NewNotFound("notification", notificationID)
+	if rowsAffected > 0 {
+		return nil
 	}
 
-	return nil
+	// Nothing was written: the row is missing, not owned by this user, or it
+	// already carries an outcome. Read the recorded verb to say which.
+	existing := new(Notification)
+	if err := r.db.NewSelect().
+		Model(existing).
+		Column("action_status").
+		Where("id = ?", notificationID).
+		Where("user_id = ?", userID).
+		Scan(ctx); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return apperror.NewNotFound("notification", notificationID)
+		}
+		r.log.Error("failed to read notification action status", logger.Error(err))
+		return apperror.NewDatabase("Database operation failed", err)
+	}
+
+	if existing.ActionStatus != nil && *existing.ActionStatus == status {
+		// A retry of the submit that already landed: report success.
+		return nil
+	}
+
+	return ErrActionAlreadyResolved
 }
 
 // MarkAllRead marks all notifications as read for a user within the given
