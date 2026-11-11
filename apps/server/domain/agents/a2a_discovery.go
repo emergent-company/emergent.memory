@@ -82,15 +82,45 @@ const A2AProviderOrganization = "Memory"
 // A2ABearerSchemeName is the key under which the bearer scheme is declared.
 const A2ABearerSchemeName = "memoryApiToken"
 
+// A2AAgentMetadataExtensionURI is the Gemini Enterprise "agent metadata"
+// extension. Registries that consume it (Gemini Enterprise's agent gallery is
+// the reference implementation) render `authorName` as the agent's author and
+// `contactEmail` as its contact address; an agent that omits the extension is
+// listed with no author at all. Both params are optional strings of at most 256
+// characters.
+const A2AAgentMetadataExtensionURI = "https://www.googleapis.com/gemini-enterprise/a2a/extensions/agent_metadata/v1"
+
+// A2AAuthorName is the builder identity advertised through the agent metadata
+// extension. It must not contain "Google": Gemini Enterprise suppresses names
+// that do, so a vendor cannot impersonate them.
+const A2AAuthorName = "Emergent Company"
+
+// A2AContactEmail is the contact address advertised through the agent metadata
+// extension. Gemini Enterprise ignores values that are not valid email
+// addresses.
+const A2AContactEmail = "support@emergent-company.ai"
+
+// A2ADocumentationURL is advertised as `documentationUrl` on every card.
+const A2ADocumentationURL = "https://emergent-company.github.io/emergent.memory/latest/developer-guide/a2a-protocol/"
+
+// a2aIconPath is the gateway-served icon advertised as `iconUrl`. It is a path
+// rather than a full URL so the advertised origin keeps following the
+// deployment (see A2AHandler.resolveIconURL).
+const a2aIconPath = "/assets/icon-512.png"
+
 // GlobalAgentCard returns the static, tenant-blind platform AgentCard.
 //
 // It MUST NOT read agent definitions, projects, orgs, or any tenant row — this
-// is a security invariant enforced by a unit test.
+// is a security invariant enforced by a unit test. The skills it carries are the
+// static PlatformSkills directory, which describes what the platform does;
+// per-project skills belong on the extended card, which is composed from agent
+// definitions for one project.
 func GlobalAgentCard() AgentCard {
 	return AgentCard{
-		Name:        A2APlatformName,
-		Description: A2APlatformDescription,
-		Version:     A2ACardVersion,
+		Name:             A2APlatformName,
+		Description:      A2APlatformDescription,
+		Version:          A2ACardVersion,
+		DocumentationURL: A2ADocumentationURL,
 		Provider: &AgentProvider{
 			Organization: A2AProviderOrganization,
 		},
@@ -103,14 +133,65 @@ func GlobalAgentCard() AgentCard {
 		Capabilities: A2AAgentCapabilities{
 			Streaming:         true,
 			ExtendedAgentCard: true,
-			Extensions: []AgentExtension{{
-				URI:    A2UIA2AExtensionURI,
-				Params: map[string]any{"supportedCatalogIds": a2ui.SupportedCatalogIDs()},
-			}},
+			Extensions: []AgentExtension{
+				{
+					URI:    A2UIA2AExtensionURI,
+					Params: map[string]any{"supportedCatalogIds": a2ui.SupportedCatalogIDs()},
+				},
+				AgentMetadataExtension(),
+			},
 		},
 		DefaultInputModes:  []string{"application/json", "text/plain"},
 		DefaultOutputModes: []string{"application/json", "text/plain"},
-		Skills:             []AgentSkill{},
+		Skills:             PlatformSkills(),
+	}
+}
+
+// AgentMetadataExtension is the agent_metadata/v1 card extension carrying the
+// builder identity. It is a function rather than a literal so the wire shape is
+// asserted by the same tests as the card.
+func AgentMetadataExtension() AgentExtension {
+	return AgentExtension{
+		URI:         A2AAgentMetadataExtensionURI,
+		Description: "Author and contact metadata for agent galleries",
+		Params: map[string]any{
+			"authorName":   A2AAuthorName,
+			"contactEmail": A2AContactEmail,
+		},
+	}
+}
+
+// PlatformSkills is the static, tenant-blind capability directory advertised on
+// the global card. It describes the platform, not any project's agents. A fresh
+// slice is returned on every call so a caller that mutates it cannot change what
+// a later request sees.
+func PlatformSkills() []AgentSkill {
+	return []AgentSkill{
+		{
+			ID:          "knowledge-graph-search",
+			Name:        "Knowledge graph search",
+			Description: "Search and traverse the project knowledge graph for entities, relationships and extracted facts.",
+			Tags:        []string{"knowledge-graph", "search", "retrieval"},
+			Examples:    []string{"Which suppliers are linked to the Acme contract?"},
+			InputModes:  []string{"text/plain"},
+			OutputModes: []string{"text/plain", "application/json"},
+		},
+		{
+			ID:          "document-retrieval",
+			Name:        "Document retrieval",
+			Description: "Retrieve indexed documents and their extracted structure, with citations back to the source.",
+			Tags:        []string{"documents", "retrieval", "citations"},
+			InputModes:  []string{"text/plain"},
+			OutputModes: []string{"text/plain", "application/json"},
+		},
+		{
+			ID:          "agent-delegation",
+			Name:        "Agent delegation",
+			Description: "Delegate a task to a project-configured agent and stream its progress, tool calls and generated UI.",
+			Tags:        []string{"agents", "delegation", "streaming"},
+			InputModes:  []string{"text/plain", "application/json"},
+			OutputModes: []string{"text/plain", "application/json"},
+		},
 	}
 }
 
@@ -229,12 +310,28 @@ func (h *A2AHandler) resolveInterfaceOrigin(c echo.Context) string {
 	return scheme + "://" + host
 }
 
-// withInterfaceOrigin returns a copy of the card with the advertised interface
-// URL populated (see resolveInterfaceOrigin).
+// resolveIconURL returns the absolute `iconUrl` advertised on cards. The icon is
+// a web-UI asset served under /assets/*, so it is anchored to APP_URL (the UI
+// origin) when configured, falling back to the interface origin otherwise.
+// Registry galleries render this as the agent's tile; leaving it unset gives a
+// blank tile even when every other field is populated.
+func (h *A2AHandler) resolveIconURL(c echo.Context) string {
+	base := h.appURL
+	if base == "" {
+		base = h.resolveInterfaceOrigin(c)
+	}
+	return base + a2aIconPath
+}
+
+// withInterfaceOrigin returns a copy of the card with the deployment-specific
+// fields populated: the advertised interface URL (see resolveInterfaceOrigin)
+// and the absolute icon URL (see resolveIconURL). Both are deployment
+// coordinates, never tenant data.
 func (h *A2AHandler) withInterfaceOrigin(c echo.Context, card AgentCard) AgentCard {
 	for i := range card.SupportedInterfaces {
 		card.SupportedInterfaces[i].URL = h.resolveInterfaceOrigin(c)
 	}
+	card.IconURL = h.resolveIconURL(c)
 	return card
 }
 
