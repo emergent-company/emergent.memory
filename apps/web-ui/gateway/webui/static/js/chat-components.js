@@ -1609,6 +1609,13 @@
     // message at a time), so it arrives with zero components and leaves an empty
     // entry behind. Announcing on the next frame — the one that actually carries
     // the card — is what makes the announcement fire at all.
+    //
+    // This rests on an invariant: a builder that returns a node for every
+    // catalog component, so a frame with components always renders cards. No
+    // builder returns null today (the only `return null`s in this renderer are
+    // in a2uiPairRows, which is a row helper, not a builder); if one ever did,
+    // a surface with no renderable components would keep an empty registry entry
+    // and re-announce on every progressive frame.
     var rendered = a2uiSurfaceRegistry(container)[surfaceKey];
     var isNewSurface = !rendered || rendered.length === 0;
     replaceA2UISurface(container, surfaceId, surfaceKey, components, canDecide);
@@ -1617,7 +1624,7 @@
     // a whole replayed history would be noise), so a card that streams in would
     // otherwise be silent to assistive tech.
     if (!replay && isNewSurface && components.length) {
-      announceA2UI(container, a2uiAnnouncement(container, components));
+      announceA2UI(container, components);
     }
     if (hideEmpty) hideEmpty();
     scrollToBottom();
@@ -1643,6 +1650,20 @@
   function a2uiSurfaceRegistry(container) {
     if (!container._a2uiSurfaces) container._a2uiSurfaces = {};
     return container._a2uiSurfaces;
+  }
+
+  // resetA2UI drops a transcript container's rendered-surface state and removes
+  // its announcer. A host starting a new conversation clears the transcript with
+  // `container.innerHTML = ""`, which removes the cards and the announcer node
+  // but not the registry this renderer keeps on the container: without this
+  // reset the new conversation's first card matches a stale, detached registry
+  // entry and is never announced, and the announcement ordinal keeps counting
+  // from the previous conversation (#597).
+  function resetA2UI(container) {
+    if (!container) return;
+    delete container._a2uiSurfaces;
+    var node = container.querySelector(".memory-a2ui-announcer");
+    if (node && node.parentNode) node.parentNode.removeChild(node);
   }
 
   // replaceA2UISurface swaps a surface's cards for the newly accumulated
@@ -1684,8 +1705,14 @@
   // polite status node per transcript carries the message; only a newly arrived
   // surface updates it, so a streamed turn announces each card once rather than
   // re-reading the surface on every progressive frame.
-  function announceA2UI(container, text) {
-    if (!container || !text) return;
+  //
+  // The ordinal lives on the announcer node, not on the transcript container:
+  // clearing the transcript is `container.innerHTML = ""`, which removes the
+  // node, so a fresh conversation restarts at "New card 1". A container-lifetime
+  // counter would survive the clear and announce the first card of a new
+  // conversation as "New card 47".
+  function announceA2UI(container, components) {
+    if (!container || !components || !components.length) return;
     var node = container.querySelector(".memory-a2ui-announcer");
     if (!node) {
       node = document.createElement("div");
@@ -1694,25 +1721,29 @@
       node.setAttribute("aria-live", "polite");
       container.appendChild(node);
     }
-    node.textContent = text;
+    var n = (node._a2uiAnnounced || 0) + 1;
+    node._a2uiAnnounced = n;
+    node.textContent = a2uiAnnouncementText(n, components);
   }
 
-  // a2uiAnnouncement builds the status text for a surface that just rendered.
-  // The running count keeps two consecutive surfaces of the same kind from
-  // producing identical text — a live region whose text does not change is not
-  // re-announced, so "New card 1: Result card." followed by the same string
-  // would be heard once.
-  function a2uiAnnouncement(container, components) {
+  // a2uiAnnouncementText builds the status text for a surface that just
+  // rendered. The running ordinal keeps two consecutive surfaces of the same
+  // kind from producing identical text — a live region whose text does not
+  // change is not re-announced, so "New card 1: Result card." followed by the
+  // same string would be heard once.
+  //
+  // The copy is always singular "New card N", because N is the ordinal of the
+  // surface, not a count of cards: a surface carrying two kinds reads
+  // "New card 1: Result card, Sources card." A plural noun with "1" reads wrong
+  // to an assistive technology.
+  function a2uiAnnouncementText(n, components) {
     // Distinct kinds, in render order: a surface may carry more than one card.
     var kinds = [];
     for (var k = 0; k < components.length; k++) {
       var label = a2uiCardKindLabel(components[k] && components[k].component);
       if (kinds.indexOf(label) < 0) kinds.push(label);
     }
-    var n = (container._a2uiAnnounced || 0) + 1;
-    container._a2uiAnnounced = n;
-    if (kinds.length === 1) return "New card " + n + ": " + kinds[0] + ".";
-    return "New cards " + n + ": " + kinds.join(", ") + ".";
+    return "New card " + n + ": " + kinds.join(", ") + ".";
   }
 
   // a2uiCardKindLabel names a card the way a screen reader should hear it, so
@@ -2469,6 +2500,9 @@
     var silent = !!flags.silent;
 
     if (ctx.begin) ctx.begin();
+    // A timeline render is a full rebuild of the transcript: start with no
+    // rendered surfaces so replay keys into a clean registry (see resetA2UI).
+    resetA2UI(container);
 
     // The server timeline is already chronological, but be explicit about it:
     // stable-sort by effective time, then step_number (a per-run counter, so it
@@ -3156,6 +3190,7 @@
     turnFooter: turnFooter,
     runMarker: runMarker,
     renderA2UISurface: renderA2UISurface,
+    resetA2UI: resetA2UI,
     auxShell: auxShell,
     createToolRun: createToolRun,
     captureLiveToolRunChoice: captureLiveToolRunChoice,
