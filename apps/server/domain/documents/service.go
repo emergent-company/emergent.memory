@@ -287,6 +287,30 @@ func (s *Service) BulkDelete(ctx context.Context, projectID string, documentIDs 
 	return response, nil
 }
 
+// findExistingUploadByHash returns the document an identical upload already
+// produced, if any. Only uploads that ask for dedupe reach it (the MCP
+// document-upload tool: an agent retrying a call it is unsure landed), so the
+// HTTP upload contract keeps creating a row per request, which is what clients
+// expect after uploads stopped being deduplicated at insert time (#381).
+//
+// The response is explicit: IsDuplicate is true and ExistingDocumentID names
+// the row the caller already has. Nothing is collapsed silently.
+func (s *Service) findExistingUploadByHash(ctx context.Context, projectID, fileHash string) (*UploadDocumentResponse, error) {
+	existing, err := s.repo.FindUploadByFileHash(ctx, projectID, fileHash)
+	if err != nil {
+		return nil, err
+	}
+	if existing == nil {
+		return nil, nil
+	}
+	id := existing.ID
+	return &UploadDocumentResponse{
+		Document:           toDocumentSummary(existing),
+		IsDuplicate:        true,
+		ExistingDocumentID: &id,
+	}, nil
+}
+
 // createFromUpload creates a document record from a file upload. It is
 // unexported on purpose: the only public way to create a document from an
 // upload is documents.UploadIngestor, which also queues the parsing job. A

@@ -215,3 +215,131 @@ func TestUploadIngestor_NilDependenciesNoPanic(t *testing.T) {
 // DocumentCreator, so nothing outside this package can insert an upload row
 // without going through UploadIngestor.
 var _ DocumentCreator = serviceDocumentCreator{}
+
+// ...and the same adapter is the ingestor's optional dedupe capability.
+var _ ExistingUploadFinder = serviceDocumentCreator{}
+
+// dedupeStubDocumentCreator is a DocumentCreator that also answers the dedupe
+// lookup, recording every hash it was asked about.
+type dedupeStubDocumentCreator struct {
+	stubDocumentCreator
+	existing *UploadDocumentResponse
+	findErr  error
+	lookedUp []string
+}
+
+func (f *dedupeStubDocumentCreator) FindExistingUploadByHash(_ context.Context, _, fileHash string) (*UploadDocumentResponse, error) {
+	f.lookedUp = append(f.lookedUp, fileHash)
+	if f.findErr != nil {
+		return nil, f.findErr
+	}
+	return f.existing, nil
+}
+
+// TestUploadIngestor_DedupeReturnsExistingDocumentWithoutStoringOrQueueing is
+// the regression test for a retried upload paying twice: when the same bytes
+// already produced a document in this project, the ingest must not store them
+// again, must not create a second row, and above all must not enqueue a second
+// parse.
+func TestUploadIngestor_DedupeReturnsExistingDocumentWithoutStoringOrQueueing(t *testing.T) {
+	existingID := "doc-existing"
+	doc := &dedupeStubDocumentCreator{existing: &UploadDocumentResponse{
+		Document:           &DocumentSummary{ID: existingID},
+		IsDuplicate:        true,
+		ExistingDocumentID: &existingID,
+	}}
+	stor := &fakeStorage{enabled: true, uploadKey: "uploads/retry.md"}
+	jobs := &fakeParsingJobs{}
+	ing := NewUploadIngestor(doc, stor, jobs, nil, discardLog())
+
+	resp, err := ing.Ingest(context.Background(), IngestUploadParams{
+		ProjectID:        "proj-1",
+		OrgID:            "org-1",
+		Filename:         "notes.md",
+		MimeType:         "text/markdown",
+		Data:             []byte("# hello"),
+		DedupeByFileHash: true,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.True(t, resp.IsDuplicate)
+	require.NotNil(t, resp.ExistingDocumentID)
+	assert.Equal(t, existingID, *resp.ExistingDocumentID)
+
+	assert.Equal(t, []string{computeFileHash([]byte("# hello"))}, doc.lookedUp,
+		"the lookup must use the digest of the bytes being uploaded")
+	assert.Empty(t, doc.got, "a duplicate must not create a second document row")
+	assert.Zero(t, stor.uploadCalls, "a duplicate must not store the bytes again")
+	assert.Empty(t, jobs.got, "a duplicate must not enqueue a second parsing job")
+}
+
+// TestUploadIngestor_DedupeMissUploadsNormally keeps the happy path: bytes that
+// were never seen still become a document and a parsing job.
+func TestUploadIngestor_DedupeMissUploadsNormally(t *testing.T) {
+	doc := &dedupeStubDocumentCreator{}
+	stor := &fakeStorage{enabled: true, uploadKey: "uploads/new.md"}
+	jobs := &fakeParsingJobs{}
+	ing := NewUploadIngestor(doc, stor, jobs, nil, discardLog())
+
+	resp, err := ing.Ingest(context.Background(), IngestUploadParams{
+		ProjectID:        "proj-1",
+		Filename:         "notes.md",
+		MimeType:         "text/markdown",
+		Data:             []byte("# hello"),
+		DedupeByFileHash: true,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.False(t, resp.IsDuplicate)
+	assert.Len(t, doc.lookedUp, 1)
+	assert.Len(t, doc.got, 1)
+	assert.Equal(t, 1, stor.uploadCalls)
+	assert.Len(t, jobs.got, 1)
+}
+
+// TestUploadIngestor_DedupeIsOptIn protects the HTTP upload contract: a second
+// upload of the same file is a second document unless the caller asked
+// otherwise, which is why dedupe is a per-call flag rather than a property of
+// the bytes.
+func TestUploadIngestor_DedupeIsOptIn(t *testing.T) {
+	doc := &dedupeStubDocumentCreator{existing: &UploadDocumentResponse{
+		Document: &DocumentSummary{ID: "doc-existing"},
+	}}
+	stor := &fakeStorage{enabled: true, uploadKey: "uploads/again.md"}
+	jobs := &fakeParsingJobs{}
+	ing := NewUploadIngestor(doc, stor, jobs, nil, discardLog())
+
+	resp, err := ing.Ingest(context.Background(), IngestUploadParams{
+		ProjectID: "proj-1",
+		Filename:  "notes.md",
+		MimeType:  "text/markdown",
+		Data:      []byte("# hello"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.False(t, resp.IsDuplicate, "without the flag the upload is a new document")
+	assert.Empty(t, doc.lookedUp, "no lookup may run for an upload that did not ask for dedupe")
+	assert.Len(t, doc.got, 1)
+	assert.Len(t, jobs.got, 1)
+}
+
+// TestUploadIngestor_DedupeLookupErrorStillUploads: dedupe is a cost
+// optimisation, never a reason to fail an upload.
+func TestUploadIngestor_DedupeLookupErrorStillUploads(t *testing.T) {
+	doc := &dedupeStubDocumentCreator{findErr: errors.New("lookup timed out")}
+	stor := &fakeStorage{enabled: true, uploadKey: "uploads/fallback.md"}
+	jobs := &fakeParsingJobs{}
+	ing := NewUploadIngestor(doc, stor, jobs, nil, discardLog())
+
+	resp, err := ing.Ingest(context.Background(), IngestUploadParams{
+		ProjectID:        "proj-1",
+		Filename:         "notes.md",
+		MimeType:         "text/markdown",
+		Data:             []byte("# hello"),
+		DedupeByFileHash: true,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Len(t, doc.got, 1)
+	assert.Len(t, jobs.got, 1)
+}

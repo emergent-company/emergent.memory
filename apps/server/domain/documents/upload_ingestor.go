@@ -35,6 +35,22 @@ func (c serviceDocumentCreator) CreateFromUpload(ctx context.Context, params Upl
 	return c.svc.createFromUpload(ctx, params)
 }
 
+// FindExistingUploadByHash also makes serviceDocumentCreator an
+// ExistingUploadFinder, which is what lets the ingestor deduplicate an upload
+// that asks for it without the ingestor knowing about *Service or a database.
+func (c serviceDocumentCreator) FindExistingUploadByHash(ctx context.Context, projectID, fileHash string) (*UploadDocumentResponse, error) {
+	return c.svc.findExistingUploadByHash(ctx, projectID, fileHash)
+}
+
+// ExistingUploadFinder is an optional capability of a DocumentCreator: can this
+// project already answer "do these exact bytes exist here?". The ingestor
+// resolves it once at construction and only consults it for an upload that sets
+// DedupeByFileHash, so an implementation that cannot answer simply never
+// deduplicates.
+type ExistingUploadFinder interface {
+	FindExistingUploadByHash(ctx context.Context, projectID, fileHash string) (*UploadDocumentResponse, error)
+}
+
 // provideDocumentCreator is the fx provider for the port.
 func provideDocumentCreator(s *Service) DocumentCreator {
 	return documentCreatorFor(s)
@@ -61,6 +77,7 @@ func documentCreatorFor(s *Service) DocumentCreator {
 // document from an upload without also queueing its parse.
 type UploadIngestor struct {
 	documents          DocumentCreator
+	existingUploads    ExistingUploadFinder
 	storage            uploadStorage
 	parsingJobs        ParsingJobCreator
 	projectAutoExtract ProjectAutoExtractReader
@@ -81,13 +98,20 @@ func NewUploadIngestor(
 	if log == nil {
 		log = slog.Default()
 	}
-	return &UploadIngestor{
+	ing := &UploadIngestor{
 		documents:          documents,
 		storage:            storage,
 		parsingJobs:        parsingJobs,
 		projectAutoExtract: projectAutoExtract,
 		log:                log,
 	}
+	// The dedupe capability travels with the document port: the production
+	// adapter answers it, a test double can, and a creator that cannot simply
+	// leaves dedupe unavailable (see Ingest).
+	if finder, ok := documents.(ExistingUploadFinder); ok {
+		ing.existingUploads = finder
+	}
+	return ing
 }
 
 // IngestUploadParams describes one upload requested by any entry point.
@@ -102,8 +126,15 @@ type IngestUploadParams struct {
 	// RequestedAutoExtract is the caller's tri-state override: nil means "use
 	// the project default", matching the HTTP upload endpoints.
 	RequestedAutoExtract *bool
-	Metadata             map[string]any
-	SkipNotification     bool
+	// DedupeByFileHash makes the ingest return an upload that already produced a
+	// document in this project instead of storing and parsing the same bytes
+	// again. Opt-in per call: the MCP document-upload tool sets it because an
+	// agent retrying a call it is unsure landed would otherwise pay for a second
+	// parse and a second extraction. The HTTP endpoints leave it false, where a
+	// second upload of the same file is a second document by contract.
+	DedupeByFileHash bool
+	Metadata         map[string]any
+	SkipNotification bool
 }
 
 // Ingest stores the bytes, creates the document row, and queues exactly one
@@ -128,6 +159,24 @@ func (i *UploadIngestor) Ingest(ctx context.Context, p IngestUploadParams) (*Upl
 	autoExtract := resolveAutoExtract(ctx, i.log, i.projectAutoExtract, p.ProjectID, p.RequestedAutoExtract)
 
 	fileHash := computeFileHash(p.Data)
+
+	// Dedupe before the bytes are stored: a retry that matches an existing
+	// document costs neither a second object nor a second parse. A lookup error
+	// is logged and the upload proceeds — dedupe is a cost optimisation, never a
+	// reason to fail an upload.
+	if p.DedupeByFileHash && i.existingUploads != nil {
+		existing, findErr := i.existingUploads.FindExistingUploadByHash(ctx, p.ProjectID, fileHash)
+		if findErr != nil {
+			i.log.Warn("failed to look up an existing upload by file hash; uploading again",
+				slog.String("project_id", p.ProjectID),
+				logger.Error(findErr))
+		} else if existing != nil {
+			i.log.Info("upload deduplicated by file hash",
+				slog.String("project_id", p.ProjectID),
+				slog.String("document_id", existing.Document.ID))
+			return existing, nil
+		}
+	}
 
 	uploadResult, err := i.storage.UploadDocument(ctx, bytes.NewReader(p.Data), size, storage.DocumentUploadOptions{
 		OrgID:     p.OrgID,
