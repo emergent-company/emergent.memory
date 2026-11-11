@@ -4145,6 +4145,173 @@
                 }
             }
         },
+        "/api/data-source-integrations/{id}/triggers": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns a source's event-to-agent bindings.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "List source triggers",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Source ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_sources.SourceTrigger"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Binds an event type to a runtime agent and queue.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Create a source trigger",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Source ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Trigger binding",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.sourceTriggerDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.SourceTrigger"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/data-source-integrations/{id}/triggers/{triggerId}": {
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Removes the binding.",
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Delete a source trigger",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Source ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Trigger ID (UUID)",
+                        "name": "triggerId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Patches the event, agent, queue, filter, or enabled state.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Update a source trigger",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Source ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Trigger ID (UUID)",
+                        "name": "triggerId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Patch",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.sourceTriggerDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.SourceTrigger"
+                        }
+                    }
+                }
+            }
+        },
         "/api/diagnostics": {
             "get": {
                 "security": [
@@ -6477,6 +6644,82 @@
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/graph/extraction-backlog": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the count of unmerged extraction branches and the live objects/relationships on them, plus whether the main graph is empty.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "graph"
+                ],
+                "summary": "Extraction merge backlog",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.ExtractionBacklogResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid project",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/graph/extraction-backlog/merge": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Merges up to `limit` unmerged extraction branches into the main graph using the non-destructive \"partial\" policy. Dry run unless execute=true. Repeat while branches_remaining \u003e 0.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "graph"
+                ],
+                "summary": "Merge pending extraction branches",
+                "parameters": [
+                    {
+                        "description": "Merge options",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.ExtractionBacklogMergeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.ExtractionBacklogMergeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -9259,6 +9502,77 @@
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/graph/sources/{id}/outcomes": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the current outcome (materialized, merged, adopted, withdrawn, skipped) of each record the source pushed, ordered by a project-scoped sequence. Pass the opaque since cursor from the previous response to page; a resumed cursor neither skips nor duplicates a record. Records pushed before outcomes existed have no entry and are not invented.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "graph"
+                ],
+                "summary": "List the outcomes of a source's records",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Source ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Opaque cursor from a previous response's next_cursor (omit for the first page)",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max outcomes (default 100, max 500)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "X-Project-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "One page of outcomes and the cursor to resume from",
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.SourceOutcomesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid source id or cursor",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Source not found in this project",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -12474,6 +12788,208 @@
                 }
             }
         },
+        "/api/orgs/{orgId}/data-source-integrations/oauth-apps": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the org's named, vendor-level OAuth apps (secrets redacted). Org admin only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "List org OAuth apps",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID (UUID)",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Org OAuth apps",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_sources.OAuthAppDTO"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Create an org OAuth app",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID (UUID)",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "OAuth app material",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.CreateOAuthAppRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created org OAuth app",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.OAuthAppDTO"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/orgs/{orgId}/data-source-integrations/oauth-apps/{appId}": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Get an org OAuth app",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID (UUID)",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "OAuth app ID (UUID)",
+                        "name": "appId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Org OAuth app",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.OAuthAppDTO"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Update an org OAuth app",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID (UUID)",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "OAuth app ID (UUID)",
+                        "name": "appId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "OAuth app fields",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.UpdateOAuthAppRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Updated org OAuth app",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.OAuthAppDTO"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Delete an org OAuth app",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID (UUID)",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "OAuth app ID (UUID)",
+                        "name": "appId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Deleted"
+                    }
+                }
+            }
+        },
         "/api/orgs/{orgId}/data-source-integrations/oauth-clients": {
             "get": {
                 "security": [
@@ -12964,6 +13480,152 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/orgs/{orgId}/source-apps": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns org Apps without credentials. Org admin only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "List source Apps",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID (UUID)",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_sources.SourceApp"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Stores org-level App credentials (encrypted). Org admin only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Register a source App",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID (UUID)",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "App credentials",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.registerSourceAppDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.SourceApp"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/orgs/{orgId}/source-apps/{appId}": {
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Removes an org App credential. Refused with 409 while project sources are still bound to the App; the error names them. Org admin only.",
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Delete a source App",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID (UUID)",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "App row ID (UUID)",
+                        "name": "appId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "App still bound to project sources",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -14814,6 +15476,207 @@
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/data-source-integrations/oauth-apps": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "List project OAuth apps",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Project OAuth apps",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_sources.OAuthAppDTO"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Create a project OAuth app",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "OAuth app material",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.CreateOAuthAppRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created project OAuth app",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.OAuthAppDTO"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/data-source-integrations/oauth-apps/{appId}": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Get a project OAuth app",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "OAuth app ID (UUID)",
+                        "name": "appId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Project OAuth app",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.OAuthAppDTO"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Update a project OAuth app",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "OAuth app ID (UUID)",
+                        "name": "appId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "OAuth app fields",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.UpdateOAuthAppRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Updated project OAuth app",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.OAuthAppDTO"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Delete a project OAuth app",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "OAuth app ID (UUID)",
+                        "name": "appId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Deleted"
                     }
                 }
             }
@@ -30581,8 +31444,16 @@
                 "imageDigest": {
                     "type": "string"
                 },
+                "ownerRunId": {
+                    "description": "OwnerRunID is the run that provisioned and owns a shared workspace's\ncontainer. Empty when the run owns its own workspace.",
+                    "type": "string"
+                },
                 "provider": {
                     "type": "string"
+                },
+                "shared": {
+                    "description": "Shared is true when the run used a sandbox that belongs to an ancestor run\n(spawn_agents shared mode) instead of provisioning its own. The container\nis the same one; only its owner differs.",
+                    "type": "boolean"
                 }
             }
         },
@@ -34759,6 +35630,10 @@
                         "type": "string"
                     }
                 },
+                "name": {
+                    "type": "string",
+                    "maxLength": 512
+                },
                 "namespace": {
                     "type": "string",
                     "maxLength": 128
@@ -34861,6 +35736,34 @@
                 }
             }
         },
+        "domain_graph.DerivedFromInput": {
+            "type": "object",
+            "properties": {
+                "derived_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_graph.DerivedFromResponse": {
+            "type": "object",
+            "properties": {
+                "inputs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.DerivedFromInput"
+                    }
+                },
+                "known": {
+                    "type": "boolean"
+                }
+            }
+        },
         "domain_graph.EdgePhase": {
             "type": "object",
             "required": [
@@ -34898,6 +35801,129 @@
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "domain_graph.ExtractionBacklogBranch": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "object_count": {
+                    "type": "integer"
+                },
+                "origin_label": {
+                    "type": "string"
+                },
+                "relationship_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_graph.ExtractionBacklogMergeItem": {
+            "type": "object",
+            "properties": {
+                "branch_id": {
+                    "type": "string"
+                },
+                "error": {
+                    "description": "Error is set when this branch could not be merged; other branches still run.",
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "result": {
+                    "description": "Result is the normal merge response for a successful (or dry-run) merge.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_graph.BranchMergeResponse"
+                        }
+                    ]
+                }
+            }
+        },
+        "domain_graph.ExtractionBacklogMergeRequest": {
+            "type": "object",
+            "properties": {
+                "execute": {
+                    "type": "boolean"
+                },
+                "limit": {
+                    "description": "Limit bounds how many branches one call merges (default 25, max 100).\nCallers repeat the request while BranchesRemaining is non-zero.",
+                    "type": "integer"
+                },
+                "wait_for_embeddings": {
+                    "description": "WaitForEmbeddings refuses to merge a branch whose objects are not fully\nembedded, so similarity classification has full coverage.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_graph.ExtractionBacklogMergeResponse": {
+            "type": "object",
+            "properties": {
+                "branches_processed": {
+                    "type": "integer"
+                },
+                "branches_remaining": {
+                    "type": "integer"
+                },
+                "branches_total": {
+                    "type": "integer"
+                },
+                "dry_run": {
+                    "type": "boolean"
+                },
+                "left_for_review_count": {
+                    "description": "LeftForReviewCount aggregates the objects the partial policy deliberately\nleft on their branch, so a caller can tell a complete merge from a\nmerge that needs human review.",
+                    "type": "integer"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.ExtractionBacklogMergeItem"
+                    }
+                }
+            }
+        },
+        "domain_graph.ExtractionBacklogResponse": {
+            "type": "object",
+            "properties": {
+                "branch_count": {
+                    "description": "BranchCount is the number of unmerged extraction branches that still hold\nat least one live HEAD object or relationship.",
+                    "type": "integer"
+                },
+                "branches": {
+                    "description": "Branches is capped at extractionBacklogBranchPageSize; the aggregate counts\nabove always cover every branch.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.ExtractionBacklogBranch"
+                    }
+                },
+                "branches_truncated": {
+                    "type": "boolean"
+                },
+                "main_graph_object_count": {
+                    "description": "MainGraphObjectCount is the number of live HEAD objects visible to a\ndefault read (branch_id IS NULL).",
+                    "type": "integer"
+                },
+                "object_count": {
+                    "description": "ObjectCount and RelationshipCount are live HEAD rows on those branches that\nhave not already been cloned to the main graph (the merge ledger is\nexcluded, so the count shrinks as branches are merged).",
+                    "type": "integer"
+                },
+                "relationship_count": {
+                    "type": "integer"
+                },
+                "stranded": {
+                    "description": "Stranded is true when extraction produced objects but the main graph is\nempty, i.e. every default read reports an empty knowledge base.",
+                    "type": "boolean"
                 }
             }
         },
@@ -35129,6 +36155,10 @@
                         "additionalProperties": {}
                     }
                 },
+                "name": {
+                    "description": "Name is the first-class human title. Key stays the internal dedup/upsert\nidentity and is not the user-facing label.",
+                    "type": "string"
+                },
                 "namespace": {
                     "type": "string"
                 },
@@ -35245,6 +36275,14 @@
                 "deleted_at": {
                     "type": "string"
                 },
+                "derived_from": {
+                    "description": "DerivedFrom names the inputs this synthesized version was derived from —\ndocument, extraction job, and the version row it was derived from. Like\ncontributions it is keyed to the version row and populated on the read\npaths from one batched query per request. Absent on write responses.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_graph.DerivedFromResponse"
+                        }
+                    ]
+                },
                 "embedding_status": {
                     "description": "Embedding status (computed): embedded | pending | processing | failed | dead_letter | missing",
                     "type": "string"
@@ -35283,6 +36321,10 @@
                         "type": "string"
                     }
                 },
+                "name": {
+                    "description": "Name is the human title; Ref is the display-only reference derived from\nCanonicalID. Key is the internal dedup identity (deprecated for display).",
+                    "type": "string"
+                },
                 "namespace": {
                     "type": "string"
                 },
@@ -35298,6 +36340,9 @@
                 "properties": {
                     "type": "object",
                     "additionalProperties": {}
+                },
+                "ref": {
+                    "type": "string"
                 },
                 "relationship_count": {
                     "type": "integer"
@@ -35694,6 +36739,10 @@
                         "type": "string"
                     }
                 },
+                "name": {
+                    "type": "string",
+                    "maxLength": 512
+                },
                 "properties": {
                     "type": "object",
                     "additionalProperties": {}
@@ -35885,6 +36934,62 @@
                 }
             }
         },
+        "domain_graph.SourceOutcomeItem": {
+            "type": "object",
+            "properties": {
+                "adopted_by_source_id": {
+                    "type": "string"
+                },
+                "canonical_id": {
+                    "type": "string"
+                },
+                "external_id": {
+                    "type": "string"
+                },
+                "external_revision": {
+                    "type": "string"
+                },
+                "external_revision_seq": {
+                    "type": "integer"
+                },
+                "generation": {
+                    "type": "integer"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "source_id": {
+                    "type": "string"
+                },
+                "state": {
+                    "type": "string"
+                },
+                "subject_kind": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_graph.SourceOutcomesResponse": {
+            "type": "object",
+            "properties": {
+                "has_more": {
+                    "type": "boolean"
+                },
+                "next_cursor": {
+                    "description": "NextCursor is the opaque cursor of the last outcome in the page. It is\nreturned even when HasMore is false, so a source can persist it as its\nhigh-water mark and resume from the same place after a restart.",
+                    "type": "string"
+                },
+                "outcomes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.SourceOutcomeItem"
+                    }
+                }
+            }
+        },
         "domain_graph.SubgraphObjectRequest": {
             "type": "object",
             "required": [
@@ -35908,6 +37013,10 @@
                     "items": {
                         "type": "string"
                     }
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 512
                 },
                 "properties": {
                     "type": "object",
@@ -37755,13 +38864,15 @@
                 "builtin",
                 "stdio",
                 "sse",
-                "http"
+                "http",
+                "source"
             ],
             "x-enum-varnames": [
                 "ServerTypeBuiltin",
                 "ServerTypeStdio",
                 "ServerTypeSSE",
-                "ServerTypeHTTP"
+                "ServerTypeHTTP",
+                "ServerTypeSource"
             ]
         },
         "domain_mcpregistry.ProvisionMCPOAuthClientDTO": {
@@ -38356,7 +39467,7 @@
                     "type": "integer"
                 },
                 "requiresAction": {
-                    "description": "RequiresAction counts the action-required notifications in the current\nscope: not cleared, not snoozed, requires_action = true.",
+                    "description": "RequiresAction counts the action-required notifications in the current\nscope: not cleared, not snoozed, requires_action = true, and no recorded\naction_status. It is the badge for the Action-required tab and applies the\nsame predicate as that tab's list (actionRequiredPredicate), so it cannot\ncount a row the list does not show — notably one that was acted on.",
                     "type": "integer"
                 },
                 "snoozed": {
@@ -39159,6 +40270,10 @@
                 "orgId"
             ],
             "properties": {
+                "auto_merge_extraction_branches": {
+                    "description": "AutoMergeExtractionBranches opts a new project into merging extraction\nstaging branches into the main graph after extraction completes. It is\nexplicit (nil keeps the opt-in default of false) so creating a project\nnever silently changes what default graph reads return (#496).",
+                    "type": "boolean"
+                },
                 "name": {
                     "type": "string",
                     "minLength": 1
@@ -39191,6 +40306,27 @@
                 }
             }
         },
+        "domain_projects.PendingExtractionMergeStats": {
+            "type": "object",
+            "properties": {
+                "branchCount": {
+                    "type": "integer"
+                },
+                "mainGraphObjectCount": {
+                    "type": "integer"
+                },
+                "objectCount": {
+                    "type": "integer"
+                },
+                "relationshipCount": {
+                    "type": "integer"
+                },
+                "stranded": {
+                    "description": "Stranded is true when extraction produced objects but the main graph is\nempty, so every default read reports nothing.",
+                    "type": "boolean"
+                }
+            }
+        },
         "domain_projects.Project": {
             "type": "object",
             "properties": {
@@ -39203,6 +40339,10 @@
                     "additionalProperties": {}
                 },
                 "auto_extract_objects": {
+                    "type": "boolean"
+                },
+                "auto_extract_source_syncs": {
+                    "description": "AutoExtractSourceSyncs runs object extraction after a data-source sync\ningests an item or appends a new version (added in migration 00293). It is\nseparate from AutoExtractObjects, which governs uploaded/created\ndocuments. Defaults to false: synced items still chunk and embed, but\nextraction is opt-in so a sync never spends tokens unasked.",
                     "type": "boolean"
                 },
                 "auto_merge_extraction_branches": {
@@ -39286,6 +40426,10 @@
                     "additionalProperties": {}
                 },
                 "auto_extract_objects": {
+                    "type": "boolean"
+                },
+                "auto_extract_source_syncs": {
+                    "description": "AutoExtractSourceSyncs is emitted only when true: the column defaults to\nfalse, so an absent field correctly reads as \"off\".",
                     "type": "boolean"
                 },
                 "auto_merge_extraction_branches": {
@@ -39396,6 +40540,14 @@
                 "objectCount": {
                     "type": "integer"
                 },
+                "pendingExtractionMerge": {
+                    "description": "PendingExtractionMerge reports extraction output that is still on unmerged\nstaging branches and therefore invisible to default graph reads (#496).\nPopulated only for include_stats requests.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_projects.PendingExtractionMergeStats"
+                        }
+                    ]
+                },
                 "queuedJobs": {
                     "type": "integer"
                 },
@@ -39440,6 +40592,9 @@
                     "additionalProperties": {}
                 },
                 "auto_extract_objects": {
+                    "type": "boolean"
+                },
+                "auto_extract_source_syncs": {
                     "type": "boolean"
                 },
                 "auto_merge_extraction_branches": {
@@ -43571,6 +44726,10 @@
                 "name": {
                     "type": "string"
                 },
+                "oauthAppId": {
+                    "description": "OAuthAppID selects the named OAuth app this source uses. Empty lets the\nresolver pick the sole project/org app or the deployment default.",
+                    "type": "string"
+                },
                 "providerType": {
                     "type": "string"
                 },
@@ -43581,6 +44740,33 @@
                     "type": "integer"
                 },
                 "syncMode": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_sources.CreateOAuthAppRequest": {
+            "type": "object",
+            "properties": {
+                "clientId": {
+                    "type": "string"
+                },
+                "clientSecret": {
+                    "type": "string"
+                },
+                "config": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "name": {
+                    "type": "string"
+                },
+                "providerConfigs": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/domain_sources.OAuthProviderConfig"
+                    }
+                },
+                "vendor": {
                     "type": "string"
                 }
             }
@@ -43630,10 +44816,21 @@
                 "lastSyncedAt": {
                     "type": "string"
                 },
+                "mcpSlug": {
+                    "description": "McpSlug is the immutable MCP tool-name segment for a source-backed MCP\nserver (Gmail). Empty for providers without source tools.",
+                    "type": "string"
+                },
                 "name": {
                     "type": "string"
                 },
                 "nextSyncAt": {
+                    "type": "string"
+                },
+                "oauthAppId": {
+                    "description": "OAuthAppID/OAuthAppName name the vendor-level OAuth app the source uses.\nOAuthAppID is empty when the source resolves to the deployment default.",
+                    "type": "string"
+                },
+                "oauthAppName": {
                     "type": "string"
                 },
                 "oauthGrantedStrategy": {
@@ -43678,6 +44875,60 @@
                 },
                 "total": {
                     "type": "integer"
+                }
+            }
+        },
+        "domain_sources.OAuthAppDTO": {
+            "type": "object",
+            "properties": {
+                "clientId": {
+                    "type": "string"
+                },
+                "config": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "configured": {
+                    "type": "boolean"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "javascriptOrigin": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "providerConfigs": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/domain_sources.OAuthProviderConfig"
+                    }
+                },
+                "redirectUris": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "scope": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "usedBy": {
+                    "type": "integer"
+                },
+                "vendor": {
+                    "type": "string"
+                },
+                "vendorName": {
+                    "type": "string"
                 }
             }
         },
@@ -43751,6 +45002,22 @@
                     "type": "boolean"
                 },
                 "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_sources.OAuthProviderConfig": {
+            "type": "object",
+            "properties": {
+                "scopes": {
+                    "description": "Scopes overrides the provider default when non-empty.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "strategy": {
+                    "description": "Strategy is the provider's named scope strategy (e.g. Drive's drive.file).",
                     "type": "string"
                 }
             }
@@ -43927,6 +45194,71 @@
                 }
             }
         },
+        "domain_sources.SourceApp": {
+            "type": "object",
+            "properties": {
+                "appId": {
+                    "type": "integer"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "orgId": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "webhookKey": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_sources.SourceTrigger": {
+            "type": "object",
+            "properties": {
+                "agentId": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "eventFilter": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "eventType": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "queue": {
+                    "type": "string"
+                },
+                "sourceId": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_sources.SourceType": {
             "type": "object",
             "properties": {
@@ -44062,11 +45394,39 @@
                 "name": {
                     "type": "string"
                 },
+                "oauthAppId": {
+                    "description": "OAuthAppID selects the named OAuth app. An empty string clears the explicit\nselection and returns the source to automatic resolution.",
+                    "type": "string"
+                },
                 "syncIntervalMinutes": {
                     "type": "integer"
                 },
                 "syncMode": {
                     "type": "string"
+                }
+            }
+        },
+        "domain_sources.UpdateOAuthAppRequest": {
+            "type": "object",
+            "properties": {
+                "clientId": {
+                    "type": "string"
+                },
+                "clientSecret": {
+                    "type": "string"
+                },
+                "config": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "name": {
+                    "type": "string"
+                },
+                "providerConfigs": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/domain_sources.OAuthProviderConfig"
+                    }
                 }
             }
         },
@@ -44082,12 +45442,57 @@
                 }
             }
         },
+        "domain_sources.registerSourceAppDTO": {
+            "type": "object",
+            "properties": {
+                "appId": {
+                    "type": "integer"
+                },
+                "privateKey": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "webhookSecret": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_sources.sourceTriggerDTO": {
+            "type": "object",
+            "properties": {
+                "agentId": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "eventFilter": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "eventType": {
+                    "type": "string"
+                },
+                "queue": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_sources.startOAuthBody": {
             "type": "object",
             "properties": {
                 "config": {
                     "type": "object",
                     "additionalProperties": {}
+                },
+                "oauthAppId": {
+                    "description": "OAuthAppID selects a named OAuth app for this connection.",
+                    "type": "string"
                 },
                 "reconnectSourceId": {
                     "description": "ReconnectSourceID re-runs consent for an existing source; the callback\nreplaces that source's grant in place (#2107).",
