@@ -13,6 +13,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/emergent-company/emergent.memory/domain/events"
+	"github.com/emergent-company/emergent.memory/pkg/a2ui"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/sse"
 )
@@ -134,6 +135,12 @@ func a2uiActionFromMetadata(metadata map[string]any) (A2UIAction, bool) {
 
 // A2UIActionMessage formats a surface action as the user message the agent
 // receives, so it can respond with updated surfaces for the same surfaceId.
+//
+// The id shown to the model is the bare surface id it wrote, not the wire id the
+// renderer rendered: the wire id is scoped to the run and step that emitted it
+// (see a2ui.NamespaceID), and handing that back to the model would (a) put a raw
+// run UUID in the persisted user turn and (b) invite an echo that the next turn
+// would scope again, nesting the id one layer per card click (#592).
 func A2UIActionMessage(action A2UIAction, userText string) string {
 	// An action with no payload (the A2A metadata path tolerates one) must not
 	// reach the agent as `null`, which reads as a bug rather than a click.
@@ -145,7 +152,7 @@ func A2UIActionMessage(action A2UIAction, userText string) string {
 	if err != nil {
 		actionJSON = []byte("{}")
 	}
-	msg := fmt.Sprintf("The user took an action on UI surface %q:\n%s", action.SurfaceID, actionJSON)
+	msg := fmt.Sprintf("The user took an action on UI surface %q:\n%s", a2ui.BareSurfaceID(action.SurfaceID), actionJSON)
 	if userText != "" {
 		msg += "\n\n" + userText
 	}
