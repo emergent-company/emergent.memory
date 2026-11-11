@@ -187,6 +187,7 @@ func TestEnsureFreshSessionFreshTokenNoRefresh(t *testing.T) {
 		AccessToken: "at-live", RefreshToken: "rt-live",
 		ActiveProjectID: "proj-sess", OrgID: "org-sess",
 		Name: "Ada", Email: "ada@example.com",
+		Issuer:    z.URL, // minted by the configured issuer: no refresh needed
 		ExpiresAt: time.Now().Add(time.Hour).Unix(),
 	}
 	req := httptest.NewRequest(http.MethodGet, "/protected", nil)

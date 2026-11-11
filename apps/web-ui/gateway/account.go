@@ -24,7 +24,8 @@ type accountSession struct {
 	IDToken           string // retained for RP-initiated logout (id_token_hint)
 	ActiveProjectID   string // the account's remembered active project
 	OrgID             string
-	ExpiresAt         int64 // unix seconds
+	Issuer            string // ZITADEL_ISSUER that minted the tokens (see sessionClaims)
+	ExpiresAt         int64  // unix seconds
 }
 
 // accountRegistry holds inactive account sessions keyed by browser install id.
@@ -125,6 +126,7 @@ func sessionToAccount(c sessionClaims) accountSession {
 		IDToken:           c.IDToken,
 		ActiveProjectID:   c.ActiveProjectID,
 		OrgID:             c.OrgID,
+		Issuer:            c.Issuer,
 		ExpiresAt:         c.ExpiresAt,
 	}
 }
@@ -142,6 +144,7 @@ func accountToSession(a accountSession) sessionClaims {
 		Picture:           a.Picture,
 		AvatarOverrideURL: a.AvatarOverrideURL,
 		Sub:               a.Sub,
+		Issuer:            a.Issuer,
 		ExpiresAt:         a.ExpiresAt,
 	}
 }
