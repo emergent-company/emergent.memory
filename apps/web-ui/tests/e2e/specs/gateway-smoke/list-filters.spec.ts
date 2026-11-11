@@ -1,8 +1,10 @@
 import { test, expect } from '@playwright/test';
+import { DOCUMENTS_SEARCH_INPUT } from '../../helpers/documents';
 
-// Per-PR browser contract for list filters: a filter refresh replaces the
+// Browser contract for list filters: a filter refresh replaces the
 // results region and nothing else. The page, its toolbar, the address bar and
-// the document itself all stay put.
+// the document itself all stay put. Runs in the gateway-smoke suite, i.e. on the
+// `dev -> main` promotion PR and on pushes to `main` — not on a feature PR.
 //
 // Why this has to be a browser test: the filters used to call form.submit(),
 // which never dispatches a `submit` event, so htmx's boosted form never saw it
@@ -42,6 +44,31 @@ test.describe('list filters refresh only the results region', () => {
       expect(await pageRes.text()).toContain('id="_layout-sidebar"');
     });
   }
+
+  test('the documents toolbar has a single search control, with the applied query mirrored as a hidden input', async ({
+    page,
+  }) => {
+    // #584: the scheduled mutations suite filled `input[name="q"]` and Playwright
+    // rejected it as ambiguous on a `?q=` URL. The duplicate is intentional —
+    // the search form and the sibling filter form each carry the other's state —
+    // so this pins the shape that makes a bare `input[name="q"]` selector
+    // ambiguous, and imports the selector the specs use, so the helper and this
+    // guard cannot drift apart.
+    await page.goto('/documents?q=quarterly');
+
+    const search = page.locator(DOCUMENTS_SEARCH_INPUT);
+    await expect(search).toHaveCount(1);
+    await expect(search).toHaveValue('quarterly');
+
+    // Exactly one *visible* control named q; the other match is the hidden
+    // mirror inside the filter form.
+    await expect(page.locator('input[name="q"]:visible')).toHaveCount(1);
+    await expect(
+      page
+        .getByTestId('documents-filter-form')
+        .locator('input[type="hidden"][name="q"]'),
+    ).toHaveValue('quarterly');
+  });
 
   test('the documents status filter swaps the listing without reloading the document', async ({
     page,

@@ -1,6 +1,7 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { readBootstrap } from '../../helpers/bootstrap';
 import { expectAppPage, goto } from '../../helpers/page';
+import { APPROVAL_DECISIONS } from '../../helpers/approval-controls';
 
 // A2UI (v0.9.1) structured-UI card renderer, exercised end-to-end in the
 // browser.
@@ -177,8 +178,18 @@ test.describe('A2UI surface cards', () => {
       // approval
       const approval = card(page, SENTINEL.approval);
       await expect(approval).toHaveCount(1);
-      await expect(approval.getByRole('button', { name: 'Approve' })).toBeVisible();
-      await expect(approval.getByRole('button', { name: 'Deny' })).toBeVisible();
+      // The approval card mirrors the canonical chat approval card
+      // (chat-stream.js renderApproval) and renders the shared decision set —
+      // Cancel / Reject / Approve. Assert it from the single owner
+      // (helpers/approval-controls.ts, pinned against the shipped renderer by
+      // specs/js/a2ui-approvals-gate.spec.ts) instead of naming the buttons
+      // here: the old assertion named a "Deny" action the renderer has never
+      // had, which is what made the scheduled lane red (#584).
+      for (const { testid, label } of APPROVAL_DECISIONS) {
+        const control = approval.getByTestId(testid);
+        await expect(control).toBeVisible();
+        await expect(control).toHaveText(label);
+      }
       // input renders as key/value rows (label + value), not a single JSON blob.
       await expect(approval.getByText('path', { exact: true })).toBeVisible();
       await expect(approval.getByText('/tmp/x', { exact: true })).toBeVisible();
