@@ -13,8 +13,10 @@ import (
 // neither write to the main graph nor leave an extraction unattributable.
 //
 // It is installed server-side by the extraction worker, never by a
-// model-visible surface: a tool argument can add detail, but it cannot change
-// the job's branch or provenance.
+// model-visible surface. The job's branch, status and provenance are FORCED on
+// every write: the tools overwrite model-supplied values, so an agent cannot
+// land output on main, change the review status, or attribute work to another
+// job.
 type ExtractionRunConfig struct {
 	// JobID is the kb.object_extraction_jobs id stamped on every object this run
 	// creates (graph_objects.extraction_job_id).

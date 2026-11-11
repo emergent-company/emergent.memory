@@ -173,6 +173,17 @@ func processInlineRelationships(
 		if relProps, ok := relMap["properties"].(map[string]any); ok {
 			req.Properties = relProps
 		}
+		// Agent-run extraction provenance is job-owned and overwrites anything the
+		// model supplied: relationship rows carry no job column, so this property
+		// is what the job's counting and review tooling read.
+		if run, ok := ExtractionRunFromContext(ctx); ok {
+			if req.Properties == nil {
+				req.Properties = make(map[string]any)
+			}
+			for k, v := range run.Provenance {
+				req.Properties[k] = v
+			}
+		}
 		if w, ok := relMap["weight"].(float64); ok {
 			weight := float32(w)
 			req.Weight = &weight

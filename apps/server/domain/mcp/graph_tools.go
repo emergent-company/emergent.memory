@@ -939,15 +939,16 @@ func (s *Service) executeUpdateRelationship(ctx context.Context, projectID strin
 		}
 	}
 
-	// Resolve optional branch param — auto-creates the branch if it does not exist.
-	// A relationship version chain cannot span branches, so the patch targets the
-	// branch-local HEAD row.
+	// Resolve the branch param even when omitted so an agent-run extraction
+	// inherits the job's staging branch. A relationship version chain cannot
+	// span branches, so a branch-scoped patch targets the branch-local HEAD row.
 	var branchID *uuid.UUID
-	if branchRef, _ := args["branch"].(string); branchRef != "" {
-		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
-		if err != nil {
-			return nil, fmt.Errorf("resolve branch: %w", err)
-		}
+	branchRef, _ := args["branch"].(string)
+	branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+	if err != nil {
+		return nil, fmt.Errorf("resolve branch: %w", err)
+	}
+	if branchID != nil {
 		relID, err = s.relationshipVersionOnBranch(ctx, projectUUID, relID, *branchID)
 		if err != nil {
 			return nil, fmt.Errorf("update relationship: %w", err)
@@ -1012,13 +1013,12 @@ func (s *Service) executeDeleteRelationship(ctx context.Context, projectID strin
 				return nil
 			}
 			branchResolved = true
-			if branchRef, _ := args["branch"].(string); branchRef != "" {
-				id, rerr := s.resolveOrCreateBranchID(ctx, projectID, branchRef)
-				if rerr != nil {
-					return fmt.Errorf("resolve branch: %w", rerr)
-				}
-				branchID = id
+			branchRef, _ := args["branch"].(string)
+			id, rerr := s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+			if rerr != nil {
+				return fmt.Errorf("resolve branch: %w", rerr)
 			}
+			branchID = id
 			return nil
 		}
 		reason := reasonFromArgs(args)
@@ -1073,13 +1073,13 @@ func (s *Service) executeDeleteRelationship(ctx context.Context, projectID strin
 		return nil, fmt.Errorf("invalid relationship_id: %w", err)
 	}
 
-	// Resolve optional branch param — auto-creates the branch if it does not exist.
+	// Resolve the branch param (an omitted branch inherits an agent-run
+	// extraction's staging branch).
 	var branchID *uuid.UUID
-	if branchRef, _ := args["branch"].(string); branchRef != "" {
-		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
-		if err != nil {
-			return nil, fmt.Errorf("resolve branch: %w", err)
-		}
+	branchRef, _ := args["branch"].(string)
+	branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+	if err != nil {
+		return nil, fmt.Errorf("resolve branch: %w", err)
 	}
 
 	relID, err := s.deleteRelationshipOne(ctx, projectUUID, projectID, relIDStr, branchID, reasonFromArgs(args))
