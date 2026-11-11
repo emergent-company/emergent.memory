@@ -114,6 +114,13 @@ function surfaceFrame(surfaceId: string, components: unknown[]) {
   ];
 }
 
+// createOnly is the shape of the *first* live frame for a surface: the
+// progressive parser yields each JSONL line as it completes, so createSurface
+// reaches the renderer on its own, with no components yet.
+function createOnly(surfaceId: string) {
+  return [{ createSurface: { surfaceId, catalogId: 'memory-basic' } }];
+}
+
 test.describe('A2UI surfaces (chat-components.js)', () => {
   test('replays every card answer even when two turns reuse a surfaceId', async ({ page }) => {
     const errors = await loadScripts(page);
@@ -136,9 +143,11 @@ test.describe('A2UI surfaces (chat-components.js)', () => {
   test('announces a card that streams in, once, and stays silent on replay', async ({ page }) => {
     await loadScripts(page);
 
-    // Live path: progressive frames for one surface, no per-item surface key.
+    // The real live shape: createSurface arrives alone in the first frame (the
+    // parser yields one JSONL line at a time), and the components follow in the
+    // next. The createSurface-only frame must not "use up" the announcement.
     const announced = await page.evaluate(
-      ({ frame, later }) => {
+      ({ created, frame, later }) => {
         const container = document.getElementById('chat-messages') as HTMLElement;
         const ctx = { messages: container, hideEmpty() {}, scrollToBottom() {} };
         const api = (
@@ -148,10 +157,16 @@ test.describe('A2UI surfaces (chat-components.js)', () => {
             };
           }
         ).MemoryChatComponents;
+        const read = () => document.querySelector('.memory-a2ui-announcer');
+        api.renderA2UISurface('s1', created, ctx);
+        const afterCreateOnly = read() ? read()!.textContent : null;
         api.renderA2UISurface('s1', frame, ctx);
+        const afterComponents = read() ? read()!.textContent : null;
         api.renderA2UISurface('s1', later, ctx);
-        const node = document.querySelector('.memory-a2ui-announcer');
+        const node = read();
         return {
+          afterCreateOnly,
+          afterComponents,
           text: node ? node.textContent : null,
           role: node ? node.getAttribute('role') : null,
           live: node ? node.getAttribute('aria-live') : null,
@@ -160,6 +175,7 @@ test.describe('A2UI surfaces (chat-components.js)', () => {
         };
       },
       {
+        created: createOnly('s1'),
         frame: surfaceFrame('s1', [
           { id: 'r1', component: 'result', rows: [{ label: 'status', value: 'FRAME_ONE' }] },
         ]),
@@ -169,12 +185,53 @@ test.describe('A2UI surfaces (chat-components.js)', () => {
       },
     );
 
+    // The frame with no components announces nothing; the first real card does.
+    expect(announced.afterCreateOnly).toBeNull();
+    expect(announced.afterComponents).toBe('New card 1: Result card.');
     // One surface, updated in place, announced once as a polite status.
     expect(announced.cards).toBe(1);
     expect(announced.announcers).toBe(1);
-    expect(announced.text).toBe('New card: Result card.');
+    expect(announced.text).toBe('New card 1: Result card.');
     expect(announced.role).toBe('status');
     expect(announced.live).toBe('polite');
+  });
+
+  test('distinguishes two consecutive surfaces of the same kind', async ({ page }) => {
+    await loadScripts(page);
+
+    // Identical status text is not re-announced by a live region, so the second
+    // card of the same kind must carry different text to be heard at all.
+    const text = await page.evaluate(
+      ({ first, second }) => {
+        const container = document.getElementById('chat-messages') as HTMLElement;
+        const ctx = { messages: container, hideEmpty() {}, scrollToBottom() {} };
+        const api = (
+          window as unknown as {
+            MemoryChatComponents: {
+              renderA2UISurface: (id: string, msgs: unknown, ctx: unknown) => void;
+            };
+          }
+        ).MemoryChatComponents;
+        api.renderA2UISurface('s1', first, ctx);
+        api.renderA2UISurface('s2', second, ctx);
+        const node = document.querySelector('.memory-a2ui-announcer');
+        return {
+          text: node ? node.textContent : null,
+          cards: document.querySelectorAll('#chat-messages .card-body').length,
+        };
+      },
+      {
+        first: surfaceFrame('s1', [
+          { id: 'r1', component: 'result', rows: [{ label: 'status', value: 'ONE' }] },
+        ]),
+        second: surfaceFrame('s2', [
+          { id: 'r2', component: 'result', rows: [{ label: 'status', value: 'TWO' }] },
+        ]),
+      },
+    );
+
+    expect(text.cards).toBe(2);
+    expect(text.text).toBe('New card 2: Result card.');
   });
 
   test('does not announce cards during history replay', async ({ page }) => {

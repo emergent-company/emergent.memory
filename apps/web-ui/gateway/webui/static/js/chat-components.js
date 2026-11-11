@@ -1539,6 +1539,13 @@
   // twice. Unknown component ids fall back to a summary card and never throw.
   // All user/model text is escaped (textContent / escapeHTML), never injected
   // via innerHTML.
+  //
+  // Two render-local concepts are worth keeping apart from the wire:
+  //   surfaceKey  identifies a surface's rendered nodes inside one transcript
+  //               container, so replay can host two turns that both named their
+  //               surface "s1" (see the key comment below);
+  //   announcement  a card arriving on the live stream is spoken once, because
+  //               the transcript is deliberately not a live region.
 
   function renderA2UISurface(surfaceId, messages, ctx) {
     ctx = ctx || {};
@@ -1596,14 +1603,21 @@
 
     // Update in place: a progressive frame for a surface we already rendered
     // replaces its cards rather than appending a second instance.
-    var isNewSurface = !a2uiSurfaceRegistry(container)[surfaceKey];
+    //
+    // "New" means no rendered cards yet, not "no registry entry": the first
+    // frame of a live surface carries only createSurface (the stream parses one
+    // message at a time), so it arrives with zero components and leaves an empty
+    // entry behind. Announcing on the next frame — the one that actually carries
+    // the card — is what makes the announcement fire at all.
+    var rendered = a2uiSurfaceRegistry(container)[surfaceKey];
+    var isNewSurface = !rendered || rendered.length === 0;
     replaceA2UISurface(container, surfaceId, surfaceKey, components, canDecide);
-    // Announce only a surface that just arrived, and only on the live stream:
-    // the transcript is deliberately not a live region (announcing a whole
-    // replayed history would be noise), so a card that streams in would
+    // Announce only a surface whose first card just arrived, and only on the
+    // live stream: the transcript is deliberately not a live region (announcing
+    // a whole replayed history would be noise), so a card that streams in would
     // otherwise be silent to assistive tech.
     if (!replay && isNewSurface && components.length) {
-      announceA2UI(container, "New card: " + a2uiCardKindLabel(components[0] && components[0].component) + ".");
+      announceA2UI(container, a2uiAnnouncement(container, components));
     }
     if (hideEmpty) hideEmpty();
     scrollToBottom();
@@ -1621,9 +1635,11 @@
     return "surface-1";
   }
 
-  // a2uiSurfaceRegistry stores each surface's rendered card nodes, keyed by
-  // surfaceId, on its message container. Each page owns its own container, so
-  // the registry is never shared across pages or the live stream and history.
+  // a2uiSurfaceRegistry stores each surface's rendered card nodes on its
+  // message container, keyed by the render-local surface key (the wire
+  // surfaceId on the live stream, surfaceId + timeline item id on replay). Each
+  // page owns its own container, so the registry is never shared across pages or
+  // the live stream and history.
   function a2uiSurfaceRegistry(container) {
     if (!container._a2uiSurfaces) container._a2uiSurfaces = {};
     return container._a2uiSurfaces;
@@ -1681,8 +1697,28 @@
     node.textContent = text;
   }
 
+  // a2uiAnnouncement builds the status text for a surface that just rendered.
+  // The running count keeps two consecutive surfaces of the same kind from
+  // producing identical text — a live region whose text does not change is not
+  // re-announced, so "New card 1: Result card." followed by the same string
+  // would be heard once.
+  function a2uiAnnouncement(container, components) {
+    // Distinct kinds, in render order: a surface may carry more than one card.
+    var kinds = [];
+    for (var k = 0; k < components.length; k++) {
+      var label = a2uiCardKindLabel(components[k] && components[k].component);
+      if (kinds.indexOf(label) < 0) kinds.push(label);
+    }
+    var n = (container._a2uiAnnounced || 0) + 1;
+    container._a2uiAnnounced = n;
+    if (kinds.length === 1) return "New card " + n + ": " + kinds[0] + ".";
+    return "New cards " + n + ": " + kinds.join(", ") + ".";
+  }
+
   // a2uiCardKindLabel names a card the way a screen reader should hear it, so
-  // the card's group is identifiable by type before its body is read out.
+  // the card's group is identifiable by type before its body is read out. (It
+  // maps onto A2UI v1.0's @accessibility.label, so that migration is a superset
+  // of this rather than a rewrite.)
   function a2uiCardKindLabel(kind) {
     switch (kind) {
       case "proposal": return "Proposal card";
@@ -1702,7 +1738,9 @@
     var node = a2uiCardNode(comp, surfaceId, canDecide);
     if (node) {
       // Group semantics: the card boundary and its type are announced before
-      // the body, and a screen-reader user can jump card to card.
+      // the body is read out. A group is not an AT quick-nav target, so this
+      // names the card rather than claiming landmark-style jumping between
+      // cards; it maps onto A2UI v1.0's @accessibility.label.
       node.setAttribute("role", "group");
       node.setAttribute("aria-label", a2uiCardKindLabel(comp && comp.component));
     }
