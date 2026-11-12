@@ -166,7 +166,12 @@ jobs:
           NOTARIZE_KEY: /tmp/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8
         run: |
           chmod +x Scripts/build-dmg.sh
-          ./Scripts/build-dmg.sh --notarize
+          # Hold a display + user-idle assertion for the child's whole lifetime
+          # (-d display, -u user idle, no -t). create-dmg lays the DMG window out
+          # via Finder, and Finder stops servicing window AppleEvents once the
+          # display sleeps (20 min on this runner), so the step dies with
+          # "AppleEvent timed out (-1712)" and exit 64.
+          caffeinate -d -u ./Scripts/build-dmg.sh --notarize
 
       - name: Upload DMG
         uses: actions/upload-artifact@v4

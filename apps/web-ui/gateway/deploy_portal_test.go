@@ -26,12 +26,13 @@ func deployTestConfig(tokenURL, graphURL string) Config {
 	}
 }
 
+// deployTestEcho builds an echo with the routes the real registrar installs.
+// It deliberately does not register the routes itself: a hand-registered copy
+// keeps passing when main.go's wiring is dropped (see user_visible_routes_test.go
+// and TestDeployPortalRegistrarWired).
 func deployTestEcho(s *Server) *echo.Echo {
 	e := echo.New()
-	e.GET("/deploy", s.deployPortalPage)
-	e.GET("/deploy/oauth/start", s.deployOAuthStart)
-	e.GET("/deploy/oauth/callback", s.deployOAuthCallback)
-	e.GET("/deploy/oauth/logout", s.deployOAuthLogout)
+	s.registerDeployPortalRoutes(e)
 	return e
 }
 
@@ -170,6 +171,125 @@ func TestDeployPortalPageSignedOut(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, "Connect Railway") || !strings.Contains(body, "Deploy Memory on Railway") {
 		t.Errorf("signed-out page missing CTA: %s", body[:min(400, len(body))])
+	}
+}
+
+// deploySignIn drives the portal's OAuth start→callback flow against the
+// caller's echo and returns the sealed Railway session cookie, so tests that
+// need the signed-in state do not re-implement the dance.
+func deploySignIn(t *testing.T, e *echo.Echo) *http.Cookie {
+	t.Helper()
+	start := httptest.NewRecorder()
+	e.ServeHTTP(start, httptest.NewRequest(http.MethodGet, "/deploy/oauth/start", nil))
+	loc, err := url.Parse(start.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stateCookie *http.Cookie
+	for _, c := range start.Result().Cookies() {
+		if c.Name == deployStateCookie {
+			stateCookie = c
+		}
+	}
+	if stateCookie == nil {
+		t.Fatal("no deploy state cookie")
+	}
+	cb := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/deploy/oauth/callback?code=code-1&state="+url.QueryEscape(loc.Query().Get("state")), nil)
+	req.AddCookie(stateCookie)
+	e.ServeHTTP(cb, req)
+	for _, c := range cb.Result().Cookies() {
+		if c.Name == deploySessionCookie && c.Value != "" {
+			return c
+		}
+	}
+	t.Fatal("no deploy session cookie; callback status was ", cb.Code)
+	return nil
+}
+
+// TestDeployOAuthLogoutIsPost pins the verb change: logout clears a cookie, so it
+// must not answer a GET (a state-changing GET can be triggered by any cross-site
+// image or prefetch). The redirect target stays /deploy.
+func TestDeployOAuthLogoutIsPost(t *testing.T) {
+	s := &Server{cfg: deployTestConfig("https://railway.test/token", "https://railway.test/graphql")}
+	e := deployTestEcho(s)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/deploy/oauth/logout", nil))
+	if rec.Code != http.StatusFound {
+		t.Fatalf("POST logout status = %d, want 302; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Location"); got != "/deploy" {
+		t.Fatalf("POST logout redirect = %q, want /deploy", got)
+	}
+	cleared := false
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == deploySessionCookie && c.Value == "" && c.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Error("POST logout did not expire the deploy session cookie")
+	}
+
+	get := httptest.NewRecorder()
+	e.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/deploy/oauth/logout", nil))
+	if get.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /deploy/oauth/logout = %d, want 405 (logout is POST-only)", get.Code)
+	}
+}
+
+// TestDeployPortalDisconnectIsPostForm asserts the signed-in markup submits the
+// logout rather than linking to it, and that the button is a submit inside the
+// form (a link-styled button would keep the verb a GET).
+func TestDeployPortalDisconnectIsPostForm(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"access-1","refresh_token":"refresh-1","expires_in":3600,"token_type":"Bearer"}`))
+	})
+	mux.HandleFunc("/graphql", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"me":{"workspaces":[{"id":"ws-1","name":"Acme"}]}}}`))
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	s := &Server{cfg: deployTestConfig(ts.URL+"/token", ts.URL+"/graphql")}
+	e := deployTestEcho(s)
+	session := deploySignIn(t, e)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/deploy", nil)
+	req.AddCookie(session)
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("signed-in page status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	if strings.Contains(body, `href="/deploy/oauth/logout"`) {
+		t.Error("signed-in page still links to /deploy/oauth/logout; logout must be a POST form")
+	}
+	open := strings.Index(body, `action="/deploy/oauth/logout"`)
+	if open < 0 {
+		t.Fatalf("signed-in page has no logout form: %s", body[:min(1200, len(body))])
+	}
+	formStart := strings.LastIndex(body[:open], "<form")
+	if formStart < 0 {
+		t.Fatal("logout action is not inside a <form")
+	}
+	formOpen := body[formStart:open]
+	if !strings.Contains(formOpen, `method="post"`) {
+		t.Errorf("logout form is not a POST: %q", formOpen)
+	}
+	formEnd := strings.Index(body[open:], "</form>")
+	if formEnd < 0 {
+		t.Fatal("logout form is not closed")
+	}
+	form := body[formStart : open+formEnd]
+	if !strings.Contains(form, `type="submit"`) {
+		t.Errorf("logout form has no submit button: %s", form)
 	}
 }
 
