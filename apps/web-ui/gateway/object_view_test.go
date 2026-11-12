@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strconv"
 	"testing"
 )
 
@@ -275,4 +276,147 @@ func sectionTitles(sections []objectViewSection) []string {
 		titles = append(titles, s.Title)
 	}
 	return titles
+}
+
+// TestExpandedViewSection pins the escape hatch from a truncated section: the
+// same group re-resolved at the expanded budget, addressed by its index in the
+// page's own render, including the trailing "More connections" group. An index
+// that names no group reports false — the route must not render an empty card.
+func TestExpandedViewSection(t *testing.T) {
+	prop := GraphObject{ID: "prop", CanonicalID: "prop", Type: "Property"}
+	var edges []GraphRelationship
+	var related []GraphObject
+	for i := 0; i < 30; i++ {
+		id := "doc-" + strconv.Itoa(i)
+		related = append(related, viewTestObject(id, "Document", "Doc "+strconv.Itoa(i), nil))
+		edges = append(edges, viewTestEdge("e"+strconv.Itoa(i), "concerns", id, "prop"))
+	}
+	related = append(related, viewTestObject("svc", "UtilityService", "Water", nil))
+	edges = append(edges, viewTestEdge("e-svc", "serves", "svc", "prop"))
+
+	view := &typeUIView{
+		More:     true,
+		Sections: []typeUISection{{Title: "Documents", Relation: []string{"concerns"}, Limit: 3}},
+	}
+	sections := resolveObjectViewSections(view, &prop, edges, related, nil)
+	if len(sections) != 2 {
+		t.Fatalf("sections = %v", sectionTitles(sections))
+	}
+	if len(sections[0].Rows) != 3 || sections[0].Total != 30 {
+		t.Fatalf("collapsed documents = %d/%d, want 3/30", len(sections[0].Rows), sections[0].Total)
+	}
+	if sections[0].Limit != 3 {
+		t.Errorf("collapsed section Limit = %d, want the declared 3", sections[0].Limit)
+	}
+	// The fallback group is bounded by the default limit and reachable by index.
+	if len(sections[1].Rows) != 1 || sections[1].Title != viewMoreTitle {
+		t.Fatalf("fallback group = %q/%d rows, want %q/1", sections[1].Title, len(sections[1].Rows), viewMoreTitle)
+	}
+
+	expanded, ok := expandedViewSection(view, 0, &prop, edges, related, nil)
+	if !ok {
+		t.Fatal("expandedViewSection(0) = false")
+	}
+	if !expanded.Expanded {
+		t.Error("expanded section must report Expanded")
+	}
+	if len(expanded.Rows) != 30 || expanded.Total != 30 {
+		t.Errorf("expanded rows = %d/%d, want all 30", len(expanded.Rows), expanded.Total)
+	}
+	// Expansion keeps the declared budget so "show fewer" can return to the
+	// page the reader left, not to a larger default.
+	if expanded.Limit != 3 {
+		t.Errorf("expanded section Limit = %d, want the declared 3", expanded.Limit)
+	}
+	// The trailing group is addressable too, so nothing on the page is dead.
+	if more, ok := expandedViewSection(view, 1, &prop, edges, related, nil); !ok || more.Title != viewMoreTitle {
+		t.Errorf("expandedViewSection(1) = %+v/%v, want the fallback group", more, ok)
+	}
+	// Out-of-range indexes are a miss, not an empty section.
+	for _, index := range []int{-1, 2, 99} {
+		if _, ok := expandedViewSection(view, index, &prop, edges, related, nil); ok {
+			t.Errorf("expandedViewSection(%d) = true, want false", index)
+		}
+	}
+}
+
+// TestExpandedViewSectionCapsRows pins the expanded budget: a hub larger than it
+// still returns a bounded response, with Total naming what is missing so the page
+// can offer a filtered browse instead of pretending the list is complete.
+func TestExpandedViewSectionCapsRows(t *testing.T) {
+	prop := GraphObject{ID: "prop", CanonicalID: "prop", Type: "Property"}
+	var edges []GraphRelationship
+	var related []GraphObject
+	for i := 0; i < viewExpandLimit+5; i++ {
+		id := "doc-" + strconv.Itoa(i)
+		related = append(related, viewTestObject(id, "Document", "Doc "+strconv.Itoa(i), nil))
+		edges = append(edges, viewTestEdge("e"+strconv.Itoa(i), "concerns", id, "prop"))
+	}
+	view := &typeUIView{Sections: []typeUISection{{Title: "Documents", Relation: []string{"concerns"}, Limit: 2}}}
+
+	expanded, ok := expandedViewSection(view, 0, &prop, edges, related, nil)
+	if !ok {
+		t.Fatal("expandedViewSection = false")
+	}
+	if len(expanded.Rows) != viewExpandLimit || expanded.Total != viewExpandLimit+5 {
+		t.Fatalf("expanded = %d/%d rows, want %d/%d", len(expanded.Rows), expanded.Total, viewExpandLimit, viewExpandLimit+5)
+	}
+}
+
+// TestObjectViewSectionDirectionCue pins the ShowDirection signal: a `dir: both`
+// section (and the fallback group, which mixes whatever the author did not
+// claim) tells each row to render its arrow, while a single-direction section
+// does not repeat what its heading already says.
+func TestObjectViewSectionDirectionCue(t *testing.T) {
+	prop := GraphObject{ID: "prop", CanonicalID: "prop", Type: "Property"}
+	related := []GraphObject{
+		viewTestObject("doc", "Document", "Deed", nil),
+		viewTestObject("svc", "UtilityService", "Water", nil),
+	}
+	edges := []GraphRelationship{
+		viewTestEdge("e1", "concerns", "doc", "prop"),
+		viewTestEdge("e2", "serves", "svc", "prop"),
+		viewTestEdge("e3", "related_to", "prop", "doc"),
+	}
+	view := &typeUIView{Sections: []typeUISection{
+		{Title: "Both", Relation: []string{"concerns", "related_to"}},
+		{Title: "Incoming", Relation: []string{"serves"}, Dir: "in"},
+	}}
+	sections := resolveObjectViewSections(view, &prop, edges, related, nil)
+	if len(sections) != 2 {
+		t.Fatalf("sections = %v", sectionTitles(sections))
+	}
+	if !sections[0].ShowDirection {
+		t.Error("a dir:both section must ask its rows for the direction cue")
+	}
+	if sections[1].ShowDirection {
+		t.Error("a dir:in section must not repeat the heading's direction per row")
+	}
+
+	fallback := resolveObjectViewSections(&typeUIView{More: true}, &prop, edges, related, nil)
+	if len(fallback) != 1 || !fallback[0].ShowDirection {
+		t.Errorf("fallback group = %+v, want one group with the direction cue", fallback)
+	}
+}
+
+// TestDominantNeighbourType pins the browse-all hint: the most common neighbour
+// type wins, ties break alphabetically (so the link is deterministic), and an
+// empty group names nothing.
+func TestDominantNeighbourType(t *testing.T) {
+	rows := []objectViewItem{
+		{Neighbour: GraphObject{Type: "Document"}},
+		{Neighbour: GraphObject{Type: "Document"}},
+		{Neighbour: GraphObject{Type: "Item"}},
+		{Neighbour: GraphObject{Type: "Item"}},
+		{Neighbour: GraphObject{Type: "Task"}},
+	}
+	if got := dominantNeighbourType(rows); got != "Document" {
+		t.Errorf("dominantNeighbourType = %q, want Document (Document and Item tie, D < I)", got)
+	}
+	if got := dominantNeighbourType(nil); got != "" {
+		t.Errorf("dominantNeighbourType(nil) = %q, want empty", got)
+	}
+	if got := dominantNeighbourType([]objectViewItem{{Neighbour: GraphObject{}}}); got != "" {
+		t.Errorf("dominantNeighbourType(untyped) = %q, want empty", got)
+	}
 }

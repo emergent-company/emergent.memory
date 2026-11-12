@@ -212,7 +212,7 @@ func TestRunPageHeaderKeepsTrailLinks(t *testing.T) {
 // page, so the header renders it once instead of Memory → Objects → the object.
 func TestObjectDetailFoldsTheGroupCrumb(t *testing.T) {
 	obj := &GraphObject{ID: "o1", CanonicalID: "o1", Type: "person", Key: "sam-lee"}
-	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, "", 0))
+	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, "", 0, nil))
 
 	items := breadcrumbItems(t, html)
 	if len(items) != 2 {

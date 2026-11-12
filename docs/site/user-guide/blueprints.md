@@ -207,12 +207,34 @@ page:
 | `sections[].title` | Heading; omit it to derive one from the relationship name. |
 | `more` | `true` (default) collects relationships no section claims into a trailing group; `false` hides them. |
 
+The same groups render on the object page itself (above the edit form) and on
+its **Relationships** tab, so a type's layout is what a reader sees first rather
+than something behind a click.
+
+A truncated section is never a dead end. A card that hides rows says how many
+and offers **Show all N**, which expands just that card in place — as a plain
+link when JavaScript is unavailable, so the page still works. Past 200 rows the
+expanded card says how many remain and offers a browse link filtered to the
+neighbour type the visible rows are mostly made of; **Show fewer** returns the
+card to the row count the pack declared.
+
+A `view` that declares only `inline` (no sections) is still bounded: everything
+the pack did not claim lands in the trailing **More connections** group, capped
+at the default limit and expandable the same way. Use `more: false` only when the
+page should show the declared groups alone — an object whose connections all fall
+outside them then says so and offers the unfiltered list, instead of rendering an
+empty page that looks like a bug.
+
 The vocabulary is deliberately closed — no expressions, no HTML, no templating.
 A section with no matching relationships is hidden rather than shown empty, and
 a `view` the server cannot parse is ignored: the object page falls back to a
 plain list of everything connected, so a typo in a pack never breaks a page. Run
 `memory blueprints validate ./my-blueprint` to check a pack offline before
-installing it.
+installing it. It warns about the mistakes that would otherwise fail silently: a
+`relation` no pack in the blueprint declares (the section stays empty unless
+another installed blueprint declares it), a `title` that is not a string (an
+unquoted year is a number, which drops the whole view at render time), unknown
+keys, and out-of-range limits.
 
 ### With the CLI (a directory)
 

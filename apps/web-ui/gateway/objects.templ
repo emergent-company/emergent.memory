@@ -805,6 +805,11 @@ type objectDetailShellData struct {
 	// declared ui.view (empty when the type declares none, which keeps the
 	// generic flat list).
 	ViewSections []objectViewSection
+	// HasView records that the type declares a ui.view at all. It is not
+	// len(ViewSections) > 0: a valid view can resolve to no group (every section
+	// empty and `more: false`), and that page must not fall back to the flat
+	// list showing exactly the relationship types the author opted out of.
+	HasView bool
 }
 
 // workControlTarget builds the POST destination/context for the header's
@@ -836,15 +841,16 @@ templ objectDetailShell(data objectDetailShellData) {
 }
 
 // ObjectDetailPage renders the object Overview subpage: the shared header/rail
-// plus the workflow panel, record facts, editable properties, and type-property
-// form. Relationships moved to their own rail tab. flashErr surfaces PRG
-// feedback (e.g. the "no agents configured" chat hint) as an auto-dismissing
-// toast. typeUIByType carries the compiled types' declared ui accents
-// (icon/color) so the header chip can render the object type's icon. trail is
-// an optional origin trail (e.g. a document's extraction history); when nil the
-// header renders Objects > <object>. typeLabel is the object type's display
-// label ("" when the schema could not be loaded), used as the schema card's
-// heading.
+// plus the workflow panel, record facts, the type's relationship sections,
+// editable properties, and type-property form. flashErr surfaces PRG feedback
+// (e.g. the "no agents configured" chat hint) as an auto-dismissing toast.
+// typeUIByType carries the compiled types' declared ui accents (icon/color) so
+// the header chip can render the object type's icon. trail is an optional origin
+// trail (e.g. a document's extraction history); when nil the header renders
+// Objects > <object>. typeLabel is the object type's display label ("" when the
+// schema could not be loaded), used as the schema card's heading. viewSections
+// is the object type's declared ui.view resolved against the object's edges —
+// empty for every type that declares none, which keeps this page unchanged.
 //
 // The editable fields live in two cards, matching the read-only preview
 // drawer: "Properties" carries the platform fields (key and labels) and
@@ -854,7 +860,7 @@ templ objectDetailShell(data objectDetailShellData) {
 // <form> spans both editable cards with a single terminal Save bar:
 // uiObjectUpdate always replaces labels with the submitted set, so a second,
 // labels-less form would wipe them.
-templ ObjectDetailPage(obj *GraphObject, branch objectBranchRef, sources []objectSource, assignees []boardAssigneeCandidate, loadErr error, flashMsg string, flashErr error, labelSuggestions []string, propDefs []objectPropertyDef, typeUIByType map[string]typeUI, status *objectStatusControl, trail []nav.BreadcrumbItem, typeLabel string, edgeCount int) {
+templ ObjectDetailPage(obj *GraphObject, branch objectBranchRef, sources []objectSource, assignees []boardAssigneeCandidate, loadErr error, flashMsg string, flashErr error, labelSuggestions []string, propDefs []objectPropertyDef, typeUIByType map[string]typeUI, status *objectStatusControl, trail []nav.BreadcrumbItem, typeLabel string, edgeCount int, viewSections []objectViewSection) {
 	{{ data := objectDetailShellData{
 		Obj:          obj,
 		Branch:       branch,
@@ -868,12 +874,16 @@ templ ObjectDetailPage(obj *GraphObject, branch objectBranchRef, sources []objec
 		FlashErr:     flashErr,
 		LoadErr:      loadErr,
 		EdgeCount:    edgeCount,
+		ViewSections: viewSections,
 	} }}
 	@objectDetailShell(data) {
 		if obj != nil {
 			@objectSourceCard(sources)
 			@objectWorkflowPanel(obj, status, assignees, data.workControlTarget())
 			@objectDetailsCard(obj)
+			if len(viewSections) > 0 {
+				@objectViewSectionList(obj.ID, viewSections, typeUIByType)
+			}
 			<form class="mt-6 flex flex-col gap-6" method="post" action={ templ.URL("/objects/" + url.PathEscape(obj.ID)) } hx-disable="find button.memory-save-btn">
 				@objectBuiltinPropertiesCard(obj, labelSuggestions)
 				@objectTypePropertiesCard(obj, propDefs, typeLabel)
@@ -933,7 +943,7 @@ templ objectRelationshipsPage(data objectDetailShellData, relTypes []CompiledTyp
 				Attrs:   templ.Attributes{"data-testid": "object-relationships-error"},
 			})
 		} else {
-			@objectRelationships(data.Obj, relTypes, edges, related, data.TypeUIByType, data.ViewSections)
+			@objectRelationships(data.Obj, relTypes, edges, related, data.TypeUIByType, data.ViewSections, data.HasView)
 		}
 	}
 }
@@ -983,7 +993,12 @@ templ objectDetailHeader(obj *GraphObject, branch objectBranchRef, typeUIByType 
 
 // objectDetailMeta renders the object's identity/state chips: its type, branch,
 // workflow status (suppressed on the Overview, whose Workflow panel carries the
-// editable control) and embedding state.
+// editable control) and embedding state. It also carries the provenance strip:
+// how the server classifies this version's data (source | synthesized |
+// adopted) and how many revisions the object has. Both are honest signals a
+// reader needs — a generated wiki entry and a hand-entered one should not look
+// identical — and both degrade to nothing when the server does not report them
+// (write responses do not).
 templ objectDetailMeta(obj *GraphObject, branch objectBranchRef, typeUIByType map[string]typeUI, status *objectStatusControl, active string) {
 	{{ tui := typeUIOf(typeUIByType, obj.Type)
 	ref := obj.Ref
@@ -993,6 +1008,31 @@ templ objectDetailMeta(obj *GraphObject, branch objectBranchRef, typeUIByType ma
 	@typeNameChip(obj.Type, ui.BadgePrimary, tui.Icon, tui.Color)
 	<span class="text-muted-strong font-mono text-xs" data-testid="object-ref">{ ref }</span>
 	@objectBranchChip(branch)
+	if lbl, variant, hint, icon := dataClassChip(obj.DataClass); lbl != "" {
+		@ui.Badge(ui.BadgeProps{
+			Label:   lbl,
+			Variant: variant,
+			Style:   ui.BadgeStyleSoft,
+			Size:    ui.BadgeSizeSM,
+			Icon:    icon,
+			Attrs:   templ.Attributes{"data-testid": "object-data-class", "data-data-class": obj.DataClass, "title": hint},
+		})
+	}
+	if lbl := credentialKindLabel(obj.CredentialKind); lbl != "" {
+		<span class="text-muted-faint text-xs" data-testid="object-credential-kind" title="The credential the last write to this version used.">via { lbl }</span>
+	}
+	if obj.RevisionCount != nil && *obj.RevisionCount > 1 {
+		{{ versions := strconv.Itoa(*obj.RevisionCount) }}
+		@ui.Badge(ui.BadgeProps{
+			Label:   versions + " versions",
+			Variant: ui.BadgeNeutral,
+			Style:   ui.BadgeStyleSoft,
+			Size:    ui.BadgeSizeSM,
+			Icon:    "lucide--history",
+			Href:    "/objects/" + url.PathEscape(obj.ID) + "/history",
+			Attrs:   templ.Attributes{"data-testid": "object-revision-count", "title": "Every recorded version of this object, newest first."},
+		})
+	}
 	if obj.Status != "" && !(active == "overview" && !objectWorkControlDisabled(status)) {
 		@components.StatusBadge(boardStatusLabel(obj.Status), boardStatusIntent(obj.Status), "", components.StatusBadgeOpts{
 			Size:  ui.BadgeSizeSM,
@@ -1195,7 +1235,13 @@ templ objectTypePropertyField(r objectTypePropertyRow) {
 // single "concerns / serves / kept_at" stream is what made the old list
 // unreadable. Both branches are reachable — a type without a view keeps the
 // generic list, which is also every existing project's default.
-templ objectRelationships(obj *GraphObject, relTypes []CompiledType, edges []GraphRelationship, related []GraphObject, typeUIByType map[string]typeUI, viewSections []objectViewSection) {
+//
+// hasView separates "no view" from "a view that shows nothing here": a valid
+// view whose sections all came up empty with `more: false` has deliberately
+// opted out of the relationship types the flat list would show, so rendering
+// the flat list would contradict the pack. That case says so and offers the
+// unfiltered list as an explicit escape (`?all=1`).
+templ objectRelationships(obj *GraphObject, relTypes []CompiledType, edges []GraphRelationship, related []GraphObject, typeUIByType map[string]typeUI, viewSections []objectViewSection, hasView bool) {
 	if len(edges) == 0 {
 		@ui.Section("Relationships", ui.SectionProps{
 			Margin:    "mt-6",
@@ -1220,8 +1266,20 @@ templ objectRelationships(obj *GraphObject, relTypes []CompiledType, edges []Gra
 			}
 		}
 	} else if len(viewSections) > 0 {
-		for _, section := range viewSections {
-			@objectViewSectionCard(section, typeUIByType)
+		@objectViewSectionList(obj.ID, viewSections, typeUIByType)
+	} else if hasView {
+		@ui.Section("Relationships", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "memory-density-comfortable",
+		}) {
+			<div class="flex flex-col gap-2" data-testid="object-view-empty">
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneStrong}) {
+					This object's type has a view, and it shows none of its { strconv.Itoa(len(edges)) } connections.
+				}
+				<a class="link link-hover text-sm" href={ templ.URL("/objects/" + url.PathEscape(obj.ID) + "/relationships?all=1") } data-testid="object-view-show-unfiltered">
+					Show every connection anyway
+				</a>
+			</div>
 		}
 	} else {
 		@ui.Section("Relationships", ui.SectionProps{
@@ -1239,28 +1297,97 @@ templ objectRelationships(obj *GraphObject, relTypes []CompiledType, edges []Gra
 	@objectConnectDialog(obj, relTypes)
 }
 
+// objectViewSectionList renders the type's declared relationship groups in
+// reading order. Indexes are positional and stable within one render, which is
+// what the in-place expansion route addresses: the request for group N swaps the
+// card whose id was rendered as N.
+templ objectViewSectionList(objID string, sections []objectViewSection, typeUIByType map[string]typeUI) {
+	<div class="flex flex-col" data-testid="object-view-sections">
+		for i, section := range sections {
+			@objectViewSectionCard(objID, i, section, typeUIByType)
+		}
+	</div>
+}
+
 // objectViewSectionCard renders one section of a type-declared view: the rows
-// the resolver grouped under this heading, then — when the section was bounded
-// — how many rows it is not showing. The count matters: a silently truncated
-// list reads as "this object has six relationships" to the person looking at
-// it, which is a lie the page should not tell.
-templ objectViewSectionCard(section objectViewSection, typeUIByType map[string]typeUI) {
-	@ui.Section(section.Title, ui.SectionProps{
-		Margin:    "mt-6",
-		CardClass: "overflow-hidden",
-		BodyClass: "memory-density-flush",
-	}) {
-		<div class="divide-y divide-base-200">
-			for _, row := range section.Rows {
-				@objectViewRow(row, typeUIByType)
-			}
-			if section.Total > len(section.Rows) {
-				<div class="text-muted-subtle px-4 py-2.5 text-xs" data-testid="object-view-truncated">
-					+{ strconv.Itoa(section.Total - len(section.Rows)) } more not shown
-				</div>
-			}
-		</div>
-	}
+// the resolver grouped under this heading, then — when the section was bounded —
+// the way out of the truncation. The count matters: a silently truncated list
+// reads as "this object has six relationships" to the person looking at it,
+// which is a lie the page should not tell.
+//
+// The card is wrapped in an id'd element so "show all" can swap this one card
+// (hx-target) and leave the rest of the page, its scroll position and the other
+// sections alone. The link carries a full-page href as well: without htmx it
+// still works, landing on the Relationships page with this section expanded.
+templ objectViewSectionCard(objID string, index int, section objectViewSection, typeUIByType map[string]typeUI) {
+	{{ sectionID := "object-view-section-" + strconv.Itoa(index)
+	sectionPath := "/objects/" + url.PathEscape(objID) + "/relationships/sections/" + strconv.Itoa(index)
+	expandHref := "/objects/" + url.PathEscape(objID) + "/relationships?expand=" + strconv.Itoa(index)
+	collapseHref := "/objects/" + url.PathEscape(objID) + "/relationships" }}
+	<div id={ sectionID } data-testid="object-view-section">
+		@ui.Section(section.Title, ui.SectionProps{
+			Margin:    "mt-6",
+			CardClass: "overflow-hidden",
+			BodyClass: "memory-density-flush",
+		}) {
+			<div class="divide-y divide-base-200">
+				for _, row := range section.Rows {
+					@objectViewRow(row, typeUIByType, section.ShowDirection)
+				}
+				if section.Total > len(section.Rows) || (section.Expanded && section.Total > section.Limit) {
+					<div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-2.5" data-testid="object-view-footer">
+						if section.Total > len(section.Rows) {
+							<span class="text-muted-subtle text-xs" data-testid="object-view-truncated">
+								+{ strconv.Itoa(section.Total - len(section.Rows)) } more not shown
+							</span>
+						} else {
+							<span></span>
+						}
+						<div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+							if section.Total > len(section.Rows) && !section.Expanded {
+								<a
+									class="link link-hover text-xs font-medium"
+									href={ templ.URL(expandHref) }
+									hx-get={ templ.URL(sectionPath) }
+									hx-target={ "#" + sectionID }
+									hx-swap="outerHTML"
+									data-testid="object-view-show-all"
+								>
+									Show all { strconv.Itoa(section.Total) }
+								</a>
+							}
+							if section.Total > len(section.Rows) && section.Expanded {
+								// Past the expanded budget: a filtered browse is the
+								// only honest offer left. Point the object browser at
+								// the neighbour type the rows are mostly made of.
+								if browseType := dominantNeighbourType(section.Rows); browseType != "" {
+									<a
+										class="link link-hover text-xs font-medium"
+										href={ templ.URL("/objects?type=" + url.QueryEscape(browseType)) }
+										data-testid="object-view-browse-all"
+									>
+										Browse all { relationshipTypeLabel(browseType) }
+									</a>
+								}
+							}
+							if section.Expanded && section.Total > section.Limit {
+								<a
+									class="link link-hover text-xs font-medium"
+									href={ templ.URL(collapseHref) }
+									hx-get={ templ.URL(sectionPath + "?collapsed=1") }
+									hx-target={ "#" + sectionID }
+									hx-swap="outerHTML"
+									data-testid="object-view-show-fewer"
+								>
+									Show fewer
+								</a>
+							}
+						</div>
+					</div>
+				}
+			</div>
+		}
+	</div>
 }
 
 // objectViewRow renders one neighbour with its depth-1 preview facts. The
@@ -1268,18 +1395,33 @@ templ objectViewSectionCard(section objectViewSection, typeUIByType map[string]t
 // one line (the badge shrinks only after the label has room), and the facts sit
 // in a two-column grid on a phone that becomes four columns from `sm` up. A
 // fixed side-by-side row — the usual desktop-first shape — collapses on a phone
-// into three-word-wide title columns, which is the single most common
-// responsive failure in a list like this.
-templ objectViewRow(row objectViewItem, typeUIByType map[string]typeUI) {
+// into three-word-wide title columns, which is the most common responsive
+// failure in a list like this.
+//
+// showDirection restores the arrow the flat list carried: inside a `dir: both`
+// section (and the fallback group) a row's edge can point at the object or away
+// from it, and the section heading no longer says which.
+templ objectViewRow(row objectViewItem, typeUIByType map[string]typeUI, showDirection bool) {
 	{{ tui := typeUIOf(typeUIByType, row.Neighbour.Type)
 	hrefID := relationshipEndpointTarget(row.Neighbour) }}
-	<div class="px-4 py-3" data-testid="object-view-row" data-relationship-type={ row.RelType }>
+	<div class="px-4 py-3" data-testid="object-view-row" data-relationship-type={ row.RelType } data-direction={ row.direction() }>
 		<div class="flex min-w-0 items-center gap-2">
 			@typeIconTileSmall(tui.Icon, tui.Color)
 			if row.Resolved {
 				<a href={ templ.URL("/objects/" + url.PathEscape(hrefID)) } class="hover:text-primary min-w-0 flex-1 truncate text-sm font-medium hover:underline">{ graphObjectLabel(row.Neighbour) }</a>
 			} else {
 				<span class="text-muted-subtle min-w-0 flex-1 truncate text-sm" data-unresolved="1">{ graphObjectLabel(row.Neighbour) }</span>
+			}
+			if showDirection {
+				if row.direction() == "in" {
+					<span class="text-muted-subtle shrink-0" title="Points at this object" aria-label="Incoming relationship" data-testid="object-view-direction">
+						@ui.IconSpan("lucide--arrow-left", "size-3.5")
+					</span>
+				} else {
+					<span class="text-muted-subtle shrink-0" title="Leaves this object" aria-label="Outgoing relationship" data-testid="object-view-direction">
+						@ui.IconSpan("lucide--arrow-right", "size-3.5")
+					</span>
+				}
 			}
 			@ui.Badge(ui.BadgeProps{
 				Label:   relationshipTypeLabel(row.RelType),

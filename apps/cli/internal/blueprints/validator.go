@@ -198,6 +198,10 @@ func (r *ValidationReport) validatePacks(packs []PackFile, knownProjectObjTypes 
 	if len(knownProjectObjTypes) > 0 {
 		scope = "the blueprint or the project"
 	}
+	// A ui.view section names relationship types, so it is checked against every
+	// relationship type the blueprint declares — not only this pack's, since a
+	// pack may present a relationship another pack in the same blueprint owns.
+	knownRelTypes := buildKnownRelationshipTypes(packs)
 
 	for _, p := range packs {
 		// Duplicate pack names across files.
@@ -262,7 +266,7 @@ func (r *ValidationReport) validatePacks(packs []PackFile, knownProjectObjTypes 
 			} else if len(ot.UI) > 0 {
 				// A pack uiConfigs fallback is validated once in the pack-level
 				// loop below, so it is not reported twice.
-				r.validateUIConfig(p.Name, p.SourceFile, uiField, ot.Name, ui)
+				r.validateUIConfig(p.Name, p.SourceFile, uiField, ot.Name, ui, knownRelTypes)
 			}
 
 			r.validateProperties(p.Name, p.SourceFile, field+".properties", fmt.Sprintf("objectType %q", ot.Name), ot.Properties)
@@ -294,7 +298,7 @@ func (r *ValidationReport) validatePacks(packs []PackFile, knownProjectObjTypes 
 					r.add(ValidationWarning, "pack", p.Name, p.SourceFile, "uiConfigs."+typeName,
 						fmt.Sprintf("uiConfigs entry names %q, which is not an objectType declared by this pack", typeName))
 				}
-				r.validateUIConfig(p.Name, p.SourceFile, "uiConfigs."+typeName, typeName, cfg)
+				r.validateUIConfig(p.Name, p.SourceFile, "uiConfigs."+typeName, typeName, cfg, knownRelTypes)
 			}
 		}
 
@@ -509,7 +513,7 @@ func effectiveObjectUI(ot ObjectTypeDef, packUIConfigs map[string]map[string]any
 // validateUIConfig checks an inline or pack-level ui block. Missing or
 // non-renderable style metadata is a warning, never an error: the server and UI
 // both fall back to defaults.
-func (r *ValidationReport) validateUIConfig(packName, sourceFile, field, typeName string, ui map[string]any) {
+func (r *ValidationReport) validateUIConfig(packName, sourceFile, field, typeName string, ui map[string]any, knownRelTypes map[string]bool) {
 	iconRaw, hasIcon := ui["icon"]
 	icon, iconIsString := iconRaw.(string)
 	switch {
@@ -545,7 +549,7 @@ func (r *ValidationReport) validateUIConfig(packName, sourceFile, field, typeNam
 	}
 
 	if view, ok := ui["view"]; ok {
-		r.validateUIView(packName, sourceFile, field+".view", typeName, view)
+		r.validateUIView(packName, sourceFile, field+".view", typeName, view, knownRelTypes)
 	}
 }
 
@@ -567,7 +571,7 @@ const uiViewMaxLimit = 50
 // shapes each key accepts, and the bounds the renderer enforces. Findings are
 // warnings, matching the rest of the ui block — the renderer ignores a view it
 // cannot parse and the page still works, so an install must not fail on it.
-func (r *ValidationReport) validateUIView(packName, sourceFile, field, typeName string, raw any) {
+func (r *ValidationReport) validateUIView(packName, sourceFile, field, typeName string, raw any, knownRelTypes map[string]bool) {
 	view, ok := toStringAnyMap(raw)
 	if !ok {
 		r.add(ValidationWarning, "pack", packName, sourceFile, field,
@@ -627,19 +631,35 @@ func (r *ValidationReport) validateUIView(packName, sourceFile, field, typeName 
 					fmt.Sprintf("type %q ui.view.sections[%d]: unknown key %q (known: title, relation, dir, limit)", typeName, i, key))
 			}
 		}
-		r.validateUIViewSection(packName, sourceFile, sectionField, typeName, i, section)
+		r.validateUIViewSection(packName, sourceFile, sectionField, typeName, i, section, knownRelTypes)
 	}
 }
 
-// validateUIViewSection checks one declared section: relation is required and
-// accepts a bare string or a list, dir is a closed enum, and limit is bounded.
-func (r *ValidationReport) validateUIViewSection(packName, sourceFile, field, typeName string, index int, section map[string]any) {
+// validateUIViewSection checks one declared section: title and relation shapes,
+// relation is required, dir is a closed enum, limit is bounded, and every named
+// relationship type is one the blueprint actually declares.
+func (r *ValidationReport) validateUIViewSection(packName, sourceFile, field, typeName string, index int, section map[string]any, knownRelTypes map[string]bool) {
+	if titleRaw, ok := section["title"]; ok {
+		// The renderer decodes title as a string; an unquoted year in YAML
+		// (title: 2024) decodes as a number and drops the whole view at render
+		// time, which is exactly the silent failure this validator exists for.
+		if _, isString := titleRaw.(string); !isString {
+			r.add(ValidationWarning, "pack", packName, sourceFile, field+".title",
+				fmt.Sprintf("type %q ui.view.sections[%d]: title must be a string (quote it) — the whole view is ignored at render time", typeName, index))
+		}
+	}
+
+	// relationNames collects the section's relationship types so each can be
+	// checked against the blueprint's declarations below.
+	var relationNames []string
 	relationRaw, hasRelation := section["relation"]
 	switch rel := relationRaw.(type) {
 	case string:
 		if strings.TrimSpace(rel) == "" {
 			r.add(ValidationWarning, "pack", packName, sourceFile, field+".relation",
 				fmt.Sprintf("type %q ui.view.sections[%d]: relation is empty — the section is ignored", typeName, index))
+		} else {
+			relationNames = append(relationNames, strings.TrimSpace(rel))
 		}
 	case []any:
 		if len(rel) == 0 {
@@ -647,9 +667,14 @@ func (r *ValidationReport) validateUIViewSection(packName, sourceFile, field, ty
 				fmt.Sprintf("type %q ui.view.sections[%d]: relation list is empty — the section is ignored", typeName, index))
 		}
 		for j, name := range rel {
-			if _, ok := name.(string); !ok {
+			relName, isString := name.(string)
+			if !isString {
 				r.add(ValidationWarning, "pack", packName, sourceFile, fmt.Sprintf("%s.relation[%d]", field, j),
 					fmt.Sprintf("type %q ui.view.sections[%d]: relation entries must be strings", typeName, index))
+				continue
+			}
+			if trimmed := strings.TrimSpace(relName); trimmed != "" {
+				relationNames = append(relationNames, trimmed)
 			}
 		}
 	default:
@@ -659,6 +684,18 @@ func (r *ValidationReport) validateUIViewSection(packName, sourceFile, field, ty
 		} else {
 			r.add(ValidationWarning, "pack", packName, sourceFile, field+".relation",
 				fmt.Sprintf("type %q ui.view.sections[%d]: relation must be a name or a list of names", typeName, index))
+		}
+	}
+
+	// A section can only render an edge whose type is one the graph knows about.
+	// An undeclared name is a permanently empty card, and nothing else reports
+	// it: the page simply shows nothing under that heading.
+	if len(knownRelTypes) > 0 {
+		for _, relName := range relationNames {
+			if !knownRelTypes[relName] {
+				r.add(ValidationWarning, "pack", packName, sourceFile, field+".relation",
+					fmt.Sprintf("type %q ui.view.sections[%d]: relation %q is not a relationshipType declared by this blueprint — the section stays empty unless another installed blueprint declares it", typeName, index, relName))
+			}
 		}
 	}
 
@@ -1314,6 +1351,12 @@ func HasUnknownRelationshipEndpoints(packs []PackFile) bool {
 	return false
 }
 
+// buildKnownRelationshipTypes is the relationship-name sibling of
+// buildKnownObjectTypes: the set of relationship types any pack in the same
+// blueprint declares. A ui.view section that names a relationship outside this
+// set can never match an edge, so the validator reports it instead of leaving
+// the author with a silently empty section. It is only a warning: the real
+// project may have the relationship type from another installed blueprint.
 func buildKnownRelationshipTypes(packs []PackFile) map[string]bool {
 	m := make(map[string]bool)
 	for _, p := range packs {

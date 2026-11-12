@@ -509,6 +509,7 @@ func main() {
 	e.GET("/objects/:id/history", s.uiObjectHistoryPage)
 	e.GET("/objects/:id/history/partial", s.uiObjectHistoryPartial)
 	e.GET("/objects/:id/relationships", s.uiObjectRelationshipsPage)
+	e.GET("/objects/:id/relationships/sections/:index", s.uiObjectViewSection)
 	e.GET("/objects/:id/similar", s.uiObjectSimilarPage)
 	e.GET("/objects/:id/similar/partial", s.uiObjectSimilarPartial)
 	e.GET("/objects/:id/similar/count", s.uiObjectSimilarCountPartial)
