@@ -15,6 +15,9 @@ import (
 
 // GetEmailSettings returns the non-secret instance email settings.
 func (h *Handler) GetEmailSettings(c echo.Context) error {
+	if _, err := h.requireSuperadminRole(c, auth.RoleSuperadminFull); err != nil {
+		return err
+	}
 	view, err := h.emailSettings.View(c.Request().Context())
 	if err != nil {
 		return apperror.NewInternal("failed to read email settings", err)
@@ -26,7 +29,10 @@ type updateEmailSettingsRequest = email.SettingsInput
 
 // UpdateEmailSettings validates, applies to Zitadel, and persists the settings.
 func (h *Handler) UpdateEmailSettings(c echo.Context) error {
-	user := auth.MustGetUser(c).ID
+	user, err := h.requireSuperadminRole(c, auth.RoleSuperadminFull)
+	if err != nil {
+		return err
+	}
 	var in updateEmailSettingsRequest
 	if err := c.Bind(&in); err != nil {
 		return apperror.NewBadRequest("invalid email settings payload")
@@ -50,10 +56,17 @@ func (h *Handler) UpdateEmailSettings(c echo.Context) error {
 		if err := h.zitadelEmail.ConfigureSMTP(c.Request().Context(), in); err != nil {
 			return apperror.New(http.StatusBadGateway, "zitadel_smtp_failed", "failed to configure Zitadel SMTP").WithInternal(err)
 		}
+	} else if h.zitadelEmail != nil {
+		if err := h.zitadelEmail.DeactivateSMTP(c.Request().Context()); err != nil {
+			return apperror.New(http.StatusBadGateway, "zitadel_smtp_failed", "failed to deactivate Zitadel SMTP").WithInternal(err)
+		}
 	}
-	view, err := h.emailSettings.Save(c.Request().Context(), in, user)
-	if err != nil {
+	if _, err := h.emailSettings.Save(c.Request().Context(), in, user); err != nil {
 		return apperror.NewBadRequest(err.Error())
+	}
+	view, err := h.emailSettings.View(c.Request().Context())
+	if err != nil {
+		return apperror.NewInternal("failed to read email settings", err)
 	}
 	return c.JSON(http.StatusOK, view)
 }
@@ -64,6 +77,9 @@ type testEmailRequest struct {
 
 // TestEmailSettings sends a test message using the effective configuration.
 func (h *Handler) TestEmailSettings(c echo.Context) error {
+	if _, err := h.requireSuperadminRole(c, auth.RoleSuperadminFull); err != nil {
+		return err
+	}
 	var in testEmailRequest
 	if err := c.Bind(&in); err != nil || in.To == "" {
 		return apperror.NewBadRequest("to is required")

@@ -156,12 +156,14 @@ func (s *SettingsService) View(ctx context.Context) (SettingsView, error) {
 			SMTPPort:     s.env.SMTPPort,
 			SMTPUsername: s.env.SMTPUsername,
 			SMTPTLS:      s.env.SMTPTLS,
+			PasswordSet:  s.env.SMTPPassword != "",
 			Source:       "environment",
 		}, nil
 	}
 	password, err := s.secret(ctx, row)
 	if err != nil {
-		return SettingsView{}, err
+		s.log.Warn("could not decrypt stored email password", slog.String("error", err.Error()))
+		password = ""
 	}
 	return SettingsView{
 		Enabled:      row.Enabled,
@@ -186,17 +188,27 @@ func (s *SettingsService) Validate(ctx context.Context, in SettingsInput) error 
 	}
 	stored, err := s.secret(ctx, existing)
 	if err != nil {
-		return err
+		s.log.Warn("could not decrypt stored email password; requiring a replacement", slog.String("error", err.Error()))
+		stored = ""
+	}
+	if stored == "" {
+		stored = s.env.SMTPPassword
 	}
 	return in.validate(stored != "")
 }
 
 func (in SettingsInput) validate(hasStoredPassword bool) error {
+	if !in.Enabled {
+		return nil
+	}
 	if in.Provider != "resend" && in.Provider != "mailgun" && in.Provider != "gmail" && in.Provider != "custom" {
 		return fmt.Errorf("unsupported email provider")
 	}
 	if _, err := mail.ParseAddress(in.FromEmail); err != nil {
 		return fmt.Errorf("invalid from address")
+	}
+	if strings.TrimSpace(in.FromName) == "" {
+		return fmt.Errorf("from name is required")
 	}
 	if in.SMTPPort < 1 || in.SMTPPort > 65535 {
 		return fmt.Errorf("SMTP port must be between 1 and 65535")
@@ -225,7 +237,11 @@ func (s *SettingsService) Save(ctx context.Context, in SettingsInput, updatedBy 
 	}
 	storedPassword, err := s.secret(ctx, existing)
 	if err != nil {
-		return Config{}, err
+		s.log.Warn("could not decrypt stored email password; overwrite required", slog.String("error", err.Error()))
+		storedPassword = ""
+	}
+	if storedPassword == "" {
+		storedPassword = s.env.SMTPPassword
 	}
 	if err := in.validate(storedPassword != ""); err != nil {
 		return Config{}, err

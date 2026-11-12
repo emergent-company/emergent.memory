@@ -15,7 +15,7 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/config"
 )
 
-var errZitadelEmailUnavailable = errors.New("Zitadel admin credentials are not configured")
+var errZitadelEmailUnavailable = errors.New("zitadel admin credentials are not configured")
 
 // ZitadelEmailClient configures the instance SMTP provider through the Zitadel
 // Admin API. It is nil when ZITADEL_ADMIN_PAT is absent.
@@ -86,25 +86,27 @@ func (c *ZitadelEmailClient) ConfigureSMTP(ctx context.Context, in email.Setting
 		"tls":           tls,
 		"host":          fmt.Sprintf("%s:%d", in.SMTPHost, in.SMTPPort),
 		"user":          in.SMTPUsername,
-		"plain": map[string]string{
-			"username": in.SMTPUsername,
-			"password": in.SMTPPassword,
-		},
+		"plain":         map[string]string{"password": in.SMTPPassword},
 	}
 	var search struct {
 		Result []struct {
-			ID string `json:"id"`
+			ID          string `json:"id"`
+			Description string `json:"description"`
+			Type        string `json:"type"`
 		} `json:"result"`
 	}
 	if err := c.do(ctx, http.MethodPost, "/admin/v1/email/_search", map[string]any{}, &search); err != nil {
 		return err
 	}
 	id := ""
-	if len(search.Result) > 0 {
-		id = search.Result[0].ID
+	for _, p := range search.Result {
+		if p.Description == "Memory deployment" || strings.EqualFold(p.Type, "SMTP") {
+			id = p.ID
+			break
+		}
 	}
 	if id != "" {
-		if err := c.do(ctx, http.MethodPut, "/admin/v1/email/"+id, body, nil); err != nil {
+		if err := c.do(ctx, http.MethodPut, "/admin/v1/email/smtp/"+id, body, nil); err != nil {
 			return err
 		}
 	} else {
@@ -120,4 +122,27 @@ func (c *ZitadelEmailClient) ConfigureSMTP(ctx context.Context, in email.Setting
 		}
 	}
 	return c.do(ctx, http.MethodPost, "/admin/v1/email/"+id+"/_activate", map[string]any{}, nil)
+}
+
+// DeactivateSMTP deactivates the Memory-provided SMTP configuration if one exists.
+func (c *ZitadelEmailClient) DeactivateSMTP(ctx context.Context) error {
+	if c == nil {
+		return errZitadelEmailUnavailable
+	}
+	var search struct {
+		Result []struct {
+			ID          string `json:"id"`
+			Description string `json:"description"`
+			Type        string `json:"type"`
+		} `json:"result"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/admin/v1/email/_search", map[string]any{}, &search); err != nil {
+		return err
+	}
+	for _, p := range search.Result {
+		if p.Description == "Memory deployment" || strings.EqualFold(p.Type, "SMTP") {
+			return c.do(ctx, http.MethodPost, "/admin/v1/email/"+p.ID+"/_deactivate", map[string]any{}, nil)
+		}
+	}
+	return nil
 }

@@ -45,7 +45,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g.DELETE("/projects/:id/members/:userId", h.RemoveProjectMember, authMiddleware.RequireSuperadminFull())
 
 	// Instance email settings (SMTP for Zitadel + Memory).
-	g.GET("/email-settings", h.GetEmailSettings)
+	g.GET("/email-settings", h.GetEmailSettings, authMiddleware.RequireSuperadminFull())
 	g.PUT("/email-settings", h.UpdateEmailSettings, authMiddleware.RequireSuperadminFull())
 	g.POST("/email-settings/test", h.TestEmailSettings, authMiddleware.RequireSuperadminFull())
 

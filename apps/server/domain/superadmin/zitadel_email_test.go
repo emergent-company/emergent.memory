@@ -66,8 +66,8 @@ func TestZitadelEmailConfigureUpdatesExisting(t *testing.T) {
 		mu.Unlock()
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/admin/v1/email/_search":
-			_, _ = w.Write([]byte(`{"result":[{"id":"smtp-1"}]}`))
-		case r.Method == http.MethodPut && r.URL.Path == "/admin/v1/email/smtp-1":
+			_, _ = w.Write([]byte(`{"result":[{"id":"smtp-1","description":"Memory deployment","type":"SMTP"}]}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/admin/v1/email/smtp/smtp-1":
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			if body["host"] != "smtp.example.com:587" {
@@ -92,7 +92,7 @@ func TestZitadelEmailConfigureUpdatesExisting(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(methods) != 3 || methods[1] != "PUT /admin/v1/email/smtp-1" {
+	if len(methods) != 3 || methods[1] != "PUT /admin/v1/email/smtp/smtp-1" {
 		t.Fatalf("methods = %v", methods)
 	}
 }
