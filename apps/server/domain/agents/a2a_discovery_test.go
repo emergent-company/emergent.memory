@@ -46,7 +46,19 @@ func TestGlobalAgentCard_NoTenantLeak(t *testing.T) {
 	// The card is static platform identity, not tenant data.
 	assert.Equal(t, A2APlatformName, card.Name)
 	assert.Equal(t, A2APlatformDescription, card.Description)
-	assert.Empty(t, card.Skills, "global card must not enumerate per-project skills")
+	// Skills are the static platform directory — never a project's agent
+	// definitions. Asserting the literal ids (rather than card.Skills ==
+	// PlatformSkills(), which is true by construction) means this fails if
+	// PlatformSkills itself ever becomes tenant-aware.
+	ids := make([]string, 0, len(card.Skills))
+	for _, skill := range card.Skills {
+		ids = append(ids, skill.ID)
+	}
+	assert.Equal(t, []string{
+		"knowledge-graph-search",
+		"document-retrieval",
+		"agent-delegation",
+	}, ids, "global card skills must be the static platform directory")
 }
 
 func TestGlobalAgentCard_RequiredFields(t *testing.T) {
@@ -81,9 +93,7 @@ func TestGlobalAgentCard_Capabilities(t *testing.T) {
 
 func TestGlobalAgentCard_A2UIExtension(t *testing.T) {
 	card := GlobalAgentCard()
-	require.Len(t, card.Capabilities.Extensions, 1)
-	ext := card.Capabilities.Extensions[0]
-	assert.Equal(t, A2UIA2AExtensionURI, ext.URI)
+	ext := findExtension(t, card, A2UIA2AExtensionURI)
 	ids, ok := ext.Params["supportedCatalogIds"].([]string)
 	require.True(t, ok, "supportedCatalogIds must be a string array")
 	assert.Equal(t, []string{"memory-basic"}, ids)
@@ -92,6 +102,80 @@ func TestGlobalAgentCard_A2UIExtension(t *testing.T) {
 	j := mustJSON(t, card)
 	assert.NotContains(t, j, "projectId")
 	assert.NotContains(t, j, "orgId")
+}
+
+func TestGlobalAgentCard_AgentMetadataExtension(t *testing.T) {
+	card := GlobalAgentCard()
+	ext := findExtension(t, card, A2AAgentMetadataExtensionURI)
+
+	assert.Equal(t, A2AAuthorName, ext.Params["authorName"])
+	assert.Equal(t, A2AContactEmail, ext.Params["contactEmail"])
+
+	// Gemini Enterprise ignores values that do not meet these requirements.
+	author, ok := ext.Params["authorName"].(string)
+	require.True(t, ok)
+	assert.LessOrEqual(t, len(author), 256)
+	assert.NotContains(t, strings.ToLower(author), "google", "Gemini Enterprise suppresses author names containing \"Google\"")
+
+	email, ok := ext.Params["contactEmail"].(string)
+	require.True(t, ok)
+	assert.LessOrEqual(t, len(email), 256)
+	assert.Contains(t, email, "@")
+}
+
+func TestGlobalAgentCard_CarriesDirectoryFields(t *testing.T) {
+	card := GlobalAgentCard()
+
+	// A registry renders the card itself as the listing, so the fields below must
+	// be populated or the agent appears as a blank tile.
+	assert.NotEmpty(t, card.DocumentationURL, "documentationUrl must be advertised")
+	require.NotEmpty(t, card.Skills, "a gallery listing with no skills shows an empty agent")
+	for _, skill := range card.Skills {
+		assert.NotEmpty(t, skill.ID)
+		assert.NotEmpty(t, skill.Name)
+		assert.NotEmpty(t, skill.Description)
+		assert.NotEmpty(t, skill.Tags, "skill %q must carry tags", skill.ID)
+	}
+}
+
+func TestPlatformSkills_NotSharedMutableState(t *testing.T) {
+	first := PlatformSkills()
+	require.NotEmpty(t, first)
+	first[0].Tags[0] = "mutated"
+	assert.NotEqual(t, "mutated", PlatformSkills()[0].Tags[0], "PlatformSkills must return fresh slices")
+}
+
+func TestWithInterfaceOrigin_AdvertisesIconURL(t *testing.T) {
+	c, _ := newA2AEchoContextNoAuth(http.MethodGet, "/.well-known/agent-card.json")
+
+	// Production shape: the API host (APP_URL) serves A2A, the UI host
+	// (WEB_UI_URL) serves /assets/*, so the icon must be anchored to the frontend
+	// origin. Anchoring it to the interface origin 404s in production.
+	h := &A2AHandler{
+		appURL:      "https://api.example.com",
+		frontendURL: "https://app.example.com",
+	}
+	card := h.withInterfaceOrigin(c, GlobalAgentCard())
+	assert.Equal(t, "https://app.example.com"+a2aIconPath, card.IconURL)
+	require.Len(t, card.SupportedInterfaces, 1)
+	assert.Equal(t, "https://api.example.com", card.SupportedInterfaces[0].URL)
+
+	// With no frontend origin configured the icon follows the interface origin, so
+	// it is still absolute rather than empty.
+	h = &A2AHandler{a2aOrigin: "https://a2a.example.com"}
+	card = h.withInterfaceOrigin(c, GlobalAgentCard())
+	assert.Equal(t, "https://a2a.example.com"+a2aIconPath, card.IconURL)
+}
+
+func findExtension(t *testing.T, card AgentCard, uri string) AgentExtension {
+	t.Helper()
+	for _, ext := range card.Capabilities.Extensions {
+		if ext.URI == uri {
+			return ext
+		}
+	}
+	require.Failf(t, "extension not advertised", "card capabilities do not carry %s", uri)
+	return AgentExtension{}
 }
 
 func TestAgentDefinitionToSkill_SlugID(t *testing.T) {
