@@ -214,9 +214,25 @@ func (s *Server) notificationMutation(c echo.Context, fn func(context.Context) e
 	return c.JSON(http.StatusOK, map[string]any{"ok": true})
 }
 
-// notificationUpstreamError maps a memory failure to a 502 so the client can
-// retry/reconcile without a generic 500.
+// notificationUpstreamError maps a memory failure to the status the caller can
+// act on.
+//
+// A conflict is a decision, not an outage: memory refused the write because the
+// row already carries a different outcome (the resolve verb is first-write-wins),
+// so the client must see the 409 and its message to reconcile — a 502 tells it to
+// retry, and the retry hits the same refusal. It is also not captured as an
+// error: an expected, handled conflict in the error stream is what makes a real
+// outage hard to spot.
+//
+// Everything else is an upstream failure and keeps the retryable 502.
 func (s *Server) notificationUpstreamError(c echo.Context, err error) error {
+	if isMemoryStatus(err, http.StatusConflict) {
+		msg := memoryHTTPErrorMessage(err)
+		if msg == "" {
+			msg = "this notification's action was already resolved"
+		}
+		return c.JSON(http.StatusConflict, map[string]string{"error": msg})
+	}
 	captureError(err)
 	return c.JSON(http.StatusBadGateway, map[string]string{"error": "memory service unavailable"})
 }

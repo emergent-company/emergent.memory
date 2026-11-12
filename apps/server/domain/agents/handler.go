@@ -3284,9 +3284,21 @@ func (h *Handler) RespondToQuestion(ctx context.Context, p RespondParams) (*Agen
 		return nil, apperror.ErrConflict.WithMessage("question is no longer pending")
 	}
 
-	// Update notification action status if notification was created (non-fatal)
+	// Record the outcome on the notification, best-effort: the question is
+	// already answered and the run is about to resume, so a failure here must
+	// not report the respond as failed. It is logged rather than discarded
+	// because the write can legitimately lose — the inbox is first-write-wins,
+	// so a verb the user recorded there earlier keeps the row
+	// (notifications.ErrActionAlreadyResolved) — and an unexpected database
+	// failure must be visible instead of silent.
 	if question.NotificationID != nil {
-		_ = h.repo.UpdateNotificationActionStatus(ctx, *question.NotificationID, "completed", p.UserID)
+		if err := h.repo.UpdateNotificationActionStatus(ctx, *question.NotificationID, "completed", p.UserID); err != nil {
+			slog.Warn("could not record notification action status",
+				slog.String("notification_id", *question.NotificationID),
+				slog.String("status", "completed"),
+				slog.Any("error", err),
+			)
+		}
 	}
 
 	// Resume the agent in a background goroutine
@@ -3448,7 +3460,17 @@ func (h *Handler) cancelQuestion(ctx context.Context, p RespondParams) (*AgentQu
 	_ = h.repo.UpdateToolApprovalDecision(ctx, p.QuestionID, "cancelled", "", p.RespondedBy)
 
 	if question.NotificationID != nil {
-		_ = h.repo.UpdateNotificationActionStatus(ctx, *question.NotificationID, "cancelled", p.UserID)
+		// Best-effort, like the respond path: the cancellation is already
+		// recorded, and the notification write can legitimately lose to a verb
+		// the user resolved from the inbox first. Log it so a real failure is
+		// not swallowed.
+		if err := h.repo.UpdateNotificationActionStatus(ctx, *question.NotificationID, "cancelled", p.UserID); err != nil {
+			slog.Warn("could not record notification action status",
+				slog.String("notification_id", *question.NotificationID),
+				slog.String("status", "cancelled"),
+				slog.Any("error", err),
+			)
+		}
 	}
 
 	var preCreatedRun *AgentRun
