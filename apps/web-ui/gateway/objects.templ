@@ -898,7 +898,7 @@ templ ObjectDetailPage(obj *GraphObject, branch objectBranchRef, sources []objec
 // objectHistoryPage renders the History subpage: the shared shell plus the full
 // version timeline. A failed history fetch degrades only this section; the
 // object header and rail stay usable.
-templ objectHistoryPage(data objectDetailShellData, versions []GraphObject, historyErr error) {
+templ objectHistoryPage(data objectDetailShellData, versions []GraphObject, identities []objectActorOption, historyErr error) {
 	@objectDetailShell(data) {
 		@ui.Section("History", ui.SectionProps{
 			BodyClass: "memory-density-comfortable",
@@ -913,7 +913,7 @@ templ objectHistoryPage(data objectDetailShellData, versions []GraphObject, hist
 				})
 			} else {
 				<div data-testid="object-history-page">
-					@objectPreviewHistory(versions)
+					@objectPreviewHistory(versions, identities)
 				</div>
 			}
 		}
@@ -1008,7 +1008,7 @@ templ objectDetailMeta(obj *GraphObject, branch objectBranchRef, typeUIByType ma
 	@typeNameChip(obj.Type, ui.BadgePrimary, tui.Icon, tui.Color)
 	<span class="text-muted-strong font-mono text-xs" data-testid="object-ref">{ ref }</span>
 	@objectBranchChip(branch)
-	if lbl, variant, hint, icon := dataClassChip(obj.DataClass); lbl != "" {
+	if lbl, variant, icon, hint := dataClassChip(obj.DataClass); lbl != "" {
 		@ui.Badge(ui.BadgeProps{
 			Label:   lbl,
 			Variant: variant,
