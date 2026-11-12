@@ -106,7 +106,7 @@ func RegisterTasks(p TaskParams) error {
 	}
 
 	// Register cache cleanup task
-	cacheCleanupTask := NewCacheCleanupTask(p.DB, p.Log)
+	cacheCleanupTask := NewCacheCleanupTask(p.DB, p.Log, p.Cfg.EmbeddingCacheRetentionDays)
 	if err := addScheduledTask(p.Scheduler, p.Log, "cache_cleanup",
 		p.Cfg.CacheCleanupSchedule, p.Cfg.CacheCleanupInterval, cacheCleanupTask.Run); err != nil {
 		p.Log.Error("failed to register cache cleanup task",

@@ -353,7 +353,7 @@ func (s *SchedulerTestSuite) TestCacheCleanupTask_Run() {
 	s.Require().NoError(err)
 
 	// Create the task and run it
-	task := scheduler.NewCacheCleanupTask(s.testDB.DB, s.log)
+	task := scheduler.NewCacheCleanupTask(s.testDB.DB, s.log, 30)
 	err = task.Run(s.ctx)
 	s.Require().NoError(err)
 
@@ -385,7 +385,7 @@ func (s *SchedulerTestSuite) TestCacheCleanupTask_AllExpired() {
 	}
 
 	// Run cleanup
-	task := scheduler.NewCacheCleanupTask(s.testDB.DB, s.log)
+	task := scheduler.NewCacheCleanupTask(s.testDB.DB, s.log, 30)
 	err := task.Run(s.ctx)
 	s.Require().NoError(err)
 

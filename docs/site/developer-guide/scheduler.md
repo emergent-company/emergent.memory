@@ -8,7 +8,7 @@ The scheduler runs maintenance tasks on a fixed cron schedule. It has no HTTP en
 |---|---|---|
 | `RevisionCountRefreshTask` | Every 15 minutes | Refreshes cached revision counts on graph nodes to avoid expensive `COUNT` queries at read time |
 | `TagCleanupTask` | Every 30 minutes | Removes orphaned tags (tags with no associated objects) |
-| `CacheCleanupTask` | Every hour | Evicts stale entries from in-memory and DB-backed caches |
+| `CacheCleanupTask` | Every 15 minutes | Deletes expired `kb.auth_introspection_cache` rows and prunes `kb.embedding_cache` rows older than `EMBEDDING_CACHE_RETENTION_DAYS` (default 30 days) |
 | `StaleJobCleanupTask` | Every 10 minutes | Marks jobs that have been stuck in `processing` state beyond their timeout as `failed`, recovering from worker crashes |
 
 All tasks run with a **30-minute hard timeout**. If a task exceeds this limit it is cancelled and the error is logged; the next scheduled run will attempt it again automatically.
