@@ -375,38 +375,7 @@ func (s *Server) loadObjectFilterOptions(ctx context.Context, data *objectsPageD
 // definitions (actor_type "agent"). Both fetches are best-effort and run
 // concurrently: a failure drops that group rather than blanking the page.
 func (s *Server) loadObjectActorOptions(ctx context.Context, data *objectsPageData) {
-	var (
-		members   []ProjectMemberDto
-		agents    []AgentDefinitionSummary
-		memberErr error
-		agentErr  error
-	)
-	var g errgroup.Group
-	g.Go(func() error { members, memberErr = s.memory.ListMembers(ctx); return nil })
-	g.Go(func() error { agents, agentErr = s.memory.ListAgentDefinitions(ctx); return nil })
-	_ = g.Wait()
-	captureError(memberErr)
-	captureError(agentErr)
-
-	options := make([]objectActorOption, 0, len(members)+len(agents))
-	for _, m := range members {
-		options = append(options, objectActorOption{
-			Type:      "user",
-			ID:        m.ID,
-			Label:     memberActorLabel(m),
-			AvatarURL: strings.TrimSpace(m.AvatarURL),
-		})
-	}
-	for _, a := range agents {
-		options = append(options, objectActorOption{
-			Type:  "agent",
-			ID:    a.ID,
-			Label: a.Name,
-			Icon:  agentIcon(a.UIConfig),
-			Color: agentColor(a.UIConfig),
-		})
-	}
-	data.ActorOptions = options
+	data.ActorOptions = s.objectActorIdentities(ctx, true, true)
 }
 
 // loadObjectBrowsePage fetches one cursor page of objects into data, applying
@@ -912,7 +881,8 @@ func (s *Server) uiObject(c echo.Context) error {
 
 // uiObjectHistoryPage renders the History subpage: the shared object shell plus
 // the full version timeline. The preview drawer keeps a compact inline history;
-// this page is the complete, linkable version.
+// this page is the complete, linkable version — every entry names the writer
+// (actor), the credential the write used, and when it happened.
 func (s *Server) uiObjectHistoryPage(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
@@ -920,7 +890,7 @@ func (s *Server) uiObjectHistoryPage(c echo.Context) error {
 	data.Active = "history"
 	data.FlashErr = flashError(c)
 	if data.LoadErr != nil {
-		return s.page(c, pageTitle("Object"), objectHistoryPage(data, nil, nil))
+		return s.page(c, pageTitle("Object"), objectHistoryPage(data, nil, nil, nil))
 	}
 
 	versions, err := s.memory.GetObjectHistory(ctx, id)
@@ -928,10 +898,11 @@ func (s *Server) uiObjectHistoryPage(c echo.Context) error {
 		captureError(err)
 		versions = nil
 	}
+	identities := s.objectActorIdentitiesFor(ctx, versions)
 	if c.QueryParam("updated") != "" {
 		data.FlashMsg = "Object updated."
 	}
-	return s.page(c, pageTitle(graphObjectLabel(*data.Obj)), objectHistoryPage(data, versions, err))
+	return s.page(c, pageTitle(graphObjectLabel(*data.Obj)), objectHistoryPage(data, versions, identities, err))
 }
 
 // uiObjectSimilarPage renders the Similar objects subpage. It intentionally does

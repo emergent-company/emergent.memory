@@ -4,6 +4,28 @@
 
 ### BREAKING CHANGES
 
+**Embeddings are resolved only from the project's configured provider** (2026-11-12)
+
+`GCP_PROJECT_ID`, `GOOGLE_API_KEY`, `EMBEDDING_PROVIDER`, `EMBEDDING_MODEL`,
+`EMBEDDING_DIMENSION` and `EMBEDDINGS_NETWORK_DISABLED` no longer configure
+embeddings — neither on hosted deployments nor on self-hosted single-tenant
+installs. Every embedding call resolves the provider, model and credentials from
+the project's model config and provider credentials, so vectors are only ever
+produced by the provider the user configured for that project. A project with no
+embedding model configured logs one warning per project —
+
+```
+embeddings: embedding model was not set for this project — semantic vectors will not be generated
+```
+
+— and ingestion, graph CRUD and lexical search keep working with no vectors until
+one is configured. Configure it with `memory projects set-models --embedding
+<provider>/<model>` or `memory provider configure-project <provider>
+--embedding-model <model>`. `GOOGLE_API_KEY` / `GCP_PROJECT_ID` remain
+generative-model (chat/extraction) environment fallbacks only, and the
+`backfill-embeddings` tool now requires `--project-id` so it resolves that
+project's provider.
+
 **MCP share creation requires an explicit tool allowlist** (2026-11-05)
 
 `POST /api/projects/{projectId}/mcp/shares` now rejects a request that omits
@@ -228,21 +250,50 @@ See `/apps/server/src/modules/unified-search/` for implementation details.
 
 ### Fixed
 
+**Corpus text and search queries are embedded with their own task — Google AI projects must re-embed** (2026-11-12)
+
+Stored graph and chunk text was embedded through the same method a search query
+uses, so the two shared one task format. For the Google clients the task is part
+of the embedded input (`task_type`, or a text prefix for `gemini-embedding-2`), so
+a corpus written that way is compared against query vectors of the wrong format —
+retrieval degrades quietly instead of failing.
+
+Ingest now has its own document method (`EmbedDocumentWithUsage`, and
+`EmbedDocument` for callers that only need the vector), and the corpus writers use
+it: the chunk, object, relationship and sweep workers, the graph service's
+relationship triplet embeddings, and the `backfill-embeddings` command. Real
+search strings still go through `EmbedQuery`/`EmbedQueryWithUsage` — unified
+search, graph vector and hybrid search, skill lookup — and the Vertex client now
+sends `RETRIEVAL_QUERY` there. On `gemini-embedding-2` that is the documented
+`task: search result | query: …` prefix. Skill *description* embeddings keep using
+the query method on both the write and the search side, so they remain consistent
+with each other; moving them is a behaviour change to skill retrieval, left for a
+follow-up rather than bundled into this fix. The embedding cache key now includes
+the format, so a document and a query of the same text can no longer share an
+entry; existing cache rows simply miss once and are re-embedded.
+
+**Action required for Google AI (`google`) projects:** that provider has sent
+`RETRIEVAL_QUERY` from its query method since an earlier release, and that method
+was also the ingest path — so its stored corpus vectors are query-format. Those
+projects must be re-embedded to be comparable with query vectors again:
+
+```bash
+memory graph reindex-embeddings --force --chunks
+```
+
+Vertex (`google-vertex`) projects wrote document-format corpus vectors already, so
+they need no re-embed — query vectors change, but a query is computed per search.
+Projects on the other providers (OpenAI-compatible, noop) are unaffected: their
+clients do not vary the input by task.
+
 **`gemini-embedding-2` is served on the `google-vertex` provider** (2026-11-12)
 
 The Vertex AI embeddings client could not serve the GA `gemini-embedding-2`
 family: it sent `task_type` on every request, and that model does not accept the
 field — its task travels as a text prefix. Requests for `gemini-embedding-2` now
-carry the documented document prefix (`title: none | text: …`) and no
-`task_type`, and the model catalog no longer filters the id out for the
-`google-vertex` provider.
-
-Embedding search queries with the *query* task is a separate change and is not in
-this release: the single-object ingest workers embed stored text through the same
-method a search query calls, so the two have to be split together (tracked in
-#615, along with the re-embed guidance such a switch needs). Until then a search
-query on `gemini-embedding-2` is sent as `title: none | text: …` like any other
-text — the pre-existing behaviour, unchanged by this release.
+carry the documented prefixes — `title: none | text: …` for indexed text,
+`task: search result | query: …` for an explicit query — and no `task_type`, and
+the model catalog no longer filters the id out for the `google-vertex` provider.
 
 **`memory projects show-models` honours `--json` / `--output`** (2026-10-22)
 

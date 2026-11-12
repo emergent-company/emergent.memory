@@ -440,11 +440,10 @@ func TestPredictBodyOmitsTaskTypeForGA(t *testing.T) {
 	}
 }
 
-func TestEmbedQueryWithUsageDocumentsItsCurrentTask(t *testing.T) {
-	// Deliberately unchanged by #616: the single-object ingest workers write the
-	// corpus through EmbedQueryWithUsage, so moving it to RETRIEVAL_QUERY here
-	// would mix tasks inside one vector column. Issue #615 moves those call
-	// sites first; this test makes a silent flip visible if someone tries.
+func TestEmbedQueryWithUsageSendsQueryTask(t *testing.T) {
+	// The mirror of the document case: a search string must go out with the
+	// query task, and only a search string. Every ingest path uses
+	// EmbedDocumentsWithUsage / EmbedDocumentWithUsage (issue #615).
 	rec := &recordingSender{values: []float32{0.1}, tokens: 7}
 	c := newRecordingClient("gemini-embedding-001", rec)
 
@@ -464,8 +463,29 @@ func TestEmbedQueryWithUsageDocumentsItsCurrentTask(t *testing.T) {
 
 	body := decodeBody(t, rec.bodies[0])
 	inst := body["instances"].([]any)[0].(map[string]any)
-	if got := inst["task_type"]; got != TaskTypeDocument {
-		t.Errorf("task_type = %v, want %s (see issue #615 before changing)", got, TaskTypeDocument)
+	if got := inst["task_type"]; got != TaskTypeQuery {
+		t.Errorf("query task_type = %v, want %s", got, TaskTypeQuery)
+	}
+}
+
+// TestGAQueryUsesTheDocumentedQueryPrefix is the wire-level counterpart of
+// TestPredictBodyOmitsTaskTypeForGA: gemini-embedding-2 has no task_type, so the
+// query/document distinction only exists if the prefix is right on both paths.
+func TestGAQueryUsesTheDocumentedQueryPrefix(t *testing.T) {
+	rec := &recordingSender{values: []float32{0.1}}
+	c := newRecordingClient("gemini-embedding-2", rec)
+
+	if _, err := c.EmbedQuery(context.Background(), "why is the sky blue"); err != nil {
+		t.Fatalf("EmbedQuery: %v", err)
+	}
+
+	body := decodeBody(t, rec.bodies[0])
+	inst := body["instances"].([]any)[0].(map[string]any)
+	if _, present := inst["task_type"]; present {
+		t.Errorf("task_type present in GA query request: %#v", inst)
+	}
+	if got, want := inst["content"], "task: search result | query: why is the sky blue"; got != want {
+		t.Errorf("content = %v, want %q", got, want)
 	}
 }
 

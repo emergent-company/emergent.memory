@@ -43,6 +43,20 @@ type GraphObject struct {
 	// mcp_link, session, none). "none" is the stored value for background and
 	// internal writes, not an absence.
 	CredentialKind string `json:"credential_kind"`
+	// ActorType/ActorID are the writing actor recorded on this version:
+	// "user" + the user id, "agent" + the kb.agent_definitions id, or "system"
+	// with no id (extraction and background work). Absent on versions written
+	// before the write stamp existed, in which case the history entry claims no
+	// writer.
+	ActorType string `json:"actor_type"`
+	ActorID   string `json:"actor_id"`
+	// RunID/RootRunID name the agent run that produced the write, when the write
+	// happened inside one; they are the audit handle behind an agent actor.
+	RunID     string `json:"run_id"`
+	RootRunID string `json:"root_run_id"`
+	// OwnerSourceID names the data source that owns this version when DataClass
+	// is source or adopted.
+	OwnerSourceID string `json:"owner_source_id"`
 	// RevisionCount is how many versions the object has. The server computes it
 	// from a materialized view and only reports it on read paths, so it is a
 	// pointer: nil means "not reported", which is not the same as zero.

@@ -5406,3 +5406,40 @@ func (f *fakeMemory) DeleteSourceTrigger(ctx context.Context, sourceID, triggerI
 	f.dsSourceTriggers[sourceID] = kept
 	return nil
 }
+
+func TestListChatModelsReturnsConfiguredGenerativeModels(t *testing.T) {
+	f := &fakeMemory{
+		projectProviders: []ProjectProviderConfig{{Provider: "openai"}},
+		modelsByProvider: map[string][]ProviderSupportedModel{
+			"openai": {{ModelName: "deepseek-v4-flash", ModelType: "generative"}},
+		},
+	}
+	s := &Server{memory: f}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/chat/models", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	if err := s.listChatModels(c); err != nil {
+		t.Fatalf("listChatModels: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var models []Model
+	if err := json.Unmarshal(rec.Body.Bytes(), &models); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(models) == 0 {
+		t.Fatal("expected configured generative models")
+	}
+	found := false
+	for _, m := range models {
+		if m.Provider == "openai" && m.ModelName == "deepseek-v4-flash" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected openai/deepseek-v4-flash in %v", models)
+	}
+}

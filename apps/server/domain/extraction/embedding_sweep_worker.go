@@ -602,7 +602,7 @@ func (w *EmbeddingSweepWorker) embedRelationshipGroupSerial(
 		dstName := displayNameFromRow(row.DstProperties, row.DstKey, row.DstType)
 		tripletText := buildTripletText(srcName, dstName, row.Type, row.Label, row.RelProperties)
 
-		result, err := w.embeds.EmbedQueryWithUsage(ctx, tripletText)
+		result, err := w.embeds.EmbedDocumentWithUsage(ctx, tripletText)
 		if err != nil {
 			errors++
 			w.log.Warn("sweep: failed to embed relationship",

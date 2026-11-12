@@ -25,15 +25,28 @@ type cachedInner interface {
 }
 
 // CachedEmbeddingService wraps an EmbeddingService and caches results in
-// kb.embedding_cache. The cache key is sha256(modelID + ":" + inputText), where
-// modelID is the effective embedding model for the request (resolved per-request
-// when a model resolver is wired, falling back to the static configured model).
+// kb.embedding_cache. The cache key is
+// sha256(modelID + ":" + format + ":" + inputText), where modelID is the
+// effective embedding model for the request, resolved per-request from the
+// project's configured provider, and format is "query" or "document".
+//
+// There is no static fallback model: when no model resolves, the call bypasses
+// the cache entirely (and the inner service reports that the project has no
+// embedding model configured).
+//
+// The format is part of the key because the same text embedded as a document and
+// as a query does not produce the same vector: the Google clients send a
+// task_type, or for gemini-embedding-2 a text prefix. Without it, whichever call
+// landed first would be served to the other and the corpus would silently be
+// compared against query-format vectors (issue #615). Adding the format
+// invalidates previously cached entries — they simply miss and are re-embedded
+// once, which is the safe direction.
+//
 // Misses call through to the inner service.
 type CachedEmbeddingService struct {
 	inner        cachedInner
 	store        embeddingCacheStore
-	modelID      string                       // static fallback model (env default)
-	resolveModel func(context.Context) string // optional per-request model resolver
+	resolveModel func(context.Context) string // per-request model resolver
 	log          *slog.Logger
 }
 
@@ -93,35 +106,29 @@ func (b *bunEmbeddingCache) Put(ctx context.Context, key, modelID string, vec []
 }
 
 // NewCachedEmbeddingService creates a wrapper around inner that caches embeddings in Postgres.
-// modelID identifies the embedding model for cache invalidation (e.g., "text-embedding-004").
-func NewCachedEmbeddingService(inner cachedInner, db bun.IDB, modelID string, log *slog.Logger) *CachedEmbeddingService {
+func NewCachedEmbeddingService(inner cachedInner, db bun.IDB, log *slog.Logger) *CachedEmbeddingService {
 	return &CachedEmbeddingService{
-		inner:   inner,
-		store:   newBunEmbeddingCache(db),
-		modelID: modelID,
-		log:     log.With(logger.Scope("cached-embedding")),
+		inner: inner,
+		store: newBunEmbeddingCache(db),
+		log:   log.With(logger.Scope("cached-embedding")),
 	}
 }
 
-// WithModelResolver wires a per-request embedding model resolver. When set, the
-// cache key is derived from the model resolved for the request (falling back to
-// the static modelID when resolution fails or returns empty). This guarantees
-// the cache never mixes vectors produced by different embedding models, even
-// when a project overrides the embedding model away from the env default.
+// WithModelResolver wires the per-request embedding model resolver. The cache
+// key is derived from the model resolved for the request, so the cache never
+// mixes vectors produced by different embedding models across projects.
 func (c *CachedEmbeddingService) WithModelResolver(resolve func(context.Context) string) *CachedEmbeddingService {
 	c.resolveModel = resolve
 	return c
 }
 
-// resolveModelID returns the effective embedding model id for this request,
-// preferring the per-request resolved model over the static fallback.
+// resolveModelID returns the embedding model id for this request, or "" when the
+// request has no resolved model (in which case caching is bypassed).
 func (c *CachedEmbeddingService) resolveModelID(ctx context.Context) string {
-	if c.resolveModel != nil {
-		if m := c.resolveModel(ctx); m != "" {
-			return m
-		}
+	if c.resolveModel == nil {
+		return ""
 	}
-	return c.modelID
+	return c.resolveModel(ctx)
 }
 
 // IsEnabled delegates to the inner service.
@@ -133,7 +140,12 @@ func (c *CachedEmbeddingService) IsEnabled() bool {
 // and stores the result.
 func (c *CachedEmbeddingService) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
 	model := c.resolveModelID(ctx)
-	key := c.cacheKey(model, query)
+	if model == "" {
+		// No resolved model — bypass the cache; the inner service reports that the
+		// project has no embedding model configured.
+		return c.inner.EmbedQuery(ctx, query)
+	}
+	key := c.cacheKey(model, cacheFormatQuery, query)
 
 	// Try cache first.
 	if vec, ok, err := c.store.Get(ctx, key); err == nil && ok {
@@ -163,7 +175,10 @@ func (c *CachedEmbeddingService) EmbedQuery(ctx context.Context, query string) (
 // inner result's usage, model, and provider.
 func (c *CachedEmbeddingService) EmbedQueryWithUsage(ctx context.Context, query string) (*vertex.EmbedResult, error) {
 	model := c.resolveModelID(ctx)
-	key := c.cacheKey(model, query)
+	if model == "" {
+		return c.inner.EmbedQueryWithUsage(ctx, query)
+	}
+	key := c.cacheKey(model, cacheFormatQuery, query)
 
 	// Try cache first.
 	if vec, ok, err := c.store.Get(ctx, key); err == nil && ok {
@@ -188,6 +203,37 @@ func (c *CachedEmbeddingService) EmbedQueryWithUsage(ctx context.Context, query 
 	return result, nil
 }
 
+// EmbedDocumentWithUsage embeds stored corpus text with the document task,
+// serving a cached vector when one exists for this model and format. Usage is
+// not cached: a hit reports no tokens, a miss propagates the inner result's.
+func (c *CachedEmbeddingService) EmbedDocumentWithUsage(ctx context.Context, text string) (*vertex.EmbedResult, error) {
+	model := c.resolveModelID(ctx)
+	if model == "" {
+		return c.inner.EmbedDocumentWithUsage(ctx, text)
+	}
+	key := c.cacheKey(model, cacheFormatDocument, text)
+
+	if vec, ok, err := c.store.Get(ctx, key); err == nil && ok {
+		return &vertex.EmbedResult{Embedding: vec, Model: model}, nil
+	} else if err != nil {
+		c.log.Warn("embedding cache read failed", slog.String("key", key), logger.Error(err))
+	}
+
+	result, err := c.inner.EmbedDocumentWithUsage(ctx, text)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+
+	if putErr := c.store.Put(ctx, key, model, result.Embedding); putErr != nil {
+		c.log.Warn("embedding cache write failed", slog.String("key", key), logger.Error(putErr))
+	}
+
+	return result, nil
+}
+
 // EmbedDocumentsWithUsage embeds several documents in one pass, routing through
 // the embedding cache: per-document cache hits are served without a call, misses
 // are embedded in a single underlying batch call, and the returned vectors are
@@ -195,13 +241,16 @@ func (c *CachedEmbeddingService) EmbedQueryWithUsage(ctx context.Context, query 
 // consume no tokens).
 func (c *CachedEmbeddingService) EmbedDocumentsWithUsage(ctx context.Context, documents []string) (*vertex.BatchEmbedResult, error) {
 	model := c.resolveModelID(ctx)
+	if model == "" {
+		return c.inner.EmbedDocumentsWithUsage(ctx, documents)
+	}
 
 	out := make([][]float32, len(documents))
 	missIdx := make([]int, 0, len(documents))
 	missTexts := make([]string, 0, len(documents))
 
 	for i, doc := range documents {
-		key := c.cacheKey(model, doc)
+		key := c.cacheKey(model, cacheFormatDocument, doc)
 		if vec, ok, err := c.store.Get(ctx, key); err == nil && ok {
 			out[i] = vec
 			continue
@@ -229,7 +278,7 @@ func (c *CachedEmbeddingService) EmbedDocumentsWithUsage(ctx context.Context, do
 	// Place miss vectors back at their original positions and persist them.
 	for k, i := range missIdx {
 		out[i] = result.Embeddings[k]
-		key := c.cacheKey(model, missTexts[k])
+		key := c.cacheKey(model, cacheFormatDocument, missTexts[k])
 		if putErr := c.store.Put(ctx, key, model, result.Embeddings[k]); putErr != nil {
 			c.log.Warn("embedding cache write failed", slog.String("key", key), logger.Error(putErr))
 		}
@@ -243,9 +292,17 @@ func (c *CachedEmbeddingService) EmbedDocumentsWithUsage(ctx context.Context, do
 	}, nil
 }
 
-// cacheKey returns a deterministic SHA-256 hex key for the given model and input text.
-func (c *CachedEmbeddingService) cacheKey(modelID, text string) string {
+// Embedding formats. They are part of the cache key because the same text
+// embedded as a document and as a query does not produce the same vector.
+const (
+	cacheFormatQuery    = "query"
+	cacheFormatDocument = "document"
+)
+
+// cacheKey returns a deterministic SHA-256 hex key for the given model, format
+// and input text.
+func (c *CachedEmbeddingService) cacheKey(modelID, format, text string) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%s:%s", modelID, text)
+	fmt.Fprintf(h, "%s:%s:%s", modelID, format, text)
 	return hex.EncodeToString(h.Sum(nil))
 }

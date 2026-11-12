@@ -303,17 +303,16 @@ func (c *Client) EmbedQuery(ctx context.Context, query string) ([]float32, error
 	return result.Embedding, nil
 }
 
-// EmbedQueryWithUsage generates an embedding for a single text with usage data.
+// EmbedQueryWithUsage generates an embedding for a search query with usage data.
 //
-// Despite the name this is NOT yet a query-only path: the single-object ingest
-// workers (chunk, object, relationship and sweep serial paths) call it to embed
-// *stored* text, so it still embeds as a document. Splitting the two is issue
-// #615 — it needs those call sites moved to a batch/document method first, and
-// a corpus written by both paths in one vector column is worse than one written
-// by the wrong path. Until then a query and its corpus share the document task,
-// exactly as before.
+// A query is embedded with the RETRIEVAL_QUERY task, which is the asymmetric
+// retrieval shape Google documents: the corpus is indexed with
+// RETRIEVAL_DOCUMENT (see EmbedDocumentsWithUsage) and only a search string goes
+// through here. Ingest paths must not use this method — writing corpus text with
+// the query task would put a query-format vector in a column that every search
+// compares against document-format vectors (issue #615).
 func (c *Client) EmbedQueryWithUsage(ctx context.Context, query string) (*EmbedResult, error) {
-	embs, tokens, err := c.embedBatch(ctx, []string{query}, TaskTypeDocument)
+	embs, tokens, err := c.embedBatch(ctx, []string{query}, TaskTypeQuery)
 	if err != nil {
 		return nil, err
 	}

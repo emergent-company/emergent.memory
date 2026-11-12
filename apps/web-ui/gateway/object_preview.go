@@ -111,9 +111,11 @@ func (s *Server) renderObjectPreview(c echo.Context, id, relID string, boardSurf
 // uiObjectHistoryPartial renders the lazy-loaded version timeline for the
 // preview drawer's History section (GET /objects/:id/history/partial).
 // GetObjectHistory returns versions newest first (the server orders by version
-// DESC), so the timeline is rendered in the order received. A failed fetch
-// degrades to a small "history unavailable" state rather than leaving the
-// section blank.
+// DESC), so the timeline is rendered in the order received. Each version's
+// write stamp (who, how, when) is resolved against the project's identities, so
+// the timeline names its writers rather than printing ids. A failed history
+// fetch degrades to a small "history unavailable" state rather than leaving the
+// section blank; a failed identity fetch only drops the names.
 func (s *Server) uiObjectHistoryPartial(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(c.Request().Context(), optionalFetchTimeout)
 	defer cancel()
@@ -125,7 +127,8 @@ func (s *Server) uiObjectHistoryPartial(c echo.Context) error {
 		renderPartial(c.Response().Writer, c.Request(), objectPreviewHistoryError())
 		return nil
 	}
-	renderPartial(c.Response().Writer, c.Request(), objectPreviewHistory(versions))
+	identities := s.objectActorIdentitiesFor(ctx, versions)
+	renderPartial(c.Response().Writer, c.Request(), objectPreviewHistory(versions, identities))
 	return nil
 }
 
@@ -333,7 +336,7 @@ func objectPreviewCanonicalID(o GraphObject) string {
 }
 
 // objectPreviewCreated formats an object's creation timestamp for the preview's
-// history timeline: relative time when parseable, otherwise the raw value, else "".
+// builtin facts: relative time when parseable, otherwise the raw value, else "".
 func objectPreviewCreated(iso string) string {
 	if iso == "" {
 		return ""

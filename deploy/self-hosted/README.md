@@ -68,7 +68,7 @@ INSTALL_DIR=/opt/memory curl -fsSL .../install-online.sh | bash
 # custom server port (default: 3002)
 SERVER_PORT=8080 curl -fsSL .../install-online.sh | bash
 
-# embedding provider key, or add it later with `memory config set`
+# optional generative-model key; embeddings are configured per project
 GOOGLE_API_KEY=your-key curl -fsSL .../install-online.sh | bash
 
 # pin a version (default: latest release)

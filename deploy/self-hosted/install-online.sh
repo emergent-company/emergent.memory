@@ -208,9 +208,11 @@ prompt_google_api_key() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
     echo "A Google API key enables AI-powered features including:"
-    echo "  - Semantic search with text embeddings"
     echo "  - AI-powered document analysis"
     echo "  - Intelligent entity extraction"
+    echo ""
+    echo "It is a generative-model key only: semantic embeddings are configured per"
+    echo "project (memory provider configure-project ... --embedding-model ...)."
     echo ""
     echo "To get a Google API key:"
     echo "  1. Go to https://aistudio.google.com/apikey"
@@ -458,8 +460,9 @@ STANDALONE_PROJECT_NAME=Default Project
 XBERG_PORT=18000
 SERVER_PORT=${SERVER_PORT}
 
+# Generative AI env fallback only. Embeddings are configured per project in
+# Memory, never from this file.
 GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
-EMBEDDING_DIMENSION=768
 XBERG_LOG_LEVEL=info
 
 LLM_ENCRYPTION_KEY=${LLM_ENCRYPTION_KEY}
@@ -600,7 +603,6 @@ services:
       STORAGE_REGION: \${STORAGE_REGION:-us-east-1}
       STORAGE_USE_SSL: 'false'
       GOOGLE_API_KEY: \${GOOGLE_API_KEY:-}
-      EMBEDDING_DIMENSION: \${EMBEDDING_DIMENSION:-768}
       SCOPES_DISABLED: 'true'
     depends_on:
       db:

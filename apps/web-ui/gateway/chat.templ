@@ -294,6 +294,21 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 					     can never drift from the message column above. The wider
 					     container matches the transcript's. -->
 					@layout.Container(layout.ContainerSize("max-w-[100rem]"), nil) {
+						<div class="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-1 pb-1.5">
+							<label for="chat-model" class="text-muted-faint text-xs font-semibold tracking-wider uppercase">Model</label>
+							<select id="chat-model" data-testid="chat-model" class="select select-xs max-w-56" aria-label="Model">
+								<option value="">Auto (agent default)</option>
+							</select>
+							<label for="chat-thinking" class="text-muted-faint text-xs font-semibold tracking-wider uppercase">Thinking</label>
+							<select id="chat-thinking" data-testid="chat-thinking" class="select select-xs" aria-label="Thinking">
+								<option value="">Auto</option>
+								<option value="minimal">Minimal</option>
+								<option value="low">Low</option>
+								<option value="medium">Medium</option>
+								<option value="high">High</option>
+								<option value="max">Max</option>
+							</select>
+						</div>
 						<div class="flex flex-wrap items-stretch gap-2">
 							<textarea
 								id="chat-input"

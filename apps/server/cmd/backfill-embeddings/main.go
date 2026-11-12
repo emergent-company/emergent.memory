@@ -11,11 +11,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect/pgdialect"
 
+	"github.com/emergent-company/emergent.memory/domain/modelconfig"
+	"github.com/emergent-company/emergent.memory/domain/provider"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
-	"github.com/emergent-company/emergent.memory/pkg/embeddings/genai"
-	"github.com/emergent-company/emergent.memory/pkg/embeddings/vertex"
 )
 
 // relationshipRow holds the fields scanned from the backfill query.
@@ -41,10 +46,19 @@ func main() {
 	flag.IntVar(&batchSize, "batch-size", 100, "Number of relationships per batch")
 	flag.IntVar(&delayMs, "delay", 100, "Milliseconds to sleep between batches")
 	flag.BoolVar(&dryRun, "dry-run", false, "Print what would be done without writing to DB")
-	flag.StringVar(&projectID, "project-id", "", "Filter to a specific project UUID (optional)")
+	flag.StringVar(&projectID, "project-id", "", "Project UUID whose configured embedding provider is used (required)")
 	flag.Parse()
 
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	if projectID == "" {
+		fmt.Fprintln(os.Stderr, "Error: --project-id is required — embeddings are resolved from the project's configured provider")
+		os.Exit(2)
+	}
+	if _, err := uuid.Parse(projectID); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: invalid --project-id %q: %v\n", projectID, err)
+		os.Exit(2)
+	}
 
 	if dryRun {
 		log.Info("DRY RUN mode enabled — no database writes will occur")
@@ -82,12 +96,18 @@ func main() {
 	log.Info("connected to database")
 
 	ctx := context.Background()
-	client, err := newEmbeddingClient(ctx, log)
+	embedder, model, err := newEmbeddingService(ctx, db, log, projectID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating embedding client: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error creating embedding service: %v\n", err)
 		os.Exit(1)
 	}
-	log.Info("embedding client initialized")
+	log.Info("embedding provider resolved from the project",
+		slog.String("project_id", projectID),
+		slog.String("model", model),
+	)
+
+	// Embeddings resolve from the project in context, exactly as the server does.
+	projectCtx := auth.ContextWithProjectID(ctx, projectID)
 
 	total, err := countNullEmbeddings(ctx, db, projectID)
 	if err != nil {
@@ -130,7 +150,18 @@ func main() {
 				continue
 			}
 
-			vec, err := client.EmbedQuery(ctx, tripletText)
+			// Document path, not EmbedQuery: triplet text is stored corpus
+			// text, and a query-format vector here would be incomparable with
+			// the document-format vectors search compares against (#615).
+			vecs, err := embedder.EmbedDocuments(projectCtx, []string{tripletText})
+			var vec []float32
+			if err == nil {
+				if len(vecs) == 0 {
+					err = fmt.Errorf("no embedding returned")
+				} else {
+					vec = vecs[0]
+				}
+			}
 			if err != nil {
 				errCount++
 				log.Warn("failed to embed relationship",
@@ -183,37 +214,44 @@ func main() {
 	)
 }
 
-// newEmbeddingClient creates an embeddings.Client based on environment variables.
-func newEmbeddingClient(ctx context.Context, log *slog.Logger) (embeddings.Client, error) {
-	model := getEnvDefault("EMBEDDING_MODEL", "gemini-embedding-2-preview")
-	gcpProject := os.Getenv("GCP_PROJECT_ID")
-	vertexLocation := getEnvDefault("VERTEX_AI_LOCATION", "us-central1")
-	googleAPIKey := os.Getenv("GOOGLE_API_KEY")
-
-	if gcpProject != "" && vertexLocation != "" {
-		log.Info("using Vertex AI embeddings",
-			slog.String("project", gcpProject),
-			slog.String("location", vertexLocation),
-			slog.String("model", model),
-		)
-		return vertex.NewClient(ctx, vertex.Config{
-			ProjectID: gcpProject,
-			Location:  vertexLocation,
-			Model:     model,
-		}, vertex.WithLogger(log))
+// newEmbeddingService builds an embeddings service that resolves the project's
+// configured provider and model through the same code path the server uses.
+// There is no environment-provided embedding provider: GCP_PROJECT_ID,
+// GOOGLE_API_KEY and EMBEDDING_MODEL are not consulted. The project must have an
+// embedding model configured (via 'memory projects set-models --embedding …' or
+// 'memory provider configure-project … --embedding-model …').
+func newEmbeddingService(ctx context.Context, sqlDB *sql.DB, log *slog.Logger, projectID string) (embeddings.Client, string, error) {
+	cfg, err := config.NewConfig(log)
+	if err != nil {
+		return nil, "", fmt.Errorf("load config: %w", err)
 	}
 
-	if googleAPIKey != "" {
-		log.Info("using Google Generative AI embeddings",
-			slog.String("model", model),
-		)
-		return genai.NewClient(ctx, genai.Config{
-			APIKey: googleAPIKey,
-			Model:  model,
-		}, genai.WithLogger(log))
-	}
+	db := bun.NewDB(sqlDB, pgdialect.New())
 
-	return nil, fmt.Errorf("no embedding configuration found: set GCP_PROJECT_ID+VERTEX_AI_LOCATION or GOOGLE_API_KEY")
+	repo := provider.NewRepository(db, log)
+	catalog := provider.NewModelCatalogService(repo, log, provider.WithNetworkDisabled(true))
+	credSvc := provider.NewCredentialService(repo, provider.NewRegistry(), catalog, cfg, log)
+	modelSvc := modelconfig.NewService(modelconfig.NewStore(db, log), log).
+		WithEmbeddingDefaultResolver(credSvc)
+
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, "", fmt.Errorf("invalid project id %q: %w", projectID, err)
+	}
+	model, source, err := modelSvc.ResolveEmbeddingModel(auth.ContextWithProjectID(ctx, projectID), projectUUID)
+	if err != nil {
+		return nil, "", fmt.Errorf("resolve embedding model for project %s: %w", projectID, err)
+	}
+	if model == "" {
+		return nil, "", fmt.Errorf("embedding model was not set for project %s — run 'memory projects set-models --embedding <provider>/<model>' or 'memory provider configure-project <provider> --embedding-model <model>'", projectID)
+	}
+	log.Info("resolved embedding model from the project",
+		slog.String("model", model),
+		slog.String("source", string(source)),
+	)
+
+	svc := embeddings.NewResolverService(modelconfig.NewEmbeddingResolverAdapter(modelSvc, credSvc), log)
+	return svc, model, nil
 }
 
 // countNullEmbeddings returns the number of relationships with NULL embeddings.

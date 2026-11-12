@@ -28,6 +28,13 @@ type EmbeddingService interface {
 	IsEnabled() bool
 	EmbedQuery(ctx context.Context, query string) ([]float32, error)
 	EmbedQueryWithUsage(ctx context.Context, query string) (*vertex.EmbedResult, error)
+	// EmbedDocumentWithUsage embeds *stored* text with the document task. Every
+	// ingest path must use this: a document and a query are embedded
+	// differently on purpose (task_type, or for gemini-embedding-2 a text
+	// prefix), so writing corpus text through EmbedQueryWithUsage puts a
+	// query-format vector in a column every search compares against
+	// document-format vectors (issue #615).
+	EmbedDocumentWithUsage(ctx context.Context, text string) (*vertex.EmbedResult, error)
 }
 
 // batchEmbeddingService is implemented by embedding services that can embed
@@ -722,7 +729,7 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 
 	// Generate embedding
 	embeddingStartTime := time.Now()
-	result, err := w.embeds.EmbedQueryWithUsage(projCtx, text)
+	result, err := w.embeds.EmbedDocumentWithUsage(projCtx, text)
 	embeddingDurationMs := time.Since(embeddingStartTime).Milliseconds()
 
 	if err != nil {
