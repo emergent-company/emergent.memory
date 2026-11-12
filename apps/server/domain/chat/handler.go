@@ -1199,6 +1199,9 @@ func (h *Handler) StreamChat(c echo.Context) error {
 			llmErr = createErr
 		} else {
 			modelName := h.modelFactory.ModelName()
+			if override := strings.TrimSpace(req.Model); override != "" {
+				modelName = override
+			}
 			llmCtx, llmSpan := tracing.Start(ctx, "chat.llm_generate",
 				attribute.String("memory.llm.model", modelName),
 			)

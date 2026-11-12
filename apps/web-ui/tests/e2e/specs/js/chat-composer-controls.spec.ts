@@ -55,19 +55,22 @@ async function boot(page: Page, seed: Record<string, string>): Promise<string[]>
     route.fulfill({ contentType: 'text/html', body: SKELETON }),
   );
   await page.goto('http://memory.test/');
-  await page.evaluate((entries) => {
-    localStorage.clear();
-    Object.keys(entries).forEach((k) => localStorage.setItem(k, entries[k]));
-    const w = window as unknown as { fetch: typeof fetch };
-    w.fetch = function (url: RequestInfo | URL) {
-      const u = String(url);
-      if (u.indexOf('/api/chat/models') === 0) {
-        return Promise.resolve(new Response(JSON.stringify(MODELS), { status: 200, headers: { 'Content-Type': 'application/json' } }));
-      }
-      if (u.indexOf('/partial/') === 0) return Promise.resolve(new Response('', { status: 200 }));
-      return Promise.resolve(new Response('[]', { status: 200 }));
-    };
-  }, seed);
+  await page.evaluate(
+    ({ entries, models }) => {
+      localStorage.clear();
+      Object.keys(entries).forEach((k) => localStorage.setItem(k, entries[k]));
+      const w = window as unknown as { fetch: typeof fetch };
+      w.fetch = function (url: RequestInfo | URL) {
+        const u = String(url);
+        if (u.indexOf('/api/chat/models') === 0) {
+          return Promise.resolve(new Response(JSON.stringify(models), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+        }
+        if (u.indexOf('/partial/') === 0) return Promise.resolve(new Response('', { status: 200 }));
+        return Promise.resolve(new Response('[]', { status: 200 }));
+      };
+    },
+    { entries: seed, models: MODELS },
+  );
   await page.addScriptTag({ path: CHAT_TRANSPORT_JS });
   await page.addScriptTag({ path: CHAT_COMPONENTS_JS });
   await page.addScriptTag({ path: CHAT_HOST_JS });
