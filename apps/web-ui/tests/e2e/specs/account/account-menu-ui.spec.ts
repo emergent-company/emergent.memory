@@ -43,6 +43,35 @@ async function openAccountMenu(page: Page) {
 
 test.describe('Account menu', () => {
 
+// Regression (go-daisy #151): the account menu is a ui.Dropdown whose trigger is
+// a plain focusable element, not ui.DropdownTrigger, so the go-daisy a11y
+// runtime never wired the root. Its delegated document click listener still
+// closed every root it did not contain, stamping data-gd-menu-closed — and
+// daisyUI renders that marker as visibility:hidden on :focus-within, with no
+// handler left to clear it. The menu then opened exactly once per page load:
+// this test's second open stayed hidden until a reload.
+test('account menu reopens after a click elsewhere on the page', async ({ page }) => {
+  await goto(page, '/agents');
+  await expectAppPage(page, /Agents/);
+
+  // A real click on a plain spot of the main region — container padding, not a
+  // control — is what used to stamp the marker and pin the menu shut.
+  const clickElsewhere = () =>
+    page.locator('#main-content').click({ position: { x: 16, y: 16 }, force: true });
+
+  const first = await openAccountMenu(page);
+  await clickElsewhere();
+  await expect(first.menu).toBeHidden();
+
+  // Reopened through openAccountMenu each time: it carries the headless focus
+  // fallback, so a missed focus cannot be mistaken for the regression.
+  const second = await openAccountMenu(page);
+  await clickElsewhere();
+  await expect(second.menu).toBeHidden();
+
+  await openAccountMenu(page);
+});
+
 test('topbar account trigger is avatar-only; dropdown shows name + email identity', async ({
   page,
 }) => {
