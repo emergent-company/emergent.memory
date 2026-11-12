@@ -250,6 +250,21 @@ See `/apps/server/src/modules/unified-search/` for implementation details.
 
 ### Fixed
 
+**`POST /api/graph/reindex-embeddings` batches all three arms** (2026-11-12)
+
+The objects and relationships arms collected every matching id into memory and
+handed the whole slice to one `WHERE id IN (…)` enqueue, which Postgres rejects
+past 65535 bind parameters — so reindexing an established project failed outright
+instead of degrading, exactly the corpus the `--force --chunks` model-migration
+recovery path targets. Both arms now keyset-paginate by `(created_at, id)` in
+pages of 2000, enqueue one page per call and sum the returned counts; the `force`
+vs non-force predicate, the namespace key/prefix filters and the active-job
+`NOT EXISTS` exclusion apply on every page. The chunks arm keeps its single
+`INSERT … SELECT` per page, now with the same keyset bound, so a model switch no
+longer turns the whole chunk corpus into one long statement and WAL burst. Each
+page has a 30 s context bound; the loop walks the corpus to completion and
+returns the summed count — there is no row cap and no silent truncation (#677).
+
 **Embedding configuration failures are quiet, permanent and non-fatal** (2026-11-12)
 
 `pkg/embeddings` reports a missing embedding model once per project, but every
