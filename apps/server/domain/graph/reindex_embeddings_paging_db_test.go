@@ -11,6 +11,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/internal/testdb"
 	"github.com/emergent-company/emergent.memory/internal/testutil"
 )
 
@@ -71,7 +72,7 @@ func insertReindexTestObject(t *testing.T, ctx context.Context, db bun.IDB, proj
 // namespace, force, soft-delete and active-job predicates on every page.
 func TestReindexEmbeddingsPagesObjectsAcrossPageBoundary(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping database integration test in short mode")
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
 	}
 	ctx := context.Background()
 	testDB := testutil.SetupTestDBOrFail(t, ctx, "reindexpages")
@@ -89,10 +90,21 @@ func TestReindexEmbeddingsPagesObjectsAcrossPageBoundary(t *testing.T) {
 	pid := uuid.MustParse(projectID)
 
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	eligible := make([]uuid.UUID, 5)
-	for i := range eligible {
+	// The first three eligible rows share one created_at, so with page size 2 a
+	// page boundary lands inside the tie group; the last two differ (one at a
+	// sub-second offset) so the cursor must advance past the group without
+	// duplicating or skipping it.
+	eligibleStamps := []time.Time{
+		base,
+		base,
+		base,
+		base.Add(time.Second),
+		base.Add(1500 * time.Millisecond),
+	}
+	eligible := make([]uuid.UUID, len(eligibleStamps))
+	for i, createdAt := range eligibleStamps {
 		eligible[i] = insertReindexTestObject(t, ctx, db, pid,
-			"ns:item-"+string(rune('a'+i)), base.Add(time.Duration(i)*time.Second), false, false)
+			"ns:item-"+string(rune('a'+i)), createdAt, false, false)
 	}
 	otherNamespace := insertReindexTestObject(t, ctx, db, pid, "other:item", base.Add(time.Minute), false, false)
 	embedded := insertReindexTestObject(t, ctx, db, pid, "ns:embedded", base.Add(2*time.Minute), true, false)
@@ -154,7 +166,7 @@ func TestReindexEmbeddingsPagesObjectsAcrossPageBoundary(t *testing.T) {
 // exactly one job and the summed count must cover all pages.
 func TestReindexEmbeddingsChunksAcrossPageBoundary(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping database integration test in short mode")
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
 	}
 	ctx := context.Background()
 	testDB := testutil.SetupTestDBOrFail(t, ctx, "reindexchunkpages")
