@@ -2555,6 +2555,60 @@ var graphEventsCmd = &cobra.Command{
 // init — wire up the command tree
 // ─────────────────────────────────────────────
 
+// ─────────────────────────────────────────────
+// graph reindex-embeddings
+// ─────────────────────────────────────────────
+
+var (
+	graphReindexNamespaceFlag string
+	graphReindexForceFlag     bool
+	graphReindexChunksFlag    bool
+)
+
+var graphReindexEmbeddingsCmd = &cobra.Command{
+	Use:   "reindex-embeddings",
+	Short: "Re-queue embeddings for the project's objects, relationships and chunks",
+	Long: `Enqueue embedding (re-)generation for a project's corpus.
+
+By default only rows with a NULL embedding are queued. --force re-queues rows
+that already have an embedding, which is what a project needs after changing
+its embedding model: vectors from two different models are not comparable.
+
+--chunks also re-queues document chunks. Chunks are otherwise only enqueued when
+a document is (re)processed, so without this a model change silently leaves the
+chunk corpus in the old embedding space.
+
+Examples:
+  memory graph reindex-embeddings --force --chunks
+  memory graph reindex-embeddings --namespace docs/ --force`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		g, err := getGraphClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		res, err := g.ReindexEmbeddings(context.Background(), sdkgraph.ReindexEmbeddingsOptions{
+			Namespace: graphReindexNamespaceFlag,
+			Force:     graphReindexForceFlag,
+			Chunks:    graphReindexChunksFlag,
+		})
+		if err != nil {
+			return fmt.Errorf("reindex embeddings failed: %w", err)
+		}
+
+		out := cmd.OutOrStdout()
+		fmt.Fprintf(out, "objects: %d  relationships: %d", res.ObjectsEnqueued, res.RelationshipsEnqueued)
+		if graphReindexChunksFlag {
+			fmt.Fprintf(out, "  chunks: %d", res.ChunksEnqueued)
+		}
+		fmt.Fprintln(out)
+		if !graphReindexForceFlag {
+			fmt.Fprintln(out, "Note: only rows with a NULL embedding were queued; pass --force to re-embed existing rows.")
+		}
+		return nil
+	},
+}
+
 func init() {
 	// Persistent project flag
 	graphCmd.PersistentFlags().StringVar(&graphProjectFlag, "project", "", "Project ID (overrides config/env)")
@@ -2683,7 +2737,12 @@ func init() {
 	graphCmd.AddCommand(graphObjectsCmd)
 	graphCmd.AddCommand(graphRelationshipsCmd)
 	graphCmd.AddCommand(graphBranchesCmd)
+	graphReindexEmbeddingsCmd.Flags().StringVar(&graphReindexNamespaceFlag, "namespace", "", "Limit objects/relationships to keys with this prefix")
+	graphReindexEmbeddingsCmd.Flags().BoolVar(&graphReindexForceFlag, "force", false, "Re-enqueue rows that already have an embedding")
+	graphReindexEmbeddingsCmd.Flags().BoolVar(&graphReindexChunksFlag, "chunks", false, "Also re-enqueue the project's document chunks")
+
 	graphCmd.AddCommand(graphEventsCmd)
+	graphCmd.AddCommand(graphReindexEmbeddingsCmd)
 
 	rootCmd.AddCommand(graphCmd)
 

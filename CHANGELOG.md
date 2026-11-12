@@ -56,6 +56,25 @@ removing it. The deprecated `ZITADEL_OIDC_DEFAULT_SCOPES` and
 
 ### Added
 
+**`memory graph reindex-embeddings` gains `--chunks`, so a model change can move the chunk corpus** (2026-11-12)
+
+Changing a project's embedding model left its document chunks stranded: chunk
+embedding jobs were produced only by the chunking pipeline, so objects and
+relationships could be reindexed but chunks could not (issue #624). `POST
+/api/graph/reindex-embeddings` now accepts `chunks=true`, and the CLI exposes it
+as `memory graph reindex-embeddings --chunks`, which re-queues the project's
+document chunks alongside objects and relationships. Combined with `--force`
+this makes an embedding-model switch recoverable:
+
+```bash
+memory graph reindex-embeddings --force --chunks
+```
+
+Parent chunks are skipped (they are structural context and never embedded), rows
+that already have an active job are not queued twice, and the response reports
+`chunks_enqueued` next to the existing counters. See
+[docs/site/user-guide/model-setup.md](docs/site/user-guide/model-setup.md#4-re-embed-after-changing-the-embedding-model).
+
 **Project search page** (2026-11-04)
 
 The web UI gains a top-level **Search** page (`/search`, sidebar: *Search*) that runs

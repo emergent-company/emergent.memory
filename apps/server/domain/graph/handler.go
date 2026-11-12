@@ -2592,8 +2592,9 @@ func (h *Handler) BulkAction(c echo.Context) error {
 	return c.JSON(http.StatusOK, result)
 }
 
-// ReindexEmbeddings queues graph objects and relationships for embedding (re)generation.
-// Supports namespace filtering and force-regeneration of existing embeddings.
+// ReindexEmbeddings queues graph objects and relationships for embedding (re-)generation.
+// Supports namespace filtering, force-regeneration of existing embeddings, and
+// opt-in re-embedding of the project's document chunks.
 //
 // @Summary      Reindex embeddings
 // @Tags         graph
@@ -2601,6 +2602,7 @@ func (h *Handler) BulkAction(c echo.Context) error {
 // @Param        project_id query string true  "Project ID"
 // @Param        namespace  query string false "Limit to objects/relationships whose key starts with this namespace prefix"
 // @Param        force      query bool   false "Re-enqueue even if embedding already exists (default: false)"
+// @Param        chunks     query bool   false "Also re-enqueue the project's document chunks, which have no other bulk re-embed path (default: false)"
 // @Success      200 {object} ReindexEmbeddingsResponse
 // @Router       /api/graph/reindex-embeddings [post]
 func (h *Handler) ReindexEmbeddings(c echo.Context) error {
@@ -2613,6 +2615,7 @@ func (h *Handler) ReindexEmbeddings(c echo.Context) error {
 	req := ReindexEmbeddingsRequest{
 		Namespace: c.QueryParam("namespace"),
 		Force:     c.QueryParam("force") == "true" || c.QueryParam("force") == "1",
+		Chunks:    c.QueryParam("chunks") == "true" || c.QueryParam("chunks") == "1",
 	}
 
 	result, err := h.svc.ReindexEmbeddings(c.Request().Context(), projectID, req)
