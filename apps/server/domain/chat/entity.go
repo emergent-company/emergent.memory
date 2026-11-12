@@ -150,7 +150,14 @@ type StreamRequest struct {
 	Message           string  `json:"message" validate:"max=100000"`
 	CanonicalID       *string `json:"canonicalId,omitempty" validate:"omitempty,uuid"`
 	AgentDefinitionID *string `json:"agentDefinitionId,omitempty" validate:"omitempty,uuid"`
-	Namespace         string  `json:"namespace,omitempty"`
+	// Model overrides the agent definition's model for this turn only
+	// ("provider/model"). Empty keeps the agent definition's model.
+	Model string `json:"model,omitempty"`
+	// ReasoningEffort overrides the model's graded thinking level for this turn
+	// ("minimal"|"low"|"medium"|"high"|"max"). Empty/"auto" keeps the agent
+	// definition / provider default.
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
+	Namespace       string `json:"namespace,omitempty"`
 	// SurfaceAction is an A2UI surface action the user took. The server frames it
 	// as the user message the agent receives
 	// (agents.A2UIActionMessage), so no client invents that wording; Message may
