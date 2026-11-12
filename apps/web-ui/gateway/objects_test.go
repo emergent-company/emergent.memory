@@ -930,6 +930,65 @@ func TestRenderRelationshipsSubpage(t *testing.T) {
 	}
 }
 
+// TestRenderRelationshipsSubpageTypedView pins the type-declared branch of the
+// Relationships surface: a type whose ui.view groups its edges renders one card
+// per declared section with a depth-1 preview per row, truncates a bounded
+// section with an explicit count, and never falls back to the flat list.
+func TestRenderRelationshipsSubpageTypedView(t *testing.T) {
+	obj := &GraphObject{ID: "o1", CanonicalID: "o1", Type: "Property", Name: "Home — Waliły 29"}
+	related := []GraphObject{
+		{ID: "u1", CanonicalID: "u1", Type: "UtilityService", Name: "Water — ZGK", Properties: map[string]any{"provider": "ZGK"}},
+		{ID: "u2", CanonicalID: "u2", Type: "UtilityService", Name: "Electricity — PGE", Properties: map[string]any{"provider": "PGE"}},
+	}
+	edges := []GraphRelationship{
+		{ID: "r1", Type: "serves", SrcID: "u1", DstID: "o1"},
+		{ID: "r2", Type: "serves", SrcID: "u2", DstID: "o1"},
+	}
+	typeUIByType := map[string]typeUI{
+		"UtilityService": {Icon: "zap", Color: "#F59E0B", View: &typeUIView{Inline: []string{"provider"}}},
+	}
+	view := &typeUIView{Sections: []typeUISection{{Title: "Utilities", Relation: []string{"serves"}, Dir: "in", Limit: 1}}}
+	data := objectDetailShellData{
+		Obj:          obj,
+		Active:       "relationships",
+		TypeUIByType: typeUIByType,
+		ViewSections: resolveObjectViewSections(view, obj, edges, related, typeUIByType),
+	}
+
+	html := renderHTML(t, objectRelationshipsPage(data, nil, edges, related, nil))
+	for _, want := range []string{
+		"Utilities",
+		`data-testid="object-view-row"`,
+		`data-relationship-type="serves"`,
+		`data-testid="object-view-truncated"`,
+		"+1 more not shown",
+		"Provider",
+		`href="/objects/u2"`,
+		"zap",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("typed-view relationships page missing %q:\n%s", want, html)
+		}
+	}
+	if strings.Contains(html, `data-testid="object-relationship-endpoint"`) {
+		t.Errorf("typed-view page rendered the generic flat list instead of its sections:\n%s", html)
+	}
+	// Rows are label-ordered, so a limit of 1 keeps "Electricity — PGE" and
+	// drops "Water — ZGK", with the section saying how many it hid.
+	if strings.Contains(html, "Water — ZGK") {
+		t.Errorf("bounded section rendered past its limit:\n%s", html)
+	}
+	if !strings.Contains(html, "data-testid=\"object-connect-modal\"") {
+		t.Error("typed-view page must keep the Connect dialog")
+	}
+
+	// The same view with no declared section leaves the generic list in place.
+	untyped := objectDetailShellData{Obj: obj, Active: "relationships", TypeUIByType: typeUIByType}
+	if html := renderHTML(t, objectRelationshipsPage(untyped, nil, edges, related, nil)); !strings.Contains(html, `data-testid="object-relationship-endpoint"`) {
+		t.Errorf("a type without a view must keep the generic list:\n%s", html)
+	}
+}
+
 func TestRenderObjectDetailSimilar(t *testing.T) {
 	obj := &GraphObject{ID: "o1", Type: "person", Key: "sam-lee"}
 

@@ -801,6 +801,10 @@ type objectDetailShellData struct {
 	Edges     []GraphRelationship
 	EdgeCount int
 	EdgesErr  error
+	// ViewSections is the Relationships page grouped by the object type's
+	// declared ui.view (empty when the type declares none, which keeps the
+	// generic flat list).
+	ViewSections []objectViewSection
 }
 
 // workControlTarget builds the POST destination/context for the header's
@@ -929,7 +933,7 @@ templ objectRelationshipsPage(data objectDetailShellData, relTypes []CompiledTyp
 				Attrs:   templ.Attributes{"data-testid": "object-relationships-error"},
 			})
 		} else {
-			@objectRelationships(data.Obj, relTypes, edges, related, data.TypeUIByType)
+			@objectRelationships(data.Obj, relTypes, edges, related, data.TypeUIByType, data.ViewSections)
 		}
 	}
 }
@@ -1183,13 +1187,21 @@ templ objectTypePropertyField(r objectTypePropertyRow) {
 // dialog. relTypes carries the schema's compiled relationship types.
 // typeUIByType carries the compiled object types' declared accents so each
 // endpoint renders with its type's icon and color, like the objects table.
-templ objectRelationships(obj *GraphObject, relTypes []CompiledType, edges []GraphRelationship, related []GraphObject, typeUIByType map[string]typeUI) {
-	@ui.Section("Relationships", ui.SectionProps{
-		Margin:    "mt-6",
-		CardClass: "overflow-hidden",
-		BodyClass: "memory-density-flush",
-	}) {
-		if len(edges) == 0 {
+//
+// When the object's type declares a ui.view, viewSections is non-empty and the
+// page renders one card per declared section (with a depth-1 preview of each
+// neighbour) instead of one flat, direction-less list: a Property's documents,
+// utilities and obligations are different questions, and mixing them into a
+// single "concerns / serves / kept_at" stream is what made the old list
+// unreadable. Both branches are reachable — a type without a view keeps the
+// generic list, which is also every existing project's default.
+templ objectRelationships(obj *GraphObject, relTypes []CompiledType, edges []GraphRelationship, related []GraphObject, typeUIByType map[string]typeUI, viewSections []objectViewSection) {
+	if len(edges) == 0 {
+		@ui.Section("Relationships", ui.SectionProps{
+			Margin:    "mt-6",
+			CardClass: "overflow-hidden",
+			BodyClass: "memory-density-flush",
+		}) {
 			@ui.EmptyState(ui.EmptyStateProps{
 				Icon:        "lucide--link",
 				Title:       "No relationships",
@@ -1206,7 +1218,17 @@ templ objectRelationships(obj *GraphObject, relTypes []CompiledType, edges []Gra
 					Connect
 				}
 			}
-		} else {
+		}
+	} else if len(viewSections) > 0 {
+		for _, section := range viewSections {
+			@objectViewSectionCard(section, typeUIByType)
+		}
+	} else {
+		@ui.Section("Relationships", ui.SectionProps{
+			Margin:    "mt-6",
+			CardClass: "overflow-hidden",
+			BodyClass: "memory-density-flush",
+		}) {
 			<div class="divide-y divide-base-200">
 				for _, r := range edges {
 					@objectRelationshipRow(obj, r, related, typeUIByType)
@@ -1215,6 +1237,67 @@ templ objectRelationships(obj *GraphObject, relTypes []CompiledType, edges []Gra
 		}
 	}
 	@objectConnectDialog(obj, relTypes)
+}
+
+// objectViewSectionCard renders one section of a type-declared view: the rows
+// the resolver grouped under this heading, then — when the section was bounded
+// — how many rows it is not showing. The count matters: a silently truncated
+// list reads as "this object has six relationships" to the person looking at
+// it, which is a lie the page should not tell.
+templ objectViewSectionCard(section objectViewSection, typeUIByType map[string]typeUI) {
+	@ui.Section(section.Title, ui.SectionProps{
+		Margin:    "mt-6",
+		CardClass: "overflow-hidden",
+		BodyClass: "memory-density-flush",
+	}) {
+		<div class="divide-y divide-base-200">
+			for _, row := range section.Rows {
+				@objectViewRow(row, typeUIByType)
+			}
+			if section.Total > len(section.Rows) {
+				<div class="text-muted-subtle px-4 py-2.5 text-xs" data-testid="object-view-truncated">
+					+{ strconv.Itoa(section.Total - len(section.Rows)) } more not shown
+				</div>
+			}
+		</div>
+	}
+}
+
+// objectViewRow renders one neighbour with its depth-1 preview facts. The
+// layout is mobile-first on purpose: the label and the relationship badge share
+// one line (the badge shrinks only after the label has room), and the facts sit
+// in a two-column grid on a phone that becomes four columns from `sm` up. A
+// fixed side-by-side row — the usual desktop-first shape — collapses on a phone
+// into three-word-wide title columns, which is the single most common
+// responsive failure in a list like this.
+templ objectViewRow(row objectViewItem, typeUIByType map[string]typeUI) {
+	{{ tui := typeUIOf(typeUIByType, row.Neighbour.Type)
+	hrefID := relationshipEndpointTarget(row.Neighbour) }}
+	<div class="px-4 py-3" data-testid="object-view-row" data-relationship-type={ row.RelType }>
+		<div class="flex min-w-0 items-center gap-2">
+			@typeIconTileSmall(tui.Icon, tui.Color)
+			if row.Resolved {
+				<a href={ templ.URL("/objects/" + url.PathEscape(hrefID)) } class="hover:text-primary min-w-0 flex-1 truncate text-sm font-medium hover:underline">{ graphObjectLabel(row.Neighbour) }</a>
+			} else {
+				<span class="text-muted-subtle min-w-0 flex-1 truncate text-sm" data-unresolved="1">{ graphObjectLabel(row.Neighbour) }</span>
+			}
+			@ui.Badge(ui.BadgeProps{
+				Label:   relationshipTypeLabel(row.RelType),
+				Variant: ui.BadgeSecondary,
+				Size:    ui.BadgeSizeXS,
+			})
+		</div>
+		if len(row.Facts) > 0 {
+			<dl class="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-4">
+				for _, fact := range row.Facts {
+					<div class="min-w-0">
+						<dt class="text-muted-faint truncate text-[11px]">{ fact.Label }</dt>
+						<dd class="truncate text-xs" title={ fact.Value }>{ fact.Value }</dd>
+					</div>
+				}
+			</dl>
+		}
+	</div>
 }
 
 // objectConnectDialog is the "add relationship" modal: pick a relationship
