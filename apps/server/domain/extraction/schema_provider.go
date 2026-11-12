@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/uptrace/bun"
 )
@@ -338,10 +339,12 @@ func (p *MemorySchemaProvider) GetInstalledSchemaSummaries(
 			if embText != "" {
 				emb, embErr := p.embeddingService.EmbedQuery(ctx, embText)
 				if embErr != nil {
-					p.log.Warn("schema embedding failed, skipping vector classification for pack",
-						slog.String("pack", ms.Name),
-						logger.Error(embErr),
-					)
+					if !embeddings.IsNotConfigured(embErr) {
+						p.log.Warn("schema embedding failed, skipping vector classification for pack",
+							slog.String("pack", ms.Name),
+							logger.Error(embErr),
+						)
+					}
 				} else {
 					summary.Embedding = emb
 				}
@@ -352,11 +355,13 @@ func (p *MemorySchemaProvider) GetInstalledSchemaSummaries(
 				for _, tn := range typeNames {
 					te, teErr := p.embeddingService.EmbedQuery(ctx, tn)
 					if teErr != nil {
-						p.log.Warn("type embedding failed",
-							slog.String("pack", ms.Name),
-							slog.String("type", tn),
-							logger.Error(teErr),
-						)
+						if !embeddings.IsNotConfigured(teErr) {
+							p.log.Warn("type embedding failed",
+								slog.String("pack", ms.Name),
+								slog.String("type", tn),
+								logger.Error(teErr),
+							)
+						}
 						continue
 					}
 					typeEmbs[tn] = te

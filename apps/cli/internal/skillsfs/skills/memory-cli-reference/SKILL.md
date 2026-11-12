@@ -4852,14 +4852,16 @@ Commands for managing LLM provider credentials, model selections, and usage repo
 
 ## memory provider configure-project
 
-Save project-level LLM provider credentials (overrides org config)
+Save this project's LLM provider credentials
 
 ### Synopsis
 
-Save project-specific credentials and model selections for the given provider.
-This overrides the organization's provider config for this project.
+Save provider credentials and model selections for this project.
+Credentials are stored per project — there is no organization-level provider
+config, and no fallback to one.
 
-Use --remove to remove the project-level override and fall back to the org config.
+Use --remove to delete this project's config for the provider. The project then
+has no credentials for it until you configure them again.
 
 Supported providers:
   google            — Google AI (Gemini API); requires --api-key
@@ -4902,7 +4904,7 @@ memory provider configure-project <provider> [flags]
       --key-file string           Path to service account JSON key file (google-vertex)
       --location string           GCP region, e.g. us-central1 (required for google-vertex)
       --project string            Project ID (auto-detected from MEMORY_PROJECT_ID)
-      --remove                    Remove the project-level override and inherit org config
+      --remove                    Remove this project's config for the provider
 ```
 
 ## memory provider definitions
@@ -4993,9 +4995,8 @@ memory provider models [provider] [flags]
 ### Options
 
 ```
-  -h, --help            help for models
-      --org-id string   Organization ID (auto-detected from config)
-      --type string     Filter by model type: embedding or generative
+  -h, --help          help for models
+      --type string   Filter by model type: embedding or generative
 ```
 
 ## memory provider pricing

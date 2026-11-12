@@ -275,7 +275,7 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 	}
 	providerHint, bareModel := ref.Provider, ref.Model
 
-	// --- 1. DB credential resolution (project/org hierarchy) ---
+	// --- 1. DB credential resolution (project only) ---
 	if f.resolver != nil {
 		var cred *ResolvedCredential
 		var err error

@@ -2,6 +2,7 @@ package modelconfig
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -88,7 +89,7 @@ func (a *EmbeddingResolverAdapter) ResolveEmbedding(ctx context.Context) (*embed
 		}
 		cred, err := a.credsvc.ResolveFor(ctx, ref.Provider)
 		if err != nil {
-			return nil, fmt.Errorf("embedding resolver: failed to get credentials for provider %q: %w", ref.Provider, err)
+			return nil, embeddingCredentialError(ref.Provider, err)
 		}
 		if cred == nil {
 			return nil, fmt.Errorf("%w for provider %q — run 'memory provider configure-project %s --api-key ...'", embeddings.ErrEmbeddingCredentialUnusable, ref.Provider, ref.Provider)
@@ -111,6 +112,20 @@ func (a *EmbeddingResolverAdapter) ResolveEmbedding(ctx context.Context) (*embed
 	}
 
 	return nil, fmt.Errorf("%w for project %s — run 'memory projects set-models --embedding provider/model-name' or 'memory provider configure-project <provider> --embedding-model <model>'", embeddings.ErrEmbeddingModelNotSet, projectIDStr)
+}
+
+// embeddingCredentialError classifies a credential-resolution failure for the
+// embedding path. A project that names a provider in its model config but has no
+// credential for it is a configuration gap, not a provider failure: it is
+// reported with embeddings.ErrEmbeddingCredentialUnusable so callers stay quiet
+// per call and extraction fails the job once instead of retrying it to
+// max_attempts. Every other failure keeps its own wrapping so a transient
+// provider/database error still surfaces and is retried.
+func embeddingCredentialError(providerName string, err error) error {
+	if errors.Is(err, provider.ErrNoProjectProviderConfig) {
+		return fmt.Errorf("%w for provider %q — run 'memory provider configure-project %s --api-key ...'", embeddings.ErrEmbeddingCredentialUnusable, providerName, providerName)
+	}
+	return fmt.Errorf("embedding resolver: failed to get credentials for provider %q: %w", providerName, err)
 }
 
 // buildEmbeddingCredential maps a resolved provider credential to the

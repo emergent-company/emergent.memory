@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -70,6 +71,21 @@ type ResolvedCredential struct {
 	// Selected models (may come from org selection, project override, or env config)
 	EmbeddingModel  string
 	GenerativeModel string
+}
+
+// ErrNoProjectProviderConfig classifies "the project has no credential for this
+// provider" as a typed error, so callers can tell a configuration gap from a
+// transient lookup failure. Embedding resolution maps it to
+// embeddings.ErrEmbeddingCredentialUnusable, which extraction treats as
+// permanent rather than retrying it to dead-letter.
+var ErrNoProjectProviderConfig = errors.New("no provider config found for project")
+
+// noProjectProviderConfigError wraps ErrNoProjectProviderConfig with the
+// provider, the project and the command that fixes the gap, so a caller that
+// needs to tell a configuration gap from a transient lookup failure can use
+// errors.Is while the operator still gets an actionable message.
+func noProjectProviderConfigError(providerName, projectID, hint string) error {
+	return fmt.Errorf("%w: %s has no credentials for project %s — %s", ErrNoProjectProviderConfig, providerName, projectID, hint)
 }
 
 // CredentialSource describes where a resolved credential originated.
@@ -142,7 +158,7 @@ func (s *CredentialService) Resolve(ctx context.Context, provider ProviderType) 
 		return s.decryptProjectConfig(cfg)
 	}
 
-	return nil, fmt.Errorf("no %s provider config found for project %s — run 'memory provider configure-project %s' to set credentials", provider, projectID, provider)
+	return nil, noProjectProviderConfigError(string(provider), projectID, "run 'memory provider configure-project "+string(provider)+"' to set them")
 }
 
 // decryptProjectConfig decrypts a project-level provider config.
@@ -349,7 +365,7 @@ func (s *CredentialService) ResolveBySlug(ctx context.Context, slug ProviderSlug
 		return nil, err
 	}
 	if cfg == nil {
-		return nil, fmt.Errorf("no %s provider config found for project %s — configure it with `memory provider configure-project`", slug, projectID)
+		return nil, noProjectProviderConfigError(string(slug), projectID, "configure them with `memory provider configure-project`")
 	}
 	return s.decryptProjectConfig(cfg)
 }
@@ -376,7 +392,7 @@ func (s *CredentialService) ResolveByRef(ctx context.Context, ref modelref.Ref) 
 	if isDialectName(ref.Provider) {
 		return s.Resolve(ctx, ProviderType(ref.Provider))
 	}
-	return nil, fmt.Errorf("no provider instance %q configured for project %s", ref.Provider, projectID)
+	return nil, noProjectProviderConfigError(ref.Provider, projectID, "configure the instance with `memory provider configure-project`")
 }
 
 // ResolveAny attempts to resolve the best available credential for the request

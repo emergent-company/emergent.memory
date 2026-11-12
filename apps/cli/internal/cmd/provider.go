@@ -28,11 +28,13 @@ var providerCmd = &cobra.Command{
 
 var configureProjectCmd = &cobra.Command{
 	Use:   "configure-project <provider>",
-	Short: "Save project-level LLM provider credentials (overrides org config)",
-	Long: `Save project-specific credentials and model selections for the given provider.
-This overrides the organization's provider config for this project.
+	Short: "Save this project's LLM provider credentials",
+	Long: `Save provider credentials and model selections for this project.
+Credentials are stored per project — there is no organization-level provider
+config, and no fallback to one.
 
-Use --remove to remove the project-level override and fall back to the org config.
+Use --remove to delete this project's config for the provider. The project then
+has no credentials for it until you configure them again.
 
 Supported providers:
   google            — Google AI (Gemini API); requires --api-key
@@ -96,7 +98,7 @@ func runProviderConfigureProject(cmd *cobra.Command, args []string) error {
 		if err := c.SDK.Provider.DeleteProjectConfig(context.Background(), projectID, providerArg); err != nil {
 			return fmt.Errorf("failed to remove project config for %s: %w", providerArg, err)
 		}
-		fmt.Printf("Project-level %s config removed. The project will now inherit the org config.\n", providerArg)
+		fmt.Printf("Removed the %s config for this project. It has no %s credentials until you configure them again.\n", providerArg, providerArg)
 		return nil
 	}
 
@@ -211,7 +213,6 @@ Examples:
 }
 
 var modelsTypeFlag string
-var modelsOrgID string
 
 func runProviderModels(cmd *cobra.Command, args []string) error {
 	c, err := getClient(cmd)
@@ -1135,12 +1136,11 @@ func init() {
 	configureProjectCmd.Flags().StringVar(&configureProjectGenerativeModel, "generative-model", "", "Generative model to use (auto-selected from catalog if omitted)")
 	configureProjectCmd.Flags().StringVar(&configureProjectEmbeddingModel, "embedding-model", "", "Embedding model to use (auto-selected from catalog if omitted)")
 	configureProjectCmd.Flags().StringVar(&configureProjectID, "project", "", "Project ID (auto-detected from MEMORY_PROJECT_ID)")
-	configureProjectCmd.Flags().BoolVar(&configureProjectRemove, "remove", false, "Remove the project-level override and inherit org config")
+	configureProjectCmd.Flags().BoolVar(&configureProjectRemove, "remove", false, "Remove this project's config for the provider")
 	configureProjectCmd.Flags().StringArrayVar(&configureProjectExtra, "extra", nil, "Vendor-specific extra config field (key=value, repeatable)")
 
 	// models flags
 	providerModelsCmd.Flags().StringVar(&modelsTypeFlag, "type", "", "Filter by model type: embedding or generative")
-	providerModelsCmd.Flags().StringVar(&modelsOrgID, "org-id", "", "Organization ID (auto-detected from config)")
 
 	// usage flags
 	providerUsageCmd.Flags().StringVar(&usageProjectID, "project", "", "Filter usage to a specific project ID")

@@ -258,15 +258,22 @@ warnings, and every MCP entity create with `check_similar` added another. Caller
 now treat the configuration sentinels — `ErrNoProjectContext`,
 `ErrEmbeddingModelNotSet` and the new `ErrEmbeddingCredentialUnusable` — as
 already reported, via the new `embeddings.IsNotConfigured(err)` helper, and keep
-per-call warnings for real provider failures (timeouts, 429, 401/403). Extraction's
-`isPermanentEmbeddingError` classifies all three sentinels as permanent, so a
-project whose provider credential is unusable fails its embedding job once
-instead of retrying to `max_attempts` and dead-lettering, and
-`graph.VectorSearchByText` now returns an empty result set for those sentinels —
-matching unified search's lexical fallback — instead of an error the MCP
-similarity check could only log. The dead `projectID != ""` branches are gone
-from `backfill-embeddings`, which has required `--project-id` since embeddings
-became project-only (Refs #682).
+per-call warnings for real provider failures (timeouts, 429, 401/403). All four
+search legs go through one guard, and the same rule now covers the MCP similarity
+check, skill description and trigger-message embeddings, and the document/schema
+vector classifiers. Extraction's `isPermanentEmbeddingError` classifies all three
+sentinels as permanent, so a project whose provider credential is unusable fails
+its embedding job once instead of retrying to `max_attempts` and dead-lettering,
+and `graph.VectorSearchByText` now returns an empty result set for those
+sentinels — matching unified search's lexical fallback — instead of an error the
+MCP similarity check could only log. A project whose model config names a
+provider it has no credential for (reachable today: configure a provider, point
+the project's embedding model at it, then remove the provider config) is now that
+same unusable-credential case rather than a plain lookup error, via the new
+`provider.ErrNoProjectProviderConfig`; transient failures still surface and
+retry. The dead `projectID != ""` branches are gone from `backfill-embeddings`,
+which has required `--project-id` since embeddings became project-only (Refs
+#682).
 
 **Docs and CLI no longer point at the removed org-level provider setup** (2026-11-12)
 
@@ -282,6 +289,12 @@ argument no longer call the deprecated org-level API (which made `list` and a ba
 `test` fail outright and `models` list nothing), `memory init` configures and
 verifies the project's provider instead of the organization's, and the "no
 provider configured" hints name `configure-project` (Closes #681).
+`configure-project`'s own help and its `--remove` message no longer claim to
+override or fall back to org config — removing a project's config leaves it with
+no credentials for that provider. The Go SDK provider reference now matches the
+client it documents (project-scoped methods, current `ProviderConfig` /
+`TestProviderResponse` / `UpsertProviderConfigRequest` fields) instead of the
+long-removed org methods and policies.
 
 **Corpus text and search queries are embedded with their own task — Google AI projects must re-embed** (2026-11-12)
 

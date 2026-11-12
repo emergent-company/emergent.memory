@@ -14,6 +14,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/emergent-company/emergent.memory/pkg/adk"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -193,7 +194,9 @@ func (c *DocumentClassifier) vectorMatch(
 	}
 	docEmb, err := c.embeddingService.EmbedQuery(ctx, snippet)
 	if err != nil {
-		c.log.Warn("vector classify: embed document failed", logger.Error(err))
+		if !embeddings.IsNotConfigured(err) {
+			c.log.Warn("vector classify: embed document failed", logger.Error(err))
+		}
 		return nil, false
 	}
 

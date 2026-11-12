@@ -100,8 +100,11 @@ func (c *Client) ListModels(ctx context.Context, provider, modelType string) ([]
 ### Test Methods
 
 ```go
-// Run a live generate call to verify credentials are working.
-// Pass projectID to test via the project's resolved credential chain; pass orgID to test org credentials directly.
+// Run a live generate call (plus an embedding call where the vendor supports
+// one) to verify credentials are working.
+// Pass projectID: credential resolution is project-scoped only, so without it
+// there is nothing to resolve. orgID is ignored (kept in the signature for
+// compatibility with older callers).
 func (c *Client) TestProvider(ctx context.Context, provider, projectID, orgID string) (*TestProviderResponse, error)
 ```
 
@@ -135,15 +138,17 @@ func (c *Client) GetOrgUsageByProject(ctx context.Context, orgID string, since, 
 
 ```go
 type ProviderConfig struct {
-    ID              string    `json:"id"`
-    OrgID           string    `json:"orgId"`
-    Provider        string    `json:"provider"`
-    GCPProject      string    `json:"gcpProject,omitempty"`
-    Location        string    `json:"location,omitempty"`
-    GenerativeModel string    `json:"generativeModel,omitempty"`
-    EmbeddingModel  string    `json:"embeddingModel,omitempty"`
-    CreatedAt       time.Time `json:"createdAt"`
-    UpdatedAt       time.Time `json:"updatedAt"`
+    ID              string            `json:"id"`
+    Provider        string            `json:"provider"`
+    Slug            string            `json:"slug"`
+    GCPProject      string            `json:"gcpProject,omitempty"`
+    Location        string            `json:"location,omitempty"`
+    BaseURL         string            `json:"baseUrl,omitempty"`
+    GenerativeModel string            `json:"generativeModel,omitempty"`
+    EmbeddingModel  string            `json:"embeddingModel,omitempty"`
+    ExtraConfig     map[string]string `json:"extraConfig,omitempty"`
+    CreatedAt       time.Time         `json:"createdAt"`
+    UpdatedAt       time.Time         `json:"updatedAt"`
 }
 ```
 
@@ -155,16 +160,18 @@ Credential secrets are never returned.
 
 ```go
 type ProjectProviderConfig struct {
-    ID              string    `json:"id"`
-    ProjectID       string    `json:"projectId"`
-    OrgID           string    `json:"orgId"`
-    Provider        string    `json:"provider"`
-    GCPProject      string    `json:"gcpProject,omitempty"`
-    Location        string    `json:"location,omitempty"`
-    GenerativeModel string    `json:"generativeModel,omitempty"`
-    EmbeddingModel  string    `json:"embeddingModel,omitempty"`
-    CreatedAt       time.Time `json:"createdAt"`
-    UpdatedAt       time.Time `json:"updatedAt"`
+    ID              string            `json:"id"`
+    ProjectID       string            `json:"projectId"`
+    Provider        string            `json:"provider"`
+    Slug            string            `json:"slug"`
+    GCPProject      string            `json:"gcpProject,omitempty"`
+    Location        string            `json:"location,omitempty"`
+    BaseURL         string            `json:"baseUrl,omitempty"`
+    GenerativeModel string            `json:"generativeModel,omitempty"`
+    EmbeddingModel  string            `json:"embeddingModel,omitempty"`
+    ExtraConfig     map[string]string `json:"extraConfig,omitempty"`
+    CreatedAt       time.Time         `json:"createdAt"`
+    UpdatedAt       time.Time         `json:"updatedAt"`
 }
 ```
 
@@ -189,10 +196,13 @@ type SupportedModel struct {
 
 ```go
 type TestProviderResponse struct {
-    Provider  string `json:"provider"`
-    Success   bool   `json:"success"`
-    Message   string `json:"message,omitempty"`
-    Model     string `json:"model,omitempty"`
+    Provider       string `json:"provider"`
+    Model          string `json:"model"`
+    Reply          string `json:"reply"`
+    LatencyMs      int64  `json:"latencyMs"`
+    EmbeddingModel string `json:"embeddingModel,omitempty"`
+    EmbeddingOK    bool   `json:"embeddingOk"`
+    EmbeddingError string `json:"embeddingError,omitempty"`
 }
 ```
 
@@ -224,13 +234,15 @@ type UsageSummaryRow struct {
 
 ```go
 type UpsertProviderConfigRequest struct {
-    APIKey             string `json:"apiKey,omitempty"`             // google, openai, deepseek
-    ServiceAccountJSON string `json:"serviceAccountJson,omitempty"` // google-vertex
-    GCPProject         string `json:"gcpProject,omitempty"`         // google-vertex
-    Location           string `json:"location,omitempty"`           // google-vertex
-    BaseURL            string `json:"baseUrl,omitempty"`            // openai (custom endpoint)
-    GenerativeModel    string `json:"generativeModel,omitempty"`    // auto-selected if omitted
-    EmbeddingModel     string `json:"embeddingModel,omitempty"`     // auto-selected if omitted
+    Slug               string            `json:"slug,omitempty"`      // provider instance; defaults to the dialect name
+    APIKey             string            `json:"apiKey,omitempty"`    // google, openai, deepseek
+    ServiceAccountJSON string            `json:"serviceAccountJson,omitempty"` // google-vertex
+    GCPProject         string            `json:"gcpProject,omitempty"`         // google-vertex
+    Location           string            `json:"location,omitempty"`           // google-vertex
+    BaseURL            string            `json:"baseUrl,omitempty"`            // openai (custom endpoint)
+    GenerativeModel    string            `json:"generativeModel,omitempty"`    // auto-selected if omitted
+    EmbeddingModel     string            `json:"embeddingModel,omitempty"`     // auto-selected if omitted
+    ExtraConfig        map[string]string `json:"extraConfig,omitempty"`        // vendor-specific fields
 }
 ```
 

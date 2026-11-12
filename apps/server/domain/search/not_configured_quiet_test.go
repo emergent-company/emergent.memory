@@ -78,3 +78,34 @@ func TestEmbedQueryWarnsOnlyForProviderFailures(t *testing.T) {
 		})
 	}
 }
+
+// TestWarnEmbedFailureCoversEveryLeg pins the single guard all four search legs
+// call. It exists because the legs embed independently on their standalone call
+// paths (graph, text, relationship) as well as through embedQuery, so a change
+// that only guarded one of them would otherwise pass unnoticed.
+func TestWarnEmbedFailureCoversEveryLeg(t *testing.T) {
+	legs := []string{
+		"failed to generate query embedding, falling back to lexical-only search",
+		"failed to generate query embedding for graph search",
+		"failed to generate query embedding for text search",
+		"failed to generate query embedding for relationship search",
+	}
+
+	for _, msg := range legs {
+		t.Run(msg, func(t *testing.T) {
+			var quiet bytes.Buffer
+			svc := &Service{log: slog.New(slog.NewTextHandler(&quiet, nil))}
+			svc.warnEmbedFailure(fmt.Errorf("resolver: %w", embeddings.ErrEmbeddingModelNotSet), msg)
+			if quiet.Len() != 0 {
+				t.Errorf("not-configured failure logged %q, want silence", quiet.String())
+			}
+
+			var loud bytes.Buffer
+			svc = &Service{log: slog.New(slog.NewTextHandler(&loud, nil))}
+			svc.warnEmbedFailure(errors.New("API error 429: quota exceeded"), msg)
+			if !strings.Contains(loud.String(), msg) {
+				t.Errorf("provider failure log = %q, want it to contain %q", loud.String(), msg)
+			}
+		})
+	}
+}
