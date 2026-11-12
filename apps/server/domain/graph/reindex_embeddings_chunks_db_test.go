@@ -22,7 +22,7 @@ import (
 // one (the partial unique index is what makes that airtight).
 func TestReindexEmbeddingsChunks(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping database integration test in short mode")
+		t.Skip("skipping database integration test in short mode (#624)")
 	}
 	ctx := context.Background()
 	testDB := testutil.SetupTestDBOrFail(t, ctx, "reindexchunks")
