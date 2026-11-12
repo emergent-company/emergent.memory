@@ -211,7 +211,21 @@ pre-commit:
         if ! command -v templ >/dev/null 2>&1; then
           echo "templ not installed, skipping"; exit 0
         fi
-        templ generate -check
+        # `-check` compares generated *text*, and templ records the directory it
+        # was invoked from in every generated file's FileName (`x.templ` from
+        # this dir vs `apps/web-ui/gateway/x.templ` from the repo root). A tree
+        # generated from the root therefore mismatches on *every* file while
+        # `git status` stays clean (*_templ.go is gitignored), so the author gets
+        # a file list, no diff and no cause. Name the remedy (#651).
+        if ! out=$(templ generate -check 2>&1); then
+          printf '%s\n' "$out" | grep -v -e '^(✓)' -e '^$' | sed -n '1,8p'
+          echo "webui-templ: generated templates are out of date or were generated from another directory."
+          echo "  Fix: cd apps/web-ui/gateway && templ generate"
+          echo "  Generating from the repo root ('templ generate ./apps/web-ui/gateway/...') is not"
+          echo "  equivalent: it embeds 'apps/web-ui/gateway/x.templ' instead of 'x.templ' in the"
+          echo "  generated FileName, so every file is rejected here though nothing else differs."
+          exit 1
+        fi
 
     - name: secrets
       run: |
@@ -450,7 +464,21 @@ lint:
         if ! command -v templ >/dev/null 2>&1; then
           echo "templ not installed, skipping"; exit 0
         fi
-        templ generate -check
+        # `-check` compares generated *text*, and templ records the directory it
+        # was invoked from in every generated file's FileName (`x.templ` from
+        # this dir vs `apps/web-ui/gateway/x.templ` from the repo root). A tree
+        # generated from the root therefore mismatches on *every* file while
+        # `git status` stays clean (*_templ.go is gitignored), so the author gets
+        # a file list, no diff and no cause. Name the remedy (#651).
+        if ! out=$(templ generate -check 2>&1); then
+          printf '%s\n' "$out" | grep -v -e '^(✓)' -e '^$' | sed -n '1,8p'
+          echo "webui-templ: generated templates are out of date or were generated from another directory."
+          echo "  Fix: cd apps/web-ui/gateway && templ generate"
+          echo "  Generating from the repo root ('templ generate ./apps/web-ui/gateway/...') is not"
+          echo "  equivalent: it embeds 'apps/web-ui/gateway/x.templ' instead of 'x.templ' in the"
+          echo "  generated FileName, so every file is rejected here though nothing else differs."
+          exit 1
+        fi
 
     - name: secrets
       run: |
@@ -568,7 +596,21 @@ lint-webui:
         if ! command -v templ >/dev/null 2>&1; then
           echo "templ not installed, skipping"; exit 0
         fi
-        templ generate -check
+        # `-check` compares generated *text*, and templ records the directory it
+        # was invoked from in every generated file's FileName (`x.templ` from
+        # this dir vs `apps/web-ui/gateway/x.templ` from the repo root). A tree
+        # generated from the root therefore mismatches on *every* file while
+        # `git status` stays clean (*_templ.go is gitignored), so the author gets
+        # a file list, no diff and no cause. Name the remedy (#651).
+        if ! out=$(templ generate -check 2>&1); then
+          printf '%s\n' "$out" | grep -v -e '^(✓)' -e '^$' | sed -n '1,8p'
+          echo "webui-templ: generated templates are out of date or were generated from another directory."
+          echo "  Fix: cd apps/web-ui/gateway && templ generate"
+          echo "  Generating from the repo root ('templ generate ./apps/web-ui/gateway/...') is not"
+          echo "  equivalent: it embeds 'apps/web-ui/gateway/x.templ' instead of 'x.templ' in the"
+          echo "  generated FileName, so every file is rejected here though nothing else differs."
+          exit 1
+        fi
 
     - name: secrets
       run: |
