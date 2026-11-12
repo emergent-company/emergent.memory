@@ -49,6 +49,8 @@ type EffectiveModelConfig struct {
 }
 
 // UpsertRequest sets the generative and/or embedding model for a project.
+// Empty fields keep their stored value (partial update); clearing the whole
+// config is Delete.
 type UpsertRequest struct {
 	GenerativeModel string `json:"generativeModel"`
 	EmbeddingModel  string `json:"embeddingModel"`

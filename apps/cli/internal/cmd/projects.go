@@ -1137,13 +1137,20 @@ var setModelsCmd = &cobra.Command{
 	Long: `Set the default generative and/or embedding model for a project.
 Model names must include a provider prefix: provider/model-name
 
+Only the models you pass are changed; an omitted flag keeps that model's
+current value. Clearing the model config is a DELETE on the model-config
+endpoint (DELETE /api/v1/projects/:projectId/model-config).
+
 Examples:
-  memory projects set-models --generative google/gemini-2.5-flash --embedding google/gemini-embedding-001
+  memory projects set-models --generative google/gemini-2.5-flash
   memory projects set-models --embedding google/gemini-embedding-001 --project <projectId>`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := getClient(cmd)
 		if err != nil {
 			return err
+		}
+		if strings.TrimSpace(setModelsGenerative) == "" && strings.TrimSpace(setModelsEmbedding) == "" {
+			return fmt.Errorf("pass --generative and/or --embedding")
 		}
 		projectID := setModelsProject
 		if projectID == "" {

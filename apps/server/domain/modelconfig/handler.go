@@ -40,7 +40,8 @@ func (h *Handler) GetProjectModelConfig(c echo.Context) error {
 }
 
 // UpsertProjectModelConfig godoc
-// @Summary Set project model config
+// @Summary Set project model config (partial update)
+// @Description Updates the supplied model fields; omitted or empty fields keep their stored value. Use DELETE to clear the config.
 // @Tags model-config
 // @Accept json
 // @Produce json

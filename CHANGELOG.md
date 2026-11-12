@@ -250,6 +250,35 @@ See `/apps/server/src/modules/unified-search/` for implementation details.
 
 ### Fixed
 
+**Embedding resolution and `projects set-models` stop failing late and quietly** (2026-11-12)
+
+The embedding fast path resolved credentials by dialect only, so a project whose
+embedding model named a provider *instance* (`google-eu/...`) could not
+embed — it now resolves by the full model reference, falling back to the
+dialect's default instance for legacy names. The defensive `cred == nil` branch
+is gone: `Resolve`/`ResolveByRef` only return `nil, nil` when the request has no
+project, which the adapter already rejected, so the branch mislabelled an
+unreachable case as an unusable credential. The missing-credential message no
+longer repeats "for project" ("no provider config found for project: google has
+no credentials for 1a3d…"), and `ResolveAnyEmbedding` now returns the first
+project-config lookup error with the provider in context instead of logging at
+Debug and reporting the permanent-looking "no embedding model configured".
+
+`memory projects set-models` now rejects a provider segment that is neither a
+supported dialect nor an existing project provider instance slug, with a 400 at
+write time rather than an `unsupported provider` (or missing slug) failure per
+call later. The API key does not have to exist yet — only the provider name must
+be known.
+
+`PUT /api/v1/projects/:id/model-config` is a partial update: a model the caller
+omits keeps its stored value. Previously `set-models --generative X` wrote
+`embedding_model = ''` and silently removed the project's embedding model, which
+since the project-only embeddings change meant no vectors were written at all.
+Clearing the model config remains `DELETE` on the same endpoint. CLI help, the
+bundled `memory-providers` skill and the model-setup guide now describe the
+partial semantics instead of warning that both flags are required (Refs #690,
+#687).
+
 **Embedding configuration failures are quiet, permanent and non-fatal** (2026-11-12)
 
 `pkg/embeddings` reports a missing embedding model once per project, but every

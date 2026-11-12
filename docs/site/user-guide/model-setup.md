@@ -112,7 +112,13 @@ memory projects set-models \
   --embedding "google/gemini-embedding-001"
 ```
 
-> `PUT /projects/:id/model-config` replaces the whole model config — pass **both** `--generative` and `--embedding`. A flag you omit is stored as empty, which clears that model.
+`set-models` updates only the models you pass; a flag you omit keeps its stored value:
+
+```bash
+memory projects set-models --embedding "google/gemini-embedding-001"   # generative unchanged
+```
+
+The provider in each model name is checked when you save: it must be a supported provider dialect or the slug of an existing project provider instance. A typo such as `google-eu/...` for an instance you have not configured yet is rejected up front. The credential itself does not have to exist yet — selecting a model before adding its API key is allowed.
 
 Because `set-models` writes an explicit project config, it takes precedence over the models stored on the provider credential — including after you later re-run `configure-project`, which updates the provider's models but not this row. Use `memory projects show-models` to see what actually wins.
 
@@ -209,7 +215,7 @@ PUT /api/v1/projects/:projectId/model-config
 }
 ```
 
-The body replaces the whole row; `DELETE` on the same path clears it.
+The update is partial: a field present in the body replaces the stored value; an omitted field (or an empty string) keeps the stored value. `DELETE` on the same path clears the whole config — that is the only way to unset a model.
 
 ### Check effective config (resolved with source)
 
@@ -250,7 +256,7 @@ memory provider models deepseek
 | Error | Cause | Fix |
 |---|---|---|
 | `no generative model configured for project <id>` | No project model config and no model on the project's provider credential | Run `memory provider configure-project <provider> --api-key <key>`, or `memory projects set-models --generative <provider>/<model> --embedding <provider>/<model>` |
-| `embeddings: embedding model was not set for this project …` (logged once per project) | Project provider has no embedding model — embeddings are project-only, with no env fallback | Run `memory projects set-models --embedding <provider>/<model>` (pass `--generative` too), then `memory graph reindex-embeddings --force --chunks` |
+| `embeddings: embedding model was not set for this project …` (logged once per project) | Project provider has no embedding model — embeddings are project-only, with no env fallback | Run `memory projects set-models --embedding <provider>/<model>`, then `memory graph reindex-embeddings --force --chunks` |
 | `embedding provider credential is unusable` | The project's embedding provider is configured but its credential cannot be used (e.g. a Google provider with no API key) | Re-run `memory provider configure-project <provider> --api-key <key>` |
 | `no project in context for embedding resolution` | The call is not project-scoped (global/org-scoped skill or an API token without a project) | Use a project-scoped token, or run the operation inside a project |
 | `model name has no provider prefix` | Model name like `gemini-2.0-flash` instead of `google/gemini-2.0-flash` | Prefix the model name with the provider slug |

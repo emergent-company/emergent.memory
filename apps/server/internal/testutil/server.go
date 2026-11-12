@@ -162,7 +162,10 @@ func NewTestServerWithLLM(testDB *TestDB) *TestServer {
 	providerCatalogSvc := provider.NewModelCatalogService(providerRepo, log, provider.WithNetworkDisabled(cfg.LLM.NetworkDisabled))
 	credSvc := provider.NewCredentialService(providerRepo, providerRegistry, providerCatalogSvc, cfg, log)
 	modelconfigStore := modelconfig.NewStore(db, log)
-	modelconfigSvc := modelconfig.NewService(modelconfigStore, log)
+	modelconfigSvc := modelconfig.NewService(modelconfigStore, log).
+		WithGenerativeDefaultResolver(credSvc).
+		WithEmbeddingDefaultResolver(credSvc).
+		WithProviderValidator(credSvc)
 	embeddingResolver := modelconfig.NewEmbeddingResolverAdapter(modelconfigSvc, credSvc)
 	embeddingsSvc := embeddings.NewTestEmbeddingsService(embeddingResolver, log)
 	skillsRepo := skills.NewRepository(db, log, skills.WithEmbedder(embeddingsSvc))
@@ -474,12 +477,6 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	embPolicyHandler := embeddingpolicies.NewHandler(embPolicySvc)
 	embeddingpolicies.RegisterRoutes(e, embPolicyHandler, authMiddleware)
 
-	// Register model config routes (GET/PUT/DELETE /api/v1/projects/:projectId/model-config)
-	modelconfigStore := modelconfig.NewStore(db, log)
-	modelconfigSvc := modelconfig.NewService(modelconfigStore, log)
-	modelconfigHandler := modelconfig.NewHandler(modelconfigSvc)
-	modelconfig.RegisterRoutes(e, modelconfigHandler, authMiddleware)
-
 	// Register branches routes
 	branchesStore := branches.NewStore(db)
 	branchesSvc := branches.NewService(branchesStore)
@@ -655,6 +652,17 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	providerCredSvc := provider.NewCredentialService(providerRepo, providerRegistry, providerCatalogSvc, testDB.Config, log)
 	providerHandler := provider.NewHandler(providerCredSvc, providerCatalogSvc, providerRepo, providerRegistry)
 	provider.RegisterRoutes(e, providerHandler, authMiddleware)
+
+	// Register model config routes (GET/PUT/DELETE /api/v1/projects/:projectId/model-config).
+	// Mirrors module.go: the credential service supplies both resolution
+	// fallbacks and the write-time provider validator.
+	modelconfigStore := modelconfig.NewStore(db, log)
+	modelconfigSvc := modelconfig.NewService(modelconfigStore, log).
+		WithGenerativeDefaultResolver(providerCredSvc).
+		WithEmbeddingDefaultResolver(providerCredSvc).
+		WithProviderValidator(providerCredSvc)
+	modelconfigHandler := modelconfig.NewHandler(modelconfigSvc)
+	modelconfig.RegisterRoutes(e, modelconfigHandler, authMiddleware)
 
 	// Register discovery jobs routes (nil modelFactory — LLM-dependent tests skip in-process)
 	discoveryRepo := discoveryjobs.NewRepository(db, log)

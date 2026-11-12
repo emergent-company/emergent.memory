@@ -39,6 +39,15 @@ func (a *ADKModelResolverAdapter) ResolveGenerativeModelByID(ctx context.Context
 	return model, string(source), nil
 }
 
+// embeddingCredentialResolver is the slice of provider.CredentialService the
+// embedding adapter needs. It is an interface so resolution behavior (instance
+// slug vs legacy dialect, missing credential, transient lookup failure) is
+// unit-testable without a database; *provider.CredentialService satisfies it.
+type embeddingCredentialResolver interface {
+	ResolveByRef(ctx context.Context, ref modelref.Ref) (*provider.ResolvedCredential, error)
+	ResolveAnyEmbedding(ctx context.Context) (*provider.ResolvedCredential, error)
+}
+
 // EmbeddingResolverAdapter adapts modelconfig.Service + provider.CredentialService to
 // embeddings.EmbeddingResolver. It resolves the embedding model via modelconfig
 // (project config only, no guessing) and fetches credentials for the provider
@@ -48,11 +57,11 @@ func (a *ADKModelResolverAdapter) ResolveGenerativeModelByID(ctx context.Context
 // and could return the wrong provider (e.g. DeepSeek) for embedding calls.
 type EmbeddingResolverAdapter struct {
 	svc     *Service
-	credsvc *provider.CredentialService
+	credsvc embeddingCredentialResolver
 }
 
 // NewEmbeddingResolverAdapter creates the adapter.
-func NewEmbeddingResolverAdapter(svc *Service, credsvc *provider.CredentialService) embeddings.EmbeddingResolver {
+func NewEmbeddingResolverAdapter(svc *Service, credsvc embeddingCredentialResolver) embeddings.EmbeddingResolver {
 	return &EmbeddingResolverAdapter{svc: svc, credsvc: credsvc}
 }
 
@@ -87,12 +96,14 @@ func (a *EmbeddingResolverAdapter) ResolveEmbedding(ctx context.Context) (*embed
 		if err != nil {
 			return nil, fmt.Errorf("embedding resolver: invalid model name %q — must be 'provider/model-name'", model)
 		}
-		cred, err := a.credsvc.ResolveFor(ctx, ref.Provider)
+		// ResolveByRef is instance-slug aware and falls back to the dialect's
+		// default instance for legacy references, so "google-eu/..." and
+		// "google/..." both resolve here. It returns nil, nil only when the
+		// request has no project context — already rejected above — so the
+		// credential is always non-nil on success.
+		cred, err := a.credsvc.ResolveByRef(ctx, ref)
 		if err != nil {
 			return nil, embeddingCredentialError(ref.Provider, err)
-		}
-		if cred == nil {
-			return nil, fmt.Errorf("%w for provider %q — run 'memory provider configure-project %s --api-key ...'", embeddings.ErrEmbeddingCredentialUnusable, ref.Provider, ref.Provider)
 		}
 		return a.buildEmbeddingCredential(cred, ref.Model), nil
 	}

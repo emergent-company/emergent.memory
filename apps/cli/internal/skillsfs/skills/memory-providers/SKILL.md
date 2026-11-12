@@ -57,7 +57,7 @@ memory projects set-models \
   --generative "google/gemini-2.5-flash" \
   --embedding "google/gemini-embedding-001"
 ```
-`PUT /projects/:id/model-config` replaces the whole model config — pass **both** flags, because an omitted one is stored as empty and clears that model. A project model config wins over the models auto-selected onto the provider config.
+`PUT /projects/:id/model-config` is a partial update — an omitted flag keeps the model's stored value, so you can set just one. Clearing the config is a `DELETE` on the same endpoint. A project model config wins over the models auto-selected onto the provider config.
 
 ### Show the effective models
 ```bash
