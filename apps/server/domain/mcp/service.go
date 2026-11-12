@@ -5427,7 +5427,7 @@ func (s *Service) executeBatchUpdateEntities(ctx context.Context, projectUUID uu
 		entityRef := refString(itemArgs["entity_id"])
 		result, err := s.updateEntityOne(ctx, projectUUID, projectID, itemArgs)
 		if err != nil {
-			results = append(results, batchUpdateResult{Index: i, EntityID: entityRef, OK: false, Error: err.Error()})
+			results = append(results, batchUpdateResult{Index: i, EntityID: entityRef, OK: false, Error: apperror.PublicMessage(err)})
 			failed++
 			continue
 		}
@@ -5524,7 +5524,7 @@ func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, arg
 				return nil, err
 			}
 			if _, err := s.deleteEntityOne(ctx, projectUUID, projectID, idStr, branchID, reason); err != nil {
-				results = append(results, batchDeleteResult{Index: i, EntityID: idStr, OK: false, Error: err.Error()})
+				results = append(results, batchDeleteResult{Index: i, EntityID: idStr, OK: false, Error: apperror.PublicMessage(err)})
 				failed++
 				continue
 			}
@@ -6621,7 +6621,7 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 		if err := writeRules.CheckFields(typeName, properties); err != nil {
 			results = append(results, batchResult{
 				Ok:    false,
-				Error: err.Error(),
+				Error: apperror.PublicMessage(err),
 				Index: i,
 			})
 			failedCount++
@@ -6671,7 +6671,7 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 		if err != nil {
 			results = append(results, batchResult{
 				Ok:    false,
-				Error: err.Error(),
+				Error: apperror.PublicMessage(err),
 				Index: i,
 			})
 			failedCount++

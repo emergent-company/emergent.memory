@@ -53,6 +53,31 @@ func NewRetryConflict(message string) error {
 	return &RetryConflictError{Message: message}
 }
 
+// retryFailure renders a RetryByJobID failure as the response the client gets.
+//
+// A refusal the caller can act on keeps its own status and message: the
+// in-flight conflict from the adapter, or an app error the extraction domain
+// raised for a job that is gone or in a state the retry cannot resume. Anything
+// else is a server-side failure — a driver error from the retry UPDATE, a
+// decode, a context the adapter could not resolve — and its text goes to the
+// log, not the body: err.Error() here used to become the 400 message, so a
+// database error was reported to the caller as a bad request with the driver
+// text in it.
+func (h *Handler) retryFailure(err error) error {
+	var conflict *RetryConflictError
+	if errors.As(err, &conflict) {
+		// A run that is still in flight is a conflict rather than a bad request:
+		// retrying it would process the document twice.
+		return apperror.NewConflict(conflict.Message)
+	}
+	var appErr *apperror.Error
+	if errors.As(err, &appErr) {
+		return appErr
+	}
+	h.log.Error("retry extraction: retry failed", logger.Error(err))
+	return apperror.ErrInternal.WithMessage("failed to retry extraction")
+}
+
 // Handler handles document HTTP requests
 type Handler struct {
 	svc                *Service
@@ -130,14 +155,16 @@ func (h *Handler) List(c echo.Context) error {
 
 	// Sort and direction. Both are validated vocabularies: an unrecognised value
 	// is rejected rather than silently falling back, so a typo cannot look like a
-	// working control.
+	// working control. The normalizers return the client-facing *apperror.Error
+	// themselves (BadRequest + the accepted vocabulary), so it is returned
+	// unchanged rather than stringified into a new message.
 	sortKey, err := NormalizeSort(c.QueryParam("sort"))
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage(err.Error())
+		return err
 	}
 	order, err := NormalizeOrder(c.QueryParam("order"))
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage(err.Error())
+		return err
 	}
 	params.Sort = sortKey
 	params.Order = order
@@ -145,7 +172,7 @@ func (h *Handler) List(c echo.Context) error {
 	// Status bucket
 	status, err := NormalizeStatusBucket(c.QueryParam("status"))
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage(err.Error())
+		return err
 	}
 	params.Status = status
 
@@ -773,13 +800,7 @@ func (h *Handler) RetryExtraction(c echo.Context) error {
 
 	job, err := h.extraction.RetryByJobID(c.Request().Context(), retryableJob.ID, user.ProjectID)
 	if err != nil {
-		// A run that is still in flight is a conflict rather than a bad request:
-		// retrying it would process the document twice.
-		var conflict *RetryConflictError
-		if errors.As(err, &conflict) {
-			return apperror.NewConflict(conflict.Message)
-		}
-		return apperror.ErrBadRequest.WithMessage(err.Error())
+		return h.retryFailure(err)
 	}
 
 	return c.JSON(http.StatusAccepted, map[string]any{
