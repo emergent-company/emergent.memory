@@ -359,11 +359,9 @@ func main() {
 	e.POST("/auth/switch", s.authSwitch)
 	// Public Railway deploy portal (see deploy_portal.go). The Railway OAuth
 	// client is separate from the Memory login client; tokens live only in a
-	// short-lived sealed cookie.
-	e.GET("/deploy", s.deployPortalPage)
-	e.GET("/deploy/oauth/start", s.deployOAuthStart)
-	e.GET("/deploy/oauth/callback", s.deployOAuthCallback)
-	e.GET("/deploy/oauth/logout", s.deployOAuthLogout)
+	// short-lived sealed cookie. Routes are registered in one place
+	// (registerDeployPortalRoutes) so the tests exercise the real wiring.
+	s.registerDeployPortalRoutes(e)
 	// OAuth 2.1 authorization-server consent (session-gated by authDispatch).
 	e.GET("/oauth/authorize", s.uiOAuthAuthorize)
 	e.POST("/oauth/authorize", s.uiOAuthAuthorizeDecision)
