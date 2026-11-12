@@ -65,7 +65,14 @@ func objectProvenanceOf(v GraphObject, identities []objectActorOption) objectVer
 			// the missing id as "Any actor" (a filter concept, not a writer).
 			p.Actor = "System"
 		case "agent", "user":
-			p.Actor = actorOptionLabel(identities, v.ActorType, v.ActorID)
+			// A recorded type with no id is still an attribution: name the type.
+			// The pair's label helper reads an empty id as "Any actor" (a filter
+			// concept, not a writer), so it is bypassed for that case.
+			if v.ActorID == "" {
+				p.Actor = actorTypeLabel(v.ActorType)
+			} else {
+				p.Actor = actorOptionLabel(identities, v.ActorType, v.ActorID)
+			}
 		}
 		if p.ActorKind == "agent" && v.ActorID != "" {
 			p.ActorHref = "/agents/" + url.PathEscape(v.ActorID)

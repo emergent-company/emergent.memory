@@ -43,8 +43,8 @@ func TestObjectProvenanceOfAgent(t *testing.T) {
 	if p.How != "agent MCP link" {
 		t.Errorf("how = %q, want agent MCP link", p.How)
 	}
-	if p.Run != "run "+shortRunID(run) {
-		t.Errorf("run = %q, want run %s", p.Run, shortRunID(run))
+	if p.Run != "run 0193f2a1" {
+		t.Errorf("run = %q, want run 0193f2a1", p.Run)
 	}
 	if !strings.Contains(p.RunTitle, run) || !strings.Contains(p.RunTitle, root) {
 		t.Errorf("run title must carry both run ids, got %q", p.RunTitle)
@@ -78,6 +78,54 @@ func TestObjectProvenanceOfUnresolvedActors(t *testing.T) {
 	}
 	if !strings.Contains(system.ActorTitle, "background") {
 		t.Errorf("system title = %q, want it to name background work", system.ActorTitle)
+	}
+}
+
+// TestObjectProvenanceOfTypeWithoutID pins the empty-id case: a version that
+// records an actor type but no id still names a writer by its type, and never
+// borrows the actor filter's "Any actor" placeholder.
+func TestObjectProvenanceOfTypeWithoutID(t *testing.T) {
+	for _, actorType := range []string{"agent", "user"} {
+		p := objectProvenanceOf(GraphObject{ActorType: actorType, CredentialKind: "api_key"}, nil)
+		if p.Actor == "Any actor" || p.Actor == "" {
+			t.Errorf("%s without id = %q, want the type name", actorType, p.Actor)
+		}
+		if p.Actor != actorTypeLabel(actorType) {
+			t.Errorf("%s without id = %q, want %q", actorType, p.Actor, actorTypeLabel(actorType))
+		}
+		if p.ActorHref != "" {
+			t.Errorf("%s without id linked to %q, want no link", actorType, p.ActorHref)
+		}
+		if p.ActorKind != actorType {
+			t.Errorf("%s without id kind = %q, want %q", actorType, p.ActorKind, actorType)
+		}
+	}
+}
+
+// TestObjectHistorySubpageNamesWriter pins the second surface: the History
+// subpage renders the same provenance line as the preview drawer, so the full
+// timeline is not the weaker one.
+func TestObjectHistorySubpageNamesWriter(t *testing.T) {
+	data := objectDetailShellData{
+		Obj:    &GraphObject{ID: "o1", Type: "note", Key: "k"},
+		Active: "history",
+	}
+	versions := []GraphObject{{
+		ID: "v2", Version: 2, Type: "note", Key: "k", Status: "ready",
+		ActorType: "agent", ActorID: "a1", CredentialKind: "mcp_link",
+		CreatedAt: "2026-01-02T09:30:00Z",
+	}}
+	html := renderHTML(t, objectHistoryPage(data, versions, agentIdentity, nil))
+	for _, want := range []string{
+		`data-testid="object-history-page"`,
+		`data-testid="object-preview-history-provenance"`,
+		"researcher",
+		`href="/agents/a1"`,
+		"via agent MCP link",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("history subpage missing %q:\n%s", want, html)
+		}
 	}
 }
 
@@ -154,7 +202,7 @@ func TestObjectPreviewHistoryProvenanceRow(t *testing.T) {
 		"researcher",
 		`href="/agents/a1"`,
 		"via agent MCP link",
-		"run " + shortRunID(run),
+		"run 0193f2a1",
 		"2026-01-02T09:30:00Z",
 	} {
 		if !strings.Contains(html, want) {
