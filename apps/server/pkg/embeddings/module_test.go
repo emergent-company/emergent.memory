@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings/vertex"
 )
 
 // stubResolver is a fixed EmbeddingResolver for the fail-closed cases.
@@ -128,5 +129,73 @@ func TestResolveRejectsUnusableCredential(t *testing.T) {
 		t.Fatal("resolveClientWithMeta() error = nil, want an unusable-credential error")
 	} else if !strings.Contains(err.Error(), "no usable credentials") {
 		t.Errorf("error = %q, want an unusable-credentials message", err.Error())
+	}
+}
+
+// routingEmbeddingClient is a Client whose query and document paths return
+// different vectors, so a call that reaches the wrong one is visible in the value
+// and not only in a counter.
+type routingEmbeddingClient struct {
+	queryCalls    int
+	documentCalls int
+}
+
+func (c *routingEmbeddingClient) EmbedQuery(context.Context, string) ([]float32, error) {
+	c.queryCalls++
+	return []float32{1, 0}, nil
+}
+
+func (c *routingEmbeddingClient) EmbedDocuments(_ context.Context, documents []string) ([][]float32, error) {
+	c.documentCalls++
+	out := make([][]float32, len(documents))
+	for i := range out {
+		out[i] = []float32{0, 1}
+	}
+	return out, nil
+}
+
+func (c *routingEmbeddingClient) EmbedQueryWithUsage(context.Context, string) (*vertex.EmbedResult, error) {
+	c.queryCalls++
+	return &vertex.EmbedResult{Embedding: []float32{1, 0}, Model: "stub", Provider: "stub"}, nil
+}
+
+func (c *routingEmbeddingClient) EmbedDocumentsWithUsage(_ context.Context, documents []string) (*vertex.BatchEmbedResult, error) {
+	c.documentCalls++
+	out := make([][]float32, len(documents))
+	for i := range out {
+		out[i] = []float32{0, 1}
+	}
+	return &vertex.BatchEmbedResult{Embeddings: out, Model: "stub", Provider: "stub"}, nil
+}
+
+// TestEmbedDocumentUsesTheDocumentPath pins that EmbedDocumentWithUsage and
+// EmbedDocument reach the *document* path, not the query one. Re-pointing either
+// method at EmbedQueryWithUsage would still compile and still return a vector of
+// the right shape, so the routing — not the shape — is what this asserts.
+func TestEmbedDocumentUsesTheDocumentPath(t *testing.T) {
+	client := &routingEmbeddingClient{}
+	svc := &Service{client: client, log: slog.Default(), enabled: true}
+	ctx := context.Background()
+
+	result, err := svc.EmbedDocumentWithUsage(ctx, "a stored chunk")
+	if err != nil {
+		t.Fatalf("EmbedDocumentWithUsage() error = %v", err)
+	}
+	if client.documentCalls != 1 || client.queryCalls != 0 {
+		t.Errorf("calls = %d document / %d query, want 1/0", client.documentCalls, client.queryCalls)
+	}
+	if len(result.Embedding) != 2 || result.Embedding[1] != 1 {
+		t.Errorf("Embedding = %v, want the document vector [0 1]", result.Embedding)
+	}
+
+	vec, err := svc.EmbedDocument(ctx, "a stored chunk")
+	if err != nil {
+		t.Fatalf("EmbedDocument() error = %v", err)
+	}
+	if client.documentCalls != 2 || client.queryCalls != 0 {
+		t.Errorf("calls = %d document / %d query, want 2/0", client.documentCalls, client.queryCalls)
+	}
+	if len(vec) != 2 || vec[1] != 1 {
+		t.Errorf("EmbedDocument() = %v, want the document vector [0 1]", vec)
 	}
 }

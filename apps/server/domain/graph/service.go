@@ -56,6 +56,13 @@ type InverseTypeProvider interface {
 // EmbeddingService provides embedding generation for triplet text.
 type EmbeddingService interface {
 	EmbedQuery(ctx context.Context, query string) ([]float32, error)
+	// EmbedDocument embeds *stored* text with the document task. Relationship
+	// triplet text is corpus text, so it goes through this and not EmbedQuery:
+	// the two formats produce different vectors, and writing a query-format
+	// vector into kb.graph_relationships.embedding would make it incomparable
+	// with the document-format vectors every search is compared against
+	// (issue #615).
+	EmbedDocument(ctx context.Context, text string) ([]float32, error)
 }
 
 // EmbeddingEnqueuer enqueues graph objects for asynchronous embedding generation.
@@ -2244,7 +2251,7 @@ func (s *Service) embedTripletText(ctx context.Context, tripletText string) ([]f
 		return nil, nil, nil
 	}
 
-	embedding, err := s.embeddings.EmbedQuery(ctx, tripletText)
+	embedding, err := s.embeddings.EmbedDocument(ctx, tripletText)
 	if err != nil {
 		return nil, nil, fmt.Errorf("embed triplet: %w", err)
 	}

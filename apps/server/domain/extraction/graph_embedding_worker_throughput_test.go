@@ -351,3 +351,20 @@ func TestChunkJobs(t *testing.T) {
 	perJob := chunkJobs(mk(3), 1)
 	require.Len(t, perJob, 3)
 }
+
+// EmbedDocumentWithUsage is the document-side counterpart of
+// EmbedQueryWithUsage; it shares the gate so a test that blocks a slow embed
+// blocks it whichever path the worker takes.
+func (e *gatedEmbedder) EmbedDocumentWithUsage(ctx context.Context, text string) (*vertex.EmbedResult, error) {
+	return e.EmbedQueryWithUsage(ctx, text)
+}
+
+// EmbedDocumentWithUsage records the serial-path call in singles, so the
+// existing "no single-object request was issued" assertions keep their meaning
+// now that the serial path uses the document method.
+func (e *batchRecordingEmbedder) EmbedDocumentWithUsage(_ context.Context, text string) (*vertex.EmbedResult, error) {
+	e.mu.Lock()
+	e.singles = append(e.singles, text)
+	e.mu.Unlock()
+	return &vertex.EmbedResult{Embedding: make([]float32, 768), Model: "test", Provider: "vertex"}, nil
+}

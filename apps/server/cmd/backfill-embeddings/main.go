@@ -150,7 +150,18 @@ func main() {
 				continue
 			}
 
-			vec, err := embedder.EmbedQuery(projectCtx, tripletText)
+			// Document path, not EmbedQuery: triplet text is stored corpus
+			// text, and a query-format vector here would be incomparable with
+			// the document-format vectors search compares against (#615).
+			vecs, err := embedder.EmbedDocuments(projectCtx, []string{tripletText})
+			var vec []float32
+			if err == nil {
+				if len(vecs) == 0 {
+					err = fmt.Errorf("no embedding returned")
+				} else {
+					vec = vecs[0]
+				}
+			}
 			if err != nil {
 				errCount++
 				log.Warn("failed to embed relationship",

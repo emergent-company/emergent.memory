@@ -19,6 +19,7 @@ import (
 type fakeCachedEmbedder struct {
 	mu         sync.Mutex
 	batchCalls [][]string
+	docCalls   []string
 }
 
 func (f *fakeCachedEmbedder) IsEnabled() bool { return true }
@@ -132,7 +133,7 @@ func TestCachedEmbeddingService_BatchMissCallsUnderlyingAndPopulatesCache(t *tes
 
 	// Every document was cached under the resolved model.
 	for _, d := range docs {
-		assert.True(t, store.has(svc.cacheKey("test-model", d)), "expected cache entry for %q", d)
+		assert.True(t, store.has(svc.cacheKey("test-model", cacheFormatDocument, d)), "expected cache entry for %q", d)
 	}
 }
 
@@ -199,7 +200,7 @@ func TestCachedEmbeddingService_KeysByResolvedModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	require.Equal(t, 1, embedder.batchCount())
-	require.True(t, store.has(svcA.cacheKey("model-A", "same-text")))
+	require.True(t, store.has(svcA.cacheKey("model-A", cacheFormatDocument, "same-text")))
 
 	// The same text under model-B must MISS (different key) and hit the underlying
 	// service again — proving vectors from different models never collide.
@@ -207,7 +208,62 @@ func TestCachedEmbeddingService_KeysByResolvedModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	assert.Equal(t, 2, embedder.batchCount(), "same text under a different model must not be served from cache")
-	assert.True(t, store.has(svcB.cacheKey("model-B", "same-text")))
+	assert.True(t, store.has(svcB.cacheKey("model-B", cacheFormatDocument, "same-text")))
+}
+
+// EmbedDocumentWithUsage returns a vector that is deliberately distinguishable
+// from the query one for the same text, the way a real provider does: that is
+// what makes a cache-key collision visible as a wrong vector rather than as a
+// coincidence.
+func (f *fakeCachedEmbedder) EmbedDocumentWithUsage(_ context.Context, text string) (*vertex.EmbedResult, error) {
+	f.mu.Lock()
+	f.docCalls = append(f.docCalls, text)
+	f.mu.Unlock()
+	return &vertex.EmbedResult{Embedding: append(vecForDoc(text), 1), Model: "test", Provider: "vertex"}, nil
+}
+
+// docCount reports how many single-document embeddings reached the underlying
+// service (cache misses), which is how the cache tests observe a format miss.
+func (f *fakeCachedEmbedder) docCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.docCalls)
+}
+
+// TestCachedEmbeddingService_FormatsDoNotShareCacheEntries is the regression
+// test for issue #615: a document and a query of the same text are embedded
+// differently, so they must not share a cache entry. Before the format was part
+// of the key, whichever call landed first was served to the other -- and the
+// corpus would silently be searched with a query-format vector, or a search
+// would be answered with a corpus vector.
+func TestCachedEmbeddingService_FormatsDoNotShareCacheEntries(t *testing.T) {
+	embedder := &fakeCachedEmbedder{}
+	store := newFakeEmbeddingCache()
+	svc := newCachedServiceForTest(embedder, store, nil)
+	ctx := context.Background()
+
+	const text = "the same words"
+
+	query, err := svc.EmbedQueryWithUsage(ctx, text)
+	require.NoError(t, err)
+
+	doc, err := svc.EmbedDocumentWithUsage(ctx, text)
+	require.NoError(t, err)
+
+	require.Equal(t, 1, embedder.docCount(), "the document embedding must miss the query entry, not reuse it")
+	assert.NotEqual(t, query.Embedding, doc.Embedding, "a query and a document of the same text must not be the same vector")
+
+	// Second calls are cache hits, each in its own format.
+	if _, err := svc.EmbedQueryWithUsage(ctx, text); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.EmbedDocumentWithUsage(ctx, text); err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, 1, embedder.docCount(), "a repeated document embedding must be served from cache")
+
+	assert.True(t, store.has(svc.cacheKey("test-model", cacheFormatQuery, text)))
+	assert.True(t, store.has(svc.cacheKey("test-model", cacheFormatDocument, text)))
 }
 
 // TestCachedEmbeddingService_NoResolvedModelBypassesCache pins that an

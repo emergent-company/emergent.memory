@@ -193,6 +193,43 @@ func (s *Service) EmbedDocumentsWithUsage(ctx context.Context, documents []strin
 	return &vertex.BatchEmbedResult{Embeddings: embeddings, Model: model, Provider: provider}, nil
 }
 
+// EmbedDocumentWithUsage embeds one piece of *stored* text with the document
+// task, returning it in the single-result shape the ingest workers use.
+//
+// The distinction matters for the Google clients: a document and a query of the
+// same text are deliberately embedded differently (a task_type field, or for
+// gemini-embedding-2 a text prefix), so the two are not interchangeable. Ingest
+// writes must use this; only a search string goes through EmbedQueryWithUsage.
+func (s *Service) EmbedDocumentWithUsage(ctx context.Context, text string) (*vertex.EmbedResult, error) {
+	result, err := s.EmbedDocumentsWithUsage(ctx, []string{text})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || len(result.Embeddings) == 0 {
+		return nil, fmt.Errorf("no embedding returned")
+	}
+	return &vertex.EmbedResult{
+		Embedding: result.Embeddings[0],
+		Usage:     result.Usage,
+		Model:     result.Model,
+		Provider:  result.Provider,
+	}, nil
+}
+
+// EmbedDocument embeds stored corpus text with the document task and returns the
+// vector alone. It is the document-side twin of EmbedQuery, for callers that only
+// need the vector (the graph domain embeds relationship triplets this way).
+func (s *Service) EmbedDocument(ctx context.Context, text string) ([]float32, error) {
+	result, err := s.EmbedDocumentWithUsage(ctx, text)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.Embedding, nil
+}
+
 // resolveClient returns the appropriate embeddings Client for this request.
 // If a resolver is configured, a transient client is created from the project's
 // provider credential. There is no environment-configured fallback.

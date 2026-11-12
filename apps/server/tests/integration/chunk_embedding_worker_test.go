@@ -749,3 +749,9 @@ func (s *ChunkEmbeddingWorkerTestSuite) TestRequeue_ResetsToPendingAndBoundedRet
 	s.NoError(err)
 	s.Empty(empty)
 }
+
+// EmbedDocumentWithUsage keeps the blocking behaviour on the document path, so
+// the overlap test still observes the first in-flight call.
+func (m *blockingEmbeddingService) EmbedDocumentWithUsage(ctx context.Context, text string) (*vertex.EmbedResult, error) {
+	return m.EmbedQueryWithUsage(ctx, text)
+}
