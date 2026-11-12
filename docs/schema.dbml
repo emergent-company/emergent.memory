@@ -100,6 +100,21 @@ Table "core"."api_tokens" {
   }
 }
 
+Table "core"."instance_email_settings" {
+  "id" boolean [pk, default: true]
+  "enabled" boolean [not null, default: false]
+  "provider" text [not null, default: '']
+  "from_email" text [not null, default: '']
+  "from_name" text [not null, default: '']
+  "smtp_host" text [not null, default: '']
+  "smtp_port" integer [not null, default: 587]
+  "smtp_username" text [not null, default: '']
+  "smtp_tls" text [not null, default: 'starttls']
+  "settings_encrypted" text [not null, default: '']
+  "updated_at" timestamptz [not null, default: `now()`]
+  "updated_by" uuid
+}
+
 Table "core"."mcp_share_instances" {
   "id" uuid [pk, default: `gen_random_uuid()`]
   "project_id" uuid [not null]
@@ -3035,6 +3050,7 @@ Ref: "core"."agent_mcp_sessions"."endpoint_id" > "core"."agent_mcp_endpoints"."i
 Ref: "core"."agent_mcp_sessions"."key_id" > "core"."agent_mcp_keys"."id"
 Ref: "core"."api_tokens"."project_id" > "kb"."projects"."id"
 Ref: "core"."api_tokens"."user_id" > "core"."user_profiles"."id"
+Ref: "core"."instance_email_settings"."updated_by" > "core"."user_profiles"."id"
 Ref: "core"."mcp_share_instances"."token_id" > "core"."api_tokens"."id"
 Ref: "core"."superadmins"."granted_by" > "core"."user_profiles"."id"
 Ref: "core"."superadmins"."revoked_by" > "core"."user_profiles"."id"

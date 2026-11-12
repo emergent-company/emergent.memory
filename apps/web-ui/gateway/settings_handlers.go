@@ -202,6 +202,7 @@ type projectSettingsData struct {
 	LoadErr           error
 	FlashMsg          string
 	FlashErr          error
+	IsSuperadmin      bool
 }
 
 // agentOption is one row of a flow's agent selector: whether the agent
@@ -334,6 +335,9 @@ func (s *Server) uiProjectSettings(c echo.Context) error {
 	}
 	data.FlashErr = flashError(c)
 	data.settingsNavCommon = s.settingsNavPayload(c, ctx)
+	if me, merr := s.memory.GetSuperadminMe(ctx); merr == nil && me != nil && me.IsSuperadmin && me.Role == "superadmin_full" {
+		data.IsSuperadmin = true
+	}
 
 	project, err := s.memory.GetCurrentProject(ctx)
 	if err != nil {

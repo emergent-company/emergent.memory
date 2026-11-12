@@ -31,6 +31,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/chunks"
 	"github.com/emergent-company/emergent.memory/domain/discoveryjobs"
 	"github.com/emergent-company/emergent.memory/domain/documents"
+	"github.com/emergent-company/emergent.memory/domain/email"
 	"github.com/emergent-company/emergent.memory/domain/embeddingpolicies"
 	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/domain/extraction"
@@ -588,7 +589,8 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	useractivity.RegisterRoutes(e, useractivityHandler, authMiddleware)
 
 	// Register superadmin routes
-	superadminHandler := superadmin.NewHandler(superadminRepo, apitokenSvc)
+	emailSettingsSvc := email.NewSettingsService(testDB.DB, encryptionSvc, email.NewConfig(testDB.Config), log)
+	superadminHandler := superadmin.NewHandler(superadminRepo, apitokenSvc, emailSettingsSvc, superadmin.NewZitadelEmailClient(testDB.Config), log)
 	superadmin.RegisterRoutes(e, superadminHandler, authMiddleware)
 
 	// Register type registry routes

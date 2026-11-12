@@ -7,6 +7,7 @@ import (
 // Module provides the superadmin domain
 var Module = fx.Module("superadmin",
 	fx.Provide(NewRepository),
+	fx.Provide(NewZitadelEmailClient),
 	fx.Provide(NewHandler),
 	fx.Invoke(RegisterRoutes),
 )

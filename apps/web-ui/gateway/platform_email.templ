@@ -1,0 +1,112 @@
+package main
+
+import (
+	"fmt"
+
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	"github.com/emergent-company/go-daisy/components/form"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+templ platformEmailConfigureAction() {
+	@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/settings/platform/email", Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) {
+		Configure
+	}
+}
+
+// platformEmailLinkPanel is rendered on Settings → General for superadmins.
+templ platformEmailLinkPanel() {
+	@components.PanelCard("", nil, "gap-3") {
+		@components.CardHeader(components.CardHeaderProps{Action: platformEmailConfigureAction()}) {
+			<h2 class="card-title text-base">Instance email</h2>
+			<p class="text-sm text-muted-bright">SMTP used by Zitadel and Memory for verification, password reset, 2FA and invites.</p>
+		}
+	}
+}
+
+// PlatformEmailSettingsPage is the superadmin-only instance email page.
+templ PlatformEmailSettingsPage(data platformEmailData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Platform email")), "", "Platform email", "Instance-wide SMTP for Zitadel and Memory. Only a platform superadmin can change this.", detailHeaderOpts{Margin: "mb-6"}) {
+		}
+		@flashToasts(data.FlashMsg, data.FlashErr)
+		if data.TestMsg != "" {
+			@ui.Alert(ui.AlertProps{Type: ui.AlertSuccess, Message: data.TestMsg, Attrs: templ.Attributes{"class": "mb-4"}})
+		}
+		if data.TestErr != nil {
+			@ui.Alert(ui.AlertProps{Type: ui.AlertError, Message: data.TestErr.Error(), Attrs: templ.Attributes{"class": "mb-4"}})
+		}
+		if data.LoadErr != nil {
+			@pageErrorNotice("Email settings unavailable", data.LoadErr)
+		} else {
+			{{ s := data.Settings }}
+			<form method="post" action="/settings/platform/email" class="flex flex-col gap-4">
+				@components.CardHeader(components.CardHeaderProps{}) {
+					<h2 class="card-title text-base">SMTP</h2>
+					if s.Source == "environment" {
+						<p class="text-xs text-muted-bright">Currently from environment variables. Saving creates a database override.</p>
+					}
+				}
+				@components.ToggleField("enabled", "Email enabled", "Turn off to stop sending without deleting the SMTP credentials.", s.Enabled, nil)
+				@form.FormControl("provider", "Provider preset", form.LabelAbove, "", "", nil) {
+					<select id="provider" name="provider" class="select w-full">
+						for _, p := range []string{"resend", "mailgun", "gmail", "custom"} {
+							<option value={ p } selected?={ s.Provider == p }>{ p }</option>
+						}
+					</select>
+				}
+				<div class="grid gap-4 sm:grid-cols-2">
+					@form.FormControl("fromEmail", "From address", form.LabelAbove, "", "", nil) {
+						<input id="fromEmail" name="fromEmail" type="email" class="input w-full" value={ s.FromEmail }/>
+					}
+					@form.FormControl("fromName", "From name", form.LabelAbove, "", "", nil) {
+						<input id="fromName" name="fromName" class="input w-full" value={ s.FromName }/>
+					}
+					@form.FormControl("smtpHost", "SMTP host", form.LabelAbove, "", "", nil) {
+						<input id="smtpHost" name="smtpHost" class="input w-full" value={ s.SMTPHost }/>
+					}
+					@form.FormControl("smtpPort", "SMTP port", form.LabelAbove, "", "", nil) {
+						<input id="smtpPort" name="smtpPort" type="number" class="input w-full" value={ fmt.Sprintf("%d", s.SMTPPort) }/>
+					}
+					@form.FormControl("smtpUsername", "SMTP username", form.LabelAbove, "", "", nil) {
+						<input id="smtpUsername" name="smtpUsername" class="input w-full" value={ s.SMTPUsername }/>
+					}
+					@form.FormControl("smtpPassword", "SMTP password", form.LabelAbove, "Leave blank to keep the existing password.", "", nil) {
+						<input id="smtpPassword" name="smtpPassword" type="password" autocomplete="new-password" class="input w-full"/>
+					}
+					@form.FormControl("smtpTls", "TLS", form.LabelAbove, "", "", nil) {
+						<select id="smtpTls" name="smtpTls" class="select w-full">
+							for _, t := range []string{"starttls", "tls", "none"} {
+								<option value={ t } selected?={ s.SMTPTLS == t }>{ t }</option>
+							}
+						</select>
+					}
+				</div>
+				<div class="flex flex-wrap items-center gap-2">
+					@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM, Icon: "lucide--save"}) {
+						Save settings
+					}
+					if s.PasswordSet {
+						@ui.Badge(ui.BadgeProps{Label: "password set", Variant: ui.BadgeSuccess, Style: ui.BadgeStyleSoft})
+					}
+				</div>
+			</form>
+
+			<form method="post" action="/settings/platform/email/test" class="mt-6 flex flex-col gap-3">
+				@components.CardHeader(components.CardHeaderProps{}) {
+					<h2 class="card-title text-base">Test email</h2>
+				}
+				@form.FormControl("to", "Send test to", form.LabelAbove, "Uses the saved settings above.", "", nil) {
+					<input id="to" name="to" type="email" class="input w-full" placeholder="you@example.com"/>
+				}
+				<div class="w-fit">
+					@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM, Icon: "lucide--send"}) {
+						Send test
+					}
+				</div>
+			</form>
+		}
+	}
+}

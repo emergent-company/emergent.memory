@@ -2076,6 +2076,18 @@ routes:
       level: superadmin-any
       note: RequireAuth, RequireSuperadmin
     - method: GET
+      path: /api/superadmin/email-settings
+      level: superadmin-full
+      note: RequireAuth, RequireSuperadmin, RequireSuperadminFull
+    - method: PUT
+      path: /api/superadmin/email-settings
+      level: superadmin-full
+      note: RequireAuth, RequireSuperadmin, RequireSuperadminFull
+    - method: POST
+      path: /api/superadmin/email-settings/test
+      level: superadmin-full
+      note: RequireAuth, RequireSuperadmin, RequireSuperadminFull
+    - method: GET
       path: /api/superadmin/embedding-jobs
       level: superadmin-any
       note: RequireAuth, RequireSuperadmin
