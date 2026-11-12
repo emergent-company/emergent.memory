@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -20,7 +21,12 @@ const (
 	// DefaultModel is the default embedding model
 	DefaultModel = "gemini-embedding-2-preview"
 
-	// DefaultDimension is the embedding dimension (gemini-embedding-2-preview supports MRL with recommended 768 dims)
+	// DefaultDimension is the embedding dimension every request asks for. It is
+	// not a per-model preference: the vector columns are declared
+	// `vector(768)` (kb.graph_objects, kb.graph_relationships, kb.chunks), so a
+	// model that cannot emit 768 dimensions cannot be used here. The Gemini
+	// embedding families all support 768 through MRL truncation, and Google
+	// lists 768 among its recommended sizes.
 	DefaultDimension = 768
 
 	// DefaultMaxRetries is the default number of retries
@@ -37,7 +43,56 @@ const (
 
 	// DefaultBatchSize is the maximum batch size per request
 	DefaultBatchSize = 100
+
+	// TaskTypeQuery and TaskTypeDocument are the documented retrieval task
+	// types. Vertex AI documents task types for text-embedding-005,
+	// text-multilingual-embedding-002 and gemini-embedding-001, and requires
+	// RETRIEVAL_DOCUMENT for the indexed corpus and RETRIEVAL_QUERY for search
+	// queries.
+	TaskTypeQuery    = "RETRIEVAL_QUERY"
+	TaskTypeDocument = "RETRIEVAL_DOCUMENT"
+
+	// TaskPrefixQuery and TaskPrefixDocument are the documented gemini-embedding-2
+	// task instructions. That model does not accept a task_type field at all;
+	// the task is part of the text instead:
+	//   query:    task: search result | query: {content}
+	//   document: title: {title} | text: {content}  (title: none when absent)
+	TaskPrefixQuery    = "task: search result | query: "
+	TaskPrefixDocument = "title: none | text: "
 )
+
+// CanonicalModelID reduces a configured model id to its short name so
+// "models/gemini-embedding-2" and "publishers/google/models/gemini-embedding-2"
+// both match "gemini-embedding-2".
+func CanonicalModelID(model string) string {
+	m := strings.ToLower(strings.TrimSpace(model))
+	if idx := strings.LastIndex(m, "/models/"); idx != -1 {
+		m = m[idx+len("/models/"):]
+	}
+	return strings.TrimPrefix(m, "models/")
+}
+
+// UsesTaskPrefix reports whether model documents its task as a text prefix
+// rather than a task_type field. Only the GA gemini-embedding-2 does: Vertex AI
+// documents task types for text-embedding-005, text-multilingual-embedding-002
+// and gemini-embedding-001, and gemini-embedding-2 rejects task_type ("You
+// cannot use the task_type field for the gemini-embedding-2 model").
+func UsesTaskPrefix(model string) bool {
+	return CanonicalModelID(model) == "gemini-embedding-2"
+}
+
+// TaskPrefixFor maps a task type to its documented gemini-embedding-2 text
+// prefix. An unknown task type yields no prefix rather than a wrong one.
+func TaskPrefixFor(taskType string) string {
+	switch taskType {
+	case TaskTypeQuery:
+		return TaskPrefixQuery
+	case TaskTypeDocument:
+		return TaskPrefixDocument
+	default:
+		return ""
+	}
+}
 
 // Config holds the configuration for the Vertex AI client
 type Config struct {
@@ -56,6 +111,11 @@ type Client struct {
 	tokenSrc        *google.Credentials
 	credentialsJSON []byte // explicit SA JSON; if set, overrides ADC
 	log             *slog.Logger
+
+	// send issues one :predict call and returns the decoded response. NewClient
+	// wires it to the real HTTP path; tests substitute a recorder so the exact
+	// request body can be asserted without calling Google.
+	send func(ctx context.Context, url string, body []byte) (*predictResponse, error)
 
 	// Retry configuration
 	maxRetries int
@@ -130,6 +190,7 @@ func NewClient(ctx context.Context, cfg Config, opts ...ClientOption) (*Client, 
 		baseDelay:  DefaultBaseDelay,
 		maxDelay:   DefaultMaxDelay,
 	}
+	c.send = c.doRequest
 
 	// Apply options first so WithCredentialsJSON takes effect before ADC fallback
 	for _, opt := range opts {
@@ -166,8 +227,10 @@ type predictParameters struct {
 }
 
 type instance struct {
-	Content  string `json:"content"`
-	TaskType string `json:"task_type"`
+	Content string `json:"content"`
+	// TaskType is omitted for gemini-embedding-2, which rejects the field: the
+	// task travels as a text prefix instead (see UsesTaskPrefix).
+	TaskType string `json:"task_type,omitempty"`
 }
 
 // predictResponse is the response from the predict API
@@ -186,6 +249,27 @@ type embeddingResult struct {
 
 type embeddingStats struct {
 	TokenCount int `json:"token_count"`
+}
+
+// buildPredictRequest assembles the :predict body for one batch.
+//
+// gemini-embedding-2 rejects task_type; its task travels as a text prefix
+// instead. Every other model keeps the documented task_type field. The output
+// dimension is always DefaultDimension because the vector columns are
+// vector(768) — see the constant's comment.
+func buildPredictRequest(model string, texts []string, taskType string) predictRequest {
+	instances := make([]instance, len(texts))
+	for i, text := range texts {
+		if UsesTaskPrefix(model) {
+			instances[i] = instance{Content: TaskPrefixFor(taskType) + text}
+			continue
+		}
+		instances[i] = instance{Content: text, TaskType: taskType}
+	}
+	return predictRequest{
+		Instances:  instances,
+		Parameters: &predictParameters{OutputDimensionality: DefaultDimension},
+	}
 }
 
 // EmbedResult contains the embedding result with usage data
@@ -219,18 +303,23 @@ func (c *Client) EmbedQuery(ctx context.Context, query string) ([]float32, error
 	return result.Embedding, nil
 }
 
-// EmbedQueryWithUsage generates an embedding for a single query with usage data
+// EmbedQueryWithUsage generates an embedding for a single query with usage data.
+//
+// The query is embedded with the RETRIEVAL_QUERY task, not as a document: the
+// corpus is indexed with RETRIEVAL_DOCUMENT, and Vertex AI documents the pair
+// as the asymmetric retrieval shape. Sending a query down the document path (as
+// this used to) loses that optimisation.
 func (c *Client) EmbedQueryWithUsage(ctx context.Context, query string) (*EmbedResult, error) {
-	result, err := c.EmbedDocumentsWithUsage(ctx, []string{query})
+	embs, tokens, err := c.embedBatch(ctx, []string{query}, TaskTypeQuery)
 	if err != nil {
 		return nil, err
 	}
-	if len(result.Embeddings) == 0 {
+	if len(embs) == 0 {
 		return nil, fmt.Errorf("no embedding returned")
 	}
 	return &EmbedResult{
-		Embedding: result.Embeddings[0],
-		Usage:     result.Usage,
+		Embedding: embs[0],
+		Usage:     &Usage{PromptTokens: tokens, TotalTokens: tokens},
 		Model:     c.model,
 		Provider:  "vertex",
 	}, nil
@@ -267,7 +356,7 @@ func (c *Client) EmbedDocumentsWithUsage(ctx context.Context, documents []string
 		}
 		batch := documents[i:end]
 
-		embs, tokens, err := c.embedBatch(ctx, batch)
+		embs, tokens, err := c.embedBatch(ctx, batch, TaskTypeDocument)
 		if err != nil {
 			return nil, fmt.Errorf("failed to embed batch %d-%d: %w", i, end, err)
 		}
@@ -287,28 +376,14 @@ func (c *Client) EmbedDocumentsWithUsage(ctx context.Context, documents []string
 	}, nil
 }
 
-// embedBatch embeds a single batch of documents
-func (c *Client) embedBatch(ctx context.Context, documents []string) ([][]float32, int, error) {
+// embedBatch embeds a single batch of texts for the given task type.
+func (c *Client) embedBatch(ctx context.Context, documents []string, taskType string) ([][]float32, int, error) {
 	url := fmt.Sprintf(
 		"https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/publishers/google/models/%s:predict",
 		c.location, c.projectID, c.location, c.model,
 	)
 
-	// Build request
-	instances := make([]instance, len(documents))
-	for i, doc := range documents {
-		instances[i] = instance{
-			Content:  doc,
-			TaskType: "RETRIEVAL_DOCUMENT",
-		}
-	}
-
-	reqBody := predictRequest{
-		Instances: instances,
-		Parameters: &predictParameters{
-			OutputDimensionality: DefaultDimension,
-		},
-	}
+	reqBody := buildPredictRequest(c.model, documents, taskType)
 	reqBytes, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to marshal request: %w", err)
@@ -332,7 +407,7 @@ func (c *Client) embedBatch(ctx context.Context, documents []string) ([][]float3
 			}
 		}
 
-		resp, lastErr = c.doRequest(ctx, url, reqBytes)
+		resp, lastErr = c.send(ctx, url, reqBytes)
 		if lastErr == nil {
 			break
 		}
