@@ -209,6 +209,22 @@ See `/apps/server/src/modules/unified-search/` for implementation details.
 
 ### Fixed
 
+**`gemini-embedding-2` is served on the `google-vertex` provider** (2026-11-12)
+
+The Vertex AI embeddings client could not serve the GA `gemini-embedding-2`
+family: it sent `task_type` on every request, and that model does not accept the
+field — its task travels as a text prefix. Requests for `gemini-embedding-2` now
+carry the documented document prefix (`title: none | text: …`) and no
+`task_type`, and the model catalog no longer filters the id out for the
+`google-vertex` provider.
+
+Embedding search queries with the *query* task is a separate change and is not in
+this release: the single-object ingest workers embed stored text through the same
+method a search query calls, so the two have to be split together (tracked in
+#615, along with the re-embed guidance such a switch needs). Until then a search
+query on `gemini-embedding-2` is sent as `title: none | text: …` like any other
+text — the pre-existing behaviour, unchanged by this release.
+
 **`memory projects show-models` honours `--json` / `--output`** (2026-10-22)
 
 `show-models` used to print the human block for every output format, so a script

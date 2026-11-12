@@ -1,6 +1,9 @@
 package vertex
 
 import (
+	"context"
+	"encoding/json"
+	"io"
 	"log/slog"
 	"os"
 	"testing"
@@ -281,5 +284,202 @@ func TestCalculateBackoff_ExponentialGrowth(t *testing.T) {
 			t.Errorf("backoff ratio between attempt %d and %d: got %v, want ~%v", i-1, i, actualRatio, expectedRatio)
 		}
 		prev = curr
+	}
+}
+
+// recordingSender captures the marshalled :predict body and returns a canned
+// response, so a test can assert the exact wire shape without calling Google.
+type recordingSender struct {
+	bodies [][]byte
+	err    error
+	values []float32
+	tokens int
+}
+
+func (r *recordingSender) send(_ context.Context, _ string, body []byte) (*predictResponse, error) {
+	r.bodies = append(r.bodies, append([]byte(nil), body...))
+	if r.err != nil {
+		return nil, r.err
+	}
+	resp := &predictResponse{Predictions: []prediction{{
+		Embeddings: embeddingResult{
+			Values:     r.values,
+			Statistics: embeddingStats{TokenCount: r.tokens},
+		},
+	}}}
+	return resp, nil
+}
+
+func newRecordingClient(model string, rec *recordingSender) *Client {
+	c := &Client{
+		projectID:  "test-project",
+		location:   "us-central1",
+		model:      model,
+		log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		maxRetries: 0,
+		baseDelay:  time.Millisecond,
+		maxDelay:   time.Millisecond,
+	}
+	c.send = rec.send
+	return c
+}
+
+func decodeBody(t *testing.T, body []byte) map[string]any {
+	t.Helper()
+	var got map[string]any
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("unmarshal request body: %v", err)
+	}
+	return got
+}
+
+func TestBuildPredictRequest(t *testing.T) {
+	tests := []struct {
+		name     string
+		model    string
+		texts    []string
+		taskType string
+		wantText string
+		wantTask string // "" means the field must be absent
+	}{
+		{
+			name:     "GA gemini-embedding-2 query uses the documented prefix",
+			model:    "gemini-embedding-2",
+			texts:    []string{"why is the sky blue"},
+			taskType: TaskTypeQuery,
+			wantText: "task: search result | query: why is the sky blue",
+			wantTask: "",
+		},
+		{
+			name:     "GA gemini-embedding-2 document uses the documented prefix",
+			model:    "gemini-embedding-2",
+			texts:    []string{"the sky is blue"},
+			taskType: TaskTypeDocument,
+			wantText: "title: none | text: the sky is blue",
+			wantTask: "",
+		},
+		{
+			name:     "GA id with a models/ prefix is still recognised",
+			model:    "publishers/google/models/gemini-embedding-2",
+			texts:    []string{"q"},
+			taskType: TaskTypeQuery,
+			wantText: "task: search result | query: q",
+			wantTask: "",
+		},
+		{
+			name:     "gemini-embedding-001 query keeps task_type and the raw text",
+			model:    "gemini-embedding-001",
+			texts:    []string{"why is the sky blue"},
+			taskType: TaskTypeQuery,
+			wantText: "why is the sky blue",
+			wantTask: TaskTypeQuery,
+		},
+		{
+			name:     "gemini-embedding-001 document keeps task_type and the raw text",
+			model:    "gemini-embedding-001",
+			texts:    []string{"the sky is blue"},
+			taskType: TaskTypeDocument,
+			wantText: "the sky is blue",
+			wantTask: TaskTypeDocument,
+		},
+		{
+			name:     "the preview family is not treated as GA",
+			model:    "gemini-embedding-2-preview",
+			texts:    []string{"x"},
+			taskType: TaskTypeQuery,
+			wantText: "x",
+			wantTask: TaskTypeQuery,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := buildPredictRequest(tt.model, tt.texts, tt.taskType)
+			if len(req.Instances) != 1 {
+				t.Fatalf("instances = %d, want 1", len(req.Instances))
+			}
+			inst := req.Instances[0]
+			if inst.Content != tt.wantText {
+				t.Errorf("content = %q, want %q", inst.Content, tt.wantText)
+			}
+			if inst.TaskType != tt.wantTask {
+				t.Errorf("task_type = %q, want %q", inst.TaskType, tt.wantTask)
+			}
+			if req.Parameters == nil || req.Parameters.OutputDimensionality != DefaultDimension {
+				t.Errorf("outputDimensionality = %v, want %d", req.Parameters, DefaultDimension)
+			}
+		})
+	}
+}
+
+// TestPredictBodyOmitsTaskTypeForGA pins the wire contract: Google rejects the
+// field for gemini-embedding-2, so the JSON must not carry it at all — a
+// "task_type": "" would still be a field.
+func TestPredictBodyOmitsTaskTypeForGA(t *testing.T) {
+	rec := &recordingSender{values: []float32{0.1, 0.2}}
+	c := newRecordingClient("gemini-embedding-2", rec)
+
+	if _, err := c.EmbedDocumentsWithUsage(context.Background(), []string{"hello"}); err != nil {
+		t.Fatalf("EmbedDocumentsWithUsage: %v", err)
+	}
+	if len(rec.bodies) != 1 {
+		t.Fatalf("requests = %d, want 1", len(rec.bodies))
+	}
+
+	body := decodeBody(t, rec.bodies[0])
+	instances, ok := body["instances"].([]any)
+	if !ok || len(instances) != 1 {
+		t.Fatalf("instances = %#v, want one entry", body["instances"])
+	}
+	inst := instances[0].(map[string]any)
+	if _, present := inst["task_type"]; present {
+		t.Errorf("task_type present in GA request: %#v", inst)
+	}
+	if got, want := inst["content"], "title: none | text: hello"; got != want {
+		t.Errorf("content = %v, want %q", got, want)
+	}
+}
+
+func TestEmbedQueryWithUsageDocumentsItsCurrentTask(t *testing.T) {
+	// Deliberately unchanged by #616: the single-object ingest workers write the
+	// corpus through EmbedQueryWithUsage, so moving it to RETRIEVAL_QUERY here
+	// would mix tasks inside one vector column. Issue #615 moves those call
+	// sites first; this test makes a silent flip visible if someone tries.
+	rec := &recordingSender{values: []float32{0.1}, tokens: 7}
+	c := newRecordingClient("gemini-embedding-001", rec)
+
+	res, err := c.EmbedQueryWithUsage(context.Background(), "find me")
+	if err != nil {
+		t.Fatalf("EmbedQueryWithUsage: %v", err)
+	}
+	if len(res.Embedding) != 1 || res.Embedding[0] != 0.1 {
+		t.Errorf("embedding = %v, want [0.1]", res.Embedding)
+	}
+	if res.Usage == nil || res.Usage.TotalTokens != 7 {
+		t.Errorf("usage = %#v, want 7 tokens", res.Usage)
+	}
+	if res.Provider != "vertex" || res.Model != "gemini-embedding-001" {
+		t.Errorf("provider/model = %q/%q", res.Provider, res.Model)
+	}
+
+	body := decodeBody(t, rec.bodies[0])
+	inst := body["instances"].([]any)[0].(map[string]any)
+	if got := inst["task_type"]; got != TaskTypeDocument {
+		t.Errorf("task_type = %v, want %s (see issue #615 before changing)", got, TaskTypeDocument)
+	}
+}
+
+func TestEmbedDocumentsSendDocumentTask(t *testing.T) {
+	rec := &recordingSender{values: []float32{0.5}, tokens: 3}
+	c := newRecordingClient("gemini-embedding-001", rec)
+
+	if _, err := c.EmbedDocumentsWithUsage(context.Background(), []string{"a"}); err != nil {
+		t.Fatalf("EmbedDocumentsWithUsage: %v", err)
+	}
+
+	body := decodeBody(t, rec.bodies[0])
+	inst := body["instances"].([]any)[0].(map[string]any)
+	if got := inst["task_type"]; got != TaskTypeDocument {
+		t.Errorf("document task_type = %v, want %s", got, TaskTypeDocument)
 	}
 }

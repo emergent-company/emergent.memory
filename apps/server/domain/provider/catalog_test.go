@@ -189,25 +189,22 @@ func TestStaticModels(t *testing.T) {
 		}
 	})
 
-	t.Run("Vertex AI omits Google AI only models", func(t *testing.T) {
+	t.Run("Vertex AI offers the same model family as Google AI", func(t *testing.T) {
 		googleModels := staticModels(ProviderGoogleAI)
 		vertexModels := staticModels(ProviderVertexAI)
-		// gemini-embedding-2 is Google AI only until the Vertex client supports
-		// the GA family (see the filter in staticModels).
-		if want := len(googleModels) - 1; len(vertexModels) != want {
-			t.Errorf("expected %d Vertex AI models (Google AI minus one), got Google AI=%d, Vertex AI=%d",
-				want, len(googleModels), len(vertexModels))
+		if len(vertexModels) != len(googleModels) {
+			t.Errorf("expected Vertex AI to mirror Google AI: Google AI=%d, Vertex AI=%d",
+				len(googleModels), len(vertexModels))
 		}
-		if m := findModel(vertexModels, "gemini-embedding-2"); m != nil {
-			t.Error("Vertex AI static models must not offer gemini-embedding-2")
+		if m := findModel(vertexModels, "gemini-embedding-2"); m == nil {
+			t.Error("Vertex AI static models must offer gemini-embedding-2 once the client serves the GA family")
 		}
 	})
 }
 
 // TestStaticModelsIncludesGAEmbeddingModel guards the catalog entry for the GA
 // gemini-embedding-2 id (issue #587): it must resolve as an embedding model for
-// Google AI, with a display name and the embedded retail price row. Vertex AI
-// deliberately omits it until its :predict client supports the GA family.
+// both Google providers, with a display name and the embedded retail price row.
 func TestStaticModelsIncludesGAEmbeddingModel(t *testing.T) {
 	m := findModel(staticModels(ProviderGoogleAI), "gemini-embedding-2")
 	if m == nil {

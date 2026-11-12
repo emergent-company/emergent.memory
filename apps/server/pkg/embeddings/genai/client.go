@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"strings"
 	"time"
 
 	"google.golang.org/genai"
@@ -39,16 +38,12 @@ const (
 	// documents that field in the current embeddings guide; the other ids are
 	// left as-is because Google still accepts task_type for them and no prefix
 	// contract is documented.
-	taskTypeQuery    = "RETRIEVAL_QUERY"
-	taskTypeDocument = "RETRIEVAL_DOCUMENT"
-
-	// taskPrefixQuery and taskPrefixDocument are the documented gemini-embedding-2
-	// task instructions. Google's embeddings guide says task_type cannot be used
-	// with gemini-embedding-2; the task is part of the text instead:
-	//   query:    task: search result | query: {content}
-	//   document: title: {title} | text: {content}  (title: none when absent)
-	taskPrefixQuery    = "task: search result | query: "
-	taskPrefixDocument = "title: none | text: "
+	//
+	// The task contract itself — including the documented gemini-embedding-2
+	// prefixes — lives in pkg/embeddings/vertex, which both Google clients
+	// share, so the two cannot drift apart.
+	taskTypeQuery    = vertex.TaskTypeQuery
+	taskTypeDocument = vertex.TaskTypeDocument
 )
 
 // Config holds the configuration for the Generative AI client
@@ -169,7 +164,7 @@ func (c *Client) EmbedDocuments(ctx context.Context, documents []string) ([][]fl
 // the token usage returned by the API. Provider is "googleai" (the Gemini
 // Developer API / Google Generative AI backend).
 func (c *Client) EmbedQueryWithUsage(ctx context.Context, query string) (*vertex.EmbedResult, error) {
-	embeddings, tokens, err := c.embedWithRetry(ctx, []string{query}, "RETRIEVAL_QUERY")
+	embeddings, tokens, err := c.embedWithRetry(ctx, []string{query}, taskTypeQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +202,7 @@ func (c *Client) EmbedDocumentsWithUsage(ctx context.Context, documents []string
 		}
 		batch := documents[i:end]
 
-		embeddings, tokens, err := c.embedWithRetry(ctx, batch, "RETRIEVAL_DOCUMENT")
+		embeddings, tokens, err := c.embedWithRetry(ctx, batch, taskTypeDocument)
 		if err != nil {
 			return nil, fmt.Errorf("failed to embed batch %d-%d: %w", i, end, err)
 		}
@@ -315,30 +310,13 @@ func embedRequest(model, text, taskType string) (string, *genai.EmbedContentConf
 // cannot use the task_type field for the gemini-embedding-2 model. Instead,
 // include the task as an instruction in your prompt."
 func usesTaskPrefix(model string) bool {
-	return canonicalModelID(model) == "gemini-embedding-2"
-}
-
-// canonicalModelID reduces a configured model id to its short name so
-// "models/gemini-embedding-2" matches "gemini-embedding-2".
-func canonicalModelID(model string) string {
-	m := strings.ToLower(strings.TrimSpace(model))
-	if idx := strings.LastIndex(m, "/models/"); idx != -1 {
-		m = m[idx+len("/models/"):]
-	}
-	return strings.TrimPrefix(m, "models/")
+	return vertex.UsesTaskPrefix(model)
 }
 
 // taskPrefixFor maps a task_type value to its documented gemini-embedding-2
 // text prefix. An unknown task type yields no prefix rather than a wrong one.
 func taskPrefixFor(taskType string) string {
-	switch taskType {
-	case taskTypeQuery:
-		return taskPrefixQuery
-	case taskTypeDocument:
-		return taskPrefixDocument
-	default:
-		return ""
-	}
+	return vertex.TaskPrefixFor(taskType)
 }
 
 // embeddingPromptTokens extracts the prompt-token count reported for a single

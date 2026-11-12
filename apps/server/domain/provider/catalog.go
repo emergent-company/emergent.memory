@@ -475,20 +475,9 @@ func staticModels(p ProviderType) []ProviderSupportedModel {
 		}
 	}
 
-	// gemini-embedding-2 is Google AI only: the Vertex client calls :predict
-	// with a hardcoded RETRIEVAL_DOCUMENT task_type, so it cannot serve the GA
-	// model's documented :embedContent/prefix contract. Follow-up: add the
-	// Vertex row once that client supports the GA family.
-	if p == ProviderVertexAI {
-		filtered := make([]entry, 0, len(known))
-		for _, e := range known {
-			if e.name == "gemini-embedding-2" {
-				continue
-			}
-			filtered = append(filtered, e)
-		}
-		known = filtered
-	}
+	// gemini-embedding-2 is servable on both Google surfaces: the Vertex client
+	// sends the documented task prefixes for the GA family and omits task_type,
+	// which gemini-embedding-2 rejects.
 
 	models := make([]ProviderSupportedModel, 0, len(known))
 	for _, e := range known {
