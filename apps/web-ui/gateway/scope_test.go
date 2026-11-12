@@ -141,8 +141,11 @@ func TestStrictScopedPath(t *testing.T) {
 		{http.MethodGet, "/data-sources", false},                // OAuth landing re-scoped by dataSourcesScopeRedirect
 		{http.MethodGet, "/data-sources/oauth/callback", false}, // OAuth callback lands unscoped
 		{http.MethodGet, "/data-sources/new", false},            // OAuth landing re-scoped by dataSourcesScopeRedirect
-		{http.MethodPost, "/objects", false},                    // mutations keep the cookie fallback
-		{http.MethodGet, "/o/o1/p/p1/objects", false},           // scoped paths are handled earlier
+		{http.MethodGet, "/deploy", false},                      // public deploy portal, pre-session
+		{http.MethodGet, "/deploy/oauth/start", false},          // Railway OAuth callback/start
+		{http.MethodGet, "/deploy/oauth/callback", false},
+		{http.MethodPost, "/objects", false},          // mutations keep the cookie fallback
+		{http.MethodGet, "/o/o1/p/p1/objects", false}, // scoped paths are handled earlier
 	}
 	for _, tc := range cases {
 		if got := strictScopedPath(tc.method, tc.path); got != tc.want {
