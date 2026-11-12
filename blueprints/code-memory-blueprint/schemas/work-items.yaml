@@ -11,6 +11,31 @@ objectTypeSchemas:
   - name: BugReport
     label: Bug Report
     description: A reported defect or unexpected behaviour in the system.
+    # `ui` travels with the type: icon/colour accent the object everywhere it
+    # appears, and `view` plans how a BugReport's page groups its relationships.
+    # Sections render in the order declared; a relationship type no section
+    # claims is collected under a trailing "More connections" group unless
+    # `more: false`. `dir` is in|out|both (default both) relative to the object,
+    # and `limit` caps a section (default 8, max 50). See
+    # docs/site/user-guide/blueprints.md.
+    ui:
+      icon: alert-triangle
+      color: "#DC2626"
+      view:
+        inline: [severity, source]      # facts shown in a depth-1 preview
+        sections:
+          - title: Affects
+            relation: affects
+            dir: out
+            limit: 8
+          - title: Reported by
+            relation: spawned_by
+            dir: in
+            limit: 4
+          - title: Fixed by
+            relation: fixes
+            dir: in
+            limit: 4
     properties:
       title:
         type: string

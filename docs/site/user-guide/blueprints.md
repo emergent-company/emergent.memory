@@ -166,6 +166,54 @@ Property `title` is the label the UI shows (the key stays visible beneath it);
 a primitive property to a fixed set of values. See
 [Schema § Property definitions](../developer-guide/schema.md#property-definitions) for the full vocabulary.
 
+### Type presentation (`ui`)
+
+Each object type may carry a `ui` block, and the presentation travels with the
+type: every object of that type renders the same way in every project that
+installs the pack.
+
+```yaml
+objectTypes:
+  - name: BugReport
+    label: Bug Report
+    ui:
+      icon: alert-triangle        # a Lucide name or an emoji glyph
+      color: "#DC2626"            # accent colour
+      view:                       # how a BugReport's page is laid out
+        inline: [severity, source]
+        sections:
+          - title: Affects
+            relation: affects
+            dir: out
+          - title: Fixed by
+            relation: [fixes, spawned_by]
+            dir: in
+            limit: 4
+    properties:
+      title: { type: string }
+      severity: { type: string }
+```
+
+`icon` and `color` are cosmetic. `view` is optional and describes the object
+page:
+
+| Key | Meaning |
+|---|---|
+| `inline` | Properties shown, in order, in a preview of this type (at most four). Omit to let the UI pick. |
+| `sections` | Relationship groups, rendered in the order declared. |
+| `sections[].relation` | One relationship type name, or a list of them. |
+| `sections[].dir` | `in`, `out`, or `both` (default) — relative to the object being viewed. |
+| `sections[].limit` | Rows shown before the section truncates (default 8, max 50). |
+| `sections[].title` | Heading; omit it to derive one from the relationship name. |
+| `more` | `true` (default) collects relationships no section claims into a trailing group; `false` hides them. |
+
+The vocabulary is deliberately closed — no expressions, no HTML, no templating.
+A section with no matching relationships is hidden rather than shown empty, and
+a `view` the server cannot parse is ignored: the object page falls back to a
+plain list of everything connected, so a typo in a pack never breaks a page. Run
+`memory blueprints validate ./my-blueprint` to check a pack offline before
+installing it.
+
 ### With the CLI (a directory)
 
 The CLI applies a directory (or GitHub repo) directly — it does not go through

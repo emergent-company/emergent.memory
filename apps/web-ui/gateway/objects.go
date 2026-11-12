@@ -955,6 +955,12 @@ func (s *Server) uiObjectRelationshipsPage(c echo.Context) error {
 	if data.EdgesErr == nil {
 		related = s.loadRelatedObjects(ctx, data.Obj, data.Edges)
 	}
+	// A type that declares ui.view groups its relationships itself: the page
+	// then renders one card per declared section instead of one flat list, with
+	// a depth-1 preview of each neighbour. A type that declares none, or whose
+	// view is malformed, keeps the generic list (see typeUIViewOf).
+	data.ViewSections = resolveObjectViewSections(typeUIOf(data.TypeUIByType, data.Obj.Type).View,
+		data.Obj, data.Edges, related, data.TypeUIByType)
 	return s.page(c, pageTitle(graphObjectLabel(*data.Obj)+" · Relationships"), objectRelationshipsPage(data, relTypes, data.Edges, related, data.EdgesErr))
 }
 

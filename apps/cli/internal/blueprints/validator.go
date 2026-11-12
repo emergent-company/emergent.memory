@@ -543,6 +543,169 @@ func (r *ValidationReport) validateUIConfig(packName, sourceFile, field, typeNam
 		r.add(ValidationWarning, "pack", packName, sourceFile, field+".color",
 			fmt.Sprintf("type %q ui.color %q is not a hex color (#RGB, #RRGGBB, or #RRGGBBAA)", typeName, color))
 	}
+
+	if view, ok := ui["view"]; ok {
+		r.validateUIView(packName, sourceFile, field+".view", typeName, view)
+	}
+}
+
+// uiViewKeys and uiViewSectionKeys are the closed vocabulary of a type's
+// ui.view plan (the gateway parses it in apps/web-ui/gateway/ui_view.go with
+// unknown fields rejected). A key outside the set is a typo that would make the
+// whole view be ignored, which is silent at render time — so it is reported
+// here, offline, where the author is looking.
+var (
+	uiViewKeys        = map[string]bool{"inline": true, "sections": true, "more": true}
+	uiViewSectionKeys = map[string]bool{"title": true, "relation": true, "dir": true, "limit": true}
+)
+
+// uiViewMaxLimit mirrors the renderer's row cap; a declared limit above it is
+// rejected there, so it must not pass validation here.
+const uiViewMaxLimit = 50
+
+// validateUIView checks a type's `ui.view` block: the closed key set, the
+// shapes each key accepts, and the bounds the renderer enforces. Findings are
+// warnings, matching the rest of the ui block — the renderer ignores a view it
+// cannot parse and the page still works, so an install must not fail on it.
+func (r *ValidationReport) validateUIView(packName, sourceFile, field, typeName string, raw any) {
+	view, ok := toStringAnyMap(raw)
+	if !ok {
+		r.add(ValidationWarning, "pack", packName, sourceFile, field,
+			fmt.Sprintf("type %q ui.view must be a mapping with inline/sections/more", typeName))
+		return
+	}
+	for _, key := range sortedMapKeys(view) {
+		if !uiViewKeys[key] {
+			r.add(ValidationWarning, "pack", packName, sourceFile, field+"."+key,
+				fmt.Sprintf("type %q ui.view: unknown key %q (known: inline, sections, more) — the whole view is ignored at render time", typeName, key))
+		}
+	}
+
+	if inlineRaw, ok := view["inline"]; ok {
+		names, ok := anySlice(inlineRaw)
+		if !ok {
+			r.add(ValidationWarning, "pack", packName, sourceFile, field+".inline",
+				fmt.Sprintf("type %q ui.view.inline must be a list of property names", typeName))
+		} else {
+			for i, name := range names {
+				if _, ok := name.(string); !ok {
+					r.add(ValidationWarning, "pack", packName, sourceFile, fmt.Sprintf("%s.inline[%d]", field, i),
+						fmt.Sprintf("type %q ui.view.inline entries must be strings", typeName))
+				}
+			}
+		}
+	}
+
+	if moreRaw, ok := view["more"]; ok {
+		if _, ok := moreRaw.(bool); !ok {
+			r.add(ValidationWarning, "pack", packName, sourceFile, field+".more",
+				fmt.Sprintf("type %q ui.view.more must be true or false", typeName))
+		}
+	}
+
+	sectionsRaw, ok := view["sections"]
+	if !ok {
+		return
+	}
+	sections, ok := anySlice(sectionsRaw)
+	if !ok {
+		r.add(ValidationWarning, "pack", packName, sourceFile, field+".sections",
+			fmt.Sprintf("type %q ui.view.sections must be a list of sections", typeName))
+		return
+	}
+	for i, sectionRaw := range sections {
+		sectionField := fmt.Sprintf("%s.sections[%d]", field, i)
+		section, ok := toStringAnyMap(sectionRaw)
+		if !ok {
+			r.add(ValidationWarning, "pack", packName, sourceFile, sectionField,
+				fmt.Sprintf("type %q ui.view.sections[%d] must be a mapping", typeName, i))
+			continue
+		}
+		for _, key := range sortedMapKeys(section) {
+			if !uiViewSectionKeys[key] {
+				r.add(ValidationWarning, "pack", packName, sourceFile, sectionField+"."+key,
+					fmt.Sprintf("type %q ui.view.sections[%d]: unknown key %q (known: title, relation, dir, limit)", typeName, i, key))
+			}
+		}
+		r.validateUIViewSection(packName, sourceFile, sectionField, typeName, i, section)
+	}
+}
+
+// validateUIViewSection checks one declared section: relation is required and
+// accepts a bare string or a list, dir is a closed enum, and limit is bounded.
+func (r *ValidationReport) validateUIViewSection(packName, sourceFile, field, typeName string, index int, section map[string]any) {
+	relationRaw, hasRelation := section["relation"]
+	switch rel := relationRaw.(type) {
+	case string:
+		if strings.TrimSpace(rel) == "" {
+			r.add(ValidationWarning, "pack", packName, sourceFile, field+".relation",
+				fmt.Sprintf("type %q ui.view.sections[%d]: relation is empty — the section is ignored", typeName, index))
+		}
+	case []any:
+		if len(rel) == 0 {
+			r.add(ValidationWarning, "pack", packName, sourceFile, field+".relation",
+				fmt.Sprintf("type %q ui.view.sections[%d]: relation list is empty — the section is ignored", typeName, index))
+		}
+		for j, name := range rel {
+			if _, ok := name.(string); !ok {
+				r.add(ValidationWarning, "pack", packName, sourceFile, fmt.Sprintf("%s.relation[%d]", field, j),
+					fmt.Sprintf("type %q ui.view.sections[%d]: relation entries must be strings", typeName, index))
+			}
+		}
+	default:
+		if !hasRelation {
+			r.add(ValidationWarning, "pack", packName, sourceFile, field+".relation",
+				fmt.Sprintf("type %q ui.view.sections[%d]: relation is required — the section is ignored", typeName, index))
+		} else {
+			r.add(ValidationWarning, "pack", packName, sourceFile, field+".relation",
+				fmt.Sprintf("type %q ui.view.sections[%d]: relation must be a name or a list of names", typeName, index))
+		}
+	}
+
+	if dirRaw, ok := section["dir"]; ok {
+		dir, isString := dirRaw.(string)
+		switch {
+		case !isString:
+			r.add(ValidationWarning, "pack", packName, sourceFile, field+".dir",
+				fmt.Sprintf("type %q ui.view.sections[%d]: dir must be a string (in, out or both)", typeName, index))
+		case dir == "", dir == "in", dir == "out", dir == "both":
+		default:
+			r.add(ValidationWarning, "pack", packName, sourceFile, field+".dir",
+				fmt.Sprintf("type %q ui.view.sections[%d]: dir %q must be in, out or both — the section is ignored", typeName, index, dir))
+		}
+	}
+
+	if limitRaw, ok := section["limit"]; ok {
+		switch limit := limitRaw.(type) {
+		case int:
+			if limit < 0 || limit > uiViewMaxLimit {
+				r.add(ValidationWarning, "pack", packName, sourceFile, field+".limit",
+					fmt.Sprintf("type %q ui.view.sections[%d]: limit %d must be between 0 and %d — the section is ignored", typeName, index, limit, uiViewMaxLimit))
+			}
+		case float64: // a pack read back from JSON decodes numbers as float64
+			if limit != float64(int(limit)) {
+				r.add(ValidationWarning, "pack", packName, sourceFile, field+".limit",
+					fmt.Sprintf("type %q ui.view.sections[%d]: limit must be a whole number", typeName, index))
+			} else if limit < 0 || limit > uiViewMaxLimit {
+				r.add(ValidationWarning, "pack", packName, sourceFile, field+".limit",
+					fmt.Sprintf("type %q ui.view.sections[%d]: limit %d must be between 0 and %d — the section is ignored", typeName, index, int(limit), uiViewMaxLimit))
+			}
+		default:
+			r.add(ValidationWarning, "pack", packName, sourceFile, field+".limit",
+				fmt.Sprintf("type %q ui.view.sections[%d]: limit must be a whole number", typeName, index))
+		}
+	}
+}
+
+// anySlice normalizes a decoded YAML/JSON list to []any.
+func anySlice(v any) ([]any, bool) {
+	switch list := v.(type) {
+	case []any:
+		return list, true
+	case nil:
+		return nil, false
+	}
+	return nil, false
 }
 
 // isHexColor accepts #RGB, #RRGGBB, and #RRGGBBAA (case-insensitive).

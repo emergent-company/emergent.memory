@@ -16,18 +16,27 @@ import (
 type typeUI struct {
 	Icon  string
 	Color string
+	// View is the type's declared presentation plan (its `ui.view` block), or
+	// nil when the type declares none. Only the renderer reads it; a type with
+	// a view but no icon/colour is still worth indexing.
+	View *typeUIView
 }
 
 // objectTypeUIMap indexes compiled object types by name, keeping only those
-// that declare a ui icon and/or color. Missing names (or a nil input) yield a
-// nil map, so lookups fall back to the generic box accent. Shadowed (losing)
-// duplicates are skipped — the same rule every other compiled-type consumer
-// follows — so an overridden type cannot lend its accent to the winner.
+// that declare a ui icon, colour and/or view. Missing names (or a nil input)
+// yield a nil map, so lookups fall back to the generic box accent. Shadowed
+// (losing) duplicates are skipped — the same rule every other compiled-type
+// consumer follows — so an overridden type cannot lend its accent to the
+// winner.
 func objectTypeUIMap(objectTypes []CompiledType) map[string]typeUI {
 	var m map[string]typeUI
 	for _, t := range visibleCompiledTypes(objectTypes) {
-		ui := typeUI{Icon: compiledTypeIcon(t), Color: compiledTypeColor(t)}
-		if ui.Icon == "" && ui.Color == "" {
+		ui := typeUI{
+			Icon:  compiledTypeIcon(t),
+			Color: compiledTypeColor(t),
+			View:  typeUIViewOf(t.UI),
+		}
+		if ui.Icon == "" && ui.Color == "" && ui.View == nil {
 			continue
 		}
 		if m == nil {
