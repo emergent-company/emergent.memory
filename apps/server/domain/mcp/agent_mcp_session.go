@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
 // ============================================================================
@@ -111,7 +114,9 @@ func runErrorKindAndMessage(err error) (string, string) {
 		}
 		return kind, msg
 	}
-	return string(AgentRunErrorFailed), err.Error()
+	// Not a curated run error: it can be a storage or transport failure, so only
+	// an app error's client-facing message may cross back to the caller.
+	return string(AgentRunErrorFailed), apperror.PublicMessage(err)
 }
 
 // loadOwnedSession resolves a session ref for the authorizing key. Sessions are
@@ -159,7 +164,10 @@ func (s *Service) StartSession(ctx context.Context, ep *AgentMCPEndpoint, key *A
 		ExpiresAt:    &expiresAt,
 	}
 	if err := store.CreateSession(ctx, sess); err != nil {
-		return sessionFailure("storage_error", err.Error())
+		// The cause is a storage failure, not something the caller can act on;
+		// keep it out of the tool result like the other storage_error paths.
+		s.log.Error("failed to create agent MCP session", logger.Error(err))
+		return sessionFailure("storage_error", "failed to create session")
 	}
 	if strings.TrimSpace(message) == "" {
 		return sessionEnvelope(true, map[string]any{

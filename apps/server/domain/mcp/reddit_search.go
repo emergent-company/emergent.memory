@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -118,7 +119,7 @@ func (s *Service) executeRedditSearch(ctx context.Context, _ string, args map[st
 	if err != nil {
 		s.log.Error("reddit API call failed", "error", err)
 		return &ToolResult{
-			Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Reddit API error: %s", err.Error())}},
+			Content: []ContentBlock{{Type: "text", Text: upstreamFailureText("Reddit", err)}},
 			IsError: true,
 		}, nil
 	}
@@ -210,7 +211,13 @@ func (s *Service) doRedditPublicRequest(ctx context.Context, endpoint string) ([
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("Reddit API returned %d: %s", resp.StatusCode, string(body))
+		// The body is logged, never returned: it is upstream detail. Only the
+		// status crosses back to the caller.
+		return nil, &upstreamStatusError{
+			Service: "Reddit",
+			Status:  resp.StatusCode,
+			Detail:  strings.TrimSpace(string(body)),
+		}
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 5*1024*1024))

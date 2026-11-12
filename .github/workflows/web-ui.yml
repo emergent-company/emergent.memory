@@ -1,15 +1,21 @@
 name: Web UI CI
 
 # The gateway (`apps/web-ui`) is a separate Go module living inside the
-# repo-root `go.work` workspace. `Server Go CI` (server.yml) is path-filtered to
-# `apps/server/**`, so `apps/web-ui`-only pull requests produced no PR CI at all
-# and never satisfied the required `ci` status check — branch protection left
-# them unmergeable. This workflow supplies that check for web-ui changes.
+# repo-root `go.work` workspace. This workflow is path-filtered to
+# `apps/web-ui/**` and fires on `push: [main]`, from the `dev -> main`
+# promotion, and on a manual dispatch — **not** on feature PRs, which go to
+# `dev` for a fast lane (see the `on:` block below).
 #
-# This workflow is path-filtered to `apps/web-ui/**`, so it is NOT a required
-# status check: the branch-protection-required context on main is Meta CI's
-# `ci` (.github/workflows/ci.yml), which is unfiltered and reports for every PR.
-# This workflow's aggregate gate is named `web-ui-ci` (advisory).
+# Being path-filtered is why this is NOT a required status check: the
+# branch-protection-required context on `main` is `ci`
+# (.github/workflows/ci.yml), which is unfiltered and reports for every PR. This
+# workflow's aggregate gate is named `web-ui-ci` (advisory).
+#
+# The checks that must gate a merge therefore live in `ci`: the gateway's
+# `golangci-lint` and consistency ratchets run there, scoped to `apps/web-ui/**`
+# and to changes in the workflows and `go.work` (#649, #662). This workflow is
+# the full suite — build, vet, test, Playwright — at the promotion boundary,
+# where that cost is paid once instead of per PR.
 #
 # Shape: ONE self-hosted job (#825). It used to fan out to five jobs that each
 # stood up their own gateway + browser stack; on the 7-slot `memory` pool that
@@ -88,10 +94,9 @@ jobs:
     # Module mode, like the shipped image: the gateway image builds
     # apps/web-ui/gateway without a workspace, and resolving through the
     # repo-root go.work would test a different dependency set than the image
-    # ships (#2314). For the build/vet/test/lint steps the reason is MVS: a
+    # ships. For the build/vet/test/lint steps the reason is MVS: a
     # workspace silently picks the highest version any *other* module requires
-    # (before #2299 that gap shipped grpc v1.83.1 while this job tested
-    # v1.84.0).
+    # — which once shipped grpc v1.83.1 while this job tested v1.84.0.
     env:
       GOWORK: "off"
     steps:

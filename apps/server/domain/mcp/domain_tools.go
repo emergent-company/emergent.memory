@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -215,7 +216,7 @@ func (s *Service) executeClassifyDocument(ctx context.Context, projectID string,
 
 	result, err := s.domainClassifier.ClassifyDocument(ctx, projectID, documentID)
 	if err != nil {
-		return errorResult(fmt.Sprintf("classification failed: %s", err)), nil
+		return errorResult("classification failed: " + apperror.PublicMessage(err)), nil
 	}
 
 	return s.wrapResultCompact(result)
@@ -228,7 +229,7 @@ func (s *Service) executeListInstalledSchemas(ctx context.Context, projectID str
 
 	entries, err := s.schemaIndex.ListInstalledSchemas(ctx, projectID)
 	if err != nil {
-		return errorResult(fmt.Sprintf("list schemas failed: %s", err)), nil
+		return errorResult("list schemas failed: " + apperror.PublicMessage(err)), nil
 	}
 
 	return s.wrapResultCompact(entries)
@@ -329,7 +330,7 @@ func (s *Service) executeFinalizeDiscovery(ctx context.Context, projectID string
 		IncludedRels:   includedRels,
 	})
 	if err != nil {
-		return errorResult(fmt.Sprintf("finalize discovery failed: %s", err)), nil
+		return errorResult("finalize discovery failed: " + apperror.PublicMessage(err)), nil
 	}
 
 	data := resp
@@ -384,7 +385,7 @@ func (s *Service) executeQueueReextraction(ctx context.Context, projectID string
 
 	jobID, err := s.reextractionQueuer.QueueReextraction(ctx, projectID, documentID, schemaID)
 	if err != nil {
-		return errorResult(fmt.Sprintf("queue reextraction failed: %s", err)), nil
+		return errorResult("queue reextraction failed: " + apperror.PublicMessage(err)), nil
 	}
 
 	return s.wrapResultCompact(map[string]string{"job_id": jobID})

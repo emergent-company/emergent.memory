@@ -397,3 +397,78 @@ func TestUpsertPreference_UniqueConflict(t *testing.T) {
 	require.True(t, p.Enabled)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// sqlRecorder captures the statements bun sends so a test can assert on a
+// predicate directly — including one a statement must NOT carry, which a
+// sqlmock regexp cannot express.
+type sqlRecorder struct {
+	statements []string
+}
+
+func (r *sqlRecorder) BeforeQuery(ctx context.Context, _ *bun.QueryEvent) context.Context {
+	return ctx
+}
+
+func (r *sqlRecorder) AfterQuery(_ context.Context, evt *bun.QueryEvent) {
+	r.statements = append(r.statements, evt.Query)
+}
+
+// recorderOn attaches a recorder to the repository's bun handle.
+func recorderOn(t *testing.T, repo *Repository) *sqlRecorder {
+	t.Helper()
+	db, ok := repo.db.(*bun.DB)
+	require.True(t, ok, "repository must hold a *bun.DB for this test")
+	rec := &sqlRecorder{}
+	db.AddQueryHook(rec)
+	return rec
+}
+
+// TestResolveActionStatusWithoutUserIDDoesNotScopeToOwner pins the half of the
+// shared write that the agent-question path depends on: an empty userID means
+// "authorized by another route", so neither statement may filter on user_id
+// (the responder is not necessarily the notification's owner) and the outcome
+// must not be attributed to a user it cannot name.
+//
+// Without this the agent path could not use the same first-write-wins rule
+// without silently refusing every write whose responder differs from the owner.
+func TestResolveActionStatusWithoutUserIDDoesNotScopeToOwner(t *testing.T) {
+	repo, mock := newRepoMock(t)
+	rec := recorderOn(t, repo)
+
+	mock.ExpectExec(`UPDATE[\s\S]*`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT[\s\S]*`).
+		WillReturnRows(sqlmock.NewRows([]string{"action_status"}).AddRow("accepted"))
+
+	err := ResolveActionStatus(context.Background(), repo.db, "", "n1", "completed")
+	require.ErrorIs(t, err, ErrActionAlreadyResolved,
+		"a differing verb is refused even without an owner scope")
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	require.Len(t, rec.statements, 2, "one update and one read-back")
+	update, read := rec.statements[0], rec.statements[1]
+	require.Contains(t, update, "action_status IS NULL",
+		"the first-write-wins predicate is the point of the shared helper")
+	require.NotContains(t, update, "user_id",
+		"an empty userID must not scope the update to the notification's owner")
+	require.NotContains(t, update, "action_status_by",
+		"there is no user id to attribute the outcome to")
+	require.NotContains(t, read, "user_id",
+		"the read-back must find the row by id alone")
+}
+
+// TestResolveActionStatusWithUserIDScopesToOwner keeps the inbox route's
+// guarantee: a write is scoped to the notification's owner, in both statements,
+// and is attributed to them.
+func TestResolveActionStatusWithUserIDScopesToOwner(t *testing.T) {
+	repo, mock := newRepoMock(t)
+	rec := recorderOn(t, repo)
+
+	mock.ExpectExec(`UPDATE[\s\S]*`).WillReturnResult(sqlmock.NewResult(0, 1))
+
+	require.NoError(t, ResolveActionStatus(context.Background(), repo.db, "u1", "n1", "accept"))
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	require.Len(t, rec.statements, 1)
+	require.Contains(t, rec.statements[0], "user_id = 'u1'")
+	require.Contains(t, rec.statements[0], "action_status_by = 'u1'")
+}

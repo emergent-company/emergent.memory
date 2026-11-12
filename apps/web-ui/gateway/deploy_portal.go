@@ -167,6 +167,20 @@ func (s *Server) deployClearSession(c echo.Context) {
 	})
 }
 
+// registerDeployPortalRoutes is the single registration point for the public
+// deploy portal. main.go calls it, and deploy_portal_test.go exercises the same
+// function instead of re-registering the four routes by hand, so the tests
+// cover the routes production serves. user_visible_routes_test.go asserts that
+// main.go still calls this registrar and that the routes below stay covered by
+// the route-authority guard.
+func (s *Server) registerDeployPortalRoutes(e *echo.Echo) {
+	e.GET("/deploy", s.deployPortalPage)
+	e.GET("/deploy/oauth/start", s.deployOAuthStart)
+	e.GET("/deploy/oauth/callback", s.deployOAuthCallback)
+	// Logout mutates the session cookie, so it is a POST (see deployOAuthLogout).
+	e.POST("/deploy/oauth/logout", s.deployOAuthLogout)
+}
+
 func (s *Server) deployOAuthStart(c echo.Context) error {
 	if !s.deployPortalEnabled() || !s.deployPortalConfigured() {
 		return echo.ErrNotFound
@@ -345,6 +359,9 @@ func (s *Server) deployWorkspaces(ctx context.Context, accessToken string) ([]de
 	return out.Data.Me.Workspaces, nil
 }
 
+// deployOAuthLogout clears the Railway session cookie. It is a POST because it
+// changes state (a GET logout can be triggered by any cross-site image or
+// prefetch); the redirect target is unchanged.
 func (s *Server) deployOAuthLogout(c echo.Context) error {
 	s.deployClearSession(c)
 	return c.Redirect(http.StatusFound, "/deploy")

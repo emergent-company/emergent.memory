@@ -3,8 +3,10 @@ package mcp
 import (
 	"context"
 	"crypto/md5"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/internal/database"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -833,7 +836,7 @@ func (s *Service) executePreviewSchemaMigration(ctx context.Context, projectID s
 
 	if err != nil {
 		return &ToolResult{
-			Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Database error: %v", err)}},
+			Content: []ContentBlock{{Type: "text", Text: "Database error: " + apperror.PublicMessage(err)}},
 		}, err
 	}
 
@@ -896,7 +899,7 @@ func (s *Service) executeListMigrationArchives(ctx context.Context, projectID st
 
 	if err != nil {
 		return &ToolResult{
-			Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Database error: %v", err)}},
+			Content: []ContentBlock{{Type: "text", Text: "Database error: " + apperror.PublicMessage(err)}},
 		}, err
 	}
 
@@ -966,8 +969,17 @@ func (s *Service) executeGetMigrationArchive(ctx context.Context, projectID stri
 		Scan(ctx)
 
 	if err != nil {
+		// A miss is the client's mistake, not a server fault: bun reports it as
+		// sql.ErrNoRows, and collapsing it with PublicMessage would read "Object
+		// not found: An internal error occurred", which tells the caller to
+		// retry rather than to correct the id.
+		if errors.Is(err, sql.ErrNoRows) {
+			return &ToolResult{
+				Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Object not found: %s", objectID)}},
+			}, err
+		}
 		return &ToolResult{
-			Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Object not found: %v", err)}},
+			Content: []ContentBlock{{Type: "text", Text: "Failed to load object: " + apperror.PublicMessage(err)}},
 		}, err
 	}
 
@@ -1271,7 +1283,7 @@ func (s *Service) executeSchemaMigratePreview(ctx context.Context, projectID str
 		ToSchemaID:   toSchemaID,
 	})
 	if err != nil {
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("preview failed: %v", err)}}}, err
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "preview failed: " + apperror.PublicMessage(err)}}}, err
 	}
 
 	return s.wrapResultCompact(result)
@@ -1304,7 +1316,7 @@ func (s *Service) executeSchemaMigrateExecute(ctx context.Context, projectID str
 		MaxObjects:   maxObjects,
 	})
 	if err != nil {
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("execute failed: %v", err)}}}, err
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "execute failed: " + apperror.PublicMessage(err)}}}, err
 	}
 
 	return s.wrapResultCompact(result)
@@ -1329,7 +1341,7 @@ func (s *Service) executeSchemaMigrateRollback(ctx context.Context, projectID st
 		RestoreTypeRegistry: restoreTypeRegistry,
 	})
 	if err != nil {
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("rollback failed: %v", err)}}}, err
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "rollback failed: " + apperror.PublicMessage(err)}}}, err
 	}
 
 	return s.wrapResultCompact(result)
@@ -1349,7 +1361,7 @@ func (s *Service) executeSchemaMigrateCommit(ctx context.Context, projectID stri
 		ThroughVersion: throughVersion,
 	})
 	if err != nil {
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("commit failed: %v", err)}}}, err
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "commit failed: " + apperror.PublicMessage(err)}}}, err
 	}
 
 	return s.wrapResultCompact(result)
@@ -1367,7 +1379,7 @@ func (s *Service) executeSchemaMigrationJobStatus(ctx context.Context, projectID
 
 	job, err := s.schemasSvc.GetMigrationJobStatus(ctx, projectID, jobID)
 	if err != nil {
-		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("job status failed: %v", err)}}}, err
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "job status failed: " + apperror.PublicMessage(err)}}}, err
 	}
 
 	return s.wrapResultCompact(job)

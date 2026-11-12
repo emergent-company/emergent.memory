@@ -94,9 +94,11 @@ templ DeployPortalPage(data deployPortalData) {
 						<div class="alert">
 							<span>Deployment orchestration is the next step: provider selection, template creation and the Zitadel bootstrap.</span>
 						</div>
-						@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/deploy/oauth/logout", Variant: ui.ButtonGhost, ExtraClass: "w-fit"}) {
-							Disconnect Railway
-						}
+						<form class="w-fit" method="post" action={ templ.URL("/deploy/oauth/logout") } data-testid="deploy-disconnect">
+							@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, ExtraClass: "w-fit"}) {
+								Disconnect Railway
+							}
+						</form>
 					</div>
 				}
 

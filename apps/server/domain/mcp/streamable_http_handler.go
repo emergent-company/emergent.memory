@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -861,8 +862,8 @@ func (h *StreamableHTTPHandler) handlePromptsGet(c echo.Context, req *Request, s
 	}
 	result, err := h.svc.GetPrompt(c.Request().Context(), projectID, params.Name, params.Arguments)
 	if err != nil {
-		return NewErrorResponse(req.ID, ErrCodeInternalError,
-			"Failed to get prompt: "+err.Error(),
+		return NewErrorResponse(req.ID, jsonRPCErrorCodeFor(err),
+			"Failed to get prompt: "+apperror.PublicMessage(err),
 			map[string]string{"name": params.Name},
 		)
 	}
