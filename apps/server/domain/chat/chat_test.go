@@ -605,3 +605,65 @@ func TestAgentRunMessageTextRecoversReasoningOnlyAnswer(t *testing.T) {
 func strPtr(s string) *string {
 	return &s
 }
+
+func TestNormalizeReasoningEffort(t *testing.T) {
+	cases := []struct {
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{"", "", false},
+		{"auto", "", false},
+		{"AUTO", "", false},
+		{" low ", "low", false},
+		{"minimal", "minimal", false},
+		{"medium", "medium", false},
+		{"high", "high", false},
+		{"max", "max", false},
+		{"turbo", "", true},
+	}
+	for _, c := range cases {
+		got, err := normalizeReasoningEffort(c.in)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("normalizeReasoningEffort(%q) expected error", c.in)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("normalizeReasoningEffort(%q) unexpected error: %v", c.in, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("normalizeReasoningEffort(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestValidateStreamRequest_ModelAndEffort(t *testing.T) {
+	base := func() *StreamRequest { return &StreamRequest{Message: "hi"} }
+
+	r := base()
+	r.Model = "openai/deepseek-v4-flash"
+	if err := validateStreamRequest(r); err != nil {
+		t.Errorf("valid model rejected: %v", err)
+	}
+
+	r = base()
+	r.Model = "no-provider-prefix"
+	if err := validateStreamRequest(r); err == nil || !strings.Contains(err.Error(), "provider/model") {
+		t.Errorf("model without provider prefix: err = %v", err)
+	}
+
+	r = base()
+	r.ReasoningEffort = "high"
+	if err := validateStreamRequest(r); err != nil {
+		t.Errorf("valid effort rejected: %v", err)
+	}
+
+	r = base()
+	r.ReasoningEffort = "turbo"
+	if err := validateStreamRequest(r); err == nil || !strings.Contains(err.Error(), "reasoningEffort") {
+		t.Errorf("invalid effort: err = %v", err)
+	}
+}
