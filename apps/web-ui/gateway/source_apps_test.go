@@ -398,6 +398,34 @@ func TestSourceAppDetailUnknownIDRedirectsWithError(t *testing.T) {
 	assertRedirectError(t, rec.Header().Get("Location"), "no such source App")
 }
 
+func TestSourceAppDetailRendersSaveError(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.dsSourceApps = []SourceApp{{ID: "a1", OrgID: "o1", AppID: 4242, Slug: "acme-bot"}}
+	e := sourceAppsTestServer(f)
+
+	// The update redirect carries the failure in ?err=; the edit page must show
+	// it or a rejected key rotation looks like a no-op.
+	loc := dsSourceAppsPath + "/a1?err=" + url.QueryEscape("privateKey is not PEM encoded")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, loc, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Source App not saved",
+		"privateKey is not PEM encoded",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("edit page missing %q", want)
+		}
+	}
+	// The failure must not be mistaken for a success toast.
+	if strings.Contains(body, "Source App saved") {
+		t.Error("error render also showed the success toast")
+	}
+}
+
 func TestSourceAppDetailNeedsOrgAdmin(t *testing.T) {
 	f := sourceAppsAdminFake()
 	f.orgsAndProjects = []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_member"}}

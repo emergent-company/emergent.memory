@@ -270,7 +270,7 @@ templ SourceAppFormPage(data dsSourceAppFormData) {
 				if data.DeleteHref != "" {
 					<div class="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-base-content/10 pt-4" data-testid="ds-source-app-danger">
 						@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "max-w-prose"}) {
-							Removing this App stops every github_app source bound to it. Sources still attached must be deleted or switched first — the server names them when it refuses.
+							Removal is refused while any github_app source is still bound to this App; delete or switch those sources first. The server names them when it refuses.
 						}
 						<form method="post" action={ templ.URL(data.DeleteHref) } class="inline-flex" hx-confirm="Remove this GitHub App registration? Sources still bound to it must be deleted or switched first.">
 							@ui.Button(ui.ButtonProps{

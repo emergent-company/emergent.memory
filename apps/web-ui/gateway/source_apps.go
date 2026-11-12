@@ -41,10 +41,9 @@ type dsSourceAppRow struct {
 // dsSourceAppsPageData is the payload for SourceAppsPage.
 type dsSourceAppsPageData struct {
 	settingsNavCommon
-	OrgID   string
 	OrgName string
 	// Forbidden renders the "organization administrators only" state instead of
-	// the list and the register form (the API would reject those writes).
+	// the table (the API answers this caller's reads and writes with 403).
 	Forbidden bool
 	Rows      []dsSourceAppRow
 	LoadErr   error
@@ -58,7 +57,6 @@ type dsSourceAppsPageData struct {
 // the template has no access to the deployment's public base URL.
 type dsSourceAppFormData struct {
 	settingsNavCommon
-	OrgID      string
 	OrgName    string
 	Action     string
 	BackHref   string
@@ -140,7 +138,6 @@ func (s *Server) uiSourceApps(c echo.Context) error {
 		// (the same degrade as uiProjectCredentials).
 		return c.Redirect(http.StatusSeeOther, "/orgs")
 	}
-	data.OrgID = project.OrgID
 	if org, oerr := s.memory.GetOrg(ctx, project.OrgID); oerr == nil && org != nil {
 		data.OrgName = org.Name
 	} else if oerr != nil {
@@ -163,13 +160,12 @@ func (s *Server) uiSourceApps(c echo.Context) error {
 // separate routes, so the register field set does not compete with the table.
 func (s *Server) uiSourceAppNew(c echo.Context) error {
 	ctx := c.Request().Context()
-	orgID, orgName, handled := s.sourceAppsFormOrg(c)
+	_, orgName, handled := s.sourceAppsFormOrg(c)
 	if handled {
 		return nil
 	}
 	return s.page(c, pageTitle("Register source app"), SourceAppFormPage(dsSourceAppFormData{
 		settingsNavCommon: s.settingsNavPayload(c, ctx),
-		OrgID:             orgID,
 		OrgName:           orgName,
 		Action:            dsSourceAppsPath,
 		BackHref:          dsSourceAppsPath,
@@ -193,7 +189,6 @@ func (s *Server) uiSourceAppDetail(c echo.Context) error {
 	}
 	return s.page(c, pageTitle("Edit source app"), SourceAppFormPage(dsSourceAppFormData{
 		settingsNavCommon: s.settingsNavPayload(c, ctx),
-		OrgID:             orgID,
 		OrgName:           orgName,
 		Action:            dsSourceAppsPath + "/" + url.PathEscape(app.ID),
 		BackHref:          dsSourceAppsPath,
@@ -201,6 +196,7 @@ func (s *Server) uiSourceAppDetail(c echo.Context) error {
 		WebhookURL:        dsSourceAppWebhookURL(s.cfg.MemoryPublicURL, app.WebhookKey),
 		App:               app,
 		FlashMsg:          flashFromQuery(c, []flashParam{{key: "saved", msg: "Source App saved."}}),
+		FlashErr:          flashError(c),
 	}))
 }
 
