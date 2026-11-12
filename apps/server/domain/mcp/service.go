@@ -5427,7 +5427,7 @@ func (s *Service) executeBatchUpdateEntities(ctx context.Context, projectUUID uu
 		entityRef := refString(itemArgs["entity_id"])
 		result, err := s.updateEntityOne(ctx, projectUUID, projectID, itemArgs)
 		if err != nil {
-			results = append(results, batchUpdateResult{Index: i, EntityID: entityRef, OK: false, Error: err.Error()})
+			results = append(results, batchUpdateResult{Index: i, EntityID: entityRef, OK: false, Error: apperror.PublicMessage(err)})
 			failed++
 			continue
 		}
@@ -5524,7 +5524,7 @@ func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, arg
 				return nil, err
 			}
 			if _, err := s.deleteEntityOne(ctx, projectUUID, projectID, idStr, branchID, reason); err != nil {
-				results = append(results, batchDeleteResult{Index: i, EntityID: idStr, OK: false, Error: err.Error()})
+				results = append(results, batchDeleteResult{Index: i, EntityID: idStr, OK: false, Error: apperror.PublicMessage(err)})
 				failed++
 				continue
 			}
@@ -6621,7 +6621,7 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 		if err := writeRules.CheckFields(typeName, properties); err != nil {
 			results = append(results, batchResult{
 				Ok:    false,
-				Error: err.Error(),
+				Error: apperror.PublicMessage(err),
 				Index: i,
 			})
 			failedCount++
@@ -6671,7 +6671,7 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 		if err != nil {
 			results = append(results, batchResult{
 				Ok:    false,
-				Error: err.Error(),
+				Error: apperror.PublicMessage(err),
 				Index: i,
 			})
 			failedCount++
@@ -7002,7 +7002,7 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 			results = append(results, batchResult{
 				Ok:     false,
 				Reason: classifyInlineRelationshipError(err),
-				Error:  err.Error(),
+				Error:  apperror.PublicMessage(err),
 				Index:  i,
 			})
 			failedCount++
@@ -7071,6 +7071,12 @@ func isValidPropertyKey(s string) bool {
 }
 
 func (s *Service) ReadResource(ctx context.Context, projectID, uri string) (*ResourceReadResult, error) {
+	// Validate the caller-supplied project id here, once: the resource readers
+	// below parse it themselves and a bare parse error would reach the client as
+	// an internal failure, losing the one thing the caller can act on.
+	if _, err := uuid.Parse(projectID); err != nil {
+		return nil, apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
 	switch {
 	case uri == "memory://schema/entity-types":
 		return s.readEntityTypesResource(ctx, projectID)
@@ -7085,7 +7091,9 @@ func (s *Service) ReadResource(ctx context.Context, projectID, uri string) (*Res
 	case strings.HasPrefix(uri, "memory://project/") && strings.Contains(uri, "/templates"):
 		return s.readProjectTemplatesResource(ctx, projectID)
 	default:
-		return nil, fmt.Errorf("unknown resource URI: %s", uri)
+		// A URI the server does not serve is the caller's mistake, and naming it
+		// is how they fix it.
+		return nil, apperror.ErrNotFound.WithMessage("unknown resource URI: " + uri)
 	}
 }
 
@@ -7340,7 +7348,7 @@ func (s *Service) GetPrompt(ctx context.Context, projectID, name string, argumen
 	case "find_related_entities":
 		return s.getFindRelatedEntitiesPrompt(arguments)
 	default:
-		return nil, fmt.Errorf("unknown prompt: %s", name)
+		return nil, apperror.ErrNotFound.WithMessage("unknown prompt: " + name)
 	}
 }
 
@@ -8097,7 +8105,7 @@ func (s *Service) executeSetSessionTitle(ctx context.Context, projectID string, 
 
 	if err := s.sessionTitleHandler.UpdateSessionTitle(ctx, projectID, sessionID, title); err != nil {
 		return &ToolResult{
-			Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf(`{"error":"failed to update session title: %s"}`, err.Error())}},
+			Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf(`{"error":"failed to update session title: %s"}`, apperror.PublicMessage(err))}},
 			IsError: true,
 		}, nil
 	}

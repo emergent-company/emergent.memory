@@ -9,6 +9,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/search"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 // getTypesForNamespace returns the set of type names allowed by the namespace filter.
@@ -1042,7 +1043,11 @@ func (s *Service) executeDeleteRelationship(ctx context.Context, projectID strin
 				return nil, err
 			}
 			if _, err := s.deleteRelationshipOne(ctx, projectUUID, projectID, idStr, branchID, reason); err != nil {
-				results = append(results, batchDeleteResult{Index: i, RelationshipID: idStr, OK: false, Error: err.Error()})
+				// Per-item detail: an app error's message is written for the
+				// caller (not found, forbidden), anything else collapses to the
+				// internal message instead of carrying driver text into the tool
+				// result. The cause is logged by the delete path.
+				results = append(results, batchDeleteResult{Index: i, RelationshipID: idStr, OK: false, Error: apperror.PublicMessage(err)})
 				failed++
 				continue
 			}

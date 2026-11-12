@@ -9,6 +9,7 @@ import (
 	"time"
 
 	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"golang.org/x/net/html"
 )
 
@@ -73,13 +74,13 @@ func (s *Service) executeWebFetch(ctx context.Context, args map[string]any) (*To
 	// --- fetch ---
 	body, contentType, err := s.doWebFetch(ctx, rawURL, acceptHeader, timeout)
 	if err != nil {
-		return webFetchError(fmt.Sprintf("Fetch error: %s", err.Error())), nil
+		return webFetchError("Fetch error: " + apperror.PublicMessage(err)), nil
 	}
 
 	// --- convert ---
 	output, err := convertWebContent(body, contentType, format)
 	if err != nil {
-		return webFetchError(fmt.Sprintf("Conversion error: %s", err.Error())), nil
+		return webFetchError("Conversion error: " + apperror.PublicMessage(err)), nil
 	}
 
 	return s.wrapResult(map[string]any{

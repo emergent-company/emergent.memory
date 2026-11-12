@@ -4,12 +4,16 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"log/slog"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 func TestToDocumentSummary(t *testing.T) {
@@ -667,9 +671,8 @@ func TestNormalizeStatusBucket(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Empty(t, got)
 
-	if _, err := NormalizeStatusBucket("pendings"); err == nil {
-		t.Fatal("expected an error for an unknown bucket")
-	}
+	_, err = NormalizeStatusBucket("pendings")
+	requireAppError(t, err, http.StatusBadRequest, "status must be one of")
 }
 
 func TestNormalizeSortAndOrder(t *testing.T) {
@@ -681,9 +684,8 @@ func TestNormalizeSortAndOrder(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, SortUpdated, sortKey)
 
-	if _, err := NormalizeSort("filename"); err == nil {
-		t.Fatal("expected an error for an unknown sort key")
-	}
+	_, err = NormalizeSort("filename")
+	requireAppError(t, err, http.StatusBadRequest, "sort must be one of")
 
 	order, err := NormalizeOrder("")
 	assert.NoError(t, err)
@@ -693,9 +695,24 @@ func TestNormalizeSortAndOrder(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, OrderAsc, order)
 
-	if _, err := NormalizeOrder("sideways"); err == nil {
-		t.Fatal("expected an error for an unknown order")
+	_, err = NormalizeOrder("sideways")
+	requireAppError(t, err, http.StatusBadRequest, "order must be one of")
+}
+
+// requireAppError asserts err is a client-facing app error: the vocabulary
+// rejection is the response's message, so it survives to the client instead of
+// being replaced by a generic 500 (and it carries nothing but the vocabulary).
+func requireAppError(t *testing.T, err error, wantStatus int, wantMessagePart string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected an error for an unknown value")
 	}
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) {
+		t.Fatalf("error is not a client-facing app error: %T %v", err, err)
+	}
+	assert.Equal(t, wantStatus, appErr.HTTPStatus)
+	assert.Contains(t, appErr.Message, wantMessagePart)
 }
 
 // TestStatusBucketsPartitionEveryState pins the bucket mapping to the six states

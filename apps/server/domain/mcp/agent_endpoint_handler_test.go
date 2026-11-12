@@ -2,11 +2,13 @@ package mcp
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
@@ -328,4 +330,51 @@ func jsonError(rec *httptest.ResponseRecorder) *ErrorObject {
 		return nil
 	}
 	return resp.Error
+}
+
+// TestAgentEndpointStoreFailureIsNotLeaked is the regression test for the
+// authorize path's error mapping.
+//
+// The service used to hand the raw error to the JSON-RPC error message, so a
+// key-store failure reached the caller as 403 with the driver's text in it
+// (`pq: … kb.agent_mcp_keys …`): an infrastructure problem reported as an
+// authorization decision, with schema detail in the body. A failure that is not
+// a deliberate refusal is now a 500 internal error carrying apperror's opaque
+// message; only the log keeps the cause.
+func TestAgentEndpointStoreFailureIsNotLeaked(t *testing.T) {
+	f := newEndpointTestFixture()
+	f.keys.getErr = errors.New(`failed to get key: pq: relation "kb.agent_mcp_keys" does not exist`)
+	ep := NewAgentEndpointHandler(f.svc, slog.Default())
+
+	c, rec := agentEndpointRequest(t, "tools/list", nil, "tok-1")
+	require.NoError(t, ep.HandleAgentEndpoint(*c))
+	require.Equal(t, http.StatusInternalServerError, rec.Code,
+		"a store failure is a server fault, not an authorization refusal")
+
+	errObj := jsonError(rec)
+	require.NotNil(t, errObj)
+	assert.Equal(t, ErrCodeInternalError, errObj.Code)
+	body := rec.Body.String()
+	assert.NotContains(t, body, "pq:", "driver text must not reach the caller")
+	assert.NotContains(t, body, "kb.agent_mcp_keys", "schema detail must not reach the caller")
+	assert.NotContains(t, body, "failed to get key")
+}
+
+// TestAgentEndpointRefusalKeepsItsMessage is the other half: a refusal the
+// service wrote for the caller must still arrive intact, because it is what the
+// operator acts on (a revoked credential must not read as an outage).
+func TestAgentEndpointRefusalKeepsItsMessage(t *testing.T) {
+	f := newEndpointTestFixture()
+	revokedAt := time.Now().UTC()
+	f.keys.byID["key-1"].TokenRevokedAt = &revokedAt
+	ep := NewAgentEndpointHandler(f.svc, slog.Default())
+
+	c, rec := agentEndpointRequest(t, "tools/list", nil, "tok-1")
+	require.NoError(t, ep.HandleAgentEndpoint(*c))
+	require.Equal(t, http.StatusForbidden, rec.Code)
+
+	errObj := jsonError(rec)
+	require.NotNil(t, errObj)
+	assert.Equal(t, ErrCodeForbidden, errObj.Code)
+	assert.Contains(t, errObj.Message, "credential is revoked")
 }

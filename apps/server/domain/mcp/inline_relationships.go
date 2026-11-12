@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 // Machine-readable reasons reported for an inline relationship that could not
@@ -204,7 +205,11 @@ func processInlineRelationships(
 
 		relResult, err := deps.Create(ctx, req)
 		if err != nil {
-			fail(i, classifyInlineRelationshipError(err), err.Error())
+			// Per-item detail: an app error's message is written for the caller,
+			// anything else collapses to the internal message instead of
+			// carrying driver text into the tool result. The cause is logged by
+			// the create path.
+			fail(i, classifyInlineRelationshipError(err), apperror.PublicMessage(err))
 			continue
 		}
 		if relResult == nil {
