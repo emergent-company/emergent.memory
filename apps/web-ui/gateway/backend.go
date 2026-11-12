@@ -446,6 +446,11 @@ type MemoryBackend interface {
 	// NotificationEventStream opens the session's real-time notification stream
 	// (account when projectID is empty, else that project's).
 	NotificationEventStream(ctx context.Context, projectID string) (io.ReadCloser, error)
+	// Instance email settings (superadmin-only).
+	GetSuperadminMe(ctx context.Context) (*superadminMe, error)
+	GetInstanceEmailSettings(ctx context.Context) (*instanceEmailSettings, error)
+	UpdateInstanceEmailSettings(ctx context.Context, in instanceEmailSettingsInput) (*instanceEmailSettings, error)
+	TestInstanceEmail(ctx context.Context, to string) error
 }
 
 // compile-time assertion that MemoryClient satisfies the interface.

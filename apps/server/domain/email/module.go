@@ -18,7 +18,8 @@ var Module = fx.Module("email",
 		NewConfig,
 		NewJobsService,
 		NewTemplateServiceFromConfig,
-		NewSender, // Uses Mailgun when configured, otherwise no-op
+		NewSettingsService,
+		NewSettingsSender,
 		NewWorker,
 		NewMailgunWebhookHandler,
 	),
@@ -111,11 +112,7 @@ func (s *noOpSender) Send(ctx context.Context, opts SendOptions) (*SendResult, e
 }
 
 // RegisterWorkerLifecycle registers the email worker with fx lifecycle
-func RegisterWorkerLifecycle(lc fx.Lifecycle, worker *Worker, cfg *Config) {
-	if !cfg.Enabled {
-		return
-	}
-
+func RegisterWorkerLifecycle(lc fx.Lifecycle, worker *Worker) {
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
 			// Use context.Background() - fx lifecycle context has a 15s timeout
