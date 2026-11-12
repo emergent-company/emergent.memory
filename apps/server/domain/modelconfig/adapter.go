@@ -91,7 +91,7 @@ func (a *EmbeddingResolverAdapter) ResolveEmbedding(ctx context.Context) (*embed
 			return nil, fmt.Errorf("embedding resolver: failed to get credentials for provider %q: %w", ref.Provider, err)
 		}
 		if cred == nil {
-			return nil, fmt.Errorf("no credentials configured for provider %q — run 'memory provider configure-project %s --api-key ...'", ref.Provider, ref.Provider)
+			return nil, fmt.Errorf("%w for provider %q — run 'memory provider configure-project %s --api-key ...'", embeddings.ErrEmbeddingCredentialUnusable, ref.Provider, ref.Provider)
 		}
 		return a.buildEmbeddingCredential(cred, ref.Model), nil
 	}

@@ -15,7 +15,7 @@ Interactive wizard that configures a Memory project in the current directory.
 Walks through three steps:
 
 1. **Project** — select an existing project or create a new one
-2. **Provider** — configure an LLM provider at the org level (e.g., Google AI, Vertex AI)
+2. **Provider** — configure the project's LLM provider (e.g., Google AI, Vertex AI)
 3. **Skills** — install the built-in Memory skills into `.agents/skills/`
 
 On completion it writes the following variables to `.env.local` and automatically adds `.env.local` to `.gitignore`:

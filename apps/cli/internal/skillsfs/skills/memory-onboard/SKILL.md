@@ -115,40 +115,42 @@ Also remind the user to add `.env.local` to `.gitignore` if it is not already th
 
 ### Step 2.5 — Configure LLM provider credentials
 
-Memory needs a live LLM provider to extract knowledge from documents and answer queries. Credentials are configured at the **organization level**. During onboarding, check whether credentials are set and, if not, configure them now — document extraction won't work without them.
+Memory needs a live LLM provider to extract knowledge from documents and answer queries. Credentials are configured **per project** — there is no organization-level provider config. During onboarding, check whether this project has credentials and, if not, configure them now — document extraction won't work without them.
 
 #### Check if credentials are configured
 
 ```bash
-memory provider list
+memory projects show-models
 ```
 
-**If a provider is listed:** run a live test to confirm it works:
+Both lines report their source — `project`, `provider`, or `none`.
 
-```bash
-memory provider test <provider>
-# provider is one of: google-ai, vertex-ai
-```
+- **Both models resolve** (neither source is `none`): run a live test to confirm the credentials work:
 
-- If the test **passes**: proceed to Step 3.
-- If the test **fails**: tell the user which provider is configured and that the credentials appear to be invalid, then offer two options:
+  ```bash
+  memory provider test <provider> --project <project-id>
+  # provider is one of: google, google-vertex, openai, deepseek
+  ```
+
+  If the test **passes**: proceed to Step 3.
+  If the test **fails**: tell the user which provider is configured and that the credentials appear to be invalid, then offer two options:
   1. Re-configure them now (follow the "no credentials" path below)
   2. Skip for now (extraction won't work until credentials are fixed)
 
-**If no providers are listed:** configure one now. The recommended path is **Google AI** (simplest — just an API key). Vertex AI is the alternative for GCP-native environments.
+- **Either source is `none`**: configure the provider now. The recommended path is **Google AI** (simplest — just an API key). Vertex AI is the alternative for GCP-native environments.
 
 **Recommended path — Google AI:**
 
 Ask the user:
-> "No LLM provider is configured yet. To enable document extraction, I need a Google AI API key. You can get one at https://aistudio.google.com/app/apikey — do you have one handy?"
+> "No LLM provider is configured for this project yet. To enable document extraction, I need a Google AI API key. You can get one at https://aistudio.google.com/app/apikey — do you have one handy?"
 
 Once they provide the key:
 
 ```bash
-memory provider configure google-ai --api-key <key>
+memory provider configure-project google --api-key <key>
 ```
 
-This stores the credentials, syncs the model catalog, auto-selects models, and runs a live test — all in one step. If it succeeds, you will see the chosen generative and embedding models in the output. Proceed to Step 3.
+This stores the credentials, syncs the model catalog, auto-selects a generative **and** an embedding model, and runs a live test — all in one step. Both matter: embeddings are generated only through the project's configured provider, and a project without an embedding model writes no vectors. If it succeeds, you will see the chosen models in the output. Proceed to Step 3.
 
 If it **fails**: show the error output, ask the user to double-check the API key, and retry. If it still fails after a second attempt, let the user know extraction will be unavailable until credentials are fixed, and continue with Step 3 anyway.
 
@@ -160,13 +162,22 @@ If the user prefers Vertex AI, ask for:
 - Region (e.g. `us-central1`)
 
 ```bash
-memory provider configure vertex-ai \
+memory provider configure-project google-vertex \
   --key-file <path-to-service-account.json> \
   --gcp-project <gcp-project-id> \
   --location <region>
 ```
 
 This also syncs the model catalog and auto-selects models atomically. Proceed to Step 3 on success.
+
+If the user picks a provider with no embedding API (OpenAI or DeepSeek), the server warns that embeddings are unconfigured. In that case ask for a Google AI or Vertex AI key as well and configure it with `--embedding-model`, then pin the pair explicitly:
+
+```bash
+memory projects set-models \
+  --generative "<provider>/<generative-model>" \
+  --embedding "google/gemini-embedding-001"
+```
+
 
 ### Step 2.6 — Set the project info document
 

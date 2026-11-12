@@ -237,8 +237,9 @@ func (f *ModelFactory) CreateModel(ctx context.Context) (model.LLM, error) {
 //
 // Credential resolution order:
 //  1. If a CredentialResolver is configured, resolve per-request credentials from
-//     the DB hierarchy (project → org → env). This is the production path when
-//     domain/provider.Module is registered.
+//     the DB hierarchy (project → env). This is the production path when
+//     domain/provider.Module is registered. Org-level provider config is
+//     deprecated, so there is no org tier.
 //  2. Fall back to per-provider env vars. The four legacy providers keep their
 //     historical variables:
 //     DeepSeek: DEEPSEEK_API_KEY

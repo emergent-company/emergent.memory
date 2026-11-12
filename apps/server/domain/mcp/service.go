@@ -43,6 +43,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/authz"
 	"github.com/emergent-company/emergent.memory/pkg/branchorigin"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 	"github.com/emergent-company/emergent.memory/pkg/embeddingtext"
 	"github.com/emergent-company/emergent.memory/pkg/ftsquery"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
@@ -6576,7 +6577,9 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 				Limit:    1,
 			})
 			if err != nil {
-				s.log.Warn("similarity check failed; proceeding with create", "type", typeName, logger.Error(err))
+				if !embeddings.IsNotConfigured(err) {
+					s.log.Warn("similarity check failed; proceeding with create", "type", typeName, logger.Error(err))
+				}
 			} else if len(sr.Data) > 0 && sr.Data[0].Object != nil && float64(sr.Data[0].Score) >= threshold {
 				best := sr.Data[0].Object
 				var bestKey string

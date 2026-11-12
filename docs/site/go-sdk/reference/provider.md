@@ -2,7 +2,7 @@
 
 Package `provider` provides a client for the Memory Provider API.
 
-The provider client is a **non-context client** — it requires no org or project context headers. It manages LLM credentials at the organization level, the model catalog for each provider, and per-project provider policies (which credential source to use and which models to call).
+The provider client is a **non-context client** — it requires no org or project context headers, so every call takes the project ID explicitly. It manages project-scoped LLM credentials, the model catalog for each provider, and each project's model selection.
 
 Supported providers: **Google AI** (`google`), **Vertex AI** (`google-vertex`), **OpenAI** (`openai`), and **DeepSeek** (`deepseek`).
 
@@ -37,26 +37,6 @@ const (
 
 ---
 
-### ProviderPolicy
-
-```go
-const (
-    PolicyNone         ProviderPolicy = "none"
-    PolicyOrganization ProviderPolicy = "organization"
-    PolicyProject      ProviderPolicy = "project"
-)
-```
-
-Controls where a project sources its LLM credentials:
-
-| Value | Description |
-|---|---|
-| `"none"` | No credentials configured |
-| `"organization"` | Inherit credentials from the parent org |
-| `"project"` | Use project-specific credentials |
-
----
-
 ### ModelType
 
 ```go
@@ -70,47 +50,31 @@ const (
 
 ## Methods
 
-### Organization Config Methods
+### Organization Config Methods (removed)
 
-```go
-// Store credentials + auto-select models for an org's provider.
-// Runs a live credential test and syncs the model catalog on success.
-func (c *Client) UpsertOrgConfig(ctx context.Context, orgID, provider string, req *UpsertProviderConfigRequest) (*ProviderConfig, error)
-
-// Get stored config metadata (no secrets) for an org's provider.
-func (c *Client) GetOrgConfig(ctx context.Context, orgID, provider string) (*ProviderConfig, error)
-
-// Delete stored config for an org's provider.
-func (c *Client) DeleteOrgConfig(ctx context.Context, orgID, provider string) error
-
-// List all provider configs for an org.
-func (c *Client) ListOrgConfigs(ctx context.Context, orgID string) ([]ProviderConfig, error)
-```
-
-**Endpoints:**
-- `PUT /api/v1/organizations/{orgID}/providers/{provider}`
-- `GET /api/v1/organizations/{orgID}/providers/{provider}`
-- `DELETE /api/v1/organizations/{orgID}/providers/{provider}`
-- `GET /api/v1/organizations/{orgID}/providers`
+Organization-level provider config is no longer supported. `UpsertOrgConfig` and
+`ListOrgConfigs` remain only as deprecated stubs that return an error; `GetOrgConfig`
+and `DeleteOrgConfig` are gone. Use the project config methods below.
 
 ---
 
 ### Project Config Methods
 
 ```go
-// Store a project-level provider override (beats org config in resolution chain).
+// Store a project's provider credential + auto-select models.
+// Runs a live credential test and syncs the model catalog on success.
 func (c *Client) UpsertProjectConfig(ctx context.Context, projectID, provider string, req *UpsertProviderConfigRequest) (*ProviderConfig, error)
 
-// Get project-level provider config.
+// Get the project's provider config metadata (no secrets).
 func (c *Client) GetProjectConfig(ctx context.Context, projectID, provider string) (*ProviderConfig, error)
 
-// Delete project-level override; project falls back to org config.
+// Delete the project's provider config.
 func (c *Client) DeleteProjectConfig(ctx context.Context, projectID, provider string) error
 
-// List all project-level provider configs for a project.
+// List all provider configs for a project.
 func (c *Client) ListProjectConfigs(ctx context.Context, projectID string) ([]ProjectProviderConfig, error)
 
-// List project-level overrides across all projects in an org.
+// List project-level configs across all projects in an org.
 func (c *Client) ListProjectConfigsByOrg(ctx context.Context, orgID string) ([]ProjectProviderConfig, error)
 ```
 
@@ -277,8 +241,8 @@ Model names must include the provider prefix (e.g. `"google/gemini-2.5-flash"`).
 ## Example
 
 ```go
-// Store a Google AI API key at org level (auto-selects models)
-_, err := client.Provider.UpsertOrgConfig(ctx, orgID, provider.ProviderGoogleAI, &provider.UpsertProviderConfigRequest{
+// Store a Google AI API key for a project (auto-selects models)
+_, err := client.Provider.UpsertProjectConfig(ctx, projectID, provider.ProviderGoogleAI, &provider.UpsertProviderConfigRequest{
     APIKey: os.Getenv("GOOGLE_AI_API_KEY"),
 })
 if err != nil {

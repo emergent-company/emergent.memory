@@ -3,6 +3,7 @@ package embeddings
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -129,6 +130,8 @@ func TestResolveRejectsUnusableCredential(t *testing.T) {
 		t.Fatal("resolveClientWithMeta() error = nil, want an unusable-credential error")
 	} else if !strings.Contains(err.Error(), "no usable credentials") {
 		t.Errorf("error = %q, want an unusable-credentials message", err.Error())
+	} else if !errors.Is(err, ErrEmbeddingCredentialUnusable) {
+		t.Errorf("error = %q, want it to wrap ErrEmbeddingCredentialUnusable so extraction classifies it permanent", err.Error())
 	}
 }
 

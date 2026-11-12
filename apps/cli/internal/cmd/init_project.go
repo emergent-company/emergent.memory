@@ -33,7 +33,7 @@ var initProjectCmd = &cobra.Command{
 
 Walks through:
   1. Project selection or creation
-  2. LLM provider configuration (org-level)
+  2. LLM provider configuration (project-scoped)
   3. Memory skills installation for AI agents
 
 Writes MEMORY_PROJECT_ID, MEMORY_PROJECT_NAME, and MEMORY_PROJECT_API_KEY
@@ -245,7 +245,7 @@ func runInitProject(cmd *cobra.Command, args []string) error {
 
 			// 9.2  Provider verification.
 			if !initSkipProvider {
-				providerStatus, err = initVerifyProvider(c)
+				providerStatus, err = initVerifyProvider(c, projectID)
 				if err != nil {
 					return err
 				}
@@ -296,7 +296,7 @@ func runInitProject(cmd *cobra.Command, args []string) error {
 	// 6. Provider configuration
 	// ------------------------------------------------------------------
 	if !initSkipProvider {
-		providerStatus, err = initConfigureProvider(c)
+		providerStatus, err = initConfigureProvider(c, projectID)
 		if err != nil {
 			return err
 		}
@@ -606,33 +606,28 @@ func ensureGitignore() {
 // 6. Provider configuration (fresh run)
 // ---------------------------------------------------------------------------
 
-func initConfigureProvider(c *client.Client) (string, error) {
+func initConfigureProvider(c *client.Client, projectID string) (string, error) {
 	fmt.Println()
 	fmt.Println("Checking LLM provider configuration...")
 
-	// 6.2  Resolve org and check existing config.
-	orgID, err := resolveProviderOrgID(c, "")
-	if err != nil {
-		return "", fmt.Errorf("failed to determine organization: %w", err)
-	}
-
-	configs, err := c.SDK.Provider.ListOrgConfigs(context.Background(), orgID)
+	// 6.2  Check the project's existing config. Provider credentials are
+	// project-scoped (org-level config is deprecated).
+	configs, err := c.SDK.Provider.ListProjectConfigs(context.Background(), projectID)
 	if err != nil {
 		return "", fmt.Errorf("failed to check provider config: %w", err)
 	}
 
-	// 6.3  Already configured (org-level).
+	// 6.3  Already configured for this project.
 	if len(configs) > 0 {
-		fmt.Printf("LLM provider already configured at org level (%s).\n", configs[0].Provider)
-		fmt.Println("  This org-level provider will be used by all projects in the organization.")
-		return "already configured (org-level: " + string(configs[0].Provider) + ")", nil
+		fmt.Printf("LLM provider already configured for this project (%s).\n", configs[0].Provider)
+		return "already configured (" + string(configs[0].Provider) + ")", nil
 	}
 
 	// 6.4  Display provider picker.
-	return initProviderPicker(c, orgID)
+	return initProviderPicker(c, projectID)
 }
 
-func initProviderPicker(c *client.Client, orgID string) (string, error) {
+func initProviderPicker(c *client.Client, projectID string) (string, error) {
 	fmt.Println("No LLM provider configured. Let's set one up.")
 	fmt.Println()
 
@@ -649,9 +644,9 @@ func initProviderPicker(c *client.Client, orgID string) (string, error) {
 
 	switch selectedID {
 	case "google":
-		return initConfigureGoogleAI(c, orgID)
+		return initConfigureGoogleAI(c, projectID)
 	case "google-vertex":
-		return initConfigureVertexAI(c, orgID)
+		return initConfigureVertexAI(c, projectID)
 	default:
 		fmt.Println("Skipping provider configuration.")
 		return "skipped", nil
@@ -659,7 +654,7 @@ func initProviderPicker(c *client.Client, orgID string) (string, error) {
 }
 
 // 6.5  Google AI path.
-func initConfigureGoogleAI(c *client.Client, orgID string) (string, error) {
+func initConfigureGoogleAI(c *client.Client, projectID string) (string, error) {
 	fmt.Print("Enter your Google AI API key: ")
 	keyBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
 	fmt.Println() // newline after masked input
@@ -673,7 +668,7 @@ func initConfigureGoogleAI(c *client.Client, orgID string) (string, error) {
 	}
 
 	fmt.Println("Configuring Google AI provider...")
-	_, err = c.SDK.Provider.UpsertOrgConfig(context.Background(), orgID, provider.ProviderGoogleAI, &provider.UpsertProviderConfigRequest{
+	_, err = c.SDK.Provider.UpsertProjectConfig(context.Background(), projectID, provider.ProviderGoogleAI, &provider.UpsertProviderConfigRequest{
 		APIKey: apiKey,
 	})
 	if err != nil {
@@ -682,10 +677,10 @@ func initConfigureGoogleAI(c *client.Client, orgID string) (string, error) {
 
 	// Test the provider.
 	fmt.Println("Testing provider credentials...")
-	testResp, testErr := c.SDK.Provider.TestProvider(context.Background(), provider.ProviderGoogleAI, "", orgID)
+	testResp, testErr := c.SDK.Provider.TestProvider(context.Background(), provider.ProviderGoogleAI, projectID, "")
 	if testErr != nil {
 		fmt.Printf("Provider test failed: %v\n", testErr)
-		fmt.Println("Credentials were saved but could not be verified. Check with 'memory provider test'.")
+		fmt.Println("Credentials were saved but could not be verified. Check with 'memory provider test <provider> --project <project-id>'.")
 		return "configured (test failed)", nil
 	}
 	fmt.Printf("Provider test passed: model=%s, latency=%dms\n", testResp.Model, testResp.LatencyMs)
@@ -693,7 +688,7 @@ func initConfigureGoogleAI(c *client.Client, orgID string) (string, error) {
 }
 
 // 6.6  Vertex AI path.
-func initConfigureVertexAI(c *client.Client, orgID string) (string, error) {
+func initConfigureVertexAI(c *client.Client, projectID string) (string, error) {
 	// Check if gcloud is available.
 	gcloudPath, err := exec.LookPath("gcloud")
 	if err != nil {
@@ -735,7 +730,7 @@ func initConfigureVertexAI(c *client.Client, orgID string) (string, error) {
 	}
 
 	fmt.Println("Configuring Vertex AI provider...")
-	_, err = c.SDK.Provider.UpsertOrgConfig(context.Background(), orgID, provider.ProviderVertexAI, &provider.UpsertProviderConfigRequest{
+	_, err = c.SDK.Provider.UpsertProjectConfig(context.Background(), projectID, provider.ProviderVertexAI, &provider.UpsertProviderConfigRequest{
 		GCPProject: gcpProject,
 		Location:   region,
 	})
@@ -745,10 +740,10 @@ func initConfigureVertexAI(c *client.Client, orgID string) (string, error) {
 
 	// Test the provider.
 	fmt.Println("Testing provider credentials...")
-	testResp, testErr := c.SDK.Provider.TestProvider(context.Background(), provider.ProviderVertexAI, "", orgID)
+	testResp, testErr := c.SDK.Provider.TestProvider(context.Background(), provider.ProviderVertexAI, projectID, "")
 	if testErr != nil {
 		fmt.Printf("Provider test failed: %v\n", testErr)
-		fmt.Println("Credentials were saved but could not be verified. Check with 'memory provider test'.")
+		fmt.Println("Credentials were saved but could not be verified. Check with 'memory provider test <provider> --project <project-id>'.")
 		return "configured (test failed)", nil
 	}
 	fmt.Printf("Provider test passed: model=%s, latency=%dms\n", testResp.Model, testResp.LatencyMs)
@@ -764,7 +759,7 @@ func printGcloudInstructions(reason string) {
 	fmt.Println("  3. Re-run: memory init")
 	fmt.Println()
 	fmt.Println("You can also configure Vertex AI later with:")
-	fmt.Println("  memory provider configure google-vertex --gcp-project <project> --location <region>")
+	fmt.Println("  memory provider configure-project google-vertex --gcp-project <project> --location <region>")
 	fmt.Println()
 	fmt.Println("Continuing without provider configuration...")
 }
@@ -874,28 +869,23 @@ func initVerifyProject(c *client.Client, currentID, currentName string) (string,
 }
 
 // 9.2  Show provider status and offer to reconfigure.
-func initVerifyProvider(c *client.Client) (string, error) {
+func initVerifyProvider(c *client.Client, projectID string) (string, error) {
 	fmt.Println()
-	orgID, err := resolveProviderOrgID(c, "")
-	if err != nil {
-		return "", fmt.Errorf("failed to determine organization: %w", err)
-	}
-
-	configs, err := c.SDK.Provider.ListOrgConfigs(context.Background(), orgID)
+	configs, err := c.SDK.Provider.ListProjectConfigs(context.Background(), projectID)
 	if err != nil {
 		return "", fmt.Errorf("failed to check provider config: %w", err)
 	}
 
 	if len(configs) > 0 {
-		fmt.Printf("  Provider: %s (configured, org-level)\n", configs[0].Provider)
+		fmt.Printf("  Provider: %s (configured for this project)\n", configs[0].Provider)
 		yes, err := promptYesNoDefault("  Reconfigure provider? [y/N] ", false)
 		if err != nil {
-			return "already configured (org-level: " + string(configs[0].Provider) + ")", err
+			return "already configured (" + string(configs[0].Provider) + ")", err
 		}
 		if !yes {
-			return "already configured (org-level: " + string(configs[0].Provider) + ")", nil
+			return "already configured (" + string(configs[0].Provider) + ")", nil
 		}
-		return initProviderPicker(c, orgID)
+		return initProviderPicker(c, projectID)
 	}
 
 	fmt.Println("  Provider: not configured")
@@ -906,7 +896,7 @@ func initVerifyProvider(c *client.Client) (string, error) {
 	if !yes {
 		return "skipped", nil
 	}
-	return initProviderPicker(c, orgID)
+	return initProviderPicker(c, projectID)
 }
 
 // 9.3  Show skills status and offer to reinstall.

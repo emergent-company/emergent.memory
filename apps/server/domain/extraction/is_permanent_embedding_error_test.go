@@ -2,9 +2,12 @@ package extraction
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 )
 
 func TestIsPermanentEmbeddingError(t *testing.T) {
@@ -21,6 +24,21 @@ func TestIsPermanentEmbeddingError(t *testing.T) {
 		{
 			name: "credential resolver wraps missing model",
 			err:  errors.New("embedding credential resolver failed: no embedding model configured for project 1a3dece4-ca40-4ed3-b88c-80c554a4d058 — run 'memory projects set-models --embedding ...'"),
+			want: true,
+		},
+		{
+			name: "typed no-model sentinel",
+			err:  fmt.Errorf("%w for provider %q", embeddings.ErrEmbeddingModelNotSet, "google"),
+			want: true,
+		},
+		{
+			name: "typed unusable-credential sentinel wraps through the resolver",
+			err:  fmt.Errorf("embedding credential resolver failed: %w", fmt.Errorf("%w for provider %q", embeddings.ErrEmbeddingCredentialUnusable, "google")),
+			want: true,
+		},
+		{
+			name: "typed no-project-context sentinel",
+			err:  embeddings.ErrNoProjectContext,
 			want: true,
 		},
 		{

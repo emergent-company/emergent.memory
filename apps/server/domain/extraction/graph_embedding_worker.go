@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings/vertex"
 	"github.com/emergent-company/emergent.memory/pkg/embeddingtext"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
@@ -912,8 +913,14 @@ func isPermanentEmbeddingError(err error) bool {
 			return true
 		}
 	}
-	// Missing embedding model configuration is a permanent config error, not a
-	// transient network/quota failure.
+	// A missing or unusable embedding configuration is permanent too, and it is
+	// the one case retrying can never fix: classify it by sentinel so a provider
+	// credential problem (e.g. no API key) is treated like a missing model. The
+	// historical substring check stays as a fallback for errors that crossed a
+	// boundary that dropped the wrapping.
+	if embeddings.IsNotConfigured(err) {
+		return true
+	}
 	if strings.Contains(msg, "no embedding model configured") {
 		return true
 	}
