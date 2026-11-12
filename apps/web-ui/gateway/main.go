@@ -623,6 +623,11 @@ func main() {
 	// project; its writes are org-admin only and the page says so.
 	e.GET("/settings/source-apps", s.uiSourceApps)
 	e.POST("/settings/source-apps", s.uiSourceAppCreate)
+	// The static "new" segment is registered before the :appId pattern, so the
+	// register page always wins over an App whose id is "new".
+	e.GET("/settings/source-apps/new", s.uiSourceAppNew)
+	e.GET("/settings/source-apps/:appId", s.uiSourceAppDetail)
+	e.POST("/settings/source-apps/:appId", s.uiSourceAppUpdate)
 	e.POST("/settings/source-apps/:appId/delete", s.uiSourceAppDelete)
 	e.GET("/settings/approvals", s.uiApprovals)
 	e.GET("/settings/mcp-nodes", s.uiMCPNodesRedirect)

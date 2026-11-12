@@ -1303,6 +1303,10 @@ routes:
       path: /api/orgs/:orgId/source-apps/:appId
       level: auth
       note: RequireAuth
+    - method: PATCH
+      path: /api/orgs/:orgId/source-apps/:appId
+      level: auth
+      note: RequireAuth
     - method: GET
       path: /api/projects
       level: auth

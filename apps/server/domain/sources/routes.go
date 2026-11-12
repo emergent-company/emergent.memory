@@ -91,6 +91,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	sourceApps.Use(authMiddleware.RequireAuth())
 	sourceApps.GET("", h.ListSourceApps)
 	sourceApps.POST("", h.RegisterSourceApp)
+	sourceApps.PATCH("/:appId", h.UpdateSourceApp)
 	sourceApps.DELETE("/:appId", h.DeleteSourceApp)
 
 	orgClients := e.Group("/api/orgs/:orgId/data-source-integrations/oauth-clients")

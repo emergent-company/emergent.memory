@@ -35,8 +35,16 @@ id and its `webhookKey`. The App must be granted `contents: read`,
 
 ```http
 GET    /api/orgs/{orgId}/source-apps
+PATCH  /api/orgs/{orgId}/source-apps/{appId}
 DELETE /api/orgs/{orgId}/source-apps/{appId}
 ```
+
+The PATCH body takes `slug` (required, trimmed) and the optional `privateKey`
+and `webhookSecret`. A blank or omitted secret keeps the stored value; a
+supplied private key is validated before it is sealed. `provider` and `appId`
+are immutable: `(organization, provider, App id)` is what binds project
+sources, so an edit renames or rotates credentials but never repoints an App
+under sources that are already attached.
 
 ### Create the source
 
