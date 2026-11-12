@@ -125,8 +125,13 @@ func (s *Server) deleteMCPServer(c echo.Context) error {
 // listChatModels returns the project's configured generative models for the
 // chat composer's model picker, grouped client-side by provider.
 func (s *Server) listChatModels(c echo.Context) error {
-	gen, _ := s.providerModelOptions(c.Request().Context())
-	return c.JSON(http.StatusOK, gen)
+	ctx := c.Request().Context()
+	providers, err := s.memory.ListProjectProviders(ctx)
+	if err != nil {
+		captureError(err)
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "memory service unavailable"})
+	}
+	return c.JSON(http.StatusOK, s.configuredGenerativeModels(ctx, providers))
 }
 
 func (s *Server) listModels(c echo.Context) error {

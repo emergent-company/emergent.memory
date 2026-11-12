@@ -206,7 +206,7 @@
         var isNew = evt.conversationId !== conversationId && !railHas(evt.conversationId);
         var prevId = conversationId;
         conversationId = evt.conversationId;
-      applyComposerSelection();
+        applyComposerSelection();
         // A message parked on a brand-new (id-less) conversation moves with it
         // once the server assigns the id, so it is never stranded or delivered
         // to another conversation.
@@ -822,6 +822,7 @@
     replayFrames = [];
     transcriptReady = false;
     conversationId = "";
+    applyComposerSelection();
     activeRunId = "";
     activeRunAgentName = "";
     updateUrl();
@@ -1473,6 +1474,7 @@
     }
 
     conversationId = id;
+    applyComposerSelection();
     activeRunId = "";
     activeRunAgentName = "";
     updateUrl();

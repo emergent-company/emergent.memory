@@ -1183,7 +1183,18 @@ func (h *Handler) StreamChat(c echo.Context) error {
 	var fullResponse strings.Builder
 	var llmErr error
 	if h.modelFactory != nil {
-		llmModel, createErr := h.modelFactory.CreateModel(ctx)
+		var llmModel adkmodel.LLM
+		var createErr error
+		if strings.TrimSpace(req.Model) != "" {
+			llmModel, createErr = h.modelFactory.CreateModelWithName(ctx, strings.TrimSpace(req.Model))
+		} else {
+			llmModel, createErr = h.modelFactory.CreateModel(ctx)
+		}
+		if createErr == nil && normalizedEffort != "" {
+			if rc, ok := llmModel.(adk.ReasoningEffortConfigurator); ok {
+				rc.SetReasoningEffort(normalizedEffort)
+			}
+		}
 		if createErr != nil {
 			llmErr = createErr
 		} else {
