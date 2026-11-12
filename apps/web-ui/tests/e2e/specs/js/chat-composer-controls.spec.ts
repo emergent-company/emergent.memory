@@ -29,14 +29,26 @@ const SKELETON = `<!doctype html>
     <div>
       <div id="chat-queue" class="memory-queue hidden" aria-live="polite"></div>
       <form id="chat-form">
-        <select id="chat-model" aria-label="Model"><option value="">Auto (agent default)</option></select>
-        <select id="chat-thinking" aria-label="Thinking">
-          <option value="">Auto</option><option value="minimal">Minimal</option><option value="low">Low</option>
-          <option value="medium">Medium</option><option value="high">High</option><option value="max">Max</option>
-        </select>
-        <textarea id="chat-input" rows="1" aria-label="Message"></textarea>
+        <textarea id="chat-input" data-prompt-bar-input rows="1" aria-label="Message"></textarea>
+        <div data-chat-picker="model">
+          <div role="button" tabindex="0" aria-label="Select model (Auto)"><span data-chat-picker-label>Auto</span></div>
+          <ul data-chat-picker-menu></ul>
+          <input type="hidden" name="model" value="" />
+        </div>
+        <div data-chat-picker="thinking">
+          <div role="button" tabindex="0" aria-label="Select thinking option (Auto)"><span data-chat-picker-label>Auto</span></div>
+          <ul data-chat-picker-menu>
+            <li><a data-value=""><span class="text-sm">Auto</span></a></li>
+            <li><a data-value="minimal"><span class="text-sm">Minimal</span></a></li>
+            <li><a data-value="low"><span class="text-sm">Low</span></a></li>
+            <li><a data-value="medium"><span class="text-sm">Medium</span></a></li>
+            <li><a data-value="high"><span class="text-sm">High</span></a></li>
+            <li><a data-value="max"><span class="text-sm">Max</span></a></li>
+          </ul>
+          <input type="hidden" name="thinking" value="" />
+        </div>
         <button id="chat-send" type="submit" aria-label="Send">Send</button>
-        <span id="chat-stop" class="hidden shrink-0"><button type="button" aria-label="Stop generating">Stop</button></span>
+        <span id="chat-stop" class="hidden"><button type="button" aria-label="Stop generating">Stop</button></span>
       </form>
     </div>
   </div>
@@ -79,12 +91,14 @@ async function boot(page: Page, seed: Record<string, string>): Promise<string[]>
   return errors;
 }
 
-test('populates the model select grouped by provider', async ({ page }) => {
+test('populates the model menu grouped by provider', async ({ page }) => {
   const errors = await boot(page, {});
-  const model = page.locator('#chat-model');
-  await expect(model.locator('option[value="openai/deepseek-v4-flash"]')).toHaveCount(1);
-  await expect(model.locator('option[value="openai/deepseek-v4-pro"]')).toHaveCount(1);
-  await expect(model.locator('optgroup[label="openai"]')).toHaveCount(1);
+  const model = page.locator('[data-chat-picker="model"]');
+  await expect(model.locator('a[data-value="openai/deepseek-v4-flash"]')).toHaveCount(1);
+  await expect(model.locator('a[data-value="openai/deepseek-v4-pro"]')).toHaveCount(1);
+  await expect(model.locator('li.menu-title')).toHaveCount(1);
+  await expect(model.locator('li.menu-title')).toHaveText('openai');
+  await expect(model.locator('[data-chat-picker-label]')).toHaveText('Auto (agent default)');
   expect(errors).toEqual([]);
 });
 
@@ -93,15 +107,22 @@ test('restores the stored selection', async ({ page }) => {
     'memory.chat.model.default': 'openai/deepseek-v4-pro',
     'memory.chat.thinking.default': 'high',
   });
-  await expect(page.locator('#chat-model')).toHaveValue('openai/deepseek-v4-pro');
-  await expect(page.locator('#chat-thinking')).toHaveValue('high');
+  const model = page.locator('[data-chat-picker="model"]');
+  const thinking = page.locator('[data-chat-picker="thinking"]');
+  await expect(page.locator('#chat-form input[name="model"]')).toHaveValue('openai/deepseek-v4-pro');
+  await expect(page.locator('#chat-form input[name="thinking"]')).toHaveValue('high');
+  await expect(model.locator('[data-chat-picker-label]')).toHaveText('DeepSeek V4 Pro');
+  await expect(thinking.locator('[data-chat-picker-label]')).toHaveText('High');
   expect(errors).toEqual([]);
 });
 
 test('persists changes to the current conversation and default slots', async ({ page }) => {
   const errors = await boot(page, {});
-  await page.locator('#chat-model').selectOption('openai/deepseek-v4-pro');
-  await page.locator('#chat-thinking').selectOption('medium');
+  const model = page.locator('[data-chat-picker="model"]');
+  await expect(model.locator('a[data-value="openai/deepseek-v4-pro"]')).toHaveCount(1);
+  await model.locator('a[data-value="openai/deepseek-v4-pro"]').dispatchEvent('click');
+  await page.locator('[data-chat-picker="thinking"] a[data-value="medium"]').dispatchEvent('click');
+
   const stored = await page.evaluate(() => ({
     model: localStorage.getItem('memory.chat.model.new'),
     thinking: localStorage.getItem('memory.chat.thinking.new'),
@@ -112,5 +133,19 @@ test('persists changes to the current conversation and default slots', async ({ 
   expect(stored.thinking).toBe('medium');
   expect(stored.modelDefault).toBe('openai/deepseek-v4-pro');
   expect(stored.thinkingDefault).toBe('medium');
+  await expect(page.locator('#chat-form input[name="model"]')).toHaveValue('openai/deepseek-v4-pro');
+  await expect(page.locator('#chat-form input[name="thinking"]')).toHaveValue('medium');
+  await expect(model.locator('[data-chat-picker-label]')).toHaveText('DeepSeek V4 Pro');
+  expect(errors).toEqual([]);
+});
+
+test('resets the model to Auto', async ({ page }) => {
+  const errors = await boot(page, { 'memory.chat.model.default': 'openai/deepseek-v4-pro' });
+  const model = page.locator('[data-chat-picker="model"]');
+  await expect(model.locator('a[data-value=""]')).toHaveCount(1);
+  await model.locator('a[data-value=""]').dispatchEvent('click');
+  await expect(page.locator('#chat-form input[name="model"]')).toHaveValue('');
+  await expect(model.locator('[data-chat-picker-label]')).toHaveText('Auto (agent default)');
+  expect(await page.evaluate(() => localStorage.getItem('memory.chat.model.default'))).toBe('');
   expect(errors).toEqual([]);
 });
