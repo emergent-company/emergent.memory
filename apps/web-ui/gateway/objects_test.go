@@ -1213,10 +1213,19 @@ func TestRenderObjectDetailMetaProvenance(t *testing.T) {
 		`href="/objects/o1/history"`,
 		`data-testid="object-credential-kind"`,
 		"agent MCP link",
+		// The chip's glyph and its human tooltip must be the ones dataClassChip
+		// returns: the two string returns were once bound in the wrong order, so
+		// the icon class was rendered as the tooltip and the sentence as the icon
+		// (an empty span, i.e. no glyph at all).
+		"lucide--sparkles",
+		"This version was generated",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("provenance meta missing %q:\n%s", want, html)
 		}
+	}
+	if strings.Contains(html, `title="lucide--sparkles"`) {
+		t.Errorf("the icon class must not be used as the chip's tooltip:\n%s", html)
 	}
 
 	// Absent fields (write responses) render no chip at all.
@@ -1228,8 +1237,12 @@ func TestRenderObjectDetailMetaProvenance(t *testing.T) {
 	}
 	// A single revision is not history worth counting.
 	one := 1
-	if html := renderHTML(t, objectDetailMeta(&GraphObject{ID: "o3", Type: "Note", DataClass: "source", RevisionCount: &one}, objectBranchRef{}, nil, nil, "overview")); strings.Contains(html, "versions") {
+	fromSource := renderHTML(t, objectDetailMeta(&GraphObject{ID: "o3", Type: "Note", DataClass: "source", RevisionCount: &one}, objectBranchRef{}, nil, nil, "overview"))
+	if strings.Contains(fromSource, "versions") {
 		t.Error("a single revision must not render a versions link")
+	}
+	if !strings.Contains(fromSource, "lucide--file-input") {
+		t.Errorf("a source-owned version must carry its own glyph:\n%s", fromSource)
 	}
 	// An unknown class leaks nothing into the header.
 	if html := renderHTML(t, objectDetailMeta(&GraphObject{ID: "o4", Type: "Note", DataClass: "mystery"}, objectBranchRef{}, nil, nil, "overview")); strings.Contains(html, "mystery") {
@@ -5407,7 +5420,7 @@ func TestObjectSubpages(t *testing.T) {
 			Status: &objectStatusControl{Show: true, Options: []string{"ready", "done"}},
 			Active: "history",
 		}
-		body := renderHTML(t, objectHistoryPage(data, nil, nil))
+		body := renderHTML(t, objectHistoryPage(data, nil, nil, nil))
 		if !strings.Contains(body, `data-status="ready"`) {
 			t.Errorf("history subpage should keep the read-only header status badge:\n%s", body)
 		}
