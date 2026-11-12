@@ -3771,6 +3771,39 @@ memory graph objects update <id> [flags]
       --status string        Set object status (e.g. active, planned, deprecated)
 ```
 
+## memory graph reindex-embeddings
+
+Re-queue embeddings for the project's objects, relationships and chunks
+
+### Synopsis
+
+Enqueue embedding (re-)generation for a project's corpus.
+
+By default only rows with a NULL embedding are queued. --force re-queues rows
+that already have an embedding, which is what a project needs after changing
+its embedding model: vectors from two different models are not comparable.
+
+--chunks also re-queues document chunks. Chunks are otherwise only enqueued when
+a document is (re)processed, so without this a model change silently leaves the
+chunk corpus in the old embedding space.
+
+Examples:
+  memory graph reindex-embeddings --force --chunks
+  memory graph reindex-embeddings --namespace docs/ --force
+
+```
+memory graph reindex-embeddings [flags]
+```
+
+### Options
+
+```
+      --chunks             Also re-enqueue the project's document chunks
+      --force              Re-enqueue rows that already have an embedding
+  -h, --help               help for reindex-embeddings
+      --namespace string   Limit objects/relationships to keys with this prefix
+```
+
 ## memory graph relationships
 
 Manage graph relationships
@@ -3959,7 +3992,7 @@ Interactive wizard that sets up a Memory project in the current directory.
 
 Walks through:
   1. Project selection or creation
-  2. LLM provider configuration (org-level)
+  2. LLM provider configuration (project-scoped)
   3. Memory skills installation for AI agents
 
 Writes MEMORY_PROJECT_ID, MEMORY_PROJECT_NAME, and MEMORY_PROJECT_API_KEY
@@ -4369,10 +4402,10 @@ Create a new project
 
 Create a new project in the Memory platform.
 
-Prints the new project's Name and ID on success. If no LLM provider credentials
-are configured for the organization, a warning is shown explaining that AI
-features (embeddings, search, extraction) will not work until a provider is
-added via 'memory provider configure'.
+Prints the new project's Name and ID on success. If the new project has no LLM
+provider credentials configured, a warning is shown explaining that AI features
+(embeddings, search, extraction) will not work until a provider is added via
+'memory provider configure-project'.
 
 ```
 memory projects create [flags]
@@ -4819,14 +4852,16 @@ Commands for managing LLM provider credentials, model selections, and usage repo
 
 ## memory provider configure-project
 
-Save project-level LLM provider credentials (overrides org config)
+Save this project's LLM provider credentials
 
 ### Synopsis
 
-Save project-specific credentials and model selections for the given provider.
-This overrides the organization's provider config for this project.
+Save provider credentials and model selections for this project.
+Credentials are stored per project — there is no organization-level provider
+config, and no fallback to one.
 
-Use --remove to remove the project-level override and fall back to the org config.
+Use --remove to delete this project's config for the provider. The project then
+has no credentials for it until you configure them again.
 
 Supported providers:
   google            — Google AI (Gemini API); requires --api-key
@@ -4869,7 +4904,7 @@ memory provider configure-project <provider> [flags]
       --key-file string           Path to service account JSON key file (google-vertex)
       --location string           GCP region, e.g. us-central1 (required for google-vertex)
       --project string            Project ID (auto-detected from MEMORY_PROJECT_ID)
-      --remove                    Remove the project-level override and inherit org config
+      --remove                    Remove this project's config for the provider
 ```
 
 ## memory provider definitions
@@ -4902,11 +4937,14 @@ Show current provider configurations
 
 ### Synopsis
 
-List all configured LLM providers at the organization level, plus any
-project-level overrides across all projects in the organization.
+List project-level LLM provider configurations across the projects in the
+organization.
+
+Provider credentials are project-scoped — org-level provider config is
+deprecated — so every row is a project config.
 
 The output is a table with columns: SCOPE, PROVIDER, GENERATIVE MODEL,
-EMBEDDING MODEL, GCP PROJECT, LOCATION, and UPDATED.
+EMBEDDING MODEL, BASE URL, GCP PROJECT, LOCATION, and UPDATED.
 
 Use --project to filter results to a single project (name or ID).
 If multiple projects share the same name, an error is returned with all matching IDs.
@@ -4957,9 +4995,8 @@ memory provider models [provider] [flags]
 ### Options
 
 ```
-  -h, --help            help for models
-      --org-id string   Organization ID (auto-detected from config)
-      --type string     Filter by model type: embedding or generative
+  -h, --help          help for models
+      --type string   Filter by model type: embedding or generative
 ```
 
 ## memory provider pricing
@@ -5089,15 +5126,16 @@ Test LLM provider credentials with a live generate call
 Send a live "say hello" generate call to verify that provider credentials
 work end-to-end.
 
-Without a provider argument, tests all configured providers.
+Without a provider argument, tests every provider configured for the project
+(requires --project or MEMORY_PROJECT_ID).
 Pass a provider name (google, google-vertex, openai, or deepseek) to test a specific one.
 
-Use --project to test using the project-level credential hierarchy
-(project override → org) instead of org credentials only.
+Provider credentials are project-scoped, so resolution always uses the project's
+config.
 
 Examples:
-  memory provider test
-  memory provider test openai
+  memory provider test --project <id>
+  memory provider test openai --project <id>
   memory provider test deepseek
   memory provider test google-vertex
   memory provider test google --project <id>

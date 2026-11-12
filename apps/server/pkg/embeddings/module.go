@@ -3,7 +3,6 @@ package embeddings
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -271,7 +270,7 @@ func (s *Service) resolveClientWithMeta(ctx context.Context) (Client, string, st
 
 	cred, err := s.resolver.ResolveEmbedding(ctx)
 	if err != nil {
-		if errors.Is(err, ErrEmbeddingModelNotSet) || errors.Is(err, ErrNoProjectContext) {
+		if IsNotConfigured(err) {
 			s.warnNotConfigured(ctx, err.Error())
 		}
 		return nil, "", "", fmt.Errorf("embedding credential resolver failed: %w", err)
@@ -337,5 +336,5 @@ func (s *Service) resolveClientWithMeta(ctx context.Context) (Client, string, st
 	// The project provider resolved, but the credential is unusable (e.g. a
 	// Google provider with no API key). Fail closed rather than quietly sending
 	// the request to some other credential.
-	return nil, "", "", fmt.Errorf("resolved embedding credential for provider %q has no usable credentials — configure it with 'memory provider configure-project %s --api-key ...'", cred.ProviderSlug, cred.ProviderSlug)
+	return nil, "", "", fmt.Errorf("%w: provider %q has no usable credentials — configure it with 'memory provider configure-project %s --api-key ...'", ErrEmbeddingCredentialUnusable, cred.ProviderSlug, cred.ProviderSlug)
 }

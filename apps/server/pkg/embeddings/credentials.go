@@ -21,7 +21,26 @@ var (
 	// (non-retryable) embedding failure by that substring, and a missing model is
 	// a configuration error, not a transient network/quota failure.
 	ErrEmbeddingModelNotSet = errors.New("no embedding model configured")
+
+	// ErrEmbeddingCredentialUnusable reports that the project's configured
+	// embedding provider exists but its credential cannot be used (for example a
+	// Google provider with no API key). Like the other two sentinels this is a
+	// configuration error: retrying the same request cannot fix it.
+	ErrEmbeddingCredentialUnusable = errors.New("embedding provider credential is unusable")
 )
+
+// IsNotConfigured reports whether err means the project has no usable embedding
+// configuration — no project context, no embedding model, or an unusable
+// provider credential — rather than a provider failure (timeout, 429, 5xx).
+//
+// These conditions are already reported once per project by Service, so callers
+// should degrade quietly: skip their own per-call warning, avoid retrying, and
+// fall back to lexical results where that is their contract.
+func IsNotConfigured(err error) bool {
+	return errors.Is(err, ErrNoProjectContext) ||
+		errors.Is(err, ErrEmbeddingModelNotSet) ||
+		errors.Is(err, ErrEmbeddingCredentialUnusable)
+}
 
 // ResolvedEmbeddingCredential holds the decrypted credential material needed to
 // instantiate an embeddings client for a specific request context.

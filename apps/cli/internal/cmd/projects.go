@@ -72,10 +72,10 @@ var createProjectCmd = &cobra.Command{
 	Short: "Create a new project",
 	Long: `Create a new project in the Memory platform.
 
-Prints the new project's Name and ID on success. If no LLM provider credentials
-are configured for the organization, a warning is shown explaining that AI
-features (embeddings, search, extraction) will not work until a provider is
-added via 'memory provider configure'.`,
+Prints the new project's Name and ID on success. If the new project has no LLM
+provider credentials configured, a warning is shown explaining that AI features
+(embeddings, search, extraction) will not work until a provider is added via
+'memory provider configure-project'.`,
 	RunE: runCreateProject,
 }
 
@@ -773,13 +773,15 @@ func runCreateProject(cmd *cobra.Command, args []string) error {
 	fmt.Println("Project created successfully!")
 	fmt.Printf("  Name: %s (%s)\n", project.Name, project.ID)
 
-	// Warn if no LLM provider is configured for the org
-	configs, credErr := c.SDK.Provider.ListOrgConfigs(context.Background(), orgID)
+	// Warn if no LLM provider is configured for the new project. Provider
+	// credentials are project-scoped (org-level config is deprecated), so the
+	// check has to be against this project, not the organization.
+	configs, credErr := c.SDK.Provider.ListProjectConfigs(context.Background(), project.ID)
 	if credErr == nil && len(configs) == 0 {
 		fmt.Println()
-		fmt.Println("Warning: No LLM provider credentials are configured for your organization.")
+		fmt.Println("Warning: No LLM provider credentials are configured for this project.")
 		fmt.Println("AI features (embeddings, search, extraction) will not work until you add one.")
-		fmt.Println("  Run: memory provider configure google --api-key <api-key>")
+		fmt.Printf("  Run: memory provider configure-project google --api-key <api-key> --project %s\n", project.ID)
 	}
 
 	return nil

@@ -28,11 +28,13 @@ var providerCmd = &cobra.Command{
 
 var configureProjectCmd = &cobra.Command{
 	Use:   "configure-project <provider>",
-	Short: "Save project-level LLM provider credentials (overrides org config)",
-	Long: `Save project-specific credentials and model selections for the given provider.
-This overrides the organization's provider config for this project.
+	Short: "Save this project's LLM provider credentials",
+	Long: `Save provider credentials and model selections for this project.
+Credentials are stored per project — there is no organization-level provider
+config, and no fallback to one.
 
-Use --remove to remove the project-level override and fall back to the org config.
+Use --remove to delete this project's config for the provider. The project then
+has no credentials for it until you configure them again.
 
 Supported providers:
   google            — Google AI (Gemini API); requires --api-key
@@ -96,7 +98,7 @@ func runProviderConfigureProject(cmd *cobra.Command, args []string) error {
 		if err := c.SDK.Provider.DeleteProjectConfig(context.Background(), projectID, providerArg); err != nil {
 			return fmt.Errorf("failed to remove project config for %s: %w", providerArg, err)
 		}
-		fmt.Printf("Project-level %s config removed. The project will now inherit the org config.\n", providerArg)
+		fmt.Printf("Removed the %s config for this project. It has no %s credentials until you configure them again.\n", providerArg, providerArg)
 		return nil
 	}
 
@@ -211,7 +213,6 @@ Examples:
 }
 
 var modelsTypeFlag string
-var modelsOrgID string
 
 func runProviderModels(cmd *cobra.Command, args []string) error {
 	c, err := getClient(cmd)
@@ -230,7 +231,7 @@ func runProviderModels(cmd *cobra.Command, args []string) error {
 		}
 		if len(models) == 0 {
 			fmt.Printf("No models cached for provider %q.\n", providerArg)
-			fmt.Println("Check that credentials are configured with 'memory provider configure'.")
+			fmt.Println("Check that credentials are configured with 'memory provider configure-project'.")
 			return nil
 		}
 		t := internalui.NewTable(internalui.TableConfig{Compact: true})
@@ -242,15 +243,22 @@ func runProviderModels(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// No provider argument: iterate all orgs and collect models from every
-	// configured provider. Orgs that 403 (JWT not scoped to them) are skipped
-	// silently. Providers seen in multiple orgs are deduplicated.
-	orgs, err := c.SDK.Orgs.List(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to list organizations: %w", err)
+	// No provider argument: list the catalog for every provider configured on the
+	// active project. Provider credentials are project-scoped (org-level config is
+	// deprecated), so there is no org-wide list to walk.
+	projectID := os.Getenv("MEMORY_PROJECT_ID")
+	if projectID == "" {
+		fmt.Println("No active project — pass a provider name, e.g. 'memory provider models google'.")
+		return nil
 	}
-	if len(orgs) == 0 {
-		fmt.Println("No organizations found.")
+
+	configs, err := c.SDK.Provider.ListProjectConfigs(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("failed to list project provider configs: %w", err)
+	}
+	if len(configs) == 0 {
+		fmt.Printf("No providers configured for project %s.\n", projectID)
+		fmt.Println("Run 'memory provider configure-project google --api-key <key>' to get started.")
 		return nil
 	}
 
@@ -260,26 +268,19 @@ func runProviderModels(cmd *cobra.Command, args []string) error {
 	seenProviders := map[string]bool{}
 	anyModels := false
 
-	for _, org := range orgs {
-		configs, listErr := c.SDK.Provider.ListOrgConfigs(ctx, org.ID)
-		if listErr != nil {
-			// 403 expected for orgs not matching the JWT scope — skip silently.
+	for _, pc := range configs {
+		if seenProviders[pc.Provider] {
 			continue
 		}
-		for _, pc := range configs {
-			if seenProviders[pc.Provider] {
-				continue
-			}
-			seenProviders[pc.Provider] = true
-			models, modelsErr := c.SDK.Provider.ListModels(ctx, pc.Provider, modelsTypeFlag)
-			if modelsErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not fetch models for %s: %v\n", pc.Provider, modelsErr)
-				continue
-			}
-			for _, m := range sortModelsByType(models) {
-				t.AddRow([]string{pc.Provider, m.ModelName, m.ModelType, pc.Provider + "/" + m.ModelName})
-				anyModels = true
-			}
+		seenProviders[pc.Provider] = true
+		models, modelsErr := c.SDK.Provider.ListModels(ctx, pc.Provider, modelsTypeFlag)
+		if modelsErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not fetch models for %s: %v\n", pc.Provider, modelsErr)
+			continue
+		}
+		for _, m := range sortModelsByType(models) {
+			t.AddRow([]string{pc.Provider, m.ModelName, m.ModelType, pc.Provider + "/" + m.ModelName})
+			anyModels = true
 		}
 	}
 
@@ -588,15 +589,16 @@ var providerTestCmd = &cobra.Command{
 	Long: `Send a live "say hello" generate call to verify that provider credentials
 work end-to-end.
 
-Without a provider argument, tests all configured providers.
+Without a provider argument, tests every provider configured for the project
+(requires --project or MEMORY_PROJECT_ID).
 Pass a provider name (google, google-vertex, openai, or deepseek) to test a specific one.
 
-Use --project to test using the project-level credential hierarchy
-(project override → org) instead of org credentials only.
+Provider credentials are project-scoped, so resolution always uses the project's
+config.
 
 Examples:
-  memory provider test
-  memory provider test openai
+  memory provider test --project <id>
+  memory provider test openai --project <id>
   memory provider test deepseek
   memory provider test google-vertex
   memory provider test google --project <id>`,
@@ -635,14 +637,19 @@ func runProviderTest(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		providers = []string{args[0]}
 	} else {
-		// Auto-discover from configured org configs
-		configs, err := c.SDK.Provider.ListOrgConfigs(ctx, resolvedOrgID)
+		// Auto-discover the providers this project has configured. Provider
+		// credentials are project-scoped (org-level config is deprecated), so
+		// there is no org-wide list to read.
+		if testProviderProjectID == "" {
+			return fmt.Errorf("--project is required to auto-discover this project's providers (or pass a provider name, e.g. 'memory provider test google')")
+		}
+		configs, err := c.SDK.Provider.ListProjectConfigs(ctx, testProviderProjectID)
 		if err != nil {
 			return fmt.Errorf("failed to list provider configs: %w", err)
 		}
 		if len(configs) == 0 {
-			fmt.Println("No providers configured.")
-			fmt.Println("Run 'memory provider configure google --api-key <key>' to configure a provider.")
+			fmt.Printf("No providers configured for project %s.\n", testProviderProjectID)
+			fmt.Println("Run 'memory provider configure-project google --api-key <key>' to configure a provider.")
 			return nil
 		}
 		for _, pc := range configs {
@@ -683,11 +690,14 @@ func runProviderTest(cmd *cobra.Command, args []string) error {
 var providerListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "Show current provider configurations",
-	Long: `List all configured LLM providers at the organization level, plus any
-project-level overrides across all projects in the organization.
+	Long: `List project-level LLM provider configurations across the projects in the
+organization.
+
+Provider credentials are project-scoped — org-level provider config is
+deprecated — so every row is a project config.
 
 The output is a table with columns: SCOPE, PROVIDER, GENERATIVE MODEL,
-EMBEDDING MODEL, GCP PROJECT, LOCATION, and UPDATED.
+EMBEDDING MODEL, BASE URL, GCP PROJECT, LOCATION, and UPDATED.
 
 Use --project to filter results to a single project (name or ID).
 If multiple projects share the same name, an error is returned with all matching IDs.
@@ -728,12 +738,8 @@ func runProviderList(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	// Fetch org-level configs and project-level overrides in parallel.
-	orgConfigs, orgErr := c.SDK.Provider.ListOrgConfigs(ctx, orgID)
-	if orgErr != nil {
-		return fmt.Errorf("failed to list org provider configs: %w", orgErr)
-	}
-
+	// Provider credentials are project-scoped: org-level config is deprecated,
+	// so every row here is a project config.
 	projectConfigs, projErr := c.SDK.Provider.ListProjectConfigsByOrg(ctx, orgID)
 	if projErr != nil {
 		return fmt.Errorf("failed to list project provider configs: %w", projErr)
@@ -748,15 +754,15 @@ func runProviderList(cmd *cobra.Command, _ []string) error {
 			}
 		}
 		projectConfigs = filtered
-		// Keep orgConfigs — they represent the inherited base for the project.
 	}
 
-	if len(orgConfigs) == 0 && len(projectConfigs) == 0 {
+	if len(projectConfigs) == 0 {
 		if filterProjectID != "" {
 			fmt.Printf("No providers configured for project %q.\n", listProjectID)
+			fmt.Println("Run 'memory provider configure-project google --api-key <key> --project " + filterProjectID + "' to set one up.")
 		} else {
 			fmt.Println("No providers configured.")
-			fmt.Println("Run 'memory provider configure google --api-key <key>' to get started.")
+			fmt.Println("Run 'memory provider configure-project google --api-key <key>' to get started.")
 		}
 		return nil
 	}
@@ -764,10 +770,8 @@ func runProviderList(cmd *cobra.Command, _ []string) error {
 	// JSON output
 	if listJSONFlag || output == "json" {
 		out := struct {
-			Org      []provider.ProviderConfig        `json:"org"`
 			Projects []provider.ProjectProviderConfig `json:"projects"`
 		}{
-			Org:      orgConfigs,
 			Projects: projectConfigs,
 		}
 		enc := json.NewEncoder(cmd.OutOrStdout())
@@ -779,18 +783,6 @@ func runProviderList(cmd *cobra.Command, _ []string) error {
 	t := internalui.NewTable(internalui.TableConfig{Compact: true})
 	t.SetHeaders([]string{"SCOPE", "PROVIDER", "GENERATIVE MODEL", "EMBEDDING MODEL", "BASE URL", "GCP PROJECT", "LOCATION", "UPDATED"})
 
-	for _, cfg := range orgConfigs {
-		t.AddRow([]string{
-			"org",
-			cfg.Provider,
-			valueOrDash(cfg.GenerativeModel),
-			valueOrDash(cfg.EmbeddingModel),
-			valueOrDash(cfg.BaseURL),
-			valueOrDash(cfg.GCPProject),
-			valueOrDash(cfg.Location),
-			fmtTime(cfg.UpdatedAt),
-		})
-	}
 	for _, cfg := range projectConfigs {
 		scope := "project:" + shortID(cfg.ProjectID)
 		t.AddRow([]string{
@@ -1144,12 +1136,11 @@ func init() {
 	configureProjectCmd.Flags().StringVar(&configureProjectGenerativeModel, "generative-model", "", "Generative model to use (auto-selected from catalog if omitted)")
 	configureProjectCmd.Flags().StringVar(&configureProjectEmbeddingModel, "embedding-model", "", "Embedding model to use (auto-selected from catalog if omitted)")
 	configureProjectCmd.Flags().StringVar(&configureProjectID, "project", "", "Project ID (auto-detected from MEMORY_PROJECT_ID)")
-	configureProjectCmd.Flags().BoolVar(&configureProjectRemove, "remove", false, "Remove the project-level override and inherit org config")
+	configureProjectCmd.Flags().BoolVar(&configureProjectRemove, "remove", false, "Remove this project's config for the provider")
 	configureProjectCmd.Flags().StringArrayVar(&configureProjectExtra, "extra", nil, "Vendor-specific extra config field (key=value, repeatable)")
 
 	// models flags
 	providerModelsCmd.Flags().StringVar(&modelsTypeFlag, "type", "", "Filter by model type: embedding or generative")
-	providerModelsCmd.Flags().StringVar(&modelsOrgID, "org-id", "", "Organization ID (auto-detected from config)")
 
 	// usage flags
 	providerUsageCmd.Flags().StringVar(&usageProjectID, "project", "", "Filter usage to a specific project ID")

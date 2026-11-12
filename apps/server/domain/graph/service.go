@@ -26,6 +26,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/branchorigin"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 	"github.com/emergent-company/emergent.memory/pkg/embeddingtext"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/mathutil"
@@ -3295,6 +3296,13 @@ func (s *Service) VectorSearchByText(ctx context.Context, projectID uuid.UUID, t
 	}
 	vec, err := s.embeddings.EmbedQuery(ctx, text)
 	if err != nil {
+		// No usable embedding configuration is a project setup problem, not a
+		// search failure: degrade to an empty result set the way hybrid search
+		// degrades to lexical-only, so callers that treat this as advisory (the
+		// MCP similarity check) do not log a failure per operation.
+		if embeddings.IsNotConfigured(err) {
+			return &SearchResponse{Data: []*SearchResultItem{}, Total: 0, Offset: req.Offset}, nil
+		}
 		return nil, fmt.Errorf("embed query text: %w", err)
 	}
 	if len(vec) == 0 {
