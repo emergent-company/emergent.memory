@@ -274,8 +274,20 @@
       body: body ? JSON.stringify(body) : undefined,
     })
       .then(function (r) {
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        return after ? after() : undefined;
+        if (r.ok) return after ? after() : undefined;
+        // A refusal is more than a status: the gateway proxies memory's 409
+        // with the reason the write was not recorded (the row already carries a
+        // different outcome), so show that instead of a bare "HTTP 409", which
+        // reads like a transport failure. A response without a JSON body keeps
+        // the status line.
+        return r
+          .json()
+          .catch(function () {
+            return null;
+          })
+          .then(function (body) {
+            throw new Error((body && body.error) || "HTTP " + r.status);
+          });
       })
       .then(function () {
         reconcile();

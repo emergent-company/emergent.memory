@@ -24,8 +24,8 @@ env:
   # (apps/server/Dockerfile and deploy/self-hosted/Dockerfile.server) copy only
   # apps/server + pkg/sdk, so they build in module mode; workspace MVS instead
   # picks the highest version any *other* module requires, which is how the
-  # gateway shipped a grpc pin this CI never exercised (#2300, #2309). A
-  # go.mod-only problem here would be invisible until image-build time (#2314).
+  # gateway shipped a grpc pin this CI never exercised. A go.mod-only problem
+  # here would be invisible until image-build time.
   GOWORK: "off"
 
 # Least privilege: PR-controlled source runs on the self-hosted runner only

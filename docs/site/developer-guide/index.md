@@ -12,6 +12,10 @@ This guide covers topics for developers integrating with, extending, or operatin
 
     Register external MCP servers (stdio, SSE, HTTP) and the built-in Memory MCP server. Browse the official MCP registry and install community servers.
 
+-   **[A2A and A2UI](a2a-protocol.md)**
+
+    The Agent2Agent interface: agent cards, project addressing, streaming, and the A2UI surface protocol — with the compatibility matrix of versions and catalogs the server supports.
+
 -   **[Extraction Pipeline](extraction.md)**
 
     Monitor and control extraction jobs that turn documents into graph objects. View per-job logs including LLM calls, token counts, and created objects.

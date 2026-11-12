@@ -751,7 +751,10 @@ all — the `*-ui.spec.ts` files were authored but never executed.)
   `apps/web-ui/gateway/webui/static/css/app.css` are gitignored, so a new
   worktree has no generated templates or stylesheet and the gateway will **not**
   compile until you run `PATH="/root/go/bin:$PATH" templ generate` (or
-  `-f <file>.templ` for one file) and `PATH="/root/go/bin:$PATH" task css`.
+  `-f <file>.templ` for one file) and `PATH="/root/go/bin:$PATH" task css`,
+  both **from `apps/web-ui/gateway`** — templ records its invocation directory in
+  the generated files, so a tree generated from the repo root is rejected by the
+  `webui-templ` pre-commit hook (see #651).
   Run them before `go build ./...` in any worktree-based lane. The mock-harness
   configs (`datasources.config.ts`, `gateway-smoke.config.ts`, `dev-gallery.config.ts`, `share.config.ts`)
   generate both on the fly via `run-e2e.sh`, so they boot on a cold tree.

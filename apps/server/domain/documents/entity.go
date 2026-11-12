@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 // Document represents a document entity from kb.documents table
@@ -146,18 +148,24 @@ const (
 // NormalizeStatusBucket validates a status filter value. An empty value means
 // "no status filter" and is returned as-is; anything outside the bucket
 // vocabulary is an error so a typo cannot silently look like a working filter.
+//
+// The error is itself the response: it is an *apperror.Error the handler returns
+// unchanged, so the accepted vocabulary reaches the client as the 400 message.
+// The message is composed here, from constants, so it can never carry anything
+// but the vocabulary — there is no cause to leak.
 func NormalizeStatusBucket(raw string) (string, error) {
 	s := strings.ToLower(strings.TrimSpace(raw))
 	if s == "" {
 		return "", nil
 	}
 	if _, ok := statusBucketStates[s]; !ok {
-		return "", fmt.Errorf("status must be one of %s, %s, %s, %s", StatusBucketProcessing, StatusBucketReady, StatusBucketExtracted, StatusBucketFailed)
+		return "", apperror.ErrBadRequest.WithMessage(fmt.Sprintf("status must be one of %s, %s, %s, %s", StatusBucketProcessing, StatusBucketReady, StatusBucketExtracted, StatusBucketFailed))
 	}
 	return s, nil
 }
 
-// NormalizeSort validates a sort key, defaulting to created.
+// NormalizeSort validates a sort key, defaulting to created. The error is a
+// client-facing *apperror.Error (see NormalizeStatusBucket).
 func NormalizeSort(raw string) (string, error) {
 	s := strings.ToLower(strings.TrimSpace(raw))
 	switch s {
@@ -166,11 +174,12 @@ func NormalizeSort(raw string) (string, error) {
 	case SortCreated, SortUpdated:
 		return s, nil
 	default:
-		return "", fmt.Errorf("sort must be one of %s, %s", SortCreated, SortUpdated)
+		return "", apperror.ErrBadRequest.WithMessage(fmt.Sprintf("sort must be one of %s, %s", SortCreated, SortUpdated))
 	}
 }
 
-// NormalizeOrder validates a sort direction, defaulting to descending.
+// NormalizeOrder validates a sort direction, defaulting to descending. The error
+// is a client-facing *apperror.Error (see NormalizeStatusBucket).
 func NormalizeOrder(raw string) (string, error) {
 	o := strings.ToLower(strings.TrimSpace(raw))
 	switch o {
@@ -179,7 +188,7 @@ func NormalizeOrder(raw string) (string, error) {
 	case OrderAsc, OrderDesc:
 		return o, nil
 	default:
-		return "", fmt.Errorf("order must be one of %s, %s", OrderAsc, OrderDesc)
+		return "", apperror.ErrBadRequest.WithMessage(fmt.Sprintf("order must be one of %s, %s", OrderAsc, OrderDesc))
 	}
 }
 

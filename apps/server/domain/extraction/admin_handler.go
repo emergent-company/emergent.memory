@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/http"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
 // AdminHandler handles HTTP requests for extraction jobs admin API
@@ -498,17 +500,44 @@ func (h *AdminHandler) RetryJob(c echo.Context) error {
 
 	job, err := h.jobsService.RetryJob(c.Request().Context(), jobID, projectID)
 	if err != nil {
-		// A live run is a conflict, not a bad request: the caller asked to retry
-		// work that is still in flight, and the 409 tells it to wait for the
-		// current attempt (or the stale-job sweep) instead of silently
-		// double-processing the unit.
-		if errors.Is(err, ErrJobStillRunning) {
-			return apperror.NewConflict(err.Error())
-		}
-		return apperror.NewBadRequest(err.Error())
+		return retryJobFailure(err, jobID, projectID, h.jobsService.log)
 	}
 
 	return c.JSON(http.StatusOK, SuccessResponse(job.ToDTO()))
+}
+
+// retryJobFailure maps a RetryJob failure onto the HTTP surface.
+//
+// A live run is a conflict, not a bad request: the caller asked to retry work
+// that is still in flight, and the 409 tells it to wait for the current attempt
+// (or the stale-job sweep) instead of silently double-processing the unit. Its
+// detail is written for the caller (how long it has run, how long the threshold
+// is) so it is relayed as-is.
+//
+// RetryJob raises app errors for the refusals a caller can act on — 404 for a job
+// that is absent or in another project (deliberately one message, so isolation is
+// not revealed), 400 for a status that cannot be retried. Their status and
+// message are kept rather than re-wrapped as a bad request, which used to report
+// "not_found: extraction job not found" as a 400.
+//
+// Anything else is a server fault (a database or driver failure): a 500 whose
+// detail stays in the log, never the driver's text in the body.
+func retryJobFailure(err error, jobID, projectID string, log *slog.Logger) error {
+	if errors.Is(err, ErrJobStillRunning) {
+		return apperror.NewConflict(err.Error())
+	}
+
+	var appErr *apperror.Error
+	if errors.As(err, &appErr) {
+		return err
+	}
+
+	log.Error("failed to retry extraction job",
+		slog.String("job_id", jobID),
+		slog.String("project_id", projectID),
+		logger.Error(err),
+	)
+	return apperror.ErrInternal.WithMessage("failed to retry extraction job")
 }
 
 // GetStatistics handles GET /api/admin/extraction-jobs/projects/:projectId/statistics

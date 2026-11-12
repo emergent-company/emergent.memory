@@ -67,6 +67,7 @@ func (f *fakeEndpointStore) TouchEndpoint(_ context.Context, id string, at time.
 type fakeKeyStore struct {
 	byID      map[string]*AgentMCPKey
 	endpoints map[string]*AgentMCPEndpoint
+	getErr    error
 	createErr error
 }
 
@@ -97,6 +98,9 @@ func (f *fakeKeyStore) detail(k *AgentMCPKey) *AgentMCPKeyDetail {
 }
 
 func (f *fakeKeyStore) GetActiveKeyByTokenID(_ context.Context, tokenID string) (*AgentMCPKey, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
 	for _, k := range f.byID {
 		if k.TokenID == tokenID && k.RevokedAt == nil {
 			return k, nil

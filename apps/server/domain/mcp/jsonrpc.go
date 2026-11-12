@@ -1,6 +1,12 @@
 package mcp
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+)
 
 // JSON-RPC 2.0 types for MCP protocol
 
@@ -49,6 +55,30 @@ const LatestProtocolVersion = "2025-11-25"
 var ServerInfo = map[string]string{
 	"name":    "memory-mcp-server-go",
 	"version": "1.0.0",
+}
+
+// jsonRPCErrorCodeFor maps an error to the JSON-RPC code that describes it.
+//
+// A transport that answers every service failure with internal-error tells the
+// client "retry" for a URI or prompt name it should correct instead. Only an app
+// error carries a status worth mapping; anything else is genuinely internal.
+func jsonRPCErrorCodeFor(err error) int {
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) {
+		return ErrCodeInternalError
+	}
+	switch appErr.HTTPStatus {
+	case http.StatusBadRequest, http.StatusUnprocessableEntity:
+		return ErrCodeInvalidParams
+	case http.StatusUnauthorized:
+		return ErrCodeUnauthorized
+	case http.StatusForbidden:
+		return ErrCodeForbidden
+	case http.StatusNotFound:
+		return ErrCodeNotFound
+	default:
+		return ErrCodeInternalError
+	}
 }
 
 // NewErrorResponse creates a JSON-RPC error response

@@ -148,7 +148,10 @@ func (s *Service) CallAgentOnce(ctx context.Context, projectID, agentID, message
 func agentRunErrorResult(err error) *ToolResult {
 	runErr := new(AgentRunError)
 	if !errors.As(err, &runErr) {
-		runErr = &AgentRunError{Kind: AgentRunErrorFailed, Message: err.Error()}
+		// Same rule as the session path: a failure that is not a curated run
+		// error can be a storage or transport fault, so only an app error's
+		// client-facing message may cross back to the caller.
+		runErr = &AgentRunError{Kind: AgentRunErrorFailed, Message: apperror.PublicMessage(err)}
 	}
 	payload := map[string]any{"error": runErr.Message}
 	if runErr.Kind != "" {

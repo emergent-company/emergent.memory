@@ -436,6 +436,15 @@ func (h *Handler) handleToolsCall(c echo.Context, req *Request, user *auth.AuthU
 			slog.String("tool", params.Name),
 			logger.Error(err),
 		)
+		// Deliberately NOT PublicMessage: this channel carries two kinds of
+		// error, and only one is safe to collapse. A domain failure is an
+		// *apperror (its client message survives PublicMessage), but a tool's
+		// own argument validation is a plain error — hundreds of them across the
+		// tool set — and the agent must see which argument is wrong. Sanitising
+		// this line therefore requires converting that validation class to app
+		// errors first (#668); until then the tool's text is the contract, and
+		// the tool implementations are in this package, not an untrusted lower
+		// layer.
 		return NewErrorResponse(req.ID, ErrCodeInternalError,
 			"Tool execution failed: "+err.Error(),
 			nil,
@@ -555,8 +564,8 @@ func (h *Handler) handleResourcesRead(c echo.Context, req *Request, user *auth.A
 			slog.String("uri", params.URI),
 			logger.Error(err),
 		)
-		return NewErrorResponse(req.ID, ErrCodeInternalError,
-			"Failed to read resource: "+err.Error(),
+		return NewErrorResponse(req.ID, jsonRPCErrorCodeFor(err),
+			apperror.PublicMessage(err),
 			map[string]string{"uri": params.URI},
 		)
 	}
@@ -604,8 +613,8 @@ func (h *Handler) handlePromptsGet(c echo.Context, req *Request, user *auth.Auth
 			slog.String("name", params.Name),
 			logger.Error(err),
 		)
-		return NewErrorResponse(req.ID, ErrCodeInternalError,
-			"Failed to get prompt: "+err.Error(),
+		return NewErrorResponse(req.ID, jsonRPCErrorCodeFor(err),
+			apperror.PublicMessage(err),
 			map[string]string{"name": params.Name},
 		)
 	}

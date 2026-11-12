@@ -389,10 +389,11 @@ func (r *Repository) GetByContentHash(ctx context.Context, projectID, contentHas
 // pipeline gets another attempt. HEAD only (supersedes_id IS NULL), like every
 // other read: an older version is not what the caller's bytes produced.
 //
-// Best-effort by design — there is no unique index on (project_id, file_hash)
-// since uploads stopped being deduplicated at insert time, so two concurrent
-// identical uploads can both create a row. The caller that matters is a retry,
-// which is sequential.
+// Best-effort by design — the index on (project_id, file_hash) is deliberately
+// non-unique (00294) because uploads stopped being deduplicated at insert time,
+// so two concurrent identical uploads can both create a row. The caller that
+// matters is a retry, which is sequential; the index only keeps this lookup from
+// scanning the project's whole document history.
 func (r *Repository) FindUploadByFileHash(ctx context.Context, projectID, fileHash string) (*Document, error) {
 	if fileHash == "" {
 		return nil, nil

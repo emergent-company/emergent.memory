@@ -126,9 +126,13 @@ func (s *Service) executeBraveWebSearch(ctx context.Context, projectID string, a
 	// Execute the search
 	results, err := s.callBraveSearchAPI(ctx, req, apiKey)
 	if err != nil {
+		// The failure text is not the agent's: it is a transport error (which
+		// carries the resolved address) or Brave's own response body (which can
+		// echo the subscription token or upstream internals). The detail is
+		// logged; the tool result says what the caller can act on.
 		s.log.Error("brave search API call failed", "error", err, "query", query)
 		return &ToolResult{
-			Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Brave Search API error: %s", err.Error())}},
+			Content: []ContentBlock{{Type: "text", Text: upstreamFailureText("Brave Search", err)}},
 			IsError: true,
 		}, nil
 	}
@@ -175,7 +179,13 @@ func (s *Service) callBraveSearchAPI(ctx context.Context, req braveSearchRequest
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		// The body is logged, never returned: it is upstream detail and can echo
+		// the subscription token. Only the status crosses back to the caller.
+		return nil, &upstreamStatusError{
+			Service: "Brave Search",
+			Status:  resp.StatusCode,
+			Detail:  strings.TrimSpace(string(body)),
+		}
 	}
 
 	// Read and decode response body

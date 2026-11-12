@@ -72,6 +72,7 @@ func documentsToolDefinitions() []ToolDefinition {
 			Description: "Upload a document to the current project by providing its content as a base64-encoded string. " +
 				"The decoded content must not exceed 10 MB. The document is stored and parsed asynchronously: its text and chunks appear once the parsing job finishes (poll document-get). " +
 				"Identical bytes already uploaded to this project are not uploaded, stored or parsed again: the existing document is returned with isDuplicate=true and existingDocumentId set, so retrying this call is cheap. " +
+				"A duplicate keeps the extraction decision made for those bytes: auto_extract on a retry does not re-decide extraction, so to store the same content with a different decision delete the existing document (document-delete) and upload it again. " +
 				"Object extraction follows the project's auto_extract_objects setting unless auto_extract overrides it for this call. " +
 				"Returns the created (or existing) document id, title, and conversion status.",
 			InputSchema: InputSchema{

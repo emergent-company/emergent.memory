@@ -16,6 +16,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/modelconfig"
 	"github.com/emergent-company/emergent.memory/internal/jobs"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -1031,16 +1032,24 @@ func (s *ObjectExtractionJobsService) DeleteJob(ctx context.Context, jobID strin
 // place because there is no failed attempt worth preserving — but only once it
 // is old enough to be stuck, which is the same threshold the stale-job sweep
 // uses to terminal-fail it.
+//
+// The refusals are app errors on purpose: a handler must be able to show why the
+// retry was refused ("this job is gone", "a ready job cannot be retried")
+// without stringifying a server-side failure into the response. A database
+// failure keeps its plain wrapped error, so it becomes a 500 rather than a 400
+// carrying driver text.
 func (s *ObjectExtractionJobsService) RetryJob(ctx context.Context, jobID string, projectID string) (*ObjectExtractionJob, error) {
 	job, err := s.FindByID(ctx, jobID)
 	if err != nil {
 		return nil, fmt.Errorf("find job: %w", err)
 	}
 	if job == nil {
-		return nil, fmt.Errorf("job not found")
+		return nil, apperror.ErrNotFound.WithMessage("extraction job not found")
 	}
 	if job.ProjectID != projectID {
-		return nil, fmt.Errorf("job not found in project")
+		// The same 404 as an absent job: a caller must not learn that another
+		// project's job exists.
+		return nil, apperror.ErrNotFound.WithMessage("extraction job not found")
 	}
 
 	switch job.Status {
@@ -1050,7 +1059,8 @@ func (s *ObjectExtractionJobsService) RetryJob(ctx context.Context, jobID string
 		next, _, err := s.ReprocessJob(ctx, jobID, projectID)
 		return next, err
 	default:
-		return nil, fmt.Errorf("cannot retry job with status %s (only failed/dead_letter/processing jobs can be retried)", job.Status)
+		return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf(
+			"cannot retry job with status %s (only failed/dead_letter/processing jobs can be retried)", job.Status))
 	}
 }
 

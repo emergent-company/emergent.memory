@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -72,7 +74,17 @@ func (h *AgentEndpointHandler) HandleAgentEndpoint(c echo.Context) error {
 	// used to scope sessions is always freshly resolved.
 	endpoint, key, err := h.svc.AuthorizeAgentEndpoint(c.Request().Context(), user.APITokenID, agentID)
 	if err != nil {
-		return c.JSON(http.StatusForbidden, NewErrorResponse(req.ID, ErrCodeForbidden, err.Error(), nil))
+		// The service's refusals are app errors whose messages are written for
+		// the caller ("credential is revoked", "bound to a different agent"); a
+		// store failure is not, and is reported as an internal error instead of
+		// having its text (`failed to get key: pq: ...`) put in the body. Either
+		// way the request is rejected before anything executes.
+		status, code := http.StatusForbidden, ErrCodeForbidden
+		var appErr *apperror.Error
+		if !errors.As(err, &appErr) || appErr.HTTPStatus >= http.StatusInternalServerError {
+			status, code = http.StatusInternalServerError, ErrCodeInternalError
+		}
+		return c.JSON(status, NewErrorResponse(req.ID, code, apperror.PublicMessage(err), nil))
 	}
 
 	// Notifications (e.g. notifications/initialized) are accepted without a response.

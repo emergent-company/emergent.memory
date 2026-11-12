@@ -1156,6 +1156,7 @@ Table "kb"."documents" {
     (parent_document_id) [name: "idx_documents_parent_document_id"]
     (project_id, content_hash) [name: "idx_documents_project_content_hash_manual_head", unique, note: '((content_hash IS NOT NULL) AND (supersedes_id IS NULL) AND (source_id IS NULL) AND (file_hash IS NULL))']
     (project_id, created_at, id) [name: "idx_documents_project_created_id"]
+    (project_id, file_hash) [name: "idx_documents_project_file_hash", note: '(file_hash IS NOT NULL)']
     (project_id, source_id, source_status) [name: "idx_documents_project_source_status"]
     (project_id, updated_at, id) [name: "idx_documents_project_updated_id"]
     (source_id, source_external_id) [name: "idx_documents_source_external_head", unique, note: '((source_external_id IS NOT NULL) AND (supersedes_id IS NULL))']

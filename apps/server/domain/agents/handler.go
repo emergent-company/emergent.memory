@@ -17,6 +17,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/chat/citations"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/domain/notifications"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/emergent-company/emergent.memory/domain/schemas"
@@ -3219,6 +3220,34 @@ type RespondParams struct {
 	OnRunSettled func(result *ExecuteResult)
 }
 
+// logNotificationActionLoss records an agent-question write that did not land on
+// the notification row. It is best-effort by design: the question is already
+// answered and the run resumes regardless, so a failure here must not become a
+// failure of the answer.
+//
+// It is logged rather than discarded because the write can legitimately lose —
+// the resolve verb is first-write-wins, so a verb the user recorded from the
+// inbox first keeps the row (notifications.ErrActionAlreadyResolved) — and
+// because anything else is a real database failure that must be visible. The
+// expected loss is a warning; an unexpected failure is an error, so the two do
+// not look alike in the log.
+func logNotificationActionLoss(notificationID, status string, err error) {
+	if err == nil {
+		return
+	}
+	level := slog.LevelError
+	msg := "failed to record notification action status"
+	if errors.Is(err, notifications.ErrActionAlreadyResolved) {
+		level = slog.LevelWarn
+		msg = "notification action status was already recorded with a different outcome"
+	}
+	slog.Log(context.Background(), level, msg,
+		slog.String("notification_id", notificationID),
+		slog.String("status", status),
+		slog.Any("error", err),
+	)
+}
+
 // RespondToQuestion is the shared core of the question-respond flow. It looks up
 // the question + paused run, atomically claims the question via AnswerQuestion,
 // records any tool-approval decision via MarkToolConfirmationDecision, and
@@ -3284,9 +3313,12 @@ func (h *Handler) RespondToQuestion(ctx context.Context, p RespondParams) (*Agen
 		return nil, apperror.ErrConflict.WithMessage("question is no longer pending")
 	}
 
-	// Update notification action status if notification was created (non-fatal)
+	// Record the outcome on the notification, best-effort: the question is
+	// already answered and the run is about to resume, so a failure here must
+	// not report the respond as failed.
 	if question.NotificationID != nil {
-		_ = h.repo.UpdateNotificationActionStatus(ctx, *question.NotificationID, "completed", p.UserID)
+		logNotificationActionLoss(*question.NotificationID, "completed",
+			h.repo.UpdateNotificationActionStatus(ctx, *question.NotificationID, "completed"))
 	}
 
 	// Resume the agent in a background goroutine
@@ -3448,7 +3480,11 @@ func (h *Handler) cancelQuestion(ctx context.Context, p RespondParams) (*AgentQu
 	_ = h.repo.UpdateToolApprovalDecision(ctx, p.QuestionID, "cancelled", "", p.RespondedBy)
 
 	if question.NotificationID != nil {
-		_ = h.repo.UpdateNotificationActionStatus(ctx, *question.NotificationID, "cancelled", p.UserID)
+		// Best-effort, like the respond path: the cancellation is already
+		// recorded, and the notification write can legitimately lose to a verb
+		// the user resolved from the inbox first.
+		logNotificationActionLoss(*question.NotificationID, "cancelled",
+			h.repo.UpdateNotificationActionStatus(ctx, *question.NotificationID, "cancelled"))
 	}
 
 	var preCreatedRun *AgentRun

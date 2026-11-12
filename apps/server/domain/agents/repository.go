@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/chat/citations"
+	"github.com/emergent-company/emergent.memory/domain/notifications"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/domain/sessiontodos"
@@ -2732,19 +2733,27 @@ func (r *Repository) UpdateQuestionNotificationID(ctx context.Context, questionI
 	return err
 }
 
-// UpdateNotificationActionStatus updates the action_status fields on a notification.
-// This is a cross-domain update used when a user responds to an agent question.
-func (r *Repository) UpdateNotificationActionStatus(ctx context.Context, notificationID string, status string, userID string) error {
-	now := time.Now()
-	_, err := r.db.NewUpdate().
-		TableExpr("kb.notifications").
-		Set("action_status = ?", status).
-		Set("action_status_at = ?", now).
-		Set("action_status_by = ?", userID).
-		Set("updated_at = ?", now).
-		Where("id = ?", notificationID).
-		Exec(ctx)
-	return err
+// UpdateNotificationActionStatus records the outcome of an agent-question
+// notification. It goes through the notifications package's conditional write so
+// the verb is first-write-wins on this surface too: an inbox resolve that
+// already landed keeps its verb, and a differing verb is refused with
+// notifications.ErrActionAlreadyResolved instead of silently overwriting it (and
+// taking action_status_by with it).
+//
+// The write is deliberately NOT owner-scoped. The respond route admits any
+// project member, so the responder is often not the notification's owner; an
+// owner-scoped UPDATE would refuse their write and leave the question in the
+// owner's Action-required tab (requires_action AND action_status IS NULL) after
+// it had already been answered and the run resumed. The row is identified by
+// its id — the caller authorized the answer through the question, which is the
+// same row — and action_status_by stays NULL because there is no owner to
+// attribute it to.
+//
+// This is a cross-domain call because an agent question is answered from chat
+// while the notification row belongs to the notifications domain; it is the same
+// row the inbox resolves.
+func (r *Repository) UpdateNotificationActionStatus(ctx context.Context, notificationID string, status string) error {
+	return notifications.ResolveActionStatus(ctx, r.db, "", notificationID, status)
 }
 
 // --- ADK Sessions ---

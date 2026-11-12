@@ -34,6 +34,19 @@ type GraphObject struct {
 	// EmbeddingUpdatedAt is the RFC3339 time the object's embedding was last
 	// written (empty when not embedded).
 	EmbeddingUpdatedAt string `json:"embedding_updated_at"`
+	// DataClass is how the server classifies this version's data: source,
+	// synthesized or adopted (the closed set in domain/graph/actor.go). Empty
+	// when the server did not report it — write responses do not — in which case
+	// the page renders no provenance chip.
+	DataClass string `json:"data_class"`
+	// CredentialKind names the credential the writing caller used (api_key,
+	// mcp_link, session, none). "none" is the stored value for background and
+	// internal writes, not an absence.
+	CredentialKind string `json:"credential_kind"`
+	// RevisionCount is how many versions the object has. The server computes it
+	// from a materialized view and only reports it on read paths, so it is a
+	// pointer: nil means "not reported", which is not the same as zero.
+	RevisionCount *int `json:"revision_count,omitempty"`
 }
 
 // ObjectSearchResult is one scored search hit (FTS or hybrid). Score semantics

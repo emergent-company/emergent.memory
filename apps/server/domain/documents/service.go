@@ -295,6 +295,13 @@ func (s *Service) BulkDelete(ctx context.Context, projectID string, documentIDs 
 //
 // The response is explicit: IsDuplicate is true and ExistingDocumentID names
 // the row the caller already has. Nothing is collapsed silently.
+//
+// A hit keeps the extraction decision already made for those bytes. The match is
+// on content, not on request parameters, so a retry that asks for object
+// extraction the first call did not request still gets the earlier (unextracted)
+// document: re-deciding it would make the same bytes produce different results
+// on a retry. To change the decision, delete the document and upload again (the
+// MCP tool says so).
 func (s *Service) findExistingUploadByHash(ctx context.Context, projectID, fileHash string) (*UploadDocumentResponse, error) {
 	existing, err := s.repo.FindUploadByFileHash(ctx, projectID, fileHash)
 	if err != nil {
