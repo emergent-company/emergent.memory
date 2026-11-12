@@ -97,10 +97,15 @@ func (f *fakeEmbeddingCache) has(key string) bool {
 }
 
 func newCachedServiceForTest(embedder *fakeCachedEmbedder, store embeddingCacheStore, resolve func(context.Context) string) *CachedEmbeddingService {
+	if resolve == nil {
+		// The production resolver always returns a model when the project has one;
+		// tests that do not care about resolution use a fixed model so caching is
+		// still exercised.
+		resolve = func(context.Context) string { return "test-model" }
+	}
 	return &CachedEmbeddingService{
 		inner:        embedder,
 		store:        store,
-		modelID:      "test-model",
 		resolveModel: resolve,
 		log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
@@ -126,7 +131,7 @@ func TestCachedEmbeddingService_BatchMissCallsUnderlyingAndPopulatesCache(t *tes
 		assert.Equal(t, vecForDoc(d), result.Embeddings[i])
 	}
 
-	// Every document was cached under the resolved (static fallback) model.
+	// Every document was cached under the resolved model.
 	for _, d := range docs {
 		assert.True(t, store.has(svc.cacheKey("test-model", cacheFormatDocument, d)), "expected cache entry for %q", d)
 	}
@@ -259,4 +264,24 @@ func TestCachedEmbeddingService_FormatsDoNotShareCacheEntries(t *testing.T) {
 
 	assert.True(t, store.has(svc.cacheKey("test-model", cacheFormatQuery, text)))
 	assert.True(t, store.has(svc.cacheKey("test-model", cacheFormatDocument, text)))
+}
+
+// TestCachedEmbeddingService_NoResolvedModelBypassesCache pins that an
+// unresolved model never produces a cache entry: without a model the key would
+// collide across providers, and the inner service is the one that reports the
+// missing configuration.
+func TestCachedEmbeddingService_NoResolvedModelBypassesCache(t *testing.T) {
+	embedder := &fakeCachedEmbedder{}
+	store := newFakeEmbeddingCache()
+	svc := newCachedServiceForTest(embedder, store, func(context.Context) string { return "" })
+
+	if _, err := svc.EmbedDocumentsWithUsage(context.Background(), []string{"alpha"}); err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	if _, err := svc.EmbedDocumentsWithUsage(context.Background(), []string{"alpha"}); err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+
+	assert.Equal(t, 2, embedder.batchCount(), "an unresolved model must bypass the cache")
+	assert.Empty(t, store.m, "no cache entry may be written without a resolved model")
 }

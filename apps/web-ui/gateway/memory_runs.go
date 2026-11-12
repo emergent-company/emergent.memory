@@ -116,6 +116,10 @@ type ChatRequest struct {
 	ConversationID    string `json:"conversationId,omitempty"`
 	Message           string `json:"message"`
 	CanonicalID       string `json:"canonicalId,omitempty"`
+	// Model and ReasoningEffort are per-turn composer overrides. Empty means
+	// "use the agent definition / provider default".
+	Model           string `json:"model,omitempty"`
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
 	// SurfaceAction carries an A2UI surface action to the server, which frames
 	// it as the agent turn; Message may then be empty.
 	SurfaceAction *ChatSurfaceAction `json:"surfaceAction,omitempty"`

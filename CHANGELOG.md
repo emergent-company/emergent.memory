@@ -4,6 +4,28 @@
 
 ### BREAKING CHANGES
 
+**Embeddings are resolved only from the project's configured provider** (2026-11-12)
+
+`GCP_PROJECT_ID`, `GOOGLE_API_KEY`, `EMBEDDING_PROVIDER`, `EMBEDDING_MODEL`,
+`EMBEDDING_DIMENSION` and `EMBEDDINGS_NETWORK_DISABLED` no longer configure
+embeddings — neither on hosted deployments nor on self-hosted single-tenant
+installs. Every embedding call resolves the provider, model and credentials from
+the project's model config and provider credentials, so vectors are only ever
+produced by the provider the user configured for that project. A project with no
+embedding model configured logs one warning per project —
+
+```
+embeddings: embedding model was not set for this project — semantic vectors will not be generated
+```
+
+— and ingestion, graph CRUD and lexical search keep working with no vectors until
+one is configured. Configure it with `memory projects set-models --embedding
+<provider>/<model>` or `memory provider configure-project <provider>
+--embedding-model <model>`. `GOOGLE_API_KEY` / `GCP_PROJECT_ID` remain
+generative-model (chat/extraction) environment fallbacks only, and the
+`backfill-embeddings` tool now requires `--project-id` so it resolves that
+project's provider.
+
 **MCP share creation requires an explicit tool allowlist** (2026-11-05)
 
 `POST /api/projects/{projectId}/mcp/shares` now rejects a request that omits
@@ -237,15 +259,18 @@ a corpus written that way is compared against query vectors of the wrong format 
 retrieval degrades quietly instead of failing.
 
 Ingest now has its own document method (`EmbedDocumentWithUsage`, and
-`EmbedDocument` for callers that only need the vector), and every corpus writer
-uses it: the chunk, object, relationship and sweep workers, the graph service's
-relationship triplet embeddings, and the `backfill-embeddings` command. Only real
-search strings — unified search, graph vector/hybrid search, skill lookup — go
-through `EmbedQueryWithUsage`, which now sends `RETRIEVAL_QUERY`. On
-`gemini-embedding-2` that is the documented `task: search result | query: …`
-prefix. The embedding cache key now includes the format, so a document and a
-query of the same text can no longer share an entry; existing cache rows simply
-miss once and are re-embedded.
+`EmbedDocument` for callers that only need the vector), and the corpus writers use
+it: the chunk, object, relationship and sweep workers, the graph service's
+relationship triplet embeddings, and the `backfill-embeddings` command. Real
+search strings still go through `EmbedQuery`/`EmbedQueryWithUsage` — unified
+search, graph vector and hybrid search, skill lookup — and the Vertex client now
+sends `RETRIEVAL_QUERY` there. On `gemini-embedding-2` that is the documented
+`task: search result | query: …` prefix. Skill *description* embeddings keep using
+the query method on both the write and the search side, so they remain consistent
+with each other; moving them is a behaviour change to skill retrieval, left for a
+follow-up rather than bundled into this fix. The embedding cache key now includes
+the format, so a document and a query of the same text can no longer share an
+entry; existing cache rows simply miss once and are re-embedded.
 
 **Action required for Google AI (`google`) projects:** that provider has sent
 `RETRIEVAL_QUERY` from its query method since an earlier release, and that method
