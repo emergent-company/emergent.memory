@@ -472,7 +472,7 @@ templ chatComposerPickers() {
 					{"max", "Max"},
 				} {
 					<li>
-						<a data-value={ item.Value }>
+						<a data-value={ item.Value } tabindex="0" role="menuitem">
 							<span class="min-w-0 flex-1"><span class="block text-sm">{ item.Label }</span></span>
 							if item.Value == "" {
 								<span class="chat-picker-check iconify lucide--check size-4 text-primary" aria-hidden="true"></span>

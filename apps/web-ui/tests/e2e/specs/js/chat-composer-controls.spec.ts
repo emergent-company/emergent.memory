@@ -98,7 +98,7 @@ test('populates the model menu grouped by provider', async ({ page }) => {
   await expect(model.locator('a[data-value="openai/deepseek-v4-pro"]')).toHaveCount(1);
   await expect(model.locator('li.menu-title')).toHaveCount(1);
   await expect(model.locator('li.menu-title')).toHaveText('openai');
-  await expect(model.locator('[data-chat-picker-label]')).toHaveText('Auto');
+  await expect(model.locator('[data-chat-picker-label]')).toHaveText('Auto (agent default)');
   expect(errors).toEqual([]);
 });
 
@@ -136,5 +136,16 @@ test('persists changes to the current conversation and default slots', async ({ 
   await expect(page.locator('#chat-form input[name="model"]')).toHaveValue('openai/deepseek-v4-pro');
   await expect(page.locator('#chat-form input[name="thinking"]')).toHaveValue('medium');
   await expect(model.locator('[data-chat-picker-label]')).toHaveText('DeepSeek V4 Pro');
+  expect(errors).toEqual([]);
+});
+
+test('resets the model to Auto', async ({ page }) => {
+  const errors = await boot(page, { 'memory.chat.model.default': 'openai/deepseek-v4-pro' });
+  const model = page.locator('[data-chat-picker="model"]');
+  await expect(model.locator('a[data-value=""]')).toHaveCount(1);
+  await model.locator('a[data-value=""]').dispatchEvent('click');
+  await expect(page.locator('#chat-form input[name="model"]')).toHaveValue('');
+  await expect(model.locator('[data-chat-picker-label]')).toHaveText('Auto (agent default)');
+  expect(await page.evaluate(() => localStorage.getItem('memory.chat.model.default'))).toBe('');
   expect(errors).toEqual([]);
 });

@@ -373,6 +373,7 @@
     pickerRows(root).forEach(function (row) {
       var on = row.getAttribute("data-value") === value;
       row.classList.toggle("active", on);
+      row.setAttribute("aria-selected", on ? "true" : "false");
       var check = row.querySelector(".chat-picker-check");
       if (on && !check) {
         check = document.createElement("span");
@@ -412,15 +413,31 @@
   function wirePicker(kind, field) {
     var root = pickerRoot(kind);
     if (!root || !field) return;
-    root.addEventListener("click", function (event) {
-      var row = event.target.closest("a[data-value]");
+    function choose(row) {
       if (!row || !root.contains(row)) return;
-      event.preventDefault();
       var value = row.getAttribute("data-value") || "";
       field.value = value;
       saveComposer(kind, value);
       setPickerDisplay(kind, value);
       closePicker(kind);
+    }
+    root.addEventListener("click", function (event) {
+      var row = event.target.closest("a[data-value]");
+      if (!row) return;
+      event.preventDefault();
+      choose(row);
+    });
+    root.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") {
+        closePicker(kind);
+        return;
+      }
+      if (event.key !== "Enter" && event.key !== " ") return;
+      var row = event.target.closest("a[data-value]");
+      if (!row) return;
+      event.preventDefault();
+      event.stopPropagation();
+      choose(row);
     });
   }
   function providerIcon(provider) {
@@ -439,6 +456,17 @@
     var menu = root.querySelector("[data-chat-picker-menu]");
     if (!menu) return;
     menu.textContent = "";
+    var autoLi = document.createElement("li");
+    var autoRow = document.createElement("a");
+    autoRow.setAttribute("data-value", "");
+    autoRow.setAttribute("tabindex", "0");
+    autoRow.setAttribute("role", "menuitem");
+    var autoLabel = document.createElement("span");
+    autoLabel.className = "block text-sm";
+    autoLabel.textContent = "Auto (agent default)";
+    autoRow.appendChild(autoLabel);
+    autoLi.appendChild(autoRow);
+    menu.appendChild(autoLi);
     var groups = {};
     var order = [];
     list.forEach(function (m) {
@@ -458,6 +486,8 @@
         var li = document.createElement("li");
         var a = document.createElement("a");
         a.setAttribute("data-value", item.value);
+        a.setAttribute("tabindex", "0");
+        a.setAttribute("role", "menuitem");
         var icon = document.createElement("span");
         icon.className = "iconify " + providerIcon(provider) + " size-4";
         icon.setAttribute("aria-hidden", "true");
@@ -481,11 +511,22 @@
     });
     root.__chatModelValues = groups;
   }
+  function pickerHasValue(kind, value) {
+    return pickerRows(pickerRoot(kind)).some(function (row) {
+      return row.getAttribute("data-value") === value;
+    });
+  }
   function applyComposerSelection() {
     if (thinkingSelect) thinkingSelect.value = readComposer("thinking");
     if (thinkingSelect) setPickerDisplay("thinking", thinkingSelect.value);
-    if (modelSelect) modelSelect.value = readComposer("model");
-    if (modelSelect) setPickerDisplay("model", modelSelect.value);
+    if (modelSelect) {
+      var model = readComposer("model");
+      // A stored model can disappear from the project catalog; fall back to
+      // Auto rather than sending a value the picker cannot show.
+      if (model && !pickerHasValue("model", model)) model = "";
+      modelSelect.value = model;
+      setPickerDisplay("model", model);
+    }
   }
   function initComposerControls() {
     if (!modelSelect && !thinkingSelect) return;
@@ -576,9 +617,11 @@
 
     var form = document.getElementById("chat-form");
     if (!form || !input || !sendBtn) return;
-    // The shared prompt bar gives its textarea no id; keep the stable id the
-    // e2e helpers and legacy hooks query.
+    // The shared prompt bar gives its textarea no id or label; keep the stable
+    // hooks the e2e helpers, legacy code and screen readers expect.
     if (!input.id) input.id = "chat-input";
+    if (!input.getAttribute("data-testid")) input.setAttribute("data-testid", "chat-input");
+    if (!input.getAttribute("aria-label")) input.setAttribute("aria-label", "Message");
 
     // resume target from the server-rendered ?c= param
     conversationId = root.getAttribute("data-conv") || "";
@@ -600,11 +643,13 @@
       // park a follow-up without changing what Enter means.
       if (ev.metaKey || ev.ctrlKey) {
         ev.preventDefault();
+        ev.stopPropagation();
         enqueueFromInput();
         return;
       }
       if (ev.shiftKey) return; // newline
       ev.preventDefault();
+      ev.stopPropagation();
       // Enter follows the turn state: send when idle, queue while running.
       if (streaming) enqueueFromInput();
       else if (input.value.trim()) form.requestSubmit();
