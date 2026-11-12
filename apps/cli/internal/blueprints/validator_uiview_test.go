@@ -103,4 +103,45 @@ func TestValidateUIConfigViewPlan(t *testing.T) {
 			t.Fatalf("expected a more-type finding, got: %v", report.Issues)
 		}
 	})
+
+	t.Run("a relation no pack declares is reported", func(t *testing.T) {
+		p := withView(map[string]any{"sections": []any{
+			map[string]any{"relation": "affects"},
+		}})
+		p.RelationshipTypes = []blueprints.RelationshipTypeDef{{Name: "fixes", Label: "Fixes"}}
+		report := blueprints.Validate(nil, []blueprints.PackFile{p}, nil, nil, nil, nil, nil)
+		if !hasIssue(report.Issues, "sections[0].relation", `"affects" is not a relationshipType`) {
+			t.Fatalf("expected an undeclared-relation finding, got: %v", report.Issues)
+		}
+	})
+
+	t.Run("a relation a sibling pack declares validates clean", func(t *testing.T) {
+		p := withView(map[string]any{"sections": []any{
+			map[string]any{"relation": []any{"affects", "fixes"}},
+		}})
+		p.RelationshipTypes = []blueprints.RelationshipTypeDef{{Name: "affects"}}
+		// "fixes" arrives from a second pack in the same blueprint: the known
+		// set is blueprint-wide, or a shared relationship type would be
+		// reported for every pack that did not happen to declare it.
+		other := validMetadataPack()
+		other.Name = "other"
+		other.SourceFile = "schemas/other.yaml"
+		other.RelationshipTypes = []blueprints.RelationshipTypeDef{{Name: "fixes"}}
+		report := blueprints.Validate(nil, []blueprints.PackFile{p, other}, nil, nil, nil, nil, nil)
+		if hasIssue(report.Issues, "sections[0].relation", "not a relationshipType") {
+			t.Fatalf("a declared relation must validate clean, got: %v", report.Issues)
+		}
+	})
+
+	t.Run("a non-string title is reported", func(t *testing.T) {
+		// Unquoted YAML year: the renderer decodes title as a string and drops
+		// the whole view, so the validator has to name it.
+		p := withView(map[string]any{"sections": []any{
+			map[string]any{"title": 2024, "relation": "affects"},
+		}})
+		report := blueprints.Validate(nil, []blueprints.PackFile{p}, nil, nil, nil, nil, nil)
+		if !hasIssue(report.Issues, "sections[0].title", "must be a string") {
+			t.Fatalf("expected a title-type finding, got: %v", report.Issues)
+		}
+	})
 }

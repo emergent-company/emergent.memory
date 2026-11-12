@@ -32,6 +32,18 @@ const viewFactMaxRunes = 60
 // facts and never previews its neighbour's neighbours.
 const viewMaxFactsPerRow = 4
 
+// viewExpandLimit bounds a section the reader expanded. The collapsed page shows
+// only the rows a section declares (default 8), which is honest but a dead end on
+// a real hub — the measured worst case is 187 edges on one object. "Show all"
+// therefore renders up to this many rows in place, and a section larger than
+// this offers a filtered browse link instead of an unbounded page.
+const viewExpandLimit = 200
+
+// viewMoreTitle is the heading of the trailing group that collects relationship
+// types no declared section claims. It is a constant so the expansion route can
+// address it by index without re-deriving a title string.
+const viewMoreTitle = "More connections"
+
 // viewDefaultFactProps are property names that make a poor preview fact because
 // the row already shows them (the label) or they are prose/links (too long to
 // scan). Everything else is a candidate.
@@ -80,17 +92,86 @@ func (r objectViewItem) direction() string {
 }
 
 // objectViewSection is one rendered group. Total is the row count before
-// truncation, so the page can say how many it is not showing.
+// truncation, so the page can say how many it is not showing. Expanded is set on
+// the card the reader opened: it renders the expanded budget and offers a way
+// back instead of "show all".
 type objectViewSection struct {
 	Title string
 	Rows  []objectViewItem
 	Total int
+	// Limit is the collapsed row budget the section declared (at least the
+	// default). An expanded card keeps it so it can offer the way back: the
+	// reader must be able to return to the page they left, not to some default
+	// that may be larger than this section ever showed.
+	Limit int
+	// ShowDirection marks a group whose rows mix directions (a `dir: both`
+	// section), so each row carries the arrow the flat list used to give it.
+	ShowDirection bool
+	Expanded      bool
+}
+
+// objectViewGroup is one group with every matching row, before truncation. The
+// collapsed page and the expanded card are the same grouping truncated to
+// different budgets, so both are built here once and cannot disagree.
+type objectViewGroup struct {
+	Title         string
+	Rows          []objectViewItem
+	Limit         int
+	ShowDirection bool
+}
+
+// section truncates the group to limit rows. A limit of zero renders every row.
+// The section keeps the declared budget, so an expanded card can still say how
+// far it had to grow to show everything.
+func (g objectViewGroup) section(limit int) objectViewSection {
+	rows := g.Rows
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return objectViewSection{
+		Title:         g.Title,
+		Rows:          rows,
+		Total:         len(g.Rows),
+		Limit:         g.Limit,
+		ShowDirection: g.ShowDirection,
+	}
 }
 
 // resolveObjectViewSections builds the page's relationship groups from the
-// type's declared view. It returns nil when the type declares no view, which is
-// the caller's signal to keep the generic list.
+// type's declared view, each capped at the rows it declares. It returns nil when
+// the type declares no view, when the object has no edges, or when no group has
+// a row — the caller decides what an empty result means (a view that opted out
+// of `more` is not the same as no view).
 func resolveObjectViewSections(view *typeUIView, obj *GraphObject, edges []GraphRelationship, related []GraphObject, typeUIByType map[string]typeUI) []objectViewSection {
+	groups := objectViewGroups(view, obj, edges, related, typeUIByType)
+	if len(groups) == 0 {
+		return nil
+	}
+	out := make([]objectViewSection, 0, len(groups))
+	for _, group := range groups {
+		out = append(out, group.section(group.Limit))
+	}
+	return out
+}
+
+// expandedViewSection re-resolves one rendered group — by its index in the
+// page's own list — with the expanded row budget. It reports false when the index
+// names no group, which the route renders as a 404 rather than an empty card: an
+// id that no longer matches (the object lost its edges, the pack changed) must
+// not look like "this section is empty".
+func expandedViewSection(view *typeUIView, index int, obj *GraphObject, edges []GraphRelationship, related []GraphObject, typeUIByType map[string]typeUI) (objectViewSection, bool) {
+	groups := objectViewGroups(view, obj, edges, related, typeUIByType)
+	if index < 0 || index >= len(groups) {
+		return objectViewSection{}, false
+	}
+	section := groups[index].section(viewExpandLimit)
+	section.Expanded = true
+	return section, true
+}
+
+// objectViewGroups collects every row of every rendered group, in reading order,
+// before any truncation.
+func objectViewGroups(view *typeUIView, obj *GraphObject, edges []GraphRelationship, related []GraphObject, typeUIByType map[string]typeUI) []objectViewGroup {
 	if view == nil || obj == nil || len(edges) == 0 {
 		return nil
 	}
@@ -98,7 +179,7 @@ func resolveObjectViewSections(view *typeUIView, obj *GraphObject, edges []Graph
 	// used records every edge a declared section rendered, so the trailing
 	// "more" group only offers what no section claimed.
 	used := make(map[string]bool, len(edges))
-	out := make([]objectViewSection, 0, len(view.Sections)+1)
+	groups := make([]objectViewGroup, 0, len(view.Sections)+1)
 
 	for _, section := range view.Sections {
 		rows := make([]objectViewItem, 0, len(edges))
@@ -123,10 +204,11 @@ func resolveObjectViewSections(view *typeUIView, obj *GraphObject, edges []Graph
 			// card is noise on a page that has nineteen other things to say.
 			continue
 		}
-		out = append(out, objectViewSection{
-			Title: section.Title,
-			Rows:  sortViewRows(rows, section.rowLimit()),
-			Total: len(rows),
+		groups = append(groups, objectViewGroup{
+			Title:         section.Title,
+			Rows:          sortViewRows(rows, 0),
+			Limit:         section.rowLimit(),
+			ShowDirection: section.direction() == "both",
 		})
 	}
 
@@ -143,15 +225,38 @@ func resolveObjectViewSections(view *typeUIView, obj *GraphObject, edges []Graph
 			rest = append(rest, row)
 		}
 		if len(rest) > 0 {
-			out = append(out, objectViewSection{
-				Title: "More connections",
-				Rows:  sortViewRows(rest, viewDefaultLimit),
-				Total: len(rest),
+			groups = append(groups, objectViewGroup{
+				Title: viewMoreTitle,
+				Rows:  sortViewRows(rest, 0),
+				Limit: viewDefaultLimit,
+				// The fallback group mixes whatever the author did not claim,
+				// so its rows need the direction cue.
+				ShowDirection: true,
 			})
 		}
 	}
 
-	return out
+	return groups
+}
+
+// dominantNeighbourType returns the most common object type among a group's
+// rows, ties broken alphabetically, or "" when there are none. It is what a
+// "browse all" escape hatch filters the object browser by when a group is still
+// too large after expanding.
+func dominantNeighbourType(rows []objectViewItem) string {
+	counts := make(map[string]int, len(rows))
+	for _, row := range rows {
+		if row.Neighbour.Type != "" {
+			counts[row.Neighbour.Type]++
+		}
+	}
+	best, bestCount := "", 0
+	for typ, n := range counts {
+		if n > bestCount || (n == bestCount && typ < best) {
+			best, bestCount = typ, n
+		}
+	}
+	return best
 }
 
 // objectViewItemFor resolves the far endpoint of one edge and its preview facts.

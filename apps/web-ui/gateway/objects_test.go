@@ -817,7 +817,7 @@ func TestRenderObjectDetailPage(t *testing.T) {
 		ID: "o1", Type: "person", Name: "sam-lee", Key: "sam-lee", Status: "suggested",
 		Properties: map[string]any{"first_name": "Sam", "relationship": "colleague"},
 	}
-	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, "", 0))
+	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, "", 0, nil))
 	for _, want := range []string{
 		"sam-lee", "person", "first_name", "Sam", "relationship", "colleague",
 		`href="/objects"`,
@@ -832,13 +832,13 @@ func TestRenderObjectDetailPage(t *testing.T) {
 		}
 	}
 
-	htmlErr := renderHTML(t, ObjectDetailPage(nil, objectBranchRef{}, nil, nil, errTest, "", nil, nil, nil, nil, nil, nil, "", 0))
+	htmlErr := renderHTML(t, ObjectDetailPage(nil, objectBranchRef{}, nil, nil, errTest, "", nil, nil, nil, nil, nil, nil, "", 0, nil))
 	if !strings.Contains(htmlErr, "Object unavailable") {
 		t.Error("error state missing")
 	}
 
 	// flash feedback renders an auto-dismissing toast carrying the message
-	htmlFlash := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", errTest, nil, nil, nil, nil, nil, "", 0))
+	htmlFlash := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", errTest, nil, nil, nil, nil, nil, "", 0, nil))
 	if !strings.Contains(htmlFlash, "memory-toast") || !strings.Contains(htmlFlash, errTest.Error()) {
 		t.Error("flash toast missing")
 	}
@@ -989,12 +989,283 @@ func TestRenderRelationshipsSubpageTypedView(t *testing.T) {
 	}
 }
 
+// TestRenderObjectViewSectionAffordances pins the escape path out of a truncated
+// section, which is the whole point of the expand route: a collapsed card offers
+// "show all" that swaps just this card (hx-get/hx-target) and still works as a
+// plain link; an expanded card offers "show fewer"; and a group still truncated
+// past the expanded budget offers a filtered browse instead of a dead end.
+func TestRenderObjectViewSectionAffordances(t *testing.T) {
+	typeUIByType := map[string]typeUI{"Document": {Icon: "file-text"}}
+	row := objectViewItem{RelID: "r1", RelType: "concerns", Neighbour: GraphObject{ID: "d1", CanonicalID: "d1", Type: "Document", Name: "Deed"}, Resolved: true}
+
+	collapsed := objectViewSection{Title: "Documents", Rows: []objectViewItem{row}, Total: 30, Limit: viewDefaultLimit}
+	html := renderHTML(t, objectViewSectionList("o1", []objectViewSection{collapsed}, typeUIByType))
+	for _, want := range []string{
+		`id="object-view-section-0"`,
+		`data-testid="object-view-truncated"`,
+		"+29 more not shown",
+		`data-testid="object-view-show-all"`,
+		`hx-get="/objects/o1/relationships/sections/0"`,
+		`hx-target="#object-view-section-0"`,
+		`hx-swap="outerHTML"`,
+		`href="/objects/o1/relationships?expand=0"`,
+		"Show all 30",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("collapsed section missing %q:\n%s", want, html)
+		}
+	}
+	if strings.Contains(html, `data-testid="object-view-show-fewer"`) {
+		t.Error("collapsed section must not offer show-fewer")
+	}
+
+	// Expanded and still over the budget: only a filtered browse remains.
+	stillBig := objectViewSection{Title: "Documents", Rows: []objectViewItem{row}, Total: 400, Limit: viewDefaultLimit, Expanded: true}
+	html = renderHTML(t, objectViewSectionList("o1", []objectViewSection{stillBig}, typeUIByType))
+	for _, want := range []string{
+		"+399 more not shown",
+		`data-testid="object-view-browse-all"`,
+		`href="/objects?type=Document"`,
+		"Browse all Document",
+		`data-testid="object-view-show-fewer"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("expanded oversized section missing %q:\n%s", want, html)
+		}
+	}
+	if strings.Contains(html, `data-testid="object-view-show-all"`) {
+		t.Error("an expanded section must not offer show-all again")
+	}
+
+	// Expanded within the budget: the way back in place, and no truncation note.
+	nine := make([]objectViewItem, 9)
+	for i := range nine {
+		nine[i] = row
+	}
+	fits := objectViewSection{Title: "Documents", Rows: nine, Total: 9, Limit: viewDefaultLimit, Expanded: true}
+	html = renderHTML(t, objectViewSectionList("o1", []objectViewSection{fits}, typeUIByType))
+	if !strings.Contains(html, `data-testid="object-view-show-fewer"`) || !strings.Contains(html, `hx-get="/objects/o1/relationships/sections/0?collapsed=1"`) {
+		t.Errorf("expanded section missing its collapse affordance:\n%s", html)
+	}
+	if strings.Contains(html, `data-testid="object-view-truncated"`) {
+		t.Errorf("a fully expanded section must not claim truncation:\n%s", html)
+	}
+	if strings.Contains(html, `data-testid="object-view-show-all"`) {
+		t.Errorf("a fully expanded section must not offer show-all:\n%s", html)
+	}
+}
+
+// TestObjectViewSectionRoute pins the endpoint behind the truncated-section
+// escape path: expanding returns the card alone with every row, ?collapsed=1
+// returns the declared budget again (so the reader can go back to the page they
+// left, not to a larger default), and an index naming no group is a 404 rather
+// than an empty card that would claim the section exists and has no rows.
+func TestObjectViewSectionRoute(t *testing.T) {
+	f := &fakeMemory{
+		compiled: &CompiledSchemaTypes{ObjectTypes: []CompiledType{{
+			Name:  "Property",
+			Label: "Property",
+			UI:    json.RawMessage(`{"view":{"sections":[{"title":"Documents","relation":"concerns","limit":2}]}}`),
+		}}},
+		objects: []GraphObject{
+			{ID: "o1", CanonicalID: "o1", Type: "Property", Name: "Home — Waliły 29"},
+			{ID: "d1", CanonicalID: "d1", Type: "Document", Name: "Deed"},
+			{ID: "d2", CanonicalID: "d2", Type: "Document", Name: "Mortgage"},
+			{ID: "d3", CanonicalID: "d3", Type: "Document", Name: "Permit"},
+			{ID: "d4", CanonicalID: "d4", Type: "Document", Name: "Survey"},
+		},
+		relns: []GraphRelationship{
+			{ID: "r1", Type: "concerns", SrcID: "d1", DstID: "o1"},
+			{ID: "r2", Type: "concerns", SrcID: "d2", DstID: "o1"},
+			{ID: "r3", Type: "concerns", SrcID: "d3", DstID: "o1"},
+			{ID: "r4", Type: "concerns", SrcID: "d4", DstID: "o1"},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/objects/:id/relationships/sections/:index", s.uiObjectViewSection)
+	get := func(path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec
+	}
+
+	rec := get("/objects/o1/relationships/sections/0")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expand status = %d", rec.Code)
+	}
+	expanded := rec.Body.String()
+	for _, want := range []string{
+		`id="object-view-section-0"`,
+		`data-testid="object-view-row"`,
+		`data-testid="object-view-show-fewer"`,
+		"Deed", "Mortgage", "Permit", "Survey",
+	} {
+		if !strings.Contains(expanded, want) {
+			t.Errorf("expanded section missing %q:\n%s", want, expanded)
+		}
+	}
+	if strings.Contains(expanded, `data-testid="object-view-truncated"`) || strings.Contains(expanded, `data-testid="object-view-show-all"`) {
+		t.Errorf("an expanded section within the budget must not claim truncation:\n%s", expanded)
+	}
+	if strings.Contains(expanded, "<!doctype html>") {
+		t.Error("the section route must return the card fragment, not a page shell")
+	}
+
+	rec = get("/objects/o1/relationships/sections/0?collapsed=1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("collapse status = %d", rec.Code)
+	}
+	collapsed := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="object-view-truncated"`, "+2 more not shown",
+		`data-testid="object-view-show-all"`, "Show all 4",
+	} {
+		if !strings.Contains(collapsed, want) {
+			t.Errorf("collapsed section missing %q:\n%s", want, collapsed)
+		}
+	}
+	// The declared limit is 2, not the default 8: rows sort by label, so
+	// Permit and Survey are the ones the collapsed card hides.
+	if strings.Contains(collapsed, "Permit") || strings.Contains(collapsed, "Survey") {
+		t.Errorf("collapsed section rendered past its declared limit:\n%s", collapsed)
+	}
+
+	for _, path := range []string{
+		"/objects/o1/relationships/sections/1", // names no group
+		"/objects/o1/relationships/sections/nope",
+		"/objects/missing/relationships/sections/0",
+	} {
+		if rec := get(path); rec.Code != http.StatusNotFound {
+			t.Errorf("%s status = %d, want 404", path, rec.Code)
+		}
+	}
+}
+
+// TestRenderRelationshipsViewShowsNothing pins the case the fallback list got
+// wrong: a valid view whose groups are all empty (every section unmatched and
+// `more: false`) must not render the flat list, which would show exactly the
+// relationship types the pack opted out of. It says so and offers ?all=1.
+func TestRenderRelationshipsViewShowsNothing(t *testing.T) {
+	obj := &GraphObject{ID: "o1", CanonicalID: "o1", Type: "Property", Name: "Home"}
+	edges := []GraphRelationship{{ID: "r1", Type: "related_to", SrcID: "o1", DstID: "x1"}}
+	data := objectDetailShellData{Obj: obj, Active: "relationships", HasView: true}
+
+	html := renderHTML(t, objectRelationshipsPage(data, nil, edges, nil, nil))
+	for _, want := range []string{
+		`data-testid="object-view-empty"`,
+		`data-testid="object-view-show-unfiltered"`,
+		`href="/objects/o1/relationships?all=1"`,
+		"1 connections",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("empty-view page missing %q:\n%s", want, html)
+		}
+	}
+	if strings.Contains(html, `data-testid="object-relationship-endpoint"`) {
+		t.Errorf("a view that shows nothing must not fall back to the flat list:\n%s", html)
+	}
+}
+
+// TestRenderObjectDetailPageTypedView pins that the typed layout is the object
+// page itself, not only a tab: the resolved groups render on the Overview above
+// the edit form, and a type without a view renders exactly as before.
+func TestRenderObjectDetailPageTypedView(t *testing.T) {
+	obj := &GraphObject{ID: "o1", CanonicalID: "o1", Type: "Property", Name: "Home — Waliły 29"}
+	related := []GraphObject{{ID: "d1", CanonicalID: "d1", Type: "Document", Name: "Deed"}}
+	edges := []GraphRelationship{{ID: "r1", Type: "concerns", SrcID: "d1", DstID: "o1"}}
+	typeUIByType := map[string]typeUI{"Document": {Icon: "file-text"}}
+	view := &typeUIView{Sections: []typeUISection{{Title: "Documents", Relation: []string{"concerns"}}}}
+	sections := resolveObjectViewSections(view, obj, edges, related, typeUIByType)
+
+	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, typeUIByType, nil, nil, "Property", len(edges), sections))
+	if !strings.Contains(html, `data-testid="object-view-sections"`) || !strings.Contains(html, "Documents") {
+		t.Errorf("overview did not render the type's relationship sections:\n%s", html)
+	}
+	// The section cards sit above the editable form, not after it.
+	if formAt, sectionsAt := strings.Index(html, `action="/objects/o1"`), strings.Index(html, `data-testid="object-view-sections"`); formAt >= 0 && sectionsAt > formAt {
+		t.Error("typed sections must render above the edit form")
+	}
+	if strings.Contains(html, `data-testid="object-relationship-endpoint"`) {
+		t.Error("the overview must not render the deprecated flat edge list")
+	}
+
+	// A type with no view renders no section group at all.
+	plain := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, typeUIByType, nil, nil, "Property", len(edges), nil))
+	if strings.Contains(plain, `data-testid="object-view-sections"`) {
+		t.Error("an object type without a view must not render typed sections")
+	}
+}
+
+// TestRenderObjectDetailMetaProvenance pins the provenance strip in the header:
+// the data class is named (a synthesized object must not look hand-entered), the
+// revision count links to the history, and absent server values render nothing.
+func TestRenderObjectDetailMetaProvenance(t *testing.T) {
+	count := 4
+	obj := &GraphObject{ID: "o1", Type: "Property", Ref: "prop-1", DataClass: "synthesized", CredentialKind: "mcp_link", RevisionCount: &count}
+	html := renderHTML(t, objectDetailMeta(obj, objectBranchRef{}, nil, nil, "overview"))
+	for _, want := range []string{
+		`data-testid="object-data-class"`,
+		`data-data-class="synthesized"`,
+		"Synthesized",
+		`data-testid="object-revision-count"`,
+		"4 versions",
+		`href="/objects/o1/history"`,
+		`data-testid="object-credential-kind"`,
+		"agent MCP link",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("provenance meta missing %q:\n%s", want, html)
+		}
+	}
+
+	// Absent fields (write responses) render no chip at all.
+	bare := renderHTML(t, objectDetailMeta(&GraphObject{ID: "o2", Type: "Note"}, objectBranchRef{}, nil, nil, "overview"))
+	for _, bad := range []string{`data-testid="object-data-class"`, `data-testid="object-revision-count"`, `data-testid="object-credential-kind"`} {
+		if strings.Contains(bare, bad) {
+			t.Errorf("absent provenance rendered %q:\n%s", bad, bare)
+		}
+	}
+	// A single revision is not history worth counting.
+	one := 1
+	if html := renderHTML(t, objectDetailMeta(&GraphObject{ID: "o3", Type: "Note", DataClass: "source", RevisionCount: &one}, objectBranchRef{}, nil, nil, "overview")); strings.Contains(html, "versions") {
+		t.Error("a single revision must not render a versions link")
+	}
+	// An unknown class leaks nothing into the header.
+	if html := renderHTML(t, objectDetailMeta(&GraphObject{ID: "o4", Type: "Note", DataClass: "mystery"}, objectBranchRef{}, nil, nil, "overview")); strings.Contains(html, "mystery") {
+		t.Error("an unknown data class must not render")
+	}
+}
+
+// TestSimilarExcludingLinked pins the de-duplication: a similarity hit that the
+// object is already connected to is dropped, matched through either its version
+// id or its canonical id (edges store canonical ids, hits carry both).
+func TestSimilarExcludingLinked(t *testing.T) {
+	similar := []SimilarObject{
+		{ID: "v1", CanonicalID: "c1", Type: "Property"},
+		{ID: "v2", CanonicalID: "c2", Type: "Property"},
+		{ID: "v3", CanonicalID: "c3", Type: "Property"},
+	}
+	linked := map[string]bool{"c1": true, "v2": true}
+
+	got := similarExcludingLinked(similar, linked)
+	if len(got) != 1 || got[0].ID != "v3" {
+		t.Fatalf("similarExcludingLinked = %+v, want only v3", got)
+	}
+	if all := similarExcludingLinked(similar, nil); len(all) != 3 {
+		t.Errorf("an empty linked set must not drop anything: %+v", all)
+	}
+	if kept := similarExcludingLinked(similar, map[string]bool{"other": true}); len(kept) != 3 {
+		t.Errorf("an unrelated linked set must not drop anything: %+v", kept)
+	}
+}
+
 func TestRenderObjectDetailSimilar(t *testing.T) {
 	obj := &GraphObject{ID: "o1", Type: "person", Key: "sam-lee"}
 
 	// The Overview page no longer renders Similar objects inline; it is a rail
 	// tab with its own route.
-	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, "", 0))
+	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, "", 0, nil))
 	if strings.Contains(html, `id="object-similar"`) || strings.Contains(html, "Finding similar objects") {
 		t.Errorf("overview must not render the Similar objects section:\n%s", html)
 	}
@@ -1033,7 +1304,7 @@ func TestRenderObjectDetailEditable(t *testing.T) {
 	// person derives from no compiled type here, so a board-enabled control is
 	// supplied explicitly to exercise the Overview Workflow panel.
 	status := objectStatusControlFor([]CompiledType{{Name: "person", BoardEnabled: true}}, "person")
-	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, status, nil, "", 0))
+	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, status, nil, "", 0, nil))
 
 	// The Overview Workflow panel carries labelled status/assignee controls;
 	// the properties form carries the key, labels, and schema fields.
@@ -1090,7 +1361,7 @@ func TestRenderObjectDetailTwoPropertyCards(t *testing.T) {
 		{Name: "notes", Type: "string", Description: "Free-form notes."},
 	}
 	status := objectStatusControlFor([]CompiledType{{Name: "Person", BoardEnabled: true}}, "Person")
-	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, propDefs, nil, status, nil, "Person", 0))
+	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, propDefs, nil, status, nil, "Person", 0, nil))
 
 	if got := strings.Count(html, ">Properties</h2>"); got != 1 {
 		t.Errorf("built-in Properties heading rendered %d times, want 1:\n%s", got, html)
@@ -1286,7 +1557,7 @@ func TestRenderObjectDetailTypeAwareWidgets(t *testing.T) {
 		{Name: "priority", Type: "string", Enum: []string{"low", "high"}},
 		{Name: "title", Type: "string"},
 	}
-	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, propDefs, nil, nil, nil, "", 0))
+	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, propDefs, nil, nil, nil, "", 0, nil))
 
 	// boolean → three-state select (unset/true/false), never a text input
 	if !strings.Contains(html, `<select name="prop_cleared"`) {
@@ -3479,7 +3750,7 @@ func TestObjectStatusField(t *testing.T) {
 	renderControls := func(current string) string {
 		obj := &GraphObject{ID: "o1", Type: "Task", Key: "t1", Status: current}
 		objectTypes := []CompiledType{{Name: "Task", BoardEnabled: true, AllowedStatuses: boardStatuses}}
-		return renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, objectStatusControlFor(objectTypes, "Task"), nil, "", 0))
+		return renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, objectStatusControlFor(objectTypes, "Task"), nil, "", 0, nil))
 	}
 
 	t.Run("detail page renders the allowed statuses in the picker", func(t *testing.T) {
@@ -3559,7 +3830,7 @@ func TestObjectStatusField(t *testing.T) {
 			Name:       "Scenario",
 			Properties: json.RawMessage(`{"status":{"type":"string","enum":["proposed","active","archived"]}}`),
 		}}
-		html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, objectStatusControlFor(objectTypes, "Scenario"), nil, "", 0))
+		html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, objectStatusControlFor(objectTypes, "Scenario"), nil, "", 0, nil))
 		if strings.Contains(html, `data-testid="object-workflow-panel"`) || strings.Contains(html, `id="object-status"`) {
 			t.Errorf("no-workflow type must not render workflow controls in:\n%s", html)
 		}
@@ -3600,7 +3871,7 @@ func TestObjectStatusField(t *testing.T) {
 
 	t.Run("degraded control renders the header badge only", func(t *testing.T) {
 		obj := &GraphObject{ID: "o1", Type: "Task", Key: "t1", Status: "in_progress"}
-		html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, objectStatusControlUnavailable(), nil, "", 0))
+		html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, objectStatusControlUnavailable(), nil, "", 0, nil))
 		if strings.Contains(html, `data-testid="object-workflow-panel"`) || strings.Contains(html, `name="status" type="text"`) {
 			t.Errorf("unavailable schema should not render editable workflow controls in:\n%s", html)
 		}
@@ -4658,7 +4929,7 @@ func TestRenderObjectDetailOriginTrail(t *testing.T) {
 	doc := &Document{ID: "d1", Filename: "Spec.md"}
 	getDoc := func(context.Context, string) (*Document, error) { return doc, nil }
 	trail := objectOriginTrail(context.Background(), "/documents/d1/extractions/job1", getDoc)
-	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, nil, trail, "", 0))
+	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, nil, trail, "", 0, nil))
 
 	region := breadcrumbRegion(html)
 	if region == "" {
@@ -4763,7 +5034,7 @@ func TestObjectFormPropertyLabels(t *testing.T) {
 	}
 
 	obj := &GraphObject{ID: "o1", Type: "Person", Key: "p1", Properties: map[string]any{"owner_notes": "hello"}}
-	detail := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, defs, nil, nil, nil, "", 0))
+	detail := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, defs, nil, nil, nil, "", 0, nil))
 	if !strings.Contains(detail, labelledLegend) {
 		t.Errorf("detail properties card must label the property by its title:\n%s", detail)
 	}
@@ -5036,27 +5307,32 @@ func TestObjectSubpages(t *testing.T) {
 	t.Run("similar partial renders ranked results with same-type marker", func(t *testing.T) {
 		prevSimilar := f.similar
 		defer func() { f.similar = prevSimilar }()
+		// o2 is already linked to o1 (f.relns), so it must not reappear here:
+		// the section would be re-listing the Relationships tab. o3 stays.
 		f.similar = []SimilarObject{
-			{ID: "o2", Type: "Task", Key: "t2", Distance: 0.1},
-			{ID: "o3", Type: "Task", Key: "t3", Distance: 0.15},
+			{ID: "o2", Type: "Task", Key: "t2", Distance: 0.05},
+			{ID: "o3", Type: "Task", Key: "t3", Distance: 0.1},
 		}
 		rec := get("/objects/o1/similar/partial?type=Task")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d", rec.Code)
 		}
 		body := rec.Body.String()
-		if !strings.Contains(body, "t2") || !strings.Contains(body, "t3") || !strings.Contains(body, "Merge") {
+		if !strings.Contains(body, "t3") || !strings.Contains(body, "Merge") {
 			t.Errorf("similar partial missing results:\n%s", body)
+		}
+		if strings.Contains(body, "t2") {
+			t.Errorf("similar partial re-listed an already-linked object:\n%s", body)
 		}
 		// Rank badges replace the standalone percentage badge.
 		if !strings.Contains(body, `data-testid="similar-rank"`) {
 			t.Errorf("similar partial missing rank badge:\n%s", body)
 		}
-		if !strings.Contains(body, ">#1<") || !strings.Contains(body, ">#2<") {
-			t.Errorf("similar partial missing rank labels:\n%s", body)
+		if !strings.Contains(body, ">#1<") {
+			t.Errorf("similar partial missing rank label:\n%s", body)
 		}
-		if strings.Index(body, ">#1<") > strings.Index(body, ">#2<") {
-			t.Errorf("ranks out of order: #1 must precede #2:\n%s", body)
+		if strings.Contains(body, ">#2<") {
+			t.Errorf("similar partial ranked an excluded (linked) object:\n%s", body)
 		}
 		// The percentage is metadata in the tooltip, not a standalone badge label.
 		if strings.Contains(body, ">90% similar<") {

@@ -18,6 +18,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/emergent-company/go-daisy/components/nav"
+	"github.com/emergent-company/go-daisy/components/ui"
 )
 
 // --- objects browser ---
@@ -854,9 +855,26 @@ func (s *Server) loadObjectDetailShell(ctx context.Context, id, from string) obj
 	}
 }
 
+// objectViewSections resolves the object type's declared ui.view against the
+// object's edges with the collapsed row budget. It returns nil when the type
+// declares no view, the edges could not be loaded, or the object has none — the
+// Relationships page distinguishes "no view" from "a view that shows nothing"
+// through objectDetailShellData.HasView, not through this nil.
+//
+// The related-objects fetch only happens for a type that declares a view, so
+// every project that has not adopted the block keeps its current page cost.
+func (s *Server) objectViewSections(ctx context.Context, data objectDetailShellData) []objectViewSection {
+	view := typeUIOf(data.TypeUIByType, data.Obj.Type).View
+	if view == nil || data.EdgesErr != nil || len(data.Edges) == 0 {
+		return nil
+	}
+	related := s.loadRelatedObjects(ctx, data.Obj, data.Edges)
+	return resolveObjectViewSections(view, data.Obj, data.Edges, related, data.TypeUIByType)
+}
+
 // uiObject renders the object Overview subpage: the workflow panel, record
-// facts, and editable properties. Relationships moved to its own rail tab, so
-// the overview no longer renders them or resolves related objects.
+// facts, the type's declared relationship sections, and editable properties.
+// The Relationships tab keeps the complete, unfiltered edge list.
 func (s *Server) uiObject(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
@@ -865,7 +883,7 @@ func (s *Server) uiObject(c echo.Context) error {
 
 	data := s.loadObjectDetailShell(ctx, id, from)
 	if data.LoadErr != nil {
-		return s.page(c, pageTitle("Object"), ObjectDetailPage(nil, objectBranchRef{}, nil, nil, data.LoadErr, "", flashErr, nil, nil, nil, nil, nil, "", 0))
+		return s.page(c, pageTitle("Object"), ObjectDetailPage(nil, objectBranchRef{}, nil, nil, data.LoadErr, "", flashErr, nil, nil, nil, nil, nil, "", 0, nil))
 	}
 	obj := data.Obj
 
@@ -876,6 +894,11 @@ func (s *Server) uiObject(c echo.Context) error {
 		propDefs = compiledTypePropertyDefs(data.Compiled.ObjectTypes, obj.Type)
 	}
 
+	// A type that declares a ui.view renders its relationship groups on the
+	// Overview itself: the typed layout is the object's page, and the
+	// Relationships tab is the full edge list behind it.
+	viewSections := s.objectViewSections(ctx, data)
+
 	flashMsg := ""
 	if c.QueryParam("updated") != "" {
 		flashMsg = "Object updated."
@@ -883,7 +906,7 @@ func (s *Server) uiObject(c echo.Context) error {
 	return s.page(c, pageTitle(graphObjectLabel(*obj)), ObjectDetailPage(
 		obj, data.Branch, data.Sources, data.Assignees,
 		nil, flashMsg, flashErr, labelSuggestions, propDefs, data.TypeUIByType,
-		data.Status, data.Trail, data.TypeLabel, data.EdgeCount,
+		data.Status, data.Trail, data.TypeLabel, data.EdgeCount, viewSections,
 	))
 }
 
@@ -959,9 +982,61 @@ func (s *Server) uiObjectRelationshipsPage(c echo.Context) error {
 	// then renders one card per declared section instead of one flat list, with
 	// a depth-1 preview of each neighbour. A type that declares none, or whose
 	// view is malformed, keeps the generic list (see typeUIViewOf).
-	data.ViewSections = resolveObjectViewSections(typeUIOf(data.TypeUIByType, data.Obj.Type).View,
-		data.Obj, data.Edges, related, data.TypeUIByType)
+	//
+	// ?all=1 is the reader's escape from a view that shows nothing: it asks for
+	// every edge, so the declared view is deliberately not applied.
+	if view := typeUIOf(data.TypeUIByType, data.Obj.Type).View; view != nil && c.QueryParam("all") != "1" {
+		data.HasView = true
+		data.ViewSections = resolveObjectViewSections(view, data.Obj, data.Edges, related, data.TypeUIByType)
+		// ?expand=N opens one group to the expanded row budget, so the in-place
+		// swap has a working no-JS fallback (this page's own URL).
+		if index, err := strconv.Atoi(c.QueryParam("expand")); err == nil && index >= 0 && index < len(data.ViewSections) {
+			if expanded, ok := expandedViewSection(view, index, data.Obj, data.Edges, related, data.TypeUIByType); ok {
+				data.ViewSections[index] = expanded
+			}
+		}
+	}
 	return s.page(c, pageTitle(graphObjectLabel(*data.Obj)+" · Relationships"), objectRelationshipsPage(data, relTypes, data.Edges, related, data.EdgesErr))
+}
+
+// uiObjectViewSection renders one group of the object type's declared ui.view as
+// a standalone fragment, so a truncated section expands in place (hx-get with
+// outerHTML) instead of navigating. ?collapsed=1 renders the collapsed card
+// again, which is how "show fewer" swaps back.
+//
+// The index is the group's position in the page's own render. A stale index — the
+// object lost an edge, the pack changed, the request is hand-made — is a 404,
+// never an empty card: an empty card would claim the section exists and has no
+// rows, which is the opposite of what happened.
+func (s *Server) uiObjectViewSection(c echo.Context) error {
+	ctx := c.Request().Context()
+	index, err := strconv.Atoi(c.Param("index"))
+	if err != nil || index < 0 {
+		return echo.NewHTTPError(http.StatusNotFound, "section not found")
+	}
+	data := s.loadObjectDetailShell(ctx, c.Param("id"), "")
+	if data.LoadErr != nil || data.EdgesErr != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "object not found")
+	}
+	view := typeUIOf(data.TypeUIByType, data.Obj.Type).View
+	if view == nil {
+		return echo.NewHTTPError(http.StatusNotFound, "section not found")
+	}
+	related := s.loadRelatedObjects(ctx, data.Obj, data.Edges)
+
+	section, ok := expandedViewSection(view, index, data.Obj, data.Edges, related, data.TypeUIByType)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotFound, "section not found")
+	}
+	if c.QueryParam("collapsed") == "1" {
+		sections := resolveObjectViewSections(view, data.Obj, data.Edges, related, data.TypeUIByType)
+		if index >= len(sections) {
+			return echo.NewHTTPError(http.StatusNotFound, "section not found")
+		}
+		section = sections[index]
+	}
+	renderPartial(c.Response().Writer, c.Request(), objectViewSectionCard(data.Obj.ID, index, section, data.TypeUIByType))
+	return nil
 }
 
 // objectSimilarFetchLimit is the raw similar-object fetch size. The count badge
@@ -983,7 +1058,7 @@ func (s *Server) uiObjectSimilarCountPartial(c echo.Context) error {
 		renderPartial(c.Response().Writer, c.Request(), objectRailCount("", "object-similar-count"))
 		return nil
 	}
-	matches := filterSimilarMatches(similar)
+	matches := similarExcludingLinked(filterSimilarMatches(similar), s.similarLinkedIDs(ctx, id))
 	label := ""
 	if len(matches) > 0 {
 		label = strconv.Itoa(len(matches))
@@ -1063,8 +1138,53 @@ func (s *Server) uiObjectSimilarPartial(c echo.Context) error {
 		return nil
 	}
 	obj := &GraphObject{ID: id, Type: c.QueryParam("type")}
-	renderPartial(c.Response().Writer, c.Request(), objectSimilarObjects(obj, filterSimilarMatches(similar)))
+	matches := similarExcludingLinked(filterSimilarMatches(similar), s.similarLinkedIDs(ctx, id))
+	renderPartial(c.Response().Writer, c.Request(), objectSimilarObjects(obj, matches))
 	return nil
+}
+
+// similarLinkedIDs returns the ids of objects that already have an edge to id,
+// keyed by both their id and their canonical id. It is best-effort: a failed
+// edge fetch returns an empty set, and the similar list is then simply not
+// de-duplicated — a reachability nicety must not turn into an error state.
+//
+// This exists because vector similarity and graph adjacency overlap almost
+// completely on a real project: the top seven neighbours of the measured hero
+// object were all already linked from its object page, so the section was
+// re-listing the page above it.
+func (s *Server) similarLinkedIDs(ctx context.Context, id string) map[string]bool {
+	edges, err := s.memory.GetObjectEdges(ctx, id)
+	if err != nil {
+		captureError(err)
+		return nil
+	}
+	linked := make(map[string]bool, len(edges)*2)
+	for _, edge := range edges {
+		for _, endpoint := range []string{edge.SrcID, edge.DstID} {
+			if endpoint != "" {
+				linked[endpoint] = true
+			}
+		}
+	}
+	return linked
+}
+
+// similarExcludingLinked drops matches that are already connected to the object.
+// An edge's endpoints are canonical ids, while a similarity hit carries both its
+// version id and its canonical id, so both are checked — matching only one would
+// let a linked object back onto the page through the other.
+func similarExcludingLinked(similar []SimilarObject, linked map[string]bool) []SimilarObject {
+	if len(linked) == 0 {
+		return similar
+	}
+	out := make([]SimilarObject, 0, len(similar))
+	for _, so := range similar {
+		if linked[so.ID] || (so.CanonicalID != "" && linked[so.CanonicalID]) {
+			continue
+		}
+		out = append(out, so)
+	}
+	return out
 }
 
 // uiObjectStatus applies the object header's status picker. A workflow object
@@ -2464,6 +2584,41 @@ func objectBranchChipIcon(b objectBranchRef) string {
 		return ""
 	}
 	return "lucide--git-branch"
+}
+
+// dataClassChip describes how the server classifies this version's data. The
+// classes are a closed vocabulary (source | synthesized | adopted), so an
+// unknown or absent value renders no chip rather than leaking a raw string into
+// the header. The label is the honest surface for a generated wiki entry: a
+// synthesized object must not look identical to a hand-entered one.
+func dataClassChip(class string) (label string, variant ui.BadgeIntent, badgeIcon, hint string) {
+	switch class {
+	case "source":
+		return "From source", ui.BadgeSuccess, "lucide--file-input", "This version came from a connected data source, not from generation."
+	case "synthesized":
+		return "Synthesized", ui.BadgeWarning, "lucide--sparkles", "This version was generated — derived by the server from other data, not entered by hand."
+	case "adopted":
+		return "Adopted", ui.BadgePrimary, "lucide--git-branch", "This version was adopted from another graph (an import or a merge) rather than written here."
+	default:
+		return "", ui.BadgeGhost, "", ""
+	}
+}
+
+// credentialKindLabel names the credential a write used: the API token, the
+// agent MCP link, or a browser session. "none" (background or internal work) and
+// an absent value render nothing — "an internal process did this" is not worth a
+// chip.
+func credentialKindLabel(kind string) string {
+	switch kind {
+	case "api_key":
+		return "API key"
+	case "mcp_link":
+		return "agent MCP link"
+	case "session":
+		return "web session"
+	default:
+		return ""
+	}
 }
 
 // objectBranchChipHref returns the chip's link target (the object browser
