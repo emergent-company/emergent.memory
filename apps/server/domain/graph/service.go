@@ -590,6 +590,9 @@ type ReindexEmbeddingsResponse struct {
 	ObjectsEnqueued int `json:"objects_enqueued"`
 	// RelationshipsEnqueued is the number of relationship embedding jobs newly inserted.
 	RelationshipsEnqueued int `json:"relationships_enqueued"`
+	// ChunksEnqueued is the number of chunk embedding jobs newly inserted. Only
+	// populated when Chunks was requested.
+	ChunksEnqueued int `json:"chunks_enqueued"`
 }
 
 // ReindexEmbeddingsRequest holds options for the ReindexEmbeddings operation.
@@ -600,10 +603,17 @@ type ReindexEmbeddingsRequest struct {
 	// Force re-enqueues even objects/relationships that already have an embedding.
 	// Default (false) only targets those with a NULL embedding.
 	Force bool
+	// Chunks also re-enqueues the project's document chunks. Chunks have no
+	// other bulk re-embed path: the chunking pipeline is the only producer of
+	// chunk embedding jobs, so a project that changes embedding model could not
+	// move its chunk corpus otherwise (issue #624). Namespace does not apply —
+	// chunks belong to documents, which carry no graph key.
+	Chunks bool
 }
 
 // ReindexEmbeddings enqueues objects and relationships in the project for embedding (re)generation.
-// Supports namespace filtering and force-regeneration of existing embeddings.
+// Supports namespace filtering, force-regeneration of existing embeddings, and
+// opt-in re-embedding of document chunks.
 func (s *Service) ReindexEmbeddings(ctx context.Context, projectID uuid.UUID, req ReindexEmbeddingsRequest) (*ReindexEmbeddingsResponse, error) {
 	resp := &ReindexEmbeddingsResponse{}
 
@@ -720,14 +730,80 @@ func (s *Service) ReindexEmbeddings(ctx context.Context, projectID uuid.UUID, re
 		}
 	}
 
+	// --- Chunks ---
+	if req.Chunks {
+		enqueued, err := s.enqueueChunkEmbeddings(ctx, projectID, req.Force)
+		if err != nil {
+			return nil, err
+		}
+		resp.ChunksEnqueued = enqueued
+	}
+
 	s.log.Info("reindex embeddings completed",
 		slog.String("project_id", projectID.String()),
 		slog.String("namespace", req.Namespace),
 		slog.Bool("force", req.Force),
+		slog.Bool("chunks", req.Chunks),
 		slog.Int("objects_enqueued", resp.ObjectsEnqueued),
-		slog.Int("relationships_enqueued", resp.RelationshipsEnqueued))
+		slog.Int("relationships_enqueued", resp.RelationshipsEnqueued),
+		slog.Int("chunks_enqueued", resp.ChunksEnqueued))
 
 	return resp, nil
+}
+
+// enqueueChunkEmbeddings queues the project's document chunks for (re-)embedding
+// and returns how many jobs were inserted.
+//
+// Chunk embedding jobs are otherwise produced only by the chunking pipeline, so
+// a project that switches embedding model has no way to move its chunk corpus —
+// objects and relationships can be reindexed, chunks could not (issue #624).
+//
+// This issues the insert here rather than calling
+// extraction.ChunkEmbeddingJobsService.EnqueueBatch because the graph domain
+// cannot import extraction (extraction imports graph), and the lint ratchet
+// bars another cross-domain setter. It targets the same table and relies on the
+// same partial unique index (uidx_chunk_embedding_jobs_active, migration 00126)
+// for dedupe, so the two paths cannot disagree about what an active job is.
+//
+// Parent chunks are excluded: they are structural context and are never
+// embedded, so enqueueing them would create jobs the worker skips.
+func (s *Service) enqueueChunkEmbeddings(ctx context.Context, projectID uuid.UUID, force bool) (int, error) {
+	embeddingFilter := "AND c.embedding IS NULL"
+	if force {
+		embeddingFilter = ""
+	}
+
+	// One statement selects and queues in the same snapshot: there is no window
+	// between choosing a chunk and inserting its job for another caller to slip
+	// one in. The NOT EXISTS mirrors the worker's own enqueue path, and
+	// ON CONFLICT names the same partial unique index
+	// (uidx_chunk_embedding_jobs_active, migration 00126) as a backstop, so the
+	// two paths cannot disagree about what an active job is.
+	insertSQL := strings.ReplaceAll(`
+		INSERT INTO kb.chunk_embedding_jobs (chunk_id, status, priority, scheduled_at, created_at, updated_at)
+		SELECT c.id, 'pending', 0, now(), now(), now()
+		FROM kb.chunks c
+		JOIN kb.documents d ON d.id = c.document_id
+		WHERE d.project_id = ?
+		  AND COALESCE((c.metadata->>'isParent')::boolean, false) = false
+		  ##EMB##
+		  AND NOT EXISTS (
+		    SELECT 1 FROM kb.chunk_embedding_jobs j
+		    WHERE j.chunk_id = c.id
+		      AND j.status IN ('pending', 'processing')
+		  )
+		ON CONFLICT (chunk_id) WHERE status IN ('pending', 'processing') DO NOTHING`,
+		"##EMB##", embeddingFilter)
+
+	res, err := s.repo.DB().NewRaw(insertSQL, projectID).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("reindex: enqueue chunks: %w", err)
+	}
+	inserted, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("reindex: count chunk jobs: %w", err)
+	}
+	return int(inserted), nil
 }
 
 // UpdateAccessTimestamps updates last_accessed_at for the given object IDs,

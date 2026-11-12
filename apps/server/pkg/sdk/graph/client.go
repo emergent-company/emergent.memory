@@ -1998,6 +1998,52 @@ func (c *Client) BulkAction(ctx context.Context, req *BulkActionRequest) (*BulkA
 }
 
 // =============================================================================
+// Reindex embeddings
+// =============================================================================
+
+// ReindexEmbeddingsOptions controls a reindex request.
+type ReindexEmbeddingsOptions struct {
+	// Namespace limits objects/relationships to those whose key starts with it.
+	Namespace string
+	// Force re-enqueues rows that already have an embedding.
+	Force bool
+	// Chunks also re-enqueues the project's document chunks, which have no other
+	// bulk re-embed path.
+	Chunks bool
+}
+
+// ReindexEmbeddingsResult reports how many embedding jobs were enqueued.
+type ReindexEmbeddingsResult struct {
+	ObjectsEnqueued       int `json:"objects_enqueued"`
+	RelationshipsEnqueued int `json:"relationships_enqueued"`
+	ChunksEnqueued        int `json:"chunks_enqueued"`
+}
+
+// ReindexEmbeddings queues graph objects, relationships and (opt-in) document
+// chunks for embedding (re-)generation.
+func (c *Client) ReindexEmbeddings(ctx context.Context, opts ReindexEmbeddingsOptions) (*ReindexEmbeddingsResult, error) {
+	q := url.Values{}
+	if opts.Namespace != "" {
+		q.Set("namespace", opts.Namespace)
+	}
+	if opts.Force {
+		q.Set("force", "true")
+	}
+	if opts.Chunks {
+		q.Set("chunks", "true")
+	}
+	reqURL := c.base + "/api/graph/reindex-embeddings"
+	if enc := q.Encode(); enc != "" {
+		reqURL += "?" + enc
+	}
+	var result ReindexEmbeddingsResult
+	if err := c.postJSON(ctx, reqURL, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// =============================================================================
 // Session API
 // =============================================================================
 
