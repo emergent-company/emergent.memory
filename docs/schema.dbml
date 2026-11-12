@@ -1256,6 +1256,10 @@ Table "kb"."embedding_cache" {
   "model_id" text [not null, default: '']
   "embedding" jsonb [not null]
   "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (created_at) [name: "idx_embedding_cache_created_at"]
+  }
 }
 
 Table "kb"."embedding_policies" {

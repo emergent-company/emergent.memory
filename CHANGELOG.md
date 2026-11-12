@@ -250,6 +250,21 @@ See `/apps/server/src/modules/unified-search/` for implementation details.
 
 ### Fixed
 
+**`kb.embedding_cache` is now pruned after a retention window** (2026-11-12)
+
+The embedding cache was write-only: `Get`/`Put` with no delete path, so every
+entry survived forever. A model switch orphans every row (the key includes the
+model), and the format-in-key change in #683 made every pre-existing row
+unreachable while still stored — the table grew monotonically. The existing
+`cache_cleanup` task now also deletes `kb.embedding_cache` rows older than
+`EMBEDDING_CACHE_RETENTION_DAYS` (default 30 days; values <= 0 fall back to 30,
+there is no "disable"), backed by a new `created_at` index (migration `00295`).
+The two cache deletes stay independent: a failure in one is logged and reported
+without skipping the other. The cache remains global, not project-scoped —
+`cache_key` is a hash with no project column, so two projects on the same model
+and text share an entry — and this change does not scope it; that would need a
+schema and key change. TTL pruning is the smallest bounded fix (Closes #684).
+
 **Embedding configuration failures are quiet, permanent and non-fatal** (2026-11-12)
 
 `pkg/embeddings` reports a missing embedding model once per project, but every
