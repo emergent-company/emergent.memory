@@ -240,9 +240,11 @@ prompt_google_api_key() {
     log "Google API Key Setup (optional)"
     echo
     echo "  A Google API key enables AI-powered features including:"
-    echo "    - Semantic search with text embeddings"
     echo "    - AI-powered document analysis"
     echo "    - Intelligent entity extraction"
+    echo
+    echo "  It is a generative-model key only: embeddings are configured per project"
+    echo "  (memory provider configure-project ... --embedding-model ...)."
     echo
     echo "  To get a Google API key:"
     echo "    1. Go to https://aistudio.google.com/apikey"
