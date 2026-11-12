@@ -798,6 +798,21 @@ func pauseAnswerableByChat(sc *agents.SuspendSignal) bool {
 	return sc == nil || sc.Reason != agents.SuspendReasonAwaitingToolConfirm
 }
 
+// normalizeReasoningEffort canonicalizes a per-turn thinking level. Empty and
+// "auto" mean "no override"; only the graded levels the executor can pass to a
+// ReasoningEffortConfigurator are accepted.
+func normalizeReasoningEffort(raw string) (string, error) {
+	effort := strings.ToLower(strings.TrimSpace(raw))
+	switch effort {
+	case "", "auto":
+		return "", nil
+	case "minimal", "low", "medium", "high", "max":
+		return effort, nil
+	default:
+		return "", apperror.ErrBadRequest.WithMessage("reasoningEffort must be auto, minimal, low, medium, high, or max")
+	}
+}
+
 func validateStreamRequest(req *StreamRequest) error {
 	hasSurfaceAction := req.SurfaceAction != nil
 	if strings.TrimSpace(req.Message) == "" && !hasSurfaceAction {
@@ -827,6 +842,15 @@ func validateStreamRequest(req *StreamRequest) error {
 		if len(streamMessage(req)) > 100000 {
 			return apperror.ErrBadRequest.WithMessage("surface action is too large to send as a message")
 		}
+	}
+	if req.Model != "" {
+		model := strings.TrimSpace(req.Model)
+		if len(model) > 200 || !strings.Contains(model, "/") {
+			return apperror.ErrBadRequest.WithMessage("model must be a provider/model name")
+		}
+	}
+	if _, err := normalizeReasoningEffort(req.ReasoningEffort); err != nil {
+		return err
 	}
 	if req.ConversationID != nil {
 		if _, err := uuid.Parse(*req.ConversationID); err != nil {
@@ -917,6 +941,7 @@ func (h *Handler) StreamChat(c echo.Context) error {
 	if err := validateStreamRequest(&req); err != nil {
 		return err
 	}
+	normalizedEffort, _ := normalizeReasoningEffort(req.ReasoningEffort)
 
 	ctx := c.Request().Context()
 
@@ -1094,7 +1119,7 @@ func (h *Handler) StreamChat(c echo.Context) error {
 			}
 		}
 
-		agentResult := h.streamAgentChat(runCtx, conv, message, user.ProjectID, user.OrgID, user.ID, sseWriter, "", "", "")
+		agentResult := h.streamAgentChat(runCtx, conv, message, user.ProjectID, user.OrgID, user.ID, sseWriter, "", "", "", strings.TrimSpace(req.Model), normalizedEffort)
 		sseWriter.WriteData(sse.NewDoneEvent())
 		sseWriter.Close()
 		if agentResult != nil && agentResult.Cleanup != nil {
@@ -1413,7 +1438,7 @@ func friendlyProviderError(err error) string {
 // streamAgentChat handles the agent-backed chat flow. It loads the agent definition,
 // builds conversation history, calls the agent executor with a StreamCallback, and
 // maps streaming events to SSE events. Final assistant text is persisted to kb.chat_messages.
-func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, message, projectID, orgID, userID string, sseWriter *sse.Writer, parentRunID, rootRunID, systemPromptAppendix string) *agents.ExecuteResult {
+func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, message, projectID, orgID, userID string, sseWriter *sse.Writer, parentRunID, rootRunID, systemPromptAppendix, model, reasoningEffort string) *agents.ExecuteResult {
 	agentDefID := conv.AgentDefinitionID.String()
 
 	// Load the agent definition
@@ -1637,6 +1662,8 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 			SystemPromptAppendix: systemPromptAppendix,
 			TrustedInternal:      true, // session UI is a trusted surface (full internal coordination)
 			RenderA2UI:           true, // chat SSE renders A2UI surfaces (StreamEventA2UI)
+			Model:                strings.TrimSpace(model),
+			ReasoningEffort:      reasoningEffort,
 		}
 		if parentRunID != "" {
 			execReq.ParentRunID = &parentRunID
@@ -2423,7 +2450,7 @@ func (h *Handler) QueryStream(c echo.Context) error {
 		return nil
 	}
 
-	queryResult := h.streamAgentChat(ctx, conv, message, projectID, user.OrgID, user.ID, sseWriter, parentRunID, rootRunID, req.ResponseFormat)
+	queryResult := h.streamAgentChat(ctx, conv, message, projectID, user.OrgID, user.ID, sseWriter, parentRunID, rootRunID, req.ResponseFormat, "", "")
 	span.SetStatus(codes.Ok, "")
 	// Emit done event with run_id so callers (e.g. search-knowledge MCP tool) can trace the internal run.
 	var queryRunID string
@@ -2596,7 +2623,7 @@ func (h *Handler) AskStream(c echo.Context) error {
 		return nil
 	}
 
-	askResult := h.streamAgentChat(ctx, conv, augmentedMessage, agentProjectID, user.OrgID, user.ID, sseWriter, "", "", "")
+	askResult := h.streamAgentChat(ctx, conv, augmentedMessage, agentProjectID, user.OrgID, user.ID, sseWriter, "", "", "", "", "")
 	span.SetStatus(codes.Ok, "")
 	sseWriter.WriteData(sse.NewDoneEvent())
 	sseWriter.Close()
@@ -3068,7 +3095,7 @@ func (h *Handler) RememberStream(c echo.Context) error {
 		if err := sseWriter.WriteData(sse.NewMetaEvent(conv.ID.String())); err != nil {
 			return nil
 		}
-		rememberResult := h.streamAgentChat(ctx, conv, agentMessage, projectID, user.OrgID, user.ID, sseWriter, parentRunID, rootRunID, "")
+		rememberResult := h.streamAgentChat(ctx, conv, agentMessage, projectID, user.OrgID, user.ID, sseWriter, parentRunID, rootRunID, "", "", "")
 		span.SetStatus(codes.Ok, "")
 		var rememberRunID, rememberTraceID string
 		if rememberResult != nil {
@@ -3527,7 +3554,7 @@ func (h *Handler) RememberFile(c echo.Context) error {
 		if err := sseWriter.WriteData(sse.NewMetaEvent(conv.ID.String())); err != nil {
 			return nil
 		}
-		rememberResult := h.streamAgentChat(ctx, conv, agentMessage, projectID, user.OrgID, user.ID, sseWriter, req.ParentRunID, req.RootRunID, "")
+		rememberResult := h.streamAgentChat(ctx, conv, agentMessage, projectID, user.OrgID, user.ID, sseWriter, req.ParentRunID, req.RootRunID, "", "", "")
 		span.SetStatus(codes.Ok, "")
 		var rememberRunID, rememberTraceID string
 		if rememberResult != nil {
@@ -3839,7 +3866,7 @@ func (h *Handler) ForgetStream(c echo.Context) error {
 		if err := sseWriter.WriteData(sse.NewMetaEvent(conv.ID.String())); err != nil {
 			return nil
 		}
-		forgetResult := h.streamAgentChat(ctx, conv, agentMessage, projectID, user.OrgID, user.ID, sseWriter, parentRunID, rootRunID, "")
+		forgetResult := h.streamAgentChat(ctx, conv, agentMessage, projectID, user.OrgID, user.ID, sseWriter, parentRunID, rootRunID, "", "", "")
 		var forgetRunID string
 		if forgetResult != nil {
 			forgetRunID = forgetResult.RunID

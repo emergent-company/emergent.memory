@@ -45,7 +45,7 @@
   }
 
   var root = null, log = null, messages = null, empty = null;
-  var input = null, sendBtn = null, stopBtn = null, agentSelect = null;
+  var input = null, sendBtn = null, stopBtn = null, agentSelect = null, modelSelect = null, thinkingSelect = null;
   var agentFilterSelect = null;
   var originFilterSelect = null;
   var includeArchivedEl = null;
@@ -206,6 +206,7 @@
         var isNew = evt.conversationId !== conversationId && !railHas(evt.conversationId);
         var prevId = conversationId;
         conversationId = evt.conversationId;
+      applyComposerSelection();
         // A message parked on a brand-new (id-less) conversation moves with it
         // once the server assigns the id, so it is never stranded or delivered
         // to another conversation.
@@ -244,6 +245,24 @@
     get bubbleText() { return bubbleText; }, set bubbleText(v) { bubbleText = v; },
     get conversationId() { return conversationId; },
     currentAgent: currentAgent,
+    // Per-turn composer overrides (model / thinking). Share pages omit this
+    // hook and keep the shared default payload.
+    streamPayload: function (agent, text, surfaceAction) {
+      var p = { agentDefinitionId: agent, message: text };
+      if (conversationId) p.conversationId = conversationId;
+      if (surfaceAction) p.surfaceAction = surfaceAction;
+      if (modelSelect) {
+        var m = modelSelect.value || "";
+        if (m) p.model = m;
+        saveComposer("model", m);
+      }
+      if (thinkingSelect) {
+        var t = thinkingSelect.value || "";
+        if (t) p.reasoningEffort = t;
+        saveComposer("thinking", t);
+      }
+      return p;
+    },
     setStreaming: setStreaming,
     scrollToBottom: scrollToBottom,
     hideEmpty: hideEmpty,
@@ -319,6 +338,76 @@
   var stripContextPreamble = MemoryChatStream.stripContextPreamble;
   var notify = MemoryChatStream.notify;
 
+  // --- composer overrides: model + thinking (client-side persistence) ---
+  // Selection is stored per conversation in localStorage, with a "default"
+  // slot that new conversations inherit. No server-side persistence for now.
+  function composerKey(kind) {
+    return "memory.chat." + kind + "." + (conversationId || "new");
+  }
+  function readComposer(kind) {
+    try {
+      return localStorage.getItem(composerKey(kind)) ||
+        localStorage.getItem("memory.chat." + kind + ".default") || "";
+    } catch (e) { return ""; }
+  }
+  function saveComposer(kind, value) {
+    try {
+      localStorage.setItem(composerKey(kind), value || "");
+      localStorage.setItem("memory.chat." + kind + ".default", value || "");
+    } catch (e) { /* storage unavailable */ }
+  }
+  function applyComposerSelection() {
+    if (modelSelect) modelSelect.value = readComposer("model");
+    if (thinkingSelect) thinkingSelect.value = readComposer("thinking");
+  }
+  function initComposerControls() {
+    if (!modelSelect && !thinkingSelect) return;
+    applyComposerSelection();
+    if (modelSelect) {
+      modelSelect.addEventListener("change", function () {
+        saveComposer("model", modelSelect.value);
+      });
+      if (!modelSelect.dataset.modelsLoaded) {
+        modelSelect.dataset.modelsLoaded = "1";
+        fetch("/api/chat/models", { headers: { "Accept": "application/json" } })
+          .then(function (res) { return res.ok ? res.json() : []; })
+          .then(function (list) {
+            if (!Array.isArray(list)) return;
+            var groups = {};
+            list.forEach(function (m) {
+              if (!m || !m.provider || !m.modelName) return;
+              var value = m.provider + "/" + m.modelName;
+              var g = groups[m.provider] || (groups[m.provider] = []);
+              for (var i = 0; i < g.length; i++) if (g[i].value === value) return;
+              g.push({ value: value, label: m.displayName || m.modelName });
+            });
+            Array.prototype.slice.call(modelSelect.querySelectorAll("optgroup")).forEach(function (el) {
+              modelSelect.removeChild(el);
+            });
+            Object.keys(groups).sort().forEach(function (provider) {
+              var group = document.createElement("optgroup");
+              group.label = provider;
+              groups[provider].forEach(function (opt) {
+                var el = document.createElement("option");
+                el.value = opt.value;
+                el.textContent = opt.label;
+                group.appendChild(el);
+              });
+              modelSelect.appendChild(group);
+            });
+            // Restore after the options exist (a bare select would drop the value).
+            applyComposerSelection();
+          })
+          .catch(function () { /* leave Auto only */ });
+      }
+    }
+    if (thinkingSelect) {
+      thinkingSelect.addEventListener("change", function () {
+        saveComposer("thinking", thinkingSelect.value);
+      });
+    }
+  }
+
   function init() {
     root = document.getElementById("chat-root");
     if (!root || root.dataset.ready === "1") return;
@@ -331,6 +420,8 @@
     sendBtn = document.getElementById("chat-send");
     stopBtn = document.getElementById("chat-stop");
     agentSelect = document.getElementById("chat-agent");
+    modelSelect = document.getElementById("chat-model");
+    thinkingSelect = document.getElementById("chat-thinking");
     agentFilterSelect = document.getElementById("chat-agent-filter");
     originFilterSelect = document.getElementById("chat-origin-filter");
     includeArchivedEl = document.getElementById("chat-include-archived");
@@ -388,6 +479,7 @@
 
     // resume target from the server-rendered ?c= param
     conversationId = root.getAttribute("data-conv") || "";
+    initComposerControls();
     // run-transcript deep link (?run=<id>): a run is not a conversation, so the
     // server has no data-conv for it — the id only ever arrives in the URL.
     var runParam = "";

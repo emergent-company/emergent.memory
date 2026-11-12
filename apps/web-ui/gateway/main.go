@@ -230,6 +230,7 @@ func main() {
 	api.DELETE("/agent-mcp-keys/:id", s.jsonDeleteAgentMCPKey)
 	api.POST("/agent-mcp-keys/:id/rotate", s.jsonRotateAgentMCPKey)
 	api.GET("/models", s.listModels)
+	api.GET("/chat/models", s.listChatModels)
 	api.POST("/token", s.mintToken)
 	api.GET("/sessions", s.listSessions)
 	api.GET("/session", s.getSession)

@@ -122,6 +122,13 @@ func (s *Server) deleteMCPServer(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
+// listChatModels returns the project's configured generative models for the
+// chat composer's model picker, grouped client-side by provider.
+func (s *Server) listChatModels(c echo.Context) error {
+	gen, _ := s.providerModelOptions(c.Request().Context())
+	return c.JSON(http.StatusOK, gen)
+}
+
 func (s *Server) listModels(c echo.Context) error {
 	out, err := s.memory.ListModels(c.Request().Context())
 	if err != nil {
