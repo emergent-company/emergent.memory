@@ -56,3 +56,14 @@ func TestSettingsInputValidate(t *testing.T) {
 		t.Fatalf("disabled settings should not require SMTP credentials: %v", err)
 	}
 }
+
+func TestConfigFromRowRetainsPasswordWhileDisabled(t *testing.T) {
+	row := &InstanceEmailSettings{Enabled: false, FromEmail: "noreply@example.com", FromName: "Memory"}
+	cfg := configFromRow(Config{SMTPPassword: "env-secret"}, row, "stored-secret")
+	if cfg.Enabled {
+		t.Fatal("disabled row must preserve enabled=false")
+	}
+	if cfg.SMTPPassword != "stored-secret" {
+		t.Fatalf("password = %q, want stored secret", cfg.SMTPPassword)
+	}
+}

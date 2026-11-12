@@ -111,23 +111,32 @@ func (s *SettingsService) Current(ctx context.Context) (Config, error) {
 	if row == nil {
 		return s.env, nil
 	}
-	cfg := s.env
+	password, err := s.secret(ctx, row)
+	if err != nil {
+		return Config{}, err
+	}
+	return configFromRow(s.env, row, password), nil
+}
+
+// configFromRow builds the effective config from a stored row. The stored
+// secret is retained even when the provider is disabled, so re-enabling with a
+// blank password field does not lose the credential.
+func configFromRow(env Config, row *InstanceEmailSettings, password string) Config {
+	cfg := env
 	cfg.Enabled = row.Enabled
 	cfg.FromEmail = row.FromEmail
 	cfg.FromName = row.FromName
+	if password != "" {
+		cfg.SMTPPassword = password
+	}
 	if row.Enabled {
 		cfg.Transport = "smtp"
 		cfg.SMTPHost = row.SMTPHost
 		cfg.SMTPPort = row.SMTPPort
 		cfg.SMTPUsername = row.SMTPUsername
 		cfg.SMTPTLS = row.SMTPTLS
-		password, err := s.secret(ctx, row)
-		if err != nil {
-			return Config{}, err
-		}
-		cfg.SMTPPassword = password
 	}
-	return cfg, nil
+	return cfg
 }
 
 // Enabled reports whether the effective configuration can send email.

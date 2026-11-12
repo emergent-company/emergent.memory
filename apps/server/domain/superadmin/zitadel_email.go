@@ -90,9 +90,9 @@ func (c *ZitadelEmailClient) ConfigureSMTP(ctx context.Context, in email.Setting
 	}
 	var search struct {
 		Result []struct {
-			ID          string `json:"id"`
-			Description string `json:"description"`
-			Type        string `json:"type"`
+			ID          string          `json:"id"`
+			Description string          `json:"description"`
+			SMTP        json.RawMessage `json:"smtp"`
 		} `json:"result"`
 	}
 	if err := c.do(ctx, http.MethodPost, "/admin/v1/email/_search", map[string]any{}, &search); err != nil {
@@ -100,7 +100,7 @@ func (c *ZitadelEmailClient) ConfigureSMTP(ctx context.Context, in email.Setting
 	}
 	id := ""
 	for _, p := range search.Result {
-		if p.Description == "Memory deployment" || strings.EqualFold(p.Type, "SMTP") {
+		if p.Description == "Memory deployment" || len(p.SMTP) > 0 && string(p.SMTP) != "null" {
 			id = p.ID
 			break
 		}
@@ -131,16 +131,16 @@ func (c *ZitadelEmailClient) DeactivateSMTP(ctx context.Context) error {
 	}
 	var search struct {
 		Result []struct {
-			ID          string `json:"id"`
-			Description string `json:"description"`
-			Type        string `json:"type"`
+			ID          string          `json:"id"`
+			Description string          `json:"description"`
+			SMTP        json.RawMessage `json:"smtp"`
 		} `json:"result"`
 	}
 	if err := c.do(ctx, http.MethodPost, "/admin/v1/email/_search", map[string]any{}, &search); err != nil {
 		return err
 	}
 	for _, p := range search.Result {
-		if p.Description == "Memory deployment" || strings.EqualFold(p.Type, "SMTP") {
+		if p.Description == "Memory deployment" || len(p.SMTP) > 0 && string(p.SMTP) != "null" {
 			return c.do(ctx, http.MethodPost, "/admin/v1/email/"+p.ID+"/_deactivate", map[string]any{}, nil)
 		}
 	}
