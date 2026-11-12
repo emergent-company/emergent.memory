@@ -197,6 +197,7 @@ type MemoryBackend interface {
 	// source_apps.go). App secrets are write-only: no read returns them.
 	ListOrgSourceApps(ctx context.Context, orgID string) ([]SourceApp, error)
 	CreateOrgSourceApp(ctx context.Context, orgID string, req *DSSourceAppRequest) (*SourceApp, error)
+	UpdateOrgSourceApp(ctx context.Context, orgID, appID string, req *DSSourceAppUpdateRequest) (*SourceApp, error)
 	DeleteOrgSourceApp(ctx context.Context, orgID, appID string) error
 	ListSourceTriggers(ctx context.Context, sourceID string) ([]DSSourceTrigger, error)
 	CreateSourceTrigger(ctx context.Context, sourceID string, req *DSSourceTriggerRequest) (*DSSourceTrigger, error)

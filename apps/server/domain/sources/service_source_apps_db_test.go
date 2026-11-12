@@ -366,6 +366,124 @@ func TestRegisterSourceAppValidatesKeyAndProvider(t *testing.T) {
 	}
 }
 
+// TestUpdateSourceAppRotatesOnlySuppliedSecrets pins the edit contract: a blank
+// secret keeps the stored ciphertext (the sealed columns are write-only, so
+// there is nothing to round-trip), a supplied key is validated before it is
+// sealed, and the provider and App id stay fixed because they are what binds
+// project sources to the credential.
+func TestUpdateSourceAppRotatesOnlySuppliedSecrets(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	ctx, svc, orgID, userID := newSourceAppValidationService(t)
+
+	registered, err := svc.RegisterSourceApp(ctx, orgID, userID, RegisterSourceAppRequest{
+		Provider: "github", AppID: 810, Slug: "before",
+		PrivateKey: string(rsaPEMForTest(t)), WebhookSecret: "whsec-before",
+	})
+	require.NoError(t, err)
+	originalKey := append([]byte(nil), registered.PrivateKeyEncrypted...)
+	originalSecret := append([]byte(nil), registered.WebhookSecretEncrypted...)
+
+	// Rename only: both sealed columns keep their stored ciphertext.
+	renamed, err := svc.UpdateSourceApp(ctx, orgID, userID, registered.ID, UpdateSourceAppRequest{Slug: "  after  "})
+	require.NoError(t, err)
+	require.Equal(t, "after", renamed.Slug, "slug was not trimmed")
+	require.Equal(t, registered.AppID, renamed.AppID, "update changed the GitHub App id")
+	require.Equal(t, SourceAppProviderGitHub, renamed.Provider, "update changed the provider")
+	require.Equal(t, originalKey, renamed.PrivateKeyEncrypted, "blank key rotated the stored ciphertext")
+	require.Equal(t, originalSecret, renamed.WebhookSecretEncrypted, "blank secret rotated the stored ciphertext")
+
+	// Rotate one secret; the untouched one survives.
+	rotated, err := svc.UpdateSourceApp(ctx, orgID, userID, registered.ID, UpdateSourceAppRequest{
+		Slug: "after", PrivateKey: string(rsaPKCS8PEMForTest(t)),
+	})
+	require.NoError(t, err)
+	require.NotEqual(t, originalKey, rotated.PrivateKeyEncrypted)
+	require.Equal(t, originalSecret, rotated.WebhookSecretEncrypted, "key rotation also overwrote the webhook secret")
+	require.NotContains(t, string(rotated.PrivateKeyEncrypted), "PRIVATE KEY")
+
+	// The change is persisted, not merely returned.
+	apps, err := svc.ListSourceApps(ctx, orgID, userID)
+	require.NoError(t, err)
+	require.Len(t, apps, 1)
+	require.Equal(t, "after", apps[0].Slug)
+	require.Equal(t, rotated.PrivateKeyEncrypted, apps[0].PrivateKeyEncrypted)
+	require.Equal(t, rotated.WebhookSecretEncrypted, apps[0].WebhookSecretEncrypted)
+
+	// A bad key is refused before sealing, leaving the stored key intact.
+	_, err = svc.UpdateSourceApp(ctx, orgID, userID, registered.ID, UpdateSourceAppRequest{
+		Slug: "after", PrivateKey: "definitely not a pem",
+	})
+	var badKey *apperror.Error
+	require.ErrorAs(t, err, &badKey)
+	require.Equal(t, 400, badKey.HTTPStatus)
+	require.Contains(t, badKey.Message, "privateKey")
+	apps, err = svc.ListSourceApps(ctx, orgID, userID)
+	require.NoError(t, err)
+	require.Equal(t, rotated.PrivateKeyEncrypted, apps[0].PrivateKeyEncrypted, "rejected rotation still rewrote the key")
+
+	// A slug is required: an App has to stay nameable in the registry.
+	_, err = svc.UpdateSourceApp(ctx, orgID, userID, registered.ID, UpdateSourceAppRequest{Slug: "   "})
+	require.Error(t, err)
+	var noSlug *apperror.Error
+	require.ErrorAs(t, err, &noSlug)
+	require.Equal(t, 400, noSlug.HTTPStatus)
+	require.Contains(t, noSlug.Message, "slug")
+	apps, err = svc.ListSourceApps(ctx, orgID, userID)
+	require.NoError(t, err)
+	require.Equal(t, "after", apps[0].Slug, "slug-less update renamed the App anyway")
+}
+
+// TestUpdateSourceAppRejectsForeignOrgAndNonAdmin covers the authority checks:
+// a member who does not administer the org is refused, and an App that belongs
+// to another organization is not found through this org's route.
+func TestUpdateSourceAppRejectsForeignOrgAndNonAdmin(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	ctx, svc, orgID, userID := newSourceAppValidationService(t)
+
+	app, err := svc.RegisterSourceApp(ctx, orgID, userID, RegisterSourceAppRequest{
+		Provider: "github", AppID: 811, Slug: "authority",
+		PrivateKey: string(rsaPEMForTest(t)), WebhookSecret: "whsec",
+	})
+	require.NoError(t, err)
+
+	memberID := uuid.New()
+	_, err = svc.repo.db.ExecContext(ctx, `INSERT INTO core.user_profiles (id, zitadel_user_id) VALUES (?, ?)`, memberID, "zitadel-member")
+	require.NoError(t, err)
+	_, err = svc.repo.db.ExecContext(ctx, `INSERT INTO kb.organization_memberships (organization_id, user_id, role) VALUES (?, ?, 'org_member')`, orgID, memberID)
+	require.NoError(t, err)
+
+	_, err = svc.UpdateSourceApp(ctx, orgID, memberID.String(), app.ID, UpdateSourceAppRequest{Slug: "hijacked"})
+	var forbidden *apperror.Error
+	require.ErrorAs(t, err, &forbidden)
+	require.Equal(t, 403, forbidden.HTTPStatus)
+
+	// Unknown id under the caller's own org.
+	_, err = svc.UpdateSourceApp(ctx, orgID, userID, uuid.New(), UpdateSourceAppRequest{Slug: "gone"})
+	var missing *apperror.Error
+	require.ErrorAs(t, err, &missing)
+	require.Equal(t, 404, missing.HTTPStatus)
+
+	// An administrator of a different org cannot reach this App through it.
+	otherOrgID := uuid.New()
+	_, err = svc.repo.db.ExecContext(ctx, `INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, otherOrgID, "other-validation-org")
+	require.NoError(t, err)
+	_, err = svc.repo.db.ExecContext(ctx, `INSERT INTO kb.organization_memberships (organization_id, user_id, role) VALUES (?, ?, 'org_admin')`, otherOrgID, userID)
+	require.NoError(t, err)
+	_, err = svc.UpdateSourceApp(ctx, otherOrgID, userID, app.ID, UpdateSourceAppRequest{Slug: "cross-org"})
+	var crossOrg *apperror.Error
+	require.ErrorAs(t, err, &crossOrg)
+	require.Equal(t, 404, crossOrg.HTTPStatus)
+
+	apps, err := svc.ListSourceApps(ctx, orgID, userID)
+	require.NoError(t, err)
+	require.Len(t, apps, 1)
+	require.Equal(t, "authority", apps[0].Slug)
+}
+
 // newSourceAppValidationService builds a fresh database with one org and one
 // org admin, and a service wired for registration. It reuses the same fixtures
 // and harness as TestSourceAppRegistrationAndGitHubAppSource.

@@ -18,6 +18,12 @@ type registerSourceAppDTO struct {
 	WebhookSecret string `json:"webhookSecret"`
 }
 
+type updateSourceAppDTO struct {
+	Slug          string `json:"slug"`
+	PrivateKey    string `json:"privateKey"`
+	WebhookSecret string `json:"webhookSecret"`
+}
+
 type sourceTriggerDTO struct {
 	EventType   string         `json:"eventType"`
 	AgentID     string         `json:"agentId"`
@@ -104,6 +110,42 @@ func (h *Handler) DeleteSourceApp(c echo.Context) error {
 		return err
 	}
 	return c.NoContent(http.StatusNoContent)
+}
+
+// UpdateSourceApp handles PATCH /api/orgs/:orgId/source-apps/:appId.
+// @Summary      Update a source App
+// @Description  Renames an App and optionally rotates its private key and webhook secret. A blank secret keeps the stored one. The provider and GitHub App id are immutable. Org admin only.
+// @Tags         data-source-integrations
+// @Accept       json
+// @Produce      json
+// @Param        orgId path string true "Organization ID (UUID)"
+// @Param        appId path string true "App row ID (UUID)"
+// @Param        body body updateSourceAppDTO true "App label; omit or blank a secret to keep the stored value"
+// @Success      200 {object} SourceApp
+// @Failure      400 {object} apperror.Error
+// @Failure      403 {object} apperror.Error
+// @Failure      404 {object} apperror.Error
+// @Router       /api/orgs/{orgId}/source-apps/{appId} [patch]
+// @Security     bearerAuth
+func (h *Handler) UpdateSourceApp(c echo.Context) error {
+	orgID, err := h.pathOrgID(c)
+	if err != nil {
+		return err
+	}
+	id, err := uuid.Parse(c.Param("appId"))
+	if err != nil {
+		return apperror.ErrBadRequest
+	}
+	var dto updateSourceAppDTO
+	if err := c.Bind(&dto); err != nil {
+		return apperror.ErrBadRequest
+	}
+	user := auth.MustGetUser(c)
+	app, err := h.svc.UpdateSourceApp(c.Request().Context(), orgID, user.ID, id, UpdateSourceAppRequest(dto))
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, app)
 }
 
 // ListSourceTriggers handles GET /api/data-source-integrations/:id/triggers.
