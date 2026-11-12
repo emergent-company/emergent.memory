@@ -22,7 +22,7 @@ this server.
 | **A2UI protocol** | **v0.9.1** | Encoded in the extension URI and stamped on each surface envelope that carries a `version` (the `deleteSurface` teardown frame omits it) |
 | **A2UI catalogs** | `memory-basic` | Custom catalog; see [A2UI catalogs](#a2ui-catalogs) |
 | **A2UI integration** | `A2UI-over-A2A` card extension | Surfaces stream as `application/a2ui+json` data parts |
-| **Auth** | Bearer project API token (`emt_…`) | Not OAuth2/OIDC end-user tokens |
+| **Auth** | Bearer project API token (`emt_…`) | The card declares this bearer scheme only — no OAuth2/OIDC scheme; the OAuth flow issues no `agents:*` scope |
 | **Tenant selection** | `X-Project-ID` header, or a project-scoped token | Never path-scoped |
 
 ## Discovery
@@ -57,7 +57,10 @@ which agents a caller can actually invoke.
 
 ## Authentication and tenancy
 
-Every route except the global card requires a Bearer project API token:
+Every route except the global card requires a Bearer token. This page documents
+the **project API token** (`emt_…`), which is the supported integration
+credential; the scope below is the token's, checked against the `scopes` list the
+token was minted with:
 
 | Route | Scope |
 |---|---|
@@ -67,6 +70,14 @@ Every route except the global card requires a Bearer project API token:
 | `POST /tasks/{id}:cancel` | `agents:write` |
 | `POST /tasks/{id}:subscribe` | `agents:read` |
 | `GET /extendedAgentCard` | `agents:read` |
+
+The card declares a single bearer security scheme, for `emt_…` tokens, and no
+OAuth2 or OIDC scheme. The server does run an OAuth 2.1 authorization server
+(`/.well-known/oauth-authorization-server`, authorization-code with PKCE), but its
+scope allowlist — `graph:read`, `graph:write`, `schema:read`, `projects:read`,
+`chat:use` — does not include `agents:read` or `agents:write`, so a token obtained
+through it is refused here with an insufficient-scope error. Mint a project API
+token carrying the scope you need (see [Not supported](#not-supported)).
 
 The project comes from the `X-Project-ID` header, or from the token itself when
 the token is project-scoped (a project-scoped token cannot be redirected to a
@@ -160,8 +171,12 @@ Be explicit about these before integrating:
 - **Path-scoped project addressing.** The project is a header or a token claim,
   never a path segment, so a host that cannot send custom headers cannot select
   a project.
-- **End-user OAuth2/OIDC tokens.** Only `emt_…` project API tokens are accepted;
-  the card declares no OAuth2 security scheme.
+- **OAuth for agent calls.** The card declares a bearer `emt_…` project API token
+  scheme and no OAuth2 or OIDC scheme. The deployment's OAuth 2.1 authorization
+  server issues tokens scoped to `graph:read`, `graph:write`, `schema:read`,
+  `projects:read` and `chat:use` — not `agents:read` or `agents:write` — so a
+  token a third-party app obtains through that flow cannot call these routes.
+  Mint a project API token with the scope you need instead.
 - **Standard A2UI catalogs.** Only `memory-basic` is served. A renderer that
   implements just the standard A2UI component set cannot draw these surfaces.
 - **Push notifications.** Not implemented. The six routes exist only to answer
