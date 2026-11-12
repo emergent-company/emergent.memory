@@ -34,10 +34,12 @@ name: Meta CI
 #
 # Fork PRs run a green no-op `ci`: every step is gated on
 # `github.event_name != 'pull_request' || head.repo.full_name == repository`, so
-# a fork PR cannot execute checked-out (untrusted) code. (That gate was written
+# a fork PR cannot execute checked-out (untrusted) code. (The gateway block's
+# steps gate on its scope step's output instead, and that step carries this same
+# fork gate — one place rather than seven, #662.) That gate was written
 # for the persistent self-hosted runner this job used to run on; it is kept
 # unchanged now the job is hosted — a fork PR still must not run PR code against
-# repo secrets, and the guard is the behaviour under test.) The job still reports
+# repo secrets, and the guard is the behaviour under test. The job still reports
 # a real result (success with all steps skipped), satisfying the required
 # context; a maintainer must re-run from a trusted ref to actually validate a
 # fork.
@@ -518,10 +520,35 @@ jobs:
       # nobody has to look at — which is exactly what `web-ui.yml` is, advisory
       # precisely because it is path-filtered (see this file's header) — and
       # promoting a new context to required is an out-of-band branch-protection
-      # change. Per the file header there is no `paths:` filter: every PR and
-      # every push to `dev`/`main` runs these. No browser, no Postgres, no
+      # change. The trigger keeps no `paths:` filter either: the *job* reports on
+      # every PR and every push to `dev`/`main`. No browser, no Postgres, no
       # Playwright — and on `ubuntu-latest`, so it does not queue behind the
       # seven `memory` slots (#1138).
+      #
+      # HOW THEY ARE SCOPED (#662). Being unfiltered is what makes the context
+      # reportable; it is not a reason to spend ~5 minutes of hosted runner time
+      # on a docs PR. Measured on PR #653, this block took the job from 2m45s to
+      # 7m33s: `task` install 50 s, generate 9 s, Node + CSS 9 s, golangci-lint
+      # install 49 s, lint 156 s, ratchets 14 s. So the steps are scoped the way
+      # `Detect schema documentation scope` above already scopes its own — a
+      # detection step publishes an output and the expensive steps carry `if:` on
+      # it. The job still runs, still reports, and still fails on a finding; only
+      # the work is skipped.
+      #
+      # The scope is `apps/web-ui/**`, the two workflows, and root `go.work`.
+      # That cannot hide a finding: all three failures #649 exists for (#577
+      # lint, #637 budget, #641 `deploy_portal.templ`) are under `apps/web-ui/**`,
+      # so no PR can change the gateway without touching the scope — and a PR
+      # that changes these checks (the pins, the step list, this file) is in scope
+      # by construction. `web-ui.yml` is in scope because this job mirrors its
+      # pins; `go.work` because its `go` directive is what `actions/setup-go`
+      # installs for every step in this job, so a toolchain bump must re-lint.
+      # (`go.work.sum` is not: it records sums, and a sum change moves no version.)
+      #
+      # It FAILS CLOSED. A diff that cannot be computed runs the checks unscoped
+      # rather than skipping them, and a push has no base to diff against so it
+      # always runs them. A scope guard that silently skips is exactly the #649
+      # failure mode.
       #
       # WHY THE GENERATE/VENDOR/CSS STEPS. A cold gateway tree cannot be linted
       # or tested: `*_templ.go` and `devgallery_{graph,adoption}_gen.go` are
@@ -561,8 +588,59 @@ jobs:
       # runner starts with empty module/build caches and both tools are compiled
       # from source. None of these steps is `continue-on-error`: a finding must
       # red the required check, which is the whole point.
-      - name: Gateway toolchain (run-scoped GOBIN)
+      - name: Detect gateway scope
+        id: gateway-scope
+        # The fork gate lives here now. The steps below carry only
+        # `steps.gateway-scope.outputs.changed == 'true'`, which is empty (and so
+        # false) when this step is skipped — and it is skipped on exactly the
+        # condition the checkout it needs is gated on.
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          emit() { printf 'changed=%s\n' "$1" >>"$GITHUB_OUTPUT"; }
+
+          # A push has no base to diff against, and `ci` on `dev`/`main` is
+          # expected to check the whole tree, so only pull requests are scoped.
+          if [ "$EVENT_NAME" != pull_request ]; then
+            emit true
+            echo "not a pull request: running the gateway static checks unscoped"
+            exit 0
+          fi
+
+          # Fork PRs never ran these steps -- the checkout they need is gated on
+          # the same expression -- so skipping them here keeps that, in one place
+          # instead of seven.
+          if [ "$HEAD_REPO" != "$REPO" ]; then
+            emit false
+            echo "fork PR: skipping the gateway static checks, as before"
+            exit 0
+          fi
+
+          # FAILS CLOSED. A diff that cannot be computed (a missing base sha, a
+          # shallow checkout) runs the checks unscoped rather than skipping them:
+          # a scope guard that skips silently is exactly the #649 failure mode.
+          if ! changed=$(git diff --name-only "${BASE_SHA}...HEAD" -- \
+              apps/web-ui .github/workflows/ci.yml .github/workflows/web-ui.yml go.work); then
+            emit true
+            echo "cannot diff ${BASE_SHA}...HEAD: running the gateway static checks unscoped"
+            exit 0
+          fi
+
+          if [ -n "$changed" ]; then
+            emit true
+            echo "gateway static checks in scope:"
+            while IFS= read -r file; do printf '  %s\n' "$file"; done <<<"$changed"
+          else
+            emit false
+            echo "no gateway-scope change (apps/web-ui, the workflows, go.work): skipping"
+          fi
+      - name: Gateway toolchain (run-scoped GOBIN)
+        if: steps.gateway-scope.outputs.changed == 'true'
         run: |
           set -euo pipefail
           # `go build`-based installs land here; $RUNNER_TEMP is per-job and
@@ -571,7 +649,7 @@ jobs:
           echo "GOBIN=$RUNNER_TEMP/bin" >> "$GITHUB_ENV"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Generate templ + component graph
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: steps.gateway-scope.outputs.changed == 'true'
         working-directory: apps/web-ui/gateway
         env:
           GOWORK: "off"
@@ -582,7 +660,7 @@ jobs:
           "$GOBIN/templ" generate ./...
           go generate ./...
       - name: Setup Node (gateway CSS)
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: steps.gateway-scope.outputs.changed == 'true'
         uses: actions/setup-node@v4
         with:
           # Same pin as `web-ui.yml`, so the compiled CSS that `go:embed`
@@ -592,14 +670,14 @@ jobs:
           # the job before any step runs, #1758).
           node-version: '20'
       - name: Compile gateway CSS
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: steps.gateway-scope.outputs.changed == 'true'
         working-directory: apps/web-ui/gateway
         run: task css
       - name: Install golangci-lint
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: steps.gateway-scope.outputs.changed == 'true'
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
       - name: golangci-lint
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: steps.gateway-scope.outputs.changed == 'true'
         working-directory: apps/web-ui/gateway
         env:
           # Per-job cache dir, as web-ui.yml does: the default lives under HOME,
@@ -608,7 +686,7 @@ jobs:
           GOWORK: "off"
         run: golangci-lint run --allow-parallel-runners ./...
       - name: Consistency ratchets
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: steps.gateway-scope.outputs.changed == 'true'
         working-directory: apps/web-ui/gateway
         env:
           GOWORK: "off"
