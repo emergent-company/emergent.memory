@@ -17,7 +17,7 @@ func providerToolDefinitions() []ToolDefinition {
 			Name:          "provider-configure-project",
 			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "projects:write",
-			Description:   "Configure or update an LLM provider at the project level, overriding the org-level config.",
+			Description:   "Configure or update an LLM provider for the caller's project.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
