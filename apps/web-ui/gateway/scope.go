@@ -62,6 +62,11 @@ func globalScopePath(p string) bool {
 	if p == "" || p == "/" || p == "/orgs" || p == "/orgs/new" {
 		return true
 	}
+	// Public deploy portal and its Railway OAuth callback live outside the
+	// org/project scope: they are reachable before any Memory session exists.
+	if p == "/deploy" || strings.HasPrefix(p, "/deploy/") {
+		return true
+	}
 	for _, pre := range []string{
 		"/o/", "/api/", "/auth/", "/share/", "/static/", "/assets/",
 		"/webhooks/", "/internal/", "/dev/", "/members", "/invites",
