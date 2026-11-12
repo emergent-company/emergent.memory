@@ -27,10 +27,8 @@ func TestSuperadminOnlyToolClassification(t *testing.T) {
 		"embedding-pause",
 		"embedding-resume",
 		"embedding-config-update",
-		"provider-list-org",
 		"provider-usage-get",
 		"provider-test",
-		"provider-configure-org",
 		"trace-list",
 		"trace-get",
 	}
@@ -49,7 +47,7 @@ func TestSuperadminOnlyToolClassification(t *testing.T) {
 	for _, legacy := range []string{
 		"embedding-status", "embedding-progress", "embedding-retrigger",
 		"embedding-pause", "embedding-resume", "embedding-config-update",
-		"provider-list-org", "provider-test", "provider-usage-get",
+		"provider-test", "provider-usage-get",
 		"trace-list", "trace-get",
 	} {
 		if tool := toolByName(t, legacy); !tool.SuperadminOnly {
@@ -86,7 +84,7 @@ func TestFilterToolsForSuperadmin(t *testing.T) {
 		{Name: "project-get"},
 		{Name: "embedding-pause", SuperadminOnly: true},
 		{Name: "entity-query"},
-		{Name: "provider-configure-org", SuperadminOnly: true},
+		{Name: "provider-usage-get", SuperadminOnly: true},
 	}
 
 	names := func(defs []ToolDefinition) map[string]bool {
@@ -99,7 +97,7 @@ func TestFilterToolsForSuperadmin(t *testing.T) {
 
 	// Non-superadmin: operator tools removed.
 	got := names(FilterToolsForSuperadmin(tools, false))
-	if got["embedding-pause"] || got["provider-configure-org"] {
+	if got["embedding-pause"] || got["provider-usage-get"] {
 		t.Errorf("non-superadmin must not see SuperadminOnly tools: %v", got)
 	}
 	if !got["project-get"] || !got["entity-query"] {

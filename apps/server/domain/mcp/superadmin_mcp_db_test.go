@@ -251,19 +251,4 @@ func TestSuperadminPreExistingMutatorsConfirmGuardDB(t *testing.T) {
 		_, err = svc.ExecuteSuperadminTool(ctx, "embedding-config-update", map[string]any{"batch_size": 5, "confirm": true})
 		require.NoError(t, err, "confirmed embedding-config-update must execute")
 	})
-
-	t.Run("provider-configure-org", func(t *testing.T) {
-		svc := &Service{db: dbc} // providerCredSvc nil — the guard must short-circuit before any write
-
-		res, err := svc.ExecuteSuperadminTool(ctx, "provider-configure-org", map[string]any{"provider_name": "google", "api_key": "sk-secret"})
-		require.NoError(t, err)
-		require.Equal(t, true, res.StructuredContent["dry_run"], "unconfirmed provider-configure-org must be a dry-run (no write)")
-		require.Equal(t, "configure organization provider", res.StructuredContent["action"])
-
-		// Confirmed reaches the real handler; with no org_id it errors on the
-		// missing identifier (proving the guard was bypassed, not a dry-run).
-		_, err = svc.ExecuteSuperadminTool(ctx, "provider-configure-org", map[string]any{"provider_name": "google", "confirm": true})
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "org_id")
-	})
 }

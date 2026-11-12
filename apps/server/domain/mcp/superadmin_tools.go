@@ -529,7 +529,6 @@ func (s *Service) superadminToolDefinition(name string) *ToolDefinition {
 // guard, so ExecuteSuperadminTool applies the guard for them directly).
 var superadminMutationToolNames = map[string]bool{
 	// pre-existing SuperadminOnly mutators (no internal confirm guard)
-	"provider-configure-org":  true,
 	"embedding-pause":         true,
 	"embedding-resume":        true,
 	"embedding-config-update": true,
@@ -556,11 +555,6 @@ var superadminMutationToolNames = map[string]bool{
 // matches the new-tool dry-run (dry_run, action, targets, message).
 func (s *Service) superadminPreExistingMutationDryRun(toolName string, args map[string]any) (*ToolResult, error) {
 	switch toolName {
-	case "provider-configure-org":
-		return s.superadminDryRun("configure organization provider", map[string]any{
-			"org_id":        superadminArgString(args, "org_id"),
-			"provider_name": superadminArgString(args, "provider_name"),
-		})
 	case "embedding-pause":
 		return s.superadminDryRun("pause all embedding workers", map[string]any{})
 	case "embedding-resume":

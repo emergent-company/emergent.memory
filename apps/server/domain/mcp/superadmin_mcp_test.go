@@ -132,7 +132,7 @@ func TestGetSuperadminToolDefinitionsIncludesExistingOperatorTools(t *testing.T)
 	}
 	for _, want := range []string{
 		"embedding-status", "embedding-pause", "embedding-resume", "embedding-config-update",
-		"provider-list-org", "provider-configure-org", "provider-test", "provider-usage-get",
+		"provider-test", "provider-usage-get",
 		"trace-list", "trace-get",
 		"user-list", "project-delete", // new tools also present
 	} {
@@ -620,11 +620,11 @@ func TestAdminEndpointRefusesProjectTool(t *testing.T) {
 // ============================================================================
 
 // TestSuperadminMutationToolNamesCoverage pins the mutating operator tool set:
-// it covers the pre-existing SuperadminOnly mutators (provider-configure-org,
-// embedding-pause/resume/config-update) AND the new mutation tools.
+// it covers the pre-existing SuperadminOnly mutators
+// (embedding-pause/resume/config-update) AND the new mutation tools.
 func TestSuperadminMutationToolNamesCoverage(t *testing.T) {
 	for _, name := range []string{
-		"provider-configure-org", "embedding-pause", "embedding-resume", "embedding-config-update",
+		"embedding-pause", "embedding-resume", "embedding-config-update",
 	} {
 		if !superadminMutationToolNames[name] {
 			t.Errorf("pre-existing mutator %q missing from superadminMutationToolNames", name)
@@ -647,7 +647,7 @@ func TestSuperadminMutationToolNamesCoverage(t *testing.T) {
 // key=value pairs are redacted, ordinary errors are left unchanged.
 func TestRedactString(t *testing.T) {
 	cases := []struct{ in, want string }{
-		{"configure_org_provider: api_key=sk-abc123 failed", "configure_org_provider: api_key=[REDACTED] failed"},
+		{"configure_project_provider: api_key=sk-abc123 failed", "configure_project_provider: api_key=[REDACTED] failed"},
 		{"token=secret123", "token=[REDACTED]"},
 		{"service_account_json={\"client_email\":\"x\"}", "service_account_json=[REDACTED]"},
 		{"ordinary error with no secrets", "ordinary error with no secrets"},

@@ -149,6 +149,18 @@ pre-commit:
           exit 1
         fi
 
+    # Preflight: generated CLI skill reference (issue #690 item 5). The glob is
+    # CLI-scoped so this regeneration only runs when CLI Go files or the
+    # generated skill change — it must stay fast for the pre-commit path.
+    # Single source of truth: scripts/preflight/cli-skill-pin.sh (also run by
+    # scripts/preflight/all.sh).
+    - name: preflight-cli-skill-pin
+      root: apps/cli
+      glob:
+        - "**/*.go"
+        - "internal/skillsfs/**/*.md"
+      run: bash ../../scripts/preflight/cli-skill-pin.sh
+
     # cli-golangci-lint intentionally lives in the `lint` group, not here:
     # whole-module golangci-lint is too slow for the fast pre-commit path and
     # apps/cli carries pre-existing findings that must not block unrelated

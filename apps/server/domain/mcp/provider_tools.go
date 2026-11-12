@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/emergent-company/emergent.memory/domain/provider"
-	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // ============================================================================
@@ -14,58 +13,6 @@ import (
 
 func providerToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
-		{
-			Name:           "provider-list-org",
-			OutputSchema:   objectOutputSchema(),
-			SuperadminOnly: true,
-			Description:    "List all LLM provider configurations for an organization. Returns provider name, model selections, and credential source.",
-			InputSchema: InputSchema{
-				Type: "object",
-				Properties: map[string]PropertySchema{
-					"org_id": {
-						Type:        "string",
-						Description: "UUID of the organization. Optional — defaults to the caller's organization.",
-					},
-				},
-				Required: []string{},
-			},
-		},
-		{
-			Name:           "provider-configure-org",
-			OutputSchema:   objectOutputSchema(),
-			SuperadminOnly: true,
-			Description:    "Configure or update an LLM provider at the organization level (e.g. set Google AI API key).",
-			InputSchema: InputSchema{
-				Type: "object",
-				Properties: map[string]PropertySchema{
-					"org_id": {
-						Type:        "string",
-						Description: "UUID of the organization. Optional — defaults to the caller's organization.",
-					},
-					"provider_name": {
-						Type:        "string",
-						Description: "Provider identifier (e.g. 'google', 'vertex')",
-					},
-					"api_key": {
-						Type:        "string",
-						Description: "API key for the provider",
-					},
-					"service_account_json": {
-						Type:        "string",
-						Description: "Service account JSON for Vertex AI (alternative to api_key)",
-					},
-					"gcp_project": {
-						Type:        "string",
-						Description: "GCP project ID for Vertex AI",
-					},
-					"location": {
-						Type:        "string",
-						Description: "GCP region for Vertex AI (e.g. 'us-central1')",
-					},
-				},
-				Required: []string{"provider_name"},
-			},
-		},
 		{
 			Name:          "provider-configure-project",
 			OutputSchema:  objectOutputSchema(),
@@ -158,41 +105,6 @@ func providerToolDefinitions() []ToolDefinition {
 // Provider Tool Handlers
 // ============================================================================
 
-func (s *Service) executeListOrgProviders(ctx context.Context, args map[string]any) (*ToolResult, error) {
-	orgID, _ := args["org_id"].(string)
-	if orgID == "" {
-		orgID = resolveOrgID(ctx, s)
-	}
-	if orgID == "" {
-		return nil, fmt.Errorf("list_org_providers: 'org_id' is required")
-	}
-	configs, err := s.providerCredSvc.ListOrgConfigs(ctx, orgID)
-	if err != nil {
-		return nil, fmt.Errorf("list_org_providers: %w", err)
-	}
-	return s.wrapResult(configs)
-}
-
-func (s *Service) executeConfigureOrgProvider(ctx context.Context, args map[string]any) (*ToolResult, error) {
-	orgID, _ := args["org_id"].(string)
-	if orgID == "" {
-		orgID = resolveOrgID(ctx, s)
-	}
-	if orgID == "" {
-		return nil, fmt.Errorf("configure_org_provider: 'org_id' is required")
-	}
-	providerName, _ := args["provider_name"].(string)
-	if providerName == "" {
-		return nil, fmt.Errorf("configure_org_provider: 'provider_name' is required")
-	}
-	req := buildUpsertRequest(args)
-	cfg, err := s.providerCredSvc.UpsertOrgConfig(ctx, orgID, provider.ProviderType(providerName), req)
-	if err != nil {
-		return nil, fmt.Errorf("configure_org_provider: %w", err)
-	}
-	return s.wrapResult(cfg)
-}
-
 func (s *Service) executeConfigureProjectProvider(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	providerName, _ := args["provider_name"].(string)
 	if providerName == "" {
@@ -248,22 +160,6 @@ func (s *Service) executeGetProviderUsage(ctx context.Context, args map[string]a
 	return s.wrapResult(map[string]any{
 		"message": "Provider usage statistics are available at GET /api/v1/organizations/:orgId/usage",
 	})
-}
-
-// resolveOrgID returns the org ID from auth context, falling back to a project lookup.
-func resolveOrgID(ctx context.Context, s *Service) string {
-	orgID := auth.OrgIDFromContext(ctx)
-	if orgID == "" {
-		if projectID := auth.ProjectIDFromContext(ctx); projectID != "" {
-			var id string
-			_ = s.db.NewRaw(
-				"SELECT organization_id FROM kb.projects WHERE id = ? LIMIT 1",
-				projectID,
-			).Scan(ctx, &id)
-			orgID = id
-		}
-	}
-	return orgID
 }
 
 // buildUpsertRequest converts MCP tool args to a provider.UpsertProviderConfigRequest.

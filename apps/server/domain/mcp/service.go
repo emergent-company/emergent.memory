@@ -3042,10 +3042,6 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 		return s.executeRetriggerEmbeddings(ctx, projectID, args)
 
 	// Provider tools
-	case "provider-list-org":
-		return s.executeListOrgProviders(ctx, args)
-	case "provider-configure-org":
-		return s.executeConfigureOrgProvider(ctx, args)
 	case "provider-configure-project":
 		return s.executeConfigureProjectProvider(ctx, projectID, args)
 	case "provider-models-list":
