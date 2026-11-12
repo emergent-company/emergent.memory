@@ -88,6 +88,30 @@ To revert a project back to org config:
 memory provider configure-project deepseek --remove
 ```
 
+### 4. Re-embed after changing the embedding model
+
+Vectors from two different embedding models are not comparable, so switching
+`embeddingModel` on a project with existing content leaves its stored vectors in
+the old model's space. Search will not fail loudly — it will quietly rank badly.
+Re-queue the corpus after the switch:
+
+```bash
+memory graph reindex-embeddings --force --chunks
+```
+
+- `--force` re-queues rows that already have a vector. Without it, only rows with
+  a NULL embedding are queued, which is what you want when filling gaps rather
+  than migrating.
+- `--chunks` also re-queues the project's document chunks. Chunks have no other
+  bulk path — they are otherwise only re-embedded when their document is
+  reprocessed — so omitting it leaves the segment search corpus behind on the old
+  model.
+- The command returns immediately with counts of jobs queued; the embedding
+  workers drain them in the background.
+
+The same endpoint is available over HTTP: `POST /api/graph/reindex-embeddings`
+with query parameters `force` and `chunks`.
+
 ---
 
 ## API
