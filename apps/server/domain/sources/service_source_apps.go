@@ -42,6 +42,18 @@ type RegisterSourceAppRequest struct {
 	WebhookSecret string
 }
 
+// UpdateSourceAppRequest is the org-admin App edit payload. The provider and the
+// GitHub App id are absent on purpose: `(org, provider, app_id)` is what binds
+// project sources to this credential, so an edit renames the App's label and
+// optionally rotates its sealed secrets instead of repointing it. A blank secret
+// keeps the stored one — the sealed columns are write-only, so there is nothing
+// the UI could prefill or the caller could round-trip.
+type UpdateSourceAppRequest struct {
+	Slug          string
+	PrivateKey    string
+	WebhookSecret string
+}
+
 // SourceTriggerInput is the create/update shape for a source trigger.
 type SourceTriggerInput struct {
 	EventType   string
@@ -186,6 +198,62 @@ func (s *Service) DeleteSourceApp(ctx context.Context, orgID uuid.UUID, userID s
 		return apperror.NewNotFound("SourceApp", id.String())
 	}
 	return s.repo.DeleteSourceApp(ctx, id)
+}
+
+// UpdateSourceApp renames an App and optionally rotates its sealed credentials.
+// AppID and provider are immutable: `(org, provider, app_id)` is the binding key
+// the sources resolve through, so an edit must not repoint an App under sources
+// that are already attached. A blank secret keeps the stored ciphertext.
+func (s *Service) UpdateSourceApp(ctx context.Context, orgID uuid.UUID, userID string, id uuid.UUID, req UpdateSourceAppRequest) (*SourceApp, error) {
+	if err := s.requireSourceAppAdmin(ctx, orgID, userID); err != nil {
+		return nil, err
+	}
+	app, err := s.repo.FindSourceAppByID(ctx, id)
+	if err != nil || app.OrgID != orgID {
+		return nil, apperror.NewNotFound("SourceApp", id.String())
+	}
+	slug := strings.TrimSpace(req.Slug)
+	if slug == "" {
+		return nil, apperror.NewBadRequest("slug is required")
+	}
+	app.Slug = slug
+	// Same ordering as registration: validate a supplied key while it is still
+	// readable, before it is sealed. The sealed columns are write-only, so a bad
+	// key accepted here would be invisible and every later token mint would fail.
+	if strings.TrimSpace(req.PrivateKey) != "" {
+		if err := validateSourceAppPrivateKey(req.PrivateKey); err != nil {
+			return nil, err
+		}
+		rotated, err := s.sealSourceAppSecret(req.PrivateKey, "the App private key")
+		if err != nil {
+			return nil, err
+		}
+		app.PrivateKeyEncrypted = rotated
+	}
+	if strings.TrimSpace(req.WebhookSecret) != "" {
+		rotated, err := s.sealSourceAppSecret(req.WebhookSecret, "the App webhook secret")
+		if err != nil {
+			return nil, err
+		}
+		app.WebhookSecretEncrypted = rotated
+	}
+	if err := s.repo.UpdateSourceApp(ctx, app); err != nil {
+		return nil, err
+	}
+	return app, nil
+}
+
+// sealSourceAppSecret seals one credential value with the source encryption key.
+// what names the secret in the failure so a rotation error identifies the field.
+func (s *Service) sealSourceAppSecret(raw, what string) ([]byte, error) {
+	if len(s.key) == 0 {
+		return nil, apperror.NewValidation("LLM_ENCRYPTION_KEY is not configured")
+	}
+	sealed, err := SealSourceBlob(s.key, []byte(raw))
+	if err != nil {
+		return nil, apperror.NewInternal("failed to seal "+what, err)
+	}
+	return sealed, nil
 }
 
 // ListSourceTriggers returns a source's trigger bindings.

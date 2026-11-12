@@ -264,6 +264,9 @@ type fakeMemory struct {
 	dsCreatedSourceAppReq    *DSSourceAppRequest          // last request forwarded to CreateOrgSourceApp
 	dsCreatedSourceAppOrg    string                       // last org id passed to CreateOrgSourceApp
 	dsDeletedSourceAppID     string                       // last app id passed to DeleteOrgSourceApp
+	dsUpdatedSourceAppOrg    string                       // last org id passed to UpdateOrgSourceApp
+	dsUpdatedSourceAppID     string                       // last app id passed to UpdateOrgSourceApp
+	dsUpdatedSourceAppReq    *DSSourceAppUpdateRequest    // last request forwarded to UpdateOrgSourceApp
 	dsSourceTriggers         map[string][]DSSourceTrigger // triggers per source id
 	dsSourceTriggerErr       error                        // any trigger method failure
 	dsCreatedTriggerReq      *DSSourceTriggerRequest      // last request forwarded to CreateSourceTrigger
@@ -5297,6 +5300,26 @@ func (f *fakeMemory) CreateOrgSourceApp(ctx context.Context, orgID string, req *
 	}
 	f.dsSourceApps = append(f.dsSourceApps, app)
 	return &app, nil
+}
+
+// UpdateOrgSourceApp mirrors the server's PATCH: the label changes and each
+// supplied secret rotates, while the provider and App id stay put.
+func (f *fakeMemory) UpdateOrgSourceApp(ctx context.Context, orgID, appID string, req *DSSourceAppUpdateRequest) (*SourceApp, error) {
+	if f.dsSourceAppErr != nil {
+		return nil, f.dsSourceAppErr
+	}
+	f.dsUpdatedSourceAppOrg = orgID
+	f.dsUpdatedSourceAppID = appID
+	f.dsUpdatedSourceAppReq = req
+	for i := range f.dsSourceApps {
+		if f.dsSourceApps[i].ID != appID {
+			continue
+		}
+		f.dsSourceApps[i].Slug = req.Slug
+		f.dsSourceApps[i].UpdatedAt = "2026-09-02T00:00:00Z"
+		return &f.dsSourceApps[i], nil
+	}
+	return nil, errors.New("no such source App in this organization")
 }
 
 func (f *fakeMemory) DeleteOrgSourceApp(ctx context.Context, orgID, appID string) error {

@@ -24,6 +24,9 @@ func sourceAppsTestServer(f *fakeMemory) *echo.Echo {
 	e := echo.New()
 	e.GET(dsSourceAppsPath, s.uiSourceApps)
 	e.POST(dsSourceAppsPath, s.uiSourceAppCreate)
+	e.GET(dsSourceAppsPath+"/new", s.uiSourceAppNew)
+	e.GET(dsSourceAppsPath+"/:appId", s.uiSourceAppDetail)
+	e.POST(dsSourceAppsPath+"/:appId", s.uiSourceAppUpdate)
 	e.POST(dsSourceAppsPath+"/:appId/delete", s.uiSourceAppDelete)
 	e.GET("/data-sources/new", s.uiDataSourceNew)
 	e.GET("/data-sources/:id", s.uiDataSourceDetail)
@@ -59,12 +62,18 @@ func TestSourceAppsPageRendersRegisteredApps(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
+		`data-testid="ds-source-apps-table"`,
 		`data-testid="ds-source-app-row"`,
 		`data-testid="ds-source-app-slug"`,
 		"acme-bot",
-		"App ID 4242",
+		`data-testid="ds-source-app-id"`,
+		"4242",
+		`data-testid="ds-source-app-webhook-url"`,
 		"https://memory.example.com/api/webhooks/source-apps/wk-1",
-		`data-testid="ds-source-app-form"`,
+		`data-testid="ds-source-app-manage"`,
+		`href="` + dsSourceAppsPath + `/a1"`,
+		`data-testid="ds-source-app-add"`,
+		`href="` + dsSourceAppsPath + `/new"`,
 		"Acme",
 	} {
 		if !strings.Contains(body, want) {
@@ -76,6 +85,17 @@ func TestSourceAppsPageRendersRegisteredApps(t *testing.T) {
 	}
 	if strings.Contains(body, `data-testid="ds-source-apps-forbidden"`) {
 		t.Error("forbidden state rendered for an org admin")
+	}
+	// The list is a table plus a separate add page: no inline register form, and
+	// no write-input for a secret anywhere on the table.
+	for _, unwanted := range []string{
+		`data-testid="ds-source-app-form"`,
+		`name="webhookSecret"`,
+		`name="privateKey"`,
+	} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("list page rendered inline form markup %q", unwanted)
+		}
 	}
 }
 
@@ -91,8 +111,18 @@ func TestSourceAppsPageEmptyState(t *testing.T) {
 	if !strings.Contains(body, `data-testid="ds-source-apps-empty"`) {
 		t.Error("empty registry did not render the empty state")
 	}
-	if !strings.Contains(body, `data-testid="ds-source-app-register"`) {
-		t.Error("empty registry did not render the register form")
+	// An empty registry points at the standalone register page; it does not
+	// carry the form itself.
+	if !strings.Contains(body, `href="`+dsSourceAppsPath+`/new"`) {
+		t.Error("empty registry lost its link to the register page")
+	}
+	for _, unwanted := range []string{
+		`data-testid="ds-source-app-form"`,
+		`data-testid="ds-source-apps-table"`,
+	} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("empty registry rendered %q", unwanted)
+		}
 	}
 }
 
@@ -117,6 +147,7 @@ func TestSourceAppsPageForbiddenForNonAdmin(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		`data-testid="ds-source-app-form"`,
+		`data-testid="ds-source-app-add"`,
 		`data-testid="ds-source-app-row"`,
 		"secret-bot",
 	} {
@@ -228,6 +259,249 @@ func TestSourceAppCreateRefusedForNonAdmin(t *testing.T) {
 
 	if f.dsCreatedSourceAppReq != nil {
 		t.Error("non-admin write was forwarded to the API")
+	}
+	assertRedirectError(t, rec.Header().Get("Location"), "organization administrator")
+}
+
+func TestSourceAppNewPageRendersRegisterForm(t *testing.T) {
+	e := sourceAppsTestServer(sourceAppsAdminFake())
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, dsSourceAppsPath+"/new", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="ds-source-app-form-page"`,
+		`data-testid="ds-source-app-form"`,
+		`action="` + dsSourceAppsPath + `"`,
+		`name="appId"`,
+		`name="slug"`,
+		`name="privateKey"`,
+		`name="webhookSecret"`,
+		`data-testid="ds-source-app-save"`,
+		"Register source app",
+		"Back",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("register page missing %q", want)
+		}
+	}
+	// Both secrets are mandatory on the add page, and there is nothing to
+	// remove or copy yet.
+	if strings.Count(body, "required") < 2 {
+		t.Error("register form did not mark its secrets required")
+	}
+	for _, unwanted := range []string{
+		`data-testid="ds-source-app-delete"`,
+		`data-testid="ds-source-app-webhook"`,
+		`readonly`,
+	} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("register page rendered %q", unwanted)
+		}
+	}
+}
+
+func TestSourceAppNewPageNeedsOrgAdmin(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.orgsAndProjects = []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_member"}}
+	e := sourceAppsTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, dsSourceAppsPath+"/new", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), `data-testid="ds-source-app-form"`) {
+		t.Error("non-admin got the register form")
+	}
+}
+
+func TestSourceAppNewPageRedirectsWithoutProject(t *testing.T) {
+	e := sourceAppsTestServer(&fakeMemory{})
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, dsSourceAppsPath+"/new", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/orgs" {
+		t.Errorf("location = %q, want /orgs", loc)
+	}
+}
+
+func TestSourceAppDetailPagePrefillsApp(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.dsSourceApps = []SourceApp{{
+		ID: "a1", OrgID: "o1", Provider: "github", AppID: 4242, Slug: "acme-bot",
+		WebhookKey: "wk-1", CreatedAt: "2026-09-01T00:00:00Z",
+	}}
+	e := sourceAppsTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, dsSourceAppsPath+"/a1?saved=1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Edit source app",
+		"Source App saved",
+		`action="` + dsSourceAppsPath + `/a1"`,
+		`value="acme-bot"`,
+		`value="4242"`,
+		`readonly`,
+		"Saved — leave empty to keep",
+		`data-testid="ds-source-app-webhook"`,
+		"https://memory.example.com/api/webhooks/source-apps/wk-1",
+		`action="` + dsSourceAppsPath + `/a1/delete"`,
+		`data-testid="ds-source-app-delete"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("edit page missing %q", want)
+		}
+	}
+	// The identity fields are fixed, and neither the App id nor a secret can be
+	// submitted from the edit page: the PATCH takes a slug and optional secrets.
+	for _, unwanted := range []string{
+		`name="appId"`,
+		`name="provider"`,
+	} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("edit page rendered %q", unwanted)
+		}
+	}
+	// The delete form is a sibling of the save form, never nested inside it: a
+	// nested form is invalid HTML and the inner submit silently posts nothing.
+	saveStart := strings.Index(body, `data-testid="ds-source-app-form"`)
+	saveEnd := strings.Index(body[saveStart:], "</form>")
+	if saveStart < 0 || saveEnd < 0 {
+		t.Fatalf("save form bounds not found")
+	}
+	if strings.Contains(body[saveStart:saveStart+saveEnd], `ds-source-app-delete`) {
+		t.Error("delete control rendered inside the save form")
+	}
+}
+
+func TestSourceAppDetailUnknownIDRedirectsWithError(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.dsSourceApps = []SourceApp{{ID: "a1", OrgID: "o1", AppID: 1, Slug: "acme-bot"}}
+	e := sourceAppsTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, dsSourceAppsPath+"/nope", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	assertRedirectError(t, rec.Header().Get("Location"), "no such source App")
+}
+
+func TestSourceAppDetailNeedsOrgAdmin(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.orgsAndProjects = []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_member"}}
+	f.dsSourceApps = []SourceApp{{ID: "a1", OrgID: "o1", AppID: 1, Slug: "secret-bot"}}
+	e := sourceAppsTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, dsSourceAppsPath+"/a1", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "secret-bot") {
+		t.Error("non-admin got the App edit page")
+	}
+}
+
+func TestSourceAppUpdateForwardsSlugAndBlankSecrets(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.dsSourceApps = []SourceApp{{ID: "a1", OrgID: "o1", AppID: 4242, Slug: "acme-bot"}}
+	e := sourceAppsTestServer(f)
+
+	form := url.Values{"slug": {" acme-renamed "}, "privateKey": {""}, "webhookSecret": {""}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, dsSourceAppsPath+"/a1", strings.NewReader(form.Encode()))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationForm)
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != dsSourceAppsPath+"/a1?saved=1" {
+		t.Errorf("location = %q", loc)
+	}
+	if f.dsUpdatedSourceAppOrg != "o1" || f.dsUpdatedSourceAppID != "a1" {
+		t.Errorf("target = %q/%q, want o1/a1", f.dsUpdatedSourceAppOrg, f.dsUpdatedSourceAppID)
+	}
+	got := f.dsUpdatedSourceAppReq
+	if got == nil {
+		t.Fatal("no update request forwarded")
+	}
+	if got.Slug != "acme-renamed" {
+		t.Errorf("slug = %q, want the trimmed value", got.Slug)
+	}
+	// Blank fields must stay blank: they are omitted from the PATCH so the
+	// server keeps the sealed copy.
+	if got.PrivateKey != "" || got.WebhookSecret != "" {
+		t.Errorf("blank secrets were forwarded: %+v", got)
+	}
+}
+
+func TestSourceAppUpdateForwardsRotatedSecret(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.dsSourceApps = []SourceApp{{ID: "a1", OrgID: "o1", AppID: 4242, Slug: "acme-bot"}}
+	e := sourceAppsTestServer(f)
+
+	// The gateway only forwards the key (the server validates it), so a plain
+	// marker string is enough: it keeps the scan clean of PEM literals.
+	form := url.Values{"slug": {"acme-bot"}, "privateKey": {"rotated-private-key-material"}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, dsSourceAppsPath+"/a1", strings.NewReader(form.Encode()))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationForm)
+	e.ServeHTTP(rec, req)
+
+	got := f.dsUpdatedSourceAppReq
+	if got == nil {
+		t.Fatal("no update request forwarded")
+	}
+	if got.PrivateKey != form.Get("privateKey") {
+		t.Errorf("rotated key not forwarded: %+v", got)
+	}
+	if got.WebhookSecret != "" {
+		t.Errorf("untouched webhook secret was overwritten: %+v", got)
+	}
+}
+
+func TestSourceAppUpdateRequiresSlug(t *testing.T) {
+	f := sourceAppsAdminFake()
+	e := sourceAppsTestServer(f)
+
+	form := url.Values{"slug": {"   "}, "privateKey": {"key"}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, dsSourceAppsPath+"/a1", strings.NewReader(form.Encode()))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationForm)
+	e.ServeHTTP(rec, req)
+
+	if f.dsUpdatedSourceAppReq != nil {
+		t.Error("slug-less update was forwarded")
+	}
+	assertRedirectError(t, rec.Header().Get("Location"), "app slug is required")
+}
+
+func TestSourceAppUpdateRefusedForNonAdmin(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.orgsAndProjects = []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_member"}}
+	e := sourceAppsTestServer(f)
+
+	form := url.Values{"slug": {"acme-bot"}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, dsSourceAppsPath+"/a1", strings.NewReader(form.Encode()))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationForm)
+	e.ServeHTTP(rec, req)
+
+	if f.dsUpdatedSourceAppReq != nil {
+		t.Error("non-admin update was forwarded to the API")
 	}
 	assertRedirectError(t, rec.Header().Get("Location"), "organization administrator")
 }
