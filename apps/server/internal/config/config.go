@@ -40,9 +40,6 @@ type Config struct {
 	// Zitadel authentication
 	Zitadel ZitadelConfig
 
-	// Embeddings configuration
-	Embeddings EmbeddingsConfig
-
 	// LLM configuration (for chat completions)
 	LLM LLMConfig
 
@@ -338,47 +335,14 @@ func (z *ZitadelConfig) IntrospectionConfigured() bool {
 	return z.ClientJWT != "" || z.ClientJWTPath != ""
 }
 
-// EmbeddingsConfig holds embedding service configuration
-type EmbeddingsConfig struct {
-	// Provider: "vertex" (production) or "genai" (development)
-	Provider string `env:"EMBEDDING_PROVIDER" envDefault:""`
-
-	// GCP Project ID for Vertex AI
-	GCPProjectID string `env:"GCP_PROJECT_ID" envDefault:""`
-
-	// Vertex AI location (e.g., "us-central1")
-	VertexAILocation string `env:"VERTEX_AI_LOCATION" envDefault:"us-central1"`
-
-	// Embedding model name
-	Model string `env:"EMBEDDING_MODEL" envDefault:"gemini-embedding-2-preview"`
-
-	// Embedding dimension (768 for gemini-embedding-2-preview with MRL)
-	Dimension int `env:"EMBEDDING_DIMENSION" envDefault:"768"`
-
-	// Google API Key for Generative AI (development)
-	GoogleAPIKey string `env:"GOOGLE_API_KEY" envDefault:""`
-
-	// Disable embeddings network calls (for testing)
-	NetworkDisabled bool `env:"EMBEDDINGS_NETWORK_DISABLED" envDefault:"false"`
-}
-
-// IsEnabled returns true if embeddings are configured
-func (e *EmbeddingsConfig) IsEnabled() bool {
-	if e.NetworkDisabled {
-		return false
-	}
-	// Enabled if Vertex AI is configured OR Google API Key is set
-	return (e.GCPProjectID != "" && e.VertexAILocation != "") || e.GoogleAPIKey != ""
-}
-
-// UseVertexAI returns true if Vertex AI should be used
-func (e *EmbeddingsConfig) UseVertexAI() bool {
-	return e.GCPProjectID != "" && e.VertexAILocation != ""
-}
+// Embeddings have no environment configuration: the provider, model and
+// credentials are resolved per request from the project's configured provider
+// (see pkg/embeddings). This holds for self-hosted single-tenant installs too —
+// a project with no embedding model set logs a warning and generates no vectors.
 
 // LLMConfig holds LLM (chat completion) configuration
 type LLMConfig struct {
-	// GCP Project ID for Vertex AI (reuses EMBEDDING_PROVIDER's GCP_PROJECT_ID)
+	// GCP Project ID for Vertex AI
 	GCPProjectID string `env:"GCP_PROJECT_ID" envDefault:""`
 
 	// Vertex AI location ("global" required for Gemini 3 models)

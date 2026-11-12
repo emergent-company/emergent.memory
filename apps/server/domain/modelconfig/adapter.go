@@ -58,12 +58,14 @@ func NewEmbeddingResolverAdapter(svc *Service, credsvc *provider.CredentialServi
 // ResolveEmbedding implements embeddings.EmbeddingResolver.
 // It reads the embedding model from project_model_config, parses the provider
 // prefix, fetches credentials for that specific provider, and returns a
-// ResolvedEmbeddingCredential. Returns an error if no embedding model is
-// configured — no silent fallback.
+// ResolvedEmbeddingCredential. Embeddings are only ever generated through the
+// provider the user configured on the project: a request with no project, or a
+// project with no embedding model, fails closed with a typed error instead of
+// falling back to an environment-configured provider.
 func (a *EmbeddingResolverAdapter) ResolveEmbedding(ctx context.Context) (*embeddings.ResolvedEmbeddingCredential, error) {
 	projectIDStr := auth.ProjectIDFromContext(ctx)
 	if projectIDStr == "" {
-		return nil, nil // no project context — caller will use static client
+		return nil, fmt.Errorf("%w — embeddings are resolved from the project's configured provider", embeddings.ErrNoProjectContext)
 	}
 
 	projectID, err := uuid.Parse(projectIDStr)
@@ -108,7 +110,7 @@ func (a *EmbeddingResolverAdapter) ResolveEmbedding(ctx context.Context) (*embed
 		return a.buildEmbeddingCredential(cred, cred.EmbeddingModel), nil
 	}
 
-	return nil, fmt.Errorf("no embedding model configured for project %s — run 'memory projects set-models --embedding provider/model-name' or 'memory provider configure-project <provider> --embedding-model <model>'", projectIDStr)
+	return nil, fmt.Errorf("%w for project %s — run 'memory projects set-models --embedding provider/model-name' or 'memory provider configure-project <provider> --embedding-model <model>'", embeddings.ErrEmbeddingModelNotSet, projectIDStr)
 }
 
 // buildEmbeddingCredential maps a resolved provider credential to the
@@ -127,5 +129,6 @@ func (a *EmbeddingResolverAdapter) buildEmbeddingCredential(cred *provider.Resol
 		Extra:              cred.Extra,
 		ExtraHeaders:       cred.ExtraHeaders,
 		Source:             string(cred.Source),
+		ProviderSlug:       string(cred.Provider),
 	}
 }

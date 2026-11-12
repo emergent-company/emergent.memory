@@ -4,6 +4,28 @@
 
 ### BREAKING CHANGES
 
+**Embeddings are resolved only from the project's configured provider** (2026-11-12)
+
+`GCP_PROJECT_ID`, `GOOGLE_API_KEY`, `EMBEDDING_PROVIDER`, `EMBEDDING_MODEL`,
+`EMBEDDING_DIMENSION` and `EMBEDDINGS_NETWORK_DISABLED` no longer configure
+embeddings — neither on hosted deployments nor on self-hosted single-tenant
+installs. Every embedding call resolves the provider, model and credentials from
+the project's model config and provider credentials, so vectors are only ever
+produced by the provider the user configured for that project. A project with no
+embedding model configured logs one warning per project —
+
+```
+embeddings: embedding model was not set for this project — semantic vectors will not be generated
+```
+
+— and ingestion, graph CRUD and lexical search keep working with no vectors until
+one is configured. Configure it with `memory projects set-models --embedding
+<provider>/<model>` or `memory provider configure-project <provider>
+--embedding-model <model>`. `GOOGLE_API_KEY` / `GCP_PROJECT_ID` remain
+generative-model (chat/extraction) environment fallbacks only, and the
+`backfill-embeddings` tool now requires `--project-id` so it resolves that
+project's provider.
+
 **MCP share creation requires an explicit tool allowlist** (2026-11-05)
 
 `POST /api/projects/{projectId}/mcp/shares` now rejects a request that omits

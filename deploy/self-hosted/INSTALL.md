@@ -121,14 +121,30 @@ time, and also emits the OpenCode and legacy-SSE variants.
 
 ### Embeddings
 
-Memory needs an embedding provider for semantic search. Either pass a key to the
-installer (`GOOGLE_API_KEY=...`) or add one later:
+Embeddings are resolved **per project** from the provider configured in Memory.
+There is no environment-configured embedding provider: `GOOGLE_API_KEY`,
+`GCP_PROJECT_ID`, `EMBEDDING_MODEL` and `EMBEDDING_DIMENSION` are not read for
+embeddings (the key is a generative-model fallback only). Configure the provider
+and embedding model on the project:
 
 ```bash
-memory config set google_api_key YOUR_KEY
+memory provider configure-project google --api-key YOUR_KEY
+# or choose the embedding model explicitly
+memory provider configure-project google --api-key YOUR_KEY \
+  --embedding-model google/gemini-embedding-001
+# or set the model on an existing project
+memory projects set-models --embedding google/gemini-embedding-001
 ```
 
-Without a provider, ingestion and graph CRUD work; embeddings stay pending.
+`--embedding-model` is optional: the CLI auto-selects an embedding model from the
+provider catalog. Until one is configured the server logs
+
+```
+embeddings: embedding model was not set for this project — semantic vectors will not be generated
+```
+
+and ingestion, graph CRUD and lexical search keep working; semantic vectors stay
+unset until a model is configured.
 
 ## Custom configuration
 
@@ -138,7 +154,7 @@ Without a provider, ingestion and graph CRUD work; embeddings stay pending.
 | `SERVER_PORT` | `3002` | host port for the API/MCP server |
 | `CLI_VERSION` | `latest` | the one version knob: CLI release *and* server image tag |
 | `MEMORY_VERSION` | `main` | branch used to download the helper scripts and `init.sql` |
-| `GOOGLE_API_KEY` | — | embedding provider key |
+| `GOOGLE_API_KEY` | — | optional generative-model key (chat/extraction); never used for embeddings |
 | `CLIENT_ONLY` | `false` | install only the CLI against an existing server |
 
 ```bash
