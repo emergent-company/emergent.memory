@@ -351,3 +351,57 @@ func TestNotificationStreamProjectScope(t *testing.T) {
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+// TestNotificationMutationConflictPassesThrough is the regression test for the
+// gateway's status mapping. Memory refuses a resolve whose verb differs from the
+// one already recorded — first-write-wins — with a 409 carrying the reason. That
+// refusal is a decision the client must see: mapping it to 502 "memory service
+// unavailable" tells the client to retry, and the retry hits the same refusal.
+// It must also not be captured as an error, because an expected, handled
+// conflict in the error stream is what makes a real outage hard to spot.
+func TestNotificationMutationConflictPassesThrough(t *testing.T) {
+	transport := bindRecordingSentry(t)
+
+	const wantMessage = "this notification's action was already resolved with a different outcome"
+	f := &fakeMemory{notificationMutErr: &memoryHTTPError{
+		Status:  http.StatusConflict,
+		Code:    "notification_action_already_resolved",
+		Message: wantMessage,
+	}}
+	s := &Server{memory: f}
+	e := notificationsEcho(s)
+
+	rec := doNotif(t, e, http.MethodPost, "/api/notifications/n1/resolve", `{"action":"decline"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (body=%s)", rec.Code, rec.Body.String())
+	}
+
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body is not JSON: %v (%s)", err, rec.Body.String())
+	}
+	if body["error"] != wantMessage {
+		t.Errorf("error = %q, want the backend's message %q", body["error"], wantMessage)
+	}
+	if body["error"] == "memory service unavailable" {
+		t.Error("the conflict still reads as an outage")
+	}
+	if n := transport.count(); n != 0 {
+		t.Errorf("a handled conflict was captured as an error (%d event(s))", n)
+	}
+}
+
+// TestNotificationMutationFailureStays502 keeps the other half of the mapping:
+// anything that is not a deliberate refusal is an upstream failure, reported as
+// a retryable 502 rather than passed through as whatever status the error
+// happens to carry.
+func TestNotificationMutationFailureStays502(t *testing.T) {
+	f := &fakeMemory{notificationMutErr: errString("boom")}
+	s := &Server{memory: f}
+	e := notificationsEcho(s)
+
+	rec := doNotif(t, e, http.MethodPatch, "/api/notifications/n1/read", "")
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 (body=%s)", rec.Code, rec.Body.String())
+	}
+}

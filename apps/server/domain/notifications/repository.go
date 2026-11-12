@@ -581,8 +581,8 @@ func (r *Repository) Restore(ctx context.Context, userID, notificationID string)
 	return nil
 }
 
-// ErrActionAlreadyResolved is returned by ResolveAction when the notification
-// already carries a different action_status.
+// ErrActionAlreadyResolved is returned by ResolveActionStatus when the
+// notification already carries a different action_status.
 //
 // The recorded verb is first-write-wins: a repeat of the verb that landed is an
 // idempotent success, a different verb is refused instead of silently
@@ -595,50 +595,73 @@ var ErrActionAlreadyResolved = apperror.New(
 	"this notification's action was already resolved with a different outcome",
 )
 
-// ResolveAction records the outcome of an actionable notification.
+// ResolveActionStatus records the outcome of an actionable notification.
+//
+// It is the one write every surface that resolves an action goes through — the
+// inbox route and an agent question answered from chat — because two writers
+// with two rules is how a recorded verb silently changes hands: the second
+// surface overwrites the first, and action_status_by changes owner with it.
 //
 // The UPDATE is conditional on action_status IS NULL, so the first statement to
 // land wins and concurrent submits cannot overwrite each other. When nothing was
-// written the stored value decides the response: absent or someone else's row is
-// a 404, the same verb again is nil (idempotent), a different verb is
-// ErrActionAlreadyResolved.
-func (r *Repository) ResolveAction(ctx context.Context, userID, notificationID, status string) error {
+// written the stored value decides the response: absent (or, when a userID is
+// given, someone else's) row is a 404, the same verb again is nil (idempotent),
+// a different verb is ErrActionAlreadyResolved.
+//
+// A non-empty userID scopes both statements to the notification's owner. An
+// empty userID means the caller authorized the write by another route and is not
+// necessarily the row's user — an agent question is answered by a run
+// participant while the notification belongs to the run's user — so the id
+// alone identifies the row, and action_status_by stays NULL because there is no
+// comparable user id to attribute the outcome to. The outcome is still
+// first-write-wins.
+//
+// It is a package function taking the database handle rather than a Repository
+// method so another domain can reuse it without owning this repository.
+func ResolveActionStatus(ctx context.Context, db bun.IDB, userID, notificationID, status string) error {
 	now := time.Now()
 
-	result, err := r.db.NewUpdate().
+	update := db.NewUpdate().
 		Model((*Notification)(nil)).
 		Set("action_status = ?", status).
 		Set("action_status_at = ?", now).
-		Set("action_status_by = ?", userID).
 		Set("updated_at = ?", now).
 		Where("id = ?", notificationID).
-		Where("user_id = ?", userID).
-		Where("action_status IS NULL").
-		Exec(ctx)
+		Where("action_status IS NULL")
+	if userID != "" {
+		update = update.
+			Set("action_status_by = ?", userID).
+			Where("user_id = ?", userID)
+	}
 
+	result, err := update.Exec(ctx)
 	if err != nil {
-		r.log.Error("failed to resolve notification action", logger.Error(err))
 		return apperror.NewDatabase("Database operation failed", err)
 	}
 
-	rowsAffected, _ := result.RowsAffected()
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return apperror.NewDatabase("Database operation failed", err)
+	}
 	if rowsAffected > 0 {
 		return nil
 	}
 
-	// Nothing was written: the row is missing, not owned by this user, or it
+	// Nothing was written: the row is missing, not owned by this caller, or it
 	// already carries an outcome. Read the recorded verb to say which.
 	existing := new(Notification)
-	if err := r.db.NewSelect().
+	read := db.NewSelect().
 		Model(existing).
 		Column("action_status").
-		Where("id = ?", notificationID).
-		Where("user_id = ?", userID).
-		Scan(ctx); err != nil {
+		Where("id = ?", notificationID)
+	if userID != "" {
+		read = read.Where("user_id = ?", userID)
+	}
+
+	if err := read.Scan(ctx); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return apperror.NewNotFound("notification", notificationID)
 		}
-		r.log.Error("failed to read notification action status", logger.Error(err))
 		return apperror.NewDatabase("Database operation failed", err)
 	}
 
@@ -648,6 +671,22 @@ func (r *Repository) ResolveAction(ctx context.Context, userID, notificationID, 
 	}
 
 	return ErrActionAlreadyResolved
+}
+
+// ResolveAction records the outcome of an actionable notification for the
+// notification's owner. It delegates to ResolveActionStatus, which owns the
+// first-write-wins rule, so this route and the agent-question writer cannot
+// drift apart.
+func (r *Repository) ResolveAction(ctx context.Context, userID, notificationID, status string) error {
+	err := ResolveActionStatus(ctx, r.db, userID, notificationID, status)
+	// A conflict or an absent row is the client's answer, not a server fault:
+	// the handler turns it into a 409/404. Only an internal failure is worth an
+	// error log, so an expected refusal does not look like an outage in the log.
+	var appErr *apperror.Error
+	if errors.As(err, &appErr) && appErr.HTTPStatus >= http.StatusInternalServerError {
+		r.log.Error("failed to resolve notification action", logger.Error(err))
+	}
+	return err
 }
 
 // MarkAllRead marks all notifications as read for a user within the given
