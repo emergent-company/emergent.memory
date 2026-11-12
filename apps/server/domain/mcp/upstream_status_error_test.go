@@ -1,10 +1,14 @@
 package mcp
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -58,4 +62,32 @@ func TestUpstreamFailureTextDoesNotRelayTheCause(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestBraveSearchToolResultDoesNotRelayUpstreamDetail pins the call site, not
+// just the helper: the Brave tool must render its failure through
+// upstreamFailureText, so the text the agent receives is the caller-facing one
+// and not the transport error (which carries the resolved URL).
+//
+// The timeout is set to a nanosecond so the call fails in transport without any
+// network access, which is exactly the case that used to leak the address.
+func TestBraveSearchToolResultDoesNotRelayUpstreamDetail(t *testing.T) {
+	svc := &Service{
+		braveSearchAPIKey:  "test-key",
+		braveSearchTimeout: time.Nanosecond,
+		log:                slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	res, err := svc.executeBraveWebSearch(context.Background(), "", map[string]any{"query": "anything"})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.True(t, res.IsError)
+	require.Len(t, res.Content, 1)
+
+	text := res.Content[0].Text
+	require.Contains(t, text, "Brave Search request failed")
+	require.NotContains(t, text, "api.search.brave.com",
+		"the tool result must not carry the resolved endpoint")
+	require.NotContains(t, text, "Client.Timeout",
+		"the tool result must not carry Go's transport detail")
 }

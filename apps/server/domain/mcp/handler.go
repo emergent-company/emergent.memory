@@ -442,11 +442,11 @@ func (h *Handler) handleToolsCall(c echo.Context, req *Request, user *auth.AuthU
 		// own argument validation is a plain error — hundreds of them across the
 		// tool set — and the agent must see which argument is wrong. Sanitising
 		// this line therefore requires converting that validation class to app
-		// errors first (tracked separately); until then the tool's text is the
-		// contract, and the tool implementations are in this package, not an
-		// untrusted lower layer.
+		// errors first (#668); until then the tool's text is the contract, and
+		// the tool implementations are in this package, not an untrusted lower
+		// layer.
 		return NewErrorResponse(req.ID, ErrCodeInternalError,
-			err.Error(),
+			"Tool execution failed: "+err.Error(),
 			nil,
 		)
 	}
@@ -564,7 +564,7 @@ func (h *Handler) handleResourcesRead(c echo.Context, req *Request, user *auth.A
 			slog.String("uri", params.URI),
 			logger.Error(err),
 		)
-		return NewErrorResponse(req.ID, ErrCodeInternalError,
+		return NewErrorResponse(req.ID, jsonRPCErrorCodeFor(err),
 			apperror.PublicMessage(err),
 			map[string]string{"uri": params.URI},
 		)
@@ -613,7 +613,7 @@ func (h *Handler) handlePromptsGet(c echo.Context, req *Request, user *auth.Auth
 			slog.String("name", params.Name),
 			logger.Error(err),
 		)
-		return NewErrorResponse(req.ID, ErrCodeInternalError,
+		return NewErrorResponse(req.ID, jsonRPCErrorCodeFor(err),
 			apperror.PublicMessage(err),
 			map[string]string{"name": params.Name},
 		)

@@ -3,8 +3,10 @@ package mcp
 import (
 	"context"
 	"crypto/md5"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -967,8 +969,17 @@ func (s *Service) executeGetMigrationArchive(ctx context.Context, projectID stri
 		Scan(ctx)
 
 	if err != nil {
+		// A miss is the client's mistake, not a server fault: bun reports it as
+		// sql.ErrNoRows, and collapsing it with PublicMessage would read "Object
+		// not found: An internal error occurred", which tells the caller to
+		// retry rather than to correct the id.
+		if errors.Is(err, sql.ErrNoRows) {
+			return &ToolResult{
+				Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("Object not found: %s", objectID)}},
+			}, err
+		}
 		return &ToolResult{
-			Content: []ContentBlock{{Type: "text", Text: "Object not found: " + apperror.PublicMessage(err)}},
+			Content: []ContentBlock{{Type: "text", Text: "Failed to load object: " + apperror.PublicMessage(err)}},
 		}, err
 	}
 
