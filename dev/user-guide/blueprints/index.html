@@ -482,6 +482,8 @@
       
         
       
+        
+      
     
     
     
@@ -861,6 +863,34 @@
     
   
     MCP Relay
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/a2a-protocol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    A2A and A2UI
   
 
     
@@ -1321,6 +1351,17 @@
     <span class="md-ellipsis">
       
         Manifest shape
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#type-presentation-ui" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Type presentation (ui)
       
     </span>
   </a>
@@ -3295,6 +3336,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#type-presentation-ui" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Type presentation (ui)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#with-the-cli-a-directory" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3715,25 +3767,114 @@ with <code>blueprint-publish</code>, then <code>blueprint-apply</code>.</p>
 <code>url</code>, <code>sha256</code>, and <code>date</code> are validated property types, and <code>enum</code> constrains
 a primitive property to a fixed set of values. See
 <a href="../../developer-guide/schema/#property-definitions">Schema § Property definitions</a> for the full vocabulary.</p>
+<h3 id="type-presentation-ui">Type presentation (<code>ui</code>)<a class="headerlink" href="#type-presentation-ui" title="Permanent link">&para;</a></h3>
+<p>Each object type may carry a <code>ui</code> block, and the presentation travels with the
+type: every object of that type renders the same way in every project that
+installs the pack.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">objectTypes</span><span class="p">:</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">BugReport</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">label</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Bug Report</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="nt">ui</span><span class="p">:</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">      </span><span class="nt">icon</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">alert-triangle</span><span class="w">        </span><span class="c1"># a Lucide name or an emoji glyph</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">      </span><span class="nt">color</span><span class="p">:</span><span class="w"> </span><span class="s">"#DC2626"</span><span class="w">            </span><span class="c1"># accent colour</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">      </span><span class="nt">view</span><span class="p">:</span><span class="w">                       </span><span class="c1"># how a BugReport's page is laid out</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">        </span><span class="nt">inline</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">severity</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">source</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">        </span><span class="nt">sections</span><span class="p">:</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Affects</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">            </span><span class="nt">relation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">affects</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">            </span><span class="nt">dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">out</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Fixed by</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="w">            </span><span class="nt">relation</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">fixes</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">spawned_by</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="w">            </span><span class="nt">dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">in</span>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="w">            </span><span class="nt">limit</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4</span>
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="w">    </span><span class="nt">properties</span><span class="p">:</span>
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="w">      </span><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> type</span><span class="p">:</span><span class="w"> </span><span class="nv">string</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="w">      </span><span class="nt">severity</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> type</span><span class="p">:</span><span class="w"> </span><span class="nv">string</span><span class="w"> </span><span class="p p-Indicator">}</span>
+</code></pre></div>
+<p><code>icon</code> and <code>color</code> are cosmetic. <code>view</code> is optional and describes the object
+page:</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>inline</code></td>
+<td>Properties shown, in order, in a preview of this type (at most four). Omit to let the UI pick.</td>
+</tr>
+<tr>
+<td><code>sections</code></td>
+<td>Relationship groups, rendered in the order declared.</td>
+</tr>
+<tr>
+<td><code>sections[].relation</code></td>
+<td>One relationship type name, or a list of them.</td>
+</tr>
+<tr>
+<td><code>sections[].dir</code></td>
+<td><code>in</code>, <code>out</code>, or <code>both</code> (default) — relative to the object being viewed.</td>
+</tr>
+<tr>
+<td><code>sections[].limit</code></td>
+<td>Rows shown before the section truncates (default 8, max 50).</td>
+</tr>
+<tr>
+<td><code>sections[].title</code></td>
+<td>Heading; omit it to derive one from the relationship name.</td>
+</tr>
+<tr>
+<td><code>more</code></td>
+<td><code>true</code> (default) collects relationships no section claims into a trailing group; <code>false</code> hides them.</td>
+</tr>
+</tbody>
+</table>
+<p>The same groups render on the object page itself (above the edit form) and on
+its <strong>Relationships</strong> tab, so a type's layout is what a reader sees first rather
+than something behind a click.</p>
+<p>A truncated section is never a dead end. A card that hides rows says how many
+and offers <strong>Show all N</strong>, which expands just that card in place — as a plain
+link when JavaScript is unavailable, so the page still works. Past 200 rows the
+expanded card says how many remain and offers a browse link filtered to the
+neighbour type the visible rows are mostly made of; <strong>Show fewer</strong> returns the
+card to the row count the pack declared.</p>
+<p>A <code>view</code> that declares only <code>inline</code> (no sections) is still bounded: everything
+the pack did not claim lands in the trailing <strong>More connections</strong> group, capped
+at the default limit and expandable the same way. Use <code>more: false</code> only when the
+page should show the declared groups alone — an object whose connections all fall
+outside them then says so and offers the unfiltered list, instead of rendering an
+empty page that looks like a bug.</p>
+<p>The vocabulary is deliberately closed — no expressions, no HTML, no templating.
+A section with no matching relationships is hidden rather than shown empty, and
+a <code>view</code> the server cannot parse is ignored: the object page falls back to a
+plain list of everything connected, so a typo in a pack never breaks a page. Run
+<code>memory blueprints validate ./my-blueprint</code> to check a pack offline before
+installing it. It warns about the mistakes that would otherwise fail silently: a
+<code>relation</code> no pack in the blueprint declares (the section stays empty unless
+another installed blueprint declares it), a <code>title</code> that is not a string (an
+unquoted year is a number, which drops the whole view at render time), unknown
+keys, and out-of-range limits.</p>
 <h3 id="with-the-cli-a-directory">With the CLI (a directory)<a class="headerlink" href="#with-the-cli-a-directory" title="Permanent link">&para;</a></h3>
 <p>The CLI applies a directory (or GitHub repo) directly — it does not go through
 the registry, so there is no draft/publish step:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>inspect<span class="w"> </span>./my-blueprint<span class="w">     </span><span class="c1"># list contents, no API calls</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>validate<span class="w"> </span>./my-blueprint<span class="w">    </span><span class="c1"># offline, no API calls</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>install<span class="w"> </span>./my-blueprint<span class="w"> </span>--dry-run
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>install<span class="w"> </span>./my-blueprint<span class="w"> </span>--project<span class="w"> </span>my-project
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>inspect<span class="w"> </span>./my-blueprint<span class="w">     </span><span class="c1"># list contents, no API calls</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>validate<span class="w"> </span>./my-blueprint<span class="w">    </span><span class="c1"># offline, no API calls</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>install<span class="w"> </span>./my-blueprint<span class="w"> </span>--dry-run
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>install<span class="w"> </span>./my-blueprint<span class="w"> </span>--project<span class="w"> </span>my-project
 </code></pre></div>
 <p>Directory layout:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>my-blueprint/
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>  schemas/                        # preferred; packs/ is accepted for compatibility
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    crm.yaml
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>  agents/
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    deal-desk.yaml
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>  skills/
-<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    deal-review/SKILL.md          # agentskills.io: frontmatter + Markdown body
-<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>  seed/
-<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    objects/Company.jsonl
-<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>    relationships/works_at.jsonl
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>my-blueprint/
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>  schemas/                        # preferred; packs/ is accepted for compatibility
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    crm.yaml
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>  agents/
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    deal-desk.yaml
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>  skills/
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    deal-review/SKILL.md          # agentskills.io: frontmatter + Markdown body
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>  seed/
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>    objects/Company.jsonl
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>    relationships/works_at.jsonl
 </code></pre></div>
 <p>To get a registry blueprint <em>from</em> a directory, import it as a GitHub repo (see
 <a href="#importing-from-github">GitHub import</a>) — or create the draft over MCP/API and
@@ -3743,14 +3884,14 @@ pass the same manifest.</p>
 <div class="tabbed-set tabbed-alternate" data-tabs="1:3"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">MCP</label><label for="__tabbed_1_2">REST</label><label for="__tabbed_1_3">Web UI</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>// blueprint-apply
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>{ "id": "&lt;blueprint-uuid&gt;" }
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>// blueprint-apply
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>{ "id": "&lt;blueprint-uuid&gt;" }
 </code></pre></div>
 </div>
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.example.com/api/blueprints/&lt;id&gt;/apply<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"X-Project-ID: &lt;projectId&gt;"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.example.com/api/blueprints/&lt;id&gt;/apply<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"X-Project-ID: &lt;projectId&gt;"</span>
 </code></pre></div>
 </div>
 <div class="tabbed-block">
@@ -3770,9 +3911,9 @@ refreshes the pack definitions from the manifest, even under an unchanged
 <h3 id="model-mapping">Model mapping<a class="headerlink" href="#model-mapping" title="Permanent link">&para;</a></h3>
 <p>Blueprint agents pin a model. At install time you can map them to a model your
 project actually has configured:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>install<span class="w"> </span>./my-blueprint<span class="w"> </span>--map-model<span class="w"> </span>deal-desk<span class="o">=</span>google/gemini-2.5-pro
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>install<span class="w"> </span>./my-blueprint<span class="w"> </span>--map-model<span class="w"> </span>deal-desk<span class="o">=</span><span class="w">    </span><span class="c1"># project default</span>
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>install<span class="w"> </span>./my-blueprint<span class="w"> </span>--no-map<span class="w">                  </span><span class="c1"># keep pinned models</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>install<span class="w"> </span>./my-blueprint<span class="w"> </span>--map-model<span class="w"> </span>deal-desk<span class="o">=</span>google/gemini-2.5-pro
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>install<span class="w"> </span>./my-blueprint<span class="w"> </span>--map-model<span class="w"> </span>deal-desk<span class="o">=</span><span class="w">    </span><span class="c1"># project default</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>install<span class="w"> </span>./my-blueprint<span class="w"> </span>--no-map<span class="w">                  </span><span class="c1"># keep pinned models</span>
 </code></pre></div>
 <p>Overrides are persisted per project and keyed by blueprint name
 (<code>GET</code>/<code>PUT /api/blueprints/model-overrides</code>), and are applied before
@@ -3817,17 +3958,17 @@ the newer version; it never steals an assignment owned by a different blueprint
 name.</p>
 <hr />
 <h2 id="importing-from-github">Importing from GitHub<a class="headerlink" href="#importing-from-github" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># Preview what the repo contains — creates nothing</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.example.com/api/blueprints/import/preview<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"X-Project-ID: &lt;projectId&gt;"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"url":"https://github.com/acme/memory-blueprints"}'</span>
-<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>
-<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="c1"># Import (and optionally publish + apply)</span>
-<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.example.com/api/blueprints/import<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"X-Project-ID: &lt;projectId&gt;"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"url":"https://github.com/acme/memory-blueprints","ref":"v1.2.0","publish":true,"apply":true}'</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># Preview what the repo contains — creates nothing</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.example.com/api/blueprints/import/preview<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"X-Project-ID: &lt;projectId&gt;"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"url":"https://github.com/acme/memory-blueprints"}'</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="c1"># Import (and optionally publish + apply)</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.example.com/api/blueprints/import<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"X-Project-ID: &lt;projectId&gt;"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"url":"https://github.com/acme/memory-blueprints","ref":"v1.2.0","publish":true,"apply":true}'</span>
 </code></pre></div>
 <ul>
 <li>Private repositories: store a project-scoped token with
@@ -3838,9 +3979,9 @@ name.</p>
   updates on a schedule.</li>
 </ul>
 <h3 id="checking-for-updates">Checking for updates<a class="headerlink" href="#checking-for-updates" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>check-updates<span class="w">            </span><span class="c1"># status of every applied blueprint</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>check-updates<span class="w"> </span>crm<span class="w">        </span><span class="c1"># trigger a check and print the result</span>
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>update<span class="w"> </span>crm<span class="w"> </span>--wait<span class="w">        </span><span class="c1"># apply the available update</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>check-updates<span class="w">            </span><span class="c1"># status of every applied blueprint</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>check-updates<span class="w"> </span>crm<span class="w">        </span><span class="c1"># trigger a check and print the result</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>update<span class="w"> </span>crm<span class="w"> </span>--wait<span class="w">        </span><span class="c1"># apply the available update</span>
 </code></pre></div>
 <p>Equivalent REST: <code>GET /api/blueprints/:name/updates</code>,
 <code>POST /api/blueprints/:name/updates/check</code>,
@@ -3949,9 +4090,9 @@ does not export packs or agent definitions.</p>
 with object keys and <code>srcKey</code>/<code>dstKey</code> references. To review a migration on a
 branch before promoting it, feed the dump directory straight back to the graph
 importer:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>dump<span class="w"> </span>./migration
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="c1"># edit ./migration/seed/...</span>
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>memory<span class="w"> </span>graph<span class="w"> </span>objects<span class="w"> </span>create-batch<span class="w"> </span>--file<span class="w"> </span>./migration<span class="w"> </span>--branch<span class="w"> </span>migration-review
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>memory<span class="w"> </span>blueprints<span class="w"> </span>dump<span class="w"> </span>./migration
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="c1"># edit ./migration/seed/...</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>memory<span class="w"> </span>graph<span class="w"> </span>objects<span class="w"> </span>create-batch<span class="w"> </span>--file<span class="w"> </span>./migration<span class="w"> </span>--branch<span class="w"> </span>migration-review
 </code></pre></div>
 <p>The importer upserts objects by <code>key</code>, resolves relationship keys after the
 objects are written, reads <code>_untyped.jsonl</code> back as type <code>Untyped</code>, and reports
