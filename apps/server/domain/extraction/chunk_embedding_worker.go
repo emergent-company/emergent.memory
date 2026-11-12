@@ -409,7 +409,7 @@ func (w *ChunkEmbeddingWorker) processJob(ctx context.Context, job *ChunkEmbeddi
 
 	// Generate embedding
 	embeddingStartTime := time.Now()
-	result, err := w.embeds.EmbedQueryWithUsage(ctx, chunk.Text)
+	result, err := w.embeds.EmbedDocumentWithUsage(ctx, chunk.Text)
 	embeddingDurationMs := time.Since(embeddingStartTime).Milliseconds()
 
 	if err != nil {

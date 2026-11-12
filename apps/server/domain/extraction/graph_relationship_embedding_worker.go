@@ -398,7 +398,7 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 	}
 
 	embeddingStartTime := time.Now()
-	result, err := w.embeds.EmbedQueryWithUsage(ctx, text)
+	result, err := w.embeds.EmbedDocumentWithUsage(ctx, text)
 	embeddingDurationMs := time.Since(embeddingStartTime).Milliseconds()
 
 	if err != nil {

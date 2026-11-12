@@ -112,6 +112,23 @@ memory graph reindex-embeddings --force --chunks
 The same endpoint is available over HTTP: `POST /api/graph/reindex-embeddings`
 with query parameters `force` and `chunks`.
 
+### 5. Re-embed Google AI projects after this upgrade
+
+Before this release, stored corpus text and search queries were embedded through
+the same code path, so they shared one task format. They are now separated: corpus
+text is embedded with the *document* task and only a search string with the *query*
+task. Google AI (`google`) projects have stored corpus vectors in the query
+format since an earlier release, so those vectors are no longer comparable with
+query vectors and must be re-embedded:
+
+```bash
+memory graph reindex-embeddings --force --chunks
+```
+
+Vertex AI (`google-vertex`) projects do not need this: their corpus was already
+document-format. OpenAI-compatible providers are unaffected. See the CHANGELOG
+entry for the backend detail.
+
 ---
 
 ## API

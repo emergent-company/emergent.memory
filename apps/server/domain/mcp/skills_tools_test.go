@@ -30,7 +30,7 @@ func connectTestDB(t *testing.T) *bun.DB {
 	return tdb.DB
 }
 
-// fakeEmbedder implements skills.Embedder for tests.
+// fakeEmbedder implements skills.Embedder and graph.EmbeddingService for tests.
 type fakeEmbedder struct {
 	vec []float32
 	err error
@@ -41,6 +41,13 @@ func (f *fakeEmbedder) EmbedQuery(ctx context.Context, query string) ([]float32,
 		return nil, f.err
 	}
 	return f.vec, nil
+}
+
+// EmbedDocument satisfies graph.EmbeddingService. These tests build a graph
+// service with this fake but never exercise relationship triplet embedding, so
+// the document path returns the same vector as the query path.
+func (f *fakeEmbedder) EmbedDocument(ctx context.Context, text string) ([]float32, error) {
+	return f.EmbedQuery(ctx, text)
 }
 
 func testVector() []float32 {
