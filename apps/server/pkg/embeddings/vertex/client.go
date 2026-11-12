@@ -303,14 +303,17 @@ func (c *Client) EmbedQuery(ctx context.Context, query string) ([]float32, error
 	return result.Embedding, nil
 }
 
-// EmbedQueryWithUsage generates an embedding for a single query with usage data.
+// EmbedQueryWithUsage generates an embedding for a single text with usage data.
 //
-// The query is embedded with the RETRIEVAL_QUERY task, not as a document: the
-// corpus is indexed with RETRIEVAL_DOCUMENT, and Vertex AI documents the pair
-// as the asymmetric retrieval shape. Sending a query down the document path (as
-// this used to) loses that optimisation.
+// Despite the name this is NOT yet a query-only path: the single-object ingest
+// workers (chunk, object, relationship and sweep serial paths) call it to embed
+// *stored* text, so it still embeds as a document. Splitting the two is issue
+// #615 — it needs those call sites moved to a batch/document method first, and
+// a corpus written by both paths in one vector column is worse than one written
+// by the wrong path. Until then a query and its corpus share the document task,
+// exactly as before.
 func (c *Client) EmbedQueryWithUsage(ctx context.Context, query string) (*EmbedResult, error) {
-	embs, tokens, err := c.embedBatch(ctx, []string{query}, TaskTypeQuery)
+	embs, tokens, err := c.embedBatch(ctx, []string{query}, TaskTypeDocument)
 	if err != nil {
 		return nil, err
 	}

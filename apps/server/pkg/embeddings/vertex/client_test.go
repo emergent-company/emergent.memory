@@ -419,8 +419,8 @@ func TestPredictBodyOmitsTaskTypeForGA(t *testing.T) {
 	rec := &recordingSender{values: []float32{0.1, 0.2}}
 	c := newRecordingClient("gemini-embedding-2", rec)
 
-	if _, err := c.EmbedQuery(context.Background(), "hello"); err != nil {
-		t.Fatalf("EmbedQuery: %v", err)
+	if _, err := c.EmbedDocumentsWithUsage(context.Background(), []string{"hello"}); err != nil {
+		t.Fatalf("EmbedDocumentsWithUsage: %v", err)
 	}
 	if len(rec.bodies) != 1 {
 		t.Fatalf("requests = %d, want 1", len(rec.bodies))
@@ -435,12 +435,16 @@ func TestPredictBodyOmitsTaskTypeForGA(t *testing.T) {
 	if _, present := inst["task_type"]; present {
 		t.Errorf("task_type present in GA request: %#v", inst)
 	}
-	if got, want := inst["content"], "task: search result | query: hello"; got != want {
+	if got, want := inst["content"], "title: none | text: hello"; got != want {
 		t.Errorf("content = %v, want %q", got, want)
 	}
 }
 
-func TestEmbedQuerySendsQueryTask(t *testing.T) {
+func TestEmbedQueryWithUsageDocumentsItsCurrentTask(t *testing.T) {
+	// Deliberately unchanged by #616: the single-object ingest workers write the
+	// corpus through EmbedQueryWithUsage, so moving it to RETRIEVAL_QUERY here
+	// would mix tasks inside one vector column. Issue #615 moves those call
+	// sites first; this test makes a silent flip visible if someone tries.
 	rec := &recordingSender{values: []float32{0.1}, tokens: 7}
 	c := newRecordingClient("gemini-embedding-001", rec)
 
@@ -460,8 +464,8 @@ func TestEmbedQuerySendsQueryTask(t *testing.T) {
 
 	body := decodeBody(t, rec.bodies[0])
 	inst := body["instances"].([]any)[0].(map[string]any)
-	if got := inst["task_type"]; got != TaskTypeQuery {
-		t.Errorf("query task_type = %v, want %s", got, TaskTypeQuery)
+	if got := inst["task_type"]; got != TaskTypeDocument {
+		t.Errorf("task_type = %v, want %s (see issue #615 before changing)", got, TaskTypeDocument)
 	}
 }
 

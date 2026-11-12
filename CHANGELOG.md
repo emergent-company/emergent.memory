@@ -209,17 +209,19 @@ See `/apps/server/src/modules/unified-search/` for implementation details.
 
 ### Fixed
 
-**Vertex AI embeddings can serve `gemini-embedding-2`, and queries are embedded as queries** (2026-11-12)
+**`gemini-embedding-2` is served on the `google-vertex` provider** (2026-11-12)
 
-The Vertex AI embeddings client sent `task_type: RETRIEVAL_DOCUMENT` on every
-request, including search queries, and could not serve the GA
-`gemini-embedding-2` family: that model does not accept `task_type`, and carries
-its task as a text prefix instead. Queries now go out with `RETRIEVAL_QUERY` (the
-asymmetric retrieval shape Google documents), `gemini-embedding-2` is served with
-the documented prefixes and no `task_type` field, and the model catalog no longer
-filters it out for the `google-vertex` provider. Query-side vectors change for
-existing Vertex projects; documents are untouched, so no corpus has to be
-re-embedded.
+The Vertex AI embeddings client could not serve the GA `gemini-embedding-2`
+family: it sent `task_type` on every request, and that model does not accept the
+field — its task travels as a text prefix. Requests for `gemini-embedding-2` now
+carry the documented prefixes (`title: none | text: …` for indexed text,
+`task: search result | query: …` for an explicit query) and no `task_type`, and
+the model catalog no longer filters the id out for the `google-vertex` provider.
+
+Embedding search queries with the query task is a separate change and is not in
+this release: the single-object ingest workers embed stored text through the
+same method a search query calls, so the two have to be split together (tracked
+in #615, along with the re-embed guidance such a switch needs).
 
 **`memory projects show-models` honours `--json` / `--output`** (2026-10-22)
 

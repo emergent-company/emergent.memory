@@ -164,7 +164,7 @@ func (c *Client) EmbedDocuments(ctx context.Context, documents []string) ([][]fl
 // the token usage returned by the API. Provider is "googleai" (the Gemini
 // Developer API / Google Generative AI backend).
 func (c *Client) EmbedQueryWithUsage(ctx context.Context, query string) (*vertex.EmbedResult, error) {
-	embeddings, tokens, err := c.embedWithRetry(ctx, []string{query}, "RETRIEVAL_QUERY")
+	embeddings, tokens, err := c.embedWithRetry(ctx, []string{query}, taskTypeQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +202,7 @@ func (c *Client) EmbedDocumentsWithUsage(ctx context.Context, documents []string
 		}
 		batch := documents[i:end]
 
-		embeddings, tokens, err := c.embedWithRetry(ctx, batch, "RETRIEVAL_DOCUMENT")
+		embeddings, tokens, err := c.embedWithRetry(ctx, batch, taskTypeDocument)
 		if err != nil {
 			return nil, fmt.Errorf("failed to embed batch %d-%d: %w", i, end, err)
 		}
