@@ -47,10 +47,18 @@ func TestGlobalAgentCard_NoTenantLeak(t *testing.T) {
 	assert.Equal(t, A2APlatformName, card.Name)
 	assert.Equal(t, A2APlatformDescription, card.Description)
 	// Skills are the static platform directory — never a project's agent
-	// definitions. The tenant-leak assertions above cover the JSON for project
-	// and org identifiers; this pins the shape so a future edit cannot swap the
-	// static list for a repository read.
-	assert.Equal(t, PlatformSkills(), card.Skills, "global card skills must be the static platform directory")
+	// definitions. Asserting the literal ids (rather than card.Skills ==
+	// PlatformSkills(), which is true by construction) means this fails if
+	// PlatformSkills itself ever becomes tenant-aware.
+	ids := make([]string, 0, len(card.Skills))
+	for _, skill := range card.Skills {
+		ids = append(ids, skill.ID)
+	}
+	assert.Equal(t, []string{
+		"knowledge-graph-search",
+		"document-retrieval",
+		"agent-delegation",
+	}, ids, "global card skills must be the static platform directory")
 }
 
 func TestGlobalAgentCard_RequiredFields(t *testing.T) {
@@ -140,12 +148,20 @@ func TestPlatformSkills_NotSharedMutableState(t *testing.T) {
 func TestWithInterfaceOrigin_AdvertisesIconURL(t *testing.T) {
 	c, _ := newA2AEchoContextNoAuth(http.MethodGet, "/.well-known/agent-card.json")
 
-	h := &A2AHandler{appURL: "https://app.example.com"}
+	// Production shape: the API host (APP_URL) serves A2A, the UI host
+	// (WEB_UI_URL) serves /assets/*, so the icon must be anchored to the frontend
+	// origin. Anchoring it to the interface origin 404s in production.
+	h := &A2AHandler{
+		appURL:      "https://api.example.com",
+		frontendURL: "https://app.example.com",
+	}
 	card := h.withInterfaceOrigin(c, GlobalAgentCard())
 	assert.Equal(t, "https://app.example.com"+a2aIconPath, card.IconURL)
+	require.Len(t, card.SupportedInterfaces, 1)
+	assert.Equal(t, "https://api.example.com", card.SupportedInterfaces[0].URL)
 
-	// With no APP_URL the icon follows the interface origin, so it is still
-	// absolute and same-origin with the advertised interface.
+	// With no frontend origin configured the icon follows the interface origin, so
+	// it is still absolute rather than empty.
 	h = &A2AHandler{a2aOrigin: "https://a2a.example.com"}
 	card = h.withInterfaceOrigin(c, GlobalAgentCard())
 	assert.Equal(t, "https://a2a.example.com"+a2aIconPath, card.IconURL)

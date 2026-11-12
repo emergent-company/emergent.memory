@@ -30,6 +30,12 @@ type A2AHandler struct {
 	// as the advertised interface origin when A2A_ORIGIN is unset, before any
 	// request-derived (and therefore spoofable) origin is considered.
 	appURL string
+
+	// frontendURL is the configured web-UI origin (config.FrontendURL():
+	// WEB_UI_URL, falling back to APP_URL). Browser-facing assets such as the
+	// agent-card icon are served by the gateway on this host, not by the API
+	// host, so the icon must be anchored here rather than to appURL.
+	frontendURL string
 }
 
 // NewA2AHandler creates a new A2A handler.
@@ -38,6 +44,7 @@ func NewA2AHandler(repo *Repository, executor *AgentExecutor, eventsSvc *events.
 	if cfg != nil {
 		h.a2aOrigin = strings.TrimRight(cfg.A2AOrigin, "/")
 		h.appURL = strings.TrimRight(cfg.AppURL, "/")
+		h.frontendURL = cfg.FrontendURL()
 	}
 	return h
 }
@@ -311,12 +318,14 @@ func (h *A2AHandler) resolveInterfaceOrigin(c echo.Context) string {
 }
 
 // resolveIconURL returns the absolute `iconUrl` advertised on cards. The icon is
-// a web-UI asset served under /assets/*, so it is anchored to APP_URL (the UI
-// origin) when configured, falling back to the interface origin otherwise.
-// Registry galleries render this as the agent's tile; leaving it unset gives a
-// blank tile even when every other field is populated.
+// a web-UI asset served by the gateway under /assets/*, so it is anchored to the
+// frontend origin (WEB_UI_URL, falling back to APP_URL) — not to the API origin,
+// which serves neither the asset nor the UI. When no frontend origin is
+// configured the interface origin is the last resort, so the value is always
+// absolute. Registry galleries render this as the agent's tile; leaving it unset
+// gives a blank tile even when every other field is populated.
 func (h *A2AHandler) resolveIconURL(c echo.Context) string {
-	base := h.appURL
+	base := h.frontendURL
 	if base == "" {
 		base = h.resolveInterfaceOrigin(c)
 	}

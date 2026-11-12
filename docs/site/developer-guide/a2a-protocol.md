@@ -19,7 +19,7 @@ this server.
 | **A2A streaming** | Yes | `POST /message:stream` (SSE), `POST /tasks/{id}:subscribe` |
 | **A2A push notifications** | No | Every push-notification route answers `PUSH_NOTIFICATION_NOT_SUPPORTED` |
 | **A2A extended card** | Yes | Per-project skills; requires `agents:read` |
-| **A2UI protocol** | **v0.9.1** | Stamped on every envelope and encoded in the extension URI |
+| **A2UI protocol** | **v0.9.1** | Encoded in the extension URI and stamped on each surface envelope that carries a `version` (the `deleteSurface` teardown frame omits it) |
 | **A2UI catalogs** | `memory-basic` | Custom catalog; see [A2UI catalogs](#a2ui-catalogs) |
 | **A2UI integration** | `A2UI-over-A2A` card extension | Surfaces stream as `application/a2ui+json` data parts |
 | **Auth** | Bearer project API token (`emt_…`) | Not OAuth2/OIDC end-user tokens |
@@ -27,10 +27,14 @@ this server.
 
 ## Discovery
 
+The A2A routes are served by the **API host** (`APP_URL`), which is a different
+host from the web UI (`WEB_UI_URL`). Card-documented asset URLs therefore point at
+the web UI; card-documented endpoints point here.
+
 ### Global agent card
 
 ```bash
-curl https://memory.emergent-company.ai/.well-known/agent-card.json
+curl https://api.memory.emergent-company.ai/.well-known/agent-card.json
 ```
 
 Unauthenticated. Returns the static, tenant-blind platform card: name,
@@ -41,7 +45,7 @@ never contains project, org, or tenant identifiers.
 ### Extended agent card
 
 ```bash
-curl https://memory.emergent-company.ai/extendedAgentCard \
+curl https://api.memory.emergent-company.ai/extendedAgentCard \
   -H "Authorization: Bearer $MEMORY_TOKEN" \
   -H "X-Project-ID: $PROJECT_ID"
 ```
@@ -160,8 +164,13 @@ Be explicit about these before integrating:
   the card declares no OAuth2 security scheme.
 - **Standard A2UI catalogs.** Only `memory-basic` is served. A renderer that
   implements just the standard A2UI component set cannot draw these surfaces.
-- **Push notifications.** Not implemented; the routes exist and answer
-  `PUSH_NOTIFICATION_NOT_SUPPORTED`.
+- **Push notifications.** Not implemented. The six routes exist only to answer
+  `PUSH_NOTIFICATION_NOT_SUPPORTED`: `GET /tasks/{id}/pushNotificationConfigs`,
+  `GET /tasks/{id}/pushNotificationConfigs/{configId}`,
+  `POST /tasks/{id}/pushNotificationConfigs`,
+  `PUT /tasks/{id}/pushNotificationConfigs/{configId}`,
+  `DELETE /tasks/{id}/pushNotificationConfigs`,
+  `DELETE /tasks/{id}/pushNotificationConfigs/{configId}`.
 - **Agent-to-agent delegation over A2A.** A caller invokes one of the project's
   agent definitions; the server does not itself fan out to other A2A agents.
 
@@ -180,6 +189,13 @@ author and a contact address:
 }
 ```
 
-The `iconUrl` field is absolute and points at the web UI's 512 px icon; the
-advertised origin follows the deployment (`A2A_ORIGIN`, then `APP_URL`, then the
-incoming request).
+This is forward-looking: Gemini Enterprise is the reference implementation of the
+extension, but it requires A2A v0.3 and cannot register this server yet (see
+[Not supported](#not-supported)). The fields are advertised because any registry
+that consumes the extension gets a correct author and contact for free, and
+because adding it later means re-publishing the card.
+
+The `iconUrl` field is absolute and points at the web UI's 512 px icon. The
+advertised origin is the frontend origin — `WEB_UI_URL`, or `APP_URL` when that is
+unset — because the gateway serves `/assets/*`, not the API host. If neither is
+configured, it falls back to the interface origin so the value is never empty.
