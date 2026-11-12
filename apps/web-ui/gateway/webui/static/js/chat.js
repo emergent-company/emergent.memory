@@ -339,8 +339,9 @@
   var notify = MemoryChatStream.notify;
 
   // --- composer overrides: model + thinking (client-side persistence) ---
-  // Selection is stored per conversation in localStorage, with a "default"
-  // slot that new conversations inherit. No server-side persistence for now.
+  // The Paseo-style prompt bar carries hidden inputs; its dropdowns are wired
+  // here. Selection is stored per conversation in localStorage, with a
+  // "default" slot that new conversations inherit. No server-side persistence.
   function composerKey(kind) {
     return "memory.chat." + kind + "." + (conversationId || "new");
   }
@@ -356,55 +357,154 @@
       localStorage.setItem("memory.chat." + kind + ".default", value || "");
     } catch (e) { /* storage unavailable */ }
   }
+  function pickerRoot(kind) {
+    return document.querySelector('[data-chat-picker="' + kind + '"]');
+  }
+  function pickerTrigger(root) {
+    return root && (root.querySelector("[data-chat-picker-trigger]") || root.querySelector('[role="button"]'));
+  }
+  function pickerLabelEl(root) {
+    return root && root.querySelector("[data-chat-picker-label]");
+  }
+  function pickerRows(root) {
+    return root ? Array.prototype.slice.call(root.querySelectorAll("[data-chat-picker-menu] a[data-value]")) : [];
+  }
+  function markPickerSelection(root, value) {
+    pickerRows(root).forEach(function (row) {
+      var on = row.getAttribute("data-value") === value;
+      row.classList.toggle("active", on);
+      var check = row.querySelector(".chat-picker-check");
+      if (on && !check) {
+        check = document.createElement("span");
+        check.className = "chat-picker-check iconify lucide--check size-4 text-primary";
+        check.setAttribute("aria-hidden", "true");
+        row.appendChild(check);
+      } else if (!on && check) {
+        check.parentNode.removeChild(check);
+      }
+    });
+  }
+  function setPickerDisplay(kind, value) {
+    var root = pickerRoot(kind);
+    if (!root) return;
+    var label = "Auto";
+    pickerRows(root).some(function (row) {
+      if (row.getAttribute("data-value") === value) {
+        var span = row.querySelector(".text-sm");
+        label = span ? span.textContent.trim() : label;
+        return true;
+      }
+      return false;
+    });
+    var labelEl = pickerLabelEl(root);
+    if (labelEl) labelEl.textContent = label;
+    var trigger = pickerTrigger(root);
+    if (trigger) trigger.setAttribute("aria-label", "Select " + kind + " (" + label + ")");
+    markPickerSelection(root, value);
+  }
+  function closePicker(kind) {
+    var root = pickerRoot(kind);
+    var trigger = pickerTrigger(root);
+    if (!trigger) return;
+    trigger.blur();
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  }
+  function wirePicker(kind, field) {
+    var root = pickerRoot(kind);
+    if (!root || !field) return;
+    root.addEventListener("click", function (event) {
+      var row = event.target.closest("a[data-value]");
+      if (!row || !root.contains(row)) return;
+      event.preventDefault();
+      var value = row.getAttribute("data-value") || "";
+      field.value = value;
+      saveComposer(kind, value);
+      setPickerDisplay(kind, value);
+      closePicker(kind);
+    });
+  }
+  function providerIcon(provider) {
+    if (provider === "anthropic") return "lucide--sparkles";
+    if (provider === "openai") return "lucide--cpu";
+    return "lucide--brain-circuit";
+  }
+  function tokenMeta(n) {
+    if (!n || n < 1000) return "";
+    if (n >= 1000000) return Math.round(n / 100000) / 10 + "M";
+    return Math.round(n / 1000) + "k";
+  }
+  function buildModelMenu(list) {
+    var root = pickerRoot("model");
+    if (!root) return;
+    var menu = root.querySelector("[data-chat-picker-menu]");
+    if (!menu) return;
+    menu.textContent = "";
+    var groups = {};
+    var order = [];
+    list.forEach(function (m) {
+      if (!m || !m.provider || !m.modelName) return;
+      var value = m.provider + "/" + m.modelName;
+      var g = groups[m.provider];
+      if (!g) { g = groups[m.provider] = []; order.push(m.provider); }
+      for (var i = 0; i < g.length; i++) if (g[i].value === value) return;
+      g.push({ value: value, label: m.displayName || m.modelName, meta: tokenMeta(m.maxInputTokens) });
+    });
+    order.sort().forEach(function (provider) {
+      var title = document.createElement("li");
+      title.className = "menu-title";
+      title.textContent = provider;
+      menu.appendChild(title);
+      groups[provider].forEach(function (item) {
+        var li = document.createElement("li");
+        var a = document.createElement("a");
+        a.setAttribute("data-value", item.value);
+        var icon = document.createElement("span");
+        icon.className = "iconify " + providerIcon(provider) + " size-4";
+        icon.setAttribute("aria-hidden", "true");
+        a.appendChild(icon);
+        var body = document.createElement("span");
+        body.className = "min-w-0 flex-1";
+        var label = document.createElement("span");
+        label.className = "block text-sm";
+        label.textContent = item.label;
+        body.appendChild(label);
+        a.appendChild(body);
+        if (item.meta) {
+          var meta = document.createElement("span");
+          meta.className = "ms-auto text-xs text-muted";
+          meta.textContent = item.meta;
+          a.appendChild(meta);
+        }
+        li.appendChild(a);
+        menu.appendChild(li);
+      });
+    });
+    root.__chatModelValues = groups;
+  }
   function applyComposerSelection() {
-    if (modelSelect) modelSelect.value = readComposer("model");
     if (thinkingSelect) thinkingSelect.value = readComposer("thinking");
+    if (thinkingSelect) setPickerDisplay("thinking", thinkingSelect.value);
+    if (modelSelect) modelSelect.value = readComposer("model");
+    if (modelSelect) setPickerDisplay("model", modelSelect.value);
   }
   function initComposerControls() {
     if (!modelSelect && !thinkingSelect) return;
+    wirePicker("thinking", thinkingSelect);
     applyComposerSelection();
     if (modelSelect) {
-      modelSelect.addEventListener("change", function () {
-        saveComposer("model", modelSelect.value);
-      });
+      wirePicker("model", modelSelect);
       if (!modelSelect.dataset.modelsLoaded) {
         modelSelect.dataset.modelsLoaded = "1";
         fetch("/api/chat/models", { headers: { "Accept": "application/json" } })
           .then(function (res) { return res.ok ? res.json() : []; })
           .then(function (list) {
             if (!Array.isArray(list)) return;
-            var groups = {};
-            list.forEach(function (m) {
-              if (!m || !m.provider || !m.modelName) return;
-              var value = m.provider + "/" + m.modelName;
-              var g = groups[m.provider] || (groups[m.provider] = []);
-              for (var i = 0; i < g.length; i++) if (g[i].value === value) return;
-              g.push({ value: value, label: m.displayName || m.modelName });
-            });
-            Array.prototype.slice.call(modelSelect.querySelectorAll("optgroup")).forEach(function (el) {
-              modelSelect.removeChild(el);
-            });
-            Object.keys(groups).sort().forEach(function (provider) {
-              var group = document.createElement("optgroup");
-              group.label = provider;
-              groups[provider].forEach(function (opt) {
-                var el = document.createElement("option");
-                el.value = opt.value;
-                el.textContent = opt.label;
-                group.appendChild(el);
-              });
-              modelSelect.appendChild(group);
-            });
-            // Restore after the options exist (a bare select would drop the value).
+            buildModelMenu(list);
+            // Restore after the options exist (a bare input would drop the value).
             applyComposerSelection();
           })
           .catch(function () { /* leave Auto only */ });
       }
-    }
-    if (thinkingSelect) {
-      thinkingSelect.addEventListener("change", function () {
-        saveComposer("thinking", thinkingSelect.value);
-      });
     }
   }
 
@@ -416,12 +516,12 @@
     log = document.getElementById("chat-log");
     messages = document.getElementById("chat-messages");
     empty = document.getElementById("chat-empty");
-    input = document.getElementById("chat-input");
+    input = document.querySelector('#chat-form textarea[data-prompt-bar-input]') || document.getElementById("chat-input");
     sendBtn = document.getElementById("chat-send");
     stopBtn = document.getElementById("chat-stop");
     agentSelect = document.getElementById("chat-agent");
-    modelSelect = document.getElementById("chat-model");
-    thinkingSelect = document.getElementById("chat-thinking");
+    modelSelect = document.querySelector('#chat-form input[name="model"]');
+    thinkingSelect = document.querySelector('#chat-form input[name="thinking"]');
     agentFilterSelect = document.getElementById("chat-agent-filter");
     originFilterSelect = document.getElementById("chat-origin-filter");
     includeArchivedEl = document.getElementById("chat-include-archived");
@@ -476,6 +576,9 @@
 
     var form = document.getElementById("chat-form");
     if (!form || !input || !sendBtn) return;
+    // The shared prompt bar gives its textarea no id; keep the stable id the
+    // e2e helpers and legacy hooks query.
+    if (!input.id) input.id = "chat-input";
 
     // resume target from the server-rendered ?c= param
     conversationId = root.getAttribute("data-conv") || "";

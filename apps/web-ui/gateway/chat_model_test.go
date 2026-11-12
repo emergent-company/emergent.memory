@@ -184,14 +184,17 @@ func TestChatComposerRendersModelAndThinkingControls(t *testing.T) {
 	agents := []AgentDefinitionSummary{{ID: "a1", Name: "A"}}
 	html := renderHTML(t, ChatPage(agents, nil, nil, nil, nil, nil, "", "", "", nil, false, nil))
 	for _, want := range []string{
-		`id="chat-model"`,
-		`id="chat-thinking"`,
-		`Auto (agent default)`,
-		`value="minimal"`,
-		`value="low"`,
-		`value="medium"`,
-		`value="high"`,
-		`value="max"`,
+		`data-testid="chat-composer"`,
+		`data-prompt-bar-input`,
+		`data-chat-picker="model"`,
+		`data-chat-picker="thinking"`,
+		`name="model"`,
+		`name="thinking"`,
+		`data-value="minimal"`,
+		`data-value="low"`,
+		`data-value="medium"`,
+		`data-value="high"`,
+		`data-value="max"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("chat composer missing %q", want)

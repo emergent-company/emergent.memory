@@ -55,7 +55,7 @@ func patternBudget() []patternBudgetEntry {
 		// shared form-control component (components/form).
 		{pattern: patternLegacyBordered, file: "approvals.templ", count: 1, note: "normalise to the shared form-control component"},
 		{pattern: patternLegacyBordered, file: "board.templ", count: 1, note: "normalise to the shared form-control component"},
-		{pattern: patternLegacyBordered, file: "chat.templ", count: 4, note: "normalise to the shared form-control component"},
+		{pattern: patternLegacyBordered, file: "chat.templ", count: 3, note: "normalise to the shared form-control component"},
 		{pattern: patternLegacyBordered, file: "datasources.templ", count: 7, note: "normalise to the shared form-control component"},
 		{pattern: patternLegacyBordered, file: "datasources_oauth.templ", count: 9, note: "normalise to the shared form-control component"},
 		{pattern: patternLegacyBordered, file: "documents.templ", count: 1, note: "normalise to the shared form-control component"},
