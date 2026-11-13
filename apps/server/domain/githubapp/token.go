@@ -67,6 +67,10 @@ func (m *TokenMinter) MintInstallationToken(
 	repos []string,
 	permissions map[string]string,
 ) (string, error) {
+	// Normalize before the least-privilege guard: an entry of "/" or whitespace
+	// would otherwise pass the raw length check and vanish here, making the
+	// request omit `repositories` and mint an installation-wide token.
+	repos = normalizeRepositoryNames(repos)
 	// Least privilege is mandatory: an empty scope would mint a token for every
 	// repository and every App permission.
 	if len(repos) == 0 {
@@ -75,12 +79,6 @@ func (m *TokenMinter) MintInstallationToken(
 	if len(permissions) == 0 {
 		return "", errors.New("githubapp: installation token requires an explicit permission set")
 	}
-	// GitHub's access_tokens `repositories` field takes repository NAMES, not
-	// owner/name. A source allowlist is stored as owner/name, so normalize here
-	// rather than leaving every caller to remember the difference (a full name
-	// is rejected with 422 "repository does not exist or is not accessible").
-	repos = normalizeRepositoryNames(repos)
-
 	key := tokenCacheKey(appID, installationID, repos, permissions)
 
 	m.mu.Lock()

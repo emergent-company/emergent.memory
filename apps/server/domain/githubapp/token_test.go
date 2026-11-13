@@ -148,3 +148,13 @@ func TestMintInstallationTokenNormalizesRepositoryNames(t *testing.T) {
 		t.Fatalf("repositories = %v, want %v", got, want)
 	}
 }
+
+func TestMintInstallationTokenRejectsEmptyAfterNormalization(t *testing.T) {
+	key := testRSAKey(t)
+	minter := NewTokenMinter("https://api.github.com", nil)
+	_, err := minter.MintInstallationToken(context.Background(), 1, pkcs1PEM(key), 2,
+		[]string{"", "  ", "/"}, map[string]string{"contents": "read"})
+	if err == nil {
+		t.Fatal("minted a token for an empty repository list")
+	}
+}
