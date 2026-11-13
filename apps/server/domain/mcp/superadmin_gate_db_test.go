@@ -89,11 +89,11 @@ func setupGateDB(t *testing.T) (*bun.DB, string, string) {
 }
 
 // TestSuperadminGateOnOperatorTools proves the hard split: the project MCP
-// endpoint refuses deployment-wide operator tools (embedding-pause) and
-// org-level provider tools (provider-configure-org) for every caller — a project
-// member with a bare admin token AND a superadmin_full principal. Operator
-// authority moved to the dedicated /api/mcp/admin endpoint, so the project
-// transport refuses them as method-not-found (never revealing their existence).
+// endpoint refuses deployment-wide operator tools (embedding-pause,
+// provider-usage-get) for every caller — a project member with a bare admin
+// token AND a superadmin_full principal. Operator authority moved to the
+// dedicated /api/mcp/admin endpoint, so the project transport refuses them as
+// method-not-found (never revealing their existence).
 func TestSuperadminGateOnOperatorTools(t *testing.T) {
 	dbc, memberID, superID := setupGateDB(t)
 
@@ -119,19 +119,16 @@ func TestSuperadminGateOnOperatorTools(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		user *auth.AuthUser
+		tool string
 	}{
-		{"project member bare-admin is refused on embedding-pause", memberUser},
-		{"superadmin_full is refused on embedding-pause (hard split)", superUser},
-		{"project member bare-admin is refused on provider-configure-org", memberUser},
-		{"superadmin_full is refused on provider-configure-org (hard split)", superUser},
+		{"project member bare-admin is refused on embedding-pause", memberUser, "embedding-pause"},
+		{"superadmin_full is refused on embedding-pause (hard split)", superUser, "embedding-pause"},
+		{"project member bare-admin is refused on provider-usage-get", memberUser, "provider-usage-get"},
+		{"superadmin_full is refused on provider-usage-get (hard split)", superUser, "provider-usage-get"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			tool := "embedding-pause"
-			if tc.name[len(tc.name)-len("provider-configure-org"):] == "provider-configure-org" {
-				tool = "provider-configure-org"
-			}
-			resp := call(t, tc.user, tool)
-			require.NotNil(t, resp.Error, "%s must be refused", tool)
+			resp := call(t, tc.user, tc.tool)
+			require.NotNil(t, resp.Error, "%s must be refused", tc.tool)
 			require.Equal(t, ErrCodeMethodNotFound, resp.Error.Code, "got code %d: %s", resp.Error.Code, resp.Error.Message)
 		})
 	}
@@ -158,9 +155,9 @@ func TestExecuteToolSuperadminGate(t *testing.T) {
 		require.False(t, ctl.paused, "pause must not execute for a non-superadmin principal")
 	})
 
-	t.Run("project member bare-admin is refused on provider-configure-org (in-process)", func(t *testing.T) {
-		_, err := svc.ExecuteTool(memberCtx, projectID, "provider-configure-org", map[string]any{})
-		require.Error(t, err, "in-process provider-configure-org by a project member must be refused")
+	t.Run("project member bare-admin is refused on provider-usage-get (in-process)", func(t *testing.T) {
+		_, err := svc.ExecuteTool(memberCtx, projectID, "provider-usage-get", map[string]any{})
+		require.Error(t, err, "in-process provider-usage-get by a project member must be refused")
 	})
 
 	t.Run("no principal fails closed (in-process)", func(t *testing.T) {

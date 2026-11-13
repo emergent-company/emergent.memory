@@ -539,13 +539,13 @@ Platform administration tools are served on a **dedicated endpoint** — `GET|PO
 
 Operator tools are **no longer reachable on `/api/mcp`**: the project endpoint always excludes them from `tools/list` and refuses calls to them (method-not-found), regardless of the caller's superadmin status.
 
-**Operator tool catalog** (40 tools; all `SuperadminOnly`):
+**Operator tool catalog** (38 tools; all `SuperadminOnly`):
 
 - **Reads** (16): `superadmin-get`, `user-list`, `user-get`, `org-list`, `org-get`, `project-list`, `project-record-get`, `project-member-list`, `email-job-list`, `email-job-get`, `embedding-job-list`, `embedding-job-stats`, `extraction-job-list`, `extraction-job-stats`, `document-parsing-job-list`, `document-parsing-job-stats`.
 - **Mutations** (14): `user-delete`, `org-delete`, `project-delete`, `superadmin-grant`, `project-member-create`, `project-member-delete`, `service-token-create`, `embedding-job-delete`, `embedding-job-cleanup`, `embedding-job-reset`, `extraction-job-delete`, `extraction-job-cancel`, `document-parsing-job-delete`, `document-parsing-job-retry`.
-- **Pre-existing operator tools** (10): `embedding-status`, `embedding-pause`, `embedding-resume`, `embedding-config-update`, `provider-list-org`, `provider-configure-org`, `provider-test`, `provider-usage-get`, `trace-list`, `trace-get`.
+- **Pre-existing operator tools** (8): `embedding-status`, `embedding-pause`, `embedding-resume`, `embedding-config-update`, `provider-test`, `provider-usage-get`, `trace-list`, `trace-get`.
 
-Every **mutation** requires an explicit `confirm=true` argument — this includes the pre-existing mutators `provider-configure-org`, `embedding-pause`, `embedding-resume`, and `embedding-config-update`. With `confirm` absent or false the tool performs **no side effect** and returns a structured dry-run (`dry_run`, `action`, `targets`, `message`) naming the intended action and its target identifiers.
+Every **mutation** requires an explicit `confirm=true` argument — this includes the pre-existing mutators `embedding-pause`, `embedding-resume`, and `embedding-config-update`. With `confirm` absent or false the tool performs **no side effect** and returns a structured dry-run (`dry_run`, `action`, `targets`, `message`) naming the intended action and its target identifiers.
 
 See [`OPERATOR_MCP.md`](./OPERATOR_MCP.md) for the full runbook (authentication, connecting a client, the confirm/dry-run protocol, and the audit trail).
 

@@ -53,7 +53,7 @@ func TestStripOperatorTools(t *testing.T) {
 	tools := []tool.Tool{
 		fakeTool{name: "entity-query"},
 		fakeTool{name: "embedding-pause"},
-		fakeTool{name: "provider-configure-org"},
+		fakeTool{name: "provider-usage-get"},
 	}
 
 	names := func(ts []tool.Tool) map[string]bool {
@@ -70,15 +70,15 @@ func TestStripOperatorTools(t *testing.T) {
 	got := names(tp.StripOperatorTools(memberCtx, tools))
 	require.True(t, got["entity-query"], "ordinary tool must remain for a project member")
 	require.False(t, got["embedding-pause"], "operator tool must be stripped for a project member")
-	require.False(t, got["provider-configure-org"], "operator tool must be stripped for a project member")
+	require.False(t, got["provider-usage-get"], "operator tool must be stripped for a project member")
 
 	got = names(tp.StripOperatorTools(superCtx, tools))
 	require.True(t, got["entity-query"], "ordinary tool must remain for superadmin_full")
 	require.True(t, got["embedding-pause"], "operator tool must remain for superadmin_full")
-	require.True(t, got["provider-configure-org"], "operator tool must remain for superadmin_full")
+	require.True(t, got["provider-usage-get"], "operator tool must remain for superadmin_full")
 
 	// Principal-less context fails closed: operator tools are stripped.
 	got = names(tp.StripOperatorTools(ctx, tools))
 	require.False(t, got["embedding-pause"], "principal-less context must strip operator tools (fail closed)")
-	require.False(t, got["provider-configure-org"], "principal-less context must strip operator tools (fail closed)")
+	require.False(t, got["provider-usage-get"], "principal-less context must strip operator tools (fail closed)")
 }
