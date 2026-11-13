@@ -13,6 +13,39 @@ Memory connects a GitHub App as a project source. The App receives
 `pull_request` webhooks, a source trigger starts a run for the configured agent,
 and the agent posts a review bound to the reviewed head SHA.
 
+You can register the App from **Settings → Source apps → Register app** in the
+web UI (the page carries a copy of the checklist below), or through the API.
+
+### Create the App in GitHub
+
+Create the App at [github.com/settings/apps/new](https://github.com/settings/apps/new)
+**before** registering it in Memory. A GitHub App is not an OAuth app: Memory
+authenticates as the App installation, so no user-authorization flow is
+configured.
+
+| GitHub field | Value |
+|---|---|
+| Homepage URL | Your Memory deployment's web address. Required by GitHub, unused by Memory. |
+| **Redirect URI** (under *Identifying and authorizing users*) | **Leave empty.** Do not add a callback. |
+| *Request user authorization (OAuth) during installation* | **Unchecked.** |
+| Setup URL | Leave empty. |
+| Webhook → Active | **Leave inactive while creating the App** (see below). |
+| Webhook → Secret | Generate one now and keep a copy; you enter the same value in step 3. |
+| Repository permissions | `Contents: read`; `Issues`, `Checks`, `Pull requests`: **read and write**. `Metadata: read` is added automatically and is mandatory. |
+| Subscribe to events | `Pull request` only. |
+| Private key | Generate one on the App page and download the `.pem` file. |
+
+The webhook is a **two-pass** setup, because the delivery URL does not exist
+until Memory registers the App and issues its `webhookKey`:
+
+1. Create the App with the webhook inactive. GitHub discards a secret entered
+   while the webhook is inactive, so the value you typed is not kept.
+2. Register the App in Memory (below). The response — and the App's page in the
+   UI — carries the delivery URL.
+3. Edit the App in GitHub: paste the delivery URL into the webhook, enter the
+   **same** secret, and make the webhook active. GitHub sends a `ping` delivery;
+   a `202` proves Memory verified the signature.
+
 ### Register the App (organization admin)
 
 ```http
@@ -32,6 +65,10 @@ The private key and webhook secret are sealed at rest with
 `LLM_ENCRYPTION_KEY` and never returned. The `201` response carries the App row
 id and its `webhookKey`. The App must be granted `contents: read`,
 `pull_requests: write`, `issues: write`, and `checks: write`.
+
+In the UI, **Register app** posts the same fields and then opens the App's own
+page, where the delivery URL is shown with a copy button — that URL is what you
+paste back into the GitHub App's webhook.
 
 ```http
 GET    /api/orgs/{orgId}/source-apps
@@ -66,6 +103,12 @@ Content-Type: application/json
 
 `github_app` is trigger-only: it never syncs documents, and webhooks for
 repositories outside the allowlist are ignored.
+
+`config.app_id` is the Memory **App row id** (a UUID) returned by the
+registration, not GitHub's numeric App id. `config.installation_id` is the
+installation on the repositories you granted: GitHub shows it in the URL of the
+installation settings page —
+`https://github.com/settings/installations/<installation_id>`.
 
 ### Bind a trigger
 

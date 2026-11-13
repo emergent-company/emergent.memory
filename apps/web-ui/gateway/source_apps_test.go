@@ -188,8 +188,8 @@ func TestSourceAppCreateForwardsRequest(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if loc := rec.Header().Get("Location"); loc != dsSourceAppsPath+"?saved=1" {
-		t.Errorf("location = %q", loc)
+	if loc := rec.Header().Get("Location"); loc != dsSourceAppsPath+"/sapp-new?created=1" {
+		t.Errorf("location = %q, want the new App's own page", loc)
 	}
 	if f.dsCreatedSourceAppOrg != "o1" {
 		t.Errorf("org = %q, want o1", f.dsCreatedSourceAppOrg)
@@ -203,6 +203,33 @@ func TestSourceAppCreateForwardsRequest(t *testing.T) {
 	}
 	if got.PrivateKey != form.Get("privateKey") || got.WebhookSecret != "s3cret" {
 		t.Errorf("secrets not forwarded: %+v", got)
+	}
+}
+
+// TestSourceAppCreateFallsBackToListWithoutRowID covers a create response that
+// carries no row id: there is no App page to open, so the operator goes back to
+// the table with the flash rather than a redirect to an empty path segment.
+func TestSourceAppCreateFallsBackToListWithoutRowID(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.dsCreatedSourceAppNoID = true
+	e := sourceAppsTestServer(f)
+
+	form := url.Values{
+		"appId":         {"4242"},
+		"slug":          {"acme-bot"},
+		"privateKey":    {"-----BEGIN RSA PRIVATE KEY-----\nkey\n-----END RSA PRIVATE KEY-----"},
+		"webhookSecret": {"s3cret"},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, dsSourceAppsPath, strings.NewReader(form.Encode()))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationForm)
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != dsSourceAppsPath+"?saved=1" {
+		t.Errorf("location = %q, want the table fallback", loc)
 	}
 }
 
@@ -275,6 +302,7 @@ func TestSourceAppNewPageRendersRegisterForm(t *testing.T) {
 	for _, want := range []string{
 		`data-testid="ds-source-app-form-page"`,
 		`data-testid="ds-source-app-form"`,
+		`data-testid="ds-source-app-gh-guide"`,
 		`action="` + dsSourceAppsPath + `"`,
 		`name="appId"`,
 		`name="slug"`,
@@ -301,6 +329,66 @@ func TestSourceAppNewPageRendersRegisterForm(t *testing.T) {
 		if strings.Contains(body, unwanted) {
 			t.Errorf("register page rendered %q", unwanted)
 		}
+	}
+}
+
+// TestSourceAppNewPageShowsGitHubSetupGuide pins the instructions that the
+// register form cannot state for itself: which GitHub fields stay empty, that
+// the webhook is created inactive, and what the App key is used for. Without
+// them an operator stalls on GitHub's "Redirect URI" field and creates a
+// webhook that has nowhere to deliver.
+func TestSourceAppNewPageShowsGitHubSetupGuide(t *testing.T) {
+	e := sourceAppsTestServer(sourceAppsAdminFake())
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, dsSourceAppsPath+"/new", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="ds-source-app-gh-guide"`,
+		"https://github.com/settings/apps/new",
+		"Redirect URI",
+		"Request user authorization (OAuth) during installation",
+		"webhook inactive",
+		"Contents",
+		"Pull requests",
+		"Pull request only",
+		"private key",
+		"github.com/settings/installations/",
+		`data-testid="ds-source-app-gh-homepage"`,
+		"http://example.com",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GitHub setup guide missing %q", want)
+		}
+	}
+	// The guide explains the two-pass flow; the delivery URL itself only exists
+	// after registration, so the register page must not pretend to show it.
+	if strings.Contains(body, `data-testid="ds-source-app-webhook"`) {
+		t.Error("register page rendered a delivery URL before one exists")
+	}
+}
+
+// TestSourceAppDetailPageOmitsSetupGuide keeps the checklist on the add page:
+// an App that is already registered has its credentials, and its delivery URL
+// is on the page itself.
+func TestSourceAppDetailPageOmitsSetupGuide(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.dsSourceApps = []SourceApp{{
+		ID: "a1", OrgID: "o1", Provider: "github", AppID: 4242, Slug: "acme-bot",
+		WebhookKey: "wk-1", CreatedAt: "2026-09-01T00:00:00Z",
+	}}
+	e := sourceAppsTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, dsSourceAppsPath+"/a1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `data-testid="ds-source-app-gh-guide"`) {
+		t.Error("edit page rendered the GitHub setup guide")
 	}
 }
 

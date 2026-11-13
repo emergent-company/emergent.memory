@@ -62,9 +62,13 @@ type dsSourceAppFormData struct {
 	BackHref   string
 	DeleteHref string
 	WebhookURL string
-	App        *SourceApp
-	FlashMsg   string
-	FlashErr   error
+	// PublicBaseURL is the deployment's web URL, offered in the register page's
+	// GitHub setup guide as the App's Homepage URL. Empty means the page could
+	// not resolve one, so the guide states the requirement instead of a value.
+	PublicBaseURL string
+	App           *SourceApp
+	FlashMsg      string
+	FlashErr      error
 }
 
 // dsSourceAppWebhookURL builds the endpoint GitHub must deliver to for one App.
@@ -124,6 +128,8 @@ func (s *Server) uiSourceApps(c echo.Context) error {
 	data := dsSourceAppsPageData{
 		settingsNavCommon: s.settingsNavPayload(c, ctx),
 		FlashMsg: flashFromQuery(c, []flashParam{
+			// Reachable only from uiSourceAppCreate's fallback, when the create
+			// response carries no row id to open an App page for.
 			{key: "saved", msg: "Source App registered."},
 			{key: "deleted", msg: "Source App removed."},
 		}),
@@ -169,6 +175,7 @@ func (s *Server) uiSourceAppNew(c echo.Context) error {
 		OrgName:           orgName,
 		Action:            dsSourceAppsPath,
 		BackHref:          dsSourceAppsPath,
+		PublicBaseURL:     s.publicBaseURL(c),
 		FlashErr:          flashError(c),
 	}))
 }
@@ -195,8 +202,11 @@ func (s *Server) uiSourceAppDetail(c echo.Context) error {
 		DeleteHref:        dsSourceAppsPath + "/" + url.PathEscape(app.ID) + "/delete",
 		WebhookURL:        dsSourceAppWebhookURL(s.cfg.MemoryPublicURL, app.WebhookKey),
 		App:               app,
-		FlashMsg:          flashFromQuery(c, []flashParam{{key: "saved", msg: "Source App saved."}}),
-		FlashErr:          flashError(c),
+		FlashMsg: flashFromQuery(c, []flashParam{
+			{key: "created", msg: "Source App registered. Copy its delivery URL into the GitHub App's webhook, with the same secret, then make the webhook active."},
+			{key: "saved", msg: "Source App saved."},
+		}),
+		FlashErr: flashError(c),
 	}))
 }
 
@@ -267,11 +277,13 @@ func (s *Server) findOrgSourceApp(c echo.Context, orgID, appID string) (*SourceA
 
 // uiSourceAppCreate registers an org source App (org-admin only, PRG). The
 // private key and webhook secret are write-only: they are forwarded once and
-// never rendered back.
+// never rendered back. A registered App lands on its own page, not the table,
+// because its delivery URL is the one value the operator still has to paste
+// into GitHub.
 func (s *Server) uiSourceAppCreate(c echo.Context) error {
 	ctx := c.Request().Context()
 	// Validation failures return to the standalone form so the message sits
-	// beside the fields; a registered App returns to the table.
+	// beside the fields.
 	formPath := dsSourceAppsPath + "/new"
 	orgID, ok := s.sourceAppsOrgForCaller(c, formPath)
 	if !ok {
@@ -301,8 +313,15 @@ func (s *Server) uiSourceAppCreate(c echo.Context) error {
 		PrivateKey:    privateKey,
 		WebhookSecret: webhookSecret,
 	}
-	if _, err := s.memory.CreateOrgSourceApp(ctx, orgID, req); err != nil {
+	created, err := s.memory.CreateOrgSourceApp(ctx, orgID, req)
+	if err != nil {
 		return redirectWithError(c, formPath, dsFormError(err))
+	}
+	// A response without a row id cannot address the App page; fall back to the
+	// table rather than redirecting to /settings/source-apps/ (a 404).
+	if created != nil && created.ID != "" {
+		redirectAfterMutation(c, dsSourceAppsPath+"/"+url.PathEscape(created.ID)+"?created=1")
+		return nil
 	}
 	redirectAfterMutation(c, dsSourceAppsPath+"?saved=1")
 	return nil
