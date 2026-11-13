@@ -205,11 +205,28 @@
   --color-muted: color-mix(in oklab, var(--color-base-content) 50%, transparent);
 }
 
+/* Same collision on the line ladder: go-daisy maps `line` to base-200 and
+   `line-strong` to base-300, both darker than the dark theme's base-100
+   surface, so every `edge-line`/`border-line` card reads as a black outline.
+   Re-assert the ladder over the content ink instead; `line-translucent` already
+   is content/10 and stays as-is. */
+@theme inline {
+  --color-line: color-mix(in oklab, var(--color-base-content) 10%, transparent);
+  --color-line-strong: color-mix(in oklab, var(--color-base-content) 15%, transparent);
+}
+
 /* ---------------------------------------------------------------------------
  * Memory brand layer — atmosphere, chat polish, session rail, motion.
  * Plain CSS on purpose: these intentionally override daisyUI component
  * defaults, so they stay unlayered (unlayered beats layered).
  * ------------------------------------------------------------------------- */
+
+/* daisyUI `.card-border` still paints `--color-base-200`, which is darker than
+   the surface and reads as black on this theme. Match the product's translucent
+   content hairlines; width/style still come from daisyUI's rule. */
+.card-border {
+  border-color: color-mix(in oklab, var(--color-base-content) 10%, transparent);
+}
 
 /* ---------- Atmosphere ---------- */
 /* Keep the root element dark regardless of daisyUI's theme cascade. Without
@@ -480,6 +497,12 @@ main#main-content {
 }
 
 /* ---------- Chat ---------- */
+/* Transcript voice: one step below the 15px shell base so long agent turns
+   read denser without dropping below 14px. */
+#chat-messages {
+  font-size: 14px;
+}
+
 #chat-log {
   scrollbar-width: thin;
   scrollbar-color: var(--color-base-300) transparent;
@@ -1825,6 +1848,23 @@ html[data-standalone] body {
 /* Shell height: dynamic viewport with a 100vh fallback. `dvh` tracks the
    collapsing URL bar in mobile browsers; older clients keep 100vh. The
    fallback lives outside an @supports check so the minifier keeps both. */
+/* The shell is the viewport. `min-h-screen` on <body> is taller than
+   `100dvh` while the mobile browser toolbar is showing, which is exactly what
+   made the document (and the topbar) scroll under the thumb. Pin the body to
+   the dynamic viewport instead; #main-content stays the only scroller. */
+html:has(body.app-body) {
+  height: 100%;
+  overflow: hidden;
+}
+body.app-body {
+  height: 100vh;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+@supports (height: 100dvh) {
+  body.app-body { height: 100dvh; }
+}
+
 .app-shell { height: 100vh; }
 @supports (height: 100dvh) {
   .app-shell { height: 100dvh; }
@@ -2028,6 +2068,22 @@ html.keyboard-open #object-preview-panel:not(.object-preview-in-modal) { height:
 }
 
 /* ---------- grouped tool calls ---------- */
+/* The tool-run summary's own sheet pads it .5rem, which pushed the row's
+   icon/verb ~8px right of every assistant line. Drop that inset so the wrench
+   glyph starts on the transcript's content edge. */
+.chat.memory-aux .memory-tool-run-summary,
+.chat.memory-aux .memory-badge-toggle {
+  padding-inline: 0;
+}
+/* The run summary had no column gap, so "2 tool calls" sat tighter to the
+   wrench than a thinking/tool badge's label does to its glyph. */
+.chat.memory-aux .memory-tool-run-summary {
+  gap: 0.5rem;
+}
+.chat.memory-aux .memory-badge-icon {
+  width: 1rem;
+}
+
 /* A group only exists for 2+ consecutive calls; the body scrolls once it gets
    long, keeping the transcript's rhythm intact. */
 .memory-tool-group .memory-tool-run-body {

@@ -407,12 +407,34 @@
     var root = pickerRoot(kind);
     var trigger = pickerTrigger(root);
     if (!trigger) return;
+    root.classList.remove("dropdown-open");
+    trigger.setAttribute("aria-expanded", "false");
     trigger.blur();
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
   }
   function wirePicker(kind, field) {
     var root = pickerRoot(kind);
     if (!root || !field) return;
+    var trigger = pickerTrigger(root);
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", "false");
+      // iOS Safari does not focus a <button> on tap, and a focus-only dropdown
+      // also closes before the row click lands. Drive an explicit open class so
+      // touch and mouse get the same behaviour as :focus-within on desktop.
+      trigger.addEventListener("click", function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (root.classList.contains("dropdown-open")) {
+          closePicker(kind);
+          return;
+        }
+        root.classList.add("dropdown-open");
+        trigger.setAttribute("aria-expanded", "true");
+      });
+    }
+    document.addEventListener("pointerdown", function (event) {
+      if (!root.contains(event.target)) closePicker(kind);
+    });
     function choose(row) {
       if (!row || !root.contains(row)) return;
       var value = row.getAttribute("data-value") || "";
@@ -1759,14 +1781,13 @@
       var ctx = order[j];
       var el = last[j] && last[j].el;
       if (!ctx || !ctx.ended || !el) continue;
-      var body = el.querySelector(".memory-md");
+      // The footer carries run metadata only. The last assistant turn already
+      // has its per-message copy button (enhanceMessage), so a second copy
+      // turn action here rendered two identical icons on that bubble.
       el.appendChild(MemoryChatComponents.turnFooter({
         model: ctx.model || currentAgentName(),
         durationMs: ctx.durationMs,
         endTime: ctx.completedAt,
-        getText: (function (b) {
-          return function () { return b ? (b.innerText || b.textContent || "") : ""; };
-        })(body),
       }));
     }
   }

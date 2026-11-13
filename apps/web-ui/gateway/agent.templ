@@ -134,7 +134,7 @@ templ agentSummaryCard(data agentDashboardData) {
 				})
 			}
 		</div>
-		<div class="mt-5 flex flex-wrap items-center gap-2 border-t border-base-200 pt-4">
+		<div class="mt-5 flex flex-wrap items-center gap-2 border-t border-base-content/10 pt-4">
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,
 				Href:    "/chat?agent=" + url.QueryEscape(data.Agent.ID),
@@ -546,7 +546,7 @@ templ agentGeneralSettingsForm(data agentSettingsData) {
 							x-show="open"
 							x-cloak
 							style="display: none"
-							class="rounded-box border-base-300 bg-base-100 absolute z-50 mt-1 max-h-72 w-full overflow-y-auto overscroll-contain border p-1 shadow-lg"
+							class="rounded-box border-base-content/10 bg-base-100 absolute z-50 mt-1 max-h-72 w-full overflow-y-auto overscroll-contain border p-1 shadow-lg"
 							@keydown.arrow-down.prevent="move(1)"
 							@keydown.arrow-up.prevent="move(-1)"
 							@keydown.enter.prevent="choose(options[active])"

@@ -285,7 +285,7 @@ templ scheduleRunsSection(runs []ScheduledAgentRun) {
 				No runs yet. Runs appear here after the schedule fires — or after you hit Run now.
 			}
 		} else {
-			<ul class="list bg-base-100 rounded-box border border-base-200">
+			<ul class="list bg-base-100 rounded-box border border-base-content/10">
 				for _, r := range runs {
 					<a class="list-row hover:bg-base-200/50" data-testid="schedule-run-row" href={ templ.URL("/runs/" + url.PathEscape(r.ID)) }>
 						@ui.IconSpan("lucide--activity", "size-4 shrink-0 text-muted-faint")

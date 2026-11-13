@@ -113,7 +113,7 @@ func questionCardHasValue(selected []string, value string) bool {
 // selection state swaps the border/background accent the client's selection
 // also applies.
 func questionCardOptionClass(selected bool) string {
-	base := "memory-question__option flex w-full items-start gap-3 rounded-field border px-3 py-2.5 text-left transition-colors duration-150 cursor-pointer border-base-300/70 bg-base-100"
+	base := "memory-question__option flex w-full items-start gap-3 rounded-field border px-3 py-2.5 text-left transition-colors duration-150 cursor-pointer border-base-content/10 bg-base-100"
 	if selected {
 		return base + " border-primary bg-primary/5 ring-1 ring-primary/40 hover:bg-primary/10"
 	}
