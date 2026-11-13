@@ -5338,6 +5338,67 @@ func (f *fakeMemory) UpdateOrgSourceApp(ctx context.Context, orgID, appID string
 	return nil, errors.New("no such source App in this organization")
 }
 
+func (f *fakeMemory) ListProjectSourceApps(ctx context.Context) ([]SourceApp, error) {
+	if f.dsSourceAppErr != nil {
+		return nil, f.dsSourceAppErr
+	}
+	return f.dsSourceApps, nil
+}
+
+func (f *fakeMemory) CreateProjectSourceApp(ctx context.Context, req *DSSourceAppRequest) (*SourceApp, error) {
+	if f.dsSourceAppErr != nil {
+		return nil, f.dsSourceAppErr
+	}
+	f.dsCreatedSourceAppReq = req
+	app := SourceApp{
+		ID:         "sapp-new",
+		Provider:   req.Provider,
+		AppID:      req.AppID,
+		Slug:       req.Slug,
+		WebhookKey: "webhook-key-new",
+		CreatedAt:  "2026-09-01T00:00:00Z",
+		UpdatedAt:  "2026-09-01T00:00:00Z",
+	}
+	if req.Scope != "org" {
+		app.ProjectID = "p1"
+	}
+	f.dsSourceApps = append(f.dsSourceApps, app)
+	return &app, nil
+}
+
+func (f *fakeMemory) UpdateProjectSourceApp(ctx context.Context, appID string, req *DSSourceAppUpdateRequest) (*SourceApp, error) {
+	if f.dsSourceAppErr != nil {
+		return nil, f.dsSourceAppErr
+	}
+	f.dsUpdatedSourceAppID = appID
+	f.dsUpdatedSourceAppReq = req
+	for i := range f.dsSourceApps {
+		if f.dsSourceApps[i].ID != appID {
+			continue
+		}
+		f.dsSourceApps[i].Slug = req.Slug
+		f.dsSourceApps[i].UpdatedAt = "2026-09-02T00:00:00Z"
+		updated := f.dsSourceApps[i]
+		return &updated, nil
+	}
+	return nil, errors.New("no such source App")
+}
+
+func (f *fakeMemory) DeleteProjectSourceApp(ctx context.Context, appID string) error {
+	if f.dsSourceAppErr != nil {
+		return f.dsSourceAppErr
+	}
+	f.dsDeletedSourceAppID = appID
+	kept := f.dsSourceApps[:0]
+	for _, app := range f.dsSourceApps {
+		if app.ID != appID {
+			kept = append(kept, app)
+		}
+	}
+	f.dsSourceApps = kept
+	return nil
+}
+
 func (f *fakeMemory) DeleteOrgSourceApp(ctx context.Context, orgID, appID string) error {
 	f.dsDeletedSourceAppID = appID
 	if f.dsSourceAppErr != nil {

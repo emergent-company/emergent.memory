@@ -13,7 +13,14 @@ Memory connects a GitHub App as a project source. The App receives
 `pull_request` webhooks, a source trigger starts a run for the configured agent,
 and the agent posts a review bound to the reviewed head SHA.
 
-### Register the App (organization admin)
+### Register the App (org-wide or project-owned)
+
+An App credential is either **org-wide** (managed by an organization
+administrator, bindable by every project) or **project-owned** (managed by a
+project administrator, bindable only by that project). App ids stay unique per
+organization.
+
+Org-wide registration:
 
 ```http
 POST /api/orgs/{orgId}/source-apps
@@ -45,6 +52,21 @@ supplied private key is validated before it is sealed. `provider` and `appId`
 are immutable: `(organization, provider, App id)` is what binds project
 sources, so an edit renames or rotates credentials but never repoints an App
 under sources that are already attached.
+
+Project surface (project membership may list; project admin creates project-owned;
+org admin may choose `scope: "org"`):
+
+```http
+GET    /api/data-source-integrations/source-apps
+POST   /api/data-source-integrations/source-apps
+PATCH  /api/data-source-integrations/source-apps/{appId}
+DELETE /api/data-source-integrations/source-apps/{appId}
+```
+
+The project `POST` body takes the same fields plus `scope` (`"project"` default,
+`"org"` requires org admin). The list returns org-wide Apps plus Apps owned by
+the current project. A project-owned App cannot be managed by another project;
+an org-wide App cannot be deleted or edited by a project administrator.
 
 ### Create the source
 

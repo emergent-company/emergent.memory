@@ -11,7 +11,11 @@ import (
 )
 
 type registerSourceAppDTO struct {
-	Provider      string `json:"provider"`
+	Provider string `json:"provider"`
+	// Scope is "org" (org-wide, org admin) or "project" (project-owned,
+	// project admin). Only the project-scoped route reads it; the org route is
+	// always org-wide.
+	Scope         string `json:"scope,omitempty"`
 	AppID         int64  `json:"appId"`
 	Slug          string `json:"slug"`
 	PrivateKey    string `json:"privateKey"`
@@ -55,7 +59,9 @@ func (h *Handler) RegisterSourceApp(c echo.Context) error {
 		return apperror.ErrBadRequest
 	}
 	user := auth.MustGetUser(c)
-	app, err := h.svc.RegisterSourceApp(c.Request().Context(), orgID, user.ID, RegisterSourceAppRequest(dto))
+	app, err := h.svc.RegisterSourceApp(c.Request().Context(), orgID, user.ID, RegisterSourceAppRequest{
+		Provider: dto.Provider, AppID: dto.AppID, Slug: dto.Slug, PrivateKey: dto.PrivateKey, WebhookSecret: dto.WebhookSecret,
+	})
 	if err != nil {
 		return err
 	}
@@ -263,6 +269,126 @@ func (h *Handler) DeleteSourceTrigger(c echo.Context) error {
 		return apperror.ErrBadRequest
 	}
 	if err := h.svc.DeleteSourceTrigger(c.Request().Context(), projectID, sourceID, triggerID); err != nil {
+		return err
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+// projectIDFromCaller resolves the X-Project-ID for the project-scoped group.
+func (h *Handler) projectIDFromCaller(c echo.Context) (uuid.UUID, error) {
+	raw, err := auth.GetProjectID(c)
+	if err != nil {
+		return uuid.Nil, apperror.ErrBadRequest
+	}
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		return uuid.Nil, apperror.ErrBadRequest
+	}
+	return id, nil
+}
+
+// ListProjectSourceApps handles GET /api/data-source-integrations/source-apps.
+// @Summary      List Apps available to the project
+// @Description  Returns org-wide Apps plus Apps owned by the current project, without credentials.
+// @Tags         data-source-integrations
+// @Produce      json
+// @Success      200 {array} SourceApp
+// @Router       /api/data-source-integrations/source-apps [get]
+// @Security     bearerAuth
+func (h *Handler) ListProjectSourceApps(c echo.Context) error {
+	projectID, err := h.projectIDFromCaller(c)
+	if err != nil {
+		return err
+	}
+	apps, err := h.svc.ListSourceAppsForProject(c.Request().Context(), projectID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, apps)
+}
+
+// RegisterProjectSourceApp handles POST /api/data-source-integrations/source-apps.
+// @Summary      Register a source App for the project
+// @Description  Org admins may register org-wide (scope=org) or project-owned (scope=project); project admins only project-owned.
+// @Tags         data-source-integrations
+// @Accept       json
+// @Produce      json
+// @Param        body body registerSourceAppDTO true "App credentials"
+// @Success      201 {object} SourceApp
+// @Router       /api/data-source-integrations/source-apps [post]
+// @Security     bearerAuth
+func (h *Handler) RegisterProjectSourceApp(c echo.Context) error {
+	projectID, err := h.projectIDFromCaller(c)
+	if err != nil {
+		return err
+	}
+	var dto registerSourceAppDTO
+	if err := c.Bind(&dto); err != nil {
+		return apperror.ErrBadRequest
+	}
+	user := auth.MustGetUser(c)
+	app, err := h.svc.RegisterProjectSourceApp(c.Request().Context(), projectID, user.ID, RegisterSourceAppRequest{
+		Provider: dto.Provider, AppID: dto.AppID, Slug: dto.Slug, PrivateKey: dto.PrivateKey, WebhookSecret: dto.WebhookSecret,
+	}, dto.Scope == "org")
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusCreated, app)
+}
+
+// UpdateProjectSourceApp handles PATCH /api/data-source-integrations/source-apps/:appId.
+// @Summary      Update a source App from the project surface
+// @Description  Project-owned Apps require project admin; org-wide Apps require org admin. Secrets are optional rotations.
+// @Tags         data-source-integrations
+// @Accept       json
+// @Produce      json
+// @Param        appId path string true "App row ID (UUID)"
+// @Param        body body updateSourceAppDTO true "Patch"
+// @Success      200 {object} SourceApp
+// @Router       /api/data-source-integrations/source-apps/{appId} [patch]
+// @Security     bearerAuth
+func (h *Handler) UpdateProjectSourceApp(c echo.Context) error {
+	projectID, err := h.projectIDFromCaller(c)
+	if err != nil {
+		return err
+	}
+	appID, err := uuid.Parse(c.Param("appId"))
+	if err != nil {
+		return apperror.ErrBadRequest
+	}
+	var dto updateSourceAppDTO
+	if err := c.Bind(&dto); err != nil {
+		return apperror.ErrBadRequest
+	}
+	user := auth.MustGetUser(c)
+	app, err := h.svc.UpdateSourceAppForProject(c.Request().Context(), projectID, user.ID, appID, UpdateSourceAppRequest{
+		Slug: dto.Slug, PrivateKey: dto.PrivateKey, WebhookSecret: dto.WebhookSecret,
+	})
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, app)
+}
+
+// DeleteProjectSourceApp handles DELETE /api/data-source-integrations/source-apps/:appId.
+// @Summary      Delete a source App from the project surface
+// @Description  Project-owned Apps require project admin; org-wide Apps require org admin. Refused with 409 while bound sources exist.
+// @Tags         data-source-integrations
+// @Param        appId path string true "App row ID (UUID)"
+// @Success      204
+// @Router       /api/data-source-integrations/source-apps/{appId} [delete]
+// @Security     bearerAuth
+func (h *Handler) DeleteProjectSourceApp(c echo.Context) error {
+	projectID, err := h.projectIDFromCaller(c)
+	if err != nil {
+		return err
+	}
+	appID, err := uuid.Parse(c.Param("appId"))
+	if err != nil {
+		return apperror.ErrBadRequest
+	}
+	user := auth.MustGetUser(c)
+	if err := h.svc.DeleteSourceAppForProject(c.Request().Context(), projectID, user.ID, appID); err != nil {
 		return err
 	}
 	return c.NoContent(http.StatusNoContent)

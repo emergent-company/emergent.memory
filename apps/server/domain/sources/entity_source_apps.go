@@ -17,21 +17,23 @@ const (
 	SourceEventCancelled  = "cancelled"
 )
 
-// SourceApp is an org-scoped provider App credential. One App can back many
-// project sources and installations. The sealed columns are write-only.
+// SourceApp is a provider App credential. ProjectID nil = org-wide (org admin,
+// usable by every project in the org); set = project-owned (project admin, only
+// that project). The sealed columns are write-only.
 type SourceApp struct {
 	bun.BaseModel `bun:"table:kb.source_apps,alias:sa"`
 
-	ID                     uuid.UUID `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
-	OrgID                  uuid.UUID `bun:"org_id,notnull,type:uuid" json:"orgId"`
-	Provider               string    `bun:"provider,notnull" json:"provider"`
-	AppID                  int64     `bun:"app_id,notnull" json:"appId"`
-	Slug                   string    `bun:"slug,notnull" json:"slug"`
-	PrivateKeyEncrypted    []byte    `bun:"private_key_encrypted,notnull,type:bytea" json:"-"`
-	WebhookSecretEncrypted []byte    `bun:"webhook_secret_encrypted,notnull,type:bytea" json:"-"`
-	WebhookKey             uuid.UUID `bun:"webhook_key,notnull,type:uuid,default:gen_random_uuid()" json:"webhookKey"`
-	CreatedAt              time.Time `bun:"created_at,notnull,default:now()" json:"createdAt"`
-	UpdatedAt              time.Time `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+	ID                     uuid.UUID  `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
+	OrgID                  uuid.UUID  `bun:"org_id,notnull,type:uuid" json:"orgId"`
+	ProjectID              *uuid.UUID `bun:"project_id,type:uuid" json:"projectId,omitempty"`
+	Provider               string     `bun:"provider,notnull" json:"provider"`
+	AppID                  int64      `bun:"app_id,notnull" json:"appId"`
+	Slug                   string     `bun:"slug,notnull" json:"slug"`
+	PrivateKeyEncrypted    []byte     `bun:"private_key_encrypted,notnull,type:bytea" json:"-"`
+	WebhookSecretEncrypted []byte     `bun:"webhook_secret_encrypted,notnull,type:bytea" json:"-"`
+	WebhookKey             uuid.UUID  `bun:"webhook_key,notnull,type:uuid,default:gen_random_uuid()" json:"webhookKey"`
+	CreatedAt              time.Time  `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	UpdatedAt              time.Time  `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
 }
 
 // SourceTrigger binds one source event type to a runtime agent and queue.
