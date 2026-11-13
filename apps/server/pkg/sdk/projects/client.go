@@ -60,7 +60,7 @@ type Project struct {
 	AutoExtractConfig    map[string]interface{} `json:"auto_extract_config,omitempty"`
 	BudgetUSD            *float64               `json:"budget_usd,omitempty"`
 	BudgetAlertThreshold *float64               `json:"budget_alert_threshold,omitempty"`
-	// Weekly spending window (added in migration 00297). A nil cap means no
+	// Weekly spending window (added in migration 00298). A nil cap means no
 	// weekly limit; the threshold defaults to the monthly one on create.
 	BudgetWeeklyUSD            *float64      `json:"budget_weekly_usd,omitempty"`
 	BudgetWeeklyAlertThreshold *float64      `json:"budget_weekly_alert_threshold,omitempty"`

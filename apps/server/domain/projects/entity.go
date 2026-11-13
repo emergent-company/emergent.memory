@@ -77,7 +77,7 @@ type Project struct {
 	BudgetAlertThreshold float64  `bun:"budget_alert_threshold" json:"budget_alert_threshold,omitempty"`
 
 	// Weekly budget window and per-window cycle anchors, added in migration
-	// 00297. A nil weekly cap means no weekly limit. The anchors are set only by
+	// 00298. A nil weekly cap means no weekly limit. The anchors are set only by
 	// the reset endpoint (never by PATCH): nil means the window follows the
 	// calendar (ISO week / UTC month), non-nil restarts the cycle at that
 	// instant.

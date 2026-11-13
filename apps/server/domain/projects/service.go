@@ -275,7 +275,7 @@ func (s *Service) Create(ctx context.Context, req CreateProjectRequest, userID s
 	//
 	// The weekly cap defaults to a quarter of the monthly one so a runaway week
 	// is caught while the month is still repairable. Existing projects are NOT
-	// backfilled (migration 00297 leaves budget_weekly_usd NULL): retrofitting a
+	// backfilled (migration 00298 leaves budget_weekly_usd NULL): retrofitting a
 	// weekly cap would start blocking agent runs on day one for projects that
 	// spend in bursts.
 	defaultBudget := DefaultMonthlyBudgetUSD

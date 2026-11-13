@@ -24,7 +24,7 @@ type Project struct {
 	AutoExtractConfig      map[string]any `json:"auto_extract_config,omitempty"`
 	BudgetUSD              *float64       `json:"budget_usd,omitempty"`
 	BudgetAlertThreshold   *float64       `json:"budget_alert_threshold,omitempty"`
-	// Weekly window + its own alert threshold, added by memory migration 00297.
+	// Weekly window + its own alert threshold, added by memory migration 00298.
 	// A nil BudgetWeeklyUSD means no weekly cap (the window is displayed as
 	// uncapped, and it never blocks agent runs).
 	BudgetWeeklyUSD             *float64       `json:"budget_weekly_usd,omitempty"`
