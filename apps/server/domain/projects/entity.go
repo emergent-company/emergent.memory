@@ -60,6 +60,16 @@ type Project struct {
 	BudgetUSD            *float64 `bun:"budget_usd" json:"budget_usd,omitempty"`
 	BudgetAlertThreshold float64  `bun:"budget_alert_threshold" json:"budget_alert_threshold,omitempty"`
 
+	// Weekly budget window and per-window cycle anchors, added in migration
+	// 00297. A nil weekly cap means no weekly limit. The anchors are set only by
+	// the reset endpoint (never by PATCH): nil means the window follows the
+	// calendar (ISO week / UTC month), non-nil restarts the cycle at that
+	// instant.
+	BudgetWeeklyUSD            *float64   `bun:"budget_weekly_usd" json:"budget_weekly_usd,omitempty"`
+	BudgetWeeklyAlertThreshold float64    `bun:"budget_weekly_alert_threshold" json:"budget_weekly_alert_threshold,omitempty"`
+	BudgetWeekAnchor           *time.Time `bun:"budget_week_anchor" json:"budget_week_anchor,omitempty"`
+	BudgetMonthAnchor          *time.Time `bun:"budget_month_anchor" json:"budget_month_anchor,omitempty"`
+
 	// Populated only when requested
 	Stats *ProjectStats `bun:"-" json:"stats,omitempty"`
 }
@@ -142,17 +152,19 @@ type PendingExtractionMergeStats struct {
 
 // ProjectDTO is the response DTO for project endpoints
 type ProjectDTO struct {
-	ID                   string                           `json:"id"`
-	Name                 string                           `json:"name"`
-	OrgID                string                           `json:"orgId"`
-	ProjectInfo          *string                          `json:"project_info,omitempty"`
-	ChatPromptTemplate   *string                          `json:"chat_prompt_template,omitempty"`
-	AutoExtractObjects   *bool                            `json:"auto_extract_objects,omitempty"`
-	AutoExtractConfig    map[string]any                   `json:"auto_extract_config,omitempty"`
-	SkillCapture         skills.ProjectSkillCaptureConfig `json:"skill_capture"`
-	BudgetUSD            *float64                         `json:"budget_usd,omitempty"`
-	BudgetAlertThreshold *float64                         `json:"budget_alert_threshold,omitempty"`
-	Stats                *ProjectStats                    `json:"stats,omitempty"`
+	ID                         string                           `json:"id"`
+	Name                       string                           `json:"name"`
+	OrgID                      string                           `json:"orgId"`
+	ProjectInfo                *string                          `json:"project_info,omitempty"`
+	ChatPromptTemplate         *string                          `json:"chat_prompt_template,omitempty"`
+	AutoExtractObjects         *bool                            `json:"auto_extract_objects,omitempty"`
+	AutoExtractConfig          map[string]any                   `json:"auto_extract_config,omitempty"`
+	SkillCapture               skills.ProjectSkillCaptureConfig `json:"skill_capture"`
+	BudgetUSD                  *float64                         `json:"budget_usd,omitempty"`
+	BudgetAlertThreshold       *float64                         `json:"budget_alert_threshold,omitempty"`
+	BudgetWeeklyUSD            *float64                         `json:"budget_weekly_usd,omitempty"`
+	BudgetWeeklyAlertThreshold *float64                         `json:"budget_weekly_alert_threshold,omitempty"`
+	Stats                      *ProjectStats                    `json:"stats,omitempty"`
 	// AutoMergeExtractionBranches is emitted only when true.
 	AutoMergeExtractionBranches *bool `json:"auto_merge_extraction_branches,omitempty"`
 	// AutoDiscoveryEnabled is always emitted (unlike the other booleans): the
@@ -216,6 +228,28 @@ type TransferProjectRequest struct {
 	OrgID string `json:"orgId" validate:"required,uuid"`
 }
 
+// BudgetWindow selects which spending window a reset restarts.
+type BudgetWindow string
+
+const (
+	BudgetWindowWeek  BudgetWindow = "week"
+	BudgetWindowMonth BudgetWindow = "month"
+)
+
+// ResetBudgetRequest is the request body for POST /api/projects/:id/budget/reset.
+// The two windows reset independently: restarting the week leaves the month's
+// tracked spend (and its anchor) untouched, and vice versa.
+type ResetBudgetRequest struct {
+	Window BudgetWindow `json:"window" validate:"required,oneof=week month"`
+}
+
+// BudgetPeriod is the resulting cycle for the window that was reset.
+type BudgetPeriod struct {
+	Window      BudgetWindow `json:"window"`
+	PeriodStart time.Time    `json:"periodStart"`
+	PeriodEnd   time.Time    `json:"periodEnd"`
+}
+
 // UpdateProjectRequest is the request body for updating a project
 type UpdateProjectRequest struct {
 	Name                        *string        `json:"name,omitempty" validate:"omitempty,min=1"`
@@ -225,6 +259,8 @@ type UpdateProjectRequest struct {
 	AutoExtractConfig           map[string]any `json:"auto_extract_config,omitempty"`
 	BudgetUSD                   *float64       `json:"budget_usd,omitempty"`
 	BudgetAlertThreshold        *float64       `json:"budget_alert_threshold,omitempty"`
+	BudgetWeeklyUSD             *float64       `json:"budget_weekly_usd,omitempty"`
+	BudgetWeeklyAlertThreshold  *float64       `json:"budget_weekly_alert_threshold,omitempty"`
 	AutoMergeExtractionBranches *bool          `json:"auto_merge_extraction_branches,omitempty"`
 	AutoDiscoveryEnabled        *bool          `json:"auto_discovery_enabled,omitempty"`
 	AutoExtractSourceSyncs      *bool          `json:"auto_extract_source_syncs,omitempty"`
@@ -244,9 +280,17 @@ func (p *Project) ToDTO() ProjectDTO {
 		ChatPromptTemplate:   p.ChatPromptTemplate,
 		BudgetUSD:            p.BudgetUSD,
 		BudgetAlertThreshold: &p.BudgetAlertThreshold,
-		Stats:                p.Stats,
 		SkillCapture:         p.SkillCapture,
 	}
+
+	if p.BudgetWeeklyUSD != nil {
+		dto.BudgetWeeklyUSD = p.BudgetWeeklyUSD
+	}
+	// The weekly threshold is always reported (like the monthly one): it is NOT
+	// NULL in the schema, and a UI that received nothing would render the
+	// control empty and imply the alert is off.
+	weeklyThreshold := p.BudgetWeeklyAlertThreshold
+	dto.BudgetWeeklyAlertThreshold = &weeklyThreshold
 
 	// Only include boolean fields if they are true
 	if p.AutoExtractObjects {

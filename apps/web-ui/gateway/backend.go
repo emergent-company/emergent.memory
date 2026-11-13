@@ -330,6 +330,13 @@ type MemoryBackend interface {
 	DeleteProjectSetting(ctx context.Context, category, key string) error
 	GetProjectUsageSummary(ctx context.Context, since, until time.Time) (*UsageSummaryResponse, error)
 	GetProjectUsageTimeSeries(ctx context.Context, granularity string, since, until time.Time) (*UsageTimeSeriesResponse, error)
+	// GetProjectBudgetState is the week/month budget position (cap, spend,
+	// remaining, status, reset timing). It backs the usage-page budget panels and
+	// the Usage nav badge.
+	GetProjectBudgetState(ctx context.Context) (*BudgetState, error)
+	// ResetProjectBudgetWindow restarts one window ("week" | "month") from now;
+	// the other window and all usage history are untouched. Admin-only.
+	ResetProjectBudgetWindow(ctx context.Context, window string) (*BudgetPeriod, error)
 	ListProjectProviders(ctx context.Context) ([]ProjectProviderConfig, error)
 	ListProviderDefinitions(ctx context.Context) ([]ProviderDefinition, error)
 	ListProviderModels(ctx context.Context, provider string) ([]ProviderSupportedModel, error)

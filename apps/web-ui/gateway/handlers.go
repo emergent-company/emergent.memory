@@ -56,6 +56,14 @@ type Server struct {
 	// problemsMu.
 	problemsMu    sync.Mutex
 	problemsCache map[string]processingProblemsEntry
+	// Budget-state cache backing the Usage sidebar badge: each project's
+	// week/month budget position lives ~budgetStateTTL so a page render does not
+	// pay an extra round trip on the critical path (and the badge never needs a
+	// fresher answer than a minute — the alert email is the durable signal).
+	// A budget reset deletes the entry so the badge reflects it immediately.
+	// Guarded by budgetMu.
+	budgetMu    sync.Mutex
+	budgetCache map[string]budgetStateEntry
 	// Label-autocomplete cache: each project's distinct object labels live
 	// ~labelSuggestionsTTL so object page renders skip the object-list query.
 	// Nil map = cold cache. Guarded by labelCacheMu. labelSuggestionsGroup

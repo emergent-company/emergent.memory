@@ -580,6 +580,11 @@ type fakeMemory struct {
 	usageSeries  *UsageTimeSeriesResponse // returned by GetProjectUsageTimeSeries
 	usageErr     error                    // failure for the usage methods
 
+	budgetState    *BudgetState // returned by GetProjectBudgetState
+	budgetStateErr error        // failure for GetProjectBudgetState
+	budgetResets   []string     // windows passed to ResetProjectBudgetWindow, in order
+	budgetResetErr error        // failure for ResetProjectBudgetWindow
+
 	projectProviders    []ProjectProviderConfig             // returned by ListProjectProviders
 	providerDefinitions []ProviderDefinition                // returned by ListProviderDefinitions
 	modelsByProvider    map[string][]ProviderSupportedModel // returned by ListProviderModels per provider
@@ -2568,6 +2573,24 @@ func (f *fakeMemory) GetProjectUsageTimeSeries(ctx context.Context, granularity 
 		return &UsageTimeSeriesResponse{}, nil
 	}
 	return f.usageSeries, nil
+}
+
+// GetProjectBudgetState returns the canned budget reading (nil = unavailable,
+// which is what a bare Server with no budget fixture gets).
+func (f *fakeMemory) GetProjectBudgetState(ctx context.Context) (*BudgetState, error) {
+	if f.budgetStateErr != nil {
+		return nil, f.budgetStateErr
+	}
+	return f.budgetState, nil
+}
+
+// ResetProjectBudgetWindow records the window and returns the new period.
+func (f *fakeMemory) ResetProjectBudgetWindow(ctx context.Context, window string) (*BudgetPeriod, error) {
+	f.budgetResets = append(f.budgetResets, window)
+	if f.budgetResetErr != nil {
+		return nil, f.budgetResetErr
+	}
+	return &BudgetPeriod{Window: window, PeriodStart: time.Now().UTC()}, nil
 }
 
 func (f *fakeMemory) ListProjectProviders(ctx context.Context) ([]ProjectProviderConfig, error) {

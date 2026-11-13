@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{projectName}}: {{windowLabel}} budget {{levelLabel}}</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; margin: 0; padding: 0; }
+    .container { max-width: 720px; margin: 40px auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    .header { background: #1a1a2e; padding: 32px; }
+    .header h1 { color: #fff; margin: 0; font-size: 22px; font-weight: 600; }
+    .body { padding: 32px; color: #333; }
+    .body p { line-height: 1.6; margin: 0 0 16px; }
+    .status { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 13px; font-weight: 600; }
+    .status.warning { background: #fef3e2; color: #a05a00; }
+    .status.exhausted { background: #fdecec; color: #b3261e; }
+    .figures { width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 14px; }
+    .figures td { padding: 8px 0; border-bottom: 1px solid #eee; }
+    .figures td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+    .figures tr:last-child td { border-bottom: none; }
+    .cta-button { display: inline-block; background: #1a73e8; color: #fff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-weight: 600; font-size: 15px; margin: 8px 0 24px; }
+    .footer { padding: 20px 32px; border-top: 1px solid #eee; color: #888; font-size: 12px; }
+    .footer a { color: #1a73e8; }
+    @media (max-width: 480px) {
+      .container { margin: 0; border-radius: 0; }
+      .header, .body, .footer { padding-left: 20px; padding-right: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>emergent.memory</h1>
+    </div>
+    <div class="body">
+      <p>
+        <strong>{{projectName}}</strong> has used
+        <span class="status {{#if exhausted}}exhausted{{else}}warning{{/if}}">
+          {{#if exhausted}}100% of its {{windowLabel}} budget{{else}}{{percent}}% of its {{windowLabel}} budget{{/if}}
+        </span>
+      </p>
+
+      <table class="figures">
+        <tr><td>Spent</td><td>${{spend}} of ${{cap}}</td></tr>
+        <tr><td>Remaining</td><td>${{remaining}}</td></tr>
+        <tr><td>Resets</td><td>{{resetsOn}}</td></tr>
+        <tr><td>Alert threshold</td><td>{{thresholdPercent}}%</td></tr>
+      </table>
+
+      {{#if exhausted}}
+      <p>
+        Agent runs in this project are <strong>rejected until the window resets</strong>.
+        To unblock it now, raise the budget or reset the window in budget settings.
+      </p>
+      {{else}}
+      <p>
+        Spend has crossed the {{thresholdPercent}}% alert threshold. Agent runs continue until the
+        budget itself is exhausted.
+      </p>
+      {{/if}}
+
+      <a href="{{usageUrl}}" class="cta-button">View usage</a>
+
+      <p>
+        <a href="{{budgetUrl}}">Manage budget settings</a> — raise the cap, change the alert
+        threshold, or reset this window to start a fresh one now.
+      </p>
+
+      <p>You are receiving this because you are a project admin.</p>
+
+      <p>— The emergent.memory team</p>
+    </div>
+    <div class="footer">
+      <p>
+        Usage: <a href="{{usageUrl}}">{{usageUrl}}</a><br>
+        Budget: <a href="{{budgetUrl}}">{{budgetUrl}}</a><br>
+        Sent from emergent.memory · <a href="https://emergent.memory">emergent.memory</a>
+      </p>
+    </div>
+  </div>
+</body>
+</html>

@@ -267,7 +267,7 @@ func TestUsageChartPayloadEmbedded(t *testing.T) {
 		Tokens:   []usageChartPoint{{Day: "2026-08-30", Value: 150}, {Day: "2026-08-31", Value: 15}},
 		Sessions: []usageChartPoint{{Day: "2026-08-30", Value: 3}},
 	}
-	html := renderHTML(t, UsagePage(sampleUsageSummary(), sampleUsageSeries(), payload, 0.0133, true, 30, nil))
+	html := renderHTML(t, UsagePage(usagePageData{Summary: sampleUsageSummary(), Series: sampleUsageSeries(), Payload: payload, MonthSpend: 0.0133, HasMonthSpend: true, Days: 30}))
 	for _, want := range []string{
 		`id="usage-timeseries"`, `type="application/json"`,
 		`"tokens"`, `"sessions"`, `"day":"2026-08-30"`, `"value":150`,

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/notifications"
 	"github.com/emergent-company/emergent.memory/domain/skills"
+	"github.com/emergent-company/emergent.memory/internal/budgetwindow"
 	"github.com/emergent-company/emergent.memory/pkg/activity"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -270,13 +272,22 @@ func (s *Service) Create(ctx context.Context, req CreateProjectRequest, userID s
 	// default 80% alert threshold. The threshold must be set explicitly: the
 	// bun insert writes every field, so the zero Go value would otherwise
 	// override the column's DEFAULT 0.80 and persist as 0 (issue #1343).
+	//
+	// The weekly cap defaults to a quarter of the monthly one so a runaway week
+	// is caught while the month is still repairable. Existing projects are NOT
+	// backfilled (migration 00297 leaves budget_weekly_usd NULL): retrofitting a
+	// weekly cap would start blocking agent runs on day one for projects that
+	// spend in bursts.
 	defaultBudget := 10.0
 	defaultAlertThreshold := 0.80
+	defaultWeeklyBudget := roundCurrency(defaultBudget / 4)
 	project := &Project{
-		OrganizationID:       req.OrgID,
-		Name:                 name,
-		BudgetUSD:            &defaultBudget,
-		BudgetAlertThreshold: defaultAlertThreshold,
+		OrganizationID:             req.OrgID,
+		Name:                       name,
+		BudgetUSD:                  &defaultBudget,
+		BudgetAlertThreshold:       defaultAlertThreshold,
+		BudgetWeeklyUSD:            &defaultWeeklyBudget,
+		BudgetWeeklyAlertThreshold: defaultAlertThreshold,
 	}
 	if req.AutoMergeExtractionBranches != nil {
 		project.AutoMergeExtractionBranches = *req.AutoMergeExtractionBranches
@@ -415,6 +426,19 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateProjectReques
 			return nil, err
 		}
 		project.BudgetAlertThreshold = *req.BudgetAlertThreshold
+		hasUpdates = true
+	}
+
+	if req.BudgetWeeklyUSD != nil {
+		project.BudgetWeeklyUSD = req.BudgetWeeklyUSD
+		hasUpdates = true
+	}
+
+	if req.BudgetWeeklyAlertThreshold != nil {
+		if err := validateBudgetWeeklyAlertThreshold(*req.BudgetWeeklyAlertThreshold); err != nil {
+			return nil, err
+		}
+		project.BudgetWeeklyAlertThreshold = *req.BudgetWeeklyAlertThreshold
 		hasUpdates = true
 	}
 
@@ -981,12 +1005,63 @@ func isValidUUID(id string) bool {
 // >1 would only alert after the spend cap is already breached, and the
 // NUMERIC(3,2) column cannot store >9.99 anyway.
 func validateBudgetAlertThreshold(threshold float64) error {
+	return validateAlertThreshold(threshold, "budget_alert_threshold")
+}
+
+// validateBudgetWeeklyAlertThreshold is validateBudgetAlertThreshold for the
+// weekly window; the two thresholds are validated identically so a value the UI
+// accepts for one can never be rejected for the other.
+func validateBudgetWeeklyAlertThreshold(threshold float64) error {
+	return validateAlertThreshold(threshold, "budget_weekly_alert_threshold")
+}
+
+func validateAlertThreshold(threshold float64, field string) error {
 	if threshold <= 0 || threshold > 1 {
 		return apperror.New(400, "validation-failed", "budget alert threshold must be greater than 0 and at most 1 (1-100%)").WithDetails(map[string]any{
-			"budget_alert_threshold": []string{"must be greater than 0 and at most 1"},
+			field: []string{"must be greater than 0 and at most 1"},
 		})
 	}
 	return nil
+}
+
+// roundCurrency rounds a USD amount to cents, so a derived default such as
+// monthly/4 lands on 2.75 rather than 2.7500000000000004.
+func roundCurrency(v float64) float64 {
+	return math.Round(v*100) / 100
+}
+
+// ResetBudgetPeriod restarts one budget window from now, by moving that
+// window's cycle anchor. The other window (and every usage row) is untouched:
+// resetting the week must not erase what has been spent this month, and the
+// usage ledger is never rewritten — only the accounting window moves.
+//
+// Authorization is accessProjectAdmin, the same level the budget PATCH
+// requires. This is a mutation that can unblock agent runs, so it must never be
+// reachable through a member-level read guard.
+func (s *Service) ResetBudgetPeriod(ctx context.Context, projectID string, window BudgetWindow, userID string) (*BudgetPeriod, error) {
+	var bw budgetwindow.Window
+	switch window {
+	case BudgetWindowWeek:
+		bw = budgetwindow.Week
+	case BudgetWindowMonth:
+		bw = budgetwindow.Month
+	default:
+		return nil, apperror.New(400, "validation-failed", "window must be week or month")
+	}
+
+	if err := s.authorizeProject(ctx, projectID, userID, accessProjectAdmin); err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	if err := s.repo.ResetBudgetWindowAnchor(ctx, projectID, bw, now); err != nil {
+		return nil, err
+	}
+
+	// Report the window the caller now sees, computed by the same package the
+	// provider uses for spend and alerts.
+	p := budgetwindow.PeriodFor(now, &now, bw)
+	return &BudgetPeriod{Window: window, PeriodStart: p.Start, PeriodEnd: p.End}, nil
 }
 
 // SkillCaptureConfigForProject returns the project's skill-capture policy.

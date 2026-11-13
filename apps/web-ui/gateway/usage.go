@@ -121,8 +121,8 @@ func totalCost(rows []UsageSummaryRow) float64 {
 // month spend when the backend reports it), a daily token chart, a
 // sessions-per-day chart, a per-model table, and a 7/30/90-day range selector
 // (?days=, default 30). A failed summary fetch renders the whole-page error
-// state; the current-month spend call is best-effort and omits the card on
-// failure.
+// state; the current-month spend and budget calls are best-effort (the budget
+// section degrades to "unavailable" rather than failing the page).
 func (s *Server) uiUsage(c echo.Context) error {
 	ctx := c.Request().Context()
 	days := usageRangeDays(c.QueryParam("days"))
@@ -140,6 +140,8 @@ func (s *Server) uiUsage(c echo.Context) error {
 		convsErr   error
 		monthSum   *UsageSummaryResponse
 		monthErr   error
+		budget     *BudgetState
+		budgetErr  error
 	)
 	var g errgroup.Group
 	g.Go(func() error { summary, summaryErr = s.memory.GetProjectUsageSummary(ctx, since, until); return nil })
@@ -149,31 +151,46 @@ func (s *Server) uiUsage(c echo.Context) error {
 	})
 	g.Go(func() error { convs, convsErr = s.memory.ListConversations(ctx, true); return nil })
 	g.Go(func() error { monthSum, monthErr = s.memory.GetProjectUsageSummary(ctx, monthStart, now); return nil })
+	// Read through the cache, but do not let a cached-but-stale reading hide a
+	// reset the user just performed: the reset handler invalidates the entry.
+	g.Go(func() error { budget, budgetErr = s.cachedBudgetState(ctx); return nil })
 	_ = g.Wait()
 
-	if summaryErr != nil {
-		return s.page(c, pageTitle("Usage"), UsagePage(nil, nil, usageChartPayload{}, 0, false, days, userFacingError(summaryErr)))
-	}
-	if seriesErr != nil {
-		return s.page(c, pageTitle("Usage"), UsagePage(summary, nil, usageChartPayload{}, 0, false, days, userFacingError(seriesErr)))
-	}
-	if convsErr != nil {
-		return s.page(c, pageTitle("Usage"), UsagePage(summary, series, usageChartPayload{}, 0, false, days, userFacingError(convsErr)))
+	data := usagePageData{
+		Budget:    budget,
+		BudgetErr: budgetErr,
+		Days:      days,
+		FlashMsg:  flashFromQuery(c, budgetResetParams),
+		FlashErr:  flashError(c),
 	}
 
-	payload := usageChartPayload{
+	if summaryErr != nil {
+		data.LoadErr = userFacingError(summaryErr)
+		return s.page(c, pageTitle("Usage"), UsagePage(data))
+	}
+	if seriesErr != nil {
+		data.Summary = summary
+		data.LoadErr = userFacingError(seriesErr)
+		return s.page(c, pageTitle("Usage"), UsagePage(data))
+	}
+	if convsErr != nil {
+		data.Summary, data.Series = summary, series
+		data.LoadErr = userFacingError(convsErr)
+		return s.page(c, pageTitle("Usage"), UsagePage(data))
+	}
+
+	data.Summary = summary
+	data.Series = series
+	data.Payload = usageChartPayload{
 		Tokens:   tokenSeries(series.Data, since, until),
 		Sessions: sessionSeries(convs.Conversations, since, until),
 	}
-
-	monthSpend := 0.0
-	hasMonthSpend := false
 	if monthErr == nil && monthSum != nil {
-		monthSpend = totalCost(monthSum.Data)
-		hasMonthSpend = true
+		data.MonthSpend = totalCost(monthSum.Data)
+		data.HasMonthSpend = true
 	}
 
-	return s.page(c, pageTitle("Usage"), UsagePage(summary, series, payload, monthSpend, hasMonthSpend, days, nil))
+	return s.page(c, pageTitle("Usage"), UsagePage(data))
 }
 
 // usageInstanceSlug returns the provider instance that served a usage row,

@@ -1,0 +1,157 @@
+package main
+
+import ui "github.com/emergent-company/go-daisy/components/ui"
+
+// --- Budget UI: nav badge + usage-page panels ---
+
+// sidebarBudgetBadge is the Usage nav marker. It appears only when a capped
+// window has crossed its alert threshold (warning) or its cap (exhausted), which
+// is what makes it worth looking at — a badge on every project would be noise.
+// The detail lives in the title attribute, because the nav has no room for the
+// numbers.
+templ sidebarBudgetBadge(level string) {
+	if level == "exhausted" {
+		@ui.Badge(ui.BadgeProps{
+			Label:    "Over budget",
+			Variant:  ui.BadgeError,
+			Size:     ui.BadgeSizeXS,
+			MaxWidth: "max-w-20",
+			Attrs: templ.Attributes{
+				"data-testid": "budget-nav-badge",
+				"data-level":  "exhausted",
+				"title":       "A budget window is exhausted — agent runs are blocked until it resets",
+				"class":       "ml-1",
+			},
+		})
+	} else if level == "warning" {
+		@ui.Badge(ui.BadgeProps{
+			Label:    "Near limit",
+			Variant:  ui.BadgeWarning,
+			Size:     ui.BadgeSizeXS,
+			MaxWidth: "max-w-20",
+			Attrs: templ.Attributes{
+				"data-testid": "budget-nav-badge",
+				"data-level":  "warning",
+				"title":       "A budget window has crossed its alert threshold",
+				"class":       "ml-1",
+			},
+		})
+	}
+}
+
+// usageBudgetSection is the usage page's budget block: one card per spending
+// window showing spend against the cap, what is left, when the window resets,
+// and a per-window reset control.
+//
+// Both windows are always shown, capped or not, so "the weekly cap is missing"
+// is visible rather than implied by an absent card.
+templ usageBudgetSection(state *BudgetState, loadErr error) {
+	@ui.Section("Budget", ui.SectionProps{Margin: "mt-6", BodyClass: "memory-density-comfortable"}) {
+		if loadErr != nil {
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+				Budget details are unavailable right now.
+			}
+		} else if state == nil {
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+				Budget details are unavailable right now.
+			}
+		} else if !state.Week.Capped() && !state.Month.Capped() {
+			<div class="flex flex-col gap-2">
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+					No spend cap is set for this project, so agent runs are never blocked on budget.
+				}
+				<a href="/settings/budget" class="link link-primary text-sm">Set a budget</a>
+			</div>
+		} else {
+			<div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+				@budgetWindowCard(state.Week, "week")
+				@budgetWindowCard(state.Month, "month")
+			</div>
+		}
+	}
+}
+
+// budgetWindowCard renders one spending window. The reset control posts to the
+// gateway (which forwards to the admin-only memory endpoint) and is offered
+// only for a capped window: resetting an uncapped window would move the
+// accounting boundary to no effect.
+templ budgetWindowCard(w *BudgetWindowState, window string) {
+	<div class="border-base-content/10 rounded-box border p-4" data-testid={ "budget-" + window }>
+		<div class="flex items-center justify-between gap-2">
+			<p class="text-sm font-medium">{ budgetWindowLabel(w) }</p>
+			if w.Capped() {
+				@ui.Badge(ui.BadgeProps{
+					Label:   budgetStatusLabel(w.Status),
+					Variant: budgetStatusIntent(w.Status),
+					Size:    ui.BadgeSizeXS,
+					Dot:     true,
+					Attrs:   templ.Attributes{"data-status": w.Status},
+				})
+			}
+		</div>
+		if !w.Capped() {
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-2"}) {
+				No { budgetWindowNoun(window) } limit set — spend in this window does not block agent runs.
+			}
+			<a href="/settings/budget" class="link link-primary mt-2 inline-block text-xs">Set a { budgetWindowNoun(window) } limit</a>
+		} else {
+			<p class="mt-2 text-lg font-semibold">
+				{ budgetMoney(w.SpendUSD) }
+				<span class="text-muted-faint text-sm font-normal">of { budgetMoney(*w.CapUSD) }</span>
+			</p>
+			<div class="bg-base-300 mt-2 h-2 w-full overflow-hidden rounded-full">
+				<div class={ "h-full", budgetBarClass(w.Status) } style={ "width: " + budgetBarWidth(w.PercentUsed) }></div>
+			</div>
+			<div class="text-muted-strong mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+				<span>{ budgetPct(w.PercentUsed) } used</span>
+				<span data-testid={ "budget-remaining-" + window }>{ budgetMoney(budgetRemaining(w)) } left</span>
+				<span data-testid={ "budget-resets-" + window }>Resets { budgetResetsOn(w) }</span>
+			</div>
+			if w.Status == "exhausted" {
+				<p class="text-error mt-2 text-xs font-medium">Agent runs are blocked until this window resets or the cap is raised.</p>
+			}
+			<div class="mt-3">
+				<form method="post" action="/settings/budget/reset">
+					<input type="hidden" name="window" value={ window }/>
+					<input type="hidden" name="back" value="usage"/>
+					@ui.Button(ui.ButtonProps{
+						Variant: ui.ButtonGhost,
+						Size:    ui.ButtonXS,
+						Icon:    "lucide--rotate-ccw",
+						Attrs: templ.Attributes{
+							"type":        "submit",
+							"data-testid": "budget-reset-" + window,
+							"onclick":     "return confirm('Reset the " + budgetWindowNoun(window) + " window? Spend so far in this window will stop counting toward the cap. Usage history is not deleted.')",
+						},
+					}) {
+						Reset { budgetWindowNoun(window) } window
+					}
+				</form>
+			</div>
+		}
+	</div>
+}
+
+// budgetStatusIntent maps a window status to the badge tone.
+func budgetStatusIntent(status string) ui.BadgeIntent {
+	switch status {
+	case "exhausted":
+		return ui.BadgeError
+	case "warning":
+		return ui.BadgeWarning
+	default:
+		return ui.BadgeSuccess
+	}
+}
+
+// budgetBarClass is the fill colour of the usage bar for a status.
+func budgetBarClass(status string) string {
+	switch status {
+	case "exhausted":
+		return "bg-error"
+	case "warning":
+		return "bg-warning"
+	default:
+		return "bg-success"
+	}
+}

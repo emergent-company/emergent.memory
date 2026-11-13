@@ -11,22 +11,64 @@ import (
 
 // --- Usage dashboard ---
 
+// usagePageData is the rendered payload of the usage dashboard. It is a struct
+// rather than a parameter list because the page has grown four independent
+// concerns — the summary, the charts, the budget panels and PRG feedback — and
+// a positional call with eight arguments is how a "days" ends up in an error
+// slot.
+type usagePageData struct {
+	Summary    *UsageSummaryResponse
+	Series     *UsageTimeSeriesResponse
+	Payload    usageChartPayload
+	MonthSpend float64
+	// HasMonthSpend is false when the current-month spend call failed; the card
+	// is then omitted rather than shown as $0.
+	HasMonthSpend bool
+	// Budget is the project's week/month budget position. Nil (with BudgetErr
+	// nil) means the reading is unavailable and the section degrades.
+	Budget *BudgetState
+	// BudgetErr is a failed budget fetch: the page still renders, the budget
+	// section says it is unavailable. A budget outage never fails the page.
+	BudgetErr error
+	FlashMsg  string
+	FlashErr  error
+	Days      int
+	LoadErr   error
+}
+
 // UsagePage renders the usage dashboard: summary cards (total tokens, range
 // cost, sessions, current-month spend when available), a daily token chart, a
-// sessions-per-day chart, a per-model table, and a 7/30/90-day range selector.
+// sessions-per-day chart, a per-model table, the budget panels (remaining
+// budget and reset timing for each window), and a 7/30/90-day range selector.
 // A failed backend fetch renders the whole-page error state (no crash).
-templ UsagePage(summary *UsageSummaryResponse, series *UsageTimeSeriesResponse, payload usageChartPayload, monthSpend float64, hasMonthSpend bool, days int, loadErr error) {
+templ UsagePage(data usagePageData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@usageHeader()
-		if loadErr != nil {
-			@pageErrorNotice("Failed to load usage", loadErr)
+		@pageHeader("Project", "Usage", "LLM token consumption, session activity and remaining budget for this project — costs are retail-price estimates.") {
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/settings/budget",
+				Variant: ui.ButtonSecondary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--wallet",
+				Attrs:   templ.Attributes{"data-testid": "usage-manage-budget"},
+			}) {
+				Manage budget
+			}
+		}
+		@flashToasts(data.FlashMsg, data.FlashErr)
+		if data.LoadErr != nil {
+			@pageErrorNotice("Failed to load usage", data.LoadErr)
 		} else {
-			@usageRangeSelector(days)
-			if hasUsageData(summary, series) {
-				@usageSummaryCards(summary, payload, monthSpend, hasMonthSpend)
-				@usageCharts(payload)
-				@usageModelSection(summary)
-				if note := usageNote(summary, series); note != "" {
+			@usageRangeSelector(data.Days)
+			// The budget panels stand on their own: they render even when the
+			// selected range has no usage rows, because "you are near your
+			// limit" matters most when the page is otherwise empty.
+			@usageBudgetSection(data.Budget, data.BudgetErr)
+			if hasUsageData(data.Summary, data.Series) {
+				@usageSummaryCards(data.Summary, data.Payload, data.MonthSpend, data.HasMonthSpend)
+				@usageCharts(data.Payload)
+				@usageModelSection(data.Summary)
+				if note := usageNote(data.Summary, data.Series); note != "" {
 					@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Tone: ui.EmptyNoteToneQuiet, Class: "mt-6"}) {
 						{ note }
 					}
@@ -36,10 +78,6 @@ templ UsagePage(summary *UsageSummaryResponse, series *UsageTimeSeriesResponse, 
 			}
 		}
 	}
-}
-
-templ usageHeader() {
-	@pageHeader("Project", "Usage", "LLM token consumption and session activity for this project — costs are retail-price estimates.")
 }
 
 // usageRangeSelector renders the 7/30/90-day links; the active range is

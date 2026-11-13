@@ -529,8 +529,9 @@ type ephemeralTokenSvc interface {
 	RevokeEphemeral(ctx context.Context, tokenID string)
 }
 
-// BudgetExceededError is returned by Execute when a project's monthly spending
-// limit has been reached and BUDGET_ENFORCEMENT_ENABLED=true.
+// BudgetExceededError is returned by Execute when one of a project's spending
+// windows (weekly or monthly) has reached its limit and
+// BUDGET_ENFORCEMENT_ENABLED=true.
 type BudgetExceededError struct {
 	ProjectID string
 	Message   string
@@ -540,7 +541,7 @@ func (e *BudgetExceededError) Error() string {
 	if e.Message != "" {
 		return e.Message
 	}
-	return fmt.Sprintf("project %s has exceeded its monthly budget", e.ProjectID)
+	return fmt.Sprintf("project %s has exceeded a spending budget window", e.ProjectID)
 }
 
 // ErrExecutionDisabled is the sentinel error returned by every agent execution
@@ -1136,7 +1137,8 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		return nil, err
 	}
 
-	// Budget pre-flight check — hard stop when project has exceeded its monthly budget.
+	// Budget pre-flight check — hard stop when either spending window (week or
+	// month) has reached its cap. CheckBudgetExceeded covers both.
 	if ae.usageService != nil && req.ProjectID != "" {
 		exceeded, err := ae.usageService.CheckBudgetExceeded(ctx, req.ProjectID)
 		if err != nil {
@@ -1152,7 +1154,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 			)
 			return nil, &BudgetExceededError{
 				ProjectID: req.ProjectID,
-				Message:   fmt.Sprintf("project %s has exceeded its monthly spending budget", req.ProjectID),
+				Message:   fmt.Sprintf("project %s has exceeded its spending budget", req.ProjectID),
 			}
 		}
 	}

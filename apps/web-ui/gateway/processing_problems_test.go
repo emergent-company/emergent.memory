@@ -180,7 +180,7 @@ func TestDocumentsProblemsPanelHiddenWhenClear(t *testing.T) {
 }
 
 func TestSidebarDocumentsBadge(t *testing.T) {
-	groups := sidebarGroupsWithWarn("", false, 7)
+	groups := sidebarGroupsWithWarn("", false, sidebarWarns{Documents: 7})
 	found := false
 	for _, g := range groups {
 		for _, item := range g.Items {
@@ -204,7 +204,7 @@ func TestSidebarDocumentsBadge(t *testing.T) {
 		t.Fatal("Documents item missing from sidebar")
 	}
 
-	for _, g := range sidebarGroupsWithWarn("", false, 0) {
+	for _, g := range sidebarGroupsWithWarn("", false, sidebarWarns{}) {
 		for _, item := range g.Items {
 			if item.Label == "Documents" && item.Warn != nil {
 				t.Fatal("zero problems rendered a badge")

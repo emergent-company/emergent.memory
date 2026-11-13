@@ -79,7 +79,7 @@ func pageTestID(title string) string {
 // "Settings" item, so the group label and its landing page never read as the
 // same thing twice.
 func sidebarGroups(base string, isOrgAdmin bool) []layout.SidebarGroup {
-	return sidebarGroupsWithWarn(base, isOrgAdmin, 0)
+	return sidebarGroupsWithWarn(base, isOrgAdmin, sidebarWarns{})
 }
 
 // sidebarSettingsHref reports whether href points at the sidebar's Settings hub
@@ -107,14 +107,30 @@ func sidebarSettingsHref(href string) bool {
 	return false
 }
 
-// sidebarGroupsWithWarn is sidebarGroups plus the Documents attention badge.
-// The badge counts document-related terminal failures only (extraction,
-// conversion, chunk embeddings); other areas surface in the Documents panel
-// and can earn their own badge later.
-func sidebarGroupsWithWarn(base string, isOrgAdmin bool, documentsWarn int) []layout.SidebarGroup {
+// sidebarWarns carries the per-project attention counts the sidebar renders as
+// badges. Each is computed best-effort by page(): a failed lookup hides its
+// badge rather than failing the render.
+type sidebarWarns struct {
+	// Documents counts document-related terminal failures.
+	Documents int
+	// Budget is the budget attention level: "" (nothing to say), "warning"
+	// (a capped window crossed its alert threshold) or "exhausted" (a cap was
+	// hit, so agent runs are blocked).
+	Budget string
+}
+
+// sidebarGroupsWithWarn is sidebarGroups plus the attention badges: Documents
+// (terminal failure count) and Usage (budget level). The Documents badge counts
+// document-related terminal failures only; other areas surface in the Documents
+// panel and can earn their own badge later.
+func sidebarGroupsWithWarn(base string, isOrgAdmin bool, warns sidebarWarns) []layout.SidebarGroup {
 	documentsItem := layout.SidebarItem{Label: "Documents", Href: base + "/documents", Icon: "lucide--file-text"}
-	if documentsWarn > 0 {
-		documentsItem.Warn = sidebarWarnBadge(documentsWarn)
+	if warns.Documents > 0 {
+		documentsItem.Warn = sidebarWarnBadge(warns.Documents)
+	}
+	usageItem := layout.SidebarItem{Label: "Usage", Href: base + "/usage", Icon: "lucide--chart-column"}
+	if warns.Budget != "" {
+		usageItem.Warn = sidebarBudgetBadge(warns.Budget)
 	}
 	memoryItems := []layout.SidebarItem{
 		{Label: "Objects", Href: base + "/objects", Icon: "lucide--box"},
@@ -132,8 +148,8 @@ func sidebarGroupsWithWarn(base string, isOrgAdmin bool, documentsWarn int) []la
 		{Label: "API Tokens", Href: base + "/settings/tokens", Icon: "lucide--key-round"},
 		{Label: "MCP Servers", Href: base + "/settings/mcp-servers", Icon: "lucide--server"},
 		{Label: "MCP Registry", Href: base + "/settings/mcp-registry", Icon: "lucide--globe"},
-		{Label: "Usage", Href: base + "/usage", Icon: "lucide--chart-column"},
 	}
+	projectItems = append(projectItems, usageItem)
 	if isOrgAdmin {
 		// Backups are org-scoped and org_admin-gated (see #997). Hiding the
 		// entry beats landing a non-admin on a page that degrades to an error.
@@ -452,7 +468,16 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 		} else {
 			documentsWarn = processingDocumentsCount(report)
 		}
-		groups = layout.ActiveSidebarGroups(sidebarGroupsWithWarn(navBase, isOrgAdmin(tree, backupsOrgID), documentsWarn), activePath)
+		// Budget badge: the Usage entry lights up when a capped window has
+		// crossed its threshold (warning) or its cap (exhausted). Best-effort
+		// and cached for 60s; a failure just hides the badge.
+		budgetLevel := ""
+		if state, err := s.cachedBudgetState(c.Request().Context()); err != nil {
+			captureError(err)
+		} else {
+			budgetLevel = budgetBadgeLevel(state)
+		}
+		groups = layout.ActiveSidebarGroups(sidebarGroupsWithWarn(navBase, isOrgAdmin(tree, backupsOrgID), sidebarWarns{Documents: documentsWarn, Budget: budgetLevel}), activePath)
 		// Warn in the settings nav when the active project has zero configured
 		// LLM providers. Fail-safe helper: false on lookup errors.
 		providersMissing = s.projectHasNoProviders(c.Request().Context())

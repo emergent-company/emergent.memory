@@ -295,7 +295,7 @@ func TestOneH1PerPage(t *testing.T) {
 		{"approvals", ApprovalsPage(nil, nil, errTest), 1},
 		{"skills", SkillsPage(nil, errTest, nil, nil, newSkillProposalQuery("", ""), "", nil, "", nil), 1},
 		{"sessions", SessionsPage(nil, nil, errTest), 1},
-		{"usage", UsagePage(nil, nil, usageChartPayload{}, 0, false, 30, errTest), 1},
+		{"usage", UsagePage(usagePageData{Days: 30, LoadErr: errTest}), 1},
 		{"backups", BackupsPage(nil, 0, nil, false, "", errTest, "", nil), 1},
 		{"inbox (list region lowers the error)", InboxPage(inboxView{LoadErr: errTest}), 1},
 		{"members", MembersPage(membersPageData{Base: "/members", LoadErr: errTest}), 1},
