@@ -10,7 +10,7 @@
 // listed here are exempt from the root
 // coverage guard (.github/scripts/check-go-work-coverage.sh) because they are
 // covered by this workspace instead.
-go 1.25.6
+go 1.26.0
 
 use (
 	.

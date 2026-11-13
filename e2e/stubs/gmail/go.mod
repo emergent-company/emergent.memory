@@ -1,3 +1,3 @@
 module github.com/emergent-company/emergent.memory/e2e/stubs/gmail
 
-go 1.25
+go 1.26.0
