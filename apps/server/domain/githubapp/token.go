@@ -67,6 +67,10 @@ func (m *TokenMinter) MintInstallationToken(
 	repos []string,
 	permissions map[string]string,
 ) (string, error) {
+	// Normalize before the least-privilege guard: an entry of "/" or whitespace
+	// would otherwise pass the raw length check and vanish here, making the
+	// request omit `repositories` and mint an installation-wide token.
+	repos = normalizeRepositoryNames(repos)
 	// Least privilege is mandatory: an empty scope would mint a token for every
 	// repository and every App permission.
 	if len(repos) == 0 {
@@ -75,7 +79,6 @@ func (m *TokenMinter) MintInstallationToken(
 	if len(permissions) == 0 {
 		return "", errors.New("githubapp: installation token requires an explicit permission set")
 	}
-
 	key := tokenCacheKey(appID, installationID, repos, permissions)
 
 	m.mu.Lock()
@@ -163,6 +166,28 @@ func (m *TokenMinter) MintInstallationToken(
 	m.cache[key] = cachedToken{token: out.Token, expiresAt: out.ExpiresAt}
 	m.mu.Unlock()
 	return out.Token, nil
+}
+
+// normalizeRepositoryNames strips an owner prefix from each entry, preserving
+// order and deduplicating after trimming. GitHub accepts names only.
+func normalizeRepositoryNames(repos []string) []string {
+	seen := make(map[string]struct{}, len(repos))
+	out := make([]string, 0, len(repos))
+	for _, repo := range repos {
+		repo = strings.TrimSpace(repo)
+		if i := strings.LastIndexByte(repo, '/'); i >= 0 {
+			repo = repo[i+1:]
+		}
+		if repo == "" {
+			continue
+		}
+		if _, ok := seen[repo]; ok {
+			continue
+		}
+		seen[repo] = struct{}{}
+		out = append(out, repo)
+	}
+	return out
 }
 
 // Invalidate drops cached tokens for an App installation.

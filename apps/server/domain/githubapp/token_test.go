@@ -64,7 +64,7 @@ func TestMintInstallationToken(t *testing.T) {
 		t.Fatalf("iss = %d, want 42", claims.Iss)
 	}
 
-	if repos, ok := gotBody["repositories"].([]any); !ok || len(repos) != 1 || repos[0] != "owner/repo" {
+	if repos, ok := gotBody["repositories"].([]any); !ok || len(repos) != 1 || repos[0] != "repo" {
 		t.Fatalf("repositories = %#v", gotBody["repositories"])
 	}
 	perms, ok := gotBody["permissions"].(map[string]any)
@@ -117,5 +117,44 @@ func TestMintInstallationTokenError(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "Bearer") || strings.Contains(err.Error(), "eyJ") {
 		t.Fatalf("error leaks the jwt: %v", err)
+	}
+}
+
+func TestMintInstallationTokenNormalizesRepositoryNames(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Repositories []string `json:"repositories"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		got = body.Repositories
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"token":"tok","expires_at":"2099-01-01T00:00:00Z"}`))
+	}))
+	defer srv.Close()
+
+	key := testRSAKey(t)
+	minter := NewTokenMinter(srv.URL, srv.Client())
+	_, err := minter.MintInstallationToken(context.Background(), 1, pkcs1PEM(key), 2,
+		[]string{"acme/repo-one", "repo-two", "acme/repo-one"}, map[string]string{"contents": "read"})
+	if err != nil {
+		t.Fatalf("MintInstallationToken: %v", err)
+	}
+	want := []string{"repo-one", "repo-two"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("repositories = %v, want %v", got, want)
+	}
+}
+
+func TestMintInstallationTokenRejectsEmptyAfterNormalization(t *testing.T) {
+	key := testRSAKey(t)
+	minter := NewTokenMinter("https://api.github.com", nil)
+	_, err := minter.MintInstallationToken(context.Background(), 1, pkcs1PEM(key), 2,
+		[]string{"", "  ", "/"}, map[string]string{"contents": "read"})
+	if err == nil {
+		t.Fatal("minted a token for an empty repository list")
 	}
 }
