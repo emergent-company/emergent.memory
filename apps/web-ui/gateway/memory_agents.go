@@ -133,6 +133,16 @@ type RuntimeAgent struct {
 	Enabled           bool   `json:"enabled"`
 }
 
+// ListRuntimeAgents returns the project's kb.agents rows.
+func (m *MemoryClient) ListRuntimeAgents(ctx context.Context, projectID string) ([]RuntimeAgent, error) {
+	var env successEnvelope[[]RuntimeAgent]
+	path := "/api/projects/" + url.PathEscape(projectID) + "/agents"
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &env); err != nil {
+		return nil, err
+	}
+	return env.Data, nil
+}
+
 type CreateRuntimeAgentRequest struct {
 	ProjectID         string `json:"projectId"`
 	Name              string `json:"name"`
