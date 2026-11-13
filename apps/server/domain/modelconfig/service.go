@@ -148,13 +148,21 @@ func (s *Service) GetProjectModelConfig(ctx context.Context, projectID uuid.UUID
 //
 // The update is partial: a field the caller does not supply keeps its stored
 // value, so `set-models --generative X` no longer wipes the embedding model.
-// Clearing is the DELETE endpoint, which removes the whole row.
+// Because an empty string therefore means "leave as is", clearing one field is
+// explicit — ClearGenerative/ClearEmbedding — and clearing the whole config is
+// the DELETE endpoint.
 func (s *Service) UpsertProjectModelConfig(ctx context.Context, projectID uuid.UUID, req UpsertModelConfigRequest) (*ModelConfigResponse, error) {
 	if err := validateModelName("generativeModel", req.GenerativeModel); err != nil {
 		return nil, err
 	}
 	if err := validateModelName("embeddingModel", req.EmbeddingModel); err != nil {
 		return nil, err
+	}
+	if req.ClearGenerative && req.GenerativeModel != "" {
+		return nil, apperror.NewBadRequest("generativeModel: set a model or clearGenerative, not both")
+	}
+	if req.ClearEmbedding && req.EmbeddingModel != "" {
+		return nil, apperror.NewBadRequest("embeddingModel: set a model or clearEmbedding, not both")
 	}
 	genRef, _ := modelref.Parse(req.GenerativeModel)
 	embRef, _ := modelref.Parse(req.EmbeddingModel)
@@ -178,14 +186,20 @@ func (s *Service) UpsertProjectModelConfig(ctx context.Context, projectID uuid.U
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	if req.GenerativeModel != "" {
+	if req.ClearGenerative {
+		cfg.GenerativeModel = ""
+		cfg.GenerativeProviderSlug = ""
+	} else if req.GenerativeModel != "" {
 		cfg.GenerativeModel = genRef.Model
 		cfg.GenerativeProviderSlug = genRef.Provider
 	} else if existing != nil {
 		cfg.GenerativeModel = existing.GenerativeModel
 		cfg.GenerativeProviderSlug = existing.GenerativeProviderSlug
 	}
-	if req.EmbeddingModel != "" {
+	if req.ClearEmbedding {
+		cfg.EmbeddingModel = ""
+		cfg.EmbeddingProviderSlug = ""
+	} else if req.EmbeddingModel != "" {
 		cfg.EmbeddingModel = embRef.Model
 		cfg.EmbeddingProviderSlug = embRef.Provider
 	} else if existing != nil {

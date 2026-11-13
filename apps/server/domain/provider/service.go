@@ -144,6 +144,9 @@ func NewCredentialService(
 // Returns nil, nil when no project context is present (env-var callers).
 // Returns an error when the project has no config for this provider.
 func (s *CredentialService) Resolve(ctx context.Context, provider ProviderType) (*ResolvedCredential, error) {
+	// Accept documented aliases here so validation (ModelProviderKnown) and
+	// resolution agree; "gemini" resolves as the "google" dialect.
+	provider = normalizeDialectName(provider)
 	if !s.registry.IsSupported(provider) {
 		return nil, fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -1059,17 +1062,35 @@ func isDialectName(s string) bool {
 	return dialectNames[s]
 }
 
+// dialectAliases maps accepted provider-name aliases to their dialect. They are
+// part of dialectNames so write-time validation accepts them, and resolution
+// normalizes them through normalizeDialectName — otherwise a reference that
+// passed validation fails per call with "unsupported provider".
+var dialectAliases = map[string]ProviderType{
+	"gemini": ProviderGoogleAI,
+}
+
+// normalizeDialectName maps an accepted alias to its dialect; any other name is
+// returned unchanged.
+func normalizeDialectName(name ProviderType) ProviderType {
+	if dialect, ok := dialectAliases[string(name)]; ok {
+		return dialect
+	}
+	return name
+}
+
 // dialectNames is the set of recognized provider dialect IDs plus accepted
 // aliases, built from Builtins() at package init.
 var dialectNames = buildDialectNames()
 
 func buildDialectNames() map[string]bool {
-	names := make(map[string]bool, len(Builtins())+1)
+	names := make(map[string]bool, len(Builtins())+len(dialectAliases))
 	for _, d := range Builtins() {
 		names[string(d.Type)] = true
 	}
-	// "gemini" is an accepted alias for the "google" dialect.
-	names["gemini"] = true
+	for alias := range dialectAliases {
+		names[alias] = true
+	}
 	return names
 }
 

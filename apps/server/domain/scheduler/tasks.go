@@ -2,6 +2,8 @@ package scheduler
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -91,47 +93,90 @@ func (t *TagCleanupTask) Run(ctx context.Context) error {
 	return nil
 }
 
-// CacheCleanupTask removes expired cache entries
+// defaultEmbeddingCacheRetentionDays is used when the configured retention is
+// not positive. Thirty days keeps a warm cache across normal use while bounding
+// the table after a model switch or a key-derivation change.
+const defaultEmbeddingCacheRetentionDays = 30
+
+// CacheCleanupTask removes expired auth introspection cache entries and prunes
+// kb.embedding_cache rows past their retention window.
+//
+// The embedding cache is global, not project-scoped: cache_key is a hash of
+// (model, format, text) with no project column, so two projects on the same
+// model and text share one entry. Making it project-scoped would need a schema
+// and key change; TTL pruning is the smallest bounded fix for the unbounded
+// growth a model switch — every key includes the model — or a key-derivation
+// change leaves behind (issue #684). A pruned row is simply re-embedded on its
+// next miss, so pruning costs one lookup, not correctness.
 type CacheCleanupTask struct {
-	db  *bun.DB
-	log *slog.Logger
+	db            *bun.DB
+	log           *slog.Logger
+	retentionDays int
 }
 
-// NewCacheCleanupTask creates a new cache cleanup task
-func NewCacheCleanupTask(db *bun.DB, log *slog.Logger) *CacheCleanupTask {
+// NewCacheCleanupTask creates a new cache cleanup task.
+// retentionDays is the maximum age (in days) of a kb.embedding_cache row;
+// values <= 0 fall back to defaultEmbeddingCacheRetentionDays.
+func NewCacheCleanupTask(db *bun.DB, log *slog.Logger, retentionDays int) *CacheCleanupTask {
+	if retentionDays <= 0 {
+		retentionDays = defaultEmbeddingCacheRetentionDays
+	}
 	return &CacheCleanupTask{
-		db:  db,
-		log: log.With(logger.Scope("scheduler.cache_cleanup")),
+		db:            db,
+		log:           log.With(logger.Scope("scheduler.cache_cleanup")),
+		retentionDays: retentionDays,
 	}
 }
 
-// Run executes the cache cleanup
+// Run executes the cache cleanup. The two caches are pruned independently: a
+// failure in one is logged and reported but never skips the other, so one
+// broken table cannot silently let the other grow unnoticed.
 func (t *CacheCleanupTask) Run(ctx context.Context) error {
 	start := time.Now()
 	t.log.Debug("cleaning up expired cache entries")
 
-	// Delete expired introspection cache entries
+	var errs []error
+
+	// Delete expired auth introspection cache entries.
 	result, err := t.db.ExecContext(ctx, `
 		DELETE FROM kb.auth_introspection_cache
 		WHERE expires_at < NOW()
 	`)
 	if err != nil {
-		t.log.Error("failed to clean up cache",
+		t.log.Error("failed to clean up auth introspection cache",
 			slog.String("error", err.Error()))
-		return err
-	}
-
-	rowsAffected, _ := result.RowsAffected()
-	if rowsAffected > 0 {
-		t.log.Info("cleaned up expired cache entries",
-			slog.Int64("count", rowsAffected),
-			slog.Duration("duration", time.Since(start)))
+		errs = append(errs, fmt.Errorf("auth_introspection_cache: %w", err))
+	} else if rowsAffected, _ := result.RowsAffected(); rowsAffected > 0 {
+		t.log.Info("cleaned up expired auth introspection cache entries",
+			slog.Int64("count", rowsAffected))
 	} else {
-		t.log.Debug("no expired cache entries to clean up",
-			slog.Duration("duration", time.Since(start)))
+		t.log.Debug("no expired auth introspection cache entries to clean up")
 	}
 
-	return nil
+	// Prune embedding cache rows past the retention window. created_at is
+	// indexed by migration 00295 so this does not seq-scan a large table.
+	cutoff := start.AddDate(0, 0, -t.retentionDays)
+	result, err = t.db.ExecContext(ctx, `
+		DELETE FROM kb.embedding_cache
+		WHERE created_at < ?
+	`, cutoff)
+	if err != nil {
+		t.log.Error("failed to prune embedding cache",
+			slog.String("error", err.Error()),
+			slog.Int("retention_days", t.retentionDays))
+		errs = append(errs, fmt.Errorf("embedding_cache: %w", err))
+	} else if rowsAffected, _ := result.RowsAffected(); rowsAffected > 0 {
+		t.log.Info("pruned old embedding cache entries",
+			slog.Int64("count", rowsAffected),
+			slog.Int("retention_days", t.retentionDays))
+	} else {
+		t.log.Debug("no old embedding cache entries to prune")
+	}
+
+	t.log.Debug("cache cleanup finished",
+		slog.Duration("duration", time.Since(start)))
+
+	return errors.Join(errs...)
 }
 
 const (

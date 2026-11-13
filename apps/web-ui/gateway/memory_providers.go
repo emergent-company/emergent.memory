@@ -358,11 +358,17 @@ func (m *MemoryClient) GetEffectiveModelConfig(ctx context.Context) (*EffectiveM
 // UpsertProjectModelConfig sets the project's default generative + embedding
 // models (PUT /api/v1/projects/{projectId}/model-config). Model names must
 // include a provider prefix (e.g. "deepseek/deepseek-v4-pro"). The update is
-// partial: an empty field keeps the stored model, so this form can never clear
-// one by submitting an empty select. Clearing is a DELETE on the same path.
-func (m *MemoryClient) UpsertProjectModelConfig(ctx context.Context, generativeModel, embeddingModel string) (*ProjectModelConfig, error) {
+// partial: an empty field keeps the stored model, so removing one model is the
+// explicit clearGenerative/clearEmbedding flag; clearing both is a DELETE on the
+// same path.
+func (m *MemoryClient) UpsertProjectModelConfig(ctx context.Context, generativeModel, embeddingModel string, clearGenerative, clearEmbedding bool) (*ProjectModelConfig, error) {
 	path := "/api/v1/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/model-config"
-	body := map[string]string{"generativeModel": generativeModel, "embeddingModel": embeddingModel}
+	body := map[string]any{
+		"generativeModel": generativeModel,
+		"embeddingModel":  embeddingModel,
+		"clearGenerative": clearGenerative,
+		"clearEmbedding":  clearEmbedding,
+	}
 	var out ProjectModelConfig
 	if err := m.do(ctx, http.MethodPut, path, body, &out); err != nil {
 		return nil, err

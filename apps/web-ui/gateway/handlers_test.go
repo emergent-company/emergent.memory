@@ -2713,11 +2713,17 @@ func (f *fakeMemory) GetProjectModelConfig(ctx context.Context) (*ProjectModelCo
 	return f.modelConfig, nil
 }
 
-func (f *fakeMemory) UpsertProjectModelConfig(ctx context.Context, generativeModel, embeddingModel string) (*ProjectModelConfig, error) {
+func (f *fakeMemory) UpsertProjectModelConfig(ctx context.Context, generativeModel, embeddingModel string, clearGenerative, clearEmbedding bool) (*ProjectModelConfig, error) {
 	if f.providerErr != nil {
 		return nil, f.providerErr
 	}
 	cfg := &ProjectModelConfig{GenerativeModel: generativeModel, EmbeddingModel: embeddingModel}
+	if clearGenerative {
+		cfg.GenerativeModel = ""
+	}
+	if clearEmbedding {
+		cfg.EmbeddingModel = ""
+	}
 	f.lastModelConfig = cfg
 	f.modelConfig = cfg
 	return cfg, nil
@@ -5443,3 +5449,14 @@ func TestListChatModelsReturnsConfiguredGenerativeModels(t *testing.T) {
 		t.Fatalf("expected openai/deepseek-v4-flash in %v", models)
 	}
 }
+
+// Instance email settings surface (superadmin-only) is exercised by
+// platform_email_ui_test.go; the shared fake returns a non-superadmin by default.
+func (f *fakeMemory) GetSuperadminMe(context.Context) (*superadminMe, error) { return nil, nil }
+func (f *fakeMemory) GetInstanceEmailSettings(context.Context) (*instanceEmailSettings, error) {
+	return &instanceEmailSettings{}, nil
+}
+func (f *fakeMemory) UpdateInstanceEmailSettings(context.Context, instanceEmailSettingsInput) (*instanceEmailSettings, error) {
+	return &instanceEmailSettings{}, nil
+}
+func (f *fakeMemory) TestInstanceEmail(context.Context, string) error { return nil }

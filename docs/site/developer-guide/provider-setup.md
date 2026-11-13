@@ -102,7 +102,7 @@ curl -X PUT https://api.example.com/api/v1/projects/<projectId>/model-config \
   }'
 ```
 
-The body replaces the whole model config — send both fields; an omitted one is stored as empty and clears that model.
+The body is a partial update: a model field you send replaces the stored value and one you omit keeps it, so `{"generativeModel": "..."}` leaves the embedding model alone. To remove one model while keeping the other, send `clearGenerative` or `clearEmbedding`; `DELETE` on the same path clears both.
 
 The resolution order is: **project model config → the project's provider credential → error**. Nothing is inherited from an organization, and there is no environment-variable fallback at the request level.
 

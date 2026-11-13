@@ -1126,9 +1126,11 @@ func runSetProjectInfo(cmd *cobra.Command, args []string) error {
 // ── set-models ─────────────────────────────────────────────────────────────────
 
 var (
-	setModelsGenerative string
-	setModelsEmbedding  string
-	setModelsProject    string
+	setModelsGenerative      string
+	setModelsEmbedding       string
+	setModelsProject         string
+	setModelsClearGenerative bool
+	setModelsClearEmbedding  bool
 )
 
 var setModelsCmd = &cobra.Command{
@@ -1138,19 +1140,21 @@ var setModelsCmd = &cobra.Command{
 Model names must include a provider prefix: provider/model-name
 
 Only the models you pass are changed; an omitted flag keeps that model's
-current value. Clearing the model config is a DELETE on the model-config
-endpoint (DELETE /api/v1/projects/:projectId/model-config).
+current value. Use --clear-generative or --clear-embedding to remove one
+model, or DELETE the model-config endpoint to clear both.
 
 Examples:
   memory projects set-models --generative google/gemini-2.5-flash
-  memory projects set-models --embedding google/gemini-embedding-001 --project <projectId>`,
+  memory projects set-models --embedding google/gemini-embedding-001 --project <projectId>
+  memory projects set-models --clear-embedding`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := getClient(cmd)
 		if err != nil {
 			return err
 		}
-		if strings.TrimSpace(setModelsGenerative) == "" && strings.TrimSpace(setModelsEmbedding) == "" {
-			return fmt.Errorf("pass --generative and/or --embedding")
+		if strings.TrimSpace(setModelsGenerative) == "" && strings.TrimSpace(setModelsEmbedding) == "" &&
+			!setModelsClearGenerative && !setModelsClearEmbedding {
+			return fmt.Errorf("pass --generative and/or --embedding, or --clear-generative/--clear-embedding")
 		}
 		projectID := setModelsProject
 		if projectID == "" {
@@ -1162,6 +1166,8 @@ Examples:
 		req := &modelconfig.UpsertRequest{
 			GenerativeModel: setModelsGenerative,
 			EmbeddingModel:  setModelsEmbedding,
+			ClearGenerative: setModelsClearGenerative,
+			ClearEmbedding:  setModelsClearEmbedding,
 		}
 		cfg, err := c.SDK.ModelConfig.Upsert(context.Background(), projectID, req)
 		if err != nil {
@@ -1342,6 +1348,8 @@ func init() {
 	// set-models flags
 	setModelsCmd.Flags().StringVar(&setModelsGenerative, "generative", "", "Generative model with provider prefix, e.g. google/gemini-2.5-flash")
 	setModelsCmd.Flags().StringVar(&setModelsEmbedding, "embedding", "", "Embedding model with provider prefix, e.g. google/gemini-embedding-001")
+	setModelsCmd.Flags().BoolVar(&setModelsClearGenerative, "clear-generative", false, "Remove the stored default generative model")
+	setModelsCmd.Flags().BoolVar(&setModelsClearEmbedding, "clear-embedding", false, "Remove the stored default embedding model")
 	setModelsCmd.Flags().StringVar(&setModelsProject, "project", "", "Project ID (auto-detected from MEMORY_PROJECT_ID)")
 
 	// show-models flags

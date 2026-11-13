@@ -4570,12 +4570,13 @@ Set the default generative and/or embedding model for a project.
 Model names must include a provider prefix: provider/model-name
 
 Only the models you pass are changed; an omitted flag keeps that model's
-current value. Clearing the model config is a DELETE on the model-config
-endpoint (DELETE /api/v1/projects/:projectId/model-config).
+current value. Use --clear-generative or --clear-embedding to remove one
+model, or DELETE the model-config endpoint to clear both.
 
 Examples:
   memory projects set-models --generative google/gemini-2.5-flash
   memory projects set-models --embedding google/gemini-embedding-001 --project <projectId>
+  memory projects set-models --clear-embedding
 
 ```
 memory projects set-models [flags]
@@ -4584,6 +4585,8 @@ memory projects set-models [flags]
 ### Options
 
 ```
+      --clear-embedding     Remove the stored default embedding model
+      --clear-generative    Remove the stored default generative model
       --embedding string    Embedding model with provider prefix, e.g. google/gemini-embedding-001
       --generative string   Generative model with provider prefix, e.g. google/gemini-2.5-flash
   -h, --help                help for set-models

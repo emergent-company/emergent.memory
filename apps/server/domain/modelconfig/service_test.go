@@ -438,6 +438,58 @@ func TestUpsertProjectModelConfigPartialUpdate(t *testing.T) {
 			t.Errorf("stored = (%q, %q), want both preserved", store.cfg.GenerativeModel, store.cfg.EmbeddingModel)
 		}
 	})
+
+	t.Run("clear generative keeps embedding", func(t *testing.T) {
+		store := base()
+		svc := testServiceWithValidator(store, validator)
+		resp, err := svc.UpsertProjectModelConfig(context.Background(), projectID, UpsertModelConfigRequest{
+			ClearGenerative: true,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if store.cfg.GenerativeModel != "" || store.cfg.GenerativeProviderSlug != "" {
+			t.Errorf("generative = (%q, %q), want cleared", store.cfg.GenerativeModel, store.cfg.GenerativeProviderSlug)
+		}
+		if store.cfg.EmbeddingModel != "gemini-embedding-001" || store.cfg.EmbeddingProviderSlug != "google" {
+			t.Errorf("embedding = (%q, %q), want the stored value preserved", store.cfg.EmbeddingModel, store.cfg.EmbeddingProviderSlug)
+		}
+		if resp.GenerativeModel != "" || resp.EmbeddingModel != "google/gemini-embedding-001" {
+			t.Errorf("response = (%q, %q), want (\"\", google/gemini-embedding-001)", resp.GenerativeModel, resp.EmbeddingModel)
+		}
+	})
+
+	t.Run("clear embedding keeps generative", func(t *testing.T) {
+		store := base()
+		svc := testServiceWithValidator(store, validator)
+		_, err := svc.UpsertProjectModelConfig(context.Background(), projectID, UpsertModelConfigRequest{
+			ClearEmbedding: true,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if store.cfg.EmbeddingModel != "" || store.cfg.EmbeddingProviderSlug != "" {
+			t.Errorf("embedding = (%q, %q), want cleared", store.cfg.EmbeddingModel, store.cfg.EmbeddingProviderSlug)
+		}
+		if store.cfg.GenerativeModel != "deepseek-v4-flash" {
+			t.Errorf("generative = %q, want the stored value preserved", store.cfg.GenerativeModel)
+		}
+	})
+
+	t.Run("set and clear the same field is rejected", func(t *testing.T) {
+		store := base()
+		svc := testServiceWithValidator(store, validator)
+		_, err := svc.UpsertProjectModelConfig(context.Background(), projectID, UpsertModelConfigRequest{
+			GenerativeModel: "deepseek/deepseek-chat",
+			ClearGenerative: true,
+		})
+		if err == nil {
+			t.Fatal("expected an error for a model and clearGenerative on the same field")
+		}
+		if store.cfg.GenerativeModel != "deepseek-v4-flash" {
+			t.Errorf("generative = %q, want the stored value untouched after a rejected request", store.cfg.GenerativeModel)
+		}
+	})
 }
 
 // TestDeleteProjectModelConfigClearsRow pins that DELETE remains the way to

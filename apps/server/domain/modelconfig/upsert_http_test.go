@@ -80,6 +80,35 @@ func (s *ModelConfigUpsertSuite) TestPartialUpdatePreservesOmittedModel() {
 	s.Empty(cleared.EmbeddingModel)
 }
 
+func (s *ModelConfigUpsertSuite) TestPartialClearRemovesOneModel() {
+	// Seed both models.
+	s.putModelConfig(map[string]any{
+		"generativeModel": "deepseek/deepseek-v4-flash",
+		"embeddingModel":  "google/gemini-embedding-001",
+	})
+
+	// clearGenerative removes only that field; the update stays partial.
+	resp := s.putModelConfig(map[string]any{"clearGenerative": true})
+	var updated modelconfig.ModelConfigResponse
+	s.Require().NoError(resp.JSON(&updated))
+	s.Empty(updated.GenerativeModel, "clearGenerative kept the generative model")
+	s.Equal("google/gemini-embedding-001", updated.EmbeddingModel, "clearGenerative removed the embedding model")
+
+	stored := s.getModelConfig()
+	s.Empty(stored.GenerativeModel)
+	s.Equal("google/gemini-embedding-001", stored.EmbeddingModel)
+
+	// Setting a model and clearing the same field is a 400.
+	bad := s.Client.PUT("/api/v1/projects/"+s.ProjectID+"/model-config",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"generativeModel": "deepseek/deepseek-chat",
+			"clearGenerative": true,
+		}))
+	s.Require().Equal(http.StatusBadRequest, bad.StatusCode,
+		"set plus clear on one field must be rejected, got %d: %s", bad.StatusCode, bad.String())
+}
+
 func (s *ModelConfigUpsertSuite) TestUnknownProviderRejected() {
 	resp := s.Client.PUT("/api/v1/projects/"+s.ProjectID+"/model-config",
 		testutil.WithAuth("e2e-test-user"),

@@ -118,6 +118,12 @@ memory projects set-models \
 memory projects set-models --embedding "google/gemini-embedding-001"   # generative unchanged
 ```
 
+To remove one model while keeping the other, pass its clear flag:
+
+```bash
+memory projects set-models --clear-embedding   # generative unchanged, embedding removed
+```
+
 The provider in each model name is checked when you save: it must be a supported provider dialect or the slug of an existing project provider instance. A typo such as `google-eu/...` for an instance you have not configured yet is rejected up front. The credential itself does not have to exist yet — selecting a model before adding its API key is allowed.
 
 Because `set-models` writes an explicit project config, it takes precedence over the models stored on the provider credential — including after you later re-run `configure-project`, which updates the provider's models but not this row. Use `memory projects show-models` to see what actually wins.
@@ -215,7 +221,13 @@ PUT /api/v1/projects/:projectId/model-config
 }
 ```
 
-The update is partial: a field present in the body replaces the stored value; an omitted field (or an empty string) keeps the stored value. `DELETE` on the same path clears the whole config — that is the only way to unset a model.
+The update is partial: a field present in the body replaces the stored value; an omitted field (or an empty string) keeps the stored value. To remove one model while keeping the other, send its clear flag:
+
+```json
+{"clearEmbedding": true}
+```
+
+`DELETE` on the same path clears the whole config.
 
 ### Check effective config (resolved with source)
 

@@ -105,6 +105,9 @@ templ ProjectSettingsPage(data projectSettingsData) {
 				@editorAgentPanel(data.EditorAgent, data.EditorOptions, data.EditorAgentWarning)
 				@mergeAgentPanel(data.MergeAgent, data.MergeOptions, data.MergeAgentWarning)
 				@rememberDedupPanel(data.RememberAgent, data.DedupThreshold, data.Agents)
+				if data.IsSuperadmin {
+					@platformEmailLinkPanel()
+				}
 			}
 		}
 	}
