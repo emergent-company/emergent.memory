@@ -271,7 +271,7 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 					</div>
 				</div>
 			</div>
-			<div class="sticky bottom-0 z-20">
+			<div>
 				<!-- No-JS fallback only. With scripting, pending ask_user questions
 				     and tool approvals render inline in the transcript as agent
 				     bubbles (chat-stream.js renderQuestion/renderApproval), so the
@@ -340,7 +340,7 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 				gap: 0;
 				padding: 0.375rem;
 			}
-			#chat-form .card-body > .mt-2 {
+			#chat-form .card-body > :last-child {
 				margin-top: 0.25rem;
 			}
 			/* Compact composer toolbar: the app-wide touch-target rule lifts

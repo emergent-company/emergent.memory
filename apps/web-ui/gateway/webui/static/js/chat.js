@@ -410,8 +410,24 @@
     root.classList.remove("dropdown-open");
     trigger.setAttribute("aria-expanded", "false");
     trigger.blur();
-    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    // Only surrender focus that the picker itself owns; an outside tap must
+    // not blur whatever the user was typing into.
+    if (root.contains(document.activeElement) && document.activeElement.blur) {
+      document.activeElement.blur();
+    }
   }
+  // One document-level dismissal for the life of the module. Binding it inside
+  // wirePicker added a new listener per chat.js init (htmx swaps re-run init),
+  // and the old closures closed over a detached #chat-root — the second visit
+  // then dismissed the live menu on pointerdown before the row click landed.
+  document.addEventListener("pointerdown", function (event) {
+    ["model", "thinking"].forEach(function (kind) {
+      var root = pickerRoot(kind);
+      if (root && root.classList.contains("dropdown-open") && !root.contains(event.target)) {
+        closePicker(kind);
+      }
+    });
+  });
   function wirePicker(kind, field) {
     var root = pickerRoot(kind);
     if (!root || !field) return;
@@ -431,10 +447,16 @@
         root.classList.add("dropdown-open");
         trigger.setAttribute("aria-expanded", "true");
       });
+      // Keyboard focus opens the menu through daisyUI's :focus-within; keep
+      // aria-expanded in step with that path too.
+      root.addEventListener("focusin", function () {
+        trigger.setAttribute("aria-expanded", "true");
+      });
+      root.addEventListener("focusout", function (event) {
+        if (root.contains(event.relatedTarget)) return;
+        trigger.setAttribute("aria-expanded", root.classList.contains("dropdown-open") ? "true" : "false");
+      });
     }
-    document.addEventListener("pointerdown", function (event) {
-      if (!root.contains(event.target)) closePicker(kind);
-    });
     function choose(row) {
       if (!row || !root.contains(row)) return;
       var value = row.getAttribute("data-value") || "";
