@@ -75,6 +75,11 @@ func (m *TokenMinter) MintInstallationToken(
 	if len(permissions) == 0 {
 		return "", errors.New("githubapp: installation token requires an explicit permission set")
 	}
+	// GitHub's access_tokens `repositories` field takes repository NAMES, not
+	// owner/name. A source allowlist is stored as owner/name, so normalize here
+	// rather than leaving every caller to remember the difference (a full name
+	// is rejected with 422 "repository does not exist or is not accessible").
+	repos = normalizeRepositoryNames(repos)
 
 	key := tokenCacheKey(appID, installationID, repos, permissions)
 
@@ -163,6 +168,28 @@ func (m *TokenMinter) MintInstallationToken(
 	m.cache[key] = cachedToken{token: out.Token, expiresAt: out.ExpiresAt}
 	m.mu.Unlock()
 	return out.Token, nil
+}
+
+// normalizeRepositoryNames strips an owner prefix from each entry, preserving
+// order and deduplicating after trimming. GitHub accepts names only.
+func normalizeRepositoryNames(repos []string) []string {
+	seen := make(map[string]struct{}, len(repos))
+	out := make([]string, 0, len(repos))
+	for _, repo := range repos {
+		repo = strings.TrimSpace(repo)
+		if i := strings.LastIndexByte(repo, '/'); i >= 0 {
+			repo = repo[i+1:]
+		}
+		if repo == "" {
+			continue
+		}
+		if _, ok := seen[repo]; ok {
+			continue
+		}
+		seen[repo] = struct{}{}
+		out = append(out, repo)
+	}
+	return out
 }
 
 // Invalidate drops cached tokens for an App installation.
