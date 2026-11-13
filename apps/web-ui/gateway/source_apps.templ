@@ -20,7 +20,7 @@ templ SourceAppsPage(data dsSourceAppsPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Source apps")), "", "Source apps", dsSourceAppsSubtitle(data.OrgName), detailHeaderOpts{Margin: "mb-6"}) {
 			if data.LoadErr == nil && data.CanRegister {
-				@sourceAppReviewSetupAction()
+				@sourceAppReviewSetupAction(data.ReviewSetupHref)
 				@sourceAppAddAction()
 			}
 		}
@@ -37,9 +37,9 @@ templ SourceAppsPage(data dsSourceAppsPageData) {
 
 // sourceAppReviewSetupAction opens the manifest wizard that creates the App,
 // installs it, and connects the source, review agent and trigger.
-templ sourceAppReviewSetupAction() {
+templ sourceAppReviewSetupAction(href string) {
 	@ui.Button(ui.ButtonProps{
-		Type: ui.ButtonTypeLink, Href: githubWizardPath, Variant: ui.ButtonPrimary, Size: ui.ButtonSM,
+		Type: ui.ButtonTypeLink, Href: href, Variant: ui.ButtonPrimary, Size: ui.ButtonSM,
 		Icon: "lucide--sparkles", Attrs: templ.Attributes{"data-testid": "gh-review-setup"},
 	}) {
 		Set up GitHub review
