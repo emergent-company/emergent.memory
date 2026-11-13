@@ -146,6 +146,7 @@ var userVisibleRoutes = []gatewayRoute{
 	{method: "GET", path: "/settings/connected-apps", handler: "uiConnectedApps"},
 	{method: "POST", path: "/settings/connected-apps/:id/revoke", handler: "uiRevokeConnectedApp"},
 	{method: "GET", path: "/settings/budget", handler: "uiProjectBudgetSettings"},
+	{method: "POST", path: "/settings/budget/reset", handler: "uiBudgetReset"},
 	{method: "GET", path: "/settings/credentials", handler: "uiProjectCredentials"},
 	{method: "GET", path: "/settings/credentials/saved/fields", handler: "uiSavedCredentialFields"},
 	{method: "POST", path: "/settings/credentials/saved", handler: "uiSavedCredentialCreate"},

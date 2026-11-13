@@ -8,6 +8,22 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/skills"
 )
 
+// Default caps every new project starts with. They live here rather than in the
+// service so the two creation paths that bypass it — the create_project MCP tool
+// and standalone bootstrap — cannot invent their own numbers; both routes must
+// give a new project the same weekly headroom the REST path derives.
+const (
+	// DefaultMonthlyBudgetUSD is the monthly cap a new project starts with.
+	DefaultMonthlyBudgetUSD = 10.0
+	// DefaultWeeklyBudgetUSD is a quarter of the monthly cap: enough to run
+	// normally, small enough that a runaway week is caught while the month is
+	// still repairable.
+	DefaultWeeklyBudgetUSD = 2.5
+	// DefaultBudgetAlertThreshold is the share of a window's cap at which the
+	// first alert is sent (mirrors the 0.80 schema default).
+	DefaultBudgetAlertThreshold = 0.80
+)
+
 // Project represents a project in the kb.projects table
 type Project struct {
 	bun.BaseModel `bun:"table:kb.projects,alias:p"`
@@ -59,6 +75,16 @@ type Project struct {
 	// Budget columns added in migration 00063
 	BudgetUSD            *float64 `bun:"budget_usd" json:"budget_usd,omitempty"`
 	BudgetAlertThreshold float64  `bun:"budget_alert_threshold" json:"budget_alert_threshold,omitempty"`
+
+	// Weekly budget window and per-window cycle anchors, added in migration
+	// 00298. A nil weekly cap means no weekly limit. The anchors are set only by
+	// the reset endpoint (never by PATCH): nil means the window follows the
+	// calendar (ISO week / UTC month), non-nil restarts the cycle at that
+	// instant.
+	BudgetWeeklyUSD            *float64   `bun:"budget_weekly_usd" json:"budget_weekly_usd,omitempty"`
+	BudgetWeeklyAlertThreshold float64    `bun:"budget_weekly_alert_threshold" json:"budget_weekly_alert_threshold,omitempty"`
+	BudgetWeekAnchor           *time.Time `bun:"budget_week_anchor" json:"budget_week_anchor,omitempty"`
+	BudgetMonthAnchor          *time.Time `bun:"budget_month_anchor" json:"budget_month_anchor,omitempty"`
 
 	// Populated only when requested
 	Stats *ProjectStats `bun:"-" json:"stats,omitempty"`
@@ -142,17 +168,19 @@ type PendingExtractionMergeStats struct {
 
 // ProjectDTO is the response DTO for project endpoints
 type ProjectDTO struct {
-	ID                   string                           `json:"id"`
-	Name                 string                           `json:"name"`
-	OrgID                string                           `json:"orgId"`
-	ProjectInfo          *string                          `json:"project_info,omitempty"`
-	ChatPromptTemplate   *string                          `json:"chat_prompt_template,omitempty"`
-	AutoExtractObjects   *bool                            `json:"auto_extract_objects,omitempty"`
-	AutoExtractConfig    map[string]any                   `json:"auto_extract_config,omitempty"`
-	SkillCapture         skills.ProjectSkillCaptureConfig `json:"skill_capture"`
-	BudgetUSD            *float64                         `json:"budget_usd,omitempty"`
-	BudgetAlertThreshold *float64                         `json:"budget_alert_threshold,omitempty"`
-	Stats                *ProjectStats                    `json:"stats,omitempty"`
+	ID                         string                           `json:"id"`
+	Name                       string                           `json:"name"`
+	OrgID                      string                           `json:"orgId"`
+	ProjectInfo                *string                          `json:"project_info,omitempty"`
+	ChatPromptTemplate         *string                          `json:"chat_prompt_template,omitempty"`
+	AutoExtractObjects         *bool                            `json:"auto_extract_objects,omitempty"`
+	AutoExtractConfig          map[string]any                   `json:"auto_extract_config,omitempty"`
+	SkillCapture               skills.ProjectSkillCaptureConfig `json:"skill_capture"`
+	BudgetUSD                  *float64                         `json:"budget_usd,omitempty"`
+	BudgetAlertThreshold       *float64                         `json:"budget_alert_threshold,omitempty"`
+	BudgetWeeklyUSD            *float64                         `json:"budget_weekly_usd,omitempty"`
+	BudgetWeeklyAlertThreshold *float64                         `json:"budget_weekly_alert_threshold,omitempty"`
+	Stats                      *ProjectStats                    `json:"stats,omitempty"`
 	// AutoMergeExtractionBranches is emitted only when true.
 	AutoMergeExtractionBranches *bool `json:"auto_merge_extraction_branches,omitempty"`
 	// AutoDiscoveryEnabled is always emitted (unlike the other booleans): the
@@ -216,6 +244,28 @@ type TransferProjectRequest struct {
 	OrgID string `json:"orgId" validate:"required,uuid"`
 }
 
+// BudgetWindow selects which spending window a reset restarts.
+type BudgetWindow string
+
+const (
+	BudgetWindowWeek  BudgetWindow = "week"
+	BudgetWindowMonth BudgetWindow = "month"
+)
+
+// ResetBudgetRequest is the request body for POST /api/projects/:id/budget/reset.
+// The two windows reset independently: restarting the week leaves the month's
+// tracked spend (and its anchor) untouched, and vice versa.
+type ResetBudgetRequest struct {
+	Window BudgetWindow `json:"window" validate:"required,oneof=week month"`
+}
+
+// BudgetPeriod is the resulting cycle for the window that was reset.
+type BudgetPeriod struct {
+	Window      BudgetWindow `json:"window"`
+	PeriodStart time.Time    `json:"periodStart"`
+	PeriodEnd   time.Time    `json:"periodEnd"`
+}
+
 // UpdateProjectRequest is the request body for updating a project
 type UpdateProjectRequest struct {
 	Name                        *string        `json:"name,omitempty" validate:"omitempty,min=1"`
@@ -225,6 +275,8 @@ type UpdateProjectRequest struct {
 	AutoExtractConfig           map[string]any `json:"auto_extract_config,omitempty"`
 	BudgetUSD                   *float64       `json:"budget_usd,omitempty"`
 	BudgetAlertThreshold        *float64       `json:"budget_alert_threshold,omitempty"`
+	BudgetWeeklyUSD             *float64       `json:"budget_weekly_usd,omitempty"`
+	BudgetWeeklyAlertThreshold  *float64       `json:"budget_weekly_alert_threshold,omitempty"`
 	AutoMergeExtractionBranches *bool          `json:"auto_merge_extraction_branches,omitempty"`
 	AutoDiscoveryEnabled        *bool          `json:"auto_discovery_enabled,omitempty"`
 	AutoExtractSourceSyncs      *bool          `json:"auto_extract_source_syncs,omitempty"`
@@ -233,8 +285,14 @@ type UpdateProjectRequest struct {
 	SkillCapture *skills.ProjectSkillCaptureConfig `json:"skill_capture,omitempty"`
 }
 
-// ToDTO converts a Project entity to ProjectDTO
-// Note: Stats are not populated here, they must be set separately after querying
+// ToDTO converts a Project entity to ProjectDTO.
+//
+// Stats are copied from the loaded entity: `List` and `GetByID` populate them
+// only when the caller asked for them (`include_stats`), and ToDTO is the only
+// thing that copies them onto the DTO. Dropping this line therefore empties
+// `?include_stats=true` responses — and with them `--stats`, the CLI TUI's
+// project counts and the SDK's IncludeStats callers — without failing any test,
+// which is how it was lost once already.
 func (p *Project) ToDTO() ProjectDTO {
 	dto := ProjectDTO{
 		ID:                   p.ID,
@@ -247,6 +305,15 @@ func (p *Project) ToDTO() ProjectDTO {
 		Stats:                p.Stats,
 		SkillCapture:         p.SkillCapture,
 	}
+
+	if p.BudgetWeeklyUSD != nil {
+		dto.BudgetWeeklyUSD = p.BudgetWeeklyUSD
+	}
+	// The weekly threshold is always reported (like the monthly one): it is NOT
+	// NULL in the schema, and a UI that received nothing would render the
+	// control empty and imply the alert is off.
+	weeklyThreshold := p.BudgetWeeklyAlertThreshold
+	dto.BudgetWeeklyAlertThreshold = &weeklyThreshold
 
 	// Only include boolean fields if they are true
 	if p.AutoExtractObjects {

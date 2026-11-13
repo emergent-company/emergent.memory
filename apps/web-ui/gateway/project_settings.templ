@@ -240,41 +240,135 @@ templ ConnectedDevicesPage(data connectedDevicesPageData) {
 	}
 }
 
-// BudgetSettingsPage renders the Budget section: the monthly spend cap and
-// the alert threshold. flashMsg/flashErr surface PRG feedback from the save
-// flow.
+// BudgetSettingsPage renders the Budget section: the weekly and monthly spend
+// caps, their alert thresholds, the live spend against each, and a per-window
+// reset. flashMsg/flashErr surface PRG feedback from the save and reset flows.
 templ BudgetSettingsPage(data budgetSettingsPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Budget")), "", "Budget", "Monthly LLM spend cap and when budget alerts are sent.", detailHeaderOpts{Margin: "mb-6"})
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Budget")), "", "Budget", "Weekly and monthly LLM spend caps, when budget alerts are sent, and how to restart a window.", detailHeaderOpts{Margin: "mb-6"})
 		@flashToasts(data.FlashMsg, data.FlashErr)
 		if data.LoadErr != nil {
 			@pageErrorNotice("Budget settings unavailable", data.LoadErr)
 		} else {
 			@layout.Rail(settingsSubNav("budget", data.ProvidersMissing), nil) {
-				@budgetPanel(data.Project)
+				@budgetPanel(data.Project, data.Budget, data.BudgetErr)
 			}
 		}
 	}
 }
 
-// budgetPanel edits the project's monthly spend cap and alert threshold. Both
-// are inline auto-save fields (no whole-form Save button).
-templ budgetPanel(p *Project) {
+// budgetPanel edits the two spend windows. Both are inline auto-save fields (no
+// whole-form Save button); each window also shows its live position and offers
+// an independent reset, because a weekly cap and a monthly cap run on separate
+// cycles.
+templ budgetPanel(p *Project, budget *BudgetState, budgetErr error) {
 	@ui.Section("Budget & alerts", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-comfortable"}) {
-		<div class="flex flex-col gap-4">
-			@settingsField("budget-usd", "Budget (USD)", "Monthly LLM spend cap. Once exceeded, agent runs are rejected (402 budget exceeded) until the cycle resets. Empty means no cap.", "Monthly budget cap, if any.", nil) {
-				<input id="budget-usd" name="budget_usd" type="number" step="0.01" min="0" value={ budgetInputValue(p.BudgetUSD) } placeholder="e.g. 25.00" class="input w-full" hx-post="/settings/project/budget_usd" hx-trigger="change delay:400ms" hx-include="this" hx-swap="none"/>
-			}
-			if p.BudgetUSD == nil {
-				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "-mt-2"}) {
-					Budget not set.
-				}
-			}
-			@settingsField("budget-alert-threshold", "Alert threshold (%)", "Send a budget alert once this share of the monthly budget has been spent. Enter a whole percentage greater than 0 and at most 100. Alerts are sent at most once per project per month.", "Percentage of the monthly budget at which to alert.", nil) {
-				<input id="budget-alert-threshold" name="budget_alert_threshold" type="number" step="1" min="1" max="100" value={ thresholdPercentInputValue(p.BudgetAlertThreshold) } placeholder="80" class="input w-full" hx-post="/settings/project/budget_alert_threshold" hx-trigger="change delay:400ms" hx-include="this" hx-swap="none"/>
-			}
+		<div class="flex flex-col gap-6">
+			@budgetWindowFields("month", "Monthly", p.BudgetUSD, p.BudgetAlertThreshold, budgetMonthState(budget), budgetErr)
+			<div class="border-base-content/10 border-t"></div>
+			@budgetWindowFields("week", "Weekly", p.BudgetWeeklyUSD, p.BudgetWeeklyAlertThreshold, budgetWeekState(budget), budgetErr)
 		</div>
 	}
+}
+
+// budgetWindowFields renders one window's controls. capUSD/threshold are the
+// stored values (nil cap = no limit); state is the live position, nil when it
+// could not be read.
+templ budgetWindowFields(window, label string, capUSD, threshold *float64, state *BudgetWindowState, budgetErr error) {
+	<div class="flex flex-col gap-4" data-testid={ "budget-window-" + window }>
+		<div class="flex flex-wrap items-center gap-2">
+			<h3 class="text-sm font-semibold">{ label } window</h3>
+			if state.Capped() {
+				@ui.Badge(ui.BadgeProps{
+					Label:   budgetStatusLabel(state.Status),
+					Variant: budgetStatusIntent(state.Status),
+					Size:    ui.BadgeSizeXS,
+					Dot:     true,
+					Attrs:   templ.Attributes{"data-status": state.Status},
+				})
+			}
+		</div>
+		if state.Capped() {
+			<div class="text-muted-strong text-xs" data-testid={ "budget-settings-status-" + window }>
+				<span>{ budgetMoney(state.SpendUSD) } of { budgetMoney(*state.CapUSD) } spent</span>
+				<span class="mx-1">·</span>
+				<span>{ budgetMoney(budgetRemaining(state)) } left</span>
+				<span class="mx-1">·</span>
+				<span>resets { budgetResetsOn(state) }</span>
+			</div>
+		} else if budgetErr != nil {
+			<div class="text-muted-faint text-xs">Current spend is unavailable right now.</div>
+		}
+
+		@settingsField(window+"-budget-usd", label+" budget (USD)", budgetWindowTip(window), "Budget cap in USD, empty for none.", nil) {
+			<input id={ window + "-budget-usd" } name={ budgetFieldName(window, "budget_usd") } type="number" step="0.01" min="0" value={ budgetInputValue(capUSD) } placeholder={ budgetPlaceholder(window) } class="input w-full" hx-post={ budgetFieldURL(window, "budget_usd") } hx-trigger="change delay:400ms" hx-include="this" hx-swap="none"/>
+		}
+		if capUSD == nil {
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "-mt-2"}) {
+				No { budgetWindowNoun(window) } limit set — this window never blocks agent runs. Enter 0 to keep it uncapped.
+			}
+		}
+		@settingsField(window+"-budget-alert-threshold", "Alert threshold (%)", budgetThresholdTip(window), "Percentage of the window's budget at which to alert.", nil) {
+			<input id={ window + "-budget-alert-threshold" } name={ budgetFieldName(window, "budget_alert_threshold") } type="number" step="1" min="1" max="100" value={ thresholdPercentInputValue(threshold) } placeholder="80" class="input w-full" hx-post={ budgetFieldURL(window, "budget_alert_threshold") } hx-trigger="change delay:400ms" hx-include="this" hx-swap="none"/>
+		}
+
+		if state.Capped() {
+			<form method="post" action="/settings/budget/reset" class="flex flex-wrap items-center gap-2">
+				<input type="hidden" name="window" value={ window }/>
+				<input type="hidden" name="back" value="settings"/>
+				@ui.Button(ui.ButtonProps{
+					Variant: ui.ButtonSecondary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--rotate-ccw",
+					Attrs: templ.Attributes{
+						"type":        "submit",
+						"data-testid": "budget-settings-reset-" + window,
+						"onclick":     "return confirm('Reset the " + budgetWindowNoun(window) + " window? Spend so far in this window will stop counting toward the cap. Usage history is not deleted.')",
+					},
+				}) {
+					Reset { budgetWindowNoun(window) } window
+				}
+				<span class="text-muted-faint text-xs">Starts a fresh { budgetWindowNoun(window) } cycle now, without touching the other window or any usage history.</span>
+			</form>
+		}
+	</div>
+}
+
+// budgetWindowTip is the help text for a window's cap field.
+func budgetWindowTip(window string) string {
+	if window == "week" {
+		return "Weekly LLM spend cap. The window runs Monday 00:00 UTC to the next Monday unless reset. Once exceeded, agent runs are rejected (402 budget exceeded) until the window resets."
+	}
+	return "Monthly LLM spend cap. The window is the UTC calendar month unless reset. Once exceeded, agent runs are rejected (402 budget exceeded) until the cycle resets."
+}
+
+// budgetThresholdTip is the help text for a window's alert threshold field.
+func budgetThresholdTip(window string) string {
+	if window == "week" {
+		return "Send a budget alert once this share of the weekly budget has been spent. Weekly alerts are sent at most once per project per window."
+	}
+	return "Send a budget alert once this share of the monthly budget has been spent. Monthly alerts are sent at most once per project per month."
+}
+
+// budgetFieldName is the form field name the save handler reads.
+func budgetFieldName(window, base string) string {
+	if window == "week" {
+		return "budget_weekly_" + strings.TrimPrefix(base, "budget_")
+	}
+	return base
+}
+
+// budgetFieldURL is the HTMX save endpoint for the field.
+func budgetFieldURL(window, base string) string {
+	return "/settings/project/" + budgetFieldName(window, base)
+}
+
+// budgetPlaceholder suggests a cap per window.
+func budgetPlaceholder(window string) string {
+	if window == "week" {
+		return "e.g. 5.00"
+	}
+	return "e.g. 25.00"
 }
 
 templ projectSettingsHeader() {

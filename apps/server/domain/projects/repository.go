@@ -10,6 +10,7 @@ import (
 
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/internal/budgetwindow"
 	"github.com/emergent-company/emergent.memory/internal/database"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
@@ -296,6 +297,37 @@ func (r *Repository) AutoExtractSourceSyncs(ctx context.Context, projectID strin
 	return enabled, nil
 }
 
+// ResetBudgetWindowAnchor moves one window's cycle anchor to at.
+//
+// The column is selected from a whitelist (never interpolated from caller
+// input) and the update is a targeted SET so it cannot clobber a concurrent
+// project edit the way a whole-row bun Update would.
+func (r *Repository) ResetBudgetWindowAnchor(ctx context.Context, projectID string, window budgetwindow.Window, at time.Time) error {
+	column := "budget_week_anchor"
+	if window == budgetwindow.Month {
+		column = "budget_month_anchor"
+	}
+
+	res, err := r.db.NewUpdate().
+		TableExpr("kb.projects").
+		Set("? = ?", bun.Ident(column), at.UTC()).
+		Set("updated_at = NOW()").
+		Where("id = ?", projectID).
+		Where("deleted_at IS NULL").
+		Exec(ctx)
+	if err != nil {
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	if affected == 0 {
+		return apperror.ErrProjectNotFound
+	}
+	return nil
+}
+
 // GetByIDWithLock returns a project by ID with a pessimistic lock (FOR UPDATE)
 func (r *Repository) GetByIDWithLock(ctx context.Context, tx bun.Tx, id string) (*Project, error) {
 	var project Project
@@ -396,8 +428,15 @@ func (r *Repository) CreateMembership(ctx context.Context, tx bun.Tx, membership
 
 // Update updates a project in the database
 func (r *Repository) Update(ctx context.Context, project *Project) error {
+	// The two cycle anchors are excluded on purpose: they move only through
+	// ResetBudgetWindowAnchor. A PATCH loads the row, edits it and writes the
+	// model back, so writing the anchors here would let a routine settings save
+	// (or a slow save racing an admin's reset) put a stale anchor back and move
+	// the cycle — exactly what "reset is the only way to move a boundary" rules
+	// out.
 	_, err := r.db.NewUpdate().
 		Model(project).
+		ExcludeColumn("budget_week_anchor", "budget_month_anchor").
 		WherePK().
 		Returning("id, organization_id, name, project_info, chat_prompt_template, auto_extract_objects, auto_extract_config, created_at, updated_at, auto_merge_extraction_branches, auto_discovery_enabled, auto_extract_source_syncs").
 		Exec(ctx)

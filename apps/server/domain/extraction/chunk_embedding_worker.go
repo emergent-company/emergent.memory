@@ -421,7 +421,8 @@ func (w *ChunkEmbeddingWorker) processJob(ctx context.Context, job *ChunkEmbeddi
 		return nil
 	}
 
-	// Budget pre-flight check — skip embedding when project has exceeded its monthly budget.
+	// Budget pre-flight check — skip embedding when project has exhausted either
+	// spending window (weekly or monthly).
 	if w.budget != nil && chunk.ProjectID != "" && w.budgetEnforcementEnabled {
 		if w.budgetBlockActive(chunk.ProjectID) {
 			// Already known over budget: park this job with bounded backoff,

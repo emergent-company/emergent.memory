@@ -41,6 +41,10 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Scope: project:write
 	g.POST("/:id/transfer", h.Transfer)
 
+	// Reset one spending window of the project budget (admin-only; the handler
+	// re-checks authority at accessProjectAdmin).
+	g.POST("/:id/budget/reset", h.ResetBudget)
+
 	// Delete project (mark pending deletion with grace period)
 	// Scope: org:project:delete
 	// TODO: org:project:delete is not yet enforced here; the existing

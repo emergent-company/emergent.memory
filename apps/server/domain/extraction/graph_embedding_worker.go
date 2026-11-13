@@ -694,7 +694,8 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 		projCtx = auth.ContextWithProjectID(ctx, obj.ProjectID)
 	}
 
-	// Budget pre-flight check — skip embedding when project has exceeded its monthly budget.
+	// Budget pre-flight check — skip embedding when project has exhausted either
+	// spending window (weekly or monthly).
 	if w.budget != nil && obj.ProjectID != "" {
 		exceeded, err := w.budget.CheckBudgetExceeded(projCtx, obj.ProjectID)
 		if err != nil {

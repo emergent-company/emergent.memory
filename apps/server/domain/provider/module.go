@@ -7,6 +7,7 @@ import (
 	"github.com/uptrace/bun"
 	"go.uber.org/fx"
 
+	"github.com/emergent-company/emergent.memory/domain/email"
 	"github.com/emergent-company/emergent.memory/domain/notifications"
 	"github.com/emergent-company/emergent.memory/domain/scheduler"
 	"github.com/emergent-company/emergent.memory/internal/config"
@@ -64,8 +65,8 @@ func provideModelCatalogService(repo *Repository, cfg *config.Config, log *slog.
 	return NewModelCatalogService(repo, log, WithNetworkDisabled(cfg.LLM.NetworkDisabled))
 }
 
-func provideUsageService(lc fx.Lifecycle, repo *Repository, db bun.IDB, notificationsSvc *notifications.Service, log *slog.Logger) *UsageService {
-	return NewUsageService(lc, repo, db, notificationsSvc, log)
+func provideUsageService(lc fx.Lifecycle, repo *Repository, db bun.IDB, notificationsSvc *notifications.Service, emailSvc *email.JobsService, cfg *config.Config, log *slog.Logger) *UsageService {
+	return NewUsageService(lc, repo, db, notificationsSvc, emailSvc, cfg.FrontendURL(), log)
 }
 
 func providePricingSyncService(repo *Repository, sched *scheduler.Scheduler, log *slog.Logger) *PricingSyncService {

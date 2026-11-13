@@ -132,6 +132,7 @@ func TestProjectJSONAlwaysEmitsDocumentedFields(t *testing.T) {
 		"id", "name", "orgId",
 		"project_info", "chat_prompt_template", "auto_extract_objects",
 		"auto_extract_config", "budget_usd", "budget_alert_threshold",
+		"budget_weekly_usd", "budget_weekly_alert_threshold",
 	} {
 		if _, ok := got[key]; !ok {
 			t.Errorf("--json output is missing %q (keys are not schema-stable)", key)
@@ -141,6 +142,7 @@ func TestProjectJSONAlwaysEmitsDocumentedFields(t *testing.T) {
 	for _, key := range []string{
 		"project_info", "chat_prompt_template", "auto_extract_objects",
 		"auto_extract_config", "budget_usd", "budget_alert_threshold",
+		"budget_weekly_usd", "budget_weekly_alert_threshold",
 	} {
 		if string(got[key]) != "null" {
 			t.Errorf("%q = %s, want null for an unset field", key, got[key])

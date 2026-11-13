@@ -301,8 +301,8 @@ func TestRenderConnectedDevicesPage(t *testing.T) {
 }
 
 // TestRenderBudgetSettingsPage covers the Budget sub-page: header, sub-nav,
-// both inline auto-save fields (budget USD + alert threshold as a percentage),
-// and the budget tooltip/hint.
+// both windows' inline auto-save fields (budget USD + alert threshold as a
+// percentage), the per-window tooltips/hints, and the uncapped-window notes.
 func TestRenderBudgetSettingsPage(t *testing.T) {
 	data := budgetSettingsPageData{
 		Project: &Project{ID: "p1", Name: "Home", BudgetUSD: floatPtr(25.5), BudgetAlertThreshold: floatPtr(0.8)},
@@ -312,20 +312,59 @@ func TestRenderBudgetSettingsPage(t *testing.T) {
 		"Budget",
 		`name="budget_usd"`, `value="25.5"`,
 		`name="budget_alert_threshold"`, `value="80"`,
+		`name="budget_weekly_usd"`,
+		`name="budget_weekly_alert_threshold"`,
 		`hx-post="/settings/project/budget_alert_threshold"`,
+		`hx-post="/settings/project/budget_weekly_alert_threshold"`,
 		`href="/settings/budget"`,
-		`data-tip="Monthly LLM spend cap. Once exceeded, agent runs are rejected (402 budget exceeded) until the cycle resets. Empty means no cap."`,
-		"Monthly budget cap, if any.",
+		`data-tip="Monthly LLM spend cap. The window is the UTC calendar month unless reset. Once exceeded, agent runs are rejected (402 budget exceeded) until the cycle resets."`,
+		`data-tip="Weekly LLM spend cap. The window runs Monday 00:00 UTC to the next Monday unless reset. Once exceeded, agent runs are rejected (402 budget exceeded) until the window resets."`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("budget settings page missing %q", want)
 		}
 	}
 
-	// unset budget renders the "not set" note
+	// Each uncapped window renders its own "no limit" note.
 	absent := renderHTML(t, BudgetSettingsPage(budgetSettingsPageData{Project: &Project{ID: "p1", Name: "Home"}}))
-	if !strings.Contains(absent, "Budget not set.") {
-		t.Error("budget settings page should render 'Budget not set.' when no budget is set")
+	for _, want := range []string{
+		"No monthly limit set",
+		"No weekly limit set",
+	} {
+		if !strings.Contains(absent, want) {
+			t.Errorf("uncapped budget page missing %q", want)
+		}
+	}
+
+	// A capped window shows its live position and an independent reset control.
+	live := renderHTML(t, BudgetSettingsPage(budgetSettingsPageData{
+		Project: &Project{ID: "p1", Name: "Home", BudgetUSD: floatPtr(25.5), BudgetAlertThreshold: floatPtr(0.8), BudgetWeeklyUSD: floatPtr(5)},
+		Budget: &BudgetState{
+			Week: &BudgetWindowState{
+				Window: "week", CapUSD: floatPtr(5), Threshold: 0.8, SpendUSD: 4.2,
+				PercentUsed: 84, Status: "warning",
+				PeriodStart: time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC),
+				PeriodEnd:   time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC),
+			},
+			Month: &BudgetWindowState{
+				Window: "month", CapUSD: floatPtr(25.5), Threshold: 0.8, SpendUSD: 4.2,
+				PercentUsed: 16.5, Status: "ok",
+				PeriodStart: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC),
+				PeriodEnd:   time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC),
+			},
+		},
+	}))
+	for _, want := range []string{
+		`data-testid="budget-settings-status-week"`,
+		"$4.20 of $5.00 spent",
+		"$0.80 left",
+		"resets Mon, 16 Nov 2026 00:00 UTC",
+		`data-testid="budget-settings-reset-week"`,
+		`name="window" value="week"`,
+	} {
+		if !strings.Contains(live, want) {
+			t.Errorf("capped budget page missing %q", want)
+		}
 	}
 
 	// regression: a stored fraction that has no exact binary representation

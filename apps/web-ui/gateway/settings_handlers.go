@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -316,13 +317,18 @@ type connectedDevicesPageData struct {
 }
 
 // budgetSettingsPageData is the payload for BudgetSettingsPage: the project's
-// spend cap and alert threshold plus PRG flash feedback.
+// spend caps and alert thresholds plus PRG flash feedback.
 type budgetSettingsPageData struct {
 	settingsNavCommon
-	Project  *Project
-	LoadErr  error
-	FlashMsg string
-	FlashErr error
+	Project *Project
+	// Budget is the live week/month position (spend, remaining, reset dates).
+	// Nil with BudgetErr nil means it could not be read and the status lines
+	// are omitted — the editable fields still work.
+	Budget    *BudgetState
+	BudgetErr error
+	LoadErr   error
+	FlashMsg  string
+	FlashErr  error
 }
 
 // uiProjectSettings renders the project settings page. ?updated=1 / ?err=1
@@ -784,14 +790,18 @@ func (s *Server) uiConnectedDevices(c echo.Context) error {
 	return s.page(c, pageTitle("Connected devices"), ConnectedDevicesPage(data))
 }
 
-// uiProjectBudgetSettings renders the Budget settings page. ?updated=1 / ?err=1
-// surface PRG feedback from the budget save flow.
+// uiProjectBudgetSettings renders the Budget settings page. ?updated=1 / ?err=
+// surface PRG feedback from the budget save flow, and ?budget_reset=week|month
+// from a window reset.
 func (s *Server) uiProjectBudgetSettings(c echo.Context) error {
 	ctx := c.Request().Context()
 	data := budgetSettingsPageData{}
 	if c.QueryParam("updated") != "" {
 		data.FlashMsg = "Budget settings saved."
 	}
+	data.FlashMsg = cmp.Or(data.FlashMsg, flashFromQuery(c, budgetResetParams))
+	// The reset handler already classified the failure into readable wording
+	// before redirecting; nothing to re-derive from a query string here.
 	data.FlashErr = flashError(c)
 	data.settingsNavCommon = s.settingsNavPayload(c, ctx)
 	project, err := s.memory.GetCurrentProject(ctx)
@@ -803,6 +813,16 @@ func (s *Server) uiProjectBudgetSettings(c echo.Context) error {
 		return c.Redirect(http.StatusSeeOther, "/orgs")
 	}
 	data.Project = project
+
+	// Read the budget position fresh rather than through the 60s badge cache:
+	// this page's whole point is showing the current spend, and an admin who
+	// just changed a cap or reset a window must not read a stale figure. A
+	// failure degrades to omitting the status lines.
+	if state, berr := s.memory.GetProjectBudgetState(ctx); berr != nil {
+		data.BudgetErr = berr
+	} else {
+		data.Budget = state
+	}
 	return s.page(c, pageTitle("Budget"), BudgetSettingsPage(data))
 }
 
@@ -818,6 +838,36 @@ func capturePolicyWith(current map[string]any, key string, value any) map[string
 	}
 	out[key] = value
 	return out
+}
+
+// parseBudgetUSD parses an optional USD cap field. An empty value returns
+// (nil, nil): the inline auto-save fires on change, so an operator focusing and
+// leaving a field must not be told they made a mistake, and the PATCH omits the
+// field to leave the stored cap untouched. Zero is accepted and means "no cap"
+// (the server treats a non-positive cap as unlimited).
+func parseBudgetUSD(raw, field string) (*float64, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil || v < 0 {
+		return nil, fmt.Errorf("%s must be a non-negative number", field)
+	}
+	return &v, nil
+}
+
+// parseThresholdPercent converts a whole percentage in (0, 100] to the fraction
+// the API stores. Both windows share this so a value accepted for one is never
+// rejected for the other.
+func parseThresholdPercent(raw string) (float64, error) {
+	if raw == "" {
+		return 0, fmt.Errorf("alert threshold is required (1-100%%)")
+	}
+	pct, err := strconv.ParseFloat(raw, 64)
+	if err != nil || pct <= 0 || pct > 100 {
+		return 0, fmt.Errorf("alert threshold must be greater than 0 and at most 100")
+	}
+	return pct / 100, nil
 }
 
 // uiProjectSettingsProjectField handles one inline per-field project-record
@@ -880,26 +930,39 @@ func (s *Server) uiProjectSettingsProjectField(c echo.Context) error {
 	case "skill_capture_auto_apply":
 		upd.SkillCapture = capturePolicyWith(project.SkillCapture, "autoApply", c.FormValue("autoApply") == "on")
 	case "budget_usd":
-		v := strings.TrimSpace(c.FormValue("budget_usd"))
-		if v == "" {
+		v, berr := parseBudgetUSD(strings.TrimSpace(c.FormValue("budget_usd")), "budget")
+		if berr != nil {
+			return toastTrigger(c, "error", berr.Error())
+		}
+		if v == nil {
 			return toastTrigger(c, "success", "Saved") // empty leaves budget unchanged
 		}
-		b, berr := strconv.ParseFloat(v, 64)
-		if berr != nil || b < 0 {
-			return toastTrigger(c, "error", "budget must be a non-negative number")
+		upd.BudgetUSD = v
+		refresh = true
+	case "budget_weekly_usd":
+		v, berr := parseBudgetUSD(strings.TrimSpace(c.FormValue("budget_weekly_usd")), "weekly budget")
+		if berr != nil {
+			return toastTrigger(c, "error", berr.Error())
 		}
-		upd.BudgetUSD = &b
+		if v == nil {
+			return toastTrigger(c, "success", "Saved")
+		}
+		upd.BudgetWeeklyUSD = v
+		refresh = true
 	case "budget_alert_threshold":
-		v := strings.TrimSpace(c.FormValue("budget_alert_threshold"))
-		if v == "" {
-			return toastTrigger(c, "error", "alert threshold is required (1-100%)")
+		frac, perr := parseThresholdPercent(strings.TrimSpace(c.FormValue("budget_alert_threshold")))
+		if perr != nil {
+			return toastTrigger(c, "error", perr.Error())
 		}
-		pct, perr := strconv.ParseFloat(v, 64)
-		if perr != nil || pct <= 0 || pct > 100 {
-			return toastTrigger(c, "error", "alert threshold must be greater than 0 and at most 100")
-		}
-		frac := pct / 100
 		upd.BudgetAlertThreshold = &frac
+		refresh = true
+	case "budget_weekly_alert_threshold":
+		frac, perr := parseThresholdPercent(strings.TrimSpace(c.FormValue("budget_weekly_alert_threshold")))
+		if perr != nil {
+			return toastTrigger(c, "error", perr.Error())
+		}
+		upd.BudgetWeeklyAlertThreshold = &frac
+		refresh = true
 	default:
 		return toastTrigger(c, "error", fmt.Sprintf("Unknown project field %q.", c.Param("field")))
 	}

@@ -60,7 +60,11 @@ type Project struct {
 	AutoExtractConfig    map[string]interface{} `json:"auto_extract_config,omitempty"`
 	BudgetUSD            *float64               `json:"budget_usd,omitempty"`
 	BudgetAlertThreshold *float64               `json:"budget_alert_threshold,omitempty"`
-	Stats                *ProjectStats          `json:"stats,omitempty"`
+	// Weekly spending window (added in migration 00298). A nil cap means no
+	// weekly limit; the threshold defaults to the monthly one on create.
+	BudgetWeeklyUSD            *float64      `json:"budget_weekly_usd,omitempty"`
+	BudgetWeeklyAlertThreshold *float64      `json:"budget_weekly_alert_threshold,omitempty"`
+	Stats                      *ProjectStats `json:"stats,omitempty"`
 }
 
 // ProjectMember represents a project member
@@ -83,13 +87,15 @@ type CreateProjectRequest struct {
 
 // UpdateProjectRequest represents a project update request
 type UpdateProjectRequest struct {
-	Name                 *string                `json:"name,omitempty"`
-	ProjectInfo          *string                `json:"project_info,omitempty"`
-	ChatPromptTemplate   *string                `json:"chat_prompt_template,omitempty"`
-	AutoExtractObjects   *bool                  `json:"auto_extract_objects,omitempty"`
-	AutoExtractConfig    map[string]interface{} `json:"auto_extract_config,omitempty"`
-	BudgetUSD            *float64               `json:"budget_usd,omitempty"`
-	BudgetAlertThreshold *float64               `json:"budget_alert_threshold,omitempty"`
+	Name                       *string                `json:"name,omitempty"`
+	ProjectInfo                *string                `json:"project_info,omitempty"`
+	ChatPromptTemplate         *string                `json:"chat_prompt_template,omitempty"`
+	AutoExtractObjects         *bool                  `json:"auto_extract_objects,omitempty"`
+	AutoExtractConfig          map[string]interface{} `json:"auto_extract_config,omitempty"`
+	BudgetUSD                  *float64               `json:"budget_usd,omitempty"`
+	BudgetAlertThreshold       *float64               `json:"budget_alert_threshold,omitempty"`
+	BudgetWeeklyUSD            *float64               `json:"budget_weekly_usd,omitempty"`
+	BudgetWeeklyAlertThreshold *float64               `json:"budget_weekly_alert_threshold,omitempty"`
 }
 
 // ListOptions holds options for listing projects.

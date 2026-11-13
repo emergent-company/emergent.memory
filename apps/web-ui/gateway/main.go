@@ -596,6 +596,9 @@ func main() {
 	e.GET("/settings/connected-apps", s.uiConnectedApps)
 	e.POST("/settings/connected-apps/:id/revoke", s.uiRevokeConnectedApp)
 	e.GET("/settings/budget", s.uiProjectBudgetSettings)
+	// Restarts one budget window (week or month) from now. The form carries the
+	// window and the page to return to; memory enforces project-admin authority.
+	e.POST("/settings/budget/reset", s.uiBudgetReset)
 	// Project-level OAuth clients for data-source providers (project-admin only;
 	// the handler 404s for anyone else). Context-addressed like the rest of the
 	// project settings hub.

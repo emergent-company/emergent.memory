@@ -103,7 +103,7 @@ func TestAccountMenuSingleAccountNoSwitch(t *testing.T) {
 // build version + commit, so a reporter can copy it into an issue instead of
 // answering "version not shown in the UI".
 func TestAppSidebarVersionFooter(t *testing.T) {
-	html := renderHTML(t, appSidebar(sidebarGroupsWithWarn("", false, 0), false))
+	html := renderHTML(t, appSidebar(sidebarGroupsWithWarn("", false, sidebarWarns{}), false))
 	if !strings.Contains(html, `data-testid="app-version"`) {
 		t.Error("sidebar footer must render the build version")
 	}

@@ -1347,6 +1347,10 @@ routes:
       path: /api/projects/:id/activity
       level: auth
       note: RequireAuth
+    - method: POST
+      path: /api/projects/:id/budget/reset
+      level: auth
+      note: RequireAuth, RequireAPITokenScopes(projects:read)
     - method: GET
       path: /api/projects/:id/embeddings/progress
       level: auth
@@ -2521,6 +2525,10 @@ routes:
       note: RequireAuth
     - method: GET
       path: /api/v1/projects/:projectId/usage
+      level: auth
+      note: RequireAuth
+    - method: GET
+      path: /api/v1/projects/:projectId/usage/budget
       level: auth
       note: RequireAuth
     - method: GET

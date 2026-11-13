@@ -252,7 +252,7 @@ func mapExecutorError(err error) *apperror.Error {
 	var budgetErr *BudgetExceededError
 	if errors.As(err, &budgetErr) {
 		return apperror.New(http.StatusPaymentRequired, "budget_exceeded",
-			"Project monthly budget has been exceeded. Please review your spending or increase your budget.")
+			"A project budget window (weekly or monthly) has been exceeded. Please review your spending, increase the budget, or reset the window.")
 	}
 	var queueErr *QueueFullError
 	if errors.As(err, &queueErr) {

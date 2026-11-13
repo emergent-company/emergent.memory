@@ -369,7 +369,8 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 		)
 	}
 
-	// Budget pre-flight check — skip embedding when project has exceeded its monthly budget.
+	// Budget pre-flight check — skip embedding when project has exhausted either
+	// spending window (weekly or monthly).
 	if w.budget != nil && rel.ProjectID != "" {
 		exceeded, err := w.budget.CheckBudgetExceeded(ctx, rel.ProjectID)
 		if err != nil {
