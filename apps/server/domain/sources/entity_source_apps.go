@@ -50,6 +50,12 @@ type SourceTrigger struct {
 	Enabled     bool           `bun:"enabled,notnull" json:"enabled"`
 	CreatedAt   time.Time      `bun:"created_at,notnull,default:now()" json:"createdAt"`
 	UpdatedAt   time.Time      `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+
+	// AgentName is the bound runtime agent's display name, resolved on read for
+	// the trigger panel. Not a column: the picker offers agent definitions while
+	// AgentID stores a runtime kb.agents id, so the view cannot resolve the name
+	// from its own list (#727).
+	AgentName string `bun:"-" json:"agentName,omitempty"`
 }
 
 // SourceEvent is one verified delivery and its dispatch claim. Payload is a

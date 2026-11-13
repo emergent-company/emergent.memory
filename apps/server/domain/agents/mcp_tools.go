@@ -522,9 +522,10 @@ func (h *MCPToolHandler) ExecuteTriggerAgent(ctx context.Context, projectID stri
 
 	switch {
 	case hasName && agentName != "":
-		// Resolve name → runtime agent
+		// Resolve name → runtime agent, materializing the row for an
+		// agent-definition-only agent (the catalog above advertises definitions).
 		var err error
-		agent, err = h.repo.FindByName(ctx, projectID, agentName)
+		agent, err = h.repo.ResolveRuntimeAgentByName(ctx, projectID, agentName)
 		if err != nil {
 			return errResult("failed to look up agent by name: " + err.Error())
 		}
@@ -532,9 +533,9 @@ func (h *MCPToolHandler) ExecuteTriggerAgent(ctx context.Context, projectID stri
 			return errResult(fmt.Sprintf("agent not found with name %q", agentName))
 		}
 	case hasID && agentID != "":
-		// Legacy UUID path
+		// Runtime agent id, or an agent-definition id (#727).
 		var err error
-		agent, err = h.repo.FindByID(ctx, agentID, &projectID)
+		agent, err = h.repo.ResolveRuntimeAgentByID(ctx, projectID, agentID)
 		if err != nil {
 			return errResult("failed to get agent: " + err.Error())
 		}

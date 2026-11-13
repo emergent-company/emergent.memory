@@ -374,7 +374,10 @@ func (s *Server) findProjectSourceApp(c echo.Context, appID string) (*SourceApp,
 type dsSourceTriggersView struct {
 	SourceID string
 	Triggers []DSSourceTrigger
-	// Agents are the project's runtime agents, the create form's options.
+	// Agents are the project's agent definitions, the create form's options. The
+	// server resolves a definition to its runtime agent when the binding is
+	// stored (kb.source_triggers.agent_id is a kb.agents id), and reports the
+	// bound agent's name back on each trigger as AgentName.
 	Agents []AgentDefinitionSummary
 	// LoadErr records a failed trigger listing; the panel still renders so the
 	// source stays editable.
@@ -415,6 +418,18 @@ func dsTriggerAgentName(agents []AgentDefinitionSummary, agentID string) string 
 		}
 	}
 	return agentID
+}
+
+// dsTriggerAgentLabel is the agent name shown on a binding row. AgentName is the
+// server's resolution of the stored runtime kb.agents id, which the picker's
+// definition list cannot map: a binding stores a runtime id while the picker
+// offers definitions (#727). An older server omits AgentName, so fall back to
+// the definition list and finally to the id.
+func dsTriggerAgentLabel(agents []AgentDefinitionSummary, trigger DSSourceTrigger) string {
+	if name := strings.TrimSpace(trigger.AgentName); name != "" {
+		return name
+	}
+	return dsTriggerAgentName(agents, trigger.AgentID)
 }
 
 // dsTriggerToggleLabel is the action that flips the current state.

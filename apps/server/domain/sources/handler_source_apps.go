@@ -182,7 +182,7 @@ func (h *Handler) ListSourceTriggers(c echo.Context) error {
 
 // CreateSourceTrigger handles POST /api/data-source-integrations/:id/triggers.
 // @Summary      Create a source trigger
-// @Description  Binds an event type to a runtime agent and queue.
+// @Description  Binds an event type to an agent and queue. agentId may be a runtime agent id or an agent-definition id; the binding stores the runtime kb.agents id either way.
 // @Tags         data-source-integrations
 // @Accept       json
 // @Produce      json

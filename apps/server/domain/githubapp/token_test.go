@@ -64,18 +64,23 @@ func TestMintInstallationToken(t *testing.T) {
 		t.Fatalf("iss = %d, want 42", claims.Iss)
 	}
 
+	// The request carries the bare repository name: GitHub's access_tokens
+	// endpoint rejects an owner-qualified entry with 422 (#729).
 	if repos, ok := gotBody["repositories"].([]any); !ok || len(repos) != 1 || repos[0] != "repo" {
-		t.Fatalf("repositories = %#v", gotBody["repositories"])
+		t.Fatalf("repositories = %#v, want [repo]", gotBody["repositories"])
 	}
 	perms, ok := gotBody["permissions"].(map[string]any)
 	if !ok || perms["contents"] != "read" {
 		t.Fatalf("permissions = %#v", gotBody["permissions"])
 	}
 
-	// Second call reuses the cached token.
-	if _, err := m.MintInstallationToken(context.Background(), 42, pkcs1PEM(key), 7,
-		[]string{"owner/repo"}, map[string]string{"contents": "read", "pull_requests": "write"}); err != nil {
-		t.Fatalf("cached mint: %v", err)
+	// A bare name, and the same scope spelled with an owner prefix, whitespace
+	// or a duplicate, reuse the cached token instead of minting again.
+	for _, repos := range [][]string{{"repo"}, {" owner/repo ", "repo"}, {"OTHER/repo"}} {
+		if _, err := m.MintInstallationToken(context.Background(), 42, pkcs1PEM(key), 7,
+			repos, map[string]string{"contents": "read", "pull_requests": "write"}); err != nil {
+			t.Fatalf("cached mint: %v", err)
+		}
 	}
 	if n := atomic.LoadInt32(&calls); n != 1 {
 		t.Fatalf("mint calls = %d, want 1 (cache)", n)
@@ -152,8 +157,10 @@ func TestMintInstallationTokenNormalizesRepositoryNames(t *testing.T) {
 func TestMintInstallationTokenRejectsEmptyAfterNormalization(t *testing.T) {
 	key := testRSAKey(t)
 	minter := NewTokenMinter("https://api.github.com", nil)
+	// Normalization must not turn a slash-only entry into an empty-but-present
+	// scope: that would mint a token for every repository.
 	_, err := minter.MintInstallationToken(context.Background(), 1, pkcs1PEM(key), 2,
-		[]string{"", "  ", "/"}, map[string]string{"contents": "read"})
+		[]string{"", "  ", "/", "owner/"}, map[string]string{"contents": "read"})
 	if err == nil {
 		t.Fatal("minted a token for an empty repository list")
 	}

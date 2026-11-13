@@ -697,6 +697,32 @@ func (r *Repository) MarkStuckJobsAsAbandoned(ctx context.Context, olderThan tim
 
 // --- Agent lookup by name ---
 
+// FindAgentNamesByIDs returns agent id → name for ids in a project, in one
+// query. Callers that render a list of rows resolve every label from it instead
+// of issuing one FindByID per row.
+func (r *Repository) FindAgentNamesByIDs(ctx context.Context, projectID string, ids []string) (map[string]string, error) {
+	names := make(map[string]string, len(ids))
+	if len(ids) == 0 {
+		return names, nil
+	}
+	var rows []struct {
+		ID   string `bun:"id"`
+		Name string `bun:"name"`
+	}
+	if err := r.db.NewSelect().
+		Model((*Agent)(nil)).
+		Column("id", "name").
+		Where("project_id = ?", projectID).
+		Where("id IN (?)", bun.In(ids)).
+		Scan(ctx, &rows); err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		names[row.ID] = row.Name
+	}
+	return names, nil
+}
+
 // FindByName finds an agent by name within a project.
 func (r *Repository) FindByName(ctx context.Context, projectID, name string) (*Agent, error) {
 	agent := new(Agent)
@@ -784,10 +810,136 @@ func (r *Repository) FindAgentsByDefinitionID(ctx context.Context, definitionID 
 	if definitionID == "" {
 		return nil, nil
 	}
-	if err := r.db.NewSelect().Model(&agents).Where("agent_definition_id = ?", definitionID).Scan(ctx); err != nil {
+	// Ordered so callers that pick a row (the first enabled one, else the first)
+	// get the same answer on every read.
+	if err := r.db.NewSelect().Model(&agents).
+		Where("agent_definition_id = ?", definitionID).
+		OrderExpr("created_at ASC, id ASC").
+		Scan(ctx); err != nil {
 		return nil, err
 	}
 	return agents, nil
+}
+
+// FindOrCreateRuntimeAgentForDefinition returns the kb.agents row that backs def,
+// creating the lightweight definition-backed row when the definition has none.
+//
+// An agent created from the UI is a kb.agent_definitions row only: the platform
+// materializes a runtime kb.agents row lazily, and only for definitions that
+// carry object-work rules (syncDefinitionWorkTriggers) or A2A/OpenAI-compat use.
+// Anything that must store or enqueue a kb.agents id — kb.source_triggers.agent_id
+// is a foreign key to kb.agents — resolves through here instead of assuming the
+// row exists (#727).
+//
+// The created row uses the same shape as syncDefinitionWorkTriggers: strategy
+// "agent-def:<defID>", a non-firing cron, a manual trigger type (so no schedule
+// is registered) and the definition FK, so runs resolve the definition through
+// ResolveDefinitionForAgent.
+func (r *Repository) FindOrCreateRuntimeAgentForDefinition(ctx context.Context, def *AgentDefinition) (*Agent, error) {
+	if def == nil {
+		return nil, errors.New("agents: nil agent definition")
+	}
+	rows, err := r.FindAgentsByDefinitionID(ctx, def.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		if row.Enabled {
+			return row, nil
+		}
+	}
+	if len(rows) > 0 {
+		return rows[0], nil
+	}
+	// An older path (A2A resolveRuntimeAgent) creates the row by name without the
+	// definition FK. Adopt it rather than colliding on the project name index.
+	if existing, err := r.FindByName(ctx, def.ProjectID, def.Name); err != nil {
+		return nil, err
+	} else if existing != nil {
+		return r.adoptRuntimeAgent(ctx, existing, def)
+	}
+	defID := def.ID
+	agent := &Agent{
+		ProjectID:         def.ProjectID,
+		Name:              def.Name,
+		StrategyType:      "agent-def:" + def.ID,
+		CronSchedule:      "0 0 * * *",
+		Enabled:           def.Enabled,
+		TriggerType:       TriggerTypeManual,
+		AgentDefinitionID: &defID,
+	}
+	if err := r.Create(ctx, agent); err != nil {
+		// Lost a create race against another binder or a definition save: adopt
+		// the winner by name instead of failing the caller.
+		if existing, ferr := r.FindByName(ctx, def.ProjectID, def.Name); ferr == nil && existing != nil {
+			return r.adoptRuntimeAgent(ctx, existing, def)
+		}
+		return nil, err
+	}
+	return agent, nil
+}
+
+// adoptRuntimeAgent points an existing kb.agents row at def so the definition
+// resolves through the authoritative FK, the same backfill
+// syncDefinitionWorkTriggers performs when it adopts a name-colliding row.
+//
+// It only fills what the row is missing. A row created by an older path can
+// carry its own marker (chat-session:<defID>), which stays authoritative for
+// ResolveDefinitionForAgent, so an existing StrategyType is left alone.
+func (r *Repository) adoptRuntimeAgent(ctx context.Context, existing *Agent, def *AgentDefinition) (*Agent, error) {
+	changed := false
+	if existing.AgentDefinitionID == nil || *existing.AgentDefinitionID == "" {
+		defID := def.ID
+		existing.AgentDefinitionID = &defID
+		changed = true
+	}
+	if existing.StrategyType == "" {
+		existing.StrategyType = "agent-def:" + def.ID
+		changed = true
+	}
+	if !changed {
+		return existing, nil
+	}
+	if err := r.Update(ctx, existing); err != nil {
+		return nil, err
+	}
+	return existing, nil
+}
+
+// ResolveRuntimeAgentByID resolves id — a runtime kb.agents id or an
+// agent-definition id — to the kb.agents row it identifies, creating the
+// definition-backed runtime row when the definition has none. It returns
+// (nil, nil) when the id names neither, so callers keep their own not-found
+// answer.
+//
+// Every surface that accepts an agent id from a picker or a catalog needs this:
+// the pickers list kb.agent_definitions, while runs enqueue against kb.agents.
+func (r *Repository) ResolveRuntimeAgentByID(ctx context.Context, projectID, id string) (*Agent, error) {
+	agent, err := r.FindByID(ctx, id, &projectID)
+	if err != nil || agent != nil {
+		return agent, err
+	}
+	def, err := r.FindDefinitionByID(ctx, id, &projectID)
+	if err != nil || def == nil {
+		return nil, err
+	}
+	return r.FindOrCreateRuntimeAgentForDefinition(ctx, def)
+}
+
+// ResolveRuntimeAgentByName is the name-shaped counterpart of
+// ResolveRuntimeAgentByID. The MCP trigger_agent catalog and the agent pickers
+// advertise definitions by name, so a name only a definition answers must
+// resolve to that definition's runtime row rather than report "not found".
+func (r *Repository) ResolveRuntimeAgentByName(ctx context.Context, projectID, name string) (*Agent, error) {
+	agent, err := r.FindByName(ctx, projectID, name)
+	if err != nil || agent != nil {
+		return agent, err
+	}
+	def, err := r.FindDefinitionByName(ctx, projectID, name)
+	if err != nil || def == nil {
+		return nil, err
+	}
+	return r.FindOrCreateRuntimeAgentForDefinition(ctx, def)
 }
 
 // FindAllDefinitions returns all agent definitions for a project.
