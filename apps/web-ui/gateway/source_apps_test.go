@@ -1298,3 +1298,21 @@ func assertRedirectError(t *testing.T, loc, want string) {
 		t.Errorf("err flash = %q, want it to contain %q", msg, want)
 	}
 }
+
+// TestDSTriggerAgentLabel covers #727's display side: a binding stores a runtime
+// kb.agents id, which the picker's definition list cannot map, so the panel uses
+// the name the server resolves (AgentName). An older server sends none, and a
+// deleted agent still shows its binding id so the row can be removed.
+func TestDSTriggerAgentLabel(t *testing.T) {
+	defs := []AgentDefinitionSummary{{ID: "def-1", Name: "PR Trigger Test"}}
+
+	if got := dsTriggerAgentLabel(defs, DSSourceTrigger{AgentID: "runtime-1", AgentName: "PR Trigger Test"}); got != "PR Trigger Test" {
+		t.Errorf("server-resolved name = %q, want PR Trigger Test", got)
+	}
+	if got := dsTriggerAgentLabel(defs, DSSourceTrigger{AgentID: "def-1"}); got != "PR Trigger Test" {
+		t.Errorf("fallback to the definition list = %q, want PR Trigger Test", got)
+	}
+	if got := dsTriggerAgentLabel(defs, DSSourceTrigger{AgentID: "gone"}); got != "gone" {
+		t.Errorf("unknown binding = %q, want its id", got)
+	}
+}

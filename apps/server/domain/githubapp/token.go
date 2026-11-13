@@ -59,6 +59,11 @@ func NewTokenMinter(baseURL string, client *http.Client) *TokenMinter {
 
 // MintInstallationToken returns a token scoped to repos and permissions,
 // reusing a cached token until shortly before expiry.
+//
+// repos accepts either bare repository names or "owner/name" references; they
+// are normalized to bare names before both the request and the cache key, so an
+// owner-qualified caller and a bare one share a token (see
+// normalizeRepositoryNames).
 func (m *TokenMinter) MintInstallationToken(
 	ctx context.Context,
 	appID int64,
@@ -168,8 +173,18 @@ func (m *TokenMinter) MintInstallationToken(
 	return out.Token, nil
 }
 
-// normalizeRepositoryNames strips an owner prefix from each entry, preserving
-// order and deduplicating after trimming. GitHub accepts names only.
+// normalizeRepositoryNames normalizes repository identifiers to the bare names
+// the App installation-token endpoint expects.
+//
+// GitHub documents `repositories` on POST /app/installations/{id}/access_tokens
+// as repository *names*. An owner-qualified "owner/name" entry makes GitHub
+// answer 422 "There is at least one repository that does not exist or is not
+// accessible to the parent installation", so every delivery would fail at token
+// minting even though the source picker stores owner/name (#729).
+//
+// It runs before the cache key, so "owner/name" and "name" share one token
+// instead of minting twice for the same scope. It trims, drops empty entries,
+// strips an owner prefix and de-duplicates, preserving the caller's order.
 func normalizeRepositoryNames(repos []string) []string {
 	seen := make(map[string]struct{}, len(repos))
 	out := make([]string, 0, len(repos))

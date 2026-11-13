@@ -345,7 +345,41 @@ func (s *Service) ListSourceTriggers(ctx context.Context, projectID, sourceID uu
 	if _, err := s.sourceForProject(ctx, projectID, sourceID); err != nil {
 		return nil, err
 	}
-	return s.repo.ListSourceTriggers(ctx, projectID, sourceID)
+	triggers, err := s.repo.ListSourceTriggers(ctx, projectID, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	s.fillTriggerAgentNames(ctx, projectID, triggers)
+	return triggers, nil
+}
+
+// fillTriggerAgentNames labels a list of bindings with the bound agents' names in
+// one lookup. The view cannot resolve them from the picker's list: the picker
+// offers agent definitions while the binding stores a runtime kb.agents id
+// (#727). Labels are cosmetic, so a failed lookup leaves them empty rather than
+// failing the read.
+func (s *Service) fillTriggerAgentNames(ctx context.Context, projectID uuid.UUID, triggers []*SourceTrigger) {
+	if s.agentRepo == nil || len(triggers) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(triggers))
+	for _, trigger := range triggers {
+		if trigger != nil && trigger.AgentID != uuid.Nil {
+			ids = append(ids, trigger.AgentID.String())
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	names, err := s.agentRepo.FindAgentNamesByIDs(ctx, projectID.String(), ids)
+	if err != nil {
+		return
+	}
+	for _, trigger := range triggers {
+		if trigger != nil {
+			trigger.AgentName = names[trigger.AgentID.String()]
+		}
+	}
 }
 
 // CreateSourceTrigger binds an event type to a runtime agent and queue.
@@ -354,7 +388,23 @@ func (s *Service) CreateSourceTrigger(ctx context.Context, projectID, sourceID u
 	if err != nil {
 		return nil, err
 	}
-	if err := s.validateTriggerInput(ctx, projectID, src, in, true); err != nil {
+	// Check the unique (source, event type) conflict before resolving the agent:
+	// resolution materializes a definition-backed kb.agents row, which a binding
+	// that cannot be created would otherwise leave orphaned. The unique index
+	// still guards the race below.
+	if eventType := strings.TrimSpace(in.EventType); eventType != "" {
+		existing, lerr := s.repo.ListSourceTriggers(ctx, projectID, sourceID)
+		if lerr != nil {
+			return nil, lerr
+		}
+		for _, t := range existing {
+			if t != nil && strings.EqualFold(strings.TrimSpace(t.EventType), eventType) {
+				return nil, apperror.NewConflict("this source already has a trigger for that event")
+			}
+		}
+	}
+	agentID, err := s.validateTriggerInput(ctx, projectID, src, in, true)
+	if err != nil {
 		return nil, err
 	}
 	enabled := true
@@ -365,7 +415,7 @@ func (s *Service) CreateSourceTrigger(ctx context.Context, projectID, sourceID u
 		ProjectID:   projectID,
 		SourceID:    sourceID,
 		EventType:   strings.TrimSpace(in.EventType),
-		AgentID:     mustUUID(in.AgentID),
+		AgentID:     mustUUID(agentID),
 		Queue:       defaultSourceQueue(in.Queue),
 		EventFilter: in.EventFilter,
 		Enabled:     enabled,
@@ -376,6 +426,7 @@ func (s *Service) CreateSourceTrigger(ctx context.Context, projectID, sourceID u
 	if err := s.repo.CreateSourceTrigger(ctx, trigger); err != nil {
 		return nil, mapSourceConflict(err, "this source already has a trigger for that event")
 	}
+	trigger.AgentName = s.triggerAgentName(ctx, projectID, trigger.AgentID)
 	return trigger, nil
 }
 
@@ -392,14 +443,15 @@ func (s *Service) UpdateSourceTrigger(ctx context.Context, projectID, sourceID, 
 	if in.EventType != "" {
 		in.EventType = strings.TrimSpace(in.EventType)
 	}
-	if err := s.validateTriggerInput(ctx, projectID, src, in, false); err != nil {
+	agentID, err := s.validateTriggerInput(ctx, projectID, src, in, false)
+	if err != nil {
 		return nil, err
 	}
 	if in.EventType != "" {
 		trigger.EventType = in.EventType
 	}
-	if in.AgentID != "" {
-		trigger.AgentID = mustUUID(in.AgentID)
+	if agentID != "" {
+		trigger.AgentID = mustUUID(agentID)
 	}
 	if in.Queue != "" {
 		trigger.Queue = defaultSourceQueue(in.Queue)
@@ -413,6 +465,7 @@ func (s *Service) UpdateSourceTrigger(ctx context.Context, projectID, sourceID, 
 	if err := s.repo.UpdateSourceTrigger(ctx, trigger); err != nil {
 		return nil, mapSourceConflict(err, "this source already has a trigger for that event")
 	}
+	trigger.AgentName = s.triggerAgentName(ctx, projectID, trigger.AgentID)
 	return trigger, nil
 }
 
@@ -428,33 +481,65 @@ func (s *Service) DeleteSourceTrigger(ctx context.Context, projectID, sourceID, 
 	return s.repo.DeleteSourceTrigger(ctx, projectID, triggerID)
 }
 
-func (s *Service) validateTriggerInput(ctx context.Context, projectID uuid.UUID, src *Source, in SourceTriggerInput, requireAll bool) error {
+// validateTriggerInput validates a binding and returns the runtime agent id it
+// must store ("" when the patch carries no agentId). The resolved id is not
+// necessarily the input: the trigger picker offers agent definitions
+// (ListAgentDefinitions), so an id naming a definition resolves to that
+// definition's kb.agents row — the id kb.source_triggers.agent_id references and
+// the id dispatch enqueues a run for (#727).
+func (s *Service) validateTriggerInput(ctx context.Context, projectID uuid.UUID, src *Source, in SourceTriggerInput, requireAll bool) (string, error) {
 	eventType := strings.TrimSpace(in.EventType)
 	if eventType == "" && requireAll {
-		return apperror.NewValidation("eventType is required")
+		return "", apperror.NewValidation("eventType is required")
 	}
 	if eventType != "" && src.Provider == ProviderTypeGitHubApp && eventType != "pull_request" {
-		return apperror.NewValidation("github_app supports only the pull_request event")
+		return "", apperror.NewValidation("github_app supports only the pull_request event")
 	}
 	if strings.TrimSpace(in.AgentID) == "" {
 		if requireAll {
-			return apperror.NewValidation("agentId is required")
+			return "", apperror.NewValidation("agentId is required")
 		}
-		return nil
+		return "", nil
 	}
-	agentID, err := uuid.Parse(in.AgentID)
+	return s.resolveTriggerAgentID(ctx, projectID, in.AgentID)
+}
+
+// resolveTriggerAgentID maps an id supplied by the trigger picker to a runtime
+// kb.agents id. It accepts either a runtime agent id or an agent-definition id,
+// and creates the definition-backed runtime row when a definition-only agent
+// (one created from the UI) is bound for the first time.
+func (s *Service) resolveTriggerAgentID(ctx context.Context, projectID uuid.UUID, raw string) (string, error) {
+	agentID, err := uuid.Parse(strings.TrimSpace(raw))
 	if err != nil {
-		return apperror.NewValidation("agentId must be a UUID")
+		return "", apperror.NewValidation("agentId must be a UUID")
 	}
 	if s.agentRepo == nil {
-		return apperror.NewInternal("agent resolver is not configured", nil)
+		return "", apperror.NewInternal("agent resolver is not configured", nil)
+	}
+	projectIDStr := projectID.String()
+	agent, err := s.agentRepo.ResolveRuntimeAgentByID(ctx, projectIDStr, agentID.String())
+	if err != nil {
+		return "", apperror.NewInternal("failed to resolve agent", err)
+	}
+	if agent == nil {
+		return "", apperror.NewNotFound("Agent", raw)
+	}
+	return agent.ID, nil
+}
+
+// triggerAgentName resolves the display name of a bound agent for the trigger
+// panel. The view cannot resolve it from the picker's list: the picker offers
+// agent definitions while the binding stores a runtime kb.agents id (#727).
+func (s *Service) triggerAgentName(ctx context.Context, projectID uuid.UUID, agentID uuid.UUID) string {
+	if s.agentRepo == nil || agentID == uuid.Nil {
+		return ""
 	}
 	projectIDStr := projectID.String()
 	agent, err := s.agentRepo.FindByID(ctx, agentID.String(), &projectIDStr)
 	if err != nil || agent == nil {
-		return apperror.NewNotFound("Agent", in.AgentID)
+		return ""
 	}
-	return nil
+	return agent.Name
 }
 
 func (s *Service) sourceForProject(ctx context.Context, projectID, sourceID uuid.UUID) (*Source, error) {

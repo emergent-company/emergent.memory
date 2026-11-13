@@ -1013,6 +1013,11 @@ type DSSourceTrigger struct {
 	Enabled     bool           `json:"enabled"`
 	CreatedAt   string         `json:"createdAt"`
 	UpdatedAt   string         `json:"updatedAt"`
+
+	// AgentName is the server-resolved display name of the bound runtime agent.
+	// The picker lists agent definitions but the binding stores a kb.agents id,
+	// so the name comes from the API rather than from the picker's list (#727).
+	AgentName string `json:"agentName,omitempty"`
 }
 
 // DSSourceTriggerRequest is the create/PATCH body. Every field is omitted when

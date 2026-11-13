@@ -93,8 +93,10 @@ func (p *githubAppProvider) ConfigSchema() ProviderSchema {
 				"description": "Registered org source App id (POST /api/orgs/:orgId/source-apps).",
 			},
 			"installation_id": map[string]any{
-				"type":        "string",
-				"description": "The GitHub App installation id for the selected repositories.",
+				"type": "string",
+				// An operator cannot guess this number, and it is not the App id,
+				// the client id or the slug (#723): name the URL that shows it.
+				"description": "The number in github.com/settings/installations/<id> after installing the App on the repositories to sync.",
 			},
 			"repos": map[string]any{
 				"type":        "array",
