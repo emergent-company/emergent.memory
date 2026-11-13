@@ -504,6 +504,7 @@ func main() {
 	// /objects/:id routes so the static segment wins over the id pattern.
 	e.POST("/objects/bulk", s.uiObjectsBulk)
 	e.GET("/objects/:id", s.uiObject)
+	e.GET("/objects/:id/wiki", s.uiObjectWiki)
 	e.GET("/objects/:id/preview", s.uiObjectPreviewPartial)
 	e.GET("/objects/:id/history", s.uiObjectHistoryPage)
 	e.GET("/objects/:id/history/partial", s.uiObjectHistoryPartial)
@@ -585,6 +586,9 @@ func main() {
 	e.POST("/schedules/:id/toggle", s.uiScheduleToggle)
 	e.GET("/runs/:runId", s.uiRun)
 	e.GET("/settings", s.uiProjectSettings)
+	e.GET("/settings/platform/email", s.uiPlatformEmailSettings)
+	e.POST("/settings/platform/email", s.uiPlatformEmailSettingsSave)
+	e.POST("/settings/platform/email/test", s.uiPlatformEmailSettingsTest)
 	e.GET("/settings/assistant", s.uiProjectAssistantSettings)
 	e.GET("/settings/extraction", s.uiProjectExtractionSettings)
 	e.GET("/settings/overrides", s.uiProjectOverridesSettings)
@@ -623,6 +627,11 @@ func main() {
 	// project; its writes are org-admin only and the page says so.
 	e.GET("/settings/source-apps", s.uiSourceApps)
 	e.POST("/settings/source-apps", s.uiSourceAppCreate)
+	// The static "new" segment is registered before the :appId pattern, so the
+	// register page always wins over an App whose id is "new".
+	e.GET("/settings/source-apps/new", s.uiSourceAppNew)
+	e.GET("/settings/source-apps/:appId", s.uiSourceAppDetail)
+	e.POST("/settings/source-apps/:appId", s.uiSourceAppUpdate)
 	e.POST("/settings/source-apps/:appId/delete", s.uiSourceAppDelete)
 	e.GET("/settings/approvals", s.uiApprovals)
 	e.GET("/settings/mcp-nodes", s.uiMCPNodesRedirect)

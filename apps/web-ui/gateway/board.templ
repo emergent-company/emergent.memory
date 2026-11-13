@@ -338,7 +338,7 @@ templ boardDeliverablesView(deliverables []boardDeliverable) {
 			for _, d := range deliverables {
 				if d.Resolved {
 					<a
-						href={ templ.URL("/objects/" + url.PathEscape(d.ObjectID)) }
+						href={ templ.URL(objectWikiHref(d.ObjectID, "")) }
 						class="flex items-center gap-2 rounded-box border border-base-content/10 px-2.5 py-1.5 transition-colors hover:border-base-content/25 hover:bg-base-200/40"
 						data-testid="board-deliverable"
 					>

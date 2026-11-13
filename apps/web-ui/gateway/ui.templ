@@ -25,7 +25,7 @@ import (
 // can load its own self-contained htmx v4 build (webui/static/js/htmx.min.js)
 // instead of go-daisy's bundled htmx 2.x, with v2-compat config applied right
 // after load. Everything else mirrors PageFull's document structure.
-templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool, agents []AgentDefinitionSummary, assistantAgent string, currentProject *ProjectRef, currentOrgName string, activeOrg *Org, projectGroups []projectGroup, orgs []Org, recentProjects []ProjectRef, showRecent bool, unreadNotifications int, pendingInvites []PendingInviteDto, user *currentUser, accounts []currentUser, content templ.Component, objectTypes map[string]objectTypeUI, sentryDSN string, sentryEnvironment string, sentryTracesSampleRate float64, sentryReplaySessionSampleRate float64, sentryReplayOnErrorSampleRate float64, feedbackOverlayURL string) {
+templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool, agents []AgentDefinitionSummary, assistantAgent string, currentProject *ProjectRef, currentOrgName string, activeOrg *Org, projectGroups []projectGroup, orgs []Org, recentProjects []ProjectRef, showRecent bool, unreadNotifications int, pendingInvites []PendingInviteDto, user *currentUser, accounts []currentUser, content templ.Component, objectTypes map[string]objectTypeUI, sentryDSN string, sentryEnvironment string, sentryTracesSampleRate float64, sentryReplaySessionSampleRate float64, sentryReplayOnErrorSampleRate float64, feedbackOverlayURL string, feedbackOverlayAPIURL string, feedbackOrder feedbackOrderConfig) {
 	<!DOCTYPE html>
 	<html lang="en" data-theme="dark" class="group/html" data-asset-track="reload">
 		<head>
@@ -78,7 +78,7 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 			})
 			<meta name="view-transition" content="same-origin"/>
 		</head>
-		<body class="bg-base-200 min-h-screen" data-active-project-id={ currentProjectID(currentProject) } data-project-id={ currentProjectID(currentProject) } data-org-id={ currentOrgID(currentProject, activeOrg) }>
+		<body class="app-body bg-base-200" data-active-project-id={ currentProjectID(currentProject) } data-project-id={ currentProjectID(currentProject) } data-org-id={ currentOrgID(currentProject, activeOrg) }>
 			<!-- Modal container -->
 			<div id="modal-container"></div>
 			<!-- Toast container -->
@@ -212,7 +212,20 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 			<script src={ templ.SafeURL(webui.AssetPath("/js/object-preview.js")) }></script>
 			<script src={ templ.SafeURL(webui.AssetPath("/js/documents-chunks.js")) }></script>
 			if feedbackOverlayURL != "" {
-				<script src={ templ.SafeURL(feedbackOverlayURL + "/emergent-feedback.js") } data-api={ feedbackOverlayURL } data-repo="emergent-company/emergent.memory" data-label="feedback" async></script>
+				<script
+					src={ templ.SafeURL(feedbackOverlayURL + "/emergent-feedback.js") }
+					data-api={ feedbackOverlayAPIURL }
+					data-repo="emergent-company/emergent.memory"
+					data-label="feedback"
+					if feedbackOrder.enabled() {
+						data-order-box={ feedbackOrder.Box }
+						data-order-session={ feedbackOrder.Session }
+						if feedbackOrder.Token != "" {
+							data-order-token={ feedbackOrder.Token }
+						}
+					}
+					async
+				></script>
 			}
 		</body>
 	</html>
@@ -785,6 +798,11 @@ type headerSpec struct {
 	KeepTrailLinks bool
 	// Margin is the outer wrapper margin class. Default "mb-6".
 	Margin string
+	// TitleBody replaces the `<h1>{Title}</h1>` when non-nil: a page whose title
+	// is an object header (icon tile, identity line, name) renders that component
+	// instead, so the object is introduced by the same markup everywhere. Title
+	// is then only used for the trail's trailing crumb.
+	TitleBody templ.Component
 }
 
 // pageHead renders headerSpec. It is the only page-header implementation: both
@@ -803,12 +821,16 @@ templ pageHead(spec headerSpec) {
 		}
 		<div class="mt-2 flex flex-wrap items-end justify-between gap-4">
 			<div class="min-w-0">
-				<div class="flex flex-wrap items-center gap-2">
-					if spec.TitleLeading != nil {
-						@spec.TitleLeading
-					}
-					<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ spec.Title }</h1>
-				</div>
+				if spec.TitleBody != nil {
+					@spec.TitleBody
+				} else {
+					<div class="flex flex-wrap items-center gap-2">
+						if spec.TitleLeading != nil {
+							@spec.TitleLeading
+						}
+						<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ spec.Title }</h1>
+					</div>
+				}
 				if spec.Description != "" {
 					<p class="text-base-content/55 mt-1 max-w-2xl text-sm">{ spec.Description }</p>
 				}
@@ -963,6 +985,10 @@ type detailHeaderOpts struct {
 	Meta templ.Component
 	// KeepTrailLinks keeps every trail crumb navigable (see headerSpec).
 	KeepTrailLinks bool
+	// TitleBody replaces the plain h1 with a component that names the page
+	// itself — an object header (tile, identity line, name) — so object pages
+	// share one header markup. Title is still the trail's trailing crumb.
+	TitleBody templ.Component
 }
 
 // detailHeader renders a detail-page header: breadcrumb trail, h1, description,
@@ -993,6 +1019,7 @@ func detailHeader(crumbs []nav.BreadcrumbItem, group, title, description string,
 			Actions:        children,
 			Margin:         o.Margin,
 			KeepTrailLinks: o.KeepTrailLinks,
+			TitleBody:      o.TitleBody,
 		}).Render(ctx, w)
 	})
 }

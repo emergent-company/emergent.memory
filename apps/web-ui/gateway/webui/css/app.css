@@ -31,98 +31,14 @@
     megamenu, mockup, otp, radialprogress, textrotate, typography;
 }
 
-/* Memory brand theme: ink-navy surfaces, brass primary (the butler's tray),
-   steel secondary, mint accent. Overrides the built-in "dark" theme. */
-@plugin "daisyui/theme" {
-  name: "dark";
-  default: true;
-  prefersdark: true;
-  color-scheme: dark;
+/* Brand palette + radius/muted bridges: the daisyUI `dark` theme, the
+   Tailwind-radius alias and the `--color-muted-*` scale now ship in go-daisy, so
+   this app and the market import one file instead of each carrying a copy:
 
-  --color-base-100: oklch(0.215 0.016 274); /* surface */
-  --color-base-200: oklch(0.175 0.014 274); /* page background */
-  --color-base-300: oklch(0.135 0.012 274); /* deepest elevation */
-  --color-base-content: oklch(0.93 0.008 265);
+     components/css/theme-memory.css   (MemoryThemeCSS in go-daisy/css)
 
-  --color-primary: oklch(0.74 0.135 78); /* brass */
-  --color-primary-content: oklch(0.2 0.04 78);
-
-  --color-secondary: oklch(0.64 0.105 240); /* steel */
-  --color-secondary-content: oklch(0.96 0.01 240);
-
-  --color-accent: oklch(0.76 0.15 162); /* mint */
-  --color-accent-content: oklch(0.17 0.04 162);
-
-  --color-neutral: oklch(0.265 0.02 274);
-  --color-neutral-content: oklch(0.9 0.01 265);
-
-  --color-info: oklch(0.69 0.115 240);
-  --color-info-content: oklch(0.97 0.01 240);
-  --color-success: oklch(0.71 0.15 152);
-  --color-success-content: oklch(0.97 0.01 152);
-  --color-warning: oklch(0.81 0.155 82);
-  --color-warning-content: oklch(0.2 0.04 82);
-  --color-error: oklch(0.63 0.2 26);
-  --color-error-content: oklch(0.2 0.04 26);
-
-  --radius-selector: 1rem;
-  --radius-field: 0.25rem;
-  --radius-box: 0.5rem;
-  --size-selector: 0.25rem;
-  --size-field: 0.25rem;
-  --border: 1px;
-  --depth: 1;
-  --noise: 0;
-}
-
-/* Theme bridge — Tailwind's radius scale is a separate namespace from daisyUI's
- * semantic radius tokens (--radius-box / --radius-field / --radius-selector),
- * so a literal `rounded-lg` compiles to var(--radius-lg) and ignores the theme.
- * go-daisy's component markup still uses that literal scale, so alias the
- * Tailwind namespace onto the semantic tokens to bring it back under the theme.
- * TEMPORARY: remove this block once go-daisy replaces its literal radius with
- * the semantic utilities (tracked in the audit's go-daisy dependency list).
- *
- * The mapping is value-preserving: every step equals its Tailwind default
- * (sm/default 0.25rem, md 0.375rem, lg 0.5rem, xl 0.75rem, 2xl 1rem,
- * 3xl 1.5rem), so nothing collapses onto a smaller value. Steps with no
- * dedicated token are derived from the three semantic levers — md is the
- * midpoint of field and box, xl the midpoint of box and selector, 3xl one box
- * past selector — so changing --radius-field/--radius-box/--radius-selector
- * still moves every radius with a single edit. */
-@theme inline {
-  --radius-sm: var(--radius-field);
-  --radius: var(--radius-field);
-  --radius-md: calc((var(--radius-field) + var(--radius-box)) / 2);
-  --radius-lg: var(--radius-box);
-  --radius-xl: calc((var(--radius-box) + var(--radius-selector)) / 2);
-  --radius-2xl: var(--radius-selector);
-  --radius-3xl: calc(var(--radius-selector) + var(--radius-box));
-}
-
-/* Muted scale — a single shared scale for de-emphasised foreground (text and
- * icons) instead of the previous spread of ad-hoc `text-base-content/N`
- * opacities (20/25/30/35/40/42/45/50/55/60/65/70/75/80/85/90/92%). Each step
- * derives from the existing `--color-base-content` token, so the scale tracks
- * the theme — no new palette. Named `--color-muted-*` so Tailwind generates
- * `text-muted-*` (and `bg-/border-/fill-/stroke-*`) utilities; the `:root`
- * variables also let app.css reference the same steps directly.
- *
- * Canonical steps (the value each step replaces):
- *   muted-subtle 25%  ← 20/25/30   (placeholder, deepest de-emphasis)
- *   muted-faint  40%  ← 35/40/42/45 (metadata, timestamps, captions)
- *   muted        50%  ← 50/55       (default secondary text/icon)
- *   muted-strong 65%  ← 60/65/70    (readable caption, table header, message)
- *   muted-bright 80%  ← 75/80       (secondary content: values, names)
- * Content text that was only faintly dimmed (85/90/92%) normalises to the full
- * `--color-base-content` token — it is content, not muted emphasis. */
-@theme {
-  --color-muted-subtle: color-mix(in oklab, var(--color-base-content) 25%, transparent);
-  --color-muted-faint: color-mix(in oklab, var(--color-base-content) 40%, transparent);
-  --color-muted: color-mix(in oklab, var(--color-base-content) 50%, transparent);
-  --color-muted-strong: color-mix(in oklab, var(--color-base-content) 65%, transparent);
-  --color-muted-bright: color-mix(in oklab, var(--color-base-content) 80%, transparent);
-}
+   It is imported below, after tokens.css/custom.css, because it must win the
+   `--color-muted` collision with go-daisy's own 60% tone ladder. */
 
 /* Radius exception list. The "radius derives from theme variables" rule has one
  * explicit, reviewable exception: the runtime-injected badge shell in
@@ -193,16 +109,22 @@
    sidebar/layout/topbar/alpine/view-transition rules (and the line ladder). */
 @import "../../vendor/github.com/emergent-company/go-daisy/components/css/tokens.css";
 @import "../../vendor/github.com/emergent-company/go-daisy/components/css/custom.css";
+/* Memory brand theme (daisyUI `dark`, the radius bridge, the muted scale) —
+   last on purpose: it overrides tokens.css's own `--color-muted`. */
+@import "../../vendor/github.com/emergent-company/go-daisy/components/css/theme-memory.css";
 
-/* go-daisy tokens.css also declares `--color-muted`, but at 60% (its own tone
-   ladder), in an `@theme inline` block. Because that import comes after
-   Memory's muted scale above, upstream's value would win and silently brighten
-   every `text-muted`/`var(--color-muted)` use app-wide. Re-assert Memory's
-   canonical 50% step after the import so the product scale stays
-   authoritative; the rest of the product scale (muted-subtle/-faint/-strong/
-   -bright) does not collide with go-daisy's names. */
+/* `--color-muted` needs no re-assert any more: theme-memory.css is the last
+   stylesheet imported and carries the product's canonical 50% step, which is
+   exactly why it has to stay after tokens.css. */
+
+/* Same collision on the line ladder: go-daisy maps `line` to base-200 and
+   `line-strong` to base-300, both darker than the dark theme's base-100
+   surface, so every `edge-line`/`border-line` card reads as a black outline.
+   Re-assert the ladder over the content ink instead; `line-translucent` already
+   is content/10 and stays as-is. */
 @theme inline {
-  --color-muted: color-mix(in oklab, var(--color-base-content) 50%, transparent);
+  --color-line: color-mix(in oklab, var(--color-base-content) 10%, transparent);
+  --color-line-strong: color-mix(in oklab, var(--color-base-content) 15%, transparent);
 }
 
 /* ---------------------------------------------------------------------------
@@ -210,6 +132,13 @@
  * Plain CSS on purpose: these intentionally override daisyUI component
  * defaults, so they stay unlayered (unlayered beats layered).
  * ------------------------------------------------------------------------- */
+
+/* daisyUI `.card-border` still paints `--color-base-200`, which is darker than
+   the surface and reads as black on this theme. Match the product's translucent
+   content hairlines; width/style still come from daisyUI's rule. */
+.card-border {
+  border-color: color-mix(in oklab, var(--color-base-content) 10%, transparent);
+}
 
 /* ---------- Atmosphere ---------- */
 /* Keep the root element dark regardless of daisyUI's theme cascade. Without
@@ -234,10 +163,11 @@ html {
   font-size: 15px;
 }
 
-/* The brand theme tokens are declared once, in the @plugin "daisyui/theme"
-   block above (dark, default). The unlayered :root redeclaration that used to
-   beat go-daisy's light "nord" default in the co-loaded stylesheet is gone —
-   go-daisy's CSS is no longer loaded, so the dark theme is authoritative. */
+/* The brand theme tokens are declared once, in go-daisy's
+   components/css/theme-memory.css (imported above, dark + default). The
+   unlayered :root redeclaration that used to beat go-daisy's light "nord"
+   default in the co-loaded stylesheet is gone — go-daisy's CSS bundle is no
+   longer loaded, so the imported theme is authoritative. */
 
 body {
   /* soft brass glow top-right, faint violet bottom-left.
@@ -480,6 +410,12 @@ main#main-content {
 }
 
 /* ---------- Chat ---------- */
+/* Transcript voice: one step below the 15px shell base so long agent turns
+   read denser without dropping below 14px. */
+#chat-messages {
+  font-size: 14px;
+}
+
 #chat-log {
   scrollbar-width: thin;
   scrollbar-color: var(--color-base-300) transparent;
@@ -1825,6 +1761,23 @@ html[data-standalone] body {
 /* Shell height: dynamic viewport with a 100vh fallback. `dvh` tracks the
    collapsing URL bar in mobile browsers; older clients keep 100vh. The
    fallback lives outside an @supports check so the minifier keeps both. */
+/* The shell is the viewport. `min-h-screen` on <body> is taller than
+   `100dvh` while the mobile browser toolbar is showing, which is exactly what
+   made the document (and the topbar) scroll under the thumb. Pin the body to
+   the dynamic viewport instead; #main-content stays the only scroller. */
+html:has(body.app-body) {
+  height: 100%;
+  overflow: hidden;
+}
+body.app-body {
+  height: 100vh;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+@supports (height: 100dvh) {
+  body.app-body { height: 100dvh; }
+}
+
 .app-shell { height: 100vh; }
 @supports (height: 100dvh) {
   .app-shell { height: 100dvh; }
@@ -2028,6 +1981,22 @@ html.keyboard-open #object-preview-panel:not(.object-preview-in-modal) { height:
 }
 
 /* ---------- grouped tool calls ---------- */
+/* The tool-run summary's own sheet pads it .5rem, which pushed the row's
+   icon/verb ~8px right of every assistant line. Drop that inset so the wrench
+   glyph starts on the transcript's content edge. */
+.chat.memory-aux .memory-tool-run-summary,
+.chat.memory-aux .memory-badge-toggle {
+  padding-inline: 0;
+}
+/* The run summary had no column gap, so "2 tool calls" sat tighter to the
+   wrench than a thinking/tool badge's label does to its glyph. */
+.chat.memory-aux .memory-tool-run-summary {
+  gap: 0.5rem;
+}
+.chat.memory-aux .memory-badge-icon {
+  width: 1rem;
+}
+
 /* A group only exists for 2+ consecutive calls; the body scrolls once it gets
    long, keeping the transcript's rhythm intact. */
 .memory-tool-group .memory-tool-run-body {

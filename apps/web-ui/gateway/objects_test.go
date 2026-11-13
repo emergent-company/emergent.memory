@@ -86,7 +86,7 @@ func TestRenderObjectsPage(t *testing.T) {
 	}))
 	for _, want := range []string{
 		"Objects", "sam-lee", "call dentist", "person", "task",
-		`href="/objects/o1"`, `name="type"`, "All types",
+		`href="/objects/o1/wiki"`, `name="type"`, "All types",
 		`name="branch"`, "Main branch", "plan/next-gen",
 		"New object", `href="/objects/new"`,
 	} {
@@ -730,7 +730,7 @@ func TestRenderObjectsPageSearchStatsLoadMore(t *testing.T) {
 		NextCursor: "cur-1",
 		Stats:      &objectsStats{TotalObjects: 42, PendingEmbed: 3, FailedEmbed: 1},
 	}))
-	for _, want := range []string{"42", "objects", "pending", "failed", "Load more", `hx-get="/objects/partial?cursor=cur-1"`, `hx-target="#objects-list"`} {
+	for _, want := range []string{"42", "objects", "pending", "failed", "Load more", `hx-get="/objects/partial?cursor=cur-1"`, `hx-target="#objects-cards"`} {
 		if !strings.Contains(browseHTML, want) {
 			t.Errorf("browse page missing %q", want)
 		}
@@ -1203,7 +1203,7 @@ func TestRenderObjectDetailPageTypedView(t *testing.T) {
 func TestRenderObjectDetailMetaProvenance(t *testing.T) {
 	count := 4
 	obj := &GraphObject{ID: "o1", Type: "Property", Ref: "prop-1", DataClass: "synthesized", CredentialKind: "mcp_link", RevisionCount: &count}
-	html := renderHTML(t, objectDetailMeta(obj, objectBranchRef{}, nil, nil, "overview"))
+	html := renderHTML(t, objectDetailChips(obj, objectBranchRef{}, nil, nil, "overview"))
 	for _, want := range []string{
 		`data-testid="object-data-class"`,
 		`data-data-class="synthesized"`,
@@ -1213,14 +1213,23 @@ func TestRenderObjectDetailMetaProvenance(t *testing.T) {
 		`href="/objects/o1/history"`,
 		`data-testid="object-credential-kind"`,
 		"agent MCP link",
+		// The chip's glyph and its human tooltip must be the ones dataClassChip
+		// returns: the two string returns were once bound in the wrong order, so
+		// the icon class was rendered as the tooltip and the sentence as the icon
+		// (an empty span, i.e. no glyph at all).
+		"lucide--sparkles",
+		"This version was generated",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("provenance meta missing %q:\n%s", want, html)
 		}
 	}
+	if strings.Contains(html, `title="lucide--sparkles"`) {
+		t.Errorf("the icon class must not be used as the chip's tooltip:\n%s", html)
+	}
 
 	// Absent fields (write responses) render no chip at all.
-	bare := renderHTML(t, objectDetailMeta(&GraphObject{ID: "o2", Type: "Note"}, objectBranchRef{}, nil, nil, "overview"))
+	bare := renderHTML(t, objectDetailChips(&GraphObject{ID: "o2", Type: "Note"}, objectBranchRef{}, nil, nil, "overview"))
 	for _, bad := range []string{`data-testid="object-data-class"`, `data-testid="object-revision-count"`, `data-testid="object-credential-kind"`} {
 		if strings.Contains(bare, bad) {
 			t.Errorf("absent provenance rendered %q:\n%s", bad, bare)
@@ -1228,11 +1237,15 @@ func TestRenderObjectDetailMetaProvenance(t *testing.T) {
 	}
 	// A single revision is not history worth counting.
 	one := 1
-	if html := renderHTML(t, objectDetailMeta(&GraphObject{ID: "o3", Type: "Note", DataClass: "source", RevisionCount: &one}, objectBranchRef{}, nil, nil, "overview")); strings.Contains(html, "versions") {
+	fromSource := renderHTML(t, objectDetailChips(&GraphObject{ID: "o3", Type: "Note", DataClass: "source", RevisionCount: &one}, objectBranchRef{}, nil, nil, "overview"))
+	if strings.Contains(fromSource, "versions") {
 		t.Error("a single revision must not render a versions link")
 	}
+	if !strings.Contains(fromSource, "lucide--file-input") {
+		t.Errorf("a source-owned version must carry its own glyph:\n%s", fromSource)
+	}
 	// An unknown class leaks nothing into the header.
-	if html := renderHTML(t, objectDetailMeta(&GraphObject{ID: "o4", Type: "Note", DataClass: "mystery"}, objectBranchRef{}, nil, nil, "overview")); strings.Contains(html, "mystery") {
+	if html := renderHTML(t, objectDetailChips(&GraphObject{ID: "o4", Type: "Note", DataClass: "mystery"}, objectBranchRef{}, nil, nil, "overview")); strings.Contains(html, "mystery") {
 		t.Error("an unknown data class must not render")
 	}
 }
@@ -1425,6 +1438,90 @@ func TestRenderObjectDetailTwoPropertyCards(t *testing.T) {
 	}
 	if strings.Contains(schema, `id="object-key"`) {
 		t.Errorf("schema card must not carry the platform key field:\n%s", schema)
+	}
+}
+
+// TestObjectProseField pins the built-in prose input: the wiki resolves an
+// object's overview from conventional properties the type schema need not
+// declare, and extraction writes `properties.description`, but the editor used to
+// carry that value only as an unnamed-in-purpose row among the type's properties.
+// The field must prefill from the stored key, post the marker the handler needs to
+// clear an emptied value, and be listed exactly once across both cards.
+func TestObjectProseField(t *testing.T) {
+	// Prefill + the key/marker pair the POST handler understands.
+	stored := &GraphObject{
+		ID: "o1", Type: "Person", Key: "sam-lee",
+		Properties: map[string]any{"description": "Extracted summary.", "owner": "Ada"},
+	}
+	defs := []objectPropertyDef{{Name: "owner", Title: "Owner", Type: "string"}}
+	html := renderHTML(t, objectBuiltinPropertiesCard(stored, nil, defs))
+	for _, want := range []string{
+		`name="prop_description"`,
+		`name="propm_present_description"`,
+		"Extracted summary.",
+		`id="object-field-label-description"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("built-in card missing %q:\n%s", want, html)
+		}
+	}
+	// The prose row is promoted out of the type card, not duplicated: one input
+	// for the key across both cards, and the other properties still listed.
+	typeCard := renderHTML(t, objectTypePropertiesCard(stored, defs, "Person"))
+	if strings.Contains(typeCard, `prop_description`) {
+		t.Errorf("the type card must not repeat the promoted prose field:\n%s", typeCard)
+	}
+	if !strings.Contains(typeCard, `prop_owner`) {
+		t.Errorf("promoting prose must not drop the other properties:\n%s", typeCard)
+	}
+
+	// No stored prose: the field still renders (that is how a hand-authored
+	// object gets an overview at all), empty.
+	blank := renderHTML(t, objectBuiltinPropertiesCard(&GraphObject{ID: "o2", Type: "Person", Key: "p2"}, nil, nil))
+	if !strings.Contains(blank, `name="prop_description"`) {
+		t.Errorf("the prose field must render for an object with none:\n%s", blank)
+	}
+	if strings.Contains(blank, "Extracted summary.") {
+		t.Errorf("an empty object must not inherit another object's description:\n%s", blank)
+	}
+
+	// Whichever of the wiki's lead keys the object carries is the one offered,
+	// labelled by its own name: a summary object gets a Summary field rather than
+	// an empty Description with its prose still buried in the type card.
+	summaryObj := &GraphObject{ID: "o3", Type: "Person", Key: "p3", Properties: map[string]any{"summary": "Led by summary."}}
+	summary := renderHTML(t, objectBuiltinPropertiesCard(summaryObj, nil, nil))
+	if !strings.Contains(summary, `name="prop_summary"`) {
+		t.Errorf("a summary object must edit its summary:\n%s", summary)
+	}
+	if !strings.Contains(summary, `id="object-field-label-summary"`) {
+		t.Errorf("the field must be labelled by the key it edits:\n%s", summary)
+	}
+
+	// A stored key with different casing keeps its spelling, so the edit
+	// overwrites the property instead of adding a second one beside it.
+	cased := renderHTML(t, objectBuiltinPropertiesCard(&GraphObject{
+		ID: "o4", Type: "Person", Key: "p4",
+		Properties: map[string]any{"Description": "Kept case."},
+	}, nil, nil))
+	if !strings.Contains(cased, `name="prop_Description"`) {
+		t.Errorf("the field must post the key the object already stores:\n%s", cased)
+	}
+
+	// A type that declares the prose property owns it through the type form; two
+	// inputs posting the same key would fight over the value.
+	declared := renderHTML(t, objectBuiltinPropertiesCard(
+		&GraphObject{ID: "o5", Type: "Person", Key: "p5"},
+		nil, []objectPropertyDef{{Name: "description", Type: "string"}},
+	))
+	if strings.Contains(declared, `propm_present_description`) {
+		t.Errorf("a declared prose property must not be posted twice:\n%s", declared)
+	}
+	declaredTypeCard := renderHTML(t, objectTypePropertiesCard(
+		&GraphObject{ID: "o5", Type: "Person", Key: "p5", Properties: map[string]any{"description": "Kept."}},
+		[]objectPropertyDef{{Name: "description", Type: "string"}}, "Person",
+	))
+	if !strings.Contains(declaredTypeCard, `prop_description`) {
+		t.Errorf("a declared prose property stays in the type card:\n%s", declaredTypeCard)
 	}
 }
 
@@ -5407,7 +5504,7 @@ func TestObjectSubpages(t *testing.T) {
 			Status: &objectStatusControl{Show: true, Options: []string{"ready", "done"}},
 			Active: "history",
 		}
-		body := renderHTML(t, objectHistoryPage(data, nil, nil))
+		body := renderHTML(t, objectHistoryPage(data, nil, nil, nil))
 		if !strings.Contains(body, `data-status="ready"`) {
 			t.Errorf("history subpage should keep the read-only header status badge:\n%s", body)
 		}

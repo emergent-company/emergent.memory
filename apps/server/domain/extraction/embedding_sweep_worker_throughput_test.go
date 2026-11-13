@@ -236,3 +236,9 @@ func TestEmbeddingSweepWorker_RelationshipBatchErrorCountsEveryRow(t *testing.T)
 		WHERE project_id = ? AND embedding IS NULL`, projectID).Scan(ctx, &nullCount))
 	assert.Equal(t, 3, nullCount, "all embeddings must remain NULL for a later retry")
 }
+
+// EmbedDocumentWithUsage keeps the failing embedder failing on the document
+// path too; the sweep test asserts the serial fallback reports errors.
+func (e *sweepFailingBatchEmbedder) EmbedDocumentWithUsage(context.Context, string) (*vertex.EmbedResult, error) {
+	return nil, errors.New("sweep failing embedder")
+}

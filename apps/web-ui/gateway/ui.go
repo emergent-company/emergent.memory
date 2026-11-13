@@ -547,7 +547,7 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 	// (literal href/action/hx-* in the page templates) must carry the scope base
 	// just like htmx partials, otherwise the first navigation after a full load
 	// hits an unscoped app path and 404s under the session-mode hard cut.
-	s.renderScoped(w, r, appShell(title, groups, providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, unreadNotifications, pendingInvites, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL), linkBase)
+	s.renderScoped(w, r, appShell(title, groups, providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, unreadNotifications, pendingInvites, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL, s.cfg.feedbackOverlayAPI(), s.cfg.feedbackOrder()), linkBase)
 	return nil
 }
 

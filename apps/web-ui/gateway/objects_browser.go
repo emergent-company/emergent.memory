@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/a-h/templ"
@@ -182,14 +183,15 @@ func objectsBulkBackURL(data objectsPageData) string {
 	return strings.TrimSuffix(objectsTargetURL(data)+objectsSortHref(data, data.Order), "?")
 }
 
-// objectsBrowserRowView is one row of the objects table, flattened from either a
-// browse object or a search hit so the table has one rendering path. Search-only
+// objectsBrowserRowView is one card of the objects grid, flattened from either a
+// browse object or a search hit so the grid has one rendering path. Search-only
 // fields (Score) are zero in browse mode and simply not rendered.
 type objectsBrowserRowView struct {
 	ID               string
 	Ref              string
 	Label            string
 	Type             string
+	Excerpt          string
 	Status           string
 	StatusLabel      string
 	StatusIntent     ui.BadgeIntent
@@ -201,36 +203,57 @@ type objectsBrowserRowView struct {
 	CreatedAt        string
 	Score            float32
 	UI               typeUI
+	// DataClass* describe how the server classified this version (source,
+	// synthesized, adopted). Empty when unreported, in which case the card
+	// renders no chip rather than inventing provenance.
+	DataClassLabel  string
+	DataClassIntent ui.BadgeIntent
+	DataClassIcon   string
+	DataClassHint   string
+	// Writer is the version's resolved write stamp: who wrote it, through which
+	// credential, and the audit tooltip behind the name. When is the relative age
+	// the card shows in its footer (a card is a glance, not an audit row, so the
+	// history timeline's absolute stamp would be out of place).
+	Writer objectVersionProvenance
+	When   string
+	// RevisionCount is reported on read paths only (a materialized view), so the
+	// card links to the history only when the server actually said how many
+	// versions exist.
+	RevisionCount    int
+	HasRevisionCount bool
 }
 
-// objectsBrowserRows flattens the page data into table rows: browse objects in
-// browse mode, ranked search hits otherwise.
+// objectsBrowserRows flattens the page data into card views: browse objects in
+// browse mode, ranked search hits otherwise. identities resolves each version's
+// writer to a name; the page already loads them for the actor filter.
 func objectsBrowserRows(data objectsPageData) []objectsBrowserRowView {
 	if data.Query != "" {
 		rows := make([]objectsBrowserRowView, 0, len(data.Results))
 		for _, r := range data.Results {
-			rows = append(rows, newObjectsBrowserRow(r.Object, data.TypeUIByType, r.Score))
+			rows = append(rows, newObjectsBrowserRow(r.Object, data.TypeUIByType, data.ActorOptions, r.Score))
 		}
 		return rows
 	}
 
 	rows := make([]objectsBrowserRowView, 0, len(data.Objects))
 	for _, o := range data.Objects {
-		rows = append(rows, newObjectsBrowserRow(o, data.TypeUIByType, 0))
+		rows = append(rows, newObjectsBrowserRow(o, data.TypeUIByType, data.ActorOptions, 0))
 	}
 	return rows
 }
 
-// newObjectsBrowserRow is the single mapping from a graph object to the table
-// row view. Browse rows pass score 0 because they have no relevance column.
-func newObjectsBrowserRow(o GraphObject, typeUIByType map[string]typeUI, score float32) objectsBrowserRowView {
+// newObjectsBrowserRow is the single mapping from a graph object to the card
+// view. Browse rows pass score 0 because they have no relevance chip.
+func newObjectsBrowserRow(o GraphObject, typeUIByType map[string]typeUI, identities []objectActorOption, score float32) objectsBrowserRowView {
 	embedLabel, embedVariant := embeddingStatusBadge(o.EmbeddingStatus)
 	embedIcon, embedClass := embeddingStatusIcon(o.EmbeddingStatus)
-	return objectsBrowserRowView{
+	classLabel, classIntent, classIcon, classHint := dataClassChip(o.DataClass)
+	r := objectsBrowserRowView{
 		ID:               o.ID,
 		Ref:              o.Ref,
 		Label:            graphObjectLabel(o),
 		Type:             o.Type,
+		Excerpt:          objectExcerpt(o.Properties),
 		Status:           o.Status,
 		StatusLabel:      boardStatusLabel(o.Status),
 		StatusIntent:     boardStatusIntent(o.Status),
@@ -242,7 +265,150 @@ func newObjectsBrowserRow(o GraphObject, typeUIByType map[string]typeUI, score f
 		CreatedAt:        o.CreatedAt,
 		Score:            score,
 		UI:               typeUIOf(typeUIByType, o.Type),
+		DataClassLabel:   classLabel,
+		DataClassIntent:  classIntent,
+		DataClassIcon:    classIcon,
+		DataClassHint:    classHint,
+		Writer:           objectProvenanceOf(o, identities),
+		When:             relTime(o.CreatedAt),
 	}
+	if o.RevisionCount != nil && *o.RevisionCount > 0 {
+		r.RevisionCount = *o.RevisionCount
+		r.HasRevisionCount = true
+	}
+	return r
+}
+
+// objectExcerptMaxRunes caps a card excerpt. A card is two or three lines of
+// text at any card width, so the cap is about the cut, not the container: the
+// template clamps the rest.
+const objectExcerptMaxRunes = 280
+
+// objectExcerptKeys is the prose-property precedence a card excerpt follows. The
+// order runs from the most deliberate short field to the long-form body, so a
+// type that declares both a summary and a description shows the summary. Keys
+// are matched case-insensitively at each step — schemas in the wild use
+// "Summary", "Description" and "content" interchangeably.
+var objectExcerptKeys = []string{"summary", "description", "excerpt", "abstract", "content", "body", "notes"}
+
+// objectExcerpt resolves the first paragraph of an object's prose for a card.
+// It reads only string properties: an array or a number is not prose, and a
+// nested object's first key is not a stand-in for one. No prose property → ""
+// and the card renders without an excerpt rather than a truncated JSON dump.
+func objectExcerpt(props map[string]any) string {
+	if len(props) == 0 {
+		return ""
+	}
+	for _, key := range objectExcerptKeys {
+		s, ok := proseProperty(props, key)
+		if !ok {
+			continue
+		}
+		if text := flattenProseParagraph(s); text != "" {
+			return truncateProseRunes(text, objectExcerptMaxRunes)
+		}
+	}
+	return ""
+}
+
+// proseProperty finds a property by name, tolerating the case and separators
+// schemas vary on ("LongDescription", "long_description").
+func proseProperty(props map[string]any, key string) (string, bool) {
+	_, s, ok := prosePropertyNamed(props, key)
+	return s, ok
+}
+
+// prosePropertyNamed is proseProperty that also reports the property's actual
+// name, which the article needs so the rail can skip the fields it rendered.
+func prosePropertyNamed(props map[string]any, key string) (name, value string, ok bool) {
+	if v, found := props[key]; found {
+		s, isString := v.(string)
+		return key, s, isString
+	}
+	for k, v := range props {
+		if !strings.EqualFold(normalizeProseKey(k), key) {
+			continue
+		}
+		s, isString := v.(string)
+		return k, s, isString
+	}
+	return "", "", false
+}
+
+// normalizeProseKey folds a property name for comparison: separators dropped and
+// spaces removed, so "long_description" and "Long Description" both match
+// "longdescription".
+func normalizeProseKey(k string) string {
+	r := strings.NewReplacer("_", "", "-", "", " ", "", ".", "")
+	return r.Replace(strings.TrimSpace(k))
+}
+
+var (
+	proseImageRE  = regexp.MustCompile(`!\[[^\]]*\]\([^)]*\)`)
+	proseLinkRE   = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`)
+	proseListItem = regexp.MustCompile(`^(?:[-*+]|\d+[.)])\s+`)
+	proseHeading  = regexp.MustCompile(`^#{1,6}\s*`)
+	proseQuote    = regexp.MustCompile(`^>\s*`)
+	proseMarks    = strings.NewReplacer("**", "", "__", "", "~~", "", "`", "")
+	proseSpaces   = regexp.MustCompile(`\s+`)
+)
+
+// flattenProseParagraph turns one markdown property into the single flat line a
+// card shows: the first paragraph, with block markers (headings, quotes, list
+// bullets), link targets, images and emphasis markers removed. It deliberately
+// keeps the words of the first paragraph's list items — a card excerpt that
+// stops at "the house has:" reads worse than one that continues into its list.
+func flattenProseParagraph(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = proseImageRE.ReplaceAllString(s, "")
+	s = proseLinkRE.ReplaceAllString(s, "$1")
+
+	var (
+		parts   []string
+		started bool
+	)
+	for _, raw := range strings.Split(s, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			// The first blank line after prose ends the paragraph.
+			if started {
+				break
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "```") {
+			continue
+		}
+		// A heading is not a paragraph: its marker and its text are structure,
+		// not prose, so a card excerpt never starts with a section title.
+		if proseHeading.MatchString(line) {
+			continue
+		}
+		line = proseQuote.ReplaceAllString(line, "")
+		line = proseListItem.ReplaceAllString(line, "")
+		line = proseMarks.Replace(line)
+		if line = strings.TrimSpace(line); line == "" {
+			continue
+		}
+		started = true
+		parts = append(parts, line)
+	}
+	return proseSpaces.ReplaceAllString(strings.Join(parts, " "), " ")
+}
+
+// truncateProseRunes cuts text to at most max runes at a word boundary, appending an
+// ellipsis. Cutting mid-word reads as a typo; cutting mid-rune corrupts the
+// string, which is why the limit counts runes rather than bytes.
+func truncateProseRunes(s string, max int) string {
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	cut := string(runes[:max])
+	if i := strings.LastIndex(cut, " "); i > 0 {
+		cut = cut[:i]
+	}
+	return strings.TrimSpace(cut) + "…"
 }
 
 // objectShortID is the id fragment shown above an object's name: the first

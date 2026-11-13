@@ -39,10 +39,13 @@ func provideService(store *Store, credsvc *provider.CredentialService, log *slog
 	// provider.CredentialService satisfies both generativeDefaultResolver and
 	// embeddingDefaultResolver; wire both fallbacks so ResolveGenerativeModel
 	// and ResolveEmbeddingModel report the provider-credential model the
-	// executor/embedder would use when no project config is set.
+	// executor/embedder would use when no project config is set. It also owns
+	// the dialect registry and instance-slug lookup, so it validates the
+	// provider segment of set-models writes.
 	return NewService(store, log).
 		WithGenerativeDefaultResolver(credsvc).
-		WithEmbeddingDefaultResolver(credsvc)
+		WithEmbeddingDefaultResolver(credsvc).
+		WithProviderValidator(credsvc)
 }
 
 func provideADKModelResolverAdapter(svc *Service) adk.ModelResolver {

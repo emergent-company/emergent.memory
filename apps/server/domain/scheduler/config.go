@@ -94,6 +94,17 @@ type Config struct {
 	// Default: 7.
 	EmbeddingJobRetentionDays int
 
+	// EmbeddingCacheRetentionDays is the maximum age (in days) of a
+	// kb.embedding_cache row before the cache cleanup task deletes it. The cache
+	// is a best-effort memo of embedding vectors, not durable data, so pruning
+	// only costs a re-embed on the next lookup of an evicted key.
+	//
+	// Values <= 0 fall back to the default (30). There is deliberately no
+	// "disable" sentinel: unbounded growth is the bug this retention policy
+	// exists to fix, so an operator can tune the window but not switch pruning
+	// off. Set EMBEDDING_CACHE_RETENTION_DAYS to change it.
+	EmbeddingCacheRetentionDays int
+
 	// SkillCuratorSchedule is the cron schedule for the deterministic skill
 	// curator (agent-created skills: active -> stale -> archived). Default:
 	// "0 30 3 * * *" (daily at 3:30am, after session cleanup).
@@ -162,6 +173,7 @@ func NewConfig() *Config {
 		ProjectDeletionSweepInterval: getEnvDurationString("PROJECT_DELETION_SWEEP_INTERVAL", time.Minute),
 		ProjectDeletionSweepSchedule: getEnvString("PROJECT_DELETION_SWEEP_SCHEDULE", ""),
 		EmbeddingJobRetentionDays:    getEnvInt("EMBEDDING_JOB_RETENTION_DAYS", 7),
+		EmbeddingCacheRetentionDays:  getEnvInt("EMBEDDING_CACHE_RETENTION_DAYS", 30),
 		EmbeddingJobPurgeSchedule:    getEnvString("EMBEDDING_JOB_PURGE_SCHEDULE", "0 0 5 * * *"),
 		EmbeddingJobPurgeInterval:    getEnvDuration("EMBEDDING_JOB_PURGE_INTERVAL", 24*time.Hour),
 		SkillCuratorSchedule:         getEnvString("SKILL_CURATOR_SCHEDULE", "0 30 3 * * *"),

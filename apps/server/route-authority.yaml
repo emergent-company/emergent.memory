@@ -1303,6 +1303,10 @@ routes:
       path: /api/orgs/:orgId/source-apps/:appId
       level: auth
       note: RequireAuth
+    - method: PATCH
+      path: /api/orgs/:orgId/source-apps/:appId
+      level: auth
+      note: RequireAuth
     - method: GET
       path: /api/projects
       level: auth
@@ -2071,6 +2075,18 @@ routes:
       path: /api/superadmin/email-jobs/:id/preview-json
       level: superadmin-any
       note: RequireAuth, RequireSuperadmin
+    - method: GET
+      path: /api/superadmin/email-settings
+      level: superadmin-full
+      note: RequireAuth, RequireSuperadmin, RequireSuperadminFull
+    - method: PUT
+      path: /api/superadmin/email-settings
+      level: superadmin-full
+      note: RequireAuth, RequireSuperadmin, RequireSuperadminFull
+    - method: POST
+      path: /api/superadmin/email-settings/test
+      level: superadmin-full
+      note: RequireAuth, RequireSuperadmin, RequireSuperadminFull
     - method: GET
       path: /api/superadmin/embedding-jobs
       level: superadmin-any

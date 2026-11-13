@@ -6,6 +6,7 @@ import (
 
 	"github.com/a-h/templ"
 	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	"github.com/emergent-company/go-daisy/components/form"
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
 
@@ -19,6 +20,16 @@ import (
 // Fixtures are inert: href="#", type="button" buttons, no live endpoint ids,
 // no real mutation wiring. Components with no curated fixture get an authored
 // zero-value closure whose emptiness/panic is flagged "needs fixture".
+// galleryPromptModels is the model picker fixture shared by the prompt-bar
+// stories: providers grouped with their glyph and context metadata.
+func galleryPromptModels() []form.PromptBarPickerItem {
+	return []form.PromptBarPickerItem{
+		{Value: "deepseek/v4-flash", Label: "DeepSeek V4 Flash", Icon: "lucide--brain-circuit", Group: "DeepSeek", Meta: "1M", Selected: true},
+		{Value: "openai/gpt-5.4", Label: "GPT-5.4", Icon: "lucide--cpu", Group: "OpenAI", Meta: "400k"},
+		{Value: "anthropic/claude-sonnet-4.5", Label: "Claude Sonnet 4.5", Icon: "lucide--sparkles", Group: "Anthropic", Meta: "200k"},
+	}
+}
+
 func gallerySeed() []GalleryEntry {
 	return []GalleryEntry{
 		// --- components/ package: domain adapters (L1) ---
@@ -369,6 +380,48 @@ func gallerySeed() []GalleryEntry {
 		},
 
 		// --- go-daisy primitives (L0) — curated subset ---
+		{
+			ID: "PromptBar", Slug: "prompt-bar", Name: "PromptBar — Paseo", Layer: LayerDaisy,
+			Category: "go-daisy", Subcategory: "form", SourceFile: "<go-daisy form>",
+			PropsType:   "PromptBarProps",
+			Description: "Paseo's real composer: combined model picker, thinking picker, voice controls, and send/stop.",
+			Render: func() templ.Component {
+				return form.PromptBar(form.PromptBarProps{
+					Placeholder:      "Message the agent, tag @files, or use /commands and /skills",
+					Models:           galleryPromptModels(),
+					SelectedModel:    "DeepSeek V4 Flash",
+					ModelName:        "model",
+					AllowEmptySubmit: true,
+					LeftSlot: form.PromptBarPicker(form.PromptBarPickerProps{
+						Label:    "Select thinking option (High)",
+						Icon:     "lucide--brain",
+						Selected: "High",
+						Name:     "thinking",
+						Items: []form.PromptBarPickerItem{
+							{Value: "low", Label: "Low"},
+							{Value: "medium", Label: "Medium"},
+							{Value: "high", Label: "High", Selected: true},
+							{Value: "max", Label: "Max"},
+						},
+					}),
+					ShowVoice: true,
+					Attrs:     templ.Attributes{"data-testid": "gallery-prompt-bar"},
+				})
+			},
+			Stories: map[string]func() templ.Component{
+				"running": func() templ.Component {
+					return form.PromptBar(form.PromptBarProps{
+						Placeholder:   "Message the agent, tag @files, or use /commands and /skills",
+						Models:        galleryPromptModels(),
+						SelectedModel: "DeepSeek V4 Flash",
+						ModelName:     "model",
+						Running:       true,
+						ShowVoice:     true,
+						Attrs:         templ.Attributes{"data-testid": "gallery-prompt-bar-running"},
+					})
+				},
+			},
+		},
 		{
 			ID: "Button", Slug: "button", Name: "Button", Layer: LayerDaisy,
 			Category: "go-daisy", Subcategory: "action", SourceFile: "<go-daisy ui>",

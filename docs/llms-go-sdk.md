@@ -475,15 +475,22 @@ Accesses built-in documentation endpoints (not OpenAPI/Swagger).
 
 ### Provider (`client.Provider`)
 LLM credential management and model catalog.
-- `GetGoogleAICredentials(ctx) (*GoogleAICreds, error)` — get Google AI credentials
-- `SetGoogleAICredentials(ctx, req) error` — set Google AI API key
-- `GetVertexAICredentials(ctx) (*VertexAICreds, error)` — get Vertex AI credentials
-- `SetVertexAICredentials(ctx, req) error` — set Vertex AI credentials
-- `ListModels(ctx) ([]Model, error)` — list available models in catalog
-- `GetModel(ctx, id) (*Model, error)` — get model by ID
-- `GetProjectPolicy(ctx, projectID) (*ProviderPolicy, error)` — get project's provider policy
-- `SetProjectPolicy(ctx, projectID, req) error` — set project provider policy
-- `GetUsage(ctx, req) (*UsageReport, error)` — usage report
+Provider credentials are **project-scoped**; there is no org-level provider config
+(the org methods are deprecated stubs that return an error).
+- `UpsertProjectConfig(ctx, projectID, provider, req) (*ProviderConfig, error)` — store a project's credential and models
+- `GetProjectConfig(ctx, projectID, provider) (*ProviderConfig, error)` — one project provider config (no secrets)
+- `DeleteProjectConfig(ctx, projectID, provider) error` — remove it
+- `ListProjectConfigs(ctx, projectID) ([]ProjectProviderConfig, error)` — list a project's provider configs
+- `ListProjectConfigsByOrg(ctx, orgID) ([]ProjectProviderConfig, error)` — list project configs across an org
+- `TestProvider(ctx, provider, projectID, orgID) (*TestProviderResponse, error)` — live generate/embed test; needs `projectID`
+- `ListModels(ctx, provider, modelType) ([]SupportedModel, error)` — cached model catalog for a provider
+- `ListProviderDefinitions(ctx) ([]ProviderDefinition, error)` — registered vendors and their capabilities
+- `GetProjectUsage(ctx, projectID, since, until) (*UsageSummary, error)` — usage report for a project
+- `GetProjectUsageTimeSeries(ctx, projectID, granularity string, since, until) (*UsageTimeSeries, error)` — time-bucketed project usage
+- `GetOrgUsage(ctx, orgID, since, until) (*UsageSummary, error)` — usage across an org
+- `GetOrgUsageByProject(ctx, orgID, since, until) (*OrgUsageByProject, error)` — org usage split per project
+- `GetOrgUsageTimeSeries(ctx, orgID, granularity string, since, until) (*UsageTimeSeries, error)` — time-bucketed org usage
+- `ListPricing` / `ListProjectPricingOverrides` / `UpsertProjectPricingOverride` / `DeleteProjectPricingOverride` — retail prices and per-project overrides
 
 ---
 

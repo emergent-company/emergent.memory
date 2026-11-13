@@ -33,7 +33,7 @@ func TestGoDaisyInitRuntimeWired(t *testing.T) {
 		0,
 		nil,
 		&currentUser{Name: "Ada", Sub: "sub-a"}, nil, content, nil,
-		"", "", 0, 0, 0, "",
+		"", "", 0, 0, 0, "", "", feedbackOrderConfig{},
 	))
 
 	initAt := strings.Index(shell, "go-daisy-init.js")

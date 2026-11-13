@@ -1101,13 +1101,24 @@ func TestGenerateTripletText(t *testing.T) {
 }
 
 type mockEmbeddingService struct {
-	embedding []float32
-	err       error
-	callCount int
+	embedding  []float32
+	err        error
+	callCount  int
+	queryCalls int
+	docCalls   int
 }
 
 func (m *mockEmbeddingService) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
 	m.callCount++
+	m.queryCalls++
+	return m.embedding, m.err
+}
+
+// EmbedDocument is the document-side path. TestEmbedTripletText asserts that
+// embedTripletText uses this one and not EmbedQuery: a triplet is corpus text.
+func (m *mockEmbeddingService) EmbedDocument(ctx context.Context, text string) ([]float32, error) {
+	m.callCount++
+	m.docCalls++
 	return m.embedding, m.err
 }
 
@@ -1161,6 +1172,11 @@ func TestEmbedTripletText(t *testing.T) {
 			svc := &Service{embeddings: tt.embeddings}
 
 			embedding, timestamp, err := svc.embedTripletText(context.Background(), tt.tripletText)
+
+			if m, ok := tt.embeddings.(*mockEmbeddingService); ok {
+				assert.Equal(t, 1, m.docCalls, "triplet text must be embedded as a document")
+				assert.Equal(t, 0, m.queryCalls, "a triplet is corpus text, not a query")
+			}
 
 			if tt.expectError {
 				require.Error(t, err)

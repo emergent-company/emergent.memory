@@ -61,6 +61,14 @@ type modelTestCall struct {
 	ModelType string
 }
 
+// modelConfigClears records the explicit clear flags of a model-config write,
+// so a handler test can prove the "None — no default" select maps to a clear
+// (the fake alone would store an empty model for an empty input either way).
+type modelConfigClears struct {
+	Generative bool
+	Embedding  bool
+}
+
 // fakeMemory is an in-memory MemoryBackend for tests.
 type fakeMemory struct {
 	orgPresence     *PresenceDto
@@ -264,6 +272,9 @@ type fakeMemory struct {
 	dsCreatedSourceAppReq    *DSSourceAppRequest          // last request forwarded to CreateOrgSourceApp
 	dsCreatedSourceAppOrg    string                       // last org id passed to CreateOrgSourceApp
 	dsDeletedSourceAppID     string                       // last app id passed to DeleteOrgSourceApp
+	dsUpdatedSourceAppOrg    string                       // last org id passed to UpdateOrgSourceApp
+	dsUpdatedSourceAppID     string                       // last app id passed to UpdateOrgSourceApp
+	dsUpdatedSourceAppReq    *DSSourceAppUpdateRequest    // last request forwarded to UpdateOrgSourceApp
 	dsSourceTriggers         map[string][]DSSourceTrigger // triggers per source id
 	dsSourceTriggerErr       error                        // any trigger method failure
 	dsCreatedTriggerReq      *DSSourceTriggerRequest      // last request forwarded to CreateSourceTrigger
@@ -587,6 +598,7 @@ type fakeMemory struct {
 	modelTestCalls         []modelTestCall     // every TestProjectModel call, in order
 	modelConfig            *ProjectModelConfig // returned by GetProjectModelConfig
 	lastModelConfig        *ProjectModelConfig // last UpsertProjectModelConfig
+	lastModelConfigClears  modelConfigClears   // clear flags of the last UpsertProjectModelConfig
 
 	orgs                 []Org          // returned by ListOrgs
 	listOrgsErr          error          // failure for ListOrgs
@@ -2710,11 +2722,18 @@ func (f *fakeMemory) GetProjectModelConfig(ctx context.Context) (*ProjectModelCo
 	return f.modelConfig, nil
 }
 
-func (f *fakeMemory) UpsertProjectModelConfig(ctx context.Context, generativeModel, embeddingModel string) (*ProjectModelConfig, error) {
+func (f *fakeMemory) UpsertProjectModelConfig(ctx context.Context, generativeModel, embeddingModel string, clearGenerative, clearEmbedding bool) (*ProjectModelConfig, error) {
 	if f.providerErr != nil {
 		return nil, f.providerErr
 	}
+	f.lastModelConfigClears = modelConfigClears{Generative: clearGenerative, Embedding: clearEmbedding}
 	cfg := &ProjectModelConfig{GenerativeModel: generativeModel, EmbeddingModel: embeddingModel}
+	if clearGenerative {
+		cfg.GenerativeModel = ""
+	}
+	if clearEmbedding {
+		cfg.EmbeddingModel = ""
+	}
 	f.lastModelConfig = cfg
 	f.modelConfig = cfg
 	return cfg, nil
@@ -5299,6 +5318,26 @@ func (f *fakeMemory) CreateOrgSourceApp(ctx context.Context, orgID string, req *
 	return &app, nil
 }
 
+// UpdateOrgSourceApp mirrors the server's PATCH: the label changes and each
+// supplied secret rotates, while the provider and App id stay put.
+func (f *fakeMemory) UpdateOrgSourceApp(ctx context.Context, orgID, appID string, req *DSSourceAppUpdateRequest) (*SourceApp, error) {
+	if f.dsSourceAppErr != nil {
+		return nil, f.dsSourceAppErr
+	}
+	f.dsUpdatedSourceAppOrg = orgID
+	f.dsUpdatedSourceAppID = appID
+	f.dsUpdatedSourceAppReq = req
+	for i := range f.dsSourceApps {
+		if f.dsSourceApps[i].ID != appID {
+			continue
+		}
+		f.dsSourceApps[i].Slug = req.Slug
+		f.dsSourceApps[i].UpdatedAt = "2026-09-02T00:00:00Z"
+		return &f.dsSourceApps[i], nil
+	}
+	return nil, errors.New("no such source App in this organization")
+}
+
 func (f *fakeMemory) DeleteOrgSourceApp(ctx context.Context, orgID, appID string) error {
 	f.dsDeletedSourceAppID = appID
 	if f.dsSourceAppErr != nil {
@@ -5420,3 +5459,14 @@ func TestListChatModelsReturnsConfiguredGenerativeModels(t *testing.T) {
 		t.Fatalf("expected openai/deepseek-v4-flash in %v", models)
 	}
 }
+
+// Instance email settings surface (superadmin-only) is exercised by
+// platform_email_ui_test.go; the shared fake returns a non-superadmin by default.
+func (f *fakeMemory) GetSuperadminMe(context.Context) (*superadminMe, error) { return nil, nil }
+func (f *fakeMemory) GetInstanceEmailSettings(context.Context) (*instanceEmailSettings, error) {
+	return &instanceEmailSettings{}, nil
+}
+func (f *fakeMemory) UpdateInstanceEmailSettings(context.Context, instanceEmailSettingsInput) (*instanceEmailSettings, error) {
+	return &instanceEmailSettings{}, nil
+}
+func (f *fakeMemory) TestInstanceEmail(context.Context, string) error { return nil }

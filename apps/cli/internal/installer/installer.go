@@ -320,7 +320,6 @@ SERVER_PORT=%d
 GOOGLE_API_KEY=
 OPENAI_API_KEY=
 OPENAI_MODEL=
-EMBEDDING_DIMENSION=768
 XBERG_LOG_LEVEL=info
 
 LLM_ENCRYPTION_KEY=%s
@@ -856,9 +855,11 @@ func (i *Installer) PromptLLMProvider() {
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Println()
 	fmt.Println("An LLM provider enables AI-powered features including:")
-	fmt.Println("  - Semantic search with text embeddings")
 	fmt.Println("  - AI-powered document analysis")
 	fmt.Println("  - Intelligent entity extraction")
+	fmt.Println()
+	fmt.Println("Semantic embeddings are resolved per project from the provider configured")
+	fmt.Println("on it (memory provider configure-project ... --embedding-model ...).")
 	fmt.Println()
 	fmt.Println("Choose a provider to configure:")
 	fmt.Println("  1. Google AI (Gemini) — requires an API key")
@@ -1026,12 +1027,12 @@ func (i *Installer) printCompletionMessage(apiKey string, servicesStarted bool, 
 		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 		fmt.Println()
 		fmt.Println("No LLM provider was configured during install.")
-		fmt.Println("AI features (embeddings, extraction, chat) will not work until you add one.")
+		fmt.Println("AI features (extraction, chat, embeddings) will not work until you add one.")
 		fmt.Println()
 		fmt.Println("To configure a provider, run:")
-		fmt.Println("  memory provider configure google --api-key <your-key>")
+		fmt.Println("  memory provider configure-project google --api-key <your-key>")
 		fmt.Println("  OR")
-		fmt.Println("  memory provider configure openai-compatible --base-url <url> --api-key <key> --generative-model <model>")
+		fmt.Println("  memory provider configure-project openai-compatible --base-url <url> --api-key <key> --generative-model <model>")
 		fmt.Println()
 	}
 }

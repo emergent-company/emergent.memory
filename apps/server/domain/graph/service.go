@@ -26,6 +26,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/branchorigin"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 	"github.com/emergent-company/emergent.memory/pkg/embeddingtext"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/mathutil"
@@ -56,6 +57,13 @@ type InverseTypeProvider interface {
 // EmbeddingService provides embedding generation for triplet text.
 type EmbeddingService interface {
 	EmbedQuery(ctx context.Context, query string) ([]float32, error)
+	// EmbedDocument embeds *stored* text with the document task. Relationship
+	// triplet text is corpus text, so it goes through this and not EmbedQuery:
+	// the two formats produce different vectors, and writing a query-format
+	// vector into kb.graph_relationships.embedding would make it incomparable
+	// with the document-format vectors every search is compared against
+	// (issue #615).
+	EmbedDocument(ctx context.Context, text string) ([]float32, error)
 }
 
 // EmbeddingEnqueuer enqueues graph objects for asynchronous embedding generation.
@@ -104,6 +112,12 @@ type Service struct {
 	// so a client disconnect cannot leave a batch holding DB connections
 	// indefinitely (default 60s, overridden from config).
 	bulkUpdateMaxDuration time.Duration
+
+	// reindexPageSize bounds how many ids/rows each ReindexEmbeddings arm
+	// fetches and enqueues per page (default defaultReindexPageSize). A page
+	// keeps the enqueue statement's bind-parameter count well under Postgres'
+	// 65535 limit and caps peak memory (#677).
+	reindexPageSize int
 
 	// accessStamp debounces last_accessed_at writes (issue #1070).
 	accessStamp *accessStampDebouncer
@@ -184,6 +198,7 @@ func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvide
 		events:                eventsSvc,
 		bulkUpdateMaxItems:    100,
 		bulkUpdateMaxDuration: 60 * time.Second,
+		reindexPageSize:       defaultReindexPageSize,
 		accessStamp:           newAccessStampDebouncer(),
 		minVectorSimilarity:   envFloatDefault("SEARCH_MIN_VECTOR_SIMILARITY", 0.5),
 	}
@@ -199,6 +214,17 @@ func (s *Service) WithBulkUpdateLimits(maxItems int, maxDuration time.Duration) 
 	}
 	if maxDuration > 0 {
 		s.bulkUpdateMaxDuration = maxDuration
+	}
+	return s
+}
+
+// WithReindexPageSize overrides the per-page bound used by ReindexEmbeddings'
+// objects, relationships and chunks arms. Values <= 0 leave the default
+// (defaultReindexPageSize). Exported so integration tests can force a page
+// boundary without inserting thousands of rows.
+func (s *Service) WithReindexPageSize(pageSize int) *Service {
+	if pageSize > 0 {
+		s.reindexPageSize = pageSize
 	}
 	return s
 }
@@ -590,6 +616,9 @@ type ReindexEmbeddingsResponse struct {
 	ObjectsEnqueued int `json:"objects_enqueued"`
 	// RelationshipsEnqueued is the number of relationship embedding jobs newly inserted.
 	RelationshipsEnqueued int `json:"relationships_enqueued"`
+	// ChunksEnqueued is the number of chunk embedding jobs newly inserted. Only
+	// populated when Chunks was requested.
+	ChunksEnqueued int `json:"chunks_enqueued"`
 }
 
 // ReindexEmbeddingsRequest holds options for the ReindexEmbeddings operation.
@@ -600,134 +629,359 @@ type ReindexEmbeddingsRequest struct {
 	// Force re-enqueues even objects/relationships that already have an embedding.
 	// Default (false) only targets those with a NULL embedding.
 	Force bool
+	// Chunks also re-enqueues the project's document chunks. Chunks have no
+	// other bulk re-embed path: the chunking pipeline is the only producer of
+	// chunk embedding jobs, so a project that changes embedding model could not
+	// move its chunk corpus otherwise (issue #624). Namespace does not apply —
+	// chunks belong to documents, which carry no graph key.
+	Chunks bool
+}
+
+// Reindex pagination bounds (issue #677). Every arm of ReindexEmbeddings walks
+// the matching corpus one page at a time instead of collecting it into memory:
+// the object/relationship arms used to build a single `WHERE id IN (…)` with one
+// bind parameter per row, which Postgres rejects past 65535 rows, and the chunk
+// arm used to insert the whole corpus in one statement.
+const (
+	// defaultReindexPageSize is the number of rows one page selects and enqueues.
+	// Low thousands keeps each enqueue statement far below the bind-parameter
+	// limit while amortising round trips on a large corpus.
+	defaultReindexPageSize = 2000
+
+	// reindexPageTimeout bounds one page's query plus enqueue round trip, so one
+	// slow page cannot hold the HTTP request open indefinitely. The loop keeps
+	// going after each page; a timeout surfaces as an error rather than a silent
+	// truncation.
+	reindexPageTimeout = 30 * time.Second
+)
+
+// reindexRow is one keyset-paginated row: the id to enqueue plus the cursor
+// column used for the (created_at, id) tiebreak.
+type reindexRow struct {
+	ID        uuid.UUID `bun:"id"`
+	CreatedAt time.Time `bun:"created_at"`
+}
+
+// reindexCursor is the last row of the previous page. Keyset pagination orders
+// by (created_at, id) so rows sharing a created_at timestamp are neither
+// duplicated nor skipped across pages.
+type reindexCursor struct {
+	createdAt time.Time
+	id        uuid.UUID
+}
+
+// reindexPageLimit returns the configured per-page bound, falling back to the
+// default for services constructed without one.
+func (s *Service) reindexPageLimit() int {
+	if s.reindexPageSize > 0 {
+		return s.reindexPageSize
+	}
+	return defaultReindexPageSize
+}
+
+// enqueueReindexIDs drives one reindex arm: fetch a page from fetch (after the
+// previous page's cursor, nil for the first page), hand its ids to enqueue, and
+// repeat until a page comes back short. It returns the summed enqueue count.
+//
+// Fetch and enqueue share one bounded context per page, and the loop only stops
+// on an exhausted corpus or an error — it never truncates the run.
+func (s *Service) enqueueReindexIDs(
+	ctx context.Context,
+	fetch func(context.Context, *reindexCursor) ([]reindexRow, error),
+	enqueue func(context.Context, []string) (int, error),
+) (int, error) {
+	pageSize := s.reindexPageLimit()
+	total := 0
+	var after *reindexCursor
+	for {
+		pageCtx, cancel := context.WithTimeout(ctx, reindexPageTimeout)
+		rows, err := fetch(pageCtx, after)
+		if err != nil {
+			cancel()
+			return total, err
+		}
+		if len(rows) == 0 {
+			cancel()
+			return total, nil
+		}
+		ids := make([]string, len(rows))
+		for i, row := range rows {
+			ids[i] = row.ID.String()
+		}
+		enqueued, err := enqueue(pageCtx, ids)
+		cancel()
+		if err != nil {
+			return total, err
+		}
+		total += enqueued
+		if len(rows) < pageSize {
+			return total, nil
+		}
+		last := rows[len(rows)-1]
+		after = &reindexCursor{createdAt: last.CreatedAt, id: last.ID}
+	}
+}
+
+// fetchReindexObjectPage returns one keyset page of object ids that need an
+// embedding job, preserving the force predicate, the namespace key prefix and
+// the active-job exclusion on every page.
+func (s *Service) fetchReindexObjectPage(ctx context.Context, projectID uuid.UUID, namespace string, force bool, pageSize int, after *reindexCursor) ([]reindexRow, error) {
+	embeddingFilter := "AND o.embedding_v2 IS NULL"
+	if force {
+		embeddingFilter = ""
+	}
+	nsFilter := ""
+	args := []any{projectID}
+	if namespace != "" {
+		nsFilter = "AND o.key LIKE ?"
+		args = append(args, namespace+"%")
+	}
+	cursorFilter := ""
+	if after != nil {
+		cursorFilter = "AND (o.created_at, o.id) > (?, ?)"
+		args = append(args, after.createdAt, after.id)
+	}
+	args = append(args, pageSize)
+
+	query := fmt.Sprintf(`
+		SELECT o.id, o.created_at
+		FROM kb.graph_objects o
+		WHERE o.project_id = ?
+		  %s
+		  AND o.deleted_at IS NULL
+		  %s
+		  AND NOT EXISTS (
+		    SELECT 1 FROM kb.graph_embedding_jobs j
+		    WHERE j.object_id = o.id
+		      AND j.status IN ('pending', 'processing')
+		  )
+		  %s
+		ORDER BY o.created_at ASC, o.id ASC
+		LIMIT ?`, embeddingFilter, nsFilter, cursorFilter)
+
+	var rows []reindexRow
+	if err := s.repo.DB().NewRaw(query, args...).Scan(ctx, &rows); err != nil {
+		return nil, fmt.Errorf("reindex: query objects: %w", err)
+	}
+	return rows, nil
+}
+
+// fetchReindexRelationshipPage returns one keyset page of relationship ids,
+// preserving the force predicate, the src-object namespace prefix and the
+// active-job exclusion on every page.
+func (s *Service) fetchReindexRelationshipPage(ctx context.Context, projectID uuid.UUID, namespace string, force bool, pageSize int, after *reindexCursor) ([]reindexRow, error) {
+	embeddingFilter := "AND r.embedding IS NULL"
+	if force {
+		embeddingFilter = ""
+	}
+	nsFilter := ""
+	args := []any{projectID}
+	if namespace != "" {
+		// Filter by namespace via src object key prefix.
+		nsFilter = `
+			AND EXISTS (
+			  SELECT 1 FROM kb.graph_objects o
+			  WHERE o.id = r.src_id AND o.key LIKE ?
+			)`
+		args = append(args, namespace+"%")
+	}
+	cursorFilter := ""
+	if after != nil {
+		cursorFilter = "AND (r.created_at, r.id) > (?, ?)"
+		args = append(args, after.createdAt, after.id)
+	}
+	args = append(args, pageSize)
+
+	query := fmt.Sprintf(`
+		SELECT r.id, r.created_at
+		FROM kb.graph_relationships r
+		WHERE r.project_id = ?
+		  %s
+		  AND r.deleted_at IS NULL
+		  %s
+		  AND NOT EXISTS (
+		    SELECT 1 FROM kb.graph_relationship_embedding_jobs j
+		    WHERE j.relationship_id = r.id
+		      AND j.status IN ('pending', 'processing')
+		  )
+		  %s
+		ORDER BY r.created_at ASC, r.id ASC
+		LIMIT ?`, embeddingFilter, nsFilter, cursorFilter)
+
+	var rows []reindexRow
+	if err := s.repo.DB().NewRaw(query, args...).Scan(ctx, &rows); err != nil {
+		return nil, fmt.Errorf("reindex: query relationships: %w", err)
+	}
+	return rows, nil
 }
 
 // ReindexEmbeddings enqueues objects and relationships in the project for embedding (re)generation.
-// Supports namespace filtering and force-regeneration of existing embeddings.
+// Supports namespace filtering, force-regeneration of existing embeddings, and
+// opt-in re-embedding of document chunks.
 func (s *Service) ReindexEmbeddings(ctx context.Context, projectID uuid.UUID, req ReindexEmbeddingsRequest) (*ReindexEmbeddingsResponse, error) {
 	resp := &ReindexEmbeddingsResponse{}
 
 	// --- Objects ---
 	if s.embeddingEnqueuer != nil {
-		var objectIDs []string
-		var objQuery string
-		if req.Force {
-			objQuery = `
-				SELECT o.id::text
-				FROM kb.graph_objects o
-				WHERE o.project_id = ?
-				  AND o.deleted_at IS NULL
-				  ##NS##
-				  AND NOT EXISTS (
-				    SELECT 1 FROM kb.graph_embedding_jobs j
-				    WHERE j.object_id = o.id
-				      AND j.status IN ('pending', 'processing')
-				  )
-				ORDER BY o.created_at ASC`
-		} else {
-			objQuery = `
-				SELECT o.id::text
-				FROM kb.graph_objects o
-				WHERE o.project_id = ?
-				  AND o.embedding_v2 IS NULL
-				  AND o.deleted_at IS NULL
-				  ##NS##
-				  AND NOT EXISTS (
-				    SELECT 1 FROM kb.graph_embedding_jobs j
-				    WHERE j.object_id = o.id
-				      AND j.status IN ('pending', 'processing')
-				  )
-				ORDER BY o.created_at ASC`
+		pageSize := s.reindexPageLimit()
+		enqueued, err := s.enqueueReindexIDs(ctx,
+			func(ctx context.Context, after *reindexCursor) ([]reindexRow, error) {
+				return s.fetchReindexObjectPage(ctx, projectID, req.Namespace, req.Force, pageSize, after)
+			},
+			func(ctx context.Context, ids []string) (int, error) {
+				n, err := s.embeddingEnqueuer.EnqueueBatchEmbeddings(ctx, ids)
+				if err != nil {
+					return 0, fmt.Errorf("reindex: enqueue objects: %w", err)
+				}
+				return n, nil
+			})
+		if err != nil {
+			return nil, err
 		}
-		if req.Namespace != "" {
-			objQuery = strings.ReplaceAll(objQuery, "##NS##", "AND o.key LIKE ?")
-			err := s.repo.DB().NewRaw(objQuery, projectID, req.Namespace+"%").Scan(ctx, &objectIDs)
-			if err != nil {
-				return nil, fmt.Errorf("reindex: query objects: %w", err)
-			}
-		} else {
-			objQuery = strings.ReplaceAll(objQuery, "##NS##", "")
-			err := s.repo.DB().NewRaw(objQuery, projectID).Scan(ctx, &objectIDs)
-			if err != nil {
-				return nil, fmt.Errorf("reindex: query objects: %w", err)
-			}
-		}
-		if len(objectIDs) > 0 {
-			enqueued, err := s.embeddingEnqueuer.EnqueueBatchEmbeddings(ctx, objectIDs)
-			if err != nil {
-				return nil, fmt.Errorf("reindex: enqueue objects: %w", err)
-			}
-			resp.ObjectsEnqueued = enqueued
-		}
+		resp.ObjectsEnqueued = enqueued
 	}
 
 	// --- Relationships ---
 	if s.relEmbeddingEnqueuer != nil {
-		var relIDs []string
-		var relQuery string
-		if req.Force {
-			relQuery = `
-				SELECT r.id::text
-				FROM kb.graph_relationships r
-				WHERE r.project_id = ?
-				  AND r.deleted_at IS NULL
-				  ##NS##
-				  AND NOT EXISTS (
-				    SELECT 1 FROM kb.graph_relationship_embedding_jobs j
-				    WHERE j.relationship_id = r.id
-				      AND j.status IN ('pending', 'processing')
-				  )
-				ORDER BY r.created_at ASC`
-		} else {
-			relQuery = `
-				SELECT r.id::text
-				FROM kb.graph_relationships r
-				WHERE r.project_id = ?
-				  AND r.embedding IS NULL
-				  AND r.deleted_at IS NULL
-				  ##NS##
-				  AND NOT EXISTS (
-				    SELECT 1 FROM kb.graph_relationship_embedding_jobs j
-				    WHERE j.relationship_id = r.id
-				      AND j.status IN ('pending', 'processing')
-				  )
-				ORDER BY r.created_at ASC`
+		pageSize := s.reindexPageLimit()
+		enqueued, err := s.enqueueReindexIDs(ctx,
+			func(ctx context.Context, after *reindexCursor) ([]reindexRow, error) {
+				return s.fetchReindexRelationshipPage(ctx, projectID, req.Namespace, req.Force, pageSize, after)
+			},
+			func(ctx context.Context, ids []string) (int, error) {
+				n, err := s.relEmbeddingEnqueuer.EnqueueBatchRelationshipEmbeddings(ctx, ids)
+				if err != nil {
+					return 0, fmt.Errorf("reindex: enqueue relationships: %w", err)
+				}
+				return n, nil
+			})
+		if err != nil {
+			return nil, err
 		}
-		// Filter by namespace via src object key prefix
-		if req.Namespace != "" {
-			relQuery = strings.ReplaceAll(relQuery, "##NS##", `
-				AND EXISTS (
-				  SELECT 1 FROM kb.graph_objects o
-				  WHERE o.id = r.src_id AND o.key LIKE ?
-				)`)
-			err := s.repo.DB().NewRaw(relQuery, projectID, req.Namespace+"%").Scan(ctx, &relIDs)
-			if err != nil {
-				return nil, fmt.Errorf("reindex: query relationships: %w", err)
-			}
-		} else {
-			relQuery = strings.ReplaceAll(relQuery, "##NS##", "")
-			err := s.repo.DB().NewRaw(relQuery, projectID).Scan(ctx, &relIDs)
-			if err != nil {
-				return nil, fmt.Errorf("reindex: query relationships: %w", err)
-			}
+		resp.RelationshipsEnqueued = enqueued
+	}
+
+	// --- Chunks ---
+	if req.Chunks {
+		enqueued, err := s.enqueueChunkEmbeddings(ctx, projectID, req.Force)
+		if err != nil {
+			return nil, err
 		}
-		if len(relIDs) > 0 {
-			enqueued, err := s.relEmbeddingEnqueuer.EnqueueBatchRelationshipEmbeddings(ctx, relIDs)
-			if err != nil {
-				return nil, fmt.Errorf("reindex: enqueue relationships: %w", err)
-			}
-			resp.RelationshipsEnqueued = enqueued
-		}
+		resp.ChunksEnqueued = enqueued
 	}
 
 	s.log.Info("reindex embeddings completed",
 		slog.String("project_id", projectID.String()),
 		slog.String("namespace", req.Namespace),
 		slog.Bool("force", req.Force),
+		slog.Bool("chunks", req.Chunks),
 		slog.Int("objects_enqueued", resp.ObjectsEnqueued),
-		slog.Int("relationships_enqueued", resp.RelationshipsEnqueued))
+		slog.Int("relationships_enqueued", resp.RelationshipsEnqueued),
+		slog.Int("chunks_enqueued", resp.ChunksEnqueued))
 
 	return resp, nil
+}
+
+// chunkReindexPageSQL queues one keyset page of the project's document chunks
+// and returns its page/insert counts plus the cursor of its last row, in a
+// single statement (#677). The ::int casts keep the count aggregates out of
+// int64/pointer scanning ambiguity.
+//
+// Chunk embedding jobs are otherwise produced only by the chunking pipeline, so
+// a project that switches embedding model has no way to move its chunk corpus —
+// objects and relationships can be reindexed, chunks could not (issue #624).
+//
+// The insert lives here rather than calling
+// extraction.ChunkEmbeddingJobsService.EnqueueBatch because the graph domain
+// cannot import extraction (extraction imports graph), and the lint ratchet
+// bars another cross-domain setter. It targets the same table and relies on the
+// same partial unique index (uidx_chunk_embedding_jobs_active, migration 00126)
+// for dedupe, so the two paths cannot disagree about what an active job is.
+//
+// Parent chunks are excluded: they are structural context and are never
+// embedded, so enqueueing them would create jobs the worker skips.
+const chunkReindexPageSQL = `
+	WITH batch AS (
+		SELECT c.id, c.created_at
+		FROM kb.chunks c
+		JOIN kb.documents d ON d.id = c.document_id
+		WHERE d.project_id = ?
+		  AND COALESCE((c.metadata->>'isParent')::boolean, false) = false
+		  ##EMB##
+		  AND NOT EXISTS (
+		    SELECT 1 FROM kb.chunk_embedding_jobs j
+		    WHERE j.chunk_id = c.id
+		      AND j.status IN ('pending', 'processing')
+		  )
+		  ##CURSOR##
+		ORDER BY c.created_at ASC, c.id ASC
+		LIMIT ?
+	), queued AS (
+		INSERT INTO kb.chunk_embedding_jobs (chunk_id, status, priority, scheduled_at, created_at, updated_at)
+		SELECT b.id, 'pending', 0, now(), now(), now()
+		FROM batch b
+		ON CONFLICT (chunk_id) WHERE status IN ('pending', 'processing') DO NOTHING
+		RETURNING 1
+	)
+	SELECT
+		(SELECT count(*) FROM batch)::int AS batch_count,
+		(SELECT count(*) FROM queued)::int AS inserted,
+		(SELECT created_at FROM batch ORDER BY created_at DESC, id DESC LIMIT 1) AS cursor_created_at,
+		(SELECT id FROM batch ORDER BY created_at DESC, id DESC LIMIT 1) AS cursor_id`
+
+// chunkReindexPage is one page's result from chunkReindexPageSQL. The cursor
+// columns are NULL on an empty page.
+type chunkReindexPage struct {
+	BatchCount      int        `bun:"batch_count"`
+	Inserted        int        `bun:"inserted"`
+	CursorCreatedAt *time.Time `bun:"cursor_created_at"`
+	CursorID        *uuid.UUID `bun:"cursor_id"`
+}
+
+// enqueueChunkEmbeddings queues the project's document chunks for (re-)embedding
+// one page at a time and returns how many jobs were inserted across all pages.
+func (s *Service) enqueueChunkEmbeddings(ctx context.Context, projectID uuid.UUID, force bool) (int, error) {
+	embeddingFilter := "AND c.embedding IS NULL"
+	if force {
+		embeddingFilter = ""
+	}
+	pageSQL := strings.ReplaceAll(chunkReindexPageSQL, "##EMB##", embeddingFilter)
+
+	pageSize := s.reindexPageLimit()
+	total := 0
+	var after *reindexCursor
+	for {
+		cursorFilter := ""
+		args := []any{projectID}
+		if after != nil {
+			cursorFilter = "AND (c.created_at, c.id) > (?, ?)"
+			args = append(args, after.createdAt, after.id)
+		}
+		args = append(args, pageSize)
+		sql := strings.ReplaceAll(pageSQL, "##CURSOR##", cursorFilter)
+
+		pageCtx, cancel := context.WithTimeout(ctx, reindexPageTimeout)
+		var page chunkReindexPage
+		err := s.repo.DB().NewRaw(sql, args...).Scan(pageCtx, &page)
+		cancel()
+		if err != nil {
+			return total, fmt.Errorf("reindex: enqueue chunks: %w", err)
+		}
+		if page.BatchCount == 0 {
+			return total, nil
+		}
+		total += page.Inserted
+		// Stop on a short page, not on inserted < pageSize: a row lost to the
+		// ON CONFLICT backstop must not end the walk while eligible rows remain
+		// past the cursor.
+		if page.BatchCount < pageSize {
+			return total, nil
+		}
+		if page.CursorCreatedAt == nil || page.CursorID == nil {
+			return total, nil
+		}
+		after = &reindexCursor{createdAt: *page.CursorCreatedAt, id: *page.CursorID}
+	}
 }
 
 // UpdateAccessTimestamps updates last_accessed_at for the given object IDs,
@@ -2168,7 +2422,7 @@ func (s *Service) embedTripletText(ctx context.Context, tripletText string) ([]f
 		return nil, nil, nil
 	}
 
-	embedding, err := s.embeddings.EmbedQuery(ctx, tripletText)
+	embedding, err := s.embeddings.EmbedDocument(ctx, tripletText)
 	if err != nil {
 		return nil, nil, fmt.Errorf("embed triplet: %w", err)
 	}
@@ -3212,6 +3466,13 @@ func (s *Service) VectorSearchByText(ctx context.Context, projectID uuid.UUID, t
 	}
 	vec, err := s.embeddings.EmbedQuery(ctx, text)
 	if err != nil {
+		// No usable embedding configuration is a project setup problem, not a
+		// search failure: degrade to an empty result set the way hybrid search
+		// degrades to lexical-only, so callers that treat this as advisory (the
+		// MCP similarity check) do not log a failure per operation.
+		if embeddings.IsNotConfigured(err) {
+			return &SearchResponse{Data: []*SearchResultItem{}, Total: 0, Offset: req.Offset}, nil
+		}
 		return nil, fmt.Errorf("embed query text: %w", err)
 	}
 	if len(vec) == 0 {

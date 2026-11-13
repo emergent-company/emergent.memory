@@ -4,6 +4,28 @@
 
 ### BREAKING CHANGES
 
+**Embeddings are resolved only from the project's configured provider** (2026-11-12)
+
+`GCP_PROJECT_ID`, `GOOGLE_API_KEY`, `EMBEDDING_PROVIDER`, `EMBEDDING_MODEL`,
+`EMBEDDING_DIMENSION` and `EMBEDDINGS_NETWORK_DISABLED` no longer configure
+embeddings — neither on hosted deployments nor on self-hosted single-tenant
+installs. Every embedding call resolves the provider, model and credentials from
+the project's model config and provider credentials, so vectors are only ever
+produced by the provider the user configured for that project. A project with no
+embedding model configured logs one warning per project —
+
+```
+embeddings: embedding model was not set for this project — semantic vectors will not be generated
+```
+
+— and ingestion, graph CRUD and lexical search keep working with no vectors until
+one is configured. Configure it with `memory projects set-models --embedding
+<provider>/<model>` or `memory provider configure-project <provider>
+--embedding-model <model>`. `GOOGLE_API_KEY` / `GCP_PROJECT_ID` remain
+generative-model (chat/extraction) environment fallbacks only, and the
+`backfill-embeddings` tool now requires `--project-id` so it resolves that
+project's provider.
+
 **MCP share creation requires an explicit tool allowlist** (2026-11-05)
 
 `POST /api/projects/{projectId}/mcp/shares` now rejects a request that omits
@@ -55,6 +77,25 @@ removing it. The deprecated `ZITADEL_OIDC_DEFAULT_SCOPES` and
 `ZITADEL_USERINFO_GRANT_ALL_SCOPES` aliases are removed in this release.
 
 ### Added
+
+**`memory graph reindex-embeddings` gains `--chunks`, so a model change can move the chunk corpus** (2026-11-12)
+
+Changing a project's embedding model left its document chunks stranded: chunk
+embedding jobs were produced only by the chunking pipeline, so objects and
+relationships could be reindexed but chunks could not (issue #624). `POST
+/api/graph/reindex-embeddings` now accepts `chunks=true`, and the CLI exposes it
+as `memory graph reindex-embeddings --chunks`, which re-queues the project's
+document chunks alongside objects and relationships. Combined with `--force`
+this makes an embedding-model switch recoverable:
+
+```bash
+memory graph reindex-embeddings --force --chunks
+```
+
+Parent chunks are skipped (they are structural context and never embedded), rows
+that already have an active job are not queued twice, and the response reports
+`chunks_enqueued` next to the existing counters. See
+[docs/site/user-guide/model-setup.md](docs/site/user-guide/model-setup.md#4-re-embed-after-changing-the-embedding-model).
 
 **Project search page** (2026-11-04)
 
@@ -208,6 +249,156 @@ X-Project-ID: <projectId>
 See `/apps/server/src/modules/unified-search/` for implementation details.
 
 ### Fixed
+
+**Embedding resolution and `projects set-models` stop failing late and quietly** (2026-11-12)
+
+The embedding fast path resolved credentials by dialect only, so a project whose
+embedding model named a provider *instance* (`google-eu/...`) could not
+embed — it now resolves by the full model reference, falling back to the
+dialect's default instance for legacy names. The defensive `cred == nil` branch
+is gone: `Resolve`/`ResolveByRef` only return `nil, nil` when the request has no
+project, which the adapter already rejected, so the branch mislabelled an
+unreachable case as an unusable credential. The missing-credential message no
+longer repeats "for project" ("no provider config found for project: google has
+no credentials for 1a3d…"), and `ResolveAnyEmbedding` now returns the first
+project-config lookup error with the provider in context instead of logging at
+Debug and reporting the permanent-looking "no embedding model configured".
+
+`memory projects set-models` now rejects a provider segment that is neither a
+supported dialect nor an existing project provider instance slug, with a 400 at
+write time rather than an `unsupported provider` (or missing slug) failure per
+call later. The API key does not have to exist yet — only the provider name must
+be known.
+
+`PUT /api/v1/projects/:id/model-config` is a partial update: a model the caller
+omits keeps its stored value. Previously `set-models --generative X` wrote
+`embedding_model = ''` and silently removed the project's embedding model, which
+since the project-only embeddings change meant no vectors were written at all.
+Clearing the model config remains `DELETE` on the same endpoint. CLI help, the
+bundled `memory-providers` skill and the model-setup guide now describe the
+partial semantics instead of warning that both flags are required (Refs #690,
+#687).
+
+**`POST /api/graph/reindex-embeddings` batches all three arms** (2026-11-12)
+
+The objects and relationships arms collected every matching id into memory and
+handed the whole slice to one `WHERE id IN (…)` enqueue, which Postgres rejects
+past 65535 bind parameters — so reindexing an established project failed outright
+instead of degrading, exactly the corpus the `--force --chunks` model-migration
+recovery path targets. Both arms now keyset-paginate by `(created_at, id)` in
+pages of 2000, enqueue one page per call and sum the returned counts; the `force`
+vs non-force predicate, the namespace key/prefix filters and the active-job
+`NOT EXISTS` exclusion apply on every page. The chunks arm keeps its single
+`INSERT … SELECT` per page, now with the same keyset bound, so a model switch no
+longer turns the whole chunk corpus into one long statement and WAL burst. Each
+page has a 30 s context bound; the loop walks the corpus to completion and
+returns the summed count — there is no row cap and no silent truncation (#677).
+
+**`kb.embedding_cache` is now pruned after a retention window** (2026-11-12)
+
+The embedding cache was write-only: `Get`/`Put` with no delete path, so every
+entry survived forever. A model switch orphans every row (the key includes the
+model), and the format-in-key change in #683 made every pre-existing row
+unreachable while still stored — the table grew monotonically. The existing
+`cache_cleanup` task now also deletes `kb.embedding_cache` rows older than
+`EMBEDDING_CACHE_RETENTION_DAYS` (default 30 days; values <= 0 fall back to 30,
+there is no "disable"), backed by a new `created_at` index (migration `00295`).
+The two cache deletes stay independent: a failure in one is logged and reported
+without skipping the other. The cache remains global, not project-scoped —
+`cache_key` is a hash with no project column, so two projects on the same model
+and text share an entry — and this change does not scope it; that would need a
+schema and key change. TTL pruning is the smallest bounded fix (Closes #684).
+
+**Embedding configuration failures are quiet, permanent and non-fatal** (2026-11-12)
+
+`pkg/embeddings` reports a missing embedding model once per project, but every
+caller logged the same failure again per call: one unified search could emit four
+warnings, and every MCP entity create with `check_similar` added another. Callers
+now treat the configuration sentinels — `ErrNoProjectContext`,
+`ErrEmbeddingModelNotSet` and the new `ErrEmbeddingCredentialUnusable` — as
+already reported, via the new `embeddings.IsNotConfigured(err)` helper, and keep
+per-call warnings for real provider failures (timeouts, 429, 401/403). All four
+search legs go through one guard, and the same rule now covers the MCP similarity
+check, skill description and trigger-message embeddings, and the document/schema
+vector classifiers. Extraction's `isPermanentEmbeddingError` classifies all three
+sentinels as permanent, so a project whose provider credential is unusable fails
+its embedding job once instead of retrying to `max_attempts` and dead-lettering,
+and `graph.VectorSearchByText` now returns an empty result set for those
+sentinels — matching unified search's lexical fallback — instead of an error the
+MCP similarity check could only log. A project whose model config names a
+provider it has no credential for (reachable today: configure a provider, point
+the project's embedding model at it, then remove the provider config) is now that
+same unusable-credential case rather than a plain lookup error, via the new
+`provider.ErrNoProjectProviderConfig`; transient failures still surface and
+retry. The dead `projectID != ""` branches are gone from `backfill-embeddings`,
+which has required `--project-id` since embeddings became project-only (Refs
+#682).
+
+**Docs and CLI no longer point at the removed org-level provider setup** (2026-11-12)
+
+`docs/site/user-guide/model-setup.md` and the bundled `memory-onboard` /
+`memory-providers` skills told users to run `memory provider configure …` at the
+org level, which no longer exists — provider credentials and model selection are
+project-scoped. They now use `memory provider configure-project`, describe the
+real resolution chain (project model config → provider credential → none, never
+org), and document the embedding-specific behaviour: project-only, no
+environment fallback, one warning per project, lexical fallback. `memory provider
+list`, `memory provider models` and `memory provider test` without a provider
+argument no longer call the deprecated org-level API (which made `list` and a bare
+`test` fail outright and `models` list nothing), `memory init` configures and
+verifies the project's provider instead of the organization's, and the "no
+provider configured" hints name `configure-project` (Closes #681).
+`configure-project`'s own help and its `--remove` message no longer claim to
+override or fall back to org config — removing a project's config leaves it with
+no credentials for that provider. The Go SDK provider reference now matches the
+client it documents (project-scoped methods, current `ProviderConfig` /
+`TestProviderResponse` / `UpsertProviderConfigRequest` fields) instead of the
+long-removed org methods and policies.
+
+**Corpus text and search queries are embedded with their own task — Google AI projects must re-embed** (2026-11-12)
+
+Stored graph and chunk text was embedded through the same method a search query
+uses, so the two shared one task format. For the Google clients the task is part
+of the embedded input (`task_type`, or a text prefix for `gemini-embedding-2`), so
+a corpus written that way is compared against query vectors of the wrong format —
+retrieval degrades quietly instead of failing.
+
+Ingest now has its own document method (`EmbedDocumentWithUsage`, and
+`EmbedDocument` for callers that only need the vector), and the corpus writers use
+it: the chunk, object, relationship and sweep workers, the graph service's
+relationship triplet embeddings, and the `backfill-embeddings` command. Real
+search strings still go through `EmbedQuery`/`EmbedQueryWithUsage` — unified
+search, graph vector and hybrid search, skill lookup — and the Vertex client now
+sends `RETRIEVAL_QUERY` there. On `gemini-embedding-2` that is the documented
+`task: search result | query: …` prefix. Skill *description* embeddings keep using
+the query method on both the write and the search side, so they remain consistent
+with each other; moving them is a behaviour change to skill retrieval, left for a
+follow-up rather than bundled into this fix. The embedding cache key now includes
+the format, so a document and a query of the same text can no longer share an
+entry; existing cache rows simply miss once and are re-embedded.
+
+**Action required for Google AI (`google`) projects:** that provider has sent
+`RETRIEVAL_QUERY` from its query method since an earlier release, and that method
+was also the ingest path — so its stored corpus vectors are query-format. Those
+projects must be re-embedded to be comparable with query vectors again:
+
+```bash
+memory graph reindex-embeddings --force --chunks
+```
+
+Vertex (`google-vertex`) projects wrote document-format corpus vectors already, so
+they need no re-embed — query vectors change, but a query is computed per search.
+Projects on the other providers (OpenAI-compatible, noop) are unaffected: their
+clients do not vary the input by task.
+
+**`gemini-embedding-2` is served on the `google-vertex` provider** (2026-11-12)
+
+The Vertex AI embeddings client could not serve the GA `gemini-embedding-2`
+family: it sent `task_type` on every request, and that model does not accept the
+field — its task travels as a text prefix. Requests for `gemini-embedding-2` now
+carry the documented prefixes — `title: none | text: …` for indexed text,
+`task: search result | query: …` for an explicit query — and no `task_type`, and
+the model catalog no longer filters the id out for the `google-vertex` provider.
 
 **`memory projects show-models` honours `--json` / `--output`** (2026-10-22)
 

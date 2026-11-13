@@ -289,9 +289,10 @@ func GetDockerComposeTemplateWithVersion(version string) string {
       STORAGE_BUCKET_TEMP: document-temp
       STORAGE_REGION: ${STORAGE_REGION:-us-east-1}
       STORAGE_USE_SSL: 'false'
+      # Generative AI env fallback only; embeddings are resolved per project
+      # from the provider configured in Memory (no EMBEDDING_* env config).
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       LLM_ENCRYPTION_KEY: ${LLM_ENCRYPTION_KEY:-}
-      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-768}
       SCOPES_DISABLED: 'true'
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4318}
       # tempo, not localhost: the query port is published on the host, and inside

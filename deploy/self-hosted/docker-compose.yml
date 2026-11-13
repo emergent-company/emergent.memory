@@ -221,9 +221,10 @@ services:
       STORAGE_REGION: ${STORAGE_REGION:-us-east-1}
       STORAGE_USE_SSL: 'false'
 
-      # AI Configuration
-      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
-      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-768}
+      # Generative AI (chat/extraction env fallback) only. Embeddings are always
+      # resolved per project from the provider configured in Memory, never from
+      # GOOGLE_API_KEY/GCP_PROJECT_ID/EMBEDDING_* — leave those unset.
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
 
       # Whisper Audio Transcription
       WHISPER_ENABLED: ${WHISPER_ENABLED:-true}

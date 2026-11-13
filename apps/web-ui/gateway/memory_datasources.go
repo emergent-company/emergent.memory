@@ -987,6 +987,15 @@ type DSSourceAppRequest struct {
 	WebhookSecret string `json:"webhookSecret"`
 }
 
+// DSSourceAppUpdateRequest is the PATCH body for an org source App. The provider
+// and App id are absent: they are the binding identity and stay immutable. Blank
+// secrets are omitted, so the server keeps the stored ciphertext.
+type DSSourceAppUpdateRequest struct {
+	Slug          string `json:"slug"`
+	PrivateKey    string `json:"privateKey,omitempty"`
+	WebhookSecret string `json:"webhookSecret,omitempty"`
+}
+
 // DSSourceTrigger is one source event → agent binding
 // (GET /api/data-source-integrations/:id/triggers).
 type DSSourceTrigger struct {
@@ -1034,6 +1043,15 @@ func (m *MemoryClient) CreateOrgSourceApp(ctx context.Context, orgID string, req
 func (m *MemoryClient) DeleteOrgSourceApp(ctx context.Context, orgID, appID string) error {
 	path := "/api/orgs/" + url.PathEscape(orgID) + "/source-apps/" + url.PathEscape(appID)
 	return m.doH(ctx, http.MethodDelete, path, nil, m.documentHeaders(ctx), nil)
+}
+
+func (m *MemoryClient) UpdateOrgSourceApp(ctx context.Context, orgID, appID string, req *DSSourceAppUpdateRequest) (*SourceApp, error) {
+	var out SourceApp
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/source-apps/" + url.PathEscape(appID)
+	if err := m.doH(ctx, http.MethodPatch, path, req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 func (m *MemoryClient) ListSourceTriggers(ctx context.Context, sourceID string) ([]DSSourceTrigger, error) {

@@ -1,0 +1,380 @@
+package main
+
+import (
+	"net/url"
+	"strconv"
+
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	"github.com/emergent-company/go-daisy/components/layout"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- object wiki page ---------------------------------------------------------
+//
+// The wiki is the reading surface: browsing links here instead of into the
+// editor, and the page renders in one of two variants (see object_wiki.go).
+// Nothing on this page mutates an object — Edit, History and Chat are links to
+// the object's own pages.
+
+// objectWikiPage renders the wiki shell: a content header, then the chosen
+// variant's body. There is deliberately no breadcrumb trail and no page-action
+// row: the wiki is reached from a list, and the reader's job here is to read, so
+// the content starts immediately under the object's own name.
+//
+// The head reads like a browse card: the type icon on the left, the type and ref
+// as the first line, the object's name as the second. The state chips (branch,
+// credential, versions, status) follow underneath, and the quiet variant switch
+// and Edit link sit in the top-right corner.
+templ objectWikiPage(data objectWikiPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if data.LoadErr != nil {
+			@pageError("Object unavailable", data.LoadErr)
+		} else {
+			@objectWikiHead(data)
+			if data.View == objectWikiViewPage {
+				@objectWikiObjectPage(data)
+			} else {
+				@objectWikiArticle(data)
+			}
+		}
+	}
+}
+
+// objectWikiHead is the wiki's content header: a reusable component with its own
+// boundary, because it is shared by both variants and is the surface a reader
+// points at when they report a problem with an object page. The
+// `data-component` attribute is what the element-level feedback overlay reads to
+// name this component; without it the nearest annotated ancestor is the page's
+// `layout/Container`, and the overlay reports a layout primitive instead.
+templ objectWikiHead(data objectWikiPageData) {
+	{{ tui := typeUIOf(data.TypeUIByType, data.Obj.Type) }}
+	<div class="mb-7 flex flex-col gap-3" data-testid="object-wiki-head">
+		<div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+			@objectHeader(objectHeaderProps{
+				Variant:        objectHeaderLead,
+				Type:           data.Obj.Type,
+				Icon:           tui.Icon,
+				Color:          tui.Color,
+				Ref:            objectDisplayRef(data.Obj.Ref, data.Obj.ID),
+				Label:          graphObjectLabel(*data.Obj),
+				TestID:         "object-wiki-header",
+				IdentityTestID: "object-wiki-identity",
+			})
+			<div class="flex shrink-0 flex-wrap items-center gap-2">
+				@objectWikiViewSwitch(data)
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    "/objects/" + url.PathEscape(data.Obj.ID) + "/chat",
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--messages-square",
+					Attrs:   templ.Attributes{"data-testid": "object-wiki-chat", "title": "Chat about this object"},
+				}) {
+					Chat
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    "/objects/" + url.PathEscape(data.Obj.ID),
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--pencil",
+					Attrs:   templ.Attributes{"data-testid": "object-wiki-edit", "title": "Edit this object"},
+				}) {
+					Edit
+				}
+			</div>
+		</div>
+		<div class="flex flex-wrap items-center gap-2">
+			@objectDetailChips(data.Obj, data.Branch, data.TypeUIByType, data.Status, "wiki")
+		</div>
+	</div>
+}
+
+// objectWikiViewSwitch is the global variant switch: two icon links in the
+// page's top-right corner, quiet enough to read as a page control rather than a
+// call to action. Each option is a link, so the choice works without JavaScript
+// and is shareable; the handler persists it as a cookie for the next object
+// opened. The active variant is named by aria-current and the label-less icons
+// carry a title and aria-label.
+templ objectWikiViewSwitch(data objectWikiPageData) {
+	<div class="join" role="group" aria-label="Wiki view" data-component="gateway/ObjectWikiViewSwitch">
+		for _, opt := range objectWikiViewOptions() {
+			{{ active := data.View == opt.Value
+			attrs := templ.Attributes{
+				"data-testid": "object-wiki-view-" + opt.Value,
+				"title":       opt.Label + " view",
+			}
+			cls := "join-item text-muted hover:text-base-content hover:bg-base-content/5"
+			if active {
+				cls = "join-item bg-base-content/10 text-base-content"
+				attrs["aria-current"] = "page"
+			} }}
+			@ui.Button(ui.ButtonProps{
+				Type:       ui.ButtonTypeLink,
+				Href:       objectWikiControlHref(data.Obj.ID, opt.Value),
+				Variant:    ui.ButtonGhost,
+				Size:       ui.ButtonSM,
+				Shape:      ui.ButtonShapeSquare,
+				Icon:       opt.Icon,
+				AriaLabel:  opt.Label + " view",
+				ExtraClass: cls,
+				Attrs:      attrs,
+			})
+		}
+	</div>
+}
+
+// objectWikiArticle is the article variant: the prose leads, and everything
+// factual sits in a rail beside it. Below xl the rail stacks under the article in
+// the same order — the details are still on the page, just not beside it, because
+// 320 px of viewport has no room for a second column.
+templ objectWikiArticle(data objectWikiPageData) {
+	{{ prose := objectArticleFor(*data.Obj) }}
+	<div class="grid grid-cols-1 gap-10 xl:grid-cols-[minmax(0,1fr)_17rem]" data-testid="object-wiki-article">
+		<article class="min-w-0">
+			@objectWikiProse(data, prose)
+		</article>
+		<aside class="flex min-w-0 flex-col gap-6" aria-label="Object details">
+			if len(prose.Headings) > 0 {
+				@objectWikiRail("On this page") {
+					<ol class="flex flex-col gap-1.5 text-sm">
+						for _, h := range prose.Headings {
+							<li class={ templ.KV("pl-3", h.Level == 3) }>
+								<a href={ "#" + h.ID } class="link link-hover text-base-content/70 hover:text-base-content">{ h.Text }</a>
+							</li>
+						}
+					</ol>
+				}
+			}
+			@objectWikiDetailsRail(data, prose)
+		</aside>
+	</div>
+}
+
+// objectWikiObjectPage is the object-page variant: the shape an auto-rendered
+// wiki entry takes — the prose overview first, then key facts, then one section
+// per relationship group. It is the page a reader lands on when they want the
+// whole object in one column, with the summaries a browsable page needs.
+//
+// The overview leads because it is the only prose on the page: a reader who
+// arrives from a list wants to know what the object *is* before reading its
+// fields. It is omitted entirely when the object carries no prose (no summary,
+// description, content or other conventional prose property) — an empty
+// "Overview" heading over a "No description yet" panel on a page whose job is
+// the record itself is just noise, so the facts and relationships start the page
+// instead. The article variant keeps the empty state: there, prose is the page.
+templ objectWikiObjectPage(data objectWikiPageData) {
+	{{ prose := objectArticleFor(*data.Obj)
+	hasProse := prose.Lead != "" || prose.BodyHTML != "" }}
+	<div class="grid grid-cols-1 gap-10 xl:grid-cols-[minmax(0,1fr)_17rem]" data-testid="object-wiki-page">
+		<div class="flex min-w-0 flex-col gap-8">
+			if hasProse {
+				@ui.Section("Overview", ui.SectionProps{BodyClass: "memory-density-comfortable"}) {
+					@objectWikiProse(data, prose)
+				}
+			}
+			if facts := objectRailPropertyRows(*data.Obj, data.PropDefs, prose); len(facts) > 0 {
+				@ui.Section("Key facts", ui.SectionProps{BodyClass: "memory-density-comfortable"}) {
+					<dl class="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2" data-testid="object-wiki-key-facts">
+						for _, r := range facts {
+							<div class="flex min-w-0 flex-col gap-0.5">
+								<dt class="text-muted-faint text-xs font-medium">{ r.Label }</dt>
+								<dd class="break-words text-sm">
+									if v := objectPropertyDisplay(r); v != "" {
+										{ v }
+									} else {
+										@components.EmptyDash()
+									}
+								</dd>
+							</div>
+						}
+					</dl>
+				}
+			}
+			for _, section := range data.Sections {
+				@objectWikiSection(data, section)
+			}
+		</div>
+		<aside class="flex min-w-0 flex-col gap-6" aria-label="Object details">
+			@objectWikiDetailsRail(data, prose)
+			if len(data.RelationCounts) > 0 {
+				@objectWikiRail("Relationships by type") {
+					<dl class="flex flex-col gap-1.5 text-sm">
+						for _, rc := range data.RelationCounts {
+							<div class="flex items-baseline justify-between gap-2">
+								<dt class="min-w-0 truncate">{ rc.Label }</dt>
+								<dd class="text-muted-faint shrink-0 text-xs tabular-nums">{ strconv.Itoa(rc.Count) }</dd>
+							</div>
+						}
+					</dl>
+					<a href={ templ.URL("/objects/" + url.PathEscape(data.Obj.ID) + "/relationships") } class="link link-hover mt-1 inline-flex items-center gap-1.5 text-xs">
+						@ui.IconSpan("lucide--link", "size-3.5 shrink-0 text-muted-faint")
+						All { strconv.Itoa(data.EdgeCount) } relationships
+					</a>
+				}
+			}
+		</aside>
+	</div>
+}
+
+// objectWikiProse renders the resolved article prose: the lead, the markdown
+// body, or the empty state when the object carries no prose at all. The empty
+// state points at the editable page, which is where prose is written.
+templ objectWikiProse(data objectWikiPageData, prose objectArticleProse) {
+	if prose.Lead != "" {
+		<p class="text-base-content/85 mb-6 text-[1.05rem] leading-relaxed" data-testid="object-lead">{ prose.Lead }</p>
+	}
+	if prose.BodyHTML != "" {
+		<div class="memory-md text-sm leading-relaxed" data-testid="object-body">@templ.Raw(prose.BodyHTML)</div>
+	}
+	if prose.Lead == "" && prose.BodyHTML == "" {
+		<div class="border-base-content/10 rounded-box border border-dashed px-4 py-6 text-center" data-testid="object-wiki-empty">
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneStrong}) {
+				No description yet.
+			}
+			<a href={ templ.URL("/objects/" + url.PathEscape(data.Obj.ID)) } class="link link-hover mt-1 inline-block text-sm">Add a summary or description</a>
+		</div>
+	}
+}
+
+// objectWikiSection renders one relationship group of the object-page variant.
+// Rows carry the neighbour's own summary, so the page reads like a wiki hub
+// instead of a list of identifiers. The section stays bounded: Total keeps the
+// real count visible, and "All relationships" is the way to the full edge list.
+templ objectWikiSection(data objectWikiPageData, section objectViewSection) {
+	@ui.Section(section.Title, ui.SectionProps{
+		CardClass: "overflow-hidden",
+		BodyClass: "memory-density-flush",
+	}) {
+		<div class="divide-y divide-base-200" data-testid="object-wiki-section">
+			for _, row := range section.Rows {
+				@objectWikiRelationRow(data, row, section.ShowDirection)
+			}
+			if section.Total > len(section.Rows) {
+				<div class="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-xs">
+					<span class="text-muted-subtle">+{ strconv.Itoa(section.Total - len(section.Rows)) } more not shown</span>
+					<a href={ templ.URL("/objects/" + url.PathEscape(data.Obj.ID) + "/relationships") } class="link link-hover font-medium">All relationships</a>
+				</div>
+			}
+		</div>
+	}
+}
+
+// objectWikiRelationRow is one neighbour inside a relationship group. It wears
+// the same layout as a browse card, because a related object is still an object:
+// type icon on the left, the type and ref as the first line, the name as the
+// second, then the neighbour's own summary. The direction cue (only in a group
+// that mixes directions) sits at the end of the identity line.
+templ objectWikiRelationRow(data objectWikiPageData, row objectViewItem, showDirection bool) {
+	{{ tui := typeUIOf(data.TypeUIByType, row.Neighbour.Type)
+	href := ""
+	if row.Resolved {
+		href = objectWikiControlHref(relationshipEndpointTarget(row.Neighbour), data.View)
+	}
+	direction := ""
+	if showDirection {
+		direction = row.direction()
+	} }}
+	<div class="min-w-0 px-4 py-3" data-testid="object-wiki-relation-row" data-relationship-type={ row.RelType } data-direction={ row.direction() }>
+		@objectHeader(objectHeaderProps{
+			Variant:        objectHeaderRow,
+			Type:           row.Neighbour.Type,
+			Icon:           tui.Icon,
+			Color:          tui.Color,
+			Ref:            objectDisplayRef(row.Neighbour.Ref, row.Neighbour.ID),
+			Label:          graphObjectLabel(row.Neighbour),
+			Href:           href,
+			Unresolved:     !row.Resolved,
+			Direction:      direction,
+			Excerpt:        objectExcerpt(row.Neighbour.Properties),
+			IdentityTestID: "object-wiki-identity",
+		})
+	</div>
+}
+
+// objectWikiDetailsRail is the shared factual rail of both variants: the record
+// facts, the type's properties the prose did not consume, the labels, and the
+// provenance. It is one rail, not two, so the variants cannot drift apart.
+templ objectWikiDetailsRail(data objectWikiPageData, prose objectArticleProse) {
+	@objectWikiRail("Details") {
+		<dl class="flex flex-col gap-2.5 text-sm">
+			@objectRecordFact("Type", data.Obj.Type, false)
+			if data.Obj.Status != "" {
+				@objectRecordFact("Status", boardStatusLabel(data.Obj.Status), false)
+			}
+			@objectRecordFact("Version", objectPreviewVersionLabel(data.Obj.Version), false)
+			@objectRecordFact("Created", objectPreviewCreated(data.Obj.CreatedAt), false)
+			@objectRecordFact("ID", objectPreviewCanonicalID(*data.Obj), true)
+		</dl>
+	}
+	if facts := objectRailPropertyRows(*data.Obj, data.PropDefs, prose); len(facts) > 0 {
+		@objectWikiRail(typePropertiesPanelTitle(data.TypeLabel)) {
+			<dl class="flex flex-col gap-2.5 text-sm">
+				for _, r := range facts {
+					<div class="flex min-w-0 flex-col gap-0.5">
+						<dt class="text-muted-faint text-xs font-medium">{ r.Label }</dt>
+						<dd class="break-words">
+							if v := objectPropertyDisplay(r); v != "" {
+								{ v }
+							} else {
+								@components.EmptyDash()
+							}
+						</dd>
+					</div>
+				}
+			</dl>
+		}
+	}
+	if len(data.Obj.Labels) > 0 {
+		@objectWikiRail("Labels") {
+			<div class="flex flex-wrap gap-1">
+				for _, l := range data.Obj.Labels {
+					@ui.Badge(ui.BadgeProps{Label: l, Variant: ui.BadgeNeutral, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
+				}
+			</div>
+		}
+	}
+	@objectWikiRail("Relationships") {
+		<a href={ templ.URL("/objects/" + url.PathEscape(data.Obj.ID) + "/relationships") } class="link link-hover inline-flex items-center gap-1.5 text-sm">
+			@ui.IconSpan("lucide--link", "size-3.5 shrink-0 text-muted-faint")
+			if data.EdgeCount == 0 {
+				No relationships yet
+			} else {
+				{ strconv.Itoa(data.EdgeCount) } relationships
+			}
+		</a>
+	}
+	// History lives in the shared rail rather than in the page-action row, so
+	// both variants carry it and neither repeats it.
+	@objectWikiRail("History") {
+		{{ versions := "No versions recorded"
+		if data.Obj.RevisionCount != nil && *data.Obj.RevisionCount > 1 {
+			versions = objectVersionCountLabel(*data.Obj.RevisionCount)
+		} }}
+		<a href={ templ.URL("/objects/" + url.PathEscape(data.Obj.ID) + "/history") } class="link link-hover inline-flex items-center gap-1.5 text-sm">
+			@ui.IconSpan("lucide--history", "size-3.5 shrink-0 text-muted-faint")
+			{ versions }
+		</a>
+	}
+	if len(data.Sources) > 0 {
+		// The rail already labels the block, so render its rows rather than the
+		// full source card (whose own "Source" section heading would repeat it).
+		@objectWikiRail("Source") {
+			<div class="flex flex-col gap-2" data-testid="object-source-card">
+				for _, src := range data.Sources {
+					@objectSourceRow(src)
+				}
+			</div>
+		}
+	}
+}
+
+// objectWikiRail is one labelled block in the details rail. The blocks are
+// separated by a hairline instead of being separate cards: a rail of six panels
+// reads as a second page.
+templ objectWikiRail(title string) {
+	<section class="border-base-content/10 flex min-w-0 flex-col gap-2 border-t pt-4 first:border-t-0 first:pt-0">
+		<h2 class="text-muted-faint text-[11px] font-semibold tracking-wider uppercase">{ title }</h2>
+		{ children... }
+	</section>
+}

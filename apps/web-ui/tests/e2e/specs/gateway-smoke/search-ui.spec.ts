@@ -67,7 +67,7 @@ test.describe('Project search', () => {
     await expect(objLink).toHaveText('revenue-note');
     await expect(objLink).toHaveAttribute(
       'href',
-      /\/objects\/11223344-5566-4778-8999-000000000001$/,
+      /\/objects\/11223344-5566-4778-8999-000000000001\/wiki$/,
     );
     await expect(objHit).toContainText('Note');
     await expect(objHit.getByTestId('search-hit-score')).toHaveText('0.72');

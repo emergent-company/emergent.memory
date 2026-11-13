@@ -41,15 +41,30 @@ type dsSourceAppRow struct {
 // dsSourceAppsPageData is the payload for SourceAppsPage.
 type dsSourceAppsPageData struct {
 	settingsNavCommon
-	OrgID   string
 	OrgName string
 	// Forbidden renders the "organization administrators only" state instead of
-	// the list and the register form (the API would reject those writes).
+	// the table (the API answers this caller's reads and writes with 403).
 	Forbidden bool
 	Rows      []dsSourceAppRow
 	LoadErr   error
 	FlashMsg  string
 	FlashErr  error
+}
+
+// dsSourceAppFormData is the payload for SourceAppFormPage. App is nil on the
+// add page; on the edit page it carries the row being edited (never a secret —
+// the API does not return them) and the delivery URL is resolved here, because
+// the template has no access to the deployment's public base URL.
+type dsSourceAppFormData struct {
+	settingsNavCommon
+	OrgName    string
+	Action     string
+	BackHref   string
+	DeleteHref string
+	WebhookURL string
+	App        *SourceApp
+	FlashMsg   string
+	FlashErr   error
 }
 
 // dsSourceAppWebhookURL builds the endpoint GitHub must deliver to for one App.
@@ -123,7 +138,6 @@ func (s *Server) uiSourceApps(c echo.Context) error {
 		// (the same degrade as uiProjectCredentials).
 		return c.Redirect(http.StatusSeeOther, "/orgs")
 	}
-	data.OrgID = project.OrgID
 	if org, oerr := s.memory.GetOrg(ctx, project.OrgID); oerr == nil && org != nil {
 		data.OrgName = org.Name
 	} else if oerr != nil {
@@ -141,32 +155,144 @@ func (s *Server) uiSourceApps(c echo.Context) error {
 	return s.page(c, pageTitle("Source apps"), SourceAppsPage(data))
 }
 
+// uiSourceAppNew renders the standalone register page. The list page no longer
+// carries the form: settings surfaces keep the table and the add/edit form on
+// separate routes, so the register field set does not compete with the table.
+func (s *Server) uiSourceAppNew(c echo.Context) error {
+	ctx := c.Request().Context()
+	_, orgName, handled := s.sourceAppsFormOrg(c)
+	if handled {
+		return nil
+	}
+	return s.page(c, pageTitle("Register source app"), SourceAppFormPage(dsSourceAppFormData{
+		settingsNavCommon: s.settingsNavPayload(c, ctx),
+		OrgName:           orgName,
+		Action:            dsSourceAppsPath,
+		BackHref:          dsSourceAppsPath,
+		FlashErr:          flashError(c),
+	}))
+}
+
+// uiSourceAppDetail renders one App's edit page: rename the slug, rotate either
+// sealed secret, copy the delivery URL, or remove the App. The API exposes no
+// get-by-id route, and the registry is a short org-scoped list, so the row is
+// resolved from the listing rather than from a second credential read.
+func (s *Server) uiSourceAppDetail(c echo.Context) error {
+	ctx := c.Request().Context()
+	orgID, orgName, handled := s.sourceAppsFormOrg(c)
+	if handled {
+		return nil
+	}
+	app, err := s.findOrgSourceApp(c, orgID, c.Param("appId"))
+	if err != nil {
+		return redirectWithError(c, dsSourceAppsPath, err)
+	}
+	return s.page(c, pageTitle("Edit source app"), SourceAppFormPage(dsSourceAppFormData{
+		settingsNavCommon: s.settingsNavPayload(c, ctx),
+		OrgName:           orgName,
+		Action:            dsSourceAppsPath + "/" + url.PathEscape(app.ID),
+		BackHref:          dsSourceAppsPath,
+		DeleteHref:        dsSourceAppsPath + "/" + url.PathEscape(app.ID) + "/delete",
+		WebhookURL:        dsSourceAppWebhookURL(s.cfg.MemoryPublicURL, app.WebhookKey),
+		App:               app,
+		FlashMsg:          flashFromQuery(c, []flashParam{{key: "saved", msg: "Source App saved."}}),
+		FlashErr:          flashError(c),
+	}))
+}
+
+// uiSourceAppUpdate saves an App's label and any rotated secret (org-admin only,
+// PRG). A blank secret field is omitted from the PATCH body, so the server keeps
+// the stored ciphertext instead of sealing an empty value.
+func (s *Server) uiSourceAppUpdate(c echo.Context) error {
+	ctx := c.Request().Context()
+	path := dsSourceAppsPath + "/" + url.PathEscape(c.Param("appId"))
+	orgID, ok := s.sourceAppsOrgForCaller(c, path)
+	if !ok {
+		return nil
+	}
+	req := &DSSourceAppUpdateRequest{
+		Slug:          strings.TrimSpace(c.FormValue("slug")),
+		PrivateKey:    c.FormValue("privateKey"),
+		WebhookSecret: c.FormValue("webhookSecret"),
+	}
+	if req.Slug == "" {
+		return redirectWithError(c, path, errors.New("app slug is required"))
+	}
+	if _, err := s.memory.UpdateOrgSourceApp(ctx, orgID, c.Param("appId"), req); err != nil {
+		return redirectWithError(c, path, dsFormError(err))
+	}
+	redirectAfterMutation(c, path+"?saved=1")
+	return nil
+}
+
+// sourceAppsFormOrg resolves the active project's org for the standalone form
+// pages. handled is true when the response is already written: no active project
+// redirects to the org picker (the same degrade as the list page), and a caller
+// who does not administer the org gets a 404, so the editor does not exist for
+// them the way the credentials app editor does not.
+func (s *Server) sourceAppsFormOrg(c echo.Context) (orgID, orgName string, handled bool) {
+	ctx := c.Request().Context()
+	project, err := s.memory.GetCurrentProject(ctx)
+	if err != nil || project == nil || project.OrgID == "" {
+		if err == nil {
+			_ = c.Redirect(http.StatusSeeOther, "/orgs")
+		} else {
+			_ = c.NoContent(http.StatusNotFound)
+		}
+		return "", "", true
+	}
+	if !s.orgAdminForCaller(c, project.OrgID) {
+		_ = c.NoContent(http.StatusNotFound)
+		return "", "", true
+	}
+	if org, oerr := s.memory.GetOrg(ctx, project.OrgID); oerr == nil && org != nil {
+		orgName = org.Name
+	}
+	return project.OrgID, orgName, false
+}
+
+// findOrgSourceApp resolves one App from the org listing, in API order.
+func (s *Server) findOrgSourceApp(c echo.Context, orgID, appID string) (*SourceApp, error) {
+	apps, err := s.memory.ListOrgSourceApps(c.Request().Context(), orgID)
+	if err != nil {
+		return nil, userFacingError(err)
+	}
+	for i := range apps {
+		if apps[i].ID == appID {
+			return &apps[i], nil
+		}
+	}
+	return nil, errors.New("no such source App in this organization")
+}
+
 // uiSourceAppCreate registers an org source App (org-admin only, PRG). The
 // private key and webhook secret are write-only: they are forwarded once and
 // never rendered back.
 func (s *Server) uiSourceAppCreate(c echo.Context) error {
 	ctx := c.Request().Context()
-	back := dsSourceAppsPath
-	orgID, ok := s.sourceAppsOrgForCaller(c, back)
+	// Validation failures return to the standalone form so the message sits
+	// beside the fields; a registered App returns to the table.
+	formPath := dsSourceAppsPath + "/new"
+	orgID, ok := s.sourceAppsOrgForCaller(c, formPath)
 	if !ok {
 		return nil
 	}
 	rawAppID := strings.TrimSpace(c.FormValue("appId"))
 	appID, err := strconv.ParseInt(rawAppID, 10, 64)
 	if err != nil || appID <= 0 {
-		return redirectWithError(c, back, errors.New("GitHub App ID must be the numeric App id from GitHub's settings, not the slug"))
+		return redirectWithError(c, formPath, errors.New("GitHub App ID must be the numeric App id from GitHub's settings, not the slug"))
 	}
 	slug := strings.TrimSpace(c.FormValue("slug"))
 	if slug == "" {
-		return redirectWithError(c, back, errors.New("app slug is required"))
+		return redirectWithError(c, formPath, errors.New("app slug is required"))
 	}
 	privateKey := c.FormValue("privateKey")
 	webhookSecret := c.FormValue("webhookSecret")
 	if strings.TrimSpace(privateKey) == "" {
-		return redirectWithError(c, back, errors.New("the App's private key is required"))
+		return redirectWithError(c, formPath, errors.New("the App's private key is required"))
 	}
 	if strings.TrimSpace(webhookSecret) == "" {
-		return redirectWithError(c, back, errors.New("the App's webhook secret is required"))
+		return redirectWithError(c, formPath, errors.New("the App's webhook secret is required"))
 	}
 	req := &DSSourceAppRequest{
 		Provider:      "github",
@@ -176,9 +302,9 @@ func (s *Server) uiSourceAppCreate(c echo.Context) error {
 		WebhookSecret: webhookSecret,
 	}
 	if _, err := s.memory.CreateOrgSourceApp(ctx, orgID, req); err != nil {
-		return redirectWithError(c, back, dsFormError(err))
+		return redirectWithError(c, formPath, dsFormError(err))
 	}
-	redirectAfterMutation(c, back+"?saved=1")
+	redirectAfterMutation(c, dsSourceAppsPath+"?saved=1")
 	return nil
 }
 

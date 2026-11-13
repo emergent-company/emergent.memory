@@ -154,9 +154,11 @@ func selectRelevantSkills(ctx context.Context, deps SkillToolDeps, all []*Skill)
 
 	vec, err := deps.EmbeddingsSvc.EmbedQuery(ctx, query)
 	if err != nil {
-		deps.Logger.Warn("skills: failed to embed trigger message for semantic retrieval, using full skill list",
-			logger.Error(err),
-		)
+		if !embeddings.IsNotConfigured(err) {
+			deps.Logger.Warn("skills: failed to embed trigger message for semantic retrieval, using full skill list",
+				logger.Error(err),
+			)
+		}
 		return all
 	}
 

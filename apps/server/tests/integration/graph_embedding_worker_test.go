@@ -483,3 +483,9 @@ func (s *GraphEmbeddingWorkerTestSuite) TestWorker_ProcessesHighPriorityFirst() 
 	s.Nil(lowJob, "Low priority job should be completed")
 	s.Equal(int64(2), mockEmbeds.CallCount())
 }
+
+// EmbedDocumentWithUsage routes through the same deterministic generator as the
+// query path; this suite asserts job bookkeeping, not task fidelity.
+func (m *mockEmbeddingService) EmbedDocumentWithUsage(ctx context.Context, text string) (*vertex.EmbedResult, error) {
+	return m.EmbedQueryWithUsage(ctx, text)
+}

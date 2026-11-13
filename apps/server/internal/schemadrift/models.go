@@ -81,6 +81,7 @@ var models = []any{
 
 	// domain/email
 	(*email.EmailJob)(nil),
+	(*email.InstanceEmailSettings)(nil),
 
 	// domain/mcp
 	(*mcp.AgentMCPSession)(nil),

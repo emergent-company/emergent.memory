@@ -87,6 +87,23 @@ func (r *Repository) ListSourceAppsByOrg(ctx context.Context, orgID uuid.UUID) (
 	return apps, nil
 }
 
+// UpdateSourceApp rewrites an App's label and its sealed credentials. Only the
+// columns an edit can change are set: org, provider and the GitHub App id are
+// immutable, because the (org_id, provider, app_id) unique index is what binds
+// project sources to this credential. Returning("*") refreshes the model so the
+// caller reports the database's updated_at rather than a guessed timestamp.
+func (r *Repository) UpdateSourceApp(ctx context.Context, app *SourceApp) error {
+	if _, err := r.db.NewUpdate().Model(app).
+		Column("slug", "private_key_encrypted", "webhook_secret_encrypted").
+		Set("updated_at = now()").
+		Where("id = ?", app.ID).
+		Returning("*").
+		Exec(ctx); err != nil {
+		return apperror.NewDatabase("failed to update source app", err)
+	}
+	return nil
+}
+
 // DeleteSourceApp removes an org-scoped App credential. It refuses while
 // project sources are still bound to the App, naming them in the error: the
 // App is org-scoped while the sources are project-scoped, so a delete must not

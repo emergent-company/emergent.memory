@@ -281,7 +281,7 @@ templ searchObjectRow(hit searchObjectHit) {
 		<div class="flex flex-wrap items-center gap-2">
 			<a
 				class="link link-hover min-w-0 truncate text-sm font-medium"
-				href={ templ.URL("/objects/" + url.PathEscape(hit.ID)) }
+				href={ templ.URL(objectWikiHref(hit.ID, "")) }
 				data-testid="search-hit-object-link"
 			>
 				{ searchObjectLabel(hit) }

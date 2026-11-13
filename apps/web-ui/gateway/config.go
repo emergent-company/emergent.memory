@@ -135,6 +135,27 @@ type Config struct {
 	// environments where element-level feedback is wanted.
 	FeedbackOverlayURL string
 
+	// FeedbackOverlayAPIURL is the API base the overlay talks to. The bundle
+	// and the API usually live together (the service serves both), but in a
+	// local or preview setup the bundle can be served from one place while
+	// comments, Memory status and issue export still go to the deployed
+	// service. Empty means "same as FeedbackOverlayURL".
+	FeedbackOverlayAPIURL string
+
+	// FeedbackOrderBox is the base URL of an order-box instance: the small
+	// front door that delivers one captured feedback report into a named Paseo
+	// session. Together with FeedbackOrderSession it adds a "Send to session"
+	// destination to the overlay, so a report made on a page under review lands
+	// in the session that is editing it. Empty disables the destination.
+	FeedbackOrderBox string
+	// FeedbackOrderSession is the Paseo session id orders are delivered to: the
+	// full dashed UUID, because the daemon rejects the short form.
+	FeedbackOrderSession string
+	// FeedbackOrderToken is an optional shared order-box token sent as a bearer
+	// header. On the same host the box's own cookie is enough — a human visiting
+	// the box once — so leave this empty unless the box lives on another host.
+	FeedbackOrderToken string
+
 	// GitHub webhook ingress (see webhook_github.go). GitHubWebhookSecret is
 	// the HMAC-SHA256 key used to verify X-Hub-Signature-256; empty disables
 	// the endpoint (503). GitHubReviewAgentID is the Memory runtime agent id
@@ -250,7 +271,11 @@ func LoadConfig() Config {
 		SentryReplaySessionSampleRate: floatOr("SENTRY_REPLAY_SESSION_SAMPLE_RATE", replayRate),
 		SentryReplayOnErrorSampleRate: floatOr("SENTRY_REPLAY_ON_ERROR_SAMPLE_RATE", 1.0),
 
-		FeedbackOverlayURL: os.Getenv("FEEDBACK_OVERLAY_URL"),
+		FeedbackOverlayURL:    os.Getenv("FEEDBACK_OVERLAY_URL"),
+		FeedbackOverlayAPIURL: strings.TrimRight(os.Getenv("FEEDBACK_OVERLAY_API_URL"), "/"),
+		FeedbackOrderBox:      strings.TrimRight(os.Getenv("FEEDBACK_ORDER_BOX"), "/"),
+		FeedbackOrderSession:  strings.ToLower(strings.TrimSpace(os.Getenv("FEEDBACK_ORDER_SESSION"))),
+		FeedbackOrderToken:    os.Getenv("FEEDBACK_ORDER_TOKEN"),
 
 		GitHubWebhookSecret: os.Getenv("GITHUB_WEBHOOK_SECRET"),
 		GitHubReviewAgentID: os.Getenv("GITHUB_REVIEW_AGENT_ID"),
@@ -429,4 +454,36 @@ func (c Config) Validate() error {
 		return err
 	}
 	return nil
+}
+
+// feedbackOrderConfig is the overlay's session destination, as the shell needs
+// it: absent (all zero) when the destination is not configured.
+type feedbackOrderConfig struct {
+	Box     string
+	Session string
+	Token   string
+}
+
+// enabled reports whether the destination has both halves it needs.
+func (c feedbackOrderConfig) enabled() bool {
+	return c.Box != "" && c.Session != ""
+}
+
+// feedbackOrder reads the destination out of the loaded config.
+func (c Config) feedbackOrder() feedbackOrderConfig {
+	return feedbackOrderConfig{
+		Box:     c.FeedbackOrderBox,
+		Session: c.FeedbackOrderSession,
+		Token:   c.FeedbackOrderToken,
+	}
+}
+
+// feedbackOverlayAPI is the base URL the overlay's own API calls use. The
+// bundle may be served from a different origin than the service (a local build
+// during development); the API stays the deployed one unless overridden.
+func (c Config) feedbackOverlayAPI() string {
+	if c.FeedbackOverlayAPIURL != "" {
+		return c.FeedbackOverlayAPIURL
+	}
+	return c.FeedbackOverlayURL
 }

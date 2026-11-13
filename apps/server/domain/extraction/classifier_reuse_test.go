@@ -199,3 +199,9 @@ func TestClassifier_PreInstalledSchema_ReuseOnly(t *testing.T) {
 		})
 	}
 }
+
+// EmbedDocumentWithUsage keeps the fake total: the classifier tests exercise
+// reuse and routing, not the document/query distinction.
+func (s *genaiEmbeddingService) EmbedDocumentWithUsage(ctx context.Context, text string) (*vertex.EmbedResult, error) {
+	return s.EmbedQueryWithUsage(ctx, text)
+}

@@ -101,8 +101,17 @@ cd "$root"
 # in that file, which is the prevailing idiom here by a wide margin, so no
 # helper is introduced for it. The message names (#24.1), so BASELINE_NO_REF
 # does not move. This is the count, not headroom.
-BASELINE_SKIPS=337
-BASELINE_NO_REF=331
+# Raised 2026-11-12 (337→338, 331→330): #624 adds one database-backed test to
+# apps/server/domain/graph/reindex_embeddings_chunks_db_test.go (the chunk arm of
+# ReindexEmbeddings: parent chunks excluded, NULL-only by default, no stacking on
+# an active job, --chunks opt-in). It takes the same `if testing.Short()
+# { t.Skip(...) }` gate every other database test in that package uses, so no
+# helper is introduced for it. The message names (#624), which is why
+# BASELINE_NO_REF moves *down* to 330 rather than up: the new site is
+# ref-bearing and the live tree had no headroom in either direction. This is the
+# count, not headroom.
+BASELINE_SKIPS=338
+BASELINE_NO_REF=330
 
 mapfile -t files < <(git ls-files '*_test.go')
 if [ "${#files[@]}" -eq 0 ]; then

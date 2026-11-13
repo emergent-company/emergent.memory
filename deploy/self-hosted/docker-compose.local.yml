@@ -163,8 +163,9 @@ services:
       STORAGE_REGION: ${STORAGE_REGION:-us-east-1}
       STORAGE_USE_SSL: 'false'
 
+      # Generative AI env fallback only; embeddings are resolved per project
+      # from the provider configured in Memory (no EMBEDDING_* env config).
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
-      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-768}
       LLM_ENCRYPTION_KEY: ${LLM_ENCRYPTION_KEY:-}
 
       # Workspace configuration

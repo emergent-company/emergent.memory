@@ -98,6 +98,11 @@ type objectsPageData struct {
 	// or its failure) into the page's toasts.
 	FlashMsg string
 	FlashErr error
+
+	// WikiView is the reader's chosen wiki variant ("article" | "page"). Cards
+	// link into the wiki carrying it, and the results bar's switch changes it.
+	// Empty normalizes to the article.
+	WikiView string
 }
 
 // listParams builds the graph-object list query for this page's active filters
@@ -375,38 +380,7 @@ func (s *Server) loadObjectFilterOptions(ctx context.Context, data *objectsPageD
 // definitions (actor_type "agent"). Both fetches are best-effort and run
 // concurrently: a failure drops that group rather than blanking the page.
 func (s *Server) loadObjectActorOptions(ctx context.Context, data *objectsPageData) {
-	var (
-		members   []ProjectMemberDto
-		agents    []AgentDefinitionSummary
-		memberErr error
-		agentErr  error
-	)
-	var g errgroup.Group
-	g.Go(func() error { members, memberErr = s.memory.ListMembers(ctx); return nil })
-	g.Go(func() error { agents, agentErr = s.memory.ListAgentDefinitions(ctx); return nil })
-	_ = g.Wait()
-	captureError(memberErr)
-	captureError(agentErr)
-
-	options := make([]objectActorOption, 0, len(members)+len(agents))
-	for _, m := range members {
-		options = append(options, objectActorOption{
-			Type:      "user",
-			ID:        m.ID,
-			Label:     memberActorLabel(m),
-			AvatarURL: strings.TrimSpace(m.AvatarURL),
-		})
-	}
-	for _, a := range agents {
-		options = append(options, objectActorOption{
-			Type:  "agent",
-			ID:    a.ID,
-			Label: a.Name,
-			Icon:  agentIcon(a.UIConfig),
-			Color: agentColor(a.UIConfig),
-		})
-	}
-	data.ActorOptions = options
+	data.ActorOptions = s.objectActorIdentities(ctx, true, true)
 }
 
 // loadObjectBrowsePage fetches one cursor page of objects into data, applying
@@ -434,6 +408,10 @@ func (s *Server) uiObjects(c echo.Context) error {
 	mode := normalizeObjectsSearchMode(c.QueryParam("mode"))
 	cursor := c.QueryParam("cursor")
 	actorType, actorID := objectActorFilter(c)
+	wikiView, wikiViewExplicit := objectWikiViewPreference(c)
+	if wikiViewExplicit {
+		setObjectWikiViewPreference(c, wikiView)
+	}
 
 	data := objectsPageData{
 		Query:        query,
@@ -448,6 +426,7 @@ func (s *Server) uiObjects(c echo.Context) error {
 		Order:        normalizeObjectOrder(c.QueryParam("order")),
 		FlashMsg:     objectsBulkFlash(c),
 		FlashErr:     flashError(c),
+		WikiView:     wikiView,
 	}
 	s.loadObjectFilterOptions(ctx, &data)
 
@@ -563,6 +542,7 @@ func (s *Server) uiObjectsPartial(c echo.Context) error {
 		return nil
 	}
 
+	wikiView, _ := objectWikiViewPreference(c)
 	data := objectsPageData{
 		Query:        query,
 		Mode:         mode,
@@ -574,6 +554,7 @@ func (s *Server) uiObjectsPartial(c echo.Context) error {
 		CredentialID: strings.TrimSpace(c.QueryParam("credential_id")),
 		ViaShare:     objectViaShareLabel(c.QueryParam("via")),
 		Order:        order,
+		WikiView:     wikiView,
 	}
 	if err := s.loadObjectBrowsePage(ctx, &data, cursor); err != nil {
 		captureError(err)
@@ -912,7 +893,8 @@ func (s *Server) uiObject(c echo.Context) error {
 
 // uiObjectHistoryPage renders the History subpage: the shared object shell plus
 // the full version timeline. The preview drawer keeps a compact inline history;
-// this page is the complete, linkable version.
+// this page is the complete, linkable version — every entry names the writer
+// (actor), the credential the write used, and when it happened.
 func (s *Server) uiObjectHistoryPage(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
@@ -920,7 +902,7 @@ func (s *Server) uiObjectHistoryPage(c echo.Context) error {
 	data.Active = "history"
 	data.FlashErr = flashError(c)
 	if data.LoadErr != nil {
-		return s.page(c, pageTitle("Object"), objectHistoryPage(data, nil, nil))
+		return s.page(c, pageTitle("Object"), objectHistoryPage(data, nil, nil, nil))
 	}
 
 	versions, err := s.memory.GetObjectHistory(ctx, id)
@@ -928,10 +910,11 @@ func (s *Server) uiObjectHistoryPage(c echo.Context) error {
 		captureError(err)
 		versions = nil
 	}
+	identities := s.objectActorIdentitiesFor(ctx, versions)
 	if c.QueryParam("updated") != "" {
 		data.FlashMsg = "Object updated."
 	}
-	return s.page(c, pageTitle(graphObjectLabel(*data.Obj)), objectHistoryPage(data, versions, err))
+	return s.page(c, pageTitle(graphObjectLabel(*data.Obj)), objectHistoryPage(data, versions, identities, err))
 }
 
 // uiObjectSimilarPage renders the Similar objects subpage. It intentionally does
@@ -1313,6 +1296,76 @@ func objectWorkRedirectPath(id, from string, params url.Values) string {
 		path += "?" + q.Encode()
 	}
 	return path
+}
+
+// objectProseEditorField resolves the detail page's built-in prose field: the
+// key the object stores the prose the wiki leads with, its label, its value, and
+// whether to render it at all.
+//
+// The field exists because prose is not a first-class column: the wiki resolves
+// it from conventional properties (`summary`, `description`, `excerpt`,
+// `abstract`) and document extraction writes `properties.description`. The editor
+// already lists such a value as an undeclared property row, but it arrives
+// labelled by the schema fallback, inside the type's property card, with nothing
+// saying it is the prose the wiki shows — so readers ask where the summary came
+// from. Promoting it beside Name, under the label of the key the object actually
+// carries, answers that; objectTypeEditorRows drops the row it was promoted from
+// so the form still posts the key once.
+//
+// The key is the first of the wiki's lead keys this object carries, so an object
+// whose prose is `summary` gets a Summary field rather than an empty Description
+// with its real prose still buried below. A type that declares one of those keys
+// owns it through the type form, so it is skipped here — two inputs posting one
+// key would fight over the value.
+func objectProseEditorField(obj *GraphObject, propDefs []objectPropertyDef) objectProseField {
+	declared := func(key string) bool {
+		for _, def := range propDefs {
+			if strings.EqualFold(normalizeProseKey(def.Name), key) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, key := range objectArticleLeadKeys {
+		if declared(key) {
+			continue
+		}
+		if name, value, ok := prosePropertyNamed(obj.Properties, key); ok && strings.TrimSpace(value) != "" {
+			return objectProseField{Key: name, Label: objectPreviewFieldLabel(name), Value: value, Show: true}
+		}
+	}
+	if declared("description") {
+		return objectProseField{}
+	}
+	return objectProseField{Key: "description", Label: "Description", Show: true}
+}
+
+// objectProseField is the resolved built-in prose input.
+type objectProseField struct {
+	// Key is the property name the input posts, spelled as the object stores it.
+	Key   string
+	Label string
+	Value string
+	Show  bool
+}
+
+// objectTypeEditorRows is objectTypePropertyRows for the editable card: the
+// prose the built-in field now owns is dropped from the generic rows, so the
+// form posts that key once (see objectProseEditorField).
+func objectTypeEditorRows(o GraphObject, propDefs []objectPropertyDef) []objectTypePropertyRow {
+	rows := objectTypePropertyRows(o, propDefs)
+	field := objectProseEditorField(&o, propDefs)
+	if !field.Show {
+		return rows
+	}
+	out := make([]objectTypePropertyRow, 0, len(rows))
+	for _, r := range rows {
+		if !r.Declared && r.Name == field.Key {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 // uiObjectUpdate applies an object edit from the detail form (key, status,
