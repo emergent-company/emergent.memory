@@ -88,6 +88,9 @@ func (s *Service) bindGitHubAppSource(ctx context.Context, projectID uuid.UUID, 
 	if app.OrgID != projectOrg {
 		return apperror.NewForbidden("github_app: the App belongs to another organization")
 	}
+	if app.ProjectID != nil && *app.ProjectID != projectID {
+		return apperror.NewForbidden("github_app: the App belongs to another project")
+	}
 	installationID, err := normalizeInstallationID(cfg["installation_id"])
 	if err != nil {
 		return apperror.NewValidation("github_app: " + err.Error())
@@ -97,18 +100,41 @@ func (s *Service) bindGitHubAppSource(ctx context.Context, projectID uuid.UUID, 
 	return nil
 }
 
-// RegisterSourceApp stores org-level App credentials, sealed with the source
-// encryption key.
+// RegisterSourceApp stores org-wide App credentials (org admin; usable by
+// every project in the org).
 func (s *Service) RegisterSourceApp(ctx context.Context, orgID uuid.UUID, userID string, req RegisterSourceAppRequest) (*SourceApp, error) {
 	if err := s.requireSourceAppAdmin(ctx, orgID, userID); err != nil {
 		return nil, err
 	}
+	return s.createSourceApp(ctx, orgID, nil, req)
+}
+
+// RegisterProjectSourceApp registers an App from the project surface. An org
+// admin may choose org-wide (usable by every project) or project-owned; a
+// project admin may create only a project-owned App.
+func (s *Service) RegisterProjectSourceApp(ctx context.Context, projectID uuid.UUID, userID string, req RegisterSourceAppRequest, orgWide bool) (*SourceApp, error) {
+	orgID, err := s.repo.ProjectOrgID(ctx, projectID)
+	if err != nil {
+		return nil, apperror.NewInternal("failed to resolve the project organization", err)
+	}
+	if orgWide {
+		if err := s.requireSourceAppAdmin(ctx, orgID, userID); err != nil {
+			return nil, err
+		}
+		return s.createSourceApp(ctx, orgID, nil, req)
+	}
+	if err := s.requireSourceAppProjectAdmin(ctx, projectID, userID); err != nil {
+		return nil, err
+	}
+	pid := projectID
+	return s.createSourceApp(ctx, orgID, &pid, req)
+}
+
+func (s *Service) createSourceApp(ctx context.Context, orgID uuid.UUID, projectID *uuid.UUID, req RegisterSourceAppRequest) (*SourceApp, error) {
 	provider := strings.TrimSpace(req.Provider)
 	if provider == "" {
 		provider = SourceAppProviderGitHub
 	}
-	// Caller-input checks return 400 (the status this route documents), not the
-	// 422 of apperror.NewValidation.
 	if req.AppID <= 0 || strings.TrimSpace(req.PrivateKey) == "" || strings.TrimSpace(req.WebhookSecret) == "" {
 		return nil, apperror.NewBadRequest("appId, privateKey, and webhookSecret are required")
 	}
@@ -116,10 +142,6 @@ func (s *Service) RegisterSourceApp(ctx context.Context, orgID uuid.UUID, userID
 		return nil, apperror.NewBadRequest(fmt.Sprintf(
 			"provider %q is not supported; the only App provider served is %q", provider, SourceAppProviderGitHub))
 	}
-	// Validate the key while it is still readable and before anything is sealed
-	// or written. The sealed columns are write-only, so a bad key is invisible
-	// after registration; and a rejected registration must leave no row and no
-	// ciphertext behind. Hence this ordering is deliberate: validate first.
 	if err := validateSourceAppPrivateKey(req.PrivateKey); err != nil {
 		return nil, err
 	}
@@ -136,6 +158,7 @@ func (s *Service) RegisterSourceApp(ctx context.Context, orgID uuid.UUID, userID
 	}
 	app := &SourceApp{
 		OrgID:                  orgID,
+		ProjectID:              projectID,
 		Provider:               provider,
 		AppID:                  req.AppID,
 		Slug:                   strings.TrimSpace(req.Slug),
@@ -178,7 +201,7 @@ func validateSourceAppPrivateKey(raw string) error {
 	}
 }
 
-// ListSourceApps returns the org's Apps without sealed credentials.
+// ListSourceApps returns the org-wide Apps without sealed credentials.
 func (s *Service) ListSourceApps(ctx context.Context, orgID uuid.UUID, userID string) ([]*SourceApp, error) {
 	if err := s.requireSourceAppAdmin(ctx, orgID, userID); err != nil {
 		return nil, err
@@ -186,40 +209,71 @@ func (s *Service) ListSourceApps(ctx context.Context, orgID uuid.UUID, userID st
 	return s.repo.ListSourceAppsByOrg(ctx, orgID)
 }
 
-// DeleteSourceApp removes an App credential. It refuses with a 409 naming the
-// bound project sources while any kb.sources row still references the App (the
-// kb.sources.app_id FK is ON DELETE RESTRICT); the caller detaches them first.
+// ListSourceAppsForProject returns the Apps a project may bind: org-wide Apps
+// plus Apps owned by that project. Project membership is enforced by the route.
+func (s *Service) ListSourceAppsForProject(ctx context.Context, projectID uuid.UUID) ([]*SourceApp, error) {
+	orgID, err := s.repo.ProjectOrgID(ctx, projectID)
+	if err != nil {
+		return nil, apperror.NewInternal("failed to resolve the project organization", err)
+	}
+	return s.repo.ListSourceAppsForProject(ctx, orgID, projectID)
+}
+
+// DeleteSourceApp removes an org-wide App credential (org admin).
 func (s *Service) DeleteSourceApp(ctx context.Context, orgID uuid.UUID, userID string, id uuid.UUID) error {
 	if err := s.requireSourceAppAdmin(ctx, orgID, userID); err != nil {
 		return err
 	}
 	app, err := s.repo.FindSourceAppByID(ctx, id)
-	if err != nil || app.OrgID != orgID {
+	if err != nil || app.OrgID != orgID || app.ProjectID != nil {
 		return apperror.NewNotFound("SourceApp", id.String())
 	}
 	return s.repo.DeleteSourceApp(ctx, id)
 }
 
-// UpdateSourceApp renames an App and optionally rotates its sealed credentials.
-// AppID and provider are immutable: `(org, provider, app_id)` is the binding key
-// the sources resolve through, so an edit must not repoint an App under sources
-// that are already attached. A blank secret keeps the stored ciphertext.
+// DeleteSourceAppForProject removes an App from the project surface. A
+// project-owned App requires project admin; an org-wide App requires org admin.
+func (s *Service) DeleteSourceAppForProject(ctx context.Context, projectID uuid.UUID, userID string, id uuid.UUID) error {
+	app, err := s.repo.FindSourceAppByID(ctx, id)
+	if err != nil {
+		return apperror.NewNotFound("SourceApp", id.String())
+	}
+	if err := s.authorizeSourceAppManage(ctx, projectID, app, userID); err != nil {
+		return err
+	}
+	return s.repo.DeleteSourceApp(ctx, id)
+}
+
+// UpdateSourceApp renames an org-wide App and optionally rotates its secrets.
 func (s *Service) UpdateSourceApp(ctx context.Context, orgID uuid.UUID, userID string, id uuid.UUID, req UpdateSourceAppRequest) (*SourceApp, error) {
 	if err := s.requireSourceAppAdmin(ctx, orgID, userID); err != nil {
 		return nil, err
 	}
 	app, err := s.repo.FindSourceAppByID(ctx, id)
-	if err != nil || app.OrgID != orgID {
+	if err != nil || app.OrgID != orgID || app.ProjectID != nil {
 		return nil, apperror.NewNotFound("SourceApp", id.String())
 	}
+	return s.applySourceAppUpdate(ctx, app, req)
+}
+
+// UpdateSourceAppForProject edits an App from the project surface.
+func (s *Service) UpdateSourceAppForProject(ctx context.Context, projectID uuid.UUID, userID string, id uuid.UUID, req UpdateSourceAppRequest) (*SourceApp, error) {
+	app, err := s.repo.FindSourceAppByID(ctx, id)
+	if err != nil {
+		return nil, apperror.NewNotFound("SourceApp", id.String())
+	}
+	if err := s.authorizeSourceAppManage(ctx, projectID, app, userID); err != nil {
+		return nil, err
+	}
+	return s.applySourceAppUpdate(ctx, app, req)
+}
+
+func (s *Service) applySourceAppUpdate(ctx context.Context, app *SourceApp, req UpdateSourceAppRequest) (*SourceApp, error) {
 	slug := strings.TrimSpace(req.Slug)
 	if slug == "" {
 		return nil, apperror.NewBadRequest("slug is required")
 	}
 	app.Slug = slug
-	// Same ordering as registration: validate a supplied key while it is still
-	// readable, before it is sealed. The sealed columns are write-only, so a bad
-	// key accepted here would be invisible and every later token mint would fail.
 	if strings.TrimSpace(req.PrivateKey) != "" {
 		if err := validateSourceAppPrivateKey(req.PrivateKey); err != nil {
 			return nil, err
@@ -241,6 +295,36 @@ func (s *Service) UpdateSourceApp(ctx context.Context, orgID uuid.UUID, userID s
 		return nil, err
 	}
 	return app, nil
+}
+
+// authorizeSourceAppManage: a project-owned App requires project admin; an
+// org-wide App requires org admin. A mismatched project is not found.
+func (s *Service) authorizeSourceAppManage(ctx context.Context, projectID uuid.UUID, app *SourceApp, userID string) error {
+	orgID, err := s.repo.ProjectOrgID(ctx, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to resolve the project organization", err)
+	}
+	if app.OrgID != orgID {
+		return apperror.NewNotFound("SourceApp", app.ID.String())
+	}
+	if app.ProjectID == nil {
+		return s.requireSourceAppAdmin(ctx, app.OrgID, userID)
+	}
+	if *app.ProjectID != projectID {
+		return apperror.NewNotFound("SourceApp", app.ID.String())
+	}
+	return s.requireSourceAppProjectAdmin(ctx, projectID, userID)
+}
+
+func (s *Service) requireSourceAppProjectAdmin(ctx context.Context, projectID uuid.UUID, userID string) error {
+	ok, err := auth.CanAdministerProject(ctx, s.repo.db, projectID.String(), userID)
+	if err != nil {
+		return apperror.NewInternal("failed to check project authority", err)
+	}
+	if !ok {
+		return apperror.NewForbidden("project administrator required")
+	}
+	return nil
 }
 
 // sealSourceAppSecret seals one credential value with the source encryption key.

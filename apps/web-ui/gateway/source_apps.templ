@@ -11,16 +11,15 @@ import (
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
 
-// SourceAppsPage is the organization's GitHub App registry: one table row per
-// registered App, with a standalone register page (/settings/source-apps/new)
-// and a per-App edit page (/settings/source-apps/:appId) — the settings
-// convention of a table plus a separate add/edit page rather than an inline
-// form. The API behind it is org-admin only, so a caller who cannot administer
-// the org gets sourceAppsForbidden instead of an empty list and dead controls.
+// SourceAppsPage lists the GitHub App credentials available to the active
+// project: org-wide Apps plus project-owned Apps, with a standalone register
+// page (/settings/source-apps/new) and a per-App edit page
+// (/settings/source-apps/:appId). Writes are authorised per App by the server:
+// project-owned Apps need project admin, org-wide Apps need org admin.
 templ SourceAppsPage(data dsSourceAppsPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Source apps")), "", "Source apps", dsSourceAppsSubtitle(data.OrgName), detailHeaderOpts{Margin: "mb-6"}) {
-			if data.LoadErr == nil && !data.Forbidden {
+			if data.LoadErr == nil && data.CanRegister {
 				@sourceAppAddAction()
 			}
 		}
@@ -28,8 +27,6 @@ templ SourceAppsPage(data dsSourceAppsPageData) {
 		@layout.Rail(settingsSubNav("source-apps", data.ProvidersMissing), nil) {
 			if data.LoadErr != nil {
 				@pageErrorNotice("Source apps unavailable", data.LoadErr)
-			} else if data.Forbidden {
-				@sourceAppsForbidden()
 			} else {
 				@sourceAppsList(data)
 			}
@@ -52,21 +49,6 @@ templ sourceAppAddAction() {
 	}
 }
 
-// sourceAppsForbidden is the org-admin-only state: the page exists for every
-// project member (the settings rail links here), but nothing is listed and no
-// write control is rendered that the API would answer with 403.
-templ sourceAppsForbidden() {
-	<div data-testid="ds-source-apps-forbidden">
-		@ui.EmptyState(ui.EmptyStateProps{
-			Icon:        "lucide--lock",
-			Title:       "Organization administrators only",
-			Description: "Source Apps are organization-wide GitHub App credentials, so only an organization administrator can register, view, or remove them. Ask an administrator if a GitHub App source needs one.",
-			Bordered:    true,
-			Class:       "py-12",
-		})
-	</div>
-}
-
 // sourceAppsList is the registered Apps as the standard table: identity and
 // numeric id, the webhook URL GitHub must deliver to (shortened to the cell, the
 // full value in the title), when the App was registered, and the action that
@@ -77,9 +59,9 @@ templ sourceAppsList(data dsSourceAppsPageData) {
 			@ui.EmptyState(ui.EmptyStateProps{
 				Icon:        "lucide--webhook",
 				Title:       "No GitHub Apps registered yet",
-				Description: "One App can back several GitHub App sources across this organization's projects. Register an App, then point its webhook at the delivery URL its page shows.",
-				ActionHref:  dsSourceAppsPath + "/new",
-				ActionLabel: "Register app",
+				Description: "One App can back several GitHub App sources. Project-owned Apps belong to this project; org-wide Apps are shared by the organization. Register an App, then point its webhook at the delivery URL its page shows.",
+				ActionHref:  sourceAppsRegisterHref(data),
+				ActionLabel: sourceAppsRegisterLabel(data),
 				ActionIcon:  "lucide--plus",
 				Bordered:    true,
 				Class:       "py-12",
@@ -93,6 +75,7 @@ templ sourceAppsList(data dsSourceAppsPageData) {
 						<thead>
 							<tr>
 								<th>App</th>
+								<th>Scope</th>
 								<th>App ID</th>
 								<th>Webhook</th>
 								<th>Registered</th>
@@ -121,6 +104,9 @@ templ sourceAppRow(row dsSourceAppRow) {
 				@ui.IconSpan("lucide--github", "size-4 shrink-0 text-muted-faint")
 				<span class="truncate font-medium" data-testid="ds-source-app-slug">{ row.Slug }</span>
 			</div>
+		</td>
+		<td>
+			<span class="text-muted" data-testid="ds-source-app-scope">{ sourceAppScope(row.SourceApp) }</span>
 		</td>
 		<td>
 			<span class="font-mono text-xs whitespace-nowrap text-muted" data-testid="ds-source-app-id">{ strconv.FormatInt(row.AppID, 10) }</span>
@@ -180,6 +166,25 @@ templ SourceAppFormPage(data dsSourceAppFormData) {
 			}
 			@components.PanelCard("", templ.Attributes{"data-testid": "ds-source-app-form-card"}) {
 				<form method="post" action={ templ.URL(data.Action) } class="flex flex-col gap-4" data-testid="ds-source-app-form">
+					if data.App == nil {
+						<div class="flex flex-col gap-1">
+							<label class="text-sm font-medium" for="source-app-scope">Scope</label>
+							if data.OrgAdmin {
+								<select id="source-app-scope" name="scope" class="select w-full" data-testid="ds-source-app-scope-input">
+									<option value="org" selected>Whole organization</option>
+									<option value="project">This project only</option>
+								</select>
+								@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+									Organization-wide Apps can be bound by every project in the organization. Project Apps can only be bound here.
+								}
+							} else {
+								<input id="source-app-scope" type="hidden" name="scope" value="project"/>
+								@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+									This App belongs to the current project. Only an organization administrator can register an org-wide App.
+								}
+							}
+						</div>
+					}
 					<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 						<div class="flex flex-col gap-1">
 							<label class="text-sm font-medium" for="source-app-id">App ID
@@ -262,23 +267,25 @@ templ SourceAppFormPage(data dsSourceAppFormData) {
 							}
 						</div>
 					}
-					<div class="flex items-center justify-end">
-						@ui.Button(ui.ButtonProps{
-							Type:    ui.ButtonTypeSubmit,
-							Variant: ui.ButtonPrimary,
-							Size:    ui.ButtonSM,
-							Icon:    "lucide--save",
+					if data.CanWrite {
+						<div class="flex items-center justify-end">
+							@ui.Button(ui.ButtonProps{
+								Type:    ui.ButtonTypeSubmit,
+								Variant: ui.ButtonPrimary,
+								Size:    ui.ButtonSM,
+								Icon:    "lucide--save",
 							Attrs:   templ.Attributes{"data-testid": "ds-source-app-save"},
-						}) {
-							if data.App != nil {
-								Save
-							} else {
-								Register app
+							}) {
+								if data.App != nil {
+									Save
+								} else {
+									Register app
+								}
 							}
-						}
-					</div>
+						</div>
+					}
 				</form>
-				if data.DeleteHref != "" {
+				if data.DeleteHref != "" && data.CanWrite {
 					<div class="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-base-content/10 pt-4" data-testid="ds-source-app-danger">
 						@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "max-w-prose"}) {
 							Removal is refused while any github_app source is still bound to this App; delete or switch those sources first. The server names them when it refuses.

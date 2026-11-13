@@ -76,10 +76,26 @@ func (r *Repository) FindSourceAppByOrgAppID(ctx context.Context, orgID uuid.UUI
 	return app, nil
 }
 
+// ListSourceAppsByOrg returns only org-wide Apps (project_id NULL).
 func (r *Repository) ListSourceAppsByOrg(ctx context.Context, orgID uuid.UUID) ([]*SourceApp, error) {
 	var apps []*SourceApp
 	if err := r.db.NewSelect().Model(&apps).
 		Where("sa.org_id = ?", orgID).
+		Where("sa.project_id IS NULL").
+		Order("sa.created_at ASC").
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+	return apps, nil
+}
+
+// ListSourceAppsForProject returns the Apps a project may bind: org-wide Apps
+// plus Apps owned by that project.
+func (r *Repository) ListSourceAppsForProject(ctx context.Context, orgID, projectID uuid.UUID) ([]*SourceApp, error) {
+	var apps []*SourceApp
+	if err := r.db.NewSelect().Model(&apps).
+		Where("sa.org_id = ?", orgID).
+		Where("(sa.project_id IS NULL OR sa.project_id = ?)", projectID).
 		Order("sa.created_at ASC").
 		Scan(ctx); err != nil {
 		return nil, err

@@ -199,6 +199,10 @@ type MemoryBackend interface {
 	CreateOrgSourceApp(ctx context.Context, orgID string, req *DSSourceAppRequest) (*SourceApp, error)
 	UpdateOrgSourceApp(ctx context.Context, orgID, appID string, req *DSSourceAppUpdateRequest) (*SourceApp, error)
 	DeleteOrgSourceApp(ctx context.Context, orgID, appID string) error
+	ListProjectSourceApps(ctx context.Context) ([]SourceApp, error)
+	CreateProjectSourceApp(ctx context.Context, req *DSSourceAppRequest) (*SourceApp, error)
+	UpdateProjectSourceApp(ctx context.Context, appID string, req *DSSourceAppUpdateRequest) (*SourceApp, error)
+	DeleteProjectSourceApp(ctx context.Context, appID string) error
 	ListSourceTriggers(ctx context.Context, sourceID string) ([]DSSourceTrigger, error)
 	CreateSourceTrigger(ctx context.Context, sourceID string, req *DSSourceTriggerRequest) (*DSSourceTrigger, error)
 	UpdateSourceTrigger(ctx context.Context, sourceID, triggerID string, req *DSSourceTriggerRequest) (*DSSourceTrigger, error)

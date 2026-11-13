@@ -508,3 +508,101 @@ func newSourceAppValidationService(t *testing.T) (context.Context, *Service, uui
 		slog.New(slog.NewTextHandler(io.Discard, nil)), NewRegistry(newGitHubAppProvider()))
 	return ctx, svc, orgID, userID.String()
 }
+
+func TestProjectOwnedSourceApps(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	ctx := context.Background()
+	db := testdb.SetupTestDBOrFail(t, ctx, "source_apps_project_scope")
+	defer db.Close()
+	repo := NewRepository(db.DB, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	orgID, projectA, projectB := uuid.New(), uuid.New(), uuid.New()
+	adminID, projectUserID := uuid.New(), uuid.New()
+	_, err := db.DB.ExecContext(ctx, `INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgID, "appscope-org")
+	require.NoError(t, err)
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?), (?, ?, ?)`,
+		projectA, orgID, "proj-a", projectB, orgID, "proj-b")
+	require.NoError(t, err)
+	for _, spec := range []struct {
+		id  uuid.UUID
+		zid string
+	}{{adminID, "zitadel-admin"}, {projectUserID, "zitadel-project-admin"}} {
+		_, err = db.DB.ExecContext(ctx, `INSERT INTO core.user_profiles (id, zitadel_user_id) VALUES (?, ?)`, spec.id, spec.zid)
+		require.NoError(t, err)
+	}
+	for _, projectID := range []uuid.UUID{projectA, projectB} {
+		_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.project_memberships (project_id, user_id, role) VALUES (?, ?, 'project_admin')`, projectID, projectUserID)
+		require.NoError(t, err)
+	}
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.organization_memberships (organization_id, user_id, role) VALUES (?, ?, 'org_admin')`, orgID, adminID)
+	require.NoError(t, err)
+
+	keyHex, err := cryptoutil.GenerateKey()
+	require.NoError(t, err)
+	svc := NewService(repo, &config.Config{LLMProvider: config.LLMProviderConfig{EncryptionKey: keyHex}},
+		slog.New(slog.NewTextHandler(io.Discard, nil)), NewRegistry(newGitHubAppProvider()),
+		WithAgentRepository(agents.NewRepository(db.DB)))
+	orgUser := adminID.String()
+	projectUser := projectUserID.String()
+
+	orgApp, err := svc.RegisterProjectSourceApp(ctx, projectA, orgUser, RegisterSourceAppRequest{
+		AppID: 201, Slug: "org-wide", PrivateKey: string(rsaPEMForTest(t)), WebhookSecret: "s1",
+	}, true)
+	require.NoError(t, err)
+	require.Nil(t, orgApp.ProjectID)
+
+	projectApp, err := svc.RegisterProjectSourceApp(ctx, projectA, projectUser, RegisterSourceAppRequest{
+		AppID: 202, Slug: "project-a", PrivateKey: string(rsaPEMForTest(t)), WebhookSecret: "s2",
+	}, false)
+	require.NoError(t, err)
+	require.NotNil(t, projectApp.ProjectID)
+	require.Equal(t, projectA, *projectApp.ProjectID)
+
+	projectBApp, err := svc.RegisterProjectSourceApp(ctx, projectB, projectUser, RegisterSourceAppRequest{
+		AppID: 203, Slug: "project-b", PrivateKey: string(rsaPEMForTest(t)), WebhookSecret: "s3",
+	}, false)
+	require.NoError(t, err)
+
+	orgList, err := svc.ListSourceApps(ctx, orgID, orgUser)
+	require.NoError(t, err)
+	require.Len(t, orgList, 1)
+	require.Equal(t, orgApp.ID, orgList[0].ID)
+
+	projectList, err := svc.ListSourceAppsForProject(ctx, projectA)
+	require.NoError(t, err)
+	require.Len(t, projectList, 2, "org-wide + project-owned")
+
+	// A project admin cannot register org-wide.
+	_, err = svc.RegisterProjectSourceApp(ctx, projectA, projectUser, RegisterSourceAppRequest{
+		AppID: 204, Slug: "nope", PrivateKey: string(rsaPEMForTest(t)), WebhookSecret: "s4",
+	}, true)
+	require.ErrorContains(t, err, "org administrator required")
+
+	// Cross-project management is refused; the org route cannot manage a
+	// project-owned App.
+	_, err = svc.UpdateSourceAppForProject(ctx, projectA, projectUser, projectBApp.ID, UpdateSourceAppRequest{Slug: "x"})
+	require.ErrorContains(t, err, "SourceApp")
+	_, err = svc.UpdateSourceApp(ctx, orgID, orgUser, projectApp.ID, UpdateSourceAppRequest{Slug: "x"})
+	require.ErrorContains(t, err, "SourceApp")
+	require.NoError(t, svc.DeleteSourceAppForProject(ctx, projectA, projectUser, projectApp.ID))
+
+	// Binding: org-wide and same-project Apps are accepted; another project's
+	// App is refused.
+	mode := SyncPolicyManual
+	bind := func(appID uuid.UUID) error {
+		_, err := svc.Create(ctx, projectA, &CreateIntegrationRequest{
+			Name: "bot", ProviderType: ProviderTypeGitHubApp, SyncMode: &mode,
+			Config: map[string]any{"app_id": appID.String(), "installation_id": "42", "repos": []any{"owner/repo"}},
+		})
+		return err
+	}
+	require.NoError(t, bind(orgApp.ID))
+	require.ErrorContains(t, bind(projectBApp.ID), "belongs to another project")
+	ownedApp, err := svc.RegisterProjectSourceApp(ctx, projectA, projectUser, RegisterSourceAppRequest{
+		AppID: 205, Slug: "project-a-2", PrivateKey: string(rsaPEMForTest(t)), WebhookSecret: "s5",
+	}, false)
+	require.NoError(t, err)
+	require.NoError(t, bind(ownedApp.ID))
+}

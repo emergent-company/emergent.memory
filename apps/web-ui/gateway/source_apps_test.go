@@ -140,11 +140,13 @@ func TestSourceAppsPageEmptyState(t *testing.T) {
 	}
 }
 
-func TestSourceAppsPageForbiddenForNonAdmin(t *testing.T) {
+func TestSourceAppsPageVisibleToProjectMember(t *testing.T) {
 	f := sourceAppsAdminFake()
 	f.orgsAndProjects = []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_member"}}
-	// A list the page must not show: the API would answer this caller with 403.
-	f.dsSourceApps = []SourceApp{{ID: "a1", OrgID: "o1", AppID: 1, Slug: "secret-bot"}}
+	f.dsSourceApps = []SourceApp{
+		{ID: "a1", OrgID: "o1", AppID: 1, Slug: "shared-bot"},
+		{ID: "a2", OrgID: "o1", ProjectID: "p1", AppID: 2, Slug: "project-bot"},
+	}
 	e := sourceAppsTestServer(f)
 
 	rec := httptest.NewRecorder()
@@ -153,24 +155,23 @@ func TestSourceAppsPageForbiddenForNonAdmin(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `data-testid="ds-source-apps-forbidden"`) {
-		t.Error("non-admin did not get the forbidden state")
-	}
-	if !strings.Contains(body, "Organization administrators only") {
-		t.Error("forbidden state lacks its explanation")
-	}
-	for _, forbidden := range []string{
-		`data-testid="ds-source-app-form"`,
-		`data-testid="ds-source-app-add"`,
+	for _, want := range []string{
 		`data-testid="ds-source-app-row"`,
-		"secret-bot",
+		"shared-bot", "project-bot",
+		`data-testid="ds-source-app-scope"`,
+		"Organization", "Project",
 	} {
-		if strings.Contains(body, forbidden) {
-			t.Errorf("non-admin page rendered %q", forbidden)
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %q", want)
 		}
 	}
+	if strings.Contains(body, `data-testid="ds-source-app-add"`) {
+		t.Error("plain project member got the register action")
+	}
+	if strings.Contains(body, `data-testid="ds-source-apps-forbidden"`) {
+		t.Error("project member got the forbidden state")
+	}
 }
-
 func TestSourceAppsPageRedirectsWithoutProject(t *testing.T) {
 	e := sourceAppsTestServer(&fakeMemory{})
 
@@ -205,15 +206,15 @@ func TestSourceAppCreateForwardsRequest(t *testing.T) {
 	if loc := rec.Header().Get("Location"); loc != dsSourceAppsPath+"/sapp-new?created=1" {
 		t.Errorf("location = %q, want the new App's own page", loc)
 	}
-	if f.dsCreatedSourceAppOrg != "o1" {
-		t.Errorf("org = %q, want o1", f.dsCreatedSourceAppOrg)
-	}
 	got := f.dsCreatedSourceAppReq
 	if got == nil {
 		t.Fatal("no create request forwarded")
 	}
 	if got.Provider != "github" || got.AppID != 4242 || got.Slug != "acme-bot" {
 		t.Errorf("request = %+v", got)
+	}
+	if got.Scope != "project" {
+		t.Errorf("scope = %q, want project default", got.Scope)
 	}
 	if got.PrivateKey != form.Get("privateKey") || got.WebhookSecret != "s3cret" {
 		t.Errorf("secrets not forwarded: %+v", got)
@@ -244,6 +245,25 @@ func TestSourceAppCreateFallsBackToListWithoutRowID(t *testing.T) {
 	}
 	if loc := rec.Header().Get("Location"); loc != dsSourceAppsPath+"?saved=1" {
 		t.Errorf("location = %q, want the table fallback", loc)
+	}
+}
+
+func TestProjectAdminSeesRegisterAndSave(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.orgsAndProjects = []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_member", Projects: []ProjectAccessDto{{ID: "p1", Name: "Project", OrgID: "o1", Role: "project_admin"}}}}
+	f.dsSourceApps = []SourceApp{{ID: "a1", OrgID: "o1", ProjectID: "p1", AppID: 1, Slug: "project-bot"}}
+	e := sourceAppsTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, dsSourceAppsPath, nil))
+	if !strings.Contains(rec.Body.String(), `data-testid="ds-source-app-add"`) {
+		t.Error("project admin does not see the register action")
+	}
+
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, dsSourceAppsPath+"/a1", nil))
+	if !strings.Contains(rec.Body.String(), `data-testid="ds-source-app-save"`) {
+		t.Error("project admin does not see the save control on a project-owned App")
 	}
 }
 
@@ -287,23 +307,22 @@ func TestSourceAppCreateRequiresSecrets(t *testing.T) {
 	assertRedirectError(t, rec.Header().Get("Location"), "private key is required")
 }
 
-func TestSourceAppCreateRefusedForNonAdmin(t *testing.T) {
+func TestSourceAppCreateOrgScopeRefusedForNonAdmin(t *testing.T) {
 	f := sourceAppsAdminFake()
 	f.orgsAndProjects = []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_member"}}
 	e := sourceAppsTestServer(f)
 
-	form := url.Values{"appId": {"1"}, "slug": {"acme-bot"}, "privateKey": {"key"}, "webhookSecret": {"s3cret"}}
+	form := url.Values{"scope": {"org"}, "appId": {"1"}, "slug": {"acme-bot"}, "privateKey": {"key"}, "webhookSecret": {"s3cret"}}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, dsSourceAppsPath, strings.NewReader(form.Encode()))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationForm)
 	e.ServeHTTP(rec, req)
 
 	if f.dsCreatedSourceAppReq != nil {
-		t.Error("non-admin write was forwarded to the API")
+		t.Error("org-wide write was forwarded by a non-admin")
 	}
 	assertRedirectError(t, rec.Header().Get("Location"), "organization administrator")
 }
-
 func TestSourceAppNewPageRendersRegisterForm(t *testing.T) {
 	e := sourceAppsTestServer(sourceAppsAdminFake())
 
@@ -323,6 +342,8 @@ func TestSourceAppNewPageRendersRegisterForm(t *testing.T) {
 		`name="privateKey"`,
 		`name="webhookSecret"`,
 		`data-testid="ds-source-app-save"`,
+		`data-testid="ds-source-app-scope-input"`,
+		`value="org"`,
 		"Register source app",
 		"Back",
 	} {
@@ -441,21 +462,30 @@ func TestSourceAppDetailPageOmitsSetupGuide(t *testing.T) {
 	}
 }
 
-func TestSourceAppNewPageNeedsOrgAdmin(t *testing.T) {
+func TestSourceAppNewPageAvailableToProjectMember(t *testing.T) {
 	f := sourceAppsAdminFake()
-	f.orgsAndProjects = []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_member"}}
+	f.orgsAndProjects = []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_member", Projects: []ProjectAccessDto{{ID: "p1", Name: "Project", OrgID: "o1", Role: "project_admin"}}}}
 	e := sourceAppsTestServer(f)
 
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, dsSourceAppsPath+"/new", nil))
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	if strings.Contains(rec.Body.String(), `data-testid="ds-source-app-form"`) {
-		t.Error("non-admin got the register form")
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-testid="ds-source-app-form"`) {
+		t.Error("project member did not get the register form")
+	}
+	if !strings.Contains(body, `name="scope"`) || !strings.Contains(body, `value="project"`) {
+		t.Error("project admin form must default to project scope")
+	}
+	if strings.Contains(body, `value="org"`) {
+		t.Error("project admin was offered org-wide scope")
+	}
+	if !strings.Contains(body, `data-testid="ds-source-app-save"`) {
+		t.Error("project admin cannot submit the register form")
 	}
 }
-
 func TestSourceAppNewPageRedirectsWithoutProject(t *testing.T) {
 	e := sourceAppsTestServer(&fakeMemory{})
 
@@ -600,25 +630,27 @@ func TestSourceAppDetailRendersSaveError(t *testing.T) {
 	}
 }
 
-func TestSourceAppDetailNeedsOrgAdmin(t *testing.T) {
+func TestSourceAppDetailVisibleToProjectMember(t *testing.T) {
 	f := sourceAppsAdminFake()
 	f.orgsAndProjects = []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_member"}}
-	f.dsSourceApps = []SourceApp{{ID: "a1", OrgID: "o1", AppID: 1, Slug: "secret-bot"}}
+	f.dsSourceApps = []SourceApp{{ID: "a1", OrgID: "o1", ProjectID: "p1", AppID: 1, Slug: "project-bot"}}
 	e := sourceAppsTestServer(f)
 
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, dsSourceAppsPath+"/a1", nil))
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
 	}
-	if strings.Contains(rec.Body.String(), "secret-bot") {
-		t.Error("non-admin got the App edit page")
+	if !strings.Contains(rec.Body.String(), "project-bot") {
+		t.Error("project member cannot see the project-owned App")
+	}
+	if strings.Contains(rec.Body.String(), `data-testid="ds-source-app-save"`) {
+		t.Error("plain project member got a save control")
 	}
 }
-
 func TestSourceAppUpdateForwardsSlugAndBlankSecrets(t *testing.T) {
 	f := sourceAppsAdminFake()
-	f.dsSourceApps = []SourceApp{{ID: "a1", OrgID: "o1", AppID: 4242, Slug: "acme-bot"}}
+	f.dsSourceApps = []SourceApp{{ID: "a1", OrgID: "o1", ProjectID: "p1", AppID: 4242, Slug: "acme-bot"}}
 	e := sourceAppsTestServer(f)
 
 	form := url.Values{"slug": {" acme-renamed "}, "privateKey": {""}, "webhookSecret": {""}}
@@ -633,8 +665,8 @@ func TestSourceAppUpdateForwardsSlugAndBlankSecrets(t *testing.T) {
 	if loc := rec.Header().Get("Location"); loc != dsSourceAppsPath+"/a1?saved=1" {
 		t.Errorf("location = %q", loc)
 	}
-	if f.dsUpdatedSourceAppOrg != "o1" || f.dsUpdatedSourceAppID != "a1" {
-		t.Errorf("target = %q/%q, want o1/a1", f.dsUpdatedSourceAppOrg, f.dsUpdatedSourceAppID)
+	if f.dsUpdatedSourceAppID != "a1" {
+		t.Errorf("updated id = %q, want a1", f.dsUpdatedSourceAppID)
 	}
 	got := f.dsUpdatedSourceAppReq
 	if got == nil {
@@ -643,13 +675,10 @@ func TestSourceAppUpdateForwardsSlugAndBlankSecrets(t *testing.T) {
 	if got.Slug != "acme-renamed" {
 		t.Errorf("slug = %q, want the trimmed value", got.Slug)
 	}
-	// Blank fields must stay blank: they are omitted from the PATCH so the
-	// server keeps the sealed copy.
 	if got.PrivateKey != "" || got.WebhookSecret != "" {
 		t.Errorf("blank secrets were forwarded: %+v", got)
 	}
 }
-
 func TestSourceAppUpdateForwardsRotatedSecret(t *testing.T) {
 	f := sourceAppsAdminFake()
 	f.dsSourceApps = []SourceApp{{ID: "a1", OrgID: "o1", AppID: 4242, Slug: "acme-bot"}}
@@ -691,9 +720,10 @@ func TestSourceAppUpdateRequiresSlug(t *testing.T) {
 	assertRedirectError(t, rec.Header().Get("Location"), "app slug is required")
 }
 
-func TestSourceAppUpdateRefusedForNonAdmin(t *testing.T) {
+func TestSourceAppUpdateSurfacesApiRefusal(t *testing.T) {
 	f := sourceAppsAdminFake()
-	f.orgsAndProjects = []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_member"}}
+	f.dsSourceApps = []SourceApp{{ID: "a1", OrgID: "o1", AppID: 1, Slug: "org-bot"}}
+	f.dsSourceAppErr = &memoryHTTPError{Status: http.StatusForbidden, Code: "forbidden", Message: "organization administrator required"}
 	e := sourceAppsTestServer(f)
 
 	form := url.Values{"slug": {"acme-bot"}}
@@ -702,12 +732,8 @@ func TestSourceAppUpdateRefusedForNonAdmin(t *testing.T) {
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationForm)
 	e.ServeHTTP(rec, req)
 
-	if f.dsUpdatedSourceAppReq != nil {
-		t.Error("non-admin update was forwarded to the API")
-	}
 	assertRedirectError(t, rec.Header().Get("Location"), "organization administrator")
 }
-
 func TestSourceAppDeleteForwardsID(t *testing.T) {
 	f := sourceAppsAdminFake()
 	e := sourceAppsTestServer(f)
