@@ -13,12 +13,10 @@ import (
 
 // --- org source Apps (GitHub App credentials) ---
 //
-// A source App is an org-wide GitHub App registration: one App backs many
-// project sources, and each github_app source binds one App plus an
-// installation. The page lists org-wide and project-owned Apps and authorises
-// writes per App scope, so a project admin can manage project-owned Apps.
-// renders an explicit forbidden state for everyone else rather than an empty
-// list (see uiSourceApps).
+// A source App is a GitHub App credential, either org-wide (org admin) or
+// project-owned (project admin); each github_app source binds one App plus an
+// installation. The page lists both and authorises writes per App scope (see
+// uiSourceApps).
 
 // dsProviderTypeGitHubApp is the trigger-only GitHub App provider. Its sources
 // carry an org App id in their config and accept pull_request triggers.
@@ -145,6 +143,7 @@ func (s *Server) uiSourceApps(c echo.Context) error {
 		settingsNavCommon: s.settingsNavPayload(c, ctx),
 		OrgName:           orgName,
 		OrgAdmin:          s.orgAdminForCaller(c, project.OrgID),
+		ProjectAdmin:      s.strictProjectAdminForCaller(c, project.ID),
 		FlashMsg: flashFromQuery(c, []flashParam{
 			// Reachable only from uiSourceAppCreate's fallback, when the create
 			// response carries no row id to open an App page for — so the delivery

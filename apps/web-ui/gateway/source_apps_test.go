@@ -248,6 +248,25 @@ func TestSourceAppCreateFallsBackToListWithoutRowID(t *testing.T) {
 	}
 }
 
+func TestProjectAdminSeesRegisterAndSave(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.orgsAndProjects = []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_member", Projects: []ProjectAccessDto{{ID: "p1", Name: "Project", OrgID: "o1", Role: "project_admin"}}}}
+	f.dsSourceApps = []SourceApp{{ID: "a1", OrgID: "o1", ProjectID: "p1", AppID: 1, Slug: "project-bot"}}
+	e := sourceAppsTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, dsSourceAppsPath, nil))
+	if !strings.Contains(rec.Body.String(), `data-testid="ds-source-app-add"`) {
+		t.Error("project admin does not see the register action")
+	}
+
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, dsSourceAppsPath+"/a1", nil))
+	if !strings.Contains(rec.Body.String(), `data-testid="ds-source-app-save"`) {
+		t.Error("project admin does not see the save control on a project-owned App")
+	}
+}
+
 func TestSourceAppCreateRejectsNonNumericAppID(t *testing.T) {
 	f := sourceAppsAdminFake()
 	e := sourceAppsTestServer(f)

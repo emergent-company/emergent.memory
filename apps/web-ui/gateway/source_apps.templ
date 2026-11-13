@@ -171,8 +171,8 @@ templ SourceAppFormPage(data dsSourceAppFormData) {
 							<label class="text-sm font-medium" for="source-app-scope">Scope</label>
 							if data.OrgAdmin {
 								<select id="source-app-scope" name="scope" class="select w-full" data-testid="ds-source-app-scope-input">
+									<option value="org" selected>Whole organization</option>
 									<option value="project">This project only</option>
-									<option value="org">Whole organization</option>
 								</select>
 								@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
 									Organization-wide Apps can be bound by every project in the organization. Project Apps can only be bound here.
