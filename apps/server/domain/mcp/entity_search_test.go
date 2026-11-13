@@ -74,16 +74,21 @@ func insertSearchEntityVersion(t *testing.T, db bun.IDB, projectID, typ, key, na
 	return id
 }
 
-// runEntitySearch executes executeSearchEntities and decodes the JSON text
-// response into a SearchEntitiesResult.
+// runEntitySearch executes executeSearchEntities and decodes the envelope's
+// `data` payload into a SearchEntitiesResult (entity-search returns the same
+// {ok,data} envelope as entity-query, #702).
 func runEntitySearch(t *testing.T, svc *Service, projectID string, args map[string]any) SearchEntitiesResult {
 	t.Helper()
 	res, err := svc.executeSearchEntities(context.Background(), projectID, args)
 	text := toolResultText(t, res, err)
 
-	var out SearchEntitiesResult
-	require.NoError(t, json.Unmarshal([]byte(text), &out))
-	return out
+	var env struct {
+		OK   bool                 `json:"ok"`
+		Data SearchEntitiesResult `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(text), &env))
+	require.True(t, env.OK, "entity-search envelope ok=false: %s", text)
+	return env.Data
 }
 
 // TestEntitySearchFreeTextNameMatch verifies a free-text query matches an
