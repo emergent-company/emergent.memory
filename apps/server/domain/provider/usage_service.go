@@ -346,6 +346,12 @@ func (s *UsageService) budgetStateForConfig(ctx context.Context, cfg *budgetConf
 	}, nil
 }
 
+// capConfigured reports whether a cap column means "there is a limit". A nil or
+// non-positive cap is uncapped, matching newBudgetWindowState's rule.
+func capConfigured(capUSD *float64) bool {
+	return capUSD != nil && *capUSD > 0
+}
+
 // newBudgetWindowState classifies one window. A nil or non-positive cap is "no
 // limit": the state keeps the period (so the UI can still say when it rolls)
 // but reports no cap, no remaining and "ok".
@@ -364,7 +370,7 @@ func newBudgetWindowState(
 		PeriodEnd:   period.End,
 		Status:      budgetStatusOK,
 	}
-	if capUSD == nil || *capUSD <= 0 {
+	if !capConfigured(capUSD) {
 		return st
 	}
 	st.CapUSD = capUSD
@@ -415,6 +421,15 @@ func (s *UsageService) checkBudget(ctx context.Context, projectID string) {
 	}
 
 	now := time.Now().UTC()
+	// No cap in either window means there is nothing to alert on: short-circuit
+	// before the spend aggregate. This runs on every usage write, and the
+	// pre-window implementation returned before its month SUM in exactly this
+	// case — an uncapped project must not pay an aggregate over
+	// kb.llm_usage_events per event.
+	if !capConfigured(cfg.WeeklyCapUSD) && !capConfigured(cfg.MonthlyCapUSD) {
+		return
+	}
+
 	state, err := s.budgetStateForConfig(ctx, cfg, projectID, now)
 	if err != nil {
 		s.log.Warn("checkBudget: failed to compute budget state", logger.Error(err), slog.String("projectID", projectID))
@@ -425,7 +440,7 @@ func (s *UsageService) checkBudget(ctx context.Context, projectID string) {
 	adminsLoaded := false
 
 	for _, w := range []*BudgetWindowState{state.Week, state.Month} {
-		if w == nil || w.CapUSD == nil || *w.CapUSD <= 0 {
+		if w == nil || !capConfigured(w.CapUSD) {
 			continue
 		}
 		if !adminsLoaded {
