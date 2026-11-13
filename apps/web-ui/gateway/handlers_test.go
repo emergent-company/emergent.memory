@@ -5443,3 +5443,14 @@ func TestListChatModelsReturnsConfiguredGenerativeModels(t *testing.T) {
 		t.Fatalf("expected openai/deepseek-v4-flash in %v", models)
 	}
 }
+
+// Instance email settings surface (superadmin-only) is exercised by
+// platform_email_ui_test.go; the shared fake returns a non-superadmin by default.
+func (f *fakeMemory) GetSuperadminMe(context.Context) (*superadminMe, error) { return nil, nil }
+func (f *fakeMemory) GetInstanceEmailSettings(context.Context) (*instanceEmailSettings, error) {
+	return &instanceEmailSettings{}, nil
+}
+func (f *fakeMemory) UpdateInstanceEmailSettings(context.Context, instanceEmailSettingsInput) (*instanceEmailSettings, error) {
+	return &instanceEmailSettings{}, nil
+}
+func (f *fakeMemory) TestInstanceEmail(context.Context, string) error { return nil }
