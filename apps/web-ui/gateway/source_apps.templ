@@ -175,6 +175,9 @@ templ SourceAppFormPage(data dsSourceAppFormData) {
 			@pageErrorNotice("Source App not saved", data.FlashErr)
 		}
 		<div class="flex flex-col gap-4" data-testid="ds-source-app-form-page">
+			if data.App == nil {
+				@sourceAppGitHubGuide(data)
+			}
 			@components.PanelCard("", templ.Attributes{"data-testid": "ds-source-app-form-card"}) {
 				<form method="post" action={ templ.URL(data.Action) } class="flex flex-col gap-4" data-testid="ds-source-app-form">
 					<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -236,6 +239,14 @@ templ SourceAppFormPage(data dsSourceAppFormData) {
 					</div>
 					if data.WebhookURL != "" {
 						<div class="flex flex-col gap-1" data-testid="ds-source-app-webhook">
+							if data.JustCreated {
+								@ui.SoftBox(ui.SoftBoxProps{Padding: "p-4", Class: "mb-2 flex flex-col gap-1", Attrs: templ.Attributes{"data-testid": "ds-source-app-created-next"}}) {
+									<p class="text-sm font-semibold">Next: finish the webhook in GitHub</p>
+									@ui.EmptyNote(ui.EmptyNoteProps{Class: "max-w-prose"}) {
+										In the GitHub App tick Active, enter the same secret, paste this delivery URL, and subscribe to the Pull request event — the event list appears with the active webhook. GitHub's ping then proves Memory verified the signature.
+									}
+								}
+							}
 							<span class="text-sm font-medium">Webhook URL</span>
 							@form.ClipboardCopy([]form.ClipboardCopyItem{
 								{
@@ -287,6 +298,73 @@ templ SourceAppFormPage(data dsSourceAppFormData) {
 				}
 			}
 		</div>
+	}
+}
+
+// sourceAppGitHubGuide is the register page's GitHub setup checklist. The App
+// has to exist in GitHub before this form can be filled in, and the two secrets
+// only line up if the webhook is created inactive — the delivery URL does not
+// exist until Memory issues it at registration — so the order that actually
+// works is spelled out here. It renders only on the add page: an existing App
+// already has its credentials, and its delivery URL lives on its own page.
+templ sourceAppGitHubGuide(data dsSourceAppFormData) {
+	@ui.SoftBox(ui.SoftBoxProps{Padding: "p-4", Class: "flex flex-col gap-3", Attrs: templ.Attributes{"data-testid": "ds-source-app-gh-guide"}}) {
+		<div class="flex flex-col gap-1">
+			<h3 class="text-sm font-semibold">Create the App in GitHub first</h3>
+			@ui.EmptyNote(ui.EmptyNoteProps{Class: "max-w-prose"}) {
+				Register a GitHub App at
+				<a class="link link-primary" href="https://github.com/settings/apps/new" target="_blank" rel="noreferrer">github.com/settings/apps/new</a>
+				, then copy its values into this form. These fields are the ones that have to be right.
+			}
+		</div>
+		<ol class="text-muted flex list-decimal flex-col gap-1 pl-5 text-sm">
+			<li>
+				<span class="font-medium">Basic information.</span>
+				Set the Homepage URL to this deployment's web address (shown below); GitHub requires a value, Memory never reads it.
+			</li>
+			<li>
+				<span class="font-medium">Leave the Callback URL empty</span> (some GitHub screens label it Redirect URI).
+				No user-authorization flow is configured: <em>Request user authorization (OAuth) during installation</em> stays unchecked and the Setup URL stays empty, because Memory authenticates as the installation, not as a signed-in GitHub user.
+			</li>
+			<li>
+				<span class="font-medium">Create the webhook inactive.</span>
+				The delivery URL does not exist until you register the App here, and GitHub only offers the webhook URL, secret and event fields once it is active — that is step 6. Generate the webhook secret now (any random string, such as
+				<code class="font-mono text-xs">openssl rand -hex 24</code>
+				), keep it, and enter the same value here and in GitHub.
+			</li>
+			<li>
+				<span class="font-medium">Repository permissions:</span>
+				Contents <span class="font-medium">read</span>; Issues, Checks and Pull requests <span class="font-medium">read and write</span>. Metadata read is added automatically and is mandatory.
+			</li>
+			<li>
+				<span class="font-medium">Generate a private key</span> on the App's page and download the <code class="font-mono text-xs">.pem</code> file; paste its contents into the field below.
+			</li>
+			<li>
+				<span class="font-medium">Register, then finish the webhook in GitHub.</span>
+				Registration opens the App's page here with its delivery URL. In the GitHub App tick <span class="font-medium">Active</span>, enter the same secret, paste the delivery URL, and subscribe to the <span class="font-medium">Pull request event</span> — the event list appears with the active webhook — then save. GitHub's ping proves Memory verified the signature.
+			</li>
+			<li>
+				<span class="font-medium">Install the App</span> on the repositories to sync, then enter the installation id when you connect the data source: it is the number in
+				<code class="font-mono text-xs">github.com/settings/installations/&lt;id&gt;</code>
+				.
+			</li>
+		</ol>
+		if data.PublicBaseURL != "" {
+			<div class="flex flex-col gap-1" data-testid="ds-source-app-gh-homepage">
+				@form.ClipboardCopy([]form.ClipboardCopyItem{
+					{
+						ID:          "ds-source-app-gh-homepage-url",
+						Label:       "Homepage URL",
+						Value:       data.PublicBaseURL,
+						ButtonLabel: "Copy",
+						Mono:        true,
+					},
+				})
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+					This deployment's web URL. It is only a label on GitHub's side.
+				}
+			</div>
+		}
 	}
 }
 
