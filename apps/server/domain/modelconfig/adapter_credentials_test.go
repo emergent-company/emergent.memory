@@ -78,6 +78,32 @@ func TestResolveEmbeddingResolvesProviderInstanceSlug(t *testing.T) {
 	}
 }
 
+// TestBuildEmbeddingCredentialNamesProviderInstanceSlug pins #710: the
+// operator-facing ProviderSlug carried into pkg/embeddings must name the
+// provider instance the model referenced, not its dialect. With instances
+// "google" and "google-eu", a failure for "google-eu" must tell the operator to
+// configure "google-eu" — naming the dialect would point at the wrong instance.
+func TestBuildEmbeddingCredentialNamesProviderInstanceSlug(t *testing.T) {
+	adapter := &EmbeddingResolverAdapter{}
+
+	got := adapter.buildEmbeddingCredential(&provider.ResolvedCredential{
+		Provider: provider.ProviderGoogleAI,
+		Slug:     "google-eu",
+		APIKey:   "sk-eu",
+	}, "gemini-embedding-001")
+	if got.ProviderSlug != "google-eu" {
+		t.Errorf("ProviderSlug = %q, want the instance slug google-eu", got.ProviderSlug)
+	}
+	// A credential with no instance (resolved from the environment) has no slug
+	// to name, so it falls back to the dialect.
+	if got := adapter.buildEmbeddingCredential(&provider.ResolvedCredential{
+		Provider: provider.ProviderGoogleAI,
+		APIKey:   "sk-env",
+	}, "gemini-embedding-001"); got.ProviderSlug != "google" {
+		t.Errorf("ProviderSlug = %q, want the dialect google when no instance slug is set", got.ProviderSlug)
+	}
+}
+
 // TestResolveEmbeddingResolvesLegacyDialect proves a legacy dialect reference
 // still goes through the same slug-first resolver, which falls back to the
 // dialect's default instance.
