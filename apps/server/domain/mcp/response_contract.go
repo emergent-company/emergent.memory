@@ -110,6 +110,21 @@ func nameForStrategy(props map[string]any, opts ResponseOpts) (string, bool) {
 	return s, true
 }
 
+// entityNameForStrategy prefers the object's first-class name column over the
+// properties.name convention. The column is what the app's object list and
+// entity action:"query" render, so a write response that reported the property
+// would make an explicit name=… look like a no-op on an object whose property
+// says something else (emergent-company/emergent.memory#718).
+func entityNameForStrategy(o *graph.GraphObjectResponse, opts ResponseOpts) (string, bool) {
+	if opts.FieldStrategy == "minimal" {
+		return "", false
+	}
+	if o.Name != nil && strings.TrimSpace(*o.Name) != "" {
+		return *o.Name, true
+	}
+	return nameForStrategy(o.Properties, opts)
+}
+
 // maxPropertyValueChars bounds a single string property value emitted in an
 // MCP tool result. Full text blobs (e.g. LegalParagraph content) previously
 // blew up agent context (issue #673), so longer strings are truncated with an
@@ -191,7 +206,7 @@ func slimEntity(o *graph.GraphObjectResponse, opts ResponseOpts) map[string]any 
 	}
 
 	props := propertiesForStrategy(o.Properties, opts)
-	name, hasName := nameForStrategy(o.Properties, opts)
+	name, hasName := entityNameForStrategy(o, opts)
 
 	// Text-chunk and synthetic relationship items carry only a version ID — their
 	// CanonicalID is zero. Printing the canonical ID unconditionally emitted the
