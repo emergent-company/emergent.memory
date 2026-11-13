@@ -1501,8 +1501,8 @@ func TestRenderExtractionJobDetailObjects(t *testing.T) {
 	for _, want := range []string{
 		"2 objects", "1 relationship",
 		"person", "sam", "task", "call dentist", "assigned to",
-		`href="/objects/o1?from=%2Fdocuments%2Fd1%2Fextractions%2Fjob1"`,
-		`href="/objects/o2?from=%2Fdocuments%2Fd1%2Fextractions%2Fjob1"`,
+		`href="/objects/o1/wiki"`,
+		`href="/objects/o2/wiki"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("extraction job detail missing %q", want)
@@ -1557,8 +1557,8 @@ func TestRenderExtractionJobDetailNoBranchFallback(t *testing.T) {
 		"2 objects", "1 relationship",
 		`data-testid="extraction-detail-nobranch"`,
 		"showing the objects on the main graph",
-		`href="/objects/o1?from=%2Fdocuments%2Fd1%2Fextractions%2Fjob1"`,
-		`href="/objects/o2?from=%2Fdocuments%2Fd1%2Fextractions%2Fjob1"`,
+		`href="/objects/o1/wiki"`,
+		`href="/objects/o2/wiki"`,
 		"assigned to",
 	} {
 		if !strings.Contains(html, want) {
@@ -2228,7 +2228,7 @@ func TestRenderMergeReviewList(t *testing.T) {
 		`data-testid="merge-review-list"`,
 		"sam", "person", "Conflict", "conflict: name, status",
 		"openai", "org", "Similar", "similar to OpenAI",
-		`href="/objects/o2"`, `href="/objects/o3"`,
+		`href="/objects/o2/wiki"`, `href="/objects/o3/wiki"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("merge review list missing %q:\n%s", want, html)
@@ -2251,7 +2251,7 @@ func TestRenderExtractionMergeLeftList(t *testing.T) {
 	for _, want := range []string{
 		"1 left for review",
 		`data-testid="merge-review-list"`,
-		"sam", "Conflict", `href="/objects/o2"`,
+		"sam", "Conflict", `href="/objects/o2/wiki"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("left-for-review list missing %q:\n%s", want, html)
@@ -2665,7 +2665,7 @@ func TestRenderExtractionObjectsCarryOrigin(t *testing.T) {
 		Objects: []GraphObject{{ID: "o1", Type: "person", Key: "sam"}},
 	}
 	html := renderHTML(t, ExtractionJobDetail("d1", d))
-	want := `href="/objects/o1?from=%2Fdocuments%2Fd1%2Fextractions%2Fjob1"`
+	want := `href="/objects/o1/wiki"`
 	if !strings.Contains(html, want) {
 		t.Fatalf("extracted object link missing origin trail %q:\n%s", want, html)
 	}

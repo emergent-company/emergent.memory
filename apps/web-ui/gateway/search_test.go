@@ -190,6 +190,32 @@ func TestUISearchUnknownTypeNormalizes(t *testing.T) {
 	}
 }
 
+// TestUISearchObjectHitOpensWiki pins the link target of an object hit: search
+// is a list surface, so a hit opens the wiki rather than the editable object
+// page. The href carries no variant, so the reader's persisted wiki variant
+// decides how it opens.
+func TestUISearchObjectHitOpensWiki(t *testing.T) {
+	f := &fakeMemory{
+		searchUnifiedResp: &UnifiedSearchResponse{
+			Results: []UnifiedSearchHit{
+				{Type: "graph", ID: "obj-1", ObjectType: "Person", Key: "sam-lee", Score: 0.6},
+			},
+		},
+	}
+
+	body := searchPageBody(t, f, "/search?q=sam&type=objects")
+
+	if !strings.Contains(body, `href="/objects/obj-1/wiki"`) {
+		t.Errorf("object hit must open its wiki page:\n%s", body)
+	}
+	if strings.Contains(body, `href="/objects/obj-1"`) {
+		t.Error("object hit must not land on the editable object page")
+	}
+	if strings.Contains(body, "/objects/obj-1/wiki?view=") {
+		t.Error("the wiki link must not pin a variant; the reader's preference decides")
+	}
+}
+
 // TestUISearchBackendErrorRendersPageError keeps a failed search a page-level
 // error, not a blank page.
 func TestUISearchBackendErrorRendersPageError(t *testing.T) {

@@ -32,7 +32,7 @@ func renderPageShellWithOverlay(t *testing.T, overlayURL string, content templ.C
 		nil, nil,
 		content,
 		nil,
-		"", "", 0, 0, 0, overlayURL,
+		"", "", 0, 0, 0, overlayURL, overlayURL, feedbackOrderConfig{},
 	))
 }
 
@@ -407,5 +407,7 @@ func renderPageShellWithSentry(t *testing.T, opts sentryHeadOpts) string {
 		nil,
 		opts.DSN, opts.Environment, opts.TracesSampleRate, opts.ReplaySessionSampleRate, opts.ReplayOnErrorSampleRate,
 		"",
+		"",
+		feedbackOrderConfig{},
 	))
 }

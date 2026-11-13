@@ -1,0 +1,126 @@
+package main
+
+import (
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// object_header.templ — how an object is introduced, on every surface.
+//
+// One component, one identity line, so the wiki page, the classic detail page, a
+// browse card and a relationship row all say "this is object X" with the same
+// markup. It is also the component the element-level feedback overlay names: the
+// `data-component` attribute on the root is what a report on the tile, the
+// identity line or the name resolves to, instead of the nearest layout
+// container (`layout/Container`) that used to be the only annotated ancestor.
+//
+// The variant enum and the props struct live in object_header.go, because
+// templ's parser rejects a named scalar type declared in a .templ file.
+
+// objectHeader renders one object's identity: type icon tile, identity line
+// (type · ref) and name. The root carries `data-component="gateway/ObjectHeader"`
+// so the feedback overlay reports the component rather than a layout wrapper.
+templ objectHeader(p objectHeaderProps) {
+	{{ tile := typeIconTileRow
+	if p.Variant == objectHeaderLead {
+		tile = typeIconTileLead
+	}
+	wrap := "flex min-w-0 items-center gap-3"
+	if p.Variant == objectHeaderLead {
+		wrap = "flex min-w-0 items-start gap-3"
+	}
+	rootAttrs := templ.Attributes{"data-component": "gateway/ObjectHeader"}
+	if p.TestID != "" {
+		rootAttrs["data-testid"] = p.TestID
+	}
+	nameExtra := ""
+	if p.NameClass != "" {
+		nameExtra = " " + p.NameClass
+	}
+	linkCls := "hover:text-primary min-w-0 truncate text-sm font-medium hover:underline" + nameExtra
+	textCls := "min-w-0 truncate text-sm font-medium" + nameExtra
+	excerptCls := "text-base-content/65 mt-0.5 line-clamp-2 text-xs leading-relaxed"
+	if p.ExcerptClass != "" {
+		excerptCls = "text-base-content/65 mt-0.5 text-xs leading-relaxed " + p.ExcerptClass
+	} }}
+	<div class={ wrap } { rootAttrs... }>
+		@typeIconTile(p.Icon, p.Color, tile)
+		<div class="min-w-0 flex-1">
+			<div class="flex min-w-0 items-center justify-between gap-2">
+				@objectIdentityLine(p.Type, p.Color, p.Ref, p.IdentityTestID)
+				if p.Direction != "" {
+					if p.Direction == "in" {
+						<span class="text-muted-subtle shrink-0" title="Points at this object" aria-label="Incoming relationship">
+							@ui.IconSpan("lucide--arrow-left", "size-3.5")
+						</span>
+					} else {
+						<span class="text-muted-subtle shrink-0" title="Leaves this object" aria-label="Outgoing relationship">
+							@ui.IconSpan("lucide--arrow-right", "size-3.5")
+						</span>
+					}
+				}
+			</div>
+			if p.Variant == objectHeaderLead {
+				<h1 class="mt-0.5 min-w-0 text-xl leading-tight font-semibold text-balance break-words sm:text-2xl">{ p.Label }</h1>
+			} else if p.Href != "" && !p.Unresolved {
+				<div class="flex min-w-0 items-center justify-between gap-2">
+					<a href={ templ.URL(p.Href) } class={ linkCls }>{ p.Label }</a>
+					if p.Trailing != nil {
+						@p.Trailing
+					}
+				</div>
+			} else if p.Unresolved {
+				<div class="flex min-w-0 items-center justify-between gap-2">
+					<span class="text-muted-subtle min-w-0 truncate text-sm" data-unresolved="1">{ p.Label }</span>
+					if p.Trailing != nil {
+						@p.Trailing
+					}
+				</div>
+			} else {
+				<div class="flex min-w-0 items-center justify-between gap-2">
+					<span class={ textCls }>{ p.Label }</span>
+					if p.Trailing != nil {
+						@p.Trailing
+					}
+				</div>
+			}
+			if p.Variant != objectHeaderLead && p.Excerpt != "" {
+				<p class={ excerptCls }>{ p.Excerpt }</p>
+			}
+		</div>
+	</div>
+}
+
+// objectIdentityLine is the type · ref line above an object's name: the type, a
+// dot tinted with the type's declared colour, and the display ref. It is one
+// component so a card, a row and a page head cannot drift apart, and it carries
+// its own `data-component` because a report on the line itself should still name
+// an object component rather than the tile beside it.
+templ objectIdentityLine(objType, color, ref, testID string) {
+	{{
+		lineAttrs := templ.Attributes{}
+		if testID != "" {
+			lineAttrs["data-testid"] = testID
+		}
+		dotAttrs := templ.Attributes{
+			"class":       "bg-base-content/25 size-1.5 shrink-0 rounded-full",
+			"aria-hidden": "true",
+		}
+		if style := typeDotStyle(color); style != "" {
+			dotAttrs["style"] = style
+		}
+	}}
+	<div class="text-muted flex min-w-0 items-center gap-1.5 font-mono text-[11px]" { lineAttrs... } data-component="gateway/ObjectIdentityLine">
+		<span class="truncate">{ objType }</span>
+		<span { dotAttrs... }></span>
+		<span class="shrink-0" data-testid="object-ref">{ ref }</span>
+	</div>
+}
+
+// objectDisplayRef is the ref an identity line shows: the object's declared ref,
+// or its short id when it has none yet.
+func objectDisplayRef(ref, id string) string {
+	if ref != "" {
+		return ref
+	}
+	return "#" + objectShortID(id)
+}

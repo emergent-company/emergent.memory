@@ -504,6 +504,7 @@ func main() {
 	// /objects/:id routes so the static segment wins over the id pattern.
 	e.POST("/objects/bulk", s.uiObjectsBulk)
 	e.GET("/objects/:id", s.uiObject)
+	e.GET("/objects/:id/wiki", s.uiObjectWiki)
 	e.GET("/objects/:id/preview", s.uiObjectPreviewPartial)
 	e.GET("/objects/:id/history", s.uiObjectHistoryPage)
 	e.GET("/objects/:id/history/partial", s.uiObjectHistoryPartial)

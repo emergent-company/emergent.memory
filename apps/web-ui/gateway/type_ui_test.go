@@ -352,6 +352,38 @@ func TestRenderTypeIconTile(t *testing.T) {
 	if !strings.Contains(html, "lucide--box") || !strings.Contains(html, "color:#7C3AED") {
 		t.Errorf("color-only tile should tint the box icon in:\n%s", html)
 	}
+
+	// lead variant: a page head's tile, as tall as the identity line and the
+	// object's name beside it, with a larger glyph.
+	html = renderHTML(t, typeIconTile("lucide--file-text", "#4F46E5", typeIconTileLead))
+	for _, want := range []string{"size-11", "sm:size-12", "lucide--file-text", "size-6", "color:#4F46E5", `aria-hidden="true"`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("lead tile missing %q in:\n%s", want, html)
+		}
+	}
+	// ... and without a declaration it is the generic primary box at that scale.
+	html = renderHTML(t, typeIconTile("", "", typeIconTileLead))
+	for _, want := range []string{"lucide--box", "size-11", "size-6", "bg-primary/10"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("neutral lead tile missing %q in:\n%s", want, html)
+		}
+	}
+	// ... and a declared glyph scales with it.
+	html = renderHTML(t, typeIconTile("📝", "", typeIconTileLead))
+	if !strings.Contains(html, "📝") || !strings.Contains(html, "text-2xl") {
+		t.Errorf("lead glyph tile must scale its glyph in:\n%s", html)
+	}
+
+	// compact variant stays the dense-menu tile.
+	html = renderHTML(t, typeIconTile("lucide--file-text", "", typeIconTileCompact))
+	for _, want := range []string{"size-6", "size-4.5"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("compact tile missing %q in:\n%s", want, html)
+		}
+	}
+	if strings.Contains(html, "size-9") {
+		t.Errorf("compact tile must not fall back to the row size in:\n%s", html)
+	}
 }
 
 func TestRenderTypeNameChip(t *testing.T) {

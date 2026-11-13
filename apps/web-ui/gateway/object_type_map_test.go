@@ -100,7 +100,7 @@ func TestAppShellEmbedsObjectTypeMap(t *testing.T) {
 		0,
 		nil,
 		nil, nil, templ.NopComponent, m,
-		"", "", 0, 0, 0, "",
+		"", "", 0, 0, 0, "", "", feedbackOrderConfig{},
 	))
 	if !strings.Contains(html, `id="memory-object-types"`) {
 		t.Fatal("shell is missing the embedded type map script")
@@ -118,7 +118,7 @@ func TestAppShellObjectTypeMapEmpty(t *testing.T) {
 		0,
 		nil,
 		nil, nil, templ.NopComponent, nil,
-		"", "", 0, 0, 0, "",
+		"", "", 0, 0, 0, "", "", feedbackOrderConfig{},
 	))
 	if !strings.Contains(html, `id="memory-object-types">{}</script>`) {
 		t.Fatalf("expected empty map script, got: %s", html)

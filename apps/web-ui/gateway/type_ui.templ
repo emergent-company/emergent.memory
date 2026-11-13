@@ -29,37 +29,62 @@ templ typeGlyph(icon, iconClass, glyphClass string) {
 	}
 }
 
-// typeIconTile renders the leading icon tile for an object/type list row:
-// colored rounded-field square with the type's declared icon. Without a declaration
-// it is the generic primary box tile (identical to today's rows). A declared
-// icon/color resolves through the catalog then delegates to ui.IconTile's
-// Color/Glyph props.
-templ typeIconTile(icon string, color string) {
-	if icon == "" && color == "" {
-		@ui.IconTile("lucide--box", ui.IconTileProps{Tone: "primary"})
+// typeIconTileSize selects a tile's size variant. One component renders every
+// type tile in the product; the variant says how many text rows the tile stands
+// beside, so an object's icon is never shorter than the lines it labels.
+type typeIconTileSize string
+
+const (
+	// typeIconTileRow is the default: one identity line plus a name — a list
+	// row, a card, or a relationship endpoint block (size-9).
+	typeIconTileRow typeIconTileSize = ""
+	// typeIconTileLead is a page head's leading tile: it spans the identity line
+	// and the object's name, so it is the height of those two rows (size-11,
+	// size-12 from the sm breakpoint).
+	typeIconTileLead typeIconTileSize = "lead"
+	// typeIconTileCompact is the dense-menu tile: filter options and type
+	// headers inside a dropdown, where a row is one line high (size-6).
+	typeIconTileCompact typeIconTileSize = "compact"
+)
+
+// typeIconTile renders the leading icon tile for an object/type surface: a
+// colored rounded square holding the type's declared icon, falling back to the
+// generic primary box. A declared icon/color resolves through the catalog then
+// delegates to ui.IconTile's Color/Glyph props; the lead variant renders the
+// same recipe at page-head scale with a larger glyph.
+templ typeIconTile(icon, color string, size ...typeIconTileSize) {
+	{{ variant := typeIconTileRow
+	if len(size) > 0 {
+		variant = size[0]
+	}
+	cls := typeIconClass(icon)
+	glyph := ""
+	if cls == "" {
+		glyph = icon
+	} }}
+	if variant == typeIconTileLead {
+		{{ name := icon
+		if name == "" {
+			name = "lucide--box"
+		}
+		neutral := icon == "" && color == "" }}
+		<div class={ "grid shrink-0 place-items-center rounded-xl border size-11 sm:size-12", templ.KV("bg-primary/10 text-primary border-primary/15", neutral) } style={ typeColorStyle(color) } data-component="gateway/TypeIconTile">
+			@typeGlyph(name, "size-6", "text-2xl")
+		</div>
+	} else if icon == "" && color == "" {
+		@ui.IconTile("lucide--box", ui.IconTileProps{Tone: "primary", Size: typeIconTileSizeClass(variant)})
 	} else {
-		{{ cls := typeIconClass(icon)
-			glyph := ""
-			if cls == "" {
-				glyph = icon
-			} }}
-		@ui.IconTile(cls, ui.IconTileProps{Color: color, Glyph: glyph})
+		@ui.IconTile(cls, ui.IconTileProps{Color: color, Glyph: glyph, Size: typeIconTileSizeClass(variant)})
 	}
 }
 
-// typeIconTileSmall is the compact (size-6) variant of typeIconTile, for menu
-// rows and filter option lists.
-templ typeIconTileSmall(icon string, color string) {
-	if icon == "" && color == "" {
-		@ui.IconTile("lucide--box", ui.IconTileProps{Tone: "primary", Size: "size-6"})
-	} else {
-		{{ cls := typeIconClass(icon)
-			glyph := ""
-			if cls == "" {
-				glyph = icon
-			} }}
-		@ui.IconTile(cls, ui.IconTileProps{Color: color, Glyph: glyph, Size: "size-6"})
+// typeIconTileSizeClass maps a variant to ui.IconTile's Size class. Empty means
+// IconTile's own default (size-9).
+func typeIconTileSizeClass(variant typeIconTileSize) string {
+	if variant == typeIconTileCompact {
+		return "size-6"
 	}
+	return ""
 }
 
 // typeNameChip renders the type-name chip used on object/type detail headers:

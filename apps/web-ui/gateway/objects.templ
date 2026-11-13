@@ -246,7 +246,7 @@ templ objectsFilterControls(data objectsPageData) {
 // history restore, with no request.
 templ objectsProvenanceFilter(data objectsPageData) {
 	{{ provenance := normalizeObjectProvenance(data.Provenance) }}
-	<div class="join">
+	<div class="join max-sm:join-vertical max-sm:w-full">
 		for _, m := range objectProvenanceModes() {
 			@ui.Button(ui.ButtonProps{
 				Type:       ui.ButtonTypeLabel,
@@ -885,7 +885,7 @@ templ ObjectDetailPage(obj *GraphObject, branch objectBranchRef, sources []objec
 				@objectViewSectionList(obj.ID, viewSections, typeUIByType)
 			}
 			<form class="mt-6 flex flex-col gap-6" method="post" action={ templ.URL("/objects/" + url.PathEscape(obj.ID)) } hx-disable="find button.memory-save-btn">
-				@objectBuiltinPropertiesCard(obj, labelSuggestions)
+				@objectBuiltinPropertiesCard(obj, labelSuggestions, propDefs)
 				@objectTypePropertiesCard(obj, propDefs, typeLabel)
 				@components.StickyFormActions(components.StickyFormActionsProps{}) {
 					@components.SaveChangesButton()
@@ -968,8 +968,25 @@ func objectBreadcrumbs(obj *GraphObject, trail []nav.BreadcrumbItem) []nav.Bread
 // chips under the description (never inline with, or above, the title), and the
 // single page action is the primary one.
 templ objectDetailHeader(obj *GraphObject, branch objectBranchRef, typeUIByType map[string]typeUI, trail []nav.BreadcrumbItem, status *objectStatusControl, active string) {
-	{{ crumbs := objectBreadcrumbs(obj, trail)
-	opts := detailHeaderOpts{Meta: objectDetailMeta(obj, branch, typeUIByType, status, active)}
+	{{ tui := typeUIOf(typeUIByType, obj.Type)
+	crumbs := objectBreadcrumbs(obj, trail)
+	opts := detailHeaderOpts{
+		// The chips are state only: the head below already names the object's
+		// type and ref, so a type badge here would say it twice.
+		Meta: objectDetailChips(obj, branch, typeUIByType, status, active),
+		// The title is the shared object header (tile, identity line, name), so
+		// an object is introduced by the same component here and on its wiki.
+		TitleBody: objectHeader(objectHeaderProps{
+			Variant:        objectHeaderLead,
+			Type:           obj.Type,
+			Icon:           tui.Icon,
+			Color:          tui.Color,
+			Ref:            objectDisplayRef(obj.Ref, obj.ID),
+			Label:          graphObjectLabel(*obj),
+			TestID:         "object-detail-header",
+			IdentityTestID: "object-detail-identity",
+		}),
+	}
 	if len(trail) > 0 {
 		// An origin trail (reached from a document's extraction history) is a
 		// path of ancestors: the object label is the h1, not a crumb, and every
@@ -991,22 +1008,18 @@ templ objectDetailHeader(obj *GraphObject, branch objectBranchRef, typeUIByType 
 	}
 }
 
-// objectDetailMeta renders the object's identity/state chips: its type, branch,
-// workflow status (suppressed on the Overview, whose Workflow panel carries the
-// editable control) and embedding state. It also carries the provenance strip:
-// how the server classifies this version's data (source | synthesized |
-// adopted) and how many revisions the object has. Both are honest signals a
-// reader needs — a generated wiki entry and a hand-entered one should not look
-// identical — and both degrade to nothing when the server does not report them
-// (write responses do not).
-templ objectDetailMeta(obj *GraphObject, branch objectBranchRef, typeUIByType map[string]typeUI, status *objectStatusControl, active string) {
-	{{ tui := typeUIOf(typeUIByType, obj.Type)
-	ref := obj.Ref
-	if ref == "" {
-		ref = "#" + objectShortID(obj.ID)
-	} }}
-	@typeNameChip(obj.Type, ui.BadgePrimary, tui.Icon, tui.Color)
-	<span class="text-muted-strong font-mono text-xs" data-testid="object-ref">{ ref }</span>
+// objectDetailChips is the header's state row: branch, data class, writing
+// credential, version count, workflow status (suppressed on the Overview, whose
+// Workflow panel carries the editable control) and embedding state.
+//
+// The type and ref are deliberately absent: the page head is the shared object
+// header, which names the type on its identity line (like a browse card and a
+// relationship row), so a type badge here would say the same thing twice — once
+// in a chip and once above the title. The provenance chips (data class, revision
+// count) stay, because a generated wiki entry and a hand-entered one must not
+// look identical, and both degrade to nothing when the server does not report
+// them (write responses do not).
+templ objectDetailChips(obj *GraphObject, branch objectBranchRef, typeUIByType map[string]typeUI, status *objectStatusControl, active string) {
 	@objectBranchChip(branch)
 	if lbl, variant, icon, hint := dataClassChip(obj.DataClass); lbl != "" {
 		@ui.Badge(ui.BadgeProps{
@@ -1124,17 +1137,31 @@ templ objectSourceRow(src objectSource) {
 }
 
 // objectBuiltinPropertiesCard renders the editable platform fields of the
-// detail page: the title and labels. Workflow status and assignee are edited in
-// the Workflow panel, and record facts have their own read-only panel, so
-// neither is repeated here. POST /objects/{id} delta-merges the submitted
-// fields. The display ref and UUID are not editable.
-templ objectBuiltinPropertiesCard(obj *GraphObject, labelSuggestions []string) {
+// detail page: the title, the prose the wiki leads with, and labels. Workflow
+// status and assignee are edited in the Workflow panel, and record facts have
+// their own read-only panel, so neither is repeated here. POST /objects/{id}
+// delta-merges the submitted fields. The display ref and UUID are not editable.
+//
+// The prose field is a platform field even though it is stored as an ordinary
+// property: the wiki resolves its overview from `summary`/`description`/`excerpt`/
+// `abstract` and extraction writes `properties.description`, so the field is
+// labelled by whichever of those the object carries (objectProseEditorField) and
+// sits beside Name instead of among the type's property rows, where nothing said
+// it was the prose the wiki shows.
+templ objectBuiltinPropertiesCard(obj *GraphObject, labelSuggestions []string, propDefs []objectPropertyDef) {
+	{{ proseField := objectProseEditorField(obj, propDefs) }}
 	@ui.Section("Properties", ui.SectionProps{
 		BodyClass: "memory-density-comfortable",
 	}) {
 		<div class="flex flex-col gap-4" data-testid="object-builtin-properties">
 			@fm.FormControl("object-name", "Name", fm.LabelAbove, "Human-readable title of this object.", "", nil) {
 				<input id="object-name" name="name" type="text" value={ obj.Name } class="input w-full"/>
+			}
+			if proseField.Show {
+				@objectField(proseField.Key, proseField.Label, "The prose this object's wiki leads with. Document extraction fills it in; clearing the field removes it.", charCountLabel(proseField.Value)) {
+					<input type="hidden" name={ "propm_present_" + proseField.Key } value="1"/>
+					@longTextarea("prop_"+proseField.Key, proseField.Value)
+				}
 			}
 			@fm.FormControl("object-labels", "Labels/Tags", fm.LabelAbove, "Comma-separated labels — replaces the current set.", "", nil) {
 				@fm.TagList(fm.TagListProps{ID: "object-labels", Name: "labels", Values: obj.Labels, Suggestions: labelSuggestions, Placeholder: "Add a label..."})
@@ -1189,8 +1216,11 @@ templ objectRecordFact(label string, value string, mono bool) {
 // can still be filled in; properties the type does not declare follow so an
 // agent-written key is never hidden. The card is omitted when there is nothing
 // to edit, matching the drawer.
+//
+// The one value it does not list is the prose the Properties card's built-in
+// field owns (see objectTypeEditorRows): the same text must not have two inputs.
 templ objectTypePropertiesCard(obj *GraphObject, propDefs []objectPropertyDef, typeLabel string) {
-	{{ rows := objectTypePropertyRows(*obj, propDefs) }}
+	{{ rows := objectTypeEditorRows(*obj, propDefs) }}
 	if len(rows) > 0 {
 		@ui.Section(typePropertiesPanelTitle(typeLabel), ui.SectionProps{
 			BodyClass: "memory-density-comfortable",
@@ -1403,32 +1433,31 @@ templ objectViewSectionCard(objID string, index int, section objectViewSection, 
 // from it, and the section heading no longer says which.
 templ objectViewRow(row objectViewItem, typeUIByType map[string]typeUI, showDirection bool) {
 	{{ tui := typeUIOf(typeUIByType, row.Neighbour.Type)
-	hrefID := relationshipEndpointTarget(row.Neighbour) }}
+	href := ""
+	if row.Resolved {
+		href = "/objects/" + url.PathEscape(relationshipEndpointTarget(row.Neighbour))
+	}
+	direction := ""
+	if showDirection {
+		direction = row.direction()
+	} }}
 	<div class="px-4 py-3" data-testid="object-view-row" data-relationship-type={ row.RelType } data-direction={ row.direction() }>
-		<div class="flex min-w-0 items-center gap-2">
-			@typeIconTileSmall(tui.Icon, tui.Color)
-			if row.Resolved {
-				<a href={ templ.URL("/objects/" + url.PathEscape(hrefID)) } class="hover:text-primary min-w-0 flex-1 truncate text-sm font-medium hover:underline">{ graphObjectLabel(row.Neighbour) }</a>
-			} else {
-				<span class="text-muted-subtle min-w-0 flex-1 truncate text-sm" data-unresolved="1">{ graphObjectLabel(row.Neighbour) }</span>
-			}
-			if showDirection {
-				if row.direction() == "in" {
-					<span class="text-muted-subtle shrink-0" title="Points at this object" aria-label="Incoming relationship" data-testid="object-view-direction">
-						@ui.IconSpan("lucide--arrow-left", "size-3.5")
-					</span>
-				} else {
-					<span class="text-muted-subtle shrink-0" title="Leaves this object" aria-label="Outgoing relationship" data-testid="object-view-direction">
-						@ui.IconSpan("lucide--arrow-right", "size-3.5")
-					</span>
-				}
-			}
-			@ui.Badge(ui.BadgeProps{
+		@objectHeader(objectHeaderProps{
+			Variant:    objectHeaderRow,
+			Type:       row.Neighbour.Type,
+			Icon:       tui.Icon,
+			Color:      tui.Color,
+			Ref:        objectDisplayRef(row.Neighbour.Ref, row.Neighbour.ID),
+			Label:      graphObjectLabel(row.Neighbour),
+			Href:       href,
+			Unresolved: !row.Resolved,
+			Direction:  direction,
+			Trailing: ui.Badge(ui.BadgeProps{
 				Label:   relationshipTypeLabel(row.RelType),
 				Variant: ui.BadgeSecondary,
 				Size:    ui.BadgeSizeXS,
-			})
-		</div>
+			}),
+		})
 		if len(row.Facts) > 0 {
 			<dl class="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-4">
 				for _, fact := range row.Facts {
@@ -1537,13 +1566,12 @@ templ objectRelationshipRow(obj *GraphObject, r GraphRelationship, related []Gra
 	</div>
 }
 
-// relationshipEndpointLink renders one relationship endpoint the way the
-// objects table renders an object: the type's icon tile, the type above the
-// short id, and the label as a link to the object. Resolving the endpoint to the
-// fetched related object (rather than printing its label text) is what makes
-// the row navigable (#421). An endpoint missing from the fetched slice renders
-// as the same block without a link: the related-object read is best-effort, so a
-// link there would point at an object page that may not exist.
+// relationshipEndpointLink renders one endpoint of a relationship row: the shared
+// object header at row scale, in the object's own type colour. Resolving the
+// endpoint to the fetched related object (rather than printing its label text) is
+// what makes the row navigable (#421). An endpoint missing from the fetched slice
+// renders as the same block without a link: the related-object read is
+// best-effort, so a link there would point at an object page that may not exist.
 templ relationshipEndpointLink(obj *GraphObject, related []GraphObject, id string, typeUIByType map[string]typeUI) {
 	{{ ep, resolved := relationshipEndpointObject(obj, related, id)
 	hrefID := relationshipEndpointTarget(ep) }}
@@ -1554,36 +1582,38 @@ templ relationshipEndpointLink(obj *GraphObject, related []GraphObject, id strin
 			data-testid="object-relationship-endpoint"
 			data-object-id={ hrefID }
 		>
-			@relationshipEndpointContent(ep, hrefID, typeUIByType)
+			@relationshipEndpointContent(ep, hrefID, typeUIByType, false)
 		</a>
 	} else {
 		<span class="flex min-w-0 items-center gap-2 px-1.5 py-0.5" data-testid="object-relationship-endpoint" data-object-id={ hrefID } data-unresolved="1">
-			@relationshipEndpointContent(ep, hrefID, typeUIByType)
+			@relationshipEndpointContent(ep, hrefID, typeUIByType, true)
 		</span>
 	}
 }
 
-// relationshipEndpointContent is the type tile, type name and short id block
-// shared by the linked and unresolved endpoint renderings.
-templ relationshipEndpointContent(ep GraphObject, hrefID string, typeUIByType map[string]typeUI) {
+// relationshipEndpointContent is the object header the endpoint link and its
+// unresolved form share. The caller owns the anchor, so the name is plain text
+// and only the hover affordance is forwarded.
+templ relationshipEndpointContent(ep GraphObject, hrefID string, typeUIByType map[string]typeUI, unresolved bool) {
 	{{ tui := typeUIOf(typeUIByType, ep.Type)
 	typeLabel := ep.Type
 	if typeLabel == "" {
 		typeLabel = "object"
 	}
-	ref := ep.Ref
-	if ref == "" {
-		ref = "#" + objectShortID(hrefID)
+	nameClass := "group-hover:text-primary group-hover:underline"
+	if unresolved {
+		nameClass = ""
 	} }}
-	@typeIconTileSmall(tui.Icon, tui.Color)
-	<div class="min-w-0">
-		<div class="text-muted-faint flex min-w-0 items-center gap-1.5 font-mono text-[11px]">
-			<span class="truncate">{ typeLabel }</span>
-			<span class="bg-base-content/25 size-1.5 shrink-0 rounded-full" aria-hidden="true"></span>
-			<span class="shrink-0">{ ref }</span>
-		</div>
-		<span class="group-hover:text-primary block truncate text-sm font-medium group-hover:underline">{ graphObjectLabel(ep) }</span>
-	</div>
+	@objectHeader(objectHeaderProps{
+		Variant:    objectHeaderRow,
+		Type:       typeLabel,
+		Icon:       tui.Icon,
+		Color:      tui.Color,
+		Ref:        objectDisplayRef(ep.Ref, hrefID),
+		Label:      graphObjectLabel(ep),
+		Unresolved: unresolved,
+		NameClass:  nameClass,
+	})
 }
 
 // objectSimilarObjects lists objects semantically similar to the current one,
