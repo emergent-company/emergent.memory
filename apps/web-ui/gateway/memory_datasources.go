@@ -982,6 +982,8 @@ type SourceApp struct {
 // DSSourceAppRequest is the register body for an org source App.
 type DSSourceAppRequest struct {
 	Provider string `json:"provider"`
+	// WebhookKey pins the delivery key before the App is registered (manifest wizard).
+	WebhookKey string `json:"webhookKey,omitempty"`
 	// Scope is "org" (org-wide, org admin) or "project" (project-owned, project
 	// admin). The org route ignores it.
 	Scope         string `json:"scope,omitempty"`

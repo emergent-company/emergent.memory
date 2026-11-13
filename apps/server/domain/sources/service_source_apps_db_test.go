@@ -605,4 +605,17 @@ func TestProjectOwnedSourceApps(t *testing.T) {
 	}, false)
 	require.NoError(t, err)
 	require.NoError(t, bind(ownedApp.ID))
+
+	pinned := uuid.New()
+	pinnedApp, err := svc.RegisterProjectSourceApp(ctx, projectA, projectUser, RegisterSourceAppRequest{
+		AppID: 206, Slug: "pinned", PrivateKey: string(rsaPEMForTest(t)), WebhookSecret: "s6",
+		WebhookKey: pinned.String(),
+	}, false)
+	require.NoError(t, err)
+	require.Equal(t, pinned, pinnedApp.WebhookKey)
+	_, err = svc.RegisterProjectSourceApp(ctx, projectA, projectUser, RegisterSourceAppRequest{
+		AppID: 207, Slug: "bad-pinned", PrivateKey: string(rsaPEMForTest(t)), WebhookSecret: "s7",
+		WebhookKey: "not-a-uuid",
+	}, false)
+	require.ErrorContains(t, err, "webhookKey")
 }

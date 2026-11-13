@@ -785,6 +785,10 @@ func (f *fakeMemory) GetAgentDefinition(ctx context.Context, id string) (*AgentD
 	return nil, fmt.Errorf("not found")
 }
 
+func (f *fakeMemory) CreateRuntimeAgent(ctx context.Context, in *CreateRuntimeAgentRequest) (*RuntimeAgent, error) {
+	return &RuntimeAgent{ID: "runtime-agent-1", ProjectID: in.ProjectID, Name: in.Name, AgentDefinitionID: in.AgentDefinitionID, Enabled: in.Enabled}, nil
+}
+
 func (f *fakeMemory) CreateAgentDefinition(ctx context.Context, in *AgentDefinition) (*AgentDefinition, error) {
 	in.ID = "new-id"
 	f.created = append(f.created, *in)

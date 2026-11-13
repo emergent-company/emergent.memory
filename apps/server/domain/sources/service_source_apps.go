@@ -40,6 +40,10 @@ type RegisterSourceAppRequest struct {
 	Slug          string
 	PrivateKey    string
 	WebhookSecret string
+	// WebhookKey pins the delivery key before the App is registered (the
+	// manifest wizard needs the URL at App-creation time). Empty lets the DB
+	// generate one.
+	WebhookKey string
 }
 
 // UpdateSourceAppRequest is the org-admin App edit payload. The provider and the
@@ -164,6 +168,13 @@ func (s *Service) createSourceApp(ctx context.Context, orgID uuid.UUID, projectI
 		Slug:                   strings.TrimSpace(req.Slug),
 		PrivateKeyEncrypted:    privateKey,
 		WebhookSecretEncrypted: webhookSecret,
+	}
+	if raw := strings.TrimSpace(req.WebhookKey); raw != "" {
+		key, err := uuid.Parse(raw)
+		if err != nil {
+			return nil, apperror.NewBadRequest("webhookKey must be a UUID")
+		}
+		app.WebhookKey = key
 	}
 	if err := s.repo.CreateSourceApp(ctx, app); err != nil {
 		return nil, mapSourceConflict(err, "an App with this id is already registered for the organization")

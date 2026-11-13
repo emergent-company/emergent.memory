@@ -52,6 +52,9 @@ type Config struct {
 	// PublicBaseURL is the externally-reachable base URL (scheme://host[:port])
 	// used for the client setup/config URLs. Empty = derive from request Host.
 	PublicBaseURL string
+	// GitHubAPIBaseURL is the GitHub REST base used by the GitHub App setup
+	// wizard (manifest conversion, App/installation reads). Empty = api.github.com.
+	GitHubAPIBaseURL string
 
 	// Zitadel OIDC configuration for the web-session auth path. Empty issuer =
 	// no sign-in offered.
@@ -217,6 +220,7 @@ func LoadConfig() Config {
 		TokenAllowedRooms: os.Getenv("TOKEN_ALLOWED_ROOMS"),
 		DefaultAgent:      envOr("LIVEKIT_AGENT_NAME", "memory"),
 		PublicBaseURL:     os.Getenv("PUBLIC_BASE_URL"),
+		GitHubAPIBaseURL:  envOr("GITHUB_API_BASE_URL", "https://api.github.com"),
 		TTSProvider:       envOr("TTS_PROVIDER", "cartesia"),
 
 		ZitadelIssuer:       os.Getenv("ZITADEL_ISSUER"),
