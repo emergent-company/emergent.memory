@@ -271,7 +271,7 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 					</div>
 				</div>
 			</div>
-			<div class="border-base-content/5 border-t bg-base-100">
+			<div>
 				<!-- No-JS fallback only. With scripting, pending ask_user questions
 				     and tool approvals render inline in the transcript as agent
 				     bubbles (chat-stream.js renderQuestion/renderApproval), so the
@@ -297,6 +297,7 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 						@form.PromptBar(form.PromptBarProps{
 							Placeholder:      chatPlaceholder(agents, preselect),
 							Name:             "message",
+							Rows:             1,
 							Class:            "max-w-none",
 							AllowEmptySubmit: true,
 							LeftSlot:         chatComposerPickers(),
@@ -305,7 +306,6 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 							Running:          true,
 							Attrs:            templ.Attributes{"data-testid": "chat-composer"},
 						})
-						@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSize2XS, Class: "mt-1.5 text-center"}) { Enter to send · Shift+Enter for a new line · responses stream in live }
 					}
 				</form>
 			</div>
@@ -324,11 +324,52 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 			}
 			/* Paseo-style prompt bar: the shared textarea is a fixed h-28 by
 			   default; chat grows it from one line up to a 10rem cap. */
+			/* Compact Paseo-like composer: one line at rest, growing to 10rem as
+			   the draft gains lines. Trim the shared card's roomy padding so the
+			   bar hugs the bottom edge instead of reading as a large panel. */
 			#chat-form textarea[data-prompt-bar-input] {
+				box-shadow: none;
 				height: auto;
-				min-height: 2.75rem;
+				min-height: 1.75rem;
 				max-height: 10rem;
 				overflow-y: auto;
+				overscroll-behavior: contain;
+				padding: 0.25rem;
+			}
+			#chat-form .card-body {
+				gap: 0;
+				padding: 0.375rem;
+			}
+			#chat-form .card-body > :last-child {
+				margin-top: 0.25rem;
+			}
+			/* Compact composer toolbar: the app-wide touch-target rule lifts
+			   every btn-sm to 44px on mobile, which dwarfs the Paseo row. Keep
+			   the pickers, voice controls and send on one 30px line. */
+			/* Line the first picker glyph up with the textarea's text, not
+			   with the button's default horizontal padding. */
+			#chat-form [data-chat-picker] .btn {
+				padding-inline: calc(0.25rem - 1px);
+			}
+			#chat-form [data-chat-picker] .btn,
+			#chat-form #voice-mute-btn,
+			#chat-form #voice-call-btn {
+				height: 1.875rem;
+				min-height: 1.875rem;
+			}
+			#chat-form #voice-mute-btn {
+				width: 1.875rem;
+				min-width: 1.875rem;
+			}
+			#chat-form #chat-send,
+			#chat-form #chat-stop .btn {
+				height: 1.875rem;
+				min-height: 1.875rem;
+				width: 1.875rem;
+				min-width: 1.875rem;
+			}
+			#chat-form > .mx-auto {
+				padding-block: 0.5rem;
 			}
 			/* Voice controls — meter + button states driven by voice.js.
 			   voice.js sets --level (0.0–1.0) on #voice-level every animation
@@ -434,8 +475,8 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 // chat.js from /api/chat/models; both pickers carry a hidden input so the
 // stream payload reads the selection without a native <select>.
 templ chatComposerPickers() {
-	<div class="flex min-w-0 items-center gap-1">
-		<div class="dropdown dropdown-start inline-flex min-w-28" data-chat-picker="model">
+	<div class="flex min-w-0 items-center gap-0.5">
+		<div class="dropdown dropdown-top dropdown-start inline-flex min-w-0 lg:min-w-28" data-chat-picker="model">
 			@ui.Button(ui.ButtonProps{
 				Type:       ui.ButtonTypeButton,
 				Variant:    ui.ButtonGhost,
@@ -444,13 +485,13 @@ templ chatComposerPickers() {
 				Attrs:      templ.Attributes{"role": "button", "aria-label": "Select model (Auto)", "aria-haspopup": "menu", "data-chat-picker-trigger": "true"},
 			}) {
 				<span data-chat-picker-icon class="iconify lucide--cpu size-4 shrink-0 text-muted" aria-hidden="true"></span>
-				<span data-chat-picker-label class="hidden min-w-0 max-w-28 truncate lg:inline">Auto</span>
+				<span data-chat-picker-label class="text-base-content hidden min-w-0 max-w-28 truncate font-normal lg:inline">Auto</span>
 				<span class="iconify lucide--chevron-down size-3.5 shrink-0 text-muted" aria-hidden="true"></span>
 			}
 			<ul data-chat-picker-menu tabindex="0" role="menu" class="dropdown-content menu bg-base-100 rounded-box z-10 w-64 p-2 shadow"></ul>
 			<input type="hidden" name="model" value=""/>
 		</div>
-		<div class="dropdown dropdown-start inline-flex min-w-28" data-chat-picker="thinking">
+		<div class="dropdown dropdown-top dropdown-start inline-flex min-w-0 lg:min-w-28" data-chat-picker="thinking">
 			@ui.Button(ui.ButtonProps{
 				Type:       ui.ButtonTypeButton,
 				Variant:    ui.ButtonGhost,
@@ -459,7 +500,7 @@ templ chatComposerPickers() {
 				Attrs:      templ.Attributes{"role": "button", "aria-label": "Select thinking option (Auto)", "aria-haspopup": "menu", "data-chat-picker-trigger": "true"},
 			}) {
 				<span data-chat-picker-icon class="iconify lucide--brain size-4 shrink-0 text-muted" aria-hidden="true"></span>
-				<span data-chat-picker-label class="hidden min-w-0 max-w-28 truncate lg:inline">Auto</span>
+				<span data-chat-picker-label class="text-base-content hidden min-w-0 max-w-28 truncate font-normal lg:inline">Auto</span>
 				<span class="iconify lucide--chevron-down size-3.5 shrink-0 text-muted" aria-hidden="true"></span>
 			}
 			<ul data-chat-picker-menu tabindex="0" role="menu" class="dropdown-content menu bg-base-100 rounded-box z-10 w-64 p-2 shadow">
@@ -496,7 +537,7 @@ templ chatComposerSendButton() {
 		Shape:      ui.ButtonShapeSquare,
 		Icon:       "lucide--arrow-up",
 		AriaLabel:  "Send",
-		ExtraClass: "h-9 w-9 shrink-0",
+		ExtraClass: "h-8 w-8 shrink-0",
 		Attrs:      templ.Attributes{"id": "chat-send", "data-testid": "chat-send"},
 	})
 }
@@ -505,7 +546,7 @@ templ chatComposerSendButton() {
 // button beside the prompt bar's send action.
 templ chatComposerRightSlot(voiceEnabled bool) {
 	if voiceEnabled {
-		<div class="flex h-9 shrink-0 items-center gap-2 self-center rounded-full border border-base-content/10 bg-base-200/50 px-2.5">
+		<div class="flex h-8 shrink-0 items-center gap-2 self-center rounded-full border border-base-content/10 bg-base-200/50 px-2.5">
 			<span id="voice-status" class="text-muted-faint text-xs whitespace-nowrap" aria-live="polite">idle</span>
 			<span class="bg-base-content/10 h-3.5 w-px" aria-hidden="true"></span>
 			<div id="voice-level" class="voice-level" aria-hidden="true">
@@ -523,7 +564,7 @@ templ chatComposerRightSlot(voiceEnabled bool) {
 			Shape:      ui.ButtonShapeSquare,
 			Icon:       "lucide--mic",
 			AriaLabel:  "Mute microphone",
-			ExtraClass: "hidden h-9 w-9 shrink-0",
+			ExtraClass: "hidden h-8 w-8 shrink-0",
 			Attrs:      templ.Attributes{"id": "voice-mute-btn"},
 		})
 		@ui.Button(ui.ButtonProps{
@@ -532,7 +573,7 @@ templ chatComposerRightSlot(voiceEnabled bool) {
 			Size:       ui.ButtonSM,
 			Icon:       "lucide--phone",
 			AriaLabel:  "Start voice call",
-			ExtraClass: "h-9 shrink-0",
+			ExtraClass: "h-8 shrink-0",
 			Attrs:      templ.Attributes{"id": "voice-call-btn"},
 		}) {
 			<span class="voice-call-label voice-call-start">Call</span>
@@ -547,7 +588,7 @@ templ chatComposerRightSlot(voiceEnabled bool) {
 			Shape:      ui.ButtonShapeSquare,
 			Icon:       "lucide--square",
 			AriaLabel:  "Stop generating",
-			ExtraClass: "h-9 w-9 shrink-0",
+			ExtraClass: "h-8 w-8 shrink-0",
 		})
 	</span>
 }
@@ -1034,7 +1075,7 @@ templ chatModelWarningBanner(message string) {
 templ chatSuggestion(text string) {
 	<button
 		type="button"
-		class="memory-suggestion border-base-content/15 bg-base-100/50 text-muted-strong hover:border-primary rounded-full border px-3.5 py-1.5 text-xs font-medium"
+		class="memory-suggestion border-base-content/10 bg-base-100/50 text-muted-strong hover:border-primary rounded-full border px-3.5 py-1.5 text-xs font-medium"
 		data-suggestion={ text }
 	>
 		{ text }

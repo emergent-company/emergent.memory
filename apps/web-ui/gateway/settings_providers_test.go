@@ -1584,6 +1584,9 @@ func TestUIProviderModelConfigClear(t *testing.T) {
 	if f.lastModelConfig == nil {
 		t.Fatal("model config was not sent to memory")
 	}
+	if !f.lastModelConfigClears.Generative || f.lastModelConfigClears.Embedding {
+		t.Errorf("clear flags = %+v, want only the generative model cleared", f.lastModelConfigClears)
+	}
 	if f.lastModelConfig.GenerativeModel != "" {
 		t.Errorf("generative = %q, want cleared by the empty select", f.lastModelConfig.GenerativeModel)
 	}

@@ -101,11 +101,6 @@ func TestResolveByRef_EmptyProvider(t *testing.T) {
 	}
 }
 
-// TestResolveByRef_DialectNameSlug_Wins is a regression test for allowing an
-// instance slug to reuse another dialect's name: a project that has an
-// openai-dialect instance whose slug equals "deepseek" must resolve a
-// "deepseek" model reference to that instance (slug-first), never to the
-// deepseek dialect default.
 // TestResolveDialectAliasNormalized pins that a documented provider alias
 // resolves as well as validates: "gemini" is in dialectNames, so Resolve must
 // normalize it to the google dialect instead of failing with "unsupported
@@ -182,6 +177,30 @@ func TestResolveByRef_GeminiAliasFallsBackToGoogleDialect(t *testing.T) {
 	}
 	if cred.APIKey != secret {
 		t.Errorf("resolved APIKey = %q, want %q", cred.APIKey, secret)
+	}
+
+	// A project instance slug that equals the alias still wins (slug-first); the
+	// normalization above must not shadow it.
+	ciphertext2, nonce2, err := svc.EncryptCredential([]byte("sk-alias-slug"))
+	if err != nil {
+		t.Fatalf("encrypt slug credential: %v", err)
+	}
+	if err := repo.UpsertProjectProviderConfig(ctx, &ProjectProviderConfig{
+		ProjectID:           projectID,
+		Provider:            ProviderOpenAI,
+		Slug:                ProviderSlug("gemini"),
+		EncryptedCredential: ciphertext2,
+		EncryptionNonce:     nonce2,
+		GenerativeModel:     "gpt-4o",
+	}); err != nil {
+		t.Fatalf("upsert alias-named instance: %v", err)
+	}
+	cred, err = svc.ResolveByRef(rctx, modelref.Ref{Provider: "gemini", Model: "gpt-4o"})
+	if err != nil {
+		t.Fatalf("ResolveByRef(gemini instance) error = %v", err)
+	}
+	if cred == nil || cred.Provider != ProviderOpenAI || cred.Slug != ProviderSlug("gemini") {
+		t.Fatalf("ResolveByRef(gemini) = %+v, want the openai-dialect instance named gemini", cred)
 	}
 }
 

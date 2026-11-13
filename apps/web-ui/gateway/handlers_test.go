@@ -61,6 +61,14 @@ type modelTestCall struct {
 	ModelType string
 }
 
+// modelConfigClears records the explicit clear flags of a model-config write,
+// so a handler test can prove the "None — no default" select maps to a clear
+// (the fake alone would store an empty model for an empty input either way).
+type modelConfigClears struct {
+	Generative bool
+	Embedding  bool
+}
+
 // fakeMemory is an in-memory MemoryBackend for tests.
 type fakeMemory struct {
 	orgPresence     *PresenceDto
@@ -590,6 +598,7 @@ type fakeMemory struct {
 	modelTestCalls         []modelTestCall     // every TestProjectModel call, in order
 	modelConfig            *ProjectModelConfig // returned by GetProjectModelConfig
 	lastModelConfig        *ProjectModelConfig // last UpsertProjectModelConfig
+	lastModelConfigClears  modelConfigClears   // clear flags of the last UpsertProjectModelConfig
 
 	orgs                 []Org          // returned by ListOrgs
 	listOrgsErr          error          // failure for ListOrgs
@@ -2717,6 +2726,7 @@ func (f *fakeMemory) UpsertProjectModelConfig(ctx context.Context, generativeMod
 	if f.providerErr != nil {
 		return nil, f.providerErr
 	}
+	f.lastModelConfigClears = modelConfigClears{Generative: clearGenerative, Embedding: clearEmbedding}
 	cfg := &ProjectModelConfig{GenerativeModel: generativeModel, EmbeddingModel: embeddingModel}
 	if clearGenerative {
 		cfg.GenerativeModel = ""

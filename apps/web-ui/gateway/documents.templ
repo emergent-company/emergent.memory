@@ -1120,7 +1120,7 @@ templ extractionJobRow(documentID string, job ExtractionJob, hint *mergeReviewHi
 	{{ detailHref := "/documents/" + url.PathEscape(documentID) + "/extractions/" + url.PathEscape(job.ID) + "/detail" }}
 	{{ traceHref := "/documents/" + url.PathEscape(documentID) + "/extractions/" + url.PathEscape(job.ID) }}
 	{{ if hint != nil && hint.JobID == job.ID && hint.Left > 0 { detailHref = detailHref + "?review=" + strconv.Itoa(hint.Left) } }}
-	<div class="border border-line overflow-hidden" data-testid="extraction-job-row">
+	<div class="border border-base-content/10 overflow-hidden" data-testid="extraction-job-row">
 		<div class="flex flex-wrap items-center gap-2 px-4 py-3">
 			@ui.IconTile("lucide--sparkles", ui.IconTileProps{Tone: "accent"})
 			<div class="min-w-0 grow">

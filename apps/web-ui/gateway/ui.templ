@@ -78,7 +78,7 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 			})
 			<meta name="view-transition" content="same-origin"/>
 		</head>
-		<body class="bg-base-200 min-h-screen" data-active-project-id={ currentProjectID(currentProject) } data-project-id={ currentProjectID(currentProject) } data-org-id={ currentOrgID(currentProject, activeOrg) }>
+		<body class="app-body bg-base-200" data-active-project-id={ currentProjectID(currentProject) } data-project-id={ currentProjectID(currentProject) } data-org-id={ currentOrgID(currentProject, activeOrg) }>
 			<!-- Modal container -->
 			<div id="modal-container"></div>
 			<!-- Toast container -->
