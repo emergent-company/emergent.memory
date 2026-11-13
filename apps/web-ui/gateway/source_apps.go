@@ -66,9 +66,13 @@ type dsSourceAppFormData struct {
 	// GitHub setup guide as the App's Homepage URL. Empty means the page could
 	// not resolve one, so the guide states the requirement instead of a value.
 	PublicBaseURL string
-	App           *SourceApp
-	FlashMsg      string
-	FlashErr      error
+	// JustCreated marks the App page a registration just redirected to: the
+	// delivery URL is the value the operator must carry back to GitHub, so the
+	// next step is rendered on the page instead of in an auto-dismissing toast.
+	JustCreated bool
+	App         *SourceApp
+	FlashMsg    string
+	FlashErr    error
 }
 
 // dsSourceAppWebhookURL builds the endpoint GitHub must deliver to for one App.
@@ -129,8 +133,9 @@ func (s *Server) uiSourceApps(c echo.Context) error {
 		settingsNavCommon: s.settingsNavPayload(c, ctx),
 		FlashMsg: flashFromQuery(c, []flashParam{
 			// Reachable only from uiSourceAppCreate's fallback, when the create
-			// response carries no row id to open an App page for.
-			{key: "saved", msg: "Source App registered."},
+			// response carries no row id to open an App page for — so the delivery
+			// URL is in the table rather than on a page of its own.
+			{key: "saved", msg: "Source App registered. Copy its delivery URL from the list into the GitHub App's webhook, with the same secret."},
 			{key: "deleted", msg: "Source App removed."},
 		}),
 		FlashErr: flashError(c),
@@ -202,8 +207,9 @@ func (s *Server) uiSourceAppDetail(c echo.Context) error {
 		DeleteHref:        dsSourceAppsPath + "/" + url.PathEscape(app.ID) + "/delete",
 		WebhookURL:        dsSourceAppWebhookURL(s.cfg.MemoryPublicURL, app.WebhookKey),
 		App:               app,
+		JustCreated:       c.QueryParam("created") != "",
 		FlashMsg: flashFromQuery(c, []flashParam{
-			{key: "created", msg: "Source App registered. Copy its delivery URL into the GitHub App's webhook, with the same secret, then make the webhook active."},
+			{key: "created", msg: "Source App registered."},
 			{key: "saved", msg: "Source App saved."},
 		}),
 		FlashErr: flashError(c),

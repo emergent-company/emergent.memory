@@ -26,25 +26,27 @@ configured.
 | GitHub field | Value |
 |---|---|
 | Homepage URL | Your Memory deployment's web address. Required by GitHub, unused by Memory. |
-| **Redirect URI** (under *Identifying and authorizing users*) | **Leave empty.** Do not add a callback. |
+| **Callback URL** (under *Identifying and authorizing users*; labelled *Redirect URI* on some GitHub screens) | **Leave empty.** Do not add a callback. |
 | *Request user authorization (OAuth) during installation* | **Unchecked.** |
 | Setup URL | Leave empty. |
 | Webhook → Active | **Leave inactive while creating the App** (see below). |
-| Webhook → Secret | Generate one now and keep a copy; you enter the same value in step 3. |
+| Webhook → Secret | Generate the secret now and keep it; GitHub only offers the secret field once the webhook is active, and you enter the same value there in step 3. |
 | Repository permissions | `Contents: read`; `Issues`, `Checks`, `Pull requests`: **read and write**. `Metadata: read` is added automatically and is mandatory. |
-| Subscribe to events | `Pull request` only. |
+| Subscribe to events | `Pull request` only — selected in step 3, once the webhook is active. |
 | Private key | Generate one on the App page and download the `.pem` file. |
 
 The webhook is a **two-pass** setup, because the delivery URL does not exist
 until Memory registers the App and issues its `webhookKey`:
 
-1. Create the App with the webhook inactive. GitHub discards a secret entered
-   while the webhook is inactive, so the value you typed is not kept.
+1. Create the App with the webhook inactive. While it is inactive GitHub does
+   not offer the webhook URL, secret or event fields at all — so pick the secret
+   here (any random string, e.g. `openssl rand -hex 24`) and keep it.
 2. Register the App in Memory (below). The response — and the App's page in the
    UI — carries the delivery URL.
-3. Edit the App in GitHub: paste the delivery URL into the webhook, enter the
-   **same** secret, and make the webhook active. GitHub sends a `ping` delivery;
-   a `202` proves Memory verified the signature.
+3. Edit the App in GitHub: activate the webhook, paste the delivery URL, enter
+   the **same** secret, and subscribe to the **Pull request event** (the event
+   list appears with the active webhook). GitHub sends a `ping` delivery; a `202`
+   proves Memory verified the signature.
 
 ### Register the App (organization admin)
 

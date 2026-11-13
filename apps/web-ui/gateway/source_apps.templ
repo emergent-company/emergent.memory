@@ -239,6 +239,14 @@ templ SourceAppFormPage(data dsSourceAppFormData) {
 					</div>
 					if data.WebhookURL != "" {
 						<div class="flex flex-col gap-1" data-testid="ds-source-app-webhook">
+							if data.JustCreated {
+								@ui.SoftBox(ui.SoftBoxProps{Padding: "p-4", Class: "mb-2 flex flex-col gap-1", Attrs: templ.Attributes{"data-testid": "ds-source-app-created-next"}}) {
+									<p class="text-sm font-semibold">Next: finish the webhook in GitHub</p>
+									@ui.EmptyNote(ui.EmptyNoteProps{Class: "max-w-prose"}) {
+										In the GitHub App tick Active, enter the same secret, paste this delivery URL, and subscribe to the Pull request event — the event list appears with the active webhook. GitHub's ping then proves Memory verified the signature.
+									}
+								}
+							}
 							<span class="text-sm font-medium">Webhook URL</span>
 							@form.ClipboardCopy([]form.ClipboardCopyItem{
 								{
@@ -315,26 +323,25 @@ templ sourceAppGitHubGuide(data dsSourceAppFormData) {
 				Set the Homepage URL to this deployment's web address (shown below); GitHub requires a value, Memory never reads it.
 			</li>
 			<li>
-				<span class="font-medium">Leave the Redirect URI empty.</span>
-				Do not add a callback, keep <em>Request user authorization (OAuth) during installation</em> unchecked, and leave the Setup URL empty: Memory authenticates as the installation, not as a signed-in GitHub user.
+				<span class="font-medium">Leave the Callback URL empty</span> (some GitHub screens label it Redirect URI).
+				No user-authorization flow is configured: <em>Request user authorization (OAuth) during installation</em> stays unchecked and the Setup URL stays empty, because Memory authenticates as the installation, not as a signed-in GitHub user.
 			</li>
 			<li>
 				<span class="font-medium">Create the webhook inactive.</span>
-				The delivery URL does not exist until you register the App here, so a webhook enabled now has nowhere to deliver. Generate the webhook secret now and keep a copy: GitHub discards it when the webhook is created inactive, so the same value is entered again in step 7.
+				The delivery URL does not exist until you register the App here, and GitHub only offers the webhook URL, secret and event fields once it is active — that is step 6. Generate the webhook secret now (any random string, such as
+				<code class="font-mono text-xs">openssl rand -hex 24</code>
+				), keep it, and enter the same value here and in GitHub.
 			</li>
 			<li>
 				<span class="font-medium">Repository permissions:</span>
 				Contents <span class="font-medium">read</span>; Issues, Checks and Pull requests <span class="font-medium">read and write</span>. Metadata read is added automatically and is mandatory.
 			</li>
 			<li>
-				<span class="font-medium">Subscribe to events:</span> Pull request only — it is the event that starts an agent run.
-			</li>
-			<li>
 				<span class="font-medium">Generate a private key</span> on the App's page and download the <code class="font-mono text-xs">.pem</code> file; paste its contents into the field below.
 			</li>
 			<li>
 				<span class="font-medium">Register, then finish the webhook in GitHub.</span>
-				Registration opens the App's page here with its delivery URL. Paste that URL into the App's webhook, enter the same secret, make the webhook active, and GitHub's ping delivery proves the signature check.
+				Registration opens the App's page here with its delivery URL. In the GitHub App tick <span class="font-medium">Active</span>, enter the same secret, paste the delivery URL, and subscribe to the <span class="font-medium">Pull request event</span> — the event list appears with the active webhook — then save. GitHub's ping proves Memory verified the signature.
 			</li>
 			<li>
 				<span class="font-medium">Install the App</span> on the repositories to sync, then enter the installation id when you connect the data source: it is the number in
@@ -343,9 +350,16 @@ templ sourceAppGitHubGuide(data dsSourceAppFormData) {
 			</li>
 		</ol>
 		if data.PublicBaseURL != "" {
-			<div class="flex flex-col gap-1">
-				<span class="text-sm font-medium">Homepage URL</span>
-				<code class="bg-base-200 text-base-content w-fit rounded px-3 py-1.5 font-mono text-sm" data-testid="ds-source-app-gh-homepage">{ data.PublicBaseURL }</code>
+			<div class="flex flex-col gap-1" data-testid="ds-source-app-gh-homepage">
+				@form.ClipboardCopy([]form.ClipboardCopyItem{
+					{
+						ID:          "ds-source-app-gh-homepage-url",
+						Label:       "Homepage URL",
+						Value:       data.PublicBaseURL,
+						ButtonLabel: "Copy",
+						Mono:        true,
+					},
+				})
 				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
 					This deployment's web URL. It is only a label on GitHub's side.
 				}

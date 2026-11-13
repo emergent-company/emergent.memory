@@ -7,20 +7,34 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/labstack/echo/v4"
 )
 
+// sourceAppsTestPrivateKey is the PEM the register form posts. It is one shared
+// constant on purpose: a second inline copy makes gitleaks' greedy private-key
+// match span the pair and trips the secret scan, and a `.gitleaks.toml` waiver is
+// not an option (that allowlist is a remove-only ratchet).
+const sourceAppsTestPrivateKey = "-----BEGIN RSA PRIVATE KEY-----\nkey\n-----END RSA PRIVATE KEY-----"
+
 // sourceAppsTestServer wires the source-App settings page, the trigger routes,
 // and the data-source detail page onto a server whose public memory URL is set,
 // so the rendered webhook URL is assertable (newDSUIServer leaves it empty).
 func sourceAppsTestServer(f *fakeMemory) *echo.Echo {
-	s := &Server{
-		cfg:    Config{DefaultAgent: "memory", MemoryPublicURL: "https://memory.example.com"},
-		memory: f,
-	}
+	return sourceAppsTestServerWithConfig(f, Config{
+		DefaultAgent:    "memory",
+		MemoryPublicURL: "https://memory.example.com",
+	})
+}
+
+// sourceAppsTestServerWithConfig is sourceAppsTestServer with a caller-supplied
+// config, for a case that depends on a deployment setting (PublicBaseURL feeds
+// the register page's Homepage URL).
+func sourceAppsTestServerWithConfig(f *fakeMemory, cfg Config) *echo.Echo {
+	s := &Server{cfg: cfg, memory: f}
 	e := echo.New()
 	e.GET(dsSourceAppsPath, s.uiSourceApps)
 	e.POST(dsSourceAppsPath, s.uiSourceAppCreate)
@@ -177,7 +191,7 @@ func TestSourceAppCreateForwardsRequest(t *testing.T) {
 	form := url.Values{
 		"appId":         {" 4242 "},
 		"slug":          {"acme-bot"},
-		"privateKey":    {"-----BEGIN RSA PRIVATE KEY-----\nkey\n-----END RSA PRIVATE KEY-----"},
+		"privateKey":    {sourceAppsTestPrivateKey},
 		"webhookSecret": {"s3cret"},
 	}
 	rec := httptest.NewRecorder()
@@ -217,7 +231,7 @@ func TestSourceAppCreateFallsBackToListWithoutRowID(t *testing.T) {
 	form := url.Values{
 		"appId":         {"4242"},
 		"slug":          {"acme-bot"},
-		"privateKey":    {"-----BEGIN RSA PRIVATE KEY-----\nkey\n-----END RSA PRIVATE KEY-----"},
+		"privateKey":    {sourceAppsTestPrivateKey},
 		"webhookSecret": {"s3cret"},
 	}
 	rec := httptest.NewRecorder()
@@ -324,21 +338,34 @@ func TestSourceAppNewPageRendersRegisterForm(t *testing.T) {
 	for _, unwanted := range []string{
 		`data-testid="ds-source-app-delete"`,
 		`data-testid="ds-source-app-webhook"`,
-		`readonly`,
 	} {
 		if strings.Contains(body, unwanted) {
 			t.Errorf("register page rendered %q", unwanted)
 		}
 	}
+	// No read-only field on the add form: every value it shows is one the
+	// operator is about to type.
+	if readonlyInputRE.MatchString(body) {
+		t.Error("register page rendered a readonly input")
+	}
 }
+
+// readonlyInputRE matches an <input> element carrying a readonly attribute,
+// ignoring the clipboard component's inline script (which mentions the word for
+// its execCommand fallback textarea).
+var readonlyInputRE = regexp.MustCompile(`(?i)<input[^>]*\sreadonly`)
 
 // TestSourceAppNewPageShowsGitHubSetupGuide pins the instructions that the
 // register form cannot state for itself: which GitHub fields stay empty, that
-// the webhook is created inactive, and what the App key is used for. Without
-// them an operator stalls on GitHub's "Redirect URI" field and creates a
-// webhook that has nowhere to deliver.
+// the webhook is created inactive (and only then offers the URL/secret fields),
+// and where the installation id comes from. Without them an operator stalls on
+// GitHub's callback field and ends up with a webhook that has nowhere to deliver.
 func TestSourceAppNewPageShowsGitHubSetupGuide(t *testing.T) {
-	e := sourceAppsTestServer(sourceAppsAdminFake())
+	e := sourceAppsTestServerWithConfig(sourceAppsAdminFake(), Config{
+		DefaultAgent:    "memory",
+		MemoryPublicURL: "https://memory.example.com",
+		PublicBaseURL:   "https://app.example.test",
+	})
 
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, dsSourceAppsPath+"/new", nil))
@@ -349,16 +376,21 @@ func TestSourceAppNewPageShowsGitHubSetupGuide(t *testing.T) {
 	for _, want := range []string{
 		`data-testid="ds-source-app-gh-guide"`,
 		"https://github.com/settings/apps/new",
+		// The field is "Callback URL" in GitHub's docs and "Redirect URI" on some
+		// of its screens; the guide names both so neither label stalls anyone.
+		"Callback URL",
 		"Redirect URI",
 		"Request user authorization (OAuth) during installation",
 		"webhook inactive",
+		"Active",
+		"Pull request event",
 		"Contents",
 		"Pull requests",
-		"Pull request only",
+		"Metadata",
 		"private key",
 		"github.com/settings/installations/",
 		`data-testid="ds-source-app-gh-homepage"`,
-		"http://example.com",
+		"https://app.example.test",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("GitHub setup guide missing %q", want)
@@ -368,6 +400,23 @@ func TestSourceAppNewPageShowsGitHubSetupGuide(t *testing.T) {
 	// after registration, so the register page must not pretend to show it.
 	if strings.Contains(body, `data-testid="ds-source-app-webhook"`) {
 		t.Error("register page rendered a delivery URL before one exists")
+	}
+}
+
+// TestSourceAppGuideWithoutPublicBaseURL renders the component with no
+// deployment URL: the checklist still renders, and the Homepage URL value is
+// omitted rather than shown blank.
+func TestSourceAppGuideWithoutPublicBaseURL(t *testing.T) {
+	var buf bytes.Buffer
+	if err := SourceAppFormPage(dsSourceAppFormData{OrgName: "Acme"}).Render(context.Background(), &buf); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body := buf.String()
+	if !strings.Contains(body, `data-testid="ds-source-app-gh-guide"`) {
+		t.Error("guide missing without a public base URL")
+	}
+	if strings.Contains(body, `data-testid="ds-source-app-gh-homepage"`) {
+		t.Error("homepage URL block rendered without a value")
 	}
 }
 
@@ -470,6 +519,43 @@ func TestSourceAppDetailPagePrefillsApp(t *testing.T) {
 	}
 	if strings.Contains(body[saveStart:saveStart+saveEnd], `ds-source-app-delete`) {
 		t.Error("delete control rendered inside the save form")
+	}
+}
+
+// TestSourceAppDetailCreatedNoticeIsPersistent puts the "copy the delivery URL
+// into GitHub" step on the page itself when registration redirects here: a toast
+// auto-dismisses in ~4 s, and this is the one value the operator has to carry
+// back to GitHub. Any other load of the page has no notice.
+func TestSourceAppDetailCreatedNoticeIsPersistent(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.dsSourceApps = []SourceApp{{
+		ID: "a1", OrgID: "o1", Provider: "github", AppID: 4242, Slug: "acme-bot",
+		WebhookKey: "wk-1", CreatedAt: "2026-09-01T00:00:00Z",
+	}}
+	e := sourceAppsTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, dsSourceAppsPath+"/a1?created=1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="ds-source-app-created-next"`,
+		"delivery URL",
+		"webhook",
+		"Active",
+		"Pull request event",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("created notice missing %q", want)
+		}
+	}
+
+	plain := httptest.NewRecorder()
+	e.ServeHTTP(plain, httptest.NewRequest(http.MethodGet, dsSourceAppsPath+"/a1", nil))
+	if strings.Contains(plain.Body.String(), `data-testid="ds-source-app-created-next"`) {
+		t.Error("created notice rendered on a plain edit-page load")
 	}
 }
 
