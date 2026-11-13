@@ -86,6 +86,10 @@ func setObjectWikiViewPreference(c echo.Context, view string) {
 		Path:     "/",
 		MaxAge:   objectWikiViewCookieMaxAge,
 		HttpOnly: true,
+		// Secure over TLS only: a browser silently drops a Secure cookie set over
+		// plain HTTP, which is how the dev host is reached, so the preference would
+		// stop persisting there. Same rule as the session cookies.
+		Secure:   c.Scheme() == "https",
 		SameSite: http.SameSiteLaxMode,
 	})
 }

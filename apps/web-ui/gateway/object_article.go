@@ -60,10 +60,13 @@ var (
 
 // objectArticleFor resolves an object's prose into the article's parts.
 //
-// When only a body exists, its first paragraph becomes the lead and the body is
-// rendered from what remains — a wiki page that repeats its opening line in
-// larger type reads like a bug. The same holds when a lead key and a body key
-// happen to hold the same opening paragraph.
+// The lead is the opening paragraph of the lead property; when the object has no
+// lead property, the opening paragraph of its body property is promoted instead.
+// Whatever the lead property holds beyond that opening paragraph is body text, so
+// an object whose only prose field is `summary` (or `excerpt`, `abstract`) keeps
+// its second paragraph rather than losing it to the lead's first line. A wiki page
+// that repeats its opening line in larger type reads like a bug, so a body that
+// opens with the lead's own paragraph has that paragraph removed.
 func objectArticleFor(obj GraphObject) objectArticleProse {
 	leadKey, leadRaw, _ := firstProseProperty(obj.Properties, objectArticleLeadKeys)
 	bodyKey, bodyRaw, _ := firstProseProperty(obj.Properties, objectArticleBodyKeys)
@@ -72,18 +75,33 @@ func objectArticleFor(obj GraphObject) objectArticleProse {
 		return objectArticleProse{}
 	}
 
-	prose := objectArticleProse{LeadKey: leadKey, BodyKey: bodyKey}
-	if leadRaw != "" {
-		prose.Lead = flattenProseParagraph(leadRaw)
-		if bodyRaw != "" {
-			if head, rest := splitFirstParagraph(bodyRaw); strings.TrimSpace(head) == strings.TrimSpace(leadRaw) || flattenProseParagraph(head) == prose.Lead {
-				bodyRaw = rest
-			}
+	// One property cannot supply both halves: when both lists resolve to the same
+	// stored key (description is in both), that property is the whole document and
+	// the body comes from what follows its opening paragraph.
+	if leadRaw != "" && bodyKey == leadKey {
+		bodyRaw = ""
+	}
+
+	leadSource := leadRaw
+	if strings.TrimSpace(leadSource) == "" {
+		leadSource, bodyRaw = bodyRaw, ""
+	}
+
+	head, leadRest := splitFirstParagraph(leadSource)
+	prose := objectArticleProse{LeadKey: leadKey, BodyKey: bodyKey, Lead: flattenProseParagraph(head)}
+
+	// The same document resolved under two keys (a summary and a content field
+	// holding the same text) must not be rendered twice.
+	if strings.TrimSpace(bodyRaw) == strings.TrimSpace(leadSource) {
+		bodyRaw = ""
+	}
+	if leadRest != "" {
+		bodyRaw = strings.TrimSpace(leadRest + "\n\n" + bodyRaw)
+	}
+	if bodyRaw != "" {
+		if bHead, bRest := splitFirstParagraph(bodyRaw); strings.TrimSpace(bHead) == strings.TrimSpace(head) || flattenProseParagraph(bHead) == prose.Lead {
+			bodyRaw = bRest
 		}
-	} else {
-		head, rest := splitFirstParagraph(bodyRaw)
-		prose.Lead = flattenProseParagraph(head)
-		bodyRaw = rest
 	}
 
 	prose.BodyHTML, prose.Headings = renderArticleMarkdown(bodyRaw)

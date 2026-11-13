@@ -107,7 +107,7 @@ func TestFeedbackOrderConfigEnabled(t *testing.T) {
 // daemon matches the id exactly and a pasted uppercase UUID would be rejected.
 func TestLoadConfigFeedbackOrder(t *testing.T) {
 	t.Setenv("FEEDBACK_ORDER_BOX", "http://box.test:8101/")
-	t.Setenv("FEEDBACK_ORDER_SESSION", "13E9FFF6-DFF0-4EC9-BCEF-26AA2CB7BA28")
+	t.Setenv("FEEDBACK_ORDER_SESSION", "A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D")
 	t.Setenv("FEEDBACK_ORDER_TOKEN", "shared-secret")
 
 	cfg := LoadConfig()

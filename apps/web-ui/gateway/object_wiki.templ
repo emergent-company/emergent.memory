@@ -64,6 +64,16 @@ templ objectWikiHead(data objectWikiPageData) {
 				@objectWikiViewSwitch(data)
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeLink,
+					Href:    "/objects/" + url.PathEscape(data.Obj.ID) + "/chat",
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--messages-square",
+					Attrs:   templ.Attributes{"data-testid": "object-wiki-chat", "title": "Chat about this object"},
+				}) {
+					Chat
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
 					Href:    "/objects/" + url.PathEscape(data.Obj.ID),
 					Variant: ui.ButtonGhost,
 					Size:    ui.ButtonSM,

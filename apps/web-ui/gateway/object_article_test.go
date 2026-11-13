@@ -156,6 +156,45 @@ func TestObjectArticleLeadAndBodySplit(t *testing.T) {
 		}
 	})
 
+	t.Run("lead-only prose keeps its second paragraph", func(t *testing.T) {
+		// The reported bug: an object whose only prose key is `summary` kept P1 as
+		// the lead and dropped P2 entirely, because no body key resolved and the
+		// lead property was never split.
+		for _, key := range []string{"summary", "excerpt", "abstract", "description"} {
+			prose := objectArticleFor(GraphObject{Properties: map[string]any{
+				key: "The opening paragraph.\n\n## Detail\n\nMore text.",
+			}})
+			if prose.Lead != "The opening paragraph." {
+				t.Errorf("%s: lead = %q", key, prose.Lead)
+			}
+			if !strings.Contains(prose.BodyHTML, "More text.") {
+				t.Errorf("%s: the lead property's remaining paragraphs must become the body, got %q", key, prose.BodyHTML)
+			}
+			if strings.Contains(prose.BodyHTML, "The opening paragraph.") {
+				t.Errorf("%s: the promoted lead must not repeat in the body: %q", key, prose.BodyHTML)
+			}
+			if len(prose.Headings) != 1 || prose.Headings[0].ID != "detail" {
+				t.Errorf("%s: headings = %+v", key, prose.Headings)
+			}
+		}
+	})
+
+	t.Run("a lead key that is also the body key is not duplicated", func(t *testing.T) {
+		// description is in both precedence lists on purpose.
+		prose := objectArticleFor(GraphObject{Properties: map[string]any{
+			"description": "The opening.\n\n## Detail\n\nMore text.",
+		}})
+		if prose.Lead != "The opening." {
+			t.Errorf("lead = %q", prose.Lead)
+		}
+		if strings.Count(prose.BodyHTML, "The opening.") != 0 {
+			t.Errorf("the body must not repeat the lead: %q", prose.BodyHTML)
+		}
+		if !strings.Contains(prose.BodyHTML, "More text.") {
+			t.Errorf("the rest of the document must survive: %q", prose.BodyHTML)
+		}
+	})
+
 	t.Run("no prose", func(t *testing.T) {
 		prose := objectArticleFor(GraphObject{Properties: map[string]any{"count": 1}})
 		if prose.Lead != "" || prose.BodyHTML != "" || len(prose.Headings) != 0 {
@@ -227,6 +266,10 @@ func TestObjectWikiPageArticleVariant(t *testing.T) {
 		// The article variant is reading-only: Edit opens the object's own page.
 		`href="/objects/o1"`,
 		`data-testid="object-wiki-edit"`,
+		// Chat is the third read-only link out of the wiki (with Edit and
+		// History): the object's own chat page, not an embedded composer.
+		`data-testid="object-wiki-chat"`,
+		`href="/objects/o1/chat"`,
 		// History lives in the shared details rail, not a page-action row, so
 		// both variants carry it exactly once.
 		`>History</h2>`,
