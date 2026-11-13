@@ -76,9 +76,15 @@ const (
 )
 
 // UpsertModelConfigRequest is the request body for setting model config.
+// Empty model fields keep their stored value (partial update). Clearing one
+// field is explicit because an empty string already means "leave as is": set
+// ClearGenerative or ClearEmbedding to remove that model while keeping the
+// other. Clearing both is the DELETE endpoint.
 type UpsertModelConfigRequest struct {
 	GenerativeModel string `json:"generativeModel"`
 	EmbeddingModel  string `json:"embeddingModel"`
+	ClearGenerative bool   `json:"clearGenerative,omitempty"`
+	ClearEmbedding  bool   `json:"clearEmbedding,omitempty"`
 }
 
 // ModelConfigResponse is the API response for a stored model config.

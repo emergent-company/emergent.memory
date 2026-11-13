@@ -1000,12 +1000,14 @@ func probeProviderEndpoint(baseURL, apiKey string) (ok bool, status int, detail 
 
 // uiProjectModelConfig sets the project's default generative + embedding
 // models (HTMX → POST /settings/providers/model-config), persisted via the
-// model-config API. Both fields carry a provider prefix.
+// model-config API. Both fields carry a provider prefix. The form always
+// submits both selects, so an empty value is the "None — no default" choice and
+// maps to the explicit clear flag — an empty API field on its own means "keep".
 func (s *Server) uiProjectModelConfig(c echo.Context) error {
 	ctx := c.Request().Context()
 	gen := strings.TrimSpace(c.FormValue("generative_model"))
 	emb := strings.TrimSpace(c.FormValue("embedding_model"))
-	if _, err := s.memory.UpsertProjectModelConfig(ctx, gen, emb); err != nil {
+	if _, err := s.memory.UpsertProjectModelConfig(ctx, gen, emb, gen == "", emb == ""); err != nil {
 		return toastTrigger(c, "error", err.Error())
 	}
 	return toastTrigger(c, "success", "Saved")

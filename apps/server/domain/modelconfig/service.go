@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/modelref"
 )
 
@@ -26,6 +27,10 @@ type Service struct {
 	// project has no explicit embedding model — mirroring the fallback the
 	// EmbeddingResolverAdapter applies when generating embeddings.
 	embeddingResolver embeddingDefaultResolver
+	// providerValidator checks that a model reference's provider segment names
+	// a supported dialect or an existing project provider instance slug
+	// (optional). It validates the provider only, never the credential.
+	providerValidator modelProviderValidator
 }
 
 // modelConfigStore is the persistence seam Service needs. Implemented by
@@ -50,6 +55,16 @@ type embeddingDefaultResolver interface {
 	DefaultEmbeddingModel(ctx context.Context, projectID string) (string, error)
 }
 
+// modelProviderValidator reports whether a model reference's provider segment
+// names a supported provider dialect or an existing project provider instance
+// slug. It deliberately does not require a usable credential: a model can be
+// selected before its API key is configured, but a typo is rejected at write
+// time instead of failing per call at resolution time. Implemented by
+// provider.CredentialService.
+type modelProviderValidator interface {
+	ModelProviderKnown(ctx context.Context, projectID, providerName string) (bool, error)
+}
+
 // NewService creates a new model config Service.
 func NewService(store modelConfigStore, log *slog.Logger) *Service {
 	return &Service{store: store, log: log}
@@ -71,6 +86,14 @@ func (s *Service) WithEmbeddingDefaultResolver(r embeddingDefaultResolver) *Serv
 	return s
 }
 
+// WithProviderValidator wires the provider check applied to non-empty model
+// references at write time. Nil-safe: without it, only the "provider/model"
+// shape is validated.
+func (s *Service) WithProviderValidator(v modelProviderValidator) *Service {
+	s.providerValidator = v
+	return s
+}
+
 // validateModelName returns an error if the model name is not a valid
 // structured reference ("provider/model"), parsed at this single input boundary
 // via modelref.Parse. Empty is allowed (means "not set").
@@ -79,7 +102,26 @@ func validateModelName(field, name string) error {
 		return nil // empty is allowed (means "not set")
 	}
 	if _, err := modelref.Parse(name); err != nil {
-		return fmt.Errorf("%s %q must be in 'provider/model' form (e.g. \"deepseek/deepseek-v4-flash\", \"google/gemini-2.5-flash\", \"google-vertex/gemini-2.5-flash\")", field, name)
+		return apperror.NewBadRequest(fmt.Sprintf("%s %q must be in 'provider/model' form (e.g. \"deepseek/deepseek-v4-flash\", \"google/gemini-2.5-flash\", \"google-vertex/gemini-2.5-flash\")", field, name))
+	}
+	return nil
+}
+
+// validateProviderRef rejects a non-empty reference whose provider segment is
+// neither a supported dialect nor an existing project provider instance slug.
+// Credentials are not checked here: selecting a model before configuring its
+// API key stays valid, while a typo fails at the write boundary instead of per
+// embedding/generation call (#690 item 3).
+func (s *Service) validateProviderRef(ctx context.Context, projectID uuid.UUID, field, name, providerName string) error {
+	if providerName == "" || s.providerValidator == nil {
+		return nil
+	}
+	known, err := s.providerValidator.ModelProviderKnown(ctx, projectID.String(), providerName)
+	if err != nil {
+		return fmt.Errorf("%s %q: failed to validate provider %q: %w", field, name, providerName, err)
+	}
+	if !known {
+		return apperror.NewBadRequest(fmt.Sprintf("%s %q names unknown provider %q — use a supported provider dialect (e.g. \"google\", \"openai\") or an existing project provider instance slug (configure one with 'memory provider configure-project <provider> --name <slug>')", field, name, providerName))
 	}
 	return nil
 }
@@ -99,9 +141,16 @@ func (s *Service) GetProjectModelConfig(ctx context.Context, projectID uuid.UUID
 }
 
 // UpsertProjectModelConfig sets the explicit default models for a project.
-// Both generativeModel and embeddingModel must be a structured reference
-// (e.g. "deepseek/deepseek-v4-flash", "google/gemini-embedding-001"); the
-// provider segment and the bare model are stored as distinct values.
+// Each non-empty field must be a structured reference (e.g.
+// "deepseek/deepseek-v4-flash", "google/gemini-embedding-001") whose provider
+// segment names a supported dialect or an existing project provider instance;
+// the provider segment and the bare model are stored as distinct values.
+//
+// The update is partial: a field the caller does not supply keeps its stored
+// value, so `set-models --generative X` no longer wipes the embedding model.
+// Because an empty string therefore means "leave as is", clearing one field is
+// explicit — ClearGenerative/ClearEmbedding — and clearing the whole config is
+// the DELETE endpoint.
 func (s *Service) UpsertProjectModelConfig(ctx context.Context, projectID uuid.UUID, req UpsertModelConfigRequest) (*ModelConfigResponse, error) {
 	if err := validateModelName("generativeModel", req.GenerativeModel); err != nil {
 		return nil, err
@@ -109,17 +158,53 @@ func (s *Service) UpsertProjectModelConfig(ctx context.Context, projectID uuid.U
 	if err := validateModelName("embeddingModel", req.EmbeddingModel); err != nil {
 		return nil, err
 	}
+	if req.ClearGenerative && req.GenerativeModel != "" {
+		return nil, apperror.NewBadRequest("generativeModel: set a model or clearGenerative, not both")
+	}
+	if req.ClearEmbedding && req.EmbeddingModel != "" {
+		return nil, apperror.NewBadRequest("embeddingModel: set a model or clearEmbedding, not both")
+	}
 	genRef, _ := modelref.Parse(req.GenerativeModel)
 	embRef, _ := modelref.Parse(req.EmbeddingModel)
+	if err := s.validateProviderRef(ctx, projectID, "generativeModel", req.GenerativeModel, genRef.Provider); err != nil {
+		return nil, err
+	}
+	if err := s.validateProviderRef(ctx, projectID, "embeddingModel", req.EmbeddingModel, embRef.Provider); err != nil {
+		return nil, err
+	}
+
+	// Load the existing row so an unsupplied field can be preserved. A missing
+	// row is fine: both fields then stay empty.
+	existing, err := s.store.GetProjectModelConfig(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+
 	now := time.Now()
 	cfg := &ProjectModelConfig{
-		ProjectID:              projectID,
-		GenerativeModel:        genRef.Model,
-		EmbeddingModel:         embRef.Model,
-		GenerativeProviderSlug: genRef.Provider,
-		EmbeddingProviderSlug:  embRef.Provider,
-		CreatedAt:              now,
-		UpdatedAt:              now,
+		ProjectID: projectID,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if req.ClearGenerative {
+		cfg.GenerativeModel = ""
+		cfg.GenerativeProviderSlug = ""
+	} else if req.GenerativeModel != "" {
+		cfg.GenerativeModel = genRef.Model
+		cfg.GenerativeProviderSlug = genRef.Provider
+	} else if existing != nil {
+		cfg.GenerativeModel = existing.GenerativeModel
+		cfg.GenerativeProviderSlug = existing.GenerativeProviderSlug
+	}
+	if req.ClearEmbedding {
+		cfg.EmbeddingModel = ""
+		cfg.EmbeddingProviderSlug = ""
+	} else if req.EmbeddingModel != "" {
+		cfg.EmbeddingModel = embRef.Model
+		cfg.EmbeddingProviderSlug = embRef.Provider
+	} else if existing != nil {
+		cfg.EmbeddingModel = existing.EmbeddingModel
+		cfg.EmbeddingProviderSlug = existing.EmbeddingProviderSlug
 	}
 	if err := s.store.UpsertProjectModelConfig(ctx, cfg); err != nil {
 		return nil, err

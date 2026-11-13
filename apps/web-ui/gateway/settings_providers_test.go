@@ -1567,6 +1567,34 @@ func TestUIProviderModelConfig(t *testing.T) {
 	}
 }
 
+// TestUIProviderModelConfigClear covers the "None — no default" select: the
+// form always submits both selects, so an empty value must clear that model
+// instead of being preserved by the partial PUT (the regression that made a
+// default model impossible to unset from Settings).
+func TestUIProviderModelConfigClear(t *testing.T) {
+	f := &fakeMemory{}
+	_, e := newProvidersSettingsEcho(f)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/settings/providers/model-config", strings.NewReader("generative_model=&embedding_model=google/gemini-embedding-001"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if f.lastModelConfig == nil {
+		t.Fatal("model config was not sent to memory")
+	}
+	if !f.lastModelConfigClears.Generative || f.lastModelConfigClears.Embedding {
+		t.Errorf("clear flags = %+v, want only the generative model cleared", f.lastModelConfigClears)
+	}
+	if f.lastModelConfig.GenerativeModel != "" {
+		t.Errorf("generative = %q, want cleared by the empty select", f.lastModelConfig.GenerativeModel)
+	}
+	if f.lastModelConfig.EmbeddingModel != "google/gemini-embedding-001" {
+		t.Errorf("embedding = %q, want the submitted value", f.lastModelConfig.EmbeddingModel)
+	}
+}
+
 // TestSettingsProvidersLoadFailure covers the panel-level error: a failed
 // providers read renders the error inside the panel while the Providers page
 // stays usable (200).
