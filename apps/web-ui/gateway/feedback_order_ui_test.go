@@ -33,14 +33,14 @@ func renderShellWithFeedbackAPI(t *testing.T, overlayURL, overlayAPIURL string, 
 // delivered into the session editing that page, so the shell must carry the box
 // URL and the session id (and the optional token, when one is configured).
 func TestAppShellFeedbackOrderAttributes(t *testing.T) {
-	const session = "13e9fff6-dff0-4ec9-bcef-26aa2cb7ba28"
+	const session = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
 
 	configured := renderShellWithFeedback(t, "https://feedback.test", feedbackOrderConfig{
-		Box:     "http://memory-home.tail0358fa.ts.net:8101",
+		Box:     "http://box.test:8101",
 		Session: session,
 	})
 	for _, want := range []string{
-		`data-order-box="http://memory-home.tail0358fa.ts.net:8101"`,
+		`data-order-box="http://box.test:8101"`,
 		`data-order-session="` + session + `"`,
 	} {
 		if !strings.Contains(configured, want) {
@@ -114,7 +114,7 @@ func TestLoadConfigFeedbackOrder(t *testing.T) {
 	if cfg.FeedbackOrderBox != "http://box.test:8101" {
 		t.Errorf("FeedbackOrderBox = %q, want the trailing slash trimmed", cfg.FeedbackOrderBox)
 	}
-	if cfg.FeedbackOrderSession != "13e9fff6-dff0-4ec9-bcef-26aa2cb7ba28" {
+	if cfg.FeedbackOrderSession != "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d" {
 		t.Errorf("FeedbackOrderSession = %q, want lowercase", cfg.FeedbackOrderSession)
 	}
 	if cfg.FeedbackOrderToken != "shared-secret" {
