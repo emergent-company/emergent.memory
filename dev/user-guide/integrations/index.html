@@ -3364,8 +3364,15 @@ and the agent posts a review bound to the reviewed head SHA.</p>
 id and its <code>webhookKey</code>. The App must be granted <code>contents: read</code>,
 <code>pull_requests: write</code>, <code>issues: write</code>, and <code>checks: write</code>.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="err">GET    /api/orgs/{orgId}/source-apps</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="err">DELETE /api/orgs/{orgId}/source-apps/{appId}</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="err">PATCH  /api/orgs/{orgId}/source-apps/{appId}</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="err">DELETE /api/orgs/{orgId}/source-apps/{appId}</span>
 </code></pre></div>
+<p>The PATCH body takes <code>slug</code> (required, trimmed) and the optional <code>privateKey</code>
+and <code>webhookSecret</code>. A blank or omitted secret keeps the stored value; a
+supplied private key is validated before it is sealed. <code>provider</code> and <code>appId</code>
+are immutable: <code>(organization, provider, App id)</code> is what binds project
+sources, so an edit renames or rotates credentials but never repoints an App
+under sources that are already attached.</p>
 <h3 id="create-the-source">Create the source<a class="headerlink" href="#create-the-source" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="err">POST /api/data-source-integrations</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="err">Content-Type: application/json</span>

@@ -3094,8 +3094,8 @@
 </tr>
 <tr>
 <td><code>CacheCleanupTask</code></td>
-<td>Every hour</td>
-<td>Evicts stale entries from in-memory and DB-backed caches</td>
+<td>Every 15 minutes</td>
+<td>Deletes expired <code>kb.auth_introspection_cache</code> rows and prunes <code>kb.embedding_cache</code> rows older than <code>EMBEDDING_CACHE_RETENTION_DAYS</code> (default 30 days)</td>
 </tr>
 <tr>
 <td><code>StaleJobCleanupTask</code></td>

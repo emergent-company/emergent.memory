@@ -632,15 +632,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#org-level-configuration" class="md-nav__link">
+  <a href="#project-configuration" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Org-level configuration
+        Project configuration
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Org-level configuration">
+    <nav class="md-nav" aria-label="Project configuration">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -677,10 +677,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#list-all-configured-providers" class="md-nav__link">
+  <a href="#list-a-projects-configured-providers" class="md-nav__link">
     <span class="md-ellipsis">
       
-        List all configured providers
+        List a project's configured providers
       
     </span>
   </a>
@@ -704,13 +704,30 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#project-level-overrides" class="md-nav__link">
+  <a href="#model-selection-and-resolution" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Project-level overrides
+        Model selection and resolution
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Model selection and resolution">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-this-matters-for-embeddings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why this matters for embeddings
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -749,10 +766,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#put-apiv1organizationsorgidprovidersprovider" class="md-nav__link">
+  <a href="#put-apiv1projectsprojectidprovidersprovider" class="md-nav__link">
     <span class="md-ellipsis">
       
-        PUT /api/v1/organizations/:orgId/providers/:provider
+        PUT /api/v1/projects/:projectId/providers/:provider
       
     </span>
   </a>
@@ -3201,15 +3218,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#org-level-configuration" class="md-nav__link">
+  <a href="#project-configuration" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Org-level configuration
+        Project configuration
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Org-level configuration">
+    <nav class="md-nav" aria-label="Project configuration">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -3246,10 +3263,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#list-all-configured-providers" class="md-nav__link">
+  <a href="#list-a-projects-configured-providers" class="md-nav__link">
     <span class="md-ellipsis">
       
-        List all configured providers
+        List a project's configured providers
       
     </span>
   </a>
@@ -3273,13 +3290,30 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#project-level-overrides" class="md-nav__link">
+  <a href="#model-selection-and-resolution" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Project-level overrides
+        Model selection and resolution
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Model selection and resolution">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-this-matters-for-embeddings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why this matters for embeddings
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -3318,10 +3352,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#put-apiv1organizationsorgidprovidersprovider" class="md-nav__link">
+  <a href="#put-apiv1projectsprojectidprovidersprovider" class="md-nav__link">
     <span class="md-ellipsis">
       
-        PUT /api/v1/organizations/:orgId/providers/:provider
+        PUT /api/v1/projects/:projectId/providers/:provider
       
     </span>
   </a>
@@ -3415,7 +3449,7 @@
 
 
 <h1 id="provider-setup">Provider Setup<a class="headerlink" href="#provider-setup" title="Permanent link">&para;</a></h1>
-<p>Memory uses LLM providers for text generation (chat, agents) and embedding (vector search). Credentials are configured at the <strong>org level</strong> as a default, and can be overridden at the <strong>project level</strong> when a project needs a different model or billing account.</p>
+<p>Memory uses LLM providers for text generation (chat, agents) and embedding (vector search). Credentials and model selection are configured <strong>per project</strong>: each project stores its own provider credential and the models it uses. There is no organization-level provider configuration — the old org-level endpoints are deprecated and returned an error.</p>
 <h2 id="supported-providers">Supported providers<a class="headerlink" href="#supported-providers" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -3428,101 +3462,113 @@
 <tbody>
 <tr>
 <td>Google AI (Gemini API)</td>
-<td><code>google-ai</code></td>
+<td><code>google</code></td>
 <td>API key</td>
 </tr>
 <tr>
 <td>Google Cloud Vertex AI</td>
-<td><code>vertex-ai</code></td>
-<td>Service account JSON</td>
+<td><code>google-vertex</code></td>
+<td>GCP project + location (+ optional service account JSON)</td>
+</tr>
+<tr>
+<td>OpenAI</td>
+<td><code>openai</code></td>
+<td>API key (+ optional base URL)</td>
+</tr>
+<tr>
+<td>DeepSeek</td>
+<td><code>deepseek</code></td>
+<td>API key</td>
 </tr>
 </tbody>
 </table>
+<p>Any other vendor registered in the server's vendor registry (for example <code>azure-openai</code>, <code>volcengine</code>, <code>lkeap</code>) can be configured with an API key, a base URL, and vendor-specific extra fields.</p>
 <hr />
 <h2 id="credential-security">Credential security<a class="headerlink" href="#credential-security" title="Permanent link">&para;</a></h2>
-<p>Credentials are <strong>AES-GCM encrypted at rest</strong> and never returned by any API response. The <code>configured</code> flag in responses indicates whether a credential is stored without revealing the value.</p>
+<p>Credentials are <strong>AES-GCM encrypted at rest</strong> and never returned by any API response. Responses carry a <code>configured</code> flag indicating whether a credential is stored, without revealing the value.</p>
 <hr />
-<h2 id="org-level-configuration">Org-level configuration<a class="headerlink" href="#org-level-configuration" title="Permanent link">&para;</a></h2>
-<p>Org-level credentials are the default fallback for all projects in the org.</p>
+<h2 id="project-configuration">Project configuration<a class="headerlink" href="#project-configuration" title="Permanent link">&para;</a></h2>
+<p>Every project configures its own credential. <code>PUT /api/v1/projects/:projectId/providers/:provider</code> stores the credential, syncs the provider's model catalog, auto-selects a generative and an embedding model, and runs a live test — one call.</p>
 <h3 id="configure-google-ai-gemini-api">Configure Google AI (Gemini API)<a class="headerlink" href="#configure-google-ai-gemini-api" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>https://api.example.com/api/v1/organizations/&lt;orgId&gt;/providers/google-ai<span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>https://api.example.com/api/v1/projects/&lt;projectId&gt;/providers/google<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{</span>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="s1">    "apiKey": "AIza...",</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="s1">    "generativeModel": "gemini-2.0-flash",</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="s1">    "embeddingModel": "text-embedding-004"</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="s1">    "generativeModel": "google/gemini-2.5-flash",</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="s1">    "embeddingModel": "google/gemini-embedding-001"</span>
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="s1">  }'</span>
 </code></pre></div>
+<p>The model fields are optional — omit them to accept the auto-selected models. Model names include the provider prefix.</p>
 <h3 id="configure-vertex-ai">Configure Vertex AI<a class="headerlink" href="#configure-vertex-ai" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>https://api.example.com/api/v1/organizations/&lt;orgId&gt;/providers/vertex-ai<span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>https://api.example.com/api/v1/projects/&lt;projectId&gt;/providers/google-vertex<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{</span>
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="s1">    "serviceAccountJson": "{\"type\":\"service_account\", ...}",</span>
 <a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="s1">    "gcpProject": "my-gcp-project",</span>
 <a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="s1">    "location": "us-central1",</span>
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="s1">    "generativeModel": "gemini-2.0-flash",</span>
-<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="s1">    "embeddingModel": "text-embedding-004"</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="s1">    "generativeModel": "google-vertex/gemini-2.5-flash",</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="s1">    "embeddingModel": "google-vertex/gemini-embedding-001"</span>
 <a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="s1">  }'</span>
 </code></pre></div>
 <h3 id="check-configuration-status">Check configuration status<a class="headerlink" href="#check-configuration-status" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>curl<span class="w"> </span>https://api.example.com/api/v1/organizations/&lt;orgId&gt;/providers/google-ai<span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>curl<span class="w"> </span>https://api.example.com/api/v1/projects/&lt;projectId&gt;/providers/google<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">{</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">"provider"</span><span class="p">:</span><span class="w"> </span><span class="s2">"google-ai"</span><span class="p">,</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">"provider"</span><span class="p">:</span><span class="w"> </span><span class="s2">"google"</span><span class="p">,</span>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">"configured"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">"generativeModel"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gemini-2.0-flash"</span><span class="p">,</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">"embeddingModel"</span><span class="p">:</span><span class="w"> </span><span class="s2">"text-embedding-004"</span><span class="p">,</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span><span class="nt">"updatedAt"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-03-01T12:00:00Z"</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">"generativeModel"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gemini-2.5-flash"</span><span class="p">,</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">"embeddingModel"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gemini-embedding-001"</span><span class="p">,</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span><span class="nt">"updatedAt"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-11-12T12:00:00Z"</span>
 <a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="p">}</span>
 </code></pre></div>
-<h3 id="list-all-configured-providers">List all configured providers<a class="headerlink" href="#list-all-configured-providers" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>curl<span class="w"> </span>https://api.example.com/api/v1/organizations/&lt;orgId&gt;/providers<span class="w"> </span><span class="se">\</span>
+<h3 id="list-a-projects-configured-providers">List a project's configured providers<a class="headerlink" href="#list-a-projects-configured-providers" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>curl<span class="w"> </span>https://api.example.com/api/v1/projects/&lt;projectId&gt;/providers<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span>
 </code></pre></div>
 <h3 id="remove-a-provider">Remove a provider<a class="headerlink" href="#remove-a-provider" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span>https://api.example.com/api/v1/organizations/&lt;orgId&gt;/providers/google-ai<span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span>https://api.example.com/api/v1/projects/&lt;projectId&gt;/providers/google<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span>
 </code></pre></div>
 <hr />
-<h2 id="project-level-overrides">Project-level overrides<a class="headerlink" href="#project-level-overrides" title="Permanent link">&para;</a></h2>
-<p>A project-level config overrides the org default for that project only. Useful when:</p>
-<ul>
-<li>A project needs a different billing account</li>
-<li>A project requires a different model (e.g. a larger context model for long documents)</li>
-<li>You are running A/B tests across projects</li>
-</ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>https://api.example.com/api/v1/projects/&lt;projectId&gt;/providers/google-ai<span class="w"> </span><span class="se">\</span>
+<h2 id="model-selection-and-resolution">Model selection and resolution<a class="headerlink" href="#model-selection-and-resolution" title="Permanent link">&para;</a></h2>
+<p>A provider credential can carry a default generative and embedding model (auto-selected on configure, or set with the <code>generativeModel</code> / <code>embeddingModel</code> fields). A project can also pin the models explicitly through its model config:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>https://api.example.com/api/v1/projects/&lt;projectId&gt;/model-config<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{</span>
-<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="s1">    "apiKey": "AIza...",</span>
-<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="s1">    "generativeModel": "gemini-2.5-pro",</span>
-<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="s1">    "embeddingModel": "text-embedding-004"</span>
-<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="s1">  }'</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="s1">    "generativeModel": "google/gemini-2.5-flash",</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="s1">    "embeddingModel": "google/gemini-embedding-001"</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="s1">  }'</span>
 </code></pre></div>
-<p>The resolution order is: <strong>project config → org config → error</strong>.</p>
+<p>The body is a partial update: a model field you send replaces the stored value and one you omit keeps it, so <code>{"generativeModel": "..."}</code> leaves the embedding model alone. To remove one model while keeping the other, send <code>clearGenerative</code> or <code>clearEmbedding</code>; <code>DELETE</code> on the same path clears both.</p>
+<p>The resolution order is: <strong>project model config → the project's provider credential → error</strong>. Nothing is inherited from an organization, and there is no environment-variable fallback at the request level.</p>
+<h3 id="why-this-matters-for-embeddings">Why this matters for embeddings<a class="headerlink" href="#why-this-matters-for-embeddings" title="Permanent link">&para;</a></h3>
+<p>Embedding vectors are generated only through the provider configured on the project. A project with no embedding model logs one warning per project —</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>embeddings: embedding model was not set for this project — semantic vectors will not be generated
+</code></pre></div>
+<p>— and writes no vectors; search degrades to lexical-only. Set the embedding model, then re-embed the corpus:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>memory<span class="w"> </span>graph<span class="w"> </span>reindex-embeddings<span class="w"> </span>--force<span class="w"> </span>--chunks
+</code></pre></div>
 <hr />
 <h2 id="testing-a-provider">Testing a provider<a class="headerlink" href="#testing-a-provider" title="Permanent link">&para;</a></h2>
-<p>Before relying on a provider for production workloads, test the credentials:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.example.com/api/v1/providers/google-ai/test<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"apiKey": "AIza..."}'</span>
+<p>Test the project's credentials end-to-end:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="s2">"https://api.example.com/api/v1/providers/google/test?projectId=&lt;projectId&gt;"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span>
 </code></pre></div>
-<p>Returns <code>200 OK</code> with a <code>{"success": true}</code> body on success, or an error message on failure.</p>
+<p>Returns <code>200 OK</code> with the model that answered, the reply, latency, and the embedding model (or an <code>embeddingError</code> when the provider cannot embed). The equivalent CLI command is <code>memory provider test google --project &lt;projectId&gt;</code>.</p>
 <hr />
 <h2 id="listing-available-models">Listing available models<a class="headerlink" href="#listing-available-models" title="Permanent link">&para;</a></h2>
-<p>Retrieve the model catalog for a provider:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>curl<span class="w"> </span><span class="s2">"https://api.example.com/api/v1/providers/google-ai/models?type=generative"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span>
+<p>Retrieve the cached model catalog for a provider:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>curl<span class="w"> </span><span class="s2">"https://api.example.com/api/v1/providers/google/models?type=generative"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span>
 </code></pre></div>
 <p>The <code>type</code> query parameter accepts <code>generative</code> or <code>embedding</code>.</p>
 <hr />
 <h2 id="request-response-reference">Request / response reference<a class="headerlink" href="#request-response-reference" title="Permanent link">&para;</a></h2>
-<h3 id="put-apiv1organizationsorgidprovidersprovider"><code>PUT /api/v1/organizations/:orgId/providers/:provider</code><a class="headerlink" href="#put-apiv1organizationsorgidprovidersprovider" title="Permanent link">&para;</a></h3>
+<h3 id="put-apiv1projectsprojectidprovidersprovider"><code>PUT /api/v1/projects/:projectId/providers/:provider</code><a class="headerlink" href="#put-apiv1projectsprojectidprovidersprovider" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
 <tr>
@@ -3536,51 +3582,64 @@
 <tr>
 <td><code>apiKey</code></td>
 <td>string</td>
-<td>Google AI only</td>
-<td>Gemini API key</td>
+<td>Google AI, OpenAI, DeepSeek</td>
+<td>API key</td>
 </tr>
 <tr>
 <td><code>serviceAccountJson</code></td>
 <td>string</td>
-<td>Vertex AI only</td>
-<td>Full service account JSON as a string</td>
+<td>No</td>
+<td>Full service account JSON as a string (Vertex AI)</td>
 </tr>
 <tr>
 <td><code>gcpProject</code></td>
 <td>string</td>
-<td>Vertex AI only</td>
+<td>Vertex AI</td>
 <td>GCP project ID</td>
 </tr>
 <tr>
 <td><code>location</code></td>
 <td>string</td>
-<td>Vertex AI only</td>
+<td>Vertex AI</td>
 <td>Region, e.g. <code>us-central1</code></td>
+</tr>
+<tr>
+<td><code>baseUrl</code></td>
+<td>string</td>
+<td>No</td>
+<td>Override the provider endpoint (OpenAI-compatible)</td>
 </tr>
 <tr>
 <td><code>generativeModel</code></td>
 <td>string</td>
 <td>No</td>
-<td>Override default generative model name</td>
+<td>Generative model, <code>provider/model</code> form</td>
 </tr>
 <tr>
 <td><code>embeddingModel</code></td>
 <td>string</td>
 <td>No</td>
-<td>Override default embedding model name</td>
+<td>Embedding model, <code>provider/model</code> form</td>
+</tr>
+<tr>
+<td><code>extraConfig</code></td>
+<td>object</td>
+<td>No</td>
+<td>Vendor-specific fields (e.g. <code>api_version</code>)</td>
 </tr>
 </tbody>
 </table>
+<p>Omitting credential fields on an update reuses the stored credential, and omitting the model fields keeps the stored models.</p>
 <hr />
 <h2 id="usage-tracking">Usage tracking<a class="headerlink" href="#usage-tracking" title="Permanent link">&para;</a></h2>
 <p>Every LLM call is recorded asynchronously. Events are buffered and bulk-inserted every 5 seconds (or at 100 events, whichever comes first).</p>
 <h3 id="view-org-usage">View org usage<a class="headerlink" href="#view-org-usage" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>curl<span class="w"> </span><span class="s2">"https://api.example.com/api/v1/organizations/&lt;orgId&gt;/usage?since=2026-03-01"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>curl<span class="w"> </span><span class="s2">"https://api.example.com/api/v1/organizations/&lt;orgId&gt;/usage?since=2026-03-01"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span>
 </code></pre></div>
 <h3 id="view-project-usage">View project usage<a class="headerlink" href="#view-project-usage" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>curl<span class="w"> </span><span class="s2">"https://api.example.com/api/v1/projects/&lt;projectId&gt;/usage"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>curl<span class="w"> </span><span class="s2">"https://api.example.com/api/v1/projects/&lt;projectId&gt;/usage"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span>
 </code></pre></div>
 <h3 id="usage-event-fields">Usage event fields<a class="headerlink" href="#usage-event-fields" title="Permanent link">&para;</a></h3>
 <table>
@@ -3593,7 +3652,7 @@
 <tbody>
 <tr>
 <td><code>provider</code></td>
-<td><code>google-ai</code> or <code>vertex-ai</code></td>
+<td>Provider slug (<code>google</code>, <code>google-vertex</code>, <code>openai</code>, <code>deepseek</code>, …)</td>
 </tr>
 <tr>
 <td><code>model</code></td>
@@ -3638,15 +3697,15 @@
 <tbody>
 <tr>
 <td>General generation (fast)</td>
-<td><code>gemini-2.0-flash</code></td>
+<td><code>google/gemini-2.5-flash</code></td>
 </tr>
 <tr>
 <td>Extended context / reasoning</td>
-<td><code>gemini-2.5-pro</code></td>
+<td><code>google/gemini-2.5-pro</code></td>
 </tr>
 <tr>
 <td>Embeddings</td>
-<td><code>text-embedding-004</code></td>
+<td><code>google/gemini-embedding-001</code></td>
 </tr>
 </tbody>
 </table>
