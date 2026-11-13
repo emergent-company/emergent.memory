@@ -423,30 +423,34 @@ func getClient(cmd *cobra.Command) (*client.Client, error) {
 // field present, with null for values that were never set. `stats` stays
 // conditional because it is only fetched with --stats.
 type projectJSON struct {
-	ID                   string                 `json:"id"`
-	Name                 string                 `json:"name"`
-	OrgID                string                 `json:"orgId"`
-	ProjectInfo          *string                `json:"project_info"`
-	ChatPromptTemplate   *string                `json:"chat_prompt_template"`
-	AutoExtractObjects   *bool                  `json:"auto_extract_objects"`
-	AutoExtractConfig    map[string]interface{} `json:"auto_extract_config"`
-	BudgetUSD            *float64               `json:"budget_usd"`
-	BudgetAlertThreshold *float64               `json:"budget_alert_threshold"`
-	Stats                *projects.ProjectStats `json:"stats,omitempty"`
+	ID                         string                 `json:"id"`
+	Name                       string                 `json:"name"`
+	OrgID                      string                 `json:"orgId"`
+	ProjectInfo                *string                `json:"project_info"`
+	ChatPromptTemplate         *string                `json:"chat_prompt_template"`
+	AutoExtractObjects         *bool                  `json:"auto_extract_objects"`
+	AutoExtractConfig          map[string]interface{} `json:"auto_extract_config"`
+	BudgetUSD                  *float64               `json:"budget_usd"`
+	BudgetAlertThreshold       *float64               `json:"budget_alert_threshold"`
+	BudgetWeeklyUSD            *float64               `json:"budget_weekly_usd"`
+	BudgetWeeklyAlertThreshold *float64               `json:"budget_weekly_alert_threshold"`
+	Stats                      *projects.ProjectStats `json:"stats,omitempty"`
 }
 
 func newProjectJSON(p projects.Project) projectJSON {
 	return projectJSON{
-		ID:                   p.ID,
-		Name:                 p.Name,
-		OrgID:                p.OrgID,
-		ProjectInfo:          p.ProjectInfo,
-		ChatPromptTemplate:   p.ChatPromptTemplate,
-		AutoExtractObjects:   p.AutoExtractObjects,
-		AutoExtractConfig:    p.AutoExtractConfig,
-		BudgetUSD:            p.BudgetUSD,
-		BudgetAlertThreshold: p.BudgetAlertThreshold,
-		Stats:                p.Stats,
+		ID:                         p.ID,
+		Name:                       p.Name,
+		OrgID:                      p.OrgID,
+		ProjectInfo:                p.ProjectInfo,
+		ChatPromptTemplate:         p.ChatPromptTemplate,
+		AutoExtractObjects:         p.AutoExtractObjects,
+		AutoExtractConfig:          p.AutoExtractConfig,
+		BudgetUSD:                  p.BudgetUSD,
+		BudgetAlertThreshold:       p.BudgetAlertThreshold,
+		BudgetWeeklyUSD:            p.BudgetWeeklyUSD,
+		BudgetWeeklyAlertThreshold: p.BudgetWeeklyAlertThreshold,
+		Stats:                      p.Stats,
 	}
 }
 

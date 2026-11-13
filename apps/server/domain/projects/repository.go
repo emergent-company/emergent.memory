@@ -428,8 +428,15 @@ func (r *Repository) CreateMembership(ctx context.Context, tx bun.Tx, membership
 
 // Update updates a project in the database
 func (r *Repository) Update(ctx context.Context, project *Project) error {
+	// The two cycle anchors are excluded on purpose: they move only through
+	// ResetBudgetWindowAnchor. A PATCH loads the row, edits it and writes the
+	// model back, so writing the anchors here would let a routine settings save
+	// (or a slow save racing an admin's reset) put a stale anchor back and move
+	// the cycle — exactly what "reset is the only way to move a boundary" rules
+	// out.
 	_, err := r.db.NewUpdate().
 		Model(project).
+		ExcludeColumn("budget_week_anchor", "budget_month_anchor").
 		WherePK().
 		Returning("id, organization_id, name, project_info, chat_prompt_template, auto_extract_objects, auto_extract_config, created_at, updated_at, auto_merge_extraction_branches, auto_discovery_enabled, auto_extract_source_syncs").
 		Exec(ctx)

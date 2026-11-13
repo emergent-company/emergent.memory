@@ -414,7 +414,10 @@ func budgetStateExhausted(state *BudgetState) bool {
 // Deduplication is the notifications producer's durable (user, group_key)
 // unique index, exactly as before; that atomic gate is also the email gate:
 // only a newly created notification sends a letter, so the retry/re-evaluation
-// loop can never mail an admin twice for the same period.
+// loop cannot mail an admin twice for the same period while that notification is
+// live. (Resolving the notification frees the partial index slot, so a later
+// evaluation of the same period would re-notify — the established behaviour of
+// migration 00219, not something this path changes.)
 func (s *UsageService) checkBudget(ctx context.Context, projectID string) {
 	cfg, err := s.budgetConfigFor(ctx, projectID)
 	if err != nil {
@@ -703,11 +706,20 @@ func (s *UsageService) sendBudgetAlertEmail(
 }
 
 // CheckBudgetExceeded returns true when either of the project's spending
-// windows has reached its cap. No cap configured anywhere returns false. If any
-// query fails it returns false so that callers fail-open and do not block agent
+// windows has reached its cap. No cap configured anywhere returns false without
+// touching the usage ledger — this runs on every agent run and every embedding
+// chunk, and a project with no caps has no limit to look for. If any query
+// fails it returns false so that callers fail-open and do not block agent
 // execution on a broken budget query.
 func (s *UsageService) CheckBudgetExceeded(ctx context.Context, projectID string) (bool, error) {
-	state, err := s.GetBudgetState(ctx, projectID)
+	cfg, err := s.budgetConfigFor(ctx, projectID)
+	if err != nil {
+		return false, fmt.Errorf("CheckBudgetExceeded: read budget config: %w", err)
+	}
+	if !capConfigured(cfg.WeeklyCapUSD) && !capConfigured(cfg.MonthlyCapUSD) {
+		return false, nil
+	}
+	state, err := s.budgetStateForConfig(ctx, cfg, projectID, time.Now().UTC())
 	if err != nil {
 		return false, fmt.Errorf("CheckBudgetExceeded: %w", err)
 	}

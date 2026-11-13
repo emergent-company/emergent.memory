@@ -285,8 +285,14 @@ type UpdateProjectRequest struct {
 	SkillCapture *skills.ProjectSkillCaptureConfig `json:"skill_capture,omitempty"`
 }
 
-// ToDTO converts a Project entity to ProjectDTO
-// Note: Stats are not populated here, they must be set separately after querying
+// ToDTO converts a Project entity to ProjectDTO.
+//
+// Stats are copied from the loaded entity: `List` and `GetByID` populate them
+// only when the caller asked for them (`include_stats`), and ToDTO is the only
+// thing that copies them onto the DTO. Dropping this line therefore empties
+// `?include_stats=true` responses — and with them `--stats`, the CLI TUI's
+// project counts and the SDK's IncludeStats callers — without failing any test,
+// which is how it was lost once already.
 func (p *Project) ToDTO() ProjectDTO {
 	dto := ProjectDTO{
 		ID:                   p.ID,
@@ -296,6 +302,7 @@ func (p *Project) ToDTO() ProjectDTO {
 		ChatPromptTemplate:   p.ChatPromptTemplate,
 		BudgetUSD:            p.BudgetUSD,
 		BudgetAlertThreshold: &p.BudgetAlertThreshold,
+		Stats:                p.Stats,
 		SkillCapture:         p.SkillCapture,
 	}
 

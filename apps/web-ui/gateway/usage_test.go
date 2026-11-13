@@ -167,7 +167,7 @@ func TestUsageRoute(t *testing.T) {
 	for _, want := range []string{
 		"Usage", "Total tokens", "165", // 100+50+10+5
 		"$0.0123", "$0.0133", // per-row cost + range total (0.0123+0.001)
-		"Current month spend", "deepseek-v4-pro", "claude-sonnet-4",
+		"Calendar month spend", "deepseek-v4-pro", "claude-sonnet-4",
 		"openai", "anthropic", "Costs shown are estimates.",
 		`id="usage-timeseries"`, `type="application/json"`, `"tokens":`, `"sessions":`,
 		"Tokens per day", "Sessions per day", "Per-model usage",

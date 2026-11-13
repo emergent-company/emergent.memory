@@ -19,7 +19,8 @@ type EmbeddingUsageRecorder interface {
 	RecordAsync(event *provider.LLMUsageEvent)
 }
 
-// BudgetChecker checks whether a project has exceeded its monthly budget.
+// BudgetChecker checks whether a project has exhausted either spending window
+// (weekly or monthly).
 // Implemented by provider.UsageService.
 type BudgetChecker interface {
 	CheckBudgetExceeded(ctx context.Context, projectID string) (bool, error)
@@ -31,7 +32,7 @@ type EmbeddingBudgetExceededError struct {
 }
 
 func (e *EmbeddingBudgetExceededError) Error() string {
-	return fmt.Sprintf("project %s has exceeded its monthly spending budget", e.ProjectID)
+	return fmt.Sprintf("project %s has exceeded its spending budget", e.ProjectID)
 }
 
 // orgIDCache provides a simple in-memory cache for projectID → orgID lookups

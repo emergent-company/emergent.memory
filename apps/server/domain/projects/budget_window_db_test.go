@@ -132,6 +132,28 @@ func (s *ProjectBudgetWindowSuite) TestReset_RejectsUnknownWindow() {
 	s.Nil(month)
 }
 
+// TestUpdate_CannotMoveTheAnchors proves a routine settings save cannot move a
+// cycle boundary. PATCH loads the row, edits it and writes the model back, so
+// without excluding the anchors a save would write back the anchor it loaded —
+// reverting an admin's reset that landed in between, and moving a boundary the
+// only the reset endpoint is allowed to move.
+func (s *ProjectBudgetWindowSuite) TestUpdate_CannotMoveTheAnchors() {
+	resp := s.reset(s.ProjectID, "week", "e2e-test-user")
+	s.Require().Equal(200, resp.StatusCode, resp.String())
+	weekBefore, _ := s.anchors(s.ProjectID)
+	s.Require().NotNil(weekBefore)
+
+	resp = s.Client.PATCH("/api/projects/"+s.ProjectID,
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{"name": "Renamed " + uuid.NewString()[:8]}),
+	)
+	s.Require().Equal(200, resp.StatusCode, resp.String())
+
+	weekAfter, _ := s.anchors(s.ProjectID)
+	s.Require().NotNil(weekAfter, "a settings save must not clear the weekly anchor")
+	s.WithinDuration(*weekBefore, *weekAfter, 0, "a settings save must not move the weekly anchor")
+}
+
 // TestReset_ProjectNotFound keeps the 404 shape the other project routes use.
 func (s *ProjectBudgetWindowSuite) TestReset_ProjectNotFound() {
 	resp := s.reset(uuid.NewString(), "week", "e2e-test-user")
