@@ -37,7 +37,7 @@ func main() {
 	// The static MEMORY_TOKEN was removed from the gateway. Operators upgrading
 	// may still export it; name it explicitly so the break is not silent.
 	if os.Getenv("MEMORY_TOKEN") != "" {
-		log.Printf("WARNING: MEMORY_TOKEN is set but no longer read by the gateway; it was replaced by session auth for interactive/voice calls and AGENT_TRIGGER_TOKEN for the GitHub webhook (see issue #818 for per-device credentials).")
+		log.Printf("WARNING: MEMORY_TOKEN is set but no longer read by the gateway; interactive/voice calls use session auth (see issue #818 for per-device credentials).")
 	}
 	if err := initSentry(cfg.SentryDSN, cfg.SentryEnvironment, cfg.SentryTracesSampleRate); err != nil {
 		log.Printf("sentry init: %v", err)
@@ -137,10 +137,6 @@ func main() {
 	// Internal worker endpoint — exempt from session auth (see publicAuthPath);
 	// gated by a per-worker credential in the X-Worker-Key header instead.
 	e.GET("/internal/voice-binding", s.voiceBindingHandler)
-
-	// GitHub webhook ingress — HMAC-signature authenticated, NOT behind the
-	// session/key gate (see publicAuthPath and webhook_github.go).
-	e.POST("/webhooks/github", s.githubWebhook)
 
 	api := e.Group("/api")
 	api.GET("/health", s.health)

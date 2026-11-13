@@ -135,7 +135,6 @@ func TestStrictScopedPath(t *testing.T) {
 		{http.MethodGet, "/share/agent", false},
 		{http.MethodGet, "/static/js/app.js", false},
 		{http.MethodGet, "/assets/x.css", false},
-		{http.MethodGet, "/webhooks/github", false},
 		{http.MethodGet, "/dev/components", false},
 		{http.MethodGet, "/partial/invite-user-search", false},
 		{http.MethodGet, "/data-sources", false},                // OAuth landing re-scoped by dataSourcesScopeRedirect

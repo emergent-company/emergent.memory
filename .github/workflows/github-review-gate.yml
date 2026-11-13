@@ -13,10 +13,12 @@ name: GitHub review gate
 # for the current head, it dispatches a fresh guard run and enables auto-merge;
 # a rejection disables auto-merge.
 #
-# Trust: `GITHUB_REVIEW_BOT_LOGIN` is a repository variable naming the review
-# App's bot login (e.g. `memory-reviewer[bot]`). The App's immutable user id must
-# also be in `MERGE_GUARD_TRUSTED_USER_IDS`, so the guard itself accepts the
-# marker. Both gates are required; this workflow never trusts a human-commenter.
+# Trust: `GITHUB_REVIEW_BOT_LOGINS` is a repository variable naming the review
+# bot login(s) (comma/space separated, e.g. `memory-reviewer[bot]`). The legacy
+# singular `GITHUB_REVIEW_BOT_LOGIN` is still read when the list is unset. Every
+# listed App's immutable user id must also be in `MERGE_GUARD_TRUSTED_USER_IDS`,
+# so the guard itself accepts the marker. Both gates are required; this workflow
+# never trusts a human-commenter.
 on:
   issue_comment:
     types: [created]
@@ -40,15 +42,19 @@ jobs:
           PR: ${{ github.event.issue.number }}
           BODY: ${{ github.event.comment.body }}
           AUTHOR: ${{ github.event.comment.user.login }}
-          BOT_LOGIN: ${{ vars.GITHUB_REVIEW_BOT_LOGIN }}
+          BOT_LOGINS: ${{ vars.GITHUB_REVIEW_BOT_LOGINS }}
+          BOT_LOGIN_LEGACY: ${{ vars.GITHUB_REVIEW_BOT_LOGIN }}
         run: |
           set -euo pipefail
 
-          if [[ -z "${BOT_LOGIN:-}" ]]; then
-            echo "GITHUB_REVIEW_BOT_LOGIN is unset; review gate is disabled"
+          logins="${BOT_LOGINS:-${BOT_LOGIN_LEGACY:-}}"
+          if [[ -z "${logins}" ]]; then
+            echo "GITHUB_REVIEW_BOT_LOGINS is unset; review gate is disabled"
             exit 0
           fi
-          if [[ "${AUTHOR}" != "${BOT_LOGIN}" ]]; then
+          if ! printf '%s\n' "${logins}" | tr ',' '\n' \
+              | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' \
+              | grep -Fxq "${AUTHOR}"; then
             exit 0
           fi
 
