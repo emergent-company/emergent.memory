@@ -151,18 +151,6 @@ func budgetBarWidth(percent float64) string {
 	return strconv.FormatFloat(percent, 'f', 0, 64) + "%"
 }
 
-// budgetStatusTone maps a window status to the tone used by the chip and bar.
-func budgetStatusTone(status string) string {
-	switch status {
-	case "exhausted":
-		return "error"
-	case "warning":
-		return "warning"
-	default:
-		return "success"
-	}
-}
-
 // budgetStatusLabel is the human wording for a window status.
 func budgetStatusLabel(status string) string {
 	switch status {

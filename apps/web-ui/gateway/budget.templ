@@ -144,12 +144,14 @@ func budgetStatusIntent(status string) ui.BadgeIntent {
 	}
 }
 
-// budgetBarClass is the fill colour of the usage bar for a status.
+// budgetBarClass is the fill colour of the usage bar for a status. It derives
+// from budgetStatusIntent so the bar and the chip beside it cannot land on
+// different levels.
 func budgetBarClass(status string) string {
-	switch status {
-	case "exhausted":
+	switch budgetStatusIntent(status) {
+	case ui.BadgeError:
 		return "bg-error"
-	case "warning":
+	case ui.BadgeWarning:
 		return "bg-warning"
 	default:
 		return "bg-success"
