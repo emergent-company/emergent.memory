@@ -30,7 +30,9 @@ type updateSourceAppDTO struct {
 }
 
 type sourceTriggerDTO struct {
-	EventType   string         `json:"eventType"`
+	EventType string `json:"eventType"`
+	// AgentID accepts an agent definition id (what the UI picker offers) or a
+	// runtime agent id; the service stores the definition's runtime agent.
 	AgentID     string         `json:"agentId"`
 	Queue       string         `json:"queue"`
 	EventFilter map[string]any `json:"eventFilter"`
@@ -182,7 +184,9 @@ func (h *Handler) ListSourceTriggers(c echo.Context) error {
 
 // CreateSourceTrigger handles POST /api/data-source-integrations/:id/triggers.
 // @Summary      Create a source trigger
-// @Description  Binds an event type to a runtime agent and queue.
+// @Description  Binds an event type to an agent and queue. agentId accepts an
+// @Description  agent definition id (resolved to its runtime agent) or a
+// @Description  runtime agent id.
 // @Tags         data-source-integrations
 // @Accept       json
 // @Produce      json

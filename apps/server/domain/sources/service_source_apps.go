@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/githubapp"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -56,7 +57,9 @@ type UpdateSourceAppRequest struct {
 
 // SourceTriggerInput is the create/update shape for a source trigger.
 type SourceTriggerInput struct {
-	EventType   string
+	EventType string
+	// AgentID is an agent definition id or a runtime agent id; the service
+	// stores the kb.agents id the runs execute as.
 	AgentID     string
 	Queue       string
 	EventFilter map[string]any
@@ -348,13 +351,14 @@ func (s *Service) ListSourceTriggers(ctx context.Context, projectID, sourceID uu
 	return s.repo.ListSourceTriggers(ctx, projectID, sourceID)
 }
 
-// CreateSourceTrigger binds an event type to a runtime agent and queue.
+// CreateSourceTrigger binds an event type to the agent its runs execute as.
 func (s *Service) CreateSourceTrigger(ctx context.Context, projectID, sourceID uuid.UUID, in SourceTriggerInput) (*SourceTrigger, error) {
 	src, err := s.sourceForProject(ctx, projectID, sourceID)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.validateTriggerInput(ctx, projectID, src, in, true); err != nil {
+	agentID, err := s.resolveTriggerAgent(ctx, projectID, src, in, true)
+	if err != nil {
 		return nil, err
 	}
 	enabled := true
@@ -365,7 +369,7 @@ func (s *Service) CreateSourceTrigger(ctx context.Context, projectID, sourceID u
 		ProjectID:   projectID,
 		SourceID:    sourceID,
 		EventType:   strings.TrimSpace(in.EventType),
-		AgentID:     mustUUID(in.AgentID),
+		AgentID:     agentID,
 		Queue:       defaultSourceQueue(in.Queue),
 		EventFilter: in.EventFilter,
 		Enabled:     enabled,
@@ -392,14 +396,15 @@ func (s *Service) UpdateSourceTrigger(ctx context.Context, projectID, sourceID, 
 	if in.EventType != "" {
 		in.EventType = strings.TrimSpace(in.EventType)
 	}
-	if err := s.validateTriggerInput(ctx, projectID, src, in, false); err != nil {
+	agentID, err := s.resolveTriggerAgent(ctx, projectID, src, in, false)
+	if err != nil {
 		return nil, err
 	}
 	if in.EventType != "" {
 		trigger.EventType = in.EventType
 	}
-	if in.AgentID != "" {
-		trigger.AgentID = mustUUID(in.AgentID)
+	if strings.TrimSpace(in.AgentID) != "" {
+		trigger.AgentID = agentID
 	}
 	if in.Queue != "" {
 		trigger.Queue = defaultSourceQueue(in.Queue)
@@ -428,33 +433,112 @@ func (s *Service) DeleteSourceTrigger(ctx context.Context, projectID, sourceID, 
 	return s.repo.DeleteSourceTrigger(ctx, projectID, triggerID)
 }
 
-func (s *Service) validateTriggerInput(ctx context.Context, projectID uuid.UUID, src *Source, in SourceTriggerInput, requireAll bool) error {
+// resolveTriggerAgent validates the trigger's agent and returns the id to store
+// on the binding: always a kb.agents id, never the definition id the UI picker
+// submits. kb.source_triggers.agent_id and kb.agent_runs.agent_id are foreign
+// keys into kb.agents, so a definition id cannot be stored and the dispatcher
+// could not enqueue a run for it.
+func (s *Service) resolveTriggerAgent(ctx context.Context, projectID uuid.UUID, src *Source, in SourceTriggerInput, requireAll bool) (uuid.UUID, error) {
 	eventType := strings.TrimSpace(in.EventType)
 	if eventType == "" && requireAll {
-		return apperror.NewValidation("eventType is required")
+		return uuid.Nil, apperror.NewValidation("eventType is required")
 	}
 	if eventType != "" && src.Provider == ProviderTypeGitHubApp && eventType != "pull_request" {
-		return apperror.NewValidation("github_app supports only the pull_request event")
+		return uuid.Nil, apperror.NewValidation("github_app supports only the pull_request event")
 	}
 	if strings.TrimSpace(in.AgentID) == "" {
 		if requireAll {
-			return apperror.NewValidation("agentId is required")
+			return uuid.Nil, apperror.NewValidation("agentId is required")
 		}
-		return nil
+		return uuid.Nil, nil
 	}
-	agentID, err := uuid.Parse(in.AgentID)
+	agentID, err := uuid.Parse(strings.TrimSpace(in.AgentID))
 	if err != nil {
-		return apperror.NewValidation("agentId must be a UUID")
+		return uuid.Nil, apperror.NewValidation("agentId must be a UUID")
 	}
 	if s.agentRepo == nil {
-		return apperror.NewInternal("agent resolver is not configured", nil)
+		return uuid.Nil, apperror.NewInternal("agent resolver is not configured", nil)
 	}
 	projectIDStr := projectID.String()
+	// A runtime agent id binds as-is: triggers created before definition-backed
+	// agents existed, and API callers that already hold a kb.agents id, keep
+	// working.
 	agent, err := s.agentRepo.FindByID(ctx, agentID.String(), &projectIDStr)
-	if err != nil || agent == nil {
-		return apperror.NewNotFound("Agent", in.AgentID)
+	if err != nil {
+		return uuid.Nil, apperror.NewInternal("failed to resolve the agent", err)
 	}
-	return nil
+	if agent != nil {
+		return agentID, nil
+	}
+	// The panel's picker lists agent definitions: resolve one to the runtime
+	// agent its runs execute as, creating that row on first bind.
+	def, err := s.agentRepo.FindDefinitionByID(ctx, agentID.String(), &projectIDStr)
+	if err != nil {
+		return uuid.Nil, apperror.NewInternal("failed to resolve the agent", err)
+	}
+	if def == nil {
+		return uuid.Nil, apperror.NewNotFound("Agent", strings.TrimSpace(in.AgentID))
+	}
+	runtime, err := s.ensureDefinitionRuntimeAgent(ctx, def)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	resolved, err := uuid.Parse(runtime.ID)
+	if err != nil {
+		return uuid.Nil, apperror.NewInternal("agent runtime row has an invalid id", err)
+	}
+	return resolved, nil
+}
+
+// ensureDefinitionRuntimeAgent returns the kb.agents row a definition's runs
+// execute as, creating it on first use. The platform does the same lazily for
+// object work rules (agents.Handler.syncDefinitionWorkTriggers) and A2A calls
+// (agents.A2AHandler.resolveRuntimeAgent), so a definition can be bound before
+// any of them has needed a runtime row.
+func (s *Service) ensureDefinitionRuntimeAgent(ctx context.Context, def *agents.AgentDefinition) (*agents.Agent, error) {
+	existing, err := s.agentRepo.FindAgentsByDefinitionID(ctx, def.ID)
+	if err != nil {
+		return nil, apperror.NewInternal("failed to resolve the agent runtime row", err)
+	}
+	if len(existing) > 0 {
+		return existing[0], nil
+	}
+	// A row created before the definition was linked (a manual run, A2A, a work
+	// rule while the link was missing) carries the definition's name: adopt it
+	// instead of leaving two runtime agents with the same name. A row linked to
+	// another definition is left alone; the bind gets its own row so the two
+	// definitions cannot run each other's agent.
+	adopted, err := s.agentRepo.FindAgentByName(ctx, def.ProjectID, def.Name)
+	if err != nil {
+		return nil, apperror.NewInternal("failed to resolve the agent runtime row", err)
+	}
+	if adopted != nil {
+		if adopted.AgentDefinitionID == nil {
+			defID := def.ID
+			adopted.AgentDefinitionID = &defID
+			if err := s.agentRepo.UpdateAgent(ctx, adopted); err != nil {
+				return nil, apperror.NewInternal("failed to link the agent runtime row", err)
+			}
+			return adopted, nil
+		}
+		if *adopted.AgentDefinitionID == def.ID {
+			return adopted, nil
+		}
+	}
+	defID := def.ID
+	created := &agents.Agent{
+		ProjectID:         def.ProjectID,
+		Name:              def.Name,
+		StrategyType:      "agent-def:" + def.ID,
+		CronSchedule:      "0 0 * * *",
+		Enabled:           def.Enabled,
+		TriggerType:       agents.TriggerTypeManual,
+		AgentDefinitionID: &defID,
+	}
+	if err := s.agentRepo.CreateAgent(ctx, created); err != nil {
+		return nil, apperror.NewInternal("failed to create the agent runtime row", err)
+	}
+	return created, nil
 }
 
 func (s *Service) sourceForProject(ctx context.Context, projectID, sourceID uuid.UUID) (*Source, error) {
@@ -474,11 +558,6 @@ func (s *Service) requireSourceAppAdmin(ctx context.Context, orgID uuid.UUID, us
 		return apperror.NewForbidden("org administrator required")
 	}
 	return nil
-}
-
-func mustUUID(raw string) uuid.UUID {
-	id, _ := uuid.Parse(strings.TrimSpace(raw))
-	return id
 }
 
 func mapSourceConflict(err error, message string) error {

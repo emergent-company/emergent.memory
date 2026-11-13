@@ -929,6 +929,53 @@ func TestDataSourceDetailRendersTriggersForGitHubApp(t *testing.T) {
 	}
 }
 
+func TestDataSourceDetailNamesRuntimeTriggerAgent(t *testing.T) {
+	// A binding stores the kb.agents id its runs execute as, while the picker
+	// offers definitions: the row must name the agent through the runtime row's
+	// definition link, not render the raw runtime UUID.
+	f := sourceAppsAdminFake()
+	f.dsIntegrations = []DSIntegration{{ID: "s1", Name: "GH", ProviderType: dsProviderTypeGitHubApp}}
+	f.dsSourceTriggers = map[string][]DSSourceTrigger{"s1": {{
+		ID: "t1", SourceID: "s1", EventType: "pull_request", AgentID: "runtime-1", Enabled: true,
+	}}}
+	f.agents = []AgentDefinitionSummary{{ID: "def-1", Name: "PR Trigger Test"}}
+	definitionID := "def-1"
+	f.scheduledAgents = []ScheduledAgent{{ID: "runtime-1", Name: "PR Trigger Test", AgentDefinitionID: &definitionID}}
+	e := sourceAppsTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `>PR Trigger Test</span>`) {
+		t.Errorf("trigger row does not name the runtime agent's definition:\n%s", body)
+	}
+	if strings.Contains(body, ">runtime-1</span>") {
+		t.Error("trigger row fell back to the raw runtime agent id")
+	}
+	if f.listScheduledAgentsCalls != 1 {
+		t.Errorf("ListScheduledAgents calls = %d, want 1", f.listScheduledAgentsCalls)
+	}
+}
+
+func TestDataSourceDetailSkipsRuntimeAgentReadWithoutTriggers(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.dsIntegrations = []DSIntegration{{ID: "s1", Name: "GH", ProviderType: dsProviderTypeGitHubApp}}
+	f.agents = []AgentDefinitionSummary{{ID: "def-1", Name: "Reviewer"}}
+	e := sourceAppsTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if f.listScheduledAgentsCalls != 0 {
+		t.Errorf("ListScheduledAgents calls = %d, want 0 with no bindings", f.listScheduledAgentsCalls)
+	}
+}
+
 func TestDataSourceDetailHidesTriggerCreateWithoutAgents(t *testing.T) {
 	f := sourceAppsAdminFake()
 	f.dsIntegrations = []DSIntegration{{ID: "s1", Name: "GH", ProviderType: dsProviderTypeGitHubApp}}
@@ -1101,7 +1148,7 @@ func TestDsSourceTriggerHelpers(t *testing.T) {
 	if got := dsTriggerQueueLabel(" reviews "); got != "reviews" {
 		t.Errorf("queue label = %q", got)
 	}
-	if got := dsTriggerAgentName([]AgentDefinitionSummary{{ID: "a1", Name: "Reviewer"}}, "a1"); got != "Reviewer" {
+	if got := dsTriggerAgentName(map[string]string{"a1": "Reviewer"}, "a1"); got != "Reviewer" {
 		t.Errorf("agent name = %q", got)
 	}
 	// A deleted agent keeps its id so the stale row stays removable.

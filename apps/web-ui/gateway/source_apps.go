@@ -374,8 +374,13 @@ func (s *Server) findProjectSourceApp(c echo.Context, appID string) (*SourceApp,
 type dsSourceTriggersView struct {
 	SourceID string
 	Triggers []DSSourceTrigger
-	// Agents are the project's runtime agents, the create form's options.
+	// Agents are the project's agent definitions, the create form's options. A
+	// binding stores the runtime agent id its runs execute as (kb.agents), so
+	// AgentNames resolves both spaces back to a display name.
 	Agents []AgentDefinitionSummary
+	// AgentNames maps a trigger's runtime agent id — and each definition id the
+	// picker offers — to a display name.
+	AgentNames map[string]string
 	// LoadErr records a failed trigger listing; the panel still renders so the
 	// source stays editable.
 	LoadErr error
@@ -394,25 +399,47 @@ func (s *Server) dsDataSourceTriggers(c echo.Context, src *DSIntegration) *dsSou
 	} else {
 		view.Triggers = triggers
 	}
+	var defs []AgentDefinitionSummary
 	if agents, err := s.memory.ListAgentDefinitions(ctx); err != nil {
 		captureError(err)
 	} else {
+		defs = agents
 		view.Agents = agents
 	}
+	names := make(map[string]string, len(defs))
+	for _, def := range defs {
+		names[def.ID] = strings.TrimSpace(def.Name)
+	}
+	// The bind stores the kb.agents id, which the definition list cannot name.
+	// One extra read only when a binding exists: a source with no trigger has
+	// nothing to resolve.
+	if len(view.Triggers) > 0 {
+		if runtimeAgents, err := s.memory.ListScheduledAgents(ctx); err != nil {
+			captureError(err)
+		} else {
+			for _, agent := range runtimeAgents {
+				name := strings.TrimSpace(agent.Name)
+				// Prefer the linked definition's name so a rename shows through
+				// and the row matches what the picker offered.
+				if agent.AgentDefinitionID != nil {
+					if defName := strings.TrimSpace(names[*agent.AgentDefinitionID]); defName != "" {
+						name = defName
+					}
+				}
+				names[agent.ID] = name
+			}
+		}
+	}
+	view.AgentNames = names
 	return view
 }
 
-// dsTriggerAgentName resolves an agent id to its display name, falling back to
-// the id when the agent is no longer listed (a deleted agent keeps its binding
-// visible so the stale row can be removed).
-func dsTriggerAgentName(agents []AgentDefinitionSummary, agentID string) string {
-	for _, agent := range agents {
-		if agent.ID == agentID {
-			if name := strings.TrimSpace(agent.Name); name != "" {
-				return name
-			}
-			break
-		}
+// dsTriggerAgentName resolves a trigger's agent id to its display name, falling
+// back to the id when the agent is no longer listed (a deleted agent keeps its
+// binding visible so the stale row can be removed).
+func dsTriggerAgentName(names map[string]string, agentID string) string {
+	if name := strings.TrimSpace(names[agentID]); name != "" {
+		return name
 	}
 	return agentID
 }

@@ -208,6 +208,102 @@ func TestSourceAppRegistrationAndGitHubAppSource(t *testing.T) {
 	}
 }
 
+// TestSourceTriggerResolvesDefinitionBackedAgent pins the binding contract the
+// UI depends on: the trigger picker lists kb.agent_definitions, but
+// kb.source_triggers.agent_id is a foreign key into the runtime-agent table
+// kb.agents, so a definition id is resolved to the definition's runtime agent
+// (created on first bind) instead of being stored verbatim (#727).
+func TestSourceTriggerResolvesDefinitionBackedAgent(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	ctx := context.Background()
+	db := testdb.SetupTestDBOrFail(t, ctx, "source_trigger_agent")
+	defer db.Close()
+	repo := NewRepository(db.DB, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	orgID, projectID := uuid.New(), uuid.New()
+	_, err := db.DB.ExecContext(ctx, `INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgID, "trigger-org")
+	require.NoError(t, err)
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`, projectID, orgID, "trigger-project")
+	require.NoError(t, err)
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.sources (id, project_id, provider, display_name, config, status)
+		VALUES (?, ?, 'github_app', 'gh', '{}'::jsonb, 'active')`, uuid.New(), projectID)
+	require.NoError(t, err)
+
+	keyHex, err := cryptoutil.GenerateKey()
+	require.NoError(t, err)
+	agentRepo := agents.NewRepository(db.DB)
+	svc := NewService(repo, &config.Config{LLMProvider: config.LLMProviderConfig{EncryptionKey: keyHex}},
+		slog.New(slog.NewTextHandler(io.Discard, nil)), NewRegistry(newGitHubAppProvider()),
+		WithAgentRepository(agentRepo))
+	src, err := repo.List(ctx, projectID)
+	require.NoError(t, err)
+	require.Len(t, src, 1)
+
+	// A definition created from the Agents page has no runtime row yet.
+	defID := uuid.New()
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.agent_definitions (id, project_id, name) VALUES (?, ?, ?)`,
+		defID, projectID, "PR Trigger Test")
+	require.NoError(t, err)
+
+	trigger, err := svc.CreateSourceTrigger(ctx, projectID, src[0].ID, SourceTriggerInput{
+		EventType: "pull_request", AgentID: defID.String(), Enabled: boolPtr(true),
+	})
+	require.NoError(t, err)
+	require.NotEqual(t, defID, trigger.AgentID, "the definition id was stored on the binding")
+
+	runtime, err := agentRepo.FindByID(ctx, trigger.AgentID.String(), nil)
+	require.NoError(t, err)
+	require.NotNil(t, runtime)
+	require.Equal(t, "PR Trigger Test", runtime.Name)
+	require.Equal(t, "agent-def:"+defID.String(), runtime.StrategyType)
+	require.Equal(t, agents.TriggerTypeManual, runtime.TriggerType)
+	require.NotNil(t, runtime.AgentDefinitionID)
+	require.Equal(t, defID.String(), *runtime.AgentDefinitionID)
+
+	// Re-binding the same definition reuses the runtime row instead of minting a
+	// second agent with the same name.
+	updated, err := svc.UpdateSourceTrigger(ctx, projectID, src[0].ID, trigger.ID, SourceTriggerInput{AgentID: defID.String()})
+	require.NoError(t, err)
+	require.Equal(t, trigger.AgentID, updated.AgentID)
+	var count int
+	require.NoError(t, db.DB.NewRaw(`SELECT count(*) FROM kb.agents WHERE agent_definition_id = ?`, defID).Scan(ctx, &count))
+	require.Equal(t, 1, count)
+
+	// A pre-existing runtime row with the definition's name (created by a manual
+	// run or A2A before the link existed) is adopted and linked, not duplicated.
+	adoptedDef, adoptedAgent := uuid.New(), uuid.New()
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.agent_definitions (id, project_id, name) VALUES (?, ?, ?)`,
+		adoptedDef, projectID, "Adopted Agent")
+	require.NoError(t, err)
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.agents (id, name, strategy_type, cron_schedule, project_id)
+		VALUES (?, ?, 'definition', '', ?)`, adoptedAgent, "Adopted Agent", projectID)
+	require.NoError(t, err)
+	webSource := uuid.New()
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.sources (id, project_id, provider, display_name, config, status)
+		VALUES (?, ?, 'web', 'web', '{}'::jsonb, 'active')`, webSource, projectID)
+	require.NoError(t, err)
+	adoptedTrigger, err := svc.CreateSourceTrigger(ctx, projectID, webSource, SourceTriggerInput{
+		EventType: "pull_request", AgentID: adoptedDef.String(),
+	})
+	require.NoError(t, err)
+	require.Equal(t, adoptedAgent, adoptedTrigger.AgentID)
+	linked, err := agentRepo.FindAgentsByDefinitionID(ctx, adoptedDef.String())
+	require.NoError(t, err)
+	require.Len(t, linked, 1)
+	require.Equal(t, adoptedAgent.String(), linked[0].ID)
+
+	// An id that is neither a runtime agent nor a definition is still a 404.
+	_, err = svc.CreateSourceTrigger(ctx, projectID, webSource, SourceTriggerInput{
+		EventType: "issue", AgentID: uuid.New().String(),
+	})
+	require.Error(t, err)
+	var notFound *apperror.Error
+	require.ErrorAs(t, err, &notFound)
+	require.Equal(t, 404, notFound.HTTPStatus)
+}
+
 func boolPtr(v bool) *bool    { return &v }
 func strPtr(v string) *string { return &v }
 

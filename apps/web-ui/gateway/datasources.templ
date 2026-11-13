@@ -1054,7 +1054,7 @@ templ dsSourceTriggerRow(view dsSourceTriggersView, trigger DSSourceTrigger) {
 				Size:    ui.BadgeSizeSM,
 				Icon:    "lucide--git-pull-request",
 			})
-			<span class="text-sm font-medium" data-testid="ds-trigger-agent">{ dsTriggerAgentName(view.Agents, trigger.AgentID) }</span>
+			<span class="text-sm font-medium" data-testid="ds-trigger-agent">{ dsTriggerAgentName(view.AgentNames, trigger.AgentID) }</span>
 			<code class="text-xs text-muted" data-testid="ds-trigger-agent-id">{ trigger.AgentID }</code>
 			<span class="text-xs text-muted" data-testid="ds-trigger-queue">Queue: { dsTriggerQueueLabel(trigger.Queue) }</span>
 		</div>
