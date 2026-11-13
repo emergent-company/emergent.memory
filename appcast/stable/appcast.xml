@@ -6,6 +6,20 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Memory</title>
         <item>
+            <title>0.96.0</title>
+            <pubDate>Fri, 13 Nov 2026 17:18:43 +0100</pubDate>
+            <sparkle:version>9600099999</sparkle:version>
+            <sparkle:shortVersionString>0.96.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://emergent-company.github.io/emergent.memory/appcast/stable/Memory-0.96.0.dmg" length="24689123" type="application/octet-stream" sparkle:edSignature="X2zjGlAsem+Dynw3TnbF5tUejfcS9aYUwa32Wyg0F7shkOvRg6JMj2WpiR2r4NRkiEQpR2zVrO2no0ea1yE1Dw=="/>
+            <sparkle:deltas>
+                <enclosure url="https://emergent-company.github.io/emergent.memory/appcast/stable/Memory9600099999-9200099999.delta" sparkle:deltaFrom="9200099999" length="5065626" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976464" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="1vma4Ps3UV0X01sf1hTv9dADjTos+1vHaTt+YToG0XBimv5H/6xH/hnHjtfgJMPQeoj1YiViyHxyPw7hU8zsCQ=="/>
+                <enclosure url="https://emergent-company.github.io/emergent.memory/appcast/stable/Memory9600099999-9100299999.delta" sparkle:deltaFrom="9100299999" length="5065902" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976464" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="VoHL94lWic4hS/PepMt8R726Fac6v9pFLQ4e/KEblq3Skf7gzclaECHNyo+yNepcMlQYnWjAP1MZUTu+oIaCBQ=="/>
+                <enclosure url="https://emergent-company.github.io/emergent.memory/appcast/stable/Memory9600099999-9100199999.delta" sparkle:deltaFrom="9100199999" length="5057662" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976464" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="/E3Yr00YzQFazahcQs4KGqryc3CVWKlEy5BOD+UTgNyJ7ONSBZUPeZnSxsaNKg//nqOHs3Pp3K2/G8nCz3nsCQ=="/>
+                <enclosure url="https://emergent-company.github.io/emergent.memory/appcast/stable/Memory9600099999-8801099999.delta" sparkle:deltaFrom="8801099999" length="5370162" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976464" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="JIWVO2T+uAExU18ZkWy31/nMHnlaDHWowUvM8A+Q6YeVG1yiuKhoCUrBtUxZ+arr0hTtNaTDJ9Zv0S++UDp3Cg=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>0.92.0</title>
             <pubDate>Sun, 08 Nov 2026 00:34:21 +0100</pubDate>
             <sparkle:version>9200099999</sparkle:version>
@@ -30,20 +44,9 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
                 <enclosure url="https://emergent-company.github.io/emergent.memory/appcast/stable/Memory9100299999-8801099999.delta" sparkle:deltaFrom="8801099999" length="5153858" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976464" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="NHMbnTcYeT0H/3YGXpX3zoo+7c28LxmLnjVM+6mrhf3s/G8prBnEU2TOhk3hh2EhUHOPhfN7XW5vggIhmQs+AA=="/>
             </sparkle:deltas>
         </item>
-        <item>
-            <title>0.91.1</title>
-            <pubDate>Sat, 07 Nov 2026 16:39:07 +0100</pubDate>
-            <sparkle:version>9100199999</sparkle:version>
-            <sparkle:shortVersionString>0.91.1</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://emergent-company.github.io/emergent.memory/appcast/stable/Memory-0.91.1.dmg" length="24475588" type="application/octet-stream" sparkle:edSignature="Sc8NCx3VJJ1NiA0olkc26GAcXHfEho3yYKB5YgMbLFsXA0bHGmuvJ78aN3svM70bcS82PtnReDr/UlngRaRwCg=="/>
-            <sparkle:deltas>
-                <enclosure url="https://emergent-company.github.io/emergent.memory/appcast/stable/Memory9100199999-8801099999.delta" sparkle:deltaFrom="8801099999" length="4906162" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976464" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="vulw5oLdm1Tr/CwF/WQRlCyTVxYD8FtdsiCCSacr0So0Lz247iyViyK5wLSo458zLdIJW9tXadkG2m7er/cMDQ=="/>
-            </sparkle:deltas>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: vNK0eOkKe3HeNIvrVZs8p9AsT5/F4gPMq97NucAUWt16aRCbkKtscMylIWC/xKKHFjYfvransWhbQm4VAr4ZBg==
-length: 5027
+edSignature: 6/aJUhrwepv0DmQpdshCBBAmipqF9uA/TfA22H41KfTvCcrpj6vj8UVkW4N1Zovkd9fqAKm21wJ/Ec2bs1l3Ag==
+length: 6314
 -->
