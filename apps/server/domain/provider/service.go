@@ -141,22 +141,46 @@ func NewCredentialService(
 // Resolve determines the effective credentials for the given provider by
 // looking up the project-level config only. No org fallback.
 //
+// Resolution is slug-first, mirroring ResolveByRef: the name is looked up as a
+// provider instance slug before it is treated as a dialect, so an instance the
+// operator created is always addressable by its own slug — including a slug
+// that spells a dialect name or alias (#709). When no such instance exists, the
+// name falls back to the dialect (accepting documented aliases) and resolves to
+// that dialect's default instance.
+//
 // Returns nil, nil when no project context is present (env-var callers).
 // Returns an error when the project has no config for this provider.
 func (s *CredentialService) Resolve(ctx context.Context, provider ProviderType) (*ResolvedCredential, error) {
-	// Accept documented aliases here so validation (ModelProviderKnown) and
-	// resolution agree; "gemini" resolves as the "google" dialect.
-	provider = normalizeDialectName(provider)
-	if !s.registry.IsSupported(provider) {
-		return nil, fmt.Errorf("unsupported provider: %s", provider)
+	projectID := auth.ProjectIDFromContext(ctx)
+
+	// A name that is not itself a registered dialect is looked up as a project
+	// instance slug first: that covers an arbitrary slug ("google-eu") and an
+	// alias whose spelling a project used as a slug ("gemini"). A plain dialect
+	// name gets the same slug-first behaviour from GetProjectProviderConfig,
+	// which prefers the instance whose slug equals the dialect, so it costs no
+	// extra query on the hot path.
+	if projectID != "" && !s.registry.IsSupported(provider) {
+		cfg, err := s.repo.GetProjectProviderConfigBySlug(ctx, projectID, ProviderSlug(provider))
+		if err != nil {
+			return nil, fmt.Errorf("failed to get project provider config: %w", err)
+		}
+		if cfg != nil {
+			return s.decryptProjectConfig(cfg)
+		}
 	}
 
-	projectID := auth.ProjectIDFromContext(ctx)
+	// Fall back to the dialect. Accept documented aliases here so validation
+	// (ModelProviderKnown) and resolution agree; "gemini" resolves as the
+	// "google" dialect's default instance when no instance is slugged "gemini".
+	dialect := normalizeDialectName(provider)
+	if !s.registry.IsSupported(dialect) {
+		return nil, fmt.Errorf("unsupported provider: %s", provider)
+	}
 	if projectID == "" {
 		return nil, nil // no project context — env-var callers handle this
 	}
 
-	cfg, err := s.repo.GetProjectProviderConfig(ctx, projectID, provider)
+	cfg, err := s.repo.GetProjectProviderConfig(ctx, projectID, dialect)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get project provider config: %w", err)
 	}
@@ -164,7 +188,31 @@ func (s *CredentialService) Resolve(ctx context.Context, provider ProviderType) 
 		return s.decryptProjectConfig(cfg)
 	}
 
-	return nil, noProjectProviderConfigError(string(provider), projectID, "run 'memory provider configure-project "+string(provider)+"' to set them")
+	return nil, s.providerLookupMiss(ctx, projectID, provider, dialect)
+}
+
+// providerLookupMiss explains a failed resolution by naming what was looked for
+// and what the project actually has, so an operator who mistyped an instance
+// slug is not sent to configure a dialect instance that is not the one they
+// meant (#709). The instance list is only read on the error path.
+func (s *CredentialService) providerLookupMiss(ctx context.Context, projectID string, requested, dialect ProviderType) error {
+	instances, err := s.repo.ListProjectProviderConfigs(ctx, projectID)
+	if err != nil || len(instances) == 0 {
+		return noProjectProviderConfigError(string(requested), projectID,
+			"run 'memory provider configure-project "+string(dialect)+"' to set them")
+	}
+	slugs := make([]string, 0, len(instances))
+	for _, cfg := range instances {
+		slugs = append(slugs, string(cfg.Slug))
+	}
+	sort.Strings(slugs)
+	if requested == dialect {
+		return noProjectProviderConfigError(string(requested), projectID,
+			fmt.Sprintf("no %s dialect instance — the project's provider instances are: %s", dialect, strings.Join(slugs, ", ")))
+	}
+	return noProjectProviderConfigError(string(requested), projectID,
+		fmt.Sprintf("no instance slugged %q and no %s dialect instance — the project's provider instances are: %s",
+			string(requested), dialect, strings.Join(slugs, ", ")))
 }
 
 // decryptProjectConfig decrypts a project-level provider config.
