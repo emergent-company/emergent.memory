@@ -2665,8 +2665,10 @@ Table "kb"."source_apps" {
   "webhook_key" uuid [not null, default: `gen_random_uuid()`]
   "created_at" timestamptz [not null, default: `now()`]
   "updated_at" timestamptz [not null, default: `now()`]
+  "project_id" uuid
 
   Indexes {
+    (project_id) [name: "idx_source_apps_project"]
     (org_id, provider, app_id) [name: "uq_source_apps_org_provider_app", unique]
     (webhook_key) [name: "uq_source_apps_webhook_key", unique]
   }
@@ -3207,6 +3209,7 @@ Ref: "kb"."skill_usage"."skill_id" > "kb"."skills"."id"
 Ref: "kb"."skills"."org_id" > "kb"."orgs"."id"
 Ref: "kb"."skills"."project_id" > "kb"."projects"."id"
 Ref: "kb"."source_apps"."org_id" > "kb"."orgs"."id"
+Ref: "kb"."source_apps"."project_id" > "kb"."projects"."id"
 Ref: "kb"."source_event_claims".("source_id", "project_id") > "kb"."sources".("id", "project_id")
 Ref: "kb"."source_event_claims"."project_id" > "kb"."projects"."id"
 Ref: "kb"."source_events".("source_id", "project_id") > "kb"."sources".("id", "project_id")

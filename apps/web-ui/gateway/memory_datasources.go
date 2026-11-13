@@ -970,6 +970,7 @@ func (m *MemoryClient) DeleteProjectDSOAuthApp(ctx context.Context, projectID, a
 type SourceApp struct {
 	ID         string `json:"id"`
 	OrgID      string `json:"orgId"`
+	ProjectID  string `json:"projectId,omitempty"`
 	Provider   string `json:"provider"`
 	AppID      int64  `json:"appId"`
 	Slug       string `json:"slug"`
@@ -980,7 +981,10 @@ type SourceApp struct {
 
 // DSSourceAppRequest is the register body for an org source App.
 type DSSourceAppRequest struct {
-	Provider      string `json:"provider"`
+	Provider string `json:"provider"`
+	// Scope is "org" (org-wide, org admin) or "project" (project-owned, project
+	// admin). The org route ignores it.
+	Scope         string `json:"scope,omitempty"`
 	AppID         int64  `json:"appId"`
 	Slug          string `json:"slug"`
 	PrivateKey    string `json:"privateKey"`
@@ -1052,6 +1056,44 @@ func (m *MemoryClient) UpdateOrgSourceApp(ctx context.Context, orgID, appID stri
 		return nil, err
 	}
 	return &out, nil
+}
+
+// --- project-scoped source Apps (org-wide + project-owned) ---
+
+// ListProjectSourceApps returns org-wide Apps plus Apps owned by the current
+// project (X-Project-ID).
+func (m *MemoryClient) ListProjectSourceApps(ctx context.Context) ([]SourceApp, error) {
+	var out []SourceApp
+	path := "/api/data-source-integrations/source-apps"
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// CreateProjectSourceApp registers an App from the project surface. scope=org
+// requires org admin; otherwise the App is project-owned and needs project admin.
+func (m *MemoryClient) CreateProjectSourceApp(ctx context.Context, req *DSSourceAppRequest) (*SourceApp, error) {
+	var out SourceApp
+	path := "/api/data-source-integrations/source-apps"
+	if err := m.doH(ctx, http.MethodPost, path, req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (m *MemoryClient) UpdateProjectSourceApp(ctx context.Context, appID string, req *DSSourceAppUpdateRequest) (*SourceApp, error) {
+	var out SourceApp
+	path := "/api/data-source-integrations/source-apps/" + url.PathEscape(appID)
+	if err := m.doH(ctx, http.MethodPatch, path, req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (m *MemoryClient) DeleteProjectSourceApp(ctx context.Context, appID string) error {
+	path := "/api/data-source-integrations/source-apps/" + url.PathEscape(appID)
+	return m.doH(ctx, http.MethodDelete, path, nil, m.documentHeaders(ctx), nil)
 }
 
 func (m *MemoryClient) ListSourceTriggers(ctx context.Context, sourceID string) ([]DSSourceTrigger, error) {
