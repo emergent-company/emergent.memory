@@ -82,6 +82,20 @@ func parseAPIMCPToolResultText(t *testing.T, body map[string]any) map[string]any
 	return parsed
 }
 
+// toolPayload unwraps the shared {ok,data} envelope that consolidated and
+// envelope-declaring tools return (see the entity tool's output schema, #702):
+// entity-search carries its SearchEntitiesResult under `data`, while
+// entity-query still returns a bare result. A payload without a `data` object
+// is returned unchanged, so a caller works with either shape.
+func toolPayload(t *testing.T, result map[string]any) map[string]any {
+	t.Helper()
+	data, ok := result["data"].(map[string]any)
+	if !ok {
+		return result
+	}
+	return data
+}
+
 // doDeleteAPIMCP sends a DELETE /api/mcp request with Mcp-Session-Id header.
 func doDeleteAPIMCP(t *testing.T, token, sessionID string) *http.Response {
 	t.Helper()
@@ -346,7 +360,7 @@ func TestMCPSSE_Tool_SearchEntities_EmptyResult(t *testing.T) {
 	body := callAPIMCPTool(t, projectID, sessionID, "entity-search", map[string]any{
 		"query": "xyznonexistent123abc",
 	})
-	result := parseAPIMCPToolResultText(t, body)
+	result := toolPayload(t, parseAPIMCPToolResultText(t, body))
 	for _, key := range []string{"entities", "query", "count"} {
 		if _, ok := result[key]; !ok {
 			t.Errorf("expected key %q", key)
@@ -373,7 +387,7 @@ func TestMCPSSE_Tool_SearchEntities_WithTypeFilter(t *testing.T) {
 		"type_name": "Document",
 		"limit":     5,
 	})
-	result := parseAPIMCPToolResultText(t, body)
+	result := toolPayload(t, parseAPIMCPToolResultText(t, body))
 	for _, key := range []string{"entities", "query"} {
 		if _, ok := result[key]; !ok {
 			t.Errorf("expected key %q", key)

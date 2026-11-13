@@ -628,7 +628,7 @@ func TestMCP_RPC_ToolsCall_SearchEntities_Empty(t *testing.T) {
 
 	projectID, _ := setupProjectLogged(t, rl)
 	initMCPSessionWithProject(t, projectID)
-	parsed := callMCPRPCTool(t, projectID, "entity-search", map[string]any{"query": "xyznonexistent123"}, 8)
+	parsed := toolPayload(t, callMCPRPCTool(t, projectID, "entity-search", map[string]any{"query": "xyznonexistent123"}, 8))
 	entities, ok := parsed["entities"].([]any)
 	if !ok {
 		t.Fatal("expected entities array")
