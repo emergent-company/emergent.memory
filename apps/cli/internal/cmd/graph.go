@@ -561,7 +561,7 @@ Examples:
 				if resp.NextCursor != nil && *resp.NextCursor != "" {
 					fmt.Fprintf(out, " — use --cursor %s for next page", *resp.NextCursor)
 				}
-				fmt.Fprintln(out)
+				_, _ = fmt.Fprintln(out)
 			} else {
 				fmt.Fprintf(out, "%d total\n", resp.Total)
 			}
@@ -1481,7 +1481,7 @@ the relationship, and any matches either.`,
 				if resp.NextCursor != nil && *resp.NextCursor != "" {
 					fmt.Fprintf(out, " — use --cursor %s for next page", *resp.NextCursor)
 				}
-				fmt.Fprintln(out)
+				_, _ = fmt.Fprintln(out)
 			} else {
 				fmt.Fprintf(out, "%d total\n", resp.Total)
 			}
@@ -2597,13 +2597,13 @@ Examples:
 		}
 
 		out := cmd.OutOrStdout()
-		fmt.Fprintf(out, "objects: %d  relationships: %d", res.ObjectsEnqueued, res.RelationshipsEnqueued)
+		_, _ = fmt.Fprintf(out, "objects: %d  relationships: %d", res.ObjectsEnqueued, res.RelationshipsEnqueued)
 		if graphReindexChunksFlag {
-			fmt.Fprintf(out, "  chunks: %d", res.ChunksEnqueued)
+			_, _ = fmt.Fprintf(out, "  chunks: %d", res.ChunksEnqueued)
 		}
-		fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out)
 		if !graphReindexForceFlag {
-			fmt.Fprintln(out, "Note: only rows with a NULL embedding were queued; pass --force to re-embed existing rows.")
+			_, _ = fmt.Fprintln(out, "Note: only rows with a NULL embedding were queued; pass --force to re-embed existing rows.")
 		}
 		return nil
 	},
