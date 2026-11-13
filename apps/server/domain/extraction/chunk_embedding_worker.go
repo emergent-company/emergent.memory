@@ -3,6 +3,7 @@ package extraction
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -25,6 +26,11 @@ import (
 // - Graceful shutdown waiting for current batch
 // - Stale job recovery on startup
 // - Metrics tracking
+
+// budgetBlockCacheTTL is how long a project is remembered as over budget so a
+// batch of its jobs does not re-run the budget check (and re-log) per job.
+const budgetBlockCacheTTL = 10 * time.Minute
+
 type ChunkEmbeddingWorker struct {
 	jobs      *ChunkEmbeddingJobsService
 	embeds    EmbeddingService
@@ -51,6 +57,11 @@ type ChunkEmbeddingWorker struct {
 	budget                   BudgetChecker
 	budgetEnforcementEnabled bool
 	orgCache                 *orgIDCache
+
+	// budgetBlocked caches projects known to be over budget so a batch of their
+	// jobs does not re-run the two-query budget check (and re-log) per job.
+	budgetBlockMu      sync.Mutex
+	budgetBlockedUntil map[string]time.Time
 
 	// Metrics
 	processedCount int64
@@ -82,7 +93,31 @@ func NewChunkEmbeddingWorker(
 		budget:                   budget,
 		budgetEnforcementEnabled: budgetEnforcementEnabled,
 		orgCache:                 newOrgIDCache(db, log),
+		budgetBlockedUntil:       make(map[string]time.Time),
 	}
+}
+
+// budgetBlockActive reports whether the project is still within a cached
+// "over budget" window. Expired entries are evicted lazily.
+func (w *ChunkEmbeddingWorker) budgetBlockActive(projectID string) bool {
+	w.budgetBlockMu.Lock()
+	defer w.budgetBlockMu.Unlock()
+	until, ok := w.budgetBlockedUntil[projectID]
+	if !ok {
+		return false
+	}
+	if time.Now().After(until) {
+		delete(w.budgetBlockedUntil, projectID)
+		return false
+	}
+	return true
+}
+
+// markBudgetBlocked caches the project as over budget for budgetBlockCacheTTL.
+func (w *ChunkEmbeddingWorker) markBudgetBlocked(projectID string) {
+	w.budgetBlockMu.Lock()
+	w.budgetBlockedUntil[projectID] = time.Now().Add(budgetBlockCacheTTL)
+	w.budgetBlockMu.Unlock()
 }
 
 // Start begins the worker's polling loop
@@ -272,6 +307,13 @@ func (w *ChunkEmbeddingWorker) processTrackedJob(ctx context.Context, job *Chunk
 		}
 	}()
 	if err := w.processJob(ctx, job); err != nil {
+		var budgetErr *EmbeddingBudgetExceededError
+		if errors.As(err, &budgetErr) {
+			w.log.Debug("chunk embedding job parked (budget exceeded)",
+				slog.String("job_id", job.ID),
+				slog.String("project_id", budgetErr.ProjectID))
+			return
+		}
 		w.log.Warn("process job failed",
 			slog.String("job_id", job.ID),
 			slog.String("error", err.Error()))
@@ -380,7 +422,17 @@ func (w *ChunkEmbeddingWorker) processJob(ctx context.Context, job *ChunkEmbeddi
 	}
 
 	// Budget pre-flight check — skip embedding when project has exceeded its monthly budget.
-	if w.budget != nil && chunk.ProjectID != "" {
+	if w.budget != nil && chunk.ProjectID != "" && w.budgetEnforcementEnabled {
+		if w.budgetBlockActive(chunk.ProjectID) {
+			// Already known over budget: park this job with bounded backoff,
+			// without re-querying the budget or logging per job.
+			if _, err := w.jobs.RescheduleBudgetExceeded(ctx, job.ID); err != nil {
+				w.log.Error("failed to park budget-exceeded job",
+					slog.String("job_id", job.ID),
+					slog.String("error", err.Error()))
+			}
+			return &EmbeddingBudgetExceededError{ProjectID: chunk.ProjectID}
+		}
 		exceeded, err := w.budget.CheckBudgetExceeded(ctx, chunk.ProjectID)
 		if err != nil {
 			w.log.Warn("embedding budget check failed, proceeding",
@@ -388,21 +440,26 @@ func (w *ChunkEmbeddingWorker) processJob(ctx context.Context, job *ChunkEmbeddi
 				slog.String("project_id", chunk.ProjectID),
 				slog.String("error", err.Error()),
 			)
-		} else if exceeded && w.budgetEnforcementEnabled {
-			w.log.Warn("chunk embedding skipped: project budget exceeded, rescheduling",
-				slog.String("job_id", job.ID),
-				slog.String("project_id", chunk.ProjectID),
-			)
-			if _, reschedErr := w.db.NewRaw(`UPDATE kb.chunk_embedding_jobs
-				SET status = 'pending',
-					last_error = 'budget_exceeded',
-					scheduled_at = now() + interval '5 minutes',
-					updated_at = now()
-				WHERE id = ?`, job.ID).Exec(ctx); reschedErr != nil {
-				w.log.Error("failed to reschedule budget-exceeded job",
-					slog.String("job_id", job.ID),
-					slog.String("error", reschedErr.Error()))
+		} else if exceeded {
+			w.markBudgetBlocked(chunk.ProjectID)
+			parked, parkErr := w.jobs.RescheduleBudgetExceededForProject(ctx, chunk.ProjectID)
+			if parkErr != nil {
+				w.log.Error("failed to park project chunk embedding jobs",
+					slog.String("project_id", chunk.ProjectID),
+					slog.String("error", parkErr.Error()))
 			}
+			// The bulk UPDATE may have missed this claimed row in a race; park it
+			// explicitly too.
+			if _, err := w.jobs.RescheduleBudgetExceeded(ctx, job.ID); err != nil {
+				w.log.Error("failed to park budget-exceeded job",
+					slog.String("job_id", job.ID),
+					slog.String("error", err.Error()))
+			}
+			w.log.Warn("chunk embedding blocked: project budget exceeded; parking jobs",
+				slog.String("project_id", chunk.ProjectID),
+				slog.Int64("parked_jobs", parked),
+				slog.Duration("retry_cache_ttl", budgetBlockCacheTTL),
+			)
 			return &EmbeddingBudgetExceededError{ProjectID: chunk.ProjectID}
 		}
 	}

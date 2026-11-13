@@ -352,6 +352,71 @@ func (s *ChunkEmbeddingJobsService) MarkPermanentlyFailed(ctx context.Context, i
 	return nil
 }
 
+// BudgetBlockDelaySec returns the bounded exponential backoff (seconds) used to
+// park a budget-blocked job. Delay doubles per attempt: base, 2*base, 4*base...
+// capped at max. Attempts below 1 are treated as 1. The exponent is capped at
+// 10 so the shift cannot overflow.
+func BudgetBlockDelaySec(attemptCount, baseSec, maxSec int) int {
+	if baseSec <= 0 {
+		baseSec = 60
+	}
+	if maxSec <= 0 {
+		maxSec = 3600
+	}
+	if attemptCount < 1 {
+		attemptCount = 1
+	}
+	exp := attemptCount - 1
+	if exp > 10 {
+		exp = 10
+	}
+	delay := baseSec << exp
+	if delay <= 0 || delay > maxSec {
+		delay = maxSec
+	}
+	return delay
+}
+
+// RescheduleBudgetExceeded parks one budget-blocked job with bounded
+// exponential backoff instead of retrying it a fixed few minutes later. The
+// job stays 'pending' with a durable last_error so it resumes automatically
+// once the project budget is raised, but it is not reheated in a tight loop.
+func (s *ChunkEmbeddingJobsService) RescheduleBudgetExceeded(ctx context.Context, id string) (time.Duration, error) {
+	var attempt int
+	err := s.db.NewRaw(`UPDATE kb.chunk_embedding_jobs
+		SET status = 'pending',
+			last_error = 'budget_exceeded',
+			scheduled_at = now() + make_interval(secs => LEAST(?::double precision, ?::double precision * power(2, LEAST(GREATEST(attempt_count - 1, 0), 10)))),
+			updated_at = now()
+		WHERE id = ?
+		RETURNING attempt_count`, s.cfg.MaxRetryDelaySec, s.cfg.BaseRetryDelaySec, id).Scan(ctx, &attempt)
+	if err != nil {
+		return 0, fmt.Errorf("reschedule budget-exceeded chunk embedding job: %w", err)
+	}
+	return time.Duration(BudgetBlockDelaySec(attempt, s.cfg.BaseRetryDelaySec, s.cfg.MaxRetryDelaySec)) * time.Second, nil
+}
+
+// RescheduleBudgetExceededForProject parks every due pending job and every
+// in-flight processing job for one project in a single UPDATE. Detecting the
+// budget once per project and parking the whole queue avoids one budget query
+// and one log line per job (the prod hot loop).
+func (s *ChunkEmbeddingJobsService) RescheduleBudgetExceededForProject(ctx context.Context, projectID string) (int64, error) {
+	res, err := s.db.NewRaw(`UPDATE kb.chunk_embedding_jobs cej
+		SET status = 'pending',
+			last_error = 'budget_exceeded',
+			scheduled_at = now() + make_interval(secs => LEAST(?::double precision, ?::double precision * power(2, LEAST(GREATEST(cej.attempt_count - 1, 0), 10)))),
+			updated_at = now()
+		WHERE (cej.status = 'processing' OR (cej.status = 'pending' AND cej.scheduled_at <= now()))
+		  AND cej.chunk_id IN (
+			SELECT c.id FROM kb.chunks c JOIN kb.documents d ON d.id = c.document_id WHERE d.project_id = ?
+		  )`, s.cfg.MaxRetryDelaySec, s.cfg.BaseRetryDelaySec, projectID).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("park budget-exceeded chunk embedding jobs: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // RecoverStaleJobs recovers jobs stuck in 'processing' status.
 // This can happen when the server restarts while jobs are being processed.
 func (s *ChunkEmbeddingJobsService) RecoverStaleJobs(ctx context.Context, staleThresholdMinutes int) (int, error) {

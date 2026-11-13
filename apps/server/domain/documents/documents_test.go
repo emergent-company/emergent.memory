@@ -662,7 +662,7 @@ func TestCursorRoundTrip(t *testing.T) {
 }
 
 func TestNormalizeStatusBucket(t *testing.T) {
-	for _, bucket := range []string{StatusBucketProcessing, StatusBucketReady, StatusBucketExtracted, StatusBucketFailed} {
+	for _, bucket := range []string{StatusBucketProcessing, StatusBucketReady, StatusBucketExtracted, StatusBucketFailed, StatusBucketBlocked} {
 		got, err := NormalizeStatusBucket(" " + strings.ToUpper(bucket) + " ")
 		assert.NoError(t, err)
 		assert.Equal(t, bucket, got)
@@ -715,12 +715,12 @@ func requireAppError(t *testing.T, err error, wantStatus int, wantMessagePart st
 	assert.Contains(t, appErr.Message, wantMessagePart)
 }
 
-// TestStatusBucketsPartitionEveryState pins the bucket mapping to the six states
+// TestStatusBucketsPartitionEveryState pins the bucket mapping to the seven states
 // the derived-status CASE can produce: every state belongs to exactly one bucket.
 // A state added to the CASE without a bucket would silently vanish from the
 // filter and the counts, so it is spelled out here rather than inferred.
 func TestStatusBucketsPartitionEveryState(t *testing.T) {
-	states := []string{"converting", "conversion_failed", "extracting", "extraction_failed", "completed", "ready_for_extraction"}
+	states := []string{"converting", "conversion_failed", "extracting", "extraction_failed", "completed", "ready_for_extraction", "blocked"}
 	seen := map[string]string{}
 	for bucket, bucketStates := range statusBucketStates {
 		for _, state := range bucketStates {

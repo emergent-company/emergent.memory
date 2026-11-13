@@ -96,6 +96,14 @@ type Document struct {
 	// Unified processing status (derived from conversion + extraction state)
 	ProcessingStatus *string `bun:"processing_status,scanonly" json:"processingStatus,omitempty"`
 
+	// ProcessingReason explains why processing is blocked (derived, never stored).
+	// Currently only "project_budget_exceeded".
+	ProcessingReason *string `bun:"processing_reason,scanonly" json:"processingReason,omitempty"`
+	// ExtractionNotEnqueuedReason explains why a converted document has no
+	// extraction job at all (derived). Currently "extraction_disabled_for_source_syncs"
+	// or "extraction_disabled_for_project".
+	ExtractionNotEnqueuedReason *string `bun:"extraction_not_enqueued_reason,scanonly" json:"extractionNotEnqueuedReason,omitempty"`
+
 	// Compact extraction summary (from most recent completed extraction job)
 	LastExtractionAt    *time.Time `bun:"last_extraction_at,scanonly" json:"lastExtractionAt,omitempty"`
 	ExtractionObjects   *int       `bun:"extraction_objects_created,scanonly" json:"objectsCreated,omitempty"`
@@ -116,8 +124,8 @@ const (
 // sentinel cannot collide with one.
 const sourceNoneFilter = "none"
 
-// Document status filter buckets. The derived processing status has six states;
-// clients filter on four, each a group of those states. The groups are disjoint
+// Document status filter buckets. The derived processing status has seven states;
+// clients filter on five, each a group of those states. The groups are disjoint
 // because they are defined as a partition of the CASE that produces the status
 // (see processingStatusExpr), not as independent predicates.
 const (
@@ -125,6 +133,16 @@ const (
 	StatusBucketReady      = "ready"
 	StatusBucketExtracted  = "extracted"
 	StatusBucketFailed     = "failed"
+	StatusBucketBlocked    = "blocked"
+)
+
+// Derived processing states and the reasons attached to them.
+const (
+	ProcessingStatusBlocked        = "blocked"
+	ProcessingReasonBudgetExceeded = "project_budget_exceeded"
+
+	ExtractionNotEnqueuedSourceSyncsDisabled = "extraction_disabled_for_source_syncs"
+	ExtractionNotEnqueuedProjectDisabled     = "extraction_disabled_for_project"
 )
 
 // statusBucketStates maps each filter bucket to the derived states it covers.
@@ -134,6 +152,7 @@ var statusBucketStates = map[string][]string{
 	StatusBucketReady:      {"ready_for_extraction"},
 	StatusBucketExtracted:  {"completed"},
 	StatusBucketFailed:     {"conversion_failed", "extraction_failed"},
+	StatusBucketBlocked:    {"blocked"},
 }
 
 // Document list sort keys and directions.
@@ -159,7 +178,7 @@ func NormalizeStatusBucket(raw string) (string, error) {
 		return "", nil
 	}
 	if _, ok := statusBucketStates[s]; !ok {
-		return "", apperror.ErrBadRequest.WithMessage(fmt.Sprintf("status must be one of %s, %s, %s, %s", StatusBucketProcessing, StatusBucketReady, StatusBucketExtracted, StatusBucketFailed))
+		return "", apperror.ErrBadRequest.WithMessage(fmt.Sprintf("status must be one of %s, %s, %s, %s, %s", StatusBucketProcessing, StatusBucketReady, StatusBucketExtracted, StatusBucketFailed, StatusBucketBlocked))
 	}
 	return s, nil
 }
@@ -248,6 +267,7 @@ type StatusCounts struct {
 	Ready      int `json:"ready"`
 	Extracted  int `json:"extracted"`
 	Failed     int `json:"failed"`
+	Blocked    int `json:"blocked"`
 }
 
 func (c *StatusCounts) add(status string, n int) {
@@ -261,6 +281,8 @@ func (c *StatusCounts) add(status string, n int) {
 		c.Extracted += n
 	case StatusBucketFailed:
 		c.Failed += n
+	case StatusBucketBlocked:
+		c.Blocked += n
 	}
 }
 
