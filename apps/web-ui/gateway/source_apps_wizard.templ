@@ -1,0 +1,146 @@
+package main
+
+import (
+	"errors"
+
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// GitHubReviewWizardPage is the three-step GitHub review setup: create the App
+// with a GitHub manifest, install it, then let Memory create the source, agent
+// and trigger. Secrets never round-trip through a form.
+templ GitHubReviewWizardPage(data ghWizardPage) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "GitHub review setup")), "", "GitHub review setup", "Create the GitHub App, install it on a repository, and connect a review agent. Memory fills in the source, agent and trigger.", detailHeaderOpts{Margin: "mb-6"}) {
+			@ui.Button(ui.ButtonProps{
+				Type: ui.ButtonTypeLink, Href: dsSourceAppsPath, Variant: ui.ButtonOutline, Size: ui.ButtonSM, Icon: "lucide--arrow-left",
+			}) { Back to source apps }
+		}
+		if data.Error != "" {
+			@pageErrorNotice("Setup error", errors.New(data.Error))
+		}
+		switch data.Step {
+			case "install":
+				@ghWizardInstall(data)
+			case "done":
+				@ghWizardDone(data)
+			default:
+				@ghWizardStart(data)
+		}
+	}
+}
+
+templ ghWizardStart(data ghWizardPage) {
+	@components.PanelCard("1 · Create the GitHub App", templ.Attributes{"data-testid": "gh-wizard-start"}) {
+		<form method="post" action={ templ.URL(githubWizardPath + "/start") } class="flex flex-col gap-4">
+			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+				<div class="flex flex-col gap-1">
+					<label class="text-sm font-medium" for="gh-owner">GitHub owner</label>
+					<input id="gh-owner" name="owner" type="text" class="input w-full" placeholder="personal account (blank) or organization" value={ data.Owner }/>
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Leave blank to create the App under your personal account, or name an organization you administer. }
+				</div>
+				<div class="flex flex-col gap-1">
+					<label class="text-sm font-medium" for="gh-name">App name</label>
+					<input id="gh-name" name="name" type="text" required class="input w-full" value={ data.Name }/>
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Must be unique across GitHub. You can edit the suggested name. }
+				</div>
+			</div>
+			if data.OrgAdmin {
+				<div class="flex flex-col gap-1">
+					<label class="text-sm font-medium" for="gh-scope">Credential scope</label>
+					<select id="gh-scope" name="scope" class="select w-full">
+						<option value="project" selected>This project only</option>
+						<option value="org">Whole organization</option>
+					</select>
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Org-wide Apps can be bound by every project; project Apps only here. }
+				</div>
+			} else {
+				<input type="hidden" name="scope" value="project"/>
+			}
+			<div class="flex items-center justify-end">
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM, Icon: "lucide--github", Attrs: templ.Attributes{"data-testid": "gh-wizard-create"}}) { Create GitHub App }
+			</div>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) { You will be sent to GitHub to confirm the App. Memory requests contents:read, pull_requests/issues/checks:write, and the pull_request event. No secrets are typed into Memory. }
+		</form>
+	}
+}
+
+templ ghWizardInstall(data ghWizardPage) {
+	@components.PanelCard("2 · Install the App", templ.Attributes{"data-testid": "gh-wizard-install"}) {
+		<div class="flex flex-col gap-3">
+			<p class="text-sm">App <span class="font-mono">{ data.Slug }</span> is registered. Install it on the repository you want reviewed (only the repositories you select are accessible).</p>
+			if data.InstallURL != "" {
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: data.InstallURL, Variant: ui.ButtonPrimary, Size: ui.ButtonSM, Icon: "lucide--download", Attrs: templ.Attributes{"target": "_blank", "rel": "noopener noreferrer"}}) { Install on GitHub }
+			}
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+				After installing, GitHub returns here with the installation id. If it does not, open the App's installation settings and copy the numeric installation id.
+			}
+			<form method="post" action={ templ.URL(githubWizardPath + "/complete") } class="mt-2 flex flex-col gap-4">
+				<input type="hidden" name="app" value={ data.AppID }/>
+				<input type="hidden" name="slug" value={ data.Slug }/>
+				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+					<div class="flex flex-col gap-1">
+						<label class="text-sm font-medium" for="gh-installation">Installation ID</label>
+						<input id="gh-installation" name="installation_id" type="text" required class="input w-full font-mono" value={ data.InstallationID } placeholder="e.g. 181621212"/>
+					</div>
+					<div class="flex flex-col gap-1">
+						<label class="text-sm font-medium" for="gh-source-name">Source name</label>
+						<input id="gh-source-name" name="source_name" type="text" required class="input w-full" value={ data.SourceName } placeholder="GitHub reviews"/>
+					</div>
+				</div>
+				<div class="flex flex-col gap-1">
+					<label class="text-sm font-medium" for="gh-repos">Repositories</label>
+					<textarea id="gh-repos" name="repos" required rows="3" class="textarea w-full font-mono text-xs" placeholder="owner/repo, one per line" data-testid="gh-wizard-repos">{ data.Repos }</textarea>
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Only these repositories will trigger reviews. Webhooks outside the allowlist are ignored. }
+				</div>
+				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+					<div class="flex flex-col gap-1">
+						<label class="text-sm font-medium" for="gh-agent-name">Review agent name</label>
+						<input id="gh-agent-name" name="agent_name" type="text" required class="input w-full" value={ data.AgentName } placeholder="security-review"/>
+					</div>
+					<div class="flex flex-col gap-1">
+						<label class="text-sm font-medium" for="gh-queue">Queue</label>
+						<input id="gh-queue" name="queue" type="text" class="input w-full" value={ data.Queue } placeholder="security-review"/>
+					</div>
+				</div>
+				<div class="flex items-center justify-end">
+					@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM, Icon: "lucide--sparkles", Attrs: templ.Attributes{"data-testid": "gh-wizard-connect"}}) { Create source, agent and trigger }
+				</div>
+			</form>
+		</div>
+	}
+}
+
+templ ghWizardDone(data ghWizardPage) {
+	@components.PanelCard("3 · Ready", templ.Attributes{"data-testid": "gh-wizard-done"}) {
+		<div class="flex flex-col gap-3 text-sm">
+			<p>The source, review agent and pull_request trigger are configured. Open a pull request in an installed repository; the agent reads the exact head diff and posts the review, a head-bound <code>reviewed</code> check, and the <code>Reviewed-SHA</code> marker.</p>
+			if data.SourceID != "" {
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/data-sources/" + data.SourceID, Variant: ui.ButtonPrimary, Size: ui.ButtonSM, Icon: "lucide--webhook"}) { Open the source }
+			}
+			if data.AgentName != "" {
+				<p class="text-muted">Agent: <span class="font-mono">{ data.AgentName }</span></p>
+			}
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) { If the App was installed without a webhook URL, the manifest already set it. Verify the latest delivery under the App's Advanced page if no run appears. }
+		</div>
+	}
+}
+
+// GitHubReviewManifestPage posts the manifest to GitHub. It is a browser form,
+// not a server-side call: the signed-in GitHub session is what authorizes App
+// creation, and the redirect carries the short-lived conversion code back.
+templ GitHubReviewManifestPage(data ghManifestPage) {
+	<div class="flex flex-col items-center gap-3 py-12" data-testid="gh-wizard-manifest">
+		<p class="text-sm">Sending you to GitHub to create the App…</p>
+		<form id="gh-manifest-form" method="post" action={ templ.URL(data.Action) }>
+			<input type="hidden" name="manifest" value={ data.ManifestJSON }/>
+			<noscript>
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) { Continue to GitHub }
+			</noscript>
+		</form>
+		<script>document.getElementById('gh-manifest-form').submit()</script>
+	</div>
+}

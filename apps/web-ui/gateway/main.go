@@ -629,6 +629,10 @@ func main() {
 	// The static "new" segment is registered before the :appId pattern, so the
 	// register page always wins over an App whose id is "new".
 	e.GET("/settings/source-apps/new", s.uiSourceAppNew)
+	e.GET("/settings/source-apps/wizard", s.uiGitHubReviewWizard)
+	e.POST("/settings/source-apps/wizard/start", s.uiGitHubReviewWizardStart)
+	e.GET("/settings/source-apps/wizard/callback", s.uiGitHubReviewWizardCallback)
+	e.POST("/settings/source-apps/wizard/complete", s.uiGitHubReviewWizardComplete)
 	e.GET("/settings/source-apps/:appId", s.uiSourceAppDetail)
 	e.POST("/settings/source-apps/:appId", s.uiSourceAppUpdate)
 	e.POST("/settings/source-apps/:appId/delete", s.uiSourceAppDelete)

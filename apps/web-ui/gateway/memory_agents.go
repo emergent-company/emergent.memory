@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"net/url"
 )
 
 // AgentSandboxConfig mirrors memory's per-agent workspace config (JSONB
@@ -121,4 +122,43 @@ func (m *MemoryClient) ListSandboxImages(ctx context.Context) ([]SandboxImage, e
 		return nil, err
 	}
 	return env.Data, nil
+}
+
+// RuntimeAgent is the execution row a trigger binds to (kb.agents).
+type RuntimeAgent struct {
+	ID                string `json:"id"`
+	ProjectID         string `json:"projectId"`
+	Name              string `json:"name"`
+	AgentDefinitionID string `json:"agentDefinitionId,omitempty"`
+	Enabled           bool   `json:"enabled"`
+}
+
+// ListRuntimeAgents returns the project's kb.agents rows.
+func (m *MemoryClient) ListRuntimeAgents(ctx context.Context, projectID string) ([]RuntimeAgent, error) {
+	var env successEnvelope[[]RuntimeAgent]
+	path := "/api/projects/" + url.PathEscape(projectID) + "/agents"
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &env); err != nil {
+		return nil, err
+	}
+	return env.Data, nil
+}
+
+type CreateRuntimeAgentRequest struct {
+	ProjectID         string `json:"projectId"`
+	Name              string `json:"name"`
+	StrategyType      string `json:"strategyType"`
+	CronSchedule      string `json:"cronSchedule"`
+	TriggerType       string `json:"triggerType,omitempty"`
+	AgentDefinitionID string `json:"agentDefinitionId,omitempty"`
+	Enabled           bool   `json:"enabled"`
+}
+
+// CreateRuntimeAgent creates the kb.agents row that source triggers resolve.
+func (m *MemoryClient) CreateRuntimeAgent(ctx context.Context, in *CreateRuntimeAgentRequest) (*RuntimeAgent, error) {
+	var env successEnvelope[RuntimeAgent]
+	path := "/api/projects/" + url.PathEscape(in.ProjectID) + "/agents"
+	if err := m.doH(ctx, http.MethodPost, path, in, m.documentHeaders(ctx), &env); err != nil {
+		return nil, err
+	}
+	return &env.Data, nil
 }

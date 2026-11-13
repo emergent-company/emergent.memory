@@ -21,6 +21,7 @@ type registerSourceAppDTO struct {
 	Slug          string `json:"slug"`
 	PrivateKey    string `json:"privateKey"`
 	WebhookSecret string `json:"webhookSecret"`
+	WebhookKey    string `json:"webhookKey,omitempty"`
 }
 
 type updateSourceAppDTO struct {
@@ -61,7 +62,7 @@ func (h *Handler) RegisterSourceApp(c echo.Context) error {
 	}
 	user := auth.MustGetUser(c)
 	app, err := h.svc.RegisterSourceApp(c.Request().Context(), orgID, user.ID, RegisterSourceAppRequest{
-		Provider: dto.Provider, AppID: dto.AppID, Slug: dto.Slug, PrivateKey: dto.PrivateKey, WebhookSecret: dto.WebhookSecret,
+		Provider: dto.Provider, AppID: dto.AppID, Slug: dto.Slug, PrivateKey: dto.PrivateKey, WebhookSecret: dto.WebhookSecret, WebhookKey: dto.WebhookKey,
 	})
 	if err != nil {
 		return err
@@ -336,7 +337,7 @@ func (h *Handler) RegisterProjectSourceApp(c echo.Context) error {
 		return apperror.NewBadRequest("scope must be project or org")
 	}
 	app, err := h.svc.RegisterProjectSourceApp(c.Request().Context(), projectID, user.ID, RegisterSourceAppRequest{
-		Provider: dto.Provider, AppID: dto.AppID, Slug: dto.Slug, PrivateKey: dto.PrivateKey, WebhookSecret: dto.WebhookSecret,
+		Provider: dto.Provider, AppID: dto.AppID, Slug: dto.Slug, PrivateKey: dto.PrivateKey, WebhookSecret: dto.WebhookSecret, WebhookKey: dto.WebhookKey,
 	}, scope == "org")
 	if err != nil {
 		return err

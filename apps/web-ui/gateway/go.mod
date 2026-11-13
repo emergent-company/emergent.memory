@@ -8,6 +8,7 @@ require (
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/emergent-company/go-daisy v0.20.0
 	github.com/getsentry/sentry-go v0.49.0
+	github.com/google/uuid v1.6.0
 	github.com/labstack/echo/v4 v4.16.1
 	github.com/livekit/protocol v1.50.4
 	github.com/microcosm-cc/bluemonday v1.0.27
@@ -41,7 +42,6 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/cel-go v0.29.0 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
 	github.com/jxskiss/base62 v1.1.0 // indirect
 	github.com/klauspost/compress v1.18.7 // indirect
