@@ -7,16 +7,15 @@ import (
 	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
-	table "github.com/emergent-company/go-daisy/components/table"
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
 
 // --- Objects browser ---
 //
-// The objects page: a wide table with row selection and a grouped action bar,
-// one compact toolbar card that stacks the search field over a single filter
-// line, a single stats strip instead of three stat cards, and "Ask the graph"
-// behind a header dialog instead of a permanent card.
+// The objects page: a responsive card grid with per-card selection and a grouped
+// action bar, one compact toolbar card that stacks the search field over a single
+// filter line, a single stats strip instead of three stat cards, and "Ask the
+// graph" behind a header dialog instead of a permanent card.
 //
 // data.Preview marks a dev-gallery render: pagination, search submission, and
 // bulk mutations render without their live wiring (no hx-* attributes, no
@@ -110,7 +109,7 @@ templ objectsBrowserStats(data objectsPageData) {
 	{{
 		statsAttrs := templ.Attributes{
 			"id":           "objects-stats",
-			"class":        "mb-4 [&>.stats]:w-full max-sm:[&_.stat]:px-2 max-sm:[&_.stat-title]:text-[10px] max-sm:[&_.stat-value]:text-xl max-sm:[&_.stat-desc]:text-[10px]",
+			"class":        "mb-4 [&>.stats]:w-full max-sm:[&_.stat]:min-w-0 max-sm:[&_.stat]:px-2 max-sm:[&_.stat-title]:whitespace-normal max-sm:[&_.stat-title]:leading-tight max-sm:[&_.stat-title]:text-[10px] max-sm:[&_.stat-value]:text-xl max-sm:[&_.stat-desc]:text-[10px]",
 			"aria-live":    "polite",
 			"hx-target":    "this",
 			"hx-swap":      "outerHTML",
@@ -242,7 +241,7 @@ templ objectsBrowserResults(data objectsPageData) {
 			if data.Query != "" {
 				@objectsBrowserResultsNote(data)
 			}
-			@objectsBrowserTable(data)
+			@objectsBrowserCards(data)
 		}
 	</div>
 }
@@ -300,13 +299,16 @@ templ objectsFilterHiddenFilters(data objectsPageData) {
 	}
 }
 
-// objectsBrowserTable is the unified results surface: browse rows and search
-// hits render in the same table, so switching between browsing and searching
-// does not change the page's shape. Unified search hits cannot fill the
-// status/embedding/created columns (the endpoint does not return them), so the
-// table drops those columns in that mode instead of rendering a column of
-// dashes.
-templ objectsBrowserTable(data objectsPageData) {
+// objectsBrowserCards is the unified results surface: browse objects and search
+// hits render as the same card, so switching between browsing and searching does
+// not change the page's shape. Unified search hits carry no status or embedding
+// state (the endpoint does not return them), so the card drops those badges in
+// that mode instead of rendering empty ones.
+//
+// One grid serves every width. It used to be a desktop table plus a hidden
+// mobile list, which meant every object existed twice in the DOM and "Load more"
+// had to append to both; the card is responsive instead.
+templ objectsBrowserCards(data objectsPageData) {
 	{{
 		rows := objectsBrowserRows(data)
 		search := data.Query != ""
@@ -319,309 +321,274 @@ templ objectsBrowserTable(data objectsPageData) {
 			@objectsEmpty(data.TypeFilter)
 		}
 	} else {
-		<div class="hidden md:block">
-			@components.TableCard(nil, components.TableCardOpt{CardClass: "overflow-hidden", BodyClass: "p-0"}) {
-				@table.TableWithProps(table.TableProps{Size: "sm", Attrs: templ.Attributes{"data-testid": "objects-table"}}) {
-					@objectsBrowserTableHead(data, search, unified)
-					<tbody id="objects-list">
-						for _, r := range rows {
-							@objectsBrowserRow(r, search, unified)
-						}
-					</tbody>
-				}
+		@objectsBrowserResultsBar(data)
+		<div
+			id="objects-cards"
+			data-testid="objects-cards"
+			class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4"
+		>
+			for _, r := range rows {
+				@objectsBrowserCard(r, search, unified, data.WikiView, data.Preview)
 			}
-		</div>
-		<div class="md:hidden">
-			@objectsBrowserMobileRows(rows, unified)
 		</div>
 		@objectsBrowserFooter(data)
 	}
 }
 
-// objectsBrowserTableHead renders the column headers. The leading and trailing
-// checkbox/chevron columns are raw <th> because TableHeadCell owns its class
-// list and cannot carry the width utility.
-//
-// There is no Type column: the type rides above the object id in the Object cell
-// ("task · #9f1c0a2e"), where it reads as the object's identity rather than as a
-// second, mostly-repeated column.
-templ objectsBrowserTableHead(data objectsPageData, search, unified bool) {
-	@table.TableHead() {
-		@table.TableHeadRow() {
-			<th class="w-10">
-				<input
-					type="checkbox"
-					class="checkbox checkbox-sm"
-					aria-label="Select all objects"
-					@change="toggleAll($el.checked)"
-					:checked="all"
-					:indeterminate="some"
-				/>
-			</th>
-			@table.TableHeadCell("Object")
-			if !unified {
-				@table.TableHeadCell("Status")
-				@table.TableHeadCell("Embedding")
+// objectsBrowserResultsBar sits above the grid: select-all on the left, the sort
+// control on the right. Select-all moved here from the table header it lost with
+// the table — it applies to the cards currently rendered, which is what the
+// Alpine model reads anyway.
+templ objectsBrowserResultsBar(data objectsPageData) {
+	<div
+		class="mb-3 flex flex-wrap items-center justify-between gap-2 px-1"
+		data-testid="objects-results-bar"
+	>
+		<label class="text-muted-faint inline-flex cursor-pointer items-center gap-2 text-xs font-medium">
+			<input
+				type="checkbox"
+				class="checkbox checkbox-sm"
+				aria-label="Select all objects"
+				@change="toggleAll($el.checked)"
+				:checked="all"
+				:indeterminate="some"
+			/>
+			<span>Select all</span>
+		</label>
+		<div class="flex flex-wrap items-center gap-3">
+			@objectsBrowserWikiViewSwitch(data)
+			@objectsBrowserSortControl(data)
+		</div>
+	</div>
+}
+
+// objectsBrowserWikiViewSwitch is the global wiki-variant switch, in the place a
+// list/card toggle usually sits. It decides which wiki variant a card opens, and
+// the handler persists it as a cookie so opening a card directly keeps the
+// choice. Each option is a plain link: no JavaScript, no state to lose on reload.
+templ objectsBrowserWikiViewSwitch(data objectsPageData) {
+	<div class="join" role="group" aria-label="Object page view">
+		for _, opt := range objectWikiViewOptions() {
+			{{ active := normalizeObjectWikiView(data.WikiView) == opt.Value
+			attrs := templ.Attributes{"data-testid": "objects-wiki-view-" + opt.Value}
+			href := objectsWikiViewHref(data, opt.Value)
+			variant := ui.ButtonGhost
+			if active {
+				variant = ui.ButtonPrimary
+				attrs["aria-current"] = "page"
+			} }}
+			@ui.Button(ui.ButtonProps{
+				Type:       ui.ButtonTypeLink,
+				Href:       href,
+				Variant:    variant,
+				Size:       ui.ButtonXS,
+				Icon:       opt.Icon,
+				ExtraClass: "join-item gap-1.5 font-normal",
+				Attrs:      attrs,
+			}) {
+				<span>{ opt.Label }</span>
 			}
-			@table.TableHeadCell("Labels")
-			if search {
-				<th class="text-right text-xs font-semibold text-base-content/60 uppercase">Score</th>
+		}
+	</div>
+}
+
+// objectsBrowserSortControl is the list's order control. It replaces the
+// sortable "Created" column header: with no table there is no column to click,
+// and burying the only sort in a header the user has to find was the table's
+// problem to begin with. Search results are relevance-ranked, so the control
+// states that instead of offering an order the result set ignores.
+templ objectsBrowserSortControl(data objectsPageData) {
+	if data.Query != "" {
+		<span class="text-muted-faint inline-flex items-center gap-1.5 text-xs">
+			@ui.IconSpan("lucide--sparkles", "size-3.5 shrink-0")
+			Best match first
+		</span>
+	} else {
+		{{
+			dir := objectsSortDir(data)
+			href := objectsSortHref(data, objectsNextSortDir(data))
+			label := "Newest first"
+			icon := "lucide--arrow-down"
+			if dir == "asc" {
+				label = "Oldest first"
+				icon = "lucide--arrow-up"
 			}
-			if !unified {
-				if search {
-					// Search hits are relevance-ranked; `order` does not apply to
-					// them, so the column states the value without offering a
-					// sort it cannot honour.
-					<th scope="col" class="text-right text-xs font-semibold text-base-content/60 uppercase">Created</th>
-				} else {
-					// Created is the one column the list endpoint can sort: `order`
-					// flips its (created_at, id) keyset and the cursor keeps working.
-					// Name/type/status would need a server-side sort whitelist — the
-					// endpoint only orders JSONB properties, which breaks the cursor.
-					@objectsBrowserSortHead(data, "Created", objectsSortHref(data, objectsNextSortDir(data)), true, objectsSortDir(data))
-				}
+			var attrs templ.Attributes
+			if !data.Preview {
+				attrs = regionFilterAttrs(href, objectsResultsRegion)
+				attrs["hx-indicator"] = "#objects-results-loading"
+				attrs["data-objects-list-refresh"] = "true"
+			} else {
+				attrs = templ.Attributes{}
 			}
-			<th class="w-10"></th>
+			attrs["aria-label"] = "Sort: " + label
+		}}
+		@ui.Button(ui.ButtonProps{
+			Type:       ui.ButtonTypeLink,
+			Href:       href,
+			Variant:    ui.ButtonGhost,
+			Size:       ui.ButtonXS,
+			Icon:       icon,
+			ExtraClass: "gap-1.5 font-normal",
+			Attrs:      attrs,
+		}) {
+			<span>{ label }</span>
 		}
 	}
 }
 
-// objectsBrowserSortHead renders one sortable column header. The indicator sits
-// opposite the column's alignment — a right-aligned (numeric/date) column leads
-// with the glyph, a left-aligned one trails with it — so it never crowds the
-// values it sorts. The glyph is always present (dimmed when the column is not
-// the active sort) so the header advertises that the column sorts at all, and
-// aria-sort carries the state for assistive tech.
+// objectsBrowserCard is one object in the grid. The card opens the object, and
+// the checkbox is a sibling of the card's anchor rather than a child: interactive
+// content nested inside a link is invalid and a click would navigate away instead
+// of selecting.
 //
-// This is page-local rather than table.TableHeader because the library header
-// hardcodes left alignment and a trailing indicator — exactly backwards for a
-// right-aligned column (see the go-daisy sortable-header alignment issue).
+// The card answers "what is this, and should I open it?" — the shared object
+// header (type tile, type · ref identity line, name, first paragraph of prose),
+// its workflow state and labels, who last wrote it. Everything else (the full
+// property set, relationships, the audit trail) is the object page's job.
 //
-// Sorting is a filter like any other: the header link refreshes the results
-// region in place and pushes the URL, so it does not reload the page. The href
-// stays (no-JS, middle-click, open-in-new-tab), and the preview renders it
-// without the htmx wiring because the gallery has no backend.
-templ objectsBrowserSortHead(data objectsPageData, label, href string, alignRight bool, dir string) {
-	{{
-		thClass := "text-xs font-semibold text-base-content/60 uppercase"
-		linkClass := "inline-flex items-center gap-1 hover:text-base-content"
-		if alignRight {
-			thClass = "text-right " + thClass
-			linkClass += " justify-end"
-		}
-		ariaSort := "none"
-		icon := "lucide--chevrons-up-down"
-		iconClass := "text-base-content/25"
-		switch dir {
-		case "asc":
-			ariaSort, icon, iconClass = "ascending", "lucide--chevron-up", ""
-		case "desc":
-			ariaSort, icon, iconClass = "descending", "lucide--chevron-down", ""
-		}
-		var sortAttrs templ.Attributes
-		if !data.Preview {
-			sortAttrs = regionFilterAttrs(href, objectsResultsRegion)
-			sortAttrs["hx-indicator"] = "#objects-results-loading"
-			sortAttrs["data-objects-list-refresh"] = "true"
-		}
-	}}
-	<th scope="col" aria-sort={ ariaSort } class={ thClass }>
-		<a href={ href } class={ linkClass } { sortAttrs... }>
-			if alignRight {
-				@ui.IconSpan(icon, "size-3 shrink-0 "+iconClass)
-				<span>{ label }</span>
-			} else {
-				<span>{ label }</span>
-				@ui.IconSpan(icon, "size-3 shrink-0 "+iconClass)
-			}
-		</a>
-	</th>
-}
-
-// objectsBrowserRow renders one table row (browse or search). The whole row is
-// clickable through data-href; the checkbox and the trailing chevron keep their
-// own behaviour because app.js ignores clicks that land on form controls.
-templ objectsBrowserRow(r objectsBrowserRowView, search, unified bool) {
-	<tr class="hover cursor-pointer" data-href={ templ.URL("/objects/" + url.PathEscape(r.ID)) }>
-		@table.TableCell("w-10", nil) {
-			<input
-				type="checkbox"
-				class="checkbox checkbox-sm"
-				value={ r.ID }
-				data-object-select
-				data-object-type={ r.Type }
-				aria-label={ "Select " + r.Label }
-				x-model="sel"
-			/>
-		}
-		@table.TableCell("max-w-[30rem]", nil) {
-			<div class="flex min-w-0 items-center gap-3">
-				@typeIconTile(r.UI.Icon, r.UI.Color)
-				<div class="min-w-0">
-					@objectsObjectMeta(r)
-					<a href={ templ.URL("/objects/" + url.PathEscape(r.ID)) } class="hover:text-primary block truncate text-sm font-medium hover:underline">{ r.Label }</a>
-				</div>
+// The name is plain text inside the header and the whole card is one stretched
+// link instead: an object is introduced by the same component as a page head and
+// a relationship row, while the card keeps a full-size click target. The
+// checkbox and the footer links sit above that overlay.
+templ objectsBrowserCard(r objectsBrowserRowView, search, unified bool, wikiView string, preview bool) {
+	{{ href := objectWikiHref(r.ID, wikiView)
+	linkAttrs := templ.Attributes{}
+	if preview {
+		// The gallery preview has no backend and no real objects behind it, so a
+		// card must not navigate the preview iframe away from the sample page.
+		href = "#"
+		linkAttrs["onclick"] = "return false"
+	} }}
+	<div
+		class="border-base-content/10 bg-base-100 rounded-box group relative flex h-full flex-col border transition-shadow hover:shadow-md"
+		data-testid="object-card"
+		data-component="gateway/ObjectCard"
+	>
+		<div class="flex items-start justify-between gap-2 p-3 pb-0">
+			<div class="flex min-w-0 flex-1">
+				@objectHeader(objectHeaderProps{
+					Variant:      objectHeaderRow,
+					Type:         r.Type,
+					Icon:         r.UI.Icon,
+					Color:        r.UI.Color,
+					Ref:          objectDisplayRef(r.Ref, r.ID),
+					Label:        r.Label,
+					Excerpt:      r.Excerpt,
+					ExcerptClass: "line-clamp-3",
+					NameClass:    "group-hover:text-primary",
+				})
 			</div>
-		}
-		if !unified {
-			@table.TableCell("", nil) {
+			<label class="relative z-10 flex shrink-0 items-center pt-0.5">
+				<input
+					type="checkbox"
+					class="checkbox checkbox-sm"
+					value={ r.ID }
+					data-object-select
+					data-object-type={ r.Type }
+					aria-label={ "Select " + r.Label }
+					x-model="sel"
+				/>
+			</label>
+		</div>
+		<div class="mt-auto flex min-h-6 flex-wrap items-center gap-1 px-3 pb-2 empty:hidden">
+			if r.DataClassLabel != "" {
+				<span class="tooltip tooltip-top inline-flex" data-tip={ r.DataClassHint }>
+					@ui.Badge(ui.BadgeProps{Label: r.DataClassLabel, Icon: r.DataClassIcon, Variant: r.DataClassIntent, Size: ui.BadgeSizeXS})
+				</span>
+			}
+			if !unified {
 				if r.Status != "" {
 					@components.StatusBadge(r.StatusLabel, r.StatusIntent, "", components.StatusBadgeOpts{
 						Size:  ui.BadgeSizeXS,
 						Dot:   true,
 						Attrs: templ.Attributes{"data-status": r.Status},
 					})
-				} else {
-					@components.EmptyDash()
 				}
-			}
-			@table.TableCell("", nil) {
-				if r.EmbeddingIcon != "" {
-					<span class={ "tooltip tooltip-top inline-flex items-center", r.EmbeddingClass } data-tip={ r.EmbeddingLabel }>
-						<span class={ "iconify shrink-0 text-base " + r.EmbeddingIcon } aria-hidden="true"></span>
+				// Only an object that is not embedded earns a badge: "Embedded" on
+				// every card is noise, a pending or failed embedding is a reason to
+				// open it.
+				if r.EmbeddingLabel != "" && r.EmbeddingIcon != "lucide--circle-check" {
+					<span class={ "tooltip tooltip-top inline-flex", r.EmbeddingClass } data-tip={ r.EmbeddingLabel }>
+						<span class={ "iconify shrink-0 text-base ", r.EmbeddingIcon } aria-hidden="true"></span>
 						<span class="sr-only">{ r.EmbeddingLabel }</span>
 					</span>
-				} else {
-					@components.EmptyDash()
 				}
 			}
-		}
-		@table.TableCell("", nil) {
-			if len(r.Labels) == 0 {
-				@components.EmptyDash()
-			} else {
-				<div class="flex flex-wrap items-center gap-1">
-					for _, l := range firstLabels(r.Labels, 2) {
-						@ui.Badge(ui.BadgeProps{Label: l, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS})
-					}
-					if len(r.Labels) > 2 {
-						@ui.Badge(ui.BadgeProps{Label: "+" + strconv.Itoa(len(r.Labels)-2), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
-					}
-				</div>
+			for _, l := range firstLabels(r.Labels, 3) {
+				@ui.Badge(ui.BadgeProps{Label: l, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS})
 			}
-		}
-		if search {
-			@table.TableCell("text-right", nil) {
-				<span class="text-muted-faint inline-flex items-center gap-1" title="Relevance score">
+			if len(r.Labels) > 3 {
+				@ui.Badge(ui.BadgeProps{Label: "+" + strconv.Itoa(len(r.Labels)-3), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+			}
+			if search {
+				<span class="text-muted-faint ml-auto inline-flex shrink-0 items-center gap-1" title="Relevance score">
 					@ui.IconSpan("lucide--sparkles", "size-3 shrink-0")
 					<span class="text-xs font-medium tabular-nums">{ searchScoreLabel(r.Score) }</span>
 				</span>
 			}
-		}
-		if !unified {
-			@table.TableCell("text-right whitespace-nowrap", nil) {
-				<span class="text-muted-faint text-xs tabular-nums" title={ r.CreatedAt }>{ relTime(r.CreatedAt) }</span>
-			}
-		}
-		@table.TableActionCell() {
-			@ui.IconSpan("lucide--chevron-right", "size-4 text-muted-faint")
-		}
-	</tr>
-}
-
-// objectsObjectMeta is the identity line above an object's name: its type, a dot
-// tinted with the type's declared colour, and the display ref ("Task · #a1b2c3d4e5f6").
-// The type lives here instead of in its own column so the row reads as one
-// identity, and the name below stays the row's single loud line.
-templ objectsObjectMeta(r objectsBrowserRowView) {
-	{{
-		dotAttrs := templ.Attributes{
-			"class":       "bg-base-content/25 size-1.5 shrink-0 rounded-full",
-			"aria-hidden": "true",
-		}
-		if style := typeDotStyle(r.UI.Color); style != "" {
-			dotAttrs["style"] = style
-		}
-		ref := r.Ref
-		if ref == "" {
-			ref = "#" + objectShortID(r.ID)
-		}
-	}}
-	<div class="text-muted-faint flex min-w-0 items-center gap-1.5 font-mono text-[11px]">
-		<span class="truncate">{ r.Type }</span>
-		<span { dotAttrs... }></span>
-		<span class="shrink-0">{ ref }</span>
-	</div>
-}
-
-// objectsBrowserMobileRows is the small-screen browse list: one compact card
-// per object with the same type accent and badges as the table row. The card
-// body opens the object; the checkbox is a sibling of the anchor so a phone can
-// drive the same Alpine selection model (and bulk bar) as the table.
-templ objectsBrowserMobileRows(rows []objectsBrowserRowView, unified bool) {
-	@components.TableCard(nil, components.TableCardOpt{CardClass: "overflow-hidden", BodyClass: "p-0"}) {
-		<div id="objects-mobile-list" class="divide-base-200 divide-y">
-			for _, r := range rows {
-				@objectsBrowserMobileRow(r, unified)
+		</div>
+		<div class="border-base-content/10 text-muted-faint relative z-10 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 border-t px-3 py-2 text-[11px]">
+			@objectsCardWriter(r)
+			if r.HasRevisionCount {
+				<a
+					href={ templ.URL("/objects/" + url.PathEscape(r.ID) + "/history") }
+					class="hover:text-base-content relative z-10 shrink-0 hover:underline"
+					aria-label={ "Version history of " + r.Label }
+				>{ objectVersionCountLabel(r.RevisionCount) }</a>
 			}
 		</div>
-	}
-}
-
-// objectsBrowserMobileRow is one mobile card. It is its own component so the
-// "Load more" fragment can append cards as well as table rows: the table is
-// hidden on small screens, so paginating only #objects-list would load rows no
-// phone can see.
-templ objectsBrowserMobileRow(r objectsBrowserRowView, unified bool) {
-	<div class="hover:bg-base-200/40 flex items-start gap-2 py-3 pr-2 pl-3 transition-colors" data-testid="objects-mobile-row">
-		<label class="mt-1.5 flex shrink-0 items-center">
-			<input
-				type="checkbox"
-				class="checkbox checkbox-sm"
-				value={ r.ID }
-				data-object-select
-				data-object-type={ r.Type }
-				aria-label={ "Select " + r.Label }
-				x-model="sel"
-			/>
-		</label>
-		<a href={ templ.URL("/objects/" + url.PathEscape(r.ID)) } class="flex min-w-0 flex-1 items-start gap-3">
-			@typeIconTile(r.UI.Icon, r.UI.Color)
-			<div class="min-w-0 flex-1">
-				@objectsObjectMeta(r)
-				<div class="truncate text-sm font-medium">{ r.Label }</div>
-				<div class="mt-1 flex flex-wrap items-center gap-1">
-					if !unified {
-						if r.Status != "" {
-							@components.StatusBadge(r.StatusLabel, r.StatusIntent, "", components.StatusBadgeOpts{
-								Size:  ui.BadgeSizeXS,
-								Dot:   true,
-								Attrs: templ.Attributes{"data-status": r.Status},
-							})
-						}
-						if r.EmbeddingLabel != "" {
-							@ui.Badge(ui.BadgeProps{Label: r.EmbeddingLabel, Variant: r.EmbeddingVariant, Size: ui.BadgeSizeXS})
-						}
-					}
-					for _, l := range firstLabels(r.Labels, 2) {
-						@ui.Badge(ui.BadgeProps{Label: l, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS})
-					}
-				</div>
-			</div>
-			@ui.IconSpan("lucide--chevron-right", "mt-2 size-4 shrink-0 text-muted-faint")
+		// The card's single link: the whole surface opens the object, with the
+		// checkbox and the footer links raised above it.
+		<a href={ templ.URL(href) } { linkAttrs... } class="absolute inset-0" aria-label={ "Open " + r.Label }>
+			<span class="sr-only">Open { r.Label }</span>
 		</a>
 	</div>
 }
 
-// objectsBrowserFooter sits below the table: the sort note on the left and the
-// cursor-pagination trigger on the right. #objects-load-more is the OOB swap
-// target the /objects/partial response replaces when a page is appended.
-templ objectsBrowserFooter(data objectsPageData) {
-	<div class="mt-3 flex flex-wrap items-center justify-between gap-2 px-1">
-		<span class="text-muted-faint inline-flex items-center gap-1.5 text-xs">
-			if data.Query != "" {
-				// Search hits are relevance-ranked; claiming a created_at order
-				// there would state something the result set does not honour.
-				@ui.IconSpan("lucide--sparkles", "size-3.5 shrink-0")
-				Best match first
-			} else if objectsSortDir(data) == "asc" {
-				@ui.IconSpan("lucide--arrow-up", "size-3.5 shrink-0")
-				Oldest first
-			} else {
-				@ui.IconSpan("lucide--arrow-down", "size-3.5 shrink-0")
-				Newest first
+// objectsCardWriter renders the card's footer provenance: who wrote this version,
+// through which credential, and how long ago. Every part degrades away — a
+// version written before the write stamp existed shows nothing rather than a
+// guessed actor — and only the age falls back to the object's created time.
+templ objectsCardWriter(r objectsBrowserRowView) {
+	<span class="inline-flex min-w-0 items-center gap-1">
+		if r.Writer.Actor != "" {
+			<span class="truncate" title={ r.Writer.ActorTitle }>
+				if r.Writer.ActorHref != "" {
+					<a href={ templ.URL(r.Writer.ActorHref) } class="hover:text-base-content relative z-10 font-medium hover:underline">{ r.Writer.Actor }</a>
+				} else {
+					<span class="text-base-content/70 font-medium">{ r.Writer.Actor }</span>
+				}
+			</span>
+			if r.Writer.How != "" {
+				<span class="shrink-0" aria-hidden="true">·</span>
+				<span class="shrink-0">via { r.Writer.How }</span>
 			}
-		</span>
+			if r.When != "" && r.When != "—" {
+				<span class="shrink-0" aria-hidden="true">·</span>
+				<span class="shrink-0" title={ r.CreatedAt }>{ r.When }</span>
+			}
+		} else if r.When != "" && r.When != "—" {
+			<span class="shrink-0" title={ r.CreatedAt }>{ r.When }</span>
+		}
+	</span>
+}
+
+// objectVersionCountLabel names a version count in the card footer.
+func objectVersionCountLabel(n int) string {
+	if n == 1 {
+		return "1 version"
+	}
+	return strconv.Itoa(n) + " versions"
+}
+
+
+// objectsBrowserFooter sits below the grid: the cursor-pagination trigger on the
+// right. The order note that used to sit on the left now lives in the results bar
+// as the sort control, so the footer has one job. #objects-load-more is the OOB
+// swap target the /objects/partial response replaces when a page is appended.
+templ objectsBrowserFooter(data objectsPageData) {
+	<div class="mt-3 flex flex-wrap items-center justify-end gap-2 px-1">
 		<div id="objects-load-more">
 			if data.HasMore {
 				@objectsBrowserLoadMoreButton(data)
@@ -639,7 +606,7 @@ templ objectsBrowserLoadMoreButton(data objectsPageData) {
 		if !data.Preview {
 			attrs = templ.Attributes{
 				"hx-get":    objectsPartialURL(data),
-				"hx-target": "#objects-list",
+				"hx-target": "#objects-cards",
 				"hx-swap":   "beforeend",
 			}
 		}
@@ -657,10 +624,9 @@ templ objectsBrowserLoadMoreButton(data objectsPageData) {
 }
 
 // objectsBrowserRowsPartial is the HTMX fragment returned by /objects/partial:
-// the next page's rows (appended to #objects-list), the same page's mobile cards
-// (appended to #objects-mobile-list — the table is hidden on small screens, so
-// paginating only the table would load rows a phone cannot see), and a
-// replacement load-more slot.
+// the next page's cards (appended to #objects-cards) and a replacement
+// load-more slot. One grid at every width means one append target — the old
+// fragment had to duplicate the page into a mobile list nobody could see.
 templ objectsBrowserRowsPartial(data objectsPageData) {
 	{{
 		search := data.Query != ""
@@ -668,13 +634,8 @@ templ objectsBrowserRowsPartial(data objectsPageData) {
 		rows := objectsBrowserRows(data)
 	}}
 	for _, r := range rows {
-		@objectsBrowserRow(r, search, unified)
+		@objectsBrowserCard(r, search, unified, data.WikiView, data.Preview)
 	}
-	<div id="objects-mobile-list" hx-swap-oob="beforeend">
-		for _, r := range rows {
-			@objectsBrowserMobileRow(r, unified)
-		}
-	</div>
 	<div id="objects-load-more" hx-swap-oob="true">
 		if data.HasMore {
 			@objectsBrowserLoadMoreButton(data)

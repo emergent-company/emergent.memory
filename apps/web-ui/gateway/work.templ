@@ -105,7 +105,7 @@ templ workTypeFilter(data workData) {
 									onchange="this.form.requestSubmit()"
 									class="checkbox checkbox-xs"
 								/>
-								@typeIconTileSmall(compiledTypeIcon(t), compiledTypeColor(t))
+								@typeIconTile(compiledTypeIcon(t), compiledTypeColor(t), typeIconTileCompact)
 								<span class="min-w-0 grow truncate text-sm">{ workTypeLabel(t, t.Name) }</span>
 								<span class="font-mono text-[10px] text-muted-faint">{ strconv.Itoa(data.TypeCounts[t.Name]) }</span>
 							</label>
@@ -130,11 +130,11 @@ templ workTypeFilterTrigger(data workData) {
 		<span class="truncate">All types</span>
 	} else if len(data.SelectedTypes) == 1 {
 		{{ t := workTypeByName(data.BoardTypes, data.SelectedTypes[0]) }}
-		@typeIconTileSmall(compiledTypeIcon(t), compiledTypeColor(t))
+		@typeIconTile(compiledTypeIcon(t), compiledTypeColor(t), typeIconTileCompact)
 		<span class="truncate">{ workTypeLabel(t, data.SelectedTypes[0]) }</span>
 	} else {
 		{{ t := workTypeByName(data.BoardTypes, data.SelectedTypes[0]) }}
-		@typeIconTileSmall(compiledTypeIcon(t), compiledTypeColor(t))
+		@typeIconTile(compiledTypeIcon(t), compiledTypeColor(t), typeIconTileCompact)
 		<span class="truncate">{ strconv.Itoa(len(data.SelectedTypes)) } types</span>
 	}
 }
@@ -144,7 +144,7 @@ templ workTypeBlock(m workMatrix, data workData) {
 	{{ t := workTypeByName(data.BoardTypes, m.Type) }}
 	<section data-testid={ "work-type-" + m.Type }>
 		<header class="mb-2 flex items-center gap-2">
-			@typeIconTileSmall(compiledTypeIcon(t), compiledTypeColor(t))
+			@typeIconTile(compiledTypeIcon(t), compiledTypeColor(t), typeIconTileCompact)
 			<span class="text-sm font-semibold">{ workTypeLabel(t, m.Type) }</span>
 			<span class="font-mono text-[11px] text-muted-faint">{ strconv.Itoa(m.Total) }</span>
 		</header>

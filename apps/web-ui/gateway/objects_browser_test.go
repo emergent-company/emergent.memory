@@ -10,18 +10,21 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// TestObjectsBrowserTableRendersSelectionSurface pins the table contract the
-// bulk actions depend on: one row checkbox per object carrying pure Alpine
-// selection state, and four self-contained dialog forms that each submit the
-// selection once.
-func TestObjectsBrowserTableRendersSelectionSurface(t *testing.T) {
+// TestObjectsBrowserCardGridRendersSelectionSurface pins the card-grid contract
+// the bulk actions depend on: one card per object carrying pure Alpine selection
+// state, and four self-contained dialog forms that each submit the selection
+// once.
+func TestObjectsBrowserCardGridRendersSelectionSurface(t *testing.T) {
 	html := renderHTML(t, ObjectsPage(objectsBrowserSampleData("")))
 
 	for _, want := range []string{
-		`data-testid="objects-table"`,
-		`id="objects-list"`,
+		`data-testid="objects-cards"`,
+		`data-testid="object-card"`,
+		`data-testid="objects-results-bar"`,
 		`name="ids"`,
 		`toggleAll`,
+		`data-object-select`,
+		`x-model="sel"`,
 		`id="objects-bulk-delete-dialog"`,
 		`id="objects-bulk-status-dialog"`,
 		`id="objects-bulk-label-add-dialog"`,
@@ -35,14 +38,14 @@ func TestObjectsBrowserTableRendersSelectionSurface(t *testing.T) {
 		}
 	}
 
-	// Selection is Alpine-only. Row checkboxes carry no name/form, so a row can
-	// never submit itself and `ids` cannot arrive twice (once per checked row,
+	// Selection is Alpine-only. Card checkboxes carry no name/form, so a card can
+	// never submit itself and `ids` cannot arrive twice (once per checked card,
 	// once as the CSV the handler expects).
 	if strings.Contains(html, `form="objects-bulk-form"`) || strings.Contains(html, `id="objects-bulk-form"`) {
 		t.Error("bulk submits must come from per-dialog forms, not one shared form")
 	}
 	if strings.Contains(html, `<input type="checkbox" class="checkbox checkbox-sm" name=`) {
-		t.Error("row checkboxes must not be submittable inputs")
+		t.Error("card checkboxes must not be submittable inputs")
 	}
 
 	// Exactly one hidden ids field per bulk dialog, each synced by the model.
@@ -58,28 +61,28 @@ func TestObjectsBrowserTableRendersSelectionSurface(t *testing.T) {
 		}
 	}
 
-	// Browse rows keep the status/embedding signals. The type is not a column:
-	// it rides above the object id in the Object cell.
+	// Cards keep the browse facts: the type and ref ride above the name as one
+	// identity line, and the workflow state, embedding state, writer and version
+	// count each render as their own signal.
 	for _, want := range []string{
 		`data-status="in_progress"`,
-		`text-sm font-medium text-muted" scope="col">Status<`,
-		`text-sm font-medium text-muted" scope="col">Embedding<`,
-		`>Created</span>`,
 		`>task<`,
 		`#9f1c0a2e`,
+		`>4 versions<`,
+		`via agent MCP link`,
 	} {
 		if !strings.Contains(html, want) {
-			t.Errorf("browse table missing %q", want)
+			t.Errorf("browse card missing %q", want)
 		}
 	}
-	if strings.Contains(html, `uppercase">Type<`) {
-		t.Error("browse table must not render a Type column; the type belongs in the Object cell")
-	}
-	if strings.Index(html, "#9f1c0a2e") > strings.Index(html, ">Ship the objects browser table</a>") {
+	if strings.Index(html, "#9f1c0a2e") > strings.Index(html, ">Ship the objects browser table<") {
 		t.Error("the object's type and id must sit above its name")
 	}
+	if strings.Contains(html, ">Embedded<") {
+		t.Error("an embedded object must not earn a badge; only a not-embedded state is worth flagging")
+	}
 	if strings.Contains(html, `uppercase">Score<`) {
-		t.Error("browse table must not render the search-only Score column")
+		t.Error("browse cards must not render the search-only score")
 	}
 
 	// Every preview form discards its submit instead of posting: the gallery has
@@ -110,6 +113,22 @@ func TestObjectsBrowserTableRendersSelectionSurface(t *testing.T) {
 	if strings.Contains(liveHTML, `onsubmit="return false"`) {
 		t.Error("live page must not carry preview submit guards")
 	}
+}
+
+// resultsBar returns the HTML of the objects results bar (select-all + sort),
+// so sort assertions talk about the control rather than any hidden filter input
+// that legitimately carries the same order elsewhere on the page.
+func resultsBar(t *testing.T, html string) string {
+	t.Helper()
+	start := strings.Index(html, `data-testid="objects-results-bar"`)
+	if start < 0 {
+		t.Fatal("objects results bar not found")
+	}
+	end := strings.Index(html[start:], `id="objects-cards"`)
+	if end < 0 {
+		t.Fatal("objects card grid not found after the results bar")
+	}
+	return html[start : start+end]
 }
 
 // formBlock returns the HTML of one <form id=...> element.
@@ -214,22 +233,27 @@ func TestObjectsBrowserPreviewIsInert(t *testing.T) {
 	}
 }
 
-// TestObjectsBrowserUnifiedDropsUnavailableColumns pins the mode-aware column
-// set: unified search hits carry no status, embedding, or created_at, so the
-// table drops those columns instead of rendering a column of dashes.
-func TestObjectsBrowserUnifiedDropsUnavailableColumns(t *testing.T) {
+// TestObjectsBrowserUnifiedDropsUnavailableBadges pins the mode-aware badge
+// set: unified search hits carry no status, embedding, or created_at, so their
+// cards drop those badges instead of rendering empty ones — and carry the
+// relevance score instead.
+func TestObjectsBrowserUnifiedDropsUnavailableBadges(t *testing.T) {
 	html := renderHTML(t, ObjectsPage(objectsBrowserSearchSampleData()))
 
-	if !strings.Contains(html, `uppercase">Score<`) {
-		t.Error("search table must render the Score column")
+	if !strings.Contains(html, `title="Relevance score"`) {
+		t.Error("search cards must render the relevance score")
 	}
 	if !strings.Contains(html, "0.94") {
-		t.Error("search table must render relevance scores")
+		t.Error("search cards must render relevance scores")
 	}
-	for _, unwanted := range []string{`text-sm font-medium text-muted" scope="col">Status<`, `text-sm font-medium text-muted" scope="col">Embedding<`, `>Created</span>`, `aria-sort=`, `data-status=`} {
+	for _, unwanted := range []string{`aria-sort=`, `data-status=`, `title="Embedding`, `>Created<`} {
 		if strings.Contains(html, unwanted) {
-			t.Errorf("unified table must not render %q", unwanted)
+			t.Errorf("unified search cards must not render %q", unwanted)
 		}
+	}
+	// Search mode states its order instead of offering one the result set ignores.
+	if !strings.Contains(html, "Best match first") {
+		t.Error("search results must state that they are relevance-ranked")
 	}
 }
 
@@ -279,7 +303,7 @@ func TestUIComponentPagePreview(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		`data-testid="objects-table"`,
+		`data-testid="objects-cards"`,
 		`/js/app.js`,
 		`/css/app.css`,
 		`id="objects-bulk-bar"`,
@@ -289,14 +313,14 @@ func TestUIComponentPagePreview(t *testing.T) {
 		}
 	}
 
-	// The search variant renders the reduced column set.
+	// The search variant renders the score instead of browse-only badges.
 	rec = httptest.NewRecorder()
 	newServer(true).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dev/components/pages/objects-search", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("search page preview = %d, want 200", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), `uppercase">Score<`) {
-		t.Error("search page preview must render the Score column")
+	if !strings.Contains(rec.Body.String(), `title="Relevance score"`) {
+		t.Error("search page preview must render the relevance score")
 	}
 
 	rec = httptest.NewRecorder()
@@ -312,48 +336,52 @@ func TestUIComponentPagePreview(t *testing.T) {
 	}
 }
 
-// TestObjectsBrowserSortHeader pins the sort contract for the one column the
-// list endpoint can order: Created. The header always states its sort
-// (aria-sort), the indicator leads the label because the column is
-// right-aligned, the link is query-only so it works on every route and inside
-// the gallery preview, and the active filters ride along so sorting never drops
-// a narrowing.
-func TestObjectsBrowserSortHeader(t *testing.T) {
+// TestObjectsBrowserSortControl pins the sort contract for the one order the
+// list endpoint supports: Created. With no table there is no column header to
+// click, so the control lives in the results bar and always states the current
+// order. The link is query-only so it works on every route and inside the
+// gallery preview, and the active filters ride along so sorting never drops a
+// narrowing.
+func TestObjectsBrowserSortControl(t *testing.T) {
 	data := objectsBrowserSampleData("")
 	html := renderHTML(t, ObjectsPage(data))
 
-	if !strings.Contains(html, `aria-sort="descending"`) {
-		t.Error("the default browse order is newest-first, so Created must render aria-sort=descending")
+	if !strings.Contains(html, "Newest first") {
+		t.Error("the default browse order must render as Newest first")
+	}
+	if !strings.Contains(html, "lucide--arrow-down") {
+		t.Error("newest-first must render a descending indicator")
+	}
+	if !strings.Contains(html, `aria-label="Sort: Newest first"`) {
+		t.Error("the sort control must state the current order for assistive tech")
 	}
 	// A query-only href: it resolves against the current document, so the same
-	// header works on /objects, the agent-scoped route, and the preview iframe.
+	// control works on /objects, the agent-scoped route, and the preview iframe.
 	// One href carries the active filter and the toggled order together, so
 	// sorting cannot silently widen the list.
-	if !regexp.MustCompile(`href="\?[^"]*actor_type=agent[^"]*order=asc`).MatchString(html) {
+	if !regexp.MustCompile(`href="\?[^"]*actor_type=agent[^"]*order=asc`).MatchString(resultsBar(t, html)) {
 		t.Error("the sort link must carry the active actor filter and toggle to ascending in one href")
-	}
-	if !strings.Contains(html, "actor_type=agent") {
-		t.Error("the sort link must carry the active actor filter so sorting never widens the list")
-	}
-
-	// Right-aligned column: the indicator leads the label, not the other way round.
-	iconAt := strings.Index(html, "lucide--chevron-down")
-	labelAt := strings.Index(html, ">Created</span>")
-	if iconAt < 0 || labelAt < 0 {
-		t.Fatalf("expected a descending indicator and the Created label (icon=%d label=%d)", iconAt, labelAt)
-	}
-	if iconAt > labelAt {
-		t.Error("indicator must precede the label on a right-aligned column")
 	}
 
 	ascHTML := renderHTML(t, ObjectsPage(objectsBrowserSampleData("asc")))
-	if !strings.Contains(ascHTML, `aria-sort="ascending"`) {
-		t.Error("ascending order must render aria-sort=ascending")
+	if !strings.Contains(ascHTML, "Oldest first") {
+		t.Error("ascending order must render as Oldest first")
 	}
-	if !strings.Contains(ascHTML, "lucide--chevron-up") {
+	if !strings.Contains(ascHTML, "lucide--arrow-up") {
 		t.Error("ascending order must render the up indicator")
 	}
-	if strings.Contains(ascHTML, "?order=asc") {
+	// The sort link's own href, not the whole bar: the sort control is not the
+	// only link in the results bar any more (the wiki view switch carries the
+	// current order forward too).
+	sortHref := func(html string) string {
+		t.Helper()
+		m := regexp.MustCompile(`href="([^"]*)"[^>]*aria-label="Sort: `).FindStringSubmatch(resultsBar(t, html))
+		if m == nil {
+			t.Fatal("sort link not found in the results bar")
+		}
+		return m[1]
+	}
+	if strings.Contains(sortHref(ascHTML), "order=asc") {
 		t.Error("ascending order must link back to the default (newest-first) order")
 	}
 
@@ -580,10 +608,10 @@ func TestObjectShortID(t *testing.T) {
 	}
 }
 
-// TestObjectsBrowserSearchHeaderIsNotSortable pins the mode distinction: search
-// hits are relevance-ranked, so ordering by created_at is meaningless there and
-// the column must not advertise a sort it cannot honour.
-func TestObjectsBrowserSearchHeaderIsNotSortable(t *testing.T) {
+// TestObjectsBrowserSearchResultsAreRelevanceRanked pins the mode distinction:
+// search hits are relevance-ranked, so ordering by created_at is meaningless
+// there and the results bar must not offer a sort the result set cannot honour.
+func TestObjectsBrowserSearchResultsAreRelevanceRanked(t *testing.T) {
 	data := objectsBrowserSampleData("")
 	data.Query = "acme"
 	data.Mode = "hybrid"
@@ -596,8 +624,14 @@ func TestObjectsBrowserSearchHeaderIsNotSortable(t *testing.T) {
 	if strings.Contains(html, "aria-sort") {
 		t.Error("search results must not render a sortable header")
 	}
-	if !strings.Contains(html, `>Created</th>`) {
-		t.Error("search results must still show the Created column")
+	if strings.Contains(html, "Newest first") || strings.Contains(html, "Oldest first") {
+		t.Error("search results must not offer a created_at order")
+	}
+	if !strings.Contains(html, "Best match first") {
+		t.Error("search results must state that they are relevance-ranked")
+	}
+	if !strings.Contains(html, `title="Relevance score"`) {
+		t.Error("search cards must render the relevance score")
 	}
 }
 
@@ -636,7 +670,7 @@ func TestObjectsPageAgentScopeOmitsProjectSurfaces(t *testing.T) {
 	}
 	for _, want := range []string{
 		`id="objects-filters-form"`,
-		`id="objects-table"`,
+		`data-testid="objects-cards"`,
 		`href="/agents/a1"`,
 		`name="actor_type"`,
 	} {
@@ -679,17 +713,17 @@ func TestObjectsPageBulkFormsCarryReturnPath(t *testing.T) {
 	}
 }
 
-// TestObjectsBrowserRowsPartialAppendsBothLists pins the HTMX fragment: the
-// table is hidden on small screens, so a page of results has to append table
-// rows AND mobile cards, or a phone's "Load more" would load invisible rows.
-func TestObjectsBrowserRowsPartialAppendsBothLists(t *testing.T) {
+// TestObjectsBrowserRowsPartialAppendsToTheGrid pins the HTMX fragment: one grid
+// at every width means one append target, plus an out-of-band replacement of the
+// load-more slot. The old fragment had to duplicate the page into a mobile list
+// that was hidden on desktop.
+func TestObjectsBrowserRowsPartialAppendsToTheGrid(t *testing.T) {
 	data := objectsBrowserSampleData("")
 	data.Preview = false
 	html := renderHTML(t, objectsBrowserRowsPartial(data))
 
 	for _, want := range []string{
-		`<tr`,
-		`id="objects-mobile-list" hx-swap-oob="beforeend"`,
+		`data-testid="object-card"`,
 		`id="objects-load-more" hx-swap-oob="true"`,
 		`hx-get="/objects/partial`,
 	} {
@@ -697,45 +731,53 @@ func TestObjectsBrowserRowsPartialAppendsBothLists(t *testing.T) {
 			t.Errorf("rows partial missing %q", want)
 		}
 	}
+	for _, unwanted := range []string{`<tr`, `objects-mobile-list`, `objects-mobile-row`, `objects-list`} {
+		if strings.Contains(html, unwanted) {
+			t.Errorf("rows partial must not carry the retired table/mobile markup %q", unwanted)
+		}
+	}
 }
 
-// TestObjectsBrowserMobileRowsAreSelectable pins the mobile counterpart of the
-// table selection surface (#2237): each mobile card carries a checkbox that
-// feeds the same Alpine `sel` model, and the checkbox is a SIBLING of the card
-// anchor (interactive content nested in a link is invalid and would navigate).
-func TestObjectsBrowserMobileRowsAreSelectable(t *testing.T) {
+// TestObjectsBrowserCardsAreSelectable pins the selection surface on the card
+// itself (#2237): each card carries a checkbox that feeds the shared Alpine `sel`
+// model, and the checkbox is a SIBLING of the card anchor (interactive content
+// nested in a link is invalid and would navigate instead of selecting).
+func TestObjectsBrowserCardsAreSelectable(t *testing.T) {
 	html := renderHTML(t, ObjectsPage(objectsBrowserSampleData("")))
 
-	start := strings.Index(html, `id="objects-mobile-list"`)
-	if start < 0 {
-		t.Fatal("mobile object list missing")
+	gridAt := strings.Index(html, `data-testid="objects-cards"`)
+	if gridAt < 0 {
+		t.Fatal("objects card grid missing")
 	}
-	end := strings.Index(html[start:], `id="objects-load-more"`)
+	end := strings.Index(html[gridAt:], `id="objects-load-more"`)
 	if end < 0 {
-		end = len(html) - start
+		end = len(html) - gridAt
 	}
-	mobile := html[start : start+end]
+	grid := html[gridAt : gridAt+end]
 
-	if !strings.Contains(mobile, `data-testid="objects-mobile-row"`) {
-		t.Error("mobile rows missing their row marker")
+	if got, want := strings.Count(grid, `data-testid="object-card"`), len(objectsBrowserSampleData("").Objects); got != want {
+		t.Errorf("grid cards = %d, want one per object (%d)", got, want)
 	}
-	if !strings.Contains(mobile, `data-object-select`) || !strings.Contains(mobile, `x-model="sel"`) {
-		t.Error("mobile rows must feed the shared Alpine selection model")
+	if !strings.Contains(grid, `data-object-select`) || !strings.Contains(grid, `x-model="sel"`) {
+		t.Error("cards must feed the shared Alpine selection model")
 	}
-	// The checkbox must come before the card anchor closes over the row: check
-	// the row's label/input precedes the anchor and that no anchor wraps it.
-	row := strings.Index(mobile, `data-testid="objects-mobile-row"`)
-	checkbox := strings.Index(mobile[row:], `data-object-select`)
-	labelClose := strings.Index(mobile[row:], `</label>`)
-	anchor := strings.Index(mobile[row+labelClose:], `<a `)
-	if row < 0 || checkbox < 0 || labelClose < 0 || anchor < 0 {
-		t.Fatalf("unexpected mobile row structure (row=%d checkbox=%d labelClose=%d anchor=%d)", row, checkbox, labelClose, anchor)
+	// The checkbox lives in the card header, before the anchor that carries the
+	// title: no anchor may wrap a form control.
+	card := strings.Index(grid, `data-testid="object-card"`)
+	checkbox := strings.Index(grid[card:], `data-object-select`)
+	labelClose := strings.Index(grid[card:], `</label>`)
+	anchor := strings.Index(grid[card:], `<a `)
+	if card < 0 || checkbox < 0 || labelClose < 0 || anchor < 0 {
+		t.Fatalf("unexpected card structure (card=%d checkbox=%d labelClose=%d anchor=%d)", card, checkbox, labelClose, anchor)
 	}
 	if checkbox > labelClose {
-		t.Error("mobile checkbox must live inside its own label, before the card anchor")
+		t.Error("card checkbox must live inside its own label")
 	}
-	if !strings.Contains(mobile, `href="/objects/`) {
-		t.Error("mobile card anchor missing (tap must still open the object)")
+	if anchor < labelClose {
+		t.Error("the card anchor must not wrap the selection checkbox")
+	}
+	if !strings.Contains(grid, `href="/objects/`) {
+		t.Error("card anchor missing (the card must open the object)")
 	}
 }
 
@@ -763,5 +805,61 @@ func TestObjectsBulkStatusDialogUsesPerTypeOptions(t *testing.T) {
 	// The old static board-order option list is gone from the status dialog.
 	if strings.Contains(html, `<option value="in_progress">`) {
 		t.Error("status dialog still renders the static canonical board order")
+	}
+}
+
+// TestObjectsBrowserWikiViewSwitch pins the browse-side variant switch: the card
+// grid opens an object's wiki in the chosen variant, the switch carries that
+// choice into the query (so a shared or reloaded URL keeps it), and it survives
+// the active filters.
+func TestObjectsBrowserWikiViewSwitch(t *testing.T) {
+	// The default variant is the article, and the default card link stays short:
+	// no view parameter when nothing but the article is meant.
+	data := objectsBrowserSampleData("")
+	data.Preview = false
+	html := renderHTML(t, ObjectsPage(data))
+	bar := resultsBar(t, html)
+	if !strings.Contains(bar, `data-testid="objects-wiki-view-article"`) ||
+		!strings.Contains(bar, `data-testid="objects-wiki-view-page"`) {
+		t.Fatal("the results bar must offer both wiki variants")
+	}
+	if !strings.Contains(bar, `aria-current="page"`) {
+		t.Error("the active variant must be marked for assistive tech")
+	}
+	if !regexp.MustCompile(`href="\?[^"]*wiki_view=page`).MatchString(bar) {
+		t.Error("the switch must link to the object-page variant as a query-only href")
+	}
+	// A card opens the wiki, and only a non-default variant is spelled out.
+	if !regexp.MustCompile(`href="/objects/[^"]+/wiki"`).MatchString(html) {
+		t.Error("a card must link into the object's wiki")
+	}
+	if strings.Contains(html, "/wiki?view=article") {
+		t.Error("the default article variant must not be spelled into card URLs")
+	}
+
+	// Chosen object-page variant: the cards carry it, so opening one does not
+	// fall back to the article.
+	page := objectsBrowserSampleData("")
+	page.Preview = false
+	page.WikiView = objectWikiViewPage
+	page.TypeFilter = "task"
+	pageHTML := renderHTML(t, ObjectsPage(page))
+	if !regexp.MustCompile(`href="/objects/[^"]+/wiki\?view=page"`).MatchString(pageHTML) {
+		t.Error("cards must open the wiki in the variant the reader chose")
+	}
+	pageBar := resultsBar(t, pageHTML)
+	if !regexp.MustCompile(`href="\?[^"]*wiki_view=article`).MatchString(pageBar) {
+		t.Error("the switch back to the article must be offered once page is active")
+	}
+	// Switching the variant keeps the active filter, so it cannot widen the list.
+	if !strings.Contains(pageBar, "wiki_view=article") || !strings.Contains(pageBar, "type=task") {
+		t.Errorf("the switch href dropped the active filter: %s", pageBar)
+	}
+
+	// The gallery preview stays inert: its cards and switch cannot navigate the
+	// preview iframe away from the sample page.
+	preview := renderHTML(t, ObjectsPage(objectsBrowserSampleData("")))
+	if strings.Contains(preview, "/wiki") {
+		t.Error("a preview card must not link to a real object")
 	}
 }

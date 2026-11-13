@@ -653,7 +653,7 @@ func TestBoardDrawerDeliverables(t *testing.T) {
 		body := rec.Body.String()
 		for _, want := range []string{
 			`data-testid="board-deliverable"`,
-			`/objects/canon-9`,
+			`href="/objects/canon-9/wiki"`,
 			"Completion note",
 			"Shipped the thing",
 		} {

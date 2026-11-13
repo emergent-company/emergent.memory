@@ -514,8 +514,14 @@ func TestRenderObjectEmbeddingBadges(t *testing.T) {
 	for _, c := range statuses {
 		objects := []GraphObject{{ID: "o1", Type: "person", Key: "sam", EmbeddingStatus: c.status}}
 		html := renderHTML(t, ObjectsPage(objectsPageData{Objects: objects}))
-		if !strings.Contains(html, c.label) {
-			t.Errorf("list card for %q missing label %q", c.status, c.label)
+		if c.status == "embedded" {
+			// "Embedded" on every card is noise: only a not-embedded state is
+			// worth flagging, so an embedded object renders no badge at all.
+			if strings.Contains(html, `data-tip="Embedded"`) || strings.Contains(html, ">Embedded<") {
+				t.Error("an embedded object must not earn a list card badge")
+			}
+		} else if !strings.Contains(html, `data-tip="`+c.label+`"`) {
+			t.Errorf("list card for %q missing embedding badge %q", c.status, c.label)
 		}
 
 		obj := &GraphObject{ID: "o1", Type: "person", Key: "sam", EmbeddingStatus: c.status}

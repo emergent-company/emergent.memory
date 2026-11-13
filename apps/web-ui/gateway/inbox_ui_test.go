@@ -352,7 +352,7 @@ func TestAppShellRendersBell(t *testing.T) {
 		7,
 		nil,
 		&currentUser{Name: "Ada", Sub: "sub-a"}, nil, templ.NopComponent, nil,
-		"", "", 0, 0, 0, "",
+		"", "", 0, 0, 0, "", "", feedbackOrderConfig{},
 	))
 	if !strings.Contains(html, `data-notifications-bell`) {
 		t.Fatal("shell is missing the notifications bell")

@@ -1243,11 +1243,11 @@ templ ExtractionJobDetail(documentID string, d extractionJobDetail) {
 					@ui.EmptyNote(ui.EmptyNoteProps{Attrs: templ.Attributes{"data-testid": "extraction-detail-nobranch"}}) { This run has no staging branch — it produced no objects, or they are no longer available. }
 				} else {
 					@ui.EmptyNote(ui.EmptyNoteProps{Attrs: templ.Attributes{"data-testid": "extraction-detail-nobranch"}}) { This run's staging branch is no longer available — showing the objects on the main graph. }
-					@extractedObjects(documentID, d.Job.ID, d.Objects)
+					@extractedObjects(d.Objects)
 					@extractedRelationships(d.Objects, d.Relationships)
 				}
 			} else {
-				@extractedObjects(documentID, d.Job.ID, d.Objects)
+				@extractedObjects(d.Objects)
 				@extractedRelationships(d.Objects, d.Relationships)
 			}
 			if d.Branch != nil {
@@ -1453,7 +1453,7 @@ templ mergeReviewList(items []mergeReviewItem) {
 						<span class="text-warning text-xs">conflict: { it.Conflicts }</span>
 					}
 					if it.ObjectID != "" {
-						<a class="link link-primary shrink-0 text-xs" href={ templ.URL("/objects/" + url.PathEscape(it.ObjectID)) }>View →</a>
+						<a class="link link-primary shrink-0 text-xs" href={ templ.URL(objectWikiHref(it.ObjectID, "")) }>View →</a>
 					}
 				</div>
 			}
@@ -1463,17 +1463,7 @@ templ mergeReviewList(items []mergeReviewItem) {
 
 // --- extraction results ---
 
-// extractedObjectOrigin is the ?from= breadcrumb trail an extracted object links
-// back through: the document and the run it came from. The object detail view
-// resolves it into Documents > Document > Extraction history; the run's short id
-// is already shown in the object's Source card, so it is not a crumb. It is
-// built from the page's own identifiers, so the object view can present that
-// document trail instead of a bare Objects trail.
-func extractedObjectOrigin(documentID, jobID string) string {
-	return "/documents/" + url.PathEscape(documentID) + "/extractions/" + url.PathEscape(jobID)
-}
-
-templ extractedObjects(documentID, jobID string, objects []GraphObject) {
+templ extractedObjects(objects []GraphObject) {
 	if len(objects) == 0 {
 		@ui.EmptyState(ui.EmptyStateProps{
 			Icon:        "lucide--boxes",
@@ -1482,19 +1472,18 @@ templ extractedObjects(documentID, jobID string, objects []GraphObject) {
 			Bordered:    true,
 		})
 	} else {
-		{{ origin := extractedObjectOrigin(documentID, jobID) }}
 		@cardList("", cardListProps{}) {
 			for _, o := range objects {
-				@extractedObjectRow(o, origin)
+				@extractedObjectRow(o)
 			}
 		}
 	}
 }
 
-templ extractedObjectRow(o GraphObject, origin string) {
+templ extractedObjectRow(o GraphObject) {
 	<a
 		class="flex items-center gap-2 px-4 py-3 transition-colors hover:bg-base-200/40"
-		href={ templ.URL("/objects/" + url.PathEscape(o.ID) + "?from=" + url.QueryEscape(origin)) }
+		href={ templ.URL(objectWikiHref(o.ID, "")) }
 	>
 		@ui.Badge(ui.BadgeProps{
 			Label:   o.Type,
