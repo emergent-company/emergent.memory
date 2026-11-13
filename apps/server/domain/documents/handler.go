@@ -121,7 +121,7 @@ func NewHandler(
 // @Param        cursor query string false "Pagination cursor (opaque, from previous response; must match the requested sort)"
 // @Param        sourceType query string false "Filter by source type"
 // @Param        sourceId query string false "Filter by connected data source UUID, or 'none' for documents with no source"
-// @Param        status query string false "Filter by derived status bucket" Enums(processing, ready, extracted, failed)
+// @Param        status query string false "Filter by derived status bucket" Enums(processing, ready, extracted, failed, blocked)
 // @Param        q query string false "Case-insensitive substring match over filename and source URL"
 // @Param        sort query string false "Sort key" Enums(created, updated) default(created)
 // @Param        order query string false "Sort direction" Enums(asc, desc) default(desc)

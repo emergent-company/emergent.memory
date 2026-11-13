@@ -144,6 +144,8 @@ func (r *Repository) listQueryBase() *bun.SelectQuery {
 		ColumnExpr("(SELECT COUNT(*)::int FROM kb.chunks c WHERE c.document_id = d.id AND c.embedding IS NOT NULL) AS embedded_chunks").
 		ColumnExpr("(SELECT ej.status FROM kb.object_extraction_jobs ej WHERE ej.document_id = d.id ORDER BY ej.created_at DESC LIMIT 1) AS extraction_status").
 		ColumnExpr(processingStatusSQL()).
+		ColumnExpr(processingReasonSQL()).
+		ColumnExpr(extractionNotEnqueuedReasonSQL()).
 		ColumnExpr(lastExtractionAtSQL()).
 		ColumnExpr(extractionObjectsCreatedSQL()).
 		ColumnExpr(extractionRelationshipsCreatedSQL())
@@ -297,6 +299,8 @@ func (r *Repository) GetByID(ctx context.Context, projectID, documentID string) 
 		ColumnExpr("(SELECT COUNT(*)::int FROM kb.chunks c WHERE c.document_id = d.id AND c.embedding IS NOT NULL) AS embedded_chunks").
 		ColumnExpr("(SELECT ej.status FROM kb.object_extraction_jobs ej WHERE ej.document_id = d.id ORDER BY ej.created_at DESC LIMIT 1) AS extraction_status").
 		ColumnExpr(processingStatusSQL()).
+		ColumnExpr(processingReasonSQL()).
+		ColumnExpr(extractionNotEnqueuedReasonSQL()).
 		ColumnExpr(lastExtractionAtSQL()).
 		ColumnExpr(extractionObjectsCreatedSQL()).
 		ColumnExpr(extractionRelationshipsCreatedSQL()).
@@ -1988,12 +1992,55 @@ func (r *Repository) UpdateContentAndStatus(ctx context.Context, documentID, con
 
 // processingStatusSQL returns a SQL CASE expression that derives the unified processing status
 // from conversion_status, document_parsing_jobs, and object_extraction_jobs.
-// Precedence: converting > conversion_failed > extracting > extraction_failed > completed > ready_for_extraction.
+// Precedence: converting > conversion_failed > extracting > extraction_failed > blocked > completed > ready_for_extraction.
 // A dead_letter extraction job is terminal failure: object extraction never
 // writes the intermediate 'failed' state, so omitting dead_letter here would
 // report a permanently failed document as ready.
 func processingStatusSQL() string {
 	return processingStatusExpr() + " AS processing_status"
+}
+
+// processingReasonSQL returns the derived blocked-reason expression with its
+// column alias; see processingReasonExpr.
+func processingReasonSQL() string {
+	return processingReasonExpr() + " AS processing_reason"
+}
+
+// extractionNotEnqueuedReasonSQL returns the derived not-enqueued-reason
+// expression with its column alias; see extractionNotEnqueuedReasonExpr.
+func extractionNotEnqueuedReasonSQL() string {
+	return extractionNotEnqueuedReasonExpr() + " AS extraction_not_enqueued_reason"
+}
+
+// processingReasonExpr derives why a document is blocked without storing a
+// column. The durable signal is a pending chunk embedding job that carries
+// last_error='budget_exceeded' — the worker leaves the job pending when the
+// project's budget is exhausted, so this survives restarts and needs no state
+// column of its own.
+func processingReasonExpr() string {
+	return `CASE WHEN EXISTS (
+		SELECT 1 FROM kb.chunks c
+		JOIN kb.chunk_embedding_jobs cej ON cej.chunk_id = c.id
+		WHERE c.document_id = d.id AND cej.status = 'pending' AND cej.last_error = 'budget_exceeded'
+	) THEN 'project_budget_exceeded' END`
+}
+
+// extractionNotEnqueuedReasonExpr derives why a converted document has no
+// extraction job at all. A job — whatever its status — means extraction was
+// enqueued, so the reason is NULL. Otherwise the project settings explain the
+// omission: source-synced docs are governed by auto_extract_source_syncs, and
+// uploads/created docs by auto_extract_objects.
+func extractionNotEnqueuedReasonExpr() string {
+	return `CASE
+		WHEN EXISTS (SELECT 1 FROM kb.object_extraction_jobs oejx WHERE oejx.document_id = d.id) THEN NULL
+		WHEN d.source_id IS NOT NULL AND EXISTS (
+			SELECT 1 FROM kb.projects p WHERE p.id = d.project_id AND p.auto_extract_source_syncs = false
+		) THEN 'extraction_disabled_for_source_syncs'
+		WHEN d.source_id IS NULL AND EXISTS (
+			SELECT 1 FROM kb.projects p WHERE p.id = d.project_id AND p.auto_extract_objects = false
+		) THEN 'extraction_disabled_for_project'
+		ELSE NULL
+	END`
 }
 
 // processingStatusExpr returns the derived-status CASE without its column alias,
@@ -2016,6 +2063,13 @@ func processingStatusExpr() string {
 			SELECT oej2.status FROM kb.object_extraction_jobs oej2
 			WHERE oej2.document_id = d.id ORDER BY oej2.created_at DESC LIMIT 1
 		) IN ('failed', 'dead_letter') THEN 'extraction_failed'
+		WHEN EXISTS (
+			SELECT 1 FROM kb.chunks c
+			JOIN kb.chunk_embedding_jobs cej ON cej.chunk_id = c.id
+			WHERE c.document_id = d.id
+				AND cej.status = 'pending'
+				AND cej.last_error = 'budget_exceeded'
+		) THEN 'blocked'
 		WHEN (
 			SELECT oej3.status FROM kb.object_extraction_jobs oej3
 			WHERE oej3.document_id = d.id ORDER BY oej3.created_at DESC LIMIT 1

@@ -766,6 +766,9 @@ func (s *Service) processSourceDocument(ctx context.Context, projectID, document
 	}
 
 	if !extract || s.extractionJobs == nil {
+		s.log.Info("source document extraction skipped: auto-extract for source syncs is disabled",
+			slog.String("document_id", documentID),
+			slog.String("project_id", projectID))
 		return
 	}
 	if err := s.extractionJobs.TriggerForDocument(ctx, projectID, documentID); err != nil {

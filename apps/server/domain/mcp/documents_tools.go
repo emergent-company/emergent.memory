@@ -200,6 +200,12 @@ func documentSummary(d *documents.Document, includeContent bool) map[string]any 
 	if d.ProcessingStatus != nil && *d.ProcessingStatus != "" {
 		sum["processingStatus"] = *d.ProcessingStatus
 	}
+	if d.ProcessingReason != nil && *d.ProcessingReason != "" {
+		sum["processingReason"] = *d.ProcessingReason
+	}
+	if d.ExtractionNotEnqueuedReason != nil && *d.ExtractionNotEnqueuedReason != "" {
+		sum["extractionNotEnqueuedReason"] = *d.ExtractionNotEnqueuedReason
+	}
 	if d.SourceStatus != "" {
 		sum["sourceStatus"] = d.SourceStatus
 	}
