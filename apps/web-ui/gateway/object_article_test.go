@@ -459,7 +459,7 @@ func TestObjectWikiPageOverviewLeads(t *testing.T) {
 	if overview < 0 || facts < 0 || relations < 0 {
 		t.Fatalf("object-page variant missing a block (overview=%d facts=%d relations=%d)", overview, facts, relations)
 	}
-	if !(overview < facts && facts < relations) {
+	if overview >= facts || facts >= relations {
 		t.Errorf("order must be overview → key facts → relationships, got overview=%d facts=%d relations=%d", overview, facts, relations)
 	}
 	if !strings.Contains(html, `data-testid="object-lead">A short lead.<`) {
