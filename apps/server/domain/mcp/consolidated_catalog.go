@@ -87,6 +87,8 @@ var consolidatedFamilies = []consolidatedFamily{
 		Scope: "graph:write",
 		Description: "Create or change graph entities. action=create takes an entities[] array (idempotent on type+key); " +
 			"action=update merges properties (null removes) for one entity_id or an updates[] batch of up to 100 with per-item results; " +
+			"both actions accept name — the entity's display name column, which the app and entity-query show and which " +
+			"properties.name does not update on an existing object; " +
 			"action=delete soft-deletes one entity_id or an entity_ids[] batch of up to 100 with per-item results; " +
 			"action=restore undeletes. Filter-based bulk actions use entity-bulk-update (default soft_delete; hard_delete explicit).",
 		Actions: []consolidatedAction{

@@ -866,7 +866,7 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 					"entities": {
 						Type:        "array",
 						Items:       &PropertySchema{Type: "object"},
-						Description: "Array of entity specifications to create. Each item: {type (required), properties, key, status, labels, relationships?: [{type, exactly one of source_id or target_id, properties}]}. Use source_id when the pre-existing entity should be the relationship source (source_id→new_entity). Use target_id when the new entity should be the source (new_entity→target_id). A spec with both is reported as invalid_spec; a spec with neither is reported as missing_endpoint.",
+						Description: "Array of entity specifications to create. Each item: {type (required), name, properties, key, status, labels, relationships?: [{type, exactly one of source_id or target_id, properties}]}. `name` is the entity's display name — the title the app and entity-query show; omit it and it is derived from properties.name/title, but a display name that differs from the property (\"Table head cell alignment\" for a variant keyed ui-variant-table-…) must be passed here. Use source_id when the pre-existing entity should be the relationship source (source_id→new_entity). Use target_id when the new entity should be the source (new_entity→target_id). A spec with both is reported as invalid_spec; a spec with neither is reported as missing_endpoint.",
 					},
 					"branch": {
 						Type:        "string",
@@ -907,7 +907,7 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 		{
 			Name:         "entity-update",
 			OutputSchema: envelopeOutputSchema(),
-			Description:  "Update one or more existing entities by creating new versions. Properties are merged with existing values (null removes a property). Two forms: single (entity_id) or batch ('updates' array, up to 100 items, each {entity_id, properties, labels, status, branch_id?}) with per-item results — one bad item never fails the batch; retry exactly the failed indexes. Returns a slim object (id/type/key/name/labels) per entity; pass verbose=true for full metadata and field_strategy/full for properties.",
+			Description:  "Update one or more existing entities by creating new versions. Properties are merged with existing values (null removes a property). `name` sets the entity's display name — the title the app and entity-query show, distinct from properties.name; pass both when the property mirrors the title. Two forms: single (entity_id) or batch ('updates' array, up to 100 items, each {entity_id, name, properties, labels, status, branch_id?}) with per-item results — one bad item never fails the batch; retry exactly the failed indexes. Returns a slim object (id/type/key/name/labels) per entity; pass verbose=true for full metadata and field_strategy/full for properties.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -923,6 +923,10 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 								"entity_id": {
 									Type:        "string",
 									Description: "UUID or key of the entity to update (required per item).",
+								},
+								"name": {
+									Type:        "string",
+									Description: "Optional new display name for this item (max 512 chars). Empty clears it.",
 								},
 								"properties": {
 									Type:        "object",
@@ -948,7 +952,11 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 							},
 							Required: []string{"entity_id"},
 						},
-						Description: "Batch form (max 100 items): each item {entity_id (required), properties, labels, replace_labels, status, branch_id?}. Returns one result per item with index/entity_id/ok/error so a retry can target only the failed indexes. No item is atomic with any other; a failure does not roll back the successes.",
+						Description: "Batch form (max 100 items): each item {entity_id (required), name, properties, labels, replace_labels, status, branch_id?}. Returns one result per item with index/entity_id/ok/error so a retry can target only the failed indexes. No item is atomic with any other; a failure does not roll back the successes.",
+					},
+					"name": {
+						Type:        "string",
+						Description: "Optional new display name (max 512 chars); an empty string clears it. Single form only — use updates[].name in the batch form.",
 					},
 					"properties": {
 						Type:        "object",
@@ -5333,6 +5341,15 @@ func (s *Service) updateEntityOne(ctx context.Context, projectUUID uuid.UUID, pr
 		BranchID: branchID,
 	}
 
+	// The display name is a first-class column, not a property: the UI and
+	// entity-query read it, while properties.name is a separate mirror. Without
+	// this an agent can rename nothing — the stored name keeps showing the key
+	// (emergent-company/emergent.memory#718). An empty string clears the name,
+	// matching the REST PATCH semantics.
+	if name, ok := args["name"].(string); ok {
+		req.Name = &name
+	}
+
 	if props, ok := args["properties"].(map[string]any); ok {
 		req.Properties = props
 	}
@@ -6664,6 +6681,13 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 			Labels:          labels,
 			BranchID:        branchID,
 			ExtractionJobID: extractionJobID,
+		}
+
+		// An explicit spec name wins; otherwise CreateOrUpdate derives one from
+		// properties.name/title. Both write the same first-class column, so a
+		// caller never has to trade one for the other.
+		if name, ok := entityMap["name"].(string); ok && name != "" {
+			req.Name = &name
 		}
 
 		// Propagate namespace from context (set by RememberStream or API caller).

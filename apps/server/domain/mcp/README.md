@@ -714,6 +714,13 @@ version, so merging the branch applies the delete to main.
 
 Supply an optional `key` per entity for idempotent operations — if an entity with the same (type, key) already exists it is updated in-place rather than duplicated.
 
+`name` is the entity's **display name** — the title the app's object list and
+`entity action:"query"` render. It is a column, not a property: `properties.name`
+is a convention used only to derive it when `name` is omitted, and on an existing
+object a properties-only write leaves the column untouched. Pass `name` whenever
+the display name is not the property value (a variant keyed
+`ui-variant-ui-Button-buttonsize` titled `Button size`, for example).
+
 ```json
 {
   "name": "entity-create",
@@ -722,6 +729,7 @@ Supply an optional `key` per entity for idempotent operations — if an entity w
       {
         "type": "Person",
         "key": "person-alice",
+        "name": "Alice Chen",
         "properties": { "name": "Alice" },
         "labels": ["employee"]
       },
@@ -765,11 +773,16 @@ both endpoints must resolve on the same branch, as with inline relationships on
 **`entity-update`** (batch) - Update up to 100 entities in one request
 
 Pass `updates` instead of `entity_id`. Each item is
-`{entity_id, properties, labels, status, branch_id?}`. Items are independent: a
+`{entity_id, name, properties, labels, status, branch_id?}`. Items are independent: a
 bad item does not fail the batch, and the result carries one entry per item
 (`{index, entity_id, ok, error?}`) plus `meta.succeeded/failed/total`, so a
 retry targets only the failed indexes. Properties are merged per item, so
 re-running a successful item is safe.
+
+`name` renames the entity (the display column, same as `entity-create`) and, like
+the other fields, is per item — so renaming a batch of objects is one call. The
+result reports the name column, so a caller can verify the rename from the write
+itself.
 
 ```json
 {
