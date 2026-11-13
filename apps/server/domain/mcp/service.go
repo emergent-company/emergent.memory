@@ -589,7 +589,7 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:         "entity-search",
-			OutputSchema: objectOutputSchema(),
+			OutputSchema: envelopeOutputSchema(),
 			Description:  "Search entities by text query over the full-text index (key, type, title, name, description). Returns the current version of each matching object only: soft-deleted objects are excluded, one hit per object, with the canonical object id plus the current version number, properties and updated_at. Matching is lexeme-based, not substring: query terms match whole indexed words (a composite key such as \"lov/1997-06-13-44\" is also searchable by its components), Norwegian stop words are ignored, and a stop-word-only query returns no results. By default only searches types with no namespace. Pass namespace to search a specific namespace, or namespace=\"all\" to search all.",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -4892,7 +4892,12 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 		Count:     len(resultEntities),
 	}
 
-	return s.wrapResult(result)
+	// entity-search is a member of the consolidated `entity` tool, which
+	// advertises the shared envelope output schema (the first family action,
+	// entity-query, returns {ok,data}). A bare SearchEntitiesResult fails the
+	// client's structuredContent validation with "data must have required
+	// property 'ok'/'data'" (#702). Return the same envelope as query.
+	return envelopeResult(true, result, nil, "")
 }
 
 func (s *Service) executeGetEntityEdges(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {

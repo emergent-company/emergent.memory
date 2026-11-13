@@ -184,10 +184,14 @@ func TestTypeScope_ExecuteSearchEntities(t *testing.T) {
 	res, err := svc.executeSearchEntities(ctx, projectID, map[string]any{"query": "Common"})
 	require.NoError(t, err)
 	text := toolResultText(t, res, nil)
-	var out SearchEntitiesResult
-	require.NoError(t, json.Unmarshal([]byte(text), &out))
-	require.Len(t, out.Entities, 1)
-	assert.Equal(t, "Law", out.Entities[0].Type)
+	var env struct {
+		OK   bool                 `json:"ok"`
+		Data SearchEntitiesResult `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(text), &env))
+	require.True(t, env.OK, "entity-search envelope ok=false: %s", text)
+	require.Len(t, env.Data.Entities, 1)
+	assert.Equal(t, "Law", env.Data.Entities[0].Type)
 }
 
 // =============================================================================
