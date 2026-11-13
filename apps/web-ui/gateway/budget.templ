@@ -45,13 +45,15 @@ templ sidebarBudgetBadge(level string) {
 //
 // Both windows are always shown, capped or not, so "the weekly cap is missing"
 // is visible rather than implied by an absent card.
+//
+// A missing window pointer is NOT the same as an uncapped one: the backend
+// reports every window, so half a payload means a server this build does not
+// understand (a rolling deploy, a truncated body). Rendering the one card we
+// got would quietly present the other window as uncapped — possibly the very
+// window that is blocking runs — so the section degrades instead.
 templ usageBudgetSection(state *BudgetState, loadErr error) {
 	@ui.Section("Budget", ui.SectionProps{Margin: "mt-6", BodyClass: "memory-density-comfortable"}) {
-		if loadErr != nil {
-			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
-				Budget details are unavailable right now.
-			}
-		} else if state == nil {
+		if loadErr != nil || state == nil || state.Week == nil || state.Month == nil {
 			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
 				Budget details are unavailable right now.
 			}

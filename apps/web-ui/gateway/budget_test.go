@@ -172,6 +172,21 @@ func TestUsageBudgetSection(t *testing.T) {
 	if !strings.Contains(down, "Budget details are unavailable right now.") {
 		t.Errorf("budget outage must degrade the section:\n%s", down)
 	}
+
+	// Half a payload (one window missing) is a server this build does not
+	// understand, not a project with an uncapped window: rendering the card we
+	// did get would present the missing window as "no limit" — possibly the one
+	// blocking runs. Degrade instead of mislabeling.
+	partial := renderHTML(t, UsagePage(usagePageData{
+		Days:   30,
+		Budget: &BudgetState{Month: budgetWindow("month", 25.5, 4.2, "ok")},
+	}))
+	if !strings.Contains(partial, "Budget details are unavailable right now.") {
+		t.Errorf("a payload missing a window must degrade the section:\n%s", partial)
+	}
+	if strings.Contains(partial, `data-testid="budget-month"`) || strings.Contains(partial, "No spend cap is set") {
+		t.Errorf("a partial payload must not render a single window as uncapped:\n%s", partial)
+	}
 }
 
 // TestUIUsageShowsResetFlash proves the PRG param from a reset surfaces as a
