@@ -271,6 +271,7 @@ type fakeMemory struct {
 	dsSourceAppErr           error                        // any org source-App method failure
 	dsCreatedSourceAppReq    *DSSourceAppRequest          // last request forwarded to CreateOrgSourceApp
 	dsCreatedSourceAppOrg    string                       // last org id passed to CreateOrgSourceApp
+	dsCreatedSourceAppNoID   bool                         // CreateOrgSourceApp returns a row without an id
 	dsDeletedSourceAppID     string                       // last app id passed to DeleteOrgSourceApp
 	dsUpdatedSourceAppOrg    string                       // last org id passed to UpdateOrgSourceApp
 	dsUpdatedSourceAppID     string                       // last app id passed to UpdateOrgSourceApp
@@ -5327,8 +5328,12 @@ func (f *fakeMemory) CreateOrgSourceApp(ctx context.Context, orgID string, req *
 	}
 	f.dsCreatedSourceAppOrg = orgID
 	f.dsCreatedSourceAppReq = req
+	rowID := "sapp-new"
+	if f.dsCreatedSourceAppNoID {
+		rowID = ""
+	}
 	app := SourceApp{
-		ID:         "sapp-new",
+		ID:         rowID,
 		OrgID:      orgID,
 		Provider:   req.Provider,
 		AppID:      req.AppID,

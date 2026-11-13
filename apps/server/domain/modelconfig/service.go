@@ -37,7 +37,7 @@ type Service struct {
 // *Store; extracted so resolution behavior is unit-testable without a DB.
 type modelConfigStore interface {
 	GetProjectModelConfig(ctx context.Context, projectID uuid.UUID) (*ProjectModelConfig, error)
-	UpsertProjectModelConfig(ctx context.Context, cfg *ProjectModelConfig) error
+	UpsertProjectModelConfig(ctx context.Context, projectID uuid.UUID, patch ProjectModelConfigPatch) (*ProjectModelConfig, error)
 	DeleteProjectModelConfig(ctx context.Context, projectID uuid.UUID) error
 }
 
@@ -173,50 +173,41 @@ func (s *Service) UpsertProjectModelConfig(ctx context.Context, projectID uuid.U
 		return nil, err
 	}
 
-	// Load the existing row so an unsupplied field can be preserved. A missing
-	// row is fine: both fields then stay empty.
-	existing, err := s.store.GetProjectModelConfig(ctx, projectID)
-	if err != nil {
-		return nil, err
-	}
-
-	now := time.Now()
-	cfg := &ProjectModelConfig{
-		ProjectID: projectID,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
+	// Build a per-field patch: a field the request does not name is never
+	// written, so a concurrent partial update to the other field cannot be
+	// resurrected from this call's stale read (#708). A missing row is created
+	// by the store with empty models.
+	patch := ProjectModelConfigPatch{}
 	if req.ClearGenerative {
-		cfg.GenerativeModel = ""
-		cfg.GenerativeProviderSlug = ""
+		empty := ""
+		patch.GenerativeModel = &empty
+		patch.GenerativeProviderSlug = &empty
 	} else if req.GenerativeModel != "" {
-		cfg.GenerativeModel = genRef.Model
-		cfg.GenerativeProviderSlug = genRef.Provider
-	} else if existing != nil {
-		cfg.GenerativeModel = existing.GenerativeModel
-		cfg.GenerativeProviderSlug = existing.GenerativeProviderSlug
+		model, slug := genRef.Model, genRef.Provider
+		patch.GenerativeModel = &model
+		patch.GenerativeProviderSlug = &slug
 	}
 	if req.ClearEmbedding {
-		cfg.EmbeddingModel = ""
-		cfg.EmbeddingProviderSlug = ""
+		empty := ""
+		patch.EmbeddingModel = &empty
+		patch.EmbeddingProviderSlug = &empty
 	} else if req.EmbeddingModel != "" {
-		cfg.EmbeddingModel = embRef.Model
-		cfg.EmbeddingProviderSlug = embRef.Provider
-	} else if existing != nil {
-		cfg.EmbeddingModel = existing.EmbeddingModel
-		cfg.EmbeddingProviderSlug = existing.EmbeddingProviderSlug
+		model, slug := embRef.Model, embRef.Provider
+		patch.EmbeddingModel = &model
+		patch.EmbeddingProviderSlug = &slug
 	}
-	if err := s.store.UpsertProjectModelConfig(ctx, cfg); err != nil {
+	saved, err := s.store.UpsertProjectModelConfig(ctx, projectID, patch)
+	if err != nil {
 		return nil, err
 	}
 	s.log.Info("project model config upserted",
 		slog.String("projectID", projectID.String()),
-		slog.String("generativeModel", cfg.GenerativeModel),
-		slog.String("generativeProviderSlug", cfg.GenerativeProviderSlug),
-		slog.String("embeddingModel", cfg.EmbeddingModel),
-		slog.String("embeddingProviderSlug", cfg.EmbeddingProviderSlug),
+		slog.String("generativeModel", saved.GenerativeModel),
+		slog.String("generativeProviderSlug", saved.GenerativeProviderSlug),
+		slog.String("embeddingModel", saved.EmbeddingModel),
+		slog.String("embeddingProviderSlug", saved.EmbeddingProviderSlug),
 	)
-	return toModelConfigResponse(cfg.GenerativeModel, cfg.EmbeddingModel, cfg.GenerativeProviderSlug, cfg.EmbeddingProviderSlug, cfg.CreatedAt, cfg.UpdatedAt), nil
+	return toModelConfigResponse(saved.GenerativeModel, saved.EmbeddingModel, saved.GenerativeProviderSlug, saved.EmbeddingProviderSlug, saved.CreatedAt, saved.UpdatedAt), nil
 }
 
 // DeleteProjectModelConfig clears the project's explicit model config.
