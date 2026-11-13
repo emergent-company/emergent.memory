@@ -156,23 +156,6 @@ type Config struct {
 	// the box once — so leave this empty unless the box lives on another host.
 	FeedbackOrderToken string
 
-	// GitHub webhook ingress (see webhook_github.go). GitHubWebhookSecret is
-	// the HMAC-SHA256 key used to verify X-Hub-Signature-256; empty disables
-	// the endpoint (503). GitHubReviewAgentID is the Memory runtime agent id
-	// triggered for relevant pull_request events; empty = log + no-op.
-	// GitHubReviewRepos is a comma-separated owner/repo allowlist; empty =
-	// ignore every event.
-	GitHubWebhookSecret string
-	GitHubReviewAgentID string
-	GitHubReviewRepos   string
-	// AgentTriggerToken is the webhook trigger credential the gateway forwards
-	// to memory to trigger the PR-review agent (AGENT_TRIGGER_TOKEN). It is a
-	// scoped per-integration `emt_*` credential carrying the reserved
-	// `webhook:trigger` marker, minted server-side via the internal
-	// CreateWebhookTriggerToken path (name + expiry + exact-set ceiling), not a
-	// shared static secret. Every other memory call authenticates with the
-	// request's session token; this is not a general gateway credential.
-	AgentTriggerToken string
 	// ProviderProbeAllow lists hostnames and/or CIDRs (from
 	// PROVIDER_PROBE_ALLOW, comma-separated) the provider connection-test /
 	// base-url check may dial even when they resolve to non-public addresses
@@ -277,12 +260,8 @@ func LoadConfig() Config {
 		FeedbackOrderSession:  strings.ToLower(strings.TrimSpace(os.Getenv("FEEDBACK_ORDER_SESSION"))),
 		FeedbackOrderToken:    os.Getenv("FEEDBACK_ORDER_TOKEN"),
 
-		GitHubWebhookSecret: os.Getenv("GITHUB_WEBHOOK_SECRET"),
-		GitHubReviewAgentID: os.Getenv("GITHUB_REVIEW_AGENT_ID"),
-		GitHubReviewRepos:   os.Getenv("GITHUB_REVIEW_REPOS"),
-		AgentTriggerToken:   os.Getenv("AGENT_TRIGGER_TOKEN"),
-		ProviderProbeAllow:  splitCSV(os.Getenv("PROVIDER_PROBE_ALLOW")),
-		TrustedProxyCIDRs:   splitCSV(os.Getenv("TRUSTED_PROXY_CIDRS")),
+		ProviderProbeAllow: splitCSV(os.Getenv("PROVIDER_PROBE_ALLOW")),
+		TrustedProxyCIDRs:  splitCSV(os.Getenv("TRUSTED_PROXY_CIDRS")),
 
 		DeployPortalEnabled:      envBoolOr("DEPLOY_PORTAL_ENABLED", false),
 		RailwayOAuthClientID:     os.Getenv("RAILWAY_OAUTH_CLIENT_ID"),
@@ -441,12 +420,6 @@ func (c Config) Validate() error {
 				return fmt.Errorf("%s must be https in %s", name, c.SentryEnvironment)
 			}
 		}
-	}
-	// The GitHub webhook is the one session-less memory caller; without its
-	// dedicated trigger token the trigger fails asynchronously after the 202,
-	// which is invisible to GitHub and unretryable. Fail fast instead.
-	if c.GitHubWebhookSecret != "" && c.AgentTriggerToken == "" {
-		return fmt.Errorf("GITHUB_WEBHOOK_SECRET is set but AGENT_TRIGGER_TOKEN is empty")
 	}
 	// A malformed TRUSTED_PROXY_CIDRS entry must be a boot error: silently
 	// ignoring it would change which peer may set the rate-limit key.

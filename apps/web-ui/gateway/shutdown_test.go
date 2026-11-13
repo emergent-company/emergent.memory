@@ -97,9 +97,7 @@ func TestConversationEventsStopsOnShutdown(t *testing.T) {
 // workers inherit the environment they need but must never see the gateway's
 // own secrets.
 func TestWorkerEnvStripsGatewaySecrets(t *testing.T) {
-	t.Setenv("AGENT_TRIGGER_TOKEN", "emt_webhook_secret")
 	t.Setenv("SESSION_SECRET", "session-secret")
-	t.Setenv("GITHUB_WEBHOOK_SECRET", "gh-secret")
 	t.Setenv("LIVEKIT_API_SECRET", "livekit-secret") // the bridge legitimately needs this
 
 	env := workerEnv()
@@ -111,7 +109,7 @@ func TestWorkerEnvStripsGatewaySecrets(t *testing.T) {
 		}
 		return "", false
 	}
-	for _, k := range []string{"AGENT_TRIGGER_TOKEN", "SESSION_SECRET", "GITHUB_WEBHOOK_SECRET"} {
+	for _, k := range []string{"SESSION_SECRET", "SHARE_COOKIE_SECRET", "SHARE_REF_SECRET", "TOKEN_API_KEY"} {
 		if _, ok := find(k); ok {
 			t.Fatalf("%s leaked into the bridge worker env", k)
 		}

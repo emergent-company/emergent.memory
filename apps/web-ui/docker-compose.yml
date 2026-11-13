@@ -8,10 +8,8 @@ services:
     build: .
     environment:
       # memory (the brain). Interactive calls authenticate with the signed-in
-      # user's session token; AGENT_TRIGGER_TOKEN is the session-less GitHub
-      # webhook's dedicated static credential only.
+      # user's session token.
       MEMORY_URL: https://memory.emergent-company.ai
-      AGENT_TRIGGER_TOKEN: ${AGENT_TRIGGER_TOKEN:-}
       MEMORY_PROJECT_ID: ${MEMORY_PROJECT_ID}
       # LiveKit (voice transport)
       LIVEKIT_URL: ${LIVEKIT_URL}
