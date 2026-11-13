@@ -151,9 +151,11 @@ func (s *Server) uiUsage(c echo.Context) error {
 	})
 	g.Go(func() error { convs, convsErr = s.memory.ListConversations(ctx, true); return nil })
 	g.Go(func() error { monthSum, monthErr = s.memory.GetProjectUsageSummary(ctx, monthStart, now); return nil })
-	// Read through the cache, but do not let a cached-but-stale reading hide a
-	// reset the user just performed: the reset handler invalidates the entry.
-	g.Go(func() error { budget, budgetErr = s.cachedBudgetState(ctx); return nil })
+	// The usage page shows the authoritative figures, so it reads the state
+	// directly rather than through the badge's 60 s cache: an admin who just
+	// changed a cap in settings must not see the old one here. The reset handler
+	// invalidates the cache for the badge.
+	g.Go(func() error { budget, budgetErr = s.memory.GetProjectBudgetState(ctx); return nil })
 	_ = g.Wait()
 
 	data := usagePageData{
@@ -161,7 +163,9 @@ func (s *Server) uiUsage(c echo.Context) error {
 		BudgetErr: budgetErr,
 		Days:      days,
 		FlashMsg:  flashFromQuery(c, budgetResetParams),
-		FlashErr:  flashError(c),
+		// Already rendered to readable wording by the reset handler before the
+		// redirect; a raw "memory 403 forbidden" would be useless here anyway.
+		FlashErr: flashError(c),
 	}
 
 	if summaryErr != nil {

@@ -194,7 +194,10 @@ func (s *Server) uiBudgetReset(c echo.Context) error {
 	}
 
 	if _, err := s.memory.ResetProjectBudgetWindow(ctx, window); err != nil {
-		return redirectWithError(c, back, err)
+		// Classify here, not on the receiving page: the PRG error travels as a
+		// query param, so the HTTP status that carries the meaning is gone by
+		// the time a page renders it.
+		return redirectWithError(c, back, budgetResetError(err))
 	}
 	s.invalidateBudgetState(ctx)
 	redirectAfterMutation(c, back+"?budget_reset="+window)

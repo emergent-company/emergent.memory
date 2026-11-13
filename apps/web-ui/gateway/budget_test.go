@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -290,4 +291,51 @@ func TestUIBudgetReset(t *testing.T) {
 			t.Errorf("Location = %q, want an error redirect to the budget page", loc)
 		}
 	})
+}
+
+// TestUIBudgetResetAuthErrorWording pins the one message that matters after a
+// rejected reset: "you need to be a project admin". The reset handler classifies
+// the failure before redirecting — the PRG error arrives as a query string, so
+// the HTTP status is already gone when a page renders it — and both entry points
+// then show the wording verbatim.
+func TestUIBudgetResetAuthErrorWording(t *testing.T) {
+	forbidden := &memoryHTTPError{Status: http.StatusForbidden, Code: "forbidden", Message: "project admin authority required"}
+
+	_, e := newBudgetResetEcho(&fakeMemory{budgetResetErr: forbidden})
+	rec := voicePost(e, "/settings/budget/reset", "window=week&back=usage")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", rec.Code)
+	}
+	loc := rec.Header().Get(echo.HeaderLocation)
+	if !strings.HasPrefix(loc, "/usage?err=") {
+		t.Fatalf("Location = %q, want a redirect to the usage page", loc)
+	}
+	msg, err := url.QueryUnescape(strings.TrimPrefix(loc, "/usage?err="))
+	if err != nil {
+		t.Fatalf("unescape redirect error: %v", err)
+	}
+	if !strings.Contains(msg, "you need to be a project admin to reset the budget window") {
+		t.Fatalf("redirected error = %q, want the admin wording", msg)
+	}
+
+	// The usage page renders that param into the toast, so the user actually
+	// sees it (and never the "memory 403 forbidden:" prefix).
+	f := &fakeMemory{
+		usageSummary:   sampleUsageSummary(),
+		usageSeries:    sampleUsageSeries(),
+		budgetStateErr: forbidden,
+	}
+	_, usageEcho := newUsageEcho(f)
+	rec2 := httptest.NewRecorder()
+	usageEcho.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, loc, nil))
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec2.Code)
+	}
+	body := rec2.Body.String()
+	if !strings.Contains(body, "you need to be a project admin to reset the budget window") {
+		t.Errorf("usage page should surface the admin wording:\n%s", body)
+	}
+	if strings.Contains(body, "memory 403 forbidden") {
+		t.Errorf("usage page must not leak the backend error prefix:\n%s", body)
+	}
 }

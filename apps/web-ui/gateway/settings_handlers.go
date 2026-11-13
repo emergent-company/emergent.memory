@@ -800,7 +800,9 @@ func (s *Server) uiProjectBudgetSettings(c echo.Context) error {
 		data.FlashMsg = "Budget settings saved."
 	}
 	data.FlashMsg = cmp.Or(data.FlashMsg, flashFromQuery(c, budgetResetParams))
-	data.FlashErr = budgetResetError(flashError(c))
+	// The reset handler already classified the failure into readable wording
+	// before redirecting; nothing to re-derive from a query string here.
+	data.FlashErr = flashError(c)
 	data.settingsNavCommon = s.settingsNavPayload(c, ctx)
 	project, err := s.memory.GetCurrentProject(ctx)
 	if err != nil {
