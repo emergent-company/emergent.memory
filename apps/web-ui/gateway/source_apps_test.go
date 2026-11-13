@@ -7,20 +7,34 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/labstack/echo/v4"
 )
 
+// sourceAppsTestPrivateKey is the PEM the register form posts. It is one shared
+// constant on purpose: a second inline copy makes gitleaks' greedy private-key
+// match span the pair and trips the secret scan, and a `.gitleaks.toml` waiver is
+// not an option (that allowlist is a remove-only ratchet).
+const sourceAppsTestPrivateKey = "-----BEGIN RSA PRIVATE KEY-----\nkey\n-----END RSA PRIVATE KEY-----"
+
 // sourceAppsTestServer wires the source-App settings page, the trigger routes,
 // and the data-source detail page onto a server whose public memory URL is set,
 // so the rendered webhook URL is assertable (newDSUIServer leaves it empty).
 func sourceAppsTestServer(f *fakeMemory) *echo.Echo {
-	s := &Server{
-		cfg:    Config{DefaultAgent: "memory", MemoryPublicURL: "https://memory.example.com"},
-		memory: f,
-	}
+	return sourceAppsTestServerWithConfig(f, Config{
+		DefaultAgent:    "memory",
+		MemoryPublicURL: "https://memory.example.com",
+	})
+}
+
+// sourceAppsTestServerWithConfig is sourceAppsTestServer with a caller-supplied
+// config, for a case that depends on a deployment setting (PublicBaseURL feeds
+// the register page's Homepage URL).
+func sourceAppsTestServerWithConfig(f *fakeMemory, cfg Config) *echo.Echo {
+	s := &Server{cfg: cfg, memory: f}
 	e := echo.New()
 	e.GET(dsSourceAppsPath, s.uiSourceApps)
 	e.POST(dsSourceAppsPath, s.uiSourceAppCreate)
@@ -146,11 +160,13 @@ func TestSourceAppsPageVisibleToProjectMember(t *testing.T) {
 		"shared-bot", "project-bot",
 		`data-testid="ds-source-app-scope"`,
 		"Organization", "Project",
-		`data-testid="ds-source-app-add"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page missing %q", want)
 		}
+	}
+	if strings.Contains(body, `data-testid="ds-source-app-add"`) {
+		t.Error("plain project member got the register action")
 	}
 	if strings.Contains(body, `data-testid="ds-source-apps-forbidden"`) {
 		t.Error("project member got the forbidden state")
@@ -176,7 +192,7 @@ func TestSourceAppCreateForwardsRequest(t *testing.T) {
 	form := url.Values{
 		"appId":         {" 4242 "},
 		"slug":          {"acme-bot"},
-		"privateKey":    {"-----BEGIN RSA PRIVATE KEY-----\nkey\n-----END RSA PRIVATE KEY-----"},
+		"privateKey":    {sourceAppsTestPrivateKey},
 		"webhookSecret": {"s3cret"},
 	}
 	rec := httptest.NewRecorder()
@@ -187,8 +203,8 @@ func TestSourceAppCreateForwardsRequest(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if loc := rec.Header().Get("Location"); loc != dsSourceAppsPath+"?saved=1" {
-		t.Errorf("location = %q", loc)
+	if loc := rec.Header().Get("Location"); loc != dsSourceAppsPath+"/sapp-new?created=1" {
+		t.Errorf("location = %q, want the new App's own page", loc)
 	}
 	got := f.dsCreatedSourceAppReq
 	if got == nil {
@@ -204,6 +220,34 @@ func TestSourceAppCreateForwardsRequest(t *testing.T) {
 		t.Errorf("secrets not forwarded: %+v", got)
 	}
 }
+
+// TestSourceAppCreateFallsBackToListWithoutRowID covers a create response that
+// carries no row id: there is no App page to open, so the operator goes back to
+// the table with the flash rather than a redirect to an empty path segment.
+func TestSourceAppCreateFallsBackToListWithoutRowID(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.dsCreatedSourceAppNoID = true
+	e := sourceAppsTestServer(f)
+
+	form := url.Values{
+		"appId":         {"4242"},
+		"slug":          {"acme-bot"},
+		"privateKey":    {sourceAppsTestPrivateKey},
+		"webhookSecret": {"s3cret"},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, dsSourceAppsPath, strings.NewReader(form.Encode()))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationForm)
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != dsSourceAppsPath+"?saved=1" {
+		t.Errorf("location = %q, want the table fallback", loc)
+	}
+}
+
 func TestSourceAppCreateRejectsNonNumericAppID(t *testing.T) {
 	f := sourceAppsAdminFake()
 	e := sourceAppsTestServer(f)
@@ -272,12 +316,15 @@ func TestSourceAppNewPageRendersRegisterForm(t *testing.T) {
 	for _, want := range []string{
 		`data-testid="ds-source-app-form-page"`,
 		`data-testid="ds-source-app-form"`,
+		`data-testid="ds-source-app-gh-guide"`,
 		`action="` + dsSourceAppsPath + `"`,
 		`name="appId"`,
 		`name="slug"`,
 		`name="privateKey"`,
 		`name="webhookSecret"`,
 		`data-testid="ds-source-app-save"`,
+		`data-testid="ds-source-app-scope-input"`,
+		`value="org"`,
 		"Register source app",
 		"Back",
 	} {
@@ -293,17 +340,112 @@ func TestSourceAppNewPageRendersRegisterForm(t *testing.T) {
 	for _, unwanted := range []string{
 		`data-testid="ds-source-app-delete"`,
 		`data-testid="ds-source-app-webhook"`,
-		`readonly`,
 	} {
 		if strings.Contains(body, unwanted) {
 			t.Errorf("register page rendered %q", unwanted)
 		}
 	}
+	// No read-only field on the add form: every value it shows is one the
+	// operator is about to type.
+	if readonlyInputRE.MatchString(body) {
+		t.Error("register page rendered a readonly input")
+	}
+}
+
+// readonlyInputRE matches an <input> element carrying a readonly attribute,
+// ignoring the clipboard component's inline script (which mentions the word for
+// its execCommand fallback textarea).
+var readonlyInputRE = regexp.MustCompile(`(?i)<input[^>]*\sreadonly`)
+
+// TestSourceAppNewPageShowsGitHubSetupGuide pins the instructions that the
+// register form cannot state for itself: which GitHub fields stay empty, that
+// the webhook is created inactive (and only then offers the URL/secret fields),
+// and where the installation id comes from. Without them an operator stalls on
+// GitHub's callback field and ends up with a webhook that has nowhere to deliver.
+func TestSourceAppNewPageShowsGitHubSetupGuide(t *testing.T) {
+	e := sourceAppsTestServerWithConfig(sourceAppsAdminFake(), Config{
+		DefaultAgent:    "memory",
+		MemoryPublicURL: "https://memory.example.com",
+		PublicBaseURL:   "https://app.example.test",
+	})
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, dsSourceAppsPath+"/new", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="ds-source-app-gh-guide"`,
+		"https://github.com/settings/apps/new",
+		// The field is "Callback URL" in GitHub's docs and "Redirect URI" on some
+		// of its screens; the guide names both so neither label stalls anyone.
+		"Callback URL",
+		"Redirect URI",
+		"Request user authorization (OAuth) during installation",
+		"webhook inactive",
+		"Active",
+		"Pull request event",
+		"Contents",
+		"Pull requests",
+		"Metadata",
+		"private key",
+		"github.com/settings/installations/",
+		`data-testid="ds-source-app-gh-homepage"`,
+		"https://app.example.test",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GitHub setup guide missing %q", want)
+		}
+	}
+	// The guide explains the two-pass flow; the delivery URL itself only exists
+	// after registration, so the register page must not pretend to show it.
+	if strings.Contains(body, `data-testid="ds-source-app-webhook"`) {
+		t.Error("register page rendered a delivery URL before one exists")
+	}
+}
+
+// TestSourceAppGuideWithoutPublicBaseURL renders the component with no
+// deployment URL: the checklist still renders, and the Homepage URL value is
+// omitted rather than shown blank.
+func TestSourceAppGuideWithoutPublicBaseURL(t *testing.T) {
+	var buf bytes.Buffer
+	if err := SourceAppFormPage(dsSourceAppFormData{OrgName: "Acme"}).Render(context.Background(), &buf); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body := buf.String()
+	if !strings.Contains(body, `data-testid="ds-source-app-gh-guide"`) {
+		t.Error("guide missing without a public base URL")
+	}
+	if strings.Contains(body, `data-testid="ds-source-app-gh-homepage"`) {
+		t.Error("homepage URL block rendered without a value")
+	}
+}
+
+// TestSourceAppDetailPageOmitsSetupGuide keeps the checklist on the add page:
+// an App that is already registered has its credentials, and its delivery URL
+// is on the page itself.
+func TestSourceAppDetailPageOmitsSetupGuide(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.dsSourceApps = []SourceApp{{
+		ID: "a1", OrgID: "o1", Provider: "github", AppID: 4242, Slug: "acme-bot",
+		WebhookKey: "wk-1", CreatedAt: "2026-09-01T00:00:00Z",
+	}}
+	e := sourceAppsTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, dsSourceAppsPath+"/a1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `data-testid="ds-source-app-gh-guide"`) {
+		t.Error("edit page rendered the GitHub setup guide")
+	}
 }
 
 func TestSourceAppNewPageAvailableToProjectMember(t *testing.T) {
 	f := sourceAppsAdminFake()
-	f.orgsAndProjects = []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_member"}}
+	f.orgsAndProjects = []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_member", Projects: []ProjectAccessDto{{ID: "p1", Name: "Project", OrgID: "o1", Role: "project_admin"}}}}
 	e := sourceAppsTestServer(f)
 
 	rec := httptest.NewRecorder()
@@ -316,7 +458,13 @@ func TestSourceAppNewPageAvailableToProjectMember(t *testing.T) {
 		t.Error("project member did not get the register form")
 	}
 	if !strings.Contains(body, `name="scope"`) || !strings.Contains(body, `value="project"`) {
-		t.Error("project member form must default to project scope")
+		t.Error("project admin form must default to project scope")
+	}
+	if strings.Contains(body, `value="org"`) {
+		t.Error("project admin was offered org-wide scope")
+	}
+	if !strings.Contains(body, `data-testid="ds-source-app-save"`) {
+		t.Error("project admin cannot submit the register form")
 	}
 }
 func TestSourceAppNewPageRedirectsWithoutProject(t *testing.T) {
@@ -385,6 +533,43 @@ func TestSourceAppDetailPagePrefillsApp(t *testing.T) {
 	}
 }
 
+// TestSourceAppDetailCreatedNoticeIsPersistent puts the "copy the delivery URL
+// into GitHub" step on the page itself when registration redirects here: a toast
+// auto-dismisses in ~4 s, and this is the one value the operator has to carry
+// back to GitHub. Any other load of the page has no notice.
+func TestSourceAppDetailCreatedNoticeIsPersistent(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.dsSourceApps = []SourceApp{{
+		ID: "a1", OrgID: "o1", Provider: "github", AppID: 4242, Slug: "acme-bot",
+		WebhookKey: "wk-1", CreatedAt: "2026-09-01T00:00:00Z",
+	}}
+	e := sourceAppsTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, dsSourceAppsPath+"/a1?created=1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="ds-source-app-created-next"`,
+		"delivery URL",
+		"webhook",
+		"Active",
+		"Pull request event",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("created notice missing %q", want)
+		}
+	}
+
+	plain := httptest.NewRecorder()
+	e.ServeHTTP(plain, httptest.NewRequest(http.MethodGet, dsSourceAppsPath+"/a1", nil))
+	if strings.Contains(plain.Body.String(), `data-testid="ds-source-app-created-next"`) {
+		t.Error("created notice rendered on a plain edit-page load")
+	}
+}
+
 func TestSourceAppDetailUnknownIDRedirectsWithError(t *testing.T) {
 	f := sourceAppsAdminFake()
 	f.dsSourceApps = []SourceApp{{ID: "a1", OrgID: "o1", AppID: 1, Slug: "acme-bot"}}
@@ -439,6 +624,9 @@ func TestSourceAppDetailVisibleToProjectMember(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "project-bot") {
 		t.Error("project member cannot see the project-owned App")
+	}
+	if strings.Contains(rec.Body.String(), `data-testid="ds-source-app-save"`) {
+		t.Error("plain project member got a save control")
 	}
 }
 func TestSourceAppUpdateForwardsSlugAndBlankSecrets(t *testing.T) {

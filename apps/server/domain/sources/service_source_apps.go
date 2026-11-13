@@ -300,6 +300,13 @@ func (s *Service) applySourceAppUpdate(ctx context.Context, app *SourceApp, req 
 // authorizeSourceAppManage: a project-owned App requires project admin; an
 // org-wide App requires org admin. A mismatched project is not found.
 func (s *Service) authorizeSourceAppManage(ctx context.Context, projectID uuid.UUID, app *SourceApp, userID string) error {
+	orgID, err := s.repo.ProjectOrgID(ctx, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to resolve the project organization", err)
+	}
+	if app.OrgID != orgID {
+		return apperror.NewNotFound("SourceApp", app.ID.String())
+	}
 	if app.ProjectID == nil {
 		return s.requireSourceAppAdmin(ctx, app.OrgID, userID)
 	}

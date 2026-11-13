@@ -2,6 +2,7 @@ package sources
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -327,9 +328,16 @@ func (h *Handler) RegisterProjectSourceApp(c echo.Context) error {
 		return apperror.ErrBadRequest
 	}
 	user := auth.MustGetUser(c)
+	scope := strings.ToLower(strings.TrimSpace(dto.Scope))
+	if scope == "" {
+		scope = "project"
+	}
+	if scope != "org" && scope != "project" {
+		return apperror.NewBadRequest("scope must be project or org")
+	}
 	app, err := h.svc.RegisterProjectSourceApp(c.Request().Context(), projectID, user.ID, RegisterSourceAppRequest{
 		Provider: dto.Provider, AppID: dto.AppID, Slug: dto.Slug, PrivateKey: dto.PrivateKey, WebhookSecret: dto.WebhookSecret,
-	}, dto.Scope == "org")
+	}, scope == "org")
 	if err != nil {
 		return err
 	}

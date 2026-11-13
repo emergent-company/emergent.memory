@@ -15,7 +15,8 @@ import (
 //
 // A source App is an org-wide GitHub App registration: one App backs many
 // project sources, and each github_app source binds one App plus an
-// installation. The register/list/delete API is org-admin only, so the page
+// installation. The page lists org-wide and project-owned Apps and authorises
+// writes per App scope, so a project admin can manage project-owned Apps.
 // renders an explicit forbidden state for everyone else rather than an empty
 // list (see uiSourceApps).
 
@@ -43,11 +44,13 @@ type dsSourceAppsPageData struct {
 	settingsNavCommon
 	OrgName string
 	// OrgAdmin toggles the organization-wide scope option on the register page.
-	OrgAdmin bool
-	Rows     []dsSourceAppRow
-	LoadErr  error
-	FlashMsg string
-	FlashErr error
+	OrgAdmin     bool
+	ProjectAdmin bool
+	CanRegister  bool
+	Rows         []dsSourceAppRow
+	LoadErr      error
+	FlashMsg     string
+	FlashErr     error
 }
 
 // dsSourceAppFormData is the payload for SourceAppFormPage. App is nil on the
@@ -61,10 +64,17 @@ type dsSourceAppFormData struct {
 	BackHref   string
 	DeleteHref string
 	WebhookURL string
-	App        *SourceApp
-	OrgAdmin   bool
-	FlashMsg   string
-	FlashErr   error
+	// PublicBaseURL is the deployment's web URL, offered in the register page's
+	// GitHub setup guide as the App's Homepage URL.
+	PublicBaseURL string
+	// JustCreated marks the App page a registration just redirected to.
+	JustCreated  bool
+	App          *SourceApp
+	OrgAdmin     bool
+	ProjectAdmin bool
+	CanWrite     bool
+	FlashMsg     string
+	FlashErr     error
 }
 
 // dsSourceAppWebhookURL builds the endpoint GitHub must deliver to for one App.
@@ -123,7 +133,8 @@ func dsSourceAppsSubtitle(orgName string) string {
 
 // uiSourceApps renders the org's source Apps page. Every project member can open
 // it (the settings rail links here); the App list and the register/delete
-// controls are org-admin only, so a non-admin gets the forbidden state.
+// controls are gated by scope: org admin for org-wide Apps, project admin for
+// project-owned Apps.
 func (s *Server) uiSourceApps(c echo.Context) error {
 	ctx := c.Request().Context()
 	project, orgName, ok := s.sourceAppsProject(c)
@@ -135,7 +146,10 @@ func (s *Server) uiSourceApps(c echo.Context) error {
 		OrgName:           orgName,
 		OrgAdmin:          s.orgAdminForCaller(c, project.OrgID),
 		FlashMsg: flashFromQuery(c, []flashParam{
-			{key: "saved", msg: "Source App registered."},
+			// Reachable only from uiSourceAppCreate's fallback, when the create
+			// response carries no row id to open an App page for — so the delivery
+			// URL is in the table rather than on a page of its own.
+			{key: "saved", msg: "Source App registered. Copy its delivery URL from the list into the GitHub App's webhook, with the same secret."},
 			{key: "deleted", msg: "Source App removed."},
 		}),
 		FlashErr: flashError(c),
@@ -144,6 +158,7 @@ func (s *Server) uiSourceApps(c echo.Context) error {
 	if err != nil {
 		data.LoadErr = userFacingError(err)
 	}
+	data.CanRegister = data.OrgAdmin || data.ProjectAdmin
 	data.Rows = dsSourceAppRows(apps, s.cfg.MemoryPublicURL)
 	return s.page(c, pageTitle("Source apps"), SourceAppsPage(data))
 }
@@ -162,6 +177,9 @@ func (s *Server) uiSourceAppNew(c echo.Context) error {
 		Action:            dsSourceAppsPath,
 		BackHref:          dsSourceAppsPath,
 		OrgAdmin:          s.orgAdminForCaller(c, project.OrgID),
+		ProjectAdmin:      s.strictProjectAdminForCaller(c, project.ID),
+		CanWrite:          s.orgAdminForCaller(c, project.OrgID) || s.strictProjectAdminForCaller(c, project.ID),
+		PublicBaseURL:     s.publicBaseURL(c),
 		FlashErr:          flashError(c),
 	}))
 }
@@ -185,8 +203,14 @@ func (s *Server) uiSourceAppDetail(c echo.Context) error {
 		WebhookURL:        dsSourceAppWebhookURL(s.cfg.MemoryPublicURL, app.WebhookKey),
 		App:               app,
 		OrgAdmin:          s.orgAdminForCaller(c, project.OrgID),
-		FlashMsg:          flashFromQuery(c, []flashParam{{key: "saved", msg: "Source App saved."}}),
-		FlashErr:          flashError(c),
+		ProjectAdmin:      s.strictProjectAdminForCaller(c, project.ID),
+		CanWrite:          s.canManageSourceApp(c, project, app),
+		JustCreated:       c.QueryParam("created") != "",
+		FlashMsg: flashFromQuery(c, []flashParam{
+			{key: "created", msg: "Source App registered."},
+			{key: "saved", msg: "Source App saved."},
+		}),
+		FlashErr: flashError(c),
 	}))
 }
 
@@ -254,8 +278,15 @@ func (s *Server) uiSourceAppCreate(c echo.Context) error {
 		PrivateKey:    privateKey,
 		WebhookSecret: webhookSecret,
 	}
-	if _, err := s.memory.CreateProjectSourceApp(ctx, req); err != nil {
+	created, err := s.memory.CreateProjectSourceApp(ctx, req)
+	if err != nil {
 		return redirectWithError(c, formPath, dsFormError(err))
+	}
+	// A response without a row id cannot address the App page; fall back to the
+	// table rather than redirecting to /settings/source-apps/ (a 404).
+	if created != nil && created.ID != "" {
+		redirectAfterMutation(c, dsSourceAppsPath+"/"+url.PathEscape(created.ID)+"?created=1")
+		return nil
 	}
 	redirectAfterMutation(c, dsSourceAppsPath+"?saved=1")
 	return nil
@@ -272,6 +303,32 @@ func (s *Server) uiSourceAppDelete(c echo.Context) error {
 	}
 	redirectAfterMutation(c, back+"?deleted=1")
 	return nil
+}
+
+func sourceAppsRegisterHref(data dsSourceAppsPageData) string {
+	if data.CanRegister {
+		return dsSourceAppsPath + "/new"
+	}
+	return ""
+}
+
+func sourceAppsRegisterLabel(data dsSourceAppsPageData) string {
+	if data.CanRegister {
+		return "Register app"
+	}
+	return ""
+}
+
+// canManageSourceApp decides the per-App write affordance: org-wide Apps need
+// org admin, project-owned Apps need project admin of that project.
+func (s *Server) canManageSourceApp(c echo.Context, project *Project, app *SourceApp) bool {
+	if app.ProjectID == "" {
+		return s.orgAdminForCaller(c, project.OrgID)
+	}
+	if app.ProjectID != project.ID {
+		return false
+	}
+	return s.strictProjectAdminForCaller(c, project.ID)
 }
 
 // sourceAppsProject resolves the active project (and its org name) for the
@@ -502,7 +559,7 @@ func (s *Server) dsAttachSourceAppSelect(ctx context.Context, providerType strin
 		Placeholder:  "Select a registered App",
 		EmptyHref:    dsSourceAppsPath,
 		EmptyLabel:   "Open source Apps",
-		EmptyMessage: "No GitHub Apps are registered for this organization yet. An organization administrator must register one before this source can be connected.",
+		EmptyMessage: "No GitHub Apps are available to this project yet. A project administrator can register a project-owned App; an organization administrator can register an org-wide one.",
 	}
 	project, err := s.memory.GetCurrentProject(ctx)
 	switch {

@@ -578,14 +578,14 @@ func TestProjectOwnedSourceApps(t *testing.T) {
 	_, err = svc.RegisterProjectSourceApp(ctx, projectA, projectUser, RegisterSourceAppRequest{
 		AppID: 204, Slug: "nope", PrivateKey: string(rsaPEMForTest(t)), WebhookSecret: "s4",
 	}, true)
-	require.Error(t, err)
+	require.ErrorContains(t, err, "org administrator required")
 
 	// Cross-project management is refused; the org route cannot manage a
 	// project-owned App.
 	_, err = svc.UpdateSourceAppForProject(ctx, projectA, projectUser, projectBApp.ID, UpdateSourceAppRequest{Slug: "x"})
-	require.Error(t, err)
+	require.ErrorContains(t, err, "SourceApp")
 	_, err = svc.UpdateSourceApp(ctx, orgID, orgUser, projectApp.ID, UpdateSourceAppRequest{Slug: "x"})
-	require.Error(t, err)
+	require.ErrorContains(t, err, "SourceApp")
 	require.NoError(t, svc.DeleteSourceAppForProject(ctx, projectA, projectUser, projectApp.ID))
 
 	// Binding: org-wide and same-project Apps are accepted; another project's
@@ -599,7 +599,7 @@ func TestProjectOwnedSourceApps(t *testing.T) {
 		return err
 	}
 	require.NoError(t, bind(orgApp.ID))
-	require.Error(t, bind(projectBApp.ID))
+	require.ErrorContains(t, bind(projectBApp.ID), "belongs to another project")
 	ownedApp, err := svc.RegisterProjectSourceApp(ctx, projectA, projectUser, RegisterSourceAppRequest{
 		AppID: 205, Slug: "project-a-2", PrivateKey: string(rsaPEMForTest(t)), WebhookSecret: "s5",
 	}, false)
