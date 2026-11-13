@@ -4379,7 +4379,8 @@
                             "processing",
                             "ready",
                             "extracted",
-                            "failed"
+                            "failed",
+                            "blocked"
                         ],
                         "type": "string",
                         "description": "Filter by derived status bucket",
@@ -8594,6 +8595,12 @@
                         "type": "boolean",
                         "description": "Re-enqueue even if embedding already exists (default: false)",
                         "name": "force",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Also re-enqueue the project's document chunks, which have no other bulk re-embed path (default: false)",
+                        "name": "chunks",
                         "in": "query"
                     }
                 ],
@@ -13626,6 +13633,75 @@
                     },
                     "409": {
                         "description": "App still bound to project sources",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Renames an App and optionally rotates its private key and webhook secret. A blank secret keeps the stored one. The provider and GitHub App id are immutable. Org admin only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Update a source App",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID (UUID)",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "App row ID (UUID)",
+                        "name": "appId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "App label; omit or blank a secret to keep the stored value",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.updateSourceAppDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.SourceApp"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -28472,6 +28548,7 @@
                 }
             },
             "put": {
+                "description": "Updates the supplied model fields; omitted or empty fields keep their stored value. Set clearGenerative/clearEmbedding to remove one field; use DELETE to clear the whole config.",
                 "consumes": [
                     "application/json"
                 ],
@@ -28481,7 +28558,7 @@
                 "tags": [
                     "model-config"
                 ],
-                "summary": "Set project model config",
+                "summary": "Set project model config (partial update)",
                 "parameters": [
                     {
                         "type": "string",
@@ -33199,7 +33276,15 @@
                     "type": "string",
                     "maxLength": 100000
                 },
+                "model": {
+                    "description": "Model overrides the agent definition's model for this turn only\n(\"provider/model\"). Empty keeps the agent definition's model.",
+                    "type": "string"
+                },
                 "namespace": {
+                    "type": "string"
+                },
+                "reasoningEffort": {
+                    "description": "ReasoningEffort overrides the model's graded thinking level for this turn\n(\"minimal\"|\"low\"|\"medium\"|\"high\"|\"max\"). Empty/\"auto\" keeps the agent\ndefinition / provider default.",
                     "type": "string"
                 },
                 "surfaceAction": {
@@ -34106,6 +34191,10 @@
                 "embeddedChunks": {
                     "type": "integer"
                 },
+                "extractionNotEnqueuedReason": {
+                    "description": "ExtractionNotEnqueuedReason explains why a converted document has no\nextraction job at all (derived). Currently \"extraction_disabled_for_source_syncs\"\nor \"extraction_disabled_for_project\".",
+                    "type": "string"
+                },
                 "extractionStatus": {
                     "type": "string"
                 },
@@ -34146,6 +34235,10 @@
                 },
                 "parentDocumentId": {
                     "description": "Hierarchy",
+                    "type": "string"
+                },
+                "processingReason": {
+                    "description": "ProcessingReason explains why processing is blocked (derived, never stored).\nCurrently only \"project_budget_exceeded\".",
                     "type": "string"
                 },
                 "processingStatus": {
@@ -34381,6 +34474,9 @@
             "type": "object",
             "properties": {
                 "all": {
+                    "type": "integer"
+                },
+                "blocked": {
                     "type": "integer"
                 },
                 "extracted": {
@@ -36869,6 +36965,10 @@
         "domain_graph.ReindexEmbeddingsResponse": {
             "type": "object",
             "properties": {
+                "chunks_enqueued": {
+                    "description": "ChunksEnqueued is the number of chunk embedding jobs newly inserted. Only\npopulated when Chunks was requested.",
+                    "type": "integer"
+                },
                 "objects_enqueued": {
                     "description": "ObjectsEnqueued is the number of object embedding jobs newly inserted.",
                     "type": "integer"
@@ -38803,14 +38903,14 @@
         "domain_mcpregistry.MCPServerTarget": {
             "type": "string",
             "enum": [
-                "auto",
                 "server",
-                "device"
+                "device",
+                "auto"
             ],
             "x-enum-varnames": [
-                "importTargetAuto",
                 "TargetServer",
-                "TargetDevice"
+                "TargetDevice",
+                "importTargetAuto"
             ]
         },
         "domain_mcpregistry.MCPServerToolDTO": {
@@ -39083,6 +39183,12 @@
         "domain_modelconfig.UpsertModelConfigRequest": {
             "type": "object",
             "properties": {
+                "clearEmbedding": {
+                    "type": "boolean"
+                },
+                "clearGenerative": {
+                    "type": "boolean"
+                },
                 "embeddingModel": {
                     "type": "string"
                 },
@@ -45503,6 +45609,20 @@
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "domain_sources.updateSourceAppDTO": {
+            "type": "object",
+            "properties": {
+                "privateKey": {
+                    "type": "string"
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "webhookSecret": {
+                    "type": "string"
                 }
             }
         },

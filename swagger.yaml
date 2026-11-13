@@ -2723,7 +2723,18 @@ definitions:
       message:
         maxLength: 100000
         type: string
+      model:
+        description: |-
+          Model overrides the agent definition's model for this turn only
+          ("provider/model"). Empty keeps the agent definition's model.
+        type: string
       namespace:
+        type: string
+      reasoningEffort:
+        description: |-
+          ReasoningEffort overrides the model's graded thinking level for this turn
+          ("minimal"|"low"|"medium"|"high"|"max"). Empty/"auto" keeps the agent
+          definition / provider default.
         type: string
       surfaceAction:
         allOf:
@@ -3385,6 +3396,12 @@ definitions:
         type: string
       embeddedChunks:
         type: integer
+      extractionNotEnqueuedReason:
+        description: |-
+          ExtractionNotEnqueuedReason explains why a converted document has no
+          extraction job at all (derived). Currently "extraction_disabled_for_source_syncs"
+          or "extraction_disabled_for_project".
+        type: string
       extractionStatus:
         type: string
       fileHash:
@@ -3415,6 +3432,11 @@ definitions:
         type: integer
       parentDocumentId:
         description: Hierarchy
+        type: string
+      processingReason:
+        description: |-
+          ProcessingReason explains why processing is blocked (derived, never stored).
+          Currently only "project_budget_exceeded".
         type: string
       processingStatus:
         description: Unified processing status (derived from conversion + extraction
@@ -3582,6 +3604,8 @@ definitions:
   domain_documents.StatusCounts:
     properties:
       all:
+        type: integer
+      blocked:
         type: integer
       extracted:
         type: integer
@@ -5389,6 +5413,11 @@ definitions:
     type: object
   domain_graph.ReindexEmbeddingsResponse:
     properties:
+      chunks_enqueued:
+        description: |-
+          ChunksEnqueued is the number of chunk embedding jobs newly inserted. Only
+          populated when Chunks was requested.
+        type: integer
       objects_enqueued:
         description: ObjectsEnqueued is the number of object embedding jobs newly
           inserted.
@@ -6736,14 +6765,14 @@ definitions:
     type: object
   domain_mcpregistry.MCPServerTarget:
     enum:
-    - auto
     - server
     - device
+    - auto
     type: string
     x-enum-varnames:
-    - importTargetAuto
     - TargetServer
     - TargetDevice
+    - importTargetAuto
   domain_mcpregistry.MCPServerToolDTO:
     properties:
       config:
@@ -6936,6 +6965,10 @@ definitions:
     - ModelSourceNone
   domain_modelconfig.UpsertModelConfigRequest:
     properties:
+      clearEmbedding:
+        type: boolean
+      clearGenerative:
+        type: boolean
       embeddingModel:
         type: string
       generativeModel:
@@ -11666,6 +11699,15 @@ definitions:
           type: string
         type: array
     type: object
+  domain_sources.updateSourceAppDTO:
+    properties:
+      privateKey:
+        type: string
+      slug:
+        type: string
+      webhookSecret:
+        type: string
+    type: object
   domain_superadmin.AddProjectMemberRequest:
     properties:
       role:
@@ -15647,6 +15689,7 @@ paths:
         - ready
         - extracted
         - failed
+        - blocked
         in: query
         name: status
         type: string
@@ -18401,6 +18444,11 @@ paths:
       - description: 'Re-enqueue even if embedding already exists (default: false)'
         in: query
         name: force
+        type: boolean
+      - description: 'Also re-enqueue the project''s document chunks, which have no
+          other bulk re-embed path (default: false)'
+        in: query
+        name: chunks
         type: boolean
       produces:
       - application/json
@@ -21741,6 +21789,53 @@ paths:
       security:
       - bearerAuth: []
       summary: Delete a source App
+      tags:
+      - data-source-integrations
+    patch:
+      consumes:
+      - application/json
+      description: Renames an App and optionally rotates its private key and webhook
+        secret. A blank secret keeps the stored one. The provider and GitHub App id
+        are immutable. Org admin only.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgId
+        required: true
+        type: string
+      - description: App row ID (UUID)
+        in: path
+        name: appId
+        required: true
+        type: string
+      - description: App label; omit or blank a secret to keep the stored value
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_sources.updateSourceAppDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_sources.SourceApp'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Update a source App
       tags:
       - data-source-integrations
   /api/projects:
@@ -31523,6 +31618,9 @@ paths:
     put:
       consumes:
       - application/json
+      description: Updates the supplied model fields; omitted or empty fields keep
+        their stored value. Set clearGenerative/clearEmbedding to remove one field;
+        use DELETE to clear the whole config.
       parameters:
       - description: Project ID
         in: path
@@ -31542,7 +31640,7 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/domain_modelconfig.ModelConfigResponse'
-      summary: Set project model config
+      summary: Set project model config (partial update)
       tags:
       - model-config
   /projects/{projectId}/model-config/effective:
