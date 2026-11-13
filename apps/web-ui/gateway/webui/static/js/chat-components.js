@@ -598,7 +598,7 @@
     if (turnKey) el.setAttribute("data-turn", String(turnKey));
     el.innerHTML =
       '<summary class="memory-tool-run-summary text-xs text-muted">' +
-      '<span class="flex size-[22px] shrink-0 items-center justify-center">' +
+      '<span class="flex size-4 shrink-0 items-center justify-center">' +
       '<span class="iconify lucide--wrench size-4 text-muted-faint" aria-hidden="true"></span></span>' +
       '<span class="memory-tool-run-count"></span>' +
       '<span class="memory-tool-run-breakdown hidden min-w-0 max-w-[48%] shrink truncate text-xs text-muted-faint"></span>' +
@@ -1520,7 +1520,11 @@
     if (container._memorySources) return container._memorySources;
     var footer = sourcesFooter(citations);
     if (!footer) return null;
-    if (md && md.parentNode === container) container.insertBefore(footer, md.nextSibling);
+    // Keep the per-message copy row directly under the markdown and the
+    // Sources disclosure below it: md -> actions (copy) -> sources.
+    var actions = container.querySelector ? container.querySelector(".memory-assistant-actions") : null;
+    var after = actions && actions.parentNode === container ? actions : md;
+    if (after && after.parentNode === container) container.insertBefore(footer, after.nextSibling);
     else container.appendChild(footer);
     container._memorySources = footer;
     return footer;

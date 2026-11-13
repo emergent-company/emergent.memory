@@ -183,7 +183,7 @@ templ processingProblemsArea(data documentPageData, area ProcessingArea, expande
 // processingProblemRow is one failed unit: what it is, the classified cause,
 // the remediation, the raw error behind a disclosure, and its next step.
 templ processingProblemRow(p ProcessingProblem, canManage bool) {
-	<div class="flex flex-wrap items-start justify-between gap-3 border border-line px-3 py-2" data-testid="processing-problem-row">
+	<div class="flex flex-wrap items-start justify-between gap-3 border border-base-content/10 px-3 py-2" data-testid="processing-problem-row">
 		<div class="min-w-0">
 			<div class="flex flex-wrap items-center gap-2">
 				<span class="truncate text-sm font-medium">{ p.Label }</span>

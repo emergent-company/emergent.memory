@@ -172,7 +172,7 @@ templ schemaDiscoveryCard(view *SchemaDiscoveryView) {
 // that a project-wide run was capped, the failure (with its retry), and the
 // link to the pack a completed run produced.
 templ schemaDiscoveryJobState(job *discoveryJob) {
-	<div class="rounded border border-line p-3" data-testid="schema-discovery-state">
+	<div class="rounded border border-base-content/10 p-3" data-testid="schema-discovery-state">
 		<div class="flex flex-wrap items-center gap-2">
 			if job.isRunning() {
 				@ui.Badge(ui.BadgeProps{Label: "Running", Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS})
@@ -360,7 +360,7 @@ templ compiledTypeCards(title string, types []CompiledType, endpoints bool, link
 templ objectTypeCard(t CompiledType, href string) {
 	{{ properties := compiledProperties(t.Properties) }}
 	<details
-		class="group rounded-box border border-line bg-base-100"
+		class="group rounded-box border border-base-content/10 bg-base-100"
 		data-testid="schema-object-type"
 		data-schema-type={ t.Name }
 	>
@@ -394,7 +394,7 @@ templ objectTypeCard(t CompiledType, href string) {
 				@ui.IconSpan("lucide--chevron-down", "size-4 shrink-0 text-muted-faint transition-transform group-open:rotate-180")
 			</div>
 		</summary>
-		<div class="border-t border-line px-3 py-3">
+		<div class="border-t border-base-content/10 px-3 py-3">
 			if len(properties) > 0 {
 				@objectTypeProperties(properties, true)
 			} else {
@@ -416,7 +416,7 @@ templ objectTypeCard(t CompiledType, href string) {
 // detail page, so the body carries the description and the source-schema line.
 templ relationshipTypeCard(t CompiledType) {
 	<details
-		class="group rounded-box border border-line bg-base-100"
+		class="group rounded-box border border-base-content/10 bg-base-100"
 		data-testid="schema-relationship-type"
 		data-schema-type={ t.Name }
 	>
@@ -439,7 +439,7 @@ templ relationshipTypeCard(t CompiledType) {
 				@ui.IconSpan("lucide--chevron-down", "size-4 shrink-0 text-muted-faint transition-transform group-open:rotate-180")
 			</div>
 		</summary>
-		<div class="border-t border-line px-3 py-3">
+		<div class="border-t border-base-content/10 px-3 py-3">
 			if t.Description != "" {
 				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
 					{ t.Description }
@@ -800,7 +800,7 @@ templ schemaEditorForm(view *SchemaEditView) {
 			</div>
 			<div id="property-rows" class="flex flex-col gap-2">
 				if len(view.Detail.Properties) == 0 {
-					<p id="property-empty" class="text-muted-faint rounded-box border border-dashed border-base-content/15 px-4 py-6 text-center text-sm">
+					<p id="property-empty" class="text-muted-faint rounded-box border border-dashed border-base-content/10 px-4 py-6 text-center text-sm">
 						No properties yet. Add one to define the shape of this type.
 					</p>
 				}
