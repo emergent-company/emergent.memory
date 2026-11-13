@@ -7920,8 +7920,14 @@ func (s *Service) executeCreateProject(ctx context.Context, args map[string]any)
 		OrgID string `bun:"organization_id"`
 	}
 	var row projectRow
+	// The default caps must match projects.Service.Create: $10 monthly and a
+	// weekly cap of a quarter of that ($2.50). This insert bypasses the service
+	// (no projects import here, by design), so the weekly column has to be
+	// stated — leaving it to the schema default would create a project that the
+	// REST path would have capped weekly. The alert thresholds come from the
+	// schema's 0.80 default, as they always have on this path.
 	err = s.db.NewRaw(
-		"INSERT INTO kb.projects (name, organization_id, budget_usd) VALUES (?, ?, 10.0) RETURNING id, name, organization_id",
+		"INSERT INTO kb.projects (name, organization_id, budget_usd, budget_weekly_usd) VALUES (?, ?, 10.0, 2.5) RETURNING id, name, organization_id",
 		name, orgID,
 	).Scan(ctx, &row)
 	if err != nil {

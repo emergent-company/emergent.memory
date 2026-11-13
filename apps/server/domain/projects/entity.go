@@ -8,6 +8,22 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/skills"
 )
 
+// Default caps every new project starts with. They live here rather than in the
+// service so the two creation paths that bypass it — the create_project MCP tool
+// and standalone bootstrap — cannot invent their own numbers; both routes must
+// give a new project the same weekly headroom the REST path derives.
+const (
+	// DefaultMonthlyBudgetUSD is the monthly cap a new project starts with.
+	DefaultMonthlyBudgetUSD = 10.0
+	// DefaultWeeklyBudgetUSD is a quarter of the monthly cap: enough to run
+	// normally, small enough that a runaway week is caught while the month is
+	// still repairable.
+	DefaultWeeklyBudgetUSD = 2.5
+	// DefaultBudgetAlertThreshold is the share of a window's cap at which the
+	// first alert is sent (mirrors the 0.80 schema default).
+	DefaultBudgetAlertThreshold = 0.80
+)
+
 // Project represents a project in the kb.projects table
 type Project struct {
 	bun.BaseModel `bun:"table:kb.projects,alias:p"`

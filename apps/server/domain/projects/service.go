@@ -278,8 +278,8 @@ func (s *Service) Create(ctx context.Context, req CreateProjectRequest, userID s
 	// backfilled (migration 00297 leaves budget_weekly_usd NULL): retrofitting a
 	// weekly cap would start blocking agent runs on day one for projects that
 	// spend in bursts.
-	defaultBudget := 10.0
-	defaultAlertThreshold := 0.80
+	defaultBudget := DefaultMonthlyBudgetUSD
+	defaultAlertThreshold := DefaultBudgetAlertThreshold
 	defaultWeeklyBudget := roundCurrency(defaultBudget / 4)
 	project := &Project{
 		OrganizationID:             req.OrgID,

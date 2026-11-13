@@ -6,6 +6,7 @@ import (
 
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -177,13 +178,25 @@ const bootstrapProjectRole = "project_admin"
 func (s *BootstrapService) createProject(ctx context.Context, tx bun.Tx, orgID, userID string) (string, error) {
 	var projectID string
 
+	// Default caps mirror projects.Service.Create: $10 monthly plus a weekly cap
+	// of a quarter of that ($2.50), both taken from the shared constants so the
+	// three creation paths cannot drift. budget_weekly_usd must be stated: this
+	// raw insert bypasses the service, so leaving it to the schema default would
+	// make the bootstrapped project the only new project with no weekly limit.
+	// The 0.80 alert thresholds come from the schema defaults, as they do on the
+	// service path's explicit write.
 	projectQuery := `
-		INSERT INTO kb.projects (organization_id, name, budget_usd, created_at, updated_at)
-		VALUES (?, ?, 10.0, NOW(), NOW())
+		INSERT INTO kb.projects (organization_id, name, budget_usd, budget_weekly_usd, created_at, updated_at)
+		VALUES (?, ?, ?, ?, NOW(), NOW())
 		RETURNING id
 	`
 
-	err := tx.NewRaw(projectQuery, orgID, s.cfg.Standalone.ProjectName).Scan(ctx, &projectID)
+	err := tx.NewRaw(projectQuery,
+		orgID,
+		s.cfg.Standalone.ProjectName,
+		projects.DefaultMonthlyBudgetUSD,
+		projects.DefaultWeeklyBudgetUSD,
+	).Scan(ctx, &projectID)
 	if err != nil {
 		return "", err
 	}
