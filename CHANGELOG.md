@@ -1,5 +1,18 @@
 ## Changelog
 
+## [0.96.0] - 2026-11-13
+
+### Added
+
+- Instance-wide email settings for Zitadel and Memory, managed by a platform
+  superadmin from **Settings → Platform email** (encrypted SMTP config, test
+  send, no restart required).
+- The deploy portal now has a separate Railway setup page, target-card
+  `deploy`/`planned` actions, and a **Skip email for now** option that points to
+  Platform email.
+- The installer creates the first human admin with a verified email and a
+  temporary password and grants the trusted `memory-superadmin` role.
+
 ## [Unreleased]
 
 ### BREAKING CHANGES
