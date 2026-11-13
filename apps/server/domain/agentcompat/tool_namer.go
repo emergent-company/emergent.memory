@@ -180,8 +180,6 @@ var internalToolNames = map[string]struct{}{
 	"mcp-device-server-list": {},
 
 	// ── Provider ────────────────────────────────────────────────────────────
-	"provider-list-org":          {},
-	"provider-configure-org":     {},
 	"provider-configure-project": {},
 	"provider-models-list":       {},
 	"provider-usage-get":         {},

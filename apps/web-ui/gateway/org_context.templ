@@ -361,7 +361,7 @@ templ OrgLandingPage(data orgPageData) {
 // org_admin — see OrgLandingPage). It holds the "Delete N selected" submit and
 // the select hint, driven by the Alpine count on the surrounding form.
 templ orgProjectsToolbar(deletableCount int) {
-	<div class="flex min-h-11 items-center gap-3 border-b border-base-200 px-4">
+	<div class="flex min-h-11 items-center gap-3 border-b border-base-content/10 px-4">
 		if deletableCount > 0 {
 			<div x-show="count > 0" class="flex items-center">
 				@ui.Button(ui.ButtonProps{

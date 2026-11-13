@@ -343,7 +343,7 @@ type MemoryBackend interface {
 	TestProjectModel(ctx context.Context, provider, model, modelType string) (*ProviderTestResult, error)
 	GetProjectModelConfig(ctx context.Context) (*ProjectModelConfig, error)
 	GetEffectiveModelConfig(ctx context.Context) (*EffectiveModelConfig, error)
-	UpsertProjectModelConfig(ctx context.Context, generativeModel, embeddingModel string) (*ProjectModelConfig, error)
+	UpsertProjectModelConfig(ctx context.Context, generativeModel, embeddingModel string, clearGenerative, clearEmbedding bool) (*ProjectModelConfig, error)
 	ListOrgs(ctx context.Context) ([]Org, error)
 	GetOrg(ctx context.Context, orgID string) (*Org, error)
 	CreateOrg(ctx context.Context, name string) (*Org, error)
@@ -446,6 +446,11 @@ type MemoryBackend interface {
 	// NotificationEventStream opens the session's real-time notification stream
 	// (account when projectID is empty, else that project's).
 	NotificationEventStream(ctx context.Context, projectID string) (io.ReadCloser, error)
+	// Instance email settings (superadmin-only).
+	GetSuperadminMe(ctx context.Context) (*superadminMe, error)
+	GetInstanceEmailSettings(ctx context.Context) (*instanceEmailSettings, error)
+	UpdateInstanceEmailSettings(ctx context.Context, in instanceEmailSettingsInput) (*instanceEmailSettings, error)
+	TestInstanceEmail(ctx context.Context, to string) error
 }
 
 // compile-time assertion that MemoryClient satisfies the interface.

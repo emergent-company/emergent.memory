@@ -254,45 +254,24 @@ func newEmbeddingService(ctx context.Context, sqlDB *sql.DB, log *slog.Logger, p
 	return svc, model, nil
 }
 
-// countNullEmbeddings returns the number of relationships with NULL embeddings.
+// countNullEmbeddings returns the number of relationships with NULL embeddings
+// in the project. The project is mandatory: embeddings are resolved from the
+// project's own provider, so a cross-project pass could not embed anything.
 func countNullEmbeddings(ctx context.Context, db *sql.DB, projectID string) (int64, error) {
-	query := `SELECT COUNT(*) FROM kb.graph_relationships WHERE embedding IS NULL AND deleted_at IS NULL`
-	args := []any{}
-
-	if projectID != "" {
-		query += ` AND project_id = $1`
-		args = append(args, projectID)
-	}
+	query := `SELECT COUNT(*) FROM kb.graph_relationships WHERE embedding IS NULL AND deleted_at IS NULL AND project_id = $1`
 
 	var count int64
-	if err := db.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+	if err := db.QueryRowContext(ctx, query, projectID).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count query: %w", err)
 	}
 	return count, nil
 }
 
-// fetchBatch retrieves the next batch of relationships with NULL embeddings.
-// Because we update rows (setting embedding to non-NULL), subsequent queries
-// naturally exclude already-processed rows — no OFFSET needed.
+// fetchBatch retrieves the next batch of relationships with NULL embeddings in
+// the project. Because we update rows (setting embedding to non-NULL),
+// subsequent queries naturally exclude already-processed rows — no OFFSET needed.
 func fetchBatch(ctx context.Context, db *sql.DB, limit int, projectID string) ([]relationshipRow, error) {
 	query := `
-		SELECT r.id, r.type, r.src_id::text, r.dst_id::text,
-		       src.properties, src.key,
-		       dst.properties, dst.key
-		FROM kb.graph_relationships r
-		JOIN kb.graph_objects src ON src.id = r.src_id
-		JOIN kb.graph_objects dst ON dst.id = r.dst_id
-		WHERE r.embedding IS NULL
-		  AND r.deleted_at IS NULL
-		  AND src.deleted_at IS NULL
-		  AND dst.deleted_at IS NULL
-		ORDER BY r.created_at
-		LIMIT $1`
-
-	args := []any{limit}
-
-	if projectID != "" {
-		query = `
 		SELECT r.id, r.type, r.src_id::text, r.dst_id::text,
 		       src.properties, src.key,
 		       dst.properties, dst.key
@@ -306,8 +285,8 @@ func fetchBatch(ctx context.Context, db *sql.DB, limit int, projectID string) ([
 		  AND r.project_id = $2
 		ORDER BY r.created_at
 		LIMIT $1`
-		args = append(args, projectID)
-	}
+
+	args := []any{limit, projectID}
 
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {

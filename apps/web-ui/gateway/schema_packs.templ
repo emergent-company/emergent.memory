@@ -67,7 +67,7 @@ templ SchemaPacksPage(packs []schemaPackSummary, loadErr error) {
 // chevron standing in for the detail page the whole card links to. Same card
 // shape as the compiled schema's type cards so both list surfaces read alike.
 templ schemaPackCard(p schemaPackSummary) {
-	<a class="rounded-box border-line bg-base-100 hover:border-primary/40 group flex items-start gap-3 border px-3 py-2.5 transition-colors" href={ templ.URL("/schema/packs/" + url.PathEscape(p.ID)) } data-testid="schema-pack-card">
+	<a class="rounded-box border-base-content/10 bg-base-100 hover:border-primary/40 group flex items-start gap-3 border px-3 py-2.5 transition-colors" href={ templ.URL("/schema/packs/" + url.PathEscape(p.ID)) } data-testid="schema-pack-card">
 		@ui.IconTile("lucide--package", ui.IconTileProps{Tone: "warning"})
 		<div class="min-w-0 flex-1">
 			<div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">

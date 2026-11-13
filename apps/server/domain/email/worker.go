@@ -77,13 +77,6 @@ func (w *Worker) Start(ctx context.Context) error {
 		return nil
 	}
 
-	// Check if email is enabled
-	if !w.cfg.Enabled {
-		w.log.Info("email worker not started (EMAIL_ENABLED=false)")
-		w.mu.Unlock()
-		return nil
-	}
-
 	w.running = true
 	w.stopCh = make(chan struct{})
 	w.stoppedCh = make(chan struct{})
@@ -164,6 +157,12 @@ func (w *Worker) run(ctx context.Context) {
 
 // processBatch processes a batch of email jobs
 func (w *Worker) processBatch(ctx context.Context) error {
+	// The effective configuration can change at runtime (platform email
+	// settings). Skip the dequeue entirely while email is disabled.
+	if checker, ok := w.sender.(interface{ Enabled(context.Context) bool }); ok && !checker.Enabled(ctx) {
+		return nil
+	}
+
 	// Check if we should stop
 	select {
 	case <-w.stopCh:

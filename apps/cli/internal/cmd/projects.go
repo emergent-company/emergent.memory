@@ -72,10 +72,10 @@ var createProjectCmd = &cobra.Command{
 	Short: "Create a new project",
 	Long: `Create a new project in the Memory platform.
 
-Prints the new project's Name and ID on success. If no LLM provider credentials
-are configured for the organization, a warning is shown explaining that AI
-features (embeddings, search, extraction) will not work until a provider is
-added via 'memory provider configure'.`,
+Prints the new project's Name and ID on success. If the new project has no LLM
+provider credentials configured, a warning is shown explaining that AI features
+(embeddings, search, extraction) will not work until a provider is added via
+'memory provider configure-project'.`,
 	RunE: runCreateProject,
 }
 
@@ -773,13 +773,15 @@ func runCreateProject(cmd *cobra.Command, args []string) error {
 	fmt.Println("Project created successfully!")
 	fmt.Printf("  Name: %s (%s)\n", project.Name, project.ID)
 
-	// Warn if no LLM provider is configured for the org
-	configs, credErr := c.SDK.Provider.ListOrgConfigs(context.Background(), orgID)
+	// Warn if no LLM provider is configured for the new project. Provider
+	// credentials are project-scoped (org-level config is deprecated), so the
+	// check has to be against this project, not the organization.
+	configs, credErr := c.SDK.Provider.ListProjectConfigs(context.Background(), project.ID)
 	if credErr == nil && len(configs) == 0 {
 		fmt.Println()
-		fmt.Println("Warning: No LLM provider credentials are configured for your organization.")
+		fmt.Println("Warning: No LLM provider credentials are configured for this project.")
 		fmt.Println("AI features (embeddings, search, extraction) will not work until you add one.")
-		fmt.Println("  Run: memory provider configure google --api-key <api-key>")
+		fmt.Printf("  Run: memory provider configure-project google --api-key <api-key> --project %s\n", project.ID)
 	}
 
 	return nil
@@ -1124,9 +1126,11 @@ func runSetProjectInfo(cmd *cobra.Command, args []string) error {
 // ── set-models ─────────────────────────────────────────────────────────────────
 
 var (
-	setModelsGenerative string
-	setModelsEmbedding  string
-	setModelsProject    string
+	setModelsGenerative      string
+	setModelsEmbedding       string
+	setModelsProject         string
+	setModelsClearGenerative bool
+	setModelsClearEmbedding  bool
 )
 
 var setModelsCmd = &cobra.Command{
@@ -1135,13 +1139,22 @@ var setModelsCmd = &cobra.Command{
 	Long: `Set the default generative and/or embedding model for a project.
 Model names must include a provider prefix: provider/model-name
 
+Only the models you pass are changed; an omitted flag keeps that model's
+current value. Use --clear-generative or --clear-embedding to remove one
+model, or DELETE the model-config endpoint to clear both.
+
 Examples:
-  memory projects set-models --generative google/gemini-2.5-flash --embedding google/gemini-embedding-001
-  memory projects set-models --embedding google/gemini-embedding-001 --project <projectId>`,
+  memory projects set-models --generative google/gemini-2.5-flash
+  memory projects set-models --embedding google/gemini-embedding-001 --project <projectId>
+  memory projects set-models --clear-embedding`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := getClient(cmd)
 		if err != nil {
 			return err
+		}
+		if strings.TrimSpace(setModelsGenerative) == "" && strings.TrimSpace(setModelsEmbedding) == "" &&
+			!setModelsClearGenerative && !setModelsClearEmbedding {
+			return fmt.Errorf("pass --generative and/or --embedding, or --clear-generative/--clear-embedding")
 		}
 		projectID := setModelsProject
 		if projectID == "" {
@@ -1153,6 +1166,8 @@ Examples:
 		req := &modelconfig.UpsertRequest{
 			GenerativeModel: setModelsGenerative,
 			EmbeddingModel:  setModelsEmbedding,
+			ClearGenerative: setModelsClearGenerative,
+			ClearEmbedding:  setModelsClearEmbedding,
 		}
 		cfg, err := c.SDK.ModelConfig.Upsert(context.Background(), projectID, req)
 		if err != nil {
@@ -1333,6 +1348,8 @@ func init() {
 	// set-models flags
 	setModelsCmd.Flags().StringVar(&setModelsGenerative, "generative", "", "Generative model with provider prefix, e.g. google/gemini-2.5-flash")
 	setModelsCmd.Flags().StringVar(&setModelsEmbedding, "embedding", "", "Embedding model with provider prefix, e.g. google/gemini-embedding-001")
+	setModelsCmd.Flags().BoolVar(&setModelsClearGenerative, "clear-generative", false, "Remove the stored default generative model")
+	setModelsCmd.Flags().BoolVar(&setModelsClearEmbedding, "clear-embedding", false, "Remove the stored default embedding model")
 	setModelsCmd.Flags().StringVar(&setModelsProject, "project", "", "Project ID (auto-detected from MEMORY_PROJECT_ID)")
 
 	// show-models flags

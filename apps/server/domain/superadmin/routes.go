@@ -44,6 +44,11 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g.POST("/projects/:id/members", h.AddProjectMember, authMiddleware.RequireSuperadminFull())
 	g.DELETE("/projects/:id/members/:userId", h.RemoveProjectMember, authMiddleware.RequireSuperadminFull())
 
+	// Instance email settings (SMTP for Zitadel + Memory).
+	g.GET("/email-settings", h.GetEmailSettings, authMiddleware.RequireSuperadminFull())
+	g.PUT("/email-settings", h.UpdateEmailSettings, authMiddleware.RequireSuperadminFull())
+	g.POST("/email-settings/test", h.TestEmailSettings, authMiddleware.RequireSuperadminFull())
+
 	// Email jobs management
 	g.GET("/email-jobs", h.ListEmailJobs)
 	g.GET("/email-jobs/:id/preview-json", h.GetEmailJobPreview)

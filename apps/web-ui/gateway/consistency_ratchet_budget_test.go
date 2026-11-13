@@ -55,7 +55,7 @@ func patternBudget() []patternBudgetEntry {
 		// shared form-control component (components/form).
 		{pattern: patternLegacyBordered, file: "approvals.templ", count: 1, note: "normalise to the shared form-control component"},
 		{pattern: patternLegacyBordered, file: "board.templ", count: 1, note: "normalise to the shared form-control component"},
-		{pattern: patternLegacyBordered, file: "chat.templ", count: 4, note: "normalise to the shared form-control component"},
+		{pattern: patternLegacyBordered, file: "chat.templ", count: 3, note: "normalise to the shared form-control component"},
 		{pattern: patternLegacyBordered, file: "datasources.templ", count: 7, note: "normalise to the shared form-control component"},
 		{pattern: patternLegacyBordered, file: "datasources_oauth.templ", count: 9, note: "normalise to the shared form-control component"},
 		{pattern: patternLegacyBordered, file: "documents.templ", count: 1, note: "normalise to the shared form-control component"},
@@ -88,21 +88,13 @@ func patternBudget() []patternBudgetEntry {
 		{pattern: patternSurfaceOpacity, file: "trace_waterfall.templ", count: 1, note: "muted bg-base-200/30 fill on a collapsible <details> (ui.SoftBox has no details element); normalise to bg-base-200/40"},
 
 		// border-token-drift — canonical is border-base-content/10.
-		{pattern: patternBorderTokenDrift, file: "agent.templ", count: 3, note: "normalise to border-base-content/10"},
-		{pattern: patternBorderTokenDrift, file: "agent_mcp_endpoint.templ", count: 2, note: "normalise to border-base-content/10"},
-		{pattern: patternBorderTokenDrift, file: "api_tokens.templ", count: 1, note: "normalise to border-base-content/10"},
-		{pattern: patternBorderTokenDrift, file: "blueprints.templ", count: 1, note: "normalise to border-base-content/10"},
-		{pattern: patternBorderTokenDrift, file: "blueprints_model_map.templ", count: 1, note: "normalise to border-base-content/10"},
+		{pattern: patternBorderTokenDrift, file: "agent.templ", count: 1, note: "normalise to border-base-content/10"},
 		{pattern: patternBorderTokenDrift, file: "board.templ", count: 3, note: "normalise to border-base-content/10"},
-		{pattern: patternBorderTokenDrift, file: "chat.templ", count: 5, note: "normalise to border-base-content/10"},
+		{pattern: patternBorderTokenDrift, file: "chat.templ", count: 3, note: "normalise to border-base-content/10"},
 		{pattern: patternBorderTokenDrift, file: "inbox.templ", count: 1, note: "normalise to border-base-content/10"},
 		{pattern: patternBorderTokenDrift, file: "mcp_servers.templ", count: 4, note: "normalise to border-base-content/10"},
-		{pattern: patternBorderTokenDrift, file: "org_context.templ", count: 1, note: "normalise to border-base-content/10"},
-		{pattern: patternBorderTokenDrift, file: "org_members_ui.templ", count: 1, note: "normalise to border-base-content/10"},
-		{pattern: patternBorderTokenDrift, file: "schedules.templ", count: 1, note: "normalise to border-base-content/10"},
-		{pattern: patternBorderTokenDrift, file: "schema.templ", count: 1, note: "normalise to border-base-content/10"},
-		{pattern: patternBorderTokenDrift, file: "share_manage.templ", count: 2, note: "normalise to border-base-content/10"},
 		{pattern: patternBorderTokenDrift, file: "share_page.templ", count: 5, note: "normalise to border-base-content/10"},
+		{pattern: patternBorderTokenDrift, file: "org_members_ui.templ", count: 1, note: "normalise to border-base-content/10"},
 		{pattern: patternBorderTokenDrift, file: "ui.templ", count: 1, note: "normalise to border-base-content/10"},
 
 		// empty-note — the muted-paragraph note surface; canonical is ui.EmptyNote.

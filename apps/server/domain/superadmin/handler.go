@@ -2,25 +2,30 @@ package superadmin
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 
 	"github.com/labstack/echo/v4"
 
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
+	"github.com/emergent-company/emergent.memory/domain/email"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // Handler handles HTTP requests for superadmin
 type Handler struct {
-	repo     *Repository
-	tokenSvc *apitoken.Service
+	repo          *Repository
+	tokenSvc      *apitoken.Service
+	emailSettings *email.SettingsService
+	zitadelEmail  *ZitadelEmailClient
+	log           *slog.Logger
 }
 
-// NewHandler creates a new superadmin handler
-func NewHandler(repo *Repository, tokenSvc *apitoken.Service) *Handler {
-	return &Handler{repo: repo, tokenSvc: tokenSvc}
+// NewHandler creates a new superadmin handler.
+func NewHandler(repo *Repository, tokenSvc *apitoken.Service, emailSettings *email.SettingsService, zitadelEmail *ZitadelEmailClient, log *slog.Logger) *Handler {
+	return &Handler{repo: repo, tokenSvc: tokenSvc, emailSettings: emailSettings, zitadelEmail: zitadelEmail, log: log}
 }
 
 // getPaginationParams extracts pagination params from query string

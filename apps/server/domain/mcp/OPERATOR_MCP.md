@@ -80,8 +80,8 @@ tools.
 ### Pre-existing operator tools (also on this endpoint)
 
 `embedding-status`, `embedding-pause`, `embedding-resume`,
-`embedding-config-update`, `provider-list-org`, `provider-configure-org`,
-`provider-test`, `provider-usage-get`, `trace-list`, `trace-get`.
+`embedding-config-update`, `provider-test`, `provider-usage-get`, `trace-list`,
+`trace-get`.
 
 > **Note:** `superadmin-grant` grants **`superadmin_readonly` only** — the
 > repository does not expose a full-grant method. `service-token-create` also
@@ -90,9 +90,8 @@ tools.
 ## 3. Confirmation protocol for mutations
 
 Every mutating operator tool takes a `confirm` boolean argument — this includes
-both the new mutation tools **and** the pre-existing mutators
-`provider-configure-org`, `embedding-pause`, `embedding-resume`, and
-`embedding-config-update`.
+both the new mutation tools **and** the pre-existing mutators `embedding-pause`,
+`embedding-resume`, and `embedding-config-update`.
 
 - `confirm` absent or `false` → **dry-run**: no side effect; the result is a
   structured object with `dry_run: true`, `action` (the intended action), and
@@ -152,8 +151,7 @@ production. The table is queryable by superadmins via the database.
 ## 5. Release note
 
 Operator tools **moved** off `/api/mcp` onto `/api/mcp/admin`. Any client that
-previously called `embedding-*`, `provider-list-org`, `provider-configure-org`,
-`provider-test`, `provider-usage-get`, `trace-list`, or `trace-get` on
-`/api/mcp` must now authenticate as `superadmin_full` and use `/api/mcp/admin`.
+previously called `embedding-*`, `provider-test`, `provider-usage-get`,
+`trace-list`, or `trace-get` on `/api/mcp` must now authenticate as `superadmin_full` and use `/api/mcp/admin`.
 The project endpoint returns `method-not-found` for these tools (they are not
 listed and are not callable), regardless of caller superadmin status.

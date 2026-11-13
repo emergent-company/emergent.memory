@@ -101,6 +101,109 @@ func TestResolveByRef_EmptyProvider(t *testing.T) {
 	}
 }
 
+// TestResolveDialectAliasNormalized pins that a documented provider alias
+// resolves as well as validates: "gemini" is in dialectNames, so Resolve must
+// normalize it to the google dialect instead of failing with "unsupported
+// provider" on every call — the late failure #690 item 3 exists to prevent.
+func TestResolveDialectAliasNormalized(t *testing.T) {
+	svc := newTestCredentialService(&config.Config{})
+	ctx := context.Background()
+	for alias, dialect := range dialectAliases {
+		if !svc.registry.IsSupported(dialect) {
+			t.Fatalf("dialectAliases[%q] = %q is not a registered dialect", alias, dialect)
+		}
+		if _, err := svc.Resolve(ctx, ProviderType(alias)); err != nil {
+			t.Errorf("Resolve(%q) error = %v, want it normalized to %q", alias, err, dialect)
+		}
+	}
+}
+
+// TestResolveByRef_GeminiAliasFallsBackToGoogleDialect is the end-to-end form:
+// a model reference "gemini/..." that passed write-time validation resolves
+// through the project's google-dialect instance, not to an "unsupported
+// provider" error.
+func TestResolveByRef_GeminiAliasFallsBackToGoogleDialect(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	ctx := context.Background()
+	tdb := testdb.SetupTestDBOrFail(t, ctx, "provalias")
+	t.Cleanup(tdb.Close)
+	db := tdb.DB
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	orgID := uuid.NewString()
+	projectID := uuid.NewString()
+	if _, err := db.ExecContext(ctx, `INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgID, "org-"+orgID); err != nil {
+		t.Fatalf("seed org: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`,
+		projectID, orgID, "proj-"+projectID); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	hexKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	cfg := &config.Config{LLMProvider: config.LLMProviderConfig{EncryptionKey: hexKey}}
+	repo := NewRepository(db, log)
+	svc := NewCredentialService(repo, NewRegistry(), nil, cfg, log)
+
+	const secret = "sk-google-alias"
+	ciphertext, nonce, err := svc.EncryptCredential([]byte(secret))
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	if err := repo.UpsertProjectProviderConfig(ctx, &ProjectProviderConfig{
+		ProjectID:           projectID,
+		Provider:            ProviderGoogleAI,
+		Slug:                ProviderSlug(ProviderGoogleAI),
+		EncryptedCredential: ciphertext,
+		EncryptionNonce:     nonce,
+		EmbeddingModel:      "gemini-embedding-001",
+	}); err != nil {
+		t.Fatalf("upsert config: %v", err)
+	}
+
+	rctx := auth.ContextWithProjectID(ctx, projectID)
+	cred, err := svc.ResolveByRef(rctx, modelref.Ref{Provider: "gemini", Model: "gemini-embedding-001"})
+	if err != nil {
+		t.Fatalf("ResolveByRef(gemini) error = %v, want the google dialect fallback", err)
+	}
+	if cred == nil || cred.Provider != ProviderGoogleAI {
+		t.Fatalf("ResolveByRef(gemini) = %+v, want the google-dialect credential", cred)
+	}
+	if cred.APIKey != secret {
+		t.Errorf("resolved APIKey = %q, want %q", cred.APIKey, secret)
+	}
+
+	// A project instance slug that equals the alias still wins (slug-first); the
+	// normalization above must not shadow it.
+	ciphertext2, nonce2, err := svc.EncryptCredential([]byte("sk-alias-slug"))
+	if err != nil {
+		t.Fatalf("encrypt slug credential: %v", err)
+	}
+	if err := repo.UpsertProjectProviderConfig(ctx, &ProjectProviderConfig{
+		ProjectID:           projectID,
+		Provider:            ProviderOpenAI,
+		Slug:                ProviderSlug("gemini"),
+		EncryptedCredential: ciphertext2,
+		EncryptionNonce:     nonce2,
+		GenerativeModel:     "gpt-4o",
+	}); err != nil {
+		t.Fatalf("upsert alias-named instance: %v", err)
+	}
+	cred, err = svc.ResolveByRef(rctx, modelref.Ref{Provider: "gemini", Model: "gpt-4o"})
+	if err != nil {
+		t.Fatalf("ResolveByRef(gemini instance) error = %v", err)
+	}
+	if cred == nil || cred.Provider != ProviderOpenAI || cred.Slug != ProviderSlug("gemini") {
+		t.Fatalf("ResolveByRef(gemini) = %+v, want the openai-dialect instance named gemini", cred)
+	}
+}
+
 // TestResolveByRef_DialectNameSlug_Wins is a regression test for allowing an
 // instance slug to reuse another dialect's name: a project that has an
 // openai-dialect instance whose slug equals "deepseek" must resolve a

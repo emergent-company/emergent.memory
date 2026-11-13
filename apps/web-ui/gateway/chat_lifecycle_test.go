@@ -356,7 +356,7 @@ func TestChatWorkspaceOpenArchivedStaysOpen(t *testing.T) {
 	for _, want := range []string{
 		`id="chat-root"`,
 		`id="chat-form"`,
-		`data-testid="chat-input"`,
+		`data-prompt-bar-input`,
 		"Open session",
 	} {
 		if !strings.Contains(html, want) {
@@ -377,7 +377,7 @@ func TestChatWorkspaceDeletedOpenRendersReadyState(t *testing.T) {
 	for _, want := range []string{
 		`id="chat-root"`,
 		`id="chat-form"`,
-		`data-testid="chat-input"`,
+		`data-prompt-bar-input`,
 		"Ready when you are",
 	} {
 		if !strings.Contains(html, want) {

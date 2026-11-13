@@ -13,6 +13,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/pgutils"
 )
@@ -89,9 +90,14 @@ func (r *Repository) embedDescription(ctx context.Context, text string) []float3
 	}
 	vec, err := r.embedder.EmbedQuery(ctx, text)
 	if err != nil {
-		r.log.Warn("skills: failed to generate description embedding (skill will have no embedding)",
-			logger.Error(err),
-		)
+		// A missing/unusable embedding configuration is logged once per project
+		// by the embedding service; only real provider failures are worth a
+		// per-write warning.
+		if !embeddings.IsNotConfigured(err) {
+			r.log.Warn("skills: failed to generate description embedding (skill will have no embedding)",
+				logger.Error(err),
+			)
+		}
 		return nil
 	}
 	return vec

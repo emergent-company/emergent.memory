@@ -253,7 +253,7 @@ func TestChatWorkspaceKeepsScrollFillAndSharedContainer(t *testing.T) {
 	if strings.Contains(html, "max-w-3xl") {
 		t.Error("chat page must not hardcode the narrower max-w-3xl width")
 	}
-	for _, id := range []string{`id="chat-log"`, `id="chat-messages"`, `id="chat-form"`, `id="chat-input"`} {
+	for _, id := range []string{`id="chat-log"`, `id="chat-messages"`, `id="chat-form"`, `data-prompt-bar-input`} {
 		if !strings.Contains(html, id) {
 			t.Errorf("chat workspace target %s missing after the wrapper change", id)
 		}

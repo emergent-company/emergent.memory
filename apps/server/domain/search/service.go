@@ -381,10 +381,24 @@ func (s *Service) embedQuery(ctx context.Context, query string) []float32 {
 	// embedding service degrades the search to lexical-only rather than hanging it.
 	vec, err := s.embedQueryBounded(ctx, query)
 	if err != nil {
-		s.log.Warn("failed to generate query embedding, falling back to lexical-only search", logger.Error(err))
+		// A missing/unusable embedding configuration is reported once per
+		// project by the embedding service; warning again on every query would
+		// only add noise. Real provider failures stay visible.
+		s.warnEmbedFailure(err, "failed to generate query embedding, falling back to lexical-only search")
 		return nil
 	}
 	return vec
+}
+
+// warnEmbedFailure logs a query-embedding failure unless the embedding
+// configuration is itself the problem. Every search leg funnels through here so
+// the "already reported once per project" rule holds for all of them, and so
+// there is one place to test it.
+func (s *Service) warnEmbedFailure(err error, msg string) {
+	if embeddings.IsNotConfigured(err) {
+		return
+	}
+	s.log.Warn(msg, logger.Error(err))
 }
 
 // runParallelSearches executes graph, text, and relationship searches concurrently
@@ -551,7 +565,7 @@ func (s *Service) executeGraphSearch(ctx context.Context, projectID uuid.UUID, r
 	if len(vector) == 0 && s.embeddings != nil {
 		vec, err := s.embedQueryBounded(ctx, req.Query)
 		if err != nil {
-			s.log.Warn("failed to generate query embedding for graph search", logger.Error(err))
+			s.warnEmbedFailure(err, "failed to generate query embedding for graph search")
 			// Continue with lexical-only search
 		} else {
 			vector = vec
@@ -647,7 +661,7 @@ func (s *Service) executeTextSearch(ctx context.Context, projectID uuid.UUID, re
 	if len(vector) == 0 && s.embeddings != nil {
 		vec, err := s.embedQueryBounded(ctx, req.Query)
 		if err != nil {
-			s.log.Warn("failed to generate query embedding for text search", logger.Error(err))
+			s.warnEmbedFailure(err, "failed to generate query embedding for text search")
 			// Continue with lexical-only search
 		} else {
 			vector = vec
@@ -713,7 +727,7 @@ func (s *Service) executeRelationshipSearch(ctx context.Context, projectID uuid.
 	if len(vector) == 0 && s.embeddings != nil {
 		vec, err := s.embedQueryBounded(ctx, req.Query)
 		if err != nil {
-			s.log.Warn("failed to generate query embedding for relationship search", logger.Error(err))
+			s.warnEmbedFailure(err, "failed to generate query embedding for relationship search")
 			return nil, nil, nil
 		}
 		vector = vec

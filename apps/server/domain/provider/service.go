@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -72,6 +73,24 @@ type ResolvedCredential struct {
 	GenerativeModel string
 }
 
+// ErrNoProjectProviderConfig classifies "the project has no credential for this
+// provider" as a typed error, so callers can tell a configuration gap from a
+// transient lookup failure. Embedding resolution maps it to
+// embeddings.ErrEmbeddingCredentialUnusable, which extraction treats as
+// permanent rather than retrying it to dead-letter.
+var ErrNoProjectProviderConfig = errors.New("no provider config found for project")
+
+// noProjectProviderConfigError wraps ErrNoProjectProviderConfig with the
+// provider, the project and the command that fixes the gap, so a caller that
+// needs to tell a configuration gap from a transient lookup failure can use
+// errors.Is while the operator still gets an actionable message.
+func noProjectProviderConfigError(providerName, projectID, hint string) error {
+	// The sentinel already reads "no provider config found for project", so the
+	// detail clause omits "for project" — otherwise the user-visible message
+	// (wrapped by handlers into a 400 body) repeats it.
+	return fmt.Errorf("%w: %s has no credentials for %s — %s", ErrNoProjectProviderConfig, providerName, projectID, hint)
+}
+
 // CredentialSource describes where a resolved credential originated.
 type CredentialSource string
 
@@ -125,6 +144,9 @@ func NewCredentialService(
 // Returns nil, nil when no project context is present (env-var callers).
 // Returns an error when the project has no config for this provider.
 func (s *CredentialService) Resolve(ctx context.Context, provider ProviderType) (*ResolvedCredential, error) {
+	// Accept documented aliases here so validation (ModelProviderKnown) and
+	// resolution agree; "gemini" resolves as the "google" dialect.
+	provider = normalizeDialectName(provider)
 	if !s.registry.IsSupported(provider) {
 		return nil, fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -142,7 +164,7 @@ func (s *CredentialService) Resolve(ctx context.Context, provider ProviderType) 
 		return s.decryptProjectConfig(cfg)
 	}
 
-	return nil, fmt.Errorf("no %s provider config found for project %s — run 'memory provider configure-project %s' to set credentials", provider, projectID, provider)
+	return nil, noProjectProviderConfigError(string(provider), projectID, "run 'memory provider configure-project "+string(provider)+"' to set them")
 }
 
 // decryptProjectConfig decrypts a project-level provider config.
@@ -349,7 +371,7 @@ func (s *CredentialService) ResolveBySlug(ctx context.Context, slug ProviderSlug
 		return nil, err
 	}
 	if cfg == nil {
-		return nil, fmt.Errorf("no %s provider config found for project %s — configure it with `memory provider configure-project`", slug, projectID)
+		return nil, noProjectProviderConfigError(string(slug), projectID, "configure them with `memory provider configure-project`")
 	}
 	return s.decryptProjectConfig(cfg)
 }
@@ -376,7 +398,26 @@ func (s *CredentialService) ResolveByRef(ctx context.Context, ref modelref.Ref) 
 	if isDialectName(ref.Provider) {
 		return s.Resolve(ctx, ProviderType(ref.Provider))
 	}
-	return nil, fmt.Errorf("no provider instance %q configured for project %s", ref.Provider, projectID)
+	return nil, noProjectProviderConfigError(ref.Provider, projectID, "configure the instance with `memory provider configure-project`")
+}
+
+// ModelProviderKnown reports whether name names a supported provider dialect
+// (or an accepted alias) or an existing provider instance slug in the project.
+// It does not require a usable credential — only that the provider is known —
+// so model-selection write paths can reject a typo without forcing the API key
+// to exist first. Implemented for modelconfig's provider validator.
+func (s *CredentialService) ModelProviderKnown(ctx context.Context, projectID, name string) (bool, error) {
+	if name == "" {
+		return false, nil
+	}
+	if isDialectName(name) {
+		return true, nil
+	}
+	cfg, err := s.repo.GetProjectProviderConfigBySlug(ctx, projectID, ProviderSlug(name))
+	if err != nil {
+		return false, err
+	}
+	return cfg != nil, nil
 }
 
 // ResolveAny attempts to resolve the best available credential for the request
@@ -577,7 +618,8 @@ func pickEmbeddingConfig(cfgs map[ProviderType]*ProjectProviderConfig) *ProjectP
 // short-circuits on a generative-only provider (DeepSeek/OpenAI) when a Google
 // or Vertex embedding provider is also configured.
 // Returns nil, nil when no project context is present or no provider has an
-// embedding model configured.
+// embedding model configured. A repository lookup failure is returned with the
+// provider in context — it must not be mistaken for "no credential".
 func (s *CredentialService) ResolveAnyEmbedding(ctx context.Context) (*ResolvedCredential, error) {
 	projectID := auth.ProjectIDFromContext(ctx)
 	if projectID == "" {
@@ -588,13 +630,14 @@ func (s *CredentialService) ResolveAnyEmbedding(ctx context.Context) (*ResolvedC
 	for _, p := range embeddingProviderOrder() {
 		cfg, err := s.repo.GetProjectProviderConfig(ctx, projectID, p)
 		if err != nil {
-			s.log.Debug("embedding credential lookup failed, trying next",
-				slog.String("provider", string(p)),
-				slog.String("error", err.Error()),
-			)
-			continue
+			// Propagate the first real lookup failure instead of continuing:
+			// swallowing it turns a transient database error into the permanent
+			// "no embedding model configured" classification (#690 item 4).
+			return nil, fmt.Errorf("embedding credential lookup failed for provider %s: %w", p, err)
 		}
-		cfgs[p] = cfg
+		if cfg != nil {
+			cfgs[p] = cfg
+		}
 	}
 
 	cfg := pickEmbeddingConfig(cfgs)
@@ -1019,17 +1062,35 @@ func isDialectName(s string) bool {
 	return dialectNames[s]
 }
 
+// dialectAliases maps accepted provider-name aliases to their dialect. They are
+// part of dialectNames so write-time validation accepts them, and resolution
+// normalizes them through normalizeDialectName — otherwise a reference that
+// passed validation fails per call with "unsupported provider".
+var dialectAliases = map[string]ProviderType{
+	"gemini": ProviderGoogleAI,
+}
+
+// normalizeDialectName maps an accepted alias to its dialect; any other name is
+// returned unchanged.
+func normalizeDialectName(name ProviderType) ProviderType {
+	if dialect, ok := dialectAliases[string(name)]; ok {
+		return dialect
+	}
+	return name
+}
+
 // dialectNames is the set of recognized provider dialect IDs plus accepted
 // aliases, built from Builtins() at package init.
 var dialectNames = buildDialectNames()
 
 func buildDialectNames() map[string]bool {
-	names := make(map[string]bool, len(Builtins())+1)
+	names := make(map[string]bool, len(Builtins())+len(dialectAliases))
 	for _, d := range Builtins() {
 		names[string(d.Type)] = true
 	}
-	// "gemini" is an accepted alias for the "google" dialect.
-	names["gemini"] = true
+	for alias := range dialectAliases {
+		names[alias] = true
+	}
 	return names
 }
 
