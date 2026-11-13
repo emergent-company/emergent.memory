@@ -123,7 +123,10 @@ func ensureGenerativeModelConfigured(t *testing.T, projectID string) {
 	t.Helper()
 	provider, _, model := framework.ProviderFromEnv()
 	if provider == "" || model == "" {
-		provider, model = "e2e", "placeholder-generative-model"
+		// The provider segment must be a supported dialect: the model-config
+		// write boundary rejects an unknown provider (#690 item 3), and this
+		// placeholder never reaches the provider — only the gate reads it.
+		provider, model = "google", "placeholder-generative-model"
 	}
 	cfg, _ := json.Marshal(map[string]any{"generativeModel": provider + "/" + model})
 	resp := doAPI(t, "PUT", "/api/v1/projects/"+projectID+"/model-config", e2eTestToken(), projectID, cfg)
