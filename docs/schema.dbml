@@ -2248,6 +2248,10 @@ Table "kb"."projects" {
   "auto_discovery_enabled" boolean [not null, default: true]
   "skill_capture" jsonb [not null, default: '{}']
   "auto_extract_source_syncs" boolean [not null, default: false]
+  "budget_weekly_usd" numeric(10,4)
+  "budget_weekly_alert_threshold" numeric(3,2) [not null, default: 0.80]
+  "budget_week_anchor" timestamptz
+  "budget_month_anchor" timestamptz
 
   Indexes {
     (deleted_at) [name: "idx_projects_deleted_at", note: '(deleted_at IS NULL)']
