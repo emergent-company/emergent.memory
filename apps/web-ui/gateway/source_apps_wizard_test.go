@@ -17,7 +17,7 @@ func githubWizardTestServer(f *fakeMemory, apiURL string) *echo.Echo {
 	s := &Server{
 		cfg: Config{
 			DefaultAgent: "memory", MemoryPublicURL: "https://api.memory.example.com",
-			PublicBaseURL: "https://app.memory.example.com", SessionSecret: "0123456789abcdef0123456789abcdef",
+			PublicBaseURL: "https://app.memory.example.com", SessionSecret: "test-session-secret-for-wizard",
 			GitHubAPIBaseURL: apiURL,
 		},
 		memory: f,
@@ -80,7 +80,7 @@ func TestGitHubWizardCallbackRegistersAppWithPinnedKey(t *testing.T) {
 
 	st := ghWizardState{ProjectID: "p1", Scope: "project", Name: "memory-review-e2e", WebhookKey: "11111111-1111-4111-8111-111111111111", State: "state-1"}
 	raw, _ := json.Marshal(st)
-	ck := &http.Cookie{Name: githubWizardCookie, Value: signCookieValue("0123456789abcdef0123456789abcdef", raw), Path: githubWizardPath}
+	ck := &http.Cookie{Name: githubWizardCookie, Value: signCookieValue("test-session-secret-for-wizard", raw), Path: githubWizardPath}
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, githubWizardPath+"/callback?state=state-1&code=abc", nil)
@@ -110,7 +110,7 @@ func TestGitHubWizardInstallRecoversAppFromState(t *testing.T) {
 	e := githubWizardTestServer(f, "https://api.github.test")
 	st := ghWizardState{ProjectID: "p1", Scope: "project", AppID: "sapp-9", Slug: "memory-review-e2e", WebhookKey: "11111111-1111-4111-8111-111111111111", State: "state-1"}
 	raw, _ := json.Marshal(st)
-	ck := &http.Cookie{Name: githubWizardCookie, Value: signCookieValue("0123456789abcdef0123456789abcdef", raw), Path: githubWizardPath}
+	ck := &http.Cookie{Name: githubWizardCookie, Value: signCookieValue("test-session-secret-for-wizard", raw), Path: githubWizardPath}
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, githubWizardPath+"?step=installed&installation_id=181621212", nil)
