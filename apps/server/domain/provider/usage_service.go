@@ -243,12 +243,16 @@ const (
 
 // BudgetWindowState is one spending window's position: the cap, the threshold,
 // the spend and the period it all applies to.
+//
+// CapUSD and RemainingUSD are omitted for an uncapped window (omitempty on a nil
+// pointer): there is no figure to report, and a client that tests the field for
+// presence must not read `null` as "cap of zero".
 type BudgetWindowState struct {
 	Window       budgetwindow.Window `json:"window"`
-	CapUSD       *float64            `json:"capUsd"`
+	CapUSD       *float64            `json:"capUsd,omitempty"`
 	Threshold    float64             `json:"threshold"`
 	SpendUSD     float64             `json:"spendUsd"`
-	RemainingUSD *float64            `json:"remainingUsd"`
+	RemainingUSD *float64            `json:"remainingUsd,omitempty"`
 	PercentUsed  float64             `json:"percentUsed"`
 	PeriodStart  time.Time           `json:"periodStart"`
 	PeriodEnd    time.Time           `json:"periodEnd"`
@@ -471,9 +475,12 @@ func (s *UsageService) checkBudget(ctx context.Context, projectID string) {
 	}
 }
 
-// budgetAdmins returns the project's admins with their preferred address. The
-// LATERAL join mirrors project member listing: the verified address wins, then
-// the oldest one, so a resend after verification cannot flip the recipient.
+// budgetAdmins returns the project's admins with their primary *verified*
+// address. An unverified address is never mailed: this is an unsolicited
+// automated email, and the address on an unverified row may belong to someone
+// else (the same rule userprofile.Repository.GetEmail applies when it resolves
+// "the" address for a user). An admin with no verified address still receives
+// the in-app notification, which is the durable record; email is best-effort.
 func (s *UsageService) budgetAdmins(ctx context.Context, projectID string) ([]budgetAdmin, error) {
 	var rows []budgetAdmin
 	err := s.db.NewSelect().
@@ -482,8 +489,8 @@ func (s *UsageService) budgetAdmins(ctx context.Context, projectID string) ([]bu
 		ColumnExpr("COALESCE(ue.email, '') AS email").
 		Join(`LEFT JOIN LATERAL (
 			SELECT email FROM core.user_emails
-			WHERE user_id = pm.user_id
-			ORDER BY verified DESC, created_at ASC
+			WHERE user_id = pm.user_id AND verified
+			ORDER BY created_at ASC
 			LIMIT 1
 		) AS ue ON true`).
 		Where("pm.project_id = ?", projectID).

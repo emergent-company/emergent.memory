@@ -233,6 +233,52 @@ func TestGetBudgetState_ComputesBothWindows(t *testing.T) {
 	require.True(t, exceeded)
 }
 
+// TestBudgetAdmins_VerifiedAddressOnly proves the alert email never goes to an
+// unverified address. This is an unsolicited automated message, and an
+// unverified row may hold somebody else's address; the admin still gets the
+// in-app notification, which is the durable record. The verified (or, for a
+// user with several, the oldest verified) address is the one returned.
+func TestBudgetAdmins_VerifiedAddressOnly(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	ctx := context.Background()
+	tdb := testdb.SetupTestDBOrFail(t, ctx, "budgetadmins")
+	t.Cleanup(tdb.Close)
+	db := tdb.DB
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc := newBudgetAlertService(db, log)
+
+	projectID, verifiedUserID := seedWindowProject(t, ctx, db, f64(10), 0.80, nil, 0.80)
+
+	// A second project admin whose only address is unverified.
+	unverifiedUserID := uuid.NewString()
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO core.user_profiles (id, zitadel_user_id, display_name) VALUES (?, ?, ?)`,
+		unverifiedUserID, "zitadel-"+unverifiedUserID, "Unverified Admin")
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.project_memberships (project_id, user_id, role) VALUES (?, ?, 'project_admin')`,
+		projectID, unverifiedUserID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO core.user_emails (id, user_id, email, verified) VALUES (?, ?, ?, false)`,
+		uuid.NewString(), unverifiedUserID, "unverified-"+unverifiedUserID[:8]+"@example.com")
+	require.NoError(t, err)
+
+	admins, err := svc.budgetAdmins(ctx, projectID)
+	require.NoError(t, err)
+
+	byUser := map[string]string{}
+	for _, a := range admins {
+		byUser[a.UserID] = a.Email
+	}
+	require.Len(t, admins, 2, "both admins are recipients of the in-app notification")
+	require.Contains(t, byUser[verifiedUserID], "@example.com")
+	require.Empty(t, byUser[unverifiedUserID],
+		"an unverified address must not be used for the alert email")
+}
+
 // TestGetBudgetState_RemainingFloorsAtZero proves an over-spend reports
 // "$0 left" rather than a negative figure, while the percentage keeps growing
 // (which is the useful signal).

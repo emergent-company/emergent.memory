@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -8,6 +9,29 @@ import (
 
 	"github.com/emergent-company/emergent.memory/internal/budgetwindow"
 )
+
+// TestBudgetWindowState_JSONOmitsUncappedFigures pins the wire shape the spec
+// promises (`openspec change add-usage-budget-alerts`, "Budget state read
+// endpoint"): an uncapped window omits capUsd and remainingUsd rather than
+// emitting null, so a client cannot read `null` as "cap of zero" — and a capped
+// window still carries both as numbers.
+func TestBudgetWindowState_JSONOmitsUncappedFigures(t *testing.T) {
+	period := weekPeriod()
+
+	uncapped, err := json.Marshal(newBudgetWindowState(budgetwindow.Week, nil, 0.80, 12.5, period))
+	require.NoError(t, err)
+	for _, absent := range []string{"capUsd", "remainingUsd"} {
+		require.NotContains(t, string(uncapped), absent,
+			"an uncapped window must omit %s: %s", absent, uncapped)
+	}
+	require.Contains(t, string(uncapped), `"status":"ok"`)
+	require.Contains(t, string(uncapped), `"spendUsd":12.5`)
+
+	capped, err := json.Marshal(newBudgetWindowState(budgetwindow.Week, f64(5), 0.80, 12.5, period))
+	require.NoError(t, err)
+	require.Contains(t, string(capped), `"capUsd":5`)
+	require.Contains(t, string(capped), `"remainingUsd":0`)
+}
 
 // weekPeriod is a fixed window so the state assertions do not depend on today.
 func weekPeriod() budgetwindow.Period {
