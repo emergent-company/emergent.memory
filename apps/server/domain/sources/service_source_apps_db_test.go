@@ -271,32 +271,102 @@ func TestSourceTriggerResolvesDefinitionBackedAgent(t *testing.T) {
 	require.NoError(t, db.DB.NewRaw(`SELECT count(*) FROM kb.agents WHERE agent_definition_id = ?`, defID).Scan(ctx, &count))
 	require.Equal(t, 1, count)
 
-	// A pre-existing runtime row with the definition's name (created by a manual
-	// run or A2A before the link existed) is adopted and linked, not duplicated.
-	adoptedDef, adoptedAgent := uuid.New(), uuid.New()
+	// A same-name runtime row of another shape (a Schedules-page or API-created
+	// agent) is a distinct agent: re-pointing it at the definition would change
+	// the config its own runs execute with, so the bind gets its own row and the
+	// bystander keeps its prompt.
+	bystanderDef, bystanderAgent := uuid.New(), uuid.New()
 	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.agent_definitions (id, project_id, name) VALUES (?, ?, ?)`,
-		adoptedDef, projectID, "Adopted Agent")
+		bystanderDef, projectID, "Bystander Agent")
 	require.NoError(t, err)
-	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.agents (id, name, strategy_type, cron_schedule, project_id)
-		VALUES (?, ?, 'definition', '', ?)`, adoptedAgent, "Adopted Agent", projectID)
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.agents (id, name, strategy_type, cron_schedule, project_id, prompt)
+		VALUES (?, ?, 'definition', '0 * * * *', ?, 'its own prompt')`, bystanderAgent, "Bystander Agent", projectID)
 	require.NoError(t, err)
 	webSource := uuid.New()
 	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.sources (id, project_id, provider, display_name, config, status)
 		VALUES (?, ?, 'web', 'web', '{}'::jsonb, 'active')`, webSource, projectID)
 	require.NoError(t, err)
-	adoptedTrigger, err := svc.CreateSourceTrigger(ctx, projectID, webSource, SourceTriggerInput{
-		EventType: "pull_request", AgentID: adoptedDef.String(),
+	bystanderTrigger, err := svc.CreateSourceTrigger(ctx, projectID, webSource, SourceTriggerInput{
+		EventType: "pull_request", AgentID: bystanderDef.String(),
 	})
 	require.NoError(t, err)
-	require.Equal(t, adoptedAgent, adoptedTrigger.AgentID)
-	linked, err := agentRepo.FindAgentsByDefinitionID(ctx, adoptedDef.String())
+	require.NotEqual(t, bystanderAgent, bystanderTrigger.AgentID, "an unrelated same-name agent was adopted")
+	bystander, err := agentRepo.FindByID(ctx, bystanderAgent.String(), nil)
+	require.NoError(t, err)
+	require.NotNil(t, bystander)
+	require.Nil(t, bystander.AgentDefinitionID, "the bystander was stamped with the definition link")
+	require.NotNil(t, bystander.Prompt)
+	require.Equal(t, "its own prompt", *bystander.Prompt)
+	linked, err := agentRepo.FindAgentsByDefinitionID(ctx, bystanderDef.String())
 	require.NoError(t, err)
 	require.Len(t, linked, 1)
-	require.Equal(t, adoptedAgent.String(), linked[0].ID)
+	require.Equal(t, bystanderTrigger.AgentID.String(), linked[0].ID)
+
+	// A row that already carries the definition's own strategy type but no link
+	// (an older codepath that created it without writing agent_definition_id) is
+	// adopted and linked instead of duplicated.
+	legacyDef, legacyAgent := uuid.New(), uuid.New()
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.agent_definitions (id, project_id, name) VALUES (?, ?, ?)`,
+		legacyDef, projectID, "Legacy Agent")
+	require.NoError(t, err)
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.agents (id, name, strategy_type, cron_schedule, project_id)
+		VALUES (?, ?, ?, '0 0 * * *', ?)`, legacyAgent, "Legacy Agent", "agent-def:"+legacyDef.String(), projectID)
+	require.NoError(t, err)
+	legacyTrigger, err := svc.CreateSourceTrigger(ctx, projectID, webSource, SourceTriggerInput{
+		EventType: "push", AgentID: legacyDef.String(),
+	})
+	require.NoError(t, err)
+	require.Equal(t, legacyAgent, legacyTrigger.AgentID)
+	linked, err = agentRepo.FindAgentsByDefinitionID(ctx, legacyDef.String())
+	require.NoError(t, err)
+	require.Len(t, linked, 1)
+	require.Equal(t, legacyAgent.String(), linked[0].ID)
+	require.NotNil(t, linked[0].AgentDefinitionID)
+
+	// The definition link is not project-checked on write, so a row in another
+	// project can carry it. Binding must not enqueue this source's runs inside
+	// that project: it mints a row in this one.
+	foreignDef, foreignProject, foreignAgent := uuid.New(), uuid.New(), uuid.New()
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.agent_definitions (id, project_id, name) VALUES (?, ?, ?)`,
+		foreignDef, projectID, "Foreign Linked")
+	require.NoError(t, err)
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`,
+		foreignProject, orgID, "other-project")
+	require.NoError(t, err)
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.agents (id, project_id, name, strategy_type, cron_schedule, agent_definition_id)
+		VALUES (?, ?, ?, ?, '0 0 * * *', ?)`,
+		foreignAgent, foreignProject, "Foreign Linked", "agent-def:"+foreignDef.String(), foreignDef)
+	require.NoError(t, err)
+	foreignTrigger, err := svc.CreateSourceTrigger(ctx, projectID, webSource, SourceTriggerInput{
+		EventType: "issue", AgentID: foreignDef.String(),
+	})
+	require.NoError(t, err)
+	require.NotEqual(t, foreignAgent, foreignTrigger.AgentID, "a foreign-project runtime row was bound")
+	bound, err := agentRepo.FindByID(ctx, foreignTrigger.AgentID.String(), nil)
+	require.NoError(t, err)
+	require.NotNil(t, bound)
+	require.Equal(t, projectID.String(), bound.ProjectID)
+
+	// A disabled definition cannot run, so the bind is refused instead of leaving
+	// a binding that queues work the worker always fails.
+	disabledDef := uuid.New()
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.agent_definitions (id, project_id, name, enabled) VALUES (?, ?, ?, false)`,
+		disabledDef, projectID, "Disabled Agent")
+	require.NoError(t, err)
+	_, err = svc.CreateSourceTrigger(ctx, projectID, webSource, SourceTriggerInput{
+		EventType: "release", AgentID: disabledDef.String(),
+	})
+	require.Error(t, err)
+	var invalid *apperror.Error
+	require.ErrorAs(t, err, &invalid)
+	require.Equal(t, 422, invalid.HTTPStatus)
+	var disabledRows int
+	require.NoError(t, db.DB.NewRaw(`SELECT count(*) FROM kb.agents WHERE agent_definition_id = ?`, disabledDef).Scan(ctx, &disabledRows))
+	require.Zero(t, disabledRows)
 
 	// An id that is neither a runtime agent nor a definition is still a 404.
 	_, err = svc.CreateSourceTrigger(ctx, projectID, webSource, SourceTriggerInput{
-		EventType: "issue", AgentID: uuid.New().String(),
+		EventType: "label", AgentID: uuid.New().String(),
 	})
 	require.Error(t, err)
 	var notFound *apperror.Error

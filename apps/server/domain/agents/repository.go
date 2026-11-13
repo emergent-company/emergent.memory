@@ -779,12 +779,20 @@ func (r *Repository) DeleteAgentsBySourceBlueprint(ctx context.Context, projectI
 
 // FindAgentsByDefinitionID returns the runtime agents bound to a definition.
 // Definition-save trigger resync uses it to re-derive their reaction config.
+//
+// There is no unique index on kb.agents(agent_definition_id), so a definition
+// can own more than one runtime row (a concurrent create, an older flow). The
+// order is oldest first so callers that need a single row pick the same one on
+// every call instead of an arbitrary row.
 func (r *Repository) FindAgentsByDefinitionID(ctx context.Context, definitionID string) ([]*Agent, error) {
 	var agents []*Agent
 	if definitionID == "" {
 		return nil, nil
 	}
-	if err := r.db.NewSelect().Model(&agents).Where("agent_definition_id = ?", definitionID).Scan(ctx); err != nil {
+	if err := r.db.NewSelect().Model(&agents).
+		Where("agent_definition_id = ?", definitionID).
+		Order("created_at ASC", "id ASC").
+		Scan(ctx); err != nil {
 		return nil, err
 	}
 	return agents, nil

@@ -479,6 +479,11 @@ func (s *Service) resolveTriggerAgent(ctx context.Context, projectID uuid.UUID, 
 	if def == nil {
 		return uuid.Nil, apperror.NewNotFound("Agent", strings.TrimSpace(in.AgentID))
 	}
+	// A disabled definition's runs fail as "agent is disabled" in the worker, so
+	// accepting the bind would leave a binding that queues work it can never run.
+	if !def.Enabled {
+		return uuid.Nil, apperror.NewValidation("agent " + def.Name + " is disabled; enable it before binding a trigger")
+	}
 	runtime, err := s.ensureDefinitionRuntimeAgent(ctx, def)
 	if err != nil {
 		return uuid.Nil, err
@@ -500,36 +505,37 @@ func (s *Service) ensureDefinitionRuntimeAgent(ctx context.Context, def *agents.
 	if err != nil {
 		return nil, apperror.NewInternal("failed to resolve the agent runtime row", err)
 	}
-	if len(existing) > 0 {
-		return existing[0], nil
+	// The link is not project-checked on write (the agents API accepts any
+	// agentDefinitionId), so skip a row that belongs to another project: binding
+	// it would enqueue this source's runs inside that project.
+	for _, agent := range existing {
+		if agent.ProjectID == def.ProjectID {
+			return agent, nil
+		}
 	}
-	// A row created before the definition was linked (a manual run, A2A, a work
-	// rule while the link was missing) carries the definition's name: adopt it
-	// instead of leaving two runtime agents with the same name. A row linked to
-	// another definition is left alone; the bind gets its own row so the two
-	// definitions cannot run each other's agent.
-	adopted, err := s.agentRepo.FindAgentByName(ctx, def.ProjectID, def.Name)
+	// A row holding the definition's own strategy type but no link (an older
+	// codepath that created one without writing agent_definition_id) is the only
+	// same-name row worth adopting. A same-name row of any other shape is a
+	// distinct agent — a Schedules-page agent, an API-created agent — whose own
+	// runs must keep their prompt and model, so the bind gets its own row rather
+	// than stamping that one and re-pointing its config at this definition.
+	legacy, err := s.agentRepo.FindAgentByName(ctx, def.ProjectID, def.Name)
 	if err != nil {
 		return nil, apperror.NewInternal("failed to resolve the agent runtime row", err)
 	}
-	if adopted != nil {
-		if adopted.AgentDefinitionID == nil {
-			defID := def.ID
-			adopted.AgentDefinitionID = &defID
-			if err := s.agentRepo.UpdateAgent(ctx, adopted); err != nil {
-				return nil, apperror.NewInternal("failed to link the agent runtime row", err)
-			}
-			return adopted, nil
+	if legacy != nil && legacy.AgentDefinitionID == nil && legacy.StrategyType == agentDefStrategyType(def.ID) {
+		defID := def.ID
+		legacy.AgentDefinitionID = &defID
+		if err := s.agentRepo.UpdateAgent(ctx, legacy); err != nil {
+			return nil, apperror.NewInternal("failed to link the agent runtime row", err)
 		}
-		if *adopted.AgentDefinitionID == def.ID {
-			return adopted, nil
-		}
+		return legacy, nil
 	}
 	defID := def.ID
 	created := &agents.Agent{
 		ProjectID:         def.ProjectID,
 		Name:              def.Name,
-		StrategyType:      "agent-def:" + def.ID,
+		StrategyType:      agentDefStrategyType(def.ID),
 		CronSchedule:      "0 0 * * *",
 		Enabled:           def.Enabled,
 		TriggerType:       agents.TriggerTypeManual,
@@ -540,6 +546,11 @@ func (s *Service) ensureDefinitionRuntimeAgent(ctx context.Context, def *agents.
 	}
 	return created, nil
 }
+
+// agentDefStrategyType is the strategy type of the runtime row a definition's
+// runs execute as. agents.ResolveDefinitionForAgent parses it when the row has
+// no agent_definition_id.
+func agentDefStrategyType(defID string) string { return "agent-def:" + defID }
 
 func (s *Service) sourceForProject(ctx context.Context, projectID, sourceID uuid.UUID) (*Source, error) {
 	src, err := s.repo.FindSourceByID(ctx, sourceID)
