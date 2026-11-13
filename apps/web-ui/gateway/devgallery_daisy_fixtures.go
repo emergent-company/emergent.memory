@@ -27,6 +27,28 @@ type daisyFixtureSpec struct {
 // hx-post/put/patch/delete. Structural components (table, popover, dropdown)
 // render their full composed context so the preview is actually populated.
 var daisyFixtures = map[string]daisyFixtureSpec{
+	"AccountMenu": {
+		PropsType:   "AccountMenuProps",
+		Description: "The topbar account control: an avatar trigger, the signed-in account, the cached accounts it can switch to, and the account actions.",
+		Render: func() templ.Component {
+			return ui.AccountMenu(ui.AccountMenuProps{
+				SignedIn: true,
+				Active: ui.Account{
+					Sub:   "gallery-ada",
+					Name:  "Ada Lovelace",
+					Email: "ada@example.invalid",
+				},
+				Others: []ui.Account{
+					{Sub: "gallery-grace", Name: "Grace Hopper", Email: "grace@example.invalid"},
+				},
+				// Inert paths: the preview shows the rows without wiring a route.
+				SwitchPath:  "#",
+				AddPath:     "#",
+				ProfilePath: "#",
+				LogoutPath:  "#",
+			})
+		},
+	},
 	"AvatarFull": {
 		PropsType:   "AvatarProps",
 		Description: "A circular avatar showing image, initials, or an icon fallback.",
