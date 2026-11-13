@@ -123,7 +123,7 @@ func ensureGenerativeModelConfigured(t *testing.T, projectID string) {
 	t.Helper()
 	provider, _, model := framework.ProviderFromEnv()
 	if provider == "" || model == "" {
-		provider, model = "e2e", "placeholder-generative-model"
+		provider, model = "google", "gemini-2.5-flash"
 	}
 	cfg, _ := json.Marshal(map[string]any{"generativeModel": provider + "/" + model})
 	resp := doAPI(t, "PUT", "/api/v1/projects/"+projectID+"/model-config", e2eTestToken(), projectID, cfg)
