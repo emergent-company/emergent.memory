@@ -47,14 +47,20 @@ jobs:
         run: |
           set -euo pipefail
 
-          logins="${BOT_LOGINS:-${BOT_LOGIN_LEGACY:-}}"
-          if [[ -z "${logins}" ]]; then
+          logins="${BOT_LOGINS:-}"
+          # A whitespace/comma-only list counts as unset and falls back once.
+          if [[ -z "${logins//[[:space:],]/}" ]]; then
+            logins="${BOT_LOGIN_LEGACY:-}"
+          fi
+          if [[ -z "${logins//[[:space:],]/}" ]]; then
             echo "GITHUB_REVIEW_BOT_LOGINS is unset; review gate is disabled"
             exit 0
           fi
-          if ! printf '%s\n' "${logins}" | tr ',' '\n' \
-              | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' \
-              | grep -Fxq "${AUTHOR}"; then
+          # Comma, space, tab, or newline separated; GitHub logins are
+          # case-insensitive, so match the author exactly but ignoring case.
+          if ! printf '%s\n' "${logins}" | tr ', ' '\n\n' | tr -s '[:space:]' '\n' \
+              | sed '/^$/d' \
+              | grep -Fxiq "${AUTHOR}"; then
             exit 0
           fi
 
