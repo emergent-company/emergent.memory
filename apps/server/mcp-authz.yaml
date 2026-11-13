@@ -62,11 +62,6 @@
       "why": "read kb.projects + kb.organization_memberships; this function IS the membership authorizer for session-bound endpoints (#868), read-only"
     },
     {
-      "file": "apps/server/domain/mcp/provider_tools.go",
-      "func": "resolveOrgID",
-      "why": "read kb.projects organization_id; org resolved from auth context (ProjectIDFromContext), read-only"
-    },
-    {
       "file": "apps/server/domain/mcp/schema_tools.go",
       "func": "executeCreateSchema",
       "why": "write INSERT kb.graph_schemas + registries, project-scoped (WHERE project_id = caller) and RLS-guarded via SetRLSContext; membership enforced by the transport (authorizeProjectClaim). Not delegated to schemas.CreatePack because the MCP tool's input contract (type_name keying, relationship types without canonical sourceType/targetType) is rejected by CreatePack validation; tracked in #1041"

@@ -115,11 +115,11 @@ func (s *MCPRegistryToolInvokeSuite) TestBuiltinScopeDenied() {
 
 func (s *MCPRegistryToolInvokeSuite) TestBuiltinSuperadminDenied() {
 	serverID := s.seedServer("builtin", true)
-	s.seedTool(serverID, "provider-list-org", true)
+	s.seedTool(serverID, "provider-usage-get", true)
 
-	// provider-list-org is SuperadminOnly: a regular project member is denied.
+	// provider-usage-get is SuperadminOnly: a regular project member is denied.
 	memberCtx := auth.ContextWithUser(s.Ctx, &auth.AuthUser{ID: testutil.RegularUser.ID})
-	_, err := s.newService().CallToolOnServer(memberCtx, s.ProjectID, serverID, "provider-list-org", nil, auth.GetAllScopes(), "")
+	_, err := s.newService().CallToolOnServer(memberCtx, s.ProjectID, serverID, "provider-usage-get", nil, auth.GetAllScopes(), "")
 
 	s.Require().Error(err)
 	s.Require().True(errors.Is(err, mcpregistry.ErrToolForbidden),

@@ -112,6 +112,12 @@ func GenerateDocs(outFile string) error {
 	fmt.Fprintln(bw, "---")
 	fmt.Fprintln(bw)
 
+	// Flag defaults render as absolute paths (e.g. "--dir ... (default
+	// \"/root/.memory\")"). Embedding the generating machine's $HOME makes the
+	// committed SKILL.md depend on who ran go generate, so CI (HOME=/home/runner)
+	// would always diff against a developer machine. Normalize it to "~".
+	homeDir, _ := os.UserHomeDir()
+
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -121,6 +127,9 @@ func GenerateDocs(outFile string) error {
 			return fmt.Errorf("read %s: %w", entry.Name(), err)
 		}
 		cleaned := cleanMarkdown(raw)
+		if homeDir != "" {
+			cleaned = bytes.ReplaceAll(cleaned, []byte(homeDir), []byte("~"))
+		}
 		if len(strings.TrimSpace(string(cleaned))) == 0 {
 			continue
 		}

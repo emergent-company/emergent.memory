@@ -5930,7 +5930,7 @@ Examples:
 ### Options
 
 ```
-      --dir string   Installation directory (default "/root/.memory")
+      --dir string   Installation directory (default "~/.memory")
   -h, --help         help for ctl
 ```
 
@@ -6131,7 +6131,7 @@ memory server install [flags]
 ### Options
 
 ```
-      --dir string                 Installation directory (default "/root/.memory")
+      --dir string                 Installation directory (default "~/.memory")
       --force                      Overwrite existing installation
       --google-api-key string      Google API key for embeddings
   -h, --help                       help for install
@@ -6166,7 +6166,7 @@ memory server uninstall [flags]
 ### Options
 
 ```
-      --dir string   Installation directory (default "/root/.memory")
+      --dir string   Installation directory (default "~/.memory")
       --force        Skip confirmation prompt
   -h, --help         help for uninstall
       --keep-data    Keep Docker volumes (preserve data)
@@ -6196,7 +6196,7 @@ memory server upgrade [flags]
 ### Options
 
 ```
-      --dir string   Installation directory (default "/root/.memory")
+      --dir string   Installation directory (default "~/.memory")
   -f, --force        Force upgrade without confirmation
   -h, --help         help for upgrade
 ```
@@ -6900,7 +6900,7 @@ memory upgrade [flags]
 ### Options
 
 ```
-      --dir string   Installation directory (unused for CLI-only upgrade) (default "/root/.memory")
+      --dir string   Installation directory (unused for CLI-only upgrade) (default "~/.memory")
   -f, --force        Force upgrade even for dev versions
   -h, --help         help for upgrade
 ```

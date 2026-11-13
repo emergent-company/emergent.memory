@@ -298,7 +298,7 @@ var defaultDangerousShareTools = []string{
 	"schema-migrate-commit", "schema-migration-job-status", "schema-migration-preview",
 	"document-delete", "document-upload",
 	"project-create",
-	"provider-configure-org", "provider-configure-project", "provider-test",
+	"provider-configure-project", "provider-test",
 	"token-create", "token-revoke", "token-delete",
 	"skill-create", "skill-update", "skill-patch", "skill-delete",
 	"blueprint-create", "blueprint-update", "blueprint-publish",
