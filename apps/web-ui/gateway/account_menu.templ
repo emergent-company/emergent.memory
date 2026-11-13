@@ -43,6 +43,13 @@ func accountForUser(user *currentUser) ui.Account {
 	if user == nil {
 		return ui.Account{}
 	}
+	return accountFor(*user)
+}
+
+// accountFor maps one gateway identity onto the shared account shape — the
+// single place the field correspondence lives, so a new identity field cannot
+// reach the menu for one row and not another.
+func accountFor(user currentUser) ui.Account {
 	return ui.Account{Sub: user.Sub, Name: user.Name, Email: user.Email, Picture: user.Picture}
 }
 
@@ -53,7 +60,7 @@ func accountsForUsers(users []currentUser) []ui.Account {
 	}
 	out := make([]ui.Account, 0, len(users))
 	for _, u := range users {
-		out = append(out, ui.Account{Sub: u.Sub, Name: u.Name, Email: u.Email, Picture: u.Picture})
+		out = append(out, accountFor(u))
 	}
 	return out
 }
