@@ -458,6 +458,32 @@ func dsTriggerQueueLabel(queue string) string {
 	return "default"
 }
 
+// uiDataSourceTriggerNew renders the standalone add-trigger page. A source has
+// one binding per event type, so an existing pull_request trigger redirects back
+// to the detail page instead of offering a form that can only conflict.
+func (s *Server) uiDataSourceTriggerNew(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := c.Param("id")
+	detailPath := "/data-sources/" + url.PathEscape(id)
+	src, err := s.memory.GetDSIntegration(ctx, id)
+	if err != nil {
+		return redirectWithError(c, detailPath, dsFormError(err))
+	}
+	if src.ProviderType != dsProviderTypeGitHubApp {
+		return redirectWithError(c, detailPath, errors.New("this data source does not support triggers"))
+	}
+	view := s.dsDataSourceTriggers(c, src)
+	if view == nil {
+		return redirectWithError(c, detailPath, errors.New("this data source does not support triggers"))
+	}
+	for _, trigger := range view.Triggers {
+		if trigger.EventType == dsTriggerEventPullRequest {
+			return redirectWithError(c, detailPath+"#triggers", errors.New("this source already has a pull_request trigger; delete it before adding another"))
+		}
+	}
+	return s.page(c, pageTitle("Add trigger", dsSourceName(*src)), DataSourceTriggerNewPage(src, *view, flashError(c)))
+}
+
 // uiDataSourceTriggerCreate binds pull_request to an agent (PRG). The event type
 // is fixed by the form; a source that is not a github_app source has no trigger
 // panel, so a stray POST is refused rather than forwarded.
@@ -472,9 +498,10 @@ func (s *Server) uiDataSourceTriggerCreate(c echo.Context) error {
 	if src.ProviderType != dsProviderTypeGitHubApp {
 		return redirectWithError(c, detailPath, errors.New("this data source does not support triggers"))
 	}
+	newPath := detailPath + "/triggers/new"
 	agentID := strings.TrimSpace(c.FormValue("agentId"))
 	if agentID == "" {
-		return redirectWithError(c, detailPath+"#triggers", errors.New("pick an agent to run on pull requests"))
+		return redirectWithError(c, newPath, errors.New("pick an agent to run on pull requests"))
 	}
 	// The panel offers exactly one event type; defaulting an absent value keeps
 	// an older cached form working without offering a choice the server rejects.
@@ -490,7 +517,7 @@ func (s *Server) uiDataSourceTriggerCreate(c echo.Context) error {
 		Enabled:   &enabled,
 	}
 	if _, err := s.memory.CreateSourceTrigger(ctx, id, req); err != nil {
-		return redirectWithError(c, detailPath+"#triggers", dsFormError(err))
+		return redirectWithError(c, newPath, dsFormError(err))
 	}
 	redirectAfterMutation(c, detailPath+"?triggerCreated=1#triggers")
 	return nil
