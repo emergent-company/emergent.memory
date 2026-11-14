@@ -1,0 +1,44 @@
+---
+title: "Developer Guide"
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+
+This guide covers topics for developers integrating with, extending, or operating the Memory platform.
+
+<div class="grid cards" markdown>
+
+-   **[Provider Setup](/emergent.memory/developer-guide/provider-setup/)**
+
+    Configure LLM providers (Google AI, Vertex AI) at the org or project level. Manage API keys, model overrides, and track token usage and costs.
+
+-   **[MCP Servers](/emergent.memory/developer-guide/mcp-servers/)**
+
+    Register external MCP servers (stdio, SSE, HTTP) and the built-in Memory MCP server. Browse the official MCP registry and install community servers.
+
+-   **[A2A and A2UI](/emergent.memory/developer-guide/a2a-protocol/)**
+
+    The Agent2Agent interface: agent cards, project addressing, streaming, and the A2UI surface protocol — with the compatibility matrix of versions and catalogs the server supports.
+
+-   **[Extraction Pipeline](/emergent.memory/developer-guide/extraction/)**
+
+    Monitor and control extraction jobs that turn documents into graph objects. View per-job logs including LLM calls, token counts, and created objects.
+
+-   **[Email Setup](/emergent.memory/developer-guide/email-setup/)**
+
+    Configure Mailgun to enable transactional email (invitations, notifications). Understand the async job queue and delivery tracking.
+
+-   **[Health & Ops](/emergent.memory/developer-guide/health-ops/)**
+
+    Health check endpoints, the diagnostics probe, debug stats, and the auto-generated OpenAPI spec.
+
+-   **[Security Scopes](/emergent.memory/developer-guide/security-scopes/)**
+
+    Complete reference for all 38 permission scopes, umbrella scope expansions, and which scopes are assignable to API tokens.
+
+-   **[CLI Reference](/emergent.memory/developer-guide/cli-reference/)**
+
+    Reference for `memory init`, `memory ask`, `memory adk-sessions`, `memory mcp-guide`, and `memory install-memory-skills`.
+
+</div>
