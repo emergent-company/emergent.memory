@@ -597,14 +597,7 @@ func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead) 
 			// Record the claim source as the object's current status: the
 			// reconciler scans both ready and trigger statuses, and the claim must
 			// CAS from whatever status the object is stranded in.
-			TriggerMetadata: map[string]any{
-				"work_trigger_event": string(EventTypeStatusChanged),
-				"work_claim_status":  h.Status,
-				"repo":               h.Properties["repo"],
-				"prNumber":           h.Properties["pr_number"],
-				"headSha":            h.Properties["head_sha"],
-				"subjectRef":         fmt.Sprintf("%v#%v", h.Properties["repo"], h.Properties["pr_number"]),
-			},
+			TriggerMetadata: workTriggerMetadata(h),
 		}); err != nil {
 			if errors.Is(err, ErrWorkItemBusy) {
 				continue
@@ -667,4 +660,27 @@ func resolveWorkObjectPolicy(ctx context.Context, workObjects WorkObjectStore, a
 		}
 	}
 	return pol
+}
+
+func workTriggerMetadata(h *graph.WorkObjectHead) map[string]any {
+	meta := map[string]any{
+		"work_trigger_event": string(EventTypeStatusChanged),
+		"work_claim_status":  h.Status,
+	}
+	if h.Properties == nil {
+		return meta
+	}
+	repo, _ := h.Properties["repo"].(string)
+	prNumber, _ := h.Properties["pr_number"].(float64)
+	if repo == "" || prNumber <= 0 {
+		return meta
+	}
+	meta["repo"] = repo
+	meta["prNumber"] = int(prNumber)
+	meta["headSha"] = h.Properties["head_sha"]
+	meta["subjectRef"] = fmt.Sprintf("%s#%d", repo, int(prNumber))
+	if sid, _ := h.Properties["source_id"].(string); sid != "" {
+		meta["sourceId"] = sid
+	}
+	return meta
 }

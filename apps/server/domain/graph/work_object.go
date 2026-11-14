@@ -34,6 +34,7 @@ func workObjectHead(obj *GraphObject) *WorkObjectHead {
 		CanonicalID: obj.CanonicalID.String(),
 		Type:        obj.Type,
 		Version:     obj.Version,
+		Properties:  obj.Properties,
 	}
 	if obj.Key != nil {
 		head.Key = *obj.Key
