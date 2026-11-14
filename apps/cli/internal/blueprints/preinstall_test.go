@@ -228,17 +228,17 @@ func TestInstallPreflight_ProjectOwnedEndpoint(t *testing.T) {
 		},
 	}
 
-	if report := PreflightWithProjectTypes([]string{"Message"}, nil, packs, nil, nil, nil, nil, nil); report.HasErrors() {
+	if report := PreflightWithProjectTypes(KnownProjectTypes{ObjectTypes: []string{"Message"}}, nil, packs, nil, nil, nil, nil, nil); report.HasErrors() {
 		t.Fatalf("expected a project-owned endpoint to pass the install preflight, got: %v", report.Errors())
 	}
 
-	if report := PreflightWithProjectTypes([]string{"Other"}, nil, packs, nil, nil, nil, nil, nil); !report.HasErrors() {
+	if report := PreflightWithProjectTypes(KnownProjectTypes{ObjectTypes: []string{"Other"}}, nil, packs, nil, nil, nil, nil, nil); !report.HasErrors() {
 		t.Fatal("expected an endpoint unknown to the blueprint and the project to fail the install preflight")
 	}
 
 	// With no project types (read failed / offline), the endpoint owned only by
 	// the project reverts to an error — the blueprint-only union.
-	if report := PreflightWithProjectTypes(nil, nil, packs, nil, nil, nil, nil, nil); !report.HasErrors() {
+	if report := PreflightWithProjectTypes(KnownProjectTypes{}, nil, packs, nil, nil, nil, nil, nil); !report.HasErrors() {
 		t.Fatal("expected the blueprint-only union to reject a project-owned endpoint")
 	}
 }

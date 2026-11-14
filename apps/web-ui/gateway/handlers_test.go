@@ -1642,6 +1642,12 @@ func (f *fakeMemory) GetSimilarObjects(ctx context.Context, objectID string, lim
 	if f.similarErr != nil {
 		return nil, f.similarErr
 	}
+	// Truncate like the real endpoint: over-fetch tests need the requested limit
+	// to be observable, and a fake that returned everything would hide both the
+	// display bound and the saturation flag.
+	if limit > 0 && len(f.similar) > limit {
+		return f.similar[:limit], nil
+	}
 	return f.similar, nil
 }
 

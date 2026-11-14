@@ -181,7 +181,7 @@ func TestObjectHeaderIsReusedAcrossObjectSurfaces(t *testing.T) {
 	}
 
 	obj := &GraphObject{ID: "o1", Type: "note", Ref: "note-1", Key: "Deed", Properties: map[string]any{"summary": "A short lead."}}
-	classic := renderHTMLDev(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, map[string]typeUI{"note": {Icon: "notebook"}}, nil, nil, "Note", 0, nil))
+	classic := renderHTMLDev(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, map[string]typeUI{"note": {Icon: "notebook"}}, nil, nil, "Note", 0, nil, false))
 	if !strings.Contains(classic, `data-component="gateway/ObjectHeader"`) {
 		t.Error("the object page head must be the shared object header")
 	}

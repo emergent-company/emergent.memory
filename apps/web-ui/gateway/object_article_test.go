@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -43,6 +44,38 @@ func TestObjectExcerptPrecedence(t *testing.T) {
 				t.Errorf("objectExcerpt(%v) = %q, want %q", c.props, got, c.want)
 			}
 		})
+	}
+}
+
+// TestObjectExcerptScalarProse pins #699.5: a prose field posted as valid JSON
+// becomes its typed value (parseFormJSON), so a description of 2024 arrives as a
+// float64. The resolver must coerce scalars to the text the author typed rather
+// than treating the field as absent and rendering an empty wiki.
+func TestObjectExcerptScalarProse(t *testing.T) {
+	cases := []struct {
+		name  string
+		props map[string]any
+		want  string
+	}{
+		{"integer", map[string]any{"description": float64(2024)}, "2024"},
+		// json.Number is the forward-compatible arm: today's decode path yields
+		// float64, so this pins the literal-preserving branch itself.
+		{"decimal keeps its literal", map[string]any{"description": json.Number("1.50")}, "1.50"},
+		{"boolean", map[string]any{"description": true}, "true"},
+		{"array is still not prose", map[string]any{"description": []any{"2024"}}, ""},
+		{"object is still not prose", map[string]any{"description": map[string]any{"text": "2024"}}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := objectExcerpt(c.props); got != c.want {
+				t.Errorf("objectExcerpt(%v) = %q, want %q", c.props, got, c.want)
+			}
+		})
+	}
+
+	prose := objectArticleFor(GraphObject{Properties: map[string]any{"description": float64(2024)}})
+	if prose.Lead != "2024" {
+		t.Errorf("numeric-looking description must become the article lead, got lead=%q body=%q", prose.Lead, prose.BodyHTML)
 	}
 }
 
