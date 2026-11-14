@@ -73,3 +73,16 @@ func TestWorkTriggerMetadataIncludesSourceSubjectOnlyForLaneObjects(t *testing.T
 		t.Fatalf("lane metadata = %#v", lane)
 	}
 }
+
+func TestIsTerminalLaneStatus(t *testing.T) {
+	for _, status := range []string{"done", "revision", "cancelled"} {
+		if !isTerminalLaneStatus(&graph.WorkObjectHead{Status: status}) {
+			t.Errorf("%s should be terminal", status)
+		}
+	}
+	for _, status := range []string{"ready", "in_progress", "blocked", ""} {
+		if isTerminalLaneStatus(&graph.WorkObjectHead{Status: status}) {
+			t.Errorf("%s must not be terminal", status)
+		}
+	}
+}

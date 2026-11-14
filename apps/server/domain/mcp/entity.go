@@ -811,3 +811,16 @@ func RunSubjectFromContext(ctx context.Context) (RunSubject, bool) {
 	v, ok := ctx.Value(runSubjectKey{}).(RunSubject)
 	return v, ok && v.SourceID != "" && v.Repo != "" && v.HeadSHA != ""
 }
+
+// WorkObjectIDFromContext returns the canonical work-object id a run was
+// dispatched for, or "" for a non-board run.
+type workObjectIDKey struct{}
+
+func ContextWithWorkObjectID(ctx context.Context, canonicalID string) context.Context {
+	return context.WithValue(ctx, workObjectIDKey{}, canonicalID)
+}
+
+func WorkObjectIDFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(workObjectIDKey{}).(string)
+	return v
+}

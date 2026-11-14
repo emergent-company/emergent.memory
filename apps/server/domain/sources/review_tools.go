@@ -14,8 +14,10 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/emergent-company/emergent.memory/domain/githubapp"
+	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 const (
@@ -73,7 +75,16 @@ type ReviewToolHandler struct {
 	apiBaseURL string
 	minter     *githubapp.TokenMinter
 	newClient  func(baseURL, token string) *githubapp.Client
+	workItems  WorkItemStatusWriter
 }
+
+// WorkItemStatusWriter finalizes the board lane a review run was dispatched for.
+type WorkItemStatusWriter interface {
+	UpdateWorkObjectStatus(ctx context.Context, projectID, canonicalID, status, reviewStatus string) (bool, error)
+}
+
+// SetWorkItemStatusWriter injects the graph work-object writer.
+func (h *ReviewToolHandler) SetWorkItemStatusWriter(w WorkItemStatusWriter) { h.workItems = w }
 
 // NewReviewToolHandler builds the handler from the deployment config. The
 // credential key is the same LLM_ENCRYPTION_KEY the source dispatcher uses to
@@ -161,7 +172,7 @@ func (h *ReviewToolHandler) ExecuteGitHubAppTool(ctx context.Context, projectID,
 	case toolPRDiff:
 		return h.executePRDiff(ctx, client, repo, stringArg(args, "head_sha"))
 	case toolReviewSubmit:
-		return h.executeReviewSubmit(ctx, client, repo, args)
+		return h.executeReviewSubmit(ctx, client, projectID, repo, args)
 	default:
 		return nil, fmt.Errorf("sources: unsupported review tool %q", toolName)
 	}
@@ -338,7 +349,7 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 // executeReviewSubmit is moved verbatim from domain/githubapp/tools.go: it
 // enforces the live-head binding and the same-run evidence rule, then posts the
 // review, the reviewed check and the merge-guard marker with byte-exact text.
-func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *githubapp.Client, repo string, args map[string]any) (*mcp.ToolResult, error) {
+func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *githubapp.Client, projectID, repo string, args map[string]any) (*mcp.ToolResult, error) {
 	number, ok := intArg(args, "number")
 	if !ok || number <= 0 {
 		return nil, fmt.Errorf("github app tool: number is required")
@@ -386,6 +397,15 @@ func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *git
 	marker := fmt.Sprintf("Reviewed-SHA: %s\nVerdict: %s\n\n%s", headSHA, verdict, summary)
 	if err := client.CreateIssueComment(ctx, repo, number, marker); err != nil {
 		return nil, err
+	}
+	// A board-dispatched review lane is finalized from the verdict; a direct
+	// trigger run has no work object and stays unchanged.
+	if canonicalID := mcp.WorkObjectIDFromContext(ctx); canonicalID != "" && h.workItems != nil {
+		laneStatus := "done"
+		if verdict == "CHANGES_REQUESTED" {
+			laneStatus = "revision"
+		}
+		_, _ = h.workItems.UpdateWorkObjectStatus(auth.WithActor(ctx, graph.ActorSystem, nil), projectID, canonicalID, laneStatus, "review")
 	}
 	return &mcp.ToolResult{
 		Content: []mcp.ContentBlock{{Type: "text", Text: fmt.Sprintf("%s posted for %s#%d at %s", verdict, repo, number, headSHA)}},
