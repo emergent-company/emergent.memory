@@ -679,6 +679,11 @@ func (s *Service) UpsertSourceWorkflow(ctx context.Context, projectID, sourceID 
 	if err != nil {
 		return nil, err
 	}
+	if provider, ok := s.providers.Get(src.Provider); ok {
+		if err := s.ensureObjectTypes(ctx, projectID, provider); err != nil {
+			return nil, apperror.NewInternal("install source workflow schema pack", err)
+		}
+	}
 	if src.Provider != ProviderTypeGitHubApp {
 		return nil, apperror.NewValidation("workflows are supported only for github_app sources")
 	}

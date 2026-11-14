@@ -584,7 +584,9 @@ func (d *SourceEventDispatcher) processWorkflowEvent(ctx context.Context, src *S
 	}
 	parentStatus := "open"
 	laneStatus := "ready"
-	if p.Action == "closed" || p.Action == "converted_to_draft" || p.PullRequest.State == "closed" {
+	closing := p.Action == "closed" || p.Action == "converted_to_draft" || p.PullRequest.State == "closed"
+	reopening := p.Action == "reopened" || p.Action == "ready_for_review"
+	if closing {
 		parentStatus = "closed"
 		laneStatus = "cancelled"
 	}
@@ -614,10 +616,18 @@ func (d *SourceEventDispatcher) processWorkflowEvent(ctx context.Context, src *S
 		if existing != nil && existing.Properties != nil {
 			oldHead, _ := existing.Properties["head_sha"].(string)
 			if oldHead == state.HeadSHA {
-				// Same head: a replayed/out-of-order delivery must not reset a
-				// lane that is already running, blocked, reviewed or done.
-				if existing.Status != nil {
-					status = *existing.Status
+				if closing {
+					// Close/draft always ends the live lane, even on the same head.
+					d.cancelSubjectRuns(ctx, existing.CanonicalID.String())
+					status = "cancelled"
+				} else if reopening && existing.Status != nil && *existing.Status == "cancelled" {
+					status = "ready"
+				} else {
+					// Same head replay: never reset a lane that is running,
+					// blocked, reviewed or done.
+					if existing.Status != nil {
+						status = *existing.Status
+					}
 				}
 			} else if oldHead != "" {
 				d.cancelSubjectRuns(ctx, existing.CanonicalID.String())

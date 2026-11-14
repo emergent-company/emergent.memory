@@ -30,7 +30,9 @@ func TestSourceWorkflowStoreRoundTrip(t *testing.T) {
 		VALUES (?, ?, 'github_app', 'bot', '{}'::jsonb, 'active')`, sourceID, projectID)
 	require.NoError(t, err)
 
-	require.Nil(t, func() *SourceWorkflow { wf, _ := repo.GetSourceWorkflow(ctx, projectID, sourceID); return wf }())
+	wf0, err := repo.GetSourceWorkflow(ctx, projectID, sourceID)
+	require.NoError(t, err)
+	require.Nil(t, wf0)
 
 	wf := &SourceWorkflow{ProjectID: projectID, SourceID: sourceID, Enabled: true, Config: map[string]any{
 		"reviewers": []any{map[string]any{"lane": "security", "agent": "security-review"}},
