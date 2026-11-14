@@ -127,6 +127,32 @@ func TestGitHubWizardInstallRecoversAppFromState(t *testing.T) {
 	}
 }
 
+func TestGitHubWizardInstallRendersRepoCheckboxes(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.dsInstallationRepos = []string{"acme/one", "acme/two"}
+	e := githubWizardTestServer(f, "https://api.github.test")
+	st := ghWizardState{ProjectID: "p1", Scope: "project", AppID: "sapp-9", Slug: "memory-review-e2e", WebhookKey: "11111111-1111-4111-8111-111111111111", State: "state-1"}
+	raw, _ := json.Marshal(st)
+	ck := &http.Cookie{Name: githubWizardCookie, Value: signCookieValue("test-session-secret-for-wizard", raw), Path: githubWizardPath}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, githubWizardPath+"?step=installed&installation_id=181621212", nil)
+	req.AddCookie(ck)
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`name="repos"`, `value="acme/one"`, `value="acme/two"`, `type="checkbox"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("repo list missing %q", want)
+		}
+	}
+	if strings.Contains(body, `name="repos_text"`) {
+		t.Error("repo textarea rendered alongside the loaded checkbox list")
+	}
+}
+
 func TestGitHubWizardCompleteCreatesSourceAgentTrigger(t *testing.T) {
 	f := sourceAppsAdminFake()
 	e := githubWizardTestServer(f, "https://api.github.test")
