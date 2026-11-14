@@ -39,6 +39,7 @@ type ghWizardState struct {
 
 type ghWizardPage struct {
 	Step           string
+	Base           string
 	Error          string
 	ProjectID      string
 	OrgName        string
@@ -118,6 +119,7 @@ func (s *Server) uiGitHubReviewWizard(c echo.Context) error {
 	if org, oerr := s.memory.GetOrg(ctx, project.OrgID); oerr == nil && org != nil {
 		data.OrgName = org.Name
 	}
+	data.Base = s.dsScoped(githubWizardPath, c)
 	if data.Step == "" || data.Step == "installed" {
 		data.Step = "install"
 	}
@@ -180,8 +182,8 @@ func (s *Server) uiGitHubReviewWizardStart(c echo.Context) error {
 	if name == "" {
 		name = defaultReviewAppName(project.Name)
 	}
-	if len(name) > 60 {
-		return s.wizardError(c, project, orgAdmin, "App name must be 60 characters or fewer")
+	if len(name) > 34 {
+		return s.wizardError(c, project, orgAdmin, "App name must be 34 characters or fewer")
 	}
 	if owner != "" && !validGitHubLogin(owner) {
 		return s.wizardError(c, project, orgAdmin, "owner must be a GitHub user or organization login")
@@ -193,6 +195,7 @@ func (s *Server) uiGitHubReviewWizardStart(c echo.Context) error {
 		return s.wizardError(c, project, orgAdmin, "server session secret is not configured")
 	}
 	base := s.publicBaseURL(c)
+	scopedWizard := s.dsScoped(githubWizardPath, c)
 	webhookBase := strings.TrimRight(s.cfg.MemoryPublicURL, "/")
 	if webhookBase == "" {
 		webhookBase = base
@@ -200,8 +203,8 @@ func (s *Server) uiGitHubReviewWizardStart(c echo.Context) error {
 	manifest := map[string]any{
 		"name":                     name,
 		"url":                      base,
-		"redirect_url":             base + githubWizardPath + "/callback",
-		"setup_url":                base + githubWizardPath + "?step=installed",
+		"redirect_url":             base + scopedWizard + "/callback",
+		"setup_url":                base + scopedWizard + "?step=installed",
 		"setup_on_update":          true,
 		"public":                   false,
 		"request_oauth_on_install": false,
@@ -268,7 +271,7 @@ func (s *Server) uiGitHubReviewWizardCallback(c echo.Context) error {
 		return s.wizardError(c, nil, false, "could not persist the setup state; start again")
 	}
 	q := url.Values{"step": {"install"}, "app": {app.ID}, "slug": {conv.Slug}}
-	return c.Redirect(http.StatusSeeOther, githubWizardPath+"?"+q.Encode())
+	return c.Redirect(http.StatusSeeOther, s.dsScoped(githubWizardPath, c)+"?"+q.Encode())
 }
 
 // uiGitHubReviewWizardComplete creates the source, the review agent (definition
@@ -279,7 +282,7 @@ func (s *Server) uiGitHubReviewWizardComplete(c echo.Context) error {
 	if err != nil || project == nil {
 		return c.Redirect(http.StatusSeeOther, "/orgs")
 	}
-	back := githubWizardPath + "?step=install"
+	back := s.dsScoped(githubWizardPath, c) + "?step=install"
 	appID := strings.TrimSpace(c.FormValue("app"))
 	slug := strings.TrimSpace(c.FormValue("slug"))
 	installationID := strings.TrimSpace(c.FormValue("installation_id"))
@@ -311,20 +314,20 @@ func (s *Server) uiGitHubReviewWizardComplete(c echo.Context) error {
 	def, err := s.ensureReviewAgent(ctx, agentName, queue)
 	if err != nil {
 		msg := fmt.Sprintf("source created (%s), but the review agent failed: %v", source.ID, err)
-		return redirectWithError(c, githubWizardPath+"?step=done&source="+url.QueryEscape(source.ID), errors.New(msg))
+		return redirectWithError(c, s.dsScoped(githubWizardPath, c)+"?step=done&source="+url.QueryEscape(source.ID), errors.New(msg))
 	}
 	runtime, err := s.ensureReviewRuntime(ctx, project.ID, def, agentName)
 	if err != nil {
 		msg := fmt.Sprintf("source and agent created, but the runtime agent failed: %v", err)
-		return redirectWithError(c, githubWizardPath+"?step=done&source="+url.QueryEscape(source.ID), errors.New(msg))
+		return redirectWithError(c, s.dsScoped(githubWizardPath, c)+"?step=done&source="+url.QueryEscape(source.ID), errors.New(msg))
 	}
 	if _, err := s.ensureReviewTrigger(ctx, source.ID, runtime.ID, queue); err != nil {
 		msg := fmt.Sprintf("source and agent created, but the trigger failed: %v", err)
-		return redirectWithError(c, githubWizardPath+"?step=done&source="+url.QueryEscape(source.ID), errors.New(msg))
+		return redirectWithError(c, s.dsScoped(githubWizardPath, c)+"?step=done&source="+url.QueryEscape(source.ID), errors.New(msg))
 	}
 	s.clearWizardState(c)
 	q := url.Values{"step": {"done"}, "source": {source.ID}, "agent": {agentName}, "app": {appID}, "slug": {slug}}
-	return c.Redirect(http.StatusSeeOther, githubWizardPath+"?"+q.Encode())
+	return c.Redirect(http.StatusSeeOther, s.dsScoped(githubWizardPath, c)+"?"+q.Encode())
 }
 
 func (s *Server) ensureReviewSource(ctx context.Context, name, appID, installationID string, repos []string) (*DSIntegration, error) {
@@ -414,9 +417,10 @@ func hasTool(tools []string, want string) bool {
 }
 
 func (s *Server) wizardError(c echo.Context, project *Project, orgAdmin bool, msg string) error {
-	data := ghWizardPage{Step: "start", Error: msg, OrgAdmin: orgAdmin}
+	data := ghWizardPage{Step: "start", Error: msg, OrgAdmin: orgAdmin, Base: s.dsScoped(githubWizardPath, c), Scope: "project", Queue: "security-review"}
 	if project != nil {
 		data.ProjectID = project.ID
+		data.Name = defaultReviewAppName(project.Name)
 		if org, err := s.memory.GetOrg(c.Request().Context(), project.OrgID); err == nil && org != nil {
 			data.OrgName = org.Name
 		}
@@ -434,8 +438,8 @@ func (s *Server) setWizardState(c echo.Context, st ghWizardState) error {
 	}
 	c.SetCookie(&http.Cookie{
 		Name: githubWizardCookie, Value: signCookieValue(s.cfg.SessionSecret, raw),
-		Path: githubWizardPath, MaxAge: int(githubWizardStateTTL.Seconds()),
-		HttpOnly: true, Secure: strings.HasPrefix(s.publicBaseURL(c), "https://"),
+		Path: "/", MaxAge: int(githubWizardStateTTL.Seconds()),
+		HttpOnly: true, Secure: s.cookieSecure(c),
 		SameSite: http.SameSiteLaxMode,
 	})
 	return nil
@@ -462,8 +466,8 @@ func (s *Server) wizardState(c echo.Context) (*ghWizardState, error) {
 
 func (s *Server) clearWizardState(c echo.Context) {
 	c.SetCookie(&http.Cookie{
-		Name: githubWizardCookie, Value: "", Path: githubWizardPath, MaxAge: -1,
-		HttpOnly: true, Secure: strings.HasPrefix(s.publicBaseURL(c), "https://"),
+		Name: githubWizardCookie, Value: "", Path: "/", MaxAge: -1,
+		HttpOnly: true, Secure: s.cookieSecure(c),
 		SameSite: http.SameSiteLaxMode,
 	})
 }
@@ -530,8 +534,8 @@ func defaultReviewAppName(projectName string) string {
 	if base == "" {
 		base = "memory"
 	}
-	if len(base) > 42 {
-		base = base[:42]
+	if len(base) > 15 {
+		base = base[:15]
 	}
 	return "memory-review-" + base + "-" + uuid.NewString()[:4]
 }

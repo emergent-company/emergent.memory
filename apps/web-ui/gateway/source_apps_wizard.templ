@@ -35,7 +35,7 @@ templ GitHubReviewWizardPage(data ghWizardPage) {
 
 templ ghWizardStart(data ghWizardPage) {
 	@components.PanelCard("1 · Create the GitHub App", templ.Attributes{"data-testid": "gh-wizard-start"}) {
-		<form method="post" action={ templ.URL(githubWizardPath + "/start") } class="flex flex-col gap-4">
+		<form method="post" action={ templ.URL(data.Base + "/start") } class="flex flex-col gap-4">
 			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 				<div class="flex flex-col gap-1">
 					<label class="text-sm font-medium" for="gh-owner">GitHub owner</label>
@@ -78,7 +78,7 @@ templ ghWizardInstall(data ghWizardPage) {
 			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
 				After installing, GitHub returns here with the installation id. If it does not, open the App's installation settings and copy the numeric installation id.
 			}
-			<form method="post" action={ templ.URL(githubWizardPath + "/complete") } class="mt-2 flex flex-col gap-4">
+			<form method="post" action={ templ.URL(data.Base + "/complete") } class="mt-2 flex flex-col gap-4">
 				<input type="hidden" name="app" value={ data.AppID }/>
 				<input type="hidden" name="slug" value={ data.Slug }/>
 				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">

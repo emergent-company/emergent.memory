@@ -42,13 +42,14 @@ type dsSourceAppsPageData struct {
 	settingsNavCommon
 	OrgName string
 	// OrgAdmin toggles the organization-wide scope option on the register page.
-	OrgAdmin     bool
-	ProjectAdmin bool
-	CanRegister  bool
-	Rows         []dsSourceAppRow
-	LoadErr      error
-	FlashMsg     string
-	FlashErr     error
+	OrgAdmin        bool
+	ProjectAdmin    bool
+	CanRegister     bool
+	ReviewSetupHref string
+	Rows            []dsSourceAppRow
+	LoadErr         error
+	FlashMsg        string
+	FlashErr        error
 }
 
 // dsSourceAppFormData is the payload for SourceAppFormPage. App is nil on the
@@ -158,6 +159,7 @@ func (s *Server) uiSourceApps(c echo.Context) error {
 		data.LoadErr = userFacingError(err)
 	}
 	data.CanRegister = data.OrgAdmin || data.ProjectAdmin
+	data.ReviewSetupHref = s.dsScoped(githubWizardPath, c)
 	data.Rows = dsSourceAppRows(apps, s.cfg.MemoryPublicURL)
 	return s.page(c, pageTitle("Source apps"), SourceAppsPage(data))
 }
