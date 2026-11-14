@@ -26,6 +26,14 @@ type sessionContext struct {
 	// (/api/user/avatar?v=<key>) when the user uploaded a profile photo; it
 	// wins over the IdP picture when both are present.
 	AvatarOverrideURL string
+
+	// claims is the exact claims the auth middleware validated for this
+	// request — after any silent refresh — so a handler that re-issues the
+	// cookie (project/org switch, avatar override) starts from those and never
+	// from the request cookie, which still holds the pre-refresh tokens
+	// (#610). Read it through (*Server).requestSessionClaims, which returns a
+	// mutable copy. nil for device and ad-hoc contexts.
+	claims *sessionClaims
 }
 
 type sessionContextKey struct{}

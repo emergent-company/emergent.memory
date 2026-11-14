@@ -2,6 +2,7 @@ package components
 
 import (
 	ui "github.com/emergent-company/go-daisy/components/ui"
+	"github.com/emergent-company/go-daisy/devmode"
 )
 
 // IconCircleTone selects the status circle's colour. It is a closed enum (not a
@@ -53,7 +54,7 @@ func iconCircleClass(tone IconCircleTone) string {
 //
 //	@components.IconCircle("lucide--refresh-cw", components.IconCircleToneWarning)
 templ IconCircle(icon string, tone IconCircleTone) {
-	<div class={ iconCircleClass(tone) }>
+	<div { devmode.Attrs(ctx, "components/IconCircle")... } class={ iconCircleClass(tone) }>
 		@ui.IconSpan(icon, "size-5")
 	</div>
 }

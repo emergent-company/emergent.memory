@@ -14,6 +14,7 @@ import (
 	"github.com/emergent-company/go-daisy/components/nav"
 	"github.com/emergent-company/go-daisy/components/table"
 	ui "github.com/emergent-company/go-daisy/components/ui"
+	"github.com/emergent-company/go-daisy/devmode"
 	"github.com/emergent-company/emergent.memory/apps/web-ui/webui"
 )
 
@@ -259,7 +260,7 @@ templ memoryLogo() {
 // and swap only the body) uses pageErrorNotice instead, or the page would carry
 // two <h1>s.
 templ pageError(heading string, err error) {
-	<div class="mb-4">
+	<div { devmode.Attrs(ctx, "gateway/pageError")... } class="mb-4">
 		<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ heading }</h1>
 	</div>
 	@pageErrorAlert(err)
@@ -268,7 +269,7 @@ templ pageError(heading string, err error) {
 // pageErrorNotice is the fetch-failure state under an existing header: a section
 // label plus the alert, never a second h1.
 templ pageErrorNotice(heading string, err error) {
-	<div class="mb-4">
+	<div { devmode.Attrs(ctx, "gateway/pageErrorNotice")... } class="mb-4">
 		<h2 class="text-sm font-semibold tracking-tight">{ heading }</h2>
 	</div>
 	@pageErrorAlert(err)
@@ -815,7 +816,7 @@ templ pageHead(spec headerSpec) {
 		margin = "mb-6"
 	}
 	crumbs := headerCrumbs(spec.Group, spec.Crumbs, !spec.KeepTrailLinks) }}
-	<div class={ margin }>
+	<div { devmode.Attrs(ctx, "gateway/pageHead")... } class={ margin }>
 		if len(crumbs) > 0 {
 			@nav.Breadcrumbs(crumbs, nav.BreadcrumbsDividerDefault)
 		}
@@ -1068,7 +1069,7 @@ templ promptBlock(text string) {
 // table or list it counts. Counts belong to the collection, never to the page
 // header, so every page that used to carry one in its header renders it here.
 templ sectionCount(label string) {
-	<div class="mb-2 text-[11px] font-semibold tracking-wide text-muted-faint uppercase">{ label }</div>
+	<div { devmode.Attrs(ctx, "gateway/sectionCount")... } class="mb-2 text-[11px] font-semibold tracking-wide text-muted-faint uppercase">{ label }</div>
 }
 
 // countBadge renders the "N noun(s)" ghost SM badge.

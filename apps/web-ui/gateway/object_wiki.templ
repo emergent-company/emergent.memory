@@ -7,6 +7,7 @@ import (
 	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/layout"
 	ui "github.com/emergent-company/go-daisy/components/ui"
+	"github.com/emergent-company/go-daisy/devmode"
 )
 
 // --- object wiki page ---------------------------------------------------------
@@ -97,7 +98,7 @@ templ objectWikiHead(data objectWikiPageData) {
 // opened. The active variant is named by aria-current and the label-less icons
 // carry a title and aria-label.
 templ objectWikiViewSwitch(data objectWikiPageData) {
-	<div class="join" role="group" aria-label="Wiki view" data-component="gateway/ObjectWikiViewSwitch">
+	<div class="join" role="group" aria-label="Wiki view" { devmode.Attrs(ctx, "gateway/ObjectWikiViewSwitch")... }>
 		for _, opt := range objectWikiViewOptions() {
 			{{ active := data.View == opt.Value
 			attrs := templ.Attributes{

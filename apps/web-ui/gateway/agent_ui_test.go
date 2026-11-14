@@ -14,13 +14,34 @@ import (
 	"testing"
 
 	"github.com/a-h/templ"
+	"github.com/emergent-company/go-daisy/devmode"
 	"github.com/labstack/echo/v4"
 )
 
+// renderHTML renders a component into a string for assertion.
+//
+// It renders without go-daisy dev mode, so the output is the markup the
+// component authors and nothing else: annotation is a runtime layer the gateway
+// adds per request, and the exact-markup assertions in this package pin the
+// component's own output. A test that asserts a data-component annotation uses
+// renderHTMLDev instead, which makes the dependency explicit.
 func renderHTML(t *testing.T, c templ.Component) string {
 	t.Helper()
 	var buf bytes.Buffer
 	if err := c.Render(t.Context(), &buf); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	return buf.String()
+}
+
+// renderHTMLDev renders a component with go-daisy dev mode enabled, mirroring
+// the gateway, which flags every request (main.go's componentAnnotations
+// middleware). Use it for any assertion on data-component: without the flag the
+// annotation is not emitted at all.
+func renderHTMLDev(t *testing.T, c templ.Component) string {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := c.Render(devmode.WithDevMode(t.Context()), &buf); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	return buf.String()
