@@ -2731,8 +2731,14 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	// transport-enforced dispatch, so a transport that missed the definition
 	// cannot authorize one (authz.AuthorizeTool).
 	toolDef := s.GetToolByNameForProject(ctx, projectID, toolName)
+	trusted := TrustedInternalFromContext(ctx)
+	if !trusted {
+		if _, ok := RunSubjectFromContext(ctx); ok && isGitHubReviewTool(toolName) {
+			trusted = true
+		}
+	}
 	principal := authz.Principal{
-		Trusted:           TrustedInternalFromContext(ctx),
+		Trusted:           trusted,
 		TransportEnforced: TransportEnforcedFromContext(ctx),
 	}
 
@@ -8535,4 +8541,8 @@ func (s *Service) executeForget(ctx context.Context, projectID string, args map[
 		data["summary"] = syncResp.Summary
 	}
 	return envelopeResult(true, data, nil, "")
+}
+
+func isGitHubReviewTool(name string) bool {
+	return name == "github-pr-diff" || name == "github-review-submit"
 }

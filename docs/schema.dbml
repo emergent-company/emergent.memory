@@ -490,6 +490,7 @@ Table "kb"."agent_runs" {
   "subject_object_id" uuid
   "subject_object_type" text
   "failure_class" text
+  "source_subject" jsonb
 
   Indexes {
     (agent_id) [name: "idx_agent_runs_agent_id"]

@@ -110,6 +110,11 @@ func TestSourceEventDispatcher(t *testing.T) {
 	require.Equal(t, sourceID.String(), run.TriggerMetadata["sourceId"])
 	require.Equal(t, "owner/repo#7", run.TriggerMetadata["subjectRef"])
 	require.False(t, run.TrustedInternal, "source-trigger runs stay externally untrusted")
+	require.NotNil(t, run.SourceSubject)
+	require.Equal(t, sourceID.String(), run.SourceSubject.SourceID)
+	require.Equal(t, "owner/repo", run.SourceSubject.Repo)
+	require.Equal(t, 7, run.SourceSubject.PRNumber)
+	require.Equal(t, currentHead, run.SourceSubject.HeadSHA)
 
 	// Duplicate delivery is a no-op.
 	require.NoError(t, deliver("d1", payload("opened", currentHead)))

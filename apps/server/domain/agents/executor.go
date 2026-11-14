@@ -2641,18 +2641,13 @@ func (ae *AgentExecutor) runPipeline(
 	// non-string or empty value leaves the fallback path unchanged (issue #579).
 	if sourceID, ok := run.TriggerMetadata["sourceId"].(string); ok && sourceID != "" {
 		ctx = mcp.ContextWithRunSourceID(ctx, sourceID)
-		// Only a dispatch-shaped source run carries the verified subject. This
-		// marker is what makes the review tools callable without blanket trust.
-		if deliveryID, _ := run.TriggerMetadata["deliveryId"].(string); deliveryID != "" {
-			repo, _ := run.TriggerMetadata["repo"].(string)
-			headSHA, _ := run.TriggerMetadata["headSha"].(string)
-			prNumber := intMetadata(run.TriggerMetadata["prNumber"])
-			if repo != "" && headSHA != "" && prNumber > 0 {
-				ctx = mcp.ContextWithRunSubject(ctx, mcp.RunSubject{
-					SourceID: sourceID, Repo: repo, PRNumber: prNumber, HeadSHA: headSHA,
-				})
-			}
-		}
+	}
+	// The verified subject is a dispatcher-written run column, not metadata:
+	// spawned runs merge metadata but never inherit this column.
+	if subj := run.SourceSubject; subj != nil && subj.RepositoryValid() {
+		ctx = mcp.ContextWithRunSubject(ctx, mcp.RunSubject{
+			SourceID: subj.SourceID, Repo: subj.Repo, PRNumber: subj.PRNumber, HeadSHA: subj.HeadSHA,
+		})
 	}
 	// Inject session ID into context so built-in tools (e.g. set_session_title)
 	// can update session metadata. If the run was created without the session ID set

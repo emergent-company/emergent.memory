@@ -246,6 +246,10 @@ type AgentRun struct {
 	// reachability invariant holds for the whole call chain, not just the first
 	// hop (issue #954).
 	TrustedInternal bool `bun:"trusted_internal,notnull,default:false" json:"trustedInternal"`
+	// SourceSubject is written only by the source-event dispatcher. It is the
+	// verified repo/PR/SHA subject the review tools bind to; never read it from
+	// trigger_metadata (model-settable on spawned runs).
+	SourceSubject *SourceSubject `bun:"source_subject,type:jsonb" json:"sourceSubject,omitempty"`
 
 	Tools []string `bun:"tools,array" json:"tools,omitempty"`
 
@@ -284,6 +288,18 @@ type CreateRunOptions struct {
 }
 
 // CreateRunQueuedOptions holds optional parameters for CreateRunQueued.
+// SourceSubject is the verified GitHub source subject for a run.
+type SourceSubject struct {
+	SourceID string `json:"sourceId"`
+	Repo     string `json:"repo"`
+	PRNumber int    `json:"prNumber"`
+	HeadSHA  string `json:"headSha"`
+}
+
+func (s *SourceSubject) RepositoryValid() bool {
+	return s != nil && s.SourceID != "" && s.Repo != "" && s.HeadSHA != "" && s.PRNumber > 0
+}
+
 type CreateRunQueuedOptions struct {
 	ParentRunID     *string        // parent run to re-enqueue when this run completes
 	RootRunID       *string        // top-level orchestration run ID; inherited by re-enqueued runs
@@ -295,6 +311,8 @@ type CreateRunQueuedOptions struct {
 	// transport that enqueued it (e.g. trigger_agent) rather than being upgraded.
 	// false (zero value) = external-facing/untrusted.
 	TrustedInternal bool
+	// SourceSubject is set by the source-event dispatcher only.
+	SourceSubject *SourceSubject
 	// Queue overrides the run's dispatch queue. Empty means resolve from the
 	// agent's binding (config override → definition default → "default").
 	Queue string
