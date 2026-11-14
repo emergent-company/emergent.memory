@@ -931,19 +931,18 @@ templ workRailItem(r workRunRow) {
 	}}
 	if r.Href != "" && r.RunID == "" {
 		// No recorded run (legacy job or a failed link): link to the extraction
-		// history page. Hand-written rather than components.LinkRow so the row
-		// still carries data-origin and the session-row test id — an unfilterable
-		// row would leak into every other origin filter's view.
-		<a class="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-base-200/40" href={ templ.URL(r.Href) } data-origin={ origin } data-testid="session-row">
-			@ui.IconSpan("lucide--scan-text", "size-4 shrink-0 text-muted-faint")
-			<div class="min-w-0 grow">
-				<p class="truncate text-sm font-medium">{ title }</p>
-				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
-					{ runRailSubtitle(r.Status, r.StartedAt) }
-				}
-			</div>
-			@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
-		</a>
+		// history page. ui.ListRow's Href keeps the row a real anchor inside the
+		// rail's <ul>, and the origin travels on the same row element the other
+		// branches use — an unfilterable row would leak into every other origin
+		// filter's view.
+		@ui.ListRow(ui.ListRowProps{
+			Title:    title,
+			Subtitle: runRailSubtitle(r.Status, r.StartedAt),
+			Leading:  ui.IconSpan("lucide--scan-text", "size-4 shrink-0 text-muted-faint"),
+			Trailing: []templ.Component{ui.IconSpan("lucide--chevron-right", "size-4 text-muted-subtle")},
+			Href:     r.Href,
+			Attrs:    templ.Attributes{"data-origin": origin, "data-testid": "session-row"},
+		})
 	} else {
 		{{
 			attrs := templ.Attributes{

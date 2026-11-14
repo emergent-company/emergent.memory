@@ -42,6 +42,7 @@ func TestDocumentsStatusFilterIsSelect(t *testing.T) {
 		`hx-swap="outerHTML"`,
 		`hx-push-url="true"`,
 		`hx-trigger="change, submit"`,
+		`hx-indicator="#documents-results-loading"`,
 	} {
 		if !strings.Contains(form, want) {
 			t.Errorf("filter form missing %q:\n%s", want, form)

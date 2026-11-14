@@ -421,12 +421,45 @@ func TestPanelCardAppendsAccentClass(t *testing.T) {
 // --- list ---
 
 func TestLinkRowRendersLinkAndMeta(t *testing.T) {
-	html := renderHTML(t, LinkRow(templ.SafeURL("/objects/o1"), templ.Raw(`<span class="leading-slot"></span>`), "Object one", "person"))
+	html := renderHTML(t, LinkRow(templ.SafeURL("/objects/o1"), templ.Raw(`<span class="leading-slot"></span>`), "Object one", "person", LinkRowOpts{
+		Attrs:   templ.Attributes{"data-testid": "object-row"},
+		Details: templ.Raw(`<a class="details-slot" href="/sources/s1">Source one</a>`),
+	}))
 	assertContains(t, html,
 		`href="/objects/o1"`,
 		"leading-slot",
 		"Object one",
 		"person",
 		"lucide--chevron-right",
+		`data-testid="object-row"`,
+		"details-slot",
 	)
+}
+
+// TestLinkRowKeepsTrailingAndDetailsOutsideAnchor pins the a11y contract the
+// documents list depends on (#744): an anchor may not contain interactive
+// content, so a row's trailing control (a delete form) and its details band (a
+// source link) render outside the row link.
+func TestLinkRowKeepsTrailingAndDetailsOutsideAnchor(t *testing.T) {
+	html := renderHTMLWithChildren(t,
+		LinkRow(templ.SafeURL("/objects/o1"), ui.IconSpan("lucide--file-text", "size-4"), "Object one", "person", LinkRowOpts{
+			Details: templ.Raw(`<a class="details-slot" href="/sources/s1">Source one</a>`),
+		}),
+		`<form class="trailing-slot"></form>`,
+	)
+
+	open := strings.Index(html, "<a ")
+	if open < 0 {
+		t.Fatalf("the row rendered no anchor:\n%s", html)
+	}
+	end := strings.Index(html[open:], "</a>")
+	if end < 0 {
+		t.Fatalf("the row anchor never closes:\n%s", html)
+	}
+	anchorEnd := open + end + len("</a>")
+	for _, outside := range []string{`class="trailing-slot"`, `class="details-slot"`} {
+		if i := strings.Index(html, outside); i < anchorEnd {
+			t.Errorf("%s renders inside the row anchor; only the title block may be inside it:\n%s", outside, html)
+		}
+	}
 }

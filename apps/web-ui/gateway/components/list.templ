@@ -5,19 +5,49 @@ import (
 	"github.com/emergent-company/go-daisy/devmode"
 )
 
+// LinkRowOpts carries LinkRow's optional slots and root wiring.
+//
+// templ gives a component a single children slot, and LinkRow's holds the row's
+// trailing controls (badges, a menu, a delete form). Anything that needs its own
+// band travels as a component value instead.
+type LinkRowOpts struct {
+	// Attrs are spread onto the row root, last (data-* hooks, ids).
+	Attrs templ.Attributes
+	// Details renders a band under the row link, inside the row root and
+	// outside the anchor — for supplementary content that is itself
+	// interactive (a source link), which HTML forbids inside an <a>. Nil
+	// renders no band.
+	Details templ.Component
+}
+
 // LinkRow renders a clickable list-page row: a leading icon or tile, a grow
 // column holding the title and metadata, caller-supplied trailing content
 // (badges and menus), and an automatic chevron.
-templ LinkRow(href templ.SafeURL, leading templ.Component, title, meta string) {
-	<a { devmode.Attrs(ctx, "components/LinkRow")... } class="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-base-200/50" href={ href }>
-		@leading
-		<div class="min-w-0 grow">
-			<p class="truncate text-sm font-medium">{ title }</p>
-			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
-				{ meta }
-			}
+//
+// The anchor covers the leading/title/meta block only. An <a> may not contain
+// interactive content, so the trailing slot and the Details band sit outside
+// it: a row's own delete form or source link must never nest in the anchor
+// (#744). Section semantics are the caller's: the row is a plain block, so it
+// can be the child of a card list or any other container.
+templ LinkRow(href templ.SafeURL, leading templ.Component, title, meta string, opts LinkRowOpts) {
+	<div { devmode.Attrs(ctx, "components/LinkRow")... } class="transition-colors hover:bg-base-200/50" { opts.Attrs... }>
+		<div class="flex items-center gap-3 pr-4">
+			<a class="flex min-w-0 grow items-center gap-3 py-3 pl-4" href={ href }>
+				@leading
+				<div class="min-w-0 grow">
+					<p class="truncate text-sm font-medium">{ title }</p>
+					@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+						{ meta }
+					}
+				</div>
+			</a>
+			{ children... }
+			@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
 		</div>
-		{ children... }
-		@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
-	</a>
+		if opts.Details != nil {
+			<div class="px-4 pb-3">
+				@opts.Details
+			</div>
+		}
+	</div>
 }
