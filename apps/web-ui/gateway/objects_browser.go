@@ -364,8 +364,11 @@ func prosePropertyNamed(props map[string]any, key string) (name, value string, o
 }
 
 // proseScalar renders a stored JSON scalar as the text its author typed. Numbers
-// use their shortest round-trip form (json.Number preserves the literal), so
-// 2024 does not become 2024.000000 and 1.50 does not become 1.5.
+// use their shortest round-trip form, so an integer year does not become a float
+// and no trailing zeros are invented. The json.Number arm is forward-compatible:
+// today's decode path (plain json.Unmarshal into map[string]any) yields float64,
+// so a literal "1.50" is already 1.5 before it reaches here; a decoder switched
+// to UseNumber would make the literal exact.
 func proseScalar(v any) (string, bool) {
 	switch s := v.(type) {
 	case string:

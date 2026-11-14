@@ -58,6 +58,8 @@ func TestObjectExcerptScalarProse(t *testing.T) {
 		want  string
 	}{
 		{"integer", map[string]any{"description": float64(2024)}, "2024"},
+		// json.Number is the forward-compatible arm: today's decode path yields
+		// float64, so this pins the literal-preserving branch itself.
 		{"decimal keeps its literal", map[string]any{"description": json.Number("1.50")}, "1.50"},
 		{"boolean", map[string]any{"description": true}, "true"},
 		{"array is still not prose", map[string]any{"description": []any{"2024"}}, ""},
