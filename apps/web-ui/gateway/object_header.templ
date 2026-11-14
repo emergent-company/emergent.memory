@@ -20,8 +20,8 @@ import (
 // templ's parser rejects a named scalar type declared in a .templ file.
 
 // objectHeader renders one object's identity: type icon tile, identity line
-// (type · ref) and name. The root carries `data-component="gateway/ObjectHeader"`
-// so the feedback overlay reports the component rather than a layout wrapper.
+// (type · ref) and name. The root carries the `data-component` annotation so the
+// feedback overlay reports the component rather than a layout wrapper.
 templ objectHeader(p objectHeaderProps) {
 	{{ tile := typeIconTileRow
 	if p.Variant == objectHeaderLead {

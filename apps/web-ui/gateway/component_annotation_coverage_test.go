@@ -30,6 +30,12 @@ import (
 // The gate is tight in both directions, like the other ratchets: a component
 // that is not annotated and not excused fails, an exception that has become
 // annotated fails, and a hardcoded data-component fails.
+//
+// Limitations, accepted: this is a text scan, so it cannot tell a root element
+// from a child, and a comment quoting the call would satisfy it. Rendering all 53
+// components would answer both, at the cost of owning fixtures this package does
+// not have; the scan catches the regression that actually happens — a component
+// silently emitting nothing — and the diff review catches the rest.
 
 // exportedTemplRE matches an exported templ component declaration.
 var exportedTemplRE = regexp.MustCompile(`(?m)^templ ([A-Z][A-Za-z0-9_]*)\(`)
@@ -202,13 +208,14 @@ func TestAnnotationIsGated(t *testing.T) {
 	}
 }
 
-// TestDevAnnotationCarriesNoProps enforces ui-rule-dev-annotation-props: dev-mode
-// annotation is always on, so it must carry the component name only. A data-props
-// attribute would serialise the props (object titles, agent names, member emails,
-// prompt text) into every rendered page.
-func TestDevAnnotationCarriesNoProps(t *testing.T) {
-	roots := []string{".", "components"}
-	for _, root := range roots {
+// templFiles lists the templ sources in the gateway package and its components
+// package. The gateway root is scanned too, not only components/, because a
+// page-local component hardcoding an attribute would be just as invisible to the
+// dev-mode switch.
+func templFiles(t *testing.T) []string {
+	t.Helper()
+	var files []string
+	for _, root := range []string{".", "components"} {
 		entries, err := os.ReadDir(root)
 		if err != nil {
 			t.Fatalf("read %s: %v", root, err)
@@ -217,14 +224,46 @@ func TestDevAnnotationCarriesNoProps(t *testing.T) {
 			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".templ") {
 				continue
 			}
-			path := filepath.Join(root, entry.Name())
-			src, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatalf("read %s: %v", path, err)
-			}
-			if strings.Contains(string(src), "data-props") {
-				t.Errorf("%s emits data-props; annotation carries names only (ui-rule-dev-annotation-props)", path)
-			}
+			files = append(files, filepath.Join(root, entry.Name()))
+		}
+	}
+	if len(files) == 0 {
+		t.Fatal("no .templ files found")
+	}
+	return files
+}
+
+// TestNoHardcodedComponentLiteral rejects the mechanism the coverage gate
+// replaced. A hardcoded data-component anywhere in the package survives
+// componentAnnotations being turned off, which is the split behaviour this
+// change removed: go-daisy's own components go bare while a hand-annotated
+// minority keeps its attribute. Scanned across every templ source rather than
+// only the annotated ones, so a page-local component cannot reintroduce it.
+func TestNoHardcodedComponentLiteral(t *testing.T) {
+	for _, path := range templFiles(t) {
+		src, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if strings.Contains(string(src), `data-component="`) {
+			t.Errorf("%s hardcodes data-component; use devmode.Attrs(ctx, …) so annotation "+
+				"stays behind the dev-mode switch", path)
+		}
+	}
+}
+
+// TestDevAnnotationCarriesNoProps enforces ui-rule-dev-annotation-props: dev-mode
+// annotation is always on, so it must carry the component name only. A data-props
+// attribute would serialise the props (object titles, agent names, member emails,
+// prompt text) into every rendered page.
+func TestDevAnnotationCarriesNoProps(t *testing.T) {
+	for _, path := range templFiles(t) {
+		src, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if strings.Contains(string(src), "data-props") {
+			t.Errorf("%s emits data-props; annotation carries names only (ui-rule-dev-annotation-props)", path)
 		}
 	}
 }
