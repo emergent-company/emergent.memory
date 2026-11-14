@@ -623,6 +623,67 @@ func (s *Server) dsAttachSourceAppSelect(ctx context.Context, providerType strin
 	return fields
 }
 
+type dsWorkflowLaneRow struct {
+	Lane       string
+	Agent      string
+	AgentFound bool
+	RuleReady  bool
+	Queue      string
+	QueueFound bool
+}
+
+func (s *Server) workflowLaneRows(ctx context.Context, wf *SourceWorkflow) []dsWorkflowLaneRow {
+	if wf == nil {
+		return nil
+	}
+	defs, _ := s.memory.ListAgentDefinitions(ctx)
+	byName := make(map[string]AgentDefinitionSummary, len(defs))
+	for _, d := range defs {
+		byName[d.Name] = d
+	}
+	queueProject := ""
+	if project, err := s.memory.GetCurrentProject(ctx); err == nil && project != nil {
+		queueProject = project.ID
+	}
+	queues, _ := s.memory.ListAgentQueues(ctx, queueProject)
+	queueSet := make(map[string]bool, len(queues))
+	for _, q := range queues {
+		if q.Enabled {
+			queueSet[q.Name] = true
+		}
+	}
+	rows := make([]dsWorkflowLaneRow, 0, len(wf.Config.Reviewers))
+	for _, r := range wf.Config.Reviewers {
+		row := dsWorkflowLaneRow{Lane: r.Lane, Agent: r.Agent}
+		if d, ok := byName[r.Agent]; ok {
+			row.AgentFound = d.Enabled
+			if full, err := s.memory.GetAgentDefinition(ctx, d.ID); err == nil && full != nil && full.WorkConfig != nil {
+				if len(full.WorkConfig.ObjectRules) == 0 {
+					// Legacy pickup: ready is always allowed when no object rules exist.
+					row.RuleReady = true
+				}
+				for _, rule := range full.WorkConfig.ObjectRules {
+					if rule.ObjectType != "GitHubReviewLane" {
+						continue
+					}
+					for _, tr := range rule.Triggers {
+						if tr.Status == "ready" {
+							row.RuleReady = true
+						}
+					}
+				}
+				row.Queue = full.DefaultQueue
+			}
+		}
+		if row.Queue == "" {
+			row.Queue = "default"
+		}
+		row.QueueFound = queueSet[row.Queue]
+		rows = append(rows, row)
+	}
+	return rows
+}
+
 func sourceWorkflowText(wf *SourceWorkflow) string {
 	if wf == nil {
 		return ""
@@ -652,10 +713,13 @@ func (s *Server) uiDataSourceWorkflow(c echo.Context) error {
 		return redirectWithError(c, "/data-sources/"+url.PathEscape(id), errors.New("workflows are supported only for GitHub App sources"))
 	}
 	wf, werr := s.memory.GetSourceWorkflow(ctx, id)
+	var loadErr error
 	if werr != nil {
 		captureError(werr)
+		loadErr = userFacingError(werr)
 	}
-	return s.page(c, pageTitle("Workflow", dsSourceName(*src)), DataSourceWorkflowPage(src, wf, userFacingError(werr), flashFromQuery(c, []flashParam{{key: "saved", msg: "Workflow saved."}}), flashError(c)))
+	lanes := s.workflowLaneRows(ctx, wf)
+	return s.page(c, pageTitle("Workflow", dsSourceName(*src)), DataSourceWorkflowPage(src, wf, lanes, loadErr, flashFromQuery(c, []flashParam{{key: "saved", msg: "Workflow saved."}}), flashError(c)))
 }
 
 func (s *Server) uiDataSourceWorkflowSave(c echo.Context) error {

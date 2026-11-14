@@ -822,8 +822,15 @@ func TestDataSourceWorkflowPageSavesReviewers(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "security | security-review") {
+	body := rec.Body.String()
+	if !strings.Contains(body, "security | security-review") {
 		t.Error("existing workflow not pre-filled")
+	}
+	if strings.Contains(body, "Workflow unavailable") {
+		t.Error("healthy workflow rendered the unavailable notice")
+	}
+	if !strings.Contains(body, `data-testid="ds-workflow-lane"`) || !strings.Contains(body, "security-review") {
+		t.Error("readiness did not render the configured lane")
 	}
 
 	form := url.Values{"reviewers": {"security | security-review\nui | ui-review"}}
