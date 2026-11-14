@@ -29,13 +29,21 @@ type LinkRowOpts struct {
 // it: a row's own delete form or source link must never nest in the anchor
 // (#744). Section semantics are the caller's: the row is a plain block, so it
 // can be the child of a card list or any other container.
+//
+// Because the chevron sits outside the anchor too, a row that should stay a tap
+// target beyond its link passes Attrs["data-href"] (documents cards, sessions
+// rows): the shell navigates on a tap anywhere on the row, and app.js skips
+// clicks that land on a link or form control, so a trailing delete form still
+// works.
 templ LinkRow(href templ.SafeURL, leading templ.Component, title, meta string, opts LinkRowOpts) {
-	{{ rowClass := "transition-colors hover:bg-base-200/50" }}
-	if _, clickable := opts.Attrs["data-href"]; clickable {
-		// A row that the shell makes clickable (data-href) is a tap target
-		// beyond its anchor, so it advertises that with a pointer.
-		rowClass += " cursor-pointer"
-	}
+	{{
+		rowClass := "transition-colors hover:bg-base-200/50"
+		if _, clickable := opts.Attrs["data-href"]; clickable {
+			// A row that the shell makes clickable (data-href) is a tap target
+			// beyond its anchor, so it advertises that with a pointer.
+			rowClass += " cursor-pointer"
+		}
+	}}
 	<div { devmode.Attrs(ctx, "components/LinkRow")... } class={ rowClass } { opts.Attrs... }>
 		<div class="flex items-center gap-3 pr-4">
 			<a class="flex min-w-0 grow items-center gap-3 py-3 pl-4" href={ href }>

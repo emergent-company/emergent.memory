@@ -436,6 +436,25 @@ func TestLinkRowRendersLinkAndMeta(t *testing.T) {
 	)
 }
 
+// TestLinkRowMarksDataHrefRowClickable pins two things a data-href row needs
+// (#744): the row root advertises that it is a tap target beyond its anchor,
+// and the class computation is executed rather than rendered. templ treats a
+// bare Go statement inside a markup block as markup, so a misplaced
+// `rowClass += …` ships as visible text between rows; the pointer assertion
+// alone would not catch it, the literal check does.
+func TestLinkRowMarksDataHrefRowClickable(t *testing.T) {
+	html := renderHTML(t, LinkRow(templ.SafeURL("/documents/d1"), ui.IconSpan("lucide--file-text", "size-4"), "Spec", "12 chunks", LinkRowOpts{
+		Attrs: templ.Attributes{"data-href": "/documents/d1"},
+	}))
+
+	if !strings.Contains(html, "cursor-pointer") {
+		t.Errorf("data-href row is a tap target but does not show a pointer:\n%s", html)
+	}
+	if strings.Contains(html, "rowClass") {
+		t.Errorf("class computation rendered as text:\n%s", html)
+	}
+}
+
 // TestLinkRowKeepsTrailingAndDetailsOutsideAnchor pins the a11y contract the
 // documents list depends on (#744): an anchor may not contain interactive
 // content, so a row's trailing control (a delete form) and its details band (a

@@ -650,6 +650,11 @@ func TestRenderDocumentsBrowser(t *testing.T) {
 			t.Errorf("sort header missing the results-region indicator: %s", tag)
 		}
 	}
+	// The indicator must name an element that renders, or htmx has nothing to
+	// show: the id is the other half of the contract.
+	if !strings.Contains(html, `id="documents-results-loading"`) {
+		t.Error(`no element carries id="documents-results-loading"; every hx-indicator above points at nothing`)
+	}
 
 	// Only the sourced row links: one anchor in the table and one in the card
 	// list, and nothing for the uploaded row (there is no data source to open).

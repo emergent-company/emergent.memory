@@ -304,7 +304,12 @@ templ agentChatsSection(data agentDashboardData) {
 }
 
 templ chatLinkRow(c Conversation) {
-	@components.LinkRow(templ.URL("/chat?c="+url.QueryEscape(c.ID)), ui.IconSpan("lucide--messages-square", "size-4 shrink-0 text-muted-faint"), chatTitle(c), relTime(c.UpdatedAt), components.LinkRowOpts{})
+	{{ href := templ.URL("/chat?c=" + url.QueryEscape(c.ID)) }}
+	// data-href keeps the chevron, which sits outside the row anchor, an
+	// "open" affordance rather than dead space.
+	@components.LinkRow(href, ui.IconSpan("lucide--messages-square", "size-4 shrink-0 text-muted-faint"), chatTitle(c), relTime(c.UpdatedAt), components.LinkRowOpts{
+		Attrs: templ.Attributes{"data-href": string(href)},
+	})
 }
 
 // --- Agent settings ---
