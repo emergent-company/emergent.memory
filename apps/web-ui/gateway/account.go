@@ -225,9 +225,10 @@ func (s *Server) authSwitch(c echo.Context) error {
 
 	claims := accountToSession(target)
 	// Lazily refresh a stale target token before making it active.
+	// refreshSessionClaims re-issues the cookie from the refreshed claims, so
+	// do not write a second cookie from the pre-refresh copy (#610).
 	if claims.RefreshToken != "" && claims.ExpiresAt <= time.Now().Add(5*time.Minute).Unix() {
-		if refreshed, err := s.refreshSessionClaims(c, &claims); err == nil {
-			s.setSessionCookie(c, *refreshed)
+		if _, err := s.refreshSessionClaims(c, &claims); err == nil {
 			return c.Redirect(http.StatusFound, "/")
 		}
 	}
