@@ -77,7 +77,7 @@ templ searchHeader() {
 // user did not ask for (selectFilterFormAttrs).
 templ searchToolbar(data searchPageData) {
 	<div class="mb-4">
-		@components.PanelCard("", nil, "p-3 sm:p-4") {
+		@components.PanelCard("", nil, components.PanelCardOpt{BodyClass: "p-3 sm:p-4"}) {
 			<form method="get" action="/search" class="flex flex-col gap-3" data-testid="search-form" { selectFilterFormAttrs("/search", searchResultsRegion)... }>
 				<div class="flex flex-col gap-2 sm:flex-row sm:items-center">
 					<label class="input flex w-full min-w-0 flex-1 items-center gap-2">
@@ -157,7 +157,7 @@ templ searchResultsFragment(data searchPageData) {
 // searchIntro is the pre-query state: what this surface searches and how to use
 // it. It renders no backend call, so an empty /search is free.
 templ searchIntro() {
-	@components.PanelCard("", nil, "p-5") {
+	@components.PanelCard("", nil, components.PanelCardOpt{BodyClass: "p-5"}) {
 		<div class="flex flex-col gap-3" data-testid="search-intro">
 			<p class="text-sm leading-relaxed">
 				Search matches documents by their <strong>text</strong> and objects by their <strong>fields</strong>.

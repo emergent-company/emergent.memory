@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -33,6 +34,24 @@ import (
 //     Commented-out markup is stripped before matching so a disabled snippet does
 //     not count.
 
+// --- shared budget-note guard ---
+
+// emptyBudgetNotes returns one finding for every budget entry whose
+// justification note is blank. All three budget tables require a note: a budget
+// entry is a claim that the pinned library cannot express the site, and the note
+// is the only place that claim is recorded, so an entry with no note is an
+// unreviewable exemption. The guard is generic over the entry type so the three
+// ratchets share one rule instead of drifting apart.
+func emptyBudgetNotes[T any](entries []T, describe func(T) string, note func(T) string) []string {
+	var findings []string
+	for _, e := range entries {
+		if strings.TrimSpace(note(e)) == "" {
+			findings = append(findings, fmt.Sprintf("budget entry %s has no justification note — name the pinned library gap that blocks adoption, or the canonical token to normalise toward", describe(e)))
+		}
+	}
+	return findings
+}
+
 // --- adoption ratchet ---
 
 type adoptionKey struct {
@@ -42,7 +61,8 @@ type adoptionKey struct {
 
 // adoptionBudgetEntry declares the tolerated count of inline reuse of one
 // component-owned marker in one authored file, plus the justification for
-// tolerating it (mirrors adoptionAllowlist in devgallery_adoption.go).
+// tolerating it (mirrors adoptionAllowlist in devgallery_adoption.go). The note
+// is required: an empty note fails the ratchet.
 type adoptionBudgetEntry struct {
 	file   string
 	marker string
@@ -50,7 +70,18 @@ type adoptionBudgetEntry struct {
 	note   string
 }
 
+// adoptionNoteFindings returns a finding for every adoption budget entry whose
+// justification note is blank.
+func adoptionNoteFindings(budget []adoptionBudgetEntry) []string {
+	return emptyBudgetNotes(budget,
+		func(b adoptionBudgetEntry) string { return fmt.Sprintf("%s in %s", b.marker, b.file) },
+		func(b adoptionBudgetEntry) string { return b.note })
+}
+
 func TestAdoptionConsistencyRatchet(t *testing.T) {
+	for _, finding := range adoptionNoteFindings(adoptionBudget()) {
+		t.Error(finding)
+	}
 	actual := map[adoptionKey]int{}
 	examples := map[adoptionKey]int{} // first finding line per key
 	for _, f := range adoptionFindings {
@@ -131,12 +162,21 @@ type patternKey struct {
 }
 
 // patternBudgetEntry declares the tolerated count of one drift token in one
-// authored file, plus the canonical token to normalise toward.
+// authored file, plus the canonical token to normalise toward. The note is
+// required: an empty note fails the ratchet.
 type patternBudgetEntry struct {
 	pattern string
 	file    string
 	count   int
 	note    string
+}
+
+// patternNoteFindings returns a finding for every pattern budget entry whose
+// justification note is blank.
+func patternNoteFindings(budget []patternBudgetEntry) []string {
+	return emptyBudgetNotes(budget,
+		func(b patternBudgetEntry) string { return fmt.Sprintf("%s in %s", b.pattern, b.file) },
+		func(b patternBudgetEntry) string { return b.note })
 }
 
 var (
@@ -257,6 +297,10 @@ func TestStatusCircleDetector(t *testing.T) {
 }
 
 func TestTemplPatternConsistencyRatchet(t *testing.T) {
+	for _, finding := range patternNoteFindings(patternBudget()) {
+		t.Error(finding)
+	}
+
 	hits, err := scanPatternHits()
 	if err != nil {
 		t.Fatalf("scan templ patterns: %v", err)
@@ -549,4 +593,27 @@ func pluralS(n int) string {
 		return ""
 	}
 	return "s"
+}
+
+// TestBudgetEntriesRequireJustification guards the note rule for all three
+// budget tables: the shipped tables must be fully annotated, and an entry with a
+// blank note must produce a finding, so the requirement is enforced and not just
+// documented.
+func TestBudgetEntriesRequireJustification(t *testing.T) {
+	if got := pageCardRawNoteFindings(pageCardRawBudget()); len(got) != 0 {
+		t.Errorf("page-card-raw budget: %v", got)
+	}
+	if got := adoptionNoteFindings(adoptionBudget()); len(got) != 0 {
+		t.Errorf("adoption budget: %v", got)
+	}
+	if got := patternNoteFindings(patternBudget()); len(got) != 0 {
+		t.Errorf("pattern budget: %v", got)
+	}
+
+	if got := adoptionNoteFindings([]adoptionBudgetEntry{{file: "x.templ", marker: "class:badge", count: 1}}); len(got) != 1 {
+		t.Errorf("adoption budget with an empty note: got %d findings, want 1: %v", len(got), got)
+	}
+	if got := patternNoteFindings([]patternBudgetEntry{{pattern: patternLegacyBordered, file: "x.templ", count: 1}}); len(got) != 1 {
+		t.Errorf("pattern budget with an empty note: got %d findings, want 1: %v", len(got), got)
+	}
 }

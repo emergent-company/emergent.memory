@@ -425,7 +425,7 @@ templ agentCard(a AgentDefinitionSummary) {
 	@components.PanelCard(
 		"memory-rise cursor-pointer group transition-all duration-200 hover:-translate-y-0.5 hover:border-base-content/25 hover:shadow-md",
 		templ.Attributes{"data-href": "/agents/" + url.PathEscape(a.ID)},
-		"memory-density-compact",
+		components.PanelCardOpt{BodyClass: "memory-density-compact"},
 	) {
 		<div class="flex items-center gap-3">
 			@agentIconTile(agentIcon(a.UIConfig), agentColor(a.UIConfig))

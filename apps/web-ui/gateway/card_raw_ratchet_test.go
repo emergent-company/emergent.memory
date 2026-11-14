@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -24,32 +25,26 @@ import (
 // and never the owners.
 
 // pageCardRawBudgetEntry declares the tolerated count of direct ui.CardRaw calls
-// in one page-level authored .templ file.
+// in one page-level authored .templ file, plus the justification for tolerating
+// it. The note is required (an empty note fails the ratchet, the way the
+// adoption and pattern budgets require theirs): a budget entry is a claim that
+// the pinned go-daisy cannot express the site, and a claim with no stated gap
+// cannot be re-checked when the pin moves.
 type pageCardRawBudgetEntry struct {
 	file  string
 	count int
+	note  string
 }
 
-// pageCardRawBudget is seeded at the 8 pre-adoption page sites. Every site
-// migrated to components.PanelCard / TableCard (task 1.1), so the budget is
-// empty except for the one site components.PanelCard cannot express (below).
+// pageCardRawBudget is seeded at the 8 pre-adoption page sites. Every site has
+// been migrated to components.PanelCard / TableCard (task 1.1), so the budget is
+// empty: components.PanelCard now passes Border and Surface through
+// (components.PanelCardOpt), which was the last gap that kept a page on the raw
+// shell. The list is kept (rather than deleted) because it is the only place a
+// page-level ui.CardRaw site can be declared, and an empty budget is the goal
+// state the ratchet defends.
 func pageCardRawBudget() []pageCardRawBudgetEntry {
-	return []pageCardRawBudgetEntry{
-		// The deploy portal's three step cards (deploy_portal.templ, the 3-up
-		// "Connect Railway / Pick providers / Deploy" grid). They are borderless
-		// bg-base-200 cards, and components.PanelCard cannot produce that: it
-		// calls ui.CardRaw with only Class/BodyClass/Attrs, so Border is the zero
-		// value and card.go:cardBorderClass maps that to the default "edge-line"
-		// outline, while Surface is not a prop at all (zero value -> bg-base-100).
-		// Rendering PanelCard here would add an outline the design does not have.
-		//
-		// Budgeted rather than reverted to raw `<div class="card">` markup on
-		// purpose: that would put a false class:card entry back in the adoption
-		// budget, claiming a component gap that does not exist — the exact failure
-		// mode adoptionBudget() exists to catch. This entry stays exact in both
-		// directions, so the three sites cannot grow unnoticed.
-		{file: "deploy_portal.templ", count: 3},
-	}
+	return []pageCardRawBudgetEntry{}
 }
 
 // uiCardRawRE matches a direct ui.CardRaw invocation (word-bounded, so
@@ -58,15 +53,31 @@ var uiCardRawRE = regexp.MustCompile(`\bui\.CardRaw\b`)
 
 // checkPageCardRaw asserts that the number of direct ui.CardRaw call sites in
 // each page-level authored .templ file matches the budget exactly, in both
-// directions.
+// directions, and that every budget entry carries a justification note.
 func checkPageCardRaw(t *testing.T) {
+	for _, finding := range pageCardRawNoteFindings(pageCardRawBudget()) {
+		t.Error(finding)
+	}
+
+	actual, examples, err := pageCardRawCounts()
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	for _, finding := range pageCardRawFindings(actual, examples, pageCardRawBudget()) {
+		t.Error(finding)
+	}
+}
+
+// pageCardRawCounts counts ui.CardRaw occurrences per page-level .templ basename
+// and records the first hit line per file.
+func pageCardRawCounts() (map[string]int, map[string]int, error) {
 	actual := map[string]int{}
 	examples := map[string]int{} // first hit line per file
 
 	for _, file := range pageCardRawSources() {
 		data, err := os.ReadFile(file)
 		if err != nil {
-			t.Fatalf("read %s: %v", file, err)
+			return nil, nil, fmt.Errorf("read %s: %w", file, err)
 		}
 		base := filepath.Base(file)
 		for i, line := range strings.Split(string(data), "\n") {
@@ -78,30 +89,46 @@ func checkPageCardRaw(t *testing.T) {
 			}
 		}
 	}
+	return actual, examples, nil
+}
 
+// pageCardRawFindings compares the observed page-level ui.CardRaw counts against
+// the budget and returns one finding per mismatch. It is pure so the ratchet can
+// be tested with a synthetic budget.
+func pageCardRawFindings(actual, examples map[string]int, budgetEntries []pageCardRawBudgetEntry) []string {
 	budget := map[string]pageCardRawBudgetEntry{}
-	for _, b := range pageCardRawBudget() {
+	for _, b := range budgetEntries {
 		budget[b.file] = b
 	}
 
+	var findings []string
 	for _, file := range sortedPageCardRawFiles(actual, budget) {
 		a, aOK := actual[file]
 		b, bOK := budget[file]
 		switch {
 		case !bOK:
-			t.Errorf("page-card-raw: page %s opens the raw ui.CardRaw shell at line %d (%d occurrence%s) — render components.PanelCard / components.TableCard, or budget the site with a justification",
-				file, examples[file], a, pluralS(a))
+			findings = append(findings, fmt.Sprintf("page-card-raw: page %s opens the raw ui.CardRaw shell at line %d (%d occurrence%s) — render components.PanelCard / components.TableCard, or budget the site with a justification note in pageCardRawBudget",
+				file, examples[file], a, pluralS(a)))
 		case !aOK:
-			t.Errorf("page-card-raw: budget entry %s (%d) no longer matches the tree (actual 0) — tighten/adjust the budget in this same change",
-				file, b.count)
+			findings = append(findings, fmt.Sprintf("page-card-raw: budget entry %s (%d) no longer matches the tree (actual 0) — tighten/adjust the budget in this same change",
+				file, b.count))
 		case a > b.count:
-			t.Errorf("page-card-raw: %s grew to %d (budget %d) — render components.PanelCard / components.TableCard, or lower the budget in this change (e.g. %s:%d)",
-				file, a, b.count, file, examples[file])
+			findings = append(findings, fmt.Sprintf("page-card-raw: %s grew to %d (budget %d) — render components.PanelCard / components.TableCard, or lower the budget in this change (e.g. %s:%d)",
+				file, a, b.count, file, examples[file]))
 		case a < b.count:
-			t.Errorf("page-card-raw: %s dropped to %d (budget %d) — tighten/adjust the budget in this same change (e.g. %s:%d)",
-				file, a, b.count, file, examples[file])
+			findings = append(findings, fmt.Sprintf("page-card-raw: %s dropped to %d (budget %d) — tighten/adjust the budget in this same change (e.g. %s:%d)",
+				file, a, b.count, file, examples[file]))
 		}
 	}
+	return findings
+}
+
+// pageCardRawNoteFindings returns a finding for every budget entry whose
+// justification note is blank.
+func pageCardRawNoteFindings(budget []pageCardRawBudgetEntry) []string {
+	return emptyBudgetNotes(budget,
+		func(b pageCardRawBudgetEntry) string { return b.file },
+		func(b pageCardRawBudgetEntry) string { return b.note })
 }
 
 func sortedPageCardRawFiles(actual map[string]int, budget map[string]pageCardRawBudgetEntry) []string {
@@ -139,4 +166,26 @@ func pageCardRawSources() []string {
 // TestPageCardRawConsistencyRatchet is the page-vs-component ui.CardRaw gate.
 func TestPageCardRawConsistencyRatchet(t *testing.T) {
 	t.Run("page-card-raw", checkPageCardRaw)
+}
+
+// TestPageCardRawBudgetRequiresNote proves the note guard is wired into the real
+// check path: a budget entry with an empty note must produce a finding, and the
+// shipped budget must produce none.
+func TestPageCardRawBudgetRequiresNote(t *testing.T) {
+	if got := pageCardRawNoteFindings(pageCardRawBudget()); len(got) != 0 {
+		t.Fatalf("shipped page-card-raw budget has entries without a justification note: %v", got)
+	}
+
+	bad := append(slices.Clone(pageCardRawBudget()), pageCardRawBudgetEntry{
+		file:  "no_such_page.templ",
+		count: 1,
+		note:  "  ",
+	})
+	got := pageCardRawNoteFindings(bad)
+	if len(got) != 1 {
+		t.Fatalf("empty-note budget entry: got %d note findings, want 1: %v", len(got), got)
+	}
+	if !strings.Contains(got[0], "no_such_page.templ") || !strings.Contains(got[0], "justification") {
+		t.Errorf("empty-note finding does not name the entry and the requirement: %q", got[0])
+	}
 }

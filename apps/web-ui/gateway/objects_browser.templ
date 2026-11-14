@@ -194,7 +194,7 @@ templ objectsBrowserToolbar(data objectsPageData) {
 		}
 	}}
 	<div class="mb-4">
-		@components.PanelCard("", nil, "p-3 sm:p-4") {
+		@components.PanelCard("", nil, components.PanelCardOpt{BodyClass: "p-3 sm:p-4"}) {
 			<div class="flex flex-col gap-3">
 				if searching {
 					<form id="objects-search-form" class="min-w-0" method="get" action={ templ.URL(searchAction) } { objectsFormAttrs(data, false, searchAction)... } { objectsPreviewGuards(data.Preview)... }>
@@ -648,7 +648,7 @@ templ objectsBrowserRowsPartial(data objectsPageData) {
 // caption when the stream reported one. It is the HTMX response the "Ask the
 // graph" dialog swaps into #objects-knowledge-answer.
 templ objectsKnowledgeAnswer(answer, sessionID string) {
-	@components.PanelCard("memory-rise", nil, "p-4") {
+	@components.PanelCard("memory-rise", nil, components.PanelCardOpt{BodyClass: "p-4"}) {
 		<div class="mb-2 flex items-center gap-2">
 			@ui.IconSpan("lucide--sparkles", "size-3.5 shrink-0 text-accent")
 			<span class="text-muted-faint text-xs font-medium tracking-wide uppercase">Answer</span>

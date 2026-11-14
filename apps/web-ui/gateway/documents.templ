@@ -159,7 +159,7 @@ templ documentUploadDialog(autoExtractDefault bool) {
 // list, it does not reload the page (docs/ui-patterns.md §3).
 templ documentsToolbar(data documentPageData) {
 	<div class="mb-4">
-		@components.PanelCard("", nil, "p-3 sm:p-4") {
+		@components.PanelCard("", nil, components.PanelCardOpt{BodyClass: "p-3 sm:p-4"}) {
 			<div class="flex flex-col gap-3">
 				<form method="get" action="/documents" class="flex flex-col gap-2 sm:flex-row sm:items-center" data-testid="documents-search-form" { submitFilterFormAttrs("/documents", documentsResultsRegion)... }>
 					<div id="documents-search-hidden" class="contents">
