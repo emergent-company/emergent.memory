@@ -165,3 +165,13 @@ func TestMintInstallationTokenRejectsEmptyAfterNormalization(t *testing.T) {
 		t.Fatal("minted a token for an empty repository list")
 	}
 }
+
+func TestMintInstallationTokenAllRepositoriesRejectsWritePermissions(t *testing.T) {
+	key := testRSAKey(t)
+	minter := NewTokenMinter("https://api.github.com", nil)
+	_, err := minter.MintInstallationTokenAllRepositories(context.Background(), 1, pkcs1PEM(key), 2,
+		map[string]string{"contents": "write"})
+	if err == nil || !strings.Contains(err.Error(), "read-only") {
+		t.Fatalf("err = %v, want read-only refusal", err)
+	}
+}

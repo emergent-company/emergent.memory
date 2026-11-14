@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"slices"
 	"strings"
@@ -619,34 +620,42 @@ func (s *Service) ListInstallationRepositories(ctx context.Context, projectID, a
 	if err != nil {
 		return nil, apperror.NewInternal("failed to list installation repositories", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		s.githubAPIBase+"/installation/repositories?per_page=100", nil)
-	if err != nil {
-		return nil, apperror.NewInternal("failed to build the repository request", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
-	if err != nil {
-		return nil, apperror.NewInternal("failed to list installation repositories", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, apperror.NewInternal(fmt.Sprintf("GitHub returned %d listing installation repositories", resp.StatusCode), nil)
-	}
-	var out struct {
-		Repositories []struct {
-			FullName string `json:"full_name"`
-		} `json:"repositories"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, apperror.NewInternal("failed to decode installation repositories", err)
-	}
-	names := make([]string, 0, len(out.Repositories))
-	for _, repo := range out.Repositories {
-		if name := strings.TrimSpace(repo.FullName); name != "" {
-			names = append(names, name)
+	client := &http.Client{Timeout: 20 * time.Second}
+	names := []string{}
+	for page := 1; page <= 20; page++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+			fmt.Sprintf("%s/installation/repositories?per_page=100&page=%d", s.githubAPIBase, page), nil)
+		if err != nil {
+			return nil, apperror.NewInternal("failed to build the repository request", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, apperror.NewInternal("failed to list installation repositories", err)
+		}
+		var out struct {
+			Repositories []struct {
+				FullName string `json:"full_name"`
+			} `json:"repositories"`
+		}
+		decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out)
+		status := resp.StatusCode
+		_ = resp.Body.Close()
+		if status != http.StatusOK {
+			return nil, apperror.NewInternal(fmt.Sprintf("GitHub returned %d listing installation repositories", status), nil)
+		}
+		if decodeErr != nil {
+			return nil, apperror.NewInternal("failed to decode installation repositories", decodeErr)
+		}
+		for _, repo := range out.Repositories {
+			if name := strings.TrimSpace(repo.FullName); name != "" {
+				names = append(names, name)
+			}
+		}
+		if len(out.Repositories) < 100 {
+			break
 		}
 	}
 	slices.Sort(names)

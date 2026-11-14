@@ -95,6 +95,11 @@ func (m *TokenMinter) MintInstallationTokenAllRepositories(
 	if len(permissions) == 0 {
 		return "", errors.New("githubapp: installation token requires an explicit permission set")
 	}
+	for _, level := range permissions {
+		if level != "read" {
+			return "", errors.New("githubapp: installation-wide tokens are read-only")
+		}
+	}
 	return m.mintInstallationToken(ctx, appID, privateKeyPEM, installationID, nil, permissions)
 }
 
