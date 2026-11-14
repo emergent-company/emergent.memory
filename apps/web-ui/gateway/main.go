@@ -486,6 +486,7 @@ func main() {
 	// github_app trigger bindings (event → agent) on the source detail page.
 	// Project-scoped and documents:write on the API side; the UI follows the
 	// same form/redirect/flash conventions as the source's other actions.
+	e.GET("/data-sources/:id/triggers/new", s.uiDataSourceTriggerNew)
 	e.POST("/data-sources/:id/triggers", s.uiDataSourceTriggerCreate)
 	e.POST("/data-sources/:id/triggers/:triggerId/toggle", s.uiDataSourceTriggerToggle)
 	e.POST("/data-sources/:id/triggers/:triggerId/delete", s.uiDataSourceTriggerDelete)

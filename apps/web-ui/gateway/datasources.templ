@@ -943,12 +943,6 @@ templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields
 			} else {
 				@dsConnectionCard(src)
 			}
-			// A trigger-only source starts agent runs instead of syncing
-			// documents, so its event bindings are part of the source's
-			// configuration and sit above the settings form.
-			if triggers != nil {
-				@dsSourceTriggersPanel(*triggers)
-			}
 			// The credentials card is an OAuth-app summary; a config/credentials
 			// provider has no OAuth app to resolve, so showing it (and its "set one
 			// up" warning) would report a healthy source as broken (#2295).
@@ -956,6 +950,12 @@ templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields
 				@dsCredentialCard(*credentialSummary)
 			}
 			@dsEditCard(src, dsSyncOptionsNote(configFields, credentialFields), dsSettingsConfigFields(configFields), credentialFields, picker)
+			// Trigger-only sources keep their event bindings below settings: the
+			// connection and settings are what a source needs first, and adding a
+			// trigger is a separate page.
+			if triggers != nil {
+				@dsSourceTriggersPanel(*triggers)
+			}
 			<script src={ templ.SafeURL(webui.AssetPath("/js/datasource-config-picker.js")) }></script>
 			// A trigger-only source can never have sync jobs, so it shows no
 			// history card. Every syncing provider keeps its history even while
@@ -1012,27 +1012,39 @@ templ dsSourceTriggersPanel(view dsSourceTriggersView) {
 					}
 				</ul>
 			}
-			// The create form's agent picker has nothing to offer without an
-			// agent, so it is replaced by the remediation link instead of a
-			// submit that can only post an empty agentId.
-			if len(view.Agents) == 0 {
-				<div class="mt-4 flex flex-col gap-2 border-t border-base-content/10 pt-4" data-testid="ds-trigger-agents-empty">
-					@ui.EmptyNote(ui.EmptyNoteProps{}) {
-						This project has no agents yet. Create one before binding a trigger.
-					}
-					@ui.Button(ui.ButtonProps{
-						Type:    ui.ButtonTypeLink,
-						Href:    "/agents",
-						Variant: ui.ButtonOutline,
-						Size:    ui.ButtonSM,
-						Icon:    "lucide--bot",
-						Attrs:   templ.Attributes{"data-testid": "ds-trigger-agents-link"},
-					}) {
-						Open Agents
-					}
-				</div>
-			} else {
-				@dsSourceTriggerCreateForm(view)
+			// A source has one binding per event; the add action lives on its own
+			// page and is offered only while no pull_request binding exists.
+			if len(view.Triggers) == 0 {
+				if len(view.Agents) == 0 {
+					<div class="mt-4 flex flex-col gap-2 border-t border-base-content/10 pt-4" data-testid="ds-trigger-agents-empty">
+						@ui.EmptyNote(ui.EmptyNoteProps{}) {
+							This project has no agents yet. Create one before binding a trigger.
+						}
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeLink,
+							Href:    "/agents",
+							Variant: ui.ButtonOutline,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--bot",
+							Attrs:   templ.Attributes{"data-testid": "ds-trigger-agents-link"},
+						}) {
+							Open Agents
+						}
+					</div>
+				} else {
+					<div class="mt-4 border-t border-base-content/10 pt-4">
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeLink,
+							Href:    "/data-sources/" + url.PathEscape(view.SourceID) + "/triggers/new",
+							Variant: ui.ButtonPrimary,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--plus",
+							Attrs:   templ.Attributes{"data-testid": "ds-trigger-add"},
+						}) {
+							Add trigger
+						}
+					</div>
+				}
 			}
 		}
 	</div>
@@ -1089,47 +1101,6 @@ templ dsSourceTriggerRow(view dsSourceTriggersView, trigger DSSourceTrigger) {
 			</form>
 		</div>
 	</li>
-}
-
-// dsSourceTriggerCreateForm binds pull_request to one of the project's agents.
-// The event type is fixed: github_app accepts nothing else, so offering a choice
-// would only let the user submit a value the API rejects.
-templ dsSourceTriggerCreateForm(view dsSourceTriggersView) {
-	<form method="post" action={ templ.URL("/data-sources/" + url.PathEscape(view.SourceID) + "/triggers") } class="mt-4 flex flex-col gap-3 border-t border-base-content/10 pt-4" data-testid="ds-trigger-form">
-		<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-			<div class="flex flex-col gap-1">
-				<label class="text-sm font-medium" for="trigger-event-type">Event</label>
-				<select id="trigger-event-type" name="eventType" class="select w-full" data-testid="ds-trigger-event-type">
-					<option value="pull_request">pull_request</option>
-				</select>
-			</div>
-			<div class="flex flex-col gap-1">
-				<label class="text-sm font-medium" for="trigger-agent">Agent <span class="text-error" aria-hidden="true">*</span></label>
-				<select id="trigger-agent" name="agentId" required class="select w-full" data-testid="ds-trigger-agent-select">
-					<option value="">Select an agent</option>
-					for _, agent := range view.Agents {
-						<option value={ agent.ID }>{ agent.Name }</option>
-					}
-				</select>
-			</div>
-			<div class="flex flex-col gap-1">
-				<label class="text-sm font-medium" for="trigger-queue">Queue</label>
-				<input id="trigger-queue" name="queue" type="text" class="input w-full" placeholder="default" data-testid="ds-trigger-queue-input"/>
-				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Optional. Leave blank for the default queue. }
-			</div>
-		</div>
-		<div>
-			@ui.Button(ui.ButtonProps{
-				Type:    ui.ButtonTypeSubmit,
-				Variant: ui.ButtonPrimary,
-				Size:    ui.ButtonSM,
-				Icon:    "lucide--plus",
-				Attrs:   templ.Attributes{"data-testid": "ds-trigger-create"},
-			}) {
-				Add trigger
-			}
-		</div>
-	</form>
 }
 
 // dsResourceNeededBanner prompts the user to finish a source whose config is
@@ -2102,4 +2073,91 @@ templ dsGmailEditFields(src *DSIntegration) {
 			<label class="flex items-center gap-2"><input type="checkbox" name="mcp_write_tools_enabled" value="true" checked?={ dsGmailWriteEnabled(src.Config) } class="checkbox checkbox-sm"/> Enable send and draft tools</label>
 		</div>
 	</div>
+}
+
+// DataSourceTriggerNewPage is the standalone add-trigger form. It lives off the
+// source detail page so the settings form and the trigger list stay readable.
+templ DataSourceTriggerNewPage(src *DSIntegration, view dsSourceTriggersView, flashErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Data sources", "/data-sources", dsSourceName(*src), "/data-sources/"+url.PathEscape(src.ID), "Add trigger")), "", "Add trigger", "Start an agent when a pull request event arrives on this source's repositories.", detailHeaderOpts{Margin: "mb-6"}) {
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/data-sources/" + url.PathEscape(src.ID) + "#triggers",
+				Variant: ui.ButtonOutline,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--arrow-left",
+				Attrs:   templ.Attributes{"data-testid": "ds-trigger-new-back"},
+			}) {
+				Back to source
+			}
+		}
+		if flashErr != nil {
+			@pageErrorNotice("Trigger not added", flashErr)
+		}
+		if view.LoadErr != nil {
+			@pageErrorNotice("Triggers unavailable", view.LoadErr)
+		}
+		@components.PanelCard("", templ.Attributes{"data-testid": "ds-trigger-new"}) {
+			if len(view.Agents) == 0 {
+				<div class="flex flex-col gap-2" data-testid="ds-trigger-new-agents-empty">
+					@ui.EmptyNote(ui.EmptyNoteProps{}) {
+						This project has no agents yet. Create one before binding a trigger.
+					}
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeLink,
+						Href:    "/agents",
+						Variant: ui.ButtonOutline,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--bot",
+					}) {
+						Open Agents
+					}
+				</div>
+			} else {
+				<form method="post" action={ templ.URL("/data-sources/" + url.PathEscape(src.ID) + "/triggers") } class="flex flex-col gap-4" data-testid="ds-trigger-new-form">
+					<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+						<div class="flex flex-col gap-1">
+							<label class="text-sm font-medium" for="trigger-event-type">Event</label>
+							<select id="trigger-event-type" name="eventType" class="select w-full" data-testid="ds-trigger-event-type">
+								<option value="pull_request">pull_request</option>
+							</select>
+						</div>
+						<div class="flex flex-col gap-1">
+							<label class="text-sm font-medium" for="trigger-agent">Agent <span class="text-error" aria-hidden="true">*</span></label>
+							<select id="trigger-agent" name="agentId" required class="select w-full" data-testid="ds-trigger-agent-select">
+								<option value="">Select an agent</option>
+								for _, agent := range view.Agents {
+									<option value={ agent.ID }>{ agent.Name }</option>
+								}
+							</select>
+						</div>
+						<div class="flex flex-col gap-1">
+							<label class="text-sm font-medium" for="trigger-queue">Queue</label>
+							<input id="trigger-queue" name="queue" type="text" class="input w-full" placeholder="default" data-testid="ds-trigger-queue-input"/>
+							@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Optional. Leave blank for the default queue. }
+						</div>
+					</div>
+					<div class="flex items-center justify-end gap-2">
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeLink,
+							Href:    "/data-sources/" + url.PathEscape(src.ID) + "#triggers",
+							Variant: ui.ButtonGhost,
+							Size:    ui.ButtonSM,
+						}) {
+							Cancel
+						}
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonPrimary,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--plus",
+							Attrs:   templ.Attributes{"data-testid": "ds-trigger-create"},
+						}) {
+							Add trigger
+						}
+					</div>
+				</form>
+			}
+		}
+	}
 }
