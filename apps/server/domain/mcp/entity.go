@@ -801,6 +801,12 @@ func ContextWithRunSubject(ctx context.Context, subject RunSubject) context.Cont
 	return context.WithValue(ctx, runSubjectKey{}, subject)
 }
 
+// ContextWithoutRunSubject clears a parent run's verified subject before a
+// nested run re-stamps only its own.
+func ContextWithoutRunSubject(ctx context.Context) context.Context {
+	return context.WithValue(ctx, runSubjectKey{}, RunSubject{})
+}
+
 func RunSubjectFromContext(ctx context.Context) (RunSubject, bool) {
 	v, ok := ctx.Value(runSubjectKey{}).(RunSubject)
 	return v, ok && v.SourceID != "" && v.Repo != "" && v.HeadSHA != ""

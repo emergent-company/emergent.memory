@@ -176,6 +176,11 @@ func (h *ReviewToolHandler) ExecuteGitHubAppTool(ctx context.Context, projectID,
 // through the wrong App. The fallback requires exactly one allowlist match;
 // zero or many fail closed naming what was found.
 func (h *ReviewToolHandler) resolveSource(ctx context.Context, projectID uuid.UUID, repo string) (*Source, *SourceApp, error) {
+	// Prefer the dispatcher-persisted subject's source over the run metadata
+	// sourceId, which is model-settable on spawned runs.
+	if subject, ok := mcp.RunSubjectFromContext(ctx); ok && subject.SourceID != "" {
+		return h.resolveRunSource(ctx, projectID, repo, subject.SourceID)
+	}
 	if sourceID := mcp.RunSourceIDFromContext(ctx); sourceID != "" {
 		return h.resolveRunSource(ctx, projectID, repo, sourceID)
 	}

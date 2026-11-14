@@ -594,6 +594,9 @@ func callerRunIDFromContext(ctx context.Context) string {
 // authorization non-inheritable across a run boundary (issue #1133).
 func runDispatchContext(ctx context.Context, trusted bool) context.Context {
 	ctx = mcp.ContextWithoutTransportEnforced(ctx)
+	// A nested run must not inherit the parent's verified source subject. It is
+	// re-stamped only from this run's own source_subject row.
+	ctx = mcp.ContextWithoutRunSubject(ctx)
 	return mcp.ContextWithTrustedInternal(ctx, trusted)
 }
 
@@ -5854,20 +5857,4 @@ func ptrUUID(s string) *uuid.UUID {
 		return nil
 	}
 	return &id
-}
-
-func intMetadata(v any) int {
-	switch n := v.(type) {
-	case int:
-		return n
-	case int64:
-		return int(n)
-	case float64:
-		return int(n)
-	case json.Number:
-		i, _ := n.Int64()
-		return int(i)
-	default:
-		return 0
-	}
 }

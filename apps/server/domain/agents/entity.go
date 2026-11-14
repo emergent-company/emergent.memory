@@ -287,7 +287,6 @@ type CreateRunOptions struct {
 	SubjectObjectType *string
 }
 
-// CreateRunQueuedOptions holds optional parameters for CreateRunQueued.
 // SourceSubject is the verified GitHub source subject for a run.
 type SourceSubject struct {
 	SourceID string `json:"sourceId"`
