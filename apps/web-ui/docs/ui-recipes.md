@@ -1,5 +1,12 @@
 # UI recipes — layout & editing patterns
 
+> **Hand-maintained mirror — not the source of truth.** The authoritative
+> catalogue is the Memory graph (project `memory_coding`, pack `ui-patterns`;
+> `UIPattern`, `UIComponent`, `UIRule`, `UIVariant`). Nothing generates this
+> file, and a pattern is never added here first: change the graph, then update
+> this mirror in the same PR. It is kept because contributors outside the
+> organisation cannot reach the graph.
+
 A decision-oriented catalog of the layout and editing affordances shipped in the
 web-ui gateway. Use it to pick a pattern by name and to hand an agent an exact
 instruction. Each recipe gives **when** to use it, **avoid** when not, a
