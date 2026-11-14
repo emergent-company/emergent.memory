@@ -1,0 +1,489 @@
+/* ==========================================================================
+   Memory docs theme.
+
+   Maps the product web UI's daisyUI brand theme onto Starlight's design
+   tokens. Source of truth:
+     apps/web-ui/gateway/webui/css/app.css  →  @plugin "daisyui/theme"
+   and its `.memory-md` prose block further down that file.
+
+   Palette: ink-navy surfaces, brass primary, steel secondary, mint accent.
+   Dark-only, 1rem = 15px, radii field .25 / box .5 / selector 1rem.
+
+   Every literal below is either one of those tokens or a direct port of a
+   `.memory-md` / chrome rule from app.css; nothing here is invented.
+   ========================================================================== */
+
+:root,
+:root[data-theme='light'],
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* --- surfaces: daisyUI base-100 / 200 / 300 ----------------------------- */
+  --sl-color-bg: oklch(0.175 0.014 274);            /* base-200 — page */
+  --sl-color-bg-nav: oklch(0.215 0.016 274);        /* base-100 — surface */
+  --sl-color-bg-sidebar: oklch(0.215 0.016 274);    /* base-100 */
+  --sl-color-bg-inline-code: oklch(0.74 0.135 78 / 0.14);
+  --sl-color-bg-accent: oklch(0.74 0.135 78);       /* primary */
+
+  --sl-color-black: oklch(0.135 0.012 274);         /* base-300 */
+  --sl-color-white: oklch(0.93 0.008 265);          /* base-content */
+
+  /* --- text --------------------------------------------------------------- */
+  --sl-color-text: oklch(0.93 0.008 265);           /* base-content */
+  --sl-color-text-accent: oklch(0.74 0.135 78);     /* primary (brass) */
+  --sl-color-text-invert: oklch(0.2 0.04 78);       /* primary-content */
+
+  /* --- gray ramp: derived from base-content, mirrors --color-muted-* ------ */
+  --sl-color-gray-1: oklch(0.93 0.008 265);
+  --sl-color-gray-2: oklch(0.855 0.009 265);        /* muted-bright */
+  --sl-color-gray-3: oklch(0.705 0.011 265);        /* muted-strong */
+  --sl-color-gray-4: oklch(0.545 0.012 270);        /* muted */
+  --sl-color-gray-5: oklch(0.335 0.015 274);
+  --sl-color-gray-6: oklch(0.265 0.02 274);         /* neutral */
+  --sl-color-gray-7: oklch(0.215 0.016 274);        /* base-100 */
+
+  /* --- accent: --color-primary (brass) ------------------------------------ */
+  --sl-color-accent-low: oklch(0.315 0.06 78);
+  --sl-color-accent: oklch(0.74 0.135 78);
+  --sl-color-accent-high: oklch(0.855 0.1 82);
+
+  /* --- hairlines ---------------------------------------------------------- */
+  --sl-color-hairline-light: oklch(1 0 0 / 0.09);
+  --sl-color-hairline: oklch(1 0 0 / 0.07);
+  --sl-color-hairline-shade: oklch(0.135 0.012 274);
+
+  /* --- type: app.css declares no webfont, so the app renders system sans -- */
+  --sl-font: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --sl-font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
+    'Liberation Mono', monospace;
+
+  /* --- metrics ------------------------------------------------------------ */
+  --sl-nav-height: 3.5rem;
+  --sl-sidebar-width: 17rem;
+  --sl-content-width: 51rem;
+}
+
+/* The app sets 1rem = 15px (app.css `html`), so every rem-based utility in the
+   product scales down from the browser default. Doubles as the pre-paint guard
+   colour (#0E1017 is base-200, kept as a literal on purpose — see
+   foucBackgroundGuard in ui.templ). */
+html {
+  font-size: 15px;
+  background-color: #0e1017;
+}
+
+/* Atmosphere: soft brass glow top-right, faint steel glow bottom-left — the
+   app's `body` background (app.css "Atmosphere" block). */
+body {
+  background-image:
+    radial-gradient(1100px 520px at 88% -12%, oklch(0.74 0.135 78 / 0.07), transparent 62%),
+    radial-gradient(900px 600px at -10% 110%, oklch(0.64 0.105 240 / 0.05), transparent 60%);
+  background-repeat: no-repeat, no-repeat;
+  background-attachment: fixed;
+}
+
+/* ---------- chrome: header ------------------------------------------------
+   The app topbar is base-100 with a hairline bottom edge (`border-base-300`). */
+.header {
+  border-bottom: 1px solid oklch(1 0 0 / 0.07);
+}
+
+.site-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  gap: 0.625rem;
+  color: var(--sl-color-white);
+}
+
+/* Search control: a field, not a pill — --radius-field (0.25rem). */
+site-search button[data-open-modal] {
+  border-radius: 0.25rem;
+  border-color: oklch(1 0 0 / 0.09);
+  background-color: oklch(0.175 0.014 274);
+  color: var(--sl-color-gray-3);
+}
+
+site-search button[data-open-modal]:hover {
+  border-color: oklch(0.74 0.135 78 / 0.45);
+  color: var(--sl-color-white);
+}
+
+/* ---------- chrome: sidebar ------------------------------------------------ */
+#starlight__sidebar {
+  border-inline-end: 1px solid oklch(1 0 0 / 0.07);
+}
+
+.sidebar-content {
+  font-size: 0.875rem;
+}
+
+/* Group labels mirror the app's breadcrumb chrome: small, tracked, uppercase. */
+.sidebar-content .group-label > span,
+.sidebar-content .group-label {
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--sl-color-gray-3);
+}
+
+.sidebar-content a {
+  border-radius: 1rem; /* --radius-selector */
+  padding-inline: 0.65rem;
+}
+
+.sidebar-content a:hover {
+  background-color: oklch(1 0 0 / 0.045);
+  color: var(--sl-color-white);
+}
+
+/* Active page: brass tint at --radius-selector, as the app's nav pills. */
+.sidebar-content a[aria-current='page'],
+.sidebar-content a[aria-current='page']:hover {
+  background-color: oklch(0.74 0.135 78 / 0.12);
+  color: var(--sl-color-text-accent);
+  font-weight: 600;
+}
+
+/* ---------- chrome: "On this page" ---------------------------------------- */
+.right-sidebar-panel h2,
+mobile-starlight-toc h2 {
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--sl-color-gray-3);
+}
+
+.right-sidebar a[aria-current='true'] {
+  color: var(--sl-color-text-accent);
+}
+
+/* ---------- prose: headings (app.css `.memory-md` heading scale) ----------- */
+.sl-markdown-content :is(h1, h2, h3, h4, h5, h6):not(:where(.not-content *)) {
+  color: var(--sl-color-white);
+}
+
+h1#_top {
+  font-size: 2rem;
+  letter-spacing: -0.011em;
+  border-bottom: 1px solid oklch(1 0 0 / 0.09);
+  padding-bottom: 0.35em;
+}
+
+.sl-markdown-content h2:not(:where(.not-content *)) {
+  font-size: 1.5rem;
+  letter-spacing: -0.005em;
+}
+
+/* The heading itself is inline inside `.sl-heading-wrapper` (that is how the
+   anchor link sits on the same line), so the app's full-width hairline under
+   an h2 has to go on the wrapper, not on the inline heading box. */
+.sl-markdown-content .sl-heading-wrapper.level-h2 {
+  border-bottom: 1px solid oklch(1 0 0 / 0.07);
+  padding-bottom: 0.3em;
+}
+
+.sl-markdown-content h3:not(:where(.not-content *)) {
+  font-size: 1.1875rem;
+  letter-spacing: -0.005em;
+}
+
+.sl-markdown-content h4:not(:where(.not-content *)) {
+  font-size: 1.0625rem;
+}
+
+/* Headings are often written as `## \`memory init\``; the brass inline-code
+   chip must not be inherited into a heading (it would render as a button). */
+.sl-markdown-content :is(h1, h2, h3, h4, h5, h6) code:not(:where(.not-content *)) {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font-size: 0.9em;
+}
+
+/* Anchor-link marker: muted until hover, then brass. Explicit parent selectors
+   because the prose link rule above (`.sl-markdown-content a`, 0-2-0) would
+   otherwise win over a bare `.sl-anchor-link`. */
+.sl-markdown-content .sl-heading-wrapper > .sl-anchor-link {
+  color: var(--sl-color-gray-4);
+  margin-inline-start: 0.35em;
+}
+
+.sl-markdown-content .sl-heading-wrapper > .sl-anchor-link:hover {
+  color: var(--sl-color-text-accent);
+}
+
+/* ---------- prose: links — brass, restrained underline -------------------- */
+.sl-markdown-content a:not(:where(.not-content *)) {
+  color: var(--sl-color-text-accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  text-decoration-color: oklch(0.74 0.135 78 / 0.45);
+  transition: color 0.15s ease, text-decoration-color 0.15s ease;
+}
+
+.sl-markdown-content a:not(:where(.not-content *)):hover {
+  color: oklch(0.82 0.12 80);
+  text-decoration-color: var(--sl-color-text-accent);
+}
+
+/* ---------- prose: inline code — brass-tinted chip at --radius-field ------ */
+.sl-markdown-content code:not(:where(.not-content *)):not(pre code) {
+  font-size: 0.85em;
+  background-color: oklch(0.74 0.135 78 / 0.14);
+  border: 1px solid oklch(0.74 0.135 78 / 0.24);
+  color: oklch(0.82 0.09 78);
+  padding: 0.12em 0.4em;
+  border-radius: 0.25rem;
+}
+
+/* ---------- prose: fenced blocks ----------------------------------------- */
+.sl-markdown-content pre:not(:where(.not-content *)) {
+  border: 1px solid oklch(1 0 0 / 0.07);
+  border-radius: 0.5rem;
+}
+
+/* Expressive Code frame: --radius-box, base-200 body, hairline edge. */
+.expressive-code .frame {
+  --ec-frm-edBg: oklch(0.175 0.014 274);
+  --ec-frm-trmBg: oklch(0.175 0.014 274);
+}
+
+.expressive-code .frame.has-title:not(.is-terminal) .title {
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+}
+
+/* ---------- prose: blockquote — brass accent bar -------------------------- */
+.sl-markdown-content blockquote:not(:where(.not-content *)) {
+  border-inline-start: 3px solid oklch(0.74 0.135 78 / 0.55);
+  border-radius: 0 0.5rem 0.5rem 0;
+  background-color: oklch(1 0 0 / 0.035);
+  color: var(--sl-color-gray-2);
+  padding: 0.5em 1em;
+}
+
+/* ---------- prose: tables ------------------------------------------------ */
+.sl-markdown-content table:not(:where(.not-content *)) {
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.sl-markdown-content :is(th, td):not(:where(.not-content *)) {
+  border-bottom: 1px solid oklch(1 0 0 / 0.09);
+  padding: 0.5em 0.85em;
+  text-align: left;
+  vertical-align: top;
+}
+
+.sl-markdown-content thead th:not(:where(.not-content *)) {
+  background-color: oklch(1 0 0 / 0.045);
+  border-bottom: 1px solid oklch(1 0 0 / 0.16);
+  font-weight: 600;
+  color: oklch(0.93 0.008 265);
+}
+
+.sl-markdown-content tbody tr:nth-child(even) {
+  background-color: oklch(1 0 0 / 0.018);
+}
+
+.sl-markdown-content tbody tr:last-child td:not(:where(.not-content *)) {
+  border-bottom: 0;
+}
+
+/* ---------- prose: rule — warm hairline ---------------------------------- */
+.sl-markdown-content hr:not(:where(.not-content *)) {
+  border: 0;
+  border-top: 1px solid oklch(0.74 0.135 78 / 0.2);
+}
+
+/* ---------- components: cards -------------------------------------------
+   base-100 surface, hairline edge at --radius-box. Starlight tints each card's
+   icon chip from a rotating accent palette; the app has no such chips, so the
+   icon is a flat brass glyph. */
+.sl-markdown-content .card {
+  --sl-card-border: transparent;
+  --sl-card-bg: transparent;
+  border: 1px solid oklch(1 0 0 / 0.09);
+  border-radius: 0.5rem;
+  background-color: oklch(0.215 0.016 274);
+  gap: 0.75rem;
+  padding: 1.25rem 1.375rem;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.sl-markdown-content .card:hover {
+  border-color: oklch(0.74 0.135 78 / 0.35);
+  background-color: oklch(0.23 0.017 274);
+}
+
+.sl-markdown-content .card .title {
+  gap: 0.625rem;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--sl-color-white);
+}
+
+.sl-markdown-content .card .icon {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--sl-color-text-accent);
+}
+
+.card-grid {
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+}
+
+/* ---------- components: buttons -----------------------------------------
+   The app's controls are fields, not pills: --radius-field (0.25rem), brass
+   fill with `primary-content` ink. */
+.sl-link-button {
+  border-radius: 0.25rem;
+  padding: 0.5rem 0.875rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+@media (min-width: 50rem) {
+  .sl-link-button {
+    padding: 0.5rem 0.875rem;
+    font-size: 0.875rem;
+  }
+}
+
+.sl-link-button.primary {
+  background: oklch(0.74 0.135 78);
+  border-color: oklch(0.74 0.135 78);
+  color: oklch(0.2 0.04 78);
+  font-weight: 600;
+}
+
+.sl-link-button.primary:hover {
+  background: oklch(0.8 0.13 80);
+  border-color: oklch(0.8 0.13 80);
+  color: oklch(0.2 0.04 78);
+}
+
+.sl-link-button.secondary {
+  border-color: oklch(1 0 0 / 0.14);
+  color: var(--sl-color-white);
+}
+
+.sl-link-button.secondary:hover {
+  border-color: oklch(0.74 0.135 78 / 0.6);
+  color: var(--sl-color-text-accent);
+}
+
+.sl-link-button :global(svg) {
+  width: 1em;
+  height: 1em;
+}
+
+/* ---------- components: asides -----------------------------------------
+   The product palette has no purple, so map Starlight's aside family onto
+   steel (note), mint (tip), brass (caution) and error red (danger). */
+.starlight-aside {
+  border-inline-start-width: 3px;
+  border-radius: 0.5rem;
+  padding: 0.875rem 1rem;
+}
+
+.starlight-aside--note {
+  --sl-color-asides-text-accent: oklch(0.79 0.09 240);
+  --sl-color-asides-border: oklch(0.64 0.105 240);
+  background-color: oklch(0.64 0.105 240 / 0.1);
+}
+
+.starlight-aside--tip {
+  --sl-color-asides-text-accent: oklch(0.85 0.12 162);
+  --sl-color-asides-border: oklch(0.76 0.15 162);
+  background-color: oklch(0.76 0.15 162 / 0.1);
+}
+
+.starlight-aside--caution {
+  --sl-color-asides-text-accent: oklch(0.88 0.12 82);
+  --sl-color-asides-border: oklch(0.81 0.155 82);
+  background-color: oklch(0.81 0.155 82 / 0.1);
+}
+
+.starlight-aside--danger {
+  --sl-color-asides-text-accent: oklch(0.8 0.13 26);
+  --sl-color-asides-border: oklch(0.63 0.2 26);
+  background-color: oklch(0.63 0.2 26 / 0.12);
+}
+
+.starlight-aside__title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+/* ---------- components: tabs ------------------------------------------- */
+.sl-markdown-content starlight-tabs .tab > [role='tab'][aria-selected='true'] {
+  color: var(--sl-color-white);
+  border-bottom: 2px solid var(--sl-color-text-accent);
+  font-weight: 600;
+}
+
+.sl-markdown-content starlight-tabs .tab > [role='tab'] {
+  font-size: 0.875rem;
+  padding-block: 0.5rem;
+}
+
+/* ---------- components: badges ----------------------------------------- */
+.sl-badge {
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+/* ---------- splash / landing ------------------------------------------- */
+body:has(.hero) {
+  --sl-content-width: 62rem;
+}
+
+/* The API reference is a full-width app surface, not prose: drop the prose
+   column cap and let Scalar fill the viewport below the header. */
+body:has(.api-page) {
+  --sl-content-width: 96rem;
+}
+
+.api-page {
+  margin-block: 0;
+}
+
+.api-page .scalar-app,
+.api-page .scalar-container {
+  height: calc(100vh - var(--sl-nav-height) - 6rem);
+}
+
+/* Scalar ships its own dark theme and injects it at runtime (v1.78 renders
+   from `@scalar/client-side-rendering` on the CDN), so re-declaring its
+   `--scalar-*` tokens from here has no effect — verified by screenshot: the
+   page is pixel-identical with and without the overrides. Branding the
+   embedded reference needs Scalar's own theme/customCss hook; that is a
+   follow-up, not a CSS tweak. The layout rules above (full width, height) do
+   apply. */
+
+
+.hero h1 {
+  font-size: 2.5rem;
+  letter-spacing: -0.02em;
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.hero .tagline {
+  color: var(--sl-color-gray-2);
+  font-size: 1.0625rem;
+  line-height: 1.65;
+  max-width: 34rem;
+}
