@@ -701,3 +701,14 @@ func (s *Service) ListWorkItems(ctx context.Context, projectID, status, typeName
 	}
 	return items, nil
 }
+
+// FindHeadObjectByTypeAndKey returns the HEAD graph object for a type/key,
+// including properties. The source workflow dispatcher uses it to compare the
+// stored head SHA before resetting a lane to ready.
+func (s *Service) FindHeadObjectByTypeAndKey(ctx context.Context, projectID, objType, key string) (*GraphObject, error) {
+	pid, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.FindHeadByTypeAndKey(ctx, s.repo.DB(), pid, nil, objType, key)
+}

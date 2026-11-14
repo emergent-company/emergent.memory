@@ -19,12 +19,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_source_workflows_source ON kb.source_workfl
 CREATE INDEX IF NOT EXISTS idx_source_workflows_project ON kb.source_workflows (project_id);
 
 ALTER TABLE kb.source_workflows ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS source_workflows_all ON kb.source_workflows;
 CREATE POLICY source_workflows_all ON kb.source_workflows FOR ALL USING (
-    (COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text)
-    OR ((project_id)::text = current_setting('app.current_project_id'::text, true))
+    project_id = NULLIF(current_setting('app.current_project_id'::text, true), '')::uuid
 ) WITH CHECK (
-    (COALESCE(current_setting('app.current_project_id'::text, true), ''::text) = ''::text)
-    OR ((project_id)::text = current_setting('app.current_project_id'::text, true))
+    project_id = NULLIF(current_setting('app.current_project_id'::text, true), '')::uuid
 );
 
 -- +goose StatementEnd

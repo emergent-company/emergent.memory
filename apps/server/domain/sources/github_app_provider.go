@@ -250,7 +250,10 @@ func (p *githubAppProvider) ObjectTypes() *ObjectTypePack {
 			},
 			{
 				Name: "GitHubReviewLane", Label: "GitHub review lane",
-				Description: "One reviewer lane on a GitHub pull request.",
+				Description:     "One reviewer lane on a GitHub pull request.",
+				BoardEnabled:    true,
+				AllowedStatuses: []string{"ready", "in_progress", "review", "revision", "blocked", "done", "cancelled"},
+				InitialStatus:   "ready",
 				Properties: map[string]any{
 					"lane":      map[string]any{"type": "string"},
 					"agent":     map[string]any{"type": "string"},

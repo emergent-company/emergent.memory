@@ -48,6 +48,7 @@ type SourceEventDispatcher struct {
 // needs. A source without a workflow keeps the direct trigger path.
 type SourceWorkObjectStore interface {
 	CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *graph.CreateGraphObjectRequest, actorID *uuid.UUID) (*graph.GraphObjectResponse, bool, error)
+	FindHeadObjectByTypeAndKey(ctx context.Context, projectID, objType, key string) (*graph.GraphObject, error)
 }
 
 // WireSourceWorkObjectStore injects the graph service into the dispatcher.
@@ -176,6 +177,13 @@ func (d *SourceEventDispatcher) handlePullRequest(ctx context.Context, v *Verifi
 	subject := fmt.Sprintf("%s#%d", repoName, p.PullNumber())
 	if p.Action == "closed" || p.Action == "converted_to_draft" {
 		for _, src := range allowed {
+			if handled, err := d.processWorkflowEvent(ctx, src, nil, &githubapp.PullRequestState{
+				HeadSHA: p.PullRequest.Head.SHA, State: "closed",
+			}, p, subject); err != nil {
+				return err
+			} else if handled {
+				continue
+			}
 			runs, err := d.repo.CancelSourceSubjectClaims(ctx, src.ProjectID, src.ID, subject)
 			if err != nil {
 				return err
@@ -576,7 +584,7 @@ func (d *SourceEventDispatcher) processWorkflowEvent(ctx context.Context, src *S
 	}
 	parentStatus := "open"
 	laneStatus := "ready"
-	if p.Action == "closed" || p.PullRequest.State == "closed" {
+	if p.Action == "closed" || p.Action == "converted_to_draft" || p.PullRequest.State == "closed" {
 		parentStatus = "closed"
 		laneStatus = "cancelled"
 	}
@@ -587,27 +595,67 @@ func (d *SourceEventDispatcher) processWorkflowEvent(ctx context.Context, src *S
 	if _, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
 		Type: "GitHubPullRequest", Key: &parentKey, Name: &title, Status: &parentStatus, Properties: parentProps,
 	}, nil); err != nil {
-		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
+		if ev != nil {
+			d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
+		}
 		return true, err
 	}
 	for _, reviewer := range cfg.Reviewers {
 		laneKey := parentKey + ":" + reviewer.Lane
 		laneName := title + " · " + reviewer.Lane
+		status := laneStatus
+		existing, ferr := d.workObjects.FindHeadObjectByTypeAndKey(ctx, src.ProjectID.String(), "GitHubReviewLane", laneKey)
+		if ferr != nil {
+			if ev != nil {
+				d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, ferr)
+			}
+			return true, ferr
+		}
+		if existing != nil && existing.Properties != nil {
+			oldHead, _ := existing.Properties["head_sha"].(string)
+			if oldHead == state.HeadSHA {
+				// Same head: a replayed/out-of-order delivery must not reset a
+				// lane that is already running, blocked, reviewed or done.
+				if existing.Status != nil {
+					status = *existing.Status
+				}
+			} else if oldHead != "" {
+				d.cancelSubjectRuns(ctx, existing.CanonicalID.String())
+			}
+		}
 		laneProps := map[string]any{
 			"lane": reviewer.Lane, "agent": reviewer.Agent, "repo": repoName, "pr_number": p.PullNumber(),
 			"head_sha": state.HeadSHA, "base_sha": p.PullRequest.Base.SHA, "title": title,
-			"state": p.PullRequest.State, "status": laneStatus,
+			"state": p.PullRequest.State, "status": status,
 		}
 		assignee := reviewer.Agent
-		status := laneStatus
 		if _, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
 			Type: "GitHubReviewLane", Key: &laneKey, Name: &laneName, Status: &status,
 			Assignee: &assignee, Properties: laneProps,
 		}, nil); err != nil {
-			d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
+			if ev != nil {
+				d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
+			}
 			return true, err
 		}
 	}
-	d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventDispatched, nil, nil)
+	if ev != nil {
+		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventDispatched, nil, nil)
+	}
 	return true, nil
+}
+
+func (d *SourceEventDispatcher) cancelSubjectRuns(ctx context.Context, canonicalID string) {
+	if d.agents == nil || canonicalID == "" {
+		return
+	}
+	runs, err := d.agents.FindLiveRunsForSubject(ctx, canonicalID)
+	if err != nil {
+		return
+	}
+	for _, run := range runs {
+		if run != nil {
+			_, _ = d.agents.RequestRunCancellation(ctx, run.ID)
+		}
+	}
 }

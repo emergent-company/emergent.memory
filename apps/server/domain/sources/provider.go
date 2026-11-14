@@ -73,12 +73,15 @@ type ObjectTypePack struct {
 
 // ObjectTypeDefinition is one object type in a pack.
 type ObjectTypeDefinition struct {
-	Name           string
-	Label          string
-	Description    string
-	Properties     map[string]any
-	Required       []string
-	SkipExtraction bool
+	Name            string
+	Label           string
+	Description     string
+	Properties      map[string]any
+	Required        []string
+	SkipExtraction  bool
+	BoardEnabled    bool
+	AllowedStatuses []string
+	InitialStatus   string
 }
 
 // RelationshipTypeDefinition is one relationship type in a pack.
