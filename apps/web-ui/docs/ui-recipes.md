@@ -241,13 +241,13 @@ surface with no outline, passes `components.PanelCardOpt{BodyClass, Surface,
 Border}` — `Surface` and `Border` are the upstream `ui.CardSurface` /
 `ui.CardBorder` values, and each replaces the default rather than stacking an
 extra class. Never open `ui.CardRaw` from a page for that: the page-vs-component
-ratchet forbids it.
+ratchet fails on a direct `ui.CardRaw` in a root page `.templ`.
 
 **Contract:** `MetaRow` emits `<dt>` uppercase label + `<dd>` value; empty value
 falls back to `EmptyDash` unless `NoEmptyDash`.
 
 **Source:** `components/meta.templ:18,35,55,74`, `components/panel.templ:47`,
-`ui.templ:391` (`statRow`), `ui.templ:1107` (`cardList`).
+`ui.templ:392` (`statRow`), `ui.templ:1108` (`cardList`).
 
 ---
 
