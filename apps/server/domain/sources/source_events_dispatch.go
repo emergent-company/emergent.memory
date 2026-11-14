@@ -634,7 +634,7 @@ func (d *SourceEventDispatcher) processWorkflowEvent(ctx context.Context, src *S
 			}
 		}
 		laneProps := map[string]any{
-			"lane": reviewer.Lane, "agent": reviewer.Agent, "repo": repoName, "pr_number": p.PullNumber(),
+			"lane": reviewer.Lane, "agent": reviewer.Agent, "source_id": src.ID.String(), "repo": repoName, "pr_number": p.PullNumber(),
 			"head_sha": state.HeadSHA, "base_sha": p.PullRequest.Base.SHA, "title": title,
 			"state": p.PullRequest.State, "status": status,
 		}

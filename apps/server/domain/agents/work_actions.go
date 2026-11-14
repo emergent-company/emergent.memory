@@ -213,10 +213,7 @@ func (s *WorkActionService) Unblock(ctx context.Context, projectID, canonicalID,
 			SubjectObjectID:   &head.CanonicalID,
 			SubjectObjectType: &head.Type,
 			TrustedInternal:   true,
-			TriggerMetadata: map[string]any{
-				"work_trigger_event": string(EventTypeStatusChanged),
-				"work_claim_status":  head.Status,
-			},
+			TriggerMetadata:   workTriggerMetadata(head),
 		}
 		if note != "" {
 			opts.TriggerMessage = &note
@@ -490,10 +487,7 @@ func (s *WorkActionService) enqueueWorkRun(ctx context.Context, head *graph.Work
 		SubjectObjectID:   &head.CanonicalID,
 		SubjectObjectType: &head.Type,
 		TrustedInternal:   true,
-		TriggerMetadata: map[string]any{
-			"work_trigger_event": string(EventTypeStatusChanged),
-			"work_claim_status":  head.Status,
-		},
+		TriggerMetadata:   workTriggerMetadata(head),
 	}
 	if len(feedback) > 0 {
 		if opts.TriggerMetadata == nil {

@@ -396,8 +396,8 @@ func (p *WorkerPool) reenqueueWork(ctx context.Context, log *slog.Logger, agent 
 		subjectTypePtr = nil
 	}
 	meta := map[string]any{"work_trigger_event": string(EventTypeStatusChanged)}
-	if head, herr := p.workObjects.GetHeadObject(ctx, projectID, canonicalID); herr == nil && head != nil && head.Status != "" {
-		meta["work_claim_status"] = head.Status
+	if head, herr := p.workObjects.GetHeadObject(ctx, projectID, canonicalID); herr == nil && head != nil {
+		meta = workTriggerMetadata(head)
 	}
 	_, err := p.repo.CreateRunQueued(ctx, agent.ID, maxAttempts, CreateRunQueuedOptions{
 		SubjectObjectID:   &canonicalID,
