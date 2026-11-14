@@ -111,7 +111,7 @@ templ ghWizardInstall(data ghWizardPage) {
 								Message: "Could not load installation repositories: " + data.RepoLoadErr + ". Enter them manually.",
 							})
 						}
-						<textarea id="gh-repos" name="repos_text" required rows="3" class="textarea w-full font-mono text-xs" placeholder="owner/repo, one per line" data-testid="gh-wizard-repos">{ data.Repos }</textarea>
+						<textarea id="gh-repos" name="repos_text" required rows="3" class="textarea w-full font-mono text-xs" placeholder="owner/repo, one per line" data-testid="gh-wizard-repos-manual">{ data.Repos }</textarea>
 					}
 					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Only these repositories will trigger reviews. Webhooks outside the allowlist are ignored. }
 				</div>
