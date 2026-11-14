@@ -3042,6 +3042,7 @@ func (r *Repository) enqueueWorkRunInTx(ctx context.Context, tx bun.Tx, agentID 
 		TriggerMessage:    o.TriggerMessage,
 		TriggerMetadata:   o.TriggerMetadata,
 		TrustedInternal:   o.TrustedInternal,
+		SourceSubject:     o.SourceSubject,
 		SubjectObjectID:   o.SubjectObjectID,
 		SubjectObjectType: o.SubjectObjectType,
 		Tools:             []string{},

@@ -280,7 +280,13 @@ func (d *SourceEventDispatcher) processPullRequestSource(ctx context.Context, v 
 		Queue:           defaultSourceQueue(trigger.Queue),
 		TriggerMessage:  &message,
 		TriggerMetadata: metadata,
+		// Source runs are external: PR authors can open/synchronize a PR. The
+		// review tools get a narrow verified-source column instead of blanket
+		// internal trust.
 		TrustedInternal: false,
+		SourceSubject: &agents.SourceSubject{
+			SourceID: src.ID.String(), Repo: repoName, PRNumber: p.PullNumber(), HeadSHA: state.HeadSHA,
+		},
 	})
 	if err != nil {
 		_, _ = d.repo.SetSourceEventClaimState(ctx, claim.ProjectID, claim.ID, SourceClaimPending)

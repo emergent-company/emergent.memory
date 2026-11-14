@@ -321,6 +321,10 @@ func (s *Server) uiGitHubReviewWizardComplete(c echo.Context) error {
 		msg := fmt.Sprintf("source and agent created, but the runtime agent failed: %v", err)
 		return redirectWithError(c, s.dsScoped(githubWizardPath, c)+"?step=done&source="+url.QueryEscape(source.ID), errors.New(msg))
 	}
+	if err := s.ensureReviewQueue(ctx, project.ID, queue); err != nil {
+		msg := fmt.Sprintf("source and agent created, but the %s queue failed: %v", queue, err)
+		return redirectWithError(c, s.dsScoped(githubWizardPath, c)+"?step=done&source="+url.QueryEscape(source.ID), errors.New(msg))
+	}
 	if _, err := s.ensureReviewTrigger(ctx, source.ID, runtime.ID, queue); err != nil {
 		msg := fmt.Sprintf("source and agent created, but the trigger failed: %v", err)
 		return redirectWithError(c, s.dsScoped(githubWizardPath, c)+"?step=done&source="+url.QueryEscape(source.ID), errors.New(msg))
@@ -353,7 +357,13 @@ func (s *Server) ensureReviewSource(ctx context.Context, name, appID, installati
 func (s *Server) ensureReviewRuntime(ctx context.Context, projectID string, def *AgentDefinition, name string) (*RuntimeAgent, error) {
 	if agents, err := s.memory.ListRuntimeAgents(ctx, projectID); err == nil {
 		for _, agent := range agents {
-			if agent.AgentDefinitionID == def.ID && agent.Enabled {
+			if agent.AgentDefinitionID == def.ID {
+				if !agent.Enabled {
+					if err := s.memory.EnableRuntimeAgent(ctx, projectID, agent.ID); err != nil {
+						return nil, err
+					}
+					agent.Enabled = true
+				}
 				return &agent, nil
 			}
 		}
@@ -362,6 +372,21 @@ func (s *Server) ensureReviewRuntime(ctx context.Context, projectID string, def 
 		ProjectID: projectID, Name: name, StrategyType: "agent-def:" + def.ID,
 		CronSchedule: "0 0 * * *", TriggerType: "manual", AgentDefinitionID: def.ID, Enabled: true,
 	})
+}
+
+func (s *Server) ensureReviewQueue(ctx context.Context, projectID, name string) error {
+	if name == "" || name == "default" {
+		return nil
+	}
+	if queues, err := s.memory.ListAgentQueues(ctx, projectID); err == nil {
+		for _, queue := range queues {
+			if queue.Name == name {
+				return nil
+			}
+		}
+	}
+	_, err := s.memory.CreateAgentQueue(ctx, projectID, name)
+	return err
 }
 
 func (s *Server) ensureReviewTrigger(ctx context.Context, sourceID, agentID, queue string) (*DSSourceTrigger, error) {

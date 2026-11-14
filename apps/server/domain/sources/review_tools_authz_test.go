@@ -122,3 +122,26 @@ func TestGitHubAppReviewToolsReachDispatchForTrustedRun(t *testing.T) {
 	require.ErrorIs(t, err, errReviewDispatchReached)
 	require.Equal(t, 1, handler.calls)
 }
+
+// TestGitHubAppReviewToolsAllowVerifiedSourceSubject pins the narrow allowance:
+// an untrusted run carrying a dispatcher-written source subject reaches the two
+// review tools (and only those).
+func TestGitHubAppReviewToolsAllowVerifiedSourceSubject(t *testing.T) {
+	handler := &staticReviewToolsHandler{}
+	svc := &mcp.Service{}
+	svc.RegisterGitHubAppToolHandler(handler)
+
+	ctx := mcp.ContextWithRunSubject(context.Background(), mcp.RunSubject{
+		SourceID: "11111111-1111-1111-1111-111111111111", Repo: "owner/repo", PRNumber: 7,
+		HeadSHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	})
+	for _, name := range reviewToolNames {
+		_, err := svc.ExecuteTool(ctx, testReviewProjectID, name, map[string]any{})
+		require.ErrorIs(t, err, errReviewDispatchReached, "%s must reach dispatch", name)
+	}
+	require.Equal(t, 2, handler.calls)
+
+	// The marker does not make the run trusted for a different AgentOnly tool.
+	_, err := svc.ExecuteTool(ctx, testReviewProjectID, "spawn_agents", map[string]any{})
+	require.Error(t, err)
+}

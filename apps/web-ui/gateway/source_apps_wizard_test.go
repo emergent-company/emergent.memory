@@ -166,4 +166,7 @@ func TestGitHubWizardCompleteCreatesSourceAgentTrigger(t *testing.T) {
 	if f.dsCreatedTriggerReq == nil || f.dsCreatedTriggerReq.AgentID != "runtime-agent-1" {
 		t.Errorf("trigger request = %+v", f.dsCreatedTriggerReq)
 	}
+	if f.createdQueue != "security-review" {
+		t.Errorf("queue = %q, want security-review", f.createdQueue)
+	}
 }

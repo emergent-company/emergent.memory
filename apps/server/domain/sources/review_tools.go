@@ -126,6 +126,9 @@ func (h *ReviewToolHandler) ExecuteGitHubAppTool(ctx context.Context, projectID,
 	if repo == "" {
 		return nil, fmt.Errorf("sources: review tool: repo is required")
 	}
+	if err := validateReviewSubject(ctx, toolName, repo, args); err != nil {
+		return nil, err
+	}
 	src, app, err := h.resolveSource(ctx, projectUUID, repo)
 	if err != nil {
 		return nil, err
@@ -173,6 +176,11 @@ func (h *ReviewToolHandler) ExecuteGitHubAppTool(ctx context.Context, projectID,
 // through the wrong App. The fallback requires exactly one allowlist match;
 // zero or many fail closed naming what was found.
 func (h *ReviewToolHandler) resolveSource(ctx context.Context, projectID uuid.UUID, repo string) (*Source, *SourceApp, error) {
+	// Prefer the dispatcher-persisted subject's source over the run metadata
+	// sourceId, which is model-settable on spawned runs.
+	if subject, ok := mcp.RunSubjectFromContext(ctx); ok && subject.SourceID != "" {
+		return h.resolveRunSource(ctx, projectID, repo, subject.SourceID)
+	}
 	if sourceID := mcp.RunSourceIDFromContext(ctx); sourceID != "" {
 		return h.resolveRunSource(ctx, projectID, repo, sourceID)
 	}
@@ -260,6 +268,25 @@ func namedSourceCandidates(candidates []Source) string {
 		parts = append(parts, src.ID.String())
 	}
 	return strings.Join(parts, ", ")
+}
+
+func validateReviewSubject(ctx context.Context, toolName, repo string, args map[string]any) error {
+	subject, ok := mcp.RunSubjectFromContext(ctx)
+	if !ok {
+		return nil
+	}
+	if !strings.EqualFold(repo, subject.Repo) {
+		return fmt.Errorf("github app tool: repo %q does not match the triggering subject %q", repo, subject.Repo)
+	}
+	if head := stringArg(args, "head_sha"); head != "" && head != subject.HeadSHA {
+		return fmt.Errorf("github app tool: head_sha %q does not match the triggering subject %q", head, subject.HeadSHA)
+	}
+	if toolName == toolReviewSubmit {
+		if number, ok := intArg(args, "number"); ok && number != subject.PRNumber {
+			return fmt.Errorf("github app tool: PR number %d does not match the triggering subject #%d", number, subject.PRNumber)
+		}
+	}
+	return nil
 }
 
 // executePRDiff is moved verbatim from domain/githubapp/tools.go: it validates

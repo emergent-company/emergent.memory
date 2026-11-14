@@ -594,6 +594,9 @@ func callerRunIDFromContext(ctx context.Context) string {
 // authorization non-inheritable across a run boundary (issue #1133).
 func runDispatchContext(ctx context.Context, trusted bool) context.Context {
 	ctx = mcp.ContextWithoutTransportEnforced(ctx)
+	// A nested run must not inherit the parent's verified source subject. It is
+	// re-stamped only from this run's own source_subject row.
+	ctx = mcp.ContextWithoutRunSubject(ctx)
 	return mcp.ContextWithTrustedInternal(ctx, trusted)
 }
 
@@ -2641,6 +2644,13 @@ func (ae *AgentExecutor) runPipeline(
 	// non-string or empty value leaves the fallback path unchanged (issue #579).
 	if sourceID, ok := run.TriggerMetadata["sourceId"].(string); ok && sourceID != "" {
 		ctx = mcp.ContextWithRunSourceID(ctx, sourceID)
+	}
+	// The verified subject is a dispatcher-written run column, not metadata:
+	// spawned runs merge metadata but never inherit this column.
+	if subj := run.SourceSubject; subj != nil && subj.RepositoryValid() {
+		ctx = mcp.ContextWithRunSubject(ctx, mcp.RunSubject{
+			SourceID: subj.SourceID, Repo: subj.Repo, PRNumber: subj.PRNumber, HeadSHA: subj.HeadSHA,
+		})
 	}
 	// Inject session ID into context so built-in tools (e.g. set_session_title)
 	// can update session metadata. If the run was created without the session ID set

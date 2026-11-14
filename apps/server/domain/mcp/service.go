@@ -2731,8 +2731,14 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	// transport-enforced dispatch, so a transport that missed the definition
 	// cannot authorize one (authz.AuthorizeTool).
 	toolDef := s.GetToolByNameForProject(ctx, projectID, toolName)
+	trusted := TrustedInternalFromContext(ctx)
+	if !trusted {
+		if _, ok := RunSubjectFromContext(ctx); ok && isGitHubReviewTool(toolName) {
+			trusted = true
+		}
+	}
 	principal := authz.Principal{
-		Trusted:           TrustedInternalFromContext(ctx),
+		Trusted:           trusted,
 		TransportEnforced: TransportEnforcedFromContext(ctx),
 	}
 
@@ -3125,7 +3131,9 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 			// same rule in-process. This gate is defence in depth and holds even
 			// if the definition lookup ever regresses (issues #994, #1017).
 			if !TrustedInternalFromContext(ctx) {
-				return nil, fmt.Errorf("github app tool %q is not reachable from an untrusted surface", toolName)
+				if _, ok := RunSubjectFromContext(ctx); !ok {
+					return nil, fmt.Errorf("github app tool %q is not reachable from an untrusted surface", toolName)
+				}
 			}
 			return s.githubAppToolHandler.ExecuteGitHubAppTool(ctx, projectID, toolName, args)
 		}
@@ -8533,4 +8541,8 @@ func (s *Service) executeForget(ctx context.Context, projectID string, args map[
 		data["summary"] = syncResp.Summary
 	}
 	return envelopeResult(true, data, nil, "")
+}
+
+func isGitHubReviewTool(name string) bool {
+	return name == "github-pr-diff" || name == "github-review-submit"
 }
