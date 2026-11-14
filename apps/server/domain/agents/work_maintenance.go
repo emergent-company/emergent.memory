@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -599,6 +600,10 @@ func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead) 
 			TriggerMetadata: map[string]any{
 				"work_trigger_event": string(EventTypeStatusChanged),
 				"work_claim_status":  h.Status,
+				"repo":               h.Properties["repo"],
+				"prNumber":           h.Properties["pr_number"],
+				"headSha":            h.Properties["head_sha"],
+				"subjectRef":         fmt.Sprintf("%v#%v", h.Properties["repo"], h.Properties["pr_number"]),
 			},
 		}); err != nil {
 			if errors.Is(err, ErrWorkItemBusy) {

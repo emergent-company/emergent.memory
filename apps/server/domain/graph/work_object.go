@@ -24,6 +24,7 @@ type WorkObjectHead struct {
 	Status      string
 	Version     int
 	Assignee    string
+	Properties  map[string]any
 }
 
 // workObjectHead builds a WorkObjectHead from a HEAD GraphObject.
