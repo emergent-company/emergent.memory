@@ -927,6 +927,7 @@ templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields
 			{{ canSync := resourcePrompt == nil && src.ProviderType != dsProviderTypeGitHubApp }}
 			@dataSourceDetailHeader(src, providerName, canSync)
 			@flashToasts(flashMsg, flashErr)
+			<div class="flex flex-col gap-4">
 			if credentialSummary != nil && credentialSummary.PickerBlocked {
 				@dsPickerBlockedNotice(*credentialSummary)
 			} else if resourcePrompt != nil {
@@ -964,6 +965,7 @@ templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields
 			if src.ProviderType != dsProviderTypeGitHubApp {
 				@dsSyncHistory(src.ID, jobs)
 			}
+			</div>
 			if picker.ShowModal {
 				@savedCredentialModal(picker, nil)
 			}
@@ -979,7 +981,7 @@ templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields
 // the source detail page only for the trigger-only provider, whose sources have
 // no document sync to show instead.
 templ dsSourceTriggersPanel(view dsSourceTriggersView) {
-	<div class="mb-4" id="triggers" data-testid="ds-triggers">
+	<div class="scroll-mt-24" id="triggers" data-testid="ds-triggers">
 		@components.PanelCard("", nil) {
 			<div class="flex items-start gap-3">
 				@ui.IconTile("lucide--webhook", ui.IconTileProps{Tone: "info"})
@@ -1111,7 +1113,7 @@ templ dsSourceTriggerRow(view dsSourceTriggersView, trigger DSSourceTrigger) {
 // alert's third child (icon, text, action), so it reads as that banner's action
 // and sits at the banner's right edge (#462).
 templ dsResourceNeededBanner(p dsResourcePrompt) {
-	<div class="mb-4" data-testid="ds-resource-needed">
+	<div data-testid="ds-resource-needed">
 		@ui.Alert(ui.AlertProps{
 			Type:  ui.AlertWarning,
 			Style: ui.AlertStyleSoft,
@@ -1161,7 +1163,7 @@ templ dsResourceNeededBody(p dsResourcePrompt) {
 // Like the resource-needed banner, the action is the alert's third child rather
 // than a block underneath it (#462).
 templ dsPickerBlockedNotice(summary dsCredentialSummary) {
-	<div class="mb-4" data-testid="ds-picker-blocked">
+	<div data-testid="ds-picker-blocked">
 		@ui.Alert(ui.AlertProps{
 			Type:  ui.AlertWarning,
 			Style: ui.AlertStyleSoft,
@@ -1222,7 +1224,7 @@ templ dsSyncScopeChooseFolders(folders []DSFolderTarget) {
 // render.
 templ dsSyncScopeCard(src *DSIntegration, summary *dsCredentialSummary) {
 	{{ folders := dsFolders(src) }}
-	<div class="mb-4" data-testid="ds-sync-scope">
+	<div data-testid="ds-sync-scope">
 		@components.PanelCard("", nil) {
 			@components.CardHeader(components.CardHeaderProps{Action: dsSyncScopeAction(folders, summary)}) {
 				<div class="flex items-center gap-3">
@@ -1274,7 +1276,7 @@ templ dsFolderChips(folders []DSFolderTarget) {
 // which scope) is used, which account authorized the source, and which scope the
 // token actually carries.
 templ dsCredentialCard(summary dsCredentialSummary) {
-	<div class="mb-4" data-testid="ds-credentials-card">
+	<div data-testid="ds-credentials-card">
 		@components.PanelCard("", nil) {
 			<div class="flex items-center gap-3">
 				@ui.IconTile("lucide--key-round", ui.IconTileProps{Tone: "neutral"})
@@ -1662,7 +1664,7 @@ templ dsEditCard(src *DSIntegration, syncNote string, configFields, credentialFi
 // inline; older jobs arrive through the /sync-jobs/partial htmx fragment so a
 // long-lived source cannot grow the page without bound.
 templ dsSyncHistory(sourceID string, page *dsSyncHistoryView) {
-	<div class="mt-6" data-testid="ds-sync-history">
+	<div data-testid="ds-sync-history">
 		@components.PanelCard("", nil) {
 			<div class="flex flex-wrap items-center justify-between gap-2">
 				<div class="flex items-center gap-3">

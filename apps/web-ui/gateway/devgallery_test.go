@@ -247,7 +247,7 @@ func TestNeedsFixtureFlag(t *testing.T) {
 
 	// LinkRow dereferences its leading component; a nil slot panics.
 	panicR := GalleryEntry{ID: "panic", Render: func() templ.Component {
-		return components.LinkRow(templ.SafeURL("#"), nil, "", "")
+		return components.LinkRow(templ.SafeURL("#"), nil, "", "", components.LinkRowOpts{})
 	}}
 	if !panicR.NeedsFixture() {
 		t.Error("nil-slot panic render should be flagged needs fixture")

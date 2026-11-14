@@ -87,7 +87,10 @@ templ AgentsPage(agents []AgentDefinitionSummary, models []Model, defaultModel s
 ```
 
 Desktop rows: `components.TableCard` → go-daisy `table.*`; mobile rows:
-`components.ListRow` (`components/list.templ:10`). Both wrap `PageCard`.
+`components.LinkRow` (`components/list.templ:38`) — the anchor covers the
+leading/title/meta block, and the row's trailing controls (a menu, a delete
+form) and its `LinkRowOpts.Details` band render outside it, because an `<a>` may
+not contain a form or a second link. Both wrap `PageCard`.
 
 **Contract:** main root carries `data-testid="page-<title-slug>"` (`pageTestID`,
 `ui.go:48`); a create button routes to `…/new`; empty state names the collection.
@@ -119,14 +122,16 @@ templ documentsResults(data documentPageData) {
 ```
 
 `filterFormAttrs` supplies `hx-get` + `hx-target` + `hx-swap="outerHTML"` +
-`hx-push-url` + `hx-trigger="change, submit"` (`selectFilterFormAttrs` for a form
-that also has a text field, `submitFilterFormAttrs` for a query form). Never wire
-a control with `onchange="this.form.submit()"`: it bypasses htmx and reloads the
-page.
+`hx-push-url` + `hx-indicator="#<region>-loading"` + `hx-trigger="change,
+submit"` (`selectFilterFormAttrs` for a form that also has a text field,
+`submitFilterFormAttrs` for a query form). The indicator id derives from the
+region, so every control that refreshes the region drives the one spinner it
+renders. Never wire a control with `onchange="this.form.submit()"`: it bypasses
+htmx and reloads the page.
 
 **Source:** `ui.templ:312` (`AgentsPage`), `ui.templ:939` (`pageHeader`),
 `ui.templ:265` (`pageErrorNotice`), `components/table.templ:10`,
-`components/list.templ:10`, `ui.templ:445` (`agentsTable`),
+`components/list.templ:38`, `ui.templ:445` (`agentsTable`),
 `gateway/list_filters.go`, `gateway/documents.templ` (`documentsToolbar`,
 `documentsResults`, `documentsResultsFragment`).
 
@@ -605,7 +610,7 @@ client code uses `MemoryApp.toast(kind, message)`. Failures pass `kind="error"`.
 
 | Pattern | Primary source |
 |---|---|
-| `layout.list` | `ui.templ:312,939,445`; `components/table.templ:10`; `components/list.templ:10` |
+| `layout.list` | `ui.templ:312,939,445`; `components/table.templ:10`; `components/list.templ:38` |
 | `layout.detail` | `ui.templ:984,963`; `components/nav.templ:10,34,47`; `schedules.templ:197` |
 | `layout.settings-rail` | `project_settings.templ:35`; `agent.templ:39`; `components/nav.templ:34` |
 | `layout.card-grid` | `components/meta.templ:18,35,55,74`; `components/panel.templ:47` |

@@ -151,7 +151,6 @@ func objectsFormAttrs(data objectsPageData, onChange bool, action string) templ.
 	} else {
 		attrs = submitFilterFormAttrs(action, objectsResultsRegion)
 	}
-	attrs["hx-indicator"] = "#objects-results-loading"
 	attrs["data-objects-list-refresh"] = "true"
 	return attrs
 }
