@@ -9,6 +9,9 @@ import (
 )
 
 // renderHTML renders a component into a string for assertion.
+//
+// Rendered without go-daisy dev mode: these tests pin the component's own
+// markup, and annotation is a runtime layer the gateway adds per request.
 func renderHTML(t *testing.T, c templ.Component) string {
 	t.Helper()
 	var buf bytes.Buffer

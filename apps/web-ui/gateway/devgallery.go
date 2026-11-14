@@ -12,6 +12,7 @@ import (
 	"github.com/a-h/templ"
 	"github.com/emergent-company/emergent.memory/apps/web-ui/webui"
 	alpine "github.com/emergent-company/go-daisy/components/alpine"
+	"github.com/emergent-company/go-daisy/devmode"
 	"github.com/emergent-company/go-daisy/render"
 	"github.com/labstack/echo/v4"
 )
@@ -313,6 +314,10 @@ func (s *Server) uiComponentPreview(c echo.Context) error {
 // renderSafe renders c into a string, recovering from a panic (a nil-slot
 // fixture panics rather than returning an error). The second return reports
 // whether a panic occurred.
+//
+// The gallery is a dev tool, so it renders in go-daisy dev mode: the sandboxed
+// fixtures it embeds keep their data-component annotation, which is what the
+// gallery's overlay reads.
 func renderSafe(c templ.Component) (html string, panicked bool) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -321,7 +326,7 @@ func renderSafe(c templ.Component) (html string, panicked bool) {
 	}()
 	var b strings.Builder
 	if c != nil {
-		_ = c.Render(context.Background(), &b)
+		_ = c.Render(devmode.WithDevMode(context.Background()), &b)
 	}
 	return b.String(), false
 }

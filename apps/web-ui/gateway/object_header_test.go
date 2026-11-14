@@ -24,7 +24,7 @@ func objectHeaderLeadFixture() objectHeaderProps {
 // identity line, and the object's name as the page's h1 — the shape the object
 // page and the wiki both lead with.
 func TestObjectHeaderLeadVariant(t *testing.T) {
-	html := renderHTML(t, objectHeader(objectHeaderLeadFixture()))
+	html := renderHTMLDev(t, objectHeader(objectHeaderLeadFixture()))
 
 	for _, want := range []string{
 		`data-component="gateway/ObjectHeader"`,
@@ -57,7 +57,7 @@ func TestObjectHeaderLeadVariant(t *testing.T) {
 // caller supplies an href, plain text when it already owns the anchor, and a
 // resolved neighbour is never dimmed.
 func TestObjectHeaderRowVariant(t *testing.T) {
-	linked := renderHTML(t, objectHeader(objectHeaderProps{
+	linked := renderHTMLDev(t, objectHeader(objectHeaderProps{
 		Variant: objectHeaderRow,
 		Type:    "task",
 		Ref:     "TASK-1",
@@ -78,7 +78,7 @@ func TestObjectHeaderRowVariant(t *testing.T) {
 		t.Error("a resolved row must not be marked unresolved")
 	}
 
-	plain := renderHTML(t, objectHeader(objectHeaderProps{
+	plain := renderHTMLDev(t, objectHeader(objectHeaderProps{
 		Variant: objectHeaderRow,
 		Type:    "task",
 		Ref:     "TASK-1",
@@ -100,7 +100,7 @@ func TestObjectHeaderRowVariant(t *testing.T) {
 // TestObjectHeaderUnresolvedRow pins the unresolved neighbour: dimmed, unlinked,
 // and marked so a reader can tell a graph gap from a real object.
 func TestObjectHeaderUnresolvedRow(t *testing.T) {
-	html := renderHTML(t, objectHeader(objectHeaderProps{
+	html := renderHTMLDev(t, objectHeader(objectHeaderProps{
 		Variant:    objectHeaderRow,
 		Type:       "task",
 		Ref:        "TASK-1",
@@ -124,7 +124,7 @@ func TestObjectHeaderUnresolvedRow(t *testing.T) {
 // incoming arrow, an outgoing one, and nothing at all when the row is not inside
 // a direction-bearing section.
 func TestObjectHeaderRowDirection(t *testing.T) {
-	in := renderHTML(t, objectHeader(objectHeaderProps{Variant: objectHeaderRow, Type: "task", Label: "A", Direction: "in"}))
+	in := renderHTMLDev(t, objectHeader(objectHeaderProps{Variant: objectHeaderRow, Type: "task", Label: "A", Direction: "in"}))
 	if !strings.Contains(in, "lucide--arrow-left") {
 		t.Errorf("incoming row missing its arrow:\n%s", in)
 	}
@@ -132,12 +132,12 @@ func TestObjectHeaderRowDirection(t *testing.T) {
 		t.Errorf("incoming arrow must be labelled for assistive tech:\n%s", in)
 	}
 
-	out := renderHTML(t, objectHeader(objectHeaderProps{Variant: objectHeaderRow, Type: "task", Label: "B", Direction: "out"}))
+	out := renderHTMLDev(t, objectHeader(objectHeaderProps{Variant: objectHeaderRow, Type: "task", Label: "B", Direction: "out"}))
 	if !strings.Contains(out, "lucide--arrow-right") {
 		t.Errorf("outgoing row missing its arrow:\n%s", out)
 	}
 
-	flat := renderHTML(t, objectHeader(objectHeaderProps{Variant: objectHeaderRow, Type: "task", Label: "C"}))
+	flat := renderHTMLDev(t, objectHeader(objectHeaderProps{Variant: objectHeaderRow, Type: "task", Label: "C"}))
 	if strings.Contains(flat, "arrow-left") || strings.Contains(flat, "arrow-right") {
 		t.Errorf("a row outside a directed section must not claim a direction:\n%s", flat)
 	}
@@ -163,7 +163,7 @@ func TestObjectDisplayRef(t *testing.T) {
 // and a browse card all introduce an object with the same two components, so no
 // surface can drift into its own private head again.
 func TestObjectHeaderIsReusedAcrossObjectSurfaces(t *testing.T) {
-	wiki := renderHTML(t, objectWikiPage(objectWikiPageData{
+	wiki := renderHTMLDev(t, objectWikiPage(objectWikiPageData{
 		Obj:  &GraphObject{ID: "o1", Type: "note", Key: "Deed", Properties: map[string]any{"summary": "A short lead."}},
 		View: objectWikiViewPage,
 		Sections: []objectViewSection{{
@@ -181,7 +181,7 @@ func TestObjectHeaderIsReusedAcrossObjectSurfaces(t *testing.T) {
 	}
 
 	obj := &GraphObject{ID: "o1", Type: "note", Ref: "note-1", Key: "Deed", Properties: map[string]any{"summary": "A short lead."}}
-	classic := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, map[string]typeUI{"note": {Icon: "notebook"}}, nil, nil, "Note", 0, nil))
+	classic := renderHTMLDev(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, map[string]typeUI{"note": {Icon: "notebook"}}, nil, nil, "Note", 0, nil))
 	if !strings.Contains(classic, `data-component="gateway/ObjectHeader"`) {
 		t.Error("the object page head must be the shared object header")
 	}
@@ -201,7 +201,7 @@ func TestObjectHeaderIsReusedAcrossObjectSurfaces(t *testing.T) {
 	related := []GraphObject{neighbour}
 	edges := []GraphRelationship{{ID: "r1", Type: "serves", SrcID: "u1", DstID: "o1"}}
 	typeUIByType := map[string]typeUI{"UtilityService": {Icon: "zap", Color: "#F59E0B"}}
-	relationships := renderHTML(t, objectRelationshipsPage(
+	relationships := renderHTMLDev(t, objectRelationshipsPage(
 		objectDetailShellData{Obj: obj, Active: "relationships", TypeUIByType: typeUIByType},
 		nil, edges, related, nil,
 	))
@@ -212,7 +212,7 @@ func TestObjectHeaderIsReusedAcrossObjectSurfaces(t *testing.T) {
 		t.Errorf("endpoint blocks rendered %d times, want 2 (both ends of one edge)", got)
 	}
 
-	cards := renderHTML(t, ObjectsPage(objectsBrowserSampleData("")))
+	cards := renderHTMLDev(t, ObjectsPage(objectsBrowserSampleData("")))
 	wantCards := len(objectsBrowserSampleData("").Objects)
 	if got := strings.Count(cards, `data-testid="object-card"`); got != wantCards {
 		t.Fatalf("cards rendered %d, want %d", got, wantCards)

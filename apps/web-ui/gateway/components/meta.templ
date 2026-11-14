@@ -1,6 +1,10 @@
 package components
 
-import "cmp"
+import (
+	"cmp"
+
+	"github.com/emergent-company/go-daisy/devmode"
+)
 
 // MetaRowOpts tunes a MetaRow.
 type MetaRowOpts struct {
@@ -20,7 +24,7 @@ templ MetaRow(label, value string, opts ...MetaRowOpts) {
 	if len(opts) > 0 {
 		o = opts[0]
 	} }}
-	<div>
+	<div { devmode.Attrs(ctx, "components/MetaRow")... }>
 		<dt class="text-muted-faint text-[11px] font-medium tracking-wide uppercase">{ label }</dt>
 		<dd class="text-base-content mt-1 text-sm break-words">
 			@metaRowValue(value, o)
@@ -33,7 +37,7 @@ templ MetaRow(label, value string, opts ...MetaRowOpts) {
 // accepted for symmetry with MetaRow; the slot content is always rendered, so
 // NoEmptyDash has no effect here.
 templ MetaRowCustom(label string, opts ...MetaRowOpts) {
-	<div>
+	<div { devmode.Attrs(ctx, "components/MetaRowCustom")... }>
 		<dt class="text-muted-faint text-[11px] font-medium tracking-wide uppercase">{ label }</dt>
 		<dd class="text-base-content mt-1 text-sm break-words">
 			{ children... }
@@ -53,7 +57,7 @@ templ metaRowValue(value string, o MetaRowOpts) {
 
 // EmptyDash renders the muted em-dash fallback for an absent value.
 templ EmptyDash() {
-	<span class="text-muted-subtle text-sm">—</span>
+	<span { devmode.Attrs(ctx, "components/EmptyDash")... } class="text-muted-subtle text-sm">—</span>
 }
 
 // MetaGridOpts tunes a MetaGrid definition-list grid.
@@ -80,7 +84,7 @@ templ MetaGrid(opts ...MetaGridOpts) {
 	if o.ColsClass != "" {
 		class += " " + o.ColsClass
 	} }}
-	<dl class={ class }>
+	<dl { devmode.Attrs(ctx, "components/MetaGrid")... } class={ class }>
 		{ children... }
 	</dl>
 }

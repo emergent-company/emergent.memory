@@ -875,11 +875,18 @@ func main() {
 	}
 }
 
-// componentAnnotations marks every render context as go-daisy dev mode so the
-// library's components emit data-component="pkg/Component" on their root
-// elements. The element-level feedback overlay reads that attribute to name the
-// component (and build its hierarchy picker) instead of falling back to a raw
-// CSS selector. Always on: emitted names only, no data-props.
+// componentAnnotations marks every render context as go-daisy dev mode so
+// components emit data-component="pkg/Component" on their root elements. The
+// element-level feedback overlay reads that attribute to name the component (and
+// build its hierarchy picker) instead of falling back to a raw CSS selector.
+// Always on: emitted names only, no data-props.
+//
+// This middleware is the single switch for the whole annotation contract. No
+// templ file hardcodes the attribute: gateway chrome and components/* call
+// devmode.Attrs(ctx, …), which emits nothing when this flag is absent. Removing
+// this middleware (or making it conditional) therefore turns annotation off in
+// one place and consistently — go-daisy's components and ours together — rather
+// than leaving a hand-annotated minority behind.
 func componentAnnotations() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {

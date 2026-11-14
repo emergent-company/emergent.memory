@@ -2,6 +2,7 @@ package components
 
 import (
 	ui "github.com/emergent-company/go-daisy/components/ui"
+	"github.com/emergent-company/go-daisy/devmode"
 )
 
 // HelpTipProps configures a HelpTip.
@@ -47,7 +48,7 @@ templ HelpTip(tip string, props ...HelpTipProps) {
 		triggerAttrs["role"] = "note"
 		triggerAttrs["aria-label"] = tip
 	} }}
-	<span class={ "tooltip tooltip-" + pos } data-tip={ tip } { triggerAttrs... }>
+	<span { devmode.Attrs(ctx, "components/HelpTip")... } class={ "tooltip tooltip-" + pos } data-tip={ tip } { triggerAttrs... }>
 		@ui.IconSpan("lucide--info", "size-3.5 shrink-0 text-base-content/40 cursor-help")
 	</span>
 	if p.ID != "" {
