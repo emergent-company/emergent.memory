@@ -626,7 +626,6 @@ func (s *Server) dsAttachSourceAppSelect(ctx context.Context, providerType strin
 type dsWorkflowLaneRow struct {
 	Lane       string
 	Agent      string
-	AgentID    string
 	AgentFound bool
 	RuleReady  bool
 	Queue      string
@@ -649,15 +648,20 @@ func (s *Server) workflowLaneRows(ctx context.Context, wf *SourceWorkflow) []dsW
 	queues, _ := s.memory.ListAgentQueues(ctx, queueProject)
 	queueSet := make(map[string]bool, len(queues))
 	for _, q := range queues {
-		queueSet[q.Name] = true
+		if q.Enabled {
+			queueSet[q.Name] = true
+		}
 	}
 	rows := make([]dsWorkflowLaneRow, 0, len(wf.Config.Reviewers))
 	for _, r := range wf.Config.Reviewers {
 		row := dsWorkflowLaneRow{Lane: r.Lane, Agent: r.Agent}
 		if d, ok := byName[r.Agent]; ok {
-			row.AgentFound = true
-			row.AgentID = d.ID
+			row.AgentFound = d.Enabled
 			if full, err := s.memory.GetAgentDefinition(ctx, d.ID); err == nil && full != nil && full.WorkConfig != nil {
+				if len(full.WorkConfig.ObjectRules) == 0 {
+					// Legacy pickup: ready is always allowed when no object rules exist.
+					row.RuleReady = true
+				}
 				for _, rule := range full.WorkConfig.ObjectRules {
 					if rule.ObjectType != "GitHubReviewLane" {
 						continue
