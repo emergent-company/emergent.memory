@@ -581,14 +581,7 @@ func TestRenderDocumentsPage(t *testing.T) {
 		}
 	}
 	// #57: the search-form submit button uses the default (md) size, not btn-sm.
-	searchAt := strings.Index(html, `data-testid="documents-search-form"`)
-	if searchAt < 0 {
-		t.Fatal("search form missing")
-	}
-	searchForm := html[searchAt:]
-	if end := strings.Index(searchForm, "</form>"); end >= 0 {
-		searchForm = searchForm[:end]
-	}
+	searchForm := formSlice(t, html, "documents-search-form")
 	if strings.Contains(searchForm, "btn-sm") {
 		t.Error("documents search button should not be btn-sm (it uses ui.ButtonMD)")
 	}
@@ -632,12 +625,29 @@ func TestRenderDocumentsBrowser(t *testing.T) {
 		`hx-swap="beforeend"`,
 		`/documents/partial?cursor=abc123`,
 		"Newest first",
-		// every filter control that refreshes the region drives the one spinner
-		// the contract requires (#744)
-		`hx-indicator="#documents-results-loading"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("documents browser missing %q", want)
+		}
+	}
+
+	// #744: every control that refreshes the results region must name that
+	// region's spinner. Without hx-indicator htmx marks the control that fired
+	// the request, so a filtered list swaps with no loading state. Asserted per
+	// control: one form carrying the attribute must not hide another's omission.
+	for _, testid := range []string{"documents-search-form", "documents-filter-form"} {
+		if form := formSlice(t, html, testid); !strings.Contains(form, `hx-indicator="#documents-results-loading"`) {
+			t.Errorf("%s is missing hx-indicator=\"#documents-results-loading\"", testid)
+		}
+	}
+	// The sort headers are links, not form controls, and drive the same region.
+	sortHeaders := startTagsWith(html, `href="/documents?sort=`)
+	if len(sortHeaders) == 0 {
+		t.Error("no sortable header link rendered")
+	}
+	for _, tag := range sortHeaders {
+		if !strings.Contains(tag, `hx-indicator="#documents-results-loading"`) {
+			t.Errorf("sort header missing the results-region indicator: %s", tag)
 		}
 	}
 
@@ -691,6 +701,9 @@ func TestRenderDocumentsMobileRowsUseLinkRow(t *testing.T) {
 		dataHrefs        int
 		formsInAnchor    int
 		nestedAnchorHits int
+		inRowAnchor      bool
+		rowText          strings.Builder
+		rowAnchorTexts   []string
 	)
 	z := html.NewTokenizer(strings.NewReader(region))
 	for {
@@ -702,6 +715,10 @@ func TestRenderDocumentsMobileRowsUseLinkRow(t *testing.T) {
 			break
 		}
 		switch tt {
+		case html.TextToken:
+			if inRowAnchor {
+				rowText.Write(z.Text())
+			}
 		case html.StartTagToken, html.SelfClosingTagToken:
 			name, _ := z.TagName()
 			attrs := tokenAttrs(z)
@@ -718,6 +735,10 @@ func TestRenderDocumentsMobileRowsUseLinkRow(t *testing.T) {
 				}
 				if strings.HasPrefix(attrs["href"], "/documents/") {
 					rowLinks++
+					if tt == html.StartTagToken {
+						inRowAnchor = true
+						rowText.Reset()
+					}
 				}
 				if strings.HasPrefix(attrs["href"], "/data-sources/") {
 					sourceLinks++
@@ -733,6 +754,10 @@ func TestRenderDocumentsMobileRowsUseLinkRow(t *testing.T) {
 		case html.EndTagToken:
 			if name, _ := z.TagName(); string(name) == "a" && anchorDepth > 0 {
 				anchorDepth--
+				if inRowAnchor {
+					rowAnchorTexts = append(rowAnchorTexts, rowText.String())
+					inRowAnchor = false
+				}
 			}
 		}
 	}
@@ -756,6 +781,23 @@ func TestRenderDocumentsMobileRowsUseLinkRow(t *testing.T) {
 	if nestedAnchorHits != 0 {
 		t.Errorf("%d anchors nest inside a row anchor", nestedAnchorHits)
 	}
+	// Non-vacuous: a row anchor must carry that document's name and chunk count.
+	// Counting anchors alone would pass for rows whose LinkRow title or meta was
+	// dropped, which is exactly what the phone row regressed to before #744.
+	for _, r := range documentsTestPage().Rows {
+		name, meta := r.Name, documentMobileMeta(r)
+		var carrying bool
+		for _, text := range rowAnchorTexts {
+			flat := strings.Join(strings.Fields(text), " ")
+			if strings.Contains(flat, name) && strings.Contains(flat, meta) {
+				carrying = true
+				break
+			}
+		}
+		if !carrying {
+			t.Errorf("no row anchor carries %q + %q; anchors = %q", name, meta, rowAnchorTexts)
+		}
+	}
 }
 
 // tokenAttrs drains the current start tag's attributes into a map.
@@ -767,6 +809,42 @@ func tokenAttrs(z *html.Tokenizer) map[string]string {
 		if !more {
 			return attrs
 		}
+	}
+}
+
+// formSlice returns the markup of the form carrying testid, from the attribute
+// through its closing </form>, so an assertion about a control cannot be
+// satisfied by a sibling form that happens to render the same attribute.
+func formSlice(t *testing.T, markup, testid string) string {
+	t.Helper()
+	start := strings.Index(markup, `data-testid="`+testid+`"`)
+	if start < 0 {
+		t.Fatalf("%s not found", testid)
+	}
+	end := strings.Index(markup[start:], "</form>")
+	if end < 0 {
+		t.Fatalf("%s closing tag not found", testid)
+	}
+	return markup[start : start+end]
+}
+
+// startTagsWith returns every start tag in markup that contains needle, from
+// its "<" to its ">". It scopes an attribute assertion to the element that
+// renders it rather than the first match anywhere in the document.
+func startTagsWith(markup, needle string) []string {
+	var tags []string
+	for from := 0; ; {
+		at := strings.Index(markup[from:], needle)
+		if at < 0 {
+			return tags
+		}
+		at += from
+		start := strings.LastIndex(markup[:at], "<")
+		end := strings.Index(markup[at:], ">")
+		if start >= 0 && end >= 0 {
+			tags = append(tags, markup[start:at+end])
+		}
+		from = at + len(needle)
 	}
 }
 

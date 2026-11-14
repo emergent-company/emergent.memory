@@ -30,7 +30,13 @@ type LinkRowOpts struct {
 // (#744). Section semantics are the caller's: the row is a plain block, so it
 // can be the child of a card list or any other container.
 templ LinkRow(href templ.SafeURL, leading templ.Component, title, meta string, opts LinkRowOpts) {
-	<div { devmode.Attrs(ctx, "components/LinkRow")... } class="transition-colors hover:bg-base-200/50" { opts.Attrs... }>
+	{{ rowClass := "transition-colors hover:bg-base-200/50" }}
+	if _, clickable := opts.Attrs["data-href"]; clickable {
+		// A row that the shell makes clickable (data-href) is a tap target
+		// beyond its anchor, so it advertises that with a pointer.
+		rowClass += " cursor-pointer"
+	}
+	<div { devmode.Attrs(ctx, "components/LinkRow")... } class={ rowClass } { opts.Attrs... }>
 		<div class="flex items-center gap-3 pr-4">
 			<a class="flex min-w-0 grow items-center gap-3 py-3 pl-4" href={ href }>
 				@leading

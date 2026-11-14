@@ -18,15 +18,7 @@ func TestDocumentsStatusFilterIsSelect(t *testing.T) {
 	data.Order = documentOrderAsc
 
 	html := renderHTML(t, DocumentsPage(data))
-	start := strings.Index(html, `data-testid="documents-filter-form"`)
-	if start < 0 {
-		t.Fatal("filter form not found")
-	}
-	end := strings.Index(html[start:], "</form>")
-	if end < 0 {
-		t.Fatal("filter form closing tag not found")
-	}
-	form := html[start : start+end]
+	form := formSlice(t, html, "documents-filter-form")
 
 	if strings.Contains(html, `data-testid="documents-status-tabs"`) {
 		t.Error("the old status tab strip must be gone")
