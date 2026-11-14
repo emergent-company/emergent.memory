@@ -280,10 +280,10 @@ func (d *SourceEventDispatcher) processPullRequestSource(ctx context.Context, v 
 		Queue:           defaultSourceQueue(trigger.Queue),
 		TriggerMessage:  &message,
 		TriggerMetadata: metadata,
-		// The delivery was HMAC-verified and the trigger was configured by a
-		// project admin, so review tools may run on this surface; an externally
-		// callable transport must never set this.
-		TrustedInternal: true,
+		// Source runs are external: PR authors can open/synchronize a PR. The
+		// review tools get a narrow verified-source marker from the run metadata
+		// instead of blanket internal trust.
+		TrustedInternal: false,
 	})
 	if err != nil {
 		_, _ = d.repo.SetSourceEventClaimState(ctx, claim.ProjectID, claim.ID, SourceClaimPending)

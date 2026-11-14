@@ -2641,6 +2641,18 @@ func (ae *AgentExecutor) runPipeline(
 	// non-string or empty value leaves the fallback path unchanged (issue #579).
 	if sourceID, ok := run.TriggerMetadata["sourceId"].(string); ok && sourceID != "" {
 		ctx = mcp.ContextWithRunSourceID(ctx, sourceID)
+		// Only a dispatch-shaped source run carries the verified subject. This
+		// marker is what makes the review tools callable without blanket trust.
+		if deliveryID, _ := run.TriggerMetadata["deliveryId"].(string); deliveryID != "" {
+			repo, _ := run.TriggerMetadata["repo"].(string)
+			headSHA, _ := run.TriggerMetadata["headSha"].(string)
+			prNumber := intMetadata(run.TriggerMetadata["prNumber"])
+			if repo != "" && headSHA != "" && prNumber > 0 {
+				ctx = mcp.ContextWithRunSubject(ctx, mcp.RunSubject{
+					SourceID: sourceID, Repo: repo, PRNumber: prNumber, HeadSHA: headSHA,
+				})
+			}
+		}
 	}
 	// Inject session ID into context so built-in tools (e.g. set_session_title)
 	// can update session metadata. If the run was created without the session ID set
@@ -5847,4 +5859,20 @@ func ptrUUID(s string) *uuid.UUID {
 		return nil
 	}
 	return &id
+}
+
+func intMetadata(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	case json.Number:
+		i, _ := n.Int64()
+		return int(i)
+	default:
+		return 0
+	}
 }

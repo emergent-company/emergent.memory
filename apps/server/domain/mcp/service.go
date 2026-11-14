@@ -3125,7 +3125,9 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 			// same rule in-process. This gate is defence in depth and holds even
 			// if the definition lookup ever regresses (issues #994, #1017).
 			if !TrustedInternalFromContext(ctx) {
-				return nil, fmt.Errorf("github app tool %q is not reachable from an untrusted surface", toolName)
+				if _, ok := RunSubjectFromContext(ctx); !ok {
+					return nil, fmt.Errorf("github app tool %q is not reachable from an untrusted surface", toolName)
+				}
 			}
 			return s.githubAppToolHandler.ExecuteGitHubAppTool(ctx, projectID, toolName, args)
 		}

@@ -109,7 +109,7 @@ func TestSourceEventDispatcher(t *testing.T) {
 	require.NoError(t, db.DB.NewSelect().Model(&run).Where("id = ?", claim.RunID.String()).Scan(ctx))
 	require.Equal(t, sourceID.String(), run.TriggerMetadata["sourceId"])
 	require.Equal(t, "owner/repo#7", run.TriggerMetadata["subjectRef"])
-	require.True(t, run.TrustedInternal, "a verified source-trigger run must be trusted for agent-only review tools")
+	require.False(t, run.TrustedInternal, "source-trigger runs stay externally untrusted")
 
 	// Duplicate delivery is a no-op.
 	require.NoError(t, deliver("d1", payload("opened", currentHead)))
