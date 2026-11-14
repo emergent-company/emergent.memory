@@ -14,8 +14,10 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/emergent-company/emergent.memory/domain/githubapp"
+	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 const (
@@ -403,7 +405,7 @@ func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *git
 		if verdict == "CHANGES_REQUESTED" {
 			laneStatus = "revision"
 		}
-		_, _ = h.workItems.UpdateWorkObjectStatus(ctx, projectID, canonicalID, laneStatus, "review")
+		_, _ = h.workItems.UpdateWorkObjectStatus(auth.WithActor(ctx, graph.ActorSystem, nil), projectID, canonicalID, laneStatus, "review")
 	}
 	return &mcp.ToolResult{
 		Content: []mcp.ContentBlock{{Type: "text", Text: fmt.Sprintf("%s posted for %s#%d at %s", verdict, repo, number, headSHA)}},
