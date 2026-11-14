@@ -51,21 +51,32 @@ func pageCardRawBudget() []pageCardRawBudgetEntry {
 // ui.CardRawProps-like symbols cannot false-positive).
 var uiCardRawRE = regexp.MustCompile(`\bui\.CardRaw\b`)
 
-// checkPageCardRaw asserts that the number of direct ui.CardRaw call sites in
-// each page-level authored .templ file matches the budget exactly, in both
-// directions, and that every budget entry carries a justification note.
+// checkPageCardRaw asserts that every budget entry carries a justification note
+// and that the number of direct ui.CardRaw call sites in each page-level
+// authored .templ file matches the budget exactly, in both directions.
 func checkPageCardRaw(t *testing.T) {
-	for _, finding := range pageCardRawNoteFindings(pageCardRawBudget()) {
-		t.Error(finding)
-	}
-
-	actual, examples, err := pageCardRawCounts()
+	findings, err := pageCardRawRatchetFindings(pageCardRawBudget())
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
-	for _, finding := range pageCardRawFindings(actual, examples, pageCardRawBudget()) {
+	for _, finding := range findings {
 		t.Error(finding)
 	}
+}
+
+// pageCardRawRatchetFindings is the whole gate for one budget: the note guard
+// plus the count check. Kept separate from checkPageCardRaw (and taking the
+// budget as an argument) so a test can drive the exact code path the ratchet
+// runs with a synthetic note-less entry — a test that only called the helpers
+// would stay green if the wiring below were deleted.
+func pageCardRawRatchetFindings(budget []pageCardRawBudgetEntry) ([]string, error) {
+	findings := pageCardRawNoteFindings(budget)
+
+	actual, examples, err := pageCardRawCounts()
+	if err != nil {
+		return nil, err
+	}
+	return append(findings, pageCardRawFindings(actual, examples, budget)...), nil
 }
 
 // pageCardRawCounts counts ui.CardRaw occurrences per page-level .templ basename
@@ -102,13 +113,19 @@ func pageCardRawFindings(actual, examples map[string]int, budgetEntries []pageCa
 	}
 
 	var findings []string
+	// A count below 1 can never match (an absent file reports !aOK), and an entry
+	// that allows nothing is a contradiction: report it separately so it also
+	// surfaces alongside any count finding for the same file.
+	for _, b := range budgetEntries {
+		if b.count < 1 {
+			findings = append(findings, fmt.Sprintf("page-card-raw: budget entry %s declares count %d — an entry exists to allow at least one site, so delete it instead of budgeting zero",
+				b.file, b.count))
+		}
+	}
 	for _, file := range sortedPageCardRawFiles(actual, budget) {
 		a, aOK := actual[file]
 		b, bOK := budget[file]
 		switch {
-		case bOK && b.count < 1:
-			findings = append(findings, fmt.Sprintf("page-card-raw: budget entry %s declares count %d — an entry exists to allow at least one site, so delete it instead of budgeting zero",
-				file, b.count))
 		case !bOK:
 			findings = append(findings, fmt.Sprintf("page-card-raw: page %s opens the raw ui.CardRaw shell at line %d (%d occurrence%s) — render components.PanelCard / components.TableCard, or budget the site with a justification note in pageCardRawBudget",
 				file, examples[file], a, pluralS(a)))
@@ -172,11 +189,17 @@ func TestPageCardRawConsistencyRatchet(t *testing.T) {
 }
 
 // TestPageCardRawBudgetRequiresNote proves the note guard is wired into the real
-// check path: a budget entry with an empty note must produce a finding, and the
-// shipped budget must produce none.
+// gate: it drives pageCardRawRatchetFindings — the exact function
+// TestPageCardRawConsistencyRatchet asserts on — with a note-less entry, so
+// deleting the guard from that function fails this test. The shipped budget must
+// produce no note finding.
 func TestPageCardRawBudgetRequiresNote(t *testing.T) {
-	if got := pageCardRawNoteFindings(pageCardRawBudget()); len(got) != 0 {
-		t.Fatalf("shipped page-card-raw budget has entries without a justification note: %v", got)
+	findings, err := pageCardRawRatchetFindings(pageCardRawBudget())
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("shipped page-card-raw budget is not clean: %v", findings)
 	}
 
 	bad := append(slices.Clone(pageCardRawBudget()), pageCardRawBudgetEntry{
@@ -184,12 +207,21 @@ func TestPageCardRawBudgetRequiresNote(t *testing.T) {
 		count: 1,
 		note:  "  ",
 	})
-	got := pageCardRawNoteFindings(bad)
-	if len(got) != 1 {
-		t.Fatalf("empty-note budget entry: got %d note findings, want 1: %v", len(got), got)
+	findings, err = pageCardRawRatchetFindings(bad)
+	if err != nil {
+		t.Fatalf("%v", err)
 	}
-	if !strings.Contains(got[0], "no_such_page.templ") || !strings.Contains(got[0], "justification") {
-		t.Errorf("empty-note finding does not name the entry and the requirement: %q", got[0])
+	var noteFindings []string
+	for _, f := range findings {
+		if strings.Contains(f, "no justification note") {
+			noteFindings = append(noteFindings, f)
+		}
+	}
+	if len(noteFindings) != 1 {
+		t.Fatalf("empty-note budget entry through the ratchet: got %d note findings, want 1 (all: %v)", len(noteFindings), findings)
+	}
+	if !strings.Contains(noteFindings[0], "no_such_page.templ") {
+		t.Errorf("empty-note finding does not name the entry: %q", noteFindings[0])
 	}
 }
 
@@ -210,7 +242,8 @@ func TestPageCardRawFindingsDetectsSites(t *testing.T) {
 		{"budget entry no longer present", nil, nil, []pageCardRawBudgetEntry{{file: "a.templ", count: 1, note: note}}, 1},
 		{"grew", map[string]int{"a.templ": 2}, map[string]int{"a.templ": 7}, []pageCardRawBudgetEntry{{file: "a.templ", count: 1, note: note}}, 1},
 		{"dropped", map[string]int{"a.templ": 1}, map[string]int{"a.templ": 7}, []pageCardRawBudgetEntry{{file: "a.templ", count: 2, note: note}}, 1},
-		{"zero-count entry", nil, nil, []pageCardRawBudgetEntry{{file: "a.templ", count: 0, note: note}}, 1},
+		{"zero-count entry", map[string]int{"a.templ": 0}, map[string]int{"a.templ": 7}, []pageCardRawBudgetEntry{{file: "a.templ", count: 0, note: note}}, 1},
+		{"zero-count entry masks nothing", map[string]int{"a.templ": 2}, map[string]int{"a.templ": 7}, []pageCardRawBudgetEntry{{file: "a.templ", count: 0, note: note}}, 2},
 		{"clean", nil, nil, nil, 0},
 		{"exact match", map[string]int{"a.templ": 2}, map[string]int{"a.templ": 7}, []pageCardRawBudgetEntry{{file: "a.templ", count: 2, note: note}}, 0},
 	}
@@ -219,6 +252,15 @@ func TestPageCardRawFindingsDetectsSites(t *testing.T) {
 			got := pageCardRawFindings(c.actual, c.examples, c.budget)
 			if len(got) != c.want {
 				t.Fatalf("got %d finding(s), want %d: %v", len(got), c.want, got)
+			}
+			// A zero-count entry must be reported by its own branch, not merely by
+			// the generic "no longer matches the tree" one.
+			for _, entry := range c.budget {
+				if entry.count < 1 {
+					if !strings.Contains(strings.Join(got, "\n"), "declares count 0") {
+						t.Errorf("zero-count entry produced no count finding, only: %v", got)
+					}
+				}
 			}
 		})
 	}

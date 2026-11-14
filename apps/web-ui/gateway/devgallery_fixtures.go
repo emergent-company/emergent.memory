@@ -62,7 +62,7 @@ func gallerySeed() []GalleryEntry {
 		{
 			ID: "PanelCard", Slug: "panel-card", Name: "PanelCard", Layer: LayerComposite,
 			Category: "Cards", Subcategory: "panel", SourceFile: "components/panel.templ",
-			PropsType:   "extraClass string, attrs templ.Attributes",
+			PropsType:   "extraClass string, attrs templ.Attributes, opts ...PanelCardOpt",
 			Description: "The standard bordered panel with the shared body padding.",
 			Render: func() templ.Component {
 				return withChildren(components.PanelCard("", nil), templ.Raw(`<p class="text-sm">Sample panel content</p>`))

@@ -79,9 +79,18 @@ func adoptionNoteFindings(budget []adoptionBudgetEntry) []string {
 }
 
 func TestAdoptionConsistencyRatchet(t *testing.T) {
-	for _, finding := range adoptionNoteFindings(adoptionBudget()) {
+	for _, finding := range adoptionRatchetFindings(adoptionBudget()) {
 		t.Error(finding)
 	}
+}
+
+// adoptionRatchetFindings is the whole adoption gate for one budget: the note
+// guard plus the count comparison against the generated adoptionFindings. It
+// takes the budget as an argument so a test can drive the same path with a
+// synthetic entry.
+func adoptionRatchetFindings(budgetEntries []adoptionBudgetEntry) []string {
+	findings := adoptionNoteFindings(budgetEntries)
+
 	actual := map[adoptionKey]int{}
 	examples := map[adoptionKey]int{} // first finding line per key
 	for _, f := range adoptionFindings {
@@ -93,7 +102,7 @@ func TestAdoptionConsistencyRatchet(t *testing.T) {
 	}
 
 	budget := map[adoptionKey]adoptionBudgetEntry{}
-	for _, b := range adoptionBudget() {
+	for _, b := range budgetEntries {
 		budget[adoptionKey{file: b.file, marker: b.marker}] = b
 	}
 
@@ -102,19 +111,20 @@ func TestAdoptionConsistencyRatchet(t *testing.T) {
 		b, bOK := budget[k]
 		switch {
 		case !bOK:
-			t.Errorf("adoption ratchet: new raw markup %s in %s:%d (%d occurrence%s) — adopt a shared component, or add a budget entry with a justification Note",
-				k.marker, k.file, examples[k], a, pluralS(a))
+			findings = append(findings, fmt.Sprintf("adoption ratchet: new raw markup %s in %s:%d (%d occurrence%s) — adopt a shared component, or add a budget entry with a justification Note",
+				k.marker, k.file, examples[k], a, pluralS(a)))
 		case !aOK:
-			t.Errorf("adoption ratchet: budget entry %s in %s (%d) no longer matches the tree (actual 0) — tighten/adjust the budget in this same change",
-				k.marker, k.file, b.count)
+			findings = append(findings, fmt.Sprintf("adoption ratchet: budget entry %s in %s (%d) no longer matches the tree (actual 0) — tighten/adjust the budget in this same change",
+				k.marker, k.file, b.count))
 		case a > b.count:
-			t.Errorf("adoption ratchet: %s in %s grew to %d (budget %d) — adopt a shared component, or lower the budget in this change; the ratchet only shrinks (e.g. %s:%d)",
-				k.marker, k.file, a, b.count, k.file, examples[k])
+			findings = append(findings, fmt.Sprintf("adoption ratchet: %s in %s grew to %d (budget %d) — adopt a shared component, or lower the budget in this change; the ratchet only shrinks (e.g. %s:%d)",
+				k.marker, k.file, a, b.count, k.file, examples[k]))
 		case a < b.count:
-			t.Errorf("adoption ratchet: %s in %s dropped to %d (budget %d) — tighten/adjust the budget in this same change (e.g. %s:%d)",
-				k.marker, k.file, a, b.count, k.file, examples[k])
+			findings = append(findings, fmt.Sprintf("adoption ratchet: %s in %s dropped to %d (budget %d) — tighten/adjust the budget in this same change (e.g. %s:%d)",
+				k.marker, k.file, a, b.count, k.file, examples[k]))
 		}
 	}
+	return findings
 }
 
 func sortedAdoptionKeys(actual map[adoptionKey]int, budget map[adoptionKey]adoptionBudgetEntry) []adoptionKey {
@@ -297,13 +307,24 @@ func TestStatusCircleDetector(t *testing.T) {
 }
 
 func TestTemplPatternConsistencyRatchet(t *testing.T) {
-	for _, finding := range patternNoteFindings(patternBudget()) {
+	findings, err := patternRatchetFindings(patternBudget())
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	for _, finding := range findings {
 		t.Error(finding)
 	}
+}
+
+// patternRatchetFindings is the whole pattern gate for one budget: the note
+// guard plus the count comparison against the scanned hits. It takes the budget
+// as an argument so a test can drive the same path with a synthetic entry.
+func patternRatchetFindings(budgetEntries []patternBudgetEntry) ([]string, error) {
+	findings := patternNoteFindings(budgetEntries)
 
 	hits, err := scanPatternHits()
 	if err != nil {
-		t.Fatalf("scan templ patterns: %v", err)
+		return nil, fmt.Errorf("scan templ patterns: %w", err)
 	}
 
 	actual := map[patternKey]int{}
@@ -317,7 +338,7 @@ func TestTemplPatternConsistencyRatchet(t *testing.T) {
 	}
 
 	budget := map[patternKey]patternBudgetEntry{}
-	for _, b := range patternBudget() {
+	for _, b := range budgetEntries {
 		budget[patternKey{pattern: b.pattern, file: b.file}] = b
 	}
 
@@ -326,19 +347,20 @@ func TestTemplPatternConsistencyRatchet(t *testing.T) {
 		b, bOK := budget[k]
 		switch {
 		case !bOK:
-			t.Errorf("%s: new drift token in %s:%d (%d occurrence%s) — normalise to the canonical token, or add a budget entry with a justification note",
-				k.pattern, k.file, examples[k], a, pluralS(a))
+			findings = append(findings, fmt.Sprintf("%s: new drift token in %s:%d (%d occurrence%s) — normalise to the canonical token, or add a budget entry with a justification note",
+				k.pattern, k.file, examples[k], a, pluralS(a)))
 		case !aOK:
-			t.Errorf("%s: budget entry in %s (%d) no longer matches the tree (actual 0) — tighten/adjust the budget in this same change",
-				k.pattern, k.file, b.count)
+			findings = append(findings, fmt.Sprintf("%s: budget entry in %s (%d) no longer matches the tree (actual 0) — tighten/adjust the budget in this same change",
+				k.pattern, k.file, b.count))
 		case a > b.count:
-			t.Errorf("%s: %s grew to %d (budget %d) — normalise to the canonical token, or lower the budget in this change; the ratchet only shrinks (e.g. %s:%d)",
-				k.pattern, k.file, a, b.count, k.file, examples[k])
+			findings = append(findings, fmt.Sprintf("%s: %s grew to %d (budget %d) — normalise to the canonical token, or lower the budget in this change; the ratchet only shrinks (e.g. %s:%d)",
+				k.pattern, k.file, a, b.count, k.file, examples[k]))
 		case a < b.count:
-			t.Errorf("%s: %s dropped to %d (budget %d) — tighten/adjust the budget in this same change (e.g. %s:%d)",
-				k.pattern, k.file, a, b.count, k.file, examples[k])
+			findings = append(findings, fmt.Sprintf("%s: %s dropped to %d (budget %d) — tighten/adjust the budget in this same change (e.g. %s:%d)",
+				k.pattern, k.file, a, b.count, k.file, examples[k]))
 		}
 	}
+	return findings, nil
 }
 
 func sortedPatternKeys(actual map[patternKey]int, budget map[patternKey]patternBudgetEntry) []patternKey {
@@ -597,21 +619,45 @@ func pluralS(n int) string {
 
 // TestBudgetEntriesRequireJustification guards the note rule for the adoption
 // and pattern budgets (the page-card-raw budget is covered by
-// TestPageCardRawBudgetRequiresNote, next to its own check): the shipped tables
-// must be fully annotated, and an entry with a blank note must produce a
-// finding, so the requirement is enforced and not just documented.
+// TestPageCardRawBudgetRequiresNote, next to its own check). It drives the same
+// findings functions the two ratchet tests assert on, so deleting the guard from
+// a ratchet fails here: the shipped tables must be clean, and an entry with a
+// blank note must produce a note finding.
 func TestBudgetEntriesRequireJustification(t *testing.T) {
-	if got := adoptionNoteFindings(adoptionBudget()); len(got) != 0 {
+	if got := adoptionRatchetFindings(adoptionBudget()); len(got) != 0 {
 		t.Errorf("adoption budget: %v", got)
 	}
-	if got := patternNoteFindings(patternBudget()); len(got) != 0 {
-		t.Errorf("pattern budget: %v", got)
+	patternFindings, err := patternRatchetFindings(patternBudget())
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if len(patternFindings) != 0 {
+		t.Errorf("pattern budget: %v", patternFindings)
 	}
 
-	if got := adoptionNoteFindings([]adoptionBudgetEntry{{file: "x.templ", marker: "class:badge", count: 1}}); len(got) != 1 {
-		t.Errorf("adoption budget with an empty note: got %d findings, want 1: %v", len(got), got)
+	noteless := func(findings []string) []string {
+		var out []string
+		for _, f := range findings {
+			if strings.Contains(f, "no justification note") {
+				out = append(out, f)
+			}
+		}
+		return out
 	}
-	if got := patternNoteFindings([]patternBudgetEntry{{pattern: patternLegacyBordered, file: "x.templ", count: 1}}); len(got) != 1 {
-		t.Errorf("pattern budget with an empty note: got %d findings, want 1: %v", len(got), got)
+
+	adoptionBad := append(slices.Clone(adoptionBudget()),
+		adoptionBudgetEntry{file: "synthetic.templ", marker: "class:badge", count: 1})
+	if got := noteless(adoptionRatchetFindings(adoptionBad)); len(got) != 1 {
+		t.Errorf("adoption budget with an empty note: got %d note findings, want 1", len(got))
+	}
+
+	patternBad := append(slices.Clone(patternBudget()),
+		patternBudgetEntry{pattern: patternLegacyBordered, file: "synthetic.templ", count: 1})
+	patternBadFindings, err := patternRatchetFindings(patternBad)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if got := noteless(patternBadFindings); len(got) != 1 {
+		t.Errorf("pattern budget with an empty note: got %d note findings, want 1", len(got))
 	}
 }

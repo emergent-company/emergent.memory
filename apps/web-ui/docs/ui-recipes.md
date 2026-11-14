@@ -233,7 +233,7 @@ for status copy and `components.EmptyDash` for absent values."
 }
 ```
 
-For a panel of tiles use `components.PanelCard` (`components/panel.templ:45`) —
+For a panel of tiles use `components.PanelCard` (`components/panel.templ:47`) —
 `ui.CardRaw` + `memory-density-comfortable`. A one-time accent is passed via
 `extraClass` (e.g. `"border-primary/20"`); spacing is owned centrally, never in
 the component. A panel that needs a different body density, or a contextual
@@ -246,7 +246,7 @@ ratchet forbids it.
 **Contract:** `MetaRow` emits `<dt>` uppercase label + `<dd>` value; empty value
 falls back to `EmptyDash` unless `NoEmptyDash`.
 
-**Source:** `components/meta.templ:18,35,55,74`, `components/panel.templ:45`,
+**Source:** `components/meta.templ:18,35,55,74`, `components/panel.templ:47`,
 `ui.templ:391` (`statRow`), `ui.templ:1107` (`cardList`).
 
 ---
@@ -608,7 +608,7 @@ client code uses `MemoryApp.toast(kind, message)`. Failures pass `kind="error"`.
 | `layout.list` | `ui.templ:312,939,445`; `components/table.templ:10`; `components/list.templ:10` |
 | `layout.detail` | `ui.templ:984,963`; `components/nav.templ:10,34,47`; `schedules.templ:197` |
 | `layout.settings-rail` | `project_settings.templ:35`; `agent.templ:39`; `components/nav.templ:34` |
-| `layout.card-grid` | `components/meta.templ:18,35,55,74`; `components/panel.templ:45` |
+| `layout.card-grid` | `components/meta.templ:18,35,55,74`; `components/panel.templ:47` |
 | `edit.inline-autosave` | `webui/static/js/agent-settings.js:25,200,279`; recipe above |
 | `edit.inline-htmx` | `project_settings.templ:19,256`; `settings_handlers.go:870`; `settings_providers.go:372` |
 | `edit.form-save` | `schedules.templ:255,386`; `components/form.templ:37`; `ui.go:166,181,188`; `ui.templ:1337` |
