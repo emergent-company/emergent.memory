@@ -6,20 +6,50 @@ import (
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
 
+// PanelCardOpt overrides the standard panel shell's body, surface and border.
+// Every field defaults to the standard treatment (comfortable density, bg-base-100
+// surface, edge-line outline), so a caller that omits the option renders exactly
+// as before. A caller whose panel is a borderless contextual surface passes the
+// values here instead of opening the raw ui.CardRaw shell — the page-vs-component
+// ratchet (card_raw_ratchet_test.go) forbids a page from doing that.
+//
+// Border and Surface are deliberately the upstream ui conversions rather than
+// local enums: the shell re-exposes the pinned go-daisy vocabulary instead of
+// inventing a second one, so a new surface step or border weight is available
+// here the moment the pin moves.
+type PanelCardOpt struct {
+	// BodyClass overrides the body's density class (default
+	// "memory-density-comfortable"). Callers whose panel needs a different
+	// density (e.g. "memory-density-compact") or a layout class like "p-4" /
+	// "gap-4" pass it here. An empty value means the default density; the
+	// pre-PanelCard positional form treated "" as "no body class at all", but
+	// no caller relied on that (the default is the shared treatment).
+	BodyClass string
+	// Surface overrides the card background; zero = ui.CardSurfaceBase100
+	// (bg-base-100). Unlike a class appended via extraClass, this REPLACES the
+	// default surface instead of stacking a second bg-* utility on top of it.
+	Surface ui.CardSurface
+	// Border overrides the card outline; zero = ui.CardBorderLine (edge-line).
+	// ui.CardBorderNone renders a borderless card.
+	Border ui.CardBorder
+}
+
 // PanelCard renders the standard bordered panel with the shared body padding.
 // extraClass is appended to the panel classes for an intentional accent (for
 // example "border-primary/20" on a one-time secret panel); the standard
-// treatment is always applied.
+// treatment applies unless PanelCardOpt replaces the surface or the outline.
 //
-// bodyClass optionally overrides the body's density class (default
-// "memory-density-comfortable"). Callers whose panel needs a different density
-// (e.g. "memory-density-compact", or a layout class like "p-4" / "gap-4") pass
-// it through instead of opening the raw ui.CardRaw shell, so the border
+// opts optionally replaces the body density, the surface and the outline (see
+// PanelCardOpt). Callers whose panel needs a different density (e.g.
+// "memory-density-compact", or a layout class like "p-4" / "gap-4") pass it
+// through here instead of opening the raw ui.CardRaw shell, so the border
 // treatment still lives in one place.
-templ PanelCard(extraClass string, attrs templ.Attributes, bodyClass ...string) {
-	{{ bc := "memory-density-comfortable"
-	if len(bodyClass) > 0 { bc = bodyClass[0] } }}
-	@ui.CardRaw(ui.CardRawProps{Class: strings.TrimSpace(extraClass), BodyClass: bc, Attrs: attrs}) {
+templ PanelCard(extraClass string, attrs templ.Attributes, opts ...PanelCardOpt) {
+	{{ var opt PanelCardOpt
+	if len(opts) > 0 { opt = opts[0] }
+	bc := "memory-density-comfortable"
+	if opt.BodyClass != "" { bc = opt.BodyClass } }}
+	@ui.CardRaw(ui.CardRawProps{Class: strings.TrimSpace(extraClass), BodyClass: bc, Surface: opt.Surface, Border: opt.Border, Attrs: attrs}) {
 		{ children... }
 	}
 }

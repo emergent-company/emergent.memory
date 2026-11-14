@@ -418,6 +418,20 @@ func TestPanelCardAppendsAccentClass(t *testing.T) {
 	)
 }
 
+func TestPanelCardOptReplacesSurfaceAndDropsBorder(t *testing.T) {
+	html := renderHTML(t, PanelCard("", nil, PanelCardOpt{
+		BodyClass: "gap-2",
+		Surface:   ui.CardSurfaceBase200,
+		Border:    ui.CardBorderNone,
+	}))
+	assertContains(t, html, "bg-base-200", "card-body gap-2")
+	for _, unwanted := range []string{"bg-base-100", "edge-line", "memory-density-comfortable"} {
+		if strings.Contains(html, unwanted) {
+			t.Errorf("PanelCardOpt must replace the default %q, got: %s", unwanted, html)
+		}
+	}
+}
+
 // --- list ---
 
 func TestLinkRowRendersLinkAndMeta(t *testing.T) {
