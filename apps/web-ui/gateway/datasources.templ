@@ -927,6 +927,7 @@ templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields
 			{{ canSync := resourcePrompt == nil && src.ProviderType != dsProviderTypeGitHubApp }}
 			@dataSourceDetailHeader(src, providerName, canSync)
 			@flashToasts(flashMsg, flashErr)
+			<div class="flex flex-col gap-4">
 			if credentialSummary != nil && credentialSummary.PickerBlocked {
 				@dsPickerBlockedNotice(*credentialSummary)
 			} else if resourcePrompt != nil {
@@ -964,6 +965,7 @@ templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields
 			if src.ProviderType != dsProviderTypeGitHubApp {
 				@dsSyncHistory(src.ID, jobs)
 			}
+			</div>
 			if picker.ShowModal {
 				@savedCredentialModal(picker, nil)
 			}
@@ -979,7 +981,7 @@ templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields
 // the source detail page only for the trigger-only provider, whose sources have
 // no document sync to show instead.
 templ dsSourceTriggersPanel(view dsSourceTriggersView) {
-	<div class="mb-4" id="triggers" data-testid="ds-triggers">
+	<div class="scroll-mt-24" id="triggers" data-testid="ds-triggers">
 		@components.PanelCard("", nil) {
 			<div class="flex items-start gap-3">
 				@ui.IconTile("lucide--webhook", ui.IconTileProps{Tone: "info"})
