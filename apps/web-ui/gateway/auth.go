@@ -92,6 +92,11 @@ func (s *Server) cookieSecure(c echo.Context) bool {
 // out entirely, so the id_token is shed before that can happen.
 const maxSessionCookieValueBytes = 3800
 
+// setSessionCookie signs claims and writes the session cookie. A response
+// carries at most ONE Set-Cookie: memory_session: an earlier value written for
+// the same response (the silent refresh in the middleware, or an earlier step
+// of a multi-step handler such as uiRoot's clear-then-activate) is replaced, so
+// the browser can never keep a stale claims value over a newer one (#610).
 func (s *Server) setSessionCookie(c echo.Context, claims sessionClaims) {
 	now := time.Now()
 	// The session cookie already carries the access + refresh tokens; adding
@@ -121,7 +126,7 @@ func (s *Server) setSessionCookie(c echo.Context, claims sessionClaims) {
 	if maxAge < 0 {
 		maxAge = 0
 	}
-	c.SetCookie(&http.Cookie{
+	writeSessionCookieHeader(c, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    val,
 		Path:     "/",
@@ -132,9 +137,45 @@ func (s *Server) setSessionCookie(c echo.Context, claims sessionClaims) {
 	})
 }
 
-// clearSessionCookie deletes the session cookie.
+// writeSessionCookieHeader sets the session cookie on the response, replacing
+// any session cookie already set for this request rather than appending a
+// second one. Browsers keep only the last Set-Cookie for a name, so leaving an
+// earlier value in place lets a stale-claims cookie win; one header removes the
+// ambiguity entirely (#610).
+func writeSessionCookieHeader(c echo.Context, ck *http.Cookie) {
+	str := ck.String()
+	if str == "" {
+		return // like http.SetCookie: never emit an empty header
+	}
+	h := c.Response().Header()
+	prefix := ck.Name + "="
+	vals := h.Values(echo.HeaderSetCookie)
+	out := make([]string, 0, len(vals)+1)
+	replaced := false
+	for _, v := range vals {
+		if strings.HasPrefix(v, prefix) {
+			if replaced {
+				continue // collapse any duplicate to a single value
+			}
+			v = str
+			replaced = true
+		}
+		out = append(out, v)
+	}
+	if !replaced {
+		out = append(out, str)
+	}
+	h.Del(echo.HeaderSetCookie)
+	for _, v := range out {
+		h.Add(echo.HeaderSetCookie, v)
+	}
+}
+
+// clearSessionCookie deletes the session cookie, replacing any value already
+// set for this response so a clear can never be shadowed by an earlier
+// Set-Cookie (#610).
 func (s *Server) clearSessionCookie(c echo.Context) {
-	c.SetCookie(&http.Cookie{
+	writeSessionCookieHeader(c, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    "",
 		Path:     "/",
@@ -342,6 +383,7 @@ func (s *Server) ensureInstallID(c echo.Context) (string, error) {
 // (design D3/D6).
 func (s *Server) attachSession(c echo.Context, claims *sessionClaims) {
 	sc := &sessionContext{
+		claims:            claims,
 		Token:             claims.AccessToken,
 		RefreshToken:      claims.RefreshToken,
 		ProjectID:         claims.ActiveProjectID,
@@ -355,6 +397,34 @@ func (s *Server) attachSession(c echo.Context, claims *sessionClaims) {
 	}
 	ctx := withSessionContext(c.Request().Context(), sc)
 	c.SetRequest(c.Request().WithContext(ctx))
+}
+
+// requestSessionClaims returns a mutable copy of the session claims the auth
+// middleware validated for this request — i.e. AFTER any silent refresh — for
+// handlers that mutate the session (project/org switch, avatar override) and
+// re-issue the cookie.
+//
+// Handlers MUST NOT re-read the request cookie for this: a refresh in
+// requireSession re-issues the cookie on the response, but the request still
+// carries the PRE-refresh value, so re-issuing from it writes a second
+// Set-Cookie with spent claims. With rotating refresh tokens that cookie is
+// unrecoverable — the next request redeems an already redeemed token and the
+// user is logged out instead of silently refreshed (#610).
+//
+// Falls back to the request cookie when no claims were attached (dev/API-key
+// mode, or an ad-hoc context built by a test), preserving the old behaviour.
+//
+// The copy is detached on purpose: attachSession's pointer can be shared with
+// concurrent single-flight waiters, so nothing may mutate it, and a handler's
+// scope change therefore does NOT flow back into the session context (or into a
+// second re-issue on the same request — call this helper again and re-apply the
+// scope instead of relying on sc.ProjectID/OrgID).
+func (s *Server) requestSessionClaims(c echo.Context) (*sessionClaims, error) {
+	if sc, ok := sessionContextFrom(c.Request().Context()); ok && sc.claims != nil {
+		cp := *sc.claims
+		return &cp, nil
+	}
+	return s.currentSession(c)
 }
 
 // --- token refresh (silent session renewal) ---
