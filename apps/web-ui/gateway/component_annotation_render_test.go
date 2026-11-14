@@ -20,13 +20,18 @@ import (
 // renders a different branch than the one it annotated. These tests render
 // through the same middleware the server installs (main.go) and assert on the
 // bytes a client would receive.
+//
+// Every test here ends in `Ratchet` on purpose: the required `ci` job runs
+// `go test -run Ratchet ./...` for this module (ci.yml, "Consistency ratchets")
+// and the full suite only at promotion. These renders cost microseconds, so
+// they belong in the group that runs on the PR that would break them.
 
-// TestPageHeadAnnotationReachesTheResponse pins the contract the element-level
+// TestPageHeadAnnotationConsistencyRatchet pins the contract the element-level
 // feedback overlay depends on: a page header rendered by a real request carries
 // data-component="gateway/pageHead". Without this, an overlay report on the page
 // title falls back to the nearest annotated layout container and names the
 // wrong component.
-func TestPageHeadAnnotationReachesTheResponse(t *testing.T) {
+func TestPageHeadAnnotationConsistencyRatchet(t *testing.T) {
 	const want = `data-component="gateway/pageHead"`
 
 	render := func(t *testing.T, mw echo.MiddlewareFunc) string {
@@ -66,13 +71,13 @@ func TestPageHeadAnnotationReachesTheResponse(t *testing.T) {
 	})
 }
 
-// TestTypeIconTileAnnotationFollowsTheVariant pins the delegation boundary.
+// TestTypeIconTileAnnotationConsistencyRatchet pins the delegation boundary.
 // typeIconTile renders its own annotated element at lead scale, but at row and
 // compact scale it delegates to go-daisy's ui.IconTile, which annotates itself
 // as ui/IconTile. Asserting only "some data-component is present" would pass
 // while the overlay reported the wrong component, so the lead case asserts the
 // gateway name is present and the row case asserts it is absent.
-func TestTypeIconTileAnnotationFollowsTheVariant(t *testing.T) {
+func TestTypeIconTileAnnotationConsistencyRatchet(t *testing.T) {
 	t.Run("lead scale is the gateway component", func(t *testing.T) {
 		body := renderHTMLDev(t, typeIconTile("", "", typeIconTileLead))
 		if !strings.Contains(body, `data-component="gateway/TypeIconTile"`) {
@@ -91,12 +96,12 @@ func TestTypeIconTileAnnotationFollowsTheVariant(t *testing.T) {
 	})
 }
 
-// TestObjectHeaderAnnotationCoversBothVariants pins that the page-head scale and
+// TestObjectHeaderAnnotationConsistencyRatchet pins that the page-head scale and
 // the list scale both report the same boundary. objectHeader is what a wiki page,
 // a detail page, a browse card and a relationship row all render, so a variant
 // that lost the annotation would make the overlay name a layout container on that
 // surface only — the kind of gap a single-fixture test misses.
-func TestObjectHeaderAnnotationCoversBothVariants(t *testing.T) {
+func TestObjectHeaderAnnotationConsistencyRatchet(t *testing.T) {
 	const want = `data-component="gateway/ObjectHeader"`
 
 	cases := []struct {

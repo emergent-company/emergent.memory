@@ -240,8 +240,9 @@ pre-commit:
         fi
 
     # UI guardrails (palette classes, htmx inside components, background-context
-    # renders, and the testid/handler/hex/style/table budgets). ~1s, needs no
-    # generated assets, so it runs before any push that touches the web UI.
+    # renders, and the testid/handler/hex/style/table budgets). ~0.3s, needs no
+    # generated assets, so a commit that touches the web UI runs it before it
+    # reaches CI.
     # Single source of truth: scripts/preflight/ui-guard.sh — also run by
     # scripts/preflight/all.sh in the required `ci` job, so the PR that
     # introduces the regression fails, not a later promotion.
