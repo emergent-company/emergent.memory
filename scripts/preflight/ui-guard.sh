@@ -16,11 +16,14 @@
 #      the theme and breaks in the dark surface. Every colour utility prefix the
 #      product could use is covered (bg/text/border/from/via/to/ring/ring-offset/
 #      divide/fill/stroke/accent/caret/placeholder/decoration/outline/shadow),
-#      and black/white count as palette values. A handful of deliberate uses are
-#      allowlisted BY VALUE below — a modal scrim is genuinely black, and a QR
-#      code's quiet zone is genuinely white, so neither has a theme token. The
-#      allowlist is a ratchet: an entry is removed when the site goes, and a new
-#      entry needs the same justification a raised baseline needs.
+#      and black/white count as palette values. daisyUI theme tokens are not
+#      palette values: `bg-neutral`, `text-neutral-content`, `bg-primary` pass,
+#      while Tailwind's neutral scale (`bg-neutral-500`) does not. A handful of
+#      deliberate uses are allowlisted BY VALUE below — a modal scrim is
+#      genuinely black, and a QR code's quiet zone is genuinely white, so neither
+#      has a theme token. The allowlist is a ratchet: an entry is removed when the
+#      site goes, and a new entry needs the same justification a raised baseline
+#      needs.
 #   2. components/ holds no htmx request attributes (hx-get/post/put/delete/
 #      patch). The components package is presentation-only — page templates own
 #      the requests — which is what keeps a component renderable in a unit test
@@ -182,7 +185,14 @@ templ_files_count="${#templ_files[@]}"
 echo "ui-guard: scanning $templ_files_count templ file(s), ${#go_files[@]} non-test Go file(s)"
 
 # 1. Design tokens only — no raw palette class, minus the pinned allowlist.
-PALETTE_RE='\b(bg|text|border|from|via|to|ring|ring-offset|divide|fill|stroke|accent|caret|placeholder|decoration|outline|shadow)-(red|blue|green|gray|grey|slate|zinc|stone|neutral|amber|yellow|indigo|purple|pink|cyan|teal|emerald|orange|rose|violet|fuchsia|lime|sky|black|white)(-[0-9]{1,3})?(/[0-9]{1,3})?'
+# Colour utilities whose colour comes from the palette rather than the theme.
+# `neutral` is deliberately NOT a family here: bare `bg-neutral` / `text-neutral` /
+# `text-neutral-content` are daisyUI THEME tokens (the correct choice), while
+# Tailwind's neutral *scale* (`bg-neutral-500`) is a palette value — so the second
+# alternative requires a shade.
+PALETTE_PREFIX='bg|text|border|from|via|to|ring|ring-offset|divide|fill|stroke|accent|caret|placeholder|decoration|outline|shadow'
+PALETTE_FAMILY='red|blue|green|gray|grey|slate|zinc|stone|amber|yellow|indigo|purple|pink|cyan|teal|emerald|orange|rose|violet|fuchsia|lime|sky|black|white'
+PALETTE_RE="\\b(${PALETTE_PREFIX})-(${PALETTE_FAMILY})(-[0-9]{1,3})?(/[0-9]{1,3})?|\\b(${PALETTE_PREFIX})-neutral-[0-9]{1,3}(/[0-9]{1,3})?"
 
 palette_hits=""
 palette_allowed=0
