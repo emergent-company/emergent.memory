@@ -417,7 +417,6 @@ templ objectsBrowserSortControl(data objectsPageData) {
 			var attrs templ.Attributes
 			if !data.Preview {
 				attrs = regionFilterAttrs(href, objectsResultsRegion)
-				attrs["hx-indicator"] = "#objects-results-loading"
 				attrs["data-objects-list-refresh"] = "true"
 			} else {
 				attrs = templ.Attributes{}

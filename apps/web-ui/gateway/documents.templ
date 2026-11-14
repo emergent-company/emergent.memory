@@ -355,7 +355,6 @@ templ documentsSortHead(label, href, dir string) {
 			ariaSort, icon, iconClass = "descending", "lucide--chevron-down", ""
 		}
 		sortAttrs := regionFilterAttrs(href, documentsResultsRegion)
-		sortAttrs["hx-indicator"] = "#documents-results-loading"
 	}}
 	<th scope="col" aria-sort={ ariaSort } class="text-right text-xs font-semibold text-base-content/60 uppercase">
 		<a href={ href } class="inline-flex items-center justify-end gap-1 hover:text-base-content" { sortAttrs... }>
@@ -416,44 +415,50 @@ templ documentTableRow(r documentRow) {
 	</tr>
 }
 
-// documentMobileCard is the same document rendered for a phone: the name and
-// chunk count, status, then the metadata the table shows in its own columns.
+// documentMobileCard is the same document rendered for a phone. The row itself
+// is components.LinkRow: an anchor over the leading icon, the name and the
+// chunk count, with the delete form in the row's trailing slot — outside the
+// anchor, because an <a> may not contain a form (#744). The row root keeps
+// data-href so the whole card stays a tap target; app.js ignores clicks that
+// land on a link or a form control, so the source link and delete still work.
 templ documentMobileCard(r documentRow) {
-	// The card navigates through data-href (as the table row does) rather than
-	// wrapping everything in one <a>: the source cell is its own link, and an
-	// anchor cannot legally nest inside another.
-	<div class="hover:bg-base-200/40 flex cursor-pointer items-start gap-2 px-4 py-3 transition-colors" data-href={ templ.URL("/documents/" + url.PathEscape(r.ID)) } data-document-id={ r.ID }>
-		<div class="flex min-w-0 grow items-start gap-3">
-			@ui.IconSpan("lucide--file-text", "size-4 shrink-0 text-muted-faint")
-			<div class="min-w-0 grow">
-				<a class="hover:text-primary block truncate text-sm font-medium hover:underline" href={ templ.URL("/documents/" + url.PathEscape(r.ID)) }>{ r.Name }</a>
-				<div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-					@ui.Badge(ui.BadgeProps{
-						Label:   strconv.Itoa(r.Chunks) + " chunk" + plural(r.Chunks),
-						Variant: ui.BadgeGhost,
-						Size:    ui.BadgeSizeXS,
-						Icon:    "lucide--braces",
-					})
-					@documentStatusBadge(r.Status)
-					if r.Versions > 0 {
-						@ui.Badge(ui.BadgeProps{Label: documentVersionLabel(r.Versions) + " v", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--layers"})
-					}
-				</div>
-				<div class="text-muted-faint mt-1 flex flex-wrap items-center gap-x-2 text-xs">
-					if r.SourceID != "" && r.Source != "" {
-						<a class="link link-hover truncate" href={ templ.URL("/data-sources/" + url.PathEscape(r.SourceID)) } title={ "From " + r.Source } data-testid="documents-source-link-card">{ r.Source }</a>
-					} else if r.Source != "" {
-						<span class="truncate">{ r.Source }</span>
-					}
-					if r.Uploader != "" {
-						<span class="truncate" title={ "Uploaded by " + r.Uploader } data-testid="documents-uploader-card">{ r.Uploader }</span>
-					}
-					<span title={ documentUpdatedLabel(r) }>updated { relTime(documentUpdatedLabel(r)) }</span>
-				</div>
-			</div>
-			@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
-		</div>
+	{{ href := templ.URL("/documents/" + url.PathEscape(r.ID)) }}
+	@components.LinkRow(href, ui.IconSpan("lucide--file-text", "size-4 shrink-0 text-muted-faint"), r.Name, documentMobileMeta(r), components.LinkRowOpts{
+		Attrs: templ.Attributes{
+			"data-href":        string(href),
+			"data-document-id": r.ID,
+		},
+		Details: documentMobileDetails(r),
+	}) {
 		@documentDeleteForm(r.ID, r.Name)
+	}
+}
+
+// documentMobileMeta is the phone row's meta line: the chunk count, the one
+// table column that fits beside the name. Provenance and recency travel in the
+// details band, which can host the source link an anchor cannot.
+func documentMobileMeta(r documentRow) string {
+	return strconv.Itoa(r.Chunks) + " chunk" + plural(r.Chunks)
+}
+
+// documentMobileDetails is the band under the phone row: the table columns that
+// do not fit beside the name. It renders outside the row anchor (LinkRowOpts
+// .Details), so the source entry stays a link.
+templ documentMobileDetails(r documentRow) {
+	<div class="text-muted-faint flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+		@documentStatusBadge(r.Status)
+		if r.Versions > 0 {
+			@ui.Badge(ui.BadgeProps{Label: documentVersionLabel(r.Versions) + " v", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--layers"})
+		}
+		if r.SourceID != "" && r.Source != "" {
+			<a class="link link-hover truncate" href={ templ.URL("/data-sources/" + url.PathEscape(r.SourceID)) } title={ "From " + r.Source } data-testid="documents-source-link-card">{ r.Source }</a>
+		} else if r.Source != "" {
+			<span class="truncate">{ r.Source }</span>
+		}
+		if r.Uploader != "" {
+			<span class="truncate" title={ "Uploaded by " + r.Uploader } data-testid="documents-uploader-card">{ r.Uploader }</span>
+		}
+		<span title={ documentUpdatedLabel(r) }>updated { relTime(documentUpdatedLabel(r)) }</span>
 	</div>
 }
 
@@ -1292,9 +1297,9 @@ templ extractionReadiness(r *MergeReadiness) {
 // of those objects so the user can see *which* need attention, not just how
 // many (#242).
 templ extractionMergeAction(documentID, jobID, branchID string, leftForReview int, reviewItems []mergeReviewItem) {
-	<div class="mt-4 flex flex-row flex-wrap items-center justify-between gap-3 rounded-box bg-base-200/50 p-3 sm:flex-nowrap" data-testid="extraction-merge">
+	<div class="mt-4 flex flex-row flex-wrap items-center justify-between gap-3 rounded-box bg-base-200/50 p-3 sm:flex-nowrap" data-layout="merge-row" data-testid="extraction-merge">
 		<div class="flex flex-wrap items-center gap-2">
-			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "text-right"}) { Merge applies clean additions and fast-forwards into the main graph; conflicts and similar objects stay on this branch for review. }
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "text-right", Attrs: templ.Attributes{"data-testid": "extraction-merge-note"}}) { Merge applies clean additions and fast-forwards into the main graph; conflicts and similar objects stay on this branch for review. }
 			if leftForReview > 0 {
 				{{ // The count without a way to see the items was the complaint in
 				   // #242: make the badge open the branch in the object browser.
