@@ -130,17 +130,28 @@ func pageCardRawFindings(actual, examples map[string]int, budgetEntries []pageCa
 			findings = append(findings, fmt.Sprintf("page-card-raw: page %s opens the raw ui.CardRaw shell at line %d (%d occurrence%s) — render components.PanelCard / components.TableCard, or budget the site with a justification note in pageCardRawBudget",
 				file, examples[file], a, pluralS(a)))
 		case !aOK:
-			findings = append(findings, fmt.Sprintf("page-card-raw: budget entry %s (%d) no longer matches the tree (actual 0) — tighten/adjust the budget in this same change",
-				file, b.count))
+			findings = append(findings, fmt.Sprintf("page-card-raw: budget entry %s (%d) no longer matches the tree (actual 0) — tighten/adjust the budget in this same change%s",
+				file, b.count, budgetNoteSuffix(b.note)))
 		case a > b.count:
-			findings = append(findings, fmt.Sprintf("page-card-raw: %s grew to %d (budget %d) — render components.PanelCard / components.TableCard, or lower the budget in this change (e.g. %s:%d)",
-				file, a, b.count, file, examples[file]))
+			findings = append(findings, fmt.Sprintf("page-card-raw: %s grew to %d (budget %d) — render components.PanelCard / components.TableCard, or lower the budget in this change (e.g. %s:%d)%s",
+				file, a, b.count, file, examples[file], budgetNoteSuffix(b.note)))
 		case a < b.count:
-			findings = append(findings, fmt.Sprintf("page-card-raw: %s dropped to %d (budget %d) — tighten/adjust the budget in this same change (e.g. %s:%d)",
-				file, a, b.count, file, examples[file]))
+			findings = append(findings, fmt.Sprintf("page-card-raw: %s dropped to %d (budget %d) — tighten/adjust the budget in this same change (e.g. %s:%d)%s",
+				file, a, b.count, file, examples[file], budgetNoteSuffix(b.note)))
 		}
 	}
 	return findings
+}
+
+// budgetNoteSuffix renders a budget entry's justification as the tail of a
+// count-mismatch finding, so the failure output shows why the site was budgeted
+// as well as that the budget no longer matches (issue #645). A blank note adds
+// nothing here — the note guard reports it separately.
+func budgetNoteSuffix(note string) string {
+	if strings.TrimSpace(note) == "" {
+		return ""
+	}
+	return fmt.Sprintf(" — budget note: %s", note)
 }
 
 // pageCardRawNoteFindings returns a finding for every budget entry whose
@@ -263,5 +274,15 @@ func TestPageCardRawFindingsDetectsSites(t *testing.T) {
 				}
 			}
 		})
+	}
+
+	// A count mismatch echoes the entry's justification, so the failure output
+	// shows why the site was budgeted as well as that the budget moved (#645).
+	got := pageCardRawFindings(
+		map[string]int{"a.templ": 1}, map[string]int{"a.templ": 7},
+		[]pageCardRawBudgetEntry{{file: "a.templ", count: 2, note: "pinned gap: no label card"}},
+	)
+	if len(got) != 1 || !strings.Contains(got[0], "pinned gap: no label card") {
+		t.Errorf("count mismatch must echo the budget note, got: %v", got)
 	}
 }
