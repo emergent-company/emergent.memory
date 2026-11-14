@@ -851,6 +851,10 @@ templ objectDetailShell(data objectDetailShellData) {
 // schema could not be loaded), used as the schema card's heading. viewSections
 // is the object type's declared ui.view resolved against the object's edges —
 // empty for every type that declares none, which keeps this page unchanged.
+// hasView separates "no view" from "a view that shows nothing", so the Overview
+// says so exactly as the Relationships tab does: the user guide describes that
+// note as page-wide, and a reader who lands on the Overview first must not be
+// left thinking the object has no relationships.
 //
 // The editable fields live in two cards, matching the read-only preview
 // drawer: "Properties" carries the platform fields (key and labels) and
@@ -860,7 +864,7 @@ templ objectDetailShell(data objectDetailShellData) {
 // <form> spans both editable cards with a single terminal Save bar:
 // uiObjectUpdate always replaces labels with the submitted set, so a second,
 // labels-less form would wipe them.
-templ ObjectDetailPage(obj *GraphObject, branch objectBranchRef, sources []objectSource, assignees []boardAssigneeCandidate, loadErr error, flashMsg string, flashErr error, labelSuggestions []string, propDefs []objectPropertyDef, typeUIByType map[string]typeUI, status *objectStatusControl, trail []nav.BreadcrumbItem, typeLabel string, edgeCount int, viewSections []objectViewSection) {
+templ ObjectDetailPage(obj *GraphObject, branch objectBranchRef, sources []objectSource, assignees []boardAssigneeCandidate, loadErr error, flashMsg string, flashErr error, labelSuggestions []string, propDefs []objectPropertyDef, typeUIByType map[string]typeUI, status *objectStatusControl, trail []nav.BreadcrumbItem, typeLabel string, edgeCount int, viewSections []objectViewSection, hasView bool) {
 	{{ data := objectDetailShellData{
 		Obj:          obj,
 		Branch:       branch,
@@ -882,7 +886,9 @@ templ ObjectDetailPage(obj *GraphObject, branch objectBranchRef, sources []objec
 			@objectWorkflowPanel(obj, status, assignees, data.workControlTarget())
 			@objectDetailsCard(obj)
 			if len(viewSections) > 0 {
-				@objectViewSectionList(obj.ID, viewSections, typeUIByType)
+				@objectViewSectionList(obj.ID, viewSections, typeUIByType, objectViewSurfaceOverview)
+			} else if hasView {
+				@objectViewEmptySection(obj.ID, edgeCount)
 			}
 			<form class="mt-6 flex flex-col gap-6" method="post" action={ templ.URL("/objects/" + url.PathEscape(obj.ID)) } hx-disable="find button.memory-save-btn">
 				@objectBuiltinPropertiesCard(obj, labelSuggestions, propDefs)
@@ -1296,21 +1302,9 @@ templ objectRelationships(obj *GraphObject, relTypes []CompiledType, edges []Gra
 			}
 		}
 	} else if len(viewSections) > 0 {
-		@objectViewSectionList(obj.ID, viewSections, typeUIByType)
+		@objectViewSectionList(obj.ID, viewSections, typeUIByType, objectViewSurfaceRelationships)
 	} else if hasView {
-		@ui.Section("Relationships", ui.SectionProps{
-			Margin:    "mt-6",
-			BodyClass: "memory-density-comfortable",
-		}) {
-			<div class="flex flex-col gap-2" data-testid="object-view-empty">
-				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneStrong}) {
-					This object's type has a view, and it shows none of its { strconv.Itoa(len(edges)) } connections.
-				}
-				<a class="link link-hover text-sm" href={ templ.URL("/objects/" + url.PathEscape(obj.ID) + "/relationships?all=1") } data-testid="object-view-show-unfiltered">
-					Show every connection anyway
-				</a>
-			</div>
-		}
+		@objectViewEmptySection(obj.ID, len(edges))
 	} else {
 		@ui.Section("Relationships", ui.SectionProps{
 			Margin:    "mt-6",
@@ -1327,14 +1321,40 @@ templ objectRelationships(obj *GraphObject, relTypes []CompiledType, edges []Gra
 	@objectConnectDialog(obj, relTypes)
 }
 
+// objectViewEmptySection is the honest note for a declared view that legally
+// shows nothing: the pack opted out of every relationship type the flat list
+// would show, so rather than contradict it the page says so and offers the
+// unfiltered list as an explicit escape (`?all=1`).
+//
+// Overview and the Relationships tab render the same note. The user guide
+// describes it as page-wide, and whichever surface the reader lands on first is
+// the one that has to explain the absence.
+templ objectViewEmptySection(objID string, edgeCount int) {
+	@ui.Section("Relationships", ui.SectionProps{
+		Margin:    "mt-6",
+		BodyClass: "memory-density-comfortable",
+	}) {
+		<div class="flex flex-col gap-2" data-testid="object-view-empty">
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneStrong}) {
+				This object's type has a view, and it shows none of its { strconv.Itoa(edgeCount) } connections.
+			}
+			<a class="link link-hover text-sm" href={ templ.URL("/objects/" + url.PathEscape(objID) + "/relationships?all=1") } data-testid="object-view-show-unfiltered">
+				Show every connection anyway
+			</a>
+		</div>
+	}
+}
+
 // objectViewSectionList renders the type's declared relationship groups in
 // reading order. Indexes are positional and stable within one render, which is
 // what the in-place expansion route addresses: the request for group N swaps the
-// card whose id was rendered as N.
-templ objectViewSectionList(objID string, sections []objectViewSection, typeUIByType map[string]typeUI) {
+// card whose id was rendered as N. surface is the page the list is rendered on;
+// the cards carry it to their fragments so a no-JavaScript collapse lands back
+// where the reader was.
+templ objectViewSectionList(objID string, sections []objectViewSection, typeUIByType map[string]typeUI, surface objectViewSurface) {
 	<div class="flex flex-col" data-testid="object-view-sections">
 		for i, section := range sections {
-			@objectViewSectionCard(objID, i, section, typeUIByType)
+			@objectViewSectionCard(objID, i, section, typeUIByType, surface)
 		}
 	</div>
 }
@@ -1349,11 +1369,27 @@ templ objectViewSectionList(objID string, sections []objectViewSection, typeUIBy
 // (hx-target) and leave the rest of the page, its scroll position and the other
 // sections alone. The link carries a full-page href as well: without htmx it
 // still works, landing on the Relationships page with this section expanded.
-templ objectViewSectionCard(objID string, index int, section objectViewSection, typeUIByType map[string]typeUI) {
+//
+// surface is where the card currently renders. "Show all" is the same offer on
+// both surfaces (the expanded list; no-JS falls back to the Relationships page),
+// but "Show fewer" must land back on the surface the reader was reading: on the
+// Overview that is /objects/<id>, not the Relationships tab the reader never
+// opened. The fragment request carries the surface too, so the card it returns
+// agrees with the card it replaced.
+templ objectViewSectionCard(objID string, index int, section objectViewSection, typeUIByType map[string]typeUI, surface objectViewSurface) {
 	{{ sectionID := "object-view-section-" + strconv.Itoa(index)
 	sectionPath := "/objects/" + url.PathEscape(objID) + "/relationships/sections/" + strconv.Itoa(index)
 	expandHref := "/objects/" + url.PathEscape(objID) + "/relationships?expand=" + strconv.Itoa(index)
-	collapseHref := "/objects/" + url.PathEscape(objID) + "/relationships" }}
+	collapseHref := "/objects/" + url.PathEscape(objID) + "/relationships"
+	// The default surface is the Relationships tab, so only an Overview card
+	// spells its own surface out; that keeps every existing href unchanged.
+	hxSectionPath := sectionPath
+	hxCollapsePath := sectionPath + "?collapsed=1"
+	if surface == objectViewSurfaceOverview {
+		hxSectionPath = sectionPath + "?surface=" + string(objectViewSurfaceOverview)
+		hxCollapsePath = hxSectionPath + "&collapsed=1"
+		collapseHref = "/objects/" + url.PathEscape(objID)
+	} }}
 	<div id={ sectionID } data-testid="object-view-section">
 		@ui.Section(section.Title, ui.SectionProps{
 			Margin:    "mt-6",
@@ -1378,7 +1414,7 @@ templ objectViewSectionCard(objID string, index int, section objectViewSection, 
 								<a
 									class="link link-hover text-xs font-medium"
 									href={ templ.URL(expandHref) }
-									hx-get={ templ.URL(sectionPath) }
+									hx-get={ templ.URL(hxSectionPath) }
 									hx-target={ "#" + sectionID }
 									hx-swap="outerHTML"
 									data-testid="object-view-show-all"
@@ -1404,7 +1440,7 @@ templ objectViewSectionCard(objID string, index int, section objectViewSection, 
 								<a
 									class="link link-hover text-xs font-medium"
 									href={ templ.URL(collapseHref) }
-									hx-get={ templ.URL(sectionPath + "?collapsed=1") }
+									hx-get={ templ.URL(hxCollapsePath) }
 									hx-target={ "#" + sectionID }
 									hx-swap="outerHTML"
 									data-testid="object-view-show-fewer"
@@ -1435,7 +1471,9 @@ templ objectViewRow(row objectViewItem, typeUIByType map[string]typeUI, showDire
 	{{ tui := typeUIOf(typeUIByType, row.Neighbour.Type)
 	href := ""
 	if row.Resolved {
-		href = "/objects/" + url.PathEscape(relationshipEndpointTarget(row.Neighbour))
+		// The wiki, like every other object link in the app (#699): the
+		// editable page is reached from the wiki, not from a neighbour list.
+		href = objectWikiHref(relationshipEndpointTarget(row.Neighbour), "")
 	}
 	direction := ""
 	if showDirection {
@@ -1572,12 +1610,16 @@ templ objectRelationshipRow(obj *GraphObject, r GraphRelationship, related []Gra
 // what makes the row navigable (#421). An endpoint missing from the fetched slice
 // renders as the same block without a link: the related-object read is
 // best-effort, so a link there would point at an object page that may not exist.
+//
+// The link opens the wiki, like every other object link in the app (#699): the
+// editable page is reached from the wiki, not by jumping straight into the
+// editor from a list of neighbours.
 templ relationshipEndpointLink(obj *GraphObject, related []GraphObject, id string, typeUIByType map[string]typeUI) {
 	{{ ep, resolved := relationshipEndpointObject(obj, related, id)
 	hrefID := relationshipEndpointTarget(ep) }}
 	if resolved {
 		<a
-			href={ templ.URL("/objects/" + url.PathEscape(hrefID)) }
+			href={ templ.URL(objectWikiHref(hrefID, "")) }
 			class="group hover:bg-base-200/40 flex min-w-0 items-center gap-2 rounded-field px-1.5 py-0.5"
 			data-testid="object-relationship-endpoint"
 			data-object-id={ hrefID }

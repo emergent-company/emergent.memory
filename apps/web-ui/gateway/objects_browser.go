@@ -1,13 +1,32 @@
 package main
 
 import (
+	"encoding/json"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/a-h/templ"
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
+
+// objectsCardsGridClass is the results grid's responsive ramp: one column on a
+// phone, two from `sm`, three from `lg`, four from `2xl`. The card is the only
+// results surface (a desktop table plus a hidden mobile list used to duplicate
+// every object in the DOM), so this one string is the whole layout promise —
+// "four per row, two at sm, one below, and nothing scrolls horizontally at
+// 320px". It is a constant so the contract test asserts the same string the
+// markup renders: a `max-sm` breakpoint or a `grid-cols-*` widening is exactly
+// the kind of edit a refactor makes silently (#699).
+const objectsCardsGridClass = "grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4"
+
+// objectsStatsStripClass keeps the three-figure stats band inside the viewport on
+// a phone: the strip itself is full width, and each `.stat` is allowed to shrink
+// (min-w-0) with its title wrapping and its type stepping down, rather than
+// forcing the page wider than 320px. Both the deferred placeholder and the
+// loaded strip carry it, because the loaded strip replaces the placeholder.
+const objectsStatsStripClass = "mb-4 [&>.stats]:w-full max-sm:[&_.stat]:min-w-0 max-sm:[&_.stat]:px-2 max-sm:[&_.stat-title]:whitespace-normal max-sm:[&_.stat-title]:leading-tight max-sm:[&_.stat-title]:text-[10px] max-sm:[&_.stat-value]:text-xl max-sm:[&_.stat-desc]:text-[10px]"
 
 // objectsBrowserSelectionJS is the Alpine model for the objects table's row
 // selection. It lives on the page root so the checkbox column, the bulk bar, and
@@ -291,9 +310,12 @@ const objectExcerptMaxRunes = 280
 var objectExcerptKeys = []string{"summary", "description", "excerpt", "abstract", "content", "body", "notes"}
 
 // objectExcerpt resolves the first paragraph of an object's prose for a card.
-// It reads only string properties: an array or a number is not prose, and a
-// nested object's first key is not a stand-in for one. No prose property → ""
-// and the card renders without an excerpt rather than a truncated JSON dump.
+// It reads scalar properties only: an array or a nested object is not prose, and
+// a nested object's first key is not a stand-in for one. Scalars stored as JSON
+// numbers or booleans still count — parseFormJSON types a text field that
+// happens to hold "2024" as a number — so the card shows what the author typed
+// instead of an empty clamp (#699). No prose property → "" and the card renders
+// without an excerpt rather than a truncated JSON dump.
 func objectExcerpt(props map[string]any) string {
 	if len(props) == 0 {
 		return ""
@@ -319,19 +341,44 @@ func proseProperty(props map[string]any, key string) (string, bool) {
 
 // prosePropertyNamed is proseProperty that also reports the property's actual
 // name, which the article needs so the rail can skip the fields it rendered.
+//
+// A scalar is prose even when it was stored as a JSON number or boolean:
+// parseFormJSON turns any valid JSON scalar into its typed value, so a
+// description of "2024" arrives as a float64 and a "true" as a bool. Rejecting
+// those emptied the wiki and the card excerpt for a value the author plainly
+// typed as text (#699). Arrays and objects stay not-prose: their JSON dump is
+// not a paragraph.
 func prosePropertyNamed(props map[string]any, key string) (name, value string, ok bool) {
 	if v, found := props[key]; found {
-		s, isString := v.(string)
-		return key, s, isString
+		s, isProse := proseScalar(v)
+		return key, s, isProse
 	}
 	for k, v := range props {
 		if !strings.EqualFold(normalizeProseKey(k), key) {
 			continue
 		}
-		s, isString := v.(string)
-		return k, s, isString
+		s, isProse := proseScalar(v)
+		return k, s, isProse
 	}
 	return "", "", false
+}
+
+// proseScalar renders a stored JSON scalar as the text its author typed. Numbers
+// use their shortest round-trip form (json.Number preserves the literal), so
+// 2024 does not become 2024.000000 and 1.50 does not become 1.5.
+func proseScalar(v any) (string, bool) {
+	switch s := v.(type) {
+	case string:
+		return s, true
+	case bool:
+		return strconv.FormatBool(s), true
+	case float64:
+		return strconv.FormatFloat(s, 'f', -1, 64), true
+	case json.Number:
+		return s.String(), true
+	default:
+		return "", false
+	}
 }
 
 // normalizeProseKey folds a property name for comparison: separators dropped and

@@ -763,12 +763,29 @@ func (s *Server) uiObjectsKnowledge(c echo.Context) error {
 	return nil
 }
 
+// objectDetailSurface names what the loaded detail shell is rendered into. The
+// loader's only surface-specific fetch is the assignee-candidate list, which
+// feeds the workflow panel's assignee picker — the Overview and nothing else.
+// The wiki and the section fragments render no workflow control, so they ask for
+// the reader surface and skip a runtime-agent round trip they would discard
+// (#699).
+type objectDetailSurface int
+
+const (
+	// objectDetailSurfaceEditor is the Overview: it renders the workflow panel,
+	// so it needs assignable agents.
+	objectDetailSurfaceEditor objectDetailSurface = iota
+	// objectDetailSurfaceReader is every read-only surface: history, similar,
+	// relationships, the wiki, and the section fragments.
+	objectDetailSurfaceReader
+)
+
 // loadObjectDetailShell loads the shared header/nav data every object subpage
 // renders: the object itself, its branch, type accent, resolved workflow
-// control, assignee candidates (workflow types only), source provenance, and the
-// optional ?from= origin trail. A failed object fetch fills LoadErr; the page
-// components render their whole-page error state from it.
-func (s *Server) loadObjectDetailShell(ctx context.Context, id, from string) objectDetailShellData {
+// control, assignee candidates (editor surface, workflow types only), source
+// provenance, and the optional ?from= origin trail. A failed object fetch fills
+// LoadErr; the page components render their whole-page error state from it.
+func (s *Server) loadObjectDetailShell(ctx context.Context, id, from string, surface objectDetailSurface) objectDetailShellData {
 	obj, err := s.memory.GetGraphObject(ctx, id)
 	if err != nil {
 		return objectDetailShellData{LoadErr: userFacingError(err)}
@@ -815,7 +832,7 @@ func (s *Server) loadObjectDetailShell(ctx context.Context, id, from string) obj
 	}
 
 	var assignees []boardAssigneeCandidate
-	if !objectWorkControlDisabled(statusControl) {
+	if surface == objectDetailSurfaceEditor && !objectWorkControlDisabled(statusControl) {
 		assignees = s.boardAssigneeCandidates(ctx)
 	}
 
@@ -862,9 +879,9 @@ func (s *Server) uiObject(c echo.Context) error {
 	from := c.QueryParam("from")
 	flashErr := flashError(c)
 
-	data := s.loadObjectDetailShell(ctx, id, from)
+	data := s.loadObjectDetailShell(ctx, id, from, objectDetailSurfaceEditor)
 	if data.LoadErr != nil {
-		return s.page(c, pageTitle("Object"), ObjectDetailPage(nil, objectBranchRef{}, nil, nil, data.LoadErr, "", flashErr, nil, nil, nil, nil, nil, "", 0, nil))
+		return s.page(c, pageTitle("Object"), ObjectDetailPage(nil, objectBranchRef{}, nil, nil, data.LoadErr, "", flashErr, nil, nil, nil, nil, nil, "", 0, nil, false))
 	}
 	obj := data.Obj
 
@@ -878,7 +895,14 @@ func (s *Server) uiObject(c echo.Context) error {
 	// A type that declares a ui.view renders its relationship groups on the
 	// Overview itself: the typed layout is the object's page, and the
 	// Relationships tab is the full edge list behind it.
+	view := typeUIOf(data.TypeUIByType, obj.Type).View
 	viewSections := s.objectViewSections(ctx, data)
+	// hasView separates "no view" from "a view that shows nothing here". When a
+	// declared view resolves to no group, the Overview says so instead of
+	// silently omitting relationships — the same note the Relationships tab
+	// shows, because the pack opted out of exactly the types a flat list would
+	// have displayed. Zero edges stay silent: there is no view to explain.
+	hasView := view != nil && data.EdgesErr == nil && len(data.Edges) > 0
 
 	flashMsg := ""
 	if c.QueryParam("updated") != "" {
@@ -887,7 +911,7 @@ func (s *Server) uiObject(c echo.Context) error {
 	return s.page(c, pageTitle(graphObjectLabel(*obj)), ObjectDetailPage(
 		obj, data.Branch, data.Sources, data.Assignees,
 		nil, flashMsg, flashErr, labelSuggestions, propDefs, data.TypeUIByType,
-		data.Status, data.Trail, data.TypeLabel, data.EdgeCount, viewSections,
+		data.Status, data.Trail, data.TypeLabel, data.EdgeCount, viewSections, hasView,
 	))
 }
 
@@ -898,7 +922,7 @@ func (s *Server) uiObject(c echo.Context) error {
 func (s *Server) uiObjectHistoryPage(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
-	data := s.loadObjectDetailShell(ctx, id, c.QueryParam("from"))
+	data := s.loadObjectDetailShell(ctx, id, c.QueryParam("from"), objectDetailSurfaceReader)
 	data.Active = "history"
 	data.FlashErr = flashError(c)
 	if data.LoadErr != nil {
@@ -924,7 +948,7 @@ func (s *Server) uiObjectHistoryPage(c echo.Context) error {
 func (s *Server) uiObjectSimilarPage(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
-	data := s.loadObjectDetailShell(ctx, id, c.QueryParam("from"))
+	data := s.loadObjectDetailShell(ctx, id, c.QueryParam("from"), objectDetailSurfaceReader)
 	data.Active = "similar"
 	data.FlashErr = flashError(c)
 	if c.QueryParam("updated") != "" {
@@ -943,7 +967,7 @@ func (s *Server) uiObjectSimilarPage(c echo.Context) error {
 func (s *Server) uiObjectRelationshipsPage(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
-	data := s.loadObjectDetailShell(ctx, id, c.QueryParam("from"))
+	data := s.loadObjectDetailShell(ctx, id, c.QueryParam("from"), objectDetailSurfaceReader)
 	data.Active = "relationships"
 	data.FlashErr = flashError(c)
 	if c.QueryParam("updated") != "" {
@@ -982,22 +1006,49 @@ func (s *Server) uiObjectRelationshipsPage(c echo.Context) error {
 	return s.page(c, pageTitle(graphObjectLabel(*data.Obj)+" · Relationships"), objectRelationshipsPage(data, relTypes, data.Edges, related, data.EdgesErr))
 }
 
+// objectViewSurface names the page a declared view's section card was rendered
+// on. It exists for the card's no-JavaScript "show fewer": the link is a plain
+// href that must land back on the surface the reader was reading, and the only
+// other surface (the Relationships tab) is not where an Overview reader came
+// from.
+type objectViewSurface string
+
+const (
+	objectViewSurfaceOverview      objectViewSurface = "overview"
+	objectViewSurfaceRelationships objectViewSurface = "relationships"
+)
+
+// objectViewSurfaceFrom resolves the ?surface= value the section fragment
+// carries. An unknown or missing value is the Relationships tab, which is the
+// page whose own hrefs point at this route.
+func objectViewSurfaceFrom(v string) objectViewSurface {
+	if objectViewSurface(v) == objectViewSurfaceOverview {
+		return objectViewSurfaceOverview
+	}
+	return objectViewSurfaceRelationships
+}
+
 // uiObjectViewSection renders one group of the object type's declared ui.view as
 // a standalone fragment, so a truncated section expands in place (hx-get with
 // outerHTML) instead of navigating. ?collapsed=1 renders the collapsed card
 // again, which is how "show fewer" swaps back.
 //
 // The index is the group's position in the page's own render. A stale index — the
-// object lost an edge, the pack changed, the request is hand-made — is a 404,
-// never an empty card: an empty card would claim the section exists and has no
-// rows, which is the opposite of what happened.
+// object lost an edge, the pack changed, the request is hand-made — is a 404 for
+// a direct link, never an empty card: an empty card would claim the section
+// exists and has no rows, which is the opposite of what happened. An htmx swap
+// that names a group which no longer exists answers an empty 200 instead, so the
+// stale card is removed from the page rather than left frozen and dead behind an
+// error the reader cannot see.
 func (s *Server) uiObjectViewSection(c echo.Context) error {
 	ctx := c.Request().Context()
 	index, err := strconv.Atoi(c.Param("index"))
 	if err != nil || index < 0 {
 		return echo.NewHTTPError(http.StatusNotFound, "section not found")
 	}
-	data := s.loadObjectDetailShell(ctx, c.Param("id"), "")
+	// The fragment renders rows and links only: no workflow panel, so the
+	// assignee candidates are not fetched for it either.
+	data := s.loadObjectDetailShell(ctx, c.Param("id"), "", objectDetailSurfaceReader)
 	if data.LoadErr != nil || data.EdgesErr != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "object not found")
 	}
@@ -1006,46 +1057,79 @@ func (s *Server) uiObjectViewSection(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "section not found")
 	}
 	related := s.loadRelatedObjects(ctx, data.Obj, data.Edges)
+	surface := objectViewSurfaceFrom(c.QueryParam("surface"))
 
-	section, ok := expandedViewSection(view, index, data.Obj, data.Edges, related, data.TypeUIByType)
+	expanded := c.QueryParam("collapsed") != "1"
+	section, ok := viewSectionAt(view, index, data.Obj, data.Edges, related, data.TypeUIByType, expanded)
 	if !ok {
+		if c.Request().Header.Get("HX-Request") == "true" {
+			// The swap's own target is the card that no longer exists. An empty
+			// body with outerHTML removes it, which is a truthful refresh; a
+			// 404 would leave the stale card in place until a manual reload.
+			return c.NoContent(http.StatusOK)
+		}
 		return echo.NewHTTPError(http.StatusNotFound, "section not found")
 	}
-	if c.QueryParam("collapsed") == "1" {
-		sections := resolveObjectViewSections(view, data.Obj, data.Edges, related, data.TypeUIByType)
-		if index >= len(sections) {
-			return echo.NewHTTPError(http.StatusNotFound, "section not found")
-		}
-		section = sections[index]
-	}
-	renderPartial(c.Response().Writer, c.Request(), objectViewSectionCard(data.Obj.ID, index, section, data.TypeUIByType))
+	renderPartial(c.Response().Writer, c.Request(), objectViewSectionCard(data.Obj.ID, index, section, data.TypeUIByType, surface))
 	return nil
 }
 
-// objectSimilarFetchLimit is the raw similar-object fetch size. The count badge
-// uses it both for the filtered count and to mark a saturated result with "+".
+// objectSimilarFetchLimit is the number of similar objects the section renders.
+// The rail's count badge shows the same number, so the badge and the list below
+// it always agree.
 const objectSimilarFetchLimit = 10
+
+// objectSimilarOverFetch is the raw-fetch multiple of the display limit. Both
+// filters — the similarity threshold and the already-linked set — run AFTER the
+// fetch, so fetching exactly the display limit empties a section whose real
+// matches start at #11: on a real project the top ten vector neighbours are
+// routinely the objects already linked from the page above, and the section then
+// said "No similar objects" while unlinked matches existed further down. Four is
+// the bound: enough headroom for a dense neighbourhood, while a 40-row vector
+// search still fits optionalFetchTimeout.
+const objectSimilarOverFetch = 4
+
+// objectSimilarRawFetchLimit is the size of the vector search both deferred
+// fragments request. A raw fetch at this limit is saturated, so the count badge
+// marks it with "+": more matches may exist past it.
+const objectSimilarRawFetchLimit = objectSimilarFetchLimit * objectSimilarOverFetch
+
+// objectSimilarMatches runs the optional vector search, drops the hits the
+// section may not show (below the similarity threshold, or already connected to
+// the object), and bounds what is left to the display limit. bounded reports
+// that more unlinked matches may exist than it returned — the filtered list was
+// truncated, or the raw fetch was saturated — which is what the rail badge turns
+// into a "+".
+func (s *Server) objectSimilarMatches(ctx context.Context, id string) (matches []SimilarObject, bounded bool, err error) {
+	raw, err := s.memory.GetSimilarObjects(ctx, id, objectSimilarRawFetchLimit)
+	if err != nil {
+		return nil, false, err
+	}
+	matches = similarExcludingLinked(filterSimilarMatches(raw), s.similarLinkedIDs(ctx, id))
+	if len(matches) > objectSimilarFetchLimit {
+		return matches[:objectSimilarFetchLimit], true, nil
+	}
+	return matches, len(raw) >= objectSimilarRawFetchLimit, nil
+}
 
 // uiObjectSimilarCountPartial renders the nav rail's deferred similar-object
 // count badge. The vector search is optional and can be slow (issue #1096), so
 // the rail asks for this tiny fragment after paint. A zero count renders
-// nothing, which removes the badge. A raw fetch that hit the limit is marked
-// with "+" because more matches may exist.
+// nothing, which removes the badge. A result set that may continue past the
+// display limit is marked with "+".
 func (s *Server) uiObjectSimilarCountPartial(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(c.Request().Context(), optionalFetchTimeout)
 	defer cancel()
-	id := c.Param("id")
-	similar, err := s.memory.GetSimilarObjects(ctx, id, objectSimilarFetchLimit)
+	matches, bounded, err := s.objectSimilarMatches(ctx, c.Param("id"))
 	if err != nil {
 		captureError(err)
 		renderPartial(c.Response().Writer, c.Request(), objectRailCount("", "object-similar-count"))
 		return nil
 	}
-	matches := similarExcludingLinked(filterSimilarMatches(similar), s.similarLinkedIDs(ctx, id))
 	label := ""
 	if len(matches) > 0 {
 		label = strconv.Itoa(len(matches))
-		if len(similar) >= objectSimilarFetchLimit {
+		if bounded {
 			label += "+"
 		}
 	}
@@ -1114,14 +1198,13 @@ func (s *Server) uiObjectSimilarPartial(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(c.Request().Context(), optionalFetchTimeout)
 	defer cancel()
 	id := c.Param("id")
-	similar, err := s.memory.GetSimilarObjects(ctx, id, objectSimilarFetchLimit)
+	matches, _, err := s.objectSimilarMatches(ctx, id)
 	if err != nil {
 		captureError(err)
 		renderPartial(c.Response().Writer, c.Request(), objectSimilarError(&GraphObject{ID: id}))
 		return nil
 	}
 	obj := &GraphObject{ID: id, Type: c.QueryParam("type")}
-	matches := similarExcludingLinked(filterSimilarMatches(similar), s.similarLinkedIDs(ctx, id))
 	renderPartial(c.Response().Writer, c.Request(), objectSimilarObjects(obj, matches))
 	return nil
 }

@@ -110,7 +110,7 @@ templ objectsBrowserStats(data objectsPageData) {
 	{{
 		statsAttrs := templ.Attributes{
 			"id":           "objects-stats",
-			"class":        "mb-4 [&>.stats]:w-full max-sm:[&_.stat]:min-w-0 max-sm:[&_.stat]:px-2 max-sm:[&_.stat-title]:whitespace-normal max-sm:[&_.stat-title]:leading-tight max-sm:[&_.stat-title]:text-[10px] max-sm:[&_.stat-value]:text-xl max-sm:[&_.stat-desc]:text-[10px]",
+			"class":        objectsStatsStripClass,
 			"aria-live":    "polite",
 			"hx-target":    "this",
 			"hx-swap":      "outerHTML",
@@ -326,7 +326,7 @@ templ objectsBrowserCards(data objectsPageData) {
 		<div
 			id="objects-cards"
 			data-testid="objects-cards"
-			class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4"
+			class={ objectsCardsGridClass }
 		>
 			for _, r := range rows {
 				@objectsBrowserCard(r, search, unified, data.WikiView, data.Preview)
@@ -450,7 +450,13 @@ templ objectsBrowserSortControl(data objectsPageData) {
 // The name is plain text inside the header and the whole card is one stretched
 // link instead: an object is introduced by the same component as a page head and
 // a relationship row, while the card keeps a full-size click target. The
-// checkbox and the footer links sit above that overlay.
+// checkbox, the chip row and the footer links sit above that overlay.
+//
+// The chip row is raised for the tooltips, not for clicks: its hint spans carry
+// the only visible explanation of a state chip (the data-class hint, the
+// embedding state), and a tooltip cannot open if the pointer lands on the
+// overlay above it. The cost is deliberate — the band the chips occupy no longer
+// opens the card, so a click between two chips does nothing (#699).
 templ objectsBrowserCard(r objectsBrowserRowView, search, unified bool, wikiView string, preview bool) {
 	{{ href := objectWikiHref(r.ID, wikiView)
 	linkAttrs := templ.Attributes{}
@@ -491,7 +497,7 @@ templ objectsBrowserCard(r objectsBrowserRowView, search, unified bool, wikiView
 				/>
 			</label>
 		</div>
-		<div class="mt-auto flex min-h-6 flex-wrap items-center gap-1 px-3 pb-2 empty:hidden">
+		<div class="relative z-10 mt-auto flex min-h-6 flex-wrap items-center gap-1 px-3 pb-2 empty:hidden" data-testid="object-card-chips">
 			if r.DataClassLabel != "" {
 				<span class="tooltip tooltip-top inline-flex" data-tip={ r.DataClassHint }>
 					@ui.Badge(ui.BadgeProps{Label: r.DataClassLabel, Icon: r.DataClassIcon, Variant: r.DataClassIntent, Size: ui.BadgeSizeXS})
