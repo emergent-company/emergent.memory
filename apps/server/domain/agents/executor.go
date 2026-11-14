@@ -3119,6 +3119,9 @@ func (ae *AgentExecutor) runPipeline(
 	// keep using work_complete/work_block so the work lifecycle stays
 	// authoritative. See the webpage-feedback issue-triager.
 	ctx = auth.WithAgentWorkStatusSubject(ctx, reactionWorkStatusSubject(req.Agent, req.AgentDefinition, req.SubjectObjectID))
+	if run.SubjectObjectID != nil && *run.SubjectObjectID != "" {
+		ctx = mcp.ContextWithWorkObjectID(ctx, *run.SubjectObjectID)
+	}
 
 	// Accumulate cached token counts across all LLM steps in this run.
 	// Used to surface cache hit visibility in the run summary.
