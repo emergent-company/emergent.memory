@@ -143,6 +143,10 @@ func (s *Server) setSessionCookie(c echo.Context, claims sessionClaims) {
 // earlier value in place lets a stale-claims cookie win; one header removes the
 // ambiguity entirely (#610).
 func writeSessionCookieHeader(c echo.Context, ck *http.Cookie) {
+	str := ck.String()
+	if str == "" {
+		return // like http.SetCookie: never emit an empty header
+	}
 	h := c.Response().Header()
 	prefix := ck.Name + "="
 	vals := h.Values(echo.HeaderSetCookie)
@@ -153,13 +157,13 @@ func writeSessionCookieHeader(c echo.Context, ck *http.Cookie) {
 			if replaced {
 				continue // collapse any duplicate to a single value
 			}
-			v = ck.String()
+			v = str
 			replaced = true
 		}
 		out = append(out, v)
 	}
 	if !replaced {
-		out = append(out, ck.String())
+		out = append(out, str)
 	}
 	h.Del(echo.HeaderSetCookie)
 	for _, v := range out {

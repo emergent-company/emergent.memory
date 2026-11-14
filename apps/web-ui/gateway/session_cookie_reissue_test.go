@@ -238,6 +238,35 @@ func TestAvatarReissueAfterRefreshWritesOneCookie(t *testing.T) {
 	})
 }
 
+// TestReissueFallsBackToRequestCookieWithoutMiddlewareClaims pins the
+// no-middleware path (dev/API-key mode, or a helper called outside the auth
+// chain): with no validated claims in the context the helpers still re-issue
+// from the request cookie, exactly as before #610.
+func TestReissueFallsBackToRequestCookieWithoutMiddlewareClaims(t *testing.T) {
+	s := &Server{cfg: sessionCfg(), memory: &fakeMemory{}}
+	e := echo.New()
+	e.POST("/switch", func(c echo.Context) error {
+		s.activateProjectInSession(c, "proj-new", "org-new")
+		return c.String(http.StatusOK, "ok")
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/switch", nil)
+	addSessionCookie(t, req, "test-secret", testSessionClaims()) // proj-sess / at-session / rt-session
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	claims := oneSessionCookie(t, rec, "test-secret")
+	if claims.AccessToken != "at-session" || claims.RefreshToken != "rt-session" {
+		t.Errorf("tokens = (%q, %q), want the cookie's own pair", claims.AccessToken, claims.RefreshToken)
+	}
+	if claims.ActiveProjectID != "proj-new" || claims.OrgID != "org-new" {
+		t.Errorf("scope = (%q, %q), want (proj-new, org-new)", claims.ActiveProjectID, claims.OrgID)
+	}
+}
+
 // TestSessionCookieWriteCollapsesDuplicatesDirectly pins the header helper
 // itself: an earlier session cookie on the response is replaced, not appended,
 // and unrelated cookies keep their place.
