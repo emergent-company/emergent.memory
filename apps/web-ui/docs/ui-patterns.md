@@ -1,5 +1,12 @@
 # UI / htmx / Alpine — patterns & unification
 
+> **Hand-maintained mirror — not the source of truth.** The authoritative
+> catalogue is the Memory graph (project `memory_coding`, pack `ui-patterns`;
+> `UIPattern`, `UIComponent`, `UIRule`, `UIVariant`). Nothing generates this
+> file, and a pattern is never added here first: change the graph, then update
+> this mirror in the same PR. It is kept because contributors outside the
+> organisation cannot reach the graph.
+
 Authoritative reference for the web-ui gateway's rendering, interactivity, and
 testing conventions. Complements the Go/templ style enforced in the gateway
 package and the component-layer rules in §4. Everything here is grounded in
