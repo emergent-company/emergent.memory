@@ -247,7 +247,7 @@ ratchet forbids it.
 falls back to `EmptyDash` unless `NoEmptyDash`.
 
 **Source:** `components/meta.templ:18,35,55,74`, `components/panel.templ:45`,
-`ui.templ:386` (`statRow`), `ui.templ:1088` (`cardList`).
+`ui.templ:391` (`statRow`), `ui.templ:1107` (`cardList`).
 
 ---
 

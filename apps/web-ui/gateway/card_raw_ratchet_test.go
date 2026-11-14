@@ -106,6 +106,9 @@ func pageCardRawFindings(actual, examples map[string]int, budgetEntries []pageCa
 		a, aOK := actual[file]
 		b, bOK := budget[file]
 		switch {
+		case bOK && b.count < 1:
+			findings = append(findings, fmt.Sprintf("page-card-raw: budget entry %s declares count %d — an entry exists to allow at least one site, so delete it instead of budgeting zero",
+				file, b.count))
 		case !bOK:
 			findings = append(findings, fmt.Sprintf("page-card-raw: page %s opens the raw ui.CardRaw shell at line %d (%d occurrence%s) — render components.PanelCard / components.TableCard, or budget the site with a justification note in pageCardRawBudget",
 				file, examples[file], a, pluralS(a)))
@@ -187,5 +190,36 @@ func TestPageCardRawBudgetRequiresNote(t *testing.T) {
 	}
 	if !strings.Contains(got[0], "no_such_page.templ") || !strings.Contains(got[0], "justification") {
 		t.Errorf("empty-note finding does not name the entry and the requirement: %q", got[0])
+	}
+}
+
+// TestPageCardRawFindingsDetectsSites covers the count check with synthetic maps:
+// since the shipped budget is empty, the load-bearing branch (any page-level
+// ui.CardRaw is a finding) is otherwise only exercised by a red tree, and a
+// retired budget that no longer bites would look identically green.
+func TestPageCardRawFindingsDetectsSites(t *testing.T) {
+	note := "synthetic: a pinned gap"
+	cases := []struct {
+		name     string
+		actual   map[string]int
+		examples map[string]int
+		budget   []pageCardRawBudgetEntry
+		want     int
+	}{
+		{"unbudgeted page", map[string]int{"a.templ": 1}, map[string]int{"a.templ": 7}, nil, 1},
+		{"budget entry no longer present", nil, nil, []pageCardRawBudgetEntry{{file: "a.templ", count: 1, note: note}}, 1},
+		{"grew", map[string]int{"a.templ": 2}, map[string]int{"a.templ": 7}, []pageCardRawBudgetEntry{{file: "a.templ", count: 1, note: note}}, 1},
+		{"dropped", map[string]int{"a.templ": 1}, map[string]int{"a.templ": 7}, []pageCardRawBudgetEntry{{file: "a.templ", count: 2, note: note}}, 1},
+		{"zero-count entry", nil, nil, []pageCardRawBudgetEntry{{file: "a.templ", count: 0, note: note}}, 1},
+		{"clean", nil, nil, nil, 0},
+		{"exact match", map[string]int{"a.templ": 2}, map[string]int{"a.templ": 7}, []pageCardRawBudgetEntry{{file: "a.templ", count: 2, note: note}}, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := pageCardRawFindings(c.actual, c.examples, c.budget)
+			if len(got) != c.want {
+				t.Fatalf("got %d finding(s), want %d: %v", len(got), c.want, got)
+			}
+		})
 	}
 }

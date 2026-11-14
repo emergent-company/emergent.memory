@@ -21,7 +21,9 @@ type PanelCardOpt struct {
 	// BodyClass overrides the body's density class (default
 	// "memory-density-comfortable"). Callers whose panel needs a different
 	// density (e.g. "memory-density-compact") or a layout class like "p-4" /
-	// "gap-4" pass it here.
+	// "gap-4" pass it here. An empty value means the default density; the
+	// pre-PanelCard positional form treated "" as "no body class at all", but
+	// no caller relied on that (the default is the shared treatment).
 	BodyClass string
 	// Surface overrides the card background; zero = ui.CardSurfaceBase100
 	// (bg-base-100). Unlike a class appended via extraClass, this REPLACES the
@@ -35,7 +37,7 @@ type PanelCardOpt struct {
 // PanelCard renders the standard bordered panel with the shared body padding.
 // extraClass is appended to the panel classes for an intentional accent (for
 // example "border-primary/20" on a one-time secret panel); the standard
-// treatment is always applied.
+// treatment applies unless PanelCardOpt replaces the surface or the outline.
 //
 // opts optionally replaces the body density, the surface and the outline (see
 // PanelCardOpt). Callers whose panel needs a different density (e.g.

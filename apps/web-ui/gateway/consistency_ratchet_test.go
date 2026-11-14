@@ -595,14 +595,12 @@ func pluralS(n int) string {
 	return "s"
 }
 
-// TestBudgetEntriesRequireJustification guards the note rule for all three
-// budget tables: the shipped tables must be fully annotated, and an entry with a
-// blank note must produce a finding, so the requirement is enforced and not just
-// documented.
+// TestBudgetEntriesRequireJustification guards the note rule for the adoption
+// and pattern budgets (the page-card-raw budget is covered by
+// TestPageCardRawBudgetRequiresNote, next to its own check): the shipped tables
+// must be fully annotated, and an entry with a blank note must produce a
+// finding, so the requirement is enforced and not just documented.
 func TestBudgetEntriesRequireJustification(t *testing.T) {
-	if got := pageCardRawNoteFindings(pageCardRawBudget()); len(got) != 0 {
-		t.Errorf("page-card-raw budget: %v", got)
-	}
 	if got := adoptionNoteFindings(adoptionBudget()); len(got) != 0 {
 		t.Errorf("adoption budget: %v", got)
 	}
