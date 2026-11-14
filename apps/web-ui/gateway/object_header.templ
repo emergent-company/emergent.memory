@@ -1,7 +1,10 @@
 package main
 
 import (
+	"maps"
+
 	ui "github.com/emergent-company/go-daisy/components/ui"
+	"github.com/emergent-company/go-daisy/devmode"
 )
 
 // object_header.templ — how an object is introduced, on every surface.
@@ -17,8 +20,8 @@ import (
 // templ's parser rejects a named scalar type declared in a .templ file.
 
 // objectHeader renders one object's identity: type icon tile, identity line
-// (type · ref) and name. The root carries `data-component="gateway/ObjectHeader"`
-// so the feedback overlay reports the component rather than a layout wrapper.
+// (type · ref) and name. The root carries the `data-component` annotation so the
+// feedback overlay reports the component rather than a layout wrapper.
 templ objectHeader(p objectHeaderProps) {
 	{{ tile := typeIconTileRow
 	if p.Variant == objectHeaderLead {
@@ -28,7 +31,11 @@ templ objectHeader(p objectHeaderProps) {
 	if p.Variant == objectHeaderLead {
 		wrap = "flex min-w-0 items-start gap-3"
 	}
-	rootAttrs := templ.Attributes{"data-component": "gateway/ObjectHeader"}
+	// Copy rather than use devmode.Attrs's map directly: outside dev mode it
+	// returns a package-level empty map shared by every caller, and the test id
+	// below would then leak into the next render.
+	rootAttrs := templ.Attributes{}
+	maps.Copy(rootAttrs, devmode.Attrs(ctx, "gateway/ObjectHeader"))
 	if p.TestID != "" {
 		rootAttrs["data-testid"] = p.TestID
 	}
@@ -109,7 +116,7 @@ templ objectIdentityLine(objType, color, ref, testID string) {
 			dotAttrs["style"] = style
 		}
 	}}
-	<div class="text-muted flex min-w-0 items-center gap-1.5 font-mono text-[11px]" { lineAttrs... } data-component="gateway/ObjectIdentityLine">
+	<div class="text-muted flex min-w-0 items-center gap-1.5 font-mono text-[11px]" { lineAttrs... } { devmode.Attrs(ctx, "gateway/ObjectIdentityLine")... }>
 		<span class="truncate">{ objType }</span>
 		<span { dotAttrs... }></span>
 		<span class="shrink-0" data-testid="object-ref">{ ref }</span>

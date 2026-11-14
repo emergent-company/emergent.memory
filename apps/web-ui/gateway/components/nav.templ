@@ -2,13 +2,14 @@ package components
 
 import (
 	ui "github.com/emergent-company/go-daisy/components/ui"
+	"github.com/emergent-company/go-daisy/devmode"
 )
 
 // SubNav renders a sub-navigation rail: it stacks horizontally on small screens
 // and becomes a vertical rail on desktop. Callers supply SubNavItems; the rail
 // lives here rather than in a feature page file.
 templ SubNav(label string) {
-	<nav class="flex flex-row gap-1 overflow-x-auto lg:flex-col" aria-label={ label }>
+	<nav { devmode.Attrs(ctx, "components/SubNav")... } class="flex flex-row gap-1 overflow-x-auto lg:flex-col" aria-label={ label }>
 		{ children... }
 	</nav>
 }
@@ -61,6 +62,7 @@ templ subNavItemWithBadge(href string, isActive bool, icon, label string, badge 
 // subNavItem is the shared entry markup behind both exported variants.
 templ subNavItem(href string, isActive bool, icon, label string, badge templ.Component) {
 	<a
+		{ devmode.Attrs(ctx, "components/SubNavItem")... }
 		class={ "flex items-center gap-2.5 rounded-box px-3 py-2 text-sm whitespace-nowrap transition-colors", templ.KV("bg-base-200 font-medium text-base-content", isActive), templ.KV("text-muted-strong hover:bg-base-200/50 hover:text-base-content", !isActive) }
 		href={ templ.URL(href) }
 		if isActive {
