@@ -162,3 +162,35 @@ func (m *MemoryClient) CreateRuntimeAgent(ctx context.Context, in *CreateRuntime
 	}
 	return &env.Data, nil
 }
+
+// AgentQueue is a named work queue (GET /api/projects/:projectId/agent-queues).
+type AgentQueue struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+	Concurrency int    `json:"concurrency"`
+	Enabled     bool   `json:"enabled"`
+}
+
+func (m *MemoryClient) ListAgentQueues(ctx context.Context, projectID string) ([]AgentQueue, error) {
+	var env successEnvelope[[]AgentQueue]
+	path := "/api/projects/" + url.PathEscape(projectID) + "/agent-queues"
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &env); err != nil {
+		return nil, err
+	}
+	return env.Data, nil
+}
+
+func (m *MemoryClient) CreateAgentQueue(ctx context.Context, projectID, name string) (*AgentQueue, error) {
+	var env successEnvelope[AgentQueue]
+	path := "/api/projects/" + url.PathEscape(projectID) + "/agent-queues"
+	body := map[string]any{"name": name, "concurrency": 1}
+	if err := m.doH(ctx, http.MethodPost, path, body, m.documentHeaders(ctx), &env); err != nil {
+		return nil, err
+	}
+	return &env.Data, nil
+}
+
+func (m *MemoryClient) EnableRuntimeAgent(ctx context.Context, projectID, agentID string) error {
+	path := "/api/projects/" + url.PathEscape(projectID) + "/agents/" + url.PathEscape(agentID) + "/enable"
+	return m.doH(ctx, http.MethodPost, path, nil, m.documentHeaders(ctx), nil)
+}

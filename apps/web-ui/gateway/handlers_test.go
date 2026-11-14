@@ -71,11 +71,13 @@ type modelConfigClears struct {
 
 // fakeMemory is an in-memory MemoryBackend for tests.
 type fakeMemory struct {
-	orgPresence     *PresenceDto
-	projectPresence *PresenceDto
-	agents          []AgentDefinitionSummary
-	defs            map[string]*AgentDefinition // full definitions keyed by id
-	runtimeAgents   []RuntimeAgent
+	orgPresence         *PresenceDto
+	projectPresence     *PresenceDto
+	agents              []AgentDefinitionSummary
+	defs                map[string]*AgentDefinition // full definitions keyed by id
+	runtimeAgents       []RuntimeAgent
+	createdQueue        string
+	enabledRuntimeAgent string
 	// defFetches records ids passed to GetAgentDefinition, in order, so tests
 	// can pin how many definition requests a render costs (#2181). Guarded by
 	// defMu: chatModelWarnings fetches definitions from concurrent goroutines.
@@ -792,6 +794,20 @@ func (f *fakeMemory) CreateRuntimeAgent(ctx context.Context, in *CreateRuntimeAg
 
 func (f *fakeMemory) ListRuntimeAgents(ctx context.Context, projectID string) ([]RuntimeAgent, error) {
 	return f.runtimeAgents, nil
+}
+
+func (f *fakeMemory) ListAgentQueues(ctx context.Context, projectID string) ([]AgentQueue, error) {
+	return []AgentQueue{{Name: "default", Enabled: true}}, nil
+}
+
+func (f *fakeMemory) CreateAgentQueue(ctx context.Context, projectID, name string) (*AgentQueue, error) {
+	f.createdQueue = name
+	return &AgentQueue{Name: name, Enabled: true}, nil
+}
+
+func (f *fakeMemory) EnableRuntimeAgent(ctx context.Context, projectID, agentID string) error {
+	f.enabledRuntimeAgent = agentID
+	return nil
 }
 
 func (f *fakeMemory) CreateAgentDefinition(ctx context.Context, in *AgentDefinition) (*AgentDefinition, error) {

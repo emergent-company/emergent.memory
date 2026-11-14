@@ -15,6 +15,9 @@ type MemoryBackend interface {
 	CreateAgentDefinition(ctx context.Context, in *AgentDefinition) (*AgentDefinition, error)
 	CreateRuntimeAgent(ctx context.Context, in *CreateRuntimeAgentRequest) (*RuntimeAgent, error)
 	ListRuntimeAgents(ctx context.Context, projectID string) ([]RuntimeAgent, error)
+	ListAgentQueues(ctx context.Context, projectID string) ([]AgentQueue, error)
+	CreateAgentQueue(ctx context.Context, projectID, name string) (*AgentQueue, error)
+	EnableRuntimeAgent(ctx context.Context, projectID, agentID string) error
 	UpdateAgentDefinition(ctx context.Context, id string, in *AgentDefinition) (*AgentDefinition, error)
 	DeleteAgentDefinition(ctx context.Context, id string) error
 	ListScheduledAgents(ctx context.Context) ([]ScheduledAgent, error)
