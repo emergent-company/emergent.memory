@@ -1491,6 +1491,13 @@ templ dataSourceHeaderMeta(src *DSIntegration) {
 templ dataSourceDetailHeader(src *DSIntegration, providerName string, canSync bool) {
 	@detailHeader(crumbsActive(nav.Crumbs("Data Sources", "/data-sources", dsSourceName(*src))), "", dsSourceName(*src), providerName, detailHeaderOpts{Margin: "mb-6", Meta: dataSourceHeaderMeta(src)}) {
 		<div class="flex flex-wrap items-center gap-2">
+			if src.ProviderType == dsProviderTypeGitHubApp {
+				@ui.Button(ui.ButtonProps{
+					Type: ui.ButtonTypeLink, Href: "/data-sources/" + url.PathEscape(src.ID) + "/workflow",
+					Variant: ui.ButtonOutline, Size: ui.ButtonSM, Icon: "lucide--workflow",
+					Attrs: templ.Attributes{"data-testid": "ds-workflow-link"},
+				}) { Workflow }
+			}
 			if canSync {
 				<form method="post" action={ templ.URL("/data-sources/" + url.PathEscape(src.ID) + "/sync") }>
 					@ui.Button(ui.ButtonProps{
@@ -2160,6 +2167,39 @@ templ DataSourceTriggerNewPage(src *DSIntegration, view dsSourceTriggersView, fl
 					</div>
 				</form>
 			}
+		}
+	}
+}
+
+
+// DataSourceWorkflowPage configures the reviewer lanes emitted by a github_app
+// source. Runs are created by the board, not by the dispatcher.
+templ DataSourceWorkflowPage(src *DSIntegration, wf *SourceWorkflow, loadErr error, flashMsg string, flashErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Data sources", "/data-sources", dsSourceName(*src), "/data-sources/"+url.PathEscape(src.ID), "Workflow")), "", "Workflow", "Each reviewer lane becomes a board item with its own agent, retries and block state. Runs are created by the Board.", detailHeaderOpts{Margin: "mb-6"}) {
+			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/data-sources/" + url.PathEscape(src.ID), Variant: ui.ButtonOutline, Size: ui.ButtonSM, Icon: "lucide--arrow-left"}) { Back to source }
+		}
+		@flashToasts(flashMsg, flashErr)
+		if loadErr != nil {
+			@pageErrorNotice("Workflow unavailable", loadErr)
+		}
+		@components.PanelCard("", templ.Attributes{"data-testid": "ds-workflow-page"}) {
+			<form method="post" action={ templ.URL("/data-sources/" + url.PathEscape(src.ID) + "/workflow") } class="flex flex-col gap-4">
+				<div class="flex flex-col gap-1">
+					<label class="text-sm font-medium" for="ds-workflow-reviewers">Reviewer lanes</label>
+					<textarea id="ds-workflow-reviewers" name="reviewers" rows="5" required class="textarea w-full font-mono text-xs" placeholder="security | security-review&#10;ui | ui-review" data-testid="ds-workflow-reviewers">{ sourceWorkflowText(wf) }</textarea>
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+						One line per lane: lane | agent-name. Every lane creates a GitHubReviewLane board item assigned to that agent.
+					}
+				</div>
+				<div class="flex flex-wrap items-center gap-2">
+					@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/work/settings", Variant: ui.ButtonOutline, Size: ui.ButtonSM, Icon: "lucide--settings"}) { Work rules }
+					@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/work/board", Variant: ui.ButtonOutline, Size: ui.ButtonSM, Icon: "lucide--columns-3"}) { Board }
+					<div class="ml-auto">
+						@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM, Icon: "lucide--save", Attrs: templ.Attributes{"data-testid": "ds-workflow-save"}}) { Save workflow }
+					</div>
+				</div>
+			</form>
 		}
 	}
 }

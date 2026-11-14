@@ -214,6 +214,7 @@ var models = []any{
 	(*sources.SourceTrigger)(nil),
 	(*sources.SourceEvent)(nil),
 	(*sources.SourceEventClaim)(nil),
+	(*sources.SourceWorkflow)(nil),
 	(*sources.SyncJob)(nil),
 	(*sources.OAuthPendingState)(nil),
 	(*sources.OAuthClientConfig)(nil),

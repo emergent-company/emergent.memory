@@ -2,6 +2,8 @@ package sources
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -690,4 +692,42 @@ func (r *Repository) FindSourceTriggerByID(ctx context.Context, projectID, id uu
 		return nil, err
 	}
 	return trigger, nil
+}
+
+// --- Source workflows ---
+
+func (r *Repository) GetSourceWorkflow(ctx context.Context, projectID, sourceID uuid.UUID) (*SourceWorkflow, error) {
+	var wf SourceWorkflow
+	err := r.projectTx(ctx, projectID, func(ctx context.Context, tx bun.Tx) error {
+		return tx.NewSelect().Model(&wf).
+			Where("sw.source_id = ?", sourceID).
+			Where("sw.project_id = ?", projectID).
+			Scan(ctx)
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &wf, nil
+}
+
+func (r *Repository) UpsertSourceWorkflow(ctx context.Context, wf *SourceWorkflow) error {
+	return r.projectTx(ctx, wf.ProjectID, func(ctx context.Context, tx bun.Tx) error {
+		_, err := tx.NewRaw(`INSERT INTO kb.source_workflows AS sw
+			(project_id, source_id, config, enabled)
+			VALUES (?, ?, ?::jsonb, ?)
+			ON CONFLICT (source_id) DO UPDATE
+			SET config = EXCLUDED.config, enabled = EXCLUDED.enabled, updated_at = now()
+			RETURNING sw.id, sw.created_at, sw.updated_at`,
+			wf.ProjectID, wf.SourceID, jsonBytes(wf.Config), wf.Enabled).
+			Exec(ctx, &wf.ID, &wf.CreatedAt, &wf.UpdatedAt)
+		return err
+	})
+}
+
+func jsonBytes(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }

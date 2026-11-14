@@ -433,3 +433,44 @@ func (h *Handler) ListInstallationRepositories(c echo.Context) error {
 	}
 	return c.JSON(http.StatusOK, repos)
 }
+
+// GetSourceWorkflow handles GET /api/data-source-integrations/:id/workflow.
+func (h *Handler) GetSourceWorkflow(c echo.Context) error {
+	projectID, err := h.projectIDFromCaller(c)
+	if err != nil {
+		return err
+	}
+	sourceID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apperror.ErrBadRequest
+	}
+	wf, err := h.svc.GetSourceWorkflow(c.Request().Context(), projectID, sourceID)
+	if err != nil {
+		return err
+	}
+	if wf == nil {
+		return c.JSON(http.StatusOK, map[string]any{"sourceId": sourceID, "config": SourceWorkflowConfig{}})
+	}
+	return c.JSON(http.StatusOK, wf)
+}
+
+// PutSourceWorkflow handles PUT /api/data-source-integrations/:id/workflow.
+func (h *Handler) PutSourceWorkflow(c echo.Context) error {
+	projectID, err := h.projectIDFromCaller(c)
+	if err != nil {
+		return err
+	}
+	sourceID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apperror.ErrBadRequest
+	}
+	var in SourceWorkflowConfig
+	if err := c.Bind(&in); err != nil {
+		return apperror.NewBadRequest("invalid workflow body")
+	}
+	wf, err := h.svc.UpsertSourceWorkflow(c.Request().Context(), projectID, sourceID, in)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, wf)
+}

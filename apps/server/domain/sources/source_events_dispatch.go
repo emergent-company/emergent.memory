@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/githubapp"
+	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -32,13 +34,27 @@ const asyncSourceEventTimeout = 2 * time.Minute
 // SourceEventDispatcher verifies provider webhooks and dispatches matching
 // source triggers to agent runs.
 type SourceEventDispatcher struct {
-	repo       *Repository
-	agents     *agents.Repository
-	key        []byte
-	apiBaseURL string
-	minter     *githubapp.TokenMinter
-	newClient  func(baseURL, token string) *githubapp.Client
-	log        *slog.Logger
+	repo        *Repository
+	agents      *agents.Repository
+	key         []byte
+	apiBaseURL  string
+	minter      *githubapp.TokenMinter
+	newClient   func(baseURL, token string) *githubapp.Client
+	workObjects SourceWorkObjectStore
+	log         *slog.Logger
+}
+
+// SourceWorkObjectStore is the graph upsert surface the workflow dispatcher
+// needs. A source without a workflow keeps the direct trigger path.
+type SourceWorkObjectStore interface {
+	CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *graph.CreateGraphObjectRequest, actorID *uuid.UUID) (*graph.GraphObjectResponse, bool, error)
+}
+
+// WireSourceWorkObjectStore injects the graph service into the dispatcher.
+func WireSourceWorkObjectStore(d *SourceEventDispatcher, store SourceWorkObjectStore) {
+	if d != nil {
+		d.workObjects = store
+	}
 }
 
 // NewSourceEventDispatcher builds the dispatcher from the deployment config.
@@ -234,6 +250,13 @@ func (d *SourceEventDispatcher) dispatchPullRequestSource(ctx context.Context, v
 
 func (d *SourceEventDispatcher) processPullRequestSource(ctx context.Context, v *VerifiedSourceEvent, src *Source, subject string, state *githubapp.PullRequestState, ev *SourceEvent) error {
 	p := v.Payload
+	handled, err := d.processWorkflowEvent(ctx, src, ev, state, p, subject)
+	if err != nil {
+		return err
+	}
+	if handled {
+		return nil
+	}
 	claim, superseded, err := d.repo.ClaimSourceSubject(ctx, src.ProjectID, src.ID, subject, state.HeadSHA, p.PullRequest.Head.SHA)
 	if errors.Is(err, ErrSourceEventStaleHead) {
 		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventSkipped, nil, nil)
@@ -528,4 +551,63 @@ func defaultSourceQueue(queue string) string {
 		return "default"
 	}
 	return strings.TrimSpace(queue)
+}
+
+// processWorkflowEvent emits parent/lane work items for a source that has a
+// workflow configured. The board reconciler, not this dispatcher, starts runs.
+func (d *SourceEventDispatcher) processWorkflowEvent(ctx context.Context, src *Source, ev *SourceEvent, state *githubapp.PullRequestState, p *githubapp.WebhookPayload, subject string) (bool, error) {
+	wf, err := d.repo.GetSourceWorkflow(ctx, src.ProjectID, src.ID)
+	if err != nil || wf == nil || !wf.Enabled {
+		return false, err
+	}
+	if d.workObjects == nil {
+		return false, fmt.Errorf("sources: workflow source has no work-object store")
+	}
+	var cfg SourceWorkflowConfig
+	raw, _ := json.Marshal(wf.Config)
+	if err := json.Unmarshal(raw, &cfg); err != nil || len(cfg.Reviewers) == 0 {
+		return false, fmt.Errorf("sources: workflow config is invalid: %w", err)
+	}
+	repoName := p.Repository.FullName
+	parentKey := fmt.Sprintf("github:%s:%s#%d", src.ID.String(), repoName, p.PullNumber())
+	title := p.PullRequest.Title
+	if title == "" {
+		title = subject
+	}
+	parentStatus := "open"
+	laneStatus := "ready"
+	if p.Action == "closed" || p.PullRequest.State == "closed" {
+		parentStatus = "closed"
+		laneStatus = "cancelled"
+	}
+	parentProps := map[string]any{
+		"repo": repoName, "pr_number": p.PullNumber(), "head_sha": state.HeadSHA,
+		"base_sha": p.PullRequest.Base.SHA, "title": title, "state": p.PullRequest.State, "status": parentStatus,
+	}
+	if _, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
+		Type: "GitHubPullRequest", Key: &parentKey, Name: &title, Status: &parentStatus, Properties: parentProps,
+	}, nil); err != nil {
+		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
+		return true, err
+	}
+	for _, reviewer := range cfg.Reviewers {
+		laneKey := parentKey + ":" + reviewer.Lane
+		laneName := title + " · " + reviewer.Lane
+		laneProps := map[string]any{
+			"lane": reviewer.Lane, "agent": reviewer.Agent, "repo": repoName, "pr_number": p.PullNumber(),
+			"head_sha": state.HeadSHA, "base_sha": p.PullRequest.Base.SHA, "title": title,
+			"state": p.PullRequest.State, "status": laneStatus,
+		}
+		assignee := reviewer.Agent
+		status := laneStatus
+		if _, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
+			Type: "GitHubReviewLane", Key: &laneKey, Name: &laneName, Status: &status,
+			Assignee: &assignee, Properties: laneProps,
+		}, nil); err != nil {
+			d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
+			return true, err
+		}
+	}
+	d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventDispatched, nil, nil)
+	return true, nil
 }
