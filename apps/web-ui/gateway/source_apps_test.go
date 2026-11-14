@@ -44,6 +44,7 @@ func sourceAppsTestServerWithConfig(f *fakeMemory, cfg Config) *echo.Echo {
 	e.POST(dsSourceAppsPath+"/:appId/delete", s.uiSourceAppDelete)
 	e.GET("/data-sources/new", s.uiDataSourceNew)
 	e.GET("/data-sources/:id", s.uiDataSourceDetail)
+	e.GET("/data-sources/:id/triggers/new", s.uiDataSourceTriggerNew)
 	e.POST("/data-sources/:id/triggers", s.uiDataSourceTriggerCreate)
 	e.POST("/data-sources/:id/triggers/:triggerId/toggle", s.uiDataSourceTriggerToggle)
 	e.POST("/data-sources/:id/triggers/:triggerId/delete", s.uiDataSourceTriggerDelete)
@@ -767,6 +768,47 @@ func TestSourceAppDeleteSurfacesConflictMessage(t *testing.T) {
 	assertRedirectError(t, rec.Header().Get("Location"), msg)
 }
 
+func TestDataSourceTriggerNewPageRendersForm(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.dsIntegrations = []DSIntegration{{ID: "s1", Name: "GH", ProviderType: dsProviderTypeGitHubApp}}
+	f.agents = []AgentDefinitionSummary{{ID: "agent-1", Name: "Reviewer"}}
+	e := sourceAppsTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1/triggers/new", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="ds-trigger-new"`,
+		`data-testid="ds-trigger-new-form"`,
+		`action="/data-sources/s1/triggers"`,
+		`name="agentId"`,
+		"Reviewer",
+		`name="queue"`,
+		`data-testid="ds-trigger-create"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("new trigger page missing %q", want)
+		}
+	}
+}
+
+func TestDataSourceTriggerNewRedirectsWhenAlreadyBound(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.dsIntegrations = []DSIntegration{{ID: "s1", Name: "GH", ProviderType: dsProviderTypeGitHubApp}}
+	f.dsSourceTriggers = map[string][]DSSourceTrigger{"s1": {{ID: "t1", EventType: "pull_request", AgentID: "agent-1", Enabled: true}}}
+	e := sourceAppsTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1/triggers/new", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	assertRedirectError(t, rec.Header().Get("Location"), "already has a pull_request trigger")
+}
+
 func TestDataSourceTriggerCreateForwardsPullRequest(t *testing.T) {
 	f := sourceAppsAdminFake()
 	f.dsIntegrations = []DSIntegration{{ID: "s1", Name: "GH", ProviderType: dsProviderTypeGitHubApp}}
@@ -899,8 +941,6 @@ func TestDataSourceDetailRendersTriggersForGitHubApp(t *testing.T) {
 		"agent-1",
 		"Queue: default",
 		"Disable",
-		`data-testid="ds-trigger-form"`,
-		`data-testid="ds-trigger-agent-select"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("detail page missing %q", want)
@@ -908,6 +948,12 @@ func TestDataSourceDetailRendersTriggersForGitHubApp(t *testing.T) {
 	}
 	if strings.Contains(body, `data-testid="ds-trigger-agents-empty"`) {
 		t.Error("agent picker reported an empty project though agents exist")
+	}
+	if strings.Contains(body, `data-testid="ds-trigger-add"`) {
+		t.Error("add action offered while a pull_request binding exists")
+	}
+	if strings.Index(body, `data-testid="ds-edit-form"`) > strings.Index(body, `data-testid="ds-triggers"`) {
+		t.Error("triggers should render below the settings form")
 	}
 	// A trigger-only source never syncs documents: no sync action, no history
 	// card inviting the action that can only fail, and no connection test (the
@@ -950,6 +996,7 @@ func TestDataSourceDetailHidesTriggerCreateWithoutAgents(t *testing.T) {
 		`data-testid="ds-trigger-form"`,
 		`data-testid="ds-trigger-agent-select"`,
 		`data-testid="ds-trigger-create"`,
+		`data-testid="ds-trigger-add"`,
 	} {
 		if strings.Contains(body, dead) {
 			t.Errorf("no-agents state rendered %q", dead)
