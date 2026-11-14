@@ -224,3 +224,49 @@ func appRepoList(v any) []string {
 	}
 	return out
 }
+
+// ObjectTypes declares the board item types a GitHub App workflow emits.
+func (p *githubAppProvider) ObjectTypes() *ObjectTypePack {
+	statusProps := map[string]any{
+		"repo":      map[string]any{"type": "string"},
+		"pr_number": map[string]any{"type": "number"},
+		"head_sha":  map[string]any{"type": "string"},
+		"base_sha":  map[string]any{"type": "string"},
+		"title":     map[string]any{"type": "string"},
+		"state":     map[string]any{"type": "string"},
+		"status":    map[string]any{"type": "string"},
+	}
+	return &ObjectTypePack{
+		Name:          "github-app-workflow",
+		Version:       "1.0.0",
+		Description:   "GitHub App pull-request workflow objects.",
+		SkipDiscovery: true,
+		ObjectTypes: []ObjectTypeDefinition{
+			{
+				Name: "GitHubPullRequest", Label: "GitHub pull request",
+				Description:    "Parent object for one GitHub pull request.",
+				Properties:     statusProps,
+				SkipExtraction: true,
+			},
+			{
+				Name: "GitHubReviewLane", Label: "GitHub review lane",
+				Description:     "One reviewer lane on a GitHub pull request.",
+				BoardEnabled:    true,
+				AllowedStatuses: []string{"ready", "in_progress", "review", "revision", "blocked", "done", "cancelled"},
+				InitialStatus:   "ready",
+				Properties: map[string]any{
+					"lane":      map[string]any{"type": "string"},
+					"agent":     map[string]any{"type": "string"},
+					"repo":      map[string]any{"type": "string"},
+					"pr_number": map[string]any{"type": "number"},
+					"head_sha":  map[string]any{"type": "string"},
+					"base_sha":  map[string]any{"type": "string"},
+					"title":     map[string]any{"type": "string"},
+					"state":     map[string]any{"type": "string"},
+					"status":    map[string]any{"type": "string"},
+				},
+				SkipExtraction: true,
+			},
+		},
+	}
+}

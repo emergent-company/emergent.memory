@@ -45,6 +45,8 @@ func sourceAppsTestServerWithConfig(f *fakeMemory, cfg Config) *echo.Echo {
 	e.GET("/data-sources/new", s.uiDataSourceNew)
 	e.GET("/data-sources/:id", s.uiDataSourceDetail)
 	e.GET("/data-sources/:id/triggers/new", s.uiDataSourceTriggerNew)
+	e.GET("/data-sources/:id/workflow", s.uiDataSourceWorkflow)
+	e.POST("/data-sources/:id/workflow", s.uiDataSourceWorkflowSave)
 	e.POST("/data-sources/:id/triggers", s.uiDataSourceTriggerCreate)
 	e.POST("/data-sources/:id/triggers/:triggerId/toggle", s.uiDataSourceTriggerToggle)
 	e.POST("/data-sources/:id/triggers/:triggerId/delete", s.uiDataSourceTriggerDelete)
@@ -807,6 +809,37 @@ func TestDataSourceTriggerNewRedirectsWhenAlreadyBound(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	assertRedirectError(t, rec.Header().Get("Location"), "already has a pull_request trigger")
+}
+
+func TestDataSourceWorkflowPageSavesReviewers(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.dsIntegrations = []DSIntegration{{ID: "s1", Name: "GH", ProviderType: dsProviderTypeGitHubApp}}
+	f.sourceWorkflow = &SourceWorkflow{SourceID: "s1", Config: SourceWorkflowConfig{Reviewers: []SourceWorkflowReviewer{{Lane: "security", Agent: "security-review"}}}, Enabled: true}
+	e := sourceAppsTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1/workflow", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "security | security-review") {
+		t.Error("existing workflow not pre-filled")
+	}
+
+	form := url.Values{"reviewers": {"security | security-review\nui | ui-review"}}
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/data-sources/s1/workflow", strings.NewReader(form.Encode()))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationForm)
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if f.sourceWorkflow == nil || len(f.sourceWorkflow.Config.Reviewers) != 2 {
+		t.Fatalf("workflow = %+v", f.sourceWorkflow)
+	}
+	if f.sourceWorkflow.Config.Reviewers[1].Lane != "ui" || f.sourceWorkflow.Config.Reviewers[1].Agent != "ui-review" {
+		t.Errorf("reviewers = %+v", f.sourceWorkflow.Config.Reviewers)
+	}
 }
 
 func TestDataSourceTriggerCreateForwardsPullRequest(t *testing.T) {

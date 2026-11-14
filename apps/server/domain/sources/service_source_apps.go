@@ -661,3 +661,50 @@ func (s *Service) ListInstallationRepositories(ctx context.Context, projectID, a
 	slices.Sort(names)
 	return names, nil
 }
+
+// GetSourceWorkflow returns the source's workflow, or nil when it is a direct
+// trigger source.
+func (s *Service) GetSourceWorkflow(ctx context.Context, projectID, sourceID uuid.UUID) (*SourceWorkflow, error) {
+	if _, err := s.sourceForProject(ctx, projectID, sourceID); err != nil {
+		return nil, err
+	}
+	return s.repo.GetSourceWorkflow(ctx, projectID, sourceID)
+}
+
+// UpsertSourceWorkflow stores/validates the reviewer lanes. A source with a
+// workflow emits board items; a source without one keeps the legacy direct
+// trigger path.
+func (s *Service) UpsertSourceWorkflow(ctx context.Context, projectID, sourceID uuid.UUID, cfg SourceWorkflowConfig) (*SourceWorkflow, error) {
+	src, err := s.sourceForProject(ctx, projectID, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	if provider, ok := s.providers.Get(src.Provider); ok {
+		if err := s.ensureObjectTypes(ctx, projectID, provider); err != nil {
+			return nil, apperror.NewInternal("install source workflow schema pack", err)
+		}
+	}
+	if src.Provider != ProviderTypeGitHubApp {
+		return nil, apperror.NewValidation("workflows are supported only for github_app sources")
+	}
+	if len(cfg.Reviewers) == 0 {
+		return nil, apperror.NewBadRequest("at least one reviewer lane is required")
+	}
+	seen := map[string]bool{}
+	for i := range cfg.Reviewers {
+		cfg.Reviewers[i].Lane = strings.TrimSpace(cfg.Reviewers[i].Lane)
+		cfg.Reviewers[i].Agent = strings.TrimSpace(cfg.Reviewers[i].Agent)
+		if cfg.Reviewers[i].Lane == "" || cfg.Reviewers[i].Agent == "" {
+			return nil, apperror.NewBadRequest("each reviewer needs a lane and an agent")
+		}
+		if seen[cfg.Reviewers[i].Lane] {
+			return nil, apperror.NewBadRequest("reviewer lanes must be unique")
+		}
+		seen[cfg.Reviewers[i].Lane] = true
+	}
+	wf := &SourceWorkflow{ProjectID: projectID, SourceID: sourceID, Config: map[string]any{"reviewers": cfg.Reviewers}, Enabled: true}
+	if err := s.repo.UpsertSourceWorkflow(ctx, wf); err != nil {
+		return nil, err
+	}
+	return wf, nil
+}

@@ -276,7 +276,8 @@ type fakeMemory struct {
 	dsCreatedSourceAppOrg    string              // last org id passed to CreateOrgSourceApp
 	dsCreatedSourceAppNoID   bool
 	dsInstallationRepos      []string
-	dsInstallationRepoErr    error                        // CreateOrgSourceApp returns a row without an id
+	dsInstallationRepoErr    error
+	sourceWorkflow           *SourceWorkflow              // CreateOrgSourceApp returns a row without an id
 	dsDeletedSourceAppID     string                       // last app id passed to DeleteOrgSourceApp
 	dsUpdatedSourceAppOrg    string                       // last org id passed to UpdateOrgSourceApp
 	dsUpdatedSourceAppID     string                       // last app id passed to UpdateOrgSourceApp
@@ -5411,6 +5412,15 @@ func (f *fakeMemory) ListInstallationRepositories(ctx context.Context, appID, in
 		return nil, f.dsInstallationRepoErr
 	}
 	return f.dsInstallationRepos, nil
+}
+
+func (f *fakeMemory) GetSourceWorkflow(ctx context.Context, sourceID string) (*SourceWorkflow, error) {
+	return f.sourceWorkflow, nil
+}
+
+func (f *fakeMemory) PutSourceWorkflow(ctx context.Context, sourceID string, cfg SourceWorkflowConfig) (*SourceWorkflow, error) {
+	f.sourceWorkflow = &SourceWorkflow{SourceID: sourceID, Config: cfg, Enabled: true}
+	return f.sourceWorkflow, nil
 }
 
 func (f *fakeMemory) CreateProjectSourceApp(ctx context.Context, req *DSSourceAppRequest) (*SourceApp, error) {

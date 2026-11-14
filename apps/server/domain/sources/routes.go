@@ -39,6 +39,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	readGroup.GET("/:id/sync-jobs/latest", h.GetLatestSyncJob)
 	readGroup.GET("/:id/sync-jobs/:jobId", h.GetSyncJob)
 	readGroup.GET("/:id/triggers", h.ListSourceTriggers)
+	readGroup.GET("/:id/workflow", h.GetSourceWorkflow)
 	readGroup.POST("/:id/scope/preview", h.PreviewSourceScope)
 
 	// Write operations (create/update/test + sync trigger/cancel).
@@ -64,6 +65,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	writeGroup.PUT("/:id/sync-targets", h.SaveSyncTargets)
 	writeGroup.POST("/:id/sync", h.TriggerSync)
 	writeGroup.POST("/:id/triggers", h.CreateSourceTrigger)
+	writeGroup.PUT("/:id/workflow", h.PutSourceWorkflow)
 	writeGroup.PATCH("/:id/triggers/:triggerId", h.UpdateSourceTrigger)
 	writeGroup.DELETE("/:id/triggers/:triggerId", h.DeleteSourceTrigger)
 	writeGroup.POST("/:id/sync-jobs/:jobId/cancel", h.CancelSyncJob)

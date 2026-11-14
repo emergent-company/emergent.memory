@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -620,4 +621,65 @@ func (s *Server) dsAttachSourceAppSelect(ctx context.Context, providerType strin
 	}
 	fields[index].Select = sel
 	return fields
+}
+
+func sourceWorkflowText(wf *SourceWorkflow) string {
+	if wf == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range wf.Config.Reviewers {
+		if r.Lane == "" || r.Agent == "" {
+			continue
+		}
+		b.WriteString(r.Lane)
+		b.WriteString(" | ")
+		b.WriteString(r.Agent)
+		b.WriteString("\n")
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// uiDataSourceWorkflow configures the board lanes a github_app source emits.
+func (s *Server) uiDataSourceWorkflow(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := c.Param("id")
+	src, err := s.memory.GetDSIntegration(ctx, id)
+	if err != nil {
+		return redirectWithError(c, "/data-sources", dsFormError(err))
+	}
+	if src.ProviderType != dsProviderTypeGitHubApp {
+		return redirectWithError(c, "/data-sources/"+url.PathEscape(id), errors.New("workflows are supported only for GitHub App sources"))
+	}
+	wf, werr := s.memory.GetSourceWorkflow(ctx, id)
+	if werr != nil {
+		captureError(werr)
+	}
+	return s.page(c, pageTitle("Workflow", dsSourceName(*src)), DataSourceWorkflowPage(src, wf, userFacingError(werr), flashFromQuery(c, []flashParam{{key: "saved", msg: "Workflow saved."}}), flashError(c)))
+}
+
+func (s *Server) uiDataSourceWorkflowSave(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := c.Param("id")
+	back := "/data-sources/" + url.PathEscape(id) + "/workflow"
+	var reviewers []SourceWorkflowReviewer
+	for _, line := range strings.Split(c.FormValue("reviewers"), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.FieldsFunc(line, func(r rune) bool { return r == '|' || r == ':' })
+		if len(parts) != 2 {
+			return redirectWithError(c, back, fmt.Errorf("reviewer %q must be lane | agent", line))
+		}
+		reviewers = append(reviewers, SourceWorkflowReviewer{Lane: strings.TrimSpace(parts[0]), Agent: strings.TrimSpace(parts[1])})
+	}
+	if len(reviewers) == 0 {
+		return redirectWithError(c, back, errors.New("add at least one reviewer lane"))
+	}
+	if _, err := s.memory.PutSourceWorkflow(ctx, id, SourceWorkflowConfig{Reviewers: reviewers}); err != nil {
+		return redirectWithError(c, back, dsFormError(err))
+	}
+	redirectAfterMutation(c, back+"?saved=1")
+	return nil
 }

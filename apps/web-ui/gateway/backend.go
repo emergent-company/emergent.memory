@@ -206,6 +206,8 @@ type MemoryBackend interface {
 	DeleteOrgSourceApp(ctx context.Context, orgID, appID string) error
 	ListProjectSourceApps(ctx context.Context) ([]SourceApp, error)
 	ListInstallationRepositories(ctx context.Context, appID, installationID string) ([]string, error)
+	GetSourceWorkflow(ctx context.Context, sourceID string) (*SourceWorkflow, error)
+	PutSourceWorkflow(ctx context.Context, sourceID string, cfg SourceWorkflowConfig) (*SourceWorkflow, error)
 	CreateProjectSourceApp(ctx context.Context, req *DSSourceAppRequest) (*SourceApp, error)
 	UpdateProjectSourceApp(ctx context.Context, appID string, req *DSSourceAppUpdateRequest) (*SourceApp, error)
 	DeleteProjectSourceApp(ctx context.Context, appID string) error

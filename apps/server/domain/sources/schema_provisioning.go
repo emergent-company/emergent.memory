@@ -44,6 +44,15 @@ func (p *schemaProvisioner) EnsureObjectTypes(ctx context.Context, projectID str
 		if def.SkipExtraction {
 			entry["skipExtraction"] = true
 		}
+		if def.BoardEnabled {
+			entry["boardEnabled"] = true
+		}
+		if len(def.AllowedStatuses) > 0 {
+			entry["allowedStatuses"] = def.AllowedStatuses
+		}
+		if def.InitialStatus != "" {
+			entry["initialStatus"] = def.InitialStatus
+		}
 		objectTypes = append(objectTypes, entry)
 	}
 	relationships := make([]map[string]any, 0, len(pack.RelationshipTypes))
