@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/emergent-company/go-daisy/devmode"
 	"gopkg.in/yaml.v3"
 )
 
@@ -424,7 +425,10 @@ func renderProposalCardHTML(card *ProposalCard) string {
 		return ""
 	}
 	var buf bytes.Buffer
-	if err := proposalCard(card).Render(context.Background(), &buf); err != nil {
+	// There is no request here: this renders a stored proposal for a transcript,
+	// so the dev-mode flag the middleware would set has to be set explicitly,
+	// or the card loses its data-component annotation.
+	if err := proposalCard(card).Render(devmode.WithDevMode(context.Background()), &buf); err != nil {
 		return ""
 	}
 	return buf.String()

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	ui "github.com/emergent-company/go-daisy/components/ui"
+	"github.com/emergent-company/go-daisy/devmode"
 	"github.com/labstack/echo/v4"
 )
 
@@ -873,7 +874,10 @@ func mcpServerIsNameConflict(err error) bool {
 // a second server trip and without duplicating the row markup in JS.
 func mcpToolsFragment(s MCPServer, tools []MCPTool) (string, error) {
 	var b strings.Builder
-	if err := mcpServerToolsContainer(s, tools, nil).Render(context.Background(), &b); err != nil {
+	// The sync endpoint has a request, but this helper does not; flag dev mode
+	// explicitly so the row container keeps the annotation the middleware would
+	// have set (scripts/preflight/ui-guard.sh locks this).
+	if err := mcpServerToolsContainer(s, tools, nil).Render(devmode.WithDevMode(context.Background()), &b); err != nil {
 		return "", err
 	}
 	return b.String(), nil
