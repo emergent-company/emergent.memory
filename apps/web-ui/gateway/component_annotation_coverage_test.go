@@ -36,6 +36,12 @@ import (
 // components would answer both, at the cost of owning fixtures this package does
 // not have; the scan catches the regression that actually happens — a component
 // silently emitting nothing — and the diff review catches the rest.
+//
+// The tests here end in `Ratchet` because the required `ci` job runs
+// `go test -run Ratchet ./...` for this module (ci.yml, "Consistency ratchets");
+// the full suite only runs at promotion. A gate that never runs on the PR that
+// breaks it is not a gate. component_annotation_render_test.go covers the part a
+// scan cannot see (the emitted bytes).
 
 // exportedTemplRE matches an exported templ component declaration.
 var exportedTemplRE = regexp.MustCompile(`(?m)^templ ([A-Z][A-Za-z0-9_]*)\(`)
@@ -96,8 +102,8 @@ var gatewayChromeExceptions = map[string]string{
 	"detailHeader": "delegating root: renders pageHead (gateway/pageHead)",
 }
 
-// TestComponentsAnnotateTheirRoot is the coverage half of ui-rule-dev-annotation.
-func TestComponentsAnnotateTheirRoot(t *testing.T) {
+// TestComponentAnnotationCoverageRatchet is the coverage half of ui-rule-dev-annotation.
+func TestComponentAnnotationCoverageRatchet(t *testing.T) {
 	files, err := filepath.Glob("components/*.templ")
 	if err != nil || len(files) == 0 {
 		t.Fatalf("glob components/*.templ: %v (found %d)", err, len(files))
@@ -148,10 +154,10 @@ func TestComponentsAnnotateTheirRoot(t *testing.T) {
 	}
 }
 
-// TestGatewayChromeAnnotations asserts the gateway.* chrome components that own a
+// TestGatewayChromeAnnotationRatchet asserts the gateway.* chrome components that own a
 // root element name it. They all live in ui.templ, so the check is a source scan
 // over that file.
-func TestGatewayChromeAnnotations(t *testing.T) {
+func TestGatewayChromeAnnotationRatchet(t *testing.T) {
 	src, err := os.ReadFile("ui.templ")
 	if err != nil {
 		t.Fatalf("read ui.templ: %v", err)
@@ -183,12 +189,12 @@ func TestGatewayChromeAnnotations(t *testing.T) {
 	}
 }
 
-// TestAnnotationIsGated pins the property that makes the annotation a switch
+// TestAnnotationGatingRatchet pins the property that makes the annotation a switch
 // rather than a permanent part of the markup: with a plain request context
 // (production without the middleware) no annotation is emitted, and with dev
 // mode on it is. Turn componentAnnotations off and the whole overlay contract
 // disappears from the HTML in one place.
-func TestAnnotationIsGated(t *testing.T) {
+func TestAnnotationGatingRatchet(t *testing.T) {
 	// Rendered directly, without dev mode: nothing to see.
 	var plain bytes.Buffer
 	if err := components.MetaChip("lucide--tag", "3").Render(t.Context(), &plain); err != nil {
@@ -233,13 +239,13 @@ func templFiles(t *testing.T) []string {
 	return files
 }
 
-// TestNoHardcodedComponentLiteral rejects the mechanism the coverage gate
+// TestNoHardcodedComponentLiteralRatchet rejects the mechanism the coverage gate
 // replaced. A hardcoded data-component anywhere in the package survives
 // componentAnnotations being turned off, which is the split behaviour this
 // change removed: go-daisy's own components go bare while a hand-annotated
 // minority keeps its attribute. Scanned across every templ source rather than
 // only the annotated ones, so a page-local component cannot reintroduce it.
-func TestNoHardcodedComponentLiteral(t *testing.T) {
+func TestNoHardcodedComponentLiteralRatchet(t *testing.T) {
 	for _, path := range templFiles(t) {
 		src, err := os.ReadFile(path)
 		if err != nil {
@@ -252,11 +258,11 @@ func TestNoHardcodedComponentLiteral(t *testing.T) {
 	}
 }
 
-// TestDevAnnotationCarriesNoProps enforces ui-rule-dev-annotation-props: dev-mode
+// TestDevAnnotationPropsRatchet enforces ui-rule-dev-annotation-props: dev-mode
 // annotation is always on, so it must carry the component name only. A data-props
 // attribute would serialise the props (object titles, agent names, member emails,
 // prompt text) into every rendered page.
-func TestDevAnnotationCarriesNoProps(t *testing.T) {
+func TestDevAnnotationPropsRatchet(t *testing.T) {
 	for _, path := range templFiles(t) {
 		src, err := os.ReadFile(path)
 		if err != nil {
