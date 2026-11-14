@@ -413,6 +413,12 @@ func (s *Server) attachSession(c echo.Context, claims *sessionClaims) {
 //
 // Falls back to the request cookie when no claims were attached (dev/API-key
 // mode, or an ad-hoc context built by a test), preserving the old behaviour.
+//
+// The copy is detached on purpose: attachSession's pointer can be shared with
+// concurrent single-flight waiters, so nothing may mutate it, and a handler's
+// scope change therefore does NOT flow back into the session context (or into a
+// second re-issue on the same request — call this helper again and re-apply the
+// scope instead of relying on sc.ProjectID/OrgID).
 func (s *Server) requestSessionClaims(c echo.Context) (*sessionClaims, error) {
 	if sc, ok := sessionContextFrom(c.Request().Context()); ok && sc.claims != nil {
 		cp := *sc.claims
