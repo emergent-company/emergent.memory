@@ -417,9 +417,10 @@ func hasTool(tools []string, want string) bool {
 }
 
 func (s *Server) wizardError(c echo.Context, project *Project, orgAdmin bool, msg string) error {
-	data := ghWizardPage{Step: "start", Error: msg, OrgAdmin: orgAdmin}
+	data := ghWizardPage{Step: "start", Error: msg, OrgAdmin: orgAdmin, Base: s.dsScoped(githubWizardPath, c), Scope: "project", Queue: "security-review"}
 	if project != nil {
 		data.ProjectID = project.ID
+		data.Name = defaultReviewAppName(project.Name)
 		if org, err := s.memory.GetOrg(c.Request().Context(), project.OrgID); err == nil && org != nil {
 			data.OrgName = org.Name
 		}
@@ -438,7 +439,7 @@ func (s *Server) setWizardState(c echo.Context, st ghWizardState) error {
 	c.SetCookie(&http.Cookie{
 		Name: githubWizardCookie, Value: signCookieValue(s.cfg.SessionSecret, raw),
 		Path: "/", MaxAge: int(githubWizardStateTTL.Seconds()),
-		HttpOnly: true, Secure: strings.HasPrefix(s.publicBaseURL(c), "https://"),
+		HttpOnly: true, Secure: s.cookieSecure(c),
 		SameSite: http.SameSiteLaxMode,
 	})
 	return nil
@@ -466,7 +467,7 @@ func (s *Server) wizardState(c echo.Context) (*ghWizardState, error) {
 func (s *Server) clearWizardState(c echo.Context) {
 	c.SetCookie(&http.Cookie{
 		Name: githubWizardCookie, Value: "", Path: "/", MaxAge: -1,
-		HttpOnly: true, Secure: strings.HasPrefix(s.publicBaseURL(c), "https://"),
+		HttpOnly: true, Secure: s.cookieSecure(c),
 		SameSite: http.SameSiteLaxMode,
 	})
 }
