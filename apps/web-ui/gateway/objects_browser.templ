@@ -497,9 +497,9 @@ templ objectsBrowserCard(r objectsBrowserRowView, search, unified bool, wikiView
 				/>
 			</label>
 		</div>
-		<div class="relative z-10 mt-auto flex min-h-6 flex-wrap items-center gap-1 px-3 pb-2 empty:hidden" data-testid="object-card-chips">
+		<div class="relative z-10 pointer-events-none mt-auto flex min-h-6 flex-wrap items-center gap-1 px-3 pb-2 empty:hidden" data-testid="object-card-chips">
 			if r.DataClassLabel != "" {
-				<span class="tooltip tooltip-top inline-flex" data-tip={ r.DataClassHint }>
+				<span class="tooltip tooltip-top pointer-events-auto inline-flex" data-tip={ r.DataClassHint }>
 					@ui.Badge(ui.BadgeProps{Label: r.DataClassLabel, Icon: r.DataClassIcon, Variant: r.DataClassIntent, Size: ui.BadgeSizeXS})
 				</span>
 			}
@@ -515,7 +515,7 @@ templ objectsBrowserCard(r objectsBrowserRowView, search, unified bool, wikiView
 				// every card is noise, a pending or failed embedding is a reason to
 				// open it.
 				if r.EmbeddingLabel != "" && r.EmbeddingIcon != "lucide--circle-check" {
-					<span class={ "tooltip tooltip-top inline-flex", r.EmbeddingClass } data-tip={ r.EmbeddingLabel }>
+					<span class={ "tooltip tooltip-top pointer-events-auto inline-flex", r.EmbeddingClass } data-tip={ r.EmbeddingLabel }>
 						<span class={ "iconify shrink-0 text-base ", r.EmbeddingIcon } aria-hidden="true"></span>
 						<span class="sr-only">{ r.EmbeddingLabel }</span>
 					</span>
@@ -528,7 +528,7 @@ templ objectsBrowserCard(r objectsBrowserRowView, search, unified bool, wikiView
 				@ui.Badge(ui.BadgeProps{Label: "+" + strconv.Itoa(len(r.Labels)-3), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
 			}
 			if search {
-				<span class="text-muted-faint ml-auto inline-flex shrink-0 items-center gap-1" title="Relevance score">
+				<span class="text-muted-faint pointer-events-auto ml-auto inline-flex shrink-0 items-center gap-1" title="Relevance score">
 					@ui.IconSpan("lucide--sparkles", "size-3 shrink-0")
 					<span class="text-xs font-medium tabular-nums">{ searchScoreLabel(r.Score) }</span>
 				</span>

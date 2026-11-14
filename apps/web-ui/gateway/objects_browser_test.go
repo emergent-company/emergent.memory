@@ -336,17 +336,47 @@ func TestObjectsLayoutContracts(t *testing.T) {
 	}
 
 	// #699.1: the chip row is raised above the card's stretched link, or neither
-	// tooltip can open — the pointer is on the overlay instead of the chip.
-	chipsAt := strings.Index(html, `data-testid="object-card-chips"`)
-	if chipsAt < 0 {
+	// tooltip can open — the pointer is on the overlay instead of the chip. The
+	// row itself passes clicks through (it spans the card's full width), so only
+	// the chips that carry a tooltip opt back into pointer events: without the
+	// pair the tooltips die, and with it inverted the band under the chips stops
+	// opening the card.
+	firstChips := strings.Index(html, `data-testid="object-card-chips"`)
+	if firstChips < 0 {
 		t.Fatalf("card chip row is not identifiable:\n%s", html)
 	}
-	tag := html[:chipsAt]
+	tag := html[:firstChips]
 	if open := strings.LastIndex(tag, "<div"); open >= 0 {
 		tag = tag[open:]
 	}
 	if !strings.Contains(tag, "relative z-10") {
 		t.Errorf("card chip row must stack above the stretched link to expose its tooltips, got tag %q", tag)
+	}
+	if !strings.Contains(tag, "pointer-events-none") {
+		t.Errorf("card chip row must pass clicks through to the card link, got tag %q", tag)
+	}
+	// The sample's first card has no tooltip chip, so scan for a row that does.
+	var tooltipRow string
+	for rest := html; ; {
+		i := strings.Index(rest, `data-testid="object-card-chips"`)
+		if i < 0 {
+			break
+		}
+		row := rest[i:]
+		if end := strings.Index(row, "</div>"); end >= 0 {
+			row = row[:end]
+		}
+		if strings.Contains(row, "data-tip=") {
+			tooltipRow = row
+			break
+		}
+		rest = rest[i+1:]
+	}
+	if tooltipRow == "" {
+		t.Fatal("the sample renders no card chip with a tooltip, so this contract cannot be checked")
+	}
+	if !strings.Contains(tooltipRow, "pointer-events-auto") {
+		t.Errorf("a tooltip chip must opt back into pointer events, got %q", tooltipRow)
 	}
 }
 
