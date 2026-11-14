@@ -1098,6 +1098,18 @@ func (m *MemoryClient) UpdateProjectSourceApp(ctx context.Context, appID string,
 	return &out, nil
 }
 
+// ListInstallationRepositories returns the repositories the installation can see
+// (setup wizard checkbox list).
+func (m *MemoryClient) ListInstallationRepositories(ctx context.Context, appID, installationID string) ([]string, error) {
+	var out []string
+	path := "/api/data-source-integrations/source-apps/" + url.PathEscape(appID) +
+		"/installation-repositories?installationId=" + url.QueryEscape(installationID)
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (m *MemoryClient) DeleteProjectSourceApp(ctx context.Context, appID string) error {
 	path := "/api/data-source-integrations/source-apps/" + url.PathEscape(appID)
 	return m.doH(ctx, http.MethodDelete, path, nil, m.documentHeaders(ctx), nil)

@@ -92,8 +92,27 @@ templ ghWizardInstall(data ghWizardPage) {
 					</div>
 				</div>
 				<div class="flex flex-col gap-1">
-					<label class="text-sm font-medium" for="gh-repos">Repositories</label>
-					<textarea id="gh-repos" name="repos" required rows="3" class="textarea w-full font-mono text-xs" placeholder="owner/repo, one per line" data-testid="gh-wizard-repos">{ data.Repos }</textarea>
+					<span class="text-sm font-medium">Repositories</span>
+					if len(data.RepoOptions) > 0 {
+						<div class="flex flex-col gap-1.5 rounded-box border border-base-content/10 p-3" data-testid="gh-wizard-repos">
+							for _, repo := range data.RepoOptions {
+								<label class="flex items-center gap-2 text-sm">
+									<input type="checkbox" name="repos" value={ repo } class="checkbox checkbox-sm"/>
+									<span class="font-mono text-xs">{ repo }</span>
+								</label>
+							}
+						</div>
+					} else {
+						if data.RepoLoadErr != "" {
+							@ui.Alert(ui.AlertProps{
+								Type:    ui.AlertWarning,
+								Style:   ui.AlertStyleSoft,
+								Icon:    "lucide--alert-triangle",
+								Message: "Could not load installation repositories: " + data.RepoLoadErr + ". Enter them manually.",
+							})
+						}
+						<textarea id="gh-repos" name="repos_text" required rows="3" class="textarea w-full font-mono text-xs" placeholder="owner/repo, one per line" data-testid="gh-wizard-repos">{ data.Repos }</textarea>
+					}
 					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Only these repositories will trigger reviews. Webhooks outside the allowlist are ignored. }
 				</div>
 				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">

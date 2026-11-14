@@ -270,11 +270,13 @@ type fakeMemory struct {
 	dsDeletedProjectOAuthID    string                   // last project id passed to DeleteProjectDSOAuthClient
 	dsDeletedProjectOAuthProv  string                   // last provider passed to DeleteProjectDSOAuthClient
 	// Org source Apps + github_app triggers (see source_apps.go).
-	dsSourceApps             []SourceApp                  // returned by ListOrgSourceApps
-	dsSourceAppErr           error                        // any org source-App method failure
-	dsCreatedSourceAppReq    *DSSourceAppRequest          // last request forwarded to CreateOrgSourceApp
-	dsCreatedSourceAppOrg    string                       // last org id passed to CreateOrgSourceApp
-	dsCreatedSourceAppNoID   bool                         // CreateOrgSourceApp returns a row without an id
+	dsSourceApps             []SourceApp         // returned by ListOrgSourceApps
+	dsSourceAppErr           error               // any org source-App method failure
+	dsCreatedSourceAppReq    *DSSourceAppRequest // last request forwarded to CreateOrgSourceApp
+	dsCreatedSourceAppOrg    string              // last org id passed to CreateOrgSourceApp
+	dsCreatedSourceAppNoID   bool
+	dsInstallationRepos      []string
+	dsInstallationRepoErr    error                        // CreateOrgSourceApp returns a row without an id
 	dsDeletedSourceAppID     string                       // last app id passed to DeleteOrgSourceApp
 	dsUpdatedSourceAppOrg    string                       // last org id passed to UpdateOrgSourceApp
 	dsUpdatedSourceAppID     string                       // last app id passed to UpdateOrgSourceApp
@@ -5402,6 +5404,13 @@ func (f *fakeMemory) ListProjectSourceApps(ctx context.Context) ([]SourceApp, er
 		return nil, f.dsSourceAppErr
 	}
 	return f.dsSourceApps, nil
+}
+
+func (f *fakeMemory) ListInstallationRepositories(ctx context.Context, appID, installationID string) ([]string, error) {
+	if f.dsInstallationRepoErr != nil {
+		return nil, f.dsInstallationRepoErr
+	}
+	return f.dsInstallationRepos, nil
 }
 
 func (f *fakeMemory) CreateProjectSourceApp(ctx context.Context, req *DSSourceAppRequest) (*SourceApp, error) {

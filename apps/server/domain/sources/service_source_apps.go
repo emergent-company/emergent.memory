@@ -2,9 +2,13 @@ package sources
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -582,4 +586,69 @@ func mapSourceConflict(err error, message string) error {
 		return apperror.NewConflict(message)
 	}
 	return apperror.NewInternal("database error", err)
+}
+
+// ListInstallationRepositories lists the repositories an installation can see.
+// It is used by the setup wizard to render a checkbox list; the token is scoped
+// to the installation with read-only contents permission and is not persisted.
+func (s *Service) ListInstallationRepositories(ctx context.Context, projectID, appID uuid.UUID, installationID int64) ([]string, error) {
+	if installationID <= 0 {
+		return nil, apperror.NewBadRequest("installationId must be a positive integer")
+	}
+	app, err := s.repo.FindSourceAppByID(ctx, appID)
+	if err != nil {
+		return nil, apperror.NewNotFound("SourceApp", appID.String())
+	}
+	orgID, err := s.repo.ProjectOrgID(ctx, projectID)
+	if err != nil {
+		return nil, apperror.NewInternal("failed to resolve the project organization", err)
+	}
+	if app.OrgID != orgID || (app.ProjectID != nil && *app.ProjectID != projectID) {
+		return nil, apperror.NewNotFound("SourceApp", appID.String())
+	}
+	if len(s.key) == 0 {
+		return nil, apperror.NewValidation("LLM_ENCRYPTION_KEY is not configured")
+	}
+	privateKey, err := OpenSourceBlob(s.key, app.PrivateKeyEncrypted)
+	if err != nil {
+		return nil, apperror.NewInternal("failed to open the App private key", err)
+	}
+	minter := githubapp.NewTokenMinter(s.githubAPIBase, nil)
+	token, err := minter.MintInstallationTokenAllRepositories(ctx, app.AppID, privateKey, installationID,
+		map[string]string{"contents": "read", "metadata": "read"})
+	if err != nil {
+		return nil, apperror.NewInternal("failed to list installation repositories", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		s.githubAPIBase+"/installation/repositories?per_page=100", nil)
+	if err != nil {
+		return nil, apperror.NewInternal("failed to build the repository request", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	if err != nil {
+		return nil, apperror.NewInternal("failed to list installation repositories", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, apperror.NewInternal(fmt.Sprintf("GitHub returned %d listing installation repositories", resp.StatusCode), nil)
+	}
+	var out struct {
+		Repositories []struct {
+			FullName string `json:"full_name"`
+		} `json:"repositories"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, apperror.NewInternal("failed to decode installation repositories", err)
+	}
+	names := make([]string, 0, len(out.Repositories))
+	for _, repo := range out.Repositories {
+		if name := strings.TrimSpace(repo.FullName); name != "" {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return names, nil
 }
