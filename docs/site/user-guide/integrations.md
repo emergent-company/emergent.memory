@@ -13,6 +13,27 @@ Memory connects a GitHub App as a project source. The App receives
 `pull_request` webhooks, a source trigger starts a run for the configured agent,
 and the agent posts a review bound to the reviewed head SHA.
 
+### Guided setup (recommended)
+
+Open **Settings → Source apps → Set up GitHub review**. The wizard:
+
+1. Creates the GitHub App with the App manifest flow (contents:read;
+   pull_requests/issues/checks:write; `pull_request` event) and registers it in
+   Memory with a pre-generated webhook key.
+2. Sends you to GitHub to install it on the repositories you choose, then fills
+   in the installation id.
+3. Creates the `github_app` source, a `security-review` agent with
+   `github-pr-diff`/`github-review-submit`, and the `pull_request` trigger.
+
+Secrets never pass through a Memory form. Before opening the wizard, make sure
+the project has a generative model and provider credentials configured (project
+Settings → Providers / model configuration); otherwise runs fail with
+`no generative model configured for project`.
+
+Expected result on an installed repository: the agent posts a review
+(`APPROVED` or `CHANGES_REQUESTED`), a head-bound `reviewed` check, and a
+`Reviewed-SHA` / `Verdict` marker comment for the exact head commit.
+
 You can register the App from **Settings → Source apps → Register app** in the
 web UI (the page carries a copy of the checklist below), or through the API.
 
