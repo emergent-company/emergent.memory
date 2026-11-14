@@ -72,18 +72,45 @@ func (m *TokenMinter) MintInstallationToken(
 	repos []string,
 	permissions map[string]string,
 ) (string, error) {
-	// Normalize before the least-privilege guard: an entry of "/" or whitespace
-	// would otherwise pass the raw length check and vanish here, making the
-	// request omit `repositories` and mint an installation-wide token.
 	repos = normalizeRepositoryNames(repos)
-	// Least privilege is mandatory: an empty scope would mint a token for every
-	// repository and every App permission.
 	if len(repos) == 0 {
 		return "", errors.New("githubapp: installation token requires an explicit repository list")
 	}
 	if len(permissions) == 0 {
 		return "", errors.New("githubapp: installation token requires an explicit permission set")
 	}
+	return m.mintInstallationToken(ctx, appID, privateKeyPEM, installationID, repos, permissions)
+}
+
+// MintInstallationTokenAllRepositories deliberately scopes a token to every
+// repository of the installation. It exists only for the setup wizard's
+// installation-repository listing; permissions stay explicit and read-only.
+func (m *TokenMinter) MintInstallationTokenAllRepositories(
+	ctx context.Context,
+	appID int64,
+	privateKeyPEM []byte,
+	installationID int64,
+	permissions map[string]string,
+) (string, error) {
+	if len(permissions) == 0 {
+		return "", errors.New("githubapp: installation token requires an explicit permission set")
+	}
+	for _, level := range permissions {
+		if level != "read" {
+			return "", errors.New("githubapp: installation-wide tokens are read-only")
+		}
+	}
+	return m.mintInstallationToken(ctx, appID, privateKeyPEM, installationID, nil, permissions)
+}
+
+func (m *TokenMinter) mintInstallationToken(
+	ctx context.Context,
+	appID int64,
+	privateKeyPEM []byte,
+	installationID int64,
+	repos []string,
+	permissions map[string]string,
+) (string, error) {
 	key := tokenCacheKey(appID, installationID, repos, permissions)
 
 	m.mu.Lock()

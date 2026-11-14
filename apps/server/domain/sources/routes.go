@@ -29,6 +29,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	readGroup.GET("/providers/:providerType/schema", h.GetProviderSchema)
 	readGroup.GET("/credentials", h.ListCredentials)
 	readGroup.GET("/source-apps", h.ListProjectSourceApps)
+	readGroup.GET("/source-apps/:appId/installation-repositories", h.ListInstallationRepositories)
 	readGroup.GET("/credentials/saved", h.ListSavedCredentials)
 	readGroup.GET("/source-types", h.ListSourceTypes)
 	readGroup.GET("", h.List)

@@ -52,6 +52,8 @@ type ghWizardPage struct {
 	InstallURL     string
 	InstallationID string
 	Repos          string
+	RepoOptions    []string
+	RepoLoadErr    string
 	SourceName     string
 	AgentName      string
 	Queue          string
@@ -141,7 +143,13 @@ func (s *Server) uiGitHubReviewWizard(c echo.Context) error {
 			}
 		}
 		data.InstallationID = strings.TrimSpace(c.QueryParam("installation_id"))
-		data.Repos = strings.TrimSpace(c.QueryParam("repo"))
+		if data.InstallationID != "" && data.AppID != "" {
+			if repos, rerr := s.memory.ListInstallationRepositories(ctx, data.AppID, data.InstallationID); rerr != nil {
+				data.RepoLoadErr = dsFormError(rerr).Error()
+			} else {
+				data.RepoOptions = repos
+			}
+		}
 		if data.Slug != "" {
 			data.InstallURL = "https://github.com/apps/" + url.PathEscape(data.Slug) + "/installations/new"
 		}
@@ -286,7 +294,22 @@ func (s *Server) uiGitHubReviewWizardComplete(c echo.Context) error {
 	appID := strings.TrimSpace(c.FormValue("app"))
 	slug := strings.TrimSpace(c.FormValue("slug"))
 	installationID := strings.TrimSpace(c.FormValue("installation_id"))
-	repos := parseRepoList(c.FormValue("repos"))
+	_ = c.Request().ParseMultipartForm(32 << 20)
+	repos := c.Request().PostForm["repos"]
+	if len(repos) == 0 {
+		repos = parseRepoList(c.FormValue("repos_text"))
+	}
+	seen := make(map[string]bool, len(repos))
+	clean := repos[:0]
+	for _, repo := range repos {
+		repo = strings.TrimSpace(repo)
+		if repo == "" || seen[repo] {
+			continue
+		}
+		seen[repo] = true
+		clean = append(clean, repo)
+	}
+	repos = clean
 	sourceName := strings.TrimSpace(c.FormValue("source_name"))
 	if sourceName == "" {
 		sourceName = "GitHub reviews"
@@ -300,7 +323,11 @@ func (s *Server) uiGitHubReviewWizardComplete(c echo.Context) error {
 		queue = "security-review"
 	}
 	if appID == "" || installationID == "" || len(repos) == 0 {
-		return redirectWithError(c, back+"&app="+url.QueryEscape(appID)+"&slug="+url.QueryEscape(slug), errors.New("installation id and at least one repository are required"))
+		b := back + "&app=" + url.QueryEscape(appID) + "&slug=" + url.QueryEscape(slug)
+		if installationID != "" {
+			b += "&installation_id=" + url.QueryEscape(installationID)
+		}
+		return redirectWithError(c, b, errors.New("installation id and at least one repository are required"))
 	}
 	for _, repo := range repos {
 		if strings.Count(repo, "/") != 1 || strings.HasPrefix(repo, "/") || strings.HasSuffix(repo, "/") {

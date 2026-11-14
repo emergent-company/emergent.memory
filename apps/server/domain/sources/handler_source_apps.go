@@ -2,6 +2,7 @@ package sources
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -401,4 +402,34 @@ func (h *Handler) DeleteProjectSourceApp(c echo.Context) error {
 		return err
 	}
 	return c.NoContent(http.StatusNoContent)
+}
+
+// ListInstallationRepositories handles GET /api/data-source-integrations/source-apps/:appId/installation-repositories.
+// @Summary      List an installation's repositories
+// @Description  Returns full repository names for the setup wizard's checkbox list. Uses a short-lived read-only installation token.
+// @Tags         data-source-integrations
+// @Produce      json
+// @Param        appId path string true "App row ID (UUID)"
+// @Param        installationId query int true "GitHub installation id"
+// @Success      200 {array} string
+// @Router       /api/data-source-integrations/source-apps/{appId}/installation-repositories [get]
+// @Security     bearerAuth
+func (h *Handler) ListInstallationRepositories(c echo.Context) error {
+	projectID, err := h.projectIDFromCaller(c)
+	if err != nil {
+		return err
+	}
+	appID, err := uuid.Parse(c.Param("appId"))
+	if err != nil {
+		return apperror.ErrBadRequest
+	}
+	installationID, err := strconv.ParseInt(strings.TrimSpace(c.QueryParam("installationId")), 10, 64)
+	if err != nil || installationID <= 0 {
+		return apperror.NewBadRequest("installationId must be a positive integer")
+	}
+	repos, err := h.svc.ListInstallationRepositories(c.Request().Context(), projectID, appID, installationID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, repos)
 }
