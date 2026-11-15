@@ -331,7 +331,7 @@ func (h *A2AHandler) StreamMessage(c echo.Context) error {
 		return writeA2AError(c, a2aErr)
 	}
 
-	projectID, err := acpProjectID(c)
+	projectID, err := h.addressedProject(c)
 	if err != nil {
 		return err
 	}

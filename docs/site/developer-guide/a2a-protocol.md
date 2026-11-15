@@ -60,7 +60,10 @@ which agents a caller can actually invoke.
 Every route except the global card requires a Bearer token. This page documents
 the **project API token** (`emt_…`), which is the supported integration
 credential; the scope below is the token's, checked against the `scopes` list the
-token was minted with:
+token was minted with. The same scope is required of any other credential the
+server accepts: for a signed-in session it is resolved from the caller's project
+role (every project role carries `agents:read`; `agents:write` comes with the
+project admin role).
 
 | Route | Scope |
 |---|---|
@@ -82,7 +85,8 @@ token carrying the scope you need (see [Not supported](#not-supported)).
 The project comes from the `X-Project-ID` header, or from the token itself when
 the token is project-scoped (a project-scoped token cannot be redirected to a
 different project by the header). A request with neither is rejected with
-`PROJECT_REQUIRED`.
+`PROJECT_REQUIRED`, and an addressed project the caller is not a member of is
+rejected with `PERMISSION_DENIED` — the header is a selector, never a grant.
 
 ## Message flow
 

@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -16,11 +17,23 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
+// allowAnyProject is the permissive project-authorization hook for tests that
+// exercise handler logic against a stub repository. Project authorization has
+// its own coverage (a2a_project_authz_test.go for the guard, the DB-backed
+// suite for the routes); stubbing it open here keeps a nil/stub database from
+// masking the behaviour those tests are about.
+func allowAnyProject(context.Context, string) error { return nil }
+
+// newTestA2AHandler builds a handler with no repository, for tests of the
+// handler-level validation and error paths. Project authorization has its own
+// tests (a2a_project_authz_test.go); here it is stubbed open so a missing
+// database does not mask the behaviour under test.
 func newTestA2AHandler() *A2AHandler {
 	return &A2AHandler{
-		repo:     nil,
-		executor: nil,
-		log:      slog.Default(),
+		repo:             nil,
+		executor:         nil,
+		log:              slog.Default(),
+		authorizeProject: allowAnyProject,
 	}
 }
 
@@ -359,7 +372,7 @@ func TestExtendedAgentCardHandler_InternalErrorDoesNotLeak(t *testing.T) {
 	// newUUIDSyntaxRepository makes every DB query fail with a Postgres 22P02
 	// syntax error, which the old code would have leaked into the envelope via
 	// err.Error(). The fix returns a stable wire message and logs the cause.
-	h := &A2AHandler{repo: newUUIDSyntaxRepository(t), log: slog.Default()}
+	h := &A2AHandler{repo: newUUIDSyntaxRepository(t), log: slog.Default(), authorizeProject: allowAnyProject}
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodGet, "/extendedAgentCard", nil)
 	rec := httptest.NewRecorder()

@@ -1,7 +1,9 @@
 package agents
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -35,10 +37,25 @@ func addA2AStandaloneAuth(req *http.Request) {
 
 // newA2ATestRouter builds an Echo instance with RegisterA2ARoutes and a
 // standalone-mode auth middleware so requests can authenticate without a DB.
+//
+// The handler's project-membership hook is a permissive stub: the tests in this
+// file are about routing, envelopes and scope gates, and a nil repository cannot
+// answer a membership query. The guard itself is covered by
+// a2a_project_authz_test.go (unit, sqlmock rows) and a2a_project_authz_db_test.go
+// (real projects, memberships and tokens); the tests that need a denial install
+// their own hook through newA2ATestRouterWithAuthz.
 func newA2ATestRouter(t *testing.T) (*echo.Echo, *A2AHandler) {
 	t.Helper()
+	return newA2ATestRouterWithAuthz(t, func(context.Context, string) error { return nil })
+}
+
+// newA2ATestRouterWithAuthz is newA2ATestRouter with an explicit
+// project-authorization hook, so a test can drive the guard's deny/allow branch
+// at the route level.
+func newA2ATestRouterWithAuthz(t *testing.T, authorize func(context.Context, string) error) (*echo.Echo, *A2AHandler) {
+	t.Helper()
 	e := echo.New()
-	h := &A2AHandler{log: slog.Default()}
+	h := &A2AHandler{log: slog.Default(), authorizeProject: authorize}
 	cfg := &config.Config{
 		Standalone: config.StandaloneConfig{Enabled: true, APIKey: a2aTestStandaloneKey, UserEmail: a2aTestStandaloneEmail},
 	}
@@ -97,8 +114,27 @@ func TestRequireA2AScope(t *testing.T) {
 		assert.Nil(t, requireA2AScope(c, "agents:write"))
 	})
 
-	t.Run("non-token session passes through", func(t *testing.T) {
-		user := &auth.AuthUser{ID: "u", APITokenID: ""} // OAuth/standalone: no token
+	// Issue #660: a session credential used to skip the scope check entirely,
+	// which left the A2A surface enforcing no scope for OIDC callers.
+	t.Run("session without the scope is denied", func(t *testing.T) {
+		user := &auth.AuthUser{ID: "u", APITokenID: "", Scopes: []string{"agents:read"}}
+		c, _ := newA2AActionContext("abc:cancel", user)
+		a2aErr := requireA2AScope(c, "agents:write")
+		require.NotNil(t, a2aErr)
+		assert.Equal(t, http.StatusForbidden, a2aErr.Code.HTTPStatus())
+		assert.Equal(t, A2AReasonPermissionDenied, a2aErr.Reason)
+	})
+
+	t.Run("session holding the scope passes", func(t *testing.T) {
+		user := &auth.AuthUser{ID: "u", APITokenID: "", Scopes: []string{"agents:write"}}
+		c, _ := newA2AActionContext("abc:cancel", user)
+		assert.Nil(t, requireA2AScope(c, "agents:write"))
+	})
+
+	t.Run("session scope is expanded through umbrellas", func(t *testing.T) {
+		// project:admin implies agents:write through ScopeImplies; a session
+		// that carries only the umbrella must still pass.
+		user := &auth.AuthUser{ID: "u", APITokenID: "", Scopes: []string{"project:admin"}}
 		c, _ := newA2AActionContext("abc:cancel", user)
 		assert.Nil(t, requireA2AScope(c, "agents:write"))
 	})
@@ -424,4 +460,191 @@ func TestA2ARoutes_StreamAuthenticatedReachesHandler(t *testing.T) {
 
 	panicked := serveRecovering(e, rec, req)
 	require.NotNil(t, panicked, "authenticated stream must reach the streaming handler (nil repo panic), got status %d", rec.Code)
+}
+
+// ---------------------------------------------------------------------------
+// Project authorization (issue #660)
+// ---------------------------------------------------------------------------
+
+// a2aGuardedOperations enumerates every A2A operation that addresses a project.
+// Each one must reach the membership guard; the global card is the one exception
+// (it is tenant-blind and unauthenticated).
+var a2aGuardedOperations = []struct {
+	name   string
+	method string
+	path   string
+	body   string
+}{
+	{name: "message:send", method: http.MethodPost, path: "/message:send", body: `{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"hi"}]}}`},
+	{name: "message:stream", method: http.MethodPost, path: "/message:stream", body: `{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"hi"}]}}`},
+	{name: "tasks list", method: http.MethodGet, path: "/tasks"},
+	{name: "task get", method: http.MethodGet, path: "/tasks/abc"},
+	{name: "task cancel", method: http.MethodPost, path: "/tasks/abc:cancel"},
+	{name: "task subscribe", method: http.MethodPost, path: "/tasks/abc:subscribe"},
+	{name: "extended agent card", method: http.MethodGet, path: "/extendedAgentCard"},
+}
+
+// TestA2ARoutes_DeniedProjectReturnsPermissionEnvelopeOnEveryOperation is the
+// #660 regression guard for the route wiring: a request that authenticates and
+// names a project it is not entitled to must be refused on every guarded
+// operation, in the A2A envelope, and must not reach the handler. Before the
+// fix none of these handlers consulted project membership at all.
+func TestA2ARoutes_DeniedProjectReturnsPermissionEnvelopeOnEveryOperation(t *testing.T) {
+	for _, op := range a2aGuardedOperations {
+		t.Run(op.name, func(t *testing.T) {
+			var calls []string
+			e, _ := newA2ATestRouterWithAuthz(t, func(_ context.Context, projectID string) error {
+				calls = append(calls, projectID)
+				return apperror.NewForbidden("access to project denied")
+			})
+
+			var body io.Reader
+			if op.body != "" {
+				body = strings.NewReader(op.body)
+			}
+			req := httptest.NewRequest(op.method, op.path, body)
+			if op.body != "" {
+				req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+			}
+			addA2AStandaloneAuth(req)
+			rec := httptest.NewRecorder()
+
+			// Recovered so a regression that skips the guard reaches a nil-repo
+			// handler and fails the assertion instead of panicking the suite.
+			panicked := serveRecovering(e, rec, req)
+			assert.Nil(t, panicked, "%s %s reached its handler without the guard", op.method, op.path)
+
+			assert.Equal(t, http.StatusForbidden, rec.Code, "%s %s must be refused", op.method, op.path)
+			assert.Equal(t, A2AContentType, rec.Header().Get(echo.HeaderContentType))
+
+			var env A2AErrorEnvelope
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &env))
+			require.Len(t, env.Error.Details, 1)
+			assert.Equal(t, "PERMISSION_DENIED", env.Error.Details[0].Reason)
+			assert.Equal(t, A2AErrorDomain, env.Error.Details[0].Domain)
+
+			// The guard must see the project the request addressed: the header
+			// value for a session credential.
+			require.Equal(t, []string{a2aTestProjectID}, calls,
+				"%s %s must ask the membership guard about the addressed project", op.method, op.path)
+		})
+	}
+}
+
+// TestA2ARoutes_EveryAuthenticatedRouteConsultsTheGuard is the structural half
+// of #660: rather than trusting the hand-written operation table above, it walks
+// the routes the server actually registered and proves each authenticated one is
+// refused when the guard denies. A future A2A handler that forgets to resolve its
+// project through addressedProject fails here.
+//
+// The exempt set is explicit and small:
+//   - the global card (tenant-blind, unauthenticated — the issue's stated
+//     exception);
+//   - the push-notification-config routes, which answer
+//     PUSH_NOTIFICATION_NOT_SUPPORTED for every caller and never read a project.
+//   - Echo's synthetic "route not found" entries, which are the fallback for
+//     paths that match no handler at all and therefore cannot reach one.
+func TestA2ARoutes_EveryAuthenticatedRouteConsultsTheGuard(t *testing.T) {
+	e, _ := newA2ATestRouterWithAuthz(t, func(context.Context, string) error {
+		return apperror.NewForbidden("access to project denied")
+	})
+
+	substitutions := []struct{ from, to string }{
+		{":id", "3f2c0e5a-1234-5678-9abc-def012345678"},
+		{"/*", "/3f2c0e5a-1234-5678-9abc-def012345678:cancel"},
+	}
+
+	guarded := 0
+	for _, route := range e.Routes() {
+		if route.Method == echo.RouteNotFound {
+			continue
+		}
+		path := route.Path
+		if path == "/.well-known/agent-card.json" || strings.Contains(path, "pushNotificationConfigs") {
+			continue
+		}
+		for _, sub := range substitutions {
+			path = strings.ReplaceAll(path, sub.from, sub.to)
+		}
+
+		t.Run(route.Method+" "+path, func(t *testing.T) {
+			var body io.Reader
+			if route.Method == http.MethodPost || route.Method == http.MethodPut {
+				body = strings.NewReader(`{}`)
+			}
+			req := httptest.NewRequest(route.Method, path, body)
+			addA2AStandaloneAuth(req)
+			rec := httptest.NewRecorder()
+
+			// Recovering keeps a regression readable: a route that skips the guard
+			// reaches a nil-repo handler, and that must fail this assertion rather
+			// than take the whole test binary down with it.
+			panicked := serveRecovering(e, rec, req)
+			assert.Nil(t, panicked,
+				"registered route %s %s reached its handler without consulting the project guard", route.Method, path)
+			assert.Equal(t, http.StatusForbidden, rec.Code,
+				"registered route %s %s must consult the project guard", route.Method, path)
+			assert.Equal(t, A2AContentType, rec.Header().Get(echo.HeaderContentType))
+		})
+		guarded++
+	}
+
+	// Guard against the test silently passing because no routes were walked.
+	// The enumerated operations map onto six registered routes: cancel and
+	// subscribe share POST /tasks/*.
+	require.GreaterOrEqual(t, guarded, 6,
+		"the structural sweep must cover every registered project-addressed A2A route")
+}
+
+// TestA2ARoutes_MemberReachesHandler proves the guard is an authorization gate
+// and not a blanket denial: with the guard satisfied the request proceeds into
+// the handler on every guarded operation.
+func TestA2ARoutes_MemberReachesHandler(t *testing.T) {
+	for _, op := range a2aGuardedOperations {
+		t.Run(op.name, func(t *testing.T) {
+			var calls []string
+			e, _ := newA2ATestRouterWithAuthz(t, func(_ context.Context, projectID string) error {
+				calls = append(calls, projectID)
+				return nil
+			})
+
+			var body io.Reader
+			if op.body != "" {
+				body = strings.NewReader(op.body)
+			}
+			req := httptest.NewRequest(op.method, op.path, body)
+			if op.body != "" {
+				req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+			}
+			addA2AStandaloneAuth(req)
+			rec := httptest.NewRecorder()
+
+			// The handler has no repository, so reaching it surfaces as the
+			// recovered nil-repo panic (routing and authorization both succeeded).
+			panicked := serveRecovering(e, rec, req)
+			require.NotNil(t, panicked,
+				"%s %s must reach its handler once the guard passes, got status %d", op.method, op.path, rec.Code)
+			require.Equal(t, []string{a2aTestProjectID}, calls)
+		})
+	}
+}
+
+// TestA2ARoutes_GlobalCardStaysOpen is the other half of #660: discovery must
+// remain unauthenticated and must not consult project membership.
+func TestA2ARoutes_GlobalCardStaysOpen(t *testing.T) {
+	e, _ := newA2ATestRouterWithAuthz(t, func(context.Context, string) error {
+		t.Fatal("the global agent card must not consult project membership")
+		return nil
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/.well-known/agent-card.json", nil) // no auth headers
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, A2AContentType, rec.Header().Get(echo.HeaderContentType))
+
+	var card AgentCard
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &card))
+	assert.Equal(t, A2APlatformName, card.Name)
 }

@@ -586,7 +586,7 @@ func (h *A2AHandler) SendMessage(c echo.Context) error {
 		return writeA2AError(c, a2aErr)
 	}
 
-	projectID, err := acpProjectID(c)
+	projectID, err := h.addressedProject(c)
 	if err != nil {
 		return err
 	}
@@ -833,7 +833,7 @@ func (h *A2AHandler) GetTask(c echo.Context) error {
 		return writeA2AError(c, a2aErr)
 	}
 
-	projectID, err := acpProjectID(c)
+	projectID, err := h.addressedProject(c)
 	if err != nil {
 		return err
 	}
@@ -865,7 +865,7 @@ func (h *A2AHandler) ListTasks(c echo.Context) error {
 		return writeA2AError(c, a2aErr)
 	}
 
-	projectID, err := acpProjectID(c)
+	projectID, err := h.addressedProject(c)
 	if err != nil {
 		return err
 	}
@@ -932,7 +932,7 @@ func (h *A2AHandler) CancelTask(c echo.Context) error {
 		return writeA2AError(c, a2aErr)
 	}
 
-	projectID, err := acpProjectID(c)
+	projectID, err := h.addressedProject(c)
 	if err != nil {
 		return err
 	}
@@ -993,7 +993,7 @@ func (h *A2AHandler) SubscribeTask(c echo.Context) error {
 		return writeA2AError(c, a2aErr)
 	}
 
-	projectID, err := acpProjectID(c)
+	projectID, err := h.addressedProject(c)
 	if err != nil {
 		return err
 	}
