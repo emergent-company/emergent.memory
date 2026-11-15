@@ -408,16 +408,29 @@ func (p *WorkerPool) reenqueueWork(ctx context.Context, log *slog.Logger, agent 
 		subjectTypePtr = nil
 	}
 	meta := map[string]any{"work_trigger_event": string(EventTypeStatusChanged)}
-	if head, herr := p.workObjects.GetHeadObject(ctx, projectID, canonicalID); herr == nil && head != nil {
+	var head *graph.WorkObjectHead
+	if h, herr := p.workObjects.GetHeadObject(ctx, projectID, canonicalID); herr == nil && h != nil {
+		head = h
 		meta = workTriggerMetadata(head)
 	}
-	_, err := p.repo.CreateRunQueued(ctx, agent.ID, maxAttempts, CreateRunQueuedOptions{
+	var trigger *AgentWorkTrigger
+	if agentDef != nil && head != nil {
+		trigger = agentDef.MatchWorkTrigger(head.Type, head.Status)
+	}
+	inv := workRunInvocation(head, trigger)
+	opts := CreateRunQueuedOptions{
 		SubjectObjectID:   &canonicalID,
 		SubjectObjectType: subjectTypePtr,
-		TrustedInternal:   true,
+		TrustedInternal:   workRunTrusted(head),
 		NextRunAt:         nextRunAt,
 		TriggerMetadata:   meta,
-	})
+		Invocation:        inv,
+		SourceTriggerID:   workSourceTriggerID(head),
+	}
+	if inv != nil {
+		opts.Priority = inv.Priority
+	}
+	_, err := p.repo.CreateRunQueued(ctx, agent.ID, maxAttempts, opts)
 	if err != nil {
 		if errors.Is(err, ErrWorkItemBusy) {
 			log.Info("work item already has a live run; re-enqueue skipped", slog.String("canonical_id", canonicalID))

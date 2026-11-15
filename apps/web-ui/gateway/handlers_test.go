@@ -5547,6 +5547,8 @@ func (f *fakeMemory) ListSourceTriggers(ctx context.Context, sourceID string) ([
 	return f.dsSourceTriggers[sourceID], nil
 }
 
+func (f *fakeMemory) BackfillSourceIssues(context.Context, string) (int, error) { return 0, nil }
+
 func (f *fakeMemory) CreateSourceTrigger(ctx context.Context, sourceID string, req *DSSourceTriggerRequest) (*DSSourceTrigger, error) {
 	if f.dsSourceTriggerErr != nil {
 		return nil, f.dsSourceTriggerErr

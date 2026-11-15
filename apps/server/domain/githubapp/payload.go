@@ -35,6 +35,25 @@ type WebhookPullRequest struct {
 	Head   WebhookRef  `json:"head"`
 }
 
+// WebhookIssue is the issue subset the producer reads. The pull_request marker
+// is present on issues that are actually pull requests; those must never enter
+// the issue-coding workflow.
+type WebhookIssue struct {
+	Number      int            `json:"number"`
+	Title       string         `json:"title"`
+	Body        string         `json:"body"`
+	State       string         `json:"state"`
+	HTMLURL     string         `json:"html_url"`
+	UpdatedAt   string         `json:"updated_at"`
+	Labels      []WebhookLabel `json:"labels"`
+	User        WebhookUser    `json:"user"`
+	PullRequest *struct{}      `json:"pull_request,omitempty"`
+}
+
+type WebhookLabel struct {
+	Name string `json:"name"`
+}
+
 // WebhookPayload is the subset of the delivery body the producer consumes.
 type WebhookPayload struct {
 	Action       string `json:"action"`
@@ -44,6 +63,7 @@ type WebhookPayload struct {
 	} `json:"installation"`
 	Repository  WebhookRepo        `json:"repository"`
 	PullRequest WebhookPullRequest `json:"pull_request"`
+	Issue       WebhookIssue       `json:"issue"`
 	Sender      WebhookUser        `json:"sender"`
 	// Repositories is the full selection on an installation event.
 	Repositories []WebhookRepo `json:"repositories"`
@@ -67,6 +87,34 @@ func (p *WebhookPayload) PullNumber() int {
 		return p.PullRequest.Number
 	}
 	return p.Number
+}
+
+// IsRelevantIssueAction reports the issue actions that may auto-start work.
+// Only new/reopened issues auto-start by default; later edits update the board
+// item without launching another run.
+func (p *WebhookPayload) IsRelevantIssueAction() bool {
+	switch p.Action {
+	case "opened", "reopened":
+		return true
+	default:
+		return false
+	}
+}
+
+// IsIssue reports whether the delivery is an issue rather than a PR in the
+// shared issues webhook.
+func (p *WebhookPayload) IsIssue() bool {
+	return p.Issue.Number > 0 && p.Issue.PullRequest == nil
+}
+
+// AuthoredByIssue reports whether the issue was authored by login or its App
+// bot form.
+func (p *WebhookPayload) AuthoredByIssue(login string) bool {
+	if login == "" {
+		return false
+	}
+	author := p.Issue.User.Login
+	return strings.EqualFold(author, login) || strings.EqualFold(author, login+"[bot]")
 }
 
 // IsRelevantPullRequestAction reports the actions that should enqueue a review.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -20,7 +21,7 @@ import (
 // uiSourceApps).
 
 // dsProviderTypeGitHubApp is the trigger-only GitHub App provider. Its sources
-// carry an org App id in their config and accept pull_request triggers.
+// carry an org App id in their config and accept pull_request/issues triggers.
 const dsProviderTypeGitHubApp = "github_app"
 
 // dsSourceAppsPath is the org source-App settings page (project settings rail).
@@ -124,7 +125,7 @@ func dsSourceAppRows(apps []SourceApp, publicBaseURL string) []dsSourceAppRow {
 // dsSourceAppsSubtitle describes the page without assuming the org name
 // resolved (GetOrg is best-effort there).
 func dsSourceAppsSubtitle(orgName string) string {
-	base := "GitHub App credentials available to this project. Organization-wide Apps are shared by every project in the organization; project-owned Apps belong to this project only. A GitHub App source picks one of these Apps and a pull-request trigger starts an agent run."
+	base := "GitHub App credentials available to this project. Organization-wide Apps are shared by every project in the organization; project-owned Apps belong to this project only. A GitHub App source picks one of these Apps and a pull-request or issue trigger starts an agent run."
 	if orgName != "" {
 		return base + " Organization: " + orgName + "."
 	}
@@ -370,8 +371,8 @@ func (s *Server) findProjectSourceApp(c echo.Context, appID string) (*SourceApp,
 // --- github_app triggers ---
 //
 // A trigger binds one source event type to a runtime agent. For github_app the
-// server accepts pull_request only, so the create form fixes the event type and
-// the gateway never offers a choice the API would reject.
+// server accepts pull_request and issues; the create form offers both and lets
+// the API enforce one binding per event type.
 
 // dsSourceTriggersView is the trigger panel's data on a source detail page.
 type dsSourceTriggersView struct {
@@ -452,6 +453,13 @@ func dsTriggerNextEnabled(enabled bool) string {
 }
 
 // dsTriggerQueueLabel renders an empty queue as the server's default.
+func dsTriggerEventIcon(eventType string) string {
+	if eventType == dsTriggerEventIssues {
+		return "lucide--circle-dot"
+	}
+	return "lucide--git-pull-request"
+}
+
 func dsTriggerQueueLabel(queue string) string {
 	if q := strings.TrimSpace(queue); q != "" {
 		return q
@@ -460,8 +468,8 @@ func dsTriggerQueueLabel(queue string) string {
 }
 
 // uiDataSourceTriggerNew renders the standalone add-trigger page. A source has
-// one binding per event type, so an existing pull_request trigger redirects back
-// to the detail page instead of offering a form that can only conflict.
+// one binding per event type; the form stays available so a source can add the
+// other event type later.
 func (s *Server) uiDataSourceTriggerNew(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
@@ -477,17 +485,11 @@ func (s *Server) uiDataSourceTriggerNew(c echo.Context) error {
 	if view == nil {
 		return redirectWithError(c, detailPath, errors.New("this data source does not support triggers"))
 	}
-	for _, trigger := range view.Triggers {
-		if trigger.EventType == dsTriggerEventPullRequest {
-			return redirectWithError(c, detailPath+"#triggers", errors.New("this source already has a pull_request trigger; delete it before adding another"))
-		}
-	}
 	return s.page(c, pageTitle("Add trigger", dsSourceName(*src)), DataSourceTriggerNewPage(src, *view, flashError(c)))
 }
 
-// uiDataSourceTriggerCreate binds pull_request to an agent (PRG). The event type
-// is fixed by the form; a source that is not a github_app source has no trigger
-// panel, so a stray POST is refused rather than forwarded.
+// uiDataSourceTriggerCreate binds an event to an agent (PRG). A source that is
+// not a github_app source has no trigger panel, so a stray POST is refused.
 func (s *Server) uiDataSourceTriggerCreate(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
@@ -502,20 +504,26 @@ func (s *Server) uiDataSourceTriggerCreate(c echo.Context) error {
 	newPath := detailPath + "/triggers/new"
 	agentID := strings.TrimSpace(c.FormValue("agentId"))
 	if agentID == "" {
-		return redirectWithError(c, newPath, errors.New("pick an agent to run on pull requests"))
+		return redirectWithError(c, newPath, errors.New("pick an agent to run on this event"))
 	}
-	// The panel offers exactly one event type; defaulting an absent value keeps
-	// an older cached form working without offering a choice the server rejects.
 	eventType := strings.TrimSpace(c.FormValue("eventType"))
 	if eventType == "" {
 		eventType = dsTriggerEventPullRequest
 	}
+	if eventType != dsTriggerEventPullRequest && eventType != dsTriggerEventIssues {
+		return redirectWithError(c, newPath, errors.New("unsupported trigger event"))
+	}
+	invocation, invErr := triggerInvocationFromForm(c)
+	if invErr != nil {
+		return redirectWithError(c, newPath, invErr)
+	}
 	enabled := true
 	req := &DSSourceTriggerRequest{
-		EventType: eventType,
-		AgentID:   agentID,
-		Queue:     strings.TrimSpace(c.FormValue("queue")),
-		Enabled:   &enabled,
+		EventType:  eventType,
+		AgentID:    agentID,
+		Queue:      strings.TrimSpace(c.FormValue("queue")),
+		Invocation: invocation,
+		Enabled:    &enabled,
 	}
 	if _, err := s.memory.CreateSourceTrigger(ctx, id, req); err != nil {
 		return redirectWithError(c, newPath, dsFormError(err))
@@ -524,8 +532,69 @@ func (s *Server) uiDataSourceTriggerCreate(c echo.Context) error {
 	return nil
 }
 
-// dsTriggerEventPullRequest is the only event a github_app source accepts.
-const dsTriggerEventPullRequest = "pull_request"
+func triggerInvocationFromForm(c echo.Context) (map[string]any, error) {
+	inv := map[string]any{}
+	if model := strings.TrimSpace(c.FormValue("model")); model != "" {
+		inv["model"] = model
+	}
+	if raw := strings.TrimSpace(c.FormValue("maxSteps")); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n <= 0 {
+			return nil, errors.New("max steps must be a positive number")
+		}
+		inv["max_steps"] = n
+	}
+	if raw := strings.TrimSpace(c.FormValue("priority")); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			return nil, errors.New("priority must be a non-negative number")
+		}
+		inv["priority"] = n
+	}
+	if raw := strings.TrimSpace(c.FormValue("context")); raw != "" {
+		var context map[string]any
+		if err := json.Unmarshal([]byte(raw), &context); err != nil {
+			return nil, errors.New("context must be a JSON object")
+		}
+		inv["context"] = context
+	}
+	if raw := strings.TrimSpace(c.FormValue("env")); raw != "" {
+		env := map[string]string{}
+		for _, line := range strings.Split(raw, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			key, value, ok := strings.Cut(line, "=")
+			if !ok || strings.TrimSpace(key) == "" {
+				return nil, fmt.Errorf("environment line %q must be KEY=value", line)
+			}
+			env[strings.TrimSpace(key)] = strings.TrimSpace(value)
+		}
+		if len(env) > 0 {
+			inv["env_vars"] = env
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(c.FormValue("codingCredential")), "true") {
+		inv["credential"] = map[string]any{
+			"kind": "github_app",
+			"permissions": map[string]string{
+				"contents": "write", "pull_requests": "write", "issues": "write", "checks": "read",
+			},
+		}
+	}
+	if len(inv) == 0 {
+		return nil, nil
+	}
+	return inv, nil
+}
+
+// github_app events a source can bind. Each source has at most one trigger per
+// event type.
+const (
+	dsTriggerEventPullRequest = "pull_request"
+	dsTriggerEventIssues      = "issues"
+)
 
 // uiDataSourceTriggerToggle flips a trigger's enabled flag (PATCH). Only
 // enabled travels, so the binding's agent and queue stay as they are.
@@ -551,6 +620,20 @@ func (s *Server) uiDataSourceTriggerDelete(c echo.Context) error {
 		return redirectWithError(c, detailPath+"#triggers", dsFormError(err))
 	}
 	redirectAfterMutation(c, detailPath+"?triggerDeleted=1#triggers")
+	return nil
+}
+
+// uiDataSourceBackfillIssues imports open issues for a github_app source as
+// unassigned board items. It never starts runs.
+func (s *Server) uiDataSourceBackfillIssues(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := c.Param("id")
+	back := "/data-sources/" + url.PathEscape(id) + "#triggers"
+	count, err := s.memory.BackfillSourceIssues(ctx, id)
+	if err != nil {
+		return redirectWithError(c, back, dsFormError(err))
+	}
+	redirectAfterMutation(c, back+"?issuesImported="+strconv.Itoa(count))
 	return nil
 }
 
@@ -623,6 +706,24 @@ func (s *Server) dsAttachSourceAppSelect(ctx context.Context, providerType strin
 	return fields
 }
 
+type dsWorkflowEditRow struct {
+	Lane  string
+	Agent string
+}
+
+func workflowEditRows(wf *SourceWorkflow) []dsWorkflowEditRow {
+	rows := make([]dsWorkflowEditRow, 0, 6)
+	if wf != nil {
+		for _, reviewer := range wf.Config.Reviewers {
+			rows = append(rows, dsWorkflowEditRow{Lane: reviewer.Lane, Agent: reviewer.Agent})
+		}
+	}
+	for len(rows) < 6 {
+		rows = append(rows, dsWorkflowEditRow{})
+	}
+	return rows
+}
+
 type dsWorkflowLaneRow struct {
 	Lane       string
 	Agent      string
@@ -684,23 +785,6 @@ func (s *Server) workflowLaneRows(ctx context.Context, wf *SourceWorkflow) []dsW
 	return rows
 }
 
-func sourceWorkflowText(wf *SourceWorkflow) string {
-	if wf == nil {
-		return ""
-	}
-	var b strings.Builder
-	for _, r := range wf.Config.Reviewers {
-		if r.Lane == "" || r.Agent == "" {
-			continue
-		}
-		b.WriteString(r.Lane)
-		b.WriteString(" | ")
-		b.WriteString(r.Agent)
-		b.WriteString("\n")
-	}
-	return strings.TrimSpace(b.String())
-}
-
 // uiDataSourceWorkflow configures the board lanes a github_app source emits.
 func (s *Server) uiDataSourceWorkflow(c echo.Context) error {
 	ctx := c.Request().Context()
@@ -719,7 +803,8 @@ func (s *Server) uiDataSourceWorkflow(c echo.Context) error {
 		loadErr = userFacingError(werr)
 	}
 	lanes := s.workflowLaneRows(ctx, wf)
-	return s.page(c, pageTitle("Workflow", dsSourceName(*src)), DataSourceWorkflowPage(src, wf, lanes, loadErr, flashFromQuery(c, []flashParam{{key: "saved", msg: "Workflow saved."}}), flashError(c)))
+	agents, _ := s.memory.ListAgentDefinitions(ctx)
+	return s.page(c, pageTitle("Workflow", dsSourceName(*src)), DataSourceWorkflowPage(src, wf, workflowEditRows(wf), agents, lanes, loadErr, flashFromQuery(c, []flashParam{{key: "saved", msg: "Workflow saved."}}), flashError(c)))
 }
 
 func (s *Server) uiDataSourceWorkflowSave(c echo.Context) error {
@@ -727,16 +812,37 @@ func (s *Server) uiDataSourceWorkflowSave(c echo.Context) error {
 	id := c.Param("id")
 	back := "/data-sources/" + url.PathEscape(id) + "/workflow"
 	var reviewers []SourceWorkflowReviewer
-	for _, line := range strings.Split(c.FormValue("reviewers"), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
+	form, _ := c.FormParams()
+	laneValues := form["lane"]
+	agentValues := form["agent"]
+	if len(laneValues) > 0 || len(agentValues) > 0 {
+		if len(laneValues) != len(agentValues) {
+			return redirectWithError(c, back, errors.New("each lane needs one agent"))
 		}
-		parts := strings.FieldsFunc(line, func(r rune) bool { return r == '|' || r == ':' })
-		if len(parts) != 2 {
-			return redirectWithError(c, back, fmt.Errorf("reviewer %q must be lane | agent", line))
+		for i := range laneValues {
+			lane := strings.TrimSpace(laneValues[i])
+			agent := strings.TrimSpace(agentValues[i])
+			if lane == "" && agent == "" {
+				continue
+			}
+			if lane == "" || agent == "" {
+				return redirectWithError(c, back, errors.New("each lane needs a name and an agent"))
+			}
+			reviewers = append(reviewers, SourceWorkflowReviewer{Lane: lane, Agent: agent})
 		}
-		reviewers = append(reviewers, SourceWorkflowReviewer{Lane: strings.TrimSpace(parts[0]), Agent: strings.TrimSpace(parts[1])})
+	} else {
+		// Keep older cached forms working while the picker rolls out.
+		for _, line := range strings.Split(c.FormValue("reviewers"), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			parts := strings.FieldsFunc(line, func(r rune) bool { return r == '|' || r == ':' })
+			if len(parts) != 2 {
+				return redirectWithError(c, back, fmt.Errorf("reviewer %q must be lane | agent", line))
+			}
+			reviewers = append(reviewers, SourceWorkflowReviewer{Lane: strings.TrimSpace(parts[0]), Agent: strings.TrimSpace(parts[1])})
+		}
 	}
 	if len(reviewers) == 0 {
 		return redirectWithError(c, back, errors.New("add at least one reviewer lane"))

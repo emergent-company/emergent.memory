@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/fx"
 
+	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/discoveryjobs"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
@@ -150,8 +151,17 @@ var SourceEventsModule = fx.Module("source-events",
 		NewSourceEventDispatcher,
 		NewSourceEventHandler,
 	),
-	fx.Invoke(RegisterSourceEventRoutes, WireAgentRepository, WireSourceWorkObjectStore),
+	fx.Invoke(RegisterSourceEventRoutes, WireAgentRepository, WireSourceWorkObjectStore, WireSourceCredentialMinter),
 )
+
+// WireSourceCredentialMinter lets the executor mint a source-scoped GitHub App
+// token at run start. The source module owns the App key; the executor only
+// names the source and requested permissions.
+func WireSourceCredentialMinter(ae *agents.AgentExecutor, h *ReviewToolHandler) {
+	if ae != nil && h != nil {
+		ae.SetSourceCredentialMinter(h)
+	}
+}
 
 // provideSourceWorkObjectStore binds the graph service to the narrow interface
 // the source workflow dispatcher consumes.

@@ -3032,6 +3032,7 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 // tx, applying the queue-depth guard. It is the shared body of CreateRunQueued
 // and the deduped object-driven dispatch enqueue.
 func (r *Repository) enqueueWorkRunInTx(ctx context.Context, tx bun.Tx, agentID string, maxAttempts int, o CreateRunQueuedOptions, projectID, queue string, priority int) (*AgentRun, error) {
+	inv := NormalizeInvocation(o.Invocation)
 	run := &AgentRun{
 		AgentID:           agentID,
 		Status:            RunStatusQueued,
@@ -3043,9 +3044,20 @@ func (r *Repository) enqueueWorkRunInTx(ctx context.Context, tx bun.Tx, agentID 
 		TriggerMetadata:   o.TriggerMetadata,
 		TrustedInternal:   o.TrustedInternal,
 		SourceSubject:     o.SourceSubject,
+		RunInvocation:     inv,
+		SourceTriggerID:   o.SourceTriggerID,
 		SubjectObjectID:   o.SubjectObjectID,
 		SubjectObjectType: o.SubjectObjectType,
 		Tools:             []string{},
+	}
+	if inv != nil {
+		if inv.Model != "" {
+			model := inv.Model
+			run.Model = &model
+		}
+		if inv.MaxSteps != nil {
+			run.MaxSteps = inv.MaxSteps
+		}
 	}
 
 	// Queue depth check inside the transaction so the count and insert are

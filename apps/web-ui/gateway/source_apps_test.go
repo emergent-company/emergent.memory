@@ -797,18 +797,24 @@ func TestDataSourceTriggerNewPageRendersForm(t *testing.T) {
 	}
 }
 
-func TestDataSourceTriggerNewRedirectsWhenAlreadyBound(t *testing.T) {
+func TestDataSourceTriggerNewAllowsSecondEventType(t *testing.T) {
 	f := sourceAppsAdminFake()
 	f.dsIntegrations = []DSIntegration{{ID: "s1", Name: "GH", ProviderType: dsProviderTypeGitHubApp}}
 	f.dsSourceTriggers = map[string][]DSSourceTrigger{"s1": {{ID: "t1", EventType: "pull_request", AgentID: "agent-1", Enabled: true}}}
+	f.agents = []AgentDefinitionSummary{{ID: "agent-1", Name: "Reviewer"}}
 	e := sourceAppsTestServer(f)
 
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1/triggers/new", nil))
-	if rec.Code != http.StatusSeeOther {
+	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	assertRedirectError(t, rec.Header().Get("Location"), "already has a pull_request trigger")
+	body := rec.Body.String()
+	for _, want := range []string{`value="pull_request"`, `value="issues"`, `name="codingCredential"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("new trigger page missing %q", want)
+		}
+	}
 }
 
 func TestDataSourceWorkflowPageSavesReviewers(t *testing.T) {
@@ -823,8 +829,8 @@ func TestDataSourceWorkflowPageSavesReviewers(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "security | security-review") {
-		t.Error("existing workflow not pre-filled")
+	if !strings.Contains(body, `value="security"`) || !strings.Contains(body, `selected`) {
+		t.Error("existing workflow not pre-filled in the picker")
 	}
 	if strings.Contains(body, "Workflow unavailable") {
 		t.Error("healthy workflow rendered the unavailable notice")
@@ -878,6 +884,42 @@ func TestDataSourceTriggerCreateForwardsPullRequest(t *testing.T) {
 	}
 	if got.Enabled == nil || !*got.Enabled {
 		t.Errorf("new trigger not enabled: %+v", got)
+	}
+}
+
+func TestDataSourceTriggerCreateForwardsIssueInvocation(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.dsIntegrations = []DSIntegration{{ID: "s1", Name: "GH", ProviderType: dsProviderTypeGitHubApp}}
+	e := sourceAppsTestServer(f)
+
+	form := url.Values{
+		"agentId":          {"agent-1"},
+		"eventType":        {"issues"},
+		"model":            {"provider/model"},
+		"maxSteps":         {"40"},
+		"priority":         {"5"},
+		"context":          {`{"instructions":"focus on tests"}`},
+		"env":              {"CI=true"},
+		"codingCredential": {"true"},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/data-sources/s1/triggers", strings.NewReader(form.Encode()))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationForm)
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	got := f.dsCreatedTriggerReq
+	if got == nil || got.EventType != dsTriggerEventIssues || got.Invocation == nil {
+		t.Fatalf("request = %+v", got)
+	}
+	if got.Invocation["model"] != "provider/model" {
+		t.Errorf("model = %v", got.Invocation["model"])
+	}
+	cred, _ := got.Invocation["credential"].(map[string]any)
+	perms, _ := cred["permissions"].(map[string]string)
+	if perms["contents"] != "write" {
+		t.Errorf("permissions = %#v", cred)
 	}
 }
 

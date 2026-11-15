@@ -497,6 +497,7 @@ func main() {
 	e.GET("/data-sources/:id/workflow", s.uiDataSourceWorkflow)
 	e.POST("/data-sources/:id/workflow", s.uiDataSourceWorkflowSave)
 	e.POST("/data-sources/:id/triggers", s.uiDataSourceTriggerCreate)
+	e.POST("/data-sources/:id/issues/backfill", s.uiDataSourceBackfillIssues)
 	e.POST("/data-sources/:id/triggers/:triggerId/toggle", s.uiDataSourceTriggerToggle)
 	e.POST("/data-sources/:id/triggers/:triggerId/delete", s.uiDataSourceTriggerDelete)
 	e.GET("/objects", s.uiObjects)

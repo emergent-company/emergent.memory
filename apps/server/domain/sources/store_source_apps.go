@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/pgutils"
 )
@@ -179,6 +180,9 @@ func (r *Repository) CreateSourceTrigger(ctx context.Context, trigger *SourceTri
 	if trigger.EventFilter == nil {
 		trigger.EventFilter = map[string]any{}
 	}
+	if trigger.Invocation == nil {
+		trigger.Invocation = &agents.AgentInvocation{}
+	}
 	err := r.projectTx(ctx, trigger.ProjectID, func(ctx context.Context, tx bun.Tx) error {
 		_, err := tx.NewInsert().Model(trigger).Returning("*").Exec(ctx)
 		return err
@@ -222,9 +226,12 @@ func (r *Repository) UpdateSourceTrigger(ctx context.Context, trigger *SourceTri
 	if trigger.EventFilter == nil {
 		trigger.EventFilter = map[string]any{}
 	}
+	if trigger.Invocation == nil {
+		trigger.Invocation = &agents.AgentInvocation{}
+	}
 	err := r.projectTx(ctx, trigger.ProjectID, func(ctx context.Context, tx bun.Tx) error {
 		_, err := tx.NewUpdate().Model(trigger).
-			Column("event_type", "agent_id", "queue", "event_filter", "enabled").
+			Column("event_type", "agent_id", "queue", "event_filter", "invocation", "enabled").
 			Set("updated_at = now()").
 			Where("id = ?", trigger.ID).
 			Exec(ctx)

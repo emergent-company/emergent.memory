@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func signed(secret string, body []byte) string {
@@ -109,4 +111,25 @@ func TestAuthoredBy(t *testing.T) {
 	if p.AuthoredBy("") {
 		t.Fatal("empty login must not match")
 	}
+}
+
+func TestParseIssueWebhook(t *testing.T) {
+	body := []byte(`{
+		"action":"opened",
+		"installation":{"id":42},
+		"repository":{"full_name":"owner/repo"},
+		"issue":{"number":737,"title":"fix","body":"details","state":"open","html_url":"https://github.com/owner/repo/issues/737","labels":[{"name":"bug"}],"user":{"login":"mkucharz","type":"User"}}
+	}`)
+	p, err := ParseWebhook(body)
+	require.NoError(t, err)
+	require.True(t, p.IsIssue())
+	require.Equal(t, 737, p.Issue.Number)
+	require.True(t, p.IsRelevantIssueAction())
+	require.False(t, p.AuthoredByIssue("memory-coder"))
+	require.True(t, (&WebhookPayload{Issue: WebhookIssue{User: WebhookUser{Login: "memory-coder[bot]"}}}).AuthoredByIssue("memory-coder"))
+}
+
+func TestIssueWebhookSkipsPullRequest(t *testing.T) {
+	p := &WebhookPayload{Issue: WebhookIssue{Number: 7, PullRequest: &struct{}{}}}
+	require.False(t, p.IsIssue())
 }

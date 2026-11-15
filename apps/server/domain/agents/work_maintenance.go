@@ -581,24 +581,41 @@ func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead) 
 		return
 	}
 	for _, agent := range agents {
+		var def *AgentDefinition
 		// Skip a listener whose rules do not pick up this status: the claim guard
 		// would reject it anyway, but enqueuing a doomed run is noise.
-		if def, derr := rc.repo.ResolveDefinitionForAgent(ctx, agent); derr == nil && def != nil {
+		if resolved, derr := rc.repo.ResolveDefinitionForAgent(ctx, agent); derr == nil && resolved != nil {
+			def = resolved
 			if !def.TriggerAllowsStatus(h.Type, h.Status) {
 				continue
 			}
 		}
 		canonicalID := h.CanonicalID
 		objectType := h.Type
-		if _, err := rc.repo.CreateRunQueued(ctx, agent.ID, 1, CreateRunQueuedOptions{
+		var trigger *AgentWorkTrigger
+		if def != nil {
+			trigger = def.MatchWorkTrigger(h.Type, h.Status)
+		}
+		inv := workRunInvocation(h, trigger)
+		opts := CreateRunQueuedOptions{
 			SubjectObjectID:   &canonicalID,
 			SubjectObjectType: &objectType,
-			TrustedInternal:   true,
+			TrustedInternal:   workRunTrusted(h),
+			Invocation:        inv,
+			SourceTriggerID:   workSourceTriggerID(h),
 			// Record the claim source as the object's current status: the
 			// reconciler scans both ready and trigger statuses, and the claim must
 			// CAS from whatever status the object is stranded in.
 			TriggerMetadata: workTriggerMetadata(h),
-		}); err != nil {
+		}
+		if inv != nil {
+			opts.Priority = inv.Priority
+		}
+		if trigger != nil && trigger.Prompt != "" {
+			prompt := trigger.Prompt
+			opts.TriggerMessage = &prompt
+		}
+		if _, err := rc.repo.CreateRunQueued(ctx, agent.ID, 1, opts); err != nil {
 			if errors.Is(err, ErrWorkItemBusy) {
 				continue
 			}
@@ -672,15 +689,26 @@ func workTriggerMetadata(h *graph.WorkObjectHead) map[string]any {
 	}
 	repo, _ := h.Properties["repo"].(string)
 	prNumber, _ := h.Properties["pr_number"].(float64)
-	if repo == "" || prNumber <= 0 {
+	issueNumber, _ := h.Properties["issue_number"].(float64)
+	if repo == "" || (prNumber <= 0 && issueNumber <= 0) {
 		return meta
 	}
 	meta["repo"] = repo
-	meta["prNumber"] = int(prNumber)
-	meta["headSha"] = h.Properties["head_sha"]
-	meta["subjectRef"] = fmt.Sprintf("%s#%d", repo, int(prNumber))
 	if sid, _ := h.Properties["source_id"].(string); sid != "" {
 		meta["sourceId"] = sid
+	}
+	if prNumber > 0 {
+		meta["prNumber"] = int(prNumber)
+		meta["headSha"] = h.Properties["head_sha"]
+		meta["subjectType"] = "pull_request"
+		meta["subjectRef"] = fmt.Sprintf("%s#%d", repo, int(prNumber))
+		return meta
+	}
+	meta["issueNumber"] = int(issueNumber)
+	meta["subjectType"] = "issue"
+	meta["subjectRef"] = fmt.Sprintf("%s#%d", repo, int(issueNumber))
+	if url, _ := h.Properties["url"].(string); url != "" {
+		meta["issueUrl"] = url
 	}
 	return meta
 }

@@ -85,6 +85,23 @@ RUN case "${TARGETARCH:-amd64}" in \
     chmod +x /usr/local/bin/ast-grep && \
     ast-grep --version
 
+# GitHub CLI. The coding flow uses `gh pr create` / `gh pr merge --auto` with
+# the per-run GH_TOKEN; keep the binary pinned and checksum-verified, and do not
+# install through the Debian repository (bookworm does not ship gh).
+ARG GH_VERSION=2.63.2
+RUN case "${TARGETARCH:-amd64}" in \
+        amd64) gh_arch=amd64; gh_sha=912fdb1ca29cb005fb746fc5d2b787a289078923a29d0f9ec19a0b00272ded00 ;; \
+        arm64) gh_arch=arm64; gh_sha=0f31e2a8549c64b5c1679f0b99ce5e0dac7c91da9e86f6246adb8805b0f0b4bb ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac && \
+    curl -fsSL -o /tmp/gh.tgz \
+        "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${gh_arch}.tar.gz" && \
+    echo "${gh_sha}  /tmp/gh.tgz" | sha256sum -c - && \
+    tar -xzf /tmp/gh.tgz -C /tmp && \
+    install -m 0755 "/tmp/gh_${GH_VERSION}_linux_${gh_arch}/bin/gh" /usr/local/bin/gh && \
+    rm -rf /tmp/gh.tgz "/tmp/gh_${GH_VERSION}_linux_${gh_arch}" && \
+    gh --version
+
 # Install the emergent-memory Python SDK from the memory repo.
 # --break-system-packages is required on Debian bookworm (PEP 668 externally
 # managed environment). requests/pydantic/python-dateutil are common deps.

@@ -209,11 +209,21 @@ func (s *WorkActionService) Unblock(ctx context.Context, projectID, canonicalID,
 	_ = s.repo.ClearWorkItemState(ctx, projectID, canonicalID)
 	res := &WorkActionResult{}
 	if agent != nil {
+		var trigger *AgentWorkTrigger
+		if def != nil {
+			trigger = def.MatchWorkTrigger(head.Type, head.Status)
+		}
+		inv := workRunInvocation(head, trigger)
 		opts := CreateRunQueuedOptions{
 			SubjectObjectID:   &head.CanonicalID,
 			SubjectObjectType: &head.Type,
-			TrustedInternal:   true,
+			TrustedInternal:   workRunTrusted(head),
 			TriggerMetadata:   workTriggerMetadata(head),
+			Invocation:        inv,
+			SourceTriggerID:   workSourceTriggerID(head),
+		}
+		if inv != nil {
+			opts.Priority = inv.Priority
 		}
 		if note != "" {
 			opts.TriggerMessage = &note
@@ -483,11 +493,21 @@ func (s *WorkActionService) enqueueWorkRun(ctx context.Context, head *graph.Work
 	if agentDef != nil && agentDef.WorkConfig.RetryPolicy.MaxAttempts > 0 {
 		maxAttempts = agentDef.WorkConfig.RetryPolicy.MaxAttempts
 	}
+	var trigger *AgentWorkTrigger
+	if agentDef != nil {
+		trigger = agentDef.MatchWorkTrigger(head.Type, head.Status)
+	}
+	inv := workRunInvocation(head, trigger)
 	opts := CreateRunQueuedOptions{
 		SubjectObjectID:   &head.CanonicalID,
 		SubjectObjectType: &head.Type,
-		TrustedInternal:   true,
+		TrustedInternal:   workRunTrusted(head),
 		TriggerMetadata:   workTriggerMetadata(head),
+		Invocation:        inv,
+		SourceTriggerID:   workSourceTriggerID(head),
+	}
+	if inv != nil {
+		opts.Priority = inv.Priority
 	}
 	if len(feedback) > 0 {
 		if opts.TriggerMetadata == nil {

@@ -623,12 +623,17 @@ func (ts *TriggerService) enqueueWorkRun(ctx context.Context, agent *Agent, agen
 	if matchedTrigger != nil && matchedTrigger.Status != "" {
 		meta["work_claim_status"] = matchedTrigger.Status
 	}
+	inv := workRunInvocationFromMetadata(data, matchedTrigger)
 	opts := CreateRunQueuedOptions{
 		SubjectObjectID:   &canonicalID,
 		SubjectObjectType: &objectType,
-		TrustedInternal:   true,
+		TrustedInternal:   workRunTrustedType(objectType),
 		MaxPendingJobs:    maxPendingJobs,
 		TriggerMetadata:   meta,
+		Invocation:        inv,
+	}
+	if inv != nil {
+		opts.Priority = inv.Priority
 	}
 	if matchedTrigger != nil && matchedTrigger.Prompt != "" {
 		prompt := matchedTrigger.Prompt
