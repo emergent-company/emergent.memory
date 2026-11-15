@@ -57,13 +57,10 @@ which agents a caller can actually invoke.
 
 ## Authentication and tenancy
 
-Every route except the global card requires a Bearer token. This page documents
-the **project API token** (`emt_…`), which is the supported integration
-credential; the scope below is the token's, checked against the `scopes` list the
-token was minted with. The same scope is required of any other credential the
-server accepts: for a signed-in session it is resolved from the caller's project
-role (every project role carries `agents:read`; `agents:write` comes with the
-project admin role).
+Every route except the global card requires a Bearer credential carrying the
+route's scope. This page documents the **project API token** (`emt_…`), which is
+the supported integration credential; its scope is checked against the `scopes`
+list the token was minted with.
 
 | Route | Scope |
 |---|---|
@@ -73,6 +70,24 @@ project admin role).
 | `POST /tasks/{id}:cancel` | `agents:write` |
 | `POST /tasks/{id}:subscribe` | `agents:read` |
 | `GET /extendedAgentCard` | `agents:read` |
+
+The same scope is enforced for **signed-in sessions** (for example a `memory
+login` credential), where it is resolved from the caller's role in the addressed
+project rather than from the token's claims:
+
+| Project role | `agents:read` | `agents:write` |
+|---|---|---|
+| `project_admin` | yes | yes |
+| `project_user` | yes | no |
+| `project_viewer` | yes | no |
+
+Every project role carries `agents:read`, so any member can fetch the card and
+read tasks. `agents:write` — `message:send`, `message:stream` and
+`tasks/{id}:cancel` — comes only with `project_admin`; a `project_user` or
+`project_viewer` session, including `memory a2a send` after `memory login`, is
+refused with `PERMISSION_DENIED`. A `superadmin_full` session carries the full
+catalogue; a session with no project role carries only the deployment's
+`MEMORY_OIDC_DEFAULT_SCOPES`, which do not include `agents:*` by default.
 
 The card declares a single bearer security scheme, for `emt_…` tokens, and no
 OAuth2 or OIDC scheme. The server does run an OAuth 2.1 authorization server
@@ -85,11 +100,11 @@ token carrying the scope you need (see [Not supported](#not-supported)).
 The project comes from the `X-Project-ID` header, or from the token itself when
 the token is project-scoped (a project-scoped token cannot be redirected to a
 different project by the header). A request with neither is rejected with
-`PROJECT_REQUIRED`, and an addressed project the caller is not a member of is
-rejected with `PERMISSION_DENIED` — the header is a selector, never a grant. The
-scope is checked before the selector: a credential that does not carry the
-route's scope is refused with `PERMISSION_DENIED` even if it also omits
-`X-Project-ID`.
+`PROJECT_REQUIRED`, and an addressed project whose organization the caller does
+not belong to is rejected with `PERMISSION_DENIED` (or `NOT_FOUND` when the
+project does not exist) — the header is a selector, never a grant. The scope is
+checked before the selector: a credential that does not carry the route's scope
+is refused with `PERMISSION_DENIED` even if it also omits `X-Project-ID`.
 
 ## Message flow
 

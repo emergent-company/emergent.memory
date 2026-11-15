@@ -299,6 +299,37 @@ func TestRoleToScopes(t *testing.T) {
 	}
 }
 
+// TestRoleScopesForA2AMatrix pins the credential matrix recorded in the A2A
+// docs page and the #660/#798 release note: every canonical project role
+// carries agents:read, and only project_admin carries agents:write. The A2A
+// groups gate message:send, message:stream and tasks/{id}:cancel on
+// agents:write, so a role that gained or lost one of these would silently
+// contradict the documented behaviour for signed-in sessions.
+func TestRoleScopesForA2AMatrix(t *testing.T) {
+	for _, role := range []string{RoleProjectViewer, RoleProjectUser, RoleProjectAdmin} {
+		scopes, ok := roleToScopes(role)
+		if !ok {
+			t.Fatalf("roleToScopes(%q) not mapped", role)
+		}
+		expanded := expandScopes(scopes)
+		if !expanded["agents:read"] {
+			t.Errorf("%s does not carry agents:read, but the A2A docs promise every project role does", role)
+		}
+		wantWrite := role == RoleProjectAdmin
+		if gotWrite := expanded["agents:write"]; gotWrite != wantWrite {
+			t.Errorf("%s agents:write = %v, want %v (A2A docs matrix)", role, gotWrite, wantWrite)
+		}
+	}
+
+	// A superadmin_full session is terminal: it resolves to the full catalogue,
+	// so it carries both A2A scopes (and must be an org member to address a
+	// project — the membership guard is separate).
+	full := expandScopes(GetAllScopes())
+	if !full["agents:read"] || !full["agents:write"] {
+		t.Errorf("superadmin_full catalogue is missing agents:read/agents:write")
+	}
+}
+
 // exclusionPrefixes are the scope families a project role must never reach:
 // account/org administration and the reserved mcp admin scope (#736 decision A).
 var excludedRoleScopes = []string{
