@@ -816,6 +816,8 @@ func main() {
 	e.GET("/sessions/:id", s.uiSession)
 	e.GET("/share-sessions/:id", s.uiShareSessionTranscript)
 	e.GET("/usage", s.uiUsage)
+	// The per-run cost log behind the usage dashboard's agent figures.
+	e.GET("/usage/sessions", s.uiUsageSessions)
 	// Kanban board (object-driven work): columns + card drawer + human actions.
 	e.GET("/board", s.uiBoardRedirect)
 	e.GET("/work", s.uiWork)

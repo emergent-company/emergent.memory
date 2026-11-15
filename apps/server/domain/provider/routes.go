@@ -21,6 +21,10 @@ import (
 //	POST   /api/v1/providers/:provider/test                   — live credential test
 //	GET    /api/v1/users/me/usage                             — current user usage summary
 //	GET    /api/v1/users/me/usage/timeseries                  — current user usage time series
+//	GET    /api/v1/projects/:projectId/usage                  — project usage summary (by provider + model)
+//	GET    /api/v1/projects/:projectId/usage/timeseries       — project usage time series
+//	GET    /api/v1/projects/:projectId/usage/by-agent         — project usage grouped by agent
+//	GET    /api/v1/projects/:projectId/usage/runs             — per-run cost log (sessions with cost)
 //	GET    /api/v1/projects/:projectId/pricing-overrides      — list project pricing overrides
 //	PUT    /api/v1/projects/:projectId/pricing-overrides      — upsert a project pricing override
 //	DELETE /api/v1/projects/:projectId/pricing-overrides/:provider/:model — delete a project pricing override
@@ -48,6 +52,10 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Project-level usage summary and timeseries
 	api.GET("/projects/:projectId/usage", h.GetProjectUsageSummary)
 	api.GET("/projects/:projectId/usage/timeseries", h.GetProjectUsageTimeSeries)
+	// Per-agent breakdown and the per-run cost log behind it. Both read the same
+	// ledger as the summary, so the three views can be reconciled.
+	api.GET("/projects/:projectId/usage/by-agent", h.GetProjectUsageByAgent)
+	api.GET("/projects/:projectId/usage/runs", h.GetProjectUsageRuns)
 	// Budget position across both spending windows (week and month). The usage
 	// page's remaining/reset copy and the sidebar badge read this, so the period
 	// arithmetic stays server-side in one place.

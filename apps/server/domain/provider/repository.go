@@ -735,6 +735,177 @@ type UsageSummaryRow struct {
 	EstimatedCostUSD float64      `bun:"estimated_cost_usd"`
 }
 
+// UsageByAgentRow is one agent's share of a project's usage over a range.
+//
+// AgentID is empty for spend that no agent run produced — direct API and
+// embedding calls carry a NULL run_id. That bucket is reported rather than
+// filtered out, because the per-agent table has to add up to the range total or
+// an operator reads a breakdown that silently omits a fifth of the bill.
+type UsageByAgentRow struct {
+	AgentID          string  `bun:"agent_id" json:"agentId"`
+	AgentName        string  `bun:"agent_name" json:"agentName"`
+	RunCount         int64   `bun:"run_count" json:"runCount"`
+	TotalText        int64   `bun:"total_text" json:"totalText"`
+	TotalImage       int64   `bun:"total_image" json:"totalImage"`
+	TotalVideo       int64   `bun:"total_video" json:"totalVideo"`
+	TotalAudio       int64   `bun:"total_audio" json:"totalAudio"`
+	TotalOutput      int64   `bun:"total_output" json:"totalOutput"`
+	TotalCached      int64   `bun:"total_cached" json:"totalCached"`
+	EstimatedCostUSD float64 `bun:"estimated_cost_usd" json:"estimatedCostUsd"`
+}
+
+// GetProjectUsageByAgent returns a project's usage grouped by the agent that
+// caused it, highest cost first.
+//
+// The join is LEFT on purpose: an event with a NULL run_id (or a run whose
+// agent row is gone) still has to appear, under the empty agent, so the rows sum
+// to the same total as GetProjectUsageSummary.
+func (r *Repository) GetProjectUsageByAgent(ctx context.Context, projectID string, since, until *time.Time) ([]UsageByAgentRow, error) {
+	var rows []UsageByAgentRow
+	q := r.db.NewSelect().
+		TableExpr("kb.llm_usage_events AS u").
+		ColumnExpr("COALESCE(a.id::text, '') AS agent_id").
+		ColumnExpr("COALESCE(a.name, '') AS agent_name").
+		ColumnExpr("COUNT(DISTINCT ar.id) AS run_count").
+		ColumnExpr("SUM(u.text_input_tokens) AS total_text").
+		ColumnExpr("SUM(u.image_input_tokens) AS total_image").
+		ColumnExpr("SUM(u.video_input_tokens) AS total_video").
+		ColumnExpr("SUM(u.audio_input_tokens) AS total_audio").
+		ColumnExpr("SUM(u.output_tokens) AS total_output").
+		ColumnExpr("SUM(u.cached_tokens) AS total_cached").
+		ColumnExpr("SUM(u.estimated_cost_usd) AS estimated_cost_usd").
+		Join("LEFT JOIN kb.agent_runs AS ar ON ar.id = u.run_id").
+		Join("LEFT JOIN kb.agents AS a ON a.id = ar.agent_id").
+		Where("u.project_id = ?", projectID).
+		// Group by the underlying columns, not the output aliases: kb.agent_runs
+		// also has an agent_id column, so `GROUP BY agent_id` binds to the joined
+		// run column and Postgres then rejects the a.id projection.
+		GroupExpr("a.id, a.name").
+		OrderExpr("estimated_cost_usd DESC, agent_name ASC")
+
+	if since != nil {
+		q = q.Where("u.created_at >= ?", *since)
+	}
+	if until != nil {
+		q = q.Where("u.created_at <= ?", *until)
+	}
+
+	if err := q.Scan(ctx, &rows); err != nil {
+		r.log.Error("failed to get project usage by agent", logger.Error(err), slog.String("projectID", projectID))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return rows, nil
+}
+
+// UsageRunRow is one agent run with the usage it accumulated: the row the
+// session log renders. Events are attributed to a run through
+// kb.llm_usage_events.run_id, which sub-agent runs inherit via root_run_id on
+// their own run row, so every event lands on exactly one run.
+type UsageRunRow struct {
+	RunID            string     `bun:"run_id" json:"runId"`
+	AgentID          string     `bun:"agent_id" json:"agentId"`
+	AgentName        string     `bun:"agent_name" json:"agentName"`
+	Status           string     `bun:"status" json:"status"`
+	SessionID        *string    `bun:"session_id" json:"sessionId,omitempty"`
+	TriggerSource    *string    `bun:"trigger_source" json:"triggerSource,omitempty"`
+	Model            *string    `bun:"model" json:"model,omitempty"`
+	StartedAt        time.Time  `bun:"started_at" json:"startedAt"`
+	CompletedAt      *time.Time `bun:"completed_at" json:"completedAt,omitempty"`
+	DurationMs       *int       `bun:"duration_ms" json:"durationMs,omitempty"`
+	LastEventAt      time.Time  `bun:"last_event_at" json:"lastEventAt"`
+	EventCount       int64      `bun:"event_count" json:"eventCount"`
+	TotalText        int64      `bun:"total_text" json:"totalText"`
+	TotalImage       int64      `bun:"total_image" json:"totalImage"`
+	TotalVideo       int64      `bun:"total_video" json:"totalVideo"`
+	TotalAudio       int64      `bun:"total_audio" json:"totalAudio"`
+	TotalOutput      int64      `bun:"total_output" json:"totalOutput"`
+	TotalCached      int64      `bun:"total_cached" json:"totalCached"`
+	EstimatedCostUSD float64    `bun:"estimated_cost_usd" json:"estimatedCostUsd"`
+}
+
+// usageRunScope is the filter shared by the run log's page and its count, so a
+// filtered page and the "N runs" figure can never disagree.
+type usageRunScope struct {
+	projectID string
+	agentID   string
+	since     *time.Time
+	until     *time.Time
+}
+
+// apply adds the scope's predicates. Exported to nothing; the two call sites
+// below are the only users.
+func (s usageRunScope) apply(q *bun.SelectQuery) *bun.SelectQuery {
+	q = q.Where("u.project_id = ?", s.projectID)
+	if s.since != nil {
+		q = q.Where("u.created_at >= ?", *s.since)
+	}
+	if s.until != nil {
+		q = q.Where("u.created_at <= ?", *s.until)
+	}
+	if s.agentID != "" {
+		q = q.Where("a.id = ?", s.agentID)
+	}
+	return q
+}
+
+// GetProjectUsageRuns returns the project's agent runs that recorded usage in
+// the range, one row per run, most recent activity first. Runs with no usage
+// events are excluded: this is a cost log, and a run that spent nothing has no
+// line in it.
+func (r *Repository) GetProjectUsageRuns(ctx context.Context, scope usageRunScope, limit, offset int) ([]UsageRunRow, error) {
+	var rows []UsageRunRow
+	q := r.db.NewSelect().
+		TableExpr("kb.llm_usage_events AS u").
+		ColumnExpr("ar.id AS run_id").
+		ColumnExpr("a.id::text AS agent_id").
+		ColumnExpr("a.name AS agent_name").
+		ColumnExpr("ar.status AS status").
+		ColumnExpr("ar.session_id AS session_id").
+		ColumnExpr("ar.trigger_source AS trigger_source").
+		ColumnExpr("ar.model AS model").
+		ColumnExpr("ar.started_at AS started_at").
+		ColumnExpr("ar.completed_at AS completed_at").
+		ColumnExpr("ar.duration_ms AS duration_ms").
+		ColumnExpr("MAX(u.created_at) AS last_event_at").
+		ColumnExpr("COUNT(*) AS event_count").
+		ColumnExpr("SUM(u.text_input_tokens) AS total_text").
+		ColumnExpr("SUM(u.image_input_tokens) AS total_image").
+		ColumnExpr("SUM(u.video_input_tokens) AS total_video").
+		ColumnExpr("SUM(u.audio_input_tokens) AS total_audio").
+		ColumnExpr("SUM(u.output_tokens) AS total_output").
+		ColumnExpr("SUM(u.cached_tokens) AS total_cached").
+		ColumnExpr("SUM(u.estimated_cost_usd) AS estimated_cost_usd").
+		Join("JOIN kb.agent_runs AS ar ON ar.id = u.run_id").
+		Join("JOIN kb.agents AS a ON a.id = ar.agent_id").
+		GroupExpr("ar.id, a.id, a.name, ar.status, ar.session_id, ar.trigger_source, ar.model, ar.started_at, ar.completed_at, ar.duration_ms").
+		OrderExpr("last_event_at DESC, ar.id DESC").
+		Limit(limit).
+		Offset(offset)
+
+	if err := scope.apply(q).Scan(ctx, &rows); err != nil {
+		r.log.Error("failed to get project usage runs", logger.Error(err), slog.String("projectID", scope.projectID))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return rows, nil
+}
+
+// CountProjectUsageRuns returns how many agent runs recorded usage under the
+// same scope as GetProjectUsageRuns.
+func (r *Repository) CountProjectUsageRuns(ctx context.Context, scope usageRunScope) (int, error) {
+	var count int
+	q := r.db.NewSelect().
+		TableExpr("kb.llm_usage_events AS u").
+		ColumnExpr("COUNT(DISTINCT ar.id)").
+		Join("JOIN kb.agent_runs AS ar ON ar.id = u.run_id").
+		Join("JOIN kb.agents AS a ON a.id = ar.agent_id")
+
+	if err := scope.apply(q).Scan(ctx, &count); err != nil {
+		r.log.Error("failed to count project usage runs", logger.Error(err), slog.String("projectID", scope.projectID))
+		return 0, apperror.ErrDatabase.WithInternal(err)
+	}
+	return count, nil
+}
+
 // GetProjectUsageSummary returns aggregated usage for a project grouped by provider + model.
 func (r *Repository) GetProjectUsageSummary(ctx context.Context, projectID string, since, until *time.Time) ([]UsageSummaryRow, error) {
 	var rows []UsageSummaryRow

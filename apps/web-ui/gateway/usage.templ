@@ -17,9 +17,14 @@ import (
 // a positional call with eight arguments is how a "days" ends up in an error
 // slot.
 type usagePageData struct {
-	Summary    *UsageSummaryResponse
-	Series     *UsageTimeSeriesResponse
-	Payload    usageChartPayload
+	Summary *UsageSummaryResponse
+	Series  *UsageTimeSeriesResponse
+	Payload usageChartPayload
+	// ByAgent is the per-agent breakdown over the range. Its RunCount is what
+	// the "Agent runs" card shows, and its rows are the per-agent table.
+	// Best-effort: nil (with ByAgentErr nil) means the backend did not answer.
+	ByAgent    *UsageByAgentResponse
+	ByAgentErr error
 	MonthSpend float64
 	// HasMonthSpend is false when the current-month spend call failed; the card
 	// is then omitted rather than shown as $0.
@@ -37,13 +42,24 @@ type usagePageData struct {
 }
 
 // UsagePage renders the usage dashboard: summary cards (total tokens, range
-// cost, sessions, current-month spend when available), a daily token chart, a
-// sessions-per-day chart, a per-model table, the budget panels (remaining
-// budget and reset timing for each window), and a 7/30/90-day range selector.
-// A failed backend fetch renders the whole-page error state (no crash).
+// cost, agent runs, current-month spend when available), daily token, cost and
+// conversation charts, a per-agent table, a per-model table, the budget panels
+// (remaining budget and reset timing for each window), and a 7/30/90-day range
+// selector. A failed backend fetch renders the whole-page error state (no
+// crash); the per-agent breakdown degrades on its own.
 templ UsagePage(data usagePageData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@pageHeader("Project", "Usage", "LLM token consumption, session activity and remaining budget for this project — costs are retail-price estimates.") {
+		@pageHeader("Project", "Usage", "LLM token consumption, agent activity and remaining budget for this project — costs are retail-price estimates.") {
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    usageSessionsHref(data.Days, "", 0),
+				Variant: ui.ButtonSecondary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--scroll-text",
+				Attrs:   templ.Attributes{"data-testid": "usage-run-log"},
+			}) {
+				Run log
+			}
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,
 				Href:    "/settings/budget",
@@ -65,8 +81,9 @@ templ UsagePage(data usagePageData) {
 			// limit" matters most when the page is otherwise empty.
 			@usageBudgetSection(data.Budget, data.BudgetErr)
 			if hasUsageData(data.Summary, data.Series) {
-				@usageSummaryCards(data.Summary, data.Payload, data.MonthSpend, data.HasMonthSpend)
+				@usageSummaryCards(data.Summary, data.ByAgent, data.MonthSpend, data.HasMonthSpend)
 				@usageCharts(data.Payload)
+				@usageAgentSection(data.ByAgent, data.ByAgentErr, data.Days)
 				@usageModelSection(data.Summary)
 				if note := usageNote(data.Summary, data.Series); note != "" {
 					@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Tone: ui.EmptyNoteToneQuiet, Class: "mt-6"}) {
@@ -109,38 +126,118 @@ templ usageRangeLink(active, n int) {
 	}
 }
 
-// usageSummaryCards renders the summary stats. The calendar-month spend card is
-// omitted when memory does not report it.
+// usageSummaryCards renders the summary stats.
 //
-// It is labelled "Calendar month spend" rather than "Current month spend"
-// because the budget section below can be showing an *anchored* monthly cycle
-// (after a reset): two cards both saying "this month" would show two different
-// figures for the same words.
-templ usageSummaryCards(summary *UsageSummaryResponse, payload usageChartPayload, monthSpend float64, hasMonthSpend bool) {
+// "Agent runs" counts the runs behind the range's spend (scheduled, delegated
+// and chat runs alike), not chat conversations: a conversation can hold many
+// runs, so a conversation count next to a multi-dollar figure reads as "one
+// session for $10". The card is omitted — never shown as zero — when the
+// per-agent breakdown is unavailable, because a zero would claim nothing ran.
+//
+// The spend card is labelled "Calendar month spend" rather than "Current month
+// spend" because the budget section below can be showing an *anchored* monthly
+// cycle (after a reset): two cards both saying "this month" would show two
+// different figures for the same words.
+templ usageSummaryCards(summary *UsageSummaryResponse, byAgent *UsageByAgentResponse, monthSpend float64, hasMonthSpend bool) {
 	{{ cards := []ui.StatCardProps{
 		{Label: "Total tokens", Value: compactNum(totalTokens(summary.Data)), Icon: "lucide--braces", IconColor: "bg-primary/15 text-primary", Attrs: templ.Attributes{"data-testid": "stat-total-tokens"}},
 		{Label: "Estimated cost", Value: formatCost(totalCost(summary.Data)), Icon: "lucide--dollar-sign", IconColor: "bg-secondary/15 text-secondary", Attrs: templ.Attributes{"data-testid": "stat-estimated-cost"}},
-		{Label: "Sessions", Value: compactNum(chartSeriesTotal(payload.Sessions)), Icon: "lucide--messages-square", IconColor: "bg-info/15 text-info", Attrs: templ.Attributes{"data-testid": "stat-sessions"}},
+	}
+	if byAgent != nil {
+		cards = append(cards, ui.StatCardProps{Label: "Agent runs", Value: compactNum(byAgent.RunCount), Icon: "lucide--bot", IconColor: "bg-info/15 text-info", Attrs: templ.Attributes{"data-testid": "stat-agent-runs"}})
 	}
 	if hasMonthSpend {
 		cards = append(cards, ui.StatCardProps{Label: "Calendar month spend", Value: formatCost(monthSpend), Icon: "lucide--calendar-clock", IconColor: "bg-accent/15 text-accent", Attrs: templ.Attributes{"data-testid": "stat-month-spend"}})
+	}
+	// Keep one line at desktop widths whatever the card count; the default row
+	// is two columns, so two cards need no extra class.
+	cols := "lg:grid-cols-4"
+	switch len(cards) {
+	case 2:
+		cols = ""
+	case 3:
+		cols = "lg:grid-cols-3"
 	} }}
-	@statRow(cards, StatRowOpts{Margin: "mt-6"})
+	@statRow(cards, StatRowOpts{Margin: "mt-6", ColsClass: cols})
 }
 
-// usageCharts renders the two daily charts plus the embedded JSON payload and
-// the dependency-free SVG chart helper (usage-charts.js).
+// usageCharts renders the three daily charts plus the embedded JSON payload
+// and the dependency-free SVG chart helper (usage-charts.js).
+//
+// The conversation chart stays, but it is labelled "Conversations per day":
+// conversations are not agent runs, and the page's run figure comes from the
+// per-agent breakdown instead.
 templ usageCharts(payload usageChartPayload) {
-	<div class="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+	<div class="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
 		@ui.Section("Tokens per day", ui.SectionProps{Margin: "", BodyClass: "memory-density-compact"}) {
 			<div id="usage-token-chart" class="w-full" data-testid="usage-token-chart"></div>
 		}
-		@ui.Section("Sessions per day", ui.SectionProps{Margin: "", BodyClass: "memory-density-compact"}) {
+		@ui.Section("Cost per day", ui.SectionProps{Margin: "", BodyClass: "memory-density-compact"}) {
+			<div id="usage-cost-chart" class="w-full" data-testid="usage-cost-chart"></div>
+		}
+		@ui.Section("Conversations per day", ui.SectionProps{Margin: "", BodyClass: "memory-density-compact"}) {
 			<div id="usage-session-chart" class="w-full" data-testid="usage-session-chart"></div>
 		}
 	</div>
 	@templ.JSONScript("usage-timeseries", payload)
 	<script src={ templ.SafeURL(webui.AssetPath("/js/usage-charts.js")) }></script>
+}
+
+// usageAgentSection lists spend per agent, highest cost first. Each agent name
+// links to the run log filtered to that agent, which is the view that explains a
+// surprising line. The unattributed bucket — spend from direct API and embedding
+// calls, which belongs to no run — is shown without a link because there are no
+// runs to list; it is what keeps the rows adding up to the range total.
+templ usageAgentSection(byAgent *UsageByAgentResponse, err error, days int) {
+	if err != nil || byAgent == nil || len(byAgent.Data) == 0 {
+		@ui.Section("Per-agent usage", ui.SectionProps{Margin: "mt-6"}) {
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Tone: ui.EmptyNoteToneQuiet}) {
+				The per-agent breakdown is unavailable right now. The totals above are unaffected.
+			}
+		}
+	} else {
+		@ui.Section("Per-agent usage", ui.SectionProps{Margin: "mt-6", CardClass: "overflow-hidden", BodyClass: "memory-density-flush"}) {
+			@table.TableWithProps(table.TableProps{Bordered: false, Attrs: templ.Attributes{"class": "stacked-table", "data-testid": "usage-agent-table", "style": "--h1:'Agent';--h2:'Runs';--h3:'Tokens';--h4:'Cost'"}}) {
+				@table.TableHead() {
+					@table.TableHeadRow() {
+						@table.TableHeadCell("Agent")
+						@table.TableHeadCell("Runs")
+						@table.TableHeadCell("Tokens")
+						@table.TableHeadCell("Cost")
+					}
+				}
+				@table.TableBody() {
+					for i, r := range byAgent.Data {
+						@usageAgentRow(strconv.Itoa(i), r, days)
+					}
+				}
+			}
+		}
+	}
+}
+
+templ usageAgentRow(rowID string, r UsageByAgentRow, days int) {
+	@table.TableRow(rowID, false, nil) {
+		@table.TableCell("", nil) {
+			if r.Attributed() {
+				<a href={ templ.URL(usageSessionsHref(days, r.AgentID, 0)) } class="link link-hover text-sm" data-testid={ "usage-agent-" + shortID(r.AgentID) }>
+					{ r.AgentName }
+				</a>
+			} else {
+				<span class="text-muted-faint text-sm" data-testid="usage-agent-unattributed">Unattributed</span>
+				<span class="text-muted-faint ml-1 text-xs">direct API calls</span>
+			}
+		}
+		@table.TableCell("", nil) {
+			<span class="text-sm">{ compactNum(r.RunCount) }</span>
+		}
+		@table.TableCell("", nil) {
+			<span class="text-sm">{ compactNum(r.TokenCount()) }</span>
+		}
+		@table.TableCell("", nil) {
+			<span class="text-sm font-medium">{ formatCost(r.EstimatedCostUSD) }</span>
+		}
+	}
 }
 
 // usageModelSection lists token usage grouped by model, sorted by cost.

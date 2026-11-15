@@ -2556,6 +2556,14 @@ routes:
       level: auth
       note: RequireAuth
     - method: GET
+      path: /api/v1/projects/:projectId/usage/by-agent
+      level: auth
+      note: RequireAuth
+    - method: GET
+      path: /api/v1/projects/:projectId/usage/runs
+      level: auth
+      note: RequireAuth
+    - method: GET
       path: /api/v1/projects/:projectId/usage/timeseries
       level: auth
       note: RequireAuth

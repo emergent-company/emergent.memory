@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -136,6 +137,21 @@ func sampleUsageSummary() *UsageSummaryResponse {
 	}
 }
 
+// sampleUsageByAgent is the per-agent breakdown behind the same range: two
+// agents plus the unattributed bucket, so the page can be checked for all three
+// row kinds.
+func sampleUsageByAgent() *UsageByAgentResponse {
+	return &UsageByAgentResponse{
+		Note:     "Costs shown are estimates.",
+		RunCount: 3,
+		Data: []UsageByAgentRow{
+			{AgentID: "agent-1", AgentName: "coding", RunCount: 2, TotalText: 100, TotalOutput: 60, EstimatedCostUSD: 0.0120},
+			{AgentID: "agent-2", AgentName: "ui-auditor", RunCount: 1, TotalText: 10, EstimatedCostUSD: 0.0013},
+			{TotalText: 2, EstimatedCostUSD: 0.0001},
+		},
+	}
+}
+
 // sampleUsageSeries builds a time-series covering today so the dashboard's
 // since/until window (computed from time.Now in the handler) includes it.
 func sampleUsageSeries() *UsageTimeSeriesResponse {
@@ -152,6 +168,7 @@ func TestUsageRoute(t *testing.T) {
 	f := &fakeMemory{
 		usageSummary: sampleUsageSummary(),
 		usageSeries:  sampleUsageSeries(),
+		usageByAgent: sampleUsageByAgent(),
 		convs: []Conversation{
 			{ID: "c1", Title: "Morning", CreatedAt: time.Now().UTC().Format(time.RFC3339)},
 			{ID: "c2", Title: "Evening", CreatedAt: time.Now().UTC().Format(time.RFC3339)},
@@ -169,12 +186,24 @@ func TestUsageRoute(t *testing.T) {
 		"$0.0123", "$0.0133", // per-row cost + range total (0.0123+0.001)
 		"Calendar month spend", "deepseek-v4-pro", "claude-sonnet-4",
 		"openai", "anthropic", "Costs shown are estimates.",
-		`id="usage-timeseries"`, `type="application/json"`, `"tokens":`, `"sessions":`,
-		"Tokens per day", "Sessions per day", "Per-model usage",
+		`id="usage-timeseries"`, `type="application/json"`, `"tokens":`, `"sessions":`, `"cost":`,
+		"Tokens per day", "Cost per day", "Conversations per day", "Per-model usage",
+		`data-testid="usage-cost-chart"`,
+		// The card is about runs, not conversations.
+		"Agent runs", `data-testid="stat-agent-runs"`,
+		"Per-agent usage", `data-testid="usage-agent-table"`,
+		"coding", "ui-auditor", "Unattributed",
+		`data-testid="usage-agent-unattributed"`,
+		// Each agent links to its filtered run log; the unattributed bucket does not.
+		`/usage/sessions?agent=agent-1&amp;days=30`,
+		`data-testid="usage-run-log"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("usage page missing %q", want)
 		}
+	}
+	if got := strings.Count(body, "Unattributed"); got != 1 {
+		t.Errorf("Unattributed should be a single non-link row, got %d occurrences", got)
 	}
 }
 
@@ -262,16 +291,46 @@ func TestUsageRouteBackendFailure(t *testing.T) {
 	}
 }
 
+// TestUsageRouteDegradesWithoutAgentBreakdown pins the best-effort contract: a
+// backend that cannot answer /usage/by-agent still renders the dashboard, and
+// the page says the breakdown is unavailable instead of showing an empty table
+// or a zero run count.
+func TestUsageRouteDegradesWithoutAgentBreakdown(t *testing.T) {
+	f := &fakeMemory{
+		usageSummary:    sampleUsageSummary(),
+		usageSeries:     sampleUsageSeries(),
+		usageByAgentErr: errors.New("by-agent unavailable"),
+	}
+	_, e := newUsageEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/usage", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Per-agent usage") || !strings.Contains(body, "unavailable right now") {
+		t.Errorf("degraded breakdown note missing:\n%s", body)
+	}
+	if strings.Contains(body, `data-testid="stat-agent-runs"`) {
+		t.Error("a failed breakdown must not render the Agent runs card")
+	}
+	if strings.Contains(body, "Failed to load usage") {
+		t.Error("a failed breakdown must not fail the whole page")
+	}
+}
+
 func TestUsageChartPayloadEmbedded(t *testing.T) {
 	payload := usageChartPayload{
 		Tokens:   []usageChartPoint{{Day: "2026-08-30", Value: 150}, {Day: "2026-08-31", Value: 15}},
+		Cost:     []usageCostPoint{{Day: "2026-08-30", Value: 0.0123}, {Day: "2026-08-31", Value: 0.001}},
 		Sessions: []usageChartPoint{{Day: "2026-08-30", Value: 3}},
 	}
-	html := renderHTML(t, UsagePage(usagePageData{Summary: sampleUsageSummary(), Series: sampleUsageSeries(), Payload: payload, MonthSpend: 0.0133, HasMonthSpend: true, Days: 30}))
+	html := renderHTML(t, UsagePage(usagePageData{Summary: sampleUsageSummary(), Series: sampleUsageSeries(), ByAgent: sampleUsageByAgent(), Payload: payload, MonthSpend: 0.0133, HasMonthSpend: true, Days: 30}))
 	for _, want := range []string{
 		`id="usage-timeseries"`, `type="application/json"`,
-		`"tokens"`, `"sessions"`, `"day":"2026-08-30"`, `"value":150`,
-		`data-testid="usage-token-chart"`, `data-testid="usage-session-chart"`,
+		`"tokens"`, `"cost"`, `"sessions"`, `"day":"2026-08-30"`, `"value":150`,
+		`data-testid="usage-token-chart"`, `data-testid="usage-cost-chart"`,
+		`data-testid="usage-session-chart"`,
 		"/assets/js/usage-charts.js",
 	} {
 		if !strings.Contains(html, want) {
@@ -285,6 +344,9 @@ func TestUsageChartPayloadEmbedded(t *testing.T) {
 	}
 	if len(decoded.Tokens) != 2 || decoded.Tokens[1].Value != 15 || decoded.Sessions[0].Value != 3 {
 		t.Errorf("decoded payload = %+v", decoded)
+	}
+	if len(decoded.Cost) != 2 || decoded.Cost[0].Value != 0.0123 {
+		t.Errorf("decoded cost = %+v", decoded.Cost)
 	}
 }
 
