@@ -45,10 +45,9 @@ func (s *Server) uiUsageSessions(c echo.Context) error {
 	since := now.AddDate(0, 0, -(days - 1))
 
 	var (
-		runs      *UsageRunListResponse
-		runsErr   error
-		byAgent   *UsageByAgentResponse
-		agentsErr error
+		runs    *UsageRunListResponse
+		runsErr error
+		byAgent *UsageByAgentResponse
 	)
 	var g errgroup.Group
 	g.Go(func() error {
@@ -58,20 +57,23 @@ func (s *Server) uiUsageSessions(c echo.Context) error {
 	// The agent filter chips come from the same breakdown the dashboard shows;
 	// a failure only costs the chips, not the log.
 	g.Go(func() error {
-		byAgent, agentsErr = s.memory.GetProjectUsageByAgent(ctx, since, until)
+		byAgent, _ = s.memory.GetProjectUsageByAgent(ctx, since, until)
 		return nil
 	})
 	_ = g.Wait()
 
 	data := usageSessionsPageData{
-		Days:      days,
-		AgentID:   agentID,
-		Agents:    byAgent,
-		AgentsErr: agentsErr,
-		Runs:      runs,
-		LoadErr:   runsErr,
-		Limit:     usageSessionsPageSize,
-		Offset:    offset,
+		Days:    days,
+		AgentID: agentID,
+		Agents:  byAgent,
+		Runs:    runs,
+		Limit:   usageSessionsPageSize,
+		Offset:  offset,
+	}
+	// The error state renders the error's message, so a raw backend failure has
+	// to be sanitized here, exactly as the dashboard does (#1671).
+	if runsErr != nil {
+		data.LoadErr = userFacingError(runsErr)
 	}
 	if runs != nil {
 		data.HasPrev = offset > 0

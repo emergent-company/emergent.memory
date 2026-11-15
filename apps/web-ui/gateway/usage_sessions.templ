@@ -17,16 +17,15 @@ type usageSessionsPageData struct {
 	Days  int
 	Runs  *UsageRunListResponse
 	// Agents is the per-agent breakdown over the same range. It names the filter
-	// chips and the current selection; nil (with AgentsErr set) means the chips
-	// are unavailable, not that the project has no agents.
-	Agents *UsageByAgentResponse
-	AgentsErr error
-	AgentID   string
-	Limit     int
-	Offset    int
-	HasPrev   bool
-	HasNext   bool
-	LoadErr   error
+	// chips and the current selection; nil means the chips are unavailable, not
+	// that the project has no agents — the log itself still renders.
+	Agents  *UsageByAgentResponse
+	AgentID string
+	Limit   int
+	Offset  int
+	HasPrev bool
+	HasNext bool
+	LoadErr error
 }
 
 // UsageSessionsPage renders the per-run cost log: the detail behind the usage
