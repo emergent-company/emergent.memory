@@ -242,8 +242,8 @@ func (s *Service) CreatePack(ctx context.Context, projectID string, req *CreateP
 	// Validate objectTypeSchemas structure — each entry must have a non-empty "name" field.
 	// This catches the common mistake of using the wrong top-level key (e.g. "objectTypes"
 	// instead of "objectTypeSchemas"), which causes silent data loss during JSON binding.
-	if errs := validateSchemaDefinitions(req.GetObjectTypeSchemas(), req.GetRelationshipTypeSchemas()); len(errs) > 0 {
-		return nil, apperror.ErrBadRequest.WithMessage("invalid schema definitions: " + strings.Join(errs, "; "))
+	if err := ValidatePackDefinitions(req.GetObjectTypeSchemas(), req.GetRelationshipTypeSchemas()); err != nil {
+		return nil, err
 	}
 
 	// Validate migration hints if present
@@ -265,6 +265,119 @@ func (s *Service) EnsureProjectPack(ctx context.Context, projectID string, req *
 		return existing, nil
 	}
 	return s.CreatePack(ctx, projectID, req)
+}
+
+// ValidatePackDefinitions runs the pack-definition guard shared by every entry
+// point that installs object/relationship type schemas: HTTP CreatePack/UpdatePack
+// and the MCP schema-create tool, which writes the registry rows with a direct
+// INSERT and previously carried only its own partial check (#811).
+//
+// It returns a 400-shaped error (nil when valid). Callers must not re-implement
+// any part of it: the MCP path skipped this guard entirely, so a bare scalar
+// `items` (`"items": "string"`) — rejected on the REST path since #726 — still
+// installed through MCP, stored the declaration and enforced nothing.
+func ValidatePackDefinitions(objectTypeSchemas, relationshipTypeSchemas json.RawMessage) error {
+	if errs := validateSchemaDefinitions(objectTypeSchemas, relationshipTypeSchemas); len(errs) > 0 {
+		return apperror.ErrBadRequest.WithMessage("invalid schema definitions: " + strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// ValidatePackDefinitionMap runs the same guard as ValidatePackDefinitions on the
+// map form of the type definitions — a map of type name → schema object — which
+// is what the MCP schema-create tool and the discovery job persist. Each entry
+// is normalised into the array entry validateSchemaDefinitions reads (the map key
+// becomes the entry's "name", and a relationship's accepted plural/alias
+// endpoint spellings become the canonical sourceType/targetType) so there is one
+// shared validator rather than a second, partial copy (#811).
+//
+// Entries are iterated in sorted order so a rejection is deterministic.
+func ValidatePackDefinitionMap(objectTypeSchemas, relationshipTypeSchemas map[string]json.RawMessage) error {
+	objArray, err := objectDefinitionsToArray(objectTypeSchemas)
+	if err != nil {
+		return err
+	}
+	relArray, err := relationshipDefinitionsToArray(relationshipTypeSchemas)
+	if err != nil {
+		return err
+	}
+	return ValidatePackDefinitions(objArray, relArray)
+}
+
+// objectDefinitionsToArray normalises the stored map form of object type
+// schemas into the array form the validator reads.
+func objectDefinitionsToArray(defs map[string]json.RawMessage) (json.RawMessage, error) {
+	if len(defs) == 0 {
+		return nil, nil
+	}
+	names := sortedDefinitionNames(defs)
+	entries := make([]map[string]json.RawMessage, 0, len(names))
+	for _, name := range names {
+		entry, err := claimDefinitionEntry("object type", name, defs[name])
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
+	return json.Marshal(entries)
+}
+
+// relationshipDefinitionsToArray normalises the stored map form of relationship
+// type schemas into the array form the validator reads, resolving the documented
+// endpoint aliases (sourceTypes/targetTypes, fromTypes/toTypes,
+// source_types/target_types, source/target) to the singular sourceType and
+// targetType the validator requires. Only the first declared endpoint of a plural
+// list is used for validation; the stored definition keeps every alias verbatim.
+func relationshipDefinitionsToArray(defs map[string]json.RawMessage) (json.RawMessage, error) {
+	if len(defs) == 0 {
+		return nil, nil
+	}
+	names := sortedDefinitionNames(defs)
+	entries := make([]map[string]json.RawMessage, 0, len(names))
+	for _, name := range names {
+		entry, err := claimDefinitionEntry("relationship type", name, defs[name])
+		if err != nil {
+			return nil, err
+		}
+		var ends relTypeRaw
+		_ = json.Unmarshal(defs[name], &ends)
+		if src := firstNonEmpty(ends.SourceType, joinTypes(ends.SourceTypes), joinTypes(ends.FromTypes), joinTypes(ends.SnakeSourceTypes), ends.Source); src != "" {
+			raw, _ := json.Marshal(src)
+			entry["sourceType"] = raw
+		}
+		if tgt := firstNonEmpty(ends.TargetType, joinTypes(ends.TargetTypes), joinTypes(ends.ToTypes), joinTypes(ends.SnakeTargetTypes), ends.Target); tgt != "" {
+			raw, _ := json.Marshal(tgt)
+			entry["targetType"] = raw
+		}
+		entries = append(entries, entry)
+	}
+	return json.Marshal(entries)
+}
+
+func sortedDefinitionNames(defs map[string]json.RawMessage) []string {
+	names := make([]string, 0, len(defs))
+	for name := range defs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// claimDefinitionEntry decodes one map-form definition and stamps the map key on
+// it as the entry "name", so the shared validator sees the same shape it sees
+// for an array-form request. A non-object definition is a 400 rather than a
+// silently skipped schema.
+func claimDefinitionEntry(kind, name string, raw json.RawMessage) (map[string]json.RawMessage, error) {
+	entry := map[string]json.RawMessage{}
+	if trimmed := bytes.TrimSpace(raw); len(trimmed) > 0 && !isNullJSON(trimmed) {
+		if err := json.Unmarshal(trimmed, &entry); err != nil || entry == nil {
+			return nil, apperror.ErrBadRequest.WithMessage(
+				fmt.Sprintf("invalid schema definitions: %s %q must be a JSON object schema", kind, name))
+		}
+	}
+	nameJSON, _ := json.Marshal(name)
+	entry["name"] = nameJSON
+	return entry, nil
 }
 
 // validateSchemaDefinitions checks that objectTypeSchemas and relationshipTypeSchemas
@@ -629,8 +742,8 @@ func (s *Service) UpdatePack(ctx context.Context, packID, projectID string, req 
 	// Validate supplied schema definitions (mirrors CreatePack). Uses the
 	// resolved set so a partial update still resolves scope-key references.
 	if hasObj || hasRel {
-		if errs := validateSchemaDefinitions(objSchemas, relSchemas); len(errs) > 0 {
-			return nil, apperror.NewBadRequest("invalid schema definitions: " + strings.Join(errs, "; "))
+		if err := ValidatePackDefinitions(objSchemas, relSchemas); err != nil {
+			return nil, err
 		}
 	}
 

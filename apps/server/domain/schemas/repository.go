@@ -836,8 +836,8 @@ func parseRelationshipTypeSchemas(data json.RawMessage, packID, packName, packVe
 				Name:          name,
 				Label:         def.Label,
 				Description:   def.Description,
-				SourceType:    firstNonEmpty(joinTypes(def.SourceTypes), joinTypes(def.FromTypes), joinTypes(def.SnakeSourceTypes), def.Source),
-				TargetType:    firstNonEmpty(joinTypes(def.TargetTypes), joinTypes(def.ToTypes), joinTypes(def.SnakeTargetTypes), def.Target),
+				SourceType:    firstNonEmpty(def.SourceType, joinTypes(def.SourceTypes), joinTypes(def.FromTypes), joinTypes(def.SnakeSourceTypes), def.Source),
+				TargetType:    firstNonEmpty(def.TargetType, joinTypes(def.TargetTypes), joinTypes(def.ToTypes), joinTypes(def.SnakeTargetTypes), def.Target),
 				SchemaID:      packID,
 				SchemaName:    packName,
 				SchemaVersion: packVersion,
@@ -864,6 +864,8 @@ func parseRelationshipTypeSchemas(data json.RawMessage, packID, packName, packVe
 type relTypeRaw struct {
 	Label            string   `json:"label"`
 	Description      string   `json:"description"`
+	SourceType       string   `json:"sourceType"`
+	TargetType       string   `json:"targetType"`
 	SourceTypes      []string `json:"sourceTypes"`
 	TargetTypes      []string `json:"targetTypes"`
 	FromTypes        []string `json:"fromTypes"`
