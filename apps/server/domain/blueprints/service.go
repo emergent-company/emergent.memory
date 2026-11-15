@@ -36,6 +36,7 @@ type AgentRepo interface {
 	// bound to a definition, and by Unapply to delete blueprint-owned agents.
 	FindAgentByName(ctx context.Context, projectID, name string) (*agents.Agent, error)
 	CreateAgent(ctx context.Context, agent *agents.Agent) error
+	CreateRuntimeAgentForDefinition(ctx context.Context, agent *agents.Agent) (*agents.Agent, error)
 	UpdateAgent(ctx context.Context, agent *agents.Agent) error
 	DeleteAgentsBySourceBlueprint(ctx context.Context, projectID, blueprintID string) (int, error)
 }
