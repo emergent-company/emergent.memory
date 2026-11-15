@@ -114,10 +114,17 @@ def _config(**overrides):
 
 
 def _version_tuple(dist: str) -> tuple[int, ...]:
+    """`"1.8.12"` -> `(1, 8, 12)`; stops at the first non-numeric part, so a
+    pre-release like `"1.8.11rc1"` reads as `(1, 8, 11)` and not `(1, 8, 111)`
+    (the latter would silently clear a `(1, 8, 12)` floor)."""
     raw = importlib.metadata.version(dist)
     parts = []
     for piece in raw.split("."):
-        digits = "".join(c for c in piece if c.isdigit())
+        digits = ""
+        for char in piece:
+            if not char.isdigit():
+                break
+            digits += char
         if not digits:
             break
         parts.append(int(digits))
