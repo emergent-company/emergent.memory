@@ -25,12 +25,13 @@ interface Props {
 const { src, alt, width, height, caption } = Astro.props;
 
 /**
- * Never blow a screenshot up more than 1.5x: a 310px card scaled to a 723px
- * text column turns to mush, while a full-width capture is unaffected (its own
- * width already exceeds the column, so this cap never binds). Narrow figures
- * sit centred in the column instead of stretching to fill it.
+ * A figure never grows past its own pixel width: upscaling a narrow capture to
+ * fill the 723px text column is what made them look blurry. Narrow figures sit
+ * centred in the column at their true size instead, and crispness comes from
+ * capturing at `deviceScaleFactor: 2` (the plan's default — see
+ * `scripts/tutorials-export.py`) rather than from stretching a small PNG.
  */
-const maxWidth = Math.round(width * 1.5);
+const maxWidth = width;
 ---
 
 <figure class="screenshot">
