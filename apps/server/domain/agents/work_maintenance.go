@@ -718,6 +718,21 @@ func intProperty(v any) int {
 	}
 }
 
+// mergeWorkObjectMetadata copies identity fields (repo, issue number, source,
+// subject) into a dispatch metadata map without overwriting the event/claim
+// keys that describe why this dispatch happened.
+func mergeWorkObjectMetadata(meta map[string]any, h *graph.WorkObjectHead) {
+	if meta == nil || h == nil {
+		return
+	}
+	for k, v := range workTriggerMetadata(h) {
+		if k == "work_trigger_event" || k == "work_claim_status" {
+			continue
+		}
+		meta[k] = v
+	}
+}
+
 func workTriggerMetadata(h *graph.WorkObjectHead) map[string]any {
 	meta := map[string]any{
 		"work_trigger_event": string(EventTypeStatusChanged),

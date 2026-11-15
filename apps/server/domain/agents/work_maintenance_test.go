@@ -98,3 +98,15 @@ func TestWorkTriggerMetadataAcceptsIntegerIssueNumber(t *testing.T) {
 		t.Fatalf("meta = %#v", meta)
 	}
 }
+
+func TestMergeWorkObjectMetadataPreservesEventAndAddsSource(t *testing.T) {
+	meta := map[string]any{"work_trigger_event": "created", "work_claim_status": "ready"}
+	mergeWorkObjectMetadata(meta, &graph.WorkObjectHead{Type: "GitHubIssue", Status: "ready", Properties: map[string]any{
+		"repo":         "emergent-company/emergent.memory",
+		"issue_number": 819,
+		"source_id":    "source-1",
+	}})
+	if meta["work_trigger_event"] != "created" || meta["repo"] != "emergent-company/emergent.memory" || meta["sourceId"] != "source-1" || meta["issueNumber"] != 819 {
+		t.Fatalf("meta = %#v", meta)
+	}
+}
