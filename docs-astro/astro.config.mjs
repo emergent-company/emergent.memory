@@ -22,36 +22,36 @@ export default defineConfig({
       },
       favicon: '/favicon.svg',
       customCss: ['./src/styles/brand.css'],
-      // Dark-only, like the product UI: no theme switcher.
-      components: {
-        ThemeSelect: './src/components/ThemeSelect.astro',
-      },
-      // Pre-paint guard (mirrors the gateway's foucBackgroundGuard).
+      // Dark is the product's only theme, but a reader whose OS is light should
+      // not be forced into it: Starlight's switcher stays, defaulting to
+      // `auto`. Light is a derived palette — see brand.css.
+      // Pre-paint guard (mirrors the gateway's foucBackgroundGuard): paint the
+      // theme's own page colour before CSS lands, so there is no white flash.
+      // `ThemeProvider` sets `data-theme` on <html> before paint; the
+      // `prefers-color-scheme` twin covers the very first load.
       head: [
         {
           tag: 'style',
-          content: 'html{color-scheme:dark;background-color:#0e1017}',
+          content: [
+            "html{background-color:#0e1017}",
+            "@media (prefers-color-scheme: light){html{background-color:#fbfbfd}}",
+            "html[data-theme='light']{background-color:#fbfbfd}",
+            "html[data-theme='dark']{background-color:#0e1017}",
+          ].join(''),
         },
       ],
-      // The product UI is dark-only; keep code blocks dark in both slots.
-      // Frame styling mirrors app.css `.memory-md pre`: base-200 body,
-      // hairline edge, --radius-box (0.5rem), 0.8375rem code at 1.6 line-height.
+      // Frame styling mirrors app.css `.memory-md pre`: base-200 body, hairline
+      // edge, --radius-box (0.5rem), 0.8375rem code at 1.6 line-height. The
+      // colour slots are two themes so syntax highlighting follows the page
+      // theme; the surface colours live in brand.css (--ec-frm-*) because they
+      // have to track `--mem-*` per theme.
       expressiveCode: {
-        themes: ['github-dark-default'],
+        themes: ['github-dark-default', 'github-light-default'],
         styleOverrides: {
           borderRadius: '0.5rem',
-          borderColor: 'oklch(1 0 0 / 0.07)',
-          codeBackground: 'oklch(0.175 0.014 274)',
           codeFontSize: '0.8375rem',
           codeLineHeight: '1.6',
           uiFontSize: '0.75rem',
-          frames: {
-            editorBackground: 'oklch(0.215 0.016 274)',
-            terminalBackground: 'oklch(0.175 0.014 274)',
-            editorActiveTabBackground: 'oklch(0.175 0.014 274)',
-            editorTabBarBackground: 'oklch(0.215 0.016 274)',
-            tooltipSuccessBackground: 'oklch(0.71 0.15 152)',
-          },
         },
       },
       social: [

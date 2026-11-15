@@ -4,17 +4,48 @@
    Maps the product web UI's daisyUI brand theme onto Starlight's design
    tokens. Source of truth:
      apps/web-ui/gateway/webui/css/app.css  →  @plugin "daisyui/theme"
-   and its `.memory-md` prose block further down that file.
+     go-daisy/components/css/theme-memory.css (the brand palette itself)
+   and the `.memory-md` prose block further down app.css.
 
    Palette: ink-navy surfaces, brass primary, steel secondary, mint accent.
-   Dark-only, 1rem = 15px, radii field .25 / box .5 / selector 1rem.
+   1rem = 15px, radii field .25 / box .5 / selector 1rem.
 
-   Every literal below is either one of those tokens or a direct port of a
-   `.memory-md` / chrome rule from app.css; nothing here is invented.
+   Two themes. The product app ships a single theme — `themes: dark --default`
+   in app.css — so **dark is the canonical one** and every literal below is
+   either one of those tokens or a direct port of a `.memory-md` / chrome rule.
+   The light theme is *derived*, not invented: same hue and chroma, lightness
+   inverted around the token's own midpoint, with the brass/steel/mint accents
+   darkened only where they carry text on a light surface (the app's L=0.74
+   brass is a 2:1 contrast on white, which is a fill colour, not an ink one).
+   Nothing here changes what dark mode looks like.
+
+   Structure: shared metrics/fonts → dark tokens → light tokens → rules. Every
+   hairline, overlay and tint in the rules goes through a `--mem-*` variable, so
+   a theme is one block, not a diff through the whole file.
    ========================================================================== */
 
+/* ---------- shared: metrics, type, brand accents ------------------------- */
+:root {
+  /* --- metrics ------------------------------------------------------------ */
+  --sl-nav-height: 3.5rem;
+  --sl-sidebar-width: 17rem;
+  --sl-content-width: 51rem;
+
+  /* --- type: app.css declares no webfont, so the app renders system sans -- */
+  --sl-font: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --sl-font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
+    'Liberation Mono', monospace;
+
+  /* --- brand accents: identical in both themes ---------------------------- */
+  --mem-brass: oklch(0.74 0.135 78);   /* --color-primary */
+  --mem-steel: oklch(0.64 0.105 240);  /* --color-secondary */
+  --mem-mint: oklch(0.76 0.15 162);    /* --color-accent */
+  --mem-brass-ink: oklch(0.2 0.04 78); /* --color-primary-content */
+}
+
+/* ---------- dark: the app's own theme ------------------------------------ */
 :root,
-:root[data-theme='light'],
 :root[data-theme='dark'] {
   color-scheme: dark;
 
@@ -25,8 +56,8 @@
   --sl-color-bg-inline-code: oklch(0.74 0.135 78 / 0.14);
   --sl-color-bg-accent: oklch(0.74 0.135 78);       /* primary */
 
-  --sl-color-black: oklch(0.135 0.012 274);         /* base-300 */
-  --sl-color-white: oklch(0.93 0.008 265);          /* base-content */
+  --sl-color-black: oklch(0.135 0.012 274);         /* base-300 — deepest */
+  --sl-color-white: oklch(0.93 0.008 265);          /* base-content — ink */
 
   /* --- text --------------------------------------------------------------- */
   --sl-color-text: oklch(0.93 0.008 265);           /* base-content */
@@ -52,33 +83,143 @@
   --sl-color-hairline: oklch(1 0 0 / 0.07);
   --sl-color-hairline-shade: oklch(0.135 0.012 274);
 
-  /* --- type: app.css declares no webfont, so the app renders system sans -- */
-  --sl-font: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
-    'Helvetica Neue', Arial, sans-serif;
-  --sl-font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
-    'Liberation Mono', monospace;
+  /* --- semantic layer for the rules below --------------------------------- */
+  --mem-page: #0e1017;                    /* pre-paint guard, = base-200 */
+  --mem-surface: oklch(0.215 0.016 274);  /* card / panel body (base-100) */
+  --mem-surface-hover: oklch(0.23 0.017 274);
+  --mem-line-faint: oklch(1 0 0 / 0.018);
+  --mem-line: oklch(1 0 0 / 0.07);
+  --mem-line-strong: oklch(1 0 0 / 0.09);
+  --mem-line-heavy: oklch(1 0 0 / 0.16);
+  --mem-line-control: oklch(1 0 0 / 0.14);
+  --mem-fill-weak: oklch(1 0 0 / 0.018);
+  --mem-fill: oklch(1 0 0 / 0.035);
+  --mem-fill-mid: oklch(1 0 0 / 0.045);
+  --mem-nav-active-bg: oklch(0.74 0.135 78 / 0.12);
+  --mem-chip-bg: oklch(0.74 0.135 78 / 0.14);
+  --mem-chip-border: oklch(0.74 0.135 78 / 0.24);
+  --mem-chip-fg: oklch(0.82 0.09 78);
+  --mem-link-underline: oklch(0.74 0.135 78 / 0.45);
+  --mem-link-hover: oklch(0.82 0.12 80);
+  --mem-glow-brass: oklch(0.74 0.135 78 / 0.07);
+  --mem-glow-steel: oklch(0.64 0.105 240 / 0.05);
 
-  /* --- metrics ------------------------------------------------------------ */
-  --sl-nav-height: 3.5rem;
-  --sl-sidebar-width: 17rem;
-  --sl-content-width: 51rem;
+  /* --- asides: steel / mint / brass / error ------------------------------- */
+  --mem-note-fg: oklch(0.79 0.09 240);
+  --mem-note-edge: oklch(0.64 0.105 240);
+  --mem-note-bg: oklch(0.64 0.105 240 / 0.1);
+  --mem-tip-fg: oklch(0.85 0.12 162);
+  --mem-tip-edge: oklch(0.76 0.15 162);
+  --mem-tip-bg: oklch(0.76 0.15 162 / 0.1);
+  --mem-tip-ink: oklch(0.2 0.04 162);
+  --mem-caution-fg: oklch(0.88 0.12 82);
+  --mem-caution-edge: oklch(0.81 0.155 82);
+  --mem-caution-bg: oklch(0.81 0.155 82 / 0.1);
+  --mem-danger-fg: oklch(0.8 0.13 26);
+  --mem-danger-edge: oklch(0.63 0.2 26);
+  --mem-danger-bg: oklch(0.63 0.2 26 / 0.12);
+}
+
+/* ---------- light: derived from the same tokens ---------------------------
+   Rule applied throughout: keep the hue and chroma of the dark token, invert
+   its lightness (L' = 1 − L) and then pull it toward the surface so text keeps
+   AA on white. Surfaces stay on hue 274 (ink-navy) at the lowest chroma so the
+   page reads as the same family as the app, not a generic grey. */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  /* --- surfaces: base-200 page, base-100 surface -------------------------- */
+  --sl-color-bg: oklch(0.985 0.003 274);            /* page */
+  --sl-color-bg-nav: oklch(1 0 0);                  /* surface */
+  --sl-color-bg-sidebar: oklch(1 0 0);
+  --sl-color-bg-inline-code: oklch(0.74 0.135 78 / 0.16);
+  --sl-color-bg-accent: oklch(0.74 0.135 78);
+
+  --sl-color-black: oklch(1 0 0);                   /* background, per Starlight */
+  --sl-color-white: oklch(0.24 0.02 274);           /* highest-contrast ink */
+
+  /* --- text: 0.28 L is ~11:1 on the page; headings take --sl-color-white -- */
+  --sl-color-text: oklch(0.3 0.018 274);
+  --sl-color-text-accent: oklch(0.52 0.12 78);      /* brass, darkened for ink */
+  --sl-color-text-invert: oklch(0.2 0.04 78);
+
+  /* --- gray ramp (1 = darkest ink, 7 = lightest surface) ------------------ */
+  --sl-color-gray-1: oklch(0.24 0.02 274);
+  --sl-color-gray-2: oklch(0.36 0.017 274);
+  --sl-color-gray-3: oklch(0.46 0.015 274);
+  --sl-color-gray-4: oklch(0.56 0.013 270);
+  --sl-color-gray-5: oklch(0.8 0.008 274);
+  --sl-color-gray-6: oklch(0.9 0.006 274);
+  --sl-color-gray-7: oklch(0.97 0.004 274);
+
+  /* --- accent ------------------------------------------------------------ */
+  --sl-color-accent-low: oklch(0.94 0.05 78);       /* brass tint */
+  --sl-color-accent: oklch(0.74 0.135 78);
+  --sl-color-accent-high: oklch(0.42 0.1 78);
+
+  /* --- hairlines: ink at low alpha, the dark theme's white at low alpha --- */
+  --sl-color-hairline-light: oklch(0.2 0.02 274 / 0.16);
+  --sl-color-hairline: oklch(0.2 0.02 274 / 0.12);
+  --sl-color-hairline-shade: oklch(0.9 0.006 274);
+
+  /* --- semantic layer ---------------------------------------------------- */
+  --mem-page: #fbfbfd;
+  --mem-surface: oklch(1 0 0);
+  --mem-surface-hover: oklch(0.99 0.004 274);
+  --mem-line-faint: oklch(0.2 0.02 274 / 0.04);
+  --mem-line: oklch(0.2 0.02 274 / 0.12);
+  --mem-line-strong: oklch(0.2 0.02 274 / 0.16);
+  --mem-line-heavy: oklch(0.2 0.02 274 / 0.24);
+  --mem-line-control: oklch(0.2 0.02 274 / 0.2);
+  --mem-fill-weak: oklch(0.2 0.02 274 / 0.022);
+  --mem-fill: oklch(0.2 0.02 274 / 0.035);
+  --mem-fill-mid: oklch(0.2 0.02 274 / 0.045);
+  --mem-nav-active-bg: oklch(0.74 0.135 78 / 0.18);
+  --mem-chip-bg: oklch(0.74 0.135 78 / 0.16);
+  --mem-chip-border: oklch(0.74 0.135 78 / 0.4);
+  --mem-chip-fg: oklch(0.45 0.1 78);
+  --mem-link-underline: oklch(0.52 0.12 78 / 0.45);
+  --mem-link-hover: oklch(0.42 0.11 78);
+  --mem-glow-brass: oklch(0.74 0.135 78 / 0.05);
+  --mem-glow-steel: oklch(0.64 0.105 240 / 0.04);
+
+  /* --- asides: ink dark enough for AA on the tinted panel ---------------- */
+  --mem-note-fg: oklch(0.42 0.1 240);
+  --mem-note-edge: oklch(0.55 0.105 240);
+  --mem-note-bg: oklch(0.55 0.105 240 / 0.08);
+  --mem-tip-fg: oklch(0.4 0.12 162);
+  --mem-tip-edge: oklch(0.58 0.14 162);
+  --mem-tip-bg: oklch(0.58 0.14 162 / 0.08);
+  --mem-tip-ink: oklch(0.99 0.005 162);
+  --mem-caution-fg: oklch(0.45 0.11 82);
+  --mem-caution-edge: oklch(0.7 0.15 82);
+  --mem-caution-bg: oklch(0.7 0.15 82 / 0.1);
+  --mem-danger-fg: oklch(0.45 0.17 26);
+  --mem-danger-edge: oklch(0.58 0.19 26);
+  --mem-danger-bg: oklch(0.58 0.19 26 / 0.08);
 }
 
 /* The app sets 1rem = 15px (app.css `html`), so every rem-based utility in the
    product scales down from the browser default. Doubles as the pre-paint guard
-   colour (#0E1017 is base-200, kept as a literal on purpose — see
-   foucBackgroundGuard in ui.templ). */
+   colour (base-200 in dark, its derived light twin otherwise). */
 html {
   font-size: 15px;
-  background-color: #0e1017;
+  background-color: var(--mem-page);
 }
 
 /* Atmosphere: soft brass glow top-right, faint steel glow bottom-left — the
-   app's `body` background (app.css "Atmosphere" block). */
-body {
+   app's `body` background (app.css "Atmosphere" block).
+
+   The colour is declared here, not left to Starlight, because the embedded
+   Scalar reference injects its own preflight `body{background-color:
+   var(--scalar-background-1)}` later in the cascade (equal specificity, so it
+   wins by order). `html > body` outranks it, and keeps a light page light
+   behind a Scalar panel that is fixed to its own dark theme. */
+html > body {
+  background-color: var(--sl-color-bg);
   background-image:
-    radial-gradient(1100px 520px at 88% -12%, oklch(0.74 0.135 78 / 0.07), transparent 62%),
-    radial-gradient(900px 600px at -10% 110%, oklch(0.64 0.105 240 / 0.05), transparent 60%);
+    radial-gradient(1100px 520px at 88% -12%, var(--mem-glow-brass), transparent 62%),
+    radial-gradient(900px 600px at -10% 110%, var(--mem-glow-steel), transparent 60%);
   background-repeat: no-repeat, no-repeat;
   background-attachment: fixed;
 }
@@ -89,7 +230,7 @@ body {
    so a bare `.header` rule draws the same line twice — the inner one inset
    from the logo to the social icons. Match the element only. */
 header.header {
-  border-bottom: 1px solid oklch(1 0 0 / 0.07);
+  border-bottom: 1px solid var(--mem-line);
 }
 
 /* The app has no rule between the topbar and the page body, and no rule above
@@ -109,8 +250,8 @@ header.header {
 /* Search control: a field, not a pill — --radius-field (0.25rem). */
 site-search button[data-open-modal] {
   border-radius: 0.25rem;
-  border-color: oklch(1 0 0 / 0.09);
-  background-color: oklch(0.175 0.014 274);
+  border-color: var(--mem-line-strong);
+  background-color: var(--sl-color-bg);
   color: var(--sl-color-gray-3);
 }
 
@@ -121,7 +262,7 @@ site-search button[data-open-modal]:hover {
 
 /* ---------- chrome: sidebar ------------------------------------------------ */
 #starlight__sidebar {
-  border-inline-end: 1px solid oklch(1 0 0 / 0.07);
+  border-inline-end: 1px solid var(--mem-line);
 }
 
 .sidebar-content {
@@ -144,14 +285,14 @@ site-search button[data-open-modal]:hover {
 }
 
 .sidebar-content a:hover {
-  background-color: oklch(1 0 0 / 0.045);
+  background-color: var(--mem-fill-mid);
   color: var(--sl-color-white);
 }
 
 /* Active page: brass tint at --radius-selector, as the app's nav pills. */
 .sidebar-content a[aria-current='page'],
 .sidebar-content a[aria-current='page']:hover {
-  background-color: oklch(0.74 0.135 78 / 0.12);
+  background-color: var(--mem-nav-active-bg);
   color: var(--sl-color-text-accent);
   font-weight: 600;
 }
@@ -178,7 +319,7 @@ mobile-starlight-toc h2 {
 h1#_top {
   font-size: 2rem;
   letter-spacing: -0.011em;
-  border-bottom: 1px solid oklch(1 0 0 / 0.09);
+  border-bottom: 1px solid var(--mem-line-strong);
   padding-bottom: 0.35em;
 }
 
@@ -191,7 +332,7 @@ h1#_top {
    anchor link sits on the same line), so the app's full-width hairline under
    an h2 has to go on the wrapper, not on the inline heading box. */
 .sl-markdown-content .sl-heading-wrapper.level-h2 {
-  border-bottom: 1px solid oklch(1 0 0 / 0.07);
+  border-bottom: 1px solid var(--mem-line);
   padding-bottom: 0.3em;
 }
 
@@ -238,12 +379,12 @@ h1#_top {
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
-  text-decoration-color: oklch(0.74 0.135 78 / 0.45);
+  text-decoration-color: var(--mem-link-underline);
   transition: color 0.15s ease, text-decoration-color 0.15s ease;
 }
 
 .sl-markdown-content a:not(.not-content):not(:where(.not-content *)):hover {
-  color: oklch(0.82 0.12 80);
+  color: var(--mem-link-hover);
   text-decoration-color: var(--sl-color-text-accent);
 }
 
@@ -262,23 +403,37 @@ h1#_top {
 /* ---------- prose: inline code — brass-tinted chip at --radius-field ------ */
 .sl-markdown-content code:not(:where(.not-content *)):not(pre code) {
   font-size: 0.85em;
-  background-color: oklch(0.74 0.135 78 / 0.14);
-  border: 1px solid oklch(0.74 0.135 78 / 0.24);
-  color: oklch(0.82 0.09 78);
+  background-color: var(--mem-chip-bg);
+  border: 1px solid var(--mem-chip-border);
+  color: var(--mem-chip-fg);
   padding: 0.12em 0.4em;
   border-radius: 0.25rem;
 }
 
 /* ---------- prose: fenced blocks ----------------------------------------- */
 .sl-markdown-content pre:not(:where(.not-content *)) {
-  border: 1px solid oklch(1 0 0 / 0.07);
+  border: 1px solid var(--mem-line);
   border-radius: 0.5rem;
 }
 
 /* Expressive Code frame: --radius-box, base-200 body, hairline edge. */
+/* Surface + chrome slots of the code frame. Expressive Code emits the tab bar,
+   active tab and tooltip colours as these vars; leaving them at the default
+   palette is what made a light theme show dark tab strips. */
 .expressive-code .frame {
-  --ec-frm-edBg: oklch(0.175 0.014 274);
-  --ec-frm-trmBg: oklch(0.175 0.014 274);
+  --ec-frm-edBg: var(--sl-color-bg);
+  --ec-frm-trmBg: var(--sl-color-bg);
+  --ec-frm-trmTtbBg: var(--mem-surface);
+  --ec-frm-edTabBarBg: var(--mem-surface);
+  --ec-frm-edActTabBg: var(--sl-color-bg);
+  --ec-frm-edTabBarBrdBtmCol: var(--mem-line);
+  --ec-frm-edTabBarBrdCol: var(--mem-line);
+  --ec-frm-edActTabBrdCol: var(--mem-line);
+  --ec-frm-trmTtbBrdBtmCol: var(--mem-line);
+  --ec-frm-inlBtnBrd: var(--mem-line);
+  --ec-frm-frameBoxShdCssVal: none;
+  --ec-frm-tooltipSuccessBg: var(--mem-tip-edge);
+  --ec-frm-tooltipSuccessFg: var(--mem-tip-ink);
 }
 
 .expressive-code .frame.has-title:not(.is-terminal) .title {
@@ -290,7 +445,7 @@ h1#_top {
 .sl-markdown-content blockquote:not(:where(.not-content *)) {
   border-inline-start: 3px solid oklch(0.74 0.135 78 / 0.55);
   border-radius: 0 0.5rem 0.5rem 0;
-  background-color: oklch(1 0 0 / 0.035);
+  background-color: var(--mem-fill);
   color: var(--sl-color-gray-2);
   padding: 0.5em 1em;
 }
@@ -302,21 +457,21 @@ h1#_top {
 }
 
 .sl-markdown-content :is(th, td):not(:where(.not-content *)) {
-  border-bottom: 1px solid oklch(1 0 0 / 0.09);
+  border-bottom: 1px solid var(--mem-line-strong);
   padding: 0.5em 0.85em;
   text-align: left;
   vertical-align: top;
 }
 
 .sl-markdown-content thead th:not(:where(.not-content *)) {
-  background-color: oklch(1 0 0 / 0.045);
-  border-bottom: 1px solid oklch(1 0 0 / 0.16);
+  background-color: var(--mem-fill-mid);
+  border-bottom: 1px solid var(--mem-line-heavy);
   font-weight: 600;
-  color: oklch(0.93 0.008 265);
+  color: var(--sl-color-white);
 }
 
 .sl-markdown-content tbody tr:nth-child(even) {
-  background-color: oklch(1 0 0 / 0.018);
+  background-color: var(--mem-fill-weak);
 }
 
 .sl-markdown-content tbody tr:last-child td:not(:where(.not-content *)) {
@@ -336,9 +491,9 @@ h1#_top {
 .sl-markdown-content .card {
   --sl-card-border: transparent;
   --sl-card-bg: transparent;
-  border: 1px solid oklch(1 0 0 / 0.09);
+  border: 1px solid var(--mem-line-strong);
   border-radius: 0.5rem;
-  background-color: oklch(0.215 0.016 274);
+  background-color: var(--mem-surface);
   gap: 0.75rem;
   padding: 1.25rem 1.375rem;
   height: 100%;
@@ -368,7 +523,7 @@ h1#_top {
 
 .sl-markdown-content .card:hover {
   border-color: oklch(0.74 0.135 78 / 0.35);
-  background-color: oklch(0.23 0.017 274);
+  background-color: var(--mem-surface-hover);
 }
 
 .sl-markdown-content .card .title {
@@ -429,20 +584,20 @@ h1#_top {
 }
 
 .sl-link-button.primary {
-  background: oklch(0.74 0.135 78);
-  border-color: oklch(0.74 0.135 78);
-  color: oklch(0.2 0.04 78);
+  background: var(--mem-brass);
+  border-color: var(--mem-brass);
+  color: var(--mem-brass-ink);
   font-weight: 600;
 }
 
 .sl-link-button.primary:hover {
   background: oklch(0.8 0.13 80);
   border-color: oklch(0.8 0.13 80);
-  color: oklch(0.2 0.04 78);
+  color: var(--mem-brass-ink);
 }
 
 .sl-link-button.secondary {
-  border-color: oklch(1 0 0 / 0.14);
+  border-color: var(--mem-line-control);
   color: var(--sl-color-white);
 }
 
@@ -458,7 +613,8 @@ h1#_top {
 
 /* ---------- components: asides -----------------------------------------
    The product palette has no purple, so map Starlight's aside family onto
-   steel (note), mint (tip), brass (caution) and error red (danger). */
+   steel (note), mint (tip), brass (caution) and error red (danger). Both
+   themes share the shape; each supplies its own fg/edge/tint. */
 .starlight-aside {
   border-inline-start-width: 3px;
   border-radius: 0.5rem;
@@ -466,27 +622,27 @@ h1#_top {
 }
 
 .starlight-aside--note {
-  --sl-color-asides-text-accent: oklch(0.79 0.09 240);
-  --sl-color-asides-border: oklch(0.64 0.105 240);
-  background-color: oklch(0.64 0.105 240 / 0.1);
+  --sl-color-asides-text-accent: var(--mem-note-fg);
+  --sl-color-asides-border: var(--mem-note-edge);
+  background-color: var(--mem-note-bg);
 }
 
 .starlight-aside--tip {
-  --sl-color-asides-text-accent: oklch(0.85 0.12 162);
-  --sl-color-asides-border: oklch(0.76 0.15 162);
-  background-color: oklch(0.76 0.15 162 / 0.1);
+  --sl-color-asides-text-accent: var(--mem-tip-fg);
+  --sl-color-asides-border: var(--mem-tip-edge);
+  background-color: var(--mem-tip-bg);
 }
 
 .starlight-aside--caution {
-  --sl-color-asides-text-accent: oklch(0.88 0.12 82);
-  --sl-color-asides-border: oklch(0.81 0.155 82);
-  background-color: oklch(0.81 0.155 82 / 0.1);
+  --sl-color-asides-text-accent: var(--mem-caution-fg);
+  --sl-color-asides-border: var(--mem-caution-edge);
+  background-color: var(--mem-caution-bg);
 }
 
 .starlight-aside--danger {
-  --sl-color-asides-text-accent: oklch(0.8 0.13 26);
-  --sl-color-asides-border: oklch(0.63 0.2 26);
-  background-color: oklch(0.63 0.2 26 / 0.12);
+  --sl-color-asides-text-accent: var(--mem-danger-fg);
+  --sl-color-asides-border: var(--mem-danger-edge);
+  background-color: var(--mem-danger-bg);
 }
 
 .starlight-aside__title {
@@ -536,11 +692,18 @@ body:has(.api-page) {
 /* Scalar ships its own dark theme and injects it at runtime (v1.78 renders
    from `@scalar/client-side-rendering` on the CDN), so re-declaring its
    `--scalar-*` tokens from here has no effect — verified by screenshot: the
-   page is pixel-identical with and without the overrides. Branding the
-   embedded reference needs Scalar's own theme/customCss hook; that is a
-   follow-up, not a CSS tweak. The layout rules above (full width, height) do
-   apply. */
+   page is pixel-identical with and without the overrides. `configuration.darkMode`
+   is fixed at build time, so the embedded reference stays dark in both themes;
+   branding it needs Scalar's own theme/customCss hook, a follow-up. The layout
+   rules above (full width, height) do apply. */
 
+/* The reference is therefore a dark app surface inside the page. In dark it is
+   seamless; in light it needs an edge, or it reads as a page that failed to
+   load its stylesheet. A ring (not a border) leaves Scalar's own box metrics,
+   sticky sidebar and scroll behaviour untouched. */
+:root[data-theme='light'] .api-page .scalar-app {
+  box-shadow: 0 0 0 1px var(--mem-line-heavy);
+}
 
 .hero h1 {
   font-size: 2.5rem;
