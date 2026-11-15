@@ -268,6 +268,52 @@ mush, so narrow figures stay near their own size and sit centred.
 Product screenshots are **dark UI captures** and stay that way in both themes;
 terminal output and JSON stay copyable text, never a picture.
 
+### Capturing a flow, not just a page
+
+Four of the tutorial's screens — Zitadel's login name, password and forced
+password change — are states you can only reach by walking the flow, and the
+originals for them were captured in a Polish browser, so Zitadel rendered
+"Witaj z powrotem!" into published docs. Zitadel picks the login language from
+`Accept-Language` whenever the account carries no stored preference, which makes
+the operator's OS locale part of the artifact.
+
+`scripts/shots.mjs` replaces the human with a script, so the capture cannot
+depend on whose machine produced it:
+
+```bash
+SHOT_USER=you@example.com SHOT_PASSWORD='…' \
+  node scripts/shots.mjs scripts/shots/zitadel.plan.json
+node scripts/port-images.mjs && npm run build
+```
+
+A plan is one browser session and an ordered list of steps (`goto`, `type`,
+`click`, `waitFor`, `expect`, `shot`), because a tutorial is one path through
+the UI. Credentials come from `vars`, which name **environment variables**, so
+no secret is committed. `--only <shot-id>` replays the plan up to one picture.
+
+Three guards make a bad capture fail instead of being written:
+
+- **language** — the page's `<html lang>` must match the plan's `locale`;
+- **theme** — the painted background must be dark when the plan says dark, so a
+  shot cannot land in the gap before the login UI applies its stored theme
+  (Zitadel reads `cp-theme`, not `prefers-color-scheme`, so the plan pins it
+  with `themeStorage`);
+- **expect** — required page text, so a redirect into a login wall is caught.
+
+Two details are specific to Zitadel's v4 login and worth knowing before editing
+the plan: its submit button only enables after **real key events**, so the plan
+says `type` (character by character) rather than `fill`; and its theme and
+language switchers are pinned to the viewport corner, so each `shot` clips to the
+card (`clip`) instead of capturing and trimming the whole frame.
+
+`shots/zitadel.plan.json` needs a throwaway dev account in the
+`passwordChangeRequired` state — create one at
+`https://zitadel.dev.memory.emergent-company.ai` and delete it afterwards.
+
+The captures land in `docs/site/assets/tutorials/railway/`, and
+`redact-tutorial-shots.mjs` skips those files (`SKIP`) so re-running the
+redaction cannot put the Polish originals back.
+
 ## Icons
 
 The docs draw the **product UI's icon set**. The gateway renders

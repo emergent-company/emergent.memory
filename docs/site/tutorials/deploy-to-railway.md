@@ -105,16 +105,14 @@ Enter the temporary password from step 5.
 
 ![Zitadel password](../assets/tutorials/railway/10-zitadel-password.webp)
 
-Zitadel may offer 2FA setup. You can skip it for the first login and enable it
-later; for a production deployment, enable it before handing the account to a
-team.
-
-![Zitadel 2FA setup](../assets/tutorials/railway/11-zitadel-2fa-skip.webp)
-
-The first admin is imported with `passwordChangeRequired`; Zitadel asks you to
-replace the temporary password.
+The first admin is imported with `passwordChangeRequired`, so Zitadel asks you to
+replace the temporary password before the app opens.
 
 ![Change the temporary password](../assets/tutorials/railway/12-first-password-change.webp)
+
+If your login policy allows second factors, Zitadel offers 2FA setup at the end
+of this flow. You can skip it for the first login and enable it later; for a
+production deployment, enable it before handing the account to a team.
 
 After the change, Zitadel returns to Memory.
 

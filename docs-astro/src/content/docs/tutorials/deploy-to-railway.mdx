@@ -107,22 +107,20 @@ Click **Open Memory** on the success card. The app opens in a new tab; click
 
 Enter the admin email from step 3.
 
-<Screenshot src="/emergent.memory/assets/tutorials/railway/09-zitadel-login.webp" alt="Zitadel login name" width={319} height={191} />
+<Screenshot src="/emergent.memory/assets/tutorials/railway/09-zitadel-login.webp" alt="Zitadel login name" width={440} height={380} />
 
 Enter the temporary password from step 5.
 
-<Screenshot src="/emergent.memory/assets/tutorials/railway/10-zitadel-password.webp" alt="Zitadel password" width={319} height={304} />
+<Screenshot src="/emergent.memory/assets/tutorials/railway/10-zitadel-password.webp" alt="Zitadel password" width={440} height={448} />
 
-Zitadel may offer 2FA setup. You can skip it for the first login and enable it
-later; for a production deployment, enable it before handing the account to a
-team.
+The first admin is imported with `passwordChangeRequired`, so Zitadel asks you to
+replace the temporary password before the app opens.
 
-<Screenshot src="/emergent.memory/assets/tutorials/railway/11-zitadel-2fa-skip.webp" alt="Zitadel 2FA setup" width={317} height={431} />
+<Screenshot src="/emergent.memory/assets/tutorials/railway/12-first-password-change.webp" alt="Change the temporary password" width={440} height={740} />
 
-The first admin is imported with `passwordChangeRequired`; Zitadel asks you to
-replace the temporary password.
-
-<Screenshot src="/emergent.memory/assets/tutorials/railway/12-first-password-change.webp" alt="Change the temporary password" width={319} height={396} />
+If your login policy allows second factors, Zitadel offers 2FA setup at the end
+of this flow. You can skip it for the first login and enable it later; for a
+production deployment, enable it before handing the account to a team.
 
 After the change, Zitadel returns to Memory.
 
