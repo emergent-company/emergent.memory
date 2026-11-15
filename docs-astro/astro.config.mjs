@@ -23,8 +23,11 @@ export default defineConfig({
       favicon: '/favicon.svg',
       customCss: ['./src/styles/brand.css'],
       // Dark is the product's only theme, but a reader whose OS is light should
-      // not be forced into it: Starlight's switcher stays, defaulting to
-      // `auto`. Light is a derived palette — see brand.css.
+      // not be forced into it. `auto` is the default; the topbar switch flips
+      // light <-> dark from there (see src/components/ThemeToggle.astro).
+      components: {
+        ThemeSelect: './src/components/ThemeToggle.astro',
+      },
       // Pre-paint guard (mirrors the gateway's foucBackgroundGuard): paint the
       // theme's own page colour before CSS lands, so there is no white flash.
       // `ThemeProvider` sets `data-theme` on <html> before paint; the
