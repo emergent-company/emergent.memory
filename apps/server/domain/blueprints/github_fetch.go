@@ -227,15 +227,6 @@ func (s *Service) importLoaded(ctx context.Context, projectID string, payload im
 	if payload.origin == "" {
 		payload.origin = OriginImport
 	}
-	if opts.apply {
-		var manifest BlueprintManifest
-		if err := json.Unmarshal(payload.manifest, &manifest); err != nil {
-			return nil, apperror.NewBadRequest("blueprint manifest is not valid JSON: " + err.Error())
-		}
-		if err := s.validateManifest(&manifest); err != nil {
-			return nil, err
-		}
-	}
 
 	var scope *string
 	if projectID != "" {

@@ -128,8 +128,7 @@ func TestMarketplaceRendersAtSidebarBottom(t *testing.T) {
 	if nav >= version || version >= footer {
 		t.Fatalf("marketplace is not the sidebar's last element: nav=%d version=%d market=%d", nav, version, footer)
 	}
-	navClass := strings.Index(html, `class="sidebar-menu grow overflow-y-auto"`)
-	navOpen := strings.LastIndex(html[:navClass], "<div")
+	navOpen := strings.LastIndex(html[:nav], "<div")
 	navClose := divCloseIndex(html, navOpen)
 	if navClose < 0 || footer < navClose {
 		t.Fatalf("marketplace block is inside the scrollable nav (nav close=%d market=%d), not pinned", navClose, footer)
