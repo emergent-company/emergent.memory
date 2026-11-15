@@ -371,9 +371,7 @@ func (h *Handler) UpdateProjectSourceApp(c echo.Context) error {
 		return apperror.ErrBadRequest
 	}
 	user := auth.MustGetUser(c)
-	app, err := h.svc.UpdateSourceAppForProject(c.Request().Context(), projectID, user.ID, appID, UpdateSourceAppRequest{
-		Slug: dto.Slug, PrivateKey: dto.PrivateKey, WebhookSecret: dto.WebhookSecret,
-	})
+	app, err := h.svc.UpdateSourceAppForProject(c.Request().Context(), projectID, user.ID, appID, UpdateSourceAppRequest(dto))
 	if err != nil {
 		return err
 	}
