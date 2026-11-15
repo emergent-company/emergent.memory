@@ -6940,14 +6940,14 @@ definitions:
     type: object
   domain_mcpregistry.MCPServerTarget:
     enum:
+    - auto
     - server
     - device
-    - auto
     type: string
     x-enum-varnames:
+    - importTargetAuto
     - TargetServer
     - TargetDevice
-    - importTargetAuto
   domain_mcpregistry.MCPServerToolDTO:
     properties:
       config:
@@ -13123,7 +13123,7 @@ info:
     name: MIT
     url: https://opensource.org/licenses/MIT
   title: Memory API
-  version: 0.98.0
+  version: 0.98.1
 paths:
   /.well-known/oauth-authorization-server:
     get:
