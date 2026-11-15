@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -278,6 +280,72 @@ func TestRequireSessionOrKeyInvalidSessionNoKeyFallback(t *testing.T) {
 	e.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401 (key fallback removed)", rec.Code)
+	}
+}
+
+// TestRequireSessionOrKeyClearsUnrecoverableSessionCookie covers #753: an
+// authentic session cookie whose access token has expired and whose refresh
+// token the token endpoint refuses is unrecoverable. requireSession already
+// clears such a cookie; requireSessionOrKey — the middleware in front of every
+// /api route — used to fall through to the device-credential path and return its
+// 401 with the dead cookie still set, so the browser re-presented it on every
+// request and each one retried a refresh that can never succeed.
+func TestRequireSessionOrKeyClearsUnrecoverableSessionCookie(t *testing.T) {
+	var ts *httptest.Server
+	ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/openid-configuration":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"authorization_endpoint":%q,"token_endpoint":%q}`,
+				ts.URL+"/authorize", ts.URL+"/token")
+		case "/token":
+			// The refresh token is spent/revoked: the token endpoint refuses it.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":"invalid_grant"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	s := &Server{cfg: Config{
+		AuthMode:        "session",
+		SessionSecret:   "test-secret",
+		ZitadelIssuer:   ts.URL,
+		ZitadelClientID: "cid",
+	}, memory: &fakeMemory{}}
+	e := echo.New()
+	e.GET("/api/ping", func(c echo.Context) error { return c.String(http.StatusOK, "ok") }, s.requireSessionOrKey)
+
+	dead := testSessionClaims()
+	dead.Issuer = ts.URL
+	dead.ExpiresAt = time.Now().Add(-time.Hour).Unix()
+	req := httptest.NewRequest(http.MethodGet, "/api/ping", nil)
+	addSessionCookie(t, req, "test-secret", dead)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 (the session is unrecoverable)", rec.Code)
+	}
+	ck := findCookie(rec, sessionCookieName)
+	if ck == nil {
+		t.Fatal("a 401 for an unrecoverable session must carry a clearing Set-Cookie")
+	}
+	if ck.Value != "" || ck.MaxAge >= 0 {
+		t.Errorf("session cookie was not cleared: value = %q, MaxAge = %d", ck.Value, ck.MaxAge)
+	}
+
+	// A request that never presented a session cookie has nothing to clear, so
+	// the 401 must not invent a Set-Cookie for it.
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/ping", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status without a cookie = %d, want 401", rec.Code)
+	}
+	if ck := findCookie(rec, sessionCookieName); ck != nil {
+		t.Errorf("a request with no session cookie must not emit a clearing Set-Cookie, got %+v", ck)
 	}
 }
 

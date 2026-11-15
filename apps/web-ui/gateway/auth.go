@@ -656,6 +656,16 @@ func (s *Server) requireSessionOrKey(next echo.HandlerFunc) echo.HandlerFunc {
 			s.attachSession(c, claims)
 			return next(c)
 		}
+		// Mirror requireSession's error branch: a session this request could not
+		// establish is done — expired with a spent/revoked refresh token, or a
+		// cookie whose signature no longer verifies — so the browser must stop
+		// presenting it. Without the clear, every /api request keeps retrying a
+		// refresh the token endpoint will keep refusing (and the next request
+		// starts from the same dead cookie). A request that never had a cookie
+		// (http.ErrNoCookie) has nothing to clear (#753).
+		if !errors.Is(err, http.ErrNoCookie) {
+			s.clearSessionCookie(c)
+		}
 		// No live session: fall back to the scoped device credential path.
 		return s.requireDeviceCredential(next)(c)
 	}
