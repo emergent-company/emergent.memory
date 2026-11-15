@@ -3853,9 +3853,9 @@ plain list of everything connected, so a typo in a pack never breaks a page. Run
 <code>memory blueprints validate ./my-blueprint</code> to check a pack offline before
 installing it. It warns about the mistakes that would otherwise fail silently: a
 <code>relation</code> no pack in the blueprint declares (the section stays empty unless
-another installed blueprint declares it), a <code>title</code> that is not a string (an
-unquoted year is a number, which drops the whole view at render time), unknown
-keys, and out-of-range limits.</p>
+another installed blueprint — or, when installing, the project itself — declares
+it), a <code>title</code> that is not a string (an unquoted year is a number, which drops
+the whole view at render time), unknown keys, and out-of-range limits.</p>
 <h3 id="with-the-cli-a-directory">With the CLI (a directory)<a class="headerlink" href="#with-the-cli-a-directory" title="Permanent link">&para;</a></h3>
 <p>The CLI applies a directory (or GitHub repo) directly — it does not go through
 the registry, so there is no draft/publish step:</p>

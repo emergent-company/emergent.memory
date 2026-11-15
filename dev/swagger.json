@@ -16,7 +16,7 @@
             "name": "MIT",
             "url": "https://opensource.org/licenses/MIT"
         },
-        "version": "0.95.0"
+        "version": "0.96.0"
     },
     "basePath": "/",
     "paths": {
@@ -4145,6 +4145,187 @@
                 }
             }
         },
+        "/api/data-source-integrations/source-apps": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns org-wide Apps plus Apps owned by the current project, without credentials.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "List Apps available to the project",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_sources.SourceApp"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Org admins may register org-wide (scope=org) or project-owned (scope=project); project admins only project-owned.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Register a source App for the project",
+                "parameters": [
+                    {
+                        "description": "App credentials",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.registerSourceAppDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.SourceApp"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/data-source-integrations/source-apps/{appId}": {
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Project-owned Apps require project admin; org-wide Apps require org admin. Refused with 409 while bound sources exist.",
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Delete a source App from the project surface",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "App row ID (UUID)",
+                        "name": "appId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Project-owned Apps require project admin; org-wide Apps require org admin. Secrets are optional rotations.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Update a source App from the project surface",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "App row ID (UUID)",
+                        "name": "appId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Patch",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.updateSourceAppDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.SourceApp"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/data-source-integrations/source-apps/{appId}/installation-repositories": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns full repository names for the setup wizard's checkbox list. Uses a short-lived read-only installation token.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "List an installation's repositories",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "App row ID (UUID)",
+                        "name": "appId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "GitHub installation id",
+                        "name": "installationId",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/data-source-integrations/{id}/triggers": {
             "get": {
                 "security": [
@@ -4187,7 +4368,7 @@
                         "bearerAuth": []
                     }
                 ],
-                "description": "Binds an event type to a runtime agent and queue.",
+                "description": "Binds an event type to an agent and queue. agentId may be a runtime agent id or an agent-definition id; the binding stores the runtime kb.agents id either way.",
                 "consumes": [
                     "application/json"
                 ],
@@ -14085,6 +14266,82 @@
                     },
                     "403": {
                         "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{id}/budget/reset": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Restarts the weekly or monthly spending window from now by moving that window's cycle anchor. The other window and all usage history are untouched. Project admins and org admins of the owning organization only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "projects"
+                ],
+                "summary": "Reset a project budget window",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Window to reset (week or month)",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_projects.ResetBudgetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The new spending window",
+                        "schema": {
+                            "$ref": "#/definitions/domain_projects.BudgetPeriod"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid project ID, body, or window",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a project admin or org admin",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Project not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -29045,6 +29302,53 @@
                 }
             }
         },
+        "/projects/{projectId}/usage/budget": {
+            "get": {
+                "description": "Returns the weekly and monthly spending windows for a project: cap, threshold, spend, remaining, percent used, period start/end and status (ok | warning | exhausted).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "projects"
+                ],
+                "summary": "Get project budget state",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_provider.BudgetState"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/projects/{projectId}/usage/timeseries": {
             "get": {
                 "summary": "Get project LLM usage time series",
@@ -40369,6 +40673,31 @@
                 }
             }
         },
+        "domain_projects.BudgetPeriod": {
+            "type": "object",
+            "properties": {
+                "periodEnd": {
+                    "type": "string"
+                },
+                "periodStart": {
+                    "type": "string"
+                },
+                "window": {
+                    "$ref": "#/definitions/domain_projects.BudgetWindow"
+                }
+            }
+        },
+        "domain_projects.BudgetWindow": {
+            "type": "string",
+            "enum": [
+                "week",
+                "month"
+            ],
+            "x-enum-varnames": [
+                "BudgetWindowWeek",
+                "BudgetWindowMonth"
+            ]
+        },
         "domain_projects.CreateProjectRequest": {
             "type": "object",
             "required": [
@@ -40458,8 +40787,21 @@
                 "budget_alert_threshold": {
                     "type": "number"
                 },
+                "budget_month_anchor": {
+                    "type": "string"
+                },
                 "budget_usd": {
                     "description": "Budget columns added in migration 00063",
+                    "type": "number"
+                },
+                "budget_week_anchor": {
+                    "type": "string"
+                },
+                "budget_weekly_alert_threshold": {
+                    "type": "number"
+                },
+                "budget_weekly_usd": {
+                    "description": "Weekly budget window and per-window cycle anchors, added in migration\n00298. A nil weekly cap means no weekly limit. The anchors are set only by\nthe reset endpoint (never by PATCH): nil means the window follows the\ncalendar (ISO week / UTC month), non-nil restarts the cycle at that\ninstant.",
                     "type": "number"
                 },
                 "chat_prompt_template": {
@@ -40546,6 +40888,12 @@
                     "type": "number"
                 },
                 "budget_usd": {
+                    "type": "number"
+                },
+                "budget_weekly_alert_threshold": {
+                    "type": "number"
+                },
+                "budget_weekly_usd": {
                     "type": "number"
                 },
                 "chat_prompt_template": {
@@ -40668,6 +41016,25 @@
                 }
             }
         },
+        "domain_projects.ResetBudgetRequest": {
+            "type": "object",
+            "required": [
+                "window"
+            ],
+            "properties": {
+                "window": {
+                    "enum": [
+                        "week",
+                        "month"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_projects.BudgetWindow"
+                        }
+                    ]
+                }
+            }
+        },
         "domain_projects.TransferProjectRequest": {
             "type": "object",
             "required": [
@@ -40710,6 +41077,12 @@
                     "type": "number"
                 },
                 "budget_usd": {
+                    "type": "number"
+                },
+                "budget_weekly_alert_threshold": {
+                    "type": "number"
+                },
+                "budget_weekly_usd": {
                     "type": "number"
                 },
                 "chat_prompt_template": {
@@ -40761,6 +41134,49 @@
                 "AuthNone",
                 "AuthSigned"
             ]
+        },
+        "domain_provider.BudgetState": {
+            "type": "object",
+            "properties": {
+                "month": {
+                    "$ref": "#/definitions/domain_provider.BudgetWindowState"
+                },
+                "week": {
+                    "$ref": "#/definitions/domain_provider.BudgetWindowState"
+                }
+            }
+        },
+        "domain_provider.BudgetWindowState": {
+            "type": "object",
+            "properties": {
+                "capUsd": {
+                    "type": "number"
+                },
+                "percentUsed": {
+                    "type": "number"
+                },
+                "periodEnd": {
+                    "type": "string"
+                },
+                "periodStart": {
+                    "type": "string"
+                },
+                "remainingUsd": {
+                    "type": "number"
+                },
+                "spendUsd": {
+                    "type": "number"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "threshold": {
+                    "type": "number"
+                },
+                "window": {
+                    "$ref": "#/definitions/github_com_emergent-company_emergent_memory_internal_budgetwindow.Window"
+                }
+            }
         },
         "domain_provider.CredentialLabel": {
             "type": "object",
@@ -45315,6 +45731,9 @@
                 "orgId": {
                     "type": "string"
                 },
+                "projectId": {
+                    "type": "string"
+                },
                 "provider": {
                     "type": "string"
                 },
@@ -45333,6 +45752,10 @@
             "type": "object",
             "properties": {
                 "agentId": {
+                    "type": "string"
+                },
+                "agentName": {
+                    "description": "AgentName is the bound runtime agent's display name, resolved on read for\nthe trigger panel. Not a column: the picker offers agent definitions while\nAgentID stores a runtime kb.agents id, so the view cannot resolve the name\nfrom its own list (#727).",
                     "type": "string"
                 },
                 "createdAt": {
@@ -45560,7 +45983,14 @@
                 "provider": {
                     "type": "string"
                 },
+                "scope": {
+                    "description": "Scope is \"org\" (org-wide, org admin) or \"project\" (project-owned,\nproject admin). Only the project-scoped route reads it; the org route is\nalways org-wide.",
+                    "type": "string"
+                },
                 "slug": {
+                    "type": "string"
+                },
+                "webhookKey": {
                     "type": "string"
                 },
                 "webhookSecret": {
@@ -47109,6 +47539,17 @@
                     "type": "integer"
                 }
             }
+        },
+        "github_com_emergent-company_emergent_memory_internal_budgetwindow.Window": {
+            "type": "string",
+            "enum": [
+                "week",
+                "month"
+            ],
+            "x-enum-varnames": [
+                "Week",
+                "Month"
+            ]
         },
         "github_com_emergent-company_emergent_memory_pkg_apperror.Error": {
             "type": "object",

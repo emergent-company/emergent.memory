@@ -7801,6 +7801,23 @@ definitions:
           per-area counts, so it is not capped by the per-queue row limit.
         type: integer
     type: object
+  domain_projects.BudgetPeriod:
+    properties:
+      periodEnd:
+        type: string
+      periodStart:
+        type: string
+      window:
+        $ref: '#/definitions/domain_projects.BudgetWindow'
+    type: object
+  domain_projects.BudgetWindow:
+    enum:
+    - week
+    - month
+    type: string
+    x-enum-varnames:
+    - BudgetWindowWeek
+    - BudgetWindowMonth
   domain_projects.CreateProjectRequest:
     properties:
       auto_merge_extraction_branches:
@@ -7879,8 +7896,22 @@ definitions:
         type: boolean
       budget_alert_threshold:
         type: number
+      budget_month_anchor:
+        type: string
       budget_usd:
         description: Budget columns added in migration 00063
+        type: number
+      budget_week_anchor:
+        type: string
+      budget_weekly_alert_threshold:
+        type: number
+      budget_weekly_usd:
+        description: |-
+          Weekly budget window and per-window cycle anchors, added in migration
+          00298. A nil weekly cap means no weekly limit. The anchors are set only by
+          the reset endpoint (never by PATCH): nil means the window follows the
+          calendar (ISO week / UTC month), non-nil restarts the cycle at that
+          instant.
         type: number
       chat_prompt_template:
         type: string
@@ -7949,6 +7980,10 @@ definitions:
       budget_alert_threshold:
         type: number
       budget_usd:
+        type: number
+      budget_weekly_alert_threshold:
+        type: number
+      budget_weekly_usd:
         type: number
       chat_prompt_template:
         type: string
@@ -8041,6 +8076,17 @@ definitions:
       totalJobs:
         type: integer
     type: object
+  domain_projects.ResetBudgetRequest:
+    properties:
+      window:
+        allOf:
+        - $ref: '#/definitions/domain_projects.BudgetWindow'
+        enum:
+        - week
+        - month
+    required:
+    - window
+    type: object
   domain_projects.TransferProjectRequest:
     properties:
       orgId:
@@ -8069,6 +8115,10 @@ definitions:
       budget_alert_threshold:
         type: number
       budget_usd:
+        type: number
+      budget_weekly_alert_threshold:
+        type: number
+      budget_weekly_usd:
         type: number
       chat_prompt_template:
         type: string
@@ -8107,6 +8157,34 @@ definitions:
     - AuthGoogleAPIKey
     - AuthNone
     - AuthSigned
+  domain_provider.BudgetState:
+    properties:
+      month:
+        $ref: '#/definitions/domain_provider.BudgetWindowState'
+      week:
+        $ref: '#/definitions/domain_provider.BudgetWindowState'
+    type: object
+  domain_provider.BudgetWindowState:
+    properties:
+      capUsd:
+        type: number
+      percentUsed:
+        type: number
+      periodEnd:
+        type: string
+      periodStart:
+        type: string
+      remainingUsd:
+        type: number
+      spendUsd:
+        type: number
+      status:
+        type: string
+      threshold:
+        type: number
+      window:
+        $ref: '#/definitions/github_com_emergent-company_emergent_memory_internal_budgetwindow.Window'
+    type: object
   domain_provider.CredentialLabel:
     properties:
       hint:
@@ -11496,6 +11574,8 @@ definitions:
         type: string
       orgId:
         type: string
+      projectId:
+        type: string
       provider:
         type: string
       slug:
@@ -11508,6 +11588,13 @@ definitions:
   domain_sources.SourceTrigger:
     properties:
       agentId:
+        type: string
+      agentName:
+        description: |-
+          AgentName is the bound runtime agent's display name, resolved on read for
+          the trigger panel. Not a column: the picker offers agent definitions while
+          AgentID stores a runtime kb.agents id, so the view cannot resolve the name
+          from its own list (#727).
         type: string
       createdAt:
         type: string
@@ -11662,7 +11749,15 @@ definitions:
         type: string
       provider:
         type: string
+      scope:
+        description: |-
+          Scope is "org" (org-wide, org admin) or "project" (project-owned,
+          project admin). Only the project-scoped route reads it; the org route is
+          always org-wide.
+        type: string
       slug:
+        type: string
+      webhookKey:
         type: string
       webhookSecret:
         type: string
@@ -12734,6 +12829,14 @@ definitions:
           agent-created, unpinned, unlocked skills.
         type: integer
     type: object
+  github_com_emergent-company_emergent_memory_internal_budgetwindow.Window:
+    enum:
+    - week
+    - month
+    type: string
+    x-enum-varnames:
+    - Week
+    - Month
   github_com_emergent-company_emergent_memory_pkg_apperror.Error:
     properties:
       code:
@@ -12785,7 +12888,7 @@ info:
     name: MIT
     url: https://opensource.org/licenses/MIT
   title: Memory API
-  version: 0.95.0
+  version: 0.96.0
 paths:
   /.well-known/oauth-authorization-server:
     get:
@@ -15529,7 +15632,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Binds an event type to a runtime agent and queue.
+      description: Binds an event type to an agent and queue. agentId may be a runtime
+        agent id or an agent-definition id; the binding stores the runtime kb.agents
+        id either way.
       parameters:
       - description: Source ID (UUID)
         in: path
@@ -15607,6 +15712,124 @@ paths:
       security:
       - bearerAuth: []
       summary: Update a source trigger
+      tags:
+      - data-source-integrations
+  /api/data-source-integrations/source-apps:
+    get:
+      description: Returns org-wide Apps plus Apps owned by the current project, without
+        credentials.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/domain_sources.SourceApp'
+            type: array
+      security:
+      - bearerAuth: []
+      summary: List Apps available to the project
+      tags:
+      - data-source-integrations
+    post:
+      consumes:
+      - application/json
+      description: Org admins may register org-wide (scope=org) or project-owned (scope=project);
+        project admins only project-owned.
+      parameters:
+      - description: App credentials
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_sources.registerSourceAppDTO'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/domain_sources.SourceApp'
+      security:
+      - bearerAuth: []
+      summary: Register a source App for the project
+      tags:
+      - data-source-integrations
+  /api/data-source-integrations/source-apps/{appId}:
+    delete:
+      description: Project-owned Apps require project admin; org-wide Apps require
+        org admin. Refused with 409 while bound sources exist.
+      parameters:
+      - description: App row ID (UUID)
+        in: path
+        name: appId
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      security:
+      - bearerAuth: []
+      summary: Delete a source App from the project surface
+      tags:
+      - data-source-integrations
+    patch:
+      consumes:
+      - application/json
+      description: Project-owned Apps require project admin; org-wide Apps require
+        org admin. Secrets are optional rotations.
+      parameters:
+      - description: App row ID (UUID)
+        in: path
+        name: appId
+        required: true
+        type: string
+      - description: Patch
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_sources.updateSourceAppDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_sources.SourceApp'
+      security:
+      - bearerAuth: []
+      summary: Update a source App from the project surface
+      tags:
+      - data-source-integrations
+  /api/data-source-integrations/source-apps/{appId}/installation-repositories:
+    get:
+      description: Returns full repository names for the setup wizard's checkbox list.
+        Uses a short-lived read-only installation token.
+      parameters:
+      - description: App row ID (UUID)
+        in: path
+        name: appId
+        required: true
+        type: string
+      - description: GitHub installation id
+        in: query
+        name: installationId
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: string
+            type: array
+      security:
+      - bearerAuth: []
+      summary: List an installation's repositories
       tags:
       - data-source-integrations
   /api/diagnostics:
@@ -22066,6 +22289,57 @@ paths:
       summary: Rank project members by activity
       tags:
       - user-activity
+  /api/projects/{id}/budget/reset:
+    post:
+      consumes:
+      - application/json
+      description: Restarts the weekly or monthly spending window from now by moving
+        that window's cycle anchor. The other window and all usage history are untouched.
+        Project admins and org admins of the owning organization only.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Window to reset (week or month)
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_projects.ResetBudgetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The new spending window
+          schema:
+            $ref: '#/definitions/domain_projects.BudgetPeriod'
+        "400":
+          description: Invalid project ID, body, or window
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Not a project admin or org admin
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Project not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Reset a project budget window
+      tags:
+      - projects
   /api/projects/{id}/embeddings/progress:
     get:
       description: Returns pending/processing/completed/failed counts for graph object
@@ -31931,6 +32205,39 @@ paths:
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
       summary: Get project LLM usage summary
+  /projects/{projectId}/usage/budget:
+    get:
+      description: 'Returns the weekly and monthly spending windows for a project:
+        cap, threshold, spend, remaining, percent used, period start/end and status
+        (ok | warning | exhausted).'
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_provider.BudgetState'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: Get project budget state
+      tags:
+      - projects
   /projects/{projectId}/usage/timeseries:
     get:
       parameters:
