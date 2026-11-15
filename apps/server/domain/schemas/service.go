@@ -302,6 +302,8 @@ func validateSchemaDefinitions(objectTypeSchemas, relationshipTypeSchemas json.R
 				}
 				errs = append(errs, validatePropertyEnums(
 					fmt.Sprintf("objectTypeSchemas[%d] (%q)", i, e.Name), e.Properties)...)
+				errs = append(errs, validatePropertyItems(
+					fmt.Sprintf("objectTypeSchemas[%d] (%q)", i, e.Name), e.Properties)...)
 				// Validate the optional scope-key declaration (issue #1148,
 				// option 2). Fail closed on an unknown property or target. A
 				// JSON null means absent — treat it exactly like an omitted
@@ -346,6 +348,8 @@ func validateSchemaDefinitions(objectTypeSchemas, relationshipTypeSchemas json.R
 					errs = append(errs, fmt.Sprintf("relationshipTypeSchemas[%d] (%q) is missing required field 'targetType'", i, e.Name))
 				}
 				errs = append(errs, validatePropertyEnums(
+					fmt.Sprintf("relationshipTypeSchemas[%d] (%q)", i, e.Name), e.Properties)...)
+				errs = append(errs, validatePropertyItems(
 					fmt.Sprintf("relationshipTypeSchemas[%d] (%q)", i, e.Name), e.Properties)...)
 			}
 		}
@@ -402,6 +406,87 @@ func validatePropertyEnums(owner string, rawProperties json.RawMessage) []string
 		}
 	}
 	return errs
+}
+
+// validatePropertyItems rejects a property whose `items` is declared as a bare
+// JSON scalar (for example "items": "string" instead of {"items": {"type":
+// "string"}}). That shape is not valid JSON Schema, PropertyDefFromMap only
+// reads an object items, so the installed pack declares an element type, stores
+// it and never enforces it — silence is the bug (#726).
+//
+// The other non-object forms — a tuple array of schemas, a boolean schema and
+// JSON null — are valid JSON Schema (or mean "absent") and carry no element
+// type this codebase interprets, so they stay acceptable on read.
+func validatePropertyItems(owner string, rawProperties json.RawMessage) []string {
+	if len(rawProperties) == 0 {
+		return nil
+	}
+	var props map[string]json.RawMessage
+	if err := json.Unmarshal(rawProperties, &props); err != nil || len(props) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(props))
+	for name := range props {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var errs []string
+	for _, name := range names {
+		errs = append(errs, validateItemsDeclaration(
+			fmt.Sprintf("%s property %q", owner, name), props[name])...)
+	}
+	return errs
+}
+
+// validateItemsDeclaration walks one property definition's items declaration,
+// recursing through nested array schemas (`items: {type: array, items: ...}`).
+func validateItemsDeclaration(property string, rawDef json.RawMessage) []string {
+	var def struct {
+		Items json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(rawDef, &def); err != nil {
+		return nil
+	}
+	return validateItemsValue(property+".items", def.Items)
+}
+
+// validateItemsValue flags a bare scalar items value and returns the wrapped
+// object form as the expected shape. Detection is by the first JSON token so a
+// scalar string and a scalar number share one message.
+func validateItemsValue(field string, raw json.RawMessage) []string {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return nil
+	}
+	switch trimmed[0] {
+	case '{':
+		var nested struct {
+			Items json.RawMessage `json:"items"`
+		}
+		if err := json.Unmarshal(trimmed, &nested); err != nil {
+			return nil
+		}
+		return validateItemsValue(field+".items", nested.Items)
+	case '[', 't', 'f':
+		// A tuple array of schemas or a boolean schema is valid JSON Schema
+		// that this codebase does not interpret; it declares no element type.
+		return nil
+	case '"':
+		var scalar string
+		if err := json.Unmarshal(trimmed, &scalar); err != nil {
+			return nil
+		}
+		return []string{itemsShapeError(field, fmt.Sprintf("%q", scalar))}
+	default:
+		return []string{itemsShapeError(field, string(trimmed))}
+	}
+}
+
+// itemsShapeError names the expected object shape so the author does not have to
+// read the decoder to learn why the declaration was ignored.
+func itemsShapeError(field, got string) string {
+	return fmt.Sprintf(`%s must be an object with a "type" (for example {"type": "string"}); got the bare scalar %s — the element type would be silently ignored`, field, got)
 }
 
 func validateEnumDeclaration(field, typ string, raw json.RawMessage) []string {

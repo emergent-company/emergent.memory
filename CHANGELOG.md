@@ -250,6 +250,20 @@ See `/apps/server/src/modules/unified-search/` for implementation details.
 
 ### Fixed
 
+**A pack's bare scalar `items` is rejected instead of silently unenforced** (2026-11-15)
+
+An array property declaring `"items": "string"` instead of the object form
+`"items": {"type": "string"}` used to be accepted, installed and then validated
+nothing:
+`PropertyDefFromMap` only reads an object `items`, so the element schema was
+dropped without a word and `POST /api/graph/objects/validate` accepted an
+integer in a declared `array<string>`. `POST /api/schemas` and `PUT
+/api/schemas/:packId` now reject the bare scalar with a 400 naming the property
+and the expected object shape. The other non-object `items` forms — a tuple
+array of schemas, a boolean schema and `null` — are valid JSON Schema (or mean
+absent) and remain accepted, as before. The `code-memory` blueprint's seven
+scalar declarations are corrected to the object form (Closes #726).
+
 **Embedding resolution and `projects set-models` stop failing late and quietly** (2026-11-12)
 
 The embedding fast path resolved credentials by dialect only, so a project whose
