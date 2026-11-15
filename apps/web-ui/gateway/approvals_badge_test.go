@@ -238,3 +238,44 @@ func TestChatDecisionInvalidatesBadge(t *testing.T) {
 		})
 	}
 }
+
+// TestApprovalsMutationRedirectsBoostedForms guards the badge's own invariant on
+// the mutation path: the decision and cancel forms live inside the boosted
+// `<main hx-target="#main-content">`, so a raw 303 would be followed in-XHR and
+// swap only #main-content. The sidebar — and therefore the pending-input badge —
+// sits outside that target, so it would keep the pre-decision count until a full
+// page load. redirectScoped emits HX-Redirect for a boosted request (a real
+// navigation, which re-renders the shell) and keeps the plain-POST 303.
+func TestApprovalsMutationRedirectsBoostedForms(t *testing.T) {
+	for _, tc := range []struct{ name, path, wantID string }{
+		{name: "respond", path: "/settings/approvals/q-1/respond", wantID: "q-1"},
+		{name: "cancel", path: "/settings/approvals/q-2/cancel", wantID: "q-2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeMemory{}
+			_, e := newTestServer(f)
+
+			// Boosted form: htmx must be told to navigate, not to swap a fragment.
+			req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader("response=approve"))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Header.Set("HX-Request", "true")
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+			if got := rec.Header().Get("HX-Redirect"); got != "/settings/approvals" {
+				t.Fatalf("boosted HX-Redirect = %q, want /settings/approvals (rec.Code %d)", got, rec.Code)
+			}
+
+			// Plain POST keeps the PRG 303 to the same target.
+			req = httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader("response=approve"))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			rec = httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+			if rec.Code != http.StatusSeeOther {
+				t.Fatalf("plain status = %d, want 303", rec.Code)
+			}
+			if got := rec.Header().Get("Location"); got != "/settings/approvals" {
+				t.Fatalf("plain Location = %q, want /settings/approvals", got)
+			}
+		})
+	}
+}

@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"encoding/json"
 	"errors"
-	"net/http"
 
 	"github.com/labstack/echo/v4"
 )
@@ -90,7 +89,13 @@ func (s *Server) uiApproveReject(c echo.Context) error {
 		return redirectWithError(c, "/settings/approvals", err)
 	}
 	s.invalidatePendingInputCount(c.Request().Context())
-	return c.Redirect(http.StatusSeeOther, "/settings/approvals")
+	// The forms live inside the boosted <main hx-target="#main-content">, so a
+	// raw 303 would be followed in-XHR and swap only #main-content: the sidebar
+	// (and its pending-input badge) sits outside that target and would keep the
+	// pre-decision count until a full page load. redirectScoped emits
+	// HX-Redirect for a boosted request, which is a real navigation, and keeps
+	// the plain-POST 303.
+	return s.redirectScoped(c, "/settings/approvals")
 }
 
 // uiCancelApproval handles POST /settings/approvals/:questionId/cancel — revokes
@@ -101,7 +106,8 @@ func (s *Server) uiCancelApproval(c echo.Context) error {
 		return redirectWithError(c, "/settings/approvals", err)
 	}
 	s.invalidatePendingInputCount(c.Request().Context())
-	return c.Redirect(http.StatusSeeOther, "/settings/approvals")
+	// Same boosted-form reasoning as the decision handler above.
+	return s.redirectScoped(c, "/settings/approvals")
 }
 
 // formatArgsJSON pretty-prints an argument summary for the audit view.
