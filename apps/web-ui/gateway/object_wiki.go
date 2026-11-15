@@ -263,7 +263,12 @@ func (s *Server) uiObjectWiki(c echo.Context) error {
 		data.PropDefs = compiledTypePropertyDefs(shell.Compiled.ObjectTypes, shell.Obj.Type)
 	}
 
-	if shell.EdgesErr == nil && len(shell.Edges) > 0 {
+	if objectEdgesReadable(shell) {
+		// The wiki's own question is the edge half, not objectViewRenderable:
+		// a type that declares no ui.view still gets one section per
+		// relationship type (objectWikiRelationSections), so gating on a
+		// declared view would empty the Relationships area on every type that
+		// has not adopted one. The declared view only chooses the grouping.
 		related := s.loadRelatedObjects(ctx, shell.Obj, shell.Edges)
 		if viewCfg := typeUIOf(shell.TypeUIByType, shell.Obj.Type).View; viewCfg != nil {
 			data.Sections = resolveObjectViewSections(viewCfg, shell.Obj, shell.Edges, related, shell.TypeUIByType)

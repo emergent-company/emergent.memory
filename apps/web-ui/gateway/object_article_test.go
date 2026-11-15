@@ -466,6 +466,15 @@ func TestObjectWikiPageObjectVariant(t *testing.T) {
 			t.Errorf("object-page variant missing %q", want)
 		}
 	}
+	// Feedback on this row (#763): the type tile sits on the identity line, not
+	// centred against the two-line excerpt the row carries.
+	rowAt := strings.Index(html, `data-testid="object-wiki-relation-row"`)
+	if rowAt < 0 {
+		t.Fatal("missing the relationship row marker")
+	}
+	if row := html[rowAt:]; !strings.Contains(row, "flex min-w-0 items-start gap-3") {
+		t.Errorf("a relationship row's type tile must align to the top of the row:\n%s", row)
+	}
 	// History moved into the shared details rail, so it is present here too —
 	// once, not twice.
 	if got := strings.Count(html, `href="/objects/o1/history"`); got != 1 {
@@ -493,6 +502,48 @@ func TestObjectWikiPageObjectVariant(t *testing.T) {
 	}
 	if strings.Contains(html, `data-testid="object-wiki-article"`) {
 		t.Error("the object-page variant must not render the article layout")
+	}
+}
+
+// TestObjectWikiRelationRowAlignsTallRowsOnly pins the #763 delta: a row opts
+// the type tile onto its first line only when it carries an excerpt, because an
+// excerpt-less row is two lines tall and reads better with the tile centred. A
+// mixed group must therefore render both alignments.
+func TestObjectWikiRelationRowAlignsTallRowsOnly(t *testing.T) {
+	data := objectWikiPageData{
+		Obj:  &GraphObject{ID: "o1", CanonicalID: "o1", Type: "note", Key: "Deed"},
+		View: objectWikiViewPage,
+		Sections: []objectViewSection{{
+			Title: "Tasks",
+			Rows: []objectViewItem{
+				{
+					RelID: "r1", RelType: "relates_to", Resolved: true,
+					Neighbour: GraphObject{
+						ID: "n1", Type: "task", Key: "With a summary",
+						Properties: map[string]any{"summary": "Leaky after the storm."},
+					},
+				},
+				{
+					RelID: "r2", RelType: "relates_to", Resolved: true,
+					Neighbour: GraphObject{ID: "n2", Type: "task", Key: "Bare"},
+				},
+			},
+			Total: 2,
+			Limit: objectWikiSectionLimit,
+		}},
+	}
+	html := renderHTML(t, objectWikiPage(data))
+
+	sectionAt := strings.Index(html, `data-testid="object-wiki-section"`)
+	if sectionAt < 0 {
+		t.Fatal("missing the relationship section")
+	}
+	rows := html[sectionAt:]
+	if got := strings.Count(rows, "flex min-w-0 items-start gap-3"); got != 1 {
+		t.Errorf("excerpt-bearing rows top-aligned = %d, want 1 (the tall row):\n%s", got, rows)
+	}
+	if got := strings.Count(rows, "flex min-w-0 items-center gap-3"); got != 1 {
+		t.Errorf("excerpt-less rows centred = %d, want 1 (the two-line row):\n%s", got, rows)
 	}
 }
 

@@ -275,7 +275,8 @@ templ objectWikiRelationRow(data objectWikiPageData, row objectViewItem, showDir
 	direction := ""
 	if showDirection {
 		direction = row.direction()
-	} }}
+	}
+	excerpt := objectExcerpt(row.Neighbour.Properties) }}
 	<div class="min-w-0 px-4 py-3" data-testid="object-wiki-relation-row" data-relationship-type={ row.RelType } data-direction={ row.direction() }>
 		@objectHeader(objectHeaderProps{
 			Variant:        objectHeaderRow,
@@ -287,8 +288,12 @@ templ objectWikiRelationRow(data objectWikiPageData, row objectViewItem, showDir
 			Href:           href,
 			Unresolved:     !row.Resolved,
 			Direction:      direction,
-			Excerpt:        objectExcerpt(row.Neighbour.Properties),
+			Excerpt:        excerpt,
 			IdentityTestID: "object-wiki-identity",
+			// Only a tall row — one whose excerpt wraps — puts the tile on the
+			// identity line; a row with no summary is two lines and reads
+			// better with the tile centred (feedback on this row).
+			TopAlign: excerpt != "",
 		})
 	</div>
 }

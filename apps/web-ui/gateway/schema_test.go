@@ -291,11 +291,10 @@ func TestRenderObjectsTypeIcons(t *testing.T) {
 
 func TestRenderObjectDetailTypeIcon(t *testing.T) {
 	obj := &GraphObject{ID: "o1", Type: "note", Key: "shopping"}
+	typeUIByType := map[string]typeUI{"note": {Icon: "📝", Color: "#4F46E5"}}
 	html := renderHTML(t, ObjectDetailPage(objectDetailShellData{
-		Obj: obj,
-		TypeUIByType: map[string]typeUI{
-			"note": {Icon: "📝", Color: "#4F46E5"},
-		},
+		Obj:          obj,
+		TypeUIByType: typeUIByType,
 	}, nil, nil))
 	for _, want := range []string{"note", "📝", "color:#4F46E5", "text-base-content"} {
 		if !strings.Contains(html, want) {

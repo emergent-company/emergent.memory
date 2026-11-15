@@ -507,6 +507,37 @@ func (s *Server) exchangeCode(ctx context.Context, tokenEndpoint, code, codeVeri
 	return &tok, nil
 }
 
+// tokenGrantRejectedError is the token endpoint's refusal of a token grant: the
+// provider answered 4xx/5xx (or an unparseable body). Only a 4xx carrying a
+// permanent OAuth error code means the grant can never succeed again; a 5xx, a
+// 429 or an unparsable body is a provider-side hiccup and must not be mistaken
+// for a dead session, because the caller clears the user's session cookie on the
+// permanent case only (#753 review).
+type tokenGrantRejectedError struct {
+	Status int
+	Code   string
+	Body   string
+}
+
+func (e *tokenGrantRejectedError) Error() string {
+	return fmt.Sprintf("token refresh: %d: %s", e.Status, e.Body)
+}
+
+// dead reports whether the rejection is the permanent kind: the grant itself is
+// invalid (RFC 6749 invalid_grant) or this client may not use it
+// (unauthorized_client). Everything else — notably every 5xx and a 429 — stays
+// transient, so the cookie survives and the next request retries.
+func (e *tokenGrantRejectedError) dead() bool {
+	if e.Status < 400 || e.Status >= 500 {
+		return false
+	}
+	switch e.Code {
+	case "invalid_grant", "unauthorized_client":
+		return true
+	}
+	return false
+}
+
 // refreshSessionTokens exchanges a refresh token for a fresh token set at the
 // Zitadel token endpoint (grant_type=refresh_token).
 func (s *Server) refreshSessionTokens(ctx context.Context, refreshToken string) (*oidcTokenResponse, error) {
@@ -534,7 +565,14 @@ func (s *Server) refreshSessionTokens(ctx context.Context, refreshToken string) 
 		return nil, err
 	}
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("token refresh: %d: %s", resp.StatusCode, string(raw))
+		rejected := &tokenGrantRejectedError{Status: resp.StatusCode, Body: string(raw)}
+		var payload struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(raw, &payload) == nil {
+			rejected.Code = payload.Error
+		}
+		return nil, rejected
 	}
 	var tok oidcTokenResponse
 	if err := json.Unmarshal(raw, &tok); err != nil {
