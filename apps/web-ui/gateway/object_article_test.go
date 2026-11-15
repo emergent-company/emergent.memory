@@ -79,6 +79,54 @@ func TestObjectExcerptScalarProse(t *testing.T) {
 	}
 }
 
+// TestObjectExcerptKeyMatching pins both halves of the excerpt matcher's key
+// rule: case and separators are tolerated, extra words are not. The positive
+// half (Description/DESCRIPTION/description all match) is what makes a pack's
+// prose render at all; the negative half is the guard rail — `long_description`
+// is a *different property*, and a "helpful" future change (substring or
+// word-prefix matching) would silently start rendering it as the description
+// (#761, object-browser spec).
+func TestObjectExcerptKeyMatching(t *testing.T) {
+	// Case is irrelevant: the same property spelled three ways is one property.
+	for _, key := range []string{"Description", "DESCRIPTION", "description"} {
+		t.Run("matches "+key, func(t *testing.T) {
+			if got := objectExcerpt(map[string]any{key: "Body"}); got != "Body" {
+				t.Errorf("objectExcerpt(%s: Body) = %q, want %q", key, got, "Body")
+			}
+		})
+	}
+
+	// An extra word makes it a different property, whatever the separators.
+	for _, key := range []string{"long_description", "Long Description", "LONG_DESCRIPTION", "longDescription"} {
+		t.Run("does not match "+key, func(t *testing.T) {
+			if got := objectExcerpt(map[string]any{key: "Long body"}); got != "" {
+				t.Errorf("objectExcerpt(%s: Long body) = %q, want no excerpt: %s is not a description", key, got, key)
+			}
+		})
+	}
+
+	// The fold drops separators and spaces but keeps case, so EqualFold is what
+	// makes those spellings one property — under their own normalized name,
+	// never under "description".
+	longFolded := normalizeProseKey("long_description")
+	for _, alt := range []string{"Long Description", "LONG_DESCRIPTION"} {
+		if !strings.EqualFold(longFolded, normalizeProseKey(alt)) {
+			t.Fatalf("long-form key spellings must fold together: %q vs %q", longFolded, normalizeProseKey(alt))
+		}
+	}
+	if strings.EqualFold(longFolded, normalizeProseKey("description")) {
+		t.Fatalf("a long-form key must not fold onto %q", normalizeProseKey("description"))
+	}
+	if _, _, ok := prosePropertyNamed(map[string]any{"long_description": "Long body"}, longFolded); !ok {
+		t.Errorf("prosePropertyNamed must still resolve the folded long-form name")
+	}
+
+	// A description beside a long description still wins as the excerpt.
+	if got := objectExcerpt(map[string]any{"description": "Short", "long_description": "Long body"}); got != "Short" {
+		t.Errorf("description must win over long_description, got %q", got)
+	}
+}
+
 func TestObjectExcerptIsWordBoundTruncated(t *testing.T) {
 	long := strings.Repeat("word ", 100)
 	got := objectExcerpt(map[string]any{"summary": long})

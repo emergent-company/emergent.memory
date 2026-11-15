@@ -817,7 +817,7 @@ func TestRenderObjectDetailPage(t *testing.T) {
 		ID: "o1", Type: "person", Name: "sam-lee", Key: "sam-lee", Status: "suggested",
 		Properties: map[string]any{"first_name": "Sam", "relationship": "colleague"},
 	}
-	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, "", 0, nil, false))
+	html := renderHTML(t, ObjectDetailPage(objectDetailShellData{Obj: obj}, nil, nil))
 	for _, want := range []string{
 		"sam-lee", "person", "first_name", "Sam", "relationship", "colleague",
 		`href="/objects"`,
@@ -832,13 +832,13 @@ func TestRenderObjectDetailPage(t *testing.T) {
 		}
 	}
 
-	htmlErr := renderHTML(t, ObjectDetailPage(nil, objectBranchRef{}, nil, nil, errTest, "", nil, nil, nil, nil, nil, nil, "", 0, nil, false))
+	htmlErr := renderHTML(t, ObjectDetailPage(objectDetailShellData{LoadErr: errTest}, nil, nil))
 	if !strings.Contains(htmlErr, "Object unavailable") {
 		t.Error("error state missing")
 	}
 
 	// flash feedback renders an auto-dismissing toast carrying the message
-	htmlFlash := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", errTest, nil, nil, nil, nil, nil, "", 0, nil, false))
+	htmlFlash := renderHTML(t, ObjectDetailPage(objectDetailShellData{Obj: obj, FlashErr: errTest}, nil, nil))
 	if !strings.Contains(htmlFlash, "memory-toast") || !strings.Contains(htmlFlash, errTest.Error()) {
 		t.Error("flash toast missing")
 	}
@@ -1178,7 +1178,14 @@ func TestRenderObjectDetailPageTypedView(t *testing.T) {
 	view := &typeUIView{Sections: []typeUISection{{Title: "Documents", Relation: []string{"concerns"}}}}
 	sections := resolveObjectViewSections(view, obj, edges, related, typeUIByType)
 
-	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, typeUIByType, nil, nil, "Property", len(edges), sections, true))
+	html := renderHTML(t, ObjectDetailPage(objectDetailShellData{
+		Obj:          obj,
+		TypeUIByType: typeUIByType,
+		TypeLabel:    "Property",
+		EdgeCount:    len(edges),
+		ViewSections: sections,
+		HasView:      true,
+	}, nil, nil))
 	if !strings.Contains(html, `data-testid="object-view-sections"`) || !strings.Contains(html, "Documents") {
 		t.Errorf("overview did not render the type's relationship sections:\n%s", html)
 	}
@@ -1191,7 +1198,12 @@ func TestRenderObjectDetailPageTypedView(t *testing.T) {
 	}
 
 	// A type with no view renders no section group at all.
-	plain := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, typeUIByType, nil, nil, "Property", len(edges), nil, false))
+	plain := renderHTML(t, ObjectDetailPage(objectDetailShellData{
+		Obj:          obj,
+		TypeUIByType: typeUIByType,
+		TypeLabel:    "Property",
+		EdgeCount:    len(edges),
+	}, nil, nil))
 	if strings.Contains(plain, `data-testid="object-view-sections"`) {
 		t.Error("an object type without a view must not render typed sections")
 	}
@@ -1278,7 +1290,7 @@ func TestRenderObjectDetailSimilar(t *testing.T) {
 
 	// The Overview page no longer renders Similar objects inline; it is a rail
 	// tab with its own route.
-	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, "", 0, nil, false))
+	html := renderHTML(t, ObjectDetailPage(objectDetailShellData{Obj: obj}, nil, nil))
 	if strings.Contains(html, `id="object-similar"`) || strings.Contains(html, "Finding similar objects") {
 		t.Errorf("overview must not render the Similar objects section:\n%s", html)
 	}
@@ -1317,7 +1329,7 @@ func TestRenderObjectDetailEditable(t *testing.T) {
 	// person derives from no compiled type here, so a board-enabled control is
 	// supplied explicitly to exercise the Overview Workflow panel.
 	status := objectStatusControlFor([]CompiledType{{Name: "person", BoardEnabled: true}}, "person")
-	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, status, nil, "", 0, nil, false))
+	html := renderHTML(t, ObjectDetailPage(objectDetailShellData{Obj: obj, Status: status}, nil, nil))
 
 	// The Overview Workflow panel carries labelled status/assignee controls;
 	// the properties form carries the key, labels, and schema fields.
@@ -1374,7 +1386,7 @@ func TestRenderObjectDetailTwoPropertyCards(t *testing.T) {
 		{Name: "notes", Type: "string", Description: "Free-form notes."},
 	}
 	status := objectStatusControlFor([]CompiledType{{Name: "Person", BoardEnabled: true}}, "Person")
-	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, propDefs, nil, status, nil, "Person", 0, nil, false))
+	html := renderHTML(t, ObjectDetailPage(objectDetailShellData{Obj: obj, Status: status, TypeLabel: "Person"}, nil, propDefs))
 
 	if got := strings.Count(html, ">Properties</h2>"); got != 1 {
 		t.Errorf("built-in Properties heading rendered %d times, want 1:\n%s", got, html)
@@ -1654,7 +1666,7 @@ func TestRenderObjectDetailTypeAwareWidgets(t *testing.T) {
 		{Name: "priority", Type: "string", Enum: []string{"low", "high"}},
 		{Name: "title", Type: "string"},
 	}
-	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, propDefs, nil, nil, nil, "", 0, nil, false))
+	html := renderHTML(t, ObjectDetailPage(objectDetailShellData{Obj: obj}, nil, propDefs))
 
 	// boolean → three-state select (unset/true/false), never a text input
 	if !strings.Contains(html, `<select name="prop_cleared"`) {
@@ -3847,7 +3859,7 @@ func TestObjectStatusField(t *testing.T) {
 	renderControls := func(current string) string {
 		obj := &GraphObject{ID: "o1", Type: "Task", Key: "t1", Status: current}
 		objectTypes := []CompiledType{{Name: "Task", BoardEnabled: true, AllowedStatuses: boardStatuses}}
-		return renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, objectStatusControlFor(objectTypes, "Task"), nil, "", 0, nil, false))
+		return renderHTML(t, ObjectDetailPage(objectDetailShellData{Obj: obj, Status: objectStatusControlFor(objectTypes, "Task")}, nil, nil))
 	}
 
 	t.Run("detail page renders the allowed statuses in the picker", func(t *testing.T) {
@@ -3927,7 +3939,7 @@ func TestObjectStatusField(t *testing.T) {
 			Name:       "Scenario",
 			Properties: json.RawMessage(`{"status":{"type":"string","enum":["proposed","active","archived"]}}`),
 		}}
-		html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, objectStatusControlFor(objectTypes, "Scenario"), nil, "", 0, nil, false))
+		html := renderHTML(t, ObjectDetailPage(objectDetailShellData{Obj: obj, Status: objectStatusControlFor(objectTypes, "Scenario")}, nil, nil))
 		if strings.Contains(html, `data-testid="object-workflow-panel"`) || strings.Contains(html, `id="object-status"`) {
 			t.Errorf("no-workflow type must not render workflow controls in:\n%s", html)
 		}
@@ -3968,7 +3980,7 @@ func TestObjectStatusField(t *testing.T) {
 
 	t.Run("degraded control renders the header badge only", func(t *testing.T) {
 		obj := &GraphObject{ID: "o1", Type: "Task", Key: "t1", Status: "in_progress"}
-		html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, objectStatusControlUnavailable(), nil, "", 0, nil, false))
+		html := renderHTML(t, ObjectDetailPage(objectDetailShellData{Obj: obj, Status: objectStatusControlUnavailable()}, nil, nil))
 		if strings.Contains(html, `data-testid="object-workflow-panel"`) || strings.Contains(html, `name="status" type="text"`) {
 			t.Errorf("unavailable schema should not render editable workflow controls in:\n%s", html)
 		}
@@ -5026,7 +5038,7 @@ func TestRenderObjectDetailOriginTrail(t *testing.T) {
 	doc := &Document{ID: "d1", Filename: "Spec.md"}
 	getDoc := func(context.Context, string) (*Document, error) { return doc, nil }
 	trail := objectOriginTrail(context.Background(), "/documents/d1/extractions/job1", getDoc)
-	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, nil, trail, "", 0, nil, false))
+	html := renderHTML(t, ObjectDetailPage(objectDetailShellData{Obj: obj, Trail: trail}, nil, nil))
 
 	region := breadcrumbRegion(html)
 	if region == "" {
@@ -5131,7 +5143,7 @@ func TestObjectFormPropertyLabels(t *testing.T) {
 	}
 
 	obj := &GraphObject{ID: "o1", Type: "Person", Key: "p1", Properties: map[string]any{"owner_notes": "hello"}}
-	detail := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, defs, nil, nil, nil, "", 0, nil, false))
+	detail := renderHTML(t, ObjectDetailPage(objectDetailShellData{Obj: obj}, nil, defs))
 	if !strings.Contains(detail, labelledLegend) {
 		t.Errorf("detail properties card must label the property by its title:\n%s", detail)
 	}

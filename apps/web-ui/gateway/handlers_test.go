@@ -208,6 +208,7 @@ type fakeMemory struct {
 	lastLookupType     string              // last typeFilter passed to LookupGraphObjectByKey
 	lastLookupKey      string              // last key passed to LookupGraphObjectByKey
 	relns              []GraphRelationship // returned by ListRelationships
+	edgesErr           error               // GetObjectEdges failure, with the object still readable
 	branches           []Branch            // returned by ListBranches
 	extractionJobs     []ExtractionJob     // returned by ListExtractionJobs
 	extractionJobsErr  error               // ListProjectExtractionJobs failure
@@ -1629,6 +1630,12 @@ func (f *fakeMemory) ListGraphRelationships(ctx context.Context, branchID string
 }
 
 func (f *fakeMemory) GetObjectEdges(ctx context.Context, objectID string) ([]GraphRelationship, error) {
+	// edgesErr simulates a partial read: the object itself still loads, but its
+	// relationship endpoints do not. The object surfaces render different things
+	// for that than for "this object has no connections".
+	if f.edgesErr != nil {
+		return nil, f.edgesErr
+	}
 	if f.docErr != nil {
 		return nil, f.docErr
 	}
