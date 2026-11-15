@@ -511,6 +511,25 @@ definitions:
       canUpdateObjects:
         type: boolean
     type: object
+  domain_agents.AgentCredentialRef:
+    properties:
+      kind:
+        description: Kind is the credential provider. github_app is the only supported
+          kind.
+        type: string
+      permissions:
+        additionalProperties:
+          type: string
+        description: |-
+          Permissions is an allowlisted GitHub App permission map, e.g.
+          {"contents":"write","pull_requests":"write"}.
+        type: object
+      source_id:
+        description: |-
+          SourceID optionally pins the source. Empty means use the run's verified
+          source subject, falling back to the sourceId in trigger metadata.
+        type: string
+    type: object
   domain_agents.AgentDTO:
     properties:
       agentDefinitionId:
@@ -744,6 +763,39 @@ definitions:
     - ExecutionModeSuggest
     - ExecutionModeExecute
     - ExecutionModeHybrid
+  domain_agents.AgentInvocation:
+    properties:
+      context:
+        additionalProperties: {}
+        description: |-
+          Context is static metadata supplied by the trigger. It is exposed to the
+          model under the reserved "trigger_context" metadata key so it cannot
+          overwrite dispatcher-owned event fields.
+        type: object
+      credential:
+        allOf:
+        - $ref: '#/definitions/domain_agents.AgentCredentialRef'
+        description: |-
+          Credential asks the executor to mint a short-lived source credential and
+          inject it into the sandbox.
+      env_vars:
+        additionalProperties:
+          type: string
+        description: |-
+          EnvVars carries non-secret, allowlisted environment variables. Secret
+          values belong in Credential, never here.
+        type: object
+      max_steps:
+        description: MaxSteps overrides the agent definition's step budget for this
+          invocation.
+        type: integer
+      model:
+        description: Model overrides the agent definition's model for this invocation.
+        type: string
+      priority:
+        description: Priority orders queued runs inside their queue (lower runs first).
+        type: integer
+    type: object
   domain_agents.AgentObjectRule:
     properties:
       canCreate:
@@ -1160,6 +1212,12 @@ definitions:
     type: object
   domain_agents.AgentWorkTrigger:
     properties:
+      invocation:
+        allOf:
+        - $ref: '#/definitions/domain_agents.AgentInvocation'
+        description: |-
+          Invocation carries the trigger-specific model, context, env allowlist and
+          credential request used when the Board starts a manual assignment.
       objectType:
         type: string
       prompt:
@@ -6035,6 +6093,123 @@ definitions:
         items:
           $ref: '#/definitions/domain_journal.JournalNote'
         type: array
+    type: object
+  domain_market.ApplyRequest:
+    properties:
+      code:
+        type: string
+      market:
+        type: string
+      model_overrides:
+        additionalProperties:
+          type: string
+        type: object
+      project_id:
+        type: string
+    type: object
+  domain_market.ApplyResult:
+    properties:
+      blueprint_id:
+        type: string
+      install_id:
+        type: string
+    type: object
+  domain_market.Capabilities:
+    properties:
+      egress:
+        items:
+          type: string
+        type: array
+      mcps:
+        items:
+          $ref: '#/definitions/domain_market.MCPCapability'
+        type: array
+      model:
+        $ref: '#/definitions/domain_market.CapabilityModel'
+      reads:
+        items:
+          type: string
+        type: array
+      schedules:
+        type: boolean
+      tools:
+        items:
+          type: string
+        type: array
+      writes:
+        items:
+          type: string
+        type: array
+    type: object
+  domain_market.CapabilityModel:
+    properties:
+      name:
+        type: string
+      provider:
+        type: string
+    type: object
+  domain_market.Compat:
+    properties:
+      memory:
+        type: string
+    type: object
+  domain_market.ListingPreview:
+    properties:
+      digest:
+        type: string
+      publisher:
+        type: string
+      semver:
+        type: string
+      slug:
+        type: string
+      title:
+        type: string
+    type: object
+  domain_market.MCPCapability:
+    properties:
+      scopes:
+        items:
+          type: string
+        type: array
+      slug:
+        type: string
+    type: object
+  domain_market.ManifestAgent:
+    properties:
+      model:
+        $ref: '#/definitions/domain_market.ManifestAgentModel'
+      name:
+        type: string
+    type: object
+  domain_market.ManifestAgentModel:
+    properties:
+      name:
+        type: string
+      provider:
+        type: string
+    type: object
+  domain_market.ResolveRequest:
+    properties:
+      code:
+        type: string
+      market:
+        type: string
+    type: object
+  domain_market.ResolveResult:
+    properties:
+      agents:
+        items:
+          $ref: '#/definitions/domain_market.ManifestAgent'
+        type: array
+      already_installed:
+        type: boolean
+      capabilities:
+        $ref: '#/definitions/domain_market.Capabilities'
+      compat:
+        $ref: '#/definitions/domain_market.Compat'
+      listing:
+        $ref: '#/definitions/domain_market.ListingPreview'
     type: object
   domain_mcp.AgentMCPEndpointDTO:
     properties:
@@ -11607,6 +11782,12 @@ definitions:
         type: string
       id:
         type: string
+      invocation:
+        allOf:
+        - $ref: '#/definitions/github_com_emergent-company_emergent_memory_domain_agents.AgentInvocation'
+        description: |-
+          Invocation carries the trigger-specific model/context/env/credential
+          request. It is snapshotted onto a run at dispatch time.
       projectId:
         type: string
       queue:
@@ -11773,6 +11954,8 @@ definitions:
         type: object
       eventType:
         type: string
+      invocation:
+        $ref: '#/definitions/github_com_emergent-company_emergent_memory_domain_agents.AgentInvocation'
       queue:
         type: string
     type: object
@@ -12587,6 +12770,58 @@ definitions:
         type: string
       lastName:
         type: string
+    type: object
+  github_com_emergent-company_emergent_memory_domain_agents.AgentCredentialRef:
+    properties:
+      kind:
+        description: Kind is the credential provider. github_app is the only supported
+          kind.
+        type: string
+      permissions:
+        additionalProperties:
+          type: string
+        description: |-
+          Permissions is an allowlisted GitHub App permission map, e.g.
+          {"contents":"write","pull_requests":"write"}.
+        type: object
+      source_id:
+        description: |-
+          SourceID optionally pins the source. Empty means use the run's verified
+          source subject, falling back to the sourceId in trigger metadata.
+        type: string
+    type: object
+  github_com_emergent-company_emergent_memory_domain_agents.AgentInvocation:
+    properties:
+      context:
+        additionalProperties: {}
+        description: |-
+          Context is static metadata supplied by the trigger. It is exposed to the
+          model under the reserved "trigger_context" metadata key so it cannot
+          overwrite dispatcher-owned event fields.
+        type: object
+      credential:
+        allOf:
+        - $ref: '#/definitions/github_com_emergent-company_emergent_memory_domain_agents.AgentCredentialRef'
+        description: |-
+          Credential asks the executor to mint a short-lived source credential and
+          inject it into the sandbox.
+      env_vars:
+        additionalProperties:
+          type: string
+        description: |-
+          EnvVars carries non-secret, allowlisted environment variables. Secret
+          values belong in Credential, never here.
+        type: object
+      max_steps:
+        description: MaxSteps overrides the agent definition's step budget for this
+          invocation.
+        type: integer
+      model:
+        description: Model overrides the agent definition's model for this invocation.
+        type: string
+      priority:
+        description: Priority orders queued runs inside their queue (lower runs first).
+        type: integer
     type: object
   github_com_emergent-company_emergent_memory_domain_mcp.ContentBlock:
     properties:
@@ -19633,6 +19868,93 @@ paths:
       summary: List pending invitations
       tags:
       - invites
+  /api/market/installs/apply:
+    post:
+      consumes:
+      - application/json
+      description: Redeems the install code, verifies the licence and bundle, imports
+        the blueprint with market provenance and records the install.
+      parameters:
+      - description: Market origin, install code, target project and optional model
+          overrides
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_market.ApplyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Applied install
+          schema:
+            $ref: '#/definitions/domain_market.ApplyResult'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Market issuer is not trusted
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: Compatibility or tool-licence conflict
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "502":
+          description: Market is unreachable
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Apply a marketplace install
+      tags:
+      - market
+  /api/market/installs/resolve:
+    post:
+      consumes:
+      - application/json
+      description: Redeems an install code, verifies the signed licence and returns
+        the authoritative listing facts. Nothing is downloaded or applied.
+      parameters:
+      - description: Market origin and install code
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_market.ResolveRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Listing review payload
+          schema:
+            $ref: '#/definitions/domain_market.ResolveResult'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Market issuer is not trusted
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "502":
+          description: Market is unreachable
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Resolve a marketplace install for review
+      tags:
+      - market
   /api/mcp-relay/connect:
     get:
       consumes:

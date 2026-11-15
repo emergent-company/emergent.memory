@@ -10218,6 +10218,138 @@
                 }
             }
         },
+        "/api/market/installs/apply": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Redeems the install code, verifies the licence and bundle, imports the blueprint with market provenance and records the install.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "market"
+                ],
+                "summary": "Apply a marketplace install",
+                "parameters": [
+                    {
+                        "description": "Market origin, install code, target project and optional model overrides",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_market.ApplyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Applied install",
+                        "schema": {
+                            "$ref": "#/definitions/domain_market.ApplyResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Market issuer is not trusted",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Compatibility or tool-licence conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "502": {
+                        "description": "Market is unreachable",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/market/installs/resolve": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Redeems an install code, verifies the signed licence and returns the authoritative listing facts. Nothing is downloaded or applied.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "market"
+                ],
+                "summary": "Resolve a marketplace install for review",
+                "parameters": [
+                    {
+                        "description": "Market origin and install code",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_market.ResolveRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Listing review payload",
+                        "schema": {
+                            "$ref": "#/definitions/domain_market.ResolveResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Market issuer is not trusted",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "502": {
+                        "description": "Market is unreachable",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/mcp-relay/connect": {
             "get": {
                 "description": "Remote MCP providers (e.g. Diane) open an outbound WebSocket here. First frame must be a register frame with instance_id and tools list.",
@@ -30562,6 +30694,26 @@
                 }
             }
         },
+        "domain_agents.AgentCredentialRef": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "description": "Kind is the credential provider. github_app is the only supported kind.",
+                    "type": "string"
+                },
+                "permissions": {
+                    "description": "Permissions is an allowlisted GitHub App permission map, e.g.\n{\"contents\":\"write\",\"pull_requests\":\"write\"}.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "source_id": {
+                    "description": "SourceID optionally pins the source. Empty means use the run's verified\nsource subject, falling back to the sourceId in trigger metadata.",
+                    "type": "string"
+                }
+            }
+        },
         "domain_agents.AgentDTO": {
             "type": "object",
             "properties": {
@@ -30865,6 +31017,43 @@
                 "ExecutionModeExecute",
                 "ExecutionModeHybrid"
             ]
+        },
+        "domain_agents.AgentInvocation": {
+            "type": "object",
+            "properties": {
+                "context": {
+                    "description": "Context is static metadata supplied by the trigger. It is exposed to the\nmodel under the reserved \"trigger_context\" metadata key so it cannot\noverwrite dispatcher-owned event fields.",
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "credential": {
+                    "description": "Credential asks the executor to mint a short-lived source credential and\ninject it into the sandbox.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_agents.AgentCredentialRef"
+                        }
+                    ]
+                },
+                "env_vars": {
+                    "description": "EnvVars carries non-secret, allowlisted environment variables. Secret\nvalues belong in Credential, never here.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "max_steps": {
+                    "description": "MaxSteps overrides the agent definition's step budget for this invocation.",
+                    "type": "integer"
+                },
+                "model": {
+                    "description": "Model overrides the agent definition's model for this invocation.",
+                    "type": "string"
+                },
+                "priority": {
+                    "description": "Priority orders queued runs inside their queue (lower runs first).",
+                    "type": "integer"
+                }
+            }
         },
         "domain_agents.AgentObjectRule": {
             "type": "object",
@@ -31405,6 +31594,14 @@
         "domain_agents.AgentWorkTrigger": {
             "type": "object",
             "properties": {
+                "invocation": {
+                    "description": "Invocation carries the trigger-specific model, context, env allowlist and\ncredential request used when the Board starts a manual assignment.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_agents.AgentInvocation"
+                        }
+                    ]
+                },
                 "objectType": {
                     "type": "string"
                 },
@@ -38163,6 +38360,187 @@
                     "items": {
                         "$ref": "#/definitions/domain_journal.JournalNote"
                     }
+                }
+            }
+        },
+        "domain_market.ApplyRequest": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "market": {
+                    "type": "string"
+                },
+                "model_overrides": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "project_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_market.ApplyResult": {
+            "type": "object",
+            "properties": {
+                "blueprint_id": {
+                    "type": "string"
+                },
+                "install_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_market.Capabilities": {
+            "type": "object",
+            "properties": {
+                "egress": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "mcps": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_market.MCPCapability"
+                    }
+                },
+                "model": {
+                    "$ref": "#/definitions/domain_market.CapabilityModel"
+                },
+                "reads": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "schedules": {
+                    "type": "boolean"
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "writes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "domain_market.CapabilityModel": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_market.Compat": {
+            "type": "object",
+            "properties": {
+                "memory": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_market.ListingPreview": {
+            "type": "object",
+            "properties": {
+                "digest": {
+                    "type": "string"
+                },
+                "publisher": {
+                    "type": "string"
+                },
+                "semver": {
+                    "type": "string"
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_market.MCPCapability": {
+            "type": "object",
+            "properties": {
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "slug": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_market.ManifestAgent": {
+            "type": "object",
+            "properties": {
+                "model": {
+                    "$ref": "#/definitions/domain_market.ManifestAgentModel"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_market.ManifestAgentModel": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_market.ResolveRequest": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "market": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_market.ResolveResult": {
+            "type": "object",
+            "properties": {
+                "agents": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_market.ManifestAgent"
+                    }
+                },
+                "already_installed": {
+                    "type": "boolean"
+                },
+                "capabilities": {
+                    "$ref": "#/definitions/domain_market.Capabilities"
+                },
+                "compat": {
+                    "$ref": "#/definitions/domain_market.Compat"
+                },
+                "listing": {
+                    "$ref": "#/definitions/domain_market.ListingPreview"
                 }
             }
         },
@@ -45774,6 +46152,14 @@
                 "id": {
                     "type": "string"
                 },
+                "invocation": {
+                    "description": "Invocation carries the trigger-specific model/context/env/credential\nrequest. It is snapshotted onto a run at dispatch time.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_domain_agents.AgentInvocation"
+                        }
+                    ]
+                },
                 "projectId": {
                     "type": "string"
                 },
@@ -46013,6 +46399,9 @@
                 },
                 "eventType": {
                     "type": "string"
+                },
+                "invocation": {
+                    "$ref": "#/definitions/github_com_emergent-company_emergent_memory_domain_agents.AgentInvocation"
                 },
                 "queue": {
                     "type": "string"
@@ -47251,6 +47640,63 @@
                 },
                 "lastName": {
                     "type": "string"
+                }
+            }
+        },
+        "github_com_emergent-company_emergent_memory_domain_agents.AgentCredentialRef": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "description": "Kind is the credential provider. github_app is the only supported kind.",
+                    "type": "string"
+                },
+                "permissions": {
+                    "description": "Permissions is an allowlisted GitHub App permission map, e.g.\n{\"contents\":\"write\",\"pull_requests\":\"write\"}.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "source_id": {
+                    "description": "SourceID optionally pins the source. Empty means use the run's verified\nsource subject, falling back to the sourceId in trigger metadata.",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_emergent-company_emergent_memory_domain_agents.AgentInvocation": {
+            "type": "object",
+            "properties": {
+                "context": {
+                    "description": "Context is static metadata supplied by the trigger. It is exposed to the\nmodel under the reserved \"trigger_context\" metadata key so it cannot\noverwrite dispatcher-owned event fields.",
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "credential": {
+                    "description": "Credential asks the executor to mint a short-lived source credential and\ninject it into the sandbox.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_domain_agents.AgentCredentialRef"
+                        }
+                    ]
+                },
+                "env_vars": {
+                    "description": "EnvVars carries non-secret, allowlisted environment variables. Secret\nvalues belong in Credential, never here.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "max_steps": {
+                    "description": "MaxSteps overrides the agent definition's step budget for this invocation.",
+                    "type": "integer"
+                },
+                "model": {
+                    "description": "Model overrides the agent definition's model for this invocation.",
+                    "type": "string"
+                },
+                "priority": {
+                    "description": "Priority orders queued runs inside their queue (lower runs first).",
+                    "type": "integer"
                 }
             }
         },
