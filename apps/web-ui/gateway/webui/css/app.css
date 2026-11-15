@@ -334,6 +334,26 @@ main#main-content {
 #_layout-sidebar .sidebar-menu {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
+/* Sidebar nav attention badges (the Documents problem count and the Usage
+   budget level) belong flush with the row's trailing edge. go-daisy's
+   SidebarNavItem renders the `grow` label, then the Warn badge, then an htmx
+   spinner — and htmx hides that spinner with `visibility: hidden`, which keeps
+   its ~1.5rem box in the flex row. Every badge therefore stopped short of the
+   right edge instead of reading as right-aligned (#810).
+   Collapse the idle spinner out of layout — the same treatment
+   .default-model-test-indicator gets below — and keep the badge ordered last so
+   it stays pinned to that edge: on an in-flight navigation the spinner appears
+   just before the badge instead of shoving it left. */
+#_layout-sidebar .menu-item > .htmx-indicator {
+  display: none;
+}
+#_layout-sidebar .menu-item.htmx-request > .htmx-indicator,
+#_layout-sidebar .menu-item > .htmx-indicator.htmx-request {
+  display: inline-flex;
+}
+#_layout-sidebar .menu-item > .badge {
+  order: 1;
+}
 
 /* Assistant drawer (#sidepanel-panel, sidepanel.templ): fixed right edge,
    full height. Header clears the status bar/notch; content clears the right
