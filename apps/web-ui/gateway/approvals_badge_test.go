@@ -68,13 +68,46 @@ func TestPendingInputCountCached(t *testing.T) {
 	}
 }
 
-// TestPendingInputCountConfigBackendError pins the fail-safe: a failed approval
+// TestPendingInputCountBackendError pins the fail-safe: a failed approval
 // fetch returns the error so the caller hides the badge instead of rendering a
 // misleading zero.
 func TestPendingInputCountBackendError(t *testing.T) {
 	s := newBadgeServer(&fakeMemory{approvalsErr: errTest})
 	if _, err := s.cachedPendingInputCount(context.Background()); err == nil {
 		t.Fatal("want an error so the caller hides the badge")
+	}
+}
+
+// TestPendingInputCountQuestionsError pins the narrower fail-safe: losing the
+// question list leaves the approval count intact, so a partial outage does not
+// hide a badge that is still telling the truth.
+func TestPendingInputCountQuestionsError(t *testing.T) {
+	f := &fakeMemory{
+		approvals: []ToolApprovalItem{
+			{ID: "a1", QuestionID: "q1", Decision: "pending"},
+			{ID: "a2", QuestionID: "q2", Decision: "pending"},
+		},
+		questionsErr: errTest,
+	}
+	got, err := newBadgeServer(f).cachedPendingInputCount(context.Background())
+	if err != nil {
+		t.Fatalf("question failure must not fail the count: %v", err)
+	}
+	if got != 2 {
+		t.Fatalf("count = %d, want 2 (approvals only)", got)
+	}
+}
+
+// TestPendingInputCountUsesFilteredRead pins that the badge asks for the
+// pending list, not the whole audit trail: the endpoint is unpaginated, so an
+// unfiltered read would grow with every decision the project ever made.
+func TestPendingInputCountUsesFilteredRead(t *testing.T) {
+	f := &fakeMemory{}
+	if _, err := newBadgeServer(f).cachedPendingInputCount(context.Background()); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if f.pendingFetched != 1 {
+		t.Fatalf("pending fetches = %d, want 1", f.pendingFetched)
 	}
 }
 
@@ -163,5 +196,45 @@ func TestApprovalDecisionInvalidatesBadge(t *testing.T) {
 
 	if got, _ := s.cachedPendingInputCount(ctx); got != 0 {
 		t.Fatalf("count after decision = %d, want 0 (cache must be invalidated)", got)
+	}
+}
+
+// TestChatDecisionInvalidatesBadge covers the other two decision paths: an
+// answer given in the chat transcript (the API endpoints chat.js posts to) must
+// drop the cached count just like the Approvals page does.
+func TestChatDecisionInvalidatesBadge(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		body string
+	}{
+		{"respond", "/api/chat/questions/q1/respond", `{"response":"approve"}`},
+		{"cancel", "/api/chat/questions/q1/cancel", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeMemory{approvals: []ToolApprovalItem{{ID: "a1", QuestionID: "q1", Decision: "pending"}}}
+			s := newBadgeServer(f)
+			e := echo.New()
+			e.POST("/api/chat/questions/:questionId/respond", s.respondQuestion)
+			e.POST("/api/chat/questions/:questionId/cancel", s.cancelQuestion)
+
+			ctx := context.Background()
+			if got, _ := s.cachedPendingInputCount(ctx); got != 1 {
+				t.Fatalf("seeded count = %d, want 1", got)
+			}
+			f.approvals = nil
+
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			e.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+			}
+
+			if got, _ := s.cachedPendingInputCount(ctx); got != 0 {
+				t.Fatalf("count after %s = %d, want 0 (cache must be invalidated)", tc.name, got)
+			}
+		})
 	}
 }

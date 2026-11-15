@@ -170,7 +170,9 @@ type fakeMemory struct {
 	questionMessage  string             // optional reject message received via RespondQuestion
 	questionCancelID string             // question id received via CancelQuestion
 	approvals        []ToolApprovalItem
+	pendingFetched   int // ListPendingToolApprovals calls, to pin the badge's filtered read
 	questions        []AgentQuestionItem
+	questionsErr     error // ListAgentQuestions failure
 	convErr          error // ListConversations failure
 	histErr          error // GetConversationHistory failure
 	documents        []Document
@@ -1034,6 +1036,23 @@ func (f *fakeMemory) ListToolApprovals(ctx context.Context) ([]ToolApprovalItem,
 	return f.approvals, nil
 }
 
+// ListPendingToolApprovals mirrors the server's ?decision=pending filter, so a
+// test fixture can hold decided rows without the badge counting them.
+func (f *fakeMemory) ListPendingToolApprovals(ctx context.Context) ([]ToolApprovalItem, error) {
+	f.pendingFetched++
+	all, err := f.ListToolApprovals(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pending := make([]ToolApprovalItem, 0, len(all))
+	for _, a := range all {
+		if a.Decision == "pending" {
+			pending = append(pending, a)
+		}
+	}
+	return pending, nil
+}
+
 func (f *fakeMemory) CancelAgentRun(ctx context.Context, runID string) (bool, error) {
 	f.cancelRunID = runID
 	if f.cancelAgentRunErr != nil {
@@ -1054,6 +1073,9 @@ func (f *fakeMemory) ListSessionTodos(ctx context.Context, sessionID string) ([]
 }
 
 func (f *fakeMemory) ListAgentQuestions(ctx context.Context) ([]AgentQuestionItem, error) {
+	if f.questionsErr != nil {
+		return nil, f.questionsErr
+	}
 	return f.questions, nil
 }
 

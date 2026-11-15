@@ -43,6 +43,9 @@ type MemoryBackend interface {
 	CancelQuestion(ctx context.Context, questionID string) (*RespondQuestionResult, error)
 	ListAgentQuestions(ctx context.Context) ([]AgentQuestionItem, error)
 	ListToolApprovals(ctx context.Context) ([]ToolApprovalItem, error)
+	// ListPendingToolApprovals is the badge's read: the same audit trail
+	// filtered to rows still awaiting a decision.
+	ListPendingToolApprovals(ctx context.Context) ([]ToolApprovalItem, error)
 	CancelAgentRun(ctx context.Context, runID string) (bool, error)
 	ListSessionTodos(ctx context.Context, sessionID string) ([]SessionTodo, error)
 	ListConversations(ctx context.Context, includeArchived bool) (*ConversationList, error)

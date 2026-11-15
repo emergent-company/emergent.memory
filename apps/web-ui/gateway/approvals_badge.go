@@ -23,6 +23,9 @@ type pendingInputEntry struct {
 // the page uses (a tool-confirmation question renders on its approval row), so
 // the badge and the page cannot disagree about what counts as one item.
 //
+// The approval read is the server-filtered pending list, so the badge never
+// pulls a project's whole approval history onto the page-render path.
+//
 // A failed approval fetch returns the error and the caller hides the badge. A
 // failed question fetch does not: the approval count is still true, so the
 // badge shows that and only the question contribution is lost.
@@ -39,12 +42,15 @@ func (s *Server) cachedPendingInputCount(ctx context.Context) (int, error) {
 		return entry.count, nil
 	}
 
-	approvals, err := s.memory.ListToolApprovals(ctx)
+	approvals, err := s.memory.ListPendingToolApprovals(ctx)
 	if err != nil {
 		return 0, err
 	}
 	count := 0
 	for _, a := range approvals {
+		// The server filters, but keep the guard: a legacy or misbehaving
+		// upstream that ignores ?decision would otherwise inflate the badge
+		// with decided rows.
 		if a.Decision == "pending" {
 			count++
 		}
