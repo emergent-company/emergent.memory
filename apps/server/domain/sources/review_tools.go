@@ -118,6 +118,68 @@ func (h *ReviewToolHandler) HandlesGitHubAppTool(name string) bool {
 	return name == toolPRDiff || name == toolReviewSubmit
 }
 
+// MintSourceCredential mints a short-lived installation token for a verified
+// source run. It is the runtime half of AgentCredentialRef: the trigger names
+// the source and permissions, and this method resolves the App key, validates
+// the repo allowlist and mints the scoped token. The token is returned to the
+// caller and never persisted.
+func (h *ReviewToolHandler) MintSourceCredential(ctx context.Context, projectID, sourceID, repo string, permissions map[string]string) (string, error) {
+	projectUUID, err := uuid.Parse(strings.TrimSpace(projectID))
+	if err != nil {
+		return "", fmt.Errorf("sources: credential: invalid project id")
+	}
+	sourceUUID, err := uuid.Parse(strings.TrimSpace(sourceID))
+	if err != nil || sourceUUID == uuid.Nil {
+		return "", fmt.Errorf("sources: credential: invalid source id")
+	}
+	repo = strings.TrimSpace(repo)
+	if repo == "" {
+		return "", fmt.Errorf("sources: credential: repo is required")
+	}
+	src, app, err := h.resolveRunSource(ctx, projectUUID, repo, sourceUUID.String())
+	if err != nil {
+		return "", err
+	}
+	installationID, err := strconv.ParseInt(*src.ExternalAccountID, 10, 64)
+	if err != nil || installationID <= 0 {
+		return "", fmt.Errorf("sources: github_app source %s has a non-numeric installation id", src.ID)
+	}
+	if len(h.key) == 0 {
+		return "", ErrSourceEventNoCredentials
+	}
+	privateKey, err := OpenSourceBlob(h.key, app.PrivateKeyEncrypted)
+	if err != nil {
+		return "", ErrSourceEventNoCredentials
+	}
+	perms, err := normalizeCredentialPermissions(permissions)
+	if err != nil {
+		return "", err
+	}
+	return h.minter.MintInstallationToken(ctx, app.AppID, privateKey, installationID, []string{repo}, perms)
+}
+
+func normalizeCredentialPermissions(in map[string]string) (map[string]string, error) {
+	allowed := map[string]struct{}{
+		"contents": {}, "pull_requests": {}, "issues": {}, "checks": {},
+	}
+	out := make(map[string]string, len(in))
+	for name, value := range in {
+		if _, ok := allowed[name]; !ok {
+			return nil, fmt.Errorf("sources: credential permission %q is not allowed", name)
+		}
+		switch value {
+		case "read", "write":
+		default:
+			return nil, fmt.Errorf("sources: credential permission %q must be read or write", name)
+		}
+		out[name] = value
+	}
+	if len(out) == 0 {
+		out["contents"] = "read"
+	}
+	return out, nil
+}
+
 // ExecuteGitHubAppTool resolves the repo's github_app source, mints a token
 // scoped to that repo, and runs the review tool.
 //

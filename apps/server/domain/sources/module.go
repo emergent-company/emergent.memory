@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/fx"
 
+	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/discoveryjobs"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
@@ -149,9 +150,43 @@ var SourceEventsModule = fx.Module("source-events",
 		provideSourceWorkObjectStore,
 		NewSourceEventDispatcher,
 		NewSourceEventHandler,
+		NewSourceTriggerInvocationResolver,
+		NewSchemaProvisioner,
 	),
-	fx.Invoke(RegisterSourceEventRoutes, WireAgentRepository, WireSourceWorkObjectStore),
+	fx.Invoke(RegisterSourceEventRoutes, WireAgentRepository, WireSourceWorkObjectStore, WireSourceCredentialMinter, WireWorkInvocationResolver, WireSourceObjectTypes),
 )
+
+// WireSourceCredentialMinter lets the executor mint a source-scoped GitHub App
+// token at run start. The source module owns the App key; the executor only
+// names the source and requested permissions.
+func WireSourceCredentialMinter(ae *agents.AgentExecutor, h *ReviewToolHandler) {
+	if ae != nil && h != nil {
+		ae.SetSourceCredentialMinter(h)
+	}
+}
+
+// WireSourceObjectTypes gives the issue dispatcher the schema provisioner so
+// pre-existing github_app sources get the GitHubIssue board type before the
+// first issue item is written.
+func WireSourceObjectTypes(d *SourceEventDispatcher, p ObjectTypeProvisioner) {
+	if d != nil && p != nil {
+		d.SetObjectTypes(p)
+	}
+}
+
+// WireWorkInvocationResolver lets the board re-resolve a source trigger's
+// invocation from its server-owned row instead of trusting graph properties.
+func WireWorkInvocationResolver(ts *agents.TriggerService, rc *agents.WorkReconciler, wa *agents.WorkActionService, r *SourceTriggerInvocationResolver) {
+	if ts != nil && r != nil {
+		ts.SetWorkInvocationResolver(r)
+	}
+	if rc != nil && r != nil {
+		rc.SetWorkInvocationResolver(r)
+	}
+	if wa != nil && r != nil {
+		wa.SetWorkInvocationResolver(r)
+	}
+}
 
 // provideSourceWorkObjectStore binds the graph service to the narrow interface
 // the source workflow dispatcher consumes.

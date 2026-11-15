@@ -213,6 +213,7 @@ type MemoryBackend interface {
 	DeleteProjectSourceApp(ctx context.Context, appID string) error
 	ListSourceTriggers(ctx context.Context, sourceID string) ([]DSSourceTrigger, error)
 	CreateSourceTrigger(ctx context.Context, sourceID string, req *DSSourceTriggerRequest) (*DSSourceTrigger, error)
+	BackfillSourceIssues(ctx context.Context, sourceID string) (int, error)
 	UpdateSourceTrigger(ctx context.Context, sourceID, triggerID string, req *DSSourceTriggerRequest) (*DSSourceTrigger, error)
 	DeleteSourceTrigger(ctx context.Context, sourceID, triggerID string) error
 	ListProjectDSOAuthClients(ctx context.Context, projectID string) ([]DSOAuthClientConfig, error)

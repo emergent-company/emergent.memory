@@ -77,3 +77,19 @@ func TestBuildBoardSwimlanesPerType(t *testing.T) {
 		t.Fatalf("Task lanes = %#v", lanes[1].Lanes)
 	}
 }
+
+func TestParseRuleInvocation(t *testing.T) {
+	inv, err := parseRuleInvocation(`{"model":"provider/model","credential":{"kind":"github_app","permissions":{"contents":"write"}}}`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if inv["model"] != "provider/model" {
+		t.Fatalf("inv = %#v", inv)
+	}
+	if _, err := parseRuleInvocation(`[]`); err == nil {
+		t.Fatal("array accepted as invocation")
+	}
+	if inv, err := parseRuleInvocation("  "); err != nil || inv != nil {
+		t.Fatalf("empty = %#v, %v", inv, err)
+	}
+}

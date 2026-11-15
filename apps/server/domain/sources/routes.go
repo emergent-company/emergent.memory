@@ -65,6 +65,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	writeGroup.PUT("/:id/sync-targets", h.SaveSyncTargets)
 	writeGroup.POST("/:id/sync", h.TriggerSync)
 	writeGroup.POST("/:id/triggers", h.CreateSourceTrigger)
+	writeGroup.POST("/:id/issues/backfill", h.BackfillSourceIssues)
 	writeGroup.PUT("/:id/workflow", h.PutSourceWorkflow)
 	writeGroup.PATCH("/:id/triggers/:triggerId", h.UpdateSourceTrigger)
 	writeGroup.DELETE("/:id/triggers/:triggerId", h.DeleteSourceTrigger)
