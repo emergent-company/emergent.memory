@@ -1617,6 +1617,27 @@ Table "kb"."llm_usage_events" {
   }
 }
 
+Table "kb"."market_installs" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "blueprint_id" uuid [not null]
+  "market_issuer" text [not null]
+  "listing_slug" text [not null]
+  "semver" text [not null]
+  "digest" text [not null]
+  "install_id" text [not null, default: '']
+  "license_jti" text [not null, default: '']
+  "installed_by" uuid
+  "installed_at" timestamptz [not null, default: `now()`]
+  "state" text [not null, default: 'applied']
+
+  Indexes {
+    (project_id, market_issuer, listing_slug, digest) [unique]
+    (blueprint_id) [name: "market_installs_blueprint_idx"]
+    (project_id) [name: "market_installs_project_idx"]
+  }
+}
+
 Table "kb"."mcp_server_oauth" {
   "server_id" uuid [not null]
   "project_id" uuid [not null]
@@ -3160,6 +3181,8 @@ Ref: "kb"."llm_usage_events"."org_id" > "kb"."orgs"."id"
 Ref: "kb"."llm_usage_events"."project_id" > "kb"."projects"."id"
 Ref: "kb"."llm_usage_events"."run_id" > "kb"."agent_runs"."id"
 Ref: "kb"."llm_usage_events"."user_id" > "core"."user_profiles"."id"
+Ref: "kb"."market_installs"."blueprint_id" > "kb"."blueprints"."id"
+Ref: "kb"."market_installs"."project_id" > "kb"."projects"."id"
 Ref: "kb"."mcp_server_oauth"."server_id" > "kb"."mcp_servers"."id"
 Ref: "kb"."mcp_server_tools"."server_id" > "kb"."mcp_servers"."id"
 Ref: "kb"."mcp_servers"."source_id" > "kb"."sources"."id"

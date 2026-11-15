@@ -2,6 +2,7 @@ package blueprints
 
 import (
 	"archive/tar"
+	"bufio"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -161,9 +162,6 @@ func (s *Service) ImportFromGitHub(ctx context.Context, projectID string, req *I
 	if req == nil {
 		return nil, apperror.NewBadRequest("url is required")
 	}
-
-	// Atomic apply is project-scoped: apply materializes into a project, so a
-	// global import cannot apply (and could not roll back to a clean retry).
 	if req.Apply && projectID == "" {
 		return nil, apperror.NewBadRequest("project context required (X-Project-ID header or API token)")
 	}
@@ -174,12 +172,69 @@ func (s *Service) ImportFromGitHub(ctx context.Context, projectID string, req *I
 	}
 	sourceKind, sourceURL, sourceRef := sourceProvenance(org, repo, ref)
 
-	// fetchAndLoadManifest returns the PRISTINE manifest (model overrides are no
-	// longer baked into the stored manifest at import time; they are applied at
-	// apply time and persisted per-project).
 	desc, manifest, sourceManifest, err := s.fetchAndLoadManifest(ctx, req)
 	if err != nil {
 		return nil, err
+	}
+
+	return s.importLoaded(ctx, projectID, importPayload{
+		desc:           desc,
+		manifest:       manifest,
+		sourceManifest: sourceManifest,
+		sourceKind:     sourceKind,
+		sourceURL:      sourceURL,
+		sourceRef:      sourceRef,
+		origin:         OriginImport,
+	}, importOptions{
+		apply:              req.Apply,
+		modelOverrides:     req.ModelOverrides,
+		mergeTypeConflicts: req.MergeTypeConflicts,
+	})
+}
+
+// importPayload is the already-fetched, already-parsed input to the shared
+// create → publish → apply pipeline. GitHub and local/marketplace imports differ
+// only in how they obtain this payload.
+type importPayload struct {
+	desc           *blueprintDescriptor
+	manifest       json.RawMessage
+	sourceManifest json.RawMessage
+	sourceKind     string
+	sourceURL      string
+	sourceRef      string
+	origin         string
+}
+
+// importOptions controls the shared import pipeline.
+type importOptions struct {
+	apply              bool
+	modelOverrides     map[string]string
+	mergeTypeConflicts bool
+	skillProvenance    *SkillProvenance
+}
+
+// importLoaded creates (or adopts) a blueprint from a loaded descriptor and,
+// when requested, publishes and applies it. This is the single pipeline shared
+// by GitHub imports and local/marketplace archive imports — the two sources
+// differ only in how they produce the directory and source provenance.
+func (s *Service) importLoaded(ctx context.Context, projectID string, payload importPayload, opts importOptions) (*Blueprint, error) {
+	if opts.apply && projectID == "" {
+		return nil, apperror.NewBadRequest("project context required (X-Project-ID header or API token)")
+	}
+	if payload.desc == nil {
+		return nil, apperror.NewInternal("import payload is missing a blueprint descriptor", nil)
+	}
+	if payload.origin == "" {
+		payload.origin = OriginImport
+	}
+	if opts.apply {
+		var manifest BlueprintManifest
+		if err := json.Unmarshal(payload.manifest, &manifest); err != nil {
+			return nil, apperror.NewBadRequest("blueprint manifest is not valid JSON: " + err.Error())
+		}
+		if err := s.validateManifest(&manifest); err != nil {
+			return nil, err
+		}
 	}
 
 	var scope *string
@@ -187,16 +242,11 @@ func (s *Service) ImportFromGitHub(ctx context.Context, projectID string, req *I
 		scope = &projectID
 	}
 
-	bp, created, err := s.createOrAdopt(ctx, scope, desc, manifest, sourceManifest, sourceKind, sourceURL, sourceRef)
+	bp, created, err := s.createOrAdopt(ctx, scope, payload.desc, payload.manifest, payload.sourceManifest, payload.sourceKind, payload.sourceURL, payload.sourceRef, payload.origin)
 	if err != nil {
 		return nil, err
 	}
 
-	// Capture whether this import adopted a pre-existing DRAFT. The adoption
-	// refresh below mutates the draft and then publishes it; if the subsequent
-	// apply fails we must restore the draft status, otherwise a failed import
-	// would silently leave a previously-draft blueprint published (the
-	// pre-#1634 409 path never mutated the row).
 	adoptedDraft := !created && bp.Status == StatusDraft
 
 	if bp.Status == StatusDraft {
@@ -207,36 +257,19 @@ func (s *Service) ImportFromGitHub(ctx context.Context, projectID string, req *I
 		bp = published
 	}
 
-	if !req.Apply {
-		// No apply: persist the requested model overrides project-scoped so a
-		// later apply (via the gallery/CLI) reuses them. A global/superadmin
-		// import (projectID == "") has no project override scope — skip
-		// persistence; overrides on a global import are simply not stored.
-		if projectID != "" && len(req.ModelOverrides) > 0 {
-			if err := s.repo.UpsertModelOverrides(ctx, projectID, bp.Name, req.ModelOverrides); err != nil {
+	if !opts.apply {
+		if projectID != "" && len(opts.modelOverrides) > 0 {
+			if err := s.repo.UpsertModelOverrides(ctx, projectID, bp.Name, opts.modelOverrides); err != nil {
 				return nil, err
 			}
 		}
 		return bp, nil
 	}
 
-	// Atomic apply: on any apply failure, hard-delete the just-created row so a
-	// retry re-imports instead of colliding on the published (name, version).
-	// A partially-applied blueprint may already own pack claims, and
-	// kb.blueprint_pack_claims.blueprint_id is a non-cascading FK to
-	// kb.blueprints(id): clear the claims first, otherwise the delete fails and
-	// the retry still hits a 409. The row delete error is surfaced (logged and
-	// returned alongside the apply error) rather than swallowed, so a failed
-	// rollback is visible instead of masquerading as a clean failure.
-	// An ADOPTED row (pre-existing) is left in place on failure — a retry
-	// re-adopts and re-applies. If it was a draft that this import published,
-	// revert the published transition so the failed import is a no-op on status.
-	// Model overrides route through apply-time (not import-time manifest
-	// rewriting): Apply applies them to the in-memory manifest and persists them
-	// per-project after success.
 	applyOpts := ApplyOptions{
-		ModelOverrides:     req.ModelOverrides,
-		MergeTypeConflicts: req.MergeTypeConflicts,
+		ModelOverrides:     opts.modelOverrides,
+		MergeTypeConflicts: opts.mergeTypeConflicts,
+		SkillProvenance:    opts.skillProvenance,
 	}
 	if _, applyErr := s.Apply(ctx, bp.ID, projectID, callerUserID(ctx), applyOpts); applyErr != nil {
 		if !created {
@@ -272,7 +305,7 @@ func (s *Service) ImportFromGitHub(ctx context.Context, projectID string, req *I
 // created (true) or an existing row adopted (false). sourceManifest is the raw
 // upstream manifest (pre model-override), used to baseline the update check.
 // The token is never involved here and is never logged.
-func (s *Service) createOrAdopt(ctx context.Context, scope *string, desc *blueprintDescriptor, manifest, sourceManifest json.RawMessage, sourceKind, sourceURL, sourceRef string) (*Blueprint, bool, error) {
+func (s *Service) createOrAdopt(ctx context.Context, scope *string, desc *blueprintDescriptor, manifest, sourceManifest json.RawMessage, sourceKind, sourceURL, sourceRef, origin string) (*Blueprint, bool, error) {
 	bp, err := s.CreateBlueprint(ctx, &CreateBlueprintRequest{
 		Name:        desc.Name,
 		Version:     desc.Version,
@@ -286,7 +319,7 @@ func (s *Service) createOrAdopt(ctx context.Context, scope *string, desc *bluepr
 		// Baseline the update check against the raw upstream content, not the
 		// override-applied stored manifest.
 		SourceManifestChecksum: canonicalManifestHash(sourceManifest),
-		Origin:                 OriginImport,
+		Origin:                 origin,
 	})
 	if err == nil {
 		return bp, true, nil
@@ -603,18 +636,36 @@ func (f *GitHubFetcher) Fetch(ctx context.Context, org, repo, ref, token string)
 	return root, cleanup, nil
 }
 
-// extractTarGzSafe extracts a gzipped tar stream under dest, rejecting path
-// traversal, absolute paths, and symlinks/hardlinks, and enforcing entry-count
-// and total-byte caps. Regular files and directories only.
+// extractTarGzSafe extracts an archive stream under dest, rejecting path
+// traversal, absolute paths, links and non-regular entries, and enforcing
+// entry-count and total-byte caps. It accepts gzip-compressed and plain tar
+// streams (the GitHub tarball is gzipped; a marketplace canonical bundle may be
+// either).
 func extractTarGzSafe(r io.Reader, dest string, maxFiles int, maxBytes int64) error {
-	gz, err := gzip.NewReader(r)
-	if err != nil {
-		return apperror.NewBadRequest("invalid repository archive: not a gzip stream")
-	}
-	defer gz.Close()
+	return extractArchiveSafe(r, dest, maxFiles, maxBytes)
+}
 
-	tr := tar.NewReader(gz)
-	files := 0
+// ExtractCanonicalTar extracts a marketplace canonical tar (gzipped or plain)
+// with the same traversal/link/special-entry and size limits as a GitHub import.
+// The caller owns dest and is responsible for removing it.
+func ExtractCanonicalTar(r io.Reader, dest string) error {
+	return extractArchiveSafe(r, dest, maxArchiveFiles, maxExtractedBytes)
+}
+
+func extractArchiveSafe(r io.Reader, dest string, maxFiles int, maxBytes int64) error {
+	br := bufio.NewReader(r)
+	var stream io.Reader = br
+	if magic, err := br.Peek(2); err == nil && magic[0] == 0x1f && magic[1] == 0x8b {
+		gz, err := gzip.NewReader(br)
+		if err != nil {
+			return apperror.NewBadRequest("invalid archive: not a gzip stream")
+		}
+		defer gz.Close()
+		stream = gz
+	}
+
+	tr := tar.NewReader(stream)
+	entries := 0
 	var total int64
 
 	for {
@@ -623,7 +674,7 @@ func extractTarGzSafe(r io.Reader, dest string, maxFiles int, maxBytes int64) er
 			break
 		}
 		if err != nil {
-			return apperror.NewBadRequest("invalid repository archive: corrupt tar")
+			return apperror.NewBadRequest("invalid archive: corrupt tar")
 		}
 
 		name := strings.TrimPrefix(filepath.Clean(hdr.Name), string(os.PathSeparator))
@@ -633,11 +684,16 @@ func extractTarGzSafe(r io.Reader, dest string, maxFiles int, maxBytes int64) er
 		}
 		// Reject absolute paths and any traversal outside the extraction root.
 		if filepath.IsAbs(hdr.Name) || !filepath.IsLocal(name) {
-			return apperror.NewBadRequest("unsafe repository archive: path traversal")
+			return apperror.NewBadRequest("unsafe archive: path traversal")
 		}
 		target := filepath.Join(dest, name)
 		if target != dest && !strings.HasPrefix(target, dest+string(os.PathSeparator)) {
-			return apperror.NewBadRequest("unsafe repository archive: path traversal")
+			return apperror.NewBadRequest("unsafe archive: path traversal")
+		}
+
+		entries++
+		if entries > maxFiles {
+			return archiveTooLarge()
 		}
 
 		switch hdr.Typeflag {
@@ -646,9 +702,8 @@ func extractTarGzSafe(r io.Reader, dest string, maxFiles int, maxBytes int64) er
 				return apperror.NewInternal("failed to create archive directory", err)
 			}
 		case tar.TypeReg, tar.TypeRegA:
-			files++
-			if files > maxFiles {
-				return archiveTooLarge()
+			if hdr.Size < 0 {
+				return apperror.NewBadRequest("unsafe archive: negative entry size")
 			}
 			total += hdr.Size
 			if total > maxBytes {
@@ -671,9 +726,12 @@ func extractTarGzSafe(r io.Reader, dest string, maxFiles int, maxBytes int64) er
 		case tar.TypeSymlink, tar.TypeLink:
 			// No links at all: an escaping symlink/hardlink is the classic
 			// archive-escape vector.
-			return apperror.NewBadRequest("unsafe repository archive: links are not allowed")
+			return apperror.NewBadRequest("unsafe archive: links are not allowed")
 		default:
-			// Char/block/fifo and other special entries are ignored.
+			// Char/block devices, fifos and every other non-regular entry are
+			// refused rather than silently skipped: a canonical bundle is
+			// files and directories only.
+			return apperror.NewBadRequest("unsafe archive: non-regular entries are not allowed")
 		}
 	}
 	return nil

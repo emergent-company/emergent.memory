@@ -1035,6 +1035,14 @@ routes:
       path: /api/invites/pending
       level: auth
       note: RequireAuth
+    - method: POST
+      path: /api/market/installs/apply
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: POST
+      path: /api/market/installs/resolve
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireProjectID
     - method: DELETE
       path: /api/mcp
       level: project-member

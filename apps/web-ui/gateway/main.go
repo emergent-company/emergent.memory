@@ -130,9 +130,16 @@ func main() {
 	// Unscoped OAuth landing: re-scope /data-sources requests (exempt from the
 	// hard cut in strictScopedPath) onto the caller's active project.
 	e.Use(s.dataSourcesScopeRedirect)
+	// Marketplace install links from the external market arrive unscoped;
+	// re-scope them onto the caller's active project (or the project picker).
+	e.Use(s.marketplaceScopeRedirect)
 	// Scope rewrite: strip the /o/... prefix before routing so the flat route
 	// table below is reused unchanged (Pre middlewares run before routing).
 	e.Pre(s.scopeRewrite)
+
+	// Public discovery document (see publicAuthPath). The marketplace fetches it
+	// cross-origin from the browser to check install capability and trust.
+	e.GET("/.well-known/memory-instance", s.memoryInstanceWellKnown)
 
 	// Internal worker endpoint — exempt from session auth (see publicAuthPath);
 	// gated by a per-worker credential in the X-Worker-Key header instead.
@@ -541,6 +548,10 @@ func main() {
 	// Blueprint derivation from the project's effective types (design D5).
 	e.POST("/schema/blueprints/derive", s.deriveSchemaBlueprint, s.requireSchemaWrite)
 	e.POST("/schema/blueprints/:id/versions/derive", s.deriveSchemaBlueprintVersion, s.requireSchemaWrite)
+	// Marketplace install review (P5): an authenticated, project-scoped flow.
+	// GET shows a side-effect-free review; POST applies after confirmation.
+	e.GET("/marketplace/install", s.uiMarketInstall)
+	e.POST("/marketplace/install", s.uiMarketInstallConfirm)
 	e.GET("/blueprints", s.uiBlueprints)
 	e.GET("/blueprints/migrations", s.uiMigrations)
 	e.GET("/blueprints/:id", s.uiBlueprint)
