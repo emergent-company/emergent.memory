@@ -626,33 +626,42 @@ templ chatDeleteConfirmDescription() {
 }
 
 // chatRailList renders the session rail's list portion: the two empty states
-// plus (when there are rows) a ui.List of sessionRailItem + scheduledRailItem.
-// Rendered by both the full chat page and the /partial/chat-rail refresh.
+// plus (when there are rows) a ui.List of every row, ordered by last activity
+// most recent first. Rows of all four kinds (conversations, scheduled runs,
+// board/extraction runs, shared sessions) share one order — see
+// orderRailEntries — because the rail is a single session list, not one list per
+// producer. Rendered by both the full chat page and the /partial/chat-rail
+// refresh.
 templ chatRailList(convs *ConversationList, appearances map[string]agentAppearance, schedRuns []scheduledRunRow, shared []sharedSessionRow, workRuns []workRunRow, convID string) {
 	{{ hasRows := (convs != nil && len(convs.Conversations) > 0) || len(schedRuns) > 0 || len(shared) > 0 || len(workRuns) > 0 }}
 	@chatRailEmpty(hasRows)
 	if hasRows {
-		@ui.List(ui.ListProps{}) {
+		{{
+			var convList []Conversation
 			if convs != nil {
-				for _, grp := range groupConversations(convs.Conversations, convID) {
-					if len(grp.Descendants) > 0 {
-						@sessionRailGroupParent(grp.Root, appearances[grp.Root.AgentDefinitionID], grp.Root.ID == convID, len(grp.Descendants), grp.Expanded)
-					} else {
-						@sessionRailItem(grp.Root, appearances[grp.Root.AgentDefinitionID], grp.Root.ID == convID)
-					}
-					for _, d := range grp.Descendants {
-						@sessionRailSubchat(d.Conversation, appearances[d.AgentDefinitionID], d.ID == convID, grp.Root.ID, d.Depth, !grp.Expanded)
-					}
+				convList = convs.Conversations
+			}
+			entries := orderRailEntries(convList, convID, schedRuns, workRuns, shared)
+		}}
+		@ui.List(ui.ListProps{}) {
+			for _, e := range entries {
+				switch e.kind {
+					case railEntryConversation:
+						if len(e.group.Descendants) > 0 {
+							@sessionRailGroupParent(e.group.Root, appearances[e.group.Root.AgentDefinitionID], e.group.Root.ID == convID, len(e.group.Descendants), e.group.Expanded)
+						} else {
+							@sessionRailItem(e.group.Root, appearances[e.group.Root.AgentDefinitionID], e.group.Root.ID == convID)
+						}
+						for _, d := range e.group.Descendants {
+							@sessionRailSubchat(d.Conversation, appearances[d.AgentDefinitionID], d.ID == convID, e.group.Root.ID, d.Depth, !e.group.Expanded)
+						}
+					case railEntryScheduledRun:
+						@scheduledRailItem(e.sched)
+					case railEntryWorkRun:
+						@workRailItem(e.work)
+					case railEntrySharedSession:
+						@sharedRailItem(e.shared)
 				}
-			}
-			for _, r := range schedRuns {
-				@scheduledRailItem(r)
-			}
-			for _, b := range workRuns {
-				@workRailItem(b)
-			}
-			for _, sh := range shared {
-				@sharedRailItem(sh)
 			}
 		}
 	}
@@ -939,7 +948,7 @@ templ workRailItem(r workRunRow) {
 			<div class="min-w-0 grow">
 				<p class="truncate text-sm font-medium">{ title }</p>
 				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
-					{ runRailSubtitle(r.Status, r.StartedAt) }
+					{ runRailSubtitle(r.Status, runActivityAt(r.StartedAt, r.CompletedAt)) }
 				}
 			</div>
 			@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
@@ -956,7 +965,7 @@ templ workRailItem(r workRunRow) {
 		}}
 		@ui.ListRow(ui.ListRowProps{
 			Title:    title,
-			Subtitle: runRailSubtitle(r.Status, r.StartedAt),
+			Subtitle: runRailSubtitle(r.Status, runActivityAt(r.StartedAt, r.CompletedAt)),
 			Leading:  agentInlineGlyph(r.Icon, r.Color),
 			Trailing: []templ.Component{ui.IconSpan("lucide--chevron-right", "size-4 text-muted-subtle")},
 			Attrs:    attrs,
@@ -965,21 +974,23 @@ templ workRailItem(r workRunRow) {
 }
 
 // runRailSubtitle builds the meta line shared by the scheduled, board and
-// extraction run rows: the run status (when set) and the relative start time.
-// Every rail run row routes through here so the rows cannot drift apart. The
-// status is humanised (via boardStatusLabel, the same humaniser the board uses
-// for work statuses) because this is prose in a human-facing list, not a
-// machine key.
-func runRailSubtitle(status, startedAt string) string {
+// extraction run rows: the run status (when set) and the relative time of its
+// last activity (completion once finished, start while running) — the same
+// instant orderRailEntries sorts the row by, so the list never shows a row above
+// one carrying a newer time. Every rail run row routes through here so the rows
+// cannot drift apart. The status is humanised (via boardStatusLabel, the same
+// humaniser the board uses for work statuses) because this is prose in a
+// human-facing list, not a machine key.
+func runRailSubtitle(status, activityAt string) string {
 	if status == "" {
-		return relTime(startedAt)
+		return relTime(activityAt)
 	}
-	return boardStatusLabel(status) + " · " + relTime(startedAt)
+	return boardStatusLabel(status) + " · " + relTime(activityAt)
 }
 
 // railRunSubtitle builds the meta line for a scheduled run rail item.
 func railRunSubtitle(r scheduledRunRow) string {
-	return runRailSubtitle(r.Status, r.StartedAt)
+	return runRailSubtitle(r.Status, runActivityAt(r.StartedAt, r.CompletedAt))
 }
 
 // sharedRailItem is one owner-shared session in the session rail. It opens a
