@@ -35,7 +35,7 @@ tasks:
     desc: Run the swift/EmergentKit unit tests (macOS host; builds the XCFramework first)
     cmds:
       - task: swift:xcframework
-      - cd {{.ROOT_DIR}}/../../swift/EmergentKit && swift test --filter EmergentKitTests
+      - cd ../../swift/EmergentKit && swift test --filter EmergentKitTests
 
   local:start:
     desc: Start server for e2e tests (port 3002, stops Docker container first)
