@@ -29,16 +29,27 @@ type AuthorizationBatch struct {
 	ExpiresIn     int64      `json:"expires_in,omitempty"`
 	KeyID         string     `json:"key_id,omitempty"`
 
-	mu   sync.Mutex
-	next int
+	mu    sync.Mutex
+	next  int
+	clock func() time.Time
 }
 
 // Take consumes and returns the next unused request id. It returns false when
-// the batch is exhausted.
+// the batch is exhausted, and also once its window has closed: an id handed out
+// after expiry can be served but never attributed, because the market rejects a
+// report naming an expired batch. The client therefore stops handing them out
+// at the same instant the report path stops accepting them.
 func (b *AuthorizationBatch) Take() (string, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.next >= len(b.RequestIDs) {
+		return "", false
+	}
+	now := b.clock
+	if now == nil {
+		now = time.Now
+	}
+	if !now().Before(b.ExpiresAt.Time) {
 		return "", false
 	}
 	id := b.RequestIDs[b.next]
@@ -195,10 +206,21 @@ func (c *Client) Authorize(ctx context.Context, issuer, entitlementID string, ca
 		return nil, err
 	}
 	now := c.now()
-	if err := normalizeBatch(batch, entitlementID, calls, now); err != nil {
+	// The assertion is the authority the seller enforces, so verify it here too
+	// and check it covers what this batch hands out. An instance that skipped
+	// this would serve calls, and then report usage, against an assertion the
+	// seller refuses — attributing a served call to nobody.
+	claims, err := c.verifyAuthorizedBatch(ctx, base, batch, entitlementID)
+	if err != nil {
 		return nil, err
 	}
-	c.storeBatch(base, entitlementID, batch)
+	if err := normalizeBatch(batch, entitlementID, calls, now, claims); err != nil {
+		return nil, err
+	}
+	batch.clock = c.now
+	if err := c.storeBatch(base, entitlementID, batch); err != nil {
+		return nil, err
+	}
 	// A successful authorize is the best moment to drain deferred usage: the
 	// market is demonstrably reachable again.
 	if err := c.FlushUsage(ctx, base); err != nil && isRetryableMarketError(err) {
@@ -214,32 +236,105 @@ func (c *Client) batchLimit() int {
 	return c.inProduct.batchLimit
 }
 
+// authorizationBatchWire is the decoded shape of one authorize response. It is
+// a separate struct from AuthorizationBatch because the response is decoded into
+// it (a mutex must not be copied) and because the market names the assertion
+// `auth` in the design of record (§8.1) while older/other spellings use
+// `assertion`; both are accepted, `auth` first.
+type authorizationBatchWire struct {
+	EntitlementID string     `json:"entitlement_id,omitempty"`
+	Assertion     string     `json:"assertion,omitempty"`
+	Auth          string     `json:"auth,omitempty"`
+	RequestIDs    []string   `json:"request_ids"`
+	IssuedAt      MarketTime `json:"issued_at,omitempty"`
+	ExpiresAt     MarketTime `json:"expires_at,omitempty"`
+	ExpiresIn     int64      `json:"expires_in,omitempty"`
+	KeyID         string     `json:"key_id,omitempty"`
+}
+
+func (w authorizationBatchWire) batch() *AuthorizationBatch {
+	assertion := strings.TrimSpace(w.Auth)
+	if assertion == "" {
+		assertion = w.Assertion
+	}
+	return &AuthorizationBatch{
+		EntitlementID: w.EntitlementID,
+		Assertion:     assertion,
+		RequestIDs:    w.RequestIDs,
+		IssuedAt:      w.IssuedAt,
+		ExpiresAt:     w.ExpiresAt,
+		ExpiresIn:     w.ExpiresIn,
+		KeyID:         w.KeyID,
+	}
+}
+
 func decodeAuthorizationBatch(body []byte) (*AuthorizationBatch, error) {
-	var direct AuthorizationBatch
-	if err := json.Unmarshal(body, &direct); err == nil && (direct.Assertion != "" || len(direct.RequestIDs) > 0) {
-		return &direct, nil
-	}
-	var envelope struct {
-		Batch         *AuthorizationBatch `json:"batch"`
-		Authorization *AuthorizationBatch `json:"authorization"`
-		Authorize     *AuthorizationBatch `json:"authorize"`
-	}
-	if err := json.Unmarshal(body, &envelope); err == nil {
-		for _, candidate := range []*AuthorizationBatch{envelope.Batch, envelope.Authorization, envelope.Authorize} {
-			if candidate != nil {
-				return candidate, nil
-			}
-		}
-	}
+	var direct authorizationBatchWire
 	if err := json.Unmarshal(body, &direct); err != nil {
 		return nil, ErrMarketUnreachable("market returned an invalid authorization batch")
 	}
-	return nil, ErrMarketUnreachable("market returned an authorization batch with no assertion")
+	batch := direct.batch()
+	if batch.Assertion == "" || len(batch.RequestIDs) == 0 {
+		// Some markets wrap the batch in a named envelope. Try those before
+		// deciding the response is unusable.
+		var envelope struct {
+			Batch         *authorizationBatchWire `json:"batch"`
+			Authorization *authorizationBatchWire `json:"authorization"`
+			Authorize     *authorizationBatchWire `json:"authorize"`
+		}
+		if err := json.Unmarshal(body, &envelope); err == nil {
+			for _, candidate := range []*authorizationBatchWire{envelope.Batch, envelope.Authorization, envelope.Authorize} {
+				if candidate == nil {
+					continue
+				}
+				if wrapped := candidate.batch(); wrapped.Assertion != "" {
+					batch = wrapped
+					break
+				}
+			}
+		}
+	}
+	if strings.TrimSpace(batch.Assertion) == "" {
+		return nil, ErrMarketUnreachable("market returned an authorization batch with no assertion")
+	}
+	return batch, nil
+}
+
+// verifyAuthorizedBatch verifies the batch assertion offline and checks that it
+// covers what the batch hands out: a call is only attributable if the assertion
+// the seller verifies authorizes that request_id and that entitlement.
+//
+// No audience is passed: the assertion's audience is the seller's, which the
+// instance cannot know, so requiring one here would refuse every valid batch.
+// The claim that matters locally is the id set and the entitlement.
+func (c *Client) verifyAuthorizedBatch(ctx context.Context, base string, batch *AuthorizationBatch, entitlementID string) (*AssertionClaims, error) {
+	claims, err := c.VerifyAssertion(ctx, base, batch.Assertion)
+	if err != nil {
+		return nil, err
+	}
+	if claims.EntitlementID != "" && claims.EntitlementID != entitlementID {
+		return nil, ErrAssertionInvalid(fmt.Sprintf(
+			"assertion is for entitlement %q but the batch authorizes %q", claims.EntitlementID, entitlementID))
+	}
+	if len(claims.RequestIDs) == 0 {
+		return claims, nil
+	}
+	authorized := make(map[string]struct{}, len(claims.RequestIDs))
+	for _, id := range claims.RequestIDs {
+		authorized[strings.TrimSpace(id)] = struct{}{}
+	}
+	for _, id := range batch.RequestIDs {
+		if _, ok := authorized[strings.TrimSpace(id)]; !ok {
+			return nil, ErrAssertionInvalid(fmt.Sprintf(
+				"assertion does not authorize request id %q", id))
+		}
+	}
+	return claims, nil
 }
 
 // normalizeBatch enforces the 20-call / 60-second contract and fills in the
 // timestamps the market left implicit.
-func normalizeBatch(batch *AuthorizationBatch, entitlementID string, requested int, now time.Time) error {
+func normalizeBatch(batch *AuthorizationBatch, entitlementID string, requested int, now time.Time, claims *AssertionClaims) error {
 	if strings.TrimSpace(batch.Assertion) == "" {
 		return ErrAssertionInvalid("market returned an empty assertion")
 	}
@@ -275,6 +370,14 @@ func normalizeBatch(batch *AuthorizationBatch, entitlementID string, requested i
 	if expiresAt.IsZero() {
 		expiresAt = now.Add(MaxBatchTTL)
 	}
+	// The assertion is what the seller checks on every call, so a batch must not
+	// outlive it: an id handed out after the assertion expired buys a call the
+	// seller will refuse to attribute.
+	if claims != nil && claims.ExpiresAt > 0 {
+		if assertionExpiry := time.Unix(claims.ExpiresAt, 0); expiresAt.After(assertionExpiry) {
+			expiresAt = assertionExpiry
+		}
+	}
 	// Local hard ceiling: never trust a batch for more than 60 seconds from now.
 	if maxExpiry := now.Add(MaxBatchTTL); expiresAt.After(maxExpiry) {
 		expiresAt = maxExpiry
@@ -290,9 +393,28 @@ func normalizeBatch(batch *AuthorizationBatch, entitlementID string, requested i
 	return nil
 }
 
-func (c *Client) storeBatch(issuer, entitlementID string, batch *AuthorizationBatch) {
+// storeBatch caches the batch and records the ids it pre-issued. A market that
+// re-issues an id this instance already reported, or already has queued for
+// replay, cannot be attributed: the second call would be reported against an id
+// the market has seen, so the report is refused and the served call is lost. The
+// batch is refused instead, before any id is handed out, and the previous cached
+// batch (if any) stays in place for the outage policy.
+func (c *Client) storeBatch(issuer, entitlementID string, batch *AuthorizationBatch) error {
 	c.inProduct.mu.Lock()
 	defer c.inProduct.mu.Unlock()
+	for _, requestID := range batch.RequestIDs {
+		key := requestKey(issuer, requestID)
+		if _, reported := c.inProduct.reported[key]; reported {
+			return ErrAssertionInvalid(fmt.Sprintf(
+				"market re-issued request id %q, which this instance already reported; attribution would be lost",
+				requestID))
+		}
+		if _, queued := c.inProduct.pendingIDs[key]; queued {
+			return ErrAssertionInvalid(fmt.Sprintf(
+				"market re-issued request id %q, which is still queued for replay; attribution would be lost",
+				requestID))
+		}
+	}
 	c.inProduct.batches[batchKey(issuer, entitlementID)] = &cachedBatch{
 		batch:     batch,
 		expiresAt: batch.ExpiresAt.Time,
@@ -303,6 +425,7 @@ func (c *Client) storeBatch(issuer, entitlementID string, batch *AuthorizationBa
 			expiresAt:     batch.ExpiresAt.Time,
 		}
 	}
+	return nil
 }
 
 func (c *Client) dropBatch(issuer, entitlementID string) {

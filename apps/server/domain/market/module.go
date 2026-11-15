@@ -1,6 +1,8 @@
 package market
 
 import (
+	"log/slog"
+
 	"go.uber.org/fx"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
@@ -18,11 +20,14 @@ var Module = fx.Module("market",
 )
 
 // NewClientFromConfig builds the client from the operator-configured issuer
-// allowlist.
-func NewClientFromConfig(cfg *config.Config) (*Client, error) {
+// allowlist. It takes the process logger so the in-product outage and deferral
+// diagnostics reach the instance's log instead of a discard handler: "usage
+// queued, will replay" is only useful if someone can see it.
+func NewClientFromConfig(cfg *config.Config, log *slog.Logger) (*Client, error) {
 	return NewClient(ClientConfig{
 		Issuers:     cfg.Market.TrustedIssuers,
 		OriginID:    cfg.Market.OriginID,
 		InstanceURL: cfg.AppURL,
+		Logger:      log,
 	})
 }

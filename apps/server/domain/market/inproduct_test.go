@@ -18,6 +18,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/emergent-company/emergent.memory/internal/config"
 )
 
 // fakeInProductMarket is a controllable market for the in-product client tests.
@@ -54,6 +56,12 @@ type fakeInProductMarket struct {
 	forgetIssued     bool
 	trustToken       string
 	assertionToken   string
+	// authField makes the authorize response name the assertion `auth`, the
+	// spelling in the marketplace design (§8.1), instead of `assertion`.
+	authField bool
+	// reissueIDs, when set, is the exact id list handed out for every batch, so
+	// a test can make the market re-issue ids it already issued.
+	reissueIDs []string
 }
 
 func newFakeInProductMarket(t *testing.T) *fakeInProductMarket {
@@ -183,21 +191,36 @@ func newFakeInProductMarket(t *testing.T) *fakeInProductMarket {
 		}
 		ids := make([]string, 0, calls)
 		m.mu.Lock()
-		for i := 1; i <= calls; i++ {
-			id := fmt.Sprintf("req-%d", i)
-			ids = append(ids, id)
+		reissue := append([]string(nil), m.reissueIDs...)
+		authField := m.authField
+		if len(reissue) > 0 {
+			ids = append(ids, reissue...)
+		} else {
+			for i := 1; i <= calls; i++ {
+				ids = append(ids, fmt.Sprintf("req-%d", i))
+			}
+		}
+		for _, id := range ids {
 			m.issued[id] = "ent-1"
 		}
 		m.mu.Unlock()
 		if expires.IsZero() {
 			expires = time.Now().Add(MaxBatchTTL)
 		}
-		writeJSON(w, map[string]any{
+		response := map[string]any{
 			"entitlement_id": "ent-1",
-			"assertion":      assertion,
 			"request_ids":    ids,
 			"expires_at":     expires.UTC().Format(time.RFC3339Nano),
-		})
+			"remaining_usd":  12.40,
+		}
+		// The marketplace design (§8.1) names the assertion `auth`; the client
+		// must accept that spelling as well as `assertion`.
+		if authField {
+			response["auth"] = assertion
+		} else {
+			response["assertion"] = assertion
+		}
+		writeJSON(w, response)
 	})
 	mux.HandleFunc("/v1/listings/", func(w http.ResponseWriter, r *http.Request) {
 		if m.offline.Load() {
@@ -751,5 +774,129 @@ func TestBrowseVerifiedDropsAnUntrustedListing(t *testing.T) {
 	}
 	if !strings.Contains(logBuf.String(), "dropping unverified market listing") {
 		t.Fatalf("log does not explain the drop:\n%s", logBuf.String())
+	}
+}
+
+// TestAuthorizeAcceptsTheAuthFieldFromTheDesignOfRecord pins the authorize
+// response shape in docs/marketplace-v1.md §8.1 — `{"auth": "<assertion>",
+// "request_ids": [...]}` — which previously decoded as an empty assertion and
+// failed every batch a market built to that contract issued.
+func TestAuthorizeAcceptsTheAuthFieldFromTheDesignOfRecord(t *testing.T) {
+	m := newFakeInProductMarket(t)
+	client := newInProductClient(t, m, newFakeClock(time.Now()), nil)
+	m.mu.Lock()
+	m.authField = true
+	m.mu.Unlock()
+
+	batch, err := client.Authorize(context.Background(), m.url, "ent-1", 2)
+	if err != nil {
+		t.Fatalf("authorize with an `auth` response: %v", err)
+	}
+	if batch.Assertion == "" {
+		t.Fatal("the `auth` field was not decoded as the assertion")
+	}
+	if len(batch.RequestIDs) != 2 {
+		t.Fatalf("want 2 request ids, got %d", len(batch.RequestIDs))
+	}
+}
+
+// TestAuthorizeRefusesAnAssertionThatDoesNotCoverTheRequestIDs: the assertion is
+// what the seller verifies, so the ids this instance hands out must be the ids it
+// authorizes. Otherwise a served call is reported against an id the seller never
+// agreed to and the attribution is refused after the work was done.
+func TestAuthorizeRefusesAnAssertionThatDoesNotCoverTheRequestIDs(t *testing.T) {
+	m := newFakeInProductMarket(t)
+	client := newInProductClient(t, m, newFakeClock(time.Now()), nil)
+	token := m.sign(t, m.key, map[string]any{
+		"iss":            m.url,
+		"aud":            "https://seller.example/mcp",
+		"exp":            time.Now().Add(time.Hour).Unix(),
+		"iat":            time.Now().Add(-time.Minute).Unix(),
+		"entitlement_id": "ent-1",
+		"request_ids":    []string{"not-a-pre-issued-id"},
+	})
+	m.mu.Lock()
+	m.assertionToken = token
+	m.mu.Unlock()
+
+	_, err := client.Authorize(context.Background(), m.url, "ent-1", 2)
+	if got := ErrorCode(err); got != CodeAssertionInvalid {
+		t.Fatalf("want %s, got %q (%v)", CodeAssertionInvalid, got, err)
+	}
+	if !strings.Contains(err.Error(), "does not authorize request id") {
+		t.Fatalf("error does not name the uncovered id: %v", err)
+	}
+}
+
+// TestAuthorizeRefusesAReissuedRequestID reproduces the silent-attribution loss:
+// the fake market hands out req-1..N for every batch, so after the first batch's
+// req-1 is reported a second authorize re-issues it. Reporting it again is
+// refused by the market, and the served call is lost with only the client
+// knowing — so the batch must be refused before any id is handed out.
+func TestAuthorizeRefusesAReissuedRequestID(t *testing.T) {
+	m := newFakeInProductMarket(t)
+	client := newInProductClient(t, m, newFakeClock(time.Now()), nil)
+	ctx := context.Background()
+
+	first, err := client.Authorize(ctx, m.url, "ent-1", 2)
+	if err != nil {
+		t.Fatalf("first authorize: %v", err)
+	}
+	id, ok := first.Take()
+	if !ok {
+		t.Fatal("first batch handed out no id")
+	}
+	if err := client.ReportUsage(ctx, m.url, UsageReport{
+		RequestID:     id,
+		EntitlementID: "ent-1",
+		Outcome:       UsageOutcomeSuccess,
+	}); err != nil {
+		t.Fatalf("report usage: %v", err)
+	}
+
+	_, err = client.Authorize(ctx, m.url, "ent-1", 2)
+	if got := ErrorCode(err); got != CodeAssertionInvalid {
+		t.Fatalf("want %s for a re-issued id, got %q (%v)", CodeAssertionInvalid, got, err)
+	}
+	if !strings.Contains(err.Error(), "re-issued request id") {
+		t.Fatalf("error does not explain the re-issue: %v", err)
+	}
+}
+
+// TestTakeRefusesAnExpiredBatch: the seller refuses attribution once the
+// assertion window closes, so the client must stop handing ids out at the same
+// instant instead of buying served calls nobody can report.
+func TestTakeRefusesAnExpiredBatch(t *testing.T) {
+	m := newFakeInProductMarket(t)
+	clock := newFakeClock(time.Now())
+	client := newInProductClient(t, m, clock, nil)
+
+	batch, err := client.Authorize(context.Background(), m.url, "ent-1", 3)
+	if err != nil {
+		t.Fatalf("authorize: %v", err)
+	}
+	if id, ok := batch.Take(); !ok || id == "" {
+		t.Fatal("a live batch handed out no id")
+	}
+	clock.Advance(MaxBatchTTL + time.Second)
+	if id, ok := batch.Take(); ok {
+		t.Fatalf("an expired batch handed out %q", id)
+	}
+}
+
+// TestClientFromConfigReceivesTheProcessLogger: the outage and deferral
+// diagnostics are only useful if the module wires the instance logger into the
+// client — the zero value discards them, so a reporter that forgets is silent.
+func TestClientFromConfigReceivesTheProcessLogger(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Market.TrustedIssuers = []string{"https://market.example"}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	client, err := NewClientFromConfig(cfg, log)
+	if err != nil {
+		t.Fatalf("new client from config: %v", err)
+	}
+	if client.log != log {
+		t.Fatal("NewClientFromConfig dropped the process logger, so outage diagnostics go nowhere")
 	}
 }
