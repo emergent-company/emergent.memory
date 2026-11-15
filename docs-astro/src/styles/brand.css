@@ -628,8 +628,8 @@ h1#_top {
 .sl-markdown-content .screenshot-open {
   display: block;
   width: 100%;
-  /* Narrow captures stop at their own size (see Screenshot.astro's cap) and sit
-     centred rather than stretched. */
+  /* Narrow captures stop at their own pixel width (see Screenshot.astro) and
+     sit centred rather than stretched. */
   margin-inline: auto;
   padding: 0;
   border: 0;
@@ -670,8 +670,17 @@ h1#_top {
 }
 
 .screenshot-dialog {
+  /* Tailwind's preflight sets `margin: 0` on every element, which removes the
+     `margin: auto` a modal <dialog> is centred with — the panel then renders at
+     the top-left corner (fixed to `inset: 0`). Restating it here is the fix, not
+     a preference: without it the zoom opens off-centre. */
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: fit-content;
+  height: fit-content;
   box-sizing: border-box;
-  max-width: 96vw;
+  max-width: min(96vw, 1600px);
   max-height: 94vh;
   padding: 0;
   border: 1px solid var(--mem-line-heavy);
