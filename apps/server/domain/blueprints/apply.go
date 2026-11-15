@@ -1274,6 +1274,14 @@ func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID
 	if err != nil {
 		return nil, err
 	}
+	// Ownership gate (mirrors the existing-row branch above): when the create
+	// lost a bind race, the winner is a row another binder already linked to
+	// this definition. Never repurpose a row another blueprint owns — writing
+	// this manifest's config over it would rebind its trigger and later make it
+	// deletable by this blueprint's Unapply.
+	if bid, _ := winner.Config["sourceBlueprintId"].(string); bid != blueprintID {
+		return nil, nil
+	}
 	winner.TriggerType = triggerType
 	winner.ReactionConfig = reactionConfig
 	winner.CronSchedule = cron

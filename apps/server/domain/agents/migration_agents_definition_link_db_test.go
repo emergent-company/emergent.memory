@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/uptrace/bun"
 	"go.uber.org/zap"
 
 	"github.com/emergent-company/emergent.memory/internal/migrate"
@@ -124,4 +125,132 @@ func TestAgentsDefinitionLinkMigrationRewritesLosers(t *testing.T) {
 		dup, projectID, dupDefID, dupDefID)
 	require.Error(t, err, "a duplicate (project_id, agent_definition_id) row was accepted after re-apply")
 	require.True(t, pgutils.IsUniqueViolation(err), "expected a unique violation, got: %v", err)
+}
+
+// insertRuns inserts n completed kb.agent_runs rows for the given runtime agent.
+func insertRuns(t *testing.T, db *bun.DB, ctx context.Context, agentID string, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		_, err := db.ExecContext(ctx,
+			`INSERT INTO kb.agent_runs (id, agent_id, status, started_at) VALUES (?, ?, 'completed', now())`,
+			uuid.NewString(), agentID)
+		require.NoError(t, err)
+	}
+}
+
+// TestAgentsDefinitionLinkMigrationKeeperRuleAndLoserDisable pins the round-5
+// BLOCKER fixes against a fixture that reproduces the production shape exactly:
+//
+//   - a manual "alfred" row created earlier with one run, and a scheduled,
+//     enabled "Test" row created later with many runs, both linking one
+//     definition. The keeper rule must keep the actively scheduled, high-run
+//     row and unlink the manual row — which, being manual, stays enabled with
+//     its (empty) schedule untouched.
+//   - a second group where the loser is itself a scheduled row: it must end up
+//     disabled with its cron reset to the inert daily default.
+func TestAgentsDefinitionLinkMigrationKeeperRuleAndLoserDisable(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	ctx := context.Background()
+	tdb := testdb.SetupTestDBOrFail(t, ctx, "agents_definition_link_keeper")
+	t.Cleanup(tdb.Close)
+	db := tdb.DB
+
+	mig := migrate.NewMigrator(db, zap.NewNop())
+	require.NoError(t, mig.DownTo(ctx, 301))
+
+	_, projectID := insertOrgAndProject(t, db, ctx)
+
+	// Fixture A — the production shape.
+	prodDefID := insertAgentDefinition(t, db, ctx, projectID, "ProdDef", "project")
+	alfredID := uuid.NewString()
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO kb.agents (id, project_id, name, strategy_type, cron_schedule, enabled, trigger_type, agent_definition_id, created_at)
+		 VALUES (?, ?, 'alfred', 'agent-def:'||?, '', true, 'manual', ?, '2020-01-01T00:00:00Z')`,
+		alfredID, projectID, prodDefID, prodDefID)
+	require.NoError(t, err)
+	testID := uuid.NewString()
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.agents (id, project_id, name, strategy_type, cron_schedule, enabled, trigger_type, agent_definition_id, created_at)
+		 VALUES (?, ?, 'Test', 'agent-def:'||?, '0 * * * *', true, 'schedule', ?, '2021-01-01T00:00:00Z')`,
+		testID, projectID, prodDefID, prodDefID)
+	require.NoError(t, err)
+	insertRuns(t, db, ctx, alfredID, 1)
+	insertRuns(t, db, ctx, testID, 5)
+
+	// Fixture B — a scheduled loser (zero runs) that must be disabled.
+	schedDefID := insertAgentDefinition(t, db, ctx, projectID, "SchedDef", "project")
+	schedKeeperID := uuid.NewString()
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.agents (id, project_id, name, strategy_type, cron_schedule, enabled, trigger_type, agent_definition_id, created_at)
+		 VALUES (?, ?, 'SchedKeeper', 'agent-def:'||?, '0 * * * *', true, 'schedule', ?, '2020-01-01T00:00:00Z')`,
+		schedKeeperID, projectID, schedDefID, schedDefID)
+	require.NoError(t, err)
+	schedLoserID := uuid.NewString()
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.agents (id, project_id, name, strategy_type, cron_schedule, enabled, trigger_type, agent_definition_id, created_at)
+		 VALUES (?, ?, 'SchedLoser', 'agent-def:'||?, '0 * * * *', true, 'schedule', ?, '2021-01-01T00:00:00Z')`,
+		schedLoserID, projectID, schedDefID, schedDefID)
+	require.NoError(t, err)
+	insertRuns(t, db, ctx, schedKeeperID, 5)
+	// schedLoser has zero runs.
+
+	require.NoError(t, mig.UpTo(ctx, 302))
+
+	// Fixture A: "Test" (scheduled, high run count) keeps the link and its live
+	// schedule; "alfred" (manual) is unlinked but left enabled with its empty
+	// schedule untouched.
+	var testLink *string
+	var testName string
+	var testEnabled bool
+	var testCron string
+	require.NoError(t, db.NewRaw(
+		`SELECT agent_definition_id, name, enabled, cron_schedule FROM kb.agents WHERE id = ?`, testID).
+		Scan(ctx, &testLink, &testName, &testEnabled, &testCron))
+	require.NotNil(t, testLink)
+	require.Equal(t, prodDefID, *testLink)
+	require.Equal(t, "Test", testName, "the live schedule was renamed as a loser")
+	require.True(t, testEnabled)
+	require.Equal(t, "0 * * * *", testCron, "the live schedule's cron was mutated")
+
+	var alfredLink *string
+	var alfredName string
+	var alfredEnabled bool
+	var alfredCron string
+	require.NoError(t, db.NewRaw(
+		`SELECT agent_definition_id, name, enabled, cron_schedule FROM kb.agents WHERE id = ?`, alfredID).
+		Scan(ctx, &alfredLink, &alfredName, &alfredEnabled, &alfredCron))
+	require.Nil(t, alfredLink, "the manual row was not unlinked")
+	require.NotEqual(t, "alfred", alfredName, "the manual row's name was not disambiguated")
+	require.True(t, alfredEnabled, "the manual loser was disabled (it has no schedule to stop)")
+	require.Equal(t, "", alfredCron, "the manual loser's schedule was mutated")
+
+	// Fixture B: the scheduled loser is disabled and its cron reset.
+	var loserLink *string
+	var loserEnabled bool
+	var loserCron string
+	var loserName string
+	require.NoError(t, db.NewRaw(
+		`SELECT agent_definition_id, enabled, cron_schedule, name FROM kb.agents WHERE id = ?`, schedLoserID).
+		Scan(ctx, &loserLink, &loserEnabled, &loserCron, &loserName))
+	require.Nil(t, loserLink)
+	require.False(t, loserEnabled, "the scheduled loser was not disabled")
+	require.Equal(t, "0 0 * * *", loserCron, "the scheduled loser's cron was not reset")
+
+	// Re-apply 00302: the keeper rule, loser-disabling and renames must be
+	// idempotent — the unlinked rows are no longer candidates, so nothing is
+	// double-suffixed and the disabled loser stays disabled.
+	require.NoError(t, mig.DownTo(ctx, 301))
+	require.NoError(t, mig.UpTo(ctx, 302))
+
+	var reAlfredName string
+	require.NoError(t, db.NewRaw(`SELECT name FROM kb.agents WHERE id = ?`, alfredID).Scan(ctx, &reAlfredName))
+	require.Equal(t, alfredName, reAlfredName, "re-apply double-suffixed the manual loser's name")
+
+	var reLoserName string
+	var reLoserEnabled bool
+	require.NoError(t, db.NewRaw(`SELECT name, enabled FROM kb.agents WHERE id = ?`, schedLoserID).Scan(ctx, &reLoserName, &reLoserEnabled))
+	require.Equal(t, loserName, reLoserName, "re-apply double-suffixed the scheduled loser's name")
+	require.False(t, reLoserEnabled, "re-apply re-enabled the scheduled loser")
 }

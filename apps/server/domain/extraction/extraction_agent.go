@@ -269,7 +269,7 @@ func (w *ObjectExtractionWorker) ensureExtractionRuntimeAgent(ctx context.Contex
 	// upsert paths already use. This is the race-safety mechanism for this shape.
 	lockKey := "extraction-agent:" + projectID + ":" + def.ID
 	err = w.jobsService.db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)", lockKey).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", lockKey).Exec(ctx); err != nil {
 			return err
 		}
 		var id string

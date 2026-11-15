@@ -24,16 +24,47 @@ WHERE name LIKE 'extraction-agent:%'
   AND agent_definition_id IS NOT NULL;
 
 -- Step 2 — dedupe. Non-destructive: for each (project_id, agent_definition_id)
--- group with more than one row, keep one — prefer enabled, then earliest
--- created_at, then lowest id — and unlink the rest (agent_definition_id = NULL).
--- Six foreign keys into kb.agents are ON DELETE CASCADE (kb.agent_runs among
--- them), so deleting a loser would destroy run history; unlinking keeps every
--- row and its runs while satisfying the new index.
+-- group with more than one row, keep one and unlink the rest
+-- (agent_definition_id = NULL). Six foreign keys into kb.agents are ON DELETE
+-- CASCADE (kb.agent_runs among them), so deleting a loser would destroy run
+-- history; unlinking keeps every row and its runs while satisfying the index.
 
--- Unlinking alone does not stop a loser from resolving to the definition:
--- ResolveDefinitionForAgent step 4 is an exact-name match (agent.Name ==
--- definition.Name), and a loser still carries the definition's name. Two edits
--- neutralise that for real, non-destructively:
+-- Keeper rule, in order: prefer a row that is enabled AND actively triggered
+-- (trigger_type <> 'manual'), then the row with the most kb.agent_runs, then
+-- enabled, then earliest created_at, then lowest id. The first two tiebreakers
+-- matter in production: a definition may own both a manual "alfred" shell
+-- (1 run) and a live hourly "Test" schedule (thousands of runs). The old rule
+-- (enabled, created_at, id) made the manual row the keeper and unlinked the
+-- live schedule, which then kept firing with no system prompt, tools or rules —
+-- the #737 failure shape reintroduced by the fix. Ranking the actively
+-- triggered, high-run-count row first keeps the live schedule as the keeper.
+DROP TABLE IF EXISTS _00302_losers;
+CREATE TEMP TABLE _00302_losers AS
+WITH ranked AS (
+    SELECT
+        a.id,
+        a.agent_definition_id,
+        row_number() OVER (
+            PARTITION BY a.project_id, a.agent_definition_id
+            ORDER BY
+                (a.enabled AND a.trigger_type <> 'manual') DESC,
+                (SELECT count(*) FROM kb.agent_runs ar WHERE ar.agent_id = a.id) DESC,
+                a.enabled DESC,
+                a.created_at ASC,
+                a.id ASC
+        ) AS rn
+    FROM kb.agents a
+    WHERE a.agent_definition_id IS NOT NULL
+)
+SELECT a.id, a.name, a.trigger_type, ranked.agent_definition_id
+FROM kb.agents a
+JOIN ranked ON ranked.id = a.id
+WHERE ranked.rn > 1;
+
+-- Unlink the losers. Unlinking alone does not stop a loser from resolving to
+-- the definition: ResolveDefinitionForAgent step 4 is an exact-name match
+-- (agent.Name == definition.Name), and a loser still carries the definition's
+-- name. Two edits neutralise that for real, non-destructively:
 --   * a loser whose strategy_type is exactly 'agent-def:<definition_id>' or
 --     'chat-session:<definition_id>' has its marker rewritten to 'definition' —
 --     the neutral value the gateway also sends for plain agents, so the resolver
@@ -44,34 +75,48 @@ WHERE name LIKE 'extraction-agent:%'
 -- A source_triggers.agent_id bound to a renamed loser keeps working: it now
 -- points at an independent agent (no definition link), and dispatch resolves
 -- that row directly rather than through the definition.
-WITH ranked AS (
-    SELECT
-        id,
-        agent_definition_id,
-        row_number() OVER (
-            PARTITION BY project_id, agent_definition_id
-            ORDER BY enabled DESC, created_at ASC, id ASC
-        ) AS rn
-    FROM kb.agents
-    WHERE agent_definition_id IS NOT NULL
-)
+--
+-- A loser that kept a live schedule must not keep firing unlinked (no system
+-- prompt, tool policy, skills or write rules — silently). For any loser whose
+-- trigger_type is not 'manual', disable it and reset its cron to the inert
+-- daily default in the same UPDATE; a manual loser (which only ever runs on
+-- explicit invocation) is left enabled with its schedule untouched.
 UPDATE kb.agents a
 SET
     agent_definition_id = NULL,
     strategy_type = CASE
-        WHEN a.strategy_type IN ('agent-def:' || ranked.agent_definition_id::text,
-                                 'chat-session:' || ranked.agent_definition_id::text)
+        WHEN a.strategy_type IN ('agent-def:' || l.agent_definition_id::text,
+                                 'chat-session:' || l.agent_definition_id::text)
              THEN 'definition'
         ELSE a.strategy_type
     END,
-    name = a.name || ' (unlinked ' || left(a.id::text, 8) || ')'
-FROM ranked
-WHERE a.id = ranked.id
-  AND ranked.rn > 1;
+    name = a.name || ' (unlinked ' || left(a.id::text, 8) || ')',
+    enabled = CASE WHEN a.trigger_type <> 'manual' THEN false ELSE a.enabled END,
+    cron_schedule = CASE WHEN a.trigger_type <> 'manual' THEN '0 0 * * *' ELSE a.cron_schedule END
+FROM _00302_losers l
+WHERE a.id = l.id;
+
+-- Audit: name every loser whose live schedule was disabled so the action is
+-- visible in the migration log rather than silent.
+DO $$
+DECLARE
+    r record;
+BEGIN
+    FOR r IN
+        SELECT id, name FROM _00302_losers WHERE trigger_type <> 'manual' ORDER BY name, id
+    LOOP
+        RAISE NOTICE '00302: disabled unlinked runtime agent % (%)', r.id, r.name;
+    END LOOP;
+END $$;
+
+DROP TABLE IF EXISTS _00302_losers;
 
 -- Step 3 — the index itself. IF NOT EXISTS keeps the whole Up body idempotent:
--- step 1's re-mark is a no-op once the shells carry no FK, and step 2's dedupe
--- finds no rows with rn > 1 once each (project, definition) owns one row.
+-- step 1's re-mark is a no-op once the shells carry no FK, step 2's dedupe
+-- finds no rn > 1 rows once each (project, definition) owns one row, and the
+-- audit loop is empty. Note the index is NOT created CONCURRENTLY — the goose
+-- StatementBegin wrapper forbids it — so it takes a brief ACCESS EXCLUSIVE lock
+-- on kb.agents, which is acceptable at this table's size.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_agents_project_agent_definition
     ON kb.agents (project_id, agent_definition_id)
     WHERE agent_definition_id IS NOT NULL;
@@ -80,5 +125,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_agents_project_agent_definition
 
 -- +goose Down
 -- +goose StatementBegin
+-- Lossy by design: dropping the index re-opens the (project_id, definition)
+-- link; it does not reverse the re-marks, unlinks, marker rewrites, renames or
+-- the loser schedule disables applied in Up, and it cannot (the pre-index state
+-- is not recoverable from the rows that remain).
 DROP INDEX IF EXISTS kb.uq_agents_project_agent_definition;
 -- +goose StatementEnd
