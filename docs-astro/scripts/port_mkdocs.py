@@ -51,6 +51,7 @@ PAGES = [
     ("user-guide/datasources.md", "user-guide/datasources.mdx", "Data Sources"),
     ("go-sdk/index.md", "go-sdk.mdx", "Go SDK"),
     ("python-sdk.md", "python-sdk.mdx", "Python SDK"),
+    ("swift-sdk.md", "swift-sdk.mdx", "Swift SDK"),
     ("cli.md", "cli.mdx", "CLI"),
 ]
 

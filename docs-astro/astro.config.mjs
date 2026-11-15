@@ -67,16 +67,6 @@ export default defineConfig({
       },
       sidebar: [
         {
-          label: 'Developer Guide',
-          items: [
-            { label: 'Overview', slug: 'developer-guide' },
-            { label: 'MCP Servers', slug: 'developer-guide/mcp-servers' },
-            { label: 'CLI Reference', slug: 'developer-guide/cli-reference' },
-            { label: 'Schema', slug: 'developer-guide/schema' },
-            { label: 'Security Scopes', slug: 'developer-guide/security-scopes' },
-          ],
-        },
-        {
           label: 'User Guide',
           items: [
             { label: 'Overview', slug: 'user-guide' },
@@ -88,17 +78,25 @@ export default defineConfig({
           ],
         },
         {
-          label: 'Go SDK',
-          items: [{ label: 'Overview', slug: 'go-sdk' }],
-        },
-        {
-          label: 'API',
+          label: 'Developer Guide',
           items: [
-            { label: 'Python SDK', slug: 'python-sdk' },
-            { label: 'CLI', slug: 'cli' },
-            { label: 'API Reference', slug: 'api-reference' },
+            { label: 'Overview', slug: 'developer-guide' },
+            { label: 'MCP Servers', slug: 'developer-guide/mcp-servers' },
+            { label: 'CLI Reference', slug: 'developer-guide/cli-reference' },
+            { label: 'Schema', slug: 'developer-guide/schema' },
+            { label: 'Security Scopes', slug: 'developer-guide/security-scopes' },
           ],
         },
+        {
+          label: 'SDKs',
+          items: [
+            { label: 'Go SDK', slug: 'go-sdk' },
+            { label: 'Python SDK', slug: 'python-sdk' },
+            { label: 'Swift SDK', slug: 'swift-sdk' },
+          ],
+        },
+        { label: 'CLI', slug: 'cli' },
+        { label: 'API Reference', slug: 'api-reference' },
       ],
     }),
   ],

@@ -1,6 +1,6 @@
 # docs-astro — Astro/Starlight port of the Memory docs (POC)
 
-Status: **proof of concept**. 16 pages converted out of the 75 in `docs/site`.
+Status: **proof of concept**. 17 pages converted out of the 77 in `docs/site`.
 The site builds, serves, and is themed against the product web UI. It is not
 wired into CI, not published, and the old MkDocs site is untouched.
 

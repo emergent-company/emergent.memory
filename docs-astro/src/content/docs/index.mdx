@@ -1,6 +1,6 @@
 ---
 title: Memory Documentation
-description: Official documentation for the Memory platform, its Go and Python SDKs, and the Memory CLI
+description: Official documentation for the Memory platform, its Go, Python and Swift SDKs, and the Memory CLI
 template: splash
 hero:
   tagline: A graph-native AI memory platform. This site documents how to use the platform, integrate with it, and build on top of it.
@@ -67,11 +67,13 @@ import CardGrid from '../../components/CardGrid.astro';
     <LinkButton href="/emergent.memory/python-sdk/" variant="secondary" icon="right-arrow">Python SDK reference</LinkButton>
   </Card>
   <Card title="Swift SDK" icon="lucide:puzzle">
-    The Swift surface is the `EmergentKit` package under `swift/EmergentKit`,
-    used by the iOS and Mac apps in this repository. It is not yet published as
-    a standalone Swift Package, so it has no reference documentation here.
+    An `actor`-based client for iOS 15+ and macOS 12+ that reaches the server
+    through a Go C-bridge. Not yet published as a standalone Swift Package —
+    you build the bridge's XCFramework and add the package by local path.
 
-    <LinkButton href="https://github.com/emergent-company/emergent.memory/tree/main/swift/EmergentKit" variant="secondary" icon="external">View EmergentKit source</LinkButton>
+    Package `EmergentKit` under `swift/EmergentKit`
+
+    <LinkButton href="/emergent.memory/swift-sdk/" variant="secondary" icon="right-arrow">Swift SDK reference</LinkButton>
   </Card>
 </CardGrid>
 
