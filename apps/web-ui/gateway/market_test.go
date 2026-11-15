@@ -61,6 +61,23 @@ func TestLoadMarketConfigRejectsMalformedIssuers(t *testing.T) {
 	}
 }
 
+func TestMarketIssuerLabelRealHosts(t *testing.T) {
+	cases := []struct {
+		issuer string
+		want   string
+	}{
+		{"https://market.dev.memory.emergent-company.ai", "Marketplace (dev)"},
+		{"https://dev.market.example", "Marketplace (dev)"},
+		{"https://market.memory.emergent-company.ai", "Marketplace (prod)"},
+		{"https://prod.market.example", "Marketplace (prod)"},
+	}
+	for _, tc := range cases {
+		if got := marketIssuerLabel(tc.issuer); got != tc.want {
+			t.Errorf("marketIssuerLabel(%q) = %q, want %q", tc.issuer, got, tc.want)
+		}
+	}
+}
+
 func TestMarketSidebarItemsLabelsAndExternalAttrs(t *testing.T) {
 	s := &Server{cfg: Config{
 		MarketURL:            "https://market.example",

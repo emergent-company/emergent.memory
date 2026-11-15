@@ -1,6 +1,7 @@
 package market
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -9,9 +10,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,6 +27,67 @@ type testMarket struct {
 	issuer   string
 	jwksHits atomic.Int32
 	reports  atomic.Int32
+	reportMu sync.Mutex
+	// reportBodies is every raw POST /v1/installs body, in order, so a test can
+	// assert the exact contract shape (no extra keys).
+	reportBodies []string
+}
+
+func (m *testMarket) lastReport() string {
+	m.reportMu.Lock()
+	defer m.reportMu.Unlock()
+	if len(m.reportBodies) == 0 {
+		return ""
+	}
+	return m.reportBodies[len(m.reportBodies)-1]
+}
+
+// handleReport is the fake market's POST /v1/installs. It mirrors the market's
+// own decoder (DisallowUnknownFields) and records the raw body so a test can
+// pin the exact wire shape.
+func (m *testMarket) handleReport(t *testing.T, w http.ResponseWriter, r *http.Request) {
+	t.Helper()
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	m.reports.Add(1)
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		t.Errorf("read report body: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	m.reportMu.Lock()
+	m.reportBodies = append(m.reportBodies, string(raw))
+	m.reportMu.Unlock()
+
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &keys); err != nil {
+		t.Errorf("report body is not JSON: %s (%v)", raw, err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	for key := range keys {
+		if key != "state" && key != "error_code" {
+			t.Errorf("report body carries unknown key %q: %s", key, raw)
+		}
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var report ReportRequest
+	if err := dec.Decode(&report); err != nil {
+		t.Errorf("report body does not match the contract: %s (%v)", raw, err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if report.State != ReportStateInstalled && report.State != ReportStateFailed {
+		t.Errorf("report state = %q, want installed|failed", report.State)
+	}
+	if report.State == ReportStateInstalled && report.ErrorCode != "" {
+		t.Errorf("installed report carries error_code %q", report.ErrorCode)
+	}
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 func newTestMarket(t *testing.T, kid string) *testMarket {
@@ -39,12 +103,7 @@ func newTestMarket(t *testing.T, kid string) *testMarket {
 		writeJSON(w, map[string]any{"keys": []map[string]string{jwkFor(key, kid)}})
 	})
 	mux.HandleFunc("/v1/installs", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		m.reports.Add(1)
-		writeJSON(w, map[string]any{"ok": true})
+		m.handleReport(t, w, r)
 	})
 	m.server = httptest.NewServer(mux)
 	t.Cleanup(m.server.Close)
@@ -97,8 +156,7 @@ func (m *testMarket) addInstallRoutes(t *testing.T, slug, digest string, bundle 
 		_, _ = w.Write(bundle)
 	})
 	mux.HandleFunc("/v1/installs", func(w http.ResponseWriter, r *http.Request) {
-		m.reports.Add(1)
-		writeJSON(w, map[string]any{"ok": true})
+		m.handleReport(t, w, r)
 	})
 	// Swap the server's handler in place; httptest.Server starts with the
 	// constructor's mux, so construct a fresh one for install routes.
@@ -210,11 +268,44 @@ func TestExchangeVerifyDownloadAndReport(t *testing.T) {
 	if err := VerifyDigest(claims.Digest, data); err != nil {
 		t.Fatalf("digest should verify: %v", err)
 	}
-	if err := client.ReportInstall(ctx, m.issuer, ReportRequest{InstallID: "inst-1", State: "applied"}, exchange.License); err != nil {
+	if err := client.ReportInstall(ctx, m.issuer, ReportRequest{State: ReportStateInstalled}, exchange.License); err != nil {
 		t.Fatalf("report: %v", err)
 	}
 	if m.reports.Load() != 1 {
 		t.Fatalf("reports = %d, want 1", m.reports.Load())
+	}
+	if got := m.lastReport(); got != `{"state":"installed"}` {
+		t.Fatalf("installed report body = %s", got)
+	}
+	if err := client.ReportInstall(ctx, m.issuer, ReportRequest{State: ReportStateFailed, ErrorCode: CodeDigestMismatch}, exchange.License); err != nil {
+		t.Fatalf("failed report: %v", err)
+	}
+	if got := m.lastReport(); got != `{"state":"failed","error_code":"digest_mismatch"}` {
+		t.Fatalf("failed report body = %s", got)
+	}
+}
+
+func TestExchangeMapsRateLimitAndConflict(t *testing.T) {
+	cases := []struct {
+		status int
+		code   string
+	}{
+		{http.StatusTooManyRequests, CodeMarketRateLimited},
+		{http.StatusConflict, CodeInstallNotInstallable},
+	}
+	for _, tc := range cases {
+		t.Run(tc.code, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+			}))
+			defer srv.Close()
+			client, err := NewClient(ClientConfig{Issuers: []string{srv.URL}})
+			if err != nil {
+				t.Fatalf("new client: %v", err)
+			}
+			_, err = client.Exchange(context.Background(), srv.URL, "code")
+			expectCode(t, err, tc.code)
+		})
 	}
 }
 
@@ -308,5 +399,52 @@ func TestJWKSCacheIsPerIssuer(t *testing.T) {
 	}
 	if got := b.jwksHits.Load(); got != 1 {
 		t.Fatalf("issuer b JWKS hits = %d, want 1", got)
+	}
+}
+
+func TestVersionDecodesManifestAgentsAndTools(t *testing.T) {
+	doc := `{
+		"slug": "demo",
+		"version": "1.2.3",
+		"kind": "mcp",
+		"digest": "sha256:abc",
+		"compat": ">=0.1 <99.0",
+		"manifest": {
+			"capabilities": {"writes": ["graph"]},
+			"agents": [
+				{"name": "writer", "model": {"name": "gpt-5", "provider": "openai"}},
+				{"name": "reader", "model": "openai/gpt-4o-mini"}
+			],
+			"tools": ["search", "fetch"]
+		}
+	}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/listings/demo/versions/1.2.3" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(doc))
+	}))
+	defer srv.Close()
+
+	client, err := NewClient(ClientConfig{Issuers: []string{srv.URL}})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	v, err := client.Version(context.Background(), srv.URL, "demo", "1.2.3")
+	if err != nil {
+		t.Fatalf("version: %v", err)
+	}
+	if len(v.Manifest.Tools) != 2 || v.Manifest.Tools[0] != "search" {
+		t.Fatalf("manifest tools = %#v", v.Manifest.Tools)
+	}
+	if len(v.Manifest.Agents) != 2 {
+		t.Fatalf("agents = %#v", v.Manifest.Agents)
+	}
+	if got := v.Manifest.Agents[0].Model.Reference(); got != "openai/gpt-5" {
+		t.Fatalf("object-form model ref = %q", got)
+	}
+	if got := v.Manifest.Agents[1].Model.Reference(); got != "openai/gpt-4o-mini" {
+		t.Fatalf("bare-string model ref = %q", got)
 	}
 }

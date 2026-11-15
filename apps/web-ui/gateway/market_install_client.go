@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"strings"
 )
 
 // --- marketplace install client types (mirror Memory's /api/market/installs) ---
@@ -52,13 +53,46 @@ type MarketCompat struct {
 	Memory string `json:"memory,omitempty"`
 }
 
+// MarketAgentModel is an agent's pinned model as published in the market
+// version manifest. It mirrors the server's market.ManifestAgentModel.
+type MarketAgentModel struct {
+	Name     string `json:"name,omitempty"`
+	Provider string `json:"provider,omitempty"`
+}
+
+// Reference folds a published model into one provider/model reference for the
+// model-map review (Name wins when it already carries a provider prefix).
+func (m *MarketAgentModel) Reference() string {
+	if m == nil {
+		return ""
+	}
+	name := strings.TrimSpace(m.Name)
+	provider := strings.TrimSpace(m.Provider)
+	if name == "" {
+		return ""
+	}
+	if provider == "" || strings.Contains(name, "/") {
+		return name
+	}
+	return provider + "/" + name
+}
+
+// MarketManifestAgent is one agent from the market version manifest, carried so
+// the review page can render the same model-map rows the blueprint flow uses.
+// It mirrors the server's market.ManifestAgent.
+type MarketManifestAgent struct {
+	Name  string            `json:"name"`
+	Model *MarketAgentModel `json:"model,omitempty"`
+}
+
 // MarketResolveResult is the review payload returned by POST
 // /api/market/installs/resolve. It mirrors the server's market.ResolveResult.
 type MarketResolveResult struct {
-	Listing          MarketListingPreview `json:"listing"`
-	Capabilities     MarketCapabilities   `json:"capabilities"`
-	Compat           MarketCompat         `json:"compat"`
-	AlreadyInstalled bool                 `json:"already_installed"`
+	Listing          MarketListingPreview  `json:"listing"`
+	Capabilities     MarketCapabilities    `json:"capabilities"`
+	Compat           MarketCompat          `json:"compat"`
+	Agents           []MarketManifestAgent `json:"agents,omitempty"`
+	AlreadyInstalled bool                  `json:"already_installed"`
 }
 
 // MarketApplyResult is the confirmed-install response returned by POST

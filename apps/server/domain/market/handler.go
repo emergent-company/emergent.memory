@@ -43,6 +43,19 @@ type ApplyRequest struct {
 }
 
 // Resolve handles POST /api/market/installs/resolve.
+// @Summary      Resolve a marketplace install for review
+// @Description  Redeems an install code, verifies the signed licence and returns the authoritative listing facts. Nothing is downloaded or applied.
+// @Tags         market
+// @Accept       json
+// @Produce      json
+// @Param        request body ResolveRequest true "Market origin and install code"
+// @Success      200 {object} ResolveResult "Listing review payload"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Market issuer is not trusted"
+// @Failure      502 {object} apperror.Error "Market is unreachable"
+// @Router       /api/market/installs/resolve [post]
+// @Security     bearerAuth
 func (h *Handler) Resolve(c echo.Context) error {
 	user := auth.MustGetUser(c)
 	if user.ProjectID == "" {
@@ -66,6 +79,20 @@ func (h *Handler) Resolve(c echo.Context) error {
 }
 
 // Apply handles POST /api/market/installs/apply.
+// @Summary      Apply a marketplace install
+// @Description  Redeems the install code, verifies the licence and bundle, imports the blueprint with market provenance and records the install.
+// @Tags         market
+// @Accept       json
+// @Produce      json
+// @Param        request body ApplyRequest true "Market origin, install code, target project and optional model overrides"
+// @Success      200 {object} ApplyResult "Applied install"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Market issuer is not trusted"
+// @Failure      409 {object} apperror.Error "Compatibility or tool-licence conflict"
+// @Failure      502 {object} apperror.Error "Market is unreachable"
+// @Router       /api/market/installs/apply [post]
+// @Security     bearerAuth
 func (h *Handler) Apply(c echo.Context) error {
 	user := auth.MustGetUser(c)
 	var req ApplyRequest

@@ -452,17 +452,18 @@ type fakeMemory struct {
 	// Marketplace install flow (see market_install_client.go). The resolve and
 	// apply results/errors let a handler test exercise the review page, the
 	// named error mapping and the confirm redirect without a backend.
-	marketResolveRes    *MarketResolveResult // returned by ResolveMarketInstall, when set
-	marketResolveErr    error                // ResolveMarketInstall failure
-	marketResolveCalls  int                  // ResolveMarketInstall call count
-	marketResolveMarket string               // last market passed to ResolveMarketInstall
-	marketResolveCode   string               // last code passed to ResolveMarketInstall
-	marketApplyRes      *MarketApplyResult   // returned by ApplyMarketInstall, when set
-	marketApplyErr      error                // ApplyMarketInstall failure
-	marketApplyCalls    int                  // ApplyMarketInstall call count
-	marketApplyMarket   string               // last market passed to ApplyMarketInstall
-	marketApplyCode     string               // last code passed to ApplyMarketInstall
-	marketApplyProject  string               // last project passed to ApplyMarketInstall
+	marketResolveRes     *MarketResolveResult // returned by ResolveMarketInstall, when set
+	marketResolveErr     error                // ResolveMarketInstall failure
+	marketResolveCalls   int                  // ResolveMarketInstall call count
+	marketResolveMarket  string               // last market passed to ResolveMarketInstall
+	marketResolveCode    string               // last code passed to ResolveMarketInstall
+	marketApplyRes       *MarketApplyResult   // returned by ApplyMarketInstall, when set
+	marketApplyErr       error                // ApplyMarketInstall failure
+	marketApplyCalls     int                  // ApplyMarketInstall call count
+	marketApplyMarket    string               // last market passed to ApplyMarketInstall
+	marketApplyCode      string               // last code passed to ApplyMarketInstall
+	marketApplyProject   string               // last project passed to ApplyMarketInstall
+	marketApplyOverrides map[string]string    // last model overrides passed to ApplyMarketInstall
 
 	importBlueprintReq *importBlueprintRequest // last request passed to ImportBlueprint
 	importBlueprintRes *BlueprintRecord        // returned by ImportBlueprint, when set
@@ -2121,6 +2122,7 @@ func (f *fakeMemory) ApplyMarketInstall(ctx context.Context, market, code, proje
 	f.marketApplyMarket = market
 	f.marketApplyCode = code
 	f.marketApplyProject = projectID
+	f.marketApplyOverrides = overrides
 	if f.marketApplyErr != nil {
 		return nil, f.marketApplyErr
 	}

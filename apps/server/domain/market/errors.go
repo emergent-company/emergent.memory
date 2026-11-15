@@ -9,13 +9,15 @@ import (
 
 // Named instance-side error codes from the install-flow contract.
 const (
-	CodeIssuerUntrusted = "market_issuer_untrusted"
-	CodeInstallCode     = "install_code_invalid"
-	CodeLicenseInvalid  = "license_invalid"
-	CodeDigestMismatch  = "digest_mismatch"
-	CodeMarketUnreach   = "market_unreachable"
-	CodeCompat          = "compat_unsatisfied"
-	CodeUndeclaredTools = "undeclared_tools"
+	CodeIssuerUntrusted       = "market_issuer_untrusted"
+	CodeInstallCode           = "install_code_invalid"
+	CodeLicenseInvalid        = "license_invalid"
+	CodeDigestMismatch        = "digest_mismatch"
+	CodeMarketUnreach         = "market_unreachable"
+	CodeMarketRateLimited     = "market_rate_limited"
+	CodeInstallNotInstallable = "install_not_installable"
+	CodeCompat                = "compat_unsatisfied"
+	CodeUndeclaredTools       = "undeclared_tools"
 )
 
 // ErrIssuerUntrusted refuses an install whose market origin is not in the
@@ -32,6 +34,25 @@ func ErrInstallCodeInvalid(detail string) *apperror.Error {
 		detail = "install code is invalid or expired"
 	}
 	return apperror.New(http.StatusBadRequest, CodeInstallCode, detail)
+}
+
+// ErrMarketRateLimited reports that the market is throttling installs. It is
+// distinct from an invalid code: retrying later may succeed.
+func ErrMarketRateLimited(detail string) *apperror.Error {
+	if detail == "" {
+		detail = "market is rate limiting installs; try again shortly"
+	}
+	return apperror.New(http.StatusTooManyRequests, CodeMarketRateLimited, detail)
+}
+
+// ErrInstallNotInstallable reports that the listing exists but cannot be
+// installed here (for example it is withdrawn or not install-delivery). It is
+// distinct from an unusable code.
+func ErrInstallNotInstallable(detail string) *apperror.Error {
+	if detail == "" {
+		detail = "listing is not installable on this instance"
+	}
+	return apperror.New(http.StatusConflict, CodeInstallNotInstallable, detail)
 }
 
 // ErrLicenseInvalid covers a license that fails signature, issuer, audience,

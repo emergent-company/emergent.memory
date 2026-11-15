@@ -28,6 +28,8 @@ type fakeClient struct {
 	downloads   int
 	exchanges   int
 	reports     int
+	reportReqs  []ReportRequest
+	reportErr   error
 }
 
 func (f *fakeClient) IsTrusted(string) bool { return f.trusted }
@@ -45,9 +47,10 @@ func (f *fakeClient) DownloadBundle(context.Context, string, string, string) ([]
 	f.downloads++
 	return f.bundle, nil
 }
-func (f *fakeClient) ReportInstall(context.Context, string, ReportRequest, string) error {
+func (f *fakeClient) ReportInstall(_ context.Context, _ string, report ReportRequest, _ string) error {
 	f.reports++
-	return nil
+	f.reportReqs = append(f.reportReqs, report)
+	return f.reportErr
 }
 
 type fakeImporter struct {
@@ -183,14 +186,20 @@ func TestServiceResolveUsesVersionDocumentForCompatAndCapabilities(t *testing.T)
 		Kind:    "blueprint",
 		Digest:  client.claims.Digest,
 		Compat:  ">=1.0 <2.0",
-		Manifest: Manifest{Capabilities: Capabilities{
-			Reads:     []string{"documents"},
-			Writes:    []string{"graph"},
-			Egress:    []string{"api.acme.example"},
-			MCPs:      []MCPCapability{{Slug: "search", Scopes: []string{"read"}}},
-			Schedules: true,
-			Model:     &CapabilityModel{Provider: "openai", Name: "gpt-5"},
-		}},
+		Manifest: Manifest{
+			Capabilities: Capabilities{
+				Reads:     []string{"documents"},
+				Writes:    []string{"graph"},
+				Egress:    []string{"api.acme.example"},
+				MCPs:      []MCPCapability{{Slug: "search", Scopes: []string{"read"}}},
+				Schedules: true,
+				Model:     &CapabilityModel{Provider: "openai", Name: "gpt-5"},
+			},
+			Agents: []ManifestAgent{
+				{Name: "writer", Model: &ManifestAgentModel{Name: "gpt-5", Provider: "openai"}},
+				{Name: "reader"},
+			},
+		},
 		Tools: []Tool{{Name: "search"}},
 	}
 	importer := &fakeImporter{}
@@ -225,6 +234,9 @@ func TestServiceResolveUsesVersionDocumentForCompatAndCapabilities(t *testing.T)
 	}
 	if res.Listing.Semver != "1.2.3" || res.Listing.Title != "Demo" || res.Listing.Publisher != "Acme" {
 		t.Fatalf("listing = %#v", res.Listing)
+	}
+	if len(res.Agents) != 2 || res.Agents[0].Name != "writer" || res.Agents[0].Model.Reference() != "openai/gpt-5" {
+		t.Fatalf("agents = %#v", res.Agents)
 	}
 	if client.downloads != 0 || importer.calls != 0 {
 		t.Fatalf("resolve downloaded=%d imported=%d, want 0/0", client.downloads, importer.calls)
@@ -279,6 +291,9 @@ func TestServiceApplyHappyPathRecordsProvenanceAndReports(t *testing.T) {
 	}
 	if client.reports != 1 {
 		t.Fatalf("reports = %d, want 1", client.reports)
+	}
+	if len(client.reportReqs) != 1 || client.reportReqs[0].State != ReportStateInstalled || client.reportReqs[0].ErrorCode != "" {
+		t.Fatalf("report requests = %+v", client.reportReqs)
 	}
 }
 
@@ -360,7 +375,19 @@ func TestServiceRefusesUndeclaredTools(t *testing.T) {
 		}},
 	})
 	client := happyClient(t, bundle)
-	client.exchange.Listing = testListing([]string{"search"})
+	// The licensed set is the version manifest's tools (plus capabilities.tools).
+	// mcp/agent installs enforce it; blueprint/bundle payloads stay exempt.
+	client.version = &Version{
+		Slug:    "demo",
+		Version: "1.2.3",
+		Kind:    "mcp",
+		Digest:  client.claims.Digest,
+		Compat:  ">=0.1 <99.0",
+		Manifest: Manifest{
+			Tools: []string{"search"},
+		},
+	}
+	client.exchange.Listing = testListing(nil)
 	importer := &fakeImporter{}
 	svc := newTestService(t, client, &fakeStore{}, importer)
 
@@ -368,6 +395,10 @@ func TestServiceRefusesUndeclaredTools(t *testing.T) {
 	expectCode(t, err, CodeUndeclaredTools)
 	if importer.calls != 0 {
 		t.Fatalf("undeclared tools reached apply")
+	}
+	// The failure is reported as `failed` with the stable contract code.
+	if len(client.reportReqs) != 1 || client.reportReqs[0].State != ReportStateFailed || client.reportReqs[0].ErrorCode != CodeUndeclaredTools {
+		t.Fatalf("failure report = %+v", client.reportReqs)
 	}
 }
 
@@ -381,7 +412,17 @@ func TestServiceAllowsDeclaredTools(t *testing.T) {
 		}},
 	})
 	client := happyClient(t, bundle)
-	client.exchange.Listing = testListing([]string{"search"})
+	client.version = &Version{
+		Slug:    "demo",
+		Version: "1.2.3",
+		Kind:    "agent",
+		Digest:  client.claims.Digest,
+		Compat:  ">=0.1 <99.0",
+		Manifest: Manifest{
+			Tools: []string{"search"},
+		},
+	}
+	client.exchange.Listing = testListing(nil)
 	importer := &fakeImporter{}
 	svc := newTestService(t, client, &fakeStore{}, importer)
 	if _, err := svc.Apply(context.Background(), "proj-1", "user-1", testIssuer, "code", nil); err != nil {
@@ -389,6 +430,66 @@ func TestServiceAllowsDeclaredTools(t *testing.T) {
 	}
 	if importer.calls != 1 {
 		t.Fatalf("import calls = %d, want 1", importer.calls)
+	}
+}
+
+func TestServiceBlueprintKindStaysExemptFromToolLicence(t *testing.T) {
+	bundle := tarWithBlueprint(t, map[string]any{
+		"name":    "demo",
+		"version": "1.0.0",
+		"agents": []map[string]any{{
+			"name":  "agent",
+			"tools": []string{"search", "danger"},
+		}},
+	})
+	client := happyClient(t, bundle)
+	client.version = &Version{
+		Slug:    "demo",
+		Version: "1.2.3",
+		Kind:    "blueprint",
+		Digest:  client.claims.Digest,
+		Compat:  ">=0.1 <99.0",
+		Manifest: Manifest{
+			Tools: []string{"search"},
+		},
+	}
+	client.exchange.Listing = testListing(nil)
+	importer := &fakeImporter{}
+	svc := newTestService(t, client, &fakeStore{}, importer)
+	if _, err := svc.Apply(context.Background(), "proj-1", "user-1", testIssuer, "code", nil); err != nil {
+		t.Fatalf("blueprint payload must stay exempt: %v", err)
+	}
+	if importer.calls != 1 {
+		t.Fatalf("import calls = %d, want 1", importer.calls)
+	}
+}
+
+func TestServiceReportFailureIsLoggedAndDoesNotUnapply(t *testing.T) {
+	bundle := tarWithBlueprint(t, map[string]any{"name": "demo", "version": "1.0.0", "skills": []map[string]any{{"name": "demo-skill", "description": "d", "content": "c"}}})
+	client := happyClient(t, bundle)
+	client.reportErr = fmt.Errorf("market callback unavailable")
+	importer := &fakeImporter{}
+	store := &fakeStore{}
+	var logs strings.Builder
+	svc := &Service{client: client, blueprints: importer, store: store, version: "1.5.0",
+		log: slog.New(slog.NewTextHandler(&logs, nil))}
+
+	res, err := svc.Apply(context.Background(), "proj-1", "user-1", testIssuer, "code", nil)
+	if err != nil {
+		t.Fatalf("report failure must not fail the install: %v", err)
+	}
+	if res.BlueprintID != "bp-1" {
+		t.Fatalf("result = %+v", res)
+	}
+	row := store.rows[store.key("proj-1", testIssuer, "demo", client.claims.Digest)]
+	if row == nil || row.State != InstallStateApplied {
+		t.Fatalf("install row = %+v, want applied", row)
+	}
+	if importer.calls != 1 {
+		t.Fatalf("import calls = %d, want 1", importer.calls)
+	}
+	if !strings.Contains(logs.String(), "market install report failed") {
+		t.Fatalf("report failure was not logged: %s", logs.String())
 	}
 }
 

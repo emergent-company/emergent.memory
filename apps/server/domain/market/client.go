@@ -37,8 +37,9 @@ type Client struct {
 type ClientConfig struct {
 	// Issuers is the explicit allowlist of normalized market origins.
 	Issuers []string
-	// HTTPClient overrides the transport (tests). Redirects are always refused
-	// by the client regardless of this value.
+	// HTTPClient overrides the transport (tests). The default client refuses
+	// redirects; a supplied client follows its own CheckRedirect policy, so a
+	// caller that needs the no-redirect guarantee must set one.
 	HTTPClient *http.Client
 	// JWKSCacheTTL bounds how long one issuer's key set is reused. Zero uses
 	// the default.
@@ -239,8 +240,14 @@ func (c *Client) Exchange(ctx context.Context, issuer, code string) (*ExchangeRe
 		return nil, ErrMarketUnreachable("market exchange response is too large")
 	}
 	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusGone || resp.StatusCode == http.StatusNotFound ||
-		resp.StatusCode == http.StatusUnprocessableEntity || resp.StatusCode == http.StatusTooManyRequests {
+		resp.StatusCode == http.StatusUnprocessableEntity {
 		return nil, ErrInstallCodeInvalid("install code is invalid, expired or already used")
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, ErrMarketRateLimited("install code exchange is rate limited")
+	}
+	if resp.StatusCode == http.StatusConflict {
+		return nil, ErrInstallNotInstallable("market refused the install as not installable")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, ErrMarketUnreachable(fmt.Sprintf("market exchange returned HTTP %d", resp.StatusCode))

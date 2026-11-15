@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
@@ -18,6 +19,8 @@ const (
 	marketErrLicenseInvalid  = "license_invalid"
 	marketErrDigestMismatch  = "digest_mismatch"
 	marketErrMarketUnreach   = "market_unreachable"
+	marketErrMarketRateLimit = "market_rate_limited"
+	marketErrNotInstallable  = "install_not_installable"
 	marketErrCompat          = "compat_unsatisfied"
 	marketErrUndeclaredTools = "undeclared_tools"
 )
@@ -31,6 +34,8 @@ var marketInstallErrorMessages = map[string]string{
 	marketErrLicenseInvalid:  "The install licence is invalid, so nothing was installed.",
 	marketErrDigestMismatch:  "The downloaded package does not match its licensed digest. Nothing was installed.",
 	marketErrMarketUnreach:   "The marketplace could not be reached. Try again in a moment.",
+	marketErrMarketRateLimit: "The marketplace is rate limiting installs. Try again in a moment.",
+	marketErrNotInstallable:  "This listing cannot be installed on this instance.",
 	marketErrCompat:          "This listing is not compatible with this Memory version.",
 	marketErrUndeclaredTools: "The blueprint declares tools the listing does not licence for install delivery.",
 }
@@ -87,13 +92,44 @@ func (s *Server) marketBackLink(market string) string {
 	return ""
 }
 
+// marketModelManifest converts the resolved version-manifest agents into the
+// manifest shape buildModelMapRows consumes, so the market review reuses the
+// exact blueprint model-map rows and provider catalog.
+func marketModelManifest(agents []MarketManifestAgent) blueprintManifest {
+	m := blueprintManifest{}
+	for _, a := range agents {
+		ba := blueprintAgent{Name: a.Name}
+		if ref := a.Model.Reference(); ref != "" {
+			ba.Model = &blueprintModel{Name: ref}
+		}
+		m.Agents = append(m.Agents, ba)
+	}
+	return m
+}
+
+// marketModelMapContext resolves the model-review rows and the project's
+// configured models for a market listing. It returns nil rows (and skips the
+// provider fetch entirely) when no agent pins a model, so an unpinned listing
+// installs without an extra review step.
+func (s *Server) marketModelMapContext(ctx context.Context, agents []MarketManifestAgent) ([]BlueprintModelMapRow, []Model) {
+	manifest := marketModelManifest(agents)
+	if len(pinnedAgentsFromManifest(manifest)) == 0 {
+		return nil, nil
+	}
+	return s.blueprintModelMapContext(ctx, manifest, "")
+}
+
 // marketInstallReviewData builds the review page data from a resolve result.
-func marketInstallReviewData(market, code, link string, res *MarketResolveResult) MarketInstallPageData {
+// rows/models carry the optional model-map review; both are empty when the
+// listing pins no model.
+func marketInstallReviewData(market, code, link string, res *MarketResolveResult, rows []BlueprintModelMapRow, models []Model) MarketInstallPageData {
 	data := MarketInstallPageData{Market: market, Code: code, MarketLink: link}
 	if res != nil {
 		data.Listing = res.Listing
 		data.Capabilities = res.Capabilities
 		data.Compat = res.Compat
+		data.ModelRows = rows
+		data.Models = models
 		data.AlreadyInstalled = res.AlreadyInstalled
 		data.HasReview = true
 	}
@@ -151,7 +187,8 @@ func (s *Server) uiMarketInstall(c echo.Context) error {
 	if err != nil {
 		return s.renderMarketInstallError(c, MarketInstallPageData{Market: market, Code: code, MarketLink: link}, err)
 	}
-	return s.renderMarketInstallPage(c, marketInstallReviewData(market, code, link, res))
+	rows, models := s.marketModelMapContext(c.Request().Context(), res.Agents)
+	return s.renderMarketInstallPage(c, marketInstallReviewData(market, code, link, res, rows, models))
 }
 
 // uiMarketInstallConfirm is the confirm step: POST /marketplace/install. It
@@ -176,13 +213,20 @@ func (s *Server) uiMarketInstallConfirm(c echo.Context) error {
 	}
 
 	ctx := c.Request().Context()
-	res, err := s.memory.ApplyMarketInstall(ctx, normalized, code, projectID, nil)
+	if err := c.Request().ParseForm(); err != nil {
+		return s.renderMarketInstallPage(c, marketInstallErrorData(market, code, link, marketErrInstallCode))
+	}
+	// The confirm form carries one `model.<agent>` select per pinned agent, so
+	// the same review rows the blueprint flow uses submit the chosen overrides.
+	overrides := modelOverridesFromForm(c.Request().PostForm)
+	res, err := s.memory.ApplyMarketInstall(ctx, normalized, code, projectID, overrides)
 	if err != nil {
 		data := MarketInstallPageData{Market: market, Code: code, MarketLink: link}
 		// Best-effort: a failed apply may still have a resolvable listing, and
 		// showing the review beside the error is more useful than a bare alert.
 		if review, rerr := s.memory.ResolveMarketInstall(ctx, normalized, code); rerr == nil {
-			data = marketInstallReviewData(market, code, link, review)
+			rows, models := s.marketModelMapContext(ctx, review.Agents)
+			data = marketInstallReviewData(market, code, link, review, rows, models)
 		}
 		return s.renderMarketInstallError(c, data, err)
 	}

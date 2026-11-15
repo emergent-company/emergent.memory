@@ -184,9 +184,63 @@ type Version struct {
 	Tools    []Tool   `json:"tools,omitempty"`
 }
 
-// Manifest is the subset of the published manifest the install review renders.
+// Manifest is the subset of the published manifest the install review renders:
+// the capability surface, the agents (so the review can map their pinned
+// models) and the tools licensed for delivery.
 type Manifest struct {
-	Capabilities Capabilities `json:"capabilities"`
+	Capabilities Capabilities    `json:"capabilities"`
+	Agents       []ManifestAgent `json:"agents,omitempty"`
+	Tools        []string        `json:"tools,omitempty"`
+}
+
+// ManifestAgent is one agent as published in the version manifest. Only the
+// review-relevant fields are carried: the agent name and its pinned model.
+type ManifestAgent struct {
+	Name  string              `json:"name"`
+	Model *ManifestAgentModel `json:"model,omitempty"`
+}
+
+// ManifestAgentModel is an agent's pinned model as published. The manifest may
+// spell a bare provider/model reference in Name, or publish the provider
+// separately; Reference folds both into the one form the model review uses.
+type ManifestAgentModel struct {
+	Name     string `json:"name,omitempty"`
+	Provider string `json:"provider,omitempty"`
+}
+
+// UnmarshalJSON accepts both the object form (`model: {name: ..., provider:
+// ...}`) and the bare-string form (`model: openai/gpt-5`).
+func (m *ManifestAgentModel) UnmarshalJSON(data []byte) error {
+	var name string
+	if err := json.Unmarshal(data, &name); err == nil {
+		m.Name = name
+		m.Provider = ""
+		return nil
+	}
+	type alias ManifestAgentModel
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*m = ManifestAgentModel(a)
+	return nil
+}
+
+// Reference returns the pinned model as one provider/model string. Name wins
+// when it already carries a provider prefix.
+func (m *ManifestAgentModel) Reference() string {
+	if m == nil {
+		return ""
+	}
+	name := strings.TrimSpace(m.Name)
+	provider := strings.TrimSpace(m.Provider)
+	if name == "" {
+		return ""
+	}
+	if provider == "" || strings.Contains(name, "/") {
+		return name
+	}
+	return provider + "/" + name
 }
 
 // ExchangeRequest is POST /v1/installs/exchange.
@@ -228,14 +282,19 @@ func (e *ExchangeResponse) BundleDigest() string {
 	return e.Listing.Digest()
 }
 
-// ReportRequest is the POST /v1/installs report body.
+// Install report states. The market's POST /v1/installs decodes with
+// DisallowUnknownFields and accepts only these values.
+const (
+	ReportStateInstalled = "installed"
+	ReportStateFailed    = "failed"
+)
+
+// ReportRequest is the POST /v1/installs report body. The market identifies
+// the install from the licence, so the body carries only the terminal state and
+// an optional stable error code. Exactly these two keys are accepted.
 type ReportRequest struct {
-	InstallID string `json:"install_id,omitempty"`
-	Digest    string `json:"digest,omitempty"`
-	ProjectID string `json:"project_id,omitempty"`
 	State     string `json:"state"`
-	Semver    string `json:"semver,omitempty"`
-	Slug      string `json:"slug,omitempty"`
+	ErrorCode string `json:"error_code,omitempty"`
 }
 
 // CleanDigest strips an optional "sha256:" prefix and lower-cases hex.

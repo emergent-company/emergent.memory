@@ -238,3 +238,73 @@ func TestMarketInstallMissingProjectOnConfirmRedirects(t *testing.T) {
 		t.Fatalf("missing project still applied: %d calls", f.marketApplyCalls)
 	}
 }
+
+func TestMarketInstallReviewRendersModelMap(t *testing.T) {
+	res := marketResolveResult()
+	res.Agents = []MarketManifestAgent{
+		{Name: "writer", Model: &MarketAgentModel{Name: "gpt-5", Provider: "openai"}},
+		{Name: "reader"},
+	}
+	f := &fakeMemory{marketResolveRes: res}
+	_, e := newMarketInstallServer(f, marketTestConfig())
+
+	q := url.Values{"code": {"abc"}, "market": {"https://market.example"}}
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/marketplace/install?"+q.Encode(), nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="market-install-model-review"`,
+		`data-testid="blueprint-model-map-row"`,
+		`name="model.writer"`,
+		"Blueprint: openai/gpt-5",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("model-map review missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, `name="model.reader"`) {
+		t.Errorf("unpinned agent rendered a model row: %s", body)
+	}
+}
+
+func TestMarketInstallReviewSkipsModelMapWhenUnpinned(t *testing.T) {
+	f := &fakeMemory{marketResolveRes: marketResolveResult()}
+	_, e := newMarketInstallServer(f, marketTestConfig())
+
+	q := url.Values{"code": {"abc"}, "market": {"https://market.example"}}
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/marketplace/install?"+q.Encode(), nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), `data-testid="market-install-model-review"`) {
+		t.Errorf("unpinned listing rendered a model review: %s", rec.Body.String())
+	}
+}
+
+func TestMarketInstallConfirmForwardsModelOverrides(t *testing.T) {
+	f := &fakeMemory{marketApplyRes: &MarketApplyResult{BlueprintID: "bp-42", InstallID: "inst-1"}}
+	_, e := newMarketInstallServer(f, marketTestConfig())
+
+	form := url.Values{
+		"market":       {"https://market.example"},
+		"code":         {"abc"},
+		"model.writer": {"openai/gpt-5"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/marketplace/install", strings.NewReader(form.Encode()))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationForm)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if got := f.marketApplyOverrides["writer"]; got != "openai/gpt-5" {
+		t.Fatalf("model overrides = %#v", f.marketApplyOverrides)
+	}
+}

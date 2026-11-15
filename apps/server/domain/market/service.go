@@ -66,12 +66,14 @@ type ListingPreview struct {
 }
 
 // ResolveResult is the preview shown before confirmation. Resolve performs no
-// download and no apply.
+// download and no apply. Agents carries the version manifest's agents so the
+// gateway can render the model-map review before anything is applied.
 type ResolveResult struct {
-	Listing          ListingPreview `json:"listing"`
-	Capabilities     Capabilities   `json:"capabilities"`
-	Compat           Compat         `json:"compat"`
-	AlreadyInstalled bool           `json:"already_installed"`
+	Listing          ListingPreview  `json:"listing"`
+	Capabilities     Capabilities    `json:"capabilities"`
+	Compat           Compat          `json:"compat"`
+	Agents           []ManifestAgent `json:"agents,omitempty"`
+	AlreadyInstalled bool            `json:"already_installed"`
 }
 
 // ApplyResult is the confirmed-install response.
@@ -96,6 +98,10 @@ func (s *Service) Resolve(ctx context.Context, projectID, marketIssuer, code str
 	if err != nil {
 		return nil, err
 	}
+	var agents []ManifestAgent
+	if exchange.Version != nil {
+		agents = exchange.Version.Manifest.Agents
+	}
 	return &ResolveResult{
 		Listing: ListingPreview{
 			Slug:      listing.Slug,
@@ -106,6 +112,7 @@ func (s *Service) Resolve(ctx context.Context, projectID, marketIssuer, code str
 		},
 		Capabilities:     listing.Capabilities,
 		Compat:           listing.Compat,
+		Agents:           agents,
 		AlreadyInstalled: already != nil && already.State == InstallStateApplied,
 	}, nil
 }
@@ -113,12 +120,25 @@ func (s *Service) Resolve(ctx context.Context, projectID, marketIssuer, code str
 // Apply performs the full install: exchange, licence verify, download, digest
 // verify, extraction, tool-licence check, blueprint apply with market
 // provenance, install row, and a best-effort market report. A repeat install of
-// the same licensed digest into the same project is idempotent.
-func (s *Service) Apply(ctx context.Context, projectID, installedBy, marketIssuer, code string, overrides map[string]string) (*ApplyResult, error) {
+// the same licensed digest into the same project is idempotent. Once the
+// exchange has handed out a licence, any later failure is reported to the
+// market as `failed` with the stable app error code (still best-effort: a
+// reporting failure never changes the install outcome).
+func (s *Service) Apply(ctx context.Context, projectID, installedBy, marketIssuer, code string, overrides map[string]string) (result *ApplyResult, applyErr error) {
 	issuer, exchange, claims, err := s.exchange(ctx, marketIssuer, code)
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if applyErr == nil {
+			return
+		}
+		report := ReportRequest{State: ReportStateFailed, ErrorCode: reportErrorCode(applyErr)}
+		if rerr := s.client.ReportInstall(ctx, issuer, report, exchange.License); rerr != nil {
+			s.log.Warn("market install failure report failed", logger.Error(rerr))
+		}
+	}()
+
 	listing := exchange.Listing
 	if !Compatible(s.version, listing.Compat.Memory) {
 		return nil, ErrCompatUnsatisfied(listing.Compat.Memory, s.version)
@@ -155,10 +175,12 @@ func (s *Service) Apply(ctx context.Context, projectID, installedBy, marketIssue
 		return nil, err
 	}
 	kind := ""
+	var manifestTools []string
 	if exchange.Version != nil {
 		kind = exchange.Version.Kind
+		manifestTools = exchange.Version.Manifest.Tools
 	}
-	if err := checkLicensedTools(kind, &listing, local); err != nil {
+	if err := checkLicensedTools(kind, &listing, manifestTools, local); err != nil {
 		return nil, err
 	}
 
@@ -201,19 +223,24 @@ func (s *Service) Apply(ctx context.Context, projectID, installedBy, marketIssue
 	}
 
 	// Reporting is best-effort: the install is already applied, and failing it
-	// because a usage callback failed would be worse than a missing report.
-	if err := s.client.ReportInstall(ctx, issuer, ReportRequest{
-		InstallID: installID,
-		Digest:    digest,
-		ProjectID: projectID,
-		State:     InstallStateApplied,
-		Semver:    listing.VersionString(),
-		Slug:      listing.Slug,
-	}, exchange.License); err != nil {
-		s.log.Warn("market install report failed", logger.Error(err))
+	// because a usage callback failed would be worse than a missing report. Use
+	// the market's terminal state vocabulary (`installed`), never the internal
+	// install-row state (`applied`).
+	if rerr := s.client.ReportInstall(ctx, issuer, ReportRequest{State: ReportStateInstalled}, exchange.License); rerr != nil {
+		s.log.Warn("market install report failed", logger.Error(rerr))
 	}
 
 	return &ApplyResult{BlueprintID: bp.ID, InstallID: installID}, nil
+}
+
+// reportErrorCode maps an apply failure to the stable error_code the market
+// records. App errors carry the contract code; anything else is a generic
+// install failure.
+func reportErrorCode(err error) string {
+	if code := ErrorCode(err); code != "" {
+		return code
+	}
+	return "install_failed"
 }
 
 // exchange normalizes the issuer, redeems the code at that issuer, and verifies
@@ -268,6 +295,9 @@ func (s *Service) exchange(ctx context.Context, marketIssuer, code string) (stri
 		return "", nil, nil, err
 	}
 	if version != nil {
+		if version.Slug != "" && version.Slug != slug {
+			return "", nil, nil, ErrLicenseInvalid("market version document names a different listing")
+		}
 		if version.Version != "" && semver != "" && version.Version != semver {
 			return "", nil, nil, ErrLicenseInvalid("market version document names a different version")
 		}
@@ -284,21 +314,27 @@ func (s *Service) exchange(ctx context.Context, marketIssuer, code string) (stri
 	return issuer, exchange, claims, nil
 }
 
-// checkLicensedTools enforces the hosted rule: the blueprint may only declare
-// agent tools the listing licences for install delivery.
-func checkLicensedTools(kind string, listing *Listing, local *blueprints.LocalBlueprint) error {
-	// A blueprint is the payload: its agents bring their own tool graph, and the
-	// install manifest has no tools[] vocabulary for it (tools[] is a hosted-listing
-	// field). Enforcing a licensed set here would refuse every real blueprint.
-	if kind == "blueprint" || kind == "bundle" {
+// checkLicensedTools enforces the hosted rule: an mcp/agent listing may only
+// deliver agents whose tools the version manifest licences (manifest tools plus
+// capabilities.tools). Blueprint and bundle installs are the payload itself and
+// bring their own tool graph, so they stay exempt. A kind that is neither
+// recognised nor hosted stays exempt too, so an unknown future kind cannot
+// start refusing real installs.
+func checkLicensedTools(kind string, listing *Listing, manifestTools []string, local *blueprints.LocalBlueprint) error {
+	if kind != "mcp" && kind != "agent" {
 		return nil
 	}
 	allowed := map[string]struct{}{}
 	for _, name := range listing.LicencedTools() {
 		allowed[name] = struct{}{}
 	}
-	// Nothing declared means nothing to enforce (P0): hosted listings declare their
-	// tools, install listings do not have the field.
+	for _, name := range manifestTools {
+		if name != "" {
+			allowed[name] = struct{}{}
+		}
+	}
+	// Nothing declared means nothing to enforce (P0): a listing that declares no
+	// tool set cannot have an agent tool refused.
 	if len(allowed) == 0 {
 		return nil
 	}

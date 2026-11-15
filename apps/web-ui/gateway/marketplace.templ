@@ -21,6 +21,8 @@ type MarketInstallPageData struct {
 	Listing          MarketListingPreview
 	Capabilities     MarketCapabilities
 	Compat           MarketCompat
+	ModelRows        []BlueprintModelMapRow
+	Models           []Model
 	AlreadyInstalled bool
 	HasReview        bool
 	ErrorCode        string
@@ -106,6 +108,24 @@ templ marketInstallReview(d MarketInstallPageData) {
 		<form method="post" action="/marketplace/install" class="flex flex-wrap items-center gap-3">
 			<input type="hidden" name="market" value={ d.Market }/>
 			<input type="hidden" name="code" value={ d.Code }/>
+			if len(d.ModelRows) > 0 {
+				<div class="flex w-full flex-col gap-3" data-testid="market-install-model-review">
+					@ui.Alert(ui.AlertProps{
+						Type:    ui.AlertWarning,
+						Style:   ui.AlertStyleSoft,
+						Icon:    "lucide--list-checks",
+						Message: blueprintModelMapSummary(len(d.ModelRows)),
+					})
+					@components.TableCard(nil, components.TableCardOpt{CardClass: "overflow-hidden"}) {
+						for _, row := range d.ModelRows {
+							@blueprintModelMapRow(row, d.Models)
+						}
+					}
+					if len(d.Models) == 0 {
+						@blueprintModelMapNoModels()
+					}
+				</div>
+			}
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeSubmit,
 				Variant: ui.ButtonPrimary,

@@ -127,8 +127,12 @@ func (s *Server) marketSidebarItems() []layout.SidebarItem {
 }
 
 // marketIssuerLabel derives the secondary-entry label from the issuer host.
+// The dev market is market.dev.memory.emergent-company.ai, so a bare "dev."
+// prefix is not enough: any host with a `.dev.` segment (or a leading `dev.`)
+// is the dev environment.
 func marketIssuerLabel(issuer string) string {
-	if strings.HasPrefix(marketIssuerHost(issuer), "dev.") {
+	host := marketIssuerHost(issuer)
+	if host == "dev" || strings.HasPrefix(host, "dev.") || strings.Contains(host, ".dev.") {
 		return "Marketplace (dev)"
 	}
 	return "Marketplace (prod)"
