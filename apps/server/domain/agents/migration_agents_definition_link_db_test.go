@@ -14,7 +14,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/pgutils"
 )
 
-// TestAgentsDefinitionLinkMigrationRewritesLosers pins migration 00302's two data
+// TestAgentsDefinitionLinkMigrationRewritesLosers pins migration 00303's two data
 // fixes, run on legacy rows that already violate the new partial unique index:
 //
 //   - an extraction shell (name 'extraction-agent:*' holding the definition link)
@@ -37,7 +37,7 @@ func TestAgentsDefinitionLinkMigrationRewritesLosers(t *testing.T) {
 	db := tdb.DB
 
 	mig := migrate.NewMigrator(db, zap.NewNop())
-	// The test DB is migrated to head; roll back 00302 so we can seed the legacy
+	// The test DB is migrated to head; roll back 00303 so we can seed the legacy
 	// linked/duplicate rows it is about to inspect, then re-apply it.
 	require.NoError(t, mig.DownTo(ctx, 301))
 
@@ -102,7 +102,7 @@ func TestAgentsDefinitionLinkMigrationRewritesLosers(t *testing.T) {
 	require.Nil(t, loserLink)
 	require.NotEqual(t, "Dup", loserName, "the loser's name was not disambiguated")
 
-	// Idempotency: roll back and re-apply 00302. The re-mark and dedupe are no-ops
+	// Idempotency: roll back and re-apply 00303. The re-mark and dedupe are no-ops
 	// on the already-transformed data, and the name is not double-suffixed.
 	require.NoError(t, mig.DownTo(ctx, 301))
 	require.NoError(t, mig.UpTo(ctx, 302))
@@ -238,7 +238,7 @@ func TestAgentsDefinitionLinkMigrationKeeperRuleAndLoserDisable(t *testing.T) {
 	require.False(t, loserEnabled, "the scheduled loser was not disabled")
 	require.Equal(t, "0 0 * * *", loserCron, "the scheduled loser's cron was not reset")
 
-	// Re-apply 00302: the keeper rule, loser-disabling and renames must be
+	// Re-apply 00303: the keeper rule, loser-disabling and renames must be
 	// idempotent — the unlinked rows are no longer candidates, so nothing is
 	// double-suffixed and the disabled loser stays disabled.
 	require.NoError(t, mig.DownTo(ctx, 301))

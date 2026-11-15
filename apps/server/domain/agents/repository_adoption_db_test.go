@@ -167,7 +167,7 @@ func TestFindAgentsByDefinitionIDProjectScoped(t *testing.T) {
 // #737/#738 BLOCKER: when a definition ALREADY owns a linked runtime row (created
 // by a source-trigger bind, a blueprint apply, or a coordination spawn), the
 // Remember/Forget feature shells must resolve to that SAME row rather than mint a
-// second linked row — which migration 00302's (project_id, agent_definition_id)
+// second linked row — which migration 00303's (project_id, agent_definition_id)
 // partial unique index would reject with 23505 (the HTTP 500). The chat handler's
 // Remember and Forget paths both call this function, so two calls (a Remember run
 // then a Forget run) must both succeed and return the same row.
@@ -201,7 +201,7 @@ func TestFindOrCreateRuntimeAgentForDefinitionReusesExistingLink(t *testing.T) {
 	// by feature name ("Remember session for <def>" / "Forget session for <def>").
 	// That lookup misses a definition that already owns a linked row under its
 	// canonical name, and the handler then minted a second linked row — hitting
-	// migration 00302's partial unique index with 23505 (the 500 at d0d9bc839).
+	// migration 00303's partial unique index with 23505 (the 500 at d0d9bc839).
 	featureName := "Forget session for " + def.Name
 	miss, err := repo.FindByName(ctx, projectID, featureName)
 	require.NoError(t, err)
@@ -269,7 +269,7 @@ func TestFindByNameDeterministic(t *testing.T) {
 }
 
 // TestAgentsDefinitionLinkUniqueIndex pins the #738 partial unique index: after
-// migration 00302 a second runtime row for the same (project_id,
+// migration 00303 a second runtime row for the same (project_id,
 // agent_definition_id) cannot be inserted.
 func TestAgentsDefinitionLinkUniqueIndex(t *testing.T) {
 	if testing.Short() {

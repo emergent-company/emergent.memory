@@ -38,8 +38,8 @@ WHERE name LIKE 'extraction-agent:%'
 -- live schedule, which then kept firing with no system prompt, tools or rules —
 -- the #737 failure shape reintroduced by the fix. Ranking the actively
 -- triggered, high-run-count row first keeps the live schedule as the keeper.
-DROP TABLE IF EXISTS _00302_losers;
-CREATE TEMP TABLE _00302_losers AS
+DROP TABLE IF EXISTS _00303_losers;
+CREATE TEMP TABLE _00303_losers AS
 WITH ranked AS (
     SELECT
         a.id,
@@ -93,7 +93,7 @@ SET
     name = a.name || ' (unlinked ' || left(a.id::text, 8) || ')',
     enabled = CASE WHEN a.trigger_type <> 'manual' THEN false ELSE a.enabled END,
     cron_schedule = CASE WHEN a.trigger_type <> 'manual' THEN '0 0 * * *' ELSE a.cron_schedule END
-FROM _00302_losers l
+FROM _00303_losers l
 WHERE a.id = l.id;
 
 -- Audit: name every loser whose live schedule was disabled so the action is
@@ -103,13 +103,13 @@ DECLARE
     r record;
 BEGIN
     FOR r IN
-        SELECT id, name FROM _00302_losers WHERE trigger_type <> 'manual' ORDER BY name, id
+        SELECT id, name FROM _00303_losers WHERE trigger_type <> 'manual' ORDER BY name, id
     LOOP
-        RAISE NOTICE '00302: disabled unlinked runtime agent % (%)', r.id, r.name;
+        RAISE NOTICE '00303: disabled unlinked runtime agent % (%)', r.id, r.name;
     END LOOP;
 END $$;
 
-DROP TABLE IF EXISTS _00302_losers;
+DROP TABLE IF EXISTS _00303_losers;
 
 -- Step 3 — the index itself. IF NOT EXISTS keeps the whole Up body idempotent:
 -- step 1's re-mark is a no-op once the shells carry no FK, step 2's dedupe
