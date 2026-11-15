@@ -3,6 +3,8 @@ title: "User Guide"
 ---
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+import Card from '../../components/Card.astro';
+import CardGrid from '../../components/CardGrid.astro';
 
 
 **Memory** is a graph-native AI knowledge platform. It lets you store, connect, and query information as a structured knowledge graph — then use AI to extract insights, answer questions, and automate workflows over that knowledge.
@@ -35,58 +37,70 @@ Everything lives inside a **project**. A project belongs to an **organization**.
 
 ## Guides
 
-<div class="grid cards" markdown>
+<CardGrid>
+<Card title='<a href="/emergent.memory/user-guide/getting-started/">Getting Started</a>' icon="lucide:rocket">
 
-- :material-rocket-launch: **[Getting Started](/emergent.memory/user-guide/getting-started/)**
+Create your org, invite your team, set up your first project.
 
-    Create your org, invite your team, set up your first project.
+</Card>
+<Card title='<a href="/emergent.memory/user-guide/knowledge-graph/">Knowledge Graph</a>' icon="lucide:network">
 
-- :material-graph: **[Knowledge Graph](/emergent.memory/user-guide/knowledge-graph/)**
+Add objects, define relationships, search and traverse the graph.
 
-    Add objects, define relationships, search and traverse the graph.
+</Card>
+<Card title='<a href="/emergent.memory/user-guide/documents/">Documents</a>' icon="lucide:file-text">
 
-- :material-file-document: **[Documents](/emergent.memory/user-guide/documents/)**
+Upload files and URLs to build your knowledge base.
 
-    Upload files and URLs to build your knowledge base.
+</Card>
+<Card title='<a href="/emergent.memory/user-guide/chat/">Chat</a>' icon="lucide:message-square">
 
-- :material-chat: **[Chat](/emergent.memory/user-guide/chat/)**
+Ask questions and explore your knowledge graph via AI chat.
 
-    Ask questions and explore your knowledge graph via AI chat.
+</Card>
+<Card title='<a href="/emergent.memory/user-guide/agents/">Agents</a>' icon="lucide:bot">
 
-- :material-robot: **[Agents](/emergent.memory/user-guide/agents/)**
+Automate workflows with scheduled or event-driven AI agents.
 
-    Automate workflows with scheduled or event-driven AI agents.
+</Card>
+<Card title='<a href="/emergent.memory/user-guide/blueprints/">Blueprints</a>' icon="lucide:package">
 
-- :material-package-variant-closed: **[Blueprints](/emergent.memory/user-guide/blueprints/)**
+Install schema packs, agents, skills, and seed data as one versioned bundle.
 
-    Install schema packs, agents, skills, and seed data as one versioned bundle.
+</Card>
+<Card title='<a href="/emergent.memory/user-guide/branches/">Branches</a>' icon="lucide:git-branch">
 
-- :material-source-branch: **[Branches](/emergent.memory/user-guide/branches/)**
+Work on isolated graph changes and merge them when ready.
 
-    Work on isolated graph changes and merge them when ready.
+</Card>
+<Card title='<a href="/emergent.memory/user-guide/datasources/">Data Sources</a>' icon="lucide:database-zap">
 
-- :material-database-sync: **[Data Sources](/emergent.memory/user-guide/datasources/)**
+Connect and sync external data sources into your graph.
 
-    Connect and sync external data sources into your graph.
+</Card>
+<Card title='<a href="/emergent.memory/user-guide/api-tokens/">API Tokens</a>' icon="lucide:key-round">
 
-- :material-key: **[API Tokens](/emergent.memory/user-guide/api-tokens/)**
+Generate tokens for programmatic and CI/CD access.
 
-    Generate tokens for programmatic and CI/CD access.
+</Card>
+<Card title='<a href="/emergent.memory/user-guide/backups/">Backups</a>' icon="lucide:database-backup">
 
-- :material-backup-restore: **[Backups](/emergent.memory/user-guide/backups/)**
+Create and restore project backups.
 
-    Create and restore project backups.
+</Card>
+<Card title='<a href="/emergent.memory/user-guide/notifications/">Notifications</a>' icon="lucide:bell">
 
-- :material-bell: **[Notifications](/emergent.memory/user-guide/notifications/)**
+Stay informed about agent activity and system events.
 
-    Stay informed about agent activity and system events.
+</Card>
+<Card title='<a href="/emergent.memory/user-guide/tasks/">Tasks</a>' icon="lucide:list-checks">
 
-- :material-list-status: **[Tasks](/emergent.memory/user-guide/tasks/)**
+Monitor and resolve background task operations.
 
-    Monitor and resolve background task operations.
+</Card>
+<Card title='<a href="/emergent.memory/user-guide/integrations/">Integrations</a>' icon="lucide:puzzle">
 
-- :material-puzzle: **[Integrations](/emergent.memory/user-guide/integrations/)**
+Connect GitHub and other third-party services.
 
-    Connect GitHub and other third-party services.
-
-</div>
+</Card>
+</CardGrid>

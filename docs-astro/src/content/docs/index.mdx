@@ -19,24 +19,26 @@ hero:
       variant: minimal
 ---
 
-import { Card, CardGrid, LinkCard, LinkButton } from '@astrojs/starlight/components';
+import { LinkCard, LinkButton } from '@astrojs/starlight/components';
+import Card from '../../components/Card.astro';
+import CardGrid from '../../components/CardGrid.astro';
 
 ## Guides
 
 <CardGrid>
-  <Card title="User Guide" icon="pencil">
+  <Card title="User Guide" icon="lucide:pencil">
     Step-by-step guides for end users of the Memory platform — knowledge graph,
     documents, agents, chat, and more.
 
     <LinkButton href="/emergent.memory/user-guide/" variant="secondary" icon="right-arrow">Open the User Guide</LinkButton>
   </Card>
-  <Card title="Developer Guide" icon="setting">
+  <Card title="Developer Guide" icon="lucide:settings-2">
     Reference for developers integrating with or extending Memory — provider
     setup, type registry, MCP servers, extraction pipeline, security scopes.
 
     <LinkButton href="/emergent.memory/developer-guide/" variant="secondary" icon="right-arrow">Open the Developer Guide</LinkButton>
   </Card>
-  <Card title="Memory CLI" icon="laptop">
+  <Card title="Memory CLI" icon="lucide:laptop">
     Install the `memory` CLI, sign in, select a project, and run the everyday
     commands — `init`, `ask`, `status`, document ingest, and graph queries.
 
@@ -47,7 +49,7 @@ import { Card, CardGrid, LinkCard, LinkButton } from '@astrojs/starlight/compone
 ## SDKs
 
 <CardGrid>
-  <Card title="Go SDK" icon="puzzle">
+  <Card title="Go SDK" icon="lucide:puzzle">
     A fully type-safe client library covering the complete Memory API surface —
     30 service clients, dual authentication, multi-tenancy, streaming SSE, and
     structured error handling.
@@ -56,7 +58,7 @@ import { Card, CardGrid, LinkCard, LinkButton } from '@astrojs/starlight/compone
 
     <LinkButton href="/emergent.memory/go-sdk/" variant="secondary" icon="right-arrow">Get started with the Go SDK</LinkButton>
   </Card>
-  <Card title="Python SDK" icon="puzzle">
+  <Card title="Python SDK" icon="lucide:puzzle">
     A full-featured client library for the Memory API — 14 sub-clients, three
     auth modes, SSE streaming, and structured error handling.
 
@@ -64,10 +66,12 @@ import { Card, CardGrid, LinkCard, LinkButton } from '@astrojs/starlight/compone
 
     <LinkButton href="/emergent.memory/python-sdk/" variant="secondary" icon="right-arrow">Python SDK reference</LinkButton>
   </Card>
-  <Card title="Swift SDK" icon="puzzle">
+  <Card title="Swift SDK" icon="lucide:puzzle">
     The Swift surface is the `EmergentKit` package under `swift/EmergentKit`,
     used by the iOS and Mac apps in this repository. It is not yet published as
     a standalone Swift Package, so it has no reference documentation here.
+
+    <LinkButton href="https://github.com/emergent-company/emergent.memory/tree/main/swift/EmergentKit" variant="secondary" icon="external">View EmergentKit source</LinkButton>
   </Card>
 </CardGrid>
 
