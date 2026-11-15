@@ -810,7 +810,7 @@ type objectDetailShellData struct {
 	// section empty and `more: false`), and that page must not fall back to the
 	// flat list showing exactly the relationship types the author opted out of.
 	// It is also not "the type declares one": an edge-read failure must not look
-	// like "the view shows nothing here". objectViewDeclared is its single
+	// like "the view shows nothing here". objectViewRenderable is its single
 	// derivation; every surface sets this field from it.
 	HasView bool
 }

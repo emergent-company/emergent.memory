@@ -853,27 +853,43 @@ func (s *Server) loadObjectDetailShell(ctx context.Context, id, from string, sur
 	}
 }
 
-// objectViewDeclared reports whether the object's type declares a ui.view this
+// objectEdgesReadable reports whether this load obtained the object's edge list:
+// the read succeeded and the object has connections. It says nothing about
+// whether the type declares a ui.view, so the surfaces that render the edges
+// themselves — the wiki page's per-type groups, which are the fallback for a
+// type that declared none — share this half without claiming a view exists.
+func objectEdgesReadable(data objectDetailShellData) bool {
+	return data.EdgesErr == nil && len(data.Edges) > 0
+}
+
+// objectViewRenderable reports whether the object's type declares a ui.view this
 // load can render: the pack declares one, the edges were read, and the object
 // has connections. Every surface derives objectDetailShellData.HasView from it,
 // so "a view that shows nothing here" can never be confused with "no view", with
 // a failed edge read, or with the ordinary zero-edge object. Zero edges stay
 // silent on purpose: there is no view to explain.
-func objectViewDeclared(data objectDetailShellData) bool {
+//
+// The nil guard covers the LoadErr shell objectDetailShellData permits: a caller
+// that has not returned on LoadErr yet still gets "not renderable" instead of a
+// panic, rather than depending on call order for its safety.
+func objectViewRenderable(data objectDetailShellData) bool {
+	if data.Obj == nil {
+		return false
+	}
 	return typeUIOf(data.TypeUIByType, data.Obj.Type).View != nil &&
-		data.EdgesErr == nil && len(data.Edges) > 0
+		objectEdgesReadable(data)
 }
 
 // objectViewSections resolves the object type's declared ui.view against the
 // object's edges with the collapsed row budget. It returns nil when there is no
-// view to render (see objectViewDeclared) — the Relationships page and the
+// view to render (see objectViewRenderable) — the Relationships page and the
 // Overview distinguish "no view" from "a view that shows nothing" through
 // objectDetailShellData.HasView, not through this nil.
 //
 // The related-objects fetch only happens for a type that declares a view, so
 // every project that has not adopted the block keeps its current page cost.
 func (s *Server) objectViewSections(ctx context.Context, data objectDetailShellData) []objectViewSection {
-	if !objectViewDeclared(data) {
+	if !objectViewRenderable(data) {
 		return nil
 	}
 	view := typeUIOf(data.TypeUIByType, data.Obj.Type).View
@@ -913,7 +929,7 @@ func (s *Server) uiObject(c echo.Context) error {
 	// shows, because the pack opted out of exactly the types a flat list would
 	// have displayed.
 	data.ViewSections = s.objectViewSections(ctx, data)
-	data.HasView = objectViewDeclared(data)
+	data.HasView = objectViewRenderable(data)
 
 	if c.QueryParam("updated") != "" {
 		data.FlashMsg = "Object updated."
@@ -996,11 +1012,12 @@ func (s *Server) uiObjectRelationshipsPage(c echo.Context) error {
 	// a depth-1 preview of each neighbour. A type that declares none, or whose
 	// view is malformed, keeps the generic list (see typeUIViewOf); a failed
 	// edge read stays the error alert below rather than claiming the view shows
-	// nothing (objectViewDeclared, shared with the Overview).
+	// nothing (objectViewRenderable, shared with the Overview).
 	//
 	// ?all=1 is the reader's escape from a view that shows nothing: it asks for
-	// every edge, so the declared view is deliberately not applied.
-	if view := typeUIOf(data.TypeUIByType, data.Obj.Type).View; c.QueryParam("all") != "1" && objectViewDeclared(data) {
+	// every edge, so the declared view is deliberately not applied and HasView
+	// stays false — this page is showing the unfiltered list, not a view.
+	if view := typeUIOf(data.TypeUIByType, data.Obj.Type).View; c.QueryParam("all") != "1" && objectViewRenderable(data) {
 		data.HasView = true
 		data.ViewSections = resolveObjectViewSections(view, data.Obj, data.Edges, related, data.TypeUIByType)
 		// ?expand=N opens one group to the expanded row budget, so the in-place
@@ -1078,11 +1095,11 @@ func (s *Server) uiObjectViewSection(c echo.Context) error {
 	}
 	// No view is renderable — none declared, the edges could not be read, or the
 	// object has no connections. The Overview and the Relationships tab go
-	// silent on all three (objectViewDeclared), so the swap removes the card
+	// silent on all three (objectViewRenderable), so the swap removes the card
 	// instead of freezing edges that may no longer exist. In particular an
 	// edge-read failure must not look like "the view shows nothing": that is the
 	// empty-view note, which only a readable, non-empty edge list earns.
-	if !objectViewDeclared(data) {
+	if !objectViewRenderable(data) {
 		return objectViewSectionUnavailable(c)
 	}
 	view := typeUIOf(data.TypeUIByType, data.Obj.Type).View
