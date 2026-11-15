@@ -241,16 +241,23 @@ Examples:
 
 var setBudgetCmd = &cobra.Command{
 	Use:   "set-budget [project-name-or-id]",
-	Short: "Set a monthly spend budget for a project",
-	Long: `Set or clear the monthly spend budget for a project.
+	Short: "Set the weekly and monthly spend budgets for a project",
+	Long: `Set or clear a project's spend budgets.
 
-When the project's estimated spend for the current month exceeds
-budget_usd * budget_alert_threshold (default 0.8), an in-app notification
-is sent to all org members. Set --budget 0 to clear an existing budget.
+Two windows are enforced independently: the monthly cap (budget_usd) over the
+UTC calendar month, and the weekly cap (budget_weekly_usd) over the ISO week
+(Monday 00:00 UTC). Either window reaching its cap blocks agent runs until it
+resets. When spend exceeds a window's cap times its alert threshold (default
+0.8), the project's admins get an in-app notification and an email — at most
+once per window.
+
+Set a cap to 0 to clear it. With no flags but --weekly, only the weekly window
+is touched.
 
 Examples:
   memory projects set-budget my-project --budget 50
   memory projects set-budget my-project --budget 100 --threshold 0.9
+  memory projects set-budget my-project --weekly 15 --weekly-threshold 0.75
   memory projects set-budget --budget 25`,
 	Args:              cobra.MaximumNArgs(1),
 	ValidArgsFunction: completion.ProjectNamesCompletionFunc(),
@@ -258,13 +265,17 @@ Examples:
 }
 
 var (
-	setBudgetAmount    float64
-	setBudgetThreshold float64
+	setBudgetAmount          float64
+	setBudgetThreshold       float64
+	setBudgetWeeklyAmount    float64
+	setBudgetWeeklyThreshold float64
 )
 
 func runSetBudget(cmd *cobra.Command, args []string) error {
-	if !cmd.Flags().Changed("budget") {
-		return fmt.Errorf("--budget is required")
+	monthlySet := cmd.Flags().Changed("budget") || cmd.Flags().Changed("threshold")
+	weeklySet := cmd.Flags().Changed("weekly") || cmd.Flags().Changed("weekly-threshold")
+	if !monthlySet && !weeklySet {
+		return fmt.Errorf("--budget or --weekly is required")
 	}
 
 	c, err := getClient(cmd)
@@ -277,11 +288,21 @@ func runSetBudget(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	req := &projects.UpdateProjectRequest{
-		BudgetUSD: &setBudgetAmount,
+	req := &projects.UpdateProjectRequest{}
+	// Only the windows this invocation names are written: UpdateProjectRequest
+	// uses pointers, so an omitted field leaves the stored cap untouched —
+	// setting the weekly cap must never silently clear the monthly one.
+	if monthlySet {
+		req.BudgetUSD = &setBudgetAmount
+		if cmd.Flags().Changed("threshold") {
+			req.BudgetAlertThreshold = &setBudgetThreshold
+		}
 	}
-	if cmd.Flags().Changed("threshold") {
-		req.BudgetAlertThreshold = &setBudgetThreshold
+	if weeklySet {
+		req.BudgetWeeklyUSD = &setBudgetWeeklyAmount
+		if cmd.Flags().Changed("weekly-threshold") {
+			req.BudgetWeeklyAlertThreshold = &setBudgetWeeklyThreshold
+		}
 	}
 
 	project, err := c.SDK.Projects.Update(context.Background(), projectID, req)
@@ -289,18 +310,31 @@ func runSetBudget(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to update project budget: %w", err)
 	}
 
-	if setBudgetAmount == 0 {
-		fmt.Printf("Budget cleared for project %q (%s).\n", project.Name, project.ID)
-	} else {
-		threshold := 0.8
-		if project.BudgetAlertThreshold != nil && *project.BudgetAlertThreshold != 0 {
-			threshold = *project.BudgetAlertThreshold
-		}
-		fmt.Printf("Budget set for project %q (%s):\n", project.Name, project.ID)
-		fmt.Printf("  Monthly budget:    $%.2f\n", setBudgetAmount)
-		fmt.Printf("  Alert threshold:   %.0f%% ($%.2f)\n", threshold*100, setBudgetAmount*threshold)
+	monthly := budgetCapLabel(cmd.Flags().Changed("budget"), setBudgetAmount, project.BudgetUSD)
+	weekly := budgetCapLabel(cmd.Flags().Changed("weekly"), setBudgetWeeklyAmount, project.BudgetWeeklyUSD)
+	if monthly == "not set" && weekly == "not set" {
+		fmt.Printf("Budgets cleared for project %q (%s).\n", project.Name, project.ID)
+		return nil
 	}
+	fmt.Printf("Budgets set for project %q (%s):\n", project.Name, project.ID)
+	fmt.Printf("  Monthly budget:    %s\n", monthly)
+	fmt.Printf("  Weekly budget:     %s\n", weekly)
 	return nil
+}
+
+// budgetCapLabel renders one window's cap after an update: the value just sent
+// when the flag was given (0 = now uncapped), otherwise whatever the server
+// echoes back. "not set" covers both a nil column and a zero/non-positive cap,
+// which the server treats as uncapped.
+func budgetCapLabel(changed bool, flagValue float64, stored *float64) string {
+	switch {
+	case changed && flagValue > 0:
+		return fmt.Sprintf("$%.2f", flagValue)
+	case !changed && stored != nil && *stored > 0:
+		return fmt.Sprintf("$%.2f", *stored)
+	default:
+		return "not set"
+	}
 }
 
 var (
@@ -389,30 +423,34 @@ func getClient(cmd *cobra.Command) (*client.Client, error) {
 // field present, with null for values that were never set. `stats` stays
 // conditional because it is only fetched with --stats.
 type projectJSON struct {
-	ID                   string                 `json:"id"`
-	Name                 string                 `json:"name"`
-	OrgID                string                 `json:"orgId"`
-	ProjectInfo          *string                `json:"project_info"`
-	ChatPromptTemplate   *string                `json:"chat_prompt_template"`
-	AutoExtractObjects   *bool                  `json:"auto_extract_objects"`
-	AutoExtractConfig    map[string]interface{} `json:"auto_extract_config"`
-	BudgetUSD            *float64               `json:"budget_usd"`
-	BudgetAlertThreshold *float64               `json:"budget_alert_threshold"`
-	Stats                *projects.ProjectStats `json:"stats,omitempty"`
+	ID                         string                 `json:"id"`
+	Name                       string                 `json:"name"`
+	OrgID                      string                 `json:"orgId"`
+	ProjectInfo                *string                `json:"project_info"`
+	ChatPromptTemplate         *string                `json:"chat_prompt_template"`
+	AutoExtractObjects         *bool                  `json:"auto_extract_objects"`
+	AutoExtractConfig          map[string]interface{} `json:"auto_extract_config"`
+	BudgetUSD                  *float64               `json:"budget_usd"`
+	BudgetAlertThreshold       *float64               `json:"budget_alert_threshold"`
+	BudgetWeeklyUSD            *float64               `json:"budget_weekly_usd"`
+	BudgetWeeklyAlertThreshold *float64               `json:"budget_weekly_alert_threshold"`
+	Stats                      *projects.ProjectStats `json:"stats,omitempty"`
 }
 
 func newProjectJSON(p projects.Project) projectJSON {
 	return projectJSON{
-		ID:                   p.ID,
-		Name:                 p.Name,
-		OrgID:                p.OrgID,
-		ProjectInfo:          p.ProjectInfo,
-		ChatPromptTemplate:   p.ChatPromptTemplate,
-		AutoExtractObjects:   p.AutoExtractObjects,
-		AutoExtractConfig:    p.AutoExtractConfig,
-		BudgetUSD:            p.BudgetUSD,
-		BudgetAlertThreshold: p.BudgetAlertThreshold,
-		Stats:                p.Stats,
+		ID:                         p.ID,
+		Name:                       p.Name,
+		OrgID:                      p.OrgID,
+		ProjectInfo:                p.ProjectInfo,
+		ChatPromptTemplate:         p.ChatPromptTemplate,
+		AutoExtractObjects:         p.AutoExtractObjects,
+		AutoExtractConfig:          p.AutoExtractConfig,
+		BudgetUSD:                  p.BudgetUSD,
+		BudgetAlertThreshold:       p.BudgetAlertThreshold,
+		BudgetWeeklyUSD:            p.BudgetWeeklyUSD,
+		BudgetWeeklyAlertThreshold: p.BudgetWeeklyAlertThreshold,
+		Stats:                      p.Stats,
 	}
 }
 
@@ -1343,7 +1381,9 @@ func init() {
 	setProjectInfoCmd.Flags().StringVar(&setInfoText, "text", "", "Inline project info text")
 
 	setBudgetCmd.Flags().Float64Var(&setBudgetAmount, "budget", 0, "Monthly budget in USD (set to 0 to clear)")
-	setBudgetCmd.Flags().Float64Var(&setBudgetThreshold, "threshold", 0.8, "Alert threshold as a fraction of budget (e.g. 0.8 = 80%)")
+	setBudgetCmd.Flags().Float64Var(&setBudgetThreshold, "threshold", 0.8, "Monthly alert threshold as a fraction of budget (e.g. 0.8 = 80%)")
+	setBudgetCmd.Flags().Float64Var(&setBudgetWeeklyAmount, "weekly", 0, "Weekly budget in USD (set to 0 to clear)")
+	setBudgetCmd.Flags().Float64Var(&setBudgetWeeklyThreshold, "weekly-threshold", 0.8, "Weekly alert threshold as a fraction of budget (e.g. 0.8 = 80%)")
 
 	// set-models flags
 	setModelsCmd.Flags().StringVar(&setModelsGenerative, "generative", "", "Generative model with provider prefix, e.g. google/gemini-2.5-flash")

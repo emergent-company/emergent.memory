@@ -13,6 +13,11 @@ type MemoryBackend interface {
 	ListAgentDefinitions(ctx context.Context) ([]AgentDefinitionSummary, error)
 	GetAgentDefinition(ctx context.Context, id string) (*AgentDefinition, error)
 	CreateAgentDefinition(ctx context.Context, in *AgentDefinition) (*AgentDefinition, error)
+	CreateRuntimeAgent(ctx context.Context, in *CreateRuntimeAgentRequest) (*RuntimeAgent, error)
+	ListRuntimeAgents(ctx context.Context, projectID string) ([]RuntimeAgent, error)
+	ListAgentQueues(ctx context.Context, projectID string) ([]AgentQueue, error)
+	CreateAgentQueue(ctx context.Context, projectID, name string) (*AgentQueue, error)
+	EnableRuntimeAgent(ctx context.Context, projectID, agentID string) error
 	UpdateAgentDefinition(ctx context.Context, id string, in *AgentDefinition) (*AgentDefinition, error)
 	DeleteAgentDefinition(ctx context.Context, id string) error
 	ListScheduledAgents(ctx context.Context) ([]ScheduledAgent, error)
@@ -199,6 +204,13 @@ type MemoryBackend interface {
 	CreateOrgSourceApp(ctx context.Context, orgID string, req *DSSourceAppRequest) (*SourceApp, error)
 	UpdateOrgSourceApp(ctx context.Context, orgID, appID string, req *DSSourceAppUpdateRequest) (*SourceApp, error)
 	DeleteOrgSourceApp(ctx context.Context, orgID, appID string) error
+	ListProjectSourceApps(ctx context.Context) ([]SourceApp, error)
+	ListInstallationRepositories(ctx context.Context, appID, installationID string) ([]string, error)
+	GetSourceWorkflow(ctx context.Context, sourceID string) (*SourceWorkflow, error)
+	PutSourceWorkflow(ctx context.Context, sourceID string, cfg SourceWorkflowConfig) (*SourceWorkflow, error)
+	CreateProjectSourceApp(ctx context.Context, req *DSSourceAppRequest) (*SourceApp, error)
+	UpdateProjectSourceApp(ctx context.Context, appID string, req *DSSourceAppUpdateRequest) (*SourceApp, error)
+	DeleteProjectSourceApp(ctx context.Context, appID string) error
 	ListSourceTriggers(ctx context.Context, sourceID string) ([]DSSourceTrigger, error)
 	CreateSourceTrigger(ctx context.Context, sourceID string, req *DSSourceTriggerRequest) (*DSSourceTrigger, error)
 	UpdateSourceTrigger(ctx context.Context, sourceID, triggerID string, req *DSSourceTriggerRequest) (*DSSourceTrigger, error)
@@ -330,6 +342,13 @@ type MemoryBackend interface {
 	DeleteProjectSetting(ctx context.Context, category, key string) error
 	GetProjectUsageSummary(ctx context.Context, since, until time.Time) (*UsageSummaryResponse, error)
 	GetProjectUsageTimeSeries(ctx context.Context, granularity string, since, until time.Time) (*UsageTimeSeriesResponse, error)
+	// GetProjectBudgetState is the week/month budget position (cap, spend,
+	// remaining, status, reset timing). It backs the usage-page budget panels and
+	// the Usage nav badge.
+	GetProjectBudgetState(ctx context.Context) (*BudgetState, error)
+	// ResetProjectBudgetWindow restarts one window ("week" | "month") from now;
+	// the other window and all usage history are untouched. Admin-only.
+	ResetProjectBudgetWindow(ctx context.Context, window string) (*BudgetPeriod, error)
 	ListProjectProviders(ctx context.Context) ([]ProjectProviderConfig, error)
 	ListProviderDefinitions(ctx context.Context) ([]ProviderDefinition, error)
 	ListProviderModels(ctx context.Context, provider string) ([]ProviderSupportedModel, error)

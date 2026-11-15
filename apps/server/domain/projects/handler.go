@@ -310,6 +310,47 @@ func (h *Handler) Restore(c echo.Context) error {
 	})
 }
 
+// ResetBudget restarts one spending window of a project's budget from now.
+//
+// The two windows are independent: resetting the week leaves the month's
+// tracked spend and anchor untouched, and vice versa. Usage history is never
+// rewritten — only the accounting window moves — so an admin who raises a cap
+// can also unblock an exhausted project immediately instead of waiting for the
+// calendar boundary.
+//
+// @Summary      Reset a project budget window
+// @Description  Restarts the weekly or monthly spending window from now by moving that window's cycle anchor. The other window and all usage history are untouched. Project admins and org admins of the owning organization only.
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Project ID (UUID)"
+// @Param        request body ResetBudgetRequest true "Window to reset (week or month)"
+// @Success      200 {object} BudgetPeriod "The new spending window"
+// @Failure      400 {object} apperror.Error "Invalid project ID, body, or window"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Not a project admin or org admin"
+// @Failure      404 {object} apperror.Error "Project not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{id}/budget/reset [post]
+// @Security     bearerAuth
+func (h *Handler) ResetBudget(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	id := c.Param("id")
+
+	var req ResetBudgetRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	period, err := h.svc.ResetBudgetPeriod(c.Request().Context(), id, req.Window, user.ID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, period)
+}
+
 // ListMembers returns all members of a project
 // @Summary      List project members
 // @Description  Returns all users who are members of the specified project with their roles

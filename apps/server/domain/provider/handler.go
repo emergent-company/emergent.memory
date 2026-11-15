@@ -18,11 +18,12 @@ type Handler struct {
 	catalog  *ModelCatalogService
 	repo     *Repository
 	registry *Registry
+	usage    *UsageService
 }
 
 // NewHandler creates a new provider handler.
-func NewHandler(creds *CredentialService, catalog *ModelCatalogService, repo *Repository, registry *Registry) *Handler {
-	return &Handler{creds: creds, catalog: catalog, repo: repo, registry: registry}
+func NewHandler(creds *CredentialService, catalog *ModelCatalogService, repo *Repository, registry *Registry, usage *UsageService) *Handler {
+	return &Handler{creds: creds, catalog: catalog, repo: repo, registry: registry, usage: usage}
 }
 
 // ProviderDefinitionResponse is the read-only, API-facing projection of a
@@ -299,6 +300,38 @@ func (h *Handler) GetProjectUsageSummary(c echo.Context) error {
 		Note: "Costs shown are estimates based on retail pricing and may not reflect your actual provider invoice.",
 		Data: rows,
 	})
+}
+
+// GetProjectBudget returns the project's position in both spending windows.
+//
+// It is the read side of the budget feature: the usage page renders the
+// remaining budget and reset dates from it, the sidebar badge derives its state
+// from it, and the gateway's "reset budget now" control re-reads it. The period
+// arithmetic lives on the server (internal/budgetwindow), so gateway code never
+// recomputes a week boundary that could disagree with what enforces the cap.
+//
+// @Summary Get project budget state
+// @Description Returns the weekly and monthly spending windows for a project: cap, threshold, spend, remaining, percent used, period start/end and status (ok | warning | exhausted).
+// @Tags projects
+// @Produce json
+// @Param projectId path string true "Project ID"
+// @Success 200 {object} BudgetState
+// @Failure 401 {object} apperror.Error
+// @Failure 403 {object} apperror.Error
+// @Failure 404 {object} apperror.Error
+// @Router /projects/{projectId}/usage/budget [get]
+func (h *Handler) GetProjectBudget(c echo.Context) error {
+	projectID := c.Param("projectId")
+
+	if err := h.creds.assertCallerOwnsProject(c.Request().Context(), projectID); err != nil {
+		return err
+	}
+
+	state, err := h.usage.GetBudgetState(c.Request().Context(), projectID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, state)
 }
 
 // GetOrgUsageSummary returns aggregated token usage and estimated costs for an organization.

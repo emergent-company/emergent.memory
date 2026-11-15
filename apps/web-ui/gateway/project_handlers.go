@@ -80,7 +80,7 @@ func (s *Server) activateProject(c echo.Context) error {
 	if _, hasSession := sessionContextFrom(c.Request().Context()); !hasSession {
 		return c.JSON(http.StatusOK, map[string]string{"ok": "true", "activeProjectId": id})
 	}
-	claims, err := s.currentSession(c)
+	claims, err := s.requestSessionClaims(c)
 	if err != nil {
 		// A session context is attached but its claims cannot be loaded (e.g. an
 		// expired cookie): fail closed rather than reporting a silent success.
@@ -109,10 +109,13 @@ func (s *Server) activateProject(c echo.Context) error {
 
 // activateProjectInSession re-issues the session cookie with a new active
 // project (and org), preserving tokens/expiry, and records the project in the
-// account's durable recent-projects cookie. No-op when there is no session
-// (API-key caller) or the secret is unset.
+// account's durable recent-projects cookie. It re-issues from the claims the
+// middleware validated for this request, never from the request cookie, so a
+// refresh on the same request is not overwritten with pre-refresh tokens
+// (#610). No-op when there is no session (API-key caller) or the secret is
+// unset.
 func (s *Server) activateProjectInSession(c echo.Context, projectID, orgID string) {
-	claims, err := s.currentSession(c)
+	claims, err := s.requestSessionClaims(c)
 	if err != nil {
 		return
 	}
@@ -128,9 +131,11 @@ func (s *Server) activateProjectInSession(c echo.Context, projectID, orgID strin
 
 // activateOrg makes orgID the active org in the session cookie and clears the
 // active project (project scope belongs to the new org), preserving
-// tokens/identity/expiry. No-op when there is no session or it is expired.
+// tokens/identity/expiry. Like activateProjectInSession it re-issues from the
+// middleware-validated (post-refresh) claims (#610). No-op when there is no
+// session or it is expired.
 func (s *Server) activateOrg(c echo.Context, orgID string) {
-	claims, err := s.currentSession(c)
+	claims, err := s.requestSessionClaims(c)
 	if err != nil {
 		return
 	}
@@ -145,9 +150,10 @@ func (s *Server) activateOrg(c echo.Context, orgID string) {
 
 // clearContext clears both the active project and the active org from the
 // session cookie (no-org wizard state), preserving tokens/identity/expiry.
-// No-op when there is no session or it is expired.
+// Re-issues from the middleware-validated (post-refresh) claims (#610). No-op
+// when there is no session or it is expired.
 func (s *Server) clearContext(c echo.Context) {
-	claims, err := s.currentSession(c)
+	claims, err := s.requestSessionClaims(c)
 	if err != nil {
 		return
 	}

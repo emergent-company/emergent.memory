@@ -17,21 +17,48 @@ const (
 	SourceEventCancelled  = "cancelled"
 )
 
-// SourceApp is an org-scoped provider App credential. One App can back many
-// project sources and installations. The sealed columns are write-only.
+// SourceApp is a provider App credential. ProjectID nil = org-wide (org admin,
+// usable by every project in the org); set = project-owned (project admin, only
+// that project). The sealed columns are write-only.
 type SourceApp struct {
 	bun.BaseModel `bun:"table:kb.source_apps,alias:sa"`
 
-	ID                     uuid.UUID `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
-	OrgID                  uuid.UUID `bun:"org_id,notnull,type:uuid" json:"orgId"`
-	Provider               string    `bun:"provider,notnull" json:"provider"`
-	AppID                  int64     `bun:"app_id,notnull" json:"appId"`
-	Slug                   string    `bun:"slug,notnull" json:"slug"`
-	PrivateKeyEncrypted    []byte    `bun:"private_key_encrypted,notnull,type:bytea" json:"-"`
-	WebhookSecretEncrypted []byte    `bun:"webhook_secret_encrypted,notnull,type:bytea" json:"-"`
-	WebhookKey             uuid.UUID `bun:"webhook_key,notnull,type:uuid,default:gen_random_uuid()" json:"webhookKey"`
-	CreatedAt              time.Time `bun:"created_at,notnull,default:now()" json:"createdAt"`
-	UpdatedAt              time.Time `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+	ID                     uuid.UUID  `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
+	OrgID                  uuid.UUID  `bun:"org_id,notnull,type:uuid" json:"orgId"`
+	ProjectID              *uuid.UUID `bun:"project_id,type:uuid" json:"projectId,omitempty"`
+	Provider               string     `bun:"provider,notnull" json:"provider"`
+	AppID                  int64      `bun:"app_id,notnull" json:"appId"`
+	Slug                   string     `bun:"slug,notnull" json:"slug"`
+	PrivateKeyEncrypted    []byte     `bun:"private_key_encrypted,notnull,type:bytea" json:"-"`
+	WebhookSecretEncrypted []byte     `bun:"webhook_secret_encrypted,notnull,type:bytea" json:"-"`
+	WebhookKey             uuid.UUID  `bun:"webhook_key,notnull,type:uuid,default:gen_random_uuid()" json:"webhookKey"`
+	CreatedAt              time.Time  `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	UpdatedAt              time.Time  `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+}
+
+// SourceWorkflow turns source events into board work items. Config carries the
+// reviewer lanes; runs are created by the board reconciler, not the dispatcher.
+type SourceWorkflow struct {
+	bun.BaseModel `bun:"table:kb.source_workflows,alias:sw"`
+
+	ID        uuid.UUID      `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
+	ProjectID uuid.UUID      `bun:"project_id,notnull,type:uuid" json:"projectId"`
+	SourceID  uuid.UUID      `bun:"source_id,notnull,type:uuid" json:"sourceId"`
+	Config    map[string]any `bun:"config,type:jsonb,notnull,default:'{}'" json:"config"`
+	Enabled   bool           `bun:"enabled,notnull,default:true" json:"enabled"`
+	CreatedAt time.Time      `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	UpdatedAt time.Time      `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+}
+
+// SourceWorkflowReviewer is one review lane in a source workflow.
+type SourceWorkflowReviewer struct {
+	Lane  string `json:"lane"`
+	Agent string `json:"agent"`
+}
+
+// SourceWorkflowConfig is the persisted workflow config.
+type SourceWorkflowConfig struct {
+	Reviewers []SourceWorkflowReviewer `json:"reviewers"`
 }
 
 // SourceTrigger binds one source event type to a runtime agent and queue.
@@ -48,6 +75,12 @@ type SourceTrigger struct {
 	Enabled     bool           `bun:"enabled,notnull" json:"enabled"`
 	CreatedAt   time.Time      `bun:"created_at,notnull,default:now()" json:"createdAt"`
 	UpdatedAt   time.Time      `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+
+	// AgentName is the bound runtime agent's display name, resolved on read for
+	// the trigger panel. Not a column: the picker offers agent definitions while
+	// AgentID stores a runtime kb.agents id, so the view cannot resolve the name
+	// from its own list (#727).
+	AgentName string `bun:"-" json:"agentName,omitempty"`
 }
 
 // SourceEvent is one verified delivery and its dispatch claim. Payload is a

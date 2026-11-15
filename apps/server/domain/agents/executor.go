@@ -529,8 +529,9 @@ type ephemeralTokenSvc interface {
 	RevokeEphemeral(ctx context.Context, tokenID string)
 }
 
-// BudgetExceededError is returned by Execute when a project's monthly spending
-// limit has been reached and BUDGET_ENFORCEMENT_ENABLED=true.
+// BudgetExceededError is returned by Execute when one of a project's spending
+// windows (weekly or monthly) has reached its limit and
+// BUDGET_ENFORCEMENT_ENABLED=true.
 type BudgetExceededError struct {
 	ProjectID string
 	Message   string
@@ -540,7 +541,7 @@ func (e *BudgetExceededError) Error() string {
 	if e.Message != "" {
 		return e.Message
 	}
-	return fmt.Sprintf("project %s has exceeded its monthly budget", e.ProjectID)
+	return fmt.Sprintf("project %s has exceeded a spending budget window", e.ProjectID)
 }
 
 // ErrExecutionDisabled is the sentinel error returned by every agent execution
@@ -593,6 +594,9 @@ func callerRunIDFromContext(ctx context.Context) string {
 // authorization non-inheritable across a run boundary (issue #1133).
 func runDispatchContext(ctx context.Context, trusted bool) context.Context {
 	ctx = mcp.ContextWithoutTransportEnforced(ctx)
+	// A nested run must not inherit the parent's verified source subject. It is
+	// re-stamped only from this run's own source_subject row.
+	ctx = mcp.ContextWithoutRunSubject(ctx)
 	return mcp.ContextWithTrustedInternal(ctx, trusted)
 }
 
@@ -1136,7 +1140,8 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		return nil, err
 	}
 
-	// Budget pre-flight check — hard stop when project has exceeded its monthly budget.
+	// Budget pre-flight check — hard stop when either spending window (week or
+	// month) has reached its cap. CheckBudgetExceeded covers both.
 	if ae.usageService != nil && req.ProjectID != "" {
 		exceeded, err := ae.usageService.CheckBudgetExceeded(ctx, req.ProjectID)
 		if err != nil {
@@ -1152,7 +1157,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 			)
 			return nil, &BudgetExceededError{
 				ProjectID: req.ProjectID,
-				Message:   fmt.Sprintf("project %s has exceeded its monthly spending budget", req.ProjectID),
+				Message:   fmt.Sprintf("project %s has exceeded its spending budget", req.ProjectID),
 			}
 		}
 	}
@@ -2640,6 +2645,13 @@ func (ae *AgentExecutor) runPipeline(
 	if sourceID, ok := run.TriggerMetadata["sourceId"].(string); ok && sourceID != "" {
 		ctx = mcp.ContextWithRunSourceID(ctx, sourceID)
 	}
+	// The verified subject is a dispatcher-written run column, not metadata:
+	// spawned runs merge metadata but never inherit this column.
+	if subj := run.SourceSubject; subj != nil && subj.RepositoryValid() {
+		ctx = mcp.ContextWithRunSubject(ctx, mcp.RunSubject{
+			SourceID: subj.SourceID, Repo: subj.Repo, PRNumber: subj.PRNumber, HeadSHA: subj.HeadSHA,
+		})
+	}
 	// Inject session ID into context so built-in tools (e.g. set_session_title)
 	// can update session metadata. If the run was created without the session ID set
 	// in-memory (e.g. via trigger_agent async path), fetch it from DB as a fallback.
@@ -3107,6 +3119,9 @@ func (ae *AgentExecutor) runPipeline(
 	// keep using work_complete/work_block so the work lifecycle stays
 	// authoritative. See the webpage-feedback issue-triager.
 	ctx = auth.WithAgentWorkStatusSubject(ctx, reactionWorkStatusSubject(req.Agent, req.AgentDefinition, req.SubjectObjectID))
+	if run.SubjectObjectID != nil && *run.SubjectObjectID != "" {
+		ctx = mcp.ContextWithWorkObjectID(ctx, *run.SubjectObjectID)
+	}
 
 	// Accumulate cached token counts across all LLM steps in this run.
 	// Used to surface cache hit visibility in the run summary.

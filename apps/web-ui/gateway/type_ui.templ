@@ -2,6 +2,7 @@ package main
 
 import (
 	ui "github.com/emergent-company/go-daisy/components/ui"
+	"github.com/emergent-company/go-daisy/devmode"
 )
 
 // --- Type-level ui accent rendering ---
@@ -68,7 +69,7 @@ templ typeIconTile(icon, color string, size ...typeIconTileSize) {
 			name = "lucide--box"
 		}
 		neutral := icon == "" && color == "" }}
-		<div class={ "grid shrink-0 place-items-center rounded-xl border size-11 sm:size-12", templ.KV("bg-primary/10 text-primary border-primary/15", neutral) } style={ typeColorStyle(color) } data-component="gateway/TypeIconTile">
+		<div class={ "grid shrink-0 place-items-center rounded-xl border size-11 sm:size-12", templ.KV("bg-primary/10 text-primary border-primary/15", neutral) } style={ typeColorStyle(color) } { devmode.Attrs(ctx, "gateway/TypeIconTile")... }>
 			@typeGlyph(name, "size-6", "text-2xl")
 		</div>
 	} else if icon == "" && color == "" {

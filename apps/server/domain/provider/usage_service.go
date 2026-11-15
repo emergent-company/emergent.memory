@@ -2,6 +2,8 @@ package provider
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -10,7 +12,9 @@ import (
 	"github.com/uptrace/bun"
 	"go.uber.org/fx"
 
+	"github.com/emergent-company/emergent.memory/domain/email"
 	"github.com/emergent-company/emergent.memory/domain/notifications"
+	"github.com/emergent-company/emergent.memory/internal/budgetwindow"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -40,10 +44,19 @@ type UsageService struct {
 	// which import provider), so the leaf-package hand-off D7 warned about is
 	// unnecessary. nil is safe: budget alerts are skipped when not wired.
 	notificationsSvc *notifications.Service
+
+	// emailSvc delivers the admin budget-alert emails. nil is safe: the in-app
+	// notification is the durable record and the mail is best-effort, so a
+	// deployment without the email jobs service still alerts in-app.
+	emailSvc *email.JobsService
+
+	// frontendURL is the absolute base for the action links in those emails
+	// (/o/{org}/p/{project}/usage and .../settings/budget).
+	frontendURL string
 }
 
 // NewUsageService creates a UsageService and registers lifecycle hooks with fx.
-func NewUsageService(lc fx.Lifecycle, repo *Repository, db bun.IDB, notificationsSvc *notifications.Service, log *slog.Logger) *UsageService {
+func NewUsageService(lc fx.Lifecycle, repo *Repository, db bun.IDB, notificationsSvc *notifications.Service, emailSvc *email.JobsService, frontendURL string, log *slog.Logger) *UsageService {
 	s := &UsageService{
 		repo:             repo,
 		db:               db,
@@ -51,6 +64,8 @@ func NewUsageService(lc fx.Lifecycle, repo *Repository, db bun.IDB, notification
 		log:              log.With(logger.Scope("provider.usage")),
 		doneCh:           make(chan struct{}),
 		notificationsSvc: notificationsSvc,
+		emailSvc:         emailSvc,
+		frontendURL:      strings.TrimRight(frontendURL, "/"),
 	}
 
 	lc.Append(fx.Hook{
@@ -217,149 +232,498 @@ func computeCost(
 	return cost
 }
 
-// checkBudget checks whether the project's current-month spend has crossed its
-// alert threshold, and if so inserts a warning notification for each project
-// admin. Alerts are coalesced per (user, project, month) group_key by the
-// notifications producer, which enforces uniqueness atomically in the database.
-func (s *UsageService) checkBudget(ctx context.Context, projectID string) {
-	// 1. Fetch the project's budget config from kb.projects.
-	var budget struct {
-		BudgetUSD            *float64 `bun:"budget_usd"`
-		BudgetAlertThreshold float64  `bun:"budget_alert_threshold"`
+// Budget window statuses. "ok" also covers a window with no cap configured, so
+// callers never have to distinguish "no cap" from "under the cap" to render a
+// badge: they check CapUSD for that.
+const (
+	budgetStatusOK        = "ok"
+	budgetStatusWarning   = "warning"
+	budgetStatusExhausted = "exhausted"
+)
+
+// BudgetWindowState is one spending window's position: the cap, the threshold,
+// the spend and the period it all applies to.
+//
+// CapUSD and RemainingUSD are omitted for an uncapped window (omitempty on a nil
+// pointer): there is no figure to report, and a client that tests the field for
+// presence must not read `null` as "cap of zero".
+type BudgetWindowState struct {
+	Window       budgetwindow.Window `json:"window"`
+	CapUSD       *float64            `json:"capUsd,omitempty"`
+	Threshold    float64             `json:"threshold"`
+	SpendUSD     float64             `json:"spendUsd"`
+	RemainingUSD *float64            `json:"remainingUsd,omitempty"`
+	PercentUsed  float64             `json:"percentUsed"`
+	PeriodStart  time.Time           `json:"periodStart"`
+	PeriodEnd    time.Time           `json:"periodEnd"`
+	Status       string              `json:"status"`
+}
+
+// BudgetState is a project's budget position across both windows. Both windows
+// are always present — a window with no cap still reports its period (so the UI
+// can say when it would roll) and status "ok"; check CapUSD to tell them apart.
+type BudgetState struct {
+	Week  *BudgetWindowState `json:"week"`
+	Month *BudgetWindowState `json:"month"`
+}
+
+// budgetConfig is the budget configuration as stored on kb.projects.
+type budgetConfig struct {
+	Name             string
+	OrgID            string
+	MonthlyCapUSD    *float64
+	MonthlyThreshold float64
+	WeeklyCapUSD     *float64
+	WeeklyThreshold  float64
+	WeekAnchor       *time.Time
+	MonthAnchor      *time.Time
+}
+
+// budgetAdmin is a project admin with the address budget alerts are mailed to.
+type budgetAdmin struct {
+	UserID string `bun:"user_id"`
+	Email  string `bun:"email"`
+}
+
+// budgetConfigFor reads the project's budget configuration, name and owning org.
+func (s *UsageService) budgetConfigFor(ctx context.Context, projectID string) (*budgetConfig, error) {
+	var row struct {
+		Name             string     `bun:"name"`
+		OrgID            string     `bun:"organization_id"`
+		MonthlyCapUSD    *float64   `bun:"budget_usd"`
+		MonthlyThreshold float64    `bun:"budget_alert_threshold"`
+		WeeklyCapUSD     *float64   `bun:"budget_weekly_usd"`
+		WeeklyThreshold  float64    `bun:"budget_weekly_alert_threshold"`
+		WeekAnchor       *time.Time `bun:"budget_week_anchor"`
+		MonthAnchor      *time.Time `bun:"budget_month_anchor"`
 	}
 	err := s.db.NewSelect().
 		TableExpr("kb.projects").
-		ColumnExpr("budget_usd, budget_alert_threshold").
+		Column("name", "organization_id", "budget_usd", "budget_alert_threshold",
+			"budget_weekly_usd", "budget_weekly_alert_threshold",
+			"budget_week_anchor", "budget_month_anchor").
 		Where("id = ?", projectID).
-		Scan(ctx, &budget)
-	if err != nil || budget.BudgetUSD == nil || *budget.BudgetUSD <= 0 {
-		// No budget set — nothing to check.
-		return
-	}
-
-	// 2. Get current-month spend.
-	spend, err := s.repo.GetProjectCurrentMonthSpend(ctx, projectID)
+		Scan(ctx, &row)
 	if err != nil {
-		s.log.Warn("checkBudget: failed to get current month spend", logger.Error(err), slog.String("projectID", projectID))
+		return nil, err
+	}
+	return &budgetConfig{
+		Name:             row.Name,
+		OrgID:            row.OrgID,
+		MonthlyCapUSD:    row.MonthlyCapUSD,
+		MonthlyThreshold: row.MonthlyThreshold,
+		WeeklyCapUSD:     row.WeeklyCapUSD,
+		WeeklyThreshold:  row.WeeklyThreshold,
+		WeekAnchor:       row.WeekAnchor,
+		MonthAnchor:      row.MonthAnchor,
+	}, nil
+}
+
+// GetBudgetState returns the project's position in both spending windows.
+//
+// It is the single source of truth for everything that reacts to spend: the
+// usage page, the sidebar badge, the alert producer and CheckBudgetExceeded all
+// read it, so a window boundary or a percentage cannot differ between what the
+// UI shows, what the email says and what blocks an agent run.
+func (s *UsageService) GetBudgetState(ctx context.Context, projectID string) (*BudgetState, error) {
+	cfg, err := s.budgetConfigFor(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("GetBudgetState: read budget config: %w", err)
+	}
+	return s.budgetStateForConfig(ctx, cfg, projectID, time.Now().UTC())
+}
+
+// budgetStateForConfig computes the state at a given instant. Split from
+// GetBudgetState so DB tests can pin the clock.
+func (s *UsageService) budgetStateForConfig(ctx context.Context, cfg *budgetConfig, projectID string, now time.Time) (*BudgetState, error) {
+	weekPeriod := budgetwindow.PeriodFor(now, cfg.WeekAnchor, budgetwindow.Week)
+	monthPeriod := budgetwindow.PeriodFor(now, cfg.MonthAnchor, budgetwindow.Month)
+
+	weekSpend, monthSpend, err := s.repo.GetProjectWindowSpend(ctx, projectID, weekPeriod.Start, monthPeriod.Start)
+	if err != nil {
+		return nil, err
+	}
+
+	return &BudgetState{
+		Week:  newBudgetWindowState(budgetwindow.Week, cfg.WeeklyCapUSD, cfg.WeeklyThreshold, weekSpend, weekPeriod),
+		Month: newBudgetWindowState(budgetwindow.Month, cfg.MonthlyCapUSD, cfg.MonthlyThreshold, monthSpend, monthPeriod),
+	}, nil
+}
+
+// capConfigured reports whether a cap column means "there is a limit". A nil or
+// non-positive cap is uncapped, matching newBudgetWindowState's rule.
+func capConfigured(capUSD *float64) bool {
+	return capUSD != nil && *capUSD > 0
+}
+
+// newBudgetWindowState classifies one window. A nil or non-positive cap is "no
+// limit": the state keeps the period (so the UI can still say when it rolls)
+// but reports no cap, no remaining and "ok".
+func newBudgetWindowState(
+	w budgetwindow.Window,
+	capUSD *float64,
+	threshold float64,
+	spend float64,
+	period budgetwindow.Period,
+) *BudgetWindowState {
+	st := &BudgetWindowState{
+		Window:      w,
+		Threshold:   threshold,
+		SpendUSD:    spend,
+		PeriodStart: period.Start,
+		PeriodEnd:   period.End,
+		Status:      budgetStatusOK,
+	}
+	if !capConfigured(capUSD) {
+		return st
+	}
+	st.CapUSD = capUSD
+	remaining := *capUSD - spend
+	if remaining < 0 {
+		remaining = 0
+	}
+	st.RemainingUSD = &remaining
+	st.PercentUsed = (spend / *capUSD) * 100
+
+	switch {
+	case spend >= *capUSD:
+		st.Status = budgetStatusExhausted
+	case threshold > 0 && spend >= *capUSD*threshold:
+		st.Status = budgetStatusWarning
+	}
+	return st
+}
+
+// budgetStateExhausted reports whether either window has hit its cap.
+func budgetStateExhausted(state *BudgetState) bool {
+	if state == nil {
+		return false
+	}
+	for _, w := range []*BudgetWindowState{state.Week, state.Month} {
+		if w != nil && w.Status == budgetStatusExhausted {
+			return true
+		}
+	}
+	return false
+}
+
+// checkBudget emits the budget alerts for both windows.
+//
+// Each window has two levels — a warning at its configured threshold and a
+// hard alert at the cap — and each level is emitted at most once per period.
+// Deduplication is the notifications producer's durable (user, group_key)
+// unique index, exactly as before; that atomic gate is also the email gate:
+// only a newly created notification sends a letter, so the retry/re-evaluation
+// loop cannot mail an admin twice for the same period while that notification is
+// live. (Resolving the notification frees the partial index slot, so a later
+// evaluation of the same period would re-notify — the established behaviour of
+// migration 00219, not something this path changes.)
+func (s *UsageService) checkBudget(ctx context.Context, projectID string) {
+	cfg, err := s.budgetConfigFor(ctx, projectID)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			s.log.Warn("checkBudget: failed to read budget config", logger.Error(err), slog.String("projectID", projectID))
+		}
 		return
 	}
 
-	// A threshold of 0 (or a non-positive budget) is not a real breach level:
-	// `spend < 0` is false even at $0 spend, which produced spurious alerts at
-	// 0% usage. Require a positive threshold, then alert only on a real breach.
-	threshold := *budget.BudgetUSD * budget.BudgetAlertThreshold
-	if budget.BudgetAlertThreshold <= 0 || threshold <= 0 {
-		return
-	}
-	if spend < threshold {
-		return
-	}
-
-	// Deduplication is enforced atomically at insert time by the partial unique
-	// index on (user_id, group_key) via notifications.Service.Create. The old
-	// read-then-insert COUNT here was racy (concurrent checks all saw zero
-	// rows) and cross-user (any admin's alert suppressed the others).
-
-	// 3. Look up project admin user IDs.
-	var adminIDs []string
-	err = s.db.NewSelect().
-		TableExpr("kb.project_memberships").
-		ColumnExpr("user_id").
-		Where("project_id = ?", projectID).
-		Where("role = 'project_admin'").
-		Scan(ctx, &adminIDs)
-	if err != nil || len(adminIDs) == 0 {
+	now := time.Now().UTC()
+	// No cap in either window means there is nothing to alert on: short-circuit
+	// before the spend aggregate. This runs on every usage write, and the
+	// pre-window implementation returned before its month SUM in exactly this
+	// case — an uncapped project must not pay an aggregate over
+	// kb.llm_usage_events per event.
+	if !capConfigured(cfg.WeeklyCapUSD) && !capConfigured(cfg.MonthlyCapUSD) {
 		return
 	}
 
-	// 4. Insert a notification for each admin via the central producer. The
-	// group_key is passed through so Service.Create coalesces durably
-	// (ON CONFLICT DO NOTHING against ux_notifications_user_group_key_active).
-	pctUsed := (spend / *budget.BudgetUSD) * 100
-	title := "Budget alert"
+	state, err := s.budgetStateForConfig(ctx, cfg, projectID, now)
+	if err != nil {
+		s.log.Warn("checkBudget: failed to compute budget state", logger.Error(err), slog.String("projectID", projectID))
+		return
+	}
+
+	var admins []budgetAdmin
+	adminsLoaded := false
+
+	for _, w := range []*BudgetWindowState{state.Week, state.Month} {
+		if w == nil || !capConfigured(w.CapUSD) {
+			continue
+		}
+		if !adminsLoaded {
+			admins, err = s.budgetAdmins(ctx, projectID)
+			if err != nil {
+				// Fail quiet: the spend check must never break a usage write.
+				// The next evaluation retries; the in-app notification is the
+				// durable record and it, too, is only attempted on success.
+				s.log.Warn("checkBudget: failed to list project admins",
+					logger.Error(err), slog.String("projectID", projectID))
+				return
+			}
+			if len(admins) == 0 {
+				// No project admin to tell — the recipient set is per project,
+				// so a further window has nobody to notify either.
+				return
+			}
+			adminsLoaded = true
+		}
+		// A threshold of 1.0 is the cap itself: sending the warning and the
+		// exhaustion alert at the same instant would be two identical emails.
+		if w.Status == budgetStatusWarning && w.Threshold < 1 {
+			s.emitBudgetAlert(ctx, cfg, projectID, w, false, admins)
+		}
+		if w.Status == budgetStatusExhausted {
+			s.emitBudgetAlert(ctx, cfg, projectID, w, true, admins)
+		}
+	}
+}
+
+// budgetAdmins returns the project's admins with their primary *verified*
+// address. An unverified address is never mailed: this is an unsolicited
+// automated email, and the address on an unverified row may belong to someone
+// else (the same rule userprofile.Repository.GetEmail applies when it resolves
+// "the" address for a user). An admin with no verified address still receives
+// the in-app notification, which is the durable record; email is best-effort.
+func (s *UsageService) budgetAdmins(ctx context.Context, projectID string) ([]budgetAdmin, error) {
+	var rows []budgetAdmin
+	err := s.db.NewSelect().
+		TableExpr("kb.project_memberships AS pm").
+		ColumnExpr("pm.user_id AS user_id").
+		ColumnExpr("COALESCE(ue.email, '') AS email").
+		Join(`LEFT JOIN LATERAL (
+			SELECT email FROM core.user_emails
+			WHERE user_id = pm.user_id AND verified
+			ORDER BY created_at ASC
+			LIMIT 1
+		) AS ue ON true`).
+		Where("pm.project_id = ?", projectID).
+		Where("pm.role = 'project_admin'").
+		Scan(ctx, &rows)
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// budgetAlertGroupKey is the durable deduplication key for one alert level of
+// one window period.
+//
+// Monthly keys keep the pre-existing YYYY-MM format for calendar projects: those
+// notifications already exist in production, and switching the format on
+// rollout would re-alert every project that is already over its threshold. A
+// project that has reset its month uses its anchor date instead, so a new cycle
+// can alert again.
+func budgetAlertGroupKey(projectID string, cfg *budgetConfig, w *BudgetWindowState, exhausted bool) string {
+	period := budgetwindow.Period{Start: w.PeriodStart, End: w.PeriodEnd}
+	if w.Window == budgetwindow.Week {
+		kind := "budget-week-alert"
+		if exhausted {
+			kind = "budget-week-exceeded"
+		}
+		return fmt.Sprintf("%s-%s-%s", kind, projectID, period.Key())
+	}
+
+	monthKey := budgetwindow.CalendarKeyMonth(period)
+	if cfg.MonthAnchor != nil {
+		monthKey = period.Key()
+	}
+	kind := "budget-alert"
+	if exhausted {
+		kind = "budget-exceeded"
+	}
+	return fmt.Sprintf("%s-%s-%s", kind, projectID, monthKey)
+}
+
+// emitBudgetAlert writes the in-app notification for every admin and, when the
+// notification is newly created, one email.
+func (s *UsageService) emitBudgetAlert(
+	ctx context.Context,
+	cfg *budgetConfig,
+	projectID string,
+	w *BudgetWindowState,
+	exhausted bool,
+	admins []budgetAdmin,
+) {
+	windowLabel := "monthly"
+	if w.Window == budgetwindow.Week {
+		windowLabel = "weekly"
+	}
+	levelLabel := "alert"
+	if exhausted {
+		levelLabel = "exhausted"
+	}
+
+	remaining := 0.0
+	if w.RemainingUSD != nil {
+		remaining = *w.RemainingUSD
+	}
+	resets := w.PeriodEnd.UTC().Format("Mon, Jan 2")
+
+	title := fmt.Sprintf("%s budget %s", strings.ToUpper(windowLabel[:1])+windowLabel[1:], levelLabel)
 	message := fmt.Sprintf(
-		"Project has used $%.2f of its $%.2f monthly budget (%.0f%%).",
-		spend, *budget.BudgetUSD, pctUsed,
+		"%s has used $%.2f of its $%.2f %s budget (%.0f%%). $%.2f left — resets %s.",
+		cfg.Name, w.SpendUSD, *w.CapUSD, windowLabel, w.PercentUsed, remaining, resets,
 	)
-	sourceType := "project"
-	category := "budget"
+	if exhausted {
+		message += " Agent runs are rejected until the period resets."
+	}
+
 	severity := "warning"
 	importance := "important"
+	if exhausted {
+		severity = "critical"
+		importance = "urgent"
+	}
 
-	// One alert per project per calendar month. The same key is used for every
-	// admin (a user_id is part of the uniqueness key), so each admin receives
-	// exactly one alert while an active one exists.
-	groupKey := fmt.Sprintf("budget-alert-%s-%s", projectID, time.Now().UTC().Format("2006-01"))
+	usageURL := s.frontendURL + "/o/" + cfg.OrgID + "/p/" + projectID + "/usage"
+	groupKey := budgetAlertGroupKey(projectID, cfg, w, exhausted)
+	sourceType := "project"
+	category := "budget"
+	actionLabel := "View usage"
 
 	if s.notificationsSvc == nil {
 		return
 	}
 
-	for _, userID := range adminIDs {
+	for _, admin := range admins {
 		gk := groupKey
 		st := sourceType
 		sid := projectID
 		cat := category
-		_, err := s.notificationsSvc.Create(ctx, notifications.CreateInput{
-			UserID:     userID,
-			ProjectID:  &projectID,
-			Scope:      notifications.ScopeAccount,
-			EventKey:   "account.usage.budget_alert",
-			Title:      title,
-			Message:    message,
-			Severity:   severity,
-			Importance: importance,
-			GroupKey:   &gk,
-			SourceType: &st,
-			SourceID:   &sid,
-			Category:   &cat,
+		au := usageURL
+		al := actionLabel
+
+		created, err := s.notificationsSvc.Create(ctx, notifications.CreateInput{
+			UserID:      admin.UserID,
+			ProjectID:   &projectID,
+			Scope:       notifications.ScopeAccount,
+			EventKey:    "account.usage.budget_alert",
+			Title:       title,
+			Message:     message,
+			Severity:    severity,
+			Importance:  importance,
+			GroupKey:    &gk,
+			SourceType:  &st,
+			SourceID:    &sid,
+			Category:    &cat,
+			ActionURL:   &au,
+			ActionLabel: &al,
 		})
 		if err != nil {
-			s.log.Warn("checkBudget: failed to create budget alert notification",
+			s.log.Warn("budget alert: failed to create notification",
 				logger.Error(err),
 				slog.String("projectID", projectID),
-				slog.String("userID", userID),
+				slog.String("userID", admin.UserID),
 			)
+			continue
 		}
+		// coalesced: this admin already has this alert for this period, so the
+		// email was sent (or attempted) with it.
+		if created == nil {
+			continue
+		}
+		s.sendBudgetAlertEmail(ctx, cfg, projectID, w, admin, windowLabel, levelLabel, exhausted, remaining, resets, usageURL)
 	}
 
-	s.log.Info("budget alert sent",
+	s.log.Info("budget alert emitted",
 		slog.String("projectID", projectID),
-		slog.Float64("spend", spend),
-		slog.Float64("budget", *budget.BudgetUSD),
-		slog.Int("admins", len(adminIDs)),
+		slog.String("window", string(w.Window)),
+		slog.String("level", levelLabel),
+		slog.Float64("spend", w.SpendUSD),
+		slog.Float64("cap", *w.CapUSD),
+		slog.Int("admins", len(admins)),
 	)
 }
 
-// CheckBudgetExceeded returns true when the project's current-month spend has
-// reached or exceeded its configured budget_usd. If no budget is set (NULL or
-// zero), it returns false (no limit). If any query fails, it returns false so
-// that callers fail-open and do not block agent execution.
-func (s *UsageService) CheckBudgetExceeded(ctx context.Context, projectID string) (bool, error) {
-	// 1. Fetch the project's budget from kb.projects.
-	var result struct {
-		BudgetUSD *float64 `bun:"budget_usd"`
+// sendBudgetAlertEmail enqueues the admin email for one alert. A nil email
+// service (or an admin without an address) is not an error: the in-app
+// notification is the durable record, and the mail is best-effort.
+func (s *UsageService) sendBudgetAlertEmail(
+	ctx context.Context,
+	cfg *budgetConfig,
+	projectID string,
+	w *BudgetWindowState,
+	admin budgetAdmin,
+	windowLabel, levelLabel string,
+	exhausted bool,
+	remaining float64,
+	resets, usageURL string,
+) {
+	if s.emailSvc == nil || admin.Email == "" {
+		return
 	}
-	err := s.db.NewSelect().
-		TableExpr("kb.projects").
-		ColumnExpr("budget_usd").
-		Where("id = ?", projectID).
-		Scan(ctx, &result)
+
+	subject := fmt.Sprintf("%s budget %s — %s", strings.ToUpper(windowLabel[:1])+windowLabel[1:], levelLabel, cfg.Name)
+	period := budgetwindow.Period{Start: w.PeriodStart, End: w.PeriodEnd}
+	sourceType := "budget_alert"
+	sourceID := fmt.Sprintf("%s:%s:%s:%s", projectID, admin.UserID, w.Window, period.Key())
+	toName := admin.Email
+	budgetURL := s.frontendURL + "/o/" + cfg.OrgID + "/p/" + projectID + "/settings/budget"
+
+	_, err := s.emailSvc.Enqueue(ctx, email.EnqueueOptions{
+		ProjectID:    &projectID,
+		TemplateName: "budget-alert",
+		ToEmail:      admin.Email,
+		ToName:       &toName,
+		Subject:      subject,
+		TemplateData: map[string]interface{}{
+			"projectName":      cfg.Name,
+			"windowLabel":      windowLabel,
+			"levelLabel":       levelLabel,
+			"exhausted":        exhausted,
+			"spend":            fmt.Sprintf("%.2f", w.SpendUSD),
+			"cap":              fmt.Sprintf("%.2f", *w.CapUSD),
+			"remaining":        fmt.Sprintf("%.2f", remaining),
+			"percent":          fmt.Sprintf("%.0f", w.PercentUsed),
+			"thresholdPercent": fmt.Sprintf("%.0f", w.Threshold*100),
+			"resetsOn":         resets,
+			"usageUrl":         usageURL,
+			"budgetUrl":        budgetURL,
+			"plainText": email.BudgetAlertPlainText(email.BudgetAlertData{
+				ProjectName:      cfg.Name,
+				WindowLabel:      windowLabel,
+				Exhausted:        exhausted,
+				SpendUSD:         w.SpendUSD,
+				CapUSD:           *w.CapUSD,
+				RemainingUSD:     remaining,
+				PercentUsed:      w.PercentUsed,
+				ThresholdPercent: w.Threshold * 100,
+				ResetsOn:         resets,
+				UsageURL:         usageURL,
+				BudgetURL:        budgetURL,
+			}),
+		},
+		SourceType: &sourceType,
+		SourceID:   &sourceID,
+	})
 	if err != nil {
-		return false, fmt.Errorf("CheckBudgetExceeded: fetch budget: %w", err)
+		s.log.Warn("budget alert: failed to enqueue admin email",
+			logger.Error(err),
+			slog.String("projectID", projectID),
+			slog.String("userID", admin.UserID),
+		)
 	}
-	// No budget configured — treat as unlimited.
-	if result.BudgetUSD == nil || *result.BudgetUSD <= 0 {
+}
+
+// CheckBudgetExceeded returns true when either of the project's spending
+// windows has reached its cap. No cap configured anywhere returns false without
+// touching the usage ledger — this runs on every agent run and every embedding
+// chunk, and a project with no caps has no limit to look for. If any query
+// fails it returns false so that callers fail-open and do not block agent
+// execution on a broken budget query.
+func (s *UsageService) CheckBudgetExceeded(ctx context.Context, projectID string) (bool, error) {
+	cfg, err := s.budgetConfigFor(ctx, projectID)
+	if err != nil {
+		return false, fmt.Errorf("CheckBudgetExceeded: read budget config: %w", err)
+	}
+	if !capConfigured(cfg.WeeklyCapUSD) && !capConfigured(cfg.MonthlyCapUSD) {
 		return false, nil
 	}
-
-	// 2. Get current-month spend.
-	spend, err := s.repo.GetProjectCurrentMonthSpend(ctx, projectID)
+	state, err := s.budgetStateForConfig(ctx, cfg, projectID, time.Now().UTC())
 	if err != nil {
-		return false, fmt.Errorf("CheckBudgetExceeded: fetch spend: %w", err)
+		return false, fmt.Errorf("CheckBudgetExceeded: %w", err)
 	}
-
-	return spend >= *result.BudgetUSD, nil
+	return budgetStateExhausted(state), nil
 }
 
 // shutdown closes the event channel and waits for the worker to drain.

@@ -24,6 +24,7 @@ type WorkObjectHead struct {
 	Status      string
 	Version     int
 	Assignee    string
+	Properties  map[string]any
 }
 
 // workObjectHead builds a WorkObjectHead from a HEAD GraphObject.
@@ -33,6 +34,7 @@ func workObjectHead(obj *GraphObject) *WorkObjectHead {
 		CanonicalID: obj.CanonicalID.String(),
 		Type:        obj.Type,
 		Version:     obj.Version,
+		Properties:  obj.Properties,
 	}
 	if obj.Key != nil {
 		head.Key = *obj.Key
@@ -700,4 +702,15 @@ func (s *Service) ListWorkItems(ctx context.Context, projectID, status, typeName
 		items = append(items, item)
 	}
 	return items, nil
+}
+
+// FindHeadObjectByTypeAndKey returns the HEAD graph object for a type/key,
+// including properties. The source workflow dispatcher uses it to compare the
+// stored head SHA before resetting a lane to ready.
+func (s *Service) FindHeadObjectByTypeAndKey(ctx context.Context, projectID, objType, key string) (*GraphObject, error) {
+	pid, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.FindHeadByTypeAndKey(ctx, s.repo.DB(), pid, nil, objType, key)
 }

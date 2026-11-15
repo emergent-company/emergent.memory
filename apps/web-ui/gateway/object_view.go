@@ -154,19 +154,32 @@ func resolveObjectViewSections(view *typeUIView, obj *GraphObject, edges []Graph
 	return out
 }
 
-// expandedViewSection re-resolves one rendered group — by its index in the
-// page's own list — with the expanded row budget. It reports false when the index
-// names no group, which the route renders as a 404 rather than an empty card: an
-// id that no longer matches (the object lost its edges, the pack changed) must
-// not look like "this section is empty".
-func expandedViewSection(view *typeUIView, index int, obj *GraphObject, edges []GraphRelationship, related []GraphObject, typeUIByType map[string]typeUI) (objectViewSection, bool) {
+// viewSectionAt re-resolves one rendered group — by its index in the page's own
+// list — at the requested budget: the declared collapsed budget, or
+// viewExpandLimit when expanded. The collapsed card and the expanded card are
+// therefore the same group truncated differently, and one request resolves the
+// section exactly once. It reports false when the index names no group, which the
+// route renders as a 404 rather than an empty card: an id that no longer matches
+// (the object lost its edges, the pack changed) must not look like "this section
+// is empty".
+func viewSectionAt(view *typeUIView, index int, obj *GraphObject, edges []GraphRelationship, related []GraphObject, typeUIByType map[string]typeUI, expanded bool) (objectViewSection, bool) {
 	groups := objectViewGroups(view, obj, edges, related, typeUIByType)
 	if index < 0 || index >= len(groups) {
 		return objectViewSection{}, false
 	}
-	section := groups[index].section(viewExpandLimit)
+	group := groups[index]
+	if !expanded {
+		return group.section(group.Limit), true
+	}
+	section := group.section(viewExpandLimit)
 	section.Expanded = true
 	return section, true
+}
+
+// expandedViewSection is viewSectionAt pinned to the expanded budget, kept so the
+// resolver's own tests read as the expansion case they name.
+func expandedViewSection(view *typeUIView, index int, obj *GraphObject, edges []GraphRelationship, related []GraphObject, typeUIByType map[string]typeUI) (objectViewSection, bool) {
+	return viewSectionAt(view, index, obj, edges, related, typeUIByType, true)
 }
 
 // objectViewGroups collects every row of every rendered group, in reading order,

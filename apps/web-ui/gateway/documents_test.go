@@ -581,14 +581,7 @@ func TestRenderDocumentsPage(t *testing.T) {
 		}
 	}
 	// #57: the search-form submit button uses the default (md) size, not btn-sm.
-	searchAt := strings.Index(html, `data-testid="documents-search-form"`)
-	if searchAt < 0 {
-		t.Fatal("search form missing")
-	}
-	searchForm := html[searchAt:]
-	if end := strings.Index(searchForm, "</form>"); end >= 0 {
-		searchForm = searchForm[:end]
-	}
+	searchForm := formSlice(t, html, "documents-search-form")
 	if strings.Contains(searchForm, "btn-sm") {
 		t.Error("documents search button should not be btn-sm (it uses ui.ButtonMD)")
 	}
@@ -638,6 +631,31 @@ func TestRenderDocumentsBrowser(t *testing.T) {
 		}
 	}
 
+	// #744: every control that refreshes the results region must name that
+	// region's spinner. Without hx-indicator htmx marks the control that fired
+	// the request, so a filtered list swaps with no loading state. Asserted per
+	// control: one form carrying the attribute must not hide another's omission.
+	for _, testid := range []string{"documents-search-form", "documents-filter-form"} {
+		if form := formSlice(t, html, testid); !strings.Contains(form, `hx-indicator="#documents-results-loading"`) {
+			t.Errorf("%s is missing hx-indicator=\"#documents-results-loading\"", testid)
+		}
+	}
+	// The sort headers are links, not form controls, and drive the same region.
+	sortHeaders := startTagsWith(html, `href="/documents?sort=`)
+	if len(sortHeaders) == 0 {
+		t.Error("no sortable header link rendered")
+	}
+	for _, tag := range sortHeaders {
+		if !strings.Contains(tag, `hx-indicator="#documents-results-loading"`) {
+			t.Errorf("sort header missing the results-region indicator: %s", tag)
+		}
+	}
+	// The indicator must name an element that renders, or htmx has nothing to
+	// show: the id is the other half of the contract.
+	if !strings.Contains(html, `id="documents-results-loading"`) {
+		t.Error(`no element carries id="documents-results-loading"; every hx-indicator above points at nothing`)
+	}
+
 	// Only the sourced row links: one anchor in the table and one in the card
 	// list, and nothing for the uploaded row (there is no data source to open).
 	if got := strings.Count(html, `href="/data-sources/ds-2"`); got != 2 {
@@ -662,6 +680,176 @@ func TestRenderDocumentsBrowser(t *testing.T) {
 	lastPage := renderHTML(t, DocumentsPage(data))
 	if strings.Contains(lastPage, `data-testid="documents-load-more"`) {
 		t.Error("load more rendered on the last page")
+	}
+}
+
+// TestRenderDocumentsMobileRowsUseLinkRow pins #744: the phone rows are
+// components.LinkRow — one anchor over the leading/title/meta block — rather
+// than a hand-rolled data-href div. The row's delete form and its source link
+// stay outside that anchor, because an <a> may not contain a form or a second
+// anchor. The row root keeps data-href, so the whole card remains a tap target
+// (app.js ignores clicks on links and form controls).
+func TestRenderDocumentsMobileRowsUseLinkRow(t *testing.T) {
+	markup := renderHTML(t, DocumentsPage(documentsTestPage()))
+
+	start := strings.Index(markup, `id="documents-mobile-list"`)
+	if start < 0 {
+		t.Fatal("mobile list not rendered")
+	}
+	region := markup[start:]
+
+	var (
+		anchorDepth      int
+		rowRoots         int
+		rowLinks         int
+		sourceLinks      int
+		dataHrefs        int
+		formsInAnchor    int
+		nestedAnchorHits int
+		inRowAnchor      bool
+		rowText          strings.Builder
+		rowAnchorTexts   []string
+	)
+	z := html.NewTokenizer(strings.NewReader(region))
+	for {
+		tt := z.Next()
+		if tt == html.ErrorToken {
+			if err := z.Err(); err != io.EOF {
+				t.Fatalf("tokenize mobile list: %v", err)
+			}
+			break
+		}
+		switch tt {
+		case html.TextToken:
+			if inRowAnchor {
+				rowText.Write(z.Text())
+			}
+		case html.StartTagToken, html.SelfClosingTagToken:
+			name, _ := z.TagName()
+			attrs := tokenAttrs(z)
+			if _, ok := attrs["data-document-id"]; ok {
+				rowRoots++
+			}
+			if _, ok := attrs["data-href"]; ok && strings.HasPrefix(attrs["data-href"], "/documents/") {
+				dataHrefs++
+			}
+			switch string(name) {
+			case "a":
+				if anchorDepth > 0 {
+					nestedAnchorHits++
+				}
+				if strings.HasPrefix(attrs["href"], "/documents/") {
+					rowLinks++
+					if tt == html.StartTagToken {
+						inRowAnchor = true
+						rowText.Reset()
+					}
+				}
+				if strings.HasPrefix(attrs["href"], "/data-sources/") {
+					sourceLinks++
+				}
+				if tt == html.StartTagToken {
+					anchorDepth++
+				}
+			case "form":
+				if anchorDepth > 0 {
+					formsInAnchor++
+				}
+			}
+		case html.EndTagToken:
+			if name, _ := z.TagName(); string(name) == "a" && anchorDepth > 0 {
+				anchorDepth--
+				if inRowAnchor {
+					rowAnchorTexts = append(rowAnchorTexts, rowText.String())
+					inRowAnchor = false
+				}
+			}
+		}
+	}
+
+	rows := len(documentsTestPage().Rows)
+	if rowRoots != rows {
+		t.Errorf("mobile row roots = %d, want %d (one per document)", rowRoots, rows)
+	}
+	if rowLinks != rows {
+		t.Errorf("mobile row links = %d, want %d (every row navigates through LinkRow's anchor)", rowLinks, rows)
+	}
+	if dataHrefs != rows {
+		t.Errorf("data-href row roots = %d, want %d (the whole card stays a tap target)", dataHrefs, rows)
+	}
+	if sourceLinks != 1 {
+		t.Errorf("mobile source links = %d, want 1 (the fixture has exactly one sourced row)", sourceLinks)
+	}
+	if formsInAnchor != 0 {
+		t.Errorf("%d delete forms render inside a row anchor; an <a> may not contain a form", formsInAnchor)
+	}
+	if nestedAnchorHits != 0 {
+		t.Errorf("%d anchors nest inside a row anchor", nestedAnchorHits)
+	}
+	// Non-vacuous: a row anchor must carry that document's name and chunk count.
+	// Counting anchors alone would pass for rows whose LinkRow title or meta was
+	// dropped, which is exactly what the phone row regressed to before #744.
+	for _, r := range documentsTestPage().Rows {
+		name, meta := r.Name, documentMobileMeta(r)
+		var carrying bool
+		for _, text := range rowAnchorTexts {
+			flat := strings.Join(strings.Fields(text), " ")
+			if strings.Contains(flat, name) && strings.Contains(flat, meta) {
+				carrying = true
+				break
+			}
+		}
+		if !carrying {
+			t.Errorf("no row anchor carries %q + %q; anchors = %q", name, meta, rowAnchorTexts)
+		}
+	}
+}
+
+// tokenAttrs drains the current start tag's attributes into a map.
+func tokenAttrs(z *html.Tokenizer) map[string]string {
+	attrs := map[string]string{}
+	for {
+		key, value, more := z.TagAttr()
+		attrs[string(key)] = string(value)
+		if !more {
+			return attrs
+		}
+	}
+}
+
+// formSlice returns the markup of the form carrying testid, from the attribute
+// through its closing </form>, so an assertion about a control cannot be
+// satisfied by a sibling form that happens to render the same attribute.
+func formSlice(t *testing.T, markup, testid string) string {
+	t.Helper()
+	start := strings.Index(markup, `data-testid="`+testid+`"`)
+	if start < 0 {
+		t.Fatalf("%s not found", testid)
+	}
+	end := strings.Index(markup[start:], "</form>")
+	if end < 0 {
+		t.Fatalf("%s closing tag not found", testid)
+	}
+	return markup[start : start+end]
+}
+
+// startTagsWith returns every start tag in markup that contains needle, from
+// its "<" to its ">". It scopes an attribute assertion to the element that
+// renders it rather than the first match anywhere in the document.
+func startTagsWith(markup, needle string) []string {
+	var tags []string
+	for from := 0; ; {
+		at := strings.Index(markup[from:], needle)
+		if at < 0 {
+			return tags
+		}
+		at += from
+		start := strings.LastIndex(markup[:at], "<")
+		end := strings.Index(markup[at:], ">")
+		if start >= 0 && end >= 0 {
+			tags = append(tags, markup[start:at+end])
+		}
+		from = at + len(needle)
 	}
 }
 
@@ -2740,24 +2928,24 @@ func TestAnchorNestingSeesNestedAnchors(t *testing.T) {
 	}
 }
 
-// TestRenderExtractionMergeRowLayout pins #2088, a recorded live style change:
-// the merge row stays on one line (explicit row direction, no wrapping) and the
-// explanatory note is right-aligned inside it.
+// TestRenderExtractionMergeRowLayout pins #2088: the merge row is a stable
+// layout hook (`data-layout="merge-row"`) plus its controls, not a class string.
+// `ui-rule-test-the-contract` forbids asserting classes or their order — a
+// reordered class list is not a style change, and the assertion is what broke
+// when the row was restyled. The layout itself (one row from sm up, the note
+// right-aligned) is pinned where computed style is available: the Playwright
+// extraction-merge spec asserts flex-wrap and text-align in the browser.
 func TestRenderExtractionMergeRowLayout(t *testing.T) {
 	html := renderHTML(t, extractionMergeAction("doc-1", "job-1", "branch-1", 0, nil))
-	// One row from sm up; below it the row wraps, because a non-wrapping row at
-	// 320 px squeezed the note into a tall stack of ragged lines (#2088 review).
-	if !strings.Contains(html, "flex flex-row flex-wrap items-center justify-between gap-3") {
-		t.Error("the merge row should be an explicit row that wraps on narrow screens")
-	}
-	if !strings.Contains(html, "sm:flex-nowrap") {
-		t.Error("the merge row should stop wrapping from sm up")
-	}
-	if !strings.Contains(html, "text-right") {
-		t.Error("the merge note should be right-aligned")
-	}
-	if !strings.Contains(html, `data-testid="extraction-merge-button"`) {
-		t.Error("the merge action must survive the layout change")
+	for _, want := range []string{
+		`data-layout="merge-row"`,
+		`data-testid="extraction-merge"`,
+		`data-testid="extraction-merge-note"`,
+		`data-testid="extraction-merge-button"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("merge row missing %q", want)
+		}
 	}
 }
 

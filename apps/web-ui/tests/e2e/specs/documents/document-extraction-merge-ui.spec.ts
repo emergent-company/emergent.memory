@@ -139,6 +139,25 @@ test.describe('Extraction merge preview', () => {
 
       await waitForMergeAction(page, id);
 
+      // #2088's layout is pinned here, where computed style exists: one row from
+      // sm up with the note right-aligned, wrapping below it so the note is not
+      // squeezed at 320 px. The Go test pins only the stable data-layout hook —
+      // class strings are not the contract (ui-rule-test-the-contract).
+      const mergeRow = page.getByTestId('extraction-merge');
+      await expect(mergeRow).toHaveAttribute('data-layout', 'merge-row');
+      await expect(mergeRow).toHaveCSS('display', 'flex');
+      await expect(mergeRow).toHaveCSS('flex-direction', 'row');
+      await expect(mergeRow).toHaveCSS('flex-wrap', 'nowrap');
+      await expect(mergeRow).toHaveCSS('justify-content', 'space-between');
+      await expect(mergeRow.getByTestId('extraction-merge-note')).toHaveCSS('text-align', 'right');
+      const viewport = page.viewportSize();
+      try {
+        await page.setViewportSize({ width: 320, height: 844 });
+        await expect(mergeRow).toHaveCSS('flex-wrap', 'wrap');
+      } finally {
+        if (viewport) await page.setViewportSize(viewport);
+      }
+
       // The button lazily fetches the preview; the response must auto-open.
       const modal = page.getByTestId('merge-preview-modal');
       await expect(modal).toHaveCount(0);

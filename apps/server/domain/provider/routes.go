@@ -48,6 +48,10 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Project-level usage summary and timeseries
 	api.GET("/projects/:projectId/usage", h.GetProjectUsageSummary)
 	api.GET("/projects/:projectId/usage/timeseries", h.GetProjectUsageTimeSeries)
+	// Budget position across both spending windows (week and month). The usage
+	// page's remaining/reset copy and the sidebar badge read this, so the period
+	// arithmetic stays server-side in one place.
+	api.GET("/projects/:projectId/usage/budget", h.GetProjectBudget)
 
 	// Project-level pricing overrides
 	api.GET("/projects/:projectId/pricing-overrides", h.ListProjectPricingOverrides)

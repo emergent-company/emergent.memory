@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"github.com/emergent-company/emergent.memory/domain/graph"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -58,4 +59,30 @@ func TestListWorkAgentStatuses_DefaultsWhenNoAgents(t *testing.T) {
 	assert.ElementsMatch(t, []string{"ready"}, ready)
 	assert.ElementsMatch(t, []string{"in_progress"}, inProgress)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestWorkTriggerMetadataIncludesSourceSubjectOnlyForLaneObjects(t *testing.T) {
+	plain := workTriggerMetadata(&graph.WorkObjectHead{Status: "ready", Properties: map[string]any{"title": "x"}})
+	if _, ok := plain["repo"]; ok {
+		t.Fatalf("plain work object got source keys: %#v", plain)
+	}
+	lane := workTriggerMetadata(&graph.WorkObjectHead{Status: "ready", Properties: map[string]any{
+		"repo": "acme/repo", "pr_number": float64(7), "head_sha": "abc", "source_id": "src-1",
+	}})
+	if lane["repo"] != "acme/repo" || lane["prNumber"] != 7 || lane["headSha"] != "abc" || lane["subjectRef"] != "acme/repo#7" || lane["sourceId"] != "src-1" {
+		t.Fatalf("lane metadata = %#v", lane)
+	}
+}
+
+func TestIsTerminalLaneStatus(t *testing.T) {
+	for _, status := range []string{"done", "revision", "cancelled"} {
+		if !isTerminalLaneStatus(&graph.WorkObjectHead{Status: status}) {
+			t.Errorf("%s should be terminal", status)
+		}
+	}
+	for _, status := range []string{"ready", "in_progress", "blocked", ""} {
+		if isTerminalLaneStatus(&graph.WorkObjectHead{Status: status}) {
+			t.Errorf("%s must not be terminal", status)
+		}
+	}
 }

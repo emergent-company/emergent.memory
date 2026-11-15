@@ -71,10 +71,13 @@ type modelConfigClears struct {
 
 // fakeMemory is an in-memory MemoryBackend for tests.
 type fakeMemory struct {
-	orgPresence     *PresenceDto
-	projectPresence *PresenceDto
-	agents          []AgentDefinitionSummary
-	defs            map[string]*AgentDefinition // full definitions keyed by id
+	orgPresence         *PresenceDto
+	projectPresence     *PresenceDto
+	agents              []AgentDefinitionSummary
+	defs                map[string]*AgentDefinition // full definitions keyed by id
+	runtimeAgents       []RuntimeAgent
+	createdQueue        string
+	enabledRuntimeAgent string
 	// defFetches records ids passed to GetAgentDefinition, in order, so tests
 	// can pin how many definition requests a render costs (#2181). Guarded by
 	// defMu: chatModelWarnings fetches definitions from concurrent goroutines.
@@ -205,6 +208,7 @@ type fakeMemory struct {
 	lastLookupType     string              // last typeFilter passed to LookupGraphObjectByKey
 	lastLookupKey      string              // last key passed to LookupGraphObjectByKey
 	relns              []GraphRelationship // returned by ListRelationships
+	edgesErr           error               // GetObjectEdges failure, with the object still readable
 	branches           []Branch            // returned by ListBranches
 	extractionJobs     []ExtractionJob     // returned by ListExtractionJobs
 	extractionJobsErr  error               // ListProjectExtractionJobs failure
@@ -267,10 +271,14 @@ type fakeMemory struct {
 	dsDeletedProjectOAuthID    string                   // last project id passed to DeleteProjectDSOAuthClient
 	dsDeletedProjectOAuthProv  string                   // last provider passed to DeleteProjectDSOAuthClient
 	// Org source Apps + github_app triggers (see source_apps.go).
-	dsSourceApps             []SourceApp                  // returned by ListOrgSourceApps
-	dsSourceAppErr           error                        // any org source-App method failure
-	dsCreatedSourceAppReq    *DSSourceAppRequest          // last request forwarded to CreateOrgSourceApp
-	dsCreatedSourceAppOrg    string                       // last org id passed to CreateOrgSourceApp
+	dsSourceApps             []SourceApp         // returned by ListOrgSourceApps
+	dsSourceAppErr           error               // any org source-App method failure
+	dsCreatedSourceAppReq    *DSSourceAppRequest // last request forwarded to CreateOrgSourceApp
+	dsCreatedSourceAppOrg    string              // last org id passed to CreateOrgSourceApp
+	dsCreatedSourceAppNoID   bool
+	dsInstallationRepos      []string
+	dsInstallationRepoErr    error
+	sourceWorkflow           *SourceWorkflow              // CreateOrgSourceApp returns a row without an id
 	dsDeletedSourceAppID     string                       // last app id passed to DeleteOrgSourceApp
 	dsUpdatedSourceAppOrg    string                       // last org id passed to UpdateOrgSourceApp
 	dsUpdatedSourceAppID     string                       // last app id passed to UpdateOrgSourceApp
@@ -580,6 +588,11 @@ type fakeMemory struct {
 	usageSeries  *UsageTimeSeriesResponse // returned by GetProjectUsageTimeSeries
 	usageErr     error                    // failure for the usage methods
 
+	budgetState    *BudgetState // returned by GetProjectBudgetState
+	budgetStateErr error        // failure for GetProjectBudgetState
+	budgetResets   []string     // windows passed to ResetProjectBudgetWindow, in order
+	budgetResetErr error        // failure for ResetProjectBudgetWindow
+
 	projectProviders    []ProjectProviderConfig             // returned by ListProjectProviders
 	providerDefinitions []ProviderDefinition                // returned by ListProviderDefinitions
 	modelsByProvider    map[string][]ProviderSupportedModel // returned by ListProviderModels per provider
@@ -777,6 +790,28 @@ func (f *fakeMemory) GetAgentDefinition(ctx context.Context, id string) (*AgentD
 		}
 	}
 	return nil, fmt.Errorf("not found")
+}
+
+func (f *fakeMemory) CreateRuntimeAgent(ctx context.Context, in *CreateRuntimeAgentRequest) (*RuntimeAgent, error) {
+	return &RuntimeAgent{ID: "runtime-agent-1", ProjectID: in.ProjectID, Name: in.Name, AgentDefinitionID: in.AgentDefinitionID, Enabled: in.Enabled}, nil
+}
+
+func (f *fakeMemory) ListRuntimeAgents(ctx context.Context, projectID string) ([]RuntimeAgent, error) {
+	return f.runtimeAgents, nil
+}
+
+func (f *fakeMemory) ListAgentQueues(ctx context.Context, projectID string) ([]AgentQueue, error) {
+	return []AgentQueue{{Name: "default", Enabled: true}}, nil
+}
+
+func (f *fakeMemory) CreateAgentQueue(ctx context.Context, projectID, name string) (*AgentQueue, error) {
+	f.createdQueue = name
+	return &AgentQueue{Name: name, Enabled: true}, nil
+}
+
+func (f *fakeMemory) EnableRuntimeAgent(ctx context.Context, projectID, agentID string) error {
+	f.enabledRuntimeAgent = agentID
+	return nil
 }
 
 func (f *fakeMemory) CreateAgentDefinition(ctx context.Context, in *AgentDefinition) (*AgentDefinition, error) {
@@ -1595,6 +1630,12 @@ func (f *fakeMemory) ListGraphRelationships(ctx context.Context, branchID string
 }
 
 func (f *fakeMemory) GetObjectEdges(ctx context.Context, objectID string) ([]GraphRelationship, error) {
+	// edgesErr simulates a partial read: the object itself still loads, but its
+	// relationship endpoints do not. The object surfaces render different things
+	// for that than for "this object has no connections".
+	if f.edgesErr != nil {
+		return nil, f.edgesErr
+	}
 	if f.docErr != nil {
 		return nil, f.docErr
 	}
@@ -1610,6 +1651,12 @@ func (f *fakeMemory) GetObjectEdges(ctx context.Context, objectID string) ([]Gra
 func (f *fakeMemory) GetSimilarObjects(ctx context.Context, objectID string, limit int) ([]SimilarObject, error) {
 	if f.similarErr != nil {
 		return nil, f.similarErr
+	}
+	// Truncate like the real endpoint: over-fetch tests need the requested limit
+	// to be observable, and a fake that returned everything would hide both the
+	// display bound and the saturation flag.
+	if limit > 0 && len(f.similar) > limit {
+		return f.similar[:limit], nil
 	}
 	return f.similar, nil
 }
@@ -2568,6 +2615,24 @@ func (f *fakeMemory) GetProjectUsageTimeSeries(ctx context.Context, granularity 
 		return &UsageTimeSeriesResponse{}, nil
 	}
 	return f.usageSeries, nil
+}
+
+// GetProjectBudgetState returns the canned budget reading (nil = unavailable,
+// which is what a bare Server with no budget fixture gets).
+func (f *fakeMemory) GetProjectBudgetState(ctx context.Context) (*BudgetState, error) {
+	if f.budgetStateErr != nil {
+		return nil, f.budgetStateErr
+	}
+	return f.budgetState, nil
+}
+
+// ResetProjectBudgetWindow records the window and returns the new period.
+func (f *fakeMemory) ResetProjectBudgetWindow(ctx context.Context, window string) (*BudgetPeriod, error) {
+	f.budgetResets = append(f.budgetResets, window)
+	if f.budgetResetErr != nil {
+		return nil, f.budgetResetErr
+	}
+	return &BudgetPeriod{Window: window, PeriodStart: time.Now().UTC()}, nil
 }
 
 func (f *fakeMemory) ListProjectProviders(ctx context.Context) ([]ProjectProviderConfig, error) {
@@ -5304,8 +5369,12 @@ func (f *fakeMemory) CreateOrgSourceApp(ctx context.Context, orgID string, req *
 	}
 	f.dsCreatedSourceAppOrg = orgID
 	f.dsCreatedSourceAppReq = req
+	rowID := "sapp-new"
+	if f.dsCreatedSourceAppNoID {
+		rowID = ""
+	}
 	app := SourceApp{
-		ID:         "sapp-new",
+		ID:         rowID,
 		OrgID:      orgID,
 		Provider:   req.Provider,
 		AppID:      req.AppID,
@@ -5336,6 +5405,86 @@ func (f *fakeMemory) UpdateOrgSourceApp(ctx context.Context, orgID, appID string
 		return &f.dsSourceApps[i], nil
 	}
 	return nil, errors.New("no such source App in this organization")
+}
+
+func (f *fakeMemory) ListProjectSourceApps(ctx context.Context) ([]SourceApp, error) {
+	if f.dsSourceAppErr != nil {
+		return nil, f.dsSourceAppErr
+	}
+	return f.dsSourceApps, nil
+}
+
+func (f *fakeMemory) ListInstallationRepositories(ctx context.Context, appID, installationID string) ([]string, error) {
+	if f.dsInstallationRepoErr != nil {
+		return nil, f.dsInstallationRepoErr
+	}
+	return f.dsInstallationRepos, nil
+}
+
+func (f *fakeMemory) GetSourceWorkflow(ctx context.Context, sourceID string) (*SourceWorkflow, error) {
+	return f.sourceWorkflow, nil
+}
+
+func (f *fakeMemory) PutSourceWorkflow(ctx context.Context, sourceID string, cfg SourceWorkflowConfig) (*SourceWorkflow, error) {
+	f.sourceWorkflow = &SourceWorkflow{SourceID: sourceID, Config: cfg, Enabled: true}
+	return f.sourceWorkflow, nil
+}
+
+func (f *fakeMemory) CreateProjectSourceApp(ctx context.Context, req *DSSourceAppRequest) (*SourceApp, error) {
+	if f.dsSourceAppErr != nil {
+		return nil, f.dsSourceAppErr
+	}
+	f.dsCreatedSourceAppReq = req
+	app := SourceApp{
+		ID:         "sapp-new",
+		Provider:   req.Provider,
+		AppID:      req.AppID,
+		Slug:       req.Slug,
+		WebhookKey: "webhook-key-new",
+		CreatedAt:  "2026-09-01T00:00:00Z",
+		UpdatedAt:  "2026-09-01T00:00:00Z",
+	}
+	if req.Scope != "org" {
+		app.ProjectID = "p1"
+	}
+	if f.dsCreatedSourceAppNoID {
+		app.ID = ""
+	}
+	f.dsSourceApps = append(f.dsSourceApps, app)
+	return &app, nil
+}
+
+func (f *fakeMemory) UpdateProjectSourceApp(ctx context.Context, appID string, req *DSSourceAppUpdateRequest) (*SourceApp, error) {
+	if f.dsSourceAppErr != nil {
+		return nil, f.dsSourceAppErr
+	}
+	f.dsUpdatedSourceAppID = appID
+	f.dsUpdatedSourceAppReq = req
+	for i := range f.dsSourceApps {
+		if f.dsSourceApps[i].ID != appID {
+			continue
+		}
+		f.dsSourceApps[i].Slug = req.Slug
+		f.dsSourceApps[i].UpdatedAt = "2026-09-02T00:00:00Z"
+		updated := f.dsSourceApps[i]
+		return &updated, nil
+	}
+	return nil, errors.New("no such source App")
+}
+
+func (f *fakeMemory) DeleteProjectSourceApp(ctx context.Context, appID string) error {
+	if f.dsSourceAppErr != nil {
+		return f.dsSourceAppErr
+	}
+	f.dsDeletedSourceAppID = appID
+	kept := f.dsSourceApps[:0]
+	for _, app := range f.dsSourceApps {
+		if app.ID != appID {
+			kept = append(kept, app)
+		}
+	}
+	f.dsSourceApps = kept
+	return nil
 }
 
 func (f *fakeMemory) DeleteOrgSourceApp(ctx context.Context, orgID, appID string) error {

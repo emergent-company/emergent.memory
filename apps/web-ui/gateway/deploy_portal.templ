@@ -1,6 +1,7 @@
 package main
 
 import (
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/emergent.memory/apps/web-ui/webui"
 	"github.com/emergent-company/go-daisy/components/ui"
 )
@@ -43,17 +44,17 @@ templ DeployPortalPage(data deployPortalData) {
 
 				if !data.SignedIn {
 					<div class="grid gap-4 sm:grid-cols-3">
-						@ui.CardRaw(ui.CardRawProps{Surface: ui.CardSurfaceBase200, Border: ui.CardBorderNone, BodyClass: "gap-2"}) {
+						@components.PanelCard("", nil, components.PanelCardOpt{BodyClass: "gap-2", Surface: ui.CardSurfaceBase200, Border: ui.CardBorderNone}) {
 							<span class="text-xs text-muted-faint">STEP 1</span>
 							<h2 class="card-title text-base">Connect Railway</h2>
 							<p class="text-sm text-base-content/80">Sign in with Railway and choose a workspace.</p>
 						}
-						@ui.CardRaw(ui.CardRawProps{Surface: ui.CardSurfaceBase200, Border: ui.CardBorderNone, BodyClass: "gap-2"}) {
+						@components.PanelCard("", nil, components.PanelCardOpt{BodyClass: "gap-2", Surface: ui.CardSurfaceBase200, Border: ui.CardBorderNone}) {
 							<span class="text-xs text-muted-faint">STEP 2</span>
 							<h2 class="card-title text-base">Pick providers</h2>
 							<p class="text-sm text-base-content/80">Resend, Mailgun or Gmail for email; Google, OpenAI or DeepSeek for AI.</p>
 						}
-						@ui.CardRaw(ui.CardRawProps{Surface: ui.CardSurfaceBase200, Border: ui.CardBorderNone, BodyClass: "gap-2"}) {
+						@components.PanelCard("", nil, components.PanelCardOpt{BodyClass: "gap-2", Surface: ui.CardSurfaceBase200, Border: ui.CardBorderNone}) {
 							<span class="text-xs text-muted-faint">STEP 3</span>
 							<h2 class="card-title text-base">Deploy</h2>
 							<p class="text-sm text-base-content/80">We provision the stack and hand you the URL and credentials.</p>

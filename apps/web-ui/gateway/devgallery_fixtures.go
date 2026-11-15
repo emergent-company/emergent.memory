@@ -62,7 +62,7 @@ func gallerySeed() []GalleryEntry {
 		{
 			ID: "PanelCard", Slug: "panel-card", Name: "PanelCard", Layer: LayerComposite,
 			Category: "Cards", Subcategory: "panel", SourceFile: "components/panel.templ",
-			PropsType:   "extraClass string, attrs templ.Attributes",
+			PropsType:   "extraClass string, attrs templ.Attributes, opts ...PanelCardOpt",
 			Description: "The standard bordered panel with the shared body padding.",
 			Render: func() templ.Component {
 				return withChildren(components.PanelCard("", nil), templ.Raw(`<p class="text-sm">Sample panel content</p>`))
@@ -139,7 +139,7 @@ func gallerySeed() []GalleryEntry {
 			Description: "A clickable list-page row: leading tile, title/meta column, trailing content, and an automatic chevron.",
 			Render: func() templ.Component {
 				leading := templ.Raw(`<span class="grid size-9 shrink-0 place-items-center rounded-box bg-primary/10 text-primary"><span class="iconify lucide--box size-4" aria-hidden="true"></span></span>`)
-				return components.LinkRow(templ.SafeURL("#"), leading, "Object one", "person · 2h ago")
+				return components.LinkRow(templ.SafeURL("#"), leading, "Object one", "person · 2h ago", components.LinkRowOpts{})
 			},
 		},
 		{

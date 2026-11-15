@@ -943,6 +943,46 @@ func (r *Repository) GetProjectCurrentMonthSpend(ctx context.Context, projectID 
 	return total, nil
 }
 
+// GetProjectWindowSpend returns the spend inside the current week and month
+// periods in one round trip.
+//
+// The two periods are passed in (rather than derived from NOW()) because the
+// caller computed them from the project's reset anchors; deriving them twice is
+// how a window boundary ends up disagreeing between the badge and the alert.
+// weekStart is always earlier than monthStart for calendar windows, but it can
+// be later after a weekly reset, so each aggregate is bounded by the earlier of
+// the two starts and the wider range is read once. The rows that fall in both
+// ranges are summed twice by SQL FILTER, which is cheaper than two scans and
+// keeps the answer atomic with respect to a concurrent usage insert.
+func (r *Repository) GetProjectWindowSpend(ctx context.Context, projectID string, weekStart, monthStart time.Time) (week float64, month float64, err error) {
+	earliest := weekStart
+	if monthStart.Before(earliest) {
+		earliest = monthStart
+	}
+
+	var row struct {
+		Week  float64 `bun:"week"`
+		Month float64 `bun:"month"`
+	}
+	queryErr := r.db.NewSelect().
+		TableExpr("kb.llm_usage_events").
+		ColumnExpr("COALESCE(SUM(estimated_cost_usd) FILTER (WHERE created_at >= ?), 0) AS week", weekStart.UTC()).
+		ColumnExpr("COALESCE(SUM(estimated_cost_usd) FILTER (WHERE created_at >= ?), 0) AS month", monthStart.UTC()).
+		Where("project_id = ?", projectID).
+		Where("created_at >= ?", earliest.UTC()).
+		Scan(ctx, &row)
+	if queryErr != nil {
+		r.log.Error("failed to get project window spend",
+			logger.Error(queryErr),
+			slog.String("projectID", projectID),
+			slog.Time("weekStart", weekStart),
+			slog.Time("monthStart", monthStart),
+		)
+		return 0, 0, apperror.ErrDatabase.WithInternal(queryErr)
+	}
+	return row.Week, row.Month, nil
+}
+
 // sanitizeGranularity validates and normalises a DATE_TRUNC granularity string.
 // Falls back to "day" for unrecognised values to prevent SQL injection.
 func sanitizeGranularity(g string) string {

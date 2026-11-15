@@ -106,7 +106,7 @@ templ blueprintConflictHiddenFields(d BlueprintTypeConflictData) {
 templ blueprintTypeConflictCard(conflict BlueprintTypeConflict) {
 	{{ typeSlug := blueprintConflictSlug(conflict.TypeName)
 		headingID := "blueprint-type-conflict-heading-" + typeSlug }}
-	@components.PanelCard("border-warning/40 shadow-sm", templ.Attributes{"role": "group", "aria-labelledby": headingID, "data-testid": "blueprint-type-conflict-" + typeSlug}, "gap-4") {
+	@components.PanelCard("border-warning/40 shadow-sm", templ.Attributes{"role": "group", "aria-labelledby": headingID, "data-testid": "blueprint-type-conflict-" + typeSlug}, components.PanelCardOpt{BodyClass: "gap-4"}) {
 		<div class="flex flex-wrap items-start justify-between gap-3">
 			<div class="flex flex-col gap-1">
 				<h2 id={ headingID } class="text-lg font-bold tracking-tight">{ conflict.TypeName }</h2>

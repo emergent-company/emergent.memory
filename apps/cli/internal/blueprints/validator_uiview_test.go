@@ -145,3 +145,81 @@ func TestValidateUIConfigViewPlan(t *testing.T) {
 		}
 	})
 }
+
+// TestValidateUIConfigProjectRelationshipTypes pins #667.6: a view may present a
+// relationship type a companion pack installed earlier owns, so the install gate
+// (which reads the project's compiled types) must accept it, while the offline
+// validator — which only knows the blueprint — still points the author at the
+// missing declaration.
+func TestValidateUIConfigProjectRelationshipTypes(t *testing.T) {
+	p := validMetadataPack()
+	p.ObjectTypes[0].UI["view"] = map[string]any{"sections": []any{
+		map[string]any{"relation": "serves"},
+	}}
+	p.RelationshipTypes = []blueprints.RelationshipTypeDef{{Name: "fixes"}}
+
+	offline := blueprints.Validate(nil, []blueprints.PackFile{p}, nil, nil, nil, nil, nil)
+	if !hasIssue(offline.Issues, "sections[0].relation", "not a relationshipType declared by this blueprint") {
+		t.Fatalf("offline validation must still warn about an undeclared relation, got: %v", offline.Issues)
+	}
+
+	gated := blueprints.PreflightWithProjectTypes(
+		blueprints.KnownProjectTypes{RelationshipTypes: []string{"serves"}},
+		nil, []blueprints.PackFile{p}, nil, nil, nil, nil, nil,
+	)
+	if hasIssue(gated.Issues, "sections[0].relation", "not a relationshipType") {
+		t.Fatalf("a project-owned relationship type must satisfy the view check, got: %v", gated.Issues)
+	}
+
+	// An unknown name is still reported when the project set does not contain
+	// it, and the message no longer promises "another installed blueprint" —
+	// the gate already checked the project.
+	unknown := blueprints.PreflightWithProjectTypes(
+		blueprints.KnownProjectTypes{RelationshipTypes: []string{"something-else"}},
+		nil, []blueprints.PackFile{p}, nil, nil, nil, nil, nil,
+	)
+	if !hasIssue(unknown.Issues, "sections[0].relation", "not a relationshipType declared by this blueprint or the project") {
+		t.Fatalf("an unknown relation must still be reported by the gate, got: %v", unknown.Issues)
+	}
+}
+
+// TestHasUnknownViewRelationshipTypes pins the install path's lazy pre-check: the
+// project's relationship types are read only when the blueprint's own packs
+// cannot answer, so a blueprint that fails offline validation still aborts with
+// zero requests.
+func TestHasUnknownViewRelationshipTypes(t *testing.T) {
+	withView := func(relation any) blueprints.PackFile {
+		p := validMetadataPack()
+		p.ObjectTypes[0].UI["view"] = map[string]any{"sections": []any{
+			map[string]any{"relation": relation},
+		}}
+		return p
+	}
+
+	unknown := withView([]any{"serves", "fixes"})
+	unknown.RelationshipTypes = []blueprints.RelationshipTypeDef{{Name: "fixes"}}
+	if !blueprints.HasUnknownViewRelationshipTypes([]blueprints.PackFile{unknown}) {
+		t.Fatal("a view naming a relation no pack declares must ask for the project's relationship types")
+	}
+
+	known := withView("fixes")
+	known.RelationshipTypes = []blueprints.RelationshipTypeDef{{Name: "fixes"}}
+	if blueprints.HasUnknownViewRelationshipTypes([]blueprints.PackFile{known}) {
+		t.Fatal("a view whose relations every pack declares must not trigger a project read")
+	}
+
+	// Pack-level uiConfigs can carry the view instead of the inline ui block.
+	packLevel := validMetadataPack()
+	packLevel.UIConfigs = blueprints.JSONBlob(`{"Doc":{"view":{"sections":[{"relation":"serves"}]}}}`)
+	if !blueprints.HasUnknownViewRelationshipTypes([]blueprints.PackFile{packLevel}) {
+		t.Fatal("a pack-level uiConfigs view naming an unknown relation must ask for the project's relationship types")
+	}
+
+	// A malformed view is a validation finding, not a reason to read the
+	// project: there is no resolvable name to look up.
+	malformed := validMetadataPack()
+	malformed.ObjectTypes[0].UI["view"] = "not-a-map"
+	if blueprints.HasUnknownViewRelationshipTypes([]blueprints.PackFile{malformed}) {
+		t.Fatal("a malformed view must not trigger a project read")
+	}
+}

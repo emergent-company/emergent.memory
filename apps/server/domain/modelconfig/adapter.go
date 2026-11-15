@@ -155,6 +155,21 @@ func (a *EmbeddingResolverAdapter) buildEmbeddingCredential(cred *provider.Resol
 		Extra:              cred.Extra,
 		ExtraHeaders:       cred.ExtraHeaders,
 		Source:             string(cred.Source),
-		ProviderSlug:       string(cred.Provider),
+		// Name the provider instance the credential came from, not its dialect:
+		// the only consumers are operator-facing messages
+		// (pkg/embeddings/module.go), so a multi-instance project must not be
+		// told to re-key an instance that is not the one that failed (#710).
+		// Credentials resolved from the environment carry no instance slug, and
+		// fall back to the dialect.
+		ProviderSlug: embeddingProviderSlug(cred),
 	}
+}
+
+// embeddingProviderSlug returns the instance slug the credential was resolved
+// from, or the dialect when there is no instance (environment credentials).
+func embeddingProviderSlug(cred *provider.ResolvedCredential) string {
+	if cred.Slug != "" {
+		return string(cred.Slug)
+	}
+	return string(cred.Provider)
 }

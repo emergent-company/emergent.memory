@@ -18,7 +18,7 @@ templ platformEmailConfigureAction() {
 
 // platformEmailLinkPanel is rendered on Settings → General for superadmins.
 templ platformEmailLinkPanel() {
-	@components.PanelCard("", nil, "gap-3") {
+	@components.PanelCard("", nil, components.PanelCardOpt{BodyClass: "gap-3"}) {
 		@components.CardHeader(components.CardHeaderProps{Action: platformEmailConfigureAction()}) {
 			<h2 class="card-title text-base">Instance email</h2>
 			<p class="text-sm text-muted-bright">SMTP used by Zitadel and Memory for verification, password reset, 2FA and invites.</p>

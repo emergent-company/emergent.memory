@@ -226,7 +226,7 @@ templ shareLinksEmpty(newLinkURL string) {
 // labelled "Access & limits" section grouping the behaviour toggles and numeric
 // caps.
 templ shareLinkRowItem(link ShareLinkRow) {
-	@components.PanelCard("", templ.Attributes{"data-testid": "share-link-row", "data-link-id": link.ID}, "gap-4 memory-density-compact") {
+	@components.PanelCard("", templ.Attributes{"data-testid": "share-link-row", "data-link-id": link.ID}, components.PanelCardOpt{BodyClass: "gap-4 memory-density-compact"}) {
 			<div class="flex flex-wrap items-start justify-between gap-3">
 				<div class="flex min-w-0 items-center gap-2">
 					@ui.IconSpan("lucide--link", "size-4 shrink-0 text-primary/70")

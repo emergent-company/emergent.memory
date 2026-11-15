@@ -116,7 +116,6 @@ MOCK=$!
 # enabled by its two secrets; the public base pins copyable owner URLs and the
 # share cookie to http://localhost (no Secure flag, so cookies work over http).
 MEMORY_URL="http://localhost:$MOCK_PORT" \
-AGENT_TRIGGER_TOKEN=test-token \
 MEMORY_PROJECT_ID=p1 \
 MEMORY_PORT="$PORT" \
 AUTH_MODE=dev \

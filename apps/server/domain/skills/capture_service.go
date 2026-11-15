@@ -27,8 +27,8 @@ type ProjectSkillCaptureReader interface {
 	ListSkillCaptureProjects(ctx context.Context) ([]string, error)
 }
 
-// BudgetChecker reports whether a project has exhausted its monthly budget.
-// *provider.UsageService satisfies it.
+// BudgetChecker reports whether a project has exhausted either spending window
+// (weekly or monthly). *provider.UsageService satisfies it.
 type BudgetChecker interface {
 	CheckBudgetExceeded(ctx context.Context, projectID string) (bool, error)
 }

@@ -244,7 +244,8 @@ func (s *Server) uiObjectWiki(c echo.Context) error {
 	}
 
 	data := objectWikiPageData{View: view}
-	shell := s.loadObjectDetailShell(ctx, id, "")
+	// The wiki reads: no workflow panel, so no assignee-candidate fetch.
+	shell := s.loadObjectDetailShell(ctx, id, "", objectDetailSurfaceReader)
 	if shell.LoadErr != nil {
 		data.LoadErr = shell.LoadErr
 		return s.page(c, pageTitle("Object"), objectWikiPage(data))

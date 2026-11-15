@@ -26,9 +26,27 @@ func (f *fakeStore) GetProjectModelConfig(_ context.Context, _ uuid.UUID) (*Proj
 	return f.cfg, nil
 }
 
-func (f *fakeStore) UpsertProjectModelConfig(_ context.Context, cfg *ProjectModelConfig) error {
-	f.cfg = cfg
-	return nil
+func (f *fakeStore) UpsertProjectModelConfig(_ context.Context, projectID uuid.UUID, patch ProjectModelConfigPatch) (*ProjectModelConfig, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.cfg == nil {
+		f.cfg = &ProjectModelConfig{ProjectID: projectID}
+	}
+	// Mirror the real store's partial-update semantics: only named fields move.
+	if patch.GenerativeModel != nil {
+		f.cfg.GenerativeModel = *patch.GenerativeModel
+	}
+	if patch.GenerativeProviderSlug != nil {
+		f.cfg.GenerativeProviderSlug = *patch.GenerativeProviderSlug
+	}
+	if patch.EmbeddingModel != nil {
+		f.cfg.EmbeddingModel = *patch.EmbeddingModel
+	}
+	if patch.EmbeddingProviderSlug != nil {
+		f.cfg.EmbeddingProviderSlug = *patch.EmbeddingProviderSlug
+	}
+	return f.cfg, nil
 }
 
 func (f *fakeStore) DeleteProjectModelConfig(_ context.Context, _ uuid.UUID) error {

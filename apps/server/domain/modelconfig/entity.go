@@ -49,6 +49,20 @@ type ProjectModelConfig struct {
 	UpdatedAt              time.Time `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
 }
 
+// ProjectModelConfigPatch is a partial update of a project's model config.
+//
+// A nil field means "leave the stored value alone"; a non-nil field sets that
+// column, with a pointer to "" clearing it. It exists so the store can emit a
+// single UPDATE naming only the supplied columns, instead of the caller
+// reading the row and writing every column back (which silently loses a
+// concurrent update to a field it did not touch, #708).
+type ProjectModelConfigPatch struct {
+	GenerativeModel        *string
+	GenerativeProviderSlug *string
+	EmbeddingModel         *string
+	EmbeddingProviderSlug  *string
+}
+
 // OrgModelConfig is retained for DB migration compatibility only.
 // DEPRECATED: org-level model config is no longer used. Use kb.project_model_config.
 type OrgModelConfig struct {

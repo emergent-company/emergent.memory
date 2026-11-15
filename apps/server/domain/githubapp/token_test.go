@@ -64,18 +64,23 @@ func TestMintInstallationToken(t *testing.T) {
 		t.Fatalf("iss = %d, want 42", claims.Iss)
 	}
 
-	if repos, ok := gotBody["repositories"].([]any); !ok || len(repos) != 1 || repos[0] != "owner/repo" {
-		t.Fatalf("repositories = %#v", gotBody["repositories"])
+	// The request carries the bare repository name: GitHub's access_tokens
+	// endpoint rejects an owner-qualified entry with 422 (#729).
+	if repos, ok := gotBody["repositories"].([]any); !ok || len(repos) != 1 || repos[0] != "repo" {
+		t.Fatalf("repositories = %#v, want [repo]", gotBody["repositories"])
 	}
 	perms, ok := gotBody["permissions"].(map[string]any)
 	if !ok || perms["contents"] != "read" {
 		t.Fatalf("permissions = %#v", gotBody["permissions"])
 	}
 
-	// Second call reuses the cached token.
-	if _, err := m.MintInstallationToken(context.Background(), 42, pkcs1PEM(key), 7,
-		[]string{"owner/repo"}, map[string]string{"contents": "read", "pull_requests": "write"}); err != nil {
-		t.Fatalf("cached mint: %v", err)
+	// A bare name, and the same scope spelled with an owner prefix, whitespace
+	// or a duplicate, reuse the cached token instead of minting again.
+	for _, repos := range [][]string{{"repo"}, {" owner/repo ", "repo"}, {"OTHER/repo"}} {
+		if _, err := m.MintInstallationToken(context.Background(), 42, pkcs1PEM(key), 7,
+			repos, map[string]string{"contents": "read", "pull_requests": "write"}); err != nil {
+			t.Fatalf("cached mint: %v", err)
+		}
 	}
 	if n := atomic.LoadInt32(&calls); n != 1 {
 		t.Fatalf("mint calls = %d, want 1 (cache)", n)
@@ -117,5 +122,56 @@ func TestMintInstallationTokenError(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "Bearer") || strings.Contains(err.Error(), "eyJ") {
 		t.Fatalf("error leaks the jwt: %v", err)
+	}
+}
+
+func TestMintInstallationTokenNormalizesRepositoryNames(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Repositories []string `json:"repositories"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		got = body.Repositories
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"token":"tok","expires_at":"2099-01-01T00:00:00Z"}`))
+	}))
+	defer srv.Close()
+
+	key := testRSAKey(t)
+	minter := NewTokenMinter(srv.URL, srv.Client())
+	_, err := minter.MintInstallationToken(context.Background(), 1, pkcs1PEM(key), 2,
+		[]string{"acme/repo-one", "repo-two", "acme/repo-one"}, map[string]string{"contents": "read"})
+	if err != nil {
+		t.Fatalf("MintInstallationToken: %v", err)
+	}
+	want := []string{"repo-one", "repo-two"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("repositories = %v, want %v", got, want)
+	}
+}
+
+func TestMintInstallationTokenRejectsEmptyAfterNormalization(t *testing.T) {
+	key := testRSAKey(t)
+	minter := NewTokenMinter("https://api.github.com", nil)
+	// Normalization must not turn a slash-only entry into an empty-but-present
+	// scope: that would mint a token for every repository.
+	_, err := minter.MintInstallationToken(context.Background(), 1, pkcs1PEM(key), 2,
+		[]string{"", "  ", "/", "owner/"}, map[string]string{"contents": "read"})
+	if err == nil {
+		t.Fatal("minted a token for an empty repository list")
+	}
+}
+
+func TestMintInstallationTokenAllRepositoriesRejectsWritePermissions(t *testing.T) {
+	key := testRSAKey(t)
+	minter := NewTokenMinter("https://api.github.com", nil)
+	_, err := minter.MintInstallationTokenAllRepositories(context.Background(), 1, pkcs1PEM(key), 2,
+		map[string]string{"contents": "write"})
+	if err == nil || !strings.Contains(err.Error(), "read-only") {
+		t.Fatalf("err = %v, want read-only refusal", err)
 	}
 }

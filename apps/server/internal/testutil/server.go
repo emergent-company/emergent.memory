@@ -18,6 +18,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
 	"github.com/uptrace/bun"
+	"go.uber.org/fx"
 	"google.golang.org/adk/v2/session"
 
 	"github.com/emergent-company/emergent.memory/domain/agentcompat"
@@ -75,6 +76,15 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/whisper"
 	"github.com/emergent-company/emergent.memory/pkg/xberg"
 )
+
+// noopLifecycle satisfies fx.Lifecycle so a service that registers lifecycle
+// hooks can still be constructed without an fx application. The in-process test
+// server uses it for the provider usage service: construction is all that is
+// needed (budget reads), and the async writer goroutine is deliberately never
+// started.
+type noopLifecycle struct{}
+
+func (noopLifecycle) Append(fx.Hook) {}
 
 // TestServer wraps an Echo instance for testing
 type TestServer struct {
@@ -652,7 +662,12 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	providerRegistry := provider.NewRegistry()
 	providerCatalogSvc := provider.NewModelCatalogService(providerRepo, log, provider.WithNetworkDisabled(testDB.Config.LLM.NetworkDisabled))
 	providerCredSvc := provider.NewCredentialService(providerRepo, providerRegistry, providerCatalogSvc, testDB.Config, log)
-	providerHandler := provider.NewHandler(providerCredSvc, providerCatalogSvc, providerRepo, providerRegistry)
+	// The usage service is wired without an fx lifecycle (the in-process server
+	// never starts the async writer goroutine) and without the email jobs
+	// service: the handler only serves budget reads here, and a nil email
+	// service is a documented no-op for budget alerts.
+	providerUsageSvc := provider.NewUsageService(noopLifecycle{}, providerRepo, db, notificationsSvc, nil, testDB.Config.FrontendURL(), log)
+	providerHandler := provider.NewHandler(providerCredSvc, providerCatalogSvc, providerRepo, providerRegistry, providerUsageSvc)
 	provider.RegisterRoutes(e, providerHandler, authMiddleware)
 
 	// Register model config routes (GET/PUT/DELETE /api/v1/projects/:projectId/model-config).

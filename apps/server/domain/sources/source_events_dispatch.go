@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/githubapp"
+	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -32,13 +34,28 @@ const asyncSourceEventTimeout = 2 * time.Minute
 // SourceEventDispatcher verifies provider webhooks and dispatches matching
 // source triggers to agent runs.
 type SourceEventDispatcher struct {
-	repo       *Repository
-	agents     *agents.Repository
-	key        []byte
-	apiBaseURL string
-	minter     *githubapp.TokenMinter
-	newClient  func(baseURL, token string) *githubapp.Client
-	log        *slog.Logger
+	repo        *Repository
+	agents      *agents.Repository
+	key         []byte
+	apiBaseURL  string
+	minter      *githubapp.TokenMinter
+	newClient   func(baseURL, token string) *githubapp.Client
+	workObjects SourceWorkObjectStore
+	log         *slog.Logger
+}
+
+// SourceWorkObjectStore is the graph upsert surface the workflow dispatcher
+// needs. A source without a workflow keeps the direct trigger path.
+type SourceWorkObjectStore interface {
+	CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *graph.CreateGraphObjectRequest, actorID *uuid.UUID) (*graph.GraphObjectResponse, bool, error)
+	FindHeadObjectByTypeAndKey(ctx context.Context, projectID, objType, key string) (*graph.GraphObject, error)
+}
+
+// WireSourceWorkObjectStore injects the graph service into the dispatcher.
+func WireSourceWorkObjectStore(d *SourceEventDispatcher, store SourceWorkObjectStore) {
+	if d != nil {
+		d.workObjects = store
+	}
 }
 
 // NewSourceEventDispatcher builds the dispatcher from the deployment config.
@@ -160,6 +177,13 @@ func (d *SourceEventDispatcher) handlePullRequest(ctx context.Context, v *Verifi
 	subject := fmt.Sprintf("%s#%d", repoName, p.PullNumber())
 	if p.Action == "closed" || p.Action == "converted_to_draft" {
 		for _, src := range allowed {
+			if handled, err := d.processWorkflowEvent(ctx, src, nil, &githubapp.PullRequestState{
+				HeadSHA: p.PullRequest.Head.SHA, State: "closed",
+			}, p, subject); err != nil {
+				return err
+			} else if handled {
+				continue
+			}
 			runs, err := d.repo.CancelSourceSubjectClaims(ctx, src.ProjectID, src.ID, subject)
 			if err != nil {
 				return err
@@ -234,6 +258,13 @@ func (d *SourceEventDispatcher) dispatchPullRequestSource(ctx context.Context, v
 
 func (d *SourceEventDispatcher) processPullRequestSource(ctx context.Context, v *VerifiedSourceEvent, src *Source, subject string, state *githubapp.PullRequestState, ev *SourceEvent) error {
 	p := v.Payload
+	handled, err := d.processWorkflowEvent(ctx, src, ev, state, p, subject)
+	if err != nil {
+		return err
+	}
+	if handled {
+		return nil
+	}
 	claim, superseded, err := d.repo.ClaimSourceSubject(ctx, src.ProjectID, src.ID, subject, state.HeadSHA, p.PullRequest.Head.SHA)
 	if errors.Is(err, ErrSourceEventStaleHead) {
 		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventSkipped, nil, nil)
@@ -280,7 +311,13 @@ func (d *SourceEventDispatcher) processPullRequestSource(ctx context.Context, v 
 		Queue:           defaultSourceQueue(trigger.Queue),
 		TriggerMessage:  &message,
 		TriggerMetadata: metadata,
+		// Source runs are external: PR authors can open/synchronize a PR. The
+		// review tools get a narrow verified-source column instead of blanket
+		// internal trust.
 		TrustedInternal: false,
+		SourceSubject: &agents.SourceSubject{
+			SourceID: src.ID.String(), Repo: repoName, PRNumber: p.PullNumber(), HeadSHA: state.HeadSHA,
+		},
 	})
 	if err != nil {
 		_, _ = d.repo.SetSourceEventClaimState(ctx, claim.ProjectID, claim.ID, SourceClaimPending)
@@ -522,4 +559,113 @@ func defaultSourceQueue(queue string) string {
 		return "default"
 	}
 	return strings.TrimSpace(queue)
+}
+
+// processWorkflowEvent emits parent/lane work items for a source that has a
+// workflow configured. The board reconciler, not this dispatcher, starts runs.
+func (d *SourceEventDispatcher) processWorkflowEvent(ctx context.Context, src *Source, ev *SourceEvent, state *githubapp.PullRequestState, p *githubapp.WebhookPayload, subject string) (bool, error) {
+	wf, err := d.repo.GetSourceWorkflow(ctx, src.ProjectID, src.ID)
+	if err != nil || wf == nil || !wf.Enabled {
+		return false, err
+	}
+	if d.workObjects == nil {
+		return false, fmt.Errorf("sources: workflow source has no work-object store")
+	}
+	var cfg SourceWorkflowConfig
+	raw, _ := json.Marshal(wf.Config)
+	if err := json.Unmarshal(raw, &cfg); err != nil || len(cfg.Reviewers) == 0 {
+		return false, fmt.Errorf("sources: workflow config is invalid: %w", err)
+	}
+	repoName := p.Repository.FullName
+	parentKey := fmt.Sprintf("github:%s:%s#%d", src.ID.String(), repoName, p.PullNumber())
+	title := p.PullRequest.Title
+	if title == "" {
+		title = subject
+	}
+	parentStatus := "open"
+	laneStatus := "ready"
+	closing := p.Action == "closed" || p.Action == "converted_to_draft" || p.PullRequest.State == "closed"
+	reopening := p.Action == "reopened" || p.Action == "ready_for_review"
+	if closing {
+		parentStatus = "closed"
+		laneStatus = "cancelled"
+	}
+	parentProps := map[string]any{
+		"repo": repoName, "pr_number": p.PullNumber(), "head_sha": state.HeadSHA,
+		"base_sha": p.PullRequest.Base.SHA, "title": title, "state": p.PullRequest.State, "status": parentStatus,
+	}
+	if _, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
+		Type: "GitHubPullRequest", Key: &parentKey, Name: &title, Status: &parentStatus, Properties: parentProps,
+	}, nil); err != nil {
+		if ev != nil {
+			d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
+		}
+		return true, err
+	}
+	for _, reviewer := range cfg.Reviewers {
+		laneKey := parentKey + ":" + reviewer.Lane
+		laneName := title + " · " + reviewer.Lane
+		status := laneStatus
+		existing, ferr := d.workObjects.FindHeadObjectByTypeAndKey(ctx, src.ProjectID.String(), "GitHubReviewLane", laneKey)
+		if ferr != nil {
+			if ev != nil {
+				d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, ferr)
+			}
+			return true, ferr
+		}
+		if existing != nil && existing.Properties != nil {
+			oldHead, _ := existing.Properties["head_sha"].(string)
+			if oldHead == state.HeadSHA {
+				if closing {
+					// Close/draft always ends the live lane, even on the same head.
+					d.cancelSubjectRuns(ctx, existing.CanonicalID.String())
+					status = "cancelled"
+				} else if reopening && existing.Status != nil && *existing.Status == "cancelled" {
+					status = "ready"
+				} else {
+					// Same head replay: never reset a lane that is running,
+					// blocked, reviewed or done.
+					if existing.Status != nil {
+						status = *existing.Status
+					}
+				}
+			} else if oldHead != "" {
+				d.cancelSubjectRuns(ctx, existing.CanonicalID.String())
+			}
+		}
+		laneProps := map[string]any{
+			"lane": reviewer.Lane, "agent": reviewer.Agent, "source_id": src.ID.String(), "repo": repoName, "pr_number": p.PullNumber(),
+			"head_sha": state.HeadSHA, "base_sha": p.PullRequest.Base.SHA, "title": title,
+			"state": p.PullRequest.State, "status": status,
+		}
+		assignee := reviewer.Agent
+		if _, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
+			Type: "GitHubReviewLane", Key: &laneKey, Name: &laneName, Status: &status,
+			Assignee: &assignee, Properties: laneProps,
+		}, nil); err != nil {
+			if ev != nil {
+				d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
+			}
+			return true, err
+		}
+	}
+	if ev != nil {
+		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventDispatched, nil, nil)
+	}
+	return true, nil
+}
+
+func (d *SourceEventDispatcher) cancelSubjectRuns(ctx context.Context, canonicalID string) {
+	if d.agents == nil || canonicalID == "" {
+		return
+	}
+	runs, err := d.agents.FindLiveRunsForSubject(ctx, canonicalID)
+	if err != nil {
+		return
+	}
+	for _, run := range runs {
+		if run != nil {
+			_, _ = d.agents.RequestRunCancellation(ctx, run.ID)
+		}
+	}
 }

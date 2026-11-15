@@ -232,9 +232,9 @@ plain list of everything connected, so a typo in a pack never breaks a page. Run
 `memory blueprints validate ./my-blueprint` to check a pack offline before
 installing it. It warns about the mistakes that would otherwise fail silently: a
 `relation` no pack in the blueprint declares (the section stays empty unless
-another installed blueprint declares it), a `title` that is not a string (an
-unquoted year is a number, which drops the whole view at render time), unknown
-keys, and out-of-range limits.
+another installed blueprint — or, when installing, the project itself — declares
+it), a `title` that is not a string (an unquoted year is a number, which drops
+the whole view at render time), unknown keys, and out-of-range limits.
 
 ### With the CLI (a directory)
 

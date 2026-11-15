@@ -3,6 +3,7 @@ package components
 import (
 	form "github.com/emergent-company/go-daisy/components/form"
 	ui "github.com/emergent-company/go-daisy/components/ui"
+	"github.com/emergent-company/go-daisy/devmode"
 )
 
 // SelectOption is one option of a grouped select.
@@ -80,7 +81,7 @@ type InlineFormActionsProps struct {
 // lives inside a card or a section and its row simply follows the last field
 // (#486).
 templ InlineFormActions(props InlineFormActionsProps) {
-	<div class={ "flex flex-wrap items-center gap-2", formActionsAlign(props.Align), templ.KV(props.Class, props.Class != "") } { props.Attrs... }>
+	<div { devmode.Attrs(ctx, "components/InlineFormActions")... } class={ "flex flex-wrap items-center gap-2", formActionsAlign(props.Align), templ.KV(props.Class, props.Class != "") } { props.Attrs... }>
 		{ children... }
 	</div>
 }
@@ -121,7 +122,7 @@ type StickyFormActionsProps struct {
 // form.FormActions footer there.
 templ StickyFormActions(props StickyFormActionsProps) {
 	{{ align := formActionsAlign(props.Align) }}
-	<div class={ "sticky-form-actions", props.Class } { props.Attrs... }>
+	<div { devmode.Attrs(ctx, "components/StickyFormActions")... } class={ "sticky-form-actions", props.Class } { props.Attrs... }>
 		<div class="sfa__surface">
 			if props.Rail {
 				<div class="mx-auto w-full max-w-6xl px-6 py-3 lg:grid lg:grid-cols-[11rem_minmax(0,1fr)] lg:gap-6 lg:px-8">
@@ -160,7 +161,7 @@ templ ToggleField(name, label, tip string, checked bool, attrs templ.Attributes)
 	if tipID != "" {
 		inputAttrs["aria-describedby"] = tipID
 	} }}
-	<div class="flex items-center gap-1.5">
+	<div { devmode.Attrs(ctx, "components/ToggleField")... } class="flex items-center gap-1.5">
 		<label class="cursor-pointer label justify-start gap-3">
 			@form.ToggleInput(form.ToggleInputProps{Name: name, Checked: checked, Attrs: inputAttrs})
 			<span class="label-text">{ label }</span>

@@ -33,7 +33,7 @@ func newSchemaDiscoveryServer(f *fakeMemory) (*Server, *echo.Echo) {
 // frozen. The interval must be on the card itself and target the card, not the
 // page shell's #main-content (htmx inherits hx-target from <main>).
 func TestSchemaDiscoveryCardPollsWhileRunning(t *testing.T) {
-	html := renderHTML(t, schemaDiscoveryCard(&SchemaDiscoveryView{
+	html := renderHTMLDev(t, schemaDiscoveryCard(&SchemaDiscoveryView{
 		Latest:        &discoveryJob{ID: "job-1", Status: "running"},
 		DocumentCount: 8,
 	}))
@@ -56,7 +56,7 @@ func TestSchemaDiscoveryCardPollsWhileRunning(t *testing.T) {
 // while keeping its intrinsic width and right alignment. Below sm the header
 // stacks; from sm up it is a two-column row, and the action stops stretching.
 func TestSchemaDiscoveryCardPutsItsActionInTheHeaderColumn(t *testing.T) {
-	doc := parseDOM(t, renderHTML(t, schemaDiscoveryCard(&SchemaDiscoveryView{DocumentCount: 8})))
+	doc := parseDOM(t, renderHTMLDev(t, schemaDiscoveryCard(&SchemaDiscoveryView{DocumentCount: 8})))
 
 	header := findElementByAttr(doc, "data-component", "components/CardHeader")
 	if header == nil {
@@ -114,7 +114,7 @@ func TestSchemaDiscoveryCardPutsItsActionInTheHeaderColumn(t *testing.T) {
 func TestSchemaDiscoveryCardStopsPollingWhenTerminal(t *testing.T) {
 	for _, status := range []string{"completed", "failed", "cancelled"} {
 		t.Run(status, func(t *testing.T) {
-			html := renderHTML(t, schemaDiscoveryCard(&SchemaDiscoveryView{
+			html := renderHTMLDev(t, schemaDiscoveryCard(&SchemaDiscoveryView{
 				Latest:        &discoveryJob{ID: "job-1", Status: status},
 				DocumentCount: 8,
 			}))
@@ -523,7 +523,7 @@ func TestDocumentDiscoverFailureStaysOnTheDocument(t *testing.T) {
 // technical detail, the cap note when a project-wide run covered a subset, and
 // the completed run's pack link.
 func TestSchemaDiscoveryCardRendersStates(t *testing.T) {
-	running := renderHTML(t, schemaDiscoveryCard(&SchemaDiscoveryView{
+	running := renderHTMLDev(t, schemaDiscoveryCard(&SchemaDiscoveryView{
 		Latest: &discoveryJob{
 			ID:       "j-running",
 			Status:   "extracting_types",
@@ -551,7 +551,7 @@ func TestSchemaDiscoveryCardRendersStates(t *testing.T) {
 		t.Error("a running job must offer Cancel: the run holds the project's one-run slot")
 	}
 
-	failed := renderHTML(t, schemaDiscoveryCard(&SchemaDiscoveryView{
+	failed := renderHTMLDev(t, schemaDiscoveryCard(&SchemaDiscoveryView{
 		Latest: &discoveryJob{
 			ID:             "j-failed",
 			Status:         "failed",
@@ -574,7 +574,7 @@ func TestSchemaDiscoveryCardRendersStates(t *testing.T) {
 		}
 	}
 
-	completed := renderHTML(t, schemaDiscoveryCard(&SchemaDiscoveryView{
+	completed := renderHTMLDev(t, schemaDiscoveryCard(&SchemaDiscoveryView{
 		Latest: &discoveryJob{
 			ID:                      "j-done",
 			Status:                  "completed",
@@ -597,7 +597,7 @@ func TestSchemaDiscoveryCardRendersStates(t *testing.T) {
 // TestSchemaDiscoveryCardDegradesOnLoadError pins that a failed job list only
 // disables that part of the card: the start action stays available.
 func TestSchemaDiscoveryCardDegradesOnLoadError(t *testing.T) {
-	html := renderHTML(t, schemaDiscoveryCard(&SchemaDiscoveryView{Err: errors.New("backend unavailable")}))
+	html := renderHTMLDev(t, schemaDiscoveryCard(&SchemaDiscoveryView{Err: errors.New("backend unavailable")}))
 	if !strings.Contains(html, "Could not load the latest discovery state: backend unavailable") {
 		t.Error("load error not surfaced")
 	}
@@ -609,7 +609,7 @@ func TestSchemaDiscoveryCardDegradesOnLoadError(t *testing.T) {
 // TestSchemaPageRendersDiscoveryCard pins that the card is on the page the
 // /schema#discovery links target, with the anchor the links rely on.
 func TestSchemaPageRendersDiscoveryCard(t *testing.T) {
-	html := renderHTML(t, SchemaPage(&SchemaListView{
+	html := renderHTMLDev(t, SchemaPage(&SchemaListView{
 		Compiled:  &CompiledSchemaTypes{ObjectTypes: []CompiledType{{Name: "person"}}},
 		Discovery: &SchemaDiscoveryView{DocumentCount: 3},
 	}, nil))
@@ -690,7 +690,7 @@ func TestSchemaDiscoveryCancelFailureSurfacesTheMessage(t *testing.T) {
 // documents says so: the start action would 400, so the card must not leave the
 // user without an explanation.
 func TestSchemaDiscoveryCardExplainsAnEmptyProject(t *testing.T) {
-	html := renderHTML(t, schemaDiscoveryCard(&SchemaDiscoveryView{DocumentCount: 0}))
+	html := renderHTMLDev(t, schemaDiscoveryCard(&SchemaDiscoveryView{DocumentCount: 0}))
 	if !strings.Contains(html, "No documents in this project yet") {
 		t.Error("an empty project must explain why there is nothing to discover")
 	}
@@ -703,7 +703,7 @@ func TestSchemaDiscoveryCardExplainsAnEmptyProject(t *testing.T) {
 // card says the number is unavailable rather than silently omitting it (which
 // would read as zero documents).
 func TestSchemaDiscoveryCardReportsAnUnreadableCount(t *testing.T) {
-	html := renderHTML(t, schemaDiscoveryCard(&SchemaDiscoveryView{
+	html := renderHTMLDev(t, schemaDiscoveryCard(&SchemaDiscoveryView{
 		Latest:   &discoveryJob{ID: "j-1", Status: "completed"},
 		CountErr: errors.New("documents unavailable"),
 	}))
@@ -720,7 +720,7 @@ func TestSchemaDiscoveryCardReportsAnUnreadableCount(t *testing.T) {
 // step and the API refuses a cancel once it starts, so offering the action would
 // turn that refusal into a flash error for a normal state.
 func TestSchemaDiscoveryCardDoesNotOfferCancelWhileCreatingThePack(t *testing.T) {
-	creating := renderHTML(t, schemaDiscoveryCard(&SchemaDiscoveryView{
+	creating := renderHTMLDev(t, schemaDiscoveryCard(&SchemaDiscoveryView{
 		Latest: &discoveryJob{ID: "j-pack", Status: "creating_pack", Trigger: "manual"},
 	}))
 	if !strings.Contains(creating, "Running") {
@@ -759,7 +759,7 @@ func TestSchemaPageShowsTheCancelConfirmation(t *testing.T) {
 // send the field.
 func TestSchemaDiscoveryCardHonoursTheServerCancellableFlag(t *testing.T) {
 	no := false
-	blocked := renderHTML(t, schemaDiscoveryCard(&SchemaDiscoveryView{
+	blocked := renderHTMLDev(t, schemaDiscoveryCard(&SchemaDiscoveryView{
 		Latest: &discoveryJob{ID: "j1", Status: "extracting_types", CancellableFlag: &no},
 	}))
 	if strings.Contains(blocked, "/schema/discovery/cancel/") {
@@ -767,7 +767,7 @@ func TestSchemaDiscoveryCardHonoursTheServerCancellableFlag(t *testing.T) {
 	}
 
 	yes := true
-	allowed := renderHTML(t, schemaDiscoveryCard(&SchemaDiscoveryView{
+	allowed := renderHTMLDev(t, schemaDiscoveryCard(&SchemaDiscoveryView{
 		Latest: &discoveryJob{ID: "j2", Status: "creating_pack", CancellableFlag: &yes},
 	}))
 	if !strings.Contains(allowed, "/schema/discovery/cancel/") {
@@ -775,7 +775,7 @@ func TestSchemaDiscoveryCardHonoursTheServerCancellableFlag(t *testing.T) {
 	}
 
 	// A server that does not send the field still gets the status behaviour.
-	legacy := renderHTML(t, schemaDiscoveryCard(&SchemaDiscoveryView{
+	legacy := renderHTMLDev(t, schemaDiscoveryCard(&SchemaDiscoveryView{
 		Latest: &discoveryJob{ID: "j3", Status: "extracting_types"},
 	}))
 	if !strings.Contains(legacy, "/schema/discovery/cancel/") {

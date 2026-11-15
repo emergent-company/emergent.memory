@@ -2,6 +2,8 @@ package sources
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -76,10 +78,26 @@ func (r *Repository) FindSourceAppByOrgAppID(ctx context.Context, orgID uuid.UUI
 	return app, nil
 }
 
+// ListSourceAppsByOrg returns only org-wide Apps (project_id NULL).
 func (r *Repository) ListSourceAppsByOrg(ctx context.Context, orgID uuid.UUID) ([]*SourceApp, error) {
 	var apps []*SourceApp
 	if err := r.db.NewSelect().Model(&apps).
 		Where("sa.org_id = ?", orgID).
+		Where("sa.project_id IS NULL").
+		Order("sa.created_at ASC").
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+	return apps, nil
+}
+
+// ListSourceAppsForProject returns the Apps a project may bind: org-wide Apps
+// plus Apps owned by that project.
+func (r *Repository) ListSourceAppsForProject(ctx context.Context, orgID, projectID uuid.UUID) ([]*SourceApp, error) {
+	var apps []*SourceApp
+	if err := r.db.NewSelect().Model(&apps).
+		Where("sa.org_id = ?", orgID).
+		Where("(sa.project_id IS NULL OR sa.project_id = ?)", projectID).
 		Order("sa.created_at ASC").
 		Scan(ctx); err != nil {
 		return nil, err
@@ -674,4 +692,42 @@ func (r *Repository) FindSourceTriggerByID(ctx context.Context, projectID, id uu
 		return nil, err
 	}
 	return trigger, nil
+}
+
+// --- Source workflows ---
+
+func (r *Repository) GetSourceWorkflow(ctx context.Context, projectID, sourceID uuid.UUID) (*SourceWorkflow, error) {
+	var wf SourceWorkflow
+	err := r.projectTx(ctx, projectID, func(ctx context.Context, tx bun.Tx) error {
+		return tx.NewSelect().Model(&wf).
+			Where("sw.source_id = ?", sourceID).
+			Where("sw.project_id = ?", projectID).
+			Scan(ctx)
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &wf, nil
+}
+
+func (r *Repository) UpsertSourceWorkflow(ctx context.Context, wf *SourceWorkflow) error {
+	return r.projectTx(ctx, wf.ProjectID, func(ctx context.Context, tx bun.Tx) error {
+		_, err := tx.NewRaw(`INSERT INTO kb.source_workflows AS sw
+			(project_id, source_id, config, enabled)
+			VALUES (?, ?, ?::jsonb, ?)
+			ON CONFLICT (source_id) DO UPDATE
+			SET config = EXCLUDED.config, enabled = EXCLUDED.enabled, updated_at = now()
+			RETURNING sw.id, sw.created_at, sw.updated_at`,
+			wf.ProjectID, wf.SourceID, jsonBytes(wf.Config), wf.Enabled).
+			Exec(ctx, &wf.ID, &wf.CreatedAt, &wf.UpdatedAt)
+		return err
+	})
+}
+
+func jsonBytes(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }

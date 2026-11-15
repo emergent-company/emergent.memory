@@ -1,5 +1,12 @@
 # UI recipes — layout & editing patterns
 
+> **Hand-maintained mirror — not the source of truth.** The authoritative
+> catalogue is the Memory graph (project `memory_coding`, pack `ui-patterns`;
+> `UIPattern`, `UIComponent`, `UIRule`, `UIVariant`). Nothing generates this
+> file, and a pattern is never added here first: change the graph, then update
+> this mirror in the same PR. It is kept because contributors outside the
+> organisation cannot reach the graph.
+
 A decision-oriented catalog of the layout and editing affordances shipped in the
 web-ui gateway. Use it to pick a pattern by name and to hand an agent an exact
 instruction. Each recipe gives **when** to use it, **avoid** when not, a
@@ -87,7 +94,10 @@ templ AgentsPage(agents []AgentDefinitionSummary, models []Model, defaultModel s
 ```
 
 Desktop rows: `components.TableCard` → go-daisy `table.*`; mobile rows:
-`components.ListRow` (`components/list.templ:10`). Both wrap `PageCard`.
+`components.LinkRow` (`components/list.templ:38`) — the anchor covers the
+leading/title/meta block, and the row's trailing controls (a menu, a delete
+form) and its `LinkRowOpts.Details` band render outside it, because an `<a>` may
+not contain a form or a second link. Both wrap `PageCard`.
 
 **Contract:** main root carries `data-testid="page-<title-slug>"` (`pageTestID`,
 `ui.go:48`); a create button routes to `…/new`; empty state names the collection.
@@ -119,14 +129,16 @@ templ documentsResults(data documentPageData) {
 ```
 
 `filterFormAttrs` supplies `hx-get` + `hx-target` + `hx-swap="outerHTML"` +
-`hx-push-url` + `hx-trigger="change, submit"` (`selectFilterFormAttrs` for a form
-that also has a text field, `submitFilterFormAttrs` for a query form). Never wire
-a control with `onchange="this.form.submit()"`: it bypasses htmx and reloads the
-page.
+`hx-push-url` + `hx-indicator="#<region>-loading"` + `hx-trigger="change,
+submit"` (`selectFilterFormAttrs` for a form that also has a text field,
+`submitFilterFormAttrs` for a query form). The indicator id derives from the
+region, so every control that refreshes the region drives the one spinner it
+renders. Never wire a control with `onchange="this.form.submit()"`: it bypasses
+htmx and reloads the page.
 
 **Source:** `ui.templ:312` (`AgentsPage`), `ui.templ:939` (`pageHeader`),
 `ui.templ:265` (`pageErrorNotice`), `components/table.templ:10`,
-`components/list.templ:10`, `ui.templ:445` (`agentsTable`),
+`components/list.templ:38`, `ui.templ:445` (`agentsTable`),
 `gateway/list_filters.go`, `gateway/documents.templ` (`documentsToolbar`,
 `documentsResults`, `documentsResultsFragment`).
 
@@ -233,16 +245,21 @@ for status copy and `components.EmptyDash` for absent values."
 }
 ```
 
-For a panel of tiles use `components.PanelCard` (`components/panel.templ:13`) —
+For a panel of tiles use `components.PanelCard` (`components/panel.templ:47`) —
 `ui.CardRaw` + `memory-density-comfortable`. A one-time accent is passed via
 `extraClass` (e.g. `"border-primary/20"`); spacing is owned centrally, never in
-the component.
+the component. A panel that needs a different body density, or a contextual
+surface with no outline, passes `components.PanelCardOpt{BodyClass, Surface,
+Border}` — `Surface` and `Border` are the upstream `ui.CardSurface` /
+`ui.CardBorder` values, and each replaces the default rather than stacking an
+extra class. Never open `ui.CardRaw` from a page for that: the page-vs-component
+ratchet fails on a direct `ui.CardRaw` in a root page `.templ`.
 
 **Contract:** `MetaRow` emits `<dt>` uppercase label + `<dd>` value; empty value
 falls back to `EmptyDash` unless `NoEmptyDash`.
 
-**Source:** `components/meta.templ:18,35,55,74`, `components/panel.templ:13`,
-`ui.templ:386` (`statRow`), `ui.templ:1088` (`cardList`).
+**Source:** `components/meta.templ:18,35,55,74`, `components/panel.templ:47`,
+`ui.templ:392` (`statRow`), `ui.templ:1108` (`cardList`).
 
 ---
 
@@ -600,10 +617,10 @@ client code uses `MemoryApp.toast(kind, message)`. Failures pass `kind="error"`.
 
 | Pattern | Primary source |
 |---|---|
-| `layout.list` | `ui.templ:312,939,445`; `components/table.templ:10`; `components/list.templ:10` |
+| `layout.list` | `ui.templ:312,939,445`; `components/table.templ:10`; `components/list.templ:38` |
 | `layout.detail` | `ui.templ:984,963`; `components/nav.templ:10,34,47`; `schedules.templ:197` |
 | `layout.settings-rail` | `project_settings.templ:35`; `agent.templ:39`; `components/nav.templ:34` |
-| `layout.card-grid` | `components/meta.templ:18,35,55,74`; `components/panel.templ:13` |
+| `layout.card-grid` | `components/meta.templ:18,35,55,74`; `components/panel.templ:47` |
 | `edit.inline-autosave` | `webui/static/js/agent-settings.js:25,200,279`; recipe above |
 | `edit.inline-htmx` | `project_settings.templ:19,256`; `settings_handlers.go:870`; `settings_providers.go:372` |
 | `edit.form-save` | `schedules.templ:255,386`; `components/form.templ:37`; `ui.go:166,181,188`; `ui.templ:1337` |

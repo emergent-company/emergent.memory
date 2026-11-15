@@ -141,7 +141,7 @@ type triggerAgentRequest struct {
 }
 
 // TriggerAgent fires a runtime agent with an explicit prompt and context
-// (e.g. a GitHub pull_request webhook; see webhook_github.go). The response is
+// (e.g. a GitHub pull_request webhook; see source_events_dispatch.go in the server). The response is
 // the same bare TriggerResult shape as TriggerScheduledAgent.
 func (m *MemoryClient) TriggerAgent(ctx context.Context, agentID, prompt string, ctxValues map[string]string) (*TriggerResult, error) {
 	var out TriggerResult

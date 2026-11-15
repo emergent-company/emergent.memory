@@ -30,6 +30,16 @@ func TestRenderSessionsPage(t *testing.T) {
 			t.Errorf("sessions page missing %q", want)
 		}
 	}
+	// The row's chip and chevron render outside the LinkRow anchor, so the row
+	// root carries data-href: a tap on either still opens the session, as it did
+	// when the whole row was one anchor.
+	for _, want := range []string{
+		`data-href="/sessions/c1"`, `data-href="/sessions/c2"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("sessions page missing %q; the row is no longer a tap target", want)
+		}
+	}
 
 	htmlEmpty := renderHTML(t, SessionsPage(nil, nil, nil))
 	if !strings.Contains(htmlEmpty, "No sessions") {

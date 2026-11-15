@@ -784,3 +784,43 @@ type DeleteSchemaResult struct {
 	SchemaID string `json:"schema_id"`
 	Message  string `json:"message"`
 }
+
+// RunSubject is the verified GitHub source subject attached to a run by the
+// dispatcher. It authorises only the review tools, and only for these repo/PR/SHA
+// values -- never blanket internal trust.
+type RunSubject struct {
+	SourceID string
+	Repo     string
+	PRNumber int
+	HeadSHA  string
+}
+
+type runSubjectKey struct{}
+
+func ContextWithRunSubject(ctx context.Context, subject RunSubject) context.Context {
+	return context.WithValue(ctx, runSubjectKey{}, subject)
+}
+
+// ContextWithoutRunSubject clears a parent run's verified subject before a
+// nested run re-stamps only its own.
+func ContextWithoutRunSubject(ctx context.Context) context.Context {
+	return context.WithValue(ctx, runSubjectKey{}, RunSubject{})
+}
+
+func RunSubjectFromContext(ctx context.Context) (RunSubject, bool) {
+	v, ok := ctx.Value(runSubjectKey{}).(RunSubject)
+	return v, ok && v.SourceID != "" && v.Repo != "" && v.HeadSHA != ""
+}
+
+// WorkObjectIDFromContext returns the canonical work-object id a run was
+// dispatched for, or "" for a non-board run.
+type workObjectIDKey struct{}
+
+func ContextWithWorkObjectID(ctx context.Context, canonicalID string) context.Context {
+	return context.WithValue(ctx, workObjectIDKey{}, canonicalID)
+}
+
+func WorkObjectIDFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(workObjectIDKey{}).(string)
+	return v
+}

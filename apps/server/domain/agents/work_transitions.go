@@ -193,6 +193,18 @@ func (p *WorkerPool) finishWorkRun(ctx context.Context, log *slog.Logger, job *A
 			log.Info("work run finalized with terminator", slog.String("terminator", term), slog.String("canonical_id", canonicalID))
 			return
 		}
+		// A review tool may have finalized the lane directly (done/revision) even
+		// though it is not a work_complete terminator. Treat a terminal lane as
+		// finalized instead of a protocol violation.
+		if head, err := p.workObjects.GetHeadObject(ctx, projectID, canonicalID); err == nil && isTerminalLaneStatus(head) {
+			if err := p.repo.CompleteJob(ctx, job.ID, job.RunID); err != nil {
+				log.Warn("failed to complete finalized work run job", slog.String("error", err.Error()))
+			}
+			_ = p.repo.ResetFailureCounter(ctx, agent.ID)
+			_ = p.repo.ClearWorkItemState(ctx, projectID, canonicalID)
+			log.Info("work run finalized by tool", slog.String("status", head.Status), slog.String("canonical_id", canonicalID))
+			return
+		}
 		// success without a terminator → protocol violation (bounded retry, else block).
 		p.protocolViolation(ctx, log, job, agent, agentDef, canonicalID, projectID, subjectType)
 		return
@@ -396,8 +408,8 @@ func (p *WorkerPool) reenqueueWork(ctx context.Context, log *slog.Logger, agent 
 		subjectTypePtr = nil
 	}
 	meta := map[string]any{"work_trigger_event": string(EventTypeStatusChanged)}
-	if head, herr := p.workObjects.GetHeadObject(ctx, projectID, canonicalID); herr == nil && head != nil && head.Status != "" {
-		meta["work_claim_status"] = head.Status
+	if head, herr := p.workObjects.GetHeadObject(ctx, projectID, canonicalID); herr == nil && head != nil {
+		meta = workTriggerMetadata(head)
 	}
 	_, err := p.repo.CreateRunQueued(ctx, agent.ID, maxAttempts, CreateRunQueuedOptions{
 		SubjectObjectID:   &canonicalID,
@@ -422,4 +434,16 @@ func (p *WorkerPool) reenqueueWork(ctx context.Context, log *slog.Logger, agent 
 // still bounded for tests.
 func itemRequeueBackoff() time.Duration {
 	return 30 * time.Second
+}
+
+func isTerminalLaneStatus(head *graph.WorkObjectHead) bool {
+	if head == nil {
+		return false
+	}
+	switch head.Status {
+	case "done", "revision", "cancelled":
+		return true
+	default:
+		return false
+	}
 }

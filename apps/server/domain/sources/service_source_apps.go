@@ -2,9 +2,14 @@ package sources
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -40,6 +45,10 @@ type RegisterSourceAppRequest struct {
 	Slug          string
 	PrivateKey    string
 	WebhookSecret string
+	// WebhookKey pins the delivery key before the App is registered (the
+	// manifest wizard needs the URL at App-creation time). Empty lets the DB
+	// generate one.
+	WebhookKey string
 }
 
 // UpdateSourceAppRequest is the org-admin App edit payload. The provider and the
@@ -88,6 +97,9 @@ func (s *Service) bindGitHubAppSource(ctx context.Context, projectID uuid.UUID, 
 	if app.OrgID != projectOrg {
 		return apperror.NewForbidden("github_app: the App belongs to another organization")
 	}
+	if app.ProjectID != nil && *app.ProjectID != projectID {
+		return apperror.NewForbidden("github_app: the App belongs to another project")
+	}
 	installationID, err := normalizeInstallationID(cfg["installation_id"])
 	if err != nil {
 		return apperror.NewValidation("github_app: " + err.Error())
@@ -97,18 +109,41 @@ func (s *Service) bindGitHubAppSource(ctx context.Context, projectID uuid.UUID, 
 	return nil
 }
 
-// RegisterSourceApp stores org-level App credentials, sealed with the source
-// encryption key.
+// RegisterSourceApp stores org-wide App credentials (org admin; usable by
+// every project in the org).
 func (s *Service) RegisterSourceApp(ctx context.Context, orgID uuid.UUID, userID string, req RegisterSourceAppRequest) (*SourceApp, error) {
 	if err := s.requireSourceAppAdmin(ctx, orgID, userID); err != nil {
 		return nil, err
 	}
+	return s.createSourceApp(ctx, orgID, nil, req)
+}
+
+// RegisterProjectSourceApp registers an App from the project surface. An org
+// admin may choose org-wide (usable by every project) or project-owned; a
+// project admin may create only a project-owned App.
+func (s *Service) RegisterProjectSourceApp(ctx context.Context, projectID uuid.UUID, userID string, req RegisterSourceAppRequest, orgWide bool) (*SourceApp, error) {
+	orgID, err := s.repo.ProjectOrgID(ctx, projectID)
+	if err != nil {
+		return nil, apperror.NewInternal("failed to resolve the project organization", err)
+	}
+	if orgWide {
+		if err := s.requireSourceAppAdmin(ctx, orgID, userID); err != nil {
+			return nil, err
+		}
+		return s.createSourceApp(ctx, orgID, nil, req)
+	}
+	if err := s.requireSourceAppProjectAdmin(ctx, projectID, userID); err != nil {
+		return nil, err
+	}
+	pid := projectID
+	return s.createSourceApp(ctx, orgID, &pid, req)
+}
+
+func (s *Service) createSourceApp(ctx context.Context, orgID uuid.UUID, projectID *uuid.UUID, req RegisterSourceAppRequest) (*SourceApp, error) {
 	provider := strings.TrimSpace(req.Provider)
 	if provider == "" {
 		provider = SourceAppProviderGitHub
 	}
-	// Caller-input checks return 400 (the status this route documents), not the
-	// 422 of apperror.NewValidation.
 	if req.AppID <= 0 || strings.TrimSpace(req.PrivateKey) == "" || strings.TrimSpace(req.WebhookSecret) == "" {
 		return nil, apperror.NewBadRequest("appId, privateKey, and webhookSecret are required")
 	}
@@ -116,10 +151,6 @@ func (s *Service) RegisterSourceApp(ctx context.Context, orgID uuid.UUID, userID
 		return nil, apperror.NewBadRequest(fmt.Sprintf(
 			"provider %q is not supported; the only App provider served is %q", provider, SourceAppProviderGitHub))
 	}
-	// Validate the key while it is still readable and before anything is sealed
-	// or written. The sealed columns are write-only, so a bad key is invisible
-	// after registration; and a rejected registration must leave no row and no
-	// ciphertext behind. Hence this ordering is deliberate: validate first.
 	if err := validateSourceAppPrivateKey(req.PrivateKey); err != nil {
 		return nil, err
 	}
@@ -136,11 +167,19 @@ func (s *Service) RegisterSourceApp(ctx context.Context, orgID uuid.UUID, userID
 	}
 	app := &SourceApp{
 		OrgID:                  orgID,
+		ProjectID:              projectID,
 		Provider:               provider,
 		AppID:                  req.AppID,
 		Slug:                   strings.TrimSpace(req.Slug),
 		PrivateKeyEncrypted:    privateKey,
 		WebhookSecretEncrypted: webhookSecret,
+	}
+	if raw := strings.TrimSpace(req.WebhookKey); raw != "" {
+		key, err := uuid.Parse(raw)
+		if err != nil {
+			return nil, apperror.NewBadRequest("webhookKey must be a UUID")
+		}
+		app.WebhookKey = key
 	}
 	if err := s.repo.CreateSourceApp(ctx, app); err != nil {
 		return nil, mapSourceConflict(err, "an App with this id is already registered for the organization")
@@ -178,7 +217,7 @@ func validateSourceAppPrivateKey(raw string) error {
 	}
 }
 
-// ListSourceApps returns the org's Apps without sealed credentials.
+// ListSourceApps returns the org-wide Apps without sealed credentials.
 func (s *Service) ListSourceApps(ctx context.Context, orgID uuid.UUID, userID string) ([]*SourceApp, error) {
 	if err := s.requireSourceAppAdmin(ctx, orgID, userID); err != nil {
 		return nil, err
@@ -186,40 +225,71 @@ func (s *Service) ListSourceApps(ctx context.Context, orgID uuid.UUID, userID st
 	return s.repo.ListSourceAppsByOrg(ctx, orgID)
 }
 
-// DeleteSourceApp removes an App credential. It refuses with a 409 naming the
-// bound project sources while any kb.sources row still references the App (the
-// kb.sources.app_id FK is ON DELETE RESTRICT); the caller detaches them first.
+// ListSourceAppsForProject returns the Apps a project may bind: org-wide Apps
+// plus Apps owned by that project. Project membership is enforced by the route.
+func (s *Service) ListSourceAppsForProject(ctx context.Context, projectID uuid.UUID) ([]*SourceApp, error) {
+	orgID, err := s.repo.ProjectOrgID(ctx, projectID)
+	if err != nil {
+		return nil, apperror.NewInternal("failed to resolve the project organization", err)
+	}
+	return s.repo.ListSourceAppsForProject(ctx, orgID, projectID)
+}
+
+// DeleteSourceApp removes an org-wide App credential (org admin).
 func (s *Service) DeleteSourceApp(ctx context.Context, orgID uuid.UUID, userID string, id uuid.UUID) error {
 	if err := s.requireSourceAppAdmin(ctx, orgID, userID); err != nil {
 		return err
 	}
 	app, err := s.repo.FindSourceAppByID(ctx, id)
-	if err != nil || app.OrgID != orgID {
+	if err != nil || app.OrgID != orgID || app.ProjectID != nil {
 		return apperror.NewNotFound("SourceApp", id.String())
 	}
 	return s.repo.DeleteSourceApp(ctx, id)
 }
 
-// UpdateSourceApp renames an App and optionally rotates its sealed credentials.
-// AppID and provider are immutable: `(org, provider, app_id)` is the binding key
-// the sources resolve through, so an edit must not repoint an App under sources
-// that are already attached. A blank secret keeps the stored ciphertext.
+// DeleteSourceAppForProject removes an App from the project surface. A
+// project-owned App requires project admin; an org-wide App requires org admin.
+func (s *Service) DeleteSourceAppForProject(ctx context.Context, projectID uuid.UUID, userID string, id uuid.UUID) error {
+	app, err := s.repo.FindSourceAppByID(ctx, id)
+	if err != nil {
+		return apperror.NewNotFound("SourceApp", id.String())
+	}
+	if err := s.authorizeSourceAppManage(ctx, projectID, app, userID); err != nil {
+		return err
+	}
+	return s.repo.DeleteSourceApp(ctx, id)
+}
+
+// UpdateSourceApp renames an org-wide App and optionally rotates its secrets.
 func (s *Service) UpdateSourceApp(ctx context.Context, orgID uuid.UUID, userID string, id uuid.UUID, req UpdateSourceAppRequest) (*SourceApp, error) {
 	if err := s.requireSourceAppAdmin(ctx, orgID, userID); err != nil {
 		return nil, err
 	}
 	app, err := s.repo.FindSourceAppByID(ctx, id)
-	if err != nil || app.OrgID != orgID {
+	if err != nil || app.OrgID != orgID || app.ProjectID != nil {
 		return nil, apperror.NewNotFound("SourceApp", id.String())
 	}
+	return s.applySourceAppUpdate(ctx, app, req)
+}
+
+// UpdateSourceAppForProject edits an App from the project surface.
+func (s *Service) UpdateSourceAppForProject(ctx context.Context, projectID uuid.UUID, userID string, id uuid.UUID, req UpdateSourceAppRequest) (*SourceApp, error) {
+	app, err := s.repo.FindSourceAppByID(ctx, id)
+	if err != nil {
+		return nil, apperror.NewNotFound("SourceApp", id.String())
+	}
+	if err := s.authorizeSourceAppManage(ctx, projectID, app, userID); err != nil {
+		return nil, err
+	}
+	return s.applySourceAppUpdate(ctx, app, req)
+}
+
+func (s *Service) applySourceAppUpdate(ctx context.Context, app *SourceApp, req UpdateSourceAppRequest) (*SourceApp, error) {
 	slug := strings.TrimSpace(req.Slug)
 	if slug == "" {
 		return nil, apperror.NewBadRequest("slug is required")
 	}
 	app.Slug = slug
-	// Same ordering as registration: validate a supplied key while it is still
-	// readable, before it is sealed. The sealed columns are write-only, so a bad
-	// key accepted here would be invisible and every later token mint would fail.
 	if strings.TrimSpace(req.PrivateKey) != "" {
 		if err := validateSourceAppPrivateKey(req.PrivateKey); err != nil {
 			return nil, err
@@ -243,6 +313,36 @@ func (s *Service) UpdateSourceApp(ctx context.Context, orgID uuid.UUID, userID s
 	return app, nil
 }
 
+// authorizeSourceAppManage: a project-owned App requires project admin; an
+// org-wide App requires org admin. A mismatched project is not found.
+func (s *Service) authorizeSourceAppManage(ctx context.Context, projectID uuid.UUID, app *SourceApp, userID string) error {
+	orgID, err := s.repo.ProjectOrgID(ctx, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to resolve the project organization", err)
+	}
+	if app.OrgID != orgID {
+		return apperror.NewNotFound("SourceApp", app.ID.String())
+	}
+	if app.ProjectID == nil {
+		return s.requireSourceAppAdmin(ctx, app.OrgID, userID)
+	}
+	if *app.ProjectID != projectID {
+		return apperror.NewNotFound("SourceApp", app.ID.String())
+	}
+	return s.requireSourceAppProjectAdmin(ctx, projectID, userID)
+}
+
+func (s *Service) requireSourceAppProjectAdmin(ctx context.Context, projectID uuid.UUID, userID string) error {
+	ok, err := auth.CanAdministerProject(ctx, s.repo.db, projectID.String(), userID)
+	if err != nil {
+		return apperror.NewInternal("failed to check project authority", err)
+	}
+	if !ok {
+		return apperror.NewForbidden("project administrator required")
+	}
+	return nil
+}
+
 // sealSourceAppSecret seals one credential value with the source encryption key.
 // what names the secret in the failure so a rotation error identifies the field.
 func (s *Service) sealSourceAppSecret(raw, what string) ([]byte, error) {
@@ -261,7 +361,41 @@ func (s *Service) ListSourceTriggers(ctx context.Context, projectID, sourceID uu
 	if _, err := s.sourceForProject(ctx, projectID, sourceID); err != nil {
 		return nil, err
 	}
-	return s.repo.ListSourceTriggers(ctx, projectID, sourceID)
+	triggers, err := s.repo.ListSourceTriggers(ctx, projectID, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	s.fillTriggerAgentNames(ctx, projectID, triggers)
+	return triggers, nil
+}
+
+// fillTriggerAgentNames labels a list of bindings with the bound agents' names in
+// one lookup. The view cannot resolve them from the picker's list: the picker
+// offers agent definitions while the binding stores a runtime kb.agents id
+// (#727). Labels are cosmetic, so a failed lookup leaves them empty rather than
+// failing the read.
+func (s *Service) fillTriggerAgentNames(ctx context.Context, projectID uuid.UUID, triggers []*SourceTrigger) {
+	if s.agentRepo == nil || len(triggers) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(triggers))
+	for _, trigger := range triggers {
+		if trigger != nil && trigger.AgentID != uuid.Nil {
+			ids = append(ids, trigger.AgentID.String())
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	names, err := s.agentRepo.FindAgentNamesByIDs(ctx, projectID.String(), ids)
+	if err != nil {
+		return
+	}
+	for _, trigger := range triggers {
+		if trigger != nil {
+			trigger.AgentName = names[trigger.AgentID.String()]
+		}
+	}
 }
 
 // CreateSourceTrigger binds an event type to a runtime agent and queue.
@@ -270,7 +404,23 @@ func (s *Service) CreateSourceTrigger(ctx context.Context, projectID, sourceID u
 	if err != nil {
 		return nil, err
 	}
-	if err := s.validateTriggerInput(ctx, projectID, src, in, true); err != nil {
+	// Check the unique (source, event type) conflict before resolving the agent:
+	// resolution materializes a definition-backed kb.agents row, which a binding
+	// that cannot be created would otherwise leave orphaned. The unique index
+	// still guards the race below.
+	if eventType := strings.TrimSpace(in.EventType); eventType != "" {
+		existing, lerr := s.repo.ListSourceTriggers(ctx, projectID, sourceID)
+		if lerr != nil {
+			return nil, lerr
+		}
+		for _, t := range existing {
+			if t != nil && strings.EqualFold(strings.TrimSpace(t.EventType), eventType) {
+				return nil, apperror.NewConflict("this source already has a trigger for that event")
+			}
+		}
+	}
+	agentID, err := s.validateTriggerInput(ctx, projectID, src, in, true)
+	if err != nil {
 		return nil, err
 	}
 	enabled := true
@@ -281,7 +431,7 @@ func (s *Service) CreateSourceTrigger(ctx context.Context, projectID, sourceID u
 		ProjectID:   projectID,
 		SourceID:    sourceID,
 		EventType:   strings.TrimSpace(in.EventType),
-		AgentID:     mustUUID(in.AgentID),
+		AgentID:     mustUUID(agentID),
 		Queue:       defaultSourceQueue(in.Queue),
 		EventFilter: in.EventFilter,
 		Enabled:     enabled,
@@ -292,6 +442,7 @@ func (s *Service) CreateSourceTrigger(ctx context.Context, projectID, sourceID u
 	if err := s.repo.CreateSourceTrigger(ctx, trigger); err != nil {
 		return nil, mapSourceConflict(err, "this source already has a trigger for that event")
 	}
+	trigger.AgentName = s.triggerAgentName(ctx, projectID, trigger.AgentID)
 	return trigger, nil
 }
 
@@ -308,14 +459,15 @@ func (s *Service) UpdateSourceTrigger(ctx context.Context, projectID, sourceID, 
 	if in.EventType != "" {
 		in.EventType = strings.TrimSpace(in.EventType)
 	}
-	if err := s.validateTriggerInput(ctx, projectID, src, in, false); err != nil {
+	agentID, err := s.validateTriggerInput(ctx, projectID, src, in, false)
+	if err != nil {
 		return nil, err
 	}
 	if in.EventType != "" {
 		trigger.EventType = in.EventType
 	}
-	if in.AgentID != "" {
-		trigger.AgentID = mustUUID(in.AgentID)
+	if agentID != "" {
+		trigger.AgentID = mustUUID(agentID)
 	}
 	if in.Queue != "" {
 		trigger.Queue = defaultSourceQueue(in.Queue)
@@ -329,6 +481,7 @@ func (s *Service) UpdateSourceTrigger(ctx context.Context, projectID, sourceID, 
 	if err := s.repo.UpdateSourceTrigger(ctx, trigger); err != nil {
 		return nil, mapSourceConflict(err, "this source already has a trigger for that event")
 	}
+	trigger.AgentName = s.triggerAgentName(ctx, projectID, trigger.AgentID)
 	return trigger, nil
 }
 
@@ -344,33 +497,65 @@ func (s *Service) DeleteSourceTrigger(ctx context.Context, projectID, sourceID, 
 	return s.repo.DeleteSourceTrigger(ctx, projectID, triggerID)
 }
 
-func (s *Service) validateTriggerInput(ctx context.Context, projectID uuid.UUID, src *Source, in SourceTriggerInput, requireAll bool) error {
+// validateTriggerInput validates a binding and returns the runtime agent id it
+// must store ("" when the patch carries no agentId). The resolved id is not
+// necessarily the input: the trigger picker offers agent definitions
+// (ListAgentDefinitions), so an id naming a definition resolves to that
+// definition's kb.agents row — the id kb.source_triggers.agent_id references and
+// the id dispatch enqueues a run for (#727).
+func (s *Service) validateTriggerInput(ctx context.Context, projectID uuid.UUID, src *Source, in SourceTriggerInput, requireAll bool) (string, error) {
 	eventType := strings.TrimSpace(in.EventType)
 	if eventType == "" && requireAll {
-		return apperror.NewValidation("eventType is required")
+		return "", apperror.NewValidation("eventType is required")
 	}
 	if eventType != "" && src.Provider == ProviderTypeGitHubApp && eventType != "pull_request" {
-		return apperror.NewValidation("github_app supports only the pull_request event")
+		return "", apperror.NewValidation("github_app supports only the pull_request event")
 	}
 	if strings.TrimSpace(in.AgentID) == "" {
 		if requireAll {
-			return apperror.NewValidation("agentId is required")
+			return "", apperror.NewValidation("agentId is required")
 		}
-		return nil
+		return "", nil
 	}
-	agentID, err := uuid.Parse(in.AgentID)
+	return s.resolveTriggerAgentID(ctx, projectID, in.AgentID)
+}
+
+// resolveTriggerAgentID maps an id supplied by the trigger picker to a runtime
+// kb.agents id. It accepts either a runtime agent id or an agent-definition id,
+// and creates the definition-backed runtime row when a definition-only agent
+// (one created from the UI) is bound for the first time.
+func (s *Service) resolveTriggerAgentID(ctx context.Context, projectID uuid.UUID, raw string) (string, error) {
+	agentID, err := uuid.Parse(strings.TrimSpace(raw))
 	if err != nil {
-		return apperror.NewValidation("agentId must be a UUID")
+		return "", apperror.NewValidation("agentId must be a UUID")
 	}
 	if s.agentRepo == nil {
-		return apperror.NewInternal("agent resolver is not configured", nil)
+		return "", apperror.NewInternal("agent resolver is not configured", nil)
+	}
+	projectIDStr := projectID.String()
+	agent, err := s.agentRepo.ResolveRuntimeAgentByID(ctx, projectIDStr, agentID.String())
+	if err != nil {
+		return "", apperror.NewInternal("failed to resolve agent", err)
+	}
+	if agent == nil {
+		return "", apperror.NewNotFound("Agent", raw)
+	}
+	return agent.ID, nil
+}
+
+// triggerAgentName resolves the display name of a bound agent for the trigger
+// panel. The view cannot resolve it from the picker's list: the picker offers
+// agent definitions while the binding stores a runtime kb.agents id (#727).
+func (s *Service) triggerAgentName(ctx context.Context, projectID uuid.UUID, agentID uuid.UUID) string {
+	if s.agentRepo == nil || agentID == uuid.Nil {
+		return ""
 	}
 	projectIDStr := projectID.String()
 	agent, err := s.agentRepo.FindByID(ctx, agentID.String(), &projectIDStr)
 	if err != nil || agent == nil {
-		return apperror.NewNotFound("Agent", in.AgentID)
+		return ""
 	}
-	return nil
+	return agent.Name
 }
 
 func (s *Service) sourceForProject(ctx context.Context, projectID, sourceID uuid.UUID) (*Source, error) {
@@ -402,4 +587,124 @@ func mapSourceConflict(err error, message string) error {
 		return apperror.NewConflict(message)
 	}
 	return apperror.NewInternal("database error", err)
+}
+
+// ListInstallationRepositories lists the repositories an installation can see.
+// It is used by the setup wizard to render a checkbox list; the token is scoped
+// to the installation with read-only contents permission and is not persisted.
+func (s *Service) ListInstallationRepositories(ctx context.Context, projectID, appID uuid.UUID, installationID int64) ([]string, error) {
+	if installationID <= 0 {
+		return nil, apperror.NewBadRequest("installationId must be a positive integer")
+	}
+	app, err := s.repo.FindSourceAppByID(ctx, appID)
+	if err != nil {
+		return nil, apperror.NewNotFound("SourceApp", appID.String())
+	}
+	orgID, err := s.repo.ProjectOrgID(ctx, projectID)
+	if err != nil {
+		return nil, apperror.NewInternal("failed to resolve the project organization", err)
+	}
+	if app.OrgID != orgID || (app.ProjectID != nil && *app.ProjectID != projectID) {
+		return nil, apperror.NewNotFound("SourceApp", appID.String())
+	}
+	if len(s.key) == 0 {
+		return nil, apperror.NewValidation("LLM_ENCRYPTION_KEY is not configured")
+	}
+	privateKey, err := OpenSourceBlob(s.key, app.PrivateKeyEncrypted)
+	if err != nil {
+		return nil, apperror.NewInternal("failed to open the App private key", err)
+	}
+	minter := githubapp.NewTokenMinter(s.githubAPIBase, nil)
+	token, err := minter.MintInstallationTokenAllRepositories(ctx, app.AppID, privateKey, installationID,
+		map[string]string{"contents": "read", "metadata": "read"})
+	if err != nil {
+		return nil, apperror.NewInternal("failed to list installation repositories", err)
+	}
+	client := &http.Client{Timeout: 20 * time.Second}
+	names := []string{}
+	for page := 1; page <= 20; page++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+			fmt.Sprintf("%s/installation/repositories?per_page=100&page=%d", s.githubAPIBase, page), nil)
+		if err != nil {
+			return nil, apperror.NewInternal("failed to build the repository request", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, apperror.NewInternal("failed to list installation repositories", err)
+		}
+		var out struct {
+			Repositories []struct {
+				FullName string `json:"full_name"`
+			} `json:"repositories"`
+		}
+		decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out)
+		status := resp.StatusCode
+		_ = resp.Body.Close()
+		if status != http.StatusOK {
+			return nil, apperror.NewInternal(fmt.Sprintf("GitHub returned %d listing installation repositories", status), nil)
+		}
+		if decodeErr != nil {
+			return nil, apperror.NewInternal("failed to decode installation repositories", decodeErr)
+		}
+		for _, repo := range out.Repositories {
+			if name := strings.TrimSpace(repo.FullName); name != "" {
+				names = append(names, name)
+			}
+		}
+		if len(out.Repositories) < 100 {
+			break
+		}
+	}
+	slices.Sort(names)
+	return names, nil
+}
+
+// GetSourceWorkflow returns the source's workflow, or nil when it is a direct
+// trigger source.
+func (s *Service) GetSourceWorkflow(ctx context.Context, projectID, sourceID uuid.UUID) (*SourceWorkflow, error) {
+	if _, err := s.sourceForProject(ctx, projectID, sourceID); err != nil {
+		return nil, err
+	}
+	return s.repo.GetSourceWorkflow(ctx, projectID, sourceID)
+}
+
+// UpsertSourceWorkflow stores/validates the reviewer lanes. A source with a
+// workflow emits board items; a source without one keeps the legacy direct
+// trigger path.
+func (s *Service) UpsertSourceWorkflow(ctx context.Context, projectID, sourceID uuid.UUID, cfg SourceWorkflowConfig) (*SourceWorkflow, error) {
+	src, err := s.sourceForProject(ctx, projectID, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	if provider, ok := s.providers.Get(src.Provider); ok {
+		if err := s.ensureObjectTypes(ctx, projectID, provider); err != nil {
+			return nil, apperror.NewInternal("install source workflow schema pack", err)
+		}
+	}
+	if src.Provider != ProviderTypeGitHubApp {
+		return nil, apperror.NewValidation("workflows are supported only for github_app sources")
+	}
+	if len(cfg.Reviewers) == 0 {
+		return nil, apperror.NewBadRequest("at least one reviewer lane is required")
+	}
+	seen := map[string]bool{}
+	for i := range cfg.Reviewers {
+		cfg.Reviewers[i].Lane = strings.TrimSpace(cfg.Reviewers[i].Lane)
+		cfg.Reviewers[i].Agent = strings.TrimSpace(cfg.Reviewers[i].Agent)
+		if cfg.Reviewers[i].Lane == "" || cfg.Reviewers[i].Agent == "" {
+			return nil, apperror.NewBadRequest("each reviewer needs a lane and an agent")
+		}
+		if seen[cfg.Reviewers[i].Lane] {
+			return nil, apperror.NewBadRequest("reviewer lanes must be unique")
+		}
+		seen[cfg.Reviewers[i].Lane] = true
+	}
+	wf := &SourceWorkflow{ProjectID: projectID, SourceID: sourceID, Config: map[string]any{"reviewers": cfg.Reviewers}, Enabled: true}
+	if err := s.repo.UpsertSourceWorkflow(ctx, wf); err != nil {
+		return nil, err
+	}
+	return wf, nil
 }

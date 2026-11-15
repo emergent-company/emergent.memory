@@ -34,6 +34,7 @@ var Module = fx.Module("sources",
 		RegisterSyncSchedulerTask,
 		RegisterSourceToolHandler,
 		RegisterReviewToolHandler,
+		WireReviewToolWorkObjectStore,
 		RegisterSourceMCPBackfill,
 		RegisterProbeSchedulerTask,
 	),
@@ -145,8 +146,21 @@ func RegisterSourceMCPBackfill(lc fx.Lifecycle, svc *Service) {
 // loaded only when FEATURE_AGENTS is on.
 var SourceEventsModule = fx.Module("source-events",
 	fx.Provide(
+		provideSourceWorkObjectStore,
 		NewSourceEventDispatcher,
 		NewSourceEventHandler,
 	),
-	fx.Invoke(RegisterSourceEventRoutes, WireAgentRepository),
+	fx.Invoke(RegisterSourceEventRoutes, WireAgentRepository, WireSourceWorkObjectStore),
 )
+
+// provideSourceWorkObjectStore binds the graph service to the narrow interface
+// the source workflow dispatcher consumes.
+func provideSourceWorkObjectStore(svc *graph.Service) SourceWorkObjectStore { return svc }
+
+// WireReviewToolWorkObjectStore lets the review tool finalize a board lane from
+// the submitted verdict.
+func WireReviewToolWorkObjectStore(h *ReviewToolHandler, svc *graph.Service) {
+	if h != nil && svc != nil {
+		h.SetWorkItemStatusWriter(svc)
+	}
+}

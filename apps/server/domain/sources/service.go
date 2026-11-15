@@ -28,6 +28,9 @@ type Service struct {
 	key       []byte // raw AES-256 key bytes (hex-decoded from config)
 	providers *Registry
 	log       *slog.Logger
+	// githubAPIBase is the REST base used only for the setup wizard's
+	// installation-repository listing.
+	githubAPIBase string
 
 	oauthCfg     config.SourceOAuthConfig
 	oauthClients map[string]OAuthClient // deployment-default clients by provider
@@ -169,14 +172,18 @@ func NewService(repo *Repository, cfg *config.Config, log *slog.Logger, registry
 		// must build its own SSRF-guarded client, and the static providers fall back
 		// to http.DefaultClient for their fixed vendor endpoints. Tests inject a
 		// client with WithOAuthHTTPClient to reach loopback fakes.
-		oauthHTTP: nil,
-		log:       log.With(logger.Scope("sources.svc")),
+		oauthHTTP:     nil,
+		log:           log.With(logger.Scope("sources.svc")),
+		githubAPIBase: "https://api.github.com",
 	}
 	if repo != nil {
 		s.orgOAuth = repo
 		s.projectOAuth = repo
 	}
 	if cfg != nil {
+		if base := strings.TrimRight(cfg.GitHubSource.APIBaseURL, "/"); base != "" {
+			s.githubAPIBase = base
+		}
 		s.oauthCfg = cfg.SourceOAuth
 		for provider, d := range cfg.SourceOAuth.OAuthClientsByProvider() {
 			s.oauthClients[provider] = OAuthClient{ClientID: d.ClientID, ClientSecret: d.ClientSecret}

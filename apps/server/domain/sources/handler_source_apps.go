@@ -2,6 +2,8 @@ package sources
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -11,11 +13,16 @@ import (
 )
 
 type registerSourceAppDTO struct {
-	Provider      string `json:"provider"`
+	Provider string `json:"provider"`
+	// Scope is "org" (org-wide, org admin) or "project" (project-owned,
+	// project admin). Only the project-scoped route reads it; the org route is
+	// always org-wide.
+	Scope         string `json:"scope,omitempty"`
 	AppID         int64  `json:"appId"`
 	Slug          string `json:"slug"`
 	PrivateKey    string `json:"privateKey"`
 	WebhookSecret string `json:"webhookSecret"`
+	WebhookKey    string `json:"webhookKey,omitempty"`
 }
 
 type updateSourceAppDTO struct {
@@ -55,7 +62,9 @@ func (h *Handler) RegisterSourceApp(c echo.Context) error {
 		return apperror.ErrBadRequest
 	}
 	user := auth.MustGetUser(c)
-	app, err := h.svc.RegisterSourceApp(c.Request().Context(), orgID, user.ID, RegisterSourceAppRequest(dto))
+	app, err := h.svc.RegisterSourceApp(c.Request().Context(), orgID, user.ID, RegisterSourceAppRequest{
+		Provider: dto.Provider, AppID: dto.AppID, Slug: dto.Slug, PrivateKey: dto.PrivateKey, WebhookSecret: dto.WebhookSecret, WebhookKey: dto.WebhookKey,
+	})
 	if err != nil {
 		return err
 	}
@@ -175,7 +184,7 @@ func (h *Handler) ListSourceTriggers(c echo.Context) error {
 
 // CreateSourceTrigger handles POST /api/data-source-integrations/:id/triggers.
 // @Summary      Create a source trigger
-// @Description  Binds an event type to a runtime agent and queue.
+// @Description  Binds an event type to an agent and queue. agentId may be a runtime agent id or an agent-definition id; the binding stores the runtime kb.agents id either way.
 // @Tags         data-source-integrations
 // @Accept       json
 // @Produce      json
@@ -266,4 +275,200 @@ func (h *Handler) DeleteSourceTrigger(c echo.Context) error {
 		return err
 	}
 	return c.NoContent(http.StatusNoContent)
+}
+
+// projectIDFromCaller resolves the X-Project-ID for the project-scoped group.
+func (h *Handler) projectIDFromCaller(c echo.Context) (uuid.UUID, error) {
+	raw, err := auth.GetProjectID(c)
+	if err != nil {
+		return uuid.Nil, apperror.ErrBadRequest
+	}
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		return uuid.Nil, apperror.ErrBadRequest
+	}
+	return id, nil
+}
+
+// ListProjectSourceApps handles GET /api/data-source-integrations/source-apps.
+// @Summary      List Apps available to the project
+// @Description  Returns org-wide Apps plus Apps owned by the current project, without credentials.
+// @Tags         data-source-integrations
+// @Produce      json
+// @Success      200 {array} SourceApp
+// @Router       /api/data-source-integrations/source-apps [get]
+// @Security     bearerAuth
+func (h *Handler) ListProjectSourceApps(c echo.Context) error {
+	projectID, err := h.projectIDFromCaller(c)
+	if err != nil {
+		return err
+	}
+	apps, err := h.svc.ListSourceAppsForProject(c.Request().Context(), projectID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, apps)
+}
+
+// RegisterProjectSourceApp handles POST /api/data-source-integrations/source-apps.
+// @Summary      Register a source App for the project
+// @Description  Org admins may register org-wide (scope=org) or project-owned (scope=project); project admins only project-owned.
+// @Tags         data-source-integrations
+// @Accept       json
+// @Produce      json
+// @Param        body body registerSourceAppDTO true "App credentials"
+// @Success      201 {object} SourceApp
+// @Router       /api/data-source-integrations/source-apps [post]
+// @Security     bearerAuth
+func (h *Handler) RegisterProjectSourceApp(c echo.Context) error {
+	projectID, err := h.projectIDFromCaller(c)
+	if err != nil {
+		return err
+	}
+	var dto registerSourceAppDTO
+	if err := c.Bind(&dto); err != nil {
+		return apperror.ErrBadRequest
+	}
+	user := auth.MustGetUser(c)
+	scope := strings.ToLower(strings.TrimSpace(dto.Scope))
+	if scope == "" {
+		scope = "project"
+	}
+	if scope != "org" && scope != "project" {
+		return apperror.NewBadRequest("scope must be project or org")
+	}
+	app, err := h.svc.RegisterProjectSourceApp(c.Request().Context(), projectID, user.ID, RegisterSourceAppRequest{
+		Provider: dto.Provider, AppID: dto.AppID, Slug: dto.Slug, PrivateKey: dto.PrivateKey, WebhookSecret: dto.WebhookSecret, WebhookKey: dto.WebhookKey,
+	}, scope == "org")
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusCreated, app)
+}
+
+// UpdateProjectSourceApp handles PATCH /api/data-source-integrations/source-apps/:appId.
+// @Summary      Update a source App from the project surface
+// @Description  Project-owned Apps require project admin; org-wide Apps require org admin. Secrets are optional rotations.
+// @Tags         data-source-integrations
+// @Accept       json
+// @Produce      json
+// @Param        appId path string true "App row ID (UUID)"
+// @Param        body body updateSourceAppDTO true "Patch"
+// @Success      200 {object} SourceApp
+// @Router       /api/data-source-integrations/source-apps/{appId} [patch]
+// @Security     bearerAuth
+func (h *Handler) UpdateProjectSourceApp(c echo.Context) error {
+	projectID, err := h.projectIDFromCaller(c)
+	if err != nil {
+		return err
+	}
+	appID, err := uuid.Parse(c.Param("appId"))
+	if err != nil {
+		return apperror.ErrBadRequest
+	}
+	var dto updateSourceAppDTO
+	if err := c.Bind(&dto); err != nil {
+		return apperror.ErrBadRequest
+	}
+	user := auth.MustGetUser(c)
+	app, err := h.svc.UpdateSourceAppForProject(c.Request().Context(), projectID, user.ID, appID, UpdateSourceAppRequest(dto))
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, app)
+}
+
+// DeleteProjectSourceApp handles DELETE /api/data-source-integrations/source-apps/:appId.
+// @Summary      Delete a source App from the project surface
+// @Description  Project-owned Apps require project admin; org-wide Apps require org admin. Refused with 409 while bound sources exist.
+// @Tags         data-source-integrations
+// @Param        appId path string true "App row ID (UUID)"
+// @Success      204
+// @Router       /api/data-source-integrations/source-apps/{appId} [delete]
+// @Security     bearerAuth
+func (h *Handler) DeleteProjectSourceApp(c echo.Context) error {
+	projectID, err := h.projectIDFromCaller(c)
+	if err != nil {
+		return err
+	}
+	appID, err := uuid.Parse(c.Param("appId"))
+	if err != nil {
+		return apperror.ErrBadRequest
+	}
+	user := auth.MustGetUser(c)
+	if err := h.svc.DeleteSourceAppForProject(c.Request().Context(), projectID, user.ID, appID); err != nil {
+		return err
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+// ListInstallationRepositories handles GET /api/data-source-integrations/source-apps/:appId/installation-repositories.
+// @Summary      List an installation's repositories
+// @Description  Returns full repository names for the setup wizard's checkbox list. Uses a short-lived read-only installation token.
+// @Tags         data-source-integrations
+// @Produce      json
+// @Param        appId path string true "App row ID (UUID)"
+// @Param        installationId query int true "GitHub installation id"
+// @Success      200 {array} string
+// @Router       /api/data-source-integrations/source-apps/{appId}/installation-repositories [get]
+// @Security     bearerAuth
+func (h *Handler) ListInstallationRepositories(c echo.Context) error {
+	projectID, err := h.projectIDFromCaller(c)
+	if err != nil {
+		return err
+	}
+	appID, err := uuid.Parse(c.Param("appId"))
+	if err != nil {
+		return apperror.ErrBadRequest
+	}
+	installationID, err := strconv.ParseInt(strings.TrimSpace(c.QueryParam("installationId")), 10, 64)
+	if err != nil || installationID <= 0 {
+		return apperror.NewBadRequest("installationId must be a positive integer")
+	}
+	repos, err := h.svc.ListInstallationRepositories(c.Request().Context(), projectID, appID, installationID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, repos)
+}
+
+// GetSourceWorkflow handles GET /api/data-source-integrations/:id/workflow.
+func (h *Handler) GetSourceWorkflow(c echo.Context) error {
+	projectID, err := h.projectIDFromCaller(c)
+	if err != nil {
+		return err
+	}
+	sourceID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apperror.ErrBadRequest
+	}
+	wf, err := h.svc.GetSourceWorkflow(c.Request().Context(), projectID, sourceID)
+	if err != nil {
+		return err
+	}
+	if wf == nil {
+		return c.JSON(http.StatusOK, map[string]any{"sourceId": sourceID, "config": SourceWorkflowConfig{}})
+	}
+	return c.JSON(http.StatusOK, wf)
+}
+
+// PutSourceWorkflow handles PUT /api/data-source-integrations/:id/workflow.
+func (h *Handler) PutSourceWorkflow(c echo.Context) error {
+	projectID, err := h.projectIDFromCaller(c)
+	if err != nil {
+		return err
+	}
+	sourceID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apperror.ErrBadRequest
+	}
+	var in SourceWorkflowConfig
+	if err := c.Bind(&in); err != nil {
+		return apperror.NewBadRequest("invalid workflow body")
+	}
+	wf, err := h.svc.UpsertSourceWorkflow(c.Request().Context(), projectID, sourceID, in)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, wf)
 }

@@ -81,9 +81,9 @@ func TestWebhookTriggerTokenRouteRequiresAuth(t *testing.T) {
 }
 
 // End-to-end lifecycle over the real HTTP auth path: mint a webhook trigger
-// credential, present it as a bearer (the gateway's AGENT_TRIGGER_TOKEN
-// install), confirm it validates as marker-class and ceiling-bound, then revoke
-// it and confirm it denies.
+// credential, present it as a bearer on the webhook trigger surface, confirm it
+// validates as marker-class and ceiling-bound, then revoke it and confirm it
+// denies.
 func TestWebhookTriggerCredentialEndToEnd(t *testing.T) {
 	tdb := testdb.SetupTestDBOrFail(t, context.Background(), "apitoken_webhook_e2e")
 	t.Cleanup(tdb.Close)

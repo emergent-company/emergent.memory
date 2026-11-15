@@ -16,12 +16,10 @@ import (
 // the parent environment (LIVEKIT_*, DEEPGRAM_*, CARTESIA_*, MEMORY_URL, …), so
 // these are explicitly stripped instead of allowlisting the whole child env.
 var gatewayOnlyEnvVars = []string{
-	"AGENT_TRIGGER_TOKEN",   // webhook trigger credential (scoped, webhook:trigger marker)
-	"SESSION_SECRET",        // browser session cookie HMAC key
-	"SHARE_COOKIE_SECRET",   // public-share cookie HMAC key
-	"SHARE_REF_SECRET",      // public-share ref secret
-	"TOKEN_API_KEY",         // admin X-API-Key
-	"GITHUB_WEBHOOK_SECRET", // GitHub webhook HMAC secret
+	"SESSION_SECRET",      // browser session cookie HMAC key
+	"SHARE_COOKIE_SECRET", // public-share cookie HMAC key
+	"SHARE_REF_SECRET",    // public-share ref secret
+	"TOKEN_API_KEY",       // admin X-API-Key
 }
 
 // workerEnv returns the parent environment with gateway-only credentials

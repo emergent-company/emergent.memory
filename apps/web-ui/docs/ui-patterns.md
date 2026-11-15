@@ -1,5 +1,12 @@
 # UI / htmx / Alpine — patterns & unification
 
+> **Hand-maintained mirror — not the source of truth.** The authoritative
+> catalogue is the Memory graph (project `memory_coding`, pack `ui-patterns`;
+> `UIPattern`, `UIComponent`, `UIRule`, `UIVariant`). Nothing generates this
+> file, and a pattern is never added here first: change the graph, then update
+> this mirror in the same PR. It is kept because contributors outside the
+> organisation cannot reach the graph.
+
 Authoritative reference for the web-ui gateway's rendering, interactivity, and
 testing conventions. Complements the Go/templ style enforced in the gateway
 package and the component-layer rules in §4. Everything here is grounded in
@@ -54,12 +61,12 @@ full (`render/render.go:40-49`). `pageTitle` (`ui.go:34`) joins segments with
 | `pageError(heading, err)` | `ui.templ:256` | fetch-failure state for a page whose error state *is* the page (`h1` + `ui.Alert`) |
 | `pageErrorNotice(heading, err)` | `ui.templ:265` | fetch-failure state under an existing header (`h2` label + the same alert) |
 | `ui.Section(title, SectionProps)` | `agent.templ:232` | titled panel + empty state |
-| `components.PanelCard` | `components/panel.templ:13` | `ui.CardRaw` + `memory-density-comfortable` |
-| `components.TableCard` | `components/table.templ:10` | `ui.CardRaw` + `memory-density-flush` (zero padding, table meets edges) |
+| `components.PanelCard` | `components/panel.templ:47` | `ui.CardRaw` + `memory-density-comfortable`; `PanelCardOpt` replaces body/surface/border |
+| `components.TableCard` | `components/table.templ:25` | `ui.CardRaw` + `memory-density-flush` (zero padding, table meets edges) |
 | `components.MetaRow` / `MetaGrid` | `components/meta.templ:18,74` | definition-list cells; single label-style definition |
 | `components.EmptyDash` | `components/meta.templ:55` | muted em-dash for absent values |
 | `components.SubNav` / `SubNavItem` | `components/nav.templ:10,17` | sub-page nav rail |
-| `components.ListRow` | `components/list.templ:10` | chat/session row |
+| `components.LinkRow` | `components/list.templ:38` | chat/session row |
 | `components.StatusBadge` | `components/badge.templ:24` | L1 domain adapter |
 
 `pageHeader`/`detailHeader` are **Go functions, not templ components**, because

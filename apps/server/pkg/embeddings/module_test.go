@@ -117,6 +117,44 @@ func TestResolveUsesProjectCredential(t *testing.T) {
 	}
 }
 
+// TestResolveCredentialErrorsNameProviderInstance pins the operator-facing
+// contract of #710: these messages name ProviderSlug, so the adapter fills it
+// with the project's provider instance (e.g. "google-eu") rather than the
+// dialect. A multi-instance project must not be told to re-key the wrong
+// instance during an incident.
+func TestResolveCredentialErrorsNameProviderInstance(t *testing.T) {
+	const instance = "google-eu"
+
+	// A credential that resolved but carries no model names the instance.
+	var buf bytes.Buffer
+	svc := NewResolverService(
+		stubResolver{cred: &ResolvedEmbeddingCredential{ProviderSlug: instance}},
+		testLogger(&buf),
+	)
+	_, _, _, err := svc.resolveClientWithMeta(context.Background())
+	if !errors.Is(err, ErrEmbeddingModelNotSet) {
+		t.Fatalf("error = %v, want ErrEmbeddingModelNotSet", err)
+	}
+	if !strings.Contains(err.Error(), instance) {
+		t.Errorf("error = %q, want it to name the provider instance %q", err.Error(), instance)
+	}
+
+	// A credential that resolved but is unusable (no API key, no base URL, not
+	// Vertex) names the instance in the configure hint.
+	buf.Reset()
+	svc = NewResolverService(
+		stubResolver{cred: &ResolvedEmbeddingCredential{EmbeddingModel: "gemini-embedding-001", ProviderSlug: instance}},
+		testLogger(&buf),
+	)
+	_, _, _, err = svc.resolveClientWithMeta(context.Background())
+	if !errors.Is(err, ErrEmbeddingCredentialUnusable) {
+		t.Fatalf("error = %v, want ErrEmbeddingCredentialUnusable", err)
+	}
+	if !strings.Contains(err.Error(), `provider "`+instance+`"`) || !strings.Contains(err.Error(), "configure-project "+instance) {
+		t.Errorf("error = %q, want it to name and point at the provider instance %q", err.Error(), instance)
+	}
+}
+
 // TestResolveRejectsUnusableCredential pins that an empty credential fails
 // closed instead of falling back to a deployment-wide client.
 func TestResolveRejectsUnusableCredential(t *testing.T) {

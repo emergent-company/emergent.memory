@@ -129,17 +129,33 @@ func Validate(
 	rels []SeedRelationshipRecord,
 	loadErrors []BlueprintsResult,
 ) *ValidationReport {
-	return validateWithProjectTypes(nil, project, packs, agents, skills, objects, rels, loadErrors)
+	return validateWithProjectTypes(KnownProjectTypes{}, project, packs, agents, skills, objects, rels, loadErrors)
+}
+
+// KnownProjectTypes is the project-side type knowledge the install gate can
+// supply to PreflightWithProjectTypes. Both sets come from the same compiled
+// types read, so widening the check to relationship types costs no extra
+// request.
+type KnownProjectTypes struct {
+	// ObjectTypes are object type names already present in the project —
+	// defined by installed packs or built-ins. A relationship endpoint naming
+	// one of them is accepted (#1853).
+	ObjectTypes []string
+	// RelationshipTypes are relationship type names already present in the
+	// project, so a ui.view section may present an edge type this blueprint
+	// does not declare — a companion pack installed earlier owns it (#667.6).
+	RelationshipTypes []string
 }
 
 // validateWithProjectTypes is the shared implementation behind Validate (offline
-// — nil knownProjectObjTypes, so only the blueprint's own packs are known) and
-// PreflightWithProjectTypes (the install gate, which supplies the object types
-// already present in the project). A relationship endpoint is accepted when it
-// names an object type defined by any pack in the blueprint OR one already in
-// the project (#1853).
+// — an empty KnownProjectTypes, so only the blueprint's own packs are known) and
+// PreflightWithProjectTypes (the install gate, which supplies the types already
+// present in the project). A relationship endpoint is accepted when it names an
+// object type defined by any pack in the blueprint OR one already in the project
+// (#1853); a ui.view section's relation likewise accepts a relationship type the
+// project already has (#667.6).
 func validateWithProjectTypes(
-	knownProjectObjTypes map[string]bool,
+	known KnownProjectTypes,
 	project *ProjectFile,
 	packs []PackFile,
 	agents []AgentFile,
@@ -164,7 +180,7 @@ func validateWithProjectTypes(
 	}
 
 	// Validate each resource type.
-	r.validatePacks(packs, knownProjectObjTypes)
+	r.validatePacks(packs, known)
 	r.validateAgents(agents)
 	r.validateSkills(skills)
 	r.validateSeedObjects(objects, packs)
@@ -177,7 +193,7 @@ func validateWithProjectTypes(
 // Pack validation
 // ──────────────────────────────────────────────
 
-func (r *ValidationReport) validatePacks(packs []PackFile, knownProjectObjTypes map[string]bool) {
+func (r *ValidationReport) validatePacks(packs []PackFile, known KnownProjectTypes) {
 	seen := make(map[string]string) // name → sourceFile
 
 	// Relationship endpoints may name an object type owned by any pack in the
@@ -185,9 +201,9 @@ func (r *ValidationReport) validatePacks(packs []PackFile, knownProjectObjTypes 
 	// (#1853), or a type already present in the project. The server accepts any
 	// non-empty endpoint, so validate against the union of every loaded pack's
 	// object types plus the project's known types rather than one pack in
-	// isolation. Offline Validate passes a nil project set (blueprint only).
+	// isolation. Offline Validate passes an empty project set (blueprint only).
 	knownObjTypes := buildKnownObjectTypes(packs)
-	for name := range knownProjectObjTypes {
+	for _, name := range known.ObjectTypes {
 		if name != "" {
 			knownObjTypes[name] = true
 		}
@@ -195,13 +211,24 @@ func (r *ValidationReport) validatePacks(packs []PackFile, knownProjectObjTypes 
 	// Scope phrase for the "does not match" message: the install gate knows the
 	// project's types, the offline validator only knows the blueprint.
 	scope := "the blueprint"
-	if len(knownProjectObjTypes) > 0 {
+	if len(known.ObjectTypes) > 0 {
 		scope = "the blueprint or the project"
 	}
 	// A ui.view section names relationship types, so it is checked against every
 	// relationship type the blueprint declares — not only this pack's, since a
-	// pack may present a relationship another pack in the same blueprint owns.
+	// pack may present a relationship another pack in the same blueprint owns —
+	// plus the relationship types the project already has (#667.6). The install
+	// gate supplies the latter; offline validation has only the blueprint.
 	knownRelTypes := buildKnownRelationshipTypes(packs)
+	for _, name := range known.RelationshipTypes {
+		if name != "" {
+			knownRelTypes[name] = true
+		}
+	}
+	// projectRelTypesKnown tells the ui.view check whether a name missing from
+	// the blueprint may still exist in the project (install gate) or whether the
+	// author can only be pointed at another installed blueprint (offline).
+	projectRelTypesKnown := len(known.RelationshipTypes) > 0
 
 	for _, p := range packs {
 		// Duplicate pack names across files.
@@ -266,7 +293,7 @@ func (r *ValidationReport) validatePacks(packs []PackFile, knownProjectObjTypes 
 			} else if len(ot.UI) > 0 {
 				// A pack uiConfigs fallback is validated once in the pack-level
 				// loop below, so it is not reported twice.
-				r.validateUIConfig(p.Name, p.SourceFile, uiField, ot.Name, ui, knownRelTypes)
+				r.validateUIConfig(p.Name, p.SourceFile, uiField, ot.Name, ui, knownRelTypes, projectRelTypesKnown)
 			}
 
 			r.validateProperties(p.Name, p.SourceFile, field+".properties", fmt.Sprintf("objectType %q", ot.Name), ot.Properties)
@@ -298,7 +325,7 @@ func (r *ValidationReport) validatePacks(packs []PackFile, knownProjectObjTypes 
 					r.add(ValidationWarning, "pack", p.Name, p.SourceFile, "uiConfigs."+typeName,
 						fmt.Sprintf("uiConfigs entry names %q, which is not an objectType declared by this pack", typeName))
 				}
-				r.validateUIConfig(p.Name, p.SourceFile, "uiConfigs."+typeName, typeName, cfg, knownRelTypes)
+				r.validateUIConfig(p.Name, p.SourceFile, "uiConfigs."+typeName, typeName, cfg, knownRelTypes, projectRelTypesKnown)
 			}
 		}
 
@@ -513,7 +540,7 @@ func effectiveObjectUI(ot ObjectTypeDef, packUIConfigs map[string]map[string]any
 // validateUIConfig checks an inline or pack-level ui block. Missing or
 // non-renderable style metadata is a warning, never an error: the server and UI
 // both fall back to defaults.
-func (r *ValidationReport) validateUIConfig(packName, sourceFile, field, typeName string, ui map[string]any, knownRelTypes map[string]bool) {
+func (r *ValidationReport) validateUIConfig(packName, sourceFile, field, typeName string, ui map[string]any, knownRelTypes map[string]bool, projectRelTypesKnown bool) {
 	iconRaw, hasIcon := ui["icon"]
 	icon, iconIsString := iconRaw.(string)
 	switch {
@@ -549,7 +576,7 @@ func (r *ValidationReport) validateUIConfig(packName, sourceFile, field, typeNam
 	}
 
 	if view, ok := ui["view"]; ok {
-		r.validateUIView(packName, sourceFile, field+".view", typeName, view, knownRelTypes)
+		r.validateUIView(packName, sourceFile, field+".view", typeName, view, knownRelTypes, projectRelTypesKnown)
 	}
 }
 
@@ -571,7 +598,7 @@ const uiViewMaxLimit = 50
 // shapes each key accepts, and the bounds the renderer enforces. Findings are
 // warnings, matching the rest of the ui block — the renderer ignores a view it
 // cannot parse and the page still works, so an install must not fail on it.
-func (r *ValidationReport) validateUIView(packName, sourceFile, field, typeName string, raw any, knownRelTypes map[string]bool) {
+func (r *ValidationReport) validateUIView(packName, sourceFile, field, typeName string, raw any, knownRelTypes map[string]bool, projectRelTypesKnown bool) {
 	view, ok := toStringAnyMap(raw)
 	if !ok {
 		r.add(ValidationWarning, "pack", packName, sourceFile, field,
@@ -631,14 +658,14 @@ func (r *ValidationReport) validateUIView(packName, sourceFile, field, typeName 
 					fmt.Sprintf("type %q ui.view.sections[%d]: unknown key %q (known: title, relation, dir, limit)", typeName, i, key))
 			}
 		}
-		r.validateUIViewSection(packName, sourceFile, sectionField, typeName, i, section, knownRelTypes)
+		r.validateUIViewSection(packName, sourceFile, sectionField, typeName, i, section, knownRelTypes, projectRelTypesKnown)
 	}
 }
 
 // validateUIViewSection checks one declared section: title and relation shapes,
 // relation is required, dir is a closed enum, limit is bounded, and every named
 // relationship type is one the blueprint actually declares.
-func (r *ValidationReport) validateUIViewSection(packName, sourceFile, field, typeName string, index int, section map[string]any, knownRelTypes map[string]bool) {
+func (r *ValidationReport) validateUIViewSection(packName, sourceFile, field, typeName string, index int, section map[string]any, knownRelTypes map[string]bool, projectRelTypesKnown bool) {
 	if titleRaw, ok := section["title"]; ok {
 		// The renderer decodes title as a string; an unquoted year in YAML
 		// (title: 2024) decodes as a number and drops the whole view at render
@@ -693,8 +720,14 @@ func (r *ValidationReport) validateUIViewSection(packName, sourceFile, field, ty
 	if len(knownRelTypes) > 0 {
 		for _, relName := range relationNames {
 			if !knownRelTypes[relName] {
+				scope := "this blueprint"
+				hint := " unless another installed blueprint declares it"
+				if projectRelTypesKnown {
+					scope = "this blueprint or the project"
+					hint = ""
+				}
 				r.add(ValidationWarning, "pack", packName, sourceFile, field+".relation",
-					fmt.Sprintf("type %q ui.view.sections[%d]: relation %q is not a relationshipType declared by this blueprint — the section stays empty unless another installed blueprint declares it", typeName, index, relName))
+					fmt.Sprintf("type %q ui.view.sections[%d]: relation %q is not a relationshipType declared by %s — the section stays empty%s", typeName, index, relName, scope, hint))
 			}
 		}
 	}
@@ -1142,22 +1175,26 @@ func Preflight(
 	rels []SeedRelationshipRecord,
 	loadErrors []BlueprintsResult,
 ) *ValidationReport {
-	return PreflightWithProjectTypes(nil, project, packs, agents, skills, objects, rels, loadErrors)
+	return PreflightWithProjectTypes(KnownProjectTypes{}, project, packs, agents, skills, objects, rels, loadErrors)
 }
 
-// PreflightWithProjectTypes is Preflight with the object types already present in
-// the project supplied (installed packs plus built-ins). A relationship endpoint
-// naming one of them is accepted even when no pack in the blueprint defines it
-// (#1853), so a pack may relate to a type owned by a companion/community pack or
-// a built-in type. Install resolves the list with a best-effort read-only call;
-// when it is unavailable (nil) the check falls back to the blueprint's own packs,
-// exactly like Preflight.
+// PreflightWithProjectTypes is Preflight with the types already present in the
+// project supplied (installed packs plus built-ins).
+//
+// An object type is used for relationship-endpoint checking: an endpoint naming
+// one of them is accepted even when no pack in the blueprint defines it (#1853),
+// so a pack may relate to a type owned by a companion/community pack or a
+// built-in type. A relationship type is used for ui.view section checking, so a
+// section may present an edge type a companion pack installed earlier owns
+// (#667.6). Install resolves both lists with a single best-effort read-only
+// compiled-types call; when either is unavailable the corresponding check falls
+// back to the blueprint's own packs, exactly like Preflight.
 //
 // Like Preflight, this function makes no API calls itself — the caller supplies
 // the project's types — so a malformed blueprint still aborts before any
 // mutation (#1586).
 func PreflightWithProjectTypes(
-	projectObjectTypes []string,
+	known KnownProjectTypes,
 	project *ProjectFile,
 	packs []PackFile,
 	agents []AgentFile,
@@ -1166,16 +1203,6 @@ func PreflightWithProjectTypes(
 	rels []SeedRelationshipRecord,
 	loadErrors []BlueprintsResult,
 ) *ValidationReport {
-	var known map[string]bool
-	if len(projectObjectTypes) > 0 {
-		known = make(map[string]bool, len(projectObjectTypes))
-		for _, name := range projectObjectTypes {
-			if name != "" {
-				known[name] = true
-			}
-		}
-	}
-
 	report := validateWithProjectTypes(known, project, packs, agents, skills, objects, rels, loadErrors)
 	if !report.HasErrors() {
 		// Validate just proved every model reference parses, so normalization
@@ -1356,7 +1383,8 @@ func HasUnknownRelationshipEndpoints(packs []PackFile) bool {
 // blueprint declares. A ui.view section that names a relationship outside this
 // set can never match an edge, so the validator reports it instead of leaving
 // the author with a silently empty section. It is only a warning: the real
-// project may have the relationship type from another installed blueprint.
+// project may have the relationship type from another installed blueprint
+// (#667.6 supplies that set at install time).
 func buildKnownRelationshipTypes(packs []PackFile) map[string]bool {
 	m := make(map[string]bool)
 	for _, p := range packs {
@@ -1367,4 +1395,93 @@ func buildKnownRelationshipTypes(packs []PackFile) map[string]bool {
 		}
 	}
 	return m
+}
+
+// HasUnknownViewRelationshipTypes reports whether any object type's ui.view
+// names a relationship type that no pack in the same set declares. Like
+// HasUnknownRelationshipEndpoints it is the install path's cheap pre-check: when
+// every named relation resolves inside the blueprint, no project read is needed,
+// so a blueprint that fails offline validation still aborts with zero requests.
+// An unresolved name triggers the same single read-only compiled-types call,
+// which supplies the project's relationship types to the preflight (#667.6).
+//
+// Malformed views are ignored here — validateUIView reports their shape — so this
+// only answers "would the install gate need the project's relationship types?".
+func HasUnknownViewRelationshipTypes(packs []PackFile) bool {
+	known := buildKnownRelationshipTypes(packs)
+	unknown := func(ui map[string]any) bool {
+		for _, relName := range viewRelationNames(ui) {
+			if !known[relName] {
+				return true
+			}
+		}
+		return false
+	}
+	for _, p := range packs {
+		for _, ot := range p.ObjectTypes {
+			if unknown(ot.UI) {
+				return true
+			}
+		}
+		for _, cfg := range effectiveUIIndex(p) {
+			if unknown(cfg) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// effectiveUIIndex returns every ui block a pack can contribute to an object
+// type: the inline ones and the pack-level uiConfigs entries (the latter only
+// when the blob decodes; a broken blob is a validation error elsewhere).
+func effectiveUIIndex(p PackFile) []map[string]any {
+	cfgs, err := decodePackUIConfigs(p)
+	if err != nil {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(cfgs))
+	for _, cfg := range cfgs {
+		if len(cfg) > 0 {
+			out = append(out, cfg)
+		}
+	}
+	return out
+}
+
+// viewRelationNames extracts the relationship types a ui block's declared view
+// names. Shape errors yield no names: the caller only needs to know whether a
+// resolvable name is missing, and an unusable view names nothing the project
+// read could fix.
+func viewRelationNames(ui map[string]any) []string {
+	view, ok := toStringAnyMap(ui["view"])
+	if !ok {
+		return nil
+	}
+	sections, ok := anySlice(view["sections"])
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, raw := range sections {
+		section, ok := toStringAnyMap(raw)
+		if !ok {
+			continue
+		}
+		switch rel := section["relation"].(type) {
+		case string:
+			if s := strings.TrimSpace(rel); s != "" {
+				out = append(out, s)
+			}
+		case []any:
+			for _, name := range rel {
+				if s, ok := name.(string); ok {
+					if t := strings.TrimSpace(s); t != "" {
+						out = append(out, t)
+					}
+				}
+			}
+		}
+	}
+	return out
 }

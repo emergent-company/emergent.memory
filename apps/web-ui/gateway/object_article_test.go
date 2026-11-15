@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -43,6 +44,86 @@ func TestObjectExcerptPrecedence(t *testing.T) {
 				t.Errorf("objectExcerpt(%v) = %q, want %q", c.props, got, c.want)
 			}
 		})
+	}
+}
+
+// TestObjectExcerptScalarProse pins #699.5: a prose field posted as valid JSON
+// becomes its typed value (parseFormJSON), so a description of 2024 arrives as a
+// float64. The resolver must coerce scalars to the text the author typed rather
+// than treating the field as absent and rendering an empty wiki.
+func TestObjectExcerptScalarProse(t *testing.T) {
+	cases := []struct {
+		name  string
+		props map[string]any
+		want  string
+	}{
+		{"integer", map[string]any{"description": float64(2024)}, "2024"},
+		// json.Number is the forward-compatible arm: today's decode path yields
+		// float64, so this pins the literal-preserving branch itself.
+		{"decimal keeps its literal", map[string]any{"description": json.Number("1.50")}, "1.50"},
+		{"boolean", map[string]any{"description": true}, "true"},
+		{"array is still not prose", map[string]any{"description": []any{"2024"}}, ""},
+		{"object is still not prose", map[string]any{"description": map[string]any{"text": "2024"}}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := objectExcerpt(c.props); got != c.want {
+				t.Errorf("objectExcerpt(%v) = %q, want %q", c.props, got, c.want)
+			}
+		})
+	}
+
+	prose := objectArticleFor(GraphObject{Properties: map[string]any{"description": float64(2024)}})
+	if prose.Lead != "2024" {
+		t.Errorf("numeric-looking description must become the article lead, got lead=%q body=%q", prose.Lead, prose.BodyHTML)
+	}
+}
+
+// TestObjectExcerptKeyMatching pins both halves of the excerpt matcher's key
+// rule: case and separators are tolerated, extra words are not. The positive
+// half (Description/DESCRIPTION/description all match) is what makes a pack's
+// prose render at all; the negative half is the guard rail — `long_description`
+// is a *different property*, and a "helpful" future change (substring or
+// word-prefix matching) would silently start rendering it as the description
+// (#761, object-browser spec).
+func TestObjectExcerptKeyMatching(t *testing.T) {
+	// Case is irrelevant: the same property spelled three ways is one property.
+	for _, key := range []string{"Description", "DESCRIPTION", "description"} {
+		t.Run("matches "+key, func(t *testing.T) {
+			if got := objectExcerpt(map[string]any{key: "Body"}); got != "Body" {
+				t.Errorf("objectExcerpt(%s: Body) = %q, want %q", key, got, "Body")
+			}
+		})
+	}
+
+	// An extra word makes it a different property, whatever the separators.
+	for _, key := range []string{"long_description", "Long Description", "LONG_DESCRIPTION", "longDescription"} {
+		t.Run("does not match "+key, func(t *testing.T) {
+			if got := objectExcerpt(map[string]any{key: "Long body"}); got != "" {
+				t.Errorf("objectExcerpt(%s: Long body) = %q, want no excerpt: %s is not a description", key, got, key)
+			}
+		})
+	}
+
+	// The fold drops separators and spaces but keeps case, so EqualFold is what
+	// makes those spellings one property — under their own normalized name,
+	// never under "description".
+	longFolded := normalizeProseKey("long_description")
+	for _, alt := range []string{"Long Description", "LONG_DESCRIPTION"} {
+		if !strings.EqualFold(longFolded, normalizeProseKey(alt)) {
+			t.Fatalf("long-form key spellings must fold together: %q vs %q", longFolded, normalizeProseKey(alt))
+		}
+	}
+	if strings.EqualFold(longFolded, normalizeProseKey("description")) {
+		t.Fatalf("a long-form key must not fold onto %q", normalizeProseKey("description"))
+	}
+	if _, _, ok := prosePropertyNamed(map[string]any{"long_description": "Long body"}, longFolded); !ok {
+		t.Errorf("prosePropertyNamed must still resolve the folded long-form name")
+	}
+
+	// A description beside a long description still wins as the excerpt.
+	if got := objectExcerpt(map[string]any{"description": "Short", "long_description": "Long body"}); got != "Short" {
+		t.Errorf("description must win over long_description, got %q", got)
 	}
 }
 

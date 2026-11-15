@@ -74,6 +74,91 @@ func usageQueryParams(since, until time.Time) url.Values {
 	return q
 }
 
+// BudgetWindowState is one spending window of a project's budget, as reported
+// by GET /api/v1/projects/{id}/usage/budget. The period is computed server-side
+// (internal/budgetwindow) so the UI renders the same week/month boundary that
+// enforces the cap.
+type BudgetWindowState struct {
+	// Window is "week" or "month".
+	Window string `json:"window"`
+	// CapUSD is nil when the window has no cap (no limit).
+	CapUSD *float64 `json:"capUsd"`
+	// Threshold is the alert threshold as a fraction (0.8 = 80%).
+	Threshold float64 `json:"threshold"`
+	SpendUSD  float64 `json:"spendUsd"`
+	// RemainingUSD is nil when there is no cap.
+	RemainingUSD *float64  `json:"remainingUsd"`
+	PercentUsed  float64   `json:"percentUsed"`
+	PeriodStart  time.Time `json:"periodStart"`
+	PeriodEnd    time.Time `json:"periodEnd"`
+	// Status is "ok", "warning" (threshold crossed) or "exhausted" (cap hit).
+	Status string `json:"status"`
+}
+
+// Capped reports whether the window has a spend cap.
+func (w *BudgetWindowState) Capped() bool {
+	return w != nil && w.CapUSD != nil && *w.CapUSD > 0
+}
+
+// BudgetState is a project's budget position across both windows.
+type BudgetState struct {
+	Week  *BudgetWindowState `json:"week"`
+	Month *BudgetWindowState `json:"month"`
+}
+
+// BudgetAlertLevel collapses both windows into the single level the nav badge
+// shows: "exhausted" beats "warning", no cap anywhere is "".
+func (b *BudgetState) AlertLevel() string {
+	if b == nil {
+		return ""
+	}
+	level := ""
+	for _, w := range []*BudgetWindowState{b.Week, b.Month} {
+		if !w.Capped() {
+			continue
+		}
+		switch w.Status {
+		case "exhausted":
+			return "exhausted"
+		case "warning":
+			level = "warning"
+		}
+	}
+	return level
+}
+
+// BudgetPeriod is the window returned by the reset endpoint.
+type BudgetPeriod struct {
+	Window      string    `json:"window"`
+	PeriodStart time.Time `json:"periodStart"`
+	PeriodEnd   time.Time `json:"periodEnd"`
+}
+
+// GetProjectBudgetState returns the project's position in both spending
+// windows. The response is BARE JSON — no success envelope. A failure must be
+// non-fatal at the call sites that decorate a page (badge, usage summary): an
+// unreachable budget endpoint should hide the badge, not fail the page.
+func (m *MemoryClient) GetProjectBudgetState(ctx context.Context) (*BudgetState, error) {
+	var out BudgetState
+	path := "/api/v1/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/usage/budget"
+	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ResetProjectBudgetWindow restarts one spending window (week|month) from now,
+// by moving that window's cycle anchor. The other window and all usage history
+// are untouched. The backend requires project-admin authority.
+func (m *MemoryClient) ResetProjectBudgetWindow(ctx context.Context, window string) (*BudgetPeriod, error) {
+	var out BudgetPeriod
+	path := "/api/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/budget/reset"
+	if err := m.do(ctx, http.MethodPost, path, map[string]string{"window": window}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // GetProjectUsageSummary returns the project's aggregated token usage and
 // estimated cost, grouped by provider + model, for the given range (zero times
 // omit the bounds). The response is BARE JSON — no success envelope.

@@ -167,7 +167,7 @@ func TestUsageRoute(t *testing.T) {
 	for _, want := range []string{
 		"Usage", "Total tokens", "165", // 100+50+10+5
 		"$0.0123", "$0.0133", // per-row cost + range total (0.0123+0.001)
-		"Current month spend", "deepseek-v4-pro", "claude-sonnet-4",
+		"Calendar month spend", "deepseek-v4-pro", "claude-sonnet-4",
 		"openai", "anthropic", "Costs shown are estimates.",
 		`id="usage-timeseries"`, `type="application/json"`, `"tokens":`, `"sessions":`,
 		"Tokens per day", "Sessions per day", "Per-model usage",
@@ -267,7 +267,7 @@ func TestUsageChartPayloadEmbedded(t *testing.T) {
 		Tokens:   []usageChartPoint{{Day: "2026-08-30", Value: 150}, {Day: "2026-08-31", Value: 15}},
 		Sessions: []usageChartPoint{{Day: "2026-08-30", Value: 3}},
 	}
-	html := renderHTML(t, UsagePage(sampleUsageSummary(), sampleUsageSeries(), payload, 0.0133, true, 30, nil))
+	html := renderHTML(t, UsagePage(usagePageData{Summary: sampleUsageSummary(), Series: sampleUsageSeries(), Payload: payload, MonthSpend: 0.0133, HasMonthSpend: true, Days: 30}))
 	for _, want := range []string{
 		`id="usage-timeseries"`, `type="application/json"`,
 		`"tokens"`, `"sessions"`, `"day":"2026-08-30"`, `"value":150`,

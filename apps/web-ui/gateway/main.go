@@ -37,7 +37,7 @@ func main() {
 	// The static MEMORY_TOKEN was removed from the gateway. Operators upgrading
 	// may still export it; name it explicitly so the break is not silent.
 	if os.Getenv("MEMORY_TOKEN") != "" {
-		log.Printf("WARNING: MEMORY_TOKEN is set but no longer read by the gateway; it was replaced by session auth for interactive/voice calls and AGENT_TRIGGER_TOKEN for the GitHub webhook (see issue #818 for per-device credentials).")
+		log.Printf("WARNING: MEMORY_TOKEN is set but no longer read by the gateway; interactive/voice calls use session auth (see issue #818 for per-device credentials).")
 	}
 	if err := initSentry(cfg.SentryDSN, cfg.SentryEnvironment, cfg.SentryTracesSampleRate); err != nil {
 		log.Printf("sentry init: %v", err)
@@ -137,10 +137,6 @@ func main() {
 	// Internal worker endpoint — exempt from session auth (see publicAuthPath);
 	// gated by a per-worker credential in the X-Worker-Key header instead.
 	e.GET("/internal/voice-binding", s.voiceBindingHandler)
-
-	// GitHub webhook ingress — HMAC-signature authenticated, NOT behind the
-	// session/key gate (see publicAuthPath and webhook_github.go).
-	e.POST("/webhooks/github", s.githubWebhook)
 
 	api := e.Group("/api")
 	api.GET("/health", s.health)
@@ -490,6 +486,9 @@ func main() {
 	// github_app trigger bindings (event → agent) on the source detail page.
 	// Project-scoped and documents:write on the API side; the UI follows the
 	// same form/redirect/flash conventions as the source's other actions.
+	e.GET("/data-sources/:id/triggers/new", s.uiDataSourceTriggerNew)
+	e.GET("/data-sources/:id/workflow", s.uiDataSourceWorkflow)
+	e.POST("/data-sources/:id/workflow", s.uiDataSourceWorkflowSave)
 	e.POST("/data-sources/:id/triggers", s.uiDataSourceTriggerCreate)
 	e.POST("/data-sources/:id/triggers/:triggerId/toggle", s.uiDataSourceTriggerToggle)
 	e.POST("/data-sources/:id/triggers/:triggerId/delete", s.uiDataSourceTriggerDelete)
@@ -600,6 +599,9 @@ func main() {
 	e.GET("/settings/connected-apps", s.uiConnectedApps)
 	e.POST("/settings/connected-apps/:id/revoke", s.uiRevokeConnectedApp)
 	e.GET("/settings/budget", s.uiProjectBudgetSettings)
+	// Restarts one budget window (week or month) from now. The form carries the
+	// window and the page to return to; memory enforces project-admin authority.
+	e.POST("/settings/budget/reset", s.uiBudgetReset)
 	// Project-level OAuth clients for data-source providers (project-admin only;
 	// the handler 404s for anyone else). Context-addressed like the rest of the
 	// project settings hub.
@@ -630,6 +632,10 @@ func main() {
 	// The static "new" segment is registered before the :appId pattern, so the
 	// register page always wins over an App whose id is "new".
 	e.GET("/settings/source-apps/new", s.uiSourceAppNew)
+	e.GET("/settings/source-apps/wizard", s.uiGitHubReviewWizard)
+	e.POST("/settings/source-apps/wizard/start", s.uiGitHubReviewWizardStart)
+	e.GET("/settings/source-apps/wizard/callback", s.uiGitHubReviewWizardCallback)
+	e.POST("/settings/source-apps/wizard/complete", s.uiGitHubReviewWizardComplete)
 	e.GET("/settings/source-apps/:appId", s.uiSourceAppDetail)
 	e.POST("/settings/source-apps/:appId", s.uiSourceAppUpdate)
 	e.POST("/settings/source-apps/:appId/delete", s.uiSourceAppDelete)
@@ -872,11 +878,18 @@ func main() {
 	}
 }
 
-// componentAnnotations marks every render context as go-daisy dev mode so the
-// library's components emit data-component="pkg/Component" on their root
-// elements. The element-level feedback overlay reads that attribute to name the
-// component (and build its hierarchy picker) instead of falling back to a raw
-// CSS selector. Always on: emitted names only, no data-props.
+// componentAnnotations marks every render context as go-daisy dev mode so
+// components emit data-component="pkg/Component" on their root elements. The
+// element-level feedback overlay reads that attribute to name the component (and
+// build its hierarchy picker) instead of falling back to a raw CSS selector.
+// Always on: emitted names only, no data-props.
+//
+// This middleware is the single switch for the whole annotation contract. No
+// templ file hardcodes the attribute: gateway chrome and components/* call
+// devmode.Attrs(ctx, …), which emits nothing when this flag is absent. Removing
+// this middleware (or making it conditional) therefore turns annotation off in
+// one place and consistently — go-daisy's components and ours together — rather
+// than leaving a hand-annotated minority behind.
 func componentAnnotations() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {

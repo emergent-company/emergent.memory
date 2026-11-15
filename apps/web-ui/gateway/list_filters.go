@@ -64,12 +64,19 @@ func hxSource(r *http.Request) string {
 // hx-target="#main-content" and hx-swap="innerHTML", and htmx propagates those
 // attributes to descendants (implicit inheritance): without an explicit target,
 // a boosted filter form swaps the whole page body back in instead of the list.
+//
+// hx-indicator is here for the same reason: without it htmx marks the control
+// that fired the request, so a filter change showed no spinner at all. Every
+// list region renders its indicator as #<region>-loading (the id derives from
+// the region this helper already takes), so a form, a sort header, and a search
+// box all drive the same one (#744).
 func regionFilterAttrs(action, region string) templ.Attributes {
 	return templ.Attributes{
-		"hx-get":      action,
-		"hx-target":   "#" + region,
-		"hx-swap":     "outerHTML",
-		"hx-push-url": "true",
+		"hx-get":       action,
+		"hx-target":    "#" + region,
+		"hx-swap":      "outerHTML",
+		"hx-push-url":  "true",
+		"hx-indicator": "#" + region + "-loading",
 	}
 }
 

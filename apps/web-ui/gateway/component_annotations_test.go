@@ -9,10 +9,15 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// TestComponentAnnotationsEnablesDevMode guards the always-on go-daisy
+// TestComponentAnnotationsEnablesDevModeRatchet guards the always-on go-daisy
 // annotation middleware: every request context must be dev-mode flagged so
 // components emit data-component for the element-level feedback overlay.
-func TestComponentAnnotationsEnablesDevMode(t *testing.T) {
+//
+// The `Ratchet` suffix is load-bearing: the required `ci` job runs
+// `go test -run Ratchet ./...` for this module (ci.yml, "Consistency ratchets"),
+// and the full suite only at promotion. Without it this test would first run on
+// the promotion PR that would have caught a broken switch weeks late.
+func TestComponentAnnotationsEnablesDevModeRatchet(t *testing.T) {
 	e := echo.New()
 	e.Use(componentAnnotations())
 

@@ -508,6 +508,14 @@ routes:
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
     - method: GET
+      path: /api/data-source-integrations/:id/workflow
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:read)
+    - method: PUT
+      path: /api/data-source-integrations/:id/workflow
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
+    - method: GET
       path: /api/data-source-integrations/credentials
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:read)
@@ -555,6 +563,26 @@ routes:
       path: /api/data-source-integrations/resources
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
+    - method: GET
+      path: /api/data-source-integrations/source-apps
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:read)
+    - method: POST
+      path: /api/data-source-integrations/source-apps
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
+    - method: DELETE
+      path: /api/data-source-integrations/source-apps/:appId
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
+    - method: PATCH
+      path: /api/data-source-integrations/source-apps/:appId
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
+    - method: GET
+      path: /api/data-source-integrations/source-apps/:appId/installation-repositories
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:read)
     - method: GET
       path: /api/data-source-integrations/source-types
       level: project-member
@@ -1331,6 +1359,10 @@ routes:
       path: /api/projects/:id/activity
       level: auth
       note: RequireAuth
+    - method: POST
+      path: /api/projects/:id/budget/reset
+      level: auth
+      note: RequireAuth, RequireAPITokenScopes(projects:read)
     - method: GET
       path: /api/projects/:id/embeddings/progress
       level: auth
@@ -2505,6 +2537,10 @@ routes:
       note: RequireAuth
     - method: GET
       path: /api/v1/projects/:projectId/usage
+      level: auth
+      note: RequireAuth
+    - method: GET
+      path: /api/v1/projects/:projectId/usage/budget
       level: auth
       note: RequireAuth
     - method: GET

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -13,11 +14,10 @@ import (
 
 // --- org source Apps (GitHub App credentials) ---
 //
-// A source App is an org-wide GitHub App registration: one App backs many
-// project sources, and each github_app source binds one App plus an
-// installation. The register/list/delete API is org-admin only, so the page
-// renders an explicit forbidden state for everyone else rather than an empty
-// list (see uiSourceApps).
+// A source App is a GitHub App credential, either org-wide (org admin) or
+// project-owned (project admin); each github_app source binds one App plus an
+// installation. The page lists both and authorises writes per App scope (see
+// uiSourceApps).
 
 // dsProviderTypeGitHubApp is the trigger-only GitHub App provider. Its sources
 // carry an org App id in their config and accept pull_request triggers.
@@ -42,13 +42,15 @@ type dsSourceAppRow struct {
 type dsSourceAppsPageData struct {
 	settingsNavCommon
 	OrgName string
-	// Forbidden renders the "organization administrators only" state instead of
-	// the table (the API answers this caller's reads and writes with 403).
-	Forbidden bool
-	Rows      []dsSourceAppRow
-	LoadErr   error
-	FlashMsg  string
-	FlashErr  error
+	// OrgAdmin toggles the organization-wide scope option on the register page.
+	OrgAdmin        bool
+	ProjectAdmin    bool
+	CanRegister     bool
+	ReviewSetupHref string
+	Rows            []dsSourceAppRow
+	LoadErr         error
+	FlashMsg        string
+	FlashErr        error
 }
 
 // dsSourceAppFormData is the payload for SourceAppFormPage. App is nil on the
@@ -62,9 +64,17 @@ type dsSourceAppFormData struct {
 	BackHref   string
 	DeleteHref string
 	WebhookURL string
-	App        *SourceApp
-	FlashMsg   string
-	FlashErr   error
+	// PublicBaseURL is the deployment's web URL, offered in the register page's
+	// GitHub setup guide as the App's Homepage URL.
+	PublicBaseURL string
+	// JustCreated marks the App page a registration just redirected to.
+	JustCreated  bool
+	App          *SourceApp
+	OrgAdmin     bool
+	ProjectAdmin bool
+	CanWrite     bool
+	FlashMsg     string
+	FlashErr     error
 }
 
 // dsSourceAppWebhookURL builds the endpoint GitHub must deliver to for one App.
@@ -80,6 +90,14 @@ func dsSourceAppWebhookURL(base, webhookKey string) string {
 
 // dsSourceAppLabel is the App's option/row label: its slug plus the numeric
 // GitHub App id, which is what a maintainer matches against GitHub's settings.
+// sourceAppScope labels the ownership shown in the Apps table.
+func sourceAppScope(app SourceApp) string {
+	if app.ProjectID != "" {
+		return "Project"
+	}
+	return "Organization"
+}
+
 func dsSourceAppLabel(app SourceApp) string {
 	slug := strings.TrimSpace(app.Slug)
 	switch {
@@ -106,62 +124,53 @@ func dsSourceAppRows(apps []SourceApp, publicBaseURL string) []dsSourceAppRow {
 // dsSourceAppsSubtitle describes the page without assuming the org name
 // resolved (GetOrg is best-effort there).
 func dsSourceAppsSubtitle(orgName string) string {
+	base := "GitHub App credentials available to this project. Organization-wide Apps are shared by every project in the organization; project-owned Apps belong to this project only. A GitHub App source picks one of these Apps and a pull-request trigger starts an agent run."
 	if orgName != "" {
-		return "GitHub App credentials shared by every project in " + orgName + ". A GitHub App source picks one of these Apps and a pull-request trigger starts an agent run."
+		return base + " Organization: " + orgName + "."
 	}
-	return "GitHub App credentials shared by the organization. A GitHub App source picks one of these Apps and a pull-request trigger starts an agent run."
+	return base
 }
 
 // uiSourceApps renders the org's source Apps page. Every project member can open
 // it (the settings rail links here); the App list and the register/delete
-// controls are org-admin only, so a non-admin gets the forbidden state.
+// controls are gated by scope: org admin for org-wide Apps, project admin for
+// project-owned Apps.
 func (s *Server) uiSourceApps(c echo.Context) error {
 	ctx := c.Request().Context()
-	project, err := s.memory.GetCurrentProject(ctx)
-	if err != nil {
-		project = nil
+	project, orgName, ok := s.sourceAppsProject(c)
+	if !ok {
+		return nil
 	}
 	data := dsSourceAppsPageData{
 		settingsNavCommon: s.settingsNavPayload(c, ctx),
+		OrgName:           orgName,
+		OrgAdmin:          s.orgAdminForCaller(c, project.OrgID),
+		ProjectAdmin:      s.strictProjectAdminForCaller(c, project.ID),
 		FlashMsg: flashFromQuery(c, []flashParam{
-			{key: "saved", msg: "Source App registered."},
+			// Reachable only from uiSourceAppCreate's fallback, when the create
+			// response carries no row id to open an App page for — so the delivery
+			// URL is in the table rather than on a page of its own.
+			{key: "saved", msg: "Source App registered. Copy its delivery URL from the list into the GitHub App's webhook, with the same secret."},
 			{key: "deleted", msg: "Source App removed."},
 		}),
 		FlashErr: flashError(c),
 	}
-	if project == nil {
-		if err != nil {
-			data.LoadErr = userFacingError(err)
-			return s.page(c, pageTitle("Source apps"), SourceAppsPage(data))
-		}
-		// No active project: land on the picker rather than an empty org page
-		// (the same degrade as uiProjectCredentials).
-		return c.Redirect(http.StatusSeeOther, "/orgs")
+	apps, err := s.memory.ListProjectSourceApps(ctx)
+	if err != nil {
+		data.LoadErr = userFacingError(err)
 	}
-	if org, oerr := s.memory.GetOrg(ctx, project.OrgID); oerr == nil && org != nil {
-		data.OrgName = org.Name
-	} else if oerr != nil {
-		captureError(oerr)
-	}
-	if !s.orgAdminForCaller(c, project.OrgID) {
-		data.Forbidden = true
-		return s.page(c, pageTitle("Source apps"), SourceAppsPage(data))
-	}
-	apps, aerr := s.memory.ListOrgSourceApps(ctx, project.OrgID)
-	if aerr != nil {
-		data.LoadErr = userFacingError(aerr)
-	}
+	data.CanRegister = data.OrgAdmin || data.ProjectAdmin
+	data.ReviewSetupHref = s.dsScoped(githubWizardPath, c)
 	data.Rows = dsSourceAppRows(apps, s.cfg.MemoryPublicURL)
 	return s.page(c, pageTitle("Source apps"), SourceAppsPage(data))
 }
 
-// uiSourceAppNew renders the standalone register page. The list page no longer
-// carries the form: settings surfaces keep the table and the add/edit form on
-// separate routes, so the register field set does not compete with the table.
+// uiSourceAppNew renders the standalone register page. An org admin may choose
+// org-wide or project-owned; a project admin gets project-owned.
 func (s *Server) uiSourceAppNew(c echo.Context) error {
 	ctx := c.Request().Context()
-	_, orgName, handled := s.sourceAppsFormOrg(c)
-	if handled {
+	project, orgName, ok := s.sourceAppsProject(c)
+	if !ok {
 		return nil
 	}
 	return s.page(c, pageTitle("Register source app"), SourceAppFormPage(dsSourceAppFormData{
@@ -169,21 +178,21 @@ func (s *Server) uiSourceAppNew(c echo.Context) error {
 		OrgName:           orgName,
 		Action:            dsSourceAppsPath,
 		BackHref:          dsSourceAppsPath,
+		OrgAdmin:          s.orgAdminForCaller(c, project.OrgID),
+		ProjectAdmin:      s.strictProjectAdminForCaller(c, project.ID),
+		CanWrite:          s.orgAdminForCaller(c, project.OrgID) || s.strictProjectAdminForCaller(c, project.ID),
+		PublicBaseURL:     s.publicBaseURL(c),
 		FlashErr:          flashError(c),
 	}))
 }
 
-// uiSourceAppDetail renders one App's edit page: rename the slug, rotate either
-// sealed secret, copy the delivery URL, or remove the App. The API exposes no
-// get-by-id route, and the registry is a short org-scoped list, so the row is
-// resolved from the listing rather than from a second credential read.
 func (s *Server) uiSourceAppDetail(c echo.Context) error {
 	ctx := c.Request().Context()
-	orgID, orgName, handled := s.sourceAppsFormOrg(c)
-	if handled {
+	project, orgName, ok := s.sourceAppsProject(c)
+	if !ok {
 		return nil
 	}
-	app, err := s.findOrgSourceApp(c, orgID, c.Param("appId"))
+	app, err := s.findProjectSourceApp(c, c.Param("appId"))
 	if err != nil {
 		return redirectWithError(c, dsSourceAppsPath, err)
 	}
@@ -195,19 +204,22 @@ func (s *Server) uiSourceAppDetail(c echo.Context) error {
 		DeleteHref:        dsSourceAppsPath + "/" + url.PathEscape(app.ID) + "/delete",
 		WebhookURL:        dsSourceAppWebhookURL(s.cfg.MemoryPublicURL, app.WebhookKey),
 		App:               app,
-		FlashMsg:          flashFromQuery(c, []flashParam{{key: "saved", msg: "Source App saved."}}),
-		FlashErr:          flashError(c),
+		OrgAdmin:          s.orgAdminForCaller(c, project.OrgID),
+		ProjectAdmin:      s.strictProjectAdminForCaller(c, project.ID),
+		CanWrite:          s.canManageSourceApp(c, project, app),
+		JustCreated:       c.QueryParam("created") != "",
+		FlashMsg: flashFromQuery(c, []flashParam{
+			{key: "created", msg: "Source App registered."},
+			{key: "saved", msg: "Source App saved."},
+		}),
+		FlashErr: flashError(c),
 	}))
 }
 
-// uiSourceAppUpdate saves an App's label and any rotated secret (org-admin only,
-// PRG). A blank secret field is omitted from the PATCH body, so the server keeps
-// the stored ciphertext instead of sealing an empty value.
 func (s *Server) uiSourceAppUpdate(c echo.Context) error {
 	ctx := c.Request().Context()
 	path := dsSourceAppsPath + "/" + url.PathEscape(c.Param("appId"))
-	orgID, ok := s.sourceAppsOrgForCaller(c, path)
-	if !ok {
+	if _, _, ok := s.sourceAppsProject(c); !ok {
 		return nil
 	}
 	req := &DSSourceAppUpdateRequest{
@@ -218,64 +230,30 @@ func (s *Server) uiSourceAppUpdate(c echo.Context) error {
 	if req.Slug == "" {
 		return redirectWithError(c, path, errors.New("app slug is required"))
 	}
-	if _, err := s.memory.UpdateOrgSourceApp(ctx, orgID, c.Param("appId"), req); err != nil {
+	if _, err := s.memory.UpdateProjectSourceApp(ctx, c.Param("appId"), req); err != nil {
 		return redirectWithError(c, path, dsFormError(err))
 	}
 	redirectAfterMutation(c, path+"?saved=1")
 	return nil
 }
 
-// sourceAppsFormOrg resolves the active project's org for the standalone form
-// pages. handled is true when the response is already written: no active project
-// redirects to the org picker (the same degrade as the list page), and a caller
-// who does not administer the org gets a 404, so the editor does not exist for
-// them the way the credentials app editor does not.
-func (s *Server) sourceAppsFormOrg(c echo.Context) (orgID, orgName string, handled bool) {
-	ctx := c.Request().Context()
-	project, err := s.memory.GetCurrentProject(ctx)
-	if err != nil || project == nil || project.OrgID == "" {
-		if err == nil {
-			_ = c.Redirect(http.StatusSeeOther, "/orgs")
-		} else {
-			_ = c.NoContent(http.StatusNotFound)
-		}
-		return "", "", true
-	}
-	if !s.orgAdminForCaller(c, project.OrgID) {
-		_ = c.NoContent(http.StatusNotFound)
-		return "", "", true
-	}
-	if org, oerr := s.memory.GetOrg(ctx, project.OrgID); oerr == nil && org != nil {
-		orgName = org.Name
-	}
-	return project.OrgID, orgName, false
-}
-
-// findOrgSourceApp resolves one App from the org listing, in API order.
-func (s *Server) findOrgSourceApp(c echo.Context, orgID, appID string) (*SourceApp, error) {
-	apps, err := s.memory.ListOrgSourceApps(c.Request().Context(), orgID)
-	if err != nil {
-		return nil, userFacingError(err)
-	}
-	for i := range apps {
-		if apps[i].ID == appID {
-			return &apps[i], nil
-		}
-	}
-	return nil, errors.New("no such source App in this organization")
-}
-
-// uiSourceAppCreate registers an org source App (org-admin only, PRG). The
-// private key and webhook secret are write-only: they are forwarded once and
-// never rendered back.
 func (s *Server) uiSourceAppCreate(c echo.Context) error {
 	ctx := c.Request().Context()
-	// Validation failures return to the standalone form so the message sits
-	// beside the fields; a registered App returns to the table.
 	formPath := dsSourceAppsPath + "/new"
-	orgID, ok := s.sourceAppsOrgForCaller(c, formPath)
+	project, _, ok := s.sourceAppsProject(c)
 	if !ok {
 		return nil
+	}
+	orgAdmin := s.orgAdminForCaller(c, project.OrgID)
+	scope := strings.TrimSpace(c.FormValue("scope"))
+	if scope == "" {
+		scope = "project"
+	}
+	if scope != "org" && scope != "project" {
+		return redirectWithError(c, formPath, errors.New("scope must be project or org"))
+	}
+	if scope == "org" && !orgAdmin {
+		return redirectWithError(c, formPath, errors.New("only an organization administrator can register an org-wide App"))
 	}
 	rawAppID := strings.TrimSpace(c.FormValue("appId"))
 	appID, err := strconv.ParseInt(rawAppID, 10, 64)
@@ -296,54 +274,97 @@ func (s *Server) uiSourceAppCreate(c echo.Context) error {
 	}
 	req := &DSSourceAppRequest{
 		Provider:      "github",
+		Scope:         scope,
 		AppID:         appID,
 		Slug:          slug,
 		PrivateKey:    privateKey,
 		WebhookSecret: webhookSecret,
 	}
-	if _, err := s.memory.CreateOrgSourceApp(ctx, orgID, req); err != nil {
+	created, err := s.memory.CreateProjectSourceApp(ctx, req)
+	if err != nil {
 		return redirectWithError(c, formPath, dsFormError(err))
+	}
+	// A response without a row id cannot address the App page; fall back to the
+	// table rather than redirecting to /settings/source-apps/ (a 404).
+	if created != nil && created.ID != "" {
+		redirectAfterMutation(c, dsSourceAppsPath+"/"+url.PathEscape(created.ID)+"?created=1")
+		return nil
 	}
 	redirectAfterMutation(c, dsSourceAppsPath+"?saved=1")
 	return nil
 }
 
-// uiSourceAppDelete removes an org source App (org-admin only, PRG). The server
-// refuses with a 409 while a project source still references the App, and that
-// message names the bound sources — it is the remediation text, so it is
-// surfaced verbatim instead of being replaced by a generic failure.
 func (s *Server) uiSourceAppDelete(c echo.Context) error {
 	ctx := c.Request().Context()
 	back := dsSourceAppsPath
-	orgID, ok := s.sourceAppsOrgForCaller(c, back)
-	if !ok {
+	if _, _, ok := s.sourceAppsProject(c); !ok {
 		return nil
 	}
-	if err := s.memory.DeleteOrgSourceApp(ctx, orgID, c.Param("appId")); err != nil {
+	if err := s.memory.DeleteProjectSourceApp(ctx, c.Param("appId")); err != nil {
 		return redirectWithError(c, back, dsFormError(err))
 	}
 	redirectAfterMutation(c, back+"?deleted=1")
 	return nil
 }
 
-// sourceAppsOrgForCaller resolves the active project's org and enforces the
-// page's org-admin gate for a write. It redirects with an explanation and
-// reports false when the caller cannot write, so no handler runs a request the
-// API would answer with 403.
-func (s *Server) sourceAppsOrgForCaller(c echo.Context, back string) (string, bool) {
+func sourceAppsRegisterHref(data dsSourceAppsPageData) string {
+	if data.CanRegister {
+		return dsSourceAppsPath + "/new"
+	}
+	return ""
+}
+
+func sourceAppsRegisterLabel(data dsSourceAppsPageData) string {
+	if data.CanRegister {
+		return "Register app"
+	}
+	return ""
+}
+
+// canManageSourceApp decides the per-App write affordance: org-wide Apps need
+// org admin, project-owned Apps need project admin of that project.
+func (s *Server) canManageSourceApp(c echo.Context, project *Project, app *SourceApp) bool {
+	if app.ProjectID == "" {
+		return s.orgAdminForCaller(c, project.OrgID)
+	}
+	if app.ProjectID != project.ID {
+		return false
+	}
+	return s.strictProjectAdminForCaller(c, project.ID)
+}
+
+// sourceAppsProject resolves the active project (and its org name) for the
+// source-App pages. Writes are authorised per-App by the server: project-owned
+// Apps need project admin, org-wide Apps need org admin.
+func (s *Server) sourceAppsProject(c echo.Context) (*Project, string, bool) {
 	ctx := c.Request().Context()
 	project, err := s.memory.GetCurrentProject(ctx)
 	if err != nil || project == nil || project.OrgID == "" {
-		// redirectWithError always returns nil; the caller reports the fault
-		// through its own bool, so the redirect result is deliberately dropped.
-		_ = redirectWithError(c, back, errors.New("no active project organization"))
-		return "", false
+		if err == nil {
+			_ = c.Redirect(http.StatusSeeOther, "/orgs")
+		} else {
+			_ = c.NoContent(http.StatusInternalServerError)
+		}
+		return nil, "", false
 	}
-	if !s.orgAdminForCaller(c, project.OrgID) {
-		_ = redirectWithError(c, back, errors.New("source Apps can only be changed by an organization administrator"))
-		return "", false
+	orgName := ""
+	if org, oerr := s.memory.GetOrg(ctx, project.OrgID); oerr == nil && org != nil {
+		orgName = org.Name
 	}
-	return project.OrgID, true
+	return project, orgName, true
+}
+
+func (s *Server) findProjectSourceApp(c echo.Context, appID string) (*SourceApp, error) {
+	apps, err := s.memory.ListProjectSourceApps(c.Request().Context())
+	if err != nil {
+		return nil, userFacingError(err)
+	}
+	for i := range apps {
+		if apps[i].ID == appID {
+			return &apps[i], nil
+		}
+	}
+	return nil, errors.New("no such source App for this project")
 }
 
 // --- github_app triggers ---
@@ -356,7 +377,10 @@ func (s *Server) sourceAppsOrgForCaller(c echo.Context, back string) (string, bo
 type dsSourceTriggersView struct {
 	SourceID string
 	Triggers []DSSourceTrigger
-	// Agents are the project's runtime agents, the create form's options.
+	// Agents are the project's agent definitions, the create form's options. The
+	// server resolves a definition to its runtime agent when the binding is
+	// stored (kb.source_triggers.agent_id is a kb.agents id), and reports the
+	// bound agent's name back on each trigger as AgentName.
 	Agents []AgentDefinitionSummary
 	// LoadErr records a failed trigger listing; the panel still renders so the
 	// source stays editable.
@@ -399,6 +423,18 @@ func dsTriggerAgentName(agents []AgentDefinitionSummary, agentID string) string 
 	return agentID
 }
 
+// dsTriggerAgentLabel is the agent name shown on a binding row. AgentName is the
+// server's resolution of the stored runtime kb.agents id, which the picker's
+// definition list cannot map: a binding stores a runtime id while the picker
+// offers definitions (#727). An older server omits AgentName, so fall back to
+// the definition list and finally to the id.
+func dsTriggerAgentLabel(agents []AgentDefinitionSummary, trigger DSSourceTrigger) string {
+	if name := strings.TrimSpace(trigger.AgentName); name != "" {
+		return name
+	}
+	return dsTriggerAgentName(agents, trigger.AgentID)
+}
+
 // dsTriggerToggleLabel is the action that flips the current state.
 func dsTriggerToggleLabel(enabled bool) string {
 	if enabled {
@@ -423,6 +459,32 @@ func dsTriggerQueueLabel(queue string) string {
 	return "default"
 }
 
+// uiDataSourceTriggerNew renders the standalone add-trigger page. A source has
+// one binding per event type, so an existing pull_request trigger redirects back
+// to the detail page instead of offering a form that can only conflict.
+func (s *Server) uiDataSourceTriggerNew(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := c.Param("id")
+	detailPath := "/data-sources/" + url.PathEscape(id)
+	src, err := s.memory.GetDSIntegration(ctx, id)
+	if err != nil {
+		return redirectWithError(c, detailPath, dsFormError(err))
+	}
+	if src.ProviderType != dsProviderTypeGitHubApp {
+		return redirectWithError(c, detailPath, errors.New("this data source does not support triggers"))
+	}
+	view := s.dsDataSourceTriggers(c, src)
+	if view == nil {
+		return redirectWithError(c, detailPath, errors.New("this data source does not support triggers"))
+	}
+	for _, trigger := range view.Triggers {
+		if trigger.EventType == dsTriggerEventPullRequest {
+			return redirectWithError(c, detailPath+"#triggers", errors.New("this source already has a pull_request trigger; delete it before adding another"))
+		}
+	}
+	return s.page(c, pageTitle("Add trigger", dsSourceName(*src)), DataSourceTriggerNewPage(src, *view, flashError(c)))
+}
+
 // uiDataSourceTriggerCreate binds pull_request to an agent (PRG). The event type
 // is fixed by the form; a source that is not a github_app source has no trigger
 // panel, so a stray POST is refused rather than forwarded.
@@ -437,9 +499,10 @@ func (s *Server) uiDataSourceTriggerCreate(c echo.Context) error {
 	if src.ProviderType != dsProviderTypeGitHubApp {
 		return redirectWithError(c, detailPath, errors.New("this data source does not support triggers"))
 	}
+	newPath := detailPath + "/triggers/new"
 	agentID := strings.TrimSpace(c.FormValue("agentId"))
 	if agentID == "" {
-		return redirectWithError(c, detailPath+"#triggers", errors.New("pick an agent to run on pull requests"))
+		return redirectWithError(c, newPath, errors.New("pick an agent to run on pull requests"))
 	}
 	// The panel offers exactly one event type; defaulting an absent value keeps
 	// an older cached form working without offering a choice the server rejects.
@@ -455,7 +518,7 @@ func (s *Server) uiDataSourceTriggerCreate(c echo.Context) error {
 		Enabled:   &enabled,
 	}
 	if _, err := s.memory.CreateSourceTrigger(ctx, id, req); err != nil {
-		return redirectWithError(c, detailPath+"#triggers", dsFormError(err))
+		return redirectWithError(c, newPath, dsFormError(err))
 	}
 	redirectAfterMutation(c, detailPath+"?triggerCreated=1#triggers")
 	return nil
@@ -540,14 +603,14 @@ func (s *Server) dsAttachSourceAppSelect(ctx context.Context, providerType strin
 		Placeholder:  "Select a registered App",
 		EmptyHref:    dsSourceAppsPath,
 		EmptyLabel:   "Open source Apps",
-		EmptyMessage: "No GitHub Apps are registered for this organization yet. An organization administrator must register one before this source can be connected.",
+		EmptyMessage: "No GitHub Apps are available to this project yet. A project administrator can register a project-owned App; an organization administrator can register an org-wide one.",
 	}
 	project, err := s.memory.GetCurrentProject(ctx)
 	switch {
 	case err != nil || project == nil || project.OrgID == "":
 		sel.LoadErr = errors.New("no active project organization")
 	default:
-		apps, aerr := s.memory.ListOrgSourceApps(ctx, project.OrgID)
+		apps, aerr := s.memory.ListProjectSourceApps(ctx)
 		if aerr != nil {
 			sel.LoadErr = userFacingError(aerr)
 			break
@@ -558,4 +621,129 @@ func (s *Server) dsAttachSourceAppSelect(ctx context.Context, providerType strin
 	}
 	fields[index].Select = sel
 	return fields
+}
+
+type dsWorkflowLaneRow struct {
+	Lane       string
+	Agent      string
+	AgentFound bool
+	RuleReady  bool
+	Queue      string
+	QueueFound bool
+}
+
+func (s *Server) workflowLaneRows(ctx context.Context, wf *SourceWorkflow) []dsWorkflowLaneRow {
+	if wf == nil {
+		return nil
+	}
+	defs, _ := s.memory.ListAgentDefinitions(ctx)
+	byName := make(map[string]AgentDefinitionSummary, len(defs))
+	for _, d := range defs {
+		byName[d.Name] = d
+	}
+	queueProject := ""
+	if project, err := s.memory.GetCurrentProject(ctx); err == nil && project != nil {
+		queueProject = project.ID
+	}
+	queues, _ := s.memory.ListAgentQueues(ctx, queueProject)
+	queueSet := make(map[string]bool, len(queues))
+	for _, q := range queues {
+		if q.Enabled {
+			queueSet[q.Name] = true
+		}
+	}
+	rows := make([]dsWorkflowLaneRow, 0, len(wf.Config.Reviewers))
+	for _, r := range wf.Config.Reviewers {
+		row := dsWorkflowLaneRow{Lane: r.Lane, Agent: r.Agent}
+		if d, ok := byName[r.Agent]; ok {
+			row.AgentFound = d.Enabled
+			if full, err := s.memory.GetAgentDefinition(ctx, d.ID); err == nil && full != nil && full.WorkConfig != nil {
+				if len(full.WorkConfig.ObjectRules) == 0 {
+					// Legacy pickup: ready is always allowed when no object rules exist.
+					row.RuleReady = true
+				}
+				for _, rule := range full.WorkConfig.ObjectRules {
+					if rule.ObjectType != "GitHubReviewLane" {
+						continue
+					}
+					for _, tr := range rule.Triggers {
+						if tr.Status == "ready" {
+							row.RuleReady = true
+						}
+					}
+				}
+				row.Queue = full.DefaultQueue
+			}
+		}
+		if row.Queue == "" {
+			row.Queue = "default"
+		}
+		row.QueueFound = queueSet[row.Queue]
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func sourceWorkflowText(wf *SourceWorkflow) string {
+	if wf == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range wf.Config.Reviewers {
+		if r.Lane == "" || r.Agent == "" {
+			continue
+		}
+		b.WriteString(r.Lane)
+		b.WriteString(" | ")
+		b.WriteString(r.Agent)
+		b.WriteString("\n")
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// uiDataSourceWorkflow configures the board lanes a github_app source emits.
+func (s *Server) uiDataSourceWorkflow(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := c.Param("id")
+	src, err := s.memory.GetDSIntegration(ctx, id)
+	if err != nil {
+		return redirectWithError(c, "/data-sources", dsFormError(err))
+	}
+	if src.ProviderType != dsProviderTypeGitHubApp {
+		return redirectWithError(c, "/data-sources/"+url.PathEscape(id), errors.New("workflows are supported only for GitHub App sources"))
+	}
+	wf, werr := s.memory.GetSourceWorkflow(ctx, id)
+	var loadErr error
+	if werr != nil {
+		captureError(werr)
+		loadErr = userFacingError(werr)
+	}
+	lanes := s.workflowLaneRows(ctx, wf)
+	return s.page(c, pageTitle("Workflow", dsSourceName(*src)), DataSourceWorkflowPage(src, wf, lanes, loadErr, flashFromQuery(c, []flashParam{{key: "saved", msg: "Workflow saved."}}), flashError(c)))
+}
+
+func (s *Server) uiDataSourceWorkflowSave(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := c.Param("id")
+	back := "/data-sources/" + url.PathEscape(id) + "/workflow"
+	var reviewers []SourceWorkflowReviewer
+	for _, line := range strings.Split(c.FormValue("reviewers"), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.FieldsFunc(line, func(r rune) bool { return r == '|' || r == ':' })
+		if len(parts) != 2 {
+			return redirectWithError(c, back, fmt.Errorf("reviewer %q must be lane | agent", line))
+		}
+		reviewers = append(reviewers, SourceWorkflowReviewer{Lane: strings.TrimSpace(parts[0]), Agent: strings.TrimSpace(parts[1])})
+	}
+	if len(reviewers) == 0 {
+		return redirectWithError(c, back, errors.New("add at least one reviewer lane"))
+	}
+	if _, err := s.memory.PutSourceWorkflow(ctx, id, SourceWorkflowConfig{Reviewers: reviewers}); err != nil {
+		return redirectWithError(c, back, dsFormError(err))
+	}
+	redirectAfterMutation(c, back+"?saved=1")
+	return nil
 }

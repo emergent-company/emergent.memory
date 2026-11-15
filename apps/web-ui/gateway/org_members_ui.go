@@ -698,7 +698,7 @@ func (s *Server) uiUploadAvatar(c echo.Context) error {
 	if err != nil {
 		return redirectWithError(c, "/profile", err)
 	}
-	if claims, cerr := s.currentSession(c); cerr == nil {
+	if claims, cerr := s.requestSessionClaims(c); cerr == nil {
 		claims.AvatarOverrideURL = dto.AvatarUrl
 		s.setSessionCookie(c, *claims)
 	}
@@ -716,7 +716,7 @@ func (s *Server) uiRemoveAvatar(c echo.Context) error {
 	if _, err := s.memory.DeleteAvatar(c.Request().Context()); err != nil {
 		return redirectWithError(c, "/profile", err)
 	}
-	if claims, cerr := s.currentSession(c); cerr == nil {
+	if claims, cerr := s.requestSessionClaims(c); cerr == nil {
 		claims.AvatarOverrideURL = ""
 		s.setSessionCookie(c, *claims)
 	}

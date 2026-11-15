@@ -24,6 +24,7 @@ type cmdPreflightServer struct {
 	total        int
 	mutating     int
 	compiledHits int
+	compiledBody string // GET .../compiled-types response; empty means no object types
 	createdRaw   []byte // last POST body to an agent-definitions endpoint
 }
 
@@ -43,8 +44,12 @@ func newCmdPreflightServer(t *testing.T) (*httptest.Server, *cmdPreflightServer)
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/compiled-types"):
 			s.mu.Lock()
 			s.compiledHits++
+			body := s.compiledBody
 			s.mu.Unlock()
-			_, _ = w.Write([]byte(`{"objectTypes":[]}`))
+			if body == "" {
+				body = `{"objectTypes":[]}`
+			}
+			_, _ = w.Write([]byte(body))
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/available"):
 			// schemas.GetAvailablePacks decodes a raw array.
 			_, _ = w.Write([]byte(`[]`))
@@ -88,6 +93,14 @@ func (s *cmdPreflightServer) compiledTypesHits() int {
 	return s.compiledHits
 }
 
+// setCompiledTypes sets the body the fake returns for GET .../compiled-types,
+// so a test can give the project the object and relationship types it needs.
+func (s *cmdPreflightServer) setCompiledTypes(body string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.compiledBody = body
+}
+
 // writeBlueprintDir writes a minimal blueprint directory whose only resource is
 // a single agent file with the supplied YAML content.
 func writeBlueprintDir(t *testing.T, agentYAML string) string {
@@ -123,6 +136,15 @@ func writePackBlueprintDir(t *testing.T, packYAML string) string {
 // server override, package-level blueprint flags) and restores it afterwards.
 func runRealInstall(t *testing.T, serverURL, source string) (string, error) {
 	t.Helper()
+	return runRealInstallMode(t, serverURL, source, false)
+}
+
+// runRealInstallMode is runRealInstall with --dry-run selectable. A dry-run
+// still runs the whole preflight — including its read of the project's compiled
+// types — but issues no mutating request, so a test can assert on the warnings
+// the gate prints without standing up the apply endpoints.
+func runRealInstallMode(t *testing.T, serverURL, source string, dryRun bool) (string, error) {
+	t.Helper()
 
 	// Keep config discovery out of any real ~/.memory/config.yaml.
 	t.Setenv("HOME", t.TempDir())
@@ -140,7 +162,7 @@ func runRealInstall(t *testing.T, serverURL, source string) (string, error) {
 	prevDryRun := blueprintsDryRunFlag
 	prevUpgrade := blueprintsUpgradeFlag
 	blueprintsProjectFlag = "00000000-0000-0000-0000-000000000001"
-	blueprintsDryRunFlag = false
+	blueprintsDryRunFlag = dryRun
 	blueprintsUpgradeFlag = false
 	t.Cleanup(func() {
 		blueprintsProjectFlag = prevProject
@@ -250,4 +272,68 @@ relationshipTypes:
 	if fake.compiledTypesHits() == 0 {
 		t.Fatal("expected the preflight to consult the project's compiled types")
 	}
+}
+
+// TestRunBlueprintsInstall_PassesProjectRelationshipTypesToViewCheck pins #667.6
+// at the command level, the layer the blueprint validator cannot see: a ui.view
+// section may present a relationship type a companion pack already installed
+// owns, so the install gate must (a) read the project's compiled types when the
+// blueprint's own packs cannot answer for a view relation and (b) hand the
+// project's relationship types to the validator.
+//
+// Mutation checks: dropping `|| HasUnknownViewRelationshipTypes(packs)` from the
+// preflight condition stops the read (compiledTypesHits == 0, and the second
+// subtest's "or the project" wording disappears); dropping the
+// compiled.RelationshipTypes loop in projectKnownTypes leaves the known set
+// blueprint-only, so the project-owned relation is reported as unknown again.
+func TestRunBlueprintsInstall_PassesProjectRelationshipTypesToViewCheck(t *testing.T) {
+	dir := writePackBlueprintDir(t, `name: board
+version: "1.0.0"
+objectTypes:
+  - name: Task
+    label: Task
+    ui:
+      view:
+        sections:
+          - title: Services
+            relation: serves
+relationshipTypes:
+  - name: fixes
+    sourceType: Task
+    targetType: Task
+`)
+
+	t.Run("a relationship type the project owns satisfies the view", func(t *testing.T) {
+		srv, fake := newCmdPreflightServer(t)
+		fake.setCompiledTypes(`{"objectTypes":[{"name":"Task"}],"relationshipTypes":[{"name":"serves"}]}`)
+
+		out, err := runRealInstallMode(t, srv.URL, dir, true)
+		if err != nil {
+			t.Fatalf("expected a view naming a project-owned relationship type to install, got: %v\noutput:\n%s", err, out)
+		}
+		if fake.compiledTypesHits() == 0 {
+			t.Fatal("expected the preflight to consult the project's compiled types for a view relation")
+		}
+		if _, mutating := fake.counts(); mutating != 0 {
+			t.Fatalf("expected a dry-run install to mutate nothing, got %d mutating requests", mutating)
+		}
+		if strings.Contains(out, "is not a relationshipType") {
+			t.Fatalf("a project-owned relationship type must satisfy the view check, got:\n%s", out)
+		}
+	})
+
+	t.Run("one neither the blueprint nor the project owns is still reported", func(t *testing.T) {
+		srv, fake := newCmdPreflightServer(t)
+		fake.setCompiledTypes(`{"objectTypes":[{"name":"Task"}],"relationshipTypes":[{"name":"mentions"}]}`)
+
+		out, err := runRealInstallMode(t, srv.URL, dir, true)
+		if err != nil {
+			t.Fatalf("expected dry-run install to succeed, got: %v\noutput:\n%s", err, out)
+		}
+		// The "or the project" scope is the proof the gate had the project's
+		// relationship types in hand rather than falling back to blueprint-only.
+		if !strings.Contains(out, `relation "serves" is not a relationshipType declared by this blueprint or the project`) {
+			t.Fatalf("expected the gate to report the unknown relation against the project too, got:\n%s", out)
+		}
+	})
 }

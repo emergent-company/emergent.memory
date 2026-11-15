@@ -1,5 +1,7 @@
 package components
 
+import "github.com/emergent-company/go-daisy/devmode"
+
 // CardHeaderProps configures CardHeader.
 //
 // Action is the header's trailing slot. templ gives a component a single
@@ -30,7 +32,7 @@ type CardHeaderProps struct {
 templ CardHeader(props CardHeaderProps) {
 	<div
 		class={ "flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between", props.Class }
-		data-component="components/CardHeader"
+		{ devmode.Attrs(ctx, "components/CardHeader")... }
 		{ props.Attrs... }
 	>
 		<div class="min-w-0">
@@ -39,7 +41,7 @@ templ CardHeader(props CardHeaderProps) {
 		if props.Action != nil {
 			<div
 				class="w-full min-w-0 max-sm:[&_a]:w-full max-sm:[&_button]:w-full sm:w-auto sm:shrink-0"
-				data-component="components/CardHeaderAction"
+				{ devmode.Attrs(ctx, "components/CardHeaderAction")... }
 			>
 				@props.Action
 			</div>

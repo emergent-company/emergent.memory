@@ -239,6 +239,20 @@ pre-commit:
           exit 1
         fi
 
+    # UI guardrails (palette classes, htmx inside components, background-context
+    # renders, and the testid/handler/hex/style/table budgets). ~0.3s, needs no
+    # generated assets, so a commit that touches the web UI runs it before it
+    # reaches CI.
+    # Single source of truth: scripts/preflight/ui-guard.sh — also run by
+    # scripts/preflight/all.sh in the required `ci` job, so the PR that
+    # introduces the regression fails, not a later promotion.
+    - name: preflight-ui-guard
+      root: apps/web-ui/gateway
+      glob:
+        - "**/*.templ"
+        - "**/*.go"
+      run: bash ../../../scripts/preflight/ui-guard.sh
+
     - name: secrets
       run: |
         if ! command -v gitleaks >/dev/null 2>&1; then

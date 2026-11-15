@@ -104,20 +104,23 @@ func runBlueprintsInstall(cmd *cobra.Command, args []string) error {
 	// ── Preflight: offline validation + model normalization ────────
 	// Runs before anything is applied so a malformed blueprint — e.g. an agent
 	// model not in "provider/model" form — aborts with zero mutations instead of
-	// partially applying packs first (#1586). Only when a relationship endpoint is
-	// not defined by any pack in the blueprint does it make a single read-only
-	// call for the project's existing object types, so a relationship may target
-	// a type owned by an already-installed pack or a built-in (#1853); the fetch
-	// is best-effort — on failure the endpoint check falls back to the
-	// blueprint's own packs. Preflight also normalizes model references in place
-	// (folds a structured model.provider into the name) so the applier sends
-	// exactly the shape the server accepts.
-	var projectObjTypes []string
-	if blueprints.HasUnknownRelationshipEndpoints(packs) {
-		projectObjTypes = projectObjectTypeNames(context.Background(), c)
+	// partially applying packs first (#1586). Only when the blueprint cannot
+	// answer from its own packs — a relationship endpoint no pack defines
+	// (#1853), or a ui.view section naming a relationship type no pack declares
+	// (#667.6) — does it make a single read-only compiled-types call for the
+	// project's existing object AND relationship types, so a relationship may
+	// target a type owned by an already-installed pack or a built-in, and a view
+	// may present a relationship a companion pack owns. The fetch is
+	// best-effort — on failure each check falls back to the blueprint's own
+	// packs. Preflight also normalizes model references in place (folds a
+	// structured model.provider into the name) so the applier sends exactly the
+	// shape the server accepts.
+	var known blueprints.KnownProjectTypes
+	if blueprints.HasUnknownRelationshipEndpoints(packs) || blueprints.HasUnknownViewRelationshipTypes(packs) {
+		known = projectKnownTypes(context.Background(), c)
 	}
 	report := blueprints.PreflightWithProjectTypes(
-		projectObjTypes,
+		known,
 		projectFile, packs, agents, skills, seedObjects, seedRels, loadResults,
 	)
 	if report.HasErrors() {
@@ -224,23 +227,34 @@ func runBlueprintsInstall(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// projectObjectTypeNames returns the object type names already present in the
-// project — defined by installed packs or built-ins — used to widen the install
+// projectKnownTypes returns the type names already present in the project —
+// defined by installed packs or built-ins — used to widen the install
 // preflight's relationship-endpoint check beyond the blueprint's own packs
-// (#1853). It is best-effort: any error yields nil so preflight still runs with
-// the blueprint-only union instead of failing an install on a read failure.
-func projectObjectTypeNames(ctx context.Context, c *client.Client) []string {
+// (#1853) and its ui.view relation check beyond the blueprint's own
+// relationship types (#667.6). Both lists come from the same compiled-types
+// read. It is best-effort: any error yields the zero value so preflight still
+// runs with the blueprint-only union instead of failing an install on a read
+// failure.
+func projectKnownTypes(ctx context.Context, c *client.Client) blueprints.KnownProjectTypes {
 	compiled, err := c.SDK.Schemas.GetCompiledTypes(ctx)
 	if err != nil || compiled == nil {
-		return nil
+		return blueprints.KnownProjectTypes{}
 	}
-	names := make([]string, 0, len(compiled.ObjectTypes))
+	known := blueprints.KnownProjectTypes{
+		ObjectTypes:       make([]string, 0, len(compiled.ObjectTypes)),
+		RelationshipTypes: make([]string, 0, len(compiled.RelationshipTypes)),
+	}
 	for _, ot := range compiled.ObjectTypes {
 		if ot.Name != "" {
-			names = append(names, ot.Name)
+			known.ObjectTypes = append(known.ObjectTypes, ot.Name)
 		}
 	}
-	return names
+	for _, rt := range compiled.RelationshipTypes {
+		if rt.Name != "" {
+			known.RelationshipTypes = append(known.RelationshipTypes, rt.Name)
+		}
+	}
+	return known
 }
 
 // confirmMergeTypeConflicts enforces explicit confirmation when object type

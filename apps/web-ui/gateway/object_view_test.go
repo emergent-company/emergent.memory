@@ -363,6 +363,65 @@ func TestExpandedViewSectionCapsRows(t *testing.T) {
 	}
 }
 
+// TestViewSectionAt pins #667.5: the collapse path used to resolve the whole
+// group set twice — once with the expanded budget, once with the collapsed one —
+// and keep a single result. viewSectionAt resolves exactly once at the requested
+// budget, and expandedViewSection is the expanded case of it (kept as a wrapper
+// so the resolver's own tests read as expansion).
+func TestViewSectionAt(t *testing.T) {
+	prop := GraphObject{ID: "prop", CanonicalID: "prop", Type: "Property"}
+	var edges []GraphRelationship
+	var related []GraphObject
+	for i := 0; i < 30; i++ {
+		id := "doc-" + strconv.Itoa(i)
+		related = append(related, viewTestObject(id, "Document", "Doc "+strconv.Itoa(i), nil))
+		edges = append(edges, viewTestEdge("e"+strconv.Itoa(i), "concerns", id, "prop"))
+	}
+	view := &typeUIView{Sections: []typeUISection{{Title: "Documents", Relation: []string{"concerns"}, Limit: 3}}}
+
+	collapsed, ok := viewSectionAt(view, 0, &prop, edges, related, nil, false)
+	if !ok {
+		t.Fatal("viewSectionAt(collapsed) = false")
+	}
+	if collapsed.Expanded {
+		t.Error("a collapsed request must not report Expanded")
+	}
+	if len(collapsed.Rows) != 3 || collapsed.Total != 30 || collapsed.Limit != 3 {
+		t.Errorf("collapsed = %d/%d rows (limit %d), want 3/30 (limit 3)", len(collapsed.Rows), collapsed.Total, collapsed.Limit)
+	}
+
+	expanded, ok := viewSectionAt(view, 0, &prop, edges, related, nil, true)
+	if !ok {
+		t.Fatal("viewSectionAt(expanded) = false")
+	}
+	if !expanded.Expanded {
+		t.Error("an expanded request must report Expanded")
+	}
+	if len(expanded.Rows) != 30 || expanded.Total != 30 {
+		t.Errorf("expanded = %d/%d rows, want all 30", len(expanded.Rows), expanded.Total)
+	}
+	// The declared budget survives expansion so "show fewer" returns to the
+	// card the reader left, not to a larger default.
+	if expanded.Limit != 3 {
+		t.Errorf("expanded Limit = %d, want the declared 3", expanded.Limit)
+	}
+
+	// The wrapper is the expanded case, not a second implementation.
+	viaWrapper, ok := expandedViewSection(view, 0, &prop, edges, related, nil)
+	if !ok || viaWrapper.Expanded != expanded.Expanded || len(viaWrapper.Rows) != len(expanded.Rows) || viaWrapper.Limit != expanded.Limit {
+		t.Errorf("expandedViewSection = %+v/%v, want the viewSectionAt(expanded) result", viaWrapper, ok)
+	}
+
+	for _, index := range []int{-1, 1, 99} {
+		if _, ok := viewSectionAt(view, index, &prop, edges, related, nil, false); ok {
+			t.Errorf("viewSectionAt(%d, collapsed) = true, want false", index)
+		}
+		if _, ok := viewSectionAt(view, index, &prop, edges, related, nil, true); ok {
+			t.Errorf("viewSectionAt(%d, expanded) = true, want false", index)
+		}
+	}
+}
+
 // TestObjectViewSectionDirectionCue pins the ShowDirection signal: a `dir: both`
 // section (and the fallback group, which mixes whatever the author did not
 // claim) tells each row to render its arrow, while a single-direction section

@@ -784,6 +784,7 @@ type AgentDefinition struct {
 	Delegation   *Delegation        `json:"delegation,omitempty"`
 	Visibility   string             `json:"visibility,omitempty"`
 	DispatchMode string             `json:"dispatchMode,omitempty"`
+	DefaultQueue string             `json:"defaultQueue,omitempty"`
 	Enabled      bool               `json:"enabled"`
 	ToolCount    int                `json:"toolCount,omitempty"`
 	CreatedAt    string             `json:"createdAt,omitempty"`

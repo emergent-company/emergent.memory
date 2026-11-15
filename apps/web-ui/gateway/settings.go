@@ -14,16 +14,21 @@ import (
 // distinguishable from a zero value. ProjectInfo/ChatPromptTemplate are
 // snake_case on the wire, matching memory's JSON field names.
 type Project struct {
-	ID                          string         `json:"id"`
-	Name                        string         `json:"name"`
-	OrgID                       string         `json:"orgId,omitempty"`
-	ProjectInfo                 string         `json:"project_info,omitempty"`
-	ChatPromptTemplate          string         `json:"chat_prompt_template,omitempty"`
-	AutoExtractObjects          *bool          `json:"auto_extract_objects,omitempty"`
-	AutoExtractSourceSyncs      *bool          `json:"auto_extract_source_syncs,omitempty"`
-	AutoExtractConfig           map[string]any `json:"auto_extract_config,omitempty"`
-	BudgetUSD                   *float64       `json:"budget_usd,omitempty"`
-	BudgetAlertThreshold        *float64       `json:"budget_alert_threshold,omitempty"`
+	ID                     string         `json:"id"`
+	Name                   string         `json:"name"`
+	OrgID                  string         `json:"orgId,omitempty"`
+	ProjectInfo            string         `json:"project_info,omitempty"`
+	ChatPromptTemplate     string         `json:"chat_prompt_template,omitempty"`
+	AutoExtractObjects     *bool          `json:"auto_extract_objects,omitempty"`
+	AutoExtractSourceSyncs *bool          `json:"auto_extract_source_syncs,omitempty"`
+	AutoExtractConfig      map[string]any `json:"auto_extract_config,omitempty"`
+	BudgetUSD              *float64       `json:"budget_usd,omitempty"`
+	BudgetAlertThreshold   *float64       `json:"budget_alert_threshold,omitempty"`
+	// Weekly window + its own alert threshold, added by memory migration 00298.
+	// A nil BudgetWeeklyUSD means no weekly cap (the window is displayed as
+	// uncapped, and it never blocks agent runs).
+	BudgetWeeklyUSD             *float64       `json:"budget_weekly_usd,omitempty"`
+	BudgetWeeklyAlertThreshold  *float64       `json:"budget_weekly_alert_threshold,omitempty"`
 	Stats                       map[string]any `json:"stats,omitempty"`
 	AutoMergeExtractionBranches *bool          `json:"auto_merge_extraction_branches,omitempty"`
 	// AutoDiscoveryEnabled is emitted by memory for every project (the column
@@ -80,6 +85,8 @@ type ProjectUpdate struct {
 	AutoExtractConfig           map[string]any `json:"auto_extract_config,omitempty"`
 	BudgetUSD                   *float64       `json:"budget_usd,omitempty"`
 	BudgetAlertThreshold        *float64       `json:"budget_alert_threshold,omitempty"`
+	BudgetWeeklyUSD             *float64       `json:"budget_weekly_usd,omitempty"`
+	BudgetWeeklyAlertThreshold  *float64       `json:"budget_weekly_alert_threshold,omitempty"`
 	AutoMergeExtractionBranches *bool          `json:"auto_merge_extraction_branches,omitempty"`
 	AutoDiscoveryEnabled        *bool          `json:"auto_discovery_enabled,omitempty"`
 	// SkillCapture replaces the project capture policy when non-nil. Callers

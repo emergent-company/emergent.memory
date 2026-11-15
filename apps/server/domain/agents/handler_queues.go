@@ -319,9 +319,9 @@ func (h *Handler) EnqueueWorkItem(c echo.Context) error {
 	var err error
 	switch {
 	case dto.AgentID != "":
-		agent, err = h.repo.FindByID(ctx, dto.AgentID, &projectID)
+		agent, err = h.repo.ResolveRuntimeAgentByID(ctx, projectID, dto.AgentID)
 	case dto.AgentName != "":
-		agent, err = h.repo.FindByName(ctx, projectID, dto.AgentName)
+		agent, err = h.repo.ResolveRuntimeAgentByName(ctx, projectID, dto.AgentName)
 	default:
 		return apperror.NewBadRequest("either agentId or agentName is required")
 	}

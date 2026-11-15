@@ -59,6 +59,11 @@ func NewTokenMinter(baseURL string, client *http.Client) *TokenMinter {
 
 // MintInstallationToken returns a token scoped to repos and permissions,
 // reusing a cached token until shortly before expiry.
+//
+// repos accepts either bare repository names or "owner/name" references; they
+// are normalized to bare names before both the request and the cache key, so an
+// owner-qualified caller and a bare one share a token (see
+// normalizeRepositoryNames).
 func (m *TokenMinter) MintInstallationToken(
 	ctx context.Context,
 	appID int64,
@@ -67,15 +72,45 @@ func (m *TokenMinter) MintInstallationToken(
 	repos []string,
 	permissions map[string]string,
 ) (string, error) {
-	// Least privilege is mandatory: an empty scope would mint a token for every
-	// repository and every App permission.
+	repos = normalizeRepositoryNames(repos)
 	if len(repos) == 0 {
 		return "", errors.New("githubapp: installation token requires an explicit repository list")
 	}
 	if len(permissions) == 0 {
 		return "", errors.New("githubapp: installation token requires an explicit permission set")
 	}
+	return m.mintInstallationToken(ctx, appID, privateKeyPEM, installationID, repos, permissions)
+}
 
+// MintInstallationTokenAllRepositories deliberately scopes a token to every
+// repository of the installation. It exists only for the setup wizard's
+// installation-repository listing; permissions stay explicit and read-only.
+func (m *TokenMinter) MintInstallationTokenAllRepositories(
+	ctx context.Context,
+	appID int64,
+	privateKeyPEM []byte,
+	installationID int64,
+	permissions map[string]string,
+) (string, error) {
+	if len(permissions) == 0 {
+		return "", errors.New("githubapp: installation token requires an explicit permission set")
+	}
+	for _, level := range permissions {
+		if level != "read" {
+			return "", errors.New("githubapp: installation-wide tokens are read-only")
+		}
+	}
+	return m.mintInstallationToken(ctx, appID, privateKeyPEM, installationID, nil, permissions)
+}
+
+func (m *TokenMinter) mintInstallationToken(
+	ctx context.Context,
+	appID int64,
+	privateKeyPEM []byte,
+	installationID int64,
+	repos []string,
+	permissions map[string]string,
+) (string, error) {
 	key := tokenCacheKey(appID, installationID, repos, permissions)
 
 	m.mu.Lock()
@@ -163,6 +198,38 @@ func (m *TokenMinter) MintInstallationToken(
 	m.cache[key] = cachedToken{token: out.Token, expiresAt: out.ExpiresAt}
 	m.mu.Unlock()
 	return out.Token, nil
+}
+
+// normalizeRepositoryNames normalizes repository identifiers to the bare names
+// the App installation-token endpoint expects.
+//
+// GitHub documents `repositories` on POST /app/installations/{id}/access_tokens
+// as repository *names*. An owner-qualified "owner/name" entry makes GitHub
+// answer 422 "There is at least one repository that does not exist or is not
+// accessible to the parent installation", so every delivery would fail at token
+// minting even though the source picker stores owner/name (#729).
+//
+// It runs before the cache key, so "owner/name" and "name" share one token
+// instead of minting twice for the same scope. It trims, drops empty entries,
+// strips an owner prefix and de-duplicates, preserving the caller's order.
+func normalizeRepositoryNames(repos []string) []string {
+	seen := make(map[string]struct{}, len(repos))
+	out := make([]string, 0, len(repos))
+	for _, repo := range repos {
+		repo = strings.TrimSpace(repo)
+		if i := strings.LastIndexByte(repo, '/'); i >= 0 {
+			repo = repo[i+1:]
+		}
+		if repo == "" {
+			continue
+		}
+		if _, ok := seen[repo]; ok {
+			continue
+		}
+		seen[repo] = struct{}{}
+		out = append(out, repo)
+	}
+	return out
 }
 
 // Invalidate drops cached tokens for an App installation.

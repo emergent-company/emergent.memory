@@ -8,6 +8,7 @@ import (
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
 	ui "github.com/emergent-company/go-daisy/components/ui"
+	"github.com/emergent-company/go-daisy/devmode"
 )
 
 // --- Objects browser ---
@@ -109,7 +110,7 @@ templ objectsBrowserStats(data objectsPageData) {
 	{{
 		statsAttrs := templ.Attributes{
 			"id":           "objects-stats",
-			"class":        "mb-4 [&>.stats]:w-full max-sm:[&_.stat]:min-w-0 max-sm:[&_.stat]:px-2 max-sm:[&_.stat-title]:whitespace-normal max-sm:[&_.stat-title]:leading-tight max-sm:[&_.stat-title]:text-[10px] max-sm:[&_.stat-value]:text-xl max-sm:[&_.stat-desc]:text-[10px]",
+			"class":        objectsStatsStripClass,
 			"aria-live":    "polite",
 			"hx-target":    "this",
 			"hx-swap":      "outerHTML",
@@ -194,7 +195,7 @@ templ objectsBrowserToolbar(data objectsPageData) {
 		}
 	}}
 	<div class="mb-4">
-		@components.PanelCard("", nil, "p-3 sm:p-4") {
+		@components.PanelCard("", nil, components.PanelCardOpt{BodyClass: "p-3 sm:p-4"}) {
 			<div class="flex flex-col gap-3">
 				if searching {
 					<form id="objects-search-form" class="min-w-0" method="get" action={ templ.URL(searchAction) } { objectsFormAttrs(data, false, searchAction)... } { objectsPreviewGuards(data.Preview)... }>
@@ -325,7 +326,7 @@ templ objectsBrowserCards(data objectsPageData) {
 		<div
 			id="objects-cards"
 			data-testid="objects-cards"
-			class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4"
+			class={ objectsCardsGridClass }
 		>
 			for _, r := range rows {
 				@objectsBrowserCard(r, search, unified, data.WikiView, data.Preview)
@@ -416,7 +417,6 @@ templ objectsBrowserSortControl(data objectsPageData) {
 			var attrs templ.Attributes
 			if !data.Preview {
 				attrs = regionFilterAttrs(href, objectsResultsRegion)
-				attrs["hx-indicator"] = "#objects-results-loading"
 				attrs["data-objects-list-refresh"] = "true"
 			} else {
 				attrs = templ.Attributes{}
@@ -450,7 +450,14 @@ templ objectsBrowserSortControl(data objectsPageData) {
 // The name is plain text inside the header and the whole card is one stretched
 // link instead: an object is introduced by the same component as a page head and
 // a relationship row, while the card keeps a full-size click target. The
-// checkbox and the footer links sit above that overlay.
+// checkbox, the chip row and the footer links sit above that overlay.
+//
+// The chip row is raised for the tooltips, not for clicks: its hint spans carry
+// the only visible explanation of a state chip (the data-class hint, the
+// embedding state), and a tooltip cannot open if the pointer lands on the
+// overlay above it. So the row is raised but passes clicks through, and only the
+// chips that carry a tooltip opt back into pointer events — the band between
+// chips still opens the card (#699).
 templ objectsBrowserCard(r objectsBrowserRowView, search, unified bool, wikiView string, preview bool) {
 	{{ href := objectWikiHref(r.ID, wikiView)
 	linkAttrs := templ.Attributes{}
@@ -463,7 +470,7 @@ templ objectsBrowserCard(r objectsBrowserRowView, search, unified bool, wikiView
 	<div
 		class="border-base-content/10 bg-base-100 rounded-box group relative flex h-full flex-col border transition-shadow hover:shadow-md"
 		data-testid="object-card"
-		data-component="gateway/ObjectCard"
+		{ devmode.Attrs(ctx, "gateway/ObjectCard")... }
 	>
 		<div class="flex items-start justify-between gap-2 p-3 pb-0">
 			<div class="flex min-w-0 flex-1">
@@ -491,9 +498,9 @@ templ objectsBrowserCard(r objectsBrowserRowView, search, unified bool, wikiView
 				/>
 			</label>
 		</div>
-		<div class="mt-auto flex min-h-6 flex-wrap items-center gap-1 px-3 pb-2 empty:hidden">
+		<div class="relative z-10 pointer-events-none mt-auto flex min-h-6 flex-wrap items-center gap-1 px-3 pb-2 empty:hidden" data-testid="object-card-chips">
 			if r.DataClassLabel != "" {
-				<span class="tooltip tooltip-top inline-flex" data-tip={ r.DataClassHint }>
+				<span class="tooltip tooltip-top pointer-events-auto inline-flex" data-tip={ r.DataClassHint }>
 					@ui.Badge(ui.BadgeProps{Label: r.DataClassLabel, Icon: r.DataClassIcon, Variant: r.DataClassIntent, Size: ui.BadgeSizeXS})
 				</span>
 			}
@@ -509,7 +516,7 @@ templ objectsBrowserCard(r objectsBrowserRowView, search, unified bool, wikiView
 				// every card is noise, a pending or failed embedding is a reason to
 				// open it.
 				if r.EmbeddingLabel != "" && r.EmbeddingIcon != "lucide--circle-check" {
-					<span class={ "tooltip tooltip-top inline-flex", r.EmbeddingClass } data-tip={ r.EmbeddingLabel }>
+					<span class={ "tooltip tooltip-top pointer-events-auto inline-flex", r.EmbeddingClass } data-tip={ r.EmbeddingLabel }>
 						<span class={ "iconify shrink-0 text-base ", r.EmbeddingIcon } aria-hidden="true"></span>
 						<span class="sr-only">{ r.EmbeddingLabel }</span>
 					</span>
@@ -522,7 +529,7 @@ templ objectsBrowserCard(r objectsBrowserRowView, search, unified bool, wikiView
 				@ui.Badge(ui.BadgeProps{Label: "+" + strconv.Itoa(len(r.Labels)-3), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
 			}
 			if search {
-				<span class="text-muted-faint ml-auto inline-flex shrink-0 items-center gap-1" title="Relevance score">
+				<span class="text-muted-faint pointer-events-auto ml-auto inline-flex shrink-0 items-center gap-1" title="Relevance score">
 					@ui.IconSpan("lucide--sparkles", "size-3 shrink-0")
 					<span class="text-xs font-medium tabular-nums">{ searchScoreLabel(r.Score) }</span>
 				</span>
@@ -648,7 +655,7 @@ templ objectsBrowserRowsPartial(data objectsPageData) {
 // caption when the stream reported one. It is the HTMX response the "Ask the
 // graph" dialog swaps into #objects-knowledge-answer.
 templ objectsKnowledgeAnswer(answer, sessionID string) {
-	@components.PanelCard("memory-rise", nil, "p-4") {
+	@components.PanelCard("memory-rise", nil, components.PanelCardOpt{BodyClass: "p-4"}) {
 		<div class="mb-2 flex items-center gap-2">
 			@ui.IconSpan("lucide--sparkles", "size-3.5 shrink-0 text-accent")
 			<span class="text-muted-faint text-xs font-medium tracking-wide uppercase">Answer</span>

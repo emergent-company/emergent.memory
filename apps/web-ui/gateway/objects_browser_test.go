@@ -280,6 +280,114 @@ func TestObjectsBrowserStatsStrip(t *testing.T) {
 	}
 }
 
+// TestObjectsLayoutContracts pins #699.3: the responsive card grid and the stats
+// strip are the two places where a class edit silently breaks the phone layout,
+// and the claim ("four per row, two at sm, one below, nothing scrolls at 320px")
+// otherwise rests on a manual browser check. ui-patterns §8 says a test should
+// assert the contract, not a class string; this is the contract, and the markup
+// is asserted to use these constants rather than a drifting literal.
+func TestObjectsLayoutContracts(t *testing.T) {
+	// The ramp is ordered and starts at one column. A `max-sm:grid-cols-*` is
+	// the classic regression: it lets the phone grid grow past the viewport.
+	ramp := []string{"grid-cols-1", "sm:grid-cols-2", "lg:grid-cols-3", "2xl:grid-cols-4"}
+	prev := -1
+	for _, token := range ramp {
+		at := strings.Index(objectsCardsGridClass, token)
+		if at < 0 {
+			t.Fatalf("card grid ramp is missing %q: %q", token, objectsCardsGridClass)
+		}
+		if at < prev {
+			t.Fatalf("card grid ramp breaks at %q — the columns must only grow: %q", token, objectsCardsGridClass)
+		}
+		prev = at
+	}
+	for _, field := range strings.Fields(objectsCardsGridClass) {
+		if !strings.HasPrefix(field, "grid-cols-") {
+			continue
+		}
+		// Every unprefixed column count must be the single-column base; a
+		// wider base is what overflows a 320px viewport.
+		if field != "grid-cols-1" {
+			t.Errorf("card grid has a multi-column base %q; a phone must start at one column", field)
+		}
+	}
+	if strings.Contains(objectsCardsGridClass, "max-sm:grid-cols-") {
+		t.Errorf("card grid narrows on max-sm instead of widening on min-width breakpoints: %q", objectsCardsGridClass)
+	}
+
+	// The stats strip keeps its three figures inside the viewport: the group is
+	// full width and each stat may shrink with a smaller title/value on phones.
+	for _, want := range []string{
+		"[&>.stats]:w-full",
+		"max-sm:[&_.stat]:min-w-0",
+	} {
+		if !strings.Contains(objectsStatsStripClass, want) {
+			t.Errorf("stats strip lost its narrow-viewport guard %q: %q", want, objectsStatsStripClass)
+		}
+	}
+
+	// The page renders the constants, not a parallel literal.
+	html := renderHTML(t, ObjectsPage(objectsBrowserSampleData("")))
+	if !strings.Contains(html, objectsCardsGridClass) {
+		t.Errorf("card grid markup does not use objectsCardsGridClass:\n%s", html)
+	}
+	if !strings.Contains(html, templAttrEscaped(objectsStatsStripClass)) {
+		t.Errorf("stats strip markup does not use objectsStatsStripClass:\n%s", html)
+	}
+
+	// #699.1: the chip row is raised above the card's stretched link, or neither
+	// tooltip can open — the pointer is on the overlay instead of the chip. The
+	// row itself passes clicks through (it spans the card's full width), so only
+	// the chips that carry a tooltip opt back into pointer events: without the
+	// pair the tooltips die, and with it inverted the band under the chips stops
+	// opening the card.
+	firstChips := strings.Index(html, `data-testid="object-card-chips"`)
+	if firstChips < 0 {
+		t.Fatalf("card chip row is not identifiable:\n%s", html)
+	}
+	tag := html[:firstChips]
+	if open := strings.LastIndex(tag, "<div"); open >= 0 {
+		tag = tag[open:]
+	}
+	if !strings.Contains(tag, "relative z-10") {
+		t.Errorf("card chip row must stack above the stretched link to expose its tooltips, got tag %q", tag)
+	}
+	if !strings.Contains(tag, "pointer-events-none") {
+		t.Errorf("card chip row must pass clicks through to the card link, got tag %q", tag)
+	}
+	// The sample's first card has no tooltip chip, so scan for a row that does.
+	var tooltipRow string
+	for rest := html; ; {
+		i := strings.Index(rest, `data-testid="object-card-chips"`)
+		if i < 0 {
+			break
+		}
+		row := rest[i:]
+		if end := strings.Index(row, "</div>"); end >= 0 {
+			row = row[:end]
+		}
+		if strings.Contains(row, "data-tip=") {
+			tooltipRow = row
+			break
+		}
+		rest = rest[i+1:]
+	}
+	if tooltipRow == "" {
+		t.Fatal("the sample renders no card chip with a tooltip, so this contract cannot be checked")
+	}
+	if !strings.Contains(tooltipRow, "pointer-events-auto") {
+		t.Errorf("a tooltip chip must opt back into pointer events, got %q", tooltipRow)
+	}
+}
+
+// templAttrEscaped is templ's attribute escaping for the bits these constants
+// contain. The stats class is carried in a templ.Attributes map, so its
+// child-selector ampersands and angle brackets arrive escaped in the output.
+func templAttrEscaped(v string) string {
+	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+	return r.Replace(v)
+}
+
 // errTestUnavailable is a stand-in for a failed stats source.
 type errTestUnavailable struct{}
 

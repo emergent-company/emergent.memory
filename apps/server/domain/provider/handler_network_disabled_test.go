@@ -29,7 +29,7 @@ func TestTestProvider_NetworkDisabled_ReturnsBadRequest(t *testing.T) {
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		provider.WithNetworkDisabled(true),
 	)
-	h := provider.NewHandler(nil, catalog, nil, nil)
+	h := provider.NewHandler(nil, catalog, nil, nil, nil)
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/providers/deepseek/test", nil)

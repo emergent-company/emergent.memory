@@ -4503,19 +4503,26 @@ memory projects list [flags]
 
 ## memory projects set-budget
 
-Set a monthly spend budget for a project
+Set the weekly and monthly spend budgets for a project
 
 ### Synopsis
 
-Set or clear the monthly spend budget for a project.
+Set or clear a project's spend budgets.
 
-When the project's estimated spend for the current month exceeds
-budget_usd * budget_alert_threshold (default 0.8), an in-app notification
-is sent to all org members. Set --budget 0 to clear an existing budget.
+Two windows are enforced independently: the monthly cap (budget_usd) over the
+UTC calendar month, and the weekly cap (budget_weekly_usd) over the ISO week
+(Monday 00:00 UTC). Either window reaching its cap blocks agent runs until it
+resets. When spend exceeds a window's cap times its alert threshold (default
+0.8), the project's admins get an in-app notification and an email — at most
+once per window.
+
+Set a cap to 0 to clear it. With no flags but --weekly, only the weekly window
+is touched.
 
 Examples:
   memory projects set-budget my-project --budget 50
   memory projects set-budget my-project --budget 100 --threshold 0.9
+  memory projects set-budget my-project --weekly 15 --weekly-threshold 0.75
   memory projects set-budget --budget 25
 
 ```
@@ -4525,9 +4532,11 @@ memory projects set-budget [project-name-or-id] [flags]
 ### Options
 
 ```
-      --budget float      Monthly budget in USD (set to 0 to clear)
-  -h, --help              help for set-budget
-      --threshold float   Alert threshold as a fraction of budget (e.g. 0.8 = 80%) (default 0.8)
+      --budget float             Monthly budget in USD (set to 0 to clear)
+  -h, --help                     help for set-budget
+      --threshold float          Monthly alert threshold as a fraction of budget (e.g. 0.8 = 80%) (default 0.8)
+      --weekly float             Weekly budget in USD (set to 0 to clear)
+      --weekly-threshold float   Weekly alert threshold as a fraction of budget (e.g. 0.8 = 80%) (default 0.8)
 ```
 
 ## memory projects set-info

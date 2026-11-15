@@ -3,6 +3,8 @@ package main
 import (
 	"net/http/httptest"
 	"testing"
+
+	"github.com/a-h/templ"
 )
 
 // The region dispatch is what lets a filter form request the *page* URL and
@@ -46,13 +48,31 @@ func TestTargetsResultsRegion(t *testing.T) {
 func TestListFilterAttrs(t *testing.T) {
 	region := regionFilterAttrs("/objects", objectsResultsRegion)
 	for key, want := range map[string]string{
-		"hx-get":      "/objects", // the page URL, never a fragment route
-		"hx-target":   "#objects-results",
-		"hx-swap":     "outerHTML", // the region is replaced, not filled
-		"hx-push-url": "true",
+		"hx-get":       "/objects", // the page URL, never a fragment route
+		"hx-target":    "#objects-results",
+		"hx-swap":      "outerHTML", // the region is replaced, not filled
+		"hx-push-url":  "true",
+		"hx-indicator": "#objects-results-loading",
 	} {
 		if got := region[key]; got != want {
 			t.Errorf("regionFilterAttrs()[%q] = %q, want %q", key, got, want)
+		}
+	}
+
+	// Every list region drives the indicator its own region names, and every
+	// helper passes it through: without it htmx marks the control that fired the
+	// request, so a filter change shows no spinner (#744).
+	for _, region := range []string{objectsResultsRegion, documentsResultsRegion, searchResultsRegion, inboxResultsRegion} {
+		want := "#" + region + "-loading"
+		for name, attrs := range map[string]templ.Attributes{
+			"regionFilterAttrs":     regionFilterAttrs("/list", region),
+			"filterFormAttrs":       filterFormAttrs("/list", region),
+			"selectFilterFormAttrs": selectFilterFormAttrs("/list", region),
+			"submitFilterFormAttrs": submitFilterFormAttrs("/list", region),
+		} {
+			if got := attrs["hx-indicator"]; got != want {
+				t.Errorf("%s(%q)[hx-indicator] = %q, want %q", name, region, got, want)
+			}
 		}
 	}
 
