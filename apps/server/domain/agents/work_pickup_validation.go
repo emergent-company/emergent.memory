@@ -137,9 +137,9 @@ func ValidateWorkPickupForDefinition(def *AgentDefinition, rc *ReactionConfig) e
 }
 
 // definitionForID resolves a definition id within a project, or nil when
-// absent/unresolvable. The project filter is required: a definition id from
-// another project must not satisfy this lookup, otherwise a cross-project
-// agentDefinitionId would be accepted and stored on the runtime agent.
+// absent/unresolvable. The lookup is project-scoped so a definition id from
+// another project resolves to nil and its work config is never consulted for
+// this project's agent.
 func (h *Handler) definitionForID(ctx context.Context, projectID string, definitionID *string) *AgentDefinition {
 	if definitionID == nil || *definitionID == "" {
 		return nil

@@ -1090,10 +1090,15 @@ func (r *Repository) ResolveDefinitionForAgent(ctx context.Context, agent *Agent
 	if agent == nil {
 		return nil, nil
 	}
-	// 1. FK lookup — authoritative, no name guessing needed
+	// 1. FK lookup — authoritative, no name guessing needed. Scoped to the
+	// agent's own project so a definition id from another project never resolves
+	// (a cross-project agentDefinitionId must not satisfy the lookup).
 	if agent.AgentDefinitionID != nil && *agent.AgentDefinitionID != "" {
 		var def AgentDefinition
-		err := r.db.NewSelect().Model(&def).Where("id = ?", *agent.AgentDefinitionID).Scan(ctx)
+		err := r.db.NewSelect().Model(&def).
+			Where("id = ?", *agent.AgentDefinitionID).
+			Where("project_id = ?", agent.ProjectID).
+			Scan(ctx)
 		if err == nil {
 			return &def, nil
 		}

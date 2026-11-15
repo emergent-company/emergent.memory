@@ -526,6 +526,9 @@ func (h *Handler) CreateAgent(c echo.Context) error {
 		if strings.Contains(err.Error(), "foreign key") || strings.Contains(err.Error(), "violates foreign key") {
 			return apperror.NewNotFound("project", "not found")
 		}
+		if pgutils.IsUniqueViolation(err) {
+			return apperror.NewConflict("agent definition is already linked to another agent")
+		}
 		return apperror.NewInternal("failed to create agent", err)
 	}
 

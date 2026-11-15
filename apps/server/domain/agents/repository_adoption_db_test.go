@@ -167,7 +167,7 @@ func TestFindAgentsByDefinitionIDProjectScoped(t *testing.T) {
 // #737/#738 BLOCKER: when a definition ALREADY owns a linked runtime row (created
 // by a source-trigger bind, a blueprint apply, or a coordination spawn), the
 // Remember/Forget feature shells must resolve to that SAME row rather than mint a
-// second linked row — which migration 00301's (project_id, agent_definition_id)
+// second linked row — which migration 00302's (project_id, agent_definition_id)
 // partial unique index would reject with 23505 (the HTTP 500). The chat handler's
 // Remember and Forget paths both call this function, so two calls (a Remember run
 // then a Forget run) must both succeed and return the same row.
@@ -201,7 +201,7 @@ func TestFindOrCreateRuntimeAgentForDefinitionReusesExistingLink(t *testing.T) {
 	// by feature name ("Remember session for <def>" / "Forget session for <def>").
 	// That lookup misses a definition that already owns a linked row under its
 	// canonical name, and the handler then minted a second linked row — hitting
-	// migration 00301's partial unique index with 23505 (the 500 at d0d9bc839).
+	// migration 00302's partial unique index with 23505 (the 500 at d0d9bc839).
 	featureName := "Forget session for " + def.Name
 	miss, err := repo.FindByName(ctx, projectID, featureName)
 	require.NoError(t, err)
@@ -269,7 +269,7 @@ func TestFindByNameDeterministic(t *testing.T) {
 }
 
 // TestAgentsDefinitionLinkUniqueIndex pins the #738 partial unique index: after
-// migration 00301 a second runtime row for the same (project_id,
+// migration 00302 a second runtime row for the same (project_id,
 // agent_definition_id) cannot be inserted.
 func TestAgentsDefinitionLinkUniqueIndex(t *testing.T) {
 	if testing.Short() {
@@ -368,6 +368,65 @@ func TestDefinitionForIDProjectScoped(t *testing.T) {
 		"a foreign-project definition id resolved for this project's agent")
 	require.NotNil(t, h.definitionForID(ctx, projectB, &foreignDefID),
 		"the definition did not resolve within its own project")
+}
+
+// TestResolveDefinitionForAgentProjectScopedFK pins the project filter added to
+// ResolveDefinitionForAgent step 1 (the FK lookup): a runtime agent in project B
+// whose agent_definition_id points at project A's definition must not resolve
+// that foreign definition. Steps 2–4 were already project-scoped; step 1 was not.
+func TestResolveDefinitionForAgentProjectScopedFK(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	ctx := context.Background()
+	tdb := testdb.SetupTestDBOrFail(t, ctx, "resolve_definition_project_scope_fk")
+	t.Cleanup(tdb.Close)
+
+	orgID, projectA := insertOrgAndProject(t, tdb.DB, ctx)
+	repo := NewRepository(tdb.DB)
+
+	projectB := uuid.NewString()
+	_, err := tdb.DB.ExecContext(ctx,
+		`INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`,
+		projectB, orgID, "other-project")
+	require.NoError(t, err)
+
+	defA := insertAgentDefinition(t, tdb.DB, ctx, projectA, "Foreign FK Def", "project")
+
+	// A project-B runtime agent whose FK points at project A's definition.
+	foreignAgentID := uuid.NewString()
+	_, err = tdb.DB.ExecContext(ctx,
+		`INSERT INTO kb.agents (id, project_id, name, strategy_type, cron_schedule, agent_definition_id)
+		 VALUES (?, ?, 'Foreign FK Agent', 'definition', '0 0 * * *', ?)`,
+		foreignAgentID, projectB, defA)
+	require.NoError(t, err)
+
+	foreignAgent, err := repo.FindByID(ctx, foreignAgentID, &projectB)
+	require.NoError(t, err)
+	require.NotNil(t, foreignAgent)
+
+	// Step 1 must not resolve the foreign definition; and the neutral name has no
+	// same-name definition in project B, so steps 2–5 also miss and the whole
+	// lookup is nil.
+	def, err := repo.ResolveDefinitionForAgent(ctx, foreignAgent)
+	require.NoError(t, err)
+	require.Nil(t, def, "a foreign-project definition id resolved through the FK lookup")
+
+	// Positive control: a project-A runtime agent linked to defA resolves it.
+	ownAgentID := uuid.NewString()
+	_, err = tdb.DB.ExecContext(ctx,
+		`INSERT INTO kb.agents (id, project_id, name, strategy_type, cron_schedule, agent_definition_id)
+		 VALUES (?, ?, 'Foreign FK Def', 'agent-def:'||?, '0 0 * * *', ?)`,
+		ownAgentID, projectA, defA, defA)
+	require.NoError(t, err)
+	ownAgent, err := repo.FindByID(ctx, ownAgentID, &projectA)
+	require.NoError(t, err)
+	require.NotNil(t, ownAgent)
+
+	got, err := repo.ResolveDefinitionForAgent(ctx, ownAgent)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Equal(t, defA, got.ID)
 }
 
 // TestSyncDefinitionWorkTriggersFallbackReResolvesWinner pins the #738 race

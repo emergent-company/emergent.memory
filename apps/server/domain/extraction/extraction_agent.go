@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/uptrace/bun"
 
 	domainagents "github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/graph"
@@ -18,7 +19,6 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/branchorigin"
 	"github.com/emergent-company/emergent.memory/pkg/branchscope"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
-	"github.com/emergent-company/emergent.memory/pkg/pgutils"
 )
 
 // extractionAgentSelection is the resolved project choice for agent-run
@@ -244,6 +244,13 @@ func withExtractionLineage(ctx context.Context, job *ObjectExtractionJob) contex
 // that backs the selected definition. Agent runs have a FK to kb.agents, so a
 // definition cannot run without one; the row is a stable per-definition shell
 // and is never scheduled (cron 0 0 * * *, disabled).
+//
+// The shell deliberately does NOT hold the definition link: it is internal,
+// auto-managed and never-scheduled, so letting it be the definition's canonical
+// runtime row would break the blueprint apply and trigger paths, which link
+// their own row (23505) and then operate on the disabled shell. Its definition
+// identity lives in the strategy_type marker ('extraction-agent:<defID>') and is
+// resolved by findExtractionRuntimeAgentID, not through ResolveDefinitionForAgent.
 func (w *ObjectExtractionWorker) ensureExtractionRuntimeAgent(ctx context.Context, projectID string, def *domainagents.AgentDefinition) (string, error) {
 	agentID, err := w.findExtractionRuntimeAgentID(ctx, projectID, def.ID)
 	if err != nil {
@@ -253,37 +260,57 @@ func (w *ObjectExtractionWorker) ensureExtractionRuntimeAgent(ctx context.Contex
 		return agentID, nil
 	}
 	name := "extraction-agent:" + def.Name
-	err = w.jobsService.db.NewRaw(`
-		INSERT INTO kb.agents
-			(project_id, name, strategy_type, cron_schedule, enabled, trigger_type, config, description, agent_definition_id)
-		VALUES (?, ?, ?, '0 0 * * *', false, 'manual', '{}'::jsonb,
-		        'Runs document extraction with the project-selected agent definition. Managed automatically.', ?)
-		RETURNING id::text`,
-		projectID, name, "agent-def:"+def.ID, def.ID).Scan(ctx, &agentID)
-	if err != nil {
-		// Lost a create race: the (project_id, agent_definition_id) partial
-		// unique index rejected a concurrent insert. Re-read the winner rather
-		// than failing the run.
-		if pgutils.IsUniqueViolation(err) {
-			if winner, ferr := w.findExtractionRuntimeAgentID(ctx, projectID, def.ID); ferr == nil && winner != "" {
-				return winner, nil
-			}
+	strategyType := "extraction-agent:" + def.ID
+	// The row carries no agent_definition_id, so the (project_id,
+	// agent_definition_id) partial unique index does not cover it and a create
+	// race could mint two shells. Serialise the create on an advisory lock keyed
+	// by (project, definition), re-read inside the lock, and insert only when
+	// the shell is still absent — the read-then-insert-under-lock shape the graph
+	// upsert paths already use. This is the race-safety mechanism for this shape.
+	lockKey := "extraction-agent:" + projectID + ":" + def.ID
+	err = w.jobsService.db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)", lockKey).Exec(ctx); err != nil {
+			return err
 		}
+		var id string
+		if err := tx.NewSelect().
+			TableExpr("kb.agents").
+			ColumnExpr("id::text").
+			Where("project_id = ? AND strategy_type = ?", projectID, strategyType).
+			Order("created_at ASC").
+			Limit(1).
+			Scan(ctx, &id); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if id != "" {
+			agentID = id
+			return nil
+		}
+		return tx.NewRaw(`
+			INSERT INTO kb.agents
+				(project_id, name, strategy_type, cron_schedule, enabled, trigger_type, config, description)
+			VALUES (?, ?, ?, '0 0 * * *', false, 'manual', '{}'::jsonb,
+			        'Runs document extraction with the project-selected agent definition. Managed automatically.')
+			RETURNING id::text`,
+			projectID, name, strategyType).Scan(ctx, &agentID)
+	})
+	if err != nil {
 		return "", fmt.Errorf("create extraction runtime agent: %w", err)
 	}
 	return agentID, nil
 }
 
 // findExtractionRuntimeAgentID returns the runtime agent id backing a definition
-// within a project, or "" when the definition has no runtime row yet. Shared by
-// ensureExtractionRuntimeAgent's lookup and its unique-violation recovery so the
-// two reads agree on the same oldest-first winner.
+// within a project, or "" when the definition has no runtime row yet. The shell
+// is identified by its strategy_type marker ('extraction-agent:<defID>') rather
+// than by agent_definition_id, because the shell intentionally carries no
+// definition link (see ensureExtractionRuntimeAgent).
 func (w *ObjectExtractionWorker) findExtractionRuntimeAgentID(ctx context.Context, projectID, definitionID string) (string, error) {
 	var agentID string
 	err := w.jobsService.db.NewSelect().
 		TableExpr("kb.agents").
 		ColumnExpr("id::text").
-		Where("project_id = ? AND agent_definition_id = ?", projectID, definitionID).
+		Where("project_id = ? AND strategy_type = ?", projectID, "extraction-agent:"+definitionID).
 		Order("created_at ASC").
 		Limit(1).
 		Scan(ctx, &agentID)

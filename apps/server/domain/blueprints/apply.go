@@ -1264,10 +1264,27 @@ func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID
 		AgentDefinitionID: &defID,
 		Config:            map[string]any{"sourceBlueprintId": blueprintID},
 	}
-	// CreateRuntimeAgentForDefinition returns the winning row — on a bind race it
-	// re-resolves to the row that actually owns the definition link — so the
-	// returned agent is authoritative rather than the local candidate.
-	return s.agentRepo.CreateRuntimeAgentForDefinition(ctx, agent)
+	// CreateRuntimeAgentForDefinition returns the winning row — the freshly
+	// created candidate on success, or on a bind race the row that actually owns
+	// the definition link. Apply the manifest config to that winner rather than
+	// discarding it (mirroring syncDefinitionWorkTriggers' conflict branch):
+	// without this, a create that lost a race would return a winner whose
+	// triggerType/reactionConfig/enabled were silently never applied.
+	winner, err := s.agentRepo.CreateRuntimeAgentForDefinition(ctx, agent)
+	if err != nil {
+		return nil, err
+	}
+	winner.TriggerType = triggerType
+	winner.ReactionConfig = reactionConfig
+	winner.CronSchedule = cron
+	winner.Enabled = true
+	winner.StrategyType = "agent-def:" + def.ID
+	winner.AgentDefinitionID = &defID
+	if winner.Config == nil {
+		winner.Config = map[string]any{}
+	}
+	winner.Config["sourceBlueprintId"] = blueprintID
+	return winner, s.agentRepo.UpdateAgent(ctx, winner)
 }
 
 // agentUIConfig marshals an AgentUIManifest into the opaque ui_config JSONB
