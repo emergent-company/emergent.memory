@@ -1,5 +1,6 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import icon from 'astro-icon';
 
 // POC: Astro/Starlight port of docs/site (MkDocs Material).
 // Published at https://emergent-company.github.io/emergent.memory/
@@ -7,6 +8,10 @@ export default defineConfig({
   site: 'https://emergent-company.github.io',
   base: '/emergent.memory',
   integrations: [
+    // Iconify `lucide` set — the icon set the product UI draws (the gateway
+    // renders `lucide--<name>` classes). No runtime JS: SVGs are inlined at
+    // build time by `<Icon name="lucide:..."/>`.
+    icon(),
     starlight({
       title: 'Memory',
       description:

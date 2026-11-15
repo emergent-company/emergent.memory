@@ -1,0 +1,56 @@
+---
+/**
+ * Card — Starlight-compatible card markup with an Iconify (lucide) icon.
+ *
+ * The docs use the product UI's icon set (lucide) instead of Starlight's
+ * built-ins, so a concept draws the same glyph in the app and on the page;
+ * Starlight's set has no network / robot / key / bell / package equivalent.
+ *
+ * Visual styling lives in `src/styles/brand.css` (`.card` block) — this
+ * component only supplies the layout Starlight's own scoped styles would, so a
+ * Card here renders identically to one from `@astrojs/starlight/components`.
+ */
+import { Icon } from 'astro-icon/components';
+
+interface Props {
+  /** Card heading. HTML is allowed (the ported pages link the whole title). */
+  title: string;
+  /** Iconify name, e.g. `lucide:rocket`. */
+  icon?: string;
+}
+
+const { title, icon } = Astro.props;
+---
+
+<article class="card sl-flex">
+  <p class="title sl-flex">
+    {icon && <Icon name={icon} class="icon" aria-hidden="true" />}
+    <span set:html={title} />
+  </p>
+  <div class="body"><slot /></div>
+</article>
+
+<style>
+  .card {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .title {
+    display: flex;
+    align-items: center;
+    margin: 0;
+    line-height: 1.25;
+  }
+
+  .icon {
+    flex-shrink: 0;
+    width: 1.15em;
+    height: 1.15em;
+  }
+
+  .body {
+    margin: 0;
+    font-size: clamp(var(--sl-text-sm), calc(0.5rem + 1vw), var(--sl-text-body));
+  }
+</style>

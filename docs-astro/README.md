@@ -11,8 +11,10 @@ docs-astro/
   src/styles/brand.css    ← the deliverable: product tokens → Starlight tokens
   src/assets/monogram.svg brass "M" logo (copied from the app's brand mark)
   public/favicon.svg
+  src/components/         Card.astro, CardGrid.astro (lucide icons), ThemeSelect
   src/content/docs/       converted MDX (generated — see "Porting")
   scripts/port_mkdocs.py  MkDocs Material → Starlight MDX converter
+  scripts/material-icons.json  `:material-*:` → lucide icon mapping
 ```
 
 ## Run it
@@ -27,9 +29,10 @@ npm run preview   # serve dist/ on :4322
 
 Astro 7 runs `dev` as a background daemon: `npx astro dev status|logs|stop`.
 
-Measured on this host for the 16-page subset: **cold build 4.1 s, warm 3.9 s**,
-home page 6.4 KB gzipped HTML, content page 13.4 KB, 120 KB JS + 92 KB CSS
-total.
+Measured on this host for the 16-page subset: **cold build 4.4 s**, home page
+6.2 KB gzipped HTML, User Guide 8.9 KB, Developer Guide 6.5 KB, `dist/` 2.4 MB
+(of which Pagefind's index is 816 KB), `_astro/` 220 KB — 97 KB of that is
+Scalar's client bundle, the only hydrated island on the site.
 
 ## Why Astro over Zensical
 
@@ -69,6 +72,16 @@ The results of that mapping are the screenshots in the POC report: headings,
 tables, asides, code chips, sidebar pills, cards and buttons all come from the
 product's own values.
 
+Two Starlight details cost real time and are worth knowing before editing
+`brand.css`:
+
+- Starlight nests `<div class="header">` inside `<header class="header">`, so a
+  header rule must target `header.header` or it draws a second, inset hairline.
+- `.not-content` is an **opt-out class the element carries** (LinkButton, card
+  CTAs), so `:not(:where(.not-content *))` does not exempt it — that selector
+  misses the element itself and underlined every button. The prose link rule
+  needs both `:not(.not-content)` and `:not(:where(.not-content *))`.
+
 ## Porting
 
 `scripts/port_mkdocs.py` is the converter and the single source of the
@@ -82,14 +95,38 @@ It handles, and reports:
 |---|---|
 | `!!! note "Title"` (24 pages) | `<Aside type="note\|tip\|caution\|danger">`, title kept |
 | `=== "Label"` content tabs (10 pages) | `<Tabs>/<TabItem>`, recursion inside them |
+| `<div class="grid cards" markdown>` (2 pages) | `<CardGrid>`/`<Card>`; the item's `:material-*:` becomes the card icon, the bold link becomes the card title |
+| `:material-<name>:` (13 names, one page) | `<Icon name="lucide:…"/>` inline, or the `icon` prop inside a card — see "Icons" |
 | duplicate leading `# H1` | dropped — Starlight renders `title` as the H1 |
 | `[x](page.md#anchor)` | rewritten to `/emergent.memory/<route>/#anchor` |
 | unescaped `\|` inside inline code in a table row | escaped (a real MDX breakage: it truncates the code span and leaves raw `<` JSX) |
 | `--8<--` snippets (3 pages) | **not converted** — reported |
 
 The converter prints any link target that has no source page ("BROKEN LINK
-TARGETS") and lists pages linked from the subset but not yet converted (22 in
-this POC). A full port needs the snippet rule and the remaining 59 pages.
+TARGETS"), lists pages linked from the subset but not yet converted (22 in this
+POC), and reports an unmapped `:material-*:` name or an unparsed grid-card line
+instead of guessing. A full port needs the snippet rule and the remaining 59
+pages.
+
+## Icons
+
+The docs draw the **product UI's icon set**. The gateway renders
+`lucide--<name>` Iconify classes (`app.css` → `@plugin "@iconify/tailwind4"`),
+so the docs use the same `lucide` set through `astro-icon` +
+`@iconify-json/lucide`: a concept is the same glyph in the app and on the page.
+
+Icons are inlined as SVG at build time — no runtime JS, no icon font. Two entry
+points:
+
+- `<Card title="…" icon="lucide:rocket">` — `src/components/Card.astro`.
+- `<Icon name="lucide:rocket" />` inline, for an icon in prose.
+
+Starlight's own `Icon`/`Card` come with a fixed set that has no network, robot,
+key, bell or package glyph, and its `Card` tints a rotating accent palette the
+app doesn't have — hence the two local components (`Card`, `CardGrid`), which
+keep Starlight's `.card` markup so `brand.css` styles both identically.
+`scripts/material-icons.json` is the only place a Material name is mapped; add
+a row there rather than hand-editing generated MDX.
 
 ## What the POC demonstrates
 

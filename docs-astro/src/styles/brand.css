@@ -84,9 +84,18 @@ body {
 }
 
 /* ---------- chrome: header ------------------------------------------------
-   The app topbar is base-100 with a hairline bottom edge (`border-base-300`). */
-.header {
+   The app topbar is base-100 with one full-width hairline on its bottom edge.
+   Starlight nests a `<div class="header">` inside `<header class="header">`,
+   so a bare `.header` rule draws the same line twice — the inner one inset
+   from the logo to the social icons. Match the element only. */
+header.header {
   border-bottom: 1px solid oklch(1 0 0 / 0.07);
+}
+
+/* The app has no rule between the topbar and the page body, and no rule above
+   the first section; Starlight adds one between stacked content panels. */
+.content-panel + .content-panel {
+  border-top: 0;
 }
 
 .site-title {
@@ -206,19 +215,25 @@ h1#_top {
 }
 
 /* Anchor-link marker: muted until hover, then brass. Explicit parent selectors
-   because the prose link rule above (`.sl-markdown-content a`, 0-2-0) would
-   otherwise win over a bare `.sl-anchor-link`. */
+   because the prose link rule below (`.sl-markdown-content a`, 0-2-1) would
+   otherwise win over a bare `.sl-anchor-link` — and it sets `text-decoration`,
+   which the marker must not inherit. */
 .sl-markdown-content .sl-heading-wrapper > .sl-anchor-link {
   color: var(--sl-color-gray-4);
   margin-inline-start: 0.35em;
+  text-decoration: none;
 }
 
 .sl-markdown-content .sl-heading-wrapper > .sl-anchor-link:hover {
   color: var(--sl-color-text-accent);
 }
 
-/* ---------- prose: links — brass, restrained underline -------------------- */
-.sl-markdown-content a:not(:where(.not-content *)) {
+/* ---------- prose: links — brass, restrained underline -------------------
+   Two exclusions, for two different shapes: `:not(.not-content)` skips an
+   element that *carries* Starlight's opt-out class (LinkButton, card CTAs),
+   `:not(:where(.not-content *))` skips a descendant of one. Missing the first
+   is what underlined every card button. */
+.sl-markdown-content a:not(.not-content):not(:where(.not-content *)) {
   color: var(--sl-color-text-accent);
   text-decoration: underline;
   text-decoration-thickness: 1px;
@@ -227,9 +242,21 @@ h1#_top {
   transition: color 0.15s ease, text-decoration-color 0.15s ease;
 }
 
-.sl-markdown-content a:not(:where(.not-content *)):hover {
+.sl-markdown-content a:not(.not-content):not(:where(.not-content *)):hover {
   color: oklch(0.82 0.12 80);
   text-decoration-color: var(--sl-color-text-accent);
+}
+
+/* LinkCard is a card, not prose: the title is a panel heading, so it takes the
+   card's ink and no underline. `> .sl-link-card a` outranks the prose rule. */
+.sl-markdown-content .sl-link-card a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.sl-markdown-content .sl-link-card a:hover {
+  color: var(--sl-color-text-accent);
+  text-decoration: none;
 }
 
 /* ---------- prose: inline code — brass-tinted chip at --radius-field ------ */
@@ -314,7 +341,29 @@ h1#_top {
   background-color: oklch(0.215 0.016 274);
   gap: 0.75rem;
   padding: 1.25rem 1.375rem;
+  height: 100%;
   transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+/* Cards in a row share the row's height, so the call to action has to be
+   pinned to the bottom-right of the card rather than trailing the copy —
+   otherwise a one-line card and a four-line card put their buttons at
+   different heights. */
+.sl-markdown-content .card .body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.sl-markdown-content .card .body > .sl-link-button:last-child {
+  margin: auto 0 0 auto;
+  align-self: flex-end;
+}
+
+/* A card whose copy ends in a code span (module path, package name) should not
+   let that span stretch: only the button sits at the bottom edge. */
+.sl-markdown-content .card .body > :not(.sl-link-button):last-child:not(:has(+ .sl-link-button)) {
+  margin-bottom: 0;
 }
 
 .sl-markdown-content .card:hover {
@@ -337,9 +386,28 @@ h1#_top {
   color: var(--sl-color-text-accent);
 }
 
+/* A ported grid card links its whole title (Material renders the first line as
+   the link), so the heading anchor is panel ink, underlined only on hover. */
+.sl-markdown-content .card .title a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.sl-markdown-content .card .title a:hover {
+  color: var(--sl-color-text-accent);
+  text-decoration: none;
+}
+
 .card-grid {
+  display: grid;
   gap: 1rem;
   grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+}
+
+/* Cards own their vertical rhythm: a markdown paragraph's top margin would
+   otherwise offset the first card in a row from the rest. */
+.card-grid > * {
+  margin-top: 0 !important;
 }
 
 /* ---------- components: buttons -----------------------------------------
