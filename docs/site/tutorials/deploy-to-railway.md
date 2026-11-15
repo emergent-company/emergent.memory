@@ -1,14 +1,10 @@
 # Deploy Memory on Railway
 
-This tutorial walks through a complete Memory installation on Railway using the
-installer at [deploy.memory.emergent-company.ai](https://deploy.memory.emergent-company.ai).
-The screenshots below come from a real installation; the temporary password and
-the installer's account email are redacted.
+This tutorial walks through a complete Memory installation on Railway using the installer at [deploy.memory.emergent-company.ai](https://deploy.memory.emergent-company.ai). The screenshots below come from a real installation; the temporary password and the installer's account email are redacted.
 
 ## Before you start
 
-- A Railway account with permission to create projects in the selected
-  workspace.
+- A Railway account with permission to create projects in the selected workspace.
 - Railway capacity for the five services and one bucket the template creates.
 - A browser signed in to the Railway account you want to use.
 

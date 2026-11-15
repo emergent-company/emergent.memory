@@ -288,7 +288,25 @@ node scripts/port-images.mjs && npm run build
 
 A plan is one browser session and an ordered list of steps (`goto`, `type`,
 `click`, `waitFor`, `expect`, `shot`), because a tutorial is one path through
-the UI. Credentials come from `vars`, which name **environment variables**, so
+the UI.
+
+**The plan and the page are generated, not authored here.** Their definitions
+live in the `tutorials` pack of the Memory graph (infra repo:
+`docs/tutorials-graph.md`), so the prose a reader follows and the actions the
+runner performs are one entity and cannot drift — the retracted draft of this
+tutorial is what drift looks like: a page describing v4's login beside pictures
+of v1's.
+
+```bash
+EXP=/root/emergent.memory.infra/scripts/tutorials-export.py
+python3 $EXP --plan deploy-to-railway --out docs-astro/scripts/shots/zitadel.plan.json
+python3 $EXP --md   deploy-to-railway --out docs/site/tutorials/deploy-to-railway.md
+```
+
+`--plan` reproduces the committed plan byte for byte; `--md` differs from the
+published page only in how `summary` and the prerequisite list are re-wrapped.
+Editing either file by hand loses the next regeneration — edit the graph and
+re-run these two commands. Credentials come from `vars`, which name **environment variables**, so
 no secret is committed. `--only <shot-id>` replays the plan up to one picture.
 
 Three guards make a bad capture fail instead of being written:
