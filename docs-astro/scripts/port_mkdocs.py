@@ -49,6 +49,7 @@ PAGES = [
     ("user-guide/agents.md", "user-guide/agents.mdx", "Agents"),
     ("user-guide/branches.md", "user-guide/branches.mdx", "Branches"),
     ("user-guide/datasources.md", "user-guide/datasources.mdx", "Data Sources"),
+    ("tutorials/deploy-to-railway.md", "tutorials/deploy-to-railway.mdx", "Deploy on Railway"),
     ("go-sdk/index.md", "go-sdk.mdx", "Go SDK"),
     ("python-sdk.md", "python-sdk.mdx", "Python SDK"),
     ("swift-sdk.md", "swift-sdk.mdx", "Swift SDK"),
@@ -73,8 +74,21 @@ CARD_IMPORTS = (
 )
 ICON_IMPORT = "import { Icon } from 'astro-icon/components';"
 
+
+def component_import(dst_rel, name):
+    """Import a local component from a generated page of any depth.
+
+    Pages sit at `src/content/docs/<dirs>/<page>.mdx` and components at
+    `src/components/`, so the hop count grows with the page's directory depth —
+    a nested page needs one more `../` than a top-level one.
+    """
+    dirs = posixpath.dirname(dst_rel)
+    depth = len(dirs.split('/')) if dirs else 0
+    return f"import {name} from '{'../' * (2 + depth)}components/{name}.astro';"
+
 ADMON = re.compile(r'^!!!\s+([A-Za-z][\w-]*)(?:\s+"([^"]*)")?\s*$')
 TAB = re.compile(r'^===\s+"([^"]*)"\s*$')
+AUTOLINK = re.compile(r'<(?P<url>https?://[^>\s]+)>')
 MD_LINK = re.compile(r'\]\((?P<target>[^)\s#]+\.md)(?P<frag>#[^)]*)?\)')
 CODE_SPAN = re.compile(r'`[^`]*`')
 # Same span, but with a group so `re.split` keeps the code spans in the result
@@ -92,6 +106,15 @@ GRID_CLOSE = re.compile(r'^</div>\s*$')
 CARD_ITEM = re.compile(r'^-\s+(?::material-(?P<icon>[a-z0-9-]+):\s*)?(?P<head>\S.*?)\s*$')
 CARD_LINK = re.compile(r'^\*\*\[(?P<text>[^\]]+)\]\((?P<href>[^)]+)\)\*\*$')
 SHORTCODE = re.compile(r':material-([a-z0-9-]+):')
+IMAGE = re.compile(r'^!\[(?P<alt>[^\]]*)\]\((?P<src>[^)\s]+)\)\s*$')
+
+# Screenshot dimensions, written by `scripts/port-images.mjs`. Keyed by file
+# name; a page's `![alt](path)` becomes a <Screenshot> with a real
+# width/height so the page does not jump while images load.
+SHOTS = {}
+_shot_manifest = PROJECT / 'public' / 'assets' / 'tutorials' / 'railway' / 'manifest.json'
+if _shot_manifest.exists():
+    SHOTS = json.loads(_shot_manifest.read_text())
 
 # `:material-<name>:` -> lucide icon, shared with the site's `Card` component.
 # Keys starting with `_` are prose (`_comment`), not mappings.
@@ -188,6 +211,9 @@ def rewrite_links(line: str, src_rel: str, routes, stats):
         if route is None:
             return m.group(0)
         return f"]({route}{m.group('frag') or ''})"
+    # MDX parses `<https://…>` as the start of a JSX tag and fails the build, so
+    # the Markdown autolink shortcut has to become an explicit link.
+    line = AUTOLINK.sub(lambda m: f"[{m.group('url')}]({m.group('url')})", line)
     return MD_LINK.sub(fix, line)
 
 
@@ -258,6 +284,37 @@ def convert_grid_cards(lines, start, src_rel, routes, stats):
     return out, i + 1
 
 
+def image_component(alt, src, src_rel, stats):
+    """`![alt](path)` -> `<Screenshot>`, sized from the ported-image manifest.
+
+    MkDocs resolves an image path relative to the page that references it, so
+    that is the rule here too: one source page has to render the same picture on
+    both sites. A page in `tutorials/` therefore writes
+    `../assets/tutorials/railway/01.webp`, and this joins it against the page's
+    own directory before turning it into a site-root URL.
+    """
+    if src.startswith("/"):
+        rel = posixpath.normpath(src)
+    else:
+        rel = posixpath.normpath(posixpath.join(posixpath.dirname(src_rel), src))
+    name = posixpath.basename(rel)
+    dims = SHOTS.get(name)
+    if dims is None:
+        # Source pages may still point at the .png the guide shipped with; the
+        # ported tree carries the same picture as .webp.
+        webp = posixpath.splitext(name)[0] + ".webp"
+        if webp in SHOTS:
+            name, dims = webp, SHOTS[webp]
+    if dims is None:
+        stats["missing_shots"].add(src)
+        return f'<img src="{BASE}/{rel}" alt="{alt}" loading="lazy" />'
+    url = f"{BASE}/{posixpath.dirname(rel)}/{name}"
+    return (
+        f'<Screenshot src="{url}" alt="{alt}" '
+        f'width={{{dims["width"]}}} height={{{dims["height"]}}} />'
+    )
+
+
 def convert(lines, src_rel, routes, stats):
     out = []
     i = 0
@@ -304,6 +361,14 @@ def convert(lines, src_rel, routes, stats):
             out.extend(cards)
             continue
 
+        m = IMAGE.match(stripped)
+        if m:
+            out.append(
+                image_component(m.group("alt"), m.group("src"), src_rel, stats)
+            )
+            i += 1
+            continue
+
         out.append(rewrite_links(escape_table_pipes(line), src_rel, routes, stats))
         i += 1
     return out
@@ -343,6 +408,7 @@ def main():
         "out_of_subset": set(),
         "unmapped_icons": set(),
         "unparsed_cards": set(),
+        "missing_shots": set(),
     }
     DST.mkdir(parents=True, exist_ok=True)
 
@@ -364,9 +430,12 @@ def main():
         body = replace_shortcodes_document(convert(lines, src_rel, routes, stats), src_rel, stats)
         imports = [IMPORTS]
         if any(line.lstrip().startswith("<Card ") for line in body):
-            imports.append(CARD_IMPORTS)
+            imports.append(component_import(dst_rel, "Card"))
+            imports.append(component_import(dst_rel, "CardGrid"))
         if any("<Icon " in line for line in body):
             imports.append(ICON_IMPORT)
+        if any("<Screenshot " in line for line in body):
+            imports.append(component_import(dst_rel, "Screenshot"))
         out = ["---", f'title: "{title}"', "---", "", "\n".join(imports), ""] + body
         dest = DST / dst_rel
         dest.parent.mkdir(parents=True, exist_ok=True)

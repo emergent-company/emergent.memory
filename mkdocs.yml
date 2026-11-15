@@ -80,9 +80,10 @@ nav:
     - Tasks: user-guide/tasks.md
     - Integrations: user-guide/integrations.md
     - Model Setup: user-guide/model-setup.md
+  - Tutorials:
+    - Deploy on Railway: tutorials/deploy-to-railway.md
   - Developer Guide:
-    - Overview: developer-guide/index.md
-    - Provider Setup: developer-guide/provider-setup.md
+    - Overview: developer-guide/index.md    - Provider Setup: developer-guide/provider-setup.md
     - MCP Servers: developer-guide/mcp-servers.md
     - Extraction Pipeline: developer-guide/extraction.md
     - Email Setup: developer-guide/email-setup.md

@@ -303,3 +303,8 @@ threads.tsv
 
 # Flow integration config — removed from the repo; ignore if a local flow CLI regenerates it
 .flow.yml
+
+# Tutorial screenshot pipeline: docs-astro/scripts/redact-tutorial-shots.mjs
+# writes these PNGs as its intermediate, and port-images.mjs turns them into the
+# WebP the sites actually serve. The source captures live in the infra repo.
+docs/site/assets/tutorials/**/*.png
