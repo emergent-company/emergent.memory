@@ -727,7 +727,7 @@ func workflowEditRows(wf *SourceWorkflow) []dsWorkflowEditRow {
 	rows := make([]dsWorkflowEditRow, 0, 6)
 	if wf != nil {
 		for _, reviewer := range wf.Config.Reviewers {
-			rows = append(rows, dsWorkflowEditRow{Lane: reviewer.Lane, Agent: reviewer.Agent})
+			rows = append(rows, dsWorkflowEditRow(reviewer))
 		}
 	}
 	for len(rows) < 6 {
