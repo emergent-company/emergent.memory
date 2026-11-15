@@ -98,7 +98,7 @@ func (s *Service) upsertBackfilledIssue(ctx context.Context, projectID, sourceID
 	if existing, err := s.graph.FindHeadObjectByTypeAndKey(ctx, projectID.String(), "GitHubIssue", key); err == nil && existing != nil && existing.Status != nil {
 		status = *existing.Status
 	}
-	labels := make([]string, 0, len(issue.Labels))
+	labels := make([]any, 0, len(issue.Labels))
 	for _, label := range issue.Labels {
 		if name := strings.TrimSpace(label.Name); name != "" {
 			labels = append(labels, name)
