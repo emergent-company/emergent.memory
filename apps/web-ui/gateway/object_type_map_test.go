@@ -96,7 +96,7 @@ func TestAppShellEmbedsObjectTypeMap(t *testing.T) {
 		compiledType("LegalParagraph", "Legal paragraph", `{"color":"#4F46E5"}`),
 	}, nil)
 	html := renderHTML(t, appShell(
-		"Chat", []layout.SidebarGroup{}, false, nil, "", nil, "", nil, nil, nil, nil, false,
+		"Chat", []layout.SidebarGroup{}, nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
 		0,
 		nil,
 		nil, nil, templ.NopComponent, m,
@@ -114,7 +114,7 @@ func TestAppShellEmbedsObjectTypeMap(t *testing.T) {
 // falls back to humanized type names instead of erroring.
 func TestAppShellObjectTypeMapEmpty(t *testing.T) {
 	html := renderHTML(t, appShell(
-		"Chat", nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
+		"Chat", nil, nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
 		0,
 		nil,
 		nil, nil, templ.NopComponent, nil,

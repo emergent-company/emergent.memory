@@ -163,6 +163,15 @@ func parseObjectRules(c echo.Context) ([]AgentObjectRule, error) {
 			r.Status = st
 		}
 		r.Triggers = parseRuleTriggers(c.FormValue("rule-" + t + "-triggers"))
+		invocation, invErr := parseRuleInvocation(c.FormValue("rule-" + t + "-invocation"))
+		if invErr != nil {
+			return nil, fmt.Errorf("%s invocation: %w", t, invErr)
+		}
+		if invocation != nil {
+			for i := range r.Triggers {
+				r.Triggers[i].Invocation = invocation
+			}
+		}
 		r.Transitions = parseRuleTransitions(c.FormValue("rule-" + t + "-transitions"))
 		if ruleHasConfig(r) {
 			out = append(out, r)
@@ -175,7 +184,14 @@ func parseObjectRules(c echo.Context) ([]AgentObjectRule, error) {
 // Untouched rows are dropped so saving the form cannot silently flip a legacy
 // agent into rules-based pickup with no triggers.
 func ruleHasConfig(r AgentObjectRule) bool {
-	if r.Status != nil || len(r.Fields) > 0 || len(r.Triggers) > 0 || len(r.Transitions) > 0 {
+	hasInvocation := false
+	for _, tr := range r.Triggers {
+		if tr.Invocation != nil {
+			hasInvocation = true
+			break
+		}
+	}
+	if r.Status != nil || len(r.Fields) > 0 || len(r.Triggers) > 0 || len(r.Transitions) > 0 || hasInvocation {
 		return true
 	}
 	for _, f := range []*bool{r.CanCreate, r.CanUpdate, r.CanDelete} {
@@ -350,6 +366,33 @@ func ruleTriggersText(r AgentObjectRule) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func parseRuleInvocation(raw string) (map[string]any, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var inv map[string]any
+	if err := json.Unmarshal([]byte(raw), &inv); err != nil {
+		return nil, fmt.Errorf("must be a JSON object")
+	}
+	return inv, nil
+}
+
+// ruleInvocationText serializes the row's invocation for the edit form. All
+// triggers in a row share the same invocation, which is how the rule editor
+// exposes it.
+func ruleInvocationText(r AgentObjectRule) string {
+	for _, tr := range r.Triggers {
+		if tr.Invocation != nil {
+			raw, err := json.MarshalIndent(tr.Invocation, "", "  ")
+			if err == nil {
+				return string(raw)
+			}
+		}
+	}
+	return ""
 }
 
 // ruleTransitionsText renders transition edges as "from -> to" lines.

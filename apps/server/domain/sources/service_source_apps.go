@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/githubapp"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -69,6 +70,7 @@ type SourceTriggerInput struct {
 	AgentID     string
 	Queue       string
 	EventFilter map[string]any
+	Invocation  *agents.AgentInvocation
 	Enabled     *bool
 }
 
@@ -434,6 +436,7 @@ func (s *Service) CreateSourceTrigger(ctx context.Context, projectID, sourceID u
 		AgentID:     mustUUID(agentID),
 		Queue:       defaultSourceQueue(in.Queue),
 		EventFilter: in.EventFilter,
+		Invocation:  agents.NormalizeInvocation(in.Invocation),
 		Enabled:     enabled,
 	}
 	if trigger.EventFilter == nil {
@@ -475,6 +478,9 @@ func (s *Service) UpdateSourceTrigger(ctx context.Context, projectID, sourceID, 
 	if in.EventFilter != nil {
 		trigger.EventFilter = in.EventFilter
 	}
+	if in.Invocation != nil {
+		trigger.Invocation = agents.NormalizeInvocation(in.Invocation)
+	}
 	if in.Enabled != nil {
 		trigger.Enabled = *in.Enabled
 	}
@@ -508,8 +514,11 @@ func (s *Service) validateTriggerInput(ctx context.Context, projectID uuid.UUID,
 	if eventType == "" && requireAll {
 		return "", apperror.NewValidation("eventType is required")
 	}
-	if eventType != "" && src.Provider == ProviderTypeGitHubApp && eventType != "pull_request" {
-		return "", apperror.NewValidation("github_app supports only the pull_request event")
+	if eventType != "" && src.Provider == ProviderTypeGitHubApp && eventType != "pull_request" && eventType != "issues" {
+		return "", apperror.NewValidation("github_app supports only pull_request and issues events")
+	}
+	if err := agents.ValidateInvocation(in.Invocation); err != nil {
+		return "", apperror.NewValidation("invocation: " + err.Error())
 	}
 	if strings.TrimSpace(in.AgentID) == "" {
 		if requireAll {

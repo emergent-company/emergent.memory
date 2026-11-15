@@ -684,6 +684,11 @@ type ExecuteRequest struct {
 	// than system keys (MEMORY_ACCOUNT_API_KEY, MEMORY_PROJECT_ID, MEMORY_SERVER_URL).
 	EnvVars map[string]string
 
+	// Invocation is the trigger-specific model/context/env/credential request.
+	// Queued runs carry it on the run row; this field covers inline trigger
+	// surfaces that have not created a run yet.
+	Invocation *AgentInvocation
+
 	// SessionID links this run to a session so built-in tools like
 	// set_session_title can update session metadata during execution.
 	SessionID string
@@ -863,6 +868,23 @@ type AgentExecutor struct {
 	// first user message (issue #330). Nil means time.Now. It is a field so
 	// tests can freeze it; runPipeline reads it exactly once per run.
 	now func() time.Time
+
+	// sourceCredentials mints a short-lived credential for a verified source
+	// (e.g. a GitHub App installation token) at run start. Nil disables the
+	// credential path; runs that do not request one are unaffected.
+	sourceCredentials SourceCredentialMinter
+}
+
+// SourceCredentialMinter is implemented by the sources domain. The executor
+// only names the source and the requested permissions; the implementation
+// owns the App key, installation id and token scope.
+type SourceCredentialMinter interface {
+	MintSourceCredential(ctx context.Context, projectID, sourceID, repo string, permissions map[string]string) (string, error)
+}
+
+// SetSourceCredentialMinter installs the run-time source credential minter.
+func (ae *AgentExecutor) SetSourceCredentialMinter(m SourceCredentialMinter) {
+	ae.sourceCredentials = m
 }
 
 // SkillCaptureHook is the post-run hook implemented by skills.CaptureService.
@@ -1077,6 +1099,88 @@ func NewAgentExecutor(
 	}
 }
 
+// applyInvocation merges a trigger invocation into the request and resolves
+// its source credential. The token is minted here, at run start, so a queued
+// run never carries an expiring installation token in its row.
+func (ae *AgentExecutor) applyInvocation(ctx context.Context, run *AgentRun, req *ExecuteRequest) error {
+	inv := req.Invocation
+	if run != nil && run.RunInvocation != nil {
+		inv = run.RunInvocation
+	}
+	if inv == nil {
+		return nil
+	}
+	inv = NormalizeInvocation(inv)
+	if err := ValidateInvocation(inv); err != nil {
+		return fmt.Errorf("invalid trigger invocation: %w", err)
+	}
+
+	if inv.Model != "" && req.Model == "" {
+		req.Model = inv.Model
+	}
+	if inv.MaxSteps != nil && req.MaxSteps == nil {
+		req.MaxSteps = inv.MaxSteps
+	}
+	if req.EnvVars == nil {
+		req.EnvVars = make(map[string]string, len(inv.EnvVars)+1)
+	}
+	for k, v := range inv.EnvVars {
+		if _, exists := req.EnvVars[k]; !exists {
+			req.EnvVars[k] = v
+		}
+	}
+	if len(inv.Context) > 0 {
+		if run != nil {
+			if run.TriggerMetadata == nil {
+				run.TriggerMetadata = map[string]any{}
+			}
+			run.TriggerMetadata["trigger_context"] = inv.Context
+		} else {
+			if req.TriggerMetadata == nil {
+				req.TriggerMetadata = map[string]any{}
+			}
+			req.TriggerMetadata["trigger_context"] = inv.Context
+		}
+	}
+
+	if inv.Credential == nil {
+		return nil
+	}
+	if ae.sourceCredentials == nil {
+		return fmt.Errorf("trigger invocation requests a source credential, but no credential provider is configured")
+	}
+
+	sourceID := strings.TrimSpace(inv.Credential.SourceID)
+	repo := ""
+	if run != nil && run.SourceSubject != nil {
+		if sourceID == "" {
+			sourceID = run.SourceSubject.SourceID
+		}
+		repo = run.SourceSubject.Repo
+	}
+	if run != nil && run.TriggerMetadata != nil {
+		if sourceID == "" {
+			sourceID, _ = run.TriggerMetadata["sourceId"].(string)
+		}
+		if repo == "" {
+			repo, _ = run.TriggerMetadata["repo"].(string)
+		}
+	}
+	if sourceID == "" || repo == "" {
+		return fmt.Errorf("trigger invocation requests a source credential, but the run has no sourceId/repo")
+	}
+	permissions := inv.Credential.Permissions
+	if len(permissions) == 0 {
+		permissions = map[string]string{PermissionContents: "read"}
+	}
+	token, err := ae.sourceCredentials.MintSourceCredential(ctx, req.ProjectID, sourceID, repo, permissions)
+	if err != nil {
+		return fmt.Errorf("mint source credential: %w", err)
+	}
+	req.EnvVars["GH_TOKEN"] = token
+	return nil
+}
+
 // EnsureExecutionEnabled reports whether agent execution is currently permitted
 // by the AGENT_EXECUTION_ENABLED kill switch, returning ErrExecutionDisabled when
 // it is off. Callers that create or claim work before reaching an executor entry
@@ -1137,6 +1241,9 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	dbCtx := context.Background()
 
 	if err := ae.ensureExecutionEnabled(req); err != nil {
+		return nil, err
+	}
+	if err := ae.applyInvocation(ctx, nil, &req); err != nil {
 		return nil, err
 	}
 
@@ -1395,6 +1502,17 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 
 	if err := ae.ensureExecutionEnabled(req); err != nil {
 		return nil, err
+	}
+	if err := ae.applyInvocation(ctx, run, &req); err != nil {
+		return nil, err
+	}
+	if run != nil {
+		if req.Model == "" && run.Model != nil {
+			req.Model = *run.Model
+		}
+		if req.MaxSteps == nil && run.MaxSteps != nil {
+			req.MaxSteps = run.MaxSteps
+		}
 	}
 
 	// The pre-created run was inserted by the caller without the trust marker;

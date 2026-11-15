@@ -77,6 +77,7 @@ nav:
     - CLI Authentication: developer-guide/cli-auth.md
     - Service Accounts: developer-guide/service-accounts.md
     - Sandbox: developer-guide/sandbox.md
+    - GitHub issue coding: developer-guide/github-issue-coding.md
     - MCP Relay: developer-guide/mcp-relay.md
     - A2A and A2UI: developer-guide/a2a-protocol.md
     - Schema: developer-guide/schema.md

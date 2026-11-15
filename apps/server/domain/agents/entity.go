@@ -250,6 +250,11 @@ type AgentRun struct {
 	// verified repo/PR/SHA subject the review tools bind to; never read it from
 	// trigger_metadata (model-settable on spawned runs).
 	SourceSubject *SourceSubject `bun:"source_subject,type:jsonb" json:"sourceSubject,omitempty"`
+	// RunInvocation is the snapshotted trigger invocation for this run. It is
+	// server-written (never from model tool input) and carries no secrets.
+	RunInvocation *AgentInvocation `bun:"run_invocation,type:jsonb" json:"runInvocation,omitempty"`
+	// SourceTriggerID is the source trigger that auto-started this run.
+	SourceTriggerID *string `bun:"source_trigger_id" json:"sourceTriggerId,omitempty"`
 
 	Tools []string `bun:"tools,array" json:"tools,omitempty"`
 
@@ -289,14 +294,22 @@ type CreateRunOptions struct {
 
 // SourceSubject is the verified GitHub source subject for a run.
 type SourceSubject struct {
-	SourceID string `json:"sourceId"`
-	Repo     string `json:"repo"`
-	PRNumber int    `json:"prNumber"`
-	HeadSHA  string `json:"headSha"`
+	SourceID    string `json:"sourceId"`
+	Repo        string `json:"repo"`
+	Kind        string `json:"kind,omitempty"` // pull_request (default) or issue
+	PRNumber    int    `json:"prNumber,omitempty"`
+	IssueNumber int    `json:"issueNumber,omitempty"`
+	HeadSHA     string `json:"headSha,omitempty"`
 }
 
 func (s *SourceSubject) RepositoryValid() bool {
-	return s != nil && s.SourceID != "" && s.Repo != "" && s.HeadSHA != "" && s.PRNumber > 0
+	return s != nil && s.SourceID != "" && s.Repo != "" && s.Kind != "issue" && s.HeadSHA != "" && s.PRNumber > 0
+}
+
+// IssueValid reports whether the subject identifies a GitHub issue. Issue runs
+// have no head SHA; the board item status and delivery id provide idempotency.
+func (s *SourceSubject) IssueValid() bool {
+	return s != nil && s.SourceID != "" && s.Repo != "" && s.Kind == "issue" && s.IssueNumber > 0
 }
 
 type CreateRunQueuedOptions struct {
@@ -312,6 +325,12 @@ type CreateRunQueuedOptions struct {
 	TrustedInternal bool
 	// SourceSubject is set by the source-event dispatcher only.
 	SourceSubject *SourceSubject
+	// Invocation is the trigger-specific run configuration. It is snapshotted
+	// onto the run so later trigger edits cannot change a queued run.
+	Invocation *AgentInvocation
+	// SourceTriggerID identifies the source trigger that produced an auto-start
+	// run. Nil for manual Board assignment.
+	SourceTriggerID *string
 	// Queue overrides the run's dispatch queue. Empty means resolve from the
 	// agent's binding (config override → definition default → "default").
 	Queue string
@@ -484,6 +503,9 @@ type AgentWorkTrigger struct {
 	ObjectType string `json:"objectType"`
 	Status     string `json:"status"`
 	Prompt     string `json:"prompt,omitempty"`
+	// Invocation carries the trigger-specific model, context, env allowlist and
+	// credential request used when the Board starts a manual assignment.
+	Invocation *AgentInvocation `json:"invocation,omitempty"`
 }
 
 // AgentTransition is one agent-permitted status edge (from -> to).

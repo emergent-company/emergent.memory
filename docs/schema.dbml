@@ -491,6 +491,8 @@ Table "kb"."agent_runs" {
   "subject_object_type" text
   "failure_class" text
   "source_subject" jsonb
+  "run_invocation" jsonb
+  "source_trigger_id" uuid
 
   Indexes {
     (agent_id) [name: "idx_agent_runs_agent_id"]
@@ -499,6 +501,7 @@ Table "kb"."agent_runs" {
     (resumed_from) [name: "idx_agent_runs_resumed_from", note: '(resumed_from IS NOT NULL)']
     (root_run_id) [name: "idx_agent_runs_root_run_id", note: '(root_run_id IS NOT NULL)']
     (session_id) [name: "idx_agent_runs_session_id"]
+    (source_trigger_id) [name: "idx_agent_runs_source_trigger", note: '(source_trigger_id IS NOT NULL)']
     (started_at) [name: "idx_agent_runs_started_at"]
     (status) [name: "idx_agent_runs_status"]
     (subject_object_id) [name: "idx_agent_runs_subject_object", note: '(subject_object_id IS NOT NULL)']
@@ -2878,6 +2881,7 @@ Table "kb"."source_triggers" {
   "enabled" boolean [not null, default: true]
   "created_at" timestamptz [not null, default: `now()`]
   "updated_at" timestamptz [not null, default: `now()`]
+  "invocation" jsonb [not null, default: '{}']
 
   Indexes {
     (project_id) [name: "idx_source_triggers_project"]

@@ -69,6 +69,9 @@ func globalScopePath(p string) bool {
 	}
 	for _, pre := range []string{
 		"/o/", "/api/", "/auth/", "/share/", "/static/", "/assets/",
+		// Public discovery documents (/.well-known/memory-instance) are fetched
+		// cross-origin before any scope exists; the hard cut must not 404 them.
+		"/.well-known/",
 		"/webhooks/", "/internal/", "/dev/", "/members", "/invites",
 		"/profile", "/partial/invite-user-search",
 		// Marketplace install links arrive from the external market without a
