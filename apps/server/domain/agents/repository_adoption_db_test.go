@@ -473,7 +473,7 @@ func TestSyncDefinitionWorkTriggersFallbackReResolvesWinner(t *testing.T) {
 	const gateKey int64 = 0x73796e6347617465 // "syncGate"
 	_, err = controller.Exec(ctx, `SELECT pg_advisory_lock($1)`, gateKey)
 	require.NoError(t, err)
-	defer controller.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, gateKey)
+	defer func() { _, _ = controller.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, gateKey) }()
 
 	// The trigger blocks only the handler's own linked insert (the definition's
 	// exact name, matching definition id, outer trigger depth). The controller's

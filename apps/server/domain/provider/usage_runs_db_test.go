@@ -14,8 +14,8 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/testdb"
 )
 
-// usage_test_log discards the repository's structured logging.
-func usage_test_log() *slog.Logger {
+// usageTestLog discards the repository's structured logging.
+func usageTestLog() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
@@ -72,9 +72,6 @@ func seedUsageEvent(t *testing.T, ctx context.Context, db bun.IDB, projectID, or
 }
 
 func strPtr(s string) *string { return &s }
-func timePtr(t time.Time) *time.Time {
-	return &t
-}
 
 // TestGetProjectUsageByAgent_AttributesRunsAndKeepsUnattributedSpend proves the
 // breakdown a reader can reconcile with the range total: every attributed
@@ -88,7 +85,7 @@ func TestGetProjectUsageByAgent_AttributesRunsAndKeepsUnattributedSpend(t *testi
 	tdb := testdb.SetupTestDBOrFail(t, ctx, "usagebyagent")
 	t.Cleanup(tdb.Close)
 	db := tdb.DB
-	repo := NewRepository(db, usage_test_log())
+	repo := NewRepository(db, usageTestLog())
 	projectID, orgID := seedUsageProject(t, ctx, db)
 
 	coding := seedUsageAgent(t, ctx, db, projectID, "coding")
@@ -150,7 +147,7 @@ func TestGetProjectUsageRuns_LogOrdersByActivityAndPages(t *testing.T) {
 	tdb := testdb.SetupTestDBOrFail(t, ctx, "usageruns")
 	t.Cleanup(tdb.Close)
 	db := tdb.DB
-	repo := NewRepository(db, usage_test_log())
+	repo := NewRepository(db, usageTestLog())
 	projectID, orgID := seedUsageProject(t, ctx, db)
 
 	coding := seedUsageAgent(t, ctx, db, projectID, "coding")
