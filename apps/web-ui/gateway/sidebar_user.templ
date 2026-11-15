@@ -42,9 +42,15 @@ templ appSidebar(groups []layout.SidebarGroup, marketplaceItems []layout.Sidebar
 				}
 			</div>
 		</div>
-		<!-- Bottom-pinned external destinations (Marketplace). The nav above grows
-		     to fill the column, so this block sits at the bottom edge; the version
-		     line stays the final metadata row beneath it. -->
+		<!-- Footer: build version. Durable and always reachable so a reporter can
+		     copy the running build into an issue (the same value /api/health
+		     exposes) instead of answering "version not shown in the UI". -->
+		<div class="border-base-content/10 shrink-0 border-t px-5 py-3">
+			<p class="text-muted-faint font-mono text-[11px] select-all" data-testid="app-version" title="Build version">{ buildVersionLabel() }</p>
+		</div>
+		<!-- The sidebar's last element: external destinations (Marketplace),
+		     after the build-version footer. The nav above grows, so this block is
+		     pinned to the bottom edge and everything else stays at the top. -->
 		if len(marketplaceItems) > 0 {
 			<div class="sidebar-menu border-base-content/10 shrink-0 border-t px-2.5 py-3" data-testid="sidebar-marketplace">
 				<div class="space-y-0.5">
@@ -69,12 +75,6 @@ templ appSidebar(groups []layout.SidebarGroup, marketplaceItems []layout.Sidebar
 				</div>
 			</div>
 		}
-		<!-- Footer: build version. Durable and always reachable so a reporter can
-		     copy the running build into an issue (the same value /api/health
-		     exposes) instead of answering "version not shown in the UI". -->
-		<div class="border-base-content/10 shrink-0 border-t px-5 py-3">
-			<p class="text-muted-faint font-mono text-[11px] select-all" data-testid="app-version" title="Build version">{ buildVersionLabel() }</p>
-		</div>
 	</div>
 	<script>
 	(function() {

@@ -125,8 +125,8 @@ func TestMarketplaceRendersAtSidebarBottom(t *testing.T) {
 	if nav < 0 || version < 0 {
 		t.Fatalf("sidebar anchors missing (nav=%d version=%d)", nav, version)
 	}
-	if nav >= footer || footer >= version {
-		t.Fatalf("marketplace not bottom-aligned above the version footer: nav=%d market=%d version=%d", nav, footer, version)
+	if nav >= version || version >= footer {
+		t.Fatalf("marketplace is not the sidebar's last element: nav=%d version=%d market=%d", nav, version, footer)
 	}
 	navClass := strings.Index(html, `class="sidebar-menu grow overflow-y-auto"`)
 	navOpen := strings.LastIndex(html[:navClass], "<div")
