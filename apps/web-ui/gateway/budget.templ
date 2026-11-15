@@ -117,11 +117,15 @@ templ budgetWindowCard(w *BudgetWindowState, window string) {
 					<input type="hidden" name="window" value={ window }/>
 					<input type="hidden" name="back" value="usage"/>
 					@ui.Button(ui.ButtonProps{
+						// Type is what emits the button's type attribute. Passing
+						// "type" through Attrs emits a SECOND one, and a browser uses
+						// the first — ui.Button defaults to type="button", so the
+						// control silently stopped submitting the form (#reset).
+						Type:    ui.ButtonTypeSubmit,
 						Variant: ui.ButtonGhost,
 						Size:    ui.ButtonXS,
 						Icon:    "lucide--rotate-ccw",
 						Attrs: templ.Attributes{
-							"type":        "submit",
 							"data-testid": "budget-reset-" + window,
 							"onclick":     "return confirm('Reset the " + budgetWindowNoun(window) + " window? Spend so far in this window will stop counting toward the cap. Usage history is not deleted.')",
 						},

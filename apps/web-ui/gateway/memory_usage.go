@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -187,6 +188,118 @@ func (m *MemoryClient) GetProjectUsageTimeSeries(ctx context.Context, granularit
 		path += "?" + q.Encode()
 	}
 	var out UsageTimeSeriesResponse
+	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// UsageByAgentRow is one agent's share of a project's usage. An empty AgentID
+// with an empty AgentName is the unattributed bucket: spend recorded with no
+// agent run behind it (direct API and embedding calls). It is a real row, not a
+// parse failure — the table renders it as "Unattributed" so the breakdown adds
+// up to the range total.
+type UsageByAgentRow struct {
+	AgentID          string  `json:"agentId"`
+	AgentName        string  `json:"agentName"`
+	RunCount         int64   `json:"runCount"`
+	TotalText        int64   `json:"totalText"`
+	TotalImage       int64   `json:"totalImage"`
+	TotalVideo       int64   `json:"totalVideo"`
+	TotalAudio       int64   `json:"totalAudio"`
+	TotalOutput      int64   `json:"totalOutput"`
+	TotalCached      int64   `json:"totalCached"`
+	EstimatedCostUSD float64 `json:"estimatedCostUsd"`
+}
+
+// TokenCount sums the row's token buckets.
+func (r UsageByAgentRow) TokenCount() int64 {
+	return r.TotalText + r.TotalImage + r.TotalVideo + r.TotalAudio + r.TotalOutput
+}
+
+// Attributed reports whether the row belongs to an agent (false for the
+// unattributed bucket).
+func (r UsageByAgentRow) Attributed() bool { return r.AgentID != "" }
+
+// UsageByAgentResponse is the bare (unwrapped) GET /usage/by-agent response.
+// RunCount is the project's total run count behind the rows, so the usage page
+// does not need a second request just to print it.
+type UsageByAgentResponse struct {
+	Note     string            `json:"note"`
+	Data     []UsageByAgentRow `json:"data"`
+	RunCount int64             `json:"runCount"`
+}
+
+// UsageRunRow is one agent run in the cost log, with the usage it accumulated.
+type UsageRunRow struct {
+	RunID            string     `json:"runId"`
+	AgentID          string     `json:"agentId"`
+	AgentName        string     `json:"agentName"`
+	Status           string     `json:"status"`
+	SessionID        *string    `json:"sessionId,omitempty"`
+	TriggerSource    *string    `json:"triggerSource,omitempty"`
+	Model            *string    `json:"model,omitempty"`
+	StartedAt        time.Time  `json:"startedAt"`
+	CompletedAt      *time.Time `json:"completedAt,omitempty"`
+	DurationMs       *int       `json:"durationMs,omitempty"`
+	LastEventAt      time.Time  `json:"lastEventAt"`
+	EventCount       int64      `json:"eventCount"`
+	TotalText        int64      `json:"totalText"`
+	TotalImage       int64      `json:"totalImage"`
+	TotalVideo       int64      `json:"totalVideo"`
+	TotalAudio       int64      `json:"totalAudio"`
+	TotalOutput      int64      `json:"totalOutput"`
+	TotalCached      int64      `json:"totalCached"`
+	EstimatedCostUSD float64    `json:"estimatedCostUsd"`
+}
+
+// TokenCount sums the run's token buckets.
+func (r UsageRunRow) TokenCount() int64 {
+	return r.TotalText + r.TotalImage + r.TotalVideo + r.TotalAudio + r.TotalOutput
+}
+
+// UsageRunListResponse is the bare (unwrapped) GET /usage/runs response: one
+// page of the log plus the total row count for the same filter.
+type UsageRunListResponse struct {
+	Note   string        `json:"note"`
+	Data   []UsageRunRow `json:"data"`
+	Total  int           `json:"total"`
+	Limit  int           `json:"limit"`
+	Offset int           `json:"offset"`
+}
+
+// GetProjectUsageByAgent returns the project's usage grouped by the agent that
+// caused it, highest cost first, including the unattributed bucket.
+func (m *MemoryClient) GetProjectUsageByAgent(ctx context.Context, since, until time.Time) (*UsageByAgentResponse, error) {
+	path := "/api/v1/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/usage/by-agent"
+	if q := usageQueryParams(since, until); len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	var out UsageByAgentResponse
+	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetProjectUsageRuns returns one page of the project's per-run cost log,
+// newest activity first. agentID narrows it to one agent ("" = every agent).
+func (m *MemoryClient) GetProjectUsageRuns(ctx context.Context, since, until time.Time, agentID string, limit, offset int) (*UsageRunListResponse, error) {
+	path := "/api/v1/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/usage/runs"
+	q := usageQueryParams(since, until)
+	if agentID != "" {
+		q.Set("agentId", agentID)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset > 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	var out UsageRunListResponse
 	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}

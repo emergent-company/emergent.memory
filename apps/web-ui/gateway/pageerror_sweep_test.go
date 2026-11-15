@@ -120,6 +120,16 @@ var sweptPages = []sweepPage{
 		},
 	},
 	{
+		name:   "usage run log",
+		path:   "/usage/sessions",
+		setErr: func(f *fakeMemory, err error) { f.usageRunsErr = err },
+		mount: func(s *Server) *echo.Echo {
+			e := echo.New()
+			e.GET("/usage/sessions", s.uiUsageSessions)
+			return e
+		},
+	},
+	{
 		name:   "objects browse",
 		path:   "/objects",
 		setErr: func(f *fakeMemory, err error) { f.pageErr = err },

@@ -317,11 +317,14 @@ templ budgetWindowFields(window, label string, capUSD, threshold *float64, state
 				<input type="hidden" name="window" value={ window }/>
 				<input type="hidden" name="back" value="settings"/>
 				@ui.Button(ui.ButtonProps{
+					// Type, not Attrs["type"]: see budgetWindowCard — a duplicate
+					// attribute leaves the first one (type="button") in effect and
+					// the button never submits.
+					Type:    ui.ButtonTypeSubmit,
 					Variant: ui.ButtonSecondary,
 					Size:    ui.ButtonSM,
 					Icon:    "lucide--rotate-ccw",
 					Attrs: templ.Attributes{
-						"type":        "submit",
 						"data-testid": "budget-settings-reset-" + window,
 						"onclick":     "return confirm('Reset the " + budgetWindowNoun(window) + " window? Spend so far in this window will stop counting toward the cap. Usage history is not deleted.')",
 					},
