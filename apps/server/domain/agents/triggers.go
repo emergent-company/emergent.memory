@@ -557,8 +557,15 @@ func (ts *TriggerService) enqueueWorkRun(ctx context.Context, agent *Agent, agen
 	// Assignee routing: an assigned object wakes only the listener whose name
 	// matches the assignee (project scoping was already applied by handleEvent).
 	data, _ := input["data"].(map[string]any)
-	if assignee, ok := data["assignee"].(string); ok && assignee != "" && agent.Name != assignee {
+	assignee, _ := data["assignee"].(string)
+	if assignee != "" && agent.Name != assignee {
 		return // not the assigned lane
+	}
+	// A backfilled GitHub issue is created unassigned. It must wait for a human
+	// assignment; otherwise a bulk import starts a run for every historical
+	// issue. Auto-start items are created with the trigger agent as assignee.
+	if skipUnassignedCreatedIssue(eventType, objectType, assignee) {
+		return
 	}
 
 	// Pickup match: rules-based agents match an (objectType, status) trigger
@@ -736,6 +743,13 @@ func firstTriggerForType(agentDef *AgentDefinition, objectType string) *AgentWor
 		return &r.Triggers[0]
 	}
 	return nil
+}
+
+// skipUnassignedCreatedIssue keeps a bulk GitHub issue backfill idle: the
+// created event fires once per item, but an unassigned item waits for a human.
+// Auto-start items are created with the trigger agent already assigned.
+func skipUnassignedCreatedIssue(eventType ReactionEventType, objectType, assignee string) bool {
+	return eventType == EventTypeCreated && objectType == "GitHubIssue" && assignee == ""
 }
 
 // workPickupMatch evaluates the 4-way pickup signal for an object-driven
