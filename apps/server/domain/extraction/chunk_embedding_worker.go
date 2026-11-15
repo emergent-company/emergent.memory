@@ -120,6 +120,28 @@ func (w *ChunkEmbeddingWorker) markBudgetBlocked(projectID string) {
 	w.budgetBlockMu.Unlock()
 }
 
+// invalidateBudgetBlock drops the cached over-budget verdict for a project so
+// the next job re-reads the budget instead of being parked from a stale cache.
+func (w *ChunkEmbeddingWorker) invalidateBudgetBlock(projectID string) {
+	w.budgetBlockMu.Lock()
+	delete(w.budgetBlockedUntil, projectID)
+	w.budgetBlockMu.Unlock()
+}
+
+// UnparkProjectBudget is the recovery hook the projects service calls when a
+// project's monthly or weekly cap is raised or cleared: it drops this worker's
+// cached "over budget" verdict for the project and makes its budget-parked chunk
+// jobs due immediately, instead of leaving the queue parked for the backoff (up
+// to budgetBlockMaxDelaySec) or the cache TTL (issue #724).
+func (w *ChunkEmbeddingWorker) UnparkProjectBudget(ctx context.Context, projectID string) error {
+	w.invalidateBudgetBlock(projectID)
+	if w.jobs == nil {
+		return nil
+	}
+	_, err := w.jobs.UnparkBudgetExceededForProject(ctx, projectID)
+	return err
+}
+
 // Start begins the worker's polling loop
 func (w *ChunkEmbeddingWorker) Start(ctx context.Context) error {
 	w.mu.Lock()
