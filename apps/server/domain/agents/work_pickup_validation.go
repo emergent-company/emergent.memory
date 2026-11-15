@@ -80,6 +80,9 @@ func ValidateWorkRules(def *AgentDefinition, types map[string]WorkRuleType) erro
 				return fmt.Errorf("%s: trigger status %q is declared more than once", r.ObjectType, tr.Status)
 			}
 			seenTriggers[tr.Status] = true
+			if err := ValidateInvocation(tr.Invocation); err != nil {
+				return fmt.Errorf("%s: trigger %q: %w", r.ObjectType, tr.Status, err)
+			}
 		}
 
 		for j := range r.Transitions {

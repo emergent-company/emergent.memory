@@ -5,6 +5,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
+
+	"github.com/emergent-company/emergent.memory/domain/agents"
 )
 
 // Source event states.
@@ -72,9 +74,12 @@ type SourceTrigger struct {
 	AgentID     uuid.UUID      `bun:"agent_id,notnull,type:uuid" json:"agentId"`
 	Queue       string         `bun:"queue,notnull,default:'default'" json:"queue"`
 	EventFilter map[string]any `bun:"event_filter,type:jsonb,notnull" json:"eventFilter"`
-	Enabled     bool           `bun:"enabled,notnull" json:"enabled"`
-	CreatedAt   time.Time      `bun:"created_at,notnull,default:now()" json:"createdAt"`
-	UpdatedAt   time.Time      `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+	// Invocation carries the trigger-specific model/context/env/credential
+	// request. It is snapshotted onto a run at dispatch time.
+	Invocation *agents.AgentInvocation `bun:"invocation,type:jsonb,notnull,default:'{}'" json:"invocation,omitempty"`
+	Enabled    bool                    `bun:"enabled,notnull" json:"enabled"`
+	CreatedAt  time.Time               `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	UpdatedAt  time.Time               `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
 
 	// AgentName is the bound runtime agent's display name, resolved on read for
 	// the trigger panel. Not a column: the picker offers agent definitions while

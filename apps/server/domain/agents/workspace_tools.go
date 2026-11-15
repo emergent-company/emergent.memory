@@ -877,14 +877,14 @@ func buildGitTool(deps WorkspaceToolDeps) (tool.Tool, error) {
 		functiontool.Config{
 			Name: "workspace_git",
 			Description: "Execute structured git operations in the workspace container. " +
-				"Supported actions: status, diff, commit, checkout, clone. " +
+				"Supported actions: status, diff, commit, checkout, clone, push. " +
 				"For commit, provide a message and optionally a list of files to stage. " +
 				"For clone, provide a url (https only) and optionally a path (destination directory) and branch. " +
-				"Push/pull are not available (credential management is server-side).",
+				"For push, provide a branch; the sandbox's per-run GH_TOKEN authenticates the push.",
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
 				Properties: map[string]*jsonschema.Schema{
-					"action":  {Type: "string", Description: "Git action to perform", Enum: []any{"status", "diff", "commit", "checkout", "clone"}},
+					"action":  {Type: "string", Description: "Git action to perform", Enum: []any{"status", "diff", "commit", "checkout", "clone", "push"}},
 					"message": {Type: "string", Description: "Commit message (for commit action)"},
 					"files":   {Type: "array", Description: "Files to stage (for commit action)", Items: &jsonschema.Schema{Type: "string"}},
 					"branch":  {Type: "string", Description: "Branch name (for checkout/clone actions)"},
@@ -933,6 +933,15 @@ func buildGitTool(deps WorkspaceToolDeps) (tool.Tool, error) {
 					return map[string]any{"error": "invalid branch name: must contain only alphanumeric characters, dots, slashes, hyphens and underscores"}, nil
 				}
 				cmd = fmt.Sprintf("git checkout -b %q 2>/dev/null || git checkout %q", branch, branch)
+			case "push":
+				branch, _ := args["branch"].(string)
+				if branch == "" {
+					return map[string]any{"error": "branch is required for push action"}, nil
+				}
+				if match, _ := regexp.MatchString(`^[a-zA-Z0-9_\-\./]+$`, branch); !match {
+					return map[string]any{"error": "invalid branch name: must contain only alphanumeric characters, dots, slashes, hyphens and underscores"}, nil
+				}
+				cmd = fmt.Sprintf("git push -u origin %q", branch)
 			case "clone":
 				return executeGitClone(ctx, args, deps)
 			default:
@@ -941,9 +950,14 @@ func buildGitTool(deps WorkspaceToolDeps) (tool.Tool, error) {
 				}, nil
 			}
 
+			env := map[string]string(nil)
+			if action == "push" {
+				env = deps.SessionEnv
+			}
 			result, err := provider.Exec(ctx, providerID, &sandbox.ExecRequest{
 				Command:   cmd,
 				TimeoutMs: 60000, // 60s timeout for git operations
+				Env:       env,
 			})
 			if err != nil {
 				return map[string]any{"error": fmt.Sprintf("git operation failed: %s", err.Error())}, nil

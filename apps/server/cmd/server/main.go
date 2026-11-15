@@ -52,6 +52,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/health"
 	"github.com/emergent-company/emergent.memory/domain/invites"
 	"github.com/emergent-company/emergent.memory/domain/journal"
+	"github.com/emergent-company/emergent.memory/domain/market"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
 	"github.com/emergent-company/emergent.memory/domain/mcprelay"
@@ -180,6 +181,7 @@ func coreFxOptions() fx.Option {
 		skills.Module,
 		schemas.Module,
 		blueprints.Module,
+		market.Module,
 		schemaregistry.Module,
 		useraccess.Module,
 		useractivity.Module,

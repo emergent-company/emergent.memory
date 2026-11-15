@@ -82,6 +82,69 @@ func sidebarGroups(base string, isOrgAdmin bool) []layout.SidebarGroup {
 	return sidebarGroupsWithWarn(base, isOrgAdmin, sidebarWarns{})
 }
 
+// marketSidebarItems builds the external Marketplace entries from config. The
+// primary market is labelled "Marketplace"; additional trusted issuers are
+// labelled by environment (dev/prod) so no two entries share an accessible
+// name. Returns nil when no market URL is configured, which hides the entry.
+func (s *Server) marketSidebarItems() []layout.SidebarItem {
+	if s.cfg.MarketURL == "" {
+		return nil
+	}
+	issuers := make([]string, 0, len(s.cfg.MarketTrustedIssuers)+1)
+	issuers = append(issuers, s.cfg.MarketURL)
+	seen := map[string]struct{}{s.cfg.MarketURL: {}}
+	for _, issuer := range s.cfg.MarketTrustedIssuers {
+		if _, dup := seen[issuer]; dup {
+			continue
+		}
+		seen[issuer] = struct{}{}
+		issuers = append(issuers, issuer)
+	}
+
+	usedLabels := make(map[string]struct{}, len(issuers))
+	items := make([]layout.SidebarItem, 0, len(issuers))
+	for i, issuer := range issuers {
+		label := "Marketplace"
+		if i > 0 {
+			label = marketIssuerLabel(issuer)
+		}
+		if _, dup := usedLabels[label]; dup {
+			label = label + " — " + marketIssuerHost(issuer)
+		}
+		usedLabels[label] = struct{}{}
+		items = append(items, layout.SidebarItem{
+			Label: label,
+			Href:  issuer,
+			Icon:  "lucide--store",
+			Attrs: templ.Attributes{
+				"target":     "_blank",
+				"rel":        "noopener noreferrer",
+				"hx-disable": "true",
+			},
+		})
+	}
+	return items
+}
+
+// marketIssuerLabel derives the secondary-entry label from the issuer host.
+// The dev market is market.dev.memory.emergent-company.ai, so a bare "dev."
+// prefix is not enough: any host with a `.dev.` segment (or a leading `dev.`)
+// is the dev environment.
+func marketIssuerLabel(issuer string) string {
+	host := marketIssuerHost(issuer)
+	if host == "dev" || strings.HasPrefix(host, "dev.") || strings.Contains(host, ".dev.") {
+		return "Marketplace (dev)"
+	}
+	return "Marketplace (prod)"
+}
+
+func marketIssuerHost(issuer string) string {
+	if u, err := url.Parse(issuer); err == nil {
+		return strings.ToLower(u.Hostname())
+	}
+	return issuer
+}
+
 // sidebarSettingsHref reports whether href points at the sidebar's Settings hub
 // for any link base — "/settings" unscoped, "/o/{org}/settings" for an org
 // scope, "/o/{org}/p/{project}/settings" for a project scope. It exists so the
@@ -124,6 +187,12 @@ type sidebarWarns struct {
 // document-related terminal failures only; other areas surface in the Documents
 // panel and can earn their own badge later.
 func sidebarGroupsWithWarn(base string, isOrgAdmin bool, warns sidebarWarns) []layout.SidebarGroup {
+	return sidebarGroupsWithMarket(base, isOrgAdmin, warns, nil)
+}
+
+// sidebarGroupsWithMarket is sidebarGroupsWithWarn plus the external marketplace
+// entries, which the page layer derives from config.
+func sidebarGroupsWithMarket(base string, isOrgAdmin bool, warns sidebarWarns, market []layout.SidebarItem) []layout.SidebarGroup {
 	documentsItem := layout.SidebarItem{Label: "Documents", Href: base + "/documents", Icon: "lucide--file-text"}
 	if warns.Documents > 0 {
 		documentsItem.Warn = sidebarWarnBadge(warns.Documents)
@@ -155,16 +224,18 @@ func sidebarGroupsWithWarn(base string, isOrgAdmin bool, warns sidebarWarns) []l
 		// entry beats landing a non-admin on a page that degrades to an error.
 		projectItems = append(projectItems, layout.SidebarItem{Label: "Backups", Href: base + "/backups", Icon: "lucide--archive"})
 	}
+	topItems := []layout.SidebarItem{
+		{Label: "Approvals", Href: base + "/settings/approvals", Icon: "lucide--shield-check"},
+		{Label: "Chat", Href: base + "/chat", Icon: "lucide--messages-square"},
+		{Label: "Search", Href: base + "/search", Icon: "lucide--search"},
+		{Label: "Sessions", Href: base + "/sessions", Icon: "lucide--history"},
+	}
+	topItems = append(topItems, market...)
 	return []layout.SidebarGroup{
 		{
 			// Ungrouped top-level entries: pulled out of their groups to sit
 			// at the very top of the sidebar.
-			Items: []layout.SidebarItem{
-				{Label: "Approvals", Href: base + "/settings/approvals", Icon: "lucide--shield-check"},
-				{Label: "Chat", Href: base + "/chat", Icon: "lucide--messages-square"},
-				{Label: "Search", Href: base + "/search", Icon: "lucide--search"},
-				{Label: "Sessions", Href: base + "/sessions", Icon: "lucide--history"},
-			},
+			Items: topItems,
 		},
 		{
 			Label: "Work",
@@ -201,6 +272,10 @@ func sidebarGroupsWithWarn(base string, isOrgAdmin bool, warns sidebarWarns) []l
 // the delete-org danger zone. isOrgAdmin gates the Members entry (the page
 // exposes whole-org member PII, org_admin-only per #1015).
 func orgSidebarGroups(base string, isOrgAdmin bool) []layout.SidebarGroup {
+	return orgSidebarGroupsWithMarket(base, isOrgAdmin, nil)
+}
+
+func orgSidebarGroupsWithMarket(base string, isOrgAdmin bool, market []layout.SidebarItem) []layout.SidebarGroup {
 	items := []layout.SidebarItem{
 		{Label: "Projects", Href: base, Icon: "lucide--folder"},
 	}
@@ -208,7 +283,11 @@ func orgSidebarGroups(base string, isOrgAdmin bool) []layout.SidebarGroup {
 		items = append(items, layout.SidebarItem{Label: "Members", Href: base + "/members", Icon: "lucide--users"})
 	}
 	items = append(items, layout.SidebarItem{Label: "Settings", Href: base + "/settings", Icon: "lucide--settings"})
-	return []layout.SidebarGroup{{Label: "Organization", Items: items}}
+	groups := []layout.SidebarGroup{}
+	if len(market) > 0 {
+		groups = append(groups, layout.SidebarGroup{Items: market})
+	}
+	return append(groups, layout.SidebarGroup{Label: "Organization", Items: items})
 }
 
 // partialWithTitle prefixes an hx-boost partial fragment with a <title> element
@@ -477,7 +556,7 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 		} else {
 			budgetLevel = budgetBadgeLevel(state)
 		}
-		groups = layout.ActiveSidebarGroups(sidebarGroupsWithWarn(navBase, isOrgAdmin(tree, backupsOrgID), sidebarWarns{Documents: documentsWarn, Budget: budgetLevel}), activePath)
+		groups = layout.ActiveSidebarGroups(sidebarGroupsWithMarket(navBase, isOrgAdmin(tree, backupsOrgID), sidebarWarns{Documents: documentsWarn, Budget: budgetLevel}, s.marketSidebarItems()), activePath)
 		// Warn in the settings nav when the active project has zero configured
 		// LLM providers. Fail-safe helper: false on lookup errors.
 		providersMissing = s.projectHasNoProviders(c.Request().Context())
@@ -489,7 +568,7 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 		if orgNavBase == "" {
 			orgNavBase = "/o/" + activeOrgID
 		}
-		groups = layout.ActiveSidebarGroups(orgSidebarGroups(orgNavBase, isOrgAdmin(tree, activeOrgID)), activePath)
+		groups = layout.ActiveSidebarGroups(orgSidebarGroupsWithMarket(orgNavBase, isOrgAdmin(tree, activeOrgID), s.marketSidebarItems()), activePath)
 	}
 	// Recent projects for the picker's "Recent" section (only when the user
 	// has more than ten projects). Recent ids come from the durable cookie,

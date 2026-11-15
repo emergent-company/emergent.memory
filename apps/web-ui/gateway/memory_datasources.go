@@ -1030,6 +1030,7 @@ type DSSourceTriggerRequest struct {
 	AgentID     string         `json:"agentId,omitempty"`
 	Queue       string         `json:"queue,omitempty"`
 	EventFilter map[string]any `json:"eventFilter,omitempty"`
+	Invocation  map[string]any `json:"invocation,omitempty"`
 	Enabled     *bool          `json:"enabled,omitempty"`
 }
 
@@ -1111,6 +1112,19 @@ func (m *MemoryClient) ListProjectSourceApps(ctx context.Context) ([]SourceApp, 
 		return nil, err
 	}
 	return out, nil
+}
+
+// BackfillSourceIssues imports all open issues for a github_app source as
+// unassigned board items.
+func (m *MemoryClient) BackfillSourceIssues(ctx context.Context, sourceID string) (int, error) {
+	var out struct {
+		Imported int `json:"imported"`
+	}
+	path := "/api/data-source-integrations/" + url.PathEscape(sourceID) + "/issues/backfill"
+	if err := m.doH(ctx, http.MethodPost, path, nil, m.documentHeaders(ctx), &out); err != nil {
+		return 0, err
+	}
+	return out.Imported, nil
 }
 
 // CreateProjectSourceApp registers an App from the project surface. scope=org

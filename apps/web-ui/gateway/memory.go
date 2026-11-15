@@ -595,9 +595,10 @@ type AgentWorkContract struct {
 
 // AgentWorkTrigger is one pickup rule row (object type + status + prompt).
 type AgentWorkTrigger struct {
-	ObjectType string `json:"objectType"`
-	Status     string `json:"status"`
-	Prompt     string `json:"prompt,omitempty"`
+	ObjectType string         `json:"objectType"`
+	Status     string         `json:"status"`
+	Prompt     string         `json:"prompt,omitempty"`
+	Invocation map[string]any `json:"invocation,omitempty"`
 }
 
 // AgentTransition is one agent-permitted status edge.

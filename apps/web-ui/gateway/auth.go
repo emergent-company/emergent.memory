@@ -1036,6 +1036,7 @@ func publicAuthPath(p string) bool {
 	switch p {
 	case "/auth/login", "/auth/start", "/auth/add", "/auth/callback", "/auth/logout",
 		"/auth/switch", "/api/setup", "/api/health",
+		"/.well-known/memory-instance",
 		// Public deploy portal and its Railway OAuth callback. /deploy/ is
 		// deliberately absent: no route serves it, and an allowlist entry
 		// without a handler only widens the unauthenticated surface.
