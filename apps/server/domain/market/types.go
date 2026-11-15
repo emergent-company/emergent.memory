@@ -95,6 +95,20 @@ type BundleRef struct {
 	URL       string   `json:"url,omitempty"`
 }
 
+// Pricing is a catalog listing's price. Both amount and free are pointers so an
+// absent field means "not disclosed", never "free".
+type Pricing struct {
+	Free        *bool  `json:"free,omitempty"`
+	AmountCents *int   `json:"amount_cents,omitempty"`
+	Currency    string `json:"currency,omitempty"`
+}
+
+// MCPListing is the hosted MCP endpoint a seller publishes for a listing.
+type MCPListing struct {
+	Endpoint string `json:"endpoint,omitempty"`
+	URL      string `json:"url,omitempty"`
+}
+
 // Listing is one market listing/version. It accepts both flattened and nested
 // metadata shapes so the market can evolve the envelope without breaking the
 // instance.
@@ -113,6 +127,16 @@ type Listing struct {
 	Tools        []Tool          `json:"tools,omitempty"`
 	Bundle       BundleRef       `json:"bundle"`
 	Manifest     json.RawMessage `json:"manifest,omitempty"`
+	// Free and PriceCents describe the listing's price when the catalog puts
+	// them at the top level. Either may be absent; IsFree treats an absent
+	// price as "not known to be free".
+	Free       *bool    `json:"free,omitempty"`
+	PriceCents *int     `json:"price_cents,omitempty"`
+	Pricing    *Pricing `json:"pricing,omitempty"`
+	// Endpoint and MCP name the seller's hosted MCP endpoint for
+	// delivery=hosted listings. SellerEndpoint folds both spellings.
+	Endpoint string      `json:"endpoint,omitempty"`
+	MCP      *MCPListing `json:"mcp,omitempty"`
 }
 
 // DisplayTitle returns the listing title, falling back to the slug.
@@ -140,6 +164,48 @@ func (l *Listing) VersionString() string {
 // Digest returns the listing's declared bundle digest (top-level or bundle).
 func (l *Listing) Digest() string {
 	return l.Bundle.Digest
+}
+
+// IsFree reports whether the catalog says this listing costs nothing. An absent
+// price is deliberately not free: the instance must not claim a paid listing by
+// accident.
+func (l *Listing) IsFree() bool {
+	if l == nil {
+		return false
+	}
+	if l.Free != nil {
+		return *l.Free
+	}
+	if l.PriceCents != nil {
+		return *l.PriceCents == 0
+	}
+	if p := l.Pricing; p != nil {
+		if p.Free != nil {
+			return *p.Free
+		}
+		if p.AmountCents != nil {
+			return *p.AmountCents == 0
+		}
+	}
+	return false
+}
+
+// SellerEndpoint returns the seller's hosted MCP endpoint for a hosted listing,
+// accepting both the flattened and nested catalog spellings.
+func (l *Listing) SellerEndpoint() string {
+	if l == nil {
+		return ""
+	}
+	if endpoint := strings.TrimSpace(l.Endpoint); endpoint != "" {
+		return endpoint
+	}
+	if l.MCP != nil {
+		if endpoint := strings.TrimSpace(l.MCP.Endpoint); endpoint != "" {
+			return endpoint
+		}
+		return strings.TrimSpace(l.MCP.URL)
+	}
+	return ""
 }
 
 // LicencedTools returns the union of capabilities.tools and top-level tools.

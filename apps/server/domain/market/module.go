@@ -9,6 +9,7 @@ import (
 // Module provides the marketplace install client, provenance store and routes.
 var Module = fx.Module("market",
 	fx.Provide(NewClientFromConfig),
+	fx.Provide(NewInProductFromConfig),
 	fx.Provide(NewRepository),
 	fx.Provide(NewService),
 	// Expose the concrete service as the handler's InstallService interface.
@@ -21,4 +22,14 @@ var Module = fx.Module("market",
 // allowlist.
 func NewClientFromConfig(cfg *config.Config) (*Client, error) {
 	return NewClient(ClientConfig{Issuers: cfg.Market.TrustedIssuers})
+}
+
+// NewInProductFromConfig builds the in-product market client for the primary
+// market. A stock instance with no MEMORY_MARKET_URL still gets the public
+// market, so the in-product path works without an operator editing a file.
+func NewInProductFromConfig(cfg *config.Config) (*InProductClient, error) {
+	return NewInProductClient(InProductConfig{
+		Issuer:   cfg.Market.URL,
+		Endpoint: cfg.AppURL,
+	})
 }
