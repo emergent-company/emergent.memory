@@ -1,5 +1,35 @@
 ## Changelog
 
+## [0.97.0] - 2026-11-15
+
+### Breaking changes
+
+- **The env-configured GitHub webhook ingress is retired.** The gateway route
+  `/webhooks/github` and `AGENT_TRIGGER_TOKEN` no longer exist. GitHub Apps must
+  deliver to `/api/webhooks/source-apps/{webhookKey}` (created by the source-App
+  wizard); installs still pointing an App webhook at the old path stop receiving
+  events.
+
+### Added
+
+- Project-owned source Apps alongside org-wide credentials, with a guided
+  GitHub review setup wizard, installation repositories listed as checkboxes,
+  and GitHub review lanes surfaced as board work items.
+- A weekly spending window for usage budgets, with a usage-budget section and
+  admin controls.
+- `entity-write` over MCP can set an entity's display name.
+
+### Changed
+
+- Source triggers moved below settings on the source page, with a dedicated
+  trigger add page.
+- Provider resolution tries instance slugs first; model-config writes apply only
+  the supplied fields, atomically.
+- Gateway re-issues session cookies from post-refresh claims instead of
+  appending a second `Set-Cookie`.
+- GitHub App installation tokens are minted with bare repository names, and
+  trigger runs are trusted only when verified.
+
 ## [0.96.0] - 2026-11-13
 
 ### Added
