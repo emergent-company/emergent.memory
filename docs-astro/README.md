@@ -128,6 +128,14 @@ width on exactly the routes that render that button (`[data-has-sidebar]
 on a sidebar page and both splash routes: no overlap with the search control or
 the menu button, no horizontal scroll.
 
+Below 50 rem the search collapses to a glyph, so it is pushed to the end of the
+bar to sit beside the switch (its wrapper takes `margin-inline-start: auto`, the
+header gap sets the 15 px between them) and both controls are painted as **bare
+glyphs**: no field background, no border, and hover changes the ink colour only.
+A fill on hover is the wrong idiom on touch — a tapped button keeps `:hover`, so
+the fill sticks and reads as a broken control. The desktop search keeps its
+bordered field, where the background actually delineates an input.
+
 - The glyph is the theme the reader is **in** — moon on dark, sun on light —
   and both icons ship in the HTML, swapped in CSS off `data-theme`, so the
   correct one is painted with the first frame instead of after hydration.
