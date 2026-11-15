@@ -9,10 +9,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/emergent-company/emergent.memory/internal/version"
 )
 
 // Defaults bounding a single install's network work.
@@ -25,12 +29,26 @@ const (
 
 // Client is the instance-side market HTTP client. It enforces the issuer
 // allowlist before every request and caches JWKS per issuer.
+//
+// It carries two related surfaces: the install flow (Exchange, VerifyLicense,
+// DownloadBundle, ReportInstall) and the in-product flow (Register, Browse,
+// VerifyTrustDocument, Claim, Authorize, ReportUsage). The latter keeps a
+// short-lived authorization batch and a usage-replay queue so the instance can
+// keep serving when the market is briefly unreachable.
 type Client struct {
 	issuers        map[string]struct{}
 	httpClient     *http.Client
 	jwks           *jwksCache
 	maxBundleBytes int64
 	now            func() time.Time
+
+	originOnce  sync.Once
+	origin      string
+	instanceURL string
+	name        string
+	version     string
+	log         *slog.Logger
+	inProduct   *inProductState
 }
 
 // ClientConfig configures a Client.
@@ -48,6 +66,22 @@ type ClientConfig struct {
 	MaxBundleBytes int64
 	// Now overrides the clock (tests).
 	Now func() time.Time
+	// OriginID is the stable identity the instance announces at registration.
+	// When empty the client generates one (and keeps it for the life of the
+	// process). Set MEMORY_MARKET_ORIGIN_ID to make it stable across restarts.
+	OriginID string
+	// InstanceName is the human-readable instance name sent at registration.
+	// Zero uses "Memory".
+	InstanceName string
+	// InstanceVersion is the instance version sent at registration. Zero uses
+	// the build version.
+	InstanceVersion string
+	// InstanceURL is this instance's public origin, announced at registration.
+	InstanceURL string
+	// Logger receives outage/deferral diagnostics. Zero discards them.
+	Logger *slog.Logger
+	// MaxBatchCalls caps one authorization batch. Zero uses MaxBatchCalls (20).
+	MaxBatchCalls int
 }
 
 // NewClient builds a market client. Every configured issuer must be an
@@ -82,13 +116,39 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &Client{
+	log := cfg.Logger
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	name := strings.TrimSpace(cfg.InstanceName)
+	if name == "" {
+		name = "Memory"
+	}
+	batchLimit := cfg.MaxBatchCalls
+	if batchLimit <= 0 || batchLimit > MaxBatchCalls {
+		batchLimit = MaxBatchCalls
+	}
+	c := &Client{
 		issuers:        issuers,
 		httpClient:     httpClient,
 		jwks:           newJWKSCache(ttl, now),
 		maxBundleBytes: maxBundle,
 		now:            now,
-	}, nil
+		origin:         strings.TrimSpace(cfg.OriginID),
+		instanceURL:    strings.TrimRight(strings.TrimSpace(cfg.InstanceURL), "/"),
+		name:           name,
+		version:        instanceVersion(cfg.InstanceVersion),
+		log:            log,
+		inProduct:      newInProductState(now, batchLimit),
+	}
+	return c, nil
+}
+
+func instanceVersion(configured string) string {
+	if v := strings.TrimSpace(configured); v != "" {
+		return v
+	}
+	return version.Version
 }
 
 // IsTrusted reports whether issuer (normalized) is in the allowlist.
@@ -408,4 +468,16 @@ func (c *Client) do(ctx context.Context, method, endpoint string, payload []byte
 		return nil, ErrMarketUnreachable(fmt.Sprintf("market returned HTTP %d", resp.StatusCode))
 	}
 	return body, nil
+}
+
+// originID returns the instance's stable registration identity. A client built
+// without one generates it lazily and keeps it for its lifetime, so a stock
+// instance registers without an operator editing a file.
+func (c *Client) originID() string {
+	c.originOnce.Do(func() {
+		if c.origin == "" {
+			c.origin = newOriginID()
+		}
+	})
+	return c.origin
 }

@@ -1114,6 +1114,11 @@ type MarketConfig struct {
 	// TrustedIssuersRaw is MEMORY_MARKET_TRUSTED_ISSUERS: a comma-separated
 	// allowlist of market origins. Parsed into TrustedIssuers by Normalize.
 	TrustedIssuersRaw string `env:"MEMORY_MARKET_TRUSTED_ISSUERS"`
+	// OriginID is MEMORY_MARKET_ORIGIN_ID: the stable identity this instance
+	// announces when it registers with the market. Empty means the client
+	// generates a process-local id, which works for a stock instance but is not
+	// stable across restarts.
+	OriginID string `env:"MEMORY_MARKET_ORIGIN_ID"`
 	// TrustedIssuers is the normalized allowlist, primary first when the default
 	// applies. It is derived, never read from the environment directly.
 	TrustedIssuers []string `env:"-"`
@@ -1123,6 +1128,7 @@ type MarketConfig struct {
 // It refuses malformed values so a typo is a boot error rather than a silently
 // widened trust boundary. An empty URL with no allowlist disables the market.
 func (m *MarketConfig) Normalize() error {
+	m.OriginID = strings.TrimSpace(m.OriginID)
 	primary := strings.TrimSpace(m.URL)
 	if primary != "" {
 		normalized, err := normalizeMarketIssuer(primary)
