@@ -163,6 +163,79 @@ func TestFindAgentsByDefinitionIDProjectScoped(t *testing.T) {
 	require.Equal(t, defID, *got.AgentDefinitionID)
 }
 
+// TestFindOrCreateRuntimeAgentForDefinitionReusesExistingLink pins the
+// #737/#738 BLOCKER: when a definition ALREADY owns a linked runtime row (created
+// by a source-trigger bind, a blueprint apply, or a coordination spawn), the
+// Remember/Forget feature shells must resolve to that SAME row rather than mint a
+// second linked row — which migration 00301's (project_id, agent_definition_id)
+// partial unique index would reject with 23505 (the HTTP 500). The chat handler's
+// Remember and Forget paths both call this function, so two calls (a Remember run
+// then a Forget run) must both succeed and return the same row.
+func TestFindOrCreateRuntimeAgentForDefinitionReusesExistingLink(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	ctx := context.Background()
+	tdb := testdb.SetupTestDBOrFail(t, ctx, "reuse_existing_link")
+	t.Cleanup(tdb.Close)
+
+	_, projectID := insertOrgAndProject(t, tdb.DB, ctx)
+	repo := NewRepository(tdb.DB)
+
+	defID := insertAgentDefinition(t, tdb.DB, ctx, projectID, "Forget Agent", "project")
+
+	// A prior bind already linked a runtime row to this definition — the exact
+	// precondition the partial unique index makes reachable.
+	linkedID := uuid.NewString()
+	_, err := tdb.DB.ExecContext(ctx,
+		`INSERT INTO kb.agents (id, project_id, name, strategy_type, cron_schedule, enabled, agent_definition_id)
+		 VALUES (?, ?, 'Forget Agent', ?, '0 0 * * *', true, ?)`,
+		linkedID, projectID, "agent-def:"+defID, defID)
+	require.NoError(t, err)
+
+	def, err := repo.FindDefinitionByID(ctx, defID, &projectID)
+	require.NoError(t, err)
+	require.NotNil(t, def)
+
+	// Reproduce the red condition first: the pre-fix handler guarded these shells
+	// by feature name ("Remember session for <def>" / "Forget session for <def>").
+	// That lookup misses a definition that already owns a linked row under its
+	// canonical name, and the handler then minted a second linked row — hitting
+	// migration 00301's partial unique index with 23505 (the 500 at d0d9bc839).
+	featureName := "Forget session for " + def.Name
+	miss, err := repo.FindByName(ctx, projectID, featureName)
+	require.NoError(t, err)
+	require.Nil(t, miss, "the feature-named shell must not exist — the name guard was the blind spot")
+	dup := &Agent{
+		ProjectID:         projectID,
+		Name:              featureName,
+		StrategyType:      "forget-session:" + defID,
+		AgentDefinitionID: &defID,
+		CronSchedule:      "0 0 * * *",
+		TriggerType:       "manual",
+	}
+	err = repo.Create(ctx, dup)
+	require.Error(t, err)
+	require.True(t, pgutils.IsUniqueViolation(err),
+		"the pre-fix name-based Create must hit the index (the red condition)")
+
+	// A Remember run then a Forget run: both must resolve to the SAME
+	// already-linked row, not fail with 23505 and not mint a duplicate.
+	rememberRow, err := repo.FindOrCreateRuntimeAgentForDefinition(ctx, def)
+	require.NoError(t, err, "remember run failed to reuse the linked row")
+	require.Equal(t, linkedID, rememberRow.ID)
+
+	forgetRow, err := repo.FindOrCreateRuntimeAgentForDefinition(ctx, def)
+	require.NoError(t, err, "forget run failed to reuse the linked row")
+	require.Equal(t, linkedID, forgetRow.ID, "the second call did not return the same row")
+
+	var n int
+	require.NoError(t, tdb.DB.NewRaw(
+		`SELECT count(*) FROM kb.agents WHERE project_id = ? AND agent_definition_id = ?`,
+		projectID, defID).Scan(ctx, &n))
+	require.Equal(t, 1, n, "a second linked runtime row was created")
+}
+
 // TestFindByNameDeterministic pins the #737 fix: with two same-name rows the
 // lookup returns the oldest (created_at, then id), not an arbitrary row.
 func TestFindByNameDeterministic(t *testing.T) {
@@ -222,6 +295,49 @@ func TestAgentsDefinitionLinkUniqueIndex(t *testing.T) {
 		 VALUES (?, ?, 'Unique Link', ?, '0 0 * * *', ?)`,
 		second, projectID, "agent-def:"+defID, defID)
 	require.Error(t, err, "a duplicate (project_id, agent_definition_id) row was accepted")
+	require.True(t, pgutils.IsUniqueViolation(err), "expected a unique violation, got: %v", err)
+}
+
+// TestUpdateAgentAssignAlreadyBoundDefinitionReturnsUniqueViolation pins the #738
+// SHOULD-FIX: assigning a definition that is already linked to another runtime
+// agent through the agents API update path is a (project_id, agent_definition_id)
+// partial-unique violation. Handler.UpdateAgent maps this to a 409 conflict rather
+// than a 500; this test proves the raw violation the mapping keys on.
+func TestUpdateAgentAssignAlreadyBoundDefinitionReturnsUniqueViolation(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	ctx := context.Background()
+	tdb := testdb.SetupTestDBOrFail(t, ctx, "update_assign_bound_definition")
+	t.Cleanup(tdb.Close)
+
+	_, projectID := insertOrgAndProject(t, tdb.DB, ctx)
+	repo := NewRepository(tdb.DB)
+	defID := insertAgentDefinition(t, tdb.DB, ctx, projectID, "Bound Definition", "project")
+
+	// Agent A already owns the definition link.
+	boundID := uuid.NewString()
+	_, err := tdb.DB.ExecContext(ctx,
+		`INSERT INTO kb.agents (id, project_id, name, strategy_type, cron_schedule, agent_definition_id)
+		 VALUES (?, ?, 'Bound Agent', ?, '0 0 * * *', ?)`,
+		boundID, projectID, "agent-def:"+defID, defID)
+	require.NoError(t, err)
+
+	// Agent B is unlinked; the API update assigns it the already-bound definition.
+	freeID := uuid.NewString()
+	_, err = tdb.DB.ExecContext(ctx,
+		`INSERT INTO kb.agents (id, project_id, name, strategy_type, cron_schedule)
+		 VALUES (?, ?, 'Free Agent', 'definition', '0 0 * * *')`,
+		freeID, projectID)
+	require.NoError(t, err)
+
+	agent, err := repo.FindByID(ctx, freeID, &projectID)
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+	agent.AgentDefinitionID = &defID
+
+	err = repo.Update(ctx, agent)
+	require.Error(t, err, "assigning an already-bound definition must fail")
 	require.True(t, pgutils.IsUniqueViolation(err), "expected a unique violation, got: %v", err)
 }
 

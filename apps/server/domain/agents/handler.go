@@ -24,6 +24,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/pgutils"
 	"github.com/emergent-company/emergent.memory/pkg/sse"
 )
 
@@ -647,6 +648,9 @@ func (h *Handler) UpdateAgent(c echo.Context) error {
 	}
 
 	if err := h.repo.Update(c.Request().Context(), agent); err != nil {
+		if pgutils.IsUniqueViolation(err) {
+			return apperror.NewConflict("agent definition is already linked to another agent")
+		}
 		return apperror.NewInternal("failed to update agent", err)
 	}
 

@@ -223,6 +223,61 @@ func TestSourceTriggerRefusesDisabledDefinition(t *testing.T) {
 	require.Equal(t, 0, n, "a disabled-definition bind created a runtime agent")
 }
 
+// TestSourceTriggerRefusesDisabledRuntimeAgent pins the #738 disabled-runtime-agent
+// fix: binding a runtime kb.agents id whose row is disabled is refused at the bind
+// surface with a 400-class error, rather than leaving a binding that queues work
+// the worker always fails as "agent is disabled". The definition check in
+// resolveTriggerAgentID covers definition ids; this covers a disabled runtime row.
+func TestSourceTriggerRefusesDisabledRuntimeAgent(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	ctx := context.Background()
+	db := testdb.SetupTestDBOrFail(t, ctx, "source_trigger_disabled_runtime_agent")
+	t.Cleanup(db.Close)
+	repo := NewRepository(db.DB, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	orgID, projectID := uuid.New(), uuid.New()
+	_, err := db.DB.ExecContext(ctx, `INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgID, "disabled-runtime-org")
+	require.NoError(t, err)
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`, projectID, orgID, "disabled-runtime-project")
+	require.NoError(t, err)
+
+	// A disabled runtime agent with no definition FK, so the definition check
+	// above the runtime-agent check in resolveTriggerAgentID finds nothing and the
+	// disabled-runtime-agent refusal is the path exercised.
+	disabledAgentID := uuid.New()
+	_, err = db.DB.ExecContext(ctx,
+		`INSERT INTO kb.agents (id, project_id, name, strategy_type, cron_schedule, enabled)
+		 VALUES (?, ?, 'Disabled Runtime', 'definition', '', false)`,
+		disabledAgentID, projectID)
+	require.NoError(t, err)
+
+	srcID := uuid.New()
+	_, err = db.DB.ExecContext(ctx,
+		`INSERT INTO kb.sources (id, project_id, provider, display_name, config, status)
+		 VALUES (?, ?, 'github_app', 'bot', '{}'::jsonb, 'active')`, srcID, projectID)
+	require.NoError(t, err)
+
+	agentRepo := agents.NewRepository(db.DB)
+	svc := NewService(repo, &config.Config{},
+		slog.New(slog.NewTextHandler(io.Discard, nil)), NewRegistry(newGitHubAppProvider()),
+		WithAgentRepository(agentRepo))
+
+	_, err = svc.CreateSourceTrigger(ctx, projectID, srcID, SourceTriggerInput{
+		EventType: "pull_request", AgentID: disabledAgentID.String(),
+	})
+	require.Error(t, err)
+	var invalid *apperror.Error
+	require.ErrorAs(t, err, &invalid)
+	require.Equal(t, 422, invalid.HTTPStatus)
+	require.Contains(t, invalid.Message, "Disabled Runtime")
+
+	var n int
+	require.NoError(t, db.DB.NewRaw(`SELECT count(*) FROM kb.agents WHERE project_id = ?`, projectID).Scan(ctx, &n))
+	require.Equal(t, 1, n, "a disabled-runtime-agent bind created an extra runtime agent")
+}
+
 // TestSourceTriggerSkipsForeignProjectRuntimeRow pins the #738 project-scope fix
 // at the bind surface: a runtime row in another project that carries this
 // project's definition id must not be bound (its runs would be enqueued in the
