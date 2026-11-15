@@ -116,11 +116,6 @@ func (s *Server) marketSidebarItems() []layout.SidebarItem {
 			Label: label,
 			Href:  issuer,
 			Icon:  "lucide--store",
-			Attrs: templ.Attributes{
-				"target":     "_blank",
-				"rel":        "noopener noreferrer",
-				"hx-disable": "true",
-			},
 		})
 	}
 	return items
@@ -187,12 +182,12 @@ type sidebarWarns struct {
 // document-related terminal failures only; other areas surface in the Documents
 // panel and can earn their own badge later.
 func sidebarGroupsWithWarn(base string, isOrgAdmin bool, warns sidebarWarns) []layout.SidebarGroup {
-	return sidebarGroupsWithMarket(base, isOrgAdmin, warns, nil)
+	return sidebarGroupsWithMarket(base, isOrgAdmin, warns)
 }
 
 // sidebarGroupsWithMarket is sidebarGroupsWithWarn plus the external marketplace
 // entries, which the page layer derives from config.
-func sidebarGroupsWithMarket(base string, isOrgAdmin bool, warns sidebarWarns, market []layout.SidebarItem) []layout.SidebarGroup {
+func sidebarGroupsWithMarket(base string, isOrgAdmin bool, warns sidebarWarns) []layout.SidebarGroup {
 	documentsItem := layout.SidebarItem{Label: "Documents", Href: base + "/documents", Icon: "lucide--file-text"}
 	if warns.Documents > 0 {
 		documentsItem.Warn = sidebarWarnBadge(warns.Documents)
@@ -230,7 +225,6 @@ func sidebarGroupsWithMarket(base string, isOrgAdmin bool, warns sidebarWarns, m
 		{Label: "Search", Href: base + "/search", Icon: "lucide--search"},
 		{Label: "Sessions", Href: base + "/sessions", Icon: "lucide--history"},
 	}
-	topItems = append(topItems, market...)
 	return []layout.SidebarGroup{
 		{
 			// Ungrouped top-level entries: pulled out of their groups to sit
@@ -272,10 +266,10 @@ func sidebarGroupsWithMarket(base string, isOrgAdmin bool, warns sidebarWarns, m
 // the delete-org danger zone. isOrgAdmin gates the Members entry (the page
 // exposes whole-org member PII, org_admin-only per #1015).
 func orgSidebarGroups(base string, isOrgAdmin bool) []layout.SidebarGroup {
-	return orgSidebarGroupsWithMarket(base, isOrgAdmin, nil)
+	return orgSidebarGroupsWithMarket(base, isOrgAdmin)
 }
 
-func orgSidebarGroupsWithMarket(base string, isOrgAdmin bool, market []layout.SidebarItem) []layout.SidebarGroup {
+func orgSidebarGroupsWithMarket(base string, isOrgAdmin bool) []layout.SidebarGroup {
 	items := []layout.SidebarItem{
 		{Label: "Projects", Href: base, Icon: "lucide--folder"},
 	}
@@ -283,11 +277,7 @@ func orgSidebarGroupsWithMarket(base string, isOrgAdmin bool, market []layout.Si
 		items = append(items, layout.SidebarItem{Label: "Members", Href: base + "/members", Icon: "lucide--users"})
 	}
 	items = append(items, layout.SidebarItem{Label: "Settings", Href: base + "/settings", Icon: "lucide--settings"})
-	groups := []layout.SidebarGroup{}
-	if len(market) > 0 {
-		groups = append(groups, layout.SidebarGroup{Items: market})
-	}
-	return append(groups, layout.SidebarGroup{Label: "Organization", Items: items})
+	return []layout.SidebarGroup{{Label: "Organization", Items: items}}
 }
 
 // partialWithTitle prefixes an hx-boost partial fragment with a <title> element
@@ -556,7 +546,7 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 		} else {
 			budgetLevel = budgetBadgeLevel(state)
 		}
-		groups = layout.ActiveSidebarGroups(sidebarGroupsWithMarket(navBase, isOrgAdmin(tree, backupsOrgID), sidebarWarns{Documents: documentsWarn, Budget: budgetLevel}, s.marketSidebarItems()), activePath)
+		groups = layout.ActiveSidebarGroups(sidebarGroupsWithMarket(navBase, isOrgAdmin(tree, backupsOrgID), sidebarWarns{Documents: documentsWarn, Budget: budgetLevel}), activePath)
 		// Warn in the settings nav when the active project has zero configured
 		// LLM providers. Fail-safe helper: false on lookup errors.
 		providersMissing = s.projectHasNoProviders(c.Request().Context())
@@ -568,7 +558,7 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 		if orgNavBase == "" {
 			orgNavBase = "/o/" + activeOrgID
 		}
-		groups = layout.ActiveSidebarGroups(orgSidebarGroupsWithMarket(orgNavBase, isOrgAdmin(tree, activeOrgID), s.marketSidebarItems()), activePath)
+		groups = layout.ActiveSidebarGroups(orgSidebarGroupsWithMarket(orgNavBase, isOrgAdmin(tree, activeOrgID)), activePath)
 	}
 	// Recent projects for the picker's "Recent" section (only when the user
 	// has more than ten projects). Recent ids come from the durable cookie,
@@ -651,7 +641,7 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 	// (literal href/action/hx-* in the page templates) must carry the scope base
 	// just like htmx partials, otherwise the first navigation after a full load
 	// hits an unscoped app path and 404s under the session-mode hard cut.
-	s.renderScoped(w, r, appShell(title, groups, providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, unreadNotifications, pendingInvites, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL, s.cfg.feedbackOverlayAPI(), s.cfg.feedbackOrder()), linkBase)
+	s.renderScoped(w, r, appShell(title, groups, s.marketSidebarItems(), providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, unreadNotifications, pendingInvites, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL, s.cfg.feedbackOverlayAPI(), s.cfg.feedbackOrder()), linkBase)
 	return nil
 }
 
