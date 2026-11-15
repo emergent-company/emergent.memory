@@ -90,12 +90,15 @@ func (s *Server) uiApproveReject(c echo.Context) error {
 	}
 	s.invalidatePendingInputCount(c.Request().Context())
 	// The forms live inside the boosted <main hx-target="#main-content">, so a
-	// raw 303 would be followed in-XHR and swap only #main-content: the sidebar
+	// plain 303 is followed in-XHR and swaps only #main-content: the sidebar
 	// (and its pending-input badge) sits outside that target and would keep the
-	// pre-decision count until a full page load. redirectScoped emits
-	// HX-Redirect for a boosted request, which is a real navigation, and keeps
-	// the plain-POST 303.
-	return s.redirectScoped(c, "/settings/approvals")
+	// pre-decision count until a full page load. redirectAfterMutation answers a
+	// boosted request with 200 + HX-Redirect — a header htmx can actually read,
+	// because fetch has already consumed the 3xx — so the browser navigates and
+	// re-renders the shell. A plain POST still gets the 303. scopeLocation
+	// applies the scope prefix to either target.
+	redirectAfterMutation(c, "/settings/approvals")
+	return nil
 }
 
 // uiCancelApproval handles POST /settings/approvals/:questionId/cancel — revokes
@@ -107,7 +110,8 @@ func (s *Server) uiCancelApproval(c echo.Context) error {
 	}
 	s.invalidatePendingInputCount(c.Request().Context())
 	// Same boosted-form reasoning as the decision handler above.
-	return s.redirectScoped(c, "/settings/approvals")
+	redirectAfterMutation(c, "/settings/approvals")
+	return nil
 }
 
 // formatArgsJSON pretty-prints an argument summary for the audit view.

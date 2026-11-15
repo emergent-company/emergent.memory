@@ -241,15 +241,18 @@ func TestChatDecisionInvalidatesBadge(t *testing.T) {
 
 // TestApprovalsMutationRedirectsBoostedForms guards the badge's own invariant on
 // the mutation path: the decision and cancel forms live inside the boosted
-// `<main hx-target="#main-content">`, so a raw 303 would be followed in-XHR and
-// swap only #main-content. The sidebar — and therefore the pending-input badge —
-// sits outside that target, so it would keep the pre-decision count until a full
-// page load. redirectScoped emits HX-Redirect for a boosted request (a real
-// navigation, which re-renders the shell) and keeps the plain-POST 303.
+// `<main hx-target="#main-content">`, so a plain 303 is followed in-XHR and
+// swaps only #main-content. The sidebar — and therefore the pending-input badge
+// — sits outside that target, so it would keep the pre-decision count until a
+// full page load.
+//
+// The boosted answer must therefore be 200 + HX-Redirect, not 303 + HX-Redirect:
+// fetch follows the 3xx inside the XHR and htmx only sees the final response's
+// headers, so a header on the 303 is invisible and the swap still happens.
 func TestApprovalsMutationRedirectsBoostedForms(t *testing.T) {
-	for _, tc := range []struct{ name, path, wantID string }{
-		{name: "respond", path: "/settings/approvals/q-1/respond", wantID: "q-1"},
-		{name: "cancel", path: "/settings/approvals/q-2/cancel", wantID: "q-2"},
+	for _, tc := range []struct{ name, path string }{
+		{name: "respond", path: "/settings/approvals/q-1/respond"},
+		{name: "cancel", path: "/settings/approvals/q-2/cancel"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := &fakeMemory{}
@@ -261,8 +264,11 @@ func TestApprovalsMutationRedirectsBoostedForms(t *testing.T) {
 			req.Header.Set("HX-Request", "true")
 			rec := httptest.NewRecorder()
 			e.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("boosted status = %d, want 200 (a 3xx hides HX-Redirect from htmx)", rec.Code)
+			}
 			if got := rec.Header().Get("HX-Redirect"); got != "/settings/approvals" {
-				t.Fatalf("boosted HX-Redirect = %q, want /settings/approvals (rec.Code %d)", got, rec.Code)
+				t.Fatalf("boosted HX-Redirect = %q, want /settings/approvals", got)
 			}
 
 			// Plain POST keeps the PRG 303 to the same target.
@@ -275,6 +281,9 @@ func TestApprovalsMutationRedirectsBoostedForms(t *testing.T) {
 			}
 			if got := rec.Header().Get("Location"); got != "/settings/approvals" {
 				t.Fatalf("plain Location = %q, want /settings/approvals", got)
+			}
+			if got := rec.Header().Get("HX-Redirect"); got != "" {
+				t.Fatalf("plain response carried HX-Redirect %q; only a boosted request should", got)
 			}
 		})
 	}
