@@ -1,6 +1,7 @@
 # docs-astro — Astro/Starlight port of the Memory docs (POC)
 
-Status: **proof of concept**. 17 pages converted out of the 77 in `docs/site`.
+Status: **proof of concept**. 18 pages of the 77 in `docs/site` — 16 converted by
+`scripts/port_mkdocs.py`, 2 hand-written (`index.mdx`, `api-reference.mdx`).
 The site builds, serves, and is themed against the product web UI. It is not
 wired into CI, not published, and the old MkDocs site is untouched.
 
@@ -209,6 +210,8 @@ It handles, and reports:
 | `:material-<name>:` (13 names, one page) | `<Icon name="lucide:…"/>` inline, or the `icon` prop inside a card — see "Icons" |
 | duplicate leading `# H1` | dropped — Starlight renders `title` as the H1 |
 | `[x](page.md#anchor)` | rewritten to `/emergent.memory/<route>/#anchor` |
+| `<https://…>` autolink | `[url](url)` — MDX reads `<https:` as the start of a JSX tag and fails the build |
+| `![alt](assets/…png)` | `<Screenshot>` sized from the ported-image manifest — see "Screenshots" |
 | unescaped `\|` inside inline code in a table row | escaped (a real MDX breakage: it truncates the code span and leaves raw `<` JSX) |
 | `--8<--` snippets (3 pages) | **not converted** — reported |
 
@@ -217,6 +220,53 @@ TARGETS"), lists pages linked from the subset but not yet converted (22 in this
 POC), and reports an unmapped `:material-*:` name or an unparsed grid-card line
 instead of guessing. A full port needs the snippet rule and the remaining 59
 pages.
+
+## Screenshots
+
+The tutorial page is the first page that carries pictures, so it also defines the
+image path both sites share:
+
+1. `scripts/redact-tutorial-shots.mjs <originals-dir>` — reads the captures from
+   wherever they were taken (the Railway walkthrough's live in
+   `emergent.memory.infra/docs/guides/railway-install/assets/`), strips what must
+   not be published, and writes `docs/site/assets/tutorials/railway/*.png`.
+   MkDocs serves that directory, so the two sites keep one copy of each picture.
+   Per-image operations live in that script's `OPS` table:
+
+   - `crop` removes framing that is not the step's subject — an OAuth card's
+     surrounding page, the "powered by ZITADEL" strip that would otherwise hold
+     the trim box open around an empty viewport, or the top-right corner Chrome
+     covers with a "Save login?" bubble.
+   - `masks` blank a value with the colour sampled from the same surface (no
+     invented text is ever drawn): the installer's account address in the
+     progress banners, the workspace and admin-email fields, and Zitadel's
+     account pill.
+   - every image is then trimmed to its content and only when the content is a
+     small minority of the frame. Detection is by **edge**, not by distance from
+     the corner colour: the app paints a soft radial gradient, so a colour test
+     sees the whole frame as content and never trims.
+
+   Re-running it is always safe — it starts from the originals, never from its
+   own output.
+
+2. `scripts/port-images.mjs` — resizes to 1600px, writes a WebP next to each PNG
+   (MkDocs serves WebP too), mirrors the directory into `public/`, and records
+   real pixel dimensions in `manifest.json`.
+
+3. `scripts/port_mkdocs.py` — reads that manifest and turns each
+   `![alt](path)` into `<Screenshot src alt width height />`, so the browser
+   reserves the right box and the page does not jump as the images arrive. A
+   picture missing from the manifest is reported as `missing_shots` rather than
+   emitted with no dimensions.
+
+`src/components/Screenshot.astro` is a figure with click-to-zoom: a native
+`<dialog>` created on first click (no framework, no hydration; Escape and
+backdrop close work by themselves). It caps how far a capture may be scaled up —
+1.5x — because a 310px-wide card stretched across the 723px text column turns to
+mush, so narrow figures stay near their own size and sit centred.
+
+Product screenshots are **dark UI captures** and stay that way in both themes;
+terminal output and JSON stay copyable text, never a picture.
 
 ## Icons
 

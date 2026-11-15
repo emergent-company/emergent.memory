@@ -81,6 +81,10 @@ export default defineConfig({
           ],
         },
         {
+          label: 'Tutorials',
+          items: [{ label: 'Deploy on Railway', slug: 'tutorials/deploy-to-railway' }],
+        },
+        {
           label: 'Developer Guide',
           items: [
             { label: 'Overview', slug: 'developer-guide' },

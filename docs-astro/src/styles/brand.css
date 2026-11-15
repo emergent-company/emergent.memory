@@ -616,6 +616,103 @@ h1#_top {
   border-top: 1px solid oklch(0.74 0.135 78 / 0.2);
 }
 
+/* ---------- components: screenshots -------------------------------------
+   Product screenshots are dark UI captures dropped into a page that may be
+   light, so they get the same treatment as the Scalar embed: seamless in dark,
+   a hairline ring in light. The zoom dialog is a native <dialog> — the image is
+   the hit target, a click outside it closes. */
+.sl-markdown-content .screenshot {
+  margin: 1.5rem 0;
+}
+
+.sl-markdown-content .screenshot-open {
+  display: block;
+  width: 100%;
+  /* Narrow captures stop at their own size (see Screenshot.astro's cap) and sit
+     centred rather than stretched. */
+  margin-inline: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0.5rem;
+  background: none;
+  cursor: zoom-in;
+  overflow: hidden;
+}
+
+.sl-markdown-content .screenshot-open img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 0.5rem;
+  transition: border-color 0.15s ease;
+}
+
+/* The ring sits on the wrapper so the image's own box is untouched. */
+.sl-markdown-content .screenshot-open {
+  box-shadow: 0 0 0 1px var(--mem-line);
+  transition: box-shadow 0.15s ease;
+}
+
+.sl-markdown-content .screenshot-open:hover {
+  box-shadow: 0 0 0 1px var(--mem-line-heavy);
+}
+
+.sl-markdown-content .screenshot-open:focus-visible {
+  outline: 2px solid var(--sl-color-accent-high, var(--sl-color-text-accent));
+  outline-offset: 2px;
+}
+
+.sl-markdown-content .screenshot figcaption {
+  margin-top: 0.5rem;
+  color: var(--sl-color-gray-3);
+  font-size: var(--sl-text-sm);
+  line-height: 1.5;
+}
+
+.screenshot-dialog {
+  box-sizing: border-box;
+  max-width: 96vw;
+  max-height: 94vh;
+  padding: 0;
+  border: 1px solid var(--mem-line-heavy);
+  border-radius: 0.75rem;
+  background-color: var(--mem-surface);
+  overflow: hidden;
+  cursor: zoom-out;
+}
+
+.screenshot-dialog::backdrop {
+  background: oklch(0 0 0 / 0.72);
+  backdrop-filter: blur(2px);
+}
+
+.screenshot-dialog img {
+  display: block;
+  max-width: 96vw;
+  max-height: 94vh;
+  width: auto;
+  height: auto;
+}
+
+/* The dialog has no <h2>, so Starlight's dialog-free page title rules do not
+   apply; align the close control with the card's top-right corner. */
+.screenshot-dialog-close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--mem-line-heavy);
+  border-radius: 0.375rem;
+  background-color: oklch(0 0 0 / 0.55);
+  color: oklch(0.98 0 0);
+  font-size: var(--sl-text-xs);
+  cursor: pointer;
+}
+
+.screenshot-dialog-close:hover {
+  background-color: oklch(0 0 0 / 0.75);
+}
+
 /* ---------- components: cards -------------------------------------------
    base-100 surface, hairline edge at --radius-box. Starlight tints each card's
    icon chip from a rotating accent palette; the app has no such chips, so the

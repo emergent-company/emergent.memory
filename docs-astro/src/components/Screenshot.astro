@@ -1,0 +1,90 @@
+---
+/**
+ * Screenshot — a figure for product screenshots with click-to-zoom.
+ *
+ * Generated pages pass `src`, `alt`, `width` and `height` from
+ * `scripts/port-images.mjs`'s manifest, so the browser reserves the right box
+ * and the page does not jump while the image loads. `loading="lazy"` keeps the
+ * 13 Railway shots off the critical path.
+ *
+ * Zoom is a native `<dialog>` created on the first click (one per page, not one
+ * per image) — no framework, no hydration, and Escape/backdrop just work.
+ * Visual styling lives in `src/styles/brand.css` (`.screenshot` block).
+ */
+interface Props {
+  /** Absolute URL under the site base, e.g. `/emergent.memory/assets/…/01.webp`. */
+  src: string;
+  /** Describes the picture; also the zoom button's accessible name. */
+  alt: string;
+  width: number;
+  height: number;
+  /** Optional caption rendered under the figure. */
+  caption?: string;
+}
+
+const { src, alt, width, height, caption } = Astro.props;
+
+/**
+ * Never blow a screenshot up more than 1.5x: a 310px card scaled to a 723px
+ * text column turns to mush, while a full-width capture is unaffected (its own
+ * width already exceeds the column, so this cap never binds). Narrow figures
+ * sit centred in the column instead of stretching to fill it.
+ */
+const maxWidth = Math.round(width * 1.5);
+---
+
+<figure class="screenshot">
+  <button
+    type="button"
+    class="screenshot-open"
+    data-screenshot
+    data-src={src}
+    data-alt={alt}
+    style={`max-width:${maxWidth}px`}
+  >
+    <img src={src} alt={alt} width={width} height={height} loading="lazy" decoding="async" />
+  </button>
+  {caption && <figcaption>{caption}</figcaption>}
+</figure>
+
+<script>
+  const ZOOM_ID = 'screenshot-zoom';
+  let zoom: { dialog: HTMLDialogElement; img: HTMLImageElement } | null = null;
+
+  function ensureZoom() {
+    if (zoom) return zoom;
+    const dialog = document.createElement('dialog');
+    dialog.id = ZOOM_ID;
+    dialog.className = 'screenshot-dialog';
+    dialog.setAttribute('aria-label', 'Screenshot, zoomed');
+
+    const img = document.createElement('img');
+    dialog.append(img);
+
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'screenshot-dialog-close';
+    close.textContent = 'Close';
+    close.addEventListener('click', () => dialog.close());
+    dialog.append(close);
+
+    // A click that lands on the dialog element itself (not the image) is a
+    // backdrop click, because the image and button fill the box.
+    dialog.addEventListener('click', (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+
+    document.body.append(dialog);
+    zoom = { dialog, img };
+    return zoom;
+  }
+
+  document.addEventListener('click', (event) => {
+    const trigger = (event.target as Element | null)?.closest('[data-screenshot]');
+    if (!(trigger instanceof HTMLElement)) return;
+    const { dialog, img } = ensureZoom();
+    img.src = trigger.dataset.src ?? '';
+    img.alt = trigger.dataset.alt ?? '';
+    dialog.showModal();
+  });
+</script>

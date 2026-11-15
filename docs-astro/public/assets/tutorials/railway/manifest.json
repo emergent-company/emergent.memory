@@ -1,0 +1,54 @@
+{
+  "01-choose-target.webp": {
+    "width": 488,
+    "height": 304
+  },
+  "02-authorize-railway.webp": {
+    "width": 1132,
+    "height": 574
+  },
+  "03-workspace-admin-email.webp": {
+    "width": 491,
+    "height": 309
+  },
+  "04-progress-project.webp": {
+    "width": 489,
+    "height": 190
+  },
+  "05-progress-zitadel.webp": {
+    "width": 489,
+    "height": 190
+  },
+  "06-progress-restart.webp": {
+    "width": 490,
+    "height": 200
+  },
+  "07-install-complete.webp": {
+    "width": 491,
+    "height": 370
+  },
+  "08-memory-signin.webp": {
+    "width": 309,
+    "height": 243
+  },
+  "09-zitadel-login.webp": {
+    "width": 319,
+    "height": 191
+  },
+  "10-zitadel-password.webp": {
+    "width": 319,
+    "height": 304
+  },
+  "11-zitadel-2fa-skip.webp": {
+    "width": 317,
+    "height": 431
+  },
+  "12-first-password-change.webp": {
+    "width": 319,
+    "height": 396
+  },
+  "13-memory-projects.webp": {
+    "width": 1320,
+    "height": 827
+  }
+}
