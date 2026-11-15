@@ -154,6 +154,33 @@ bordered field, where the background actually delineates an input.
 `color-scheme` flips with the theme, so native controls (scrollbars, form
 widgets, the select popup of any future control) follow.
 
+### The bar on splash routes
+
+The home page and the API reference render no sidebar, and Starlight lays the
+header out against the viewport on those routes while the content is confined to
+`--sl-content-width` and centred. So the logo sat at the 22.5 px nav gutter and
+the right-hand icons at the screen edge — 232 px outside the column at 1440 px
+wide, and further out as the viewport grows. `brand.css` copies the column's own
+geometry onto the bar
+(`:root:not([data-has-sidebar]) header.header`), in Starlight's two regimes:
+
+- **below 72 rem** the column is left-anchored in the content gutter, so the bar
+  takes `--sl-content-pad-x` on the left and stops where the column stops
+  (`100% - pad - width`, floored at the pad). Note that this is the *content*
+  gutter, not `--sl-nav-pad-x`: between 50 and 72 rem those differ (15 px vs
+  22.5 px) and the nav value leaves the logo 7.5 px out;
+- **from 72 rem** Starlight centres the column (`margin-inline: auto`), so both
+  sides become its margin, `(100% - width)/2`, floored at the pad so a full-bleed
+  column (the API reference is 96 rem) is not pulled to zero.
+
+The media query is the same one Starlight uses for the centring, so the bar
+changes regime exactly when the prose does. `rem` in a media query resolves
+against the *initial* font size (16 px), not `html { font-size: 15px }` — 72 rem
+here is 1152 px, not 1080. Measured on `/` and `/api-reference/` from 390 to
+1600 px: logo left edge and last icon right edge both exactly on the column
+(0.0 px delta) at every width, including the left-anchored 945–1151 px band;
+sidebar routes are untouched (logo at the nav gutter, icons at the header edge).
+
 
 Two Starlight details cost real time and are worth knowing before editing
 `brand.css`:

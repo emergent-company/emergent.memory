@@ -359,6 +359,39 @@ site-search button[data-open-modal]:hover {
   }
 }
 
+/* Splash routes (the home page, the API reference) have no sidebar to anchor
+   the bar, so Starlight lays it out against the viewport while the content is
+   confined to `--sl-content-width`. That leaves the logo and the right-hand
+   icons out at the screen edge, well outside the column the prose sits in. Copy
+   the column's own geometry onto the bar instead, which means following
+   Starlight's two regimes:
+
+   - below 72rem the column is left-anchored inside the content gutter
+     (`--sl-content-pad-x`, which is NOT `--sl-nav-pad-x` between 50 and 72rem),
+     so the bar keeps that gutter on the left and stops where the column stops;
+   - from 72rem Starlight centres the column with `margin-inline: auto`, so both
+     sides become the column's margin. `max()` keeps a full-bleed column (the
+     API reference, 96rem) on the plain gutter rather than collapsing to zero.
+
+   The media query is deliberately the same one Starlight uses for the centring,
+   so the bar changes regime exactly when the prose does. */
+:root:not([data-has-sidebar]) header.header {
+  padding-inline: var(--sl-content-pad-x)
+    max(
+      var(--sl-content-pad-x),
+      calc(100% - var(--sl-content-pad-x) - var(--sl-content-width))
+    );
+}
+
+@media (min-width: 72rem) {
+  :root:not([data-has-sidebar]) header.header {
+    padding-inline: max(
+      var(--sl-content-pad-x),
+      calc((100% - var(--sl-content-width)) / 2)
+    );
+  }
+}
+
 /* ---------- chrome: sidebar ------------------------------------------------ */
 #starlight__sidebar {
   border-inline-end: 1px solid var(--mem-line);
