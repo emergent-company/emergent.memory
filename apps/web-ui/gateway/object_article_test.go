@@ -466,6 +466,15 @@ func TestObjectWikiPageObjectVariant(t *testing.T) {
 			t.Errorf("object-page variant missing %q", want)
 		}
 	}
+	// Feedback on this row (#763): the type tile sits on the identity line, not
+	// centred against the two-line excerpt the row carries.
+	rowAt := strings.Index(html, `data-testid="object-wiki-relation-row"`)
+	if rowAt < 0 {
+		t.Fatal("missing the relationship row marker")
+	}
+	if row := html[rowAt:]; !strings.Contains(row, "flex min-w-0 items-start gap-3") {
+		t.Errorf("a relationship row's type tile must align to the top of the row:\n%s", row)
+	}
 	// History moved into the shared details rail, so it is present here too —
 	// once, not twice.
 	if got := strings.Count(html, `href="/objects/o1/history"`); got != 1 {

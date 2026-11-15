@@ -289,6 +289,10 @@ templ objectWikiRelationRow(data objectWikiPageData, row objectViewItem, showDir
 			Direction:      direction,
 			Excerpt:        objectExcerpt(row.Neighbour.Properties),
 			IdentityTestID: "object-wiki-identity",
+			// A relationship row is a list line whose excerpt wraps to two
+			// lines, so the tile sits on the identity line instead of beside
+			// the middle of the summary (feedback on this row).
+			TopAlign: true,
 		})
 	</div>
 }
