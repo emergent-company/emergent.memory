@@ -528,6 +528,12 @@ func (f *fakeAgentRepo) CreateAgent(ctx context.Context, a *agents.Agent) error 
 	f.createdAgents = append(f.createdAgents, a)
 	return nil
 }
+func (f *fakeAgentRepo) CreateRuntimeAgentForDefinition(ctx context.Context, a *agents.Agent) (*agents.Agent, error) {
+	if err := f.CreateAgent(ctx, a); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
 func (f *fakeAgentRepo) UpdateAgent(ctx context.Context, a *agents.Agent) error {
 	f.agentsByName[a.Name] = a
 	f.updatedAgents = append(f.updatedAgents, a)

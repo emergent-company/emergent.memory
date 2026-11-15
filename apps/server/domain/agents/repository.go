@@ -724,12 +724,19 @@ func (r *Repository) FindAgentNamesByIDs(ctx context.Context, projectID string, 
 }
 
 // FindByName finds an agent by name within a project.
+//
+// Names are not unique per project: several paths create a kb.agents row by
+// name (per-run chat agents, A2A, the agents API) with no unique
+// (project_id, name) index backing them. When duplicates exist the result must
+// still be stable, so the query orders oldest-first with id as a deterministic
+// tie-breaker — the same order FindAgentsByDefinitionID uses.
 func (r *Repository) FindByName(ctx context.Context, projectID, name string) (*Agent, error) {
 	agent := new(Agent)
 	err := r.db.NewSelect().
 		Model(agent).
 		Where("project_id = ?", projectID).
 		Where("name = ?", name).
+		OrderExpr("created_at ASC, id ASC").
 		Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -803,9 +810,15 @@ func (r *Repository) DeleteAgentsBySourceBlueprint(ctx context.Context, projectI
 
 // --- Agent Definitions ---
 
-// FindAgentsByDefinitionID returns the runtime agents bound to a definition.
-// Definition-save trigger resync uses it to re-derive their reaction config.
-func (r *Repository) FindAgentsByDefinitionID(ctx context.Context, definitionID string) ([]*Agent, error) {
+// FindAgentsByDefinitionID returns the runtime agents bound to a definition
+// within a single project. Definition-save trigger resync uses it to re-derive
+// their reaction config.
+//
+// The project filter is load-bearing: the agents create/update API accepts any
+// agentDefinitionId without checking the project, so a runtime row in project B
+// can carry project A's definition id. A project-scoped lookup keeps a bind in A
+// from resolving (and storing) B's row.
+func (r *Repository) FindAgentsByDefinitionID(ctx context.Context, projectID, definitionID string) ([]*Agent, error) {
 	var agents []*Agent
 	if definitionID == "" {
 		return nil, nil
@@ -813,6 +826,7 @@ func (r *Repository) FindAgentsByDefinitionID(ctx context.Context, definitionID 
 	// Ordered so callers that pick a row (the first enabled one, else the first)
 	// get the same answer on every read.
 	if err := r.db.NewSelect().Model(&agents).
+		Where("project_id = ?", projectID).
 		Where("agent_definition_id = ?", definitionID).
 		OrderExpr("created_at ASC, id ASC").
 		Scan(ctx); err != nil {
@@ -839,23 +853,22 @@ func (r *Repository) FindOrCreateRuntimeAgentForDefinition(ctx context.Context, 
 	if def == nil {
 		return nil, errors.New("agents: nil agent definition")
 	}
-	rows, err := r.FindAgentsByDefinitionID(ctx, def.ID)
+	rows, err := r.FindAgentsByDefinitionID(ctx, def.ProjectID, def.ID)
 	if err != nil {
 		return nil, err
 	}
-	for _, row := range rows {
-		if row.Enabled {
-			return row, nil
-		}
-	}
-	if len(rows) > 0 {
-		return rows[0], nil
+	if row := pickRuntimeAgent(rows); row != nil {
+		return row, nil
 	}
 	// An older path (A2A resolveRuntimeAgent) creates the row by name without the
-	// definition FK. Adopt it rather than colliding on the project name index.
+	// definition FK. Reuse the row an older path created by name rather than
+	// duplicating it. Names are not unique per project, so only a row already
+	// definition-shaped for this definition is adopted; a same-name row of any
+	// other shape (its own prompt/model, created from the Schedules page or the
+	// agents API) is a distinct agent and keeps its config.
 	if existing, err := r.FindByName(ctx, def.ProjectID, def.Name); err != nil {
 		return nil, err
-	} else if existing != nil {
+	} else if canAdoptRuntimeAgent(existing, def) {
 		return r.adoptRuntimeAgent(ctx, existing, def)
 	}
 	defID := def.ID
@@ -868,24 +881,82 @@ func (r *Repository) FindOrCreateRuntimeAgentForDefinition(ctx context.Context, 
 		TriggerType:       TriggerTypeManual,
 		AgentDefinitionID: &defID,
 	}
-	if err := r.Create(ctx, agent); err != nil {
-		// Lost a create race against another binder or a definition save: adopt
-		// the winner by name instead of failing the caller.
-		if existing, ferr := r.FindByName(ctx, def.ProjectID, def.Name); ferr == nil && existing != nil {
-			return r.adoptRuntimeAgent(ctx, existing, def)
-		}
+	row, createErr := r.CreateRuntimeAgentForDefinition(ctx, agent)
+	if createErr == nil {
+		return row, nil
+	}
+	// A concurrent older-path create (A2A) may have made a name-only row in the
+	// meantime. Adopt it only when it is shaped for this definition; an
+	// unrelated same-name row is never adopted.
+	if existing, ferr := r.FindByName(ctx, def.ProjectID, def.Name); ferr == nil && canAdoptRuntimeAgent(existing, def) {
+		return r.adoptRuntimeAgent(ctx, existing, def)
+	}
+	return nil, createErr
+}
+
+// CreateRuntimeAgentForDefinition creates a runtime agent that already carries
+// its definition link and returns the created row. When the insert is rejected
+// by the (project_id, agent_definition_id) partial unique index — another binder
+// linked the same definition first — it re-resolves and returns the winner
+// instead of failing the caller, so a bind race never surfaces as a 500.
+func (r *Repository) CreateRuntimeAgentForDefinition(ctx context.Context, agent *Agent) (*Agent, error) {
+	err := r.Create(ctx, agent)
+	if err == nil {
+		return agent, nil
+	}
+	if !pgutils.IsUniqueViolation(err) || agent.AgentDefinitionID == nil || *agent.AgentDefinitionID == "" {
 		return nil, err
 	}
-	return agent, nil
+	rows, ferr := r.FindAgentsByDefinitionID(ctx, agent.ProjectID, *agent.AgentDefinitionID)
+	if ferr != nil {
+		return nil, err
+	}
+	if row := pickRuntimeAgent(rows); row != nil {
+		return row, nil
+	}
+	return nil, err
+}
+
+// pickRuntimeAgent returns the enabled row from rows, else the first, else nil.
+// rows arrive oldest-first from FindAgentsByDefinitionID, so the choice is
+// deterministic even when a definition owns more than one runtime row.
+func pickRuntimeAgent(rows []*Agent) *Agent {
+	for _, row := range rows {
+		if row.Enabled {
+			return row
+		}
+	}
+	if len(rows) > 0 {
+		return rows[0]
+	}
+	return nil
+}
+
+// canAdoptRuntimeAgent reports whether an existing same-name kb.agents row may
+// be re-pointed at def by adoptRuntimeAgent. Only a row an older path created
+// for this definition — carrying the definition's own strategy marker
+// ("agent-def:<defID>") but no definition FK — is adopted. A same-name row of
+// any other shape (its own prompt/model, created from the Schedules page or the
+// agents API) is a distinct agent and is never adopted; a row linked to a
+// different definition is never adopted.
+func canAdoptRuntimeAgent(existing *Agent, def *AgentDefinition) bool {
+	if existing == nil || def == nil {
+		return false
+	}
+	if existing.AgentDefinitionID != nil && *existing.AgentDefinitionID != "" {
+		return false
+	}
+	return existing.StrategyType == "agent-def:"+def.ID
 }
 
 // adoptRuntimeAgent points an existing kb.agents row at def so the definition
 // resolves through the authoritative FK, the same backfill
 // syncDefinitionWorkTriggers performs when it adopts a name-colliding row.
 //
-// It only fills what the row is missing. A row created by an older path can
-// carry its own marker (chat-session:<defID>), which stays authoritative for
-// ResolveDefinitionForAgent, so an existing StrategyType is left alone.
+// It is only called for a row canAdoptRuntimeAgent has accepted: one already
+// carrying the definition's own strategy marker with a missing link. It fills
+// the FK (and the strategy marker if it were somehow empty); an existing
+// StrategyType is left alone.
 func (r *Repository) adoptRuntimeAgent(ctx context.Context, existing *Agent, def *AgentDefinition) (*Agent, error) {
 	changed := false
 	if existing.AgentDefinitionID == nil || *existing.AgentDefinitionID == "" {

@@ -91,7 +91,7 @@ func TestSourceTriggerBindsDefinitionOnlyAgent(t *testing.T) {
 	require.Equal(t, trigger.AgentID.String(), run.AgentID)
 
 	// Binding the same definition from another source reuses the one runtime row
-	// instead of creating a duplicate (which would trip the project name index).
+	// instead of creating a duplicate.
 	second, err := svc.CreateSourceTrigger(ctx, projectID, newSource(), SourceTriggerInput{
 		EventType: "pull_request", AgentID: defID.String(),
 	})
@@ -146,10 +146,11 @@ func TestSourceTriggerBindsDefinitionOnlyAgent(t *testing.T) {
 	require.Equal(t, 409, conflict.HTTPStatus)
 	require.Equal(t, beforeDuplicate, runtimeRows(), "a duplicate-event bind left an orphaned runtime agent")
 
-	// A runtime row created by an older path (A2A) from the name alone carries no
-	// definition FK. It is adopted — and backfilled so the definition resolves
-	// through the authoritative FK — rather than colliding on the project name
-	// index.
+	// A runtime row created by an older path (A2A) from the name alone carries the
+	// definition's own strategy marker ("agent-def:<defID>") but no definition FK.
+	// It is adopted — and backfilled so the definition resolves through the
+	// authoritative FK — rather than duplicated. Only this definition-shaped row
+	// is adopted; a same-name row of another shape is a distinct agent.
 	legacyDefID := uuid.New()
 	_, err = db.DB.ExecContext(ctx,
 		`INSERT INTO kb.agent_definitions (id, project_id, name, visibility) VALUES (?, ?, 'Legacy Named Agent', 'project')`,
@@ -157,17 +158,125 @@ func TestSourceTriggerBindsDefinitionOnlyAgent(t *testing.T) {
 	require.NoError(t, err)
 	legacyRuntimeID := uuid.New()
 	_, err = db.DB.ExecContext(ctx,
-		`INSERT INTO kb.agents (id, name, strategy_type, cron_schedule, project_id) VALUES (?, 'Legacy Named Agent', 'definition', '', ?)`,
-		legacyRuntimeID, projectID)
+		`INSERT INTO kb.agents (id, name, strategy_type, cron_schedule, project_id) VALUES (?, 'Legacy Named Agent', ?, '', ?)`,
+		legacyRuntimeID, "agent-def:"+legacyDefID.String(), projectID)
 	require.NoError(t, err)
 	adopted, err := svc.CreateSourceTrigger(ctx, projectID, newSource(), SourceTriggerInput{
 		EventType: "pull_request", AgentID: legacyDefID.String(),
 	})
 	require.NoError(t, err)
-	require.Equal(t, legacyRuntimeID, adopted.AgentID, "did not adopt the existing name-only runtime row")
+	require.Equal(t, legacyRuntimeID, adopted.AgentID, "did not adopt the legacy definition-shaped runtime row")
 	var backfilled *string
 	require.NoError(t, db.DB.NewRaw(
 		`SELECT agent_definition_id FROM kb.agents WHERE id = ?`, legacyRuntimeID).Scan(ctx, &backfilled))
 	require.NotNil(t, backfilled, "adopted row kept a nil agent_definition_id")
 	require.Equal(t, legacyDefID.String(), *backfilled)
+}
+
+// TestSourceTriggerRefusesDisabledDefinition pins the #738 disabled-definition
+// fix: binding a disabled definition is refused at the bind surface with a 400
+// class error, rather than leaving a binding that queues work the worker always
+// fails as "agent is disabled".
+func TestSourceTriggerRefusesDisabledDefinition(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	ctx := context.Background()
+	db := testdb.SetupTestDBOrFail(t, ctx, "source_trigger_disabled_definition")
+	t.Cleanup(db.Close)
+	repo := NewRepository(db.DB, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	orgID, projectID := uuid.New(), uuid.New()
+	_, err := db.DB.ExecContext(ctx, `INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgID, "disabled-org")
+	require.NoError(t, err)
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`, projectID, orgID, "disabled-project")
+	require.NoError(t, err)
+
+	disabledDefID := uuid.New()
+	_, err = db.DB.ExecContext(ctx,
+		`INSERT INTO kb.agent_definitions (id, project_id, name, visibility, enabled) VALUES (?, ?, 'Disabled Agent', 'project', false)`,
+		disabledDefID, projectID)
+	require.NoError(t, err)
+
+	srcID := uuid.New()
+	_, err = db.DB.ExecContext(ctx,
+		`INSERT INTO kb.sources (id, project_id, provider, display_name, config, status)
+		 VALUES (?, ?, 'github_app', 'bot', '{}'::jsonb, 'active')`, srcID, projectID)
+	require.NoError(t, err)
+
+	agentRepo := agents.NewRepository(db.DB)
+	svc := NewService(repo, &config.Config{},
+		slog.New(slog.NewTextHandler(io.Discard, nil)), NewRegistry(newGitHubAppProvider()),
+		WithAgentRepository(agentRepo))
+
+	_, err = svc.CreateSourceTrigger(ctx, projectID, srcID, SourceTriggerInput{
+		EventType: "pull_request", AgentID: disabledDefID.String(),
+	})
+	require.Error(t, err)
+	var invalid *apperror.Error
+	require.ErrorAs(t, err, &invalid)
+	require.Equal(t, 422, invalid.HTTPStatus)
+	require.Contains(t, invalid.Message, "Disabled Agent")
+
+	var n int
+	require.NoError(t, db.DB.NewRaw(`SELECT count(*) FROM kb.agents WHERE project_id = ?`, projectID).Scan(ctx, &n))
+	require.Equal(t, 0, n, "a disabled-definition bind created a runtime agent")
+}
+
+// TestSourceTriggerSkipsForeignProjectRuntimeRow pins the #738 project-scope fix
+// at the bind surface: a runtime row in another project that carries this
+// project's definition id must not be bound (its runs would be enqueued in the
+// other project); the bind mints a row in this project instead.
+func TestSourceTriggerSkipsForeignProjectRuntimeRow(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	ctx := context.Background()
+	db := testdb.SetupTestDBOrFail(t, ctx, "source_trigger_foreign_project")
+	t.Cleanup(db.Close)
+	repo := NewRepository(db.DB, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	orgID, projectA := uuid.New(), uuid.New()
+	_, err := db.DB.ExecContext(ctx, `INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgID, "foreign-org")
+	require.NoError(t, err)
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`, projectA, orgID, "project-a")
+	require.NoError(t, err)
+	projectB := uuid.New()
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`, projectB, orgID, "project-b")
+	require.NoError(t, err)
+
+	defID := uuid.New()
+	_, err = db.DB.ExecContext(ctx,
+		`INSERT INTO kb.agent_definitions (id, project_id, name, visibility) VALUES (?, ?, 'Foreign Linked', 'project')`,
+		defID, projectA)
+	require.NoError(t, err)
+	// A runtime row in project B that carries project A's definition id.
+	foreignAgent := uuid.New()
+	_, err = db.DB.ExecContext(ctx,
+		`INSERT INTO kb.agents (id, project_id, name, strategy_type, cron_schedule, agent_definition_id)
+		 VALUES (?, ?, 'Foreign Linked', ?, '0 0 * * *', ?)`,
+		foreignAgent, projectB, "agent-def:"+defID.String(), defID)
+	require.NoError(t, err)
+
+	srcID := uuid.New()
+	_, err = db.DB.ExecContext(ctx,
+		`INSERT INTO kb.sources (id, project_id, provider, display_name, config, status)
+		 VALUES (?, ?, 'github_app', 'bot', '{}'::jsonb, 'active')`, srcID, projectA)
+	require.NoError(t, err)
+
+	agentRepo := agents.NewRepository(db.DB)
+	svc := NewService(repo, &config.Config{},
+		slog.New(slog.NewTextHandler(io.Discard, nil)), NewRegistry(newGitHubAppProvider()),
+		WithAgentRepository(agentRepo))
+
+	trigger, err := svc.CreateSourceTrigger(ctx, projectA, srcID, SourceTriggerInput{
+		EventType: "pull_request", AgentID: defID.String(),
+	})
+	require.NoError(t, err)
+	require.NotEqual(t, foreignAgent, trigger.AgentID, "a foreign-project runtime row was bound")
+
+	bound, err := agentRepo.FindByID(ctx, trigger.AgentID.String(), strPtr(projectA.String()))
+	require.NoError(t, err)
+	require.NotNil(t, bound)
+	require.Equal(t, projectA.String(), bound.ProjectID)
 }

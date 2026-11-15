@@ -18,6 +18,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/branchorigin"
 	"github.com/emergent-company/emergent.memory/pkg/branchscope"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/pgutils"
 )
 
 // extractionAgentSelection is the resolved project choice for agent-run
@@ -244,19 +245,12 @@ func withExtractionLineage(ctx context.Context, job *ObjectExtractionJob) contex
 // definition cannot run without one; the row is a stable per-definition shell
 // and is never scheduled (cron 0 0 * * *, disabled).
 func (w *ObjectExtractionWorker) ensureExtractionRuntimeAgent(ctx context.Context, projectID string, def *domainagents.AgentDefinition) (string, error) {
-	var agentID string
-	err := w.jobsService.db.NewSelect().
-		TableExpr("kb.agents").
-		ColumnExpr("id::text").
-		Where("project_id = ? AND agent_definition_id = ?", projectID, def.ID).
-		Order("created_at ASC").
-		Limit(1).
-		Scan(ctx, &agentID)
-	if err == nil && agentID != "" {
-		return agentID, nil
+	agentID, err := w.findExtractionRuntimeAgentID(ctx, projectID, def.ID)
+	if err != nil {
+		return "", err
 	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("find extraction runtime agent: %w", err)
+	if agentID != "" {
+		return agentID, nil
 	}
 	name := "extraction-agent:" + def.Name
 	err = w.jobsService.db.NewRaw(`
@@ -267,7 +261,34 @@ func (w *ObjectExtractionWorker) ensureExtractionRuntimeAgent(ctx context.Contex
 		RETURNING id::text`,
 		projectID, name, "agent-def:"+def.ID, def.ID).Scan(ctx, &agentID)
 	if err != nil {
+		// Lost a create race: the (project_id, agent_definition_id) partial
+		// unique index rejected a concurrent insert. Re-read the winner rather
+		// than failing the run.
+		if pgutils.IsUniqueViolation(err) {
+			if winner, ferr := w.findExtractionRuntimeAgentID(ctx, projectID, def.ID); ferr == nil && winner != "" {
+				return winner, nil
+			}
+		}
 		return "", fmt.Errorf("create extraction runtime agent: %w", err)
+	}
+	return agentID, nil
+}
+
+// findExtractionRuntimeAgentID returns the runtime agent id backing a definition
+// within a project, or "" when the definition has no runtime row yet. Shared by
+// ensureExtractionRuntimeAgent's lookup and its unique-violation recovery so the
+// two reads agree on the same oldest-first winner.
+func (w *ObjectExtractionWorker) findExtractionRuntimeAgentID(ctx context.Context, projectID, definitionID string) (string, error) {
+	var agentID string
+	err := w.jobsService.db.NewSelect().
+		TableExpr("kb.agents").
+		ColumnExpr("id::text").
+		Where("project_id = ? AND agent_definition_id = ?", projectID, definitionID).
+		Order("created_at ASC").
+		Limit(1).
+		Scan(ctx, &agentID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("find extraction runtime agent: %w", err)
 	}
 	return agentID, nil
 }

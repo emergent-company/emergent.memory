@@ -680,6 +680,7 @@ Table "kb"."agents" {
     (enabled) [name: "idx_agents_enabled"]
     (project_id) [name: "idx_agents_project_id"]
     (strategy_type) [name: "idx_agents_role"]
+    (project_id, agent_definition_id) [name: "uq_agents_project_agent_definition", unique, note: '(agent_definition_id IS NOT NULL)']
   }
 }
 

@@ -589,7 +589,8 @@ func executeSingleSpawn(ctx context.Context, deps *CoordinationToolDeps, req Spa
 			ExecutionMode:     ExecutionModeExecute,
 			AgentDefinitionID: &def.ID,
 		}
-		if createErr := deps.Repo.Create(ctx, agent); createErr != nil {
+		created, createErr := deps.Repo.CreateRuntimeAgentForDefinition(ctx, agent)
+		if createErr != nil {
 			msg := fmt.Sprintf("failed to create runtime agent for definition %q: %s", req.AgentName, createErr.Error())
 			emitFailed(msg)
 			return SpawnResult{
@@ -598,6 +599,7 @@ func executeSingleSpawn(ctx context.Context, deps *CoordinationToolDeps, req Spa
 				Error:     msg,
 			}
 		}
+		agent = created
 	}
 
 	// Determine timeout — explicit timeout overrides agent definition's default_timeout

@@ -1264,7 +1264,8 @@ func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID
 		AgentDefinitionID: &defID,
 		Config:            map[string]any{"sourceBlueprintId": blueprintID},
 	}
-	return s.agentRepo.CreateAgent(ctx, agent)
+	_, err = s.agentRepo.CreateRuntimeAgentForDefinition(ctx, agent)
+	return err
 }
 
 // agentUIConfig marshals an AgentUIManifest into the opaque ui_config JSONB
