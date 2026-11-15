@@ -99,9 +99,6 @@ func TestMarketSidebarItemsLabelsAndExternalAttrs(t *testing.T) {
 		if item.Icon != "lucide--store" {
 			t.Fatalf("item %d icon = %q", i, item.Icon)
 		}
-		if item.Attrs["target"] != "_blank" || item.Attrs["rel"] != "noopener noreferrer" {
-			t.Fatalf("item %d attrs = %#v", i, item.Attrs)
-		}
 	}
 }
 
@@ -110,12 +107,9 @@ func TestMarketSidebarItemsHiddenWhenUnconfigured(t *testing.T) {
 	if items := s.marketSidebarItems(); len(items) != 0 {
 		t.Fatalf("items = %#v, want none", items)
 	}
-	for _, group := range sidebarGroupsWithMarket("", false, sidebarWarns{}) {
-		for _, item := range group.Items {
-			if item.Label == "Marketplace" {
-				t.Fatalf("Marketplace rendered without configuration")
-			}
-		}
+	html := renderHTML(t, appSidebar(sidebarGroupsWithWarn("", false, sidebarWarns{}), s.marketSidebarItems(), false))
+	if strings.Contains(html, `data-testid="sidebar-marketplace"`) {
+		t.Fatal("Marketplace block rendered without configuration")
 	}
 }
 
@@ -131,8 +125,18 @@ func TestMarketplaceRendersAtSidebarBottom(t *testing.T) {
 	if nav < 0 || version < 0 {
 		t.Fatalf("sidebar anchors missing (nav=%d version=%d)", nav, version)
 	}
-	if !(nav < footer && footer < version) {
+	if nav >= footer || footer >= version {
 		t.Fatalf("marketplace not bottom-aligned above the version footer: nav=%d market=%d version=%d", nav, footer, version)
+	}
+	navClass := strings.Index(html, `class="sidebar-menu grow overflow-y-auto"`)
+	navOpen := strings.LastIndex(html[:navClass], "<div")
+	navClose := divCloseIndex(html, navOpen)
+	if navClose < 0 || footer < navClose {
+		t.Fatalf("marketplace block is inside the scrollable nav (nav close=%d market=%d), not pinned", navClose, footer)
+	}
+	blockStart := strings.LastIndex(html[:footer], "<div")
+	if blockStart < 0 || !strings.Contains(html[blockStart:footer], "shrink-0") {
+		t.Fatalf("marketplace block is not a shrink-0 sibling: %s", html[blockStart:footer])
 	}
 	if !strings.Contains(html[footer:], "Marketplace") {
 		t.Fatal("marketplace label missing from its footer block")
@@ -156,6 +160,29 @@ func TestMarketplaceRendersAtSidebarBottom(t *testing.T) {
 	if !strings.Contains(link, `target="_blank"`) || !strings.Contains(link, `rel="noopener noreferrer"`) {
 		t.Fatalf("marketplace link is not an external noopener link: %s", link)
 	}
+}
+
+// divCloseIndex returns the offset of the </div> that closes the <div> opening
+// at open, counting nested divs. The sidebar test uses it to prove a block is a
+// sibling after the scroll container rather than nested inside it.
+func divCloseIndex(html string, open int) int {
+	depth := 0
+	for i := open; i < len(html); {
+		switch {
+		case strings.HasPrefix(html[i:], "<div"):
+			depth++
+			i += 4
+		case strings.HasPrefix(html[i:], "</div>"):
+			depth--
+			if depth == 0 {
+				return i
+			}
+			i += 6
+		default:
+			i++
+		}
+	}
+	return -1
 }
 
 func TestMarketSidebarSecondaryLabelsNeverCollide(t *testing.T) {

@@ -116,11 +116,6 @@ func (s *Server) marketSidebarItems() []layout.SidebarItem {
 			Label: label,
 			Href:  issuer,
 			Icon:  "lucide--store",
-			Attrs: templ.Attributes{
-				"target":     "_blank",
-				"rel":        "noopener noreferrer",
-				"hx-disable": "true",
-			},
 		})
 	}
 	return items
