@@ -723,28 +723,39 @@ func parseRuleRow(c echo.Context, objectType string) (AgentObjectRule, error) {
 	create := lastFormBool(c, "ruleCreate")
 	update := lastFormBool(c, "ruleUpdate")
 	del := lastFormBool(c, "ruleDelete")
+	rule := AgentObjectRule{
+		ObjectType:              objectType,
+		CanCreate:               &create,
+		CanUpdate:               &update,
+		CanDelete:               &del,
+		Fields:                  splitCSV(c.FormValue("ruleFields")),
+		Triggers:                parseRuleTriggers(c.FormValue("ruleTriggers")),
+		Transitions:             parseRuleTransitions(c.FormValue("ruleTransitions")),
+		ClearAssigneeOnComplete: lastFormBool(c, "ruleClearAssignee"),
+	}
 	rawInvocation := c.FormValue("rule-" + objectType + "-invocation")
 	if strings.TrimSpace(rawInvocation) == "" {
 		rawInvocation = c.FormValue("ruleInvocation")
 	}
 	invocation, err := parseRuleInvocation(rawInvocation)
 	if err != nil {
-		return AgentObjectRule{ObjectType: objectType}, err
+		return rule, err
 	}
-	triggers := parseRuleTriggers(c.FormValue("ruleTriggers"))
 	if invocation != nil {
-		for i := range triggers {
-			triggers[i].Invocation = invocation
+		for i := range rule.Triggers {
+			rule.Triggers[i].Invocation = invocation
 		}
 	}
-	return AgentObjectRule{
-		ObjectType:              objectType,
-		CanCreate:               &create,
-		CanUpdate:               &update,
-		CanDelete:               &del,
-		Fields:                  splitCSV(c.FormValue("ruleFields")),
-		Triggers:                triggers,
-		Transitions:             parseRuleTransitions(c.FormValue("ruleTransitions")),
-		ClearAssigneeOnComplete: lastFormBool(c, "ruleClearAssignee"),
-	}, nil
+	return rule, nil
+}
+
+func ruleInvocationFieldName(rule AgentObjectRule, selectedType string) string {
+	objectType := rule.ObjectType
+	if objectType == "" {
+		objectType = selectedType
+	}
+	if objectType == "" {
+		return "ruleInvocation"
+	}
+	return "rule-" + objectType + "-invocation"
 }

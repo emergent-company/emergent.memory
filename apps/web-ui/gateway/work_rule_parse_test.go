@@ -40,3 +40,15 @@ func TestParseRuleRowRejectsBadInvocationJSON(t *testing.T) {
 		t.Fatal("invalid invocation JSON accepted")
 	}
 }
+
+func TestRuleInvocationFieldNameUsesSelectedTypeOnCreate(t *testing.T) {
+	if got := ruleInvocationFieldName(AgentObjectRule{}, "GitHubIssue"); got != "rule-GitHubIssue-invocation" {
+		t.Fatalf("field = %q", got)
+	}
+	if got := ruleInvocationFieldName(AgentObjectRule{ObjectType: "GitHubIssue"}, ""); got != "rule-GitHubIssue-invocation" {
+		t.Fatalf("field = %q", got)
+	}
+	if got := ruleInvocationFieldName(AgentObjectRule{}, ""); got != "ruleInvocation" {
+		t.Fatalf("fallback = %q", got)
+	}
+}
