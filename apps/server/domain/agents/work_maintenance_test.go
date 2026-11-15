@@ -86,3 +86,15 @@ func TestIsTerminalLaneStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkTriggerMetadataAcceptsIntegerIssueNumber(t *testing.T) {
+	meta := workTriggerMetadata(&graph.WorkObjectHead{Status: "ready", Type: "GitHubIssue", Properties: map[string]any{
+		"repo":         "emergent-company/emergent.memory",
+		"issue_number": 819,
+		"source_id":    "source-1",
+		"url":          "https://github.com/emergent-company/emergent.memory/issues/819",
+	}})
+	if meta["issueNumber"] != 819 || meta["sourceId"] != "source-1" || meta["subjectType"] != "issue" {
+		t.Fatalf("meta = %#v", meta)
+	}
+}
