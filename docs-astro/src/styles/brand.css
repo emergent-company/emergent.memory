@@ -281,8 +281,10 @@ site-search button[data-open-modal]:hover {
   transition: background-color 0.15s ease, color 0.15s ease;
 }
 
+/* Hover is a colour change, not a fill: on a touch device a tapped button keeps
+   `:hover`, and a stuck grey box behind a bare glyph reads as a broken control. */
 .mem-theme-toggle:hover {
-  background-color: var(--mem-fill-mid);
+  background: none;
   color: var(--sl-color-white);
 }
 
@@ -329,6 +331,31 @@ site-search button[data-open-modal]:hover {
 
   #starlight__sidebar starlight-theme-select {
     display: none;
+  }
+
+  /* Below 50rem the search collapses to a glyph, so it belongs with the switch
+     instead of floating in the middle of the bar: push its wrapper to the end
+     and the header's own gap (--sl-nav-gap) sets the distance between the two
+     controls. */
+  header.header .header > div:has(site-search) {
+    margin-inline-start: auto;
+  }
+
+  /* Both controls are bare glyphs on mobile. The bordered field is right for a
+     search box that shows an input; an icon with a box around it is not, and
+     neither is a fill on hover that a tap leaves stuck. */
+  header.header site-search button[data-open-modal] {
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    border: 0;
+    background: none;
+  }
+
+  header.header site-search button[data-open-modal]:hover {
+    border: 0;
+    background: none;
+    color: var(--sl-color-white);
   }
 }
 
