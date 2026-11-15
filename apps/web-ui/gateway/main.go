@@ -134,6 +134,10 @@ func main() {
 	// table below is reused unchanged (Pre middlewares run before routing).
 	e.Pre(s.scopeRewrite)
 
+	// Public discovery document (see publicAuthPath). The marketplace fetches it
+	// cross-origin from the browser to check install capability and trust.
+	e.GET("/.well-known/memory-instance", s.memoryInstanceWellKnown)
+
 	// Internal worker endpoint — exempt from session auth (see publicAuthPath);
 	// gated by a per-worker credential in the X-Worker-Key header instead.
 	e.GET("/internal/voice-binding", s.voiceBindingHandler)

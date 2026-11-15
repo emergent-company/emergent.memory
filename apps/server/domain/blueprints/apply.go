@@ -33,6 +33,17 @@ type ApplyOptions struct {
 	// an object type name already registered in the project. Without it, apply
 	// blocks with 409 before materializing anything.
 	MergeTypeConflicts bool `json:"mergeTypeConflicts,omitempty"`
+	// SkillProvenance stamps provenance on skills CREATED by this apply. It is
+	// used by the marketplace install path (source=marketplace, source_url =
+	// <issuer>/listings/<slug>). Existing skills keep their stored provenance.
+	SkillProvenance *SkillProvenance `json:"-"`
+}
+
+// SkillProvenance carries the marketplace provenance written onto created
+// skills.
+type SkillProvenance struct {
+	Source    string
+	SourceURL string
 }
 
 // ApplyPreview is the read-only result of previewing a blueprint apply: the
@@ -165,7 +176,7 @@ func (s *Service) Apply(ctx context.Context, blueprintID, projectID, userID stri
 	}
 
 	// Skills: create-or-update by name (global scope: project_id NULL, org_id NULL).
-	result.Skills, err = s.applySkills(ctx, manifest.Skills)
+	result.Skills, err = s.applySkills(ctx, manifest.Skills, opts.SkillProvenance)
 	if err != nil {
 		return nil, err
 	}
@@ -734,7 +745,7 @@ func (s *Service) applyAgents(ctx context.Context, projectID, blueprintID, bpNam
 // org_id NULL). Both paths run the exported skills validation (name pattern,
 // non-empty description/content, content size cap). Updates preserve
 // provenance metadata unless the manifest explicitly provides new metadata.
-func (s *Service) applySkills(ctx context.Context, skillManifests []SkillManifest) (ApplyCounts, error) {
+func (s *Service) applySkills(ctx context.Context, skillManifests []SkillManifest, provenance *SkillProvenance) (ApplyCounts, error) {
 	var counts ApplyCounts
 	existing, err := s.skillsRepo.FindAll(ctx, nil, nil)
 	if err != nil {
@@ -773,6 +784,16 @@ func (s *Service) applySkills(ctx context.Context, skillManifests []SkillManifes
 			Content:     sm.Content,
 		}, maxContentSize); err != nil {
 			return counts, err
+		}
+
+		if provenance != nil {
+			if md == nil {
+				md = &skills.SkillMetadata{}
+			}
+			// Install provenance is authoritative: a marketplace install's
+			// created skills are stamped source=marketplace and its listing URL.
+			md.Source = provenance.Source
+			md.SourceURL = provenance.SourceURL
 		}
 
 		skill := &skills.Skill{

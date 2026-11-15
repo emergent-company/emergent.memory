@@ -226,10 +226,11 @@ func (s *Service) CreateBlueprint(ctx context.Context, req *CreateBlueprintReque
 		UpdatedAt:              now,
 	}
 	// Origin is server-derived, never client-settable (the request field is
-	// json:"-"): only the internal GitHub-import path may set "import"; every
-	// other create path — including a forged `origin` in a JSON body — is
-	// user-authored. Built-ins are written by the seeder, not this path.
-	if bp.Origin != OriginImport {
+	// json:"-"): only the internal GitHub-import path may set "import" and only
+	// the marketplace install path may set "market"; every other create path —
+	// including a forged `origin` in a JSON body — is user-authored. Built-ins
+	// are written by the seeder, not this path.
+	if bp.Origin != OriginImport && bp.Origin != OriginMarket {
 		bp.Origin = OriginUser
 	}
 	if bp.Manifest == nil {

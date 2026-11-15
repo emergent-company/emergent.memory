@@ -15,13 +15,14 @@ const (
 )
 
 // Blueprint origin values. Origin distinguishes a platform built-in
-// (project_id IS NULL, seeded at boot) from a user-authored blueprint and a
-// GitHub import; it drives apply-time pack scoping (builtin → global pack,
-// user/import → project-scoped pack).
+// (project_id IS NULL, seeded at boot) from a user-authored blueprint, a
+// GitHub import and a marketplace install; it drives apply-time pack scoping
+// (builtin → global pack, user/import/market → project-scoped pack).
 const (
 	OriginBuiltin = "builtin"
 	OriginUser    = "user"
 	OriginImport  = "import"
+	OriginMarket  = "market"
 )
 
 // Blueprint is a versioned, immutable-on-publish blueprint definition.
