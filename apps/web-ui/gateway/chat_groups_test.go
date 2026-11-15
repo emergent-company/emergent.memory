@@ -197,7 +197,7 @@ func TestMemoryClientListConversationsWithAncestors(t *testing.T) {
 // the session title.
 func TestSessionRailSubchatToggleSitsInGrowColumn(t *testing.T) {
 	c := Conversation{ID: "parent", Title: "Parent", UpdatedAt: railTime(-time.Hour), CreatedAt: railTime(-time.Hour)}
-	html := renderHTML(t, sessionRailGroupParent(c, agentAppearance{}, false, 3, false))
+	html := renderHTML(t, sessionRailGroupParent(c, agentAppearance{}, false, 3, false, ""))
 
 	grow := strings.Index(html, `class="list-col-grow"`)
 	actions := strings.Index(html, `<div class="flex items-center gap-1">`)
