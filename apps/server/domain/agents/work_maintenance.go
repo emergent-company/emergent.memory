@@ -341,10 +341,11 @@ func (r *Repository) listWorkAgentStatuses(ctx context.Context) (ready, inProgre
 // workMaintenance is the shared base for the periodic work-status reaper and
 // reconciler.
 type workMaintenance struct {
-	repo        *Repository
-	workObjects WorkObjectStore
-	log         *slog.Logger
-	interval    time.Duration
+	repo           *Repository
+	workObjects    WorkObjectStore
+	workInvocation WorkInvocationResolver
+	log            *slog.Logger
+	interval       time.Duration
 
 	stopCh  chan struct{}
 	doneCh  chan struct{}
@@ -497,6 +498,10 @@ type WorkReconciler struct {
 }
 
 // NewWorkReconciler creates a reconciler.
+func (rc *WorkReconciler) SetWorkInvocationResolver(r WorkInvocationResolver) {
+	rc.workInvocation = r
+}
+
 func NewWorkReconciler(repo *Repository, log *slog.Logger, interval time.Duration) *WorkReconciler {
 	if interval <= 0 {
 		interval = defaultWorkReconcilerInterval
@@ -596,7 +601,7 @@ func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead) 
 		if def != nil {
 			trigger = def.MatchWorkTrigger(h.Type, h.Status)
 		}
-		inv := workRunInvocation(h, trigger)
+		inv := workRunInvocation(ctx, rc.workInvocation, h.ProjectID, h, trigger)
 		opts := CreateRunQueuedOptions{
 			SubjectObjectID:   &canonicalID,
 			SubjectObjectType: &objectType,

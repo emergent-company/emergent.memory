@@ -453,6 +453,19 @@ func dsTriggerNextEnabled(enabled bool) string {
 }
 
 // dsTriggerQueueLabel renders an empty queue as the server's default.
+func dsCanAddTrigger(triggers []DSSourceTrigger) bool {
+	hasPullRequest, hasIssues := false, false
+	for _, trigger := range triggers {
+		switch trigger.EventType {
+		case dsTriggerEventPullRequest:
+			hasPullRequest = true
+		case dsTriggerEventIssues:
+			hasIssues = true
+		}
+	}
+	return !hasPullRequest || !hasIssues
+}
+
 func dsTriggerEventIcon(eventType string) string {
 	if eventType == dsTriggerEventIssues {
 		return "lucide--circle-dot"
@@ -629,11 +642,10 @@ func (s *Server) uiDataSourceBackfillIssues(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
 	back := "/data-sources/" + url.PathEscape(id) + "#triggers"
-	count, err := s.memory.BackfillSourceIssues(ctx, id)
-	if err != nil {
+	if _, err := s.memory.BackfillSourceIssues(ctx, id); err != nil {
 		return redirectWithError(c, back, dsFormError(err))
 	}
-	redirectAfterMutation(c, back+"?issuesImported="+strconv.Itoa(count))
+	redirectAfterMutation(c, back+"?issuesImported=1")
 	return nil
 }
 

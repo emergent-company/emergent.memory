@@ -11,6 +11,7 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"github.com/emergent-company/emergent.memory/domain/events"
+	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/scheduler"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -35,6 +36,9 @@ type TriggerService struct {
 	// dispatch and to perform the claim transition. Nil in unit tests that only
 	// exercise trigger registration and the legacy inline path.
 	workObjects WorkObjectStore
+	// workInvocation resolves a source trigger's invocation from its server-owned
+	// row. Nil falls back to the agent work rule.
+	workInvocation WorkInvocationResolver
 
 	// activeRuns backs ConcurrencyStrategy=skip. nil fails open (no checker wired,
 	// e.g. unit tests).
@@ -52,6 +56,11 @@ type TriggerService struct {
 // inline path (or skips when a HEAD lookup is required).
 func (ts *TriggerService) SetWorkObjectStore(store WorkObjectStore) {
 	ts.workObjects = store
+}
+
+// SetWorkInvocationResolver installs the source-trigger invocation resolver.
+func (ts *TriggerService) SetWorkInvocationResolver(r WorkInvocationResolver) {
+	ts.workInvocation = r
 }
 
 // NewTriggerService creates a new TriggerService.
@@ -572,28 +581,33 @@ func (ts *TriggerService) enqueueWorkRun(ctx context.Context, agent *Agent, agen
 		return
 	}
 
-	// Resolve the object version at dispatch. The single-event path carries it in
-	// the payload; the batch path omits it, so fall back to the HEAD version.
-	version, hasVersion := intFromInput(input["version"])
-	if !hasVersion {
-		if ts.workObjects == nil {
-			ts.log.Warn("cannot resolve work object version: no work object store",
+	// Load the HEAD once: it supplies the invocation for auto-start items and
+	// the fallback version for the batch path. Trigger invocation is never read
+	// from the mutable graph properties; only the server-owned trigger id is.
+	var head *graph.WorkObjectHead
+	if ts.workObjects != nil {
+		var herr error
+		head, herr = ts.workObjects.GetHeadObject(ctx, projectID, canonicalID)
+		if herr != nil {
+			ts.log.Warn("failed to resolve work object",
 				slog.String("agent_id", agent.ID),
 				slog.String("canonical_id", canonicalID),
-			)
-			return
-		}
-		head, err := ts.workObjects.GetHeadObject(ctx, projectID, canonicalID)
-		if err != nil {
-			ts.log.Warn("failed to resolve work object version",
-				slog.String("agent_id", agent.ID),
-				slog.String("canonical_id", canonicalID),
-				slog.String("error", err.Error()),
+				slog.String("error", herr.Error()),
 			)
 			return
 		}
 		if head == nil {
 			return // object gone
+		}
+	}
+	version, hasVersion := intFromInput(input["version"])
+	if !hasVersion {
+		if head == nil {
+			ts.log.Warn("cannot resolve work object version: no work object store",
+				slog.String("agent_id", agent.ID),
+				slog.String("canonical_id", canonicalID),
+			)
+			return
 		}
 		version = head.Version
 	}
@@ -623,14 +637,19 @@ func (ts *TriggerService) enqueueWorkRun(ctx context.Context, agent *Agent, agen
 	if matchedTrigger != nil && matchedTrigger.Status != "" {
 		meta["work_claim_status"] = matchedTrigger.Status
 	}
-	inv := workRunInvocationFromMetadata(data, matchedTrigger)
+	inv := workRunInvocation(ctx, ts.workInvocation, projectID, head, matchedTrigger)
+	trusted := workRunTrustedType(objectType)
+	if head != nil {
+		trusted = workRunTrusted(head)
+	}
 	opts := CreateRunQueuedOptions{
 		SubjectObjectID:   &canonicalID,
 		SubjectObjectType: &objectType,
-		TrustedInternal:   workRunTrustedType(objectType),
+		TrustedInternal:   trusted,
 		MaxPendingJobs:    maxPendingJobs,
 		TriggerMetadata:   meta,
 		Invocation:        inv,
+		SourceTriggerID:   workSourceTriggerID(head),
 	}
 	if inv != nil {
 		opts.Priority = inv.Priority

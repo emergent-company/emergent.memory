@@ -1032,37 +1032,35 @@ templ dsSourceTriggersPanel(view dsSourceTriggersView) {
 					Adds every open issue as an unassigned board item. Importing never starts a run.
 				}
 			</div>
-			if len(view.Triggers) == 0 {
-				if len(view.Agents) == 0 {
-					<div class="mt-4 flex flex-col gap-2 border-t border-base-content/10 pt-4" data-testid="ds-trigger-agents-empty">
-						@ui.EmptyNote(ui.EmptyNoteProps{}) {
-							This project has no agents yet. Create one before binding a trigger.
-						}
-						@ui.Button(ui.ButtonProps{
-							Type:    ui.ButtonTypeLink,
-							Href:    "/agents",
-							Variant: ui.ButtonOutline,
-							Size:    ui.ButtonSM,
-							Icon:    "lucide--bot",
-							Attrs:   templ.Attributes{"data-testid": "ds-trigger-agents-link"},
-						}) {
-							Open Agents
-						}
-					</div>
-				} else {
-					<div class="mt-4 border-t border-base-content/10 pt-4">
-						@ui.Button(ui.ButtonProps{
-							Type:    ui.ButtonTypeLink,
-							Href:    "/data-sources/" + url.PathEscape(view.SourceID) + "/triggers/new",
-							Variant: ui.ButtonPrimary,
-							Size:    ui.ButtonSM,
-							Icon:    "lucide--plus",
-							Attrs:   templ.Attributes{"data-testid": "ds-trigger-add"},
-						}) {
-							Add trigger
-						}
-					</div>
-				}
+			if len(view.Agents) == 0 {
+				<div class="mt-4 flex flex-col gap-2 border-t border-base-content/10 pt-4" data-testid="ds-trigger-agents-empty">
+					@ui.EmptyNote(ui.EmptyNoteProps{}) {
+						This project has no agents yet. Create one before binding a trigger.
+					}
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeLink,
+						Href:    "/agents",
+						Variant: ui.ButtonOutline,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--bot",
+						Attrs:   templ.Attributes{"data-testid": "ds-trigger-agents-link"},
+					}) {
+						Open Agents
+					}
+				</div>
+			} else if dsCanAddTrigger(view.Triggers) {
+				<div class="mt-4 border-t border-base-content/10 pt-4">
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeLink,
+						Href:    "/data-sources/" + url.PathEscape(view.SourceID) + "/triggers/new",
+						Variant: ui.ButtonPrimary,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--plus",
+						Attrs:   templ.Attributes{"data-testid": "ds-trigger-add"},
+					}) {
+						Add trigger
+					}
+				</div>
 			}
 		}
 	</div>

@@ -417,7 +417,16 @@ func (p *WorkerPool) reenqueueWork(ctx context.Context, log *slog.Logger, agent 
 	if agentDef != nil && head != nil {
 		trigger = agentDef.MatchWorkTrigger(head.Type, head.Status)
 	}
-	inv := workRunInvocation(head, trigger)
+	inv := workRunInvocation(ctx, nil, projectID, head, trigger)
+	sourceTriggerID := workSourceTriggerID(head)
+	if prev, perr := p.repo.FindLatestRunForSubject(ctx, canonicalID); perr == nil && prev != nil {
+		if prev.RunInvocation != nil {
+			inv = prev.RunInvocation
+		}
+		if prev.SourceTriggerID != nil {
+			sourceTriggerID = prev.SourceTriggerID
+		}
+	}
 	opts := CreateRunQueuedOptions{
 		SubjectObjectID:   &canonicalID,
 		SubjectObjectType: subjectTypePtr,
@@ -425,7 +434,7 @@ func (p *WorkerPool) reenqueueWork(ctx context.Context, log *slog.Logger, agent 
 		NextRunAt:         nextRunAt,
 		TriggerMetadata:   meta,
 		Invocation:        inv,
-		SourceTriggerID:   workSourceTriggerID(head),
+		SourceTriggerID:   sourceTriggerID,
 	}
 	if inv != nil {
 		opts.Priority = inv.Priority

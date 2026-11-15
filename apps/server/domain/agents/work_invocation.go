@@ -1,35 +1,25 @@
 package agents
 
 import (
-	"encoding/json"
+	"context"
 
 	"github.com/emergent-company/emergent.memory/domain/graph"
 )
 
-// workRunInvocation resolves the invocation for a Board dispatch. A source
-// auto-start item carries the sanitized invocation it was created with; a
-// manual assignment falls back to the assigned agent's pickup trigger.
-func workRunInvocation(h *graph.WorkObjectHead, trigger *AgentWorkTrigger) *AgentInvocation {
-	if h != nil && h.Properties != nil {
-		if raw, ok := h.Properties["run_invocation"]; ok && raw != nil {
-			if inv := decodeInvocation(raw); inv != nil {
-				return inv
-			}
-		}
-	}
-	if trigger != nil && trigger.Invocation != nil {
-		return NormalizeInvocation(trigger.Invocation)
-	}
-	return nil
+// WorkInvocationResolver resolves a source trigger's invocation from the
+// server-owned trigger row. The board item only carries the trigger id; the
+// invocation (model, context, env allowlist, credential request) is never
+// trusted from graph properties, which project users and agents can write.
+type WorkInvocationResolver interface {
+	ResolveSourceTriggerInvocation(ctx context.Context, projectID, sourceID, triggerID string) (*AgentInvocation, error)
 }
 
-// workRunInvocationFromMetadata is the reaction/assignment path's equivalent
-// of workRunInvocation: it can read run_invocation from the event payload.
-func workRunInvocationFromMetadata(data map[string]any, trigger *AgentWorkTrigger) *AgentInvocation {
-	if data != nil {
-		if raw, ok := data["run_invocation"]; ok && raw != nil {
-			if inv := decodeInvocation(raw); inv != nil {
-				return inv
+func workRunInvocation(ctx context.Context, resolver WorkInvocationResolver, projectID string, h *graph.WorkObjectHead, trigger *AgentWorkTrigger) *AgentInvocation {
+	if h != nil && h.Properties != nil {
+		if triggerID, _ := h.Properties["source_trigger_id"].(string); triggerID != "" && resolver != nil {
+			sourceID, _ := h.Properties["source_id"].(string)
+			if inv, err := resolver.ResolveSourceTriggerInvocation(ctx, projectID, sourceID, triggerID); err == nil && inv != nil {
+				return NormalizeInvocation(inv)
 			}
 		}
 	}
@@ -62,16 +52,4 @@ func workSourceTriggerID(h *graph.WorkObjectHead) *string {
 		return nil
 	}
 	return &id
-}
-
-func decodeInvocation(raw any) *AgentInvocation {
-	data, err := json.Marshal(raw)
-	if err != nil {
-		return nil
-	}
-	var inv AgentInvocation
-	if err := json.Unmarshal(data, &inv); err != nil {
-		return nil
-	}
-	return NormalizeInvocation(&inv)
 }

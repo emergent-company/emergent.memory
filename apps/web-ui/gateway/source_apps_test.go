@@ -1031,8 +1031,8 @@ func TestDataSourceDetailRendersTriggersForGitHubApp(t *testing.T) {
 	if strings.Contains(body, `data-testid="ds-trigger-agents-empty"`) {
 		t.Error("agent picker reported an empty project though agents exist")
 	}
-	if strings.Contains(body, `data-testid="ds-trigger-add"`) {
-		t.Error("add action offered while a pull_request binding exists")
+	if !strings.Contains(body, `data-testid="ds-trigger-add"`) {
+		t.Error("add action missing while the issues event is still unbound")
 	}
 	if strings.Index(body, `data-testid="ds-edit-form"`) > strings.Index(body, `data-testid="ds-triggers"`) {
 		t.Error("triggers should render below the settings form")

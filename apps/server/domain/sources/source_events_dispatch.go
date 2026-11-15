@@ -41,7 +41,14 @@ type SourceEventDispatcher struct {
 	minter      *githubapp.TokenMinter
 	newClient   func(baseURL, token string) *githubapp.Client
 	workObjects SourceWorkObjectStore
+	objectTypes ObjectTypeProvisioner
 	log         *slog.Logger
+}
+
+// SetObjectTypes installs the schema-pack provisioner so an issue event can
+// ensure GitHubIssue exists on a source created before the type was added.
+func (d *SourceEventDispatcher) SetObjectTypes(p ObjectTypeProvisioner) {
+	d.objectTypes = p
 }
 
 // SourceWorkObjectStore is the graph upsert surface the workflow dispatcher
@@ -366,6 +373,11 @@ func (d *SourceEventDispatcher) handleIssues(ctx context.Context, v *VerifiedSou
 		if !repoAllowed(src.Config, repoName) {
 			continue
 		}
+		if d.objectTypes != nil {
+			if err := d.objectTypes.EnsureObjectTypes(ctx, src.ProjectID.String(), (&githubAppProvider{}).ObjectTypes()); err != nil {
+				return fmt.Errorf("sources: ensure GitHub issue object types: %w", err)
+			}
+		}
 		if err := d.processIssueSource(ctx, v, src); err != nil {
 			return err
 		}
@@ -459,10 +471,10 @@ func (d *SourceEventDispatcher) processIssueSource(ctx context.Context, v *Verif
 		"labels": labels, "url": issue.HTMLURL, "source_id": src.ID.String(), "status": status,
 	}
 	if trigger != nil && !closed && assignee != "" {
+		// Only the server-owned trigger id is stored. The invocation (including
+		// the credential request) is re-resolved from kb.source_triggers by the
+		// board, so a writable graph property can never mint a write token.
 		props["source_trigger_id"] = trigger.ID.String()
-		if inv := invocationJSONMap(trigger.Invocation); inv != nil {
-			props["run_invocation"] = inv
-		}
 	}
 	var assigneePtr *string
 	if assignee != "" {
@@ -499,22 +511,6 @@ func (d *SourceEventDispatcher) triggerAgentName(ctx context.Context, projectID 
 		return ""
 	}
 	return agent.Name
-}
-
-func invocationJSONMap(inv *agents.AgentInvocation) map[string]any {
-	if inv == nil {
-		return nil
-	}
-	normalized := agents.NormalizeInvocation(inv)
-	raw, err := json.Marshal(normalized)
-	if err != nil {
-		return nil
-	}
-	var out map[string]any
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil
-	}
-	return out
 }
 
 func (d *SourceEventDispatcher) handleInstallation(ctx context.Context, v *VerifiedSourceEvent) error {

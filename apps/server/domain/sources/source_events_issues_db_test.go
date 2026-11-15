@@ -91,9 +91,13 @@ func TestSourceEventDispatcherIssueAutoStart(t *testing.T) {
 	require.Equal(t, "coding-agent", *store.req.Assignee)
 	require.Equal(t, "ready", *store.req.Status)
 	require.Equal(t, trigger.ID.String(), store.req.Properties["source_trigger_id"])
-	inv, ok := store.req.Properties["run_invocation"].(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, "provider/coding", inv["model"])
+	_, hasInvocation := store.req.Properties["run_invocation"]
+	require.False(t, hasInvocation, "invocation must not be trusted from graph properties")
+
+	resolver := NewSourceTriggerInvocationResolver(repo)
+	resolved, err := resolver.ResolveSourceTriggerInvocation(ctx, projectID.String(), sourceID.String(), trigger.ID.String())
+	require.NoError(t, err)
+	require.Equal(t, "provider/coding", resolved.Model)
 
 	ev, err := repo.FindSourceEventByDelivery(ctx, projectID, sourceID, "d-issue")
 	require.NoError(t, err)

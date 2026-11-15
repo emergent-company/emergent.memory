@@ -2683,6 +2683,7 @@ func (s *Server) uiDataSourceDetail(c echo.Context) error {
 		{key: "triggerCreated", msg: "Trigger added."},
 		{key: "triggerToggled", msg: "Trigger updated."},
 		{key: "triggerDeleted", msg: "Trigger removed."},
+		{key: "issuesImported", msg: "Open issues imported as unassigned board items."},
 	})
 	flashErr := flashError(c)
 	// Trigger bindings exist only for the event-driven github_app provider; any

@@ -265,7 +265,6 @@ func (p *githubAppProvider) ObjectTypes() *ObjectTypePack {
 					"source_id":         map[string]any{"type": "string"},
 					"status":            map[string]any{"type": "string"},
 					"source_trigger_id": map[string]any{"type": "string"},
-					"run_invocation":    map[string]any{"type": "object"},
 				},
 				SkipExtraction: true,
 			},

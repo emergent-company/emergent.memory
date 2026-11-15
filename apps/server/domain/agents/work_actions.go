@@ -21,9 +21,10 @@ import (
 // only adds the surrounding bookkeeping (review columns, append-only feedback,
 // rework/retry enqueue, escalation tasks, and in-flight-run cancellation).
 type WorkActionService struct {
-	repo        *Repository
-	workObjects WorkObjectStore
-	log         *slog.Logger
+	repo           *Repository
+	workObjects    WorkObjectStore
+	workInvocation WorkInvocationResolver
+	log            *slog.Logger
 }
 
 // NewWorkActionService creates the human-action service.
@@ -34,6 +35,11 @@ func NewWorkActionService(repo *Repository, log *slog.Logger) *WorkActionService
 // SetWorkObjectStore injects the graph work-object surface after construction.
 func (s *WorkActionService) SetWorkObjectStore(store WorkObjectStore) {
 	s.workObjects = store
+}
+
+// SetWorkInvocationResolver installs the source-trigger invocation resolver.
+func (s *WorkActionService) SetWorkInvocationResolver(r WorkInvocationResolver) {
+	s.workInvocation = r
 }
 
 // WorkActionResult is the outcome of a human action, returned to the handler
@@ -213,7 +219,7 @@ func (s *WorkActionService) Unblock(ctx context.Context, projectID, canonicalID,
 		if def != nil {
 			trigger = def.MatchWorkTrigger(head.Type, head.Status)
 		}
-		inv := workRunInvocation(head, trigger)
+		inv := workRunInvocation(ctx, s.workInvocation, head.ProjectID, head, trigger)
 		opts := CreateRunQueuedOptions{
 			SubjectObjectID:   &head.CanonicalID,
 			SubjectObjectType: &head.Type,
@@ -497,7 +503,7 @@ func (s *WorkActionService) enqueueWorkRun(ctx context.Context, head *graph.Work
 	if agentDef != nil {
 		trigger = agentDef.MatchWorkTrigger(head.Type, head.Status)
 	}
-	inv := workRunInvocation(head, trigger)
+	inv := workRunInvocation(ctx, s.workInvocation, head.ProjectID, head, trigger)
 	opts := CreateRunQueuedOptions{
 		SubjectObjectID:   &head.CanonicalID,
 		SubjectObjectType: &head.Type,

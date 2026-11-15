@@ -34,8 +34,12 @@ issues API are skipped). Importing is idempotent and never starts a run.
 
 ## Trigger an agent
 
-Create a trigger with event `issues`. The agent picker is the same one used by
-pull-request triggers. The trigger can also carry:
+For manual work, configure the coding agent's work rule for object type
+`GitHubIssue`, pickup status `ready`, with a prompt and an invocation. Assigning
+a backfilled issue to that agent then starts the run.
+
+For automatic work, create a trigger with event `issues`. The agent picker is
+the same one used by pull-request triggers. The trigger can also carry:
 
 - model and max-step overrides
 - a static context object
