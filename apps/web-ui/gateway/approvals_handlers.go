@@ -89,6 +89,7 @@ func (s *Server) uiApproveReject(c echo.Context) error {
 	if _, err := s.memory.RespondQuestion(c.Request().Context(), questionID, response, message); err != nil {
 		return redirectWithError(c, "/settings/approvals", err)
 	}
+	s.invalidatePendingInputCount(c.Request().Context())
 	return c.Redirect(http.StatusSeeOther, "/settings/approvals")
 }
 
@@ -99,6 +100,7 @@ func (s *Server) uiCancelApproval(c echo.Context) error {
 	if _, err := s.memory.CancelQuestion(c.Request().Context(), questionID); err != nil {
 		return redirectWithError(c, "/settings/approvals", err)
 	}
+	s.invalidatePendingInputCount(c.Request().Context())
 	return c.Redirect(http.StatusSeeOther, "/settings/approvals")
 }
 
