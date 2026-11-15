@@ -565,7 +565,7 @@ templ WorkRulePage(data workRuleFormData) {
 					<textarea id="work-rule-triggers" name="ruleTriggers" rows="4" placeholder="ready | Claim this item and do the work." class="textarea w-full">{ ruleTriggersText(data.Rule) }</textarea>
 				}
 				@form.FormControl("work-rule-invocation", "Invocation JSON", form.LabelAbove, "Optional model, context, env allowlist and credential request for this rule's triggers.", "", nil) {
-					<textarea id="work-rule-invocation" name="ruleInvocation" rows="4" placeholder='{"model":"provider/model","credential":{"kind":"github_app","permissions":{"contents":"write"}}}' class="textarea w-full font-mono text-xs">{ ruleInvocationText(data.Rule) }</textarea>
+					<textarea id="work-rule-invocation" name={ "rule-" + data.Rule.ObjectType + "-invocation" } rows="4" placeholder='{"model":"provider/model","credential":{"kind":"github_app","permissions":{"contents":"write"}}}' class="textarea w-full font-mono text-xs">{ ruleInvocationText(data.Rule) }</textarea>
 				}
 				@form.FormControl("work-rule-transitions", "Transitions", form.LabelAbove, "One per line: from -> to. Empty allows the standard complete/block edges.", "", nil) {
 					<textarea id="work-rule-transitions" name="ruleTransitions" rows="4" placeholder="draft -> review" class="textarea w-full">{ ruleTransitionsText(data.Rule) }</textarea>
