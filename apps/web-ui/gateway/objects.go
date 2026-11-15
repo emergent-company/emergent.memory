@@ -853,19 +853,30 @@ func (s *Server) loadObjectDetailShell(ctx context.Context, id, from string, sur
 	}
 }
 
+// objectViewDeclared reports whether the object's type declares a ui.view this
+// load can render: the pack declares one, the edges were read, and the object
+// has connections. Every surface derives objectDetailShellData.HasView from it,
+// so "a view that shows nothing here" can never be confused with "no view", with
+// a failed edge read, or with the ordinary zero-edge object. Zero edges stay
+// silent on purpose: there is no view to explain.
+func objectViewDeclared(data objectDetailShellData) bool {
+	return typeUIOf(data.TypeUIByType, data.Obj.Type).View != nil &&
+		data.EdgesErr == nil && len(data.Edges) > 0
+}
+
 // objectViewSections resolves the object type's declared ui.view against the
-// object's edges with the collapsed row budget. It returns nil when the type
-// declares no view, the edges could not be loaded, or the object has none — the
-// Relationships page distinguishes "no view" from "a view that shows nothing"
-// through objectDetailShellData.HasView, not through this nil.
+// object's edges with the collapsed row budget. It returns nil when there is no
+// view to render (see objectViewDeclared) — the Relationships page and the
+// Overview distinguish "no view" from "a view that shows nothing" through
+// objectDetailShellData.HasView, not through this nil.
 //
 // The related-objects fetch only happens for a type that declares a view, so
 // every project that has not adopted the block keeps its current page cost.
 func (s *Server) objectViewSections(ctx context.Context, data objectDetailShellData) []objectViewSection {
-	view := typeUIOf(data.TypeUIByType, data.Obj.Type).View
-	if view == nil || data.EdgesErr != nil || len(data.Edges) == 0 {
+	if !objectViewDeclared(data) {
 		return nil
 	}
+	view := typeUIOf(data.TypeUIByType, data.Obj.Type).View
 	related := s.loadRelatedObjects(ctx, data.Obj, data.Edges)
 	return resolveObjectViewSections(view, data.Obj, data.Edges, related, data.TypeUIByType)
 }
@@ -877,11 +888,11 @@ func (s *Server) uiObject(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
 	from := c.QueryParam("from")
-	flashErr := flashError(c)
 
 	data := s.loadObjectDetailShell(ctx, id, from, objectDetailSurfaceEditor)
+	data.FlashErr = flashError(c)
 	if data.LoadErr != nil {
-		return s.page(c, pageTitle("Object"), ObjectDetailPage(nil, objectBranchRef{}, nil, nil, data.LoadErr, "", flashErr, nil, nil, nil, nil, nil, "", 0, nil, false))
+		return s.page(c, pageTitle("Object"), ObjectDetailPage(data, nil, nil))
 	}
 	obj := data.Obj
 
@@ -895,24 +906,19 @@ func (s *Server) uiObject(c echo.Context) error {
 	// A type that declares a ui.view renders its relationship groups on the
 	// Overview itself: the typed layout is the object's page, and the
 	// Relationships tab is the full edge list behind it.
-	view := typeUIOf(data.TypeUIByType, obj.Type).View
-	viewSections := s.objectViewSections(ctx, data)
-	// hasView separates "no view" from "a view that shows nothing here". When a
+	//
+	// HasView separates "no view" from "a view that shows nothing here". When a
 	// declared view resolves to no group, the Overview says so instead of
 	// silently omitting relationships — the same note the Relationships tab
 	// shows, because the pack opted out of exactly the types a flat list would
-	// have displayed. Zero edges stay silent: there is no view to explain.
-	hasView := view != nil && data.EdgesErr == nil && len(data.Edges) > 0
+	// have displayed.
+	data.ViewSections = s.objectViewSections(ctx, data)
+	data.HasView = objectViewDeclared(data)
 
-	flashMsg := ""
 	if c.QueryParam("updated") != "" {
-		flashMsg = "Object updated."
+		data.FlashMsg = "Object updated."
 	}
-	return s.page(c, pageTitle(graphObjectLabel(*obj)), ObjectDetailPage(
-		obj, data.Branch, data.Sources, data.Assignees,
-		nil, flashMsg, flashErr, labelSuggestions, propDefs, data.TypeUIByType,
-		data.Status, data.Trail, data.TypeLabel, data.EdgeCount, viewSections, hasView,
-	))
+	return s.page(c, pageTitle(graphObjectLabel(*obj)), ObjectDetailPage(data, labelSuggestions, propDefs))
 }
 
 // uiObjectHistoryPage renders the History subpage: the shared object shell plus
@@ -988,11 +994,13 @@ func (s *Server) uiObjectRelationshipsPage(c echo.Context) error {
 	// A type that declares ui.view groups its relationships itself: the page
 	// then renders one card per declared section instead of one flat list, with
 	// a depth-1 preview of each neighbour. A type that declares none, or whose
-	// view is malformed, keeps the generic list (see typeUIViewOf).
+	// view is malformed, keeps the generic list (see typeUIViewOf); a failed
+	// edge read stays the error alert below rather than claiming the view shows
+	// nothing (objectViewDeclared, shared with the Overview).
 	//
 	// ?all=1 is the reader's escape from a view that shows nothing: it asks for
 	// every edge, so the declared view is deliberately not applied.
-	if view := typeUIOf(data.TypeUIByType, data.Obj.Type).View; view != nil && c.QueryParam("all") != "1" {
+	if view := typeUIOf(data.TypeUIByType, data.Obj.Type).View; c.QueryParam("all") != "1" && objectViewDeclared(data) {
 		data.HasView = true
 		data.ViewSections = resolveObjectViewSections(view, data.Obj, data.Edges, related, data.TypeUIByType)
 		// ?expand=N opens one group to the expanded row budget, so the in-place
@@ -1028,6 +1036,22 @@ func objectViewSurfaceFrom(v string) objectViewSurface {
 	return objectViewSurfaceRelationships
 }
 
+// objectViewSectionUnavailable answers a request for a section card that cannot
+// be resolved: the object is gone, the type no longer declares a view, the edge
+// read failed, the index is stale, or the request is hand-made.
+//
+// An htmx swap gets an empty 200, because its own target is the card that no
+// longer exists and an empty body with outerHTML removes it — a truthful
+// refresh. A 404 would leave the stale card frozen on the page, showing rows the
+// server no longer stands behind. A direct link keeps the 404: there the reader
+// needs to know the section is not a page.
+func objectViewSectionUnavailable(c echo.Context) error {
+	if c.Request().Header.Get("HX-Request") == "true" {
+		return c.NoContent(http.StatusOK)
+	}
+	return echo.NewHTTPError(http.StatusNotFound, "section not found")
+}
+
 // uiObjectViewSection renders one group of the object type's declared ui.view as
 // a standalone fragment, so a truncated section expands in place (hx-get with
 // outerHTML) instead of navigating. ?collapsed=1 renders the collapsed card
@@ -1039,36 +1063,36 @@ func objectViewSurfaceFrom(v string) objectViewSurface {
 // exists and has no rows, which is the opposite of what happened. An htmx swap
 // that names a group which no longer exists answers an empty 200 instead, so the
 // stale card is removed from the page rather than left frozen and dead behind an
-// error the reader cannot see.
+// error the reader cannot see (objectViewSectionUnavailable).
 func (s *Server) uiObjectViewSection(c echo.Context) error {
 	ctx := c.Request().Context()
 	index, err := strconv.Atoi(c.Param("index"))
 	if err != nil || index < 0 {
-		return echo.NewHTTPError(http.StatusNotFound, "section not found")
+		return objectViewSectionUnavailable(c)
 	}
 	// The fragment renders rows and links only: no workflow panel, so the
 	// assignee candidates are not fetched for it either.
 	data := s.loadObjectDetailShell(ctx, c.Param("id"), "", objectDetailSurfaceReader)
-	if data.LoadErr != nil || data.EdgesErr != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "object not found")
+	if data.LoadErr != nil {
+		return objectViewSectionUnavailable(c)
+	}
+	// No view is renderable — none declared, the edges could not be read, or the
+	// object has no connections. The Overview and the Relationships tab go
+	// silent on all three (objectViewDeclared), so the swap removes the card
+	// instead of freezing edges that may no longer exist. In particular an
+	// edge-read failure must not look like "the view shows nothing": that is the
+	// empty-view note, which only a readable, non-empty edge list earns.
+	if !objectViewDeclared(data) {
+		return objectViewSectionUnavailable(c)
 	}
 	view := typeUIOf(data.TypeUIByType, data.Obj.Type).View
-	if view == nil {
-		return echo.NewHTTPError(http.StatusNotFound, "section not found")
-	}
 	related := s.loadRelatedObjects(ctx, data.Obj, data.Edges)
 	surface := objectViewSurfaceFrom(c.QueryParam("surface"))
 
 	expanded := c.QueryParam("collapsed") != "1"
 	section, ok := viewSectionAt(view, index, data.Obj, data.Edges, related, data.TypeUIByType, expanded)
 	if !ok {
-		if c.Request().Header.Get("HX-Request") == "true" {
-			// The swap's own target is the card that no longer exists. An empty
-			// body with outerHTML removes it, which is a truthful refresh; a
-			// 404 would leave the stale card in place until a manual reload.
-			return c.NoContent(http.StatusOK)
-		}
-		return echo.NewHTTPError(http.StatusNotFound, "section not found")
+		return objectViewSectionUnavailable(c)
 	}
 	renderPartial(c.Response().Writer, c.Request(), objectViewSectionCard(data.Obj.ID, index, section, data.TypeUIByType, surface))
 	return nil
