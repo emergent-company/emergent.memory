@@ -208,8 +208,9 @@ func ValidateTypeScopeKey(typeName string, typeSchema json.RawMessage, knownType
 // resolve reference targets is derived from the same input, so a declaration can
 // reference any other type in the set. Returns a deterministic (sorted by type
 // name) list of actionable error strings; empty = valid. Used by write paths
-// that persist type schemas outside CreatePack/UpdatePack (the schema-create MCP
-// tool and backup restore) so a malformed declaration can never be stored.
+// that persist type schemas outside CreatePack/UpdatePack (backup restore) so a
+// malformed declaration can never be stored. Other write paths can share the
+// fuller ValidateSchemaDefinitions guard instead.
 func ValidateTypeSchemaScopeKeys(typeSchemas map[string]json.RawMessage) []string {
 	if len(typeSchemas) == 0 {
 		return nil

@@ -144,7 +144,7 @@ round-trip.
 | `type` | Coerced on write for `number`, `integer`, `boolean`, `date`, `time`, `url`, `email`, `phone`, `country`, `currency`, `md5`/`sha1`/`sha256`/`sha512`, `array` (see below). `string` is stored as sent unless `format` names a semantic format; `object` is type-checked but not converted. An unknown type is stored as-is |
 | `title` | Display label. The UI shows it in place of the key, which stays visible beneath it |
 | `description` | Help text shown with the field |
-| `items` | Element schema for `array`, declared as an object such as `{"type": "string"}`; every element is coerced (a wrong element fails with its index). A bare scalar (`"items": "string"`) is rejected when the schema is created or updated |
+| `items` | Element schema for `array`, declared as an object such as `{"type": "string"}`; every element is coerced (a wrong element fails with its index). A bare scalar (`"items": "string"`) is rejected by every write path — REST create/update, CLI install and the MCP `schema-create` tool share one definition guard |
 | `enum` | Allowed values for a primitive property (`string`-backed, `number`, `integer`, `boolean`), enforced on object and relationship writes after coercion. An array's `items.enum` constrains every element. On `array`/`object` itself it is documentation only |
 | `format` | On a `string` property, validates like the matching type for `email`, `phone`, `country`, `currency` and `time`. Any other format is documentation only |
 | `minimum` / `maximum` | Enforced on `number` and `integer`: a value outside the bound fails the write |

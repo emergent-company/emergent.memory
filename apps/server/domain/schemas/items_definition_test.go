@@ -65,3 +65,23 @@ func TestValidateSchemaDefinitionsRejectsScalarItems(t *testing.T) {
 		}
 	})
 }
+
+// ValidateSchemaDefinitions is the exported seam the MCP schema-create tool
+// calls (#811). It must be the same guard CreatePack runs — not a copy that can
+// drift — so a declaration it rejects over REST is rejected over MCP too.
+func TestValidateSchemaDefinitionsExportedSeam(t *testing.T) {
+	objectTypes := func(props string) json.RawMessage {
+		return json.RawMessage(`[{"name":"Contract","properties":` + props + `}]`)
+	}
+
+	errs := ValidateSchemaDefinitions(objectTypes(`{"tags":{"type":"array","items":"string"}}`), nil)
+	if len(errs) != 1 || !strings.Contains(errs[0], `property "tags".items`) {
+		t.Fatalf("expected the scalar-items guard through the exported seam, got %v", errs)
+	}
+
+	valid := ValidateSchemaDefinitions(
+		objectTypes(`{"tags":{"type":"array","items":{"type":"string"}}}`), nil)
+	if len(valid) != 0 {
+		t.Fatalf("expected no validation errors for the object items form, got %v", valid)
+	}
+}

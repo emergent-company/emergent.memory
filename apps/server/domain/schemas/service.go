@@ -358,6 +358,21 @@ func validateSchemaDefinitions(objectTypeSchemas, relationshipTypeSchemas json.R
 	return errs
 }
 
+// ValidateSchemaDefinitions runs the same definition guard as CreatePack and
+// UpdatePack for write paths that persist type definitions without going
+// through them. It is exported so those paths share this call instead of
+// reimplementing part of it: the MCP schema-create tool writes the schema and
+// registry rows with a direct INSERT, and before issue #811 it only ran the
+// scope-key check, so a declaration this guard rejects (a bare scalar `items`,
+// #726, or a malformed enum) still installed silently there.
+//
+// Both arguments take the HTTP request shape — arrays of
+// {"name","properties",...} / {"name","sourceType","targetType",...} objects.
+// Returns a list of actionable error strings (empty = valid).
+func ValidateSchemaDefinitions(objectTypeSchemas, relationshipTypeSchemas json.RawMessage) []string {
+	return validateSchemaDefinitions(objectTypeSchemas, relationshipTypeSchemas)
+}
+
 // validatePropertyEnums checks the enum declarations on one type's properties.
 // It mirrors the CLI validator's primitive-type rule: an enum is meaningful
 // only on string-backed, number, integer and boolean properties, and was

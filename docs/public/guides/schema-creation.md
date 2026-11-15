@@ -30,7 +30,8 @@ Schemas can be created via:
 2. **REST API** - `/api/schemas/projects/:projectId/*` (HTTP clients)
 3. **CLI** - `memory schemas create --file <path>` (JSON or YAML files)
 
-Both MCP and REST methods use identical field definitions and validation.
+Both MCP and REST methods use identical field definitions and validation: they run the
+same definition guard, so a declaration rejected by one is rejected by the other.
 
 ---
 
@@ -202,9 +203,11 @@ is applied when an object is created, and `enum` is enforced on writes and
 drives the editor's select. The remaining JSON-Schema keywords (`pattern`,
 `minLength`, `maxLength`, `minItems`, `maxItems`) are carried through for
 documentation and tooling but are **not** enforced when an object is written. A
-bare scalar `items` (`"items": "string"`) is not a schema and is rejected when
-the schema is created or updated — write `"items": {"type": "string"}` so
-element validation runs.
+bare scalar `items` (`"items": "string"`) is not a schema and is rejected by
+every write path — REST `POST`/`PUT`, a CLI/YAML install and the MCP
+`schema-create` tool all run the same definition guard — so write
+`"items": {"type": "string"}` and element validation runs. The same guard
+rejects a malformed `enum` and an invalid `scopeKey` declaration on all three.
 
 `enum` is enforced on primitive property types: `string` (including the
 semantic and hex-digest spellings) and `number`/`integer`/`boolean`, on object

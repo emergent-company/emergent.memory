@@ -609,6 +609,35 @@ func optionalJSONObject(args map[string]any, key string) (json.RawMessage, error
 	return raw, nil
 }
 
+// schemaEntryTypeName returns the type name an object/relationship type entry
+// declares. The map form of the tool arguments records it under "type_name";
+// the legacy string form may use "name", the key the REST request shape uses.
+func schemaEntryTypeName(entry map[string]any) string {
+	if typeName, _ := entry["type_name"].(string); typeName != "" {
+		return typeName
+	}
+	name, _ := entry["name"].(string)
+	return name
+}
+
+// schemaDefinitionsRequestJSON converts parsed tool entries into the request
+// shape schemas.ValidateSchemaDefinitions reads — an array of objects with a
+// "name" — so the MCP write path runs exactly the guard CreatePack runs. An
+// entry whose type name cannot be resolved is kept with an empty "name" so the
+// validator rejects it instead of the entry silently disappearing.
+func schemaDefinitionsRequestJSON(entries []map[string]any) (json.RawMessage, error) {
+	defs := make([]map[string]any, 0, len(entries))
+	for _, entry := range entries {
+		def := make(map[string]any, len(entry)+1)
+		for k, v := range entry {
+			def[k] = v
+		}
+		def["name"] = schemaEntryTypeName(entry)
+		defs = append(defs, def)
+	}
+	return json.Marshal(defs)
+}
+
 func (s *Service) executeCreateSchema(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
@@ -677,6 +706,22 @@ func (s *Service) executeCreateSchema(ctx context.Context, projectID string, arg
 		}
 	}
 
+	// Resolve each entry's type name once. The map form records it under
+	// "type_name"; the legacy string form may spell it "name", the key the REST
+	// request shape uses. An entry that names neither keeps an empty name and is
+	// rejected by the shared validator below instead of being silently dropped
+	// from the stored pack.
+	for _, ot := range objectTypes {
+		if typeName := schemaEntryTypeName(ot); typeName != "" {
+			ot["type_name"] = typeName
+		}
+	}
+	for _, rt := range relTypes {
+		if typeName := schemaEntryTypeName(rt); typeName != "" {
+			rt["type_name"] = typeName
+		}
+	}
+
 	// Build jsonb representations for graph_schemas columns (required NOT NULL)
 	objTypeSchemasMap := map[string]any{}
 	for _, ot := range objectTypes {
@@ -695,20 +740,26 @@ func (s *Service) executeCreateSchema(ctx context.Context, projectID string, arg
 	objTypeSchemasJSON, _ := json.Marshal(objTypeSchemasMap)
 	relTypeSchemasJSON, _ := json.Marshal(relTypeSchemasMap)
 
-	// Validate optional scopeKey declarations fail-closed (issue #1177): this
-	// tool writes registry json_schema directly, bypassing CreatePack/UpdatePack
-	// where that validation otherwise lives, so a malformed declaration could
-	// otherwise be persisted and later silently ignored by entity-query.
-	typeSchemaRaws := make(map[string]json.RawMessage, len(objTypeSchemasMap))
-	for typeName, ot := range objTypeSchemasMap {
-		raw, mErr := json.Marshal(ot)
-		if mErr != nil {
-			return nil, fmt.Errorf("marshal object type %s: %w", typeName, mErr)
-		}
-		typeSchemaRaws[typeName] = raw
+	// Validate the definitions with the same guard CreatePack/UpdatePack run
+	// (#811). This tool writes kb.graph_schemas and both registry tables with a
+	// direct INSERT, so without the shared call a declaration the REST path
+	// rejects — a bare scalar `items` (#726), a malformed enum, a broken
+	// scopeKey — would install here silently. That includes the scopeKey check
+	// this tool used to run on its own (issue #1177); it is covered by the
+	// shared validator now, so there is one guard to keep in step, not two.
+	//
+	// The stored shape is a map keyed by type name while the guard reads the
+	// request array shape, so normalise both entry lists first.
+	objDefsJSON, err := schemaDefinitionsRequestJSON(objectTypes)
+	if err != nil {
+		return nil, fmt.Errorf("invalid object type definitions: %w", err)
 	}
-	if errs := schemas.ValidateTypeSchemaScopeKeys(typeSchemaRaws); len(errs) > 0 {
-		return nil, fmt.Errorf("invalid scopeKey declaration: %s", strings.Join(errs, "; "))
+	relDefsJSON, err := schemaDefinitionsRequestJSON(relTypes)
+	if err != nil {
+		return nil, fmt.Errorf("invalid relationship type definitions: %w", err)
+	}
+	if errs := schemas.ValidateSchemaDefinitions(objDefsJSON, relDefsJSON); len(errs) > 0 {
+		return nil, fmt.Errorf("invalid schema definitions: %s", strings.Join(errs, "; "))
 	}
 
 	// Create schema
