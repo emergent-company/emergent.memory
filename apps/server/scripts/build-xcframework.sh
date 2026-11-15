@@ -103,6 +103,33 @@ build_target() {
 }
 
 # ---------------------------------------------------------------------------
+# Helper: stage a slice's public headers for the XCFramework
+#
+# The XCFramework has to expose a Clang module named after the bridge, or
+# `import EmergentGoCore` cannot resolve: xcodebuild copies whatever directory
+# you hand to -headers, and SwiftPM only synthesises a module map for
+# *framework* slices, not for static libraries. So each slice gets its own
+# headers directory holding just the header plus this module map — which also
+# keeps the .a from being duplicated inside XCFramework/…/Headers/.
+#
+# Arguments:
+#   $1  slice build dir (e.g. ${BUILD_DIR}/ios-arm64)
+# ---------------------------------------------------------------------------
+stage_headers() {
+  local OUT="$1"
+  local DEST="${OUT}/include"
+
+  mkdir -p "${DEST}"
+  cp "${OUT}/lib${FRAMEWORK_NAME}.h" "${DEST}/"
+  cat > "${DEST}/module.modulemap" <<EOF
+module ${FRAMEWORK_NAME} {
+    umbrella header "lib${FRAMEWORK_NAME}.h"
+    export *
+}
+EOF
+}
+
+# ---------------------------------------------------------------------------
 # iOS Device — arm64
 # ---------------------------------------------------------------------------
 IOS_SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
@@ -177,13 +204,17 @@ echo "Creating XCFramework…"
 XCFW_OUT="${OUTPUT_DIR}/${FRAMEWORK_NAME}.xcframework"
 rm -rf "${XCFW_OUT}"
 
+stage_headers "${BUILD_DIR}/ios-arm64"
+stage_headers "${BUILD_DIR}/iossimulator-universal"
+stage_headers "${BUILD_DIR}/macos-universal"
+
 xcodebuild -create-xcframework \
   -library "${BUILD_DIR}/ios-arm64/lib${FRAMEWORK_NAME}.a" \
-    -headers "${BUILD_DIR}/ios-arm64" \
+    -headers "${BUILD_DIR}/ios-arm64/include" \
   -library "${BUILD_DIR}/iossimulator-universal/lib${FRAMEWORK_NAME}.a" \
-    -headers "${BUILD_DIR}/iossimulator-universal" \
+    -headers "${BUILD_DIR}/iossimulator-universal/include" \
   -library "${BUILD_DIR}/macos-universal/lib${FRAMEWORK_NAME}.a" \
-    -headers "${BUILD_DIR}/macos-universal" \
+    -headers "${BUILD_DIR}/macos-universal/include" \
   -output "${XCFW_OUT}"
 
 echo ""

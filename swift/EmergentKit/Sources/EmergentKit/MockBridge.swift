@@ -1,5 +1,11 @@
 import Foundation
 
+/// The `{"result":…}` success envelope the Go bridge emits. File-scoped: a
+/// nested type cannot be declared inside a generic function.
+private struct OKEnvelope<T: Encodable>: Encodable {
+    let result: T
+}
+
 // MARK: - Mock bridge protocol (task 6.1)
 
 /// An internal protocol that abstracts the bridge operations used by
@@ -86,8 +92,7 @@ final class MockEmergentBridge: EmergentBridgeProtocol, @unchecked Sendable {
 
     // Encode a result into the standard bridge envelope format.
     private func encodeOK<T: Encodable>(_ value: T) throws -> String {
-        struct Wrapper<T: Encodable>: Encodable { let result: T }
-        let data = try JSONEncoder().encode(Wrapper(result: value))
+        let data = try JSONEncoder().encode(OKEnvelope(result: value))
         return String(data: data, encoding: .utf8)!
     }
 }

@@ -1,4 +1,5 @@
 import EmergentBridge
+import EmergentGoCore
 import Foundation
 import OSLog
 

@@ -42,6 +42,13 @@ public struct HealthResponse: Codable, Sendable {
     public let timestamp: String?
     public let uptime: String?
     public let version: String?
+
+    public init(status: String, timestamp: String? = nil, uptime: String? = nil, version: String? = nil) {
+        self.status = status
+        self.timestamp = timestamp
+        self.uptime = uptime
+        self.version = version
+    }
 }
 
 // MARK: - Search
@@ -112,6 +119,11 @@ public struct SearchMetadata: Codable, Sendable {
 public struct SearchResponse: Codable, Sendable {
     public let results: [SearchResult]
     public let metadata: SearchMetadata?
+
+    public init(results: [SearchResult], metadata: SearchMetadata? = nil) {
+        self.results = results
+        self.metadata = metadata
+    }
 }
 
 // MARK: - Chat
@@ -144,6 +156,11 @@ public struct ChatResponse: Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case conversationID = "conversation_id"
         case content
+    }
+
+    public init(conversationID: String? = nil, content: String) {
+        self.conversationID = conversationID
+        self.content = content
     }
 }
 
@@ -185,6 +202,12 @@ public struct ListDocumentsResponse: Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case documents, total
         case nextCursor = "next_cursor"
+    }
+
+    public init(documents: [Document], total: Int, nextCursor: String? = nil) {
+        self.documents = documents
+        self.total = total
+        self.nextCursor = nextCursor
     }
 }
 

@@ -7,12 +7,12 @@
 //
 //     task server:swift:xcframework
 //     # or
-//     apps/server-go/scripts/build-xcframework.sh
+//     apps/server/scripts/build-xcframework.sh
 //
 // Release / SPM consumers:
 //   Switch the `EmergentGoCore` target below from `.binaryTarget(path:…)` to
 //   `.binaryTarget(url:…, checksum:…)` pointing at the GitHub release asset.
-//   See scripts/release-xcframework.sh for automation.
+//   See apps/server/scripts/release-xcframework.sh for automation.
 
 import PackageDescription
 
@@ -47,7 +47,7 @@ let package = Package(
         // ------------------------------------------------------------------
         .binaryTarget(
             name: "EmergentGoCore",
-            path: "../../apps/server-go/dist/swift/EmergentGoCore.xcframework"
+            path: "../../apps/server/dist/swift/EmergentGoCore.xcframework"
         ),
 
         // ------------------------------------------------------------------
@@ -69,7 +69,7 @@ let package = Package(
         // ------------------------------------------------------------------
         .target(
             name: "EmergentKit",
-            dependencies: ["EmergentBridge"],
+            dependencies: ["EmergentBridge", "EmergentGoCore"],
             path: "Sources/EmergentKit",
             swiftSettings: [
                 // Enable full Swift 6 strict concurrency checking.

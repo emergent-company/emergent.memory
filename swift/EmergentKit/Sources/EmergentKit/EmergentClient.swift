@@ -1,4 +1,5 @@
 import EmergentBridge
+import EmergentGoCore
 import Foundation
 import OSLog
 
@@ -81,7 +82,8 @@ public actor EmergentClient: EmergentService {
 
     deinit {
         FreeClient(handle)
-        EmergentClient.logger.info("EmergentClient freed: handle=\(handle)")
+        let freed = handle
+        EmergentClient.logger.info("EmergentClient freed: handle=\(freed)")
     }
 
     // MARK: - Context
@@ -90,6 +92,7 @@ public actor EmergentClient: EmergentService {
     public func setContext(orgID: String, projectID: String) async throws {
         let req = SetContextRequest(orgID: orgID, projectID: projectID)
         let json = try JSONEncoder().encode(req).asUTF8String()
+        let handle = self.handle
         let responseJSON = withBridgeString(json) { ptr -> String in
             let cResult = SetContext(handle, ptr)
             return consumeBridgeString(cResult)
