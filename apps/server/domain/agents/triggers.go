@@ -564,7 +564,7 @@ func (ts *TriggerService) enqueueWorkRun(ctx context.Context, agent *Agent, agen
 	// A backfilled GitHub issue is created unassigned. It must wait for a human
 	// assignment; otherwise a bulk import starts a run for every historical
 	// issue. Auto-start items are created with the trigger agent as assignee.
-	if skipUnassignedCreatedIssue(eventType, objectType, assignee) {
+	if skipUnassignedIssue(objectType, assignee) {
 		return
 	}
 
@@ -743,13 +743,6 @@ func firstTriggerForType(agentDef *AgentDefinition, objectType string) *AgentWor
 		return &r.Triggers[0]
 	}
 	return nil
-}
-
-// skipUnassignedCreatedIssue keeps a bulk GitHub issue backfill idle: the
-// created event fires once per item, but an unassigned item waits for a human.
-// Auto-start items are created with the trigger agent already assigned.
-func skipUnassignedCreatedIssue(eventType ReactionEventType, objectType, assignee string) bool {
-	return eventType == EventTypeCreated && objectType == "GitHubIssue" && assignee == ""
 }
 
 // workPickupMatch evaluates the 4-way pickup signal for an object-driven

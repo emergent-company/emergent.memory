@@ -43,6 +43,12 @@ func workRunTrustedType(objectType string) bool {
 	return objectType != "GitHubIssue"
 }
 
+// skipUnassignedIssue keeps a bulk GitHub issue backfill idle: ready items wait
+// for a human assignment, and only an assigned item may dispatch a coding run.
+func skipUnassignedIssue(objectType, assignee string) bool {
+	return objectType == "GitHubIssue" && assignee == ""
+}
+
 func workSourceTriggerID(h *graph.WorkObjectHead) *string {
 	if h == nil || h.Properties == nil {
 		return nil
