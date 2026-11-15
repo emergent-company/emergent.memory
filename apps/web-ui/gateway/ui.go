@@ -175,12 +175,16 @@ type sidebarWarns struct {
 	// (a capped window crossed its alert threshold) or "exhausted" (a cap was
 	// hit, so agent runs are blocked).
 	Budget string
+	// Approvals counts human-input items waiting on the Approvals page:
+	// pending tool approvals plus unanswered agent questions.
+	Approvals int
 }
 
-// sidebarGroupsWithWarn is sidebarGroups plus the attention badges: Documents
-// (terminal failure count) and Usage (budget level). The Documents badge counts
-// document-related terminal failures only; other areas surface in the Documents
-// panel and can earn their own badge later.
+// sidebarGroupsWithWarn is sidebarGroups plus the attention badges: Approvals
+// (pending human-input count), Documents (terminal failure count) and Usage
+// (budget level). The Documents badge counts document-related terminal failures
+// only; other areas surface in the Documents panel and can earn their own badge
+// later.
 func sidebarGroupsWithWarn(base string, isOrgAdmin bool, warns sidebarWarns) []layout.SidebarGroup {
 	return sidebarGroupsWithMarket(base, isOrgAdmin, warns)
 }
@@ -195,6 +199,10 @@ func sidebarGroupsWithMarket(base string, isOrgAdmin bool, warns sidebarWarns) [
 	usageItem := layout.SidebarItem{Label: "Usage", Href: base + "/usage", Icon: "lucide--chart-column"}
 	if warns.Budget != "" {
 		usageItem.Warn = sidebarBudgetBadge(warns.Budget)
+	}
+	approvalsItem := layout.SidebarItem{Label: "Approvals", Href: base + "/settings/approvals", Icon: "lucide--shield-check"}
+	if warns.Approvals > 0 {
+		approvalsItem.Warn = sidebarApprovalsBadge(warns.Approvals)
 	}
 	memoryItems := []layout.SidebarItem{
 		{Label: "Objects", Href: base + "/objects", Icon: "lucide--box"},
@@ -220,7 +228,7 @@ func sidebarGroupsWithMarket(base string, isOrgAdmin bool, warns sidebarWarns) [
 		projectItems = append(projectItems, layout.SidebarItem{Label: "Backups", Href: base + "/backups", Icon: "lucide--archive"})
 	}
 	topItems := []layout.SidebarItem{
-		{Label: "Approvals", Href: base + "/settings/approvals", Icon: "lucide--shield-check"},
+		approvalsItem,
 		{Label: "Chat", Href: base + "/chat", Icon: "lucide--messages-square"},
 		{Label: "Search", Href: base + "/search", Icon: "lucide--search"},
 		{Label: "Sessions", Href: base + "/sessions", Icon: "lucide--history"},
@@ -546,7 +554,16 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 		} else {
 			budgetLevel = budgetBadgeLevel(state)
 		}
-		groups = layout.ActiveSidebarGroups(sidebarGroupsWithMarket(navBase, isOrgAdmin(tree, backupsOrgID), sidebarWarns{Documents: documentsWarn, Budget: budgetLevel}), activePath)
+		// Approvals badge: human-input items waiting (pending tool approvals
+		// plus unanswered questions). Best-effort and cached for 30s; a failure
+		// just hides the badge.
+		approvalsPending := 0
+		if n, err := s.cachedPendingInputCount(c.Request().Context()); err != nil {
+			captureError(err)
+		} else {
+			approvalsPending = n
+		}
+		groups = layout.ActiveSidebarGroups(sidebarGroupsWithMarket(navBase, isOrgAdmin(tree, backupsOrgID), sidebarWarns{Documents: documentsWarn, Budget: budgetLevel, Approvals: approvalsPending}), activePath)
 		// Warn in the settings nav when the active project has zero configured
 		// LLM providers. Fail-safe helper: false on lookup errors.
 		providersMissing = s.projectHasNoProviders(c.Request().Context())
