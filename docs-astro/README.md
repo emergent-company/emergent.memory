@@ -11,7 +11,7 @@ docs-astro/
   src/styles/brand.css    ← the deliverable: product tokens → Starlight tokens
   src/assets/monogram.svg brass "M" logo (copied from the app's brand mark)
   public/favicon.svg
-  src/components/         Card.astro, CardGrid.astro (lucide icons), ThemeSelect
+  src/components/         Card.astro, CardGrid.astro (lucide icons)
   src/content/docs/       converted MDX (generated — see "Porting")
   scripts/port_mkdocs.py  MkDocs Material → Starlight MDX converter
   scripts/material-icons.json  `:material-*:` → lucide icon mapping
@@ -66,11 +66,53 @@ and ports the `.memory-md` prose rules one-for-one:
 | body brass/steel radial glows | same gradients on `body` |
 | `--radius-field .25 / --radius-box .5 / --radius-selector 1rem` | buttons + inline code, cards + code frames, sidebar pills |
 | `.memory-md` h1/h2 hairlines, table header tint, brass inline code, blockquote bar | same rules |
-| dark-only (`themes: dark --default`) | theme switcher removed (`ThemeSelect.astro`), pre-paint guard in `<head>` |
+| dark-only (`themes: dark --default`) | dark is canonical; light is derived (see below), switcher offered, pre-paint guard in `<head>` |
 
 The results of that mapping are the screenshots in the POC report: headings,
 tables, asides, code chips, sidebar pills, cards and buttons all come from the
 product's own values.
+
+### Light theme: derived, not designed
+
+The product app ships **one** theme, so dark stays canonical and the light theme
+is arithmetic on the same tokens, not a second design:
+
+- hue and chroma are kept, lightness is inverted (`L' = 1 − L`), and each value
+  is pulled toward the surface until it clears AA as ink on white;
+- accents are the exception: `--color-primary` brass at `L = 0.74` is a **fill**
+  colour (2:1 on white), so as text it is darkened to `L = 0.52` — the same
+  relationship the app has between a brass button and `primary-content` ink;
+- `--sl-color-white` stays "highest-contrast ink" and `--sl-color-black` stays
+  "background", because that is what Starlight's own components assume (they
+  flip in its light theme too);
+- every hairline, tint and overlay in the rules goes through a `--mem-*`
+  variable, so a theme is one token block and the rules never branch.
+
+Verified with computed-style sampling in Chrome DevTools on `/`, `/go-sdk/`,
+`/swift-sdk/`, `/cli/`, `/developer-guide/security-scopes/` and `/api-reference/`, at 1440 px
+and 620 px: no element below AA contrast in either theme, and no light-on-light
+or dark-on-dark block in either direction.
+
+Three cascade traps this costs, worth knowing before touching the file:
+
+- **`html > body` for the page colour.** The embedded Scalar bundle injects its
+  own preflight (`body{background-color:var(--scalar-background-1)}`) *later* in
+  the cascade, so a plain `body` rule loses and a light API page paints a dark
+  body under a light header. Specificity, not order, is what fixes it.
+- **The pre-paint guard must be theme-aware** (`html[data-theme='light']`,
+  plus a `prefers-color-scheme` twin for the first paint), or a light reader gets
+  one frame of `#0e1017`.
+- **Expressive Code needs both theme slots** (`themes: ['github-dark-default',
+  'github-light-default']`) and its *frame* colours (`--ec-frm-*`: tab bar,
+  active tab, terminal title bar, tooltip) live in `brand.css`, because they
+  have to track `--mem-*`; setting them in `astro.config.mjs` pins them to one
+  theme.
+
+Starlight's `ThemeSelect` is deliberately **not** overridden any more: the
+switcher defaults to `auto`, so a dark-OS reader still gets the app's own theme
+while a light-OS reader is not forced into it. Preferences persist in
+`localStorage.starlight-theme`, and `color-scheme` flips with the theme so native
+controls (scrollbars, form widgets) follow.
 
 Two Starlight details cost real time and are worth knowing before editing
 `brand.css`:
@@ -134,15 +176,20 @@ a row there rather than hand-editing generated MDX.
   mode its docs prescribe for Starlight's client-side navigation) renders all
   420 endpoints from the published `swagger.json`, full width, with try-it.
 - **Search**: Pagefind, indexed at build time (`dist/pagefind/`).
-- **Mobile**, dark-only, no FOUC (pre-paint colour guard mirroring
+- **Mobile**, both themes, no FOUC (theme-aware pre-paint colour guard mirroring
   `foucBackgroundGuard()` in `ui.templ`).
 
 ## Known gaps / follow-ups
 
-1. **Scalar is not branded.** Its runtime theme wins over `--scalar-*` from our
-   stylesheet (verified: pixel-identical renders with and without the
-   overrides), so the embedded reference is Scalar's own dark palette. Needs
-   Scalar's `customCss`/theme hook, not a CSS tweak.
+1. **Scalar is not branded, and not theme-aware.** Its runtime theme wins over
+   `--scalar-*` from our stylesheet (verified: pixel-identical renders with and
+   without the overrides), so the embedded reference is Scalar's own dark
+   palette. `configuration.darkMode` is fixed at build time, so the reference
+   stays dark in the light docs theme too — which is defensible only because it
+   reads as an embedded tool: in light it gets a hairline ring
+   (`:root[data-theme='light'] .api-page .scalar-app`). Making it follow the page
+   needs Scalar's `customCss`/theme hook, not a CSS tweak, and a light Scalar
+   palette that does not exist yet in its shipped themes.
 2. **Sidebar is hand-written** in `astro.config.mjs`, not `autogenerate` — a
    full port should switch to autogenerate so a new page cannot be invisible.
 3. **Versioning.** The current site publishes `latest` via `mike` and
