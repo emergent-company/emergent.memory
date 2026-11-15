@@ -18,6 +18,7 @@
 import sharp from 'sharp';
 import { mkdir, readdir } from 'node:fs/promises';
 import path from 'node:path';
+import { trimDeadSpace } from './lib/frame.mjs';
 
 const SRC = process.argv[2];
 if (!SRC) {
@@ -87,12 +88,11 @@ const OPS = {
     masks: [{ box: { left: 698, top: 223, width: 82, height: 19 }, sample: { x: 950, y: 230 } }],
   },
   '11-zitadel-2fa-skip.png': {
-    // Chrome's "Save login?" bubble sits over the top-right corner from this
-    // step on, so the frame is cropped to end before it; the ZITADEL footer
-    // strip at the bottom-left goes too, or it holds the trim box open across
-    // the whole viewport.
-    crop: { left: 0, top: 0, width: 1320, height: 780 },
-    masks: [{ box: { left: 676, top: 220, width: 248, height: 19 }, sample: { x: 900, y: 230 } }],
+    // Not published. The Polish original stays in the infra guide's `assets/`;
+    // Zitadel only offers this screen when the login policy allows second
+    // factors, and the current Zitadel v4 login could not be driven past its
+    // password change on dev, so there is no English capture to replace it
+    // with. The tutorial keeps the step as prose until there is one.
   },
   // Chrome's "Save login?" bubble sits over the top-right corner of the page and
   // is browser chrome, not the product, so the frame is cropped to end before it.
@@ -104,75 +104,34 @@ const OPS = {
 };
 
 /**
- * Trim a screenshot's dead space.
- *
- * The portal's pages are a narrow centred column on a full-viewport dark
- * background, and the app's sign-in screen is one small card in a large empty
- * field, so a capture is mostly empty paint. At docs width that renders as a
- * large black box with a small picture in it, so the empty margin is cropped
- * away.
- *
- * Content is found by looking for *edges*, not by comparing against the corner
- * colour: the app draws a soft radial gradient behind its pages, so a
- * colour-distance test sees the whole frame as "content" and never trims. A
- * pixel counts as an edge when it differs from its left neighbour by more than
- * 10 in total RGB (text, card borders and controls do; a smooth gradient does
- * not), and a row or column needs 3 such pixels so a stray artefact cannot hold
- * the box open.
- *
- * The crop only happens when the content is a small minority of the frame: a
- * full-bleed capture — a browser page, a dialog — has a bounding box close to
- * the whole image and is left exactly as captured.
+ * Trim a screenshot's dead space — the rule lives in `lib/frame.mjs` because
+ * `shots.mjs` needs the same one for a live capture.
  */
-const PAD = 32;
-const TRIM_BELOW = 0.85;
 
-async function trimDeadSpace(buffer, pad = PAD) {
-  const { data, info } = await sharp(buffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  const { width: w, height: h, channels: c } = info;
-  const rowHits = new Array(h).fill(0);
-  const colHits = new Array(w).fill(0);
-  for (let y = 0; y < h; y += 1) {
-    for (let x = 1; x < w; x += 1) {
-      const i = (y * w + x) * c;
-      const j = i - c;
-      const d =
-        Math.abs(data[i] - data[j]) +
-        Math.abs(data[i + 1] - data[j + 1]) +
-        Math.abs(data[i + 2] - data[j + 2]);
-      if (d > 10) {
-        rowHits[y] += 1;
-        colHits[x] += 1;
-      }
-    }
-  }
-  const first = (hits, min) => hits.findIndex((n) => n >= min);
-  const last = (hits, min) => hits.length - 1 - [...hits].reverse().findIndex((n) => n >= min);
-  const top = first(rowHits, 3);
-  const bottom = last(rowHits, 3);
-  const left = first(colHits, 3);
-  const right = last(colHits, 3);
-  if (top < 0 || left < 0) return { buffer, cropped: false };
-
-  const box = {
-    left: Math.max(0, left - pad),
-    top: Math.max(0, top - pad),
-    width: Math.min(w, right + pad + 1) - Math.max(0, left - pad),
-    height: Math.min(h, bottom + pad + 1) - Math.max(0, top - pad),
-  };
-  const share = (box.width * box.height) / (w * h);
-  if (share >= TRIM_BELOW) return { buffer, cropped: false };
-  return {
-    buffer: await sharp(buffer).extract(box).png({ compressionLevel: 9, palette: true }).toBuffer(),
-    cropped: true,
-    share,
-  };
-}
+/**
+ * Files that are never produced from the infra guide's originals:
+ *
+ * - 09, 10, 12 are captured in English by `scripts/shots.mjs`, and a fresh dev
+ *   capture carries no installer account, so there is nothing to redact and
+ *   re-running this script must not put the Polish originals back.
+ * - 11 has no English capture yet (see its entry above), so its Polish original
+ *   must not be published either.
+ */
+const SKIP = new Set([
+  '09-zitadel-login.png',
+  '10-zitadel-password.png',
+  '11-zitadel-2fa-skip.png',
+  '12-first-password-change.png',
+]);
 
 await mkdir(OUT, { recursive: true });
 const files = (await readdir(SRC)).filter((f) => f.endsWith('.png')).sort();
 
 for (const file of files) {
+  if (SKIP.has(file)) {
+    console.log(`${file.padEnd(34)} skipped — see scripts/shots/zitadel.plan.json`);
+    continue;
+  }
   const ops = OPS[file] ?? { masks: [] };
   let img = sharp(path.join(SRC, file)).resize({ width: WIDTH, withoutEnlargement: true });
   const { width, height } = await img.metadata().then((m) => ({

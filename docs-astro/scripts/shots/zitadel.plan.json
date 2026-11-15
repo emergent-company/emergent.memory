@@ -1,0 +1,110 @@
+{
+  "tutorial": "deploy-to-railway",
+  "instance": "dev",
+  "baseUrl": "https://app.dev.memory.emergent-company.ai",
+  "locale": "en-US",
+  "viewport": {
+    "width": 1600,
+    "height": 827
+  },
+  "colorScheme": "dark",
+  "deviceScaleFactor": 1,
+  "themeStorage": {
+    "cp-theme": "dark"
+  },
+  "vars": {
+    "user": {
+      "env": "SHOT_USER"
+    },
+    "password": {
+      "env": "SHOT_PASSWORD"
+    }
+  },
+  "steps": [
+    {
+      "name": "the app sends you to Zitadel",
+      "goto": "/"
+    },
+    {
+      "expect": "Sign in to Memory"
+    },
+    {
+      "click": {
+        "selector": "a:has-text('Sign in'), button:has-text('Sign in')"
+      }
+    },
+    {
+      "waitFor": {
+        "selector": "input[name=loginName]"
+      }
+    },
+    {
+      "expect": [
+        "Welcome back!",
+        "Loginname"
+      ]
+    },
+    {
+      "shot": {
+        "id": "09-zitadel-login",
+        "clip": "xpath=//form/ancestor::div[contains(@class,'rounded')][1]"
+      }
+    },
+    {
+      "type": {
+        "selector": "input[name=loginName]",
+        "value": "${user}"
+      }
+    },
+    {
+      "click": {
+        "selector": "button[data-testid=submit-button]"
+      }
+    },
+    {
+      "waitFor": {
+        "selector": "input[type=password]"
+      }
+    },
+    {
+      "expect": [
+        "Password",
+        "Enter your password"
+      ]
+    },
+    {
+      "shot": {
+        "id": "10-zitadel-password",
+        "clip": "xpath=//form/ancestor::div[contains(@class,'rounded')][1]"
+      }
+    },
+    {
+      "type": {
+        "selector": "input[type=password]",
+        "value": "${password}"
+      }
+    },
+    {
+      "click": {
+        "selector": "button[data-testid=submit-button]"
+      }
+    },
+    {
+      "waitFor": {
+        "selector": "input[name=currentPassword]"
+      }
+    },
+    {
+      "expect": [
+        "Change Password",
+        "Set the password for your account"
+      ]
+    },
+    {
+      "shot": {
+        "id": "12-first-password-change",
+        "clip": "xpath=//form/ancestor::div[contains(@class,'rounded')][1]"
+      }
+    }
+  ]
+}

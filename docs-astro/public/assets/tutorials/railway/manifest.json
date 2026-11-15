@@ -32,20 +32,16 @@
     "height": 243
   },
   "09-zitadel-login.webp": {
-    "width": 319,
-    "height": 191
+    "width": 440,
+    "height": 380
   },
   "10-zitadel-password.webp": {
-    "width": 319,
-    "height": 304
-  },
-  "11-zitadel-2fa-skip.webp": {
-    "width": 317,
-    "height": 431
+    "width": 440,
+    "height": 448
   },
   "12-first-password-change.webp": {
-    "width": 319,
-    "height": 396
+    "width": 440,
+    "height": 740
   },
   "13-memory-projects.webp": {
     "width": 1320,
