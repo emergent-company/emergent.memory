@@ -3,6 +3,7 @@ package blueprints
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"testing"
 
 	"github.com/google/uuid"
@@ -533,6 +534,32 @@ func (f *fakeAgentRepo) CreateRuntimeAgentForDefinition(ctx context.Context, a *
 		return nil, err
 	}
 	return a, nil
+}
+
+// FindRuntimeAgentForDefinition returns the row linked to definitionID within
+// projectID. Rows are matched deterministically (enabled first, then by name) so
+// the #789 recovery unit test does not depend on map iteration order.
+func (f *fakeAgentRepo) FindRuntimeAgentForDefinition(ctx context.Context, projectID, definitionID string) (*agents.Agent, error) {
+	var candidates []*agents.Agent
+	for _, a := range f.agentsByName {
+		if a.ProjectID != projectID || a.AgentDefinitionID == nil || *a.AgentDefinitionID != definitionID {
+			continue
+		}
+		candidates = append(candidates, a)
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Enabled != candidates[j].Enabled {
+			return candidates[i].Enabled
+		}
+		if candidates[i].Name != candidates[j].Name {
+			return candidates[i].Name < candidates[j].Name
+		}
+		return candidates[i].ID < candidates[j].ID
+	})
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	return candidates[0], nil
 }
 func (f *fakeAgentRepo) UpdateAgent(ctx context.Context, a *agents.Agent) error {
 	f.agentsByName[a.Name] = a
