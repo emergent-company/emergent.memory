@@ -451,7 +451,7 @@ h1#_top {
   color: var(--sl-color-text-accent);
 }
 
-.sl-link-button :global(svg) {
+.sl-link-button svg {
   width: 1em;
   height: 1em;
 }
