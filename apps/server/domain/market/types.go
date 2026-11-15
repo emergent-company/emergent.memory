@@ -113,6 +113,10 @@ type Listing struct {
 	Tools        []Tool          `json:"tools,omitempty"`
 	Bundle       BundleRef       `json:"bundle"`
 	Manifest     json.RawMessage `json:"manifest,omitempty"`
+	// TrustDocument is the market-signed JWT that lets the instance verify the
+	// listing before offering it. It may be omitted by a catalog response; the
+	// client then fetches GET /v1/listings/{slug}/trust.
+	TrustDocument string `json:"trust_document,omitempty"`
 }
 
 // DisplayTitle returns the listing title, falling back to the slug.

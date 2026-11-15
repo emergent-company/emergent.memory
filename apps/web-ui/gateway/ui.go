@@ -1095,7 +1095,11 @@ type scheduledRunRow struct {
 	AgentName string
 	Status    string
 	StartedAt string
-	Summary   string
+	// CompletedAt is the run's finish time (empty while it is still running).
+	// It is the rail row's last activity, so it drives both the row's sort
+	// position and the time its subtitle shows.
+	CompletedAt string
+	Summary     string
 	// Icon/Color carry the run agent's definition appearance (empty when
 	// undeclared or the definition is unknown), resolved in chatScheduledRuns.
 	Icon  string
@@ -1111,7 +1115,10 @@ type sharedSessionRow struct {
 	AgentName         string
 	Title             string
 	IsArchived        bool
-	ActivityRelative  string
+	// ActivityAt is the session's last activity as RFC3339 — the rail's sort
+	// key. ActivityRelative is that same instant as the row's display label.
+	ActivityAt       string
+	ActivityRelative string
 }
 
 // chatSharedSessions collects the project's owner-shared sessions (created by
@@ -1138,6 +1145,7 @@ func (s *Server) chatSharedSessions(ctx context.Context) []sharedSessionRow {
 			AgentName:         sess.AgentName,
 			Title:             title,
 			IsArchived:        sess.IsArchived,
+			ActivityAt:        last.UTC().Format(time.RFC3339Nano),
 			ActivityRelative:  relTime(last.UTC().Format(time.RFC3339)),
 		})
 	}
@@ -1167,14 +1175,19 @@ func (s *Server) chatScheduledRuns(ctx context.Context, appearances map[string]a
 			continue
 		}
 		for _, r := range runs {
+			completedAt := ""
+			if r.CompletedAt != nil {
+				completedAt = *r.CompletedAt
+			}
 			out = append(out, scheduledRunRow{
-				ID:        r.ID,
-				AgentName: a.Name,
-				Status:    r.Status,
-				StartedAt: r.StartedAt,
-				Summary:   scheduledRunPreview(r, a.Name),
-				Icon:      ap.Icon,
-				Color:     ap.Color,
+				ID:          r.ID,
+				AgentName:   a.Name,
+				Status:      r.Status,
+				StartedAt:   r.StartedAt,
+				CompletedAt: completedAt,
+				Summary:     scheduledRunPreview(r, a.Name),
+				Icon:        ap.Icon,
+				Color:       ap.Color,
 			})
 		}
 	}
@@ -1205,18 +1218,23 @@ func (s *Server) chatWorkRuns(ctx context.Context, appearances map[string]agentA
 			}
 		}
 		ap := appearances[r.AgentID]
+		completedAt := ""
+		if r.CompletedAt != nil {
+			completedAt = *r.CompletedAt
+		}
 		out = append(out, workRunRow{
 			// A board row IS the run: both the row id and the transcript target
 			// are the run id (the rail keys open-run off RunID).
-			ID:        r.ID,
-			RunID:     r.ID,
-			Origin:    "board",
-			Title:     title,
-			AgentName: r.AgentName,
-			Status:    r.Status,
-			StartedAt: r.StartedAt,
-			Icon:      ap.Icon,
-			Color:     ap.Color,
+			ID:          r.ID,
+			RunID:       r.ID,
+			Origin:      "board",
+			Title:       title,
+			AgentName:   r.AgentName,
+			Status:      r.Status,
+			StartedAt:   r.StartedAt,
+			CompletedAt: completedAt,
+			Icon:        ap.Icon,
+			Color:       ap.Color,
 		})
 	}
 	return append(out, s.extractionRunRows(ctx)...)

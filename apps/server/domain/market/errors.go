@@ -18,6 +18,23 @@ const (
 	CodeInstallNotInstallable = "install_not_installable"
 	CodeCompat                = "compat_unsatisfied"
 	CodeUndeclaredTools       = "undeclared_tools"
+
+	// In-product market client (register/verify/browse/claim/authorize) codes.
+	// They are deliberately distinct from the install-flow codes above: the
+	// in-product path never downloads a bundle, and telling a buyer that an
+	// entitlement is already held is not the same failure as a bad install code.
+	CodeRegistrationFailed   = "market_registration_failed"
+	CodeTrustInvalid         = "market_trust_invalid"
+	CodeClaimFailed          = "market_claim_failed"
+	CodeEntitlementHeld      = "entitlement_already_held"
+	CodeEntitlementInactive  = "entitlement_inactive"
+	CodeBatchTooLarge        = "market_batch_too_large"
+	CodeBatchExpired         = "market_batch_expired"
+	CodeBatchExhausted       = "market_batch_exhausted"
+	CodeAssertionInvalid     = "market_assertion_invalid"
+	CodeUsageRejected        = "market_usage_rejected"
+	CodeUsageRequestUnknown  = "usage_request_unknown"
+	CodeUsageRequestRepeated = "usage_request_repeated"
 )
 
 // ErrIssuerUntrusted refuses an install whose market origin is not in the
@@ -98,6 +115,114 @@ func ErrUndeclaredTools(tools []string) *apperror.Error {
 		msg = fmt.Sprintf("%s: %v", msg, tools)
 	}
 	return apperror.New(http.StatusConflict, CodeUndeclaredTools, msg)
+}
+
+// ErrRegistrationFailed reports that the instance could not announce itself to
+// the market.
+func ErrRegistrationFailed(detail string) *apperror.Error {
+	if detail == "" {
+		detail = "market refused the instance registration"
+	}
+	return apperror.New(http.StatusBadGateway, CodeRegistrationFailed, detail)
+}
+
+// ErrTrustInvalid covers a listing trust document that fails signature,
+// issuer, audience, expiry or subject validation.
+func ErrTrustInvalid(detail string) *apperror.Error {
+	if detail == "" {
+		detail = "listing trust document is invalid"
+	}
+	return apperror.New(http.StatusBadRequest, CodeTrustInvalid, detail)
+}
+
+// ErrClaimFailed reports that the market refused an entitlement claim for a
+// reason other than "already held".
+func ErrClaimFailed(detail string) *apperror.Error {
+	if detail == "" {
+		detail = "market refused the entitlement claim"
+	}
+	return apperror.New(http.StatusBadGateway, CodeClaimFailed, detail)
+}
+
+// ErrEntitlementAlreadyHeld reports that this account/instance already holds
+// the entitlement. The claim is idempotent in spirit, but the caller asked for
+// a fresh one, so it is surfaced rather than silently swallowed.
+func ErrEntitlementAlreadyHeld(listingSlug string) *apperror.Error {
+	msg := "this account already holds an entitlement for the listing"
+	if listingSlug != "" {
+		msg = fmt.Sprintf("this account already holds an entitlement for %q", listingSlug)
+	}
+	return apperror.New(http.StatusConflict, CodeEntitlementHeld, msg)
+}
+
+// ErrEntitlementInactive reports that the market will not authorize calls for
+// the entitlement (revoked, expired, or not held by this instance).
+func ErrEntitlementInactive(detail string) *apperror.Error {
+	if detail == "" {
+		detail = "entitlement is not active for this instance"
+	}
+	return apperror.New(http.StatusForbidden, CodeEntitlementInactive, detail)
+}
+
+// ErrBatchTooLarge refuses an authorization request above the 20-call batch
+// ceiling.
+func ErrBatchTooLarge(calls, limit int) *apperror.Error {
+	return apperror.New(http.StatusBadRequest, CodeBatchTooLarge,
+		fmt.Sprintf("authorization batch requests %d calls; the market limit is %d", calls, limit))
+}
+
+// ErrBatchExpired reports that the market's authorization batch is outside its
+// ≤60 s validity window, so no call may be attributed to it.
+func ErrBatchExpired(detail string) *apperror.Error {
+	if detail == "" {
+		detail = "market authorization batch has expired"
+	}
+	return apperror.New(http.StatusBadRequest, CodeBatchExpired, detail)
+}
+
+// ErrBatchExhausted reports that every pre-issued request id in the cached
+// batch has been used and the market cannot issue another batch right now.
+func ErrBatchExhausted(detail string) *apperror.Error {
+	if detail == "" {
+		detail = "cached market authorization batch has no calls left"
+	}
+	return apperror.New(http.StatusConflict, CodeBatchExhausted, detail)
+}
+
+// ErrAssertionInvalid covers an entitlement assertion that fails signature,
+// issuer, audience or expiry validation.
+func ErrAssertionInvalid(detail string) *apperror.Error {
+	if detail == "" {
+		detail = "market assertion is invalid"
+	}
+	return apperror.New(http.StatusBadRequest, CodeAssertionInvalid, detail)
+}
+
+// ErrUsageRejected reports that the market refused a usage report.
+func ErrUsageRejected(detail string) *apperror.Error {
+	if detail == "" {
+		detail = "market refused the usage report"
+	}
+	return apperror.New(http.StatusBadGateway, CodeUsageRejected, detail)
+}
+
+// ErrUsageRequestUnknown reports a usage report whose request_id the market
+// never issued to this instance. The client refuses it before the outbound
+// request, mirroring the market's fabricated-usage control.
+func ErrUsageRequestUnknown(detail string) *apperror.Error {
+	if detail == "" {
+		detail = "usage request id was not issued by the market to this instance"
+	}
+	return apperror.New(http.StatusBadRequest, CodeUsageRequestUnknown, detail)
+}
+
+// ErrUsageRequestRepeated reports a second usage report for a request_id that
+// was already reported or is already queued for replay.
+func ErrUsageRequestRepeated(detail string) *apperror.Error {
+	if detail == "" {
+		detail = "usage request id has already been reported"
+	}
+	return apperror.New(http.StatusConflict, CodeUsageRequestRepeated, detail)
 }
 
 // ErrorCode returns the apperror code carried by err, or "".
