@@ -809,9 +809,13 @@ jobs:
           version: "0.13.6"
           python-version: "3.14"
           # Keyed on uv.lock, so the ~95-wheel download is warm on the next PR
-          # that touches apps/web-ui (setup-uv's cache input is a boolean, and
-          # it hashes the lockfile itself — unlike setup-node's package-manager
-          # cache input, see web-ui.yml).
+          # that touches apps/web-ui (`uv sync` of this stack is ~550 MB of
+          # wheels — livekit-local-inference alone is 94 MB — against the repo's
+          # 10 GB Actions cache budget, which runner-cache-hygiene.yml prunes by
+          # 14-day idleness; one warm entry per lock version is the trade). Note
+          # that setup-uv's cache input is a boolean and it hashes the lockfile
+          # itself, unlike setup-node's package-manager cache input — see
+          # web-ui.yml for why that one is disabled.
           enable-cache: true
       - name: Lock is current
         if: steps.voice-agent-scope.outputs.changed == 'true'
