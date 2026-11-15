@@ -67,3 +67,13 @@ func TestMarketConfigEmptyDisablesMarket(t *testing.T) {
 		t.Fatalf("trusted = %#v", m.TrustedIssuers)
 	}
 }
+
+func TestMarketConfigNormalizeOriginID(t *testing.T) {
+	m := MarketConfig{URL: "https://market.example", OriginID: "  inst_abc  "}
+	if err := m.Normalize(); err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if m.OriginID != "inst_abc" {
+		t.Fatalf("origin id = %q, want trimmed", m.OriginID)
+	}
+}

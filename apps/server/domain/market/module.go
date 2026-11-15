@@ -20,5 +20,9 @@ var Module = fx.Module("market",
 // NewClientFromConfig builds the client from the operator-configured issuer
 // allowlist.
 func NewClientFromConfig(cfg *config.Config) (*Client, error) {
-	return NewClient(ClientConfig{Issuers: cfg.Market.TrustedIssuers})
+	return NewClient(ClientConfig{
+		Issuers:     cfg.Market.TrustedIssuers,
+		OriginID:    cfg.Market.OriginID,
+		InstanceURL: cfg.AppURL,
+	})
 }
