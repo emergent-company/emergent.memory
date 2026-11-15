@@ -20,7 +20,7 @@ func renderShellWithFeedback(t *testing.T, overlayURL string, order feedbackOrde
 func renderShellWithFeedbackAPI(t *testing.T, overlayURL, overlayAPIURL string, order feedbackOrderConfig) string {
 	t.Helper()
 	return renderHTML(t, appShell(
-		"Objects", nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
+		"Objects", nil, nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
 		0,
 		nil,
 		nil, nil, templ.NopComponent, nil,

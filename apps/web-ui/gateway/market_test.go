@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/labstack/echo/v4"
 )
 
@@ -108,12 +110,51 @@ func TestMarketSidebarItemsHiddenWhenUnconfigured(t *testing.T) {
 	if items := s.marketSidebarItems(); len(items) != 0 {
 		t.Fatalf("items = %#v, want none", items)
 	}
-	for _, group := range sidebarGroupsWithMarket("", false, sidebarWarns{}, s.marketSidebarItems()) {
+	for _, group := range sidebarGroupsWithMarket("", false, sidebarWarns{}) {
 		for _, item := range group.Items {
 			if item.Label == "Marketplace" {
 				t.Fatalf("Marketplace rendered without configuration")
 			}
 		}
+	}
+}
+
+func TestMarketplaceRendersAtSidebarBottom(t *testing.T) {
+	items := []layout.SidebarItem{{Label: "Marketplace", Href: "https://market.example", Icon: "lucide--store"}}
+	html := renderHTML(t, appSidebar(sidebarGroupsWithWarn("", false, sidebarWarns{}), items, false))
+	footer := strings.Index(html, `data-testid="sidebar-marketplace"`)
+	if footer < 0 {
+		t.Fatal("marketplace block missing from the sidebar")
+	}
+	nav := strings.Index(html, `class="sidebar-menu grow overflow-y-auto"`)
+	version := strings.Index(html, `data-testid="app-version"`)
+	if nav < 0 || version < 0 {
+		t.Fatalf("sidebar anchors missing (nav=%d version=%d)", nav, version)
+	}
+	if !(nav < footer && footer < version) {
+		t.Fatalf("marketplace not bottom-aligned above the version footer: nav=%d market=%d version=%d", nav, footer, version)
+	}
+	if !strings.Contains(html[footer:], "Marketplace") {
+		t.Fatal("marketplace label missing from its footer block")
+	}
+	block := html[footer:]
+	marker := strings.Index(block, `data-testid="sidebar-marketplace-link"`)
+	if marker < 0 {
+		t.Fatal("marketplace link missing from its footer block")
+	}
+	linkStart := strings.LastIndex(block[:marker], "<a")
+	if linkStart < 0 {
+		t.Fatal("marketplace anchor start missing")
+	}
+	link := block[linkStart:]
+	if end := strings.Index(link, "</a>"); end >= 0 {
+		link = link[:end]
+	}
+	if strings.Contains(link, "hx-get") || strings.Contains(link, "hx-target") {
+		t.Fatalf("marketplace link carries htmx attributes and the click is intercepted: %s", link)
+	}
+	if !strings.Contains(link, `target="_blank"`) || !strings.Contains(link, `rel="noopener noreferrer"`) {
+		t.Fatalf("marketplace link is not an external noopener link: %s", link)
 	}
 }
 

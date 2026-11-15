@@ -22,7 +22,7 @@ import (
 // providersMissing surfaces a warning indicator on the Settings hub entry
 // (see sidebarSettingsHref: "/settings" under any link base) when the project
 // has no LLM provider configured yet.
-templ appSidebar(groups []layout.SidebarGroup, providersMissing bool) {
+templ appSidebar(groups []layout.SidebarGroup, marketplaceItems []layout.SidebarItem, providersMissing bool) {
 	<div id="_layout-sidebar" class="flex flex-col bg-base-100">
 		<!-- Header: logo -->
 		<div class="flex h-16 items-center gap-3 px-5 shrink-0">
@@ -42,6 +42,33 @@ templ appSidebar(groups []layout.SidebarGroup, providersMissing bool) {
 				}
 			</div>
 		</div>
+		<!-- Bottom-pinned external destinations (Marketplace). The nav above grows
+		     to fill the column, so this block sits at the bottom edge; the version
+		     line stays the final metadata row beneath it. -->
+		if len(marketplaceItems) > 0 {
+			<div class="sidebar-menu border-base-content/10 shrink-0 border-t px-2.5 py-3" data-testid="sidebar-marketplace">
+				<div class="space-y-0.5">
+					for _, item := range marketplaceItems {
+						<!-- A plain anchor, not layout.SidebarNavItem: that component always
+						     emits hx-get/hx-target/hx-push-url, and htmx would intercept the
+						     click and try to swap a cross-origin market page into #main-content
+						     instead of opening it. -->
+						<a
+							class="menu-item"
+							href={ templ.URL(item.Href) }
+							target="_blank"
+							rel="noopener noreferrer"
+							data-testid="sidebar-marketplace-link"
+						>
+							if item.Icon != "" {
+								<span class={ "iconify size-4 " + item.Icon }></span>
+							}
+							<span class="grow">{ item.Label }</span>
+						</a>
+					}
+				</div>
+			</div>
+		}
 		<!-- Footer: build version. Durable and always reachable so a reporter can
 		     copy the running build into an issue (the same value /api/health
 		     exposes) instead of answering "version not shown in the UI". -->

@@ -29,7 +29,7 @@ func TestGoDaisyInitRuntimeWired(t *testing.T) {
 		Options: []ui.IconPickerOption{{Name: "box", Label: "Box", Class: "lucide--box"}},
 	})
 	shell := renderHTML(t, appShell(
-		"Inbox", nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
+		"Inbox", nil, nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
 		0,
 		nil,
 		&currentUser{Name: "Ada", Sub: "sub-a"}, nil, content, nil,
