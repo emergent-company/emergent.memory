@@ -202,9 +202,11 @@ is applied when an object is created, and `enum` is enforced on writes and
 drives the editor's select. The remaining JSON-Schema keywords (`pattern`,
 `minLength`, `maxLength`, `minItems`, `maxItems`) are carried through for
 documentation and tooling but are **not** enforced when an object is written. A
-bare scalar `items` (`"items": "string"`) is not a schema and is rejected when
-the schema is created or updated — write `"items": {"type": "string"}` so
-element validation runs.
+bare scalar `items` (`"items": "string"`) is not a schema and is rejected on
+`POST /api/schemas` and `PUT /api/schemas/:packId` — write
+`"items": {"type": "string"}` so element validation runs. The MCP `schema-create`
+tool does not run that guard yet, so a scalar `items` there is still stored and
+still enforces nothing.
 
 `enum` is enforced on primitive property types: `string` (including the
 semantic and hex-digest spellings) and `number`/`integer`/`boolean`, on object
