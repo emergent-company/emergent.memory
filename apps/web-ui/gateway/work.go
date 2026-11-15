@@ -550,9 +550,12 @@ func (s *Server) uiWorkRuleSave(c echo.Context) error {
 	}
 	agentID := strings.TrimSpace(c.FormValue("agentId"))
 	objectType := strings.TrimSpace(c.FormValue("ruleObjectType"))
-	rule := parseRuleRow(c, objectType)
+	rule, ruleErr := parseRuleRow(c, objectType)
 	if agentID == "" || objectType == "" {
 		return s.renderWorkRuleForm(c, mode, agentID, objectType, rule, fmt.Errorf("agent and object type are required"))
+	}
+	if ruleErr != nil {
+		return s.renderWorkRuleForm(c, mode, agentID, objectType, rule, ruleErr)
 	}
 	def, err := s.memory.GetAgentDefinition(ctx, agentID)
 	if err != nil {
@@ -716,18 +719,32 @@ func workBoardReturnPath(types []string) string {
 }
 
 // parseRuleRow reads one rule's fields from the form.
-func parseRuleRow(c echo.Context, objectType string) AgentObjectRule {
+func parseRuleRow(c echo.Context, objectType string) (AgentObjectRule, error) {
 	create := lastFormBool(c, "ruleCreate")
 	update := lastFormBool(c, "ruleUpdate")
 	del := lastFormBool(c, "ruleDelete")
+	rawInvocation := c.FormValue("rule-" + objectType + "-invocation")
+	if strings.TrimSpace(rawInvocation) == "" {
+		rawInvocation = c.FormValue("ruleInvocation")
+	}
+	invocation, err := parseRuleInvocation(rawInvocation)
+	if err != nil {
+		return AgentObjectRule{ObjectType: objectType}, err
+	}
+	triggers := parseRuleTriggers(c.FormValue("ruleTriggers"))
+	if invocation != nil {
+		for i := range triggers {
+			triggers[i].Invocation = invocation
+		}
+	}
 	return AgentObjectRule{
 		ObjectType:              objectType,
 		CanCreate:               &create,
 		CanUpdate:               &update,
 		CanDelete:               &del,
 		Fields:                  splitCSV(c.FormValue("ruleFields")),
-		Triggers:                parseRuleTriggers(c.FormValue("ruleTriggers")),
+		Triggers:                triggers,
 		Transitions:             parseRuleTransitions(c.FormValue("ruleTransitions")),
 		ClearAssigneeOnComplete: lastFormBool(c, "ruleClearAssignee"),
-	}
+	}, nil
 }
