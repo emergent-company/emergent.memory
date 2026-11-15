@@ -660,7 +660,7 @@ func TestResumeAsyncSnapshot_WorkingSnapshot(t *testing.T) {
 }
 
 func TestA2AGetTask_InternalErrorDoesNotLeak(t *testing.T) {
-	h := &A2AHandler{repo: newUUIDSyntaxRepository(t), log: slog.Default()}
+	h := &A2AHandler{repo: newUUIDSyntaxRepository(t), log: slog.Default(), authorizeProject: allowAnyProject}
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodGet, "/tasks/task-123", nil)
 	rec := httptest.NewRecorder()

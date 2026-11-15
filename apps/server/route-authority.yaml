@@ -2634,7 +2634,7 @@ routes:
     - method: GET
       path: /extendedAgentCard
       level: auth
-      note: a2aErrorEnvelopeMiddleware, RequireAuth, RequireAPITokenScopes(agents:read)
+      note: a2aErrorEnvelopeMiddleware, RequireAuth, RequireScopes(agents:read)
     - method: GET
       path: /health
       level: public
@@ -2650,7 +2650,7 @@ routes:
     - method: POST
       path: /message:send
       level: auth
-      note: a2aErrorEnvelopeMiddleware, RequireAuth, RequireAPITokenScopes(agents:write)
+      note: a2aErrorEnvelopeMiddleware, RequireAuth, RequireScopes(agents:write)
     - method: POST
       path: /message:stream
       level: auth
@@ -2666,7 +2666,7 @@ routes:
     - method: GET
       path: /tasks
       level: auth
-      note: a2aErrorEnvelopeMiddleware, RequireAuth, RequireAPITokenScopes(agents:read)
+      note: a2aErrorEnvelopeMiddleware, RequireAuth, RequireScopes(agents:read)
     - method: POST
       path: /tasks/*
       level: auth
@@ -2674,31 +2674,31 @@ routes:
     - method: GET
       path: /tasks/:id
       level: auth
-      note: a2aErrorEnvelopeMiddleware, RequireAuth, RequireAPITokenScopes(agents:read)
+      note: a2aErrorEnvelopeMiddleware, RequireAuth, RequireScopes(agents:read)
     - method: DELETE
       path: /tasks/:id/pushNotificationConfigs
       level: auth
-      note: a2aErrorEnvelopeMiddleware, RequireAuth, RequireAPITokenScopes(agents:write)
+      note: a2aErrorEnvelopeMiddleware, RequireAuth, RequireScopes(agents:write)
     - method: GET
       path: /tasks/:id/pushNotificationConfigs
       level: auth
-      note: a2aErrorEnvelopeMiddleware, RequireAuth, RequireAPITokenScopes(agents:read)
+      note: a2aErrorEnvelopeMiddleware, RequireAuth, RequireScopes(agents:read)
     - method: POST
       path: /tasks/:id/pushNotificationConfigs
       level: auth
-      note: a2aErrorEnvelopeMiddleware, RequireAuth, RequireAPITokenScopes(agents:write)
+      note: a2aErrorEnvelopeMiddleware, RequireAuth, RequireScopes(agents:write)
     - method: DELETE
       path: /tasks/:id/pushNotificationConfigs/:configId
       level: auth
-      note: a2aErrorEnvelopeMiddleware, RequireAuth, RequireAPITokenScopes(agents:write)
+      note: a2aErrorEnvelopeMiddleware, RequireAuth, RequireScopes(agents:write)
     - method: GET
       path: /tasks/:id/pushNotificationConfigs/:configId
       level: auth
-      note: a2aErrorEnvelopeMiddleware, RequireAuth, RequireAPITokenScopes(agents:read)
+      note: a2aErrorEnvelopeMiddleware, RequireAuth, RequireScopes(agents:read)
     - method: PUT
       path: /tasks/:id/pushNotificationConfigs/:configId
       level: auth
-      note: a2aErrorEnvelopeMiddleware, RequireAuth, RequireAPITokenScopes(agents:write)
+      note: a2aErrorEnvelopeMiddleware, RequireAuth, RequireScopes(agents:write)
     - method: POST
       path: /v1/chat/completions
       level: project-member

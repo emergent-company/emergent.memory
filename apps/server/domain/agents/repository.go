@@ -58,6 +58,18 @@ func NewRepository(db bun.IDB) *Repository {
 	return &Repository{db: db}
 }
 
+// DB exposes the handle the repository was built on. Authorization helpers that
+// need to read a project's owning organization (auth.RequireProjectMembership)
+// take it directly, so the A2A surface can guard a header-supplied project
+// without routing the lookup through an unrelated query. Nil-safe: a nil
+// repository yields a nil handle, and the caller's guard then fails closed.
+func (r *Repository) DB() bun.IDB {
+	if r == nil {
+		return nil
+	}
+	return r.db
+}
+
 // WithSchemaRepo attaches the compiled-type source used to fill citation
 // type_label/type_color on read-side derivations. Called from fx Invoke; nil is
 // safe and leaves citations with empty (omitted) labels.
