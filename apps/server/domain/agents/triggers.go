@@ -641,6 +641,7 @@ func (ts *TriggerService) enqueueWorkRun(ctx context.Context, agent *Agent, agen
 		Status:        ProcessingStatusPending,
 	}
 	meta := workPickupTriggerMetadata(eventType, data)
+	mergeWorkObjectMetadata(meta, head)
 	if matchedTrigger != nil && matchedTrigger.Status != "" {
 		meta["work_claim_status"] = matchedTrigger.Status
 	}
