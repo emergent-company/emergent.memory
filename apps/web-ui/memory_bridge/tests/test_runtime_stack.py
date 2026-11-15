@@ -20,7 +20,9 @@ WHAT IS COVERED (offline, sub-second, no DB, no audio, no network):
     because it is the one place this repo subclasses the framework;
   * `livekit.api.AccessToken` mints a room-join JWT (livekit-api's own
     jwt/crypto path, no network);
-  * importing `memory_bridge.worker` constructs the module-level `AgentServer`.
+  * importing `memory_bridge.worker` constructs the module-level `AgentServer`;
+  * the version parser behind the `livekit-agents` floor, including the
+    pre-release path (#792).
 
 WHAT IS NOT COVERED — the honesty this file exists for:
 
@@ -113,11 +115,24 @@ def _config(**overrides):
             setattr(config, k, v)
 
 
-def _version_tuple(dist: str) -> tuple[int, ...]:
-    """`"1.8.12"` -> `(1, 8, 12)`; stops at the first non-numeric part, so a
-    pre-release like `"1.8.11rc1"` reads as `(1, 8, 11)` and not `(1, 8, 111)`
-    (the latter would silently clear a `(1, 8, 12)` floor)."""
-    raw = importlib.metadata.version(dist)
+def _parse_version(raw: str) -> tuple[int, ...]:
+    """`"1.8.12"` -> `(1, 8, 12)`; stops at the first non-numeric character of a
+    dot-separated part, so a pre-release like `"1.8.11rc1"` reads as
+    `(1, 8, 11)` and not `(1, 8, 111)` — the latter would silently clear a
+    `(1, 8, 12)` floor, which is the regression #792 records.
+
+    Malformed-input failure mode: parsing stops at the first part with no
+    leading digit, so `"abc"` is `()` and `"1.x.12"` is `(1,)`. Such a result is
+    shorter than any real release and therefore cannot clear
+    `MIN_LIVEKIT_AGENTS`: a garbage version fails the floor assertion red
+    instead of passing it by accident.
+
+    Known limitation, deliberate and out of #792's scope: only the release
+    components are compared, so a pre-release OF the floor release
+    (`"1.8.12rc1"`) parses as `(1, 8, 12)` and DOES clear it. Closing that would
+    need PEP 440 ordering (rc/dev/post ranks); the floor exists to catch a silent
+    major/patch move, and a `rc` of the accepted release is not one.
+    """
     parts = []
     for piece in raw.split("."):
         digits = ""
@@ -129,6 +144,59 @@ def _version_tuple(dist: str) -> tuple[int, ...]:
             break
         parts.append(int(digits))
     return tuple(parts)
+
+
+def _version_tuple(dist: str) -> tuple[int, ...]:
+    """The installed distribution's version, parsed by `_parse_version`."""
+    return _parse_version(importlib.metadata.version(dist))
+
+
+def test_version_parser_handles_pre_releases():
+    """#792: the pre-release branch of the version parser shipped untested.
+
+    `uv.lock` currently pins the stable `livekit-agents 1.8.12`, so the buggy
+    and the fixed parser agree on what is installed and the regression is
+    invisible — until a `rc`/`dev`/`post` moves into the lock, exactly when the
+    floor comparison matters. Table-driven so the next suffix variant is one
+    line.
+    """
+    cases = {
+        # multi-digit stable release
+        "1.8.12": (1, 8, 12),
+        "1.8.0": (1, 8, 0),
+        "1.10.2": (1, 10, 2),
+        # pre-release suffixes: the digits belong to the release, not to a new
+        # component (a `piece.isdigit() or int(piece)` parse reads 1.8.111)
+        "1.8.11rc1": (1, 8, 11),
+        "1.8.11rc2": (1, 8, 11),
+        "1.8.11a1": (1, 8, 11),
+        "1.8.11b10": (1, 8, 11),
+        # dot-separated dev/post suffixes
+        "1.8.11.dev0": (1, 8, 11),
+        "1.8.11.post2": (1, 8, 11),
+        # local version label
+        "1.8.11+local": (1, 8, 11),
+        # an rc of the floor release compares as the floor (see _parse_version)
+        "1.8.12rc1": (1, 8, 12),
+        # malformed: unparseable, so it cannot clear the floor (see docstring)
+        "": (),
+        "abc": (),
+        "1.x.3": (1,),
+    }
+    for raw, expected in cases.items():
+        parsed = _parse_version(raw)
+        assert parsed == expected, f"{raw!r} parsed as {parsed!r}, expected {expected!r}"
+
+    # The whole point of the fix: a pre-release BELOW the floor release stays
+    # below it. Reading `1.8.11rc1` as `(1, 8, 111)` — the bug this table
+    # pins — would satisfy test_locked_stack_is_the_accepted_one() and hide
+    # the move.
+    assert _parse_version("1.8.11rc1") < MIN_LIVEKIT_AGENTS
+    assert _parse_version("1.8.11.dev3") < MIN_LIVEKIT_AGENTS
+    assert _parse_version("1.8.12") >= MIN_LIVEKIT_AGENTS
+    assert _parse_version("1.9.0.dev1") >= MIN_LIVEKIT_AGENTS
+    # Malformed input fails the floor comparison rather than passing it.
+    assert _parse_version("version-unknown") < MIN_LIVEKIT_AGENTS
 
 
 def test_locked_stack_is_the_accepted_one():
@@ -269,6 +337,7 @@ def test_worker_process_objects_exist():
 
 
 if __name__ == "__main__":
+    test_version_parser_handles_pre_releases()
     test_locked_stack_is_the_accepted_one()
     test_locked_stack_imports()
     test_bridge_session_builds_under_the_lock()
