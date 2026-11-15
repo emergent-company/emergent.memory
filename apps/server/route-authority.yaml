@@ -447,6 +447,10 @@ routes:
       path: /api/data-source-integrations/:id
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
+    - method: POST
+      path: /api/data-source-integrations/:id/issues/backfill
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
     - method: GET
       path: /api/data-source-integrations/:id/picker-session
       level: project-member

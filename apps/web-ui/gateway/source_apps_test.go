@@ -50,6 +50,7 @@ func sourceAppsTestServerWithConfig(f *fakeMemory, cfg Config) *echo.Echo {
 	e.POST("/data-sources/:id/triggers", s.uiDataSourceTriggerCreate)
 	e.POST("/data-sources/:id/triggers/:triggerId/toggle", s.uiDataSourceTriggerToggle)
 	e.POST("/data-sources/:id/triggers/:triggerId/delete", s.uiDataSourceTriggerDelete)
+	e.POST("/data-sources/:id/issues/backfill", s.uiDataSourceBackfillIssues)
 	return e
 }
 
@@ -1443,5 +1444,20 @@ func TestDSTriggerAgentLabel(t *testing.T) {
 	}
 	if got := dsTriggerAgentLabel(defs, DSSourceTrigger{AgentID: "gone"}); got != "gone" {
 		t.Errorf("unknown binding = %q, want its id", got)
+	}
+}
+
+func TestDataSourceIssueBackfillRedirectKeepsQueryBeforeFragment(t *testing.T) {
+	f := sourceAppsAdminFake()
+	f.dsIntegrations = []DSIntegration{{ID: "s1", Name: "GH", ProviderType: dsProviderTypeGitHubApp}}
+	e := sourceAppsTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/data-sources/s1/issues/backfill", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/data-sources/s1?issuesImported=1#triggers" {
+		t.Fatalf("location = %q", loc)
 	}
 }

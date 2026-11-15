@@ -419,7 +419,7 @@ func (p *WorkerPool) reenqueueWork(ctx context.Context, log *slog.Logger, agent 
 	}
 	inv := workRunInvocation(ctx, nil, projectID, head, trigger)
 	sourceTriggerID := workSourceTriggerID(head)
-	if prev, perr := p.repo.FindLatestRunForSubject(ctx, canonicalID); perr == nil && prev != nil {
+	if prev, perr := p.repo.FindLatestRunForSubject(ctx, canonicalID); perr == nil && prev != nil && prev.AgentID == agent.ID {
 		if prev.RunInvocation != nil {
 			inv = prev.RunInvocation
 		}

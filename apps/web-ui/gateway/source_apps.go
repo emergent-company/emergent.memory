@@ -645,7 +645,7 @@ func (s *Server) uiDataSourceBackfillIssues(c echo.Context) error {
 	if _, err := s.memory.BackfillSourceIssues(ctx, id); err != nil {
 		return redirectWithError(c, back, dsFormError(err))
 	}
-	redirectAfterMutation(c, back+"?issuesImported=1")
+	redirectAfterMutation(c, "/data-sources/"+url.PathEscape(id)+"?issuesImported=1#triggers")
 	return nil
 }
 
