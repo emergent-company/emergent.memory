@@ -719,7 +719,7 @@ func (s *Service) applyAgents(ctx context.Context, projectID, blueprintID, bpNam
 			if err := s.agentRepo.UpdateDefinition(ctx, existing); err != nil {
 				return counts, apperror.ErrDatabase.WithInternal(err)
 			}
-			if err := s.ensureRuntimeAgent(ctx, projectID, blueprintID, existing, &am); err != nil {
+			if _, err := s.ensureRuntimeAgent(ctx, projectID, blueprintID, existing, &am); err != nil {
 				return counts, err
 			}
 			counts.Updated++
@@ -732,7 +732,7 @@ func (s *Service) applyAgents(ctx context.Context, projectID, blueprintID, bpNam
 			if err := s.agentRepo.CreateDefinition(ctx, def); err != nil {
 				return counts, apperror.ErrDatabase.WithInternal(err)
 			}
-			if err := s.ensureRuntimeAgent(ctx, projectID, blueprintID, def, &am); err != nil {
+			if _, err := s.ensureRuntimeAgent(ctx, projectID, blueprintID, def, &am); err != nil {
 				return counts, err
 			}
 			counts.Created++
@@ -1166,16 +1166,16 @@ func applyWorkConfig(def *agents.AgentDefinition, m *AgentManifest) error {
 // ownership into its config map, and defaults an empty trigger type to
 // "reaction" (when a reaction config is present) or "schedule", and an empty
 // cron schedule to the daily "0 0 * * *" default (the column is NOT NULL).
-func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID string, def *agents.AgentDefinition, m *AgentManifest) error {
+func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID string, def *agents.AgentDefinition, m *AgentManifest) (*agents.Agent, error) {
 	if m.TriggerType == "" && m.ReactionConfig == nil && m.CronSchedule == "" && len(def.WorkConfig.ObjectRules) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// Work-pickup validation: a legacy work agent must declare a single object
 	// type and a single pickup signal; a rules-based agent may declare multiple
 	// types and derives its reaction config below.
 	if err := agents.ValidateWorkPickupForDefinition(def, m.ReactionConfig); err != nil {
-		return apperror.NewBadRequest("invalid reactionConfig for agent " + m.Name + ": " + err.Error())
+		return nil, apperror.NewBadRequest("invalid reactionConfig for agent " + m.Name + ": " + err.Error())
 	}
 
 	reactionConfig := m.ReactionConfig
@@ -1218,7 +1218,7 @@ func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID
 	// derived from objectRules rather than declared.
 	if triggerType == agents.TriggerTypeSchedule {
 		if err := agents.ValidateCronInterval(cron, s.minCronInterval()); err != nil {
-			return apperror.NewBadRequest(fmt.Sprintf(
+			return nil, apperror.NewBadRequest(fmt.Sprintf(
 				"agent %q: invalid cronSchedule: %v (runtime agents use standard 5-field cron — minute hour day-of-month month day-of-week; a seconds field is not accepted)",
 				m.Name, err))
 		}
@@ -1227,7 +1227,7 @@ func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID
 
 	existing, err := s.agentRepo.FindAgentByName(ctx, projectID, def.Name)
 	if err != nil {
-		return apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 	if existing != nil {
 		// Ownership gate: adopt a pre-existing runtime agent only when it is
@@ -1237,7 +1237,7 @@ func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID
 		// rebind its trigger config and later delete it on Unapply (mirroring
 		// applyAgents' definition-ownership discipline).
 		if bid, _ := existing.Config["sourceBlueprintId"].(string); bid != blueprintID {
-			return nil
+			return nil, nil
 		}
 
 		existing.TriggerType = triggerType
@@ -1250,7 +1250,7 @@ func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID
 			existing.Config = map[string]any{}
 		}
 		existing.Config["sourceBlueprintId"] = blueprintID
-		return s.agentRepo.UpdateAgent(ctx, existing)
+		return existing, s.agentRepo.UpdateAgent(ctx, existing)
 	}
 
 	agent := &agents.Agent{
@@ -1264,7 +1264,35 @@ func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID
 		AgentDefinitionID: &defID,
 		Config:            map[string]any{"sourceBlueprintId": blueprintID},
 	}
-	return s.agentRepo.CreateAgent(ctx, agent)
+	// CreateRuntimeAgentForDefinition returns the winning row — the freshly
+	// created candidate on success, or on a bind race the row that actually owns
+	// the definition link. Apply the manifest config to that winner rather than
+	// discarding it (mirroring syncDefinitionWorkTriggers' conflict branch):
+	// without this, a create that lost a race would return a winner whose
+	// triggerType/reactionConfig/enabled were silently never applied.
+	winner, err := s.agentRepo.CreateRuntimeAgentForDefinition(ctx, agent)
+	if err != nil {
+		return nil, err
+	}
+	// Ownership gate (mirrors the existing-row branch above): when the create
+	// lost a bind race, the winner is a row another binder already linked to
+	// this definition. Never repurpose a row another blueprint owns — writing
+	// this manifest's config over it would rebind its trigger and later make it
+	// deletable by this blueprint's Unapply.
+	if bid, _ := winner.Config["sourceBlueprintId"].(string); bid != blueprintID {
+		return nil, nil
+	}
+	winner.TriggerType = triggerType
+	winner.ReactionConfig = reactionConfig
+	winner.CronSchedule = cron
+	winner.Enabled = true
+	winner.StrategyType = "agent-def:" + def.ID
+	winner.AgentDefinitionID = &defID
+	if winner.Config == nil {
+		winner.Config = map[string]any{}
+	}
+	winner.Config["sourceBlueprintId"] = blueprintID
+	return winner, s.agentRepo.UpdateAgent(ctx, winner)
 }
 
 // agentUIConfig marshals an AgentUIManifest into the opaque ui_config JSONB

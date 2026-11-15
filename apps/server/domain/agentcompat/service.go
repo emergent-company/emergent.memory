@@ -161,23 +161,13 @@ func (s *Service) handleNewRun(
 
 	// Find or create the runtime agent record.
 	// The kb.agent_runs table requires a valid agent_id, so we ensure a
-	// runtime agent row exists that is backed by this definition.
-	agent, err := s.agentRepo.FindByName(ctx, projectID, agentDef.Name)
+	// runtime agent row exists that is backed by this definition. Routing
+	// through FindOrCreateRuntimeAgentForDefinition (rather than a name lookup
+	// followed by an unlinked Create) reuses any already-linked row and never
+	// mints an unlinked "agent-def:<id>" duplicate — the state #737 removes.
+	agent, err := s.agentRepo.FindOrCreateRuntimeAgentForDefinition(ctx, agentDef)
 	if err != nil {
 		return nil, fmt.Errorf("agent record lookup failed: %w", err)
-	}
-	if agent == nil {
-		// Create a lightweight runtime agent for this definition.
-		agent = &agents.Agent{
-			ProjectID:    projectID,
-			Name:         agentDef.Name,
-			StrategyType: "agent-def:" + agentDef.ID,
-			CronSchedule: "0 0 * * *", // required by schema, not used
-			TriggerType:  "manual",
-		}
-		if createErr := s.agentRepo.Create(ctx, agent); createErr != nil {
-			return nil, fmt.Errorf("failed to create runtime agent for definition %q: %w", agentDef.Name, createErr)
-		}
 	}
 
 	userMsg := buildUserMessage(req.Messages)

@@ -139,12 +139,15 @@ func ValidateWorkPickupForDefinition(def *AgentDefinition, rc *ReactionConfig) e
 	return nil
 }
 
-// definitionForID resolves a definition id, or nil when absent/unresolvable.
-func (h *Handler) definitionForID(ctx context.Context, definitionID *string) *AgentDefinition {
+// definitionForID resolves a definition id within a project, or nil when
+// absent/unresolvable. The lookup is project-scoped so a definition id from
+// another project resolves to nil and its work config is never consulted for
+// this project's agent.
+func (h *Handler) definitionForID(ctx context.Context, projectID string, definitionID *string) *AgentDefinition {
 	if definitionID == nil || *definitionID == "" {
 		return nil
 	}
-	def, err := h.repo.FindDefinitionByID(ctx, *definitionID, nil)
+	def, err := h.repo.FindDefinitionByID(ctx, *definitionID, &projectID)
 	if err != nil {
 		return nil
 	}

@@ -26,7 +26,7 @@ func renderPageShell(t *testing.T, content templ.Component) string {
 func renderPageShellWithOverlay(t *testing.T, overlayURL string, content templ.Component) string {
 	t.Helper()
 	return renderHTML(t, appShell(
-		"Agents", nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
+		"Agents", nil, nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
 		0,
 		nil,
 		nil, nil,
@@ -399,7 +399,7 @@ func renderPageShellWithSentry(t *testing.T, opts sentryHeadOpts) string {
 		return err
 	})
 	return renderHTML(t, appShell(
-		"Agents", nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
+		"Agents", nil, nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
 		0,
 		nil,
 		nil, nil,
