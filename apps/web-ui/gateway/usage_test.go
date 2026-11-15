@@ -192,6 +192,7 @@ func TestUsageRoute(t *testing.T) {
 		// The card is about runs, not conversations.
 		"Agent runs", `data-testid="stat-agent-runs"`,
 		"Per-agent usage", `data-testid="usage-agent-table"`,
+		`class="overflow-x-auto stacked-table"`,
 		"coding", "ui-auditor", "Unattributed",
 		`data-testid="usage-agent-unattributed"`,
 		// Each agent links to its filtered run log; the unattributed bucket does not.

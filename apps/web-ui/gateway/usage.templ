@@ -197,7 +197,7 @@ templ usageAgentSection(byAgent *UsageByAgentResponse, err error, days int) {
 		}
 	} else {
 		@ui.Section("Per-agent usage", ui.SectionProps{Margin: "mt-6", CardClass: "overflow-hidden", BodyClass: "memory-density-flush"}) {
-			@table.TableWithProps(table.TableProps{Bordered: false, Attrs: templ.Attributes{"class": "stacked-table", "data-testid": "usage-agent-table", "style": "--h1:'Agent';--h2:'Runs';--h3:'Tokens';--h4:'Cost'"}}) {
+			@table.TableWithProps(table.TableProps{Bordered: false, WrapperClass: "stacked-table", Attrs: templ.Attributes{"data-testid": "usage-agent-table", "style": "--h1:'Agent';--h2:'Runs';--h3:'Tokens';--h4:'Cost'"}}) {
 				@table.TableHead() {
 					@table.TableHeadRow() {
 						@table.TableHeadCell("Agent")
@@ -243,7 +243,7 @@ templ usageAgentRow(rowID string, r UsageByAgentRow, days int) {
 // usageModelSection lists token usage grouped by model, sorted by cost.
 templ usageModelSection(summary *UsageSummaryResponse) {
 	@ui.Section("Per-model usage", ui.SectionProps{Margin: "mt-6", CardClass: "overflow-hidden", BodyClass: "memory-density-flush"}) {
-		@table.TableWithProps(table.TableProps{Bordered: false, Attrs: templ.Attributes{"class": "stacked-table", "style": "--h1:'Model';--h2:'Provider';--h3:'Tokens';--h4:'Cost'"}}) {
+		@table.TableWithProps(table.TableProps{Bordered: false, WrapperClass: "stacked-table", Attrs: templ.Attributes{"style": "--h1:'Model';--h2:'Provider';--h3:'Tokens';--h4:'Cost'"}}) {
 			@table.TableHead() {
 				@table.TableHeadRow() {
 					@table.TableHeadCell("Model")

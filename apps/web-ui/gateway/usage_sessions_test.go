@@ -215,6 +215,9 @@ func TestUsageSessionsRoute(t *testing.T) {
 	for _, want := range []string{
 		"Sessions &amp; runs", "Run log",
 		`data-testid="sessions-table"`,
+		// stacked-table belongs on the wrapper's class list, not in a second
+		// class attribute (a duplicate drops it and mobile loses the card layout).
+		`class="overflow-x-auto stacked-table"`,
 		`href="/runs/run-1"`, `href="/runs/run-2"`,
 		"coding", "ui-auditor", "completed", "failed", "deepseek-v4-pro",
 		// Per-row cost, plus the page total (0.8123 + 0.1).
