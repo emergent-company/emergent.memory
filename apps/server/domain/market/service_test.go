@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -169,6 +170,81 @@ func TestServiceResolveDoesNotDownloadOrApply(t *testing.T) {
 	if client.downloads != 0 || importer.calls != 0 {
 		t.Fatalf("resolve downloaded=%d imported=%d, want 0/0", client.downloads, importer.calls)
 	}
+}
+
+func TestServiceResolveUsesVersionDocumentForCompatAndCapabilities(t *testing.T) {
+	bundle := tarWithBlueprint(t, map[string]any{"name": "demo", "version": "1.0.0"})
+	client := happyClient(t, bundle)
+	// The exchange card carries only identity fields; the version document is
+	// where compat, capabilities and the tool declarations live.
+	client.version = &Version{
+		Slug:    "demo",
+		Version: "1.2.3",
+		Kind:    "blueprint",
+		Digest:  client.claims.Digest,
+		Compat:  ">=1.0 <2.0",
+		Manifest: Manifest{Capabilities: Capabilities{
+			Reads:     []string{"documents"},
+			Writes:    []string{"graph"},
+			Egress:    []string{"api.acme.example"},
+			MCPs:      []MCPCapability{{Slug: "search", Scopes: []string{"read"}}},
+			Schedules: true,
+			Model:     &CapabilityModel{Provider: "openai", Name: "gpt-5"},
+		}},
+		Tools: []Tool{{Name: "search"}},
+	}
+	importer := &fakeImporter{}
+	store := &fakeStore{}
+	svc := newTestService(t, client, store, importer)
+
+	res, err := svc.Resolve(context.Background(), "proj-1", testIssuer, "code")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if res.Compat.Memory != ">=1.0 <2.0" {
+		t.Fatalf("compat = %q, want the version document's range", res.Compat.Memory)
+	}
+	caps := res.Capabilities
+	if len(caps.Reads) != 1 || caps.Reads[0] != "documents" {
+		t.Fatalf("reads = %#v", caps.Reads)
+	}
+	if len(caps.Writes) != 1 || caps.Writes[0] != "graph" {
+		t.Fatalf("writes = %#v", caps.Writes)
+	}
+	if len(caps.Egress) != 1 || caps.Egress[0] != "api.acme.example" {
+		t.Fatalf("egress = %#v", caps.Egress)
+	}
+	if len(caps.MCPs) != 1 || caps.MCPs[0].Slug != "search" || len(caps.MCPs[0].Scopes) != 1 {
+		t.Fatalf("mcps = %#v", caps.MCPs)
+	}
+	if !caps.Schedules {
+		t.Fatal("schedules = false, want the version's declaration")
+	}
+	if caps.Model == nil || caps.Model.Provider != "openai" || caps.Model.Name != "gpt-5" {
+		t.Fatalf("model = %#v", caps.Model)
+	}
+	if res.Listing.Semver != "1.2.3" || res.Listing.Title != "Demo" || res.Listing.Publisher != "Acme" {
+		t.Fatalf("listing = %#v", res.Listing)
+	}
+	if client.downloads != 0 || importer.calls != 0 {
+		t.Fatalf("resolve downloaded=%d imported=%d, want 0/0", client.downloads, importer.calls)
+	}
+}
+
+func TestServiceResolveRefusesVersionDigestMismatch(t *testing.T) {
+	client := happyClient(t, nil)
+	// A version document whose digest disagrees with the licence must be
+	// refused even though the exchange's own digest matched.
+	client.version = &Version{
+		Slug:    "demo",
+		Version: "1.2.3",
+		Digest:  "sha256:" + strings.Repeat("a", 64),
+		Compat:  ">=0.1 <99.0",
+	}
+	svc := newTestService(t, client, &fakeStore{}, &fakeImporter{})
+
+	_, err := svc.Resolve(context.Background(), "proj-1", testIssuer, "code")
+	expectCode(t, err, CodeLicenseInvalid)
 }
 
 func TestServiceApplyHappyPathRecordsProvenanceAndReports(t *testing.T) {

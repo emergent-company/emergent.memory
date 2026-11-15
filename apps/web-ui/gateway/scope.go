@@ -71,6 +71,10 @@ func globalScopePath(p string) bool {
 		"/o/", "/api/", "/auth/", "/share/", "/static/", "/assets/",
 		"/webhooks/", "/internal/", "/dev/", "/members", "/invites",
 		"/profile", "/partial/invite-user-search",
+		// Marketplace install links arrive from the external market without a
+		// scope prefix; marketplaceScopeRedirect re-scopes them onto the
+		// caller's active project (see marketplace_install.go).
+		"/marketplace/",
 		// OAuth callback landing (oauth_landing.go): the API server redirects
 		// here without a scope prefix, and the route resolves the caller's
 		// project itself.
@@ -245,6 +249,46 @@ func (s *Server) dataSourcesScopeRedirect(next echo.HandlerFunc) echo.HandlerFun
 		sc, ok := sessionContextFrom(c.Request().Context())
 		if !ok || sc.Device || sc.ProjectID == "" {
 			return echo.NewHTTPError(http.StatusNotFound, "not found")
+		}
+		base := projectScopeURL(sc.OrgID, sc.ProjectID)
+		if base == "" {
+			return echo.NewHTTPError(http.StatusNotFound, "not found")
+		}
+		target := base + path
+		if q := c.Request().URL.RawQuery; q != "" {
+			target += "?" + q
+		}
+		return c.Redirect(http.StatusSeeOther, target)
+	}
+}
+
+// marketplaceScopeRedirect re-scopes an unscoped marketplace install link onto
+// the caller's active project. The external market redirects to
+// /marketplace/install?code=…&market=… with no /o/{org}/p/{project} prefix, so
+// the first GET must derive the scope from the session before the review page
+// (and its links/forms) can render in context. No active project lands on the
+// project picker rather than installing against a deployment default.
+func (s *Server) marketplaceScopeRedirect(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		if s.cfg.AuthMode != "session" {
+			return next(c)
+		}
+		if c.Request().Method != http.MethodGet && c.Request().Method != http.MethodHead {
+			return next(c)
+		}
+		path := c.Request().URL.Path
+		if !strings.HasPrefix(path, "/marketplace/") {
+			return next(c)
+		}
+		if _, ok := scopeFromContext(c.Request().Context()); ok {
+			return next(c) // already scoped
+		}
+		sc, ok := sessionContextFrom(c.Request().Context())
+		if !ok || sc.Device {
+			return echo.NewHTTPError(http.StatusNotFound, "not found")
+		}
+		if sc.ProjectID == "" {
+			return c.Redirect(http.StatusSeeOther, "/orgs")
 		}
 		base := projectScopeURL(sc.OrgID, sc.ProjectID)
 		if base == "" {

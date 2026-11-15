@@ -449,6 +449,21 @@ type fakeMemory struct {
 	deletedBlueprints   []string                // ids passed to DeleteBlueprint
 	deleteBlueprintErr  error                   // DeleteBlueprint failure
 
+	// Marketplace install flow (see market_install_client.go). The resolve and
+	// apply results/errors let a handler test exercise the review page, the
+	// named error mapping and the confirm redirect without a backend.
+	marketResolveRes    *MarketResolveResult // returned by ResolveMarketInstall, when set
+	marketResolveErr    error                // ResolveMarketInstall failure
+	marketResolveCalls  int                  // ResolveMarketInstall call count
+	marketResolveMarket string               // last market passed to ResolveMarketInstall
+	marketResolveCode   string               // last code passed to ResolveMarketInstall
+	marketApplyRes      *MarketApplyResult   // returned by ApplyMarketInstall, when set
+	marketApplyErr      error                // ApplyMarketInstall failure
+	marketApplyCalls    int                  // ApplyMarketInstall call count
+	marketApplyMarket   string               // last market passed to ApplyMarketInstall
+	marketApplyCode     string               // last code passed to ApplyMarketInstall
+	marketApplyProject  string               // last project passed to ApplyMarketInstall
+
 	importBlueprintReq *importBlueprintRequest // last request passed to ImportBlueprint
 	importBlueprintRes *BlueprintRecord        // returned by ImportBlueprint, when set
 	importBlueprintErr error                   // ImportBlueprint failure
@@ -2089,6 +2104,27 @@ func (f *fakeMemory) GetModelOverrides(ctx context.Context, name string) (map[st
 		return f.modelOverrides, nil
 	}
 	return map[string]string{}, nil
+}
+
+func (f *fakeMemory) ResolveMarketInstall(ctx context.Context, market, code string) (*MarketResolveResult, error) {
+	f.marketResolveCalls++
+	f.marketResolveMarket = market
+	f.marketResolveCode = code
+	if f.marketResolveErr != nil {
+		return nil, f.marketResolveErr
+	}
+	return f.marketResolveRes, nil
+}
+
+func (f *fakeMemory) ApplyMarketInstall(ctx context.Context, market, code, projectID string, overrides map[string]string) (*MarketApplyResult, error) {
+	f.marketApplyCalls++
+	f.marketApplyMarket = market
+	f.marketApplyCode = code
+	f.marketApplyProject = projectID
+	if f.marketApplyErr != nil {
+		return nil, f.marketApplyErr
+	}
+	return f.marketApplyRes, nil
 }
 
 func (f *fakeMemory) ListAppliedBlueprints(ctx context.Context) ([]AppliedBlueprint, error) {

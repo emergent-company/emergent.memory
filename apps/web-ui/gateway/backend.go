@@ -280,6 +280,10 @@ type MemoryBackend interface {
 	ListBlueprintVersions(ctx context.Context, name string) ([]BlueprintRecord, error)
 	ListBlueprints(ctx context.Context) ([]BlueprintRecord, error)
 	CreateBlueprint(ctx context.Context, req *createBlueprintRequest) (*BlueprintRecord, error)
+	// Marketplace install flow (see market_install_client.go): resolve a code
+	// into a review payload, then apply it into the active project.
+	ResolveMarketInstall(ctx context.Context, market, code string) (*MarketResolveResult, error)
+	ApplyMarketInstall(ctx context.Context, market, code, projectID string, overrides map[string]string) (*MarketApplyResult, error)
 	ImportBlueprint(ctx context.Context, url, ref, token string) (*BlueprintRecord, error)
 	PreviewImportBlueprint(ctx context.Context, url, ref, token string) (*BlueprintPreview, error)
 	ImportAndApplyBlueprint(ctx context.Context, url, ref, token string, overrides map[string]string) (*BlueprintRecord, error)

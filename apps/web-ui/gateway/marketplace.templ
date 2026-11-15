@@ -1,0 +1,226 @@
+package main
+
+import (
+	"strings"
+
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	"github.com/emergent-company/go-daisy/components/layout"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Marketplace install review (P5 HTML install flow) ---
+
+// MarketInstallPageData is the review/error page payload. HasReview is false on
+// an error page that never got as far as resolving a listing (untrusted market,
+// invalid code, unreachable backend); MarketLink is empty when there is no
+// trustworthy marketplace to send the reader back to.
+type MarketInstallPageData struct {
+	Market           string
+	Code             string
+	MarketLink       string
+	Listing          MarketListingPreview
+	Capabilities     MarketCapabilities
+	Compat           MarketCompat
+	AlreadyInstalled bool
+	HasReview        bool
+	ErrorCode        string
+	ErrorMsg         string
+}
+
+// MarketInstallPage renders the pre-install review. Nothing is applied until
+// the confirm form posts.
+templ MarketInstallPage(d MarketInstallPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@pageHeader("", "Install from Marketplace", "Review what this listing will add before installing it into the active project.") {}
+		if d.ErrorMsg != "" {
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertError,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--alert-triangle",
+				Message: d.ErrorMsg,
+				Attrs: templ.Attributes{
+					"data-testid":     "market-install-error",
+					"data-error-code": d.ErrorCode,
+				},
+			})
+		}
+		if d.HasReview {
+			@marketInstallReview(d)
+		}
+		@marketInstallBackLink(d)
+	}
+}
+
+// marketInstallReview is the listing card: identity, version/digest, the
+// declared capability surface, compatibility, the already-installed note and
+// the confirm form.
+templ marketInstallReview(d MarketInstallPageData) {
+	@components.PanelCard("mt-4", templ.Attributes{"data-testid": "market-install-review"}, components.PanelCardOpt{BodyClass: "memory-density-comfortable gap-5"}) {
+		<div class="flex flex-wrap items-start justify-between gap-3">
+			<div>
+				<h2 class="text-xl font-semibold tracking-tight" data-testid="market-install-title">{ d.Listing.Title }</h2>
+				<p class="text-sm" data-testid="market-install-publisher">
+					by { d.Listing.Publisher }
+				</p>
+			</div>
+			if d.AlreadyInstalled {
+				@ui.Badge(ui.BadgeProps{
+					Label:   "Already installed",
+					Variant: ui.BadgeSuccess,
+					Style:   ui.BadgeStyleOutline,
+					Attrs:   templ.Attributes{"data-testid": "market-install-already"},
+				})
+			}
+		</div>
+
+		<dl class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+			<div>
+				<dt class="text-xs font-semibold uppercase tracking-wide">Version</dt>
+				<dd class="text-sm" data-testid="market-install-version">{ d.Listing.Semver }</dd>
+			</div>
+			<div>
+				<dt class="text-xs font-semibold uppercase tracking-wide">Digest</dt>
+				<dd class="break-all font-mono text-sm" data-testid="market-install-digest">{ d.Listing.Digest }</dd>
+			</div>
+			<div>
+				<dt class="text-xs font-semibold uppercase tracking-wide">Compatibility</dt>
+				<dd class="text-sm" data-testid="market-install-compat">{ marketCompatLabel(d.Compat) }</dd>
+			</div>
+		</dl>
+
+		<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+			@marketCapList("Reads", d.Capabilities.Reads)
+			@marketCapList("Writes", d.Capabilities.Writes)
+			@marketCapList("Egress", d.Capabilities.Egress)
+			@marketMCPList(d.Capabilities.MCPs)
+			@marketSchedule(d.Capabilities.Schedules)
+			@marketModel(d.Capabilities.Model)
+		</div>
+
+		if d.AlreadyInstalled {
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Attrs: templ.Attributes{"data-testid": "market-install-already-note"}}) {
+				This exact version and digest is already installed in this project. Confirming again is safe and will not duplicate it.
+			}
+		}
+
+		<form method="post" action="/marketplace/install" class="flex flex-wrap items-center gap-3">
+			<input type="hidden" name="market" value={ d.Market }/>
+			<input type="hidden" name="code" value={ d.Code }/>
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeSubmit,
+				Variant: ui.ButtonPrimary,
+				Icon:    "lucide--download",
+				Attrs: templ.Attributes{
+					"data-testid": "market-install-confirm",
+				},
+			}) {
+				Confirm install
+			}
+		</form>
+	}
+}
+
+// marketCapList renders one declared string set, explicitly saying when nothing
+// was declared so silence never reads as "no access".
+templ marketCapList(label string, values []string) {
+	<div>
+		<span class="text-xs font-semibold uppercase tracking-wide">{ label }</span>
+		if len(values) == 0 {
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet}) {
+				None declared
+			}
+		} else {
+			<div class="mt-1 flex flex-wrap gap-2">
+				for _, v := range values {
+					@ui.Badge(ui.BadgeProps{Label: v, Variant: ui.BadgeGhost, Size: ui.BadgeSizeSM})
+				}
+			</div>
+		}
+	</div>
+}
+
+// marketMCPList renders declared MCP dependencies with their scopes.
+templ marketMCPList(mcps []MarketMCPCapability) {
+	<div>
+		<span class="text-xs font-semibold uppercase tracking-wide">MCP servers</span>
+		if len(mcps) == 0 {
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet}) {
+				None declared
+			}
+		} else {
+			<div class="mt-1 flex flex-wrap gap-2">
+				for _, mcp := range mcps {
+					@ui.Badge(ui.BadgeProps{Label: marketMCPLabel(mcp), Variant: ui.BadgeGhost, Size: ui.BadgeSizeSM})
+				}
+			</div>
+		}
+	</div>
+}
+
+// marketSchedule renders the schedule capability.
+templ marketSchedule(enabled bool) {
+	<div>
+		<span class="text-xs font-semibold uppercase tracking-wide">Schedules</span>
+		if enabled {
+			<p class="text-sm" data-testid="market-install-schedules">Can create scheduled runs</p>
+		} else {
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet}) {
+				No scheduled runs
+			}
+		}
+	</div>
+}
+
+// marketModel renders the optional model disclosure.
+templ marketModel(model *MarketCapabilityModel) {
+	<div>
+		<span class="text-xs font-semibold uppercase tracking-wide">Model</span>
+		if model != nil && (model.Provider != "" || model.Name != "") {
+			<p class="text-sm" data-testid="market-install-model">{ marketModelLabel(model) }</p>
+		} else {
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet}) {
+				None declared
+			}
+		}
+	</div>
+}
+
+// marketInstallBackLink is the escape hatch back to the marketplace.
+templ marketInstallBackLink(d MarketInstallPageData) {
+	if d.MarketLink != "" {
+		<div class="mt-6">
+			<a href={ templ.URL(d.MarketLink) } class="link link-hover text-sm" data-testid="market-install-back">
+				Back to the marketplace
+			</a>
+		</div>
+	}
+}
+
+// marketCompatLabel renders the compatibility range, marking an undeclared
+// range explicitly.
+func marketCompatLabel(c MarketCompat) string {
+	if strings.TrimSpace(c.Memory) == "" {
+		return "Not declared"
+	}
+	return c.Memory
+}
+
+// marketMCPLabel renders "<slug> (scopes)" for one MCP dependency.
+func marketMCPLabel(mcp MarketMCPCapability) string {
+	if len(mcp.Scopes) == 0 {
+		return mcp.Slug
+	}
+	return mcp.Slug + " (" + strings.Join(mcp.Scopes, ", ") + ")"
+}
+
+// marketModelLabel renders "provider/name" (either half may be empty).
+func marketModelLabel(model *MarketCapabilityModel) string {
+	switch {
+	case model.Provider != "" && model.Name != "":
+		return model.Provider + "/" + model.Name
+	case model.Name != "":
+		return model.Name
+	default:
+		return model.Provider
+	}
+}
