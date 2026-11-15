@@ -22,9 +22,9 @@
 ### Changed
 
 - Source triggers moved below settings on the source page, with a dedicated
-  trigger editor.
-- Provider resolution tries instance slugs first; model-config writes validate
-  before persisting.
+  trigger add page.
+- Provider resolution tries instance slugs first; model-config writes apply only
+  the supplied fields, atomically.
 - Gateway re-issues session cookies from post-refresh claims instead of
   appending a second `Set-Cookie`.
 - GitHub App installation tokens are minted with bare repository names, and
