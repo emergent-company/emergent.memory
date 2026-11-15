@@ -22,7 +22,8 @@ objectTypeSchemas:
       platform:
         type: array
         title: Platforms
-        items: string
+        items:
+          type: string
         description: "Target platforms. E.g. [web], [ios, android], [macos, linux]"
       root_path:
         type: string
@@ -31,7 +32,8 @@ objectTypeSchemas:
       tech_stack:
         type: array
         title: Tech stack
-        items: string
+        items:
+          type: string
         description: "Key technologies. E.g. [react, typescript, vite]"
       deployment_target:
         type: string
@@ -100,7 +102,8 @@ objectTypeSchemas:
       platform:
         type: array
         title: Platforms
-        items: string
+        items:
+          type: string
         description: "Target platforms. E.g. [ios], [android], [web]"
       description:
         type: string
@@ -249,7 +252,8 @@ objectTypeSchemas:
       and_also:
         type: array
         title: And also
-        items: string
+        items:
+          type: string
         description: "Additional outcomes or side effects. E.g. [an audit log entry is created, the client appears in the clients list]"
       description:
         type: string
@@ -349,7 +353,8 @@ objectTypeSchemas:
         description: "Language-specific type name if different from the object name"
       fields:
         type: array
-        items: string
+        items:
+          type: string
         description: "Key field names"
       description:
         type: string
@@ -400,7 +405,8 @@ objectTypeSchemas:
       query_params:
         type: array
         title: Query parameters
-        items: string
+        items:
+          type: string
         description: "Accepted query parameters. E.g. [search, status, limit, offset]"
       description:
         type: string
@@ -657,7 +663,8 @@ objectTypeSchemas:
       input_params:
         type: array
         title: Input parameters
-        items: string
+        items:
+          type: string
         description: "Input parameter names and types. E.g. [org_id int64, status CaseStatusEnum]"
       return_type:
         type: string
