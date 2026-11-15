@@ -169,6 +169,26 @@ func (l *Listing) LicencedTools() []string {
 	return out
 }
 
+// Version is GET /v1/listings/{slug}/versions/{semver}: the immutable version
+// document the review and the tool-licence check need. The exchange names the
+// version, but the listing envelope on the exchange carries only card fields
+// (title/publisher/semver/digest); compatibility and capabilities live here.
+type Version struct {
+	Slug     string   `json:"slug"`
+	Version  string   `json:"version"`
+	Kind     string   `json:"kind,omitempty"`
+	Delivery string   `json:"delivery,omitempty"`
+	Digest   string   `json:"digest,omitempty"`
+	Compat   string   `json:"compat,omitempty"`
+	Manifest Manifest `json:"manifest"`
+	Tools    []Tool   `json:"tools,omitempty"`
+}
+
+// Manifest is the subset of the published manifest the install review renders.
+type Manifest struct {
+	Capabilities Capabilities `json:"capabilities"`
+}
+
 // ExchangeRequest is POST /v1/installs/exchange.
 type ExchangeRequest struct {
 	Code string `json:"code"`
@@ -183,6 +203,8 @@ type ExchangeResponse struct {
 	Digest     string          `json:"digest,omitempty"`
 	LicenseJTI string          `json:"license_jti,omitempty"`
 	Raw        json.RawMessage `json:"-"`
+	// Version is the fetched version document, not part of the exchange body.
+	Version *Version `json:"-"`
 }
 
 // Normalize folds the response's redundant spellings into the canonical fields.

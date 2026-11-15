@@ -182,6 +182,29 @@ func (c *Client) Listing(ctx context.Context, issuer, slug string) (*Listing, er
 	return &direct, nil
 }
 
+// Version fetches GET <issuer>/v1/listings/{slug}/versions/{semver}. This is
+// the document the review and the tool-licence check read: compatibility and
+// the capabilities/manifest live on the version, not on the exchange's card.
+func (c *Client) Version(ctx context.Context, issuer, slug, semver string) (*Version, error) {
+	base, err := c.trustedIssuer(issuer)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(slug) == "" || strings.TrimSpace(semver) == "" {
+		return nil, ErrInstallCodeInvalid("listing slug and version are required")
+	}
+	endpoint := base + "/v1/listings/" + url.PathEscape(slug) + "/versions/" + url.PathEscape(semver)
+	body, err := c.do(ctx, http.MethodGet, endpoint, nil, "application/json")
+	if err != nil {
+		return nil, err
+	}
+	var v Version
+	if err := json.Unmarshal(body, &v); err != nil {
+		return nil, ErrMarketUnreachable("market returned an invalid version document")
+	}
+	return &v, nil
+}
+
 // Exchange redeems the redirect code at the issuer that minted it. The issuer
 // allowlist is enforced before the outbound POST.
 func (c *Client) Exchange(ctx context.Context, issuer, code string) (*ExchangeResponse, error) {

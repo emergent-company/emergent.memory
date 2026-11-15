@@ -19,6 +19,8 @@ type fakeClient struct {
 	trusted     bool
 	exchange    *ExchangeResponse
 	claims      *LicenseClaims
+	version     *Version
+	versionErr  error
 	exchangeErr error
 	verifyErr   error
 	bundle      []byte
@@ -31,6 +33,9 @@ func (f *fakeClient) IsTrusted(string) bool { return f.trusted }
 func (f *fakeClient) Exchange(context.Context, string, string) (*ExchangeResponse, error) {
 	f.exchanges++
 	return f.exchange, f.exchangeErr
+}
+func (f *fakeClient) Version(context.Context, string, string, string) (*Version, error) {
+	return f.version, f.versionErr
 }
 func (f *fakeClient) VerifyLicense(context.Context, string, string) (*LicenseClaims, error) {
 	return f.claims, f.verifyErr

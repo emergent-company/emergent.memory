@@ -18,6 +18,7 @@ import (
 type ClientAPI interface {
 	IsTrusted(issuer string) bool
 	Exchange(ctx context.Context, issuer, code string) (*ExchangeResponse, error)
+	Version(ctx context.Context, issuer, slug, semver string) (*Version, error)
 	VerifyLicense(ctx context.Context, issuer, token string) (*LicenseClaims, error)
 	DownloadBundle(ctx context.Context, issuer, bundleURL, license string) ([]byte, error)
 	ReportInstall(ctx context.Context, issuer string, report ReportRequest, license string) error
@@ -153,7 +154,11 @@ func (s *Service) Apply(ctx context.Context, projectID, installedBy, marketIssue
 	if err != nil {
 		return nil, err
 	}
-	if err := checkLicensedTools(&listing, local); err != nil {
+	kind := ""
+	if exchange.Version != nil {
+		kind = exchange.Version.Kind
+	}
+	if err := checkLicensedTools(kind, &listing, local); err != nil {
 		return nil, err
 	}
 
@@ -243,15 +248,59 @@ func (s *Service) exchange(ctx context.Context, marketIssuer, code string) (stri
 	if claimed := CleanDigest(exchange.BundleDigest()); claimed != "" && claimed != licensed {
 		return "", nil, nil, ErrLicenseInvalid("install license digest does not match the exchange")
 	}
+
+	// The exchange carries card fields only. Compatibility, capabilities and the
+	// tool declarations live on the immutable version document; fetch it and
+	// require it to describe the same version and digest the license did.
+	slug := claims.ListingSlug
+	if slug == "" {
+		slug = exchange.Listing.Slug
+	}
+	semver := claims.Semver
+	if semver == "" {
+		semver = exchange.Listing.VersionString()
+	}
+	if slug == "" || semver == "" {
+		return "", nil, nil, ErrLicenseInvalid("install license names no listing or version")
+	}
+	version, err := s.client.Version(ctx, issuer, slug, semver)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	if version != nil {
+		if version.Version != "" && semver != "" && version.Version != semver {
+			return "", nil, nil, ErrLicenseInvalid("market version document names a different version")
+		}
+		if vd := CleanDigest(version.Digest); vd != "" && vd != licensed {
+			return "", nil, nil, ErrLicenseInvalid("market version document names a different digest")
+		}
+		exchange.Listing.Slug = slug
+		exchange.Listing.Semver = semver
+		exchange.Listing.Compat.Memory = version.Compat
+		exchange.Listing.Capabilities = version.Manifest.Capabilities
+		exchange.Listing.Tools = version.Tools
+		exchange.Version = version
+	}
 	return issuer, exchange, claims, nil
 }
 
 // checkLicensedTools enforces the hosted rule: the blueprint may only declare
 // agent tools the listing licences for install delivery.
-func checkLicensedTools(listing *Listing, local *blueprints.LocalBlueprint) error {
+func checkLicensedTools(kind string, listing *Listing, local *blueprints.LocalBlueprint) error {
+	// A blueprint is the payload: its agents bring their own tool graph, and the
+	// install manifest has no tools[] vocabulary for it (tools[] is a hosted-listing
+	// field). Enforcing a licensed set here would refuse every real blueprint.
+	if kind == "blueprint" || kind == "bundle" {
+		return nil
+	}
 	allowed := map[string]struct{}{}
 	for _, name := range listing.LicencedTools() {
 		allowed[name] = struct{}{}
+	}
+	// Nothing declared means nothing to enforce (P0): hosted listings declare their
+	// tools, install listings do not have the field.
+	if len(allowed) == 0 {
+		return nil
 	}
 	var undeclared []string
 	seen := map[string]struct{}{}

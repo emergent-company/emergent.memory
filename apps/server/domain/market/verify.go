@@ -30,6 +30,7 @@ type LicenseClaims struct {
 	NotBefore   int64           `json:"nbf,omitempty"`
 	JTI         string          `json:"jti,omitempty"`
 	Digest      string          `json:"digest,omitempty"`
+	Listing     string          `json:"listing,omitempty"`
 	ListingSlug string          `json:"listing_slug,omitempty"`
 	Semver      string          `json:"semver,omitempty"`
 	InstallID   string          `json:"install_id,omitempty"`
@@ -146,6 +147,9 @@ func (c *Client) VerifyLicense(ctx context.Context, issuer, token string) (*Lice
 	}
 	if CleanDigest(claims.Digest) == "" {
 		return nil, ErrLicenseInvalid("install license carries no archive digest")
+	}
+	if claims.ListingSlug == "" {
+		claims.ListingSlug = claims.Listing
 	}
 	return &claims, nil
 }
