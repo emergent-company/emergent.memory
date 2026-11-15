@@ -694,3 +694,156 @@ jobs:
       - name: Meta checks
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: 'echo "Meta CI: no meta checks remain in this repository."'
+
+  # ---- voice agent: the apps/web-ui Python bridge (#773, #772) ---------------
+  #
+  # `apps/web-ui` is the LiveKit voice agent (Python), deployed from
+  # `apps/web-ui/Dockerfile` by build-publish.yml on a release tag. It had no
+  # Python CI of any kind: `memory_bridge/tests` held five modules nothing ran,
+  # pytest was undeclared, and nothing asserted the lock (#773). That matters
+  # because `apps/web-ui/uv.lock` IS the deployed artifact — the image runs
+  # `uv sync --locked --no-dev --no-install-project`, so a lockfile-only
+  # dependabot PR changes the agent's runtime stack with no signal. #742 did
+  # exactly that: `openai 2.54 -> 3.51` (major) and `livekit-agents
+  # 1.8.0 -> 1.8.12`, forced by the `opentelemetry-api` bump, and it was
+  # accepted on a hand review (#772). This job is that missing signal.
+  #
+  # WHAT IT RUNS, and why each line is here:
+  #   `uv lock --check`                     — lock agrees with pyproject.toml
+  #   `uv sync --locked --no-dev`           — the Dockerfile's line, verbatim:
+  #                                           proves the deployable set resolves
+  #                                           and has cp314 wheels on 3.14
+  #   the pytest-import guard               — proves `--no-dev` really excludes
+  #                                           the dev group, so the new test
+  #                                           dependency cannot reach the image
+  #   `uv sync --locked --group dev`        — adds pytest (lock diff is additive
+  #                                           only: pytest, pluggy, iniconfig)
+  #   `uv run pytest memory_bridge/tests`   — the five existing unit modules
+  #                                           plus test_runtime_stack.py, the
+  #                                           #772 smoke test
+  #
+  # WHAT IT DOES NOT RUN: no Postgres, no Docker, no audio, no network beyond
+  # the package install (fetch_binding and memory chat are MockTransport/fake
+  # in the units; the smoke test only constructs provider objects). A live
+  # end-to-end voice turn needs a LiveKit server, a real room and paid
+  # STT/TTS — it is not faked here and remains a manual dev check (#772).
+  #
+  # WHY A SEPARATE JOB rather than steps of `ci` like the gateway block above.
+  # The gateway block lives in `ci` because its findings must gate (#649). This
+  # one needs a toolchain nothing else in `ci` has — uv, a uv-managed CPython
+  # 3.14, and a cold install of ~95 wheels (livekit-local-inference alone is
+  # 94 MB) — and at ~1-2 minutes on a cold cache it would sit on the critical
+  # path of every PR, including the docs PRs the gateway scope exists to keep
+  # cheap. As its own job it runs in parallel on a hosted runner and cannot
+  # slow the required check.
+  #
+  # CONSEQUENCE, stated plainly: this job is ADVISORY. The required contexts are
+  # `ci` and `verify` (see the header), and a path-filtered context cannot be
+  # made required without deadlocking unrelated PRs (#797), so a red
+  # `voice-agent-python` does not by itself block a merge — a reviewer must look
+  # at it. Promoting it would need an out-of-band branch-protection change plus
+  # deleting the scope guard.
+  #
+  # SCOPE is `apps/web-ui/**` plus this workflow (a PR that edits this job runs
+  # it). It FAILS CLOSED like `Detect gateway scope` below: an uncomputable diff
+  # and a push (no base to diff against) run the gate rather than skip it. The
+  # fork gate lives on the scope step, so the steps carry only its output.
+  voice-agent-python:
+    name: voice-agent-python
+    # Hosted, like `ci`: the repo is public so hosted minutes are free, and
+    # this job shares no cache with the self-hosted `memory` pool.
+    runs-on: ubuntu-latest
+    env:
+      # The image is `python:3.14-slim`. Pin the interpreter every uv command
+      # below resolves against, so a hosted image that ships an older python
+      # cannot quietly test a dependency set the deploy does not install.
+      UV_PYTHON: "3.14"
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        with:
+          # The scope step diffs against the PR base commit.
+          fetch-depth: 0
+      - name: Detect voice-agent scope
+        id: voice-agent-scope
+        # Same reason as `Detect gateway scope`: the fork gate lives here, and
+        # the steps below carry only `steps.voice-agent-scope.outputs.changed
+        # == 'true'`, which is empty (and so false) when this step is skipped.
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          emit() { printf 'changed=%s\n' "$1" >>"$GITHUB_OUTPUT"; }
+
+          if [ "$EVENT_NAME" != pull_request ]; then
+            emit true
+            echo "not a pull request: running the voice-agent gate unscoped"
+            exit 0
+          fi
+
+          if ! changed=$(git diff --name-only "${BASE_SHA}...HEAD" -- \
+              apps/web-ui .github/workflows/ci.yml); then
+            emit true
+            echo "cannot diff ${BASE_SHA}...HEAD: running the voice-agent gate unscoped"
+            exit 0
+          fi
+
+          if [ -n "$changed" ]; then
+            emit true
+            echo "voice-agent gate in scope:"
+            while IFS= read -r file; do printf '  %s\n' "$file"; done <<<"$changed"
+          else
+            emit false
+            echo "no voice-agent-scope change (apps/web-ui, this workflow): skipping"
+          fi
+      # Same action and shape as python-sdk.yml/docs.yml. `version` mirrors the
+      # Dockerfile's `ghcr.io/astral-sh/uv:0.13.6`: the resolver that WRITES
+      # uv.lock should be the one that CHECKS it, so a lock written by a newer
+      # uv cannot pass here and fail the image build. Bump both together.
+      - name: Set up uv (0.13.6, CPython 3.14)
+        if: steps.voice-agent-scope.outputs.changed == 'true'
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          version: "0.13.6"
+          python-version: "3.14"
+          # Keyed on uv.lock, so the ~95-wheel download is warm on the next PR
+          # that touches apps/web-ui (setup-uv's cache input is a boolean, and
+          # it hashes the lockfile itself — unlike setup-node's package-manager
+          # cache input, see web-ui.yml).
+          enable-cache: true
+      - name: Lock is current
+        if: steps.voice-agent-scope.outputs.changed == 'true'
+        working-directory: apps/web-ui
+        run: uv lock --check
+      - name: Install exactly what the image installs
+        if: steps.voice-agent-scope.outputs.changed == 'true'
+        working-directory: apps/web-ui
+        run: uv sync --locked --no-dev --no-install-project
+      # Guards the split the dev group relies on: if pytest (or anything else
+      # test-only) ever lands in `[project].dependencies` instead of
+      # `[dependency-groups].dev`, this fails instead of quietly shipping a test
+      # framework inside the voice agent image. Runs BEFORE the dev sync, so
+      # the runtime venv is still `--no-dev`.
+      - name: Dev group stays out of the runtime install
+        if: steps.voice-agent-scope.outputs.changed == 'true'
+        working-directory: apps/web-ui
+        run: |
+          set -euo pipefail
+          if uv run --no-sync python -c 'import pytest' 2>/dev/null; then
+            echo "::error::pytest is importable from the --no-dev install; it belongs in [dependency-groups].dev, not [project].dependencies (#773)"
+            exit 1
+          fi
+          echo "runtime install has no pytest: the dev group is excluded, as the image requires"
+      - name: Install the test group
+        if: steps.voice-agent-scope.outputs.changed == 'true'
+        working-directory: apps/web-ui
+        run: uv sync --locked --group dev
+      - name: pytest (voice-agent units + runtime-stack smoke test)
+        if: steps.voice-agent-scope.outputs.changed == 'true'
+        working-directory: apps/web-ui
+        # `testpaths` in pyproject.toml points at memory_bridge/tests; the path
+        # is repeated so a mis-edited pyproject cannot make this run zero tests
+        # and report green.
+        run: uv run pytest memory_bridge/tests -q
