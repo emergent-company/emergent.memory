@@ -309,9 +309,16 @@ def image_component(alt, src, src_rel, stats):
         stats["missing_shots"].add(src)
         return f'<img src="{BASE}/{rel}" alt="{alt}" loading="lazy" />'
     url = f"{BASE}/{posixpath.dirname(rel)}/{name}"
+    # `cssWidth`/`cssHeight` are the size the app drew on screen; `width`/`height`
+    # are the captured pixels, which can be several times larger. A figure must
+    # reserve its on-screen size, never the capture's, or a 4x capture takes four
+    # times the space it should. The component reads the captured size from the
+    # loaded image when it caps the zoom.
+    css_w = dims.get("cssWidth", dims["width"])
+    css_h = dims.get("cssHeight", dims["height"])
     return (
         f'<Screenshot src="{url}" alt="{alt}" '
-        f'width={{{dims["width"]}}} height={{{dims["height"]}}} />'
+        f'width={{{css_w}}} height={{{css_h}}} />'
     )
 
 

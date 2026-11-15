@@ -122,6 +122,17 @@ async function assertTheme(step) {
 
 let masks = [];
 let wrote = 0;
+// Capture scale for the pictures this run writes, kept beside them in
+// `.shots.json` (see the write below). Merged, not replaced, so refreshing one
+// shot with `--only` does not lose the scale of the others.
+const metaPath = path.join(OUT, '.shots.json');
+const scale = plan.deviceScaleFactor ?? 1;
+let shotMeta = {};
+try {
+  shotMeta = JSON.parse(await readFile(metaPath, 'utf8'));
+} catch {
+  /* first run in this directory */
+}
 for (const [i, step] of plan.steps.entries()) {
   const label = `#${i + 1}${step.name ? ` ${step.name}` : ''}`;
   if (step.goto) {
@@ -199,6 +210,12 @@ for (const [i, step] of plan.steps.entries()) {
     const { buffer } = await trimDeadSpace(raw, spec.pad ?? plan.pad);
     await writeFile(file, buffer);
     const meta = await sharp(buffer).metadata();
+    // Record the capture scale next to the pictures: the docs need the figure's
+    // *CSS* size (what the app drew on screen) to size the card and to cap the
+    // zoom at a size the pixels can actually support. A PNG cannot carry that,
+    // and guessing from the file name would break the first time a shot is
+    // captured at another ratio.
+    shotMeta[spec.id] = { width: meta.width, height: meta.height, scale };
     console.log(`  ${spec.id.padEnd(26)} ${meta.width}x${meta.height}  ${path.relative(REPO, file)}`);
     wrote += 1;
     if (only === spec.id) break;
@@ -206,6 +223,7 @@ for (const [i, step] of plan.steps.entries()) {
 }
 
 await browser.close();
+await writeFile(metaPath, JSON.stringify(shotMeta, null, 2) + '\n');
 if (only && wrote === 0) {
   console.error(`\n  no shot named "${only}" in ${planPath}`);
   process.exit(1);
