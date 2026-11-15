@@ -8,8 +8,9 @@
 #   1. the root go.work lists it, or
 #   2. the allowlisted isolated root's own go.work claims it — `isolated_roots`
 #      below, currently only e2e: the e2e module must stay isolated from the root
-#      build list (its runlog framework pins an older ADK that does not compile
-#      against the server's). A deeper go.work inside the subtree does NOT count:
+#      build list (it pins adk v1.x for its runlog framework while the server
+#      builds against adk/v2 — see the pin comment in e2e/go.mod). A deeper
+#      go.work inside the subtree does NOT count:
 #      the isolated root's workspace is the one a command run at that root
 #      resolves, so it is the one that must claim every module beneath it.
 # Rule 2 is deliberately opt-in by editing the list: dropping a nested go.work
