@@ -41,7 +41,10 @@ func trimName(s string) *string {
 
 // autoWorkKey mints the internal dedup key for a board-enabled object created
 // without one. The claim lock keys on (project, type, key), so a work item must
-// have a key; it is never shown to users.
+// have a key; it is never shown to users. The trailing 12 hex characters match
+// the machine-key shape (`<type>-<12 hex>`) that the display layer and the
+// migration 00280 backfill recognise as a non-title, so a minted key never
+// becomes the object's label.
 func autoWorkKey(typeName string, name *string) string {
 	base := ""
 	if name != nil {
@@ -56,7 +59,7 @@ func autoWorkKey(typeName string, name *string) string {
 	if len(base) > 32 {
 		base = strings.Trim(base[:32], "-")
 	}
-	suffix := strings.ReplaceAll(uuid.New().String(), "-", "")[:8]
+	suffix := strings.ReplaceAll(uuid.New().String(), "-", "")[:12]
 	return base + "-" + suffix
 }
 
