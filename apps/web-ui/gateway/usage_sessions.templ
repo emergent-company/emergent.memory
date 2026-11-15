@@ -186,6 +186,12 @@ templ usageSessionsRow(rowID string, r UsageRunRow) {
 		}
 		@table.TableCell("", nil) {
 			<span class="text-sm" data-testid={ "sessions-agent-name-" + shortID(cmpOrNone(r.AgentID)) }>{ r.AgentName }</span>
+			// Runs with no conversation behind them — scheduled, manual, webhook,
+			// A2A — are exactly the ones the old Sessions card could not show, so
+			// say where this one came from. Chat is the default and stays quiet.
+			if r.TriggerSource != nil && *r.TriggerSource != "" && *r.TriggerSource != "chat" {
+				<span class="text-muted-faint ml-1 text-xs" data-testid={ "sessions-trigger-" + shortID(r.RunID) }>{ usageTriggerLabel(*r.TriggerSource) }</span>
+			}
 		}
 		@table.TableCell("", nil) {
 			@runStatusBadge(r.Status)

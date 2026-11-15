@@ -145,6 +145,20 @@ func TestUsageRunOffset(t *testing.T) {
 	}
 }
 
+func TestUsageTriggerLabel(t *testing.T) {
+	for raw, want := range map[string]string{
+		"chat":            "chat",
+		"schedule":        "schedule",
+		"webhook:abc-123": "webhook",
+		"a2a":             "a2a",
+		"":                "",
+	} {
+		if got := usageTriggerLabel(raw); got != want {
+			t.Errorf("usageTriggerLabel(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
 func TestUsageSessionsHref(t *testing.T) {
 	for _, tc := range []struct {
 		days   int
@@ -175,11 +189,13 @@ func sampleUsageRuns() *UsageRunListResponse {
 	started := time.Date(2026, 11, 14, 9, 30, 0, 0, time.UTC)
 	model := "deepseek-v4-pro"
 	dur := 420000
+	scheduled := "schedule"
+	chat := "chat"
 	return &UsageRunListResponse{
 		Note: "Costs shown are estimates.",
 		Data: []UsageRunRow{
-			{RunID: "run-1", AgentID: "agent-1", AgentName: "coding", Status: "completed", Model: &model, StartedAt: started, LastEventAt: started.Add(time.Minute), DurationMs: &dur, EventCount: 4, TotalText: 1200, TotalOutput: 300, TotalCached: 100, EstimatedCostUSD: 0.8123},
-			{RunID: "run-2", AgentID: "agent-2", AgentName: "ui-auditor", Status: "failed", StartedAt: started.Add(-2 * time.Hour), LastEventAt: started, EstimatedCostUSD: 0.1},
+			{RunID: "run-1", AgentID: "agent-1", AgentName: "coding", Status: "completed", TriggerSource: &scheduled, Model: &model, StartedAt: started, LastEventAt: started.Add(time.Minute), DurationMs: &dur, EventCount: 4, TotalText: 1200, TotalOutput: 300, TotalCached: 100, EstimatedCostUSD: 0.8123},
+			{RunID: "run-2", AgentID: "agent-2", AgentName: "ui-auditor", Status: "failed", TriggerSource: &chat, StartedAt: started.Add(-2 * time.Hour), LastEventAt: started, EstimatedCostUSD: 0.1},
 		},
 		Total:  2,
 		Limit:  50,
@@ -206,6 +222,9 @@ func TestUsageSessionsRoute(t *testing.T) {
 		// Totals strip: filtered total, page count, page tokens.
 		`data-testid="sessions-total-runs"`, `data-testid="sessions-page-runs"`,
 		`data-testid="sessions-page-cost"`, `data-testid="sessions-page-tokens"`,
+		// The origin of a run with no conversation behind it is named; a chat
+		// run is the default and is not.
+		`data-testid="sessions-trigger-run-1"`, "schedule",
 		// Range links and agent chips.
 		`data-testid="sessions-range-30"`, `data-testid="sessions-agent-agent-1"`,
 		`data-testid="sessions-agent-all"`,

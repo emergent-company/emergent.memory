@@ -111,6 +111,16 @@ func usageAgentFilterLabel(byAgent *UsageByAgentResponse, agentID string) string
 	return agentID
 }
 
+// usageTriggerLabel shortens a run's trigger source for the log's agent cell.
+// Webhook sources are recorded as "webhook:<id>"; the id adds nothing on this
+// page, so only the kind is shown.
+func usageTriggerLabel(source string) string {
+	if kind, _, ok := strings.Cut(source, ":"); ok && kind != "" {
+		return kind
+	}
+	return source
+}
+
 // usageRunsCost sums the estimated cost of the rows on the page.
 func usageRunsCost(rows []UsageRunRow) float64 {
 	var total float64

@@ -286,15 +286,6 @@ func compactNum(n int64) string {
 	}
 }
 
-// chartSeriesTotal sums the values of a (zero-filled) chart series.
-func chartSeriesTotal(points []usageChartPoint) int64 {
-	var total int64
-	for _, p := range points {
-		total += p.Value
-	}
-	return total
-}
-
 // hasUsageData reports whether the page has anything to show: summary rows or
 // time-series rows.
 func hasUsageData(summary *UsageSummaryResponse, series *UsageTimeSeriesResponse) bool {
