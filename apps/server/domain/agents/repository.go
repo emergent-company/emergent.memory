@@ -835,6 +835,20 @@ func (r *Repository) FindAgentsByDefinitionID(ctx context.Context, projectID, de
 	return agents, nil
 }
 
+// FindRuntimeAgentForDefinition returns the kb.agents row that owns def's
+// definition link in projectID, or nil when the definition owns none. It is the
+// read half of CreateRuntimeAgentForDefinition's conflict recovery and of the
+// blueprint apply update branch (#789): a caller that lost a bind race resolves
+// the winner through here instead of re-deriving it. Project-scoped and
+// deterministic (pickRuntimeAgent) so every recovery path picks the same row.
+func (r *Repository) FindRuntimeAgentForDefinition(ctx context.Context, projectID, definitionID string) (*Agent, error) {
+	rows, err := r.FindAgentsByDefinitionID(ctx, projectID, definitionID)
+	if err != nil {
+		return nil, err
+	}
+	return pickRuntimeAgent(rows), nil
+}
+
 // FindOrCreateRuntimeAgentForDefinition returns the kb.agents row that backs def,
 // creating the lightweight definition-backed row when the definition has none.
 //
@@ -907,11 +921,11 @@ func (r *Repository) CreateRuntimeAgentForDefinition(ctx context.Context, agent 
 	if !pgutils.IsUniqueViolation(err) || agent.AgentDefinitionID == nil || *agent.AgentDefinitionID == "" {
 		return nil, err
 	}
-	rows, ferr := r.FindAgentsByDefinitionID(ctx, agent.ProjectID, *agent.AgentDefinitionID)
+	row, ferr := r.FindRuntimeAgentForDefinition(ctx, agent.ProjectID, *agent.AgentDefinitionID)
 	if ferr != nil {
 		return nil, err
 	}
-	if row := pickRuntimeAgent(rows); row != nil {
+	if row != nil {
 		return row, nil
 	}
 	return nil, err

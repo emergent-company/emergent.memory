@@ -18,6 +18,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/pgutils"
 )
 
 // ApplyOptions controls blueprint apply behavior.
@@ -1240,17 +1241,39 @@ func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID
 			return nil, nil
 		}
 
-		existing.TriggerType = triggerType
-		existing.ReactionConfig = reactionConfig
-		existing.CronSchedule = cron
-		existing.Enabled = true
-		existing.StrategyType = "agent-def:" + def.ID
-		existing.AgentDefinitionID = &defID
-		if existing.Config == nil {
-			existing.Config = map[string]any{}
+		row, err := s.stampRuntimeAgent(ctx, existing, blueprintID, defID, triggerType, reactionConfig, cron)
+		if err == nil {
+			return row, nil
 		}
-		existing.Config["sourceBlueprintId"] = blueprintID
-		return existing, s.agentRepo.UpdateAgent(ctx, existing)
+		if !pgutils.IsUniqueViolation(err) {
+			return nil, apperror.NewDatabase("failed to update the runtime agent for blueprint apply", err)
+		}
+		// #789: the update lost the definition link to a row minted after this
+		// blueprint row was orphaned (apply → definition deleted, FK set to
+		// NULL → definition re-created through the agents API, which links a
+		// runtime row of its own → re-apply). Recover exactly like the create
+		// path: resolve the row that actually owns the link and gate the
+		// manifest config on the same ownership stamp.
+		winner, findErr := s.agentRepo.FindRuntimeAgentForDefinition(ctx, projectID, defID)
+		if findErr != nil {
+			return nil, apperror.NewDatabase("failed to resolve the runtime agent bound to the agent definition", findErr)
+		}
+		if winner == nil {
+			// A unique violation with no winning row is an inconsistent bind
+			// state; surface a legible conflict instead of ErrInternal.
+			return nil, apperror.NewConflict(fmt.Sprintf(
+				"agent %q: the agent definition link is held by another runtime agent that could not be resolved; remove the conflicting runtime agent and re-apply",
+				m.Name))
+		}
+		if bid, _ := winner.Config["sourceBlueprintId"].(string); bid != blueprintID {
+			// The winner belongs to another owner (a manual/API-created row or
+			// another blueprint). Never repurpose it: writing this manifest's
+			// config over it would rebind its trigger, and this blueprint's
+			// Unapply would delete it. The definition keeps the winner's link
+			// and the apply still succeeds, mirroring the create path.
+			return nil, nil
+		}
+		return s.stampRuntimeAgent(ctx, winner, blueprintID, defID, triggerType, reactionConfig, cron)
 	}
 
 	agent := &agents.Agent{
@@ -1282,17 +1305,25 @@ func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID
 	if bid, _ := winner.Config["sourceBlueprintId"].(string); bid != blueprintID {
 		return nil, nil
 	}
-	winner.TriggerType = triggerType
-	winner.ReactionConfig = reactionConfig
-	winner.CronSchedule = cron
-	winner.Enabled = true
-	winner.StrategyType = "agent-def:" + def.ID
-	winner.AgentDefinitionID = &defID
-	if winner.Config == nil {
-		winner.Config = map[string]any{}
+	return s.stampRuntimeAgent(ctx, winner, blueprintID, defID, triggerType, reactionConfig, cron)
+}
+
+// stampRuntimeAgent applies the manifest's trigger configuration to row and
+// persists it. The existing-row update, the create, and the #789 bind-race
+// recovery all go through here so the three paths cannot drift on which fields
+// the manifest owns.
+func (s *Service) stampRuntimeAgent(ctx context.Context, row *agents.Agent, blueprintID, defID string, triggerType agents.AgentTriggerType, reactionConfig *agents.ReactionConfig, cron string) (*agents.Agent, error) {
+	row.TriggerType = triggerType
+	row.ReactionConfig = reactionConfig
+	row.CronSchedule = cron
+	row.Enabled = true
+	row.StrategyType = "agent-def:" + defID
+	row.AgentDefinitionID = &defID
+	if row.Config == nil {
+		row.Config = map[string]any{}
 	}
-	winner.Config["sourceBlueprintId"] = blueprintID
-	return winner, s.agentRepo.UpdateAgent(ctx, winner)
+	row.Config["sourceBlueprintId"] = blueprintID
+	return row, s.agentRepo.UpdateAgent(ctx, row)
 }
 
 // agentUIConfig marshals an AgentUIManifest into the opaque ui_config JSONB
