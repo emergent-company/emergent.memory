@@ -84,10 +84,21 @@ project rather than from the token's claims:
 Every project role carries `agents:read`, so any member can fetch the card and
 read tasks. `agents:write` — `message:send`, `message:stream` and
 `tasks/{id}:cancel` — comes only with `project_admin`; a `project_user` or
-`project_viewer` session, including `memory a2a send` after `memory login`, is
-refused with `PERMISSION_DENIED`. A `superadmin_full` session carries the full
-catalogue; a session with no project role carries only the deployment's
-`MEMORY_OIDC_DEFAULT_SCOPES`, which do not include `agents:*` by default.
+`project_viewer` session is refused with `PERMISSION_DENIED`. Both CLI consumers
+are affected: after `memory login`, `memory a2a` writes (`send`, `tasks cancel`)
+and `memory acp` are refused for those roles. `memory acp` forwards every prompt
+over `POST /message:stream`; only its best-effort extended-card lookup for modes
+needs `agents:read` and keeps working.
+
+A `superadmin_full` session carries the full catalogue. The deployment's
+`MEMORY_OIDC_DEFAULT_SCOPES` fallback applies only to a caller with no project
+membership row for the addressed project and no other entitlement; an
+`org_admin` membership contributes its own scope set instead. The default does
+not include `agents:*`, so a session that reaches it is refused on this surface
+unless the deployment configures the default with the scope. An unrecognised
+project role (a legacy `owner` row, a typo) or a failed role lookup is not a
+no-membership case: it fails closed to an empty scope set regardless of
+`MEMORY_OIDC_DEFAULT_SCOPES`.
 
 The card declares a single bearer security scheme, for `emt_…` tokens, and no
 OAuth2 or OIDC scheme. The server does run an OAuth 2.1 authorization server

@@ -26,16 +26,19 @@ visible change is:
 | `project_viewer` | yes | **no** — now 403 |
 
 A `superadmin_full` session keeps the full catalogue; a session with no project
-role falls back to `MEMORY_OIDC_DEFAULT_SCOPES` (then to nothing), so it is
-refused on this surface unless that default carries `agents:*`. A `memory login`
+membership falls back to `MEMORY_OIDC_DEFAULT_SCOPES` (then to nothing), so it
+is refused on this surface unless that default carries `agents:*`. A `memory login`
 session is subject to the same matrix: `memory a2a discover`, `memory a2a tasks
 list` and `memory a2a tasks get` keep working for every project role, while
-`memory a2a send` and `memory a2a tasks cancel` now need a project admin. No
-documented flow promises A2A writes to a `project_user` or `project_viewer`
-session (their role grants graph, document and chat access, not agent
-management), and nothing in the web UI calls A2A, so the migration is to
-authenticate with an `emt_…` token carrying `agents:write` — the project-token
-defaults already include `agents:*`:
+`memory a2a send`, `memory a2a tasks cancel` and `memory acp` now need a project
+admin, or a project token carrying `agents:write`. `memory acp` forwards every
+prompt over `POST /message:stream`, so it hits the same `agents:write` gate as
+`memory a2a send`; only its best-effort extended-card lookup for modes needs
+`agents:read`. No documented flow promises A2A or ACP writes to a `project_user`
+or `project_viewer` session (their role grants graph, document and chat access,
+not agent management), and nothing in the web UI calls A2A, so the migration is
+to authenticate with an `emt_…` token carrying `agents:write` — the
+project-token defaults already include `agents:*`:
 
 ```bash
 memory projects create-token <project> --scopes agents:read,agents:write
