@@ -958,6 +958,12 @@ Table "kb"."chat_messages" {
   }
 }
 
+Table "kb"."chunk_embedding_budget_blocks" {
+  "project_id" uuid [pk]
+  "blocked_until" timestamptz [not null]
+  "updated_at" timestamptz [not null, default: `now()`]
+}
+
 Table "kb"."chunk_embedding_jobs" {
   "id" uuid [pk, default: `uuid_generate_v4()`]
   "chunk_id" uuid [not null]
@@ -3155,6 +3161,7 @@ Ref: "kb"."chat_conversations"."agent_definition_id" > "kb"."agent_definitions".
 Ref: "kb"."chat_conversations"."object_id" > "kb"."graph_objects"."id"
 Ref: "kb"."chat_conversations"."parent_conversation_id" > "kb"."chat_conversations"."id"
 Ref: "kb"."chat_messages"."conversation_id" > "kb"."chat_conversations"."id"
+Ref: "kb"."chunk_embedding_budget_blocks"."project_id" > "kb"."projects"."id"
 Ref: "kb"."chunk_embedding_jobs"."chunk_id" > "kb"."chunks"."id"
 Ref: "kb"."chunk_revisions"."chunk_id" > "kb"."chunks"."id"
 Ref: "kb"."chunks"."document_id" > "kb"."documents"."id"

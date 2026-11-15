@@ -127,13 +127,22 @@ func TestUnparkBudgetExceededForProjectMakesJobsDue(t *testing.T) {
 	cfg := DefaultChunkEmbeddingConfig()
 	jobsSvc := NewChunkEmbeddingJobsService(db, quietLogger(), cfg)
 	worker := NewChunkEmbeddingWorker(jobsSvc, nil, db, cfg, quietLogger(), nil, nil, nil, true)
-	worker.markBudgetBlocked(projectID)
-	require.True(t, worker.budgetBlockActive(projectID))
+	// A second worker on the same database models a second replica: it holds no
+	// local state, so everything it knows about the block it reads from shared
+	// state (issue #793).
+	otherReplica := NewChunkEmbeddingWorker(jobsSvc, nil, db, cfg, quietLogger(), nil, nil, nil, true)
+
+	worker.markBudgetBlocked(ctx, projectID)
+	require.True(t, worker.budgetBlockActive(ctx, projectID))
+	require.True(t, otherReplica.budgetBlockActive(ctx, projectID),
+		"the over-budget verdict must be visible to every replica, not just the one that cached it")
 
 	require.NoError(t, worker.UnparkProjectBudget(ctx, projectID))
 
-	assert.False(t, worker.budgetBlockActive(projectID),
+	assert.False(t, worker.budgetBlockActive(ctx, projectID),
 		"the cached over-budget verdict must be dropped so the budget is re-read")
+	assert.False(t, otherReplica.budgetBlockActive(ctx, projectID),
+		"a replica that did not serve the budget update must stop parking immediately, not wait for its cache TTL")
 
 	type row struct {
 		Status    string  `bun:"status"`
