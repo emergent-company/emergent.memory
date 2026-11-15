@@ -260,6 +260,56 @@ site-search button[data-open-modal]:hover {
   color: var(--sl-color-white);
 }
 
+/* Theme switch (src/components/ThemeToggle.astro). One ghost icon button, the
+   way the app draws its header icon buttons: no fill at rest, muted glyph,
+   --radius-field on hover. The glyph is the theme the reader is *in* (moon on
+   dark, sun on light), the same semantics as Starlight's own picker. Both icons
+   are in the DOM and swapped in CSS, so the correct one is painted with the
+   first frame — no wrong-glyph flash before the script runs. */
+.mem-theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.25rem; /* --radius-field */
+  background: none;
+  color: var(--sl-color-gray-3);
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.mem-theme-toggle:hover {
+  background-color: var(--mem-fill-mid);
+  color: var(--sl-color-white);
+}
+
+/* Brass ring, not the UA outline: the same focus treatment as the app's
+   controls, and it sits inside the 2rem box so the header height is stable. */
+.mem-theme-toggle:focus-visible {
+  outline: 2px solid var(--sl-color-text-accent);
+  outline-offset: 1px;
+}
+
+.mem-theme-toggle .mem-theme-icon {
+  width: 1.0625rem;
+  height: 1.0625rem;
+}
+
+.mem-theme-toggle .is-sun {
+  display: none;
+}
+
+:root[data-theme='light'] .mem-theme-toggle .is-moon {
+  display: none;
+}
+
+:root[data-theme='light'] .mem-theme-toggle .is-sun {
+  display: block;
+}
+
 /* ---------- chrome: sidebar ------------------------------------------------ */
 #starlight__sidebar {
   border-inline-end: 1px solid var(--mem-line);

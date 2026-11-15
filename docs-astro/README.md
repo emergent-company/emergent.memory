@@ -11,7 +11,7 @@ docs-astro/
   src/styles/brand.css    ← the deliverable: product tokens → Starlight tokens
   src/assets/monogram.svg brass "M" logo (copied from the app's brand mark)
   public/favicon.svg
-  src/components/         Card.astro, CardGrid.astro (lucide icons)
+  src/components/         Card.astro, CardGrid.astro (lucide icons), ThemeToggle
   src/content/docs/       converted MDX (generated — see "Porting")
   scripts/port_mkdocs.py  MkDocs Material → Starlight MDX converter
   scripts/material-icons.json  `:material-*:` → lucide icon mapping
@@ -66,7 +66,7 @@ and ports the `.memory-md` prose rules one-for-one:
 | body brass/steel radial glows | same gradients on `body` |
 | `--radius-field .25 / --radius-box .5 / --radius-selector 1rem` | buttons + inline code, cards + code frames, sidebar pills |
 | `.memory-md` h1/h2 hairlines, table header tint, brass inline code, blockquote bar | same rules |
-| dark-only (`themes: dark --default`) | dark is canonical; light is derived (see below), switcher offered, pre-paint guard in `<head>` |
+| dark-only (`themes: dark --default`) | dark is canonical; light is derived (see below), one-button topbar switch, pre-paint guard in `<head>` |
 
 The results of that mapping are the screenshots in the POC report: headings,
 tables, asides, code chips, sidebar pills, cards and buttons all come from the
@@ -108,11 +108,33 @@ Three cascade traps this costs, worth knowing before touching the file:
   have to track `--mem-*`; setting them in `astro.config.mjs` pins them to one
   theme.
 
-Starlight's `ThemeSelect` is deliberately **not** overridden any more: the
-switcher defaults to `auto`, so a dark-OS reader still gets the app's own theme
-while a light-OS reader is not forced into it. Preferences persist in
-`localStorage.starlight-theme`, and `color-scheme` flips with the theme so native
-controls (scrollbars, form widgets) follow.
+### The switch in the topbar
+
+`src/components/ThemeToggle.astro` overrides Starlight's `ThemeSelect` — the
+component slot Starlight also renders into the mobile drawer footer, so the
+switch is in the topbar on desktop and in the drawer next to the GitHub icon on
+mobile. It is one ghost icon button (30 px, `--radius-field`, muted until hover,
+brass `:focus-visible` ring) rather than a native `<select>`: two states, one
+click, no menu.
+
+- The glyph is the theme the reader is **in** — moon on dark, sun on light —
+  and both icons ship in the HTML, swapped in CSS off `data-theme`, so the
+  correct one is painted with the first frame instead of after hydration.
+- `auto` remains the default: with no stored preference the pre-paint script
+  resolves the theme from the OS and the button shows what was resolved. The
+  first click stores an explicit `light`/`dark` in `localStorage.starlight-theme`;
+  deleting that key returns the reader to OS-following.
+- Overriding the component also overrides its script, which is where Starlight
+  keeps the theme logic (`data-theme`, storage, the OS-change listener), so
+  `ThemeToggle.astro` reimplements those three pieces. The `starlight-theme-select`
+  element is kept as the wrapper, so any Starlight CSS still keyed on that tag
+  keeps its hook.
+- `aria-label`/`title` are rewritten per resolved theme ("Switch to dark theme"),
+  so the announced action is never stale.
+
+`color-scheme` flips with the theme, so native controls (scrollbars, form
+widgets, the select popup of any future control) follow.
+
 
 Two Starlight details cost real time and are worth knowing before editing
 `brand.css`:
