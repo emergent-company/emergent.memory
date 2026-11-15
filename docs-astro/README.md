@@ -110,12 +110,23 @@ Three cascade traps this costs, worth knowing before touching the file:
 
 ### The switch in the topbar
 
-`src/components/ThemeToggle.astro` overrides Starlight's `ThemeSelect` — the
-component slot Starlight also renders into the mobile drawer footer, so the
-switch is in the topbar on desktop and in the drawer next to the GitHub icon on
-mobile. It is one ghost icon button (30 px, `--radius-field`, muted until hover,
-brass `:focus-visible` ring) rather than a native `<select>`: two states, one
-click, no menu.
+`src/components/ThemeToggle.astro` overrides Starlight's `ThemeSelect`, the
+component slot Starlight renders in the topbar (and, below 50 rem, in the mobile
+drawer footer). It is one ghost icon button (30 px, `--radius-field`, muted until
+hover, brass `:focus-visible` ring) rather than a native `<select>`: two states,
+one click, no menu.
+
+**It stays in the topbar on mobile**, which is not where Starlight puts it:
+Starlight hides the whole header `.right-group` below 50 rem because the fixed
+menu button owns that corner, and offers the theme control only inside the
+drawer. The override brings the group back, hides the two things the drawer
+already duplicates (social icons, language select), and hides the drawer copy, so
+the switch is on screen at every width without opening the menu. No margin or
+offset is needed: Starlight pads the header's inline-end by the menu button's
+width on exactly the routes that render that button (`[data-has-sidebar]
+.header`), and splash routes render neither. Verified at 320/360/390/430/620 px
+on a sidebar page and both splash routes: no overlap with the search control or
+the menu button, no horizontal scroll.
 
 - The glyph is the theme the reader is **in** — moon on dark, sun on light —
   and both icons ship in the HTML, swapped in CSS off `data-theme`, so the

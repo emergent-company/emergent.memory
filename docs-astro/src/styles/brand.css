@@ -310,6 +310,28 @@ site-search button[data-open-modal]:hover {
   display: block;
 }
 
+/* Mobile: the switch belongs in the topbar too, not only inside the drawer.
+   Starlight hides its whole `.right-group` below 50rem because the fixed menu
+   button owns that corner, so bring the group back and drop the parts that are
+   duplicated in the drawer (social icons, language select). No margin is needed:
+   Starlight pads the header's inline-end by the menu button's width on exactly
+   the routes that render that button (`[data-has-sidebar] .header`), and splash
+   routes render neither. The drawer's own copy is hidden below 50rem — one
+   switch per viewport, always reachable. */
+@media (max-width: 49.99rem) {
+  header.header .right-group {
+    display: flex;
+  }
+
+  header.header .right-group :is(.social-icons, starlight-lang-select) {
+    display: none;
+  }
+
+  #starlight__sidebar starlight-theme-select {
+    display: none;
+  }
+}
+
 /* ---------- chrome: sidebar ------------------------------------------------ */
 #starlight__sidebar {
   border-inline-end: 1px solid var(--mem-line);
