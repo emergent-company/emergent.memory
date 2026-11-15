@@ -96,10 +96,10 @@ func (t *MarketTime) UnmarshalJSON(data []byte) error {
 }
 
 func (t MarketTime) MarshalJSON() ([]byte, error) {
-	if t.Time.IsZero() {
+	if t.IsZero() {
 		return []byte("null"), nil
 	}
-	return json.Marshal(t.Time.UTC().Format(time.RFC3339Nano))
+	return json.Marshal(t.UTC().Format(time.RFC3339Nano))
 }
 
 // apiResult is one market HTTP response whose status the caller maps itself.

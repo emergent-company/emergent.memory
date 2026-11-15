@@ -478,7 +478,7 @@ func TestInProductPathRegisterBrowseVerifyClaimAuthorizeServeAndReport(t *testin
 	if len(batch.RequestIDs) != 20 || batch.Remaining() != 20 {
 		t.Fatalf("batch ids = %d remaining = %d, want 20", len(batch.RequestIDs), batch.Remaining())
 	}
-	if !batch.IssuedAt.Time.Before(batch.ExpiresAt.Time) {
+	if !batch.IssuedAt.Before(batch.ExpiresAt.Time) {
 		t.Fatalf("batch timestamps are not ordered: %+v", batch)
 	}
 
