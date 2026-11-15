@@ -1,50 +1,74 @@
 {
   "01-choose-target.webp": {
     "width": 488,
-    "height": 304
+    "height": 304,
+    "cssWidth": 488,
+    "cssHeight": 304
   },
   "02-authorize-railway.webp": {
     "width": 1132,
-    "height": 574
+    "height": 574,
+    "cssWidth": 1132,
+    "cssHeight": 574
   },
   "03-workspace-admin-email.webp": {
     "width": 491,
-    "height": 309
+    "height": 309,
+    "cssWidth": 491,
+    "cssHeight": 309
   },
   "04-progress-project.webp": {
     "width": 489,
-    "height": 190
+    "height": 190,
+    "cssWidth": 489,
+    "cssHeight": 190
   },
   "05-progress-zitadel.webp": {
     "width": 489,
-    "height": 190
+    "height": 190,
+    "cssWidth": 489,
+    "cssHeight": 190
   },
   "06-progress-restart.webp": {
     "width": 490,
-    "height": 200
+    "height": 200,
+    "cssWidth": 490,
+    "cssHeight": 200
   },
   "07-install-complete.webp": {
     "width": 491,
-    "height": 370
+    "height": 370,
+    "cssWidth": 491,
+    "cssHeight": 370
   },
   "08-memory-signin.webp": {
     "width": 309,
-    "height": 243
+    "height": 243,
+    "cssWidth": 309,
+    "cssHeight": 243
   },
   "09-zitadel-login.webp": {
-    "width": 880,
-    "height": 760
+    "width": 1760,
+    "height": 1520,
+    "cssWidth": 440,
+    "cssHeight": 380
   },
   "10-zitadel-password.webp": {
-    "width": 880,
-    "height": 896
+    "width": 1760,
+    "height": 1792,
+    "cssWidth": 440,
+    "cssHeight": 448
   },
   "12-first-password-change.webp": {
-    "width": 880,
-    "height": 1480
+    "width": 1760,
+    "height": 2960,
+    "cssWidth": 440,
+    "cssHeight": 740
   },
   "13-memory-projects.webp": {
     "width": 1320,
-    "height": 827
+    "height": 827,
+    "cssWidth": 1320,
+    "cssHeight": 827
   }
 }

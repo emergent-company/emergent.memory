@@ -14,7 +14,7 @@
  * Run from `docs-astro/`:  node scripts/port-images.mjs
  */
 import sharp from 'sharp';
-import { mkdir, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const REPO = path.resolve(import.meta.dirname, '../..');
@@ -24,13 +24,25 @@ const PUBLIC = path.join(REPO, 'docs-astro/public');
 /** Source dir (relative to docs/site) → public dir (relative to docs-astro/public). */
 const DIRS = ['assets/tutorials/railway'];
 
-const MAX_WIDTH = 1600;
+// The WebP is what both sites serve, so its ceiling is the *display* ceiling:
+// a figure is shown at most 2x its CSS size, and a 4x capture has to survive
+// that without being downsampled first.
+const MAX_WIDTH = 2400;
 
 for (const dir of DIRS) {
   const srcDir = path.join(SITE, dir);
   const outDir = path.join(PUBLIC, dir);
   await mkdir(outDir, { recursive: true });
   await mkdir(srcDir, { recursive: true });
+
+  // `shots.mjs` records the device pixel ratio each picture was captured at.
+  // Hand-captured pictures have no entry and are 1:1 by definition.
+  let scales = {};
+  try {
+    scales = JSON.parse(await readFile(path.join(srcDir, '.shots.json'), 'utf8'));
+  } catch {
+    /* no plan captured here yet */
+  }
 
   const files = (await readdir(srcDir)).filter((f) => /\.(png|jpe?g)$/i.test(f)).sort();
   if (!files.length) {
@@ -51,8 +63,23 @@ for (const dir of DIRS) {
       .resize({ width: MAX_WIDTH, withoutEnlargement: true })
       .webp({ quality: 82, effort: 5 })
       .toFile(path.join(srcDir, webp));
-    manifest[webp] = { width: info.width, height: info.height };
-    console.log(`${dir}/${webp}  ${info.width}x${info.height}  ${Math.round(info.size / 1024)}K`);
+    // `width`/`height` are real pixels; `cssWidth`/`cssHeight` are the size the
+    // app drew on screen (real pixels ÷ capture ratio). The page needs both: the
+    // first bounds how far a figure may be zoomed before it stops being sharp,
+    // the second is the figure's true size, which the card must not exceed.
+    // Computed from the *captured* size, not the resized one, so a full-frame
+    // shot that hits MAX_WIDTH still declares its real on-screen width.
+    const recorded = scales[file.replace(/\.(png|jpe?g)$/i, '')];
+    const scale = recorded?.scale ?? 1;
+    const captured = recorded?.width ?? info.width;
+    const capturedHeight = recorded?.height ?? info.height;
+    manifest[webp] = {
+      width: info.width,
+      height: info.height,
+      cssWidth: Math.round(captured / scale),
+      cssHeight: Math.round(capturedHeight / scale),
+    };
+    console.log(`${dir}/${webp}  ${info.width}x${info.height} @${scale}x → ${manifest[webp].cssWidth}css  ${Math.round(info.size / 1024)}K`);
   }
   await writeFile(path.join(outDir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
 }
