@@ -237,7 +237,21 @@ func (s *A2AProjectAuthzSuite) TestProjectBoundTokenStillWorks() {
 // development test token authenticated as a plain session (no APITokenID) whose
 // scope set carries no agents:* scope, so both the read and the write route must
 // now refuse it.
+//
+// The caller is made a member of the addressed project first, and a member
+// session holding agents:* is used as the positive control: without both, the
+// 403 would be the membership guard's and reverting the scope change would leave
+// this test green.
 func (s *A2AProjectAuthzSuite) TestSessionWithoutAgentsScopeIsRefused() {
+	s.Require().NoError(testutil.CreateTestOrgMembership(s.Ctx, s.DB(), s.OrgID, testutil.ReadOnlyUser.ID, "org_member"))
+	s.Require().NoError(testutil.CreateTestOrgMembership(s.Ctx, s.DB(), s.OrgID, testutil.AllScopesUser.ID, "org_member"))
+
+	// Control: same membership, agents:* present — the route answers normally, so
+	// the refusal below can only be the missing scope.
+	control := s.Client.GET("/tasks", testutil.WithAuth("all-scopes"), testutil.WithProjectID(s.ProjectID))
+	s.Require().Equal(http.StatusOK, control.StatusCode,
+		"a member session with agents:read must reach the tasks route: %s", control.String())
+
 	for _, req := range []struct {
 		name   string
 		method string

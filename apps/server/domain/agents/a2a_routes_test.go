@@ -533,17 +533,16 @@ func TestA2ARoutes_DeniedProjectReturnsPermissionEnvelopeOnEveryOperation(t *tes
 
 // TestA2ARoutes_EveryAuthenticatedRouteConsultsTheGuard is the structural half
 // of #660: rather than trusting the hand-written operation table above, it walks
-// the routes the server actually registered and proves each authenticated one is
-// refused when the guard denies. A future A2A handler that forgets to resolve its
-// project through addressedProject fails here.
+// the routes the server actually registered and proves every registered route
+// answers what it should when the guard denies: an authenticated route is refused,
+// the two tenant-blind routes are not. A future A2A handler that forgets to
+// resolve its project through addressedProject fails here.
 //
-// The exempt set is explicit and small:
-//   - the global card (tenant-blind, unauthenticated — the issue's stated
-//     exception);
-//   - the push-notification-config routes, which answer
-//     PUSH_NOTIFICATION_NOT_SUPPORTED for every caller and never read a project.
-//   - Echo's synthetic "route not found" entries, which are the fallback for
-//     paths that match no handler at all and therefore cannot reach one.
+// There is no silent exemption. The global card and the push-notification-config
+// stubs are asserted to answer their own thing rather than skipped, so a real
+// implementation appearing under those paths cannot hide from this sweep. Echo's
+// synthetic "route not found" entries are the only skipped rows: they are the
+// fallback for paths that match no handler and cannot reach one.
 func TestA2ARoutes_EveryAuthenticatedRouteConsultsTheGuard(t *testing.T) {
 	e, _ := newA2ATestRouterWithAuthz(t, func(context.Context, string) error {
 		return apperror.NewForbidden("access to project denied")
@@ -560,9 +559,6 @@ func TestA2ARoutes_EveryAuthenticatedRouteConsultsTheGuard(t *testing.T) {
 			continue
 		}
 		path := route.Path
-		if path == "/.well-known/agent-card.json" || strings.Contains(path, "pushNotificationConfigs") {
-			continue
-		}
 		for _, sub := range substitutions {
 			path = strings.ReplaceAll(path, sub.from, sub.to)
 		}
@@ -582,11 +578,24 @@ func TestA2ARoutes_EveryAuthenticatedRouteConsultsTheGuard(t *testing.T) {
 			panicked := serveRecovering(e, rec, req)
 			assert.Nil(t, panicked,
 				"registered route %s %s reached its handler without consulting the project guard", route.Method, path)
-			assert.Equal(t, http.StatusForbidden, rec.Code,
-				"registered route %s %s must consult the project guard", route.Method, path)
 			assert.Equal(t, A2AContentType, rec.Header().Get(echo.HeaderContentType))
+
+			switch {
+			case path == "/.well-known/agent-card.json":
+				// Tenant-blind and unauthenticated: it must not even ask.
+				assert.Equal(t, http.StatusOK, rec.Code, "the global card must stay open")
+			case strings.Contains(path, "pushNotificationConfigs"):
+				// Declared unsupported for every caller and never project-addressed;
+				// asserting the answer is what keeps it from being an exemption.
+				assert.Equal(t, http.StatusBadRequest, rec.Code,
+					"push-notification config route %s %s must stay not-supported", route.Method, path)
+				assert.Contains(t, rec.Body.String(), "PUSH_NOTIFICATION_NOT_SUPPORTED")
+			default:
+				assert.Equal(t, http.StatusForbidden, rec.Code,
+					"registered route %s %s must consult the project guard", route.Method, path)
+				guarded++
+			}
 		})
-		guarded++
 	}
 
 	// Guard against the test silently passing because no routes were walked.

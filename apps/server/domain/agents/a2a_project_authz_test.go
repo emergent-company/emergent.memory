@@ -19,12 +19,12 @@ import (
 )
 
 const (
-	a2aAuthzMemberUser  = "11111111-1111-1111-1111-111111111111"
-	a2aAuthzProjectA    = "3f2c0e5a-1234-5678-9abc-def012345678"
-	a2aAuthzProjectB    = "8b1d2f44-aaaa-bbbb-cccc-0123456789ab"
-	a2aAuthzUnknownProj = "00000000-0000-0000-0000-000000000000"
-	a2aAuthzOrgA        = "aaaaaaaa-0000-0000-0000-000000000001"
-	a2aAuthzOrgB        = "bbbbbbbb-0000-0000-0000-000000000002"
+	a2aMemberUserID     = "11111111-1111-1111-1111-111111111111"
+	a2aMemberProjectID  = "3f2c0e5a-1234-5678-9abc-def012345678"
+	a2aForeignProjectID = "8b1d2f44-aaaa-bbbb-cccc-0123456789ab"
+	a2aUnknownProjectID = "00000000-0000-0000-0000-000000000000"
+	a2aMemberOrgID      = "aaaaaaaa-0000-0000-0000-000000000001"
+	a2aForeignOrgID     = "bbbbbbbb-0000-0000-0000-000000000002"
 )
 
 // Issue #660. The A2A surface addresses a project through the X-Project-ID
@@ -90,7 +90,7 @@ func newA2AContextWithUser(user *auth.AuthUser, headerProjectID string) echo.Con
 
 func TestAddressedProject_NoSelectorIsProjectRequired(t *testing.T) {
 	h, mock := newA2AHandlerWithMockDB(t)
-	c := newA2AContextWithUser(&auth.AuthUser{ID: a2aAuthzMemberUser}, "")
+	c := newA2AContextWithUser(&auth.AuthUser{ID: a2aMemberUserID}, "")
 
 	_, err := h.addressedProject(c)
 	require.Error(t, err)
@@ -105,7 +105,7 @@ func TestAddressedProject_NoSelectorIsProjectRequired(t *testing.T) {
 
 func TestAddressedProject_UnauthenticatedIsUnauthorized(t *testing.T) {
 	h, mock := newA2AHandlerWithMockDB(t)
-	c := newA2AContextWithUser(nil, a2aAuthzProjectA)
+	c := newA2AContextWithUser(nil, a2aMemberProjectID)
 
 	_, err := h.addressedProject(c)
 	require.Error(t, err)
@@ -118,14 +118,14 @@ func TestAddressedProject_UnauthenticatedIsUnauthorized(t *testing.T) {
 // that project.
 func TestAddressedProject_MemberOfAddressedProjectPasses(t *testing.T) {
 	h, mock := newA2AHandlerWithMockDB(t)
-	expectProjectOrg(mock, a2aAuthzProjectA, a2aAuthzOrgA)
-	expectMembership(mock, a2aAuthzOrgA, a2aAuthzMemberUser, true)
+	expectProjectOrg(mock, a2aMemberProjectID, a2aMemberOrgID)
+	expectMembership(mock, a2aMemberOrgID, a2aMemberUserID, true)
 
-	c := newA2AContextWithUser(&auth.AuthUser{ID: a2aAuthzMemberUser, ProjectID: a2aAuthzProjectA}, a2aAuthzProjectA)
+	c := newA2AContextWithUser(&auth.AuthUser{ID: a2aMemberUserID, ProjectID: a2aMemberProjectID}, a2aMemberProjectID)
 
 	got, err := h.addressedProject(c)
 	require.NoError(t, err)
-	assert.Equal(t, a2aAuthzProjectA, got)
+	assert.Equal(t, a2aMemberProjectID, got)
 }
 
 // TestAddressedProject_NonMemberIsForbidden is the #660 regression guard: the
@@ -133,12 +133,12 @@ func TestAddressedProject_MemberOfAddressedProjectPasses(t *testing.T) {
 // member of its owning org.
 func TestAddressedProject_NonMemberIsForbidden(t *testing.T) {
 	h, mock := newA2AHandlerWithMockDB(t)
-	expectProjectOrg(mock, a2aAuthzProjectB, a2aAuthzOrgB)
-	expectMembership(mock, a2aAuthzOrgB, a2aAuthzMemberUser, false)
+	expectProjectOrg(mock, a2aForeignProjectID, a2aForeignOrgID)
+	expectMembership(mock, a2aForeignOrgID, a2aMemberUserID, false)
 
 	// The user is a member of project A and addresses project B by header: the
 	// exact cross-tenant shape the issue reports.
-	c := newA2AContextWithUser(&auth.AuthUser{ID: a2aAuthzMemberUser, ProjectID: a2aAuthzProjectB}, a2aAuthzProjectB)
+	c := newA2AContextWithUser(&auth.AuthUser{ID: a2aMemberUserID, ProjectID: a2aForeignProjectID}, a2aForeignProjectID)
 
 	_, err := h.addressedProject(c)
 	require.Error(t, err)
@@ -154,10 +154,10 @@ func TestAddressedProject_NonMemberIsForbidden(t *testing.T) {
 // and never a 500.
 func TestAddressedProject_UnknownProjectIsNotFound(t *testing.T) {
 	h, mock := newA2AHandlerWithMockDB(t)
-	mock.ExpectQuery(`SELECT .*organization_id.* FROM kb\.projects WHERE \(id = '` + a2aAuthzUnknownProj + `'\)`).
+	mock.ExpectQuery(`SELECT .*organization_id.* FROM kb\.projects WHERE \(id = '` + a2aUnknownProjectID + `'\)`).
 		WillReturnRows(sqlmock.NewRows([]string{"organization_id"})) // no rows
 
-	c := newA2AContextWithUser(&auth.AuthUser{ID: a2aAuthzMemberUser, ProjectID: a2aAuthzUnknownProj}, a2aAuthzUnknownProj)
+	c := newA2AContextWithUser(&auth.AuthUser{ID: a2aMemberUserID, ProjectID: a2aUnknownProjectID}, a2aUnknownProjectID)
 
 	_, err := h.addressedProject(c)
 	require.Error(t, err)
@@ -173,7 +173,7 @@ func TestAddressedProject_UnknownProjectIsNotFound(t *testing.T) {
 // 500) and must not be treated as any project.
 func TestAddressedProject_MalformedProjectIsNotFound(t *testing.T) {
 	h, mock := newA2AHandlerWithMockDB(t)
-	c := newA2AContextWithUser(&auth.AuthUser{ID: a2aAuthzMemberUser, ProjectID: "not-a-uuid"}, "not-a-uuid")
+	c := newA2AContextWithUser(&auth.AuthUser{ID: a2aMemberUserID, ProjectID: "not-a-uuid"}, "not-a-uuid")
 
 	_, err := h.addressedProject(c)
 	require.Error(t, err)
@@ -193,15 +193,15 @@ func TestAddressedProject_ProjectBoundTokenNeedsNoMembershipLookup(t *testing.T)
 	h := &A2AHandler{log: slog.Default()} // no repository at all
 
 	c := newA2AContextWithUser(&auth.AuthUser{
-		ID:                a2aAuthzMemberUser,
+		ID:                a2aMemberUserID,
 		APITokenID:        "tok-1",
-		APITokenProjectID: a2aAuthzProjectA,
-		ProjectID:         a2aAuthzProjectA, // RequireAuth normalizes the header
-	}, a2aAuthzProjectB) // the header names a *different* project
+		APITokenProjectID: a2aMemberProjectID,
+		ProjectID:         a2aMemberProjectID, // RequireAuth normalizes the header
+	}, a2aForeignProjectID) // the header names a *different* project
 
 	got, err := h.addressedProject(c)
 	require.NoError(t, err)
-	assert.Equal(t, a2aAuthzProjectA, got, "the token's project must win over the header")
+	assert.Equal(t, a2aMemberProjectID, got, "the token's project must win over the header")
 }
 
 // TestRequireProjectMembershipTokenBinding is a direct assertion of the branch
@@ -209,12 +209,12 @@ func TestAddressedProject_ProjectBoundTokenNeedsNoMembershipLookup(t *testing.T)
 // a 403 with no database access.
 func TestRequireProjectMembershipTokenBinding(t *testing.T) {
 	ctx := auth.ContextWithUser(context.Background(), &auth.AuthUser{
-		ID:                a2aAuthzMemberUser,
+		ID:                a2aMemberUserID,
 		APITokenID:        "tok-1",
-		APITokenProjectID: a2aAuthzProjectA,
+		APITokenProjectID: a2aMemberProjectID,
 	})
 
-	err := auth.RequireProjectMembership(ctx, nil, a2aAuthzProjectB)
+	err := auth.RequireProjectMembership(ctx, nil, a2aForeignProjectID)
 	require.Error(t, err)
 
 	var appErr *apperror.Error
@@ -222,7 +222,7 @@ func TestRequireProjectMembershipTokenBinding(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, appErr.HTTPStatus)
 
 	// Its own project is accepted without touching the nil database handle.
-	require.NoError(t, auth.RequireProjectMembership(ctx, nil, a2aAuthzProjectA))
+	require.NoError(t, auth.RequireProjectMembership(ctx, nil, a2aMemberProjectID))
 }
 
 // TestNewA2AHandlerWiresTheGuard proves the production constructor installs the
@@ -231,17 +231,17 @@ func TestNewA2AHandlerWiresTheGuard(t *testing.T) {
 	h := NewA2AHandler(NewRepository(nil), nil, nil, slog.Default(), nil)
 	require.NotNil(t, h.authorizeProject, "NewA2AHandler must wire the project-membership guard")
 
-	ctx := auth.ContextWithUser(context.Background(), &auth.AuthUser{ID: a2aAuthzMemberUser})
+	ctx := auth.ContextWithUser(context.Background(), &auth.AuthUser{ID: a2aMemberUserID})
 	// A nil DB is a missing-database error, i.e. the real guard ran and could not
 	// be satisfied — never a silent pass.
-	require.Error(t, h.authorizeProject(ctx, a2aAuthzProjectA))
+	require.Error(t, h.authorizeProject(ctx, a2aMemberProjectID))
 }
 
 // TestAddressedProject_NilDBFailsClosed: without a database the guard cannot
 // prove membership, so it denies rather than allowing the request.
 func TestAddressedProject_NilDBFailsClosed(t *testing.T) {
 	h := &A2AHandler{log: slog.Default()}
-	c := newA2AContextWithUser(&auth.AuthUser{ID: a2aAuthzMemberUser, ProjectID: a2aAuthzProjectA}, a2aAuthzProjectA)
+	c := newA2AContextWithUser(&auth.AuthUser{ID: a2aMemberUserID, ProjectID: a2aMemberProjectID}, a2aMemberProjectID)
 
 	_, err := h.addressedProject(c)
 	require.Error(t, err)

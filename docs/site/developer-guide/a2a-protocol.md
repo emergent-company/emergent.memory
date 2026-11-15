@@ -86,7 +86,10 @@ The project comes from the `X-Project-ID` header, or from the token itself when
 the token is project-scoped (a project-scoped token cannot be redirected to a
 different project by the header). A request with neither is rejected with
 `PROJECT_REQUIRED`, and an addressed project the caller is not a member of is
-rejected with `PERMISSION_DENIED` — the header is a selector, never a grant.
+rejected with `PERMISSION_DENIED` — the header is a selector, never a grant. The
+scope is checked before the selector: a credential that does not carry the
+route's scope is refused with `PERMISSION_DENIED` even if it also omits
+`X-Project-ID`.
 
 ## Message flow
 
