@@ -23,6 +23,12 @@
  *
  * Nothing here authenticates on its own: credentials come from the plan's
  * `vars`, which name environment variables, so no secret is committed.
+ *
+ * The browser is a bare Playwright Chromium: no extensions, no profile, no
+ * browser chrome. That is why a capture cannot show a password manager's
+ * autofill overlay or toolbar badge — a class of leak a hand-taken screenshot
+ * from a personal profile has, and the reason a figure is re-shot through this
+ * script rather than cropped out of whatever the operator had open.
  */
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
