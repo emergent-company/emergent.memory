@@ -39,7 +39,7 @@ func TestAgentsDefinitionLinkMigrationRewritesLosers(t *testing.T) {
 	mig := migrate.NewMigrator(db, zap.NewNop())
 	// The test DB is migrated to head; roll back 00303 so we can seed the legacy
 	// linked/duplicate rows it is about to inspect, then re-apply it.
-	require.NoError(t, mig.DownTo(ctx, 301))
+	require.NoError(t, mig.DownTo(ctx, 302))
 
 	_, projectID := insertOrgAndProject(t, db, ctx)
 
@@ -69,7 +69,7 @@ func TestAgentsDefinitionLinkMigrationRewritesLosers(t *testing.T) {
 		loserID, projectID, dupDefID, dupDefID)
 	require.NoError(t, err)
 
-	require.NoError(t, mig.UpTo(ctx, 302))
+	require.NoError(t, mig.UpTo(ctx, 303))
 
 	// Extraction shell: re-marked and unlinked, never the definition's owner.
 	var extractStrategy string
@@ -104,8 +104,8 @@ func TestAgentsDefinitionLinkMigrationRewritesLosers(t *testing.T) {
 
 	// Idempotency: roll back and re-apply 00303. The re-mark and dedupe are no-ops
 	// on the already-transformed data, and the name is not double-suffixed.
-	require.NoError(t, mig.DownTo(ctx, 301))
-	require.NoError(t, mig.UpTo(ctx, 302))
+	require.NoError(t, mig.DownTo(ctx, 302))
+	require.NoError(t, mig.UpTo(ctx, 303))
 
 	var reStrategy string
 	var reLink *string
@@ -158,7 +158,7 @@ func TestAgentsDefinitionLinkMigrationKeeperRuleAndLoserDisable(t *testing.T) {
 	db := tdb.DB
 
 	mig := migrate.NewMigrator(db, zap.NewNop())
-	require.NoError(t, mig.DownTo(ctx, 301))
+	require.NoError(t, mig.DownTo(ctx, 302))
 
 	_, projectID := insertOrgAndProject(t, db, ctx)
 
@@ -196,7 +196,7 @@ func TestAgentsDefinitionLinkMigrationKeeperRuleAndLoserDisable(t *testing.T) {
 	insertRuns(t, db, ctx, schedKeeperID, 5)
 	// schedLoser has zero runs.
 
-	require.NoError(t, mig.UpTo(ctx, 302))
+	require.NoError(t, mig.UpTo(ctx, 303))
 
 	// Fixture A: "Test" (scheduled, high run count) keeps the link and its live
 	// schedule; "alfred" (manual) is unlinked but left enabled with its empty
@@ -241,8 +241,8 @@ func TestAgentsDefinitionLinkMigrationKeeperRuleAndLoserDisable(t *testing.T) {
 	// Re-apply 00303: the keeper rule, loser-disabling and renames must be
 	// idempotent — the unlinked rows are no longer candidates, so nothing is
 	// double-suffixed and the disabled loser stays disabled.
-	require.NoError(t, mig.DownTo(ctx, 301))
-	require.NoError(t, mig.UpTo(ctx, 302))
+	require.NoError(t, mig.DownTo(ctx, 302))
+	require.NoError(t, mig.UpTo(ctx, 303))
 
 	var reAlfredName string
 	require.NoError(t, db.NewRaw(`SELECT name FROM kb.agents WHERE id = ?`, alfredID).Scan(ctx, &reAlfredName))
