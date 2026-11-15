@@ -311,7 +311,7 @@ func (w *ObjectExtractionWorker) findExtractionRuntimeAgentID(ctx context.Contex
 		TableExpr("kb.agents").
 		ColumnExpr("id::text").
 		Where("project_id = ? AND strategy_type = ?", projectID, "extraction-agent:"+definitionID).
-		Order("created_at ASC").
+		Order("created_at ASC", "id ASC").
 		Limit(1).
 		Scan(ctx, &agentID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
