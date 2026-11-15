@@ -283,14 +283,12 @@ func TestRequireSessionOrKeyInvalidSessionNoKeyFallback(t *testing.T) {
 	}
 }
 
-// TestRequireSessionOrKeyClearsUnrecoverableSessionCookie covers #753: an
-// authentic session cookie whose access token has expired and whose refresh
-// token the token endpoint refuses is unrecoverable. requireSession already
-// clears such a cookie; requireSessionOrKey — the middleware in front of every
-// /api route — used to fall through to the device-credential path and return its
-// 401 with the dead cookie still set, so the browser re-presented it on every
-// request and each one retried a refresh that can never succeed.
-func TestRequireSessionOrKeyClearsUnrecoverableSessionCookie(t *testing.T) {
+// refreshProvider starts a fake ZITADEL (discovery + token endpoint) whose
+// refresh-grant answer is written by answer, and returns the session config that
+// points at it. The issuer is the unique httptest URL, so the discovery cache
+// cannot leak between test cases.
+func refreshProvider(t *testing.T, answer func(w http.ResponseWriter)) Config {
+	t.Helper()
 	var ts *httptest.Server
 	ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -299,30 +297,76 @@ func TestRequireSessionOrKeyClearsUnrecoverableSessionCookie(t *testing.T) {
 			_, _ = fmt.Fprintf(w, `{"authorization_endpoint":%q,"token_endpoint":%q}`,
 				ts.URL+"/authorize", ts.URL+"/token")
 		case "/token":
-			// The refresh token is spent/revoked: the token endpoint refuses it.
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = io.WriteString(w, `{"error":"invalid_grant"}`)
+			answer(w)
 		default:
 			http.NotFound(w, r)
 		}
 	}))
-	defer ts.Close()
-
-	s := &Server{cfg: Config{
+	t.Cleanup(ts.Close)
+	return Config{
 		AuthMode:        "session",
 		SessionSecret:   "test-secret",
 		ZitadelIssuer:   ts.URL,
 		ZitadelClientID: "cid",
-	}, memory: &fakeMemory{}}
+	}
+}
+
+// refusedProvider returns a session config whose issuer host refuses
+// connections: the listener was closed before use, so discovery fails at the
+// transport layer exactly as it does during an auth-provider outage.
+func refusedProvider(t *testing.T) Config {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	dead := ts.URL
+	ts.Close()
+	return Config{
+		AuthMode:        "session",
+		SessionSecret:   "test-secret",
+		ZitadelIssuer:   dead,
+		ZitadelClientID: "cid",
+	}
+}
+
+// expiredSessionRequest attaches an authentic session cookie whose access token
+// has already expired and whose refresh token the provider will be asked to
+// spend: the shape every requireSession/requireSessionOrKey refresh failure
+// starts from.
+func expiredSessionRequest(t *testing.T, req *http.Request, issuer string) {
+	t.Helper()
+	dead := testSessionClaims()
+	dead.Issuer = issuer
+	dead.ExpiresAt = time.Now().Add(-time.Hour).Unix()
+	addSessionCookie(t, req, "test-secret", dead)
+}
+
+// sessionMiddlewareEcho wires both session middlewares on one server: /api/ping
+// goes through requireSessionOrKey, /protected through requireSession.
+func sessionMiddlewareEcho(s *Server) *echo.Echo {
 	e := echo.New()
 	e.GET("/api/ping", func(c echo.Context) error { return c.String(http.StatusOK, "ok") }, s.requireSessionOrKey)
+	e.GET("/protected", func(c echo.Context) error { return c.String(http.StatusOK, "ok") }, s.requireSession)
+	return e
+}
 
-	dead := testSessionClaims()
-	dead.Issuer = ts.URL
-	dead.ExpiresAt = time.Now().Add(-time.Hour).Unix()
+// TestRequireSessionOrKeyClearsUnrecoverableSessionCookie covers #753: an
+// authentic session cookie whose access token has expired and whose refresh
+// token the provider refuses with invalid_grant is unrecoverable. requireSession
+// already cleared such a cookie; requireSessionOrKey — the middleware in front
+// of every /api route — used to fall through to the device-credential path and
+// return its 401 with the dead cookie still set, so the browser re-presented it
+// on every request and each one retried a refresh that can never succeed.
+func TestRequireSessionOrKeyClearsUnrecoverableSessionCookie(t *testing.T) {
+	cfg := refreshProvider(t, func(w http.ResponseWriter) {
+		// The refresh token is spent/revoked: the grant is permanently invalid.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":"invalid_grant"}`)
+	})
+	s := &Server{cfg: cfg, memory: &fakeMemory{}}
+	e := sessionMiddlewareEcho(s)
+
 	req := httptest.NewRequest(http.MethodGet, "/api/ping", nil)
-	addSessionCookie(t, req, "test-secret", dead)
+	expiredSessionRequest(t, req, cfg.ZitadelIssuer)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
@@ -346,6 +390,117 @@ func TestRequireSessionOrKeyClearsUnrecoverableSessionCookie(t *testing.T) {
 	}
 	if ck := findCookie(rec, sessionCookieName); ck != nil {
 		t.Errorf("a request with no session cookie must not emit a clearing Set-Cookie, got %+v", ck)
+	}
+}
+
+// TestRequireSessionOrKeyClearsTamperedCookie pins the other permanent shape: a
+// cookie whose signature no longer verifies can never be revived, so the /api
+// 401 clears it (the UI middleware already did).
+func TestRequireSessionOrKeyClearsTamperedCookie(t *testing.T) {
+	s := &Server{cfg: sessionCfg(), memory: &fakeMemory{}}
+	e := sessionMiddlewareEcho(s)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/ping", nil)
+	req.Header.Set("Cookie", cookieHeader(sessionCookieName, "tampered.value"))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	if ck := findCookie(rec, sessionCookieName); ck == nil || ck.Value != "" || ck.MaxAge >= 0 {
+		t.Errorf("a tampered session cookie must be cleared, got %+v", ck)
+	}
+}
+
+// TestTransientRefreshFailureKeepsSessionCookie is the other half of #753's
+// review: a provider blip — a 5xx, a 4xx that is not a grant rejection, a refused
+// connection — must NOT clear the cookie. Before the typed rejection, every
+// ensureFreshSession error that was not http.ErrNoCookie cleared it, so an
+// outage logged a healthy user out of every /api route.
+func TestTransientRefreshFailureKeepsSessionCookie(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  func(*testing.T) Config
+	}{
+		{"provider 5xx", func(t *testing.T) Config {
+			return refreshProvider(t, func(w http.ResponseWriter) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadGateway)
+				_, _ = io.WriteString(w, `{"error":"server_error"}`)
+			})
+		}},
+		{"provider 429", func(t *testing.T) Config {
+			return refreshProvider(t, func(w http.ResponseWriter) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = io.WriteString(w, `{"error":"rate_limited"}`)
+			})
+		}},
+		// A timeout shares this branch: httpClient.Do returns the error, not a
+		// response, so no status or error code exists to classify.
+		{"connection refused", refusedProvider},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := tc.cfg(t)
+			s := &Server{cfg: cfg, memory: &fakeMemory{}}
+			e := sessionMiddlewareEcho(s)
+
+			// The /api route fails closed with the device-credential 401, but the
+			// cookie survives for the next attempt.
+			req := httptest.NewRequest(http.MethodGet, "/api/ping", nil)
+			expiredSessionRequest(t, req, cfg.ZitadelIssuer)
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("/api status = %d, want 401", rec.Code)
+			}
+			if ck := findCookie(rec, sessionCookieName); ck != nil {
+				t.Errorf("a transient refresh failure (%s) must not clear the session cookie, got %+v", tc.name, ck)
+			}
+
+			// The UI route redirects for this request, and must keep the cookie
+			// so a later successful refresh restores the session.
+			req = httptest.NewRequest(http.MethodGet, "/protected", nil)
+			expiredSessionRequest(t, req, cfg.ZitadelIssuer)
+			rec = httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+			if rec.Code != http.StatusFound {
+				t.Fatalf("UI status = %d, want 302", rec.Code)
+			}
+			if ck := findCookie(rec, sessionCookieName); ck != nil {
+				t.Errorf("a transient refresh failure (%s) must not clear the UI session cookie, got %+v", tc.name, ck)
+			}
+		})
+	}
+}
+
+// TestTokenGrantRejectionClassification pins the boundary itself: only a 4xx
+// carrying a permanent OAuth error code is a dead session. A 5xx is never one,
+// even with a misleading body, and neither is a 4xx that means "try later".
+func TestTokenGrantRejectionClassification(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		code   string
+		dead   bool
+	}{
+		{"invalid_grant", 400, "invalid_grant", true},
+		{"unauthorized_client", 401, "unauthorized_client", true},
+		{"invalid_request", 400, "invalid_request", false},
+		{"invalid_scope", 400, "invalid_scope", false},
+		{"429 rate limited", 429, "", false},
+		{"500 with a grant code", 500, "invalid_grant", false},
+		{"503 provider outage", 503, "server_error", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rejected := &tokenGrantRejectedError{Status: tc.status, Code: tc.code}
+			if got := rejected.dead(); got != tc.dead {
+				t.Errorf("%d %q: dead() = %v, want %v", tc.status, tc.code, got, tc.dead)
+			}
+		})
 	}
 }
 

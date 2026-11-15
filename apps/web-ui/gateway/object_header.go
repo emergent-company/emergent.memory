@@ -38,8 +38,9 @@ type objectHeaderProps struct {
 	// TopAlign aligns the type tile with the row's first line instead of
 	// centring it. A row whose body wraps — a relationship row carrying a
 	// two-line excerpt is taller than the tile — would otherwise float the tile
-	// beside the middle of the paragraph instead of introducing the object.
-	// Callers opt in per surface: a browse card's head keeps the centred tile,
+	// beside the middle of the paragraph instead of introducing the object. A
+	// row without a summary is only two lines tall and reads better centred, so
+	// the caller decides per row; a browse card's head keeps the centred tile,
 	// because a card is a face to scan, not a line in a list.
 	TopAlign bool
 	// Excerpt is an optional summary line under the name. Only used on a row:
