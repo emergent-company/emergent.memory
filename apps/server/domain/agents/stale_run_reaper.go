@@ -117,8 +117,11 @@ func (r *StaleRunReaper) reap(ctx context.Context) {
 	// Heal first, then fail: a queued run that merely lost its job row is
 	// re-enqueued — the same recovery the startup hook performs — and only a run
 	// that still has no claimable job after being idle past the threshold is
-	// failed. A run whose queue row exists but is disabled is spared: disabling
-	// is reversible operator intent and re-enabling must bring the backlog back.
+	// failed. This covers fan-out children and session/A2A turns too, because
+	// their shape is reachable by the same defect; the repository declines to act
+	// on one a worker already claimed and reports it as spared instead (issue
+	// #907). A run whose queue row exists but is disabled is spared: disabling is
+	// reversible operator intent and re-enabling must bring the backlog back.
 	if k, err := r.repo.RequeueOrphanedQueuedRuns(ctx); err != nil {
 		r.log.Warn("failed to requeue orphaned queued runs",
 			slog.String("error", err.Error()),
@@ -141,6 +144,14 @@ func (r *StaleRunReaper) reap(ctx context.Context) {
 		if res.SparedDisabled > 0 {
 			r.log.Info("spared queued agent runs parked on disabled queues",
 				slog.Int("count", res.SparedDisabled),
+			)
+		}
+		if res.SparedExecuted > 0 {
+			// Residue, not a silent spare: a run whose lifecycle a parent or a
+			// session owns and that a worker already claimed cannot be
+			// re-enqueued without risking a second turn (issue #907).
+			r.log.Info("spared queued agent runs already claimed by a worker",
+				slog.Int("count", res.SparedExecuted),
 			)
 		}
 	}

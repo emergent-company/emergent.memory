@@ -47,6 +47,17 @@
 
 ### Changed
 
+**The queued-run sweep now covers fan-out and session runs** (2026-11-16)
+
+The stale-run reaper spared every run with a `root_run_id` or a `session_id`,
+so a fan-out child or an A2A/session turn whose dispatch job no worker could
+claim sat `submitted` for ever — the same stall #880 fixed for top-level runs
+(#893 scoped the sweep there). The sweep now reads the job ledger for those
+shapes too and re-enqueues or fails them exactly as it does a top-level run,
+with one guard: a run that a worker already claimed (`attempt_count > 0`) is
+never re-enqueued, because that risks a second turn, and is reported as a
+counted `spared` outcome instead of staying silent.
+
 **Source-App webhook failures answer in the apperror envelope** (2026-11-16)
 
 `POST /api/webhooks/source-apps/{webhookKey}` used to answer every failure with a
