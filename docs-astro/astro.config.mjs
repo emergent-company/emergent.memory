@@ -112,6 +112,7 @@ export default defineConfig({
           items: [
             { label: 'Overview', slug: 'developer-guide' },
             { label: 'Provider Setup', slug: 'developer-guide/provider-setup' },
+            { label: 'Deploy Portal', slug: 'developer-guide/deploy-portal' },
             { label: 'MCP Servers', slug: 'developer-guide/mcp-servers' },
             { label: 'Extraction Pipeline', slug: 'developer-guide/extraction' },
             { label: 'Email Setup', slug: 'developer-guide/email-setup' },
@@ -122,6 +123,7 @@ export default defineConfig({
             { label: 'CLI Authentication', slug: 'developer-guide/cli-auth' },
             { label: 'Service Accounts', slug: 'developer-guide/service-accounts' },
             { label: 'Sandbox', slug: 'developer-guide/sandbox' },
+            { label: 'GitHub Issue Coding', slug: 'developer-guide/github-issue-coding' },
             { label: 'MCP Relay', slug: 'developer-guide/mcp-relay' },
             { label: 'A2A and A2UI', slug: 'developer-guide/a2a-protocol' },
             { label: 'Schema', slug: 'developer-guide/schema' },

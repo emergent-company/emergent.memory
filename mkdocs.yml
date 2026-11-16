@@ -83,7 +83,8 @@ nav:
   - Tutorials:
     - Deploy on Railway: tutorials/deploy-to-railway.md
   - Developer Guide:
-    - Overview: developer-guide/index.md    - Provider Setup: developer-guide/provider-setup.md
+    - Overview: developer-guide/index.md
+    - Provider Setup: developer-guide/provider-setup.md
     - MCP Servers: developer-guide/mcp-servers.md
     - Extraction Pipeline: developer-guide/extraction.md
     - Email Setup: developer-guide/email-setup.md
@@ -112,7 +113,7 @@ nav:
       - Reference:
         - auth: go-sdk/reference/auth.md
         - errors: go-sdk/reference/errors.md
-        - graph/graphutil: go-sdk/reference/graphutil.md
+        - graphutil: go-sdk/reference/graphutil.md
         - testutil: go-sdk/reference/testutil.md
         - graph: go-sdk/reference/graph.md
         - documents: go-sdk/reference/documents.md
