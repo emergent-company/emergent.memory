@@ -107,16 +107,16 @@ func TestMarketSidebarItemsHiddenWhenUnconfigured(t *testing.T) {
 	if items := s.marketSidebarItems(); len(items) != 0 {
 		t.Fatalf("items = %#v, want none", items)
 	}
-	html := renderHTML(t, appSidebar(sidebarGroupsWithWarn("", false, sidebarWarns{}), s.marketSidebarItems(), false))
-	if strings.Contains(html, `data-testid="sidebar-marketplace"`) {
-		t.Fatal("Marketplace block rendered without configuration")
+	html := renderHTML(t, appSidebar(sidebarGroupsWithWarn("", false, sidebarWarns{}), s.sidebarExternalLinks(), false))
+	if strings.Contains(html, `data-testid="sidebar-external"`) {
+		t.Fatal("external-links block rendered with neither a market nor docs configured")
 	}
 }
 
 func TestMarketplaceRendersAtSidebarBottom(t *testing.T) {
 	items := []layout.SidebarItem{{Label: "Marketplace", Href: "https://market.example", Icon: "lucide--store"}}
 	html := renderHTML(t, appSidebar(sidebarGroupsWithWarn("", false, sidebarWarns{}), items, false))
-	footer := strings.Index(html, `data-testid="sidebar-marketplace"`)
+	footer := strings.Index(html, `data-testid="sidebar-external"`)
 	if footer < 0 {
 		t.Fatal("marketplace block missing from the sidebar")
 	}
@@ -141,7 +141,7 @@ func TestMarketplaceRendersAtSidebarBottom(t *testing.T) {
 		t.Fatal("marketplace label missing from its footer block")
 	}
 	block := html[footer:]
-	marker := strings.Index(block, `data-testid="sidebar-marketplace-link"`)
+	marker := strings.Index(block, `data-testid="sidebar-external-link"`)
 	if marker < 0 {
 		t.Fatal("marketplace link missing from its footer block")
 	}
