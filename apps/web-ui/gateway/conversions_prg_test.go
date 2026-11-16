@@ -16,9 +16,10 @@ import (
 // (POST /documents/retry-conversion-failures), the one redirectScoped call site
 // that had no test at all (#854), plus the route registration itself. The
 // boosted/plain PRG wire-shape matrix for this handler lives in
-// scope_prg_test.go, next to the same matrix for its three siblings
-// (uiRetryAllExtractions, uiRetryExtraction, uiRetryConversion); the gate behind
-// all of it is ui-rule-prg-contract:
+// scope_prg_test.go, next to the same matrix for uiRetryAllExtractions — the only
+// sibling that has the full set there (uiRetryExtraction has only its error-path
+// test, uiRetryConversion only its route test). The gate behind all of it is
+// ui-rule-prg-contract:
 //
 //   - a boosted (htmx) form gets 200 + HX-Redirect and NO Location, because
 //     htmx issues its request through fetch, which follows a 3xx transparently
