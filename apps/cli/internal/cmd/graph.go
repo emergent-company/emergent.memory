@@ -2378,7 +2378,7 @@ BRANCHES:
 
 		for _, r := range resp.Results {
 			if r.Success && r.Object != nil {
-				fmt.Fprintf(out, "%s\t%s\t%s\n", r.Object.EntityID, r.Object.Type, objectName(r.Object.Name))
+				_, _ = fmt.Fprintf(out, "%s\t%s\t%s\n", r.Object.EntityID, r.Object.Type, objectName(r.Object.Name))
 			} else {
 				errMsg := "unknown error"
 				if r.Error != nil {
