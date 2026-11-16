@@ -1,0 +1,51 @@
+package components
+
+import (
+	ui "github.com/emergent-company/go-daisy/components/ui"
+	"github.com/emergent-company/go-daisy/devmode"
+)
+
+// AlertWithClassProps configures AlertWithClass.
+//
+// It embeds ui.AlertProps so the alert vocabulary stays go-daisy's (one set of
+// types and styles) and adds the one capability the pinned go-daisy v0.20.0
+// Alert does not have: a Class that reaches the element's own class attribute.
+//
+// Class is not expressible through ui.AlertProps.Attrs: ui.Alert writes its own
+// class attribute and then spreads Attrs, so a "class" key renders a *second*
+// class attribute, which browsers drop — the utility the caller asked for
+// silently disappears (#855). Every other field is forwarded unchanged.
+//
+// Delete Class, and this wrapper, when go-daisy #150 lands AlertProps.Class.
+type AlertWithClassProps struct {
+	ui.AlertProps
+	// Class is merged into the alert's class list, last, so it wins a conflict
+	// with the alert's own utilities (twmerge, last-wins). Layout-only utilities
+	// belong here — margin, grid placement.
+	Class string
+}
+
+// AlertWithClass renders a DaisyUI alert banner whose class list accepts a
+// caller utility. It is named apart from ui.Alert because the component graph
+// keys components by bare identifier (canonical_ratchet_test.go): a local
+// "Alert" would merge with the upstream one it stands in for.
+//
+// It reproduces ui.Alert's markup with one difference: props.Class is merged
+// into the element's class attribute instead of arriving as a second attribute —
+// and a class left in Attrs is folded into the same merge rather than rendered
+// twice. With Class empty it renders ui.Alert's markup (class order aside, which
+// twmerge may normalise), and badge_alert_class_test.go pins that, which is what
+// makes the copy safe to carry.
+templ AlertWithClass(props AlertWithClassProps) {
+	{{ class, attrs := alertClassAndAttrs(props) }}
+	<div role="alert" class={ class } { devmode.Attrs(ctx, "components/AlertWithClass")... } { attrs... }>
+		if props.Icon != "" {
+			@ui.IconSpan(props.Icon, "size-5")
+		}
+		if props.Body != nil {
+			@props.Body
+		} else {
+			<span>{ props.Message }</span>
+		}
+	</div>
+}

@@ -55,15 +55,17 @@ templ ApprovalsPage(approvals []ToolApprovalItem, questions []AgentQuestionItem,
 // not a failure — a pending approval is normal operation — so it uses the
 // primary intent rather than the Documents badge's error intent.
 templ sidebarApprovalsBadge(n int) {
-	@ui.Badge(ui.BadgeProps{
-		Label:   processingBadgeCount(n),
-		Variant: ui.BadgePrimary,
-		Size:    ui.BadgeSizeXS,
-		Attrs: templ.Attributes{
-			"data-testid": "approvals-nav-badge",
-			"title":       "Items waiting for your input",
-			"class":       "ml-1",
+	@components.BadgeWithClass(components.BadgeWithClassProps{
+		BadgeProps: ui.BadgeProps{
+			Label:   processingBadgeCount(n),
+			Variant: ui.BadgePrimary,
+			Size:    ui.BadgeSizeXS,
+			Attrs: templ.Attributes{
+				"data-testid": "approvals-nav-badge",
+				"title":       "Items waiting for your input",
+			},
 		},
+		Class: "ml-1",
 	})
 }
 
