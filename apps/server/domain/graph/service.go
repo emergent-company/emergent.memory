@@ -24,6 +24,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
 
+	"github.com/emergent-company/emergent.memory/internal/database"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/branchorigin"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
@@ -201,6 +202,32 @@ func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvide
 		reindexPageSize:       defaultReindexPageSize,
 		accessStamp:           newAccessStampDebouncer(),
 		minVectorSimilarity:   envFloatDefault("SEARCH_MIN_VECTOR_SIMILARITY", 0.5),
+	}
+}
+
+// rollbackTx aborts tx and logs a failure. SafeTx.Rollback is a no-op once the
+// transaction has committed, so a non-nil error here means the transaction
+// could not be aborted at all (dead connection, already-closed tx, a failed
+// statement that poisoned the connection). The caller still reports its own
+// error — that is the one the client should see — but a transaction left in an
+// unknown state must not disappear silently, which is what an unchecked
+// `defer tx.Rollback()` did.
+func (s *Service) rollbackTx(tx *database.SafeTx) {
+	if err := tx.Rollback(); err != nil {
+		s.log.Warn("graph: transaction rollback failed", slog.String("error", err.Error()))
+	}
+}
+
+// logEvent records a graph mutation event, logging rather than returning a sink
+// failure: the mutation is already committed, so a failed audit/journal write
+// must not turn a successful write into an error for the caller — but it must
+// not be dropped silently either.
+func (s *Service) logEvent(ctx context.Context, params LogParams) {
+	if err := s.eventSink.Log(ctx, params); err != nil {
+		s.log.Warn("graph: event sink write failed",
+			slog.String("event_type", params.EventType),
+			slog.String("error", err.Error()),
+		)
 	}
 }
 
@@ -1375,7 +1402,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 	if obj.Key != nil {
 		objType := obj.Type
 		entityType := entityTypeObject
-		s.eventSink.Log(ctx, LogParams{
+		s.logEvent(ctx, LogParams{
 			ProjectID:  projectID,
 			BranchID:   obj.BranchID,
 			EventType:  EventTypeCreated,
@@ -1420,7 +1447,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 	if err != nil {
 		return nil, false, apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer s.rollbackTx(tx)
 
 	// Acquire advisory lock for this (project_id, type, key) identity
 	if err := s.repo.AcquireObjectUpsertLock(ctx, tx.Tx, projectID, req.Type, *req.Key); err != nil {
@@ -1699,7 +1726,7 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 	if err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer s.rollbackTx(tx)
 
 	// Acquire advisory lock on the canonical ID (same lock identity as before).
 	if err := s.repo.AcquireObjectLock(ctx, tx.Tx, ident.CanonicalID); err != nil {
@@ -1939,7 +1966,7 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 				fieldsChanged = append(fieldsChanged, k)
 			}
 		}
-		s.eventSink.Log(ctx, LogParams{
+		s.logEvent(ctx, LogParams{
 			ProjectID:  projectID,
 			BranchID:   newVersion.BranchID,
 			EventType:  EventTypeUpdated,
@@ -1978,7 +2005,7 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 	if err != nil {
 		return apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer s.rollbackTx(tx)
 
 	if err := s.repo.AcquireObjectLock(ctx, tx.Tx, current.CanonicalID); err != nil {
 		return err
@@ -2040,7 +2067,7 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 	if current.Key != nil {
 		objType := current.Type
 		entityType := entityTypeObject
-		s.eventSink.Log(ctx, LogParams{
+		s.logEvent(ctx, LogParams{
 			ProjectID:  projectID,
 			BranchID:   current.BranchID,
 			EventType:  EventTypeDeleted,
@@ -2078,7 +2105,7 @@ func (s *Service) Restore(ctx context.Context, projectID, id uuid.UUID, actorID 
 	if err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer s.rollbackTx(tx)
 
 	if err := s.repo.AcquireObjectLock(ctx, tx.Tx, current.CanonicalID); err != nil {
 		return nil, err
@@ -2107,7 +2134,7 @@ func (s *Service) Restore(ctx context.Context, projectID, id uuid.UUID, actorID 
 	if restored.Key != nil {
 		objType := restored.Type
 		entityType := entityTypeObject
-		s.eventSink.Log(ctx, LogParams{
+		s.logEvent(ctx, LogParams{
 			ProjectID:  projectID,
 			BranchID:   restored.BranchID,
 			EventType:  EventTypeRestored,
@@ -2609,7 +2636,7 @@ func (s *Service) createRelationship(ctx context.Context, projectID uuid.UUID, r
 	if err != nil {
 		return nil, false, apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer s.rollbackTx(tx)
 
 	// Validate endpoints exist and are not deleted
 	srcObj, dstObj, err := s.repo.ValidateEndpoints(ctx, tx.Tx, projectID, req.SrcID, req.DstID)
@@ -2696,7 +2723,7 @@ func (s *Service) createRelationship(ctx context.Context, projectID uuid.UUID, r
 				dstKey = *dstObj.Key
 			}
 			entityType := entityTypeRelationship
-			s.eventSink.Log(ctx, LogParams{
+			s.logEvent(ctx, LogParams{
 				ProjectID:  projectID,
 				BranchID:   effectiveBranchID,
 				EventType:  EventTypeRelated,
@@ -2719,7 +2746,7 @@ func (s *Service) createRelationship(ctx context.Context, projectID uuid.UUID, r
 
 	// Conflict: relationship HEAD already exists (another concurrent goroutine inserted it).
 	// Roll back the current tx — we don't need it for a read-only check.
-	tx.Rollback()
+	s.rollbackTx(tx)
 
 	// Read HEAD outside any transaction (no lock needed — the row is stable).
 	existing, err := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, relType, srcObj.CanonicalID, dstObj.CanonicalID)
@@ -2746,7 +2773,7 @@ func (s *Service) createRelationship(ctx context.Context, projectID uuid.UUID, r
 	if err != nil {
 		return nil, false, apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx2.Rollback()
+	defer s.rollbackTx(tx2)
 
 	if err := s.repo.AcquireRelationshipLock(ctx, tx2.Tx, projectID, relType, srcObj.CanonicalID, dstObj.CanonicalID); err != nil {
 		return nil, false, err
@@ -3050,7 +3077,7 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 	if err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer s.rollbackTx(tx)
 
 	// Acquire lock
 	if err := s.repo.AcquireRelationshipLock(ctx, tx.Tx, current.ProjectID, current.Type, current.SrcID, current.DstID); err != nil {
@@ -3155,7 +3182,7 @@ func (s *Service) DeleteRelationship(ctx context.Context, projectID, id uuid.UUI
 	if err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer s.rollbackTx(tx)
 
 	// Acquire lock
 	if err := s.repo.AcquireRelationshipLock(ctx, tx.Tx, current.ProjectID, current.Type, current.SrcID, current.DstID); err != nil {
@@ -3206,7 +3233,7 @@ func (s *Service) RestoreRelationship(ctx context.Context, projectID, id uuid.UU
 	if err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer s.rollbackTx(tx)
 
 	// Acquire lock
 	if err := s.repo.AcquireRelationshipLock(ctx, tx.Tx, current.ProjectID, current.Type, current.SrcID, current.DstID); err != nil {
@@ -5411,7 +5438,7 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 			// Attribute the merge to the source branch so the event appears in that
 			// branch's own journal history, alongside the objects it contained.
 			mergeActorType, mergeActorID := actorFromContext(ctx, nil)
-			s.eventSink.Log(ctx, LogParams{
+			s.logEvent(ctx, LogParams{
 				ProjectID: projectID,
 				BranchID:  &req.SourceBranchID,
 				EventType: EventTypeMerge,
@@ -5483,7 +5510,7 @@ func (s *Service) applyMerge(
 	if err != nil {
 		return 0, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer s.rollbackTx(tx)
 
 	// canonicalIDMap maps source canonical IDs → target canonical IDs for
 	// objects that are "added" (new on source, don't exist on target yet).
@@ -6440,7 +6467,7 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 	if err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer s.rollbackTx(tx)
 
 	refMap := make(map[string]uuid.UUID, len(req.Objects))
 	objResponses := make([]*GraphObjectResponse, 0, len(req.Objects))
@@ -6670,7 +6697,7 @@ func (s *Service) MoveObject(ctx context.Context, projectID, objectID uuid.UUID,
 	if err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer s.rollbackTx(tx)
 
 	if err := s.repo.AcquireObjectLock(ctx, tx.Tx, current.CanonicalID); err != nil {
 		return nil, err
@@ -6757,7 +6784,7 @@ func (s *Service) MoveObject(ctx context.Context, projectID, objectID uuid.UUID,
 	if current.Key != nil {
 		objType := current.Type
 		entityType := entityTypeObject
-		s.eventSink.Log(ctx, LogParams{
+		s.logEvent(ctx, LogParams{
 			ProjectID:  projectID,
 			BranchID:   targetBranchID,
 			EventType:  EventTypeMoved,
@@ -6857,7 +6884,7 @@ func (s *Service) ForkBranch(ctx context.Context, projectID uuid.UUID, sourceBra
 	// Journal log
 	{
 		forkActorType, forkActorID := actorFromContext(ctx, nil)
-		s.eventSink.Log(ctx, LogParams{
+		s.logEvent(ctx, LogParams{
 			ProjectID: projectID,
 			BranchID:  &targetBranchID,
 			EventType: EventTypeBatch,
@@ -6971,7 +6998,7 @@ func (s *Service) BulkAction(ctx context.Context, projectID uuid.UUID, req *Bulk
 	// Write journal entry for non-dry-run operations
 	if !req.DryRun {
 		entityType := entityTypeObject
-		s.eventSink.Log(ctx, LogParams{
+		s.logEvent(ctx, LogParams{
 			ProjectID:  projectID,
 			EventType:  EventTypeBatch,
 			EntityType: &entityType,
