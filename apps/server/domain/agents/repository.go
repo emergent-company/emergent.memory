@@ -3347,10 +3347,19 @@ func (r *Repository) findProcessingLogByKeyInTx(ctx context.Context, tx bun.Tx, 
 	return log, nil
 }
 
-// CreateRunJob inserts a new agent_run_jobs row for an existing run. When queue
-// is empty it is resolved from the run's agent binding (config override →
-// definition default → "default"); priority 0 means DefaultQueuePriority.
-func (r *Repository) CreateRunJob(ctx context.Context, runID string, maxAttempts int, queue string, priority int) error {
+// CreateRunJob inserts a new agent_run_jobs row for an existing run and reports
+// whether it inserted one. When queue is empty it is resolved from the run's
+// agent binding (config override → definition default → "default"); priority 0
+// means DefaultQueuePriority.
+//
+// The insert is ON CONFLICT DO NOTHING against the partial unique index
+// uq_agent_run_jobs_one_live_per_run (migration 00311), which allows at most one
+// pending/processing job per run. Callers therefore no longer need to
+// check-then-act: two healers racing to re-enqueue one run — or a healer racing
+// CreateRunQueued — collapse to a single live row, and inserted is false when
+// the run already had one (issue #905). Duplicates would otherwise inflate the
+// row count CountPendingJobsForAgent feeds to the AGENT_MAX_PENDING_JOBS guard.
+func (r *Repository) CreateRunJob(ctx context.Context, runID string, maxAttempts int, queue string, priority int) (inserted bool, err error) {
 	var projectID string
 	if run, err := r.FindRunByID(ctx, runID); err == nil && run != nil {
 		projectID, queue, priority = r.resolveAgentRouting(ctx, run.AgentID, queue, priority)
@@ -3370,8 +3379,18 @@ func (r *Repository) CreateRunJob(ctx context.Context, runID string, maxAttempts
 		ProjectID:   strPtrIfNotEmpty(projectID),
 		NextRunAt:   time.Now(),
 	}
-	_, err := r.db.NewInsert().Model(job).Exec(ctx)
-	return err
+	res, err := r.db.NewInsert().
+		Model(job).
+		On("CONFLICT DO NOTHING").
+		Exec(ctx)
+	if err != nil {
+		return false, fmt.Errorf("insert agent_run_jobs: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("insert agent_run_jobs: rows affected: %w", err)
+	}
+	return n > 0, nil
 }
 
 // ClaimNextJob atomically claims the next pending job from any project/queue.
@@ -3582,7 +3601,15 @@ func (r *Repository) FindRunByIDProjectScoped(ctx context.Context, runID, projec
 
 // RequeueOrphanedQueuedRuns finds agent_runs with status=queued that have no
 // active agent_run_jobs row (pending or processing) and inserts a new job row
-// for each. Called at startup after MarkOrphanedRunsAsError.
+// for each. Called at startup after MarkOrphanedRunsAsError and from the
+// five-minute stale-run sweep, so several instances can run it concurrently.
+//
+// The insert is idempotent at the database level (CreateRunJob uses ON CONFLICT
+// DO NOTHING against uq_agent_run_jobs_one_live_per_run): the NOT EXISTS filter
+// below is only an optimisation, because under READ COMMITTED concurrent
+// callers do not see each other's uncommitted row. The returned count is the
+// number of jobs this call actually inserted, not the number of candidates
+// observed (issue #905).
 func (r *Repository) RequeueOrphanedQueuedRuns(ctx context.Context) (int, error) {
 	// Find queued runs that have no pending/processing job
 	type runRow struct {
@@ -3603,12 +3630,17 @@ func (r *Repository) RequeueOrphanedQueuedRuns(ctx context.Context) (int, error)
 		return 0, fmt.Errorf("find orphaned queued runs: %w", err)
 	}
 
+	requeued := 0
 	for _, row := range runs {
-		if err := r.CreateRunJob(ctx, row.ID, 1, "", 0); err != nil {
-			return 0, fmt.Errorf("re-enqueue run %s: %w", row.ID, err)
+		inserted, err := r.CreateRunJob(ctx, row.ID, 1, "", 0)
+		if err != nil {
+			return requeued, fmt.Errorf("re-enqueue run %s: %w", row.ID, err)
+		}
+		if inserted {
+			requeued++
 		}
 	}
-	return len(runs), nil
+	return requeued, nil
 }
 
 // QueuedRunReapResult reports what one undispatchable-queued-run sweep found.
