@@ -2055,8 +2055,8 @@ func (h *Handler) resumeForAnswer(ctx context.Context, sseWriter *sse.Writer, co
 		ResumedFrom:      &resumedFrom,
 		InitialStepCount: run.StepCount,
 		TriggerMetadata:  run.TriggerMetadata,
-		// The resumed run owns the work item; FinalizeResumedCheckpoint
-		// finalizes the parent, so the subject must not be lost on the child.
+		// The resumed run owns the work item; the resume claim finalizes the
+		// paused checkpoint, so the subject must not be lost on the child.
 		SubjectObjectID:   run.SubjectObjectID,
 		SubjectObjectType: run.SubjectObjectType,
 	})

@@ -11,10 +11,16 @@ enum AuthFailure {
     /// rejected-token signals. Uses `ConnectorCLIError.errorDescription` when
     /// available (it preserves the CLI's own message) and falls back to the
     /// localized description otherwise.
+    ///
+    /// `invalid_grant` is the provider's own code for exactly this condition
+    /// (the refresh token expired, was revoked, or was rotated away); a refresh
+    /// failure that carries it must not be treated as transient, or the account
+    /// silently retries a token that can never work again.
     static func looksLikeAuthFailure(_ error: Error) -> Bool {
         let text = ((error as? ConnectorCLIError)?.errorDescription ?? error.localizedDescription)
             .lowercased()
         return text.contains("not signed in")
+            || text.contains("invalid_grant")
             || text.contains("invalid_token")
             || text.contains("unauthorized")
             || text.contains("401")

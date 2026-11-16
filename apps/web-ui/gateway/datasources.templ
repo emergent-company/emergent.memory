@@ -742,6 +742,7 @@ templ dsConfigFieldInput(f dsConfigField) {
 					Variant: ui.ButtonOutline,
 					Size:    ui.ButtonSM,
 					Icon:    "lucide--list",
+					ExtraClass: "shrink-0",
 					Attrs: templ.Attributes{
 						"data-testid": f.dsLoadTestID(),
 						"hx-post":     f.dsLoadPath(),
@@ -749,7 +750,6 @@ templ dsConfigFieldInput(f dsConfigField) {
 						"hx-include":  "closest form",
 						"hx-target":   "#" + f.dsPickerID(),
 						"hx-swap":     "innerHTML",
-						"class":       "shrink-0",
 					},
 				}) {
 					{ f.dsLoadLabel() }
@@ -777,6 +777,7 @@ templ dsConfigFieldInput(f dsConfigField) {
 					Variant: ui.ButtonOutline,
 					Size:    ui.ButtonSM,
 					Icon:    "lucide--list",
+					ExtraClass: "shrink-0",
 					Attrs: templ.Attributes{
 						"data-testid": f.dsLoadTestID(),
 						"hx-post":     f.dsLoadPath(),
@@ -784,7 +785,6 @@ templ dsConfigFieldInput(f dsConfigField) {
 						"hx-include":  "closest form",
 						"hx-target":   "#" + f.dsPickerID(),
 						"hx-swap":     "innerHTML",
-						"class":       "shrink-0",
 					},
 				}) {
 					{ f.dsLoadLabel() }

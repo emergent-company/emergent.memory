@@ -265,10 +265,11 @@ func TestResumeClaim_SecondFollowerIsRejected(t *testing.T) {
 }
 
 // TestResumeClaim_QuestionlessContinuationClaimsThePause is the positive half:
-// the winner's claim is the conditional terminal transition on the paused row,
-// issued BEFORE the resumed run is created. FinalizeResumedCheckpoint emits the same
-// statement later (after the child exists, which is why it cannot serialise
-// anything), so the assertion is on the order, not on the statement's presence.
+// the winner's claim is the conditional non-terminal transition on the paused
+// row (BeginA2AResumeClaim), issued BEFORE the resumed run is created.
+// FinalizeResumedCheckpoint commits it later, after the child exists — which is
+// why the commit cannot serialise anything and the assertion is on the order,
+// not on the statement's presence.
 func TestResumeClaim_QuestionlessContinuationClaimsThePause(t *testing.T) {
 	repo, drv := newA2AResumeRepository(t)
 	drv.setQuestionsMissing(true)
@@ -426,13 +427,6 @@ func TestStreamRun_FailedResumeRestoresThePause(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "TASK_STATE_FAILED")
 }
 
-// TestReleasePausedRunClaim_IsStatusAware pins the compensating write itself.
-// The release path must cover both claim states: "working" (an ordinary resume
-// that failed before the child) is restored to the pause so the follow-up is
-// retryable, while "cancelling" (a CancelTask that landed in the resume window)
-// carries a durable cancel intent and must finalize as cancelled. Restoring the
-// latter would drop the cancel and report live work until the 30-minute
-// orphan sweep (issue #1166).
 // TestExecutorResume_PropagatesCancelledCheckpointToChild pins the one branch
 // #866 depends on that no other resume test exercises: a CancelTask that lands
 // in the claim-to-child window leaves the checkpoint "cancelling", so
@@ -459,6 +453,9 @@ func TestExecutorResume_PropagatesCancelledCheckpointToChild(t *testing.T) {
 		ProjectID:     "proj-1",
 		PreCreatedRun: newRun,
 		RootRunID:     &rootRunID,
+		// The A2A lane claims before Resume; PauseClaimed is what makes Resume
+		// commit that claim through FinalizeResumedCheckpoint.
+		PauseClaimed: true,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -476,6 +473,13 @@ func TestExecutorResume_PropagatesCancelledCheckpointToChild(t *testing.T) {
 		strings.Join(drv.queriesCopy(), "\n"))
 }
 
+// TestReleasePausedRunClaim_IsStatusAware pins the compensating write itself.
+// The release path must cover both claim states: "working" (an ordinary resume
+// that failed before the child) is restored to the pause so the follow-up is
+// retryable, while "cancelling" (a CancelTask that landed in the resume window)
+// carries a durable cancel intent and must finalize as cancelled. Restoring the
+// latter would drop the cancel and report live work until the 30-minute
+// orphan sweep (issue #1166).
 func TestReleasePausedRunClaim_IsStatusAware(t *testing.T) {
 	repo, drv := newA2AResumeRepository(t)
 

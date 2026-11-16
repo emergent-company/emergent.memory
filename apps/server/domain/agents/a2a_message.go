@@ -799,7 +799,10 @@ func (h *A2AHandler) resumeA2ATask(c echo.Context, projectID, userID, userMessag
 		// The questionless continuation has no question row to claim, so claim the
 		// pause itself: two followers (a client retry, a double submit) would
 		// otherwise both create a resumed child run and execute the turn twice.
-		claimed, err := h.repo.ClaimPausedRunForResume(ctx, latest.ID)
+		// The claim stays non-terminal ("working") until Resume's finalize, so a
+		// cancel landing in the window still wins (the A2A lane's contract; other
+		// resume entry points claim terminally instead — issue #887).
+		claimed, err := h.repo.BeginA2AResumeClaim(ctx, latest.ID)
 		if err != nil {
 			h.log.Error("failed to claim paused run", "task_id", taskID, "error", err)
 			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to claim paused run"))
@@ -827,6 +830,10 @@ func (h *A2AHandler) resumeA2ATask(c echo.Context, projectID, userID, userMessag
 		OrgID:           orgID,
 		UserID:          userID,
 		UserMessage:     resumeMsg,
+		// The questionless branch claimed the pause into "working"; Resume must
+		// commit that claim (FinalizeResumedCheckpoint) instead of claiming
+		// again, which a "working" row would reject (issue #887).
+		PauseClaimed: question == nil,
 		// TrustedInternal defaults false: an A2A surface must not reach internal agents.
 	}
 

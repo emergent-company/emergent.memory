@@ -32,6 +32,10 @@ import (
 // a2aStreamTranslator accumulates a turn's streaming state and translates
 // internal StreamEvents into A2A StreamResponse payloads. It is a pure, non-I/O
 // type so the event map can be tested without a database or executor.
+//
+// It is NOT safe for concurrent use: ADK emits tool callbacks from parallel
+// goroutines. Drive it through a2aStreamSink, which serialises the callback
+// body (translate + write + persist).
 type a2aStreamTranslator struct {
 	taskID    string
 	contextID string
@@ -63,6 +67,37 @@ func newA2aStreamTranslator(taskID, contextID string) *a2aStreamTranslator {
 		taskID:    taskID,
 		contextID: contextID,
 		textArtID: "artifact-" + taskID,
+	}
+}
+
+// a2aStreamSink serialises the streaming callback body. The translator is NOT
+// safe for concurrent use, and ADK calls it concurrently: the function calls of
+// one model response fan out through platform.RunTasks (one goroutine per call),
+// so both tool callbacks reach StreamCallback at once. Without this lock the
+// shared toolSeq++ can hand two starts the same "tool-call-N", the toolArtByCall
+// map write can panic the process ("concurrent map writes" is a fatal error, not
+// a recoverable race), and the SSE writes interleave.
+//
+// The mutex makes one event atomic: translate, write, and persist/fan-out happen
+// in event order. Event order between goroutines is still whichever arrives
+// first, which is all the wire needs.
+type a2aStreamSink struct {
+	mu      sync.Mutex
+	tr      *a2aStreamTranslator
+	write   func(...StreamResponse)
+	onDelta func(ev StreamEvent, resps []StreamResponse) // optional; nil skips persistence
+}
+
+// handle translates and emits one stream event. Safe for concurrent use.
+func (s *a2aStreamSink) handle(ev StreamEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	resps := s.tr.translate(ev)
+	if s.write != nil {
+		s.write(resps...)
+	}
+	if s.onDelta != nil {
+		s.onDelta(ev, resps)
 	}
 }
 
@@ -682,7 +717,10 @@ func (h *A2AHandler) streamResumeTask(c echo.Context, projectID, userID, userMes
 		// The questionless continuation has no question row to claim, so claim the
 		// pause itself: two followers (a client retry, a double submit) would
 		// otherwise both create a resumed child run and execute the turn twice.
-		claimed, err := h.repo.ClaimPausedRunForResume(ctx, latest.ID)
+		// The claim stays non-terminal ("working") until Resume's finalize, so a
+		// cancel landing in the window still wins (the A2A lane's contract; other
+		// resume entry points claim terminally instead — issue #887).
+		claimed, err := h.repo.BeginA2AResumeClaim(ctx, latest.ID)
 		if err != nil {
 			h.log.Error("failed to claim paused run", "task_id", taskID, "error", err)
 			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to claim paused run"))
@@ -714,6 +752,10 @@ func (h *A2AHandler) streamResumeTask(c echo.Context, projectID, userID, userMes
 		OrgID:           h.a2aOrgID(ctx, c, projectID),
 		UserID:          userID,
 		UserMessage:     resumeMsg,
+		// The questionless branch claimed the pause into "working"; Resume must
+		// commit that claim (FinalizeResumedCheckpoint) instead of claiming
+		// again, which a "working" row would reject (issue #887).
+		PauseClaimed: question == nil,
 		// TrustedInternal defaults false: an A2A surface must not reach internal agents.
 		RenderA2UI: true, // A2A stream renders A2UI surfaces (artifactUpdate)
 	}
@@ -793,11 +835,16 @@ func (h *A2AHandler) streamRun(
 
 	// Translate + emit streaming deltas as they arrive, persisting each delta's
 	// translated payload (and fanning it out to the bus) so a subscribe client
-	// can replay the same artifactUpdate/message events.
-	execReq.StreamCallback = func(ev StreamEvent) {
-		resps := tr.translate(ev)
-		writer.writeAll(resps)
-		if et, ok := a2aDeltaEventType(ev); ok {
+	// can replay the same artifactUpdate/message events. The sink serialises the
+	// whole body: ADK emits tool callbacks from parallel goroutines.
+	sink := &a2aStreamSink{
+		tr:    tr,
+		write: write,
+		onDelta: func(ev StreamEvent, resps []StreamResponse) {
+			et, ok := a2aDeltaEventType(ev)
+			if !ok {
+				return
+			}
 			for _, sr := range resps {
 				h.persistA2AEvent(bgCtx, taskID, et, a2aStreamPayload(sr))
 				h.emitA2ABus(ctx, projectID, taskID, et, a2aStreamPayload(sr))
@@ -808,8 +855,9 @@ func (h *A2AHandler) streamRun(
 				// consistency but do not fan it out to subscribers.
 				h.persistA2AEvent(bgCtx, taskID, et, nil)
 			}
-		}
+		},
 	}
+	execReq.StreamCallback = sink.handle
 
 	var result *ExecuteResult
 	var execErr error

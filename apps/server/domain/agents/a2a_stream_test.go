@@ -2,7 +2,9 @@ package agents
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -196,6 +198,76 @@ func TestA2AStreamTranslator_InterleavedToolCalls_EndMatchesItsOwnStart(t *testi
 	dataA, ok := endA[0].ArtifactUpdate.Artifact.Parts[0].Data.(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, map[string]any{"r": "a"}, dataA["output"])
+}
+
+// TestA2AStreamSink_ConcurrentToolCalls is the concurrency half of #866. ADK
+// runs the function calls of one model response in parallel goroutines
+// (platform.RunTasks), so StreamCallback — and therefore translate — is entered
+// concurrently. This drives the sink the way that fan-out does: N goroutines
+// released on one barrier, each emitting its own start and end, all with
+// distinct ADK call ids.
+//
+// It must be run with -race. With the sink's mutex removed it fails on the
+// shared toolSeq/toolArtByCall state (data race, and "concurrent map writes" can
+// take the process down); with the mutex it asserts the two properties the
+// blocker fix relies on: every end lands on its own start's artifact, and every
+// tool-call-N artifact id is unique across the burst.
+func TestA2AStreamSink_ConcurrentToolCalls(t *testing.T) {
+	const calls = 32
+
+	tr := newA2aStreamTranslator("t1", "c1")
+	starts := make(map[string]string, calls) // call id -> artifactId
+	ends := make(map[string]string, calls)   // call id -> artifactId
+	sink := &a2aStreamSink{
+		tr: tr,
+		onDelta: func(ev StreamEvent, resps []StreamResponse) {
+			// handle() holds the sink lock here, so these maps need no lock of
+			// their own; t.Errorf is safe from any goroutine.
+			if len(resps) != 1 || resps[0].ArtifactUpdate == nil {
+				t.Errorf("event %s/%s produced %d responses without one artifactUpdate", ev.ID, ev.Tool, len(resps))
+				return
+			}
+			artID := resps[0].ArtifactUpdate.Artifact.ArtifactID
+			switch ev.Type {
+			case StreamEventToolCallStart:
+				starts[ev.ID] = artID
+			case StreamEventToolCallEnd:
+				ends[ev.ID] = artID
+			}
+		},
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < calls; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			id := fmt.Sprintf("call-%02d", i)
+			<-start // release every tool goroutine at once
+			sink.handle(StreamEvent{Type: StreamEventToolCallStart, ID: id, Tool: "tool-" + id})
+			sink.handle(StreamEvent{Type: StreamEventToolCallEnd, ID: id, Tool: "tool-" + id})
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	require.Len(t, starts, calls)
+	require.Len(t, ends, calls)
+
+	seen := make(map[string]string, calls) // artifactId -> call id
+	for id, artID := range starts {
+		if prev, dup := seen[artID]; dup {
+			t.Errorf("calls %s and %s share artifactId %q: toolSeq++ is not serialised", prev, id, artID)
+			continue
+		}
+		seen[artID] = id
+		if got, ok := ends[id]; !ok {
+			t.Errorf("call %s has no end", id)
+		} else if got != artID {
+			t.Errorf("call %s ended on %q, want its own start artifact %q", id, got, artID)
+		}
+	}
 }
 
 // TestA2AStreamTranslator_ToolCallWithoutID_FallsBackToLastArtifact keeps the

@@ -94,6 +94,10 @@ type fakeMemory struct {
 	retriedParsingJobIDs []string
 	retryJobErr          error
 	bulkRetried          int
+	// bulkParsingErr makes the bulk conversion retry fail, so a test can pin its
+	// error redirect (the bulk extraction retry has no such injection point yet
+	// because no test needs one).
+	bulkParsingErr error
 	// bulkIncludeNonRetryable records the flag each bulk retry arrived with, so
 	// a test can pin that the panel's explicit "after fixing the cause" button
 	// is the only caller that sets it.

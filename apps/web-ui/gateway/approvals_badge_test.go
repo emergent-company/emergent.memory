@@ -145,6 +145,9 @@ func TestSidebarApprovalsBadge(t *testing.T) {
 			if !strings.Contains(html, `data-testid="approvals-nav-badge"`) {
 				t.Fatalf("badge missing its test hook: %q", html)
 			}
+			if !strings.Contains(html, "ml-1") {
+				t.Fatalf("badge lost the caller's ml-1 utility: %q", html)
+			}
 		}
 	}
 	if !found {
