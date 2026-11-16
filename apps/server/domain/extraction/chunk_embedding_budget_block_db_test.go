@@ -19,29 +19,44 @@ import (
 // application clock is off cannot cache a verdict for longer (or shorter) than
 // budgetBlockCacheTTL, and active's `blocked_until > now()` judges the row on
 // the clock that wrote it.
+//
+// The mark runs inside a transaction that started two seconds earlier. Postgres
+// now() is the transaction start, so a SQL-clock deadline lands exactly TTL
+// after now(), while a deadline computed from the Go clock (which sees the real
+// wall time, two seconds ahead of this transaction's now()) lands TTL+2s after
+// it. That is what makes this test fail on the pre-#818 semantics: comparing
+// the two clocks side by side after a plain mark cannot, because they agree.
 func TestBudgetBlockStoreDeadlineUsesDatabaseClock(t *testing.T) {
 	ctx, db := openEmbeddingWorkerTestDB(t)
 	projectID := seedEmbeddingProject(t, ctx, db)
-	store := newBudgetBlockStore(db)
+
+	const txBackdate = 2 * time.Second
+
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+
+	// Backdate the transaction's now() without moving the wall clock.
+	_, err = tx.NewRaw("SELECT pg_sleep(?)", txBackdate.Seconds()).Exec(ctx)
+	require.NoError(t, err)
+
+	store := newBudgetBlockStore(tx)
+	require.NoError(t, store.mark(ctx, projectID, budgetBlockCacheTTL))
+
+	// The remaining window is measured against this transaction's now(), so a
+	// Go-clock deadline shows up as the sleep added to it.
+	var remainingSeconds float64
+	require.NoError(t, tx.NewRaw(`SELECT EXTRACT(EPOCH FROM blocked_until - now())
+		FROM kb.chunk_embedding_budget_blocks WHERE project_id = ?`, projectID).
+		Scan(ctx, &remainingSeconds))
+	assert.InDelta(t, budgetBlockCacheTTL.Seconds(), remainingSeconds, 1,
+		"the deadline must be now() + TTL on the database clock; a Go-clock deadline is ahead by the transaction's age")
 
 	active, err := store.active(ctx, projectID)
 	require.NoError(t, err)
-	require.False(t, active, "a project that was never marked must not be blocked")
-
-	require.NoError(t, store.mark(ctx, projectID, budgetBlockCacheTTL))
-
-	// The remaining window is measured against the database's own now(), so a
-	// Go-clock deadline would show up here as a skew-sized difference.
-	var remainingSeconds float64
-	require.NoError(t, db.NewRaw(`SELECT EXTRACT(EPOCH FROM blocked_until - now())
-		FROM kb.chunk_embedding_budget_blocks WHERE project_id = ?`, projectID).
-		Scan(ctx, &remainingSeconds))
-	assert.InDelta(t, budgetBlockCacheTTL.Seconds(), remainingSeconds, 5,
-		"the deadline must be now() + TTL on the database clock")
-
-	active, err = store.active(ctx, projectID)
-	require.NoError(t, err)
 	assert.True(t, active, "a freshly marked project is inside its cached window")
+
+	require.NoError(t, tx.Commit())
 
 	// Once the window passes (written directly here — the store has no way to
 	// shorten a live window) active falls back to the authoritative check.
@@ -49,7 +64,7 @@ func TestBudgetBlockStoreDeadlineUsesDatabaseClock(t *testing.T) {
 		SET blocked_until = now() - interval '1 second' WHERE project_id = ?`, projectID).Exec(ctx)
 	require.NoError(t, err)
 
-	active, err = store.active(ctx, projectID)
+	active, err = newBudgetBlockStore(db).active(ctx, projectID)
 	require.NoError(t, err)
 	assert.False(t, active, "an expired window must not keep the project blocked")
 }

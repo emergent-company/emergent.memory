@@ -2690,7 +2690,7 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	// includes hidden built-ins such as set_session_title, which must not be
 	// reachable outside a restricted instance's allowlist.
 	if scope := InstanceScopeFromContext(ctx); scope != nil && InstanceDeniesTool(scope, legacyDispatchName(toolName, args)) {
-		return nil, fmt.Errorf("tool not allowed by MCP share instance: %s", toolName)
+		return nil, toolForbiddenf("tool not allowed by MCP share instance: %s", toolName)
 	}
 	// Handle hidden built-in tools — these are always available, never listed,
 	// and cannot be blocked by scope filters or tool whitelists (subject to the
@@ -2706,7 +2706,7 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	// pre-check — notably the ADK ToolPool during an agent run, which executes
 	// tools with the agent's context.
 	if scope := InstanceScopeFromContext(ctx); scope != nil && InstanceDeniesTool(scope, legacyDispatchName(toolName, args)) {
-		return nil, fmt.Errorf("tool not allowed by MCP share instance: %s", toolName)
+		return nil, toolForbiddenf("tool not allowed by MCP share instance: %s", toolName)
 	}
 	// One authority decision for every transport. The three HTTP transports
 	// enforce per-tool AgentOnly / RequiredScope / SuperadminOnly before dispatch
@@ -2766,7 +2766,7 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	// so it is exempt here.
 	if sensitiveInProcessAdminTools[toolName] && !principal.TransportEnforced {
 		if !principal.Platform {
-			return nil, fmt.Errorf("tool %q requires superadmin privileges", toolName)
+			return nil, toolForbiddenf("tool %q requires superadmin privileges", toolName)
 		}
 	}
 
@@ -2777,7 +2777,7 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 			AgentOnly:      toolDef.AgentOnly,
 			SuperadminOnly: s.IsSuperadminOnlyTool(toolName),
 		}, principal); err != nil {
-			return nil, err
+			return nil, toolAuthorizationError(err)
 		}
 	}
 
@@ -3132,7 +3132,7 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 			// if the definition lookup ever regresses (issues #994, #1017).
 			if !TrustedInternalFromContext(ctx) {
 				if _, ok := RunSubjectFromContext(ctx); !ok {
-					return nil, fmt.Errorf("github app tool %q is not reachable from an untrusted surface", toolName)
+					return nil, toolForbiddenf("github app tool %q is not reachable from an untrusted surface", toolName)
 				}
 			}
 			return s.githubAppToolHandler.ExecuteGitHubAppTool(ctx, projectID, toolName, args)
@@ -3151,7 +3151,7 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 					// per-tool check, so they never satisfy this trusted-internal gate
 					// — the relay fallback is genuinely-internal only (issues #994, #1017).
 					if !TrustedInternalFromContext(ctx) {
-						return nil, fmt.Errorf("relay tool %q is not reachable from an untrusted surface", toolName)
+						return nil, toolForbiddenf("relay tool %q is not reachable from an untrusted surface", toolName)
 					}
 					relayToolName := strings.TrimPrefix(toolName, prefix)
 					result, err := s.relaySvc.CallTool(ctx, projectID, sess.InstanceID, relayToolName, args)
@@ -3175,7 +3175,7 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 				}
 			}
 		}
-		return nil, fmt.Errorf("tool not found: %s", toolName)
+		return nil, toolNotFoundf("tool not found: %s", toolName)
 	}
 }
 
@@ -3860,7 +3860,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 
 	scope := TypeScopeFromContext(ctx)
 	if typeName != "" && !scope.AllowsObject(typeName) {
-		return nil, fmt.Errorf("query entities: object type %q is not allowed for this agent", typeName)
+		return nil, toolForbiddenf("query entities: object type %q is not allowed for this agent", typeName)
 	}
 
 	// Hard per-call deadline created at the tool entry so it covers EVERY path
@@ -4473,7 +4473,7 @@ func (s *Service) executeEntityHistory(ctx context.Context, projectID string, ar
 	if err != nil {
 		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, entityIDStr)
 		if keyErr != nil {
-			return nil, toolArgErrorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
+			return nil, invalidEntityRefError("entity_id", entityIDStr, keyErr)
 		}
 		canonicalID = resolved
 	}
@@ -4513,7 +4513,7 @@ func (s *Service) executeEntityHistory(ctx context.Context, projectID string, ar
 	}
 
 	if len(rows) > 0 && !TypeScopeFromContext(ctx).AllowsObject(rows[0].Type) {
-		return nil, fmt.Errorf("entity history: object type is not allowed for this agent's scope")
+		return nil, toolForbiddenf("entity history: object type is not allowed for this agent's scope")
 	}
 
 	type versionEntry struct {
@@ -4676,7 +4676,11 @@ func (s *Service) resolveOrCreateBranchID(ctx context.Context, projectID, branch
 	}
 	createdID, parseErr := uuid.Parse(created.ID)
 	if parseErr != nil {
-		return nil, toolArgErrorf("auto-created branch has invalid UUID %q: %w", created.ID, parseErr)
+		// The id is server-generated: an unparseable one is never the caller's
+		// input problem, so reporting it as invalid params would misdirect the
+		// agent into changing its branch argument.
+		return nil, apperror.NewInternal("An internal error occurred",
+			fmt.Errorf("auto-created branch has invalid UUID %q: %w", created.ID, parseErr))
 	}
 	return &createdID, nil
 }
@@ -4698,7 +4702,7 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 
 	scope := TypeScopeFromContext(ctx)
 	if typeName != "" && !scope.AllowsObject(typeName) {
-		return nil, fmt.Errorf("search entities: object type %q is not allowed for this agent", typeName)
+		return nil, toolForbiddenf("search entities: object type %q is not allowed for this agent", typeName)
 	}
 
 	// Resolve optional branch parameter.
@@ -4930,7 +4934,7 @@ func (s *Service) executeGetEntityEdges(ctx context.Context, projectID string, a
 	if err != nil {
 		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, entityIDStr)
 		if keyErr != nil {
-			return nil, toolArgErrorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
+			return nil, invalidEntityRefError("entity_id", entityIDStr, keyErr)
 		}
 		entityID = resolved
 	}
@@ -5098,15 +5102,22 @@ func (s *Service) resolveEntityIDByKey(ctx context.Context, projectID uuid.UUID,
 		`, key, projectID).Scan(ctx, &canonicalID)
 	}
 	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			// A store failure is not a missing key. Reporting it as "not found"
+			// would make the caller's next move (fix the key) wrong, and the
+			// call site would fold it into an invalid-parameter message.
+			return uuid.Nil, apperror.NewInternal("An internal error occurred",
+				fmt.Errorf("resolve entity key %q: %w", key, err))
+		}
 		// Fetch fuzzy suggestions to help agents self-correct.
 		suggestions := s.suggestEntityKeysByFuzzy(ctx, projectID, key, 3)
 		if len(suggestions) > 0 {
-			return uuid.Nil, fmt.Errorf(
+			return uuid.Nil, &entityKeyNotFound{message: fmt.Sprintf(
 				"entity with key %q not found — did you mean one of these? %s. Use the exact key shown with entity-update or relationship-create.",
 				key, strings.Join(suggestions, ", "),
-			)
+			)}
 		}
-		return uuid.Nil, fmt.Errorf("entity with key %q not found", key)
+		return uuid.Nil, &entityKeyNotFound{message: fmt.Sprintf("entity with key %q not found", key)}
 	}
 	return canonicalID, nil
 }
@@ -5316,7 +5327,7 @@ func (s *Service) updateEntityOne(ctx context.Context, projectUUID uuid.UUID, pr
 	if err != nil {
 		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, entityIDStr)
 		if keyErr != nil {
-			return nil, toolArgErrorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
+			return nil, invalidEntityRefError("entity_id", entityIDStr, keyErr)
 		}
 		entityID = resolved
 	}
@@ -5383,10 +5394,10 @@ func (s *Service) updateEntityOne(ctx context.Context, projectUUID uuid.UUID, pr
 	writeRules := AgentWriteRulesFromContext(ctx)
 	if typ, lerr := s.lookupObjectType(ctx, projectID, entityID); lerr == nil {
 		if !scope.AllowsObject(typ) {
-			return nil, fmt.Errorf("update entity: object type is not allowed for this agent's scope")
+			return nil, toolForbiddenf("update entity: object type is not allowed for this agent's scope")
 		}
 		if !writeRules.UpdateAllowed(typ) {
-			return nil, fmt.Errorf("update entity: updating objects of type %q is not allowed for this agent", typ)
+			return nil, toolForbiddenf("update entity: updating objects of type %q is not allowed for this agent", typ)
 		}
 		if err := writeRules.CheckFields(typ, req.Properties); err != nil {
 			return nil, fmt.Errorf("update entity: %w", err)
@@ -5605,7 +5616,7 @@ func (s *Service) deleteEntityOne(ctx context.Context, projectUUID uuid.UUID, pr
 	if err != nil {
 		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, entityIDStr)
 		if keyErr != nil {
-			return uuid.Nil, toolArgErrorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
+			return uuid.Nil, invalidEntityRefError("entity_id", entityIDStr, keyErr)
 		}
 		entityID = resolved
 	}
@@ -5614,10 +5625,10 @@ func (s *Service) deleteEntityOne(ctx context.Context, projectUUID uuid.UUID, pr
 	scope := TypeScopeFromContext(ctx)
 	if typ, lerr := s.lookupObjectType(ctx, projectID, entityID); lerr == nil {
 		if !scope.AllowsObject(typ) {
-			return uuid.Nil, fmt.Errorf("delete entity: object type is not allowed for this agent's scope")
+			return uuid.Nil, toolForbiddenf("delete entity: object type is not allowed for this agent's scope")
 		}
 		if !writeRules.DeleteAllowed(typ) {
-			return uuid.Nil, fmt.Errorf("delete entity: deleting objects of type %q is not allowed for this agent", typ)
+			return uuid.Nil, toolForbiddenf("delete entity: deleting objects of type %q is not allowed for this agent", typ)
 		}
 	}
 
@@ -5755,11 +5766,11 @@ func (s *Service) executeBulkUpdateEntities(ctx context.Context, projectID strin
 			switch action {
 			case graph.BulkActionSoftDelete, graph.BulkActionHardDelete:
 				if !writeRules.DeleteAllowed(typ) {
-					return nil, fmt.Errorf("bulk update entity: deleting objects of type %q is not allowed for this agent", typ)
+					return nil, toolForbiddenf("bulk update entity: deleting objects of type %q is not allowed for this agent", typ)
 				}
 			default:
 				if !writeRules.UpdateAllowed(typ) {
-					return nil, fmt.Errorf("bulk update entity: updating objects of type %q is not allowed for this agent", typ)
+					return nil, toolForbiddenf("bulk update entity: updating objects of type %q is not allowed for this agent", typ)
 				}
 				if action == graph.BulkActionMergeProperties || action == graph.BulkActionReplaceProperties {
 					if err := writeRules.CheckFields(typ, props); err != nil {
@@ -5926,7 +5937,7 @@ func (s *Service) executeRestoreEntity(ctx context.Context, projectID string, ar
 	if err != nil {
 		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, entityIDStr)
 		if keyErr != nil {
-			return nil, toolArgErrorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
+			return nil, invalidEntityRefError("entity_id", entityIDStr, keyErr)
 		}
 		entityID = resolved
 	}
@@ -5947,7 +5958,7 @@ func (s *Service) executeRestoreEntity(ctx context.Context, projectID string, ar
 	scope := TypeScopeFromContext(ctx)
 	if typ, lerr := s.lookupObjectTypeIncludingDeleted(ctx, projectID, entityID); lerr == nil {
 		if !scope.AllowsObject(typ) {
-			return nil, fmt.Errorf("restore entity: object type is not allowed for this agent's scope")
+			return nil, toolForbiddenf("restore entity: object type is not allowed for this agent's scope")
 		}
 	}
 

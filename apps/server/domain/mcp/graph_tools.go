@@ -695,7 +695,7 @@ func (s *Service) executeFindSimilar(ctx context.Context, projectID string, args
 
 	scope := TypeScopeFromContext(ctx)
 	if typeFilter != nil && !scope.AllowsObject(*typeFilter) {
-		return nil, fmt.Errorf("find similar: object type %q is not allowed for this agent", *typeFilter)
+		return nil, toolForbiddenf("find similar: object type %q is not allowed for this agent", *typeFilter)
 	}
 
 	opts := responseOptsFromArgs(args)
@@ -740,7 +740,7 @@ func (s *Service) executeTraverseGraph(ctx context.Context, projectID string, ar
 		// Not a UUID — try resolving as an entity key.
 		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, startEntityIDStr)
 		if keyErr != nil {
-			return nil, toolArgErrorf("invalid start_entity_id: %q is not a UUID and key lookup failed: %w", startEntityIDStr, keyErr)
+			return nil, invalidEntityRefError("start_entity_id", startEntityIDStr, keyErr)
 		}
 		startEntityID = resolved
 	}
@@ -846,7 +846,7 @@ func (s *Service) executeListRelationships(ctx context.Context, projectID string
 
 	if t, ok := args["type"].(string); ok && t != "" {
 		if !scope.AllowsRelationship(t) {
-			return nil, fmt.Errorf("list relationships: relationship type %q is not allowed for this agent", t)
+			return nil, toolForbiddenf("list relationships: relationship type %q is not allowed for this agent", t)
 		}
 		params.Type = &t
 	}
@@ -936,7 +936,7 @@ func (s *Service) executeUpdateRelationship(ctx context.Context, projectID strin
 	scope := TypeScopeFromContext(ctx)
 	if typ, lerr := s.lookupRelationshipType(ctx, projectID, relID); lerr == nil {
 		if !scope.AllowsRelationship(typ) {
-			return nil, fmt.Errorf("update relationship: relationship type is not allowed for this agent's scope")
+			return nil, toolForbiddenf("update relationship: relationship type is not allowed for this agent's scope")
 		}
 	}
 

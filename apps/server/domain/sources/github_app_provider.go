@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 // githubAppRepoPattern validates an owner/name allowlist entry.
@@ -41,25 +43,25 @@ func normalizeInstallationID(v any) (string, error) {
 		digits = strconv.FormatUint(t, 10)
 	case float64:
 		if t != math.Trunc(t) || t < 0 || t > math.MaxInt64 {
-			return "", fmt.Errorf("installation_id must be a whole number, got %v", t)
+			return "", apperror.NewValidationf("installation_id must be a whole number, got %v", t)
 		}
 		digits = strconv.FormatInt(int64(t), 10)
 	case float32:
 		f := float64(t)
 		if f != math.Trunc(f) || f < 0 || f > math.MaxInt64 {
-			return "", fmt.Errorf("installation_id must be a whole number, got %v", t)
+			return "", apperror.NewValidationf("installation_id must be a whole number, got %v", t)
 		}
 		digits = strconv.FormatInt(int64(f), 10)
 	case nil:
-		return "", fmt.Errorf("installation_id is required")
+		return "", apperror.NewValidation("installation_id is required")
 	default:
-		return "", fmt.Errorf("installation_id must be a string or a number, got %T", v)
+		return "", apperror.NewValidationf("installation_id must be a string or a number, got %T", v)
 	}
 	if digits == "" || digits == "<nil>" {
-		return "", fmt.Errorf("installation_id is required")
+		return "", apperror.NewValidation("installation_id is required")
 	}
 	if !githubInstallationIDPattern.MatchString(digits) {
-		return "", fmt.Errorf("installation_id must be numeric, got %q", digits)
+		return "", apperror.NewValidationf("installation_id must be numeric, got %q", digits)
 	}
 	return digits, nil
 }
@@ -139,21 +141,21 @@ func (p *githubAppProvider) NormalizeConfig(cfg map[string]any) {
 func (p *githubAppProvider) ValidateConfig(cfg map[string]any) error {
 	appID := strings.TrimSpace(fmt.Sprint(cfg["app_id"]))
 	if appID == "" || appID == "<nil>" {
-		return fmt.Errorf("github_app: app_id is required")
+		return apperror.NewValidation("github_app: app_id is required")
 	}
 	if _, err := uuid.Parse(appID); err != nil {
-		return fmt.Errorf("github_app: app_id must be a UUID")
+		return apperror.NewValidation("github_app: app_id must be a UUID")
 	}
 	if _, err := normalizeInstallationID(cfg["installation_id"]); err != nil {
-		return fmt.Errorf("github_app: %w", err)
+		return apperror.NewValidationf("github_app: %w", err)
 	}
 	repos := appRepoList(cfg["repos"])
 	if len(repos) == 0 {
-		return fmt.Errorf("github_app: repos must not be empty")
+		return apperror.NewValidation("github_app: repos must not be empty")
 	}
 	for _, repo := range repos {
 		if !githubAppRepoPattern.MatchString(repo) {
-			return fmt.Errorf("github_app: %q is not owner/name", repo)
+			return apperror.NewValidationf("github_app: %q is not owner/name", repo)
 		}
 	}
 	return nil

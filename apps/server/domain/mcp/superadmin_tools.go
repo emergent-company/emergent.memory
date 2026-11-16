@@ -589,14 +589,14 @@ func (s *Service) GetSuperadminToolDefinitions() []ToolDefinition {
 // SuperadminOnly tools through ExecuteTool's dispatch.
 func (s *Service) ExecuteSuperadminTool(ctx context.Context, toolName string, args map[string]any) (*ToolResult, error) {
 	if !s.IsAdminOperatorTool(toolName) {
-		return nil, fmt.Errorf("tool not found: %s", toolName)
+		return nil, toolNotFoundf("tool not found: %s", toolName)
 	}
 	ok, err := s.IsSuperadminCaller(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to authorize tool %q: %w", toolName, err)
 	}
 	if !ok {
-		return nil, fmt.Errorf("tool %q requires superadmin privileges", toolName)
+		return nil, toolForbiddenf("tool %q requires superadmin privileges", toolName)
 	}
 	// Same strict-boolean boundary as ExecuteTool (#24): the operator catalogue
 	// declares `confirm` and `has_error` as booleans and the handlers read them
@@ -685,7 +685,7 @@ func (s *Service) dispatchSuperadminTool(ctx context.Context, toolName string, a
 	case "document-parsing-job-retry":
 		return s.executeSuperadminDocumentParsingJobRetry(ctx, args)
 	default:
-		return nil, fmt.Errorf("tool not found: %s", toolName)
+		return nil, toolNotFoundf("tool not found: %s", toolName)
 	}
 }
 
