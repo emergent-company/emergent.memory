@@ -364,7 +364,10 @@ func (h *A2AHandler) prepareA2AResume(ctx context.Context, latest *AgentRun, use
 			return "", false, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to resume task")
 		}
 		if !claimed {
-			return "", false, a2aResumeInProgressError()
+			// The claim only says the pause left input-required; classify why
+			// before telling the client anything about a turn running elsewhere
+			// (issue #912).
+			return "", false, a2aResumeClaimLostError(h.repo.ResumeClaimLostError(ctx, latest.ID))
 		}
 		return a2aResumeUserMessage(nil, userMessage), true, nil
 	}
@@ -380,6 +383,23 @@ func (h *A2AHandler) prepareA2AResume(ctx context.Context, latest *AgentRun, use
 		return "", false, a2aInvalidStateError("question is no longer pending")
 	}
 	return a2aResumeUserMessage(question, userMessage), false, nil
+}
+
+// a2aResumeClaimLostError maps a lost resume claim onto the A2A envelope. A
+// pause another caller claimed reads as "someone else is resuming this task"
+// (RESUME_IN_PROGRESS); a pause that left input-required for another reason —
+// cancelled, failed — is INVALID_STATE carrying the run's real status instead,
+// so the client is never told a dead turn is running (issue #912). Anything else
+// (e.g. the run row could not be read) keeps the generic failure.
+func a2aResumeClaimLostError(err error) *A2AError {
+	switch {
+	case errors.Is(err, ErrRunAlreadyResumed):
+		return a2aResumeInProgressError()
+	case errors.Is(err, ErrRunPauseNotResumable):
+		return a2aInvalidStateError(err.Error())
+	default:
+		return NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to resume task")
+	}
 }
 
 // a2aResumeInProgressError reports that another follow-up consumed the pause
@@ -934,6 +954,13 @@ func (h *A2AHandler) resumeA2ATask(c echo.Context, projectID, userID, userMessag
 				// Another follow-up consumed the pause first: this one must not
 				// execute the turn a second time (issue #887).
 				h.log.Info("a2a async resume lost the pause claim", "task_id", taskID)
+			case errors.Is(execErr, ErrRunPauseNotResumable):
+				// The pause went terminal (cancelled/failed) before this resume
+				// reached it: no turn is running, so this is not the benign
+				// "someone else has it" case (issue #912). Nothing to fail
+				// either — the task already shows its real terminal state.
+				h.log.Warn("a2a async resume found the pause no longer resumable",
+					"task_id", taskID, "error", execErr.Error())
 			case execErr != nil:
 				h.log.Error("a2a async resume failed", "task_id", taskID, "error", execErr.Error())
 			}
@@ -950,10 +977,12 @@ func (h *A2AHandler) resumeA2ATask(c echo.Context, projectID, userID, userMessag
 	if result != nil && result.Cleanup != nil {
 		defer result.Cleanup()
 	}
-	if errors.Is(execErr, ErrRunAlreadyResumed) {
-		// Another follow-up consumed the pause first: reject this follower with
-		// its own reason instead of reporting the task as paused/failed (#887).
-		return writeA2AError(c, a2aResumeInProgressError())
+	if errors.Is(execErr, ErrRunAlreadyResumed) || errors.Is(execErr, ErrRunPauseNotResumable) {
+		// Another follow-up consumed the pause first (reject this follower with
+		// its own reason, #887), or the pause went terminal before the claim
+		// (report the run's real state instead of "already being resumed",
+		// #912).
+		return writeA2AError(c, a2aResumeClaimLostError(execErr))
 	}
 	if execErr != nil {
 		h.log.Error("a2a resume failed", "task_id", taskID, "error", execErr.Error())

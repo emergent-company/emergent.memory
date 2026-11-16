@@ -1,5 +1,8 @@
 package main
 
+// guard: the canonical-L0 primitive / name-collision ratchet over authored
+// gateway sources — every test here must gate every PR.
+
 import (
 	"fmt"
 	"maps"

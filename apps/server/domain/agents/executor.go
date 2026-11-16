@@ -1806,6 +1806,43 @@ func resolveRunTimeout(req ExecuteRequest) time.Duration {
 // second time (issue #887).
 var ErrRunAlreadyResumed = errors.New("run is no longer awaiting input (already resumed)")
 
+// ErrRunPauseNotResumable reports that a resume lost the pause claim to a
+// terminal state rather than to another caller: the run was cancelled, failed,
+// or otherwise finalized before this resume reached it (issue #912).
+//
+// It is deliberately distinct from ErrRunAlreadyResumed. A 0-row claim only says
+// the pause is no longer `input-required`; it does not say a turn is running
+// under someone else's claim. Reporting "already resumed" for a cancelled pause
+// tells the caller to wait for a turn that will never execute, and leaves a
+// spawn_agents sub-agent card stuck at `running` forever.
+var ErrRunPauseNotResumable = errors.New("run pause is no longer resumable")
+
+// lostResumeClaimError explains a resume claim that matched no rows by reading
+// the pause's remaining state (issue #912). The claim's guarded
+// `input-required → completed` UPDATE is the only writer that moves a paused row
+// to success, so
+//
+//   - paused/queued/running: the pause is still live (a claim is in flight or
+//     the row was never consumed) — the benign "someone else has it" verdict;
+//   - success: the claim already ran, possibly by another follower — benign,
+//     whether or not its child row is visible yet;
+//   - anything else (cancelled, cancelling, failed, skipped, deleted): the pause
+//     is terminal for another reason, so no turn will ever execute under it.
+//
+// A nil run means the row is gone, which is equally unresumable.
+func lostResumeClaimError(run *AgentRun, runID string) error {
+	if run == nil {
+		return fmt.Errorf("%w: run %s no longer exists", ErrRunPauseNotResumable, runID)
+	}
+	switch run.Status {
+	case RunStatusPaused, RunStatusQueued, RunStatusRunning, RunStatusSuccess:
+		return fmt.Errorf("%w: run %s", ErrRunAlreadyResumed, runID)
+	default:
+		return fmt.Errorf("%w: run %s left input-required with status %s",
+			ErrRunPauseNotResumable, runID, run.Status)
+	}
+}
+
 // beginResumedRun creates the run that takes over priorRun's execution,
 // consuming the pause as part of the same transaction (issue #887). It is the
 // executor's resume claim: every non-A2A entry point (chat, question respond,
@@ -1829,7 +1866,10 @@ func (ae *AgentExecutor) beginResumedRun(ctx context.Context, priorRun *AgentRun
 		return nil, fmt.Errorf("failed to create resumed run: %w", err)
 	}
 	if !claimed {
-		return nil, fmt.Errorf("%w: run %s", ErrRunAlreadyResumed, priorRun.ID)
+		// The claim says only that the pause left input-required; read the row
+		// back to tell "another follower is running it" from "the pause went
+		// terminal before we got here" (issue #912).
+		return nil, ae.repo.ResumeClaimLostError(ctx, priorRun.ID)
 	}
 	return run, nil
 }
@@ -1899,14 +1939,20 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 				// leak as a live `working` row that never executes. The winner
 				// owns the turn. Callers that also fail it on the returned error
 				// are a no-op thanks to the guarded terminal transition.
+				//
+				// Retiring is right in both cases the lost claim can mean: the
+				// turn runs under another follower's claim, or the pause went
+				// terminal before this one (issue #912) — either way this
+				// child will never execute.
+				lostErr := ae.repo.ResumeClaimLostError(dbCtx, priorRun.ID)
 				if failErr := ae.repo.FailRunWithSteps(dbCtx, newRun.ID,
-					fmt.Sprintf("resume lost the race for run %s: %s", priorRun.ID, ErrRunAlreadyResumed), priorRun.StepCount); failErr != nil {
+					fmt.Sprintf("resume lost the claim for run %s: %s", priorRun.ID, lostErr), priorRun.StepCount); failErr != nil {
 					ae.log.Warn("failed to retire pre-created run after losing the resume claim",
 						slog.String("run_id", newRun.ID),
 						slog.String("error", failErr.Error()),
 					)
 				}
-				return nil, fmt.Errorf("%w: run %s", ErrRunAlreadyResumed, priorRun.ID)
+				return nil, lostErr
 			}
 		}
 		newRun.TrustedInternal = priorRun.TrustedInternal

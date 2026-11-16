@@ -830,6 +830,7 @@ func (f *fakeMemory) CreateRuntimeAgent(ctx context.Context, in *CreateRuntimeAg
 }
 
 func (f *fakeMemory) ListRuntimeAgents(ctx context.Context, projectID string) ([]RuntimeAgent, error) {
+	f.recordCatalog("ListRuntimeAgents")
 	return f.runtimeAgents, nil
 }
 

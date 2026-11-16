@@ -141,7 +141,7 @@ func (s *Service) executeListDocuments(ctx context.Context, projectID string, ar
 	if cur, ok := args["cursor"].(string); ok && cur != "" {
 		parsed, err := documents.ParseCursor(cur)
 		if err != nil {
-			return nil, fmt.Errorf("list_documents: invalid cursor: %w", err)
+			return nil, toolArgErrorf("list_documents: invalid cursor: %w", err)
 		}
 		params.Cursor = parsed
 	}
@@ -228,7 +228,7 @@ func documentSummary(d *documents.Document, includeContent bool) map[string]any 
 func (s *Service) executeGetDocument(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	docID, _ := args["document_id"].(string)
 	if docID == "" {
-		return nil, fmt.Errorf("get_document: 'document_id' is required")
+		return nil, toolArgErrorf("get_document: 'document_id' is required")
 	}
 	doc, err := s.documentsSvc.GetByID(ctx, projectID, docID)
 	if err != nil {
@@ -240,11 +240,11 @@ func (s *Service) executeGetDocument(ctx context.Context, projectID string, args
 func (s *Service) executeUploadDocument(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	filename, _ := args["filename"].(string)
 	if filename == "" {
-		return nil, fmt.Errorf("upload_document: 'filename' is required")
+		return nil, toolArgErrorf("upload_document: 'filename' is required")
 	}
 	contentB64, _ := args["content_base64"].(string)
 	if contentB64 == "" {
-		return nil, fmt.Errorf("upload_document: 'content_base64' is required")
+		return nil, toolArgErrorf("upload_document: 'content_base64' is required")
 	}
 
 	// Decode — try standard then URL-safe base64
@@ -252,11 +252,11 @@ func (s *Service) executeUploadDocument(ctx context.Context, projectID string, a
 	if err != nil {
 		decoded, err = base64.URLEncoding.DecodeString(contentB64)
 		if err != nil {
-			return nil, fmt.Errorf("upload_document: invalid base64 content: %w", err)
+			return nil, toolArgErrorf("upload_document: invalid base64 content: %w", err)
 		}
 	}
 	if len(decoded) > maxUploadBytes {
-		return nil, fmt.Errorf("upload_document: decoded file size %d bytes exceeds 10 MB limit", len(decoded))
+		return nil, toolArgErrorf("upload_document: decoded file size %d bytes exceeds 10 MB limit", len(decoded))
 	}
 
 	mimeType, _ := args["mime_type"].(string)
@@ -314,7 +314,7 @@ func (s *Service) executeUploadDocument(ctx context.Context, projectID string, a
 func (s *Service) executeDeleteDocument(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	docID, _ := args["document_id"].(string)
 	if docID == "" {
-		return nil, fmt.Errorf("delete_document: 'document_id' is required")
+		return nil, toolArgErrorf("delete_document: 'document_id' is required")
 	}
 	result, err := s.documentsSvc.Delete(ctx, projectID, docID)
 	if err != nil {

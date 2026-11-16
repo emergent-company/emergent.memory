@@ -264,7 +264,10 @@ func (s *Server) invalidateProcessingProblems(ctx context.Context) {
 }
 
 // currentProjectID resolves the active project from the session, falling back
-// to the static project id used by dev/API-key mode.
+// to the static project id used by dev/API-key mode. It is the Server-side twin
+// of MemoryClient.projectIDFor, and exists for the calls that take an explicit
+// project id (ListRuntimeAgents, ListAgentQueues, …); everything else lets the
+// client scope the request itself.
 func (s *Server) currentProjectID(ctx context.Context) string {
 	if sc, ok := sessionContextFrom(ctx); ok && sc.ProjectID != "" {
 		return sc.ProjectID

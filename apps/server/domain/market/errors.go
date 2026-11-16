@@ -16,6 +16,7 @@ const (
 	CodeMarketUnreach         = "market_unreachable"
 	CodeMarketRejected        = "market_rejected"
 	CodeMarketRateLimited     = "market_rate_limited"
+	CodeMarketMalformed       = "market_malformed_response"
 	CodeInstallNotInstallable = "install_not_installable"
 	CodeCompat                = "compat_unsatisfied"
 	CodeUndeclaredTools       = "undeclared_tools"
@@ -113,6 +114,19 @@ func ErrMarketRejected(operation string, status int) *apperror.Error {
 	}
 	return apperror.New(http.StatusBadGateway, CodeMarketRejected,
 		fmt.Sprintf("market rejected the %s with HTTP %d", operation, status))
+}
+
+// ErrMarketMalformedResponse reports a 2xx whose body the instance cannot use:
+// invalid JSON, or a document missing the field the operation needs. It is a
+// market bug, not an outage: it must stay visible and distinct from
+// ErrMarketUnreachable, which drives the outage/fallback path and usage replay.
+// It has its own code so dashboards can separate a broken producer from a market
+// that is down, and it is deliberately not retryable on the network cadence.
+func ErrMarketMalformedResponse(detail string) *apperror.Error {
+	if detail == "" {
+		detail = "market returned a malformed response"
+	}
+	return apperror.New(http.StatusBadGateway, CodeMarketMalformed, detail)
 }
 
 // isClientRejection reports whether status is the market answering "no" to a

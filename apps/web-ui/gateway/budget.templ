@@ -72,9 +72,13 @@ templ usageBudgetSection(state *BudgetState, loadErr error) {
 				<a href="/settings/budget" class="link link-primary text-sm">Set a budget</a>
 			</div>
 		} else {
+			// Month first, then week: the monthly cap is the primary budget a
+			// user reasons about, and the shorter window reads as the follow-up
+			// detail. The settings page orders its windows the same way, so the
+			// two views cannot disagree about which window comes first.
 			<div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
-				@budgetWindowCard(state.Week, "week")
 				@budgetWindowCard(state.Month, "month")
+				@budgetWindowCard(state.Week, "week")
 			</div>
 		}
 	}

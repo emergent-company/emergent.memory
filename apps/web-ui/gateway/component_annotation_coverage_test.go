@@ -1,5 +1,8 @@
 package main
 
+// guard: the dev-mode component-annotation coverage ratchet and its gating
+// checks — every test here must gate every PR.
+
 import (
 	"bytes"
 	"os"

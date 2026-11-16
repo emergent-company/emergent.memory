@@ -192,6 +192,18 @@ func NewValidation(message string) *Error {
 	}
 }
 
+// NewValidationf is NewValidation with printf-style formatting, for call sites
+// that build the message from the offending argument. It formats through
+// fmt.Errorf so a %w operand renders the wrapped error's text into the message
+// (fmt.Sprintf would emit "%!w(...)"), matching what a caller of this helper
+// expects: the wrapped error describes the caller's own input.
+//
+// Shared by the MCP tool domain and the sources domain so both render an
+// argument refusal the same way (issue #668).
+func NewValidationf(format string, args ...any) *Error {
+	return NewValidation(fmt.Errorf(format, args...).Error())
+}
+
 // NewDatabase creates a 500 database error with a message and the underlying
 // error attached for internal logging. Constructed directly (rather than via
 // ErrDatabase.WithInternal) for the same ratchet-count reason as NewValidation.

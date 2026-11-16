@@ -1,5 +1,8 @@
 package main
 
+// guard: the adoption/pattern consistency ratchets and their detector
+// self-tests — every test here must gate every PR.
+
 import (
 	"fmt"
 	"maps"
@@ -279,12 +282,12 @@ func statusCircleHit(line string) bool {
 	return false
 }
 
-// TestStatusCircleDetector pins both directions of the status-icon-circle
+// TestStatusCircleDetectorRatchet pins both directions of the status-icon-circle
 // pattern: it must fire on every shape a copied circle takes (including the
 // multi-attribute tag templ splits across lines, and a reordered class list) and
 // stay quiet on components.IconCircle's own computed attribute and on the tone
 // switch's Go string literals.
-func TestStatusCircleDetector(t *testing.T) {
+func TestStatusCircleDetectorRatchet(t *testing.T) {
 	const circle = "bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full"
 	cases := []struct {
 		name string
@@ -617,13 +620,13 @@ func pluralS(n int) string {
 	return "s"
 }
 
-// TestBudgetEntriesRequireJustification guards the note rule for the adoption
-// and pattern budgets (the page-card-raw budget is covered by
-// TestPageCardRawBudgetRequiresNote, next to its own check). It drives the same
-// findings functions the two ratchet tests assert on, so deleting the guard from
-// a ratchet fails here: the shipped tables must be clean, and an entry with a
-// blank note must produce a note finding.
-func TestBudgetEntriesRequireJustification(t *testing.T) {
+// TestBudgetEntriesRequireJustificationRatchet guards the note rule for the
+// adoption and pattern budgets (the page-card-raw budget is covered by
+// TestPageCardRawBudgetRequiresNoteRatchet, next to its own check). It drives
+// the same findings functions the two ratchet tests assert on, so deleting the
+// guard from a ratchet fails here: the shipped tables must be clean, and an
+// entry with a blank note must produce a note finding.
+func TestBudgetEntriesRequireJustificationRatchet(t *testing.T) {
 	if got := adoptionRatchetFindings(adoptionBudget()); len(got) != 0 {
 		t.Errorf("adoption budget: %v", got)
 	}

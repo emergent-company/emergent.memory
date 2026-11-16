@@ -1,5 +1,8 @@
 package components
 
+// guard: the class-hook wrappers' merge and go-daisy parity — every test in
+// this file must gate every PR, so all of them end in `Ratchet`.
+
 import (
 	"regexp"
 	"sort"
@@ -20,11 +23,14 @@ import (
 // defect being fixed, and "the token asked for is present in the single class
 // attribute" is the whole claim. The parity tests are what keep the copy honest.
 //
-// The behavioural tests end in `Ratchet` because the required `ci` job runs only
-// `go test -run Ratchet ./...` for this module (ci.yml, "Consistency
+// Every test in this file ends in `Ratchet` because the required `ci` job runs
+// only `go test -run Ratchet ./...` for this module (ci.yml, "Consistency
 // ratchets"): class_attr_ratchet_test.go stops a new "class" literal, but it
-// cannot notice this merge disappearing from the wrappers, and that is the
-// regression the names must make runnable on the PR.
+// cannot notice this merge disappearing from the wrappers, and the parity tests
+// are the half that catches a go-daisy pin bump that drops twmerge. All of them
+// must run on the PR, not only at promotion (#910). The `// guard:` marker above
+// declares the file a guard, and TestGuardTestNamingConventionRatchet enforces
+// both halves of that convention.
 
 // rootTag returns the first element's opening tag, from "<tag" through ">".
 func rootTag(t *testing.T, html string) string {
@@ -182,12 +188,12 @@ func TestBadgeAndAlertFoldAClassLeftInAttrsRatchet(t *testing.T) {
 	}
 }
 
-// TestTakeClassAttrFoldsEveryShapeTemplRenders pins the class values that can
-// arrive through templ.Attributes: the shapes templ itself renders as class
-// text are folded, anything else is dropped. The key never survives, whatever
-// the type — a second class attribute is the defect (#855), so an unfashionable
-// value must not get one.
-func TestTakeClassAttrFoldsEveryShapeTemplRenders(t *testing.T) {
+// TestTakeClassAttrFoldsEveryShapeTemplRendersRatchet pins the class values
+// that can arrive through templ.Attributes: the shapes templ itself renders as
+// class text are folded, anything else is dropped. The key never survives,
+// whatever the type — a second class attribute is the defect (#855), so an
+// unfashionable value must not get one.
+func TestTakeClassAttrFoldsEveryShapeTemplRendersRatchet(t *testing.T) {
 	str := "ml-1"
 	for _, tc := range []struct {
 		name  string
@@ -217,10 +223,10 @@ func TestTakeClassAttrFoldsEveryShapeTemplRenders(t *testing.T) {
 	}
 }
 
-// TestBadgeNeverRendersASecondClassAttributeForAnUnfoldableValue is the render
-// half of the test above: an int class value is dropped, not emitted beside the
-// badge's own class attribute.
-func TestBadgeNeverRendersASecondClassAttributeForAnUnfoldableValue(t *testing.T) {
+// TestBadgeNeverRendersASecondClassAttributeForAnUnfoldableValueRatchet is the
+// render half of the test above: an int class value is dropped, not emitted
+// beside the badge's own class attribute.
+func TestBadgeNeverRendersASecondClassAttributeForAnUnfoldableValueRatchet(t *testing.T) {
 	html := renderHTML(t, BadgeWithClass(BadgeWithClassProps{
 		BadgeProps: ui.BadgeProps{Label: "3", Variant: ui.BadgeError, Attrs: templ.Attributes{"class": 5}},
 	}))
@@ -250,10 +256,10 @@ func TestStatusBadgeFoldsClassFromAttrsRatchet(t *testing.T) {
 	assertContains(t, tag, `data-testid="pending-badge"`)
 }
 
-// TestBadgeMatchesUpstreamWithoutClass is the anti-drift guard for the Badge
-// copy: every prop shape renders the same markup as ui.Badge when Class is
-// empty.
-func TestBadgeMatchesUpstreamWithoutClass(t *testing.T) {
+// TestBadgeMatchesUpstreamWithoutClassRatchet is the anti-drift guard for the
+// Badge copy: every prop shape renders the same markup as ui.Badge when Class
+// is empty.
+func TestBadgeMatchesUpstreamWithoutClassRatchet(t *testing.T) {
 	cases := map[string]ui.BadgeProps{
 		"bare":         {Label: "hi"},
 		"intent+size":  {Label: "hi", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeSM},
@@ -285,9 +291,9 @@ func TestBadgeMatchesUpstreamWithoutClass(t *testing.T) {
 	}
 }
 
-// TestAlertMatchesUpstreamWithoutClass is the anti-drift guard for the Alert
-// copy.
-func TestAlertMatchesUpstreamWithoutClass(t *testing.T) {
+// TestAlertMatchesUpstreamWithoutClassRatchet is the anti-drift guard for the
+// Alert copy.
+func TestAlertMatchesUpstreamWithoutClassRatchet(t *testing.T) {
 	cases := map[string]ui.AlertProps{
 		"bare":          {Message: "hi"},
 		"type+style":    {Type: ui.AlertSuccess, Style: ui.AlertStyleSoft, Message: "saved"},
