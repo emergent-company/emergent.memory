@@ -401,9 +401,7 @@ templ objectsActorAvatar(o objectActorOption) {
 			})
 		</span>
 	} else {
-		<span class="bg-base-200 text-base-content/70 inline-flex size-6 shrink-0 items-center justify-center rounded-full" aria-hidden="true" data-actor-avatar="agent">
-			@agentInlineGlyph(o.Icon, o.Color)
-		</span>
+		@agentAvatarBubble(o.Icon, o.Color, templ.Attributes{"data-actor-avatar": "agent"})
 	}
 }
 

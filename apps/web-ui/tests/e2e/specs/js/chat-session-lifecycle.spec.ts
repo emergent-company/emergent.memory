@@ -71,7 +71,6 @@ const SKELETON = `<!doctype html>
     <div>
       <button type="button" data-action="toggle-session-select" data-testid="toggle-session-select" aria-pressed="false">Select</button>
     </div>
-    <select id="chat-agent-filter" aria-label="Filter sessions by agent"><option value="">All agents</option></select>
     <select id="chat-origin-filter" aria-label="Filter sessions by type"><option value="">All types</option><option value="manual">Manual</option><option value="scheduled">Scheduled</option></select>
     <label><input id="chat-include-archived" data-testid="chat-include-archived" type="checkbox" aria-label="Include archived" /> Include archived</label>
     <div id="chat-rail-list" data-testid="session-list">${ACTIVE}</div>

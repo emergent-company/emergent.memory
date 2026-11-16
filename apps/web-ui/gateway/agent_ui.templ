@@ -63,3 +63,17 @@ templ agentInlineGlyph(icon string, color string) {
 		</span>
 	}
 }
+
+// agentAvatarBubble renders an agent's identity mark at picker size: the
+// neutral pill an agent name is listed behind (the objects actor picker, the
+// chat rail's agent filter and its menu rows). It carries the agent's declared
+// glyph, or the fallback bot, and is decorative by contract — every caller also
+// renders the name, so the bubble is aria-hidden and the name carries the
+// accessible label. attrs exist for the caller's own hook (data-actor-avatar /
+// data-agent-avatar, which the client-side pickers key off), because the mark
+// has to stay one element: an extra wrapper would drift from this partial.
+templ agentAvatarBubble(icon string, color string, attrs templ.Attributes) {
+	<span class="bg-base-200 text-base-content/70 inline-flex size-6 shrink-0 items-center justify-center rounded-full" aria-hidden="true" { attrs... }>
+		@agentInlineGlyph(icon, color)
+	</span>
+}
