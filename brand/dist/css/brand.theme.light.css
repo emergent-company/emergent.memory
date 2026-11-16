@@ -16,7 +16,6 @@
  * over the layered defaults, and the file needs no toolchain at all —
  * which is also what makes it usable from an email template.
  */
-:root,
 [data-theme="brand-light"] {
   color-scheme: light;
 

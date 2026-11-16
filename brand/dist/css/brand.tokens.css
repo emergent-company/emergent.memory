@@ -52,6 +52,15 @@
   --brand-motion-slow: 320ms;
   --brand-ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
   --brand-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  /* Radius levers, consumed by the Tailwind bridge below. These are the
+   * brand's own names: the daisyUI theme file declares --radius-* for
+   * daisyUI's components, and this block declares --brand-radius-* for
+   * everything that reads the token layer directly. */
+  --brand-radius-selector: 1rem;
+  --brand-radius-field: 0.25rem;
+  --brand-radius-box: 0.5rem;
+  --brand-radius-full: 9999px;
 }
 
 /* Light roles: generated, documented, NOT compiled into the product build.

@@ -63,15 +63,15 @@ public enum MemoryBrand {
     /// Text styles. The UI uses the system stack by decision: no web font,
     /// no bundled typeface. Sizes derive from the token scale (1rem = 16pt).
     public enum Text {
-        public static let xs = Font.system(size: 12, weight: .regular)
-        public static let sm = Font.system(size: 14, weight: .regular)
-        public static let base = Font.system(size: 16, weight: .regular)
-        public static let lg = Font.system(size: 18, weight: .regular)
-        public static let xl = Font.system(size: 20, weight: .regular)
-        public static let 2xl = Font.system(size: 24, weight: .regular)
-        public static let 3xl = Font.system(size: 30, weight: .regular)
-        public static let 4xl = Font.system(size: 36, weight: .regular)
-        public static let 5xl = Font.system(size: 48, weight: .regular)
+        public static let sizeXs = Font.system(size: 12, weight: .regular)
+        public static let sizeSm = Font.system(size: 14, weight: .regular)
+        public static let sizeBase = Font.system(size: 16, weight: .regular)
+        public static let sizeLg = Font.system(size: 18, weight: .regular)
+        public static let sizeXl = Font.system(size: 20, weight: .regular)
+        public static let size2xl = Font.system(size: 24, weight: .regular)
+        public static let size3xl = Font.system(size: 30, weight: .regular)
+        public static let size4xl = Font.system(size: 36, weight: .regular)
+        public static let size5xl = Font.system(size: 48, weight: .regular)
     }
 
     /// Corner radii from the semantic levers.

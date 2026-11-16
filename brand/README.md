@@ -13,9 +13,9 @@ brand/
   logo/
     mark/                     ← the shipping mark and its two tiles
       DIRECTION.md            ← the grid contract, in prose
-    explore/                  ← rejected constructions, kept as evidence
+    explore/                  ← the lattice proved across other letters (not a product asset)
     preview.html              ← human eyeball check, consumes dist/css
-  brand.go                    ← generated Go constants
+  brand.go                    ← generated Go constants (module: brand/go.mod)
 ```
 
 ## Build
@@ -28,7 +28,7 @@ task brand:preview   # open logo/preview.html
 
 `brand:check` is also a pre-commit job (`lefthook run pre-commit`) and part of
 `scripts/preflight/all.sh`, so a stale artefact or a contrast regression cannot
-be committed. It fails on four things:
+be committed. It fails on five things:
 
 1. **Drift** — a generated file no longer matches what the token file produces.
 2. **Contrast** — any pair in `CONTRAST_PAIRS` (in `build.py`) below WCAG 2.2 AA:
@@ -36,7 +36,14 @@ be committed. It fails on four things:
 3. **Grid** — a glyph whose segment is thicker than 1u (any filled 2×2 block),
    the wrong cap height, or a box narrower than the letter width.
 4. **Conformance** — a malformed token file: no `$type`, a non-`oklch` source
-   colour, a broken or circular alias.
+   colour, a broken or circular alias, or a semantic role present in only one
+   mode.
+5. **Go compilation** — `go vet ./brand` on the generated package. Every other
+   Go job in CI is rooted in its own module, so without this step a syntax error
+   in `brand.go` would land silently. `brand/` is its own module
+   (`github.com/emergent-company/emergent.memory/brand`) and is registered in
+   `go.work`, which is what makes the file importable by a Go consumer at all —
+   a `.go` file in a directory no module owns is never compiled.
 
 ## What is generated, and who reads it
 
@@ -73,8 +80,12 @@ under `brand/dist/css/` is not inside a node project and can never resolve
 `daisyui`. Unlayered custom properties sidestep both problems, and the same file
 works with no Tailwind at all.
 
-`brand.go` lives at the package root rather than under `dist/go/` on purpose: it
-is imported as the `brand` package, so it has to sit where Go can resolve it.
+`brand.go` lives at the package root rather than under `dist/go/` because it is
+generated into a real Go module: `brand/go.mod` declares
+`github.com/emergent-company/emergent.memory/brand`, and `go.work` registers it,
+so `go vet ./brand` compiles the generated file and a Go consumer in this
+workspace can import it. A `.go` file under `dist/` would be in nobody's module
+and would therefore never be built.
 
 ## The three tiers
 
@@ -122,8 +133,8 @@ Deliberately **not** in this change — these consumers still carry their own co
 of the theme block and are migrated next, one surface at a time:
 
 - `apps/web-ui/gateway/webui/css/app.css`
-- `cmd/deploy-portal` and `cmd/ememory-infra-dashboard` (in `emergent.memory.infra`)
-- `emergent.memory.website/theme/input.css`
+- the deploy portal and the infrastructure dashboard (both in the infra control repo)
+- the marketing site's `theme/input.css` (a separate repository)
 - `mkdocs.yml` (still on Material `indigo`)
 - `apps/server/templates/email`
 - `apps/cli/internal/ui`

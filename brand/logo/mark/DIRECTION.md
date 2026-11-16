@@ -8,17 +8,19 @@ commit.
 
 ## What this inherits, and what it does not
 
-The starting point is the construction language of a previous company's identity
-(EYEDEA): uppercase, orthogonal, letters broken into **separated segments** rather
-than drawn as stems with arms, and a stroke whose weight equals the gap beside it.
-That language was measured off the reference artwork and is reproduced here as
-ratios.
+The starting point is the construction language of an earlier identity by the
+same founders, from a company that has since closed: uppercase, orthogonal,
+letters broken into **separated segments** rather than drawn as stems with arms,
+and a stroke whose weight equals the gap beside it. That language was measured
+off the reference artwork and is reproduced here as ratios.
 
 What does **not** carry over is the artwork. No glyph, no wordmark, no lockup and
-no outline geometry from that identity appears in this repository. The system is a
-method — a grid, a weight rule, a way of decomposing a letterform — and a method
-is not a trademark; the glyphs and the goodwill are, and they belong to the
-company that closed. Every letter here is drawn from scratch on the grid below.
+no outline geometry from that identity appears in this repository — and the
+closed company is not named here, because a public document should not tie a
+third party's dead brand to a live one. The system is a method — a grid, a weight
+rule, a way of decomposing a letterform — and a method is not a trademark; the
+glyphs and the goodwill are, and they belong to the company that closed. Every
+letter here is drawn from scratch on the grid below.
 
 This is why the direction is written down as numbers instead of being copied as
 paths: a system can be re-derived by anyone on the team, and the result is ours.
@@ -46,8 +48,15 @@ The two geometric rules that do the most work:
    what makes the letterforms read as a system rather than as a font.
 2. **Thickness is constrained, length is not.** A bar may run 3u; a filled 2×2
    block is forbidden. On an orthogonal lattice that rule is exactly *"no filled
-   2×2 block"*, and it is what the gate checks — it is also what stops a stepped
-   M from becoming a blob.
+   2×2 block"*, and it is also what stops a stepped M from becoming a blob.
+
+What the gate checks, precisely: cap height is 5 rows, the box is at least 4u
+wide, and there is no filled 2×2 block anywhere — that last test is the encoded
+form of "never thicker than 1u". It does **not** enforce rule 1: a 3u gap between
+two segments builds cleanly. The equality of stroke and gap is a design rule
+judged by eye on `preview.html`, not a build assertion; only the thickness half of
+it is mechanical. Stating that difference here is deliberate, because a rule the
+gate pretends to enforce and does not is worse than one it admits is judgement.
 
 ## The one idea
 
@@ -93,8 +102,10 @@ What survived, and what did not:
 - **5u box, full-height stems, inset stepped V** — reads as M at every size down
   to 16px. **Shipped as mark v1.**
 
-The rejected constructions are kept as evidence, not as options, in
-`brand/logo/explore/`. Do not restore one without re-running the 16px test.
+The rejected constructions are recorded above, each one a single edit of
+`MARK_V1` away — they are evidence, not options. Do not restore one without
+re-running the 16px test. `brand/logo/explore/` holds only the accepted lattice
+proved across other letters (`glyphs.svg`); it carries no rejected glyph.
 
 ## Known limitation
 

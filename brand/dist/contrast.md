@@ -10,6 +10,7 @@ Computed from the token file by `brand/build.py`. Text pairs target 4.5:1
 | **dark** | | | |
 | `content.body` on `surface.base` | 14.27 | 4.5 | pass |
 | `content.body` on `surface.page` | 15.44 | 4.5 | pass |
+| `content.body` on `surface.raised` | 12.48 | 4.5 | pass |
 | `content.strong` on `surface.base` | 16.32 | 4.5 | pass |
 | `interactive.onPrimary` on `interactive.primary` | 7.74 | 4.5 | pass |
 | `interactive.onSecondary` on `interactive.secondary` | 5.66 | 4.5 | pass |
@@ -24,6 +25,7 @@ Computed from the token file by `brand/build.py`. Text pairs target 4.5:1
 | **light** | | | |
 | `content.body` on `surface.base` | 17.65 | 4.5 | pass |
 | `content.body` on `surface.page` | 16.39 | 4.5 | pass |
+| `content.body` on `surface.raised` | 18.44 | 4.5 | pass |
 | `content.strong` on `surface.base` | 19.09 | 4.5 | pass |
 | `interactive.onPrimary` on `interactive.primary` | 7.85 | 4.5 | pass |
 | `interactive.onSecondary` on `interactive.secondary` | 9.88 | 4.5 | pass |
