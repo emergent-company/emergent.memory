@@ -90,7 +90,7 @@ templ OAuthAppFormPage(data dsOAuthAppFormData) {
 						</div>
 						<div class="flex flex-col gap-1">
 							<label class="text-sm font-medium" for="oauth-app-client-secret">Client secret</label>
-							<input id="oauth-app-client-secret" name="client_secret" type="password" class="input w-full" placeholder={ oauthAppSecretPlaceholder(data) } data-testid="ds-oauth-app-client-secret"/>
+							<input id="oauth-app-client-secret" name="client_secret" type="password" autocomplete="new-password" class="input w-full" placeholder={ oauthAppSecretPlaceholder(data) } data-testid="ds-oauth-app-client-secret"/>
 							@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
 								The secret is write-only. Leave blank to keep the stored one.
 							}
