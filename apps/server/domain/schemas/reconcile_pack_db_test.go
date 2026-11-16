@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/testdb"
@@ -39,8 +40,14 @@ func TestReconcileProjectPackUpdatesInPlace(t *testing.T) {
 		Name:  "Reconcile Project",
 	}, testutil.AdminUser.ID))
 
+	cfg := &config.Config{}
 	repo := schemas.NewRepository(db, slog.Default())
-	svc := schemas.NewService(repo, nil, slog.Default(), &config.Config{})
+	// AssignPack invalidates the graph schema cache, so the service needs a real
+	// graph service here; a nil one panics on the first assign (the fast CI lane
+	// skips DB tests, so only the DB-backed job would catch it).
+	gRepo := graph.NewRepository(db, slog.Default(), cfg)
+	gSvc := graph.NewService(gRepo, slog.Default(), nil, nil, nil, nil, nil, nil, nil, nil)
+	svc := schemas.NewService(repo, gSvc, slog.Default(), cfg)
 
 	created, err := svc.CreatePack(ctx, projectID, &schemas.CreatePackRequest{
 		Name:        "github-app-workflow",

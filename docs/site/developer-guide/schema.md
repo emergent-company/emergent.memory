@@ -300,7 +300,11 @@ The page groups packs into four fixed sections, in this order:
 | **Manual** | *Add schema* installs and project-authored or override packs | No link |
 | **Blueprints** | Packs an applied blueprint declares, grouped per blueprint | Heading links to the blueprint |
 | **Data Sources** | Packs a data-source provider installs on connect (e.g. `github-app-workflow` for the GitHub App / Bot, `email-core` for Gmail), one row per installed app | Row links to that data source |
-| **Built-in** | Global `source="builtin"` packs (blueprint built-ins and the platform's own types) | No link |
+| **Built-in** | Global `source="builtin"` platform packs that no applied blueprint claims | No link |
+
+A global built-in pack that an applied blueprint claims is listed under
+**Blueprints** (blueprint provenance wins), matching the pack detail's
+owning-blueprint link.
 
 A pack row's title is only a link where the section gives it a destination; its
 object types and the explicit **Details** link are always navigable.
