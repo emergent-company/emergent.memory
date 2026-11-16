@@ -178,6 +178,18 @@ func workStreamTestMemory(pr io.ReadCloser) *workStreamMemory {
 	}
 }
 
+// workStreamOneOfEachType is workStreamTestMemory with a Bug beside the Task, so
+// every board type carries an item. The default view hides a type with no items
+// (applyWorkBoardItems), so a fixture holding only a Task cannot render a Bug
+// matrix even with the filter dropped — and a "the frame did not widen"
+// assertion over it passes whatever the stream does (#878). The count test keeps
+// the one-Task fixture on purpose: "the empty Bug type appears" is its premise.
+func workStreamOneOfEachType(pr io.ReadCloser) *workStreamMemory {
+	f := workStreamTestMemory(pr)
+	f.items = append(f.items, WorkItem{CanonicalID: "b1", Type: "Bug", Key: "crash-1", Status: "open"})
+	return f
+}
+
 // startWorkBoardStream runs GET /work/board/stream on the work-board routes and
 // returns the recording writer plus a stop func. The request context is the
 // stream's only exit, so cancel is what ends it.
@@ -310,10 +322,24 @@ func TestWorkBoardStreamPushesFrames(t *testing.T) {
 // outside the swap region and would still show the subset. This is the live half
 // of the review finding (the page half is TestWorkBoardViewConnectsTheStreamWithItsView).
 func TestWorkBoardStreamRendersTheConnectingView(t *testing.T) {
+	// The unfiltered board is this test's control: it must render both matrices.
+	// Without that, the "no Bug matrix" assertion below would pass on a fixture
+	// that could never render a Bug at all — the defect #878 reported.
+	prWide, pwWide := io.Pipe()
+	t.Cleanup(func() { _ = pwWide.Close() })
+	wide, stopWide := startWorkBoardStream(t, workStreamOneOfEachType(prWide))
+	defer stopWide()
+	waitForFrames(t, wide, "#work-board", 1, 2*time.Second)
+	for _, want := range []string{`data-testid="work-type-Task"`, `data-testid="work-type-Bug"`} {
+		if !strings.Contains(wide.body(), want) {
+			t.Fatalf("the unfiltered board is missing %q, so the narrowing assertion below could not fail:\n%s", want, wide.body())
+		}
+	}
+
 	pr, pw := io.Pipe()
 	t.Cleanup(func() { _ = pw.Close() })
 
-	rec, stop := startWorkBoardStreamAt(t, workStreamTestMemory(pr), "/work/board/stream?filter=1&type=Task")
+	rec, stop := startWorkBoardStreamAt(t, workStreamOneOfEachType(pr), "/work/board/stream?filter=1&type=Task")
 	defer stop()
 
 	waitForFrames(t, rec, "#work-board", 1, 2*time.Second)
