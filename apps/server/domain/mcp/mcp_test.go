@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/schemaicon"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 func TestExtractToken(t *testing.T) {
@@ -846,9 +848,16 @@ func TestExecuteToolUnknownTool(t *testing.T) {
 		t.Error("ExecuteTool should return error for unknown tool")
 	}
 
+	// The text stays caller-addressable (the e2e skip helper matches "tool not
+	// found") but it is an app error now: Error() renders "code: message", so the
+	// contract these tests pin is the public message plus the not-found status.
 	expectedMsg := "tool not found: nonexistent_tool"
-	if err.Error() != expectedMsg {
-		t.Errorf("ExecuteTool error = %q, want %q", err.Error(), expectedMsg)
+	if got := apperror.PublicMessage(err); got != expectedMsg {
+		t.Errorf("ExecuteTool public message = %q, want %q", got, expectedMsg)
+	}
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	if !ok || appErr.HTTPStatus != http.StatusNotFound {
+		t.Errorf("ExecuteTool error = %T %v, want a 404 app error", err, err)
 	}
 }
 
@@ -870,8 +879,8 @@ func TestExecuteToolRouting(t *testing.T) {
 				return
 			}
 			expectedErr := "tool not found: " + toolName
-			if err.Error() != expectedErr {
-				t.Errorf("ExecuteTool(%q) error = %q, want %q", toolName, err.Error(), expectedErr)
+			if got := apperror.PublicMessage(err); got != expectedErr {
+				t.Errorf("ExecuteTool(%q) public message = %q, want %q", toolName, got, expectedErr)
 			}
 		})
 	}

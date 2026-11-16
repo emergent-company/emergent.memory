@@ -22,6 +22,15 @@ const (
 	webFetchUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
 )
 
+// webFetchResponseTooLarge reports an upstream body over the 5 MB cap as a
+// public app error. The caller can act on it (fetch a smaller page or a raw
+// file), so it must not collapse to "An internal error occurred" in the
+// tools/call channel.
+func webFetchResponseTooLarge(size int64) error {
+	return apperror.New(http.StatusBadGateway, "web_fetch_response_too_large",
+		fmt.Sprintf("response too large (%d bytes, limit 5MB)", size))
+}
+
 // webFetchError returns a ToolResult with IsError=true and the given message.
 func webFetchError(msg string) *ToolResult {
 	return &ToolResult{
@@ -127,9 +136,11 @@ func (s *Service) doWebFetch(ctx context.Context, rawURL, acceptHeader string, t
 		return nil, "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(preview)))
 	}
 
-	// Guard against oversized responses
+	// Guard against oversized responses. A public app error, not a plain one:
+	// the size limit is actionable (try a smaller source) so the message must
+	// survive PublicMessage instead of collapsing to the internal sentence.
 	if cl := resp.ContentLength; cl > webFetchMaxResponseSize {
-		return nil, "", fmt.Errorf("response too large (%d bytes, limit 5MB)", cl)
+		return nil, "", webFetchResponseTooLarge(cl)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, webFetchMaxResponseSize+1))
@@ -137,7 +148,7 @@ func (s *Service) doWebFetch(ctx context.Context, rawURL, acceptHeader string, t
 		return nil, "", fmt.Errorf("read body: %w", err)
 	}
 	if int64(len(body)) > webFetchMaxResponseSize {
-		return nil, "", fmt.Errorf("response too large (exceeds 5MB limit)")
+		return nil, "", webFetchResponseTooLarge(int64(len(body)))
 	}
 
 	contentType := resp.Header.Get("Content-Type")

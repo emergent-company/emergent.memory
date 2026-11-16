@@ -250,6 +250,12 @@ type Provider struct {
 	// Strategies advertises the org-selectable OAuth scope strategies (design
 	// D6); empty when the provider's scopes are fixed.
 	Strategies []string `json:"strategies,omitempty"`
+	// SchemaPack names the object-type pack this provider installs on connect
+	// (e.g. "github-app-workflow"), with its code-declared version. Lets a
+	// client map a pack back to the provider — and its installed sources —
+	// without hardcoding the pack name.
+	SchemaPack        string `json:"schemaPack,omitempty"`
+	SchemaPackVersion string `json:"schemaPackVersion,omitempty"`
 }
 
 // ProviderSchema mirrors pkg/sdk/datasources.ProviderSchema. Properties includes

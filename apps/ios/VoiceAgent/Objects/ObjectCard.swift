@@ -242,8 +242,10 @@ struct ObjectCardSection: Decodable, Equatable, Sendable, Identifiable {
     }
 }
 
-/// One read-only row. Values are agent-written and untrusted: they are shown
-/// as plain `Text`, never interpreted as markup.
+/// One read-only row. Values are agent-written and untrusted: a plain row is
+/// shown as `Text`, never parsed; a row the gateway flags as markdown
+/// (``isMarkdown``) is parsed by ``MarkdownRenderer`` into a SwiftUI view tree,
+/// never HTML or a web view.
 struct ObjectCardField: Decodable, Equatable, Sendable, Identifiable {
     var label: String
     /// The raw schema property name, when the row is a property.
@@ -255,22 +257,26 @@ struct ObjectCardField: Decodable, Equatable, Sendable, Identifiable {
     var isEmpty: Bool
     /// Identifier values (the id) read best monospaced.
     var isMonospaced: Bool
+    /// The value is markdown (the schema declares `format: markdown`, or the
+    /// long-form heuristics flagged it): render it, not its source.
+    var isMarkdown: Bool
 
     var id: String {
         name.isEmpty ? label : name
     }
 
-    init(label: String, name: String = "", description: String = "", value: String, isEmpty: Bool = false, isMonospaced: Bool = false) {
+    init(label: String, name: String = "", description: String = "", value: String, isEmpty: Bool = false, isMonospaced: Bool = false, isMarkdown: Bool = false) {
         self.label = label
         self.name = name
         self.description = description
         self.value = value
         self.isEmpty = isEmpty
         self.isMonospaced = isMonospaced
+        self.isMarkdown = isMarkdown
     }
 
     private enum CodingKeys: String, CodingKey {
-        case label, name, description, value, empty, mono
+        case label, name, description, value, empty, mono, markdown
     }
 
     init(from decoder: Decoder) throws {
@@ -282,6 +288,7 @@ struct ObjectCardField: Decodable, Equatable, Sendable, Identifiable {
         value = (try? container.decodeIfPresent(String.self, forKey: .value)) ?? ""
         isEmpty = (try? container.decodeIfPresent(Bool.self, forKey: .empty)) ?? value.isEmpty
         isMonospaced = (try? container.decodeIfPresent(Bool.self, forKey: .mono)) ?? false
+        isMarkdown = (try? container.decodeIfPresent(Bool.self, forKey: .markdown)) ?? false
     }
 }
 

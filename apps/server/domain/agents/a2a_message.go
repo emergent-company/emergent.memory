@@ -35,6 +35,11 @@ const (
 	a2aReasonInvalidArgument A2AErrorReason = "INVALID_ARGUMENT"
 	a2aReasonInvalidState    A2AErrorReason = "INVALID_STATE"
 	a2aReasonSkillNotFound   A2AErrorReason = "SKILL_NOT_FOUND"
+	// a2aReasonResumeInProgress is a distinct reason from INVALID_STATE so a
+	// client can tell "another follow-up is already resuming this task" from
+	// "this task cannot be resumed at all" (the latter is what a legacy client
+	// safety net recovers from by starting a new task).
+	a2aReasonResumeInProgress A2AErrorReason = "RESUME_IN_PROGRESS"
 )
 
 // a2aSkillIDMetadataKey is the canonical message.metadata key under which a
@@ -220,7 +225,10 @@ func a2aReturnImmediately(cfg *SendMessageConfiguration) bool {
 
 // hitlMetadata builds task metadata distinguishing the pause source for a
 // paused run so A2A callers can tell an ask_user question from a tool-approval
-// gate. Returns nil for non-paused runs.
+// gate or the executor's step-limit pause (issue #867). The source is read off
+// the persisted suspend marker; a pause whose marker is missing or unrecognised
+// reports "unknown", never "step_limit", so a client is not told to auto-continue
+// a pause of undetermined origin. Returns nil for non-paused runs.
 func hitlMetadata(run *AgentRun) map[string]any {
 	if run == nil || run.Status != RunStatusPaused {
 		return nil
@@ -242,21 +250,168 @@ func hitlMetadata(run *AgentRun) map[string]any {
 	}
 }
 
-// a2aResumeMessage builds the turn message a resumed task hands the executor.
+// a2aResumeQuestion picks the pending question a follow-up message answers, or
+// nil when the paused run is a continuation with nothing to answer.
 //
-// When the pause left a pending question (ask_user or a tool confirmation), the
-// message is the user's answer quoted against the question so the model sees what
-// it asked. When it did not — a step-limit or watchdog pause writes no question
-// row — the user's own message IS the continuation and is passed through
-// unchanged (issue #867).
-func a2aResumeMessage(question *AgentQuestion, userMessage string) string {
-	if question == nil {
-		return userMessage
+// A pause does not always write a question row: the executor pauses a run that
+// reached its step limit without one (issue #867), and an ask_user pause whose
+// question was consumed by a resume that then failed is left with its suspend
+// signal but no pending row. Both are advanced by the follow-up message itself,
+// so they continue. The pause must be POSITIVELY identified as one of those by
+// its persisted marker (a2aPauseIsContinuation); a pause with no marker, or one
+// whose marker did not persist, is rejected, so a fail-closed gate is never
+// turned into a continuation by missing evidence. A pause that is structurally
+// waiting on something else (tool approval, a spawned child, a client-side tool)
+// is rejected too.
+func a2aResumeQuestion(run *AgentRun, questions []*AgentQuestion) (*AgentQuestion, *A2AError) {
+	if len(questions) > 0 && questions[0] != nil {
+		return questions[0], nil
+	}
+	if a2aPauseIsContinuation(run) {
+		return nil, nil
+	}
+	return nil, a2aInvalidStateError("no pending question for task")
+}
+
+// a2aPauseIsContinuation reports whether a paused run with no pending question
+// may be advanced by a plain follow-up message. Only pauses whose persisted
+// suspend marker says so qualify: the executor's step-limit pause, and an
+// ask_user pause whose question was already consumed. Everything else — no
+// marker at all (a legacy row or a partially persisted pause), a tool-approval
+// gate, a spawned child, a client-side tool — stays fail-closed.
+func a2aPauseIsContinuation(run *AgentRun) bool {
+	if run == nil {
+		return false
+	}
+	sc := SuspendSignalFromMap(run.SuspendContext)
+	if sc == nil {
+		return false
+	}
+	switch sc.Reason {
+	case SuspendReasonStepLimit, SuspendReasonAwaitingHuman:
+		return true
+	default:
+		return false
+	}
+}
+
+// a2aResumeUserMessage builds the prompt handed to a resumed run: the answer to
+// a pending question, or the continuation prompt for a pause that asked nothing
+// (notably the step-limit pause).
+func a2aResumeUserMessage(question *AgentQuestion, userMessage string) string {
+	if question != nil {
+		return fmt.Sprintf(
+			"Previously you asked: \"%s\"\nThe user responded: \"%s\"\nContinue from where you left off.",
+			question.Question, userMessage,
+		)
 	}
 	return fmt.Sprintf(
-		"Previously you asked: \"%s\"\nThe user responded: \"%s\"\nContinue from where you left off.",
-		question.Question, userMessage,
+		"Your previous turn was paused before it finished (for example, at its step limit).\nContinue from where you left off. The user says: \"%s\"",
+		userMessage,
 	)
+}
+
+// prepareA2AResume validates a paused run for a follow-up message, applies the
+// execution kill switch, atomically claims what the message is advancing, and
+// returns the message to hand the resumed run plus whether the pause itself was
+// claimed here.
+//
+// A pending question is claimed through AnswerQuestion. A pause with nothing to
+// answer — the step-limit continuation of issue #867 — has no question row, so
+// the pause is consumed here through ClaimPausedRunForResume (issue #887): of
+// two concurrent follow-ups exactly one proceeds, and the loser is rejected
+// before anything executes. The returned pauseClaimed flag is passed on as
+// ExecuteRequest.PauseClaimed so the executor does not claim the consumed pause a
+// second time.
+func (h *A2AHandler) prepareA2AResume(ctx context.Context, latest *AgentRun, userMessage, userID string) (string, bool, *A2AError) {
+	questions, err := h.repo.FindPendingQuestionsByRunID(ctx, latest.ID)
+	if err != nil {
+		h.log.Error("failed to load pending questions", "run_id", latest.ID, "error", err)
+		return "", false, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to load pending questions")
+	}
+
+	question, a2aErr := a2aResumeQuestion(latest, questions)
+	if a2aErr != nil {
+		return "", false, a2aErr
+	}
+
+	// Kill switch: check BEFORE claiming anything, otherwise a disabled resume
+	// consumes the question (or the pause) and strands the task (same guarantee
+	// as the JSON /message path).
+	if h.executor != nil {
+		if err := h.executor.EnsureExecutionEnabled(); err != nil {
+			return "", false, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, err.Error())
+		}
+	}
+
+	// A resume cannot exceed the global cumulative step cap (executor.Resume
+	// refuses the same threshold). Check it BEFORE claiming: claiming first and
+	// then discovering the run cannot continue would consume the pause and leave
+	// the task with nothing to answer — the stall this fix exists to remove
+	// (same guard as chat's resume path).
+	if latest.StepCount >= MaxTotalStepsPerRun {
+		return "", false, a2aInvalidStateError(fmt.Sprintf(
+			"run reached its total step limit (%d) and cannot be resumed; start a new task", MaxTotalStepsPerRun))
+	}
+
+	if question == nil {
+		// Claimed here — before execution, and on the streaming surface before
+		// the SSE stream starts — so a concurrent follower gets a clean error
+		// instead of executing the same turn twice.
+		claimed, err := h.repo.ClaimPausedRunForResume(ctx, latest.ID)
+		if err != nil {
+			h.log.Error("failed to claim paused run", "run_id", latest.ID, "error", err)
+			return "", false, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to resume task")
+		}
+		if !claimed {
+			// The claim only says the pause left input-required; classify why
+			// before telling the client anything about a turn running elsewhere
+			// (issue #912).
+			return "", false, a2aResumeClaimLostError(h.repo.ResumeClaimLostError(ctx, latest.ID))
+		}
+		return a2aResumeUserMessage(nil, userMessage), true, nil
+	}
+
+	// Atomically claim the pending question (mirror ACP AnswerQuestion path); a
+	// concurrent responder wins and this call loses.
+	claimed, err := h.repo.AnswerQuestion(ctx, question.ID, userMessage, userID)
+	if err != nil {
+		h.log.Error("failed to answer question", "run_id", latest.ID, "question_id", question.ID, "error", err)
+		return "", false, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to answer question")
+	}
+	if !claimed {
+		return "", false, a2aInvalidStateError("question is no longer pending")
+	}
+	return a2aResumeUserMessage(question, userMessage), false, nil
+}
+
+// a2aResumeClaimLostError maps a lost resume claim onto the A2A envelope. A
+// pause another caller claimed reads as "someone else is resuming this task"
+// (RESUME_IN_PROGRESS); a pause that left input-required for another reason —
+// cancelled, failed — is INVALID_STATE carrying the run's real status instead,
+// so the client is never told a dead turn is running (issue #912). Anything else
+// (e.g. the run row could not be read) keeps the generic failure.
+func a2aResumeClaimLostError(err error) *A2AError {
+	switch {
+	case errors.Is(err, ErrRunAlreadyResumed):
+		return a2aResumeInProgressError()
+	case errors.Is(err, ErrRunPauseNotResumable):
+		return a2aInvalidStateError(err.Error())
+	default:
+		return NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to resume task")
+	}
+}
+
+// a2aResumeInProgressError reports that another follow-up consumed the pause
+// before this one reached the executor, so this follower must not execute the
+// turn again. It carries its own reason so a client can tell "someone else is
+// resuming this task" from "this task cannot be resumed at all" (INVALID_STATE).
+func a2aResumeInProgressError() *A2AError {
+	return &A2AError{
+		Code:    A2AErrorCode(http.StatusBadRequest),
+		Reason:  a2aReasonResumeInProgress,
+		Message: "task is already being resumed",
+	}
 }
 
 // internalStatusesForTaskState maps an A2A TaskState filter to the set of
@@ -762,57 +917,10 @@ func (h *A2AHandler) resumeA2ATask(c echo.Context, projectID, userID, userMessag
 		return writeA2AError(c, a2aInvalidStateError(fmt.Sprintf("task is not awaiting input (state %s)", MapRunStatusToTaskState(latest.Status))))
 	}
 
-	questions, err := h.repo.FindPendingQuestionsByRunID(ctx, latest.ID)
-	if err != nil {
-		h.log.Error("failed to load pending questions", "task_id", taskID, "error", err)
-		return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to load pending questions"))
+	resumeMsg, pauseClaimed, resumeErr := h.prepareA2AResume(ctx, latest, userMessage, userID)
+	if resumeErr != nil {
+		return writeA2AError(c, resumeErr)
 	}
-	// A paused run with no pending question is a continuation, not a question:
-	// a step-limit or watchdog pause leaves no question row, and the client has
-	// already latched the task id from the INPUT_REQUIRED status, so rejecting
-	// the follow-up would strand the task (issue #867).
-	var question *AgentQuestion
-	if len(questions) > 0 {
-		question = questions[0]
-	}
-
-	// Kill switch: check BEFORE claiming the pending question, otherwise a
-	// disabled resume consumes the question and permanently strands the task.
-	if h.executor != nil {
-		if err := h.executor.EnsureExecutionEnabled(); err != nil {
-			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, err.Error()))
-		}
-	}
-
-	// Atomically claim the pending question (mirror ACP AnswerQuestion path); a
-	// concurrent responder wins and this call loses.
-	if question != nil {
-		claimed, err := h.repo.AnswerQuestion(ctx, question.ID, userMessage, userID)
-		if err != nil {
-			h.log.Error("failed to answer question", "task_id", taskID, "error", err)
-			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to answer question"))
-		}
-		if !claimed {
-			return writeA2AError(c, a2aInvalidStateError("question is no longer pending"))
-		}
-	} else {
-		// The questionless continuation has no question row to claim, so claim the
-		// pause itself: two followers (a client retry, a double submit) would
-		// otherwise both create a resumed child run and execute the turn twice.
-		// The claim stays non-terminal ("working") until Resume's finalize, so a
-		// cancel landing in the window still wins (the A2A lane's contract; other
-		// resume entry points claim terminally instead — issue #887).
-		claimed, err := h.repo.BeginA2AResumeClaim(ctx, latest.ID)
-		if err != nil {
-			h.log.Error("failed to claim paused run", "task_id", taskID, "error", err)
-			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to claim paused run"))
-		}
-		if !claimed {
-			return writeA2AError(c, a2aInvalidStateError("task is no longer awaiting input (already resumed)"))
-		}
-	}
-
-	resumeMsg := a2aResumeMessage(question, userMessage)
 
 	def, err := h.repo.ResolveDefinitionForAgent(ctx, latest.Agent)
 	if err != nil {
@@ -830,10 +938,7 @@ func (h *A2AHandler) resumeA2ATask(c echo.Context, projectID, userID, userMessag
 		OrgID:           orgID,
 		UserID:          userID,
 		UserMessage:     resumeMsg,
-		// The questionless branch claimed the pause into "working"; Resume must
-		// commit that claim (FinalizeResumedCheckpoint) instead of claiming
-		// again, which a "working" row would reject (issue #887).
-		PauseClaimed: question == nil,
+		PauseClaimed:    pauseClaimed,
 		// TrustedInternal defaults false: an A2A surface must not reach internal agents.
 	}
 
@@ -844,18 +949,26 @@ func (h *A2AHandler) resumeA2ATask(c echo.Context, projectID, userID, userMessag
 			if result != nil && result.Cleanup != nil {
 				result.Cleanup()
 			}
-			if execErr != nil {
+			switch {
+			case errors.Is(execErr, ErrRunAlreadyResumed):
+				// Another follow-up consumed the pause first: this one must not
+				// execute the turn a second time (issue #887).
+				h.log.Info("a2a async resume lost the pause claim", "task_id", taskID)
+			case errors.Is(execErr, ErrRunPauseNotResumable):
+				// The pause went terminal (cancelled/failed) before this resume
+				// reached it: no turn is running, so this is not the benign
+				// "someone else has it" case (issue #912). Nothing to fail
+				// either — the task already shows its real terminal state.
+				h.log.Warn("a2a async resume found the pause no longer resumable",
+					"task_id", taskID, "error", execErr.Error())
+			case execErr != nil:
 				h.log.Error("a2a async resume failed", "task_id", taskID, "error", execErr.Error())
-				// The continuation claimed the pause; if Resume failed before a
-				// child run existed, restore it so the follow-up is retryable.
-				h.releaseResumeClaim(bgCtx, latest)
 			}
 		}()
-		// Synthesize the immediate WORKING snapshot without mutating the row. The
-		// questionless branch has already claimed the pause into "working" (so a
-		// cancel or GetTask in the window sees live work, not a terminal
-		// checkpoint), and this snapshot matches that state; a failure that never
-		// creates a child run restores the pause via releaseResumeClaim.
+		// Synthesize the immediate WORKING snapshot without mutating the row: the
+		// paused run stays paused until executor.Resume creates the child run and
+		// marks it resumed, so a failed Resume cannot wedge the task as stuck
+		// "running" with no child run.
 		task := resumeAsyncSnapshot(latest, taskID)
 		return writeA2AJSON(c, SendMessageResponse{Task: &task})
 	}
@@ -864,11 +977,15 @@ func (h *A2AHandler) resumeA2ATask(c echo.Context, projectID, userID, userMessag
 	if result != nil && result.Cleanup != nil {
 		defer result.Cleanup()
 	}
+	if errors.Is(execErr, ErrRunAlreadyResumed) || errors.Is(execErr, ErrRunPauseNotResumable) {
+		// Another follow-up consumed the pause first (reject this follower with
+		// its own reason, #887), or the pause went terminal before the claim
+		// (report the run's real state instead of "already being resumed",
+		// #912).
+		return writeA2AError(c, a2aResumeClaimLostError(execErr))
+	}
 	if execErr != nil {
 		h.log.Error("a2a resume failed", "task_id", taskID, "error", execErr.Error())
-		// See releaseResumeClaim: the claim is not left owning a row that no
-		// execution will finalize.
-		h.releaseResumeClaim(ctx, latest)
 	}
 
 	return h.respondWithA2ATask(c, projectID, taskID)

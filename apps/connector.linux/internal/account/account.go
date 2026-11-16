@@ -143,6 +143,10 @@ type Manager struct {
 	scopes    []string
 	deps      Deps
 	refreshMu sync.Mutex
+	// refreshLock, when non-nil, replaces the real cross-process flock. Tests
+	// install one to prove a write path is serialized (see
+	// TestCompletePKCEWritesUnderRefreshLock); production leaves it nil.
+	refreshLock func(serverURL string) (func(), error)
 }
 
 // NewManager returns a Manager backed by baseDir using the production network
@@ -539,6 +543,15 @@ func needsRefresh(s *Session, minTTL time.Duration) bool {
 // one server, waiting up to refreshLockTimeout. The returned function releases
 // it; it is safe to call exactly once (defer unlock()).
 func (m *Manager) lockRefresh(serverURL string) (func(), error) {
+	if m.refreshLock != nil {
+		return m.refreshLock(serverURL)
+	}
+	return m.flockRefresh(serverURL)
+}
+
+// flockRefresh is the real lock: an advisory flock on a per-server lock file
+// beside the session, so it serializes across processes as well as goroutines.
+func (m *Manager) flockRefresh(serverURL string) (func(), error) {
 	dir := m.accountsDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("account: create accounts dir: %w", err)

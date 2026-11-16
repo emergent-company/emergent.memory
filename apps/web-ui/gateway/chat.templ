@@ -55,7 +55,8 @@ templ ChatPage(agents []AgentDefinitionSummary, convs *ConversationList, appeara
 // chat.js drives resume + streaming via the /api/* endpoints. runControl holds
 // the active conversation's server-rendered dock cards and session todos.
 templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, appearances map[string]agentAppearance, schedRuns []scheduledRunRow, shared []sharedSessionRow, workRuns []workRunRow, preselect string, convID string, prompt string, voiceEnabled bool, modelWarnings map[string]string, runControl chatRunControl) {
-	<div id="chat-root" data-conv={ convID } data-prompt={ prompt } class="flex h-full flex-col md:flex-row">
+	{{ startISO := conversationStartedAt(convs, convID) }}
+	<div id="chat-root" data-conv={ convID } data-conv-started={ startISO } data-prompt={ prompt } class="flex h-full flex-col md:flex-row">
 		<!-- Mobile-only scrim behind the session rail. chat.js toggles it with
 		     the rail; it never shows at md+ where the rail is in flow. -->
 		<div id="chat-rail-backdrop" class="fixed inset-0 z-30 hidden bg-black/40 md:hidden" data-chat-rail-backdrop data-action="toggle-chat-rail"></div>
@@ -254,6 +255,7 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 										@chatSuggestion("Help me draft a status update")
 									</div>
 								}
+								@chatSessionStart(startISO)
 								<!-- Session todo card. Pre-rendered when the active
 							     conversation's ACP session has todos; chat.js
 							     refreshes it in place from /partial/chat-todos. -->
@@ -737,7 +739,7 @@ templ chatAgentFilter(agents []AgentDefinitionSummary) {
 				class="select select-sm select-bordered flex h-auto min-h-8 w-full cursor-pointer items-center gap-2 text-left"
 			>
 				<span id="chat-agent-filter-glyph" class="flex shrink-0 items-center">
-					@chatAgentAllGlyph()
+					@agentAllBubble()
 				</span>
 				<span id="chat-agent-filter-label" class="min-w-0 truncate">All agents</span>
 			</div>
@@ -754,7 +756,7 @@ templ chatAgentFilter(agents []AgentDefinitionSummary) {
 						class="menu-active min-w-0 text-left"
 					>
 						<span class="flex min-w-0 items-center gap-2">
-							@chatAgentAllGlyph()
+							@agentAllBubble()
 							<span class="min-w-0 truncate">All agents</span>
 							<span class="ml-auto shrink-0" data-agent-check="true">
 								@ui.IconSpan("lucide--check", "size-4 text-primary")
@@ -792,15 +794,6 @@ templ chatAgentFilter(agents []AgentDefinitionSummary) {
 			}
 		}
 	</div>
-}
-
-// chatAgentAllGlyph is the "every agent" mark: the same neutral bubble the agent
-// rows wear, carrying the group glyph instead of one agent's. It is the filter's
-// resting state, and chat.js restores it whenever that row is picked.
-templ chatAgentAllGlyph() {
-	<span class="bg-base-200 text-base-content/60 inline-flex size-6 shrink-0 items-center justify-center rounded-full" aria-hidden="true" data-agent-avatar="all">
-		@ui.IconSpan("lucide--users", "size-3.5")
-	</span>
 }
 
 // sessionRailItem is one resumable conversation in the session rail.
@@ -1252,4 +1245,24 @@ templ chatSuggestion(text string) {
 	>
 		{ text }
 	</button>
+}
+
+// chatSessionStart heads the transcript with when the active conversation was
+// started. startISO is empty for a new chat (the line stays hidden until the
+// first turn creates the conversation) and chat.js fills the <time> text in the
+// browser's local timezone, so the server never stamps a UTC wall clock the
+// reader has to translate. The client also seeds the transcript's day-divider
+// state from it so the first day is not announced twice (start line + "Today"
+// divider).
+templ chatSessionStart(startISO string) {
+	<div
+		id="chat-session-start"
+		data-testid="chat-session-start"
+		class={ "memory-session-start", templ.KV("hidden", startISO == "") }
+		data-started-at={ startISO }
+	>
+		@ui.IconSpan("lucide--clock", "size-3.5 shrink-0")
+		<span>Session started</span>
+		<time id="chat-session-start-time" datetime={ startISO }></time>
+	</div>
 }

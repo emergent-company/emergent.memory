@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 // githubAppRepoPattern validates an owner/name allowlist entry.
@@ -41,25 +43,25 @@ func normalizeInstallationID(v any) (string, error) {
 		digits = strconv.FormatUint(t, 10)
 	case float64:
 		if t != math.Trunc(t) || t < 0 || t > math.MaxInt64 {
-			return "", fmt.Errorf("installation_id must be a whole number, got %v", t)
+			return "", apperror.NewValidationf("installation_id must be a whole number, got %v", t)
 		}
 		digits = strconv.FormatInt(int64(t), 10)
 	case float32:
 		f := float64(t)
 		if f != math.Trunc(f) || f < 0 || f > math.MaxInt64 {
-			return "", fmt.Errorf("installation_id must be a whole number, got %v", t)
+			return "", apperror.NewValidationf("installation_id must be a whole number, got %v", t)
 		}
 		digits = strconv.FormatInt(int64(f), 10)
 	case nil:
-		return "", fmt.Errorf("installation_id is required")
+		return "", apperror.NewValidation("installation_id is required")
 	default:
-		return "", fmt.Errorf("installation_id must be a string or a number, got %T", v)
+		return "", apperror.NewValidationf("installation_id must be a string or a number, got %T", v)
 	}
 	if digits == "" || digits == "<nil>" {
-		return "", fmt.Errorf("installation_id is required")
+		return "", apperror.NewValidation("installation_id is required")
 	}
 	if !githubInstallationIDPattern.MatchString(digits) {
-		return "", fmt.Errorf("installation_id must be numeric, got %q", digits)
+		return "", apperror.NewValidationf("installation_id must be numeric, got %q", digits)
 	}
 	return digits, nil
 }
@@ -81,6 +83,10 @@ func (p *githubAppProvider) Catalog() Provider {
 		Vendor:      "github",
 		VendorName:  "GitHub",
 		Available:   true,
+		// The pack this provider installs, so the Schema UI can group it under
+		// Data Sources and link it to the installed apps.
+		SchemaPack:        "github-app-workflow",
+		SchemaPackVersion: "1.3.0",
 	}
 }
 
@@ -102,6 +108,10 @@ func (p *githubAppProvider) ConfigSchema() ProviderSchema {
 				"type":        "array",
 				"items":       map[string]any{"type": "string"},
 				"description": "Repository allowlist (owner/name). Webhooks outside it are ignored.",
+			},
+			"assignee_login": map[string]any{
+				"type":        "string",
+				"description": "GitHub login to assign as the responsible owner when this source auto-starts an issue. The coding agent claims separately with manager/status labels.",
 			},
 		},
 		Required: []string{"app_id", "installation_id", "repos"},
@@ -134,26 +144,37 @@ func (p *githubAppProvider) NormalizeConfig(cfg map[string]any) {
 	if v, ok := cfg["repos"]; ok {
 		cfg["repos"] = appRepoList(v)
 	}
+	if v, ok := cfg["assignee_login"]; ok {
+		if v == nil {
+			cfg["assignee_login"] = ""
+		} else {
+			cfg["assignee_login"] = strings.TrimSpace(fmt.Sprint(v))
+		}
+	}
 }
 
 func (p *githubAppProvider) ValidateConfig(cfg map[string]any) error {
 	appID := strings.TrimSpace(fmt.Sprint(cfg["app_id"]))
 	if appID == "" || appID == "<nil>" {
-		return fmt.Errorf("github_app: app_id is required")
+		return apperror.NewValidation("github_app: app_id is required")
 	}
 	if _, err := uuid.Parse(appID); err != nil {
-		return fmt.Errorf("github_app: app_id must be a UUID")
+		return apperror.NewValidation("github_app: app_id must be a UUID")
 	}
 	if _, err := normalizeInstallationID(cfg["installation_id"]); err != nil {
-		return fmt.Errorf("github_app: %w", err)
+		// PublicMessage, not %w: normalizeInstallationID already returns a
+		// validation app error, and formatting it with %w would print the code
+		// inside the user-facing sentence ("validation_error: installation_id is
+		// required"). Only the message is wanted here, prefixed with the field.
+		return apperror.NewValidation("github_app: " + apperror.PublicMessage(err))
 	}
 	repos := appRepoList(cfg["repos"])
 	if len(repos) == 0 {
-		return fmt.Errorf("github_app: repos must not be empty")
+		return apperror.NewValidation("github_app: repos must not be empty")
 	}
 	for _, repo := range repos {
 		if !githubAppRepoPattern.MatchString(repo) {
-			return fmt.Errorf("github_app: %q is not owner/name", repo)
+			return apperror.NewValidationf("github_app: %q is not owner/name", repo)
 		}
 	}
 	return nil
@@ -238,19 +259,22 @@ func (p *githubAppProvider) ObjectTypes() *ObjectTypePack {
 	}
 	return &ObjectTypePack{
 		Name:          "github-app-workflow",
-		Version:       "1.2.0",
+		Version:       "1.3.0",
 		Description:   "GitHub App issue and pull-request workflow objects.",
+		Source:        "provider:github_app",
 		SkipDiscovery: true,
 		ObjectTypes: []ObjectTypeDefinition{
 			{
 				Name: "GitHubPullRequest", Label: "GitHub pull request",
 				Description:    "Parent object for one GitHub pull request.",
+				UI:             map[string]any{"icon": "git-pull-request", "color": "#4F46E5"},
 				Properties:     statusProps,
 				SkipExtraction: true,
 			},
 			{
 				Name: "GitHubIssue", Label: "GitHub issue",
 				Description:     "One GitHub issue available for manual or automatic coding work.",
+				UI:              map[string]any{"icon": "circle", "color": "#10B981"},
 				BoardEnabled:    true,
 				AllowedStatuses: []string{"ready", "in_progress", "review", "revision", "blocked", "done", "cancelled"},
 				InitialStatus:   "ready",
@@ -264,6 +288,7 @@ func (p *githubAppProvider) ObjectTypes() *ObjectTypePack {
 					"url":               map[string]any{"type": "string"},
 					"source_id":         map[string]any{"type": "string"},
 					"status":            map[string]any{"type": "string"},
+					"claim_conflict":    map[string]any{"type": "boolean"},
 					"source_trigger_id": map[string]any{"type": "string"},
 					"pr_number":         map[string]any{"type": "number"},
 					"pr_url":            map[string]any{"type": "string"},
@@ -275,6 +300,7 @@ func (p *githubAppProvider) ObjectTypes() *ObjectTypePack {
 			{
 				Name: "GitHubReviewLane", Label: "GitHub review lane",
 				Description:     "One reviewer lane on a GitHub pull request.",
+				UI:              map[string]any{"icon": "users", "color": "#7C3AED"},
 				BoardEnabled:    true,
 				AllowedStatuses: []string{"ready", "in_progress", "review", "revision", "blocked", "done", "cancelled"},
 				InitialStatus:   "ready",

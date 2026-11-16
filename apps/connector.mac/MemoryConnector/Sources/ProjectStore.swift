@@ -197,48 +197,89 @@ final class ProjectStore {
     /// leave a config file pointing at another account's project (and thus can
     /// never run another account's connection).
     ///
-    /// Returns `true` when the CLI wrote a valid config for every connected
-    /// project. Returns `false` when nothing is connected or any CLI call
-    /// fails. An auth/session failure keeps every connected intent and the
-    /// running children (their long-lived project tokens and on-disk configs
-    /// still bind them), surfacing re-auth for management actions only; a
-    /// non-auth failure for one project tears down ONLY that project (per-
-    /// project failure isolation).
+    /// What a failure means decides what survives, per project (see
+    /// `ProjectFailure`):
+    ///
+    /// - `.auth` — keep every connection, the engine and the configs; surface
+    ///   re-auth (`.signedOut`) for management actions. The running children
+    ///   keep their long-lived project tokens, so the user is not disconnected.
+    /// - `.transient` — keep every connection, the engine and the configs, and
+    ///   leave `state` alone: nothing was lost, so the next attempt (the launch
+    ///   retry, wake, or a user action) is the one that settles it.
+    /// - `.permanent` — that project only is disconnected (its token/config can
+    ///   never work again); the others are untouched.
+    ///
+    /// - Returns: the overall outcome for a mixed settle, reporting the worst
+    ///   case in the order auth → permanent → transient. A dead project must
+    ///   never be reported as a mere blip: `.transientFailure` leaves the state
+    ///   looking healthy, which hides the disconnect, so a permanent failure in
+    ///   the same pass wins over it. The transient projects themselves are kept
+    ///   and settle on the next launch/wake, because only a retry can tell them
+    ///   apart from a real loss.
     @discardableResult
-    func reassertConnection() async -> Bool {
+    func reassertConnection() async -> ReassertOutcome {
         let ids = connectedProjectIDs
         guard !ids.isEmpty else {
             stop()
-            return false
+            return .noneConnected
         }
         var sawAuthFailure = false
-        var sawNonAuthFailure = false
+        var sawTransientFailure = false
+        var sawPermanentFailure = false
         for id in ids.sorted() {
             let profile = resolvedProfile(for: id)
             let target = engineTarget(for: id, profile: profile)
             do {
                 try await runProjectsUse(projectID: id, profile: profile, configPath: target.configPath)
             } catch {
-                if await Self.isAuthFailure(error, cli: connectorCLI,
-                                            serverURL: effectiveServerURL,
-                                            configPath: cliConfigPath)
+                switch await ProjectFailure.classify(error, cli: connectorCLI,
+                                                     serverURL: effectiveServerURL,
+                                                     configPath: cliConfigPath)
                 {
+                case .auth:
                     sawAuthFailure = true
-                } else {
-                    sawNonAuthFailure = true
+                case .transient:
+                    sawTransientFailure = true
+                case .permanent:
+                    sawPermanentFailure = true
                     disconnect(projectID: id)
                 }
             }
         }
         if sawAuthFailure {
             state = .signedOut
-            return false
+            return .authRequired
         }
-        if sawNonAuthFailure {
+        // Worst case first: a project that is permanently gone is disconnected
+        // and surfaced, even when another project in the same pass merely
+        // blipped. Reporting `.transientFailure` here would leave the state
+        // looking healthy and hide the dead connection.
+        if sawPermanentFailure {
             state = .error("Couldn't re-establish one or more project connections.")
-            return false
+            return .permanentFailure
         }
-        return true
+        if sawTransientFailure {
+            return .transientFailure
+        }
+        return .settled
+    }
+
+    /// Outcome of `reassertConnection()`, ordered by what a caller should do:
+    /// retry only on `.transientFailure`.
+    enum ReassertOutcome: String, Equatable, Sendable {
+        /// Every connected project was re-asserted.
+        case settled
+        /// Nothing is connected, so there was nothing to re-assert.
+        case noneConnected
+        /// The session is unusable; everything was kept.
+        case authRequired
+        /// The server/transport failed; everything was kept, retry later. Only
+        /// reported when no project in the same pass failed permanently.
+        case transientFailure
+        /// At least one project is permanently gone and was disconnected. Other
+        /// projects that failed transiently in the same pass are kept, and
+        /// settle on the next launch or wake.
+        case permanentFailure
     }
 
     private func persistActiveProjectID() {
@@ -391,17 +432,19 @@ final class ProjectStore {
     /// one of the known not-signed-in / rejected-token signals. The CLI status is
     /// the reliable signal; the text match is the fallback when the status cannot
     /// be read (e.g. the bundled binary is missing).
+    ///
+    /// Deliberate trade (kept from the staying-signed-in change): while an
+    /// account's session is marked `needs_reauth`, ANY project failure classifies
+    /// as auth, including one that was really transient. The cost is a retry that
+    /// shows the sign-in affordance a little early; the alternative — tearing
+    /// down a connection and its engine because a network blip happened to land
+    /// next to a stale session — is the failure mode this code exists to remove.
     static func isAuthFailure(_ error: Error,
                               cli: ConnectorCLI,
                               serverURL: String,
                               configPath: String) async -> Bool
     {
-        if let status = try? await cli.authStatus(serverURL: serverURL, configPath: configPath),
-           !status.signedIn || status.needsReauth == true
-        {
-            return true
-        }
-        return errorLooksLikeAuthFailure(error)
+        await ProjectFailure.classify(error, cli: cli, serverURL: serverURL, configPath: configPath) == .auth
     }
 
     /// Text fallback for the auth-failure classification.

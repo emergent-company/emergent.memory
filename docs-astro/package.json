@@ -1,0 +1,23 @@
+{
+  "name": "memory-docs-astro-poc",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro",
+    "shots:port": "node scripts/redact-tutorial-shots.mjs && node scripts/port-images.mjs && python3 scripts/port_mkdocs.py"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.43.1",
+    "@iconify-json/lucide": "^1.2.155",
+    "@scalar/astro": "^0.4.37",
+    "astro": "^7.4.12",
+    "astro-icon": "^1.2.0",
+    "sharp": "^0.34.5"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.65.1"
+  }
+}

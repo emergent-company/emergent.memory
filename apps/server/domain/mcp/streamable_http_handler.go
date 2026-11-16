@@ -729,10 +729,7 @@ func (h *StreamableHTTPHandler) handleToolsCall(c echo.Context, req *Request, se
 			slog.String("tool", params.Name),
 			logger.Error(err),
 		)
-		return NewErrorResponse(req.ID, ErrCodeInternalError,
-			"Tool execution failed: "+err.Error(),
-			nil,
-		)
+		return toolExecutionErrorResponse(req.ID, err)
 	}
 
 	return NewSuccessResponse(req.ID, result)
@@ -793,10 +790,7 @@ func (h *StreamableHTTPHandler) handleAdminToolsCall(c echo.Context, req *Reques
 			slog.String("tool", params.Name),
 			slog.String("error", errMsg),
 		)
-		return NewErrorResponse(req.ID, ErrCodeInternalError,
-			"Tool execution failed: "+errMsg,
-			nil,
-		)
+		return toolExecutionErrorResponse(req.ID, err)
 	}
 
 	return NewSuccessResponse(req.ID, result)

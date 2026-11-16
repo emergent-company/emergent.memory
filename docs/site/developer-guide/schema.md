@@ -146,7 +146,7 @@ round-trip.
 | `description` | Help text shown with the field |
 | `items` | Element schema for `array`, declared as an object such as `{"type": "string"}`; every element is coerced (a wrong element fails with its index). A bare scalar (`"items": "string"`) is rejected when the schema is created or updated, over REST and MCP alike |
 | `enum` | Allowed values for a primitive property (`string`-backed, `number`, `integer`, `boolean`), enforced on object and relationship writes after coercion. An array's `items.enum` constrains every element. On `array`/`object` itself it is documentation only |
-| `format` | On a `string` property, validates like the matching type for `email`, `phone`, `country`, `currency` and `time`. Any other format is documentation only |
+| `format` | On a `string` property, validates like the matching type for `email`, `phone`, `country`, `currency` and `time`. Any other format is documentation only, except `markdown`: it declares the value as prose, so the object preview, the object page and the card API render it as sanitized Markdown (the value is still a string and is not validated) |
 | `minimum` / `maximum` | Enforced on `number` and `integer`: a value outside the bound fails the write |
 | `required` | Type-level list of property names that must be present on a write |
 
@@ -290,15 +290,38 @@ Each item includes `status: "installed"` or `status: "uninstalled"` and an optio
 A **schema pack** is one schema as it exists in a project. The Schema area's
 **Schema packs** page (`/schema/packs`) is the pack-level view: every active pack
 with its name, version, owner badge, and the object/relationship types it
-contributes, plus the applied blueprint that claims it.
+contributes. Object types are chips that open the type page, and each row links
+to the pack's read-only detail.
 
-Packs arrive in a project one of three ways:
+The page groups packs into four fixed sections, in this order:
+
+| Section | What it holds | Heading / title link |
+|---|---|---|
+| **Manual** | *Add schema* installs and project-authored or override packs | No link |
+| **Blueprints** | Packs an applied blueprint declares, grouped per blueprint | Heading links to the blueprint |
+| **Data Sources** | Packs a data-source provider installs on connect (e.g. `github-app-workflow` for the GitHub App / Bot, `email-core` for Gmail), one row per installed app | Row links to that data source |
+| **Built-in** | Global `source="builtin"` platform packs that no applied blueprint claims | No link |
+
+A global built-in pack that an applied blueprint claims is listed under
+**Blueprints** (blueprint provenance wins), matching the pack detail's
+owning-blueprint link.
+
+A pack row's title is only a link where the section gives it a destination; its
+object types and the explicit **Details** link are always navigable.
+
+Packs arrive in a project one of these ways:
 
 | Source | Owner badge | How it gets there |
 |---|---|---|
 | Applied blueprint (built-in) | **Global** | Shared `source="builtin"` row, one for all projects |
 | Applied blueprint (user/import) | **Project** | A project-scoped pack created on apply |
-| Manual install or project-authored schema | **Project** | *Add schema*, or a manual/override pack |
+| Data-source provider | **Project** | Installed by the provider on connect (`source="provider:<type>"`), then reconciled in place on re-connect, webhook or issue sync |
+| Manual install or project-authored schema | **Project** | *Add schema*, or a manual/override pack (`source="manual"`) |
+
+Provider packs are code-owned: their types, icons/colours and provenance token
+come from the provider, and a reconcile updates the project's existing pack
+rather than creating a second version. Their types render with the declared
+accent (for the GitHub App pack: a pull request, an issue and a review lane).
 
 There is no read-time "system pack": a project's packs are only what has been
 assigned to it.

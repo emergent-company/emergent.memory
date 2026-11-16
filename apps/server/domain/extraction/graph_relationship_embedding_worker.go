@@ -308,7 +308,7 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 	startTime := time.Now()
 
 	// Fetch the relationship along with endpoint names for triplet text generation.
-	// We join graph_objects twice to get src/dst display names (properties.name > key > type).
+	// We join graph_objects twice to get src/dst display names (name > key > type).
 	rel := &graphRelationshipRow{}
 	err := w.db.NewRaw(`
 		SELECT
@@ -317,9 +317,11 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 			gr.label,
 			gr.properties  AS rel_props,
 			gr.project_id,
+			src.name       AS src_name,
 			src.properties AS src_props,
 			src.key        AS src_key,
 			src.type       AS src_type,
+			dst.name       AS dst_name,
 			dst.properties AS dst_props,
 			dst.key        AS dst_key,
 			dst.type       AS dst_type
@@ -352,9 +354,10 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 		return fmt.Errorf("fetch relationship: %w", err)
 	}
 
-	// Build triplet text using best display names (properties.name > key > type) and humanized rel type.
-	srcName := displayNameFromRow(rel.SrcProps, rel.SrcKey, rel.SrcType)
-	dstName := displayNameFromRow(rel.DstProps, rel.DstKey, rel.DstType)
+	// Build triplet text from the first-class name (else key > type) and the
+	// humanized rel type. properties.name is never a title (#824).
+	srcName := displayNameFromRow(rel.SrcName, rel.SrcKey, rel.SrcType)
+	dstName := displayNameFromRow(rel.DstName, rel.DstKey, rel.DstType)
 	text := buildTripletText(srcName, dstName, rel.Type, rel.Label, rel.RelProps)
 
 	// Inject project ID into context so the credential resolver can look up

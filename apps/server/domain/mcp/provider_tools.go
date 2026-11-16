@@ -108,7 +108,7 @@ func providerToolDefinitions() []ToolDefinition {
 func (s *Service) executeConfigureProjectProvider(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	providerName, _ := args["provider_name"].(string)
 	if providerName == "" {
-		return nil, fmt.Errorf("configure_project_provider: 'provider_name' is required")
+		return nil, toolArgErrorf("configure_project_provider: 'provider_name' is required")
 	}
 	req := buildUpsertRequest(args)
 	cfg, err := s.providerCredSvc.UpsertProjectConfig(ctx, projectID, provider.ProviderType(providerName), req)
@@ -121,7 +121,7 @@ func (s *Service) executeConfigureProjectProvider(ctx context.Context, projectID
 func (s *Service) executeListProviderModels(ctx context.Context, args map[string]any) (*ToolResult, error) {
 	providerName, _ := args["provider_name"].(string)
 	if providerName == "" {
-		return nil, fmt.Errorf("list_provider_models: 'provider_name' is required")
+		return nil, toolArgErrorf("list_provider_models: 'provider_name' is required")
 	}
 	var modelTypePtr *provider.ModelType
 	if mt, ok := args["model_type"].(string); ok && mt != "" {
@@ -138,7 +138,7 @@ func (s *Service) executeListProviderModels(ctx context.Context, args map[string
 func (s *Service) executeTestProvider(ctx context.Context, args map[string]any) (*ToolResult, error) {
 	providerName, _ := args["provider_name"].(string)
 	if providerName == "" {
-		return nil, fmt.Errorf("test_provider: 'provider_name' is required")
+		return nil, toolArgErrorf("test_provider: 'provider_name' is required")
 	}
 	cred, err := s.providerCredSvc.Resolve(ctx, provider.ProviderType(providerName))
 	if err != nil {

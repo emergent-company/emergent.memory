@@ -77,3 +77,16 @@ templ agentAvatarBubble(icon string, color string, attrs templ.Attributes) {
 		@agentInlineGlyph(icon, color)
 	</span>
 }
+
+// agentAllBubble is the "every agent" mark of a picker: the same neutral bubble
+// an agent row wears, carrying the group glyph instead of one agent's. It is the
+// resting state of the chat rail's agent filter (chat.js restores it whenever
+// that row is picked) and of the run log's agent picker, so the two controls
+// read as the same picker over different collections.
+//
+// Decorative like agentAvatarBubble: the row's label names the selection.
+templ agentAllBubble() {
+	<span class="bg-base-200 text-base-content/60 inline-flex size-6 shrink-0 items-center justify-center rounded-full" aria-hidden="true" data-agent-avatar="all">
+		@ui.IconSpan("lucide--users", "size-3.5")
+	</span>
+}

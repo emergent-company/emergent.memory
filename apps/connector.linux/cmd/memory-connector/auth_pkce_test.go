@@ -77,6 +77,124 @@ func TestAuthStartJSON(t *testing.T) {
 	}
 }
 
+// A silent re-auth is an ordinary authorization request with `prompt=none`
+// and, when the client knows the account, `login_hint`. Both must reach the
+// authorize URL the app opens: that URL is the whole non-interactive attempt.
+func TestAuthStartSilentPromptAndLoginHint(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "memory-connector.yml")
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	withFakePKCEManager(t, pkceTestDeps(&now))
+
+	code, stdout, stderr := runAuthCapture("start", "--config", configPath,
+		"--server", "https://memory.example.test",
+		"--redirect-uri", "myapp://callback",
+		"--prompt", "none",
+		"--login-hint", "person@example.test",
+		"--json")
+	if code != 0 {
+		t.Fatalf("code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	var doc struct {
+		AuthorizeURL string `json:"authorize_url"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		t.Fatalf("unmarshal start JSON: %v\n%s", err, stdout)
+	}
+	u, err := url.Parse(doc.AuthorizeURL)
+	if err != nil {
+		t.Fatalf("parse authorize_url: %v", err)
+	}
+	if got := u.Query().Get("prompt"); got != "none" {
+		t.Errorf("prompt = %q, want none", got)
+	}
+	if got := u.Query().Get("login_hint"); got != "person@example.test" {
+		t.Errorf("login_hint = %q", got)
+	}
+}
+
+// Without the flags the two parameters are simply absent — an interactive
+// sign-in must not inherit a stale hint or a prompt.
+func TestAuthStartOmitsUnsetPromptAndLoginHint(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "memory-connector.yml")
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	withFakePKCEManager(t, pkceTestDeps(&now))
+
+	code, stdout, stderr := runAuthCapture("start", "--config", configPath,
+		"--server", "https://memory.example.test",
+		"--redirect-uri", "myapp://callback", "--json")
+	if code != 0 {
+		t.Fatalf("code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	var doc struct {
+		AuthorizeURL string `json:"authorize_url"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		t.Fatalf("unmarshal start JSON: %v\n%s", err, stdout)
+	}
+	u, err := url.Parse(doc.AuthorizeURL)
+	if err != nil {
+		t.Fatalf("parse authorize_url: %v", err)
+	}
+	if u.Query().Has("prompt") || u.Query().Has("login_hint") {
+		t.Errorf("authorize_url carries prompt/login_hint that were not requested: %s", doc.AuthorizeURL)
+	}
+}
+
+func TestAuthStartRejectsUnknownPrompt(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "memory-connector.yml")
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	withFakePKCEManager(t, pkceTestDeps(&now))
+
+	code, _, stderr := runAuthCapture("start", "--config", configPath,
+		"--server", "https://memory.example.test",
+		"--redirect-uri", "myapp://callback",
+		"--prompt", "none-ish")
+	if code != 2 {
+		t.Fatalf("code = %d, want 2 (usage)", code)
+	}
+	if !strings.Contains(stderr, "--prompt") {
+		t.Errorf("stderr should name the rejected flag, got %q", stderr)
+	}
+}
+
+// TestRootCommandCarriesSilentFlagsToAuthorizeURL crosses the REAL entry point:
+// cobra leaf -> stdlibArgs -> runAuthStart -> StartPKCE -> buildAuthorizeURL. It
+// fails if the leaf stops registering --prompt/--login-hint, because cobra
+// rejects an unregistered flag before runAuthStart runs — the failure the
+// direct runAuthStart tests could not see.
+func TestRootCommandCarriesSilentFlagsToAuthorizeURL(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "memory-connector.yml")
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	withFakePKCEManager(t, pkceTestDeps(&now))
+
+	out, errOut, err := executeRoot("auth", "start",
+		"--config", configPath,
+		"--server", "https://memory.example.test",
+		"--redirect-uri", "myapp://callback",
+		"--prompt", "none",
+		"--login-hint", "person@example.test",
+		"--json")
+	if err != nil {
+		t.Fatalf("auth start through the root command: %v (stderr: %s)", err, errOut)
+	}
+	var doc struct {
+		AuthorizeURL string `json:"authorize_url"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("unmarshal start JSON: %v\n%s", err, out)
+	}
+	u, err := url.Parse(doc.AuthorizeURL)
+	if err != nil {
+		t.Fatalf("parse authorize_url: %v", err)
+	}
+	if got := u.Query().Get("prompt"); got != "none" {
+		t.Errorf("authorize prompt = %q, want none", got)
+	}
+	if got := u.Query().Get("login_hint"); got != "person@example.test" {
+		t.Errorf("authorize login_hint = %q, want person@example.test", got)
+	}
+}
+
 func TestAuthStartText(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "memory-connector.yml")
 	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)

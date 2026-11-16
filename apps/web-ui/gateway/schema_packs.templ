@@ -12,12 +12,15 @@ import (
 
 // --- Schema packs list ---
 
-// SchemaPacksPage renders the "Schema packs" list: the project's ACTIVE packs
-// with their owner, type counts, and description. Each row links to the
-// read-only pack detail. "Add schema" is the list-page action (the existing
-// /schema/add install flow). A load error renders the whole-page error state
-// inside the rail.
-templ SchemaPacksPage(packs []schemaPackSummary, loadErr error) {
+// SchemaPacksPage renders the "Schema packs" list in four fixed sections:
+// Manual, Blueprints, Data Sources and Built-in. A blueprint section keeps the
+// per-blueprint groups (the heading links to the blueprint, as before); a Data
+// Sources section lists one row per installed app (the row links to the app);
+// Manual and Built-in rows have no title link. Each row still exposes its object
+// types as links, and a "Details" link opens the read-only pack page. "Add
+// schema" is the list-page action (the existing /schema/add install flow). A
+// load error renders the whole-page error state inside the rail.
+templ SchemaPacksPage(sections []schemaPackSection, loadErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Schema packs")), "", "Schema packs", "Active schema packs contributing object and relationship types to this project.") {
 			<div class="flex flex-wrap items-center gap-2">
@@ -35,7 +38,7 @@ templ SchemaPacksPage(packs []schemaPackSummary, loadErr error) {
 		@layout.Rail(schemaSubNav("packs"), nil) {
 			if loadErr != nil {
 				@pageErrorNotice("Failed to load schema packs", loadErr)
-			} else if len(packs) == 0 {
+			} else if len(sections) == 0 {
 				@ui.EmptyState(ui.EmptyStateProps{
 					Icon:        "lucide--library",
 					Title:       "No active schema packs",
@@ -46,14 +49,34 @@ templ SchemaPacksPage(packs []schemaPackSummary, loadErr error) {
 					ActionIcon:  "lucide--plus",
 				})
 			} else {
-				<div class="flex flex-col gap-5" data-testid="schema-pack-groups">
-					for _, g := range groupSchemaPacks(packs) {
-						<div class="flex flex-col gap-2" data-testid="schema-pack-group" data-schema-pack-group={ g.Key }>
-							@originHeading(g.Label, g.BlueprintID(), "", len(g.Packs), "pack", "packs")
-							for _, p := range g.Packs {
-								@schemaPackCard(p)
+				<div class="flex flex-col gap-8" data-testid="schema-pack-groups">
+					for _, sec := range sections {
+						<section class="flex flex-col gap-3" data-testid="schema-pack-section" data-schema-pack-section={ sec.Key }>
+							@originHeading(sec.Label, "", "", sec.packCount(), "pack", "packs")
+							for _, g := range sec.Groups {
+								<div class="flex flex-col gap-2" data-testid="schema-pack-group" data-schema-pack-group={ g.Key }>
+									if g.Label != "" {
+										if g.Href != "" {
+											<div class="flex flex-wrap items-center gap-2">
+												@ui.IconSpan("lucide--library", "text-info size-3.5 shrink-0")
+												<a class="text-info text-sm font-semibold hover:underline" href={ templ.URL(g.Href) }>{ g.Label }</a>
+												<span class="text-muted-faint text-[11px]">{ countLabel(len(g.Rows), "pack", "packs") }</span>
+												<span class="text-muted-faint text-[11px]">· blueprint</span>
+											</div>
+										} else {
+											<div class="flex flex-wrap items-center gap-2">
+												@ui.IconSpan("lucide--database", "text-info size-3.5 shrink-0")
+												<span class="text-muted-bright text-sm font-semibold">{ g.Label }</span>
+												<span class="text-muted-faint text-[11px]">{ countLabel(len(g.Rows), "pack", "packs") }</span>
+											</div>
+										}
+									}
+									for _, r := range g.Rows {
+										@schemaPackRowCard(r)
+									}
+								</div>
 							}
-						</div>
+						</section>
 					}
 				</div>
 			}
@@ -61,20 +84,52 @@ templ SchemaPacksPage(packs []schemaPackSummary, loadErr error) {
 	}
 }
 
-// schemaPackCard is one active pack in the list: a package icon tile, the pack
-// name in the pack colour (yellow, matching the compiled schema's pack group
-// headings), its version and owner badges, type counts and description, with a
-// chevron standing in for the detail page the whole card links to. Same card
-// shape as the compiled schema's type cards so both list surfaces read alike.
-templ schemaPackCard(p schemaPackSummary) {
-	<a class="rounded-box border-base-content/10 bg-base-100 hover:border-primary/40 group flex items-start gap-3 border px-3 py-2.5 transition-colors" href={ templ.URL("/schema/packs/" + url.PathEscape(p.ID)) } data-testid="schema-pack-card">
-		@ui.IconTile("lucide--package", ui.IconTileProps{Tone: "warning"})
+// schemaPackRowCard is one active pack in the list. The title is the pack name,
+// or an installed app's name for a data-source row; it links only where the
+// section gives it a destination (the app, for data sources) — a blueprint's
+// destination is the group heading above it, and manual/built-in rows are plain.
+// The row keeps the pack's object types as chips linking to their type pages, so
+// the data is reachable even when the title is not a link, and offers the
+// read-only pack detail behind an explicit "Details" link.
+templ schemaPackRowCard(r schemaPackRow) {
+	{{ p := r.Pack
+	icon := ""
+	color := ""
+	for _, t := range p.ObjectTypes {
+		if icon == "" {
+			icon = compiledTypeIcon(t)
+		}
+		if color == "" {
+			color = compiledTypeColor(t)
+		}
+		if icon != "" && color != "" {
+			break
+		}
+	} }}
+	<div class="rounded-box border-base-content/10 bg-base-100 group flex items-start gap-3 border px-3 py-2.5" data-testid="schema-pack-card">
+		@typeIconTile(icon, color)
 		<div class="min-w-0 flex-1">
 			<div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-				<span class="text-warning truncate text-sm font-medium">{ p.Name }</span>
+				<span class="text-warning truncate text-sm font-medium" data-testid="schema-pack-title">
+					if r.Href != "" {
+						<a class="hover:underline" href={ templ.URL(r.Href) } data-schema-pack-title-href={ r.Href }>{ r.Title }</a>
+					} else {
+						{ r.Title }
+					}
+				</span>
 				@ui.Badge(ui.BadgeProps{Label: "v" + p.Version, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
 				@ownerBadge(p, ui.BadgeSizeXS)
+				if r.Subtitle != "" {
+					<span class="text-muted-faint text-[11px]">{ r.Subtitle }</span>
+				}
 			</div>
+			if len(p.ObjectTypes) > 0 {
+				<div class="mt-1 flex flex-wrap items-center gap-1" data-testid="schema-pack-types">
+					for _, t := range p.ObjectTypes {
+						@schemaPackTypeChip(t)
+					}
+				</div>
+			}
 			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5"}) {
 				{ p.typeCountLabel() }
 			}
@@ -84,7 +139,25 @@ templ schemaPackCard(p schemaPackSummary) {
 				}
 			}
 		</div>
-		@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-faint")
+		<a class="text-muted-faint hover:text-base-content inline-flex shrink-0 items-center gap-0.5 text-[11px]" href={ templ.URL("/schema/packs/" + url.PathEscape(p.ID)) } data-testid="schema-pack-details">
+			Details
+			@ui.IconSpan("lucide--chevron-right", "size-3.5")
+		</a>
+	</div>
+}
+
+// schemaPackTypeChip is one object type of a pack, rendered with the type's own
+// declared icon and colour accent and linking to that type's page.
+templ schemaPackTypeChip(t CompiledType) {
+	{{ icon := compiledTypeIcon(t)
+	color := compiledTypeColor(t)
+	cls := typeIconClass(icon)
+	glyph := ""
+	if cls == "" {
+		glyph = icon
+	} }}
+	<a href={ templ.URL("/schema/object-types/" + url.PathEscape(t.Name)) } class="inline-flex items-center" data-testid="schema-pack-type-link" data-pack-type={ t.Name } title={ t.Name }>
+		@ui.Badge(ui.BadgeProps{Label: t.Name, Variant: ui.BadgeGhost, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: cls, Glyph: glyph, Color: color})
 	</a>
 }
 
@@ -186,8 +259,8 @@ templ SchemaPackPendingPage(pack *pendingPack, flashErr error) {
 					if pack.Author != "" {
 						@schemaPackMetaRow("Author", pack.Author, false)
 					}
-					if pack.Source != "" {
-						@schemaPackMetaRow("Source", pack.Source, false)
+					if label := packSourceDisplay(pack.Source); label != "" {
+						@schemaPackMetaRow("Source", label, false)
 					}
 					@schemaPackMetaRow("Types", strconv.Itoa(len(pack.ObjectTypes)+len(pack.RelationTypes)), false)
 				}
@@ -238,8 +311,17 @@ templ schemaPackMeta(pack *schemaPackSummary) {
 		@components.MetaGrid() {
 			@schemaPackMetaRow("Pack id", pack.ID, true)
 			@schemaPackMetaRow("Owner", pack.ownerLabel(), false)
-			if pack.Source != "" {
-				@schemaPackMetaRow("Source", pack.Source, false)
+			if label := pack.sourceLabel(); label != "" {
+				@schemaPackMetaRow("Source", label, false)
+			}
+			if len(pack.LinkedSources) > 0 {
+				@components.MetaRowCustom("Installed apps", components.MetaRowOpts{NoEmptyDash: true}) {
+					<div class="flex flex-wrap gap-x-2 gap-y-1">
+						for _, src := range pack.LinkedSources {
+							<a class="text-primary font-medium hover:underline" href={ templ.URL("/data-sources/" + url.PathEscape(src.ID)) }>{ src.Name }</a>
+						}
+					</div>
+				}
 			}
 			@schemaPackMetaRow("Types", pack.typeCountLabel(), false)
 			if pack.Provenance != nil {

@@ -41,6 +41,9 @@ func (p *schemaProvisioner) EnsureObjectTypes(ctx context.Context, projectID str
 		if len(def.Required) > 0 {
 			entry["required"] = def.Required
 		}
+		if len(def.UI) > 0 {
+			entry["ui"] = def.UI
+		}
 		if def.SkipExtraction {
 			entry["skipExtraction"] = true
 		}
@@ -77,10 +80,15 @@ func (p *schemaProvisioner) EnsureObjectTypes(ctx context.Context, projectID str
 		Version:                      pack.Version,
 		Description:                  &pack.Description,
 		Author:                       stringPtr("Memory"),
+		Source:                       pack.Source,
 		ObjectTypeSchemasSnake:       objJSON,
 		RelationshipTypeSchemasSnake: relJSON,
 	}
-	schema, err := p.svc.EnsureProjectPack(ctx, projectID, req)
+	// Provider packs are code-owned: reconcile the project's existing pack in
+	// place (source, version, type definitions incl. their ui block) instead of
+	// returning the stale row untouched. Without this a type added or styled in
+	// code never reaches an already-connected project.
+	schema, err := p.svc.ReconcileProjectPack(ctx, projectID, req)
 	if err != nil {
 		return err
 	}

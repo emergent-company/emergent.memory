@@ -17,6 +17,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
@@ -143,15 +144,15 @@ func (h *ReviewToolHandler) HandlesGitHubAppTool(name string) bool {
 func (h *ReviewToolHandler) MintSourceCredential(ctx context.Context, projectID, sourceID, repo string, permissions map[string]string) (string, error) {
 	projectUUID, err := uuid.Parse(strings.TrimSpace(projectID))
 	if err != nil {
-		return "", fmt.Errorf("sources: credential: invalid project id")
+		return "", apperror.NewValidation("sources: credential: invalid project id")
 	}
 	sourceUUID, err := uuid.Parse(strings.TrimSpace(sourceID))
 	if err != nil || sourceUUID == uuid.Nil {
-		return "", fmt.Errorf("sources: credential: invalid source id")
+		return "", apperror.NewValidation("sources: credential: invalid source id")
 	}
 	repo = strings.TrimSpace(repo)
 	if repo == "" {
-		return "", fmt.Errorf("sources: credential: repo is required")
+		return "", apperror.NewValidation("sources: credential: repo is required")
 	}
 	src, app, err := h.resolveRunSource(ctx, projectUUID, repo, sourceUUID.String())
 	if err != nil {
@@ -182,12 +183,12 @@ func normalizeCredentialPermissions(in map[string]string) (map[string]string, er
 	out := make(map[string]string, len(in))
 	for name, value := range in {
 		if _, ok := allowed[name]; !ok {
-			return nil, fmt.Errorf("sources: credential permission %q is not allowed", name)
+			return nil, apperror.NewValidationf("sources: credential permission %q is not allowed", name)
 		}
 		switch value {
 		case "read", "write":
 		default:
-			return nil, fmt.Errorf("sources: credential permission %q must be read or write", name)
+			return nil, apperror.NewValidationf("sources: credential permission %q must be read or write", name)
 		}
 		out[name] = value
 	}
@@ -206,15 +207,15 @@ func normalizeCredentialPermissions(in map[string]string) (map[string]string, er
 // zero or multiple candidates instead of guessing (#579).
 func (h *ReviewToolHandler) ExecuteGitHubAppTool(ctx context.Context, projectID, toolName string, args map[string]any) (*mcp.ToolResult, error) {
 	if !h.HandlesGitHubAppTool(toolName) {
-		return nil, fmt.Errorf("sources: unsupported review tool %q", toolName)
+		return nil, apperror.NewValidationf("sources: unsupported review tool %q", toolName)
 	}
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("sources: review tool: invalid project id")
+		return nil, apperror.NewValidation("sources: review tool: invalid project id")
 	}
 	repo := stringArg(args, "repo")
 	if repo == "" {
-		return nil, fmt.Errorf("sources: review tool: repo is required")
+		return nil, apperror.NewValidation("sources: review tool: repo is required")
 	}
 	if err := validateReviewSubject(ctx, toolName, repo, args); err != nil {
 		return nil, err
@@ -253,7 +254,7 @@ func (h *ReviewToolHandler) ExecuteGitHubAppTool(ctx context.Context, projectID,
 	case toolReviewSubmit:
 		return h.executeReviewSubmit(ctx, client, projectID, repo, args)
 	default:
-		return nil, fmt.Errorf("sources: unsupported review tool %q", toolName)
+		return nil, apperror.NewValidationf("sources: unsupported review tool %q", toolName)
 	}
 }
 
@@ -280,10 +281,10 @@ func (h *ReviewToolHandler) resolveSource(ctx context.Context, projectID uuid.UU
 	}
 	switch len(candidates) {
 	case 0:
-		return nil, nil, fmt.Errorf("sources: no github_app source allows repo %s in this project", repo)
+		return nil, nil, apperror.NewValidationf("sources: no github_app source allows repo %s in this project", repo)
 	case 1:
 	default:
-		return nil, nil, fmt.Errorf("sources: repo %s is allowlisted by %d github_app sources in this project (%s); refusing to guess",
+		return nil, nil, apperror.NewValidationf("sources: repo %s is allowlisted by %d github_app sources in this project (%s); refusing to guess",
 			repo, len(candidates), namedSourceCandidates(candidates))
 	}
 	src := candidates[0]
@@ -384,10 +385,10 @@ func validateReviewSubject(ctx context.Context, toolName, repo string, args map[
 // truncates large payloads.
 func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp.Client, repo, headSHA string) (*mcp.ToolResult, error) {
 	if headSHA == "" {
-		return nil, fmt.Errorf("github app tool: head_sha is required")
+		return nil, apperror.NewValidation("github app tool: head_sha is required")
 	}
 	if !validCommitSHA(headSHA) {
-		return nil, fmt.Errorf("github app tool: head_sha %q is not a commit SHA (40 lowercase hex)", headSHA)
+		return nil, apperror.NewValidationf("github app tool: head_sha %q is not a commit SHA (40 lowercase hex)", headSHA)
 	}
 	diff, err := client.GetCommit(ctx, repo, headSHA)
 	if err != nil {
@@ -446,16 +447,16 @@ func (h *ReviewToolHandler) linkedIssue(ctx context.Context, projectID, repo str
 func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *githubapp.Client, projectID, repo string, args map[string]any) (*mcp.ToolResult, error) {
 	number, ok := intArg(args, "number")
 	if !ok || number <= 0 {
-		return nil, fmt.Errorf("github app tool: number is required")
+		return nil, apperror.NewValidation("github app tool: number is required")
 	}
 	headSHA := stringArg(args, "head_sha")
 	verdict := strings.ToUpper(strings.TrimSpace(stringArg(args, "verdict")))
 	summary := strings.TrimSpace(stringArg(args, "summary"))
 	if headSHA == "" || summary == "" {
-		return nil, fmt.Errorf("github app tool: head_sha and summary are required")
+		return nil, apperror.NewValidation("github app tool: head_sha and summary are required")
 	}
 	if !validCommitSHA(headSHA) {
-		return nil, fmt.Errorf("github app tool: head_sha %q is not a commit SHA (40 lowercase hex)", headSHA)
+		return nil, apperror.NewValidationf("github app tool: head_sha %q is not a commit SHA (40 lowercase hex)", headSHA)
 	}
 	var event, conclusion, checkTitle string
 	switch verdict {
@@ -464,7 +465,7 @@ func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *git
 	case "CHANGES_REQUESTED":
 		event, conclusion, checkTitle = "REQUEST_CHANGES", "failure", "reviewed: changes requested"
 	default:
-		return nil, fmt.Errorf("github app tool: verdict must be MERGE or CHANGES_REQUESTED")
+		return nil, apperror.NewValidation("github app tool: verdict must be MERGE or CHANGES_REQUESTED")
 	}
 
 	state, err := client.GetPullRequest(ctx, repo, number)

@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
-	"sync/atomic"
+	"time"
 
 	"github.com/labstack/echo/v4"
 
@@ -32,10 +32,6 @@ import (
 // a2aStreamTranslator accumulates a turn's streaming state and translates
 // internal StreamEvents into A2A StreamResponse payloads. It is a pure, non-I/O
 // type so the event map can be tested without a database or executor.
-//
-// It is NOT safe for concurrent use: ADK emits tool callbacks from parallel
-// goroutines. Drive it through a2aStreamSink, which serialises the callback
-// body (translate + write + persist).
 type a2aStreamTranslator struct {
 	taskID    string
 	contextID string
@@ -50,15 +46,10 @@ type a2aStreamTranslator struct {
 	// for; they are folded into the final ROLE_AGENT message metadata.
 	thinking []string
 
-	// toolSeq/toolArtByCall give each tool-call trajectory a stable artifactId
-	// so a call's start and end deltas accumulate onto the same artifact.
-	// ADK runs the function calls of one model response concurrently, so starts
-	// and ends interleave: the end must be matched to its own call by the ADK
-	// function-call id (StreamEvent.ID), never to whichever call started last.
-	// toolArtID is the most recent assignment, used only when the id is empty.
-	toolSeq       int
-	toolArtID     string
-	toolArtByCall map[string]string
+	// toolSeq/toolArtID give each tool-call trajectory a stable artifactId so a
+	// call's start and end deltas accumulate onto the same artifact.
+	toolSeq   int
+	toolArtID string
 }
 
 // newA2aStreamTranslator builds a translator for a task/context pair.
@@ -67,37 +58,6 @@ func newA2aStreamTranslator(taskID, contextID string) *a2aStreamTranslator {
 		taskID:    taskID,
 		contextID: contextID,
 		textArtID: "artifact-" + taskID,
-	}
-}
-
-// a2aStreamSink serialises the streaming callback body. The translator is NOT
-// safe for concurrent use, and ADK calls it concurrently: the function calls of
-// one model response fan out through platform.RunTasks (one goroutine per call),
-// so both tool callbacks reach StreamCallback at once. Without this lock the
-// shared toolSeq++ can hand two starts the same "tool-call-N", the toolArtByCall
-// map write can panic the process ("concurrent map writes" is a fatal error, not
-// a recoverable race), and the SSE writes interleave.
-//
-// The mutex makes one event atomic: translate, write, and persist/fan-out happen
-// in event order. Event order between goroutines is still whichever arrives
-// first, which is all the wire needs.
-type a2aStreamSink struct {
-	mu      sync.Mutex
-	tr      *a2aStreamTranslator
-	write   func(...StreamResponse)
-	onDelta func(ev StreamEvent, resps []StreamResponse) // optional; nil skips persistence
-}
-
-// handle translates and emits one stream event. Safe for concurrent use.
-func (s *a2aStreamSink) handle(ev StreamEvent) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	resps := s.tr.translate(ev)
-	if s.write != nil {
-		s.write(resps...)
-	}
-	if s.onDelta != nil {
-		s.onDelta(ev, resps)
 	}
 }
 
@@ -130,12 +90,6 @@ func (t *a2aStreamTranslator) translate(ev StreamEvent) []StreamResponse {
 	case StreamEventToolCallStart:
 		t.toolSeq++
 		t.toolArtID = fmt.Sprintf("tool-call-%d", t.toolSeq)
-		if ev.ID != "" {
-			if t.toolArtByCall == nil {
-				t.toolArtByCall = make(map[string]string)
-			}
-			t.toolArtByCall[ev.ID] = t.toolArtID
-		}
 		return []StreamResponse{{
 			ArtifactUpdate: &TaskArtifactUpdateEvent{
 				TaskID:    t.taskID,
@@ -149,21 +103,12 @@ func (t *a2aStreamTranslator) translate(ev StreamEvent) []StreamResponse {
 		}}
 
 	case StreamEventToolCallEnd:
-		// Match the end to its own start by call id. Parallel calls finish out
-		// of order, so the last-started artifact is usually the wrong one.
-		artID := t.toolArtID
-		if ev.ID != "" {
-			if id, ok := t.toolArtByCall[ev.ID]; ok {
-				artID = id
-				delete(t.toolArtByCall, ev.ID)
-			}
-		}
 		return []StreamResponse{{
 			ArtifactUpdate: &TaskArtifactUpdateEvent{
 				TaskID:    t.taskID,
 				ContextID: t.contextID,
 				Artifact: Artifact{
-					ArtifactID: artID,
+					ArtifactID: t.toolArtID,
 					Name:       ev.Tool,
 					Parts:      []Part{{Data: map[string]any{"toolName": ev.Tool, "output": ev.Output}}},
 				},
@@ -300,6 +245,16 @@ func a2aStatusUpdate(taskID, contextID string, state TaskState, msgText string) 
 	return StreamResponse{StatusUpdate: su}
 }
 
+// a2aResumeConflictResponse reports, inside a stream that has already started,
+// that a concurrent follow-up consumed the pause and owns the task. It carries no
+// terminal state: the winner is still executing the task.
+func a2aResumeConflictResponse(taskID, contextID string) StreamResponse {
+	msg := textStatusMessage("This task is already being resumed by another follow-up. Follow it with tasks/" + taskID + ":subscribe.")
+	msg.TaskID = taskID
+	msg.ContextID = contextID
+	return StreamResponse{Message: msg}
+}
+
 // a2aDeltaEventType maps an internal stream event to the reused run-event
 // type persisted alongside emission. Returns false when the event has no
 // persistence counterpart (tool-approval gate, unknown).
@@ -379,164 +334,6 @@ func a2aInitialTask(run *AgentRun, taskID, contextID string) Task {
 // ---------------------------------------------------------------------------
 // POST /message:stream
 // ---------------------------------------------------------------------------
-
-// abandonedStreamCancelReason is recorded on a run whose A2A stream consumer went
-// away mid-turn: the SSE connection failed to write, or the request context was
-// cancelled while the executor was still running. It is a cancel, not a failure —
-// the work is not wrong, nobody is listening for it (issue #868).
-const abandonedStreamCancelReason = "Run cancelled: the A2A stream consumer disconnected"
-
-// a2aStreamTarget tracks the run that currently owns the streamed turn so a dead
-// connection cancels the row that is actually executing. On a new task that is
-// the run this handler created; on a resume the executor creates a child run and
-// the paused checkpoint it resumes from is not what carries the work, so the id
-// is updated from ExecuteRequest.OnRunCreated.
-type a2aStreamTarget struct {
-	mu      sync.Mutex
-	id      string
-	aborted bool
-}
-
-// newA2AStreamTarget tracks runID as the executing run.
-func newA2AStreamTarget(runID string) *a2aStreamTarget {
-	return &a2aStreamTarget{id: runID}
-}
-
-// track records the id of the run now executing this turn and reports whether the
-// stream has ALREADY been abandoned, so the caller cancels this run instead of
-// leaving it to run for a consumer that is gone. On the resume path the abort can
-// land between the WORKING write and the child insert, when the tracked id is
-// still the paused checkpoint: that cancel is refused (a paused row must never be
-// flipped to cancelling), and without this second chance the child — created a
-// moment later — would execute the whole turn for nobody. An empty id is ignored
-// so a caller cannot erase a known target.
-func (t *a2aStreamTarget) track(runID string) (aborted bool) {
-	if runID == "" {
-		return false
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.id = runID
-	return t.aborted
-}
-
-// markAborted reports that the stream is abandoned (exactly once, from the
-// handler's abandon guard) and returns the id tracked at that moment. A track
-// call that arrives afterwards sees aborted=true and cancels its own run.
-func (t *a2aStreamTarget) markAborted() string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.aborted = true
-	return t.id
-}
-
-// a2aStreamWriter writes translated StreamResponses to the SSE connection and
-// reports the first failure. A failed write means the consumer is gone, so the
-// handler treats it as a cancel instead of writing into a dead connection for the
-// rest of the turn — the discarded-error shape that let a run keep stepping for
-// nine minutes in issue #868.
-type a2aStreamWriter struct {
-	writer  *sse.Writer
-	onAbort func() // called at most once, on the first failed write
-	aborted atomic.Bool
-}
-
-// newA2AStreamWriter wraps the SSE writer.
-func newA2AStreamWriter(w *sse.Writer) *a2aStreamWriter {
-	return &a2aStreamWriter{writer: w}
-}
-
-// write emits one StreamResponse and returns the write error so callers stop
-// writing into a dead connection. The first failure also invokes onAbort.
-func (s *a2aStreamWriter) write(sr StreamResponse) error {
-	if err := s.writer.WriteData(sr); err != nil {
-		if s.aborted.CompareAndSwap(false, true) && s.onAbort != nil {
-			s.onAbort()
-		}
-		return err
-	}
-	return nil
-}
-
-// writeAll emits a translated sequence in order, stopping at the first failed
-// write. The error is consumed here (not discarded): a dead connection has
-// already triggered the cancel, and every later write would fail the same way.
-func (s *a2aStreamWriter) writeAll(resps []StreamResponse) {
-	for _, sr := range resps {
-		if err := s.write(sr); err != nil {
-			return
-		}
-	}
-}
-
-// trackStreamRun records runID as the run executing this stream and, when the
-// stream has already been abandoned, cancels it immediately. This closes the
-// resume window: the abort can land between the WORKING frame and the child run
-// insert, when the tracked id is still the paused checkpoint — a cancel the
-// repository refuses on purpose (issue #867) — so the child would otherwise
-// execute a whole turn for a consumer that is gone (issue #868).
-func (h *A2AHandler) trackStreamRun(ctx context.Context, target *a2aStreamTarget, runID string) {
-	if target.track(runID) {
-		h.cancelAbandonedStream(ctx, runID)
-	}
-}
-
-// cancelAbandonedStream cancels the run behind a stream whose consumer went away.
-// It records the durable cancel intent (issue #1166) and notifies the local
-// executor — the same two steps an explicit A2A CancelTask takes — so the run
-// stops at its next step boundary instead of running to completion for a client
-// that is no longer reading (issue #868).
-//
-// The transition only applies while the run is still doing work: a paused run has
-// already stopped and is waiting for a resume, and cancelling it would strand the
-// task the user is about to continue (issue #867).
-func (h *A2AHandler) cancelAbandonedStream(ctx context.Context, runID string) {
-	if runID == "" {
-		return
-	}
-	if h.repo != nil {
-		accepted, err := h.repo.RequestRunCancellationIfActive(ctx, runID)
-		if err != nil {
-			if h.log != nil {
-				h.log.Warn("failed to record a cancel for an abandoned A2A stream",
-					slog.String("run_id", runID),
-					slog.String("error", err.Error()),
-				)
-			}
-			return
-		}
-		if !accepted {
-			// Already terminal or paused: nothing is executing to cancel.
-			return
-		}
-	}
-	if h.executor != nil {
-		h.executor.Cancel(runID, abandonedStreamCancelReason)
-	}
-}
-
-// releaseResumeClaim releases a checkpoint that a resume consumed but never
-// turned into a child run, so a failed follow-up is not silently dropped against
-// a row that execution will never finalize. A plain claim is restored to the
-// pause so the follow-up is retryable; one carrying a cancel landed in the claim
-// window is finalized as cancelled instead. See
-// Repository.ReleasePausedRunClaim for the guard; when the child does exist this
-// is a no-op.
-func (h *A2AHandler) releaseResumeClaim(ctx context.Context, run *AgentRun) {
-	if h.repo == nil || run == nil || run.ID == "" {
-		return
-	}
-	released, err := h.repo.ReleasePausedRunClaim(ctx, run.ID)
-	if err != nil {
-		h.log.Error("failed to release paused run claim",
-			"run_id", run.ID, "error", err.Error())
-		return
-	}
-	if released {
-		h.log.Warn("resume failed before creating a child run; released the checkpoint claim",
-			"run_id", run.ID)
-	}
-}
 
 // StreamMessage handles POST /message:stream (SSE). Each `data:` line is a
 // StreamResponse discriminated by member presence. With no message.taskId it
@@ -681,56 +478,10 @@ func (h *A2AHandler) streamResumeTask(c echo.Context, projectID, userID, userMes
 		return writeA2AError(c, a2aInvalidStateError(fmt.Sprintf("task is not awaiting input (state %s)", MapRunStatusToTaskState(latest.Status))))
 	}
 
-	questions, err := h.repo.FindPendingQuestionsByRunID(ctx, latest.ID)
-	if err != nil {
-		h.log.Error("failed to load pending questions", "task_id", taskID, "error", err)
-		return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to load pending questions"))
+	resumeMsg, pauseClaimed, resumeErr := h.prepareA2AResume(ctx, latest, userMessage, userID)
+	if resumeErr != nil {
+		return writeA2AError(c, resumeErr)
 	}
-	// A paused run with no pending question is a continuation, not a question:
-	// a step-limit or watchdog pause leaves no question row, and the client has
-	// already latched the task id from the INPUT_REQUIRED status, so rejecting
-	// the follow-up would strand the task (issue #867).
-	var question *AgentQuestion
-	if len(questions) > 0 {
-		question = questions[0]
-	}
-
-	// Kill switch: check BEFORE claiming the pending question, otherwise a
-	// disabled resume consumes the question and permanently strands the task
-	// (same guarantee as the JSON /message path).
-	if h.executor != nil {
-		if err := h.executor.EnsureExecutionEnabled(); err != nil {
-			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, err.Error()))
-		}
-	}
-
-	if question != nil {
-		claimed, err := h.repo.AnswerQuestion(ctx, question.ID, userMessage, userID)
-		if err != nil {
-			h.log.Error("failed to answer question", "task_id", taskID, "error", err)
-			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to answer question"))
-		}
-		if !claimed {
-			return writeA2AError(c, a2aInvalidStateError("question is no longer pending"))
-		}
-	} else {
-		// The questionless continuation has no question row to claim, so claim the
-		// pause itself: two followers (a client retry, a double submit) would
-		// otherwise both create a resumed child run and execute the turn twice.
-		// The claim stays non-terminal ("working") until Resume's finalize, so a
-		// cancel landing in the window still wins (the A2A lane's contract; other
-		// resume entry points claim terminally instead — issue #887).
-		claimed, err := h.repo.BeginA2AResumeClaim(ctx, latest.ID)
-		if err != nil {
-			h.log.Error("failed to claim paused run", "task_id", taskID, "error", err)
-			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to claim paused run"))
-		}
-		if !claimed {
-			return writeA2AError(c, a2aInvalidStateError("task is no longer awaiting input (already resumed)"))
-		}
-	}
-
-	resumeMsg := a2aResumeMessage(question, userMessage)
 
 	def, err := h.repo.ResolveDefinitionForAgent(ctx, latest.Agent)
 	if err != nil {
@@ -752,15 +503,118 @@ func (h *A2AHandler) streamResumeTask(c echo.Context, projectID, userID, userMes
 		OrgID:           h.a2aOrgID(ctx, c, projectID),
 		UserID:          userID,
 		UserMessage:     resumeMsg,
-		// The questionless branch claimed the pause into "working"; Resume must
-		// commit that claim (FinalizeResumedCheckpoint) instead of claiming
-		// again, which a "working" row would reject (issue #887).
-		PauseClaimed: question == nil,
+		PauseClaimed:    pauseClaimed,
 		// TrustedInternal defaults false: an A2A surface must not reach internal agents.
 		RenderA2UI: true, // A2A stream renders A2UI surfaces (artifactUpdate)
 	}
 
 	return h.streamRun(c, projectID, taskID, streamCtxID, latest, execReq, true)
+}
+
+// a2aAbandonTimeout bounds the durable-cancel write issued when an SSE consumer
+// disappears. The run is already being stopped locally, so a slow database must
+// not keep the handler or its goroutine alive.
+const a2aAbandonTimeout = 5 * time.Second
+
+// a2aStreamGuard stops the run behind an SSE stream when the client consuming
+// it goes away (issue #868). A vanished consumer used to be invisible: the
+// handler discarded every WriteData error, so a closed connection did not fail
+// the request and the run kept stepping in its sandbox with nobody reading the
+// output — tokens and workspace mutations spent on a turn the user had already
+// cancelled.
+//
+// It fires at most once, on either signal: a failed SSE write or a cancelled
+// request context (client disconnect). It is disarmed when the handler
+// completes normally, so a run that produced its terminal frame is never
+// cancelled after the fact.
+//
+// The run id is tracked instead of fixed at construction because a resume
+// creates a fresh child run: cancelling the paused checkpoint would strand the
+// resume instead of stopping the work. An abandonment that lands before the
+// child id is known is remembered and applied as soon as the id is tracked.
+type a2aStreamGuard struct {
+	mu        sync.Mutex
+	runID     string
+	abandoned bool
+	lateFired bool
+	stopped   bool
+	stopCh    chan struct{}
+	onAbandon func(runID string)
+}
+
+// newA2AStreamGuard builds a guard for a stream executing initialRunID (empty
+// when the executing run does not exist yet, as on the resume path).
+func newA2AStreamGuard(initialRunID string, onAbandon func(runID string)) *a2aStreamGuard {
+	return &a2aStreamGuard{
+		runID:     initialRunID,
+		stopCh:    make(chan struct{}),
+		onAbandon: onAbandon,
+	}
+}
+
+// watch fires the guard when ctx is cancelled, unless the handler finished
+// first. It runs on its own goroutine.
+func (g *a2aStreamGuard) watch(ctx context.Context) {
+	select {
+	case <-ctx.Done():
+		g.abandon()
+	case <-g.stopCh:
+	}
+}
+
+// trackRun records the run that is executing now. On the resume path this is
+// called from ExecuteRequest.OnRunCreated once the child run row exists, which
+// is why it may arrive after an abandonment already fired.
+func (g *a2aStreamGuard) trackRun(runID string) {
+	if runID == "" {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.stopped {
+		return
+	}
+	g.runID = runID
+	if g.abandoned && !g.lateFired {
+		g.lateFired = true
+		g.onAbandon(runID)
+	}
+}
+
+// abandon stops the run once. An empty run id means the consumer vanished
+// before the executing run existed (the resume window): execution is stopped
+// now and the durable cancel is issued when the id is tracked.
+func (g *a2aStreamGuard) abandon() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.stopped || g.abandoned {
+		return
+	}
+	g.abandoned = true
+	if g.runID != "" {
+		g.lateFired = true
+	}
+	g.onAbandon(g.runID)
+}
+
+// stop disarms the guard and waits for any in-flight abandonment, so no cancel
+// write can outlive the handler.
+func (g *a2aStreamGuard) stop() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.stopped {
+		return
+	}
+	g.stopped = true
+	close(g.stopCh)
+}
+
+// abandonedRunID reports whether the consumer went away and, if so, the run id
+// that was executing when it did (empty on the resume window).
+func (g *a2aStreamGuard) abandonedRunID() (string, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.runID, g.abandoned
 }
 
 // streamRun executes (or resumes) a run and streams A2A StreamResponse events
@@ -776,39 +630,79 @@ func (h *A2AHandler) streamRun(
 	ctx := c.Request().Context()
 	bgCtx := context.Background()
 
-	writer := newA2AStreamWriter(sse.NewWriter(c.Response().Writer))
-	if err := writer.writer.Start(); err != nil {
+	// The executor runs under runCtx so an abandoned stream can stop it. The
+	// request context alone was not enough: a run whose consumer vanished kept
+	// executing to completion (issue #868).
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+
+	writer := sse.NewWriter(c.Response().Writer)
+	if err := writer.Start(); err != nil {
 		return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "SSE streaming not supported"))
 	}
-	defer writer.writer.Close()
-
-	// A consumer that disconnects is a cancel, not a slow client: the connection
-	// closing cancels the request context, and a failed write means the
-	// connection is already dead. Either way the run must stop, so both paths
-	// funnel through cancelAbandonedStream exactly once.
-	target := newA2AStreamTarget(run.ID)
-	var abandonOnce sync.Once
-	abandon := func() {
-		abandonOnce.Do(func() { h.cancelAbandonedStream(bgCtx, target.markAborted()) })
-	}
-	writer.onAbort = abandon
-
-	streamDone := make(chan struct{})
-	defer close(streamDone)
-	go func() {
-		select {
-		case <-ctx.Done():
-			abandon()
-		case <-streamDone:
-		}
-	}()
+	defer writer.Close()
 
 	tr := newA2aStreamTranslator(taskID, contextID)
 
-	// write emits translated responses to the wire. lifecycle persists + fans out
-	// to the bus separately so the terminal multi-event sequence persists once.
-	write := func(resps ...StreamResponse) {
-		writer.writeAll(resps)
+	// guard cancels the run when its consumer goes away. A resume creates a
+	// fresh child run, so no id is tracked until ExecuteRequest.OnRunCreated
+	// (wired below) reports it: cancelling the paused checkpoint instead would
+	// strand the resume. On the new-task path run.ID is already the executing
+	// run.
+	trackedRunID := run.ID
+	if resume {
+		trackedRunID = ""
+	}
+	guard := newA2AStreamGuard(trackedRunID, func(runID string) {
+		// Record the durable cancel intent first: the executor observes it at
+		// its next step boundary and finalizes the row as cancelled. Only then
+		// cancel the local run context, so the terminal write cannot race the
+		// intent and misreport an abandoned run as failed. The write is bounded
+		// and detached from the request context, which may already be gone.
+		if runID != "" {
+			cancelCtx, stopCancel := context.WithTimeout(bgCtx, a2aAbandonTimeout)
+			if _, err := h.repo.RequestRunCancellation(cancelCtx, runID); err != nil {
+				h.log.Warn("failed to request cancel for abandoned a2a stream run",
+					slog.String("run_id", runID),
+					slog.String("task_id", taskID),
+					slog.String("error", err.Error()),
+				)
+			}
+			stopCancel()
+		}
+		h.log.Info("a2a stream consumer gone, stopping run",
+			slog.String("task_id", taskID),
+			slog.String("run_id", runID),
+		)
+		cancelRun()
+	})
+	// Registered after cancelRun so it runs before it: on a clean return the
+	// guard is disarmed before the request context is cancelled.
+	defer guard.stop()
+
+	if ctx.Err() != nil {
+		// The consumer was already gone before execution started: do not spend
+		// a single step on it.
+		guard.abandon()
+	}
+	go guard.watch(ctx)
+
+	prevOnRunCreated := execReq.OnRunCreated
+	execReq.OnRunCreated = func(runID string) {
+		guard.trackRun(runID)
+		if prevOnRunCreated != nil {
+			prevOnRunCreated(runID)
+		}
+	}
+
+	// write emits a StreamResponse to the wire. A failed write means the
+	// consumer is gone, which is treated as a cancel. lifecycle persists + fans
+	// out to the bus separately so the terminal multi-event sequence persists
+	// once.
+	write := func(sr StreamResponse) {
+		if err := writer.WriteData(sr); err != nil {
+			guard.abandon()
+		}
 	}
 	lifecycle := func(eventType string) {
 		h.persistA2AEvent(bgCtx, taskID, eventType, nil)
@@ -826,25 +720,15 @@ func (h *A2AHandler) streamRun(
 	write(a2aStatusUpdate(taskID, contextID, TaskStateWorking, ""))
 	lifecycle(ACPEventRunInProgress)
 
-	// Track the run that actually executes this turn: on a resume the executor
-	// creates a child run, so a cancel aimed at run.ID would hit the paused
-	// checkpoint instead of the work in flight. If the stream was already
-	// abandoned before that child existed, track reports it and the child is
-	// cancelled here rather than executing a whole turn for a dead consumer.
-	execReq.OnRunCreated = func(runID string) { h.trackStreamRun(bgCtx, target, runID) }
-
 	// Translate + emit streaming deltas as they arrive, persisting each delta's
 	// translated payload (and fanning it out to the bus) so a subscribe client
-	// can replay the same artifactUpdate/message events. The sink serialises the
-	// whole body: ADK emits tool callbacks from parallel goroutines.
-	sink := &a2aStreamSink{
-		tr:    tr,
-		write: write,
-		onDelta: func(ev StreamEvent, resps []StreamResponse) {
-			et, ok := a2aDeltaEventType(ev)
-			if !ok {
-				return
-			}
+	// can replay the same artifactUpdate/message events.
+	execReq.StreamCallback = func(ev StreamEvent) {
+		resps := tr.translate(ev)
+		for _, sr := range resps {
+			write(sr)
+		}
+		if et, ok := a2aDeltaEventType(ev); ok {
 			for _, sr := range resps {
 				h.persistA2AEvent(bgCtx, taskID, et, a2aStreamPayload(sr))
 				h.emitA2ABus(ctx, projectID, taskID, et, a2aStreamPayload(sr))
@@ -855,42 +739,55 @@ func (h *A2AHandler) streamRun(
 				// consistency but do not fan it out to subscribers.
 				h.persistA2AEvent(bgCtx, taskID, et, nil)
 			}
-		},
+		}
 	}
-	execReq.StreamCallback = sink.handle
 
 	var result *ExecuteResult
 	var execErr error
 	if resume {
-		if h.resumeRun != nil {
-			result, execErr = h.resumeRun(ctx, run, execReq)
-		} else {
-			result, execErr = h.executor.Resume(ctx, run, execReq)
-		}
+		result, execErr = h.executor.Resume(runCtx, run, execReq)
 	} else {
-		result, execErr = h.executor.ExecuteWithRun(ctx, run, execReq)
+		result, execErr = h.executor.ExecuteWithRun(runCtx, run, execReq)
 	}
 	if result != nil && result.Cleanup != nil {
 		defer result.Cleanup()
 	}
+	if errors.Is(execErr, ErrRunAlreadyResumed) {
+		// Another follow-up consumed the pause first and owns the task. The
+		// stream has already started, so report it as a message and emit no
+		// terminal lifecycle event: the concurrent resume is still working, so
+		// marking this task failed (or completed) would be a lie (issue #887).
+		//
+		// ErrRunPauseNotResumable is deliberately NOT folded in here: no turn is
+		// running in that case, so the stream must report the failure and close
+		// the task out rather than telling the client to wait on a dead run
+		// (issue #912). It falls through to the failure path below.
+		write(a2aResumeConflictResponse(taskID, contextID))
+		return nil
+	}
 	if execErr != nil {
 		h.log.Error("a2a stream run failed", "task_id", taskID, "error", execErr.Error())
-		if resume {
-			// The continuation claims the pause before Resume runs. If Resume
-			// failed before creating a child run, the claim owns a row that no
-			// execution will ever finalize; restore the pause so the follow-up
-			// is retryable and GetTask stops reporting live work. Once the child
-			// exists this is a no-op and the child carries the failure.
-			h.releaseResumeClaim(bgCtx, run)
-		} else {
-			// Defence in depth: if the switch was flipped after the pre-check, the
-			// executor refused before touching the row, so fail it terminal rather
-			// than leaving it `running` until the stale-run reaper.
-			failRunIfExecutionDisabled(bgCtx, h.repo, run, execErr, h.log)
+		// Defence in depth: if the switch was flipped after the pre-check, the
+		// executor refused before touching the row, so fail it terminal rather
+		// than leaving it `running` until the stale-run reaper.
+		failRunIfExecutionDisabled(bgCtx, h.repo, run, execErr, h.log)
+	}
+	if abandonedRunID, abandoned := guard.abandonedRunID(); abandoned && abandonedRunID != "" {
+		// The consumer went away. The durable cancel intent normally makes the
+		// executor finalize the row as cancelled, but a run that stopped before
+		// reaching the pipeline (or whose executor never observed the intent)
+		// must not stay non-terminal. CancelRun is guarded, so a run that
+		// already reached a terminal state is left untouched.
+		if _, err := h.repo.CancelRun(bgCtx, abandonedRunID); err != nil {
+			h.log.Warn("failed to finalize abandoned a2a stream run",
+				slog.String("run_id", abandonedRunID),
+				slog.String("task_id", taskID),
+				slog.String("error", err.Error()),
+			)
 		}
 	}
 
-	h.streamTerminal(bgCtx, writer, tr, projectID, taskID, result, execErr)
+	h.streamTerminal(bgCtx, write, tr, projectID, taskID, result, execErr)
 	return nil
 }
 
@@ -898,7 +795,7 @@ func (h *A2AHandler) streamRun(
 // lets streamRun's deferred Close end the stream.
 func (h *A2AHandler) streamTerminal(
 	ctx context.Context,
-	writer *a2aStreamWriter,
+	write func(StreamResponse),
 	tr *a2aStreamTranslator,
 	projectID, taskID string,
 	result *ExecuteResult,
@@ -910,12 +807,16 @@ func (h *A2AHandler) streamTerminal(
 	}
 
 	if execErr != nil {
-		writer.writeAll(tr.failedEvents(execErr.Error()))
+		for _, sr := range tr.failedEvents(execErr.Error()) {
+			write(sr)
+		}
 		lifecycle(ACPEventRunFailed)
 		return
 	}
 	if result == nil {
-		writer.writeAll(tr.failedEvents("run produced no result"))
+		for _, sr := range tr.failedEvents("run produced no result") {
+			write(sr)
+		}
 		lifecycle(ACPEventRunFailed)
 		return
 	}
@@ -940,7 +841,9 @@ func (h *A2AHandler) streamTerminal(
 		if r, _ := h.repo.FindRunByID(ctx, runID); r != nil {
 			pausedRun = r
 		}
-		writer.writeAll(tr.inputRequiredEvents(prompt, pausedRun))
+		for _, sr := range tr.inputRequiredEvents(prompt, pausedRun) {
+			write(sr)
+		}
 		lifecycle(ACPEventRunAwaiting)
 
 	case RunStatusError:
@@ -948,11 +851,15 @@ func (h *A2AHandler) streamTerminal(
 		if errRun, _ := h.repo.FindRunByID(ctx, runID); errRun != nil && errRun.ErrorMessage != nil {
 			errMsg = *errRun.ErrorMessage
 		}
-		writer.writeAll(tr.failedEvents(errMsg))
+		for _, sr := range tr.failedEvents(errMsg) {
+			write(sr)
+		}
 		lifecycle(ACPEventRunFailed)
 
 	case RunStatusCancelled:
-		writer.writeAll(tr.cancelledEvents())
+		for _, sr := range tr.cancelledEvents() {
+			write(sr)
+		}
 		lifecycle(ACPEventRunCancelled)
 
 	default: // Success / Skipped → COMPLETED
@@ -960,7 +867,9 @@ func (h *A2AHandler) streamTerminal(
 		if a2aErr != nil {
 			latest = nil
 		}
-		writer.writeAll(tr.completedEvents(messages, latest, question))
+		for _, sr := range tr.completedEvents(messages, latest, question) {
+			write(sr)
+		}
 		lifecycle(ACPEventRunCompleted)
 	}
 }

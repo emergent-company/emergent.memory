@@ -1673,6 +1673,7 @@ type objectPropertyDef struct {
 	Title       string
 	Type        string
 	Widget      string
+	Format      string
 	Enum        []string
 	Description string
 	// ItemType is the declared element type of an `array` property
@@ -1682,6 +1683,19 @@ type objectPropertyDef struct {
 	// it rather than guessing with JSON parsing; a declared object/array element
 	// forces the JSON editor because a chip carries text only.
 	ItemType string
+}
+
+// Markdown reports whether the schema explicitly declares the property's
+// content as markdown (`"type": "string", "format": "markdown"`). It is a
+// content-type declaration, not a value type: the stored value stays a string
+// and nothing is validated or coerced, but every read surface renders the value
+// as markdown instead of escaped text. Only string-ish properties qualify, so a
+// stray format on a number or array never turns a value into prose.
+func (d objectPropertyDef) Markdown() bool {
+	if d.Type != "" && d.Type != "string" {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(d.Format), "markdown")
 }
 
 // Label is the property's display name: the schema's declared title (JSON-Schema
@@ -1906,6 +1920,7 @@ func compiledTypePropertyDefs(objectTypes []CompiledType, typeName string) []obj
 			Type        string          `json:"type"`
 			Title       string          `json:"title"`
 			Widget      string          `json:"widget"`
+			Format      string          `json:"format"`
 			Enum        []string        `json:"enum"`
 			Description string          `json:"description"`
 			Items       json.RawMessage `json:"items"`
@@ -1914,6 +1929,7 @@ func compiledTypePropertyDefs(objectTypes []CompiledType, typeName string) []obj
 			def.Type = meta.Type
 			def.Title = meta.Title
 			def.Widget = meta.Widget
+			def.Format = meta.Format
 			def.Enum = meta.Enum
 			def.Description = meta.Description
 			// Decode the element type on its own: JSON Schema also allows a

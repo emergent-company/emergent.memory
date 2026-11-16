@@ -73,7 +73,7 @@ func TestObjectExcerptScalarProse(t *testing.T) {
 		})
 	}
 
-	prose := objectArticleFor(GraphObject{Properties: map[string]any{"description": float64(2024)}})
+	prose := objectArticleFor(GraphObject{Properties: map[string]any{"description": float64(2024)}}, nil)
 	if prose.Lead != "2024" {
 		t.Errorf("numeric-looking description must become the article lead, got lead=%q body=%q", prose.Lead, prose.BodyHTML)
 	}
@@ -165,7 +165,7 @@ func TestObjectArticleLeadAndBodySplit(t *testing.T) {
 		prose := objectArticleFor(GraphObject{Properties: map[string]any{
 			"summary": "The lead sentence.",
 			"content": "## History\n\nSigned in 1901.\n\n## Notes\n\nFiled under land.",
-		}})
+		}}, nil)
 		if prose.Lead != "The lead sentence." {
 			t.Errorf("lead = %q", prose.Lead)
 		}
@@ -184,7 +184,7 @@ func TestObjectArticleLeadAndBodySplit(t *testing.T) {
 		prose := objectArticleFor(GraphObject{Properties: map[string]any{
 			"summary":     "The short version.",
 			"description": "The long version.\n\n## Detail\n\nMore of it.",
-		}})
+		}}, nil)
 		if prose.Lead != "The short version." {
 			t.Errorf("lead = %q", prose.Lead)
 		}
@@ -199,7 +199,7 @@ func TestObjectArticleLeadAndBodySplit(t *testing.T) {
 	t.Run("body only promotes its first paragraph", func(t *testing.T) {
 		prose := objectArticleFor(GraphObject{Properties: map[string]any{
 			"content": "The opening paragraph.\n\n## Details\n\nMore text.",
-		}})
+		}}, nil)
 		if prose.Lead != "The opening paragraph." {
 			t.Errorf("lead = %q", prose.Lead)
 		}
@@ -215,7 +215,7 @@ func TestObjectArticleLeadAndBodySplit(t *testing.T) {
 	})
 
 	t.Run("single-paragraph body has no body left", func(t *testing.T) {
-		prose := objectArticleFor(GraphObject{Properties: map[string]any{"content": "Only one paragraph."}})
+		prose := objectArticleFor(GraphObject{Properties: map[string]any{"content": "Only one paragraph."}}, nil)
 		if prose.Lead != "Only one paragraph." {
 			t.Errorf("lead = %q", prose.Lead)
 		}
@@ -228,7 +228,7 @@ func TestObjectArticleLeadAndBodySplit(t *testing.T) {
 		prose := objectArticleFor(GraphObject{Properties: map[string]any{
 			"summary": "Same opening.",
 			"content": "Same opening.\n\n## Rest\n\nAfter.",
-		}})
+		}}, nil)
 		if prose.Lead != "Same opening." {
 			t.Errorf("lead = %q", prose.Lead)
 		}
@@ -244,7 +244,7 @@ func TestObjectArticleLeadAndBodySplit(t *testing.T) {
 		for _, key := range []string{"summary", "excerpt", "abstract", "description"} {
 			prose := objectArticleFor(GraphObject{Properties: map[string]any{
 				key: "The opening paragraph.\n\n## Detail\n\nMore text.",
-			}})
+			}}, nil)
 			if prose.Lead != "The opening paragraph." {
 				t.Errorf("%s: lead = %q", key, prose.Lead)
 			}
@@ -264,7 +264,7 @@ func TestObjectArticleLeadAndBodySplit(t *testing.T) {
 		// description is in both precedence lists on purpose.
 		prose := objectArticleFor(GraphObject{Properties: map[string]any{
 			"description": "The opening.\n\n## Detail\n\nMore text.",
-		}})
+		}}, nil)
 		if prose.Lead != "The opening." {
 			t.Errorf("lead = %q", prose.Lead)
 		}
@@ -277,7 +277,7 @@ func TestObjectArticleLeadAndBodySplit(t *testing.T) {
 	})
 
 	t.Run("no prose", func(t *testing.T) {
-		prose := objectArticleFor(GraphObject{Properties: map[string]any{"count": 1}})
+		prose := objectArticleFor(GraphObject{Properties: map[string]any{"count": 1}}, nil)
 		if prose.Lead != "" || prose.BodyHTML != "" || len(prose.Headings) != 0 {
 			t.Errorf("expected empty prose, got %+v", prose)
 		}
@@ -861,4 +861,76 @@ func TestObjectWikiHrefForms(t *testing.T) {
 	if got := objectsWikiViewHref(objectsPageData{}, objectWikiViewPage); got != "?wiki_view=page" {
 		t.Errorf("bare browse switch link = %q", got)
 	}
+}
+
+// TestObjectArticleExplicitMarkdownBody pins the explicit content type on the
+// object page: a property the schema declares `format: markdown` is the body
+// even when its key is not among the article's conventional body names, and it
+// wins over one that is. A format declared on a non-string type is ignored, so
+// the page falls back to the conventional keys exactly as before.
+func TestObjectArticleExplicitMarkdownBody(t *testing.T) {
+	markdownDef := func(name string) objectPropertyDef {
+		return objectPropertyDef{Name: name, Type: "string", Format: "markdown"}
+	}
+
+	t.Run("declared format beats the conventional body key", func(t *testing.T) {
+		prose := objectArticleFor(GraphObject{Properties: map[string]any{
+			"content": "The conventional body.",
+			"readme":  "## Declared\n\nThe schema's choice.",
+		}}, []objectPropertyDef{{Name: "content", Type: "string"}, markdownDef("readme")})
+		if prose.BodyKey != "readme" {
+			t.Fatalf("body key = %q, want readme", prose.BodyKey)
+		}
+		if !strings.Contains(prose.BodyHTML, "choice.") {
+			t.Errorf("declared markdown must render as the body: %q", prose.BodyHTML)
+		}
+		if strings.Contains(prose.BodyHTML, "The conventional body.") {
+			t.Errorf("the conventional body must not also render: %q", prose.BodyHTML)
+		}
+	})
+
+	t.Run("unrelated format leaves the heuristic alone", func(t *testing.T) {
+		prose := objectArticleFor(GraphObject{Properties: map[string]any{
+			"content": "## History\n\nSigned in 1901.",
+		}}, []objectPropertyDef{{Name: "content", Type: "string", Format: "email"}})
+		if prose.BodyKey != "content" {
+			t.Fatalf("body key = %q, want content", prose.BodyKey)
+		}
+	})
+
+	t.Run("markdown on a non-string type is ignored", func(t *testing.T) {
+		prose := objectArticleFor(GraphObject{Properties: map[string]any{
+			"content": "The conventional body.",
+			"tags":    "not prose",
+		}}, []objectPropertyDef{
+			{Name: "content", Type: "string"},
+			{Name: "tags", Type: "array", Format: "markdown"},
+		})
+		if prose.BodyKey != "content" {
+			t.Fatalf("body key = %q, want content", prose.BodyKey)
+		}
+	})
+
+	t.Run("the lead property is not stolen as the body", func(t *testing.T) {
+		prose := objectArticleFor(GraphObject{Properties: map[string]any{
+			"summary": "The lead.",
+			"notes":   "## Body\n\nFrom the notes field.",
+		}}, []objectPropertyDef{markdownDef("summary"), markdownDef("notes")})
+		if prose.LeadKey != "summary" || prose.BodyKey != "notes" {
+			t.Fatalf("consumed keys = %q/%q, want summary/notes", prose.LeadKey, prose.BodyKey)
+		}
+		if prose.Lead != "The lead." {
+			t.Errorf("lead = %q", prose.Lead)
+		}
+	})
+
+	t.Run("an empty declared field falls back to the heuristic", func(t *testing.T) {
+		prose := objectArticleFor(GraphObject{Properties: map[string]any{
+			"content": "The conventional body.",
+			"readme":  "",
+		}}, []objectPropertyDef{markdownDef("readme")})
+		if prose.BodyKey != "content" {
+			t.Fatalf("body key = %q, want the conventional fallback", prose.BodyKey)
+		}
+	})
 }

@@ -231,12 +231,13 @@ func (s *Server) collectExtractionRelationships(ctx context.Context, branchID st
 	return out
 }
 
-// machineObjectKey matches the two machine-generated identity shapes: the legacy
-// generated key ("<type>-<12 hex>") and a source-scoped dedup key
+// machineObjectKey matches the machine-generated identity shapes: the current
+// generated key ("<type>-<12 hex>"), the legacy generated key
+// ("<type>-<8 hex>"), and a source-scoped dedup key
 // ("<provider>:<uuid>:<external id>", e.g.
 // "github:357590e8-6cbf-46bb-8c29-d8f839dd4ba8:emergent-company/emergent.memory#772").
-// Either is an identity, never a title.
-var machineObjectKey = regexp.MustCompile(`^[a-z0-9_-]+-[0-9a-f]{12}$|^[a-z][a-z0-9_-]*:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:.+$`)
+// Any of them is an identity, never a title.
+var machineObjectKey = regexp.MustCompile(`^[a-z0-9_-]+-[0-9a-f]{12}$|^[a-z0-9_-]+-[0-9a-f]{8}$|^[a-z][a-z0-9_-]*:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:.+$`)
 
 // graphObjectLabel returns a display label for an object using only fields
 // common to all types: its name, else a non-machine key, else the type + short

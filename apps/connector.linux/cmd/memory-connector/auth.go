@@ -203,7 +203,14 @@ type authStatus struct {
 	// tell "the access token is stale but renewable" from "this session is
 	// gone". NeedsReauth reports a session the provider has already rejected:
 	// signing in again (silently or interactively) is the only fix.
-	CanRefresh  bool `json:"can_refresh,omitempty"`
+	//
+	// CanRefresh carries no `omitempty`: it is part of the stable document
+	// everywhere it is produced (see `authStatusFromSession`), and "expired and
+	// not renewable" is a sign-in, decided by a client that reads false. Swift
+	// decodes an absent key to nil rather than false, so omitting it made that
+	// branch unreachable. NeedsReauth is only ever read for its true value, so
+	// its omission already means false.
+	CanRefresh  bool `json:"can_refresh"`
 	NeedsReauth bool `json:"needs_reauth,omitempty"`
 }
 
@@ -231,17 +238,9 @@ func runAuthStatus(args []string, stdout, stderr io.Writer) int {
 			_, _ = fmt.Fprintf(stderr, "memory-connector auth status: %v\n", err)
 			return 1
 		}
-		if sess != nil {
-			state.SignedIn = true
-			state.Email = sess.UserEmail
-			state.Issuer = sess.IssuerURL
-			state.CanRefresh = sess.RefreshToken != ""
-			state.NeedsReauth = sess.NeedsReauth
-			if !sess.ExpiresAt.IsZero() {
-				state.ExpiresAt = sess.ExpiresAt.UTC().Format(time.RFC3339)
-			}
-			state.Expired = sess.Expired()
-		}
+		// One shared builder: `auth complete` and `auth import` print the same
+		// document, and a second inline copy here had already drifted once.
+		state = authStatusFromSession(serverURL, sess)
 	}
 
 	if f.json {
@@ -305,6 +304,8 @@ func runAuthStart(args []string, stdout, stderr io.Writer) int {
 	redirectURI := fs.String("redirect-uri", "", "OAuth redirect URI registered by the app")
 	clientID := fs.String("client-id", account.ClientID, "OAuth client id (defaults to the connector client)")
 	issuer := fs.String("issuer", "", "OIDC issuer URL (skips /api/auth/issuer discovery; --server may be omitted)")
+	prompt := fs.String("prompt", "", "OIDC prompt parameter (none for a silent re-auth that shows no UI)")
+	loginHint := fs.String("login-hint", "", "OIDC login_hint (the account email a silent re-auth is for)")
 	jsonOut := fs.Bool("json", false, "emit machine-readable JSON")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -315,6 +316,11 @@ func runAuthStart(args []string, stdout, stderr io.Writer) int {
 	}
 	if strings.TrimSpace(*redirectURI) == "" {
 		_, _ = fmt.Fprintln(stderr, "memory-connector auth start: --redirect-uri is required")
+		return 2
+	}
+	if !account.ValidPrompt(*prompt) {
+		_, _ = fmt.Fprintf(stderr, "memory-connector auth start: unsupported --prompt %q (want one of %s)\n",
+			*prompt, strings.Join(account.PromptValues, ", "))
 		return 2
 	}
 	serverURL, err := resolveAuthServer(*server, *configPath)
@@ -328,7 +334,12 @@ func runAuthStart(args []string, stdout, stderr io.Writer) int {
 	}
 
 	m := newAuthManager(account.BaseDirForConfig(*configPath))
-	pending, err := m.StartPKCE(context.Background(), serverURL, *redirectURI, account.PKCEOptions{ClientID: *clientID, Issuer: *issuer})
+	pending, err := m.StartPKCE(context.Background(), serverURL, *redirectURI, account.PKCEOptions{
+		ClientID:  *clientID,
+		Issuer:    *issuer,
+		Prompt:    *prompt,
+		LoginHint: *loginHint,
+	})
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "memory-connector auth start: %v\n", err)
 		return 1
@@ -450,9 +461,17 @@ func runAuthCancel(args []string, stdout, stderr io.Writer) int {
 	}
 
 	m := newAuthManager(account.BaseDirForConfig(*configPath))
-	if err := m.CancelPKCE(*loginID); err != nil {
+	cancelled, err := m.CancelPKCE(*loginID)
+	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "memory-connector auth cancel: %v\n", err)
 		return 1
+	}
+	if !cancelled {
+		// Best-effort and idempotent: an unknown, expired or already-completed
+		// login has nothing left to cancel, so say that rather than claim a
+		// cancel that did not happen.
+		_, _ = fmt.Fprintf(stdout, "memory-connector auth: no pending login %s (already absent)\n", *loginID)
+		return 0
 	}
 	_, _ = fmt.Fprintf(stdout, "memory-connector auth: cancelled login %s\n", *loginID)
 	return 0

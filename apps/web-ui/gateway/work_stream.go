@@ -112,7 +112,7 @@ func (s *Server) workBoardStream(c echo.Context) error {
 	// refresh and action requests. Keeping the raw query here would republish the
 	// whole request (lane prefs, unrelated params) and keeping nothing would drop
 	// the filter after the first live frame.
-	query := boardViewQuery(c.Request().URL.Query())
+	query := boardViewQuery(c.Request().URL.Query(), data.BoardTypes)
 	data.Query = query
 
 	st := &workStreamState{

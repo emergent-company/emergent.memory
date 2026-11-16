@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -115,98 +114,48 @@ func TestStreamNewTask_DisabledDoesNotCreateRun(t *testing.T) {
 // =============================================================================
 
 type a2aResumeDriver struct {
-	mu              sync.Mutex
-	queries         []string
-	noQuestions     bool
-	questionsErr    bool
-	denyResumeClaim bool
-	finalizeStatus  string
-	runCancelling   bool
+	mu      sync.Mutex
+	queries []string
+
+	// noPendingQuestions makes the fake question query return zero rows, as it
+	// does for a run the executor paused at its step limit (issue #867).
+	noPendingQuestions bool
+
+	// claimLost makes the pause-claim UPDATE report zero affected rows, as it
+	// does when a concurrent follow-up consumed the pause first (issue #887).
+	claimLost bool
 }
 
 func (d *a2aResumeDriver) reset() {
 	d.mu.Lock()
 	d.queries = nil
-	d.noQuestions = false
-	d.questionsErr = false
-	d.denyResumeClaim = false
-	d.finalizeStatus = ""
-	d.runCancelling = false
+	d.noPendingQuestions = false
+	d.claimLost = false
 	d.mu.Unlock()
 }
 
-// setFinalizeStatus makes FinalizeResumedCheckpoint return the given status,
-// the value Postgres would hand back from its `RETURNING status` when a CancelTask
-// landed in the claim window.
-func (d *a2aResumeDriver) setFinalizeStatus(status AgentRunStatus) {
+func (d *a2aResumeDriver) setNoPendingQuestions(v bool) {
 	d.mu.Lock()
-	d.finalizeStatus = string(status)
+	d.noPendingQuestions = v
 	d.mu.Unlock()
 }
 
-// finalizeResult reports the configured FinalizeResumedCheckpoint outcome.
-func (d *a2aResumeDriver) finalizeResult() string {
+func (d *a2aResumeDriver) setClaimLost(v bool) {
+	d.mu.Lock()
+	d.claimLost = v
+	d.mu.Unlock()
+}
+
+func (d *a2aResumeDriver) claimRefused() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.finalizeStatus
+	return d.claimLost
 }
 
-// setRunCancelling makes RunIsCancelling report a durable cancel, so runPipeline
-// stops before the parts of a run no fake repository can satisfy.
-func (d *a2aResumeDriver) setRunCancelling(cancelling bool) {
-	d.mu.Lock()
-	d.runCancelling = cancelling
-	d.mu.Unlock()
-}
-
-// runIsCancelling reports the configured durable-cancel observation.
-func (d *a2aResumeDriver) runIsCancelling() bool {
+func (d *a2aResumeDriver) questionRows() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.runCancelling
-}
-
-// setClaimDenied makes the resume claim lose its row, the shape a second follower
-// of the same pause sees when another request already claimed it.
-func (d *a2aResumeDriver) setClaimDenied(denied bool) {
-	d.mu.Lock()
-	d.denyResumeClaim = denied
-	d.mu.Unlock()
-}
-
-// claimDenied reports whether the given statement is the resume claim and the
-// test configured it to lose. The claim moves the pause into the non-terminal
-// "working" intermediate and clears completed_at; that pair identifies it.
-func (d *a2aResumeDriver) claimDenied(q string) bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.denyResumeClaim &&
-		strings.Contains(q, `SET status = 'working'`) &&
-		strings.Contains(q, "completed_at = NULL")
-}
-
-// setQuestionsMissing makes the pending-question query return no rows: the shape
-// a resume sees when the run paused for a reason that writes no question row
-// (step limit, watchdog) — issue #867.
-func (d *a2aResumeDriver) setQuestionsMissing(missing bool) {
-	d.mu.Lock()
-	d.noQuestions = missing
-	d.mu.Unlock()
-}
-
-// setQuestionsError makes the pending-question query fail, so a test can tell a
-// broken read apart from an empty question set.
-func (d *a2aResumeDriver) setQuestionsError(fail bool) {
-	d.mu.Lock()
-	d.questionsErr = fail
-	d.mu.Unlock()
-}
-
-// questionMode reports the configured behaviour of the pending-question query.
-func (d *a2aResumeDriver) questionMode() (missing, failing bool) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.noQuestions, d.questionsErr
+	return !d.noPendingQuestions
 }
 
 func (d *a2aResumeDriver) record(q string) {
@@ -235,7 +184,7 @@ func (*a2aResumeConn) Begin() (driver.Tx, error) { return nil, io.EOF }
 
 func (c *a2aResumeConn) ExecContext(_ context.Context, q string, _ []driver.NamedValue) (driver.Result, error) {
 	c.d.record(q)
-	if c.d.claimDenied(q) {
+	if c.d.claimRefused() && strings.Contains(q, "completed_at = NOW()") {
 		return driver.RowsAffected(0), nil
 	}
 	return driver.RowsAffected(1), nil
@@ -244,65 +193,16 @@ func (c *a2aResumeConn) ExecContext(_ context.Context, q string, _ []driver.Name
 func (c *a2aResumeConn) QueryContext(_ context.Context, q string, _ []driver.NamedValue) (driver.Rows, error) {
 	c.d.record(q)
 	switch {
-	case strings.Contains(q, "RETURNING status"):
-		if status := c.d.finalizeResult(); status != "" {
-			return &a2aStatusRows{status: status}, nil
-		}
-		return rootEmptyRows{}, nil
-	case strings.Contains(q, "SELECT status =") && strings.Contains(q, "FROM kb.agent_runs"):
-		return &a2aCancelProbeRows{cancelling: c.d.runIsCancelling()}, nil
 	case strings.Contains(q, `FROM "kb"."agent_runs"`):
 		return &a2aRunRows{}, nil
 	case strings.Contains(q, `FROM "kb"."agent_questions"`):
-		missing, failing := c.d.questionMode()
-		if failing {
-			return nil, errors.New("agent_questions read failed")
-		}
-		if missing {
+		if !c.d.questionRows() {
 			return rootEmptyRows{}, nil
 		}
 		return &a2aQuestionRows{}, nil
 	default:
 		return rootEmptyRows{}, nil
 	}
-}
-
-// a2aStatusRows answers a status UPDATE ... RETURNING "status" the way Postgres
-// would, handing back the status the state machine settled on.
-type a2aStatusRows struct {
-	status string
-	done   bool
-}
-
-func (*a2aStatusRows) Columns() []string { return []string{"status"} }
-func (*a2aStatusRows) Close() error      { return nil }
-
-func (r *a2aStatusRows) Next(dest []driver.Value) error {
-	if r.done {
-		return io.EOF
-	}
-	r.done = true
-	dest[0] = r.status
-	return nil
-}
-
-// a2aCancelProbeRows answers RunIsCancelling's `SELECT status = 'cancelling'`,
-// which runPipeline reads before doing any work.
-type a2aCancelProbeRows struct {
-	cancelling bool
-	done       bool
-}
-
-func (*a2aCancelProbeRows) Columns() []string { return []string{"?column?"} }
-func (*a2aCancelProbeRows) Close() error      { return nil }
-
-func (r *a2aCancelProbeRows) Next(dest []driver.Value) error {
-	if r.done {
-		return io.EOF
-	}
-	r.done = true
-	dest[0] = r.cancelling
-	return nil
 }
 
 type a2aRunRows struct{ done bool }

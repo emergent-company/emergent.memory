@@ -542,6 +542,33 @@ func TestPredefinedErrors(t *testing.T) {
 // tool-result paths show PublicMessage to the client while logging the full
 // error, so a raw driver or wrapped internal error must collapse to the constant
 // internal message rather than reaching the response body.
+// TestNewValidationf pins the formatting contract shared by the tool argument
+// validators: %q/%s/%w all render into the message (the part PublicMessage
+// returns) and the wrapped error is *not* attached as an internal cause, since
+// it describes the caller's own input.
+func TestNewValidationf(t *testing.T) {
+	cause := errors.New("invalid UUID length: 3")
+
+	err := NewValidationf("invalid entity_id: %q is not a UUID: %w", "abc", cause)
+
+	if err.HTTPStatus != http.StatusUnprocessableEntity {
+		t.Fatalf("HTTPStatus = %d, want 422", err.HTTPStatus)
+	}
+	if err.Code != "validation_error" {
+		t.Fatalf("Code = %q, want validation_error", err.Code)
+	}
+	want := `invalid entity_id: "abc" is not a UUID: invalid UUID length: 3`
+	if err.Message != want {
+		t.Fatalf("Message = %q, want %q", err.Message, want)
+	}
+	if err.Internal != nil {
+		t.Fatalf("Internal = %v, want nil (the cause is the caller's own input)", err.Internal)
+	}
+	if got := PublicMessage(err); got != want {
+		t.Fatalf("PublicMessage() = %q, want %q", got, want)
+	}
+}
+
 func TestPublicMessage(t *testing.T) {
 	driverErr := errors.New(`pq: relation "kb.documents" does not exist`)
 

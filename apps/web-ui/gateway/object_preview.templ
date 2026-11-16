@@ -306,7 +306,15 @@ templ objectPreviewFieldRow(f objectPreviewField) {
 			if f.Empty {
 				—
 			} else if f.Markdown {
-				<div class="memory-md" data-preview-markdown>@templ.Raw(renderMarkdown(f.Value))</div>
+				{{ body, truncated := markdownPreviewHTML(f.Value) }}
+				<div class="memory-md max-h-96 overflow-auto" data-preview-markdown>@templ.Raw(body)</div>
+				if truncated {
+					<div data-preview-truncated>
+						@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Tone: ui.EmptyNoteToneQuiet, Class: "mt-1"}) {
+							Truncated in this preview; the stored value is unchanged.
+						}
+					</div>
+				}
 			} else {
 				{ f.Value }
 			}

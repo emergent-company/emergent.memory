@@ -1,0 +1,58 @@
+---
+title: "Developer Guide"
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+import Card from '../../components/Card.astro';
+import CardGrid from '../../components/CardGrid.astro';
+
+
+This guide covers topics for developers integrating with, extending, or operating the Memory platform.
+
+<CardGrid>
+<Card title='<a href="/developer-guide/provider-setup/">Provider Setup</a>'>
+
+Configure LLM providers (Google AI, Vertex AI) at the org or project level. Manage API keys, model overrides, and track token usage and costs.
+
+</Card>
+<Card title='<a href="/developer-guide/mcp-servers/">MCP Servers</a>'>
+
+Register external MCP servers (stdio, SSE, HTTP) and the built-in Memory MCP server. Browse the official MCP registry and install community servers.
+
+</Card>
+<Card title='<a href="/developer-guide/a2a-protocol/">A2A and A2UI</a>'>
+
+The Agent2Agent interface: agent cards, project addressing, streaming, and the A2UI surface protocol — with the compatibility matrix of versions and catalogs the server supports.
+
+</Card>
+<Card title='<a href="/developer-guide/extraction/">Extraction Pipeline</a>'>
+
+Monitor and control extraction jobs that turn documents into graph objects. View per-job logs including LLM calls, token counts, and created objects.
+
+</Card>
+<Card title='<a href="/developer-guide/email-setup/">Email Setup</a>'>
+
+Configure Mailgun to enable transactional email (invitations, notifications). Understand the async job queue and delivery tracking.
+
+</Card>
+<Card title='<a href="/developer-guide/health-ops/">Health & Ops</a>'>
+
+Health check endpoints, the diagnostics probe, debug stats, and the auto-generated OpenAPI spec.
+
+</Card>
+<Card title='<a href="/developer-guide/deploy-portal/">Deploy Portal</a>'>
+
+The public `/deploy` page: its Railway OAuth routes, the four variables that enable it, and what a `404` from it means.
+
+</Card>
+<Card title='<a href="/developer-guide/security-scopes/">Security Scopes</a>'>
+
+Complete reference for all 38 permission scopes, umbrella scope expansions, and which scopes are assignable to API tokens.
+
+</Card>
+<Card title='<a href="/developer-guide/cli-reference/">CLI Reference</a>'>
+
+Reference for `memory init`, `memory ask`, `memory adk-sessions`, `memory mcp-guide`, and `memory install-memory-skills`.
+
+</Card>
+</CardGrid>

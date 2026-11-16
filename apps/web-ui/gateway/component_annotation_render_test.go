@@ -1,5 +1,8 @@
 package main
 
+// guard: the rendered-output half of the dev-mode annotation ratchet —
+// every test here must gate every PR.
+
 import (
 	"net/http"
 	"net/http/httptest"

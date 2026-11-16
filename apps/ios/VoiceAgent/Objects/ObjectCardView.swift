@@ -254,6 +254,10 @@ private struct ObjectCardFieldRow: View {
                     .font(.system(.subheadline, design: .monospaced))
                     .foregroundStyle(.fg4)
                     .accessibilityLabel(Text("objects.card.empty"))
+            } else if field.isMarkdown {
+                MarkdownRenderer(text: field.value)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
             } else {
                 Text(verbatim: field.value)
                     .font(.system(.subheadline, design: field.isMonospaced ? .monospaced : .default))

@@ -121,6 +121,27 @@ func (s *Server) marketSidebarItems() []layout.SidebarItem {
 	return items
 }
 
+// sidebarExternalLinks is the sidebar's bottom block: external destinations in
+// reading order — the Marketplace entries, then the documentation site. Both are
+// off-instance, so the template renders them as plain anchors in a new tab and
+// never lets htmx swap them into #main-content.
+//
+// Empty is the normal self-hosted default: an instance with no market and no
+// docs host renders no block at all, rather than a row of links to nowhere.
+func (s *Server) sidebarExternalLinks() []layout.SidebarItem {
+	items := s.marketSidebarItems()
+	if s.cfg.DocsURL != "" {
+		// marketSidebarItems returns a slice it built itself, so appending here
+		// cannot write into shared state.
+		items = append(items, layout.SidebarItem{
+			Label: "Docs",
+			Href:  s.cfg.DocsURL,
+			Icon:  "lucide--book-open",
+		})
+	}
+	return items
+}
+
 // marketIssuerLabel derives the secondary-entry label from the issuer host.
 // The dev market is market.dev.memory.emergent-company.ai, so a bare "dev."
 // prefix is not enough: any host with a `.dev.` segment (or a leading `dev.`)
@@ -658,7 +679,7 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 	// (literal href/action/hx-* in the page templates) must carry the scope base
 	// just like htmx partials, otherwise the first navigation after a full load
 	// hits an unscoped app path and 404s under the session-mode hard cut.
-	s.renderScoped(w, r, appShell(title, groups, s.marketSidebarItems(), providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, unreadNotifications, pendingInvites, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL, s.cfg.feedbackOverlayAPI(), s.cfg.feedbackOrder()), linkBase)
+	s.renderScoped(w, r, appShell(title, groups, s.sidebarExternalLinks(), providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, unreadNotifications, pendingInvites, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL, s.cfg.feedbackOverlayAPI(), s.cfg.feedbackOrder()), linkBase)
 	return nil
 }
 

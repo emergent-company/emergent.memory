@@ -117,6 +117,9 @@ type IssueState struct {
 	Labels    []struct {
 		Name string `json:"name"`
 	} `json:"labels"`
+	Assignees []struct {
+		Login string `json:"login"`
+	} `json:"assignees"`
 	User struct {
 		Login string `json:"login"`
 		Type  string `json:"type"`
@@ -148,6 +151,76 @@ func (c *Client) GetIssue(ctx context.Context, repo string, number int) (*IssueS
 		return nil, err
 	}
 	return &out, nil
+}
+
+// EnsureIssueLabel creates a repository label when it does not exist. GitHub
+// silently ignores unknown labels on an issue write, so claim labels must be
+// created explicitly first.
+func (c *Client) EnsureIssueLabel(ctx context.Context, repo, name, color, description string) error {
+	labelPath := fmt.Sprintf("/repos/%s/labels/%s", repo, url.PathEscape(name))
+	err := c.do(ctx, http.MethodGet, labelPath, nil, nil)
+	if err == nil {
+		return nil
+	}
+	apiErr, ok := err.(*APIError)
+	if !ok || apiErr.Status != http.StatusNotFound {
+		return err
+	}
+	createErr := c.do(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/labels", repo), map[string]any{
+		"name": name, "color": color, "description": description,
+	}, nil)
+	if createErr == nil {
+		return nil
+	}
+	if createAPIErr, ok := createErr.(*APIError); ok && createAPIErr.Status == http.StatusUnprocessableEntity {
+		// Another writer won the create race; only treat it as success when the
+		// label is now readable.
+		if getErr := c.do(ctx, http.MethodGet, labelPath, nil, nil); getErr == nil {
+			return nil
+		}
+	}
+	return createErr
+}
+
+// AddIssueLabels adds labels to an issue and returns the label names GitHub
+// reports on the issue after the write. The response is authoritative: a label
+// that does not exist is not added, so callers can detect a partial write.
+func (c *Client) AddIssueLabels(ctx context.Context, repo string, number int, labels []string) ([]string, error) {
+	var out []struct {
+		Name string `json:"name"`
+	}
+	if err := c.do(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/issues/%d/labels", repo, number), map[string]any{
+		"labels": labels,
+	}, &out); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(out))
+	for _, label := range out {
+		if name := strings.TrimSpace(label.Name); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names, nil
+}
+
+// RemoveIssueLabel removes one label from an issue. A missing label is a
+// successful no-op on GitHub.
+func (c *Client) RemoveIssueLabel(ctx context.Context, repo string, number int, label string) error {
+	return c.do(ctx, http.MethodDelete, fmt.Sprintf("/repos/%s/issues/%d/labels/%s", repo, number, url.PathEscape(label)), nil, nil)
+}
+
+// AddIssueAssignees assigns users to an issue.
+func (c *Client) AddIssueAssignees(ctx context.Context, repo string, number int, assignees []string) error {
+	return c.do(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/issues/%d/assignees", repo, number), map[string]any{
+		"assignees": assignees,
+	}, nil)
+}
+
+// RemoveIssueAssignees unassigns users from an issue.
+func (c *Client) RemoveIssueAssignees(ctx context.Context, repo string, number int, assignees []string) error {
+	return c.do(ctx, http.MethodDelete, fmt.Sprintf("/repos/%s/issues/%d/assignees", repo, number), map[string]any{
+		"assignees": assignees,
+	}, nil)
 }
 
 // GetPullRequest reads the live PR state.

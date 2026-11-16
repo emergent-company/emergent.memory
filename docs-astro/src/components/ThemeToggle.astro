@@ -1,0 +1,73 @@
+---
+// Topbar theme switch.
+//
+// Replaces Starlight's `ThemeSelect` (a native `<select>` with dark/light/auto)
+// with one icon button that flips light <-> dark, which is what the topbar of an
+// app with a strong single look wants: two states, one click, no menu.
+//
+// The `starlight-theme-select` element is kept as the wrapper so nothing in
+// Starlight's own styles or scripts that targets that tag loses its hook; the
+// select it used to contain — and the theme logic its inline script carried — is
+// reimplemented here, because overriding the component removes both.
+//
+// `auto` stays the *initial* default: with no stored preference the pre-paint
+// script resolves the theme from the OS, and this button simply shows what was
+// resolved. The first click stores an explicit `light`/`dark`.
+import { Icon } from 'astro-icon/components';
+---
+
+<starlight-theme-select>
+  <button
+    type="button"
+    class="mem-theme-toggle"
+    data-theme-toggle
+    aria-label="Toggle color theme"
+  >
+    <Icon name="lucide:moon" class="mem-theme-icon is-moon" aria-hidden="true" />
+    <Icon name="lucide:sun" class="mem-theme-icon is-sun" aria-hidden="true" />
+  </button>
+</starlight-theme-select>
+
+<script>
+  type Theme = 'light' | 'dark';
+
+  const storageKey = 'starlight-theme';
+  const prefersLight = matchMedia('(prefers-color-scheme: light)');
+
+  /** The theme actually on screen (Starlight's pre-paint script resolved it). */
+  const current = (): Theme =>
+    document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+
+  /** Keep every toggle's label and icon in sync with the resolved theme. */
+  function sync(): void {
+    const theme = current();
+    const label = theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme';
+    document.querySelectorAll<HTMLButtonElement>('[data-theme-toggle]').forEach((button) => {
+      button.setAttribute('aria-label', label);
+      button.setAttribute('title', label);
+    });
+  }
+
+  function apply(theme: Theme): void {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem(storageKey, theme);
+    sync();
+  }
+
+  // One delegated listener: the toggle is rendered twice (header and mobile
+  // drawer), and the drawer is re-rendered by Starlight's popover.
+  document.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    if (!target?.closest('[data-theme-toggle]')) return;
+    apply(current() === 'light' ? 'dark' : 'light');
+  });
+
+  // Someone who never clicked follows the OS; someone who did keeps their choice.
+  prefersLight.addEventListener('change', () => {
+    if (localStorage.getItem(storageKey)) return;
+    document.documentElement.dataset.theme = prefersLight.matches ? 'light' : 'dark';
+    sync();
+  });
+
+  sync();
+</script>

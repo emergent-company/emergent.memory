@@ -188,15 +188,22 @@ func (s *MergePolicyTestSuite) createStagingBranch(name string) uuid.UUID {
 }
 
 // createObjectOnBranch creates a graph object on a branch and returns its ID.
+// A fixture that names its object in properties passes the same string as the
+// explicit title, which is the only place the name is written (#824): the
+// properties copy is not a title and is not read as one.
 func (s *MergePolicyTestSuite) createObjectOnBranch(branchID *uuid.UUID, typeName string, props map[string]any) uuid.UUID {
 	s.T().Helper()
 	svc := s.graphSvc()
 	pid, _ := uuid.Parse(s.projectID)
-	obj, err := svc.Create(s.ctx, pid, &graph.CreateGraphObjectRequest{
+	req := &graph.CreateGraphObjectRequest{
 		Type:       typeName,
 		Properties: props,
 		BranchID:   branchID,
-	}, nil)
+	}
+	if name, ok := props["name"].(string); ok && name != "" {
+		req.Name = &name
+	}
+	obj, err := svc.Create(s.ctx, pid, req, nil)
 	require.NoError(s.T(), err)
 	return obj.ID
 }

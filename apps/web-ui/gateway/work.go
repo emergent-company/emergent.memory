@@ -141,7 +141,7 @@ func (s *Server) loadWorkBoard(ctx context.Context, c echo.Context, data *workDa
 	if err != nil {
 		return err
 	}
-	view := boardViewQuery(c.Request().URL.Query())
+	view := boardViewQuery(c.Request().URL.Query(), data.BoardTypes)
 	data.Query = view
 	applyWorkBoardItems(data, items, view)
 	return nil
@@ -484,15 +484,49 @@ func workFilterTypes(data workData) []string {
 // drawer action's response. Each carries this query forward, so a filtered board
 // cannot silently widen to every type while the filter control still shows the
 // subset. Everything else in the request's query is dropped.
-func boardViewQuery(q url.Values) url.Values {
+//
+// The type values are resolved through the same validation the board renders
+// with, rather than copied verbatim (#878): a repeated or non-board-enabled type
+// would otherwise ride into the stream URL, data-board-query and every action
+// URL, and the published query would then name types the rendered matrices do not
+// contain — the exact drift this field exists to prevent.
+//
+// boardTypes is the board's own type set (boardTypesFromCompiled). Empty means
+// the schema is unknown — the object preview renders even when GetCompiledTypes
+// fails — and then only values that cannot mean anything (blank, repeated) are
+// dropped, because validating against an empty set would strip a real filter.
+func boardViewQuery(q url.Values, boardTypes []CompiledType) url.Values {
 	out := url.Values{}
 	if q.Get("filter") == "1" {
 		out.Set("filter", "1")
 	}
-	for _, t := range q["type"] {
-		if t = strings.TrimSpace(t); t != "" {
-			out.Add("type", t)
+	for _, t := range boardViewTypes(boardTypes, q["type"]) {
+		out.Add("type", t)
+	}
+	return out
+}
+
+// boardViewTypes validates and de-dupes the requested types. With a known board
+// type set it is resolveWorkTypeFilter's explicit selection — the same call the
+// matrices are built from — so the published query and the rendered board come
+// from one set. Without one it keeps the request's order and drops only blanks
+// and repeats.
+func boardViewTypes(boardTypes []CompiledType, raw []string) []string {
+	trimmed := make([]string, 0, len(raw))
+	for _, t := range raw {
+		trimmed = append(trimmed, strings.TrimSpace(t))
+	}
+	if len(boardTypes) > 0 {
+		return resolveWorkTypeFilter(boardTypes, trimmed, true)
+	}
+	seen := make(map[string]bool, len(trimmed))
+	var out []string
+	for _, t := range trimmed {
+		if t == "" || seen[t] {
+			continue
 		}
+		seen[t] = true
+		out = append(out, t)
 	}
 	return out
 }

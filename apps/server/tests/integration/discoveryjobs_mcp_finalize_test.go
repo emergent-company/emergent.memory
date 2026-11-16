@@ -137,13 +137,21 @@ func TestFinalizeDiscoveryFromMCP(t *testing.T) {
 	t.Run("an explicit job id reuses the job instead of creating one", func(t *testing.T) {
 		projectID, projectUUID, doc := newProject(t)
 
+		// discovery_jobs.organization_id is notnull and, since migration 00306,
+		// backed by a foreign key to organizations. A direct insert that leaves
+		// it at the zero UUID is rejected, so resolve it from the project the
+		// same way the production start path does.
+		orgID, err := djRepo.GetProjectOrgID(ctx, projectUUID)
+		require.NoError(t, err)
+
 		job := &discoveryjobs.DiscoveryJob{
-			ID:        uuid.New(),
-			ProjectID: projectUUID,
-			Status:    discoveryjobs.StatusCompleted,
-			KBPurpose: "HR org chart",
-			Progress:  discoveryjobs.JSONMap{"message": "completed"},
-			Config:    discoveryjobs.JSONMap{"document_ids": []string{doc.ID}},
+			ID:             uuid.New(),
+			OrganizationID: orgID,
+			ProjectID:      projectUUID,
+			Status:         discoveryjobs.StatusCompleted,
+			KBPurpose:      "HR org chart",
+			Progress:       discoveryjobs.JSONMap{"message": "completed"},
+			Config:         discoveryjobs.JSONMap{"document_ids": []string{doc.ID}},
 			DiscoveredTypes: discoveryjobs.JSONArray{
 				map[string]any{"type_name": "Person"},
 				map[string]any{"type_name": "Department"},
