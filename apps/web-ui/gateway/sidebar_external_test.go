@@ -42,10 +42,15 @@ func TestSidebarExternalLinksDocsOnly(t *testing.T) {
 	if block < 0 {
 		t.Fatal("docs entry did not render its own bottom block")
 	}
-	if !strings.Contains(html[block:], ">Docs<") && !strings.Contains(html[block:], "Docs") {
-		t.Fatal("docs label missing from the bottom block")
+	if !strings.Contains(html[block:], `>Docs</span>`) {
+		t.Fatalf("docs label missing from the bottom block: %s", html[block:])
 	}
 	link := externalLinkAt(t, html, block, "https://docs.example")
+	// Two entries now share one data-testid, so a bare getByTestId is a Playwright
+	// strict-mode violation. data-href is the per-entry hook a selector can use.
+	if !strings.Contains(link, `data-href="https://docs.example"`) {
+		t.Fatalf("docs link carries no data-href selector hook: %s", link)
+	}
 	if strings.Contains(link, "hx-get") || strings.Contains(link, "hx-target") {
 		t.Fatalf("docs link carries htmx attributes and the click is intercepted: %s", link)
 	}
@@ -135,7 +140,7 @@ func TestDocsEntryStaysInsideThePinnedBottomBlock(t *testing.T) {
 	if nav < 0 || version < 0 || block < 0 {
 		t.Fatalf("anchors missing (nav=%d version=%d block=%d)", nav, version, block)
 	}
-	if !(nav < version && version < block) {
+	if nav >= version || version >= block {
 		t.Fatalf("bottom block is not after the version footer: nav=%d version=%d block=%d", nav, version, block)
 	}
 	docs := strings.Index(html, `href="https://docs.example"`)

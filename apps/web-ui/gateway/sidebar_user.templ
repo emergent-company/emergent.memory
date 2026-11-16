@@ -65,6 +65,7 @@ templ appSidebar(groups []layout.SidebarGroup, externalItems []layout.SidebarIte
 							target="_blank"
 							rel="noopener noreferrer"
 							data-testid="sidebar-external-link"
+							data-href={ item.Href }
 						>
 							if item.Icon != "" {
 								<span class={ "iconify size-4 " + item.Icon }></span>
