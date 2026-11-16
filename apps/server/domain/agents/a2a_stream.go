@@ -588,6 +588,11 @@ func (h *A2AHandler) streamRun(
 		// stream has already started, so report it as a message and emit no
 		// terminal lifecycle event: the concurrent resume is still working, so
 		// marking this task failed (or completed) would be a lie (issue #887).
+		//
+		// ErrRunPauseNotResumable is deliberately NOT folded in here: no turn is
+		// running in that case, so the stream must report the failure and close
+		// the task out rather than telling the client to wait on a dead run
+		// (issue #912). It falls through to the failure path below.
 		write(a2aResumeConflictResponse(taskID, contextID))
 		return nil
 	}
