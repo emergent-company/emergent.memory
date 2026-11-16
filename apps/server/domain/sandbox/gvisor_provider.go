@@ -1010,24 +1010,25 @@ func parseMemoryBytes(s string) int64 {
 	return int64(val) * multiplier
 }
 
-// parseSize parses a string into int64.
+// parseSize parses a string into int64. A string with no leading number yields
+// 0, which callers treat as "unset".
 func parseSize(s string) int64 {
 	var n int64
-	fmt.Sscanf(s, "%d", &n)
+	_, _ = fmt.Sscanf(s, "%d", &n)
 	return n
 }
 
-// parseInt parses a string into int.
+// parseInt parses a string into int, yielding 0 when there is no number.
 func parseInt(s string) int {
 	var n int
-	fmt.Sscanf(s, "%d", &n)
+	_, _ = fmt.Sscanf(s, "%d", &n)
 	return n
 }
 
-// parseFloat parses a string into float64.
+// parseFloat parses a string into float64, yielding 0 when there is no number.
 func parseFloat(s string) float64 {
 	var f float64
-	fmt.Sscanf(s, "%f", &f)
+	_, _ = fmt.Sscanf(s, "%f", &f)
 	return f
 }
 

@@ -156,15 +156,6 @@ func (s *RememberAgentTestSuite) objectCount() int {
 	return len(items)
 }
 
-// traceBodyKeys returns the top-level keys of a Tempo trace response for logging.
-func traceBodyKeys(body map[string]any) []string {
-	keys := make([]string, 0, len(body))
-	for k := range body {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
 // ── Trace dump ────────────────────────────────────────────────────────────────
 
 type traceSpan struct {

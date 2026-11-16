@@ -24,6 +24,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
 
+	"github.com/emergent-company/emergent.memory/internal/database"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/branchorigin"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
@@ -201,6 +202,27 @@ func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvide
 		reindexPageSize:       defaultReindexPageSize,
 		accessStamp:           newAccessStampDebouncer(),
 		minVectorSimilarity:   envFloatDefault("SEARCH_MIN_VECTOR_SIMILARITY", 0.5),
+	}
+}
+
+// rollbackTx aborts tx and logs a failure. It is the graph package's name for
+// database.RollbackTx, kept so call sites read as this service's own cleanup;
+// the interface argument accepts both *database.SafeTx and a plain bun.Tx from
+// a repository BeginTx.
+func (s *Service) rollbackTx(tx interface{ Rollback() error }) {
+	database.RollbackTx(s.log, tx)
+}
+
+// logEvent records a graph mutation event, logging rather than returning a sink
+// failure: the mutation is already committed, so a failed audit/journal write
+// must not turn a successful write into an error for the caller — but it must
+// not be dropped silently either.
+func (s *Service) logEvent(ctx context.Context, params LogParams) {
+	if err := s.eventSink.Log(ctx, params); err != nil {
+		s.log.Warn("graph: event sink write failed",
+			slog.String("event_type", params.EventType),
+			slog.String("error", err.Error()),
+		)
 	}
 }
 
@@ -455,22 +477,12 @@ func (s *Service) excludedSearchTypes(ctx context.Context, projectID uuid.UUID) 
 	return out
 }
 
-// nameFromProps extracts the "name" property from a properties map, or returns an empty string.
-// objectTitle prefers the first-class name and falls back to the properties
-// convention, for event metadata that still reports a human title.
+// objectTitle reports the event metadata title. The first-class name is the
+// only title: properties["name"] is an ordinary property and is never a
+// fallback (#824).
 func objectTitle(o *GraphObject) string {
 	if o.Name != nil {
 		return *o.Name
-	}
-	return nameFromProps(o.Properties)
-}
-
-func nameFromProps(props map[string]any) string {
-	if props == nil {
-		return ""
-	}
-	if v, ok := props["name"].(string); ok {
-		return v
 	}
 	return ""
 }
@@ -567,8 +579,8 @@ func embeddingTextUnchanged(prev, next *GraphObject) bool {
 	// caller-supplied Go values (int, []string, …) that the worker — reading the
 	// persisted JSONB back — would see as float64/[]any. Hashing the two views
 	// without normalizing could miss a real change (Copilot #1488 review).
-	return embeddingtext.Hash(prev.Type, prev.Key, embeddingtext.Normalize(prev.Properties)) ==
-		embeddingtext.Hash(next.Type, next.Key, embeddingtext.Normalize(next.Properties))
+	return embeddingtext.Hash(prev.Type, prev.Name, prev.Key, embeddingtext.Normalize(prev.Properties)) ==
+		embeddingtext.Hash(next.Type, next.Name, next.Key, embeddingtext.Normalize(next.Properties))
 }
 
 // carryEmbeddingIfUnchanged keeps a newly-created version's embedding in sync
@@ -580,13 +592,13 @@ func embeddingTextUnchanged(prev, next *GraphObject) bool {
 // embedding text). An unchanged row that was never embedded is left to the
 // self-healing embedding sweep.
 func (s *Service) carryEmbeddingIfUnchanged(ctx context.Context, tx bun.Tx, prev, next *GraphObject, propsUnchanged bool) (bool, error) {
-	// Fast path only when properties AND key are unchanged: embedding text is
-	// built from type + stripped key + properties, so with both provably
-	// identical the Normalize+Text walk can be skipped. A raw key change may
-	// still be semantically identical (the builder strips namespace prefixes and
-	// omits UUID keys), so fall back to the exact #1488 comparison rather than
-	// assuming any key change alters the text.
-	if !propsUnchanged || !sameOptionalString(prev.Key, next.Key) {
+	// Fast path only when properties, key AND name are unchanged: embedding text
+	// is built from type + title (`name` column) + stripped key + properties, so
+	// with all three provably identical the Normalize+Text walk can be skipped.
+	// A raw key change may still be semantically identical (the builder strips
+	// namespace prefixes and omits UUID keys), so fall back to the exact #1488
+	// comparison rather than assuming any key change alters the text.
+	if !propsUnchanged || !sameOptionalString(prev.Key, next.Key) || !sameOptionalString(prev.Name, next.Name) {
 		if !embeddingTextUnchanged(prev, next) {
 			return true, nil
 		}
@@ -1326,7 +1338,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 	// Board-enabled items need a claimable key; mint an internal one when the
 	// caller did not supply it (users only see name/ref).
 	if isBoardEnabledConfig(workCfg) && (req.Key == nil || *req.Key == "") {
-		k := autoWorkKey(req.Type, resolveObjectName(req.Name, req.Properties))
+		k := autoWorkKey(req.Type, resolveObjectName(req.Name))
 		req.Key = &k
 	}
 	if err := requireBoardEnabledKey(workCfg, req.Key); err != nil {
@@ -1347,7 +1359,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 		ProjectID:       projectID,
 		BranchID:        req.BranchID,
 		Type:            req.Type,
-		Name:            resolveObjectName(req.Name, validatedProps),
+		Name:            resolveObjectName(req.Name),
 		Key:             req.Key,
 		Status:          createStatus,
 		Assignee:        req.Assignee,
@@ -1375,7 +1387,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 	if obj.Key != nil {
 		objType := obj.Type
 		entityType := entityTypeObject
-		s.eventSink.Log(ctx, LogParams{
+		s.logEvent(ctx, LogParams{
 			ProjectID:  projectID,
 			BranchID:   obj.BranchID,
 			EventType:  EventTypeCreated,
@@ -1420,7 +1432,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 	if err != nil {
 		return nil, false, apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer s.rollbackTx(tx)
 
 	// Acquire advisory lock for this (project_id, type, key) identity
 	if err := s.repo.AcquireObjectUpsertLock(ctx, tx.Tx, projectID, req.Type, *req.Key); err != nil {
@@ -1461,7 +1473,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 			ProjectID:       projectID,
 			BranchID:        req.BranchID,
 			Type:            req.Type,
-			Name:            resolveObjectName(req.Name, validatedProps),
+			Name:            resolveObjectName(req.Name),
 			Key:             req.Key,
 			Status:          statusForWrite(validatedProps, createStatus),
 			Assignee:        req.Assignee,
@@ -1493,10 +1505,16 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 
 	// Object exists - check if it was deleted
 	if existing.DeletedAt != nil {
-		// Was deleted, create new version to "restore" with new properties
+		// Was deleted, create new version to "restore" with new properties. The
+		// restore keeps the tombstoned title unless the caller names it: the
+		// name is not part of the property payload that triggered the upsert.
+		restoreName := existing.Name
+		if req.Name != nil {
+			restoreName = trimName(*req.Name)
+		}
 		newVersion := &GraphObject{
 			Type:            req.Type,
-			Name:            resolveObjectName(req.Name, validatedProps),
+			Name:            restoreName,
 			Key:             req.Key,
 			Status:          statusForWrite(validatedProps, req.Status),
 			Assignee:        req.Assignee,
@@ -1567,13 +1585,12 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 		}
 	}
 
-	// Title: an explicit name wins; otherwise backfill from the merged
-	// properties the first time a title is available.
+	// Title: only an explicit name writes it. properties["name"]/["title"] are
+	// ordinary properties, never a title, and an upsert that omits the name
+	// preserves the current one.
 	newName := existing.Name
 	if req.Name != nil {
 		newName = trimName(*req.Name)
-	} else if newName == nil {
-		newName = resolveObjectName(nil, newProps)
 	}
 	nameChanged := !namesEqual(newName, existing.Name)
 
@@ -1699,7 +1716,7 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 	if err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer s.rollbackTx(tx)
 
 	// Acquire advisory lock on the canonical ID (same lock identity as before).
 	if err := s.repo.AcquireObjectLock(ctx, tx.Tx, ident.CanonicalID); err != nil {
@@ -1834,13 +1851,12 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		newKey = req.Key
 	}
 
-	// Handle title: explicit name wins; otherwise preserve, backfilling from
-	// merged properties when the object never had a title.
+	// Handle title: only an explicit name writes it. properties["name"] and
+	// ["title"] are ordinary properties, never a title, and a patch that omits
+	// the name preserves the current one.
 	newName := current.Name
 	if req.Name != nil {
 		newName = trimName(*req.Name)
-	} else if newName == nil {
-		newName = resolveObjectName(nil, newProps)
 	}
 
 	// Handle assignee: use req.Assignee if provided, otherwise preserve current.
@@ -1939,7 +1955,7 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 				fieldsChanged = append(fieldsChanged, k)
 			}
 		}
-		s.eventSink.Log(ctx, LogParams{
+		s.logEvent(ctx, LogParams{
 			ProjectID:  projectID,
 			BranchID:   newVersion.BranchID,
 			EventType:  EventTypeUpdated,
@@ -1978,7 +1994,7 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 	if err != nil {
 		return apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer s.rollbackTx(tx)
 
 	if err := s.repo.AcquireObjectLock(ctx, tx.Tx, current.CanonicalID); err != nil {
 		return err
@@ -1989,8 +2005,8 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 		// If none exists, fall back to main HEAD and create a branch-local tombstone.
 		branchHead, err := s.repo.GetHeadByCanonicalID(ctx, tx.Tx, projectID, current.CanonicalID, branchID)
 		if err != nil {
-			var appErr *apperror.Error
-			if !errors.As(err, &appErr) || appErr.HTTPStatus != 404 {
+			appErr, ok := errors.AsType[*apperror.Error](err)
+			if !ok || appErr.HTTPStatus != 404 {
 				return err
 			}
 			// No branch-local HEAD — fetch main HEAD and create tombstone directly on branch.
@@ -2040,7 +2056,7 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 	if current.Key != nil {
 		objType := current.Type
 		entityType := entityTypeObject
-		s.eventSink.Log(ctx, LogParams{
+		s.logEvent(ctx, LogParams{
 			ProjectID:  projectID,
 			BranchID:   current.BranchID,
 			EventType:  EventTypeDeleted,
@@ -2078,7 +2094,7 @@ func (s *Service) Restore(ctx context.Context, projectID, id uuid.UUID, actorID 
 	if err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer s.rollbackTx(tx)
 
 	if err := s.repo.AcquireObjectLock(ctx, tx.Tx, current.CanonicalID); err != nil {
 		return nil, err
@@ -2107,7 +2123,7 @@ func (s *Service) Restore(ctx context.Context, projectID, id uuid.UUID, actorID 
 	if restored.Key != nil {
 		objType := restored.Type
 		entityType := entityTypeObject
-		s.eventSink.Log(ctx, LogParams{
+		s.logEvent(ctx, LogParams{
 			ProjectID:  projectID,
 			BranchID:   restored.BranchID,
 			EventType:  EventTypeRestored,
@@ -2384,13 +2400,12 @@ func normalizeRelationType(relType string) string {
 	return strings.ToLower(b.String())
 }
 
-// getDisplayName extracts a display name from a graph object.
-// Tries properties["name"] first, falls back to Key if name is missing or empty.
+// getDisplayName extracts a display name from a graph object for embedding text.
+// The first-class name is the only title; a nameless object falls back to its
+// key and then its id, never to properties["name"] (#824).
 func getDisplayName(obj *GraphObject) string {
-	if obj.Properties != nil {
-		if name, ok := obj.Properties["name"].(string); ok && name != "" {
-			return name
-		}
+	if obj.Name != nil && *obj.Name != "" {
+		return *obj.Name
 	}
 	if obj.Key != nil && *obj.Key != "" {
 		return *obj.Key
@@ -2609,7 +2624,7 @@ func (s *Service) createRelationship(ctx context.Context, projectID uuid.UUID, r
 	if err != nil {
 		return nil, false, apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer s.rollbackTx(tx)
 
 	// Validate endpoints exist and are not deleted
 	srcObj, dstObj, err := s.repo.ValidateEndpoints(ctx, tx.Tx, projectID, req.SrcID, req.DstID)
@@ -2696,7 +2711,7 @@ func (s *Service) createRelationship(ctx context.Context, projectID uuid.UUID, r
 				dstKey = *dstObj.Key
 			}
 			entityType := entityTypeRelationship
-			s.eventSink.Log(ctx, LogParams{
+			s.logEvent(ctx, LogParams{
 				ProjectID:  projectID,
 				BranchID:   effectiveBranchID,
 				EventType:  EventTypeRelated,
@@ -2719,7 +2734,7 @@ func (s *Service) createRelationship(ctx context.Context, projectID uuid.UUID, r
 
 	// Conflict: relationship HEAD already exists (another concurrent goroutine inserted it).
 	// Roll back the current tx — we don't need it for a read-only check.
-	tx.Rollback()
+	s.rollbackTx(tx)
 
 	// Read HEAD outside any transaction (no lock needed — the row is stable).
 	existing, err := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, relType, srcObj.CanonicalID, dstObj.CanonicalID)
@@ -2746,7 +2761,7 @@ func (s *Service) createRelationship(ctx context.Context, projectID uuid.UUID, r
 	if err != nil {
 		return nil, false, apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx2.Rollback()
+	defer s.rollbackTx(tx2)
 
 	if err := s.repo.AcquireRelationshipLock(ctx, tx2.Tx, projectID, relType, srcObj.CanonicalID, dstObj.CanonicalID); err != nil {
 		return nil, false, err
@@ -3050,7 +3065,7 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 	if err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer s.rollbackTx(tx)
 
 	// Acquire lock
 	if err := s.repo.AcquireRelationshipLock(ctx, tx.Tx, current.ProjectID, current.Type, current.SrcID, current.DstID); err != nil {
@@ -3155,7 +3170,7 @@ func (s *Service) DeleteRelationship(ctx context.Context, projectID, id uuid.UUI
 	if err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer s.rollbackTx(tx)
 
 	// Acquire lock
 	if err := s.repo.AcquireRelationshipLock(ctx, tx.Tx, current.ProjectID, current.Type, current.SrcID, current.DstID); err != nil {
@@ -3206,7 +3221,7 @@ func (s *Service) RestoreRelationship(ctx context.Context, projectID, id uuid.UU
 	if err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer s.rollbackTx(tx)
 
 	// Acquire lock
 	if err := s.repo.AcquireRelationshipLock(ctx, tx.Tx, current.ProjectID, current.Type, current.SrcID, current.DstID); err != nil {
@@ -4798,6 +4813,7 @@ func (s *Service) TraverseGraph(ctx context.Context, projectID uuid.UUID, req *T
 			CanonicalID: id,
 			Depth:       result.NodeDepths[id],
 			Type:        obj.Type,
+			Name:        obj.Name,
 			Key:         obj.Key,
 			Labels:      obj.Labels,
 			Properties:  s.NormaliseDatePropertyValues(ctx, projectID, obj.Type, obj.Properties),
@@ -5107,8 +5123,8 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 				summary.SimilarityScore = 1.0
 				cid := same.CanonicalID
 				summary.SimilarTargetID = &cid
-				if name, ok := same.Properties["name"].(string); ok {
-					summary.SimilarTargetName = name
+				if same.Name != nil {
+					summary.SimilarTargetName = *same.Name
 				}
 			}
 		}
@@ -5258,8 +5274,8 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 			sum.SimilarityScore = 1.0 - dist
 			cid := similar.CanonicalID
 			sum.SimilarTargetID = &cid
-			if name, ok := similar.Properties["name"].(string); ok {
-				sum.SimilarTargetName = name
+			if similar.Name != nil {
+				sum.SimilarTargetName = *similar.Name
 			}
 			addedCount--
 			similarCount++
@@ -5322,8 +5338,8 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 			}
 			if src := sourceObjects[s.CanonicalID]; src != nil {
 				entry["type"] = src.Type
-				if name, ok := src.Properties["name"].(string); ok {
-					entry["name"] = name
+				if src.Name != nil {
+					entry["name"] = *src.Name
 				}
 			}
 			if len(s.Conflicts) > 0 {
@@ -5411,7 +5427,7 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 			// Attribute the merge to the source branch so the event appears in that
 			// branch's own journal history, alongside the objects it contained.
 			mergeActorType, mergeActorID := actorFromContext(ctx, nil)
-			s.eventSink.Log(ctx, LogParams{
+			s.logEvent(ctx, LogParams{
 				ProjectID: projectID,
 				BranchID:  &req.SourceBranchID,
 				EventType: EventTypeMerge,
@@ -5483,7 +5499,7 @@ func (s *Service) applyMerge(
 	if err != nil {
 		return 0, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer s.rollbackTx(tx)
 
 	// canonicalIDMap maps source canonical IDs → target canonical IDs for
 	// objects that are "added" (new on source, don't exist on target yet).
@@ -6440,7 +6456,7 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 	if err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer s.rollbackTx(tx)
 
 	refMap := make(map[string]uuid.UUID, len(req.Objects))
 	objResponses := make([]*GraphObjectResponse, 0, len(req.Objects))
@@ -6482,7 +6498,7 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 			ProjectID:  projectID,
 			BranchID:   objReq.BranchID,
 			Type:       objReq.Type,
-			Name:       resolveObjectName(objReq.Name, validatedProps),
+			Name:       resolveObjectName(objReq.Name),
 			Key:        objReq.Key,
 			Status:     statusForWrite(validatedProps, createStatus),
 			Properties: validatedProps,
@@ -6670,7 +6686,7 @@ func (s *Service) MoveObject(ctx context.Context, projectID, objectID uuid.UUID,
 	if err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer s.rollbackTx(tx)
 
 	if err := s.repo.AcquireObjectLock(ctx, tx.Tx, current.CanonicalID); err != nil {
 		return nil, err
@@ -6757,7 +6773,7 @@ func (s *Service) MoveObject(ctx context.Context, projectID, objectID uuid.UUID,
 	if current.Key != nil {
 		objType := current.Type
 		entityType := entityTypeObject
-		s.eventSink.Log(ctx, LogParams{
+		s.logEvent(ctx, LogParams{
 			ProjectID:  projectID,
 			BranchID:   targetBranchID,
 			EventType:  EventTypeMoved,
@@ -6857,7 +6873,7 @@ func (s *Service) ForkBranch(ctx context.Context, projectID uuid.UUID, sourceBra
 	// Journal log
 	{
 		forkActorType, forkActorID := actorFromContext(ctx, nil)
-		s.eventSink.Log(ctx, LogParams{
+		s.logEvent(ctx, LogParams{
 			ProjectID: projectID,
 			BranchID:  &targetBranchID,
 			EventType: EventTypeBatch,
@@ -6971,7 +6987,7 @@ func (s *Service) BulkAction(ctx context.Context, projectID uuid.UUID, req *Bulk
 	// Write journal entry for non-dry-run operations
 	if !req.DryRun {
 		entityType := entityTypeObject
-		s.eventSink.Log(ctx, LogParams{
+		s.logEvent(ctx, LogParams{
 			ProjectID:  projectID,
 			EventType:  EventTypeBatch,
 			EntityType: &entityType,
@@ -6990,9 +7006,12 @@ func (s *Service) BulkAction(ctx context.Context, projectID uuid.UUID, req *Bulk
 	return resp, nil
 }
 
-// PatchGraphObjectTitle merges {"title": title} into the graph object's Properties.
-// Implements mcp.GraphObjectPatcher. Best-effort: returns an error only if the object
-// exists and the patch fails; a missing object is silently ignored.
+// PatchGraphObjectTitle sets the graph object's `name` column to title.
+// Implements mcp.GraphObjectPatcher. `name` is the only title carrier (#824), so
+// this is what makes a session title visible to every graph API reader; writing
+// properties.title would be a write no read path consults. Best-effort: returns
+// an error only if the object exists and the patch fails; a missing object is
+// silently ignored.
 func (s *Service) PatchGraphObjectTitle(ctx context.Context, projectID, objectID, title string) error {
 	pid, err := uuid.Parse(projectID)
 	if err != nil {
@@ -7003,13 +7022,14 @@ func (s *Service) PatchGraphObjectTitle(ctx context.Context, projectID, objectID
 		return fmt.Errorf("PatchGraphObjectTitle: invalid object_id %q: %w", objectID, err)
 	}
 
+	name := title
 	_, err = s.Patch(ctx, pid, oid, &PatchGraphObjectRequest{
-		Properties: map[string]any{"title": title},
+		Name: &name,
 	}, nil)
 	if err != nil {
 		// Object not found is non-fatal — session may not yet exist as a graph object.
-		var appErr *apperror.Error
-		if errors.As(err, &appErr) && appErr.HTTPStatus == 404 {
+		appErr, ok := errors.AsType[*apperror.Error](err)
+		if ok && appErr.HTTPStatus == 404 {
 			return nil
 		}
 		return fmt.Errorf("PatchGraphObjectTitle: %w", err)

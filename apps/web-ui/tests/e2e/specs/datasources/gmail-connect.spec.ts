@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../fixtures';
 
 // Gmail is OAuth-only and always authorizes exactly one scope, so its connect
 // surface has no pasted-credential form and no scope picker. Runs against the

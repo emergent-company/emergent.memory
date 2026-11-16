@@ -170,6 +170,14 @@ func ensureBucketsWithRetry(
 	return fmt.Errorf("bucket bootstrap failed after %d attempt(s): %w", attemptsMade, lastErr)
 }
 
+// httpStatusCoder is the shape awshttp.ResponseError exposes for the retry
+// policy. It embeds error because errors.AsType requires the target type to
+// implement error.
+type httpStatusCoder interface {
+	error
+	HTTPStatusCode() int
+}
+
 // isRetryableBucketErr reports whether err is worth retrying. Connection-level
 // failures (dial refused/reset, DNS, timeouts) and 5xx responses mean the
 // object store is not ready yet; 4xx responses mean the request itself is wrong
@@ -187,20 +195,17 @@ func isRetryableBucketErr(err error) bool {
 		}
 	}
 
-	var urlErr *url.Error
-	if errors.As(err, &urlErr) {
+	if _, ok := errors.AsType[*url.Error](err); ok {
 		return true
 	}
-	var netErr net.Error
-	if errors.As(err, &netErr) {
+	if _, ok := errors.AsType[net.Error](err); ok {
 		return true
 	}
 
 	// 5xx means "not ready yet" (SeaweedFS answers 503 while volumes are being
 	// created); 4xx means the request is wrong and retrying will not help.
-	var statusCoder interface{ HTTPStatusCode() int }
-	if errors.As(err, &statusCoder) {
-		return statusCoder.HTTPStatusCode() >= 500
+	if sc, ok := errors.AsType[httpStatusCoder](err); ok {
+		return sc.HTTPStatusCode() >= 500
 	}
 
 	return false

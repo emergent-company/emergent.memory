@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/account"
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/memoryapi"
@@ -473,5 +474,148 @@ func TestEnsureTokenDoesNotRecoverNonConflictError(t *testing.T) {
 	}
 	if fd.revokeCalls != 0 {
 		t.Errorf("RevokeToken calls = %d, want 0", fd.revokeCalls)
+	}
+}
+
+// refreshingSessions is a Sessions implementation that also supplies
+// AccessToken/Refresh, the way *account.Manager does. It records the loop so a
+// test can assert the Manager refreshed instead of falling back to the stored
+// token.
+type refreshingSessions struct {
+	sessions map[string]*account.Session
+
+	mu           sync.Mutex
+	accessCalls  int
+	refreshCalls int
+	lastMinTTL   time.Duration
+	refreshErr   error
+	token        string // what AccessToken returns; "" uses the stored token
+}
+
+func (r *refreshingSessions) SessionFor(serverURL string) (*account.Session, error) {
+	return r.sessions[serverURL], nil
+}
+
+func (r *refreshingSessions) AccessToken(_ context.Context, serverURL string, minTTL time.Duration) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.accessCalls++
+	r.lastMinTTL = minTTL
+	if r.token != "" {
+		return r.token, nil
+	}
+	if sess := r.sessions[serverURL]; sess != nil {
+		return sess.AccessToken, nil
+	}
+	return "", account.ErrNoSession
+}
+
+func (r *refreshingSessions) Refresh(_ context.Context, serverURL string) (*account.Session, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.refreshCalls++
+	if r.refreshErr != nil {
+		return nil, r.refreshErr
+	}
+	sess := r.sessions[serverURL]
+	if sess == nil {
+		return nil, account.ErrNoSession
+	}
+	sess.AccessToken = "refreshed"
+	return sess, nil
+}
+
+func unauthorized() error {
+	return &sdkerrors.Error{StatusCode: 401, Code: "unauthorized", Message: "invalid token"}
+}
+
+// TestListRetriesOnceAfterUnauthorized: a 401 means the stored expiry was
+// optimistic (revoked token, clock ahead), so the Manager must force a refresh
+// and retry rather than surfacing "signed out" to the user.
+func TestListRetriesOnceAfterUnauthorized(t *testing.T) {
+	serverURL := "https://srv.test"
+	sessions := &refreshingSessions{sessions: map[string]*account.Session{
+		serverURL: {ServerURL: serverURL, AccessToken: "stale"},
+	}}
+	fd := &fakeDeps{}
+	calls := 0
+	deps := fd.deps()
+	inner := deps.ListProjects
+	deps.ListProjects = func(ctx context.Context, serverURL, accessToken string) ([]memoryapi.Project, error) {
+		calls++
+		if calls == 1 {
+			if accessToken != "stale" {
+				t.Errorf("first call token = %q, want the stored token", accessToken)
+			}
+			return nil, unauthorized()
+		}
+		if accessToken != "refreshed" {
+			t.Errorf("retry token = %q, want the refreshed token", accessToken)
+		}
+		return inner(ctx, serverURL, accessToken)
+	}
+
+	m := NewManagerWithDeps(t.TempDir(), sessions, deps)
+	if _, err := m.List(context.Background(), serverURL); err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("ListProjects calls = %d, want 2 (original + one retry)", calls)
+	}
+	if sessions.refreshCalls != 1 {
+		t.Errorf("Refresh calls = %d, want 1", sessions.refreshCalls)
+	}
+}
+
+// TestListRejectedRefreshKeepsTheOriginalError: when the refresh is itself
+// rejected the session genuinely needs a new sign-in, so the 401 must reach the
+// caller (and no second API call is made with a token we know is dead).
+func TestListRejectedRefreshKeepsTheOriginalError(t *testing.T) {
+	serverURL := "https://srv.test"
+	sessions := &refreshingSessions{
+		sessions:   map[string]*account.Session{serverURL: {ServerURL: serverURL, AccessToken: "stale"}},
+		refreshErr: errors.New("invalid_grant"),
+	}
+	fd := &fakeDeps{}
+	deps := fd.deps()
+	calls := 0
+	deps.ListProjects = func(context.Context, string, string) ([]memoryapi.Project, error) {
+		calls++
+		return nil, unauthorized()
+	}
+
+	m := NewManagerWithDeps(t.TempDir(), sessions, deps)
+	_, err := m.List(context.Background(), serverURL)
+	if !memoryapi.IsUnauthorized(err) {
+		t.Fatalf("List error = %v, want the 401 surfaced", err)
+	}
+	if calls != 1 {
+		t.Errorf("ListProjects calls = %d, want 1 (no retry without a fresh token)", calls)
+	}
+	if sessions.refreshCalls != 1 {
+		t.Errorf("Refresh calls = %d, want 1", sessions.refreshCalls)
+	}
+}
+
+// TestProjectOperationsUseTokenSource: when the session store can hand out a
+// usable token, project operations use it (with the proactive window) instead
+// of reading the stored token directly.
+func TestProjectOperationsUseTokenSource(t *testing.T) {
+	serverURL := "https://srv.test"
+	sessions := &refreshingSessions{
+		sessions: map[string]*account.Session{serverURL: {ServerURL: serverURL, AccessToken: "stored"}},
+		token:    "from-token-source",
+	}
+	fd := &fakeDeps{projects: []memoryapi.Project{{ID: "p1", Name: "One"}}}
+	m := NewManagerWithDeps(t.TempDir(), sessions, fd.deps())
+
+	if _, err := m.List(context.Background(), serverURL); err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if fd.lastAccess != "from-token-source" {
+		t.Errorf("ListProjects token = %q, want the TokenSource token", fd.lastAccess)
+	}
+	if sessions.lastMinTTL != accessTokenRefreshWindow {
+		t.Errorf("minTTL = %s, want %s", sessions.lastMinTTL, accessTokenRefreshWindow)
 	}
 }

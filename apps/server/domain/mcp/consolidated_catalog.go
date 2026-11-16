@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -507,7 +506,7 @@ func resolveConsolidatedHandler(name string, args map[string]any) (string, bool,
 	}
 	action, _ := actionArg(args)
 	if action == "" {
-		return "", true, fmt.Errorf("%s: 'action' is required (one of: %s)", name, familyActionList(fam))
+		return "", true, toolArgErrorf("%s: 'action' is required (one of: %s)", name, familyActionList(fam))
 	}
 	for _, act := range fam.Actions {
 		if act.Action != action {
@@ -519,7 +518,7 @@ func resolveConsolidatedHandler(name string, args map[string]any) (string, bool,
 		}
 		return handler, true, nil
 	}
-	return "", true, fmt.Errorf("%s: unknown action %q (one of: %s)", name, action, familyActionList(fam))
+	return "", true, toolArgErrorf("%s: unknown action %q (one of: %s)", name, action, familyActionList(fam))
 }
 
 func familyActionList(fam *consolidatedFamily) string {

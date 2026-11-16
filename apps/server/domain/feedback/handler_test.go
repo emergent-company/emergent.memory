@@ -30,8 +30,7 @@ func postFeedback(t *testing.T, h *Handler, body string, user *auth.AuthUser) *h
 	e := echo.New()
 	e.HTTPErrorHandler = func(err error, c echo.Context) {
 		status := http.StatusInternalServerError
-		var appErr *apperror.Error
-		if errors.As(err, &appErr) {
+		if appErr, ok := errors.AsType[*apperror.Error](err); ok {
 			status = appErr.HTTPStatus
 		}
 		_ = c.JSON(status, map[string]string{"message": err.Error()})

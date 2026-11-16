@@ -104,7 +104,9 @@ final class ConnectorCLITests: XCTestCase {
                                              email: "user@example.com",
                                              issuer: "https://issuer.test",
                                              expiresAt: "2030-01-02T03:04:05Z",
-                                             expired: false))
+                                             expired: false,
+                                             canRefresh: nil,
+                                             needsReauth: nil))
         XCTAssertEqual(runner.lastArguments,
                        ["auth", "status", "--server", serverURL, "--json", "--config", configPath])
     }
@@ -217,6 +219,39 @@ final class ConnectorCLITests: XCTestCase {
                                              expiresAt: "2030-01-02T03:04:05Z"))
         XCTAssertEqual(runner.lastArguments,
                        ["auth", "access-token", "--server", serverURL, "--json", "--config", configPath])
+    }
+
+    func testAuthRefreshDecodesAndBuildsArguments() async throws {
+        let runner = CannedRunner(result: ok("""
+        {"schema_version":1,"server_url":"https://memory.example.test","refreshed":true,\
+        "expires_at":"2030-01-02T03:04:05Z","can_refresh":true,"needs_reauth":false}
+        """))
+        let cli = makeCLI(runner)
+
+        let refresh = try await cli.authRefresh(serverURL: serverURL, configPath: configPath)
+
+        XCTAssertEqual(refresh, CLIAuthRefresh(schemaVersion: 1,
+                                               serverURL: serverURL,
+                                               refreshed: true,
+                                               expiresAt: "2030-01-02T03:04:05Z",
+                                               canRefresh: true,
+                                               needsReauth: false))
+        XCTAssertEqual(runner.lastArguments,
+                       ["auth", "refresh", "--server", serverURL, "--json", "--config", configPath])
+    }
+
+    func testAuthStatusDecodesRefreshFields() async throws {
+        let runner = CannedRunner(result: ok("""
+        {"schema_version":1,"server":"https://memory.example.test","signed_in":true,\
+        "expired":true,"can_refresh":true,"needs_reauth":true}
+        """))
+        let cli = makeCLI(runner)
+
+        let status = try await cli.authStatus(serverURL: serverURL, configPath: configPath)
+
+        XCTAssertEqual(status.expired, true)
+        XCTAssertEqual(status.canRefresh, true)
+        XCTAssertEqual(status.needsReauth, true)
     }
 
     // MARK: - projects
@@ -353,7 +388,9 @@ final class ConnectorCLITests: XCTestCase {
                                              email: "user@example.com",
                                              issuer: "https://issuer.test",
                                              expiresAt: "2030-01-02T03:04:05Z",
-                                             expired: false))
+                                             expired: false,
+                                             canRefresh: nil,
+                                             needsReauth: nil))
         XCTAssertEqual(runner.lastArguments,
                        ["auth", "import", "--server", serverURL, "--json", "--config", configPath])
         XCTAssertEqual(runner.lastStdin, sessionJSON)

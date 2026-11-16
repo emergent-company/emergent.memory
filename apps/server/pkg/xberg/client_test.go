@@ -757,8 +757,8 @@ func TestExtractText_SurfacesPerInputErrors(t *testing.T) {
 		t.Fatal("ExtractText() error = nil, want an error for a per-input failure")
 	}
 
-	var xe *Error
-	if !errors.As(err, &xe) {
+	xe, ok := errors.AsType[*Error](err)
+	if !ok {
 		t.Fatalf("error = %T (%v), want *xberg.Error", err, err)
 	}
 	if xe.Message != "This PDF file appears to be corrupted or invalid." {
@@ -790,8 +790,8 @@ func TestExtractText_JoinsMultiplePerInputErrors(t *testing.T) {
 	})
 
 	_, err := c.ExtractText(context.Background(), []byte("bytes"), "a.pdf", "application/pdf", nil)
-	var xe *Error
-	if !errors.As(err, &xe) {
+	xe, ok := errors.AsType[*Error](err)
+	if !ok {
 		t.Fatalf("error = %T (%v), want *xberg.Error", err, err)
 	}
 	wantDetail := "a.pdf: Invalid PDF; b.docx: Unsupported file format"

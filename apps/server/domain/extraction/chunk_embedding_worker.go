@@ -117,12 +117,13 @@ func (w *ChunkEmbeddingWorker) budgetBlockActive(ctx context.Context, projectID 
 }
 
 // markBudgetBlocked caches the project as over budget for budgetBlockCacheTTL in
-// the shared store, so every replica skips the per-job budget query.
+// the shared store, so every replica skips the per-job budget query. The
+// deadline is applied by the store on the database clock (#818).
 func (w *ChunkEmbeddingWorker) markBudgetBlocked(ctx context.Context, projectID string) {
 	if w.budgetBlocks == nil {
 		return
 	}
-	if err := w.budgetBlocks.mark(ctx, projectID, time.Now().Add(budgetBlockCacheTTL)); err != nil {
+	if err := w.budgetBlocks.mark(ctx, projectID, budgetBlockCacheTTL); err != nil {
 		// The jobs are parked either way; the cache is only an optimisation, so
 		// a failed write costs another budget check, not correctness.
 		w.log.Warn("failed to cache shared budget block",
@@ -345,8 +346,7 @@ func (w *ChunkEmbeddingWorker) processTrackedJob(ctx context.Context, job *Chunk
 		}
 	}()
 	if err := w.processJob(ctx, job); err != nil {
-		var budgetErr *EmbeddingBudgetExceededError
-		if errors.As(err, &budgetErr) {
+		if budgetErr, ok := errors.AsType[*EmbeddingBudgetExceededError](err); ok {
 			w.log.Debug("chunk embedding job parked (budget exceeded)",
 				slog.String("job_id", job.ID),
 				slog.String("project_id", budgetErr.ProjectID))

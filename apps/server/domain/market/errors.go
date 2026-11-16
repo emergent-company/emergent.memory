@@ -14,7 +14,9 @@ const (
 	CodeLicenseInvalid        = "license_invalid"
 	CodeDigestMismatch        = "digest_mismatch"
 	CodeMarketUnreach         = "market_unreachable"
+	CodeMarketRejected        = "market_rejected"
 	CodeMarketRateLimited     = "market_rate_limited"
+	CodeMarketMalformed       = "market_malformed_response"
 	CodeInstallNotInstallable = "install_not_installable"
 	CodeCompat                = "compat_unsatisfied"
 	CodeUndeclaredTools       = "undeclared_tools"
@@ -92,12 +94,52 @@ func ErrDigestMismatch(expected, actual string) *apperror.Error {
 }
 
 // ErrMarketUnreachable reports a transport or upstream failure talking to the
-// market.
+// market: the request never got an answer, or the market answered 5xx. It is the
+// only code that means "the market could not answer now", and it is what drives
+// the retry/backoff and usage-replay paths.
 func ErrMarketUnreachable(detail string) *apperror.Error {
 	if detail == "" {
 		detail = "market is unreachable"
 	}
 	return apperror.New(http.StatusBadGateway, CodeMarketUnreach, detail)
+}
+
+// ErrMarketRejected reports that the market answered and refused the request:
+// a 4xx other than 408/425 (transport-shaped) and 429 (throttling, with its own
+// code). A 400/401/403 is ours to fix, so it must not be dressed up as an egress
+// failure or queued for retry as if the market had been down.
+func ErrMarketRejected(operation string, status int) *apperror.Error {
+	if operation == "" {
+		operation = "request"
+	}
+	return apperror.New(http.StatusBadGateway, CodeMarketRejected,
+		fmt.Sprintf("market rejected the %s with HTTP %d", operation, status))
+}
+
+// ErrMarketMalformedResponse reports a 2xx whose body the instance cannot use:
+// invalid JSON, or a document missing the field the operation needs. It is a
+// market bug, not an outage: it must stay visible and distinct from
+// ErrMarketUnreachable, which drives the outage/fallback path and usage replay.
+// It has its own code so dashboards can separate a broken producer from a market
+// that is down, and it is deliberately not retryable on the network cadence.
+func ErrMarketMalformedResponse(detail string) *apperror.Error {
+	if detail == "" {
+		detail = "market returned a malformed response"
+	}
+	return apperror.New(http.StatusBadGateway, CodeMarketMalformed, detail)
+}
+
+// isClientRejection reports whether status is the market answering "no" to a
+// request it understood, as opposed to an outage. 408 (Request Timeout), 425
+// (Too Early) and 429 (Too Many Requests) are excluded: a timeout and an
+// "ask again shortly" are transport-shaped, and throttling has its own
+// retryable code. Treating 425 as a rejection would drop a usage report that a
+// retry would have accepted.
+func isClientRejection(status int) bool {
+	return status >= 400 && status < 500 &&
+		status != http.StatusRequestTimeout &&
+		status != http.StatusTooEarly &&
+		status != http.StatusTooManyRequests
 }
 
 // ErrCompatUnsatisfied reports a listing whose compat.memory range does not

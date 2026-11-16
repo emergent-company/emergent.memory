@@ -100,11 +100,11 @@ func (s *Service) executeListProjectAPITokens(ctx context.Context, projectID str
 func (s *Service) executeCreateProjectAPIToken(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	name, _ := args["name"].(string)
 	if name == "" {
-		return nil, fmt.Errorf("create_project_api_token: 'name' is required")
+		return nil, toolArgErrorf("create_project_api_token: 'name' is required")
 	}
 	scopesStr, _ := args["scopes"].(string)
 	if scopesStr == "" {
-		return nil, fmt.Errorf("create_project_api_token: 'scopes' is required")
+		return nil, toolArgErrorf("create_project_api_token: 'scopes' is required")
 	}
 	scopes := splitScopes(scopesStr)
 
@@ -122,7 +122,7 @@ func (s *Service) executeCreateProjectAPIToken(ctx context.Context, projectID st
 func (s *Service) executeGetProjectAPIToken(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	tokenID, _ := args["token_id"].(string)
 	if tokenID == "" {
-		return nil, fmt.Errorf("get_project_api_token: 'token_id' is required")
+		return nil, toolArgErrorf("get_project_api_token: 'token_id' is required")
 	}
 	result, err := s.apitokenSvc.GetByID(ctx, tokenID, projectID)
 	if err != nil {
@@ -134,7 +134,7 @@ func (s *Service) executeGetProjectAPIToken(ctx context.Context, projectID strin
 func (s *Service) executeRevokeProjectAPIToken(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	tokenID, _ := args["token_id"].(string)
 	if tokenID == "" {
-		return nil, fmt.Errorf("revoke_project_api_token: 'token_id' is required")
+		return nil, toolArgErrorf("revoke_project_api_token: 'token_id' is required")
 	}
 	userID := ""
 	if u := auth.UserFromContext(ctx); u != nil {

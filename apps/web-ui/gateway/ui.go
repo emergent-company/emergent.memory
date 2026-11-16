@@ -121,6 +121,27 @@ func (s *Server) marketSidebarItems() []layout.SidebarItem {
 	return items
 }
 
+// sidebarExternalLinks is the sidebar's bottom block: external destinations in
+// reading order — the Marketplace entries, then the documentation site. Both are
+// off-instance, so the template renders them as plain anchors in a new tab and
+// never lets htmx swap them into #main-content.
+//
+// Empty is the normal self-hosted default: an instance with no market and no
+// docs host renders no block at all, rather than a row of links to nowhere.
+func (s *Server) sidebarExternalLinks() []layout.SidebarItem {
+	items := s.marketSidebarItems()
+	if s.cfg.DocsURL != "" {
+		// marketSidebarItems returns a slice it built itself, so appending here
+		// cannot write into shared state.
+		items = append(items, layout.SidebarItem{
+			Label: "Docs",
+			Href:  s.cfg.DocsURL,
+			Icon:  "lucide--book-open",
+		})
+	}
+	return items
+}
+
 // marketIssuerLabel derives the secondary-entry label from the issuer host.
 // The dev market is market.dev.memory.emergent-company.ai, so a bare "dev."
 // prefix is not enough: any host with a `.dev.` segment (or a leading `dev.`)
@@ -658,7 +679,7 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 	// (literal href/action/hx-* in the page templates) must carry the scope base
 	// just like htmx partials, otherwise the first navigation after a full load
 	// hits an unscoped app path and 404s under the session-mode hard cut.
-	s.renderScoped(w, r, appShell(title, groups, s.marketSidebarItems(), providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, unreadNotifications, pendingInvites, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL, s.cfg.feedbackOverlayAPI(), s.cfg.feedbackOrder()), linkBase)
+	s.renderScoped(w, r, appShell(title, groups, s.sidebarExternalLinks(), providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, unreadNotifications, pendingInvites, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL, s.cfg.feedbackOverlayAPI(), s.cfg.feedbackOrder()), linkBase)
 	return nil
 }
 
@@ -1100,6 +1121,9 @@ type scheduledRunRow struct {
 	// position and the time its subtitle shows.
 	CompletedAt string
 	Summary     string
+	// AgentDefinitionID is the agent-definition id the run's runtime agent binds
+	// (empty when it binds none), in the id space the rail's agent filter uses.
+	AgentDefinitionID string
 	// Icon/Color carry the run agent's definition appearance (empty when
 	// undeclared or the definition is unknown), resolved in chatScheduledRuns.
 	Icon  string
@@ -1166,9 +1190,11 @@ func (s *Server) chatScheduledRuns(ctx context.Context, appearances map[string]a
 		if a.TriggerType != "schedule" {
 			continue
 		}
+		defID := ""
 		var ap agentAppearance
 		if a.AgentDefinitionID != nil {
-			ap = appearances[*a.AgentDefinitionID]
+			defID = *a.AgentDefinitionID
+			ap = appearances[defID]
 		}
 		runs, err := s.memory.ListScheduledAgentRuns(ctx, a.ID)
 		if err != nil {
@@ -1180,14 +1206,15 @@ func (s *Server) chatScheduledRuns(ctx context.Context, appearances map[string]a
 				completedAt = *r.CompletedAt
 			}
 			out = append(out, scheduledRunRow{
-				ID:          r.ID,
-				AgentName:   a.Name,
-				Status:      r.Status,
-				StartedAt:   r.StartedAt,
-				CompletedAt: completedAt,
-				Summary:     scheduledRunPreview(r, a.Name),
-				Icon:        ap.Icon,
-				Color:       ap.Color,
+				ID:                r.ID,
+				AgentName:         a.Name,
+				Status:            r.Status,
+				StartedAt:         r.StartedAt,
+				CompletedAt:       completedAt,
+				Summary:           scheduledRunPreview(r, a.Name),
+				AgentDefinitionID: defID,
+				Icon:              ap.Icon,
+				Color:             ap.Color,
 			})
 		}
 	}
@@ -1196,13 +1223,14 @@ func (s *Server) chatScheduledRuns(ctx context.Context, appearances map[string]a
 
 // chatWorkRuns collects the project's object-driven (board/work) runs and its
 // extraction runs for the chat session rail. Each run row is matched (once, in
-// Go) against the work-item board projection so its title is the work item's key
-// when known, falling back to the run agent's name. Rows inherit the run agent's
-// definition appearance.
+// Go) against the work-item board projection so its title is the work item's
+// label when known (the same name → key → type+id rule the board card uses),
+// falling back to the run agent's name. Rows inherit the run agent's definition
+// appearance.
 func (s *Server) chatWorkRuns(ctx context.Context, appearances map[string]agentAppearance) []workRunRow {
 	// A board-listing failure must not hide the extraction rows below.
 	runs, _ := s.memory.ListBoardRuns(ctx, 50)
-	items, _ := s.memory.ListWorkItems(ctx, "", "", 1000)
+	items, _ := s.memory.ListWorkItems(ctx, "", "", 1000, false)
 	bySubject := make(map[string]WorkItem, len(items))
 	for _, it := range items {
 		if it.CanonicalID != "" {
@@ -1213,11 +1241,19 @@ func (s *Server) chatWorkRuns(ctx context.Context, appearances map[string]agentA
 	for _, r := range runs {
 		title := r.AgentName
 		if r.SubjectObjectID != nil {
+			// Same label rule as the board card: name, else a human key, else
+			// type + short id. A machine dedup key is an identity, not a title.
+			// Keyless objects still fall back to the run agent's name, as before.
 			if it, ok := bySubject[*r.SubjectObjectID]; ok && it.Key != "" {
-				title = it.Key
+				title = workItemLabel(it)
 			}
 		}
-		ap := appearances[r.AgentID]
+		// appearances is keyed by agent-definition id, so the run's definition id
+		// is what resolves its declared glyph and colour — NOT r.AgentID, which
+		// is the runtime agent (kb.agents.id) and never matches. Falling back to
+		// the runtime id here is what painted every board row with the neutral
+		// bot glyph.
+		ap := appearances[r.AgentDefinitionID]
 		completedAt := ""
 		if r.CompletedAt != nil {
 			completedAt = *r.CompletedAt
@@ -1225,16 +1261,17 @@ func (s *Server) chatWorkRuns(ctx context.Context, appearances map[string]agentA
 		out = append(out, workRunRow{
 			// A board row IS the run: both the row id and the transcript target
 			// are the run id (the rail keys open-run off RunID).
-			ID:          r.ID,
-			RunID:       r.ID,
-			Origin:      "board",
-			Title:       title,
-			AgentName:   r.AgentName,
-			Status:      r.Status,
-			StartedAt:   r.StartedAt,
-			CompletedAt: completedAt,
-			Icon:        ap.Icon,
-			Color:       ap.Color,
+			ID:                r.ID,
+			RunID:             r.ID,
+			Origin:            "board",
+			Title:             title,
+			AgentName:         r.AgentName,
+			AgentDefinitionID: r.AgentDefinitionID,
+			Status:            r.Status,
+			StartedAt:         r.StartedAt,
+			CompletedAt:       completedAt,
+			Icon:              ap.Icon,
+			Color:             ap.Color,
 		})
 	}
 	return append(out, s.extractionRunRows(ctx)...)

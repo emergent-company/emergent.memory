@@ -17,6 +17,7 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/storage"
 	"github.com/emergent-company/emergent.memory/internal/version"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 	"github.com/emergent-company/emergent.memory/pkg/governor"
 	"github.com/emergent-company/emergent.memory/pkg/whisper"
@@ -513,7 +514,7 @@ func (h *Handler) Ready(c echo.Context) error {
 // @Security     bearerAuth
 func (h *Handler) Debug(c echo.Context) error {
 	if h.cfg.Environment == "production" {
-		return echo.NewHTTPError(http.StatusNotFound, "Not found")
+		return apperror.ErrNotFound
 	}
 
 	var mem runtime.MemStats

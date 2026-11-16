@@ -517,8 +517,7 @@ func (w *ObjectExtractionWorker) processSingleJob(ctx context.Context, job *Obje
 				details["model"] = name
 			}
 		}
-		var batchErr *extractionBatchError
-		if errors.As(err, &batchErr) {
+		if batchErr, ok := errors.AsType[*extractionBatchError](err); ok {
 			details["batch"] = batchErr.Batch
 			details["total_batches"] = batchErr.Total
 		}
@@ -1303,6 +1302,7 @@ func (w *ObjectExtractionWorker) persistResults(
 			graphObj, created, err := w.graphService.CreateOrUpdate(ctx, projectID, &graph.CreateGraphObjectRequest{
 				Type:            entity.Type,
 				Key:             &key,
+				Name:            &key,
 				Properties:      properties,
 				Status:          stringPtr("suggested"),
 				BranchID:        stagingBranchID,

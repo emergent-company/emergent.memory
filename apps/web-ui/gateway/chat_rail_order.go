@@ -18,12 +18,19 @@ const (
 	railEntryScheduledRun
 	railEntryWorkRun
 	railEntrySharedSession
+
+	// railEntryKindCount bounds the enum so a test can walk every kind and
+	// assert it has a row renderer (see railEntryRows). It is not a real kind.
+	railEntryKindCount
 )
 
 // railEntry is one rail row — or one conversation group (a root plus the
 // sub-chats spawned beneath it) — together with the instant of its last
-// activity. at is both the sort key and the time the row's subtitle shows, so a
-// row cannot render above another row carrying a newer timestamp.
+// activity. at is both the sort key and, for every visible row, the time the
+// row's subtitle shows: a run row renders runActivityAt, a shared row renders
+// ActivityRelative, and a conversation group's root row renders the subtree's
+// newest updated_at even when it is collapsed (so a group never reads older
+// than the row beneath it).
 type railEntry struct {
 	kind   railEntryKind
 	at     time.Time
@@ -44,7 +51,8 @@ type railEntry struct {
 //
 //   - conversation group: the newest updated_at in the subtree, so a sub-chat
 //     that ran later lifts its whole group (the rule groupConversations already
-//     uses to order groups among themselves);
+//     uses to order groups among themselves), and the group's root row displays
+//     that same instant;
 //   - scheduled/board/extraction run: completed_at once the run finished,
 //     started_at while it is still running;
 //   - shared session: last_activity_at, falling back to created_at.

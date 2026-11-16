@@ -45,6 +45,77 @@
 
 ## [Unreleased]
 
+### Changed
+
+**The queued-run sweep now covers fan-out and session runs** (2026-11-16)
+
+The stale-run reaper spared every run with a `root_run_id` or a `session_id`,
+so a fan-out child or an A2A/session turn whose dispatch job no worker could
+claim sat `submitted` for ever — the same stall #880 fixed for top-level runs
+(#893 scoped the sweep there). The sweep now reads the job ledger for those
+shapes too and re-enqueues or fails them exactly as it does a top-level run,
+with one guard: a run that a worker already claimed (`attempt_count > 0`) is
+never re-enqueued, because that risks a second turn, and is reported as a
+counted `spared` outcome instead of staying silent.
+
+**Source-App webhook failures answer in the apperror envelope** (2026-11-16)
+
+`POST /api/webhooks/source-apps/{webhookKey}` used to answer every failure with a
+plain-text body (`unknown app`, `invalid signature`, …), which a sender could only
+match as a string. Failures now come from the shared handler as
+`{"error":{"code","message"}}`: the message text is unchanged, so a webhook
+delivery log reads the same, and `code` is machine-readable. Statuses are
+unchanged — `400`, `401`, `404`, `503`, `500` — and the codes are
+`unreadable_body` (400, the body could not be read), `malformed_payload` (400),
+`invalid_signature` (401), `source_app_not_found` (404),
+`source_app_unconfigured` (503) and `internal_error` (500). The seven sites were
+also outside the ratchet that counts raw `echo.NewHTTPError`, so it now counts
+plain-text `c.String` error bodies as well (baseline 0).
+
+**Embedding-control failures answer the apperror envelope, and the ratchet counts c.JSON error bodies** (2026-11-16)
+
+The seventeen `c.JSON(4xx/5xx, map[string]any{"error": err.Error()})` bodies
+under `/api/embeddings/*` bypassed `apperror.HTTPErrorHandler` the same way, and
+a repository or provider failure put its raw message on the wire for the eight
+500 paths. Each failure now returns `*apperror.Error` with a code
+(`invalid_request_body` for a bad bind, `forbidden` for the deployment-wide
+refusal, `internal_error` otherwise), a message written for the caller, and the
+cause kept for the 5xx log line; `c.JSON` is used only for success bodies.
+`scripts/lint-ratchet.sh` now counts this shape too — non-test
+`c.JSON(http.Status<4xx|5xx>, map[...]{"error": ...})` lines, excluding 2xx
+success bodies and the `domain/mcp` JSON-RPC contract — pinned at baseline 0, so
+the next handler cannot reintroduce one unnoticed.
+
+**Error bodies from six handler families now come from the apperror envelope** (2026-11-16)
+
+The model-config, tracing, devtools (`/coverage`, `/docs`), backups, `/debug`
+and platform-email handlers built their failures with `echo.NewHTTPError`. Most
+passed a fixed string, but four sites put a cause on the wire or lost the code
+altogether: the Tempo passthrough relayed an upstream body and its status
+verbatim, an unreachable Tempo produced a 502 whose message named the URL and
+the DNS/TLS state, a Zitadel SMTP failure produced a 502 with the provider's
+result text, and the two "tracing not enabled" answers were a 503 that the shared
+handler could only label `internal_error` — indistinguishable from a Tempo
+outage. They now construct `*apperror.Error` with a code chosen per cause and a
+message written for the client, keeping the underlying error for logging:
+`invalid_project_id`, `invalid_request_body`, `invalid_path`,
+`invalid_retention`, `backup_not_ready`, `forbidden`, `not_found`,
+`tracing_disabled`, `tempo_query_error` and `service_unavailable`. Statuses are
+unchanged except:
+
+- a trace-store fault is reported as `503 service_unavailable` instead of being
+  relayed with Tempo's own status or body: upstream 5xx, an unreachable Tempo, a
+  Tempo `401`/`403` (its credentials are the server's, not the caller's), and a
+  `408`/`429` (retryable) all answer 503, so a trace store that is down no
+  longer looks like a Memory-server fault or a bad credential. `memory traces`
+  reads the error code to report the right cause.
+- a Tempo `404` is this API's `not_found`, and a rejected TraceQL query
+  (`400`/`409`/`422`) keeps its status with Tempo's diagnostic under
+  `tempo_query_error` (capped at 512 runes).
+- the production `/debug` 404 body reads "Resource not found" instead of
+  "Not found", and the `/docs` asset route now rejects a path-traversal attempt
+  with `403 forbidden` instead of serving it or answering 404.
+
 ### BREAKING CHANGES
 
 **A2A enforces `agents:read` / `agents:write` for session credentials** (2026-11-15)
@@ -68,17 +139,23 @@ visible change is:
 | `project_user` | yes | **no** — now 403 |
 | `project_viewer` | yes | **no** — now 403 |
 
-A `superadmin_full` session keeps the full catalogue; a session with no project
-role falls back to `MEMORY_OIDC_DEFAULT_SCOPES` (then to nothing), so it is
-refused on this surface unless that default carries `agents:*`. A `memory login`
-session is subject to the same matrix: `memory a2a discover`, `memory a2a tasks
-list` and `memory a2a tasks get` keep working for every project role, while
-`memory a2a send` and `memory a2a tasks cancel` now need a project admin. No
-documented flow promises A2A writes to a `project_user` or `project_viewer`
-session (their role grants graph, document and chat access, not agent
-management), and nothing in the web UI calls A2A, so the migration is to
-authenticate with an `emt_…` token carrying `agents:write` — the project-token
-defaults already include `agents:*`:
+A `superadmin_full` session keeps the full catalogue. A session with no project
+membership resolves to its `org_admin` entitlements when it has them, and
+otherwise to `MEMORY_OIDC_DEFAULT_SCOPES` (then to nothing); neither set carries
+`agents:*`, so it is refused on this surface unless that default is changed. An
+*unrecognised* project role — or a role lookup that fails — does not fall back
+to that default: it fails closed to no scopes at all. A `memory login` session is
+subject to the same matrix: `memory a2a discover`, `memory a2a tasks list` and
+`memory a2a tasks get` keep working for every project role, while `memory a2a
+send`, `memory a2a tasks cancel` and `memory acp` now need a project admin or a
+project token carrying `agents:write`. `memory acp` is the other A2A consumer:
+it forwards every prompt over `POST /message:stream`, so it is a write surface
+even though its documented setup uses `MEMORY_PROJECT_TOKEN`, whose defaults
+include `agents:*`. No documented flow promises A2A writes to a `project_user`
+or `project_viewer` session (their role grants graph, document and chat access,
+not agent management), and nothing in the web UI calls A2A, so the migration is
+to authenticate with an `emt_…` token carrying `agents:write` — the
+project-token defaults already include `agents:*`:
 
 ```bash
 memory projects create-token <project> --scopes agents:read,agents:write

@@ -18,6 +18,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
 	"github.com/emergent-company/emergent.memory/domain/mcprelay"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
@@ -813,7 +814,7 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 							),
 						}, nil
 					}
-					return map[string]any{"error": err.Error()}, nil
+					return map[string]any{"error": apperror.PublicMessage(err)}, nil
 				}
 				return convertRelayResponse(result)
 			},
@@ -833,7 +834,7 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 			func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 				result, err := regSvc.CallExternalTool(ctx, pid, toolName, args)
 				if err != nil {
-					return map[string]any{"error": err.Error()}, nil
+					return map[string]any{"error": apperror.PublicMessage(err)}, nil
 				}
 				return convertToolResult(result)
 			},
@@ -860,7 +861,7 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 			}
 			result, err := svc.ExecuteTool(ctx, pid, toolName, args)
 			if err != nil {
-				return map[string]any{"error": err.Error()}, nil
+				return map[string]any{"error": apperror.PublicMessage(err)}, nil
 			}
 			return convertToolResult(result)
 		},
@@ -949,7 +950,7 @@ func (tp *ToolPool) CallTool(ctx context.Context, projectID, toolName string, ar
 					),
 				}, nil
 			}
-			return map[string]any{"error": err.Error()}, nil
+			return map[string]any{"error": apperror.PublicMessage(err)}, nil
 		}
 		return convertRelayResponse(result)
 	}
@@ -960,7 +961,7 @@ func (tp *ToolPool) CallTool(ctx context.Context, projectID, toolName string, ar
 	if !isBuiltin && tp.registryService != nil {
 		result, err := tp.registryService.CallExternalTool(ctx, projectID, toolName, args)
 		if err != nil {
-			return map[string]any{"error": err.Error()}, nil
+			return map[string]any{"error": apperror.PublicMessage(err)}, nil
 		}
 		return convertToolResult(result)
 	}
@@ -971,7 +972,7 @@ func (tp *ToolPool) CallTool(ctx context.Context, projectID, toolName string, ar
 	}
 	result, err := tp.mcpService.ExecuteTool(ctx, projectID, toolName, args)
 	if err != nil {
-		return map[string]any{"error": err.Error()}, nil
+		return map[string]any{"error": apperror.PublicMessage(err)}, nil
 	}
 	return convertToolResult(result)
 }
@@ -1115,7 +1116,7 @@ func (tp *ToolPool) wrapHiddenBuiltin(projectID, name, description string, schem
 		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 			result, err := svc.ExecuteTool(ctx, pid, name, args)
 			if err != nil {
-				return map[string]any{"error": err.Error()}, nil
+				return map[string]any{"error": apperror.PublicMessage(err)}, nil
 			}
 			return convertToolResult(result)
 		},
@@ -1156,7 +1157,9 @@ func extractRelayToolDefs(toolsMap map[string]any) ([]mcp.ToolDefinition, error)
 		if is, ok := tMap["inputSchema"]; ok {
 			data, err := json.Marshal(is)
 			if err == nil {
-				json.Unmarshal(data, &inputSchema)
+				// Best-effort: an unparsable schema leaves Type empty, which the
+				// default below repairs to the only legal value.
+				_ = json.Unmarshal(data, &inputSchema)
 			}
 		}
 		if inputSchema.Type == "" {

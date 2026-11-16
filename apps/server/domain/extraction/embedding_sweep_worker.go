@@ -368,9 +368,11 @@ type relationshipSweepRow struct {
 	Label         *string `bun:"label"`
 	RelProperties []byte  `bun:"rel_properties"`
 	ProjectID     string  `bun:"project_id"`
+	SrcName       string  `bun:"src_name"`
 	SrcProperties []byte  `bun:"src_properties"`
 	SrcKey        *string `bun:"src_key"`
 	SrcType       string  `bun:"src_type"`
+	DstName       string  `bun:"dst_name"`
 	DstProperties []byte  `bun:"dst_properties"`
 	DstKey        *string `bun:"dst_key"`
 	DstType       string  `bun:"dst_type"`
@@ -386,8 +388,8 @@ func (w *EmbeddingSweepWorker) sweepRelationships(ctx context.Context) (embedded
 	err := w.db.NewRaw(`
 		SELECT r.id::text, r.type, r.label, r.properties AS rel_properties,
 		       r.project_id::text AS project_id,
-		       src.properties AS src_properties, src.key AS src_key, src.type AS src_type,
-		       dst.properties AS dst_properties, dst.key AS dst_key, dst.type AS dst_type
+		       src.name AS src_name, src.properties AS src_properties, src.key AS src_key, src.type AS src_type,
+		       dst.name AS dst_name, dst.properties AS dst_properties, dst.key AS dst_key, dst.type AS dst_type
 		FROM kb.graph_relationships r
 		JOIN kb.graph_objects src ON src.id = r.src_id
 		JOIN kb.graph_objects dst ON dst.id = r.dst_id
@@ -528,8 +530,8 @@ func (w *EmbeddingSweepWorker) embedRelationshipGroupBatched(
 
 		texts := make([]string, len(subRows))
 		for i, row := range subRows {
-			srcName := displayNameFromRow(row.SrcProperties, row.SrcKey, row.SrcType)
-			dstName := displayNameFromRow(row.DstProperties, row.DstKey, row.DstType)
+			srcName := displayNameFromRow(row.SrcName, row.SrcKey, row.SrcType)
+			dstName := displayNameFromRow(row.DstName, row.DstKey, row.DstType)
 			texts[i] = buildTripletText(srcName, dstName, row.Type, row.Label, row.RelProperties)
 		}
 
@@ -598,8 +600,8 @@ func (w *EmbeddingSweepWorker) embedRelationshipGroupSerial(
 		default:
 		}
 
-		srcName := displayNameFromRow(row.SrcProperties, row.SrcKey, row.SrcType)
-		dstName := displayNameFromRow(row.DstProperties, row.DstKey, row.DstType)
+		srcName := displayNameFromRow(row.SrcName, row.SrcKey, row.SrcType)
+		dstName := displayNameFromRow(row.DstName, row.DstKey, row.DstType)
 		tripletText := buildTripletText(srcName, dstName, row.Type, row.Label, row.RelProperties)
 
 		result, err := w.embeds.EmbedDocumentWithUsage(ctx, tripletText)
@@ -645,20 +647,17 @@ func (w *EmbeddingSweepWorker) embedRelationshipGroupSerial(
 
 // --- helpers (duplicated from backfill CLI to avoid import cycles) ---
 
-// displayNameFromRow picks the best display name from properties/key/id.
-func displayNameFromRow(propsJSON []byte, key *string, id string) string {
-	if len(propsJSON) > 0 {
-		var props map[string]any
-		if err := json.Unmarshal(propsJSON, &props); err == nil {
-			if name, ok := props["name"].(string); ok && name != "" {
-				return name
-			}
-		}
+// displayNameFromRow picks the display name for triplet text: the object's
+// first-class name, else its key, else its type. properties.name is an ordinary
+// property and is never a title (#824).
+func displayNameFromRow(name string, key *string, typ string) string {
+	if name != "" {
+		return name
 	}
 	if key != nil && *key != "" {
 		return *key
 	}
-	return id
+	return typ
 }
 
 // buildTripletText creates a natural language triplet for embedding.

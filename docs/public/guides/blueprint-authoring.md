@@ -88,7 +88,8 @@ Property keywords the registry validates: `type` (`string`, `number`, `integer`,
 `boolean`, `date`, `time`, `url`, `email`, `phone`, `country`, `currency`,
 `md5`/`sha1`/`sha256`/`sha512`, `array`, `object`), `title` (display label),
 `description`, `items` (array element schema), `format` (semantic string
-format), `enum` (allowed values for a primitive property; `items.enum` for array
+format; `markdown` declares a field as prose the UI renders as Markdown),
+`enum` (allowed values for a primitive property; `items.enum` for array
 elements), `minimum`/`maximum` (enforced on `number`/`integer`), and a
 type-level `required` list. See the Schema Creation Guide for details.
 

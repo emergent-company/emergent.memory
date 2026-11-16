@@ -55,7 +55,8 @@ templ ChatPage(agents []AgentDefinitionSummary, convs *ConversationList, appeara
 // chat.js drives resume + streaming via the /api/* endpoints. runControl holds
 // the active conversation's server-rendered dock cards and session todos.
 templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, appearances map[string]agentAppearance, schedRuns []scheduledRunRow, shared []sharedSessionRow, workRuns []workRunRow, preselect string, convID string, prompt string, voiceEnabled bool, modelWarnings map[string]string, runControl chatRunControl) {
-	<div id="chat-root" data-conv={ convID } data-prompt={ prompt } class="flex h-full flex-col md:flex-row">
+	{{ startISO := conversationStartedAt(convs, convID) }}
+	<div id="chat-root" data-conv={ convID } data-conv-started={ startISO } data-prompt={ prompt } class="flex h-full flex-col md:flex-row">
 		<!-- Mobile-only scrim behind the session rail. chat.js toggles it with
 		     the rail; it never shows at md+ where the rail is in flow. -->
 		<div id="chat-rail-backdrop" class="fixed inset-0 z-30 hidden bg-black/40 md:hidden" data-chat-rail-backdrop data-action="toggle-chat-rail"></div>
@@ -92,13 +93,13 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 					     chat.js; while selection is on, every conversation row
 					     shows a checkbox and the footer action bar appears. -->
 					@ui.Button(ui.ButtonProps{
-						Type:       ui.ButtonTypeButton,
-						Variant:    ui.ButtonGhost,
-						Size:       ui.ButtonSM,
-						Shape:      ui.ButtonShapeSquare,
-						Icon:       "lucide--list-checks",
-						AriaLabel:  "Select sessions",
-						Attrs:      templ.Attributes{"data-action": "toggle-session-select", "data-testid": "toggle-session-select", "aria-pressed": "false"},
+						Type:      ui.ButtonTypeButton,
+						Variant:   ui.ButtonGhost,
+						Size:      ui.ButtonSM,
+						Shape:     ui.ButtonShapeSquare,
+						Icon:      "lucide--list-checks",
+						AriaLabel: "Select sessions",
+						Attrs:     templ.Attributes{"data-action": "toggle-session-select", "data-testid": "toggle-session-select", "aria-pressed": "false"},
 					})
 					@ui.Button(ui.ButtonProps{
 						Type:       ui.ButtonTypeButton,
@@ -111,12 +112,7 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 						Attrs:      templ.Attributes{"data-action": "toggle-chat-rail"},
 					})
 				</div>
-				<select id="chat-agent-filter" class="select select-sm select-bordered w-full" aria-label="Filter sessions by agent">
-					<option value="">All agents</option>
-					for _, a := range agents {
-						<option value={ a.ID }>{ a.Name }</option>
-					}
-				</select>
+				@chatAgentFilter(agents)
 				<select id="chat-origin-filter" class="select select-sm select-bordered w-full" aria-label="Filter sessions by type">
 					<option value="">All types</option>
 					<option value="manual">Manual</option>
@@ -259,6 +255,7 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 										@chatSuggestion("Help me draft a status update")
 									</div>
 								}
+								@chatSessionStart(startISO)
 								<!-- Session todo card. Pre-rendered when the active
 							     conversation's ACP session has todos; chat.js
 							     refreshes it in place from /partial/chat-todos. -->
@@ -645,26 +642,158 @@ templ chatRailList(convs *ConversationList, appearances map[string]agentAppearan
 		}}
 		@ui.List(ui.ListProps{}) {
 			for _, e := range entries {
-				switch e.kind {
-					case railEntryConversation:
-						if len(e.group.Descendants) > 0 {
-							@sessionRailGroupParent(e.group.Root, appearances[e.group.Root.AgentDefinitionID], e.group.Root.ID == convID, len(e.group.Descendants), e.group.Expanded)
-						} else {
-							@sessionRailItem(e.group.Root, appearances[e.group.Root.AgentDefinitionID], e.group.Root.ID == convID)
-						}
-						for _, d := range e.group.Descendants {
-							@sessionRailSubchat(d.Conversation, appearances[d.AgentDefinitionID], d.ID == convID, e.group.Root.ID, d.Depth, !e.group.Expanded)
-						}
-					case railEntryScheduledRun:
-						@scheduledRailItem(e.sched)
-					case railEntryWorkRun:
-						@workRailItem(e.work)
-					case railEntrySharedSession:
-						@sharedRailItem(e.shared)
+				for _, row := range railEntryRows(e, appearances, convID) {
+					@row
 				}
 			}
 		}
 	}
+}
+
+// railEntryRows renders one rail entry as its ordered list rows. A conversation
+// group expands to its root plus one nested row per sub-chat (hidden unless the
+// group is expanded, the state chat.js toggles); every other kind is a single
+// row.
+//
+// The switch is exhaustive over railEntryKind and carries a loud default:
+// rendering nothing for an unhandled kind would silently drop a whole
+// producer's rows, which is indistinguishable from that producer having no
+// data. railEntryUnhandled renders a visible marker instead, and
+// TestRailEntryRowsCoverEveryKind walks railEntryConversation through
+// railEntryKindCount so a new kind fails the suite until it gets a case here.
+func railEntryRows(e railEntry, appearances map[string]agentAppearance, convID string) []templ.Component {
+	switch e.kind {
+	case railEntryConversation:
+		rows := make([]templ.Component, 0, 1+len(e.group.Descendants))
+		ap := appearances[e.group.Root.AgentDefinitionID]
+		if len(e.group.Descendants) > 0 {
+			rows = append(rows, sessionRailGroupParent(e.group.Root, ap, e.group.Root.ID == convID, len(e.group.Descendants), e.group.Expanded, e.group.latestAt))
+		} else {
+			rows = append(rows, sessionRailItem(e.group.Root, ap, e.group.Root.ID == convID))
+		}
+		for _, d := range e.group.Descendants {
+			rows = append(rows, sessionRailSubchat(d.Conversation, appearances[d.AgentDefinitionID], d.ID == convID, e.group.Root.ID, d.Depth, !e.group.Expanded))
+		}
+		return rows
+	case railEntryScheduledRun:
+		return []templ.Component{scheduledRailItem(e.sched)}
+	case railEntryWorkRun:
+		return []templ.Component{workRailItem(e.work)}
+	case railEntrySharedSession:
+		return []templ.Component{sharedRailItem(e.shared)}
+	default:
+		return []templ.Component{railEntryUnhandled(e.kind)}
+	}
+}
+
+// railEntryUnhandled is railEntryRows' fallback for a railEntryKind with no row
+// renderer. It renders a visible, conventional-looking row — never nothing — so
+// a producer added without a case shows up on the next render instead of
+// dropping its rows silently.
+templ railEntryUnhandled(kind railEntryKind) {
+	<li class="list-row text-error" data-testid="rail-unhandled-entry" data-rail-kind={ strconv.Itoa(int(kind)) }>
+		<div class="list-col-grow">
+			<div class="text-sm font-medium">Unhandled session rail row</div>
+			<div class="text-xs">No renderer for rail entry kind { strconv.Itoa(int(kind)) }</div>
+		</div>
+	</li>
+}
+
+// chatAgentFilter narrows the session rail to one agent definition. It is the
+// menu variant of the rail's type <select> beside it, and the twin of the
+// objects page's actor picker: a native <select> cannot render a glyph per
+// option, and the rail is exactly where an agent's own mark is what separates
+// two sessions at a glance.
+//
+// Every row is a button carrying data-agent-id (empty for "All agents"), so a
+// pick is a pure DOM filter change — data-action="filter-agent", handled by
+// chat.js — rather than a form submit: the filter is client state with no URL
+// of its own. chat.js keeps the closed trigger honest (label, glyph,
+// aria-checked) and closes the menu; the server renders the initial state.
+//
+// The option list is the project's agent definitions — the same list the
+// composer's picker offers — so any agent that can own a chat can be filtered.
+// A session bound to a definition that is no longer listed (a deleted agent)
+// stays reachable under "All agents", which is where it already was.
+//
+// Keyboard and focus semantics come from go-daisy-a11y via ui.Dropdown: the
+// trigger carries data-gd-menu-trigger and every row data-gd-menu-item, so the
+// arrows, Home/End, typeahead and Escape work here (the objects picker leaves
+// its trigger unwired and gets no roving focus).
+templ chatAgentFilter(agents []AgentDefinitionSummary) {
+	// The wrapper exists because ui.Dropdown renders daisyUI's .dropdown root,
+	// which is display:inline-block and shrinks to its content — the trigger's
+	// w-full then measures that shrink-to-fit width, leaving the control at
+	// 125 px against the sibling type <select class="w-full">'s 247 px. A plain
+	// block wrapper is not enough (the inline-block child still shrink-wraps);
+	// grid blockifies the root into a stretched grid item, so the trigger spans
+	// the rail exactly like the native select beside it.
+	<div class="grid w-full">
+		@ui.Dropdown(ui.DropdownBottom, templ.Attributes{"data-testid": "chat-agent-filter"}) {
+			<div
+				tabindex="0"
+				role="button"
+				data-gd-menu-trigger
+				aria-haspopup="menu"
+				aria-label="Filter sessions by agent: All agents"
+				class="select select-sm select-bordered flex h-auto min-h-8 w-full cursor-pointer items-center gap-2 text-left"
+			>
+				<span id="chat-agent-filter-glyph" class="flex shrink-0 items-center">
+					@agentAllBubble()
+				</span>
+				<span id="chat-agent-filter-label" class="min-w-0 truncate">All agents</span>
+			</div>
+			@ui.DropdownMenu(templ.Attributes{"aria-label": "Filter sessions by agent", "class": "w-full min-w-56 max-w-[28rem]"}) {
+				<li role="none">
+					<button
+						type="button"
+						role="menuitemradio"
+						data-gd-menu-item
+						data-action="filter-agent"
+						data-agent-id=""
+						data-agent-label="All agents"
+						aria-checked="true"
+						class="menu-active min-w-0 text-left"
+					>
+						<span class="flex min-w-0 items-center gap-2">
+							@agentAllBubble()
+							<span class="min-w-0 truncate">All agents</span>
+							<span class="ml-auto shrink-0" data-agent-check="true">
+								@ui.IconSpan("lucide--check", "size-4 text-primary")
+							</span>
+						</span>
+					</button>
+				</li>
+				// An empty <li> is daisyUI's menu divider (background + .1 opacity);
+				// the opacity utility restores it to a line you can actually see.
+				<li role="separator" class="bg-base-content/20 my-1 h-px opacity-100"></li>
+				for _, a := range agents {
+					<li role="none">
+						<button
+							type="button"
+							role="menuitemradio"
+							data-gd-menu-item
+							data-action="filter-agent"
+							data-agent-id={ a.ID }
+							data-agent-label={ a.Name }
+							aria-checked="false"
+							class="min-w-0 text-left"
+						>
+							<span class="flex min-w-0 items-center gap-2">
+								@agentAvatarBubble(agentIcon(a.UIConfig), agentColor(a.UIConfig), templ.Attributes{"data-agent-avatar": "agent"})
+								<span class="min-w-0 truncate">{ a.Name }</span>
+								// Always rendered so chat.js toggles a class instead of
+								// rewriting the row; an inactive row just hides the check.
+								<span class="ml-auto hidden shrink-0" data-agent-check="true">
+									@ui.IconSpan("lucide--check", "size-4 text-primary")
+								</span>
+							</span>
+						</button>
+					</li>
+				}
+			}
+		}
+	</div>
 }
 
 // sessionRailItem is one resumable conversation in the session rail.
@@ -682,8 +811,11 @@ templ sessionRailItem(c Conversation, ap agentAppearance, active bool) {
 // sessionRailGroupParent renders the root of a conversation group. count is the
 // number of spawned sub-chats beneath it and expanded is the server-rendered
 // initial state (the active branch is open, everything else starts collapsed).
-templ sessionRailGroupParent(c Conversation, ap agentAppearance, active bool, count int, expanded bool) {
-	@sessionRailRow(c, ap, active, sessionRailRowOptions{SubchatCount: count, SubchatsExpanded: expanded})
+// activityAt is the subtree's newest activity — the instant orderRailEntries
+// sorts the group by — so a collapsed group whose sub-chat is the recent one
+// does not display the idle root's older time above a newer row.
+templ sessionRailGroupParent(c Conversation, ap agentAppearance, active bool, count int, expanded bool, activityAt string) {
+	@sessionRailRow(c, ap, active, sessionRailRowOptions{SubchatCount: count, SubchatsExpanded: expanded, ActivityAt: activityAt})
 }
 
 // sessionRailSubchat renders one nested chat below its group root. rootID is
@@ -748,6 +880,10 @@ templ sessionRailRow(c Conversation, ap agentAppearance, active bool, opts sessi
 				subtitleName = c.SpawnSource
 			}
 		}
+		subtitleAt := c.UpdatedAt
+		if opts.ActivityAt != "" {
+			subtitleAt = opts.ActivityAt
+		}
 	}}
 	<li class={ class } style={ style } { attrs... }>
 		<!-- Selection checkbox (#1385). Always rendered so the markup is
@@ -782,7 +918,7 @@ templ sessionRailRow(c Conversation, ap agentAppearance, active bool, opts sessi
 			</div>
 			<div class="font-medium text-sm">{ c.Title }</div>
 			<div class="flex min-w-0 items-center gap-1.5">
-				<span class="truncate text-xs text-muted">{ railSubtitle(subtitleName, c.UpdatedAt) }</span>
+				<span class="truncate text-xs text-muted">{ railSubtitle(subtitleName, subtitleAt) }</span>
 				if opts.SubchatCount > 0 {
 					@ui.Button(ui.ButtonProps{
 						Variant:    ui.ButtonGhost,
@@ -887,6 +1023,12 @@ templ scheduledRailItem(r scheduledRunRow) {
 			"data-action": "open-run",
 			"data-id":     r.ID,
 			"data-run-id": r.ID,
+			// data-agent is the agent-definition id, the same id space the rail's
+			// agent filter and the conversation rows use. A scheduled run of a
+			// runtime agent that binds no definition (the legacy "Chat session
+			// for …" agents) carries "" and is therefore only reachable under
+			// "All agents".
+			"data-agent":  r.AgentDefinitionID,
 			"data-origin": "scheduled",
 			"data-testid": "session-row",
 		}
@@ -909,17 +1051,23 @@ templ scheduledRailItem(r scheduledRunRow) {
 // document's filename when known, else the agent name; Icon/Color carry the run
 // agent's definition appearance.
 type workRunRow struct {
-	ID          string
-	RunID       string
-	Origin      string
-	Href        string
-	Title       string
-	AgentName   string
-	Status      string
-	StartedAt   string
-	CompletedAt string
-	Icon        string
-	Color       string
+	ID        string
+	RunID     string
+	Origin    string
+	Href      string
+	Title     string
+	AgentName string
+	// AgentDefinitionID is the agent-definition id the run belongs to, in the
+	// same id space the rail's agent filter uses (the run's own definition FK
+	// when set, else its runtime agent's). It is empty for an extraction job
+	// whose recorded run could not be resolved, and for a run through a runtime
+	// agent that binds no definition.
+	AgentDefinitionID string
+	Status            string
+	StartedAt         string
+	CompletedAt       string
+	Icon              string
+	Color             string
 }
 
 // workRailItem is one board/work or extraction run in the session rail. It
@@ -942,8 +1090,10 @@ templ workRailItem(r workRunRow) {
 		// No recorded run (legacy job or a failed link): link to the extraction
 		// history page. Hand-written rather than components.LinkRow so the row
 		// still carries data-origin and the session-row test id — an unfilterable
-		// row would leak into every other origin filter's view.
-		<a class="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-base-200/40" href={ templ.URL(r.Href) } data-origin={ origin } data-testid="session-row">
+		// row would leak into every other origin filter's view. Its data-agent is
+		// empty: an extraction job carries no agent definition, so the row shows
+		// only under "All agents", like any other unattributed row.
+		<a class="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-base-200/40" href={ templ.URL(r.Href) } data-origin={ origin } data-agent={ r.AgentDefinitionID } data-testid="session-row">
 			@ui.IconSpan("lucide--scan-text", "size-4 shrink-0 text-muted-faint")
 			<div class="min-w-0 grow">
 				<p class="truncate text-sm font-medium">{ title }</p>
@@ -959,6 +1109,10 @@ templ workRailItem(r workRunRow) {
 				"data-action": "open-run",
 				"data-id":     r.RunID,
 				"data-run-id": r.RunID,
+				// Same agent-definition id space as the conversation and
+				// scheduled rows; empty means the run cannot be attributed to a
+				// definition and only shows under "All agents".
+				"data-agent":  r.AgentDefinitionID,
 				"data-origin": origin,
 				"data-testid": "session-row",
 			}
@@ -1091,4 +1245,24 @@ templ chatSuggestion(text string) {
 	>
 		{ text }
 	</button>
+}
+
+// chatSessionStart heads the transcript with when the active conversation was
+// started. startISO is empty for a new chat (the line stays hidden until the
+// first turn creates the conversation) and chat.js fills the <time> text in the
+// browser's local timezone, so the server never stamps a UTC wall clock the
+// reader has to translate. The client also seeds the transcript's day-divider
+// state from it so the first day is not announced twice (start line + "Today"
+// divider).
+templ chatSessionStart(startISO string) {
+	<div
+		id="chat-session-start"
+		data-testid="chat-session-start"
+		class={ "memory-session-start", templ.KV("hidden", startISO == "") }
+		data-started-at={ startISO }
+	>
+		@ui.IconSpan("lucide--clock", "size-3.5 shrink-0")
+		<span>Session started</span>
+		<time id="chat-session-start-time" datetime={ startISO }></time>
+	</div>
 }

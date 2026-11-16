@@ -25,16 +25,17 @@ type WebhookUser struct {
 
 // WebhookPullRequest is the pull_request subset the producer reads.
 type WebhookPullRequest struct {
-	Number  int         `json:"number"`
-	Title   string      `json:"title"`
-	Body    string      `json:"body"`
-	HTMLURL string      `json:"html_url"`
-	Draft   bool        `json:"draft"`
-	Merged  bool        `json:"merged"`
-	State   string      `json:"state"`
-	User    WebhookUser `json:"user"`
-	Base    WebhookRef  `json:"base"`
-	Head    WebhookRef  `json:"head"`
+	Number  int            `json:"number"`
+	Title   string         `json:"title"`
+	Body    string         `json:"body"`
+	HTMLURL string         `json:"html_url"`
+	Draft   bool           `json:"draft"`
+	Merged  bool           `json:"merged"`
+	State   string         `json:"state"`
+	Labels  []WebhookLabel `json:"labels"`
+	User    WebhookUser    `json:"user"`
+	Base    WebhookRef     `json:"base"`
+	Head    WebhookRef     `json:"head"`
 }
 
 // WebhookIssue is the issue subset the producer reads. The pull_request marker
@@ -117,6 +118,16 @@ func (p *WebhookPayload) AuthoredByIssue(login string) bool {
 	}
 	author := p.Issue.User.Login
 	return strings.EqualFold(author, login) || strings.EqualFold(author, login+"[bot]")
+}
+
+// AuthoredBySender reports whether the delivery actor is login or its App bot
+// form. Issue-claim writes (labels, assignment, receipt comments) are authored
+// by the integration's own App and must not re-enter the source dispatcher.
+func (p *WebhookPayload) AuthoredBySender(login string) bool {
+	if login == "" {
+		return false
+	}
+	return strings.EqualFold(p.Sender.Login, login) || strings.EqualFold(p.Sender.Login, login+"[bot]")
 }
 
 // IsRelevantPullRequestAction reports the actions that should enqueue a review.

@@ -37,7 +37,7 @@ var newAuthManager = func(baseDir string) *account.Manager {
 // runAuth dispatches the `auth` subcommands.
 func runAuth(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(stderr, "memory-connector auth: missing subcommand (login, logout, start, complete, cancel, access-token, import, list, or status)")
+		_, _ = fmt.Fprintln(stderr, "memory-connector auth: missing subcommand (login, logout, start, complete, cancel, access-token, refresh, import, list, or status)")
 		return 2
 	}
 	switch args[0] {
@@ -53,6 +53,8 @@ func runAuth(args []string, stdout, stderr io.Writer) int {
 		return runAuthCancel(args[1:], stdout, stderr)
 	case "access-token":
 		return runAuthAccessToken(args[1:], stdout, stderr)
+	case "refresh":
+		return runAuthRefresh(args[1:], stdout, stderr)
 	case "import":
 		return runAuthImport(args[1:], stdout, stderr)
 	case "list":
@@ -197,6 +199,19 @@ type authStatus struct {
 	Issuer        string `json:"issuer,omitempty"`
 	ExpiresAt     string `json:"expires_at,omitempty"`
 	Expired       bool   `json:"expired,omitempty"`
+	// CanRefresh reports whether a refresh token is stored, so a caller can
+	// tell "the access token is stale but renewable" from "this session is
+	// gone". NeedsReauth reports a session the provider has already rejected:
+	// signing in again (silently or interactively) is the only fix.
+	//
+	// CanRefresh carries no `omitempty`: it is part of the stable document
+	// everywhere it is produced (see `authStatusFromSession`), and "expired and
+	// not renewable" is a sign-in, decided by a client that reads false. Swift
+	// decodes an absent key to nil rather than false, so omitting it made that
+	// branch unreachable. NeedsReauth is only ever read for its true value, so
+	// its omission already means false.
+	CanRefresh  bool `json:"can_refresh"`
+	NeedsReauth bool `json:"needs_reauth,omitempty"`
 }
 
 func runAuthStatus(args []string, stdout, stderr io.Writer) int {
@@ -223,15 +238,9 @@ func runAuthStatus(args []string, stdout, stderr io.Writer) int {
 			_, _ = fmt.Fprintf(stderr, "memory-connector auth status: %v\n", err)
 			return 1
 		}
-		if sess != nil {
-			state.SignedIn = true
-			state.Email = sess.UserEmail
-			state.Issuer = sess.IssuerURL
-			if !sess.ExpiresAt.IsZero() {
-				state.ExpiresAt = sess.ExpiresAt.UTC().Format(time.RFC3339)
-			}
-			state.Expired = sess.Expired()
-		}
+		// One shared builder: `auth complete` and `auth import` print the same
+		// document, and a second inline copy here had already drifted once.
+		state = authStatusFromSession(serverURL, sess)
 	}
 
 	if f.json {
@@ -271,6 +280,9 @@ func printAuthStatusText(w io.Writer, s authStatus) {
 	} else {
 		_, _ = fmt.Fprintln(w, "expired: no")
 	}
+	if s.NeedsReauth {
+		_, _ = fmt.Fprintln(w, "needs re-auth: yes")
+	}
 }
 
 // authStartDoc is the machine-readable `auth start --json` document.
@@ -292,6 +304,8 @@ func runAuthStart(args []string, stdout, stderr io.Writer) int {
 	redirectURI := fs.String("redirect-uri", "", "OAuth redirect URI registered by the app")
 	clientID := fs.String("client-id", account.ClientID, "OAuth client id (defaults to the connector client)")
 	issuer := fs.String("issuer", "", "OIDC issuer URL (skips /api/auth/issuer discovery; --server may be omitted)")
+	prompt := fs.String("prompt", "", "OIDC prompt parameter (none for a silent re-auth that shows no UI)")
+	loginHint := fs.String("login-hint", "", "OIDC login_hint (the account email a silent re-auth is for)")
 	jsonOut := fs.Bool("json", false, "emit machine-readable JSON")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -302,6 +316,11 @@ func runAuthStart(args []string, stdout, stderr io.Writer) int {
 	}
 	if strings.TrimSpace(*redirectURI) == "" {
 		_, _ = fmt.Fprintln(stderr, "memory-connector auth start: --redirect-uri is required")
+		return 2
+	}
+	if !account.ValidPrompt(*prompt) {
+		_, _ = fmt.Fprintf(stderr, "memory-connector auth start: unsupported --prompt %q (want one of %s)\n",
+			*prompt, strings.Join(account.PromptValues, ", "))
 		return 2
 	}
 	serverURL, err := resolveAuthServer(*server, *configPath)
@@ -315,7 +334,12 @@ func runAuthStart(args []string, stdout, stderr io.Writer) int {
 	}
 
 	m := newAuthManager(account.BaseDirForConfig(*configPath))
-	pending, err := m.StartPKCE(context.Background(), serverURL, *redirectURI, account.PKCEOptions{ClientID: *clientID, Issuer: *issuer})
+	pending, err := m.StartPKCE(context.Background(), serverURL, *redirectURI, account.PKCEOptions{
+		ClientID:  *clientID,
+		Issuer:    *issuer,
+		Prompt:    *prompt,
+		LoginHint: *loginHint,
+	})
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "memory-connector auth start: %v\n", err)
 		return 1
@@ -437,17 +461,26 @@ func runAuthCancel(args []string, stdout, stderr io.Writer) int {
 	}
 
 	m := newAuthManager(account.BaseDirForConfig(*configPath))
-	if err := m.CancelPKCE(*loginID); err != nil {
+	cancelled, err := m.CancelPKCE(*loginID)
+	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "memory-connector auth cancel: %v\n", err)
 		return 1
+	}
+	if !cancelled {
+		// Best-effort and idempotent: an unknown, expired or already-completed
+		// login has nothing left to cancel, so say that rather than claim a
+		// cancel that did not happen.
+		_, _ = fmt.Fprintf(stdout, "memory-connector auth: no pending login %s (already absent)\n", *loginID)
+		return 0
 	}
 	_, _ = fmt.Fprintf(stdout, "memory-connector auth: cancelled login %s\n", *loginID)
 	return 0
 }
 
 // accessTokenRefreshWindow is how close to expiry a session may be before
-// `auth access-token` refreshes it proactively.
-const accessTokenRefreshWindow = 60 * time.Second
+// `auth access-token` / `auth refresh` renews it proactively. Five minutes
+// covers a slow API burst without churning the token on every read.
+const accessTokenRefreshWindow = 5 * time.Minute
 
 // authAccessTokenDoc is the machine-readable `auth access-token --json`
 // document. It never contains the refresh token.
@@ -479,39 +512,26 @@ func runAuthAccessToken(args []string, stdout, stderr io.Writer) int {
 	}
 
 	m := newAuthManager(account.BaseDirForConfig(f.configPath))
-	sess, err := m.SessionFor(serverURL)
+	token, err := m.AccessToken(context.Background(), serverURL, accessTokenRefreshWindow)
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "memory-connector auth access-token: %v\n", err)
-		return 1
-	}
-	if sess == nil {
-		_, _ = fmt.Fprintf(stderr, "memory-connector auth access-token: %s\n", projectsNotSignedIn)
-		return 1
-	}
-
-	if accessTokenNeedsRefresh(sess.ExpiresAt) {
-		if _, err := m.Refresh(context.Background(), serverURL); err != nil {
-			_, _ = fmt.Fprintf(stderr, "memory-connector auth access-token: %v\n", err)
-			return 1
-		}
-		// Re-read so the persisted (possibly rotated) session is returned.
-		sess, err = m.SessionFor(serverURL)
-		if err != nil {
-			_, _ = fmt.Fprintf(stderr, "memory-connector auth access-token: %v\n", err)
-			return 1
-		}
-		if sess == nil {
+		if errors.Is(err, account.ErrNoSession) {
 			_, _ = fmt.Fprintf(stderr, "memory-connector auth access-token: %s\n", projectsNotSignedIn)
 			return 1
 		}
+		_, _ = fmt.Fprintf(stderr, "memory-connector auth access-token: %v\n", err)
+		return 1
 	}
 
 	if f.json {
+		expiresAt := ""
+		if sess, serr := m.SessionFor(serverURL); serr == nil && sess != nil && !sess.ExpiresAt.IsZero() {
+			expiresAt = sess.ExpiresAt.UTC().Format(time.RFC3339)
+		}
 		doc := authAccessTokenDoc{
 			SchemaVersion: authSchemaVersion,
 			ServerURL:     serverURL,
-			AccessToken:   sess.AccessToken,
-			ExpiresAt:     sess.ExpiresAt.UTC().Format(time.RFC3339),
+			AccessToken:   token,
+			ExpiresAt:     expiresAt,
 		}
 		b, err := json.MarshalIndent(doc, "", "  ")
 		if err != nil {
@@ -522,17 +542,102 @@ func runAuthAccessToken(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	_, _ = fmt.Fprintln(stdout, sess.AccessToken)
+	_, _ = fmt.Fprintln(stdout, token)
 	return 0
 }
 
-// accessTokenNeedsRefresh reports whether expiresAt is already past or within
-// accessTokenRefreshWindow of now. A zero expiry is treated as needing refresh.
-func accessTokenNeedsRefresh(expiresAt time.Time) bool {
-	if expiresAt.IsZero() {
-		return true
+// authRefreshDoc is the machine-readable `auth refresh --json` document.
+type authRefreshDoc struct {
+	SchemaVersion int    `json:"schema_version"`
+	ServerURL     string `json:"server_url"`
+	Refreshed     bool   `json:"refreshed"`
+	ExpiresAt     string `json:"expires_at,omitempty"`
+	CanRefresh    bool   `json:"can_refresh"`
+	NeedsReauth   bool   `json:"needs_reauth,omitempty"`
+}
+
+// runAuthRefresh renews the stored session's access token when it is within
+// --min-ttl of expiry, and reports the resulting state. It is the explicit
+// "make this session fresh before a burst of work" call a client makes at
+// launch and after wake; project commands refresh on demand themselves.
+func runAuthRefresh(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("auth refresh", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	configPath := fs.String("config", config.DefaultConfigPath(), "config file path")
+	server := fs.String("server", "", "server URL (defaults to config server_url or the active account)")
+	minTTL := fs.Duration("min-ttl", accessTokenRefreshWindow, "refresh when the access token expires within this duration")
+	jsonOut := fs.Bool("json", false, "emit machine-readable JSON")
+	if err := fs.Parse(args); err != nil {
+		return 2
 	}
-	return time.Until(expiresAt) <= accessTokenRefreshWindow
+
+	serverURL, err := resolveAuthServer(*server, *configPath)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "memory-connector auth refresh: %v\n", err)
+		return 1
+	}
+	if serverURL == "" {
+		_, _ = fmt.Fprintln(stderr, "memory-connector auth refresh: no server URL — pass --server or set server_url in the config")
+		return 2
+	}
+
+	m := newAuthManager(account.BaseDirForConfig(*configPath))
+	before, err := m.SessionFor(serverURL)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "memory-connector auth refresh: %v\n", err)
+		return 1
+	}
+	if before == nil {
+		_, _ = fmt.Fprintf(stderr, "memory-connector auth refresh: %s\n", projectsNotSignedIn)
+		return 1
+	}
+	if _, err := m.AccessToken(context.Background(), serverURL, *minTTL); err != nil {
+		_, _ = fmt.Fprintf(stderr, "memory-connector auth refresh: %v\n", err)
+		return 1
+	}
+	after, err := m.SessionFor(serverURL)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "memory-connector auth refresh: %v\n", err)
+		return 1
+	}
+	if after == nil {
+		_, _ = fmt.Fprintf(stderr, "memory-connector auth refresh: %s\n", projectsNotSignedIn)
+		return 1
+	}
+
+	doc := authRefreshDoc{
+		SchemaVersion: authSchemaVersion,
+		ServerURL:     serverURL,
+		Refreshed:     after.AccessToken != before.AccessToken,
+		CanRefresh:    after.RefreshToken != "",
+		NeedsReauth:   after.NeedsReauth,
+	}
+	if !after.ExpiresAt.IsZero() {
+		doc.ExpiresAt = after.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	if *jsonOut {
+		b, err := json.MarshalIndent(doc, "", "  ")
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "memory-connector auth refresh: %v\n", err)
+			return 1
+		}
+		_, _ = stdout.Write(append(b, '\n'))
+		return 0
+	}
+	state := "fresh"
+	if doc.Refreshed {
+		state = "refreshed"
+	}
+	_, _ = fmt.Fprintf(stdout, "memory-connector auth: session %s for %s\n", state, serverURL)
+	if doc.ExpiresAt != "" {
+		_, _ = fmt.Fprintf(stdout, "expires at: %s\n", doc.ExpiresAt)
+	}
+	// A session whose refresh token the provider already rejected still has a
+	// stored access token, so "fresh" alone would be misleading.
+	if doc.NeedsReauth {
+		_, _ = fmt.Fprintln(stdout, "needs re-auth: yes (the stored refresh token was rejected)")
+	}
+	return 0
 }
 
 // authStatusFromSession builds the shared account status document.
@@ -544,6 +649,11 @@ func authStatusFromSession(serverURL string, sess *account.Session) authStatus {
 	state.SignedIn = true
 	state.Email = sess.UserEmail
 	state.Issuer = sess.IssuerURL
+	// The refresh fields are part of the document everywhere it is produced:
+	// `auth complete`/`auth import` answering without them made the same
+	// session look different depending on which command printed it.
+	state.CanRefresh = sess.RefreshToken != ""
+	state.NeedsReauth = sess.NeedsReauth
 	if !sess.ExpiresAt.IsZero() {
 		state.ExpiresAt = sess.ExpiresAt.UTC().Format(time.RFC3339)
 	}

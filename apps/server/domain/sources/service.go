@@ -340,8 +340,7 @@ func (s *Service) ListProviderRefs(ctx context.Context, projectID uuid.UUID, req
 // message (an invalid repository, for example) passes through unchanged so the
 // message is not double-prefixed.
 func providerListError(prefix string, err error) error {
-	var ae *apperror.Error
-	if errors.As(err, &ae) {
+	if _, ok := errors.AsType[*apperror.Error](err); ok {
 		return err
 	}
 	return apperror.NewValidation(prefix + ": " + err.Error())

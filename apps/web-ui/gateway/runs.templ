@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/layout"
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
@@ -107,12 +108,14 @@ templ runMetaHeader(full *AgentRunFull, trace runTraceMeta) {
 		@monoMeta(run.ID, "text-muted-faint")
 	</div>
 	if run.ErrorMessage != nil && *run.ErrorMessage != "" {
-		@ui.Alert(ui.AlertProps{
-			Type:    ui.AlertError,
-			Style:   ui.AlertStyleOutline,
-			Icon:    "lucide--circle-x",
-			Message: "This run failed: " + *run.ErrorMessage,
-			Attrs:   templ.Attributes{"class": "mb-4"},
+		@components.AlertWithClass(components.AlertWithClassProps{
+			AlertProps: ui.AlertProps{
+				Type:    ui.AlertError,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--circle-x",
+				Message: "This run failed: " + *run.ErrorMessage,
+			},
+			Class: "mb-4",
 		})
 	}
 	if s := scheduledRunPreview(*run, run.AgentName); s != "" {

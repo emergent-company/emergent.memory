@@ -267,6 +267,35 @@ func (s *Service) EnsureProjectPack(ctx context.Context, projectID string, req *
 	return s.CreatePack(ctx, projectID, req)
 }
 
+// ReconcileProjectPack installs a code-owned pack for a project. Unlike
+// EnsureProjectPack, which returns the stored row untouched, it updates the
+// project's existing pack of the same name in place: a provider's type
+// definitions, presentation block and provenance token live in code, so a
+// webhook, re-connect or issue sync must be able to bring an already-installed
+// pack up to date without creating a second version or shadowing the old types.
+func (s *Service) ReconcileProjectPack(ctx context.Context, projectID string, req *CreatePackRequest) (*GraphMemorySchema, error) {
+	existing, err := s.repo.GetLatestProjectPackByName(ctx, projectID, req.Name)
+	if err != nil || existing == nil {
+		return s.CreatePack(ctx, projectID, req)
+	}
+	var source *string
+	if req.Source != "" {
+		source = &req.Source
+	}
+	upd := &UpdatePackRequest{
+		Version:                 &req.Version,
+		Description:             req.Description,
+		Author:                  req.Author,
+		Source:                  source,
+		ObjectTypeSchemas:       req.GetObjectTypeSchemas(),
+		RelationshipTypeSchemas: req.GetRelationshipTypeSchemas(),
+		UIConfigs:               req.GetUIConfigs(),
+		ExtractionPrompts:       req.GetExtractionPrompts(),
+		Migrations:              req.Migrations,
+	}
+	return s.UpdatePack(ctx, existing.ID, projectID, upd)
+}
+
 // ValidatePackDefinitions runs the pack-definition guard shared by every entry
 // point that installs object/relationship type schemas: HTTP CreatePack/UpdatePack
 // and the MCP schema-create tool, which writes the registry rows with a direct
@@ -1264,8 +1293,7 @@ func (s *Service) ExecuteSchemaMigration(ctx context.Context, projectID string, 
 			if errors.Is(listErr, errMaxObjectsReached) {
 				continue
 			}
-			var apErr *apperror.Error
-			if errors.As(listErr, &apErr) {
+			if apErr, ok := errors.AsType[*apperror.Error](listErr); ok {
 				return nil, apErr
 			}
 			return nil, fmt.Errorf("failed to list objects of type %s: %w", typeName, listErr)
@@ -1426,8 +1454,7 @@ func (s *Service) RollbackSchemaMigration(ctx context.Context, projectID string,
 		return nil
 	})
 	if err != nil {
-		var apErr *apperror.Error
-		if errors.As(err, &apErr) {
+		if apErr, ok := errors.AsType[*apperror.Error](err); ok {
 			return nil, apErr
 		}
 		return nil, apperror.ErrDatabase.WithInternal(err)

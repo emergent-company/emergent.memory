@@ -9,26 +9,17 @@ import (
 
 var keySlugRegexp = regexp.MustCompile(`[^a-z0-9]+`)
 
-// resolveObjectName derives the first-class title for a write. An explicit
-// request name wins; otherwise the established properties convention is used
-// (name, then title). An empty/whitespace explicit name clears the title.
-func resolveObjectName(explicit *string, props map[string]any) *string {
-	if explicit != nil {
-		return trimName(*explicit)
+// resolveObjectName derives the first-class title for a write. The explicit
+// request name is the only source: properties["name"] and properties["title"]
+// are ordinary properties and are never consulted as a title (#824). An
+// empty/whitespace explicit name clears the title, and an absent one leaves it
+// unset — a nameless write is accepted, not rejected, because a provider record
+// or an extraction result legitimately has no title yet.
+func resolveObjectName(explicit *string) *string {
+	if explicit == nil {
+		return nil
 	}
-	if props != nil {
-		if v, ok := props["name"].(string); ok {
-			if n := trimName(v); n != nil {
-				return n
-			}
-		}
-		if v, ok := props["title"].(string); ok {
-			if n := trimName(v); n != nil {
-				return n
-			}
-		}
-	}
-	return nil
+	return trimName(*explicit)
 }
 
 func trimName(s string) *string {
@@ -41,7 +32,10 @@ func trimName(s string) *string {
 
 // autoWorkKey mints the internal dedup key for a board-enabled object created
 // without one. The claim lock keys on (project, type, key), so a work item must
-// have a key; it is never shown to users.
+// have a key; it is never shown to users. The trailing 12 hex characters match
+// the machine-key shape (`<type>-<12 hex>`) that the display layer and the
+// migration 00280 backfill recognise as a non-title, so a minted key never
+// becomes the object's label.
 func autoWorkKey(typeName string, name *string) string {
 	base := ""
 	if name != nil {
@@ -56,7 +50,7 @@ func autoWorkKey(typeName string, name *string) string {
 	if len(base) > 32 {
 		base = strings.Trim(base[:32], "-")
 	}
-	suffix := strings.ReplaceAll(uuid.New().String(), "-", "")[:8]
+	suffix := strings.ReplaceAll(uuid.New().String(), "-", "")[:12]
 	return base + "-" + suffix
 }
 

@@ -64,8 +64,8 @@ func TestRetryJobFailureMapsTheRefusals(t *testing.T) {
 			err := retryJobFailure(tt.err, "job-1", "proj-1", discard)
 			require.Error(t, err)
 
-			var appErr *apperror.Error
-			require.True(t, errors.As(err, &appErr), "the route must return an app error")
+			appErr, ok := errors.AsType[*apperror.Error](err)
+			require.True(t, ok, "the route must return an app error")
 			assert.Equal(t, tt.wantStatus, appErr.HTTPStatus)
 			assert.Contains(t, appErr.Message, tt.wantMessage)
 			for _, forbidden := range tt.mustNot {

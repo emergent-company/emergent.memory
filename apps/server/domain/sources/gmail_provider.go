@@ -80,6 +80,9 @@ func (p *gmailProvider) Catalog() Provider {
 		Vendor:      "google",
 		VendorName:  "Google",
 		Available:   true,
+		SchemaPack:  "email-core",
+		// The pack version is declared in ObjectTypes below.
+		SchemaPackVersion: "1.0.0",
 	}
 }
 
@@ -156,6 +159,7 @@ func (p *gmailProvider) ObjectTypes() *ObjectTypePack {
 		Name:          "email-core",
 		Version:       "1.0.0",
 		Description:   "Email message and thread objects synced from a mailbox.",
+		Source:        "provider:gmail",
 		SkipDiscovery: true,
 		ObjectTypes: []ObjectTypeDefinition{
 			{
@@ -621,6 +625,7 @@ func gmailThreadRecords(t *gmail.Thread, cfg gmailConfig) []ObjectRecord {
 		rec := ObjectRecord{
 			Type: "EmailThread",
 			Key:  t.ID,
+			Name: subject,
 			Properties: map[string]any{
 				"subject":       subject,
 				"snippet":       t.Snippet,
@@ -684,7 +689,7 @@ func gmailThreadRecords(t *gmail.Thread, cfg gmailConfig) []ObjectRecord {
 			if account != "" {
 				props["account"] = account
 			}
-			records = append(records, ObjectRecord{Type: "EmailMessage", Key: m.ID, Properties: props})
+			records = append(records, ObjectRecord{Type: "EmailMessage", Key: m.ID, Name: msgSubject, Properties: props})
 		}
 	}
 	return records

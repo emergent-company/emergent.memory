@@ -1074,7 +1074,8 @@ func parseWorkspaceGrepOutput(output string) []map[string]any {
 
 		// Parse line number
 		lineNum := 0
-		fmt.Sscanf(lineNumStr, "%d", &lineNum)
+		// A non-numeric line number parses to 0 and is skipped by the check below.
+		_, _ = fmt.Sscanf(lineNumStr, "%d", &lineNum)
 		if lineNum <= 0 {
 			continue
 		}

@@ -19,7 +19,7 @@ import (
 // false and must surface as a test FAILURE, never a skip. The server emits two
 // shapes for the not-wired case, both matched here:
 //
-//	-32603 "Tool execution failed: tool not found: <name>"  (legacy /api/mcp/rpc)
+//	-32003 "Tool execution failed: tool not found: <name>"  (legacy /api/mcp/rpc)
 //	-32601 "Tool not found: <name>"                          (streamable handler)
 func mcpErrIsToolNotFound(rpc map[string]any) bool {
 	errObj, ok := rpc["error"].(map[string]any)
@@ -400,7 +400,7 @@ func TestMCPNew_toolNotFoundGuard(t *testing.T) {
 	t.Run("not-wired tool not found is a skip", func(t *testing.T) {
 		rpc := map[string]any{
 			"error": map[string]any{
-				"code":    float64(-32603),
+				"code":    float64(-32003),
 				"message": "Tool execution failed: tool not found: list_adk_sessions",
 			},
 		}
@@ -428,7 +428,10 @@ func TestMCPNew_toolNotFoundGuard(t *testing.T) {
 			{"error": map[string]any{"code": float64(-32603), "message": "Tool execution failed: query_knowledge: request failed: connection refused"}},
 			{"error": map[string]any{"code": float64(-32002), "message": "Tool not allowed: query_knowledge"}},
 			{"error": map[string]any{"code": float64(-32600), "message": "Invalid request"}},
-			{"error": map[string]any{"code": float64(-32603), "message": "Tool execution failed: get_skill: skill \"x\" not found"}},
+			// A tool execution that could not find the resource it was asked
+			// about carries -32003 too, and the helper must still call that a
+			// failure: only the "tool not found" phrase means "not wired".
+			{"error": map[string]any{"code": float64(-32003), "message": "Tool execution failed: get_skill: skill \"x\" not found"}},
 		}
 		for _, rpc := range cases {
 			if mcpErrIsToolNotFound(rpc) {

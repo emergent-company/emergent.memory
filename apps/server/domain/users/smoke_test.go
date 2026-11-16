@@ -43,8 +43,8 @@ func TestSearchHandlerMissingEmail(t *testing.T) {
 		t.Fatal("expected error for missing email query")
 	}
 
-	var appErr *apperror.Error
-	if !errors.As(err, &appErr) {
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	if !ok {
 		t.Fatalf("expected apperror.Error, got %T: %v", err, err)
 	}
 	if appErr.HTTPStatus != http.StatusBadRequest {

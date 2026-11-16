@@ -12,20 +12,37 @@ import (
 // --- Session & run cost log ---
 
 // usageSessionsPageData is the payload of the run log page: one page of runs,
-// the breakdown that feeds the agent filter, and the paging state.
+// the agent breakdown that names the current selection, the filter picker's rows
+// and the paging state.
 type usageSessionsPageData struct {
-	Days  int
-	Runs  *UsageRunListResponse
-	// Agents is the per-agent breakdown over the same range. It names the filter
-	// chips and the current selection; nil means the chips are unavailable, not
-	// that the project has no agents — the log itself still renders.
-	Agents  *UsageByAgentResponse
-	AgentID string
-	Limit   int
-	Offset  int
-	HasPrev bool
-	HasNext bool
-	LoadErr error
+	Days int
+	Runs *UsageRunListResponse
+	// Agents is the per-agent breakdown over the same range. It names the empty
+	// state's selection; nil means the breakdown is unavailable, not that the
+	// project has no agents — the log itself still renders.
+	Agents *UsageByAgentResponse
+	// AgentOptions is the agent picker's rows, in the breakdown's order. Empty
+	// hides the picker: a menu with nothing to pick cannot narrow anything.
+	AgentOptions []usageSessionsAgentOption
+	AgentID      string
+	Limit        int
+	Offset       int
+	HasPrev      bool
+	HasNext      bool
+	LoadErr      error
+}
+
+// usageSessionsAgentOption is one row of the run log's agent filter: an agent
+// that recorded usage in the selected range, plus the icon and colour its
+// definition declares. ID is the runtime agent id the breakdown reports and the
+// ?agent= filter matches; the appearance comes from the definition that runtime
+// agent binds. Both appearance fields are empty for an agent whose definition is
+// gone or never carried one, which renders as the generic bot mark.
+type usageSessionsAgentOption struct {
+	ID    string
+	Name  string
+	Icon  string
+	Color string
 }
 
 // UsageSessionsPage renders the per-run cost log: the detail behind the usage
@@ -34,10 +51,13 @@ type usageSessionsPageData struct {
 templ UsageSessionsPage(data usageSessionsPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@pageHeader("Project", "Sessions & runs", "Every agent run that recorded token usage, newest activity first. A chat conversation can hold many runs, and scheduled or delegated runs belong to no conversation — this log is per run, so the cost lines add up to the dashboard total.") {
+			// The page's one header action is the primary (brand-yellow) button,
+			// matching the primary button colour used across the system; it used to
+			// render as the steel secondary link (#857).
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,
 				Href:    "/usage",
-				Variant: ui.ButtonSecondary,
+				Variant: ui.ButtonPrimary,
 				Size:    ui.ButtonSM,
 				Icon:    "lucide--chart-column",
 				Attrs:   templ.Attributes{"data-testid": "sessions-back-to-usage"},
@@ -87,41 +107,108 @@ templ usageSessionsRanges(data usageSessionsPageData) {
 	</div>
 }
 
-// usageSessionsAgentFilter renders one chip per agent with spend in the range,
-// plus "All agents". Chips are links, so the filter survives a refresh and can
-// be shared.
+// usageSessionsAgentFilter is the run log's agent picker: a menu of the agents
+// with spend in the range, each row wearing the agent's own mark, plus an "All
+// agents" row that clears the filter (#856). It is the agent-filter twin of the
+// objects page's actor picker and the chat rail's agent picker — the two places
+// where "an agent is a face, not a string" is already established — because a
+// native <select> cannot render a glyph per option.
+//
+// Rows are links, not submit buttons: a filter that survives a refresh and can
+// be shared is the contract the chip row it replaces already had, and a link is
+// the one control that needs no form, no script and no hidden state to keep the
+// range. Each row carries its whole target URL, so picking an agent keeps `days`
+// and drops the page offset (a new agent starts at the first page).
+//
+// The trigger is a menu variant of the same select chrome the other filter
+// pickers wear, and its leading mark mirrors the active row, so the closed
+// control says which agent the log is narrowed to.
 templ usageSessionsAgentFilter(data usageSessionsPageData) {
-	if data.Agents != nil && len(data.Agents.Data) > 0 {
+	if len(data.AgentOptions) > 0 {
 		<div class="mb-6 flex flex-wrap items-center gap-2" data-testid="sessions-agent-filter">
 			<span class="text-muted-faint text-xs">Agent</span>
-			@usageSessionsAgentChip(data, "", "All agents")
-			for _, row := range data.Agents.Data {
-				if row.Attributed() {
-					@usageSessionsAgentChip(data, row.AgentID, row.AgentName)
+			@ui.Dropdown(ui.DropdownBottom, templ.Attributes{"data-testid": "sessions-agent-picker"}) {
+				<div
+					tabindex="0"
+					role="button"
+					data-gd-menu-trigger
+					aria-haspopup="menu"
+					aria-label={ "Filter runs by agent: " + usageAgentFilterLabel(data.Agents, data.AgentID) }
+					class="select select-sm flex h-auto min-h-8 min-w-44 max-w-80 cursor-pointer items-center gap-2 text-left"
+				>
+					@usageSessionsAgentMark(data)
+					<span class="min-w-0 truncate">{ usageAgentFilterLabel(data.Agents, data.AgentID) }</span>
+					@ui.IconSpan("lucide--chevron-down", "ml-auto size-3.5 shrink-0 opacity-60")
+				</div>
+				@ui.DropdownMenu(templ.Attributes{"aria-label": "Filter runs by agent", "class": "w-max min-w-56 max-w-[28rem] max-h-96 overflow-y-auto"}) {
+					<li role="none">
+						<a
+							href={ templ.URL(usageSessionsHref(data.Days, "", 0)) }
+							role="menuitemradio"
+							data-gd-menu-item
+							aria-checked={ strconv.FormatBool(data.AgentID == "") }
+							class={ "min-w-0 text-left", templ.KV("menu-active", data.AgentID == "") }
+							data-testid="sessions-agent-all"
+						>
+							<span class="flex min-w-0 items-center gap-2">
+								@agentAllBubble()
+								<span class="min-w-0 truncate">All agents</span>
+								if data.AgentID == "" {
+									@ui.IconSpan("lucide--check", "ml-auto size-4 shrink-0 text-primary")
+								}
+							</span>
+						</a>
+					</li>
+					// An empty <li> is daisyUI's menu divider (background + .1 opacity);
+					// the opacity utility restores it to a line you can actually see.
+					<li role="separator" class="bg-base-content/20 opacity-100 my-1 h-px"></li>
+					for _, o := range data.AgentOptions {
+						<li role="none">
+							<a
+								href={ templ.URL(usageSessionsHref(data.Days, o.ID, 0)) }
+								role="menuitemradio"
+								data-gd-menu-item
+								aria-checked={ strconv.FormatBool(data.AgentID == o.ID) }
+								class={ "min-w-0 text-left", templ.KV("menu-active", data.AgentID == o.ID) }
+								data-testid={ "sessions-agent-" + shortID(o.ID) }
+							>
+								<span class="flex min-w-0 items-center gap-2">
+									@agentAvatarBubble(o.Icon, o.Color, templ.Attributes{"data-agent-avatar": "agent"})
+									<span class="min-w-0 truncate">{ o.Name }</span>
+									if data.AgentID == o.ID {
+										@ui.IconSpan("lucide--check", "ml-auto size-4 shrink-0 text-primary")
+									}
+								</span>
+							</a>
+						</li>
+					}
 				}
 			}
 		</div>
 	}
 }
 
-templ usageSessionsAgentChip(data usageSessionsPageData, agentID, label string) {
-	{{ variant := ui.ButtonGhost
-	if data.AgentID == agentID {
-		variant = ui.ButtonPrimary
-	} }}
-	@ui.Button(ui.ButtonProps{
-		Type:    ui.ButtonTypeLink,
-		Href:    usageSessionsHref(data.Days, agentID, 0),
-		Variant: variant,
-		Size:    ui.ButtonXS,
-		Attrs:   templ.Attributes{"data-testid": "sessions-agent-" + shortID(cmpOrNone(agentID))},
-	}) {
-		{ label }
+// usageSessionsAgentMark is the picker's leading mark: the selected agent's own
+// glyph, the generic bot when the filter names an agent that is not among the
+// rows (a URL carried from a range where it has no usage), and the group bubble
+// when the log is unfiltered. Like every picker mark it is decorative — the
+// trigger's visible label and aria-label name the selection.
+templ usageSessionsAgentMark(data usageSessionsPageData) {
+	{{
+		selected, known := usageSessionsAgentOptionOf(data.AgentOptions, data.AgentID)
+	}}
+	if known {
+		@agentAvatarBubble(selected.Icon, selected.Color, templ.Attributes{"data-agent-avatar": "agent"})
+	} else if data.AgentID != "" {
+		@agentAvatarBubble("", "", templ.Attributes{"data-agent-avatar": "agent"})
+	} else {
+		@agentAllBubble()
 	}
 }
 
-// cmpOrNone keeps a chip's test id readable for the "All agents" link, which
-// carries no agent id.
+// cmpOrNone keeps a run row's agent test id readable when the run is not
+// attributed to any agent: those rows carry no agent id, and "all" is the
+// neutral fragment the rest of the page already uses for that bucket.
 func cmpOrNone(agentID string) string {
 	if agentID == "" {
 		return "all"

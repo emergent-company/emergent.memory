@@ -97,8 +97,8 @@ func PublicMessage(err error) string {
 	if err == nil {
 		return ""
 	}
-	var appErr *Error
-	if errors.As(err, &appErr) && appErr.Message != "" {
+	appErr, ok := errors.AsType[*Error](err)
+	if ok && appErr.Message != "" {
 		return appErr.Message
 	}
 	return ErrInternal.Message
@@ -190,6 +190,18 @@ func NewValidation(message string) *Error {
 		Code:       "validation_error",
 		Message:    message,
 	}
+}
+
+// NewValidationf is NewValidation with printf-style formatting, for call sites
+// that build the message from the offending argument. It formats through
+// fmt.Errorf so a %w operand renders the wrapped error's text into the message
+// (fmt.Sprintf would emit "%!w(...)"), matching what a caller of this helper
+// expects: the wrapped error describes the caller's own input.
+//
+// Shared by the MCP tool domain and the sources domain so both render an
+// argument refusal the same way (issue #668).
+func NewValidationf(format string, args ...any) *Error {
+	return NewValidation(fmt.Errorf(format, args...).Error())
 }
 
 // NewDatabase creates a 500 database error with a message and the underlying

@@ -577,6 +577,13 @@ npx playwright install chromium   # once
 npx playwright test --config=datasources.config.ts   # or: task e2e:datasources
 ```
 
+Every test starts from the mock's **seeded** store: `fixtures.ts` exports a
+`test` whose auto fixture calls the mock's `POST /__mock/reset` (which restores
+the seed, not an empty store) before each test, so a spec file that mutates
+sources or credentials cannot change what the next one sees. Import that `test`
+— not `@playwright/test`'s — in every `specs/datasources/*` spec;
+`specs/datasources/mock-reset.spec.ts` is the leak-then-empty proof (#633).
+
 The CI job provisions the generated-asset prerequisites once for every suite
 (Go toolchain + `templ` + `task`) plus Node/Playwright, and the suite stays
 excluded from the live session-mode `playwright.config.ts` via `testIgnore`

@@ -43,10 +43,10 @@ func (s *sharedBudgetBlockStore) active(_ context.Context, projectID string) (bo
 	return true, nil
 }
 
-func (s *sharedBudgetBlockStore) mark(_ context.Context, projectID string, until time.Time) error {
+func (s *sharedBudgetBlockStore) mark(_ context.Context, projectID string, ttl time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.blocks[projectID] = until
+	s.blocks[projectID] = time.Now().Add(ttl)
 	return nil
 }
 
@@ -99,7 +99,7 @@ func TestBudgetBlockCacheWindowStillExpires(t *testing.T) {
 	require.True(t, worker.budgetBlockActive(ctx, projectID))
 
 	// Move the window into the past, as time passing would.
-	require.NoError(t, store.mark(ctx, projectID, time.Now().Add(-time.Second)))
+	require.NoError(t, store.mark(ctx, projectID, -time.Second))
 	assert.False(t, worker.budgetBlockActive(ctx, projectID),
 		"an expired cache window must fall back to the authoritative budget check")
 }

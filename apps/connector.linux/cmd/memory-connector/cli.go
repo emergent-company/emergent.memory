@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -39,6 +40,11 @@ func stdlibArgs(cmd *cobra.Command, args []string) []string {
 	return append(out, args...)
 }
 
+// leafRunners records each leaf's run function, keyed by its command, so the
+// flag-parity test can ask the leaf's own stdlib FlagSet which flags it reads.
+// It is populated by leaf() while the tree is built (single goroutine).
+var leafRunners = map[*cobra.Command]func([]string, io.Writer, io.Writer) int{}
+
 // leaf builds a cobra leaf command that registers the given flags and delegates
 // to run, passing the reconstructed stdlib-style arguments. The run function is
 // the existing runX implementation, so output, exit codes, and the direct unit
@@ -55,6 +61,7 @@ func leaf(use, short, long string, flags func(*cobra.Command), run func([]string
 	if flags != nil {
 		flags(cmd)
 	}
+	leafRunners[cmd] = run
 	return cmd
 }
 
@@ -117,6 +124,7 @@ func relayFlags(cmd *cobra.Command) {
 func installFlags(cmd *cobra.Command) {
 	configFlags(cmd)
 	cmd.Flags().String("bin", "", "path to the memory-connector binary (default: this executable)")
+	cmd.Flags().Bool("no-linger", false, "do not run loginctl enable-linger")
 }
 
 func newInitCmd() *cobra.Command {
@@ -174,11 +182,13 @@ Use 'memory-connector auth <subcommand> --help' for details.`,
 		}, runAuthLogin),
 		leaf("logout", "sign out and clear the stored session", "Sign out of the resolved (or active) account and drop its locally stored project tokens. Idempotent.", authCommonFlags, runAuthLogout),
 		leaf("status", "show the signed-in account status", "Print the server, email, issuer, and token expiry for the resolved (or active) account.", authJSONFlags, runAuthStatus),
-		leaf("start", "begin a two-step PKCE login", "Begin a two-step PKCE login for a coordinating app (for example the macOS app, which owns the browser and custom-scheme callback).", func(cmd *cobra.Command) {
+		leaf("start", "begin a two-step PKCE login", "Begin a two-step PKCE login for a coordinating app (for example the macOS app, which owns the browser and custom-scheme callback). --prompt and --login-hint carry the OIDC extras a silent re-auth needs.", func(cmd *cobra.Command) {
 			authJSONFlags(cmd)
 			cmd.Flags().String("redirect-uri", "", "OAuth redirect URI registered by the app")
 			cmd.Flags().String("client-id", account.ClientID, "OAuth client id (defaults to the connector client)")
 			cmd.Flags().String("issuer", "", "OIDC issuer URL (skips /api/auth/issuer discovery; --server may be omitted)")
+			cmd.Flags().String("prompt", "", "OIDC prompt parameter (none for a silent re-auth that shows no UI)")
+			cmd.Flags().String("login-hint", "", "OIDC login_hint (the account email a silent re-auth is for)")
 		}, runAuthStart),
 		leaf("complete", "finish a PKCE login", "Complete a PKCE login started by 'auth start' and report the resulting account.", func(cmd *cobra.Command) {
 			authJSONFlags(cmd)
@@ -190,7 +200,13 @@ Use 'memory-connector auth <subcommand> --help' for details.`,
 			configFlags(cmd)
 			cmd.Flags().String("login-id", "", "login id returned by 'auth start'")
 		}, runAuthCancel),
-		leaf("access-token", "print the stored account's access token", "Print the stored account's OAuth access token, refreshing it first when expired or within 60 seconds of expiry. Never reads or prints the refresh token.", authJSONFlags, runAuthAccessToken),
+		leaf("access-token", "print the stored account's access token", "Print the stored account's OAuth access token, refreshing it first when expired or within five minutes of expiry. Never reads or prints the refresh token.", authJSONFlags, runAuthAccessToken),
+		leaf("refresh", "renew the stored session's access token", "Renew the stored account's access token when it is within --min-ttl of expiry (default 5m), serialized across processes so concurrent refreshes cannot race a single-use refresh token. Reports whether a refresh happened and when the token now expires.", func(cmd *cobra.Command) {
+			configFlags(cmd)
+			cmd.Flags().String("server", "", "server URL (defaults to config server_url or the active account)")
+			cmd.Flags().Duration("min-ttl", 5*time.Minute, "refresh when the access token expires within this duration")
+			cmd.Flags().Bool("json", false, "emit machine-readable JSON")
+		}, runAuthRefresh),
 		leaf("import", "store a session piped on stdin", "Read a single session JSON object from stdin and store it. It is the migration path for clients (such as the macOS app) that can read sessions the CLI cannot.", func(cmd *cobra.Command) {
 			configFlags(cmd)
 			cmd.Flags().String("server", "", "Memory server URL (required)")

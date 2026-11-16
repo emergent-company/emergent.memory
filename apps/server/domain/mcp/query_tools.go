@@ -73,7 +73,7 @@ const queryKnowledgeTimeout = 120 * time.Second
 func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	question, _ := args["question"].(string)
 	if question == "" {
-		return nil, fmt.Errorf("query_knowledge: 'question' is required")
+		return nil, toolArgErrorf("query_knowledge: 'question' is required")
 	}
 
 	// Prepend branch context so the graph-query-agent scopes its tool calls correctly.

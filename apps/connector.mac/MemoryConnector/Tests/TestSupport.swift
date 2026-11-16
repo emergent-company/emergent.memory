@@ -33,8 +33,17 @@ enum HTTPBodyReader {
 final class FakeAuthenticator: BrowserAuthenticator, @unchecked Sendable {
     var handler: ((URL) -> Result<URL, Error>) = { _ in .failure(OIDCError.cancelled) }
     private(set) var openedURLs: [URL] = []
+    /// Timeouts requested through the bounded (silent) entry point, so a test can
+    /// prove background work cannot leave a browser window up indefinitely.
+    private(set) var requestedTimeouts: [Duration] = []
 
     func authenticate(url: URL, callbackURLScheme _: String) async throws -> URL {
+        openedURLs.append(url)
+        return try handler(url).get()
+    }
+
+    func authenticate(url: URL, callbackURLScheme _: String, timeout: Duration) async throws -> URL {
+        requestedTimeouts.append(timeout)
         openedURLs.append(url)
         return try handler(url).get()
     }

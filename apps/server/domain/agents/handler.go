@@ -250,13 +250,11 @@ func (h *Handler) enrichRunTrace(ctx context.Context, dto *AgentRunDTO, runID st
 //   - QueueFullError      → 429 Too Many Requests
 //   - other              → 500 Internal Server Error
 func mapExecutorError(err error) *apperror.Error {
-	var budgetErr *BudgetExceededError
-	if errors.As(err, &budgetErr) {
+	if _, ok := errors.AsType[*BudgetExceededError](err); ok {
 		return apperror.New(http.StatusPaymentRequired, "budget_exceeded",
 			"A project budget window (weekly or monthly) has been exceeded. Please review your spending, increase the budget, or reset the window.")
 	}
-	var queueErr *QueueFullError
-	if errors.As(err, &queueErr) {
+	if queueErr, ok := errors.AsType[*QueueFullError](err); ok {
 		return apperror.New(http.StatusTooManyRequests, "queue_full",
 			fmt.Sprintf("Agent run queue is full (%d/%d pending jobs). Wait for existing runs to complete before triggering new ones.",
 				queueErr.PendingJobs, queueErr.MaxPendingJobs))
@@ -3584,9 +3582,9 @@ func (h *Handler) resumeQuestionRun(ctx context.Context, p RespondParams, run *A
 		ResumedFrom:      &resumedFrom,
 		InitialStepCount: run.StepCount,
 		TriggerMetadata:  run.TriggerMetadata,
-		// Keep the work-item link on the resumed run: the parent checkpoint is
-		// finalized by MarkRunResumed, and a subject with no live run is
-		// reclaimable by the work reaper.
+		// Keep the work-item link on the resumed run: the resume claim finalizes
+		// the paused checkpoint, and a subject with no live run is reclaimable by
+		// the work reaper.
 		SubjectObjectID:   run.SubjectObjectID,
 		SubjectObjectType: run.SubjectObjectType,
 	})
@@ -3652,10 +3650,20 @@ func (h *Handler) resumeQuestionRun(ctx context.Context, p RespondParams, run *A
 					slog.String("error", repoErr.Error()),
 				)
 			}
-			// The pre-created resume run must also reach a terminal state: when the
-			// kill switch refused the resume the executor never touched it, so it
-			// would otherwise sit `running` until the stale-run reaper.
-			failRunIfExecutionDisabled(ctx, h.repo, preCreatedRun, err, slog.Default())
+			// The pre-created resume run must reach a terminal state on ANY
+			// failure, not only a kill-switch refusal: the claim can fail on a DB
+			// error before the executor ever touches the child, and a losing
+			// follower's child is only retired inside Resume — if that retirement
+			// itself failed, the row would sit `running` until the stale-run
+			// reaper. Resume is guarded too, so failing an already-terminal child
+			// is a no-op.
+			if repoErr := h.repo.FailRunWithSteps(ctx, preCreatedRun.ID,
+				fmt.Sprintf("resume failed before start: %s", err.Error()), run.StepCount); repoErr != nil {
+				slog.Error("failed to mark pre-created resume run as error",
+					slog.String("run_id", preCreatedRun.ID),
+					slog.String("error", repoErr.Error()),
+				)
+			}
 		}
 		// Notify the caller (share) that the resumed leg has settled so it can
 		// reconcile budget usage. Invoked last so Cleanup + failure marking are

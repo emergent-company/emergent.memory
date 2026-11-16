@@ -1636,6 +1636,14 @@ func TestGraphObjectLabel(t *testing.T) {
 		{"name wins", GraphObject{ID: "o1", Type: "person", Name: "Sam Lee", Key: "sam-lee"}, "Sam Lee"},
 		{"human key fallback", GraphObject{ID: "o1", Type: "person", Key: "sam-lee"}, "sam-lee"},
 		{"machine key is not a title", GraphObject{ID: "abcdef123456", Type: "task", Key: "task-9f1c0a2e3b4d"}, "task abcdef1234"},
+		{"minted slug key is not a title", GraphObject{ID: "abcdef123456", Type: "task", Key: "fix-login-redirect-loop-9f1c0a2e3b4d"}, "task abcdef1234"},
+		{"legacy 8-hex key is not a title", GraphObject{ID: "abcdef123456", Type: "task", Key: "fix-login-redirect-9f1c0a2e"}, "task abcdef1234"},
+		{"source-scoped dedup key is not a title", GraphObject{
+			ID:   "abcdef123456",
+			Type: "GitHubIssue",
+			Key:  "github:357590e8-6cbf-46bb-8c29-d8f839dd4ba8:emergent-company/emergent.memory#772",
+		}, "GitHubIssue abcdef1234"},
+		{"colon key without a uuid is still a title", GraphObject{ID: "o1", Type: "note", Key: "note:standup-notes"}, "note:standup-notes"},
 		{"type+short id fallback", GraphObject{ID: "abcdef123456", Type: "task"}, "task abcdef1234"},
 		{"short id only", GraphObject{ID: "o1"}, "o1"},
 		// Type-specific properties must never become the label.

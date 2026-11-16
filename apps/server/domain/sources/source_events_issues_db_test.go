@@ -9,6 +9,8 @@ import (
 	"encoding/pem"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -24,7 +26,8 @@ import (
 )
 
 type fakeIssueWorkStore struct {
-	req *graph.CreateGraphObjectRequest
+	req  *graph.CreateGraphObjectRequest
+	head *graph.GraphObject
 }
 
 func (f *fakeIssueWorkStore) CreateOrUpdate(_ context.Context, _ uuid.UUID, req *graph.CreateGraphObjectRequest, _ *uuid.UUID) (*graph.GraphObjectResponse, bool, error) {
@@ -33,7 +36,7 @@ func (f *fakeIssueWorkStore) CreateOrUpdate(_ context.Context, _ uuid.UUID, req 
 }
 
 func (f *fakeIssueWorkStore) FindHeadObjectByTypeAndKey(context.Context, string, string, string) (*graph.GraphObject, error) {
-	return nil, nil
+	return f.head, nil
 }
 
 func TestSourceEventDispatcherIssueAutoStart(t *testing.T) {
@@ -67,7 +70,7 @@ func TestSourceEventDispatcherIssueAutoStart(t *testing.T) {
 	require.NoError(t, repo.CreateSourceApp(ctx, app))
 
 	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.sources (id, project_id, provider, display_name, app_id, external_account_id, config, status)
-		VALUES (?, ?, 'github_app', 'issues', ?, '42', '{"repos":["owner/repo"]}'::jsonb, 'active')`, sourceID, projectID, app.ID)
+		VALUES (?, ?, 'github_app', 'issues', ?, '42', '{"repos":["owner/repo"],"assignee_login":"mkucharz"}'::jsonb, 'active')`, sourceID, projectID, app.ID)
 	require.NoError(t, err)
 	trigger := &SourceTrigger{
 		ProjectID: projectID, SourceID: sourceID, EventType: "issues", AgentID: agentID,
@@ -79,9 +82,47 @@ func TestSourceEventDispatcherIssueAutoStart(t *testing.T) {
 	}
 	require.NoError(t, repo.CreateSourceTrigger(ctx, trigger))
 
+	liveLabels := "[]"
+	var assignedPath, labelsPath, commentPath, commentBody string
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/app/installations/42/access_tokens":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"token":"ghs_test","expires_at":"2099-01-01T00:00:00Z"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/owner/repo/issues/737":
+			_, _ = w.Write([]byte(`{"number":737,"title":"fix it","body":"details","state":"open","labels":` + liveLabels + `,"assignees":[]}`))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/owner/repo/labels/"):
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/owner/repo/labels":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/owner/repo/issues/737/assignees":
+			assignedPath = r.URL.Path
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/owner/repo/issues/737/labels":
+			labelsPath = r.URL.Path
+			_, _ = w.Write([]byte(`[{"name":"status: in-progress"},{"name":"manager: memory-coding"}]`))
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/owner/repo/issues/737/comments":
+			commentPath = r.URL.Path
+			body, _ := io.ReadAll(r.Body)
+			commentBody = string(body)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":1}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer fake.Close()
+
 	dispatcher := NewSourceEventDispatcher(repo, agentsRepo, &config.Config{
-		LLMProvider: config.LLMProviderConfig{EncryptionKey: keyHex},
+		LLMProvider:  config.LLMProviderConfig{EncryptionKey: keyHex},
+		GitHubSource: config.GitHubSourceConfig{APIBaseURL: fake.URL},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	dispatcher.minter = githubapp.NewTokenMinter(fake.URL, fake.Client())
+	dispatcher.newClient = func(_, token string) *githubapp.Client {
+		return githubapp.NewClient(fake.URL, token, fake.Client())
+	}
 	store := &fakeIssueWorkStore{}
 	dispatcher.workObjects = store
 
@@ -104,6 +145,34 @@ func TestSourceEventDispatcherIssueAutoStart(t *testing.T) {
 	ev, err := repo.FindSourceEventByDelivery(ctx, projectID, sourceID, "d-issue")
 	require.NoError(t, err)
 	require.Equal(t, SourceEventDispatched, ev.State)
+	require.Equal(t, "/repos/owner/repo/issues/737/assignees", assignedPath)
+	require.Equal(t, "/repos/owner/repo/issues/737/labels", labelsPath)
+	require.Equal(t, "/repos/owner/repo/issues/737/comments", commentPath)
+	require.Contains(t, commentBody, "coding-agent")
+	labels, ok := store.req.Properties["labels"].([]any)
+	require.True(t, ok)
+	require.Contains(t, labels, "manager: memory-coding")
+
+	// A peer claim must not create a board item or start work.
+	liveLabels = `[{"name":"status: in-progress"},{"name":"manager: peer-lane"}]`
+	store.req = nil
+	peerBody := []byte(`{"action":"opened","installation":{"id":42},"repository":{"full_name":"owner/repo"},"issue":{"number":737,"title":"fix it","body":"details","state":"open","html_url":"https://github.com/owner/repo/issues/737","labels":[{"name":"status: in-progress"},{"name":"manager: peer-lane"}],"user":{"login":"mkucharz","type":"User"}}}`)
+	require.NoError(t, dispatcher.HandleWebhook(ctx, app.WebhookKey, "issues", "d-issue-peer", signWebhook(webhookSecret, peerBody), peerBody))
+	require.Nil(t, store.req, "a peer claim must not create or start a Memory work item")
+	ev, err = repo.FindSourceEventByDelivery(ctx, projectID, sourceID, "d-issue-peer")
+	require.NoError(t, err)
+	require.Equal(t, SourceEventSkipped, ev.State)
+
+	// If the board item already exists and becomes peer-owned, it is blocked
+	// rather than started.
+	store.req = nil
+	store.head = &graph.GraphObject{CanonicalID: uuid.New(), Type: "GitHubIssue", Status: ptr("ready"), Assignee: ptr("coding-agent"), Properties: map[string]any{}}
+	peerExisting := []byte(`{"action":"labeled","installation":{"id":42},"repository":{"full_name":"owner/repo"},"issue":{"number":737,"title":"fix it","body":"details","state":"open","html_url":"https://github.com/owner/repo/issues/737","labels":[{"name":"status: in-progress"},{"name":"manager: peer-lane"}],"user":{"login":"mkucharz","type":"User"}}}`)
+	require.NoError(t, dispatcher.HandleWebhook(ctx, app.WebhookKey, "issues", "d-issue-peer-existing", signWebhook(webhookSecret, peerExisting), peerExisting))
+	require.NotNil(t, store.req)
+	require.Equal(t, "blocked", *store.req.Status)
+	require.Nil(t, store.req.Assignee)
+	require.Equal(t, true, store.req.Properties["claim_conflict"])
 }
 
 func testRSAKeyPEM(t *testing.T) []byte {

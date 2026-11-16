@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/account"
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/memoryapi"
@@ -51,6 +52,28 @@ var TokenScopes = []string{
 type Sessions interface {
 	SessionFor(serverURL string) (*account.Session, error)
 }
+
+// TokenSource supplies a usable account access token, refreshing it when the
+// stored one is expired or about to expire. *account.Manager implements it, and
+// a Sessions implementation that also satisfies this interface is used
+// automatically.
+type TokenSource interface {
+	AccessToken(ctx context.Context, serverURL string, minTTL time.Duration) (string, error)
+}
+
+// TokenRefresher forces a refresh of the stored session, ignoring the stored
+// expiry. *account.Manager implements it. A 401 from the API is the one signal
+// that the stored expiry was optimistic, so a retry needs a forced refresh
+// rather than the proximity check TokenSource applies.
+type TokenRefresher interface {
+	Refresh(ctx context.Context, serverURL string) (*account.Session, error)
+}
+
+// accessTokenRefreshWindow is how long before expiry a project operation
+// refreshes proactively. It is deliberately generous: the cost of an
+// unnecessary refresh is one token-endpoint round trip, the cost of a stale
+// token is a 401 the user sees.
+const accessTokenRefreshWindow = 5 * time.Minute
 
 // Deps are the injectable API operations behind the Manager. Every field
 // defaults to a real SDK-backed implementation (DefaultDeps); tests replace
@@ -105,6 +128,12 @@ type Manager struct {
 	baseDir  string
 	sessions Sessions
 	deps     Deps
+	// tokens refreshes the account access token before project operations, and
+	// refresher forces one after a 401. Both are optional (a Sessions
+	// implementation that does not provide them falls back to the stored
+	// token), which keeps the offline test fakes simple.
+	tokens    TokenSource
+	refresher TokenRefresher
 	// mu serializes EnsureToken minting so a second concurrent caller reuses
 	// the token the first one just stored instead of racing into a 409+revoke.
 	mu sync.Mutex
@@ -113,13 +142,23 @@ type Manager struct {
 // NewManager returns a Manager backed by baseDir, reading sessions from an
 // account store in the same location and using production API calls.
 func NewManager(baseDir string) *Manager {
-	return NewManagerWithDeps(baseDir, account.NewManager(baseDir), DefaultDeps())
+	accounts := account.NewManager(baseDir)
+	return NewManagerWithDeps(baseDir, accounts, DefaultDeps())
 }
 
 // NewManagerWithDeps returns a Manager with injected session and API
-// dependencies. It is the test seam for the project operations.
+// dependencies. It is the test seam for the project operations. When sessions
+// also implements TokenSource/TokenRefresher — as *account.Manager does — the
+// Manager refreshes through it.
 func NewManagerWithDeps(baseDir string, sessions Sessions, deps Deps) *Manager {
-	return &Manager{baseDir: baseDir, sessions: sessions, deps: deps}
+	m := &Manager{baseDir: baseDir, sessions: sessions, deps: deps}
+	if ts, ok := sessions.(TokenSource); ok {
+		m.tokens = ts
+	}
+	if tr, ok := sessions.(TokenRefresher); ok {
+		m.refresher = tr
+	}
+	return m
 }
 
 func (m *Manager) projectsDir() string { return filepath.Join(m.baseDir, "projects") }
@@ -157,9 +196,19 @@ func safeKey(s string) string {
 	return name
 }
 
-// accessToken returns the account access token for serverURL, or
-// ErrNotSignedIn.
-func (m *Manager) accessToken(serverURL string) (string, error) {
+// accessToken returns a usable account access token for serverURL, refreshing
+// it when the stored one is expired or about to expire, or ErrNotSignedIn when
+// there is no session.
+func (m *Manager) accessToken(ctx context.Context, serverURL string) (string, error) {
+	if m.tokens != nil {
+		tok, err := m.tokens.AccessToken(ctx, serverURL, accessTokenRefreshWindow)
+		switch {
+		case err == nil && tok != "":
+			return tok, nil
+		case err != nil && !errors.Is(err, account.ErrNoSession):
+			return "", err
+		}
+	}
 	sess, err := m.sessions.SessionFor(serverURL)
 	if err != nil {
 		return "", err
@@ -170,13 +219,44 @@ func (m *Manager) accessToken(serverURL string) (string, error) {
 	return sess.AccessToken, nil
 }
 
+// withToken runs op with a usable account access token and retries once after a
+// forced refresh when the API answers 401. A 401 means the token was rejected
+// although the stored expiry said it was fine (revoked, or a clock that ran
+// ahead), which only a refresh can fix; without the retry every such rejection
+// surfaced as "signed out" until the user signed in again.
+func (m *Manager) withToken(ctx context.Context, serverURL string, op func(accessToken string) error) error {
+	token, err := m.accessToken(ctx, serverURL)
+	if err != nil {
+		return err
+	}
+	err = op(token)
+	if err == nil || !memoryapi.IsUnauthorized(err) || m.refresher == nil {
+		return err
+	}
+	if _, rerr := m.refresher.Refresh(ctx, serverURL); rerr != nil {
+		// The refresh itself was rejected: the session genuinely needs a new
+		// sign-in, so surface the original rejection with its cause.
+		return err
+	}
+	token, terr := m.accessToken(ctx, serverURL)
+	if terr != nil {
+		return err
+	}
+	return op(token)
+}
+
 // List returns the projects visible to the signed-in account for serverURL.
 func (m *Manager) List(ctx context.Context, serverURL string) ([]Project, error) {
-	token, err := m.accessToken(serverURL)
+	var out []Project
+	err := m.withToken(ctx, serverURL, func(token string) error {
+		var lerr error
+		out, lerr = m.deps.ListProjects(ctx, serverURL, token)
+		return lerr
+	})
 	if err != nil {
 		return nil, err
 	}
-	return m.deps.ListProjects(ctx, serverURL, token)
+	return out, nil
 }
 
 // activeRecord is the persisted active-project selection for one account.
@@ -259,36 +339,38 @@ func (m *Manager) EnsureToken(ctx context.Context, serverURL, projectID string) 
 	if rec, ok := m.loadToken(serverURL, projectID); ok {
 		return rec.Token, nil
 	}
-	accessToken, err := m.accessToken(serverURL)
-	if err != nil {
-		return "", err
-	}
 	name := m.TokenName(projectID)
-	created, err := m.deps.CreateToken(ctx, serverURL, accessToken, projectID, name, append([]string(nil), TokenScopes...))
-	if err != nil {
-		if memoryapi.IsTokenNameExists(err) {
+	var rec tokenRecord
+	err := m.withToken(ctx, serverURL, func(accessToken string) error {
+		created, cerr := m.deps.CreateToken(ctx, serverURL, accessToken, projectID, name, append([]string(nil), TokenScopes...))
+		if cerr != nil {
+			if !memoryapi.IsTokenNameExists(cerr) {
+				return fmt.Errorf("project: mint token for %s: %w", projectID, cerr)
+			}
 			// A token with this project-scoped name already exists on the
 			// server but no local record is stored (e.g. it was cleared on
 			// sign-out). Revoke the conflicting token and re-mint once.
 			if rerr := m.revokeConflictingTokens(ctx, serverURL, accessToken, projectID, name); rerr != nil {
-				return "", fmt.Errorf("project: mint token for %s: %w", projectID, rerr)
+				return fmt.Errorf("project: mint token for %s: %w", projectID, rerr)
 			}
-			created, err = m.deps.CreateToken(ctx, serverURL, accessToken, projectID, name, append([]string(nil), TokenScopes...))
-			if err != nil {
-				return "", fmt.Errorf("project: mint token for %s: %w", projectID, err)
+			created, cerr = m.deps.CreateToken(ctx, serverURL, accessToken, projectID, name, append([]string(nil), TokenScopes...))
+			if cerr != nil {
+				return fmt.Errorf("project: mint token for %s: %w", projectID, cerr)
 			}
-		} else {
-			return "", fmt.Errorf("project: mint token for %s: %w", projectID, err)
 		}
-	}
-	rec := tokenRecord{
-		ServerURL: serverURL,
-		ProjectID: projectID,
-		TokenID:   created.ID,
-		Token:     created.Token,
-		Name:      created.Name,
-		Scopes:    created.Scopes,
-		CreatedAt: created.CreatedAt,
+		rec = tokenRecord{
+			ServerURL: serverURL,
+			ProjectID: projectID,
+			TokenID:   created.ID,
+			Token:     created.Token,
+			Name:      created.Name,
+			Scopes:    created.Scopes,
+			CreatedAt: created.CreatedAt,
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
 	}
 	if err := m.saveToken(serverURL, projectID, rec); err != nil {
 		return "", err
@@ -296,7 +378,9 @@ func (m *Manager) EnsureToken(ctx context.Context, serverURL, projectID string) 
 	// A fresh token was just minted (the reuse path returned early), so it is
 	// safe to clean up any superseded legacy credential still active in this
 	// project — never an in-use token.
-	m.revokeLegacyTokens(ctx, serverURL, accessToken, projectID, m.legacyTokenName())
+	if accessToken, terr := m.accessToken(ctx, serverURL); terr == nil {
+		m.revokeLegacyTokens(ctx, serverURL, accessToken, projectID, m.legacyTokenName())
+	}
 	return rec.Token, nil
 }
 
@@ -347,7 +431,7 @@ func (m *Manager) revokeLegacyTokens(ctx context.Context, serverURL, accessToken
 // locally. A missing token is not an error.
 func (m *Manager) Revoke(ctx context.Context, serverURL, projectID string) error {
 	if rec, ok := m.loadToken(serverURL, projectID); ok {
-		if accessToken, err := m.accessToken(serverURL); err == nil && rec.TokenID != "" {
+		if accessToken, err := m.accessToken(ctx, serverURL); err == nil && rec.TokenID != "" {
 			// Best-effort: the local copy is removed even if the server call
 			// fails (the token may already be gone or the session expired).
 			_ = m.deps.RevokeToken(ctx, serverURL, accessToken, projectID, rec.TokenID)

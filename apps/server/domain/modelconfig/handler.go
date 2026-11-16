@@ -5,7 +5,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
+
+// errInvalidProjectID is returned when the :projectId path parameter is not a
+// UUID. A dedicated code lets a client tell a malformed path from a rejection
+// by the service layer.
+var errInvalidProjectID = apperror.New(http.StatusBadRequest, "invalid_project_id", "invalid project id")
 
 // Handler exposes model config endpoints.
 type Handler struct {
@@ -27,7 +34,7 @@ func NewHandler(svc *Service) *Handler {
 func (h *Handler) GetProjectModelConfig(c echo.Context) error {
 	projectID, err := uuid.Parse(c.Param("projectId"))
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid project id")
+		return errInvalidProjectID
 	}
 	resp, err := h.svc.GetProjectModelConfig(c.Request().Context(), projectID)
 	if err != nil {
@@ -52,11 +59,11 @@ func (h *Handler) GetProjectModelConfig(c echo.Context) error {
 func (h *Handler) UpsertProjectModelConfig(c echo.Context) error {
 	projectID, err := uuid.Parse(c.Param("projectId"))
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid project id")
+		return errInvalidProjectID
 	}
 	var req UpsertModelConfigRequest
 	if err := c.Bind(&req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+		return apperror.New(http.StatusBadRequest, "invalid_request_body", "invalid request body")
 	}
 	resp, err := h.svc.UpsertProjectModelConfig(c.Request().Context(), projectID, req)
 	if err != nil {
@@ -74,7 +81,7 @@ func (h *Handler) UpsertProjectModelConfig(c echo.Context) error {
 func (h *Handler) DeleteProjectModelConfig(c echo.Context) error {
 	projectID, err := uuid.Parse(c.Param("projectId"))
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid project id")
+		return errInvalidProjectID
 	}
 	if err := h.svc.DeleteProjectModelConfig(c.Request().Context(), projectID); err != nil {
 		return err
@@ -92,7 +99,7 @@ func (h *Handler) DeleteProjectModelConfig(c echo.Context) error {
 func (h *Handler) GetEffectiveModelConfig(c echo.Context) error {
 	projectID, err := uuid.Parse(c.Param("projectId"))
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid project id")
+		return errInvalidProjectID
 	}
 	resp, err := h.svc.ResolveEffectiveModels(c.Request().Context(), projectID)
 	if err != nil {

@@ -31,6 +31,9 @@ func (f *fakeMemory) RetryAllExtractionJobs(_ context.Context, includeNonRetryab
 
 func (f *fakeMemory) RetryAllParsingJobs(_ context.Context, includeNonRetryable bool) (int, error) {
 	f.bulkIncludeNonRetryable = append(f.bulkIncludeNonRetryable, includeNonRetryable)
+	if f.bulkParsingErr != nil {
+		return 0, f.bulkParsingErr
+	}
 	return f.bulkRetried, nil
 }
 

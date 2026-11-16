@@ -43,6 +43,7 @@ type SourceEventDispatcher struct {
 	newClient   func(baseURL, token string) *githubapp.Client
 	workObjects SourceWorkObjectStore
 	objectTypes ObjectTypeProvisioner
+	reviewGates *ReviewGateService
 	log         *slog.Logger
 }
 
@@ -50,6 +51,11 @@ type SourceEventDispatcher struct {
 // ensure GitHubIssue exists on a source created before the type was added.
 func (d *SourceEventDispatcher) SetObjectTypes(p ObjectTypeProvisioner) {
 	d.objectTypes = p
+}
+
+// SetReviewGateService installs the server-owned review aggregation service.
+func (d *SourceEventDispatcher) SetReviewGateService(g *ReviewGateService) {
+	d.reviewGates = g
 }
 
 // SourceWorkObjectStore is the graph upsert surface the workflow dispatcher
@@ -220,7 +226,10 @@ func (d *SourceEventDispatcher) handlePullRequest(ctx context.Context, v *Verifi
 		}
 		return nil
 	}
-	if p.ShouldSkipPullRequest() || !p.IsRelevantPullRequestAction() {
+	if p.ShouldSkipPullRequest() {
+		return nil
+	}
+	if !p.IsRelevantPullRequestAction() && p.Action != "labeled" && p.Action != "unlabeled" {
 		return nil
 	}
 
@@ -287,8 +296,68 @@ func (d *SourceEventDispatcher) dispatchPullRequestSource(ctx context.Context, v
 	return nil
 }
 
+// ensureReviewSubject emits the provider-owned review subject and snapshots the
+// reviewer agents that match it. Reviewer selection is agent-driven; this
+// function never writes a reviewer list into the source.
+func (d *SourceEventDispatcher) ensureReviewSubject(ctx context.Context, v *VerifiedSourceEvent, src *Source, p *githubapp.WebhookPayload, state *githubapp.PullRequestState, subject string) error {
+	if d.workObjects == nil || p == nil || src == nil {
+		return nil
+	}
+	repoName := p.Repository.FullName
+	headSHA := p.PullRequest.Head.SHA
+	if state != nil && state.HeadSHA != "" {
+		headSHA = state.HeadSHA
+	}
+	labels := make([]string, 0)
+	if state != nil && len(state.Labels) > 0 {
+		labels = append(labels, state.Labels...)
+	} else {
+		for _, label := range p.PullRequest.Labels {
+			if name := strings.TrimSpace(label.Name); name != "" {
+				labels = append(labels, name)
+			}
+		}
+	}
+	title := p.PullRequest.Title
+	if title == "" {
+		title = subject
+	}
+	key := fmt.Sprintf("github:%s:%s#%d", src.ID.String(), repoName, p.PullNumber())
+	props := map[string]any{
+		"repo": repoName, "pr_number": p.PullNumber(), "title": title,
+		"head_sha": headSHA, "base_sha": p.PullRequest.Base.SHA,
+		"state": p.PullRequest.State, "labels": labels, "status": "open",
+	}
+	resp, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
+		Type: "GitHubPullRequest", Key: &key, Name: &title, Properties: props,
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("sources: upsert review subject: %w", err)
+	}
+	if d.reviewGates != nil && resp != nil {
+		gate, err := d.reviewGates.Ensure(ctx, src.ProjectID, "GitHubPullRequest", subject, headSHA, props)
+		if err != nil {
+			return fmt.Errorf("sources: ensure review gate: %w", err)
+		}
+		if gate != nil && len(gate.RequiredReviewers) > 0 && gate.Status == ReviewGatePending && v != nil && v.App != nil {
+			if token, terr := d.mintToken(ctx, v.App, p.Installation.ID, repoName); terr == nil {
+				_ = d.newClient(d.apiBaseURL, token).CreateCheck(ctx, repoName, headSHA, "reviewed", "in_progress", "", "reviewed: pending", "Waiting for all required reviewers.")
+			}
+		}
+	}
+	return nil
+}
+
 func (d *SourceEventDispatcher) processPullRequestSource(ctx context.Context, v *VerifiedSourceEvent, src *Source, subject string, state *githubapp.PullRequestState, ev *SourceEvent) error {
 	p := v.Payload
+	if err := d.ensureReviewSubject(ctx, v, src, p, state, subject); err != nil {
+		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
+		return err
+	}
+	if p.Action == "labeled" || p.Action == "unlabeled" {
+		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventDispatched, nil, nil)
+		return nil
+	}
 	handled, err := d.processWorkflowEvent(ctx, src, ev, state, p, subject)
 	if err != nil {
 		return err
@@ -512,7 +581,7 @@ func (d *SourceEventDispatcher) ensureIssuePRLink(ctx context.Context, src *Sour
 	issueProps["status"] = issueStatus
 	issueKey := fmt.Sprintf("github:%s:%s#%d", issueSourceID, repoName, issueNumber)
 	if _, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
-		Type: "GitHubIssue", Key: &issueKey, Status: &issueStatus, Properties: issueProps,
+		Type: "GitHubIssue", Key: &issueKey, Name: issue.Name, Status: &issueStatus, Properties: issueProps,
 	}, nil); err != nil {
 		return nil, err
 	}
@@ -522,7 +591,7 @@ func (d *SourceEventDispatcher) ensureIssuePRLink(ctx context.Context, src *Sour
 
 func (d *SourceEventDispatcher) handleIssues(ctx context.Context, v *VerifiedSourceEvent) error {
 	p := v.Payload
-	if p == nil || !p.IsIssue() || p.AuthoredByIssue(v.App.Slug) {
+	if p == nil || !p.IsIssue() || p.AuthoredByIssue(v.App.Slug) || p.AuthoredBySender(v.App.Slug) {
 		return nil
 	}
 	repoName := p.Repository.FullName
@@ -544,6 +613,191 @@ func (d *SourceEventDispatcher) handleIssues(ctx context.Context, v *VerifiedSou
 		}
 	}
 	return nil
+}
+
+const (
+	issueClaimStatusLabel  = "status: in-progress"
+	issueClaimBlockedLabel = "status: blocked"
+	issueClaimManagerLabel = "manager: memory-coding"
+)
+
+func issueClaimLabelStyle(name string) (color, description string) {
+	if name == issueClaimManagerLabel {
+		return "5319e7", "Memory coding issue claim manager"
+	}
+	return "fbca04", "Issue claimed by an agent"
+}
+
+// issueClaimResult describes the live GitHub claim state and the labels the
+// board item should mirror. configured=false means the source has no
+// assignee_login, so the legacy no-claim path is preserved.
+type issueClaimResult struct {
+	configured bool
+	ours       bool
+	foreign    bool
+	labels     []string
+}
+
+func sourceAssigneeLogin(src *Source) string {
+	if src == nil || src.Config == nil {
+		return ""
+	}
+	login, _ := src.Config["assignee_login"].(string)
+	return strings.TrimSpace(login)
+}
+
+func issueLabelNames(issue *githubapp.IssueState) []string {
+	if issue == nil {
+		return nil
+	}
+	out := make([]string, 0, len(issue.Labels))
+	for _, label := range issue.Labels {
+		if name := strings.TrimSpace(label.Name); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+func hasIssueLabel(labels []string, want string) bool {
+	for _, label := range labels {
+		if strings.EqualFold(strings.TrimSpace(label), want) {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeIssueLabels(labels []string, extra ...string) []string {
+	out := append([]string(nil), labels...)
+	for _, label := range extra {
+		if !hasIssueLabel(out, label) {
+			out = append(out, label)
+		}
+	}
+	return out
+}
+
+func hasIssueAssignee(issue *githubapp.IssueState, login string) bool {
+	for _, assignee := range issue.Assignees {
+		if strings.EqualFold(assignee.Login, login) {
+			return true
+		}
+	}
+	return false
+}
+
+// issueClaimConflict separates our own live claim from a peer claim. A peer
+// claim is any manager label other than memory-coding, a lifecycle claim with
+// no manager (legacy), a blocked status, or an assignee other than the
+// configured responsible user.
+func issueClaimConflict(issue *githubapp.IssueState, responsible string) (ours, foreign bool) {
+	labels := issueLabelNames(issue)
+	manager := ""
+	for _, label := range labels {
+		if strings.HasPrefix(strings.ToLower(label), "manager: ") {
+			manager = strings.TrimSpace(label[len("manager: "):])
+			break
+		}
+	}
+	inProgress := hasIssueLabel(labels, issueClaimStatusLabel)
+	blocked := hasIssueLabel(labels, issueClaimBlockedLabel)
+
+	if blocked {
+		return false, true
+	}
+	if manager != "" && !strings.EqualFold(manager, "memory-coding") {
+		return false, true
+	}
+	if inProgress && !strings.EqualFold(manager, "memory-coding") {
+		return false, true
+	}
+	if responsible == "" {
+		if len(issue.Assignees) > 0 {
+			return false, true
+		}
+	} else {
+		for _, assignee := range issue.Assignees {
+			if assignee.Login != "" && !strings.EqualFold(assignee.Login, responsible) {
+				return false, true
+			}
+		}
+	}
+	return inProgress && strings.EqualFold(manager, "memory-coding"), false
+}
+
+func (d *SourceEventDispatcher) claimIssue(ctx context.Context, v *VerifiedSourceEvent, src *Source, repoName, agentName string) (issueClaimResult, error) {
+	login := sourceAssigneeLogin(src)
+	if login == "" {
+		return issueClaimResult{}, nil
+	}
+	token, err := d.mintToken(ctx, v.App, v.Payload.Installation.ID, repoName)
+	if err != nil {
+		return issueClaimResult{}, fmt.Errorf("sources: mint issue-claim token: %w", err)
+	}
+	client := d.newClient(d.apiBaseURL, token)
+	issue, err := client.GetIssue(ctx, repoName, v.Payload.Issue.Number)
+	if err != nil {
+		return issueClaimResult{}, fmt.Errorf("sources: read issue claim state: %w", err)
+	}
+	result := issueClaimResult{configured: true, labels: issueLabelNames(issue)}
+	ours, foreign := issueClaimConflict(issue, login)
+	if foreign {
+		result.foreign = true
+		return result, nil
+	}
+	result.ours = ours
+
+	missing := make([]string, 0, 2)
+	if !hasIssueLabel(result.labels, issueClaimStatusLabel) {
+		missing = append(missing, issueClaimStatusLabel)
+	}
+	if !hasIssueLabel(result.labels, issueClaimManagerLabel) {
+		missing = append(missing, issueClaimManagerLabel)
+	}
+	needAssignee := !hasIssueAssignee(issue, login)
+
+	// GitHub silently ignores unknown labels on an issue write. Create the
+	// claim labels first, then assign, then verify the add response.
+	for _, label := range missing {
+		color, description := issueClaimLabelStyle(label)
+		if err := client.EnsureIssueLabel(ctx, repoName, label, color, description); err != nil {
+			return result, fmt.Errorf("sources: ensure issue claim label %q: %w", label, err)
+		}
+	}
+	if needAssignee {
+		if err := client.AddIssueAssignees(ctx, repoName, v.Payload.Issue.Number, []string{login}); err != nil {
+			return result, fmt.Errorf("sources: assign responsible issue owner %q: %w", login, err)
+		}
+	}
+	if len(missing) > 0 {
+		added, err := client.AddIssueLabels(ctx, repoName, v.Payload.Issue.Number, missing)
+		if err == nil {
+			for _, label := range missing {
+				if !hasIssueLabel(added, label) {
+					err = fmt.Errorf("label %q was not applied", label)
+					break
+				}
+			}
+		}
+		if err != nil {
+			for _, label := range missing {
+				_ = client.RemoveIssueLabel(ctx, repoName, v.Payload.Issue.Number, label)
+			}
+			if needAssignee {
+				_ = client.RemoveIssueAssignees(ctx, repoName, v.Payload.Issue.Number, []string{login})
+			}
+			return result, fmt.Errorf("sources: add issue claim labels: %w", err)
+		}
+		result.labels = mergeIssueLabels(result.labels, missing...)
+	}
+	if !ours {
+		body := fmt.Sprintf("Claimed by Memory coding agent `%s` for responsible owner @%s. The agent will open a PR that references this issue.", agentName, login)
+		if err := client.CreateIssueComment(ctx, repoName, v.Payload.Issue.Number, body); err != nil && d.log != nil {
+			d.log.Warn("failed to post issue claim receipt", "repo", repoName, "issue", v.Payload.Issue.Number, "error", err)
+		}
+	}
+	return result, nil
 }
 
 func (d *SourceEventDispatcher) processIssueSource(ctx context.Context, v *VerifiedSourceEvent, src *Source) error {
@@ -585,6 +839,10 @@ func (d *SourceEventDispatcher) processIssueSource(ctx context.Context, v *Verif
 		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
 		return err
 	}
+	agentName := ""
+	if trigger != nil {
+		agentName = d.triggerAgentName(ctx, src.ProjectID, trigger.AgentID)
+	}
 	closed := p.Action == "closed" || p.Action == "deleted" || strings.EqualFold(issue.State, "closed")
 	key := fmt.Sprintf("github:%s:%s#%d", src.ID.String(), repoName, issue.Number)
 	title := issue.Title
@@ -606,21 +864,49 @@ func (d *SourceEventDispatcher) processIssueSource(ctx context.Context, v *Verif
 			assignee = *existing.Assignee
 		}
 	}
+	wantStart := trigger != nil && !closed && p.IsRelevantIssueAction() &&
+		(existing == nil || existing.Status == nil || status == "ready" ||
+			(p.Action == "reopened" && (status == "cancelled" || status == "done")))
+	if wantStart && agentName == "" {
+		err := fmt.Errorf("sources: issue trigger %s references an agent that cannot be resolved", trigger.ID)
+		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
+		return err
+	}
+	checkClaim := trigger != nil && !closed && (wantStart || (existing != nil && (status == "ready" || status == "in_progress")))
+	claim := issueClaimResult{}
+	if checkClaim {
+		claim, err = d.claimIssue(ctx, v, src, repoName, agentName)
+		if err != nil {
+			d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
+			return err
+		}
+		if claim.foreign {
+			if existing == nil {
+				d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventSkipped, nil, nil)
+				return nil
+			}
+			status = "blocked"
+			assignee = ""
+		}
+	}
 	if closed {
 		if status != "done" {
 			status = "cancelled"
 		}
 		assignee = ""
+	} else if claim.foreign {
+		status = "blocked"
+		assignee = ""
 	} else if trigger != nil && p.IsRelevantIssueAction() {
 		switch {
 		case existing == nil || existing.Status == nil:
 			status = "ready"
-			assignee = d.triggerAgentName(ctx, src.ProjectID, trigger.AgentID)
+			assignee = agentName
 		case status == "ready":
-			assignee = d.triggerAgentName(ctx, src.ProjectID, trigger.AgentID)
+			assignee = agentName
 		case p.Action == "reopened" && (status == "cancelled" || status == "done"):
 			status = "ready"
-			assignee = d.triggerAgentName(ctx, src.ProjectID, trigger.AgentID)
+			assignee = agentName
 		}
 		if assignee == "" {
 			err := fmt.Errorf("sources: issue trigger %s references an agent that cannot be resolved", trigger.ID)
@@ -628,10 +914,20 @@ func (d *SourceEventDispatcher) processIssueSource(ctx context.Context, v *Verif
 			return err
 		}
 	}
+	boardLabels := labels
+	if claim.configured {
+		boardLabels = make([]any, 0, len(claim.labels))
+		for _, label := range claim.labels {
+			boardLabels = append(boardLabels, label)
+		}
+	}
 	props := map[string]any{
 		"repo": repoName, "issue_number": issue.Number, "title": title,
 		"body": truncateUTF8(issue.Body, 16000), "state": issue.State,
-		"labels": labels, "url": issue.HTMLURL, "source_id": src.ID.String(), "status": status,
+		"labels": boardLabels, "url": issue.HTMLURL, "source_id": src.ID.String(), "status": status,
+	}
+	if claim.foreign {
+		props["claim_conflict"] = true
 	}
 	if trigger != nil && !closed && assignee != "" {
 		// Only the server-owned trigger id is stored. The invocation (including
@@ -651,11 +947,11 @@ func (d *SourceEventDispatcher) processIssueSource(ctx context.Context, v *Verif
 		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
 		return err
 	}
-	if closed && resp != nil {
+	if (closed || claim.foreign) && resp != nil {
 		d.cancelSubjectRuns(ctx, resp.CanonicalID.String())
 	}
 	state := SourceEventDispatched
-	if trigger == nil || closed {
+	if trigger == nil || closed || claim.foreign {
 		state = SourceEventSkipped
 	}
 	d.markEvent(ctx, src.ProjectID, ev.ID, state, nil, nil)
@@ -923,9 +1219,20 @@ func (d *SourceEventDispatcher) processWorkflowEvent(ctx context.Context, src *S
 		parentStatus = "closed"
 		laneStatus = "cancelled"
 	}
+	labels := make([]string, 0)
+	if state != nil && len(state.Labels) > 0 {
+		labels = append(labels, state.Labels...)
+	} else {
+		for _, label := range p.PullRequest.Labels {
+			if name := strings.TrimSpace(label.Name); name != "" {
+				labels = append(labels, name)
+			}
+		}
+	}
 	parentProps := map[string]any{
 		"repo": repoName, "pr_number": p.PullNumber(), "head_sha": state.HeadSHA,
-		"base_sha": p.PullRequest.Base.SHA, "title": title, "state": p.PullRequest.State, "status": parentStatus,
+		"base_sha": p.PullRequest.Base.SHA, "title": title, "state": p.PullRequest.State,
+		"labels": labels, "status": parentStatus,
 	}
 	if _, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
 		Type: "GitHubPullRequest", Key: &parentKey, Name: &title, Status: &parentStatus, Properties: parentProps,

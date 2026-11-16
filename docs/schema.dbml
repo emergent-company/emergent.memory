@@ -422,6 +422,7 @@ Table "kb"."agent_run_jobs" {
     (status, next_run_at) [name: "idx_agent_run_jobs_poll", note: '(status = \'pending\'::text)']
     (project_id, queue, status, priority, next_run_at) [name: "idx_agent_run_jobs_queue_poll", note: '(status = \'pending\'::text)']
     (run_id) [name: "idx_agent_run_jobs_run_id"]
+    (run_id) [name: "uq_agent_run_jobs_one_live_per_run", unique, note: '(status = ANY (ARRAY[\'pending\'::text, \'processing\'::text]))']
   }
 }
 // kb.agent_run_jobs: Dispatch ledger for queued agent runs. Workers claim rows with FOR UPDATE SKIP LOCKED.
@@ -1057,6 +1058,7 @@ Table "kb"."discovery_jobs" {
   "updated_at" timestamptz [not null, default: `now()`]
 
   Indexes {
+    (organization_id) [name: "idx_discovery_jobs_organization_id"]
     (project_id) [name: "idx_discovery_jobs_project_id"]
     (status) [name: "idx_discovery_jobs_status"]
     (project_id) [name: "uq_discovery_jobs_one_active", unique, note: '(status <> ALL (ARRAY[\'completed\'::text, \'failed\'::text, \'cancelled\'::text]))']
@@ -1130,6 +1132,7 @@ Table "kb"."document_parsing_jobs" {
 
   Indexes {
     (document_id) [name: "idx_document_parsing_jobs_document", note: '(document_id IS NOT NULL)']
+    (organization_id) [name: "idx_document_parsing_jobs_organization_id"]
     (status, updated_at) [name: "idx_document_parsing_jobs_orphaned", note: '(status = \'processing\'::text)']
     (status, created_at) [name: "idx_document_parsing_jobs_pending", note: '(status = \'pending\'::text)']
     (project_id) [name: "idx_document_parsing_jobs_project"]
@@ -1468,9 +1471,8 @@ Table "kb"."graph_objects" {
     (project_id, run_id) [name: "idx_graph_objects_project_run", note: '(run_id IS NOT NULL)']
     (project_id, type, created_at, id) [name: "idx_graph_objects_project_type_created_id"]
     (project_id, type, key) [name: "idx_graph_objects_project_type_key_c", note: '((deleted_at IS NULL) AND (supersedes_id IS NULL) AND (branch_id IS NULL))']
-    (project_id, type, `"left"(properties ->> 'name'::text, 256)`, key) [name: "idx_graph_objects_project_type_name", note: '((deleted_at IS NULL) AND (supersedes_id IS NULL) AND (branch_id IS NULL))']
-    (project_id, type, `lower(name)`) [name: "idx_graph_objects_project_type_name_lower"]
     (project_id, type, properties) [name: "idx_graph_objects_project_type_props_gin", note: '((deleted_at IS NULL) AND (supersedes_id IS NULL) AND (branch_id IS NULL))']
+    (project_id, type, `"left"(name, 256)`, key) [name: "idx_graph_objects_project_type_title_sort", note: '((deleted_at IS NULL) AND (supersedes_id IS NULL) AND (branch_id IS NULL))']
     (schema_version) [name: "idx_graph_objects_schema_version"]
     (project_id, last_accessed_at, id) [name: "idx_graph_objects_unused_main", note: '((supersedes_id IS NULL) AND (deleted_at IS NULL))']
     (project_id, namespace, type, key) [name: "idx_graph_objects_upsert_namespace", unique, note: '((key IS NOT NULL) AND (namespace IS NOT NULL) AND (supersedes_id IS NULL) AND (deleted_at IS NULL) AND (branch_id IS NULL))']
@@ -1597,6 +1599,10 @@ Table "kb"."invites" {
   "revoked_at" timestamptz
   "created_at" timestamptz [not null, default: `now()`]
   "invited_by_user_id" uuid
+
+  Indexes {
+    (organization_id) [name: "idx_invites_organization_id"]
+  }
 }
 
 Table "kb"."llm_call_logs" {
@@ -2461,6 +2467,41 @@ Table "kb"."retrieval_traces" {
 }
 // kb.retrieval_traces: Persisted retrieval traces for unified search debugging and reconstruction
 
+Table "kb"."review_gates" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid [not null]
+  "subject_type" text [not null]
+  "subject_ref" text [not null]
+  "head_sha" text [not null]
+  "required_reviewers" jsonb [not null, default: '[]']
+  "status" text [not null, default: 'pending']
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (project_id, subject_type, subject_ref, head_sha) [unique]
+    (project_id, subject_type, subject_ref, created_at) [name: "idx_review_gates_subject"]
+  }
+}
+
+Table "kb"."review_verdicts" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "gate_id" uuid [not null]
+  "project_id" uuid [not null]
+  "reviewer_agent_id" uuid [not null]
+  "reviewer_name" text [not null]
+  "head_sha" text [not null]
+  "verdict" text [not null]
+  "evidence" text [not null, default: '']
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (gate_id, reviewer_agent_id) [unique]
+    (gate_id, created_at) [name: "idx_review_verdicts_gate"]
+  }
+}
+
 Table "kb"."run_events" {
   "id" uuid [pk, default: `gen_random_uuid()`]
   "run_id" uuid [not null]
@@ -2664,6 +2705,7 @@ Table "kb"."skill_reviews" {
     (agent_id, created_at) [name: "idx_skill_reviews_agent"]
     (status, created_at) [name: "idx_skill_reviews_claim", note: '(status = \'pending\'::text)']
     (agent_id) [name: "idx_skill_reviews_one_active", unique, note: '((status = ANY (ARRAY[\'pending\'::text, \'running\'::text])) AND (agent_id IS NOT NULL))']
+    (org_id) [name: "idx_skill_reviews_org_id"]
     (agent_run_id) [name: "idx_skill_reviews_run", unique, note: '(agent_run_id IS NOT NULL)']
   }
 }
@@ -3185,10 +3227,13 @@ Ref: "kb"."chunk_embedding_budget_blocks"."project_id" > "kb"."projects"."id"
 Ref: "kb"."chunk_embedding_jobs"."chunk_id" > "kb"."chunks"."id"
 Ref: "kb"."chunk_revisions"."chunk_id" > "kb"."chunks"."id"
 Ref: "kb"."chunks"."document_id" > "kb"."documents"."id"
+Ref: "kb"."discovery_jobs"."organization_id" > "kb"."orgs"."id"
+Ref: "kb"."discovery_jobs"."project_id" > "kb"."projects"."id"
 Ref: "kb"."discovery_type_candidates"."job_id" > "kb"."discovery_jobs"."id"
 Ref: "kb"."document_artifacts"."document_id" > "kb"."documents"."id"
 Ref: "kb"."document_parsing_jobs"."document_id" > "kb"."documents"."id"
 Ref: "kb"."document_parsing_jobs"."extraction_job_id" > "kb"."object_extraction_jobs"."id"
+Ref: "kb"."document_parsing_jobs"."organization_id" > "kb"."orgs"."id"
 Ref: "kb"."document_parsing_jobs"."project_id" > "kb"."projects"."id"
 Ref: "kb"."documents"."project_id" > "kb"."projects"."id"
 Ref: "kb"."documents"."created_by_user_id" > "core"."user_profiles"."id"
@@ -3210,6 +3255,7 @@ Ref: "kb"."graph_relationships"."project_id" > "kb"."projects"."id"
 Ref: "kb"."graph_schemas"."parent_version_id" > "kb"."graph_schemas"."id"
 Ref: "kb"."invites"."project_id" > "kb"."projects"."id"
 Ref: "kb"."invites"."invited_by_user_id" > "core"."user_profiles"."id"
+Ref: "kb"."invites"."organization_id" > "kb"."orgs"."id"
 Ref: "kb"."llm_usage_events"."org_id" > "kb"."orgs"."id"
 Ref: "kb"."llm_usage_events"."project_id" > "kb"."projects"."id"
 Ref: "kb"."llm_usage_events"."run_id" > "kb"."agent_runs"."id"
@@ -3267,6 +3313,9 @@ Ref: "kb"."restores"."backup_id" > "kb"."backups"."id"
 Ref: "kb"."restores"."created_by" > "core"."user_profiles"."id"
 Ref: "kb"."restores"."organization_id" > "kb"."orgs"."id"
 Ref: "kb"."retrieval_traces"."project_id" > "kb"."projects"."id"
+Ref: "kb"."review_gates"."project_id" > "kb"."projects"."id"
+Ref: "kb"."review_verdicts"."gate_id" > "kb"."review_gates"."id"
+Ref: "kb"."review_verdicts"."project_id" > "kb"."projects"."id"
 Ref: "kb"."run_events"."run_id" > "kb"."agent_runs"."id"
 Ref: "kb"."schema_studio_messages"."session_id" > "kb"."schema_studio_sessions"."id"
 Ref: "kb"."schema_studio_sessions"."project_id" > "kb"."projects"."id"
@@ -3275,6 +3324,7 @@ Ref: "kb"."sessions"."project_id" > "kb"."projects"."id"
 Ref: "kb"."skill_proposals"."base_skill_id" > "kb"."skills"."id"
 Ref: "kb"."skill_proposals"."project_id" > "kb"."projects"."id"
 Ref: "kb"."skill_proposals"."review_id" > "kb"."skill_reviews"."id"
+Ref: "kb"."skill_reviews"."org_id" > "kb"."orgs"."id"
 Ref: "kb"."skill_reviews"."project_id" > "kb"."projects"."id"
 Ref: "kb"."skill_usage"."project_id" > "kb"."projects"."id"
 Ref: "kb"."skill_usage"."skill_id" > "kb"."skills"."id"

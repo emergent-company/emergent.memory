@@ -1,0 +1,112 @@
+# Deploy Portal
+
+The deploy portal is a public page at `/deploy` that walks a visitor through deploying Memory to **their own** Railway account. It is a capability gate: its routes are registered on every gateway, but they answer `404` unless the deployment explicitly enables the portal.
+
+Nothing else in Memory depends on it — the application works normally with the portal switched off.
+
+## Routes
+
+| Route | Method | Purpose |
+|---|---|---|
+| `/deploy` | GET | Portal page: connect button, or the signed-in user's Railway workspaces |
+| `/deploy/oauth/start` | GET | Starts the Railway OAuth handshake (PKCE `S256`) |
+| `/deploy/oauth/callback` | GET | Exchanges the authorization code and returns to `/deploy` |
+| `/deploy/oauth/logout` | POST | Clears the Railway session cookie |
+
+All four are unauthenticated by design: the portal is for people who have no Memory account yet, and the only sign-in it performs is Railway's. Logout is a `POST` because it mutates the session cookie — a `GET` logout can be triggered by any cross-site image or prefetch — so `GET /deploy/oauth/logout` answers `405`.
+
+## The OAuth handshake
+
+1. `/deploy/oauth/start` mints a `state` value and a PKCE verifier, seals both into the `memory_deploy_state` cookie (10-minute, one-shot: it is cleared before the code exchange) and redirects to Railway with `state`, `code_challenge`, `code_challenge_method=S256` and `prompt=consent`.
+2. Railway redirects back to `/deploy/oauth/callback?code=…&state=…`. The gateway checks the state against the sealed cookie, exchanges the code for a Railway token, seals the token into the `memory_deploy_session` cookie and redirects to `/deploy`.
+3. `/deploy` opens the sealed token, refreshes it with the stored refresh token when it is within 30 seconds of expiry, and lists the user's Railway workspaces over the Railway GraphQL API.
+
+Failures are redirected back to the page as `/deploy?error=<code>` — `missing_code`, `missing_state`, `invalid_state`, `state_mismatch`, `exchange_failed`, or the OAuth `error` value Railway returned — and rendered as a short "try again" message rather than an error page.
+
+### Session cookies
+
+`memory_deploy_session` and `memory_deploy_state` are `HttpOnly`, `SameSite=Lax`, scoped to `/deploy`, and `Secure` when `PUBLIC_BASE_URL` is `https://`. Their values are AES-GCM sealed with a key derived (`sha256`) from `DEPLOY_SESSION_SECRET`: the Railway access and refresh tokens never reach the page, the browser unsealed, or the logs.
+
+## Enabling the portal
+
+The portal is off unless explicitly enabled:
+
+```
+DEPLOY_PORTAL_ENABLED=false   # default
+```
+
+Set `DEPLOY_PORTAL_ENABLED=true` and supply the four dependencies below. In practice that is three credentials plus an https `PUBLIC_BASE_URL`: the redirect URI is derived from it when you leave it unset:
+
+| Variable | Value |
+|---|---|
+| `RAILWAY_OAUTH_CLIENT_ID` | Railway OAuth app client id |
+| `RAILWAY_OAUTH_CLIENT_SECRET` | Railway OAuth app client secret — server-side only, never sent to the browser |
+| `RAILWAY_OAUTH_REDIRECT_URI` | `https://<host>/deploy/oauth/callback`; when unset it defaults to `PUBLIC_BASE_URL` + `/deploy/oauth/callback` |
+| `DEPLOY_SESSION_SECRET` | at least 32 bytes — the session and state cookie key |
+
+The redirect URI must match the callback registered on the Railway OAuth app **exactly**: the gateway sends it as `redirect_uri` on both the authorize request and the token request, and Railway rejects a mismatch.
+
+Rarely set, with defaults that suit Railway's hosted endpoints:
+
+| Variable | Default |
+|---|---|
+| `RAILWAY_OAUTH_SCOPES` | `openid,email,profile,offline_access,workspace:admin,project:admin` |
+| `RAILWAY_OAUTH_AUTHORIZE_URL` | `https://backboard.railway.com/oauth/auth` |
+| `RAILWAY_OAUTH_TOKEN_URL` | `https://backboard.railway.com/oauth/token` |
+| `RAILWAY_GRAPHQL_URL` | `https://backboard.railway.com/graphql/v2` |
+
+The three endpoint overrides must be `https://` outside a `development` environment.
+
+!!! warning "Enabling it incompletely stops the gateway"
+    The gateway validates the capability at startup and refuses to run rather than serving a half-configured portal:
+
+    ```
+    DEPLOY_PORTAL_ENABLED=true requires: RAILWAY_OAUTH_CLIENT_ID, RAILWAY_OAUTH_CLIENT_SECRET, DEPLOY_SESSION_SECRET (>=32 bytes)
+    ```
+
+    The message lists exactly the variables that are missing (or, for the secret, shorter than 32 bytes). Fix them and restart; there is no partial mode.
+
+## What a `404` means
+
+`/deploy` is registered on every gateway, so a `404` is normally a capability answer rather than a routing bug. The bodies tell the two apart:
+
+| Request | Response body |
+|---|---|
+| `/deploy` with the portal disabled | `{"message":"deploy portal is disabled on this deployment"}` |
+| a path no route matches (e.g. `/deploy/typo`) | `{"message":"Not Found"}` |
+
+Both are `404`, and the body is what distinguishes them. Read it with `curl`, which sends `Accept: */*` and so gets the JSON envelope; a browser (`Accept: text/html`) gets the same branded "not found" page in either case, so use a JSON client to tell them apart:
+
+```bash
+curl -sS https://app.example.com/deploy
+# {"message":"deploy portal is disabled on this deployment"}
+```
+
+Troubleshooting entry:
+
+> `/deploy` returns `{"message":"deploy portal is disabled on this deployment"}` → the portal is not enabled on this deployment (`DEPLOY_PORTAL_ENABLED` unset or false). Not a routing bug. Set the flag and its dependencies, or ignore it.
+
+There is a third state, and it should be unreachable: with the flag on but the Railway credentials missing, `/deploy` renders the page with a "not configured" warning and a disabled connect button, and the two OAuth routes answer `{"message":"deploy portal is not configured on this deployment"}`. The gateway refuses to start in that state, so seeing it means the process was started with an environment that bypassed validation.
+
+Two historical cases are worth knowing, because both were reported as "the fix did not land":
+
+- **Releases before the gate named itself.** The disabled portal returned Echo's default `{"message":"Not Found"}` — the same body an unregistered route returns. On those releases a bare `Not Found` at `/deploy` means the capability is off, not that the route is missing.
+- **`0.94.0` — the inverse bug.** The portal *was* enabled and `/deploy` still `404`'d: a scope-rewrite middleware cut unscoped paths before routing, so the request never reached the handler. That was a real routing bug and it was fixed in `0.94.1` ([#648](https://github.com/emergent-company/emergent.memory/issues/648)). A capability-gate body on a current release rules it out.
+
+## Per environment
+
+How the two operated deployments of this project stand today:
+
+| Environment | `DEPLOY_PORTAL_ENABLED` | `GET /deploy` |
+|---|---|---|
+| prod | `true` | `200` — the portal renders |
+| dev | unset (defaults to `false`) | `404` — `deploy portal is disabled on this deployment` |
+
+That difference is expected: dev's web-ui container sets no `DEPLOY_PORTAL_*` variables at all. **It is not a regression, and there is nothing to fix there unless dev is meant to host the portal.** The table records only whether the capability is on; the rest of each deployment's configuration — hostnames, OAuth client credentials, redirect URIs — lives with the deployment that runs it, not in this repository.
+
+## Self-hosting checklist
+
+1. Register a Railway OAuth app whose callback is `https://<your-host>/deploy/oauth/callback`.
+2. Set `DEPLOY_PORTAL_ENABLED=true`, `PUBLIC_BASE_URL` (https), and the four dependencies above.
+3. Restart the gateway and check `curl -sS https://<your-host>/deploy` renders the page; the connect button then round-trips through Railway.
+4. Leave `DEPLOY_PORTAL_ENABLED` unset to keep the portal off — the deployment loses nothing but the page.

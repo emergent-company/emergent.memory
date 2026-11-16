@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../fixtures';
 import { createWebSource, deleteDriveSource } from '../../helpers/datasources';
 
 // Sync trigger + job progress for the Web provider (gateway /data-sources/:id +

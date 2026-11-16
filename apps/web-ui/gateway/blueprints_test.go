@@ -1101,6 +1101,36 @@ func TestObjectTypePropertiesHeader(t *testing.T) {
 	}
 }
 
+// TestObjectTypePropertiesFormatBadge pins the read-only visibility of a
+// property's declared content format: the schema and blueprint browsers show the
+// format beside the type, so a blueprint-authored `format: markdown` property is
+// visible even though the editor has no format control yet.
+func TestObjectTypePropertiesFormatBadge(t *testing.T) {
+	props := propertiesFromMap(map[string]any{
+		"release_notes": map[string]any{"type": "string", "format": "markdown"},
+		"contact":       map[string]any{"type": "string"},
+	})
+	var notes *PropertyDetail
+	for i := range props {
+		if props[i].Name == "release_notes" {
+			notes = &props[i]
+		}
+	}
+	if notes == nil || notes.Format != "markdown" {
+		t.Fatalf("propertiesFromMap must carry format, got %+v", props)
+	}
+	html := renderHTML(t, objectTypeProperties(props, true))
+	if !strings.Contains(html, "markdown") {
+		t.Errorf("format badge missing from the properties table:\n%s", html)
+	}
+	if got := strings.Count(html, `data-property-format="markdown"`); got != 2 {
+		t.Errorf("format badge rendered %d times, want 2 (mobile + table):\n%s", got, html)
+	}
+	if strings.Contains(html, `data-property-format=""`) {
+		t.Errorf("a property without a format must not render an empty badge:\n%s", html)
+	}
+}
+
 // TestPropertyTypeToneHuesSeparated guards the scannability of the type colour
 // scheme. Every type the registry interprets must resolve to a tone whose oklch
 // hue has been measured here, and the distinct hues must stay at least 40°

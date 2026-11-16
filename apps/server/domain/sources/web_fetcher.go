@@ -12,6 +12,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/internal/outbound"
 	"github.com/emergent-company/emergent.memory/internal/webcrawl"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 // webFetchCap is the maximum body a single fetch reads into memory. It is far
@@ -77,7 +78,7 @@ func (f *webFetcher) Get(ctx context.Context, rawURL string) (*webcrawl.Response
 		return nil, fmt.Errorf("web: read body of %q: %w", rawURL, err)
 	}
 	if len(body) > webFetchCap {
-		return nil, fmt.Errorf("web: body of %q exceeds the %d-byte read cap", rawURL, webFetchCap)
+		return nil, apperror.NewValidationf("web: body of %q exceeds the %d-byte read cap", rawURL, webFetchCap)
 	}
 
 	return &webcrawl.Response{

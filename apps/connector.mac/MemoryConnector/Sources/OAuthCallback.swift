@@ -7,8 +7,20 @@ import Foundation
 protocol BrowserAuthenticator: Sendable {
     /// Opens `url` in the system browser and resolves with the callback URL
     /// delivered to `callbackURLScheme`. Throws `OIDCError.cancelled` when the
-    /// user cancels.
+    /// user cancels. No time limit: the user is expected to interact.
     func authenticate(url: URL, callbackURLScheme: String) async throws -> URL
+    /// Same, but gives up after `timeout`, tears the browser session down and
+    /// reports `OIDCError.cancelled` — the clean decline a silent
+    /// (`prompt=none`) attempt expects.
+    func authenticate(url: URL, callbackURLScheme: String, timeout: Duration) async throws -> URL
+}
+
+extension BrowserAuthenticator {
+    /// Default for authenticators with no cancellation hook (tests): the
+    /// timeout is advisory and the underlying call decides when to stop.
+    func authenticate(url: URL, callbackURLScheme: String, timeout _: Duration) async throws -> URL {
+        try await authenticate(url: url, callbackURLScheme: callbackURLScheme)
+    }
 }
 
 /// Real `ASWebAuthenticationSession` implementation.
@@ -63,43 +75,103 @@ final class WebAuthenticator: NSObject, BrowserAuthenticator, @unchecked Sendabl
         }
     }
 
+    /// One in-flight browser round trip: the retained live session, the
+    /// continuation, and the single-resume gate. It also keeps `start` down to a
+    /// few parameters.
+    private final class SessionAttempt: @unchecked Sendable {
+        let holder = SessionHolder()
+        private let lock = NSLock()
+        private var finished = false
+        private let continuation: CheckedContinuation<URL, Error>
+
+        init(continuation: CheckedContinuation<URL, Error>) {
+            self.continuation = continuation
+        }
+
+        /// Keeps the started session (and its presentation anchor) alive until
+        /// the attempt ends; ASWebAuthenticationSession does not retain itself.
+        func retain(session: ASWebAuthenticationSession, provider: AnchorProvider) {
+            holder.set(session: session, provider: provider)
+        }
+
+        /// Completes the attempt. The timeout and the session's own completion
+        /// handler can both fire, and a second resume traps, so only the first
+        /// call does anything.
+        func finish(_ result: Result<URL, Error>) {
+            holder.clear()
+            lock.lock()
+            let alreadyFinished = finished
+            finished = true
+            lock.unlock()
+            guard !alreadyFinished else { return }
+            continuation.resume(with: result)
+        }
+    }
+
     nonisolated func authenticate(url: URL, callbackURLScheme: String) async throws -> URL {
+        try await run(url: url, callbackURLScheme: callbackURLScheme, timeout: nil)
+    }
+
+    nonisolated func authenticate(url: URL, callbackURLScheme: String, timeout: Duration) async throws -> URL {
+        try await run(url: url, callbackURLScheme: callbackURLScheme, timeout: timeout)
+    }
+
+    /// Shared implementation. `timeout` nil waits for the user; otherwise the
+    /// session is cancelled when it expires and the attempt completes as
+    /// `.cancelled`.
+    ///
+    /// A silent (`prompt=none`) attempt means no login page, not no window: an
+    /// IdP that answers with an HTML page instead of a callback would otherwise
+    /// leave a window up from a background trigger, so the timeout is what makes
+    /// that path safe.
+    private nonisolated func run(url: URL, callbackURLScheme: String, timeout: Duration?) async throws -> URL {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
-            let holder = SessionHolder()
+            start(url: url, callbackURLScheme: callbackURLScheme, timeout: timeout,
+                  attempt: SessionAttempt(continuation: continuation))
+        }
+    }
 
-            // Runs on a background queue — Sendable values only.
-            let completion: @Sendable (URL?, Error?) -> Void = { callbackURL, error in
-                holder.clear()
-                if let error {
-                    let nsError = error as NSError
-                    if nsError.code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
-                        continuation.resume(throwing: OIDCError.cancelled)
-                    } else {
-                        continuation.resume(throwing: OIDCError.invalidResponse(error.localizedDescription))
-                    }
-                } else if let callbackURL {
-                    continuation.resume(returning: callbackURL)
+    /// Creates and starts the session on the main actor (an AppKit requirement)
+    /// and arms the timeout, which cancels the session so it cannot linger.
+    private nonisolated func start(url: URL, callbackURLScheme: String, timeout: Duration?,
+                                   attempt: SessionAttempt)
+    {
+        // The session completion handler runs on a background XPC queue, so it
+        // only touches Sendable values.
+        let completion: @Sendable (URL?, Error?) -> Void = { callbackURL, error in
+            if let error {
+                let nsError = error as NSError
+                if nsError.code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
+                    attempt.finish(.failure(OIDCError.cancelled))
                 } else {
-                    continuation.resume(throwing: OIDCError.invalidResponse("empty authentication callback"))
+                    attempt.finish(.failure(OIDCError.invalidResponse(error.localizedDescription)))
                 }
+            } else if let callbackURL {
+                attempt.finish(.success(callbackURL))
+            } else {
+                attempt.finish(.failure(OIDCError.invalidResponse("empty authentication callback")))
             }
+        }
+        Task { @MainActor in
+            let provider = AnchorProvider()
+            provider.setWindow(NSApp.keyWindow ?? NSApp.windows.first ?? NSWindow())
 
-            // AppKit requires creating/starting the session on the main thread.
+            let session = ASWebAuthenticationSession(url: url,
+                                                     callbackURLScheme: callbackURLScheme,
+                                                     completionHandler: completion)
+            session.presentationContextProvider = provider
+            session.prefersEphemeralWebBrowserSession = false
+            attempt.retain(session: session, provider: provider)
+
+            if !session.start() {
+                attempt.finish(.failure(OIDCError.invalidResponse("could not start the authentication session")))
+                return
+            }
+            guard let timeout else { return }
             Task { @MainActor in
-                let provider = AnchorProvider()
-                provider.setWindow(NSApp.keyWindow ?? NSApp.windows.first ?? NSWindow())
-
-                let session = ASWebAuthenticationSession(url: url,
-                                                         callbackURLScheme: callbackURLScheme,
-                                                         completionHandler: completion)
-                session.presentationContextProvider = provider
-                session.prefersEphemeralWebBrowserSession = false
-                holder.set(session: session, provider: provider)
-
-                if !session.start() {
-                    holder.clear()
-                    continuation.resume(throwing: OIDCError.invalidResponse("could not start the authentication session"))
-                }
+                try? await Task.sleep(for: timeout)
+                session.cancel()
+                attempt.finish(.failure(OIDCError.cancelled))
             }
         }
     }
@@ -112,6 +184,13 @@ enum OAuthCallback {
     nonisolated static let callbackScheme = "com.emergent.memory.connector"
     nonisolated static let redirectURI = "com.emergent.memory.connector://callback"
     nonisolated static let postLogoutRedirectURI = "com.emergent.memory.connector://logout"
+
+    /// How long a silent (`prompt=none`) browser round trip may take before it
+    /// is cancelled and treated as a clean decline. "Silent" means no login
+    /// page, not necessarily no window: an IdP that answers with HTML instead
+    /// of a callback must not leave one up, least of all from a background
+    /// launch or wake.
+    nonisolated static let silentBrowserTimeout: Duration = .seconds(15)
 
     /// Parses the callback URL's query into a dictionary (last value wins).
     nonisolated static func queryItems(from url: URL) -> [String: String] {

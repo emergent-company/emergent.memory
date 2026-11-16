@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	sdkauth "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/auth"
@@ -39,6 +40,15 @@ var Scopes = []string{"openid", "profile", "email", "offline_access"}
 // httpTimeout bounds each account network call.
 const httpTimeout = 15 * time.Second
 
+// Cross-process refresh serialization. Zitadel refresh tokens are single-use,
+// so two processes refreshing at once means one wins and the other is rejected;
+// the lock makes the loser reuse the winner's token instead.
+const (
+	refreshLockTimeout = 20 * time.Second
+	refreshLockPoll    = 50 * time.Millisecond
+	refreshLockSuffix  = ".refresh.lock"
+)
+
 // ErrNoSession indicates there is no stored session for the requested server.
 var ErrNoSession = errors.New("account: no stored session")
 
@@ -54,6 +64,12 @@ type Session struct {
 	ExpiresAt    time.Time `json:"expires_at"`
 	UserEmail    string    `json:"user_email,omitempty"`
 	UserID       string    `json:"user_id,omitempty"`
+	// NeedsReauth marks a session whose refresh token the provider rejected
+	// (expired, revoked, or rotated away by a process that lost the refresh
+	// race). The tokens are deliberately KEPT: deleting them turns a
+	// recoverable rejection into a forced interactive login, and a silent
+	// re-auth (`prompt=none`) cannot run without the stored client/issuer.
+	NeedsReauth bool `json:"needs_reauth,omitempty"`
 }
 
 // Expired reports whether the access token is past its expiry.
@@ -127,6 +143,10 @@ type Manager struct {
 	scopes    []string
 	deps      Deps
 	refreshMu sync.Mutex
+	// refreshLock, when non-nil, replaces the real cross-process flock. Tests
+	// install one to prove a write path is serialized (see
+	// TestCompletePKCEWritesUnderRefreshLock); production leaves it nil.
+	refreshLock func(serverURL string) (func(), error)
 }
 
 // NewManager returns a Manager backed by baseDir using the production network
@@ -381,11 +401,26 @@ func (m *Manager) LoginWithOptions(ctx context.Context, serverURL string, opts L
 
 // Refresh refreshes the stored session for serverURL via the SDK provider. A
 // refresh that is rejected as an authentication error (the refresh token was
-// rejected with invalid_grant/invalid_token or a 400/401 response) clears the
-// stored session so callers can prompt for a new sign-in; transient failures
-// (network, timeout, parse, 5xx) leave the stored session intact. Refreshes are
-// serialized per Manager.
+// rejected with invalid_grant/invalid_token or a 400/401 response) keeps the
+// stored session and marks it NeedsReauth, so a caller can attempt a silent
+// re-auth instead of forcing an interactive sign-in; transient failures
+// (network, timeout, parse, 5xx) leave the stored session untouched. Refreshes
+// are serialized per Manager and across processes.
 func (m *Manager) Refresh(ctx context.Context, serverURL string) (*Session, error) {
+	// Serialize across processes as well: a single-use rotation raced by two
+	// `memory-connector` processes rejects the loser, so every refresh path
+	// takes the same advisory lock.
+	unlock, err := m.lockRefresh(serverURL)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	return m.refreshLocked(ctx, serverURL)
+}
+
+// refreshLocked performs the refresh. Callers must hold refreshMu and the
+// cross-process refresh lock.
+func (m *Manager) refreshLocked(ctx context.Context, serverURL string) (*Session, error) {
 	m.refreshMu.Lock()
 	defer m.refreshMu.Unlock()
 
@@ -407,12 +442,22 @@ func (m *Manager) Refresh(ctx context.Context, serverURL string) (*Session, erro
 	creds, err := m.deps.RefreshToken(ctx, oidc, m.effectiveClientID(sess.ClientID), m.sessionPath(serverURL))
 	if err != nil {
 		if isAuthRejection(err) && m.refreshTokenStillCurrent(serverURL, sess.RefreshToken) {
-			_ = m.Logout(serverURL)
+			// Do NOT delete the session. The stored refresh token is the only
+			// thing that can recover this account without user interaction, and
+			// a deletion turns a rejection into a forced interactive sign-in
+			// (the historical behaviour, and the reason a single-use rotation
+			// race looked like "signed out unexpectedly"). Mark it so callers
+			// can offer a silent re-auth instead.
+			if !sess.NeedsReauth {
+				sess.NeedsReauth = true
+				_ = m.Save(serverURL, sess)
+			}
 		}
 		return nil, fmt.Errorf("account: refresh %s: %w", serverURL, err)
 	}
 
 	sess.AccessToken = creds.AccessToken
+	sess.NeedsReauth = false
 	if creds.RefreshToken != "" {
 		sess.RefreshToken = creds.RefreshToken
 	}
@@ -426,9 +471,121 @@ func (m *Manager) Refresh(ctx context.Context, serverURL string) (*Session, erro
 	return sess, nil
 }
 
+// AccessToken returns a usable access token for serverURL, refreshing it when
+// the stored one is missing or expires within minTTL.
+//
+// Refresh is serialized across PROCESSES as well as goroutines. Zitadel refresh
+// tokens are single-use and rotate on every refresh, and the macOS app spawns a
+// separate `memory-connector` process for each token read, so concurrent
+// refreshes used to race: one process rotated the token and every loser was
+// rejected with invalid_grant (which the app surfaced as "signed out"). Inside
+// the advisory lock the session is re-read, so a process that waited returns the
+// winner's fresh token instead of refreshing again.
+//
+// A session with no refresh token still returns its access token: the caller's
+// API call will decide whether it is still good.
+func (m *Manager) AccessToken(ctx context.Context, serverURL string, minTTL time.Duration) (string, error) {
+	sess, err := m.SessionFor(serverURL)
+	if err != nil {
+		return "", err
+	}
+	if sess == nil {
+		return "", fmt.Errorf("%w for %s", ErrNoSession, serverURL)
+	}
+	if !needsRefresh(sess, minTTL) {
+		return sess.AccessToken, nil
+	}
+	if sess.RefreshToken == "" {
+		if sess.AccessToken != "" {
+			return sess.AccessToken, nil
+		}
+		return "", fmt.Errorf("%w for %s", ErrNoSession, serverURL)
+	}
+
+	unlock, err := m.lockRefresh(serverURL)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+
+	// Another process may have refreshed while this one waited for the lock.
+	if sess, err = m.SessionFor(serverURL); err != nil {
+		return "", err
+	}
+	if sess == nil {
+		return "", fmt.Errorf("%w for %s", ErrNoSession, serverURL)
+	}
+	if !needsRefresh(sess, minTTL) {
+		return sess.AccessToken, nil
+	}
+	refreshed, err := m.refreshLocked(ctx, serverURL)
+	if err != nil {
+		return "", err
+	}
+	return refreshed.AccessToken, nil
+}
+
+// needsRefresh reports whether the access token must be renewed before use:
+// missing, or expiring within minTTL. A session with no recorded expiry is
+// treated as usable — there is nothing to compare against, and a stale token
+// then fails at the API call, which retries after a refresh.
+func needsRefresh(s *Session, minTTL time.Duration) bool {
+	if s == nil || s.AccessToken == "" {
+		return true
+	}
+	if s.ExpiresAt.IsZero() {
+		return false
+	}
+	return time.Now().Add(minTTL).After(s.ExpiresAt)
+}
+
+// lockRefresh takes the cross-process advisory lock that serializes refresh for
+// one server, waiting up to refreshLockTimeout. The returned function releases
+// it; it is safe to call exactly once (defer unlock()).
+func (m *Manager) lockRefresh(serverURL string) (func(), error) {
+	if m.refreshLock != nil {
+		return m.refreshLock(serverURL)
+	}
+	return m.flockRefresh(serverURL)
+}
+
+// flockRefresh is the real lock: an advisory flock on a per-server lock file
+// beside the session, so it serializes across processes as well as goroutines.
+func (m *Manager) flockRefresh(serverURL string) (func(), error) {
+	dir := m.accountsDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("account: create accounts dir: %w", err)
+	}
+	path := filepath.Join(dir, "."+strings.TrimSuffix(accountFileName(serverURL), ".json")+refreshLockSuffix)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("account: open refresh lock: %w", err)
+	}
+	deadline := time.Now().Add(refreshLockTimeout)
+	for {
+		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+			_ = f.Close()
+			return nil, fmt.Errorf("account: lock refresh for %s: %w", serverURL, err)
+		}
+		if time.Now().After(deadline) {
+			_ = f.Close()
+			return nil, fmt.Errorf("account: timed out after %s waiting for the refresh lock of %s", refreshLockTimeout, serverURL)
+		}
+		time.Sleep(refreshLockPoll)
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
+}
+
 // isAuthRejection reports whether a refresh error is an authentication
 // rejection (the token endpoint rejected the refresh token) rather than a
-// transient failure. Only such rejections clear the stored session.
+// transient failure. Only such rejections mark the session as needing re-auth.
 func isAuthRejection(err error) bool {
 	var re *sdkauth.RefreshError
 	if !errors.As(err, &re) {
@@ -436,9 +593,18 @@ func isAuthRejection(err error) bool {
 	}
 	switch re.Code {
 	case "invalid_grant", "invalid_token":
+		// The provider's own words for "this refresh token is dead".
 		return true
+	case "":
+		// No OAuth error code: fall back to the status. A 5xx is transient and
+		// deliberately lands here as false.
+		return re.StatusCode == http.StatusBadRequest || re.StatusCode == http.StatusUnauthorized
 	}
-	return re.StatusCode == http.StatusBadRequest || re.StatusCode == http.StatusUnauthorized
+	// A coded error that is not about the grant itself (`invalid_request`,
+	// `invalid_client`, `unsupported_grant_type`) is a configuration problem: a
+	// new sign-in would fail the same way, so it must not be reported as
+	// "needs re-auth" or it would loop the user through a useless login.
+	return false
 }
 
 // refreshTokenStillCurrent reports whether the stored session still holds the
@@ -450,7 +616,10 @@ func isAuthRejection(err error) bool {
 func (m *Manager) refreshTokenStillCurrent(serverURL, attempted string) bool {
 	cur, err := m.SessionFor(serverURL)
 	if err != nil || cur == nil {
-		// Cannot verify; preserve the clear-on-rejection behavior.
+		// Cannot verify. Treat the attempted token as current: a rejection is
+		// then attributed to it and the session is kept (marked needs_reauth)
+		// rather than discarded — the token is the one recovery path that
+		// needs no user.
 		return true
 	}
 	return cur.RefreshToken == attempted

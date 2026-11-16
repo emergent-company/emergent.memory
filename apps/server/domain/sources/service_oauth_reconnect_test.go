@@ -236,8 +236,8 @@ func TestStartOAuth_ReconnectValidatesTheTarget(t *testing.T) {
 		if err == nil {
 			t.Fatal("StartOAuth(github reconnect of a drive source) succeeded, want a validation error")
 		}
-		var appErr *apperror.Error
-		if !errors.As(err, &appErr) || appErr.HTTPStatus != http.StatusUnprocessableEntity {
+		appErr, ok := errors.AsType[*apperror.Error](err)
+		if !ok || appErr.HTTPStatus != http.StatusUnprocessableEntity {
 			t.Fatalf("StartOAuth(provider mismatch) error = %v, want a validation error (422)", err)
 		}
 	})

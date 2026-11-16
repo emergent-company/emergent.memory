@@ -9,11 +9,20 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/scheduler"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // EmbeddingControlHandler exposes HTTP endpoints to pause/resume/inspect
 // all embedding workers. Intended for benchmarking and operational use.
+//
+// Every failure is returned as *apperror.Error, so apperror.HTTPErrorHandler is
+// the only writer of an error body (dev-rule-go-apperror-only, #863). Success
+// bodies remain c.JSON. The handler used to answer failures with
+// map[string]any{"error": err.Error()}, which put a repository or provider
+// message on the wire and was invisible to the ratchet that counted only
+// echo.NewHTTPError and c.String error bodies; the c.JSON error-body shape is
+// now counted too (scripts/lint-ratchet.sh).
 type EmbeddingControlHandler struct {
 	objectWorker  *GraphEmbeddingWorker
 	relWorker     *GraphRelationshipEmbeddingWorker
@@ -150,7 +159,9 @@ type EmbeddingConfigRequest struct {
 func (h *EmbeddingControlHandler) Config(c echo.Context) error {
 	var req EmbeddingConfigRequest
 	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+		// The bind error names a decoder detail; the caller only needs to know
+		// the body did not parse. invalid_request_body is the shared code.
+		return apperror.New(http.StatusBadRequest, "invalid_request_body", "invalid request body")
 	}
 
 	// Apply to both workers (they share the same config shape)
@@ -270,12 +281,11 @@ func (h *EmbeddingControlHandler) Progress(c echo.Context) error {
 	if projectID == "" {
 		isSuperadmin, err := auth.IsSuperadminFull(ctx, h.objectJobsSvc.DB())
 		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return apperror.NewInternal("check superadmin privilege", err)
 		}
 		if !isSuperadmin {
-			return c.JSON(http.StatusForbidden, map[string]any{
-				"error": "superadmin privilege required for deployment-wide embedding progress",
-			})
+			return apperror.New(http.StatusForbidden, "forbidden",
+				"superadmin privilege required for deployment-wide embedding progress")
 		}
 		return h.progressGlobal(ctx, c)
 	}
@@ -300,10 +310,10 @@ func (h *EmbeddingControlHandler) progressByProject(ctx context.Context, c echo.
 	_ = g.Wait()
 
 	if objErr != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": objErr.Error()})
+		return apperror.NewInternal("get object embedding stats", objErr)
 	}
 	if relErr != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": relErr.Error()})
+		return apperror.NewInternal("get relationship embedding stats", relErr)
 	}
 	return c.JSON(http.StatusOK, embeddingProgressResponse(objStats, relStats))
 }
@@ -323,10 +333,10 @@ func (h *EmbeddingControlHandler) progressGlobal(ctx context.Context, c echo.Con
 	_ = g.Wait()
 
 	if objErr != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": objErr.Error()})
+		return apperror.NewInternal("get object embedding stats", objErr)
 	}
 	if relErr != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": relErr.Error()})
+		return apperror.NewInternal("get relationship embedding stats", relErr)
 	}
 	return c.JSON(http.StatusOK, embeddingProgressResponse(objStats, relStats))
 }
@@ -377,12 +387,11 @@ func (h *EmbeddingControlHandler) Coverage(c echo.Context) error {
 	if projectID == "" {
 		isSuperadmin, err := auth.IsSuperadminFull(ctx, h.objectJobsSvc.DB())
 		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return apperror.NewInternal("check superadmin privilege", err)
 		}
 		if !isSuperadmin {
-			return c.JSON(http.StatusForbidden, map[string]any{
-				"error": "superadmin privilege required for deployment-wide embedding coverage",
-			})
+			return apperror.New(http.StatusForbidden, "forbidden",
+				"superadmin privilege required for deployment-wide embedding coverage")
 		}
 		return h.coverageGlobal(ctx, c)
 	}
@@ -405,10 +414,10 @@ func (h *EmbeddingControlHandler) coverageByProject(ctx context.Context, c echo.
 	_ = g.Wait()
 
 	if objErr != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": objErr.Error()})
+		return apperror.NewInternal("get object embedding coverage", objErr)
 	}
 	if relErr != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": relErr.Error()})
+		return apperror.NewInternal("get relationship embedding coverage", relErr)
 	}
 	return c.JSON(http.StatusOK, embeddingCoverageResponse(objCov, relCov))
 }
@@ -428,10 +437,10 @@ func (h *EmbeddingControlHandler) coverageGlobal(ctx context.Context, c echo.Con
 	_ = g.Wait()
 
 	if objErr != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": objErr.Error()})
+		return apperror.NewInternal("get object embedding coverage", objErr)
 	}
 	if relErr != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": relErr.Error()})
+		return apperror.NewInternal("get relationship embedding coverage", relErr)
 	}
 	return c.JSON(http.StatusOK, embeddingCoverageResponse(objCov, relCov))
 }
@@ -481,7 +490,7 @@ func (h *EmbeddingControlHandler) DiagnoseQueue(c echo.Context) error {
 		WHERE status = 'pending' AND scheduled_at <= now()
 	`).Scan(ctx, &result)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return apperror.NewInternal("inspect embedding queue", err)
 	}
 	var allPending []row
 	err = h.objectJobsSvc.DB().NewRaw(`
@@ -494,7 +503,7 @@ func (h *EmbeddingControlHandler) DiagnoseQueue(c echo.Context) error {
 		WHERE status = 'pending'
 	`).Scan(ctx, &allPending)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return apperror.NewInternal("inspect embedding queue", err)
 	}
 	return c.JSON(http.StatusOK, map[string]any{
 		"eligible_now": result,
@@ -507,12 +516,12 @@ func (h *EmbeddingControlHandler) ResetSchedule(c echo.Context) error {
 
 	objN, err := h.objectJobsSvc.ResetSchedule(ctx)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return apperror.NewInternal("reset object embedding job schedule", err)
 	}
 
 	relN, err := h.relJobsSvc.ResetSchedule(ctx)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return apperror.NewInternal("reset relationship embedding job schedule", err)
 	}
 
 	return c.JSON(http.StatusOK, EmbeddingResetScheduleResponse{
@@ -528,12 +537,12 @@ func (h *EmbeddingControlHandler) ClearQueue(c echo.Context) error {
 
 	objN, err := h.objectJobsSvc.ClearPendingJobs(ctx)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return apperror.NewInternal("clear object embedding job queue", err)
 	}
 
 	relN, err := h.relJobsSvc.ClearPendingJobs(ctx)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return apperror.NewInternal("clear relationship embedding job queue", err)
 	}
 
 	return c.JSON(http.StatusOK, EmbeddingClearResponse{

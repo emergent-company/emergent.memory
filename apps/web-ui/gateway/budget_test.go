@@ -107,14 +107,14 @@ func TestSidebarBudgetBadge(t *testing.T) {
 	if !found {
 		t.Fatal("Usage item missing from sidebar")
 	}
-	for _, want := range []string{`data-testid="budget-nav-badge"`, `data-level="warning"`, "Near limit"} {
+	for _, want := range []string{`data-testid="budget-nav-badge"`, `data-level="warning"`, "Near limit", "ml-1"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("warning badge missing %q: %s", want, html)
 		}
 	}
 
 	_, html = usageItem(t, "exhausted")
-	for _, want := range []string{`data-level="exhausted"`, "Over budget"} {
+	for _, want := range []string{`data-level="exhausted"`, "Over budget", "ml-1"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("exhausted badge missing %q: %s", want, html)
 		}

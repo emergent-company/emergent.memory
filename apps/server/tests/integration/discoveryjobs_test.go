@@ -867,14 +867,17 @@ Carol Davis is Director of Product. Dave Lee is a Senior Engineer reporting to B
 	djRepo := discoveryjobs.NewRepository(testDB.DB, log)
 	djSvc := discoveryjobs.NewService(djRepo, docsSvc, cfg, mf, log)
 
-	// Create a stub discovery job.
+	// Create a stub discovery job. organization_id is notnull and foreign-keyed
+	// to organizations (migration 00306), so the fixture must carry the project's
+	// org rather than the zero UUID.
 	stubJob := &discoveryjobs.DiscoveryJob{
-		ID:        uuid.New(),
-		ProjectID: projectUUID,
-		Status:    discoveryjobs.StatusCompleted,
-		KBPurpose: "HR org-chart system",
-		Progress:  discoveryjobs.JSONMap{"message": "stub"},
-		Config:    discoveryjobs.JSONMap{"document_ids": []string{doc.ID}},
+		ID:             uuid.New(),
+		OrganizationID: uuid.MustParse(orgID),
+		ProjectID:      projectUUID,
+		Status:         discoveryjobs.StatusCompleted,
+		KBPurpose:      "HR org-chart system",
+		Progress:       discoveryjobs.JSONMap{"message": "stub"},
+		Config:         discoveryjobs.JSONMap{"document_ids": []string{doc.ID}},
 	}
 	require.NoError(t, djRepo.Create(ctx, stubJob))
 
@@ -962,12 +965,13 @@ when the solk touches the gravity-well. A match lasts 5 phases of 8 zorns each.`
 	djSvc := discoveryjobs.NewService(djRepo, docsSvc, cfg, mf, log)
 
 	stubJob := &discoveryjobs.DiscoveryJob{
-		ID:        uuid.New(),
-		ProjectID: projectUUID,
-		Status:    discoveryjobs.StatusCompleted,
-		KBPurpose: "Fictional sports tracking",
-		Progress:  discoveryjobs.JSONMap{"message": "stub"},
-		Config:    discoveryjobs.JSONMap{"document_ids": []string{doc.ID}},
+		ID:             uuid.New(),
+		OrganizationID: uuid.MustParse(orgID),
+		ProjectID:      projectUUID,
+		Status:         discoveryjobs.StatusCompleted,
+		KBPurpose:      "Fictional sports tracking",
+		Progress:       discoveryjobs.JSONMap{"message": "stub"},
+		Config:         discoveryjobs.JSONMap{"document_ids": []string{doc.ID}},
 	}
 	require.NoError(t, djRepo.Create(ctx, stubJob))
 
@@ -1780,37 +1784,6 @@ func waitForExtraction(t *testing.T, ctx context.Context, testDB *testutil.TestD
 		time.Sleep(5 * time.Second)
 	}
 	t.Logf("  ⚠ timeout after %v (%d/%d jobs done)", timeout, doneCount, totalCount)
-	return false
-}
-
-// waitForObjects polls until at least one graph object exists for the project.
-// Deprecated: use waitForExtraction for more reliable job-level waiting.
-func waitForObjects(t *testing.T, ctx context.Context, testDB *testutil.TestDB, projectID string, timeout time.Duration) bool {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		var count int
-		err := testDB.DB.NewRaw(
-			"SELECT COUNT(*) FROM kb.graph_objects WHERE project_id = ?::uuid AND supersedes_id IS NULL",
-			projectID,
-		).Scan(ctx, &count)
-		if err == nil && count > 0 {
-			t.Logf("  background extraction complete: %d objects found", count)
-			return true
-		}
-		// Check if extraction job finished (even if it produced 0 objects)
-		var jobStatus string
-		_ = testDB.DB.NewRaw(
-			`SELECT status FROM kb.object_extraction_jobs WHERE project_id = ?::uuid ORDER BY created_at DESC LIMIT 1`,
-			projectID,
-		).Scan(ctx, &jobStatus)
-		if jobStatus == "completed" || jobStatus == "failed" {
-			t.Logf("  extraction job reached terminal status: %s (objects: %d)", jobStatus, count)
-			return count > 0
-		}
-		time.Sleep(2 * time.Second)
-	}
-	t.Logf("  ⚠ no objects appeared after %v (extraction may be slow or failed)", timeout)
 	return false
 }
 

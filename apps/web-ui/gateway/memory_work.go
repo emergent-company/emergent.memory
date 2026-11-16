@@ -13,12 +13,17 @@ type WorkItem struct {
 	ProjectID   string `json:"projectId"`
 	CanonicalID string `json:"canonicalId"`
 	Type        string `json:"type"`
-	Key         string `json:"key"`
-	Status      string `json:"status"`
-	Assignee    string `json:"assignee"`
-	Version     int    `json:"version"`
-	NeedsReview bool   `json:"needsReview"`
-	UpdatedAt   string `json:"updatedAt"`
+	// Name is the object's first-class human title; empty when it has none.
+	Name string `json:"name"`
+	// Ref is the display-only "#<12 hex>" identity derived from the canonical id.
+	Ref         string         `json:"ref"`
+	Key         string         `json:"key"`
+	Status      string         `json:"status"`
+	Assignee    string         `json:"assignee"`
+	Version     int            `json:"version"`
+	NeedsReview bool           `json:"needsReview"`
+	UpdatedAt   string         `json:"updatedAt"`
+	Properties  map[string]any `json:"properties"`
 
 	LatestRunStatus       string `json:"latestRunStatus"`
 	LatestRunFailureClass string `json:"latestRunFailureClass"`
@@ -97,14 +102,20 @@ type WorkItemActionItem struct {
 // are the runs the work reconciler created for Kanban tasks, surfaced alongside
 // work items in the board's "recent runs" list.
 type BoardRun struct {
-	ID              string         `json:"id"`
-	AgentID         string         `json:"agentId"`
-	AgentName       string         `json:"agentName,omitempty"`
-	Status          string         `json:"status"`
-	StartedAt       string         `json:"startedAt"`
-	CompletedAt     *string        `json:"completedAt"`
-	Summary         map[string]any `json:"summary"`
-	SubjectObjectID *string        `json:"subjectObjectId,omitempty"`
+	ID        string `json:"id"`
+	AgentID   string `json:"agentId"`
+	AgentName string `json:"agentName,omitempty"`
+	// AgentDefinitionID is the agent definition the run executed under. It is
+	// the run's own FK when set, else the runtime agent's (memory's ToDTO
+	// falls back to the loaded Agent relation) — which is the id space every
+	// agent filter and grouping in the UI uses, unlike AgentID (a runtime
+	// kb.agents row).
+	AgentDefinitionID string         `json:"agentDefinitionId,omitempty"`
+	Status            string         `json:"status"`
+	StartedAt         string         `json:"startedAt"`
+	CompletedAt       *string        `json:"completedAt"`
+	Summary           map[string]any `json:"summary"`
+	SubjectObjectID   *string        `json:"subjectObjectId,omitempty"`
 }
 
 func (m *MemoryClient) workItemsPath(ctx context.Context) string {
@@ -112,8 +123,10 @@ func (m *MemoryClient) workItemsPath(ctx context.Context) string {
 }
 
 // ListWorkItems lists the board projection of work items. status empty = all
-// statuses; typeName empty = all board-enabled types.
-func (m *MemoryClient) ListWorkItems(ctx context.Context, status, typeName string, limit int) ([]WorkItem, error) {
+// statuses; typeName empty = all board-enabled types. includeProperties asks for
+// the HEAD property bag, which only a card excerpt needs — a run→item join over
+// the full list must not pay for it.
+func (m *MemoryClient) ListWorkItems(ctx context.Context, status, typeName string, limit int, includeProperties bool) ([]WorkItem, error) {
 	q := url.Values{}
 	if status != "" {
 		q.Set("status", status)
@@ -125,6 +138,9 @@ func (m *MemoryClient) ListWorkItems(ctx context.Context, status, typeName strin
 		limit = 200
 	}
 	q.Set("limit", strconv.Itoa(limit))
+	if includeProperties {
+		q.Set("include", "properties")
+	}
 	var env successEnvelope[[]WorkItem]
 	if err := m.do(ctx, http.MethodGet, m.workItemsPath(ctx)+"?"+q.Encode(), nil, &env); err != nil {
 		return nil, err

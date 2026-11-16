@@ -80,8 +80,8 @@ func (h *AgentEndpointHandler) HandleAgentEndpoint(c echo.Context) error {
 		// having its text (`failed to get key: pq: ...`) put in the body. Either
 		// way the request is rejected before anything executes.
 		status, code := http.StatusForbidden, ErrCodeForbidden
-		var appErr *apperror.Error
-		if !errors.As(err, &appErr) || appErr.HTTPStatus >= http.StatusInternalServerError {
+		appErr, ok := errors.AsType[*apperror.Error](err)
+		if !ok || appErr.HTTPStatus >= http.StatusInternalServerError {
 			status, code = http.StatusInternalServerError, ErrCodeInternalError
 		}
 		return c.JSON(status, NewErrorResponse(req.ID, code, apperror.PublicMessage(err), nil))

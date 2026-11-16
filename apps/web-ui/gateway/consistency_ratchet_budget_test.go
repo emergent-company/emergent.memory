@@ -1,5 +1,8 @@
 package main
 
+// guard: the tightened budget tables the consistency ratchets compare
+// against (data only — the ratchets' own tests live next door).
+
 // consistency_ratchet_budget_test.go holds the seeded budget tables for the
 // consistency ratchet. Both tables are declared tight (exact equality) against
 // the counts the corresponding scanners produce on the current tree, so the
@@ -54,7 +57,6 @@ func patternBudget() []patternBudgetEntry {
 		// legacy-bordered — daisyUI legacy border classes; canonical is the
 		// shared form-control component (components/form).
 		{pattern: patternLegacyBordered, file: "approvals.templ", count: 1, note: "normalise to the shared form-control component"},
-		{pattern: patternLegacyBordered, file: "board.templ", count: 1, note: "normalise to the shared form-control component"},
 		{pattern: patternLegacyBordered, file: "chat.templ", count: 3, note: "normalise to the shared form-control component"},
 		{pattern: patternLegacyBordered, file: "datasources.templ", count: 7, note: "normalise to the shared form-control component"},
 		{pattern: patternLegacyBordered, file: "datasources_oauth.templ", count: 9, note: "normalise to the shared form-control component"},
@@ -71,7 +73,6 @@ func patternBudget() []patternBudgetEntry {
 		{pattern: patternSurfaceOpacity, file: "agent.templ", count: 1, note: "normalise to bg-base-200/40"},
 		{pattern: patternSurfaceOpacity, file: "backups.templ", count: 5, note: "normalise to bg-base-200/40"},
 		{pattern: patternSurfaceOpacity, file: "blueprints.templ", count: 2, note: "normalise to bg-base-200/40"},
-		{pattern: patternSurfaceOpacity, file: "board.templ", count: 3, note: "normalise to bg-base-200/40"},
 		{pattern: patternSurfaceOpacity, file: "chat.templ", count: 1, note: "normalise to bg-base-200/40"},
 		{pattern: patternSurfaceOpacity, file: "documents.templ", count: 2, note: "normalise to bg-base-200/40"},
 		{pattern: patternSurfaceOpacity, file: "documents_chunks.templ", count: 1, note: "normalise to bg-base-200/40"},
@@ -89,7 +90,6 @@ func patternBudget() []patternBudgetEntry {
 
 		// border-token-drift — canonical is border-base-content/10.
 		{pattern: patternBorderTokenDrift, file: "agent.templ", count: 1, note: "normalise to border-base-content/10"},
-		{pattern: patternBorderTokenDrift, file: "board.templ", count: 3, note: "normalise to border-base-content/10"},
 		{pattern: patternBorderTokenDrift, file: "chat.templ", count: 3, note: "normalise to border-base-content/10"},
 		{pattern: patternBorderTokenDrift, file: "inbox.templ", count: 1, note: "normalise to border-base-content/10"},
 		{pattern: patternBorderTokenDrift, file: "mcp_servers.templ", count: 4, note: "normalise to border-base-content/10"},

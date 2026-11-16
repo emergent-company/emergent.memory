@@ -53,6 +53,55 @@ func writeSSEEvents(w http.ResponseWriter, events []a2a.StreamResponse) {
 	}
 }
 
+// trackedTaskIDs returns the non-empty A2A task ids a session has tracked. The
+// caller must hold Agent.mu. Test-only view over the per-turn state.
+func trackedTaskIDs(s *session) []string {
+	ids := make([]string, 0, len(s.cancels))
+	for _, t := range s.cancels {
+		if t.taskID != "" {
+			ids = append(ids, t.taskID)
+		}
+	}
+	return ids
+}
+
+// waitForInFlightTaskIDs blocks until the session has tracked at least n A2A
+// task ids. A test that cancels must wait for the bridge to have actually read
+// the id off the stream, or the cancel races the stream reader and finds nothing
+// to cancel.
+func waitForInFlightTaskIDs(t *testing.T, agent *Agent, sessionID string, n int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		agent.mu.Lock()
+		var got int
+		if sess := agent.sessions[sessionID]; sess != nil {
+			got = len(trackedTaskIDs(sess))
+		}
+		agent.mu.Unlock()
+		if got >= n {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %d tracked task ids (have %d)", n, got)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// isCancelRequest reports whether r is the A2A CancelTask call the bridge sends
+// when a turn is abandoned (POST /tasks/{id}:cancel).
+func isCancelRequest(r *http.Request) bool {
+	return r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, ":cancel")
+}
+
+// serveCancel answers a CancelTask request with a canceled task envelope so the
+// bridge's best-effort cancel does not fall through to a test's stream handler.
+func serveCancel(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/a2a+json")
+	_, _ = w.Write([]byte(`{"id":"task-1","contextId":"ctx-1","status":{"state":"canceled"}}`))
+}
+
 // runLines feeds the given input lines to the agent loop and returns the raw
 // stdout bytes after stdin closes.
 func runLines(t *testing.T, agent *Agent, input string) []byte {
@@ -102,6 +151,35 @@ func chunkText(t *testing.T, m map[string]any) string {
 	content := update["content"].(map[string]any)
 	text, _ := content["text"].(string)
 	return text
+}
+
+// updateKind extracts params.update.sessionUpdate from a session/update message.
+func updateKind(t *testing.T, m map[string]any) string {
+	t.Helper()
+	params, ok := m["params"].(map[string]any)
+	if !ok {
+		t.Fatalf("message has no params: %v", m)
+	}
+	update, ok := params["update"].(map[string]any)
+	if !ok {
+		t.Fatalf("params has no update object: %v", m)
+	}
+	kind, _ := update["sessionUpdate"].(string)
+	return kind
+}
+
+// updateOf extracts params.update from a session/update message.
+func updateOf(t *testing.T, m map[string]any) map[string]any {
+	t.Helper()
+	params, ok := m["params"].(map[string]any)
+	if !ok {
+		t.Fatalf("message has no params: %v", m)
+	}
+	update, ok := params["update"].(map[string]any)
+	if !ok {
+		t.Fatalf("params has no update object: %v", m)
+	}
+	return update
 }
 
 func TestInitialize(t *testing.T) {
@@ -187,17 +265,21 @@ func TestSessionPromptStreams(t *testing.T) {
 		t.Errorf("parts = %+v, want single text part 'hello'", body.Message.Parts)
 	}
 
-	// init, session/new, chunk("Hel"), chunk("lo"), prompt(end_turn).
-	if len(msgs) != 5 {
-		t.Fatalf("expected 5 messages, got %d: %v", len(msgs), msgs)
+	// init, session/new, thought chunk (WORKING), chunk("Hel"), chunk("lo"),
+	// prompt(end_turn).
+	if len(msgs) != 6 {
+		t.Fatalf("expected 6 messages, got %d: %v", len(msgs), msgs)
 	}
-	if got := chunkText(t, msgs[2]); got != "Hel" {
+	if got := updateKind(t, msgs[2]); got != "agent_thought_chunk" {
+		t.Errorf("frame 3 = %q, want the WORKING progress chunk", got)
+	}
+	if got := chunkText(t, msgs[3]); got != "Hel" {
 		t.Errorf("chunk 1 = %q, want Hel", got)
 	}
-	if got := chunkText(t, msgs[3]); got != "lo" {
+	if got := chunkText(t, msgs[4]); got != "lo" {
 		t.Errorf("chunk 2 = %q, want lo", got)
 	}
-	if pr := msgs[4]["result"].(map[string]any); pr["stopReason"] != "end_turn" {
+	if pr := msgs[5]["result"].(map[string]any); pr["stopReason"] != "end_turn" {
 		t.Errorf("stopReason = %v, want end_turn", pr["stopReason"])
 	}
 }
@@ -236,13 +318,14 @@ func TestHITLResume(t *testing.T) {
 	}, "\n") + "\n"
 
 	out1 := decodeLines(t, runLines(t, agent, input1))
-	if len(out1) != 4 {
-		t.Fatalf("phase1: expected 4 messages (init, session/new, question chunk, prompt), got %d: %v", len(out1), out1)
+	// init, session/new, thought chunk (WORKING), question chunk, prompt.
+	if len(out1) != 5 {
+		t.Fatalf("phase1: expected 5 messages (init, session/new, thought, question chunk, prompt), got %d: %v", len(out1), out1)
 	}
-	if got := chunkText(t, out1[2]); got != "What's your name?" {
+	if got := chunkText(t, out1[3]); got != "What's your name?" {
 		t.Errorf("question chunk = %q", got)
 	}
-	if pr := out1[3]["result"].(map[string]any); pr["stopReason"] != "end_turn" {
+	if pr := out1[4]["result"].(map[string]any); pr["stopReason"] != "end_turn" {
 		t.Errorf("phase1 stopReason = %v", pr["stopReason"])
 	}
 
@@ -254,10 +337,11 @@ func TestHITLResume(t *testing.T) {
 	// Phase 2: same session resumes the paused task.
 	input2 := `{"jsonrpc":"2.0","id":4,"method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"Alice"}]}}` + "\n"
 	out2 := decodeLines(t, runLines(t, agent, input2))
-	if len(out2) != 2 {
-		t.Fatalf("phase2: expected 2 messages (answer chunk, prompt), got %d: %v", len(out2), out2)
+	// thought chunk (WORKING), answer chunk, prompt.
+	if len(out2) != 3 {
+		t.Fatalf("phase2: expected 3 messages (thought, answer chunk, prompt), got %d: %v", len(out2), out2)
 	}
-	if got := chunkText(t, out2[0]); got != "Nice to meet you" {
+	if got := chunkText(t, out2[1]); got != "Nice to meet you" {
 		t.Errorf("answer chunk = %q", got)
 	}
 
@@ -267,6 +351,163 @@ func TestHITLResume(t *testing.T) {
 	}
 	if _, hasSkill := body2.Message.Metadata[a2a.SkillIDMetadataKey]; hasSkill {
 		t.Errorf("phase2 should not send skillId on resume")
+	}
+}
+
+// TestHITLResume_NoPendingQuestionRetriesAsNewTask pins the client safety net
+// for issue #867: an older server rejects the resume of a paused task with no
+// pending question. The client must clear the latched task id and retry the
+// prompt as a new task in the same context instead of failing the turn.
+func TestHITLResume_NoPendingQuestionRetriesAsNewTask(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		bodies []a2a.SendMessageRequest
+	)
+	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		var body a2a.SendMessageRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode body: %v", err)
+			return
+		}
+		mu.Lock()
+		bodies = append(bodies, body)
+		mu.Unlock()
+
+		if body.Message.TaskID != "" {
+			// Old server: the step-limit pause wrote no question row.
+			w.Header().Set("Content-Type", "application/a2a+json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"code":400,"status":"BAD_REQUEST","message":"no pending question for task","details":[{"@type":"type.googleapis.com/lf.a2a.v1.Error","reason":"INVALID_STATE","domain":"a2a-protocol.org"}]}}`))
+			return
+		}
+
+		text := ""
+		if len(body.Message.Parts) > 0 && body.Message.Parts[0].Text != nil {
+			text = *body.Message.Parts[0].Text
+		}
+		if text == "hi" {
+			writeSSEEvents(w, []a2a.StreamResponse{
+				{Task: &a2a.Task{ID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateSubmitted}}},
+				{StatusUpdate: &a2a.TaskStatusUpdateEvent{TaskID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateWorking}}},
+				{StatusUpdate: &a2a.TaskStatusUpdateEvent{TaskID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateInputRequired, Message: &a2a.Message{Role: a2a.RoleAgent, Parts: []a2a.Part{a2a.TextPart("Step limit reached. Run has been paused.")}}}}},
+			})
+			return
+		}
+
+		// Retried as a new task in the same context: completes.
+		writeSSEEvents(w, []a2a.StreamResponse{
+			{Task: &a2a.Task{ID: "task-2", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateSubmitted}}},
+			{StatusUpdate: &a2a.TaskStatusUpdateEvent{TaskID: "task-2", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateWorking}}},
+			{ArtifactUpdate: &a2a.TaskArtifactUpdateEvent{TaskID: "task-2", ContextID: "ctx-1", Artifact: a2a.Artifact{ArtifactID: "artifact-task-2", Parts: []a2a.Part{a2a.TextPart("continued")}}}},
+			{Task: &a2a.Task{ID: "task-2", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}},
+		})
+	})
+
+	// Phase 1: new turn pauses at the step limit.
+	input1 := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"session/new","params":{}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"hi"}]}}`,
+	}, "\n") + "\n"
+	_ = decodeLines(t, runLines(t, agent, input1))
+
+	// Phase 2: the follow-up resume is rejected and retried as a new task.
+	input2 := `{"jsonrpc":"2.0","id":4,"method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"continue"}]}}` + "\n"
+	out2 := decodeLines(t, runLines(t, agent, input2))
+
+	mu.Lock()
+	got := append([]a2a.SendMessageRequest(nil), bodies...)
+	mu.Unlock()
+	if len(got) != 3 {
+		t.Fatalf("expected 3 backend calls (new, resume, retry), got %d", len(got))
+	}
+	if got[1].Message.TaskID != "task-1" {
+		t.Errorf("resume taskId = %q, want task-1", got[1].Message.TaskID)
+	}
+	if got[2].Message.TaskID != "" {
+		t.Errorf("retry taskId = %q, want empty (latched task cleared)", got[2].Message.TaskID)
+	}
+	if got[2].Message.ContextID != "ctx-1" {
+		t.Errorf("retry contextId = %q, want ctx-1", got[2].Message.ContextID)
+	}
+	if _, hasSkill := got[2].Message.Metadata[a2a.SkillIDMetadataKey]; !hasSkill {
+		t.Errorf("retry must send the skill id for a new task")
+	}
+
+	if len(out2) != 3 {
+		t.Fatalf("phase2: expected 3 messages (thought, chunk, prompt), got %d: %v", len(out2), out2)
+	}
+	if got := updateKind(t, out2[0]); got != "agent_thought_chunk" {
+		t.Errorf("phase2 first update = %q, want agent_thought_chunk", got)
+	}
+	if gotText := chunkText(t, out2[1]); gotText != "continued" {
+		t.Errorf("phase2 chunk = %q, want %q", gotText, "continued")
+	}
+	if pr := out2[2]["result"].(map[string]any); pr["stopReason"] != "end_turn" {
+		t.Errorf("phase2 stopReason = %v, want end_turn", pr["stopReason"])
+	}
+}
+
+// TestA2ANewTaskRetry_PreservesMetadata pins the retry rewrite: the latched task
+// id is cleared, the skill id is set for the new task, and metadata the original
+// request carried survives (issue #867 review).
+func TestA2ANewTaskRetry_PreservesMetadata(t *testing.T) {
+	req := a2a.SendMessageRequest{Message: a2a.Message{
+		TaskID:    "task-1",
+		ContextID: "ctx-old",
+		Metadata: map[string]any{
+			"keep":                 "me",
+			a2a.SkillIDMetadataKey: "stale-skill",
+		},
+	}}
+
+	got := a2aNewTaskRetry(req, "research-agent", "ctx-1")
+
+	if got.Message.TaskID != "" {
+		t.Fatalf("taskId = %q, want empty", got.Message.TaskID)
+	}
+	if got.Message.ContextID != "ctx-1" {
+		t.Fatalf("contextId = %q, want ctx-1", got.Message.ContextID)
+	}
+	if v, _ := got.Message.Metadata["keep"].(string); v != "me" {
+		t.Fatalf("metadata keep = %v, want \"me\" (unrelated metadata must survive)", got.Message.Metadata["keep"])
+	}
+	if v, _ := got.Message.Metadata[a2a.SkillIDMetadataKey].(string); v != "research-agent" {
+		t.Fatalf("metadata skill = %v, want research-agent", got.Message.Metadata[a2a.SkillIDMetadataKey])
+	}
+	if req.Message.TaskID != "task-1" || req.Message.ContextID != "ctx-old" {
+		t.Fatalf("the original request must not be mutated")
+	}
+}
+
+// TestA2ANewTaskRetry_EmptySkillLeavesNoSkillKey pins that an unknown skill does
+// not overwrite the map with an empty-string skill id.
+func TestA2ANewTaskRetry_EmptySkillLeavesNoSkillKey(t *testing.T) {
+	req := a2a.SendMessageRequest{Message: a2a.Message{
+		Metadata: map[string]any{"keep": "me"},
+	}}
+
+	got := a2aNewTaskRetry(req, "", "")
+
+	if _, ok := got.Message.Metadata[a2a.SkillIDMetadataKey]; ok {
+		t.Fatalf("empty skill must not be written into metadata: %v", got.Message.Metadata)
+	}
+	if v, _ := got.Message.Metadata["keep"].(string); v != "me" {
+		t.Fatalf("metadata keep = %v, want \"me\"", got.Message.Metadata["keep"])
+	}
+}
+
+// TestIsInvalidStateError pins the structured match: the reason decides, not the
+// human-readable message.
+func TestIsInvalidStateError(t *testing.T) {
+	if !isInvalidStateError(&a2a.Error{Reason: "INVALID_STATE", Message: "reworded by a newer server"}) {
+		t.Fatalf("a structured INVALID_STATE must match regardless of wording")
+	}
+	if isInvalidStateError(&a2a.Error{Reason: "TASK_NOT_FOUND", Message: "no pending question for task"}) {
+		t.Fatalf("a different reason must not match even with the legacy wording")
+	}
+	if isInvalidStateError(errors.New("no pending question for task")) {
+		t.Fatalf("a non-A2A error must not match")
 	}
 }
 
@@ -502,6 +743,10 @@ func TestCancelBeforePromptReturnsCancelled(t *testing.T) {
 // against regressions of the read-outside-lock bug).
 func TestCancelConcurrentWithPrompt(t *testing.T) {
 	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		if isCancelRequest(r) {
+			serveCancel(w)
+			return
+		}
 		writeSSEEvents(w, []a2a.StreamResponse{
 			{Task: &a2a.Task{ID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}},
 		})
@@ -534,6 +779,10 @@ func TestConcurrentPromptsOnSameSessionEachCancelable(t *testing.T) {
 	const turns = 2
 	chunks := make(chan struct{}, turns)
 	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		if isCancelRequest(r) {
+			serveCancel(w)
+			return
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		fl, _ := w.(http.Flusher)
 		b, _ := json.Marshal(a2a.StreamResponse{ArtifactUpdate: &a2a.TaskArtifactUpdateEvent{
@@ -786,7 +1035,7 @@ func TestSessionCapRefusesWhenAllInFlight(t *testing.T) {
 	cancelCalled := false
 	agent.mu.Lock()
 	agent.sessions["busy"] = &session{
-		cancels:  map[uint64]context.CancelFunc{0: func() { cancelCalled = true }},
+		cancels:  map[uint64]*promptTurn{0: {cancel: func() { cancelCalled = true }}},
 		lastUsed: 0,
 	}
 	agent.mu.Unlock()
@@ -815,7 +1064,7 @@ func TestPromptRefusesNewSessionWhenAllInFlight(t *testing.T) {
 
 	agent.mu.Lock()
 	agent.sessions["busy"] = &session{
-		cancels:  map[uint64]context.CancelFunc{0: func() {}},
+		cancels:  map[uint64]*promptTurn{0: {cancel: func() {}}},
 		lastUsed: 0,
 	}
 	agent.mu.Unlock()
@@ -845,7 +1094,7 @@ func TestPromptRefusalDoesNotRaceSessionMap(t *testing.T) {
 	agent.maxSessions = 1
 
 	agent.mu.Lock()
-	agent.sessions["busy"] = &session{cancels: map[uint64]context.CancelFunc{0: func() {}}}
+	agent.sessions["busy"] = &session{cancels: map[uint64]*promptTurn{0: {cancel: func() {}}}}
 	agent.mu.Unlock()
 
 	var wg sync.WaitGroup
@@ -886,7 +1135,7 @@ func TestDeleteSessionCancelsInFlightTurn(t *testing.T) {
 	ctxA, cancelA := context.WithCancel(context.Background())
 	ctxB, cancelB := context.WithCancel(context.Background())
 	agent.mu.Lock()
-	agent.sessions["S"] = &session{cancels: map[uint64]context.CancelFunc{1: cancelA, 2: cancelB}}
+	agent.sessions["S"] = &session{cancels: map[uint64]*promptTurn{1: {cancel: cancelA}, 2: {cancel: cancelB}}}
 	agent.mu.Unlock()
 
 	agent.deleteSession("S")
@@ -912,7 +1161,7 @@ func TestCloseSessionCancelsInFlightTurnAndRemoves(t *testing.T) {
 	agent := noopAgent(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	agent.mu.Lock()
-	agent.sessions["S"] = &session{cancels: map[uint64]context.CancelFunc{1: cancel}}
+	agent.sessions["S"] = &session{cancels: map[uint64]*promptTurn{1: {cancel: cancel}}}
 	agent.mu.Unlock()
 
 	agent.closeSession("S")
@@ -1244,6 +1493,10 @@ func TestStreamErrorMidStreamPropagatesAsRPCError(t *testing.T) {
 func TestCancelMidStreamReturnsCancelled(t *testing.T) {
 	chunkSent := make(chan struct{})
 	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		if isCancelRequest(r) {
+			serveCancel(w)
+			return
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		fl, _ := w.(http.Flusher)
 
@@ -1306,6 +1559,207 @@ func TestCancelMidStreamReturnsCancelled(t *testing.T) {
 	}
 }
 
+// TestCancelMidStreamCancelsMemoryTask is the regression test for #868: a
+// session/cancel must ask the Memory platform to cancel the in-flight A2A task,
+// not merely tear down the local SSE stream (which left the run executing in its
+// sandbox). The cancel call is best-effort and must never block the ACP turn:
+// here the server waits on a channel before answering CancelTask, and the prompt
+// still resolves "cancelled" first.
+func TestCancelMidStreamCancelsMemoryTask(t *testing.T) {
+	streamStarted := make(chan struct{})
+	cancelArrived := make(chan string, 1)
+	releaseCancel := make(chan struct{})
+	var cancelCalled atomic.Bool
+
+	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		if isCancelRequest(r) {
+			cancelCalled.Store(true)
+			cancelArrived <- strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/tasks/"), ":cancel")
+			<-releaseCancel
+			serveCancel(w)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl, _ := w.(http.Flusher)
+		b, _ := json.Marshal(a2a.StreamResponse{ArtifactUpdate: &a2a.TaskArtifactUpdateEvent{
+			TaskID:    "task-7",
+			ContextID: "ctx-1",
+			Artifact:  a2a.Artifact{ArtifactID: "artifact-task-7", Parts: []a2a.Part{a2a.TextPart("working")}},
+		}})
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+		if fl != nil {
+			fl.Flush()
+		}
+		close(streamStarted)
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+			t.Error("stream not torn down by cancellation")
+		}
+	})
+
+	sessID := mustNewSession(t, agent)
+	type promptResult struct {
+		reason string
+		err    error
+	}
+	resCh := make(chan promptResult, 1)
+	go func() {
+		res, err := agent.prompt(context.Background(), PromptParams{
+			SessionID: sessID,
+			Prompt:    []ContentBlock{{Type: "text", Text: "go"}},
+		}, func(any) error { return nil })
+		if err != nil {
+			resCh <- promptResult{err: err}
+			return
+		}
+		resCh <- promptResult{reason: res.(PromptResponse).StopReason}
+	}()
+
+	<-streamStarted
+	waitForInFlightTaskIDs(t, agent, sessID, 1)
+	agent.cancel(CancelParams{SessionID: sessID})
+
+	// The turn resolves while the CancelTask request is still unanswered: the
+	// client is never blocked on the platform call.
+	got := <-resCh
+	if got.err != nil {
+		t.Fatalf("prompt returned error: %v", got.err)
+	}
+	if got.reason != StopReasonCancelled {
+		t.Fatalf("stopReason = %q, want cancelled", got.reason)
+	}
+
+	select {
+	case id := <-cancelArrived:
+		if id != "task-7" {
+			t.Errorf("cancelled task id = %q, want task-7", id)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("session/cancel did not call CancelTask on the in-flight A2A task")
+	}
+	close(releaseCancel)
+	if !cancelCalled.Load() {
+		t.Fatal("cancelled state not observed")
+	}
+}
+
+// TestCancelAllInFlightTasks proves the task id is tracked per in-flight turn:
+// a single session/cancel cancels every running A2A task, not just one.
+func TestCancelAllInFlightTasks(t *testing.T) {
+	const turns = 2
+	started := make(chan struct{}, turns)
+	cancelled := make(chan string, turns)
+	var nextID atomic.Int32
+	streamStarted := make(chan string, turns)
+
+	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		if isCancelRequest(r) {
+			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/tasks/"), ":cancel")
+			cancelled <- id
+			serveCancel(w)
+			return
+		}
+		id := fmt.Sprintf("task-%d", nextID.Add(1))
+		streamStarted <- id
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl, _ := w.(http.Flusher)
+		b, _ := json.Marshal(a2a.StreamResponse{ArtifactUpdate: &a2a.TaskArtifactUpdateEvent{
+			TaskID:    id,
+			ContextID: "ctx-1",
+			Artifact:  a2a.Artifact{ArtifactID: "artifact-" + id, Parts: []a2a.Part{a2a.TextPart("working")}},
+		}})
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+		if fl != nil {
+			fl.Flush()
+		}
+		started <- struct{}{}
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+			t.Error("stream not torn down by cancellation")
+		}
+	})
+
+	sessID := mustNewSession(t, agent)
+	reasons := make(chan string, turns)
+	for i := 0; i < turns; i++ {
+		go func() {
+			res, err := agent.prompt(context.Background(), PromptParams{
+				SessionID: sessID,
+				Prompt:    []ContentBlock{{Type: "text", Text: "go"}},
+			}, func(any) error { return nil })
+			if err != nil {
+				t.Errorf("prompt returned error: %v", err)
+				reasons <- ""
+				return
+			}
+			reasons <- res.(PromptResponse).StopReason
+		}()
+	}
+
+	wantIDs := map[string]bool{}
+	for i := 0; i < turns; i++ {
+		<-started
+		wantIDs[<-streamStarted] = true
+	}
+	waitForInFlightTaskIDs(t, agent, sessID, turns)
+	agent.cancel(CancelParams{SessionID: sessID})
+
+	for i := 0; i < turns; i++ {
+		if got := <-reasons; got != StopReasonCancelled {
+			t.Errorf("stopReason = %q, want cancelled", got)
+		}
+	}
+	gotIDs := map[string]bool{}
+	for i := 0; i < turns; i++ {
+		select {
+		case id := <-cancelled:
+			gotIDs[id] = true
+		case <-time.After(5 * time.Second):
+			t.Fatalf("only %d of %d in-flight tasks were cancelled", len(gotIDs), turns)
+		}
+	}
+	for id := range wantIDs {
+		if !gotIDs[id] {
+			t.Errorf("in-flight task %q was not cancelled", id)
+		}
+	}
+}
+
+// TestCompletedTurnClearsTaskID pins the other half of the task-id tracking: a
+// finished turn must not leave its task id on the session, otherwise a later
+// session/cancel would cancel an unrelated (possibly already paused) task.
+func TestCompletedTurnClearsTaskID(t *testing.T) {
+	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		if isCancelRequest(r) {
+			t.Errorf("unexpected CancelTask after the turn completed")
+			serveCancel(w)
+			return
+		}
+		writeSSEEvents(w, []a2a.StreamResponse{
+			{Task: &a2a.Task{ID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateSubmitted}}},
+			{StatusUpdate: &a2a.TaskStatusUpdateEvent{TaskID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}},
+		})
+	})
+	sessID := mustNewSession(t, agent)
+
+	if _, err := agent.prompt(context.Background(), PromptParams{
+		SessionID: sessID,
+		Prompt:    []ContentBlock{{Type: "text", Text: "hi"}},
+	}, func(any) error { return nil }); err != nil {
+		t.Fatalf("prompt returned error: %v", err)
+	}
+
+	agent.mu.Lock()
+	sess := agent.sessions[sessID]
+	leftover := trackedTaskIDs(sess)
+	agent.mu.Unlock()
+	if len(leftover) != 0 {
+		t.Fatalf("finished turn left task ids behind: %v", leftover)
+	}
+}
+
 // TestMidTurnCancelDoesNotCancelNextPrompt is the regression test for #780: a
 // session/cancel that lands while turn A is in flight must resolve turn A
 // "cancelled" but must NOT leave session-scoped state behind that spuriously
@@ -1317,6 +1771,10 @@ func TestMidTurnCancelDoesNotCancelNextPrompt(t *testing.T) {
 	chunkSent := make(chan struct{})
 
 	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		if isCancelRequest(r) {
+			serveCancel(w)
+			return
+		}
 		// First turn: stream a chunk, then hold the connection open until the
 		// client cancels. Second turn: complete normally.
 		if backendRequests.Add(1) == 1 {
@@ -1400,13 +1858,22 @@ func TestMidTurnCancelDoesNotCancelNextPrompt(t *testing.T) {
 // following turn (generation N+2) is untouched and runs normally. It also pins
 // the "cancel all in-flight" contract from #775 under the watermark design.
 func TestConcurrentMidTurnCancelDoesNotCancelFollowingPrompt(t *testing.T) {
-	var backendRequests atomic.Int32
+	var streamRequests atomic.Int32
 	started := make(chan struct{}, 2)
+	cancelled := make(chan struct{}, 4)
 
 	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		if isCancelRequest(r) {
+			select {
+			case cancelled <- struct{}{}:
+			default:
+			}
+			serveCancel(w)
+			return
+		}
 		// The first two turns stream a chunk then hold the connection open until
 		// the client cancels. The third turn (the following prompt) completes.
-		if backendRequests.Add(1) <= 2 {
+		if streamRequests.Add(1) <= 2 {
 			w.Header().Set("Content-Type", "text/event-stream")
 			fl, _ := w.(http.Flusher)
 			b, _ := json.Marshal(a2a.StreamResponse{ArtifactUpdate: &a2a.TaskArtifactUpdateEvent{
@@ -1465,6 +1932,28 @@ func TestConcurrentMidTurnCancelDoesNotCancelFollowingPrompt(t *testing.T) {
 		t.Fatalf("in-flight turns = %d, want %d", registered, inFlight)
 	}
 
+	// Each turn stashes the task id when the stream names it. Wait for both so
+	// the cancel below is not racing the first event's arrival: an unnamed turn
+	// has nothing to cancel remotely (issue #868).
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		agent.mu.Lock()
+		named := 0
+		for _, tn := range agent.sessions[sessID].cancels {
+			if tn.taskID != "" {
+				named++
+			}
+		}
+		agent.mu.Unlock()
+		if named == inFlight {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("in-flight turns with a task id = %d, want %d", named, inFlight)
+		}
+		time.Sleep(time.Millisecond)
+	}
+
 	// One cancel must reach every in-flight turn.
 	agent.cancel(CancelParams{SessionID: sessID})
 	for i := 0; i < inFlight; i++ {
@@ -1488,8 +1977,15 @@ func TestConcurrentMidTurnCancelDoesNotCancelFollowingPrompt(t *testing.T) {
 	if got := res.(PromptResponse).StopReason; got != StopReasonEndTurn {
 		t.Errorf("following prompt stopReason = %q, want end_turn (concurrent cancel leaked)", got)
 	}
-	if n := backendRequests.Load(); n != inFlight+1 {
-		t.Errorf("backend requests = %d, want %d (following prompt did not execute)", n, inFlight+1)
+	if n := streamRequests.Load(); n != inFlight+1 {
+		t.Errorf("stream requests = %d, want %d (following prompt did not execute)", n, inFlight+1)
+	}
+	// Cancelling the local streams is not enough: each in-flight turn had named
+	// task-1, so the cancel must also reach the Memory task (issue #868).
+	select {
+	case <-cancelled:
+	case <-time.After(2 * time.Second):
+		t.Error("session/cancel never reached the backend CancelTask endpoint")
 	}
 }
 
@@ -1820,5 +2316,575 @@ func TestSetConfigOptionRoutesPromptToSelectedAgent(t *testing.T) {
 	body := <-bodyCh
 	if got := body.Message.Metadata[a2a.SkillIDMetadataKey]; got != "writer-agent" {
 		t.Errorf("skillId = %v, want writer-agent", got)
+	}
+}
+
+// =============================================================================
+// #866: tool calls and progress are streamed, not silently dropped.
+// =============================================================================
+
+// TestPromptStreamsToolCalls pins the #866 fix: the server already emits each
+// tool call as a structured Data artifact (start: {toolName, input}; end:
+// {toolName, output} with append:true under the same artifact id), and the
+// bridge must surface both as ACP tool_call / tool_call_update frames instead of
+// keeping only text parts. It also pins the WORKING transition as one progress
+// chunk and that the text path is unchanged.
+func TestPromptStreamsToolCalls(t *testing.T) {
+	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		writeSSEEvents(w, []a2a.StreamResponse{
+			{Task: &a2a.Task{ID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateSubmitted}}},
+			{StatusUpdate: &a2a.TaskStatusUpdateEvent{TaskID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateWorking}}},
+			{ArtifactUpdate: &a2a.TaskArtifactUpdateEvent{
+				TaskID:    "task-1",
+				ContextID: "ctx-1",
+				Artifact: a2a.Artifact{
+					ArtifactID: "tool-call-1",
+					Name:       "workspace_bash",
+					Parts:      []a2a.Part{{Data: map[string]any{"toolName": "workspace_bash", "input": map[string]any{"command": "go test ./..."}}}},
+				},
+			}},
+			{ArtifactUpdate: &a2a.TaskArtifactUpdateEvent{
+				TaskID:    "task-1",
+				ContextID: "ctx-1",
+				Artifact: a2a.Artifact{
+					ArtifactID: "tool-call-1",
+					Name:       "workspace_bash",
+					Parts:      []a2a.Part{{Data: map[string]any{"toolName": "workspace_bash", "output": "ok  	example.com/x	0.2s"}}},
+				},
+				Append: true,
+			}},
+			{ArtifactUpdate: &a2a.TaskArtifactUpdateEvent{TaskID: "task-1", ContextID: "ctx-1", Artifact: a2a.Artifact{ArtifactID: "artifact-task-1", Parts: []a2a.Part{a2a.TextPart("Tests pass.")}}}},
+			{Task: &a2a.Task{ID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}},
+		})
+	})
+	sessID := mustNewSession(t, agent)
+
+	var frames []map[string]any
+	if _, err := agent.prompt(context.Background(), PromptParams{
+		SessionID: sessID,
+		Prompt:    []ContentBlock{{Type: "text", Text: "run the tests"}},
+	}, func(m any) error {
+		b, err := json.Marshal(m)
+		if err != nil {
+			return err
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(b, &decoded); err != nil {
+			return err
+		}
+		if params, ok := decoded["params"].(map[string]any); ok && params["sessionId"] != sessID {
+			t.Errorf("sessionId = %v, want %s", params["sessionId"], sessID)
+		}
+		frames = append(frames, decoded)
+		return nil
+	}); err != nil {
+		t.Fatalf("prompt returned error: %v", err)
+	}
+
+	// progress chunk, tool_call, tool_call_update, agent_message_chunk.
+	if len(frames) != 4 {
+		t.Fatalf("frames = %d, want 4: %v", len(frames), frames)
+	}
+	if got := updateKind(t, frames[0]); got != "agent_thought_chunk" {
+		t.Errorf("frame 1 = %q, want the WORKING progress chunk", got)
+	}
+
+	start := updateOf(t, frames[1])
+	if got := start["sessionUpdate"]; got != "tool_call" {
+		t.Fatalf("frame 2 sessionUpdate = %v, want tool_call", got)
+	}
+	if got := start["toolCallId"]; got != "task-1:tool-call-1" {
+		t.Errorf("toolCallId = %v, want task-1:tool-call-1 (task-namespaced artifact id)", got)
+	}
+	if got := start["title"]; got != "workspace_bash" {
+		t.Errorf("title = %v, want workspace_bash", got)
+	}
+	// `name` is optional in ACP: absent is fine, and so is echoing the title.
+	// What must not happen is a third value a client cannot interpret.
+	if got, ok := start["name"]; ok && got != "workspace_bash" {
+		t.Errorf("name = %v, want absent or workspace_bash", got)
+	}
+	if got := start["kind"]; got != "execute" {
+		t.Errorf("kind = %v, want execute", got)
+	}
+	if got := start["status"]; got != "pending" {
+		t.Errorf("status = %v, want pending", got)
+	}
+	input, ok := start["rawInput"].(map[string]any)
+	if !ok || input["command"] != "go test ./..." {
+		t.Errorf("rawInput = %v, want the tool input", start["rawInput"])
+	}
+
+	end := updateOf(t, frames[2])
+	if got := end["sessionUpdate"]; got != "tool_call_update" {
+		t.Fatalf("frame 3 sessionUpdate = %v, want tool_call_update", got)
+	}
+	if got := end["toolCallId"]; got != "task-1:tool-call-1" {
+		t.Errorf("toolCallId = %v, want task-1:tool-call-1", got)
+	}
+	if got := end["status"]; got != "completed" {
+		t.Errorf("status = %v, want completed", got)
+	}
+	if out, _ := end["rawOutput"].(string); !strings.Contains(out, "0.2s") {
+		t.Errorf("rawOutput = %v, want the tool output", end["rawOutput"])
+	}
+
+	// The text path is unchanged: the tool frames must not swallow the reply.
+	if got := chunkText(t, frames[3]); got != "Tests pass." {
+		t.Errorf("text chunk = %q, want Tests pass.", got)
+	}
+}
+
+// TestToolCallIDsAreUniqueAcrossTurns pins the #866 contract that a toolCallId
+// identifies one call within an ACP session. One ACP session is one A2A context,
+// every prompt is a new task, and the server's toolSeq restarts at 1 per stream
+// (a resume restarts it too), so the bare artifact id repeats on every turn. A
+// client that keys by it folds the new call into the last one.
+func TestToolCallIDsAreUniqueAcrossTurns(t *testing.T) {
+	var turn atomic.Int32
+	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		n := turn.Add(1)
+		taskID := fmt.Sprintf("task-%d", n)
+		writeSSEEvents(w, []a2a.StreamResponse{
+			{Task: &a2a.Task{ID: taskID, ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateSubmitted}}},
+			{ArtifactUpdate: &a2a.TaskArtifactUpdateEvent{
+				TaskID:    taskID,
+				ContextID: "ctx-1",
+				Artifact: a2a.Artifact{
+					ArtifactID: "tool-call-1",
+					Name:       "workspace_bash",
+					Parts:      []a2a.Part{{Data: map[string]any{"toolName": "workspace_bash", "input": map[string]any{"command": "true"}}}},
+				},
+			}},
+			{Task: &a2a.Task{ID: taskID, ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}},
+		})
+	})
+	sessID := mustNewSession(t, agent)
+
+	send := func() string {
+		var id string
+		if _, err := agent.prompt(context.Background(), PromptParams{
+			SessionID: sessID,
+			Prompt:    []ContentBlock{{Type: "text", Text: "go"}},
+		}, func(m any) error {
+			b, err := json.Marshal(m)
+			if err != nil {
+				return err
+			}
+			var decoded map[string]any
+			if err := json.Unmarshal(b, &decoded); err != nil {
+				return err
+			}
+			params, _ := decoded["params"].(map[string]any)
+			update, _ := params["update"].(map[string]any)
+			if update["sessionUpdate"] == "tool_call" {
+				id, _ = update["toolCallId"].(string)
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("prompt returned error: %v", err)
+		}
+		if id == "" {
+			t.Fatal("the turn emitted no tool_call")
+		}
+		return id
+	}
+
+	first := send()
+	second := send()
+	if first != "task-1:tool-call-1" {
+		t.Errorf("first toolCallId = %q, want task-1:tool-call-1", first)
+	}
+	if second != "task-2:tool-call-1" {
+		t.Errorf("second toolCallId = %q, want task-2:tool-call-1", second)
+	}
+	if first == second {
+		t.Errorf("toolCallId %q repeats across turns: a client keying by it folds the calls", first)
+	}
+}
+
+// TestToolCallFromArtifact classifies the artifacts the server emits, so the
+// text artifact and A2UI surfaces are never mistaken for tool calls.
+func TestToolCallFromArtifact(t *testing.T) {
+	tests := []struct {
+		name  string
+		event *a2a.TaskArtifactUpdateEvent
+		want  bool
+		end   bool
+	}{
+		{
+			name: "tool start",
+			event: &a2a.TaskArtifactUpdateEvent{Artifact: a2a.Artifact{
+				ArtifactID: "tool-call-1",
+				Name:       "workspace_read",
+				Parts:      []a2a.Part{{Data: map[string]any{"toolName": "workspace_read", "input": map[string]any{"path": "a.go"}}}},
+			}},
+			want: true,
+		},
+		{
+			name: "tool end",
+			event: &a2a.TaskArtifactUpdateEvent{Append: true, Artifact: a2a.Artifact{
+				ArtifactID: "tool-call-1",
+				Name:       "workspace_read",
+				Parts:      []a2a.Part{{Data: map[string]any{"toolName": "workspace_read", "output": "package a"}}},
+			}},
+			want: true,
+			end:  true,
+		},
+		{
+			name:  "text artifact",
+			event: &a2a.TaskArtifactUpdateEvent{Artifact: a2a.Artifact{ArtifactID: "artifact-task-1", Parts: []a2a.Part{a2a.TextPart("hi")}}},
+		},
+		{
+			name: "a2ui surface",
+			event: &a2a.TaskArtifactUpdateEvent{Artifact: a2a.Artifact{
+				ArtifactID: "a2ui-s1",
+				Parts:      []a2a.Part{{Data: []any{map[string]any{"surfaceId": "s1"}}}},
+			}},
+		},
+		{
+			name: "structured data without a tool name",
+			event: &a2a.TaskArtifactUpdateEvent{Artifact: a2a.Artifact{
+				ArtifactID: "something",
+				Parts:      []a2a.Part{{Data: map[string]any{"todo": "x"}}},
+			}},
+		},
+		{name: "nil event"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := toolCallFromArtifact(tc.event, "task-1")
+			if ok != tc.want {
+				t.Fatalf("toolCallFromArtifact ok = %v, want %v", ok, tc.want)
+			}
+			if got.End != tc.end {
+				t.Errorf("End = %v, want %v", got.End, tc.end)
+			}
+			if ok && got.ID == "" {
+				t.Error("tool call has no id")
+			}
+		})
+	}
+}
+
+// TestToolKind pins the tool-name to ACP ToolKind mapping, including the
+// fallback for a tool the table has never seen.
+func TestToolKind(t *testing.T) {
+	cases := map[string]string{
+		"workspace_bash":    "execute",
+		"run_python":        "execute",
+		"workspace_git":     "execute",
+		"workspace_read":    "read",
+		"workspace_glob":    "search",
+		"workspace_grep":    "search",
+		"workspace_write":   "edit",
+		"workspace_edit":    "edit",
+		"web-fetch":         "fetch",
+		"session-todo-list": "other",
+		"ask_user":          "other",
+		"":                  "other",
+		// Keyword fallback: the specific verbs must win over the "run_"/"git"
+		// substrings, or a read tool is rendered as a shell command.
+		"run_read":    "read",
+		"run_edit":    "edit",
+		"run_search":  "search",
+		"custom_bash": "execute",
+		"custom_git":  "execute",
+	}
+	for name, want := range cases {
+		if got := toolKind(name); got != want {
+			t.Errorf("toolKind(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// =============================================================================
+// #868: session/cancel must cancel the Memory run, not just the local request.
+// =============================================================================
+
+// TestCancelMidStreamCancelsMemoryTask pins the #868 fix: a session/cancel
+// arriving while the A2A stream is open must also call CancelTask for the
+// in-flight task, so the run stops in its sandbox instead of executing to
+// completion for a client that has stopped reading.
+func TestCancelMidStreamCancelsMemoryTaskDev(t *testing.T) {
+	streaming := make(chan struct{})
+	cancelled := make(chan string, 1)
+
+	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ":cancel") {
+			cancelled <- r.URL.Path
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"task-1","status":{"state":"TASK_STATE_CANCELED"}}`))
+			return
+		}
+		// Name the task on the first event (the SUBMITTED snapshot), then stream
+		// a tool call and hold the connection open until the client cancels.
+		writeSSEEvents(w, []a2a.StreamResponse{
+			{Task: &a2a.Task{ID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateSubmitted}}},
+			{StatusUpdate: &a2a.TaskStatusUpdateEvent{TaskID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateWorking}}},
+		})
+		close(streaming)
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+			t.Error("stream not torn down by cancellation")
+		}
+	})
+
+	sessID := mustNewSession(t, agent)
+	promptLine := fmt.Sprintf(`{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":%q,"prompt":[{"type":"text","text":"hi"}]}}`, sessID)
+	cancelLine := fmt.Sprintf(`{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":%q}}`, sessID)
+
+	pr, pw := io.Pipe()
+	go func() {
+		_, _ = fmt.Fprintln(pw, promptLine)
+		<-streaming
+		// Wait until the turn has stashed the task id from the stream: the
+		// cancel must not race the first event's arrival, or there is nothing
+		// to cancel remotely yet.
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			agent.mu.Lock()
+			named := false
+			if s := agent.sessions[sessID]; s != nil {
+				for _, tn := range s.cancels {
+					named = tn.taskID == "task-1"
+				}
+			}
+			agent.mu.Unlock()
+			if named {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Error("turn never stashed the streamed task id")
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		_, _ = fmt.Fprintln(pw, cancelLine)
+		_ = pw.Close()
+	}()
+
+	var out, errBuf bytes.Buffer
+	if err := Run(context.Background(), pr, &out, &errBuf, agent); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	select {
+	case path := <-cancelled:
+		if path != "/tasks/task-1:cancel" {
+			t.Errorf("cancel path = %q, want /tasks/task-1:cancel", path)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("session/cancel did not reach the Memory CancelTask endpoint")
+	}
+
+	var promptResp map[string]any
+	for _, m := range decodeLines(t, out.Bytes()) {
+		if m["id"] == float64(3) {
+			promptResp = m
+		}
+	}
+	if promptResp == nil {
+		t.Fatalf("no prompt response in %q", out.String())
+	}
+	pr2 := promptResp["result"].(map[string]any)
+	if pr2["stopReason"] != StopReasonCancelled {
+		t.Errorf("stopReason = %v, want cancelled", pr2["stopReason"])
+	}
+}
+
+// TestConsumeStream_TaskIDClearedOnPause is the positive assertion for the
+// "do not cancel a paused task" guard: it drives consumeStream itself and
+// requires the tracker to report the task id while the turn runs and "" as soon
+// as INPUT_REQUIRED arrives — while the stream is still open, so the clear cannot
+// be confused with the end-of-stream cleanup. Without it the paused task id stays
+// tracked, and a session/cancel racing the stream teardown parks the task in
+// "cancelling" and strands the resume (issue #868 against #867).
+//
+// Asserting on the tracker at the pause, not on a 300 ms silence at the end of the
+// turn, is what makes this bite: removing the clearTask in the INPUT_REQUIRED
+// branch leaves the tracker silent after "task-1" and the test fails regardless of
+// scheduling.
+func TestConsumeStream_TaskIDClearedOnPause(t *testing.T) {
+	release := make(chan struct{})
+	paused := make(chan struct{})
+
+	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		writeSSEEvents(w, []a2a.StreamResponse{
+			{Task: &a2a.Task{ID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateSubmitted}}},
+			{StatusUpdate: &a2a.TaskStatusUpdateEvent{TaskID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateWorking}}},
+			{StatusUpdate: &a2a.TaskStatusUpdateEvent{TaskID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{
+				State:   a2a.TaskStateInputRequired,
+				Message: &a2a.Message{Role: a2a.RoleAgent, Parts: []a2a.Part{a2a.TextPart("Go on?")}},
+			}}},
+		})
+		close(paused)
+		// Hold the stream open: the test observes the tracker while it is still
+		// live, so an end-of-stream cleanup cannot masquerade as the pause guard.
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	})
+
+	stream, err := agent.client.StreamMessage(context.Background(), a2a.SendMessageRequest{
+		Message: a2a.Message{MessageID: "msg-1", Role: a2a.RoleUser, Parts: []a2a.Part{a2a.TextPart("hi")}},
+	})
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	tracked := make(chan string, 8)
+	type result struct {
+		pending string
+		err     error
+	}
+	consumed := make(chan result, 1)
+	go func() {
+		emitter := &sessionEmitter{sid: "s1", send: func(any) error { return nil }}
+		_, pending, _, err := agent.consumeStream(context.Background(), stream, emitter, func(id string) {
+			tracked <- id
+		})
+		consumed <- result{pending: pending, err: err}
+	}()
+
+	<-paused
+
+	next := func() (string, bool) {
+		select {
+		case id := <-tracked:
+			return id, true
+		case <-time.After(2 * time.Second):
+			return "", false
+		}
+	}
+
+	first, ok := next()
+	if !ok {
+		t.Fatal("the tracker was never told the task id: a cancel mid-turn would not reach the run")
+	}
+	if first != "task-1" {
+		t.Errorf("first tracked id = %q, want task-1: the running turn must be cancellable", first)
+	}
+	second, ok := next()
+	if !ok {
+		t.Fatal("the pause did not clear the tracked task id before the stream ended: " +
+			"a session/cancel would cancel the paused task and strand the resume")
+	}
+	if second != "" {
+		t.Errorf("tracked id at the pause = %q, want \"\": the paused run has stopped", second)
+	}
+
+	close(release)
+
+	var res result
+	select {
+	case res = <-consumed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("consumeStream did not return after the stream closed")
+	}
+	if res.err != nil {
+		t.Fatalf("consumeStream: %v", res.err)
+	}
+	if res.pending != "task-1" {
+		t.Errorf("pendingTaskID = %q, want task-1 (the resume target)", res.pending)
+	}
+}
+
+// TestCancelAfterInputRequiredDoesNotCancelPausedTask is the coarse end-to-end
+// companion: it runs the whole loop and requires no :cancel request to arrive
+// after the pause. It synchronises on the CLIENT having consumed INPUT_REQUIRED
+// (the tracker cleared the task id) — not on the server having written it — so
+// the test does not race the client's read of the pause frame and cannot fail
+// under CPU contention for the wrong reason. The guard itself is pinned
+// precisely by TestConsumeStream_TaskIDClearedOnPause.
+func TestCancelAfterInputRequiredDoesNotCancelPausedTask(t *testing.T) {
+	consumed := make(chan struct{})
+	remoteCancels := make(chan string, 4)
+
+	var agent *Agent
+	// trackedTaskID reports the task id the in-flight turn is currently
+	// cancellable for, under the agent's lock.
+	trackedTaskID := func() (string, bool) {
+		agent.mu.Lock()
+		defer agent.mu.Unlock()
+		for _, sess := range agent.sessions {
+			for _, tn := range sess.cancels {
+				return tn.taskID, true
+			}
+		}
+		return "", false
+	}
+	waitTracked := func(want string) {
+		deadline := time.Now().Add(3 * time.Second)
+		for {
+			if got, ok := trackedTaskID(); ok && got == want {
+				return
+			}
+			if time.Now().After(deadline) {
+				got, ok := trackedTaskID()
+				t.Errorf("tracked task id = %q (registered=%v), want %q: the cancel would race the pause", got, ok, want)
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	agent = streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ":cancel") {
+			remoteCancels <- r.URL.Path
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"task-1","status":{"state":"TASK_STATE_CANCELED"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl, _ := w.(http.Flusher)
+		write := func(ev a2a.StreamResponse) {
+			b, _ := json.Marshal(ev)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+			if fl != nil {
+				fl.Flush()
+			}
+		}
+		write(a2a.StreamResponse{Task: &a2a.Task{ID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateSubmitted}}})
+		// Hold the run open until the client has latched the task id: a cancel
+		// before this is legitimately a no-op, and one after it but before the
+		// pause frame would legitimately cancel the run.
+		waitTracked("task-1")
+		write(a2a.StreamResponse{StatusUpdate: &a2a.TaskStatusUpdateEvent{TaskID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateInputRequired, Message: &a2a.Message{Role: a2a.RoleAgent, Parts: []a2a.Part{a2a.TextPart("Go on?")}}}}})
+		// Only now may the test send session/cancel: the client has consumed the
+		// pause and cleared its tracked task id, which is the state under test.
+		waitTracked("")
+		close(consumed)
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+			t.Error("stream not torn down by cancellation")
+		}
+	})
+
+	sessID := mustNewSession(t, agent)
+	promptLine := fmt.Sprintf(`{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":%q,"prompt":[{"type":"text","text":"hi"}]}}`, sessID)
+	cancelLine := fmt.Sprintf(`{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":%q}}`, sessID)
+
+	pr, pw := io.Pipe()
+	go func() {
+		_, _ = fmt.Fprintln(pw, promptLine)
+		<-consumed
+		_, _ = fmt.Fprintln(pw, cancelLine)
+		_ = pw.Close()
+	}()
+
+	var out, errBuf bytes.Buffer
+	if err := Run(context.Background(), pr, &out, &errBuf, agent); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	select {
+	case path := <-remoteCancels:
+		t.Fatalf("cancel of a paused task must not reach %q: it strands the resume", path)
+	case <-time.After(300 * time.Millisecond):
 	}
 }

@@ -15,6 +15,12 @@ struct CLIAuthStatus: Decodable, Equatable, Sendable {
     let issuer: String?
     let expiresAt: String?
     let expired: Bool?
+    /// True when a refresh token is stored, i.e. the access token can be
+    /// renewed without user interaction. Older CLI builds omit it.
+    let canRefresh: Bool?
+    /// True when the provider has already rejected the stored refresh token:
+    /// the session exists but cannot be renewed.
+    let needsReauth: Bool?
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -24,6 +30,31 @@ struct CLIAuthStatus: Decodable, Equatable, Sendable {
         case issuer
         case expiresAt = "expires_at"
         case expired
+        case canRefresh = "can_refresh"
+        case needsReauth = "needs_reauth"
+    }
+}
+
+/// `memory-connector auth refresh --json`.
+///
+/// Reports whether a renewal actually happened and the session state afterwards.
+/// Like `auth access-token`, the refresh token itself is never part of this
+/// contract.
+struct CLIAuthRefresh: Decodable, Equatable, Sendable {
+    let schemaVersion: Int
+    let serverURL: String
+    let refreshed: Bool
+    let expiresAt: String?
+    let canRefresh: Bool
+    let needsReauth: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case serverURL = "server_url"
+        case refreshed
+        case expiresAt = "expires_at"
+        case canRefresh = "can_refresh"
+        case needsReauth = "needs_reauth"
     }
 }
 

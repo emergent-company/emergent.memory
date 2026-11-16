@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"strings"
 )
@@ -78,7 +77,7 @@ func (r *AgentWriteRules) CheckFields(objectType string, properties map[string]a
 		return nil
 	}
 	slices.Sort(denied)
-	return fmt.Errorf("%s: fields not writable by this agent: %s (allowed: %s)",
+	return toolArgErrorf("%s: fields not writable by this agent: %s (allowed: %s)",
 		objectType, strings.Join(denied, ", "), strings.Join(rule.Fields, ", "))
 }
 

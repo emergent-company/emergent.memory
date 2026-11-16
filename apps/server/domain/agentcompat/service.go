@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -363,6 +364,23 @@ func (s *Service) executeStreaming(
 	return &Result{StreamEvents: ch}, nil
 }
 
+// resumeErrorMessage renders a resume failure for a caller whose HTTP status is
+// already committed (streaming): a resume that lost the claim to another
+// follower is not a failure of this caller's run — the turn is running under
+// that claim — so it must not read like a server-side error (issue #887).
+//
+// A lost claim is only reported that way when another caller actually owns the
+// turn. agents.ErrRunPauseNotResumable means the pause went terminal instead
+// (cancelled/failed), so it keeps its own message naming the run's real status:
+// telling the client to wait for a turn that will never run is exactly the lie
+// issue #912 is about.
+func resumeErrorMessage(err error) string {
+	if errors.Is(err, agents.ErrRunAlreadyResumed) {
+		return "this run was already resumed by another caller; the turn is running under that claim"
+	}
+	return err.Error()
+}
+
 func (s *Service) resumeStreaming(
 	ctx context.Context,
 	priorRun *agents.AgentRun,
@@ -379,7 +397,7 @@ func (s *Service) resumeStreaming(
 		result, err := s.executor.Resume(ctx, priorRun, resumeReq)
 		if err != nil {
 			s.log.Warn("agentcompat: streaming resume error", slog.String("error", err.Error()))
-			ch <- StreamEvent{Done: true, ErrorMsg: err.Error()}
+			ch <- StreamEvent{Done: true, ErrorMsg: resumeErrorMessage(err)}
 			return
 		}
 		usage := s.fetchUsage(ctx, result.RunID)

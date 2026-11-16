@@ -208,8 +208,8 @@ func TestHTTPErrorMapping(t *testing.T) {
 	defer srv.Close()
 
 	_, err := newTestClient(t, srv.URL, Config{}).GetRepo(context.Background(), "acme/private-docs")
-	var httpErr *HTTPError
-	if !errors.As(err, &httpErr) {
+	httpErr, ok := errors.AsType[*HTTPError](err)
+	if !ok {
 		t.Fatalf("GetRepo() error = %v, want *HTTPError", err)
 	}
 	if httpErr.StatusCode != http.StatusUnauthorized || httpErr.Message != "Bad credentials" {

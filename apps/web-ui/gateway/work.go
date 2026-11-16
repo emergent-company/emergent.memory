@@ -28,19 +28,39 @@ type workData struct {
 	Definitions       map[string]*AgentDefinition
 	ObjectTypes       []CompiledType
 	RelationshipTypes []CompiledType
-	BoardTypes        []CompiledType
-	SelectedTypes     []string
-	TypeCounts        map[string]int
-	Matrices          []workMatrix
-	FilterExplicit    bool
-	ScopeBase         string
-	LaneOpen          map[string]bool
-	Items             []WorkItem
-	Allowances        boardAllowances
-	Rules             []workRuleRow
-	FlashMsg          string
-	FlashErr          error
-	LoadErr           error
+	// TypeUI indexes the compiled types' declared icon/colour by type name, so a
+	// card renders the same tile the objects page does.
+	TypeUI         map[string]typeUI
+	BoardTypes     []CompiledType
+	SelectedTypes  []string
+	TypeCounts     map[string]int
+	Matrices       []workMatrix
+	FilterExplicit bool
+	// Query is the board's view state (the type filter) as it arrived, reduced to
+	// the board's own parameters. Every surface that re-renders the board — the
+	// live stream, the deferred partial refresh, a drawer action's response — has
+	// to name the same view: the filter control deliberately sits outside the swap
+	// region, so a frame that fell back to "all types" would widen the board under
+	// a control that still shows the selected subset. The frame republishes it as
+	// data-board-query, the stream connects with it, and every board request
+	// carries it forward.
+	Query      url.Values
+	ScopeBase  string
+	LaneOpen   map[string]bool
+	Items      []WorkItem
+	Allowances boardAllowances
+	Rules      []workRuleRow
+	FlashMsg   string
+	FlashErr   error
+	LoadErr    error
+	// StatusMap is the project's work-path status mapping. The board renders it
+	// as `data-board-status-map` on its swap container, which is where the drag
+	// handler reads the allowed moves from — without it a custom-mapped project
+	// falls back to the built-in statuses.
+	StatusMap boardStatusMap
+	// Unhealthy is the agent circuit-breaker readout: reaction agents that are
+	// disabled or repeatedly failing. Empty means all healthy.
+	Unhealthy []ScheduledAgent
 }
 
 // workRuleRow is one (agent, object type) rule in the aggregated table.
@@ -73,8 +93,21 @@ func (s *Server) uiWorkSection(c echo.Context) error {
 	return s.page(c, pageTitle("Work"), WorkPage(data))
 }
 
-// loadWorkData loads agents, compiled types, rules, and (for Board) items.
+// loadWorkData loads the Work section's data. Board and Settings need different
+// halves of it: the board renders matrices from compiled types and items and
+// needs no agent definition at all, while settings aggregates every definition's
+// rules. Loading both on the board path meant one GetAgentDefinition call per
+// agent on every board render — and, once the board has a live stream, on every
+// re-render — so the two paths are separate.
 func (s *Server) loadWorkData(ctx context.Context, c echo.Context, data *workData) error {
+	if data.Section == workBoardSection {
+		return s.loadWorkBoard(ctx, c, data)
+	}
+	return s.loadWorkSettings(ctx, c, data)
+}
+
+// loadWorkSettings loads the aggregated rules and agent defaults.
+func (s *Server) loadWorkSettings(ctx context.Context, c echo.Context, data *workData) error {
 	defs, err := s.memory.ListAgentDefinitions(ctx)
 	if err != nil {
 		return err
@@ -95,7 +128,31 @@ func (s *Server) loadWorkData(ctx context.Context, c echo.Context, data *workDat
 		}
 		return data.Rules[i].ObjectType < data.Rules[j].ObjectType
 	})
+	s.loadWorkSchema(ctx, c, data)
+	return nil
+}
 
+// loadWorkBoard loads the board: the schema-derived frame inputs, the health
+// readout and the work items themselves.
+func (s *Server) loadWorkBoard(ctx context.Context, c echo.Context, data *workData) error {
+	s.loadWorkSchema(ctx, c, data)
+	s.loadWorkHealth(ctx, data)
+	items, err := s.memory.ListWorkItems(ctx, "", "", boardItemLimit, true)
+	if err != nil {
+		return err
+	}
+	view := boardViewQuery(c.Request().URL.Query(), data.BoardTypes)
+	data.Query = view
+	applyWorkBoardItems(data, items, view)
+	return nil
+}
+
+// loadWorkSchema fills the compiled-type inputs a board frame renders from:
+// board types, their declared icons/colours, the per-type status allowances and
+// the persisted lane preferences. A compiled-types failure is tolerated — the
+// matrices fall back to the built-in status order — because a schema hiccup must
+// not take the board away; it is captured and the page still renders.
+func (s *Server) loadWorkSchema(ctx context.Context, c echo.Context, data *workData) {
 	var compiled *CompiledSchemaTypes
 	if c, err := s.memory.GetCompiledTypes(ctx); err != nil {
 		captureError(err)
@@ -106,23 +163,37 @@ func (s *Server) loadWorkData(ctx context.Context, c echo.Context, data *workDat
 		data.ObjectTypes = compiled.ObjectTypes
 		data.RelationshipTypes = compiled.RelationshipTypes
 	}
+	data.TypeUI = objectTypeUIMap(data.ObjectTypes)
 	data.BoardTypes = boardTypesFromCompiled(compiled)
 	data.Allowances = boardAllowancesFromCompiled(compiled)
+	data.StatusMap = s.boardStatusMap(ctx)
 	data.ScopeBase = linkBaseFromContext(ctx)
 	data.LaneOpen = workLanePrefs(c, data.ScopeBase)
+}
 
-	if data.Section != workBoardSection {
-		return nil
-	}
-	items, err := s.memory.ListWorkItems(ctx, "", "", boardItemLimit)
+// loadWorkHealth loads the agent circuit-breaker readout. A failed fetch is
+// "unknown", not "healthy": the banner is left empty and the error captured,
+// exactly as the live stream treats it (see workStreamState.pushHealth).
+func (s *Server) loadWorkHealth(ctx context.Context, data *workData) {
+	agents, err := s.memory.ListScheduledAgents(ctx)
 	if err != nil {
-		return err
+		captureError(err)
+		return
 	}
+	data.Unhealthy = boardUnhealthyAgents(agents)
+}
+
+// applyWorkBoardItems fills the projection a board frame renders: the type
+// counts, the selected types and one matrix per selected type. It is the half of
+// the board that changes when an item moves, so the live stream calls it again
+// per frame while keeping the schema-derived inputs it loaded at connect time.
+func applyWorkBoardItems(data *workData, items []WorkItem, q url.Values) {
+	compiled := &CompiledSchemaTypes{ObjectTypes: data.ObjectTypes}
 	data.Items = items
-	q := c.Request().URL.Query()
 	data.FilterExplicit = q.Get("filter") == "1"
 	data.SelectedTypes = resolveWorkTypeFilter(data.BoardTypes, q["type"], data.FilterExplicit)
 	data.TypeCounts = map[string]int{}
+	data.Matrices = nil
 	for _, it := range items {
 		data.TypeCounts[it.Type]++
 	}
@@ -139,7 +210,6 @@ func (s *Server) loadWorkData(ctx context.Context, c echo.Context, data *workDat
 		}
 		data.Matrices = append(data.Matrices, buildWorkMatrix(t.Name, items, compiled))
 	}
-	return nil
 }
 
 // rulesForDefinition flattens one definition's rules.
@@ -405,6 +475,71 @@ func workFilterTypes(data workData) []string {
 		return nil
 	}
 	return data.SelectedTypes
+}
+
+// boardViewQuery reduces a request's query to the board's own view state. The
+// type filter is that state, and it has to survive the three surfaces that
+// re-render the board without the user's filter form: the live stream (which
+// renders from the query it connected with), the deferred partial refresh, and a
+// drawer action's response. Each carries this query forward, so a filtered board
+// cannot silently widen to every type while the filter control still shows the
+// subset. Everything else in the request's query is dropped.
+//
+// The type values are resolved through the same validation the board renders
+// with, rather than copied verbatim (#878): a repeated or non-board-enabled type
+// would otherwise ride into the stream URL, data-board-query and every action
+// URL, and the published query would then name types the rendered matrices do not
+// contain — the exact drift this field exists to prevent.
+//
+// boardTypes is the board's own type set (boardTypesFromCompiled). Empty means
+// the schema is unknown — the object preview renders even when GetCompiledTypes
+// fails — and then only values that cannot mean anything (blank, repeated) are
+// dropped, because validating against an empty set would strip a real filter.
+func boardViewQuery(q url.Values, boardTypes []CompiledType) url.Values {
+	out := url.Values{}
+	if q.Get("filter") == "1" {
+		out.Set("filter", "1")
+	}
+	for _, t := range boardViewTypes(boardTypes, q["type"]) {
+		out.Add("type", t)
+	}
+	return out
+}
+
+// boardViewTypes validates and de-dupes the requested types. With a known board
+// type set it is resolveWorkTypeFilter's explicit selection — the same call the
+// matrices are built from — so the published query and the rendered board come
+// from one set. Without one it keeps the request's order and drops only blanks
+// and repeats.
+func boardViewTypes(boardTypes []CompiledType, raw []string) []string {
+	trimmed := make([]string, 0, len(raw))
+	for _, t := range raw {
+		trimmed = append(trimmed, strings.TrimSpace(t))
+	}
+	if len(boardTypes) > 0 {
+		return resolveWorkTypeFilter(boardTypes, trimmed, true)
+	}
+	seen := make(map[string]bool, len(trimmed))
+	var out []string
+	for _, t := range trimmed {
+		if t == "" || seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	return out
+}
+
+// workBoardStreamURL is the live stream's address, carrying the board's view
+// state. hx-sse opens a bare EventSource, so the query cannot be added by the
+// client afterwards: it has to be in the rendered URL or the mandatory catch-up
+// frame renders the all-types board.
+func workBoardStreamURL(data workData) string {
+	if q := data.Query.Encode(); q != "" {
+		return "/work/board/stream?" + q
+	}
+	return "/work/board/stream"
 }
 
 // workRuleEditHref builds the edit-page URL for one rule.

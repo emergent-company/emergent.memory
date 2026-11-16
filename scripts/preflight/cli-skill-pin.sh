@@ -9,10 +9,14 @@
 #
 # Run by scripts/preflight/all.sh, which the `ci` GitHub workflow invokes; also
 # wired into lefthook's pre-commit for CLI-scoped changes. Run from anywhere;
-# resolves the repo root itself.
+# resolves the repo root from the script's own location — not from
+# `git rev-parse --show-toplevel`, which answers the hook's cwd when a git hook
+# exports GIT_DIR. lefthook runs this job with cwd `apps/cli`, so the old form
+# diffed `apps/cli/apps/cli/internal/skillsfs`, matched nothing and reported
+# every generated file as deleted. ui-guard.sh documents the same trap.
 set -euo pipefail
 
-root="$(git rev-parse --show-toplevel)"
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$root"
 
 skill_dir="apps/cli/internal/skillsfs"

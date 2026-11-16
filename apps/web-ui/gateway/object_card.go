@@ -55,7 +55,10 @@ type objectCardStatus struct {
 }
 
 // objectCardField is one read-only row: objectPreviewField as JSON. The field
-// order matches objectPreviewField so the two convert directly.
+// order matches objectPreviewField so the two convert directly. Markdown flags
+// a long-form prose value (an issue body) that the web drawer renders as
+// sanitized markdown; a client renders it with its own markdown view instead of
+// showing the source.
 type objectCardField struct {
 	Label       string `json:"label"`
 	Description string `json:"description,omitempty"`
@@ -63,6 +66,7 @@ type objectCardField struct {
 	Name        string `json:"name,omitempty"`
 	Empty       bool   `json:"empty,omitempty"`
 	Mono        bool   `json:"mono,omitempty"`
+	Markdown    bool   `json:"markdown,omitempty"`
 }
 
 // objectCardSection is a titled list of rows.
@@ -101,7 +105,8 @@ type objectCard struct {
 	// CopyID is the identifier the copy control yields: the canonical id, not
 	// the version row that happened to be previewed.
 	CopyID string `json:"copy_id"`
-	// Title is the card heading (graphObjectLabel: key, else type + short id).
+	// Title is the card heading (graphObjectLabel: name, else a non-machine key,
+	// else type + short id).
 	Title   string         `json:"title"`
 	Key     string         `json:"key,omitempty"`
 	Version int            `json:"version,omitempty"`

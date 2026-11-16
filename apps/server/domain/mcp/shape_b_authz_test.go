@@ -104,8 +104,8 @@ func (s *ShapeBAuthzSuite) seedSchema(projectID, name string) string {
 func (s *ShapeBAuthzSuite) assertAppErrorStatus(err error, wantStatus int) {
 	s.T().Helper()
 	s.Require().Error(err)
-	var appErr *apperror.Error
-	s.Require().Truef(errors.As(err, &appErr), "expected *apperror.Error, got %T: %v", err, err)
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	s.Require().Truef(ok, "expected *apperror.Error, got %T: %v", err, err)
 	s.Require().Equalf(wantStatus, appErr.HTTPStatus, "got status %d: %v", appErr.HTTPStatus, err)
 }
 

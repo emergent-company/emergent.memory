@@ -20,8 +20,10 @@ import (
 type budgetBlockStore interface {
 	// active reports whether projectID is still inside a cached over-budget window.
 	active(ctx context.Context, projectID string) (bool, error)
-	// mark caches projectID as over budget until the given deadline.
-	mark(ctx context.Context, projectID string, until time.Time) error
+	// mark caches projectID as over budget for ttl. The deadline is derived
+	// inside the database (see dbBudgetBlockStore.mark), so the window is
+	// extended relative to the same clock `active` reads (#818).
+	mark(ctx context.Context, projectID string, ttl time.Duration) error
 	// clear drops the cached verdict so the next job re-reads the budget.
 	clear(ctx context.Context, projectID string) error
 }
@@ -42,6 +44,9 @@ type dbBudgetBlockStore struct {
 	db bun.IDB
 }
 
+// active answers from the database clock. `mark` writes `blocked_until` on that
+// same clock, so a verdict computed by one replica is judged by every other
+// replica against one timeline instead of each replica's own skew (#818).
 func (s *dbBudgetBlockStore) active(ctx context.Context, projectID string) (bool, error) {
 	var active bool
 	err := s.db.NewRaw(`SELECT EXISTS (
@@ -54,13 +59,27 @@ func (s *dbBudgetBlockStore) active(ctx context.Context, projectID string) (bool
 	return active, nil
 }
 
-func (s *dbBudgetBlockStore) mark(ctx context.Context, projectID string, until time.Time) error {
+// mark caches projectID as over budget for ttl.
+//
+// The deadline is `now() + ttl` in SQL, not time.Now() in the caller: the write
+// and the `blocked_until > now()` read in active must be on one clock, or a
+// replica whose clock runs ahead caches a verdict longer than the TTL and one
+// that runs behind expires it early (#818).
+//
+// DO UPDATE ... WHERE excludes a re-mark whose deadline is not later than the
+// stored one. A blocked project re-marks whenever a replica runs the budget
+// check after its window expired, and concurrent replicas can detect the
+// exhaustion together; without the guard each of those rewrote (and vacuumed)
+// the row for a strictly shorter window, which changed nothing (#818).
+func (s *dbBudgetBlockStore) mark(ctx context.Context, projectID string, ttl time.Duration) error {
 	_, err := s.db.NewRaw(`INSERT INTO kb.chunk_embedding_budget_blocks
 			(project_id, blocked_until, updated_at)
-		VALUES (?, ?, now())
+		VALUES (?, now() + make_interval(secs => ?), now())
 		ON CONFLICT (project_id) DO UPDATE
 		SET blocked_until = EXCLUDED.blocked_until,
-			updated_at = now()`, projectID, until).Exec(ctx)
+			updated_at = now()
+		WHERE chunk_embedding_budget_blocks.blocked_until < EXCLUDED.blocked_until`,
+		projectID, ttl.Seconds()).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cache chunk embedding budget block: %w", err)
 	}

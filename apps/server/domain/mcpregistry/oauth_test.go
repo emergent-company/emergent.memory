@@ -284,8 +284,8 @@ func TestRegisterClient_RejectedSurfacesStatusAndSentinel(t *testing.T) {
 		t.Fatal("expected an error for a rejected registration")
 	}
 
-	var rej *oauthRegistrationRejected
-	if !errors.As(err, &rej) {
+	rej, ok := errors.AsType[*oauthRegistrationRejected](err)
+	if !ok {
 		t.Fatalf("err = %v, want *oauthRegistrationRejected", err)
 	}
 	if rej.Status != http.StatusForbidden {

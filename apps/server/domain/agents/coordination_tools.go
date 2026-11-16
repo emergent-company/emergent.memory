@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -493,6 +494,57 @@ func spawnTargetBlocked(trustedInternal bool, def *AgentDefinition) (string, boo
 	return "", false
 }
 
+// spawnResumeFailure projects a resume_run_id spawn that lost the pause claim.
+// A 0-row claim has two opposite meanings, and the card must not conflate them
+// (issue #912):
+//
+//   - ErrRunAlreadyResumed: another follower (a client retry, a re-delivered
+//     wake) claimed this pause first and is executing the turn. Nothing this
+//     caller started was lost, and reporting `error` would make the parent
+//     believe the delegated work failed — and very likely retry a resume that
+//     will be rejected again. Keep the card `running` with a note (issue #887).
+//   - ErrRunPauseNotResumable: the pause left input-required for another reason
+//     (cancelled/failed), so no turn will ever execute. A card left `running`
+//     would never leave that state: project it terminal with the real reason.
+//
+// Both outcomes return an error status for the caller to inspect; only the
+// benign one reports the sub-agent as running.
+func spawnResumeFailure(deps *CoordinationToolDeps, req SpawnRequest, resumeRunID, syntheticID string, err error) SpawnResult {
+	if errors.Is(err, ErrRunAlreadyResumed) {
+		note := "resume already claimed by another caller; that claim is executing the turn (this caller did not start it)"
+		deps.emitSubagent(SubagentUpdate{
+			ID:          syntheticID,
+			ParentRunID: deps.ParentRunID,
+			AgentName:   req.AgentName,
+			Task:        req.Task,
+			Status:      "running",
+		})
+		return SpawnResult{
+			AgentName: req.AgentName,
+			RunID:     resumeRunID,
+			Status:    RunStatusRunning,
+			Summary:   map[string]any{"note": note},
+		}
+	}
+	// Terminal pause: the card is keyed on the paused run itself, so it names
+	// the run whose state the parent can look up.
+	deps.emitSubagent(SubagentUpdate{
+		ID:          resumeRunID,
+		ParentRunID: deps.ParentRunID,
+		RunID:       resumeRunID,
+		AgentName:   req.AgentName,
+		Task:        req.Task,
+		Status:      "failed",
+		Error:       err.Error(),
+	})
+	return SpawnResult{
+		AgentName: req.AgentName,
+		RunID:     resumeRunID,
+		Status:    RunStatusError,
+		Error:     err.Error(),
+	}
+}
+
 // executeSingleSpawn handles a single sub-agent spawn request.
 func executeSingleSpawn(ctx context.Context, deps *CoordinationToolDeps, req SpawnRequest) SpawnResult {
 	// syntheticID identifies a spawn that fails before a child run exists. It is
@@ -739,6 +791,9 @@ func executeSingleSpawn(ctx context.Context, deps *CoordinationToolDeps, req Spa
 			defer result.Cleanup()
 		}
 		if err != nil {
+			if errors.Is(err, ErrRunAlreadyResumed) || errors.Is(err, ErrRunPauseNotResumable) {
+				return spawnResumeFailure(deps, req, *req.ResumeRunID, syntheticID, err)
+			}
 			emitTerminal(result, err)
 			return SpawnResult{
 				AgentName: req.AgentName,

@@ -84,10 +84,20 @@ project rather than from the token's claims:
 Every project role carries `agents:read`, so any member can fetch the card and
 read tasks. `agents:write` — `message:send`, `message:stream` and
 `tasks/{id}:cancel` — comes only with `project_admin`; a `project_user` or
-`project_viewer` session, including `memory a2a send` after `memory login`, is
-refused with `PERMISSION_DENIED`. A `superadmin_full` session carries the full
-catalogue; a session with no project role carries only the deployment's
-`MEMORY_OIDC_DEFAULT_SCOPES`, which do not include `agents:*` by default.
+`project_viewer` session, including `memory a2a send` or `memory acp` after
+`memory login`, is refused with `PERMISSION_DENIED`. `memory acp` forwards every
+prompt over `message:stream`, so it is a write surface even though it drives an
+agent rather than a task; its documented setup uses `MEMORY_PROJECT_TOKEN`,
+whose default scopes include `agents:*`.
+
+A `superadmin_full` session carries the full catalogue. A session with no
+project membership resolves to its `org_admin` entitlements when it has them,
+and otherwise to the deployment's `MEMORY_OIDC_DEFAULT_SCOPES`; neither set
+includes `agents:*` by default, so it is refused here unless the default is
+changed. An **unrecognised** project role — or a role lookup that fails — does
+not fall back to that default: the mapping fails closed to no scopes at all, so
+the session is refused here even when `MEMORY_OIDC_DEFAULT_SCOPES` names
+`agents:*`.
 
 The card declares a single bearer security scheme, for `emt_…` tokens, and no
 OAuth2 or OIDC scheme. The server does run an OAuth 2.1 authorization server

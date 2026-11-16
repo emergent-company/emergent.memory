@@ -7,7 +7,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,25 +19,6 @@ import (
 // verifying workspace config parsing → repo resolution → provider selection →
 // container creation → checkout → setup commands → status transitions.
 // =============================================================================
-
-// mockStoreForProvisioning implements the store operations needed by Service
-// during auto-provisioning. It uses in-memory maps instead of a real DB.
-type mockStoreForProvisioning struct {
-	workspaces  map[string]*AgentSandbox
-	mu          sync.Mutex
-	activeCount int
-	activeErr   error
-	createErr   error
-	updateErr   error
-	touchErr    error
-	idCounter   int
-}
-
-func newMockStore() *mockStoreForProvisioning {
-	return &mockStoreForProvisioning{
-		workspaces: make(map[string]*AgentSandbox),
-	}
-}
 
 // provisioningProvider extends mockProvider with configurable exec for clone/setup testing.
 type provisioningProvider struct {
@@ -1517,13 +1497,6 @@ func TestAutoProvisioner_CreateWorkspaceWithContainer_NoStore(t *testing.T) {
 	ap := NewAutoProvisioner(nil, nil, nil, nil, nil, testLogger(), nil)
 	_, err := ap.createWorkspaceWithContainer(t.Context(), ProviderGVisor, "c1", "", "", nil)
 	require.Error(t, err, "must not silently proceed without a workspace store")
-}
-
-// Helper: elapsed time tracker for timing assertions
-func measureDuration(fn func()) time.Duration {
-	start := time.Now()
-	fn()
-	return time.Since(start)
 }
 
 // TestIntegration_AutoProvision_ConfiguresGitAuthBeforeClone pins the wiring, not

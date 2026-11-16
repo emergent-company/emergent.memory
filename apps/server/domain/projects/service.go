@@ -16,6 +16,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/notifications"
 	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/internal/budgetwindow"
+	"github.com/emergent-company/emergent.memory/internal/database"
 	"github.com/emergent-company/emergent.memory/pkg/activity"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -286,7 +287,7 @@ func (s *Service) Create(ctx context.Context, req CreateProjectRequest, userID s
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer database.RollbackTx(s.log, tx) // no-op after a successful commit
 
 	// Check org exists with pessimistic lock
 	orgExists, err := s.repo.CheckOrgExistsWithLock(ctx, tx.Tx, req.OrgID)

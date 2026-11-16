@@ -58,7 +58,16 @@ type WorkItem struct {
 	ProjectID   string
 	CanonicalID string
 	Type        string
-	Key         string
+	// Name is the object's first-class human title (the `name` column). Nil when
+	// the object has none; a caller falls back to Key and then Type + short id.
+	Name *string
+	// Ref is the display-only "#<12 hex>" identity derived from the canonical
+	// id. It is never an input.
+	Ref string
+	Key string
+	// Properties is the HEAD's property bag, carried so a card can render the
+	// same excerpt the objects page renders without a second fetch.
+	Properties  map[string]any
 	Status      string
 	Assignee    string
 	Version     int
@@ -363,7 +372,7 @@ func (s *Service) transitionWorkObject(ctx context.Context, projectID, canonical
 	if err != nil {
 		return false, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer s.rollbackTx(tx)
 
 	if err := s.repo.AcquireObjectUpsertLock(ctx, tx.Tx, pid, head.Type, *head.Key); err != nil {
 		return false, err
@@ -668,6 +677,9 @@ func (s *Service) ListWorkItems(ctx context.Context, projectID, status, typeName
 			ProjectID:   o.ProjectID.String(),
 			CanonicalID: o.CanonicalID.String(),
 			Type:        o.Type,
+			Name:        o.Name,
+			Ref:         ObjectRef(o.CanonicalID),
+			Properties:  o.Properties,
 			Version:     o.Version,
 			UpdatedAt:   o.UpdatedAt,
 		}

@@ -107,6 +107,7 @@ type UnifiedSearchGraphResult struct {
 	Score           float32                     `json:"score"`
 	Rank            int                         `json:"rank"`
 	ObjectType      string                      `json:"object_type"`
+	Name            *string                     `json:"name,omitempty"`
 	Key             string                      `json:"key"`
 	Fields          map[string]any              `json:"fields"`
 	Labels          []string                    `json:"labels,omitempty"`
@@ -155,6 +156,7 @@ type UnifiedSearchResultItem struct {
 	CanonicalID     string                      `json:"canonical_id,omitempty"`
 	Rank            int                         `json:"rank,omitempty"`
 	ObjectType      string                      `json:"object_type,omitempty"`
+	Name            *string                     `json:"name,omitempty"`
 	Key             string                      `json:"key,omitempty"`
 	Fields          map[string]any              `json:"fields,omitempty"`
 	Labels          []string                    `json:"labels,omitempty"`

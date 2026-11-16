@@ -116,8 +116,8 @@ func (h *Handler) CompleteOAuth(c echo.Context) error {
 		// Browser-facing: log the detail, land on a generic error scoped to the
 		// project the flow started from (when the state was consumed).
 		projectID := ""
-		var connectErr *OAuthConnectError
-		if errors.As(err, &connectErr) && connectErr.ProjectID != uuid.Nil {
+		connectErr, ok := errors.AsType[*OAuthConnectError](err)
+		if ok && connectErr.ProjectID != uuid.Nil {
 			projectID = connectErr.ProjectID.String()
 		}
 		h.svc.log.Warn("oauth callback failed",

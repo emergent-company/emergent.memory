@@ -2,7 +2,29 @@ package components
 
 import (
 	ui "github.com/emergent-company/go-daisy/components/ui"
+	"github.com/emergent-company/go-daisy/devmode"
 )
+
+// BadgeWithClassProps configures BadgeWithClass.
+//
+// It embeds ui.BadgeProps so the badge vocabulary stays go-daisy's — one set of
+// intents, styles and sizes — and adds the one capability the pinned go-daisy
+// v0.20.0 Badge does not have: a Class that reaches the element's own class
+// attribute.
+//
+// Class is not expressible through ui.BadgeProps.Attrs: ui.Badge writes its own
+// class attribute and then spreads Attrs, so a "class" key renders a *second*
+// class attribute, which browsers drop — the utility the caller asked for
+// silently disappears (#855). Every other field is forwarded unchanged.
+//
+// Delete Class, and this wrapper, when go-daisy #150 lands BadgeProps.Class.
+type BadgeWithClassProps struct {
+	ui.BadgeProps
+	// Class is merged into the badge's class list, last, so it wins a conflict
+	// with the badge's own utilities (twmerge, last-wins). Layout-only utilities
+	// belong here — spacing, tabular-nums; a width override is MaxWidth's job.
+	Class string
+}
 
 // StatusBadgeOpts tunes a StatusBadge. Every domain status badge keeps its
 // existing treatment (style, size, dot vs icon) by passing these, so unifying
@@ -14,7 +36,11 @@ type StatusBadgeOpts struct {
 	Size ui.BadgeSize
 	// Dot renders a status dot instead of an icon.
 	Dot bool
-	// Attrs carries extra attributes such as data-testid.
+	// Attrs carries extra attributes such as data-testid. A "class" entry is
+	// folded into the badge's class list (StatusBadge renders through
+	// BadgeWithClass), so it is applied exactly once rather than rendered as a
+	// second attribute; prefer passing a layout utility as a plain "class" here
+	// only when the call site cannot use BadgeWithClass directly.
 	Attrs templ.Attributes
 }
 
@@ -29,14 +55,70 @@ templ StatusBadge(label string, intent ui.BadgeIntent, icon string, opts ...Stat
 	}
 	if o.Size != "" {
 		size = o.Size
-	} }}
-	@ui.Badge(ui.BadgeProps{
-		Label:   label,
-		Variant: intent,
-		Style:   o.Style,
-		Size:    size,
-		Icon:    icon,
-		Dot:     o.Dot,
-		Attrs:   o.Attrs,
+	}
+	attrs, class := takeClassAttr(o.Attrs) }}
+	@BadgeWithClass(BadgeWithClassProps{
+		BadgeProps: ui.BadgeProps{
+			Label:   label,
+			Variant: intent,
+			Style:   o.Style,
+			Size:    size,
+			Icon:    icon,
+			Dot:     o.Dot,
+			Attrs:   attrs,
+		},
+		Class: class,
 	})
+}
+
+// BadgeWithClass renders a DaisyUI badge whose class list accepts a caller
+// utility. It is named apart from ui.Badge because the component graph keys
+// components by bare identifier (canonical_ratchet_test.go): a local "Badge"
+// would merge with the upstream one it stands in for.
+//
+// It reproduces ui.Badge's markup (both the <span> and the <a href> shape) with
+// one difference: props.Class is merged into the element's class attribute
+// instead of arriving as a second attribute — and a class left in Attrs is
+// folded into the same merge rather than rendered twice (the DropdownMenu shape
+// upstream). The content subtree is badgeContent, a port of ui.Badge's own, so
+// the two render the same markup when Class is empty (class order aside, which
+// twmerge may normalise) — badge_alert_class_test.go pins that, which is what
+// makes the copy safe to carry.
+templ BadgeWithClass(props BadgeWithClassProps) {
+	{{ class, attrs := badgeClassAndAttrs(props) }}
+	if props.Href != "" {
+		<a href={ templ.URL(props.Href) } class={ class }
+			if props.Color != "" {
+				style={ accentStyle(props.Color) }
+			}
+			{ devmode.Attrs(ctx, "components/BadgeWithClass")... } { attrs... }>
+			@badgeContent(props.BadgeProps)
+		</a>
+	} else {
+		<span class={ class }
+			if props.Color != "" {
+				style={ accentStyle(props.Color) }
+			}
+			{ devmode.Attrs(ctx, "components/BadgeWithClass")... } { attrs... }>
+			@badgeContent(props.BadgeProps)
+		</span>
+	}
+}
+
+// badgeContent renders the prefix (dot/glyph/icon) and the label body shared by
+// both Badge variants. Port of ui.Badge's badgeContent; keep the two in step —
+// badge_alert_class_test.go fails on any drift.
+templ badgeContent(props ui.BadgeProps) {
+	if props.Dot {
+		<span class={ templ.KV("animate-pulse", props.Animate), dotClass(props.Variant) }></span>
+	} else if props.Glyph != "" {
+		<span class="shrink-0 leading-none text-[13px]" aria-hidden="true">{ props.Glyph }</span>
+	} else if props.Icon != "" {
+		@ui.IconSpan(props.Icon, "size-3 shrink-0")
+	}
+	if props.DirectLabel {
+		{ props.Label }
+	} else {
+		<span class={ templ.KV("truncate", props.MaxWidth != ""), props.LabelClass }>{ props.Label }</span>
+	}
 }

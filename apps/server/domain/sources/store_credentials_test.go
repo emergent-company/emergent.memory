@@ -212,8 +212,8 @@ func TestSavedCredential_SourceReference(t *testing.T) {
 	if err == nil {
 		t.Fatal("DeleteSavedCredential(in use) = nil error, want conflict")
 	}
-	var appErr *apperror.Error
-	if !errors.As(err, &appErr) || appErr.HTTPStatus != 409 {
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	if !ok || appErr.HTTPStatus != 409 {
 		t.Fatalf("DeleteSavedCredential(in use) error = %v, want 409", err)
 	}
 	if !strings.Contains(appErr.Message, "in use by 1 data source(s)") {

@@ -866,7 +866,7 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 					"entities": {
 						Type:        "array",
 						Items:       &PropertySchema{Type: "object"},
-						Description: "Array of entity specifications to create. Each item: {type (required), name, properties, key, status, labels, relationships?: [{type, exactly one of source_id or target_id, properties}]}. `name` is the entity's display name — the title the app and entity-query show; omit it and it is derived from properties.name/title, but a display name that differs from the property (\"Table head cell alignment\" for a variant keyed ui-variant-table-…) must be passed here. Use source_id when the pre-existing entity should be the relationship source (source_id→new_entity). Use target_id when the new entity should be the source (new_entity→target_id). A spec with both is reported as invalid_spec; a spec with neither is reported as missing_endpoint.",
+						Description: "Array of entity specifications to create. Each item: {type (required), name, properties, key, status, labels, relationships?: [{type, exactly one of source_id or target_id, properties}]}. `name` is the entity's display name — the title the app and entity-query show. It is the ONLY source of the title: properties.name and properties.title are ordinary properties and never name the object. Omit it and the entity is created nameless and displays as `type · #ref`, so pass the display name whenever the record has one (especially when it differs from the key, e.g. \"Table head cell alignment\" for a variant keyed ui-variant-table-…). Use source_id when the pre-existing entity should be the relationship source (source_id→new_entity). Use target_id when the new entity should be the source (new_entity→target_id). A spec with both is reported as invalid_spec; a spec with neither is reported as missing_endpoint.",
 					},
 					"branch": {
 						Type:        "string",
@@ -2690,7 +2690,7 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	// includes hidden built-ins such as set_session_title, which must not be
 	// reachable outside a restricted instance's allowlist.
 	if scope := InstanceScopeFromContext(ctx); scope != nil && InstanceDeniesTool(scope, legacyDispatchName(toolName, args)) {
-		return nil, fmt.Errorf("tool not allowed by MCP share instance: %s", toolName)
+		return nil, toolForbiddenf("tool not allowed by MCP share instance: %s", toolName)
 	}
 	// Handle hidden built-in tools — these are always available, never listed,
 	// and cannot be blocked by scope filters or tool whitelists (subject to the
@@ -2706,7 +2706,7 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	// pre-check — notably the ADK ToolPool during an agent run, which executes
 	// tools with the agent's context.
 	if scope := InstanceScopeFromContext(ctx); scope != nil && InstanceDeniesTool(scope, legacyDispatchName(toolName, args)) {
-		return nil, fmt.Errorf("tool not allowed by MCP share instance: %s", toolName)
+		return nil, toolForbiddenf("tool not allowed by MCP share instance: %s", toolName)
 	}
 	// One authority decision for every transport. The three HTTP transports
 	// enforce per-tool AgentOnly / RequiredScope / SuperadminOnly before dispatch
@@ -2766,7 +2766,7 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	// so it is exempt here.
 	if sensitiveInProcessAdminTools[toolName] && !principal.TransportEnforced {
 		if !principal.Platform {
-			return nil, fmt.Errorf("tool %q requires superadmin privileges", toolName)
+			return nil, toolForbiddenf("tool %q requires superadmin privileges", toolName)
 		}
 	}
 
@@ -2777,7 +2777,7 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 			AgentOnly:      toolDef.AgentOnly,
 			SuperadminOnly: s.IsSuperadminOnlyTool(toolName),
 		}, principal); err != nil {
-			return nil, err
+			return nil, toolAuthorizationError(err)
 		}
 	}
 
@@ -3132,7 +3132,7 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 			// if the definition lookup ever regresses (issues #994, #1017).
 			if !TrustedInternalFromContext(ctx) {
 				if _, ok := RunSubjectFromContext(ctx); !ok {
-					return nil, fmt.Errorf("github app tool %q is not reachable from an untrusted surface", toolName)
+					return nil, toolForbiddenf("github app tool %q is not reachable from an untrusted surface", toolName)
 				}
 			}
 			return s.githubAppToolHandler.ExecuteGitHubAppTool(ctx, projectID, toolName, args)
@@ -3151,7 +3151,7 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 					// per-tool check, so they never satisfy this trusted-internal gate
 					// — the relay fallback is genuinely-internal only (issues #994, #1017).
 					if !TrustedInternalFromContext(ctx) {
-						return nil, fmt.Errorf("relay tool %q is not reachable from an untrusted surface", toolName)
+						return nil, toolForbiddenf("relay tool %q is not reachable from an untrusted surface", toolName)
 					}
 					relayToolName := strings.TrimPrefix(toolName, prefix)
 					result, err := s.relaySvc.CallTool(ctx, projectID, sess.InstanceID, relayToolName, args)
@@ -3175,7 +3175,7 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 				}
 			}
 		}
-		return nil, fmt.Errorf("tool not found: %s", toolName)
+		return nil, toolNotFoundf("tool not found: %s", toolName)
 	}
 }
 
@@ -3268,10 +3268,10 @@ const maxProjectInfoBytes = 100 * 1024
 func (s *Service) executeUpdateProjectInfo(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	content, ok := args["content"].(string)
 	if !ok {
-		return nil, fmt.Errorf("project-update: missing required parameter: content")
+		return nil, toolArgErrorf("project-update: missing required parameter: content")
 	}
 	if len(content) > maxProjectInfoBytes {
-		return nil, fmt.Errorf("project-update: content is %d bytes, over the %d-byte limit", len(content), maxProjectInfoBytes)
+		return nil, toolArgErrorf("project-update: content is %d bytes, over the %d-byte limit", len(content), maxProjectInfoBytes)
 	}
 
 	var stored *string
@@ -3290,7 +3290,9 @@ func (s *Service) executeUpdateProjectInfo(ctx context.Context, projectID string
 	}
 	affected, _ := res.RowsAffected()
 	if affected == 0 {
-		return nil, fmt.Errorf("update project info: project %s not found", projectID)
+		// The project id came from the request context, so this is a target that
+		// no longer exists — not a server fault, and not a malformed argument.
+		return nil, notFoundf("project_not_found", "update project info: project %s not found", projectID)
 	}
 
 	return s.wrapResult(map[string]any{
@@ -3304,7 +3306,7 @@ func (s *Service) executeUpdateProjectInfo(ctx context.Context, projectID string
 func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	branchRef, _ := args["branch"].(string)
@@ -3830,13 +3832,12 @@ func prefixUpperBound(prefix string) (string, bool) {
 }
 
 // entityQueryNameSortKeyChars bounds the sort_by=name ordering expression that
-// migration 00199 indexes. `properties` is user-supplied with no size cap (see
-// domain/graph/validation.go: unknown property types pass through), so indexing
-// the raw properties->>'name' can exceed the btree entry limit (~2704 B, 1/3
-// page): a single 5120-char name reproduces SQLSTATE 54000
-// ("index row size ... exceeds btree version 4 maximum") on insert. The index
-// expression is therefore left(properties->>'name', N), and the query ORDER BY
-// must use the exact same expression for the index to serve it.
+// migration 00311 indexes. `name` is the first-class title column (#824); the
+// expression is left(name, N) so an oversized name cannot make the btree entry
+// exceed the limit (~2704 B, 1/3 page — SQLSTATE 54000, "index row size ...
+// exceeds btree version 4 maximum"). The index expression is therefore
+// left(name, N), and the query ORDER BY must use the exact same expression for
+// the index to serve it.
 //
 // N=256 is safe under UTF-8: 256 chars x 4 bytes/char = 1024 B for the
 // expression, plus the bounded key (<=128 runes -> <=512 B) and type
@@ -3852,7 +3853,7 @@ const entityQueryNameSortKeyChars = 256
 func (s *Service) executeQueryEntities(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	// Parse arguments
@@ -3860,7 +3861,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 
 	scope := TypeScopeFromContext(ctx)
 	if typeName != "" && !scope.AllowsObject(typeName) {
-		return nil, fmt.Errorf("query entities: object type %q is not allowed for this agent", typeName)
+		return nil, toolForbiddenf("query entities: object type %q is not allowed for this agent", typeName)
 	}
 
 	// Hard per-call deadline created at the tool entry so it covers EVERY path
@@ -3899,7 +3900,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 			// fail-closed instead of silently ignoring key_prefix (issue #1148
 			// follow-up), which would otherwise contradict the scope contract.
 			if kp, _ := args["key_prefix"].(string); kp != "" {
-				return nil, fmt.Errorf("query entities: key_prefix cannot be combined with ids; ids already selects entities explicitly")
+				return nil, toolArgErrorf("query entities: key_prefix cannot be combined with ids; ids already selects entities explicitly")
 			}
 			res, err := s.executeQueryEntitiesByIDs(queryCtx, projectID, idStrs, branchID, args)
 			if err != nil && errors.Is(queryCtx.Err(), context.DeadlineExceeded) {
@@ -3947,13 +3948,14 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	// Build sort expression based on field
 	orderExpr := fmt.Sprintf("go.%s %s", sortBy, sortOrder)
 	if sortBy == "name" {
-		// Bound the ordered expression to the same left(..., N) used by the
-		// partial index idx_graph_objects_project_type_name (migration 00199),
-		// and add the canonical key as a total-order tiebreak so the index
-		// serves the ordering with no Sort node. `properties` is unbounded, so
-		// indexing the raw properties->>'name' could exceed the ~2704-byte
-		// btree tuple limit (see entityQueryNameSortKeyChars).
-		orderExpr = fmt.Sprintf("left(go.properties->>'name', %d) %s NULLS LAST, go.key", entityQueryNameSortKeyChars, sortOrder)
+		// Bound the ordered expression to the same left(..., N) used by
+		// idx_graph_objects_project_type_name (migration 00311), and add the
+		// canonical key as a total-order tiebreak so the index serves the ordering
+		// with no Sort node. `name` is the first-class title column (#824), so
+		// sort_by=name orders by the title rather than by the properties payload;
+		// the bound keeps the btree tuple under the ~2704-byte limit (see
+		// entityQueryNameSortKeyChars).
+		orderExpr = fmt.Sprintf("left(go.name, %d) %s NULLS LAST, go.key", entityQueryNameSortKeyChars, sortOrder)
 	}
 
 	// Resolve the field strategy the same way search-hybrid does. "compact" (no
@@ -4103,7 +4105,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 				go.id,
 				go.canonical_id,
 				go.key,
-				COALESCE(NULLIF(go.name, ''), go.properties->>'name', '') as name,
+				COALESCE(go.name, '') as name,
 				go.version,
 				`+fieldProjection+` as properties,
 				go.created_at,
@@ -4142,8 +4144,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	})
 
 	if err != nil {
-		var scopeErr *entityQueryScopeError
-		if errors.As(err, &scopeErr) {
+		if scopeErr, ok := errors.AsType[*entityQueryScopeError](err); ok {
 			return nil, scopeErr
 		}
 		if errors.Is(queryCtx.Err(), context.DeadlineExceeded) {
@@ -4341,7 +4342,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID string, idStrs []string, branchID *uuid.UUID, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	scope := TypeScopeFromContext(ctx)
@@ -4355,7 +4356,7 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 		canonicalIDs = append(canonicalIDs, id)
 	}
 	if len(canonicalIDs) == 0 {
-		return nil, fmt.Errorf("ids: no valid UUIDs provided")
+		return nil, toolArgErrorf("ids: no valid UUIDs provided")
 	}
 
 	type entityRow struct {
@@ -4407,7 +4408,7 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 				go.id,
 				go.canonical_id,
 				go.key,
-				COALESCE(NULLIF(go.name, ''), go.properties->>'name', '') as name,
+				COALESCE(go.name, '') as name,
 				go.version,
 				`+propsProjection+` as properties,
 				go.created_at,
@@ -4463,18 +4464,18 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 func (s *Service) executeEntityHistory(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	entityIDStr, _ := args["entity_id"].(string)
 	if entityIDStr == "" {
-		return nil, fmt.Errorf("missing required parameter: entity_id")
+		return nil, toolArgErrorf("missing required parameter: entity_id")
 	}
 	canonicalID, err := uuid.Parse(entityIDStr)
 	if err != nil {
 		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, entityIDStr)
 		if keyErr != nil {
-			return nil, fmt.Errorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
+			return nil, invalidEntityRefError("entity_id", entityIDStr, keyErr)
 		}
 		canonicalID = resolved
 	}
@@ -4514,7 +4515,7 @@ func (s *Service) executeEntityHistory(ctx context.Context, projectID string, ar
 	}
 
 	if len(rows) > 0 && !TypeScopeFromContext(ctx).AllowsObject(rows[0].Type) {
-		return nil, fmt.Errorf("entity history: object type is not allowed for this agent's scope")
+		return nil, toolForbiddenf("entity history: object type is not allowed for this agent's scope")
 	}
 
 	type versionEntry struct {
@@ -4570,7 +4571,15 @@ func (s *Service) resolveBranchID(ctx context.Context, projectID, branchRef stri
 		Limit(1).
 		Scan(ctx, &row)
 	if err != nil {
-		return nil, fmt.Errorf("branch %q not found (pass a UUID or branch name; omit the field entirely to target the main graph): %w", branchRef, err)
+		if !errors.Is(err, sql.ErrNoRows) {
+			// A store failure is not a missing branch: reporting it as "not
+			// found" would send the caller looking for a typo in a name that was
+			// fine. The cause stays internal.
+			return nil, apperror.NewInternal("An internal error occurred",
+				fmt.Errorf("look up branch %q: %w", branchRef, err))
+		}
+		return nil, notFoundf("branch_not_found",
+			"branch %q not found (pass a UUID or branch name; omit the field entirely to target the main graph)", branchRef)
 	}
 	if err := s.branchRefAllowedByScope(ctx, projectID, row.ID); err != nil {
 		return nil, err
@@ -4607,7 +4616,7 @@ func (s *Service) branchRefAllowedByScope(ctx context.Context, projectID string,
 	}
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return fmt.Errorf("invalid project_id: %w", err)
+		return toolArgErrorf("invalid project_id: %w", err)
 	}
 	return s.branchAllowedByScope(ctx, projectUUID, branchID)
 }
@@ -4647,6 +4656,13 @@ func (s *Service) resolveOrCreateBranchID(ctx context.Context, projectID, branch
 		Where("project_id = ?", projectID).
 		Limit(1).
 		Scan(ctx, &row)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		// Only a genuine miss may fall through to auto-create: treating a store
+		// failure as "name not found" would create a branch to work around an
+		// outage, and then report the creation failure as the caller's problem.
+		return nil, apperror.NewInternal("An internal error occurred",
+			fmt.Errorf("look up branch %q: %w", branchRef, err))
+	}
 	if err == nil {
 		if err := s.branchRefAllowedByScope(ctx, projectID, row.ID); err != nil {
 			return nil, err
@@ -4658,14 +4674,15 @@ func (s *Service) resolveOrCreateBranchID(ctx context.Context, projectID, branch
 	// resolve is either a model mistake or an attempt to write elsewhere: refuse
 	// instead of auto-creating and escaping the job.
 	if _, ok := ExtractionRunFromContext(ctx); ok {
-		return nil, fmt.Errorf("branch %q is outside this extraction job's scope", branchRef)
+		return nil, toolForbiddenf("branch %q is outside this extraction job's scope", branchRef)
 	}
 	// Branch not found — auto-create it. A branch this run is creating itself is
 	// not gated by the read scope: the scope says which existing branches the run
 	// may read, and refusing a branch it just created would make the tool unusable
 	// without protecting anything.
 	if s.branchSvc == nil {
-		return nil, fmt.Errorf("branch %q not found and branch service not available to auto-create", branchRef)
+		return nil, notFoundf("branch_not_found",
+			"branch %q not found (auto-create is unavailable, so pass an existing branch)", branchRef)
 	}
 	req := &branches.CreateBranchRequest{
 		ProjectID: &projectID,
@@ -4673,11 +4690,16 @@ func (s *Service) resolveOrCreateBranchID(ctx context.Context, projectID, branch
 	}
 	created, createErr := s.branchSvc.Create(ctx, req)
 	if createErr != nil {
-		return nil, fmt.Errorf("branch %q not found and auto-create failed: %w", branchRef, createErr)
+		return nil, apperror.NewInternal("An internal error occurred",
+			fmt.Errorf("auto-create branch %q: %w", branchRef, createErr))
 	}
 	createdID, parseErr := uuid.Parse(created.ID)
 	if parseErr != nil {
-		return nil, fmt.Errorf("auto-created branch has invalid UUID %q: %w", created.ID, parseErr)
+		// The id is server-generated: an unparseable one is never the caller's
+		// input problem, so reporting it as invalid params would misdirect the
+		// agent into changing its branch argument.
+		return nil, apperror.NewInternal("An internal error occurred",
+			fmt.Errorf("auto-created branch has invalid UUID %q: %w", created.ID, parseErr))
 	}
 	return &createdID, nil
 }
@@ -4686,20 +4708,20 @@ func (s *Service) resolveOrCreateBranchID(ctx context.Context, projectID, branch
 func (s *Service) executeSearchEntities(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	// Parse arguments
 	query, _ := args["query"].(string)
 	if query == "" {
-		return nil, fmt.Errorf("missing required parameter: query")
+		return nil, toolArgErrorf("missing required parameter: query")
 	}
 
 	typeName, _ := args["type_name"].(string)
 
 	scope := TypeScopeFromContext(ctx)
 	if typeName != "" && !scope.AllowsObject(typeName) {
-		return nil, fmt.Errorf("search entities: object type %q is not allowed for this agent", typeName)
+		return nil, toolForbiddenf("search entities: object type %q is not allowed for this agent", typeName)
 	}
 
 	// Resolve optional branch parameter.
@@ -4789,7 +4811,7 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			SELECT 
 				go.canonical_id,
 				go.key,
-				COALESCE(NULLIF(go.name, ''), go.properties->>'name', '') as name,
+				COALESCE(go.name, '') as name,
 				go.version,
 				go.properties,
 				go.type as type_name,
@@ -4919,19 +4941,19 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 func (s *Service) executeGetEntityEdges(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	entityIDStr, _ := args["entity_id"].(string)
 	if entityIDStr == "" {
-		return nil, fmt.Errorf("missing required parameter: entity_id")
+		return nil, toolArgErrorf("missing required parameter: entity_id")
 	}
 
 	entityID, err := uuid.Parse(entityIDStr)
 	if err != nil {
 		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, entityIDStr)
 		if keyErr != nil {
-			return nil, fmt.Errorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
+			return nil, invalidEntityRefError("entity_id", entityIDStr, keyErr)
 		}
 		entityID = resolved
 	}
@@ -5026,7 +5048,7 @@ func (s *Service) getEntityBasicInfo(ctx context.Context, projectID, entityID uu
 	var entity entityRow
 	err := s.db.NewRaw(`
 		SELECT id, canonical_id, type, COALESCE(key, '') as key,
-		       COALESCE(NULLIF(name, ''), properties->>'name', '') as name, properties
+		       COALESCE(name, '') as name, properties
 		FROM kb.graph_objects
 		WHERE id = ? AND project_id = ? AND deleted_at IS NULL
 	`, entityID, projectID).Scan(ctx, &entity)
@@ -5099,15 +5121,22 @@ func (s *Service) resolveEntityIDByKey(ctx context.Context, projectID uuid.UUID,
 		`, key, projectID).Scan(ctx, &canonicalID)
 	}
 	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			// A store failure is not a missing key. Reporting it as "not found"
+			// would make the caller's next move (fix the key) wrong, and the
+			// call site would fold it into an invalid-parameter message.
+			return uuid.Nil, apperror.NewInternal("An internal error occurred",
+				fmt.Errorf("resolve entity key %q: %w", key, err))
+		}
 		// Fetch fuzzy suggestions to help agents self-correct.
 		suggestions := s.suggestEntityKeysByFuzzy(ctx, projectID, key, 3)
 		if len(suggestions) > 0 {
-			return uuid.Nil, fmt.Errorf(
+			return uuid.Nil, notFoundf("entity_key_not_found",
 				"entity with key %q not found — did you mean one of these? %s. Use the exact key shown with entity-update or relationship-create.",
 				key, strings.Join(suggestions, ", "),
 			)
 		}
-		return uuid.Nil, fmt.Errorf("entity with key %q not found", key)
+		return uuid.Nil, notFoundf("entity_key_not_found", "entity with key %q not found", key)
 	}
 	return canonicalID, nil
 }
@@ -5263,7 +5292,7 @@ const batchMutationMaxItems = 100
 // batchOverLimitError names the limit and how to proceed, so an agent can split
 // the call instead of guessing.
 func batchOverLimitError(tool string, got int) error {
-	return fmt.Errorf("%s batch size exceeded: %d items, maximum %d per call — split into batches of %d or fewer and retry", tool, got, batchMutationMaxItems, batchMutationMaxItems)
+	return toolArgErrorf("%s batch size exceeded: %d items, maximum %d per call — split into batches of %d or fewer and retry", tool, got, batchMutationMaxItems, batchMutationMaxItems)
 }
 
 // executeUpdateEntity updates one or more existing entities.
@@ -5275,16 +5304,16 @@ func batchOverLimitError(tool string, got int) error {
 func (s *Service) executeUpdateEntity(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	if raw, present := args["updates"]; present {
 		items, ok := raw.([]any)
 		if !ok {
-			return nil, fmt.Errorf("invalid updates: must be an array of {entity_id, properties, labels, status, branch_id?} objects")
+			return nil, toolArgErrorf("invalid updates: must be an array of {entity_id, properties, labels, status, branch_id?} objects")
 		}
 		if len(items) == 0 {
-			return nil, fmt.Errorf("missing or empty updates array")
+			return nil, toolArgErrorf("missing or empty updates array")
 		}
 		if len(items) > batchMutationMaxItems {
 			return nil, batchOverLimitError("entity-update", len(items))
@@ -5310,14 +5339,14 @@ func (s *Service) executeUpdateEntity(ctx context.Context, projectID string, arg
 func (s *Service) updateEntityOne(ctx context.Context, projectUUID uuid.UUID, projectID string, args map[string]any) (*graph.GraphObjectResponse, error) {
 	entityIDStr, ok := args["entity_id"].(string)
 	if !ok || entityIDStr == "" {
-		return nil, fmt.Errorf("missing required parameter: entity_id")
+		return nil, toolArgErrorf("missing required parameter: entity_id")
 	}
 
 	entityID, err := uuid.Parse(entityIDStr)
 	if err != nil {
 		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, entityIDStr)
 		if keyErr != nil {
-			return nil, fmt.Errorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
+			return nil, invalidEntityRefError("entity_id", entityIDStr, keyErr)
 		}
 		entityID = resolved
 	}
@@ -5350,8 +5379,9 @@ func (s *Service) updateEntityOne(ctx context.Context, projectUUID uuid.UUID, pr
 	}
 
 	// The display name is a first-class column, not a property: the UI and
-	// entity-query read it, while properties.name is a separate mirror. Without
-	// this an agent can rename nothing — the stored name keeps showing the key
+	// entity-query read it, while properties.name is a separate, ordinary
+	// property that never names the object (#824). Without this an agent can
+	// rename nothing — the stored name keeps showing the key
 	// (emergent-company/emergent.memory#718). An empty string clears the name,
 	// matching the REST PATCH semantics.
 	if name, ok := args["name"].(string); ok {
@@ -5384,10 +5414,10 @@ func (s *Service) updateEntityOne(ctx context.Context, projectUUID uuid.UUID, pr
 	writeRules := AgentWriteRulesFromContext(ctx)
 	if typ, lerr := s.lookupObjectType(ctx, projectID, entityID); lerr == nil {
 		if !scope.AllowsObject(typ) {
-			return nil, fmt.Errorf("update entity: object type is not allowed for this agent's scope")
+			return nil, toolForbiddenf("update entity: object type is not allowed for this agent's scope")
 		}
 		if !writeRules.UpdateAllowed(typ) {
-			return nil, fmt.Errorf("update entity: updating objects of type %q is not allowed for this agent", typ)
+			return nil, toolForbiddenf("update entity: updating objects of type %q is not allowed for this agent", typ)
 		}
 		if err := writeRules.CheckFields(typ, req.Properties); err != nil {
 			return nil, fmt.Errorf("update entity: %w", err)
@@ -5497,16 +5527,16 @@ func refString(v any) string {
 func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	if raw, present := args["entity_ids"]; present {
 		ids, ok := raw.([]any)
 		if !ok {
-			return nil, fmt.Errorf("invalid entity_ids: must be an array of UUIDs or keys")
+			return nil, toolArgErrorf("invalid entity_ids: must be an array of UUIDs or keys")
 		}
 		if len(ids) == 0 {
-			return nil, fmt.Errorf("missing or empty entity_ids array")
+			return nil, toolArgErrorf("missing or empty entity_ids array")
 		}
 		if len(ids) > batchMutationMaxItems {
 			return nil, batchOverLimitError("entity-delete", len(ids))
@@ -5576,7 +5606,7 @@ func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, arg
 
 	entityIDStr, ok := args["entity_id"].(string)
 	if !ok || entityIDStr == "" {
-		return nil, fmt.Errorf("missing required parameter: entity_id")
+		return nil, toolArgErrorf("missing required parameter: entity_id")
 	}
 
 	// Resolve the branch param (see entity-update: an omitted branch inherits an
@@ -5606,7 +5636,7 @@ func (s *Service) deleteEntityOne(ctx context.Context, projectUUID uuid.UUID, pr
 	if err != nil {
 		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, entityIDStr)
 		if keyErr != nil {
-			return uuid.Nil, fmt.Errorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
+			return uuid.Nil, invalidEntityRefError("entity_id", entityIDStr, keyErr)
 		}
 		entityID = resolved
 	}
@@ -5615,10 +5645,10 @@ func (s *Service) deleteEntityOne(ctx context.Context, projectUUID uuid.UUID, pr
 	scope := TypeScopeFromContext(ctx)
 	if typ, lerr := s.lookupObjectType(ctx, projectID, entityID); lerr == nil {
 		if !scope.AllowsObject(typ) {
-			return uuid.Nil, fmt.Errorf("delete entity: object type is not allowed for this agent's scope")
+			return uuid.Nil, toolForbiddenf("delete entity: object type is not allowed for this agent's scope")
 		}
 		if !writeRules.DeleteAllowed(typ) {
-			return uuid.Nil, fmt.Errorf("delete entity: deleting objects of type %q is not allowed for this agent", typ)
+			return uuid.Nil, toolForbiddenf("delete entity: deleting objects of type %q is not allowed for this agent", typ)
 		}
 	}
 
@@ -5646,8 +5676,8 @@ func (s *Service) deleteEntityOne(ctx context.Context, projectUUID uuid.UUID, pr
 // whole batch after a timeout cannot append another tombstone or report a false
 // failure.
 func isAlreadyDeletedError(err error) bool {
-	var appErr *apperror.Error
-	if !errors.As(err, &appErr) || appErr.HTTPStatus != http.StatusBadRequest {
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	if !ok || appErr.HTTPStatus != http.StatusBadRequest {
 		return false
 	}
 	msg := strings.ToLower(appErr.Message)
@@ -5686,12 +5716,12 @@ var bulkActionNames = []string{
 func (s *Service) executeBulkUpdateEntities(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	filterRaw, ok := args["filter"].(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("missing required parameter: filter (object; constrain at least one of types, property_filters, labels, created_after, namespace)")
+		return nil, toolArgErrorf("missing required parameter: filter (object; constrain at least one of types, property_filters, labels, created_after, namespace)")
 	}
 	filter, err := decodeBulkActionFilter(filterRaw)
 	if err != nil {
@@ -5702,12 +5732,12 @@ func (s *Service) executeBulkUpdateEntities(ctx context.Context, projectID strin
 	// namespace:"team-b" from a team-a context and reach the sibling namespace.
 	if ns := auth.NamespaceFromContext(ctx); ns != "" {
 		if filter.Namespace != nil && *filter.Namespace != "" && *filter.Namespace != ns {
-			return nil, fmt.Errorf("filter.namespace %q conflicts with this caller's namespace; omit it to use the caller's own namespace", *filter.Namespace)
+			return nil, toolArgErrorf("filter.namespace %q conflicts with this caller's namespace; omit it to use the caller's own namespace", *filter.Namespace)
 		}
 		filter.Namespace = &ns
 	}
 	if filterIsEmpty(filter) {
-		return nil, fmt.Errorf("filter must constrain at least one of types, property_filters, labels, created_after or namespace; an empty filter would match every entity in the project")
+		return nil, toolArgErrorf("filter must constrain at least one of types, property_filters, labels, created_after or namespace; an empty filter would match every entity in the project")
 	}
 
 	action := graph.BulkActionSoftDelete
@@ -5715,17 +5745,17 @@ func (s *Service) executeBulkUpdateEntities(ctx context.Context, projectID strin
 		action = a
 	}
 	if !slices.Contains(bulkActionNames, action) {
-		return nil, fmt.Errorf("unknown action %q (one of: %s)", action, strings.Join(bulkActionNames, ", "))
+		return nil, toolArgErrorf("unknown action %q (one of: %s)", action, strings.Join(bulkActionNames, ", "))
 	}
 	// hard_delete is irreversible, so require BOTH an explicitly typed target
 	// set and an explicit confirmation. Checked on the caller's own types,
 	// before the type allowlist below can widen an empty list into one.
 	if action == graph.BulkActionHardDelete {
 		if len(filter.Types) == 0 {
-			return nil, fmt.Errorf("action=hard_delete requires a non-empty filter.types: an untyped hard delete cannot be reviewed before it destroys rows")
+			return nil, toolArgErrorf("action=hard_delete requires a non-empty filter.types: an untyped hard delete cannot be reviewed before it destroys rows")
 		}
 		if !boolArg(args, "confirm") {
-			return nil, fmt.Errorf("action=hard_delete permanently removes rows and requires confirm=true")
+			return nil, toolArgErrorf("action=hard_delete permanently removes rows and requires confirm=true")
 		}
 	}
 	// Narrow an unrestricted request to the agent's object-type allowlist, and
@@ -5749,18 +5779,18 @@ func (s *Service) executeBulkUpdateEntities(ctx context.Context, projectID strin
 	writeRules := AgentWriteRulesFromContext(ctx)
 	if writeRules != nil {
 		if len(filter.Types) == 0 {
-			return nil, fmt.Errorf("filter.types is required when this agent has per-type write rules: an untyped bulk action cannot be checked against the agent's allowed types")
+			return nil, toolArgErrorf("filter.types is required when this agent has per-type write rules: an untyped bulk action cannot be checked against the agent's allowed types")
 		}
 		props, _ := args["properties"].(map[string]any)
 		for _, typ := range filter.Types {
 			switch action {
 			case graph.BulkActionSoftDelete, graph.BulkActionHardDelete:
 				if !writeRules.DeleteAllowed(typ) {
-					return nil, fmt.Errorf("bulk update entity: deleting objects of type %q is not allowed for this agent", typ)
+					return nil, toolForbiddenf("bulk update entity: deleting objects of type %q is not allowed for this agent", typ)
 				}
 			default:
 				if !writeRules.UpdateAllowed(typ) {
-					return nil, fmt.Errorf("bulk update entity: updating objects of type %q is not allowed for this agent", typ)
+					return nil, toolForbiddenf("bulk update entity: updating objects of type %q is not allowed for this agent", typ)
 				}
 				if action == graph.BulkActionMergeProperties || action == graph.BulkActionReplaceProperties {
 					if err := writeRules.CheckFields(typ, props); err != nil {
@@ -5789,7 +5819,7 @@ func (s *Service) executeBulkUpdateEntities(ctx context.Context, projectID strin
 	}
 	if hasLimit {
 		if limit < 0 {
-			return nil, fmt.Errorf("limit must not be negative")
+			return nil, toolArgErrorf("limit must not be negative")
 		}
 		req.Limit = limit
 	}
@@ -5799,15 +5829,15 @@ func (s *Service) executeBulkUpdateEntities(ctx context.Context, projectID strin
 	switch action {
 	case graph.BulkActionUpdateStatus:
 		if req.Value == "" {
-			return nil, fmt.Errorf("action=update_status requires 'value' (the new status)")
+			return nil, toolArgErrorf("action=update_status requires 'value' (the new status)")
 		}
 	case graph.BulkActionMergeProperties, graph.BulkActionReplaceProperties:
 		if req.Properties == nil {
-			return nil, fmt.Errorf("action=%s requires 'properties'", action)
+			return nil, toolArgErrorf("action=%s requires 'properties'", action)
 		}
 	case graph.BulkActionAddLabels, graph.BulkActionRemoveLabels, graph.BulkActionSetLabels:
 		if len(req.Labels) == 0 {
-			return nil, fmt.Errorf("action=%s requires a non-empty 'labels' array", action)
+			return nil, toolArgErrorf("action=%s requires a non-empty 'labels' array", action)
 		}
 	}
 
@@ -5846,23 +5876,23 @@ func decodeBulkActionFilter(raw map[string]any) (graph.BulkActionFilter, error) 
 	var filter graph.BulkActionFilter
 	encoded, err := json.Marshal(raw)
 	if err != nil {
-		return filter, fmt.Errorf("invalid filter: %w", err)
+		return filter, toolArgErrorf("invalid filter: %w", err)
 	}
 	dec := json.NewDecoder(bytes.NewReader(encoded))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&filter); err != nil {
-		return filter, fmt.Errorf("invalid filter: %w (property_filters items are {path, op, value})", err)
+		return filter, toolArgErrorf("invalid filter: %w (property_filters items are {path, op, value})", err)
 	}
 	for i, pf := range filter.PropertyFilters {
 		if strings.TrimSpace(pf.Path) == "" {
-			return filter, fmt.Errorf("invalid filter: property_filters[%d] is missing 'path' (expected {path, op, value})", i)
+			return filter, toolArgErrorf("invalid filter: property_filters[%d] is missing 'path' (expected {path, op, value})", i)
 		}
 		if !slices.Contains(bulkPropertyFilterOps, pf.Op) {
-			return filter, fmt.Errorf("invalid filter: property_filters[%d] has unknown op %q (one of: %s)", i, pf.Op, strings.Join(bulkPropertyFilterOps, ", "))
+			return filter, toolArgErrorf("invalid filter: property_filters[%d] has unknown op %q (one of: %s)", i, pf.Op, strings.Join(bulkPropertyFilterOps, ", "))
 		}
 		if pf.Op == "in" {
 			if _, ok := pf.Value.([]any); !ok {
-				return filter, fmt.Errorf("invalid filter: property_filters[%d] op=in requires an array value", i)
+				return filter, toolArgErrorf("invalid filter: property_filters[%d] op=in requires an array value", i)
 			}
 		}
 	}
@@ -5886,7 +5916,7 @@ func intArg(args map[string]any, name string) (int, bool, error) {
 		return int(v), true, nil
 	case float64:
 		if v != float64(int(v)) {
-			return 0, false, fmt.Errorf("%s must be an integer, got %v", name, v)
+			return 0, false, toolArgErrorf("%s must be an integer, got %v", name, v)
 		}
 		return int(v), true, nil
 	}
@@ -5915,19 +5945,19 @@ func stringSliceArg(args map[string]any, name string) []string {
 func (s *Service) executeRestoreEntity(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	entityIDStr, ok := args["entity_id"].(string)
 	if !ok || entityIDStr == "" {
-		return nil, fmt.Errorf("missing required parameter: entity_id")
+		return nil, toolArgErrorf("missing required parameter: entity_id")
 	}
 
 	entityID, err := uuid.Parse(entityIDStr)
 	if err != nil {
 		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, entityIDStr)
 		if keyErr != nil {
-			return nil, fmt.Errorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
+			return nil, invalidEntityRefError("entity_id", entityIDStr, keyErr)
 		}
 		entityID = resolved
 	}
@@ -5948,7 +5978,7 @@ func (s *Service) executeRestoreEntity(ctx context.Context, projectID string, ar
 	scope := TypeScopeFromContext(ctx)
 	if typ, lerr := s.lookupObjectTypeIncludingDeleted(ctx, projectID, entityID); lerr == nil {
 		if !scope.AllowsObject(typ) {
-			return nil, fmt.Errorf("restore entity: object type is not allowed for this agent's scope")
+			return nil, toolForbiddenf("restore entity: object type is not allowed for this agent's scope")
 		}
 	}
 
@@ -5984,10 +6014,10 @@ func (s *Service) executeGetSessionMessages(ctx context.Context, projectID strin
 		sessionIDStr, ok = args["sessionId"].(string)
 	}
 	if !ok || sessionIDStr == "" {
-		return nil, fmt.Errorf("missing required parameter: session_id")
+		return nil, toolArgErrorf("missing required parameter: session_id")
 	}
 	if _, err := uuid.Parse(sessionIDStr); err != nil {
-		return nil, fmt.Errorf("invalid session_id: %w", err)
+		return nil, toolArgErrorf("invalid session_id: %w", err)
 	}
 
 	if s.sessionHistoryProvider == nil {
@@ -6032,7 +6062,7 @@ func (s *Service) executeGraphBranchGet(ctx context.Context, projectID string, a
 	}
 	branchRef, _ := args["branch"].(string)
 	if branchRef == "" {
-		return nil, fmt.Errorf("missing required parameter: branch")
+		return nil, toolArgErrorf("missing required parameter: branch")
 	}
 	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
 	if err != nil || branchID == nil {
@@ -6054,7 +6084,7 @@ func (s *Service) executeGraphBranchCreate(ctx context.Context, projectID string
 	}
 	name, _ := args["name"].(string)
 	if name == "" {
-		return nil, fmt.Errorf("missing required parameter: name")
+		return nil, toolArgErrorf("missing required parameter: name")
 	}
 	req := &branches.CreateBranchRequest{
 		ProjectID: &projectID,
@@ -6094,7 +6124,7 @@ func branchUpdateRequest(args map[string]any) (*branches.UpdateBranchRequest, er
 		req.Description = &desc
 	}
 	if req.Name == nil && req.Description == nil {
-		return nil, fmt.Errorf("at least one of name or description is required")
+		return nil, toolArgErrorf("at least one of name or description is required")
 	}
 	return req, nil
 }
@@ -6106,7 +6136,7 @@ func (s *Service) executeGraphBranchUpdate(ctx context.Context, projectID string
 	}
 	branchRef, _ := args["branch"].(string)
 	if branchRef == "" {
-		return nil, fmt.Errorf("missing required parameter: branch")
+		return nil, toolArgErrorf("missing required parameter: branch")
 	}
 	req, err := branchUpdateRequest(args)
 	if err != nil {
@@ -6138,21 +6168,21 @@ func branchMergeOptions(args map[string]any) (execute bool, policy, conflictStra
 	if v, ok := args["execute"]; ok {
 		b, isBool := v.(bool)
 		if !isBool {
-			return false, "", "", fmt.Errorf("execute must be a boolean, got %T", v)
+			return false, "", "", toolArgErrorf("execute must be a boolean, got %T", v)
 		}
 		execute = b
 	}
 	if v, ok := args["policy"]; ok {
 		s, isString := v.(string)
 		if !isString {
-			return false, "", "", fmt.Errorf("policy must be a string, got %T", v)
+			return false, "", "", toolArgErrorf("policy must be a string, got %T", v)
 		}
 		policy = s
 	}
 	if v, ok := args["conflict_strategy"]; ok {
 		s, isString := v.(string)
 		if !isString {
-			return false, "", "", fmt.Errorf("conflict_strategy must be a string, got %T", v)
+			return false, "", "", toolArgErrorf("conflict_strategy must be a string, got %T", v)
 		}
 		conflictStrategy = s
 	}
@@ -6167,11 +6197,11 @@ func (s *Service) executeGraphBranchMerge(ctx context.Context, projectID string,
 	}
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 	srcRef, _ := args["source_branch"].(string)
 	if srcRef == "" {
-		return nil, fmt.Errorf("missing required parameter: source_branch")
+		return nil, toolArgErrorf("missing required parameter: source_branch")
 	}
 	srcID, err := s.resolveBranchID(ctx, projectID, srcRef)
 	if err != nil || srcID == nil {
@@ -6214,11 +6244,11 @@ func (s *Service) executeGraphBranchMergeReadiness(ctx context.Context, projectI
 	}
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 	branchRef, _ := args["branch"].(string)
 	if branchRef == "" {
-		return nil, fmt.Errorf("missing required parameter: branch")
+		return nil, toolArgErrorf("missing required parameter: branch")
 	}
 	branchID, err := s.resolveReadableBranchID(ctx, projectID, branchRef)
 	if err != nil || branchID == nil {
@@ -6242,7 +6272,7 @@ func (s *Service) executeGraphBranchMergeReadiness(ctx context.Context, projectI
 func forkBranchRequest(args map[string]any) (*graph.ForkBranchRequest, error) {
 	name, _ := args["name"].(string)
 	if name == "" {
-		return nil, fmt.Errorf("missing required parameter: name")
+		return nil, toolArgErrorf("missing required parameter: name")
 	}
 	req := &graph.ForkBranchRequest{Name: name}
 	if desc, ok := args["description"].(string); ok && desc != "" {
@@ -6273,7 +6303,7 @@ func (s *Service) executeGraphBranchFork(ctx context.Context, projectID string, 
 	}
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 	req, err := forkBranchRequest(args)
 	if err != nil {
@@ -6303,7 +6333,7 @@ func (s *Service) executeGraphBranchDelete(ctx context.Context, projectID string
 	}
 	branchRef, _ := args["branch"].(string)
 	if branchRef == "" {
-		return nil, fmt.Errorf("missing required parameter: branch")
+		return nil, toolArgErrorf("missing required parameter: branch")
 	}
 	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
 	if err != nil || branchID == nil {
@@ -6395,8 +6425,8 @@ func (s *Service) readSimilarityThreshold(ctx context.Context, projectID string)
 // with their key names) silently measured a different vector than the one the
 // candidate object actually stores, so near-duplicates were under-detected.
 // pkg/embeddingtext exists precisely to stop that drift; see issue #1478.
-func buildEntityEmbedText(typeName string, key *string, properties map[string]any) string {
-	return embeddingtext.Text(typeName, key, properties)
+func buildEntityEmbedText(typeName string, name *string, key *string, properties map[string]any) string {
+	return embeddingtext.Text(typeName, name, key, properties)
 }
 
 // executeBatchCreateEntities creates one or more entities. Always expects an "entities" array.
@@ -6418,7 +6448,7 @@ func buildEntityEmbedText(typeName string, key *string, properties map[string]an
 func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	scope := TypeScopeFromContext(ctx)
@@ -6441,11 +6471,11 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 	}
 
 	if len(entitiesRaw) == 0 {
-		return nil, fmt.Errorf("missing or empty entities array")
+		return nil, toolArgErrorf("missing or empty entities array")
 	}
 
 	if len(entitiesRaw) > 100 {
-		return nil, fmt.Errorf("batch size exceeded: maximum 100 entities per request")
+		return nil, toolArgErrorf("batch size exceeded: maximum 100 entities per request")
 	}
 
 	checkSimilar, _ := args["check_similar"].(bool)
@@ -6518,7 +6548,10 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 	pendingInline := make([]pendingInlineRels, 0)
 
 	// resolveIDOrKey resolves a string that is either a UUID or an entity key.
-	// Checks the in-batch keyToID map first, then falls back to a DB lookup.
+	// Checks the in-batch keyToID map first, then falls back to a DB lookup. The
+	// resolver's error is returned unwrapped so its class (a not-found key or a
+	// store failure) survives to the per-item text, which renders only the
+	// public half.
 	resolveIDOrKey := func(idOrKey string) (uuid.UUID, error) {
 		if id, err := uuid.Parse(idOrKey); err == nil {
 			return id, nil
@@ -6528,7 +6561,8 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 		}
 		id, err := s.resolveEntityIDByKey(ctx, projectUUID, idOrKey)
 		if err != nil {
-			return uuid.Nil, fmt.Errorf("key %q not found: %w", idOrKey, err)
+			s.logToolFailure("entity key resolution failed", err, "key", idOrKey)
+			return uuid.Nil, err
 		}
 		return id, nil
 	}
@@ -6581,6 +6615,12 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 			key = &k
 		}
 
+		// The title is the `name` column (#824), not a property.
+		var name *string
+		if n, ok := entityMap["name"].(string); ok && strings.TrimSpace(n) != "" {
+			name = &n
+		}
+
 		properties, _ := entityMap["properties"].(map[string]any)
 		if properties == nil {
 			properties = make(map[string]any)
@@ -6596,7 +6636,7 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 		}
 
 		if checkSimilar {
-			embedText := buildEntityEmbedText(typeName, key, properties)
+			embedText := buildEntityEmbedText(typeName, name, key, properties)
 			sr, err := s.graphService.VectorSearchByText(ctx, projectUUID, embedText, &graph.VectorSearchRequest{
 				Types:    []string{typeName},
 				BranchID: branchID,
@@ -6691,9 +6731,9 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 			ExtractionJobID: extractionJobID,
 		}
 
-		// An explicit spec name wins; otherwise CreateOrUpdate derives one from
-		// properties.name/title. Both write the same first-class column, so a
-		// caller never has to trade one for the other.
+		// An explicit spec name is the only source of the title. properties.name
+		// and properties.title are ordinary properties and never name the object,
+		// so an agent that wants the display name must pass it here (#824).
 		if name, ok := entityMap["name"].(string); ok && name != "" {
 			req.Name = &name
 		}
@@ -6843,7 +6883,7 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	scope := TypeScopeFromContext(ctx)
@@ -6866,11 +6906,11 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 	}
 
 	if len(relationshipsRaw) == 0 {
-		return nil, fmt.Errorf("missing or empty relationships array")
+		return nil, toolArgErrorf("missing or empty relationships array")
 	}
 
 	if len(relationshipsRaw) > 100 {
-		return nil, fmt.Errorf("batch size exceeded: maximum 100 relationships per request")
+		return nil, toolArgErrorf("batch size exceeded: maximum 100 relationships per request")
 	}
 
 	// slimRelationship is the minimal response for a created relationship.
@@ -6891,14 +6931,17 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 		Index  int    `json:"index"`
 	}
 
-	// resolveRelIDOrKey resolves a string that is either a UUID or an entity key (DB lookup).
+	// resolveRelIDOrKey resolves a string that is either a UUID or an entity key
+	// (DB lookup). As in the entity batch, the resolver's error is returned as it
+	// is so the per-item text can show the public half of it.
 	resolveRelIDOrKey := func(idOrKey string) (uuid.UUID, error) {
 		if id, err := uuid.Parse(idOrKey); err == nil {
 			return id, nil
 		}
 		id, err := s.resolveEntityIDByKey(ctx, projectUUID, idOrKey)
 		if err != nil {
-			return uuid.Nil, fmt.Errorf("key %q not found: %w", idOrKey, err)
+			s.logToolFailure("entity key resolution failed", err, "key", idOrKey)
+			return uuid.Nil, err
 		}
 		return id, nil
 	}
@@ -6955,7 +6998,7 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 			results = append(results, batchResult{
 				Ok:     false,
 				Reason: inlineRelReasonUnknownSourceID,
-				Error:  fmt.Sprintf("cannot resolve source_id %q: %v", srcIDStr, err),
+				Error:  fmt.Sprintf("cannot resolve source_id %q: %s", srcIDStr, apperror.PublicMessage(err)),
 				Index:  i,
 			})
 			failedCount++
@@ -6971,7 +7014,7 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 			results = append(results, batchResult{
 				Ok:     false,
 				Reason: inlineRelReasonUnknownTargetID,
-				Error:  fmt.Sprintf("cannot resolve target_id %q: %v", dstIDStr, err),
+				Error:  fmt.Sprintf("cannot resolve target_id %q: %s", dstIDStr, apperror.PublicMessage(err)),
 				Index:  i,
 			})
 			failedCount++
@@ -7158,7 +7201,7 @@ func (s *Service) readEntityTypesResource(ctx context.Context, projectID string)
 func (s *Service) readRelationshipsResource(ctx context.Context, projectID string) (*ResourceReadResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	var relationships []struct {
@@ -7222,7 +7265,7 @@ func (s *Service) readRelationshipsResource(ctx context.Context, projectID strin
 func resourceBoolParam(uri, name string) (bool, error) {
 	parsed, err := url.Parse(uri)
 	if err != nil {
-		return false, fmt.Errorf("invalid resource URI %q: %w", uri, err)
+		return false, toolArgErrorf("invalid resource URI %q: %w", uri, err)
 	}
 	raw := parsed.Query().Get(name)
 	if raw == "" {
@@ -7230,14 +7273,14 @@ func resourceBoolParam(uri, name string) (bool, error) {
 	}
 	v, err := strconv.ParseBool(raw)
 	if err != nil {
-		return false, fmt.Errorf("%s must be a boolean, got %q", name, raw)
+		return false, toolArgErrorf("%s must be a boolean, got %q", name, raw)
 	}
 	return v, nil
 }
 
 func (s *Service) readTemplatesCatalogResource(ctx context.Context, projectID, uri string) (*ResourceReadResult, error) {
 	if projectID == "" {
-		return nil, fmt.Errorf("templates catalog requires a project context")
+		return nil, toolArgErrorf("templates catalog requires a project context")
 	}
 
 	// Deprecated schemas are hidden by default, same as the schema-list tool.
@@ -7275,7 +7318,7 @@ func (s *Service) readTemplatesCatalogResource(ctx context.Context, projectID, u
 func (s *Service) readProjectMetadataResource(ctx context.Context, projectID string) (*ResourceReadResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	var entityCount, relationshipCount int
@@ -7486,7 +7529,7 @@ func (s *Service) getMemoryGuidePrompt(ctx context.Context, projectID string) (*
 func (s *Service) getExploreEntityTypePrompt(args map[string]any) (*PromptGetResult, error) {
 	entityType, _ := args["entity_type"].(string)
 	if entityType == "" {
-		return nil, fmt.Errorf("missing required argument: entity_type")
+		return nil, toolArgErrorf("missing required argument: entity_type")
 	}
 
 	return &PromptGetResult{
@@ -7524,7 +7567,7 @@ Let's start by using hybrid_search to find the most relevant %s entities.`, enti
 func (s *Service) getCreateFromTemplatePrompt(args map[string]any) (*PromptGetResult, error) {
 	entityType, _ := args["entity_type"].(string)
 	if entityType == "" {
-		return nil, fmt.Errorf("missing required argument: entity_type")
+		return nil, toolArgErrorf("missing required argument: entity_type")
 	}
 
 	schema, _ := args["schema"].(string)
@@ -7570,7 +7613,7 @@ Let's start by checking what templates are available for %s entities.`, entityTy
 func (s *Service) getAnalyzeRelationshipsPrompt(args map[string]any) (*PromptGetResult, error) {
 	entityName, _ := args["entity_name"].(string)
 	if entityName == "" {
-		return nil, fmt.Errorf("missing required argument: entity_name")
+		return nil, toolArgErrorf("missing required argument: entity_name")
 	}
 
 	return &PromptGetResult{
@@ -7605,7 +7648,7 @@ Let's start by finding the entity.`, entityName, entityName),
 func (s *Service) getSetupResearchProjectPrompt(args map[string]any) (*PromptGetResult, error) {
 	projectName, _ := args["project_name"].(string)
 	if projectName == "" {
-		return nil, fmt.Errorf("missing required argument: project_name")
+		return nil, toolArgErrorf("missing required argument: project_name")
 	}
 
 	methodology, _ := args["methodology"].(string)
@@ -7661,7 +7704,7 @@ Let's start by defining the project's research goal.`, projectName, methodologyN
 func (s *Service) getFindRelatedEntitiesPrompt(args map[string]any) (*PromptGetResult, error) {
 	entityName, _ := args["entity_name"].(string)
 	if entityName == "" {
-		return nil, fmt.Errorf("missing required argument: entity_name")
+		return nil, toolArgErrorf("missing required argument: entity_name")
 	}
 
 	relationshipType, _ := args["relationship_type"].(string)
@@ -7797,7 +7840,7 @@ func (s *Service) delegateAgentToolInner(ctx context.Context, projectID, toolNam
 		return s.agentToolHandler.ExecuteListAvailableAgents(ctx, projectID, args)
 
 	default:
-		return nil, fmt.Errorf("unknown agent tool: %s", toolName)
+		return nil, toolArgErrorf("unknown agent tool: %s", toolName)
 	}
 }
 
@@ -7851,7 +7894,7 @@ func (s *Service) delegateBlueprintTool(ctx context.Context, projectID, toolName
 	case "blueprint-github-credentials-put":
 		return s.blueprintToolHandler.ExecuteBlueprintGithubCredentialsPut(ctx, projectID, args)
 	default:
-		return nil, fmt.Errorf("unknown blueprint tool: %s", toolName)
+		return nil, toolArgErrorf("unknown blueprint tool: %s", toolName)
 	}
 }
 
@@ -7887,7 +7930,7 @@ func (s *Service) delegateRegistryTool(ctx context.Context, projectID, toolName 
 	case "mcp-server-inspect":
 		return s.mcpRegistryToolHandler.ExecuteInspectMCPServer(ctx, projectID, args)
 	default:
-		return nil, fmt.Errorf("unknown MCP registry tool: %s", toolName)
+		return nil, toolArgErrorf("unknown MCP registry tool: %s", toolName)
 	}
 }
 
@@ -7901,7 +7944,7 @@ func (s *Service) delegateRegistryTool(ctx context.Context, projectID, toolName 
 func (s *Service) executeCreateProject(ctx context.Context, args map[string]any) (*ToolResult, error) {
 	name, _ := args["name"].(string)
 	if strings.TrimSpace(name) == "" {
-		return nil, fmt.Errorf("create_project: 'name' is required")
+		return nil, toolArgErrorf("create_project: 'name' is required")
 	}
 
 	// Resolve org_id: explicit arg → auth context → project lookup → error.
@@ -7922,12 +7965,12 @@ func (s *Service) executeCreateProject(ctx context.Context, args map[string]any)
 		}
 	}
 	if orgID == "" {
-		return nil, fmt.Errorf("create_project: 'org_id' is required (could not resolve from auth context)")
+		return nil, toolArgErrorf("create_project: 'org_id' is required (could not resolve from auth context)")
 	}
 
 	// Validate that org_id is a UUID.
 	if _, err := uuid.Parse(orgID); err != nil {
-		return nil, fmt.Errorf("create_project: 'org_id' must be a valid UUID: %w", err)
+		return nil, toolArgErrorf("create_project: 'org_id' must be a valid UUID: %w", err)
 	}
 
 	// Enforce org_admin authority server-side before the insert (issue #1041):
@@ -7981,7 +8024,7 @@ func (s *Service) executeJournalList(ctx context.Context, projectID string, args
 	}
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	params := journal.ListParams{
@@ -8049,12 +8092,12 @@ func (s *Service) executeJournalAddNote(ctx context.Context, projectID string, a
 	}
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	body, _ := args["body"].(string)
 	if body == "" {
-		return nil, fmt.Errorf("body is required")
+		return nil, toolArgErrorf("body is required")
 	}
 
 	req := &journal.AddNoteRequest{
@@ -8065,7 +8108,7 @@ func (s *Service) executeJournalAddNote(ctx context.Context, projectID string, a
 	if journalIDStr, _ := args["journal_id"].(string); journalIDStr != "" {
 		id, err := uuid.Parse(journalIDStr)
 		if err != nil {
-			return nil, fmt.Errorf("invalid journal_id: %w", err)
+			return nil, toolArgErrorf("invalid journal_id: %w", err)
 		}
 		req.JournalID = &id
 	}
@@ -8152,7 +8195,9 @@ func (s *Service) executeSetSessionTitle(ctx context.Context, projectID string, 
 		}, nil
 	}
 
-	// Also patch the graph object so callers using the graph API can read the title.
+	// Also patch the graph object's `name` column so callers using the graph API can
+	// read the title. `name` is the only title carrier (#824), so this is the write
+	// that makes the session title observable; properties.title is not read.
 	// Best-effort: log but don't fail if the graph object doesn't exist or patcher not wired.
 	if s.graphObjectTitlePatcher != nil {
 		if err := s.graphObjectTitlePatcher(ctx, projectID, sessionID, title); err != nil {
@@ -8173,7 +8218,7 @@ func (s *Service) executeSetSessionTitle(ctx context.Context, projectID string, 
 func (s *Service) executeProjectBriefing(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	query, _ := args["query"].(string)
 	if query == "" {
-		return nil, fmt.Errorf("query is required")
+		return nil, toolArgErrorf("query is required")
 	}
 	limit := 5
 	if l, ok := args["limit"].(float64); ok && l > 0 {
@@ -8233,8 +8278,9 @@ func (s *Service) executeProjectBriefing(ctx context.Context, projectID string, 
 			}
 			props, _ := obj["properties"].(map[string]any)
 
-			// Key identifying text: prefer name > description > content.
-			text, _ := props["name"].(string)
+			// Key identifying text: the first-class name, then prose. `name` is
+			// the object's title column, never properties["name"] (#824).
+			text, _ := obj["name"].(string)
 			if text == "" {
 				if d, ok := props["description"].(string); ok {
 					text = d
@@ -8346,7 +8392,7 @@ func (s *Service) executeProjectBriefing(ctx context.Context, projectID string, 
 func (s *Service) executeRemember(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	message, _ := args["message"].(string)
 	if message == "" {
-		return nil, fmt.Errorf("message is required")
+		return nil, toolArgErrorf("message is required")
 	}
 	mode, _ := args["mode"].(string)
 	if mode == "" {
@@ -8449,7 +8495,7 @@ func (s *Service) executeRemember(ctx context.Context, projectID string, args ma
 func (s *Service) executeForget(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	message, _ := args["message"].(string)
 	if message == "" {
-		return nil, fmt.Errorf("message is required")
+		return nil, toolArgErrorf("message is required")
 	}
 	mode, _ := args["mode"].(string)
 	if mode == "" {

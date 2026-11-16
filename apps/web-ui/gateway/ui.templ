@@ -26,7 +26,7 @@ import (
 // can load its own self-contained htmx v4 build (webui/static/js/htmx.min.js)
 // instead of go-daisy's bundled htmx 2.x, with v2-compat config applied right
 // after load. Everything else mirrors PageFull's document structure.
-templ appShell(title string, groups []layout.SidebarGroup, marketplaceItems []layout.SidebarItem, providersMissing bool, agents []AgentDefinitionSummary, assistantAgent string, currentProject *ProjectRef, currentOrgName string, activeOrg *Org, projectGroups []projectGroup, orgs []Org, recentProjects []ProjectRef, showRecent bool, unreadNotifications int, pendingInvites []PendingInviteDto, user *currentUser, accounts []currentUser, content templ.Component, objectTypes map[string]objectTypeUI, sentryDSN string, sentryEnvironment string, sentryTracesSampleRate float64, sentryReplaySessionSampleRate float64, sentryReplayOnErrorSampleRate float64, feedbackOverlayURL string, feedbackOverlayAPIURL string, feedbackOrder feedbackOrderConfig) {
+templ appShell(title string, groups []layout.SidebarGroup, externalItems []layout.SidebarItem, providersMissing bool, agents []AgentDefinitionSummary, assistantAgent string, currentProject *ProjectRef, currentOrgName string, activeOrg *Org, projectGroups []projectGroup, orgs []Org, recentProjects []ProjectRef, showRecent bool, unreadNotifications int, pendingInvites []PendingInviteDto, user *currentUser, accounts []currentUser, content templ.Component, objectTypes map[string]objectTypeUI, sentryDSN string, sentryEnvironment string, sentryTracesSampleRate float64, sentryReplaySessionSampleRate float64, sentryReplayOnErrorSampleRate float64, feedbackOverlayURL string, feedbackOverlayAPIURL string, feedbackOrder feedbackOrderConfig) {
 	<!DOCTYPE html>
 	<html lang="en" data-theme="dark" class="group/html" data-asset-track="reload">
 		<head>
@@ -99,7 +99,7 @@ templ appShell(title string, groups []layout.SidebarGroup, marketplaceItems []la
 					id="_layout-sidebar-backdrop"
 				></label>
 				if groups != nil {
-					@appSidebar(groups, marketplaceItems, providersMissing)
+					@appSidebar(groups, externalItems, providersMissing)
 				}
 				<div class="flex min-w-0 grow flex-col overflow-hidden">
 					<!-- Pinned on purpose: on mobile the topbar must not travel with
@@ -189,7 +189,7 @@ templ appShell(title string, groups []layout.SidebarGroup, marketplaceItems []la
 		<!-- htmx v4 SSE extension (vendored from htmx 4.0.1). Must load after htmx
 		     (it calls htmx.registerExtension) and before any page element that
 		     uses hx-sse:connect is processed. Only the board subscribes today,
-		     via an anchor in board.templ. -->
+		     via an anchor in work.templ. -->
 		<script src={ templ.SafeURL(webui.AssetPath("/js/hx-sse.js")) }></script>
 		<!-- htmx/Alpine compatibility extension. Must load AFTER htmx (it calls
 		     htmx.registerExtension) and BEFORE deferred Alpine (@alpine.Tag()

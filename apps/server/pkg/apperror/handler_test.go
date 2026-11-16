@@ -207,7 +207,9 @@ func TestHTTPErrorHandler_CommittedResponse(t *testing.T) {
 
 	// Simulate committed response by writing something first
 	c.Response().WriteHeader(http.StatusOK)
-	c.Response().Write([]byte("already written"))
+	if _, err := c.Response().Write([]byte("already written")); err != nil {
+		t.Fatalf("write committed response: %v", err)
+	}
 
 	// Handler should return early without modifying response
 	appErr := NewBadRequest("should not appear")

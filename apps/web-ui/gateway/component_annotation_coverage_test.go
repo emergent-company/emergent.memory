@@ -1,5 +1,8 @@
 package main
 
+// guard: the dev-mode component-annotation coverage ratchet and its gating
+// checks — every test here must gate every PR.
+
 import (
 	"bytes"
 	"os"
@@ -61,9 +64,12 @@ func annotationLiteralRE(qualified string) *regexp.Regexp {
 // data-component on an element it owns, with the reason. Two shapes are allowed:
 //
 //   - adapter: the root element belongs to an upstream go-daisy component, which
-//     annotates it with its own name (components.StatusBadge reports ui/Badge).
-//     Wrapping the primitive in a display:contents boundary would name the
-//     adapter but add DOM to every call site; adopting it is a go-daisy change.
+//     annotates it with its own name (components.StatusBadge reports
+//     components/BadgeWithClass since #855 moved its root into that wrapper —
+//     the wrapper is where the class merge lives, so the overlay names the merge
+//     site rather than the adapter). Wrapping the primitive in a
+//     display:contents boundary would name the adapter but add DOM to every call
+//     site; adopting it is a go-daisy change.
 //   - delegating root: the component renders another component's element and
 //     owns no root of its own (components.SettingsRail renders components.SubNav).
 var componentAnnotationExceptions = map[string]string{
@@ -73,7 +79,7 @@ var componentAnnotationExceptions = map[string]string{
 	"PanelCard":         "adapter: root is ui.CardRaw (ui/CardRaw)",
 	"QuestionCard":      "adapter: root is ui.CardRaw (ui/CardRaw)",
 	"SaveChangesButton": "adapter: root is ui.Button (ui/Button)",
-	"StatusBadge":       "adapter: root is ui.Badge (ui/Badge)",
+	"StatusBadge":       "adapter: root is components.BadgeWithClass (components/BadgeWithClass)",
 	"TableCard":         "adapter: root is ui.CardRaw (ui/CardRaw)",
 
 	// delegating roots — no element of their own to annotate

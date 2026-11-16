@@ -50,26 +50,34 @@ type usagePageData struct {
 templ UsagePage(data usagePageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@pageHeader("Project", "Usage", "LLM token consumption, agent activity and remaining budget for this project — costs are retail-price estimates.") {
-			@ui.Button(ui.ButtonProps{
-				Type:    ui.ButtonTypeLink,
-				Href:    usageSessionsHref(data.Days, "", 0),
-				Variant: ui.ButtonSecondary,
-				Size:    ui.ButtonSM,
-				Icon:    "lucide--scroll-text",
-				Attrs:   templ.Attributes{"data-testid": "usage-run-log"},
-			}) {
-				Run log
-			}
-			@ui.Button(ui.ButtonProps{
-				Type:    ui.ButtonTypeLink,
-				Href:    "/settings/budget",
-				Variant: ui.ButtonSecondary,
-				Size:    ui.ButtonSM,
-				Icon:    "lucide--wallet",
-				Attrs:   templ.Attributes{"data-testid": "usage-manage-budget"},
-			}) {
-				Manage budget
-			}
+			// One action row rather than two bare header children (#861): the
+			// header's outer flex uses gap-4 for the title/actions separation, so
+			// raw children picked up a 16px gap between themselves. The shared
+			// action row tightens that to gap-2 and pins the pair to the right.
+			// Manage budget is the quiet ghost action; Run log is the page's
+			// brand-yellow primary call to action and reads second.
+			<div class="flex flex-wrap items-center justify-end gap-2">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    "/settings/budget",
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--wallet",
+					Attrs:   templ.Attributes{"data-testid": "usage-manage-budget"},
+				}) {
+					Manage budget
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    usageSessionsHref(data.Days, "", 0),
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--scroll-text",
+					Attrs:   templ.Attributes{"data-testid": "usage-run-log"},
+				}) {
+					Run log
+				}
+			</div>
 		}
 		@flashToasts(data.FlashMsg, data.FlashErr)
 		if data.LoadErr != nil {
