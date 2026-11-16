@@ -198,8 +198,12 @@ func (c *Client) Register(ctx context.Context, issuer string, req RegisterReques
 		return nil, ErrMarketRateLimited("instance registration is rate limited")
 	case res.StatusCode == http.StatusConflict:
 		return nil, ErrRegistrationFailed("this origin_id is already registered with different details")
-	default:
+	case isClientRejection(res.StatusCode):
 		return nil, ErrRegistrationFailed(fmt.Sprintf("market registration returned HTTP %d", res.StatusCode))
+	default:
+		// A 5xx is an outage, not a refusal: the caller must see an unreachable
+		// market so it can retry, not a permanent registration failure.
+		return nil, ErrMarketUnreachable(fmt.Sprintf("market registration returned HTTP %d", res.StatusCode))
 	}
 
 	registration, err := decodeRegistration(res.Body)
@@ -287,6 +291,8 @@ func (c *Client) Browse(ctx context.Context, issuer string, query BrowseQuery) (
 	case res.ok():
 	case res.StatusCode == http.StatusTooManyRequests:
 		return nil, ErrMarketRateLimited("catalog browse is rate limited")
+	case isClientRejection(res.StatusCode):
+		return nil, ErrMarketRejected("catalog browse", res.StatusCode)
 	default:
 		return nil, ErrMarketUnreachable(fmt.Sprintf("catalog browse returned HTTP %d", res.StatusCode))
 	}
@@ -319,8 +325,13 @@ func (c *Client) Browse(ctx context.Context, issuer string, query BrowseQuery) (
 
 // BrowseVerified browses and verifies every listing's trust document before
 // returning it. A listing whose document is missing, invalid, expired, for a
-// different slug, or for a different digest is dropped and logged; the instance
-// never offers an unverified listing.
+// different slug, for a different digest, or that explicitly says the listing is
+// not verified is dropped and logged.
+//
+// The last clause is the limit of the promise: an explicit verified:false is
+// enforced, but a document that omits the claim means "not stated" and is
+// accepted on its signature (see TrustClaims.Verified), so this depends on the
+// market's producer contract emitting the claim.
 func (c *Client) BrowseVerified(ctx context.Context, issuer string, query BrowseQuery) (*Catalog, error) {
 	catalog, err := c.Browse(ctx, issuer, query)
 	if err != nil {
@@ -374,7 +385,14 @@ type TrustClaims struct {
 	ListingSlug string          `json:"listing_slug,omitempty"`
 	Publisher   string          `json:"publisher,omitempty"`
 	Digest      string          `json:"digest,omitempty"`
-	Verified    bool            `json:"verified,omitempty"`
+	// Verified is the market's statement, inside the signed document, that this
+	// listing passed its review. It is a pointer so "not stated" (nil) and
+	// "stated false" are distinguishable: an explicit false is refused by
+	// VerifyTrustDocument, while an omitted claim means not stated and is
+	// fail-open — the listing is accepted on the signature alone. Enforcement
+	// therefore depends on the market's producer contract setting the claim;
+	// see BrowseVerified.
+	Verified *bool `json:"verified,omitempty"`
 }
 
 // VerifyListingTrust verifies the listing's embedded trust document, fetching
@@ -429,6 +447,8 @@ func (c *Client) FetchTrustDocument(ctx context.Context, issuer, slug string) (s
 		return "", ErrTrustInvalid("market publishes no trust document for this listing")
 	case res.StatusCode == http.StatusTooManyRequests:
 		return "", ErrMarketRateLimited("trust document fetch is rate limited")
+	case isClientRejection(res.StatusCode):
+		return "", ErrMarketRejected("trust document fetch", res.StatusCode)
 	default:
 		return "", ErrMarketUnreachable(fmt.Sprintf("trust document fetch returned HTTP %d", res.StatusCode))
 	}
@@ -517,8 +537,10 @@ func (c *Client) Claim(ctx context.Context, issuer string, req ClaimRequest) (*E
 		return nil, ErrMarketRateLimited("entitlement claim is rate limited")
 	case res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden:
 		return nil, ErrClaimFailed("this instance is not allowed to claim the listing")
-	default:
+	case isClientRejection(res.StatusCode):
 		return nil, ErrClaimFailed(fmt.Sprintf("market claim returned HTTP %d", res.StatusCode))
+	default:
+		return nil, ErrMarketUnreachable(fmt.Sprintf("market claim returned HTTP %d", res.StatusCode))
 	}
 	entitlement, err := decodeEntitlement(res.Body)
 	if err != nil {
@@ -633,6 +655,11 @@ func (c *Client) sendUsage(ctx context.Context, base string, report UsageReport)
 		res.StatusCode == http.StatusNotFound ||
 		res.StatusCode == http.StatusUnprocessableEntity:
 		return ErrUsageRejected("market refused the usage request id")
+	case isClientRejection(res.StatusCode):
+		// Any other 4xx (401/403/405/...) is the market refusing this report,
+		// not an outage: replaying it unchanged would be refused again, so it is
+		// surfaced and dropped rather than queued.
+		return ErrUsageRejected(fmt.Sprintf("market refused the usage report with HTTP %d", res.StatusCode))
 	default:
 		return ErrMarketUnreachable(fmt.Sprintf("usage report returned HTTP %d", res.StatusCode))
 	}
