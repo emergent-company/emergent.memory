@@ -49,6 +49,7 @@ func (s *Server) uiUsageSessions(c echo.Context) error {
 		runsErr error
 		byAgent *UsageByAgentResponse
 		defs    []AgentDefinitionSummary
+		runtime []RuntimeAgent
 	)
 	var g errgroup.Group
 	g.Go(func() error {
@@ -69,13 +70,22 @@ func (s *Server) uiUsageSessions(c echo.Context) error {
 		defs, _ = s.memory.ListAgentDefinitions(ctx)
 		return nil
 	})
+	// The breakdown reports kb.agents ids while a definition's appearance is
+	// keyed by kb.agent_definitions id, so the two fetches above cannot be joined
+	// on the row's own id; this fetch supplies the runtime agent's definition id.
+	// Best-effort for the same reason as the definitions: an unreachable map only
+	// costs the glyph, and every row stays on the generic bot mark.
+	g.Go(func() error {
+		runtime, _ = s.memory.ListRuntimeAgents(ctx, s.currentProjectID(ctx))
+		return nil
+	})
 	_ = g.Wait()
 
 	data := usageSessionsPageData{
 		Days:         days,
 		AgentID:      agentID,
 		Agents:       byAgent,
-		AgentOptions: usageSessionsAgentOptions(byAgent, defs),
+		AgentOptions: usageSessionsAgentOptions(byAgent, defs, runtime),
 		Runs:         runs,
 		Limit:        usageSessionsPageSize,
 		Offset:       offset,
@@ -128,7 +138,11 @@ func usageAgentFilterLabel(byAgent *UsageByAgentResponse, agentID string) string
 // declared appearance so a row wears the glyph the agent wears elsewhere. Only
 // attributed rows become options: the unattributed bucket is not an agent and
 // cannot be filtered by agent id.
-func usageSessionsAgentOptions(byAgent *UsageByAgentResponse, defs []AgentDefinitionSummary) []usageSessionsAgentOption {
+//
+// The row keeps the breakdown's id — that is the ?agent= filter value the run
+// log matches — and only the appearance lookup crosses over to the definition
+// id space (see usageRuntimeAgentDefinitionID).
+func usageSessionsAgentOptions(byAgent *UsageByAgentResponse, defs []AgentDefinitionSummary, runtime []RuntimeAgent) []usageSessionsAgentOption {
 	if byAgent == nil {
 		return nil
 	}
@@ -137,7 +151,7 @@ func usageSessionsAgentOptions(byAgent *UsageByAgentResponse, defs []AgentDefini
 		if !row.Attributed() {
 			continue
 		}
-		appearance := agentUIForList(defs, row.AgentID)
+		appearance := agentUIForList(defs, usageRuntimeAgentDefinitionID(runtime, row.AgentID))
 		out = append(out, usageSessionsAgentOption{
 			ID:    row.AgentID,
 			Name:  row.AgentName,
@@ -146,6 +160,23 @@ func usageSessionsAgentOptions(byAgent *UsageByAgentResponse, defs []AgentDefini
 		})
 	}
 	return out
+}
+
+// usageRuntimeAgentDefinitionID maps a breakdown row's agent id to the agent
+// definition whose declared appearance describes it. The two are independent id
+// spaces: the breakdown projects kb.agents.id (the id the run log's ?agent=
+// filter matches), while ListAgentDefinitions returns kb.agent_definitions.id.
+// Looking a row up by its own id therefore never matches on real data and
+// silently painted every row with the generic bot mark. An agent that binds no
+// definition (or one the best-effort fetch could not see) yields "" and renders
+// the bot mark, which is the correct fallback.
+func usageRuntimeAgentDefinitionID(runtime []RuntimeAgent, agentID string) string {
+	for _, a := range runtime {
+		if a.ID == agentID {
+			return a.AgentDefinitionID
+		}
+	}
+	return ""
 }
 
 // usageSessionsAgentOptionOf returns the picker row for an agent id, so the

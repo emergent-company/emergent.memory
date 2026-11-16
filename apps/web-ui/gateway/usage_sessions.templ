@@ -34,8 +34,10 @@ type usageSessionsPageData struct {
 
 // usageSessionsAgentOption is one row of the run log's agent filter: an agent
 // that recorded usage in the selected range, plus the icon and colour its
-// definition declares. Both are empty for an agent whose definition is gone or
-// never carried an appearance, which renders as the generic bot mark.
+// definition declares. ID is the runtime agent id the breakdown reports and the
+// ?agent= filter matches; the appearance comes from the definition that runtime
+// agent binds. Both appearance fields are empty for an agent whose definition is
+// gone or never carried one, which renders as the generic bot mark.
 type usageSessionsAgentOption struct {
 	ID    string
 	Name  string
@@ -204,8 +206,9 @@ templ usageSessionsAgentMark(data usageSessionsPageData) {
 	}
 }
 
-// cmpOrNone keeps a chip's test id readable for the "All agents" link, which
-// carries no agent id.
+// cmpOrNone keeps a run row's agent test id readable when the run is not
+// attributed to any agent: those rows carry no agent id, and "all" is the
+// neutral fragment the rest of the page already uses for that bucket.
 func cmpOrNone(agentID string) string {
 	if agentID == "" {
 		return "all"
