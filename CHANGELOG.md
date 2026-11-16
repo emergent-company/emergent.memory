@@ -47,6 +47,34 @@
 
 ### Changed
 
+**Source-App webhook failures answer in the apperror envelope** (2026-11-16)
+
+`POST /api/webhooks/source-apps/{webhookKey}` used to answer every failure with a
+plain-text body (`unknown app`, `invalid signature`, …), which a sender could only
+match as a string. Failures now come from the shared handler as
+`{"error":{"code","message"}}`: the message text is unchanged, so a webhook
+delivery log reads the same, and `code` is machine-readable. Statuses are
+unchanged — `400`, `401`, `404`, `503`, `500` — and the codes are
+`unreadable_body` (400, the body could not be read), `malformed_payload` (400),
+`invalid_signature` (401), `source_app_not_found` (404),
+`source_app_unconfigured` (503) and `internal_error` (500). The seven sites were
+also outside the ratchet that counts raw `echo.NewHTTPError`, so it now counts
+plain-text `c.String` error bodies as well (baseline 0).
+
+**Embedding-control failures answer the apperror envelope, and the ratchet counts c.JSON error bodies** (2026-11-16)
+
+The seventeen `c.JSON(4xx/5xx, map[string]any{"error": err.Error()})` bodies
+under `/api/embeddings/*` bypassed `apperror.HTTPErrorHandler` the same way, and
+a repository or provider failure put its raw message on the wire for the eight
+500 paths. Each failure now returns `*apperror.Error` with a code
+(`invalid_request_body` for a bad bind, `forbidden` for the deployment-wide
+refusal, `internal_error` otherwise), a message written for the caller, and the
+cause kept for the 5xx log line; `c.JSON` is used only for success bodies.
+`scripts/lint-ratchet.sh` now counts this shape too — non-test
+`c.JSON(http.Status<4xx|5xx>, map[...]{"error": ...})` lines, excluding 2xx
+success bodies and the `domain/mcp` JSON-RPC contract — pinned at baseline 0, so
+the next handler cannot reintroduce one unnoticed.
+
 **Error bodies from six handler families now come from the apperror envelope** (2026-11-16)
 
 The model-config, tracing, devtools (`/coverage`, `/docs`), backups, `/debug`
