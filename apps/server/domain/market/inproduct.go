@@ -234,7 +234,7 @@ func decodeRegistration(body []byte) (*Registration, error) {
 		return envelope.Instance, nil
 	}
 	if err := json.Unmarshal(body, &direct); err != nil {
-		return nil, ErrMarketUnreachable("market registration returned an invalid document")
+		return nil, ErrMarketMalformedResponse("market registration returned an invalid document")
 	}
 	return &direct, nil
 }
@@ -299,12 +299,12 @@ func (c *Client) Browse(ctx context.Context, issuer string, query BrowseQuery) (
 
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(res.Body, &top); err != nil {
-		return nil, ErrMarketUnreachable("market returned an invalid catalog document")
+		return nil, ErrMarketMalformedResponse("market returned an invalid catalog document")
 	}
 	var catalog Catalog
 	if raw, ok := top["listings"]; ok {
 		if err := json.Unmarshal(raw, &catalog.Listings); err != nil {
-			return nil, ErrMarketUnreachable("market returned an invalid catalog document")
+			return nil, ErrMarketMalformedResponse("market returned an invalid catalog document")
 		}
 		if raw, ok := top["next_cursor"]; ok {
 			_ = json.Unmarshal(raw, &catalog.NextCursor)
@@ -315,7 +315,7 @@ func (c *Client) Browse(ctx context.Context, issuer string, query BrowseQuery) (
 			Catalog *Catalog `json:"catalog"`
 		}
 		if err := json.Unmarshal(res.Body, &envelope); err != nil || envelope.Catalog == nil {
-			return nil, ErrMarketUnreachable("market returned an invalid catalog document")
+			return nil, ErrMarketMalformedResponse("market returned an invalid catalog document")
 		}
 		catalog = *envelope.Catalog
 	}
@@ -325,13 +325,10 @@ func (c *Client) Browse(ctx context.Context, issuer string, query BrowseQuery) (
 
 // BrowseVerified browses and verifies every listing's trust document before
 // returning it. A listing whose document is missing, invalid, expired, for a
-// different slug, for a different digest, or that explicitly says the listing is
-// not verified is dropped and logged.
-//
-// The last clause is the limit of the promise: an explicit verified:false is
-// enforced, but a document that omits the claim means "not stated" and is
-// accepted on its signature (see TrustClaims.Verified), so this depends on the
-// market's producer contract emitting the claim.
+// different slug, for a different digest, that does not state verified:true, or
+// that states verified:false is dropped and logged. The claim is required: a
+// document that omits it is refused, so "verified" does not silently depend on
+// the market's producer contract emitting the claim.
 func (c *Client) BrowseVerified(ctx context.Context, issuer string, query BrowseQuery) (*Catalog, error) {
 	catalog, err := c.Browse(ctx, issuer, query)
 	if err != nil {
@@ -387,11 +384,10 @@ type TrustClaims struct {
 	Digest      string          `json:"digest,omitempty"`
 	// Verified is the market's statement, inside the signed document, that this
 	// listing passed its review. It is a pointer so "not stated" (nil) and
-	// "stated false" are distinguishable: an explicit false is refused by
-	// VerifyTrustDocument, while an omitted claim means not stated and is
-	// fail-open — the listing is accepted on the signature alone. Enforcement
-	// therefore depends on the market's producer contract setting the claim;
-	// see BrowseVerified.
+	// "stated false" are distinguishable in the claims, but both are refused by
+	// VerifyTrustDocument: the absence of the claim is treated as not verified
+	// (fail closed), so a producer that stops emitting it cannot silently widen
+	// what this instance offers.
 	Verified *bool `json:"verified,omitempty"`
 }
 
@@ -567,7 +563,7 @@ func decodeEntitlement(body []byte) (*Entitlement, error) {
 		return envelope.Entitlement, nil
 	}
 	if err := json.Unmarshal(body, &direct); err != nil {
-		return nil, ErrMarketUnreachable("market returned an invalid entitlement document")
+		return nil, ErrMarketMalformedResponse("market returned an invalid entitlement document")
 	}
 	return &direct, nil
 }

@@ -65,6 +65,12 @@ type fakeInProductMarket struct {
 	// reissueIDs, when set, is the exact id list handed out for every batch, so
 	// a test can make the market re-issue ids it already issued.
 	reissueIDs []string
+	// nextRequestID hands out a fresh id per call, so two batches never share an
+	// id unless a test asks for that through reissueIDs.
+	nextRequestID int
+	// catalogBody, when set, is written verbatim as the catalog's 200 body, so a
+	// test can make the market answer 2xx with an unusable document.
+	catalogBody []byte
 }
 
 func newFakeInProductMarket(t *testing.T) *fakeInProductMarket {
@@ -132,7 +138,13 @@ func newFakeInProductMarket(t *testing.T) *fakeInProductMarket {
 		m.mu.Lock()
 		m.browseQueries = append(m.browseQueries, r.URL.Query())
 		trust := m.trustToken
+		raw := m.catalogBody
 		m.mu.Unlock()
+		if raw != nil {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(raw)
+			return
+		}
 		writeJSON(w, map[string]any{"listings": []map[string]any{
 			{
 				"slug":           "hosted-mcp",
@@ -213,8 +225,9 @@ func newFakeInProductMarket(t *testing.T) *fakeInProductMarket {
 		if len(reissue) > 0 {
 			ids = append(ids, reissue...)
 		} else {
-			for i := 1; i <= calls; i++ {
-				ids = append(ids, fmt.Sprintf("req-%d", i))
+			for i := 0; i < calls; i++ {
+				m.nextRequestID++
+				ids = append(ids, fmt.Sprintf("req-%d", m.nextRequestID))
 			}
 		}
 		for _, id := range ids {
@@ -313,7 +326,7 @@ func (m *fakeInProductMarket) refreshTokens(t *testing.T) {
 		"jti":            "assertion-1",
 		"entitlement_id": "ent-1",
 		"listing_slug":   "hosted-mcp",
-		"request_ids":    requestIDs(20),
+		"request_ids":    requestIDs(fakeRequestIDs),
 	})
 	m.trustToken = m.sign(t, m.key, map[string]any{
 		"iss":          m.url,
@@ -343,9 +356,14 @@ func (m *fakeInProductMarket) assertionFor(t *testing.T, key *ecdsa.PrivateKey) 
 		"jti":            "assertion-1",
 		"entitlement_id": "ent-1",
 		"listing_slug":   "hosted-mcp",
-		"request_ids":    requestIDs(20),
+		"request_ids":    requestIDs(fakeRequestIDs),
 	})
 }
+
+// fakeRequestIDs is how many ids the fake market's assertions cover. The market
+// hands out a fresh id per batch, so a test that mints several batches stays
+// inside the assertion's id set.
+const fakeRequestIDs = 500
 
 func requestIDs(n int) []string {
 	ids := make([]string, 0, n)
@@ -704,8 +722,11 @@ func TestOutageKeepsServingFromCacheAndReplaysUsage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cached authorize: %v", err)
 	}
-	if cached != batch {
-		t.Fatalf("expected the cached batch handle")
+	if got := m.authorizeHits.Load(); got != 1 {
+		t.Fatalf("authorize hits = %d, want 1: the fallback must not mint a new batch", got)
+	}
+	if cached.Assertion != batch.Assertion {
+		t.Fatal("the fallback did not return the cached batch")
 	}
 	if cached.Remaining() != 1 {
 		t.Fatalf("cached remaining = %d, want 1", cached.Remaining())
@@ -851,8 +872,8 @@ func TestAuthorizeRefusesAnAssertionThatDoesNotCoverTheRequestIDs(t *testing.T) 
 }
 
 // TestAuthorizeRefusesAReissuedRequestID reproduces the silent-attribution loss:
-// the fake market hands out req-1..N for every batch, so after the first batch's
-// req-1 is reported a second authorize re-issues it. Reporting it again is
+// after the first batch's first id is reported, a second authorize asks the
+// market for a batch and the market re-issues that id. Reporting it again is
 // refused by the market, and the served call is lost with only the client
 // knowing — so the batch must be refused before any id is handed out.
 func TestAuthorizeRefusesAReissuedRequestID(t *testing.T) {
@@ -875,6 +896,10 @@ func TestAuthorizeRefusesAReissuedRequestID(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("report usage: %v", err)
 	}
+
+	m.mu.Lock()
+	m.reissueIDs = append([]string(nil), first.RequestIDs...)
+	m.mu.Unlock()
 
 	_, err = client.Authorize(ctx, m.url, "ent-1", 2)
 	if got := ErrorCode(err); got != CodeAssertionInvalid {
@@ -952,6 +977,7 @@ func TestClockSkewWithinLeewayIsTolerated(t *testing.T) {
 			"aud":          TrustDocumentAudience,
 			"sub":          "hosted-mcp",
 			"listing_slug": "hosted-mcp",
+			"verified":     true,
 			"exp":          exp.Unix(),
 		}
 		if nbf != nil {
@@ -1338,10 +1364,11 @@ func TestTrustDocumentThatDisclaimsVerificationIsRefused(t *testing.T) {
 	}
 }
 
-// TestTrustDocumentWithoutVerificationClaimIsAccepted: the claim is optional. A
-// document that omits it is still signed by the market, which is the trust
-// anchor, so it is accepted and Verified stays nil (not stated, not false).
-func TestTrustDocumentWithoutVerificationClaimIsAccepted(t *testing.T) {
+// TestTrustDocumentWithoutVerificationClaimIsRefused pins item 4 of #908: the
+// absence of the claim is not a pass. A signed document that never says the
+// listing is verified is refused (fail closed), so "verified" cannot silently
+// depend on the market's producer contract emitting the claim.
+func TestTrustDocumentWithoutVerificationClaimIsRefused(t *testing.T) {
 	clock := newFakeClock(time.Now())
 	m := newFakeInProductMarket(t)
 	client := newInProductClient(t, m, clock, nil)
@@ -1357,12 +1384,23 @@ func TestTrustDocumentWithoutVerificationClaimIsAccepted(t *testing.T) {
 	})
 	m.mu.Unlock()
 
-	claims, err := client.VerifyListingTrust(ctx, m.url, &Listing{Slug: "hosted-mcp"})
-	if err != nil {
-		t.Fatalf("a document without the optional verified claim must verify: %v", err)
+	_, err := client.VerifyListingTrust(ctx, m.url, &Listing{Slug: "hosted-mcp"})
+	expectCode(t, err, CodeTrustInvalid)
+	if !strings.Contains(err.Error(), "does not state") {
+		t.Fatalf("error does not explain the missing verification claim: %v", err)
 	}
-	if claims.Verified != nil {
-		t.Fatalf("Verified = %t, want nil when the claim is absent", *claims.Verified)
+
+	var logBuf bytes.Buffer
+	loggingClient := newInProductClient(t, m, clock, &logBuf)
+	catalog, err := loggingClient.BrowseVerified(ctx, m.url, BrowseQuery{Kind: KindMCP, Delivery: DeliveryHosted})
+	if err != nil {
+		t.Fatalf("browse verified: %v", err)
+	}
+	if len(catalog.Listings) != 0 {
+		t.Fatalf("offered %d listings whose trust document does not state verified:true", len(catalog.Listings))
+	}
+	if !strings.Contains(logBuf.String(), "dropping unverified market listing") {
+		t.Fatalf("log does not explain the drop:\n%s", logBuf.String())
 	}
 }
 
@@ -1528,6 +1566,127 @@ func TestAuthorizeRetainsABatchThatIsNotYetValid(t *testing.T) {
 	clock.Advance(31 * time.Second)
 	if id, ok := batch.Take(); !ok || id == "" {
 		t.Fatal("the batch did not become usable after its not-before instant")
+	}
+}
+
+// TestMintedBatchIsACopyOfTheCachedBatch pins item 1 of #908: Authorize caches
+// the batch it minted and hands the caller a copy. Mutating the returned
+// document must not rewrite what the cache will serve, while the ids the caller
+// takes are still consumed for that cache and are never handed out twice.
+func TestMintedBatchIsACopyOfTheCachedBatch(t *testing.T) {
+	clock := newFakeClock(time.Now())
+	m := newFakeInProductMarket(t)
+	client := newInProductClient(t, m, clock, nil)
+	ctx := context.Background()
+
+	minted, err := client.Authorize(ctx, m.url, "ent-1", 2)
+	if err != nil {
+		t.Fatalf("authorize: %v", err)
+	}
+	originalAssertion := minted.Assertion
+	if _, ok := minted.Take(); !ok {
+		t.Fatal("minted batch handed out no id")
+	}
+
+	// A caller that rewrites the document it was handed must not corrupt the
+	// cached batch that later authorizations reserve from.
+	minted.Assertion = "tampered"
+	minted.RequestIDs[0] = "tampered"
+	minted.ExpiresAt = MarketTime{Time: clock.Now().Add(24 * time.Hour)}
+
+	grant, err := client.Authorize(ctx, m.url, "ent-1", 1)
+	if err != nil {
+		t.Fatalf("second authorize: %v", err)
+	}
+	if got := m.authorizeHits.Load(); got != 1 {
+		t.Fatalf("authorize hits = %d, want 1: the live cached batch must still be reused", got)
+	}
+	if grant.Assertion != originalAssertion {
+		t.Fatalf("the cached assertion was rewritten through the minted handle: %q", grant.Assertion)
+	}
+	if len(grant.RequestIDs) != 1 || grant.RequestIDs[0] != "req-2" {
+		t.Fatalf("grant ids = %v, want the single unreserved id req-2", grant.RequestIDs)
+	}
+	// The handle and the cache share consumption state: the reservation is
+	// visible to the handle, which therefore offers nothing more.
+	if got := minted.Remaining(); got != 0 {
+		t.Fatalf("minted handle remaining = %d, want 0 after the cache reserved its id", got)
+	}
+	if id, ok := minted.Take(); ok {
+		t.Fatalf("the minted handle handed out %q after the cache had reserved it", id)
+	}
+}
+
+// TestAuthorizeRefusesAnIdFromALiveCachedBatch pins item 2 of #908: an id that a
+// still-live batch already issued (reserved but not yet reported) must not be
+// accepted again. Overwriting the cache would leave two served calls naming one
+// id, and the second report would be refused.
+func TestAuthorizeRefusesAnIdFromALiveCachedBatch(t *testing.T) {
+	clock := newFakeClock(time.Now())
+	m := newFakeInProductMarket(t)
+	client := newInProductClient(t, m, clock, nil)
+	ctx := context.Background()
+
+	first, err := client.Authorize(ctx, m.url, "ent-1", 2)
+	if err != nil {
+		t.Fatalf("first authorize: %v", err)
+	}
+
+	// Ask for more than the cache holds, so the market is consulted, and have it
+	// re-issue the ids that are still live in the cache.
+	m.mu.Lock()
+	m.reissueIDs = append([]string(nil), first.RequestIDs...)
+	m.mu.Unlock()
+
+	_, err = client.Authorize(ctx, m.url, "ent-1", 20)
+	if got := ErrorCode(err); got != CodeAssertionInvalid {
+		t.Fatalf("want %s for an id from a live batch, got %q (%v)", CodeAssertionInvalid, got, err)
+	}
+	if !strings.Contains(err.Error(), "already issued by a live batch") {
+		t.Fatalf("error does not explain the live re-issue: %v", err)
+	}
+
+	// The previous cached batch stays usable: the refusal happens before it is
+	// replaced, so its unreserved ids are still attributable.
+	grant, err := client.Authorize(ctx, m.url, "ent-1", 1)
+	if err != nil {
+		t.Fatalf("reserving from the surviving cached batch: %v", err)
+	}
+	if len(grant.RequestIDs) != 1 || grant.RequestIDs[0] != "req-1" {
+		t.Fatalf("grant ids = %v, want req-1 from the surviving batch", grant.RequestIDs)
+	}
+}
+
+// TestMalformedSuccessBodyIsNotAnOutage pins item 3 of #908: a 2xx whose body
+// the instance cannot use is a market bug, not an outage. It carries its own
+// code and is not retried on the network cadence, so dashboards can tell a
+// broken producer from a market that is down.
+func TestMalformedSuccessBodyIsNotAnOutage(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "not JSON", body: "not json at all", want: "invalid catalog document"},
+		{name: "JSON without listings or catalog", body: `{"unexpected":"shape"}`, want: "invalid catalog document"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newFakeInProductMarket(t)
+			client := newInProductClient(t, m, newFakeClock(time.Now()), nil)
+			m.mu.Lock()
+			m.catalogBody = []byte(tc.body)
+			m.mu.Unlock()
+
+			_, err := client.Browse(context.Background(), m.url, BrowseQuery{Kind: KindMCP})
+			expectCode(t, err, CodeMarketMalformed)
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error does not explain the malformed body: %v", err)
+			}
+			if isRetryableMarketError(err) {
+				t.Fatalf("a malformed 2xx body must not be retried on the network cadence: %v", err)
+			}
+		})
 	}
 }
 
