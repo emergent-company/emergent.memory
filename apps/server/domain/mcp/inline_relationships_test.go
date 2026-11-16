@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 // inlineTestDeps wires a deterministic in-memory graph layer. resolveErr maps an
@@ -70,6 +71,42 @@ func TestProcessInlineRelationshipsReportsUnresolvableEndpoints(t *testing.T) {
 	assert.False(t, results[1].Ok)
 	assert.Equal(t, inlineRelReasonUnknownTargetID, results[1].Reason)
 	assert.Contains(t, results[1].Error, `cannot resolve target_id "PLACEHOLDER"`)
+}
+
+// TestProcessInlineRelationshipsHidesDriverFailures is the fail-first regression
+// for the batch driver leak found in review round 2 (#899): the per-item text is
+// rendered with apperror.PublicMessage, so a store fault shows the internal
+// sentence while a key miss keeps its guidance. Before the fix the text used %v
+// on the resolver error, which printed the wrapped cause — a driver message such
+// as `pq: … host=…` — straight into the tool result.
+func TestProcessInlineRelationshipsHidesDriverFailures(t *testing.T) {
+	entityID := uuid.New()
+	driverErr := apperror.NewInternal("An internal error occurred",
+		errors.New(`pq: relation "kb.graph_objects" does not exist (SQLSTATE 42P01)`))
+	d := &inlineTestDeps{resolveErr: map[string]error{
+		"store-failure": driverErr,
+		"ghost-key": notFoundf("entity_key_not_found",
+			"entity with key %q not found", "ghost-key"),
+	}}
+
+	_, results := processInlineRelationships(context.Background(), "Obligation", entityID, []any{
+		map[string]any{"type": "has_subject", "source_id": "store-failure"},
+		map[string]any{"type": "has_owner", "target_id": "ghost-key"},
+	}, nil, d.deps())
+
+	require.Len(t, results, 2)
+
+	assert.Equal(t, inlineRelReasonUnknownSourceID, results[0].Reason)
+	assert.Contains(t, results[0].Error, "An internal error occurred")
+	for _, leak := range []string{"pq:", "SQLSTATE", "graph_objects", "42P01"} {
+		assert.NotContains(t, results[0].Error, leak,
+			"a driver failure must not reach the tool result")
+	}
+
+	assert.Equal(t, inlineRelReasonUnknownTargetID, results[1].Reason)
+	assert.Contains(t, results[1].Error, `entity with key "ghost-key" not found`,
+		"a key miss stays caller-addressable")
+	assert.NotContains(t, results[1].Error, "An internal error occurred")
 }
 
 func TestProcessInlineRelationshipsReportsTypeNotAllowed(t *testing.T) {

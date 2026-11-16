@@ -257,7 +257,11 @@ func (s *Service) executeGetSchema(ctx context.Context, projectID string, args m
 		WHERE id = ? AND (project_id = ? OR source = 'builtin')
 	`, schemaID, projectID).Scan(ctx, &schema)
 	if err != nil {
-		return nil, fmt.Errorf("schema not found: %s", schemaID)
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, apperror.NewInternal("An internal error occurred",
+				fmt.Errorf("load schema %q: %w", schemaID, err))
+		}
+		return nil, notFoundf("schema_not_found", "schema not found: %s", schemaID)
 	}
 
 	// Get object types

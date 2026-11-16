@@ -347,9 +347,12 @@ func TestToolsCallPermissionRefusalIsForbidden(t *testing.T) {
 //
 // The scan is call-shaped (toolargscan), not line-shaped: it reads each
 // fmt.Errorf/errors.New argument list, so a validator written with errors.New
-// or split across lines is caught too. The sources domain shares the same
-// scan (domain/sources/review_tools_scan_test.go) because its tool validators
-// reach the same tools/call channel.
+// or split across lines is caught too. It also scans the "not found" family: a
+// lookup miss is as caller-addressable as a malformed argument, and reporting it
+// as an internal fault sends the caller to retry a lookup that will never
+// succeed. The sources domain runs the same scan over its whole package
+// (domain/sources/tool_argument_error_test.go) because its tool validators reach
+// the same tools/call channel.
 func TestNoPlainArgumentValidationErrors(t *testing.T) {
 	findings, err := toolargscan.ScanDir(".", toolargscan.Exemptions{
 		Files: map[string]string{
@@ -361,6 +364,10 @@ func TestNoPlainArgumentValidationErrors(t *testing.T) {
 			// The internal cause of an apperror.NewInternal: never rendered to
 			// the caller (only logged), so it is not a public message.
 			"auto-created branch has invalid UUID": "internal cause",
+			// Scope probes: the caller ignores the error and only skips a type
+			// check, so the text is never rendered into a result.
+			"relationship not found": "scope probe",
+			"object not found":       "scope probe",
 		},
 	})
 	require.NoError(t, err)

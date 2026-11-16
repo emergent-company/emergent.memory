@@ -7,6 +7,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/authz"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
 // Error classes for a tools/call failure, alongside toolArgErrorf in args.go.
@@ -25,12 +26,22 @@ func toolForbiddenf(format string, args ...any) error {
 	return apperror.New(http.StatusForbidden, "forbidden", fmt.Errorf(format, args...).Error())
 }
 
+// notFoundf reports a resource the caller named that does not exist — a tool
+// name, a branch, a schema, a skill, an entity key. A miss is caller-addressable
+// (the caller can correct the reference, and the message says how), so the text
+// is public and jsonRPCErrorCodeFor maps the 404 to JSON-RPC not-found instead of
+// reporting a server fault. Reporting it as internal tells the caller to retry a
+// lookup that will fail the same way forever.
+func notFoundf(code, format string, args ...any) error {
+	return apperror.New(http.StatusNotFound, code, fmt.Errorf(format, args...).Error())
+}
+
 // toolNotFoundf reports a tool name the catalog does not register. Unknown tool
 // names are caller-addressable — a model may still emit a retired name — so the
 // "tool not found" text is public and maps to JSON-RPC not-found. The e2e skip
 // helper keys on that phrase (e2e/tests/api/mcp_new_tools_test.go).
 func toolNotFoundf(format string, args ...any) error {
-	return apperror.New(http.StatusNotFound, "tool_not_found", fmt.Errorf(format, args...).Error())
+	return notFoundf("tool_not_found", format, args...)
 }
 
 // toolAuthorizationError adapts authz.AuthorizeTool's typed refusal to the
@@ -46,26 +57,38 @@ func toolAuthorizationError(err error) error {
 	return toolForbiddenf("%s", denial.Message)
 }
 
-// entityKeyNotFound is the typed "no object in this project carries that key"
-// answer from resolveEntityIDByKey. It exists so a caller can tell the one
-// lookup failure that is its own input problem (report the key and the fuzzy
-// suggestions) from a store failure (stay internal).
-type entityKeyNotFound struct {
-	message string
+// logToolFailure records the internal cause of a per-item failure. A batch
+// result carries only the public text (see the call sites), so this is where the
+// driver detail survives; a Service built without a logger (tests) is tolerated.
+//
+// A caller-addressable miss is expected traffic, not a fault, so it is logged at
+// debug; anything else — a store or driver failure — is a warning.
+func (s *Service) logToolFailure(msg string, err error, args ...any) {
+	if s.log == nil {
+		return
+	}
+	attrs := append(args, logger.Error(err))
+	if refErr, ok := errors.AsType[*apperror.Error](err); ok && refErr.HTTPStatus < http.StatusInternalServerError {
+		s.log.Debug(msg, attrs...)
+		return
+	}
+	s.log.Warn(msg, attrs...)
 }
-
-func (e *entityKeyNotFound) Error() string { return e.message }
 
 // invalidEntityRefError renders a failed entity_id / start_entity_id
 // resolution. A key miss is the caller's to fix, so it becomes a validation
 // error carrying the resolver's message (with fuzzy suggestions). Any other
 // lookup failure is a store fault: folding it into an invalid-parameter message
 // would blame the caller for an outage and print "not found" for a DB error.
+//
+// The miss/fault split is the resolver's 404: resolveEntityIDByKey returns a
+// *not-found* app error for a key it could not find and an internal app error for
+// a store failure, so this helper classifies by status rather than by string.
 func invalidEntityRefError(label, idStr string, keyErr error) error {
-	notFound, ok := errors.AsType[*entityKeyNotFound](keyErr)
-	if !ok {
+	refErr, ok := errors.AsType[*apperror.Error](keyErr)
+	if !ok || refErr.HTTPStatus != http.StatusNotFound {
 		return apperror.NewInternal("An internal error occurred",
 			fmt.Errorf("resolve %s %q: %w", label, idStr, keyErr))
 	}
-	return toolArgErrorf("invalid %s: %q is not a UUID and key lookup failed: %s", label, idStr, notFound.message)
+	return toolArgErrorf("invalid %s: %q is not a UUID and key lookup failed: %s", label, idStr, refErr.Message)
 }

@@ -204,7 +204,7 @@ func (s *Service) executeGetSkill(ctx context.Context, projectID string, args ma
 			}
 		}
 	}
-	return nil, fmt.Errorf("get_skill: skill %q not found", idStr)
+	return nil, notFoundf("skill_not_found", "get_skill: skill %q not found", idStr)
 }
 
 func (s *Service) executeCreateSkill(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {

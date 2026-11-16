@@ -3290,7 +3290,9 @@ func (s *Service) executeUpdateProjectInfo(ctx context.Context, projectID string
 	}
 	affected, _ := res.RowsAffected()
 	if affected == 0 {
-		return nil, fmt.Errorf("update project info: project %s not found", projectID)
+		// The project id came from the request context, so this is a target that
+		// no longer exists — not a server fault, and not a malformed argument.
+		return nil, notFoundf("project_not_found", "update project info: project %s not found", projectID)
 	}
 
 	return s.wrapResult(map[string]any{
@@ -4569,7 +4571,15 @@ func (s *Service) resolveBranchID(ctx context.Context, projectID, branchRef stri
 		Limit(1).
 		Scan(ctx, &row)
 	if err != nil {
-		return nil, fmt.Errorf("branch %q not found (pass a UUID or branch name; omit the field entirely to target the main graph): %w", branchRef, err)
+		if !errors.Is(err, sql.ErrNoRows) {
+			// A store failure is not a missing branch: reporting it as "not
+			// found" would send the caller looking for a typo in a name that was
+			// fine. The cause stays internal.
+			return nil, apperror.NewInternal("An internal error occurred",
+				fmt.Errorf("look up branch %q: %w", branchRef, err))
+		}
+		return nil, notFoundf("branch_not_found",
+			"branch %q not found (pass a UUID or branch name; omit the field entirely to target the main graph)", branchRef)
 	}
 	if err := s.branchRefAllowedByScope(ctx, projectID, row.ID); err != nil {
 		return nil, err
@@ -4646,6 +4656,13 @@ func (s *Service) resolveOrCreateBranchID(ctx context.Context, projectID, branch
 		Where("project_id = ?", projectID).
 		Limit(1).
 		Scan(ctx, &row)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		// Only a genuine miss may fall through to auto-create: treating a store
+		// failure as "name not found" would create a branch to work around an
+		// outage, and then report the creation failure as the caller's problem.
+		return nil, apperror.NewInternal("An internal error occurred",
+			fmt.Errorf("look up branch %q: %w", branchRef, err))
+	}
 	if err == nil {
 		if err := s.branchRefAllowedByScope(ctx, projectID, row.ID); err != nil {
 			return nil, err
@@ -4657,14 +4674,15 @@ func (s *Service) resolveOrCreateBranchID(ctx context.Context, projectID, branch
 	// resolve is either a model mistake or an attempt to write elsewhere: refuse
 	// instead of auto-creating and escaping the job.
 	if _, ok := ExtractionRunFromContext(ctx); ok {
-		return nil, fmt.Errorf("branch %q is outside this extraction job's scope", branchRef)
+		return nil, toolForbiddenf("branch %q is outside this extraction job's scope", branchRef)
 	}
 	// Branch not found — auto-create it. A branch this run is creating itself is
 	// not gated by the read scope: the scope says which existing branches the run
 	// may read, and refusing a branch it just created would make the tool unusable
 	// without protecting anything.
 	if s.branchSvc == nil {
-		return nil, fmt.Errorf("branch %q not found and branch service not available to auto-create", branchRef)
+		return nil, notFoundf("branch_not_found",
+			"branch %q not found (auto-create is unavailable, so pass an existing branch)", branchRef)
 	}
 	req := &branches.CreateBranchRequest{
 		ProjectID: &projectID,
@@ -4672,7 +4690,8 @@ func (s *Service) resolveOrCreateBranchID(ctx context.Context, projectID, branch
 	}
 	created, createErr := s.branchSvc.Create(ctx, req)
 	if createErr != nil {
-		return nil, fmt.Errorf("branch %q not found and auto-create failed: %w", branchRef, createErr)
+		return nil, apperror.NewInternal("An internal error occurred",
+			fmt.Errorf("auto-create branch %q: %w", branchRef, createErr))
 	}
 	createdID, parseErr := uuid.Parse(created.ID)
 	if parseErr != nil {
@@ -5112,12 +5131,12 @@ func (s *Service) resolveEntityIDByKey(ctx context.Context, projectID uuid.UUID,
 		// Fetch fuzzy suggestions to help agents self-correct.
 		suggestions := s.suggestEntityKeysByFuzzy(ctx, projectID, key, 3)
 		if len(suggestions) > 0 {
-			return uuid.Nil, &entityKeyNotFound{message: fmt.Sprintf(
+			return uuid.Nil, notFoundf("entity_key_not_found",
 				"entity with key %q not found — did you mean one of these? %s. Use the exact key shown with entity-update or relationship-create.",
 				key, strings.Join(suggestions, ", "),
-			)}
+			)
 		}
-		return uuid.Nil, &entityKeyNotFound{message: fmt.Sprintf("entity with key %q not found", key)}
+		return uuid.Nil, notFoundf("entity_key_not_found", "entity with key %q not found", key)
 	}
 	return canonicalID, nil
 }
@@ -6528,7 +6547,10 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 	pendingInline := make([]pendingInlineRels, 0)
 
 	// resolveIDOrKey resolves a string that is either a UUID or an entity key.
-	// Checks the in-batch keyToID map first, then falls back to a DB lookup.
+	// Checks the in-batch keyToID map first, then falls back to a DB lookup. The
+	// resolver's error is returned unwrapped so its class (a not-found key or a
+	// store failure) survives to the per-item text, which renders only the
+	// public half.
 	resolveIDOrKey := func(idOrKey string) (uuid.UUID, error) {
 		if id, err := uuid.Parse(idOrKey); err == nil {
 			return id, nil
@@ -6538,7 +6560,8 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 		}
 		id, err := s.resolveEntityIDByKey(ctx, projectUUID, idOrKey)
 		if err != nil {
-			return uuid.Nil, fmt.Errorf("key %q not found: %w", idOrKey, err)
+			s.logToolFailure("entity key resolution failed", err, "key", idOrKey)
+			return uuid.Nil, err
 		}
 		return id, nil
 	}
@@ -6901,14 +6924,17 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 		Index  int    `json:"index"`
 	}
 
-	// resolveRelIDOrKey resolves a string that is either a UUID or an entity key (DB lookup).
+	// resolveRelIDOrKey resolves a string that is either a UUID or an entity key
+	// (DB lookup). As in the entity batch, the resolver's error is returned as it
+	// is so the per-item text can show the public half of it.
 	resolveRelIDOrKey := func(idOrKey string) (uuid.UUID, error) {
 		if id, err := uuid.Parse(idOrKey); err == nil {
 			return id, nil
 		}
 		id, err := s.resolveEntityIDByKey(ctx, projectUUID, idOrKey)
 		if err != nil {
-			return uuid.Nil, fmt.Errorf("key %q not found: %w", idOrKey, err)
+			s.logToolFailure("entity key resolution failed", err, "key", idOrKey)
+			return uuid.Nil, err
 		}
 		return id, nil
 	}
@@ -6965,7 +6991,7 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 			results = append(results, batchResult{
 				Ok:     false,
 				Reason: inlineRelReasonUnknownSourceID,
-				Error:  fmt.Sprintf("cannot resolve source_id %q: %v", srcIDStr, err),
+				Error:  fmt.Sprintf("cannot resolve source_id %q: %s", srcIDStr, apperror.PublicMessage(err)),
 				Index:  i,
 			})
 			failedCount++
@@ -6981,7 +7007,7 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 			results = append(results, batchResult{
 				Ok:     false,
 				Reason: inlineRelReasonUnknownTargetID,
-				Error:  fmt.Sprintf("cannot resolve target_id %q: %v", dstIDStr, err),
+				Error:  fmt.Sprintf("cannot resolve target_id %q: %s", dstIDStr, apperror.PublicMessage(err)),
 				Index:  i,
 			})
 			failedCount++

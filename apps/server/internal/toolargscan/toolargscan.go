@@ -55,8 +55,14 @@ var callRe = regexp.MustCompile(`\b(?:fmt\.Errorf|errors\.New)\(`)
 
 // keywordRe is the validation vocabulary from issue #668: the original scan's
 // keywords plus the sibling families the conversion found.
+//
+// "not found" was added in review round 2 (#899): the first pass converted the
+// argument-naming messages and left the lookup misses behind, so a caller who
+// named a branch, schema or skill that does not exist got "An internal error
+// occurred" (-32603) instead of the guidance telling it what to pass. A miss is
+// as caller-addressable as a malformed argument, so it is scanned the same way.
 var keywordRe = regexp.MustCompile(
-	`(?i)(is required|are required|required parameter|required argument|must be|must not|invalid |unsupported|not supported|unknown |missing|cannot be combined|no valid |exceeds )`,
+	`(?i)(is required|are required|required parameter|required argument|must be|must not|invalid |unsupported|not supported|unknown |missing|cannot be combined|no valid |exceeds |not found)`,
 )
 
 // Scan reports the offending call sites in paths.

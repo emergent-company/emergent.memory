@@ -147,7 +147,11 @@ func (p *githubAppProvider) ValidateConfig(cfg map[string]any) error {
 		return apperror.NewValidation("github_app: app_id must be a UUID")
 	}
 	if _, err := normalizeInstallationID(cfg["installation_id"]); err != nil {
-		return apperror.NewValidationf("github_app: %w", err)
+		// PublicMessage, not %w: normalizeInstallationID already returns a
+		// validation app error, and formatting it with %w would print the code
+		// inside the user-facing sentence ("validation_error: installation_id is
+		// required"). Only the message is wanted here, prefixed with the field.
+		return apperror.NewValidation("github_app: " + apperror.PublicMessage(err))
 	}
 	repos := appRepoList(cfg["repos"])
 	if len(repos) == 0 {
