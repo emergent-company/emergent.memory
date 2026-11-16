@@ -260,6 +260,10 @@ func (p *WorkerPool) finishWorkRun(ctx context.Context, log *slog.Logger, job *A
 	}
 }
 
+func isIssueReviewFinal(head *graph.WorkObjectHead) bool {
+	return head != nil && head.Type == "GitHubIssue" && head.Status == "review"
+}
+
 func failureMessage(execErr error, result *ExecuteResult) string {
 	if execErr != nil {
 		return execErr.Error()
