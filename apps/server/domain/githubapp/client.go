@@ -117,6 +117,9 @@ type IssueState struct {
 	Labels    []struct {
 		Name string `json:"name"`
 	} `json:"labels"`
+	Assignees []struct {
+		Login string `json:"login"`
+	} `json:"assignees"`
 	User struct {
 		Login string `json:"login"`
 		Type  string `json:"type"`
@@ -148,6 +151,34 @@ func (c *Client) GetIssue(ctx context.Context, repo string, number int) (*IssueS
 		return nil, err
 	}
 	return &out, nil
+}
+
+// AddIssueLabels adds labels to an issue. The call is idempotent on GitHub:
+// labels already present are left in place.
+func (c *Client) AddIssueLabels(ctx context.Context, repo string, number int, labels []string) error {
+	return c.do(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/issues/%d/labels", repo, number), map[string]any{
+		"labels": labels,
+	}, nil)
+}
+
+// RemoveIssueLabel removes one label from an issue. A missing label is a
+// successful no-op on GitHub.
+func (c *Client) RemoveIssueLabel(ctx context.Context, repo string, number int, label string) error {
+	return c.do(ctx, http.MethodDelete, fmt.Sprintf("/repos/%s/issues/%d/labels/%s", repo, number, url.PathEscape(label)), nil, nil)
+}
+
+// AddIssueAssignees assigns users to an issue.
+func (c *Client) AddIssueAssignees(ctx context.Context, repo string, number int, assignees []string) error {
+	return c.do(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/issues/%d/assignees", repo, number), map[string]any{
+		"assignees": assignees,
+	}, nil)
+}
+
+// RemoveIssueAssignees unassigns users from an issue.
+func (c *Client) RemoveIssueAssignees(ctx context.Context, repo string, number int, assignees []string) error {
+	return c.do(ctx, http.MethodDelete, fmt.Sprintf("/repos/%s/issues/%d/assignees", repo, number), map[string]any{
+		"assignees": assignees,
+	}, nil)
 }
 
 // GetPullRequest reads the live PR state.
