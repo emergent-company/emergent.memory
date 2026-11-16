@@ -496,3 +496,58 @@ func TestLinkRowKeepsTrailingAndDetailsOutsideAnchor(t *testing.T) {
 		}
 	}
 }
+
+// TestLinkRowSpreadsLinkAttrsOnAnchor pins LinkRowOpts.LinkAttrs: the hooks a
+// page's JS keys on when the row is opened belong on the anchor, not on the row
+// root — a hook on the root would also match clicks that land on the trailing
+// controls and hijack them (#756, the inbox's mark-read-on-open).
+func TestLinkRowSpreadsLinkAttrsOnAnchor(t *testing.T) {
+	html := renderHTMLWithChildren(t,
+		LinkRow(templ.SafeURL("/chat?c=conv-1"), ui.IconSpan("lucide--bot", "size-4"), "Agent needs your input", "today", LinkRowOpts{
+			Attrs:     templ.Attributes{"data-notification-id": "n1"},
+			LinkAttrs: templ.Attributes{"data-notification-open": true, "data-notif-id": "n1"},
+		}),
+		`<button type="button" data-notif-action="read"></button>`,
+	)
+
+	open := strings.Index(html, "<a ")
+	if open < 0 {
+		t.Fatalf("the row rendered no anchor:\n%s", html)
+	}
+	end := strings.Index(html[open:], "</a>")
+	if end < 0 {
+		t.Fatalf("the row anchor never closes:\n%s", html)
+	}
+	anchor := html[open : open+end+len("</a>")]
+	for _, want := range []string{"data-notification-open", `data-notif-id="n1"`} {
+		if !strings.Contains(anchor, want) {
+			t.Errorf("anchor missing link attr %q:\n%s", want, anchor)
+		}
+	}
+	root := html[:strings.Index(html, ">")+1]
+	if strings.Contains(root, "data-notification-open") {
+		t.Errorf("link attr leaked onto the row root, where it would also match trailing-control clicks:\n%s", root)
+	}
+}
+
+// TestLinkRowWithoutHrefRendersNoAnchor pins LinkRow's untargeted mode: an empty
+// href is a row that opens nothing (an inbox notification with no deep link), so
+// it renders the same slots with no anchor and no chevron — a link that goes
+// nowhere must not be in the tab order or advertise navigation.
+func TestLinkRowWithoutHrefRendersNoAnchor(t *testing.T) {
+	html := renderHTML(t, LinkRow(templ.SafeURL(""), ui.IconSpan("lucide--key-round", "size-4"), "Role changed", "yesterday", LinkRowOpts{
+		Attrs:   templ.Attributes{"data-notification-id": "n2"},
+		Details: templ.Raw(`<span class="details-slot"></span>`),
+	}))
+
+	if strings.Contains(html, "<a ") {
+		t.Errorf("a row with no target rendered an anchor:\n%s", html)
+	}
+	assertNotContains(t, html, "lucide--chevron-right")
+	assertContains(t, html,
+		"Role changed",
+		"yesterday",
+		`data-notification-id="n2"`,
+		"details-slot",
+	)
+}

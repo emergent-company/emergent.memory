@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -43,6 +44,71 @@ func TestDeployPortalDisabledIsNotFound(t *testing.T) {
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/deploy", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+// TestDeployPortalDisabledIsDistinguishableFromMissingRoute pins the two 404s
+// apart. Echo answers a handler that declines and a path no route matches with
+// the same default body (`{"message":"Not Found"}`), so a deployment with the
+// portal switched off looked exactly like the #648 scope-rewrite regression that
+// 404'd the path before routing. Every gated route must now name the gate, while
+// an unmatched path keeps the default body — that difference is the tell the
+// docs point at. Fails without deployPortalDisabled (the disabled body would
+// equal Echo's default).
+func TestDeployPortalDisabledIsDistinguishableFromMissingRoute(t *testing.T) {
+	s := &Server{cfg: Config{DeployPortalEnabled: false}}
+	e := deployTestEcho(s)
+
+	for _, path := range []string{"/deploy", "/deploy/oauth/start", "/deploy/oauth/callback"} {
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s status = %d, want 404", path, rec.Code)
+		}
+		var body struct {
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%s: body is not Echo's JSON error envelope: %q", path, rec.Body.String())
+		}
+		if body.Message == "Not Found" {
+			t.Errorf("%s body = Echo's default 404 body; a disabled capability must name itself (got %q)", path, body.Message)
+		}
+		if !strings.Contains(body.Message, "disabled") {
+			t.Errorf("%s message = %q, want it to say the capability is disabled", path, body.Message)
+		}
+	}
+
+	// A path no route matches keeps Echo's default body: 404 + `Not Found` is a
+	// missing route, not a switched-off capability.
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/deploy/not-a-route", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unmatched route status = %d, want 404", rec.Code)
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != `{"message":"Not Found"}` {
+		t.Fatalf("unmatched route body = %q, want Echo's default %q", got, `{"message":"Not Found"}`)
+	}
+}
+
+// TestDeployPortalEnabledUnconfiguredSaysSo pins the third state: the capability
+// is on but its Railway credentials are missing. LoadConfig refuses to start in
+// that state, so the OAuth routes' guard is only a belt-and-braces check — but
+// it must not answer "disabled", which would send an operator looking for an
+// unset flag that is in fact set.
+func TestDeployPortalEnabledUnconfiguredSaysSo(t *testing.T) {
+	s := &Server{cfg: Config{DeployPortalEnabled: true}}
+	e := deployTestEcho(s)
+
+	for _, path := range []string{"/deploy/oauth/start", "/deploy/oauth/callback"} {
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s status = %d, want 404", path, rec.Code)
+		}
+		if body := rec.Body.String(); !strings.Contains(body, "not configured") {
+			t.Errorf("%s body = %q, want it to say the portal is not configured", path, body)
+		}
 	}
 }
 

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../fixtures';
 import { createDriveSource, deleteDriveSource } from '../../helpers/datasources';
 
 // Drive connect is OAuth-only: the provider advertises no credentials method and

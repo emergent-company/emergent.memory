@@ -317,23 +317,30 @@
     return q;
   }
 
+  // markOpenRead marks a notification read on the way out of the page: the
+  // PATCH is sent with keepalive so it survives the navigation, and navigation
+  // is never blocked on it. Already-read rows do nothing. It takes the row
+  // (which carries the id and the unread flag) plus an optional id from the
+  // element that was clicked, because both the row link and the whole-row tap
+  // path end here.
+  function markOpenRead(row, id) {
+    if (!id) id = row ? row.getAttribute("data-notification-id") : "";
+    var unread = row && row.getAttribute("data-notification-unread") === "true";
+    if (!id || !unread) return;
+    fetch("/api/notifications/" + encodeURIComponent(id) + "/read", {
+      method: "PATCH",
+      credentials: "same-origin",
+      keepalive: true,
+    }).catch(function () {});
+  }
+
   // openNotification navigates a row to its deep link (the pending
-  // question/approval) and marks it read on the way out. The read PATCH is
-  // sent with keepalive so it survives the navigation; navigation is not
-  // blocked on it. Already-read rows navigate straight through.
+  // question/approval) and marks it read on the way out. Already-read rows
+  // navigate straight through.
   function openNotification(el) {
     var href = el.getAttribute("href");
     if (!href) return;
-    var id = el.getAttribute("data-notif-id");
-    var row = el.closest("[data-notification-id]");
-    var unread = row && row.getAttribute("data-notification-unread") === "true";
-    if (id && unread) {
-      fetch("/api/notifications/" + encodeURIComponent(id) + "/read", {
-        method: "PATCH",
-        credentials: "same-origin",
-        keepalive: true,
-      }).catch(function () {});
-    }
+    markOpenRead(el.closest("[data-notification-id]"), el.getAttribute("data-notif-id"));
     window.location.assign(href);
   }
 
@@ -378,6 +385,16 @@
     if (openEl) {
       ev.preventDefault();
       openNotification(openEl);
+      return;
+    }
+    // A navigable row is a whole-row tap target (components.LinkRow carries
+    // data-href on its root, #756): app.js owns that navigation, so this
+    // handler owes only the read-marking — the same contract as the row link,
+    // for a tap that lands on the message or the badges rather than the title.
+    // Clicks on the row's own controls and links keep their own behaviour.
+    var tapRow = ev.target.closest("[data-notification-id][data-href]");
+    if (tapRow && !ev.target.closest("a, button, input, label, select, textarea, form")) {
+      markOpenRead(tapRow, "");
       return;
     }
     var el = ev.target.closest("[data-notif-action], [data-inbox-action]");
