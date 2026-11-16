@@ -26,10 +26,13 @@
 #      already exists on the base branch: on a populated table that takes a
 #      SHARE lock and blocks writes for the whole build. Use
 #      `CREATE INDEX CONCURRENTLY` (`-- +goose NO TRANSACTION`) and the
-#      drop-then-create + post-condition guard from 00161/00170 — see
+#      drop-then-create + post-condition guard from 00012/00161/00170 — see
 #      apps/server/migrations/README.md, "Build indexes CONCURRENTLY". Only
-#      *added* migrations are checked; the 94 pre-00161 occurrences are
-#      applied debt and are deliberately not rewritten (issue #844, section 2).
+#      *added* migrations are checked — the plain index builds already applied
+#      by earlier migrations are applied debt and are deliberately not rewritten
+#      (issue #844, section 2). Both the Up and the Down are inspected: a
+#      rollback that rebuilds an index on a populated table locks it just the
+#      same.
 #      For a deliberate exception, put this on the line before the statement:
 #        -- index-concurrently-allowed: <reason>
 #
@@ -134,8 +137,8 @@ done
 #    exists on the base branch (SHARE lock for the whole build on a populated
 #    table). Tables created by the same set of new migrations are exempt, because
 #    they are empty — that is what the base-table census below approximates.
-base_tables="$(git grep -hoiE 'CREATE TABLE( IF NOT EXISTS)?[[:space:]]+([a-z_]+\.)?[a-z_]+' "$base" -- "$mig_dir" 2>/dev/null \
-  | sed -E 's/.*[[:space:]]([a-z_]+\.)?([a-z_]+)$/\2/' | tr '[:upper:]' '[:lower:]' | sort -u || true)"
+base_tables="$(git grep -hoiE 'CREATE TABLE( IF NOT EXISTS)?[[:space:]]+([a-z0-9_]+\.)?[a-z0-9_]+' "$base" -- "$mig_dir" 2>/dev/null \
+  | sed -E 's/.*[[:space:]]([a-z0-9_]+\.)?([a-z0-9_]+)$/\2/' | tr '[:upper:]' '[:lower:]' | sort -u || true)"
 
 # Emit "<file>: <table>" for each offending statement in one migration file.
 # Statements are accumulated until a semicolon so a wrapped

@@ -323,8 +323,10 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_jobs_org_id
     ON kb.jobs (org_id);
 ```
 
-`00161` is where this discipline starts (the embedding indexes; `00170` is the
-fuller reference implementation, including the post-condition guard). The rules:
+`00012_add_relationship_embedding_index.sql` is the earliest use in the tree and
+already documents why; `00161` (embedding indexes) and `00170` are the recent
+reference implementations — `00170` in particular carries the post-condition
+guard. The rules:
 
 - **`-- +goose NO TRANSACTION`** — `CREATE`/`DROP INDEX CONCURRENTLY` cannot run
   inside a transaction, so the file cannot be wrapped in one. Each statement then
@@ -336,22 +338,29 @@ fuller reference implementation, including the post-condition guard). The rules:
 - **Raise if the index is not valid.** Append the `DO` block from `00170`
   (`pg_index.indisvalid AND indisready`) so goose refuses to record the version
   when the build did not take effect — this is the failure `00164` hit (issue #734)
-  and the reason `mark-applied` must not be used to paper over it. The same check
-  is available read-only as `go run ./cmd/migrate -c verify`.
+  and the reason `mark-applied` must not be used to paper over it.
+  `go run ./cmd/migrate -c verify` is the read-only relative: it reports indexes
+  that exist but are not `indisvalid`/`indisready`, so it catches an invalid build
+  and not one that left no index at all.
 - **Index names stay unqualified** in `CREATE INDEX`; the schema comes from the
   table reference.
 - **Adding a foreign key?** Add the index for the referencing column in the same
-  change — every org- and project-scoped table already carries one — and use
-  `ADD CONSTRAINT … NOT VALID` then `VALIDATE CONSTRAINT` in a separate statement
-  (the `00257`/`00258` and `00266`/`00267` lock pattern) so the table is not held
-  under `ACCESS EXCLUSIVE` for a full scan.
+  change — every org- and project-scoped table already carries one — and split the
+  constraint: `ADD CONSTRAINT … NOT VALID` in one migration, `VALIDATE CONSTRAINT`
+  in the next (`00257` -> `00258`, `00266` -> `00267`, `00306` -> `00308`). Both
+  statements in one transaction hold the `ADD`'s `SHARE ROW EXCLUSIVE` — which
+  blocks writes — until the `VALIDATE`'s scan finishes; alone, the `ADD` commits at
+  once and the `VALIDATE` takes only `SHARE UPDATE EXCLUSIVE`.
 
 `scripts/preflight/migration-number.sh` enforces this for **new** migrations: a
 plain `CREATE INDEX` on a table that exists on the base branch fails the preflight
-and CI. For a deliberate exception write `-- index-concurrently-allowed: <reason>`
-on the line before the statement. The 94 plain index builds that predate `00161`
-are applied migrations and are deliberately left alone — rewriting them would be a
-locking no-op on every environment (`#844`, section 2).
+and CI, in the `Up` and the `Down` alike (a rollback that rebuilds an index on a
+populated table locks it just the same). For a deliberate exception write
+`-- index-concurrently-allowed: <reason>` on the line before the statement. The
+plain index builds already applied by earlier migrations — including several after
+`00161`, so this is a convention that was followed unevenly rather than a cut-off
+— are applied migrations and are deliberately left alone; rewriting them would be
+a locking no-op on every environment (`#844`, section 2).
 
 ### 6. Baseline `"IDX_<hash>"` index names are deliberate
 
