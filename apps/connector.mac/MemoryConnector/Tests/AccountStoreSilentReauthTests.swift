@@ -339,7 +339,7 @@ extension AccountStoreSilentReauthTests {
     /// rejection is a NEW episode and may attempt again. `fetchAccessToken`
     /// bounds the retried read, so clearing cannot loop the browser.
     @MainActor
-    func testSuccessClearsTheGuardSoALaterEpisodeCanTryAgain() async throws {
+    func testSuccessDoesNotDisableALaterEpisode() async throws {
         let (store, account) = try await makeSignedInStore()
         stubNeedsReauthStatus()
         stubComplete()

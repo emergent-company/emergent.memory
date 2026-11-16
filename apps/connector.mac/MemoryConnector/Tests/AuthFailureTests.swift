@@ -60,4 +60,45 @@ struct AuthFailureTests {
             ConnectorCLIError.commandFailed(command: "auth access-token", exitCode: 1, message: "Not Signed In")
         ))
     }
+
+    @Test func bracketedStatusTokenIsAuthFailure() {
+        // The server SDK's shape: `[<status>] <code>: <message>`.
+        #expect(AuthFailure.looksLikeAuthFailure(
+            ConnectorCLIError.commandFailed(command: "projects use", exitCode: 1,
+                                            message: "[401] unauthorized: token expired")
+        ))
+    }
+
+    @Test func statusTokenTextIsAuthFailure() {
+        // `status NNN` is the shape a refresh failure uses.
+        #expect(AuthFailure.looksLikeAuthFailure(
+            ConnectorCLIError.commandFailed(command: "auth access-token", exitCode: 1,
+                                            message: "refresh failed with status 401")
+        ))
+    }
+
+    @Test func projectNameContaining401IsNotAuthFailure() {
+        // The digits alone are not a token: a project name, path or id can
+        // contain `401` while the session is perfectly usable.
+        #expect(!AuthFailure.looksLikeAuthFailure(
+            ConnectorCLIError.commandFailed(command: "projects use", exitCode: 1,
+                                            message: "[Work 401 Audit] create failed: [404] not_found: project not found")
+        ))
+        #expect(!AuthFailure.looksLikeAuthFailure(
+            ConnectorCLIError.commandFailed(command: "projects use", exitCode: 1,
+                                            message: "project 401-audit could not be reached")
+        ))
+    }
+
+    @Test func onlyAnchoredStatusShapesAreTokens() {
+        // `[NNN]`, `status NNN` and `HTTP NNN` are the emitted shapes; a
+        // bracketed name is not one, so the scan continues to the real status.
+        #expect(AuthFailure.statusToken(in: "[503] unavailable: try later") == 503)
+        #expect(AuthFailure.statusToken(in: "[Work 401 Audit] create failed: [404] not_found") == 404)
+        #expect(AuthFailure.statusToken(in: "refresh failed with status 400") == 400)
+        #expect(AuthFailure.statusToken(in: "The identity provider returned HTTP 401.") == 401)
+        #expect(AuthFailure.statusToken(in: "[404 Reasons] create failed") == nil,
+                "a bracketed name that starts with digits is not a status")
+        #expect(AuthFailure.statusToken(in: "project 401-audit is unreachable") == nil)
+    }
 }

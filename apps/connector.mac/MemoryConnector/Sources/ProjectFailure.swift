@@ -8,9 +8,10 @@ import Foundation
 /// down. Treating every failure as permanent is what made a network blip look
 /// like a lost project.
 enum ProjectFailure: Equatable, Sendable {
-    /// The connector CLI has no usable session for the account (or the provider
-    /// already rejected it). Keep every connection — its token and config still
-    /// bind it — and surface the sign-in affordance.
+    /// The connector CLI has no usable session for the account, the provider
+    /// already rejected it, or it expired with no refresh token to renew it.
+    /// Keep every connection — its token and config still bind it — and surface
+    /// the sign-in affordance.
     case auth
     /// The transport or the server failed in a way that may succeed later: a
     /// timeout, a refused/reset connection, a DNS failure, a 408/429, or any
@@ -29,6 +30,11 @@ enum ProjectFailure: Equatable, Sendable {
     /// it (and `refresh failed with status 400` carries no OAuth code). The
     /// status costs one extra process spawn only on the failure path.
     ///
+    /// A session that cannot be renewed is `auth` too: an expired access token
+    /// with no refresh token stored (`expired` and no `can_refresh`) would
+    /// otherwise be retried as `.transient` forever, when the only fix is the
+    /// sign-in affordance.
+    ///
     /// A failure that matches nothing is treated as `transient`. Over-keeping a
     /// connection costs a retry; over-clearing one discards the user's decision
     /// and a running engine, which is the bug this classification exists to
@@ -42,11 +48,14 @@ enum ProjectFailure: Equatable, Sendable {
             return .auth
         }
         // A session the provider has already rejected is still "a session is
-        // stored" (`signed_in: true`), so only `needs_reauth` catches it.
-        if let status = try? await cli.authStatus(serverURL: serverURL, configPath: configPath),
-           !status.signedIn || status.needsReauth == true
-        {
-            return .auth
+        // stored" (`signed_in: true`), so only `needs_reauth` catches it. A
+        // session that expired without a refresh token cannot be renewed either:
+        // that is a sign-in, not a retry.
+        if let status = try? await cli.authStatus(serverURL: serverURL, configPath: configPath) {
+            let cannotRenew = status.expired == true && status.canRefresh == false
+            if !status.signedIn || status.needsReauth == true || cannotRenew {
+                return .auth
+            }
         }
         return classifyMessage(textOf(error))
     }
@@ -56,10 +65,13 @@ enum ProjectFailure: Equatable, Sendable {
     ///
     /// Project commands reach the API through the SDK, whose errors stringify as
     /// `[<status>] <code>: <message>` (e.g. `[404] not_found: project not
-    /// found`), so a bracketed status is a reliable signal.
+    /// found`), so a bracketed status is a reliable signal. The parse lives in
+    /// `AuthFailure.statusToken(in:)` so both classifiers accept exactly the
+    /// same shapes, and none of them can be fooled by a project name that
+    /// contains a status-like number.
     static func classifyMessage(_ text: String) -> ProjectFailure {
         let lowered = text.lowercased()
-        if let status = httpStatus(in: lowered) {
+        if let status = AuthFailure.statusToken(in: lowered) {
             switch status {
             case 401:
                 return .auth
@@ -84,19 +96,6 @@ enum ProjectFailure: Equatable, Sendable {
             return .permanent
         }
         return .transient
-    }
-
-    /// The first `[NNN]` / `status NNN` / `HTTP NNN` in the message, when it
-    /// carries one.
-    private static func httpStatus(in text: String) -> Int? {
-        for pattern in ["[", "status ", "http "] {
-            guard let range = text.range(of: pattern) else { continue }
-            let digits = text[range.upperBound...].prefix { $0.isNumber }
-            if digits.count == 3, let status = Int(digits) {
-                return status
-            }
-        }
-        return nil
     }
 
     /// Transport and server-side signals that a retry can fix.

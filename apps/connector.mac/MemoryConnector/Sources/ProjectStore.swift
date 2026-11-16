@@ -209,9 +209,13 @@ final class ProjectStore {
     /// - `.permanent` — that project only is disconnected (its token/config can
     ///   never work again); the others are untouched.
     ///
-    /// - Returns: the overall outcome, with auth taking precedence over
-    ///   transient over permanent, so a caller can decide whether a retry is
-    ///   worth attempting.
+    /// - Returns: the overall outcome for a mixed settle, reporting the worst
+    ///   case in the order auth → permanent → transient. A dead project must
+    ///   never be reported as a mere blip: `.transientFailure` leaves the state
+    ///   looking healthy, which hides the disconnect, so a permanent failure in
+    ///   the same pass wins over it. The transient projects themselves are kept
+    ///   and settle on the next launch/wake, because only a retry can tell them
+    ///   apart from a real loss.
     @discardableResult
     func reassertConnection() async -> ReassertOutcome {
         let ids = connectedProjectIDs
@@ -246,12 +250,16 @@ final class ProjectStore {
             state = .signedOut
             return .authRequired
         }
-        if sawTransientFailure {
-            return .transientFailure
-        }
+        // Worst case first: a project that is permanently gone is disconnected
+        // and surfaced, even when another project in the same pass merely
+        // blipped. Reporting `.transientFailure` here would leave the state
+        // looking healthy and hide the dead connection.
         if sawPermanentFailure {
             state = .error("Couldn't re-establish one or more project connections.")
             return .permanentFailure
+        }
+        if sawTransientFailure {
+            return .transientFailure
         }
         return .settled
     }
@@ -265,9 +273,12 @@ final class ProjectStore {
         case noneConnected
         /// The session is unusable; everything was kept.
         case authRequired
-        /// The server/transport failed; everything was kept, retry later.
+        /// The server/transport failed; everything was kept, retry later. Only
+        /// reported when no project in the same pass failed permanently.
         case transientFailure
-        /// At least one project is permanently gone and was disconnected.
+        /// At least one project is permanently gone and was disconnected. Other
+        /// projects that failed transiently in the same pass are kept, and
+        /// settle on the next launch or wake.
         case permanentFailure
     }
 

@@ -245,6 +245,38 @@ final class ProjectStoreSessionExpiryTests: XCTestCase {
         XCTAssertEqual(stop.count, 0)
     }
 
+    // MARK: - Mixed: a permanent failure is never hidden behind a blip
+
+    @MainActor
+    func testMixedSettleReportsPermanentAndKeepsTheTransientProject() async {
+        // One project is gone for good, the other merely timed out. The report
+        // must name the worst case, or the dead connection looks alive.
+        seedConnectedProject("p1")
+        seedConnectedProject("p2")
+        cli.on("projects use") { arguments in
+            let project = arguments.indices.contains(2) ? arguments[2] : ""
+            if project == "p1" {
+                return ProcessResult(stdout: "[404] not_found: project not found", exitCode: 1, timedOut: false)
+            }
+            return ProcessResult(stdout: "dial tcp 127.0.0.1:8090: connection refused", exitCode: 1, timedOut: false)
+        }
+        cli.on("auth status", json: signedInStatus)
+        let stop = CallCounter()
+        var stoppedProjects: [String] = []
+        let store = makeStore(stop: stop, stopProject: { stoppedProjects.append($0) })
+
+        let result = await store.reassertConnection()
+
+        XCTAssertEqual(result, .permanentFailure,
+                       "a dead project must not be reported as a blip")
+        guard case .error = store.state
+        else { return XCTFail("the disconnect must surface, not be left looking healthy") }
+        XCTAssertEqual(store.connectedProjectIDs, ["p2"],
+                       "only the permanent failure is dropped; the blip is retried later")
+        XCTAssertEqual(stoppedProjects, ["p1"], "only the gone project's engine is stopped")
+        XCTAssertEqual(stop.count, 0, "the surviving connection keeps running")
+    }
+
     // MARK: - Nothing connected
 
     @MainActor
