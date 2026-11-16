@@ -296,6 +296,14 @@ func (d *SourceEventDispatcher) dispatchPullRequestSource(ctx context.Context, v
 	return nil
 }
 
+func reviewSubjectLabels(labels []string) []any {
+	out := make([]any, 0, len(labels))
+	for _, label := range labels {
+		out = append(out, label)
+	}
+	return out
+}
+
 // ensureReviewSubject emits the provider-owned review subject and snapshots the
 // reviewer agents that match it. Reviewer selection is agent-driven; this
 // function never writes a reviewer list into the source.
@@ -331,7 +339,7 @@ func (d *SourceEventDispatcher) ensureReviewSubject(ctx context.Context, v *Veri
 	props := map[string]any{
 		"repo": repoName, "pr_number": p.PullNumber(), "title": title,
 		"head_sha": headSHA, "base_sha": p.PullRequest.Base.SHA,
-		"state": p.PullRequest.State, "labels": labels, "status": "open",
+		"state": p.PullRequest.State, "labels": reviewSubjectLabels(labels), "status": "open",
 	}
 	resp, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
 		Type: "GitHubPullRequest", Key: &key, Name: &title, Properties: props,
@@ -1242,7 +1250,7 @@ func (d *SourceEventDispatcher) processWorkflowEvent(ctx context.Context, src *S
 	parentProps := map[string]any{
 		"repo": repoName, "pr_number": p.PullNumber(), "head_sha": state.HeadSHA,
 		"base_sha": p.PullRequest.Base.SHA, "title": title, "state": p.PullRequest.State,
-		"labels": labels, "status": parentStatus,
+		"labels": reviewSubjectLabels(labels), "status": parentStatus,
 	}
 	if _, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
 		Type: "GitHubPullRequest", Key: &parentKey, Name: &title, Status: &parentStatus, Properties: parentProps,
