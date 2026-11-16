@@ -238,7 +238,7 @@ func (p *githubAppProvider) ObjectTypes() *ObjectTypePack {
 	}
 	return &ObjectTypePack{
 		Name:          "github-app-workflow",
-		Version:       "1.1.0",
+		Version:       "1.2.0",
 		Description:   "GitHub App issue and pull-request workflow objects.",
 		SkipDiscovery: true,
 		ObjectTypes: []ObjectTypeDefinition{
@@ -265,6 +265,10 @@ func (p *githubAppProvider) ObjectTypes() *ObjectTypePack {
 					"source_id":         map[string]any{"type": "string"},
 					"status":            map[string]any{"type": "string"},
 					"source_trigger_id": map[string]any{"type": "string"},
+					"pr_number":         map[string]any{"type": "number"},
+					"pr_url":            map[string]any{"type": "string"},
+					"pr_branch":         map[string]any{"type": "string"},
+					"pr_head_sha":       map[string]any{"type": "string"},
 				},
 				SkipExtraction: true,
 			},

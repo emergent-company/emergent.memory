@@ -76,6 +76,8 @@ type ReviewToolHandler struct {
 	minter     *githubapp.TokenMinter
 	newClient  func(baseURL, token string) *githubapp.Client
 	workItems  WorkItemStatusWriter
+	links      IssuePRLinkReader
+	reworker   WorkItemReworker
 }
 
 // WorkItemStatusWriter finalizes the board lane a review run was dispatched for.
@@ -83,8 +85,22 @@ type WorkItemStatusWriter interface {
 	UpdateWorkObjectStatus(ctx context.Context, projectID, canonicalID, status, reviewStatus string) (bool, error)
 }
 
+// WorkItemReworker transitions a linked issue to revision and enqueues its
+// assigned coding agent with the review feedback.
+type WorkItemReworker interface {
+	RequestWorkItemChanges(ctx context.Context, projectID, canonicalID, author, text string) error
+}
+
+// IssuePRLinkReader reads the server-owned issue/PR link.
+type IssuePRLinkReader interface {
+	FindSourceIssuePRLink(ctx context.Context, projectID uuid.UUID, repo string, prNumber int) (*SourceIssuePRLink, error)
+}
+
 // SetWorkItemStatusWriter injects the graph work-object writer.
 func (h *ReviewToolHandler) SetWorkItemStatusWriter(w WorkItemStatusWriter) { h.workItems = w }
+
+// SetWorkItemReworker injects the coding rework dispatcher.
+func (h *ReviewToolHandler) SetWorkItemReworker(r WorkItemReworker) { h.reworker = r }
 
 // NewReviewToolHandler builds the handler from the deployment config. The
 // credential key is the same LLM_ENCRYPTION_KEY the source dispatcher uses to
@@ -104,6 +120,7 @@ func NewReviewToolHandler(repo *Repository, cfg *config.Config, log *slog.Logger
 	}
 	return &ReviewToolHandler{
 		repo:       repo,
+		links:      repo,
 		key:        key,
 		apiBaseURL: baseURL,
 		minter:     githubapp.NewTokenMinter(baseURL, nil),
@@ -411,6 +428,21 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 // executeReviewSubmit is moved verbatim from domain/githubapp/tools.go: it
 // enforces the live-head binding and the same-run evidence rule, then posts the
 // review, the reviewed check and the merge-guard marker with byte-exact text.
+func (h *ReviewToolHandler) linkedIssue(ctx context.Context, projectID, repo string, number int) *SourceIssuePRLink {
+	if h.links == nil || projectID == "" || repo == "" || number <= 0 {
+		return nil
+	}
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil
+	}
+	link, err := h.links.FindSourceIssuePRLink(ctx, projectUUID, repo, number)
+	if err != nil {
+		return nil
+	}
+	return link
+}
+
 func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *githubapp.Client, projectID, repo string, args map[string]any) (*mcp.ToolResult, error) {
 	number, ok := intArg(args, "number")
 	if !ok || number <= 0 {
@@ -468,6 +500,15 @@ func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *git
 			laneStatus = "revision"
 		}
 		_, _ = h.workItems.UpdateWorkObjectStatus(auth.WithActor(ctx, graph.ActorSystem, nil), projectID, canonicalID, laneStatus, "review")
+	} else if link := h.linkedIssue(ctx, projectID, repo, number); link != nil && verdict == "CHANGES_REQUESTED" {
+		issueCanonical := link.IssueCanonicalID.String()
+		reworked := false
+		if h.reworker != nil {
+			reworked = h.reworker.RequestWorkItemChanges(ctx, projectID, issueCanonical, "review", summary) == nil
+		}
+		if !reworked && h.workItems != nil {
+			_, _ = h.workItems.UpdateWorkObjectStatus(auth.WithActor(ctx, graph.ActorSystem, nil), projectID, issueCanonical, "revision", "review")
+		}
 	}
 	return &mcp.ToolResult{
 		Content: []mcp.ContentBlock{{Type: "text", Text: fmt.Sprintf("%s posted for %s#%d at %s", verdict, repo, number, headSHA)}},

@@ -69,11 +69,21 @@ gh pr merge --auto --squash
 
 Use the configured base branch; do not push directly to the protected branch.
 
-## Independent review
+## Independent review and rework loop
 
-The review workflow remains unchanged: a separate review agent reads the PR
-diff and submits its verdict, which posts the trusted `Reviewed-SHA` marker.
-Auto-merge only completes once the required checks and that marker are present.
+A separate review agent reads the PR diff and submits its verdict, which posts
+the trusted `Reviewed-SHA` marker. The PR is linked to its coding issue by
+`Closes #N`, `Refs #N`, a `fix/<N>-...` branch, or `(#N)` in the title.
+
+- **MERGE**: the issue item moves to `done`, the issue is closed, and auto-merge
+  completes once required checks are green.
+- **CHANGES_REQUESTED**: the issue item moves to `revision`, the review text is
+  stored as work feedback, and the coding agent is enqueued again with the PR
+  number and branch. It must push to the same branch; opening a second PR is a
+  failure. The PR `synchronize` event triggers a fresh review.
+
+The loop is capped by the coding agent's `revisionLimit` (default 3), after which
+the item is blocked for a human.
 
 ## Invocation environment allowlist
 
