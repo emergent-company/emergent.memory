@@ -124,12 +124,14 @@ final class AccountStoreTests: XCTestCase {
         """)
     }
 
-    private func stubAuthStatus(signedIn: [String: Bool] = [:]) {
+    private func stubAuthStatus(signedIn: [String: Bool] = [:], needsReauth: [String: Bool] = [:]) {
         cli.on("auth status") { arguments in
             let server = Self.flagValue("--server", in: arguments) ?? ""
             let signed = signedIn[server] ?? true
+            let reauth = needsReauth[server] ?? false
             return ProcessResult(stdout: """
-            {"schema_version":1,"server":"\(server)","signed_in":\(signed ? "true" : "false")}
+            {"schema_version":1,"server":"\(server)","signed_in":\(signed ? "true" : "false"),\
+            "needs_reauth":\(reauth ? "true" : "false")}
             """, exitCode: 0, timedOut: false)
         }
     }
@@ -453,8 +455,24 @@ final class AccountStoreTests: XCTestCase {
         XCTAssertNotEqual(store.accountDirectory(for: prodAccount.id), store.accountDirectory(for: devAccount.id))
         XCTAssertTrue(store.accountDirectory(for: prodAccount.id).path.hasSuffix("/accounts/prod:a@example.test"))
         XCTAssertTrue(store.accountDirectory(for: devAccount.id).path.hasSuffix("/accounts/dev:b@example.test"))
+    }
 
+    @MainActor
+    func testSeededAccountsReadTheirOwnTokens() async throws {
+        // Seeded rather than signed in: `signIn` fires a detached identity
+        // backfill that reads (and caches) a token, which would decide this
+        // assertion on task timing instead of on the account split.
+        let prodAccount = Account(id: "prod:a@example.test", environmentID: "prod",
+                                  email: "a@example.test", displayName: nil,
+                                  avatarObjectKey: nil)
+        let devAccount = Account(id: "dev:b@example.test", environmentID: "dev",
+                                 email: "b@example.test", displayName: nil,
+                                 avatarObjectKey: nil)
+        try seedAccounts([prodAccount, devAccount], activeID: devAccount.id)
+        let store = makeStore()
+        _ = await store.reconcileEffectiveSignedInState()
         stubAccessToken([prodServer: "access-A", devServer: "access-B"])
+
         let tokenA = try await store.currentAccessToken(for: prodAccount.id)
         let tokenB = try await store.currentAccessToken(for: devAccount.id)
         XCTAssertEqual(tokenA, "access-A")
@@ -501,6 +519,29 @@ final class AccountStoreTests: XCTestCase {
             XCTAssertEqual(error, .notSignedIn)
         }
         XCTAssertEqual(store.activeAccountID, devAccount.id, "failed switch leaves the active account unchanged")
+    }
+
+    @MainActor
+    func testSwitchToRejectedSessionAccountThrowsAndMarksReauth() async throws {
+        let store = makeStore()
+        stubComplete(email: "a@example.test")
+        let prodAccount = try await signIn(store, .prod)
+        stubComplete(email: "b@example.test", server: devServer, issuer: Environment.dev.issuerString)
+        let devAccount = try await signIn(store, .dev)
+
+        // `signed_in` stays true for a rejected session; `needs_reauth` is what
+        // says the account needs a new sign-in. Switching into it must not
+        // present it as a working session.
+        stubAuthStatus(needsReauth: [prodServer: true])
+        do {
+            try await store.switchTo(accountID: prodAccount.id)
+            XCTFail("expected notSignedIn")
+        } catch let error as OIDCError {
+            XCTAssertEqual(error, .notSignedIn)
+        }
+        XCTAssertEqual(store.activeAccountID, devAccount.id, "failed switch leaves the active account unchanged")
+        XCTAssertTrue(store.needsReauthentication(prodAccount.id),
+                      "the rejected account is marked so the UI can offer a sign-in")
     }
 
     @MainActor
@@ -583,17 +624,27 @@ final class AccountStoreTests: XCTestCase {
 
     @MainActor
     func testAccessTokenFailureMarksOnlyThatAccount() async throws {
+        // Seeded, not signed in: `signIn` fires a detached identity backfill
+        // that reads — and caches — a token, which would decide these reads on
+        // task timing instead of on the per-account split.
+        let prodAccount = Account(id: "prod:a@example.test", environmentID: "prod",
+                                  email: "a@example.test", displayName: nil,
+                                  avatarObjectKey: nil)
+        let devAccount = Account(id: "dev:b@example.test", environmentID: "dev",
+                                 email: "b@example.test", displayName: nil,
+                                 avatarObjectKey: nil)
+        try seedAccounts([prodAccount, devAccount], activeID: devAccount.id)
         let store = makeStore()
-        stubComplete(email: "a@example.test")
-        let prodAccount = try await signIn(store, .prod)
-        stubComplete(email: "b@example.test", server: devServer, issuer: Environment.dev.issuerString)
-        let devAccount = try await signIn(store, .dev)
+        _ = await store.reconcileEffectiveSignedInState()
 
         let devServer = devServer
         cli.on("auth access-token") { arguments in
             let server = Self.flagValue("--server", in: arguments) ?? ""
             if server == devServer {
-                return ProcessResult(stdout: "refresh rejected", exitCode: 1, timedOut: false)
+                // The CLI's rejected-refresh stderr, verbatim enough to carry
+                // the OAuth code the classifier keys on.
+                return ProcessResult(stdout: "memory-connector auth access-token: refresh failed: invalid_grant - refresh token is invalid",
+                                     exitCode: 1, timedOut: false)
             }
             return ProcessResult(stdout: """
             {"schema_version":1,"server_url":"\(server)","access_token":"access-A",\
@@ -617,10 +668,7 @@ final class AccountStoreTests: XCTestCase {
 
     @MainActor
     func testAccessTokenAuthFailureMapsToNotSignedIn() async throws {
-        stubComplete(email: "a@example.test")
-        let store = makeStore()
-        let account = try await signIn(store, .prod)
-        XCTAssertTrue(store.isEffectivelySignedIn)
+        let (store, account) = try await makeSignedInStore()
 
         cli.on("auth access-token") { _ in
             ProcessResult(stdout: "not signed in", exitCode: 1, timedOut: false)
@@ -635,6 +683,39 @@ final class AccountStoreTests: XCTestCase {
         XCTAssertTrue(store.needsReauthentication(account.id))
         XCTAssertEqual(store.sessionValid[account.id], false)
         XCTAssertFalse(store.isEffectivelySignedIn, "the active account's session is invalid")
+    }
+
+    /// A store with one already-signed-in active account, without running the
+    /// sign-in flow.
+    ///
+    /// `signIn` fires a detached identity backfill that reads a token, so any
+    /// assertion about how many token reads happened would depend on a task it
+    /// did not await. Seeding the index and reconciling reproduces a relaunch
+    /// over an existing session — which is the state these tests describe.
+    @MainActor
+    private func makeSignedInStore(id: String = "prod:a@example.test",
+                                   environmentID: String = "prod",
+                                   email: String = "a@example.test") async throws -> (AccountStore, Account)
+    {
+        let account = Account(id: id,
+                              environmentID: environmentID,
+                              email: email,
+                              displayName: nil,
+                              avatarObjectKey: nil)
+        try seedAccounts([account], activeID: account.id)
+        let store = makeStore()
+        let signedIn = await store.reconcileEffectiveSignedInState()
+        XCTAssertTrue(signedIn, "the seeded store must come back signed in")
+        return (store, account)
+    }
+
+    /// Writes the non-secret account index and points the store at `activeID`.
+    @MainActor
+    private func seedAccounts(_ accounts: [Account], activeID: String) throws {
+        let index = AccountsIndex(accounts: accounts)
+        try AppSecretStore(baseDirectory: root)
+            .writeData(JSONEncoder().encode(index), to: AccountStore.accountsIndexFileName)
+        defaults.set(activeID, forKey: AccountStore.activeAccountIDKey)
     }
 
     // MARK: - Identity backfill
