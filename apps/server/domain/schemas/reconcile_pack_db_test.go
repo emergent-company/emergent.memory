@@ -46,7 +46,11 @@ func TestReconcileProjectPackUpdatesInPlace(t *testing.T) {
 	// graph service here; a nil one panics on the first assign (the fast CI lane
 	// skips DB tests, so only the DB-backed job would catch it).
 	gRepo := graph.NewRepository(db, slog.Default(), cfg)
-	gSvc := graph.NewService(gRepo, slog.Default(), nil, nil, nil, nil, nil, nil, nil, nil)
+	// AssignPack reaches the graph's schema-cache provider (not just the graph
+	// repository), so pass the no-op provider this package already uses for the
+	// assign path: assignNoopSchemaProvider implements exactly the one
+	// method the assign path calls.
+	gSvc := graph.NewService(gRepo, slog.Default(), assignNoopSchemaProvider{}, nil, nil, nil, nil, nil, nil, nil)
 	svc := schemas.NewService(repo, gSvc, slog.Default(), cfg)
 
 	created, err := svc.CreatePack(ctx, projectID, &schemas.CreatePackRequest{
