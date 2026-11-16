@@ -844,7 +844,7 @@
 
   // boardStatusDefaults mirrors the built-in work-path statuses. A project that
   // configures custom ones (e.g. todo/doing) renders them into
-  // #board[data-board-status-map], which boardStatusMap() reads.
+  // #work-board[data-board-status-map], which boardStatusMap() reads.
   var boardStatusDefaults = {
     ready: "ready",
     inProgress: "in_progress",
@@ -855,10 +855,10 @@
   };
 
   // boardStatusMap reads the board's configured work-path status mapping from
-  // the #board swap region, falling back to the built-in statuses when the
+  // the #work-board swap region, falling back to the built-in statuses when the
   // attribute is absent or malformed. Read per gesture so it tracks re-renders.
   function boardStatusMap() {
-    var board = document.getElementById("board");
+    var board = document.getElementById("work-board");
     var raw = board && board.getAttribute("data-board-status-map");
     if (!raw) return boardStatusDefaults;
     try {
@@ -903,16 +903,11 @@
     return "status";
   }
 
-  /* boardLanes returns the rendered lanes in visual order. Drag eligibility is
-     derived from them (not from the canonical defaults) so the lanes marked as
-     valid targets are exactly the lanes the drop will accept. */
-  function boardLanes() {
-    return document.querySelectorAll("#board [data-board-column]");
-  }
-
-  /* Work board (global Work → Board) uses status × execution cells instead of
-     the single-lane rows the legacy #board uses. Cards are still draggable but
-     a drop performs an exact-status move through the Work endpoint, then
+  /* The work board (global Work → Board) renders one status × execution matrix
+     per type, so the lanes on screen are each type's own statuses rather than one
+     union: a card is still draggable, and a drop performs the same move the
+     canonical action mapping decides (retry / approve / cancel / request changes)
+     and falls back to an exact-status move through the Work endpoint, then
      reloads the matrix (keeping the type filter in the URL). */
   function workBoardRoot(el) {
     return el && el.closest ? el.closest("[data-work-board]") : null;
@@ -922,11 +917,26 @@
     return (root || document).querySelectorAll("[data-work-board] [data-board-column]");
   }
 
-  function markWorkDropTargets(root, from) {
+  /* markWorkDropTargets tags every lane that accepts the held card with
+     data-drop-eligible / data-drop-action, narrowed to the statuses the card's
+     own type allows (data-board-allowed) exactly as the drop handler decides —
+     one predicate, so a lane cannot be painted as a target and then refuse the
+     drop. The action tag is what distinguishes a canonical transition (retry,
+     approve, cancel) from a plain status write on screen and to the wiring tests.
+     Cleared on drop/dragend. */
+  function markWorkDropTargets(root, from, allowed) {
+    var sm = boardStatusMap();
     var cols = workBoardColumns(root);
     for (var i = 0; i < cols.length; i++) {
-      if (cols[i].getAttribute("data-board-column") === from) continue;
+      var to = cols[i].getAttribute("data-board-column");
+      var action = boardLaneAccepts(from, to, sm, allowed);
+      if (!action) {
+        cols[i].removeAttribute("data-drop-eligible");
+        cols[i].removeAttribute("data-drop-action");
+        continue;
+      }
       cols[i].setAttribute("data-drop-eligible", "");
+      cols[i].setAttribute("data-drop-action", action);
     }
   }
 
@@ -935,6 +945,7 @@
     for (var i = 0; i < cols.length; i++) {
       cols[i].classList.remove("memory-board__lane--drop");
       cols[i].removeAttribute("data-drop-eligible");
+      cols[i].removeAttribute("data-drop-action");
     }
   }
 
@@ -979,8 +990,26 @@
     saveWorkLanePref(el.getAttribute("data-work-lane-key"), el.open);
   }, true);
 
-  function submitWorkMove(id, to) {
+  /* submitWorkMove performs a drop. action is the move decision boardMoveAction
+     returned: a canonical pair posts its own endpoint, so approve/retry/cancel
+     keep their semantics (review intent and run dispatch) instead of degenerating
+     into a bare status write; "dialog" opens the preview, where request-changes
+     collects its required feedback; anything else posts the exact target status
+     and leaves validation to the server, which re-renders the board with its
+     reason when it refuses. */
+  function submitWorkMove(id, to, action) {
     if (!id || !to) return;
+    if (action === "dialog") {
+      openBoardPreviewByID(id);
+      return;
+    }
+    if (window.htmx && action && action !== "status") {
+      htmx.ajax("POST", MemoryScope.path("/work/items/" + encodeURIComponent(id) + "/" + action), {
+        target: "#work-board",
+        swap: "outerMorph"
+      });
+      return;
+    }
     fetch(MemoryScope.path("/work/items/" + encodeURIComponent(id) + "/status"), {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -1028,46 +1057,17 @@
     return "";
   }
 
-  /* markBoardDropTargets tags every lane that accepts the held card with
-     data-drop-eligible / data-drop-action. CSS renders the tag, and the drop
-     handler re-derives the same action from the same predicate. Cleared on
-     drop/dragend. */
-  function markBoardDropTargets(from, allowed) {
-    var sm = boardStatusMap();
-    var lanes = boardLanes();
-    for (var i = 0; i < lanes.length; i++) {
-      var to = lanes[i].getAttribute("data-board-column");
-      var action = boardLaneAccepts(from, to, sm, allowed);
-      if (!action) {
-        lanes[i].removeAttribute("data-drop-eligible");
-        lanes[i].removeAttribute("data-drop-action");
-        continue;
-      }
-      lanes[i].setAttribute("data-drop-eligible", "");
-      lanes[i].setAttribute("data-drop-action", action);
-    }
-  }
-
-  function clearBoardDropTargets() {
-    var lanes = boardLanes();
-    for (var i = 0; i < lanes.length; i++) {
-      lanes[i].classList.remove("memory-board__lane--drop");
-      lanes[i].removeAttribute("data-drop-eligible");
-      lanes[i].removeAttribute("data-drop-action");
-    }
-  }
-
   // boardRefreshPending records that a live board frame was dropped because a
   // drag was in flight; dragend replays one refresh so the board cannot stay
   // stale after a cancelled drag.
   var boardRefreshPending = false;
 
-  // Live board frames (htmx hx-sse) morph #board. Morphing the columns mid-drag
-  // would move the card being dragged out from under the pointer, so those
-  // frames are deferred; the drop's own POST re-renders, and dragend replays a
-  // refresh otherwise. Only the #board frame is deferred: the count and health
-  // frames cannot move a card, and deferring them would leave those readouts
-  // stale whenever no later event happens to arrive.
+  // Live board frames (htmx hx-sse) morph #work-board. Morphing the lanes
+  // mid-drag would move the card being dragged out from under the pointer, so
+  // those frames are deferred; the drop's own POST re-renders, and dragend
+  // replays a refresh otherwise. Only the #work-board frame is deferred: the
+  // count and health frames cannot move a card, and deferring them would leave
+  // those readouts stale whenever no later event happens to arrive.
   //
   // The drag state lives only in boardDrag (the object the drop handlers use).
   // There is deliberately no DOM copy: a flag left set by an aborted drag would
@@ -1076,7 +1076,7 @@
   document.addEventListener("htmx:sse:before:message", function (ev) {
     if (!boardDrag) return;
     var data = ev.detail && ev.detail.message ? ev.detail.message.data || "" : "";
-    if (data.indexOf('hx-target="#board"') === -1) return;
+    if (data.indexOf('hx-target="#work-board"') === -1) return;
     if (ev.detail) ev.detail.cancelled = true;
     boardRefreshPending = true;
   });
@@ -1084,13 +1084,13 @@
   document.addEventListener("dragstart", function (ev) {
     var card = ev.target.closest("[data-board-card]");
     if (!card) return;
-    var id = card.getAttribute("data-canonical-id");
     var root = workBoardRoot(card);
+    if (!root) return;
+    var id = card.getAttribute("data-canonical-id");
     boardDrag = {
       id: id,
       fromStatus: card.getAttribute("data-board-status"),
-      allowed: root ? null : boardAllowedStatuses(card),
-      work: !!root,
+      allowed: boardAllowedStatuses(card),
       root: root
     };
     if (ev.dataTransfer) {
@@ -1098,79 +1098,35 @@
       ev.dataTransfer.effectAllowed = "move";
     }
     card.classList.add("memory-board__card--dragging");
-    if (root) markWorkDropTargets(root, boardDrag.fromStatus);
-    else markBoardDropTargets(boardDrag.fromStatus, boardDrag.allowed);
+    markWorkDropTargets(root, boardDrag.fromStatus, boardDrag.allowed);
   });
   document.addEventListener("dragover", function (ev) {
     var col = ev.target.closest ? ev.target.closest("[data-board-column]") : null;
-    if (!col) return;
-    if (boardDrag && boardDrag.work) {
-      if (boardDrag.root && !boardDrag.root.contains(col)) return;
-      var workTo = col.getAttribute("data-board-column");
-      if (!workTo || workTo === boardDrag.fromStatus) return;
-      ev.preventDefault();
-      if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
-      var workCols = workBoardColumns(boardDrag.root);
-      for (var wi = 0; wi < workCols.length; wi++) {
-        workCols[wi].classList.remove("memory-board__lane--drop");
-      }
-      col.classList.add("memory-board__lane--drop");
-      return;
-    }
-    var lanes = boardLanes();
-    for (var i = 0; i < lanes.length; i++) lanes[i].classList.remove("memory-board__lane--drop");
-    var action = boardDrag && boardLaneAccepts(boardDrag.fromStatus, col.getAttribute("data-board-column"), boardStatusMap(), boardDrag.allowed);
-    if (!action) return; // unsupported move: do not accept the drop
+    if (!col || !boardDrag) return;
+    if (!boardDrag.root || !boardDrag.root.contains(col)) return;
+    var to = col.getAttribute("data-board-column");
+    if (!boardLaneAccepts(boardDrag.fromStatus, to, boardStatusMap(), boardDrag.allowed)) return; // unsupported move: do not accept the drop
     ev.preventDefault();
     if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
+    var cols = workBoardColumns(boardDrag.root);
+    for (var i = 0; i < cols.length; i++) cols[i].classList.remove("memory-board__lane--drop");
     col.classList.add("memory-board__lane--drop");
   });
   document.addEventListener("drop", function (ev) {
     var col = ev.target.closest ? ev.target.closest("[data-board-column]") : null;
     if (!col || !boardDrag) return;
+    if (!boardDrag.root || !boardDrag.root.contains(col)) return;
     var to = col.getAttribute("data-board-column");
-    if (boardDrag.work) {
-      if (boardDrag.root && !boardDrag.root.contains(col)) return;
-      if (!to || to === boardDrag.fromStatus) return;
-      ev.preventDefault();
-      var workID = boardDrag.id;
-      boardDrag = null;
-      clearWorkDropTargets();
-      submitWorkMove(workID, to);
-      return;
-    }
     var action = boardLaneAccepts(boardDrag.fromStatus, to, boardStatusMap(), boardDrag.allowed);
     if (!action) return; // invalid pair: reject the drop, no request
     ev.preventDefault();
-    clearBoardDropTargets();
     var id = boardDrag.id || (ev.dataTransfer ? ev.dataTransfer.getData("text/plain") : "");
     boardDrag = null;
     boardRefreshPending = false;
-    if (!id || !window.htmx) return;
-    if (action === "dialog") {
-      // Open the item action dialog (review -> revision needs feedback).
-      htmx.ajax("GET", MemoryScope.path("/board/items/" + encodeURIComponent(id)), {
-        target: "#board-drawer",
-        swap: "innerHTML"
-      });
-      return;
-    }
-    if (action === "status") {
-      // Exact-status move (custom lanes included): the type validates it.
-      htmx.ajax("POST", MemoryScope.path("/board/items/" + encodeURIComponent(id) + "/status"), {
-        target: "#board",
-        swap: "outerHTML",
-        values: { status: to }
-      });
-      return;
-    }
-    htmx.ajax("POST", MemoryScope.path("/board/items/" + encodeURIComponent(id) + "/" + action), {
-      target: "#board",
-      swap: "outerHTML"
-    });
+    clearWorkDropTargets();
+    submitWorkMove(id, to, action);
   });
   document.addEventListener("dragend", function (ev) {
-    clearBoardDropTargets();
     clearWorkDropTargets();
     var card = ev.target.closest ? ev.target.closest("[data-board-card]") : null;
     if (card) card.classList.remove("memory-board__card--dragging");
@@ -1178,7 +1134,7 @@
     if (boardRefreshPending) {
       boardRefreshPending = false;
       if (window.htmx) {
-        htmx.ajax("GET", MemoryScope.path("/board/partial"), { target: "#board", swap: "outerHTML" });
+        htmx.ajax("GET", MemoryScope.path("/work/board/partial"), { target: "#work-board", swap: "outerMorph" });
       }
     }
   });
@@ -1188,7 +1144,10 @@
      summary plus the status-gated work-item actions. Falls back to the object
      page when the preview client is unavailable. */
   function openBoardCardPreview(card) {
-    var id = card.getAttribute("data-canonical-id");
+    openBoardPreviewByID(card.getAttribute("data-canonical-id"));
+  }
+
+  function openBoardPreviewByID(id) {
     if (!id) return;
     if (window.MemoryObjectPreview && typeof window.MemoryObjectPreview.open === "function") {
       window.MemoryObjectPreview.open({ id: id, editHref: MemoryScope.path("/objects/" + id), actions: "board" });
@@ -1197,24 +1156,10 @@
     window.location.assign(MemoryScope.path("/objects/" + encodeURIComponent(id)));
   }
 
-  /* Mobile card "Move": opens the item drawer, which carries the status
-     control and the other work-item actions. HTML5 drag never fires on touch. */
-  document.addEventListener("click", function (ev) {
-    var move = ev.target.closest ? ev.target.closest("[data-board-open-drawer]") : null;
-    if (!move) return;
-    ev.preventDefault();
-    var moveID = move.getAttribute("data-board-open-drawer");
-    if (!moveID || !window.htmx) return;
-    htmx.ajax("GET", MemoryScope.path("/board/items/" + encodeURIComponent(moveID)), {
-      target: "#board-drawer",
-      swap: "innerHTML"
-    });
-  });
-
   document.addEventListener("click", function (ev) {
     if (ev.defaultPrevented) return;
     if (ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
-    if (ev.target.closest && ev.target.closest("a, button, input, textarea, select, label, form, [data-board-open-drawer]")) return;
+    if (ev.target.closest && ev.target.closest("a, button, input, textarea, select, label, form")) return;
     var card = ev.target.closest ? ev.target.closest("[data-board-open-preview]") : null;
     if (!card) return;
     ev.preventDefault();

@@ -32,8 +32,15 @@ templ WorkPage(data workData) {
 	}
 }
 
-// workBoardView renders the type filter, one status × execution matrix per
-// selected type, and a status-lane fallback for narrow screens.
+// workBoardView renders the type filter, the agent-health readout and the live
+// board (one status × execution matrix per selected type, plus a status-lane
+// fallback for narrow screens).
+//
+// Only the board itself is the swap region; the filter is deliberately outside
+// it, because a live morph of the board must not close an open dropdown. The
+// count and the health readout are their own regions (#work-board-count,
+// #work-board-health) so a change to one does not re-render the matrices — see
+// web-board-live-refresh.
 templ workBoardView(data workData) {
 	if len(data.BoardTypes) == 0 {
 		@ui.EmptyState(ui.EmptyStateProps{
@@ -45,34 +52,17 @@ templ workBoardView(data workData) {
 		})
 	} else {
 		<div class="mb-4 flex items-center justify-between gap-2">
-			<span class="text-[11px] font-semibold tracking-wide text-muted-faint uppercase">
-				{ strconv.Itoa(len(data.Matrices)) } of { strconv.Itoa(len(data.BoardTypes)) } types
-			</span>
+			@workBoardCount(data)
 			@workTypeFilter(data)
 		</div>
-		if data.FilterExplicit && len(data.SelectedTypes) == 0 {
-			@ui.EmptyState(ui.EmptyStateProps{
-				Icon:        "lucide--filter-x",
-				Title:       "No types selected",
-				Description: "Pick one or more object types in the filter, or reset to all types.",
-				Bordered:    true,
-				Class:       "py-12",
-			})
-		} else if len(data.Matrices) == 0 {
-			@ui.EmptyState(ui.EmptyStateProps{
-				Icon:        "lucide--inbox",
-				Title:       "No items",
-				Description: "Work items of the selected types will appear here.",
-				Bordered:    true,
-				Class:       "py-12",
-			})
-		} else {
-			<div class="flex flex-col gap-8" data-work-board>
-				for _, m := range data.Matrices {
-					@workTypeBlock(m, data)
-				}
-			</div>
-		}
+		@workBoardHealthRegion(data.Unhealthy)
+		<!-- Live refresh: htmx's hx-sse extension (loaded by the page shell,
+		     after htmx) holds /work/board/stream open and the server pushes
+		     rendered <hx-partial> frames for #work-board, #work-board-count and
+		     #work-board-health whenever a work item or an agent run changes — so
+		     an agent-driven transition appears without a reload. -->
+		<div id="work-board-live" hx-sse:connect="/work/board/stream" aria-hidden="true"></div>
+		@WorkBoardFrame(data, "")
 	}
 }
 
@@ -244,6 +234,7 @@ templ workCard(it WorkItem, data workData) {
 		data-board-open-preview=""
 		data-canonical-id={ it.CanonicalID }
 		data-board-status={ it.Status }
+		data-board-allowed={ data.Allowances.allowedJSON(it.Type) }
 		draggable="true"
 		role="button"
 		tabindex="0"

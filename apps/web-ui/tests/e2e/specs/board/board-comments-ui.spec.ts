@@ -12,7 +12,7 @@ import {
 
 // Comment-thread lifecycle of one board work item, seeded directly through the
 // memory API (a board-enabled object type + one object) and then driven through
-// the real /board UI: empty state → post a comment from the inline form → a
+// the real /work/board UI: empty state → post a comment from the inline form → a
 // rework feedback round and a second comment render in the same merged thread in
 // ascending `createdAt` order. No reaction agent is created, so nothing
 // auto-runs and the item's status is only ever moved by this spec (see the
@@ -20,15 +20,9 @@ import {
 // actions resolve their transitions against the built-in status defaults).
 //
 // The merged "Activity" thread (durable comments + rework feedback rounds) and
-// its inline form render in BOTH board surfaces:
-//   * the shared object preview drawer's board slot (#object-preview-actions-slot)
-//     — the card-click path, and the primary way a human opens a board item; and
-//   * the native drawer dialog (#board-drawer) — the rarer drag→review path.
-// Both surfaces can share one DOM (the dialog's content persists in #board-drawer
-// after it closes), so each surface renders its own `data-testid` family
-// ("board-preview-comment-*" / "board-drawer-comment-*") to keep a Playwright
-// locator unambiguous. The first three cases drive the card-click preview; the
-// last opens the native drawer too and pins the two id families apart.
+// its inline form render in the shared object preview drawer's board slot
+// (#object-preview-actions-slot) — the card-click path, and the only surface a
+// work item is opened from since the legacy native drawer retired.
 //
 // Lives in the serial `mutations` project (the `-ui.spec.ts` testMatch). The
 // whole file shares ONE seeded schema + object created in `beforeAll` and
@@ -49,8 +43,8 @@ interface ThreadEntry {
 
 /** Click the seeded card and wait for the shared object preview drawer + its board slot. */
 async function openPreview(page: Page): Promise<void> {
-  await expect(page.getByTestId(`board-card-${canonicalId}`)).toBeVisible();
-  await page.getByTestId(`board-card-${canonicalId}`).click();
+  await expect(page.getByTestId(`work-card-${canonicalId}`)).toBeVisible();
+  await page.getByTestId(`work-card-${canonicalId}`).click();
   const panel = page.locator('#object-preview-panel');
   await expect(panel).toHaveAttribute('aria-hidden', 'false');
   // The summary and the ?actions=board slot (actions + thread) load over htmx.
@@ -65,29 +59,6 @@ function previewBoard(page: Page) {
 /** The merged thread's rows in the preview surface. */
 function commentRows(page: Page) {
   return previewBoard(page).getByTestId('board-preview-comment-row');
-}
-
-/**
- * Open the native board-item dialog (the drag review→revision target) by loading
- * its drawer partial into #board-drawer — the same request app.js fires on a
- * review→revision drop, without simulating a native drag.
- */
-async function openItemDialog(page: Page): Promise<void> {
-  await page.evaluate(
-    (id) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const htmx = (window as any).htmx;
-      if (!htmx || typeof htmx.ajax !== 'function') {
-        throw new Error('htmx is unavailable; cannot open the board item dialog');
-      }
-      htmx.ajax('GET', `/board/items/${encodeURIComponent(id)}`, {
-        target: '#board-drawer',
-        swap: 'innerHTML',
-      });
-    },
-    canonicalId,
-  );
-  await expect(page.getByTestId('board-item-dialog')).toBeVisible();
 }
 
 /** PATCH the object's status directly (the graph API is the deterministic setter). */
@@ -176,7 +147,7 @@ async function threadEntries(page: Page): Promise<ThreadEntry[]> {
  * The order the gateway renders the merged thread in, derived from the API's own
  * `createdAt` values: ascending, then the deterministic same-second tie-break
  * (kind, author, body) exactly as `boardComments` applies it in
- * apps/web-ui/gateway/board.go. Deriving the expectation this way keeps the
+ * apps/web-ui/gateway/work_board.go. Deriving the expectation this way keeps the
  * ordering assertion independent of wall-clock seconds, so it is stable whether
  * or not two seeds land in the same second.
  */
@@ -243,8 +214,8 @@ test.describe.serial('board comments thread', () => {
 
   test('an item with no comments or feedback shows the muted empty state', async ({ page }) => {
     expect(canonicalId, 'beforeAll must seed the item').toBeTruthy();
-    await goto(page, '/board');
-    await expectAppPage(page, /Board/);
+    await goto(page, '/work/board');
+    await expectAppPage(page, /Work/);
 
     await openPreview(page);
     await expect(previewBoard(page).getByRole('heading', { name: 'Activity' })).toBeVisible();
@@ -261,8 +232,8 @@ test.describe.serial('board comments thread', () => {
   });
 
   test('posting a comment from the inline form adds it to the merged thread', async ({ page }) => {
-    await goto(page, '/board');
-    await expectAppPage(page, /Board/);
+    await goto(page, '/work/board');
+    await expectAppPage(page, /Work/);
 
     // The inline form (this spec drives the preview surface) posts to #board;
     // object-preview.js closes the drawer on a successful POST and the board
@@ -291,8 +262,8 @@ test.describe.serial('board comments thread', () => {
     await requestChanges(page, 'Rework the title please');
     await addCommentViaApi(page, 'Follow-up note');
 
-    await goto(page, '/board');
-    await expectAppPage(page, /Board/);
+    await goto(page, '/work/board');
+    await expectAppPage(page, /Work/);
     await openPreview(page);
 
     // The expected order comes from the server's own createdAt values (see
@@ -314,29 +285,4 @@ test.describe.serial('board comments thread', () => {
     expect(counts.filter((e) => e.kind === 'feedback')).toHaveLength(1);
   });
 
-  test('both surfaces render the thread, each under its own test ids', async ({ page }) => {
-    await goto(page, '/board');
-    await expectAppPage(page, /Board/);
-
-    // Card-click path: the preview's board slot carries the thread.
-    await openPreview(page);
-    await expect(previewBoard(page).getByRole('heading', { name: 'Activity' })).toBeVisible();
-    const expected = expectedOrder(await threadEntries(page));
-    expect(expected.length, 'the earlier cases must have seeded the thread').toBeGreaterThan(0);
-    await expect(page.getByTestId('board-preview-comment-row')).toHaveCount(expected.length);
-
-    // Now open the native drawer too (the drag→review path). Its content persists
-    // in #board-drawer, so both surfaces share one DOM at once — each family of
-    // test ids must still resolve to only its own surface.
-    await openItemDialog(page);
-    await expect(page.getByTestId('board-drawer-comment-row')).toHaveCount(expected.length);
-    await expect(page.getByTestId('board-preview-comment-row')).toHaveCount(expected.length);
-    await expect(page.locator('#board-drawer').getByTestId('board-preview-comment-row')).toHaveCount(0);
-    await expect(
-      page.locator('#object-preview-actions-slot').getByTestId('board-drawer-comment-row'),
-    ).toHaveCount(0);
-
-    // The drawer renders the thread under its own eyebrow heading ("Activity").
-    await expect(page.locator('#board-drawer').getByText('Activity', { exact: true })).toBeVisible();
-  });
 });

@@ -89,7 +89,7 @@ func (s *Server) renderObjectPreview(c echo.Context, id, relID string, boardSurf
 	var actions templ.Component
 	if boardSurface {
 		if detail, werr := s.memory.GetWorkItem(ctx, id); werr == nil && detail != nil && detail.Item != nil {
-			actions = boardPreviewBoardSlot(detail.Item, s.boardStatusMap(ctx), detail.Comments, detail.Feedback)
+			actions = workPreviewBoardSlot(detail.Item, s.boardStatusMap(ctx), detail.Comments, detail.Feedback, s.resolveBoardDeliverables(ctx, detail.Runs))
 		}
 	}
 

@@ -44,6 +44,14 @@ type workData struct {
 	FlashMsg       string
 	FlashErr       error
 	LoadErr        error
+	// StatusMap is the project's work-path status mapping. The board renders it
+	// as `data-board-status-map` on its swap container, which is where the drag
+	// handler reads the allowed moves from — without it a custom-mapped project
+	// falls back to the built-in statuses.
+	StatusMap boardStatusMap
+	// Unhealthy is the agent circuit-breaker readout: reaction agents that are
+	// disabled or repeatedly failing. Empty means all healthy.
+	Unhealthy []ScheduledAgent
 }
 
 // workRuleRow is one (agent, object type) rule in the aggregated table.
@@ -76,8 +84,21 @@ func (s *Server) uiWorkSection(c echo.Context) error {
 	return s.page(c, pageTitle("Work"), WorkPage(data))
 }
 
-// loadWorkData loads agents, compiled types, rules, and (for Board) items.
+// loadWorkData loads the Work section's data. Board and Settings need different
+// halves of it: the board renders matrices from compiled types and items and
+// needs no agent definition at all, while settings aggregates every definition's
+// rules. Loading both on the board path meant one GetAgentDefinition call per
+// agent on every board render — and, once the board has a live stream, on every
+// re-render — so the two paths are separate.
 func (s *Server) loadWorkData(ctx context.Context, c echo.Context, data *workData) error {
+	if data.Section == workBoardSection {
+		return s.loadWorkBoard(ctx, c, data)
+	}
+	return s.loadWorkSettings(ctx, c, data)
+}
+
+// loadWorkSettings loads the aggregated rules and agent defaults.
+func (s *Server) loadWorkSettings(ctx context.Context, c echo.Context, data *workData) error {
 	defs, err := s.memory.ListAgentDefinitions(ctx)
 	if err != nil {
 		return err
@@ -98,7 +119,29 @@ func (s *Server) loadWorkData(ctx context.Context, c echo.Context, data *workDat
 		}
 		return data.Rules[i].ObjectType < data.Rules[j].ObjectType
 	})
+	s.loadWorkSchema(ctx, c, data)
+	return nil
+}
 
+// loadWorkBoard loads the board: the schema-derived frame inputs, the health
+// readout and the work items themselves.
+func (s *Server) loadWorkBoard(ctx context.Context, c echo.Context, data *workData) error {
+	s.loadWorkSchema(ctx, c, data)
+	s.loadWorkHealth(ctx, data)
+	items, err := s.memory.ListWorkItems(ctx, "", "", boardItemLimit, true)
+	if err != nil {
+		return err
+	}
+	applyWorkBoardItems(data, items, c.Request().URL.Query())
+	return nil
+}
+
+// loadWorkSchema fills the compiled-type inputs a board frame renders from:
+// board types, their declared icons/colours, the per-type status allowances and
+// the persisted lane preferences. A compiled-types failure is tolerated — the
+// matrices fall back to the built-in status order — because a schema hiccup must
+// not take the board away; it is captured and the page still renders.
+func (s *Server) loadWorkSchema(ctx context.Context, c echo.Context, data *workData) {
 	var compiled *CompiledSchemaTypes
 	if c, err := s.memory.GetCompiledTypes(ctx); err != nil {
 		captureError(err)
@@ -112,21 +155,34 @@ func (s *Server) loadWorkData(ctx context.Context, c echo.Context, data *workDat
 	data.TypeUI = objectTypeUIMap(data.ObjectTypes)
 	data.BoardTypes = boardTypesFromCompiled(compiled)
 	data.Allowances = boardAllowancesFromCompiled(compiled)
+	data.StatusMap = s.boardStatusMap(ctx)
 	data.ScopeBase = linkBaseFromContext(ctx)
 	data.LaneOpen = workLanePrefs(c, data.ScopeBase)
+}
 
-	if data.Section != workBoardSection {
-		return nil
-	}
-	items, err := s.memory.ListWorkItems(ctx, "", "", boardItemLimit, true)
+// loadWorkHealth loads the agent circuit-breaker readout. A failed fetch is
+// "unknown", not "healthy": the banner is left empty and the error captured,
+// exactly as the live stream treats it (see workStreamState.pushHealth).
+func (s *Server) loadWorkHealth(ctx context.Context, data *workData) {
+	agents, err := s.memory.ListScheduledAgents(ctx)
 	if err != nil {
-		return err
+		captureError(err)
+		return
 	}
+	data.Unhealthy = boardUnhealthyAgents(agents)
+}
+
+// applyWorkBoardItems fills the projection a board frame renders: the type
+// counts, the selected types and one matrix per selected type. It is the half of
+// the board that changes when an item moves, so the live stream calls it again
+// per frame while keeping the schema-derived inputs it loaded at connect time.
+func applyWorkBoardItems(data *workData, items []WorkItem, q url.Values) {
+	compiled := &CompiledSchemaTypes{ObjectTypes: data.ObjectTypes}
 	data.Items = items
-	q := c.Request().URL.Query()
 	data.FilterExplicit = q.Get("filter") == "1"
 	data.SelectedTypes = resolveWorkTypeFilter(data.BoardTypes, q["type"], data.FilterExplicit)
 	data.TypeCounts = map[string]int{}
+	data.Matrices = nil
 	for _, it := range items {
 		data.TypeCounts[it.Type]++
 	}
@@ -143,7 +199,6 @@ func (s *Server) loadWorkData(ctx context.Context, c echo.Context, data *workDat
 		}
 		data.Matrices = append(data.Matrices, buildWorkMatrix(t.Name, items, compiled))
 	}
-	return nil
 }
 
 // rulesForDefinition flattens one definition's rules.

@@ -406,7 +406,7 @@ func TestRewriteScopedHTML(t *testing.T) {
 	in := `<a href="/objects">o</a>` +
 		`<form action="/agents/7/settings/general" hx-post="/settings/tokens/new">x</form>` +
 		`<button data-reveal-url="/agents/7/share-links/l1/reveal">copy</button>` +
-		`<div hx-sse:connect="/board/stream"></div>` +
+		`<div hx-sse:connect="/work/board/stream"></div>` +
 		`<a href="/orgs/o2/members">members</a>` +
 		`<a href="/api/chat">api</a><a href="#x">f</a><a href="https://e.com">e</a>` +
 		`<a href="/o/other/p/x/objects">already</a>`
@@ -416,7 +416,7 @@ func TestRewriteScopedHTML(t *testing.T) {
 		`action="/o/o1/p/p1/agents/7/settings/general"`,
 		`hx-post="/o/o1/p/p1/settings/tokens/new"`,
 		`data-reveal-url="/o/o1/p/p1/agents/7/share-links/l1/reveal"`,
-		`hx-sse:connect="/o/o1/p/p1/board/stream"`,
+		`hx-sse:connect="/o/o1/p/p1/work/board/stream"`,
 		`href="/o/o2/members"`,
 		`href="/api/chat"`,
 		`href="#x"`,

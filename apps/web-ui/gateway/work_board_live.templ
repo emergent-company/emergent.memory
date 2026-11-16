@@ -1,0 +1,118 @@
+package main
+
+import (
+	"strconv"
+
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// The work board's live surface. `#work-board` is the swap region: the page
+// renders it once and the live stream (hx-sse) and the drawer's action forms
+// re-render the same component into it, so a frame can never diverge from a
+// reload. `#work-board-health` is a separate region because an agent-health
+// change publishes no work-item event — the stream re-checks the readout on an
+// idle heartbeat and must be able to swap it without touching the matrices
+// (see web-board-live-refresh).
+
+// WorkBoardFrame is the whole board swap region. errMsg, when set, renders an
+// error notice inside it: that is how a failed drawer action reports itself,
+// since the drawer closes on success and has no other place to put the failure.
+templ WorkBoardFrame(data workData, errMsg string) {
+	<div id="work-board" data-testid="work-board" tabindex="-1" data-work-board data-board-status-map={ data.StatusMap.statusMapJSON() }>
+		if errMsg != "" {
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertError,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--circle-x",
+				Message: errMsg,
+				Attrs:   templ.Attributes{"class": "mb-4", "data-testid": "work-board-error"},
+			})
+		}
+		if len(data.Items) >= boardItemLimit {
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertInfo,
+				Style:   ui.AlertStyleSoft,
+				Icon:    "lucide--list-filter",
+				Message: "Showing the newest " + strconv.Itoa(boardItemLimit) + " work items — older items are not listed. Review them from the object list.",
+				Attrs:   templ.Attributes{"class": "mb-4", "data-testid": "work-board-cap-notice"},
+			})
+		}
+		@workBoardMatrices(data)
+	</div>
+}
+
+// workBoardMatrices renders one matrix per selected type, or the notice that
+// explains why there is nothing to draw. The empty states live *inside* the swap
+// region so the region exists even when the board is empty — otherwise the first
+// item to arrive live would have no element to morph into, and the board would
+// stay empty until a reload.
+templ workBoardMatrices(data workData) {
+	if len(data.SelectedTypes) == 0 && data.FilterExplicit {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--filter-x",
+			Title:       "No types selected",
+			Description: "Pick one or more object types in the filter, or reset to all types.",
+			Bordered:    true,
+			Class:       "py-12",
+		})
+	} else if len(data.Matrices) == 0 {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--inbox",
+			Title:       "No items",
+			Description: "Work items of the selected types will appear here.",
+			Bordered:    true,
+			Class:       "py-12",
+		})
+	} else {
+		<div class="flex flex-col gap-8">
+			for _, m := range data.Matrices {
+				@workTypeBlock(m, data)
+			}
+		</div>
+	}
+}
+
+// workBoardCount is the "N of M types" readout above the board. It is its own
+// swap region so the live stream can refresh it without re-rendering the
+// matrices, and so an unchanged count costs no frame.
+templ workBoardCount(data workData) {
+	<span id="work-board-count" data-testid="work-board-count" class="text-[11px] font-semibold tracking-wide text-muted-faint uppercase">
+		{ strconv.Itoa(len(data.Matrices)) } of { strconv.Itoa(len(data.BoardTypes)) } types
+	</span>
+}
+
+// workBoardHealthRegion wraps the circuit-breaker readout in a stable swap
+// target. workBoardHealth renders nothing when every agent is healthy, so the
+// wrapper is what keeps the frame non-empty and lets a later frame clear a stale
+// alert.
+templ workBoardHealthRegion(unhealthy []ScheduledAgent) {
+	<div id="work-board-health" data-testid="work-board-health">
+		@workBoardHealth(unhealthy)
+	</div>
+}
+
+// workBoardHealth renders the agent circuit-breaker readout: a warning listing
+// disabled or repeatedly-failing reaction agents. Renders nothing when healthy.
+templ workBoardHealth(unhealthy []ScheduledAgent) {
+	if len(unhealthy) > 0 {
+		<div class="mb-6" data-testid="board-agent-health">
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertWarning,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--heart-pulse",
+				Message: "Some work agents are unhealthy and may not pick up new items.",
+			})
+			<div class="mt-2 flex flex-wrap gap-2">
+				for _, a := range unhealthy {
+					{{ label := a.Name
+					if !a.Enabled {
+						label = a.Name + " · disabled"
+					} else {
+						label = a.Name + " · " + strconv.Itoa(a.ConsecutiveFailures) + " failure" + plural(a.ConsecutiveFailures)
+					} }}
+					@ui.Badge(ui.BadgeProps{Label: label, Variant: ui.BadgeError, Size: ui.BadgeSizeXS, Dot: true})
+				}
+			</div>
+		</div>
+	}
+}

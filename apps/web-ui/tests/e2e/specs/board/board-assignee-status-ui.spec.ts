@@ -35,7 +35,7 @@ interface MemberDto {
   email?: string;
 }
 
-/** The label the picker renders for a member (gateway/board.go buildBoardAssigneeCandidates). */
+/** The label the picker renders for a member (gateway/work_board.go buildBoardAssigneeCandidates). */
 function memberLabel(m: MemberDto): string {
   const name = (m.displayName ?? '').trim();
   return name !== '' ? name : (m.email ?? '').trim();
@@ -51,12 +51,12 @@ async function fetchMembers(page: Page): Promise<MemberDto[]> {
 
 /** The board card, scoped to one status column. */
 function cardIn(page: Page, status: string) {
-  return page.locator(`[data-board-column="${status}"]`).getByTestId(`board-card-${canonicalId}`);
+  return page.locator(`[data-board-column="${status}"]`).getByTestId(`work-card-${canonicalId}`);
 }
 
 /** Open the shared object preview for the seeded card (card click → preview). */
 async function openPreview(page: Page): Promise<void> {
-  await page.getByTestId(`board-card-${canonicalId}`).click();
+  await page.getByTestId(`work-card-${canonicalId}`).click();
   const panel = page.locator('#object-preview-panel');
   await expect(panel).toHaveAttribute('aria-hidden', 'false');
   await expect(page.locator('#object-preview-heading')).toHaveText(key);
@@ -152,8 +152,8 @@ test.describe.serial('board assignee + status controls', () => {
     const target = memberLabel(members[0] ?? {});
     expect(target, 'a project member must exist to reassign').toBeTruthy();
 
-    await goto(page, '/board');
-    await expectAppPage(page, /Board/);
+    await goto(page, '/work/board');
+    await expectAppPage(page, /Work/);
     await openPreview(page);
 
     // The picker trigger is the avatar+name pill in the preview's top strip,
@@ -176,8 +176,8 @@ test.describe.serial('board assignee + status controls', () => {
   test('status control moves the item to an exact phase without closing the preview', async ({ page }) => {
     expect(canonicalId, 'beforeAll must seed the item').toBeTruthy();
 
-    await goto(page, '/board');
-    await expectAppPage(page, /Board/);
+    await goto(page, '/work/board');
+    await expectAppPage(page, /Work/);
     await openPreview(page);
 
     const { menu } = await openDropdown(page, 'Change status');

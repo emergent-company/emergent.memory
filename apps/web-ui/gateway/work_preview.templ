@@ -1,0 +1,182 @@
+package main
+
+import (
+	"strconv"
+
+	tpl "github.com/a-h/templ"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// The work board's item surface inside the shared object preview drawer. This is
+// the primary way a human opens a board item: clicking a card opens the preview
+// (object-preview.js), and ?actions=board fills its action slot with the
+// status-gated actions and the merged Activity thread, so the work item is
+// actionable from the common path rather than only from a drag.
+//
+// The pane is narrow (32rem by default, resizable, promotable to a modal), so the
+// thread reuses wrapping rows and the preview's own section heading. Every action
+// posts to the work-item action route and morphs #work-board; object-preview.js
+// closes the drawer on a successful POST, so the board behind it is already up to
+// date when it goes.
+//
+// The status and assignee pickers live in the preview's top workflow strip, not
+// this slot: changing either keeps the preview open and swaps its body in place,
+// while the board refreshes from the project event stream (object_controls.go).
+
+// workPreviewBoardSlot renders the work-item surface inside the preview drawer:
+// the status-gated actions, the completed runs' declared deliverables, then the
+// merged Activity thread and its inline form.
+templ workPreviewBoardSlot(item *WorkItem, statusMap boardStatusMap, comments []WorkItemComment, feedback []WorkItemFeedback, deliverables []boardDeliverable) {
+	@workPreviewActionButtons(item, statusMap)
+	if len(deliverables) > 0 {
+		<div class="mt-5">
+			@objectPreviewSection("Deliverables") {
+				@workPreviewDeliverables(deliverables)
+			}
+		</div>
+	}
+	<div class="mt-5">
+		@objectPreviewSection("Activity") {
+			@boardCommentsThread(boardComments(comments, feedback), "board-preview-comment")
+			@boardCommentForm(item.CanonicalID, "board-preview-comment")
+		}
+	</div>
+}
+
+// workPreviewDeliverables renders the declared deliverables of a work item's
+// runs: a resolved object links to its detail page (key as label, muted type
+// prefix); a declared-but-missing deliverable renders muted with a "not found"
+// hint rather than being dropped.
+templ workPreviewDeliverables(deliverables []boardDeliverable) {
+	<div class="space-y-1.5">
+		for _, d := range deliverables {
+			if d.Resolved {
+				<a
+					href={ tpl.URL(objectWikiHref(d.ObjectID, "")) }
+					class="flex items-center gap-2 rounded-box border border-base-content/10 px-2.5 py-1.5 transition-colors hover:bg-base-200/40"
+					data-testid="board-deliverable"
+				>
+					<span class="font-mono text-[10px] font-medium tracking-wide text-muted uppercase">{ d.Type }</span>
+					<span class="min-w-0 truncate text-sm font-medium">{ d.Key }</span>
+					@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
+				</a>
+			} else {
+				<div class="flex items-center gap-2 rounded-box border border-base-content/10 px-2.5 py-1.5" data-testid="board-deliverable-missing">
+					<span class="font-mono text-[10px] font-medium tracking-wide text-muted uppercase">{ d.Type }</span>
+					<span class="min-w-0 truncate text-sm text-muted">{ d.Key }</span>
+					<span class="ml-auto text-[10px] text-muted-faint">not found</span>
+				</div>
+			}
+		}
+	</div>
+}
+
+// workPreviewActionButtons renders the status-gated work-item actions (no
+// assignee picker — status and assignee are edited in the preview's top strip
+// and refresh the board through the event stream). The statuses resolve through
+// the project's work-path map, so a custom-mapped board exposes the same actions
+// as the default one.
+templ workPreviewActionButtons(item *WorkItem, statusMap boardStatusMap) {
+	<div class="mt-4 flex flex-wrap gap-2">
+		if item.Status == statusMap.Review {
+			@workActionButton("Approve", "lucide--check", ui.ButtonSuccess, workActionPath(item.CanonicalID, "approve"))
+			@boardRequestChangesForm(item.CanonicalID)
+		}
+		if item.Status == statusMap.Blocked {
+			@workActionButton("Retry", "lucide--rotate-cw", ui.ButtonPrimary, workActionPath(item.CanonicalID, "retry"))
+		}
+		if item.Status != statusMap.Done {
+			@workActionButton("Cancel", "lucide--ban", ui.ButtonGhost, workActionPath(item.CanonicalID, "cancel"))
+		}
+	</div>
+}
+
+// workActionButton is an htmx POST button for a bodyless work-item action.
+templ workActionButton(label, icon string, variant ui.ButtonVariant, action string) {
+	@ui.Button(ui.ButtonProps{
+		Type:    ui.ButtonTypeButton,
+		Variant: variant,
+		Size:    ui.ButtonSM,
+		Icon:    icon,
+		Attrs: tpl.Attributes{
+			"hx-post":   action,
+			"hx-target": "#work-board",
+			"hx-swap":   "outerMorph",
+		},
+	}) {
+		{ label }
+	}
+}
+
+// boardRequestChangesForm posts request-changes with required feedback.
+templ boardRequestChangesForm(canonicalID string) {
+	<form
+		hx-post={ workActionPath(canonicalID, "request-changes") }
+		hx-target="#work-board"
+		hx-swap="outerMorph"
+		class="mt-2 flex w-full flex-col gap-2"
+	>
+		<textarea name="feedback" required placeholder="What needs to change?" class="textarea w-full" rows="2"></textarea>
+		<div class="flex justify-end">
+			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonAccent, Size: ui.ButtonSM}) {
+				Request changes
+			}
+		</div>
+	</form>
+}
+
+// boardCommentForm posts a durable comment and morphs the work board, the same
+// swap the other actions use. testIDPrefix scopes its test ids to the surface
+// rendering it (see boardCommentsThread).
+templ boardCommentForm(canonicalID, testIDPrefix string) {
+	<form
+		hx-post={ workActionPath(canonicalID, "comments") }
+		hx-target="#work-board"
+		hx-swap="outerMorph"
+		class="mt-2 flex w-full flex-col gap-2"
+		data-testid={ testIDPrefix + "-form" }
+	>
+		<textarea name="body" required placeholder="Add a comment…" class="textarea w-full" rows="2" data-testid={ testIDPrefix + "-input" }></textarea>
+		<div class="flex justify-end">
+			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonOutline, Size: ui.ButtonSM}) {
+				Comment
+			}
+		</div>
+	</form>
+}
+
+// boardCommentsThread renders the merged thread's rows — durable comments and
+// rework feedback rounds, ascending — plus its muted empty state, with no heading
+// and no outer margin so the calling surface supplies its own chrome (the
+// preview's section heading).
+//
+// testIDPrefix scopes the test ids to the surface rendering the thread
+// ("board-preview-comment"), so a second surface can reuse it without making a
+// Playwright locator resolve to two nodes (strict-mode violation).
+//
+// Feedback rounds are marked with their rework round; agent-authored comments
+// carry an "agent" badge. Two badges are never shown for one entry: a feedback
+// round is never agent-authored. At the preview pane's narrow default width the
+// meta row wraps rather than pushing the author out of the pane.
+templ boardCommentsThread(entries []boardComment, testIDPrefix string) {
+	<div class="space-y-2">
+		for _, e := range entries {
+			@ui.SoftBox(ui.SoftBoxProps{Surface: ui.SoftBoxMuted, Padding: "p-2.5", Attrs: tpl.Attributes{"data-testid": testIDPrefix + "-row"}}) {
+				<div class="flex flex-wrap items-center gap-1.5 text-[10px] font-medium text-muted">
+					if e.Kind == "feedback" {
+						@ui.Badge(ui.BadgeProps{Label: "rework round " + strconv.Itoa(e.Round), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+					} else if e.ActorType == "agent" {
+						@ui.Badge(ui.BadgeProps{Label: "agent", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+					}
+					if e.Author != "" {
+						<span class="min-w-0 break-words">{ e.Author }</span>
+					}
+				</div>
+				<p class="mt-1 text-sm break-words">{ e.Body }</p>
+			}
+		}
+		if len(entries) == 0 {
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Attrs: tpl.Attributes{"data-testid": testIDPrefix + "-empty"}}) { No activity yet }
+		}
+	</div>
+}
