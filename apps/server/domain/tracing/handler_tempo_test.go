@@ -97,6 +97,20 @@ func TestTempoStatusErrorMessage(t *testing.T) {
 		require.True(t, utf8.ValidString(err.Message), "capping must not cut a UTF-8 sequence")
 		require.Len(t, []rune(err.Message), maxErrorBody+1)
 	})
+
+	// The caller reads a bounded byte prefix, so truncateErrorBody can be handed
+	// a body whose last rune was cut in half. The partial rune must be dropped,
+	// not rendered as U+FFFD.
+	t.Run("a body cut mid-rune stays valid UTF-8", func(t *testing.T) {
+		full := []byte(strings.Repeat("é", 8))
+		cut := full[:len(full)-1] // "é" is 2 bytes: drop one, leave a stray lead byte
+
+		err := tempoStatusError(http.StatusBadRequest, cut)
+
+		require.True(t, utf8.ValidString(err.Message), "a split rune must not survive as an invalid byte")
+		require.NotContains(t, err.Message, string(utf8.RuneError))
+		require.Equal(t, strings.Repeat("é", 7), err.Message)
+	})
 }
 
 // TestProxyMapsBackendFaultToAppError proves the streaming search route applies

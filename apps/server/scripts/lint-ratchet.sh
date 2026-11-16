@@ -34,13 +34,16 @@ count_matches() {
 }
 
 # count_raw_echo_httperrors prints non-test `echo.NewHTTPError` occurrences in
-# tree. Full-line comments are excluded — line comments, the opening `/*` and a
-# block comment's ` *` continuation lines — so documenting the rule does not trip
-# it. The filter is a single awk pass over the matches, so a failing grep still
+# tree. Full-line comments are excluded so documenting the rule does not trip
+# it: `//`, the opening `/*`, and a block comment's continuation, which gofmt
+# writes as `* text` or `*/`. The continuation needs the space (or the closing
+# slash) — a code line can legitimately start with a dereference such as
+# `*ptr = echo.NewHTTPError(...)`, and dropping every leading `*` would hide it.
+# The filter is a single awk pass over the matches, so a failing grep still
 # aborts through grep_matches instead of being hidden by the pipeline.
 count_raw_echo_httperrors() {
   grep_matches -rn "echo\.NewHTTPError" --include="*.go" --exclude="*_test.go" "$1" \
-    | awk '!/^[^:]+:[0-9]+:[[:space:]]*(\/\/|\/\*|\*)/ { n++ } END { print n + 0 }'
+    | awk '!/^[^:]+:[0-9]+:[[:space:]]*(\/\/|\/\*|\*[ \/])/ { n++ } END { print n + 0 }'
 }
 
 # --self-test exercises the counters' three outcomes on a scratch tree: a match
@@ -58,7 +61,7 @@ if [ "${1:-}" = "--self-test" ]; then
     ' * echo.NewHTTPError in a block continuation' \
     ' */' \
     'var first = echo.NewHTTPError(500)' \
-    'var second = echo.NewHTTPError(502)' \
+    '*ptr = echo.NewHTTPError(502)' \
     >"$scratch/assets.go"
 
   self_fail() {

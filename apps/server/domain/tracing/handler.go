@@ -422,8 +422,14 @@ func upstreamCause(body []byte) error {
 const maxErrorBody = 512
 
 // truncateErrorBody trims an upstream error body and bounds its length.
+//
+// The caller reads a bounded prefix of the body, so the byte slice can end in
+// the middle of a multi-byte rune; that partial rune is dropped rather than
+// rendered as U+FFFD, and the length cap then counts runes so the cap itself
+// cannot split one.
 func truncateErrorBody(body []byte) string {
 	msg := strings.TrimSpace(string(body))
+	msg = strings.ToValidUTF8(msg, "")
 	if msg == "" {
 		return "tracing backend rejected the query"
 	}
