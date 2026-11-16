@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -199,29 +200,71 @@ func TestExecuteQueryEntities_LongNameDoesNotBreakNameSortIndex(t *testing.T) {
 	require.NotContains(t, plan, "Sort", plan)
 }
 
-// TestMigration311_TitleIndexBuildsWithLongNameRow proves CREATE INDEX
-// CONCURRENTLY on the bounded expression succeeds even when an oversized title
-// row already exists — the raw-expression index (or its CONCURRENTLY build)
-// fails with SQLSTATE 54000 in that situation.
+// TestMigration311_TitleIndexBuildsWithLongNameRow proves migration 00311's real
+// CREATE INDEX CONCURRENTLY statement builds on the bounded expression even when
+// an oversized title row already exists — an index on the raw `name` column (or
+// its CONCURRENTLY build) fails with SQLSTATE 54000 in that situation.
+//
+// It does not transcribe the statement: it reads 00311 and runs the index build
+// under a throwaway name, so a change to the expression, the predicate or the
+// CONCURRENTLY keyword is exercised here instead of passing unnoticed. The shared
+// index is never dropped — that would pull an index out from under every other
+// DB test in this package — and the applied shared index is asserted to have the
+// same definition as the migration's, which is the drift check the transcription
+// could not give.
 func TestMigration311_TitleIndexBuildsWithLongNameRow(t *testing.T) {
 	db := connectTestDB(t)
+	ctx := context.Background()
 	_, projectID := seedProject(t, db)
 
-	_, err := db.ExecContext(context.Background(),
-		`DROP INDEX CONCURRENTLY IF EXISTS kb.idx_graph_objects_project_type_title_sort`)
-	require.NoError(t, err)
+	const (
+		sharedIndex = "idx_graph_objects_project_type_title_sort"
+		migration   = "../../migrations/00311_object_name_title_only.sql"
+	)
+	src, err := os.ReadFile(migration)
+	require.NoError(t, err, "migration 00311 must exist")
+
+	marker := "CREATE INDEX CONCURRENTLY IF NOT EXISTS " + sharedIndex
+	start := strings.Index(string(src), marker)
+	require.GreaterOrEqual(t, start, 0, "migration 00311 must contain the title sort index build")
+	end := strings.Index(string(src)[start:], ";")
+	require.Greater(t, end, 0, "index build statement must be terminated")
+	stmt := string(src)[start : start+end]
+
+	// The statement must stay bounded and partial; assert on the source text so a
+	// malformed edit is named here rather than as a 54000 far away.
+	require.Contains(t, stmt, "left(name, 256)", "the indexed expression must stay bounded")
+	require.Contains(t, stmt, "WHERE deleted_at IS NULL AND supersedes_id IS NULL AND branch_id IS NULL",
+		"the index must stay partial on the entity-query head-main predicate")
+
+	tmpIndex := "idx_m311_probe_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	tmpStmt := strings.Replace(stmt, sharedIndex, tmpIndex, 1)
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(context.Background(),
+			"DROP INDEX CONCURRENTLY IF EXISTS kb."+tmpIndex)
+	})
 
 	insertQueryEntityTitle(t, db, projectID, "lov/long#kapittel-1-paragraf-build", longQueryEntityName(t))
 
-	_, err = db.ExecContext(context.Background(), `
-		CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_graph_objects_project_type_title_sort
-		  ON kb.graph_objects (project_id, type, left(name, 256) DESC NULLS LAST, key)
-		  WHERE deleted_at IS NULL AND supersedes_id IS NULL AND branch_id IS NULL`)
-	require.NoError(t, err, "CREATE INDEX CONCURRENTLY must not fail on an oversized-title row")
+	_, err = db.ExecContext(ctx, tmpStmt)
+	require.NoError(t, err, "the migration's CREATE INDEX CONCURRENTLY must not fail on an oversized-title row")
 
-	var exists bool
+	// Drift: the index the migration actually applied must have the same
+	// definition as the statement in the file.
+	var sharedDef, tmpDef string
 	require.NoError(t, db.NewRaw(
-		`SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'kb' AND indexname = 'idx_graph_objects_project_type_title_sort')`,
-	).Scan(context.Background(), &exists))
-	require.True(t, exists)
+		`SELECT indexdef FROM pg_indexes WHERE schemaname = 'kb' AND indexname = ?`, sharedIndex,
+	).Scan(ctx, &sharedDef), "the applied migration must own the shared index")
+	require.NoError(t, db.NewRaw(
+		`SELECT indexdef FROM pg_indexes WHERE schemaname = 'kb' AND indexname = ?`, tmpIndex,
+	).Scan(ctx, &tmpDef))
+	require.Equal(t, strings.Replace(sharedDef, sharedIndex, tmpIndex, 1), tmpDef,
+		"migration 00311's index statement must match the index in the database")
+
+	var valid bool
+	require.NoError(t, db.NewRaw(
+		`SELECT indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+		 WHERE c.relname = ?`, sharedIndex,
+	).Scan(ctx, &valid))
+	require.True(t, valid, "the shared title sort index must still be valid")
 }

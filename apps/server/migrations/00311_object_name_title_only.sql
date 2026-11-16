@@ -15,7 +15,9 @@
 -- properties.name/title (resolveObjectName), so repairing the data is all that
 -- is left here.
 --
--- Repair: clear a `name` that is a verbatim copy of a machine-shaped `key`.
+-- Repair: clear a `name` that is a verbatim copy of a machine-shaped `key`, and
+-- move a legacy `properties.title` (the pre-#824 `set_session_title` / entity
+-- convention) into `name` where the column is still empty.
 -- Backfill: title a still-nameless object from a key that is a real human
 -- identifier. A machine key stays NULL, and the object renders as
 -- `type · #ref` in the UI instead of showing its identity.
@@ -37,7 +39,7 @@
 --
 -- NO TRANSACTION because the index replacement is built CONCURRENTLY. Each
 -- statement commits on its own, so a failed run leaves the repair applied and
--- the version unrecorded; both UPDATEs are idempotent and the index is
+-- the version unrecorded; all three UPDATEs are idempotent and the index is
 -- drop-then-create, so a retry completes cleanly.
 
 -- ---- 1. Repair: a machine key is never a title ----------------------------
@@ -52,7 +54,27 @@ UPDATE kb.graph_objects
      OR key ~ '^[a-z][a-z0-9_-]*:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:.+$'
    );
 
--- ---- 2. Backfill: a human key is a usable title ---------------------------
+-- ---- 2. Repair: a legacy property title moves into the column --------------
+-- Before #824 a session's title was written by PatchGraphObjectTitle into
+-- `properties.title` (set_session_title), and sessions were not the only writer
+-- to use that convention (entities created with `name: &key` by extraction are
+-- the same shape). Now that no read path consults properties, that title would
+-- be lost to every reader, so it is moved into `name` once, where it belongs.
+-- Precedence is deliberate: a real legacy title beats the key backfill below, so
+-- this runs first. A machine-shaped title is not a title and is left alone; the
+-- object then falls to the key backfill or stays nameless.
+UPDATE kb.graph_objects
+   SET name = btrim(properties->>'title')
+ WHERE (name IS NULL OR btrim(name) = '')
+   AND jsonb_typeof(properties->'title') = 'string'
+   AND btrim(properties->>'title') <> ''
+   AND NOT (
+        properties->>'title' ~ '^[a-z0-9_-]+-[0-9a-f]{12}$'
+     OR properties->>'title' ~ '^[a-z0-9_-]+-[0-9a-f]{8}$'
+     OR properties->>'title' ~ '^[a-z][a-z0-9_-]*:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:.+$'
+   );
+
+-- ---- 3. Backfill: a human key is a usable title ---------------------------
 UPDATE kb.graph_objects
    SET name = key
  WHERE key IS NOT NULL
@@ -64,7 +86,7 @@ UPDATE kb.graph_objects
      OR key ~ '^[a-z][a-z0-9_-]*:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:.+$'
    );
 
--- ---- 3. sort_by=name orders by the title column ---------------------------
+-- ---- 4. sort_by=name orders by the title column ---------------------------
 -- entity-query's `sort_by=name` now orders by `left(go.name, 256)` (the
 -- properties->>'name' fallback is gone, #824). Replace the 00199 expression
 -- index so the ordering stays an ordered index scan with no Sort node. The
@@ -143,7 +165,8 @@ ANALYZE kb.graph_objects;
 -- +goose Down
 -- Restore the 00199 properties-based sort index. The data steps are NOT
 -- reversed: the rows step 1 cleared held a copy of their own machine key (still
--- in `key`), and step 2's backfill is reproducible from `key` at any time, so a
+-- in `key`), step 2 only copied a value out of `properties` (which it does not
+-- modify), and step 3's backfill is reproducible from `key` at any time, so a
 -- down migration that re-polluted `name` would contradict the invariant this
 -- migration establishes. Only the index is reverted.
 DROP INDEX CONCURRENTLY IF EXISTS kb.idx_graph_objects_project_type_title_sort;

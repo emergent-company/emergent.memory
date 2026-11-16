@@ -1399,7 +1399,8 @@ func benchIngestObjects(ctx context.Context, client *sdkgraph.Client, titles map
 	}
 	for g := range uniqueGenres {
 		k := "genre_" + g
-		items = append(items, sdkgraph.CreateObjectRequest{Type: "Genre", Key: &k, Properties: map[string]any{"name": g}})
+		genreName := g
+		items = append(items, sdkgraph.CreateObjectRequest{Type: "Genre", Key: &k, Name: &genreName, Properties: map[string]any{"name": g}})
 	}
 
 	// Professions
@@ -1411,13 +1412,14 @@ func benchIngestObjects(ctx context.Context, client *sdkgraph.Client, titles map
 	}
 	for prof := range uniqueProfs {
 		k := "prof_" + prof
-		items = append(items, sdkgraph.CreateObjectRequest{Type: "Profession", Key: &k, Properties: map[string]any{"name": strings.ReplaceAll(prof, "_", " ")}})
+		professionName := strings.ReplaceAll(prof, "_", " ")
+		items = append(items, sdkgraph.CreateObjectRequest{Type: "Profession", Key: &k, Name: &professionName, Properties: map[string]any{"name": professionName}})
 	}
 
 	// Characters
 	for char := range characterNames {
 		k := "char_" + char
-		items = append(items, sdkgraph.CreateObjectRequest{Type: "Character", Key: &k, Properties: map[string]any{"name": char}})
+		items = append(items, sdkgraph.CreateObjectRequest{Type: "Character", Key: &k, Name: &char, Properties: map[string]any{"name": char}})
 	}
 
 	// Seasons
@@ -1436,7 +1438,8 @@ func benchIngestObjects(ctx context.Context, client *sdkgraph.Client, titles map
 		if akaList, ok := titleAKAs[t.ID]; ok && len(akaList) > 0 {
 			props["aka_titles"] = akaList
 		}
-		items = append(items, sdkgraph.CreateObjectRequest{Type: nodeType, Key: &k, Properties: props})
+		titleName := t.Name
+		items = append(items, sdkgraph.CreateObjectRequest{Type: nodeType, Key: &k, Name: &titleName, Properties: props})
 	}
 
 	// People
@@ -1450,7 +1453,8 @@ func benchIngestObjects(ctx context.Context, client *sdkgraph.Client, titles map
 		if p.Death > 0 {
 			props["death_year"] = p.Death
 		}
-		items = append(items, sdkgraph.CreateObjectRequest{Type: "Person", Key: &k, Properties: props})
+		personName := p.Name
+		items = append(items, sdkgraph.CreateObjectRequest{Type: "Person", Key: &k, Name: &personName, Properties: props})
 	}
 
 	fmt.Printf("  Uploading %d objects in batches of %d with %d workers ...\n", len(items), batchSz, nWorkers)

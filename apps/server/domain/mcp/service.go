@@ -8158,7 +8158,9 @@ func (s *Service) executeSetSessionTitle(ctx context.Context, projectID string, 
 		}, nil
 	}
 
-	// Also patch the graph object so callers using the graph API can read the title.
+	// Also patch the graph object's `name` column so callers using the graph API can
+	// read the title. `name` is the only title carrier (#824), so this is the write
+	// that makes the session title observable; properties.title is not read.
 	// Best-effort: log but don't fail if the graph object doesn't exist or patcher not wired.
 	if s.graphObjectTitlePatcher != nil {
 		if err := s.graphObjectTitlePatcher(ctx, projectID, sessionID, title); err != nil {

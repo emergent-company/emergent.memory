@@ -7006,9 +7006,12 @@ func (s *Service) BulkAction(ctx context.Context, projectID uuid.UUID, req *Bulk
 	return resp, nil
 }
 
-// PatchGraphObjectTitle merges {"title": title} into the graph object's Properties.
-// Implements mcp.GraphObjectPatcher. Best-effort: returns an error only if the object
-// exists and the patch fails; a missing object is silently ignored.
+// PatchGraphObjectTitle sets the graph object's `name` column to title.
+// Implements mcp.GraphObjectPatcher. `name` is the only title carrier (#824), so
+// this is what makes a session title visible to every graph API reader; writing
+// properties.title would be a write no read path consults. Best-effort: returns
+// an error only if the object exists and the patch fails; a missing object is
+// silently ignored.
 func (s *Service) PatchGraphObjectTitle(ctx context.Context, projectID, objectID, title string) error {
 	pid, err := uuid.Parse(projectID)
 	if err != nil {
@@ -7019,8 +7022,9 @@ func (s *Service) PatchGraphObjectTitle(ctx context.Context, projectID, objectID
 		return fmt.Errorf("PatchGraphObjectTitle: invalid object_id %q: %w", objectID, err)
 	}
 
+	name := title
 	_, err = s.Patch(ctx, pid, oid, &PatchGraphObjectRequest{
-		Properties: map[string]any{"title": title},
+		Name: &name,
 	}, nil)
 	if err != nil {
 		// Object not found is non-fatal — session may not yet exist as a graph object.

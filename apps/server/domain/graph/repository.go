@@ -3298,7 +3298,7 @@ func (r *Repository) FindSimilarObjects(ctx context.Context, params SimilarSearc
 		var labels pq.StringArray
 		err := rows.Scan(
 			&result.ID, &result.CanonicalID, &result.Version, &result.ProjectID, &result.BranchID,
-			&result.Type, &result.Key, &result.Status, &props, &labels, &result.CreatedAt,
+			&result.Type, &result.Name, &result.Key, &result.Status, &props, &labels, &result.CreatedAt,
 			&result.Distance,
 		)
 		if err != nil {

@@ -27,6 +27,7 @@ type NodeDetail struct {
 	ID         string          `json:"id"`
 	Type       string          `json:"type"`
 	TypeColor  string          `json:"type_color"`
+	Name       string          `json:"name"`
 	Key        string          `json:"key"`
 	Labels     []string        `json:"labels"`
 	Properties []PropertyField `json:"properties"`

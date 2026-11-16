@@ -277,8 +277,9 @@ func featureFxOptions(f config.FeatureSet) []fx.Option {
 	}
 	if f.MCP {
 		opts = append(opts, mcp.Module)
-		// Cross-domain wiring: set_session_title writes title to graph object Properties
-		// so clients using the graph API can read the updated title.
+		// Cross-domain wiring: set_session_title writes the title to the graph
+		// object's `name` column (the only title carrier, #824) so clients using the
+		// graph API can read the updated title.
 		opts = append(opts, fx.Provide(func(graphSvc *graph.Service) mcp.GraphObjectPatcher {
 			return graphSvc.PatchGraphObjectTitle
 		}))
