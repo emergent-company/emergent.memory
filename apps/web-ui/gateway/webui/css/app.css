@@ -591,6 +591,59 @@ main#main-content {
   50% { opacity: 1; }
 }
 
+/* Session-start line — the transcript's own heading. It sits above the first
+   message (the transcript is bottom-anchored, so it scrolls with the history
+   rather than pinning to the pane). chat.js fills the <time> in the reader's
+   local timezone. */
+.memory-session-start {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.15rem 0;
+  font-size: 0.75rem;
+  color: var(--color-muted-faint);
+}
+.memory-session-start time {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-muted-strong);
+}
+/* `.memory-session-start` is unlayered and sets `display: flex`, which beats
+   Tailwind's layered `.hidden { display: none }` at equal specificity. Re-assert
+   hiding here (same hazard as `.memory-rail-badge.hidden` below) so a new chat,
+   a reset conversation and a run scope never show an empty "Session started". */
+.memory-session-start.hidden {
+  display: none;
+}
+
+/* Day dividers — the messaging-app convention: a quiet line + label ("Today",
+   "Yesterday", "Wed, 12 Nov") before the first row of each local calendar day.
+   The day is derived client-side (chat-components.js) so a server UTC clock
+   never decides what "today" is for the reader. */
+.memory-day-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0.5rem 0 0.15rem;
+  padding: 0 0.25rem;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-muted-faint);
+}
+.memory-day-divider::before,
+.memory-day-divider::after {
+  content: "";
+  flex: 1 1 0;
+  height: 1px;
+  background: color-mix(in oklab, var(--color-base-content) 10%, transparent);
+}
+.memory-day-divider-label {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 /* typed run markers — turn boundaries, not generic content */
 .memory-run-marker {
   display: flex;

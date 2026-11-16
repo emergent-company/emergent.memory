@@ -67,6 +67,7 @@
   var bubbleHTML = "";      // accumulated assistant rendered HTML (snapshot)
   var bubbleText = "";      // accumulated raw token deltas (pre-snapshot)
   var conversationId = "";  // threaded back into /api/chat turns
+  var chatStartedAt = "";   // active conversation's created_at ("" = no session-start line)
   var activeRunId = "";     // scheduled-run transcript open in the pane ("" = conversation/fresh chat)
   var activeRunAgentName = ""; // the opened run's own agent, from the run history payload
   var transcriptRefreshPending = false; // one history re-render at a time
@@ -205,6 +206,9 @@
         var isNew = evt.conversationId !== conversationId && !railHas(evt.conversationId);
         var prevId = conversationId;
         conversationId = evt.conversationId;
+        // The first turn stamped the start line optimistically; only a
+        // conversation adopted without one needs a fallback instant.
+        if (!chatStartedAt) updateSessionStart(new Date().toISOString());
         applyComposerSelection();
         // A message parked on a brand-new (id-less) conversation moves with it
         // once the server assigns the id, so it is never stranded or delivered
@@ -667,6 +671,9 @@
 
     // resume target from the server-rendered ?c= param
     conversationId = root.getAttribute("data-conv") || "";
+    // The server names the resumed conversation's start instant so the line is
+    // correct on first paint; resumeConversation re-applies detail.createdAt.
+    updateSessionStart(root.getAttribute("data-conv-started") || "");
     initComposerControls();
     // run-transcript deep link (?run=<id>): a run is not a conversation, so the
     // server has no data-conv for it — the id only ever arrives in the URL.
@@ -963,6 +970,38 @@
     }
   }
 
+  // updateSessionStart heads the transcript with when the active conversation
+  // was started. The server supplies the ISO instant (data-conv-started on
+  // #chat-root, or detail.createdAt on resume); this formats it in the reader's
+  // local timezone and seeds the day divider so the line's day is not announced
+  // twice. Passing "" hides it and clears the day state (new chat before its
+  // first turn, run scope, conversation reset).
+  function updateSessionStart(iso) {
+    chatStartedAt = iso || "";
+    var el = document.getElementById("chat-session-start");
+    if (!el) return;
+    if (!chatStartedAt) {
+      el.classList.add("hidden");
+      if (messages) MemoryChatComponents.resetDayDivider(messages);
+      return;
+    }
+    var timeEl = document.getElementById("chat-session-start-time");
+    var label = MemoryChatComponents.formatSessionStart(chatStartedAt);
+    if (!label) {
+      // Malformed instant: no meaningful date to show, so keep the line hidden.
+      chatStartedAt = "";
+      el.classList.add("hidden");
+      if (messages) MemoryChatComponents.resetDayDivider(messages);
+      return;
+    }
+    if (timeEl) {
+      timeEl.textContent = label;
+      timeEl.setAttribute("datetime", chatStartedAt);
+    }
+    el.classList.remove("hidden");
+    if (messages) MemoryChatComponents.seedDay(messages, chatStartedAt);
+  }
+
   // applyRunHeader points the chat pane header at the opened run's own agent.
   // The server paints the header for the selected chat agent, which is the wrong
   // owner for a run transcript: an extraction run belongs to "Extraction" (or to
@@ -1013,6 +1052,7 @@
     replayFrames = [];
     transcriptReady = false;
     conversationId = "";
+    updateSessionStart(""); // a fresh chat has no session-start line
     applyComposerSelection();
     activeRunId = "";
     activeRunAgentName = "";
@@ -1711,7 +1751,13 @@
       return;
     }
 
+    // detail.createdAt is authoritative. An older payload that omits it keeps
+    // the server-rendered instant only when this IS the server-resumed
+    // conversation; a rail switch must never carry the previous session's start.
+    var sameAsServerConv = id === conversationId;
     conversationId = id;
+    if (detail && detail.createdAt) updateSessionStart(detail.createdAt);
+    else if (!sameAsServerConv) updateSessionStart("");
     applyComposerSelection();
     activeRunId = "";
     activeRunAgentName = "";
@@ -1771,6 +1817,7 @@
     // resumeConversation): the run history below re-derives it.
     releaseWorkingState();
     conversationId = ""; // a run is not an /api/chat conversation
+    updateSessionStart(""); // a run page has no conversation-start line
     activeRunId = runId;
     activeRunAgentName = ""; // until the history names the run's agent
     updateUrl();
@@ -1895,6 +1942,10 @@
       showRunMarkers: chatDebugEnabled(),
       showMeta: currentScopeIsRun(),
       silent: false,
+      // A conversation transcript heads itself with the "Session started" line,
+      // so seed that day to avoid a duplicate first divider. A run transcript
+      // has no such line (its page header carries the start metadata).
+      startedAt: currentScopeIsRun() ? "" : chatStartedAt,
     });
     if (subagentTrack) subagentTrack.rebuild(items || []);
   }
@@ -2423,6 +2474,7 @@
     updateChatHeader();
     if (messages) messages.innerHTML = "";
     MemoryChatComponents.resetA2UI(messages);
+    updateSessionStart(""); // the fresh chat gets its own start when the turn begins
     bubble = null; bubbleHTML = ""; bubbleText = "";
   }
 
@@ -2441,6 +2493,10 @@
       autoGrow();
       input.focus();
     }
+    // A fresh chat's first turn starts the session: stamp the line now (the
+    // server's meta frame confirms the id moments later) so the first bubble
+    // does not get a separate "Today" divider right under it.
+    if (!conversationId && !chatStartedAt) updateSessionStart(new Date().toISOString());
     addUserMessage(text);
     setStreaming(true); // before the bubble: it shows the typing indicator
     openAssistantBubble();
