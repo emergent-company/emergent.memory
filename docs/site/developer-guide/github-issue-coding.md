@@ -60,11 +60,12 @@ responsible for issues this source starts. On opening or reopening an issue,
 the integration:
 
 1. reads the live issue and refuses to start if another agent has claimed it
-   (`status: in-progress` or `status: blocked` with a different `manager:`), or
-   if it is assigned to someone else;
-2. assigns the configured responsible user;
-3. adds `status: in-progress` and `manager: memory-coding`; and
-4. posts a receipt comment naming the agent.
+   (any `status: blocked`, any other `manager:` label, or `status: in-progress`
+   without `manager: memory-coding`), or if it is assigned to someone else;
+2. creates the claim labels when the repository does not have them yet;
+3. assigns the configured responsible user;
+4. adds `status: in-progress` and `manager: memory-coding`; and
+5. posts a receipt comment naming the agent.
 
 The responsible user stays assigned for the life of the issue. The labels are
 the claim signal peer agents read; `manager: memory-coding` identifies the

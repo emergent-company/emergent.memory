@@ -145,7 +145,11 @@ func (p *githubAppProvider) NormalizeConfig(cfg map[string]any) {
 		cfg["repos"] = appRepoList(v)
 	}
 	if v, ok := cfg["assignee_login"]; ok {
-		cfg["assignee_login"] = strings.TrimSpace(fmt.Sprint(v))
+		if v == nil {
+			cfg["assignee_login"] = ""
+		} else {
+			cfg["assignee_login"] = strings.TrimSpace(fmt.Sprint(v))
+		}
 	}
 }
 
@@ -284,6 +288,7 @@ func (p *githubAppProvider) ObjectTypes() *ObjectTypePack {
 					"url":               map[string]any{"type": "string"},
 					"source_id":         map[string]any{"type": "string"},
 					"status":            map[string]any{"type": "string"},
+					"claim_conflict":    map[string]any{"type": "boolean"},
 					"source_trigger_id": map[string]any{"type": "string"},
 					"pr_number":         map[string]any{"type": "number"},
 					"pr_url":            map[string]any{"type": "string"},

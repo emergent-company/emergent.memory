@@ -370,6 +370,7 @@
 
   window.MemoryChatHost = {
     sortTimeline: sortTimeline,
+    itemTime: itemTime,
     isTransientError: isTransientError,
     copyText: copyText,
     formatDuration: formatDuration,

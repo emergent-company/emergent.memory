@@ -121,9 +121,10 @@ func messageTimelineItems(msgs []Message) []json.RawMessage {
 	items := make([]json.RawMessage, 0, len(msgs))
 	for _, m := range msgs {
 		raw, err := json.Marshal(map[string]any{
-			"kind":    "message",
-			"role":    m.Role,
-			"content": map[string]any{"text": m.Content},
+			"kind":       "message",
+			"role":       m.Role,
+			"content":    map[string]any{"text": m.Content},
+			"created_at": m.CreatedAt,
 		})
 		if err != nil {
 			continue

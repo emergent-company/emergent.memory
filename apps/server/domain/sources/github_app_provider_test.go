@@ -146,3 +146,20 @@ func TestGitHubAppPackProvenanceAndPresentation(t *testing.T) {
 		}
 	}
 }
+
+func TestGitHubAppProviderNormalizeAssigneeLogin(t *testing.T) {
+	p, ok := newGitHubAppProvider().(ConfigNormalizer)
+	if !ok {
+		t.Fatal("github_app provider must normalize config")
+	}
+	cfg := map[string]any{"assignee_login": nil}
+	p.NormalizeConfig(cfg)
+	if got := cfg["assignee_login"]; got != "" {
+		t.Fatalf("nil assignee_login = %#v, want empty string", got)
+	}
+	cfg = map[string]any{"assignee_login": " mkucharz "}
+	p.NormalizeConfig(cfg)
+	if got := cfg["assignee_login"]; got != "mkucharz" {
+		t.Fatalf("assignee_login = %#v, want mkucharz", got)
+	}
+}
