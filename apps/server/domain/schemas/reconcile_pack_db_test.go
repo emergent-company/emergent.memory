@@ -91,13 +91,15 @@ func TestReconcileProjectPackUpdatesInPlace(t *testing.T) {
 	assert.Equal(t, "1.3.0", reconciled.Version)
 	require.NotNil(t, reconciled.Source)
 	assert.Equal(t, "provider:github_app", *reconciled.Source)
-	assert.Contains(t, string(reconciled.ObjectTypeSchemas), `"ui"`)
+	// object_type_schemas is jsonb: Postgres re-reads it with spaces and
+	// reordered keys, so decode rather than substring-match the raw bytes.
+	assertTypeUI(t, reconciled.ObjectTypeSchemas, "circle", "#10B981")
 	require.NotNil(t, reconciled.Checksum)
 	assert.NotEqual(t, originalChecksum, *reconciled.Checksum, "checksum must follow the content")
 
 	stored, err := repo.GetPack(ctx, created.ID, projectID)
 	require.NoError(t, err)
-	assert.Contains(t, string(stored.ObjectTypeSchemas), `"icon":"circle"`)
+	assertTypeUI(t, stored.ObjectTypeSchemas, "circle", "#10B981")
 
 	count, err := db.NewSelect().Model((*schemas.GraphMemorySchema)(nil)).
 		Where("project_id = ?", projectID).
@@ -125,6 +127,21 @@ func TestReconcileProjectPackUpdatesInPlace(t *testing.T) {
 }
 
 func stringPtr(s string) *string { return &s }
+
+// assertTypeUI decodes a stored object-type array and asserts the first type's
+// presentation block.
+func assertTypeUI(t *testing.T, raw json.RawMessage, icon, color string) {
+	t.Helper()
+	var defs []struct {
+		Name string         `json:"name"`
+		UI   map[string]any `json:"ui"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &defs))
+	require.Len(t, defs, 1)
+	require.NotNil(t, defs[0].UI)
+	assert.Equal(t, icon, defs[0].UI["icon"])
+	assert.Equal(t, color, defs[0].UI["color"])
+}
 
 func typeNames(types []schemas.ObjectTypeSchema) []string {
 	out := make([]string, 0, len(types))
