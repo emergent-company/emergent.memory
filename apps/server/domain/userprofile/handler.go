@@ -142,8 +142,7 @@ func (h *Handler) Upload(c echo.Context) error {
 
 	file, err := c.FormFile("file")
 	if err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			return apperror.New(http.StatusRequestEntityTooLarge, "avatar_too_large", "avatar image must be 512 KiB or smaller")
 		}
 		return apperror.ErrBadRequest.WithMessage("file is required")

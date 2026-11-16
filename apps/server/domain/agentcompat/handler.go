@@ -314,12 +314,10 @@ func (h *Handler) writeStream(c echo.Context, result *Result, model string, opts
 //   - Agent/model errors   → 502 Bad Gateway
 //   - Everything else      → 400 Bad Request (invalid request)
 func classifyError(err error) int {
-	var budget *agents.BudgetExceededError
-	if errors.As(err, &budget) {
+	if _, ok := errors.AsType[*agents.BudgetExceededError](err); ok {
 		return http.StatusTooManyRequests // 429
 	}
-	var queue *agents.QueueFullError
-	if errors.As(err, &queue) {
+	if _, ok := errors.AsType[*agents.QueueFullError](err); ok {
 		return http.StatusTooManyRequests // 429
 	}
 	msg := err.Error()
@@ -338,12 +336,10 @@ func classifyError(err error) int {
 
 // classifyErrorType returns the OpenAI-compatible error type string.
 func classifyErrorType(err error) string {
-	var budget *agents.BudgetExceededError
-	if errors.As(err, &budget) {
+	if _, ok := errors.AsType[*agents.BudgetExceededError](err); ok {
 		return "rate_limit_exceeded"
 	}
-	var queue *agents.QueueFullError
-	if errors.As(err, &queue) {
+	if _, ok := errors.AsType[*agents.QueueFullError](err); ok {
 		return "rate_limit_exceeded"
 	}
 	msg := err.Error()

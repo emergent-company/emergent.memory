@@ -534,8 +534,8 @@ func (e *metadataHTTPError) Error() string {
 // metadataAbsent reports whether err is a definitive "this document does not
 // exist here" answer (404/410) rather than a transient failure.
 func metadataAbsent(err error) bool {
-	var httpErr *metadataHTTPError
-	return errors.As(err, &httpErr) && (httpErr.Status == http.StatusNotFound || httpErr.Status == http.StatusGone)
+	httpErr, ok := errors.AsType[*metadataHTTPError](err)
+	return ok && (httpErr.Status == http.StatusNotFound || httpErr.Status == http.StatusGone)
 }
 
 // transientMetadataFailure reports whether err is an upstream 5xx worth
@@ -546,8 +546,8 @@ func metadataAbsent(err error) bool {
 // does not publish protected-resource metadata still reaches the
 // authorization-server walk.
 func transientMetadataFailure(err error) bool {
-	var httpErr *metadataHTTPError
-	return errors.As(err, &httpErr) && httpErr.Status >= http.StatusInternalServerError
+	httpErr, ok := errors.AsType[*metadataHTTPError](err)
+	return ok && httpErr.Status >= http.StatusInternalServerError
 }
 
 // --- guarded fetch ---
@@ -689,8 +689,7 @@ func (d *discovery) fetchAuthMetadata(ctx context.Context, candidates []string) 
 // aggregate failure message: the HTTP status when there was one, otherwise a
 // short marker (network error, undecodable document, missing endpoints).
 func failureReason(err error) string {
-	var statusErr *metadataHTTPError
-	if errors.As(err, &statusErr) {
+	if statusErr, ok := errors.AsType[*metadataHTTPError](err); ok {
 		return fmt.Sprintf("%d", statusErr.Status)
 	}
 	return "error"
@@ -1012,8 +1011,8 @@ var requestShapeCodes = map[string]struct{}{
 // answers with a 4xx is a refusal of what was presented; a transport failure or a
 // 5xx leaves it intact.
 func IsCredentialRejection(err error) bool {
-	var rejection *Rejection
-	if !errors.As(err, &rejection) {
+	rejection, ok := errors.AsType[*Rejection](err)
+	if !ok {
 		return false
 	}
 	if rejection.StatusCode < 400 || rejection.StatusCode >= 500 {

@@ -159,8 +159,8 @@ func TestApplyMergeConflict(t *testing.T) {
 
 		_, err := svc.Apply(ctx, bp.ID, projectID, uuid.NewString(), ApplyOptions{})
 		require.Error(t, err)
-		var apErr *apperror.Error
-		require.True(t, errors.As(err, &apErr))
+		apErr, ok := errors.AsType[*apperror.Error](err)
+		require.True(t, ok)
 		assert.Equal(t, apperror.ErrConflict.Code, apErr.Code)
 		assert.Equal(t, http.StatusConflict, apErr.HTTPStatus)
 		require.NotNil(t, apErr.Details)
@@ -271,8 +271,8 @@ func TestImportMergeConflict(t *testing.T) {
 			Apply: true,
 		})
 		require.Error(t, err)
-		var apErr *apperror.Error
-		require.True(t, errors.As(err, &apErr))
+		apErr, ok := errors.AsType[*apperror.Error](err)
+		require.True(t, ok)
 		assert.Equal(t, apperror.ErrConflict.Code, apErr.Code)
 
 		_, getErr := svc.repo.GetByNameVersion(ctx, projectID, name, "1.0.0")

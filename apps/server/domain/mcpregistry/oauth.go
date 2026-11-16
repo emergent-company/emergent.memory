@@ -212,8 +212,7 @@ func registerClient(ctx context.Context, registrationEndpoint, clientName, redir
 		Validate:             oauthValidateURL,
 	})
 	if err != nil {
-		var rejected *mcpauth.RegistrationRejected
-		if errors.As(err, &rejected) {
+		if rejected, ok := errors.AsType[*mcpauth.RegistrationRejected](err); ok {
 			return nil, &oauthRegistrationRejected{Status: rejected.Status, Excerpt: rejected.Excerpt}
 		}
 		if errors.Is(err, mcpauth.ErrNoRegistrationEndpoint) ||

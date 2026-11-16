@@ -75,8 +75,8 @@ func newAuthzCtx(t *testing.T, method, target string, body []byte, user *auth.Au
 func assertForbidden(t *testing.T, err error) {
 	t.Helper()
 	require.Error(t, err)
-	var apErr *apperror.Error
-	require.True(t, errors.As(err, &apErr), "expected *apperror.Error, got %T: %v", err, err)
+	apErr, ok := errors.AsType[*apperror.Error](err)
+	require.True(t, ok, "expected *apperror.Error, got %T: %v", err, err)
 	assert.Equal(t, http.StatusForbidden, apErr.HTTPStatus, "status = %d, want 403", apErr.HTTPStatus)
 }
 

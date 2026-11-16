@@ -65,13 +65,6 @@ func (f *fakeParsingJobs) CreateJob(_ context.Context, opts ParsingJobOptions) e
 	return f.err
 }
 
-// --- Fake upload service ---
-
-type fakeUploadService struct {
-	result *UploadDocumentResponse
-	err    error
-}
-
 // We need to satisfy the *Service call in UploadHandler. Since svc is a *Service
 // (concrete type), we can't easily mock it without a real DB. Instead, for
 // handler tests that reach CreateFromUpload, we test them at a higher level
@@ -472,7 +465,6 @@ func TestUploadHandler_IngestorBuiltOnDemand(t *testing.T) {
 func assertHandlerStatus(t *testing.T, handlerErr error, rec *httptest.ResponseRecorder, wantCode int) {
 	t.Helper()
 	if handlerErr != nil {
-		type hasHTTPStatus interface{ GetHTTPStatus() int }
 		// apperror.Error exposes HTTPStatus field directly
 		if appErr, ok := handlerErr.(*apperror.Error); ok {
 			assert.Equal(t, wantCode, appErr.HTTPStatus)

@@ -81,8 +81,8 @@ func TestAgentMCPEndpointStoreCRUD(t *testing.T) {
 		AgentID:   agentID,
 	})
 	require.Error(t, dupErr)
-	var appErr *apperror.Error
-	require.True(t, errors.As(dupErr, &appErr))
+	appErr, ok := errors.AsType[*apperror.Error](dupErr)
+	require.True(t, ok)
 	assert.Equal(t, 409, appErr.HTTPStatus)
 
 	// Touch bumps updated_at.
@@ -170,8 +170,8 @@ func TestAgentMCPKeyStoreCRUD(t *testing.T) {
 		Label:      strings.ToUpper(key.Label),
 	})
 	require.Error(t, dupErr)
-	var appErr *apperror.Error
-	require.True(t, errors.As(dupErr, &appErr))
+	appErr, ok := errors.AsType[*apperror.Error](dupErr)
+	require.True(t, ok)
 	assert.Equal(t, 409, appErr.HTTPStatus)
 
 	// Rotation repoints token_id but keeps key.id.
@@ -379,8 +379,8 @@ func TestAgentMCPKeyStoreRejectsDuplicateTokenBinding(t *testing.T) {
 		ID: uuid.NewString(), EndpointID: ep2.ID, TokenID: tokenID, Label: "second-" + uuid.NewString(),
 	})
 	require.Error(t, dupErr)
-	var appErr *apperror.Error
-	require.True(t, errors.As(dupErr, &appErr))
+	appErr, ok := errors.AsType[*apperror.Error](dupErr)
+	require.True(t, ok)
 	assert.Equal(t, 409, appErr.HTTPStatus)
 	assert.Equal(t, "agent_mcp_key_token_exists", appErr.Code)
 }

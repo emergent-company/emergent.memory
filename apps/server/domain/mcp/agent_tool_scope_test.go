@@ -65,17 +65,6 @@ func agentToolDefs() []ToolDefinition {
 	return defs
 }
 
-func findToolByName(t *testing.T, tools []ToolDefinition, name string) *ToolDefinition {
-	t.Helper()
-	for i := range tools {
-		if tools[i].Name == name {
-			return &tools[i]
-		}
-	}
-	t.Fatalf("tool %q not found in catalog", name)
-	return nil
-}
-
 // TestAgentToolsRequireHTTPEquivalentScope asserts every agent tool resolves to
 // the scope its HTTP route enforces, and — critically — that this holds on BOTH
 // catalog paths: GetToolDefinitions (used by tools/list without a project) and

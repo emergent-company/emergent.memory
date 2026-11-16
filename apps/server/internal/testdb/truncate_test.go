@@ -254,8 +254,8 @@ func TestTruncateTablesFailsLoudlyWhenLockHolderNeverReleases(t *testing.T) {
 	if truncErr == nil {
 		t.Fatal("TruncateTables() = nil, want a loud failure while the lock holder never releases")
 	}
-	var pgErrOut *pgconn.PgError
-	if !errors.As(truncErr, &pgErrOut) || pgErrOut.Code != "55P03" {
+	pgErrOut, ok := errors.AsType[*pgconn.PgError](truncErr)
+	if !ok || pgErrOut.Code != "55P03" {
 		t.Fatalf("TruncateTables() = %v, want SQLSTATE 55P03 from lock_timeout", truncErr)
 	}
 	if !strings.Contains(truncErr.Error(), "(after 5 attempts)") {

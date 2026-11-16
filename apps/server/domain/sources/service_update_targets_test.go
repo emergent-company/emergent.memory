@@ -145,8 +145,8 @@ func TestUpdate_AllowsSettingsSaveBeforeTargetChosen(t *testing.T) {
 	if err == nil {
 		t.Fatal("Update(clear target) = nil, want a validation error")
 	}
-	var appErr *apperror.Error
-	if !errors.As(err, &appErr) {
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	if !ok {
 		t.Fatalf("Update(clear target) error type = %T, want *apperror.Error", err)
 	}
 	if !strings.Contains(appErr.Message, "folders") {

@@ -36,8 +36,8 @@ func TestExecuteCreateSchemaRejectsScalarItems(t *testing.T) {
 	})
 
 	require.Error(t, err, "schema-create must reject a bare scalar items declaration")
-	var appErr *apperror.Error
-	require.True(t, errors.As(err, &appErr), "expected a 400-shaped apperror, got %T", err)
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	require.True(t, ok, "expected a 400-shaped apperror, got %T", err)
 	assert.Equal(t, http.StatusBadRequest, appErr.HTTPStatus)
 	for _, want := range []string{
 		`objectTypeSchemas[0] ("UIPattern")`,
@@ -87,8 +87,8 @@ func TestExecuteCreateSchemaRejectsEmptyObjectTypes(t *testing.T) {
 	})
 
 	require.Error(t, err)
-	var appErr *apperror.Error
-	require.True(t, errors.As(err, &appErr), "expected a 400-shaped apperror, got %T", err)
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	require.True(t, ok, "expected a 400-shaped apperror, got %T", err)
 	assert.Equal(t, http.StatusBadRequest, appErr.HTTPStatus)
 	assert.Contains(t, appErr.Message, "object_type_schemas is required")
 }

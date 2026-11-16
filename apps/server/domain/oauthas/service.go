@@ -651,8 +651,8 @@ func (s *Service) mintToken(ctx context.Context, projectID, userID, clientName s
 	// apitoken enforces uniqueness on (user_id, name) for active tokens. A user
 	// may authorize the same client more than once (e.g. two projects), so fall
 	// back to a suffixed display name instead of failing the exchange.
-	var appErr *apperror.Error
-	if errors.As(err, &appErr) && appErr.Code == "token_name_exists" {
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	if ok && appErr.Code == "token_name_exists" {
 		suffix, suffixErr := randomString(6)
 		if suffixErr == nil {
 			if token, retryErr := s.tokens.Create(ctx, projectID, userID, name+" ("+suffix+")", scopes); retryErr == nil {
@@ -675,8 +675,7 @@ func (s *Service) revokeAPIToken(ctx context.Context, tokenID, projectID, userID
 	if err == nil {
 		return nil
 	}
-	var appErr *apperror.Error
-	if errors.As(err, &appErr) {
+	if appErr, ok := errors.AsType[*apperror.Error](err); ok {
 		if appErr.Code == "token_already_revoked" || appErr.HTTPStatus == 404 {
 			return nil
 		}

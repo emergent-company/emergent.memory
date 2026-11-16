@@ -93,8 +93,8 @@ func (s *RequiredConfigSuite) TestUpdateServerEnableGateBlankRequired() {
 		Enabled: &enable,
 	})
 	s.Require().Error(err)
-	var missing *mcpregistry.ErrRequiredConfigMissing
-	s.Require().True(errors.As(err, &missing), "expected *ErrRequiredConfigMissing, got %T: %v", err, err)
+	missing, ok := errors.AsType[*mcpregistry.ErrRequiredConfigMissing](err)
+	s.Require().True(ok, "expected *ErrRequiredConfigMissing, got %T: %v", err, err)
 	s.Require().ElementsMatch([]string{"Authorization"}, missing.Keys)
 }
 

@@ -81,8 +81,8 @@ func seedProject(t *testing.T, db bun.IDB) (orgID, projectID string) {
 func assertAppErrorCode(t *testing.T, err error, code string) {
 	t.Helper()
 	require.Error(t, err)
-	var appErr *apperror.Error
-	require.True(t, errors.As(err, &appErr), "expected *apperror.Error, got %T: %v", err, err)
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	require.True(t, ok, "expected *apperror.Error, got %T: %v", err, err)
 	assert.Equal(t, code, appErr.Code)
 }
 

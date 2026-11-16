@@ -1586,8 +1586,7 @@ func mcpEndpointURL(baseURL string) string {
 // isTokenAlreadyRevoked reports whether an apitoken failure is the
 // "already revoked" conflict (treated as success for idempotency).
 func isTokenAlreadyRevoked(err error) bool {
-	var appErr *apperror.Error
-	if errors.As(err, &appErr) {
+	if appErr, ok := errors.AsType[*apperror.Error](err); ok {
 		return appErr.Code == "token_already_revoked" || appErr.HTTPStatus == 404
 	}
 	return false
