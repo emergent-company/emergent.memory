@@ -286,7 +286,7 @@ func (s *Service) Create(ctx context.Context, req CreateProjectRequest, userID s
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // no-op after a successful commit
 
 	// Check org exists with pessimistic lock
 	orgExists, err := s.repo.CheckOrgExistsWithLock(ctx, tx.Tx, req.OrgID)

@@ -148,10 +148,12 @@ func HTTPErrorHandler(log *slog.Logger) echo.HTTPErrorHandler {
 		}
 
 		// Send error response
+		// This is the error path's own write: there is no handler left to report a
+		// failure to, and the status is already committed by this point.
 		if c.Request().Method == http.MethodHead {
-			c.NoContent(code)
+			_ = c.NoContent(code)
 		} else {
-			c.JSON(code, response)
+			_ = c.JSON(code, response)
 		}
 	}
 }

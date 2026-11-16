@@ -48,6 +48,9 @@ pre-commit:
       glob: "**/handler*.go"
       exclude:
         - "**/*_test.go"
+        # The apperror handler is the error-body writer, not a route file: it
+        # registers no routes, so it cannot carry a @Router annotation.
+        - "**/pkg/apperror/handler.go"
       run: |
         fail=0
         for file in {staged_files}; do

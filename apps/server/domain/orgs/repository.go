@@ -130,7 +130,7 @@ func (r *Repository) Create(ctx context.Context, name string, userID string) (*O
 		r.log.Error("failed to begin transaction", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // no-op after a successful commit
 
 	// Create the organization
 	org := &Org{Name: name}
@@ -182,7 +182,7 @@ func (r *Repository) Delete(ctx context.Context, id string) (bool, error) {
 		r.log.Error("failed to begin transaction", logger.Error(err))
 		return false, apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // no-op after a successful commit
 
 	_, err = tx.NewDelete().
 		Model((*OrganizationMembership)(nil)).

@@ -338,7 +338,9 @@ func (l *ExtractionTraceLogger) LogEvent(eventType string, author string, conten
 // writeLine writes a line to the log file.
 func (l *ExtractionTraceLogger) writeLine(line string) {
 	if l.file != nil {
-		l.file.WriteString(line + "\n")
+		// Diagnostic trace output: a write failure (full disk, closed file) must
+		// not fail the extraction it is recording.
+		_, _ = l.file.WriteString(line + "\n")
 	}
 }
 

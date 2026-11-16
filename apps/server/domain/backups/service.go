@@ -88,8 +88,13 @@ func (s *Service) CreateBackup(ctx context.Context, req CreateBackupRequest) (*B
 		slog.String("project_id", req.ProjectID),
 	)
 
-	// Start backup creation asynchronously
-	go s.executeBackup(context.Background(), backupID, req)
+	// Start backup creation asynchronously, detached from this request (a
+	// disconnect must not abort a half-written archive) but still bounded.
+	jobCtx, cancelJob := detachedJobContext(ctx)
+	go func() {
+		defer cancelJob()
+		s.executeBackup(jobCtx, backupID, req)
+	}()
 
 	return backup, nil
 }
@@ -336,10 +341,38 @@ func (s *Service) CreateRestore(ctx context.Context, req RestoreRequest) (*Resto
 	)
 
 	// Run on its own copy so the caller's snapshot is not mutated concurrently.
+	// The job outlives this request — a client disconnect must not abort a
+	// restore that has already been recorded as pending — so it runs on a
+	// detached, bounded context, and its error is logged: Restore records the
+	// failed status itself, but a discarded error left the failure invisible in
+	// the server log.
 	dispatch := *job
-	go s.restorer.Restore(context.Background(), &dispatch, req)
+	jobCtx, cancelJob := detachedJobContext(ctx)
+	go func() {
+		defer cancelJob()
+		if err := s.restorer.Restore(jobCtx, &dispatch, req); err != nil {
+			s.log.Error("background restore failed",
+				slog.String("restore_id", dispatch.ID),
+				slog.String("backup_id", req.BackupID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}()
 
 	return job, nil
+}
+
+// backgroundJobTimeout bounds a detached backup/restore job. The job must
+// outlive the request that queued it, so it cannot inherit the request's
+// cancellation; the bound exists so a wedged object-store transfer eventually
+// dies instead of pinning a goroutine and a pool connection forever.
+const backgroundJobTimeout = 6 * time.Hour
+
+// detachedJobContext returns the context a background backup/restore job runs
+// on: request values (tracing, correlation) are kept, cancellation is dropped
+// so a client disconnect cannot abort it, and the whole job is time-bounded.
+func detachedJobContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), backgroundJobTimeout)
 }
 
 // GetRestore retrieves a restore job by ID.

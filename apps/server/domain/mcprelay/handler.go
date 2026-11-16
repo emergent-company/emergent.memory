@@ -59,7 +59,8 @@ func (h *Handler) Connect(c echo.Context) error {
 	defer conn.Close()
 
 	// First frame must be register.
-	conn.SetReadDeadline(time.Now().Add(idleTimeout))
+	// A deadline that cannot be set surfaces as the ReadMessage error below.
+	_ = conn.SetReadDeadline(time.Now().Add(idleTimeout))
 	_, msg, err := conn.ReadMessage()
 	if err != nil {
 		return nil
@@ -67,11 +68,12 @@ func (h *Handler) Connect(c echo.Context) error {
 
 	var reg RegisterFrame
 	if jsonErr := json.Unmarshal(msg, &reg); jsonErr != nil || reg.Type != FrameRegister {
-		conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"error","message":"first frame must be register"}`))
+		// Best-effort refusal: the connection is dropped either way.
+		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"error","message":"first frame must be register"}`))
 		return nil
 	}
 	if reg.InstanceID == "" {
-		conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"error","message":"instance_id required"}`))
+		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"error","message":"instance_id required"}`)) // best-effort refusal: the connection is dropped either way
 		return nil
 	}
 
@@ -106,9 +108,11 @@ func (h *Handler) Connect(c echo.Context) error {
 		pingPeriod = 45 * time.Second // server sends pings at this interval
 	)
 
-	conn.SetReadDeadline(time.Now().Add(pongWait))
+	// Deadlines that cannot be set surface as the read loop's error, which ends
+	// the session; there is nothing to recover per call.
+	_ = conn.SetReadDeadline(time.Now().Add(pongWait))
 	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(pongWait))
+		_ = conn.SetReadDeadline(time.Now().Add(pongWait))
 		return nil
 	})
 
@@ -146,7 +150,11 @@ func (h *Handler) Connect(c echo.Context) error {
 		switch base.Type {
 		case FramePing:
 			pong, _ := json.Marshal(PingFrame{Type: FramePong})
-			sess.writeMessage(websocket.TextMessage, pong)
+			if err := sess.writeMessage(websocket.TextMessage, pong); err != nil {
+				// The write failed, so the peer is gone: stop reading and let the
+				// deferred Unregister close the session.
+				return nil
+			}
 
 		case FrameRegister:
 			var reg RegisterFrame
