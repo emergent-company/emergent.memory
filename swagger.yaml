@@ -1437,6 +1437,14 @@ definitions:
           it. nil (unset) = true = ignore. Explicit false allows self-triggering.
           Only consulted when IgnoreAgentTriggered is explicitly false.
         type: boolean
+      match:
+        description: |-
+          Match carries value predicates evaluated against the current object
+          properties. It is distinct from Properties, which filters the changed
+          property paths of an updated event.
+        items:
+          $ref: '#/definitions/domain_agents.ReactionPropertyMatch'
+        type: array
       objectTypes:
         items:
           type: string
@@ -1451,6 +1459,11 @@ definitions:
         items:
           type: string
         type: array
+      reviewer:
+        description: |-
+          Reviewer marks an object-driven review lane. The review gate requires every
+          enabled reviewer whose Match predicates accept the subject.
+        type: boolean
     type: object
   domain_agents.ReactionEventType:
     enum:
@@ -1466,6 +1479,14 @@ definitions:
     - EventTypeDeleted
     - EventTypeStatusChanged
     - EventTypeAssigned
+  domain_agents.ReactionPropertyMatch:
+    properties:
+      operator:
+        type: string
+      path:
+        type: string
+      value: {}
+    type: object
   domain_agents.ReassignWorkItemDTO:
     properties:
       assignee:
@@ -1709,11 +1730,24 @@ definitions:
         type: string
       latestRunStatus:
         type: string
+      name:
+        description: |-
+          Name is the HEAD's first-class human title (the `name` column), empty when
+          the object has none. Ref is the display-only "#<12 hex>" identity.
+        type: string
       needsReview:
         type: boolean
       nextRunAt:
         type: string
       projectId:
+        type: string
+      properties:
+        additionalProperties: {}
+        description: |-
+          Properties is the HEAD's property bag, so a card can render the same
+          excerpt the objects page renders without a second fetch.
+        type: object
+      ref:
         type: string
       runCount:
         type: integer
@@ -4459,6 +4493,9 @@ definitions:
           type: string
         maxItems: 32
         type: array
+      name:
+        maxLength: 512
+        type: string
       properties:
         additionalProperties: {}
         type: object
@@ -6940,14 +6977,14 @@ definitions:
     type: object
   domain_mcpregistry.MCPServerTarget:
     enum:
+    - auto
     - server
     - device
-    - auto
     type: string
     x-enum-varnames:
+    - importTargetAuto
     - TargetServer
     - TargetDevice
-    - importTargetAuto
   domain_mcpregistry.MCPServerToolDTO:
     properties:
       config:
@@ -10031,6 +10068,12 @@ definitions:
         type: array
       repository_url:
         type: string
+      source:
+        description: |-
+          Source names what created the pack: "manual" when empty, "provider:<type>"
+          for a source-provider pack, and whatever a blueprint/registry writer sets.
+          It is registry metadata, not a value the API client controls.
+        type: string
       ui_configs:
         description: |-
           UIConfigs is a JSON object keyed by object type name, each value a UI
@@ -10841,6 +10884,11 @@ definitions:
         type: array
       repository_url:
         type: string
+      source:
+        description: |-
+          Source, when set, rewrites the pack's provenance token (e.g. a provider
+          reconciling a pack it owns).
+        type: string
       ui_configs:
         description: |-
           UIConfigs is a JSON object keyed by object type name (type name → UI
@@ -11129,6 +11177,8 @@ definitions:
           type: string
         type: array
       mode:
+        type: string
+      name:
         type: string
       object_id:
         description: Graph-specific fields
@@ -11730,6 +11780,15 @@ definitions:
       iconUrl:
         type: string
       name:
+        type: string
+      schemaPack:
+        description: |-
+          SchemaPack names the object-type pack this provider installs on connect
+          (e.g. "github-app-workflow"), with its code-declared version. Lets a
+          client map a pack back to the provider — and its installed sources —
+          without hardcoding the pack name.
+        type: string
+      schemaPackVersion:
         type: string
       selfRegistering:
         description: |-
@@ -13213,7 +13272,7 @@ info:
     name: MIT
     url: https://opensource.org/licenses/MIT
   title: Memory API
-  version: 0.100.3
+  version: 0.101.0
 paths:
   /.well-known/oauth-authorization-server:
     get:
@@ -25024,8 +25083,11 @@ paths:
       - api-tokens
   /api/projects/{projectId}/work-items:
     get:
-      description: Returns the Kanban projection of board-enabled work items (object
-        HEAD joined to latest run), filterable by status and type
+      description: 'Returns the Kanban projection of board-enabled work items (object
+        HEAD joined to latest run), filterable by status and type. Property bags are
+        only included on request (`include=properties`): a board page renders a card
+        excerpt from them, while a caller that only needs identities (a run→item join
+        over 1000 items) should not pay for the full text.'
       parameters:
       - description: Project ID
         in: path
@@ -25044,6 +25106,11 @@ paths:
         in: query
         name: limit
         type: integer
+      - description: Comma-separated extras; the only supported value is `properties`
+          (the HEAD property bag, for a card excerpt)
+        in: query
+        name: include
+        type: string
       produces:
       - application/json
       responses:
@@ -32056,6 +32123,10 @@ paths:
           description: Swagger spec file
           schema:
             type: file
+        "403":
+          description: Access denied (directory traversal attempt)
+          schema:
+            type: string
         "404":
           description: File not found
           schema:

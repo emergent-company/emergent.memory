@@ -16,7 +16,7 @@
             "name": "MIT",
             "url": "https://opensource.org/licenses/MIT"
         },
-        "version": "0.100.3"
+        "version": "0.101.0"
     },
     "basePath": "/",
     "paths": {
@@ -17913,7 +17913,7 @@
                         "bearerAuth": []
                     }
                 ],
-                "description": "Returns the Kanban projection of board-enabled work items (object HEAD joined to latest run), filterable by status and type",
+                "description": "Returns the Kanban projection of board-enabled work items (object HEAD joined to latest run), filterable by status and type. Property bags are only included on request (`include=properties`): a board page renders a card excerpt from them, while a caller that only needs identities (a run→item join over 1000 items) should not pay for the full text.",
                 "produces": [
                     "application/json"
                 ],
@@ -17945,6 +17945,12 @@
                         "type": "integer",
                         "description": "Max items (default 200, max 1000)",
                         "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated extras; the only supported value is `properties` (the HEAD property bag, for a card excerpt)",
+                        "name": "include",
                         "in": "query"
                     }
                 ],
@@ -28589,6 +28595,12 @@
                             "type": "file"
                         }
                     },
+                    "403": {
+                        "description": "Access denied (directory traversal attempt)",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
                     "404": {
                         "description": "File not found",
                         "schema": {
@@ -32004,6 +32016,13 @@
                     "description": "IgnoreSelfTriggered controls whether this agent's own runs may re-trigger\nit. nil (unset) = true = ignore. Explicit false allows self-triggering.\nOnly consulted when IgnoreAgentTriggered is explicitly false.",
                     "type": "boolean"
                 },
+                "match": {
+                    "description": "Match carries value predicates evaluated against the current object\nproperties. It is distinct from Properties, which filters the changed\nproperty paths of an updated event.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_agents.ReactionPropertyMatch"
+                    }
+                },
                 "objectTypes": {
                     "type": "array",
                     "items": {
@@ -32016,6 +32035,10 @@
                     "items": {
                         "type": "string"
                     }
+                },
+                "reviewer": {
+                    "description": "Reviewer marks an object-driven review lane. The review gate requires every\nenabled reviewer whose Match predicates accept the subject.",
+                    "type": "boolean"
                 }
             }
         },
@@ -32035,6 +32058,18 @@
                 "EventTypeStatusChanged",
                 "EventTypeAssigned"
             ]
+        },
+        "domain_agents.ReactionPropertyMatch": {
+            "type": "object",
+            "properties": {
+                "operator": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "value": {}
+            }
         },
         "domain_agents.ReassignWorkItemDTO": {
             "type": "object",
@@ -32368,6 +32403,10 @@
                 "latestRunStatus": {
                     "type": "string"
                 },
+                "name": {
+                    "description": "Name is the HEAD's first-class human title (the `name` column), empty when\nthe object has none. Ref is the display-only \"#\u003c12 hex\u003e\" identity.",
+                    "type": "string"
+                },
                 "needsReview": {
                     "type": "boolean"
                 },
@@ -32375,6 +32414,14 @@
                     "type": "string"
                 },
                 "projectId": {
+                    "type": "string"
+                },
+                "properties": {
+                    "description": "Properties is the HEAD's property bag, so a card can render the same\nexcerpt the objects page renders without a second fetch.",
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "ref": {
                     "type": "string"
                 },
                 "runCount": {
@@ -36236,6 +36283,10 @@
                         "type": "string"
                     }
                 },
+                "name": {
+                    "type": "string",
+                    "maxLength": 512
+                },
                 "properties": {
                     "type": "object",
                     "additionalProperties": {}
@@ -39697,14 +39748,14 @@
         "domain_mcpregistry.MCPServerTarget": {
             "type": "string",
             "enum": [
+                "auto",
                 "server",
-                "device",
-                "auto"
+                "device"
             ],
             "x-enum-varnames": [
+                "importTargetAuto",
                 "TargetServer",
-                "TargetDevice",
-                "importTargetAuto"
+                "TargetDevice"
             ]
         },
         "domain_mcpregistry.MCPServerToolDTO": {
@@ -43905,6 +43956,10 @@
                 "repository_url": {
                     "type": "string"
                 },
+                "source": {
+                    "description": "Source names what created the pack: \"manual\" when empty, \"provider:\u003ctype\u003e\"\nfor a source-provider pack, and whatever a blueprint/registry writer sets.\nIt is registry metadata, not a value the API client controls.",
+                    "type": "string"
+                },
                 "uiConfigs": {
                     "type": "object"
                 },
@@ -44976,6 +45031,10 @@
                 "repository_url": {
                     "type": "string"
                 },
+                "source": {
+                    "description": "Source, when set, rewrites the pack's provenance token (e.g. a provider\nreconciling a pack it owns).",
+                    "type": "string"
+                },
                 "ui_configs": {
                     "description": "UIConfigs is a JSON object keyed by object type name (type name → UI\nconfig); an array is not a supported shape.",
                     "type": "object"
@@ -45375,6 +45434,9 @@
                     }
                 },
                 "mode": {
+                    "type": "string"
+                },
+                "name": {
                     "type": "string"
                 },
                 "object_id": {
@@ -46210,6 +46272,13 @@
                     "type": "string"
                 },
                 "name": {
+                    "type": "string"
+                },
+                "schemaPack": {
+                    "description": "SchemaPack names the object-type pack this provider installs on connect\n(e.g. \"github-app-workflow\"), with its code-declared version. Lets a\nclient map a pack back to the provider — and its installed sources —\nwithout hardcoding the pack name.",
+                    "type": "string"
+                },
+                "schemaPackVersion": {
                     "type": "string"
                 },
                 "selfRegistering": {
