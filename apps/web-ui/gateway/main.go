@@ -818,9 +818,12 @@ func main() {
 	e.GET("/usage", s.uiUsage)
 	// The per-run cost log behind the usage dashboard's agent figures.
 	e.GET("/usage/sessions", s.uiUsageSessions)
-	// Kanban board (object-driven work): columns + card drawer + human actions.
+	// Work (object-driven work): the board, its live stream and its settings.
+	// /board is the retired board's URL, kept as a redirect for bookmarks.
 	e.GET("/board", s.uiBoardRedirect)
 	e.GET("/work", s.uiWork)
+	e.GET("/work/board/partial", s.uiWorkBoardPartial)
+	e.GET("/work/board/stream", s.workBoardStream)
 	e.GET("/work/:section", s.uiWorkSection)
 	e.GET("/work/settings/rules/new", s.uiWorkRuleNew)
 	e.GET("/work/settings/rules/edit", s.uiWorkRuleEdit)
@@ -829,16 +832,11 @@ func main() {
 	e.POST("/work/settings/agents/:id", s.uiWorkAgentDefaults)
 	e.POST("/work/items/:canonicalId/status", s.uiWorkSetStatus)
 	e.POST("/work/items/:canonicalId/unblock", s.uiWorkUnblock)
-	e.GET("/board/partial", s.uiBoardPartial)
-	e.GET("/board/stream", s.boardStream)
-	e.GET("/board/items/:canonicalId", s.uiBoardItem)
-	e.POST("/board/items/:canonicalId/approve", s.uiBoardApprove)
-	e.POST("/board/items/:canonicalId/request-changes", s.uiBoardRequestChanges)
-	e.POST("/board/items/:canonicalId/comments", s.uiBoardComment)
-	e.POST("/board/items/:canonicalId/retry", s.uiBoardRetry)
-	e.POST("/board/items/:canonicalId/reassign", s.uiBoardReassign)
-	e.POST("/board/items/:canonicalId/status", s.uiBoardSetStatus)
-	e.POST("/board/items/:canonicalId/cancel", s.uiBoardCancel)
+	e.POST("/work/items/:canonicalId/approve", s.uiWorkApprove)
+	e.POST("/work/items/:canonicalId/request-changes", s.uiWorkRequestChanges)
+	e.POST("/work/items/:canonicalId/comments", s.uiWorkComment)
+	e.POST("/work/items/:canonicalId/retry", s.uiWorkRetry)
+	e.POST("/work/items/:canonicalId/cancel", s.uiWorkCancel)
 
 	// Inbox page + project-event notification preferences (inbox subsystem).
 	// /partial/inbox-list is the server-rendered fragment the page's JS swaps in
