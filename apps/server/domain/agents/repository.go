@@ -2309,6 +2309,41 @@ func (r *Repository) CancelRunIfPaused(ctx context.Context, runID string) (bool,
 	return n > 0, nil
 }
 
+// ClaimPausedRunForResume atomically consumes a paused run's pause, so two
+// concurrent follow-ups to the same pause cannot both resume it. It applies the
+// same terminal transition MarkRunResumed finalizes the checkpoint with, but
+// BEFORE the resumed child run exists and with the row count as the verdict,
+// which is the only thing that serialises the two:
+//
+//	handler A  SELECT … status=input-required …  ─┐ both see "paused"
+//	handler B  SELECT … status=input-required …  ─┘
+//	handler A  UPDATE … WHERE status=input-required   → 1 row, wins
+//	handler B  UPDATE … WHERE status=input-required   → 0 rows, rejected
+//
+// Without it a questionless pause had no claim at all: executor.Resume reads the
+// in-memory status and MarkRunResumed runs only after the child insert, so both
+// followers created a child run and executed the same turn twice (issue #867
+// follow-up). A pause that does carry a pending question is already serialised by
+// AnswerQuestion's claim on the question row; this is that claim's counterpart.
+//
+// A claim that later loses its child to a hard failure leaves the checkpoint
+// successful, so the retry is rejected instead of running twice — the same
+// consume-then-run trade the question claim makes.
+func (r *Repository) ClaimPausedRunForResume(ctx context.Context, runID string) (bool, error) {
+	res, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusSuccess).
+		Set("completed_at = NOW()").
+		Where("id = ?", runID).
+		Where("status = ?", RunStatusPaused).
+		Exec(ctx)
+	if err != nil {
+		return false, fmt.Errorf("ClaimPausedRunForResume: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // MarkRunResumed finalizes the paused checkpoint run once a new resumed run has
 // been created. The checkpoint must reach a terminal state: this used to flip it
 // to `running` and clear completed_at, and nothing ever finalized it, so every

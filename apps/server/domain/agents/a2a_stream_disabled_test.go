@@ -115,10 +115,11 @@ func TestStreamNewTask_DisabledDoesNotCreateRun(t *testing.T) {
 // =============================================================================
 
 type a2aResumeDriver struct {
-	mu           sync.Mutex
-	queries      []string
-	noQuestions  bool
-	questionsErr bool
+	mu              sync.Mutex
+	queries         []string
+	noQuestions     bool
+	questionsErr    bool
+	denyResumeClaim bool
 }
 
 func (d *a2aResumeDriver) reset() {
@@ -126,7 +127,26 @@ func (d *a2aResumeDriver) reset() {
 	d.queries = nil
 	d.noQuestions = false
 	d.questionsErr = false
+	d.denyResumeClaim = false
 	d.mu.Unlock()
+}
+
+// setClaimDenied makes the resume claim lose its row, the shape a second follower
+// of the same pause sees when another request already claimed it.
+func (d *a2aResumeDriver) setClaimDenied(denied bool) {
+	d.mu.Lock()
+	d.denyResumeClaim = denied
+	d.mu.Unlock()
+}
+
+// claimDenied reports whether the given statement is the resume claim and the
+// test configured it to lose.
+func (d *a2aResumeDriver) claimDenied(q string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.denyResumeClaim &&
+		strings.Contains(q, `SET status = 'completed'`) &&
+		strings.Contains(q, "completed_at = NOW()")
 }
 
 // setQuestionsMissing makes the pending-question query return no rows: the shape
@@ -179,6 +199,9 @@ func (*a2aResumeConn) Begin() (driver.Tx, error) { return nil, io.EOF }
 
 func (c *a2aResumeConn) ExecContext(_ context.Context, q string, _ []driver.NamedValue) (driver.Result, error) {
 	c.d.record(q)
+	if c.d.claimDenied(q) {
+		return driver.RowsAffected(0), nil
+	}
 	return driver.RowsAffected(1), nil
 }
 

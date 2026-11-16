@@ -795,6 +795,18 @@ func (h *A2AHandler) resumeA2ATask(c echo.Context, projectID, userID, userMessag
 		if !claimed {
 			return writeA2AError(c, a2aInvalidStateError("question is no longer pending"))
 		}
+	} else {
+		// The questionless continuation has no question row to claim, so claim the
+		// pause itself: two followers (a client retry, a double submit) would
+		// otherwise both create a resumed child run and execute the turn twice.
+		claimed, err := h.repo.ClaimPausedRunForResume(ctx, latest.ID)
+		if err != nil {
+			h.log.Error("failed to claim paused run", "task_id", taskID, "error", err)
+			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to claim paused run"))
+		}
+		if !claimed {
+			return writeA2AError(c, a2aInvalidStateError("task is no longer awaiting input (already resumed)"))
+		}
 	}
 
 	resumeMsg := a2aResumeMessage(question, userMessage)

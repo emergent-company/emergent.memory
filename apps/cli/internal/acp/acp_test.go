@@ -1977,8 +1977,9 @@ func TestPromptStreamsToolCalls(t *testing.T) {
 	if got := start["title"]; got != "workspace_bash" {
 		t.Errorf("title = %v, want workspace_bash", got)
 	}
-	if got := start["name"]; got != "workspace_bash" {
-		t.Errorf("name = %v, want workspace_bash", got)
+	if got, ok := start["name"]; ok {
+		t.Errorf("name = %v, want absent: ACP's tool_call carries title, and a non-standard "+
+			"member costs a client a schema surprise", got)
 	}
 	if got := start["kind"]; got != "execute" {
 		t.Errorf("kind = %v, want execute", got)
@@ -2091,6 +2092,13 @@ func TestToolKind(t *testing.T) {
 		"session-todo-list": "other",
 		"ask_user":          "other",
 		"":                  "other",
+		// Keyword fallback: the specific verbs must win over the "run_"/"git"
+		// substrings, or a read tool is rendered as a shell command.
+		"run_read":    "read",
+		"run_edit":    "edit",
+		"run_search":  "search",
+		"custom_bash": "execute",
+		"custom_git":  "execute",
 	}
 	for name, want := range cases {
 		if got := toolKind(name); got != want {
@@ -2195,10 +2203,109 @@ func TestCancelMidStreamCancelsMemoryTask(t *testing.T) {
 	}
 }
 
-// TestCancelAfterInputRequiredDoesNotCancelPausedTask guards the other half of
-// #868: once the stream reports INPUT_REQUIRED the run has stopped, so a cancel
-// racing the stream teardown must NOT call CancelTask. Cancelling a paused task
-// parks it in "cancelling" and strands the resume the user is about to send.
+// TestConsumeStream_TaskIDClearedOnPause is the positive assertion for the
+// "do not cancel a paused task" guard: it drives consumeStream itself and
+// requires the tracker to report the task id while the turn runs and "" as soon
+// as INPUT_REQUIRED arrives — while the stream is still open, so the clear cannot
+// be confused with the end-of-stream cleanup. Without it the paused task id stays
+// tracked, and a session/cancel racing the stream teardown parks the task in
+// "cancelling" and strands the resume (issue #868 against #867).
+//
+// Asserting on the tracker at the pause, not on a 300 ms silence at the end of the
+// turn, is what makes this bite: removing the clearTask in the INPUT_REQUIRED
+// branch leaves the tracker silent after "task-1" and the test fails regardless of
+// scheduling.
+func TestConsumeStream_TaskIDClearedOnPause(t *testing.T) {
+	release := make(chan struct{})
+	paused := make(chan struct{})
+
+	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		writeSSEEvents(w, []a2a.StreamResponse{
+			{Task: &a2a.Task{ID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateSubmitted}}},
+			{StatusUpdate: &a2a.TaskStatusUpdateEvent{TaskID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateWorking}}},
+			{StatusUpdate: &a2a.TaskStatusUpdateEvent{TaskID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{
+				State:   a2a.TaskStateInputRequired,
+				Message: &a2a.Message{Role: a2a.RoleAgent, Parts: []a2a.Part{a2a.TextPart("Go on?")}},
+			}}},
+		})
+		close(paused)
+		// Hold the stream open: the test observes the tracker while it is still
+		// live, so an end-of-stream cleanup cannot masquerade as the pause guard.
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	})
+
+	stream, err := agent.client.StreamMessage(context.Background(), a2a.SendMessageRequest{
+		Message: a2a.Message{MessageID: "msg-1", Role: a2a.RoleUser, Parts: []a2a.Part{a2a.TextPart("hi")}},
+	})
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	tracked := make(chan string, 8)
+	type result struct {
+		pending string
+		err     error
+	}
+	consumed := make(chan result, 1)
+	go func() {
+		emitter := &sessionEmitter{sid: "s1", send: func(any) error { return nil }}
+		_, pending, _, err := agent.consumeStream(context.Background(), stream, emitter, func(id string) {
+			tracked <- id
+		})
+		consumed <- result{pending: pending, err: err}
+	}()
+
+	<-paused
+
+	next := func() (string, bool) {
+		select {
+		case id := <-tracked:
+			return id, true
+		case <-time.After(2 * time.Second):
+			return "", false
+		}
+	}
+
+	first, ok := next()
+	if !ok {
+		t.Fatal("the tracker was never told the task id: a cancel mid-turn would not reach the run")
+	}
+	if first != "task-1" {
+		t.Errorf("first tracked id = %q, want task-1: the running turn must be cancellable", first)
+	}
+	second, ok := next()
+	if !ok {
+		t.Fatal("the pause did not clear the tracked task id before the stream ended: " +
+			"a session/cancel would cancel the paused task and strand the resume")
+	}
+	if second != "" {
+		t.Errorf("tracked id at the pause = %q, want \"\": the paused run has stopped", second)
+	}
+
+	close(release)
+
+	var res result
+	select {
+	case res = <-consumed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("consumeStream did not return after the stream closed")
+	}
+	if res.err != nil {
+		t.Fatalf("consumeStream: %v", res.err)
+	}
+	if res.pending != "task-1" {
+		t.Errorf("pendingTaskID = %q, want task-1 (the resume target)", res.pending)
+	}
+}
+
+// TestCancelAfterInputRequiredDoesNotCancelPausedTask is the coarse end-to-end
+// companion: it runs the whole loop and requires no :cancel request to arrive
+// after the pause. It is secondary evidence — it depends on scheduling silence —
+// so the guard itself is pinned by TestConsumeStream_TaskIDClearedOnPause.
 func TestCancelAfterInputRequiredDoesNotCancelPausedTask(t *testing.T) {
 	paused := make(chan struct{})
 	remoteCancels := make(chan string, 4)

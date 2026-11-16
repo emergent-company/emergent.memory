@@ -783,7 +783,6 @@ func toolCallFrame(sessionID string, tc toolCall) any {
 		"sessionUpdate": "tool_call",
 		"toolCallId":    tc.ID,
 		"title":         tc.Name,
-		"name":          tc.Name,
 		"kind":          toolKind(tc.Name),
 		"status":        "pending",
 	}
@@ -827,23 +826,26 @@ var toolKinds = map[string]string{
 	"web-fetch":          "fetch",
 }
 
-// toolKind maps a Memory tool name onto an ACP ToolKind.
+// toolKind maps a Memory tool name onto an ACP ToolKind. The explicit table wins,
+// then a keyword match. The keyword order matters: the specific verbs are checked
+// before "run_"/"git", which are substrings of names like `run_read` and would
+// otherwise classify a read (or an edit) as shell execution.
 func toolKind(name string) string {
 	lower := strings.ToLower(name)
 	if kind, ok := toolKinds[lower]; ok {
 		return kind
 	}
 	switch {
-	case hasAny(lower, "bash", "shell", "exec", "command", "run_", "git"):
-		return "execute"
+	case hasAny(lower, "read", "cat", "view"):
+		return "read"
 	case hasAny(lower, "grep", "glob", "search", "find"):
 		return "search"
 	case hasAny(lower, "write", "edit", "patch", "replace"):
 		return "edit"
-	case hasAny(lower, "read", "cat", "view"):
-		return "read"
 	case hasAny(lower, "fetch", "download", "http"):
 		return "fetch"
+	case hasAny(lower, "bash", "shell", "exec", "command", "run_", "git"):
+		return "execute"
 	default:
 		return "other"
 	}

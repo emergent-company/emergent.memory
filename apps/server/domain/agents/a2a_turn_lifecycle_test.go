@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,8 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/emergent-company/emergent.memory/internal/config"
 )
 
 // =============================================================================
@@ -170,4 +173,125 @@ func TestCancellableWhileStreamingStatuses_ExcludesPaused(t *testing.T) {
 	assert.NotContains(t, statuses, string(RunStatusPaused))
 	assert.NotContains(t, statuses, string(RunStatusSuccess))
 	assert.NotContains(t, statuses, string(RunStatusError))
+}
+
+// TestStreamRun_TrackAfterAbortCancelsResumedChild covers the window the first
+// #868 fix missed: on a resume the tracked id is the paused checkpoint until the
+// executor creates the child run, so an abort that lands in between is refused by
+// the status list (paused is excluded on purpose) and, without a second chance,
+// the child executes the whole turn for a consumer that is gone.
+func TestStreamRun_TrackAfterAbortCancelsResumedChild(t *testing.T) {
+	rootDriver.reset()
+	repo := newRootCaptureRepository(t)
+	h := &A2AHandler{repo: repo, executor: disabledExecutor(), log: testAgentLogger()}
+
+	target := newA2AStreamTarget("paused-checkpoint")
+	assert.False(t, target.track("paused-checkpoint"),
+		"tracking an already-known id before any abort must not cancel")
+
+	abandoned := target.markAborted()
+	assert.Equal(t, "paused-checkpoint", abandoned,
+		"the abort at that moment can only name the paused checkpoint")
+
+	h.trackStreamRun(context.Background(), target, "child-1")
+
+	var cancelStmt string
+	for _, q := range rootDriver.queriesCopy() {
+		if strings.Contains(q, `SET status = 'cancelling'`) {
+			cancelStmt = q
+		}
+	}
+	require.NotEmpty(t, cancelStmt,
+		"a run id that arrives after the abort must be cancelled, got queries:\n%s",
+		strings.Join(rootDriver.queriesCopy(), "\n"))
+	assert.Contains(t, cancelStmt, "'child-1'",
+		"the late cancel must target the child run, not the paused checkpoint")
+}
+
+// resumeTestExecutor is an execution-enabled executor bound to repo, so a resume
+// that gets past the claim reaches executor.Resume instead of tripping the kill
+// switch (which is checked, deliberately, before any claim). With the fake driver
+// the resumed run insert yields no row, so Resume fails safely instead of
+// executing a pipeline.
+func resumeTestExecutor(repo *Repository) *AgentExecutor {
+	return &AgentExecutor{
+		repo:       repo,
+		safeguards: config.AgentSafeguardsConfig{ExecutionEnabled: true},
+		log:        testAgentLogger(),
+	}
+}
+
+// TestResumeClaim_SecondFollowerIsRejected pins that the questionless
+// continuation claims the pause, so two concurrent follow-ups cannot both create
+// a resumed child run and execute the turn twice. The second follower gets an
+// invalid-state answer and never reaches the executor.
+func TestResumeClaim_SecondFollowerIsRejected(t *testing.T) {
+	t.Run("stream", func(t *testing.T) {
+		repo, drv := newA2AResumeRepository(t)
+		drv.setQuestionsMissing(true)
+		drv.setClaimDenied(true)
+		h := &A2AHandler{repo: repo, executor: resumeTestExecutor(repo), log: testAgentLogger()}
+
+		c, rec := newStreamContext(http.MethodPost, "/message:stream")
+		err := h.streamResumeTask(c, "proj-1", "user-1", "keep going", "task-1", "")
+		require.NoError(t, err)
+
+		body := rec.Body.String()
+		assert.Contains(t, body, "already resumed",
+			"a follower that loses the pause claim must be told so")
+		for _, q := range drv.queriesCopy() {
+			assert.NotContains(t, q, `INSERT INTO "kb"."agent_runs"`,
+				"the losing follower must not create a resumed child run")
+		}
+	})
+
+	t.Run("json", func(t *testing.T) {
+		repo, drv := newA2AResumeRepository(t)
+		drv.setQuestionsMissing(true)
+		drv.setClaimDenied(true)
+		h := &A2AHandler{repo: repo, executor: resumeTestExecutor(repo), log: testAgentLogger()}
+
+		c, rec := newStreamContext(http.MethodPost, "/message:send")
+		err := h.resumeA2ATask(c, "proj-1", "user-1", "keep going", "task-1", "", nil)
+		require.NoError(t, err)
+
+		body := rec.Body.String()
+		assert.Contains(t, body, "already resumed")
+		for _, q := range drv.queriesCopy() {
+			assert.NotContains(t, q, `INSERT INTO "kb"."agent_runs"`)
+		}
+	})
+}
+
+// TestResumeClaim_QuestionlessContinuationClaimsThePause is the positive half:
+// the winner's claim is the conditional terminal transition on the paused row,
+// issued BEFORE the resumed run is created. MarkRunResumed emits the same
+// statement later (after the child exists, which is why it cannot serialise
+// anything), so the assertion is on the order, not on the statement's presence.
+func TestResumeClaim_QuestionlessContinuationClaimsThePause(t *testing.T) {
+	repo, drv := newA2AResumeRepository(t)
+	drv.setQuestionsMissing(true)
+	h := &A2AHandler{repo: repo, executor: resumeTestExecutor(repo), log: testAgentLogger()}
+
+	c, _ := newStreamContext(http.MethodPost, "/message:stream")
+	require.NoError(t, h.streamResumeTask(c, "proj-1", "user-1", "keep going", "task-1", ""))
+
+	claimIdx, insertIdx := -1, -1
+	for i, q := range drv.queriesCopy() {
+		if insertIdx < 0 && strings.Contains(q, `INSERT INTO "kb"."agent_runs"`) {
+			insertIdx = i
+		}
+		if claimIdx < 0 &&
+			strings.Contains(q, "SET status = 'completed'") &&
+			strings.Contains(q, "completed_at = NOW()") &&
+			strings.Contains(q, "status = '"+string(RunStatusPaused)+"'") {
+			claimIdx = i
+		}
+	}
+	require.NotEqual(t, -1, insertIdx, "the resumed run must be created")
+	require.NotEqual(t, -1, claimIdx,
+		"the continuation must claim the pause with a conditional terminal transition, got queries:\n%s",
+		strings.Join(drv.queriesCopy(), "\n"))
+	assert.Less(t, claimIdx, insertIdx,
+		"the claim must precede the resumed run insert — after it, two followers already both created a child")
 }

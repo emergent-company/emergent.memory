@@ -337,8 +337,9 @@ const abandonedStreamCancelReason = "Run cancelled: the A2A stream consumer disc
 // the paused checkpoint it resumes from is not what carries the work, so the id
 // is updated from ExecuteRequest.OnRunCreated.
 type a2aStreamTarget struct {
-	mu sync.Mutex
-	id string
+	mu      sync.Mutex
+	id      string
+	aborted bool
 }
 
 // newA2AStreamTarget tracks runID as the executing run.
@@ -346,21 +347,31 @@ func newA2AStreamTarget(runID string) *a2aStreamTarget {
 	return &a2aStreamTarget{id: runID}
 }
 
-// track records the id of the run now executing this turn. An empty id is
-// ignored so a caller cannot erase a known target.
-func (t *a2aStreamTarget) track(runID string) {
+// track records the id of the run now executing this turn and reports whether the
+// stream has ALREADY been abandoned, so the caller cancels this run instead of
+// leaving it to run for a consumer that is gone. On the resume path the abort can
+// land between the WORKING write and the child insert, when the tracked id is
+// still the paused checkpoint: that cancel is refused (a paused row must never be
+// flipped to cancelling), and without this second chance the child — created a
+// moment later — would execute the whole turn for nobody. An empty id is ignored
+// so a caller cannot erase a known target.
+func (t *a2aStreamTarget) track(runID string) (aborted bool) {
 	if runID == "" {
-		return
+		return false
 	}
 	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.id = runID
-	t.mu.Unlock()
+	return t.aborted
 }
 
-// runID returns the tracked run id, or "" when none is known yet.
-func (t *a2aStreamTarget) runID() string {
+// markAborted reports that the stream is abandoned (exactly once, from the
+// handler's abandon guard) and returns the id tracked at that moment. A track
+// call that arrives afterwards sees aborted=true and cancels its own run.
+func (t *a2aStreamTarget) markAborted() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.aborted = true
 	return t.id
 }
 
@@ -400,6 +411,18 @@ func (s *a2aStreamWriter) writeAll(resps []StreamResponse) {
 		if err := s.write(sr); err != nil {
 			return
 		}
+	}
+}
+
+// trackStreamRun records runID as the run executing this stream and, when the
+// stream has already been abandoned, cancels it immediately. This closes the
+// resume window: the abort can land between the WORKING frame and the child run
+// insert, when the tracked id is still the paused checkpoint — a cancel the
+// repository refuses on purpose (issue #867) — so the child would otherwise
+// execute a whole turn for a consumer that is gone (issue #868).
+func (h *A2AHandler) trackStreamRun(ctx context.Context, target *a2aStreamTarget, runID string) {
+	if target.track(runID) {
+		h.cancelAbandonedStream(ctx, runID)
 	}
 }
 
@@ -612,6 +635,18 @@ func (h *A2AHandler) streamResumeTask(c echo.Context, projectID, userID, userMes
 		if !claimed {
 			return writeA2AError(c, a2aInvalidStateError("question is no longer pending"))
 		}
+	} else {
+		// The questionless continuation has no question row to claim, so claim the
+		// pause itself: two followers (a client retry, a double submit) would
+		// otherwise both create a resumed child run and execute the turn twice.
+		claimed, err := h.repo.ClaimPausedRunForResume(ctx, latest.ID)
+		if err != nil {
+			h.log.Error("failed to claim paused run", "task_id", taskID, "error", err)
+			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to claim paused run"))
+		}
+		if !claimed {
+			return writeA2AError(c, a2aInvalidStateError("task is no longer awaiting input (already resumed)"))
+		}
 	}
 
 	resumeMsg := a2aResumeMessage(question, userMessage)
@@ -669,7 +704,7 @@ func (h *A2AHandler) streamRun(
 	target := newA2AStreamTarget(run.ID)
 	var abandonOnce sync.Once
 	abandon := func() {
-		abandonOnce.Do(func() { h.cancelAbandonedStream(bgCtx, target.runID()) })
+		abandonOnce.Do(func() { h.cancelAbandonedStream(bgCtx, target.markAborted()) })
 	}
 	writer.onAbort = abandon
 
@@ -708,8 +743,10 @@ func (h *A2AHandler) streamRun(
 
 	// Track the run that actually executes this turn: on a resume the executor
 	// creates a child run, so a cancel aimed at run.ID would hit the paused
-	// checkpoint instead of the work in flight.
-	execReq.OnRunCreated = target.track
+	// checkpoint instead of the work in flight. If the stream was already
+	// abandoned before that child existed, track reports it and the child is
+	// cancelled here rather than executing a whole turn for a dead consumer.
+	execReq.OnRunCreated = func(runID string) { h.trackStreamRun(bgCtx, target, runID) }
 
 	// Translate + emit streaming deltas as they arrive, persisting each delta's
 	// translated payload (and fanning it out to the bus) so a subscribe client
