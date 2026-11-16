@@ -231,17 +231,9 @@ func runAuthStatus(args []string, stdout, stderr io.Writer) int {
 			_, _ = fmt.Fprintf(stderr, "memory-connector auth status: %v\n", err)
 			return 1
 		}
-		if sess != nil {
-			state.SignedIn = true
-			state.Email = sess.UserEmail
-			state.Issuer = sess.IssuerURL
-			state.CanRefresh = sess.RefreshToken != ""
-			state.NeedsReauth = sess.NeedsReauth
-			if !sess.ExpiresAt.IsZero() {
-				state.ExpiresAt = sess.ExpiresAt.UTC().Format(time.RFC3339)
-			}
-			state.Expired = sess.Expired()
-		}
+		// One shared builder: `auth complete` and `auth import` print the same
+		// document, and a second inline copy here had already drifted once.
+		state = authStatusFromSession(serverURL, sess)
 	}
 
 	if f.json {
@@ -305,6 +297,8 @@ func runAuthStart(args []string, stdout, stderr io.Writer) int {
 	redirectURI := fs.String("redirect-uri", "", "OAuth redirect URI registered by the app")
 	clientID := fs.String("client-id", account.ClientID, "OAuth client id (defaults to the connector client)")
 	issuer := fs.String("issuer", "", "OIDC issuer URL (skips /api/auth/issuer discovery; --server may be omitted)")
+	prompt := fs.String("prompt", "", "OIDC prompt parameter (none for a silent re-auth that shows no UI)")
+	loginHint := fs.String("login-hint", "", "OIDC login_hint (the account email a silent re-auth is for)")
 	jsonOut := fs.Bool("json", false, "emit machine-readable JSON")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -315,6 +309,11 @@ func runAuthStart(args []string, stdout, stderr io.Writer) int {
 	}
 	if strings.TrimSpace(*redirectURI) == "" {
 		_, _ = fmt.Fprintln(stderr, "memory-connector auth start: --redirect-uri is required")
+		return 2
+	}
+	if !account.ValidPrompt(*prompt) {
+		_, _ = fmt.Fprintf(stderr, "memory-connector auth start: unsupported --prompt %q (want one of %s)\n",
+			*prompt, strings.Join(account.PromptValues, ", "))
 		return 2
 	}
 	serverURL, err := resolveAuthServer(*server, *configPath)
@@ -328,7 +327,12 @@ func runAuthStart(args []string, stdout, stderr io.Writer) int {
 	}
 
 	m := newAuthManager(account.BaseDirForConfig(*configPath))
-	pending, err := m.StartPKCE(context.Background(), serverURL, *redirectURI, account.PKCEOptions{ClientID: *clientID, Issuer: *issuer})
+	pending, err := m.StartPKCE(context.Background(), serverURL, *redirectURI, account.PKCEOptions{
+		ClientID:  *clientID,
+		Issuer:    *issuer,
+		Prompt:    *prompt,
+		LoginHint: *loginHint,
+	})
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "memory-connector auth start: %v\n", err)
 		return 1
