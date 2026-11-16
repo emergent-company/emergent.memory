@@ -2363,13 +2363,16 @@ func (s *ExtractionFixedSchemaTestSuite) runSchemaAndExtract(
 	djSvc := discoveryjobs.NewService(djRepo, docsSvc, cfg, mf, log)
 
 	// Create a stub discovery job so FinalizeDiscovery has a valid FK row.
+	// organization_id is notnull and foreign-keyed to organizations (migration
+	// 00306), so it must carry the project's org, not the zero UUID.
 	stubJob := &discoveryjobs.DiscoveryJob{
-		ID:        uuid.New(),
-		ProjectID: projectUUID,
-		Status:    discoveryjobs.StatusCompleted,
-		KBPurpose: friendsRichProjectInfo,
-		Progress:  discoveryjobs.JSONMap{"message": "test stub"},
-		Config:    discoveryjobs.JSONMap{"document_ids": []string{doc.ID}},
+		ID:             uuid.New(),
+		OrganizationID: uuid.MustParse(orgID),
+		ProjectID:      projectUUID,
+		Status:         discoveryjobs.StatusCompleted,
+		KBPurpose:      friendsRichProjectInfo,
+		Progress:       discoveryjobs.JSONMap{"message": "test stub"},
+		Config:         discoveryjobs.JSONMap{"document_ids": []string{doc.ID}},
 	}
 	s.Require().NoError(djRepo.Create(s.ctx, stubJob))
 
@@ -2897,12 +2900,13 @@ func (s *ExtractionFixedSchemaTestSuite) TestExtract_SecondRunEnrichment_Sequent
 	djSvc := discoveryjobs.NewService(djRepo, docsSvc, cfg, mf, log)
 
 	stubJob := &discoveryjobs.DiscoveryJob{
-		ID:        uuid.New(),
-		ProjectID: projectUUID,
-		Status:    discoveryjobs.StatusCompleted,
-		KBPurpose: friendsRichProjectInfo,
-		Progress:  discoveryjobs.JSONMap{"message": "test stub"},
-		Config:    discoveryjobs.JSONMap{"document_ids": []string{doc.ID}},
+		ID:             uuid.New(),
+		OrganizationID: uuid.MustParse(orgID),
+		ProjectID:      projectUUID,
+		Status:         discoveryjobs.StatusCompleted,
+		KBPurpose:      friendsRichProjectInfo,
+		Progress:       discoveryjobs.JSONMap{"message": "test stub"},
+		Config:         discoveryjobs.JSONMap{"document_ids": []string{doc.ID}},
 	}
 	s.Require().NoError(djRepo.Create(s.ctx, stubJob))
 
