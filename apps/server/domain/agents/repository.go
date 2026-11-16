@@ -2314,6 +2314,86 @@ func (r *Repository) CancelRunIfPaused(ctx context.Context, runID string) (bool,
 	return n > 0, nil
 }
 
+// ClaimPausedRunForResume atomically consumes a paused run's pause, so two
+// concurrent follow-ups to the same pause cannot both resume it. It applies the
+// same terminal transition MarkRunResumed finalizes the checkpoint with, but
+// BEFORE the resumed child run exists and with the row count as the verdict,
+// which is the only thing that serialises the two:
+//
+//	handler A  SELECT … status=input-required …  ─┐ both see "paused"
+//	handler B  SELECT … status=input-required …  ─┘
+//	handler A  UPDATE … WHERE status=input-required   → 1 row, wins
+//	handler B  UPDATE … WHERE status=input-required   → 0 rows, rejected
+//
+// Without it a questionless pause had no claim at all: executor.Resume reads the
+// in-memory status and MarkRunResumed runs only after the child insert, so both
+// followers created a child run and executed the same turn twice (issue #867
+// follow-up). A pause that does carry a pending question is already serialised by
+// AnswerQuestion's claim on the question row; this is that claim's counterpart.
+//
+// A claim that later loses its child to a hard failure leaves the checkpoint
+// successful, so the retry is rejected instead of running twice — the same
+// consume-then-run trade the question claim makes. CreateResumedRunFromPause is
+// the claim-and-insert variant for resumes that have to create their own child.
+func (r *Repository) ClaimPausedRunForResume(ctx context.Context, runID string) (bool, error) {
+	res, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusSuccess).
+		Set("completed_at = NOW()").
+		Where("id = ?", runID).
+		Where("status = ?", RunStatusPaused).
+		Exec(ctx)
+	if err != nil {
+		return false, fmt.Errorf("ClaimPausedRunForResume: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// CreateResumedRunFromPause atomically consumes a paused run's pause and inserts
+// the run that takes over its execution (issue #887).
+//
+// The claim and the child insert share one transaction, so the resume is
+// serialised without stranding the pause: the claim's UPDATE takes the row lock,
+// a concurrent follower blocks on it, and when the winner commits the follower
+// re-evaluates `status = input-required`, sees the checkpoint is already
+// terminal, and is reported as claimed=false. Because the insert rolls back with
+// the claim, a failed child insert leaves the pause resumable instead of
+// consuming it.
+//
+// It reports claimed=false (and no error) when another resume already consumed
+// the pause; callers must reject that follower rather than executing again.
+func (r *Repository) CreateResumedRunFromPause(ctx context.Context, priorRunID string, opts CreateRunOptions) (run *AgentRun, claimed bool, err error) {
+	err = r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		res, updErr := tx.NewUpdate().
+			Model((*AgentRun)(nil)).
+			Set("status = ?", RunStatusSuccess).
+			Set("completed_at = NOW()").
+			Where("id = ?", priorRunID).
+			Where("status = ?", RunStatusPaused).
+			Exec(ctx)
+		if updErr != nil {
+			return fmt.Errorf("claim paused run for resume: %w", updErr)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return nil
+		}
+		claimed = true
+		run = newAgentRun(opts)
+		if _, insErr := tx.NewInsert().Model(run).Returning("*").Exec(ctx); insErr != nil {
+			return fmt.Errorf("insert resumed run: %w", insErr)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	if !claimed {
+		return nil, false, nil
+	}
+	return run, true, nil
+}
+
 // MarkRunResumed finalizes the paused checkpoint run once a new resumed run has
 // been created. The checkpoint must reach a terminal state: this used to flip it
 // to `running` and clear completed_at, and nothing ever finalized it, so every
