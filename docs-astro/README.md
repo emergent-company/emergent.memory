@@ -322,6 +322,49 @@ Two details are specific to Zitadel's v4 login and worth knowing before editing
 the plan: its submit button only enables after **real key events**, so the plan
 says `type` (character by character) rather than `fill`; and its theme and
 language switchers are pinned to the viewport corner, so each `shot` clips to the
+### Flows that need a human once: the Railway installer
+
+`shots/installer.plan.json` walks the public installer at
+`deploy.memory.emergent-company.ai` through a **real** Railway deployment — the
+page claims its figures come from a real installation, so they have to. Railway
+will not authorise a script it cannot see signed in, so the login happens once,
+by hand, in the browser the capture uses:
+
+```bash
+node scripts/shots.mjs --login --profile .profile      # a window opens; sign in; press Enter
+node scripts/shots.mjs scripts/shots/installer.plan.json \
+  --profile .profile --out captures/$(date +%Y-%m-%dT%H-%M) --review
+```
+
+The profile is a capture-host file: the session stays where the human signed in
+and is never copied off the machine, committed or pasted into a chat. On a host
+without `sharp` (a Mac with Chrome) the runner skips the trim step and writes the
+raw frames, which is why the bundle there needs only `playwright-core`.
+
+**This run creates a real Railway project** in the selected workspace, plus five
+services and a bucket. Delete it afterwards unless the deployment is meant to
+stay. Nothing is configured by hand: the plan reads the generated first-admin
+email and password off the success panel with `setVar`, because the installer
+prints the password exactly once.
+
+The plan drives the portal's own markup, so it is a guard as well as a recipe:
+`#deploy`, `#progress-step`, `#success-card`, `#open-memory` are the portal's
+`cmd/deploy-portal/portal.templ` ids (infra repo), and the stage names it waits
+for — *Creating Railway project*, *Waiting for Zitadel*, *Restarting Memory* —
+are the strings `runner.go` writes. Rename one and the run fails instead of
+publishing a stale figure.
+
+Four step kinds exist for this flow and are not used by the Zitadel plan:
+`clickIfPresent` (Railway's cookie banner is regional, so absence is not an
+error), `clickNewPage` (`Open Memory` opens a second tab, and the plan continues
+there), `setVar` (read a value off the page into a `${var}`), and progress waits
+written as `#progress-step:has-text('…')` so they poll one element rather than
+the whole page.
+
+Two details are specific to Zitadel's v4 login and worth knowing before editing
+the plan: its submit button only enables after **real key events**, so the plan
+says `type` (character by character) rather than `fill`; and its theme and
+language switchers are pinned to the viewport corner, so each `shot` clips to the
 card (`clip`) instead of capturing and trimming the whole frame.
 
 `shots/zitadel.plan.json` needs a throwaway dev account in the
