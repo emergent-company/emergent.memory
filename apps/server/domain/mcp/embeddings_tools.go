@@ -217,7 +217,7 @@ func embeddingProjectID(projectID string, args map[string]any) (string, error) {
 	if v, ok := args["project_id"].(string); ok && v != "" {
 		return v, nil
 	}
-	return "", fmt.Errorf("project_id is required: this call has no project context")
+	return "", toolArgErrorf("project_id is required: this call has no project context")
 }
 
 func (s *Service) executeGetEmbeddingProgress(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {

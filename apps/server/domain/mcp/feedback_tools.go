@@ -20,7 +20,7 @@ func (s *Service) executeSubmitFeedback(ctx context.Context, projectID string, a
 
 	message, _ := args["message"].(string)
 	if message == "" {
-		return nil, fmt.Errorf("feedback-submit: missing required parameter: message")
+		return nil, toolArgErrorf("feedback-submit: missing required parameter: message")
 	}
 	category, _ := args["category"].(string)
 	severity, _ := args["severity"].(string)

@@ -393,7 +393,7 @@ func (h *SSEHandler) handleToolsCall(c echo.Context, req *Request, projectID str
 			slog.String("tool", params.Name),
 			logger.Error(err),
 		)
-		return NewErrorResponse(req.ID, ErrCodeInternalError, "Tool execution failed: "+err.Error(), nil)
+		return toolExecutionErrorResponse(req.ID, err)
 	}
 
 	return NewSuccessResponse(req.ID, result)

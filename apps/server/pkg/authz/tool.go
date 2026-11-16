@@ -44,6 +44,25 @@ type Principal struct {
 	Platform bool
 }
 
+// Denial is a typed authorization refusal. Message is the explanation the
+// caller may see — which tool was refused and which authority it lacked — and
+// Error returns exactly that text: a denial carries no internal detail.
+//
+// The type exists so a transport can recognise a refusal without matching a
+// string. The MCP seam converts it to its own 403 / JSON-RPC -32002 error; this
+// package stays free of transport, Echo and app-error imports so every caller
+// keeps its own refusal shape (issue #668 review).
+type Denial struct {
+	Message string
+}
+
+// Error implements error.
+func (d *Denial) Error() string { return d.Message }
+
+func denyf(format string, args ...any) error {
+	return &Denial{Message: fmt.Sprintf(format, args...)}
+}
+
 // AuthorizeTool is the single fail-closed decision point for tool-level
 // authorization. It enforces a tool's declared authority in precedence order:
 //
@@ -67,21 +86,21 @@ type Principal struct {
 func AuthorizeTool(a ToolAuthority, p Principal) error {
 	if a.SuperadminOnly {
 		if !p.Platform {
-			return fmt.Errorf("tool %q requires superadmin privileges", a.Name)
+			return denyf("tool %q requires superadmin privileges", a.Name)
 		}
 		return nil
 	}
 	if a.AgentOnly && !p.Trusted {
-		return fmt.Errorf("tool %q is agent-only and not reachable from an untrusted surface", a.Name)
+		return denyf("tool %q is agent-only and not reachable from an untrusted surface", a.Name)
 	}
 	if p.TransportEnforced {
 		return nil
 	}
 	if a.RequiredScope != "" && !p.Trusted {
 		if a.RequiredScope == "admin" {
-			return fmt.Errorf("tool %q requires admin authority and is not reachable from an untrusted surface", a.Name)
+			return denyf("tool %q requires admin authority and is not reachable from an untrusted surface", a.Name)
 		}
-		return fmt.Errorf("tool %q requires scope %q and is not reachable from an untrusted surface", a.Name, a.RequiredScope)
+		return denyf("tool %q requires scope %q and is not reachable from an untrusted surface", a.Name, a.RequiredScope)
 	}
 	return nil
 }

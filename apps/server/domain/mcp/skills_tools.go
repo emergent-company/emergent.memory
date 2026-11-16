@@ -171,7 +171,7 @@ func (s *Service) executeListSkills(ctx context.Context, projectID string) (*Too
 func (s *Service) executeGetSkill(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	idStr, _ := args["skill_id"].(string)
 	if idStr == "" {
-		return nil, fmt.Errorf("get_skill: 'skill_id' is required")
+		return nil, toolArgErrorf("get_skill: 'skill_id' is required")
 	}
 
 	// Try UUID first.
@@ -204,7 +204,7 @@ func (s *Service) executeGetSkill(ctx context.Context, projectID string, args ma
 			}
 		}
 	}
-	return nil, fmt.Errorf("get_skill: skill %q not found", idStr)
+	return nil, notFoundf("skill_not_found", "get_skill: skill %q not found", idStr)
 }
 
 func (s *Service) executeCreateSkill(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
@@ -245,11 +245,11 @@ func (s *Service) executeCreateSkill(ctx context.Context, projectID string, args
 func (s *Service) executeUpdateSkill(ctx context.Context, args map[string]any) (*ToolResult, error) {
 	idStr, _ := args["skill_id"].(string)
 	if idStr == "" {
-		return nil, fmt.Errorf("update_skill: 'skill_id' is required")
+		return nil, toolArgErrorf("update_skill: 'skill_id' is required")
 	}
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		return nil, fmt.Errorf("update_skill: invalid skill_id UUID: %w", err)
+		return nil, toolArgErrorf("update_skill: invalid skill_id UUID: %w", err)
 	}
 
 	// Authorize before mutating: same tier resolution as the REST write routes,
@@ -295,11 +295,11 @@ func (s *Service) executeUpdateSkill(ctx context.Context, args map[string]any) (
 func (s *Service) executeDeleteSkill(ctx context.Context, args map[string]any) (*ToolResult, error) {
 	idStr, _ := args["skill_id"].(string)
 	if idStr == "" {
-		return nil, fmt.Errorf("delete_skill: 'skill_id' is required")
+		return nil, toolArgErrorf("delete_skill: 'skill_id' is required")
 	}
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		return nil, fmt.Errorf("delete_skill: invalid skill_id UUID: %w", err)
+		return nil, toolArgErrorf("delete_skill: invalid skill_id UUID: %w", err)
 	}
 
 	// Authorize before mutating: same tier resolution as the REST write routes,
@@ -329,19 +329,19 @@ func (s *Service) executeDeleteSkill(ctx context.Context, args map[string]any) (
 func (s *Service) executePatchSkill(ctx context.Context, args map[string]any) (*ToolResult, error) {
 	idStr, _ := args["skill_id"].(string)
 	if idStr == "" {
-		return nil, fmt.Errorf("patch_skill: 'skill_id' is required")
+		return nil, toolArgErrorf("patch_skill: 'skill_id' is required")
 	}
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		return nil, fmt.Errorf("patch_skill: invalid skill_id UUID: %w", err)
+		return nil, toolArgErrorf("patch_skill: invalid skill_id UUID: %w", err)
 	}
 	oldText, _ := args["old"].(string)
 	newText, _ := args["new"].(string)
 	if strings.TrimSpace(oldText) == "" {
-		return nil, fmt.Errorf("patch_skill: 'old' is required and must be a unique substring")
+		return nil, toolArgErrorf("patch_skill: 'old' is required and must be a unique substring")
 	}
 	if newText == "" {
-		return nil, fmt.Errorf("patch_skill: 'new' is required")
+		return nil, toolArgErrorf("patch_skill: 'new' is required")
 	}
 
 	sk, err := s.skillsRepo.FindByID(ctx, id)

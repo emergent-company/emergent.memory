@@ -302,7 +302,7 @@ func (r *Repository) FindSourceEventByID(ctx context.Context, projectID, id uuid
 // claims for older heads, returning their run ids for cancellation.
 func (r *Repository) ClaimSourceSubject(ctx context.Context, projectID, sourceID uuid.UUID, subjectRef, currentHead, headSHA string) (*SourceEventClaim, []uuid.UUID, error) {
 	if subjectRef == "" || headSHA == "" {
-		return nil, nil, fmt.Errorf("sources: subject and head are required")
+		return nil, nil, apperror.NewValidation("sources: subject and head are required")
 	}
 	if currentHead == "" || currentHead != headSHA {
 		return nil, nil, ErrSourceEventStaleHead

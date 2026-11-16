@@ -1,6 +1,7 @@
 package authz
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -62,5 +63,27 @@ func TestAuthorizeToolDecisionMatrix(t *testing.T) {
 				t.Fatalf("AuthorizeTool error %q does not contain %q", err.Error(), tt.want)
 			}
 		})
+	}
+}
+
+// TestAuthorizeToolReturnsATypedDenial pins the refusal's type, not its text:
+// the MCP seam converts a *Denial to a 403 / JSON-RPC -32002 without matching
+// the message, and keeps the message itself as the public explanation. A plain
+// fmt.Errorf here would collapse to "An internal error occurred" at that seam
+// and report a permission refusal as a server fault (issue #668 review).
+func TestAuthorizeToolReturnsATypedDenial(t *testing.T) {
+	err := AuthorizeTool(ToolAuthority{Name: "web-fetch", AgentOnly: true}, Principal{})
+
+	denial, ok := errors.AsType[*Denial](err)
+	if !ok {
+		t.Fatalf("AuthorizeTool returned %T, want *Denial", err)
+	}
+	if denial.Error() != denial.Message {
+		t.Fatalf("Error() = %q, want the public message %q", denial.Error(), denial.Message)
+	}
+	for _, want := range []string{"web-fetch", "agent-only"} {
+		if !strings.Contains(denial.Message, want) {
+			t.Fatalf("Denial.Message = %q, want it to name %q", denial.Message, want)
+		}
 	}
 }
