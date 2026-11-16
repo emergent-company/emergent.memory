@@ -1,0 +1,103 @@
+---
+/**
+ * Screenshot — a figure for product screenshots with click-to-zoom.
+ *
+ * Generated pages pass `src`, `alt`, `width` and `height` from
+ * `scripts/port-images.mjs`'s manifest, so the browser reserves the right box
+ * and the page does not jump while the image loads. `loading="lazy"` keeps the
+ * 13 Railway shots off the critical path.
+ *
+ * Zoom is a native `<dialog>` created on the first click (one per page, not one
+ * per image) — no framework, no hydration, and Escape/backdrop just work.
+ * Visual styling lives in `src/styles/brand.css` (`.screenshot` block).
+ */
+interface Props {
+  /** Absolute URL under the site base, e.g. `/assets/…/01.webp`. */
+  src: string;
+  /** Describes the picture; also the zoom button's accessible name. */
+  alt: string;
+  width: number;
+  height: number;
+  /** Optional caption rendered under the figure. */
+  caption?: string;
+}
+
+const { src, alt, width, height, caption } = Astro.props;
+
+/**
+ * A figure never grows past its own on-screen size: upscaling a narrow capture
+ * to fill the 723px text column is what made them look blurry. Captures are
+ * made at a device pixel ratio (the plan's `deviceScaleFactor`, 4), so the
+ * same picture carries plenty of pixels for the *zoom* — which is where the
+ * extra resolution is actually spent.
+ */
+const maxWidth = width;
+---
+
+<figure class="screenshot">
+  <button
+    type="button"
+    class="screenshot-open"
+    data-screenshot
+    data-src={src}
+    data-alt={alt}
+    style={`max-width:${maxWidth}px`}
+  >
+    <img src={src} alt={alt} width={width} height={height} loading="lazy" decoding="async" />
+  </button>
+  {caption && <figcaption>{caption}</figcaption>}
+</figure>
+
+<script>
+  const ZOOM_ID = 'screenshot-zoom';
+  let zoom: { dialog: HTMLDialogElement; img: HTMLImageElement } | null = null;
+
+  function ensureZoom() {
+    if (zoom) return zoom;
+    const dialog = document.createElement('dialog');
+    dialog.id = ZOOM_ID;
+    dialog.className = 'screenshot-dialog';
+    dialog.setAttribute('aria-label', 'Screenshot, zoomed');
+
+    const img = document.createElement('img');
+    dialog.append(img);
+
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'screenshot-dialog-close';
+    close.textContent = 'Close';
+    close.addEventListener('click', () => dialog.close());
+    dialog.append(close);
+
+    // A click that lands on the dialog element itself (not the image) is a
+    // backdrop click, because the image and button fill the box.
+    dialog.addEventListener('click', (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+
+    document.body.append(dialog);
+    zoom = { dialog, img };
+    return zoom;
+  }
+
+  document.addEventListener('click', (event) => {
+    const trigger = (event.target as Element | null)?.closest('[data-screenshot]');
+    if (!(trigger instanceof HTMLElement)) return;
+    const { dialog, img } = ensureZoom();
+    img.src = trigger.dataset.src ?? '';
+    img.alt = trigger.dataset.alt ?? '';
+
+    // Zoom to twice the figure's on-screen size, but never past the pixels the
+    // capture actually has: a 4x capture of a 440px dialog is 1760px, so 880px
+    // is crisp on any display, while a hand-captured 490px picture stops at
+    // 490px instead of being blown up into mush. `naturalWidth` is read from
+    // the card's already-loaded image — the same file this dialog shows.
+    const source = trigger.querySelector('img');
+    const pixels = source?.naturalWidth ?? 0;
+    const css = Number(source?.getAttribute('width')) || 0;
+    const cap = pixels ? Math.min(pixels, Math.max(css, 1) * 2) : Math.max(css, 1) * 2;
+    img.style.maxWidth = `min(${cap}px, 96vw)`;
+
+    dialog.showModal();
+  });
+</script>

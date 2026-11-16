@@ -1,0 +1,45 @@
+{
+  "tutorial": "deploy-to-railway",
+  "instance": "railway-deployment",
+  "baseUrl": "https://memory-web-ui-production-3640b7d1.up.railway.app",
+  "locale": "en-US",
+  "viewport": {
+    "width": 1600,
+    "height": 900
+  },
+  "colorScheme": "dark",
+  "deviceScaleFactor": 4,
+  "steps": [
+    {
+      "name": "the signed-in app lands on the organization's projects",
+      "goto": "/"
+    },
+    {
+      "waitFor": {
+        "text": "Projects",
+        "timeout": 60000
+      }
+    },
+    {
+      "name": "the bulk-delete control is server-rendered and hidden by the page's own script: a shot on first paint would ship a red toolbar no reader sees",
+      "waitHidden": {
+        "selector": "button[data-project-delete-busy]",
+        "timeout": 30000
+      }
+    },
+    {
+      "pause": 1500
+    },
+    {
+      "expect": [
+        "Projects",
+        "Memory"
+      ]
+    },
+    {
+      "shot": {
+        "id": "13-memory-projects"
+      }
+    }
+  ]
+}

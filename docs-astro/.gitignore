@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.astro/
+public/openapi.json
+# Capture runs write here: raw PNGs, the review sheet, failure evidence, and the
+# browser profile a human signed into. None of it belongs in the repo — the
+# profile is a live session.
+captures/
+.profile/
