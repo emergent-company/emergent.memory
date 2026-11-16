@@ -29481,6 +29481,118 @@
                 }
             }
         },
+        "/projects/{projectId}/usage/by-agent": {
+            "get": {
+                "description": "Aggregates token counts and estimated cost per agent for a range. Spend that no agent run produced (direct API and embedding calls) is returned as a row with an empty agentId/agentName, so the rows always add up to the project total.",
+                "summary": "Get project LLM usage by agent",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start time (RFC3339)",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End time (RFC3339)",
+                        "name": "until",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_provider.UsageByAgentResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/projects/{projectId}/usage/runs": {
+            "get": {
+                "description": "One row per agent run that recorded usage in the range, most recent activity first, with token counts, event count and estimated cost. Runs that spent nothing are absent. limit defaults to 50 and is capped at 200; offset pages through the ordered list.",
+                "summary": "List project agent runs with cost",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start time (RFC3339)",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End time (RFC3339)",
+                        "name": "until",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only runs of this agent",
+                        "name": "agentId",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size (default 50, max 200)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Rows to skip",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_provider.UsageRunListResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/projects/{projectId}/usage/timeseries": {
             "get": {
                 "summary": "Get project LLM usage time series",
@@ -42211,6 +42323,143 @@
                 },
                 "slug": {
                     "description": "Slug optionally names the provider instance. When empty the slug\ndefaults to the dialect name, with a numeric suffix on collision.",
+                    "type": "string"
+                }
+            }
+        },
+        "domain_provider.UsageByAgentResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_provider.UsageByAgentRow"
+                    }
+                },
+                "note": {
+                    "type": "string"
+                },
+                "runCount": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_provider.UsageByAgentRow": {
+            "type": "object",
+            "properties": {
+                "agentId": {
+                    "type": "string"
+                },
+                "agentName": {
+                    "type": "string"
+                },
+                "estimatedCostUsd": {
+                    "type": "number"
+                },
+                "runCount": {
+                    "type": "integer"
+                },
+                "totalAudio": {
+                    "type": "integer"
+                },
+                "totalCached": {
+                    "type": "integer"
+                },
+                "totalImage": {
+                    "type": "integer"
+                },
+                "totalOutput": {
+                    "type": "integer"
+                },
+                "totalText": {
+                    "type": "integer"
+                },
+                "totalVideo": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_provider.UsageRunListResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_provider.UsageRunRow"
+                    }
+                },
+                "limit": {
+                    "type": "integer"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "offset": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_provider.UsageRunRow": {
+            "type": "object",
+            "properties": {
+                "agentId": {
+                    "type": "string"
+                },
+                "agentName": {
+                    "type": "string"
+                },
+                "completedAt": {
+                    "type": "string"
+                },
+                "durationMs": {
+                    "type": "integer"
+                },
+                "estimatedCostUsd": {
+                    "type": "number"
+                },
+                "eventCount": {
+                    "type": "integer"
+                },
+                "lastEventAt": {
+                    "type": "string"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "runId": {
+                    "type": "string"
+                },
+                "sessionId": {
+                    "type": "string"
+                },
+                "startedAt": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "totalAudio": {
+                    "type": "integer"
+                },
+                "totalCached": {
+                    "type": "integer"
+                },
+                "totalImage": {
+                    "type": "integer"
+                },
+                "totalOutput": {
+                    "type": "integer"
+                },
+                "totalText": {
+                    "type": "integer"
+                },
+                "totalVideo": {
+                    "type": "integer"
+                },
+                "triggerSource": {
                     "type": "string"
                 }
             }
