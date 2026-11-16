@@ -118,6 +118,12 @@ func (s *WorkActionService) Approve(ctx context.Context, projectID, canonicalID,
 // concurrencyStrategy: skip. Once the revision cap is reached it escalates to a
 // human (kb.tasks) and does NOT re-enqueue. The rework run's id is persisted on
 // the feedback round it produced (rather than trusting a caller-supplied id).
+// RequestWorkItemChanges is the source-tool adapter for RequestChanges.
+func (s *WorkActionService) RequestWorkItemChanges(ctx context.Context, projectID, canonicalID, author, text string) error {
+	_, err := s.RequestChanges(ctx, projectID, canonicalID, author, text)
+	return err
+}
+
 func (s *WorkActionService) RequestChanges(ctx context.Context, projectID, canonicalID, author, text string) (*WorkActionResult, error) {
 	head, agent, def, err := s.resolveWorkContext(ctx, projectID, canonicalID)
 	if err != nil {
@@ -520,6 +526,8 @@ func (s *WorkActionService) enqueueWorkRun(ctx context.Context, head *graph.Work
 			opts.TriggerMetadata = map[string]any{}
 		}
 		opts.TriggerMetadata["work_feedback"] = feedback
+		msg := "Rework this item using the review feedback in work_feedback. Update the existing pull request branch; do not open a second pull request."
+		opts.TriggerMessage = &msg
 	}
 	run, err := s.repo.CreateRunQueued(ctx, agent.ID, maxAttempts, opts)
 	if err != nil {

@@ -1361,6 +1361,26 @@ Table "kb"."github_credentials" {
   "updated_at" timestamptz [not null, default: `now()`]
 }
 
+Table "kb"."github_issue_pull_requests" {
+  "project_id" uuid [pk]
+  "repo" text [pk]
+  "pr_number" integer [pk]
+  "issue_canonical_id" uuid [not null]
+  "issue_number" integer [not null]
+  "issue_source_id" uuid [not null]
+  "pr_url" text [not null, default: '']
+  "branch" text [not null, default: '']
+  "head_sha" text [not null, default: '']
+  "state" text [not null, default: 'open']
+  "closes_issue" boolean [not null, default: false]
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (project_id, issue_canonical_id) [name: "idx_issue_pr_issue"]
+  }
+}
+
 Table "kb"."graph_embedding_jobs" {
   "id" uuid [pk, default: `uuid_generate_v4()`]
   "object_id" uuid [not null]
@@ -3181,6 +3201,7 @@ Ref: "kb"."email_templates"."updated_by" > "core"."user_profiles"."id"
 Ref: "kb"."email_templates"."current_version_id" > "kb"."email_template_versions"."id"
 Ref: "kb"."embedding_policies"."project_id" > "kb"."projects"."id"
 Ref: "kb"."external_sources"."project_id" > "kb"."projects"."id"
+Ref: "kb"."github_issue_pull_requests"."project_id" > "kb"."projects"."id"
 Ref: "kb"."graph_embedding_jobs"."object_id" > "kb"."graph_objects"."id"
 Ref: "kb"."graph_objects"."project_id" > "kb"."projects"."id"
 Ref: "kb"."graph_objects"."owner_source_id" > "kb"."sources"."id"

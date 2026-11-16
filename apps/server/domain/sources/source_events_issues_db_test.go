@@ -9,12 +9,14 @@ import (
 	"encoding/pem"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
+	"github.com/emergent-company/emergent.memory/domain/githubapp"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/testdb"
@@ -110,3 +112,88 @@ func testRSAKeyPEM(t *testing.T) []byte {
 	require.NoError(t, err)
 	return pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
 }
+
+type fakePRLinkStore struct {
+	issue    *graph.GraphObject
+	issueReq *graph.CreateGraphObjectRequest
+}
+
+func (f *fakePRLinkStore) CreateOrUpdate(_ context.Context, _ uuid.UUID, req *graph.CreateGraphObjectRequest, _ *uuid.UUID) (*graph.GraphObjectResponse, bool, error) {
+	if req.Type == "GitHubIssue" {
+		f.issueReq = req
+	}
+	return &graph.GraphObjectResponse{CanonicalID: uuid.New()}, true, nil
+}
+
+func (f *fakePRLinkStore) FindHeadObjectByTypeAndKey(context.Context, string, string, string) (*graph.GraphObject, error) {
+	return f.issue, nil
+}
+
+func TestEnsureIssuePRLink(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	ctx := context.Background()
+	db := testutilDB(t, ctx, "issue_pr_link")
+	defer db.Close()
+	repo := NewRepository(db.DB, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	orgID, projectID, sourceID, appID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	_, err := db.DB.ExecContext(ctx, `INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgID, "link-org")
+	require.NoError(t, err)
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`, projectID, orgID, "link-project")
+	require.NoError(t, err)
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.source_apps (id, org_id, provider, app_id, slug, private_key_encrypted, webhook_secret_encrypted)
+		VALUES (?, ?, 'github', 99, 'link-app', '\x00'::bytea, '\x00'::bytea)`, appID, orgID)
+	require.NoError(t, err)
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.sources (id, project_id, provider, display_name, app_id, external_account_id, config, status)
+		VALUES (?, ?, 'github_app', 'coding', ?, '42', '{"repos":["owner/repo"]}'::jsonb, 'active')`, sourceID, projectID, appID)
+	require.NoError(t, err)
+	src, err := repo.GetByID(ctx, sourceID, projectID)
+	require.NoError(t, err)
+
+	issueCanonical := uuid.New()
+	store := &fakePRLinkStore{issue: &graph.GraphObject{CanonicalID: issueCanonical, Type: "GitHubIssue", Status: ptr("in_progress"), Properties: map[string]any{
+		"repo": "emergent-company/emergent.memory", "issue_number": 7, "source_id": sourceID.String(), "title": "fix",
+	}}}
+	d := NewSourceEventDispatcher(repo, nil, &config.Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	d.workObjects = store
+	p := &githubapp.WebhookPayload{
+		Action:     "opened",
+		Repository: githubapp.WebhookRepo{FullName: "owner/repo"},
+		PullRequest: githubapp.WebhookPullRequest{
+			Number: 42, Title: "fix", Body: "Closes #7", State: "open",
+			Head: githubapp.WebhookRef{Ref: "fix/7-fix", SHA: strings.Repeat("a", 40)},
+		},
+	}
+	_, err = d.ensureIssuePRLink(ctx, src, p, &githubapp.PullRequestState{State: "open", HeadSHA: strings.Repeat("a", 40)}, "owner/repo#42")
+	require.NoError(t, err)
+	link, err := repo.FindSourceIssuePRLink(ctx, projectID, "owner/repo", 42)
+	require.NoError(t, err)
+	require.Equal(t, issueCanonical, link.IssueCanonicalID)
+	require.True(t, link.ClosesIssue)
+	require.NotNil(t, store.issueReq)
+	require.Equal(t, "review", *store.issueReq.Status)
+	require.Equal(t, "emergent-company/emergent.memory", store.issueReq.Properties["repo"])
+
+	// A draft conversion must not cancel the issue.
+	p.Action = "converted_to_draft"
+	p.PullRequest.State = "open"
+	_, err = d.ensureIssuePRLink(ctx, src, p, &githubapp.PullRequestState{State: "draft", HeadSHA: strings.Repeat("a", 40)}, "owner/repo#42")
+	require.NoError(t, err)
+	require.Equal(t, "review", *store.issueReq.Status)
+	link, err = repo.FindSourceIssuePRLink(ctx, projectID, "owner/repo", 42)
+	require.NoError(t, err)
+	require.Equal(t, "draft", link.State)
+
+	// Refs-only is a link but not a closing keyword.
+	p.Action = "synchronize"
+	p.PullRequest.State = "open"
+	p.PullRequest.Body = "Refs #7"
+	_, err = d.ensureIssuePRLink(ctx, src, p, &githubapp.PullRequestState{State: "open", HeadSHA: strings.Repeat("a", 40)}, "owner/repo#42")
+	require.NoError(t, err)
+	link, err = repo.FindSourceIssuePRLink(ctx, projectID, "owner/repo", 42)
+	require.NoError(t, err)
+	require.False(t, link.ClosesIssue)
+}
+
+func ptr(s string) *string { return &s }

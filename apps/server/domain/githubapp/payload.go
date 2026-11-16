@@ -25,14 +25,16 @@ type WebhookUser struct {
 
 // WebhookPullRequest is the pull_request subset the producer reads.
 type WebhookPullRequest struct {
-	Number int         `json:"number"`
-	Title  string      `json:"title"`
-	Draft  bool        `json:"draft"`
-	Merged bool        `json:"merged"`
-	State  string      `json:"state"`
-	User   WebhookUser `json:"user"`
-	Base   WebhookRef  `json:"base"`
-	Head   WebhookRef  `json:"head"`
+	Number  int         `json:"number"`
+	Title   string      `json:"title"`
+	Body    string      `json:"body"`
+	HTMLURL string      `json:"html_url"`
+	Draft   bool        `json:"draft"`
+	Merged  bool        `json:"merged"`
+	State   string      `json:"state"`
+	User    WebhookUser `json:"user"`
+	Base    WebhookRef  `json:"base"`
+	Head    WebhookRef  `json:"head"`
 }
 
 // WebhookIssue is the issue subset the producer reads. The pull_request marker
