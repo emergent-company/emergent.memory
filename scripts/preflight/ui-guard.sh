@@ -81,10 +81,10 @@ cd "$root"
 # ── Baselines ────────────────────────────────────────────────────────────────
 # Recorded 2026-11-14 against dev @ abfda1693 while auditing the web-ui against
 # the ui-patterns rules. Each is a count that may only fall.
-BASELINE_DUP_TESTIDS=15
+BASELINE_DUP_TESTIDS=14  # tightened from 15: #865 retired board.templ, whose two board notices were the duplicate copy this baseline carried
 BASELINE_INLINE_HANDLERS=19
 BASELINE_HEX_COLOURS=8
-BASELINE_STYLE_ATTRS=12
+BASELINE_STYLE_ATTRS=14  # +2: components.BadgeWithClass reproduces ui.Badge's two `style={ accentStyle(props.Color) }` branches (span + <a href>) so the wrapper stays parity-identical to upstream; remove both when go-daisy #150 adds BadgeProps.Class (#855)
 BASELINE_RAW_TABLES=14
 #
 # INLINE_HANDLERS was 10 in the first cut of this script and is 19 here. That is

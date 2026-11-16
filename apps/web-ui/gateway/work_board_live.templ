@@ -3,6 +3,7 @@ package main
 import (
 	"strconv"
 
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
 
@@ -20,21 +21,27 @@ import (
 templ WorkBoardFrame(data workData, errMsg string) {
 	<div id="work-board" data-testid="work-board" tabindex="-1" data-work-board data-board-query={ data.Query.Encode() } data-board-status-map={ data.StatusMap.statusMapJSON() }>
 		if errMsg != "" {
-			@ui.Alert(ui.AlertProps{
-				Type:    ui.AlertError,
-				Style:   ui.AlertStyleOutline,
-				Icon:    "lucide--circle-x",
-				Message: errMsg,
-				Attrs:   templ.Attributes{"class": "mb-4", "data-testid": "work-board-error"},
+			@components.AlertWithClass(components.AlertWithClassProps{
+				AlertProps: ui.AlertProps{
+					Type:    ui.AlertError,
+					Style:   ui.AlertStyleOutline,
+					Icon:    "lucide--circle-x",
+					Message: errMsg,
+					Attrs:   templ.Attributes{"data-testid": "work-board-error"},
+				},
+				Class: "mb-4",
 			})
 		}
 		if len(data.Items) >= boardItemLimit {
-			@ui.Alert(ui.AlertProps{
-				Type:    ui.AlertInfo,
-				Style:   ui.AlertStyleSoft,
-				Icon:    "lucide--list-filter",
-				Message: "Showing the newest " + strconv.Itoa(boardItemLimit) + " work items — older items are not listed. Review them from the object list.",
-				Attrs:   templ.Attributes{"class": "mb-4", "data-testid": "work-board-cap-notice"},
+			@components.AlertWithClass(components.AlertWithClassProps{
+				AlertProps: ui.AlertProps{
+					Type:    ui.AlertInfo,
+					Style:   ui.AlertStyleSoft,
+					Icon:    "lucide--list-filter",
+					Message: "Showing the newest " + strconv.Itoa(boardItemLimit) + " work items — older items are not listed. Review them from the object list.",
+					Attrs:   templ.Attributes{"data-testid": "work-board-cap-notice"},
+				},
+				Class: "mb-4",
 			})
 		}
 		@workBoardMatrices(data)
