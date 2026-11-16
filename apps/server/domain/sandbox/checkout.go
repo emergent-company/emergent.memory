@@ -205,19 +205,30 @@ func (cs *CheckoutService) ConfigureGitAuth(ctx context.Context, provider Provid
 	}
 
 	// git: a credential-helper store entry, so `git push/fetch` authenticates even
-	// when the agent re-clones or adds a remote. `gh`: hosts.yml, the same shape
-	// `gh auth login --with-token` writes.
+	// when the agent re-clones or adds a remote. `gh`: hosts.yml plus config.yml.
+	//
+	// gh is deliberately configured in the *legacy single-account* shape
+	// (`config.yml` version "1", no `users:` map in hosts.yml). With the
+	// multi-account shape gh treats the stored login as unknown, runs its
+	// multi-account migration, and resolves the login over GraphQL before every
+	// command. A token the API rejects — expired, revoked, or a GitHub App
+	// installation token — then makes gh refuse *all* commands, `gh --version`
+	// included ("cowardly refusing to continue with multi account migration"),
+	// instead of reporting a bad credential. Pinning version "1" keeps a rejected
+	// token confined to the call that needed it.
+	//
+	// `: "${GH_TOKEN:?...}"` makes a provider that ignores ExecRequest.Env (e2b)
+	// fail loudly here rather than write an empty credential and report success.
 	const script = `set -e
+: "${GH_TOKEN:?GH_TOKEN must be set}"
 umask 077
 mkdir -p "$HOME/.config/gh"
+printf 'version: "1"\n' > "$HOME/.config/gh/config.yml"
 cat > "$HOME/.config/gh/hosts.yml" <<EOF
 github.com:
-    users:
-        x-access-token:
-            oauth_token: $GH_TOKEN
+    user: x-access-token
     oauth_token: $GH_TOKEN
     git_protocol: https
-    user: x-access-token
 EOF
 printf 'https://x-access-token:%s@github.com\n' "$GH_TOKEN" > "$HOME/.git-credentials"
 git config --global credential.helper store

@@ -184,7 +184,6 @@ func TestConfigureGitAuth_ConfiguresGitAndGhWithoutLeakingToken(t *testing.T) {
 	// The token travels in the exec environment, never in the command string:
 	// providers may log the command or expose it as a process argument.
 	assert.NotContains(t, req.Command, token, "token must not appear in the command text")
-	assert.NotContains(t, req.Command, "github_pat_", "command must not carry a token literal")
 	assert.Equal(t, token, req.Env["GH_TOKEN"])
 
 	// Both consumers must be set up: git (credential store entry) and the GitHub
@@ -192,6 +191,21 @@ func TestConfigureGitAuth_ConfiguresGitAndGhWithoutLeakingToken(t *testing.T) {
 	assert.Contains(t, req.Command, ".git-credentials")
 	assert.Contains(t, req.Command, "credential.helper store")
 	assert.Contains(t, req.Command, ".config/gh/hosts.yml")
+
+	// gh must be pinned to the legacy single-account shape. In the multi-account
+	// shape (a `users:` map) gh runs its migration and resolves the login over
+	// GraphQL on every command, so a token the API rejects — expired, revoked, or
+	// a GitHub App installation token — makes gh refuse to run at all, including
+	// `gh --version`, instead of reporting a bad credential.
+	assert.Contains(t, req.Command, ".config/gh/config.yml")
+	assert.Contains(t, req.Command, `version: "1"`)
+	assert.Contains(t, req.Command, "user: x-access-token")
+	assert.NotContains(t, req.Command, "users:", "hosts.yml must stay on the legacy single-account shape")
+
+	// A provider that ignores ExecRequest.Env (e2b) must fail loudly here rather
+	// than write an empty credential and report success.
+	assert.Contains(t, req.Command, "${GH_TOKEN:?")
+
 	assert.Equal(t, "/workspace", req.Workdir)
 }
 

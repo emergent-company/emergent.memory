@@ -489,10 +489,12 @@ func (ap *AutoProvisioner) attemptProvision(
 	}
 
 	// Configure push/PR credentials for the sandbox. Applied here — after the
-	// container is assigned — so it lands on warm-pool containers too, which
-	// never see the CreateContainerRequest.Env built above. Best-effort like the
-	// clone below: a sandbox with no credential is still usable for reading.
-	if ap.checkoutSvc != nil && gitToken != "" {
+	// container is assigned, before the clone — so it lands on warm-pool
+	// containers too, which never see the CreateContainerRequest.Env built above.
+	// Best-effort like the clone below: a sandbox with no credential is still
+	// usable for reading. Skipped without a repository: there is nothing to
+	// authenticate against, and it would spend an exec on every such sandbox.
+	if ap.checkoutSvc != nil && gitToken != "" && repoURL != "" {
 		if authErr := ap.checkoutSvc.ConfigureGitAuth(ctx, provider, containerProviderID, gitToken); authErr != nil {
 			ap.log.Warn("failed to configure sandbox git credentials",
 				"workspace_id", ws.ID,
@@ -547,11 +549,14 @@ func (ap *AutoProvisioner) attemptProvision(
 		}
 	}
 
-	// Mark workspace as ready
+	// Mark workspace as ready. Guarded like updateStatusBestEffort: a provisioner
+	// can be constructed without its service, and a status write is not worth a
+	// panic in the middle of an otherwise successful provisioning.
 	ap.log.Info("marking workspace as ready", "workspace_id", ws.ID)
-	_, err = ap.service.UpdateStatus(ctx, ws.ID, StatusReady)
-	if err != nil {
-		ap.log.Warn("failed to mark workspace as ready", "workspace_id", ws.ID, "error", err)
+	if ap.service != nil {
+		if _, statusErr := ap.service.UpdateStatus(ctx, ws.ID, StatusReady); statusErr != nil {
+			ap.log.Warn("failed to mark workspace as ready", "workspace_id", ws.ID, "error", statusErr)
+		}
 	}
 
 	ap.log.Info("workspace provisioned successfully",
