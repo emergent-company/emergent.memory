@@ -1637,6 +1637,7 @@ func TestGraphObjectLabel(t *testing.T) {
 		{"human key fallback", GraphObject{ID: "o1", Type: "person", Key: "sam-lee"}, "sam-lee"},
 		{"machine key is not a title", GraphObject{ID: "abcdef123456", Type: "task", Key: "task-9f1c0a2e3b4d"}, "task abcdef1234"},
 		{"minted slug key is not a title", GraphObject{ID: "abcdef123456", Type: "task", Key: "fix-login-redirect-loop-9f1c0a2e3b4d"}, "task abcdef1234"},
+		{"legacy 8-hex key is not a title", GraphObject{ID: "abcdef123456", Type: "task", Key: "fix-login-redirect-9f1c0a2e"}, "task abcdef1234"},
 		{"source-scoped dedup key is not a title", GraphObject{
 			ID:   "abcdef123456",
 			Type: "GitHubIssue",

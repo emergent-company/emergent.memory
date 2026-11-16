@@ -20,8 +20,8 @@ func TestBuildEntityEmbedTextMatchesStoredEmbeddingText(t *testing.T) {
 		"count":   float64(3),
 	}
 
-	got := buildEntityEmbedText("Note", &key, props)
-	want := embeddingtext.Text("Note", &key, props)
+	got := buildEntityEmbedText("Note", nil, &key, props)
+	want := embeddingtext.Text("Note", nil, &key, props)
 
 	if got != want {
 		t.Fatalf("near-duplicate query text drifted from the stored-embedding builder:\n got %q\nwant %q", got, want)
@@ -35,7 +35,7 @@ func TestBuildEntityEmbedTextIncludesTypeKeyAndProps(t *testing.T) {
 		"content":  "User really likes ice cream",
 	}
 
-	out := buildEntityEmbedText("Note", &key, props)
+	out := buildEntityEmbedText("Note", nil, &key, props)
 
 	if !strings.HasPrefix(out, "Note") {
 		t.Fatalf("expected type prefix, got %q", out)
@@ -57,7 +57,7 @@ func TestBuildEntityEmbedTextOmitsKeysAndURLs(t *testing.T) {
 		"url":     "https://example.com/ice-cream",
 	}
 
-	out := buildEntityEmbedText("Note", &key, props)
+	out := buildEntityEmbedText("Note", nil, &key, props)
 
 	for _, unwanted := range []string{"content", "https://example.com"} {
 		if strings.Contains(out, unwanted) {
@@ -69,10 +69,35 @@ func TestBuildEntityEmbedTextOmitsKeysAndURLs(t *testing.T) {
 // Boosted fields are repeated so they dominate the vector.
 func TestBuildEntityEmbedTextRepeatsName(t *testing.T) {
 	key := "preference-ice-cream"
-	out := buildEntityEmbedText("Note", &key, map[string]any{"name": "Ice cream"})
+	out := buildEntityEmbedText("Note", nil, &key, map[string]any{"name": "Ice cream"})
 
 	if got := strings.Count(out, "Ice cream"); got != 2 {
 		t.Fatalf("name should be boosted (repeated twice), got %d occurrences in %q", got, out)
+	}
+}
+
+// The title is the `name` column (#824): a near-duplicate check must compare the
+// text the stored object actually embeds, which includes that title. A property
+// copy is prose and is not counted twice.
+func TestBuildEntityEmbedTextUsesColumnTitle(t *testing.T) {
+	key := "preference-ice-cream"
+	title := "Ice cream"
+	props := map[string]any{"name": "Ice cream", "category": "preference"}
+
+	withColumn := buildEntityEmbedText("Note", &title, &key, props)
+	if got := strings.Count(withColumn, "Ice cream"); got != 2 {
+		t.Fatalf("column title should be boosted once (twice), got %d occurrences in %q", got, withColumn)
+	}
+	// The property copy is prose, not a second title: the same string must not
+	// be counted again when the column already carries it.
+	propOnly := buildEntityEmbedText("Note", nil, &key, props)
+	if got := strings.Count(propOnly, "Ice cream"); got != 2 {
+		t.Fatalf("property copy must be boosted once (twice), got %d occurrences in %q", got, propOnly)
+	}
+	// Changing the column title changes the text — the enqueue guard depends on it.
+	other := "Gelato"
+	if changed := buildEntityEmbedText("Note", &other, &key, props); changed == withColumn {
+		t.Fatalf("a different column title must produce different embed text, got %q", changed)
 	}
 }
 
@@ -81,8 +106,8 @@ func TestBuildEntityEmbedTextPropertyOrderIndependent(t *testing.T) {
 	a := map[string]any{"category": "preference", "content": "likes ice cream"}
 	b := map[string]any{"content": "likes ice cream", "category": "preference"}
 
-	oa := buildEntityEmbedText("Note", &key, a)
-	ob := buildEntityEmbedText("Note", &key, b)
+	oa := buildEntityEmbedText("Note", nil, &key, a)
+	ob := buildEntityEmbedText("Note", nil, &key, b)
 
 	if oa != ob {
 		t.Fatalf("property insertion order must not change embed text, got %q vs %q", oa, ob)
@@ -90,7 +115,7 @@ func TestBuildEntityEmbedTextPropertyOrderIndependent(t *testing.T) {
 }
 
 func TestBuildEntityEmbedTextNilKey(t *testing.T) {
-	out := buildEntityEmbedText("Note", nil, map[string]any{"content": "x"})
+	out := buildEntityEmbedText("Note", nil, nil, map[string]any{"content": "x"})
 
 	if !strings.HasPrefix(out, "Note") {
 		t.Fatalf("expected type prefix with nil key, got %q", out)

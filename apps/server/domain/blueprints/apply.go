@@ -821,6 +821,9 @@ func buildSeedObjectRequest(o SeedObjectRecord) graph.CreateGraphObjectRequest {
 		Properties: o.Properties,
 		Labels:     o.Labels,
 	}
+	if o.Name != "" {
+		item.Name = &o.Name
+	}
 	if o.Status != "" {
 		item.Status = &o.Status
 	}

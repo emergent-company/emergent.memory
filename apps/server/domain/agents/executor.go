@@ -1834,6 +1834,22 @@ func (ae *AgentExecutor) beginResumedRun(ctx context.Context, priorRun *AgentRun
 	return run, nil
 }
 
+// pauseRunAtStepLimit records the step-limit suspend marker and then pauses the
+// run. A step-limit pause writes no question row, so the marker is the only
+// positive evidence that the pause is a continuation a follow-up message may
+// advance (issue #867); a resume surface must never infer that from a missing
+// marker. Best-effort on the marker: a failed write must not skip the pause.
+func (ae *AgentExecutor) pauseRunAtStepLimit(ctx context.Context, runID string, step int) {
+	sig := SuspendSignal{Reason: SuspendReasonStepLimit}
+	if err := ae.repo.UpdateSuspendContext(ctx, runID, sig.ToMap()); err != nil {
+		ae.log.Warn("failed to persist suspend_context for step limit",
+			slog.String("run_id", runID),
+			slog.String("error", err.Error()),
+		)
+	}
+	_ = ae.repo.PauseRun(ctx, runID, step)
+}
+
 func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req ExecuteRequest) (*ExecuteResult, error) {
 	startTime := time.Now()
 	dbCtx := context.Background()
@@ -3422,8 +3438,10 @@ func (ae *AgentExecutor) runPipeline(
 				slog.Int("step", currentStep),
 				slog.Int("max_steps", maxSteps),
 			)
-			// Pause the run instead of failing
-			_ = ae.repo.PauseRun(dbCtx, run.ID, currentStep)
+			// Pause the run instead of failing, recording WHY it paused. The marker
+			// is what lets a resume surface tell a step-limit pause from an
+			// unidentified one and refuse to advance the latter (issue #867).
+			ae.pauseRunAtStepLimit(dbCtx, run.ID, currentStep)
 			return &model.LLMResponse{
 				Content: genai.NewContentFromText("Step limit reached. Run has been paused.", genai.RoleModel),
 			}, nil
