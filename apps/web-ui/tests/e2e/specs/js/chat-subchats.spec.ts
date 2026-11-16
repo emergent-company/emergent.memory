@@ -33,6 +33,14 @@ function rail(expanded = false, activeChild = ''): string {
   );
 }
 
+// agentOption mirrors one row of the rail's agent menu (chatAgentFilter): a
+// menuitemradio button carrying the agent id, its label, its avatar and a check
+// chat.js shows only on the active row. The menu itself is server-rendered, so
+// the fixture uses the same button shape.
+function agentOption(id: string, label: string, active: boolean): string {
+  return `<li role="none"><button type="button" role="menuitemradio" data-action="filter-agent" data-agent-id="${id}" data-agent-label="${label}" aria-checked="${active}" class="${active ? 'menu-active ' : ''}min-w-0 text-left"><span class="flex min-w-0 items-center gap-2"><span class="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-base-200" aria-hidden="true" data-agent-avatar="${id ? 'agent' : 'all'}"><span class="iconify ${id ? 'lucide--bot' : 'lucide--users'} size-4"></span></span><span class="min-w-0 truncate">${label}</span><span class="ml-auto shrink-0${active ? '' : ' hidden'}" data-agent-check="true"><span class="iconify lucide--check size-4"></span></span></span></button></li>`;
+}
+
 function skeleton(railHTML: string): string {
   return `<!doctype html>
 <html><head><meta charset="utf-8" /><style>.hidden { display: none !important; }</style></head>
@@ -41,12 +49,15 @@ function skeleton(railHTML: string): string {
   <aside id="chat-rail">
     <div id="chat-rail-resize" role="separator" aria-orientation="vertical" aria-label="Resize session list"></div>
     <div><button type="button" data-action="toggle-session-select" data-testid="toggle-session-select" aria-pressed="false">Select</button></div>
-    <select id="chat-agent-filter" aria-label="Filter sessions by agent">
-      <option value="">All agents</option>
-      <option value="a1">Tester</option>
-      <option value="internal">Internal</option>
-      <option value="other">Other</option>
-    </select>
+    <div class="dropdown dropdown-bottom" data-gd-menu-root data-testid="chat-agent-filter">
+      <div tabindex="0" role="button" data-gd-menu-trigger aria-haspopup="menu" aria-label="Filter sessions by agent: All agents" class="select select-sm select-bordered flex h-auto min-h-8 w-full cursor-pointer items-center gap-2 text-left">
+        <span id="chat-agent-filter-glyph" class="flex shrink-0 items-center"><span class="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-base-200" aria-hidden="true" data-agent-avatar="all"><span class="iconify lucide--users size-3.5"></span></span></span>
+        <span id="chat-agent-filter-label" class="min-w-0 truncate">All agents</span>
+      </div>
+      <ul tabindex="0" role="menu" data-gd-menu class="dropdown-content menu menu-sm p-1">
+        ${agentOption('', 'All agents', true)}${agentOption('a1', 'Tester', false)}${agentOption('internal', 'Internal', false)}${agentOption('other', 'Other', false)}
+      </ul>
+    </div>
     <select id="chat-origin-filter" aria-label="Filter sessions by type"><option value="">All types</option><option value="manual">Manual</option></select>
     <label><input id="chat-include-archived" type="checkbox" aria-label="Include archived" /> Include archived</label>
     <div id="chat-rail-list" data-testid="session-list">${railHTML}</div>
@@ -140,6 +151,12 @@ async function setFilter(page: Page, selector: string, value: string): Promise<v
   );
 }
 
+// pickAgent is the agent-filter equivalent of setFilter: the filter is a menu
+// now, so a pick is a click on the row carrying that agent id.
+async function pickAgent(page: Page, id: string): Promise<void> {
+  await click(page, `[data-action="filter-agent"][data-agent-id="${id}"]`);
+}
+
 test.describe('spawned sub-chats', () => {
   test('starts collapsed and toggles the nested rows', async ({ page }) => {
     const errors = await bootstrap(page, rail(false));
@@ -182,7 +199,7 @@ test.describe('spawned sub-chats', () => {
   test('a child-only filter match keeps the collapsed parent reachable', async ({ page }) => {
     const errors = await bootstrap(page, rail(false));
 
-    await setFilter(page, '#chat-agent-filter', 'internal');
+    await pickAgent(page, 'internal');
     // Parent does not match the agent filter but its child does: the header
     // stays visible (collapsed) instead of hiding the only way to open it.
     expect(await rowHidden(page, 'parent')).toBe(false);
@@ -194,11 +211,38 @@ test.describe('spawned sub-chats', () => {
 
     // A filter that matches nothing hides the whole group and shows the
     // filtered empty state.
-    await setFilter(page, '#chat-agent-filter', 'other');
+    await pickAgent(page, 'other');
     expect(await rowHidden(page, 'parent')).toBe(true);
     expect(
       await page.evaluate(() => !document.getElementById('chat-rail-empty-filtered')?.classList.contains('hidden')),
     ).toBe(true);
+    expect(errors, errors.join(' | ')).toEqual([]);
+  });
+
+  test('picking an agent updates the closed trigger and the checked row', async ({ page }) => {
+    const errors = await bootstrap(page, rail(false));
+
+    await pickAgent(page, 'internal');
+
+    const chrome = await page.evaluate(() => ({
+      label: document.getElementById('chat-agent-filter-label')?.textContent,
+      glyph: document
+        .querySelector('#chat-agent-filter-glyph [data-agent-avatar]')
+        ?.getAttribute('data-agent-avatar'),
+      ariaLabel: document.querySelector('[data-gd-menu-trigger]')?.getAttribute('aria-label'),
+      checked: Array.from(document.querySelectorAll('[data-action="filter-agent"]'))
+        .filter((r) => r.getAttribute('aria-checked') === 'true')
+        .map((r) => r.getAttribute('data-agent-id')),
+      visibleChecks: Array.from(document.querySelectorAll('[data-agent-check]')).filter(
+        (c) => !c.classList.contains('hidden'),
+      ).length,
+    }));
+
+    expect(chrome.label).toBe('Internal');
+    expect(chrome.glyph).toBe('agent');
+    expect(chrome.ariaLabel).toBe('Filter sessions by agent: Internal');
+    expect(chrome.checked).toEqual(['internal']);
+    expect(chrome.visibleChecks).toBe(1);
     expect(errors, errors.join(' | ')).toEqual([]);
   });
 

@@ -102,14 +102,20 @@ type WorkItemActionItem struct {
 // are the runs the work reconciler created for Kanban tasks, surfaced alongside
 // work items in the board's "recent runs" list.
 type BoardRun struct {
-	ID              string         `json:"id"`
-	AgentID         string         `json:"agentId"`
-	AgentName       string         `json:"agentName,omitempty"`
-	Status          string         `json:"status"`
-	StartedAt       string         `json:"startedAt"`
-	CompletedAt     *string        `json:"completedAt"`
-	Summary         map[string]any `json:"summary"`
-	SubjectObjectID *string        `json:"subjectObjectId,omitempty"`
+	ID        string `json:"id"`
+	AgentID   string `json:"agentId"`
+	AgentName string `json:"agentName,omitempty"`
+	// AgentDefinitionID is the agent definition the run executed under. It is
+	// the run's own FK when set, else the runtime agent's (memory's ToDTO
+	// falls back to the loaded Agent relation) — which is the id space every
+	// agent filter and grouping in the UI uses, unlike AgentID (a runtime
+	// kb.agents row).
+	AgentDefinitionID string         `json:"agentDefinitionId,omitempty"`
+	Status            string         `json:"status"`
+	StartedAt         string         `json:"startedAt"`
+	CompletedAt       *string        `json:"completedAt"`
+	Summary           map[string]any `json:"summary"`
+	SubjectObjectID   *string        `json:"subjectObjectId,omitempty"`
 }
 
 func (m *MemoryClient) workItemsPath(ctx context.Context) string {

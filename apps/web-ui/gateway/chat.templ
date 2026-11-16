@@ -111,12 +111,7 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 						Attrs:      templ.Attributes{"data-action": "toggle-chat-rail"},
 					})
 				</div>
-				<select id="chat-agent-filter" class="select select-sm select-bordered w-full" aria-label="Filter sessions by agent">
-					<option value="">All agents</option>
-					for _, a := range agents {
-						<option value={ a.ID }>{ a.Name }</option>
-					}
-				</select>
+				@chatAgentFilter(agents)
 				<select id="chat-origin-filter" class="select select-sm select-bordered w-full" aria-label="Filter sessions by type">
 					<option value="">All types</option>
 					<option value="manual">Manual</option>
@@ -702,6 +697,103 @@ templ railEntryUnhandled(kind railEntryKind) {
 	</li>
 }
 
+// chatAgentFilter narrows the session rail to one agent definition. It is the
+// menu variant of the rail's type <select> beside it, and the twin of the
+// objects page's actor picker: a native <select> cannot render a glyph per
+// option, and the rail is exactly where an agent's own mark is what separates
+// two sessions at a glance.
+//
+// Every row is a button carrying data-agent-id (empty for "All agents"), so a
+// pick is a pure DOM filter change — data-action="filter-agent", handled by
+// chat.js — rather than a form submit: the filter is client state with no URL
+// of its own. chat.js keeps the closed trigger honest (label, glyph,
+// aria-checked) and closes the menu; the server renders the initial state.
+//
+// The option list is the project's agent definitions — the same list the
+// composer's picker offers — so any agent that can own a chat can be filtered.
+// A session bound to a definition that is no longer listed (a deleted agent)
+// stays reachable under "All agents", which is where it already was.
+//
+// Keyboard and focus semantics come from go-daisy-a11y via ui.Dropdown: the
+// trigger carries data-gd-menu-trigger and every row data-gd-menu-item, so the
+// arrows, Home/End, typeahead and Escape work here (the objects picker leaves
+// its trigger unwired and gets no roving focus).
+templ chatAgentFilter(agents []AgentDefinitionSummary) {
+	@ui.Dropdown(ui.DropdownBottom, templ.Attributes{"data-testid": "chat-agent-filter"}) {
+		<div
+			tabindex="0"
+			role="button"
+			data-gd-menu-trigger
+			aria-haspopup="menu"
+			aria-label="Filter sessions by agent: All agents"
+			class="select select-sm select-bordered flex h-auto min-h-8 w-full cursor-pointer items-center gap-2 text-left"
+		>
+			<span id="chat-agent-filter-glyph" class="flex shrink-0 items-center">
+				@chatAgentAllGlyph()
+			</span>
+			<span id="chat-agent-filter-label" class="min-w-0 truncate">All agents</span>
+		</div>
+		@ui.DropdownMenu(templ.Attributes{"aria-label": "Filter sessions by agent", "class": "w-full min-w-56 max-w-[28rem]"}) {
+			<li role="none">
+				<button
+					type="button"
+					role="menuitemradio"
+					data-gd-menu-item
+					data-action="filter-agent"
+					data-agent-id=""
+					data-agent-label="All agents"
+					aria-checked="true"
+					class="menu-active min-w-0 text-left"
+				>
+					<span class="flex min-w-0 items-center gap-2">
+						@chatAgentAllGlyph()
+						<span class="min-w-0 truncate">All agents</span>
+						<span class="ml-auto shrink-0" data-agent-check="true">
+							@ui.IconSpan("lucide--check", "size-4 text-primary")
+						</span>
+					</span>
+				</button>
+			</li>
+			// An empty <li> is daisyUI's menu divider (background + .1 opacity);
+			// the opacity utility restores it to a line you can actually see.
+			<li role="separator" class="bg-base-content/20 my-1 h-px opacity-100"></li>
+			for _, a := range agents {
+				<li role="none">
+					<button
+						type="button"
+						role="menuitemradio"
+						data-gd-menu-item
+						data-action="filter-agent"
+						data-agent-id={ a.ID }
+						data-agent-label={ a.Name }
+						aria-checked="false"
+						class="min-w-0 text-left"
+					>
+						<span class="flex min-w-0 items-center gap-2">
+							@agentAvatarBubble(agentIcon(a.UIConfig), agentColor(a.UIConfig), templ.Attributes{"data-agent-avatar": "agent"})
+							<span class="min-w-0 truncate">{ a.Name }</span>
+							// Always rendered so chat.js toggles a class instead of
+							// rewriting the row; an inactive row just hides the check.
+							<span class="ml-auto hidden shrink-0" data-agent-check="true">
+								@ui.IconSpan("lucide--check", "size-4 text-primary")
+							</span>
+						</span>
+					</button>
+				</li>
+			}
+		}
+	}
+}
+
+// chatAgentAllGlyph is the "every agent" mark: the same neutral bubble the agent
+// rows wear, carrying the group glyph instead of one agent's. It is the filter's
+// resting state, and chat.js restores it whenever that row is picked.
+templ chatAgentAllGlyph() {
+	<span class="bg-base-200 text-base-content/60 inline-flex size-6 shrink-0 items-center justify-center rounded-full" aria-hidden="true" data-agent-avatar="all">
+		@ui.IconSpan("lucide--users", "size-3.5")
+	</span>
+}
+
 // sessionRailItem is one resumable conversation in the session rail.
 // Clicking it asks chat.js to load the transcript and continue it. All
 // conversations are on-demand, so their origin is "manual". The agent's own
@@ -929,6 +1021,12 @@ templ scheduledRailItem(r scheduledRunRow) {
 			"data-action": "open-run",
 			"data-id":     r.ID,
 			"data-run-id": r.ID,
+			// data-agent is the agent-definition id, the same id space the rail's
+			// agent filter and the conversation rows use. A scheduled run of a
+			// runtime agent that binds no definition (the legacy "Chat session
+			// for …" agents) carries "" and is therefore only reachable under
+			// "All agents".
+			"data-agent":  r.AgentDefinitionID,
 			"data-origin": "scheduled",
 			"data-testid": "session-row",
 		}
@@ -957,11 +1055,17 @@ type workRunRow struct {
 	Href        string
 	Title       string
 	AgentName   string
-	Status      string
-	StartedAt   string
-	CompletedAt string
-	Icon        string
-	Color       string
+	// AgentDefinitionID is the agent-definition id the run belongs to, in the
+	// same id space the rail's agent filter uses (the run's own definition FK
+	// when set, else its runtime agent's). It is empty for an extraction job
+	// whose recorded run could not be resolved, and for a run through a runtime
+	// agent that binds no definition.
+	AgentDefinitionID string
+	Status            string
+	StartedAt         string
+	CompletedAt       string
+	Icon              string
+	Color             string
 }
 
 // workRailItem is one board/work or extraction run in the session rail. It
@@ -984,8 +1088,10 @@ templ workRailItem(r workRunRow) {
 		// No recorded run (legacy job or a failed link): link to the extraction
 		// history page. Hand-written rather than components.LinkRow so the row
 		// still carries data-origin and the session-row test id — an unfilterable
-		// row would leak into every other origin filter's view.
-		<a class="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-base-200/40" href={ templ.URL(r.Href) } data-origin={ origin } data-testid="session-row">
+		// row would leak into every other origin filter's view. Its data-agent is
+		// empty: an extraction job carries no agent definition, so the row shows
+		// only under "All agents", like any other unattributed row.
+		<a class="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-base-200/40" href={ templ.URL(r.Href) } data-origin={ origin } data-agent={ r.AgentDefinitionID } data-testid="session-row">
 			@ui.IconSpan("lucide--scan-text", "size-4 shrink-0 text-muted-faint")
 			<div class="min-w-0 grow">
 				<p class="truncate text-sm font-medium">{ title }</p>
@@ -1001,6 +1107,10 @@ templ workRailItem(r workRunRow) {
 				"data-action": "open-run",
 				"data-id":     r.RunID,
 				"data-run-id": r.RunID,
+				// Same agent-definition id space as the conversation and
+				// scheduled rows; empty means the run cannot be attributed to a
+				// definition and only shows under "All agents".
+				"data-agent":  r.AgentDefinitionID,
 				"data-origin": origin,
 				"data-testid": "session-row",
 			}

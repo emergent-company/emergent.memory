@@ -199,6 +199,60 @@ func TestAgentDefinitionToDTORedactsSandboxSecrets(t *testing.T) {
 	require.NotContains(t, string(b), realToken, "raw git token must not appear in the DTO JSON")
 }
 
+// TestAgentRunToDTOFallsBackToRuntimeAgentDefinition covers runs created
+// through a runtime agent (kb.agents): work/board dispatch, the scheduler and
+// reaction runs all leave kb.agent_runs.agent_definition_id NULL, so the run's
+// owning agent is the only link back to the agent definition the user picked.
+// ToDTO must report that definition, because every consumer that groups or
+// filters runs by agent (the chat session rail's agent filter) works in
+// definition ids while a run carries a runtime agent id. Without the fallback
+// all 131 object-driven runs of a project reported no agent at all.
+func TestAgentRunToDTOFallsBackToRuntimeAgentDefinition(t *testing.T) {
+	defID := "ad-coding"
+	run := &AgentRun{
+		ID:      "run-1",
+		AgentID: "runtime-coding",
+		Agent:   &Agent{ID: "runtime-coding", Name: "coding", AgentDefinitionID: &defID},
+	}
+
+	dto := run.ToDTO()
+	require.NotNil(t, dto.AgentDefinitionID)
+	require.Equal(t, "ad-coding", *dto.AgentDefinitionID)
+	require.Equal(t, "coding", dto.AgentName)
+
+	// The wire name is what the gateway decodes (BoardRun.agentDefinitionId).
+	encoded, err := json.Marshal(dto)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &payload))
+	require.Equal(t, "ad-coding", payload["agentDefinitionId"],
+		"wire name must be agentDefinitionId, got %s", encoded)
+
+	// The run's own column stays authoritative: a definition switch on the
+	// runtime agent must not rewrite the history of runs that already ran.
+	pinned := "ad-at-run-time"
+	other := "ad-current"
+	snapshot := &AgentRun{
+		ID:                "run-2",
+		AgentID:           "runtime-coding",
+		AgentDefinitionID: &pinned,
+		Agent:             &Agent{ID: "runtime-coding", AgentDefinitionID: &other},
+	}
+	require.Equal(t, pinned, *snapshot.ToDTO().AgentDefinitionID)
+
+	// No Agent relation (or an unbound runtime agent) leaves the field unset,
+	// so a run nobody can attribute does not claim a definition.
+	require.Nil(t, (&AgentRun{ID: "run-3", AgentID: "a"}).ToDTO().AgentDefinitionID)
+
+	empty := ""
+	unbound := &AgentRun{
+		ID:      "run-4",
+		AgentID: "runtime-chat",
+		Agent:   &Agent{ID: "runtime-chat", AgentDefinitionID: &empty},
+	}
+	require.Nil(t, unbound.ToDTO().AgentDefinitionID)
+}
+
 // TestAgentRunDTOSpansCompanionToTokenUsage documents the pairing: enrichRunTrace
 // populates both fields from a single trace fetch, so a DTO with token usage set
 // may carry spans alongside it without breaking serialization.

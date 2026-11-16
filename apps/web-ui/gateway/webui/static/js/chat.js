@@ -46,10 +46,9 @@
 
   var root = null, log = null, messages = null, empty = null;
   var input = null, sendBtn = null, stopBtn = null, agentSelect = null, modelSelect = null, thinkingSelect = null;
-  var agentFilterSelect = null;
   var originFilterSelect = null;
   var includeArchivedEl = null;
-  var filterAgent = "";   // session rail agent filter ("" = all agents)
+  var filterAgent = "";   // session rail agent filter ("" = all agents); set by the agent menu
   var filterOrigin = "";  // session rail origin filter ("" = all types)
   var filterIncludeArchived = false; // rail "Include archived" filter (server-side query)
   var deleteSessionId = "";          // session pending the delete confirmation
@@ -607,7 +606,6 @@
     agentSelect = document.getElementById("chat-agent");
     modelSelect = document.querySelector('#chat-form input[name="model"]');
     thinkingSelect = document.querySelector('#chat-form input[name="thinking"]');
-    agentFilterSelect = document.getElementById("chat-agent-filter");
     originFilterSelect = document.getElementById("chat-origin-filter");
     includeArchivedEl = document.getElementById("chat-include-archived");
 
@@ -716,14 +714,10 @@
       });
     }
 
-    // session rail agent filter: hide rows for other agents, and surface a
-    // dedicated empty state when the active filter matches nothing.
-    if (agentFilterSelect) {
-      agentFilterSelect.addEventListener("change", function () {
-        filterAgent = agentFilterSelect.value;
-        applyAgentFilter();
-      });
-    }
+    // session rail agent filter: the pick comes from the rail's agent menu
+    // (data-action="filter-agent"), handled in the delegated click chain below
+    // because the menu rows are re-rendered by a rail refresh. See
+    // setAgentFilter.
 
     // session rail origin filter (manual / scheduled / all): combined with
     // the agent filter in applyAgentFilter.
@@ -787,6 +781,11 @@
         }
       } else if (t.getAttribute("data-action") === "toggle-chat-rail") {
         toggleSessionRail();
+      } else if (t.getAttribute("data-action") === "filter-agent") {
+        // A pick in the rail's agent menu. Delegated rather than bound per row:
+        // the menu's option list is server-rendered once, but a rail refresh
+        // can swap markup, and this chain already survives re-init.
+        setAgentFilter(t.getAttribute("data-agent-id") || "", t);
       } else if (t.getAttribute("data-action") === "session-menu") {
         // The row action menu opens via the go-daisy popover runtime. The
         // delegated closest("[data-action]") above resolves to the innermost
@@ -1113,11 +1112,58 @@
     return false;
   }
 
+  // setAgentFilter applies one pick from the rail's agent menu. It is the menu
+  // equivalent of a <select> change: it records the active definition id, makes
+  // the closed trigger show that agent (label + its own glyph), and re-marks
+  // every menu row (aria-checked, active background, check mark) — the menu is
+  // server-rendered once, so without this pass the check would stay on whatever
+  // row was active at render time. rowEl is the picked button; it carries
+  // data-agent-label and the avatar, so the trigger never parses row markup for
+  // a name. An empty id is "All agents" and clears the filter.
+  function setAgentFilter(id, rowEl) {
+    filterAgent = id || "";
+
+    var menuRoot = rowEl ? rowEl.closest("[data-gd-menu-root]") : null;
+    var label = document.getElementById("chat-agent-filter-label");
+    var glyph = document.getElementById("chat-agent-filter-glyph");
+    var trigger = menuRoot ? menuRoot.querySelector("[data-gd-menu-trigger]") : null;
+    var picked = rowEl ? (rowEl.getAttribute("data-agent-label") || "All agents") : "";
+
+    if (rowEl) {
+      if (label) label.textContent = picked;
+      var mark = rowEl.querySelector("[data-agent-avatar]");
+      // Static, server-rendered markup (never user input) — copying it keeps the
+      // agent's icon/colour without duplicating the appearance rules in JS.
+      if (glyph && mark) glyph.innerHTML = mark.outerHTML;
+      if (trigger) trigger.setAttribute("aria-label", "Filter sessions by agent: " + picked);
+    }
+
+    var rows = document.querySelectorAll("[data-action='filter-agent']");
+    for (var i = 0; i < rows.length; i++) {
+      var active = (rows[i].getAttribute("data-agent-id") || "") === filterAgent;
+      rows[i].setAttribute("aria-checked", active ? "true" : "false");
+      if (active) rows[i].classList.add("menu-active");
+      else rows[i].classList.remove("menu-active");
+      var check = rows[i].querySelector("[data-agent-check]");
+      if (check) check.classList.toggle("hidden", !active);
+    }
+
+    applyAgentFilter();
+    // daisyUI keeps the menu open while focus stays inside it, so close it the
+    // way the a11y runtime expects (marker + focus back on the trigger). A page
+    // without the runtime (an e2e harness) simply leaves it be.
+    if (menuRoot && window.gdMenu) window.gdMenu.close(menuRoot, true);
+  }
+
   // Show/hide session rows according to the active agent + origin filters, the
   // sub-chat group state, and the optimistic archive marker; toggle the empty
   // states. Rows carry data-agent/data-origin and sub-chat rows carry
   // data-parent-id, so visibility is a pure DOM pass that works after both the
-  // initial server render and refreshSessionRail() rebuilds.
+  // initial server render and refreshSessionRail() rebuilds. Every row kind
+  // carries data-agent now — conversations, shared sessions AND the run rows
+  // (scheduled/board/extraction) — so the agent filter isolates the row's agent
+  // whatever produced it; a row whose agent could not be attributed carries ""
+  // and therefore shows only under "All agents".
   function applyAgentFilter() {
     var railList = document.getElementById("chat-rail-list");
     if (!railList) return;
