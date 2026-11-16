@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../fixtures';
 
 // Hermetic (no-auth, mock-backed) coverage for the project Credentials surface:
 // saved, reusable credentials (personal access tokens) and the OAuth apps table.
@@ -48,7 +48,8 @@ test.describe('project credentials', () => {
     // substring search for "OAuth apps", which makes the locator ambiguous.
     await expect(page.getByRole('heading', { name: 'OAuth apps', exact: true })).toBeVisible();
     await expect(page.getByTestId('ds-oauth-app-add')).toBeVisible();
-    // No catalog rows are pre-rendered: the list starts empty.
+    // No catalog rows are pre-rendered: the mock store is reset to its seed
+    // before every test (fixtures.ts), so the list always starts empty.
     await expect(page.getByTestId('ds-credential-row')).toHaveCount(0);
     await expect(page.getByRole('heading', { name: 'No OAuth apps yet' })).toBeVisible();
 
@@ -194,8 +195,9 @@ test.describe('project credentials', () => {
     await expect(page.getByTestId('ds-oauth-apps')).toBeVisible();
 
     await page.getByTestId('ds-oauth-app-add').click();
-    // The canonical org scope prefix is `/o/<org>`: a legacy `/orgs/<org>` path
-    // is 302'd there, so only the tail of the editor route is asserted.
+    // The canonical org scope prefix is `/o/<org>`: the href is rewritten at
+    // render time by rewriteScopedHTML → scopedPathFor (gateway/scope.go), not by
+    // a 302 from `/orgs/<org>`, so only the tail of the editor route is asserted.
     await expect(page).toHaveURL(/\/settings\/oauth-apps\/new$/);
     await page.getByTestId('ds-oauth-app-vendor').selectOption('google');
     await page.getByTestId('ds-oauth-app-name').fill(name);

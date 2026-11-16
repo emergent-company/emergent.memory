@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../fixtures';
 
 // Document version history (gateway /documents/:id/versions) — the observable
 // outcome of re-syncing a source document. The mock seeds `doc-report` (two

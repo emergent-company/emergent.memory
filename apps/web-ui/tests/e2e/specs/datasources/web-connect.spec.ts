@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../fixtures';
 import { createWebSource, deleteDriveSource } from '../../helpers/datasources';
 
 // Web connect is config-only: the provider advertises no credentials method and
