@@ -10,11 +10,11 @@ import (
 )
 
 // The display name is a first-class column on kb.graph_objects (migration
-// 00280), and it is what the app's object list and entity-query show. Before
-// #718 the MCP write path dropped it: create could only set it sideways through
-// properties.name (resolveObjectName backfills it on create), and an update had
-// no route at all, so a renamed entity kept rendering its key. These tests pin
-// both halves of the fix: an explicit spec name and an explicit update name.
+// 00280), and it is what the app's object list and entity-query show. Since
+// #824 it is the ONLY title: properties.name/title are ordinary properties and
+// are never read as one, on a create or an update. These tests pin that: an
+// explicit spec name lands on the column, a properties-only write never moves
+// it, and a nameless create stays nameless.
 
 // createNamedEntity creates one entity through the batch-create path (the only
 // create path the tool exposes) and returns the canonical id the response
@@ -89,6 +89,27 @@ func TestEntityCreateSetsDisplayName(t *testing.T) {
 	assert.Equal(t, "Button size", prop)
 }
 
+// TestEntityCreateWithoutNameStaysNameless pins the #824 contract: a properties
+// write is not a title. An entity created with only properties.name has no name
+// column, so the UI renders `type · #ref` instead of promoting a property — and
+// the property itself is stored untouched.
+func TestEntityCreateWithoutNameStaysNameless(t *testing.T) {
+	db := connectTestDB(t)
+	ctx := context.Background()
+	_, projectID := seedProject(t, db)
+	svc := newEntityCreateDedupService(t, db)
+
+	id := createNamedEntity(t, svc, ctx, projectID, map[string]any{
+		"type":       "UIVariant",
+		"key":        "ui-variant-probe-nameless",
+		"properties": map[string]any{"name": "Not a title", "go_type": "ButtonSize"},
+	})
+
+	column, prop := objectNameParts(t, svc, projectID, id)
+	assert.Empty(t, column, "properties.name must never populate the name column")
+	assert.Equal(t, "Not a title", prop, "the property itself is stored untouched")
+}
+
 // TestEntityUpdateSetsDisplayNameFromName is the #718 regression: updating with
 // `name` must move the name column, while properties.name keeps whatever the
 // caller last set there. Passing only properties.name must NOT change the
@@ -103,6 +124,7 @@ func TestEntityUpdateSetsDisplayNameFromName(t *testing.T) {
 	id := createNamedEntity(t, svc, ctx, projectID, map[string]any{
 		"type":       "UIPattern",
 		"key":        key,
+		"name":       "Old title",
 		"properties": map[string]any{"name": "Old title"},
 	})
 
@@ -155,6 +177,7 @@ func TestEntityUpdateBatchSetsDisplayName(t *testing.T) {
 	id := createNamedEntity(t, svc, ctx, projectID, map[string]any{
 		"type":       "UIRule",
 		"key":        key,
+		"name":       "Rule old",
 		"properties": map[string]any{"name": "Rule old"},
 	})
 

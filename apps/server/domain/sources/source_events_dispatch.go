@@ -512,7 +512,7 @@ func (d *SourceEventDispatcher) ensureIssuePRLink(ctx context.Context, src *Sour
 	issueProps["status"] = issueStatus
 	issueKey := fmt.Sprintf("github:%s:%s#%d", issueSourceID, repoName, issueNumber)
 	if _, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
-		Type: "GitHubIssue", Key: &issueKey, Status: &issueStatus, Properties: issueProps,
+		Type: "GitHubIssue", Key: &issueKey, Name: issue.Name, Status: &issueStatus, Properties: issueProps,
 	}, nil); err != nil {
 		return nil, err
 	}

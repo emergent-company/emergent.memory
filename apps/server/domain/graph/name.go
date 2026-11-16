@@ -9,26 +9,17 @@ import (
 
 var keySlugRegexp = regexp.MustCompile(`[^a-z0-9]+`)
 
-// resolveObjectName derives the first-class title for a write. An explicit
-// request name wins; otherwise the established properties convention is used
-// (name, then title). An empty/whitespace explicit name clears the title.
-func resolveObjectName(explicit *string, props map[string]any) *string {
-	if explicit != nil {
-		return trimName(*explicit)
+// resolveObjectName derives the first-class title for a write. The explicit
+// request name is the only source: properties["name"] and properties["title"]
+// are ordinary properties and are never consulted as a title (#824). An
+// empty/whitespace explicit name clears the title, and an absent one leaves it
+// unset — a nameless write is accepted, not rejected, because a provider record
+// or an extraction result legitimately has no title yet.
+func resolveObjectName(explicit *string) *string {
+	if explicit == nil {
+		return nil
 	}
-	if props != nil {
-		if v, ok := props["name"].(string); ok {
-			if n := trimName(v); n != nil {
-				return n
-			}
-		}
-		if v, ok := props["title"].(string); ok {
-			if n := trimName(v); n != nil {
-				return n
-			}
-		}
-	}
-	return nil
+	return trimName(*explicit)
 }
 
 func trimName(s string) *string {

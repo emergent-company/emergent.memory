@@ -332,13 +332,32 @@ function registerEdgeType(t) { edgeTypeCounts[t] = (edgeTypeCounts[t] || 0) + 1;
 
 function nodeSize(deg) { return Math.min(14 + Math.sqrt(deg) * 4, 48); }
 
+// machineObjectKey mirrors the server, migration 00311 and the web-ui gateway
+// regexes: the current minted key ("<type>-<12 hex>"), the legacy minted key
+// ("<type>-<8 hex>") and a source-scoped dedup key
+// ("<provider>:<uuid>:<external id>"). Any of them is an identity, never a title.
+const MACHINE_OBJECT_KEY = /^[a-z0-9_-]+-[0-9a-f]{12}$|^[a-z0-9_-]+-[0-9a-f]{8}$|^[a-z][a-z0-9_-]*:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:.+$/;
+
+// objectLabel is the one label rule for every graph surface here: the `name`
+// column, else a non-machine key, else `type` + a short id. It never reads
+// properties (#824) — a properties.name/title copy is a legibility mirror, not a
+// title.
+function objectLabel(o, fallbackId) {
+  if (!o) return String(fallbackId || '').slice(0, 8);
+  const id = o.canonical_id || o.entity_id || o.id || fallbackId || '';
+  const name = typeof o.name === 'string' ? o.name.trim() : '';
+  if (name) return o.name;
+  if (o.key && !MACHINE_OBJECT_KEY.test(o.key)) return o.key;
+  const type = o.type || 'unknown';
+  return type + ' ' + String(id).slice(0, 6);
+}
+
 function mergeNode(n, { forceVisible = false } = {}) {
   const id = n.canonical_id || n.entity_id || n.id;
   if (!id) return;
   const type = n.type || 'unknown';
   const color = typeColor(type);
-  const props = n.properties || {};
-  const label = props.name || props.title || n.key || (type + ' ' + String(id).slice(0, 6));
+  const label = objectLabel(n, id);
   if (!graph.hasNode(id)) {
     graph.addNode(id, {
       label, size: 14, color,
@@ -358,8 +377,7 @@ function mergeObjectResponse(o, { forceVisible = false } = {}) {
   if (!id) return;
   const type = o.type || 'unknown';
   const color = typeColor(type);
-  const props = o.properties || {};
-  const label = props.name || props.title || o.key || (type + ' ' + String(id).slice(0, 6));
+  const label = objectLabel(o, id);
   if (!graph.hasNode(id)) {
     graph.addNode(id, {
       label, size: 14, color,
@@ -367,7 +385,7 @@ function mergeObjectResponse(o, { forceVisible = false } = {}) {
       nodeType: type, typeInitial: typeIcon(type),
       hidden: forceVisible ? false : hiddenNodeTypes.has(type),
     });
-    nodeData[id] = { ...o, canonical_id: id, properties: props };
+    nodeData[id] = { ...o, canonical_id: id };
     registerNodeType(type);
   } else if (forceVisible) {
     graph.setNodeAttribute(id, 'hidden', false);
@@ -1554,7 +1572,7 @@ document.addEventListener('mouseover', (e) => {
   // Gather info — prefer in-graph data, fall back to row content
   const d = nodeData[nid];
   const typeName = d?.type || row.querySelector('.text-gh-muted.shrink-0')?.textContent?.trim() || '';
-  const name = d?.properties?.name || d?.properties?.title || d?.key ||
+  const name = d ? objectLabel(d, nid) :
     row.querySelector('.text-gh-text.truncate')?.textContent?.trim() || nid.slice(0, 8);
   const color = d ? typeColor(typeName) : (row.querySelector('.rounded-full')?.style.background || '#8b949e');
   const props = d?.properties || null;

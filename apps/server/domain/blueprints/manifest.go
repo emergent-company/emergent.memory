@@ -268,8 +268,12 @@ type SeedManifest struct {
 
 // SeedObjectRecord is a seed graph object identified by (type, key).
 type SeedObjectRecord struct {
-	Type       string         `json:"type"`
-	Key        string         `json:"key"`
+	Type string `json:"type"`
+	Key  string `json:"key"`
+	// Name is the object's human title. It is the only title source: a seed's
+	// properties["name"]/["title"] is an ordinary property and is never read as
+	// a title (#824). A seed without a name is created nameless on purpose.
+	Name       string         `json:"name,omitempty"`
 	Status     string         `json:"status"`
 	Properties map[string]any `json:"properties"`
 	Labels     []string       `json:"labels,omitempty"`
