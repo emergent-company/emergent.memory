@@ -10,8 +10,13 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
+
+// errFileNotFound is the single not-found body for the coverage/docs asset
+// endpoints: the requested asset is absent, not the endpoint.
+var errFileNotFound = apperror.New(http.StatusNotFound, "not_found", "File not found")
 
 // Handler serves developer tools endpoints
 type Handler struct {
@@ -78,16 +83,16 @@ func (h *Handler) ServeCoverageFiles(c echo.Context) error {
 	// Security: prevent directory traversal
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "Invalid path")
+		return apperror.New(http.StatusBadRequest, "invalid_path", "Invalid path")
 	}
 	absDir, _ := filepath.Abs(h.coverageDir)
 	if !strings.HasPrefix(absPath, absDir) {
-		return echo.NewHTTPError(http.StatusForbidden, "Access denied")
+		return apperror.ErrForbidden
 	}
 
 	// Check if file exists
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		return echo.NewHTTPError(http.StatusNotFound, "File not found")
+		return errFileNotFound
 	}
 
 	return c.File(filePath)
@@ -168,7 +173,7 @@ func (h *Handler) ServeDocs(c echo.Context) error {
 		return c.File(filePath)
 	}
 
-	return echo.NewHTTPError(http.StatusNotFound, "File not found")
+	return errFileNotFound
 }
 
 // serveSwaggerUI serves the Swagger UI HTML

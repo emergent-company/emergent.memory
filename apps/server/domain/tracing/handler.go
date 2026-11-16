@@ -17,6 +17,10 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
+// errTracingDisabled is returned by every Tempo-backed route when the
+// deployment has no tracing backend configured.
+var errTracingDisabled = apperror.NewServiceUnavailable("tracing not enabled", nil)
+
 // Handler proxies Tempo query API requests so clients never talk to Tempo directly.
 type Handler struct {
 	tempoBaseURL string
@@ -76,7 +80,7 @@ func NewHandler(cfg *config.Config, db bun.IDB) *Handler {
 // @Router       /api/traces/search [get]
 func (h *Handler) Search(c echo.Context) error {
 	if h.tempoBaseURL == "" {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "tracing not enabled")
+		return errTracingDisabled
 	}
 
 	user := auth.MustGetUser(c)
@@ -136,7 +140,7 @@ func (h *Handler) Search(c echo.Context) error {
 // @Router       /api/traces/{id} [get]
 func (h *Handler) GetTrace(c echo.Context) error {
 	if h.tempoBaseURL == "" {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "tracing not enabled")
+		return errTracingDisabled
 	}
 
 	user := auth.MustGetUser(c)
@@ -167,7 +171,14 @@ func (h *Handler) GetTrace(c echo.Context) error {
 		return fmt.Errorf("read tempo response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return echo.NewHTTPError(resp.StatusCode, strings.TrimSpace(string(body)))
+		// A 4xx body is Tempo's own query error (bad TraceQL, unknown trace) and
+		// is actionable for the caller. A 5xx is a backend fault: it must not be
+		// relayed with Tempo's status or body, which leak the trace store's
+		// internals as if they were this API's answer.
+		if resp.StatusCode >= 500 {
+			return apperror.NewServiceUnavailable("tracing backend error", errors.New(strings.TrimSpace(string(body))))
+		}
+		return apperror.New(resp.StatusCode, "tempo_query_error", truncateErrorBody(body))
 	}
 
 	if projectID != "" {
@@ -365,6 +376,23 @@ func wellFormedTraceQL(s string) bool {
 	return paren == 0 && brace == 0 && !inStr
 }
 
+// maxErrorBody is the largest upstream error body relayed to a client. Tempo's
+// 4xx bodies are short query diagnostics; the cap keeps a misbehaving proxy from
+// turning a trace query into a multi-megabyte error envelope.
+const maxErrorBody = 512
+
+// truncateErrorBody trims an upstream error body and bounds its length.
+func truncateErrorBody(body []byte) string {
+	msg := strings.TrimSpace(string(body))
+	if msg == "" {
+		return "tracing backend rejected the query"
+	}
+	if r := []rune(msg); len(r) > maxErrorBody {
+		return string(r[:maxErrorBody]) + "…"
+	}
+	return msg
+}
+
 // tempoGet performs a GET against Tempo and returns the raw response. It
 // mirrors proxy's request-building and error handling. The caller must close
 // the returned response body.
@@ -378,7 +406,10 @@ func (h *Handler) tempoGet(c echo.Context, path string) (*http.Response, error) 
 
 	resp, err := h.client.Do(req)
 	if err != nil {
-		return nil, echo.NewHTTPError(http.StatusBadGateway, fmt.Sprintf("tempo unreachable: %s", err))
+		// The transport error names the Tempo URL and DNS/TLS state, so it is
+		// carried as the internal cause (logged by HTTPErrorHandler on the 503)
+		// rather than echoed to the client.
+		return nil, apperror.NewServiceUnavailable("tracing backend unreachable", err)
 	}
 	return resp, nil
 }

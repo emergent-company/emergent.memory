@@ -1,6 +1,7 @@
 package superadmin
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -98,7 +99,9 @@ func (h *Handler) TestEmailSettings(c echo.Context) error {
 	})
 	if err != nil || !result.Success {
 		if err == nil {
-			err = echo.NewHTTPError(http.StatusBadGateway, result.Error)
+			// Send reports a provider rejection as result.Error with a nil
+			// error; keep it as the logged cause, not an HTTP status carrier.
+			err = errors.New(result.Error)
 		}
 		return apperror.New(http.StatusBadGateway, "email_test_failed", "failed to send test email").WithInternal(err)
 	}
