@@ -1,6 +1,9 @@
 package main
 
-import ui "github.com/emergent-company/go-daisy/components/ui"
+import (
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
 
 // --- Budget UI: nav badge + usage-page panels ---
 
@@ -11,30 +14,34 @@ import ui "github.com/emergent-company/go-daisy/components/ui"
 // numbers.
 templ sidebarBudgetBadge(level string) {
 	if level == "exhausted" {
-		@ui.Badge(ui.BadgeProps{
-			Label:    "Over budget",
-			Variant:  ui.BadgeError,
-			Size:     ui.BadgeSizeXS,
-			MaxWidth: "max-w-20",
-			Attrs: templ.Attributes{
-				"data-testid": "budget-nav-badge",
-				"data-level":  "exhausted",
-				"title":       "A budget window is exhausted — agent runs are blocked until it resets",
-				"class":       "ml-1",
+		@components.BadgeWithClass(components.BadgeWithClassProps{
+			BadgeProps: ui.BadgeProps{
+				Label:    "Over budget",
+				Variant:  ui.BadgeError,
+				Size:     ui.BadgeSizeXS,
+				MaxWidth: "max-w-20",
+				Attrs: templ.Attributes{
+					"data-testid": "budget-nav-badge",
+					"data-level":  "exhausted",
+					"title":       "A budget window is exhausted — agent runs are blocked until it resets",
+				},
 			},
+			Class: "ml-1",
 		})
 	} else if level == "warning" {
-		@ui.Badge(ui.BadgeProps{
-			Label:    "Near limit",
-			Variant:  ui.BadgeWarning,
-			Size:     ui.BadgeSizeXS,
-			MaxWidth: "max-w-20",
-			Attrs: templ.Attributes{
-				"data-testid": "budget-nav-badge",
-				"data-level":  "warning",
-				"title":       "A budget window has crossed its alert threshold",
-				"class":       "ml-1",
+		@components.BadgeWithClass(components.BadgeWithClassProps{
+			BadgeProps: ui.BadgeProps{
+				Label:    "Near limit",
+				Variant:  ui.BadgeWarning,
+				Size:     ui.BadgeSizeXS,
+				MaxWidth: "max-w-20",
+				Attrs: templ.Attributes{
+					"data-testid": "budget-nav-badge",
+					"data-level":  "warning",
+					"title":       "A budget window has crossed its alert threshold",
+				},
 			},
+			Class: "ml-1",
 		})
 	}
 }
