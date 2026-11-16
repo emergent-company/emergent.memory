@@ -174,6 +174,26 @@ func TestEnsureIssuePRLink(t *testing.T) {
 	require.NotNil(t, store.issueReq)
 	require.Equal(t, "review", *store.issueReq.Status)
 	require.Equal(t, "emergent-company/emergent.memory", store.issueReq.Properties["repo"])
+
+	// A draft conversion must not cancel the issue.
+	p.Action = "converted_to_draft"
+	p.PullRequest.State = "open"
+	_, err = d.ensureIssuePRLink(ctx, src, p, &githubapp.PullRequestState{State: "draft", HeadSHA: strings.Repeat("a", 40)}, "owner/repo#42")
+	require.NoError(t, err)
+	require.Equal(t, "review", *store.issueReq.Status)
+	link, err = repo.FindSourceIssuePRLink(ctx, projectID, "owner/repo", 42)
+	require.NoError(t, err)
+	require.Equal(t, "draft", link.State)
+
+	// Refs-only is a link but not a closing keyword.
+	p.Action = "synchronize"
+	p.PullRequest.State = "open"
+	p.PullRequest.Body = "Refs #7"
+	_, err = d.ensureIssuePRLink(ctx, src, p, &githubapp.PullRequestState{State: "open", HeadSHA: strings.Repeat("a", 40)}, "owner/repo#42")
+	require.NoError(t, err)
+	link, err = repo.FindSourceIssuePRLink(ctx, projectID, "owner/repo", 42)
+	require.NoError(t, err)
+	require.False(t, link.ClosesIssue)
 }
 
 func ptr(s string) *string { return &s }

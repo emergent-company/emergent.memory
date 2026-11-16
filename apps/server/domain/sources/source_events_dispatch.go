@@ -187,8 +187,12 @@ func (d *SourceEventDispatcher) handlePullRequest(ctx context.Context, v *Verifi
 	subject := fmt.Sprintf("%s#%d", repoName, p.PullNumber())
 	if p.Action == "closed" || p.Action == "converted_to_draft" {
 		for _, src := range allowed {
+			linkState := "closed"
+			if p.Action == "converted_to_draft" {
+				linkState = "draft"
+			}
 			if _, err := d.ensureIssuePRLink(ctx, src, p, &githubapp.PullRequestState{
-				HeadSHA: p.PullRequest.Head.SHA, State: "closed",
+				HeadSHA: p.PullRequest.Head.SHA, State: linkState,
 			}, subject); err != nil {
 				return err
 			}
