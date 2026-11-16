@@ -285,10 +285,15 @@ pre-commit:
 
     - name: webui-no-generated
       run: |
+        # Scope to apps/web-ui: only that tree gitignores its templ output, the
+        # compiled Tailwind CSS and the generated gallery data. Other trees track
+        # generated files (apps/cli/internal/graphexplore/*_templ.go), and a templ
+        # change there is a source change, not a mistake — a repo-wide glob made
+        # the hook impossible to pass without a LEFTHOOK=0 bypass (#918).
         bad=$(git diff --cached --name-only --diff-filter=ACM \
-          | grep -E 'webui/static/css/app\.css$|_templ\.go$|devgallery_(graph|adoption)_gen\.go$' || true)
+          | grep -E '^apps/web-ui/.*(_templ\.go$|webui/static/css/app\.css$|devgallery_(graph|adoption)_gen\.go$)' || true)
         if [ -n "$bad" ]; then
-          echo "Generated files staged (gitignored — regenerate via task build/css):"
+          echo "Generated web-ui files staged (gitignored — regenerate via task build/css):"
           echo "$bad"
           exit 1
         fi
