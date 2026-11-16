@@ -54,21 +54,54 @@ func (s *Server) uiUsageSessions(c echo.Context) error {
 		runs, runsErr = s.memory.GetProjectUsageRuns(ctx, since, until, agentID, usageSessionsPageSize, offset)
 		return nil
 	})
-	// The agent filter chips come from the same breakdown the dashboard shows;
-	// a failure only costs the chips, not the log.
+	// The agent picker's rows come from the same breakdown the dashboard shows;
+	// a failure only costs the picker, not the log.
 	g.Go(func() error {
 		byAgent, _ = s.memory.GetProjectUsageByAgent(ctx, since, until)
 		return nil
 	})
 	_ = g.Wait()
 
+	// Appearance is decoration for the picker alone, so its two fetches wait for
+	// the breakdown: a failed log renders the error state and a breakdown with no
+	// attributed agent renders no picker, and in both cases the glyphs would be
+	// painted nowhere. Skipping them saves a round trip and costs no row.
+	var (
+		defs    []AgentDefinitionSummary
+		runtime []RuntimeAgent
+	)
+	if runsErr == nil && usageAttributedRows(byAgent) > 0 {
+		var ag errgroup.Group
+		// The rows wear each agent's declared glyph, so the picker reads like the
+		// chat rail's and the objects page's. A failed fetch leaves every row on
+		// the generic bot mark, exactly as an agent whose definition is gone
+		// renders, so these failures are not surfaced either.
+		ag.Go(func() error {
+			defs, _ = s.memory.ListAgentDefinitions(ctx)
+			return nil
+		})
+		// The breakdown reports kb.agents ids while a definition's appearance is
+		// keyed by kb.agent_definitions id, so the two cannot be joined on the
+		// row's own id; this fetch supplies the runtime agent's definition id.
+		// ListRuntimeAgents takes an explicit project id, so resolve it the way
+		// MemoryClient.projectIDFor scopes the two fetches above (the session's
+		// active project, else the static dev/API-key one) — a map built for a
+		// different project would silently miss.
+		ag.Go(func() error {
+			runtime, _ = s.memory.ListRuntimeAgents(ctx, s.currentProjectID(ctx))
+			return nil
+		})
+		_ = ag.Wait()
+	}
+
 	data := usageSessionsPageData{
-		Days:    days,
-		AgentID: agentID,
-		Agents:  byAgent,
-		Runs:    runs,
-		Limit:   usageSessionsPageSize,
-		Offset:  offset,
+		Days:         days,
+		AgentID:      agentID,
+		Agents:       byAgent,
+		AgentOptions: usageSessionsAgentOptions(byAgent, defs, runtime),
+		Runs:         runs,
+		Limit:        usageSessionsPageSize,
+		Offset:       offset,
 	}
 	// The error state renders the error's message, so a raw backend failure has
 	// to be sanitized here, exactly as the dashboard does (#1671).
@@ -96,9 +129,10 @@ func usageSessionsHref(days int, agentID string, offset int) string {
 	return "/usage/sessions?" + q.Encode()
 }
 
-// usageAgentFilterLabel names the filter's current selection, falling back to
-// the id when the breakdown could not name it (a filter carried in a URL from a
-// range where the agent has no usage).
+// usageAgentFilterLabel names the filter's current selection. An empty filter is
+// "All agents"; a filter naming an agent the breakdown cannot name (a URL
+// carried from a range where that agent has no usage) says so in words instead
+// of putting a bare id — often a UUID — in front of an operator.
 func usageAgentFilterLabel(byAgent *UsageByAgentResponse, agentID string) string {
 	if agentID == "" {
 		return "All agents"
@@ -110,7 +144,85 @@ func usageAgentFilterLabel(byAgent *UsageByAgentResponse, agentID string) string
 			}
 		}
 	}
-	return agentID
+	return "unknown agent"
+}
+
+// usageAttributedRows counts the breakdown rows that name an agent. The
+// unattributed bucket is not an agent and cannot be filtered, so a breakdown
+// with none of these has no picker to paint.
+func usageAttributedRows(byAgent *UsageByAgentResponse) int {
+	if byAgent == nil {
+		return 0
+	}
+	n := 0
+	for _, row := range byAgent.Data {
+		if row.Attributed() {
+			n++
+		}
+	}
+	return n
+}
+
+// usageSessionsAgentOptions builds the agent picker's rows from the per-agent
+// breakdown, in the order the breakdown returns them, joined with each agent's
+// declared appearance so a row wears the glyph the agent wears elsewhere. Only
+// attributed rows become options: the unattributed bucket is not an agent and
+// cannot be filtered by agent id.
+//
+// The row keeps the breakdown's id — that is the ?agent= filter value the run
+// log matches — and only the appearance lookup crosses over to the definition
+// id space (see usageRuntimeAgentDefinitionID).
+func usageSessionsAgentOptions(byAgent *UsageByAgentResponse, defs []AgentDefinitionSummary, runtime []RuntimeAgent) []usageSessionsAgentOption {
+	if byAgent == nil {
+		return nil
+	}
+	out := make([]usageSessionsAgentOption, 0, len(byAgent.Data))
+	for _, row := range byAgent.Data {
+		if !row.Attributed() {
+			continue
+		}
+		appearance := agentUIForList(defs, usageRuntimeAgentDefinitionID(runtime, row.AgentID))
+		out = append(out, usageSessionsAgentOption{
+			ID:    row.AgentID,
+			Name:  row.AgentName,
+			Icon:  appearance.Icon,
+			Color: appearance.Color,
+		})
+	}
+	return out
+}
+
+// usageRuntimeAgentDefinitionID maps a breakdown row's agent id to the agent
+// definition whose declared appearance describes it. The two are independent id
+// spaces: the breakdown projects kb.agents.id (the id the run log's ?agent=
+// filter matches), while ListAgentDefinitions returns kb.agent_definitions.id.
+// Looking a row up by its own id therefore never matches on real data and
+// silently painted every row with the generic bot mark. An agent that binds no
+// definition (or one the best-effort fetch could not see) yields "" and renders
+// the bot mark, which is the correct fallback.
+func usageRuntimeAgentDefinitionID(runtime []RuntimeAgent, agentID string) string {
+	for _, a := range runtime {
+		if a.ID == agentID {
+			return a.AgentDefinitionID
+		}
+	}
+	return ""
+}
+
+// usageSessionsAgentOptionOf returns the picker row for an agent id, so the
+// closed trigger can borrow the same mark its row renders. known is false for an
+// unfiltered log and for a filter that names an agent the breakdown does not
+// list (see usageAgentFilterLabel).
+func usageSessionsAgentOptionOf(options []usageSessionsAgentOption, agentID string) (usageSessionsAgentOption, bool) {
+	if agentID == "" {
+		return usageSessionsAgentOption{}, false
+	}
+	for _, o := range options {
+		if o.ID == agentID {
+			return o, true
+		}
+	}
+	return usageSessionsAgentOption{}, false
 }
 
 // usageTriggerLabel shortens a run's trigger source for the log's agent cell.
