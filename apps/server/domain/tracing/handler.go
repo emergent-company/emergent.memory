@@ -17,6 +17,13 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
+// errTracingDisabled is returned by every Tempo-backed route when the
+// deployment has no tracing backend configured. It carries its own code because
+// it is the one 503 an operator can fix in configuration; a Tempo outage is also
+// a 503 (service_unavailable) but means the opposite thing, and clients such as
+// `memory traces` key on the code to tell them apart.
+var errTracingDisabled = apperror.New(http.StatusServiceUnavailable, "tracing_disabled", "tracing not enabled")
+
 // Handler proxies Tempo query API requests so clients never talk to Tempo directly.
 type Handler struct {
 	tempoBaseURL string
@@ -76,7 +83,7 @@ func NewHandler(cfg *config.Config, db bun.IDB) *Handler {
 // @Router       /api/traces/search [get]
 func (h *Handler) Search(c echo.Context) error {
 	if h.tempoBaseURL == "" {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "tracing not enabled")
+		return errTracingDisabled
 	}
 
 	user := auth.MustGetUser(c)
@@ -136,7 +143,7 @@ func (h *Handler) Search(c echo.Context) error {
 // @Router       /api/traces/{id} [get]
 func (h *Handler) GetTrace(c echo.Context) error {
 	if h.tempoBaseURL == "" {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "tracing not enabled")
+		return errTracingDisabled
 	}
 
 	user := auth.MustGetUser(c)
@@ -162,12 +169,23 @@ func (h *Handler) GetTrace(c echo.Context) error {
 	}
 	defer resp.Body.Close()
 
+	// The error path reads a bounded prefix only: an upstream error body is a
+	// diagnostic, not a payload, and must not be able to grow unbounded before
+	// the mapping discards it.
+	if resp.StatusCode != http.StatusOK {
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4*maxErrorBody))
+		if readErr != nil {
+			return apperror.NewServiceUnavailable("tracing backend error", readErr)
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			return apperror.NewNotFound("trace", traceID)
+		}
+		return tempoStatusError(resp.StatusCode, body)
+	}
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("read tempo response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return echo.NewHTTPError(resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	if projectID != "" {
@@ -365,6 +383,62 @@ func wellFormedTraceQL(s string) bool {
 	return paren == 0 && brace == 0 && !inStr
 }
 
+// tempoStatusError converts a non-2xx Tempo response into the error this API
+// reports for it. The statuses are split by who can act on them:
+//
+//   - 400/409/422 — the caller's own query is malformed or rejected: keep
+//     Tempo's diagnostic (capped) under tempo_query_error so the user can fix
+//     the TraceQL.
+//   - 404 — the requested upstream resource is absent: this API's not_found.
+//   - 401/403 — Tempo refused this server's credentials or tenant. The caller's
+//     token is not at fault, so answering 401/403 would tell a user with a valid
+//     credential to re-authenticate; it is a backend fault → 503.
+//   - 408/429 — Tempo timed out or is shedding load: retryable → 503.
+//   - 5xx and anything unrecognised — backend fault → 503. Tempo's body travels
+//     as the internal cause (logged) instead of being relayed, so the trace
+//     store's internals are never presented as this API's own answer.
+func tempoStatusError(status int, body []byte) *apperror.Error {
+	switch status {
+	case http.StatusBadRequest, http.StatusConflict, http.StatusUnprocessableEntity:
+		return apperror.New(status, "tempo_query_error", truncateErrorBody(body))
+	case http.StatusNotFound:
+		return apperror.New(http.StatusNotFound, "not_found", "Not found")
+	case http.StatusUnauthorized, http.StatusForbidden,
+		http.StatusRequestTimeout, http.StatusTooManyRequests:
+		return apperror.NewServiceUnavailable("tracing backend rejected this server's request", upstreamCause(body))
+	}
+	return apperror.NewServiceUnavailable("tracing backend error", upstreamCause(body))
+}
+
+// upstreamCause wraps a capped upstream body so it can travel as an error's
+// internal cause without ever being rendered to the client.
+func upstreamCause(body []byte) error {
+	return errors.New(truncateErrorBody(body))
+}
+
+// maxErrorBody is the largest upstream error body relayed to a client. Tempo's
+// 4xx bodies are short query diagnostics; the cap keeps a misbehaving proxy from
+// turning a trace query into a multi-megabyte error envelope.
+const maxErrorBody = 512
+
+// truncateErrorBody trims an upstream error body and bounds its length.
+//
+// The caller reads a bounded prefix of the body, so the byte slice can end in
+// the middle of a multi-byte rune; that partial rune is dropped rather than
+// rendered as U+FFFD, and the length cap then counts runes so the cap itself
+// cannot split one.
+func truncateErrorBody(body []byte) string {
+	msg := strings.TrimSpace(string(body))
+	msg = strings.ToValidUTF8(msg, "")
+	if msg == "" {
+		return "tracing backend rejected the query"
+	}
+	if r := []rune(msg); len(r) > maxErrorBody {
+		return string(r[:maxErrorBody]) + "…"
+	}
+	return msg
+}
+
 // tempoGet performs a GET against Tempo and returns the raw response. It
 // mirrors proxy's request-building and error handling. The caller must close
 // the returned response body.
@@ -378,7 +452,10 @@ func (h *Handler) tempoGet(c echo.Context, path string) (*http.Response, error) 
 
 	resp, err := h.client.Do(req)
 	if err != nil {
-		return nil, echo.NewHTTPError(http.StatusBadGateway, fmt.Sprintf("tempo unreachable: %s", err))
+		// The transport error names the Tempo URL and DNS/TLS state, so it is
+		// carried as the internal cause (logged by HTTPErrorHandler on the 503)
+		// rather than echoed to the client.
+		return nil, apperror.NewServiceUnavailable("tracing backend unreachable", err)
 	}
 	return resp, nil
 }
@@ -395,6 +472,18 @@ func (h *Handler) proxy(c echo.Context, path string, params url.Values) error {
 		return err
 	}
 	defer resp.Body.Close()
+
+	// A non-2xx answer is buffered (capped) and mapped through
+	// tempoStatusError, so the client receives this API's code and a bounded
+	// message rather than Tempo's status and an unbounded body. A 2xx result
+	// still streams: a search payload is large and must not be buffered.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4*maxErrorBody))
+		if readErr != nil {
+			return apperror.NewServiceUnavailable("tracing backend error", readErr)
+		}
+		return tempoStatusError(resp.StatusCode, body)
+	}
 
 	c.Response().Header().Set(echo.HeaderContentType, resp.Header.Get(echo.HeaderContentType))
 	c.Response().WriteHeader(resp.StatusCode)

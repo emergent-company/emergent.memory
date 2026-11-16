@@ -1156,7 +1156,9 @@ func extractRelayToolDefs(toolsMap map[string]any) ([]mcp.ToolDefinition, error)
 		if is, ok := tMap["inputSchema"]; ok {
 			data, err := json.Marshal(is)
 			if err == nil {
-				json.Unmarshal(data, &inputSchema)
+				// Best-effort: an unparsable schema leaves Type empty, which the
+				// default below repairs to the only legal value.
+				_ = json.Unmarshal(data, &inputSchema)
 			}
 		}
 		if inputSchema.Type == "" {

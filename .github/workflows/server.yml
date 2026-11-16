@@ -118,7 +118,9 @@ jobs:
 
       - name: Architectural debt ratchet
         working-directory: apps/server
-        run: ./scripts/lint-ratchet.sh
+        run: |
+          ./scripts/lint-ratchet.sh --self-test
+          ./scripts/lint-ratchet.sh
 
       - name: Go test coverage guard
         # Fails when a *_test.go package under apps/server is not referenced by

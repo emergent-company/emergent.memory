@@ -12,6 +12,7 @@ import (
 
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/encryption"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -206,33 +207,38 @@ func (s *SettingsService) Validate(ctx context.Context, in SettingsInput) error 
 	return in.validate(stored != "")
 }
 
+// validate rejects a settings payload the operator can fix. Every rejection is a
+// 400 carrying its reason, so the handler can return it unchanged; anything else
+// Validate/Save returns (a row read, a decrypt, the store write) is
+// infrastructure and stays an unclassified error, which the HTTP error handler
+// answers as a sanitised 500 rather than echoing a SQL message to the client.
 func (in SettingsInput) validate(hasStoredPassword bool) error {
 	if !in.Enabled {
 		return nil
 	}
 	if in.Provider != "resend" && in.Provider != "mailgun" && in.Provider != "gmail" && in.Provider != "custom" {
-		return fmt.Errorf("unsupported email provider")
+		return apperror.NewBadRequest("unsupported email provider")
 	}
 	if _, err := mail.ParseAddress(in.FromEmail); err != nil {
-		return fmt.Errorf("invalid from address")
+		return apperror.NewBadRequest("invalid from address")
 	}
 	if strings.TrimSpace(in.FromName) == "" {
-		return fmt.Errorf("from name is required")
+		return apperror.NewBadRequest("from name is required")
 	}
 	if in.SMTPPort < 1 || in.SMTPPort > 65535 {
-		return fmt.Errorf("SMTP port must be between 1 and 65535")
+		return apperror.NewBadRequest("SMTP port must be between 1 and 65535")
 	}
 	switch in.SMTPTLS {
 	case "none", "starttls", "tls":
 	default:
-		return fmt.Errorf("SMTP TLS must be none, starttls or tls")
+		return apperror.NewBadRequest("SMTP TLS must be none, starttls or tls")
 	}
 	if in.Enabled {
 		if strings.TrimSpace(in.SMTPHost) == "" {
-			return fmt.Errorf("SMTP host is required")
+			return apperror.NewBadRequest("SMTP host is required")
 		}
 		if in.SMTPPassword == "" && !hasStoredPassword {
-			return fmt.Errorf("SMTP password is required")
+			return apperror.NewBadRequest("SMTP password is required")
 		}
 	}
 	return nil

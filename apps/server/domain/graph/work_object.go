@@ -372,7 +372,7 @@ func (s *Service) transitionWorkObject(ctx context.Context, projectID, canonical
 	if err != nil {
 		return false, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer s.rollbackTx(tx)
 
 	if err := s.repo.AcquireObjectUpsertLock(ctx, tx.Tx, pid, head.Type, *head.Key); err != nil {
 		return false, err

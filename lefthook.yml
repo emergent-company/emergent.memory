@@ -48,6 +48,10 @@ pre-commit:
       glob: "**/handler*.go"
       exclude:
         - "**/*_test.go"
+        # Route handlers live under domain/; pkg/ holds infrastructure, whose
+        # handler*.go files (e.g. the apperror error-body writer) register no
+        # routes and so cannot carry a @Router annotation.
+        - "**/pkg/**"
       run: |
         fail=0
         for file in {staged_files}; do

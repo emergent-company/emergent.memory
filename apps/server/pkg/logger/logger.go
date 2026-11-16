@@ -161,7 +161,9 @@ func (h *customHandler) Handle(_ context.Context, r slog.Record) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, w := range h.writers {
-		w.Write([]byte(buf.String()))
+		// A logger cannot report its own write failure anywhere else; dropping the
+		// line is the only option that does not recurse.
+		_, _ = w.Write([]byte(buf.String()))
 	}
 
 	return nil
@@ -375,7 +377,7 @@ func (h *HTTPLogger) LogRequest(ip, method, path string, status int, duration ti
 	// Write to file if available
 	if h.file != nil {
 		h.mu.Lock()
-		h.file.WriteString(logLine)
+		_, _ = h.file.WriteString(logLine)
 		h.mu.Unlock()
 	}
 }

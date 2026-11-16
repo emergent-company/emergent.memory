@@ -172,7 +172,8 @@ func (h *Handler) CreateBackup(c echo.Context) error {
 	}
 
 	if req.RetentionDays < 1 || req.RetentionDays > 365 {
-		return echo.NewHTTPError(http.StatusBadRequest, "retention_days must be between 1 and 365")
+		return apperror.New(http.StatusBadRequest, "invalid_retention",
+			"retention_days must be between 1 and 365")
 	}
 
 	backup, err := h.service.CreateBackup(c.Request().Context(), CreateBackupRequest{
@@ -296,6 +297,9 @@ func (h *Handler) ImportBackup(c echo.Context) error {
 	backup, err := h.service.ImportBackup(c.Request().Context(), orgID, user.ID, data, retentionDays)
 	if err != nil {
 		if errors.Is(err, ErrInvalidArchive) {
+			// err.Error() is safe to relay: the chain is the ErrInvalidArchive
+			// sentinel plus archive-structure detail ("not a valid zip file",
+			// "manifest checksum mismatch"), never a store or upstream cause.
 			return apperror.NewBadRequest(err.Error())
 		}
 		h.log.Error("failed to import backup",
@@ -368,7 +372,8 @@ func (h *Handler) DownloadBackup(c echo.Context) error {
 	}
 
 	if backup.Status != BackupStatusReady {
-		return echo.NewHTTPError(http.StatusBadRequest, "backup is not ready for download")
+		return apperror.New(http.StatusBadRequest, "backup_not_ready",
+			"backup is not ready for download")
 	}
 
 	url, err := h.storage.GetSignedDownloadURL(

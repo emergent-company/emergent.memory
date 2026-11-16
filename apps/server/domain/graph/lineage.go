@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/internal/database"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
@@ -362,7 +363,7 @@ func (r *Repository) SupersedeStaleDerivedVersions(
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer database.RollbackTx(r.log, tx)
 
 	q := tx.NewSelect().
 		TableExpr("kb.synthesis_lineage AS sl").
