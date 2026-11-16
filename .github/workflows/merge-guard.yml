@@ -43,7 +43,7 @@ run-name: merge-guard PR ${{ github.event.inputs.pr || github.event.pull_request
 # cannot mint one: the allowlist is human identities only, and a bot id in it is
 # a misconfiguration, not a supported configuration. With a bot id listed the
 # gate becomes delta-only — a bot marker on the newest head satisfies `verify` on
-# its own, so the PR is mergeable the moment the bot speaks, with no human marker
+# its own, so the review gate closes on the bot's word alone, with no human marker
 # required. A bot marker is otherwise advisory: `github-review-gate.yml` still
 # dispatches this guard and arms auto-merge on one, but the marker never
 # satisfies `verify` and never authorizes a merge, so the armed auto-merge waits
