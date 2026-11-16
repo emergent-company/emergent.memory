@@ -4213,7 +4213,7 @@ round-trip.</p>
 </tr>
 <tr>
 <td><code>items</code></td>
-<td>Element schema for <code>array</code>; every element is coerced (a wrong element fails with its index)</td>
+<td>Element schema for <code>array</code>, declared as an object such as <code>{"type": "string"}</code>; every element is coerced (a wrong element fails with its index). A bare scalar (<code>"items": "string"</code>) is rejected when the schema is created or updated, over REST and MCP alike</td>
 </tr>
 <tr>
 <td><code>enum</code></td>
@@ -4682,7 +4682,7 @@ not the version to return to; objects are restored to the archive's <code>from_v
 </tr>
 <tr>
 <td><code>schema-create</code></td>
-<td>Create a new schema (pack) in the registry</td>
+<td>Create a new schema (pack) in the registry; runs the same schema-definition guard as the REST create/update endpoints</td>
 </tr>
 <tr>
 <td><code>schema-delete</code></td>

@@ -8856,6 +8856,96 @@ definitions:
           defaults to the dialect name, with a numeric suffix on collision.
         type: string
     type: object
+  domain_provider.UsageByAgentResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/domain_provider.UsageByAgentRow'
+        type: array
+      note:
+        type: string
+      runCount:
+        type: integer
+    type: object
+  domain_provider.UsageByAgentRow:
+    properties:
+      agentId:
+        type: string
+      agentName:
+        type: string
+      estimatedCostUsd:
+        type: number
+      runCount:
+        type: integer
+      totalAudio:
+        type: integer
+      totalCached:
+        type: integer
+      totalImage:
+        type: integer
+      totalOutput:
+        type: integer
+      totalText:
+        type: integer
+      totalVideo:
+        type: integer
+    type: object
+  domain_provider.UsageRunListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/domain_provider.UsageRunRow'
+        type: array
+      limit:
+        type: integer
+      note:
+        type: string
+      offset:
+        type: integer
+      total:
+        type: integer
+    type: object
+  domain_provider.UsageRunRow:
+    properties:
+      agentId:
+        type: string
+      agentName:
+        type: string
+      completedAt:
+        type: string
+      durationMs:
+        type: integer
+      estimatedCostUsd:
+        type: number
+      eventCount:
+        type: integer
+      lastEventAt:
+        type: string
+      model:
+        type: string
+      runId:
+        type: string
+      sessionId:
+        type: string
+      startedAt:
+        type: string
+      status:
+        type: string
+      totalAudio:
+        type: integer
+      totalCached:
+        type: integer
+      totalImage:
+        type: integer
+      totalOutput:
+        type: integer
+      totalText:
+        type: integer
+      totalVideo:
+        type: integer
+      triggerSource:
+        type: string
+    type: object
   domain_provider.UsageSummaryResponse:
     properties:
       data:
@@ -13123,7 +13213,7 @@ info:
     name: MIT
     url: https://opensource.org/licenses/MIT
   title: Memory API
-  version: 0.97.0
+  version: 0.98.4
 paths:
   /.well-known/oauth-authorization-server:
     get:
@@ -32560,6 +32650,86 @@ paths:
       summary: Get project budget state
       tags:
       - projects
+  /projects/{projectId}/usage/by-agent:
+    get:
+      description: Aggregates token counts and estimated cost per agent for a range.
+        Spend that no agent run produced (direct API and embedding calls) is returned
+        as a row with an empty agentId/agentName, so the rows always add up to the
+        project total.
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Start time (RFC3339)
+        in: query
+        name: since
+        type: string
+      - description: End time (RFC3339)
+        in: query
+        name: until
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_provider.UsageByAgentResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: Get project LLM usage by agent
+  /projects/{projectId}/usage/runs:
+    get:
+      description: One row per agent run that recorded usage in the range, most recent
+        activity first, with token counts, event count and estimated cost. Runs that
+        spent nothing are absent. limit defaults to 50 and is capped at 200; offset
+        pages through the ordered list.
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Start time (RFC3339)
+        in: query
+        name: since
+        type: string
+      - description: End time (RFC3339)
+        in: query
+        name: until
+        type: string
+      - description: Only runs of this agent
+        in: query
+        name: agentId
+        type: string
+      - description: Page size (default 50, max 200)
+        in: query
+        name: limit
+        type: integer
+      - description: Rows to skip
+        in: query
+        name: offset
+        type: integer
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_provider.UsageRunListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: List project agent runs with cost
   /projects/{projectId}/usage/timeseries:
     get:
       parameters:

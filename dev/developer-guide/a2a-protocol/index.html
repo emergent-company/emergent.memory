@@ -3414,10 +3414,10 @@ project's <strong>external-visibility agent definitions</strong>, one skill per 
 the bearer security declaration. This is the card to use when you need to know
 which agents a caller can actually invoke.</p>
 <h2 id="authentication-and-tenancy">Authentication and tenancy<a class="headerlink" href="#authentication-and-tenancy" title="Permanent link">&para;</a></h2>
-<p>Every route except the global card requires a Bearer token. This page documents
-the <strong>project API token</strong> (<code>emt_…</code>), which is the supported integration
-credential; the scope below is the token's, checked against the <code>scopes</code> list the
-token was minted with:</p>
+<p>Every route except the global card requires a Bearer credential carrying the
+route's scope. This page documents the <strong>project API token</strong> (<code>emt_…</code>), which is
+the supported integration credential; its scope is checked against the <code>scopes</code>
+list the token was minted with.</p>
 <table>
 <thead>
 <tr>
@@ -3452,6 +3452,42 @@ token was minted with:</p>
 </tr>
 </tbody>
 </table>
+<p>The same scope is enforced for <strong>signed-in sessions</strong> (for example a <code>memory
+login</code> credential), where it is resolved from the caller's role in the addressed
+project rather than from the token's claims:</p>
+<table>
+<thead>
+<tr>
+<th>Project role</th>
+<th><code>agents:read</code></th>
+<th><code>agents:write</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>project_admin</code></td>
+<td>yes</td>
+<td>yes</td>
+</tr>
+<tr>
+<td><code>project_user</code></td>
+<td>yes</td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>project_viewer</code></td>
+<td>yes</td>
+<td>no</td>
+</tr>
+</tbody>
+</table>
+<p>Every project role carries <code>agents:read</code>, so any member can fetch the card and
+read tasks. <code>agents:write</code> — <code>message:send</code>, <code>message:stream</code> and
+<code>tasks/{id}:cancel</code> — comes only with <code>project_admin</code>; a <code>project_user</code> or
+<code>project_viewer</code> session, including <code>memory a2a send</code> after <code>memory login</code>, is
+refused with <code>PERMISSION_DENIED</code>. A <code>superadmin_full</code> session carries the full
+catalogue; a session with no project role carries only the deployment's
+<code>MEMORY_OIDC_DEFAULT_SCOPES</code>, which do not include <code>agents:*</code> by default.</p>
 <p>The card declares a single bearer security scheme, for <code>emt_…</code> tokens, and no
 OAuth2 or OIDC scheme. The server does run an OAuth 2.1 authorization server
 (<code>/.well-known/oauth-authorization-server</code>, authorization-code with PKCE), but its
@@ -3462,7 +3498,11 @@ token carrying the scope you need (see <a href="#not-supported">Not supported</a
 <p>The project comes from the <code>X-Project-ID</code> header, or from the token itself when
 the token is project-scoped (a project-scoped token cannot be redirected to a
 different project by the header). A request with neither is rejected with
-<code>PROJECT_REQUIRED</code>.</p>
+<code>PROJECT_REQUIRED</code>, and an addressed project whose organization the caller does
+not belong to is rejected with <code>PERMISSION_DENIED</code> (or <code>NOT_FOUND</code> when the
+project does not exist) — the header is a selector, never a grant. The scope is
+checked before the selector: a credential that does not carry the route's scope
+is refused with <code>PERMISSION_DENIED</code> even if it also omits <code>X-Project-ID</code>.</p>
 <h2 id="message-flow">Message flow<a class="headerlink" href="#message-flow" title="Permanent link">&para;</a></h2>
 <p><code>POST /message:send</code> runs an agent and returns a buffered envelope.
 <code>POST /message:stream</code> runs the same agent and streams SSE events. Both accept an
