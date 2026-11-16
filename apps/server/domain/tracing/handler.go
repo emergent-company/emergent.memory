@@ -18,8 +18,11 @@ import (
 )
 
 // errTracingDisabled is returned by every Tempo-backed route when the
-// deployment has no tracing backend configured.
-var errTracingDisabled = apperror.NewServiceUnavailable("tracing not enabled", nil)
+// deployment has no tracing backend configured. It carries its own code because
+// it is the one 503 an operator can fix in configuration; a Tempo outage is also
+// a 503 (service_unavailable) but means the opposite thing, and clients such as
+// `memory traces` key on the code to tell them apart.
+var errTracingDisabled = apperror.New(http.StatusServiceUnavailable, "tracing_disabled", "tracing not enabled")
 
 // Handler proxies Tempo query API requests so clients never talk to Tempo directly.
 type Handler struct {
@@ -171,14 +174,7 @@ func (h *Handler) GetTrace(c echo.Context) error {
 		return fmt.Errorf("read tempo response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		// A 4xx body is Tempo's own query error (bad TraceQL, unknown trace) and
-		// is actionable for the caller. A 5xx is a backend fault: it must not be
-		// relayed with Tempo's status or body, which leak the trace store's
-		// internals as if they were this API's answer.
-		if resp.StatusCode >= 500 {
-			return apperror.NewServiceUnavailable("tracing backend error", errors.New(strings.TrimSpace(string(body))))
-		}
-		return apperror.New(resp.StatusCode, "tempo_query_error", truncateErrorBody(body))
+		return tempoStatusError(resp.StatusCode, body)
 	}
 
 	if projectID != "" {
@@ -376,6 +372,20 @@ func wellFormedTraceQL(s string) bool {
 	return paren == 0 && brace == 0 && !inStr
 }
 
+// tempoStatusError converts a non-200 Tempo response into the error this API
+// reports for it.
+//
+// A 4xx body is Tempo's own query error (bad TraceQL, unknown trace) and is
+// actionable for the caller, so it keeps its status. A 5xx is a backend fault:
+// it must not be relayed with Tempo's status or body, which would leak the trace
+// store's internals as if they were this API's answer.
+func tempoStatusError(status int, body []byte) *apperror.Error {
+	if status >= 500 {
+		return apperror.NewServiceUnavailable("tracing backend error", errors.New(strings.TrimSpace(string(body))))
+	}
+	return apperror.New(status, "tempo_query_error", truncateErrorBody(body))
+}
+
 // maxErrorBody is the largest upstream error body relayed to a client. Tempo's
 // 4xx bodies are short query diagnostics; the cap keeps a misbehaving proxy from
 // turning a trace query into a multi-megabyte error envelope.
@@ -426,6 +436,18 @@ func (h *Handler) proxy(c echo.Context, path string, params url.Values) error {
 		return err
 	}
 	defer resp.Body.Close()
+
+	// A backend fault is reported as this API's own 503, not streamed with
+	// Tempo's status and body (see tempoStatusError). Success and 4xx responses
+	// still stream: the search result is large and the client's own query error
+	// is what it asked for.
+	if resp.StatusCode >= 500 {
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4*maxErrorBody))
+		if readErr != nil {
+			return apperror.NewServiceUnavailable("tracing backend error", readErr)
+		}
+		return tempoStatusError(resp.StatusCode, body)
+	}
 
 	c.Response().Header().Set(echo.HeaderContentType, resp.Header.Get(echo.HeaderContentType))
 	c.Response().WriteHeader(resp.StatusCode)

@@ -242,7 +242,7 @@ func (s *Service) ApplyChangeset(ctx context.Context, projectID uuid.UUID, req *
 	if err != nil {
 		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
-	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
+	defer s.rollbackTx(tx)
 
 	// Allocate the generation before the items are applied, not after: each
 	// item's outcome records the generation that produced it (task 1.1), and the

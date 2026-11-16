@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -213,7 +214,10 @@ func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvide
 // unknown state must not disappear silently, which is what an unchecked
 // `defer tx.Rollback()` did.
 func (s *Service) rollbackTx(tx *database.SafeTx) {
-	if err := tx.Rollback(); err != nil {
+	// sql.ErrTxDone means the transaction is already gone — either this call is
+	// the deferred rollback after commit (the ordinary path) or after an earlier
+	// explicit rollback. Only a *different* error is a real failure.
+	if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
 		s.log.Warn("graph: transaction rollback failed", slog.String("error", err.Error()))
 	}
 }

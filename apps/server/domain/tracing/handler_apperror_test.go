@@ -37,7 +37,9 @@ func TestDisabledBackendReturnsAppError(t *testing.T) {
 			require.ErrorAs(t, err, &appErr,
 				"a disabled tracing backend must answer with *apperror.Error, got %T", err)
 			require.Equal(t, http.StatusServiceUnavailable, appErr.HTTPStatus)
-			require.Equal(t, "service_unavailable", appErr.Code)
+			// A disabled backend has its own code so a client can tell it from a
+			// Tempo outage, which is also a 503.
+			require.Equal(t, "tracing_disabled", appErr.Code)
 		})
 	}
 }

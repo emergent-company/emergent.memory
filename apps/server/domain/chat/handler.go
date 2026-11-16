@@ -1184,9 +1184,10 @@ func (h *Handler) StreamChat(c echo.Context) error {
 	var fullResponse strings.Builder
 	var llmErr error
 	// writeErr records the first failed SSE write in the token loops. A failed
-	// write means the client is gone (reload, navigation, network drop), so the
-	// rest of the generation has nowhere to go and both token loops stop instead
-	// of streaming into a closed connection for the rest of the turn.
+	// write means the client is gone (reload, navigation, network drop). The
+	// generation is NOT abandoned: the assistant message is persisted below, so
+	// a reconnecting client must find the whole answer and not a half sentence.
+	// What stops is the streaming — there is nobody left to stream to.
 	var writeErr error
 	if h.modelFactory != nil {
 		var llmModel adkmodel.LLM
@@ -1225,7 +1226,6 @@ func (h *Handler) StreamChat(c echo.Context) error {
 					},
 				},
 			}
-		tokenLoop:
 			for resp, iterErr := range llmModel.GenerateContent(llmCtx, llmReq, true) {
 				if iterErr != nil {
 					llmErr = iterErr
@@ -1237,9 +1237,10 @@ func (h *Handler) StreamChat(c echo.Context) error {
 				for _, part := range resp.Content.Parts {
 					if part != nil && part.Text != "" {
 						fullResponse.WriteString(part.Text)
-						if werr := sseWriter.WriteData(sse.NewTokenEvent(part.Text)); werr != nil {
-							writeErr = werr
-							break tokenLoop
+						if writeErr == nil {
+							if werr := sseWriter.WriteData(sse.NewTokenEvent(part.Text)); werr != nil {
+								writeErr = werr
+							}
 						}
 					}
 				}
@@ -1263,12 +1264,11 @@ func (h *Handler) StreamChat(c echo.Context) error {
 			Prompt:       message,
 			SystemPrompt: systemPrompt,
 		}, func(token string) {
-			if writeErr != nil {
-				return // client gone; stop buffering a response nobody will read
-			}
 			fullResponse.WriteString(token)
-			if werr := sseWriter.WriteData(sse.NewTokenEvent(token)); werr != nil {
-				writeErr = werr
+			if writeErr == nil {
+				if werr := sseWriter.WriteData(sse.NewTokenEvent(token)); werr != nil {
+					writeErr = werr
+				}
 			}
 		})
 		if llmErr != nil {
@@ -1283,7 +1283,7 @@ func (h *Handler) StreamChat(c echo.Context) error {
 	}
 
 	if writeErr != nil {
-		h.log.Info("chat: client disconnected mid-stream",
+		h.log.Info("chat: client disconnected mid-stream; generation finished without streaming",
 			slog.String("conversation_id", conv.ID.String()),
 			slog.String("error", writeErr.Error()),
 		)
@@ -3169,11 +3169,12 @@ const (
 // request context, the single timeout timer, and the poll ticker — so a
 // disconnect returns immediately.
 //
-// A non-nil error means the caller must stop because the client left. Every
-// other outcome (completed, failed, timed out, unreadable document) returns the
-// last status and a nil error: the caller decides what a missing conversion
-// means for the request, exactly as before.
-func (h *Handler) awaitConversion(ctx context.Context, projectID, documentID string) (string, error) {
+// cancelled reports that the caller's context ended before the document reached
+// a terminal state, so the caller has nobody to answer. Every other outcome
+// (completed, failed, timed out, unreadable document) returns the last status
+// with cancelled=false: the caller decides what a missing conversion means for
+// the request, exactly as before.
+func (h *Handler) awaitConversion(ctx context.Context, projectID, documentID string) (status string, cancelled bool) {
 	timeout := time.NewTimer(conversionPollTimeout)
 	defer timeout.Stop()
 	ticker := time.NewTicker(conversionPollInterval)
@@ -3182,25 +3183,24 @@ func (h *Handler) awaitConversion(ctx context.Context, projectID, documentID str
 	for {
 		doc, err := h.docSvc.GetByID(ctx, projectID, documentID)
 		if err != nil {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return "", apperror.NewServiceUnavailable("upload conversion was interrupted", ctxErr)
+			if ctx.Err() != nil {
+				return "", true
 			}
 			// Proceed anyway: GetContent below reports whether text is available.
-			return "", nil
+			return "", false
 		}
-		status := ""
 		if doc.ConversionStatus != nil {
 			status = *doc.ConversionStatus
 		}
 		if status == conversionStatusCompleted || status == conversionStatusFailed {
-			return status, nil
+			return status, false
 		}
 
 		select {
 		case <-ctx.Done():
-			return "", apperror.NewServiceUnavailable("upload conversion was interrupted", ctx.Err())
+			return "", true
 		case <-timeout.C:
-			return "", nil // budget spent: fall through to the content check
+			return "", false // budget spent: fall through to the content check
 		case <-ticker.C:
 		}
 	}
@@ -3340,9 +3340,16 @@ func (h *Handler) RememberFile(c echo.Context) error {
 	// Wait for conversion completion (max 120s, 2s interval).
 	// Duplicate documents are already converted — skip waiting.
 	if !uploadResult.IsDuplicate && h.docSvc != nil {
-		conversionStatus, waitErr := h.awaitConversion(ctx, projectID, documentID)
-		if waitErr != nil {
-			return waitErr
+		conversionStatus, cancelled := h.awaitConversion(ctx, projectID, documentID)
+		if cancelled {
+			// The client went away (or the server is shutting down) while the
+			// parser was still working. Nobody is left to answer: this is a
+			// routine event on an endpoint that may wait two minutes, so it is
+			// not an error response and not an error-level log line.
+			h.log.Info("remember/file: upload abandoned before conversion completed",
+				slog.String("document_id", documentID),
+			)
+			return nil
 		}
 		if conversionStatus == conversionStatusFailed {
 			return apperror.New(http.StatusUnprocessableEntity, "conversion_failed",

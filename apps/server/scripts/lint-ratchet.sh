@@ -8,6 +8,9 @@
 # Run from apps/server/ (the script resolves its own directory).
 
 set -euo pipefail
+#
+# Each counter ends with `|| true`: under `pipefail` a `grep` that finds nothing
+# fails the pipeline, and the counter a ratchet is trying to reach is zero.
 
 cd "$(dirname "$0")/.." # resolve to apps/server/
 
@@ -25,11 +28,12 @@ BASELINE_RESPONSE_TYPES=6     # non-httputil APIResponse/PaginatedResponse/Succe
 # message — dev-rule-go-apperror-only.
 BASELINE_ECHO_HTTPERROR=6
 
-auth_guards=$(grep -rn "if user == nil" --include="*.go" domain/ 2>/dev/null | grep -v "_test.go" | wc -l | tr -d ' ')
-setters=$(grep -rn "func (s \*Service) Set[A-Z]\|func (h \*Handler) Set[A-Z]" --include="*.go" domain/ 2>/dev/null | grep -v "_test.go" | wc -l | tr -d ' ')
-apperror_style_a=$(grep -rn "\.WithMessage\|\.WithInternal" --include="*.go" domain/ pkg/ 2>/dev/null | grep -v "_test.go" | wc -l | tr -d ' ')
-response_types=$(grep -rn "type APIResponse\|type PaginatedResponse\|type SuccessResponse" --include="*.go" domain/ 2>/dev/null | grep -v "_test.go" | wc -l | tr -d ' ')
-echo_http_errors=$(grep -rn "echo\.NewHTTPError" --include="*.go" . 2>/dev/null | grep -v "_test.go" | wc -l | tr -d ' ')
+auth_guards=$(grep -rn "if user == nil" --include="*.go" domain/ 2>/dev/null | grep -v "_test.go" | wc -l | tr -d ' ' || true)
+setters=$(grep -rn "func (s \*Service) Set[A-Z]\|func (h \*Handler) Set[A-Z]" --include="*.go" domain/ 2>/dev/null | grep -v "_test.go" | wc -l | tr -d ' ' || true)
+apperror_style_a=$(grep -rn "\.WithMessage\|\.WithInternal" --include="*.go" domain/ pkg/ 2>/dev/null | grep -v "_test.go" | wc -l | tr -d ' ' || true)
+response_types=$(grep -rn "type APIResponse\|type PaginatedResponse\|type SuccessResponse" --include="*.go" domain/ 2>/dev/null | grep -v "_test.go" | wc -l | tr -d ' ' || true)
+# Full-line comments are excluded so documenting the rule does not trip it.
+echo_http_errors=$(grep -rn "echo\.NewHTTPError" --include="*.go" . 2>/dev/null | grep -v "_test.go" | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' | wc -l | tr -d ' ' || true)
 
 fail=0
 

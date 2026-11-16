@@ -45,6 +45,27 @@
 
 ## [Unreleased]
 
+### Changed
+
+**Error bodies from six handler families now carry an error code** (2026-11-16)
+
+The model-config, tracing, devtools (`/coverage`, `/docs`), backups, `/debug`
+and platform-email handlers returned a bare `echo.HTTPError`, so their failures
+reached the client as a plain string with no `code` and, in the tracing
+passthrough, with upstream transport text verbatim. They now answer through the
+standard envelope (`{"error":{"code","message"}}`), with codes chosen per cause:
+`invalid_project_id`, `invalid_request_body`, `invalid_path`,
+`invalid_retention`, `backup_not_ready`, `forbidden`, `not_found`, and
+`tracing_disabled`. Statuses are unchanged except:
+
+- a Tempo backend fault (upstream 5xx, or an unreachable Tempo) is reported as
+  `503 service_unavailable` instead of being relayed with Tempo's own status —
+  and `502` for the transport case — so a trace store that is down no longer
+  looks like a Memory-server fault or a bad credential. `memory traces` reads
+  the error code to report the right cause.
+- the production `/debug` 404 body reads "Resource not found" instead of
+  "Not found".
+
 ### BREAKING CHANGES
 
 **A2A enforces `agents:read` / `agents:write` for session credentials** (2026-11-15)
