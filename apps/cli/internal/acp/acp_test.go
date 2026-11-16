@@ -270,6 +270,160 @@ func TestHITLResume(t *testing.T) {
 	}
 }
 
+// TestHITLResume_NoPendingQuestionRetriesAsNewTask pins the client safety net
+// for issue #867: an older server rejects the resume of a paused task with no
+// pending question. The client must clear the latched task id and retry the
+// prompt as a new task in the same context instead of failing the turn.
+func TestHITLResume_NoPendingQuestionRetriesAsNewTask(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		bodies []a2a.SendMessageRequest
+	)
+	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		var body a2a.SendMessageRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode body: %v", err)
+			return
+		}
+		mu.Lock()
+		bodies = append(bodies, body)
+		mu.Unlock()
+
+		if body.Message.TaskID != "" {
+			// Old server: the step-limit pause wrote no question row.
+			w.Header().Set("Content-Type", "application/a2a+json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"code":400,"status":"BAD_REQUEST","message":"no pending question for task","details":[{"@type":"type.googleapis.com/lf.a2a.v1.Error","reason":"INVALID_STATE","domain":"a2a-protocol.org"}]}}`))
+			return
+		}
+
+		text := ""
+		if len(body.Message.Parts) > 0 && body.Message.Parts[0].Text != nil {
+			text = *body.Message.Parts[0].Text
+		}
+		if text == "hi" {
+			writeSSEEvents(w, []a2a.StreamResponse{
+				{Task: &a2a.Task{ID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateSubmitted}}},
+				{StatusUpdate: &a2a.TaskStatusUpdateEvent{TaskID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateWorking}}},
+				{StatusUpdate: &a2a.TaskStatusUpdateEvent{TaskID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateInputRequired, Message: &a2a.Message{Role: a2a.RoleAgent, Parts: []a2a.Part{a2a.TextPart("Step limit reached. Run has been paused.")}}}}},
+			})
+			return
+		}
+
+		// Retried as a new task in the same context: completes.
+		writeSSEEvents(w, []a2a.StreamResponse{
+			{Task: &a2a.Task{ID: "task-2", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateSubmitted}}},
+			{StatusUpdate: &a2a.TaskStatusUpdateEvent{TaskID: "task-2", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateWorking}}},
+			{ArtifactUpdate: &a2a.TaskArtifactUpdateEvent{TaskID: "task-2", ContextID: "ctx-1", Artifact: a2a.Artifact{ArtifactID: "artifact-task-2", Parts: []a2a.Part{a2a.TextPart("continued")}}}},
+			{Task: &a2a.Task{ID: "task-2", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}},
+		})
+	})
+
+	// Phase 1: new turn pauses at the step limit.
+	input1 := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"session/new","params":{}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"hi"}]}}`,
+	}, "\n") + "\n"
+	_ = decodeLines(t, runLines(t, agent, input1))
+
+	// Phase 2: the follow-up resume is rejected and retried as a new task.
+	input2 := `{"jsonrpc":"2.0","id":4,"method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"continue"}]}}` + "\n"
+	out2 := decodeLines(t, runLines(t, agent, input2))
+
+	mu.Lock()
+	got := append([]a2a.SendMessageRequest(nil), bodies...)
+	mu.Unlock()
+	if len(got) != 3 {
+		t.Fatalf("expected 3 backend calls (new, resume, retry), got %d", len(got))
+	}
+	if got[1].Message.TaskID != "task-1" {
+		t.Errorf("resume taskId = %q, want task-1", got[1].Message.TaskID)
+	}
+	if got[2].Message.TaskID != "" {
+		t.Errorf("retry taskId = %q, want empty (latched task cleared)", got[2].Message.TaskID)
+	}
+	if got[2].Message.ContextID != "ctx-1" {
+		t.Errorf("retry contextId = %q, want ctx-1", got[2].Message.ContextID)
+	}
+	if _, hasSkill := got[2].Message.Metadata[a2a.SkillIDMetadataKey]; !hasSkill {
+		t.Errorf("retry must send the skill id for a new task")
+	}
+
+	if len(out2) != 2 {
+		t.Fatalf("phase2: expected 2 messages (chunk, prompt), got %d: %v", len(out2), out2)
+	}
+	if gotText := chunkText(t, out2[0]); gotText != "continued" {
+		t.Errorf("phase2 chunk = %q, want %q", gotText, "continued")
+	}
+	if pr := out2[1]["result"].(map[string]any); pr["stopReason"] != "end_turn" {
+		t.Errorf("phase2 stopReason = %v, want end_turn", pr["stopReason"])
+	}
+}
+
+// TestA2ANewTaskRetry_PreservesMetadata pins the retry rewrite: the latched task
+// id is cleared, the skill id is set for the new task, and metadata the original
+// request carried survives (issue #867 review).
+func TestA2ANewTaskRetry_PreservesMetadata(t *testing.T) {
+	req := a2a.SendMessageRequest{Message: a2a.Message{
+		TaskID:    "task-1",
+		ContextID: "ctx-old",
+		Metadata: map[string]any{
+			"keep":                 "me",
+			a2a.SkillIDMetadataKey: "stale-skill",
+		},
+	}}
+
+	got := a2aNewTaskRetry(req, "research-agent", "ctx-1")
+
+	if got.Message.TaskID != "" {
+		t.Fatalf("taskId = %q, want empty", got.Message.TaskID)
+	}
+	if got.Message.ContextID != "ctx-1" {
+		t.Fatalf("contextId = %q, want ctx-1", got.Message.ContextID)
+	}
+	if v, _ := got.Message.Metadata["keep"].(string); v != "me" {
+		t.Fatalf("metadata keep = %v, want \"me\" (unrelated metadata must survive)", got.Message.Metadata["keep"])
+	}
+	if v, _ := got.Message.Metadata[a2a.SkillIDMetadataKey].(string); v != "research-agent" {
+		t.Fatalf("metadata skill = %v, want research-agent", got.Message.Metadata[a2a.SkillIDMetadataKey])
+	}
+	if req.Message.TaskID != "task-1" || req.Message.ContextID != "ctx-old" {
+		t.Fatalf("the original request must not be mutated")
+	}
+}
+
+// TestA2ANewTaskRetry_EmptySkillLeavesNoSkillKey pins that an unknown skill does
+// not overwrite the map with an empty-string skill id.
+func TestA2ANewTaskRetry_EmptySkillLeavesNoSkillKey(t *testing.T) {
+	req := a2a.SendMessageRequest{Message: a2a.Message{
+		Metadata: map[string]any{"keep": "me"},
+	}}
+
+	got := a2aNewTaskRetry(req, "", "")
+
+	if _, ok := got.Message.Metadata[a2a.SkillIDMetadataKey]; ok {
+		t.Fatalf("empty skill must not be written into metadata: %v", got.Message.Metadata)
+	}
+	if v, _ := got.Message.Metadata["keep"].(string); v != "me" {
+		t.Fatalf("metadata keep = %v, want \"me\"", got.Message.Metadata["keep"])
+	}
+}
+
+// TestIsInvalidStateError pins the structured match: the reason decides, not the
+// human-readable message.
+func TestIsInvalidStateError(t *testing.T) {
+	if !isInvalidStateError(&a2a.Error{Reason: "INVALID_STATE", Message: "reworded by a newer server"}) {
+		t.Fatalf("a structured INVALID_STATE must match regardless of wording")
+	}
+	if isInvalidStateError(&a2a.Error{Reason: "TASK_NOT_FOUND", Message: "no pending question for task"}) {
+		t.Fatalf("a different reason must not match even with the legacy wording")
+	}
+	if isInvalidStateError(errors.New("no pending question for task")) {
+		t.Fatalf("a non-A2A error must not match")
+	}
+}
+
 func TestPromptEmptyNoBackendCall(t *testing.T) {
 	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("unexpected HTTP request for empty prompt")

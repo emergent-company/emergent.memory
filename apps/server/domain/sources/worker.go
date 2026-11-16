@@ -939,6 +939,7 @@ func (w *SyncWorker) applyItemRecords(ctx context.Context, job *SyncJob, src *So
 			reqs = append(reqs, graph.CreateGraphObjectRequest{
 				Type:       rec.Type,
 				Key:        stringPtr(rec.Key),
+				Name:       stringPtr(rec.Name),
 				Properties: props,
 				Labels:     rec.Labels,
 				Namespace:  &ns,

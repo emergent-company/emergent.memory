@@ -106,6 +106,28 @@ final class ProjectStoreSessionExpiryTests: XCTestCase {
     }
 
     @MainActor
+    func testReassertConnectionRejectedSessionKeepsConnectionAndEngine() async {
+        // A stored session the provider already rejected: `signed_in` is still
+        // true, so only `needs_reauth` distinguishes it from a healthy one. A
+        // code-less 400 from `projects use` must classify as an auth failure —
+        // keeping the connection and the engine — not as a plain error that
+        // tears both down.
+        seedConnectedProject("p1")
+        cli.fail("projects use", message: "refresh failed with status 400")
+        cli.on("auth status", json: #"{"schema_version":1,"server":"https://api.example.test","signed_in":true,"needs_reauth":true}"#)
+        let stop = CallCounter()
+        let store = makeStore(stop: stop)
+
+        let result = await store.reassertConnection()
+
+        XCTAssertFalse(result)
+        XCTAssertEqual(store.state, .signedOut)
+        XCTAssertEqual(store.connectedProjectIDs, ["p1"],
+                       "a rejected session is a re-auth, not a lost connection")
+        XCTAssertEqual(stop.count, 0, "the engine is left alone")
+    }
+
+    @MainActor
     func testReassertConnectionNonAuthFailureClearsConnectionAndStops() async {
         seedConnectedProject("p1")
         cli.fail("projects use", message: "boom")

@@ -1302,6 +1302,7 @@ func (w *ObjectExtractionWorker) persistResults(
 			graphObj, created, err := w.graphService.CreateOrUpdate(ctx, projectID, &graph.CreateGraphObjectRequest{
 				Type:            entity.Type,
 				Key:             &key,
+				Name:            &key,
 				Properties:      properties,
 				Status:          stringPtr("suggested"),
 				BranchID:        stagingBranchID,

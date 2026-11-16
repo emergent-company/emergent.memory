@@ -44,8 +44,13 @@ type SourceItem struct {
 
 // ObjectRecord is one structured graph object emitted by a provider.
 type ObjectRecord struct {
-	Type          string
-	Key           string
+	Type string
+	Key  string
+	// Name is the object's human title. A provider that knows the record's
+	// subject sets it here: properties["name"]/["title"] are never read as a
+	// title (#824), so a record with no Name is created nameless and displays as
+	// `type · #ref` rather than borrowing a property.
+	Name          string
 	Properties    map[string]any
 	Labels        []string
 	DocumentID    string

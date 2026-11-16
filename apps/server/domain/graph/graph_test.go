@@ -947,37 +947,29 @@ func TestGetDisplayName(t *testing.T) {
 		expected string
 	}{
 		{
-			name: "name property exists",
+			name: "name column wins",
 			obj: &GraphObject{
-				ID:         uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
-				Properties: map[string]any{"name": validName},
-				Key:        &validKey,
+				ID:   uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
+				Name: &validName,
+				Key:  &validKey,
 			},
 			expected: validName,
 		},
 		{
-			name: "name property empty, fallback to key",
+			name: "name column empty, fallback to key",
 			obj: &GraphObject{
 				ID:         uuid.MustParse("550e8400-e29b-41d4-a716-446655440001"),
-				Properties: map[string]any{"name": emptyName},
+				Name:       &emptyName,
+				Properties: map[string]any{"name": "property only"},
 				Key:        &validKey,
 			},
 			expected: validKey,
 		},
 		{
-			name: "name property missing, fallback to key",
+			name: "no name column, properties.name is never a title",
 			obj: &GraphObject{
 				ID:         uuid.MustParse("550e8400-e29b-41d4-a716-446655440002"),
-				Properties: map[string]any{"other": "value"},
-				Key:        &validKey,
-			},
-			expected: validKey,
-		},
-		{
-			name: "properties nil, fallback to key",
-			obj: &GraphObject{
-				ID:         uuid.MustParse("550e8400-e29b-41d4-a716-446655440003"),
-				Properties: nil,
+				Properties: map[string]any{"name": validName, "title": validName},
 				Key:        &validKey,
 			},
 			expected: validKey,
@@ -985,29 +977,17 @@ func TestGetDisplayName(t *testing.T) {
 		{
 			name: "key empty, fallback to ID",
 			obj: &GraphObject{
-				ID:         uuid.MustParse("550e8400-e29b-41d4-a716-446655440004"),
-				Properties: map[string]any{},
-				Key:        &emptyKey,
+				ID:  uuid.MustParse("550e8400-e29b-41d4-a716-446655440004"),
+				Key: &emptyKey,
 			},
 			expected: "550e8400-e29b-41d4-a716-446655440004",
 		},
 		{
 			name: "key nil, fallback to ID",
 			obj: &GraphObject{
-				ID:         uuid.MustParse("550e8400-e29b-41d4-a716-446655440005"),
-				Properties: map[string]any{},
-				Key:        nil,
+				ID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440005"),
 			},
 			expected: "550e8400-e29b-41d4-a716-446655440005",
-		},
-		{
-			name: "name property wrong type, fallback to key",
-			obj: &GraphObject{
-				ID:         uuid.MustParse("550e8400-e29b-41d4-a716-446655440006"),
-				Properties: map[string]any{"name": 123},
-				Key:        &validKey,
-			},
-			expected: validKey,
 		},
 	}
 
@@ -1018,6 +998,8 @@ func TestGetDisplayName(t *testing.T) {
 		})
 	}
 }
+
+func ptrName(s string) *string { return &s }
 
 func TestGenerateTripletText(t *testing.T) {
 	sourceKey := "source-123"
@@ -1032,16 +1014,16 @@ func TestGenerateTripletText(t *testing.T) {
 		expected string
 	}{
 		{
-			name: "both objects have name properties",
+			name: "both objects have a name column",
 			source: &GraphObject{
-				ID:         uuid.New(),
-				Properties: map[string]any{"name": "Elon Musk"},
-				Key:        &sourceKey,
+				ID:   uuid.New(),
+				Name: ptrName("Elon Musk"),
+				Key:  &sourceKey,
 			},
 			target: &GraphObject{
-				ID:         uuid.New(),
-				Properties: map[string]any{"name": "Tesla"},
-				Key:        &targetKey,
+				ID:   uuid.New(),
+				Name: ptrName("Tesla"),
+				Key:  &targetKey,
 			},
 			relType:  "FOUNDED_BY",
 			expected: "Elon Musk founded by Tesla",
@@ -1049,9 +1031,9 @@ func TestGenerateTripletText(t *testing.T) {
 		{
 			name: "source has name, target uses key",
 			source: &GraphObject{
-				ID:         uuid.New(),
-				Properties: map[string]any{"name": "Alice"},
-				Key:        &sourceKey,
+				ID:   uuid.New(),
+				Name: ptrName("Alice"),
+				Key:  &sourceKey,
 			},
 			target: &GraphObject{
 				ID:         uuid.New(),
@@ -1079,12 +1061,12 @@ func TestGenerateTripletText(t *testing.T) {
 		{
 			name: "multi-word relation type",
 			source: &GraphObject{
-				ID:         uuid.New(),
-				Properties: map[string]any{"name": "Company A"},
+				ID:   uuid.New(),
+				Name: ptrName("Company A"),
 			},
 			target: &GraphObject{
-				ID:         uuid.New(),
-				Properties: map[string]any{"name": "San Francisco"},
+				ID:   uuid.New(),
+				Name: ptrName("San Francisco"),
 			},
 			relType:  "LOCATED_IN",
 			expected: "Company A located in San Francisco",

@@ -49,6 +49,43 @@ func gallerySeed() []GalleryEntry {
 			},
 		},
 		{
+			ID: "BadgeWithClass", Slug: "badge-with-class", Name: "BadgeWithClass", Layer: LayerAdapter,
+			Category: "Badges", Subcategory: "utility hook", SourceFile: "components/badge.templ",
+			PropsType:   "BadgeWithClassProps (ui.BadgeProps + Class string)",
+			Description: "A DaisyUI badge whose class list accepts a caller utility. It exists because ui.Badge spreads Attrs after its own class attribute, so a class passed through Attrs is dropped (#855); delete it when go-daisy #150 adds BadgeProps.Class.",
+			Render: func() templ.Component {
+				return components.BadgeWithClass(components.BadgeWithClassProps{
+					BadgeProps: ui.BadgeProps{Label: "3", Variant: ui.BadgeError, Size: ui.BadgeSizeXS},
+					Class:      "ml-1",
+				})
+			},
+			Stories: map[string]func() templ.Component{
+				"link": func() templ.Component {
+					return components.BadgeWithClass(components.BadgeWithClassProps{
+						BadgeProps: ui.BadgeProps{Label: "run", Variant: ui.BadgeGhost, Href: "#", DirectLabel: true},
+						Class:      "hover:opacity-70",
+					})
+				},
+			},
+		},
+		{
+			ID: "AlertWithClass", Slug: "alert-with-class", Name: "AlertWithClass", Layer: LayerAdapter,
+			Category: "Feedback", Subcategory: "banner", SourceFile: "components/alert.templ",
+			PropsType:   "AlertWithClassProps (ui.AlertProps + Class string)",
+			Description: "A DaisyUI alert banner whose class list accepts a caller utility. It exists because ui.Alert spreads Attrs after its own class attribute, so a class passed through Attrs is dropped (#855); delete it when go-daisy #150 adds AlertProps.Class.",
+			Render: func() templ.Component {
+				return components.AlertWithClass(components.AlertWithClassProps{
+					AlertProps: ui.AlertProps{
+						Type:    ui.AlertError,
+						Style:   ui.AlertStyleOutline,
+						Icon:    "lucide--circle-x",
+						Message: "This run failed: upstream timeout",
+					},
+					Class: "mb-4",
+				})
+			},
+		},
+		{
 			ID: "MetaRow", Slug: "meta-row", Name: "MetaRow", Layer: LayerAdapter,
 			Category: "Metadata", Subcategory: "definition-list", SourceFile: "components/meta.templ",
 			PropsType:   "MetaRowOpts",

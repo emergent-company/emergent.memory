@@ -45,6 +45,7 @@ const (
 type ChangesetObjectItem struct {
 	Ref                 string         `json:"_ref,omitempty" validate:"omitempty,max=128"`
 	Type                string         `json:"type" validate:"required,max=64"`
+	Name                *string        `json:"name,omitempty" validate:"omitempty,max=512"`
 	Key                 *string        `json:"key,omitempty" validate:"omitempty,max=128"`
 	Status              *string        `json:"status,omitempty" validate:"omitempty,max=64"`
 	Properties          map[string]any `json:"properties,omitempty"`
@@ -847,7 +848,7 @@ func buildChangesetObject(projectID uuid.UUID, branchID *uuid.UUID, sourceID uui
 		ProjectID:     projectID,
 		BranchID:      branchID,
 		Type:          item.Type,
-		Name:          resolveObjectName(nil, props),
+		Name:          resolveObjectName(item.Name),
 		Key:           item.Key,
 		Status:        statusForWrite(props, item.Status),
 		Properties:    props,
@@ -898,6 +899,11 @@ func buildChangesetObjectVersion(head *GraphObject, item *ChangesetObjectItem, s
 	if item.Labels != nil {
 		version.Labels = item.Labels
 	}
+	// The title is explicit payload, never a property: a push that names the
+	// record sets it, and one that omits the name preserves the head's.
+	if item.Name != nil {
+		version.Name = resolveObjectName(item.Name)
+	}
 	if item.Properties != nil {
 		props := make(map[string]any, len(item.Properties)+1)
 		for k, v := range item.Properties {
@@ -907,9 +913,6 @@ func buildChangesetObjectVersion(head *GraphObject, item *ChangesetObjectItem, s
 			props[provenanceSourcesKey] = sources
 		}
 		version.Properties = props
-		if n := resolveObjectName(nil, props); n != nil {
-			version.Name = n
-		}
 	}
 
 	if schema, ok := objectSchema(schemas, version.Type); ok {

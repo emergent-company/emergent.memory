@@ -902,6 +902,7 @@ type TraverseNode struct {
 	CanonicalID string     `json:"canonical_id"`
 	Depth       int        `json:"depth"`
 	Type        string     `json:"type"`
+	Name        *string    `json:"name,omitempty"`
 	Key         *string    `json:"key,omitempty"`
 	Labels      []string   `json:"labels"`
 	PhaseIndex  *int       `json:"phaseIndex,omitempty"`

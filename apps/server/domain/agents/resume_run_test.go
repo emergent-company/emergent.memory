@@ -3,7 +3,7 @@ package agents
 import "testing"
 
 // A resumed run must inherit the work-item link. HasLiveRunForSubject only
-// counts queued/running/paused runs, and MarkRunResumed finalizes the paused
+// counts queued/running/paused runs, and the resume claim finalizes the paused
 // parent — without the subject on the child, the work reaper would see nothing
 // live and re-dispatch the item while the resumed run is still executing.
 func TestNewAgentRun_CarriesSubjectObject(t *testing.T) {

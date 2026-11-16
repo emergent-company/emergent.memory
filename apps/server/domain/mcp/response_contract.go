@@ -79,42 +79,20 @@ func propertiesForStrategy(props map[string]any, opts ResponseOpts) map[string]a
 }
 
 // projectProperties builds a map containing only the requested property keys.
-// The "name" key is always included when present in the source properties,
-// even if not requested.
 func projectProperties(props map[string]any, fields []string) map[string]any {
-	out := make(map[string]any, len(fields)+1)
+	out := make(map[string]any, len(fields))
 	for _, f := range fields {
 		if v, ok := props[f]; ok {
 			out[f] = v
 		}
 	}
-	if _, ok := out["name"]; !ok {
-		if v, ok := props["name"]; ok {
-			out["name"] = v
-		}
-	}
 	return out
 }
 
-// nameForStrategy derives the display name from properties["name"]. It is
-// omitted under the "minimal" strategy or when the value is not a non-empty
-// string.
-func nameForStrategy(props map[string]any, opts ResponseOpts) (string, bool) {
-	if opts.FieldStrategy == "minimal" || props == nil {
-		return "", false
-	}
-	s, ok := props["name"].(string)
-	if !ok || s == "" {
-		return "", false
-	}
-	return s, true
-}
-
-// entityNameForStrategy prefers the object's first-class name column over the
-// properties.name convention. The column is what the app's object list and
-// entity action:"query" render, so a write response that reported the property
-// would make an explicit name=… look like a no-op on an object whose property
-// says something else (emergent-company/emergent.memory#718).
+// entityNameForStrategy reports the object's first-class name column. The name
+// column is the only title (#824); properties["name"] is an ordinary property
+// and is never read as one. Omitted under the "minimal" strategy or when the
+// column is empty.
 func entityNameForStrategy(o *graph.GraphObjectResponse, opts ResponseOpts) (string, bool) {
 	if opts.FieldStrategy == "minimal" {
 		return "", false
@@ -122,7 +100,29 @@ func entityNameForStrategy(o *graph.GraphObjectResponse, opts ResponseOpts) (str
 	if o.Name != nil && strings.TrimSpace(*o.Name) != "" {
 		return *o.Name, true
 	}
-	return nameForStrategy(o.Properties, opts)
+	return "", false
+}
+
+// optionalNameForStrategy is entityNameForStrategy for the read shapes that
+// carry the name column directly rather than a GraphObjectResponse.
+func optionalNameForStrategy(name *string, opts ResponseOpts) (string, bool) {
+	if opts.FieldStrategy == "minimal" {
+		return "", false
+	}
+	if n := graphObjectName(name); n != "" {
+		return n, true
+	}
+	return "", false
+}
+
+// graphObjectName renders the first-class name for tool output. A nameless
+// object prints as empty rather than falling back to properties["name"], which
+// is an ordinary property and never a title (#824).
+func graphObjectName(name *string) string {
+	if name == nil {
+		return ""
+	}
+	return strings.TrimSpace(*name)
 }
 
 // maxPropertyValueChars bounds a single string property value emitted in an
@@ -507,7 +507,7 @@ func slimTraverseNode(n *graph.TraverseNode, opts ResponseOpts) map[string]any {
 	}
 
 	props := propertiesForStrategy(n.Properties, opts)
-	name, hasName := nameForStrategy(n.Properties, opts)
+	name, hasName := optionalNameForStrategy(n.Name, opts)
 
 	out := map[string]any{
 		"id":    n.CanonicalID.String(),
@@ -568,7 +568,7 @@ func slimSimilarResult(sr *graph.SimilarObjectResult, opts ResponseOpts) map[str
 		id = *sr.CanonicalID
 	}
 	props := propertiesForStrategy(sr.Properties, opts)
-	name, hasName := nameForStrategy(sr.Properties, opts)
+	name, hasName := optionalNameForStrategy(sr.Name, opts)
 
 	out := map[string]any{
 		"id":       id.String(),

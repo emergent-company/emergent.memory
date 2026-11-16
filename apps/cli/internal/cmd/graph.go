@@ -72,17 +72,13 @@ type batchUpdateObjectItem struct {
 	BranchID      *string        `json:"branch_id,omitempty"`
 }
 
-// nameFromProps returns the "name" property from a properties map, or "" if absent.
-func nameFromProps(props map[string]any) string {
-	if props == nil {
+// objectName renders an object's first-class name, or "" when it has none.
+// properties["name"] is an ordinary property and is never a title (#824).
+func objectName(name *string) string {
+	if name == nil {
 		return ""
 	}
-	if v, ok := props["name"]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
+	return *name
 }
 
 // ─────────────────────────────────────────────
@@ -341,7 +337,7 @@ func resolveGraphObjectArgOrPick(cmd *cobra.Command, g *sdkgraph.Client, args []
 		if obj.Type != "" {
 			label = obj.Type + "  " + label
 		}
-		if n := nameFromProps(obj.Properties); n != "" {
+		if n := objectName(obj.Name); n != "" {
 			label = label + "  " + n
 		}
 		if obj.Key != nil && *obj.Key != "" {
@@ -780,6 +776,10 @@ When --key is given, the object is keyed for idempotent operations:
 		}
 
 		if graphNameFlag != "" {
+			// The name is a first-class field; the property is kept as a mirror
+			// for schema-typed properties, never as the title source (#824).
+			nm := graphNameFlag
+			req.Name = &nm
 			if req.Properties == nil {
 				req.Properties = make(map[string]any)
 			}
@@ -803,7 +803,7 @@ When --key is given, the object is keyed for idempotent operations:
 			if graphOutputFlag == "json" {
 				return json.NewEncoder(out).Encode(obj)
 			}
-			fmt.Fprintf(out, "%s\t%s\t%s\n", obj.EntityID, obj.Type, nameFromProps(obj.Properties))
+			fmt.Fprintf(out, "%s\t%s\t%s\n", obj.EntityID, obj.Type, objectName(obj.Name))
 			return nil
 		}
 
@@ -821,7 +821,7 @@ When --key is given, the object is keyed for idempotent operations:
 			return json.NewEncoder(out).Encode(obj)
 		}
 
-		fmt.Fprintf(out, "%s\t%s\t%s\n", obj.EntityID, obj.Type, nameFromProps(obj.Properties))
+		fmt.Fprintf(out, "%s\t%s\t%s\n", obj.EntityID, obj.Type, objectName(obj.Name))
 		return nil
 	},
 }
@@ -862,6 +862,10 @@ var graphObjectsUpdateCmd = &cobra.Command{
 		}
 
 		if graphNameFlag != "" {
+			// The name is a first-class field; the property is kept as a mirror
+			// for schema-typed properties, never as the title source (#824).
+			nm := graphNameFlag
+			req.Name = &nm
 			if req.Properties == nil {
 				req.Properties = make(map[string]any)
 			}
@@ -1672,9 +1676,6 @@ func toSubgraphSDKRequest(sg subgraphInput) sdkgraph.CreateSubgraphRequest {
 		for k, v := range o.Properties {
 			props[k] = v
 		}
-		if o.Name != "" {
-			props["name"] = o.Name
-		}
 		if o.Description != "" {
 			props["description"] = o.Description
 		}
@@ -1682,6 +1683,10 @@ func toSubgraphSDKRequest(sg subgraphInput) sdkgraph.CreateSubgraphRequest {
 			Ref:  o.Ref,
 			Type: o.Type,
 			Key:  o.Key,
+		}
+		if o.Name != "" {
+			props["name"] = o.Name
+			req.Name = &o.Name
 		}
 		if len(props) > 0 {
 			req.Properties = props
@@ -1720,7 +1725,7 @@ func printSubgraphResult(out io.Writer, resp *sdkgraph.CreateSubgraphResponse, o
 		return json.NewEncoder(out).Encode(resp)
 	}
 	for _, o := range resp.Objects {
-		fmt.Fprintf(out, "%s\t%s\t%s\n", o.EntityID, o.Type, nameFromProps(o.Properties))
+		fmt.Fprintf(out, "%s\t%s\t%s\n", o.EntityID, o.Type, objectName(o.Name))
 	}
 	fmt.Fprintf(out, "Created %d objects, %d relationships\n", len(resp.Objects), len(resp.Relationships))
 	return nil
@@ -1781,7 +1786,7 @@ func runSubgraphChunked(cmd *cobra.Command, g *sdkgraph.Client, sg subgraphInput
 		totalObjs += len(resp.Objects)
 		totalRels += len(resp.Relationships)
 		for _, o := range resp.Objects {
-			fmt.Fprintf(out, "%s\t%s\t%s\n", o.EntityID, o.Type, nameFromProps(o.Properties))
+			fmt.Fprintf(out, "%s\t%s\t%s\n", o.EntityID, o.Type, objectName(o.Name))
 		}
 		for k, v := range resp.RefMap {
 			mergedRefMap[k] = v
@@ -1949,9 +1954,6 @@ func subgraphObjectRequest(o subgraphObjectInput, branchID string) sdkgraph.Crea
 	for k, v := range o.Properties {
 		props[k] = v
 	}
-	if o.Name != "" {
-		props["name"] = o.Name
-	}
 	if o.Description != "" {
 		props["description"] = o.Description
 	}
@@ -1959,6 +1961,11 @@ func subgraphObjectRequest(o subgraphObjectInput, branchID string) sdkgraph.Crea
 	req := sdkgraph.CreateObjectRequest{
 		Type:     o.Type,
 		BranchID: batchBranchPtr(branchID),
+	}
+	if o.Name != "" {
+		props["name"] = o.Name
+		name := o.Name
+		req.Name = &name
 	}
 	if o.Key != nil && *o.Key != "" {
 		req.Key = o.Key
@@ -2001,7 +2008,7 @@ func runSubgraphOnBranch(cmd *cobra.Command, g *sdkgraph.Client, sg subgraphInpu
 			entityByRef[slot.input.Ref] = obj.EntityID
 		}
 		if graphOutputFlag != "json" {
-			fmt.Fprintf(out, "%s\t%s\t%s\n", obj.EntityID, obj.Type, nameFromProps(obj.Properties))
+			fmt.Fprintf(out, "%s\t%s\t%s\n", obj.EntityID, obj.Type, objectName(obj.Name))
 		}
 	}
 
@@ -2173,7 +2180,7 @@ var graphObjectsCreateBatchCmd = &cobra.Command{
 FLAT ARRAY FORMAT (objects only):
   A JSON array of objects, each with:
     type        (string, required)
-    name        (string, optional) — placed in properties.name
+    name        (string, optional) — the object's title (also mirrored into properties.name)
     description (string, optional) — placed in properties.description
     properties  (object, optional) — arbitrary additional properties
 
@@ -2346,6 +2353,8 @@ BRANCHES:
 			}
 			if item.Name != "" {
 				props["name"] = item.Name
+				name := item.Name
+				req.Name = &name
 			}
 			if item.Description != "" {
 				props["description"] = item.Description
@@ -2369,7 +2378,7 @@ BRANCHES:
 
 		for _, r := range resp.Results {
 			if r.Success && r.Object != nil {
-				fmt.Fprintf(out, "%s\t%s\t%s\n", r.Object.EntityID, r.Object.Type, nameFromProps(r.Object.Properties))
+				fmt.Fprintf(out, "%s\t%s\t%s\n", r.Object.EntityID, r.Object.Type, objectName(r.Object.Name))
 			} else {
 				errMsg := "unknown error"
 				if r.Error != nil {
@@ -2636,7 +2645,7 @@ func init() {
 	graphObjectsGetCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch ID or name to resolve the key against (omit for main branch)")
 
 	graphObjectsCreateCmd.Flags().StringVar(&graphTypeFlag, "type", "", "Object type (required)")
-	graphObjectsCreateCmd.Flags().StringVar(&graphNameFlag, "name", "", "Shorthand for --properties '{\"name\": \"...\"}' (subject to schema validation)")
+	graphObjectsCreateCmd.Flags().StringVar(&graphNameFlag, "name", "", "The object's title (also mirrored into properties.name, subject to schema validation)")
 	graphObjectsCreateCmd.Flags().StringVar(&graphDescFlag, "description", "", "Shorthand for --properties '{\"description\": \"...\"}' (subject to schema validation)")
 	graphObjectsCreateCmd.Flags().StringVar(&graphPropsFlag, "properties", "", "JSON properties object")
 	graphObjectsCreateCmd.Flags().StringVar(&graphKeyFlag, "key", "", "Stable key for idempotent operations")
@@ -2648,7 +2657,7 @@ func init() {
 	graphObjectsCreateBatchCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch name or UUID to import into (omit for main branch)")
 
 	graphObjectsUpdateCmd.Flags().StringVar(&graphPropsFlag, "properties", "", "JSON properties object to merge")
-	graphObjectsUpdateCmd.Flags().StringVar(&graphNameFlag, "name", "", "Shorthand for --properties '{\"name\": \"...\"}' (subject to schema validation)")
+	graphObjectsUpdateCmd.Flags().StringVar(&graphNameFlag, "name", "", "The object's title (also mirrored into properties.name, subject to schema validation)")
 	graphObjectsUpdateCmd.Flags().StringVar(&graphDescFlag, "description", "", "Shorthand for --properties '{\"description\": \"...\"}' (subject to schema validation)")
 	graphObjectsUpdateCmd.Flags().StringVar(&graphKeyFlag, "key", "", "Set a stable key on the object (enables cross-session src_key/dst_key references)")
 	graphObjectsUpdateCmd.Flags().StringVar(&graphStatusFlag, "status", "", "Set object status (e.g. active, planned, deprecated)")

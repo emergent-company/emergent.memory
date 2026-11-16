@@ -147,12 +147,21 @@ func (p *OAuthProvider) Refresh(ctx context.Context) error {
 		return fmt.Errorf("failed to parse token response: %w", err)
 	}
 
-	// Update credentials
+	// Update credentials. Some providers omit the refresh token from a refresh
+	// response when it did not rotate; overwriting ours with "" would discard
+	// the only way to renew this session and force an interactive login. The
+	// user identity claim is likewise not part of the token response.
+	refreshToken := tokenResp.RefreshToken
+	if refreshToken == "" {
+		refreshToken = p.credentials.RefreshToken
+	}
+	userEmail := p.credentials.UserEmail
 	expiresAt := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
 	p.credentials = &Credentials{
 		AccessToken:  tokenResp.AccessToken,
-		RefreshToken: tokenResp.RefreshToken,
+		RefreshToken: refreshToken,
 		ExpiresAt:    expiresAt,
+		UserEmail:    userEmail,
 		IssuerURL:    p.oidcConfig.Issuer,
 	}
 

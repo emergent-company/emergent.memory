@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -379,6 +380,7 @@ func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
 		CanonicalID string                 `json:"canonical_id"`
 		EntityID    string                 `json:"entity_id"`
 		Type        string                 `json:"type"`
+		Name        *string                `json:"name"`
 		Key         string                 `json:"key"`
 		Labels      []string               `json:"labels"`
 		Properties  map[string]interface{} `json:"properties"`
@@ -416,6 +418,7 @@ func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
 		ID:         id,
 		Type:       typeName,
 		TypeColor:  s.typeColor(typeName),
+		Name:       objectLabel(node.Name, node.Key, typeName, id),
 		Key:        node.Key,
 		Labels:     node.Labels,
 		Properties: props,
@@ -482,25 +485,13 @@ func (s *Server) handleNodeRelations(w http.ResponseWriter, r *http.Request) {
 					CanonicalID string                 `json:"canonical_id"`
 					EntityID    string                 `json:"entity_id"`
 					Type        string                 `json:"type"`
+					Name        *string                `json:"name"`
 					Key         string                 `json:"key"`
 					Properties  map[string]interface{} `json:"properties"`
 				}
 				if json.Unmarshal(raw, &obj) == nil {
 					oid := coalesce(obj.CanonicalID, obj.EntityID, obj.ID)
-					name := ""
-					if props := obj.Properties; props != nil {
-						if n, ok := props["name"].(string); ok {
-							name = n
-						} else if t, ok := props["title"].(string); ok {
-							name = t
-						}
-					}
-					if name == "" {
-						name = obj.Key
-					}
-					if name == "" && obj.Type != "" {
-						name = obj.Type + " " + oid[:min(6, len(oid))]
-					}
+					name := objectLabel(obj.Name, obj.Key, obj.Type, oid)
 					nodeNames[oid] = nodeInfo{Name: name, Type: obj.Type}
 				}
 			}
@@ -778,6 +769,30 @@ type edgeEntry struct {
 type nodeInfo struct {
 	Name string
 	Type string
+}
+
+// machineObjectKey matches the machine-generated identity shapes: the current
+// generated key ("<type>-<12 hex>"), the legacy generated key ("<type>-<8 hex>")
+// and a source-scoped dedup key ("<provider>:<uuid>:<external id>"). It mirrors
+// the server, migration 00311 and the web-ui gateway regexes (the fourth copy of
+// this rule); any of them is an identity, never a title (#824).
+var machineObjectKey = regexp.MustCompile(`^[a-z0-9_-]+-[0-9a-f]{12}$|^[a-z0-9_-]+-[0-9a-f]{8}$|^[a-z][a-z0-9_-]*:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:.+$`)
+
+// objectLabel resolves an object's display label from the fields every object
+// payload carries: its `name` column, else a non-machine key, else `type` + a
+// short id. It never reads properties (#824): a `properties.name`/`title` copy is
+// a legibility mirror, not a title.
+func objectLabel(name *string, key, objType, id string) string {
+	if name != nil && strings.TrimSpace(*name) != "" {
+		return *name
+	}
+	if key != "" && !machineObjectKey.MatchString(key) {
+		return key
+	}
+	if objType != "" {
+		return objType + " " + id[:min(6, len(id))]
+	}
+	return id[:min(8, len(id))]
 }
 
 func coalesce(vals ...string) string {

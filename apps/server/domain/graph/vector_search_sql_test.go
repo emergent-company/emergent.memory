@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"regexp"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
@@ -63,7 +64,10 @@ func TestVectorSearchUsesHNSWSubquery(t *testing.T) {
 }
 
 // TestFindSimilarObjectsUsesHNSWSubquery asserts the same ANN-subquery shape for
-// the similar-objects vector query.
+// the similar-objects vector query, and that a returned row carries the `name`
+// column. The row set is sized to the real projection (13 columns): the scan
+// previously listed 12 destinations against a 13-column SELECT, so every call
+// failed and this test could not see it because it returned zero rows.
 func TestFindSimilarObjectsUsesHNSWSubquery(t *testing.T) {
 	db, mock := newGraphSQLMockDB(t)
 	repo := newGraphSQLRepo(db)
@@ -72,13 +76,26 @@ func TestFindSimilarObjectsUsesHNSWSubquery(t *testing.T) {
 	mock.ExpectQuery(`(?s)SELECT embedding_v2::text[\s\S]*kb\.graph_objects`).
 		WillReturnRows(sqlmock.NewRows([]string{"embedding_v2"}).AddRow("[0.1,0.2,0.3]"))
 	// Second query: ANN subquery for similar objects.
-	mock.ExpectQuery(annSubqueryRe.String()).WillReturnRows(sqlmock.NewRows([]string{}))
+	mock.ExpectQuery(annSubqueryRe.String()).WillReturnRows(
+		sqlmock.NewRows([]string{
+			"id", "canonical_id", "version", "project_id", "branch_id",
+			"type", "name", "key", "status", "properties", "labels",
+			"created_at", "_dist",
+		}).AddRow(
+			uuid.NewString(), uuid.NewString(), 1, uuid.NewString(), nil,
+			"person", "Alice", "alice", "active", []byte(`{}`), "{}",
+			time.Now(), float32(0.1),
+		),
+	)
 
-	_, err := repo.FindSimilarObjects(context.Background(), graph.SimilarSearchParams{
+	results, err := repo.FindSimilarObjects(context.Background(), graph.SimilarSearchParams{
 		ProjectID: uuid.New(),
 		ObjectID:  uuid.New(),
 		Limit:     10,
 	})
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
+	require.Len(t, results, 1)
+	require.NotNil(t, results[0].Name, "the name column must be scanned into the result")
+	require.Equal(t, "Alice", *results[0].Name)
 }
