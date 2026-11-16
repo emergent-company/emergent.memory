@@ -163,7 +163,12 @@ func parseObjectRules(c echo.Context) ([]AgentObjectRule, error) {
 			r.Status = st
 		}
 		r.Triggers = parseRuleTriggers(c.FormValue("rule-" + t + "-triggers"))
-		invocation, invErr := parseRuleInvocation(c.FormValue("rule-" + t + "-invocation"))
+		rawInvocation := c.FormValue("rule-" + t + "-invocation")
+		if strings.TrimSpace(rawInvocation) == "" {
+			// Older rendered forms used the generic field name; keep them working.
+			rawInvocation = c.FormValue("ruleInvocation")
+		}
+		invocation, invErr := parseRuleInvocation(rawInvocation)
 		if invErr != nil {
 			return nil, fmt.Errorf("%s invocation: %w", t, invErr)
 		}

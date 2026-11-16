@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/internal/config"
@@ -332,4 +333,44 @@ func TestWorkReconciler_EnqueuesReadyObject(t *testing.T) {
 	rc.reconcile(ctx)
 
 	require.Equal(t, 1, countQueuedRuns(t, db, ctx, agentID, canonicalID))
+}
+
+// TestWorkReconciler_SkipsUnassignedGitHubIssue is the incident regression:
+// a backfilled issue is ready and unassigned, and must not start a coding run.
+// The same item assigned to the listening agent must still dispatch.
+func TestWorkReconciler_SkipsUnassignedGitHubIssue(t *testing.T) {
+	ctx, db, repo, projectID := setupWorkObjectDispatch(t)
+	defID := insertWorkDefinition(t, db, ctx, projectID, "coder",
+		`{"status":{"ready":"ready"},"objectRules":[{"objectType":"GitHubIssue","triggers":[{"status":"ready"}]}]}`)
+	agentID := insertWorkAgent(t, db, ctx, projectID, "coder", defID)
+	_, err := db.ExecContext(ctx,
+		`UPDATE kb.agents SET trigger_type='reaction', reaction_config='{"objectTypes":["GitHubIssue"],"events":["created","status_changed"]}'::jsonb WHERE id=?`,
+		agentID)
+	require.NoError(t, err)
+
+	unassignedID := uuid.NewString()
+	assignedID := uuid.NewString()
+	insertGitHubIssueObject(t, db, ctx, projectID, unassignedID, "issue-1", "")
+	insertGitHubIssueObject(t, db, ctx, projectID, assignedID, "issue-2", "coder")
+
+	store := &fakeListStore{heads: []*graph.WorkObjectHead{
+		{ProjectID: projectID, CanonicalID: unassignedID, Status: "ready", Type: "GitHubIssue"},
+		{ProjectID: projectID, CanonicalID: assignedID, Status: "ready", Type: "GitHubIssue", Assignee: "coder"},
+	}}
+	rc := NewWorkReconciler(repo, testAgentLogger(), time.Minute)
+	rc.SetWorkObjectStore(store)
+
+	rc.reconcile(ctx)
+
+	require.Equal(t, 0, countQueuedRuns(t, db, ctx, agentID, unassignedID))
+	require.Equal(t, 1, countQueuedRuns(t, db, ctx, agentID, assignedID))
+}
+
+func insertGitHubIssueObject(t *testing.T, db *bun.DB, ctx context.Context, projectID, canonicalID, key, assignee string) {
+	t.Helper()
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO kb.graph_objects (id, project_id, type, canonical_id, version, key, status, assignee)
+		 VALUES (?, ?, 'GitHubIssue', ?, 1, ?, 'ready', NULLIF(?, ''))`,
+		canonicalID, projectID, canonicalID, key, assignee)
+	require.NoError(t, err)
 }

@@ -3,9 +3,11 @@ package agents
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -575,6 +577,9 @@ func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead) 
 	if blocked, err := rc.repo.IsWorkBlocked(ctx, h.CanonicalID); err == nil && blocked {
 		return
 	}
+	if skipUnassignedIssue(h.Type, h.Assignee) {
+		return
+	}
 	agents, err := rc.repo.FindReactionAgentsForType(ctx, h.ProjectID, h.Type, h.Assignee)
 	if err != nil {
 		rc.log.Warn("failed to resolve listening agents", slog.String("canonical_id", h.CanonicalID), slog.String("error", err.Error()))
@@ -684,6 +689,50 @@ func resolveWorkObjectPolicy(ctx context.Context, workObjects WorkObjectStore, a
 	return pol
 }
 
+func intProperty(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int32:
+		return int(n)
+	case int64:
+		return int(n)
+	case uint:
+		return int(n)
+	case uint32:
+		return int(n)
+	case uint64:
+		return int(n)
+	case float32:
+		return int(n)
+	case float64:
+		return int(n)
+	case json.Number:
+		i, _ := n.Int64()
+		return int(i)
+	case string:
+		i, _ := strconv.Atoi(n)
+		return i
+	default:
+		return 0
+	}
+}
+
+// mergeWorkObjectMetadata copies identity fields (repo, issue number, source,
+// subject) into a dispatch metadata map without overwriting the event/claim
+// keys that describe why this dispatch happened.
+func mergeWorkObjectMetadata(meta map[string]any, h *graph.WorkObjectHead) {
+	if meta == nil || h == nil {
+		return
+	}
+	for k, v := range workTriggerMetadata(h) {
+		if k == "work_trigger_event" || k == "work_claim_status" {
+			continue
+		}
+		meta[k] = v
+	}
+}
+
 func workTriggerMetadata(h *graph.WorkObjectHead) map[string]any {
 	meta := map[string]any{
 		"work_trigger_event": string(EventTypeStatusChanged),
@@ -693,8 +742,8 @@ func workTriggerMetadata(h *graph.WorkObjectHead) map[string]any {
 		return meta
 	}
 	repo, _ := h.Properties["repo"].(string)
-	prNumber, _ := h.Properties["pr_number"].(float64)
-	issueNumber, _ := h.Properties["issue_number"].(float64)
+	prNumber := intProperty(h.Properties["pr_number"])
+	issueNumber := intProperty(h.Properties["issue_number"])
 	if repo == "" || (prNumber <= 0 && issueNumber <= 0) {
 		return meta
 	}
