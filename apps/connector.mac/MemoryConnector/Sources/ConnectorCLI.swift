@@ -123,6 +123,17 @@ final class ConnectorCLI: @unchecked Sendable {
                           arguments: ConnectorCLI.authAccessTokenArguments(serverURL: serverURL, configPath: configPath))
     }
 
+    /// `auth refresh` renews the stored access token when it is within the
+    /// CLI's refresh window (an expired token always is) and reports the
+    /// resulting state. The CLI serializes the renewal across processes with a
+    /// file lock, so the app can call this from several places without racing a
+    /// single-use refresh token.
+    func authRefresh(serverURL: String?, configPath: String) async throws -> CLIAuthRefresh {
+        try await runJSON(CLIAuthRefresh.self,
+                          command: "auth refresh",
+                          arguments: ConnectorCLI.authRefreshArguments(serverURL: serverURL, configPath: configPath))
+    }
+
     func projectsList(serverURL: String?, configPath: String) async throws -> [CLIProject] {
         let document = try await runJSON(CLIProjectsList.self,
                                          command: "projects list",
@@ -194,6 +205,10 @@ final class ConnectorCLI: @unchecked Sendable {
 
     static func authAccessTokenArguments(serverURL: String?, configPath: String) -> [String] {
         ["auth", "access-token"] + serverArguments(serverURL) + ["--json", "--config", configPath]
+    }
+
+    static func authRefreshArguments(serverURL: String?, configPath: String) -> [String] {
+        ["auth", "refresh"] + serverArguments(serverURL) + ["--json", "--config", configPath]
     }
 
     static func projectsListArguments(serverURL: String?, configPath: String) -> [String] {

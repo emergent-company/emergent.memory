@@ -332,6 +332,7 @@ memory-connector auth login --server https://api.example.ai
 memory-connector auth login --client-id 390138928478289930 --issuer https://<issuer>
 memory-connector auth status [--json]
 memory-connector auth access-token [--server ...] [--json]
+memory-connector auth refresh [--server ...] [--min-ttl 5m] [--json]
 memory-connector auth import --server <url> [--json]   # session JSON on stdin
 memory-connector auth list [--json]
 memory-connector auth logout
@@ -360,18 +361,43 @@ effective client id is persisted with the session, so later refreshes
 (`auth access-token`) use the same client even when the flags are omitted.
 
 `auth status` prints the server, email, issuer, and token expiry; `--json`
-emits the same as a stable document. `auth logout` clears the account and is
-idempotent (exit `0` even when already signed out).
+emits the same as a stable document, plus `can_refresh` (a refresh token is
+stored, so the access token can be renewed without the user) and `needs_reauth`
+(the provider already rejected the stored refresh token). `signed_in` keeps its
+meaning: it reports that a session is **stored**, not that its tokens still work.
+A rejected refresh does **not** delete the stored session — it is kept and marked
+`needs_reauth`, so a client can attempt a silent re-auth instead of forcing an
+interactive sign-in. `auth logout` clears the account and is idempotent (exit
+`0` even when already signed out).
 
 `auth access-token` prints the stored account's OAuth access token so another
 local process (for example a GUI) can call the Memory API as the signed-in
 user. It resolves the server from `--server` or the config's `server_url`,
-refreshes the session first when the token is expired or within 60 seconds of
+refreshes the session first when the token is expired or within five minutes of
 expiry, and never reads or prints the refresh token. Text mode prints the raw
 token only; `--json` emits
 `{"schema_version":1,"server_url":"…","access_token":"…","expires_at":"<RFC3339>"}`.
 It exits `1` when not signed in (with the same hint as `projects`) and `2` on
 usage errors.
+
+Refresh tokens are single-use and rotate on every refresh, so a refresh is
+serialized across **processes** with an advisory lock: a process that loses the
+race waits, re-reads the session, and returns the winner's fresh token instead of
+being rejected with `invalid_grant`.
+
+`auth refresh` is the explicit "make this session fresh before a burst of work"
+call — a client runs it at launch and after wake, so a long-idle machine comes
+back without asking for a login. It renews when the access token expires within
+`--min-ttl` (default `5m`) and reports what happened:
+
+```json
+{"schema_version":1,"server_url":"…","refreshed":true,
+ "expires_at":"<RFC3339>","can_refresh":true,"needs_reauth":false}
+```
+
+`refreshed` is `false` when the token was still fresh and nothing was renewed.
+It exits `1` when there is no stored session or the refresh was rejected (the
+provider's error code is on stderr), `2` on usage errors.
 
 `auth import --server <url>` reads a single session JSON object from **stdin**
 (never argv, which `ps` exposes) and stores it, for clients such as the macOS

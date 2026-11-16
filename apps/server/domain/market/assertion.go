@@ -4,9 +4,35 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
+
+// clockSkewLeeway is the tolerance applied to exp/nbf checks in both directions.
+// The market and the instance are independent clocks, so a token minted on the
+// market's clock can look a few seconds old (or a few seconds early) here. A
+// token that expired less than this long ago is still accepted, and one that is
+// not valid before a moment within this window is accepted too. Anything beyond
+// it is a real expiry/not-before failure.
+const clockSkewLeeway = 60 * time.Second
+
+// clockSkewLeewaySeconds is clockSkewLeeway in the units of the numeric JWT
+// claims (exp/nbf are Unix seconds).
+const clockSkewLeewaySeconds = int64(clockSkewLeeway / time.Second)
+
+// expiredBeyondLeeway reports whether an exp claim has passed by more than the
+// tolerance. An absent claim (exp == 0) is treated as expired: a document with
+// no expiry never stops being valid, so it cannot be accepted.
+func expiredBeyondLeeway(now, exp int64) bool {
+	return exp == 0 || now >= exp+clockSkewLeewaySeconds
+}
+
+// notYetValidWithinLeeway reports whether an nbf claim starts more than the
+// tolerance after now. An absent claim (nbf == 0) is valid immediately.
+func notYetValidWithinLeeway(now, nbf int64) bool {
+	return nbf != 0 && now+clockSkewLeewaySeconds < nbf
+}
 
 // AssertionClaims is the subset of the market's entitlement assertion a seller
 // verifies. Unknown claims are ignored.
@@ -51,10 +77,10 @@ func (c *Client) VerifyAssertion(ctx context.Context, issuer, token string, audi
 		return nil, ErrAssertionInvalid("assertion audience does not match the seller")
 	}
 	now := c.now().Unix()
-	if claims.ExpiresAt == 0 || now >= claims.ExpiresAt {
+	if expiredBeyondLeeway(now, claims.ExpiresAt) {
 		return nil, ErrAssertionInvalid("assertion has expired")
 	}
-	if claims.NotBefore != 0 && now < claims.NotBefore {
+	if notYetValidWithinLeeway(now, claims.NotBefore) {
 		return nil, ErrAssertionInvalid("assertion is not yet valid")
 	}
 	return &claims, nil
@@ -79,11 +105,14 @@ func (c *Client) VerifyTrustDocument(ctx context.Context, issuer, token string) 
 		return nil, ErrTrustInvalid("trust document audience must be " + TrustDocumentAudience)
 	}
 	now := c.now().Unix()
-	if claims.ExpiresAt == 0 || now >= claims.ExpiresAt {
+	if expiredBeyondLeeway(now, claims.ExpiresAt) {
 		return nil, ErrTrustInvalid("trust document has expired")
 	}
-	if claims.NotBefore != 0 && now < claims.NotBefore {
+	if notYetValidWithinLeeway(now, claims.NotBefore) {
 		return nil, ErrTrustInvalid("trust document is not yet valid")
+	}
+	if claims.Verified != nil && !*claims.Verified {
+		return nil, ErrTrustInvalid("trust document does not vouch for the listing")
 	}
 	if claims.ListingSlug == "" {
 		claims.ListingSlug = claims.Subject

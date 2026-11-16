@@ -479,6 +479,10 @@ func (r *Repository) MarkStaleRunsAsError(ctx context.Context, threshold time.Du
 	n, _ := res.RowsAffected()
 	return int(n), nil
 }
+
+// GetRecentRuns returns an agent's most recent runs, newest first. The Agent
+// relation is loaded so AgentRun.ToDTO can fall back to the runtime agent's
+// agent_definition_id for runs whose own column is NULL (issue #873).
 func (r *Repository) GetRecentRuns(ctx context.Context, agentID string, limit int) ([]*AgentRun, error) {
 	if limit <= 0 {
 		limit = 10
@@ -486,6 +490,7 @@ func (r *Repository) GetRecentRuns(ctx context.Context, agentID string, limit in
 	var runs []*AgentRun
 	err := r.db.NewSelect().
 		Model(&runs).
+		Relation("Agent").
 		Where("agent_id = ?", agentID).
 		Order("started_at DESC").
 		Limit(limit).
@@ -2309,70 +2314,85 @@ func (r *Repository) CancelRunIfPaused(ctx context.Context, runID string) (bool,
 	return n > 0, nil
 }
 
-// runResumeClaimKey is the suspend_context key recording that a follow-up
-// message has claimed a paused run for resume. It serialises concurrent
-// follow-ups on a pause that has no question row to claim (the step-limit
-// continuation, issue #867). The value is the claim id.
-const runResumeClaimKey = "resume_claim"
-
-// ClaimPausedRun atomically records a resume claim on a paused run, so exactly
-// one of several concurrent follow-up messages proceeds to the executor
-// (issue #867). A pause with no pending question has no question row to claim,
-// so the run itself is claimed here; the claim lives in suspend_context because
-// the row must stay paused until the executor's MarkRunResumed finalizes the
-// checkpoint. Returns true when this caller owns the claim: false means the row
-// is no longer paused or another caller already claimed it.
-func (r *Repository) ClaimPausedRun(ctx context.Context, runID, claimID string) (bool, error) {
+// ClaimPausedRunForResume atomically consumes a paused run's pause, so two
+// concurrent follow-ups to the same pause cannot both resume it. It applies the
+// terminal `input-required → completed` transition the checkpoint needs, but
+// BEFORE the resumed child run exists and with the row count as the verdict,
+// which is the only thing that serialises the two:
+//
+//	handler A  SELECT … status=input-required …  ─┐ both see "paused"
+//	handler B  SELECT … status=input-required …  ─┘
+//	handler A  UPDATE … WHERE status=input-required   → 1 row, wins
+//	handler B  UPDATE … WHERE status=input-required   → 0 rows, rejected
+//
+// Without it a questionless pause had no claim at all: executor.Resume read the
+// in-memory status and only finalized the checkpoint after the child insert, so
+// both followers created a child run and executed the same turn twice (issue
+// #867 follow-up). A pause that does carry a pending question is already
+// serialised by AnswerQuestion's claim on the question row; this is that claim's
+// counterpart.
+//
+// A claim that later loses its child to a hard failure leaves the checkpoint
+// successful, so the retry is rejected instead of running twice — the same
+// consume-then-run trade the question claim makes. CreateResumedRunFromPause is
+// the claim-and-insert variant for resumes that have to create their own child.
+func (r *Repository) ClaimPausedRunForResume(ctx context.Context, runID string) (bool, error) {
 	res, err := r.db.NewUpdate().
-		Model((*AgentRun)(nil)).
-		Set("suspend_context = jsonb_set(COALESCE(suspend_context, '{}'::jsonb), '{resume_claim}', to_jsonb(?::text))", claimID).
-		Where("id = ?", runID).
-		Where("status = ?", RunStatusPaused).
-		Where("COALESCE(suspend_context->>'resume_claim', '') = ''").
-		Exec(ctx)
-	if err != nil {
-		return false, err
-	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
-}
-
-// ReleasePausedRunClaim drops a claim taken by ClaimPausedRun when the resume did
-// not take ownership (the executor refused it or failed before creating the
-// resumed run), leaving the task resumable. It only removes its own claim and
-// only from a still-paused row: once MarkRunResumed finalized the checkpoint the
-// claim is inert and the guard leaves the row untouched. Returns true when a
-// claim was released.
-func (r *Repository) ReleasePausedRunClaim(ctx context.Context, runID, claimID string) (bool, error) {
-	res, err := r.db.NewUpdate().
-		Model((*AgentRun)(nil)).
-		Set("suspend_context = suspend_context - ?", runResumeClaimKey).
-		Where("id = ?", runID).
-		Where("status = ?", RunStatusPaused).
-		Where("suspend_context->>'resume_claim' = ?", claimID).
-		Exec(ctx)
-	if err != nil {
-		return false, err
-	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
-}
-
-// MarkRunResumed finalizes the paused checkpoint run once a new resumed run has
-// been created. The checkpoint must reach a terminal state: this used to flip it
-// to `running` and clear completed_at, and nothing ever finalized it, so every
-// resumed run left its parent permanently stuck in "working" — visible as a
-// stalled run in the UI and counted as live work. Execution has moved to the new
-// run; the checkpoint records that it was resumed and is marked successful.
-func (r *Repository) MarkRunResumed(ctx context.Context, runID string) error {
-	_, err := r.db.NewUpdate().
 		Model((*AgentRun)(nil)).
 		Set("status = ?", RunStatusSuccess).
 		Set("completed_at = NOW()").
 		Where("id = ?", runID).
 		Where("status = ?", RunStatusPaused).
 		Exec(ctx)
-	return err
+	if err != nil {
+		return false, fmt.Errorf("ClaimPausedRunForResume: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// CreateResumedRunFromPause atomically consumes a paused run's pause and inserts
+// the run that takes over its execution (issue #887).
+//
+// The claim and the child insert share one transaction, so the resume is
+// serialised without stranding the pause: the claim's UPDATE takes the row lock,
+// a concurrent follower blocks on it, and when the winner commits the follower
+// re-evaluates `status = input-required`, sees the checkpoint is already
+// terminal, and is reported as claimed=false. Because the insert rolls back with
+// the claim, a failed child insert leaves the pause resumable instead of
+// consuming it.
+//
+// It reports claimed=false (and no error) when another resume already consumed
+// the pause; callers must reject that follower rather than executing again.
+func (r *Repository) CreateResumedRunFromPause(ctx context.Context, priorRunID string, opts CreateRunOptions) (run *AgentRun, claimed bool, err error) {
+	err = r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		res, updErr := tx.NewUpdate().
+			Model((*AgentRun)(nil)).
+			Set("status = ?", RunStatusSuccess).
+			Set("completed_at = NOW()").
+			Where("id = ?", priorRunID).
+			Where("status = ?", RunStatusPaused).
+			Exec(ctx)
+		if updErr != nil {
+			return fmt.Errorf("claim paused run for resume: %w", updErr)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return nil
+		}
+		claimed = true
+		run = newAgentRun(opts)
+		if _, insErr := tx.NewInsert().Model(run).Returning("*").Exec(ctx); insErr != nil {
+			return fmt.Errorf("insert resumed run: %w", insErr)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	if !claimed {
+		return nil, false, nil
+	}
+	return run, true, nil
 }
 
 // UpdateStepCount updates the step count for a running agent.
@@ -2477,11 +2497,14 @@ func (r *Repository) UpdateRunTools(ctx context.Context, runID string, tools []s
 	return err
 }
 
-// FindChildRuns returns all child runs of a parent run.
+// FindChildRuns returns all child runs of a parent run. The Agent relation is
+// loaded so AgentRun.ToDTO can fall back to the runtime agent's
+// agent_definition_id for runs whose own column is NULL (issue #873).
 func (r *Repository) FindChildRuns(ctx context.Context, parentRunID string) ([]*AgentRun, error) {
 	var runs []*AgentRun
 	err := r.db.NewSelect().
 		Model(&runs).
+		Relation("Agent").
 		Where("parent_run_id = ?", parentRunID).
 		Order("started_at ASC").
 		Scan(ctx)
@@ -2633,7 +2656,10 @@ type RunFilters struct {
 	Status  *AgentRunStatus
 }
 
-// FindRunsByProjectPaginated returns paginated agent runs for a project.
+// FindRunsByProjectPaginated returns paginated agent runs for a project. The
+// Agent relation is loaded (alongside the project-scoping join, which uses the
+// distinct "a" alias) so AgentRun.ToDTO can fall back to the runtime agent's
+// agent_definition_id for runs whose own column is NULL (issue #873).
 func (r *Repository) FindRunsByProjectPaginated(ctx context.Context, projectID string, filters RunFilters, limit, offset int) ([]*AgentRun, int, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 20
@@ -2644,6 +2670,7 @@ func (r *Repository) FindRunsByProjectPaginated(ctx context.Context, projectID s
 
 	q := r.db.NewSelect().
 		Model((*AgentRun)(nil)).
+		Relation("Agent").
 		Join("JOIN kb.agents AS a ON a.id = ar.agent_id").
 		Where("a.project_id = ?", projectID)
 
@@ -3582,6 +3609,151 @@ func (r *Repository) RequeueOrphanedQueuedRuns(ctx context.Context) (int, error)
 		}
 	}
 	return len(runs), nil
+}
+
+// QueuedRunReapResult reports what one undispatchable-queued-run sweep found.
+type QueuedRunReapResult struct {
+	// Failed is how many runs were driven to a terminal failure (and had their
+	// dispatch jobs retired with them).
+	Failed int
+	// SparedDisabled is how many runs were left alone because their only live
+	// job sits on a queue row that exists but is disabled: an operator switch,
+	// which re-enabling reverses, not an unroutable shape.
+	SparedDisabled int
+}
+
+// ReapUndispatchableQueuedRuns fails queued ("submitted") runs that no worker
+// can ever claim, so a run that was created but never dispatched cannot sit
+// non-terminal forever (issue #880).
+//
+// Every queued run is inserted together with its dispatch job, but the job is
+// only claimable when a worker polls its exact (project_id, queue) pair, and a
+// worker only polls the enabled rows of kb.agent_queues. Two job shapes are
+// therefore invisible to every worker for good: a job whose queue row does not
+// exist at all, and a job with project_id NULL, which can never equal the
+// project a worker claims with. Those runs stay "submitted" with no error, no
+// step activity and nothing to reap, because the stale-run reaper only looks at
+// "working" and work maintenance counts "submitted" as live.
+//
+// A disabled queue is NOT in that class. `enabled` is a PATCHable field
+// (handler_queues.go), EnsureDefaultQueue is ON CONFLICT DO NOTHING so a
+// disable sticks, and re-enabling brings the backlog back — so a parked queue is
+// reversible operator intent, and failing its queue would discard work for a
+// deploy window. Those runs are spared and counted in SparedDisabled instead.
+//
+// The sweep is deliberately narrow. It only touches runs that
+//
+//   - are still queued,
+//   - have no root run and no session — the shape CreateRunQueued leaves behind
+//     for a top-level dispatch, and the shape observed on prod,
+//   - have been idle past the threshold (COALESCE(last_step_at, started_at),
+//     matching the stale-run reaper), and
+//   - have no live job on a queue row that exists (enabled or disabled).
+//
+// A queued run with a claimable job is left alone: it is legitimately waiting in
+// line, and RequeueOrphanedQueuedRuns covers the case where the job row itself
+// was lost.
+//
+// A failed run's jobs are retired in the same transaction, so a terminal run
+// never leaves a non-terminal job behind. Such a job could otherwise never be
+// claimed (a NULL project_id never matches a claim) while still inflating
+// CountPendingJobsForAgent, which is the MaxPendingJobs guard CreateRunQueued
+// applies.
+func (r *Repository) ReapUndispatchableQueuedRuns(ctx context.Context, threshold time.Duration) (QueuedRunReapResult, error) {
+	var out QueuedRunReapResult
+	cutoff := time.Now().Add(-threshold)
+
+	type candidate struct {
+		ID        string `bun:"id"`
+		Claimable bool   `bun:"claimable"`
+		Disabled  bool   `bun:"disabled"`
+	}
+	var candidates []candidate
+	if err := r.db.NewRaw(`
+		SELECT ar.id::text AS id,
+		       EXISTS (
+		           SELECT 1
+		           FROM kb.agent_run_jobs arj
+		           JOIN kb.agent_queues aq
+		             ON aq.project_id = arj.project_id
+		            AND aq.name = arj.queue
+		            AND aq.enabled
+		           WHERE arj.run_id = ar.id
+		             AND arj.status IN ('pending', 'processing')
+		       ) AS claimable,
+		       EXISTS (
+		           SELECT 1
+		           FROM kb.agent_run_jobs arj
+		           JOIN kb.agent_queues aq
+		             ON aq.project_id = arj.project_id
+		            AND aq.name = arj.queue
+		            AND NOT aq.enabled
+		           WHERE arj.run_id = ar.id
+		             AND arj.status IN ('pending', 'processing')
+		       ) AS disabled
+		  FROM kb.agent_runs ar
+		 WHERE ar.status = ?
+		   AND ar.root_run_id IS NULL
+		   AND ar.session_id IS NULL
+		   AND COALESCE(ar.last_step_at, ar.started_at) < ?`,
+		RunStatusQueued, cutoff,
+	).Scan(ctx, &candidates); err != nil {
+		return out, fmt.Errorf("find undispatchable queued runs: %w", err)
+	}
+
+	var doomed []string
+	for _, c := range candidates {
+		switch {
+		case c.Claimable:
+			// Legitimately waiting in line.
+		case c.Disabled:
+			out.SparedDisabled++
+		default:
+			doomed = append(doomed, c.ID)
+		}
+	}
+	if len(doomed) == 0 {
+		return out, nil
+	}
+
+	now := time.Now()
+	const reason = "queued run was never dispatched: no dispatch job a worker can claim"
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var failed []string
+		if err := tx.NewRaw(`
+			UPDATE kb.agent_runs
+			   SET status = ?,
+			       completed_at = ?,
+			       duration_ms = (EXTRACT(EPOCH FROM (? - started_at)) * 1000)::int,
+			       error_message = ?
+			 WHERE id IN (?)
+			   AND status = ?
+			RETURNING id::text`,
+			RunStatusError, now, now, reason, bun.In(doomed), RunStatusQueued,
+		).Scan(ctx, &failed); err != nil {
+			return fmt.Errorf("fail undispatchable queued runs: %w", err)
+		}
+		if len(failed) == 0 {
+			return nil
+		}
+		// Retire the dispatch jobs with the run: a terminal run must not leave
+		// a pending/processing row that no claim can ever take.
+		if _, err := tx.NewRaw(`
+			UPDATE kb.agent_run_jobs
+			   SET status = ?, completed_at = ?
+			 WHERE run_id IN (?)
+			   AND status IN (?, ?)`,
+			JobStatusCompleted, now, bun.In(failed), JobStatusPending, JobStatusProcessing,
+		).Exec(ctx); err != nil {
+			return fmt.Errorf("retire jobs of undispatchable queued runs: %w", err)
+		}
+		out.Failed = len(failed)
+		return nil
+	})
+	if err != nil {
+		return QueuedRunReapResult{}, err
+	}
+	return out, nil
 }
 
 // GetRunTokenUsage returns aggregated LLM token counts and estimated cost for a
@@ -4925,6 +5097,13 @@ func (r *Repository) ListA2ARuns(ctx context.Context, projectID, contextID strin
 
 	rootsQuery := r.db.NewSelect().
 		Model((*AgentRun)(nil)).
+		// Relation("Agent") is a belongs-to LEFT JOIN, so a run whose runtime
+		// agent was deleted still lists (with a nil Agent) instead of vanishing.
+		// The run a caller receives is the chain tail, built by a2aListingRun
+		// from a tail that already loads the relation; loading it here too keeps
+		// the root copies attributable for AgentRun.ToDTO's agent_definition_id
+		// fallback (issue #873).
+		Relation("Agent").
 		Join("JOIN kb.agents AS a ON a.id = ar.agent_id").
 		Where("a.project_id = ?", projectID).
 		Where("ar.resumed_from IS NULL")

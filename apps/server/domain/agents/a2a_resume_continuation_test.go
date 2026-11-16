@@ -145,51 +145,50 @@ func TestA2AResumeUserMessage_ContinuationCarriesUserText(t *testing.T) {
 
 // TestPrepareA2AResume_StepLimitPauseContinues drives the shared resume
 // preparation over a run the executor paused at its step limit: it must return a
-// continuation prompt, claim the run (not a question), and never touch
-// agent_questions.
+// continuation prompt, consume the pause atomically (so a concurrent follow-up
+// cannot execute it too), and never touch agent_questions.
 func TestPrepareA2AResume_StepLimitPauseContinues(t *testing.T) {
 	repo, drv := newA2AResumeRepository(t)
 	drv.setNoPendingQuestions(true)
 	h := &A2AHandler{repo: repo, executor: enabledExecutor(), log: testAgentLogger()}
 
-	msg, claim, a2aErr := h.prepareA2AResume(context.Background(), stepLimitPausedRun(), "keep going", "user-1")
+	msg, pauseClaimed, a2aErr := h.prepareA2AResume(context.Background(), stepLimitPausedRun(), "keep going", "user-1")
 	require.Nil(t, a2aErr)
-	require.NotNil(t, claim, "a continuation must claim the run")
+	assert.True(t, pauseClaimed, "a continuation must consume the pause before executing")
 	assert.Contains(t, msg, "keep going")
 	assert.Contains(t, msg, "Continue from where you left off")
 
 	var claimedRun, claimedQuestion bool
 	for _, q := range drv.queriesCopy() {
-		if containsAll(q, "UPDATE", `"kb"."agent_runs"`, "resume_claim") {
+		if containsAll(q, "UPDATE", `"kb"."agent_runs"`, "completed_at = NOW()") {
 			claimedRun = true
 		}
 		if containsAll(q, "UPDATE", `"kb"."agent_questions"`) {
 			claimedQuestion = true
 		}
 	}
-	assert.True(t, claimedRun, "the run must be claimed with the resume-claim CAS")
+	assert.True(t, claimedRun, "the pause must be claimed atomically")
 	assert.False(t, claimedQuestion, "a continuation has no question to claim")
 }
 
-// TestPrepareA2AResume_StepLimitPauseClaimLost pins the concurrency guard: when a
-// concurrent follow-up already claimed the run, the loser must be rejected
-// instead of resuming a second time.
-func TestPrepareA2AResume_StepLimitPauseClaimLost(t *testing.T) {
+// TestPrepareA2AResume_ClaimLostRejected pins the concurrency guard: when a
+// concurrent follow-up already consumed the pause, the loser is rejected with its
+// own reason instead of executing the turn a second time (issue #887).
+func TestPrepareA2AResume_ClaimLostRejected(t *testing.T) {
 	repo, drv := newA2AResumeRepository(t)
 	drv.setNoPendingQuestions(true)
 	drv.setClaimLost(true)
 	h := &A2AHandler{repo: repo, executor: enabledExecutor(), log: testAgentLogger()}
 
-	msg, claim, a2aErr := h.prepareA2AResume(context.Background(), stepLimitPausedRun(), "keep going", "user-1")
+	msg, pauseClaimed, a2aErr := h.prepareA2AResume(context.Background(), stepLimitPausedRun(), "keep going", "user-1")
 	require.NotNil(t, a2aErr)
 	assert.Empty(t, msg)
-	assert.Nil(t, claim)
+	assert.False(t, pauseClaimed)
 	assert.Equal(t, a2aReasonResumeInProgress, a2aErr.Reason)
-	assert.Contains(t, a2aErr.Message, "already being resumed")
 }
 
 // TestPrepareA2AResume_UnidentifiedPauseRejected pins the fail-closed default: a
-// paused run with no suspend marker is not a continuation.
+// paused run with no suspend marker is not a continuation, and is left untouched.
 func TestPrepareA2AResume_UnidentifiedPauseRejected(t *testing.T) {
 	repo, drv := newA2AResumeRepository(t)
 	drv.setNoPendingQuestions(true)
@@ -197,43 +196,39 @@ func TestPrepareA2AResume_UnidentifiedPauseRejected(t *testing.T) {
 
 	run := &AgentRun{ID: "task-1", Status: RunStatusPaused, StepCount: 30}
 
-	msg, claim, a2aErr := h.prepareA2AResume(context.Background(), run, "keep going", "user-1")
+	msg, pauseClaimed, a2aErr := h.prepareA2AResume(context.Background(), run, "keep going", "user-1")
 	require.NotNil(t, a2aErr)
 	assert.Empty(t, msg)
-	assert.Nil(t, claim)
+	assert.False(t, pauseClaimed)
 	assert.Contains(t, a2aErr.Message, "no pending question for task")
 	for _, q := range drv.queriesCopy() {
-		assert.NotContains(t, q, "resume_claim",
-			"an unidentified pause must not be claimed for resume")
+		assert.NotContains(t, q, "completed_at = NOW()",
+			"an unidentified pause must not be consumed")
 	}
 }
 
 // TestPrepareA2AResume_PendingQuestionClaimed pins the question path: the
-// follow-up message answers the question and the claim is applied once. No run
-// claim is taken, because AnswerQuestion already serialises the answer.
+// follow-up message answers the question and the claim is applied once. The pause
+// is left for the executor to claim, so pauseClaimed stays false.
 func TestPrepareA2AResume_PendingQuestionClaimed(t *testing.T) {
 	repo, drv := newA2AResumeRepository(t)
 	h := &A2AHandler{repo: repo, executor: enabledExecutor(), log: testAgentLogger()}
 
 	run := &AgentRun{ID: "task-1", Status: RunStatusPaused}
 
-	msg, claim, a2aErr := h.prepareA2AResume(context.Background(), run, "yes", "user-1")
+	msg, pauseClaimed, a2aErr := h.prepareA2AResume(context.Background(), run, "yes", "user-1")
 	require.Nil(t, a2aErr)
-	assert.Nil(t, claim, "the pending question is the claim")
+	assert.False(t, pauseClaimed, "the executor claims the pause on the question path")
 	assert.Contains(t, msg, `Previously you asked: "Approve?"`)
 	assert.Contains(t, msg, `The user responded: "yes"`)
 
-	var claimed, runClaimed bool
+	var claimed bool
 	for _, q := range drv.queriesCopy() {
 		if containsAll(q, "UPDATE", `"kb"."agent_questions"`) {
 			claimed = true
 		}
-		if strings.Contains(q, "resume_claim") {
-			runClaimed = true
-		}
 	}
 	assert.True(t, claimed, "the pending question must be claimed")
-	assert.False(t, runClaimed, "the question is the claim; the run needs none")
 }
 
 // TestPrepareA2AResume_ToolApprovalPauseRejected pins that a pause waiting on a
@@ -249,35 +244,37 @@ func TestPrepareA2AResume_ToolApprovalPauseRejected(t *testing.T) {
 		SuspendContext: map[string]any{"reason": string(SuspendReasonAwaitingToolConfirm)},
 	}
 
-	msg, claim, a2aErr := h.prepareA2AResume(context.Background(), run, "yes", "user-1")
+	msg, pauseClaimed, a2aErr := h.prepareA2AResume(context.Background(), run, "yes", "user-1")
 	require.NotNil(t, a2aErr)
 	assert.Empty(t, msg)
-	assert.Nil(t, claim)
+	assert.False(t, pauseClaimed)
 	assert.Contains(t, a2aErr.Message, "no pending question for task")
 }
 
-// TestA2AResumeClaim_Release pins the compensation path: a claim whose resume
-// never took ownership is dropped so the task stays resumable. A nil claim (the
-// question path or the new-task path) releases as a no-op.
-func TestA2AResumeClaim_Release(t *testing.T) {
-	repo, drv := newA2AResumeRepository(t)
-	h := &A2AHandler{repo: repo, executor: enabledExecutor(), log: testAgentLogger()}
+// TestA2AResumeInProgressError pins the rejection a follower gets when a
+// concurrent follow-up consumed the pause first: a distinct reason, so a client
+// does not mistake it for an unresumable task and start a duplicate one.
+func TestA2AResumeInProgressError(t *testing.T) {
+	a2aErr := a2aResumeInProgressError()
+	require.NotNil(t, a2aErr)
+	assert.Equal(t, a2aReasonResumeInProgress, a2aErr.Reason)
+	assert.NotEqual(t, a2aReasonInvalidState, a2aErr.Reason)
+	assert.Contains(t, a2aErr.Message, "already being resumed")
+}
 
-	claim := &a2aResumeClaim{h: h, runID: "run-1", claimID: "claim-1"}
-	claim.release()
-
-	var released bool
-	for _, q := range drv.queriesCopy() {
-		if containsAll(q, "UPDATE", `"kb"."agent_runs"`, "resume_claim") {
-			released = true
-		}
-	}
-	assert.True(t, released, "release must drop the claim")
-
-	before := len(drv.queriesCopy())
-	var nilClaim *a2aResumeClaim
-	nilClaim.release()
-	assert.Len(t, drv.queriesCopy(), before, "a nil claim must not hit the database")
+// TestA2AResumeConflictResponse pins the in-stream report for the same case: a
+// message naming the task, and no fabricated terminal state for a task another
+// follower is still executing.
+func TestA2AResumeConflictResponse(t *testing.T) {
+	sr := a2aResumeConflictResponse("task-1", "ctx-1")
+	assert.Nil(t, sr.StatusUpdate, "a concurrent resume is not a terminal state")
+	assert.Nil(t, sr.Task)
+	require.NotNil(t, sr.Message)
+	assert.Equal(t, "task-1", sr.Message.TaskID)
+	assert.Equal(t, "ctx-1", sr.Message.ContextID)
+	require.Len(t, sr.Message.Parts, 1)
+	require.NotNil(t, sr.Message.Parts[0].Text)
+	assert.Contains(t, *sr.Message.Parts[0].Text, "already being resumed")
 }
 
 // TestPauseRunAtStepLimit_PersistsMarkerBeforePause pins the executor side of the

@@ -59,7 +59,7 @@ func TestStreamRun_DisabledFailsRunTerminal_NewTask(t *testing.T) {
 	run := &AgentRun{ID: "run-1", Status: RunStatusRunning}
 
 	err := h.streamRun(c, "proj-1", "task-1", "ctx-1", run,
-		ExecuteRequest{ProjectID: "proj-1", UserMessage: "hi"}, false, nil)
+		ExecuteRequest{ProjectID: "proj-1", UserMessage: "hi"}, false)
 	require.NoError(t, err)
 
 	joined := strings.Join(rootDriver.queriesCopy(), "\n")
@@ -80,7 +80,7 @@ func TestStreamRun_DisabledFailsRunTerminal_Resume(t *testing.T) {
 	run := &AgentRun{ID: "run-resume", Status: RunStatusPaused}
 
 	err := h.streamRun(c, "proj-1", "task-1", "ctx-1", run,
-		ExecuteRequest{ProjectID: "proj-1", UserMessage: "resume"}, true, nil)
+		ExecuteRequest{ProjectID: "proj-1", UserMessage: "resume"}, true)
 	require.NoError(t, err)
 
 	joined := strings.Join(rootDriver.queriesCopy(), "\n")
@@ -121,8 +121,8 @@ type a2aResumeDriver struct {
 	// does for a run the executor paused at its step limit (issue #867).
 	noPendingQuestions bool
 
-	// claimLost makes the run-claim UPDATE report zero affected rows, as it does
-	// when a concurrent follow-up won the claim first (issue #867 review).
+	// claimLost makes the pause-claim UPDATE report zero affected rows, as it
+	// does when a concurrent follow-up consumed the pause first (issue #887).
 	claimLost bool
 }
 
@@ -146,16 +146,16 @@ func (d *a2aResumeDriver) setClaimLost(v bool) {
 	d.mu.Unlock()
 }
 
-func (d *a2aResumeDriver) questionRows() bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return !d.noPendingQuestions
-}
-
 func (d *a2aResumeDriver) claimRefused() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.claimLost
+}
+
+func (d *a2aResumeDriver) questionRows() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return !d.noPendingQuestions
 }
 
 func (d *a2aResumeDriver) record(q string) {
@@ -184,7 +184,7 @@ func (*a2aResumeConn) Begin() (driver.Tx, error) { return nil, io.EOF }
 
 func (c *a2aResumeConn) ExecContext(_ context.Context, q string, _ []driver.NamedValue) (driver.Result, error) {
 	c.d.record(q)
-	if c.d.claimRefused() && strings.Contains(q, "resume_claim") {
+	if c.d.claimRefused() && strings.Contains(q, "completed_at = NOW()") {
 		return driver.RowsAffected(0), nil
 	}
 	return driver.RowsAffected(1), nil

@@ -33,10 +33,16 @@ templ PlatformEmailSettingsPage(data platformEmailData) {
 		}
 		@flashToasts(data.FlashMsg, data.FlashErr)
 		if data.TestMsg != "" {
-			@ui.Alert(ui.AlertProps{Type: ui.AlertSuccess, Message: data.TestMsg, Attrs: templ.Attributes{"class": "mb-4"}})
+			@components.AlertWithClass(components.AlertWithClassProps{
+				AlertProps: ui.AlertProps{Type: ui.AlertSuccess, Message: data.TestMsg},
+				Class:      "mb-4",
+			})
 		}
 		if data.TestErr != nil {
-			@ui.Alert(ui.AlertProps{Type: ui.AlertError, Message: data.TestErr.Error(), Attrs: templ.Attributes{"class": "mb-4"}})
+			@components.AlertWithClass(components.AlertWithClassProps{
+				AlertProps: ui.AlertProps{Type: ui.AlertError, Message: data.TestErr.Error()},
+				Class:      "mb-4",
+			})
 		}
 		if data.LoadErr != nil {
 			@pageErrorNotice("Email settings unavailable", data.LoadErr)

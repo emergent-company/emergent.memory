@@ -9,9 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
-	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/emergent-company/emergent.memory/domain/events"
@@ -314,53 +312,51 @@ func a2aResumeUserMessage(question *AgentQuestion, userMessage string) string {
 }
 
 // prepareA2AResume validates a paused run for a follow-up message, applies the
-// execution kill switch, atomically claims the thing the message is advancing,
-// and returns the message to hand the resumed run.
+// execution kill switch, atomically claims what the message is advancing, and
+// returns the message to hand the resumed run plus whether the pause itself was
+// claimed here.
 //
-// A pending question is claimed through AnswerQuestion (a CAS). A pause with
-// nothing to answer — the step-limit continuation of issue #867 — has no
-// question row, so the run itself is claimed through ClaimPausedRun: without
-// that, two follow-ups that both read the run as paused would both resume it,
-// duplicating execution and any tool side effects. The returned claim must be
-// released if the resume does not start.
-func (h *A2AHandler) prepareA2AResume(ctx context.Context, latest *AgentRun, userMessage, userID string) (string, *a2aResumeClaim, *A2AError) {
+// A pending question is claimed through AnswerQuestion. A pause with nothing to
+// answer — the step-limit continuation of issue #867 — has no question row, so
+// the pause is consumed here through ClaimPausedRunForResume (issue #887): of
+// two concurrent follow-ups exactly one proceeds, and the loser is rejected
+// before anything executes. The returned pauseClaimed flag is passed on as
+// ExecuteRequest.PauseClaimed so the executor does not claim the consumed pause a
+// second time.
+func (h *A2AHandler) prepareA2AResume(ctx context.Context, latest *AgentRun, userMessage, userID string) (string, bool, *A2AError) {
 	questions, err := h.repo.FindPendingQuestionsByRunID(ctx, latest.ID)
 	if err != nil {
 		h.log.Error("failed to load pending questions", "run_id", latest.ID, "error", err)
-		return "", nil, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to load pending questions")
+		return "", false, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to load pending questions")
 	}
 
 	question, a2aErr := a2aResumeQuestion(latest, questions)
 	if a2aErr != nil {
-		return "", nil, a2aErr
+		return "", false, a2aErr
 	}
 
-	// Kill switch: check BEFORE claiming, otherwise a disabled resume consumes
-	// the question (or the run claim) and strands the task (same guarantee as the
-	// JSON /message path).
+	// Kill switch: check BEFORE claiming anything, otherwise a disabled resume
+	// consumes the question (or the pause) and strands the task (same guarantee
+	// as the JSON /message path).
 	if h.executor != nil {
 		if err := h.executor.EnsureExecutionEnabled(); err != nil {
-			return "", nil, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, err.Error())
+			return "", false, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, err.Error())
 		}
 	}
 
 	if question == nil {
-		claim := &a2aResumeClaim{h: h, runID: latest.ID, claimID: uuid.NewString()}
-		claimed, err := h.repo.ClaimPausedRun(ctx, latest.ID, claim.claimID)
+		// Claimed here — before execution, and on the streaming surface before
+		// the SSE stream starts — so a concurrent follower gets a clean error
+		// instead of executing the same turn twice.
+		claimed, err := h.repo.ClaimPausedRunForResume(ctx, latest.ID)
 		if err != nil {
 			h.log.Error("failed to claim paused run", "run_id", latest.ID, "error", err)
-			return "", nil, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to resume task")
+			return "", false, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to resume task")
 		}
 		if !claimed {
-			// Another follow-up claimed it between the status check and here, or
-			// the run stopped being paused.
-			return "", nil, &A2AError{
-				Code:    A2AErrorCode(http.StatusBadRequest),
-				Reason:  a2aReasonResumeInProgress,
-				Message: "task is already being resumed",
-			}
+			return "", false, a2aResumeInProgressError()
 		}
-		return a2aResumeUserMessage(nil, userMessage), claim, nil
+		return a2aResumeUserMessage(nil, userMessage), true, nil
 	}
 
 	// Atomically claim the pending question (mirror ACP AnswerQuestion path); a
@@ -368,39 +364,23 @@ func (h *A2AHandler) prepareA2AResume(ctx context.Context, latest *AgentRun, use
 	claimed, err := h.repo.AnswerQuestion(ctx, question.ID, userMessage, userID)
 	if err != nil {
 		h.log.Error("failed to answer question", "run_id", latest.ID, "question_id", question.ID, "error", err)
-		return "", nil, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to answer question")
+		return "", false, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to answer question")
 	}
 	if !claimed {
-		return "", nil, a2aInvalidStateError("question is no longer pending")
+		return "", false, a2aInvalidStateError("question is no longer pending")
 	}
-	return a2aResumeUserMessage(question, userMessage), nil, nil
+	return a2aResumeUserMessage(question, userMessage), false, nil
 }
 
-// a2aResumeClaim is the claim prepareA2AResume takes on a paused run whose
-// follow-up message is a continuation. release drops it when the resume did not
-// take ownership, so a transient failure leaves the task resumable rather than
-// wedged behind a stale claim. Once the executor's MarkRunResumed finalizes the
-// checkpoint the row is no longer paused and the release is a no-op.
-type a2aResumeClaim struct {
-	h       *A2AHandler
-	runID   string
-	claimID string
-}
-
-// release drops the claim. Best effort: a leaked claim only blocks further
-// follow-ups on this task until the client sends a fresh task, so a failure is
-// logged rather than reported to the caller that already saw a resume error.
-func (c *a2aResumeClaim) release() {
-	if c == nil || c.claimID == "" {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if _, err := c.h.repo.ReleasePausedRunClaim(ctx, c.runID, c.claimID); err != nil {
-		c.h.log.Warn("failed to release a2a resume claim",
-			"run_id", c.runID,
-			"error", err.Error(),
-		)
+// a2aResumeInProgressError reports that another follow-up consumed the pause
+// before this one reached the executor, so this follower must not execute the
+// turn again. It carries its own reason so a client can tell "someone else is
+// resuming this task" from "this task cannot be resumed at all" (INVALID_STATE).
+func a2aResumeInProgressError() *A2AError {
+	return &A2AError{
+		Code:    A2AErrorCode(http.StatusBadRequest),
+		Reason:  a2aReasonResumeInProgress,
+		Message: "task is already being resumed",
 	}
 }
 
@@ -907,7 +887,7 @@ func (h *A2AHandler) resumeA2ATask(c echo.Context, projectID, userID, userMessag
 		return writeA2AError(c, a2aInvalidStateError(fmt.Sprintf("task is not awaiting input (state %s)", MapRunStatusToTaskState(latest.Status))))
 	}
 
-	resumeMsg, claim, resumeErr := h.prepareA2AResume(ctx, latest, userMessage, userID)
+	resumeMsg, pauseClaimed, resumeErr := h.prepareA2AResume(ctx, latest, userMessage, userID)
 	if resumeErr != nil {
 		return writeA2AError(c, resumeErr)
 	}
@@ -928,6 +908,7 @@ func (h *A2AHandler) resumeA2ATask(c echo.Context, projectID, userID, userMessag
 		OrgID:           orgID,
 		UserID:          userID,
 		UserMessage:     resumeMsg,
+		PauseClaimed:    pauseClaimed,
 		// TrustedInternal defaults false: an A2A surface must not reach internal agents.
 	}
 
@@ -938,10 +919,12 @@ func (h *A2AHandler) resumeA2ATask(c echo.Context, projectID, userID, userMessag
 			if result != nil && result.Cleanup != nil {
 				result.Cleanup()
 			}
-			if execErr != nil {
-				// The resume never took ownership: drop the claim so the task
-				// stays resumable.
-				claim.release()
+			switch {
+			case errors.Is(execErr, ErrRunAlreadyResumed):
+				// Another follow-up consumed the pause first: this one must not
+				// execute the turn a second time (issue #887).
+				h.log.Info("a2a async resume lost the pause claim", "task_id", taskID)
+			case execErr != nil:
 				h.log.Error("a2a async resume failed", "task_id", taskID, "error", execErr.Error())
 			}
 		}()
@@ -957,10 +940,12 @@ func (h *A2AHandler) resumeA2ATask(c echo.Context, projectID, userID, userMessag
 	if result != nil && result.Cleanup != nil {
 		defer result.Cleanup()
 	}
+	if errors.Is(execErr, ErrRunAlreadyResumed) {
+		// Another follow-up consumed the pause first: reject this follower with
+		// its own reason instead of reporting the task as paused/failed (#887).
+		return writeA2AError(c, a2aResumeInProgressError())
+	}
 	if execErr != nil {
-		// The resume never took ownership: drop the claim so the task stays
-		// resumable.
-		claim.release()
 		h.log.Error("a2a resume failed", "task_id", taskID, "error", execErr.Error())
 	}
 

@@ -243,6 +243,16 @@ func a2aStatusUpdate(taskID, contextID string, state TaskState, msgText string) 
 	return StreamResponse{StatusUpdate: su}
 }
 
+// a2aResumeConflictResponse reports, inside a stream that has already started,
+// that a concurrent follow-up consumed the pause and owns the task. It carries no
+// terminal state: the winner is still executing the task.
+func a2aResumeConflictResponse(taskID, contextID string) StreamResponse {
+	msg := textStatusMessage("This task is already being resumed by another follow-up. Follow it with tasks/" + taskID + ":subscribe.")
+	msg.TaskID = taskID
+	msg.ContextID = contextID
+	return StreamResponse{Message: msg}
+}
+
 // a2aDeltaEventType maps an internal stream event to the reused run-event
 // type persisted alongside emission. Returns false when the event has no
 // persistence counterpart (tool-approval gate, unknown).
@@ -438,7 +448,7 @@ func (h *A2AHandler) streamNewTask(c echo.Context, projectID, userID, userMessag
 		RenderA2UI: true, // A2A stream renders A2UI surfaces (artifactUpdate)
 	}
 
-	return h.streamRun(c, projectID, run.ID, contextID, run, execReq, false, nil)
+	return h.streamRun(c, projectID, run.ID, contextID, run, execReq, false)
 }
 
 // streamResumeTask resumes an INPUT_REQUIRED task with a follow-up message and
@@ -466,7 +476,7 @@ func (h *A2AHandler) streamResumeTask(c echo.Context, projectID, userID, userMes
 		return writeA2AError(c, a2aInvalidStateError(fmt.Sprintf("task is not awaiting input (state %s)", MapRunStatusToTaskState(latest.Status))))
 	}
 
-	resumeMsg, claim, resumeErr := h.prepareA2AResume(ctx, latest, userMessage, userID)
+	resumeMsg, pauseClaimed, resumeErr := h.prepareA2AResume(ctx, latest, userMessage, userID)
 	if resumeErr != nil {
 		return writeA2AError(c, resumeErr)
 	}
@@ -491,26 +501,23 @@ func (h *A2AHandler) streamResumeTask(c echo.Context, projectID, userID, userMes
 		OrgID:           h.a2aOrgID(ctx, c, projectID),
 		UserID:          userID,
 		UserMessage:     resumeMsg,
+		PauseClaimed:    pauseClaimed,
 		// TrustedInternal defaults false: an A2A surface must not reach internal agents.
 		RenderA2UI: true, // A2A stream renders A2UI surfaces (artifactUpdate)
 	}
 
-	return h.streamRun(c, projectID, taskID, streamCtxID, latest, execReq, true, claim)
+	return h.streamRun(c, projectID, taskID, streamCtxID, latest, execReq, true)
 }
 
 // streamRun executes (or resumes) a run and streams A2A StreamResponse events
 // over SSE. taskID is the stable A2A task id; run is the run passed to the
 // executor (the fresh run on new-task, the latest paused run on resume).
-// claim is the run claim prepareA2AResume took for a continuation resume (nil on
-// the new-task path and when a question was claimed instead); it is released if
-// the resume does not take ownership.
 func (h *A2AHandler) streamRun(
 	c echo.Context,
 	projectID, taskID, contextID string,
 	run *AgentRun,
 	execReq ExecuteRequest,
 	resume bool,
-	claim *a2aResumeClaim,
 ) error {
 	ctx := c.Request().Context()
 	bgCtx := context.Background()
@@ -576,10 +583,13 @@ func (h *A2AHandler) streamRun(
 	if result != nil && result.Cleanup != nil {
 		defer result.Cleanup()
 	}
-	if execErr != nil || result == nil {
-		// The run (or resume) never took ownership of the work: drop the
-		// continuation claim so the task stays resumable.
-		claim.release()
+	if errors.Is(execErr, ErrRunAlreadyResumed) {
+		// Another follow-up consumed the pause first and owns the task. The
+		// stream has already started, so report it as a message and emit no
+		// terminal lifecycle event: the concurrent resume is still working, so
+		// marking this task failed (or completed) would be a lie (issue #887).
+		write(a2aResumeConflictResponse(taskID, contextID))
+		return nil
 	}
 	if execErr != nil {
 		h.log.Error("a2a stream run failed", "task_id", taskID, "error", execErr.Error())
