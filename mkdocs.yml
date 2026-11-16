@@ -71,6 +71,7 @@ nav:
     - Extraction Pipeline: developer-guide/extraction.md
     - Email Setup: developer-guide/email-setup.md
     - Health & Ops: developer-guide/health-ops.md
+    - Deploy Portal: developer-guide/deploy-portal.md
     - Security Scopes: developer-guide/security-scopes.md
     - Background Scheduler: developer-guide/scheduler.md
     - CLI Reference: developer-guide/cli-reference.md
