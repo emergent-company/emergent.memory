@@ -13,8 +13,9 @@ import (
 
 // --- Sessions (trace viewer) ---
 
-// SessionsPage renders the session list, most recent first. A failed fetch
-// renders the whole-page error state.
+// SessionsPage renders the session list, newest created first — the rows are
+// labelled "Created ...", so created_at is the order's own contract rather than
+// last activity. A failed fetch renders the whole-page error state.
 templ SessionsPage(agents []AgentDefinitionSummary, convs []Conversation, loadErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@sessionsHeader()
