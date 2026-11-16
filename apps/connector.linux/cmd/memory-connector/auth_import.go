@@ -22,7 +22,7 @@ var authStdin io.Reader = os.Stdin
 // authImportPayload is the JSON object `auth import` accepts on stdin:
 //
 //	{"access_token":"...","refresh_token":"...","expires_at":"<RFC3339>",
-//	 "issuer":"...","client_id":"...","email":"..."}
+//	 "issuer":"...","client_id":"...","email":"...","needs_reauth":<bool>}
 //
 // The snake_case keys are canonical. A few camelCase aliases are accepted so
 // the macOS app can pipe its own session shape; `client_id` is accepted but not
@@ -38,6 +38,13 @@ type authImportPayload struct {
 	IssuerURL       string `json:"issuer_url"`
 	Email           string `json:"email"`
 	UserEmail       string `json:"user_email"`
+	// NeedsReauth lets an importer state that the session it is importing has
+	// already been rejected by the provider. It is optional: `true` marks the
+	// imported session, while `false` (or omitting it) never clears a mark the
+	// CLI recorded — only replacing the rejected refresh token does. See
+	// runAuthImport for the rule.
+	NeedsReauth    *bool `json:"needs_reauth"`
+	NeedsReauthAlt *bool `json:"needsReauth"`
 }
 
 // runAuthImport stores a session piped on stdin and prints the resulting
@@ -48,6 +55,11 @@ type authImportPayload struct {
 // Identity is stored as-is from the payload; no /api/auth/me round-trip is
 // made, so import is fast, deterministic, and works offline. The payload's
 // optional `email` is trusted when present.
+//
+// Two fields are merged from the stored session rather than clobbered: the
+// refresh token when the payload omits it, and the needs_reauth mark, which is
+// a property of that stored refresh token and not of the import event — see the
+// resolution below.
 //
 // Exit codes: 0 success, 1 runtime error, 2 usage (missing --server or
 // access_token, malformed JSON, or an unparseable expiry).
@@ -99,16 +111,36 @@ func runAuthImport(args []string, stdout, stderr io.Writer) int {
 	refreshToken := firstNonEmpty(payload.RefreshToken, payload.RefreshTokenAlt)
 
 	m := newAuthManager(account.BaseDirForConfig(*configPath))
+	stored, err := m.SessionFor(*server)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "memory-connector auth import: %v\n", err)
+		return 1
+	}
 	// Merge instead of clobber: when the payload omits the refresh token,
 	// carry over the stored session's so an import that carries only the
 	// access token does not destroy the IdP-minted refresh token.
-	if refreshToken == "" {
-		if stored, err := m.SessionFor(*server); err != nil {
-			_, _ = fmt.Fprintf(stderr, "memory-connector auth import: %v\n", err)
-			return 1
-		} else if stored != nil {
-			refreshToken = stored.RefreshToken
-		}
+	if refreshToken == "" && stored != nil {
+		refreshToken = stored.RefreshToken
+	}
+
+	// needs_reauth marks the stored refresh token the provider rejected, so it
+	// belongs to that token rather than to the import event, and an import must
+	// not clear it by omission: importing a session that still carries the
+	// rejected token with the mark gone would leave a session that looks
+	// renewable, and the client would only rediscover the rejection on its next
+	// refresh. The mark therefore follows the token — it survives while the
+	// import keeps the stored refresh token (the payload omitted it, or repeated
+	// it) and drops when the import replaces that token, because the rejection
+	// described the old one. Replacing the refresh token is the deliberate reset.
+	needsReauth := stored != nil && stored.NeedsReauth && refreshToken == stored.RefreshToken
+	// An importer that knows the session is already rejected can say so, which
+	// also marks a token the CLI has not seen rejected itself. `false` is
+	// accepted (a client may echo a whole session document) but never clears a
+	// mark recorded for a token that is still stored — that is the resurrection
+	// this rule exists to prevent.
+	if (payload.NeedsReauth != nil && *payload.NeedsReauth) ||
+		(payload.NeedsReauthAlt != nil && *payload.NeedsReauthAlt) {
+		needsReauth = true
 	}
 
 	sess := &account.Session{
@@ -118,6 +150,7 @@ func runAuthImport(args []string, stdout, stderr io.Writer) int {
 		RefreshToken: refreshToken,
 		ExpiresAt:    expiresAt,
 		UserEmail:    firstNonEmpty(payload.Email, payload.UserEmail),
+		NeedsReauth:  needsReauth,
 	}
 
 	if err := m.Save(*server, sess); err != nil {
