@@ -6,10 +6,17 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/apps/cli/internal/idgen"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/a2a"
 )
+
+// cancelTaskTimeout bounds the best-effort CancelTask request sent when an ACP
+// session/cancel (or a session teardown) abandons an in-flight turn. The call
+// runs on its own goroutine so the ACP client is never blocked on it, but a
+// hung Memory server must not leak that goroutine forever.
+const cancelTaskTimeout = 5 * time.Second
 
 // defaultMaxSessions is the strict upper bound on the number of sessions tracked
 // in memory. A long-lived agent fronting many sessions (e.g. an IDE reusing one
@@ -51,6 +58,14 @@ type session struct {
 	// concurrent turn cancellable: a cancel notification cancels them all and
 	// each turn removes only its own entry when it ends, so none is orphaned.
 	cancels map[uint64]context.CancelFunc
+	// tasks maps each in-flight turn generation to the A2A task id observed on
+	// its stream. The bridge only reserved the local request before: cancelling
+	// the ACP turn closed the SSE stream but left the Memory run executing in
+	// its sandbox. Tracking the task id per turn lets session/cancel ask the
+	// platform to cancel the run as well (issue #868). The id is recorded as
+	// soon as the first stream event carries it, not when the turn pauses,
+	// because a cancel can land at any point mid-run.
+	tasks map[uint64]string
 	// cancelledThrough is the highest turn generation for which a session/cancel
 	// has been requested. A turn whose generation is <= cancelledThrough
 	// resolves "cancelled" at registration instead of starting a backend turn.
@@ -67,6 +82,19 @@ type session struct {
 
 // inFlight reports the number of prompt turns currently running for the session.
 func (s *session) inFlight() int { return len(s.cancels) }
+
+// taskIDsLocked returns the A2A task ids of every in-flight turn, so abandoning
+// the session can ask the platform to cancel those runs. The caller must hold
+// a.mu.
+func (s *session) taskIDsLocked() []string {
+	ids := make([]string, 0, len(s.tasks))
+	for _, id := range s.tasks {
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
 
 // NewAgent creates an ACP agent that fronts the given A2A client and targets
 // the Memory agent identified by skill (its RFC1123 slug). modes is the list of
@@ -237,11 +265,15 @@ func (a *Agent) dropSession(sessionID string) {
 	for _, fn := range sess.cancels {
 		fns = append(fns, fn)
 	}
+	taskIDs := sess.taskIDsLocked()
 	a.mu.Unlock()
 	// Invoke the cancel functions outside the lock, as cancel does.
 	for _, fn := range fns {
 		fn()
 	}
+	// Dropping a session is a cancel for its in-flight turns too: closing the
+	// local stream alone would leave the Memory runs executing (issue #868).
+	a.cancelTasks(taskIDs)
 }
 
 // deleteSession handles the ACP session/delete method: drop the session's state
@@ -345,6 +377,9 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 		sess.cancels = make(map[uint64]context.CancelFunc)
 	}
 	sess.cancels[turn] = cancel
+	if sess.tasks == nil {
+		sess.tasks = make(map[uint64]string)
+	}
 	dropped := sess.dropped
 	cancelled := turn <= sess.cancelledThrough
 	if resumeTaskID != "" {
@@ -359,6 +394,7 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 	defer func() {
 		a.mu.Lock()
 		delete(sess.cancels, turn)
+		delete(sess.tasks, turn)
 		a.mu.Unlock()
 	}()
 
@@ -403,7 +439,23 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 	defer func() { _ = stream.Close() }()
 
 	emitter := &textEmitter{sid: p.SessionID, send: send}
-	newContextID, newPendingTaskID, stopReason, err := a.consumeStream(promptCtx, stream, emitter)
+	// Record the A2A task id on the session as soon as the stream reveals it, so
+	// a session/cancel arriving mid-run can cancel that task on the platform.
+	onTaskID := func(id string) {
+		a.mu.Lock()
+		dropped := sess.dropped
+		if !dropped && sess.tasks != nil {
+			sess.tasks[turn] = id
+		}
+		a.mu.Unlock()
+		if dropped {
+			// The session was closed/deleted between stream setup and the task
+			// id arriving: its in-flight task ids were collected at drop time,
+			// so cancel this one directly rather than stranding the run.
+			a.cancelTasks([]string{id})
+		}
+	}
+	newContextID, newPendingTaskID, stopReason, err := a.consumeStream(promptCtx, stream, emitter, onTaskID)
 	if err != nil {
 		return nil, err
 	}
@@ -423,10 +475,24 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 // consumeStream drains an A2A SSE stream, emitting agent_message_chunk deltas
 // for streamed text and terminal question/error messages. It returns the
 // accumulated contextId, any pending HITL task id, the stop reason, and an error
-// (only for transport failures).
-func (a *Agent) consumeStream(ctx context.Context, stream *a2a.SSEStream, emitter *textEmitter) (string, string, string, error) {
+// (only for transport failures). onTaskID, when non-nil, is called with the
+// stream's task id as soon as the first event carries it, so the caller can
+// cancel that task if the client later abandons the turn.
+func (a *Agent) consumeStream(ctx context.Context, stream *a2a.SSEStream, emitter *textEmitter, onTaskID func(string)) (string, string, string, error) {
 	var contextID, pendingTaskID string
 	stopReason := StopReasonEndTurn
+	seenTaskID := ""
+	// observe records the task id once, on first sight. The id is stable across
+	// a turn (and across a HITL resume), so later repeats are no-ops.
+	observe := func(id string) {
+		if id == "" || id == seenTaskID {
+			return
+		}
+		seenTaskID = id
+		if onTaskID != nil {
+			onTaskID(id)
+		}
+	}
 
 	for {
 		ev, err := stream.Next()
@@ -442,6 +508,7 @@ func (a *Agent) consumeStream(ctx context.Context, stream *a2a.SSEStream, emitte
 
 		switch {
 		case ev.ArtifactUpdate != nil:
+			observe(ev.ArtifactUpdate.TaskID)
 			if ev.ArtifactUpdate.ContextID != "" {
 				contextID = ev.ArtifactUpdate.ContextID
 			}
@@ -450,6 +517,7 @@ func (a *Agent) consumeStream(ctx context.Context, stream *a2a.SSEStream, emitte
 			}
 
 		case ev.Message != nil:
+			observe(ev.Message.TaskID)
 			if ev.Message.ContextID != "" {
 				contextID = ev.Message.ContextID
 			}
@@ -459,6 +527,7 @@ func (a *Agent) consumeStream(ctx context.Context, stream *a2a.SSEStream, emitte
 
 		case ev.StatusUpdate != nil:
 			su := ev.StatusUpdate
+			observe(su.TaskID)
 			if su.ContextID != "" {
 				contextID = su.ContextID
 			}
@@ -489,6 +558,7 @@ func (a *Agent) consumeStream(ctx context.Context, stream *a2a.SSEStream, emitte
 			// Initial SUBMITTED snapshot or terminal snapshot. Its text is
 			// already emitted via artifact/message events; capture context id
 			// and any terminal failure/cancellation state.
+			observe(ev.Task.ID)
 			if ev.Task.ContextID != "" {
 				contextID = ev.Task.ContextID
 			}
@@ -517,11 +587,13 @@ func (a *Agent) cancel(params CancelParams) {
 	a.mu.Lock()
 	sess := a.sessions[params.SessionID]
 	var fns []context.CancelFunc
+	var taskIDs []string
 	if sess != nil {
 		fns = make([]context.CancelFunc, 0, len(sess.cancels))
 		for _, fn := range sess.cancels {
 			fns = append(fns, fn)
 		}
+		taskIDs = sess.taskIDsLocked()
 		// Record the cancel against the turn generation. With a turn in flight it
 		// applies up to the newest registered generation; with none in flight it
 		// applies to the next turn to register (a cancel racing a prompt's
@@ -539,6 +611,29 @@ func (a *Agent) cancel(params CancelParams) {
 	a.mu.Unlock()
 	for _, fn := range fns {
 		fn()
+	}
+	// Cancelling the local request only stops the SSE consumer; the Memory run
+	// keeps executing unless the platform is told to cancel it (issue #868).
+	a.cancelTasks(taskIDs)
+}
+
+// cancelTasks asks the Memory server to cancel the given A2A tasks on a
+// best-effort, fire-and-forget basis. Each request has its own bounded context
+// (not the turn's cancelled one), so it can still reach the server after the
+// local stream was torn down, and the ACP client is never blocked on it: the
+// turn resolves "cancelled" whether or not the call succeeds. Failures are
+// swallowed deliberately — the server treats a dropped SSE connection as a
+// cancel as well, so the two paths are each other's backstop.
+func (a *Agent) cancelTasks(taskIDs []string) {
+	for _, id := range taskIDs {
+		if id == "" {
+			continue
+		}
+		go func(taskID string) {
+			ctx, cancel := context.WithTimeout(context.Background(), cancelTaskTimeout)
+			defer cancel()
+			_, _ = a.client.CancelTask(ctx, taskID)
+		}(id)
 	}
 }
 
