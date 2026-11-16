@@ -1,0 +1,47 @@
+{
+  "tutorial": "deploy-to-railway",
+  "instance": "railway-deployment",
+  "baseUrl": "https://memory-web-ui-production-3640b7d1.up.railway.app",
+  "locale": "en-US",
+  "viewport": {
+    "width": 1600,
+    "height": 900
+  },
+  "colorScheme": "dark",
+  "deviceScaleFactor": 4,
+  "steps": [
+    {
+      "name": "the app, with the Zitadel session sitting on the password-changed confirmation",
+      "goto": "/"
+    },
+    {
+      "click": {
+        "selector": "a:has-text('Sign in'), button:has-text('Sign in')"
+      }
+    },
+    {
+      "waitFor": {
+        "text": "Your password was changed successfully",
+        "timeout": 60000
+      }
+    },
+    {
+      "pause": 1200
+    },
+    {
+      "name": "Zitadel confirms the change and asks for one more click before it hands back to Memory",
+      "click": {
+        "selector": "xpath=//button[normalize-space()='Next']"
+      }
+    },
+    {
+      "name": "the app opens on the organization's projects",
+      "pause": 10000
+    },
+    {
+      "shot": {
+        "id": "13-memory-projects"
+      }
+    }
+  ]
+}
