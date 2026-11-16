@@ -22,7 +22,7 @@ import (
 // providersMissing surfaces a warning indicator on the Settings hub entry
 // (see sidebarSettingsHref: "/settings" under any link base) when the project
 // has no LLM provider configured yet.
-templ appSidebar(groups []layout.SidebarGroup, marketplaceItems []layout.SidebarItem, providersMissing bool) {
+templ appSidebar(groups []layout.SidebarGroup, externalItems []layout.SidebarItem, providersMissing bool) {
 	<div id="_layout-sidebar" class="flex flex-col bg-base-100">
 		<!-- Header: logo -->
 		<div class="flex h-16 items-center gap-3 px-5 shrink-0">
@@ -48,13 +48,13 @@ templ appSidebar(groups []layout.SidebarGroup, marketplaceItems []layout.Sidebar
 		<div class="border-base-content/10 shrink-0 border-t px-5 py-3">
 			<p class="text-muted-faint font-mono text-[11px] select-all" data-testid="app-version" title="Build version">{ buildVersionLabel() }</p>
 		</div>
-		<!-- The sidebar's last element: external destinations (Marketplace),
+		<!-- The sidebar's last element: external destinations (Marketplace, Docs),
 		     after the build-version footer. The nav above grows, so this block is
 		     pinned to the bottom edge and everything else stays at the top. -->
-		if len(marketplaceItems) > 0 {
-			<div class="sidebar-menu border-base-content/10 shrink-0 border-t px-2.5 py-3" data-testid="sidebar-marketplace">
+		if len(externalItems) > 0 {
+			<div class="sidebar-menu border-base-content/10 shrink-0 border-t px-2.5 py-3" data-testid="sidebar-external">
 				<div class="space-y-0.5">
-					for _, item := range marketplaceItems {
+					for _, item := range externalItems {
 						<!-- A plain anchor, not layout.SidebarNavItem: that component always
 						     emits hx-get/hx-target/hx-push-url, and htmx would intercept the
 						     click and try to swap a cross-origin market page into #main-content
@@ -64,7 +64,7 @@ templ appSidebar(groups []layout.SidebarGroup, marketplaceItems []layout.Sidebar
 							href={ templ.URL(item.Href) }
 							target="_blank"
 							rel="noopener noreferrer"
-							data-testid="sidebar-marketplace-link"
+							data-testid="sidebar-external-link"
 						>
 							if item.Icon != "" {
 								<span class={ "iconify size-4 " + item.Icon }></span>
