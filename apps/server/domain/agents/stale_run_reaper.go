@@ -21,6 +21,12 @@ const (
 	// is alive is never reaped, even across long blocking phases such as
 	// workspace provisioning/build or a slow in-flight model/tool call.
 	defaultRunHeartbeatInterval = 2 * time.Minute
+
+	// queuedRunDispatchThreshold is how long a queued ("submitted") run may sit
+	// with no dispatch job any worker can claim before the reaper fails it
+	// (issue #880). It matches the stale-run window: a run that has been idle
+	// this long was never dispatched at all, not merely waiting in line.
+	queuedRunDispatchThreshold = 30 * time.Minute
 )
 
 // StaleRunReaper periodically scans for agent runs stuck in "running" status
@@ -99,6 +105,37 @@ func (r *StaleRunReaper) reap(ctx context.Context) {
 	if n > 0 {
 		r.log.Info("marked stale agent runs as error",
 			slog.Int("count", n),
+		)
+	}
+
+	// A queued ("submitted") run whose dispatch job no worker can ever claim has
+	// nothing left to drive it: no worker polls a queue row that is missing or
+	// disabled, and a job with a NULL project_id never matches the project a
+	// worker claims with. Neither the running-run sweep above nor work
+	// maintenance (which counts "submitted" as live) will ever terminate it, so
+	// no error would surface and the run would sit non-terminal forever
+	// (issue #880).
+	//
+	// Heal first, then fail: a queued run that merely lost its job row is
+	// re-enqueued — the same recovery the startup hook performs — and only a run
+	// that still has no claimable job after being idle past the threshold is
+	// failed.
+	if k, err := r.repo.RequeueOrphanedQueuedRuns(ctx); err != nil {
+		r.log.Warn("failed to requeue orphaned queued runs",
+			slog.String("error", err.Error()),
+		)
+	} else if k > 0 {
+		r.log.Info("re-enqueued orphaned queued agent runs",
+			slog.Int("count", k),
+		)
+	}
+	if p, err := r.repo.MarkUndispatchableQueuedRunsAsError(ctx, queuedRunDispatchThreshold); err != nil {
+		r.log.Warn("failed to mark undispatchable queued runs as error",
+			slog.String("error", err.Error()),
+		)
+	} else if p > 0 {
+		r.log.Info("marked undispatchable queued agent runs as error",
+			slog.Int("count", p),
 		)
 	}
 

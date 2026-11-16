@@ -3627,6 +3627,62 @@ func (r *Repository) RequeueOrphanedQueuedRuns(ctx context.Context) (int, error)
 	return len(runs), nil
 }
 
+// MarkUndispatchableQueuedRunsAsError fails queued ("submitted") runs that no
+// worker can ever claim, so a run that was created but never dispatched cannot
+// sit non-terminal forever (issue #880).
+//
+// Every queued run is inserted together with its dispatch job, but the job is
+// only claimable when a worker polls its exact (project_id, queue) pair, and a
+// worker only polls the enabled rows of kb.agent_queues. A job whose queue row
+// is missing or disabled — or whose project_id is NULL, which can never equal the
+// project a worker claims with — is therefore invisible to every worker: the run
+// stays "submitted" with no error, no step activity and nothing to reap, because
+// the stale-run reaper only looks at "working" and work maintenance counts
+// "submitted" as live.
+//
+// The sweep is deliberately narrow. It only touches runs that
+//
+//   - are still queued,
+//   - have no root run and no session — the shape CreateRunQueued leaves behind
+//     for a fan-out dispatch, and the shape observed on prod,
+//   - have been idle past the threshold (COALESCE(last_step_at, started_at),
+//     matching the stale-run reaper), and
+//   - have no live job any worker could claim.
+//
+// A queued run that does have a claimable job is left alone: it is legitimately
+// waiting in line, and RequeueOrphanedQueuedRuns covers the case where the job
+// row itself was lost.
+func (r *Repository) MarkUndispatchableQueuedRunsAsError(ctx context.Context, threshold time.Duration) (int, error) {
+	cutoff := time.Now().Add(-threshold)
+	now := time.Now()
+	res, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusError).
+		Set("completed_at = ?", now).
+		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
+		Set("error_message = ?", "queued run was never dispatched: no dispatch job a worker can claim").
+		Where("ar.status = ?", RunStatusQueued).
+		Where("ar.root_run_id IS NULL").
+		Where("ar.session_id IS NULL").
+		Where("COALESCE(ar.last_step_at, ar.started_at) < ?", cutoff).
+		Where(`NOT EXISTS (
+			SELECT 1
+			FROM kb.agent_run_jobs arj
+			JOIN kb.agent_queues aq
+			  ON aq.project_id = arj.project_id
+			 AND aq.name = arj.queue
+			 AND aq.enabled
+			WHERE arj.run_id = ar.id
+			  AND arj.status IN ('pending', 'processing')
+		)`).
+		Exec(ctx)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 // GetRunTokenUsage returns aggregated LLM token counts and estimated cost for a
 // single agent run, reading from kb.llm_usage_events. Returns nil when no usage
 // events exist for the run.
