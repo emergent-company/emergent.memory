@@ -196,7 +196,7 @@ func (p *WorkerPool) finishWorkRun(ctx context.Context, log *slog.Logger, job *A
 		// A review tool may have finalized the lane directly (done/revision) even
 		// though it is not a work_complete terminator. Treat a terminal lane as
 		// finalized instead of a protocol violation.
-		if head, err := p.workObjects.GetHeadObject(ctx, projectID, canonicalID); err == nil && isTerminalLaneStatus(head) {
+		if head, err := p.workObjects.GetHeadObject(ctx, projectID, canonicalID); err == nil && (isTerminalLaneStatus(head) || isIssueReviewFinal(head)) {
 			if err := p.repo.CompleteJob(ctx, job.ID, job.RunID); err != nil {
 				log.Warn("failed to complete finalized work run job", slog.String("error", err.Error()))
 			}
@@ -258,6 +258,10 @@ func (p *WorkerPool) finishWorkRun(ctx context.Context, log *slog.Logger, job *A
 	default: // deterministic / poison
 		p.poisonFailure(ctx, log, agentDef, canonicalID, projectID, subjectType, errMsg)
 	}
+}
+
+func isIssueReviewFinal(head *graph.WorkObjectHead) bool {
+	return head != nil && head.Type == "GitHubIssue" && head.Status == "review"
 }
 
 func failureMessage(execErr error, result *ExecuteResult) string {
