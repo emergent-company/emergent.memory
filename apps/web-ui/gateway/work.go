@@ -118,7 +118,7 @@ func (s *Server) loadWorkData(ctx context.Context, c echo.Context, data *workDat
 	if data.Section != workBoardSection {
 		return nil
 	}
-	items, err := s.memory.ListWorkItems(ctx, "", "", boardItemLimit)
+	items, err := s.memory.ListWorkItems(ctx, "", "", boardItemLimit, true)
 	if err != nil {
 		return err
 	}

@@ -252,7 +252,7 @@ func (s *Server) boardSessionSummaries(ctx context.Context) []sessionSummary {
 	if err != nil {
 		return nil
 	}
-	items, _ := s.memory.ListWorkItems(ctx, "", "", 1000)
+	items, _ := s.memory.ListWorkItems(ctx, "", "", 1000, false)
 	bySubject := make(map[string]WorkItem, len(items))
 	for _, it := range items {
 		if it.CanonicalID != "" {

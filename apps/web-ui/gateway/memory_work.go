@@ -117,8 +117,10 @@ func (m *MemoryClient) workItemsPath(ctx context.Context) string {
 }
 
 // ListWorkItems lists the board projection of work items. status empty = all
-// statuses; typeName empty = all board-enabled types.
-func (m *MemoryClient) ListWorkItems(ctx context.Context, status, typeName string, limit int) ([]WorkItem, error) {
+// statuses; typeName empty = all board-enabled types. includeProperties asks for
+// the HEAD property bag, which only a card excerpt needs — a run→item join over
+// the full list must not pay for it.
+func (m *MemoryClient) ListWorkItems(ctx context.Context, status, typeName string, limit int, includeProperties bool) ([]WorkItem, error) {
 	q := url.Values{}
 	if status != "" {
 		q.Set("status", status)
@@ -130,6 +132,9 @@ func (m *MemoryClient) ListWorkItems(ctx context.Context, status, typeName strin
 		limit = 200
 	}
 	q.Set("limit", strconv.Itoa(limit))
+	if includeProperties {
+		q.Set("include", "properties")
+	}
 	var env successEnvelope[[]WorkItem]
 	if err := m.do(ctx, http.MethodGet, m.workItemsPath(ctx)+"?"+q.Encode(), nil, &env); err != nil {
 		return nil, err

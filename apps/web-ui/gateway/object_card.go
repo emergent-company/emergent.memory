@@ -101,7 +101,8 @@ type objectCard struct {
 	// CopyID is the identifier the copy control yields: the canonical id, not
 	// the version row that happened to be previewed.
 	CopyID string `json:"copy_id"`
-	// Title is the card heading (graphObjectLabel: key, else type + short id).
+	// Title is the card heading (graphObjectLabel: name, else a non-machine key,
+	// else type + short id).
 	Title   string         `json:"title"`
 	Key     string         `json:"key,omitempty"`
 	Version int            `json:"version,omitempty"`
