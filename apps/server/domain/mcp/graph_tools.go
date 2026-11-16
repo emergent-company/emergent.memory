@@ -902,6 +902,10 @@ func (s *Service) executeListRelationships(ctx context.Context, projectID string
 // physical or canonical id. It is routed through the graph service so the mcp
 // package issues no raw SQL (the mcp-authz guard forbids unclassified raw
 // access).
+//
+// A missing relationship is reported as errTypeScopeTargetNotFound so a
+// type-scope gate can tell "nothing to authorize" from "could not look it up"
+// (#930).
 func (s *Service) lookupRelationshipType(ctx context.Context, projectID string, relID uuid.UUID) (string, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
@@ -909,10 +913,10 @@ func (s *Service) lookupRelationshipType(ctx context.Context, projectID string, 
 	}
 	rel, err := s.graphService.GetRelationship(ctx, projectUUID, relID)
 	if err != nil {
-		return "", err
+		return "", asTypeScopeMiss(err)
 	}
 	if rel == nil {
-		return "", fmt.Errorf("relationship not found")
+		return "", errTypeScopeTargetNotFound
 	}
 	return rel.Type, nil
 }
@@ -935,10 +939,18 @@ func (s *Service) executeUpdateRelationship(ctx context.Context, projectID strin
 	}
 
 	scope := TypeScopeFromContext(ctx)
-	if typ, lerr := s.lookupRelationshipType(ctx, projectID, relID); lerr == nil {
-		if !scope.AllowsRelationship(typ) {
-			return nil, toolForbiddenf("update relationship: relationship type is not allowed for this agent's scope")
-		}
+	// Fail closed on a lookup fault: skipping the scope check on a store error
+	// would authorize a relationship update the agent's allowlist forbids
+	// (#930). A genuine miss falls through to the patch, which reports the 404
+	// as before.
+	typ, found, lerr := typeForScopeGate(func() (string, error) {
+		return s.lookupRelationshipType(ctx, projectID, relID)
+	})
+	if lerr != nil {
+		return nil, lerr
+	}
+	if found && !scope.AllowsRelationship(typ) {
+		return nil, toolForbiddenf("update relationship: relationship type is not allowed for this agent's scope")
 	}
 
 	// Resolve the branch param even when omitted so an agent-run extraction

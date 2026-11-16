@@ -25,38 +25,39 @@ import (
 // enforce one rule: an argument refusal is apperror.NewValidation(f).
 func TestNoPlainToolArgumentValidationErrors(t *testing.T) {
 	findings, err := toolargscan.ScanDir(".", toolargscan.Exemptions{
-		Messages: map[string]string{
+		// Each key pins one call: the file it lives in and the exact literal it
+		// passes. A phrase-wide key let any future message containing the phrase
+		// skip the scan, so the exemptions are call sites now (#930).
+		Sites: map[toolargscan.Site]string{
 			// The connection-test answer for a trigger source: a platform fact
 			// the caller cannot correct by changing an argument.
-			"connection testing is not supported for trigger sources": "platform fact",
+			{File: "github_app_provider.go", Message: "connection testing is not supported for trigger sources; the App credentials are verified on every webhook delivery"}: "platform fact",
 
 			// Inbound webhook verification sentinels (source_events_dispatch.go).
 			// The handler matches them with errors.Is to pick a status and a
 			// retry policy, so they must keep their identity; none of them is
 			// rendered into a tool result.
-			"sources: source app not found":      "webhook sentinel",
-			"sources: invalid webhook signature": "webhook sentinel",
-			"missing delivery id":                "webhook sentinel",
+			{File: "source_events_dispatch.go", Message: "sources: source app not found"}:      "webhook sentinel",
+			{File: "source_events_dispatch.go", Message: "sources: invalid webhook signature"}: "webhook sentinel",
+			{File: "source_events_dispatch.go", Message: "%w: missing delivery id"}:            "webhook sentinel",
 
 			// The board's trigger-invocation resolver: a miss leaves the item
 			// without an invocation, and the caller ignores the error
-			// (domain/agents/work_invocation.go). The keys are the full
-			// messages so they cannot silence a tool-surface validator that
-			// happens to share the phrase.
-			"sources: invalid project id":        "board resolver (error ignored)",
-			"sources: invalid source trigger id": "board resolver (error ignored)",
+			// (domain/agents/work_invocation.go).
+			{File: "source_trigger_invocation.go", Message: "sources: invalid project id"}:        "board resolver (error ignored)",
+			{File: "source_trigger_invocation.go", Message: "sources: invalid source trigger id"}: "board resolver (error ignored)",
 
-			// Store guards: the value is server-derived, so a gap is a bug in
-			// the caller's plumbing, not something a tool caller can correct.
-			"project context is required for source trigger/event rows": "store guard",
+			// Store guards: the value is server-derived, so a gap is a bug in the
+			// caller's plumbing, not something a tool caller can correct.
+			{File: "store_source_apps.go", Message: "sources: project context is required for source trigger/event rows"}: "store guard",
 
-			// Connector and sync-worker internals. These run inside a sync job
-			// or a connector contract check; their text is recorded on the job
-			// row or skipped item, never returned through tools/call.
-			"trale: MCP server is missing required tools": "connector contract check",
-			"web: page %q not found in the crawl result":  "sync selector miss",
-			"web: skipping unsupported content type":      "per-item sync skip",
-			"unknown provider %q":                         "job-row failure",
+			// Connector and sync-worker internals. These run inside a sync job or
+			// a connector contract check; their text is recorded on the job row
+			// or skipped item, never returned through tools/call.
+			{File: "trale_connector.go", Message: "trale: MCP server is missing required tools: %s"}: "connector contract check",
+			{File: "web_connector.go", Message: "web: page %q not found in the crawl result"}:        "sync selector miss",
+			{File: "web_connector.go", Message: "web: skipping unsupported content type %q for %s"}:  "per-item sync skip",
+			{File: "worker.go", Message: "unknown provider %q"}:                                      "job-row failure",
 		},
 	})
 	require.NoError(t, err)
