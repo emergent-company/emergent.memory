@@ -33,10 +33,13 @@ DEFAULT_SRC = PROJECT.parent / "docs" / "site"
 DST = PROJECT / "src" / "content" / "docs"
 BASE = ""  # site is served at the host root: docs.memory.emergent-company.ai/
 
-# Pages included in the POC. (source path, output path, title)
-# The landing page (`index.mdx`) and the API reference (`api-reference.mdx`) are
-# hand-written — a bespoke hero and an embedded Scalar reference rather than a
-# conversion of the MkDocs pages.
+# Pages to convert. (source path, output path, title)
+#
+# Five pages are hand-written rather than converted, because their structure does
+# not exist upstream: the landing page (`index.mdx`, a bespoke hero), the API
+# reference (`api-reference.mdx`, an embedded Scalar reference), and the three
+# `user-guide/getting-started/` pages (the self-hosted and Memory Cloud walkthroughs
+# plus their shared entry point, which the MkDocs site has as one page).
 PAGES = [
     ("developer-guide/index.md", "developer-guide.mdx", "Developer Guide"),
     ("developer-guide/mcp-servers.md", "developer-guide/mcp-servers.mdx", "MCP Servers"),

@@ -40,6 +40,17 @@ const BANNER = {
   from: { left: 1250, top: 462, width: 1400, height: 66 },
 };
 
+/**
+ * The "Install ID <hex>" row. The same row sits on all four screens that share the
+ * progress layout; only its `top` differs, because 07's success card pushes it
+ * down the panel. The hex starts at x=354 and the "Install ID" label ends at 335,
+ * so the label survives and the value does not.
+ */
+const installId = (top) => ({
+  box: { left: 344, top, width: 886, height: 50 },
+  from: { left: 1300, top, width: 1400, height: 50 },
+});
+
 const OPS = {
   '03-workspace-admin-email.png': {
     width: 2828,
@@ -52,22 +63,10 @@ const OPS = {
       },
     ],
   },
-  '04-progress-project.png': { width: BANNER.width, masks: [BANNER] },
-  '05-progress-zitadel.png': { width: BANNER.width, masks: [BANNER] },
-  '06-progress-restart.png': { width: BANNER.width, masks: [BANNER] },
-  '07-install-complete.png': {
-    width: 3008,
-    masks: [
-      BANNER,
-      // The success panel's install identifier. Only the hex is covered — the
-      // "Install ID" label (ends x=335) stays, so the row still reads as a
-      // labelled value that is deliberately withheld, not as missing chrome.
-      {
-        box: { left: 344, top: 1944, width: 886, height: 44 },
-        from: { left: 1300, top: 1944, width: 1400, height: 44 },
-      },
-    ],
-  },
+  '04-progress-project.png': { width: BANNER.width, masks: [BANNER, installId(1004)] },
+  '05-progress-zitadel.png': { width: BANNER.width, masks: [BANNER, installId(1004)] },
+  '06-progress-restart.png': { width: BANNER.width, masks: [BANNER, installId(1004)] },
+  '07-install-complete.png': { width: 3008, masks: [BANNER, installId(1944)] },
 };
 
 /**
