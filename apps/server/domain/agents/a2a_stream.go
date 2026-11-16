@@ -46,10 +46,15 @@ type a2aStreamTranslator struct {
 	// for; they are folded into the final ROLE_AGENT message metadata.
 	thinking []string
 
-	// toolSeq/toolArtID give each tool-call trajectory a stable artifactId so a
-	// call's start and end deltas accumulate onto the same artifact.
-	toolSeq   int
-	toolArtID string
+	// toolSeq/toolArtByCall give each tool-call trajectory a stable artifactId
+	// so a call's start and end deltas accumulate onto the same artifact.
+	// ADK runs the function calls of one model response concurrently, so starts
+	// and ends interleave: the end must be matched to its own call by the ADK
+	// function-call id (StreamEvent.ID), never to whichever call started last.
+	// toolArtID is the most recent assignment, used only when the id is empty.
+	toolSeq       int
+	toolArtID     string
+	toolArtByCall map[string]string
 }
 
 // newA2aStreamTranslator builds a translator for a task/context pair.
@@ -90,6 +95,12 @@ func (t *a2aStreamTranslator) translate(ev StreamEvent) []StreamResponse {
 	case StreamEventToolCallStart:
 		t.toolSeq++
 		t.toolArtID = fmt.Sprintf("tool-call-%d", t.toolSeq)
+		if ev.ID != "" {
+			if t.toolArtByCall == nil {
+				t.toolArtByCall = make(map[string]string)
+			}
+			t.toolArtByCall[ev.ID] = t.toolArtID
+		}
 		return []StreamResponse{{
 			ArtifactUpdate: &TaskArtifactUpdateEvent{
 				TaskID:    t.taskID,
@@ -103,12 +114,21 @@ func (t *a2aStreamTranslator) translate(ev StreamEvent) []StreamResponse {
 		}}
 
 	case StreamEventToolCallEnd:
+		// Match the end to its own start by call id. Parallel calls finish out
+		// of order, so the last-started artifact is usually the wrong one.
+		artID := t.toolArtID
+		if ev.ID != "" {
+			if id, ok := t.toolArtByCall[ev.ID]; ok {
+				artID = id
+				delete(t.toolArtByCall, ev.ID)
+			}
+		}
 		return []StreamResponse{{
 			ArtifactUpdate: &TaskArtifactUpdateEvent{
 				TaskID:    t.taskID,
 				ContextID: t.contextID,
 				Artifact: Artifact{
-					ArtifactID: t.toolArtID,
+					ArtifactID: artID,
 					Name:       ev.Tool,
 					Parts:      []Part{{Data: map[string]any{"toolName": ev.Tool, "output": ev.Output}}},
 				},
@@ -460,23 +480,25 @@ func (h *A2AHandler) cancelAbandonedStream(ctx context.Context, runID string) {
 	}
 }
 
-// releaseResumeClaim restores a pause that a resume consumed but never turned
-// into a child run, so a failed follow-up is retryable instead of being silently
-// dropped against a checkpoint that execution will never finalize. See
+// releaseResumeClaim releases a checkpoint that a resume consumed but never
+// turned into a child run, so a failed follow-up is not silently dropped against
+// a row that execution will never finalize. A plain claim is restored to the
+// pause so the follow-up is retryable; one carrying a cancel landed in the claim
+// window is finalized as cancelled instead. See
 // Repository.ReleasePausedRunClaim for the guard; when the child does exist this
 // is a no-op.
 func (h *A2AHandler) releaseResumeClaim(ctx context.Context, run *AgentRun) {
 	if h.repo == nil || run == nil || run.ID == "" {
 		return
 	}
-	restored, err := h.repo.ReleasePausedRunClaim(ctx, run.ID)
+	released, err := h.repo.ReleasePausedRunClaim(ctx, run.ID)
 	if err != nil {
 		h.log.Error("failed to release paused run claim",
 			"run_id", run.ID, "error", err.Error())
 		return
 	}
-	if restored {
-		h.log.Warn("resume failed before creating a child run; restored the pause",
+	if released {
+		h.log.Warn("resume failed before creating a child run; released the checkpoint claim",
 			"run_id", run.ID)
 	}
 }

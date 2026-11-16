@@ -168,6 +168,50 @@ func TestA2AStreamTranslator_ToolCall_DataPart(t *testing.T) {
 	assertSingleMember(t, end[0])
 }
 
+// TestA2AStreamTranslator_InterleavedToolCalls_EndMatchesItsOwnStart pins the
+// concurrency contract of #866: ADK runs the function calls of one model
+// response in parallel, so both starts can land before either end and the ends
+// can arrive in any order. Each end must append to the artifact of its own
+// call (matched by the ADK function-call id), never to whichever call started
+// last — otherwise call A's output lands on B's card and A's stays pending.
+func TestA2AStreamTranslator_InterleavedToolCalls_EndMatchesItsOwnStart(t *testing.T) {
+	tr := newA2aStreamTranslator("t1", "c1")
+
+	startA := tr.translate(StreamEvent{Type: StreamEventToolCallStart, ID: "call-a", Tool: "search", Input: map[string]any{"q": "a"}})
+	startB := tr.translate(StreamEvent{Type: StreamEventToolCallStart, ID: "call-b", Tool: "read", Input: map[string]any{"q": "b"}})
+	require.Len(t, startA, 1)
+	require.Len(t, startB, 1)
+	artA := startA[0].ArtifactUpdate.Artifact.ArtifactID
+	artB := startB[0].ArtifactUpdate.Artifact.ArtifactID
+	require.NotEqual(t, artA, artB, "each tool call must get its own artifactId")
+
+	// Ends arrive out of order: B finishes first, then A.
+	endB := tr.translate(StreamEvent{Type: StreamEventToolCallEnd, ID: "call-b", Tool: "read", Output: map[string]any{"r": "b"}})
+	require.Len(t, endB, 1)
+	assert.Equal(t, artB, endB[0].ArtifactUpdate.Artifact.ArtifactID, "B's end must append to B's artifact")
+
+	endA := tr.translate(StreamEvent{Type: StreamEventToolCallEnd, ID: "call-a", Tool: "search", Output: map[string]any{"r": "a"}})
+	require.Len(t, endA, 1)
+	assert.Equal(t, artA, endA[0].ArtifactUpdate.Artifact.ArtifactID, "A's end must append to A's artifact, not the most recent start")
+	dataA, ok := endA[0].ArtifactUpdate.Artifact.Parts[0].Data.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, map[string]any{"r": "a"}, dataA["output"])
+}
+
+// TestA2AStreamTranslator_ToolCallWithoutID_FallsBackToLastArtifact keeps the
+// pre-correlation behaviour for any emitter that carries no function-call id.
+func TestA2AStreamTranslator_ToolCallWithoutID_FallsBackToLastArtifact(t *testing.T) {
+	tr := newA2aStreamTranslator("t1", "c1")
+
+	start := tr.translate(StreamEvent{Type: StreamEventToolCallStart, Tool: "search", Input: map[string]any{"q": "x"}})
+	require.Len(t, start, 1)
+	artID := start[0].ArtifactUpdate.Artifact.ArtifactID
+
+	end := tr.translate(StreamEvent{Type: StreamEventToolCallEnd, Tool: "search", Output: map[string]any{"r": "y"}})
+	require.Len(t, end, 1)
+	assert.Equal(t, artID, end[0].ArtifactUpdate.Artifact.ArtifactID)
+}
+
 func TestA2AStreamTranslator_Error_FailedStatusUpdate(t *testing.T) {
 	tr := newA2aStreamTranslator("t1", "c1")
 

@@ -120,6 +120,8 @@ type a2aResumeDriver struct {
 	noQuestions     bool
 	questionsErr    bool
 	denyResumeClaim bool
+	finalizeStatus  string
+	runCancelling   bool
 }
 
 func (d *a2aResumeDriver) reset() {
@@ -128,7 +130,40 @@ func (d *a2aResumeDriver) reset() {
 	d.noQuestions = false
 	d.questionsErr = false
 	d.denyResumeClaim = false
+	d.finalizeStatus = ""
+	d.runCancelling = false
 	d.mu.Unlock()
+}
+
+// setFinalizeStatus makes FinalizeResumedCheckpoint return the given status,
+// the value Postgres would hand back from its `RETURNING status` when a CancelTask
+// landed in the claim window.
+func (d *a2aResumeDriver) setFinalizeStatus(status AgentRunStatus) {
+	d.mu.Lock()
+	d.finalizeStatus = string(status)
+	d.mu.Unlock()
+}
+
+// finalizeResult reports the configured FinalizeResumedCheckpoint outcome.
+func (d *a2aResumeDriver) finalizeResult() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.finalizeStatus
+}
+
+// setRunCancelling makes RunIsCancelling report a durable cancel, so runPipeline
+// stops before the parts of a run no fake repository can satisfy.
+func (d *a2aResumeDriver) setRunCancelling(cancelling bool) {
+	d.mu.Lock()
+	d.runCancelling = cancelling
+	d.mu.Unlock()
+}
+
+// runIsCancelling reports the configured durable-cancel observation.
+func (d *a2aResumeDriver) runIsCancelling() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.runCancelling
 }
 
 // setClaimDenied makes the resume claim lose its row, the shape a second follower
@@ -209,6 +244,13 @@ func (c *a2aResumeConn) ExecContext(_ context.Context, q string, _ []driver.Name
 func (c *a2aResumeConn) QueryContext(_ context.Context, q string, _ []driver.NamedValue) (driver.Rows, error) {
 	c.d.record(q)
 	switch {
+	case strings.Contains(q, "RETURNING status"):
+		if status := c.d.finalizeResult(); status != "" {
+			return &a2aStatusRows{status: status}, nil
+		}
+		return rootEmptyRows{}, nil
+	case strings.Contains(q, "SELECT status =") && strings.Contains(q, "FROM kb.agent_runs"):
+		return &a2aCancelProbeRows{cancelling: c.d.runIsCancelling()}, nil
 	case strings.Contains(q, `FROM "kb"."agent_runs"`):
 		return &a2aRunRows{}, nil
 	case strings.Contains(q, `FROM "kb"."agent_questions"`):
@@ -223,6 +265,44 @@ func (c *a2aResumeConn) QueryContext(_ context.Context, q string, _ []driver.Nam
 	default:
 		return rootEmptyRows{}, nil
 	}
+}
+
+// a2aStatusRows answers a status UPDATE ... RETURNING "status" the way Postgres
+// would, handing back the status the state machine settled on.
+type a2aStatusRows struct {
+	status string
+	done   bool
+}
+
+func (*a2aStatusRows) Columns() []string { return []string{"status"} }
+func (*a2aStatusRows) Close() error      { return nil }
+
+func (r *a2aStatusRows) Next(dest []driver.Value) error {
+	if r.done {
+		return io.EOF
+	}
+	r.done = true
+	dest[0] = r.status
+	return nil
+}
+
+// a2aCancelProbeRows answers RunIsCancelling's `SELECT status = 'cancelling'`,
+// which runPipeline reads before doing any work.
+type a2aCancelProbeRows struct {
+	cancelling bool
+	done       bool
+}
+
+func (*a2aCancelProbeRows) Columns() []string { return []string{"?column?"} }
+func (*a2aCancelProbeRows) Close() error      { return nil }
+
+func (r *a2aCancelProbeRows) Next(dest []driver.Value) error {
+	if r.done {
+		return io.EOF
+	}
+	r.done = true
+	dest[0] = r.cancelling
+	return nil
 }
 
 type a2aRunRows struct{ done bool }

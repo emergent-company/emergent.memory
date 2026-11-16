@@ -2349,20 +2349,29 @@ func (r *Repository) ClaimPausedRunForResume(ctx context.Context, runID string) 
 	return n > 0, nil
 }
 
-// ReleasePausedRunClaim restores a pause that a resume consumed but never turned
-// into a child run, so the user's follow-up is retryable instead of being
-// silently dropped. It only acts while the claim still owns the row: status is
-// the intermediate "working" written by ClaimPausedRunForResume and no child run
+// ReleasePausedRunClaim releases a checkpoint whose resume never turned into a
+// child run, so the user's follow-up is not stranded on a row no executor will
+// finalize. It only acts while the claim still owns the row: status is the
+// intermediate write made by ClaimPausedRunForResume — "working", or
+// "cancelling" when a CancelTask landed in the resume window — and no child run
 // points back at it. Once the child exists the claim is real (finalized by
-// FinalizeResumedCheckpoint) and this is a no-op. A claim that loses its child to
-// a hard failure is exactly the case a plain terminal claim could not express.
+// FinalizeResumedCheckpoint) and this is a no-op. A claim that loses its child
+// to a hard failure is exactly the case a plain terminal claim could not
+// express.
+//
+// It is status-aware for the same reason FinalizeResumedCheckpoint is: a
+// "working" claim is restored to the pause so the follow-up is retryable, but a
+// "cancelling" claim carries a durable cancel intent (issue #1166) and must
+// finalize as "cancelled" with completed_at set. Restoring it to
+// "input-required" would drop the cancel and report a live-but-stalled task
+// until FinalizeOrphanedCancellingRuns swept it 30 minutes later.
 func (r *Repository) ReleasePausedRunClaim(ctx context.Context, runID string) (bool, error) {
 	res, err := r.db.NewUpdate().
 		Model((*AgentRun)(nil)).
-		Set("status = ?", RunStatusPaused).
-		Set("completed_at = NULL").
+		Set("status = CASE WHEN status = ? THEN ? ELSE ? END", RunStatusCancelling, RunStatusCancelled, RunStatusPaused).
+		Set("completed_at = CASE WHEN status = ? THEN NOW() ELSE NULL END", RunStatusCancelling).
 		Where("id = ?", runID).
-		Where("status = ?", RunStatusRunning).
+		Where("status IN (?)", bun.In([]AgentRunStatus{RunStatusRunning, RunStatusCancelling})).
 		Where("NOT EXISTS (SELECT 1 FROM kb.agent_runs AS child WHERE child.resumed_from = ?)", runID).
 		Exec(ctx)
 	if err != nil {

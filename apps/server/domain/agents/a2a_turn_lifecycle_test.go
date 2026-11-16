@@ -406,19 +406,100 @@ func TestStreamRun_FailedResumeRestoresThePause(t *testing.T) {
 
 	var releaseStmt string
 	for _, q := range rootDriver.queriesCopy() {
-		if strings.Contains(q, `SET status = 'input-required'`) {
+		if strings.Contains(q, "SET status = CASE") && strings.Contains(q, "'input-required'") {
 			releaseStmt = q
 		}
 	}
 	require.NotEmpty(t, releaseStmt,
-		"a failed resume that created no child must restore the pause, got queries:\n%s",
+		"a failed resume that created no child must release the checkpoint claim, got queries:\n%s",
 		strings.Join(rootDriver.queriesCopy(), "\n"))
 	assert.Contains(t, releaseStmt, "'paused-checkpoint'")
-	assert.Contains(t, releaseStmt, "completed_at = NULL")
+	assert.Contains(t, releaseStmt, `CASE WHEN status = 'cancelling' THEN 'cancelled' ELSE 'input-required' END`,
+		"a plain claim is restored to the pause; a cancel landed in the window finalizes as cancelled")
+	assert.Contains(t, releaseStmt, "completed_at = CASE WHEN status = 'cancelling' THEN NOW() ELSE NULL END",
+		"only the cancelled branch is complete; a restored pause has no completed_at")
 	assert.Contains(t, releaseStmt, "NOT EXISTS",
 		"the restore must not fire once a child run exists: that claim is real")
 	assert.Contains(t, releaseStmt, "child.resumed_from",
 		"the child-run guard must key on resumed_from")
 	// The client is told the turn failed even though the task is retryable.
 	assert.Contains(t, rec.Body.String(), "TASK_STATE_FAILED")
+}
+
+// TestReleasePausedRunClaim_IsStatusAware pins the compensating write itself.
+// The release path must cover both claim states: "working" (an ordinary resume
+// that failed before the child) is restored to the pause so the follow-up is
+// retryable, while "cancelling" (a CancelTask that landed in the resume window)
+// carries a durable cancel intent and must finalize as cancelled. Restoring the
+// latter would drop the cancel and report live work until the 30-minute
+// orphan sweep (issue #1166).
+// TestExecutorResume_PropagatesCancelledCheckpointToChild pins the one branch
+// #866 depends on that no other resume test exercises: a CancelTask that lands
+// in the claim-to-child window leaves the checkpoint "cancelling", so
+// FinalizeResumedCheckpoint returns "cancelled" and Resume must propagate the
+// cancel to the child it just created. Without the propagation the child runs
+// the whole turn for a cancel that already arrived.
+//
+// It drives the real AgentExecutor.Resume (not a helper) so deleting the call
+// site fails here. The fake repository answers the finalize with "cancelled" and
+// reports the durable cancel, which is exactly the state runPipeline reads
+// first; that lets Resume return before the parts of a run a fake repository
+// cannot satisfy, while the propagation write is already recorded.
+func TestExecutorResume_PropagatesCancelledCheckpointToChild(t *testing.T) {
+	repo, drv := newA2AResumeRepository(t)
+	drv.setFinalizeStatus(RunStatusCancelled)
+	drv.setRunCancelling(true)
+	ae := resumeTestExecutor(repo)
+
+	priorRun := &AgentRun{ID: "task-1", AgentID: "agent-1", Status: RunStatusPaused}
+	newRun := &AgentRun{ID: "child-1", AgentID: "agent-1", Status: RunStatusRunning}
+	rootRunID := "root-1"
+
+	result, err := ae.Resume(context.Background(), priorRun, ExecuteRequest{
+		ProjectID:     "proj-1",
+		PreCreatedRun: newRun,
+		RootRunID:     &rootRunID,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, RunStatusCancelled, result.Status,
+		"the child must not execute after the checkpoint was finalized as cancelled")
+
+	var cancelStmt string
+	for _, q := range drv.queriesCopy() {
+		if strings.Contains(q, `SET status = 'cancelling'`) && strings.Contains(q, "'child-1'") {
+			cancelStmt = q
+		}
+	}
+	assert.NotEmpty(t, cancelStmt,
+		"a checkpoint finalized as cancelled must propagate to the resumed child, got queries:\n%s",
+		strings.Join(drv.queriesCopy(), "\n"))
+}
+
+func TestReleasePausedRunClaim_IsStatusAware(t *testing.T) {
+	repo, drv := newA2AResumeRepository(t)
+
+	released, err := repo.ReleasePausedRunClaim(context.Background(), "task-1")
+	require.NoError(t, err)
+	assert.True(t, released, "the fake driver reports one affected row")
+
+	var stmt string
+	for _, q := range drv.queriesCopy() {
+		if strings.Contains(q, "SET status = CASE") && strings.Contains(q, "'input-required'") {
+			stmt = q
+		}
+	}
+	require.NotEmpty(t, stmt,
+		"releasing a claim must be status-aware, got queries:\n%s",
+		strings.Join(drv.queriesCopy(), "\n"))
+	assert.Contains(t, stmt, `CASE WHEN status = 'cancelling' THEN 'cancelled' ELSE 'input-required' END`)
+	assert.Contains(t, stmt, "completed_at = CASE WHEN status = 'cancelling' THEN NOW() ELSE NULL END")
+	// The release only owns the claim window, not a run that is genuinely
+	// executing, and never one whose child already exists.
+	assert.Contains(t, stmt, "'working'")
+	assert.Contains(t, stmt, "'cancelling'")
+	assert.Contains(t, stmt, "NOT EXISTS")
+	assert.Contains(t, stmt, "child.resumed_from")
+	assert.NotContains(t, stmt, "'completed'",
+		"a release must never finalize the checkpoint as success")
 }
