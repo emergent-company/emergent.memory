@@ -226,56 +226,71 @@ pages.
 The tutorial page is the first page that carries pictures, so it also defines the
 image path both sites share:
 
-1. `scripts/redact-tutorial-shots.mjs <originals-dir>` — reads the captures from
-   wherever they were taken (the Railway walkthrough's live in
-   `emergent.memory.infra/docs/guides/railway-install/assets/`), strips what must
-   not be published, and writes `docs/site/assets/tutorials/railway/*.png`.
-   MkDocs serves that directory, so the two sites keep one copy of each picture.
-   Per-image operations live in that script's `OPS` table:
+1. **Capture** — `scripts/shots.mjs` writes one PNG per `shot` action into
+   `captures/<run>/` on the capture host, at **4× device pixel ratio**, and a
+   `.shots.json` beside them recording that ratio and each frame's real pixel
+   size. Nothing is hand-captured any more.
 
-   - `crop` removes framing that is not the step's subject — an OAuth card's
-     surrounding page, the "powered by ZITADEL" strip that would otherwise hold
-     the trim box open around an empty viewport, or the top-right corner Chrome
-     covers with a "Save login?" bubble.
-   - `masks` blank a value with the colour sampled from the same surface (no
-     invented text is ever drawn): the installer's account address in the
-     progress banners, the workspace and admin-email fields, and Zitadel's
-     account pill.
-   - every image is then trimmed to its content and only when the content is a
-     small minority of the frame. Detection is by **edge**, not by distance from
-     the corner colour: the app paints a soft radial gradient, so a colour test
-     sees the whole frame as content and never trims.
+   Cropping happens **here, not afterwards**: a `shot` may carry `clip` (a
+   selector, or a measured `{x, y, width, height}` in CSS pixels) and `pad`, so
+   the figure is the subject the reader is looking at — the Zitadel card, the
+   sign-in card — rather than the whole browser window, and a re-capture lands
+   ready to publish. `scripts/redact-tutorial-shots.mjs` (an `OPS` table of crops
+   and colour-sampled masks) was the ingest for the hand-taken originals; it
+   stays only for that legacy path and deliberately `SKIP`s the files the runner
+   produces.
 
-   Re-running it is always safe — it starts from the originals, never from its
-   own output.
-
-2. `scripts/port-images.mjs` — resizes to 1600px, writes a WebP next to each PNG
-   (MkDocs serves WebP too), mirrors the directory into `public/`, and records
-   real pixel dimensions in `manifest.json`.
+2. `scripts/port-images.mjs` — caps each picture at **2400 px wide** (a 2× zoom
+   ceiling over a 4× capture's on-screen width, so zooming never has to
+   downsample first), writes a WebP next to the PNG for MkDocs plus a copy under
+   `public/`, and records `width`/`height` (real pixels) with `cssWidth`/
+   `cssHeight` (pixels ÷ the `.shots.json` ratio) in `manifest.json`.
 
 3. `scripts/port_mkdocs.py` — reads that manifest and turns each
-   `![alt](path)` into `<Screenshot src alt width height />`, so the browser
-   reserves the right box and the page does not jump as the images arrive. A
-   picture missing from the manifest is reported as `missing_shots` rather than
-   emitted with no dimensions.
+   `![alt](path)` into `<Screenshot src alt width height />` sized to the **CSS**
+   size, so the browser reserves the right box and the page does not jump as the
+   images arrive. A picture missing from the manifest is reported as
+   `missing_shots` rather than emitted with no dimensions.
+
+Regenerating the set after a new app version is therefore: capture, copy,
+`npm run shots:port` (steps 2 and 3 in one), `npm run build`.
+
+```bash
+# on the capture host
+node scripts/shots.mjs scripts/shots/installer.plan.json \
+  --profile .profile --out "captures/$(date +%Y-%m-%dT%H-%M)"
+
+# where the docs are built
+cp captures/<run>/*.png captures/<run>/.shots.json docs/site/assets/tutorials/railway/
+cd docs-astro && npm run shots:port && npm run build
+```
+
+`.shots.json` is merged rather than replaced, so re-shooting two figures against
+an existing deployment updates those entries and leaves the rest alone.
 
 `src/components/Screenshot.astro` is a figure with click-to-zoom: a native
 `<dialog>` created on first click (no framework, no hydration; Escape and
-backdrop close work by themselves). It caps how far a capture may be scaled up —
-1.5x — because a 310px-wide card stretched across the 723px text column turns to
-mush, so narrow figures stay near their own size and sit centred.
+backdrop close work by themselves). Two rules keep the zoom honest:
+
+- **never wider than the pixels that exist** — the cap is
+  `min(naturalWidth, cssSize × 2)`, so a 440 css Zitadel card opens at 880 and a
+  1600 css full frame at its own 1600, but neither is invented;
+- **never wider than the window** — `96vw`, with `94vh` of height.
+
+A figure narrower than the text column stays at its own size and sits centred: a
+card stretched to 723 px is exactly the mush this avoids.
 
 Product screenshots are **dark UI captures** and stay that way in both themes;
 terminal output and JSON stay copyable text, never a picture.
 
 ### Capturing a flow, not just a page
 
-Four of the tutorial's screens — Zitadel's login name, password and forced
-password change — are states you can only reach by walking the flow, and the
-originals for them were captured in a Polish browser, so Zitadel rendered
-"Witaj z powrotem!" into published docs. Zitadel picks the login language from
-`Accept-Language` whenever the account carries no stored preference, which makes
-the operator's OS locale part of the artifact.
+Four of the tutorial's screens — Zitadel's login name, its password prompt, the
+**2-Factor Setup** step and the forced password change — are states you can only
+reach by walking the flow. The originals for them were captured in a Polish
+browser, so Zitadel rendered "Witaj z powrotem!" into published docs: it picks the
+login language from `Accept-Language` whenever the account carries no stored
+preference, which makes the operator's OS locale part of the artifact.
 
 `scripts/shots.mjs` replaces the human with a script, so the capture cannot
 depend on whose machine produced it:
@@ -283,19 +298,18 @@ depend on whose machine produced it:
 ```bash
 SHOT_USER=you@example.com SHOT_PASSWORD='…' \
   node scripts/shots.mjs scripts/shots/zitadel.plan.json
-node scripts/port-images.mjs && npm run build
+npm run shots:port && npm run build
 ```
 
 A plan is one browser session and an ordered list of steps (`goto`, `type`,
 `click`, `waitFor`, `expect`, `shot`), because a tutorial is one path through
 the UI.
 
-**The plan and the page are generated, not authored here.** Their definitions
-live in the `tutorials` pack of the Memory graph (infra repo:
-`docs/tutorials-graph.md`), so the prose a reader follows and the actions the
-runner performs are one entity and cannot drift — the retracted draft of this
-tutorial is what drift looks like: a page describing v4's login beside pictures
-of v1's.
+**The page is generated, and so is the single-step plan.** Both live in the
+`tutorials` pack of the Memory graph (infra repo: `docs/tutorials-graph.md`), so
+the prose a reader follows and the actions the runner performs are one entity and
+cannot drift — the retracted draft of this tutorial is what drift looks like: a
+page describing v4's login beside pictures of v1's.
 
 ```bash
 EXP=/root/emergent.memory.infra/scripts/tutorials-export.py
@@ -303,11 +317,16 @@ python3 $EXP --plan deploy-to-railway --out docs-astro/scripts/shots/zitadel.pla
 python3 $EXP --md   deploy-to-railway --out docs/site/tutorials/deploy-to-railway.md
 ```
 
-`--plan` reproduces the committed plan byte for byte; `--md` differs from the
-published page only in how `summary` and the prerequisite list are re-wrapped.
-Editing either file by hand loses the next regeneration — edit the graph and
-re-run these two commands. Credentials come from `vars`, which name **environment variables**, so
-no secret is committed. `--only <shot-id>` replays the plan up to one picture.
+`--md` reproduces the published page **byte for byte**, and `--plan` reproduces its
+own output — but that plan covers **step 7 only**. `shots/installer.plan.json`,
+the end-to-end 62-step run that produces all thirteen figures, is still
+hand-authored: the pack models one of the eight steps today, and its actions for
+that step predate the 2FA screen, so a generated plan would time out there.
+Until that authoring is finished, edit the installer plan by hand and the page in
+the graph — hand-editing `deploy-to-railway.md` loses the next `--md`.
+
+Credentials come from `vars`, which name **environment variables**, so no secret
+is committed. `--only <shot-id>` replays the plan up to one picture.
 
 Three guards make a bad capture fail instead of being written:
 
@@ -318,10 +337,6 @@ Three guards make a bad capture fail instead of being written:
   with `themeStorage`);
 - **expect** — required page text, so a redirect into a login wall is caught.
 
-Two details are specific to Zitadel's v4 login and worth knowing before editing
-the plan: its submit button only enables after **real key events**, so the plan
-says `type` (character by character) rather than `fill`; and its theme and
-language switchers are pinned to the viewport corner, so each `shot` clips to the
 ### Flows that need a human once: the Railway installer
 
 `shots/installer.plan.json` walks the public installer at
@@ -332,20 +347,40 @@ by hand, in the browser the capture uses:
 
 ```bash
 node scripts/shots.mjs --login --profile .profile      # a window opens; sign in; press Enter
-node scripts/shots.mjs scripts/shots/installer.plan.json \
-  --profile .profile --out captures/$(date +%Y-%m-%dT%H-%M) --review
+SHOT_NEW_PASSWORD='…' node scripts/shots.mjs scripts/shots/installer.plan.json \
+  --profile .profile --out "captures/$(date +%Y-%m-%dT%H-%M)" --review
 ```
+
+`SHOT_NEW_PASSWORD` is the password the plan sets when Zitadel forces the
+first-admin change; it only has to satisfy Zitadel's checklist.
 
 The profile is a capture-host file: the session stays where the human signed in
 and is never copied off the machine, committed or pasted into a chat. On a host
 without `sharp` (a Mac with Chrome) the runner skips the trim step and writes the
 raw frames, which is why the bundle there needs only `playwright-core`.
 
+The run takes around twenty minutes — it provisions a real deployment and waits
+for Zitadel to bootstrap — so on a capture host you reach over ssh it goes under
+`nohup` and is watched for the runner's own completion line rather than polled:
+
+```bash
+ssh <capture-host> 'cd ~/railway-capture && SHOT_NEW_PASSWORD=… \
+  nohup node shots.mjs scripts/shots/installer.plan.json \
+    --profile .profile --out "captures/$(date +%Y-%m-%dT%H-%M)" \
+    --vars-out "$PWD/run.vars.json" > /tmp/capture.log 2>&1 < /dev/null &'
+```
+
+`--vars-out` writes the values the plan read or generated into
+`run.vars.json` — it lifts `adminPassword` off `#admin-password`, because the
+installer prints the temporary password exactly once and a resume plan has no
+other way to know it. That file is a credential: it stays on the capture host
+with the profile, and is never committed.
+
 **This run creates a real Railway project** in the selected workspace, plus five
 services and a bucket. Delete it afterwards unless the deployment is meant to
-stay. Nothing is configured by hand: the plan reads the generated first-admin
-email and password off the success panel with `setVar`, because the installer
-prints the password exactly once.
+stay. Nothing is configured by hand: the admin address is the plan's literal
+`admin@example.com`, and the generated password is lifted off `#admin-password`
+with `setVar`, because the installer prints it exactly once.
 
 The plan drives the portal's own markup, so it is a guard as well as a recipe:
 `#deploy`, `#progress-step`, `#success-card`, `#open-memory` are the portal's
@@ -354,26 +389,49 @@ for — *Creating Railway project*, *Waiting for Zitadel*, *Restarting Memory* �
 are the strings `runner.go` writes. Rename one and the run fails instead of
 publishing a stale figure.
 
-Four step kinds exist for this flow and are not used by the Zitadel plan:
-`clickIfPresent` (Railway's cookie banner is regional, so absence is not an
-error), `clickNewPage` (`Open Memory` opens a second tab, and the plan continues
-there), `setVar` (read a value off the page into a `${var}`), and progress waits
-written as `#progress-step:has-text('…')` so they poll one element rather than
-the whole page.
+The step kinds this flow needs, on top of `goto`/`type`/`click`/`waitFor`/
+`expect`/`shot`:
+
+- `clickIfPresent` — Railway's cookie banner is regional, so absence is not an
+  error;
+- `clickNewPage` — `Open Memory` opens a second tab and the plan continues there;
+- `setVar` — read a value off the page into a `${var}`; the installer prints the
+  temporary password exactly once;
+- `waitHidden` — wait for something the *server rendered* to disappear. The
+  projects page ships its bulk-delete toolbar in the HTML and hides it on boot,
+  so a shot on first paint publishes a red "Delete N selected" control that no
+  reader ever sees;
+- `when` — guard a step on `url` or `text`, so a screen that offers itself on one
+  install and not another skips instead of failing the run.
 
 Two details are specific to Zitadel's v4 login and worth knowing before editing
-the plan: its submit button only enables after **real key events**, so the plan
+any plan: its submit button only enables after **real key events**, so the plan
 says `type` (character by character) rather than `fill`; and its theme and
-language switchers are pinned to the viewport corner, so each `shot` clips to the
-card (`clip`) instead of capturing and trimming the whole frame.
+language switchers are pinned to the viewport corner, so each `shot` clips to
+the card (`clip`) rather than capturing and trimming the whole frame.
 
-`shots/zitadel.plan.json` needs a throwaway dev account in the
-`passwordChangeRequired` state — create one at
-`https://zitadel.dev.memory.emergent-company.ai` and delete it afterwards.
+The Zitadel sequence on a **fresh install** is login name → temporary password →
+**2-Factor Setup** (**Skip**, bottom left) → forced password change → "Your
+password was changed successfully." → **Next** → the app. The confirmation does
+not advance by itself, so the plan clicks it. The installer plan therefore starts
+at `/oauth/railway/logout`, which puts the consent screen in every run instead of
+only the first.
 
-The captures land in `docs/site/assets/tutorials/railway/`, and
-`redact-tutorial-shots.mjs` skips those files (`SKIP`) so re-running the
-redaction cannot put the Polish originals back.
+`shots/zitadel-railway.plan.json`, `app-landing.plan.json` and
+`zitadel-finish.plan.json` re-shoot a subset against an **existing** install,
+which is how figures 09–13 were captured without paying for a second deployment.
+They pin that install's `baseUrl`, so they are a convenience for a run that is
+still up, not a reproducible entry point — the reproducible one is
+`installer.plan.json` against a fresh install. `shots/zitadel.plan.json` is the
+different one: a throwaway dev account in the `passwordChangeRequired` state at
+`https://zitadel.dev.memory.emergent-company.ai`, deleted afterwards.
+
+Figures never carry the operator's address: the admin email is a literal
+`admin@example.com` in the plan, and the temporary password is masked by the
+app's own password field. The Railway workspace name is the account's own label
+and stays, because the reader is looking at a real workspace.
+
+The captures land in `docs/site/assets/tutorials/railway/`.
 
 ## Icons
 
@@ -428,3 +486,10 @@ a row there rather than hand-editing generated MDX.
    absolute CDN-era URL for `/emergent.memory/openapi.json`).
 5. **Fonts**: the app declares no webfont (system sans), so the docs do the
    same. If the product ever adopts one, `--sl-font` follows.
+6. **The capture plan is half-generated.** The `tutorials` pack models one of
+   the eight Railway steps (`--plan` emits step 7 only), and its actions for that
+   step predate the 2FA screen, so `installer.plan.json` — the run that produces
+   all thirteen figures — is still hand-authored. Finishing the pack needs the
+   remaining seven steps modelled, with `when` guards (the runner has them) on
+   the screens that only some installs show; after that the figures regenerate
+   from the graph like the page does.
