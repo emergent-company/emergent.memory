@@ -20,11 +20,28 @@ Run from `docs-astro/`:
 
 It rewrites `src/content/docs/`, so it is the single source of the converted
 pages — edit the converter, not the generated MDX.
+
+`docs/site` is the source of truth and the generated MDX is a committed
+snapshot, so the two can silently disagree: change a page under `docs/site`,
+merge, and the Astro site keeps publishing the old text (it is the published
+site; the MkDocs build is happy either way). `--check` is the gate for that:
+
+    python3 scripts/port_mkdocs.py --check
+
+It renders the port in memory and compares it with the tree — it writes nothing
+— and exits non-zero naming every generated page that is stale, missing, or no
+longer generated (an orphan left behind by a renamed source). A hand edit to a
+generated page fails it too, because `docs/site` is authoritative: the fix is
+always "regenerate the port", never "edit the MDX". The five hand-written pages
+listed in `HANDWRITTEN` are the only files excluded from the comparison.
+
+Exit codes: 0 = in sync, 1 = drift, 2 = cannot proceed (no source tree).
 """
 import argparse
 import json
 import posixpath
 import re
+import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -36,7 +53,7 @@ BASE = ""  # site is served at the host root: docs.memory.emergent-company.ai/
 # Pages included in the POC. (source path, output path, title)
 # The landing page (`index.mdx`) and the API reference (`api-reference.mdx`) are
 # hand-written — a bespoke hero and an embedded Scalar reference rather than a
-# conversion of the MkDocs pages.
+# conversion of the MkDocs pages. See `HANDWRITTEN` for the full excluded set.
 PAGES = [
     ("developer-guide/index.md", "developer-guide.mdx", "Developer Guide"),
     ("developer-guide/mcp-servers.md", "developer-guide/mcp-servers.mdx", "MCP Servers"),
@@ -423,6 +440,19 @@ def strip_frontmatter(text):
 
 PORTS = {src for src, _dst, _title in PAGES}
 
+# Pages under `src/content/docs/` that the converter does NOT write. They are
+# the only files `--check` ignores, and the list is deliberately literal: a page
+# is hand-written because someone maintains it by hand, never because it fell
+# out of `PAGES`, so the gate cannot be satisfied by dropping a page from the
+# conversion list — the orphan it leaves behind still fails the check.
+HANDWRITTEN = {
+    "index.mdx",                                    # bespoke hero landing page
+    "api-reference.mdx",                            # embedded Scalar reference
+    "user-guide/getting-started.mdx",               # POC IA: the choice
+    "user-guide/getting-started/self-hosted.mdx",   # POC IA: self-hosted target
+    "user-guide/getting-started/memory-cloud.mdx",  # POC IA: Memory Cloud
+}
+
 
 def replace_shortcodes_document(lines, src_rel, stats):
     """Shortcode pass over a whole page, skipping fenced code blocks."""
@@ -436,26 +466,25 @@ def replace_shortcodes_document(lines, src_rel, stats):
     return out
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--src", type=Path, default=Path(DEFAULT_SRC))
-    args = ap.parse_args()
-    src_root = args.src
-    routes = build_link_map(src_root)
-    stats = {
+def new_stats():
+    return {
         "missing": set(),
         "out_of_subset": set(),
         "unmapped_icons": set(),
         "unparsed_cards": set(),
         "missing_shots": set(),
     }
-    DST.mkdir(parents=True, exist_ok=True)
 
-    # The generated per-package Go SDK reference is ported wholesale rather than
-    # listed in PAGES: the SDK guides link into it (Authentication → auth,
-    # Streaming → chat, …), so a partial port turns those into 404s, and the
-    # pages are one per package with only an H1 and Go doc bodies. The generator
-    # writes the package name as the H1.
+
+def build_pages(src_root: Path):
+    """Every (source, output, title) triple the port writes.
+
+    Beyond the literal `PAGES` list this includes the generated per-package Go
+    SDK reference, which is ported wholesale rather than listed: the SDK guides
+    link into it (Authentication → auth, Streaming → chat, …), so a partial port
+    turns those into 404s, and the pages are one per package with only an H1 and
+    Go doc bodies. The generator writes the package name as the H1.
+    """
     pages = list(PAGES)
     for ref in sorted((src_root / "go-sdk" / "reference").glob("*.md")):
         first = next((l for l in ref.read_text().splitlines() if l.startswith("# ")), "# " + ref.stem)
@@ -465,37 +494,87 @@ def main():
     # so it has to see the pages appended above, not just the literal PAGES.
     PORTS.clear()
     PORTS.update(src for src, _dst, _title in pages)
+    return pages
 
-    for src_rel, dst_rel, title in pages:
-        src = src_root / src_rel
-        if not src.exists():
-            print(f"MISSING SOURCE {src_rel}")
-            continue
-        text, _fm = strip_frontmatter(src.read_text())
-        if SNIPPET.search(text):
-            print(f"SNIPPET (not converted) {src_rel}")
-        lines = text.split("\n")
 
-        for idx, l in enumerate(lines[:12]):
-            if l.startswith("# "):
-                lines = lines[:idx] + lines[idx + 1:]
-                break
+def render_page(src_rel, dst_rel, title, src_root, routes, stats) -> str | None:
+    """Starlight MDX for one page, or None when the source is absent."""
+    src = src_root / src_rel
+    if not src.exists():
+        print(f"MISSING SOURCE {src_rel}")
+        return None
+    text, _fm = strip_frontmatter(src.read_text())
+    if SNIPPET.search(text):
+        print(f"SNIPPET (not converted) {src_rel}")
+    lines = text.split("\n")
 
-        body = replace_shortcodes_document(convert(lines, src_rel, routes, stats), src_rel, stats)
-        imports = [IMPORTS]
-        if any(line.lstrip().startswith("<Card ") for line in body):
-            imports.append(component_import(dst_rel, "Card"))
-            imports.append(component_import(dst_rel, "CardGrid"))
-        if any("<Icon " in line for line in body):
-            imports.append(ICON_IMPORT)
-        if any("<Screenshot " in line for line in body):
-            imports.append(component_import(dst_rel, "Screenshot"))
-        out = ["---", f'title: "{title}"', "---", "", "\n".join(imports), ""] + body
-        dest = DST / dst_rel
+    for idx, l in enumerate(lines[:12]):
+        if l.startswith("# "):
+            lines = lines[:idx] + lines[idx + 1:]
+            break
+
+    body = replace_shortcodes_document(convert(lines, src_rel, routes, stats), src_rel, stats)
+    imports = [IMPORTS]
+    if any(line.lstrip().startswith("<Card ") for line in body):
+        imports.append(component_import(dst_rel, "Card"))
+        imports.append(component_import(dst_rel, "CardGrid"))
+    if any("<Icon " in line for line in body):
+        imports.append(ICON_IMPORT)
+    if any("<Screenshot " in line for line in body):
+        imports.append(component_import(dst_rel, "Screenshot"))
+    out = ["---", f'title: "{title}"', "---", "", "\n".join(imports), ""] + body
+    return "\n".join(out).rstrip() + "\n"
+
+
+def generate(src_root: Path):
+    """Render the whole port in memory: ([(src_rel, dst_rel, text)], stats)."""
+    routes = build_link_map(src_root)
+    stats = new_stats()
+    generated = []
+    for src_rel, dst_rel, title in build_pages(src_root):
+        text = render_page(src_rel, dst_rel, title, src_root, routes, stats)
+        if text is not None:
+            generated.append((src_rel, dst_rel, text))
+    return generated, stats
+
+
+def write(generated, dst_root: Path):
+    dst_root.mkdir(parents=True, exist_ok=True)
+    for src_rel, dst_rel, text in generated:
+        dest = dst_root / dst_rel
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text("\n".join(out).rstrip() + "\n")
+        dest.write_text(text)
         print(f"ok {src_rel} -> {dst_rel}")
 
+
+def drift(generated, dst_root: Path):
+    """Every way the committed tree disagrees with what the converter writes.
+
+    Returns `(kind, dst_rel)` tuples where kind is:
+      * `stale`     — the page exists but its content differs from the port;
+      * `missing`   — the port writes the page and it is not in the tree;
+      * `orphaned`  — an MDX page the port no longer writes and nobody declared
+                      hand-written (a leftover after a rename, or a page whose
+                      source was deleted).
+    """
+    problems = []
+    expected = set()
+    for _src_rel, dst_rel, text in generated:
+        expected.add(dst_rel)
+        path = dst_root / dst_rel
+        if not path.exists():
+            problems.append(("missing", dst_rel))
+        elif path.read_text() != text:
+            problems.append(("stale", dst_rel))
+    if dst_root.is_dir():
+        for path in sorted(dst_root.rglob("*.mdx")):
+            rel = path.relative_to(dst_root).as_posix()
+            if rel not in expected and rel not in HANDWRITTEN:
+                problems.append(("orphaned", rel))
+    return problems
+
+
+def report_stats(stats):
     if stats["missing"]:
         print("\nBROKEN LINK TARGETS (no such page in docs/site):")
         for item in sorted(stats["missing"]):
@@ -514,5 +593,79 @@ def main():
             print(f"  {item}")
 
 
+def display_path(path: Path) -> str:
+    """`path` relative to the repository root when it is inside it, else as-is."""
+    repo_root = DEFAULT_SRC.parents[1]          # docs-astro/../.. = repo root
+    try:
+        return path.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def report_drift(problems, src_root: Path, dst_root: Path):
+    """Print the drift, then say what to do about it — in that order, because
+    the actionable line is the only part a failing CI log is read for."""
+    labels = {
+        "stale": "out of date (content differs from the port)",
+        "missing": "not in the tree (the port writes it)",
+        "orphaned": "orphaned (nothing generates it and it is not hand-written)",
+    }
+    print(
+        f"\nDRIFT: {len(problems)} page(s) under {display_path(dst_root)} "
+        f"disagree with {display_path(src_root)}",
+        file=sys.stderr,
+    )
+    for kind in ("stale", "missing", "orphaned"):
+        items = sorted(rel for k, rel in problems if k == kind)
+        if items:
+            print(f"\n  {labels[kind]}:", file=sys.stderr)
+            for rel in items:
+                print(f"    {rel}", file=sys.stderr)
+    print(
+        f"\n{display_path(src_root)} is the source of truth — do not edit the "
+        "generated MDX.\nRegenerate the port and commit the result:\n"
+        "\n    cd docs-astro && python3 scripts/port_mkdocs.py\n"
+        "\n(`npm run shots:port` when screenshots changed as well.)",
+        file=sys.stderr,
+    )
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="Convert docs/site Markdown to Starlight MDX "
+                    "(or check the committed port is current)."
+    )
+    ap.add_argument("--src", type=Path, default=Path(DEFAULT_SRC))
+    ap.add_argument("--dst", type=Path, default=DST,
+                    help="output directory (default: docs-astro/src/content/docs)")
+    ap.add_argument(
+        "--check",
+        action="store_true",
+        help="write nothing; exit 1 if the committed MDX differs from a fresh "
+             "conversion of --src",
+    )
+    args = ap.parse_args()
+
+    if not args.src.is_dir():
+        print(f"cannot proceed: source tree not found: {args.src}", file=sys.stderr)
+        return 2
+
+    generated, stats = generate(args.src)
+
+    if args.check:
+        problems = drift(generated, args.dst)
+        if problems:
+            report_drift(problems, args.src, args.dst)
+            report_stats(stats)
+            return 1
+        report_stats(stats)
+        print(f"ok: {len(generated)} generated page(s) under {args.dst} match {args.src}")
+        return 0
+
+    write(generated, args.dst)
+    report_stats(stats)
+    return 0
+
+
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

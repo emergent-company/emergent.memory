@@ -222,6 +222,30 @@ POC), and reports an unmapped `:material-*:` name or an unparsed grid-card line
 instead of guessing. A full port needs the snippet rule and the remaining 59
 pages.
 
+### The port is checked, not trusted
+
+The MDX is committed, so it is a *snapshot* of `docs/site`: editing the source
+and merging publishes the old text, because MkDocs builds the new Markdown and
+Astro builds its old copy. Nothing used to compare them, and the drift surfaced
+only when an unrelated PR re-ran the generator (#954).
+
+`port_mkdocs.py --check` is the gate. It renders the port in memory and diffs it
+against the tree — writing nothing — and fails on a stale page, a page the port
+writes but the tree lost, an orphan the converter no longer generates (a renamed
+or deleted source, or a page dropped from `PAGES`), or a hand edit to a generated
+page. `docs/site` is authoritative, so the fix is always to regenerate:
+
+```bash
+cd docs-astro && python3 scripts/port_mkdocs.py   # or: npm run shots:port
+```
+
+The five hand-written pages are excluded by name (`HANDWRITTEN` in the script),
+so a page cannot leave the gate by falling out of the conversion list. The check
+is a preflight guard (`scripts/preflight/docs-port.sh`), so it runs in the
+branch-protection-required `ci` job and in the local lane before a push; it also
+runs `scripts/port_mkdocs_test.py`, which pins each of the outcomes above on a
+throwaway source tree.
+
 ## Getting Started — the one place the POC changes the IA
 
 The MkDocs site opens the User Guide with a single `getting-started.md` that
