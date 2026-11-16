@@ -34,9 +34,40 @@ type AuthorizationBatch struct {
 	NotBefore MarketTime `json:"nbf,omitempty"`
 	KeyID     string     `json:"key_id,omitempty"`
 
-	mu    sync.Mutex
-	next  int
 	clock func() time.Time
+	alloc *batchAllocation
+}
+
+// batchAllocation is the consumption state of one batch. It is a separate object
+// because the batch document and the cache must not be the same pointer: a caller
+// may mutate the document it was handed, but the ids it takes must be consumed
+// for the cached batch too, or a later reservation could hand the same id to a
+// second caller.
+type batchAllocation struct {
+	mu   sync.Mutex
+	next int
+}
+
+// consumption returns the batch's allocation state, creating it for a zero-value
+// batch. Batches built by this package always carry one before they are shared.
+func (b *AuthorizationBatch) consumption() *batchAllocation {
+	if b.alloc == nil {
+		b.alloc = &batchAllocation{}
+	}
+	return b.alloc
+}
+
+// view returns the caller's handle on a freshly minted batch. It is a copy, so a
+// caller that mutates the returned document (assertion, ids, expiry) cannot
+// corrupt the cached batch, but the consumption state is shared: an id the caller
+// takes is unavailable to a later reservation from the same cache.
+func (b *AuthorizationBatch) view() *AuthorizationBatch {
+	copied := *b
+	if b.RequestIDs != nil {
+		copied.RequestIDs = append([]string(nil), b.RequestIDs...)
+	}
+	copied.alloc = b.consumption()
+	return &copied
 }
 
 // Take consumes and returns the next unused request id. It returns false when
@@ -47,9 +78,10 @@ type AuthorizationBatch struct {
 // The client therefore stops handing them out at the same instant the report
 // path stops accepting them.
 func (b *AuthorizationBatch) Take() (string, bool) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.next >= len(b.RequestIDs) {
+	alloc := b.consumption()
+	alloc.mu.Lock()
+	defer alloc.mu.Unlock()
+	if alloc.next >= len(b.RequestIDs) {
 		return "", false
 	}
 	now := b.now()
@@ -59,8 +91,8 @@ func (b *AuthorizationBatch) Take() (string, bool) {
 	if !now.Before(b.ExpiresAt.Time) {
 		return "", false
 	}
-	id := b.RequestIDs[b.next]
-	b.next++
+	id := b.RequestIDs[alloc.next]
+	alloc.next++
 	return id, true
 }
 
@@ -74,17 +106,18 @@ func (b *AuthorizationBatch) Reserve(n int) ([]string, bool) {
 	if n <= 0 {
 		return nil, false
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.next+n > len(b.RequestIDs) {
+	alloc := b.consumption()
+	alloc.mu.Lock()
+	defer alloc.mu.Unlock()
+	if alloc.next+n > len(b.RequestIDs) {
 		return nil, false
 	}
 	now := b.now()
 	if now.Before(b.NotBefore.Time) || !now.Before(b.ExpiresAt.Time) {
 		return nil, false
 	}
-	ids := append([]string(nil), b.RequestIDs[b.next:b.next+n]...)
-	b.next += n
+	ids := append([]string(nil), b.RequestIDs[alloc.next:alloc.next+n]...)
+	alloc.next += n
 	return ids, true
 }
 
@@ -103,6 +136,7 @@ func (b *AuthorizationBatch) grant(ids []string) *AuthorizationBatch {
 		NotBefore:     b.NotBefore,
 		KeyID:         b.KeyID,
 		clock:         b.clock,
+		alloc:         &batchAllocation{},
 	}
 }
 
@@ -116,9 +150,10 @@ func (b *AuthorizationBatch) now() time.Time {
 
 // Remaining reports how many pre-issued calls are still unused and unreserved.
 func (b *AuthorizationBatch) Remaining() int {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return len(b.RequestIDs) - b.next
+	alloc := b.consumption()
+	alloc.mu.Lock()
+	defer alloc.mu.Unlock()
+	return len(b.RequestIDs) - alloc.next
 }
 
 // Expired reports whether the batch's validity window has closed.
@@ -300,7 +335,10 @@ func (c *Client) Authorize(ctx context.Context, issuer, entitlementID string, ca
 		c.log.Warn("usage replay deferred again after a successful authorize",
 			"issuer", base, "error", err)
 	}
-	return batch, nil
+	// The cache keeps the batch; the caller gets a copy so mutating the returned
+	// document cannot rewrite the cached one, while sharing its consumption
+	// counter so no id is handed out twice.
+	return batch.view(), nil
 }
 
 // reserveFromCachedBatch reserves calls ids from the cached batch for this
@@ -364,13 +402,14 @@ func (w authorizationBatchWire) batch() *AuthorizationBatch {
 		ExpiresIn:     w.ExpiresIn,
 		NotBefore:     w.NotBefore,
 		KeyID:         w.KeyID,
+		alloc:         &batchAllocation{},
 	}
 }
 
 func decodeAuthorizationBatch(body []byte) (*AuthorizationBatch, error) {
 	var direct authorizationBatchWire
 	if err := json.Unmarshal(body, &direct); err != nil {
-		return nil, ErrMarketUnreachable("market returned an invalid authorization batch")
+		return nil, ErrMarketMalformedResponse("market returned an invalid authorization batch")
 	}
 	batch := direct.batch()
 	if batch.Assertion == "" || len(batch.RequestIDs) == 0 {
@@ -394,7 +433,7 @@ func decodeAuthorizationBatch(body []byte) (*AuthorizationBatch, error) {
 		}
 	}
 	if strings.TrimSpace(batch.Assertion) == "" {
-		return nil, ErrMarketUnreachable("market returned an authorization batch with no assertion")
+		return nil, ErrMarketMalformedResponse("market returned an authorization batch with no assertion")
 	}
 	return batch, nil
 }
@@ -501,18 +540,19 @@ func normalizeBatch(batch *AuthorizationBatch, entitlementID string, requested i
 	batch.IssuedAt = MarketTime{Time: issuedAt}
 	batch.ExpiresAt = MarketTime{Time: expiresAt}
 	batch.NotBefore = MarketTime{Time: notBefore}
-	batch.mu.Lock()
-	batch.next = 0
-	batch.mu.Unlock()
+	batch.alloc = &batchAllocation{}
 	return nil
 }
 
 // storeBatch caches the batch and records the ids it pre-issued. A market that
-// re-issues an id this instance already reported, or already has queued for
-// replay, cannot be attributed: the second call would be reported against an id
-// the market has seen, so the report is refused and the served call is lost. The
-// batch is refused instead, before any id is handed out, and the previous cached
-// batch (if any) stays in place for the outage policy.
+// re-issues an id this instance already reported, already has queued for replay,
+// or already issued in a batch whose attribution window is still open cannot be
+// attributed: the second call would be reported against an id the market has
+// seen, so the report is refused and the served call is lost. The third check
+// also covers an id the instance handed out but has not reported yet, which the
+// cached-but-superseded batch would otherwise strand. The batch is refused
+// instead, before any id is handed out, and the previous cached batch (if any)
+// stays in place for the outage policy.
 func (c *Client) storeBatch(issuer, entitlementID string, batch *AuthorizationBatch) error {
 	c.inProduct.mu.Lock()
 	defer c.inProduct.mu.Unlock()
@@ -526,6 +566,14 @@ func (c *Client) storeBatch(issuer, entitlementID string, batch *AuthorizationBa
 		if _, queued := c.inProduct.pendingIDs[key]; queued {
 			return ErrAssertionInvalid(fmt.Sprintf(
 				"market re-issued request id %q, which is still queued for replay; attribution would be lost",
+				requestID))
+		}
+		// An id from a batch that is still live has already been handed out (or
+		// is about to be reserved from the cache); re-issuing it would let two
+		// served calls name the same id, and the second report would be refused.
+		if existing, issued := c.inProduct.issued[key]; issued && c.now().Before(existing.expiresAt) {
+			return ErrAssertionInvalid(fmt.Sprintf(
+				"market re-issued request id %q, which is already issued by a live batch; attribution would be lost",
 				requestID))
 		}
 	}
@@ -567,7 +615,9 @@ func (c *Client) fallbackBatch(issuer, entitlementID string, cause error) (*Auth
 			"remaining_calls", cached.batch.Remaining(),
 			"expires_at", cached.expiresAt.UTC(),
 			"error", cause)
-		return cached.batch, nil
+		// Same rule as the mint path: the cache keeps the batch, the caller gets
+		// a copy that shares its consumption state.
+		return cached.batch.view(), nil
 	}
 	if now.Before(cached.expiresAt) {
 		return nil, ErrBatchExhausted(fmt.Sprintf("cached batch has no calls left; market is unavailable: %v", cause))
