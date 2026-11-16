@@ -13,9 +13,11 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/githubapp"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -71,14 +73,16 @@ func truncateUTF8(s string, max int) string {
 // names, AgentOnly property and TrustedInternal gate they had under
 // domain/githubapp (#579).
 type ReviewToolHandler struct {
-	repo       *Repository
-	key        []byte // raw AES-256 key bytes (LLM_ENCRYPTION_KEY)
-	apiBaseURL string
-	minter     *githubapp.TokenMinter
-	newClient  func(baseURL, token string) *githubapp.Client
-	workItems  WorkItemStatusWriter
-	links      IssuePRLinkReader
-	reworker   WorkItemReworker
+	repo        *Repository
+	key         []byte // raw AES-256 key bytes (LLM_ENCRYPTION_KEY)
+	apiBaseURL  string
+	minter      *githubapp.TokenMinter
+	newClient   func(baseURL, token string) *githubapp.Client
+	workItems   WorkItemStatusWriter
+	links       IssuePRLinkReader
+	reworker    WorkItemReworker
+	reviewGates *ReviewGateService
+	agentRuns   *agents.Repository
 }
 
 // WorkItemStatusWriter finalizes the board lane a review run was dispatched for.
@@ -102,6 +106,12 @@ func (h *ReviewToolHandler) SetWorkItemStatusWriter(w WorkItemStatusWriter) { h.
 
 // SetWorkItemReworker injects the coding rework dispatcher.
 func (h *ReviewToolHandler) SetWorkItemReworker(r WorkItemReworker) { h.reworker = r }
+
+// SetReviewGateService injects the server-owned review aggregator.
+func (h *ReviewToolHandler) SetReviewGateService(g *ReviewGateService) { h.reviewGates = g }
+
+// SetAgentRuns injects the run reader used to identify the reviewer agent.
+func (h *ReviewToolHandler) SetAgentRuns(r *agents.Repository) { h.agentRuns = r }
 
 // NewReviewToolHandler builds the handler from the deployment config. The
 // credential key is the same LLM_ENCRYPTION_KEY the source dispatcher uses to
@@ -486,12 +496,33 @@ func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *git
 	if err := client.CreateReview(ctx, repo, number, headSHA, event, summary); err != nil {
 		return nil, err
 	}
-	if err := client.CreateReviewedCheck(ctx, repo, headSHA, conclusion, checkTitle, summary); err != nil {
-		return nil, err
-	}
-	marker := fmt.Sprintf("Reviewed-SHA: %s\nVerdict: %s\n\n%s", headSHA, verdict, summary)
-	if err := client.CreateIssueComment(ctx, repo, number, marker); err != nil {
-		return nil, err
+	reviewerID, reviewerName := h.reviewerIdentity(ctx, projectID)
+	if h.reviewGates != nil && reviewerID != "" {
+		gate, gateErr := h.reviewGates.RecordVerdict(ctx, uuid.MustParse(projectID), "GitHubPullRequest", fmt.Sprintf("%s#%d", repo, number), headSHA, reviewerID, reviewerName, verdict, summary)
+		if gateErr != nil {
+			slog.Default().Warn("review verdict not recorded in review gate", "repo", repo, "number", number, "error", gateErr)
+		} else if gate != nil {
+			if err := h.publishReviewGate(ctx, client, repo, headSHA, gate, summary); err != nil {
+				return nil, err
+			}
+			if gate.Status == ReviewGateApproved {
+				marker := fmt.Sprintf("Reviewed-SHA: %s\nVerdict: MERGE\n\n%s", headSHA, summary)
+				if err := client.CreateIssueComment(ctx, repo, number, marker); err != nil {
+					return nil, err
+				}
+			} else if gate.Status == ReviewGateChangesRequested {
+				marker := fmt.Sprintf("Reviewed-SHA: %s\nVerdict: CHANGES_REQUESTED\n\n%s", headSHA, summary)
+				_ = client.CreateIssueComment(ctx, repo, number, marker)
+			}
+		}
+	} else {
+		if err := client.CreateReviewedCheck(ctx, repo, headSHA, conclusion, checkTitle, summary); err != nil {
+			return nil, err
+		}
+		marker := fmt.Sprintf("Reviewed-SHA: %s\nVerdict: %s\n\n%s", headSHA, verdict, summary)
+		if err := client.CreateIssueComment(ctx, repo, number, marker); err != nil {
+			return nil, err
+		}
 	}
 	// A board-dispatched review lane is finalized from the verdict; a direct
 	// trigger run has no work object and stays unchanged.
@@ -522,6 +553,36 @@ func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *git
 			"conclusion": conclusion,
 		},
 	}, nil
+}
+
+func (h *ReviewToolHandler) reviewerIdentity(ctx context.Context, projectID string) (string, string) {
+	if h.agentRuns == nil {
+		return "", ""
+	}
+	runID := provider.RunIDFromContext(ctx)
+	if runID == "" {
+		return "", ""
+	}
+	run, err := h.agentRuns.FindRunByID(ctx, runID)
+	if err != nil || run == nil || run.AgentID == "" {
+		return "", ""
+	}
+	name := ""
+	if agent, aerr := h.agentRuns.FindByID(ctx, run.AgentID, &projectID); aerr == nil && agent != nil {
+		name = agent.Name
+	}
+	return run.AgentID, name
+}
+
+func (h *ReviewToolHandler) publishReviewGate(ctx context.Context, client *githubapp.Client, repo, headSHA string, gate *ReviewGate, summary string) error {
+	switch gate.Status {
+	case ReviewGateApproved:
+		return client.CreateReviewedCheck(ctx, repo, headSHA, "success", "reviewed: all reviewers approved", summary)
+	case ReviewGateChangesRequested:
+		return client.CreateReviewedCheck(ctx, repo, headSHA, "failure", "reviewed: changes requested", summary)
+	default:
+		return client.CreateCheck(ctx, repo, headSHA, "reviewed", "in_progress", "", "reviewed: pending", "Waiting for all required reviewers.")
+	}
 }
 
 func intArg(args map[string]any, key string) (int, bool) {

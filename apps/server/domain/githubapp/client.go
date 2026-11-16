@@ -21,16 +21,17 @@ const (
 
 // PullRequestState is the live PR state read just before reviewing or posting.
 type PullRequestState struct {
-	Number    int    `json:"number"`
-	Title     string `json:"title"`
-	State     string `json:"state"`
-	Draft     bool   `json:"draft"`
-	Merged    bool   `json:"merged"`
-	UserLogin string `json:"-"`
-	UserType  string `json:"-"`
-	HeadSHA   string `json:"-"`
-	HeadRef   string `json:"-"`
-	BaseRef   string `json:"-"`
+	Number    int      `json:"number"`
+	Title     string   `json:"title"`
+	State     string   `json:"state"`
+	Draft     bool     `json:"draft"`
+	Merged    bool     `json:"merged"`
+	Labels    []string `json:"-"`
+	UserLogin string   `json:"-"`
+	UserType  string   `json:"-"`
+	HeadSHA   string   `json:"-"`
+	HeadRef   string   `json:"-"`
+	BaseRef   string   `json:"-"`
 }
 
 // APIError is a GitHub REST error carrying the API message only (never a token
@@ -231,7 +232,10 @@ func (c *Client) GetPullRequest(ctx context.Context, repo string, number int) (*
 		State  string `json:"state"`
 		Draft  bool   `json:"draft"`
 		Merged bool   `json:"merged"`
-		User   struct {
+		Labels []struct {
+			Name string `json:"name"`
+		} `json:"labels"`
+		User struct {
 			Login string `json:"login"`
 			Type  string `json:"type"`
 		} `json:"user"`
@@ -246,12 +250,19 @@ func (c *Client) GetPullRequest(ctx context.Context, repo string, number int) (*
 	if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/pulls/%d", repo, number), nil, &raw); err != nil {
 		return nil, err
 	}
+	labels := make([]string, 0, len(raw.Labels))
+	for _, label := range raw.Labels {
+		if name := strings.TrimSpace(label.Name); name != "" {
+			labels = append(labels, name)
+		}
+	}
 	return &PullRequestState{
 		Number:    raw.Number,
 		Title:     raw.Title,
 		State:     raw.State,
 		Draft:     raw.Draft,
 		Merged:    raw.Merged,
+		Labels:    labels,
 		UserLogin: raw.User.Login,
 		UserType:  raw.User.Type,
 		HeadSHA:   raw.Head.SHA,
@@ -303,18 +314,26 @@ func (c *Client) CreateReview(ctx context.Context, repo string, number int, head
 	}, nil)
 }
 
-// CreateReviewedCheck publishes the head-bound "reviewed" check run.
-func (c *Client) CreateReviewedCheck(ctx context.Context, repo, headSHA, conclusion, title, summary string) error {
-	return c.do(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/check-runs", repo), map[string]any{
-		"name":       checkNameReviewed,
-		"head_sha":   headSHA,
-		"status":     "completed",
-		"conclusion": conclusion,
+// CreateCheck publishes a head-bound check run.
+func (c *Client) CreateCheck(ctx context.Context, repo, headSHA, name, status, conclusion, title, summary string) error {
+	body := map[string]any{
+		"name":     name,
+		"head_sha": headSHA,
+		"status":   status,
 		"output": map[string]string{
 			"title":   title,
 			"summary": summary,
 		},
-	}, nil)
+	}
+	if conclusion != "" {
+		body["conclusion"] = conclusion
+	}
+	return c.do(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/check-runs", repo), body, nil)
+}
+
+// CreateReviewedCheck publishes the head-bound "reviewed" check run.
+func (c *Client) CreateReviewedCheck(ctx context.Context, repo, headSHA, conclusion, title, summary string) error {
+	return c.CreateCheck(ctx, repo, headSHA, checkNameReviewed, "completed", conclusion, title, summary)
 }
 
 // CreateIssueComment posts the merge-guard marker as a PR conversation comment.

@@ -74,6 +74,40 @@ must reference the issue with a closing keyword (`Closes #N`, `Fixes #N`, or
 `Resolves #N`) so the merge closes it. Label and comment writes from the
 integration's own App are ignored, so claiming cannot re-trigger the source.
 
+## Reviewer agents
+
+Reviewers are normal reaction agents, not a source-level reviewer list. The
+source emits a board object for each pull request; reviewer agents subscribe by
+object type and property predicates.
+
+Example:
+
+```json
+{
+  "objectTypes": ["GitHubPullRequest"],
+  "events": ["created", "updated"],
+  "properties": ["/head_sha"],
+  "match": [
+    {"path": "/labels", "operator": "contains", "value": "review:ui"}
+  ],
+  "reviewer": true,
+  "concurrencyStrategy": "skip"
+}
+```
+
+- A reviewer with no `match` is the default reviewer.
+- `properties` filters which changed property paths wake an `updated` agent.
+- `match` evaluates the current HEAD properties; supported operators are
+  `contains`, `equals` and `exists`.
+- Every matching reviewer is required for the current head.
+- Added reviewers are sticky for that head; a new head requires a fresh set.
+- Reviewer verdicts are aggregated server-side; a reviewer cannot set the
+  aggregate approval or publish the provider check directly.
+
+The GitHub adapter publishes the aggregate `reviewed` check and the source
+discovers the reviewer agents from the project. Do not add a source workflow
+reviewer list for new review sources.
+
 ## Run inside the sandbox
 
 The coding agent uses the existing workspace tools. A `workspace_git push` and
