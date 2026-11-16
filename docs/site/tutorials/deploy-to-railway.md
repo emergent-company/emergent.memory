@@ -1,6 +1,6 @@
 # Deploy Memory on Railway
 
-This tutorial walks through a complete Memory installation on Railway using the installer at [deploy.memory.emergent-company.ai](https://deploy.memory.emergent-company.ai). The screenshots below come from a real installation; the temporary password and the installer's account email are redacted.
+This tutorial walks through a complete Memory installation on Railway using the installer at [deploy.memory.emergent-company.ai](https://deploy.memory.emergent-company.ai). The screenshots below come from a real installation; the temporary password is masked, and the admin address shown is a placeholder.
 
 ## Before you start
 
@@ -16,8 +16,8 @@ This tutorial walks through a complete Memory installation on Railway using the 
 ## 1. Choose Railway
 
 Open the [Memory installer](https://deploy.memory.emergent-company.ai) and
-choose **Railway**. Docker,
-Google Cloud and AWS are listed as planned targets.
+choose **Railway**. Docker, Google Cloud and AWS are offered on the same page as
+a downloadable bundle, which this tutorial does not cover.
 
 ![Choose Railway](../assets/tutorials/railway/01-choose-target.webp)
 
@@ -37,7 +37,7 @@ the OAuth session in a sealed cookie; it does not store your Railway password.
 After authorization the installer shows the Railway account and workspace.
 Select the workspace that should own the deployment. The **Admin email** becomes
 the first platform superadmin. It defaults to the signed-in Railway email and
-can be changed.
+can be changed; the screenshot shows a placeholder address.
 
 Email is skipped by default for the Railway runner. Leave **Skip email for now**
 checked to finish the install; configure SMTP later from **Settings → Platform
@@ -101,16 +101,23 @@ Enter the temporary password from step 5.
 
 ![Zitadel password](../assets/tutorials/railway/10-zitadel-password.webp)
 
-The first admin is imported with `passwordChangeRequired`, so Zitadel asks you to
-replace the temporary password before the app opens.
+Zitadel offers to enroll a second factor at this point, before the password
+change. Click **Skip** at the bottom left for this first login — you can add an
+authenticator app or a device factor later, and you should before handing the
+account to a team.
+
+![2-Factor Setup, with Skip at the bottom left](../assets/tutorials/railway/11-2fa-setup.webp)
+
+The first admin is imported with `passwordChangeRequired`, so Zitadel requires a
+new password before the app opens. Enter the temporary password as the old one,
+choose a new password and repeat it in **Password confirmation**: the checklist
+under the fields turns green as each rule is met, and **Next** stays disabled
+until they all are.
 
 ![Change the temporary password](../assets/tutorials/railway/12-first-password-change.webp)
 
-If your login policy allows second factors, Zitadel offers 2FA setup at the end
-of this flow. You can skip it for the first login and enable it later; for a
-production deployment, enable it before handing the account to a team.
-
-After the change, Zitadel returns to Memory.
+Zitadel then confirms with "Your password was changed successfully." — click
+**Next** there, and Zitadel returns to Memory.
 
 ## 8. Verify the installation
 

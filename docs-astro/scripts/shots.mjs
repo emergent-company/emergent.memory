@@ -39,7 +39,8 @@
  * human to sign in. The session then stays in that profile, so every later run
  * is a plain scripted run with no prompts:
  *
- *     node scripts/shots.mjs --login --profile .profile        # sign in, press Enter
+ *     node scripts/shots.mjs --login --profile .profile [--login-done-file /tmp/x]
+ *                                                              # sign in, press Enter
  *     node scripts/shots.mjs plan.json --profile .profile      # scripted from here on
  *
  * The profile is a capture-host file, never committed and never transferred:
@@ -53,14 +54,14 @@
  * screenshot, HTML and the labels on screen — into `failures/`, which is what
  * makes a plan iterable without a person describing every screen.
  */
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium } from 'playwright-core';
 
 const REPO = path.resolve(import.meta.dirname, '../..');
 
 /** Flags that consume the next argument, so it is not mistaken for the plan. */
-const VALUE_FLAGS = new Set(['--only', '--out', '--profile', '--channel']);
+const VALUE_FLAGS = new Set(['--only', '--out', '--profile', '--channel', '--login-url', '--login-done-file', '--vars-out']);
 const argv = process.argv.slice(2);
 const flag = (name, fallback = null) => {
   const at = argv.indexOf(name);
@@ -77,12 +78,14 @@ const profile = flag('--profile');
 const review = has('--review');
 const trim = !has('--no-trim');
 const outFlag = flag('--out');
+const varsOut = flag('--vars-out');
 
 if (!loginMode && !planPath) {
   console.error(
     'usage:\n' +
       '  node scripts/shots.mjs <plan.json> [--only <shot-id>] [--out <dir>] [--review]\n' +
-      '  node scripts/shots.mjs --login --profile <dir> [--login-url <url>]',
+      '                                    [--profile <dir>] [--vars-out <file>]\n' +
+      '  node scripts/shots.mjs --login --profile <dir> [--login-url <url>] [--login-done-file <path>]',
   );
   process.exit(2);
 }
@@ -136,13 +139,25 @@ async function imageSize(buffer) {
   return { width: meta.width, height: meta.height };
 }
 
-/** `${var}` in a plan value, resolved from an env var named by `vars`. */
+/**
+ * `${var}` in a plan value. A var comes from an env var (`env`) or is fixed in
+ * the plan (`literal`). The literal exists for values a figure should show but
+ * that nothing real should be published for — the tutorial's admin address is
+ * `admin@example.com` whether or not the operator's own account is real.
+ */
 const vars = {};
 for (const [name, spec] of Object.entries(plan?.vars ?? {})) {
+  if (spec.literal !== undefined) {
+    vars[name] = spec.literal;
+    continue;
+  }
   const value = process.env[spec.env];
   if (!value) fail('-', `plan var "${name}" needs env ${spec.env}`);
   vars[name] = value;
 }
+/** Collapse runs of whitespace, so a guard matches words rather than DOM splits. */
+const flat = (value) => String(value).replace(/\s+/g, ' ').trim();
+
 const expand = (value) =>
   typeof value === 'string'
     ? value.replace(/\$\{(\w+)\}/g, (_, name) => {
@@ -189,12 +204,29 @@ const shutdown = async () => {
 if (loginMode) {
   page = context.pages()[0] ?? (await context.newPage());
   await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded' });
+  // Two ways to say "I am signed in": press Enter, or create the sentinel file.
+  // The file exists because the person signing in and the person driving the run
+  // are not always at the same keyboard — an agent on another host can watch a
+  // window it cannot type into, and `touch` is the only channel it has.
+  const doneFile = flag('--login-done-file');
+  await rm(doneFile, { force: true }).catch(() => {});
   console.log(`\n  A browser window is open on ${LOGIN_URL}`);
-  console.log('  Sign in (and clear any "verify you are human" check), then press Enter here.\n');
-  await new Promise((resolve) => {
-    process.stdin.resume();
-    process.stdin.once('data', resolve);
-  });
+  console.log('  Sign in (and clear any "verify you are human" check), then press Enter here.');
+  if (doneFile) console.log(`  (or, from another host: touch ${doneFile})`);
+  console.log('');
+  await Promise.race([
+    new Promise((resolve) => {
+      process.stdin.resume();
+      process.stdin.once('data', resolve);
+    }),
+    (async () => {
+      if (!doneFile) return new Promise(() => {});
+      for (;;) {
+        if (await access(doneFile).then(() => true).catch(() => false)) return;
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    })(),
+  ]);
   // Names only: a cookie value is a credential and does not belong in a log.
   const cookies = await context.cookies();
   const domains = [...new Set(cookies.map((c) => c.domain))].sort();
@@ -337,10 +369,44 @@ try {
   /* first run in this directory */
 }
 
+/**
+ * `--vars-out <file>` keeps what `setVar` read, so a run that fails after an
+ * install can be retried without creating a second one. It holds credentials:
+ * mode 600, written inside the run directory, never committed.
+ */
+async function writeVars() {
+  await writeFile(path.resolve(varsOut), JSON.stringify(vars, null, 2) + '\n', { mode: 0o600 });
+  console.log(`  vars: ${path.relative(process.cwd(), path.resolve(varsOut))} (mode 600)`);
+}
+
 const startedAt = Date.now();
+// The step being run, so a raw Playwright timeout (a click that never lands, a
+// fill on a field that vanished) is attributed to a step and leaves evidence
+// instead of printing a one-line message with no page to look at.
+let currentStep = null;
 try {
   for (const [i, step] of plan.steps.entries()) {
     const label = `#${i + 1}${step.name ? ` ${step.name}` : ''}`;
+    currentStep = label;
+    // A flow through a third party has two possible shapes, and the plan cannot
+    // branch: Railway shows its consent screen on the first run and skips
+    // straight to the setup page once the portal holds a session. A step that
+    // only applies at one of those places says so with `when.url` and is
+    // skipped elsewhere — which is what lets one plan survive both.
+    if (step.when?.url && !new RegExp(step.when.url).test(page.url())) {
+      console.log(`  skip ${label} (at ${page.url().slice(0, 80)})`);
+      continue;
+    }
+    // A screen that only some deployments show keeps the same URL as the one
+    // that replaces it (Zitadel's optional 2FA setup), so the guard is the text
+    // on the page, not the address.
+    if (step.when?.text) {
+      const onScreen = flat(await page.locator('body').innerText());
+      if (!onScreen.includes(flat(expand(step.when.text)))) {
+        console.log(`  skip ${label} (no ${JSON.stringify(step.when.text)} on screen)`);
+        continue;
+      }
+    }
     if (step.goto) {
       const url = step.goto.startsWith('http') ? step.goto : `${plan.baseUrl}${step.goto}`;
       await page.goto(url, { waitUntil: 'domcontentloaded' });
@@ -399,6 +465,10 @@ try {
     // the first admin's password and shows it once, so an end-to-end capture
     // cannot carry it in an environment variable: the plan reads it from the
     // page it was printed on and signs in with it.
+    // Third-party pages settle with their own timers (a redirect that renders a
+    // second form), and there is no element to wait for yet when the point of
+    // the step is to find out what appeared.
+    if (step.pause) await page.waitForTimeout(step.pause);
     if (step.setVar) {
       const spec = step.setVar;
       const el = page.locator(expand(spec.from.selector)).first();
@@ -417,15 +487,26 @@ try {
     if (step.waitFor) {
       const { selector, text, url } = step.waitFor;
       const timeout = step.waitFor.timeout ?? 20_000;
-      if (selector) await page.locator(expand(selector)).first().waitFor({ state: 'visible', timeout });
+      if (selector)
+        await page
+          .locator(expand(selector))
+          .first()
+          .waitFor({ state: 'visible', timeout })
+          .catch(() => fail(label, `selector ${JSON.stringify(selector)} never became visible (at ${page.url()})`));
       // "the page shows this text" — not "some element matching it is
       // visible". getByText also matches every ancestor of the text node, so
       // `.first()` is the page container, which is visible before the text
       // exists: a wait that returns immediately is worse than no wait at all.
       if (text) {
-        const needle = expand(text);
+        const needle = flat(expand(text));
+        // Whitespace-insensitive: a sentence split across elements comes back
+        // from innerText with the break inside it, and the guard is about the
+        // words on screen, not how the DOM happened to divide them.
         await page
-          .waitForFunction((n) => document.body.innerText.includes(n), needle, { timeout, polling: 1000 })
+          .waitForFunction((n) => document.body.innerText.replace(/\s+/g, ' ').includes(n), needle, {
+            timeout,
+            polling: 1000,
+          })
           .catch(() => fail(label, `page never showed ${JSON.stringify(needle)} (at ${page.url()})`));
       }
       // A flow that hands off to another host (an OAuth provider, then a
@@ -439,16 +520,28 @@ try {
           .catch(() => fail(label, `url never matched ${patterns.join(' | ')} (at ${page.url()})`));
       }
     }
+    // `waitHidden` is the mirror of `waitFor`: some chrome is server-rendered
+    // visible and hidden once the page's own script boots (Alpine's `x-show`
+    // before it runs), so a shot taken on first paint ships a control the app
+    // never shows a reader. Wait for the settled state, do not mask the flash.
+    if (step.waitHidden) {
+      const { selector, timeout = 20_000 } = step.waitHidden;
+      await page
+        .locator(expand(selector))
+        .first()
+        .waitFor({ state: 'hidden', timeout })
+        .catch(() => fail(label, `${selector} never went away — the page would ship a flash (at ${page.url()})`));
+    }
     if (step.mask) {
       masks = masks.concat([].concat(step.mask).map((s) => page.locator(expand(s))));
     }
     if (step.expect) lastExpect = [].concat(expand(step.expect));
     if (step.expect || step.shot) await assertLanguage(label);
     if (step.expect) {
-      const body = await page.locator('body').innerText();
+      const body = flat(await page.locator('body').innerText());
       for (const needle of [].concat(expand(step.expect))) {
-        if (!body.includes(needle)) {
-          fail(label, `expected page text ${JSON.stringify(needle)}\n  got: ${body.replace(/\s+/g, ' ').slice(0, 400)}`);
+        if (!body.includes(flat(needle))) {
+          fail(label, `expected page text ${JSON.stringify(needle)}\n  got: ${body.slice(0, 400)}`);
         }
       }
     }
@@ -465,9 +558,17 @@ try {
         // Clip to the subject: the login page pins its theme and language
         // switchers to the viewport corner, and a full-frame capture drags them
         // into the picture where they are chrome the reader never touches.
-        const box = await page.locator(expand(spec.clip)).first().boundingBox();
+        //
+        // A clip is a selector or a measured `{x, y, width, height}` in CSS
+        // pixels. The rect exists for a subject with no element of its own —
+        // Zitadel's 2FA screen draws a content column, not a card — and it
+        // carries its own padding, so it is not padded again.
+        const isRect = typeof spec.clip === 'object';
+        const box = isRect
+          ? { ...spec.clip }
+          : await page.locator(expand(spec.clip)).first().boundingBox();
         if (!box) fail(label, `clip selector matched nothing: ${spec.clip}`);
-        const pad = spec.pad ?? 16;
+        const pad = spec.pad ?? (isRect ? 0 : 16);
         const vp = page.viewportSize();
         raw = await page.screenshot({
           ...shotOpts,
@@ -504,6 +605,7 @@ try {
     }
   }
 } catch (error) {
+  if (!error.step && currentStep) error.step = currentStep;
   if (error.step) {
     console.error(`\n  FAILED at step ${error.step}: ${error.message}`);
     await writeEvidence(error.step, error.message);
@@ -511,6 +613,9 @@ try {
     console.error(`\n  FAILED: ${error.message}`);
   }
   await writeFile(metaPath, JSON.stringify(shotMeta, null, 2) + '\n').catch(() => {});
+  // The scraped values survive the failure too: a plan that dies after an
+  // install must not need a second install to be retried.
+  if (varsOut) await writeVars();
   // A plan that fails late has still banked every figure before the failure,
   // and those are exactly what a reviewer needs to see next to the evidence.
   if (shots.length) {
@@ -526,6 +631,7 @@ try {
 
 await shutdown();
 await writeFile(metaPath, JSON.stringify(shotMeta, null, 2) + '\n');
+if (varsOut) await writeVars();
 if (review && shots.length) await writeReview(shots, Date.now() - startedAt);
 if (only && wrote === 0) {
   console.error(`\n  no shot named "${only}" in ${planPath}`);

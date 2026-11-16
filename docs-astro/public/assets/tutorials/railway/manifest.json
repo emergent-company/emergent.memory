@@ -1,74 +1,80 @@
 {
   "01-choose-target.webp": {
-    "width": 488,
-    "height": 304,
-    "cssWidth": 488,
-    "cssHeight": 304
+    "width": 2400,
+    "height": 1771,
+    "cssWidth": 752,
+    "cssHeight": 555
   },
   "02-authorize-railway.webp": {
-    "width": 1132,
-    "height": 574,
-    "cssWidth": 1132,
-    "cssHeight": 574
+    "width": 1800,
+    "height": 2632,
+    "cssWidth": 450,
+    "cssHeight": 658
   },
   "03-workspace-admin-email.webp": {
-    "width": 491,
-    "height": 309,
-    "cssWidth": 491,
-    "cssHeight": 309
+    "width": 2400,
+    "height": 1541,
+    "cssWidth": 707,
+    "cssHeight": 454
   },
   "04-progress-project.webp": {
-    "width": 489,
-    "height": 190,
-    "cssWidth": 489,
-    "cssHeight": 190
+    "width": 2400,
+    "height": 1136,
+    "cssWidth": 752,
+    "cssHeight": 356
   },
   "05-progress-zitadel.webp": {
-    "width": 489,
-    "height": 190,
-    "cssWidth": 489,
-    "cssHeight": 190
+    "width": 2400,
+    "height": 1136,
+    "cssWidth": 752,
+    "cssHeight": 356
   },
   "06-progress-restart.webp": {
-    "width": 490,
-    "height": 200,
-    "cssWidth": 490,
-    "cssHeight": 200
+    "width": 2400,
+    "height": 1136,
+    "cssWidth": 752,
+    "cssHeight": 356
   },
   "07-install-complete.webp": {
-    "width": 491,
-    "height": 370,
-    "cssWidth": 491,
-    "cssHeight": 370
+    "width": 2400,
+    "height": 1886,
+    "cssWidth": 752,
+    "cssHeight": 591
   },
   "08-memory-signin.webp": {
-    "width": 309,
-    "height": 243,
-    "cssWidth": 309,
-    "cssHeight": 243
+    "width": 1568,
+    "height": 1172,
+    "cssWidth": 392,
+    "cssHeight": 293
   },
   "09-zitadel-login.webp": {
     "width": 1760,
-    "height": 1520,
+    "height": 968,
     "cssWidth": 440,
-    "cssHeight": 380
+    "cssHeight": 242
   },
   "10-zitadel-password.webp": {
     "width": 1760,
-    "height": 1792,
+    "height": 1696,
     "cssWidth": 440,
-    "cssHeight": 448
+    "cssHeight": 424
+  },
+  "11-2fa-setup.webp": {
+    "width": 1760,
+    "height": 1948,
+    "cssWidth": 440,
+    "cssHeight": 487
   },
   "12-first-password-change.webp": {
     "width": 1760,
-    "height": 2960,
+    "height": 2452,
     "cssWidth": 440,
-    "cssHeight": 740
+    "cssHeight": 613
   },
   "13-memory-projects.webp": {
-    "width": 1320,
-    "height": 827,
-    "cssWidth": 1320,
-    "cssHeight": 827
+    "width": 2400,
+    "height": 1350,
+    "cssWidth": 1600,
+    "cssHeight": 900
   }
 }
