@@ -236,7 +236,7 @@ type MemoryBackend interface {
 	GetObjectEdges(ctx context.Context, objectID string) ([]GraphRelationship, error)
 	GetSimilarObjects(ctx context.Context, objectID string, limit int) ([]SimilarObject, error)
 	// Work items (object-driven work / Kanban board).
-	ListWorkItems(ctx context.Context, status, typeName string, limit int) ([]WorkItem, error)
+	ListWorkItems(ctx context.Context, status, typeName string, limit int, includeProperties bool) ([]WorkItem, error)
 	GetWorkItem(ctx context.Context, canonicalID string) (*WorkItemDetail, error)
 	ApproveWorkItem(ctx context.Context, canonicalID string) (*WorkItemAction, error)
 	RequestChangesWorkItem(ctx context.Context, canonicalID, feedback string) (*WorkItemAction, error)

@@ -469,7 +469,7 @@ func (s *Server) uiBoardRedirect(c echo.Context) error {
 // error state.
 func (s *Server) uiBoard(c echo.Context) error {
 	ctx := c.Request().Context()
-	items, err := s.memory.ListWorkItems(ctx, "", "", boardItemLimit)
+	items, err := s.memory.ListWorkItems(ctx, "", "", boardItemLimit, false)
 	if err != nil {
 		return s.page(c, pageTitle("Board"), BoardPage(nil, nil, nil, nil, defaultBoardStatusMap(), userFacingError(err)))
 	}
@@ -495,7 +495,7 @@ func (s *Server) uiBoardPartial(c echo.Context) error {
 // from the drawer closes it. actionErr, when non-nil, becomes the error banner.
 func (s *Server) renderBoardColumns(c echo.Context, actionErr error) error {
 	ctx := c.Request().Context()
-	items, err := s.memory.ListWorkItems(ctx, "", "", boardItemLimit)
+	items, err := s.memory.ListWorkItems(ctx, "", "", boardItemLimit, false)
 	errMsg := ""
 	if actionErr != nil {
 		errMsg = actionErr.Error()
@@ -512,7 +512,7 @@ func (s *Server) renderBoardColumns(c echo.Context, actionErr error) error {
 // after a cancelled drag).
 func (s *Server) renderBoardPartial(c echo.Context, actionErr error) error {
 	ctx := c.Request().Context()
-	items, err := s.memory.ListWorkItems(ctx, "", "", boardItemLimit)
+	items, err := s.memory.ListWorkItems(ctx, "", "", boardItemLimit, false)
 	errMsg := ""
 	if actionErr != nil {
 		errMsg = actionErr.Error()

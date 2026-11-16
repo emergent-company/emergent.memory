@@ -1196,13 +1196,14 @@ func (s *Server) chatScheduledRuns(ctx context.Context, appearances map[string]a
 
 // chatWorkRuns collects the project's object-driven (board/work) runs and its
 // extraction runs for the chat session rail. Each run row is matched (once, in
-// Go) against the work-item board projection so its title is the work item's key
-// when known, falling back to the run agent's name. Rows inherit the run agent's
-// definition appearance.
+// Go) against the work-item board projection so its title is the work item's
+// label when known (the same name → key → type+id rule the board card uses),
+// falling back to the run agent's name. Rows inherit the run agent's definition
+// appearance.
 func (s *Server) chatWorkRuns(ctx context.Context, appearances map[string]agentAppearance) []workRunRow {
 	// A board-listing failure must not hide the extraction rows below.
 	runs, _ := s.memory.ListBoardRuns(ctx, 50)
-	items, _ := s.memory.ListWorkItems(ctx, "", "", 1000)
+	items, _ := s.memory.ListWorkItems(ctx, "", "", 1000, false)
 	bySubject := make(map[string]WorkItem, len(items))
 	for _, it := range items {
 		if it.CanonicalID != "" {
@@ -1213,8 +1214,11 @@ func (s *Server) chatWorkRuns(ctx context.Context, appearances map[string]agentA
 	for _, r := range runs {
 		title := r.AgentName
 		if r.SubjectObjectID != nil {
+			// Same label rule as the board card: name, else a human key, else
+			// type + short id. A machine dedup key is an identity, not a title.
+			// Keyless objects still fall back to the run agent's name, as before.
 			if it, ok := bySubject[*r.SubjectObjectID]; ok && it.Key != "" {
-				title = it.Key
+				title = workItemLabel(it)
 			}
 		}
 		ap := appearances[r.AgentID]

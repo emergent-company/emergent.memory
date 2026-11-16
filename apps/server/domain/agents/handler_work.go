@@ -65,9 +65,13 @@ type UpdateWorkItemStatusDTO struct {
 // work object's HEAD joined to its latest run's execution status, plus the
 // derived unroutable flag.
 type WorkItemDTO struct {
-	ProjectID             string `json:"projectId"`
-	CanonicalID           string `json:"canonicalId"`
-	Type                  string `json:"type"`
+	ProjectID   string `json:"projectId"`
+	CanonicalID string `json:"canonicalId"`
+	Type        string `json:"type"`
+	// Name is the HEAD's first-class human title (the `name` column), empty when
+	// the object has none. Ref is the display-only "#<12 hex>" identity.
+	Name                  string `json:"name"`
+	Ref                   string `json:"ref"`
 	Key                   string `json:"key"`
 	Status                string `json:"status"`
 	Assignee              string `json:"assignee"`
@@ -85,16 +89,23 @@ type WorkItemDTO struct {
 	BlockReason           string `json:"blockReason,omitempty"`
 	BlockedAt             string `json:"blockedAt,omitempty"`
 	Unroutable            bool   `json:"unroutable"`
+	// Properties is the HEAD's property bag, so a card can render the same
+	// excerpt the objects page renders without a second fetch.
+	Properties map[string]any `json:"properties,omitempty"`
 }
 
-func toWorkItemDTO(it *graph.WorkItem) *WorkItemDTO {
+// toWorkItemDTO maps a work item to its wire projection. includeProperties
+// decides whether the HEAD's property bag rides along: a card excerpt needs it,
+// a bulk run→item join does not (the bag can hold a full body of text).
+func toWorkItemDTO(it *graph.WorkItem, includeProperties bool) *WorkItemDTO {
 	if it == nil {
 		return nil
 	}
-	return &WorkItemDTO{
+	dto := &WorkItemDTO{
 		ProjectID:             it.ProjectID,
 		CanonicalID:           it.CanonicalID,
 		Type:                  it.Type,
+		Ref:                   it.Ref,
 		Key:                   it.Key,
 		Status:                it.Status,
 		Assignee:              it.Assignee,
@@ -113,6 +124,13 @@ func toWorkItemDTO(it *graph.WorkItem) *WorkItemDTO {
 		NextRunAt:             formatTimePtr(it.NextRunAt),
 		BlockedAt:             formatTimePtr(it.BlockedAt),
 	}
+	if includeProperties {
+		dto.Properties = it.Properties
+	}
+	if it.Name != nil {
+		dto.Name = *it.Name
+	}
+	return dto
 }
 
 func formatTimePtr(t *time.Time) string {
@@ -183,7 +201,7 @@ func (h *Handler) GetWorkItem(c echo.Context) error {
 		return err
 	}
 	dto := &WorkItemDetailDTO{
-		Item:     toWorkItemDTO(detail.Item),
+		Item:     toWorkItemDTO(detail.Item, true),
 		Feedback: make([]WorkItemFeedbackDTO, 0, len(detail.Feedback)),
 		Comments: make([]WorkItemCommentDTO, 0, len(detail.Comments)),
 		Runs:     make([]WorkItemRunDTO, 0, len(detail.Runs)),
@@ -237,13 +255,14 @@ func (h *Handler) GetWorkItem(c echo.Context) error {
 // ListWorkItems handles GET /api/projects/:projectId/work-items
 //
 // @Summary      List work items
-// @Description  Returns the Kanban projection of board-enabled work items (object HEAD joined to latest run), filterable by status and type
+// @Description  Returns the Kanban projection of board-enabled work items (object HEAD joined to latest run), filterable by status and type. Property bags are only included on request (`include=properties`): a board page renders a card excerpt from them, while a caller that only needs identities (a run→item join over 1000 items) should not pay for the full text.
 // @Tags         agents
 // @Produce      json
 // @Param        projectId path string true "Project ID"
 // @Param        status query string false "Filter by work status"
 // @Param        type query string false "Filter by object type"
 // @Param        limit query int false "Max items (default 200, max 1000)"
+// @Param        include query string false "Comma-separated extras; the only supported value is `properties` (the HEAD property bag, for a card excerpt)"
 // @Success      200 {object} APIResponse[[]WorkItemDTO] "Work items"
 // @Router       /api/projects/{projectId}/work-items [get]
 // @Security     bearerAuth
@@ -264,9 +283,15 @@ func (h *Handler) ListWorkItems(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	includeProperties := false
+	for _, want := range strings.Split(c.QueryParam("include"), ",") {
+		if strings.TrimSpace(want) == "properties" {
+			includeProperties = true
+		}
+	}
 	out := make([]*WorkItemDTO, 0, len(items))
 	for _, it := range items {
-		out = append(out, toWorkItemDTO(it))
+		out = append(out, toWorkItemDTO(it, includeProperties))
 	}
 	return c.JSON(http.StatusOK, SuccessResponse(out))
 }
