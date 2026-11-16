@@ -344,8 +344,10 @@ guard. The rules:
   and not one that left no index at all.
 - **Index names stay unqualified** in `CREATE INDEX`; the schema comes from the
   table reference.
-- **Adding a foreign key?** Add the index for the referencing column in the same
-  change — every org- and project-scoped table already carries one — and split the
+- **Adding a foreign key?** Add the index for the referencing column when the
+  child table is large or an org/project delete matters — most scoped tables
+  already carry one, but not all (`kb.projects` and `kb.backup_schedules` are the
+  org-side exceptions, 8 of the 46 project FKs have none) — and split the
   constraint: `ADD CONSTRAINT … NOT VALID` in one migration, `VALIDATE CONSTRAINT`
   in the next (`00257` -> `00258`, `00266` -> `00267`, `00306` -> `00308`). Both
   statements in one transaction hold the `ADD`'s `SHARE ROW EXCLUSIVE` — which

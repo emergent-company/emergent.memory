@@ -23,8 +23,8 @@
 --
 -- This migration ONLY adds the constraints, NOT VALID. That is metadata: no
 -- scan, no table rewrite, so each statement finishes immediately and the lock is
--- released when the transaction commits (the whole file, eight statements, is
--- one transaction). New writes are checked from that moment.
+-- released when the transaction commits (the whole Up, four statements, is one
+-- transaction). New writes are checked from that moment.
 --
 -- Lock profile, since it is the point of the split: ADD CONSTRAINT ... FOREIGN
 -- KEY ... NOT VALID takes SHARE ROW EXCLUSIVE on the child table — it blocks
