@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../fixtures';
 
 // Hermetic (no-auth, mock-backed) coverage for the provider-generic OAuth
 // data-source connect UI. Runs against the dev-mode mock harness (see
@@ -298,8 +298,9 @@ test.describe('provider-generic OAuth data-source connect', () => {
     await expect(page.getByTestId('ds-oauth-app-add')).toBeVisible();
     await expect(page.getByTestId('ds-oauth-app-form')).toHaveCount(0);
     await page.getByTestId('ds-oauth-app-add').click();
-    // The canonical org scope prefix is `/o/<org>`: a legacy `/orgs/<org>` path
-    // is 302'd there, so only the tail of the editor route is asserted.
+    // The canonical org scope prefix is `/o/<org>`: the href is rewritten at
+    // render time by rewriteScopedHTML → scopedPathFor (gateway/scope.go), not by
+    // a 302 from `/orgs/<org>`, so only the tail of the editor route is asserted.
     await expect(page).toHaveURL(/\/settings\/oauth-apps\/new$/);
     await expect(page.getByTestId('ds-oauth-app-form')).toBeVisible();
 

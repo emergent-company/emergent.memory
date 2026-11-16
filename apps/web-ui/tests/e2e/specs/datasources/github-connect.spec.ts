@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../fixtures';
 import {
   SEEDED_GITHUB_CREDENTIAL_ID,
   createGitHubSource,
