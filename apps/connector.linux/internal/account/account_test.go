@@ -590,6 +590,125 @@ func TestRefreshWithoutSession(t *testing.T) {
 	}
 }
 
+// TestUpdateSessionWaitsForTheRefreshLock is the reason the API exists: the
+// read-modify-write must not run while a refresh holds the cross-process lock,
+// or it would save a session built from the pre-rotation refresh token.
+func TestUpdateSessionWaitsForTheRefreshLock(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(dir)
+	serverURL := "https://memory.example.test"
+	if err := m.Save(serverURL, &Session{AccessToken: "access-1", RefreshToken: "refresh-1"}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Stand in for an in-flight refresh: the winner takes the lock, reads the
+	// pre-rotation token, rotates, and only then releases the lock.
+	unlock, err := m.lockRefresh(serverURL)
+	if err != nil {
+		t.Fatalf("lockRefresh: %v", err)
+	}
+	mutated := make(chan string, 1)
+	done := make(chan error, 1)
+	go func() {
+		_, err := m.UpdateSession(serverURL, func(s *Session) error {
+			mutated <- s.RefreshToken
+			s.AccessToken = "access-imported"
+			return nil
+		})
+		done <- err
+	}()
+
+	select {
+	case token := <-mutated:
+		t.Fatalf("UpdateSession ran with refresh token %q while the lock was held", token)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	// The refresh persists its rotated pair before dropping the lock.
+	if err := m.Save(serverURL, &Session{AccessToken: "access-rotated", RefreshToken: "refresh-2"}); err != nil {
+		t.Fatalf("save rotated session: %v", err)
+	}
+	unlock()
+
+	if err := <-done; err != nil {
+		t.Fatalf("UpdateSession: %v", err)
+	}
+	if token := <-mutated; token != "refresh-2" {
+		t.Errorf("mutator saw refresh token %q, want the rotated refresh-2", token)
+	}
+	stored, err := m.SessionFor(serverURL)
+	if err != nil || stored == nil {
+		t.Fatalf("SessionFor = (%v, %v)", stored, err)
+	}
+	if stored.AccessToken != "access-imported" {
+		t.Errorf("AccessToken = %q, want the mutation's access-imported", stored.AccessToken)
+	}
+	if stored.RefreshToken != "refresh-2" {
+		t.Errorf("RefreshToken = %q, want refresh-2 (the rotation must survive the update)", stored.RefreshToken)
+	}
+}
+
+// TestUpdateSessionMutatorErrorWritesNothing keeps the read-modify-write atomic
+// on the failure path too.
+func TestUpdateSessionMutatorErrorWritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(dir)
+	serverURL := "https://memory.example.test"
+	if err := m.Save(serverURL, &Session{AccessToken: "access-1", RefreshToken: "refresh-1"}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	wantErr := errors.New("mutator refused")
+	sess, err := m.UpdateSession(serverURL, func(s *Session) error {
+		s.AccessToken = "access-should-not-persist"
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("UpdateSession error = %v, want the mutator's error", err)
+	}
+	if sess != nil {
+		t.Errorf("UpdateSession session = %+v, want nil on a mutator error", sess)
+	}
+	stored, err := m.SessionFor(serverURL)
+	if err != nil || stored == nil {
+		t.Fatalf("SessionFor = (%v, %v)", stored, err)
+	}
+	if stored.AccessToken != "access-1" {
+		t.Errorf("AccessToken = %q, want the unchanged access-1", stored.AccessToken)
+	}
+}
+
+// TestUpdateSessionCreatesAnAbsentSession is what `auth import` relies on: an
+// import into a fresh store starts from an empty document instead of failing.
+func TestUpdateSessionCreatesAnAbsentSession(t *testing.T) {
+	m := NewManager(t.TempDir())
+	serverURL := "https://memory.example.test"
+
+	sawEmpty := false
+	sess, err := m.UpdateSession(serverURL, func(s *Session) error {
+		sawEmpty = s.AccessToken == "" && s.RefreshToken == "" && s.ServerURL == serverURL
+		s.AccessToken = "access-new"
+		s.RefreshToken = "refresh-new"
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("UpdateSession: %v", err)
+	}
+	if !sawEmpty {
+		t.Error("mutator did not start from an empty document with the server URL set")
+	}
+	if sess.AccessToken != "access-new" || sess.ServerURL != serverURL {
+		t.Errorf("returned session = %+v", sess)
+	}
+	stored, err := m.SessionFor(serverURL)
+	if err != nil || stored == nil {
+		t.Fatalf("SessionFor = (%v, %v), want the created session", stored, err)
+	}
+	if stored.AccessToken != "access-new" || stored.RefreshToken != "refresh-new" {
+		t.Errorf("stored session = %+v", stored)
+	}
+}
+
 func TestImportCLISessionReadsWithoutMutating(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "credentials.json")
 	body := `{"access_token":"cli-access","refresh_token":"cli-refresh","expires_at":"2030-01-02T03:04:05Z","user_email":"cli@example.com","issuer_url":"https://issuer.test"}`

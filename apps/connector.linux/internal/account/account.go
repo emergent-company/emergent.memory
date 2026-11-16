@@ -225,6 +225,48 @@ func (m *Manager) Save(serverURL string, s *Session) error {
 	return m.store().Save(accountFileName(serverURL), b)
 }
 
+// UpdateSession runs mutate over the stored session for serverURL and saves the
+// result, holding the same cross-process refresh lock (and in-process mutex)
+// that Refresh takes for the whole read-modify-write. A caller that changes the
+// session outside a refresh must use this instead of SessionFor + Save:
+// refresh tokens are single-use, so a refresh that rotates the token between an
+// unlocked read and its Save would be overwritten, leaving a session that is
+// stale by construction.
+//
+// When no session is stored the mutator starts from an empty document (with
+// ServerURL set), so a caller can create one; Save creates the file. A mutator
+// error is returned (wrapped) and nothing is written. The saved, mutated
+// document is returned. mutate must not retain the pointer.
+func (m *Manager) UpdateSession(serverURL string, mutate func(*Session) error) (*Session, error) {
+	if mutate == nil {
+		return nil, errors.New("account: nil session mutator")
+	}
+	// Same order as Refresh: the cross-process lock first, then refreshMu.
+	unlock, err := m.lockRefresh(serverURL)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+
+	m.refreshMu.Lock()
+	defer m.refreshMu.Unlock()
+
+	sess, err := m.SessionFor(serverURL)
+	if err != nil {
+		return nil, err
+	}
+	if sess == nil {
+		sess = &Session{ServerURL: serverURL}
+	}
+	if err := mutate(sess); err != nil {
+		return nil, fmt.Errorf("account: update session for %s: %w", serverURL, err)
+	}
+	if err := m.Save(serverURL, sess); err != nil {
+		return nil, err
+	}
+	return sess, nil
+}
+
 // SessionFor returns the stored session for serverURL, or (nil, nil) when none
 // is stored.
 func (m *Manager) SessionFor(serverURL string) (*Session, error) {
