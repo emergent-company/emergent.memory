@@ -294,12 +294,18 @@ func processingRetryFormAttrs(r processingRetryAction) templ.Attributes {
 
 // sidebarWarnBadge is the Documents nav count. It counts document problems
 // only; other areas will get their own badges if they need one.
+//
+// No class goes through Attrs: ui.Badge emits its own class attribute before
+// spreading Attrs (go-daisy#150 has no Class prop), so a caller "class" renders
+// a second attribute and is silently dropped. The nav row's own `gap-2`
+// (layout.SidebarNavItem -> `.menu-item`) spaces the badge from the label, and
+// app.css orders it to the row's trailing edge.
 templ sidebarWarnBadge(n int) {
 	@ui.Badge(ui.BadgeProps{
 		Label:   processingBadgeCount(n),
 		Variant: ui.BadgeError,
 		Size:    ui.BadgeSizeXS,
-		Attrs:   templ.Attributes{"data-testid": "documents-problem-badge", "class": "ml-1"},
+		Attrs:   templ.Attributes{"data-testid": "documents-problem-badge"},
 	})
 }
 

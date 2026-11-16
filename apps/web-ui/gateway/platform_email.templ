@@ -32,11 +32,17 @@ templ PlatformEmailSettingsPage(data platformEmailData) {
 		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Platform email")), "", "Platform email", "Instance-wide SMTP for Zitadel and Memory. Only a platform superadmin can change this.", detailHeaderOpts{Margin: "mb-6"}) {
 		}
 		@flashToasts(data.FlashMsg, data.FlashErr)
+		{{/* ui.Alert has no Class prop (go-daisy#150) and a "class" in Attrs renders a
+		     second class attribute the browser drops, so a wrapper carries the margin. */}}
 		if data.TestMsg != "" {
-			@ui.Alert(ui.AlertProps{Type: ui.AlertSuccess, Message: data.TestMsg, Attrs: templ.Attributes{"class": "mb-4"}})
+			<div class="mb-4">
+				@ui.Alert(ui.AlertProps{Type: ui.AlertSuccess, Message: data.TestMsg})
+			</div>
 		}
 		if data.TestErr != nil {
-			@ui.Alert(ui.AlertProps{Type: ui.AlertError, Message: data.TestErr.Error(), Attrs: templ.Attributes{"class": "mb-4"}})
+			<div class="mb-4">
+				@ui.Alert(ui.AlertProps{Type: ui.AlertError, Message: data.TestErr.Error()})
+			</div>
 		}
 		if data.LoadErr != nil {
 			@pageErrorNotice("Email settings unavailable", data.LoadErr)

@@ -107,13 +107,16 @@ templ runMetaHeader(full *AgentRunFull, trace runTraceMeta) {
 		@monoMeta(run.ID, "text-muted-faint")
 	</div>
 	if run.ErrorMessage != nil && *run.ErrorMessage != "" {
-		@ui.Alert(ui.AlertProps{
-			Type:    ui.AlertError,
-			Style:   ui.AlertStyleOutline,
-			Icon:    "lucide--circle-x",
-			Message: "This run failed: " + *run.ErrorMessage,
-			Attrs:   templ.Attributes{"class": "mb-4"},
-		})
+		{{/* ui.Alert has no Class prop (go-daisy#150) and a "class" in Attrs renders a
+		     second class attribute the browser drops, so a wrapper carries the margin. */}}
+		<div class="mb-4">
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertError,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--circle-x",
+				Message: "This run failed: " + *run.ErrorMessage,
+			})
+		</div>
 	}
 	if s := scheduledRunPreview(*run, run.AgentName); s != "" {
 		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Class: "mb-4"}) {

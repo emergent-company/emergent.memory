@@ -101,23 +101,30 @@ templ boardHealth(agents []ScheduledAgent) {
 templ BoardColumns(items []WorkItem, statuses []string, allowances boardAllowances, statusMap boardStatusMap, errMsg string) {
 	<div id="board" data-testid="board" tabindex="-1" data-board-status-map={ statusMap.statusMapJSON() }>
 		if errMsg != "" {
-			@ui.Alert(ui.AlertProps{
-				Type:    ui.AlertError,
-				Style:   ui.AlertStyleOutline,
-				Icon:    "lucide--circle-x",
-				Message: errMsg,
-				Attrs:   templ.Attributes{"class": "mb-4"},
-			})
+			{{/* ui.Alert has no Class prop (go-daisy#150) and a "class" in Attrs renders a
+			     second class attribute the browser drops, so a wrapper carries the margin. */}}
+			<div class="mb-4">
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertError,
+					Style:   ui.AlertStyleOutline,
+					Icon:    "lucide--circle-x",
+					Message: errMsg,
+				})
+			</div>
 		}
 		{{ cols := buildBoardColumns(items, statuses) }}
 		if len(items) >= boardItemLimit {
-			@ui.Alert(ui.AlertProps{
-				Type:    ui.AlertInfo,
-				Style:   ui.AlertStyleSoft,
-				Icon:    "lucide--list-filter",
-				Message: "Showing the newest " + strconv.Itoa(boardItemLimit) + " work items — older items are not listed. Review them from the object list.",
-				Attrs:   templ.Attributes{"class": "mb-4", "data-testid": "board-cap-notice"},
-			})
+			{{/* ui.Alert has no Class prop (go-daisy#150) and a "class" in Attrs renders a
+			     second class attribute the browser drops, so a wrapper carries the margin. */}}
+			<div class="mb-4">
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertInfo,
+					Style:   ui.AlertStyleSoft,
+					Icon:    "lucide--list-filter",
+					Message: "Showing the newest " + strconv.Itoa(boardItemLimit) + " work items — older items are not listed. Review them from the object list.",
+					Attrs:   templ.Attributes{"data-testid": "board-cap-notice"},
+				})
+			</div>
 		}
 		if len(items) == 0 {
 			@ui.EmptyState(ui.EmptyStateProps{

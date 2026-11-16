@@ -54,6 +54,11 @@ templ ApprovalsPage(approvals []ToolApprovalItem, questions []AgentQuestionItem,
 // (pending tool approvals plus unanswered questions). It is an attention cue,
 // not a failure — a pending approval is normal operation — so it uses the
 // primary intent rather than the Documents badge's error intent.
+//
+// No class goes through Attrs: ui.Badge emits its own class attribute before
+// spreading Attrs (go-daisy#150 has no Class prop), so a caller "class" renders
+// a second attribute and is silently dropped. The nav row's own `gap-2`
+// (layout.SidebarNavItem -> `.menu-item`) spaces the badge from the label.
 templ sidebarApprovalsBadge(n int) {
 	@ui.Badge(ui.BadgeProps{
 		Label:   processingBadgeCount(n),
@@ -62,7 +67,6 @@ templ sidebarApprovalsBadge(n int) {
 		Attrs: templ.Attributes{
 			"data-testid": "approvals-nav-badge",
 			"title":       "Items waiting for your input",
-			"class":       "ml-1",
 		},
 	})
 }

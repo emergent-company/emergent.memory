@@ -9,6 +9,11 @@ import ui "github.com/emergent-company/go-daisy/components/ui"
 // is what makes it worth looking at — a badge on every project would be noise.
 // The detail lives in the title attribute, because the nav has no room for the
 // numbers.
+//
+// No class goes through Attrs: ui.Badge emits its own class attribute before
+// spreading Attrs (go-daisy#150 has no Class prop), so a caller "class" renders
+// a second attribute and is silently dropped. The nav row's own `gap-2`
+// (layout.SidebarNavItem -> `.menu-item`) spaces the badge from the label.
 templ sidebarBudgetBadge(level string) {
 	if level == "exhausted" {
 		@ui.Badge(ui.BadgeProps{
@@ -20,7 +25,6 @@ templ sidebarBudgetBadge(level string) {
 				"data-testid": "budget-nav-badge",
 				"data-level":  "exhausted",
 				"title":       "A budget window is exhausted — agent runs are blocked until it resets",
-				"class":       "ml-1",
 			},
 		})
 	} else if level == "warning" {
@@ -33,7 +37,6 @@ templ sidebarBudgetBadge(level string) {
 				"data-testid": "budget-nav-badge",
 				"data-level":  "warning",
 				"title":       "A budget window has crossed its alert threshold",
-				"class":       "ml-1",
 			},
 		})
 	}
