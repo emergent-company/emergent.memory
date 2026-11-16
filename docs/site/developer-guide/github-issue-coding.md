@@ -60,8 +60,8 @@ responsible for issues this source starts. On opening or reopening an issue,
 the integration:
 
 1. reads the live issue and refuses to start if another agent has claimed it
-   (any `status: blocked`, or `status: in-progress` without
-   `manager: memory-coding`), or if it is assigned to someone else;
+   (any `status: blocked`, any other `manager:` label, or `status: in-progress`
+   without `manager: memory-coding`), or if it is assigned to someone else;
 2. creates the claim labels when the repository does not have them yet;
 3. assigns the configured responsible user;
 4. adds `status: in-progress` and `manager: memory-coding`; and

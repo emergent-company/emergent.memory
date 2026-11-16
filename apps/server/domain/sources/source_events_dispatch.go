@@ -803,7 +803,7 @@ func (d *SourceEventDispatcher) processIssueSource(ctx context.Context, v *Verif
 		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
 		return err
 	}
-	checkClaim := trigger != nil && !closed && (wantStart || (existing != nil && status == "ready"))
+	checkClaim := trigger != nil && !closed && (wantStart || (existing != nil && (status == "ready" || status == "in_progress")))
 	claim := issueClaimResult{}
 	if checkClaim {
 		claim, err = d.claimIssue(ctx, v, src, repoName, agentName)
