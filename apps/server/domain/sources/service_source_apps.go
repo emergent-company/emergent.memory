@@ -542,12 +542,29 @@ func (s *Service) resolveTriggerAgentID(ctx context.Context, projectID uuid.UUID
 		return "", apperror.NewInternal("agent resolver is not configured", nil)
 	}
 	projectIDStr := projectID.String()
+	// A disabled definition cannot run: its runs fail as "agent is disabled" in
+	// the worker, so accepting the bind would leave a binding that queues work it
+	// can never run. Refuse the bind here rather than in the shared resolver —
+	// A2A/MCP resolution deliberately resolves disabled agents and must keep
+	// reporting "agent is disabled".
+	if def, err := s.agentRepo.FindDefinitionByID(ctx, agentID.String(), &projectIDStr); err != nil {
+		return "", apperror.NewInternal("failed to resolve agent", err)
+	} else if def != nil && !def.Enabled {
+		return "", apperror.NewValidation("agent " + def.Name + " is disabled; enable it before binding a trigger")
+	}
 	agent, err := s.agentRepo.ResolveRuntimeAgentByID(ctx, projectIDStr, agentID.String())
 	if err != nil {
 		return "", apperror.NewInternal("failed to resolve agent", err)
 	}
 	if agent == nil {
 		return "", apperror.NewNotFound("Agent", raw)
+	}
+	// A disabled runtime agent (not only a disabled definition) cannot run: its
+	// runs fail as "agent is disabled" in the worker, so accepting the bind would
+	// leave a binding that queues work it can never run. The definition check
+	// above covers definition ids; this covers a disabled runtime-agent id.
+	if !agent.Enabled {
+		return "", apperror.NewValidation("agent " + agent.Name + " is disabled; enable it before binding a trigger")
 	}
 	return agent.ID, nil
 }

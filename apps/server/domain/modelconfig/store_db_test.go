@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -113,6 +114,105 @@ func TestUpsertProjectModelConfigPatchSemantics(t *testing.T) {
 		t.Errorf("embedding = %q, want the stored value preserved", saved.EmbeddingModel)
 	}
 }
+
+// TestUpsertProjectModelConfigCreatesEmptySlugs pins #730 §1: a row created by a
+// partial patch stores the empty string (not NULL) in the model columns it does
+// not name. The
+// two provider-slug columns added by migration 00189 are nullable with no
+// default, so an INSERT that named only project_id left the unnamed pair NULL —
+// a second representation of "unset" that migration 00189 also reads as "legacy
+// row needing slug resolution". Reading the columns back as NULL-ness rather
+// than as Go strings is what makes the assertion sharp: bun decodes NULL into ""
+// for a non-pointer string, which is why the existing assertions could not see it.
+func TestUpsertProjectModelConfigCreatesEmptySlugs(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	ctx := context.Background()
+	tdb := testdb.SetupTestDBOrFail(t, ctx, "mc_empty_slugs")
+	t.Cleanup(tdb.Close)
+	store := NewStore(tdb.DB, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	projectID := seedModelConfigProject(t, ctx, tdb, "empty_slugs")
+
+	genSlug := "google-vertex"
+	if _, err := store.UpsertProjectModelConfig(ctx, projectID, ProjectModelConfigPatch{
+		GenerativeModel:        strPtr("gemini-2.5-flash"),
+		GenerativeProviderSlug: &genSlug,
+	}); err != nil {
+		t.Fatalf("generative-only upsert: %v", err)
+	}
+
+	var row struct {
+		EmbeddingModelNull    bool `bun:"embedding_model_null"`
+		EmbeddingSlugNull     bool `bun:"embedding_slug_null"`
+		GenerativeSlugNull    bool `bun:"generative_slug_null"`
+		EmbeddingModelIsEmpty bool `bun:"embedding_model_is_empty"`
+		EmbeddingSlugIsEmpty  bool `bun:"embedding_slug_is_empty"`
+	}
+	if err := tdb.DB.NewRaw(`SELECT
+			embedding_model IS NULL               AS embedding_model_null,
+			embedding_provider_slug IS NULL       AS embedding_slug_null,
+			generative_provider_slug IS NULL      AS generative_slug_null,
+			embedding_model = ''                  AS embedding_model_is_empty,
+			embedding_provider_slug = ''          AS embedding_slug_is_empty
+		FROM kb.project_model_config WHERE project_id = ?`, projectID).Scan(ctx, &row); err != nil {
+		t.Fatalf("read raw columns: %v", err)
+	}
+	if row.EmbeddingModelNull || row.EmbeddingSlugNull || row.GenerativeSlugNull {
+		t.Errorf("created row has a NULL model column (embedding_model=%t, embedding_provider_slug=%t, generative_provider_slug=%t), want '' for every unnamed column",
+			row.EmbeddingModelNull, row.EmbeddingSlugNull, row.GenerativeSlugNull)
+	}
+	if !row.EmbeddingModelIsEmpty || !row.EmbeddingSlugIsEmpty {
+		t.Errorf("unnamed embedding columns are not '' (embedding_model=%t, embedding_provider_slug=%t)",
+			row.EmbeddingModelIsEmpty, row.EmbeddingSlugIsEmpty)
+	}
+}
+
+// TestUpsertProjectModelConfigEmptyPatchKeepsUpdatedAt pins the documented no-op
+// from #730 §2: an empty patch must not move updated_at. The timestamp is pinned
+// with a real write rather than a sleep, so the test is deterministic and also
+// catches an implementation that always bumps the column.
+func TestUpsertProjectModelConfigEmptyPatchKeepsUpdatedAt(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	ctx := context.Background()
+	tdb := testdb.SetupTestDBOrFail(t, ctx, "mc_empty_patch")
+	t.Cleanup(tdb.Close)
+	store := NewStore(tdb.DB, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	projectID := seedModelConfigProject(t, ctx, tdb, "empty_patch")
+
+	if _, err := store.UpsertProjectModelConfig(ctx, projectID, ProjectModelConfigPatch{
+		GenerativeModel: strPtr("deepseek-v4-flash"),
+	}); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+
+	// Pin updated_at in the past so any write at NOW() is unmistakable.
+	pinned := time.Now().UTC().Add(-42 * time.Minute).Truncate(time.Microsecond)
+	if _, err := tdb.DB.ExecContext(ctx,
+		`UPDATE kb.project_model_config SET updated_at = ? WHERE project_id = ?`,
+		pinned, projectID); err != nil {
+		t.Fatalf("pin updated_at: %v", err)
+	}
+
+	saved, err := store.UpsertProjectModelConfig(ctx, projectID, ProjectModelConfigPatch{})
+	if err != nil {
+		t.Fatalf("empty-patch upsert: %v", err)
+	}
+	if !saved.UpdatedAt.Equal(pinned) {
+		t.Errorf("empty patch moved updated_at: returned %v, want the pinned %v", saved.UpdatedAt, pinned)
+	}
+	stored := loadModelConfig(t, ctx, store, projectID)
+	if !stored.UpdatedAt.Equal(pinned) {
+		t.Errorf("empty patch persisted a new updated_at: stored %v, want the pinned %v", stored.UpdatedAt, pinned)
+	}
+	if stored.GenerativeModel != "deepseek-v4-flash" {
+		t.Errorf("empty patch changed generative_model to %q, want it preserved", stored.GenerativeModel)
+	}
+}
+
+func strPtr(s string) *string { return &s }
 
 // TestUpsertProjectModelConfigConcurrentPartialUpdates is the regression test
 // for #708. Two concurrent partial updates — one naming generative, one naming

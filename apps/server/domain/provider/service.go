@@ -192,9 +192,19 @@ func (s *CredentialService) Resolve(ctx context.Context, provider ProviderType) 
 }
 
 // providerLookupMiss explains a failed resolution by naming what was looked for
-// and what the project actually has, so an operator who mistyped an instance
-// slug is not sent to configure a dialect instance that is not the one they
-// meant (#709). The instance list is only read on the error path.
+// and what the project actually has, so an operator can see which instances the
+// project does have without opening the provider page (#709). The instance list
+// is only read on the error path.
+//
+// Reach: this runs only after the name has been resolved to a supported dialect
+// (directly, or through an accepted alias such as "gemini" → "google") and that
+// dialect's config is missing. A name that is neither a dialect nor an alias
+// never gets here — it is looked up as a project instance slug first and then,
+// if no such slug exists, fails earlier with "unsupported provider: <name>".
+// So a mistyped instance slug does *not* receive the "the project's provider
+// instances are …" hint; narrowing the wording rather than rerouting that case
+// keeps Resolve's unsupported-provider error (pinned by
+// service_slug_first_resolve_db_test.go) intact (issue #730 §3).
 func (s *CredentialService) providerLookupMiss(ctx context.Context, projectID string, requested, dialect ProviderType) error {
 	instances, err := s.repo.ListProjectProviderConfigs(ctx, projectID)
 	if err != nil || len(instances) == 0 {

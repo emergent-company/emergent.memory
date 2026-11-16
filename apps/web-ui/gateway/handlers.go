@@ -56,6 +56,13 @@ type Server struct {
 	// problemsMu.
 	problemsMu    sync.Mutex
 	problemsCache map[string]processingProblemsEntry
+	// Pending human-input cache backing the Approvals sidebar badge: each
+	// project's pending approval + question count lives ~pendingInputTTL so a
+	// page render does not pay two list round trips on the critical path. A
+	// decision handled by this gateway deletes the entry so the badge drops at
+	// once. Guarded by pendingInputMu.
+	pendingInputMu    sync.Mutex
+	pendingInputCache map[string]pendingInputEntry
 	// Budget-state cache backing the Usage sidebar badge: each project's
 	// week/month budget position lives ~budgetStateTTL so a page render does not
 	// pay an extra round trip on the critical path (and the badge never needs a
@@ -299,6 +306,7 @@ func (s *Server) respondQuestion(c echo.Context) error {
 		captureError(err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "memory service unavailable"})
 	}
+	s.invalidatePendingInputCount(c.Request().Context())
 	return c.JSON(http.StatusOK, map[string]any{
 		"ok":          true,
 		"questionId":  result.QuestionID,
@@ -312,6 +320,7 @@ func (s *Server) cancelQuestion(c echo.Context) error {
 		captureError(err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "memory service unavailable"})
 	}
+	s.invalidatePendingInputCount(c.Request().Context())
 	return c.JSON(http.StatusOK, map[string]any{
 		"ok":          true,
 		"questionId":  result.QuestionID,

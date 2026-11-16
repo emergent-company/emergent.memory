@@ -36,9 +36,21 @@ type usageChartPoint struct {
 
 // usageChartPayload is embedded in the page as the #usage-timeseries JSON
 // script block consumed by usage-charts.js.
+//
+// Tokens and cost come from the usage ledger (they are what the bill is made
+// of); sessions counts chat conversations created per day, which is a different
+// thing from an agent run and is labelled as such on the page.
 type usageChartPayload struct {
 	Tokens   []usageChartPoint `json:"tokens"`
+	Cost     []usageCostPoint  `json:"cost"`
 	Sessions []usageChartPoint `json:"sessions"`
+}
+
+// usageCostPoint is one day of estimated spend. Cost is fractional, so it
+// cannot share usageChartPoint's integer value.
+type usageCostPoint struct {
+	Day   string  `json:"day"`
+	Value float64 `json:"value"`
 }
 
 // dayKey returns the UTC calendar-day key for a time.Time.
@@ -99,6 +111,25 @@ func sessionSeries(convs []Conversation, since, until time.Time) []usageChartPoi
 	return fillDaySeries(since, until, func(day string) int64 { return counts[day] })
 }
 
+// costSeries aggregates the daily time-series rows into estimated spend per
+// calendar day, zero-filled so the chart's x-axis stays continuous.
+func costSeries(rows []UsageTimeSeriesRow, since, until time.Time) []usageCostPoint {
+	totals := map[string]float64{}
+	for _, r := range rows {
+		t, err := time.Parse(time.RFC3339, r.Period)
+		if err != nil {
+			continue
+		}
+		totals[dayKey(t)] += r.EstimatedCostUSD
+	}
+	points := fillDaySeries(since, until, func(string) int64 { return 0 })
+	out := make([]usageCostPoint, len(points))
+	for i, p := range points {
+		out[i] = usageCostPoint{Day: p.Day, Value: totals[p.Day]}
+	}
+	return out
+}
+
 // totalTokens sums all token buckets across the summary rows.
 func totalTokens(rows []UsageSummaryRow) int64 {
 	var total int64
@@ -142,6 +173,8 @@ func (s *Server) uiUsage(c echo.Context) error {
 		monthErr   error
 		budget     *BudgetState
 		budgetErr  error
+		byAgent    *UsageByAgentResponse
+		byAgentErr error
 	)
 	var g errgroup.Group
 	g.Go(func() error { summary, summaryErr = s.memory.GetProjectUsageSummary(ctx, since, until); return nil })
@@ -151,6 +184,10 @@ func (s *Server) uiUsage(c echo.Context) error {
 	})
 	g.Go(func() error { convs, convsErr = s.memory.ListConversations(ctx, true); return nil })
 	g.Go(func() error { monthSum, monthErr = s.memory.GetProjectUsageSummary(ctx, monthStart, now); return nil })
+	// The per-agent breakdown is best-effort like the budget panels: a project
+	// whose backend does not know the endpoint yet still renders the rest of the
+	// dashboard, with the breakdown section saying it is unavailable.
+	g.Go(func() error { byAgent, byAgentErr = s.memory.GetProjectUsageByAgent(ctx, since, until); return nil })
 	// The usage page shows the authoritative figures, so it reads the state
 	// directly rather than through the badge's 60 s cache: an admin who just
 	// changed a cap in settings must not see the old one here. The reset handler
@@ -159,10 +196,12 @@ func (s *Server) uiUsage(c echo.Context) error {
 	_ = g.Wait()
 
 	data := usagePageData{
-		Budget:    budget,
-		BudgetErr: budgetErr,
-		Days:      days,
-		FlashMsg:  flashFromQuery(c, budgetResetParams),
+		Budget:     budget,
+		BudgetErr:  budgetErr,
+		ByAgent:    byAgent,
+		ByAgentErr: byAgentErr,
+		Days:       days,
+		FlashMsg:   flashFromQuery(c, budgetResetParams),
 		// Already rendered to readable wording by the reset handler before the
 		// redirect; a raw "memory 403 forbidden" would be useless here anyway.
 		FlashErr: flashError(c),
@@ -187,6 +226,7 @@ func (s *Server) uiUsage(c echo.Context) error {
 	data.Series = series
 	data.Payload = usageChartPayload{
 		Tokens:   tokenSeries(series.Data, since, until),
+		Cost:     costSeries(series.Data, since, until),
 		Sessions: sessionSeries(convs.Conversations, since, until),
 	}
 	if monthErr == nil && monthSum != nil {
@@ -244,15 +284,6 @@ func compactNum(n int64) string {
 	default:
 		return strconv.FormatInt(n, 10)
 	}
-}
-
-// chartSeriesTotal sums the values of a (zero-filled) chart series.
-func chartSeriesTotal(points []usageChartPoint) int64 {
-	var total int64
-	for _, p := range points {
-		total += p.Value
-	}
-	return total
 }
 
 // hasUsageData reports whether the page has anything to show: summary rows or

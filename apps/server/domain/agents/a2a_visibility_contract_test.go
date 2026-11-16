@@ -107,7 +107,9 @@ func newA2AVisibilityRepository(t *testing.T) *Repository {
 
 func newA2AVisibilityHandler(t *testing.T) *A2AHandler {
 	t.Helper()
-	return &A2AHandler{repo: newA2AVisibilityRepository(t), log: slog.Default()}
+	// The guard is stubbed open: this contract is about slug resolution, and the
+	// visibility driver answers only the queries that path issues.
+	return &A2AHandler{repo: newA2AVisibilityRepository(t), log: slog.Default(), authorizeProject: allowAnyProject}
 }
 
 // TestA2ASendMessage_InternalSlug_Returns400SkillNotFound pins the security

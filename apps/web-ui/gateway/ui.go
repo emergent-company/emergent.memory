@@ -116,11 +116,6 @@ func (s *Server) marketSidebarItems() []layout.SidebarItem {
 			Label: label,
 			Href:  issuer,
 			Icon:  "lucide--store",
-			Attrs: templ.Attributes{
-				"target":     "_blank",
-				"rel":        "noopener noreferrer",
-				"hx-disable": "true",
-			},
 		})
 	}
 	return items
@@ -180,19 +175,23 @@ type sidebarWarns struct {
 	// (a capped window crossed its alert threshold) or "exhausted" (a cap was
 	// hit, so agent runs are blocked).
 	Budget string
+	// Approvals counts human-input items waiting on the Approvals page:
+	// pending tool approvals plus unanswered agent questions.
+	Approvals int
 }
 
-// sidebarGroupsWithWarn is sidebarGroups plus the attention badges: Documents
-// (terminal failure count) and Usage (budget level). The Documents badge counts
-// document-related terminal failures only; other areas surface in the Documents
-// panel and can earn their own badge later.
+// sidebarGroupsWithWarn is sidebarGroups plus the attention badges: Approvals
+// (pending human-input count), Documents (terminal failure count) and Usage
+// (budget level). The Documents badge counts document-related terminal failures
+// only; other areas surface in the Documents panel and can earn their own badge
+// later.
 func sidebarGroupsWithWarn(base string, isOrgAdmin bool, warns sidebarWarns) []layout.SidebarGroup {
-	return sidebarGroupsWithMarket(base, isOrgAdmin, warns, nil)
+	return sidebarGroupsWithMarket(base, isOrgAdmin, warns)
 }
 
 // sidebarGroupsWithMarket is sidebarGroupsWithWarn plus the external marketplace
 // entries, which the page layer derives from config.
-func sidebarGroupsWithMarket(base string, isOrgAdmin bool, warns sidebarWarns, market []layout.SidebarItem) []layout.SidebarGroup {
+func sidebarGroupsWithMarket(base string, isOrgAdmin bool, warns sidebarWarns) []layout.SidebarGroup {
 	documentsItem := layout.SidebarItem{Label: "Documents", Href: base + "/documents", Icon: "lucide--file-text"}
 	if warns.Documents > 0 {
 		documentsItem.Warn = sidebarWarnBadge(warns.Documents)
@@ -200,6 +199,10 @@ func sidebarGroupsWithMarket(base string, isOrgAdmin bool, warns sidebarWarns, m
 	usageItem := layout.SidebarItem{Label: "Usage", Href: base + "/usage", Icon: "lucide--chart-column"}
 	if warns.Budget != "" {
 		usageItem.Warn = sidebarBudgetBadge(warns.Budget)
+	}
+	approvalsItem := layout.SidebarItem{Label: "Approvals", Href: base + "/settings/approvals", Icon: "lucide--shield-check"}
+	if warns.Approvals > 0 {
+		approvalsItem.Warn = sidebarApprovalsBadge(warns.Approvals)
 	}
 	memoryItems := []layout.SidebarItem{
 		{Label: "Objects", Href: base + "/objects", Icon: "lucide--box"},
@@ -225,12 +228,11 @@ func sidebarGroupsWithMarket(base string, isOrgAdmin bool, warns sidebarWarns, m
 		projectItems = append(projectItems, layout.SidebarItem{Label: "Backups", Href: base + "/backups", Icon: "lucide--archive"})
 	}
 	topItems := []layout.SidebarItem{
-		{Label: "Approvals", Href: base + "/settings/approvals", Icon: "lucide--shield-check"},
+		approvalsItem,
 		{Label: "Chat", Href: base + "/chat", Icon: "lucide--messages-square"},
 		{Label: "Search", Href: base + "/search", Icon: "lucide--search"},
 		{Label: "Sessions", Href: base + "/sessions", Icon: "lucide--history"},
 	}
-	topItems = append(topItems, market...)
 	return []layout.SidebarGroup{
 		{
 			// Ungrouped top-level entries: pulled out of their groups to sit
@@ -272,10 +274,10 @@ func sidebarGroupsWithMarket(base string, isOrgAdmin bool, warns sidebarWarns, m
 // the delete-org danger zone. isOrgAdmin gates the Members entry (the page
 // exposes whole-org member PII, org_admin-only per #1015).
 func orgSidebarGroups(base string, isOrgAdmin bool) []layout.SidebarGroup {
-	return orgSidebarGroupsWithMarket(base, isOrgAdmin, nil)
+	return orgSidebarGroupsWithMarket(base, isOrgAdmin)
 }
 
-func orgSidebarGroupsWithMarket(base string, isOrgAdmin bool, market []layout.SidebarItem) []layout.SidebarGroup {
+func orgSidebarGroupsWithMarket(base string, isOrgAdmin bool) []layout.SidebarGroup {
 	items := []layout.SidebarItem{
 		{Label: "Projects", Href: base, Icon: "lucide--folder"},
 	}
@@ -283,11 +285,7 @@ func orgSidebarGroupsWithMarket(base string, isOrgAdmin bool, market []layout.Si
 		items = append(items, layout.SidebarItem{Label: "Members", Href: base + "/members", Icon: "lucide--users"})
 	}
 	items = append(items, layout.SidebarItem{Label: "Settings", Href: base + "/settings", Icon: "lucide--settings"})
-	groups := []layout.SidebarGroup{}
-	if len(market) > 0 {
-		groups = append(groups, layout.SidebarGroup{Items: market})
-	}
-	return append(groups, layout.SidebarGroup{Label: "Organization", Items: items})
+	return []layout.SidebarGroup{{Label: "Organization", Items: items}}
 }
 
 // partialWithTitle prefixes an hx-boost partial fragment with a <title> element
@@ -556,7 +554,16 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 		} else {
 			budgetLevel = budgetBadgeLevel(state)
 		}
-		groups = layout.ActiveSidebarGroups(sidebarGroupsWithMarket(navBase, isOrgAdmin(tree, backupsOrgID), sidebarWarns{Documents: documentsWarn, Budget: budgetLevel}, s.marketSidebarItems()), activePath)
+		// Approvals badge: human-input items waiting (pending tool approvals
+		// plus unanswered questions). Best-effort and cached for 30s; a failure
+		// just hides the badge.
+		approvalsPending := 0
+		if n, err := s.cachedPendingInputCount(c.Request().Context()); err != nil {
+			captureError(err)
+		} else {
+			approvalsPending = n
+		}
+		groups = layout.ActiveSidebarGroups(sidebarGroupsWithMarket(navBase, isOrgAdmin(tree, backupsOrgID), sidebarWarns{Documents: documentsWarn, Budget: budgetLevel, Approvals: approvalsPending}), activePath)
 		// Warn in the settings nav when the active project has zero configured
 		// LLM providers. Fail-safe helper: false on lookup errors.
 		providersMissing = s.projectHasNoProviders(c.Request().Context())
@@ -568,7 +575,7 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 		if orgNavBase == "" {
 			orgNavBase = "/o/" + activeOrgID
 		}
-		groups = layout.ActiveSidebarGroups(orgSidebarGroupsWithMarket(orgNavBase, isOrgAdmin(tree, activeOrgID), s.marketSidebarItems()), activePath)
+		groups = layout.ActiveSidebarGroups(orgSidebarGroupsWithMarket(orgNavBase, isOrgAdmin(tree, activeOrgID)), activePath)
 	}
 	// Recent projects for the picker's "Recent" section (only when the user
 	// has more than ten projects). Recent ids come from the durable cookie,
@@ -651,7 +658,7 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 	// (literal href/action/hx-* in the page templates) must carry the scope base
 	// just like htmx partials, otherwise the first navigation after a full load
 	// hits an unscoped app path and 404s under the session-mode hard cut.
-	s.renderScoped(w, r, appShell(title, groups, providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, unreadNotifications, pendingInvites, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL, s.cfg.feedbackOverlayAPI(), s.cfg.feedbackOrder()), linkBase)
+	s.renderScoped(w, r, appShell(title, groups, s.marketSidebarItems(), providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, unreadNotifications, pendingInvites, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL, s.cfg.feedbackOverlayAPI(), s.cfg.feedbackOrder()), linkBase)
 	return nil
 }
 
@@ -1088,7 +1095,11 @@ type scheduledRunRow struct {
 	AgentName string
 	Status    string
 	StartedAt string
-	Summary   string
+	// CompletedAt is the run's finish time (empty while it is still running).
+	// It is the rail row's last activity, so it drives both the row's sort
+	// position and the time its subtitle shows.
+	CompletedAt string
+	Summary     string
 	// Icon/Color carry the run agent's definition appearance (empty when
 	// undeclared or the definition is unknown), resolved in chatScheduledRuns.
 	Icon  string
@@ -1104,7 +1115,10 @@ type sharedSessionRow struct {
 	AgentName         string
 	Title             string
 	IsArchived        bool
-	ActivityRelative  string
+	// ActivityAt is the session's last activity as RFC3339 — the rail's sort
+	// key. ActivityRelative is that same instant as the row's display label.
+	ActivityAt       string
+	ActivityRelative string
 }
 
 // chatSharedSessions collects the project's owner-shared sessions (created by
@@ -1131,6 +1145,7 @@ func (s *Server) chatSharedSessions(ctx context.Context) []sharedSessionRow {
 			AgentName:         sess.AgentName,
 			Title:             title,
 			IsArchived:        sess.IsArchived,
+			ActivityAt:        last.UTC().Format(time.RFC3339Nano),
 			ActivityRelative:  relTime(last.UTC().Format(time.RFC3339)),
 		})
 	}
@@ -1160,14 +1175,19 @@ func (s *Server) chatScheduledRuns(ctx context.Context, appearances map[string]a
 			continue
 		}
 		for _, r := range runs {
+			completedAt := ""
+			if r.CompletedAt != nil {
+				completedAt = *r.CompletedAt
+			}
 			out = append(out, scheduledRunRow{
-				ID:        r.ID,
-				AgentName: a.Name,
-				Status:    r.Status,
-				StartedAt: r.StartedAt,
-				Summary:   scheduledRunPreview(r, a.Name),
-				Icon:      ap.Icon,
-				Color:     ap.Color,
+				ID:          r.ID,
+				AgentName:   a.Name,
+				Status:      r.Status,
+				StartedAt:   r.StartedAt,
+				CompletedAt: completedAt,
+				Summary:     scheduledRunPreview(r, a.Name),
+				Icon:        ap.Icon,
+				Color:       ap.Color,
 			})
 		}
 	}
@@ -1198,18 +1218,23 @@ func (s *Server) chatWorkRuns(ctx context.Context, appearances map[string]agentA
 			}
 		}
 		ap := appearances[r.AgentID]
+		completedAt := ""
+		if r.CompletedAt != nil {
+			completedAt = *r.CompletedAt
+		}
 		out = append(out, workRunRow{
 			// A board row IS the run: both the row id and the transcript target
 			// are the run id (the rail keys open-run off RunID).
-			ID:        r.ID,
-			RunID:     r.ID,
-			Origin:    "board",
-			Title:     title,
-			AgentName: r.AgentName,
-			Status:    r.Status,
-			StartedAt: r.StartedAt,
-			Icon:      ap.Icon,
-			Color:     ap.Color,
+			ID:          r.ID,
+			RunID:       r.ID,
+			Origin:      "board",
+			Title:       title,
+			AgentName:   r.AgentName,
+			Status:      r.Status,
+			StartedAt:   r.StartedAt,
+			CompletedAt: completedAt,
+			Icon:        ap.Icon,
+			Color:       ap.Color,
 		})
 	}
 	return append(out, s.extractionRunRows(ctx)...)

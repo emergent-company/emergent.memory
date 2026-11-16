@@ -280,11 +280,23 @@ type ToolApprovalItem struct {
 // ListToolApprovals returns the tool-approval audit trail for the project
 // (newest first).
 func (m *MemoryClient) ListToolApprovals(ctx context.Context) ([]ToolApprovalItem, error) {
+	return m.listToolApprovals(ctx, "")
+}
+
+// ListPendingToolApprovals returns only the rows still awaiting a decision
+// (`?decision=pending`). The Approvals badge counts exactly these, so filtering
+// server-side keeps a project's whole approval history off the page-render
+// path.
+func (m *MemoryClient) ListPendingToolApprovals(ctx context.Context) ([]ToolApprovalItem, error) {
+	return m.listToolApprovals(ctx, "?decision=pending")
+}
+
+func (m *MemoryClient) listToolApprovals(ctx context.Context, query string) ([]ToolApprovalItem, error) {
 	var out struct {
 		Success bool               `json:"success"`
 		Data    []ToolApprovalItem `json:"data"`
 	}
-	if err := m.do(ctx, http.MethodGet, "/api/projects/"+url.PathEscape(m.projectIDFor(ctx))+"/agent-approvals", nil, &out); err != nil {
+	if err := m.do(ctx, http.MethodGet, "/api/projects/"+url.PathEscape(m.projectIDFor(ctx))+"/agent-approvals"+query, nil, &out); err != nil {
 		return nil, err
 	}
 	return out.Data, nil

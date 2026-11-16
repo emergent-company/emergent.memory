@@ -170,7 +170,9 @@ type fakeMemory struct {
 	questionMessage  string             // optional reject message received via RespondQuestion
 	questionCancelID string             // question id received via CancelQuestion
 	approvals        []ToolApprovalItem
+	pendingFetched   int // ListPendingToolApprovals calls, to pin the badge's filtered read
 	questions        []AgentQuestionItem
+	questionsErr     error // ListAgentQuestions failure
 	convErr          error // ListConversations failure
 	histErr          error // GetConversationHistory failure
 	documents        []Document
@@ -604,6 +606,16 @@ type fakeMemory struct {
 	usageSeries  *UsageTimeSeriesResponse // returned by GetProjectUsageTimeSeries
 	usageErr     error                    // failure for the usage methods
 
+	usageByAgent    *UsageByAgentResponse // returned by GetProjectUsageByAgent
+	usageByAgentErr error                 // failure for GetProjectUsageByAgent
+	usageRuns       *UsageRunListResponse // returned by GetProjectUsageRuns
+	usageRunsErr    error                 // failure for GetProjectUsageRuns
+	// usageRunsAgentID/usageRunsLimit/usageRunsOffset record the last paging
+	// call, so tests can assert the filter survives the round trip.
+	usageRunsAgentID string
+	usageRunsLimit   int
+	usageRunsOffset  int
+
 	budgetState    *BudgetState // returned by GetProjectBudgetState
 	budgetStateErr error        // failure for GetProjectBudgetState
 	budgetResets   []string     // windows passed to ResetProjectBudgetWindow, in order
@@ -1034,6 +1046,23 @@ func (f *fakeMemory) ListToolApprovals(ctx context.Context) ([]ToolApprovalItem,
 	return f.approvals, nil
 }
 
+// ListPendingToolApprovals mirrors the server's ?decision=pending filter, so a
+// test fixture can hold decided rows without the badge counting them.
+func (f *fakeMemory) ListPendingToolApprovals(ctx context.Context) ([]ToolApprovalItem, error) {
+	f.pendingFetched++
+	all, err := f.ListToolApprovals(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pending := make([]ToolApprovalItem, 0, len(all))
+	for _, a := range all {
+		if a.Decision == "pending" {
+			pending = append(pending, a)
+		}
+	}
+	return pending, nil
+}
+
 func (f *fakeMemory) CancelAgentRun(ctx context.Context, runID string) (bool, error) {
 	f.cancelRunID = runID
 	if f.cancelAgentRunErr != nil {
@@ -1054,6 +1083,9 @@ func (f *fakeMemory) ListSessionTodos(ctx context.Context, sessionID string) ([]
 }
 
 func (f *fakeMemory) ListAgentQuestions(ctx context.Context) ([]AgentQuestionItem, error) {
+	if f.questionsErr != nil {
+		return nil, f.questionsErr
+	}
 	return f.questions, nil
 }
 
@@ -2653,6 +2685,27 @@ func (f *fakeMemory) GetProjectUsageTimeSeries(ctx context.Context, granularity 
 		return &UsageTimeSeriesResponse{}, nil
 	}
 	return f.usageSeries, nil
+}
+
+func (f *fakeMemory) GetProjectUsageByAgent(ctx context.Context, since, until time.Time) (*UsageByAgentResponse, error) {
+	if f.usageByAgentErr != nil {
+		return nil, f.usageByAgentErr
+	}
+	if f.usageByAgent == nil {
+		return &UsageByAgentResponse{}, nil
+	}
+	return f.usageByAgent, nil
+}
+
+func (f *fakeMemory) GetProjectUsageRuns(ctx context.Context, since, until time.Time, agentID string, limit, offset int) (*UsageRunListResponse, error) {
+	f.usageRunsAgentID, f.usageRunsLimit, f.usageRunsOffset = agentID, limit, offset
+	if f.usageRunsErr != nil {
+		return nil, f.usageRunsErr
+	}
+	if f.usageRuns == nil {
+		return &UsageRunListResponse{Limit: limit, Offset: offset}, nil
+	}
+	return f.usageRuns, nil
 }
 
 // GetProjectBudgetState returns the canned budget reading (nil = unavailable,

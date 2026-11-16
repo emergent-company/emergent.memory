@@ -53,11 +53,16 @@ func (s *Server) requireClientKey(next echo.HandlerFunc) echo.HandlerFunc {
 
 // sessionCookie helpers ---
 
+// errNoSessionSecret reports a server with no SessionSecret configured: no
+// cookie can ever verify, but that is a deployment fault, not a dead session, so
+// it must not make the middleware clear the client's cookie.
+var errNoSessionSecret = errors.New("session: no SessionSecret configured")
+
 // currentSession reads + verifies the session cookie. Errors mean the request
 // is unauthenticated (missing cookie, tampered, expired, or no secret set).
 func (s *Server) currentSession(c echo.Context) (*sessionClaims, error) {
 	if s.cfg.SessionSecret == "" {
-		return nil, errors.New("session: no SessionSecret configured")
+		return nil, errNoSessionSecret
 	}
 	ck, err := c.Cookie(sessionCookieName)
 	if err != nil {
@@ -434,7 +439,7 @@ func (s *Server) requestSessionClaims(c echo.Context) (*sessionClaims, error) {
 // recover a session whose access token has already expired.
 func (s *Server) sessionPayload(c echo.Context) (*sessionClaims, error) {
 	if s.cfg.SessionSecret == "" {
-		return nil, errors.New("session: no SessionSecret configured")
+		return nil, errNoSessionSecret
 	}
 	ck, err := c.Cookie(sessionCookieName)
 	if err != nil {
@@ -462,6 +467,14 @@ func (s *Server) sessionRefreshToken(c echo.Context) (string, error) {
 func (s *Server) refreshSessionClaims(c echo.Context, old *sessionClaims) (*sessionClaims, error) {
 	claims, err := s.refreshOnce(old)
 	if err != nil {
+		// Only a permanent grant rejection means the session can never be
+		// revived. A 5xx, a timeout, a refused connection or a discovery
+		// failure is a provider blip: returning it unwrapped keeps the caller
+		// from clearing a cookie that the next request can still refresh.
+		var rejected *tokenGrantRejectedError
+		if errors.As(err, &rejected) && rejected.dead() {
+			return nil, sessionUnrecoverable(err)
+		}
 		return nil, err
 	}
 	s.setSessionCookie(c, *claims)
@@ -520,12 +533,30 @@ func (s *Server) refreshOnce(old *sessionClaims) (*sessionClaims, error) {
 	return v.(*sessionClaims), nil
 }
 
+// errSessionUnrecoverable marks the one shape of session failure that no later
+// request can revive: the provider permanently rejected the refresh grant, the
+// cookie's signature does not verify, or the cookie carries no refresh token to
+// try. It is deliberately narrow. A provider blip — a 5xx, a timeout, a refused
+// connection, a failed discovery — is NOT this error: the cookie must survive it
+// so the next request can refresh successfully, and clearing on it would log a
+// healthy user out over an outage (#753 review).
+var errSessionUnrecoverable = errors.New("session: unrecoverable")
+
+// sessionUnrecoverable wraps a permanent session failure so callers can test it
+// with errors.Is while the underlying cause stays readable in logs.
+func sessionUnrecoverable(err error) error {
+	if err == nil {
+		return errSessionUnrecoverable
+	}
+	return fmt.Errorf("%w: %w", errSessionUnrecoverable, err)
+}
+
 // ensureFreshSession returns the request's session claims, silently refreshing
 // the access token when it is expired or within the 5-minute grace window and
 // a refresh token is available. The cookie is re-issued on every refresh.
-// When no live session can be established (missing/tampered cookie, or the
-// refresh itself fails), it returns the original session error — the caller
-// treats that as logged out.
+// When no live session can be established, the error says whether it is a
+// transient failure — the caller may retry on the next request and must keep
+// the cookie — or an errSessionUnrecoverable one the cookie cannot outlive.
 func (s *Server) ensureFreshSession(c echo.Context) (*sessionClaims, error) {
 	claims, err := s.currentSession(c)
 	if err == nil {
@@ -550,10 +581,13 @@ func (s *Server) ensureFreshSession(c echo.Context) (*sessionClaims, error) {
 	// signature) and still carries a refresh token.
 	old, perr := s.sessionPayload(c)
 	if perr != nil {
-		return nil, err // missing/tampered — logged out
+		if errors.Is(perr, http.ErrNoCookie) || errors.Is(perr, errNoSessionSecret) {
+			return nil, err // nothing to revive, or nothing configured to verify it
+		}
+		return nil, sessionUnrecoverable(perr) // tampered signature — dead cookie
 	}
 	if old.RefreshToken == "" {
-		return nil, err // authentic but refreshless — logged out
+		return nil, sessionUnrecoverable(err) // authentic but refreshless — logged out
 	}
 	return s.refreshSessionClaims(c, old)
 }
@@ -621,8 +655,12 @@ func (s *Server) requireSession(next echo.HandlerFunc) echo.HandlerFunc {
 		}
 		claims, err := s.ensureFreshSession(c)
 		if err != nil {
-			if !errors.Is(err, http.ErrNoCookie) {
-				s.clearSessionCookie(c) // drop tampered/expired/unrecoverable cookies
+			// Clear only a session no later request can revive (refused grant,
+			// tampered signature, no refresh token). A provider blip redirects
+			// to sign-in for this request but keeps the cookie, so the next
+			// successful refresh does not cost the user their session.
+			if errors.Is(err, errSessionUnrecoverable) {
+				s.clearSessionCookie(c)
 			}
 			target := "/auth/login"
 			// Preserve a safe local GET target where losing the query string
@@ -655,6 +693,16 @@ func (s *Server) requireSessionOrKey(next echo.HandlerFunc) echo.HandlerFunc {
 		if err == nil {
 			s.attachSession(c, claims)
 			return next(c)
+		}
+		// Mirror requireSession's error branch, but clear only a session that no
+		// later request can revive: the provider refused the grant, the cookie's
+		// signature does not verify, or it carries no refresh token. Keeping a
+		// dead cookie means every /api request retries a refresh that can never
+		// succeed; clearing a live one over a provider blip would log a healthy
+		// user out, so transient failures leave the cookie in place for the next
+		// request to retry (#753 review).
+		if errors.Is(err, errSessionUnrecoverable) {
+			s.clearSessionCookie(c)
 		}
 		// No live session: fall back to the scoped device credential path.
 		return s.requireDeviceCredential(next)(c)

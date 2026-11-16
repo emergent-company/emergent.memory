@@ -453,7 +453,7 @@ func (h *A2AHandler) resolveA2AAgent(ctx context.Context, projectID, skillID str
 		}
 	}
 
-	agent, err := h.resolveRuntimeAgent(ctx, projectID, def)
+	agent, err := h.resolveRuntimeAgent(ctx, def)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -496,24 +496,15 @@ func (h *A2AHandler) resolveA2AAgentBySkillID(ctx context.Context, projectID, sk
 	return a2aPickResolvableDefinition(external, fallback), nil
 }
 
-// resolveRuntimeAgent finds the runtime Agent for a definition by name, creating
-// a lightweight runtime agent (StrategyType "agent-def:<id>") when absent.
-func (h *A2AHandler) resolveRuntimeAgent(ctx context.Context, projectID string, def *AgentDefinition) (*Agent, error) {
-	agent, err := h.repo.FindByName(ctx, projectID, def.Name)
+// resolveRuntimeAgent finds the runtime Agent that backs a definition, creating
+// the definition-linked runtime row when the definition has none. Routing
+// through FindOrCreateRuntimeAgentForDefinition (rather than a name lookup
+// followed by an unlinked Create) reuses any already-linked row and never mints
+// an unlinked "agent-def:<id>" duplicate — the state #737 removes.
+func (h *A2AHandler) resolveRuntimeAgent(ctx context.Context, def *AgentDefinition) (*Agent, error) {
+	agent, err := h.repo.FindOrCreateRuntimeAgentForDefinition(ctx, def)
 	if err != nil {
-		return nil, fmt.Errorf("failed to look up runtime agent: %w", err)
-	}
-	if agent == nil {
-		agent = &Agent{
-			ProjectID:    projectID,
-			Name:         def.Name,
-			StrategyType: "agent-def:" + def.ID,
-			CronSchedule: "0 0 * * *",
-			TriggerType:  TriggerTypeManual,
-		}
-		if err := h.repo.Create(ctx, agent); err != nil {
-			return nil, fmt.Errorf("failed to create runtime agent: %w", err)
-		}
+		return nil, fmt.Errorf("failed to resolve runtime agent: %w", err)
 	}
 	return agent, nil
 }
@@ -595,7 +586,7 @@ func (h *A2AHandler) SendMessage(c echo.Context) error {
 		return writeA2AError(c, a2aErr)
 	}
 
-	projectID, err := acpProjectID(c)
+	projectID, err := h.addressedProject(c)
 	if err != nil {
 		return err
 	}
@@ -842,7 +833,7 @@ func (h *A2AHandler) GetTask(c echo.Context) error {
 		return writeA2AError(c, a2aErr)
 	}
 
-	projectID, err := acpProjectID(c)
+	projectID, err := h.addressedProject(c)
 	if err != nil {
 		return err
 	}
@@ -874,7 +865,7 @@ func (h *A2AHandler) ListTasks(c echo.Context) error {
 		return writeA2AError(c, a2aErr)
 	}
 
-	projectID, err := acpProjectID(c)
+	projectID, err := h.addressedProject(c)
 	if err != nil {
 		return err
 	}
@@ -941,7 +932,7 @@ func (h *A2AHandler) CancelTask(c echo.Context) error {
 		return writeA2AError(c, a2aErr)
 	}
 
-	projectID, err := acpProjectID(c)
+	projectID, err := h.addressedProject(c)
 	if err != nil {
 		return err
 	}
@@ -1002,7 +993,7 @@ func (h *A2AHandler) SubscribeTask(c echo.Context) error {
 		return writeA2AError(c, a2aErr)
 	}
 
-	projectID, err := acpProjectID(c)
+	projectID, err := h.addressedProject(c)
 	if err != nil {
 		return err
 	}

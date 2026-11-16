@@ -2730,6 +2730,26 @@ func rememberFileText(content *string, guide string) (text string, fromGuide boo
 	return trimmedGuide, trimmedGuide != ""
 }
 
+// rememberForgetRuntimeAgent resolves the kb.agents row a Remember/Forget run
+// executes as. The definition owns at most ONE runtime row — migration 00303's
+// (project_id, agent_definition_id) partial unique index — so every one of the
+// six Remember/Forget kickoff sites (sync/async × remember, remember/file,
+// forget) must resolve the definition's existing row instead of minting a
+// feature-named one of its own. Minting a second linked row is what made these
+// runs answer 500 with 23505 (#737/#738); routing them all through one helper
+// keeps that single resolution point testable and greppable (#790).
+//
+// label names the caller's surface ("sync remember", "async forget", …) and is
+// kept in the wrapped 500 message so the failing leg is identifiable from the
+// response body.
+func (h *Handler) rememberForgetRuntimeAgent(ctx context.Context, agentDef *agents.AgentDefinition, label string) (*agents.Agent, error) {
+	row, err := h.agentRepo.FindOrCreateRuntimeAgentForDefinition(ctx, agentDef)
+	if err != nil {
+		return nil, apperror.NewInternal("failed to create agent session for "+label, err)
+	}
+	return row, nil
+}
+
 // RememberStream handles POST /api/projects/:projectId/remember.
 // It is the unified domain-aware memory endpoint: raw text is persisted as a document,
 // the domain-remember-agent classifies it, discovers or reuses a schema pack, and
@@ -2966,24 +2986,9 @@ func (h *Handler) RememberStream(c echo.Context) error {
 	switch mode {
 	case "async":
 		// Fire-and-forget: launch agent in background, return 202 with run_id immediately.
-		dummyName := "Remember session for " + agentDef.Name
-		dummyAgent, _ := h.agentRepo.FindByName(ctx, projectID, dummyName)
-		if dummyAgent == nil {
-			dummyAgent = &agents.Agent{
-				ProjectID:         projectID,
-				Name:              dummyName,
-				StrategyType:      "remember-session:" + agentDef.ID,
-				AgentDefinitionID: &agentDef.ID,
-				CronSchedule:      "0 0 * * *",
-				TriggerType:       "manual",
-			}
-			if err := h.agentRepo.Create(ctx, dummyAgent); err != nil {
-				return apperror.NewInternal("failed to create agent session for async remember", err)
-			}
-		} else if dummyAgent.AgentDefinitionID == nil || *dummyAgent.AgentDefinitionID != agentDef.ID {
-			// Backfill FK for agents created before this fix.
-			dummyAgent.AgentDefinitionID = &agentDef.ID
-			_ = h.agentRepo.Update(ctx, dummyAgent)
+		dummyAgent, err := h.rememberForgetRuntimeAgent(ctx, agentDef, "async remember")
+		if err != nil {
+			return err
 		}
 		run, runErr := h.agentRepo.CreateRun(ctx, dummyAgent.ID)
 		if runErr != nil {
@@ -3052,24 +3057,9 @@ func (h *Handler) RememberStream(c echo.Context) error {
 
 	case "sync":
 		// Synchronous: wait for the agent to finish, return JSON result.
-		dummyName := "Remember session for " + agentDef.Name
-		dummyAgent, _ := h.agentRepo.FindByName(ctx, projectID, dummyName)
-		if dummyAgent == nil {
-			dummyAgent = &agents.Agent{
-				ProjectID:         projectID,
-				Name:              dummyName,
-				StrategyType:      "remember-session:" + agentDef.ID,
-				AgentDefinitionID: &agentDef.ID,
-				CronSchedule:      "0 0 * * *",
-				TriggerType:       "manual",
-			}
-			if err := h.agentRepo.Create(ctx, dummyAgent); err != nil {
-				return apperror.NewInternal("failed to create agent session for sync remember", err)
-			}
-		} else if dummyAgent.AgentDefinitionID == nil || *dummyAgent.AgentDefinitionID != agentDef.ID {
-			// Backfill FK for agents created before this fix.
-			dummyAgent.AgentDefinitionID = &agentDef.ID
-			_ = h.agentRepo.Update(ctx, dummyAgent)
+		dummyAgent, err := h.rememberForgetRuntimeAgent(ctx, agentDef, "sync remember")
+		if err != nil {
+			return err
 		}
 		execReq := agents.ExecuteRequest{
 			Agent:           dummyAgent,
@@ -3428,23 +3418,9 @@ func (h *Handler) RememberFile(c echo.Context) error {
 
 	switch req.Mode {
 	case "async":
-		dummyName := "Remember session for " + agentDef.Name
-		dummyAgent, _ := h.agentRepo.FindByName(ctx, projectID, dummyName)
-		if dummyAgent == nil {
-			dummyAgent = &agents.Agent{
-				ProjectID:         projectID,
-				Name:              dummyName,
-				StrategyType:      "remember-session:" + agentDef.ID,
-				AgentDefinitionID: &agentDef.ID,
-				CronSchedule:      "0 0 * * *",
-				TriggerType:       "manual",
-			}
-			if err := h.agentRepo.Create(ctx, dummyAgent); err != nil {
-				return apperror.NewInternal("failed to create agent session for async remember/file", err)
-			}
-		} else if dummyAgent.AgentDefinitionID == nil || *dummyAgent.AgentDefinitionID != agentDef.ID {
-			dummyAgent.AgentDefinitionID = &agentDef.ID
-			_ = h.agentRepo.Update(ctx, dummyAgent)
+		dummyAgent, err := h.rememberForgetRuntimeAgent(ctx, agentDef, "async remember/file")
+		if err != nil {
+			return err
 		}
 		run, runErr := h.agentRepo.CreateRun(ctx, dummyAgent.ID)
 		if runErr != nil {
@@ -3512,23 +3488,9 @@ func (h *Handler) RememberFile(c echo.Context) error {
 		})
 
 	case "sync":
-		dummyName := "Remember session for " + agentDef.Name
-		dummyAgent, _ := h.agentRepo.FindByName(ctx, projectID, dummyName)
-		if dummyAgent == nil {
-			dummyAgent = &agents.Agent{
-				ProjectID:         projectID,
-				Name:              dummyName,
-				StrategyType:      "remember-session:" + agentDef.ID,
-				AgentDefinitionID: &agentDef.ID,
-				CronSchedule:      "0 0 * * *",
-				TriggerType:       "manual",
-			}
-			if err := h.agentRepo.Create(ctx, dummyAgent); err != nil {
-				return apperror.NewInternal("failed to create agent session for sync remember/file", err)
-			}
-		} else if dummyAgent.AgentDefinitionID == nil || *dummyAgent.AgentDefinitionID != agentDef.ID {
-			dummyAgent.AgentDefinitionID = &agentDef.ID
-			_ = h.agentRepo.Update(ctx, dummyAgent)
+		dummyAgent, err := h.rememberForgetRuntimeAgent(ctx, agentDef, "sync remember/file")
+		if err != nil {
+			return err
 		}
 		execReq := agents.ExecuteRequest{
 			Agent:           dummyAgent,
@@ -3772,20 +3734,9 @@ func (h *Handler) ForgetStream(c echo.Context) error {
 
 	switch mode {
 	case "async":
-		dummyName := "Forget session for " + agentDef.Name
-		dummyAgent, _ := h.agentRepo.FindByName(ctx, projectID, dummyName)
-		if dummyAgent == nil {
-			dummyAgent = &agents.Agent{
-				ProjectID:         projectID,
-				Name:              dummyName,
-				StrategyType:      "forget-session:" + agentDef.ID,
-				AgentDefinitionID: &agentDef.ID,
-				CronSchedule:      "0 0 * * *",
-				TriggerType:       "manual",
-			}
-			if err := h.agentRepo.Create(ctx, dummyAgent); err != nil {
-				return apperror.NewInternal("failed to create agent session for async forget", err)
-			}
+		dummyAgent, err := h.rememberForgetRuntimeAgent(ctx, agentDef, "async forget")
+		if err != nil {
+			return err
 		}
 		run, runErr := h.agentRepo.CreateRun(ctx, dummyAgent.ID)
 		if runErr != nil {
@@ -3829,20 +3780,9 @@ func (h *Handler) ForgetStream(c echo.Context) error {
 		})
 
 	case "sync":
-		dummyName := "Forget session for " + agentDef.Name
-		dummyAgent, _ := h.agentRepo.FindByName(ctx, projectID, dummyName)
-		if dummyAgent == nil {
-			dummyAgent = &agents.Agent{
-				ProjectID:         projectID,
-				Name:              dummyName,
-				StrategyType:      "forget-session:" + agentDef.ID,
-				AgentDefinitionID: &agentDef.ID,
-				CronSchedule:      "0 0 * * *",
-				TriggerType:       "manual",
-			}
-			if err := h.agentRepo.Create(ctx, dummyAgent); err != nil {
-				return apperror.NewInternal("failed to create agent session for sync forget", err)
-			}
+		dummyAgent, err := h.rememberForgetRuntimeAgent(ctx, agentDef, "sync forget")
+		if err != nil {
+			return err
 		}
 		execReq := agents.ExecuteRequest{
 			Agent:           dummyAgent,

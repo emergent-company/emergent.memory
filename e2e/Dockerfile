@@ -45,7 +45,9 @@ RUN GOWORK=off CGO_ENABLED=0 go build \
     -o /out/memory ./cmd
 
 # ── Stage 2: test runner ────────────────────────────────────────────────────
-FROM golang:1.25-alpine AS test-runner
+# Go 1.26 is the floor of e2e/go.mod: otel v1.47 (and with it the stable
+# otel/log API) requires it. Stage 1 stays on 1.25 because apps/cli declares it.
+FROM golang:1.26-alpine AS test-runner
 
 # Runtime deps: bash for scripts; curl/tar/git for test tooling and workspace
 # setup; libstdc++/libgcc are required by the opencode binary on Alpine (musl libc)

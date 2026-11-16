@@ -47,6 +47,47 @@
 
 ### BREAKING CHANGES
 
+**A2A enforces `agents:read` / `agents:write` for session credentials** (2026-11-15)
+
+The A2A v1.0 surface (`/message:send`, `/message:stream`, `/tasks*`,
+`/extendedAgentCard`) used to skip its scope gate for every credential that was
+not an `emt_…` project API token: the guard returned early for OIDC/session
+callers, so `agents:read` / `agents:write` were decorative for them. The gate now
+applies to every credential (issue #660, shipped in #795), and every
+project-addressed route additionally requires the caller to belong to the
+addressed project's organization — `X-Project-ID` is a selector, never a grant.
+The unauthenticated global card is unchanged, and an `emt_…` token keeps the
+scopes it was minted with and stays bound to its own project.
+
+A signed-in session's scopes are derived from its project membership role, so the
+visible change is:
+
+| Project role | `agents:read` (card, task list/get) | `agents:write` (send, stream, cancel) |
+|---|---|---|
+| `project_admin` | yes | yes |
+| `project_user` | yes | **no** — now 403 |
+| `project_viewer` | yes | **no** — now 403 |
+
+A `superadmin_full` session keeps the full catalogue; a session with no project
+role falls back to `MEMORY_OIDC_DEFAULT_SCOPES` (then to nothing), so it is
+refused on this surface unless that default carries `agents:*`. A `memory login`
+session is subject to the same matrix: `memory a2a discover`, `memory a2a tasks
+list` and `memory a2a tasks get` keep working for every project role, while
+`memory a2a send` and `memory a2a tasks cancel` now need a project admin. No
+documented flow promises A2A writes to a `project_user` or `project_viewer`
+session (their role grants graph, document and chat access, not agent
+management), and nothing in the web UI calls A2A, so the migration is to
+authenticate with an `emt_…` token carrying `agents:write` — the project-token
+defaults already include `agents:*`:
+
+```bash
+memory projects create-token <project> --scopes agents:read,agents:write
+```
+
+A caller who is not a member of the addressed project's organization is now
+refused as well (403, or 404 for an unknown project) instead of reaching another
+project's card, tasks and runs.
+
 **Embeddings are resolved only from the project's configured provider** (2026-11-12)
 
 `GCP_PROJECT_ID`, `GOOGLE_API_KEY`, `EMBEDDING_PROVIDER`, `EMBEDDING_MODEL`,
@@ -292,6 +333,20 @@ X-Project-ID: <projectId>
 See `/apps/server/src/modules/unified-search/` for implementation details.
 
 ### Fixed
+
+**A pack's bare scalar `items` is rejected instead of silently unenforced** (2026-11-15)
+
+An array property declaring `"items": "string"` instead of the object form
+`"items": {"type": "string"}` used to be accepted, installed and then validated
+nothing:
+`PropertyDefFromMap` only reads an object `items`, so the element schema was
+dropped without a word and `POST /api/graph/objects/validate` accepted an
+integer in a declared `array<string>`. `POST /api/schemas` and `PUT
+/api/schemas/:packId` now reject the bare scalar with a 400 naming the property
+and the expected object shape. The other non-object `items` forms — a tuple
+array of schemas, a boolean schema and `null` — are valid JSON Schema (or mean
+absent) and remain accepted, as before. The `code-memory` blueprint's seven
+scalar declarations are corrected to the object form (Closes #726).
 
 **Embedding resolution and `projects set-models` stop failing late and quietly** (2026-11-12)
 

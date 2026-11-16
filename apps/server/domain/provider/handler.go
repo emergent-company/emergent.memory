@@ -3,6 +3,7 @@ package provider
 import (
 	"encoding/base64"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -393,6 +394,114 @@ func (h *Handler) GetProjectUsageTimeSeries(c echo.Context) error {
 	})
 }
 
+// GetProjectUsageByAgent returns a project's usage broken down by the agent
+// that caused it.
+// @Summary Get project LLM usage by agent
+// @Description Aggregates token counts and estimated cost per agent for a range. Spend that no agent run produced (direct API and embedding calls) is returned as a row with an empty agentId/agentName, so the rows always add up to the project total.
+// @Param projectId path string true "Project ID"
+// @Param since query string false "Start time (RFC3339)"
+// @Param until query string false "End time (RFC3339)"
+// @Success 200 {object} UsageByAgentResponse
+// @Failure 401 {object} apperror.Error
+// @Failure 403 {object} apperror.Error
+// @Router /projects/{projectId}/usage/by-agent [get]
+func (h *Handler) GetProjectUsageByAgent(c echo.Context) error {
+	projectID := c.Param("projectId")
+
+	if err := h.creds.assertCallerOwnsProject(c.Request().Context(), projectID); err != nil {
+		return err
+	}
+
+	since, until := parseTimeRange(c)
+	rows, err := h.repo.GetProjectUsageByAgent(c.Request().Context(), projectID, since, until)
+	if err != nil {
+		return err
+	}
+
+	// The run total is the sum of the per-agent counts: agent groups partition
+	// runs (a run has exactly one agent), and the unattributed bucket has none.
+	var runCount int64
+	for _, row := range rows {
+		runCount += row.RunCount
+	}
+
+	return c.JSON(http.StatusOK, UsageByAgentResponse{
+		Note:     usageNote,
+		Data:     rows,
+		RunCount: runCount,
+	})
+}
+
+// GetProjectUsageRuns returns the project's per-run cost log.
+// @Summary List project agent runs with cost
+// @Description One row per agent run that recorded usage in the range, most recent activity first, with token counts, event count and estimated cost. Runs that spent nothing are absent. limit defaults to 50 and is capped at 200; offset pages through the ordered list.
+// @Param projectId path string true "Project ID"
+// @Param since query string false "Start time (RFC3339)"
+// @Param until query string false "End time (RFC3339)"
+// @Param agentId query string false "Only runs of this agent"
+// @Param limit query int false "Page size (default 50, max 200)"
+// @Param offset query int false "Rows to skip"
+// @Success 200 {object} UsageRunListResponse
+// @Failure 401 {object} apperror.Error
+// @Failure 403 {object} apperror.Error
+// @Router /projects/{projectId}/usage/runs [get]
+func (h *Handler) GetProjectUsageRuns(c echo.Context) error {
+	projectID := c.Param("projectId")
+
+	if err := h.creds.assertCallerOwnsProject(c.Request().Context(), projectID); err != nil {
+		return err
+	}
+
+	since, until := parseTimeRange(c)
+	limit, offset := parseUsagePaging(c)
+	scope := usageRunScope{
+		projectID: projectID,
+		agentID:   c.QueryParam("agentId"),
+		since:     since,
+		until:     until,
+	}
+
+	ctx := c.Request().Context()
+	rows, err := h.repo.GetProjectUsageRuns(ctx, scope, limit, offset)
+	if err != nil {
+		return err
+	}
+	total, err := h.repo.CountProjectUsageRuns(ctx, scope)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, UsageRunListResponse{
+		Note:   usageNote,
+		Data:   rows,
+		Total:  total,
+		Limit:  limit,
+		Offset: offset,
+	})
+}
+
+// usageNote is the disclaimer every usage response carries: the figures are
+// retail-price estimates, never a provider invoice.
+const usageNote = "Costs shown are estimates based on retail pricing and may not reflect your actual provider invoice."
+
+// parseUsagePaging reads limit/offset for the run log. limit defaults to 50 and
+// anything outside [1, 200] is clamped rather than rejected, so a hand-edited
+// URL degrades instead of erroring; a negative offset is treated as 0.
+func parseUsagePaging(c echo.Context) (limit, offset int) {
+	limit = 50
+	if raw := c.QueryParam("limit"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			limit = min(n, 200)
+		}
+	}
+	if raw := c.QueryParam("offset"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			offset = n
+		}
+	}
+	return limit, offset
+}
+
 // GetOrgUsageTimeSeries returns time-bucketed usage for an organization.
 // @Summary Get org LLM usage time series
 // @Param orgId path string true "Organization ID"
@@ -581,6 +690,26 @@ type UsageSummaryResponse struct {
 type UsageTimeSeriesResponse struct {
 	Note string               `json:"note"`
 	Data []UsageTimeSeriesRow `json:"data"`
+}
+
+// UsageByAgentResponse wraps the per-agent breakdown. RunCount is the total
+// number of runs behind the rows (the sum of the per-agent counts) so a caller
+// gets the project's run count without a second request.
+type UsageByAgentResponse struct {
+	Note     string            `json:"note"`
+	Data     []UsageByAgentRow `json:"data"`
+	RunCount int64             `json:"runCount"`
+}
+
+// UsageRunListResponse wraps one page of the per-run cost log together with the
+// total row count for the same filter, which is what the page header and the
+// "older" link need.
+type UsageRunListResponse struct {
+	Note   string        `json:"note"`
+	Data   []UsageRunRow `json:"data"`
+	Total  int           `json:"total"`
+	Limit  int           `json:"limit"`
+	Offset int           `json:"offset"`
 }
 
 // OrgUsageByProjectResponse wraps per-project rows with a disclaimer note.

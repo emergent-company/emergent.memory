@@ -614,6 +614,13 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	agentsHandler.WithSchemaRepo(schemasRepo)
 	agents.RegisterRoutes(e, agentsHandler, authMiddleware)
 
+	// Register the A2A v1.0 surface (root-scoped, X-Project-ID-addressed) so its
+	// project authorization and scope enforcement can be exercised end to end
+	// against real rows (issue #660). The executor is nil: these tests cover
+	// authorization on the read/card routes and the denials that short-circuit
+	// before any run is started.
+	agents.RegisterA2ARoutes(e, agents.NewA2AHandler(agentsRepo, nil, nil, log, nil), authMiddleware)
+
 	// Register OpenAI-compatible agentcompat routes (/v1/chat/completions, /v1/models)
 	// unconditionally (issue #895). The executor is nil here because no LLM provider
 	// is wired; the handler still gates on auth first, so unauthenticated requests

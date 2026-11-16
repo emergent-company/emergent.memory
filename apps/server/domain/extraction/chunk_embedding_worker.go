@@ -58,10 +58,11 @@ type ChunkEmbeddingWorker struct {
 	budgetEnforcementEnabled bool
 	orgCache                 *orgIDCache
 
-	// budgetBlocked caches projects known to be over budget so a batch of their
-	// jobs does not re-run the two-query budget check (and re-log) per job.
-	budgetBlockMu      sync.Mutex
-	budgetBlockedUntil map[string]time.Time
+	// budgetBlocks caches projects known to be over budget so a batch of their
+	// jobs does not re-run the two-query budget check (and re-log) per job. The
+	// cache is shared (database-backed), not per process: an un-park served by
+	// one replica must be visible to every other replica at once (issue #793).
+	budgetBlocks budgetBlockStore
 
 	// Metrics
 	processedCount int64
@@ -93,31 +94,68 @@ func NewChunkEmbeddingWorker(
 		budget:                   budget,
 		budgetEnforcementEnabled: budgetEnforcementEnabled,
 		orgCache:                 newOrgIDCache(db, log),
-		budgetBlockedUntil:       make(map[string]time.Time),
+		budgetBlocks:             newBudgetBlockStore(db),
 	}
 }
 
 // budgetBlockActive reports whether the project is still within a cached
-// "over budget" window. Expired entries are evicted lazily.
-func (w *ChunkEmbeddingWorker) budgetBlockActive(projectID string) bool {
-	w.budgetBlockMu.Lock()
-	defer w.budgetBlockMu.Unlock()
-	until, ok := w.budgetBlockedUntil[projectID]
-	if !ok {
+// "over budget" window. The verdict is shared, so it reflects an un-park served
+// by any replica. A failed read fails open: the authoritative budget check
+// follows, so a broken cache must not block embedding.
+func (w *ChunkEmbeddingWorker) budgetBlockActive(ctx context.Context, projectID string) bool {
+	if w.budgetBlocks == nil {
 		return false
 	}
-	if time.Now().After(until) {
-		delete(w.budgetBlockedUntil, projectID)
+	active, err := w.budgetBlocks.active(ctx, projectID)
+	if err != nil {
+		w.log.Warn("failed to read shared budget block cache; re-checking budget",
+			slog.String("project_id", projectID),
+			slog.String("error", err.Error()))
 		return false
 	}
-	return true
+	return active
 }
 
-// markBudgetBlocked caches the project as over budget for budgetBlockCacheTTL.
-func (w *ChunkEmbeddingWorker) markBudgetBlocked(projectID string) {
-	w.budgetBlockMu.Lock()
-	w.budgetBlockedUntil[projectID] = time.Now().Add(budgetBlockCacheTTL)
-	w.budgetBlockMu.Unlock()
+// markBudgetBlocked caches the project as over budget for budgetBlockCacheTTL in
+// the shared store, so every replica skips the per-job budget query.
+func (w *ChunkEmbeddingWorker) markBudgetBlocked(ctx context.Context, projectID string) {
+	if w.budgetBlocks == nil {
+		return
+	}
+	if err := w.budgetBlocks.mark(ctx, projectID, time.Now().Add(budgetBlockCacheTTL)); err != nil {
+		// The jobs are parked either way; the cache is only an optimisation, so
+		// a failed write costs another budget check, not correctness.
+		w.log.Warn("failed to cache shared budget block",
+			slog.String("project_id", projectID),
+			slog.String("error", err.Error()))
+	}
+}
+
+// invalidateBudgetBlock drops the shared over-budget verdict for a project so
+// every replica's next job re-reads the budget instead of parking from a stale
+// cache.
+func (w *ChunkEmbeddingWorker) invalidateBudgetBlock(ctx context.Context, projectID string) error {
+	if w.budgetBlocks == nil {
+		return nil
+	}
+	return w.budgetBlocks.clear(ctx, projectID)
+}
+
+// UnparkProjectBudget is the recovery hook the projects service calls when a
+// project's monthly or weekly cap is raised or cleared: it drops the shared
+// "over budget" verdict (visible to every replica, issue #793) and makes the
+// project's budget-parked chunk jobs due immediately, instead of leaving the
+// queue parked for the backoff (up to budgetBlockMaxDelaySec) or the cache TTL
+// (issue #724).
+func (w *ChunkEmbeddingWorker) UnparkProjectBudget(ctx context.Context, projectID string) error {
+	// Clear the shared verdict first: it is what every replica reads, so even if
+	// the queue un-park below fails, a warm replica must stop re-parking jobs.
+	clearErr := w.invalidateBudgetBlock(ctx, projectID)
+	if w.jobs == nil {
+		return clearErr
+	}
+	_, err := w.jobs.UnparkBudgetExceededForProject(ctx, projectID)
+	return errors.Join(clearErr, err)
 }
 
 // Start begins the worker's polling loop
@@ -424,7 +462,7 @@ func (w *ChunkEmbeddingWorker) processJob(ctx context.Context, job *ChunkEmbeddi
 	// Budget pre-flight check — skip embedding when project has exhausted either
 	// spending window (weekly or monthly).
 	if w.budget != nil && chunk.ProjectID != "" && w.budgetEnforcementEnabled {
-		if w.budgetBlockActive(chunk.ProjectID) {
+		if w.budgetBlockActive(ctx, chunk.ProjectID) {
 			// Already known over budget: park this job with bounded backoff,
 			// without re-querying the budget or logging per job.
 			if _, err := w.jobs.RescheduleBudgetExceeded(ctx, job.ID); err != nil {
@@ -442,7 +480,7 @@ func (w *ChunkEmbeddingWorker) processJob(ctx context.Context, job *ChunkEmbeddi
 				slog.String("error", err.Error()),
 			)
 		} else if exceeded {
-			w.markBudgetBlocked(chunk.ProjectID)
+			w.markBudgetBlocked(ctx, chunk.ProjectID)
 			parked, parkErr := w.jobs.RescheduleBudgetExceededForProject(ctx, chunk.ProjectID)
 			if parkErr != nil {
 				w.log.Error("failed to park project chunk embedding jobs",

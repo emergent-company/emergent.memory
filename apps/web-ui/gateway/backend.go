@@ -43,6 +43,9 @@ type MemoryBackend interface {
 	CancelQuestion(ctx context.Context, questionID string) (*RespondQuestionResult, error)
 	ListAgentQuestions(ctx context.Context) ([]AgentQuestionItem, error)
 	ListToolApprovals(ctx context.Context) ([]ToolApprovalItem, error)
+	// ListPendingToolApprovals is the badge's read: the same audit trail
+	// filtered to rows still awaiting a decision.
+	ListPendingToolApprovals(ctx context.Context) ([]ToolApprovalItem, error)
 	CancelAgentRun(ctx context.Context, runID string) (bool, error)
 	ListSessionTodos(ctx context.Context, sessionID string) ([]SessionTodo, error)
 	ListConversations(ctx context.Context, includeArchived bool) (*ConversationList, error)
@@ -347,6 +350,12 @@ type MemoryBackend interface {
 	DeleteProjectSetting(ctx context.Context, category, key string) error
 	GetProjectUsageSummary(ctx context.Context, since, until time.Time) (*UsageSummaryResponse, error)
 	GetProjectUsageTimeSeries(ctx context.Context, granularity string, since, until time.Time) (*UsageTimeSeriesResponse, error)
+	// GetProjectUsageByAgent is the per-agent breakdown of the same ledger,
+	// including the unattributed bucket (spend with no run behind it).
+	GetProjectUsageByAgent(ctx context.Context, since, until time.Time) (*UsageByAgentResponse, error)
+	// GetProjectUsageRuns is the per-run cost log: one row per agent run that
+	// spent tokens, most recent activity first, with the filtered total.
+	GetProjectUsageRuns(ctx context.Context, since, until time.Time, agentID string, limit, offset int) (*UsageRunListResponse, error)
 	// GetProjectBudgetState is the week/month budget position (cap, spend,
 	// remaining, status, reset timing). It backs the usage-page budget panels and
 	// the Usage nav badge.

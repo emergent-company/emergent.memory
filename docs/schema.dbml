@@ -683,6 +683,7 @@ Table "kb"."agents" {
     (enabled) [name: "idx_agents_enabled"]
     (project_id) [name: "idx_agents_project_id"]
     (strategy_type) [name: "idx_agents_role"]
+    (project_id, agent_definition_id) [name: "uq_agents_project_agent_definition", unique, note: '(agent_definition_id IS NOT NULL)']
   }
 }
 
@@ -955,6 +956,12 @@ Table "kb"."chat_messages" {
   Indexes {
     (conversation_id, created_at) [name: "idx_chat_messages_conversation_history"]
   }
+}
+
+Table "kb"."chunk_embedding_budget_blocks" {
+  "project_id" uuid [pk]
+  "blocked_until" timestamptz [not null]
+  "updated_at" timestamptz [not null, default: `now()`]
 }
 
 Table "kb"."chunk_embedding_jobs" {
@@ -3154,6 +3161,7 @@ Ref: "kb"."chat_conversations"."agent_definition_id" > "kb"."agent_definitions".
 Ref: "kb"."chat_conversations"."object_id" > "kb"."graph_objects"."id"
 Ref: "kb"."chat_conversations"."parent_conversation_id" > "kb"."chat_conversations"."id"
 Ref: "kb"."chat_messages"."conversation_id" > "kb"."chat_conversations"."id"
+Ref: "kb"."chunk_embedding_budget_blocks"."project_id" > "kb"."projects"."id"
 Ref: "kb"."chunk_embedding_jobs"."chunk_id" > "kb"."chunks"."id"
 Ref: "kb"."chunk_revisions"."chunk_id" > "kb"."chunks"."id"
 Ref: "kb"."chunks"."document_id" > "kb"."documents"."id"

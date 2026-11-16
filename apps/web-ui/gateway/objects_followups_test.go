@@ -271,7 +271,7 @@ func TestObjectViewSectionWithoutView(t *testing.T) {
 // silent on it; the Relationships tab says so with its own error alert and never
 // with the empty-view note; and the section fragment removes the stale card
 // instead of 404ing the swap into a frozen one. All three derive the fact from
-// objectViewDeclared, so a future surface cannot pick a fourth answer.
+// objectViewRenderable, so a future surface cannot pick a fourth answer.
 func TestObjectViewEdgeErrorStaysSilent(t *testing.T) {
 	f := viewFollowupMemory()
 	f.edgesErr = errTest
@@ -407,5 +407,53 @@ func TestObjectWikiSkipsAssigneeCandidates(t *testing.T) {
 	}
 	if f.listScheduledAgentsCalls != 0 {
 		t.Errorf("the wiki fetched assignee candidates %d times, want 0", f.listScheduledAgentsCalls)
+	}
+}
+
+// TestObjectWikiUndeclaredEdgeSections pins the wiki's half of the edge gate
+// (#771). The object-page variant groups an edge list by relationship type when
+// the type declares no ui.view, so its "is there something to show" question is
+// objectEdgesReadable — NOT objectViewRenderable, which also requires a declared
+// view. Binding the wiki to the view predicate would quietly empty the
+// Relationships area of every type that has not adopted a view, which is why the
+// derivation is split rather than shared whole.
+func TestObjectWikiUndeclaredEdgeSections(t *testing.T) {
+	f := &fakeMemory{
+		// No ui.view on the type: the page must group by relationship type.
+		compiled: &CompiledSchemaTypes{ObjectTypes: []CompiledType{{Name: "Property", Label: "Property"}}},
+		objects: []GraphObject{
+			{ID: "o1", CanonicalID: "o1", Type: "Property", Name: "Home"},
+			{ID: "d1", CanonicalID: "d1", Type: "Document", Name: "Deed"},
+		},
+		relns: []GraphRelationship{{ID: "r1", Type: "concerns", SrcID: "d1", DstID: "o1"}},
+	}
+	e := newFollowupServer(f)
+	get := func() string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/o1/wiki?view=page", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("wiki status = %d, want 200", rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	body := get()
+	for _, want := range []string{
+		`data-testid="object-wiki-section"`,
+		`>concerns<`,
+		`data-testid="object-wiki-relation-row"`,
+		"Deed",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("undeclared-view wiki page missing %q:\n%s", want, body)
+		}
+	}
+
+	// The other half of the gate: a failed edge read is not an empty edge list,
+	// so the page renders no section at all rather than claiming one.
+	f.edgesErr = errTest
+	if body := get(); strings.Contains(body, `data-testid="object-wiki-section"`) {
+		t.Errorf("an edge-read failure must not render an empty relationship group:\n%s", body)
 	}
 }

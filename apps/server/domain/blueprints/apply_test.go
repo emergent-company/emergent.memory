@@ -3,6 +3,7 @@ package blueprints
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"testing"
 
 	"github.com/google/uuid"
@@ -528,6 +529,38 @@ func (f *fakeAgentRepo) CreateAgent(ctx context.Context, a *agents.Agent) error 
 	f.createdAgents = append(f.createdAgents, a)
 	return nil
 }
+func (f *fakeAgentRepo) CreateRuntimeAgentForDefinition(ctx context.Context, a *agents.Agent) (*agents.Agent, error) {
+	if err := f.CreateAgent(ctx, a); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+// FindRuntimeAgentForDefinition returns the row linked to definitionID within
+// projectID. Rows are matched deterministically (enabled first, then by name) so
+// the #789 recovery unit test does not depend on map iteration order.
+func (f *fakeAgentRepo) FindRuntimeAgentForDefinition(ctx context.Context, projectID, definitionID string) (*agents.Agent, error) {
+	var candidates []*agents.Agent
+	for _, a := range f.agentsByName {
+		if a.ProjectID != projectID || a.AgentDefinitionID == nil || *a.AgentDefinitionID != definitionID {
+			continue
+		}
+		candidates = append(candidates, a)
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Enabled != candidates[j].Enabled {
+			return candidates[i].Enabled
+		}
+		if candidates[i].Name != candidates[j].Name {
+			return candidates[i].Name < candidates[j].Name
+		}
+		return candidates[i].ID < candidates[j].ID
+	})
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	return candidates[0], nil
+}
 func (f *fakeAgentRepo) UpdateAgent(ctx context.Context, a *agents.Agent) error {
 	f.agentsByName[a.Name] = a
 	f.updatedAgents = append(f.updatedAgents, a)
@@ -778,7 +811,8 @@ func TestEnsureRuntimeAgent_ForeignOwnerNoHijack(t *testing.T) {
 				ReactionConfig: &agents.ReactionConfig{ObjectTypes: []string{"Task"}},
 			}
 
-			require.NoError(t, svc.ensureRuntimeAgent(context.Background(), "proj-1", "bp-1", def, &am))
+			_, err := svc.ensureRuntimeAgent(context.Background(), "proj-1", "bp-1", def, &am)
+			require.NoError(t, err)
 			assert.Len(t, fake.updatedAgents, 0, "must not mutate a non-owned runtime agent")
 			assert.Len(t, fake.createdAgents, 0)
 		})
@@ -800,7 +834,7 @@ func TestEnsureRuntimeAgent_InvalidCronOnUpdateRejected(t *testing.T) {
 	def := &agents.AgentDefinition{ID: uuid.NewString(), Name: "nightly", ProjectID: "proj-1"}
 	am := AgentManifest{Name: "nightly", TriggerType: "schedule", CronSchedule: "0 0 5 * * *"}
 
-	err := svc.ensureRuntimeAgent(context.Background(), "proj-1", "bp-1", def, &am)
+	_, err := svc.ensureRuntimeAgent(context.Background(), "proj-1", "bp-1", def, &am)
 	require.Error(t, err)
 	assertAppErrorCode(t, err, apperror.ErrBadRequest.Code)
 	assert.Contains(t, err.Error(), "0 0 5 * * *")
@@ -823,7 +857,8 @@ func TestEnsureRuntimeAgent_OwnBlueprintUpdates(t *testing.T) {
 	def := &agents.AgentDefinition{ID: defID, Name: "board-agent", ProjectID: "proj-1"}
 	am := AgentManifest{Name: "board-agent", TriggerType: "reaction", ReactionConfig: &agents.ReactionConfig{ObjectTypes: []string{"Task"}}}
 
-	require.NoError(t, svc.ensureRuntimeAgent(context.Background(), "proj-1", "bp-1", def, &am))
+	_, err := svc.ensureRuntimeAgent(context.Background(), "proj-1", "bp-1", def, &am)
+	require.NoError(t, err)
 	require.Len(t, fake.updatedAgents, 1, "owned agent must be updated")
 	assert.Equal(t, "fast", fake.updatedAgents[0].Config["queue"], "existing config preserved")
 	assert.Equal(t, "bp-1", fake.updatedAgents[0].Config["sourceBlueprintId"])

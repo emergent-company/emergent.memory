@@ -35,6 +35,14 @@ type objectHeaderProps struct {
 	// Direction, "in" or "out", adds the edge's arrow at the end of the identity
 	// line. Only meaningful on a row.
 	Direction string
+	// TopAlign aligns the type tile with the row's first line instead of
+	// centring it. A row whose body wraps — a relationship row carrying a
+	// two-line excerpt is taller than the tile — would otherwise float the tile
+	// beside the middle of the paragraph instead of introducing the object. A
+	// row without a summary is only two lines tall and reads better centred, so
+	// the caller decides per row; a browse card's head keeps the centred tile,
+	// because a card is a face to scan, not a line in a list.
+	TopAlign bool
 	// Excerpt is an optional summary line under the name. Only used on a row:
 	// at lead scale the page's own prose follows the head.
 	Excerpt string

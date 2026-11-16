@@ -143,6 +143,37 @@ func TestObjectHeaderRowDirection(t *testing.T) {
 	}
 }
 
+// TestObjectHeaderRowTopAlign pins the relationship row's fix (#763): a row
+// whose excerpt wraps is taller than its tile, so the row opts the tile onto the
+// first line. A row that does not opt in keeps the centred tile, and the choice
+// stays a prop rather than a guess about the excerpt, so a card's head and a
+// list row can differ deliberately.
+func TestObjectHeaderRowTopAlign(t *testing.T) {
+	top := renderHTMLDev(t, objectHeader(objectHeaderProps{
+		Variant:  objectHeaderRow,
+		Type:     "task",
+		Label:    "Fix the roof",
+		Excerpt:  "Leaky after the storm, and the gutter is loose too.",
+		TopAlign: true,
+	}))
+	if !strings.Contains(top, "flex min-w-0 items-start gap-3") {
+		t.Errorf("a top-aligned row must align its tile to the first line:\n%s", top)
+	}
+
+	centred := renderHTMLDev(t, objectHeader(objectHeaderProps{
+		Variant: objectHeaderRow,
+		Type:    "task",
+		Label:   "Fix the roof",
+		Excerpt: "Leaky after the storm, and the gutter is loose too.",
+	}))
+	if !strings.Contains(centred, "flex min-w-0 items-center gap-3") {
+		t.Errorf("a row that did not opt in must keep the centred tile:\n%s", centred)
+	}
+	if strings.Contains(centred, "items-start") {
+		t.Errorf("the centred tile must not leak to rows that did not ask for it:\n%s", centred)
+	}
+}
+
 // TestObjectDisplayRef pins the identity line's ref: the declared ref, or the
 // short id when the object has none yet.
 func TestObjectDisplayRef(t *testing.T) {
