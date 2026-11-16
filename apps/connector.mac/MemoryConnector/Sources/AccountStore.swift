@@ -79,6 +79,11 @@ final class AccountStore {
     private(set) var identities: [String: OIDCUserInfo] = [:]
     /// Accounts whose last token fetch failed — they need the user to sign in
     /// again. Other accounts are never touched by a failure here.
+    ///
+    /// Membership is what scopes the silent-re-auth attempt mark: the mark only
+    /// counts while the account is marked (see `attemptSilentReauth`), so
+    /// leaving this set — on any positive evidence — ends the episode and
+    /// allows the next one to try again.
     private(set) var needsReauth: Set<String> = []
     private(set) var lastError: String?
     /// True while the browser sign-in flow is in flight (drives the UI spinner).
@@ -135,14 +140,13 @@ final class AccountStore {
 
     // MARK: - Silent re-auth state
 
-    /// In-flight non-interactive re-auth per account: single-flight, so a
-    /// launch, a wake and a token read that all notice `needs_reauth` at once
-    /// produce ONE authorization attempt, not three.
+    /// In-flight non-interactive re-auth per account: single-flight, so a launch,
+    /// a wake and a token read that notice `needs_reauth` run ONE attempt.
     private var silentReauthTasks: [String: Task<Bool, Never>] = [:]
-    /// Accounts that have had their one silent attempt for the current
-    /// `needs_reauth` episode; cleared only on positive evidence of a working
-    /// session (a token read, a usable status, sign-in, a switch), never by the
-    /// attempt itself, so a failed attempt cannot trigger the next one.
+    /// Accounts that already attempted a silent re-auth in the current
+    /// `needs_reauth` episode. Set before the attempt, so a FAILED attempt
+    /// cannot retrigger it, and cleared with `needsReauth` (see
+    /// `clearNeedsReauth`), which is what ends the episode.
     private var silentReauthAttempted: Set<String> = []
 
     /// A cached token is reused only while it keeps at least this much life: a
@@ -281,8 +285,7 @@ final class AccountStore {
                                   displayName: nil,
                                   avatarObjectKey: nil)
             upsert(account)
-            needsReauth.remove(accountID)
-            clearSilentReauthAttempt(accountID)
+            clearNeedsReauth(accountID)
             persistIndex()
 
             if let previous = activeAccountID, previous != accountID {
@@ -380,8 +383,7 @@ final class AccountStore {
             }
             // The CLI reports the session as usable, so any stale re-auth mark
             // on this account is out of date.
-            needsReauth.remove(account.id)
-            clearSilentReauthAttempt(account.id)
+            clearNeedsReauth(account.id)
             sessionValid[account.id] = true
             setSessionState(.valid)
             return true
@@ -391,8 +393,7 @@ final class AccountStore {
         let valid = await connectorIsSignedIn(environment: environment)
         sessionValid[account.id] = valid
         if valid {
-            needsReauth.remove(account.id)
-            clearSilentReauthAttempt(account.id)
+            clearNeedsReauth(account.id)
             setSessionState(.valid)
         } else {
             markNeedsReauth(account.id)
@@ -403,20 +404,11 @@ final class AccountStore {
     // MARK: - Silent re-auth
 
     /// Non-interactive re-auth for an account whose stored session the provider
-    /// rejected (`needs_reauth`).
-    ///
-    /// It runs the SAME `auth start`/`auth complete` pair the interactive flow
-    /// uses, with `prompt=none` and the account's email as `login_hint`, so a
-    /// machine still signed in at the identity provider comes back without a
-    /// login page. A decline ("login_required", a cancelled browser session,
-    /// anything else) cancels the pending login and changes nothing: the
-    /// `needs_reauth` mark and the interactive affordance stay, and `lastError`
-    /// is never written because the user neither caused nor can act on it.
-    ///
-    /// At most ONE attempt runs per `needs_reauth` episode: the attempt is
-    /// recorded before it starts and cleared only when a session is positively
-    /// observed working again, so two surfaces noticing the same rejection share
-    /// one attempt instead of starting a sign-in loop.
+    /// rejected (`needs_reauth`). It runs the SAME `auth start`/`auth complete`
+    /// pair the interactive flow uses, with `prompt=none` and the account's email
+    /// as `login_hint`; a decline ("login_required", a cancelled session, a
+    /// browser timeout) cancels the pending login and changes nothing: the mark
+    /// and the interactive affordance stay, and `lastError` is never written.
     ///
     /// - Returns: true when the attempt restored a usable session.
     @discardableResult
@@ -424,13 +416,16 @@ final class AccountStore {
         guard let account = account(id: accountID), let environment = account.environment else {
             return false
         }
-        // Join an attempt already in flight first: it is running *because* this
-        // episode has no attempt recorded yet, and its caller must see the
-        // result the other surface is about to observe.
+        // Join an in-flight attempt first: whoever started it must see its
+        // result, not a second `false`.
         if let inFlight = silentReauthTasks[accountID] {
             return await inFlight.value
         }
-        guard !silentReauthAttempted.contains(accountID) else { return false }
+        // One attempt per `needs_reauth` episode: the guard is dropped with the
+        // mark (`clearNeedsReauth`), so a later episode gets a fresh attempt.
+        guard !(needsReauth.contains(accountID) && silentReauthAttempted.contains(accountID)) else {
+            return false
+        }
         silentReauthAttempted.insert(accountID)
         let task = Task { await self.runSilentReauth(account: account, environment: environment) }
         silentReauthTasks[accountID] = task
@@ -457,9 +452,8 @@ final class AccountStore {
                 configPath: configPath
             )
             loginID = start.loginID
-            // `prompt=none` resolves from the provider's own session: no login
-            // page is rendered and the callback arrives immediately, either
-            // with a code or with an `error=login_required`-style decline.
+            // `prompt=none` answers from the provider's own session: a code or
+            // an `error=login_required` decline, never a login page.
             let attempt = await silentAuthorizationCode(for: start)
             guard let code = attempt.code else {
                 return await abandonSilentReauth(account: account, loginID: loginID,
@@ -476,7 +470,11 @@ final class AccountStore {
                                                  reason: "the connector did not complete the sign-in")
             }
 
-            needsReauth.remove(account.id)
+            // The episode is over: clearing the mark with the attempt means a
+            // later rejection is a new one that tries again. The retried token
+            // read is bounded separately (see `fetchAccessToken`), so this
+            // cannot loop.
+            clearNeedsReauth(account.id)
             sessionValid[account.id] = true
             if account.id == activeAccountID {
                 setSessionState(.valid)
@@ -493,8 +491,9 @@ final class AccountStore {
     private typealias SilentAuthorizationAttempt = (code: String?, decline: String?)
 
     /// Opens the `prompt=none` authorization URL and returns the code the
-    /// provider issued, or the reason it declined. Split from `runSilentReauth`
-    /// so that function reads as the flow (start → authorize → complete).
+    /// provider issued, or the reason it declined. Bounded by
+    /// `OAuthCallback.silentBrowserTimeout`, so an IdP that answers with HTML
+    /// instead of a callback leaves no window up.
     private func silentAuthorizationCode(for start: CLIPKCEStart) async -> SilentAuthorizationAttempt {
         guard let authorizeURL = URL(string: start.authorizeURL) else {
             return (code: nil, decline: "invalid authorize URL")
@@ -502,7 +501,8 @@ final class AccountStore {
         let callback: URL
         do {
             callback = try await authenticator.authenticate(url: authorizeURL,
-                                                            callbackURLScheme: OAuthCallback.callbackScheme)
+                                                            callbackURLScheme: OAuthCallback.callbackScheme,
+                                                            timeout: OAuthCallback.silentBrowserTimeout)
         } catch {
             return (code: nil, decline: "no SSO session (\(error.localizedDescription))")
         }
@@ -525,13 +525,6 @@ final class AccountStore {
             try? await connectorCLI.authCancel(loginID: loginID, configPath: configPath)
         }
         return false
-    }
-
-    /// Allows the next `needs_reauth` episode to attempt a silent re-auth again.
-    /// Only a positively working session clears it (see
-    /// `silentReauthAttempted`).
-    private func clearSilentReauthAttempt(_ accountID: String) {
-        silentReauthAttempted.remove(accountID)
     }
 
     /// Outcome of a renewal attempt: only `.rejected` means the session is dead.
@@ -587,6 +580,12 @@ final class AccountStore {
         if accountID == activeAccountID {
             setSessionState(.needsReauth)
         }
+    }
+
+    /// Clears the mark together with the attempt that consumed its episode.
+    private func clearNeedsReauth(_ accountID: String) {
+        needsReauth.remove(accountID)
+        silentReauthAttempted.remove(accountID)
     }
 
     /// Updates `sessionState`, logging transitions only (a poll loop that keeps
@@ -687,8 +686,7 @@ final class AccountStore {
         ConnectorLog.lifecycle("activeAccountDidChange source=switchTo account=\(account.id)")
         activeAccountDidChange(account)
         // The CLI validated this account's session above.
-        needsReauth.remove(accountID)
-        clearSilentReauthAttempt(accountID)
+        clearNeedsReauth(accountID)
         sessionValid[accountID] = true
         tokenCache[accountID] = nil
         setSessionState(.valid)
@@ -715,8 +713,7 @@ final class AccountStore {
         }
 
         identities[accountID] = nil
-        needsReauth.remove(accountID)
-        clearSilentReauthAttempt(accountID)
+        clearNeedsReauth(accountID)
         silentReauthTasks[accountID]?.cancel()
         silentReauthTasks[accountID] = nil
         sessionValid[accountID] = nil
@@ -784,7 +781,12 @@ final class AccountStore {
 
     /// The uncached token read. Callers must go through
     /// `currentAccessToken(for:)` so the single-flight coalescing applies.
-    private func fetchAccessToken(for accountID: String) async throws -> String {
+    ///
+    /// - Parameter allowSilentReauth: when false, an auth rejection marks the
+    ///   account instead of starting another `prompt=none` attempt. The read
+    ///   retried after a successful silent attempt passes false, so a provider
+    ///   that rejects again cannot loop the browser.
+    private func fetchAccessToken(for accountID: String, allowSilentReauth: Bool = true) async throws -> String {
         guard let environment = account(id: accountID)?.environment else {
             markNeedsReauth(accountID)
             throw AccountStoreError.unknownAccount(accountID)
@@ -792,8 +794,7 @@ final class AccountStore {
         do {
             let token = try await connectorCLI.authAccessToken(serverURL: environment.serverURLString,
                                                                configPath: configPath)
-            needsReauth.remove(accountID)
-            clearSilentReauthAttempt(accountID)
+            clearNeedsReauth(accountID)
             sessionValid[accountID] = true
             if let expiresAt = Self.parseExpiry(token.expiresAt) {
                 tokenCache[accountID] = CachedToken(accessToken: token.accessToken, expiresAt: expiresAt)
@@ -806,11 +807,10 @@ final class AccountStore {
             tokenCache[accountID] = nil
             if await isAuthRejection(error: error, environment: environment) {
                 // A rejected session is the one recoverable case a background
-                // flow may fix without asking: try `prompt=none` once, then
-                // read the (now renewed) token. The attempt guard is what stops
-                // a second failure from starting a second attempt.
-                if await attemptSilentReauth(for: accountID) {
-                    return try await fetchAccessToken(for: accountID)
+                // flow may fix without asking: try `prompt=none` once, then read
+                // the (now renewed) token. The retried read cannot re-attempt.
+                if allowSilentReauth, await attemptSilentReauth(for: accountID) {
+                    return try await fetchAccessToken(for: accountID, allowSilentReauth: false)
                 }
                 markNeedsReauth(accountID)
                 throw OIDCError.notSignedIn

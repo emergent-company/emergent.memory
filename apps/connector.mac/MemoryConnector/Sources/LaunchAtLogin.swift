@@ -60,7 +60,8 @@ final class LaunchAtLogin {
         requiresApproval = service.requiresApproval
     }
 
-    /// Re-reads the system status (on appear, and after every change).
+    /// Re-reads the system status (on appear, when the app becomes active, and
+    /// after every change).
     func refresh() {
         isEnabled = service.isEnabled
         requiresApproval = service.requiresApproval
