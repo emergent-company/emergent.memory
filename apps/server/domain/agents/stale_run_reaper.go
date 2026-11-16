@@ -21,6 +21,12 @@ const (
 	// is alive is never reaped, even across long blocking phases such as
 	// workspace provisioning/build or a slow in-flight model/tool call.
 	defaultRunHeartbeatInterval = 2 * time.Minute
+
+	// queuedRunDispatchThreshold is how long a queued ("submitted") run may sit
+	// with no dispatch job any worker can claim before the reaper fails it
+	// (issue #880). It matches the stale-run window: a run that has been idle
+	// this long was never dispatched at all, not merely waiting in line.
+	queuedRunDispatchThreshold = 30 * time.Minute
 )
 
 // StaleRunReaper periodically scans for agent runs stuck in "running" status
@@ -87,19 +93,56 @@ func (r *StaleRunReaper) Stop() {
 	<-r.doneCh
 }
 
-// reap finds and marks stale runs.
+// reap finds and marks stale runs. Each sweep is independent: a failure in one
+// must not starve the others, because a database error in the running-run sweep
+// has nothing to do with whether queued or cancelling runs can be finalized.
 func (r *StaleRunReaper) reap(ctx context.Context) {
-	n, err := r.repo.MarkStaleRunsAsError(ctx, staleRunThreshold)
-	if err != nil {
+	if n, err := r.repo.MarkStaleRunsAsError(ctx, staleRunThreshold); err != nil {
 		r.log.Warn("failed to mark stale runs",
 			slog.String("error", err.Error()),
 		)
-		return
-	}
-	if n > 0 {
+	} else if n > 0 {
 		r.log.Info("marked stale agent runs as error",
 			slog.Int("count", n),
 		)
+	}
+
+	// A queued ("submitted") run whose dispatch job no worker can ever claim has
+	// nothing left to drive it: a job whose queue row is missing, or with a NULL
+	// project_id, never matches a claim. Neither the running-run sweep above nor
+	// work maintenance (which counts "submitted" as live) will ever terminate it,
+	// so no error would surface and the run would sit non-terminal forever
+	// (issue #880).
+	//
+	// Heal first, then fail: a queued run that merely lost its job row is
+	// re-enqueued — the same recovery the startup hook performs — and only a run
+	// that still has no claimable job after being idle past the threshold is
+	// failed. A run whose queue row exists but is disabled is spared: disabling
+	// is reversible operator intent and re-enabling must bring the backlog back.
+	if k, err := r.repo.RequeueOrphanedQueuedRuns(ctx); err != nil {
+		r.log.Warn("failed to requeue orphaned queued runs",
+			slog.String("error", err.Error()),
+		)
+	} else if k > 0 {
+		r.log.Info("re-enqueued orphaned queued agent runs",
+			slog.Int("count", k),
+		)
+	}
+	if res, err := r.repo.ReapUndispatchableQueuedRuns(ctx, queuedRunDispatchThreshold); err != nil {
+		r.log.Warn("failed to reap undispatchable queued runs",
+			slog.String("error", err.Error()),
+		)
+	} else {
+		if res.Failed > 0 {
+			r.log.Info("marked undispatchable queued agent runs as error",
+				slog.Int("count", res.Failed),
+			)
+		}
+		if res.SparedDisabled > 0 {
+			r.log.Info("spared queued agent runs parked on disabled queues",
+				slog.Int("count", res.SparedDisabled),
+			)
+		}
 	}
 
 	// A durable cancel whose executing instance never observed it (the process
