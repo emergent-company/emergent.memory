@@ -6,6 +6,8 @@ import (
 	"html"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strings"
 	"testing"
 
@@ -178,12 +180,297 @@ func TestWorkBoardCountReadout(t *testing.T) {
 	}
 }
 
+// TestBoardViewQuery pins the board's view-state reduction. The type filter is
+// the only thing that has to survive a re-render, and it must survive intact:
+// dropping it widens a filtered board to every type behind a control that still
+// shows the subset, and carrying unrelated params would leak the rest of the
+// request into every action URL.
+func TestBoardViewQuery(t *testing.T) {
+	tests := []struct {
+		name, in, want string
+	}{
+		{"empty", "", ""},
+		{"filter only", "filter=1", "filter=1"},
+		{"types only", "type=Task", "type=Task"},
+		{"filter and types", "filter=1&type=Task&type=Bug", "filter=1&type=Task&type=Bug"},
+		{"blank type dropped", "filter=1&type=&type=Task", "filter=1&type=Task"},
+		{"unrelated params dropped", "filter=1&type=Task&section=board&agent=a1&q=x", "filter=1&type=Task"},
+		{"filter flag must be exactly 1", "filter=0&type=Task", "type=Task"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			in, err := url.ParseQuery(tt.in)
+			if err != nil {
+				t.Fatalf("ParseQuery(%q): %v", tt.in, err)
+			}
+			if got := boardViewQuery(in).Encode(); got != tt.want {
+				t.Errorf("boardViewQuery(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestWorkBoardStreamURLCarriesTheView pins the stream's address. hx-sse opens a
+// bare EventSource, so the query cannot be attached by the client afterwards: if
+// it is not in the rendered URL the catch-up frame renders the all-types board.
+func TestWorkBoardStreamURLCarriesTheView(t *testing.T) {
+	if got := workBoardStreamURL(workData{}); got != "/work/board/stream" {
+		t.Errorf("unfiltered stream URL = %q, want /work/board/stream", got)
+	}
+	data := workData{Query: url.Values{"filter": {"1"}, "type": {"Task"}}}
+	if got := workBoardStreamURL(data); got != "/work/board/stream?filter=1&type=Task" {
+		t.Errorf("filtered stream URL = %q, want /work/board/stream?filter=1&type=Task", got)
+	}
+}
+
+// TestWorkActionPathCarriesTheView pins the action routes. An action's response
+// re-renders the board from the request's own query, so the filter has to ride on
+// the action URL — the POST body carries the form's fields, not the board's view.
+func TestWorkActionPathCarriesTheView(t *testing.T) {
+	if got := workActionPath("w1", "approve", nil); got != "/work/items/w1/approve" {
+		t.Errorf("unfiltered action path = %q, want /work/items/w1/approve", got)
+	}
+	view := url.Values{"filter": {"1"}, "type": {"Task"}}
+	if got := workActionPath("w1", "approve", view); got != "/work/items/w1/approve?filter=1&type=Task" {
+		t.Errorf("filtered action path = %q, want /work/items/w1/approve?filter=1&type=Task", got)
+	}
+}
+
+// TestWorkBoardViewConnectsTheStreamWithItsView pins both ends of the wiring: the
+// rendered board publishes its view state as data-board-query (which app.js
+// appends to the refresh and action requests) and opens the live stream with the
+// same query.
+func TestWorkBoardViewConnectsTheStreamWithItsView(t *testing.T) {
+	data := workData{
+		BoardTypes:     []CompiledType{{Name: "Task", BoardEnabled: true}},
+		SelectedTypes:  []string{"Task"},
+		FilterExplicit: true,
+		Query:          url.Values{"filter": {"1"}, "type": {"Task"}},
+		TypeCounts:     map[string]int{"Task": 1},
+		StatusMap:      defaultBoardStatusMap(),
+	}
+	body := renderHTML(t, workBoardView(data))
+	for _, want := range []string{
+		`data-board-query="filter=1&amp;type=Task"`,
+		`hx-sse:connect="/work/board/stream?filter=1&amp;type=Task"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("filtered board missing %q:\n%s", want, body)
+		}
+	}
+
+	unfiltered := renderHTML(t, workBoardView(workData{
+		BoardTypes:    []CompiledType{{Name: "Task", BoardEnabled: true}},
+		SelectedTypes: []string{"Task"},
+		TypeCounts:    map[string]int{"Task": 1},
+		StatusMap:     defaultBoardStatusMap(),
+	}))
+	if !strings.Contains(unfiltered, `hx-sse:connect="/work/board/stream"`) {
+		t.Errorf("unfiltered board must connect without a query:\n%s", unfiltered)
+	}
+	if !strings.Contains(unfiltered, `data-board-query=""`) {
+		t.Errorf("unfiltered board must publish an empty view:\n%s", unfiltered)
+	}
+}
+
+// TestWorkActionRefreshKeepsTheTypeFilter is the regression for the review
+// finding: the action POST answers by re-rendering the board from its own query,
+// so an approve on a filtered board must come back still showing only the
+// selected type. Before, the response rendered every type while the filter
+// control — outside the swap region — still showed the subset.
+func TestWorkActionRefreshKeepsTheTypeFilter(t *testing.T) {
+	f := &fakeMemory{
+		compiled: &CompiledSchemaTypes{ObjectTypes: []CompiledType{
+			{Name: "Task", BoardEnabled: true, AllowedStatuses: []string{"ready", "review", "done"}},
+			{Name: "Bug", BoardEnabled: true, AllowedStatuses: []string{"open", "closed"}},
+		}},
+		workItems: []WorkItem{
+			{CanonicalID: "w1", Type: "Task", Key: "ship-1", Status: "review"},
+			{CanonicalID: "b1", Type: "Bug", Key: "crash-1", Status: "open"},
+		},
+		workAction: &WorkItemAction{Item: &WorkItemActionItem{CanonicalID: "w1", Status: "done"}},
+	}
+	_, e := newWorkBoardEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/work/items/w1/approve?filter=1&type=Task", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-testid="work-type-Task"`) {
+		t.Errorf("filtered action refresh dropped the selected type:\n%s", body)
+	}
+	if strings.Contains(body, `data-testid="work-type-Bug"`) {
+		t.Errorf("filtered action refresh widened the board to every type:\n%s", body)
+	}
+	if !strings.Contains(body, `data-board-query="filter=1&amp;type=Task"`) {
+		t.Errorf("filtered action refresh lost the view state:\n%s", body)
+	}
+}
+
+// TestWorkBoardPageUsesFullBleedContainer pins the page shell the legacy board's
+// layout test also pinned: a Kanban board is a horizontal surface, so it takes the
+// full-bleed container (go-daisy ContainerFull = max-w-none) rather than the capped
+// reading width. The width is applied from a runtime value (string(size)), so the
+// compiled-stylesheet side is covered by the @source inline("max-w-none")
+// safelist in webui/css/app.css.
+func TestWorkBoardPageUsesFullBleedContainer(t *testing.T) {
+	body := renderWorkBoardPage(t, workBoardPageMemory())
+
+	if !strings.Contains(body, "max-w-none") {
+		t.Errorf("work board page does not render the full-bleed container width (max-w-none):\n%s", body)
+	}
+	if strings.Contains(body, "max-w-6xl") {
+		t.Error("work board page still renders the capped container width (max-w-6xl)")
+	}
+}
+
+// TestWorkBoardPageWiresLiveStream pins the live-refresh wiring the retired
+// board's layout test covered: the htmx hx-sse extension is loaded and the page
+// carries a connection anchor pointed at the work stream. The client-side poller
+// (/js/board.js) must stay retired — it listened for entity.created/updated and
+// therefore never saw the entity.status_changed/entity.assigned events the work
+// path emits.
+func TestWorkBoardPageWiresLiveStream(t *testing.T) {
+	body := renderWorkBoardPage(t, workBoardPageMemory())
+
+	for _, want := range []string{
+		"/js/hx-sse.js",
+		`hx-sse:connect="/work/board/stream"`,
+		`id="work-board-live"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("work board page is missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "/js/board.js") {
+		t.Error("work board page still loads the retired client-side poller (/js/board.js)")
+	}
+}
+
+// TestWorkBoardLanesShareTheRow pins the narrow-screen lane row: a column-flow
+// grid whose lanes take an equal share of the row, instead of a wrapping
+// auto-fill grid (which leaves a trailing empty column or strands a lone lane on
+// a second row). The desktop status × execution matrix divides width by
+// grid-template-columns, so this covers the fallback.
+func TestWorkBoardLanesShareTheRow(t *testing.T) {
+	body := renderWorkBoardPage(t, workBoardPageMemory())
+
+	for _, want := range []string{"grid-flow-col", "auto-cols-[minmax(", "memory-board__lane"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("work board lanes missing width-sharing member %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "auto-fill") {
+		t.Error("work board lanes still use a wrapping auto-fill grid")
+	}
+}
+
+// TestWorkBoardDropRingIsDrawnInsideTheLane pins the drop highlight. Lanes live in
+// an overflow-x-auto row with no top padding, so an external outline (a positive
+// offset) has its top edge clipped by the scroll container.
+func TestWorkBoardDropRingIsDrawnInsideTheLane(t *testing.T) {
+	css, err := os.ReadFile("webui/css/app.css")
+	if err != nil {
+		t.Fatalf("read app.css: %v", err)
+	}
+	s := string(css)
+	for _, selector := range []string{".memory-board__lane[data-drop-eligible]", ".memory-board__lane--drop"} {
+		block := cssRuleBlock(t, s, selector)
+		if !strings.Contains(block, "outline-offset: -2px") {
+			t.Errorf("%s must draw its ring inside the lane (outline-offset: -2px); got:\n%s", selector, block)
+		}
+	}
+	// The active target has to outrank the eligibility ring, which is a
+	// class+attribute selector (0,2,0): with a single class (0,1,0) the hovered
+	// lane kept the dashed ring and only the background tint distinguished it.
+	if !strings.Contains(s, ".memory-board__lane.memory-board__lane--drop") {
+		t.Error("the active drop-target rule must be two-class specific (.memory-board__lane.memory-board__lane--drop) to override the eligibility ring")
+	}
+	// ...and it has to come after the eligibility rule: both are (0,2,0), so only
+	// source order decides which ring the hovered lane gets (#2464).
+	eligibilityAt := strings.Index(s, ".memory-board__lane[data-drop-eligible] {")
+	activeAt := strings.Index(s, ".memory-board__lane.memory-board__lane--drop {")
+	if eligibilityAt < 0 || activeAt < 0 {
+		t.Fatalf("both drop-ring rules must be present in app.css: eligibility at %d, active at %d", eligibilityAt, activeAt)
+	}
+	if activeAt < eligibilityAt {
+		t.Error("the active drop-target rule must come after the eligibility rule: both are (0,2,0), so only source order decides")
+	}
+}
+
+// TestWorkBoardLaneCarriesTheDropAffordanceHook pins both halves of the
+// eligibility ring: the selector needs the class, and the lane element needs to
+// carry it. A rename on either side leaves the drag affordance invisible with no
+// error anywhere.
+func TestWorkBoardLaneCarriesTheDropAffordanceHook(t *testing.T) {
+	body := renderWorkBoardPage(t, workBoardPageMemory())
+
+	lane := openingTagBefore(t, body, `data-board-column="ready"`)
+	if !strings.Contains(lane, "memory-board__lane") {
+		t.Errorf("board lane element does not carry the memory-board__lane hook, so .memory-board__lane[data-drop-eligible] never matches:\n%s", lane)
+	}
+
+	css, err := os.ReadFile("webui/css/app.css")
+	if err != nil {
+		t.Fatalf("read app.css: %v", err)
+	}
+	if !strings.Contains(string(css), ".memory-board__lane[data-drop-eligible]") {
+		t.Error("app.css no longer styles the eligibility ring through .memory-board__lane[data-drop-eligible]")
+	}
+}
+
+// workBoardPageMemory is a one-type board holding one item, so the page renders a
+// real matrix rather than the no-board-types empty state.
+func workBoardPageMemory() *fakeMemory {
+	return &fakeMemory{
+		compiled: &CompiledSchemaTypes{ObjectTypes: []CompiledType{
+			{Name: "Task", BoardEnabled: true, AllowedStatuses: []string{"ready", "in_progress", "done"}},
+		}},
+		workItems: []WorkItem{
+			{CanonicalID: "w1", Type: "Task", Key: "ship-1", Status: "ready"},
+		},
+	}
+}
+
+// renderWorkBoardPage renders the Work → Board page through its route.
+func renderWorkBoardPage(t *testing.T, f MemoryBackend) string {
+	t.Helper()
+	_, e := newWorkBoardEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/work/board", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /work/board status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	return rec.Body.String()
+}
+
+// openingTagBefore isolates the opening tag that carries attribute: it starts at
+// the last `<` before the attribute, so an assertion cannot pass on a class that
+// belongs to a different element earlier in the page.
+func openingTagBefore(t *testing.T, s, attribute string) string {
+	t.Helper()
+	end := strings.Index(s, attribute)
+	if end < 0 {
+		t.Fatalf("attribute %q not found in rendered board", attribute)
+	}
+	start := strings.LastIndex(s[:end], "<")
+	if start < 0 {
+		t.Fatalf("no tag start before %q", attribute)
+	}
+	tagEnd := strings.Index(s[end:], ">")
+	if tagEnd < 0 {
+		t.Fatalf("unterminated tag at %q", attribute)
+	}
+	return s[start : end+tagEnd+1]
+}
+
 // TestWorkPreviewActionButtonsGateByStatus pins the status-gated work-item
 // actions in the preview's action slot: review exposes approve + request changes
 // (feedback is required, so it is a form) and hides retry; blocked exposes retry;
 // done hides cancel.
 func TestWorkPreviewActionButtonsGateByStatus(t *testing.T) {
-	review := renderHTML(t, workPreviewActionButtons(&WorkItem{CanonicalID: "w1", Status: "review"}, defaultBoardStatusMap()))
+	review := renderHTML(t, workPreviewActionButtons(&WorkItem{CanonicalID: "w1", Status: "review"}, defaultBoardStatusMap(), nil))
 	for _, want := range []string{`/work/items/w1/approve`, `/work/items/w1/request-changes`, `name="feedback"`, `hx-target="#work-board"`, `hx-swap="outerMorph"`} {
 		if !strings.Contains(review, want) {
 			t.Errorf("review actions missing %q:\n%s", want, review)
@@ -193,12 +480,12 @@ func TestWorkPreviewActionButtonsGateByStatus(t *testing.T) {
 		t.Error("retry must be hidden for a review item")
 	}
 
-	blocked := renderHTML(t, workPreviewActionButtons(&WorkItem{CanonicalID: "w1", Status: "blocked"}, defaultBoardStatusMap()))
+	blocked := renderHTML(t, workPreviewActionButtons(&WorkItem{CanonicalID: "w1", Status: "blocked"}, defaultBoardStatusMap(), nil))
 	if !strings.Contains(blocked, "/work/items/w1/retry") {
 		t.Errorf("blocked item must expose retry:\n%s", blocked)
 	}
 
-	done := renderHTML(t, workPreviewActionButtons(&WorkItem{CanonicalID: "w1", Status: "done"}, defaultBoardStatusMap()))
+	done := renderHTML(t, workPreviewActionButtons(&WorkItem{CanonicalID: "w1", Status: "done"}, defaultBoardStatusMap(), nil))
 	if strings.Contains(done, "/work/items/w1/cancel") || strings.Contains(done, "/work/items/w1/approve") {
 		t.Errorf("done item must expose neither cancel nor approve:\n%s", done)
 	}
@@ -210,7 +497,7 @@ func TestWorkPreviewActionButtonsGateByStatus(t *testing.T) {
 func TestWorkPreviewActionButtonsUseCustomStatusMap(t *testing.T) {
 	sm := boardStatusMap{Ready: "todo", InProgress: "doing", Review: "checking", Revision: "rework", Blocked: "rejected", Done: "shipped"}
 
-	review := renderHTML(t, workPreviewActionButtons(&WorkItem{CanonicalID: "w1", Status: "checking"}, sm))
+	review := renderHTML(t, workPreviewActionButtons(&WorkItem{CanonicalID: "w1", Status: "checking"}, sm, nil))
 	for _, want := range []string{`/work/items/w1/approve`, `name="feedback"`} {
 		if !strings.Contains(review, want) {
 			t.Errorf("custom review status missing %q:\n%s", want, review)
@@ -220,12 +507,12 @@ func TestWorkPreviewActionButtonsUseCustomStatusMap(t *testing.T) {
 		t.Error("retry must be hidden for a custom-review item")
 	}
 
-	blocked := renderHTML(t, workPreviewActionButtons(&WorkItem{CanonicalID: "w1", Status: "rejected"}, sm))
+	blocked := renderHTML(t, workPreviewActionButtons(&WorkItem{CanonicalID: "w1", Status: "rejected"}, sm, nil))
 	if !strings.Contains(blocked, "/work/items/w1/retry") || strings.Contains(blocked, "/work/items/w1/approve") {
 		t.Errorf("custom blocked status must expose retry only:\n%s", blocked)
 	}
 
-	done := renderHTML(t, workPreviewActionButtons(&WorkItem{CanonicalID: "w1", Status: "shipped"}, sm))
+	done := renderHTML(t, workPreviewActionButtons(&WorkItem{CanonicalID: "w1", Status: "shipped"}, sm, nil))
 	if strings.Contains(done, "/work/items/w1/cancel") {
 		t.Errorf("cancel must be hidden for a custom-done item:\n%s", done)
 	}
@@ -245,6 +532,7 @@ func TestWorkPreviewBoardSlotRendersActivity(t *testing.T) {
 		[]WorkItemFeedback{
 			{Round: 1, Author: "bob", Text: "round one", CreatedAt: "2026-10-14T11:00:00Z"},
 		},
+		nil,
 		nil,
 	))
 	for _, want := range []string{
@@ -269,9 +557,14 @@ func TestWorkPreviewBoardSlotRendersActivity(t *testing.T) {
 	if hi >= ri || ri >= ai {
 		t.Errorf("comments not in ascending order: human=%d round=%d agent=%d", hi, ri, ai)
 	}
-	// An item with no deliverables must not grow an empty Deliverables section.
-	if strings.Contains(body, "Deliverables") {
-		t.Errorf("empty deliverables rendered a section:\n%s", body)
+	// An item with no deliverables still states the section (object-driven-agent-work):
+	// the preview is the human's only view of what a run produced, so "nothing
+	// declared" must read as an explicit empty state rather than a missing feature.
+	if !strings.Contains(body, "Deliverables") {
+		t.Errorf("empty deliverables omitted the section:\n%s", body)
+	}
+	if !strings.Contains(body, `data-testid="board-deliverable-empty"`) || !strings.Contains(body, "No deliverables declared") {
+		t.Errorf("empty deliverables missing the explicit empty state:\n%s", body)
 	}
 }
 
@@ -281,7 +574,7 @@ func TestWorkPreviewBoardSlotRendersActivity(t *testing.T) {
 func TestWorkPreviewBoardSlotRendersDeliverables(t *testing.T) {
 	item := &WorkItem{CanonicalID: "w1", Type: "Task", Key: "ship-1", Status: "done"}
 	resolved := renderHTML(t, workPreviewBoardSlot(item, defaultBoardStatusMap(), nil, nil,
-		[]boardDeliverable{{Type: "Note", Key: "release-notes", ObjectID: "canon-9", Resolved: true}}))
+		[]boardDeliverable{{Type: "Note", Key: "release-notes", ObjectID: "canon-9", Resolved: true}}, nil))
 	for _, want := range []string{"Deliverables", `data-testid="board-deliverable"`, `href="/objects/canon-9/wiki"`, "release-notes"} {
 		if !strings.Contains(resolved, want) {
 			t.Errorf("resolved deliverable missing %q:\n%s", want, resolved)
@@ -292,7 +585,7 @@ func TestWorkPreviewBoardSlotRendersDeliverables(t *testing.T) {
 	}
 
 	missing := renderHTML(t, workPreviewBoardSlot(item, defaultBoardStatusMap(), nil, nil,
-		[]boardDeliverable{{Type: "Note", Key: "ghost"}}))
+		[]boardDeliverable{{Type: "Note", Key: "ghost"}}, nil))
 	if !strings.Contains(missing, `data-testid="board-deliverable-missing"`) || !strings.Contains(missing, "not found") {
 		t.Errorf("unresolved deliverable not marked:\n%s", missing)
 	}

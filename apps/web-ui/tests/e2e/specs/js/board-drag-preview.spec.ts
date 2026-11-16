@@ -369,7 +369,7 @@ test.describe('Work board drag + preview wiring (app.js)', () => {
     const ref = await page.evaluate(
       () => (window as unknown as { __previewRef: unknown }).__previewRef,
     );
-    expect(ref).toEqual({ id: 'w3', editHref: '/objects/w3', actions: 'board' });
+    expect(ref).toEqual({ id: 'w3', editHref: '/objects/w3', actions: 'board', boardQuery: '' });
     expect(await calls(page)).toHaveLength(0);
     expect(await fetchCalls(page)).toHaveLength(0);
 
@@ -394,7 +394,7 @@ test.describe('Work board drag + preview wiring (app.js)', () => {
     const ref = await page.evaluate(
       () => (window as unknown as { __previewRef: unknown }).__previewRef,
     );
-    expect(ref).toEqual({ id: 'w2', editHref: '/objects/w2', actions: 'board' });
+    expect(ref).toEqual({ id: 'w2', editHref: '/objects/w2', actions: 'board', boardQuery: '' });
 
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
@@ -418,13 +418,13 @@ test.describe('Work board drag + preview wiring (app.js)', () => {
 
     await card.focus();
     await card.press('Enter');
-    expect(await ref()).toEqual({ id: 'w2', editHref: '/objects/w2', actions: 'board' });
+    expect(await ref()).toEqual({ id: 'w2', editHref: '/objects/w2', actions: 'board', boardQuery: '' });
 
     await page.evaluate(() => {
       (window as unknown as { __previewRef: unknown }).__previewRef = null;
     });
     await card.press('Space');
-    expect(await ref()).toEqual({ id: 'w2', editHref: '/objects/w2', actions: 'board' });
+    expect(await ref()).toEqual({ id: 'w2', editHref: '/objects/w2', actions: 'board', boardQuery: '' });
 
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
@@ -477,7 +477,7 @@ test.describe('Work board drag wiring — custom-mapped statuses (app.js)', () =
     const ref = await page.evaluate(
       () => (window as unknown as { __previewRef: unknown }).__previewRef,
     );
-    expect(ref).toEqual({ id: 'w3', editHref: '/objects/w3', actions: 'board' });
+    expect(ref).toEqual({ id: 'w3', editHref: '/objects/w3', actions: 'board', boardQuery: '' });
     expect(await calls(page)).toHaveLength(0);
 
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
@@ -630,6 +630,94 @@ test.describe("Work board drag and the item type's allowed statuses (app.js)", (
     });
 
     await dragEnd(page, 'card-unscoped');
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+});
+
+// The board's view state (its type filter) has to survive every request that
+// re-renders the board. The filter control deliberately sits outside the swap
+// region, so a request built from an empty query would widen a filtered board to
+// every type while the control still showed the subset. The rendered frame
+// publishes the view as data-board-query; app.js appends it to the deferred
+// refresh and the canonical action POST, and forwards it to the preview so the
+// preview's own action routes carry it too.
+const FILTERED_BOARD_HTML = `<!doctype html><html><body>
+  <div id="work-board" data-work-board data-board-query="filter=1&amp;type=Task">
+    <section class="memory-board__lane" data-board-column="ready"><div class="lane-body">
+      <div id="card-ready" draggable="true" data-board-card data-board-status="ready"
+           data-board-open-preview aria-haspopup="dialog" role="button" tabindex="0"
+           data-canonical-id="w2">ready card</div>
+    </div></section>
+    <section class="memory-board__lane" data-board-column="in_progress"><div class="lane-body"></div></section>
+    <section class="memory-board__lane" data-board-column="review"><div class="lane-body"></div></section>
+    <section class="memory-board__lane" data-board-column="revision"><div class="lane-body"></div></section>
+    <section class="memory-board__lane" data-board-column="blocked"><div class="lane-body">
+      <div id="card-blocked" draggable="true" data-board-card data-board-status="blocked"
+           data-board-open-preview aria-haspopup="dialog" role="button" tabindex="0"
+           data-canonical-id="w1">blocked card</div>
+    </div></section>
+    <section class="memory-board__lane" data-board-column="done"><div class="lane-body"></div></section>
+  </div>
+</body></html>`;
+
+test.describe('Work board view state forwarding (app.js)', () => {
+  test('the deferred refresh carries the filter', async ({ page }) => {
+    const errors = await bootstrap(page, FILTERED_BOARD_HTML);
+
+    await dragStart(page, 'card-ready');
+    // The replay only happens when a live frame was deferred by the drag, which
+    // is the case the refresh exists for.
+    await page.evaluate(() => {
+      const detail = { message: { data: '<hx-partial hx-target="#work-board"></hx-partial>' }, cancelled: false };
+      document.dispatchEvent(new CustomEvent('htmx:sse:before:message', { detail }));
+    });
+    await dragEnd(page, 'card-ready');
+
+    const fired = await calls(page);
+    expect(fired).toHaveLength(1);
+    expect(fired[0].method).toBe('GET');
+    expect(fired[0].url).toBe('/work/board/partial?filter=1&type=Task');
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  test('a canonical action carries the filter', async ({ page }) => {
+    const errors = await bootstrap(page, FILTERED_BOARD_HTML);
+
+    await drag(page, 'card-blocked', 'ready');
+
+    const fired = await calls(page);
+    expect(fired).toHaveLength(1);
+    expect(fired[0].url).toBe('/work/items/w1/retry?filter=1&type=Task');
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  test('the preview ref carries the filter', async ({ page }) => {
+    const errors = await bootstrap(page, FILTERED_BOARD_HTML);
+
+    await page.evaluate(() => {
+      const w = window as unknown as { __previewRef: unknown };
+      w.__previewRef = null;
+      (window as unknown as { MemoryObjectPreview: unknown }).MemoryObjectPreview = {
+        open: (ref: unknown) => {
+          w.__previewRef = ref;
+        },
+      };
+    });
+
+    await page.locator('#card-ready').click();
+
+    const ref = await page.evaluate(
+      () => (window as unknown as { __previewRef: unknown }).__previewRef,
+    );
+    expect(ref).toEqual({
+      id: 'w2',
+      editHref: '/objects/w2',
+      actions: 'board',
+      boardQuery: 'filter=1&type=Task',
+    });
+
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
 });

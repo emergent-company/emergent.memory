@@ -235,6 +235,10 @@
     // surface's actions into #object-preview-actions-slot. Absent for chat
     // references, which stay read-only.
     if (ref.actions) params.push("actions=" + encodeURIComponent(ref.actions));
+    // The board's view state (its type filter), forwarded so the rendered action
+    // routes carry it: their responses re-render the board, which would otherwise
+    // widen a filtered board back to every type.
+    if (ref.boardQuery) params.push(ref.boardQuery);
     var url = scopedPath("/objects/" + ref.id) + "/preview" + (params.length ? "?" + params.join("&") : "");
     if (window.htmx && htmx.ajax) {
       htmx.ajax("GET", url, { target: "#object-preview-body", swap: "innerHTML" });

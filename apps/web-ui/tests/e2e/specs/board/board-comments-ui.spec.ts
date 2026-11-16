@@ -235,7 +235,7 @@ test.describe.serial('board comments thread', () => {
     await goto(page, '/work/board');
     await expectAppPage(page, /Work/);
 
-    // The inline form (this spec drives the preview surface) posts to #board;
+    // The inline form (this spec drives the preview surface) posts to #work-board;
     // object-preview.js closes the drawer on a successful POST and the board
     // re-renders.
     await openPreview(page);

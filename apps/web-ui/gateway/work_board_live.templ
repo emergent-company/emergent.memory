@@ -18,7 +18,7 @@ import (
 // error notice inside it: that is how a failed drawer action reports itself,
 // since the drawer closes on success and has no other place to put the failure.
 templ WorkBoardFrame(data workData, errMsg string) {
-	<div id="work-board" data-testid="work-board" tabindex="-1" data-work-board data-board-status-map={ data.StatusMap.statusMapJSON() }>
+	<div id="work-board" data-testid="work-board" tabindex="-1" data-work-board data-board-query={ data.Query.Encode() } data-board-status-map={ data.StatusMap.statusMapJSON() }>
 		if errMsg != "" {
 			@ui.Alert(ui.AlertProps{
 				Type:    ui.AlertError,

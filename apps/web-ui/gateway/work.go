@@ -36,14 +36,23 @@ type workData struct {
 	TypeCounts     map[string]int
 	Matrices       []workMatrix
 	FilterExplicit bool
-	ScopeBase      string
-	LaneOpen       map[string]bool
-	Items          []WorkItem
-	Allowances     boardAllowances
-	Rules          []workRuleRow
-	FlashMsg       string
-	FlashErr       error
-	LoadErr        error
+	// Query is the board's view state (the type filter) as it arrived, reduced to
+	// the board's own parameters. Every surface that re-renders the board — the
+	// live stream, the deferred partial refresh, a drawer action's response — has
+	// to name the same view: the filter control deliberately sits outside the swap
+	// region, so a frame that fell back to "all types" would widen the board under
+	// a control that still shows the selected subset. The frame republishes it as
+	// data-board-query, the stream connects with it, and every board request
+	// carries it forward.
+	Query      url.Values
+	ScopeBase  string
+	LaneOpen   map[string]bool
+	Items      []WorkItem
+	Allowances boardAllowances
+	Rules      []workRuleRow
+	FlashMsg   string
+	FlashErr   error
+	LoadErr    error
 	// StatusMap is the project's work-path status mapping. The board renders it
 	// as `data-board-status-map` on its swap container, which is where the drag
 	// handler reads the allowed moves from — without it a custom-mapped project
@@ -132,7 +141,9 @@ func (s *Server) loadWorkBoard(ctx context.Context, c echo.Context, data *workDa
 	if err != nil {
 		return err
 	}
-	applyWorkBoardItems(data, items, c.Request().URL.Query())
+	view := boardViewQuery(c.Request().URL.Query())
+	data.Query = view
+	applyWorkBoardItems(data, items, view)
 	return nil
 }
 
@@ -464,6 +475,37 @@ func workFilterTypes(data workData) []string {
 		return nil
 	}
 	return data.SelectedTypes
+}
+
+// boardViewQuery reduces a request's query to the board's own view state. The
+// type filter is that state, and it has to survive the three surfaces that
+// re-render the board without the user's filter form: the live stream (which
+// renders from the query it connected with), the deferred partial refresh, and a
+// drawer action's response. Each carries this query forward, so a filtered board
+// cannot silently widen to every type while the filter control still shows the
+// subset. Everything else in the request's query is dropped.
+func boardViewQuery(q url.Values) url.Values {
+	out := url.Values{}
+	if q.Get("filter") == "1" {
+		out.Set("filter", "1")
+	}
+	for _, t := range q["type"] {
+		if t = strings.TrimSpace(t); t != "" {
+			out.Add("type", t)
+		}
+	}
+	return out
+}
+
+// workBoardStreamURL is the live stream's address, carrying the board's view
+// state. hx-sse opens a bare EventSource, so the query cannot be added by the
+// client afterwards: it has to be in the rendered URL or the mandatory catch-up
+// frame renders the all-types board.
+func workBoardStreamURL(data workData) string {
+	if q := data.Query.Encode(); q != "" {
+		return "/work/board/stream?" + q
+	}
+	return "/work/board/stream"
 }
 
 // workRuleEditHref builds the edit-page URL for one rule.

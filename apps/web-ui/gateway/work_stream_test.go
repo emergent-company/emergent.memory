@@ -183,10 +183,18 @@ func workStreamTestMemory(pr io.ReadCloser) *workStreamMemory {
 // stream's only exit, so cancel is what ends it.
 func startWorkBoardStream(t *testing.T, f MemoryBackend) (*streamRecorder, func()) {
 	t.Helper()
+	return startWorkBoardStreamAt(t, f, "/work/board/stream")
+}
+
+// startWorkBoardStreamAt is startWorkBoardStream with an explicit target, which
+// is how the board's view state (the type filter) reaches the stream: hx-sse
+// connects with the query the page rendered.
+func startWorkBoardStreamAt(t *testing.T, f MemoryBackend, target string) (*streamRecorder, func()) {
+	t.Helper()
 	_, e := newWorkBoardEcho(f)
 	rec := newStreamRecorder()
 	ctx, cancel := context.WithCancel(context.Background())
-	req := httptest.NewRequest(http.MethodGet, "/work/board/stream", nil).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodGet, target, nil).WithContext(ctx)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -294,6 +302,30 @@ func TestWorkBoardStreamPushesFrames(t *testing.T) {
 	second := readSSEUntil(t, reader, `hx-target="#work-board" hx-swap`)
 	if !strings.Contains(second, `data-board-status-map`) {
 		t.Fatalf("event-driven frame does not carry the rendered board:\n%s", second)
+	}
+}
+
+// The stream renders from the connecting request's query, so a filtered board
+// must not be widened by the mandatory catch-up frame: the filter control sits
+// outside the swap region and would still show the subset. This is the live half
+// of the review finding (the page half is TestWorkBoardViewConnectsTheStreamWithItsView).
+func TestWorkBoardStreamRendersTheConnectingView(t *testing.T) {
+	pr, pw := io.Pipe()
+	t.Cleanup(func() { _ = pw.Close() })
+
+	rec, stop := startWorkBoardStreamAt(t, workStreamTestMemory(pr), "/work/board/stream?filter=1&type=Task")
+	defer stop()
+
+	waitForFrames(t, rec, "#work-board", 1, 2*time.Second)
+	body := rec.body()
+	if !strings.Contains(body, `data-testid="work-type-Task"`) {
+		t.Errorf("catch-up frame dropped the connecting type filter:\n%s", body)
+	}
+	if strings.Contains(body, `data-testid="work-type-Bug"`) {
+		t.Errorf("catch-up frame widened a filtered board to every type:\n%s", body)
+	}
+	if !strings.Contains(body, `data-board-query="filter=1&amp;type=Task"`) {
+		t.Errorf("catch-up frame lost the view state it has to republish:\n%s", body)
 	}
 }
 

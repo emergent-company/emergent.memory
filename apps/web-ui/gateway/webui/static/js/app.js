@@ -917,6 +917,22 @@
     return (root || document).querySelectorAll("[data-work-board] [data-board-column]");
   }
 
+  /* boardViewQuery is the board's view state (the type filter) as the rendered
+     frame published it in data-board-query. A request that re-renders the board
+     has to carry it: the filter control sits outside the swap region, so a
+     response built from an empty query would widen the board to every type while
+     the control still shows the selected subset. */
+  function boardViewQuery() {
+    var board = document.getElementById("work-board");
+    return board ? board.getAttribute("data-board-query") || "" : "";
+  }
+
+  function withBoardView(path) {
+    var q = boardViewQuery();
+    if (!q) return path;
+    return path + (path.indexOf("?") === -1 ? "?" : "&") + q;
+  }
+
   /* markWorkDropTargets tags every lane that accepts the held card with
      data-drop-eligible / data-drop-action, narrowed to the statuses the card's
      own type allows (data-board-allowed) exactly as the drop handler decides —
@@ -1004,7 +1020,7 @@
       return;
     }
     if (window.htmx && action && action !== "status") {
-      htmx.ajax("POST", MemoryScope.path("/work/items/" + encodeURIComponent(id) + "/" + action), {
+      htmx.ajax("POST", withBoardView(MemoryScope.path("/work/items/" + encodeURIComponent(id) + "/" + action)), {
         target: "#work-board",
         swap: "outerMorph"
       });
@@ -1134,7 +1150,7 @@
     if (boardRefreshPending) {
       boardRefreshPending = false;
       if (window.htmx) {
-        htmx.ajax("GET", MemoryScope.path("/work/board/partial"), { target: "#work-board", swap: "outerMorph" });
+        htmx.ajax("GET", withBoardView(MemoryScope.path("/work/board/partial")), { target: "#work-board", swap: "outerMorph" });
       }
     }
   });
@@ -1150,7 +1166,12 @@
   function openBoardPreviewByID(id) {
     if (!id) return;
     if (window.MemoryObjectPreview && typeof window.MemoryObjectPreview.open === "function") {
-      window.MemoryObjectPreview.open({ id: id, editHref: MemoryScope.path("/objects/" + id), actions: "board" });
+      window.MemoryObjectPreview.open({
+        id: id,
+        editHref: MemoryScope.path("/objects/" + id),
+        actions: "board",
+        boardQuery: boardViewQuery()
+      });
       return;
     }
     window.location.assign(MemoryScope.path("/objects/" + encodeURIComponent(id)));

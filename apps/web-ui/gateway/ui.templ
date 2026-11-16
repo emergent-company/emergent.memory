@@ -189,7 +189,7 @@ templ appShell(title string, groups []layout.SidebarGroup, marketplaceItems []la
 		<!-- htmx v4 SSE extension (vendored from htmx 4.0.1). Must load after htmx
 		     (it calls htmx.registerExtension) and before any page element that
 		     uses hx-sse:connect is processed. Only the board subscribes today,
-		     via an anchor in board.templ. -->
+		     via an anchor in work.templ. -->
 		<script src={ templ.SafeURL(webui.AssetPath("/js/hx-sse.js")) }></script>
 		<!-- htmx/Alpine compatibility extension. Must load AFTER htmx (it calls
 		     htmx.registerExtension) and BEFORE deferred Alpine (@alpine.Tag()

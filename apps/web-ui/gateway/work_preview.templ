@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/url"
 	"strconv"
 
 	tpl "github.com/a-h/templ"
@@ -26,19 +27,20 @@ import (
 // workPreviewBoardSlot renders the work-item surface inside the preview drawer:
 // the status-gated actions, the completed runs' declared deliverables, then the
 // merged Activity thread and its inline form.
-templ workPreviewBoardSlot(item *WorkItem, statusMap boardStatusMap, comments []WorkItemComment, feedback []WorkItemFeedback, deliverables []boardDeliverable) {
-	@workPreviewActionButtons(item, statusMap)
-	if len(deliverables) > 0 {
-		<div class="mt-5">
-			@objectPreviewSection("Deliverables") {
-				@workPreviewDeliverables(deliverables)
-			}
-		</div>
-	}
+templ workPreviewBoardSlot(item *WorkItem, statusMap boardStatusMap, comments []WorkItemComment, feedback []WorkItemFeedback, deliverables []boardDeliverable, view url.Values) {
+	@workPreviewActionButtons(item, statusMap, view)
+	// Always rendered, even with nothing declared: the section is the human's
+	// only view of what a completed run produced, so "nothing declared" has to be
+	// stated rather than left looking like an absence of the feature.
+	<div class="mt-5">
+		@objectPreviewSection("Deliverables") {
+			@workPreviewDeliverables(deliverables)
+		}
+	</div>
 	<div class="mt-5">
 		@objectPreviewSection("Activity") {
 			@boardCommentsThread(boardComments(comments, feedback), "board-preview-comment")
-			@boardCommentForm(item.CanonicalID, "board-preview-comment")
+			@boardCommentForm(item.CanonicalID, "board-preview-comment", view)
 		}
 	</div>
 }
@@ -46,7 +48,8 @@ templ workPreviewBoardSlot(item *WorkItem, statusMap boardStatusMap, comments []
 // workPreviewDeliverables renders the declared deliverables of a work item's
 // runs: a resolved object links to its detail page (key as label, muted type
 // prefix); a declared-but-missing deliverable renders muted with a "not found"
-// hint rather than being dropped.
+// hint rather than being dropped; no declaration at all renders an explicit
+// empty state (object-driven-agent-work).
 templ workPreviewDeliverables(deliverables []boardDeliverable) {
 	<div class="space-y-1.5">
 		for _, d := range deliverables {
@@ -68,6 +71,9 @@ templ workPreviewDeliverables(deliverables []boardDeliverable) {
 				</div>
 			}
 		}
+		if len(deliverables) == 0 {
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Attrs: tpl.Attributes{"data-testid": "board-deliverable-empty"}}) { No deliverables declared }
+		}
 	</div>
 }
 
@@ -76,17 +82,17 @@ templ workPreviewDeliverables(deliverables []boardDeliverable) {
 // and refresh the board through the event stream). The statuses resolve through
 // the project's work-path map, so a custom-mapped board exposes the same actions
 // as the default one.
-templ workPreviewActionButtons(item *WorkItem, statusMap boardStatusMap) {
+templ workPreviewActionButtons(item *WorkItem, statusMap boardStatusMap, view url.Values) {
 	<div class="mt-4 flex flex-wrap gap-2">
 		if item.Status == statusMap.Review {
-			@workActionButton("Approve", "lucide--check", ui.ButtonSuccess, workActionPath(item.CanonicalID, "approve"))
-			@boardRequestChangesForm(item.CanonicalID)
+			@workActionButton("Approve", "lucide--check", ui.ButtonSuccess, workActionPath(item.CanonicalID, "approve", view))
+			@boardRequestChangesForm(item.CanonicalID, view)
 		}
 		if item.Status == statusMap.Blocked {
-			@workActionButton("Retry", "lucide--rotate-cw", ui.ButtonPrimary, workActionPath(item.CanonicalID, "retry"))
+			@workActionButton("Retry", "lucide--rotate-cw", ui.ButtonPrimary, workActionPath(item.CanonicalID, "retry", view))
 		}
 		if item.Status != statusMap.Done {
-			@workActionButton("Cancel", "lucide--ban", ui.ButtonGhost, workActionPath(item.CanonicalID, "cancel"))
+			@workActionButton("Cancel", "lucide--ban", ui.ButtonGhost, workActionPath(item.CanonicalID, "cancel", view))
 		}
 	</div>
 }
@@ -109,9 +115,9 @@ templ workActionButton(label, icon string, variant ui.ButtonVariant, action stri
 }
 
 // boardRequestChangesForm posts request-changes with required feedback.
-templ boardRequestChangesForm(canonicalID string) {
+templ boardRequestChangesForm(canonicalID string, view url.Values) {
 	<form
-		hx-post={ workActionPath(canonicalID, "request-changes") }
+		hx-post={ workActionPath(canonicalID, "request-changes", view) }
 		hx-target="#work-board"
 		hx-swap="outerMorph"
 		class="mt-2 flex w-full flex-col gap-2"
@@ -128,9 +134,9 @@ templ boardRequestChangesForm(canonicalID string) {
 // boardCommentForm posts a durable comment and morphs the work board, the same
 // swap the other actions use. testIDPrefix scopes its test ids to the surface
 // rendering it (see boardCommentsThread).
-templ boardCommentForm(canonicalID, testIDPrefix string) {
+templ boardCommentForm(canonicalID, testIDPrefix string, view url.Values) {
 	<form
-		hx-post={ workActionPath(canonicalID, "comments") }
+		hx-post={ workActionPath(canonicalID, "comments", view) }
 		hx-target="#work-board"
 		hx-swap="outerMorph"
 		class="mt-2 flex w-full flex-col gap-2"

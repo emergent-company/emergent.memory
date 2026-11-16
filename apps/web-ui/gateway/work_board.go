@@ -18,7 +18,7 @@ var boardStatusOrder = []string{"ready", "in_progress", "review", "revision", "b
 
 // boardItemLimit caps how many work items the board fetches in one page. There
 // is no pagination yet, so a capped board renders an explicit notice
-// (board.templ) rather than silently hiding older items.
+// (work_board_live.templ) rather than silently hiding older items.
 const boardItemLimit = 200
 
 // boardStatusLabel humanises a work status for the column header.
@@ -85,7 +85,7 @@ func defaultBoardStatusMap() boardStatusMap {
 	}
 }
 
-// statusMapJSON serialises the map for the #board[data-board-status-map]
+// statusMapJSON serialises the map for the #work-board[data-board-status-map]
 // attribute app.js reads to derive drag transitions. Falls back to "" on the
 // (practically impossible) marshal error.
 func (m boardStatusMap) statusMapJSON() string {
@@ -400,9 +400,16 @@ func (s *Server) uiWorkCancel(c echo.Context) error {
 	return s.renderWorkBoard(c, err)
 }
 
-// workActionPath builds an action route for a work item.
-func workActionPath(canonicalID, action string) string {
-	return "/work/items/" + url.PathEscape(canonicalID) + "/" + action
+// workActionPath builds an action route for a work item. view is the board's
+// view state: the action's response re-renders the board (renderWorkBoard reads
+// the request's own query), so the filter has to ride on the action URL or the
+// response would widen a filtered board to every type.
+func workActionPath(canonicalID, action string, view url.Values) string {
+	path := "/work/items/" + url.PathEscape(canonicalID) + "/" + action
+	if q := view.Encode(); q != "" {
+		return path + "?" + q
+	}
+	return path
 }
 
 // boardAssigneeCandidate is one option in the ticket-style assignee picker.

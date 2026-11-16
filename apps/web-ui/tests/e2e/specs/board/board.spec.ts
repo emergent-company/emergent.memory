@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { expectAppPage, goto } from '../../helpers/page';
+import { scopedPath } from '../../helpers/scope';
 
 // Work board read surface. One status × execution matrix renders per selected
 // board-enabled object type (gateway/work.templ WorkBoardFrame), so the assertion
@@ -21,10 +22,12 @@ test.describe('Work board page', () => {
     await expect(page.getByTestId('work-board-count')).toBeVisible();
 
     // Live refresh: the board subscribes to its own stream, and the region the
-    // frames morph into carries the project's status map the drag reads.
+    // frames morph into carries the project's status map the drag reads. The
+    // connect URL carries the board's view state (its type filter) when one is
+    // set, so match the path rather than an exact query-less URL.
     await expect(page.locator('#work-board-live')).toHaveAttribute(
       'hx-sse:connect',
-      '/work/board/stream',
+      /\/work\/board\/stream(\?|$)/,
     );
     await expect(page.getByTestId('work-board')).toHaveAttribute('data-board-status-map', /ready/);
 
@@ -39,7 +42,17 @@ test.describe('Work board page', () => {
   });
 
   test('the retired /board URL redirects to the work board', async ({ page }) => {
-    await page.goto('/board');
+    // Assert the redirect as a server contract, not a client one: a raw page.goto
+    // only proves the browser followed it, and the dev-auth harness navigates
+    // unscoped by design — so the case a bookmarked production URL actually hits
+    // (a scoped app path under session auth) went untested. Fetch the scoped path
+    // with redirects disabled.
+    const scoped = scopedPath('/board');
+    const res = await page.request.get(scoped, { maxRedirects: 0 });
+    expect(res.status()).toBe(308);
+    expect(res.headers()['location']).toBe(scopedPath('/work/board'));
+
+    await goto(page, '/board');
     await expect(page).toHaveURL(/\/work\/board$/);
     await expect(page.getByTestId('work-board')).toBeVisible();
   });

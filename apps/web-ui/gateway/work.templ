@@ -61,7 +61,7 @@ templ workBoardView(data workData) {
 		     rendered <hx-partial> frames for #work-board, #work-board-count and
 		     #work-board-health whenever a work item or an agent run changes — so
 		     an agent-driven transition appears without a reload. -->
-		<div id="work-board-live" hx-sse:connect="/work/board/stream" aria-hidden="true"></div>
+		<div id="work-board-live" hx-sse:connect={ workBoardStreamURL(data) } aria-hidden="true"></div>
 		@WorkBoardFrame(data, "")
 	}
 }

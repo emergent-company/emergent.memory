@@ -107,7 +107,13 @@ func (s *Server) workBoardStream(c echo.Context) error {
 	// cookies for the same reason.
 	data := workData{Section: workBoardSection}
 	s.loadWorkSchema(ctx, c, &data)
-	query := c.Request().URL.Query()
+	// The view state is the reduced query, not the raw one: the board publishes it
+	// as data-board-query on every frame it renders, and app.js appends that to the
+	// refresh and action requests. Keeping the raw query here would republish the
+	// whole request (lane prefs, unrelated params) and keeping nothing would drop
+	// the filter after the first live frame.
+	query := boardViewQuery(c.Request().URL.Query())
+	data.Query = query
 
 	st := &workStreamState{
 		s:     s,
