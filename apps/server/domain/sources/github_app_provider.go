@@ -238,7 +238,7 @@ func (p *githubAppProvider) ObjectTypes() *ObjectTypePack {
 	}
 	return &ObjectTypePack{
 		Name:          "github-app-workflow",
-		Version:       "1.1.0",
+		Version:       "1.2.0",
 		Description:   "GitHub App issue and pull-request workflow objects.",
 		SkipDiscovery: true,
 		ObjectTypes: []ObjectTypeDefinition{
@@ -265,6 +265,27 @@ func (p *githubAppProvider) ObjectTypes() *ObjectTypePack {
 					"source_id":         map[string]any{"type": "string"},
 					"status":            map[string]any{"type": "string"},
 					"source_trigger_id": map[string]any{"type": "string"},
+					"pr_number":         map[string]any{"type": "number"},
+					"pr_url":            map[string]any{"type": "string"},
+					"pr_branch":         map[string]any{"type": "string"},
+					"pr_head_sha":       map[string]any{"type": "string"},
+				},
+				SkipExtraction: true,
+			},
+			{
+				Name: "GitHubIssuePullRequest", Label: "GitHub issue pull request",
+				Description: "Project-level link between a coding issue and its pull request.",
+				Properties: map[string]any{
+					"repo":               map[string]any{"type": "string"},
+					"issue_number":       map[string]any{"type": "number"},
+					"issue_canonical_id": map[string]any{"type": "string"},
+					"issue_source_id":    map[string]any{"type": "string"},
+					"pr_number":          map[string]any{"type": "number"},
+					"pr_url":             map[string]any{"type": "string"},
+					"branch":             map[string]any{"type": "string"},
+					"head_sha":           map[string]any{"type": "string"},
+					"state":              map[string]any{"type": "string"},
+					"review_status":      map[string]any{"type": "string"},
 				},
 				SkipExtraction: true,
 			},

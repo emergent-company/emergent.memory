@@ -250,3 +250,12 @@ func (c *Client) CreateIssueComment(ctx context.Context, repo string, number int
 		"body": body,
 	}, nil)
 }
+
+// CloseIssue closes an issue as completed. Used after a linked coding PR is
+// approved so the issue does not remain open when the PR body did not include a
+// closing keyword.
+func (c *Client) CloseIssue(ctx context.Context, repo string, number int) error {
+	return c.do(ctx, http.MethodPatch, fmt.Sprintf("/repos/%s/issues/%d", repo, number), map[string]any{
+		"state": "closed",
+	}, nil)
+}

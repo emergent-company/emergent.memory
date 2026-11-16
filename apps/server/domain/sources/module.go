@@ -153,7 +153,7 @@ var SourceEventsModule = fx.Module("source-events",
 		NewSourceTriggerInvocationResolver,
 		NewSchemaProvisioner,
 	),
-	fx.Invoke(RegisterSourceEventRoutes, WireAgentRepository, WireSourceWorkObjectStore, WireSourceCredentialMinter, WireWorkInvocationResolver, WireSourceObjectTypes),
+	fx.Invoke(RegisterSourceEventRoutes, WireAgentRepository, WireSourceWorkObjectStore, WireSourceCredentialMinter, WireWorkInvocationResolver, WireSourceObjectTypes, WireReviewToolReworker),
 )
 
 // WireSourceCredentialMinter lets the executor mint a source-scoped GitHub App
@@ -197,5 +197,14 @@ func provideSourceWorkObjectStore(svc *graph.Service) SourceWorkObjectStore { re
 func WireReviewToolWorkObjectStore(h *ReviewToolHandler, svc *graph.Service) {
 	if h != nil && svc != nil {
 		h.SetWorkItemStatusWriter(svc)
+		h.SetWorkObjectStore(svc)
+	}
+}
+
+// WireReviewToolReworker lets a CHANGES_REQUESTED verdict transition the linked
+// issue to revision and enqueue its coding agent with the review feedback.
+func WireReviewToolReworker(h *ReviewToolHandler, wa *agents.WorkActionService) {
+	if h != nil && wa != nil {
+		h.SetWorkItemReworker(wa)
 	}
 }

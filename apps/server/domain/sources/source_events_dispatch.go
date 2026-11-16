@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -186,6 +187,11 @@ func (d *SourceEventDispatcher) handlePullRequest(ctx context.Context, v *Verifi
 	subject := fmt.Sprintf("%s#%d", repoName, p.PullNumber())
 	if p.Action == "closed" || p.Action == "converted_to_draft" {
 		for _, src := range allowed {
+			if _, err := d.ensureIssuePRLink(ctx, src, p, &githubapp.PullRequestState{
+				HeadSHA: p.PullRequest.Head.SHA, State: "closed",
+			}, subject); err != nil {
+				return err
+			}
 			if handled, err := d.processWorkflowEvent(ctx, src, nil, &githubapp.PullRequestState{
 				HeadSHA: p.PullRequest.Head.SHA, State: "closed",
 			}, p, subject); err != nil {
@@ -229,6 +235,9 @@ func (d *SourceEventDispatcher) handlePullRequest(ctx context.Context, v *Verifi
 func (d *SourceEventDispatcher) dispatchPullRequestSource(ctx context.Context, v *VerifiedSourceEvent, src *Source, subject string, state *githubapp.PullRequestState) error {
 	p := v.Payload
 	repoName := p.Repository.FullName
+	if _, err := d.ensureIssuePRLink(ctx, src, p, state, subject); err != nil {
+		return err
+	}
 	ev := &SourceEvent{
 		ProjectID:   src.ProjectID,
 		SourceID:    src.ID,
@@ -273,6 +282,9 @@ func (d *SourceEventDispatcher) processPullRequestSource(ctx context.Context, v 
 	}
 	if handled {
 		return nil
+	}
+	if _, err := d.ensureIssuePRLink(ctx, src, p, state, subject); err != nil {
+		return err
 	}
 	claim, superseded, err := d.repo.ClaimSourceSubject(ctx, src.ProjectID, src.ID, subject, state.HeadSHA, p.PullRequest.Head.SHA)
 	if errors.Is(err, ErrSourceEventStaleHead) {
@@ -357,6 +369,117 @@ func (d *SourceEventDispatcher) processPullRequestSource(ctx context.Context, v 
 	}
 	d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventDispatched, &runID, nil)
 	return nil
+}
+
+var prIssueRefRe = regexp.MustCompile(`(?i)(?:closes|fixes|resolves|refs)\s+#(\d+)`)
+var prBranchIssueRe = regexp.MustCompile(`(?:^|/)(\d+)[-_]`)
+var prTitleIssueRe = regexp.MustCompile(`\(#(\d+)\)`)
+
+func issueNumberForPullRequest(p *githubapp.WebhookPayload) int {
+	if p == nil {
+		return 0
+	}
+	for _, re := range []*regexp.Regexp{prIssueRefRe, prBranchIssueRe, prTitleIssueRe} {
+		text := p.PullRequest.Body
+		switch re {
+		case prBranchIssueRe:
+			text = p.PullRequest.Head.Ref
+		case prTitleIssueRe:
+			text = p.PullRequest.Title
+		}
+		if m := re.FindStringSubmatch(text); len(m) == 2 {
+			n, _ := strconv.Atoi(m[1])
+			if n > 0 {
+				return n
+			}
+		}
+	}
+	return 0
+}
+
+func issuePRLinkKey(repo string, number int) string {
+	return fmt.Sprintf("github:pr:%s#%d", repo, number)
+}
+
+// ensureIssuePRLink resolves the coding issue referenced by a PR and records a
+// project-level link. The link is source-independent, so the review source can
+// resolve the issue even though the coding source owns the item.
+func (d *SourceEventDispatcher) ensureIssuePRLink(ctx context.Context, src *Source, p *githubapp.WebhookPayload, state *githubapp.PullRequestState, subject string) (*graph.GraphObject, error) {
+	if d.workObjects == nil || p == nil || src == nil {
+		return nil, nil
+	}
+	if d.objectTypes != nil {
+		if err := d.objectTypes.EnsureObjectTypes(ctx, src.ProjectID.String(), (&githubAppProvider{}).ObjectTypes()); err != nil {
+			return nil, fmt.Errorf("sources: ensure GitHub issue/pr object types: %w", err)
+		}
+	}
+	repoName := p.Repository.FullName
+	issueNumber := issueNumberForPullRequest(p)
+	if issueNumber <= 0 {
+		return nil, nil
+	}
+	candidates, err := d.repo.FindGitHubAppSourcesForRepo(ctx, src.ProjectID, repoName)
+	if err != nil {
+		return nil, err
+	}
+	var issue *graph.GraphObject
+	var issueSourceID string
+	for i := range candidates {
+		key := fmt.Sprintf("github:%s:%s#%d", candidates[i].ID, repoName, issueNumber)
+		found, ferr := d.workObjects.FindHeadObjectByTypeAndKey(ctx, src.ProjectID.String(), "GitHubIssue", key)
+		if ferr != nil {
+			return nil, ferr
+		}
+		if found != nil {
+			issue = found
+			issueSourceID = candidates[i].ID.String()
+			break
+		}
+	}
+	if issue == nil {
+		return nil, nil
+	}
+	merged := p.PullRequest.Merged || (state != nil && state.State == "closed" && p.PullRequest.Merged)
+	closed := p.Action == "closed" || p.Action == "converted_to_draft" || (state != nil && state.State == "closed")
+	linkStatus := "open"
+	issueStatus := "review"
+	if merged {
+		linkStatus = "merged"
+		issueStatus = "done"
+	} else if closed {
+		linkStatus = "closed"
+		issueStatus = "cancelled"
+	}
+	prURL := p.PullRequest.HTMLURL
+	if prURL == "" {
+		prURL = fmt.Sprintf("https://github.com/%s/pull/%d", repoName, p.PullNumber())
+	}
+	linkKey := issuePRLinkKey(repoName, p.PullNumber())
+	linkProps := map[string]any{
+		"repo": repoName, "issue_number": issueNumber, "issue_canonical_id": issue.CanonicalID.String(),
+		"issue_source_id": issueSourceID, "pr_number": p.PullNumber(), "pr_url": prURL,
+		"branch": p.PullRequest.Head.Ref, "head_sha": p.PullRequest.Head.SHA,
+		"state": p.PullRequest.State, "review_status": linkStatus,
+	}
+	if _, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
+		Type: "GitHubIssuePullRequest", Key: &linkKey, Name: &subject, Properties: linkProps,
+	}, nil); err != nil {
+		return nil, err
+	}
+	issueProps := map[string]any{
+		"pr_number": p.PullNumber(), "pr_url": prURL, "pr_branch": p.PullRequest.Head.Ref,
+		"pr_head_sha": p.PullRequest.Head.SHA,
+	}
+	if issue.Status != nil && (*issue.Status == "done" || *issue.Status == "cancelled") && issueStatus == "review" {
+		issueStatus = *issue.Status
+	}
+	issueKey := fmt.Sprintf("github:%s:%s#%d", issueSourceID, repoName, issueNumber)
+	if _, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
+		Type: "GitHubIssue", Key: &issueKey, Status: &issueStatus, Properties: issueProps,
+	}, nil); err != nil {
+		return nil, err
+	}
+	return issue, nil
 }
 
 func (d *SourceEventDispatcher) handleIssues(ctx context.Context, v *VerifiedSourceEvent) error {
@@ -446,7 +569,9 @@ func (d *SourceEventDispatcher) processIssueSource(ctx context.Context, v *Verif
 		}
 	}
 	if closed {
-		status = "cancelled"
+		if status != "done" {
+			status = "cancelled"
+		}
 		assignee = ""
 	} else if trigger != nil && p.IsRelevantIssueAction() {
 		switch {
