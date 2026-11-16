@@ -3,7 +3,7 @@ name: Merge guard
 # `inputs` is undefined for pull_request events and fails workflow startup there.
 # Order matters: a workflow_dispatch payload has no `pull_request` object, so the
 # dispatch input is tested first and short-circuits the dereference.
-run-name: merge-guard PR ${{ github.event.inputs.pr || github.event.pull_request.number }}
+run-name: merge-guard PR ${{ github.event.inputs.pr || github.event.pull_request.number || github.event.issue.number }}
 
 # Check that binds the merged commit to the reviewed commit. It still runs on
 # every PR, and its `verify` job check is a required status check on `main`.
@@ -72,6 +72,8 @@ run-name: merge-guard PR ${{ github.event.inputs.pr || github.event.pull_request
 on:
   pull_request_target:
     types: [opened, reopened, synchronize, ready_for_review]
+  issue_comment:
+    types: [created]
   workflow_dispatch:
     inputs:
       pr:
@@ -87,6 +89,7 @@ permissions:
 jobs:
   verify:
     name: verify
+    if: github.event_name != 'issue_comment' || (github.event.issue.pull_request && contains(github.event.comment.body, 'Reviewed-SHA:'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -97,7 +100,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR: ${{ github.event.inputs.pr || github.event.pull_request.number }}
+          PR: ${{ github.event.inputs.pr || github.event.pull_request.number || github.event.issue.number }}
           HEAD: ${{ github.event.pull_request.head.sha || '' }}
           TRUSTED_IDS: ${{ vars.MERGE_GUARD_TRUSTED_USER_IDS }}
           # `pull_request_target` is the automatic evaluation a push triggers;
@@ -120,7 +123,7 @@ jobs:
           # dispatched run they publish a failure, because that run only happens
           # when someone is trying to merge.
           awaiting_review() {
-            [[ "${MODE}" == "pull_request_target" ]] || return 1
+            [[ "${MODE}" == "pull_request_target" || "${MODE}" == "issue_comment" ]] || return 1
             echo "awaiting=true" >>"${GITHUB_OUTPUT}"
             return 0
           }
@@ -333,7 +336,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR: ${{ github.event.inputs.pr || github.event.pull_request.number }}
+          PR: ${{ github.event.inputs.pr || github.event.pull_request.number || github.event.issue.number }}
           HEAD: ${{ github.event.pull_request.head.sha || '' }}
           OUTCOME: ${{ steps.verify.outcome }}
           AWAITING: ${{ steps.verify.outputs.awaiting }}
