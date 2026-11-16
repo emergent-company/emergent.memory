@@ -866,7 +866,7 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 					"entities": {
 						Type:        "array",
 						Items:       &PropertySchema{Type: "object"},
-						Description: "Array of entity specifications to create. Each item: {type (required), name, properties, key, status, labels, relationships?: [{type, exactly one of source_id or target_id, properties}]}. `name` is the entity's display name — the title the app and entity-query show; omit it and it is derived from properties.name/title, but a display name that differs from the property (\"Table head cell alignment\" for a variant keyed ui-variant-table-…) must be passed here. Use source_id when the pre-existing entity should be the relationship source (source_id→new_entity). Use target_id when the new entity should be the source (new_entity→target_id). A spec with both is reported as invalid_spec; a spec with neither is reported as missing_endpoint.",
+						Description: "Array of entity specifications to create. Each item: {type (required), name, properties, key, status, labels, relationships?: [{type, exactly one of source_id or target_id, properties}]}. `name` is the entity's display name — the title the app and entity-query show. It is the ONLY source of the title: properties.name and properties.title are ordinary properties and never name the object. Omit it and the entity is created nameless and displays as `type · #ref`, so pass the display name whenever the record has one (especially when it differs from the key, e.g. \"Table head cell alignment\" for a variant keyed ui-variant-table-…). Use source_id when the pre-existing entity should be the relationship source (source_id→new_entity). Use target_id when the new entity should be the source (new_entity→target_id). A spec with both is reported as invalid_spec; a spec with neither is reported as missing_endpoint.",
 					},
 					"branch": {
 						Type:        "string",
@@ -3832,13 +3832,12 @@ func prefixUpperBound(prefix string) (string, bool) {
 }
 
 // entityQueryNameSortKeyChars bounds the sort_by=name ordering expression that
-// migration 00199 indexes. `properties` is user-supplied with no size cap (see
-// domain/graph/validation.go: unknown property types pass through), so indexing
-// the raw properties->>'name' can exceed the btree entry limit (~2704 B, 1/3
-// page): a single 5120-char name reproduces SQLSTATE 54000
-// ("index row size ... exceeds btree version 4 maximum") on insert. The index
-// expression is therefore left(properties->>'name', N), and the query ORDER BY
-// must use the exact same expression for the index to serve it.
+// migration 00311 indexes. `name` is the first-class title column (#824); the
+// expression is left(name, N) so an oversized name cannot make the btree entry
+// exceed the limit (~2704 B, 1/3 page — SQLSTATE 54000, "index row size ...
+// exceeds btree version 4 maximum"). The index expression is therefore
+// left(name, N), and the query ORDER BY must use the exact same expression for
+// the index to serve it.
 //
 // N=256 is safe under UTF-8: 256 chars x 4 bytes/char = 1024 B for the
 // expression, plus the bounded key (<=128 runes -> <=512 B) and type
@@ -3949,13 +3948,14 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	// Build sort expression based on field
 	orderExpr := fmt.Sprintf("go.%s %s", sortBy, sortOrder)
 	if sortBy == "name" {
-		// Bound the ordered expression to the same left(..., N) used by the
-		// partial index idx_graph_objects_project_type_name (migration 00199),
-		// and add the canonical key as a total-order tiebreak so the index
-		// serves the ordering with no Sort node. `properties` is unbounded, so
-		// indexing the raw properties->>'name' could exceed the ~2704-byte
-		// btree tuple limit (see entityQueryNameSortKeyChars).
-		orderExpr = fmt.Sprintf("left(go.properties->>'name', %d) %s NULLS LAST, go.key", entityQueryNameSortKeyChars, sortOrder)
+		// Bound the ordered expression to the same left(..., N) used by
+		// idx_graph_objects_project_type_name (migration 00311), and add the
+		// canonical key as a total-order tiebreak so the index serves the ordering
+		// with no Sort node. `name` is the first-class title column (#824), so
+		// sort_by=name orders by the title rather than by the properties payload;
+		// the bound keeps the btree tuple under the ~2704-byte limit (see
+		// entityQueryNameSortKeyChars).
+		orderExpr = fmt.Sprintf("left(go.name, %d) %s NULLS LAST, go.key", entityQueryNameSortKeyChars, sortOrder)
 	}
 
 	// Resolve the field strategy the same way search-hybrid does. "compact" (no
@@ -4105,7 +4105,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 				go.id,
 				go.canonical_id,
 				go.key,
-				COALESCE(NULLIF(go.name, ''), go.properties->>'name', '') as name,
+				COALESCE(go.name, '') as name,
 				go.version,
 				`+fieldProjection+` as properties,
 				go.created_at,
@@ -4408,7 +4408,7 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 				go.id,
 				go.canonical_id,
 				go.key,
-				COALESCE(NULLIF(go.name, ''), go.properties->>'name', '') as name,
+				COALESCE(go.name, '') as name,
 				go.version,
 				`+propsProjection+` as properties,
 				go.created_at,
@@ -4811,7 +4811,7 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			SELECT 
 				go.canonical_id,
 				go.key,
-				COALESCE(NULLIF(go.name, ''), go.properties->>'name', '') as name,
+				COALESCE(go.name, '') as name,
 				go.version,
 				go.properties,
 				go.type as type_name,
@@ -5048,7 +5048,7 @@ func (s *Service) getEntityBasicInfo(ctx context.Context, projectID, entityID uu
 	var entity entityRow
 	err := s.db.NewRaw(`
 		SELECT id, canonical_id, type, COALESCE(key, '') as key,
-		       COALESCE(NULLIF(name, ''), properties->>'name', '') as name, properties
+		       COALESCE(name, '') as name, properties
 		FROM kb.graph_objects
 		WHERE id = ? AND project_id = ? AND deleted_at IS NULL
 	`, entityID, projectID).Scan(ctx, &entity)
@@ -5379,8 +5379,9 @@ func (s *Service) updateEntityOne(ctx context.Context, projectUUID uuid.UUID, pr
 	}
 
 	// The display name is a first-class column, not a property: the UI and
-	// entity-query read it, while properties.name is a separate mirror. Without
-	// this an agent can rename nothing — the stored name keeps showing the key
+	// entity-query read it, while properties.name is a separate, ordinary
+	// property that never names the object (#824). Without this an agent can
+	// rename nothing — the stored name keeps showing the key
 	// (emergent-company/emergent.memory#718). An empty string clears the name,
 	// matching the REST PATCH semantics.
 	if name, ok := args["name"].(string); ok {
@@ -6424,8 +6425,8 @@ func (s *Service) readSimilarityThreshold(ctx context.Context, projectID string)
 // with their key names) silently measured a different vector than the one the
 // candidate object actually stores, so near-duplicates were under-detected.
 // pkg/embeddingtext exists precisely to stop that drift; see issue #1478.
-func buildEntityEmbedText(typeName string, key *string, properties map[string]any) string {
-	return embeddingtext.Text(typeName, key, properties)
+func buildEntityEmbedText(typeName string, name *string, key *string, properties map[string]any) string {
+	return embeddingtext.Text(typeName, name, key, properties)
 }
 
 // executeBatchCreateEntities creates one or more entities. Always expects an "entities" array.
@@ -6614,6 +6615,12 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 			key = &k
 		}
 
+		// The title is the `name` column (#824), not a property.
+		var name *string
+		if n, ok := entityMap["name"].(string); ok && strings.TrimSpace(n) != "" {
+			name = &n
+		}
+
 		properties, _ := entityMap["properties"].(map[string]any)
 		if properties == nil {
 			properties = make(map[string]any)
@@ -6629,7 +6636,7 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 		}
 
 		if checkSimilar {
-			embedText := buildEntityEmbedText(typeName, key, properties)
+			embedText := buildEntityEmbedText(typeName, name, key, properties)
 			sr, err := s.graphService.VectorSearchByText(ctx, projectUUID, embedText, &graph.VectorSearchRequest{
 				Types:    []string{typeName},
 				BranchID: branchID,
@@ -6724,9 +6731,9 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 			ExtractionJobID: extractionJobID,
 		}
 
-		// An explicit spec name wins; otherwise CreateOrUpdate derives one from
-		// properties.name/title. Both write the same first-class column, so a
-		// caller never has to trade one for the other.
+		// An explicit spec name is the only source of the title. properties.name
+		// and properties.title are ordinary properties and never name the object,
+		// so an agent that wants the display name must pass it here (#824).
 		if name, ok := entityMap["name"].(string); ok && name != "" {
 			req.Name = &name
 		}
@@ -8188,7 +8195,9 @@ func (s *Service) executeSetSessionTitle(ctx context.Context, projectID string, 
 		}, nil
 	}
 
-	// Also patch the graph object so callers using the graph API can read the title.
+	// Also patch the graph object's `name` column so callers using the graph API can
+	// read the title. `name` is the only title carrier (#824), so this is the write
+	// that makes the session title observable; properties.title is not read.
 	// Best-effort: log but don't fail if the graph object doesn't exist or patcher not wired.
 	if s.graphObjectTitlePatcher != nil {
 		if err := s.graphObjectTitlePatcher(ctx, projectID, sessionID, title); err != nil {
@@ -8269,8 +8278,9 @@ func (s *Service) executeProjectBriefing(ctx context.Context, projectID string, 
 			}
 			props, _ := obj["properties"].(map[string]any)
 
-			// Key identifying text: prefer name > description > content.
-			text, _ := props["name"].(string)
+			// Key identifying text: the first-class name, then prose. `name` is
+			// the object's title column, never properties["name"] (#824).
+			text, _ := obj["name"].(string)
 			if text == "" {
 				if d, ok := props["description"].(string); ok {
 					text = d

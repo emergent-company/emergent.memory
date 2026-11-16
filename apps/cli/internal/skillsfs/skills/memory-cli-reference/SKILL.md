@@ -3396,7 +3396,7 @@ Create multiple graph objects in one API call. Accepts three input formats:
 FLAT ARRAY FORMAT (objects only):
   A JSON array of objects, each with:
     type        (string, required)
-    name        (string, optional) — placed in properties.name
+    name        (string, optional) — the object's title (also mirrored into properties.name)
     description (string, optional) — placed in properties.description
     properties  (object, optional) — arbitrary additional properties
 
@@ -3491,7 +3491,7 @@ memory graph objects create [flags]
       --description string   Shorthand for --properties '{"description": "..."}' (subject to schema validation)
   -h, --help                 help for create
       --key string           Stable key for idempotent operations
-      --name string          Shorthand for --properties '{"name": "..."}' (subject to schema validation)
+      --name string          The object's title (also mirrored into properties.name, subject to schema validation)
       --properties string    JSON properties object
       --status string        Object status (e.g. active, planned, deprecated)
       --type string          Object type (required)
@@ -3766,7 +3766,7 @@ memory graph objects update <id> [flags]
       --description string   Shorthand for --properties '{"description": "..."}' (subject to schema validation)
   -h, --help                 help for update
       --key string           Set a stable key on the object (enables cross-session src_key/dst_key references)
-      --name string          Shorthand for --properties '{"name": "..."}' (subject to schema validation)
+      --name string          The object's title (also mirrored into properties.name, subject to schema validation)
       --properties string    JSON properties object to merge
       --status string        Set object status (e.g. active, planned, deprecated)
 ```

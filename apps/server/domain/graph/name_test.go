@@ -8,29 +8,28 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestResolveObjectNamePrecedence(t *testing.T) {
+func TestResolveObjectNameIsExplicitOnly(t *testing.T) {
 	explicit := "  Explicit title  "
-	got := resolveObjectName(&explicit, map[string]any{"name": "Prop name", "title": "Prop title"})
+	got := resolveObjectName(&explicit)
 	assert.Equal(t, "Explicit title", *got)
 
-	got = resolveObjectName(nil, map[string]any{"name": "Prop name", "title": "Prop title"})
-	assert.Equal(t, "Prop name", *got)
-
-	got = resolveObjectName(nil, map[string]any{"title": "Prop title"})
-	assert.Equal(t, "Prop title", *got)
-
-	assert.Nil(t, resolveObjectName(nil, map[string]any{}))
-	assert.Nil(t, resolveObjectName(nil, nil))
+	// properties.name and properties.title are ordinary properties. They are
+	// never a title, so an omitted explicit name stays nameless (#824).
+	assert.Nil(t, resolveObjectName(nil))
 }
 
 func TestResolveObjectNameEmptyExplicitClears(t *testing.T) {
 	empty := "   "
-	assert.Nil(t, resolveObjectName(&empty, map[string]any{"name": "fallback"}))
+	assert.Nil(t, resolveObjectName(&empty))
 }
 
-// machineKeyRegexp is the shape the display layer treats as a machine key and
-// never renders as a title (apps/web-ui/gateway/documents.go, migration 00280).
-var machineKeyRegexp = regexp.MustCompile(`^[a-z0-9_-]+-[0-9a-f]{12}$`)
+// machineKeyRegexp is every machine-key shape the display layer and migration
+// 00311 treat as an identity, never a title: the current generated key
+// (`<type>-<12 hex>`), the legacy generated key (`<type>-<8 hex>`), and the
+// source-scoped dedup key (`<provider>:<uuid>:<external id>`). Keep the three
+// alternatives in step with apps/web-ui/gateway/documents.go and
+// apps/server/migrations/00311_object_name_title_only.sql.
+var machineKeyRegexp = regexp.MustCompile(`^[a-z0-9_-]+-[0-9a-f]{12}$|^[a-z0-9_-]+-[0-9a-f]{8}$|^[a-z][a-z0-9_-]*:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:.+$`)
 
 func TestAutoWorkKey(t *testing.T) {
 	name := "Fix login redirect loop"
@@ -55,5 +54,27 @@ func TestAutoWorkKeyFallbacks(t *testing.T) {
 		key := autoWorkKey(tc.typeName, nil)
 		assert.True(t, strings.HasPrefix(key, tc.prefix), key)
 		assert.Regexp(t, machineKeyRegexp, key, "a minted key must be recognisable as a machine key")
+	}
+}
+
+func TestMachineKeyRegexpShapes(t *testing.T) {
+	for _, key := range []string{
+		"task-0f9a8b7c6d5e",  // current 12-hex generated key
+		"work-item-0f9a8b7c", // legacy 8-hex generated key
+		"github:357590e8-6cbf-46bb-8c29-d8f839dd4ba8:emergent-company/emergent.memory#772",
+		// A human key that ends in 8 hex characters (a date suffix is the real
+		// case) is indistinguishable from a legacy minted key. It is treated as
+		// machine on purpose: the object falls back to `type · #ref` rather than
+		// risk printing an identity string as a title.
+		"report-20251116",
+	} {
+		assert.Regexp(t, machineKeyRegexp, key, "must be recognised as a machine key")
+	}
+	for _, key := range []string{
+		"Fix login redirect loop",                       // a human title, not a key
+		"forskrift/1997-06-13-44#kapittel-1-paragraf-2", // a source identifier, not machine-shaped
+		"task-0f9a8b7c6d5",                              // 11 hex: not a generated key
+	} {
+		assert.NotRegexp(t, machineKeyRegexp, key, "must not be treated as a machine key")
 	}
 }

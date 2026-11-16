@@ -71,7 +71,7 @@ var sessionsCreateCmd = &cobra.Command{
 
 		fmt.Printf("Session created\n")
 		fmt.Printf("  ID:    %s\n", session.VersionID)
-		fmt.Printf("  Title: %s\n", titleFromProps(session.Properties))
+		fmt.Printf("  Title: %s\n", sessionTitle(session))
 		return nil
 	},
 }
@@ -115,7 +115,7 @@ var sessionsListCmd = &cobra.Command{
 		fmt.Printf("%-36s  %-40s  %s\n", "ID", "TITLE", "CREATED")
 		fmt.Println(strings.Repeat("-", 90))
 		for _, s := range resp.Items {
-			title := titleFromProps(s.Properties)
+			title := sessionTitle(s)
 			fmt.Printf("%-36s  %-40s  %s\n", s.VersionID, title, fmtTime(s.CreatedAt))
 		}
 
@@ -157,7 +157,7 @@ var sessionsGetCmd = &cobra.Command{
 		}
 
 		fmt.Printf("ID:         %s\n", session.VersionID)
-		fmt.Printf("Title:      %s\n", titleFromProps(session.Properties))
+		fmt.Printf("Title:      %s\n", sessionTitle(session))
 		fmt.Printf("Created:    %s\n", fmtTime(session.CreatedAt))
 		if v, ok := session.Properties["agent_version"]; ok {
 			fmt.Printf("Agent:      %v\n", v)
@@ -221,7 +221,7 @@ as a snapshot at spawn time. The child then operates independently — no live s
 		sess := result.Session
 		fmt.Printf("Session spawned\n")
 		fmt.Printf("  ID:              %s\n", sess.EntityID)
-		fmt.Printf("  Title:           %s\n", titleFromProps(sess.Properties))
+		fmt.Printf("  Title:           %s\n", sessionTitle(sess))
 		fmt.Printf("  Parent:          %s\n", parentID)
 		fmt.Printf("  Forked messages: %d\n", result.ForkedMessages)
 		return nil
@@ -356,17 +356,15 @@ var messagesListCmd = &cobra.Command{
 	},
 }
 
-// titleFromProps extracts the "title" property from a graph object's properties map.
-func titleFromProps(props map[string]any) string {
-	if props == nil {
+// sessionTitle returns a session's display title: the object's `name` column,
+// the only title carrier (#824). It deliberately does not read
+// properties.title — migration 00311 moved a legacy property title into the
+// column, so a read-path fallback would only keep two title sources alive.
+func sessionTitle(obj *sdkgraph.GraphObject) string {
+	if obj == nil || obj.Name == nil {
 		return ""
 	}
-	if v, ok := props["title"]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
+	return *obj.Name
 }
 
 // ─────────────────────────────────────────────

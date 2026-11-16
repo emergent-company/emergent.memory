@@ -934,7 +934,7 @@ func (s *Service) executeListMigrationArchives(ctx context.Context, projectID st
 	for _, obj := range objects {
 		archiveCount := len(obj.MigrationArchive)
 		output += fmt.Sprintf("Object: %s\n", obj.ID)
-		output += fmt.Sprintf("  Name: %s\n", obj.Properties["name"])
+		output += fmt.Sprintf("  Name: %s\n", graphObjectName(obj.Name))
 		output += fmt.Sprintf("  Type: %s\n", obj.Type)
 		if obj.SchemaVersion != nil {
 			output += fmt.Sprintf("  Current Version: %s\n", *obj.SchemaVersion)
@@ -1021,7 +1021,7 @@ func (s *Service) executeGetMigrationArchive(ctx context.Context, projectID stri
 	}
 
 	output := fmt.Sprintf("Migration Archive for Object: %s\n", obj.ID)
-	output += fmt.Sprintf("Name: %s\n", obj.Properties["name"])
+	output += fmt.Sprintf("Name: %s\n", graphObjectName(obj.Name))
 	output += fmt.Sprintf("Type: %s\n", obj.Type)
 	if obj.SchemaVersion != nil {
 		output += fmt.Sprintf("Current Version: %s\n\n", *obj.SchemaVersion)

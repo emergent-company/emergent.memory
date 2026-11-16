@@ -39,7 +39,10 @@ func TestNoPlainToolArgumentValidationErrors(t *testing.T) {
 			"missing delivery id":                "webhook sentinel",
 
 			// The board's trigger-invocation resolver: a miss leaves the item
-			// without an invocation, and the caller ignores the error.
+			// without an invocation, and the caller ignores the error
+			// (domain/agents/work_invocation.go). The keys are the full
+			// messages so they cannot silence a tool-surface validator that
+			// happens to share the phrase.
 			"sources: invalid project id":        "board resolver (error ignored)",
 			"sources: invalid source trigger id": "board resolver (error ignored)",
 
