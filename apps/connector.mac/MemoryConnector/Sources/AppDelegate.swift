@@ -17,10 +17,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // this guard is belt-and-suspenders that also skips the status item.
         guard !UITestMode.isActive else { return }
         let app = AppEnvironment.shared
-        // Gated: start engine children + status polling ONLY for connected
-        // projects with valid configs; otherwise stop and publish "not running"
-        // so a stale `~/.config/memory-connector.yml` never reconnects.
-        app.syncEngineWithConnections()
+        // The one launch settle: session → connection → data → engine. Gated so
+        // only connected projects with valid configs run, and ordered so the
+        // session is renewed (or silently re-authed) BEFORE anything reads a
+        // token and before an engine child is started against a stale config.
+        Task { await app.startup() }
         app.statusItemController.start()
     }
 

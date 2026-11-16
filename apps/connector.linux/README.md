@@ -449,7 +449,8 @@ callback while the connector owns PKCE, the token exchange, and storage:
 memory-connector auth start \
   --redirect-uri com.emergent.memory.connector://callback \
   --client-id 390138006318678019 \
-  --issuer https://<issuer> [--server https://api.example.ai] [--json]
+  --issuer https://<issuer> [--server https://api.example.ai] [--json] \
+  [--prompt none] [--login-hint <email>]
 memory-connector auth complete --login-id <id> --code <code> --state <state> [--server ...] [--json]
 memory-connector auth cancel --login-id <id>
 ```
@@ -462,6 +463,16 @@ as JSON). `--client-id` overrides the default public client id
 `GET /api/auth/issuer`, and lets `--server` be omitted. The effective client id
 is stored in the one-shot pending record, so `auth complete` needs no extra
 flag.
+
+**Silent re-auth.** Add `--prompt none` (plus `--login-hint <email>` when the
+client knows the account) and the same two commands become a *non-interactive*
+attempt: the provider answers from a still-live SSO session, and when it cannot
+it redirects with `error=login_required` instead of showing a login page. That
+is how a client recovers a session the provider rejected (`needs_reauth`)
+without asking the user anything; on any error it cancels the pending login
+(`auth cancel`) and falls back to the interactive sign-in. `--prompt` accepts
+`none`, `login`, `consent`, `select_account` or `create` (anything else is a
+usage error, exit `2`).
 
 Sessions live **in the connector's own store**, not the Memory CLI's
 `~/.memory/`: one `0600` file per server under

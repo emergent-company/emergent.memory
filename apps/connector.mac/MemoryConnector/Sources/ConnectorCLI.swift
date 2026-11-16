@@ -57,6 +57,10 @@ final class ConnectorCLI: @unchecked Sendable {
         Bundle.main.url(forResource: "memory-connector", withExtension: nil)
     }
 
+    /// The OIDC `prompt` value of a silent re-auth: authenticate from the
+    /// provider's existing session, or fail — never render a login page.
+    nonisolated static let silentPrompt = "none"
+
     private let binaryURL: URL?
     private let runner: Runner
     private let stdinRunner: StdinRunner
@@ -87,10 +91,16 @@ final class ConnectorCLI: @unchecked Sendable {
                           arguments: ConnectorCLI.authStatusArguments(serverURL: serverURL, configPath: configPath))
     }
 
+    /// `auth start` begins a PKCE login and returns the authorization URL the
+    /// app opens. `prompt` and `loginHint` are the OIDC extras a silent re-auth
+    /// needs (`prompt: "none"`, the account's email): with them the provider
+    /// answers from a live SSO session instead of showing a login page.
     func authStart(serverURL: String?,
                    redirectURI: String,
                    clientID: String,
                    issuer: String?,
+                   prompt: String? = nil,
+                   loginHint: String? = nil,
                    configPath: String) async throws -> CLIPKCEStart
     {
         try await runJSON(CLIPKCEStart.self,
@@ -99,6 +109,8 @@ final class ConnectorCLI: @unchecked Sendable {
                                                                      redirectURI: redirectURI,
                                                                      clientID: clientID,
                                                                      issuer: issuer,
+                                                                     prompt: prompt,
+                                                                     loginHint: loginHint,
                                                                      configPath: configPath))
     }
 
@@ -162,6 +174,14 @@ final class ConnectorCLI: @unchecked Sendable {
                               arguments: ConnectorCLI.authLogoutArguments(serverURL: serverURL, configPath: configPath))
     }
 
+    /// `auth cancel` discards a pending PKCE login and emits no JSON. A silent
+    /// re-auth that the provider declined leaves a pending record behind; this
+    /// is how it is cleaned up (best-effort, the CLI prunes expired ones too).
+    func authCancel(loginID: String, configPath: String) async throws {
+        _ = try await execute(command: "auth cancel",
+                              arguments: ConnectorCLI.authCancelArguments(loginID: loginID, configPath: configPath))
+    }
+
     /// `auth import` reads a session JSON body from stdin (never argv, so the
     /// tokens stay out of `ps`) and prints the resulting `auth status` document.
     /// Used to migrate a legacy Keychain session into the connector config.
@@ -182,12 +202,20 @@ final class ConnectorCLI: @unchecked Sendable {
                                    redirectURI: String,
                                    clientID: String,
                                    issuer: String?,
+                                   prompt: String? = nil,
+                                   loginHint: String? = nil,
                                    configPath: String) -> [String]
     {
         var arguments = ["auth", "start"] + serverArguments(serverURL)
         arguments += ["--client-id", clientID]
         if let issuer, !issuer.isEmpty {
             arguments += ["--issuer", issuer]
+        }
+        if let prompt, !prompt.isEmpty {
+            arguments += ["--prompt", prompt]
+        }
+        if let loginHint, !loginHint.isEmpty {
+            arguments += ["--login-hint", loginHint]
         }
         arguments += ["--redirect-uri", redirectURI, "--json", "--config", configPath]
         return arguments
@@ -234,6 +262,10 @@ final class ConnectorCLI: @unchecked Sendable {
 
     static func authLogoutArguments(serverURL: String?, configPath: String) -> [String] {
         ["auth", "logout"] + serverArguments(serverURL) + ["--config", configPath]
+    }
+
+    static func authCancelArguments(loginID: String, configPath: String) -> [String] {
+        ["auth", "cancel", "--login-id", loginID, "--config", configPath]
     }
 
     /// `auth import` requires `--server`; the session body arrives on stdin.
