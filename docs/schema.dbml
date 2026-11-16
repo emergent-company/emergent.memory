@@ -422,6 +422,7 @@ Table "kb"."agent_run_jobs" {
     (status, next_run_at) [name: "idx_agent_run_jobs_poll", note: '(status = \'pending\'::text)']
     (project_id, queue, status, priority, next_run_at) [name: "idx_agent_run_jobs_queue_poll", note: '(status = \'pending\'::text)']
     (run_id) [name: "idx_agent_run_jobs_run_id"]
+    (run_id) [name: "uq_agent_run_jobs_one_live_per_run", unique, note: '(status = ANY (ARRAY[\'pending\'::text, \'processing\'::text]))']
   }
 }
 // kb.agent_run_jobs: Dispatch ledger for queued agent runs. Workers claim rows with FOR UPDATE SKIP LOCKED.

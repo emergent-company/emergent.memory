@@ -59,6 +59,66 @@ func TestMarkOrphanedRunsAsError_StillFailsAllRunning(t *testing.T) {
 	require.NotContains(t, q, "started_at <", "startup recovery must not key off started_at")
 }
 
+// TestTerminalRunSweepsRetireDispatchJobs pins issue #906.
+//
+// A worker claims a job by moving the job to "processing" and the run to
+// "running". If the worker then dies, the recovery sweeps fail (or cancel) the
+// run, but before #906 nothing moved the job row: ClaimNextJobInQueue only
+// selects "pending" rows, so the stranded row was never reclaimed while it kept
+// counting against AGENT_MAX_PENDING_JOBS via CountPendingJobsForAgent — an
+// agent would start returning QueueFullError while doing no work at all.
+//
+// Every sweep that terminalizes an abandoned run must retire its live dispatch
+// rows in the same statement, so a terminal run never leaves a non-terminal job
+// behind (the invariant #893 applied to the queued sweep).
+func TestTerminalRunSweepsRetireDispatchJobs(t *testing.T) {
+	sweeps := []struct {
+		name string
+		run  func(repo *Repository) error
+	}{
+		{
+			name: "MarkStaleRunsAsError",
+			run: func(repo *Repository) error {
+				_, err := repo.MarkStaleRunsAsError(context.Background(), 30*time.Minute)
+				return err
+			},
+		},
+		{
+			name: "MarkOrphanedRunsAsError",
+			run: func(repo *Repository) error {
+				_, err := repo.MarkOrphanedRunsAsError(context.Background())
+				return err
+			},
+		},
+		{
+			name: "FinalizeCancellingRuns",
+			run: func(repo *Repository) error {
+				_, err := repo.FinalizeCancellingRuns(context.Background(), 30*time.Minute)
+				return err
+			},
+		},
+	}
+
+	for _, tc := range sweeps {
+		t.Run(tc.name, func(t *testing.T) {
+			resetCaptureDriver()
+			repo := newCaptureExecRepository(t)
+
+			require.NoError(t, tc.run(repo))
+
+			q := sharedCaptureDriver.lastQuery()
+			require.Contains(t, q, "kb.agent_run_jobs",
+				"%s must retire the run's dispatch job rows; got: %s", tc.name, q)
+			require.Contains(t, q, "SET status = 'completed'",
+				"%s must retire live jobs to completed; got: %s", tc.name, q)
+			require.Contains(t, q, "'pending', 'processing'",
+				"%s must retire both pending and processing job rows; got: %s", tc.name, q)
+			require.Contains(t, q, "completed_at",
+				"%s must stamp the retired job rows; got: %s", tc.name, q)
+		})
+	}
+}
+
 // TestTouchRun_SetsLastStepAt asserts the heartbeat writes last_step_at on the
 // target run.
 func TestTouchRun_SetsLastStepAt(t *testing.T) {

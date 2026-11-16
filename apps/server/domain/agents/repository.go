@@ -385,16 +385,38 @@ func (r *Repository) FailRun(ctx context.Context, runID string, errorMessage str
 // MarkOrphanedRunsAsError finds all runs stuck in "running" status and marks
 // them as errored. This is called on server startup to recover from unclean
 // shutdowns where the agent goroutine was killed mid-execution.
+//
+// The dispatch ledger is retired in the same statement (issue #906): a claimed
+// job is left in "processing" by the process that died, and nothing else ever
+// moves it — ClaimNextJobInQueue only selects "pending" rows — so the row would
+// count against AGENT_MAX_PENDING_JOBS for ever while being unclaimable. A
+// terminal run must never leave a non-terminal job row behind.
 func (r *Repository) MarkOrphanedRunsAsError(ctx context.Context) (int, error) {
 	now := time.Now()
-	res, err := r.db.NewUpdate().
-		Model((*AgentRun)(nil)).
-		Set("status = ?", RunStatusError).
-		Set("completed_at = ?", now).
-		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
-		Set("error_message = ?", "server restarted while run was in progress").
-		Where("status = ?", RunStatusRunning).
-		Exec(ctx)
+	res, err := r.db.NewRaw(`
+		WITH orphaned AS (
+			SELECT id
+			  FROM kb.agent_runs
+			 WHERE status = ?
+		), retired AS (
+			UPDATE kb.agent_run_jobs
+			   SET status = ?,
+			       completed_at = ?
+			 WHERE status IN (?, ?)
+			   AND run_id IN (SELECT id FROM orphaned)
+			RETURNING 1
+		)
+		UPDATE kb.agent_runs
+		   SET status = ?,
+		       completed_at = ?,
+		       duration_ms = (EXTRACT(EPOCH FROM (? - started_at)) * 1000)::int,
+		       error_message = ?
+		 WHERE status = ?`,
+		RunStatusRunning,
+		JobStatusCompleted, now, JobStatusPending, JobStatusProcessing,
+		RunStatusError, now, now, "server restarted while run was in progress",
+		RunStatusRunning,
+	).Exec(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -461,18 +483,45 @@ func (r *Repository) StartRunHeartbeat(runID string, interval time.Duration) (st
 // actively heartbeating (long sandbox build, many MCP round-trips) is not
 // failed merely because it started long ago; only runs whose last activity —
 // or start, for runs that never heartbeated — predates the threshold are reaped.
+//
+// The run is failed and its dispatch ledger is retired in one atomic statement
+// (issue #906). A worker claims a job by moving it to "processing" and the run
+// to "running"; if that worker then dies, the run is reaped here, but nothing
+// else ever moves the job row: ClaimNextJobInQueue only selects "pending" rows,
+// so a stranded "processing" row is unclaimable *and* counted by
+// CountPendingJobsForAgent (the MaxPendingJobs guard CreateRunQueued applies)
+// for ever. Retiring it keeps the queue-depth count honest. The cause is
+// recorded on the run's error_message — kb.agent_run_jobs is a ledger with no
+// reason column of its own.
 func (r *Repository) MarkStaleRunsAsError(ctx context.Context, threshold time.Duration) (int, error) {
 	cutoff := time.Now().Add(-threshold)
 	now := time.Now()
-	res, err := r.db.NewUpdate().
-		Model((*AgentRun)(nil)).
-		Set("status = ?", RunStatusError).
-		Set("completed_at = ?", now).
-		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
-		Set("error_message = ?", "run exceeded idle timeout (likely abandoned by client)").
-		Where("status = ?", RunStatusRunning).
-		Where("COALESCE(last_step_at, started_at) < ?", cutoff).
-		Exec(ctx)
+	res, err := r.db.NewRaw(`
+		WITH stale AS (
+			SELECT id
+			  FROM kb.agent_runs
+			 WHERE status = ?
+			   AND COALESCE(last_step_at, started_at) < ?
+		), retired AS (
+			UPDATE kb.agent_run_jobs
+			   SET status = ?,
+			       completed_at = ?
+			 WHERE status IN (?, ?)
+			   AND run_id IN (SELECT id FROM stale)
+			RETURNING 1
+		)
+		UPDATE kb.agent_runs
+		   SET status = ?,
+		       completed_at = ?,
+		       duration_ms = (EXTRACT(EPOCH FROM (? - started_at)) * 1000)::int,
+		       error_message = ?
+		 WHERE status = ?
+		   AND COALESCE(last_step_at, started_at) < ?`,
+		RunStatusRunning, cutoff,
+		JobStatusCompleted, now, JobStatusPending, JobStatusProcessing,
+		RunStatusError, now, now, "run exceeded idle timeout (likely abandoned by client)",
+		RunStatusRunning, cutoff,
+	).Exec(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -3347,10 +3396,19 @@ func (r *Repository) findProcessingLogByKeyInTx(ctx context.Context, tx bun.Tx, 
 	return log, nil
 }
 
-// CreateRunJob inserts a new agent_run_jobs row for an existing run. When queue
-// is empty it is resolved from the run's agent binding (config override →
-// definition default → "default"); priority 0 means DefaultQueuePriority.
-func (r *Repository) CreateRunJob(ctx context.Context, runID string, maxAttempts int, queue string, priority int) error {
+// CreateRunJob inserts a new agent_run_jobs row for an existing run and reports
+// whether it inserted one. When queue is empty it is resolved from the run's
+// agent binding (config override → definition default → "default"); priority 0
+// means DefaultQueuePriority.
+//
+// The insert is ON CONFLICT DO NOTHING against the partial unique index
+// uq_agent_run_jobs_one_live_per_run (migration 00312), which allows at most one
+// pending/processing job per run. Callers therefore no longer need to
+// check-then-act: two healers racing to re-enqueue one run — or a healer racing
+// CreateRunQueued — collapse to a single live row, and inserted is false when
+// the run already had one (issue #905). Duplicates would otherwise inflate the
+// row count CountPendingJobsForAgent feeds to the AGENT_MAX_PENDING_JOBS guard.
+func (r *Repository) CreateRunJob(ctx context.Context, runID string, maxAttempts int, queue string, priority int) (inserted bool, err error) {
 	var projectID string
 	if run, err := r.FindRunByID(ctx, runID); err == nil && run != nil {
 		projectID, queue, priority = r.resolveAgentRouting(ctx, run.AgentID, queue, priority)
@@ -3370,8 +3428,18 @@ func (r *Repository) CreateRunJob(ctx context.Context, runID string, maxAttempts
 		ProjectID:   strPtrIfNotEmpty(projectID),
 		NextRunAt:   time.Now(),
 	}
-	_, err := r.db.NewInsert().Model(job).Exec(ctx)
-	return err
+	res, err := r.db.NewInsert().
+		Model(job).
+		On("CONFLICT DO NOTHING").
+		Exec(ctx)
+	if err != nil {
+		return false, fmt.Errorf("insert agent_run_jobs: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("insert agent_run_jobs: rows affected: %w", err)
+	}
+	return n > 0, nil
 }
 
 // ClaimNextJob atomically claims the next pending job from any project/queue.
@@ -3582,7 +3650,26 @@ func (r *Repository) FindRunByIDProjectScoped(ctx context.Context, runID, projec
 
 // RequeueOrphanedQueuedRuns finds agent_runs with status=queued that have no
 // active agent_run_jobs row (pending or processing) and inserts a new job row
-// for each. Called at startup after MarkOrphanedRunsAsError.
+// for each. Called at startup after MarkOrphanedRunsAsError and from the
+// five-minute stale-run sweep, so several instances can run it concurrently.
+//
+// The heal is unconditional for a top-level run: CreateRunQueued left it with a
+// job of its own, so a queued top-level run with no live job is simply one whose
+// row was lost, and re-enqueueing it is the recovery (issues #880, #893). A run
+// with a root run or a session — a fan-out child, or an A2A/session turn — is
+// different: a parent or a session turn owns its lifecycle, and if any of its
+// jobs was ever claimed a worker already started a turn, so re-enqueueing it
+// could execute the same work twice (issue #907). The heal therefore requires
+// that such a run never had a claimed job (attempt_count = 0 on every job row);
+// ReapUndispatchableQueuedRuns reports the runs it declines this way as
+// SparedExecuted.
+//
+// The insert is idempotent at the database level (CreateRunJob uses ON CONFLICT
+// DO NOTHING against uq_agent_run_jobs_one_live_per_run): the NOT EXISTS filter
+// below is only an optimisation, because under READ COMMITTED concurrent
+// callers do not see each other's uncommitted row. The returned count is the
+// number of jobs this call actually inserted, not the number of candidates
+// observed (issue #905).
 func (r *Repository) RequeueOrphanedQueuedRuns(ctx context.Context) (int, error) {
 	// Find queued runs that have no pending/processing job
 	type runRow struct {
@@ -3598,17 +3685,34 @@ func (r *Repository) RequeueOrphanedQueuedRuns(ctx context.Context) (int, error)
 			WHERE arj.run_id = ar.id
 			  AND arj.status IN ('pending', 'processing')
 		)`).
+		// A run whose lifecycle someone else owns may only be re-enqueued when no
+		// worker ever claimed it: attempt_count is the ledger's evidence that a
+		// turn started (ClaimNextJobInQueue increments it). Re-enqueueing a run
+		// that already executed would risk a second turn (issue #907).
+		Where(`(
+			(ar.root_run_id IS NULL AND ar.session_id IS NULL)
+			OR NOT EXISTS (
+				SELECT 1 FROM kb.agent_run_jobs claimed
+				WHERE claimed.run_id = ar.id
+				  AND claimed.attempt_count > 0
+			)
+		)`).
 		Scan(ctx, &runs)
 	if err != nil {
 		return 0, fmt.Errorf("find orphaned queued runs: %w", err)
 	}
 
+	requeued := 0
 	for _, row := range runs {
-		if err := r.CreateRunJob(ctx, row.ID, 1, "", 0); err != nil {
-			return 0, fmt.Errorf("re-enqueue run %s: %w", row.ID, err)
+		inserted, err := r.CreateRunJob(ctx, row.ID, 1, "", 0)
+		if err != nil {
+			return requeued, fmt.Errorf("re-enqueue run %s: %w", row.ID, err)
+		}
+		if inserted {
+			requeued++
 		}
 	}
-	return len(runs), nil
+	return requeued, nil
 }
 
 // QueuedRunReapResult reports what one undispatchable-queued-run sweep found.
@@ -3620,6 +3724,65 @@ type QueuedRunReapResult struct {
 	// job sits on a queue row that exists but is disabled: an operator switch,
 	// which re-enabling reverses, not an unroutable shape.
 	SparedDisabled int
+	// SparedExecuted is how many runs were left alone because their lifecycle is
+	// owned by a parent run or a session and a worker already claimed one of
+	// their jobs. Re-enqueueing such a run could execute a second turn, so the
+	// sweep declines it and counts it here instead (issue #907).
+	SparedExecuted int
+}
+
+// queuedRunCandidate is the job state of one stale queued run: everything the
+// sweep needs in order to decide whether acting on the run is safe.
+type queuedRunCandidate struct {
+	ID string `bun:"id"`
+	// Owned is true when a parent run (root_run_id) or a session owns this run's
+	// lifecycle, so re-enqueueing it is not the sweep's decision alone.
+	Owned bool `bun:"owned"`
+	// Claimable is true when a live job sits on an existing, enabled queue.
+	Claimable bool `bun:"claimable"`
+	// Disabled is true when a live job sits on an existing but disabled queue.
+	Disabled bool `bun:"disabled"`
+	// Claimed is true when any job of the run was ever claimed by a worker
+	// (attempt_count > 0), i.e. a turn may already have started.
+	Claimed bool `bun:"claimed"`
+}
+
+// queuedRunVerdict is the sweep's decision for one candidate.
+type queuedRunVerdict int
+
+const (
+	// queuedRunInLine: a claimable job exists; the run is legitimately waiting.
+	queuedRunInLine queuedRunVerdict = iota
+	// queuedRunSparedDisabled: parked on a disabled queue; reversible intent.
+	queuedRunSparedDisabled
+	// queuedRunSparedExecuted: owned lifecycle and a worker already claimed it.
+	queuedRunSparedExecuted
+	// queuedRunDoomed: no worker can ever claim it; fail it.
+	queuedRunDoomed
+)
+
+// classifyQueuedRun decides what the sweep may do with one stale queued run.
+//
+// The top-level rule is unchanged: a claimable job means "waiting in line", a
+// disabled queue means "operator parked it", and anything else is undispatchable
+// and gets failed. Runs whose lifecycle someone else owns — fan-out children
+// (root_run_id) and session/A2A turns (session_id) — get one extra check: when a
+// worker already claimed a job (attempt_count > 0, evidence a turn started),
+// re-enqueueing it could execute the same work twice, so the sweep declines it
+// and counts it as spared rather than acting (issue #907). Such a run with no
+// claimed job is treated exactly like a top-level run: healed if it merely lost
+// its job, failed if no worker can ever claim it.
+func classifyQueuedRun(c queuedRunCandidate) queuedRunVerdict {
+	switch {
+	case c.Claimable:
+		return queuedRunInLine
+	case c.Disabled:
+		return queuedRunSparedDisabled
+	case c.Owned && c.Claimed:
+		return queuedRunSparedExecuted
+	default:
+		return queuedRunDoomed
+	}
 }
 
 // ReapUndispatchableQueuedRuns fails queued ("submitted") runs that no worker
@@ -3635,17 +3798,27 @@ type QueuedRunReapResult struct {
 // step activity and nothing to reap, because the stale-run reaper only looks at
 // "working" and work maintenance counts "submitted" as live.
 //
-// A disabled queue is NOT in that class. `enabled` is a PATCHable field
-// (handler_queues.go), EnsureDefaultQueue is ON CONFLICT DO NOTHING so a
+// The sweep covers every queued run, not only top-level ones. Issue #907: a
+// fan-out child (root_run_id set) and an A2A/session turn (session_id set) hit
+// exactly the same defect, and sparing them left #880 reachable for the shapes
+// it spared. The owned shapes do need one extra guard, because re-enqueueing a
+// run that already executed risks a second turn: the sweep acts on them only
+// when no job of theirs was ever claimed (attempt_count = 0 everywhere), i.e. it
+// never got as far as a worker. An owned run that a worker did claim and that
+// then lost its job is counted in SparedExecuted and logged, so the residue is
+// visible instead of silent. Top-level runs keep the original rule: a queued
+// top-level run whose job was claimed and then lost is still recovered by the
+// heal, because nothing else owns its lifecycle.
+//
+// A disabled queue is NOT in the undispatchable class. `enabled` is a PATCHable
+// field (handler_queues.go), EnsureDefaultQueue is ON CONFLICT DO NOTHING so a
 // disable sticks, and re-enabling brings the backlog back — so a parked queue is
 // reversible operator intent, and failing its queue would discard work for a
 // deploy window. Those runs are spared and counted in SparedDisabled instead.
 //
-// The sweep is deliberately narrow. It only touches runs that
+// The sweep is otherwise deliberately narrow. It only touches runs that
 //
 //   - are still queued,
-//   - have no root run and no session — the shape CreateRunQueued leaves behind
-//     for a top-level dispatch, and the shape observed on prod,
 //   - have been idle past the threshold (COALESCE(last_step_at, started_at),
 //     matching the stale-run reaper), and
 //   - have no live job on a queue row that exists (enabled or disabled).
@@ -3663,14 +3836,10 @@ func (r *Repository) ReapUndispatchableQueuedRuns(ctx context.Context, threshold
 	var out QueuedRunReapResult
 	cutoff := time.Now().Add(-threshold)
 
-	type candidate struct {
-		ID        string `bun:"id"`
-		Claimable bool   `bun:"claimable"`
-		Disabled  bool   `bun:"disabled"`
-	}
-	var candidates []candidate
+	var candidates []queuedRunCandidate
 	if err := r.db.NewRaw(`
 		SELECT ar.id::text AS id,
+		       (ar.root_run_id IS NOT NULL OR ar.session_id IS NOT NULL) AS owned,
 		       EXISTS (
 		           SELECT 1
 		           FROM kb.agent_run_jobs arj
@@ -3690,11 +3859,15 @@ func (r *Repository) ReapUndispatchableQueuedRuns(ctx context.Context, threshold
 		            AND NOT aq.enabled
 		           WHERE arj.run_id = ar.id
 		             AND arj.status IN ('pending', 'processing')
-		       ) AS disabled
+		       ) AS disabled,
+		       EXISTS (
+		           SELECT 1
+		           FROM kb.agent_run_jobs claimed
+		           WHERE claimed.run_id = ar.id
+		             AND claimed.attempt_count > 0
+		       ) AS claimed
 		  FROM kb.agent_runs ar
 		 WHERE ar.status = ?
-		   AND ar.root_run_id IS NULL
-		   AND ar.session_id IS NULL
 		   AND COALESCE(ar.last_step_at, ar.started_at) < ?`,
 		RunStatusQueued, cutoff,
 	).Scan(ctx, &candidates); err != nil {
@@ -3703,11 +3876,13 @@ func (r *Repository) ReapUndispatchableQueuedRuns(ctx context.Context, threshold
 
 	var doomed []string
 	for _, c := range candidates {
-		switch {
-		case c.Claimable:
+		switch classifyQueuedRun(c) {
+		case queuedRunInLine:
 			// Legitimately waiting in line.
-		case c.Disabled:
+		case queuedRunSparedDisabled:
 			out.SparedDisabled++
+		case queuedRunSparedExecuted:
+			out.SparedExecuted++
 		default:
 			doomed = append(doomed, c.ID)
 		}
@@ -4351,20 +4526,44 @@ func (r *Repository) RunIsCancelling(ctx context.Context, runID string) (bool, e
 // owned by another instance during a rolling restart — is never finalized. A
 // non-positive olderThan is rejected: an unconditional sweep would finalize a
 // live run (issue #1166).
+//
+// Like MarkStaleRunsAsError, the run is finalized and its dispatch ledger is
+// retired in the same statement (issue #906): a cancel whose executing process
+// died can leave the job row in "processing", which no claim ever revisits and
+// which would otherwise inflate CountPendingJobsForAgent for ever. The reason
+// lives on the run's error_message; the job ledger has no reason column.
 func (r *Repository) FinalizeCancellingRuns(ctx context.Context, olderThan time.Duration) (int, error) {
 	if olderThan <= 0 {
 		return 0, fmt.Errorf("FinalizeCancellingRuns: olderThan must be positive")
 	}
 	now := time.Now()
-	res, err := r.db.NewUpdate().
-		Model((*AgentRun)(nil)).
-		Set("status = ?", RunStatusCancelled).
-		Set("completed_at = ?", now).
-		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
-		Set("error_message = COALESCE(NULLIF(error_message, ''), ?)", userCancelReason).
-		Where("status = ?", RunStatusCancelling).
-		Where("COALESCE(last_step_at, started_at) < ?", now.Add(-olderThan)).
-		Exec(ctx)
+	cutoff := now.Add(-olderThan)
+	res, err := r.db.NewRaw(`
+		WITH cancelling AS (
+			SELECT id
+			  FROM kb.agent_runs
+			 WHERE status = ?
+			   AND COALESCE(last_step_at, started_at) < ?
+		), retired AS (
+			UPDATE kb.agent_run_jobs
+			   SET status = ?,
+			       completed_at = ?
+			 WHERE status IN (?, ?)
+			   AND run_id IN (SELECT id FROM cancelling)
+			RETURNING 1
+		)
+		UPDATE kb.agent_runs
+		   SET status = ?,
+		       completed_at = ?,
+		       duration_ms = (EXTRACT(EPOCH FROM (? - started_at)) * 1000)::int,
+		       error_message = COALESCE(NULLIF(error_message, ''), ?)
+		 WHERE status = ?
+		   AND COALESCE(last_step_at, started_at) < ?`,
+		RunStatusCancelling, cutoff,
+		JobStatusCompleted, now, JobStatusPending, JobStatusProcessing,
+		RunStatusCancelled, now, now, userCancelReason,
+		RunStatusCancelling, cutoff,
+	).Exec(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("FinalizeCancellingRuns: %w", err)
 	}

@@ -904,3 +904,99 @@ func TestObjectPreviewEmptyBodyStaysPlain(t *testing.T) {
 		t.Errorf("empty body row should stay tagged data-empty\n%s", html)
 	}
 }
+
+// TestObjectPropertyDefMarkdown pins the explicit content-type rule: a
+// `format: markdown` string property renders as markdown on every read surface
+// even when the key and the widget hint would otherwise keep it plain, and a
+// stray format on a non-string type never turns a value into prose. Without the
+// format the long-form heuristics still decide, so existing types are unchanged.
+func TestObjectPropertyDefMarkdown(t *testing.T) {
+	cases := []struct {
+		name string
+		def  objectPropertyDef
+		want bool
+	}{
+		{"format markdown beats a single-line widget", objectPropertyDef{Name: "release_notes", Type: "string", Widget: "input", Format: "markdown"}, true},
+		{"format markdown on an untyped property", objectPropertyDef{Name: "release_notes", Format: "markdown"}, true},
+		{"format is case-insensitive", objectPropertyDef{Name: "release_notes", Type: "string", Format: "Markdown"}, true},
+		{"format markdown on an array is ignored", objectPropertyDef{Name: "release_notes", Type: "array", Format: "markdown"}, false},
+		{"format markdown on a number is ignored", objectPropertyDef{Name: "release_notes", Type: "number", Format: "markdown"}, false},
+		{"an unrelated format does not suppress the key heuristic", objectPropertyDef{Name: "description", Type: "string", Format: "email"}, true},
+		{"an unrelated format on a plain key stays plain", objectPropertyDef{Name: "version", Type: "string", Format: "email"}, false},
+		{"textarea heuristic", objectPropertyDef{Name: "instructions", Type: "string", Widget: "textarea"}, true},
+		{"input heuristic", objectPropertyDef{Name: "body", Type: "string", Widget: "input"}, false},
+		{"plain string", objectPropertyDef{Name: "title", Type: "string"}, false},
+	}
+	for _, c := range cases {
+		if got := objectPropertyDefMarkdown(c.def); got != c.want {
+			t.Errorf("%s: objectPropertyDefMarkdown(%+v) = %v, want %v", c.name, c.def, got, c.want)
+		}
+	}
+}
+
+// TestObjectPreviewExplicitFormatRendersMarkdown is the drawer half of the
+// explicit content type: a property named nothing like the article's body
+// vocabulary, declared with `format: markdown` and a single-line widget hint,
+// still renders as sanitized markdown.
+func TestObjectPreviewExplicitFormatRendersMarkdown(t *testing.T) {
+	obj := &GraphObject{
+		ID:   "11111111-1111-1111-1111-111111111111",
+		Type: "Changelog",
+		Key:  "changelog-1",
+		Properties: map[string]any{
+			"release_notes": "## v2\n\n- **faster** startup\n\n<script>alert(1)</script>",
+		},
+	}
+	html := renderHTML(t, objectPreviewContent(obj, nil, "", objectPreviewSchema{
+		TypeLabel: "Changelog",
+		Properties: []objectPropertyDef{{
+			Name: "release_notes", Type: "string", Widget: "input", Format: "markdown",
+		}},
+	}, nil))
+	for _, want := range []string{
+		`data-preview-markdown`,
+		`<h2>v2</h2>`,
+		`<strong>faster</strong>`,
+		`<li>`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("explicit markdown row missing %q\n%s", want, html)
+		}
+	}
+	for _, not := range []string{`## v2`, `**faster**`, `<script>`} {
+		if strings.Contains(html, not) {
+			t.Errorf("explicit markdown row still contains literal/unsafe %q\n%s", not, html)
+		}
+	}
+}
+
+// TestObjectPreviewMarkdownIsCapped pins the preview-only source cap: a huge
+// markdown value renders truncated with a visible note, so one property cannot
+// bloat the drawer. The cap is presentation-only — the object's stored value is
+// untouched (the drawer receives the full value and only the render is cut).
+func TestObjectPreviewMarkdownIsCapped(t *testing.T) {
+	huge := strings.Repeat("a ", maxTextPreviewChars/2+10) // rune count > cap
+	obj := &GraphObject{
+		ID:         "11111111-1111-1111-1111-111111111111",
+		Type:       "Note",
+		Properties: map[string]any{"body": huge},
+	}
+	html := renderHTML(t, objectPreviewContent(obj, nil, "", objectPreviewSchema{
+		TypeLabel:  "Note",
+		Properties: []objectPropertyDef{{Name: "body", Type: "string", Format: "markdown"}},
+	}, nil))
+	if !strings.Contains(html, "data-preview-truncated") {
+		t.Errorf("oversized markdown must render the truncation note\n%s", html)
+	}
+
+	body, truncated := markdownPreviewHTML(huge)
+	if !truncated {
+		t.Fatal("markdownPreviewHTML must report truncation past the cap")
+	}
+	if len([]rune(body)) == 0 {
+		t.Fatal("truncated markdown must still render")
+	}
+	if body, truncated := markdownPreviewHTML("short"); truncated || !strings.Contains(body, "short") {
+		t.Errorf("under-cap markdown must render whole: %q truncated=%v", body, truncated)
+	}
+}

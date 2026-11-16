@@ -409,11 +409,24 @@ memory-connector auth import --server https://api.example.ai [--json]
 ```
 
 The payload is
-`{"access_token":"…","refresh_token":"…","expires_at":"<RFC3339, optional>","issuer":"…","client_id":"…","email":"…"}`;
+`{"access_token":"…","refresh_token":"…","expires_at":"<RFC3339, optional>","issuer":"…","client_id":"…","email":"…","needs_reauth":<bool, optional>}`;
 `access_token` is required. The session is stored as-is (no `/api/auth/me`
 round-trip; `email` from the payload is trusted) and `--server` becomes the
 active account. It prints the `auth status` shape and never echoes the tokens.
 Exit codes: `0` success, `1` runtime error, `2` usage.
+
+`needs_reauth` is a property of the stored refresh token, not of the import, so
+an import **never clears it by omission**. When the import keeps the stored
+refresh token — it omits `refresh_token`, or repeats the stored value — an
+existing mark survives and the printed document reports `"needs_reauth":true`,
+so a session whose refresh token the provider already rejected cannot come back
+looking renewable (that would hide the rejection until the next refresh failed
+again). The mark is cleared only by replacing the token it described: an import
+that supplies a different `refresh_token` drops it, because the new token has
+not been rejected — replacing the refresh token *is* the deliberate reset.
+`needs_reauth:true` in the payload marks the imported session as already
+rejected, which lets a client import a session it knows is dead; `false`, or
+omitting the field, is not a reset and does not clear a recorded mark.
 
 `auth list [--json]` enumerates the stored servers for a multi-environment UI:
 

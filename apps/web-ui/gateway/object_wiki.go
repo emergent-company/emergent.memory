@@ -306,6 +306,27 @@ func objectRailPropertyRows(o GraphObject, propDefs []objectPropertyDef, prose o
 	return out
 }
 
+// objectRailRowMarkdown reports whether a details-rail row renders as markdown.
+// A declared property follows the same rule as every other surface (an explicit
+// `format: markdown` or the long-form heuristics); an undeclared stored key can
+// only use the key heuristic, since it has no schema definition.
+func objectRailRowMarkdown(r objectTypePropertyRow) bool {
+	if r.Declared {
+		return objectPropertyDefMarkdown(r.Def)
+	}
+	return objectPreviewFieldMarkdown(r.Name, "")
+}
+
+// objectRailMarkdownSource returns a rail row's raw markdown source, trimmed, or
+// "" when the row is not markdown or has no value. The values are joined with a
+// blank line so an agent-written multi-value property still parses.
+func objectRailMarkdownSource(r objectTypePropertyRow) string {
+	if !objectRailRowMarkdown(r) || len(r.Values) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(strings.Join(r.Values, "\n\n"))
+}
+
 // objectPropertyDisplay renders a property row's value on one line for a
 // details rail: a scalar as written, an array as a comma-separated list, capped
 // so a long value cannot dominate the rail. The full value stays reachable on
