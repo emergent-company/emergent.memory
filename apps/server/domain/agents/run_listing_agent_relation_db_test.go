@@ -105,6 +105,17 @@ func TestRunListingsLoadAgentRelationForDTOFallback(t *testing.T) {
 		}
 	})
 
+	// A page smaller than the row count: a belongs-to relation must not multiply
+	// rows (an erroneous has-many join would return duplicates and skew `total`
+	// against the page), and every page must keep the attribution.
+	t.Run("FindRunsByProjectPaginatedWindow", func(t *testing.T) {
+		runs, total, err := repo.FindRunsByProjectPaginated(ctx, projectID, RunFilters{}, 1, 1)
+		require.NoError(t, err)
+		require.Equal(t, 3, total)
+		require.Len(t, runs, 1, "one row per run, never a duplicated join row")
+		assertAttributed(t, "FindRunsByProjectPaginatedWindow", runs[0])
+	})
+
 	t.Run("ListA2ARuns", func(t *testing.T) {
 		runs, total, err := repo.ListA2ARuns(ctx, projectID, "", nil, 50, 0)
 		require.NoError(t, err)

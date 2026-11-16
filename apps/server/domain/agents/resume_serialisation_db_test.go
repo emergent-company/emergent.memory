@@ -9,6 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+
+	"github.com/emergent-company/emergent.memory/internal/config"
 )
 
 // TestBeginResumedRunSerialisesConcurrentResumes is the required regression test
@@ -173,4 +175,81 @@ func TestClaimPausedRunForResumeIsSingleUse(t *testing.T) {
 	claimed, err = repo.ClaimPausedRunForResume(ctx, paused.ID)
 	require.NoError(t, err)
 	require.False(t, claimed, "the second follower must be rejected")
+}
+
+// TestResumeRetiresLosingFollowersPreCreatedChild covers Resume's own
+// pre-created-child branch (issue #887). The private-seam test above drives
+// beginResumedRun directly and never enters Resume, while the SQL test above only
+// exercises the claim statement — so nothing pinned the branch that decides what
+// happens to the child a losing follower already inserted. A refactor that
+// dropped it (or that skipped the claim when PreCreatedRun is set) would leave
+// both green while a second turn executed on a leaked `working` child.
+//
+// The test walks the real caller shape: pre-create the child, let another
+// follower claim the pause first, then call Resume with that child.
+func TestResumeRetiresLosingFollowersPreCreatedChild(t *testing.T) {
+	tdb, projectID := seedAgentDeleteProject(t, "resume_precreated_loser")
+	ctx := context.Background()
+	repo := NewRepository(tdb.DB)
+	ae := &AgentExecutor{
+		repo:       repo,
+		log:        testAgentLogger(),
+		safeguards: config.AgentSafeguardsConfig{ExecutionEnabled: true},
+	}
+
+	agentID := uuid.NewString()
+	_, err := tdb.DB.ExecContext(ctx,
+		`INSERT INTO kb.agents (id, name, strategy_type, cron_schedule, project_id)
+		 VALUES (?, ?, 'graph', '', ?)`,
+		agentID, "resume-loser-887", projectID)
+	require.NoError(t, err)
+
+	checkpoint, err := repo.CreateRunWithOptions(ctx, CreateRunOptions{AgentID: agentID, InitialStepCount: 1})
+	require.NoError(t, err)
+	require.NoError(t, repo.PauseRun(ctx, checkpoint.ID, 1))
+	priorRun, err := repo.FindRunByID(ctx, checkpoint.ID)
+	require.NoError(t, err)
+	require.Equal(t, RunStatusPaused, priorRun.Status)
+
+	// The child a follower pre-creates before calling Resume.
+	resumedFrom := priorRun.ID
+	preCreated, err := repo.CreateRunWithOptions(ctx, CreateRunOptions{
+		AgentID:          agentID,
+		ResumedFrom:      &resumedFrom,
+		InitialStepCount: priorRun.StepCount,
+	})
+	require.NoError(t, err)
+	require.Equal(t, RunStatusRunning, preCreated.Status)
+
+	// Another follower wins the pause.
+	won, err := repo.ClaimPausedRunForResume(ctx, priorRun.ID)
+	require.NoError(t, err)
+	require.True(t, won)
+
+	result, err := ae.Resume(ctx, priorRun, ExecuteRequest{
+		ProjectID:     projectID,
+		PreCreatedRun: preCreated,
+	})
+	require.Nil(t, result, "a losing follower must not execute")
+	require.ErrorIs(t, err, ErrRunAlreadyResumed)
+
+	after, err := repo.FindRunByID(ctx, preCreated.ID)
+	require.NoError(t, err)
+	require.Equal(t, RunStatusError, after.Status,
+		"the losing follower's pre-created child must be retired, not left running")
+	require.NotNil(t, after.CompletedAt)
+
+	// And the winner's checkpoint is terminal, not left paused.
+	spent, err := repo.FindRunByID(ctx, priorRun.ID)
+	require.NoError(t, err)
+	require.Equal(t, RunStatusSuccess, spent.Status)
+
+	// A second resume of the same pause is still rejected: the child retirement
+	// must not have made the pause resumable again.
+	again, err := ae.Resume(ctx, priorRun, ExecuteRequest{
+		ProjectID:     projectID,
+		PreCreatedRun: preCreated,
+	})
+	require.Nil(t, again)
+	require.ErrorIs(t, err, ErrRunAlreadyResumed)
 }

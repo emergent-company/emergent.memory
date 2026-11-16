@@ -2316,7 +2316,7 @@ func (r *Repository) CancelRunIfPaused(ctx context.Context, runID string) (bool,
 
 // ClaimPausedRunForResume atomically consumes a paused run's pause, so two
 // concurrent follow-ups to the same pause cannot both resume it. It applies the
-// same terminal transition MarkRunResumed finalizes the checkpoint with, but
+// terminal `input-required → completed` transition the checkpoint needs, but
 // BEFORE the resumed child run exists and with the row count as the verdict,
 // which is the only thing that serialises the two:
 //
@@ -2325,11 +2325,12 @@ func (r *Repository) CancelRunIfPaused(ctx context.Context, runID string) (bool,
 //	handler A  UPDATE … WHERE status=input-required   → 1 row, wins
 //	handler B  UPDATE … WHERE status=input-required   → 0 rows, rejected
 //
-// Without it a questionless pause had no claim at all: executor.Resume reads the
-// in-memory status and MarkRunResumed runs only after the child insert, so both
-// followers created a child run and executed the same turn twice (issue #867
-// follow-up). A pause that does carry a pending question is already serialised by
-// AnswerQuestion's claim on the question row; this is that claim's counterpart.
+// Without it a questionless pause had no claim at all: executor.Resume read the
+// in-memory status and only finalized the checkpoint after the child insert, so
+// both followers created a child run and executed the same turn twice (issue
+// #867 follow-up). A pause that does carry a pending question is already
+// serialised by AnswerQuestion's claim on the question row; this is that claim's
+// counterpart.
 //
 // A claim that later loses its child to a hard failure leaves the checkpoint
 // successful, so the retry is rejected instead of running twice — the same
@@ -2392,23 +2393,6 @@ func (r *Repository) CreateResumedRunFromPause(ctx context.Context, priorRunID s
 		return nil, false, nil
 	}
 	return run, true, nil
-}
-
-// MarkRunResumed finalizes the paused checkpoint run once a new resumed run has
-// been created. The checkpoint must reach a terminal state: this used to flip it
-// to `running` and clear completed_at, and nothing ever finalized it, so every
-// resumed run left its parent permanently stuck in "working" — visible as a
-// stalled run in the UI and counted as live work. Execution has moved to the new
-// run; the checkpoint records that it was resumed and is marked successful.
-func (r *Repository) MarkRunResumed(ctx context.Context, runID string) error {
-	_, err := r.db.NewUpdate().
-		Model((*AgentRun)(nil)).
-		Set("status = ?", RunStatusSuccess).
-		Set("completed_at = NOW()").
-		Where("id = ?", runID).
-		Where("status = ?", RunStatusPaused).
-		Exec(ctx)
-	return err
 }
 
 // UpdateStepCount updates the step count for a running agent.
@@ -3627,60 +3611,149 @@ func (r *Repository) RequeueOrphanedQueuedRuns(ctx context.Context) (int, error)
 	return len(runs), nil
 }
 
-// MarkUndispatchableQueuedRunsAsError fails queued ("submitted") runs that no
-// worker can ever claim, so a run that was created but never dispatched cannot
-// sit non-terminal forever (issue #880).
+// QueuedRunReapResult reports what one undispatchable-queued-run sweep found.
+type QueuedRunReapResult struct {
+	// Failed is how many runs were driven to a terminal failure (and had their
+	// dispatch jobs retired with them).
+	Failed int
+	// SparedDisabled is how many runs were left alone because their only live
+	// job sits on a queue row that exists but is disabled: an operator switch,
+	// which re-enabling reverses, not an unroutable shape.
+	SparedDisabled int
+}
+
+// ReapUndispatchableQueuedRuns fails queued ("submitted") runs that no worker
+// can ever claim, so a run that was created but never dispatched cannot sit
+// non-terminal forever (issue #880).
 //
 // Every queued run is inserted together with its dispatch job, but the job is
 // only claimable when a worker polls its exact (project_id, queue) pair, and a
-// worker only polls the enabled rows of kb.agent_queues. A job whose queue row
-// is missing or disabled — or whose project_id is NULL, which can never equal the
-// project a worker claims with — is therefore invisible to every worker: the run
-// stays "submitted" with no error, no step activity and nothing to reap, because
-// the stale-run reaper only looks at "working" and work maintenance counts
-// "submitted" as live.
+// worker only polls the enabled rows of kb.agent_queues. Two job shapes are
+// therefore invisible to every worker for good: a job whose queue row does not
+// exist at all, and a job with project_id NULL, which can never equal the
+// project a worker claims with. Those runs stay "submitted" with no error, no
+// step activity and nothing to reap, because the stale-run reaper only looks at
+// "working" and work maintenance counts "submitted" as live.
+//
+// A disabled queue is NOT in that class. `enabled` is a PATCHable field
+// (handler_queues.go), EnsureDefaultQueue is ON CONFLICT DO NOTHING so a
+// disable sticks, and re-enabling brings the backlog back — so a parked queue is
+// reversible operator intent, and failing its queue would discard work for a
+// deploy window. Those runs are spared and counted in SparedDisabled instead.
 //
 // The sweep is deliberately narrow. It only touches runs that
 //
 //   - are still queued,
 //   - have no root run and no session — the shape CreateRunQueued leaves behind
-//     for a fan-out dispatch, and the shape observed on prod,
+//     for a top-level dispatch, and the shape observed on prod,
 //   - have been idle past the threshold (COALESCE(last_step_at, started_at),
 //     matching the stale-run reaper), and
-//   - have no live job any worker could claim.
+//   - have no live job on a queue row that exists (enabled or disabled).
 //
-// A queued run that does have a claimable job is left alone: it is legitimately
-// waiting in line, and RequeueOrphanedQueuedRuns covers the case where the job
-// row itself was lost.
-func (r *Repository) MarkUndispatchableQueuedRunsAsError(ctx context.Context, threshold time.Duration) (int, error) {
+// A queued run with a claimable job is left alone: it is legitimately waiting in
+// line, and RequeueOrphanedQueuedRuns covers the case where the job row itself
+// was lost.
+//
+// A failed run's jobs are retired in the same transaction, so a terminal run
+// never leaves a non-terminal job behind. Such a job could otherwise never be
+// claimed (a NULL project_id never matches a claim) while still inflating
+// CountPendingJobsForAgent, which is the MaxPendingJobs guard CreateRunQueued
+// applies.
+func (r *Repository) ReapUndispatchableQueuedRuns(ctx context.Context, threshold time.Duration) (QueuedRunReapResult, error) {
+	var out QueuedRunReapResult
 	cutoff := time.Now().Add(-threshold)
-	now := time.Now()
-	res, err := r.db.NewUpdate().
-		Model((*AgentRun)(nil)).
-		Set("status = ?", RunStatusError).
-		Set("completed_at = ?", now).
-		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
-		Set("error_message = ?", "queued run was never dispatched: no dispatch job a worker can claim").
-		Where("ar.status = ?", RunStatusQueued).
-		Where("ar.root_run_id IS NULL").
-		Where("ar.session_id IS NULL").
-		Where("COALESCE(ar.last_step_at, ar.started_at) < ?", cutoff).
-		Where(`NOT EXISTS (
-			SELECT 1
-			FROM kb.agent_run_jobs arj
-			JOIN kb.agent_queues aq
-			  ON aq.project_id = arj.project_id
-			 AND aq.name = arj.queue
-			 AND aq.enabled
-			WHERE arj.run_id = ar.id
-			  AND arj.status IN ('pending', 'processing')
-		)`).
-		Exec(ctx)
-	if err != nil {
-		return 0, err
+
+	type candidate struct {
+		ID        string `bun:"id"`
+		Claimable bool   `bun:"claimable"`
+		Disabled  bool   `bun:"disabled"`
 	}
-	n, _ := res.RowsAffected()
-	return int(n), nil
+	var candidates []candidate
+	if err := r.db.NewRaw(`
+		SELECT ar.id::text AS id,
+		       EXISTS (
+		           SELECT 1
+		           FROM kb.agent_run_jobs arj
+		           JOIN kb.agent_queues aq
+		             ON aq.project_id = arj.project_id
+		            AND aq.name = arj.queue
+		            AND aq.enabled
+		           WHERE arj.run_id = ar.id
+		             AND arj.status IN ('pending', 'processing')
+		       ) AS claimable,
+		       EXISTS (
+		           SELECT 1
+		           FROM kb.agent_run_jobs arj
+		           JOIN kb.agent_queues aq
+		             ON aq.project_id = arj.project_id
+		            AND aq.name = arj.queue
+		            AND NOT aq.enabled
+		           WHERE arj.run_id = ar.id
+		             AND arj.status IN ('pending', 'processing')
+		       ) AS disabled
+		  FROM kb.agent_runs ar
+		 WHERE ar.status = ?
+		   AND ar.root_run_id IS NULL
+		   AND ar.session_id IS NULL
+		   AND COALESCE(ar.last_step_at, ar.started_at) < ?`,
+		RunStatusQueued, cutoff,
+	).Scan(ctx, &candidates); err != nil {
+		return out, fmt.Errorf("find undispatchable queued runs: %w", err)
+	}
+
+	var doomed []string
+	for _, c := range candidates {
+		switch {
+		case c.Claimable:
+			// Legitimately waiting in line.
+		case c.Disabled:
+			out.SparedDisabled++
+		default:
+			doomed = append(doomed, c.ID)
+		}
+	}
+	if len(doomed) == 0 {
+		return out, nil
+	}
+
+	now := time.Now()
+	const reason = "queued run was never dispatched: no dispatch job a worker can claim"
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var failed []string
+		if err := tx.NewRaw(`
+			UPDATE kb.agent_runs
+			   SET status = ?,
+			       completed_at = ?,
+			       duration_ms = (EXTRACT(EPOCH FROM (? - started_at)) * 1000)::int,
+			       error_message = ?
+			 WHERE id IN (?)
+			   AND status = ?
+			RETURNING id::text`,
+			RunStatusError, now, now, reason, bun.In(doomed), RunStatusQueued,
+		).Scan(ctx, &failed); err != nil {
+			return fmt.Errorf("fail undispatchable queued runs: %w", err)
+		}
+		if len(failed) == 0 {
+			return nil
+		}
+		// Retire the dispatch jobs with the run: a terminal run must not leave
+		// a pending/processing row that no claim can ever take.
+		if _, err := tx.NewRaw(`
+			UPDATE kb.agent_run_jobs
+			   SET status = ?, completed_at = ?
+			 WHERE run_id IN (?)
+			   AND status IN (?, ?)`,
+			JobStatusCompleted, now, bun.In(failed), JobStatusPending, JobStatusProcessing,
+		).Exec(ctx); err != nil {
+			return fmt.Errorf("retire jobs of undispatchable queued runs: %w", err)
+		}
+		out.Failed = len(failed)
+		return nil
+	})
+	if err != nil {
+		return QueuedRunReapResult{}, err
+	}
+	return out, nil
 }
 
 // GetRunTokenUsage returns aggregated LLM token counts and estimated cost for a

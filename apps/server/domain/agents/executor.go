@@ -652,12 +652,16 @@ type ExecuteRequest struct {
 	// event to the parent stream before execution proceeds.
 	OnRunCreated func(runID string)
 
-	// PauseClaimed reports that the caller already consumed the paused run's
-	// pause (Repository.ClaimPausedRunForResume) before calling Resume. The
-	// executor claims every pause on its own — that claim is what serialises
-	// concurrent resumes (issue #887) — so only a caller that had to claim
-	// earlier, inside a wider handler transaction, sets this. Leaving it false
-	// is the default and safe choice: Resume then claims the pause itself.
+	// PauseClaimed reports that the caller ALREADY consumed the paused run's
+	// pause (Repository.ClaimPausedRunForResume) inside its own transaction
+	// before calling Resume. No caller in this tree sets it; it exists for a
+	// caller that must claim in a wider handler transaction (the A2A questionless
+	// branch in #881).
+	//
+	// Setting it without having actually claimed the pause re-opens #887: Resume
+	// skips its claim and two followers then execute the same turn. Leaving it
+	// false is the default and the safe choice — Resume claims the pause itself,
+	// and that claim is what serialises concurrent resumes.
 	PauseClaimed bool
 
 	// SubjectObjectID/SubjectObjectType identify the reaction target for this
