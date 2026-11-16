@@ -53,6 +53,26 @@ installation token at run start and injects it as `GH_TOKEN` into the sandbox.
 Automatic issue triggers default to opening/reopening work. Edits update the
 board item; closing cancels a live run and closes the item.
 
+## Issue ownership and claims
+
+Set `assignee_login` in the source config to the GitHub login of the person
+responsible for issues this source starts. On opening or reopening an issue,
+the integration:
+
+1. reads the live issue and refuses to start if another agent has claimed it
+   (`status: in-progress` or `status: blocked` with a different `manager:`), or
+   if it is assigned to someone else;
+2. assigns the configured responsible user;
+3. adds `status: in-progress` and `manager: memory-coding`; and
+4. posts a receipt comment naming the agent.
+
+The responsible user stays assigned for the life of the issue. The labels are
+the claim signal peer agents read; `manager: memory-coding` identifies the
+agent, while the graph keeps the precise agent and run identity. A coding PR
+must reference the issue with a closing keyword (`Closes #N`, `Fixes #N`, or
+`Resolves #N`) so the merge closes it. Label and comment writes from the
+integration's own App are ignored, so claiming cannot re-trigger the source.
+
 ## Run inside the sandbox
 
 The coding agent uses the existing workspace tools. A `workspace_git push` and

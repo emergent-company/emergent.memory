@@ -105,6 +105,10 @@ func (p *githubAppProvider) ConfigSchema() ProviderSchema {
 				"items":       map[string]any{"type": "string"},
 				"description": "Repository allowlist (owner/name). Webhooks outside it are ignored.",
 			},
+			"assignee_login": map[string]any{
+				"type":        "string",
+				"description": "GitHub login to assign as the responsible owner when this source auto-starts an issue. The coding agent claims separately with manager/status labels.",
+			},
 		},
 		Required: []string{"app_id", "installation_id", "repos"},
 	}
@@ -135,6 +139,9 @@ func (p *githubAppProvider) NormalizeConfig(cfg map[string]any) {
 	}
 	if v, ok := cfg["repos"]; ok {
 		cfg["repos"] = appRepoList(v)
+	}
+	if v, ok := cfg["assignee_login"]; ok {
+		cfg["assignee_login"] = strings.TrimSpace(fmt.Sprint(v))
 	}
 }
 

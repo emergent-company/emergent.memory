@@ -119,6 +119,16 @@ func (p *WebhookPayload) AuthoredByIssue(login string) bool {
 	return strings.EqualFold(author, login) || strings.EqualFold(author, login+"[bot]")
 }
 
+// AuthoredBySender reports whether the delivery actor is login or its App bot
+// form. Issue-claim writes (labels, assignment, receipt comments) are authored
+// by the integration's own App and must not re-enter the source dispatcher.
+func (p *WebhookPayload) AuthoredBySender(login string) bool {
+	if login == "" {
+		return false
+	}
+	return strings.EqualFold(p.Sender.Login, login) || strings.EqualFold(p.Sender.Login, login+"[bot]")
+}
+
 // IsRelevantPullRequestAction reports the actions that should enqueue a review.
 func (p *WebhookPayload) IsRelevantPullRequestAction() bool {
 	switch p.Action {
