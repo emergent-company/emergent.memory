@@ -176,6 +176,74 @@ func TestBadgeAndAlertFoldAClassLeftInAttrs(t *testing.T) {
 	}
 }
 
+// TestTakeClassAttrFoldsEveryShapeTemplRenders pins the class values that can
+// arrive through templ.Attributes: the shapes templ itself renders as class
+// text are folded, anything else is dropped. The key never survives, whatever
+// the type — a second class attribute is the defect (#855), so an unfashionable
+// value must not get one.
+func TestTakeClassAttrFoldsEveryShapeTemplRenders(t *testing.T) {
+	str := "ml-1"
+	for _, tc := range []struct {
+		name  string
+		value any
+		want  string
+	}{
+		{"string", "ml-1", "ml-1"},
+		{"string pointer", &str, "ml-1"},
+		{"nil string pointer", (*string)(nil), ""},
+		{"key-value on", templ.KV("mb-4", true), "mb-4"},
+		{"key-value off", templ.KV("mb-4", false), ""},
+		{"non-string", 5, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			attrs := templ.Attributes{"class": tc.value, "data-testid": "kept"}
+			got, class := takeClassAttr(attrs)
+			if class != tc.want {
+				t.Fatalf("class = %q, want %q", class, tc.want)
+			}
+			if _, ok := got["class"]; ok {
+				t.Errorf("class key survived takeClassAttr: %v", got)
+			}
+			if got["data-testid"] != "kept" {
+				t.Errorf("unrelated attribute lost: %v", got)
+			}
+		})
+	}
+}
+
+// TestBadgeNeverRendersASecondClassAttributeForAnUnfoldableValue is the render
+// half of the test above: an int class value is dropped, not emitted beside the
+// badge's own class attribute.
+func TestBadgeNeverRendersASecondClassAttributeForAnUnfoldableValue(t *testing.T) {
+	html := renderHTML(t, BadgeWithClass(BadgeWithClassProps{
+		BadgeProps: ui.BadgeProps{Label: "3", Variant: ui.BadgeError, Attrs: templ.Attributes{"class": 5}},
+	}))
+	tag := rootTag(t, html)
+	if n := classAttrCount(tag); n != 1 {
+		t.Fatalf("want exactly one class attribute, got %d: %s", n, tag)
+	}
+}
+
+// TestStatusBadgeFoldsClassFromAttrs pins the coordination with StatusBadge:
+// StatusBadgeOpts.Attrs still accepts a class (the pre-#855 shape) and the badge
+// applies it once, because StatusBadge renders through BadgeWithClass. Without
+// the fold the shape would recreate #855 one call frame down.
+func TestStatusBadgeFoldsClassFromAttrs(t *testing.T) {
+	html := renderHTML(t, StatusBadge("Pending", ui.BadgeWarning, "", StatusBadgeOpts{
+		Attrs: templ.Attributes{"class": "ml-1", "data-testid": "pending-badge"},
+	}))
+
+	tag := rootTag(t, html)
+	class := rootClass(t, tag)
+	if !hasClassToken(class, "ml-1") {
+		t.Errorf("class %q is missing the Attrs utility ml-1", class)
+	}
+	if !hasClassToken(class, "badge") || !hasClassToken(class, "badge-warning") {
+		t.Errorf("class %q lost one of the badge's own classes", class)
+	}
+	assertContains(t, tag, `data-testid="pending-badge"`)
+}
+
 // TestBadgeMatchesUpstreamWithoutClass is the anti-drift guard for the Badge
 // copy: every prop shape renders the same markup as ui.Badge when Class is
 // empty.

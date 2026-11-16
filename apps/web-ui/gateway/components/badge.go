@@ -46,13 +46,21 @@ func badgeClassAndAttrs(props BadgeWithClassProps) (string, templ.Attributes) {
 	return shared.TwMerge(classes...), attrs
 }
 
-// takeClassAttr returns attrs without its "class" entry, plus that entry's
-// value. The map is copied, so the caller's templ.Attributes is not mutated.
+// takeClassAttr returns attrs without its "class" entry, plus the class text that
+// entry carried. The map is copied, so the caller's templ.Attributes is not
+// mutated.
+//
+// The key is removed whatever its type: a class left in Attrs must never reach
+// the element as a second class attribute (#855). Only the values templ itself
+// renders as class text — a string, a *string, or a templ.KeyValue[string, bool]
+// whose flag is set — are folded into the merged class list. Any other value
+// cannot be trusted to be a utility, so it is dropped rather than duplicated;
+// pass strings (or templ.KV) if the utility must survive.
 func takeClassAttr(attrs templ.Attributes) (templ.Attributes, string) {
 	if len(attrs) == 0 {
 		return nil, ""
 	}
-	class, ok := attrs["class"].(string)
+	raw, ok := attrs["class"]
 	if !ok {
 		return attrs, ""
 	}
@@ -62,7 +70,28 @@ func takeClassAttr(attrs templ.Attributes) (templ.Attributes, string) {
 			out[k] = v
 		}
 	}
-	return out, class
+	return out, classText(raw)
+}
+
+// classText returns the class text templ would render for a class attribute
+// value, or "" when the value carries none.
+func classText(v any) string {
+	switch v := v.(type) {
+	case string:
+		return v
+	case *string:
+		if v == nil {
+			return ""
+		}
+		return *v
+	case templ.KeyValue[string, bool]:
+		if !v.Value {
+			return ""
+		}
+		return v.Key
+	default:
+		return ""
+	}
 }
 
 // dotClass maps a BadgeIntent to its DaisyUI status-dot class (ui.Badge's

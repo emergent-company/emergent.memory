@@ -36,7 +36,11 @@ type StatusBadgeOpts struct {
 	Size ui.BadgeSize
 	// Dot renders a status dot instead of an icon.
 	Dot bool
-	// Attrs carries extra attributes such as data-testid.
+	// Attrs carries extra attributes such as data-testid. A "class" entry is
+	// folded into the badge's class list (StatusBadge renders through
+	// BadgeWithClass), so it is applied exactly once rather than rendered as a
+	// second attribute; prefer passing a layout utility as a plain "class" here
+	// only when the call site cannot use BadgeWithClass directly.
 	Attrs templ.Attributes
 }
 
@@ -51,15 +55,19 @@ templ StatusBadge(label string, intent ui.BadgeIntent, icon string, opts ...Stat
 	}
 	if o.Size != "" {
 		size = o.Size
-	} }}
-	@ui.Badge(ui.BadgeProps{
-		Label:   label,
-		Variant: intent,
-		Style:   o.Style,
-		Size:    size,
-		Icon:    icon,
-		Dot:     o.Dot,
-		Attrs:   o.Attrs,
+	}
+	attrs, class := takeClassAttr(o.Attrs) }}
+	@BadgeWithClass(BadgeWithClassProps{
+		BadgeProps: ui.BadgeProps{
+			Label:   label,
+			Variant: intent,
+			Style:   o.Style,
+			Size:    size,
+			Icon:    icon,
+			Dot:     o.Dot,
+			Attrs:   attrs,
+		},
+		Class: class,
 	})
 }
 

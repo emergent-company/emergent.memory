@@ -16,10 +16,12 @@ import (
 // at the code. The go-daisy pin (v0.20.0) has that shape on ui.Badge, ui.Alert
 // and ui.Button; upstream issue #150 is the fix.
 //
-// The supported slots are components.BadgeWithClass / components.AlertWithClass (Class, merged into
-// the element's class list) and ui.Button (ExtraClass, which is a member of the
-// button's own class list). This scan fails on the next call site that reaches
-// for Attrs instead, because that call site would look right and render wrong.
+// The supported slots are components.BadgeWithClass / components.AlertWithClass
+// (Class, merged into the element's class list) and ui.Button (ExtraClass, which
+// is a member of the button's own class list). components.StatusBadge folds a
+// class in its Attrs into the same merge since #855, but this scan still reports
+// it: the explicit slot says what the utility is for. Every other call site that
+// reaches for Attrs reads as if the class were applied and renders without it.
 //
 // Best-effort and line-oriented, like the other source scans in this package: it
 // reads authored .templ, tolerates nested calls and strings, and cannot tell a
@@ -36,6 +38,11 @@ var classHookCallees = []classHookCallee{
 	{callee: "ui.Badge(", supported: "components.BadgeWithClass's Class field"},
 	{callee: "ui.Alert(", supported: "components.AlertWithClass's Class field"},
 	{callee: "ui.Button(", supported: "ui.ButtonProps.ExtraClass"},
+	// StatusBadge forwards Attrs into a class-owning badge; it folds a "class"
+	// itself since #855, so this entry is about keeping the utility visible at
+	// the call site rather than about rendering (a BadgeWithClass call says what
+	// the class is for).
+	{callee: "components.StatusBadge(", supported: "components.BadgeWithClass's Class field"},
 }
 
 // classKeyRE matches a templ.Attributes map key named class.
@@ -129,6 +136,11 @@ func TestClassInAttrsScannerCatchesTheShape(t *testing.T) {
 			want: 1,
 		},
 		{
+			name: "status badge with class in Attrs",
+			src:  "@components.StatusBadge(\"Pending\", ui.BadgeWarning, \"\", components.StatusBadgeOpts{Attrs: templ.Attributes{\"class\": \"ml-1\"}})\n",
+			want: 1,
+		},
+		{
 			name: "wrapper Class field is the supported shape",
 			src:  "@components.AlertWithClass(components.AlertWithClassProps{AlertProps: ui.AlertProps{Message: \"m\"}, Class: \"mb-4\"})\n",
 			want: 0,
@@ -153,7 +165,8 @@ func TestClassInAttrsScannerCatchesTheShape(t *testing.T) {
 }
 
 // TestClassInAttrsRatchet is the guard half of #855: no authored template passes
-// a class through Attrs to a component that owns a class attribute.
+// a class through Attrs to a class-owning component — a primitive, a wrapper, or
+// a component that forwards into one.
 func TestClassInAttrsRatchet(t *testing.T) {
 	files, err := filepath.Glob("*.templ")
 	if err != nil {
