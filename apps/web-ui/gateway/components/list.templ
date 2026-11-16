@@ -17,7 +17,8 @@ type LinkRowOpts struct {
 	// JS keys on when the row is opened (inbox: data-notification-open +
 	// data-notif-id, so the click marks the notification read first). They
 	// belong on the anchor, not on the root: a hook on the root would also
-	// match clicks that land on the row's trailing controls.
+	// match clicks that land on the row's trailing controls. Dropped in the
+	// empty-href mode, where there is no anchor to carry them.
 	LinkAttrs templ.Attributes
 	// Details renders a band under the row link, inside the row root and
 	// outside the anchor — for supplementary content that is itself

@@ -262,14 +262,24 @@ templ inboxRow(d inboxView, n Notification) {
 		{{ linkAttrs["data-notification-open"] = true }}
 		{{ linkAttrs["data-notif-id"] = n.ID }}
 	}
+	{{ var details templ.Component }}
+	if inboxRowHasDetails(d, n) {
+		{{ details = inboxRowDetails(d, n) }}
+	}
 	@components.LinkRow(href, inboxRowLeading(n), n.Title, notificationMeta(n), components.LinkRowOpts{
 		Attrs:     attrs,
 		LinkAttrs: linkAttrs,
-		Details:   inboxRowDetails(d, n),
+		Details:   details,
 	}) {
 		@inboxRowControls(n)
 		@inboxReviewMergeTarget(n)
 	}
+}
+
+// inboxRowHasDetails reports whether the details band would render anything, so
+// a plain read notification is not given an empty 12px band under its row.
+func inboxRowHasDetails(d inboxView, n Notification) bool {
+	return notificationProjectLabel(d, n) != "" || !n.Read || n.RequiresAction || n.Message != ""
 }
 
 // inboxRowLeading is the row's leading tile: the category icon, with the unread

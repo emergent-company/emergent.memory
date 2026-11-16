@@ -322,6 +322,32 @@ func TestRenderInboxRowsUseLinkRow(t *testing.T) {
 	}
 }
 
+// TestInboxRowWithoutDetailsOmitsBand pins that a read notification with nothing
+// to add — no message, no badges — is not given LinkRow's details band, which
+// would otherwise leave an empty 12px strip under the row.
+func TestInboxRowWithoutDetailsOmitsBand(t *testing.T) {
+	bare := Notification{
+		ID: "n-bare", Scope: "account", Category: "system", Title: "Signed in",
+		Read: true, CreatedAt: "2026-09-22T10:00:00Z",
+	}
+	withBody := Notification{
+		ID: "n-body", Scope: "account", Category: "system", Title: "Signed in",
+		Message: "From a new device", Read: true, CreatedAt: "2026-09-23T10:00:00Z",
+	}
+	markup := renderHTML(t, InboxPage(inboxView{
+		Scope: "account", Tab: "all", Notifications: []Notification{bare, withBody},
+	}))
+
+	listed := markup[strings.Index(markup, "data-inbox-list"):]
+	if row := inboxRowSlice(t, listed, bare.ID, withBody.ID); strings.Contains(row, "px-4 pb-3") {
+		t.Errorf("row with no details content still rendered the details band:\n%s", row)
+	}
+	row := inboxRowSlice(t, listed, withBody.ID, "")
+	if !strings.Contains(row, "px-4 pb-3") || !strings.Contains(row, withBody.Message) {
+		t.Errorf("row with a message lost its details band:\n%s", row)
+	}
+}
+
 // inboxRowSlice returns the markup of one row, from its root start tag through
 // the start of the next row (or the end of the region). Rows are siblings, so
 // the next row's id marker is the boundary. The slice starts at the row root's
