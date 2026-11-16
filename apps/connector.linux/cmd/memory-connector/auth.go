@@ -203,7 +203,14 @@ type authStatus struct {
 	// tell "the access token is stale but renewable" from "this session is
 	// gone". NeedsReauth reports a session the provider has already rejected:
 	// signing in again (silently or interactively) is the only fix.
-	CanRefresh  bool `json:"can_refresh,omitempty"`
+	//
+	// CanRefresh carries no `omitempty`: it is part of the stable document
+	// everywhere it is produced (see `authStatusFromSession`), and "expired and
+	// not renewable" is a sign-in, decided by a client that reads false. Swift
+	// decodes an absent key to nil rather than false, so omitting it made that
+	// branch unreachable. NeedsReauth is only ever read for its true value, so
+	// its omission already means false.
+	CanRefresh  bool `json:"can_refresh"`
 	NeedsReauth bool `json:"needs_reauth,omitempty"`
 }
 

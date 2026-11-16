@@ -39,9 +39,10 @@ enum AuthFailure {
     ///
     /// - `[<status>] …` / `[<status>] <code>: …` — the server SDK's error text
     ///   (`apps/server/pkg/sdk/errors`: `fmt.Sprintf("[%d] %s", …)`, the detail
-    ///   the CLI prefixes with `memory-connector projects use: …`). The closing
-    ///   bracket is required, so a bracketed name that starts with three digits
-    ///   (`[404 Reasons] …`) does not match and the scan continues.
+    ///   the CLI prefixes with `memory-connector projects use: …`). The bracket
+    ///   must be closed AND followed by the detail text, so a project name that
+    ///   is exactly `[503]` (or starts with three digits, `[404 Reasons] …`) is
+    ///   not a status and the scan continues.
     /// - `status <status>` — the CLI/Go shape for a refresh failure, e.g.
     ///   `refresh failed with status 400`.
     /// - `HTTP <status>` — `OIDCError.httpStatus`'s own text, e.g.
@@ -66,8 +67,13 @@ enum AuthFailure {
     /// The three anchored shapes above, sharing one left-to-right scan so the
     /// first recognised token wins (the status that follows a bracketed project
     /// name cannot be shadowed by the name).
+    ///
+    /// The bracketed form requires whitespace and then at least one character
+    /// after it: real output is `[<status>] <detail>`, while a project named
+    /// exactly `[503]` is followed by the end of the string (or by punctuation
+    /// the name is quoted with) and is not a status.
     private static let statusRegex = try? NSRegularExpression(
-        pattern: #"\[(\d{3})\]|\bstatus\s+(\d{3})\b|\bhttp\s+(\d{3})\b"#,
+        pattern: #"\[(\d{3})\](?=\s+\S)|\bstatus\s+(\d{3})\b|\bhttp\s+(\d{3})\b"#,
         options: [.caseInsensitive]
     )
 }

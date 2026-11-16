@@ -54,4 +54,27 @@ final class SingleFlightTests: XCTestCase {
 
         XCTAssertFalse(flight.isRunning)
     }
+
+    /// A waiter that resumes on the finished run must never see it as still in
+    /// flight: the slot is cleared by the run itself, before the task completes.
+    /// Clearing it from the owning caller instead left a window in which a wake
+    /// that arrived through `join()` was dropped as "already running".
+    func testAFinishedRunIsNotInFlightForAWaiter() async {
+        let flight = SingleFlight<Int>()
+        let began = expectation(description: "the run started")
+        let work: @MainActor () async -> Int = {
+            began.fulfill()
+            try? await Task.sleep(for: .milliseconds(20))
+            return 1
+        }
+
+        let owner = Task { await flight.run(work) }
+        await fulfillment(of: [began], timeout: 2)
+        XCTAssertTrue(flight.isRunning, "the run must be joinable while it works")
+
+        await flight.join()
+        XCTAssertFalse(flight.isRunning, "a finished run is not in flight, whoever resumes first")
+
+        _ = await owner.value
+    }
 }

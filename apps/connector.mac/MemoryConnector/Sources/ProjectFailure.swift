@@ -31,9 +31,15 @@ enum ProjectFailure: Equatable, Sendable {
     /// status costs one extra process spawn only on the failure path.
     ///
     /// A session that cannot be renewed is `auth` too: an expired access token
-    /// with no refresh token stored (`expired` and no `can_refresh`) would
+    /// with no refresh token stored (`expired` and not `can_refresh`) would
     /// otherwise be retried as `.transient` forever, when the only fix is the
     /// sign-in affordance.
+    ///
+    /// `can_refresh` is read as `!= true`, not `== false`: older CLI builds
+    /// omit the key for a session with no refresh token (`omitempty` dropped
+    /// the false value), and a missing key decodes to `nil`. Absence means the
+    /// same thing as false here, and reading it the other way round made this
+    /// whole branch unreachable against the CLI that was actually shipped.
     ///
     /// A failure that matches nothing is treated as `transient`. Over-keeping a
     /// connection costs a retry; over-clearing one discards the user's decision
@@ -52,7 +58,7 @@ enum ProjectFailure: Equatable, Sendable {
         // session that expired without a refresh token cannot be renewed either:
         // that is a sign-in, not a retry.
         if let status = try? await cli.authStatus(serverURL: serverURL, configPath: configPath) {
-            let cannotRenew = status.expired == true && status.canRefresh == false
+            let cannotRenew = status.expired == true && status.canRefresh != true
             if !status.signedIn || status.needsReauth == true || cannotRenew {
                 return .auth
             }

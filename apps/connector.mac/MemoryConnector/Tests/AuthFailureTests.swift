@@ -100,5 +100,8 @@ struct AuthFailureTests {
         #expect(AuthFailure.statusToken(in: "[404 Reasons] create failed") == nil,
                 "a bracketed name that starts with digits is not a status")
         #expect(AuthFailure.statusToken(in: "project 401-audit is unreachable") == nil)
+        #expect(AuthFailure.statusToken(in: "[503]") == nil,
+                "real output carries detail after the bracket; a bare `[503]` is a name")
+        #expect(AuthFailure.statusToken(in: #"no project matching "[503]""#) == nil)
     }
 }

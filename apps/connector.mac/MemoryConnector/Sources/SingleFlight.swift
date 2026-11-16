@@ -33,12 +33,16 @@ final class SingleFlight<Value: Sendable> {
         if let inFlight = task {
             return await inFlight.value
         }
-        let run = Task { @MainActor in await work() }
+        let run = Task { @MainActor in
+            let value = await work()
+            // Clear the slot inside the run, BEFORE the task completes: every
+            // waiter (this caller, or a `join()`) resumes on the finished task,
+            // so clearing afterwards left a window in which a finished run still
+            // read as in flight and a wake that arrived then was dropped.
+            self.task = nil
+            return value
+        }
         task = run
-        let value = await run.value
-        // No suspension between the resumption above and this line, so on the
-        // main actor nothing can have replaced the run in the meantime.
-        task = nil
-        return value
+        return await run.value
     }
 }
