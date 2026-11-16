@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/labstack/echo/v4"
 
@@ -509,6 +511,112 @@ func (h *A2AHandler) streamResumeTask(c echo.Context, projectID, userID, userMes
 	return h.streamRun(c, projectID, taskID, streamCtxID, latest, execReq, true)
 }
 
+// a2aAbandonTimeout bounds the durable-cancel write issued when an SSE consumer
+// disappears. The run is already being stopped locally, so a slow database must
+// not keep the handler or its goroutine alive.
+const a2aAbandonTimeout = 5 * time.Second
+
+// a2aStreamGuard stops the run behind an SSE stream when the client consuming
+// it goes away (issue #868). A vanished consumer used to be invisible: the
+// handler discarded every WriteData error, so a closed connection did not fail
+// the request and the run kept stepping in its sandbox with nobody reading the
+// output — tokens and workspace mutations spent on a turn the user had already
+// cancelled.
+//
+// It fires at most once, on either signal: a failed SSE write or a cancelled
+// request context (client disconnect). It is disarmed when the handler
+// completes normally, so a run that produced its terminal frame is never
+// cancelled after the fact.
+//
+// The run id is tracked instead of fixed at construction because a resume
+// creates a fresh child run: cancelling the paused checkpoint would strand the
+// resume instead of stopping the work. An abandonment that lands before the
+// child id is known is remembered and applied as soon as the id is tracked.
+type a2aStreamGuard struct {
+	mu        sync.Mutex
+	runID     string
+	abandoned bool
+	lateFired bool
+	stopped   bool
+	stopCh    chan struct{}
+	onAbandon func(runID string)
+}
+
+// newA2AStreamGuard builds a guard for a stream executing initialRunID (empty
+// when the executing run does not exist yet, as on the resume path).
+func newA2AStreamGuard(initialRunID string, onAbandon func(runID string)) *a2aStreamGuard {
+	return &a2aStreamGuard{
+		runID:     initialRunID,
+		stopCh:    make(chan struct{}),
+		onAbandon: onAbandon,
+	}
+}
+
+// watch fires the guard when ctx is cancelled, unless the handler finished
+// first. It runs on its own goroutine.
+func (g *a2aStreamGuard) watch(ctx context.Context) {
+	select {
+	case <-ctx.Done():
+		g.abandon()
+	case <-g.stopCh:
+	}
+}
+
+// trackRun records the run that is executing now. On the resume path this is
+// called from ExecuteRequest.OnRunCreated once the child run row exists, which
+// is why it may arrive after an abandonment already fired.
+func (g *a2aStreamGuard) trackRun(runID string) {
+	if runID == "" {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.stopped {
+		return
+	}
+	g.runID = runID
+	if g.abandoned && !g.lateFired {
+		g.lateFired = true
+		g.onAbandon(runID)
+	}
+}
+
+// abandon stops the run once. An empty run id means the consumer vanished
+// before the executing run existed (the resume window): execution is stopped
+// now and the durable cancel is issued when the id is tracked.
+func (g *a2aStreamGuard) abandon() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.stopped || g.abandoned {
+		return
+	}
+	g.abandoned = true
+	if g.runID != "" {
+		g.lateFired = true
+	}
+	g.onAbandon(g.runID)
+}
+
+// stop disarms the guard and waits for any in-flight abandonment, so no cancel
+// write can outlive the handler.
+func (g *a2aStreamGuard) stop() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.stopped {
+		return
+	}
+	g.stopped = true
+	close(g.stopCh)
+}
+
+// abandonedRunID reports whether the consumer went away and, if so, the run id
+// that was executing when it did (empty on the resume window).
+func (g *a2aStreamGuard) abandonedRunID() (string, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.runID, g.abandoned
+}
+
 // streamRun executes (or resumes) a run and streams A2A StreamResponse events
 // over SSE. taskID is the stable A2A task id; run is the run passed to the
 // executor (the fresh run on new-task, the latest paused run on resume).
@@ -522,6 +630,12 @@ func (h *A2AHandler) streamRun(
 	ctx := c.Request().Context()
 	bgCtx := context.Background()
 
+	// The executor runs under runCtx so an abandoned stream can stop it. The
+	// request context alone was not enough: a run whose consumer vanished kept
+	// executing to completion (issue #868).
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+
 	writer := sse.NewWriter(c.Response().Writer)
 	if err := writer.Start(); err != nil {
 		return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "SSE streaming not supported"))
@@ -530,10 +644,65 @@ func (h *A2AHandler) streamRun(
 
 	tr := newA2aStreamTranslator(taskID, contextID)
 
-	// write emits a StreamResponse to the wire. lifecycle persists + fans out to
-	// the bus separately so the terminal multi-event sequence persists once.
+	// guard cancels the run when its consumer goes away. A resume creates a
+	// fresh child run, so no id is tracked until ExecuteRequest.OnRunCreated
+	// (wired below) reports it: cancelling the paused checkpoint instead would
+	// strand the resume. On the new-task path run.ID is already the executing
+	// run.
+	trackedRunID := run.ID
+	if resume {
+		trackedRunID = ""
+	}
+	guard := newA2AStreamGuard(trackedRunID, func(runID string) {
+		// Record the durable cancel intent first: the executor observes it at
+		// its next step boundary and finalizes the row as cancelled. Only then
+		// cancel the local run context, so the terminal write cannot race the
+		// intent and misreport an abandoned run as failed. The write is bounded
+		// and detached from the request context, which may already be gone.
+		if runID != "" {
+			cancelCtx, stopCancel := context.WithTimeout(bgCtx, a2aAbandonTimeout)
+			if _, err := h.repo.RequestRunCancellation(cancelCtx, runID); err != nil {
+				h.log.Warn("failed to request cancel for abandoned a2a stream run",
+					slog.String("run_id", runID),
+					slog.String("task_id", taskID),
+					slog.String("error", err.Error()),
+				)
+			}
+			stopCancel()
+		}
+		h.log.Info("a2a stream consumer gone, stopping run",
+			slog.String("task_id", taskID),
+			slog.String("run_id", runID),
+		)
+		cancelRun()
+	})
+	// Registered after cancelRun so it runs before it: on a clean return the
+	// guard is disarmed before the request context is cancelled.
+	defer guard.stop()
+
+	if ctx.Err() != nil {
+		// The consumer was already gone before execution started: do not spend
+		// a single step on it.
+		guard.abandon()
+	}
+	go guard.watch(ctx)
+
+	prevOnRunCreated := execReq.OnRunCreated
+	execReq.OnRunCreated = func(runID string) {
+		guard.trackRun(runID)
+		if prevOnRunCreated != nil {
+			prevOnRunCreated(runID)
+		}
+	}
+
+	// write emits a StreamResponse to the wire. A failed write means the
+	// consumer is gone, which is treated as a cancel. lifecycle persists + fans
+	// out to the bus separately so the terminal multi-event sequence persists
+	// once.
 	write := func(sr StreamResponse) {
-		_ = writer.WriteData(sr)
+		if err := writer.WriteData(sr); err != nil {
+			guard.abandon()
+		}
 	}
 	lifecycle := func(eventType string) {
 		h.persistA2AEvent(bgCtx, taskID, eventType, nil)
@@ -557,7 +726,7 @@ func (h *A2AHandler) streamRun(
 	execReq.StreamCallback = func(ev StreamEvent) {
 		resps := tr.translate(ev)
 		for _, sr := range resps {
-			_ = writer.WriteData(sr)
+			write(sr)
 		}
 		if et, ok := a2aDeltaEventType(ev); ok {
 			for _, sr := range resps {
@@ -576,9 +745,9 @@ func (h *A2AHandler) streamRun(
 	var result *ExecuteResult
 	var execErr error
 	if resume {
-		result, execErr = h.executor.Resume(ctx, run, execReq)
+		result, execErr = h.executor.Resume(runCtx, run, execReq)
 	} else {
-		result, execErr = h.executor.ExecuteWithRun(ctx, run, execReq)
+		result, execErr = h.executor.ExecuteWithRun(runCtx, run, execReq)
 	}
 	if result != nil && result.Cleanup != nil {
 		defer result.Cleanup()
@@ -603,8 +772,22 @@ func (h *A2AHandler) streamRun(
 		// than leaving it `running` until the stale-run reaper.
 		failRunIfExecutionDisabled(bgCtx, h.repo, run, execErr, h.log)
 	}
+	if abandonedRunID, abandoned := guard.abandonedRunID(); abandoned && abandonedRunID != "" {
+		// The consumer went away. The durable cancel intent normally makes the
+		// executor finalize the row as cancelled, but a run that stopped before
+		// reaching the pipeline (or whose executor never observed the intent)
+		// must not stay non-terminal. CancelRun is guarded, so a run that
+		// already reached a terminal state is left untouched.
+		if _, err := h.repo.CancelRun(bgCtx, abandonedRunID); err != nil {
+			h.log.Warn("failed to finalize abandoned a2a stream run",
+				slog.String("run_id", abandonedRunID),
+				slog.String("task_id", taskID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
 
-	h.streamTerminal(bgCtx, writer, tr, projectID, taskID, result, execErr)
+	h.streamTerminal(bgCtx, write, tr, projectID, taskID, result, execErr)
 	return nil
 }
 
@@ -612,15 +795,12 @@ func (h *A2AHandler) streamRun(
 // lets streamRun's deferred Close end the stream.
 func (h *A2AHandler) streamTerminal(
 	ctx context.Context,
-	writer *sse.Writer,
+	write func(StreamResponse),
 	tr *a2aStreamTranslator,
 	projectID, taskID string,
 	result *ExecuteResult,
 	execErr error,
 ) {
-	write := func(sr StreamResponse) {
-		_ = writer.WriteData(sr)
-	}
 	lifecycle := func(eventType string) {
 		h.persistA2AEvent(ctx, taskID, eventType, nil)
 		h.emitA2ABus(ctx, projectID, taskID, eventType, nil)
