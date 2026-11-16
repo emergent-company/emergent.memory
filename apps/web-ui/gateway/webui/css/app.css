@@ -608,6 +608,13 @@ main#main-content {
   font-variant-numeric: tabular-nums;
   color: var(--color-muted-strong);
 }
+/* `.memory-session-start` is unlayered and sets `display: flex`, which beats
+   Tailwind's layered `.hidden { display: none }` at equal specificity. Re-assert
+   hiding here (same hazard as `.memory-rail-badge.hidden` below) so a new chat,
+   a reset conversation and a run scope never show an empty "Session started". */
+.memory-session-start.hidden {
+  display: none;
+}
 
 /* Day dividers — the messaging-app convention: a quiet line + label ("Today",
    "Yesterday", "Wed, 12 Nov") before the first row of each local calendar day.

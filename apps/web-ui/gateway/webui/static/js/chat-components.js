@@ -2467,7 +2467,11 @@
   function itemPaints(item, showRunMarkers) {
     var CS = window.MemoryChatStream || {};
     if (!item || typeof item !== "object") return false;
-    if (item.kind === "tool_call") return true;
+    // An ask_user call renders a question card only when the question id is
+    // present; one without it paints nothing.
+    if (item.kind === "tool_call") {
+      return item.tool_name !== "ask_user" || !!(item.tool_output && item.tool_output.question_id);
+    }
     if (item.kind === "run_start") return !!showRunMarkers;
     if (item.kind === "run_end") return !!showRunMarkers || isFailedRun(item.run_status);
     if (item.kind !== "message") return false;
@@ -2719,13 +2723,20 @@
     for (var i = 0; i < items.length; i++) {
       var item = items[i];
       if (!item || typeof item !== "object") continue;
+      var currentThinking = itemProducesThinking(item);
+      // Reasoning-only items merge into the previous Thinking block instead of
+      // rendering their own row; a divider for them would land after the merged
+      // content, so they never announce a day.
+      var mergesThinking = currentThinking && prevWasThinking && thinkingRec &&
+        (!item.run_id || item.run_id === thinkingRun);
       // A day divider precedes the first row that actually paints on a new
       // local day. Hidden items (system/tool result/pause notice/empty
       // thinking) paint nothing and so never announce a day. An open tool-run
       // group owns its rows, so a group that crosses midnight is not split by a
       // divider appended after its wrapper.
-      if (!openRun && itemPaints(item, showRunMarkers)) maybeDayDivider(container, timelineItemTime(item));
-      var currentThinking = itemProducesThinking(item);
+      if (!openRun && !mergesThinking && itemPaints(item, showRunMarkers)) {
+        maybeDayDivider(container, timelineItemTime(item));
+      }
       // Run-transcript annotation: step number + relative time under each
       // message/tool item. Only on a dedicated run page (flags.showMeta);
       // conversation transcripts and the live stream render no meta at all.

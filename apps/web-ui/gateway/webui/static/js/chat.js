@@ -1751,10 +1751,13 @@
       return;
     }
 
+    // detail.createdAt is authoritative. An older payload that omits it keeps
+    // the server-rendered instant only when this IS the server-resumed
+    // conversation; a rail switch must never carry the previous session's start.
+    var sameAsServerConv = id === conversationId;
     conversationId = id;
-    // detail.createdAt is authoritative; keep the server-rendered instant when
-    // an older payload omits it rather than blanking the line.
     if (detail && detail.createdAt) updateSessionStart(detail.createdAt);
+    else if (!sameAsServerConv) updateSessionStart("");
     applyComposerSelection();
     activeRunId = "";
     activeRunAgentName = "";

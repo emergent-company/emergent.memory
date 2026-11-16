@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import fs from 'node:fs';
 import path from 'node:path';
 
 // Chat transcript day dividers + session-start formatting.
@@ -26,6 +27,10 @@ const CHAT_HOST_JS = path.resolve(
 const CHAT_STREAM_JS = path.resolve(
   __dirname,
   '../../../../gateway/webui/static/js/chat-stream.js',
+);
+const BUILT_CSS = path.resolve(
+  __dirname,
+  '../../../../gateway/webui/static/css/app.css',
 );
 
 const BARE_SKELETON = `<!doctype html><html><head><meta charset="utf-8" /></head><body></body></html>`;
@@ -86,10 +91,24 @@ async function renderItems(
           c.appendChild(d);
           return d;
         },
-        toolChip(tool: string) { append('tool', tool); },
+        toolChip(tool: string, _status?: string, _detail?: string, payload?: any) {
+          const host = payload && payload.host ? payload.host : c;
+          const d = document.createElement('div');
+          d.className = 'tool';
+          d.textContent = tool;
+          host.appendChild(d);
+        },
         renderHistoryQuestion() {},
-        renderThinkingBlock() { return null; },
-        isThinkingItem() { return false; },
+        renderThinkingBlock(text: string) {
+          const d = document.createElement('div');
+          d.className = 'think';
+          d.textContent = text || '';
+          c.appendChild(d);
+          return { body: d };
+        },
+        isThinkingItem(_item: unknown, content: any) {
+          return !!(content && Array.isArray(content.function_calls) && content.function_calls.length);
+        },
       };
       (window as any).MemoryChatComponents.renderTimeline(items, ctx, flags);
       const dividers = Array.from(c.querySelectorAll('.memory-day-divider'));
@@ -202,5 +221,88 @@ test.describe('chat transcript day dividers (chat-components.js)', () => {
       { a: DAY_A, b: DAY_B },
     );
     expect(res).toEqual({ first: true, same: false, next: true, afterReset: true, count: 3 });
+  });
+
+  test('live engine bubbles announce exactly one day (chat-stream.js)', async ({ page }) => {
+    await loadScripts(page);
+    const out = await page.evaluate(() => {
+      const c = document.createElement('div');
+      document.body.appendChild(c);
+      const state = { streaming: false, bubble: null as any, bubbleHTML: '', bubbleText: '' };
+      const ctx = {
+        get messages() { return c; },
+        get streaming() { return state.streaming; }, set streaming(v: boolean) { state.streaming = v; },
+        get bubble() { return state.bubble; }, set bubble(v: any) { state.bubble = v; },
+        get bubbleHTML() { return state.bubbleHTML; }, set bubbleHTML(v: string) { state.bubbleHTML = v; },
+        get bubbleText() { return state.bubbleText; }, set bubbleText(v: string) { state.bubbleText = v; },
+        hideEmpty() {}, scrollToBottom() {}, onActivity() {}, onLiveTurnStart() {},
+      };
+      const engine = (window as any).MemoryChatStream.createEngine(ctx);
+      engine.addUserMessage('first live turn', true);
+      engine.addUserMessage('second live turn', true);
+      return {
+        days: Array.from(c.querySelectorAll('.memory-day-divider')).map((d) => d.getAttribute('data-day')),
+        bubbles: c.querySelectorAll('.chat-end').length,
+        first: c.children[0] && c.children[0].className.split(' ')[0],
+      };
+    });
+    expect(out.bubbles).toBe(2);
+    expect(out.days.length).toBe(1);
+    expect(out.first).toBe('memory-day-divider');
+  });
+
+  test('a tool-run group is not split by a divider when it crosses midnight', async ({ page }) => {
+    await loadScripts(page);
+    const items: HistoryItem[] = [
+      { kind: 'tool_call', tool_name: 'entity-query', tool_status: 'ok', run_id: 'r1', created_at: DAY_A },
+      { kind: 'tool_call', tool_name: 'entity-query', tool_status: 'ok', run_id: 'r1', created_at: DAY_B },
+    ];
+    const out = await renderItems(page, items, { silent: false });
+    expect(out.days.length).toBe(1);
+    expect(out.days[0]).toBe(await localDayKey(page, DAY_A));
+  });
+
+  test('an ask_user call with no question id paints nothing and announces no day', async ({ page }) => {
+    await loadScripts(page);
+    const items: HistoryItem[] = [
+      ITEMS[0],
+      { kind: 'tool_call', tool_name: 'ask_user', tool_status: 'ok', created_at: DAY_B, tool_output: {} },
+    ];
+    const out = await renderItems(page, items, { silent: false });
+    expect(out.days).toEqual([await localDayKey(page, DAY_A)]);
+  });
+
+  test('reasoning merged into the previous Thinking block does not split the day', async ({ page }) => {
+    await loadScripts(page);
+    const items: HistoryItem[] = [
+      { kind: 'message', role: 'operator', content: { text: 'plan A', function_calls: [{}] }, created_at: DAY_A },
+      { kind: 'message', role: 'operator', content: { text: 'plan B', function_calls: [{}] }, created_at: DAY_B },
+    ];
+    const out = await renderItems(page, items, { silent: false });
+    expect(out.days).toEqual([await localDayKey(page, DAY_A)]);
+    const thinking = await page.evaluate(() => {
+      const t = document.querySelector('.think');
+      return t ? t.textContent || '' : '';
+    });
+    expect(thinking).toContain('plan A');
+    expect(thinking).toContain('plan B');
+  });
+
+  test('the hidden class actually hides the session-start line (unlayered CSS guard)', async ({ page }) => {
+    test.skip(!fs.existsSync(BUILT_CSS), 'built CSS missing; run `task -d gateway css` first');
+    const css = fs.readFileSync(BUILT_CSS, 'utf8');
+    await page.setContent(`<!doctype html><html data-theme="dark"><head><style>${css}</style></head><body>
+      <div id="s" class="memory-session-start hidden" data-started-at="">
+        <span>Session started</span><time id="t"></time>
+      </div></body></html>`);
+    const state = await page.evaluate(() => {
+      const el = document.getElementById('s') as HTMLElement;
+      const hidden = getComputedStyle(el).display;
+      el.classList.remove('hidden');
+      const shown = getComputedStyle(el).display;
+      return { hidden, shown };
+    });
+    expect(state.hidden).toBe('none');
+    expect(state.shown).toBe('flex');
   });
 });
