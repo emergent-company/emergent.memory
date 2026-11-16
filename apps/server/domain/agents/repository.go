@@ -385,16 +385,38 @@ func (r *Repository) FailRun(ctx context.Context, runID string, errorMessage str
 // MarkOrphanedRunsAsError finds all runs stuck in "running" status and marks
 // them as errored. This is called on server startup to recover from unclean
 // shutdowns where the agent goroutine was killed mid-execution.
+//
+// The dispatch ledger is retired in the same statement (issue #906): a claimed
+// job is left in "processing" by the process that died, and nothing else ever
+// moves it — ClaimNextJobInQueue only selects "pending" rows — so the row would
+// count against AGENT_MAX_PENDING_JOBS for ever while being unclaimable. A
+// terminal run must never leave a non-terminal job row behind.
 func (r *Repository) MarkOrphanedRunsAsError(ctx context.Context) (int, error) {
 	now := time.Now()
-	res, err := r.db.NewUpdate().
-		Model((*AgentRun)(nil)).
-		Set("status = ?", RunStatusError).
-		Set("completed_at = ?", now).
-		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
-		Set("error_message = ?", "server restarted while run was in progress").
-		Where("status = ?", RunStatusRunning).
-		Exec(ctx)
+	res, err := r.db.NewRaw(`
+		WITH orphaned AS (
+			SELECT id
+			  FROM kb.agent_runs
+			 WHERE status = ?
+		), retired AS (
+			UPDATE kb.agent_run_jobs
+			   SET status = ?,
+			       completed_at = ?
+			 WHERE status IN (?, ?)
+			   AND run_id IN (SELECT id FROM orphaned)
+			RETURNING 1
+		)
+		UPDATE kb.agent_runs
+		   SET status = ?,
+		       completed_at = ?,
+		       duration_ms = (EXTRACT(EPOCH FROM (? - started_at)) * 1000)::int,
+		       error_message = ?
+		 WHERE status = ?`,
+		RunStatusRunning,
+		JobStatusCompleted, now, JobStatusPending, JobStatusProcessing,
+		RunStatusError, now, now, "server restarted while run was in progress",
+		RunStatusRunning,
+	).Exec(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -461,18 +483,45 @@ func (r *Repository) StartRunHeartbeat(runID string, interval time.Duration) (st
 // actively heartbeating (long sandbox build, many MCP round-trips) is not
 // failed merely because it started long ago; only runs whose last activity —
 // or start, for runs that never heartbeated — predates the threshold are reaped.
+//
+// The run is failed and its dispatch ledger is retired in one atomic statement
+// (issue #906). A worker claims a job by moving it to "processing" and the run
+// to "running"; if that worker then dies, the run is reaped here, but nothing
+// else ever moves the job row: ClaimNextJobInQueue only selects "pending" rows,
+// so a stranded "processing" row is unclaimable *and* counted by
+// CountPendingJobsForAgent (the MaxPendingJobs guard CreateRunQueued applies)
+// for ever. Retiring it keeps the queue-depth count honest. The cause is
+// recorded on the run's error_message — kb.agent_run_jobs is a ledger with no
+// reason column of its own.
 func (r *Repository) MarkStaleRunsAsError(ctx context.Context, threshold time.Duration) (int, error) {
 	cutoff := time.Now().Add(-threshold)
 	now := time.Now()
-	res, err := r.db.NewUpdate().
-		Model((*AgentRun)(nil)).
-		Set("status = ?", RunStatusError).
-		Set("completed_at = ?", now).
-		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
-		Set("error_message = ?", "run exceeded idle timeout (likely abandoned by client)").
-		Where("status = ?", RunStatusRunning).
-		Where("COALESCE(last_step_at, started_at) < ?", cutoff).
-		Exec(ctx)
+	res, err := r.db.NewRaw(`
+		WITH stale AS (
+			SELECT id
+			  FROM kb.agent_runs
+			 WHERE status = ?
+			   AND COALESCE(last_step_at, started_at) < ?
+		), retired AS (
+			UPDATE kb.agent_run_jobs
+			   SET status = ?,
+			       completed_at = ?
+			 WHERE status IN (?, ?)
+			   AND run_id IN (SELECT id FROM stale)
+			RETURNING 1
+		)
+		UPDATE kb.agent_runs
+		   SET status = ?,
+		       completed_at = ?,
+		       duration_ms = (EXTRACT(EPOCH FROM (? - started_at)) * 1000)::int,
+		       error_message = ?
+		 WHERE status = ?
+		   AND COALESCE(last_step_at, started_at) < ?`,
+		RunStatusRunning, cutoff,
+		JobStatusCompleted, now, JobStatusPending, JobStatusProcessing,
+		RunStatusError, now, now, "run exceeded idle timeout (likely abandoned by client)",
+		RunStatusRunning, cutoff,
+	).Exec(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -4351,20 +4400,44 @@ func (r *Repository) RunIsCancelling(ctx context.Context, runID string) (bool, e
 // owned by another instance during a rolling restart — is never finalized. A
 // non-positive olderThan is rejected: an unconditional sweep would finalize a
 // live run (issue #1166).
+//
+// Like MarkStaleRunsAsError, the run is finalized and its dispatch ledger is
+// retired in the same statement (issue #906): a cancel whose executing process
+// died can leave the job row in "processing", which no claim ever revisits and
+// which would otherwise inflate CountPendingJobsForAgent for ever. The reason
+// lives on the run's error_message; the job ledger has no reason column.
 func (r *Repository) FinalizeCancellingRuns(ctx context.Context, olderThan time.Duration) (int, error) {
 	if olderThan <= 0 {
 		return 0, fmt.Errorf("FinalizeCancellingRuns: olderThan must be positive")
 	}
 	now := time.Now()
-	res, err := r.db.NewUpdate().
-		Model((*AgentRun)(nil)).
-		Set("status = ?", RunStatusCancelled).
-		Set("completed_at = ?", now).
-		Set("duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int").
-		Set("error_message = COALESCE(NULLIF(error_message, ''), ?)", userCancelReason).
-		Where("status = ?", RunStatusCancelling).
-		Where("COALESCE(last_step_at, started_at) < ?", now.Add(-olderThan)).
-		Exec(ctx)
+	cutoff := now.Add(-olderThan)
+	res, err := r.db.NewRaw(`
+		WITH cancelling AS (
+			SELECT id
+			  FROM kb.agent_runs
+			 WHERE status = ?
+			   AND COALESCE(last_step_at, started_at) < ?
+		), retired AS (
+			UPDATE kb.agent_run_jobs
+			   SET status = ?,
+			       completed_at = ?
+			 WHERE status IN (?, ?)
+			   AND run_id IN (SELECT id FROM cancelling)
+			RETURNING 1
+		)
+		UPDATE kb.agent_runs
+		   SET status = ?,
+		       completed_at = ?,
+		       duration_ms = (EXTRACT(EPOCH FROM (? - started_at)) * 1000)::int,
+		       error_message = COALESCE(NULLIF(error_message, ''), ?)
+		 WHERE status = ?
+		   AND COALESCE(last_step_at, started_at) < ?`,
+		RunStatusCancelling, cutoff,
+		JobStatusCompleted, now, JobStatusPending, JobStatusProcessing,
+		RunStatusCancelled, now, now, userCancelReason,
+		RunStatusCancelling, cutoff,
+	).Exec(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("FinalizeCancellingRuns: %w", err)
 	}
