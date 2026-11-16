@@ -51,7 +51,7 @@ func mountScopedConversionsRetry(s *Server) *echo.Echo {
 
 // A boosted form's redirect must be scoped and must ride HX-Redirect on a 200,
 // for both outcomes the handler produces.
-func TestRetryAllConversionsRedirectIsScopedWithoutMiddleware(t *testing.T) {
+func TestRetryAllConversionsRedirectIsScopedWithoutMiddlewareWire(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		retried  int
@@ -89,7 +89,7 @@ func TestRetryAllConversionsRedirectIsScopedWithoutMiddleware(t *testing.T) {
 
 // A plain form post gets no HX-Redirect: the browser follows Location, which is
 // already scoped.
-func TestRetryAllConversionsPlainFormRedirect(t *testing.T) {
+func TestRetryAllConversionsPlainFormRedirectWire(t *testing.T) {
 	f := &fakeMemory{bulkRetried: 0}
 	s, _ := newClientEcho(f, Config{AuthMode: "session"})
 	e := mountScopedConversionsRetry(s)
@@ -114,7 +114,7 @@ func TestRetryAllConversionsPlainFormRedirect(t *testing.T) {
 // real chain (scopeRewrite + scopeLocation + the handler) on a real server, so a
 // scope rewrite that ran after the response committed would fail here rather
 // than pass in a recorder.
-func TestRetryAllConversionsScopesTheWireRedirect(t *testing.T) {
+func TestRetryAllConversionsScopesTheWireRedirectRealServer(t *testing.T) {
 	f := &fakeMemory{bulkRetried: 5}
 	s, _ := newClientEcho(f, Config{AuthMode: "session"})
 
