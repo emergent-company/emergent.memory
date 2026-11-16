@@ -232,7 +232,7 @@ because the structure does not exist upstream:
 | Page | Holds |
 |---|---|
 | `user-guide/getting-started.mdx` | The choice: self-hosted or Memory Cloud, a comparison table, and what both paths then share |
-| `…/getting-started/self-hosted.mdx` | Installer → first admin → project → blueprint → client, with the Railway install's own figures |
+| `…/getting-started/self-hosted.mdx` | Four target cards that open the installer, what each target needs, the install per target, then first admin → project → blueprint → client |
 | `…/getting-started/memory-cloud.mdx` | Sign in → project → blueprint → client, on the hosted instance |
 
 The sidebar puts the group at the top of the sidebar, above the User Guide,
@@ -246,9 +246,23 @@ so its prose is HTML (no backtick fences) and the snippets go through
 `astro-expressive-code`'s `<Code>`, which is what fenced markdown compiles to —
 same theme slots, same frame.
 
-Figures so far are the self-hosted install's, re-used from the tutorial: the
-install path is genuinely screenshotted end to end. The blueprint install, the
-MCP Sharing screen and the API-token screen still need captures; they belong in
+The self-hosted page deliberately does **not** screenshot the installer's target
+chooser. A picture of four buttons makes the reader read them in an image and
+then go hunting for the site; four `<Card>`s with a `<LinkButton>` each deep-link
+straight into that target's page in the installer
+(`deploy.memory.emergent-company.ai/setup/railway|docker|gcp|aws`), opening in a
+new tab so the guide stays behind the wizard. Each card is an equal option — no
+"recommended" badge and no primary button — because the right target is the one
+the reader already runs. What each target needs is a table, and the install is a
+paragraph per target: Railway keeps the three figures that show its wizard
+(authorize, workspace + admin email, install complete) while Docker and the two
+cloud bundles are described in prose, since what they hand back is a script we
+have not run end to end.
+
+The rest of the figures are the self-hosted install's, re-used from the
+tutorial: the sign-in and first-password screens are the same whatever the
+target. The blueprint install, the MCP Sharing screen and the API-token screen
+still need captures; they belong in
 `shots/installer.plan.json` (which already ends logged in as the admin it just
 created, so the flow continues with no second login) rather than being taken by
 hand.

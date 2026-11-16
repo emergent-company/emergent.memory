@@ -3,82 +3,165 @@ title: "Self-hosted"
 description: Install Memory on infrastructure you control, then create a project, install a blueprint, and connect a client.
 ---
 
-import { Aside } from '@astrojs/starlight/components';
+import { Aside, LinkButton } from '@astrojs/starlight/components';
+import Card from '../../../../components/Card.astro';
+import CardGrid from '../../../../components/CardGrid.astro';
 import Screenshot from '../../../../components/Screenshot.astro';
 import ConnectOptions from '../../../../components/ConnectOptions.astro';
 
-This is the short path to a running instance. The figures come from a real
-Railway installation; every screen the installer shows is explained step by step
-in [Deploy on Railway](/emergent.memory/tutorials/deploy-to-railway/).
+Memory installs into the platform you already run. Pick a target below — every
+one of them is a page in the same installer — then the last four steps are
+identical whatever you chose.
 
-## Before you start
-
-- An account on one of the supported targets — **Railway**, **Docker**, **Google
-  Cloud** or **AWS**. Railway is the fastest; Docker and the two clouds run from
-  a downloadable bundle.
-- Capacity for the five services and one bucket the template creates.
-- A domain if this is going to be a production install. Railway hands out a
-  hostname per service; a domain install puts the UI on `app.<domain>` and the
-  API on `api.<domain>`.
-
-<Aside type="note" title="No AI provider key yet">
-
-The installer provisions the platform, not a model. AI features are configured
-per project, after you are signed in.
-
-</Aside>
+The figures are Railway's: it is the only target with a wizard of its own. The
+other three hand you a script to review and run.
 
 ## 1. Choose a target
 
-Open the [Memory installer](https://deploy.memory.emergent-company.ai) and choose
-where Memory should run.
+<CardGrid>
+<Card title="Railway" icon="lucide:train-front">
 
-<Screenshot src="/emergent.memory/assets/tutorials/railway/01-choose-target.webp" alt="Choose Railway" width={752} height={555} />
+OAuth into your Railway workspace. The installer creates the project, its five
+services and a bucket, then bootstraps the identity provider — nothing to
+install.
 
-## 2. Authorize the installer
+<LinkButton href="https://deploy.memory.emergent-company.ai/setup/railway" variant="secondary" icon="right-arrow" target="_blank" rel="noopener noreferrer">Deploy on Railway</LinkButton>
 
-Click **deploy** and approve the request. On Railway the installer needs
-`workspace:admin` so it can create the project, the services and the bucket; the
-consent screen is where you grant it, and you can revoke it later in Railway
-account settings.
+</Card>
+<Card title="Docker" icon="lucide:container">
+
+A single-host Docker Compose stack you run yourself. The wizard hands you a
+reviewable script; it generates the secrets and bootstraps Zitadel on the host.
+
+<LinkButton href="https://deploy.memory.emergent-company.ai/setup/docker" variant="secondary" icon="right-arrow" target="_blank" rel="noopener noreferrer">Configure the Docker bundle</LinkButton>
+
+</Card>
+<Card title="Google Cloud" icon="lucide:cloud">
+
+Terraform and Helm for GKE, applied with your own authenticated `gcloud`. No
+cloud credentials go into the wizard.
+
+<LinkButton href="https://deploy.memory.emergent-company.ai/setup/gcp" variant="secondary" icon="right-arrow" target="_blank" rel="noopener noreferrer">Configure the GKE bundle</LinkButton>
+
+</Card>
+<Card title="AWS" icon="lucide:cloud-cog">
+
+Terraform and Helm for EKS, applied with your own authenticated AWS CLI. The
+same bundle shape, with advanced settings if you need them.
+
+<LinkButton href="https://deploy.memory.emergent-company.ai/setup/aws" variant="secondary" icon="right-arrow" target="_blank" rel="noopener noreferrer">Configure the EKS bundle</LinkButton>
+
+</Card>
+</CardGrid>
+
+Each of those links opens the installer in a new tab, so this page stays behind
+it.
+
+## 2. What each target needs
+
+| Target | What you bring |
+|---|---|
+| **Railway** | A Railway account with permission to create projects in the workspace you pick, and room for five services and one bucket |
+| **Docker** | A Linux host with Docker Engine and Compose v2, ports 80 and 443 reachable from the internet, and `openssl`, `curl`, `jq` installed. Start at 8 GB RAM / 4 vCPU |
+| **Google Cloud** | A project and a region, with `gcloud`, `terraform` and `helm` authenticated on the machine you apply from |
+| **AWS** | An account and a region, with the AWS CLI, `terraform` and `helm` authenticated on the machine you apply from |
+
+<Aside type="note" title="A domain, if this is production">
+
+Docker, Google Cloud and AWS all serve the stack on `app.<domain>`, with the API
+on `api.<domain>` and the identity provider on `auth.<domain>`, so those DNS
+records have to exist before the install runs. Railway gives you generated
+hostnames instead and needs no domain.
+
+</Aside>
+
+## 3. The install, target by target
+
+### Railway
+
+The Railway card takes you to Railway's consent screen first. The installer needs
+`workspace:admin` so it can create the project, its services and its bucket; you
+can revoke that access later in Railway account settings.
 
 <Screenshot src="/emergent.memory/assets/tutorials/railway/02-authorize-railway.webp" alt="Authorize the Memory installer" width={450} height={658} />
 
-## 3. Choose a workspace and an admin email
+Back in the wizard, choose the workspace that should own the deployment. The
+**Admin email** becomes the first platform superadmin: it defaults to the account
+you signed in with, it can be changed, and it is how you will sign in afterwards.
 
-The **Admin email** becomes the first platform superadmin. It defaults to the
-account you are signed in with and can be changed — use an address you actually
-receive mail at, because it is how you will sign in.
-
-If email delivery is not configured yet, leave **Skip email for now** checked
-and add SMTP later from **Settings → Platform email**. Until then, Zitadel
-verification, password reset and 2FA emails, and Memory invitations are
-unavailable.
+If email delivery is not configured yet, leave **Skip email for now** checked and
+add SMTP later from **Settings → Platform email**. Until then Zitadel
+verification, password reset and 2FA emails, and Memory invitations, do not work.
 
 <Screenshot src="/emergent.memory/assets/tutorials/railway/03-workspace-admin-email.webp" alt="Workspace and admin email" width={707} height={454} />
 
-Click **deploy** and the installer does the rest: it creates the project, deploys
-the published template, and bootstraps the identity provider. It takes about
-fifteen to twenty minutes, mostly waiting, and the page polls its own progress —
-you can leave it open.
+Click **deploy** and the installer creates the Railway project, deploys the
+published template and bootstraps Zitadel. It takes about fifteen to twenty
+minutes, mostly waiting, and the page polls its own progress — you can leave it
+open.
+
+The success card holds **Open Memory** and the temporary admin password, printed
+once. Copy the password now: nothing will show it again.
 
 <Screenshot src="/emergent.memory/assets/tutorials/railway/07-install-complete.webp" alt="Install complete, with a link to open Memory" width={752} height={591} />
 
+### Docker
+
+The Docker page asks for three values — the **base domain**, the **admin email**
+and an **ACME email** for the TLS certificate — and answers with a downloadable
+script. It takes no cloud credentials and executes nothing; you review it and run
+it on the host:
+
+```bash
+cd deploy/docker
+MEMORY_BASE_DOMAIN=memory.example.com \
+ADMIN_EMAIL=you@example.com \
+ACME_EMAIL=you@example.com \
+./install.sh
+```
+
+`install.sh` generates `.env` with fresh database, Zitadel, object-store and
+application secrets, brings up Postgres, SeaweedFS, the extraction worker,
+Zitadel, the server and the web UI behind Caddy, and bootstraps Zitadel. Caddy
+obtains the certificates once the three DNS records resolve to the host.
+
+The temporary admin password is written to `deploy/docker/admin-credentials.env`
+— the script does not print it. Email is skipped by the bundle; configure SMTP
+after your first sign-in.
+
+### Google Cloud
+
+The GCP page asks for the base domain, the project id and a region (default
+`europe-west1`), and returns a GKE bundle: Terraform for the cluster and its
+dependencies, Helm for the Memory stack. It asks for no cloud credentials — you
+apply it with your own authenticated `gcloud`, `terraform` and `helm`, then open
+`app.<domain>`.
+
+### AWS
+
+The AWS page is the same shape for EKS: base domain and region, plus an
+**Advanced AWS settings** section for anything the defaults do not cover. It
+returns a Terraform + Helm bundle you apply with your authenticated AWS CLI, and
+then you open `app.<domain>`.
+
 ## 4. Sign in as the first admin
 
-**Open Memory** takes you to the instance. The installer printed a temporary
-password once, on the success card — if you copied it, sign in now.
+Every target ends here. Open `app.<domain>` — or, on Railway, the hostname the
+success card links to — and sign in with the admin address you chose. Where the
+temporary password comes from depends on the target: Railway prints it once on
+the success card, Docker writes it to `deploy/docker/admin-credentials.env`, and
+the cloud bundles name the file in their own output.
 
 <Screenshot src="/emergent.memory/assets/tutorials/railway/08-memory-signin.webp" alt="Memory sign-in" width={392} height={293} />
 
-The sign-in runs through the bundled Zitadel, so you will be asked for the admin
+Sign-in runs through the bundled Zitadel, so you will be asked for the admin
 address and the temporary password, then walked through two things that exist
 only for the first account:
 
 - **2-Factor Setup** — enroll an authenticator or skip it for now. Skipping is
   allowed, and you can enroll later from your profile.
-- **A forced password change** — set a real password. The temporary one from the
-  installer stops working here.
+- **A forced password change** — set a real password. The temporary one stops
+  working here.
 
 <Screenshot src="/emergent.memory/assets/tutorials/railway/12-first-password-change.webp" alt="Change the temporary password" width={440} height={613} />
 
