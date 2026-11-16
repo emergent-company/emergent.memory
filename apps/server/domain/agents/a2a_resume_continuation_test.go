@@ -207,6 +207,29 @@ func TestPrepareA2AResume_UnidentifiedPauseRejected(t *testing.T) {
 	}
 }
 
+// TestPrepareA2AResume_TotalStepCapRefusedBeforeClaim pins the guard against
+// consuming a pause that cannot be executed anyway: a run at the global
+// cumulative step cap is refused before the pause is claimed, so the task is not
+// left terminal with nothing to answer.
+func TestPrepareA2AResume_TotalStepCapRefusedBeforeClaim(t *testing.T) {
+	repo, drv := newA2AResumeRepository(t)
+	drv.setNoPendingQuestions(true)
+	h := &A2AHandler{repo: repo, executor: enabledExecutor(), log: testAgentLogger()}
+
+	run := stepLimitPausedRun()
+	run.StepCount = MaxTotalStepsPerRun
+
+	msg, pauseClaimed, a2aErr := h.prepareA2AResume(context.Background(), run, "keep going", "user-1")
+	require.NotNil(t, a2aErr)
+	assert.Empty(t, msg)
+	assert.False(t, pauseClaimed)
+	assert.Contains(t, a2aErr.Message, "total step limit")
+	for _, q := range drv.queriesCopy() {
+		assert.NotContains(t, q, "completed_at = NOW()",
+			"a pause that cannot execute must not be consumed")
+	}
+}
+
 // TestPrepareA2AResume_PendingQuestionClaimed pins the question path: the
 // follow-up message answers the question and the claim is applied once. The pause
 // is left for the executor to claim, so pauseClaimed stays false.

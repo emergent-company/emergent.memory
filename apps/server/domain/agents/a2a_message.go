@@ -344,6 +344,16 @@ func (h *A2AHandler) prepareA2AResume(ctx context.Context, latest *AgentRun, use
 		}
 	}
 
+	// A resume cannot exceed the global cumulative step cap (executor.Resume
+	// refuses the same threshold). Check it BEFORE claiming: claiming first and
+	// then discovering the run cannot continue would consume the pause and leave
+	// the task with nothing to answer — the stall this fix exists to remove
+	// (same guard as chat's resume path).
+	if latest.StepCount >= MaxTotalStepsPerRun {
+		return "", false, a2aInvalidStateError(fmt.Sprintf(
+			"run reached its total step limit (%d) and cannot be resumed; start a new task", MaxTotalStepsPerRun))
+	}
+
 	if question == nil {
 		// Claimed here — before execution, and on the streaming surface before
 		// the SSE stream starts — so a concurrent follower gets a clean error
