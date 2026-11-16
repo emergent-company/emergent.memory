@@ -70,16 +70,16 @@ export default defineConfig({
       },
       sidebar: [
         {
+          label: 'Getting Started',
+          items: [
+            { label: 'Start here', slug: 'user-guide/getting-started' },
+            { label: 'Self-hosted', slug: 'user-guide/getting-started/self-hosted' },
+            { label: 'Memory Cloud', slug: 'user-guide/getting-started/memory-cloud' },
+          ],
+        },
+        {
           label: 'User Guide',
           items: [
-            {
-              label: 'Getting Started',
-              items: [
-                { label: 'Start here', slug: 'user-guide/getting-started' },
-                { label: 'Self-hosted', slug: 'user-guide/getting-started/self-hosted' },
-                { label: 'Memory Cloud', slug: 'user-guide/getting-started/memory-cloud' },
-              ],
-            },
             { label: 'Overview', slug: 'user-guide' },
             { label: 'Knowledge Graph', slug: 'user-guide/knowledge-graph' },
             { label: 'Agents', slug: 'user-guide/agents' },

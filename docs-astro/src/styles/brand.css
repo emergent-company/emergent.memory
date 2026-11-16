@@ -741,11 +741,15 @@ h1#_top {
 /* Cards in a row share the row's height, so the call to action has to be
    pinned to the bottom-right of the card rather than trailing the copy —
    otherwise a one-line card and a four-line card put their buttons at
-   different heights. */
+   different heights. `row-gap` is the floor under that pin: `margin-top: auto`
+   only absorbs *slack*, and the tallest card in a row has none, so without it
+   the button sits flush against the last line of copy. It also spaces stacked
+   blocks inside a card, whose paragraph margins are reset to zero. */
 .sl-markdown-content .card .body {
   display: flex;
   flex-direction: column;
   flex: 1;
+  row-gap: 0.75rem;
 }
 
 .sl-markdown-content .card .body > .sl-link-button:last-child {
