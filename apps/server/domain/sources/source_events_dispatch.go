@@ -1219,9 +1219,20 @@ func (d *SourceEventDispatcher) processWorkflowEvent(ctx context.Context, src *S
 		parentStatus = "closed"
 		laneStatus = "cancelled"
 	}
+	labels := make([]string, 0)
+	if state != nil && len(state.Labels) > 0 {
+		labels = append(labels, state.Labels...)
+	} else {
+		for _, label := range p.PullRequest.Labels {
+			if name := strings.TrimSpace(label.Name); name != "" {
+				labels = append(labels, name)
+			}
+		}
+	}
 	parentProps := map[string]any{
 		"repo": repoName, "pr_number": p.PullNumber(), "head_sha": state.HeadSHA,
-		"base_sha": p.PullRequest.Base.SHA, "title": title, "state": p.PullRequest.State, "status": parentStatus,
+		"base_sha": p.PullRequest.Base.SHA, "title": title, "state": p.PullRequest.State,
+		"labels": labels, "status": parentStatus,
 	}
 	if _, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
 		Type: "GitHubPullRequest", Key: &parentKey, Name: &title, Status: &parentStatus, Properties: parentProps,

@@ -14,6 +14,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 const (
@@ -87,7 +88,7 @@ func (s *ReviewGateService) Ensure(ctx context.Context, projectID uuid.UUID, sub
 		return nil, errors.New("sources: review gate service is not configured")
 	}
 	headSHA = strings.TrimSpace(headSHA)
-	subjectRef = strings.TrimSpace(subjectRef)
+	subjectRef = strings.ToLower(strings.TrimSpace(subjectRef))
 	if headSHA == "" || subjectRef == "" || subjectType == "" {
 		return nil, errors.New("sources: review gate requires subject type, subject ref and head sha")
 	}
@@ -104,45 +105,53 @@ func (s *ReviewGateService) Ensure(ctx context.Context, projectID uuid.UUID, sub
 		}
 	}
 
-	var gate ReviewGate
-	err := s.repo.db.NewSelect().Model(&gate).
-		Where("project_id = ?", projectID).
-		Where("subject_type = ?", subjectType).
-		Where("subject_ref = ?", subjectRef).
-		Where("head_sha = ?", headSHA).
-		Scan(ctx)
-	if errors.Is(err, sql.ErrNoRows) {
-		gate = ReviewGate{
-			ProjectID: projectID, SubjectType: subjectType, SubjectRef: subjectRef,
-			HeadSHA: headSHA, RequiredReviewers: required, Status: ReviewGatePending,
+	var result *ReviewGate
+	err := s.repo.projectTx(ctx, projectID, func(ctx context.Context, tx bun.Tx) error {
+		var gate ReviewGate
+		err := tx.NewSelect().Model(&gate).
+			Where("project_id = ?", projectID).
+			Where("subject_type = ?", subjectType).
+			Where("subject_ref = ?", subjectRef).
+			Where("head_sha = ?", headSHA).
+			Scan(ctx)
+		if errors.Is(err, sql.ErrNoRows) {
+			gate = ReviewGate{
+				ProjectID: projectID, SubjectType: subjectType, SubjectRef: subjectRef,
+				HeadSHA: headSHA, RequiredReviewers: required, Status: ReviewGatePending,
+			}
+			if _, err := tx.NewInsert().Model(&gate).Exec(ctx); err != nil {
+				return fmt.Errorf("sources: create review gate: %w", err)
+			}
+			result = &gate
+			return nil
 		}
-		if _, err := s.repo.db.NewInsert().Model(&gate).Exec(ctx); err != nil {
-			return nil, fmt.Errorf("sources: create review gate: %w", err)
+		if err != nil {
+			return fmt.Errorf("sources: read review gate: %w", err)
 		}
-		return &gate, nil
-	}
+		changed := false
+		for _, reviewer := range required {
+			if !containsReviewer(gate.RequiredReviewers, reviewer.AgentID) {
+				gate.RequiredReviewers = append(gate.RequiredReviewers, reviewer)
+				changed = true
+			}
+		}
+		if changed {
+			gate.Status = s.evaluate(ctx, tx, &gate)
+			gate.UpdatedAt = time.Now().UTC()
+			raw, _ := json.Marshal(gate.RequiredReviewers)
+			if _, err := tx.NewRaw(`UPDATE kb.review_gates
+				SET required_reviewers = ?::jsonb, status = ?, updated_at = now()
+				WHERE id = ?`, string(raw), gate.Status, gate.ID).Exec(ctx); err != nil {
+				return fmt.Errorf("sources: update review gate: %w", err)
+			}
+		}
+		result = &gate
+		return nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("sources: read review gate: %w", err)
+		return nil, err
 	}
-
-	changed := false
-	for _, reviewer := range required {
-		if !containsReviewer(gate.RequiredReviewers, reviewer.AgentID) {
-			gate.RequiredReviewers = append(gate.RequiredReviewers, reviewer)
-			changed = true
-		}
-	}
-	if changed {
-		gate.Status = s.evaluate(ctx, &gate)
-		gate.UpdatedAt = time.Now().UTC()
-		raw, _ := json.Marshal(gate.RequiredReviewers)
-		if _, err := s.repo.db.NewRaw(`UPDATE kb.review_gates
-			SET required_reviewers = ?::jsonb, status = ?, updated_at = now()
-			WHERE id = ?`, string(raw), gate.Status, gate.ID).Exec(ctx); err != nil {
-			return nil, fmt.Errorf("sources: update review gate: %w", err)
-		}
-	}
-	return &gate, nil
+	return result, nil
 }
 
 // RecordVerdict writes one reviewer's verdict and recomputes the gate. A
@@ -151,65 +160,77 @@ func (s *ReviewGateService) RecordVerdict(ctx context.Context, projectID uuid.UU
 	if s == nil || s.repo == nil {
 		return nil, errors.New("sources: review gate service is not configured")
 	}
+	subjectRef = strings.ToLower(strings.TrimSpace(subjectRef))
 	reviewerID, err := uuid.Parse(strings.TrimSpace(reviewerAgentID))
 	if err != nil {
-		return nil, fmt.Errorf("sources: invalid reviewer agent id: %w", err)
+		return nil, apperror.NewValidationf("sources: invalid reviewer agent id: %v", err)
 	}
 	verdict = strings.ToUpper(strings.TrimSpace(verdict))
 	if verdict != "MERGE" && verdict != "CHANGES_REQUESTED" {
-		return nil, fmt.Errorf("sources: invalid review verdict %q", verdict)
+		return nil, apperror.NewValidationf("sources: invalid review verdict %q", verdict)
 	}
-	var gate ReviewGate
-	err = s.repo.db.NewSelect().Model(&gate).
-		Where("project_id = ?", projectID).
-		Where("subject_type = ?", subjectType).
-		Where("subject_ref = ?", subjectRef).
-		Where("head_sha = ?", headSHA).
-		Scan(ctx)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrReviewGateNotFound
-	}
+	var result *ReviewGate
+	err = s.repo.projectTx(ctx, projectID, func(ctx context.Context, tx bun.Tx) error {
+		var gate ReviewGate
+		err := tx.NewSelect().Model(&gate).
+			Where("project_id = ?", projectID).
+			Where("subject_type = ?", subjectType).
+			Where("subject_ref = ?", subjectRef).
+			Where("head_sha = ?", headSHA).
+			Scan(ctx)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrReviewGateNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("sources: read review gate: %w", err)
+		}
+		if !containsReviewer(gate.RequiredReviewers, reviewerID.String()) {
+			result = &gate
+			return fmt.Errorf("%w: %s", ErrReviewerNotRequired, reviewerID)
+		}
+		if reviewerName == "" {
+			reviewerName = reviewerID.String()
+		}
+		if _, err := tx.NewRaw(`
+			INSERT INTO kb.review_verdicts
+				(gate_id, project_id, reviewer_agent_id, reviewer_name, head_sha, verdict, evidence)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT (gate_id, reviewer_agent_id) DO UPDATE SET
+				reviewer_name = EXCLUDED.reviewer_name,
+				head_sha = EXCLUDED.head_sha,
+				verdict = EXCLUDED.verdict,
+				evidence = EXCLUDED.evidence,
+				updated_at = now()
+		`, gate.ID, projectID, reviewerID, reviewerName, headSHA, verdict, evidence).Exec(ctx); err != nil {
+			return fmt.Errorf("sources: record review verdict: %w", err)
+		}
+		gate.Status = s.evaluate(ctx, tx, &gate)
+		gate.UpdatedAt = time.Now().UTC()
+		if _, err := tx.NewUpdate().Model(&gate).
+			Set("status = ?", gate.Status).
+			Set("updated_at = ?", gate.UpdatedAt).
+			Where("id = ?", gate.ID).Exec(ctx); err != nil {
+			return fmt.Errorf("sources: update review gate status: %w", err)
+		}
+		result = &gate
+		return nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("sources: read review gate: %w", err)
+		if result != nil {
+			return result, err
+		}
+		return nil, err
 	}
-	if !containsReviewer(gate.RequiredReviewers, reviewerID.String()) {
-		return &gate, fmt.Errorf("%w: %s", ErrReviewerNotRequired, reviewerID)
-	}
-	if reviewerName == "" {
-		reviewerName = reviewerID.String()
-	}
-	_, err = s.repo.db.NewRaw(`
-		INSERT INTO kb.review_verdicts
-			(gate_id, project_id, reviewer_agent_id, reviewer_name, head_sha, verdict, evidence)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (gate_id, reviewer_agent_id) DO UPDATE SET
-			reviewer_name = EXCLUDED.reviewer_name,
-			head_sha = EXCLUDED.head_sha,
-			verdict = EXCLUDED.verdict,
-			evidence = EXCLUDED.evidence,
-			updated_at = now()
-	`, gate.ID, projectID, reviewerID, reviewerName, headSHA, verdict, evidence).Exec(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("sources: record review verdict: %w", err)
-	}
-	gate.Status = s.evaluate(ctx, &gate)
-	gate.UpdatedAt = time.Now().UTC()
-	if _, err := s.repo.db.NewUpdate().Model(&gate).
-		Set("status = ?", gate.Status).
-		Set("updated_at = ?", gate.UpdatedAt).
-		Where("id = ?", gate.ID).Exec(ctx); err != nil {
-		return nil, fmt.Errorf("sources: update review gate status: %w", err)
-	}
-	return &gate, nil
+	return result, nil
 }
 
-func (s *ReviewGateService) evaluate(ctx context.Context, gate *ReviewGate) string {
+func (s *ReviewGateService) evaluate(ctx context.Context, db bun.IDB, gate *ReviewGate) string {
 	if gate == nil || len(gate.RequiredReviewers) == 0 {
 		return ReviewGatePending
 	}
 	var verdicts []ReviewVerdict
-	if s != nil && s.repo != nil {
-		_ = s.repo.db.NewSelect().Model(&verdicts).Where("gate_id = ?", gate.ID).Scan(ctx)
+	if db != nil {
+		_ = db.NewSelect().Model(&verdicts).Where("gate_id = ?", gate.ID).Scan(ctx)
 	}
 	byReviewer := make(map[string]string, len(verdicts))
 	for _, v := range verdicts {

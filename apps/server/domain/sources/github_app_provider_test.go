@@ -123,7 +123,7 @@ func TestGitHubAppPackProvenanceAndPresentation(t *testing.T) {
 	if pack == nil {
 		t.Fatal("github app provider declares no pack")
 	}
-	if pack.Name != "github-app-workflow" || pack.Version != "1.3.0" {
+	if pack.Name != "github-app-workflow" || pack.Version != "1.4.0" {
 		t.Errorf("pack identity = %s@%s", pack.Name, pack.Version)
 	}
 	if pack.Source != "provider:github_app" {

@@ -86,7 +86,7 @@ func (p *githubAppProvider) Catalog() Provider {
 		// The pack this provider installs, so the Schema UI can group it under
 		// Data Sources and link it to the installed apps.
 		SchemaPack:        "github-app-workflow",
-		SchemaPackVersion: "1.3.0",
+		SchemaPackVersion: "1.4.0",
 	}
 }
 
