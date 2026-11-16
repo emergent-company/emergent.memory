@@ -229,6 +229,190 @@ func TestRetryAllExtractionsScopesTheWireRedirect(t *testing.T) {
 	}
 }
 
+// mountScopedConversionsRetryAll mounts uiRetryAllConversions behind the same
+// scopeRewrite Pre step as the extraction tests above, so the handler sees the
+// request's URL scope without a session middleware.
+func mountScopedConversionsRetryAll(s *Server) *echo.Echo {
+	e := echo.New()
+	e.POST("/o/:org/p/:project/documents/retry-conversion-failures", func(c echo.Context) error {
+		ctx := context.WithValue(c.Request().Context(), scopeCtxKey{}, &requestScope{
+			OrgRef: c.Param("org"), ProjectRef: c.Param("project"),
+		})
+		c.SetRequest(c.Request().WithContext(ctx))
+		return s.uiRetryAllConversions(c)
+	})
+	return e
+}
+
+// uiRetryAllConversions is the panel's other project-wide retry and the one
+// redirectScoped call site the extraction tests above did not reach: a
+// regression in its PRG shape would go unnoticed, so both outcomes are pinned
+// here. The htmx shape is 200 + HX-Redirect, never 303 + HX-Redirect — htmx
+// issues its requests through window.fetch without a redirect option, so the
+// browser follows a 303 transparently and the HX-Redirect on the intermediate
+// response is discarded (#828).
+func TestRetryAllConversionsRedirectIsScopedWithoutMiddleware(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		retried int
+		want    string
+	}{
+		{
+			name:    "retried",
+			retried: 3,
+			want:    "/o/org-1/p/proj-1/documents?conversions_retried=3",
+		},
+		{
+			name:    "nothing to retry",
+			retried: 0,
+			want:    "/o/org-1/p/proj-1/documents?conversions_none=1",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := newClientEcho(&fakeMemory{bulkRetried: tc.retried}, Config{AuthMode: "session"})
+			e := mountScopedConversionsRetryAll(s)
+
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/o/org-1/p/proj-1/documents/retry-conversion-failures", nil)
+			req.Header.Set("HX-Request", "true")
+			req.Header.Set("HX-Boosted", "true")
+			e.ServeHTTP(rec, req)
+
+			// 200, not 303: a 3xx would be followed transparently by fetch and
+			// the HX-Redirect would never reach htmx (#828).
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 for a boosted form; body %s", rec.Code, rec.Body.String())
+			}
+			if got := rec.Header().Get(echo.HeaderLocation); got != "" {
+				t.Fatalf("location = %q, want empty: a boosted form navigates via HX-Redirect, not Location", got)
+			}
+			if got := rec.Header().Get("HX-Redirect"); got != tc.want {
+				t.Fatalf("HX-Redirect = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// A plain form post (no htmx) gets no HX-Redirect: the browser follows Location,
+// which is already scoped. Both outcomes are covered so a regression in either
+// flash key is visible.
+func TestRetryAllConversionsPlainFormRedirect(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		retried int
+		want    string
+	}{
+		{
+			name:    "nothing to retry",
+			retried: 0,
+			want:    "/o/org-1/p/proj-1/documents?conversions_none=1",
+		},
+		{
+			name:    "retried",
+			retried: 4,
+			want:    "/o/org-1/p/proj-1/documents?conversions_retried=4",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := newClientEcho(&fakeMemory{bulkRetried: tc.retried}, Config{AuthMode: "session"})
+			e := mountScopedConversionsRetryAll(s)
+
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/o/org-1/p/proj-1/documents/retry-conversion-failures", nil)
+			e.ServeHTTP(rec, req)
+
+			// 303, not 302: ui-rule-prg-contract names 303 for the plain-form
+			// half of the contract.
+			if rec.Code != http.StatusSeeOther {
+				t.Fatalf("status = %d, want 303 for a plain form post", rec.Code)
+			}
+			if got := rec.Header().Get(echo.HeaderLocation); got != tc.want {
+				t.Fatalf("location = %q, want %q", got, tc.want)
+			}
+			if got := rec.Header().Get("HX-Redirect"); got != "" {
+				t.Fatalf("HX-Redirect = %q, want empty for a plain form post", got)
+			}
+		})
+	}
+}
+
+// The wire is what the client receives, and the conversions retry must keep its
+// scope there through the real middleware chain (scopeRewrite + scopeLocation),
+// not only in the recorder's still-writable header map.
+func TestRetryAllConversionsScopesTheWireRedirect(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		retried  int
+		boosted  bool
+		wantCode int
+		wantKey  string
+		want     string
+	}{
+		{
+			name:     "boosted retried",
+			retried:  2,
+			boosted:  true,
+			wantCode: http.StatusOK,
+			wantKey:  "HX-Redirect",
+			want:     "/o/org-1/p/proj-1/documents?conversions_retried=2",
+		},
+		{
+			name:     "boosted nothing to retry",
+			retried:  0,
+			boosted:  true,
+			wantCode: http.StatusOK,
+			wantKey:  "HX-Redirect",
+			want:     "/o/org-1/p/proj-1/documents?conversions_none=1",
+		},
+		{
+			name:     "plain form",
+			retried:  0,
+			boosted:  false,
+			wantCode: http.StatusSeeOther,
+			wantKey:  echo.HeaderLocation,
+			want:     "/o/org-1/p/proj-1/documents?conversions_none=1",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := newClientEcho(&fakeMemory{bulkRetried: tc.retried}, Config{AuthMode: "session"})
+			e := echo.New()
+			e.Pre(s.scopeRewrite)
+			e.Use(s.scopeLocation)
+			e.POST("/documents/retry-conversion-failures", s.uiRetryAllConversions)
+
+			srv := httptest.NewServer(e)
+			defer srv.Close()
+
+			client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			}}
+			req, err := http.NewRequest(http.MethodPost, srv.URL+"/o/org-1/p/proj-1/documents/retry-conversion-failures", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.boosted {
+				req.Header.Set("HX-Request", "true")
+				req.Header.Set("HX-Boosted", "true")
+			}
+			res, err := client.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = res.Body.Close() }()
+
+			if res.StatusCode != tc.wantCode {
+				t.Fatalf("status = %d, want %d", res.StatusCode, tc.wantCode)
+			}
+			if got := res.Header.Get(tc.wantKey); got != tc.want {
+				t.Fatalf("wire %s = %q, want %q", tc.wantKey, got, tc.want)
+			}
+			if got := res.Header.Get(echo.HeaderLocation); tc.boosted && got != "" {
+				t.Fatalf("wire location = %q, want empty for a boosted form", got)
+			}
+		})
+	}
+}
+
 // A committed redirect must already carry its scope when it reaches the wire.
 // scopeLocation used to rewrite Location/HX-Redirect after next(c) returned,
 // which is invisible: c.Redirect calls WriteHeader, and Go serialises the status
