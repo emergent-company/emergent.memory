@@ -57,7 +57,7 @@ func countLiveJobs(t *testing.T, repo *Repository, runID string) int {
 // no live dispatch job and inserts one. It runs on every process boot and every
 // five minutes per process, so several instances run it concurrently for the
 // same run. Before the partial unique index
-// uq_agent_run_jobs_one_live_per_run (migration 00311) and the requeue's
+// uq_agent_run_jobs_one_live_per_run (migration 00312) and the requeue's
 // ON CONFLICT DO NOTHING, each caller inserted its own row: six concurrent
 // calls left two or more pending jobs for one run, inflating the row count
 // CountPendingJobsForAgent feeds to the AGENT_MAX_PENDING_JOBS guard.

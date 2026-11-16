@@ -90,7 +90,7 @@ BEGIN
           AND i.indisready
     );
     IF bad IS NOT NULL THEN
-        RAISE EXCEPTION '00311: agent_run_jobs live-job unique index missing or invalid: %', bad;
+        RAISE EXCEPTION '00312: agent_run_jobs live-job unique index missing or invalid: %', bad;
     END IF;
 END
 $$;

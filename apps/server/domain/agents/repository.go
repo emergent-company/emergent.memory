@@ -3353,7 +3353,7 @@ func (r *Repository) findProcessingLogByKeyInTx(ctx context.Context, tx bun.Tx, 
 // means DefaultQueuePriority.
 //
 // The insert is ON CONFLICT DO NOTHING against the partial unique index
-// uq_agent_run_jobs_one_live_per_run (migration 00311), which allows at most one
+// uq_agent_run_jobs_one_live_per_run (migration 00312), which allows at most one
 // pending/processing job per run. Callers therefore no longer need to
 // check-then-act: two healers racing to re-enqueue one run — or a healer racing
 // CreateRunQueued — collapse to a single live row, and inserted is false when
