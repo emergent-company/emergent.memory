@@ -1,5 +1,8 @@
 package main
 
+// guard: the class-in-Attrs ratchet (#855) and its scanner self-test —
+// every test here must gate every PR.
+
 import (
 	"fmt"
 	"os"
@@ -122,9 +125,10 @@ func balancedCallEnd(text string, open int) int {
 	return -1
 }
 
-// TestClassInAttrsScannerCatchesTheShape proves the guard is not vacuous: the
-// pre-#855 call shapes must be reported, and the supported ones must not.
-func TestClassInAttrsScannerCatchesTheShape(t *testing.T) {
+// TestClassInAttrsScannerCatchesTheShapeRatchet proves the guard is not
+// vacuous: the pre-#855 call shapes must be reported, and the supported ones
+// must not.
+func TestClassInAttrsScannerCatchesTheShapeRatchet(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		src  string

@@ -1,5 +1,8 @@
 package main
 
+// guard: the page-vs-component ui.CardRaw ratchet and its note-rule
+// self-tests — every test here must gate every PR.
+
 import (
 	"fmt"
 	"maps"
@@ -199,12 +202,12 @@ func TestPageCardRawConsistencyRatchet(t *testing.T) {
 	t.Run("page-card-raw", checkPageCardRaw)
 }
 
-// TestPageCardRawBudgetRequiresNote proves the note guard is wired into the real
-// gate: it drives pageCardRawRatchetFindings — the exact function
+// TestPageCardRawBudgetRequiresNoteRatchet proves the note guard is wired into
+// the real gate: it drives pageCardRawRatchetFindings — the exact function
 // TestPageCardRawConsistencyRatchet asserts on — with a note-less entry, so
 // deleting the guard from that function fails this test. The shipped budget must
 // produce no note finding.
-func TestPageCardRawBudgetRequiresNote(t *testing.T) {
+func TestPageCardRawBudgetRequiresNoteRatchet(t *testing.T) {
 	findings, err := pageCardRawRatchetFindings(pageCardRawBudget())
 	if err != nil {
 		t.Fatalf("%v", err)
@@ -236,11 +239,11 @@ func TestPageCardRawBudgetRequiresNote(t *testing.T) {
 	}
 }
 
-// TestPageCardRawFindingsDetectsSites covers the count check with synthetic maps:
-// since the shipped budget is empty, the load-bearing branch (any page-level
-// ui.CardRaw is a finding) is otherwise only exercised by a red tree, and a
-// retired budget that no longer bites would look identically green.
-func TestPageCardRawFindingsDetectsSites(t *testing.T) {
+// TestPageCardRawFindingsDetectsSitesRatchet covers the count check with
+// synthetic maps: since the shipped budget is empty, the load-bearing branch
+// (any page-level ui.CardRaw is a finding) is otherwise only exercised by a red
+// tree, and a retired budget that no longer bites would look identically green.
+func TestPageCardRawFindingsDetectsSitesRatchet(t *testing.T) {
 	note := "synthetic: a pinned gap"
 	cases := []struct {
 		name     string
