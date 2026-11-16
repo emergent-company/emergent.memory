@@ -140,15 +140,13 @@ final class AccountStore {
 
     // MARK: - Silent re-auth state
 
-    /// In-flight non-interactive re-auth per account: single-flight, so a
-    /// launch, a wake and a token read that notice `needs_reauth` at once run
-    /// ONE attempt.
+    /// In-flight non-interactive re-auth per account: single-flight, so a launch,
+    /// a wake and a token read that notice `needs_reauth` run ONE attempt.
     private var silentReauthTasks: [String: Task<Bool, Never>] = [:]
     /// Accounts that already attempted a silent re-auth in the current
     /// `needs_reauth` episode. Set before the attempt, so a FAILED attempt
-    /// cannot retrigger it — and it only counts while the account is still in
-    /// `needsReauth`, so the episode that a success (or a working token read)
-    /// cleared cannot disable a later one.
+    /// cannot retrigger it, and cleared with `needsReauth` (see
+    /// `clearNeedsReauth`), which is what ends the episode.
     private var silentReauthAttempted: Set<String> = []
 
     /// A cached token is reused only while it keeps at least this much life: a
@@ -287,7 +285,7 @@ final class AccountStore {
                                   displayName: nil,
                                   avatarObjectKey: nil)
             upsert(account)
-            needsReauth.remove(accountID)
+            clearNeedsReauth(accountID)
             persistIndex()
 
             if let previous = activeAccountID, previous != accountID {
@@ -385,7 +383,7 @@ final class AccountStore {
             }
             // The CLI reports the session as usable, so any stale re-auth mark
             // on this account is out of date.
-            needsReauth.remove(account.id)
+            clearNeedsReauth(account.id)
             sessionValid[account.id] = true
             setSessionState(.valid)
             return true
@@ -395,7 +393,7 @@ final class AccountStore {
         let valid = await connectorIsSignedIn(environment: environment)
         sessionValid[account.id] = valid
         if valid {
-            needsReauth.remove(account.id)
+            clearNeedsReauth(account.id)
             setSessionState(.valid)
         } else {
             markNeedsReauth(account.id)
@@ -406,14 +404,11 @@ final class AccountStore {
     // MARK: - Silent re-auth
 
     /// Non-interactive re-auth for an account whose stored session the provider
-    /// rejected (`needs_reauth`).
-    ///
-    /// It runs the SAME `auth start`/`auth complete` pair the interactive flow
-    /// uses, with `prompt=none` and the account's email as `login_hint`. A
-    /// decline ("login_required", a cancelled session, a browser timeout)
-    /// cancels the pending login and changes nothing: the `needs_reauth` mark
-    /// and the interactive affordance stay, and `lastError` is never written
-    /// because the user neither caused nor can act on it.
+    /// rejected (`needs_reauth`). It runs the SAME `auth start`/`auth complete`
+    /// pair the interactive flow uses, with `prompt=none` and the account's email
+    /// as `login_hint`; a decline ("login_required", a cancelled session, a
+    /// browser timeout) cancels the pending login and changes nothing: the mark
+    /// and the interactive affordance stay, and `lastError` is never written.
     ///
     /// - Returns: true when the attempt restored a usable session.
     @discardableResult
@@ -426,9 +421,8 @@ final class AccountStore {
         if let inFlight = silentReauthTasks[accountID] {
             return await inFlight.value
         }
-        // One attempt per `needs_reauth` episode: the mark only counts while the
-        // account is still marked, and every attempt runs before it marks on
-        // failure, so a success never disables the next episode's attempt.
+        // One attempt per `needs_reauth` episode: the guard is dropped with the
+        // mark (`clearNeedsReauth`), so a later episode gets a fresh attempt.
         guard !(needsReauth.contains(accountID) && silentReauthAttempted.contains(accountID)) else {
             return false
         }
@@ -476,11 +470,11 @@ final class AccountStore {
                                                  reason: "the connector did not complete the sign-in")
             }
 
-            // The episode is over: a later rejection is a new one, and leaving
-            // `needsReauth` also allows the next episode's silent attempt. The
-            // retried token read is bounded separately (see `fetchAccessToken`),
-            // so this cannot loop.
-            needsReauth.remove(account.id)
+            // The episode is over: clearing the mark with the attempt means a
+            // later rejection is a new one that tries again. The retried token
+            // read is bounded separately (see `fetchAccessToken`), so this
+            // cannot loop.
+            clearNeedsReauth(account.id)
             sessionValid[account.id] = true
             if account.id == activeAccountID {
                 setSessionState(.valid)
@@ -588,6 +582,12 @@ final class AccountStore {
         }
     }
 
+    /// Clears the mark together with the attempt that consumed its episode.
+    private func clearNeedsReauth(_ accountID: String) {
+        needsReauth.remove(accountID)
+        silentReauthAttempted.remove(accountID)
+    }
+
     /// Updates `sessionState`, logging transitions only (a poll loop that keeps
     /// reporting the same state must not fill the log).
     private func setSessionState(_ state: ConnectorSessionState) {
@@ -686,7 +686,7 @@ final class AccountStore {
         ConnectorLog.lifecycle("activeAccountDidChange source=switchTo account=\(account.id)")
         activeAccountDidChange(account)
         // The CLI validated this account's session above.
-        needsReauth.remove(accountID)
+        clearNeedsReauth(accountID)
         sessionValid[accountID] = true
         tokenCache[accountID] = nil
         setSessionState(.valid)
@@ -713,7 +713,7 @@ final class AccountStore {
         }
 
         identities[accountID] = nil
-        needsReauth.remove(accountID)
+        clearNeedsReauth(accountID)
         silentReauthTasks[accountID]?.cancel()
         silentReauthTasks[accountID] = nil
         sessionValid[accountID] = nil
@@ -794,7 +794,7 @@ final class AccountStore {
         do {
             let token = try await connectorCLI.authAccessToken(serverURL: environment.serverURLString,
                                                                configPath: configPath)
-            needsReauth.remove(accountID)
+            clearNeedsReauth(accountID)
             sessionValid[accountID] = true
             if let expiresAt = Self.parseExpiry(token.expiresAt) {
                 tokenCache[accountID] = CachedToken(accessToken: token.accessToken, expiresAt: expiresAt)

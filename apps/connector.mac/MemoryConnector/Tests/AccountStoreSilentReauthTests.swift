@@ -15,12 +15,12 @@ final class AccountStoreSilentReauthTests: XCTestCase {
     private var suiteName = ""
     private var defaults = UserDefaults(suiteName: "") ?? .standard
     private var root = FileManager.default.temporaryDirectory
-    private var fakeAuth = FakeAuthenticator()
-    private var cli = StubCLI()
+    var fakeAuth = FakeAuthenticator()
+    var cli = StubCLI()
 
-    private let prodServer = Environment.prod.serverURLString
+    let prodServer = Environment.prod.serverURLString
     private let loginID = "silent-login"
-    private let state = "state-1"
+    let state = "state-1"
 
     override func setUpWithError() throws {
         suiteName = "mc-silent-reauth-\(UUID().uuidString)"
@@ -49,8 +49,11 @@ final class AccountStoreSilentReauthTests: XCTestCase {
 
     // MARK: - Fixtures
 
+    // Shared with `AccountStoreSilentReauthEpisodeTests`, which is a separate
+    // file because this one is at SwiftLint's `file_length` limit.
+
     @MainActor
-    private func makeSignedInStore() async throws -> (AccountStore, Account) {
+    func makeSignedInStore() async throws -> (AccountStore, Account) {
         let account = Account(id: "prod:a@example.test",
                               environmentID: "prod",
                               email: "a@example.test",
@@ -75,7 +78,7 @@ final class AccountStoreSilentReauthTests: XCTestCase {
         return (store, account)
     }
 
-    private func stubSignedInStatus() {
+    func stubSignedInStatus() {
         cli.on("auth status") { arguments in
             let server = silentReauthFlag("--server", in: arguments) ?? ""
             return ProcessResult(stdout: """
@@ -85,7 +88,7 @@ final class AccountStoreSilentReauthTests: XCTestCase {
     }
 
     /// The provider rejected the stored session but kept it on disk.
-    private func stubNeedsReauthStatus() {
+    func stubNeedsReauthStatus() {
         cli.on("auth status") { arguments in
             let server = silentReauthFlag("--server", in: arguments) ?? ""
             return ProcessResult(stdout: """
@@ -113,7 +116,7 @@ final class AccountStoreSilentReauthTests: XCTestCase {
         """)
     }
 
-    private func stubComplete() {
+    func stubComplete() {
         cli.on("auth complete", json: """
         {"schema_version":1,"server":"\(prodServer)","signed_in":true,\
         "email":"a@example.test","issuer":"https://auth.example.test",\
@@ -125,7 +128,7 @@ final class AccountStoreSilentReauthTests: XCTestCase {
         cli.on("auth cancel") { _ in ProcessResult(stdout: "", exitCode: 0, timedOut: false) }
     }
 
-    private func calls(_ command: String) -> [[String]] {
+    func calls(_ command: String) -> [[String]] {
         cli.calls.filter { Array($0.prefix(2)).joined(separator: " ") == command }
     }
 
