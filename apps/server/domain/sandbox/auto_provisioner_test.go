@@ -45,6 +45,7 @@ type provisioningProvider struct {
 	mockProvider
 	mu          sync.Mutex
 	execCalls   []string
+	execEnvs    []map[string]string
 	execResults map[string]*ExecResult
 	execErrors  map[string]error
 }
@@ -52,6 +53,7 @@ type provisioningProvider struct {
 func (p *provisioningProvider) Exec(_ context.Context, _ string, req *ExecRequest) (*ExecResult, error) {
 	p.mu.Lock()
 	p.execCalls = append(p.execCalls, req.Command)
+	p.execEnvs = append(p.execEnvs, req.Env)
 	p.mu.Unlock()
 
 	for substr, err := range p.execErrors {
@@ -72,6 +74,14 @@ func (p *provisioningProvider) getExecCalls() []string {
 	defer p.mu.Unlock()
 	result := make([]string, len(p.execCalls))
 	copy(result, p.execCalls)
+	return result
+}
+
+func (p *provisioningProvider) getExecEnvs() []map[string]string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	result := make([]map[string]string, len(p.execEnvs))
+	copy(result, p.execEnvs)
 	return result
 }
 
@@ -1514,4 +1524,58 @@ func measureDuration(fn func()) time.Duration {
 	start := time.Now()
 	fn()
 	return time.Since(start)
+}
+
+// TestIntegration_AutoProvision_ConfiguresGitAuthBeforeClone pins the wiring, not
+// just the helper: a coding agent that can read the repository but not push is
+// the bug this change exists for. The credential must be resolved from the run's
+// environment and written to the container *after* assignment and *before* the
+// clone, or the sandbox ends up in exactly that state again.
+func TestIntegration_AutoProvision_ConfiguresGitAuthBeforeClone(t *testing.T) {
+	pp := &provisioningProvider{
+		mockProvider: mockProvider{name: "gvisor", providerType: ProviderGVisor, healthy: true},
+	}
+	o := NewOrchestrator(testLogger())
+	o.RegisterProvider(ProviderGVisor, pp)
+
+	ap := NewAutoProvisioner(nil, o, NewCheckoutService(nil, testLogger()),
+		nil, NewWarmPool(o, testLogger(), WarmPoolConfig{Size: 0}), testLogger(), nil)
+	ap.createWorkspace = func(_ context.Context, _ *CreateWorkspaceRequest) (*WorkspaceResponse, error) {
+		return &WorkspaceResponse{ID: "ws-gitauth"}, nil
+	}
+
+	const token = "ghp_sandbox_token_for_test"
+	_, err := ap.attemptProvision(t.Context(),
+		"proj-1",
+		&AgentSandboxConfig{Enabled: true},
+		"https://github.com/org/repo.git",
+		"dev",
+		true,
+		"",
+		map[string]string{"GH_TOKEN": token},
+	)
+	require.NoError(t, err)
+
+	calls := pp.getExecCalls()
+	envs := pp.getExecEnvs()
+	require.Len(t, envs, len(calls), "every exec records its env")
+
+	authIdx, cloneIdx := -1, -1
+	for i, call := range calls {
+		if authIdx == -1 && strings.Contains(call, ".git-credentials") {
+			authIdx = i
+		}
+		if cloneIdx == -1 && strings.Contains(call, "git clone") {
+			cloneIdx = i
+		}
+	}
+	require.NotEqual(t, -1, authIdx, "the sandbox credential must be written")
+	require.NotEqual(t, -1, cloneIdx, "the repository must still be cloned")
+	assert.Less(t, authIdx, cloneIdx,
+		"credentials must be configured before the clone so the clone path and the agent share one token")
+
+	// The token must ride in the exec env, never in the command string: providers
+	// may log the command or expose it as a process argument.
+	assert.Equal(t, token, envs[authIdx]["GH_TOKEN"])
+	assert.NotContains(t, calls[authIdx], token)
 }
