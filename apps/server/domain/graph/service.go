@@ -2,7 +2,6 @@ package graph
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -206,20 +205,12 @@ func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvide
 	}
 }
 
-// rollbackTx aborts tx and logs a failure. SafeTx.Rollback is a no-op once the
-// transaction has committed, so a non-nil error here means the transaction
-// could not be aborted at all (dead connection, already-closed tx, a failed
-// statement that poisoned the connection). The caller still reports its own
-// error — that is the one the client should see — but a transaction left in an
-// unknown state must not disappear silently, which is what an unchecked
-// `defer tx.Rollback()` did.
-func (s *Service) rollbackTx(tx *database.SafeTx) {
-	// sql.ErrTxDone means the transaction is already gone — either this call is
-	// the deferred rollback after commit (the ordinary path) or after an earlier
-	// explicit rollback. Only a *different* error is a real failure.
-	if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
-		s.log.Warn("graph: transaction rollback failed", slog.String("error", err.Error()))
-	}
+// rollbackTx aborts tx and logs a failure. It is the graph package's name for
+// database.RollbackTx, kept so call sites read as this service's own cleanup;
+// the interface argument accepts both *database.SafeTx and a plain bun.Tx from
+// a repository BeginTx.
+func (s *Service) rollbackTx(tx interface{ Rollback() error }) {
+	database.RollbackTx(s.log, tx)
 }
 
 // logEvent records a graph mutation event, logging rather than returning a sink

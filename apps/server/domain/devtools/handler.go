@@ -18,6 +18,35 @@ import (
 // endpoints: the requested asset is absent, not the endpoint.
 var errFileNotFound = apperror.New(http.StatusNotFound, "not_found", "File not found")
 
+// resolveAsset maps a wildcard route parameter onto dir and rejects anything
+// that resolves outside it.
+//
+// The wildcard value is URL-decoded by Echo, so "../../etc/passwd" arrives as a
+// literal dot-dot segment; filepath.Join cleans it and the result can point
+// anywhere on disk. A strings.HasPrefix compare against the cleaned directory is
+// not sufficient — "/srv/coverage-notes" shares the prefix "/srv/coverage" — so
+// the containment test is a relative-path walk instead. Symlinks inside the
+// directory are still followed: the guard is about path segments, not link
+// targets, and both directories are repo-owned.
+func resolveAsset(dir, requestPath string) (string, error) {
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", apperror.New(http.StatusInternalServerError, "internal_error", "Failed to resolve asset directory")
+	}
+
+	absPath, err := filepath.Abs(filepath.Join(absDir, requestPath))
+	if err != nil {
+		return "", apperror.New(http.StatusBadRequest, "invalid_path", "Invalid path")
+	}
+
+	rel, err := filepath.Rel(absDir, absPath)
+	if err != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", apperror.ErrForbidden
+	}
+
+	return absPath, nil
+}
+
 // Handler serves developer tools endpoints
 type Handler struct {
 	log         *slog.Logger
@@ -78,16 +107,9 @@ func (h *Handler) ServeCoverageFiles(c echo.Context) error {
 		return h.ServeCoverage(c)
 	}
 
-	filePath := filepath.Join(h.coverageDir, requestPath)
-
-	// Security: prevent directory traversal
-	absPath, err := filepath.Abs(filePath)
+	filePath, err := resolveAsset(h.coverageDir, requestPath)
 	if err != nil {
-		return apperror.New(http.StatusBadRequest, "invalid_path", "Invalid path")
-	}
-	absDir, _ := filepath.Abs(h.coverageDir)
-	if !strings.HasPrefix(absPath, absDir) {
-		return apperror.ErrForbidden
+		return err
 	}
 
 	// Check if file exists
@@ -157,6 +179,7 @@ func (h *Handler) ServeDocsIndex(c echo.Context) error {
 // @Produce      json
 // @Param        filepath path string true "File path (swagger.json or swagger.yaml) - use * for wildcard in actual route"
 // @Success      200 {file} file "Swagger spec file"
+// @Failure      403 {string} string "Access denied (directory traversal attempt)"
 // @Failure      404 {string} string "File not found"
 // @Router       /docs/{filepath} [get]
 func (h *Handler) ServeDocs(c echo.Context) error {
@@ -168,7 +191,10 @@ func (h *Handler) ServeDocs(c echo.Context) error {
 	}
 
 	// Try to serve from docs directory
-	filePath := filepath.Join(h.docsDir, requestPath)
+	filePath, err := resolveAsset(h.docsDir, requestPath)
+	if err != nil {
+		return err
+	}
 	if _, err := os.Stat(filePath); err == nil {
 		return c.File(filePath)
 	}

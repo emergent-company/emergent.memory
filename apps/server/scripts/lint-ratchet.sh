@@ -8,11 +8,80 @@
 # Run from apps/server/ (the script resolves its own directory).
 
 set -euo pipefail
-#
-# Each counter ends with `|| true`: under `pipefail` a `grep` that finds nothing
-# fails the pipeline, and the counter a ratchet is trying to reach is zero.
 
 cd "$(dirname "$0")/.." # resolve to apps/server/
+
+# ── Counting ─────────────────────────────────────────────────────────────────
+# A counter must be able to reach zero — that is the point of paying debt down —
+# but `grep` exits 1 when it matches nothing and 2+ when it could not read its
+# input at all (a missing path, an unreadable file, a bad pattern). A `|| true`
+# treats both as zero, so the gate reads a tree it never inspected as clean.
+# grep_matches separates them: exit 1 prints nothing (a real zero), exit 2+
+# aborts the gate with a non-zero status.
+grep_matches() {
+  local out status=0
+  out=$(grep "$@" 2>/dev/null) || status=$?
+  if [ "$status" -gt 1 ]; then
+    echo "RATCHET ERROR: grep exited $status, cannot inspect the tree: grep $*" >&2
+    exit 2
+  fi
+  [ -z "$out" ] || printf '%s\n' "$out"
+}
+
+# count_matches prints the number of lines `grep "$@"` matches, including zero.
+count_matches() {
+  grep_matches "$@" | wc -l | tr -d ' '
+}
+
+# count_raw_echo_httperrors prints non-test `echo.NewHTTPError` occurrences in
+# tree. Full-line comments are excluded — line comments, the opening `/*` and a
+# block comment's ` *` continuation lines — so documenting the rule does not trip
+# it. The filter is a single awk pass over the matches, so a failing grep still
+# aborts through grep_matches instead of being hidden by the pipeline.
+count_raw_echo_httperrors() {
+  grep_matches -rn "echo\.NewHTTPError" --include="*.go" --exclude="*_test.go" "$1" \
+    | awk '!/^[^:]+:[0-9]+:[[:space:]]*(\/\/|\/\*|\*)/ { n++ } END { print n + 0 }'
+}
+
+# --self-test exercises the counters' three outcomes on a scratch tree: a match
+# counts, no match is zero, and an unreadable path aborts instead of reading as a
+# clean zero. It needs no checkout, so CI can run it before the real gate.
+if [ "${1:-}" = "--self-test" ]; then
+  scratch=$(mktemp -d)
+  trap 'rm -rf "$scratch"' EXIT
+  printf '%s\n' \
+    'package scratch' \
+    '' \
+    '// echo.NewHTTPError is banned here.' \
+    '/* echo.NewHTTPError in a block comment */' \
+    '/*' \
+    ' * echo.NewHTTPError in a block continuation' \
+    ' */' \
+    'var first = echo.NewHTTPError(500)' \
+    'var second = echo.NewHTTPError(502)' \
+    >"$scratch/assets.go"
+
+  self_fail() {
+    echo "self-test FAIL: $1" >&2
+    exit 1
+  }
+
+  got=$(count_matches "echo\.NewHTTPError" "$scratch/assets.go")
+  [ "$got" = 5 ] || self_fail "expected 5 matching lines, got $got"
+
+  got=$(count_raw_echo_httperrors "$scratch")
+  [ "$got" = 2 ] || self_fail "expected 2 counted lines (comments excluded), got $got"
+
+  got=$(count_matches "no\.such\.pattern" "$scratch/assets.go")
+  [ "$got" = 0 ] || self_fail "expected 0 matches, got $got"
+
+  status=0
+  count_matches x "$scratch/missing.go" >/dev/null 2>&1 || status=$?
+  [ "$status" = 2 ] || self_fail "expected exit 2 for an unreadable path, got $status"
+
+  echo "ratchet self-test ok"
+  exit 0
+fi
 
 # ── Baselines (auth/apperror raised 2026-09-08: PR #384 adds 3 auth-guarded
 #    avatar endpoints using the codebase-standard inline auth pattern) ────────
@@ -28,12 +97,12 @@ BASELINE_RESPONSE_TYPES=6     # non-httputil APIResponse/PaginatedResponse/Succe
 # message — dev-rule-go-apperror-only.
 BASELINE_ECHO_HTTPERROR=6
 
-auth_guards=$(grep -rn "if user == nil" --include="*.go" domain/ 2>/dev/null | grep -v "_test.go" | wc -l | tr -d ' ' || true)
-setters=$(grep -rn "func (s \*Service) Set[A-Z]\|func (h \*Handler) Set[A-Z]" --include="*.go" domain/ 2>/dev/null | grep -v "_test.go" | wc -l | tr -d ' ' || true)
-apperror_style_a=$(grep -rn "\.WithMessage\|\.WithInternal" --include="*.go" domain/ pkg/ 2>/dev/null | grep -v "_test.go" | wc -l | tr -d ' ' || true)
-response_types=$(grep -rn "type APIResponse\|type PaginatedResponse\|type SuccessResponse" --include="*.go" domain/ 2>/dev/null | grep -v "_test.go" | wc -l | tr -d ' ' || true)
+auth_guards=$(count_matches -rn "if user == nil" --include="*.go" --exclude="*_test.go" domain/)
+setters=$(count_matches -rn "func (s \*Service) Set[A-Z]\|func (h \*Handler) Set[A-Z]" --include="*.go" --exclude="*_test.go" domain/)
+apperror_style_a=$(count_matches -rn "\.WithMessage\|\.WithInternal" --include="*.go" --exclude="*_test.go" domain/ pkg/)
+response_types=$(count_matches -rn "type APIResponse\|type PaginatedResponse\|type SuccessResponse" --include="*.go" --exclude="*_test.go" domain/)
 # Full-line comments are excluded so documenting the rule does not trip it.
-echo_http_errors=$(grep -rn "echo\.NewHTTPError" --include="*.go" . 2>/dev/null | grep -v "_test.go" | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' | wc -l | tr -d ' ' || true)
+echo_http_errors=$(count_raw_echo_httperrors .)
 
 fail=0
 

@@ -14,9 +14,12 @@ import (
 )
 
 // TestDisabledBackendReturnsAppError pins the wire shape of the "tracing not
-// enabled" answer (#843). Before the conversion these routes returned a bare
-// echo.HTTPError, so the client got a string body with no error code; the
-// ratchet in scripts/lint-ratchet.sh now forbids that from coming back.
+// enabled" answer (#843). Before the conversion it was an echo.HTTPError carrying
+// only a fixed string: the shared handler derives a code from the status, and it
+// has no case for 503, so the client saw `internal_error` — the same code a Tempo
+// outage produced. The route now states its own code, and the ratchet in
+// scripts/lint-ratchet.sh forbids a non-test handler from constructing an
+// echo.HTTPError again.
 func TestDisabledBackendReturnsAppError(t *testing.T) {
 	h := tracing.NewHandler(&config.Config{}, nil)
 

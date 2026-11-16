@@ -39,7 +39,7 @@ func (h *Handler) UpdateEmailSettings(c echo.Context) error {
 		return apperror.NewBadRequest("invalid email settings payload")
 	}
 	if err := h.emailSettings.Validate(c.Request().Context(), in); err != nil {
-		return apperror.NewBadRequest(err.Error())
+		return err
 	}
 	if in.Enabled {
 		if h.zitadelEmail == nil {
@@ -63,7 +63,7 @@ func (h *Handler) UpdateEmailSettings(c echo.Context) error {
 		}
 	}
 	if _, err := h.emailSettings.Save(c.Request().Context(), in, user); err != nil {
-		return apperror.NewBadRequest(err.Error())
+		return err
 	}
 	view, err := h.emailSettings.View(c.Request().Context())
 	if err != nil {

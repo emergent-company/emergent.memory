@@ -1004,7 +1004,7 @@ func (r *Repository) Create(ctx context.Context, obj *GraphObject) error {
 		if err != nil {
 			return fmt.Errorf("begin create transaction: %w", err)
 		}
-		defer func() { _ = tx.Rollback() }() // no-op after a successful Commit
+		defer database.RollbackTx(r.log, tx) // no-op after a successful Commit
 		if err := r.insertGraphObject(ctx, tx.Tx, obj); err != nil {
 			return err
 		}

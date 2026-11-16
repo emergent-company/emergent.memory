@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -353,6 +354,25 @@ func (tx *SafeTx) Commit() error {
 		tx.committed = true
 	}
 	return err
+}
+
+// RollbackTx aborts tx and reports a rollback that genuinely failed.
+//
+// It replaces the deferred `_ = tx.Rollback()` every transaction site writes.
+// SafeTx.Rollback is a no-op after a successful commit, and sql.ErrTxDone means
+// the transaction is already gone — this call is then the ordinary deferred
+// rollback, or a repeat after an earlier explicit one. Any other error means the
+// transaction could not be aborted at all (dead connection, a session poisoned
+// by a failed statement) and must not disappear silently. The caller still
+// reports its own error to the client; this only logs.
+//
+// tx is the interface rather than *SafeTx so a site that rolls back a plain
+// bun.Tx (or a repository's BeginTx return) can share it. Callers defer it only
+// after a successful begin, so tx is never nil.
+func RollbackTx(log *slog.Logger, tx interface{ Rollback() error }) {
+	if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+		log.Warn("transaction rollback failed", slog.String("error", err.Error()))
+	}
 }
 
 // Rollback rolls back the transaction only if it hasn't been committed.

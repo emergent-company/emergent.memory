@@ -1184,10 +1184,12 @@ func (h *Handler) StreamChat(c echo.Context) error {
 	var fullResponse strings.Builder
 	var llmErr error
 	// writeErr records the first failed SSE write in the token loops. A failed
-	// write means the client is gone (reload, navigation, network drop). The
-	// generation is NOT abandoned: the assistant message is persisted below, so
-	// a reconnecting client must find the whole answer and not a half sentence.
-	// What stops is the streaming — there is nobody left to stream to.
+	// write means the client is gone (reload, navigation, network drop).
+	// Generation itself is bound to the request context, so the provider stream
+	// normally ends on the next token with a context error, llmErr is set, and
+	// the partial answer is not persisted. writeErr's job is narrower: stop
+	// attempting writes to a dead connection, and let the disconnect be logged
+	// as a disconnect rather than as a provider failure.
 	var writeErr error
 	if h.modelFactory != nil {
 		var llmModel adkmodel.LLM
@@ -1587,7 +1589,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 				slog.String("error", err.Error()),
 				slog.String("agent_definition_id", agentDefID),
 			)
-			_ = sseWriter.WriteData(sse.NewErrorEvent("Failed to create agent session: " + err.Error())) // best-effort: the request is already failing
+			_ = sseWriter.WriteData(sse.NewErrorEvent("Failed to create agent session: " + apperror.PublicMessage(err))) // best-effort: the request is already failing
 			return nil
 		}
 	}
@@ -3165,16 +3167,22 @@ const (
 // It exists because the previous implementation slept in the request goroutine
 // with `time.Sleep` and never looked at ctx: a client that disconnected held a
 // request goroutine (and one query every 2s) for up to two minutes, and a
-// shutdown could not interrupt it. The wait now races three events — the
-// request context, the single timeout timer, and the poll ticker — so a
-// disconnect returns immediately.
+// shutdown could not interrupt it. The wait now checks ctx before the first
+// query and then races three events — the request context, the single timeout
+// timer, and the poll ticker — so a disconnect costs at most one in-flight
+// GetByID rather than the rest of the budget.
 //
 // cancelled reports that the caller's context ended before the document reached
 // a terminal state, so the caller has nobody to answer. Every other outcome
-// (completed, failed, timed out, unreadable document) returns the last status
-// with cancelled=false: the caller decides what a missing conversion means for
-// the request, exactly as before.
+// returns the last status observed (empty when the document could not be read
+// at all) with cancelled=false: completed and failed are terminal, and a spent
+// budget or an unreadable document leaves the caller to decide what a missing
+// conversion means for the request, exactly as before.
 func (h *Handler) awaitConversion(ctx context.Context, projectID, documentID string) (status string, cancelled bool) {
+	if ctx.Err() != nil {
+		return "", true
+	}
+
 	timeout := time.NewTimer(conversionPollTimeout)
 	defer timeout.Stop()
 	ticker := time.NewTicker(conversionPollInterval)

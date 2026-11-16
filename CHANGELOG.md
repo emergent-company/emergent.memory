@@ -47,24 +47,35 @@
 
 ### Changed
 
-**Error bodies from six handler families now carry an error code** (2026-11-16)
+**Error bodies from six handler families now come from the apperror envelope** (2026-11-16)
 
 The model-config, tracing, devtools (`/coverage`, `/docs`), backups, `/debug`
-and platform-email handlers returned a bare `echo.HTTPError`, so their failures
-reached the client as a plain string with no `code` and, in the tracing
-passthrough, with upstream transport text verbatim. They now answer through the
-standard envelope (`{"error":{"code","message"}}`), with codes chosen per cause:
+and platform-email handlers built their failures with `echo.NewHTTPError`. Most
+passed a fixed string, but four sites put a cause on the wire or lost the code
+altogether: the Tempo passthrough relayed an upstream body and its status
+verbatim, an unreachable Tempo produced a 502 whose message named the URL and
+the DNS/TLS state, a Zitadel SMTP failure produced a 502 with the provider's
+result text, and the two "tracing not enabled" answers were a 503 that the shared
+handler could only label `internal_error` — indistinguishable from a Tempo
+outage. They now construct `*apperror.Error` with a code chosen per cause and a
+message written for the client, keeping the underlying error for logging:
 `invalid_project_id`, `invalid_request_body`, `invalid_path`,
-`invalid_retention`, `backup_not_ready`, `forbidden`, `not_found`, and
-`tracing_disabled`. Statuses are unchanged except:
+`invalid_retention`, `backup_not_ready`, `forbidden`, `not_found`,
+`tracing_disabled`, `tempo_query_error` and `service_unavailable`. Statuses are
+unchanged except:
 
-- a Tempo backend fault (upstream 5xx, or an unreachable Tempo) is reported as
-  `503 service_unavailable` instead of being relayed with Tempo's own status —
-  and `502` for the transport case — so a trace store that is down no longer
-  looks like a Memory-server fault or a bad credential. `memory traces` reads
-  the error code to report the right cause.
+- a trace-store fault is reported as `503 service_unavailable` instead of being
+  relayed with Tempo's own status or body: upstream 5xx, an unreachable Tempo, a
+  Tempo `401`/`403` (its credentials are the server's, not the caller's), and a
+  `408`/`429` (retryable) all answer 503, so a trace store that is down no
+  longer looks like a Memory-server fault or a bad credential. `memory traces`
+  reads the error code to report the right cause.
+- a Tempo `404` is this API's `not_found`, and a rejected TraceQL query
+  (`400`/`409`/`422`) keeps its status with Tempo's diagnostic under
+  `tempo_query_error` (capped at 512 runes).
 - the production `/debug` 404 body reads "Resource not found" instead of
-  "Not found".
+  "Not found", and the `/docs` asset route now rejects a path-traversal attempt
+  with `403 forbidden` instead of serving it or answering 404.
 
 ### BREAKING CHANGES
 

@@ -297,6 +297,9 @@ func (h *Handler) ImportBackup(c echo.Context) error {
 	backup, err := h.service.ImportBackup(c.Request().Context(), orgID, user.ID, data, retentionDays)
 	if err != nil {
 		if errors.Is(err, ErrInvalidArchive) {
+			// err.Error() is safe to relay: the chain is the ErrInvalidArchive
+			// sentinel plus archive-structure detail ("not a valid zip file",
+			// "manifest checksum mismatch"), never a store or upstream cause.
 			return apperror.NewBadRequest(err.Error())
 		}
 		h.log.Error("failed to import backup",
