@@ -1,0 +1,146 @@
+---
+title: "Self-hosted"
+description: Install Memory on infrastructure you control, then create a project, install a blueprint, and connect a client.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import Screenshot from '../../../../components/Screenshot.astro';
+import ConnectOptions from '../../../../components/ConnectOptions.astro';
+
+This is the short path to a running instance. The figures come from a real
+Railway installation; every screen the installer shows is explained step by step
+in [Deploy on Railway](/emergent.memory/tutorials/deploy-to-railway/).
+
+## Before you start
+
+- An account on one of the supported targets — **Railway**, **Docker**, **Google
+  Cloud** or **AWS**. Railway is the fastest; Docker and the two clouds run from
+  a downloadable bundle.
+- Capacity for the five services and one bucket the template creates.
+- A domain if this is going to be a production install. Railway hands out a
+  hostname per service; a domain install puts the UI on `app.<domain>` and the
+  API on `api.<domain>`.
+
+<Aside type="note" title="No AI provider key yet">
+
+The installer provisions the platform, not a model. AI features are configured
+per project, after you are signed in.
+
+</Aside>
+
+## 1. Choose a target
+
+Open the [Memory installer](https://deploy.memory.emergent-company.ai) and choose
+where Memory should run.
+
+<Screenshot src="/emergent.memory/assets/tutorials/railway/01-choose-target.webp" alt="Choose Railway" width={752} height={555} />
+
+## 2. Authorize the installer
+
+Click **deploy** and approve the request. On Railway the installer needs
+`workspace:admin` so it can create the project, the services and the bucket; the
+consent screen is where you grant it, and you can revoke it later in Railway
+account settings.
+
+<Screenshot src="/emergent.memory/assets/tutorials/railway/02-authorize-railway.webp" alt="Authorize the Memory installer" width={450} height={658} />
+
+## 3. Choose a workspace and an admin email
+
+The **Admin email** becomes the first platform superadmin. It defaults to the
+account you are signed in with and can be changed — use an address you actually
+receive mail at, because it is how you will sign in.
+
+If email delivery is not configured yet, leave **Skip email for now** checked
+and add SMTP later from **Settings → Platform email**. Until then, Zitadel
+verification, password reset and 2FA emails, and Memory invitations are
+unavailable.
+
+<Screenshot src="/emergent.memory/assets/tutorials/railway/03-workspace-admin-email.webp" alt="Workspace and admin email" width={707} height={454} />
+
+Click **deploy** and the installer does the rest: it creates the project, deploys
+the published template, and bootstraps the identity provider. It takes about
+fifteen to twenty minutes, mostly waiting, and the page polls its own progress —
+you can leave it open.
+
+<Screenshot src="/emergent.memory/assets/tutorials/railway/07-install-complete.webp" alt="Install complete, with a link to open Memory" width={752} height={591} />
+
+## 4. Sign in as the first admin
+
+**Open Memory** takes you to the instance. The installer printed a temporary
+password once, on the success card — if you copied it, sign in now.
+
+<Screenshot src="/emergent.memory/assets/tutorials/railway/08-memory-signin.webp" alt="Memory sign-in" width={392} height={293} />
+
+The sign-in runs through the bundled Zitadel, so you will be asked for the admin
+address and the temporary password, then walked through two things that exist
+only for the first account:
+
+- **2-Factor Setup** — enroll an authenticator or skip it for now. Skipping is
+  allowed, and you can enroll later from your profile.
+- **A forced password change** — set a real password. The temporary one from the
+  installer stops working here.
+
+<Screenshot src="/emergent.memory/assets/tutorials/railway/12-first-password-change.webp" alt="Change the temporary password" width={440} height={613} />
+
+You land on the projects page, as a superadmin of an instance that is now yours.
+
+<Screenshot src="/emergent.memory/assets/tutorials/railway/13-memory-projects.webp" alt="Memory projects page" width={1600} height={900} />
+
+## 5. Create your first project
+
+A project is the workspace everything else lives in: graph objects, documents,
+chat sessions, agents, branches. It belongs to an organization, and you can be a
+member of several.
+
+1. Select **New project**.
+2. Give it a name and, optionally, a **purpose** — one sentence describing what
+   knowledge it holds. The purpose is passed to AI features as context, so a
+   real sentence beats a label.
+3. Leave **automatic extraction** on if you want every uploaded document mined
+   for objects and relationships. Each upload can override it.
+
+## 6. Install a blueprint
+
+An empty project has no object types, so the first thing to add is a domain
+model. Do not build it by hand — install a blueprint, which bundles object and
+relationship types, agent definitions, skills and seed data, and applies them in
+one action.
+
+1. Open the project and go to **Blueprints**.
+2. Pick one from the registry. `task-board` is a good first install: a
+   board-enabled `Task` type, a task-worker agent with its workflow skill, and
+   one example task.
+3. Select **Install**. The blueprint's types appear in the schema, its seed
+   objects land in the graph, and the badge on the blueprint row reads
+   **Installed**.
+
+Everything a blueprint created is owned by that blueprint, so **Uninstall**
+removes exactly what it added and leaves the rest of the project alone. Built-in
+blueprints are immutable — fork one with **New version** to change it.
+
+## 7. Connect a client
+
+You now have a project with a working model. Three ways in, same credentials, and
+you only need one of them.
+
+<ConnectOptions api="https://api.<your-domain>" app="https://app.<your-domain>" />
+
+<Aside type="note" title="Use the hostnames your install actually has">
+
+A Railway deployment serves the UI and the API on two generated hostnames
+(`<service>-production-<id>.up.railway.app`); a domain-based install uses
+`app.<domain>` and `api.<domain>`. Read the values off **Settings → Platform**
+rather than assuming.
+
+</Aside>
+
+## What's next
+
+- [Knowledge Graph](/emergent.memory/user-guide/knowledge-graph/) — objects,
+  relationships, search and traversal.
+- [Agents](/emergent.memory/user-guide/agents/) — scheduled and event-driven
+  work over the graph.
+- [Data Sources](/emergent.memory/user-guide/datasources/) — pull external
+  systems in and keep them in sync.
+- [Deploy on Railway](/emergent.memory/tutorials/deploy-to-railway/) — the same
+  install, with every screen and every prerequisite spelled out.

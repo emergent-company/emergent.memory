@@ -1,0 +1,136 @@
+---
+/**
+ * ConnectOptions — the three ways into a project, in one place.
+ *
+ * Both Getting Started detail pages end the same way: a project with a
+ * blueprint installed, and a choice of MCP share, CLI or REST API. They differ
+ * only in the hostnames, so the commands live here once and take the instance
+ * as a prop — a copy per page is two sets of commands that drift.
+ *
+ * This is an Astro component, not MDX, so the prose is HTML: backtick fences
+ * and `-` lists are not parsed here, and inline code has to be <code>.
+ *
+ * The `Code` component is astro-expressive-code's, which is what Starlight
+ * renders fenced markdown with, so a snippet here is styled by the same theme
+ * slots as a snippet in a converted page.
+ */
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+import { Code } from 'astro-expressive-code/components';
+
+interface Props {
+  /** API base URL, e.g. `https://api.memory.example.com`. */
+  api: string;
+  /** Where the UI is served, e.g. `https://app.memory.example.com`. */
+  app: string;
+  /** Hosted instance: drop the self-hosted asides. */
+  cloud?: boolean;
+}
+
+const { api, app, cloud = false } = Astro.props;
+const apiHost = api.replace(/^https?:\/\//, '').replace(/\/$/, '');
+const appHost = app.replace(/^https?:\/\//, '').replace(/\/$/, '');
+
+const mcpConfig = `{
+  "mcpServers": {
+    "memory": {
+      "type": "http",
+      "url": "https://${apiHost}/api/mcp",
+      "headers": {
+        "X-Project-ID": "<project-id>",
+        "X-API-Key": "<scoped-token>"
+      }
+    }
+  }
+}`;
+
+const cliCommands = `# 1. install the CLI (adds ~/.memory/bin to PATH)
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/install-cli.sh | bash
+
+# 2. sign in to this instance — the browser opens, the session is saved
+memory login --server https://${apiHost}
+
+# 3. check what the CLI can see, then ask the graph a question
+memory projects list
+memory query "what have we decided about pricing?"`;
+
+const restCommands = `# the token is shown once, at creation — keep it in an environment variable
+export MEMORY_TOKEN=emt_...
+export MEMORY_PROJECT=<project-id>
+
+curl -s https://${apiHost}/api/blueprints \\
+  -H "Authorization: Bearer $MEMORY_TOKEN" \\
+  -H "X-Project-ID: $MEMORY_PROJECT"`;
+---
+
+<p>
+  Every option authenticates as the same project and reaches the same graph, so
+  pick the one that fits where the client runs: an MCP client reads and writes
+  the graph as tools, the CLI is for a terminal or a script, and the REST API is
+  for anything else.
+</p>
+
+<Tabs>
+  <TabItem label="MCP share">
+    <p>
+      Memory is itself an MCP server, so an AI client — Claude, Cursor, OpenCode —
+      reads the graph directly, as tools, with no code in between.
+    </p>
+    <ol>
+      <li>
+        Open the project in Memory (<code>{appHost}</code>) and go to <strong>MCP Sharing</strong>.
+      </li>
+      <li>
+        Select <strong>Create a share</strong>, name the recipient and choose
+        read-only or read-write. Memory mints a token scoped to that share.
+      </li>
+      <li>
+        Copy the install link or the JSON config the dialog shows. The link is
+        private — it carries the token.
+      </li>
+      <li>
+        Paste the config into the client's MCP settings and restart it. The
+        client lists the <code>memory_*</code> tools and can search the graph.
+      </li>
+    </ol>
+
+    <Code code={mcpConfig} lang="json" title="Claude Desktop — claude_desktop_config.json" />
+
+    <Aside type="note">
+      A read-only share is also one command away:
+      <code>memory projects share-mcp --project &lt;name&gt; --name "Alice read-only"</code>
+      mints the token and prints the same snippets for Claude Desktop, Cursor and
+      OpenCode.
+    </Aside>
+  </TabItem>
+
+  <TabItem label="CLI">
+    <Code code={cliCommands} lang="bash" />
+
+    <p>
+      <code>memory login</code> opens the browser and stores an OAuth session,
+      which is the right choice when one sign-in should cover several projects.
+      For CI, skip the browser with <code>memory set-token &lt;token&gt;</code> or
+      a <code>MEMORY_PROJECT_TOKEN</code> environment variable — the
+      <a href="/emergent.memory/developer-guide/cli-reference/">CLI reference</a>
+      has the full credential resolution order.
+    </p>
+  </TabItem>
+
+  <TabItem label="REST API">
+    <p>
+      Mint a token in <strong>Project settings → API tokens → Create token</strong>,
+      or from the CLI with
+      <code>memory projects create-token --project &lt;name&gt;</code>. The token
+      is scoped to the project and shown once.
+    </p>
+
+    <Code code={restCommands} lang="bash" />
+
+    <p>
+      Send <code>X-Project-ID</code> on every project-scoped call;
+      <code>Authorization: Bearer</code> and <code>X-API-Key</code> are both
+      accepted. The same credentials reach the MCP endpoint at
+      <code>https://{apiHost}/api/mcp</code>.
+    </p>
+  </TabItem>
+</Tabs>

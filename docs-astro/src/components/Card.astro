@@ -52,5 +52,15 @@ const { title, icon } = Astro.props;
   .body {
     margin: 0;
     font-size: clamp(var(--sl-text-sm), calc(0.5rem + 1vw), var(--sl-text-body));
+    /* A card's call to action sits on the card's floor, not under the text:
+       two cards side by side rarely have the same amount of prose, and a row
+       of buttons at two different heights reads as a broken grid. */
+    display: flex;
+    flex-direction: column;
+  }
+
+  .body > :global(.sl-link-button) {
+    margin-top: auto;
+    align-self: flex-start;
   }
 </style>

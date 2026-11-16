@@ -1,0 +1,73 @@
+---
+title: "Memory Cloud"
+description: Start on the Memory instance we run — sign in, your first project, a blueprint, and a client connected.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import ConnectOptions from '../../../../components/ConnectOptions.astro';
+
+Memory Cloud is the same platform as a self-hosted install, run and upgraded by
+us. There is nothing to install and nothing to bootstrap: sign in, and the next
+three steps are a project, a blueprint and a client.
+
+## 1. Sign in
+
+Open [app.memory.emergent-company.ai](https://app.memory.emergent-company.ai)
+and select **Continue with your Memory account**. Sign-in goes through our
+identity provider, so it is one account across the UI, the CLI and the API.
+
+<Aside type="note" title="Accounts are issued by invitation">
+
+There is no self-service sign-up — an account is created for you when your
+organization is onboarded. If you cannot sign in, ask an `org_admin` of your
+organization to invite you.
+
+</Aside>
+
+## 2. Open a project
+
+A project is the workspace everything else lives in: graph objects, documents,
+chat sessions, agents, branches. Your organization may already have projects, in
+which case they are listed for you.
+
+If it does not, select **New project**, give it a name and — optionally — a
+**purpose**: one sentence describing what knowledge it holds. The purpose is
+passed to AI features as context, so a real sentence beats a label.
+
+## 3. Install a blueprint
+
+An empty project has no object types, so the first thing to add is a domain
+model. Install a blueprint rather than building one by hand: it bundles object
+and relationship types, agent definitions, skills and seed data and applies them
+in one action.
+
+1. Open the project and go to **Blueprints**.
+2. Pick one from the registry. `task-board` is a good first install: a
+   board-enabled `Task` type, a task-worker agent with its workflow skill, and
+   one example task.
+3. Select **Install**. The blueprint's types appear in the schema, its seed
+   objects land in the graph, and the badge on the blueprint row reads
+   **Installed**.
+
+Everything a blueprint created is owned by that blueprint, so **Uninstall**
+removes exactly what it added. Built-in blueprints are immutable — fork one with
+**New version** to change it.
+
+## 4. Connect a client
+
+You now have a project with a working model. Three ways in, same credentials, and
+you only need one of them.
+
+<ConnectOptions api="https://api.memory.emergent-company.ai" app="https://app.memory.emergent-company.ai" cloud />
+
+## What's next
+
+- [Knowledge Graph](/emergent.memory/user-guide/knowledge-graph/) — objects,
+  relationships, search and traversal.
+- [Agents](/emergent.memory/user-guide/agents/) — scheduled and event-driven
+  work over the graph.
+- [Data Sources](/emergent.memory/user-guide/datasources/) — pull external
+  systems in and keep them in sync.
+- [Self-hosted](/emergent.memory/user-guide/getting-started/self-hosted/) — the
+  same platform on infrastructure you control, for data residency or a private
+  network.
