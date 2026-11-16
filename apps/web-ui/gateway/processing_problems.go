@@ -711,6 +711,18 @@ func extractionJobStatusIntent(status string, deadLettered bool) ui.BadgeIntent 
 // already names the caller's scope, and mirrors that target into HX-Redirect
 // for the boosted forms.
 //
+// The wire shape matters: an htmx request must get 200 + HX-Redirect, never
+// 303 + HX-Redirect. htmx issues its requests through window.fetch without a
+// redirect option, so the browser follows a 303 transparently and JS only ever
+// sees the final response — the HX-Redirect on the intermediate 303 is
+// discarded. What arrives is a 200 whose body is the followed page, still
+// requested with HX-Request: true, which htmx swaps into the boosted target
+// (#main-content) instead of navigating: the shell chrome (sidebar badges, the
+// budget badge, the documents problem count) keeps its pre-mutation value until
+// a full page load (#828, same class as #2479). redirectAfterMutation is the
+// primitive that answers 200 + HX-Redirect, and scopeLocation scopes either
+// shape through Response.Before.
+//
 // scopeLocation scopes a handler's Location/HX-Redirect before the response
 // commits: it registers the rewrite with Response.Before, which runs inside
 // WriteHeader ahead of the writer (#2479 — mutating the map after the handler
@@ -729,11 +741,10 @@ func extractionJobStatusIntent(status string, deadLettered bool) ui.BadgeIntent 
 // session's active project for a target the hard cut would otherwise 404).
 
 func (s *Server) redirectScoped(c echo.Context, path string) error {
-	target := s.prgScoped(c, path)
-	if c.Request().Header.Get("HX-Request") == "true" {
-		c.Response().Header().Set("HX-Redirect", target)
-	}
-	return c.Redirect(http.StatusSeeOther, target)
+	// redirectAfterMutation commits through echo's Response (not its raw
+	// Writer), so scopeLocation's Response.Before rewrite still runs.
+	redirectAfterMutation(c, s.prgScoped(c, path))
+	return nil
 }
 
 // redirectScopedError is redirectScoped carrying the ?err= flash the gateway's
