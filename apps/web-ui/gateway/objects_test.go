@@ -1636,6 +1636,7 @@ func TestGraphObjectLabel(t *testing.T) {
 		{"name wins", GraphObject{ID: "o1", Type: "person", Name: "Sam Lee", Key: "sam-lee"}, "Sam Lee"},
 		{"human key fallback", GraphObject{ID: "o1", Type: "person", Key: "sam-lee"}, "sam-lee"},
 		{"machine key is not a title", GraphObject{ID: "abcdef123456", Type: "task", Key: "task-9f1c0a2e3b4d"}, "task abcdef1234"},
+		{"minted slug key is not a title", GraphObject{ID: "abcdef123456", Type: "task", Key: "fix-login-redirect-loop-9f1c0a2e3b4d"}, "task abcdef1234"},
 		{"type+short id fallback", GraphObject{ID: "abcdef123456", Type: "task"}, "task abcdef1234"},
 		{"short id only", GraphObject{ID: "o1"}, "o1"},
 		// Type-specific properties must never become the label.
