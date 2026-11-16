@@ -170,3 +170,10 @@ func IsTokenNameExists(err error) bool {
 	return errors.As(err, &apiErr) &&
 		apiErr.StatusCode == 409 && apiErr.Code == "token_name_exists"
 }
+
+// IsUnauthorized reports whether err is a 401 from the API. The SDK error is
+// wrapped by this package, so callers must unwrap rather than type-assert.
+func IsUnauthorized(err error) bool {
+	var apiErr *sdkerrors.Error
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusUnauthorized
+}

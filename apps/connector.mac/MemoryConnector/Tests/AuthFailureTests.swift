@@ -31,6 +31,24 @@ struct AuthFailureTests {
         #expect(AuthFailure.looksLikeAuthFailure(OIDCError.notSignedIn))
     }
 
+    @Test func invalidGrantIsAuthFailure() {
+        // A rejected refresh is the one refresh error that no retry can fix:
+        // the provider has invalidated the refresh token itself.
+        #expect(AuthFailure.looksLikeAuthFailure(
+            ConnectorCLIError.commandFailed(command: "auth access-token", exitCode: 1,
+                                            message: "refresh failed: invalid_grant - refresh token is invalid")
+        ))
+    }
+
+    @Test func transientRefreshFailureIsNotAuthFailure() {
+        // Transport/status failures leave the stored refresh token usable, so
+        // they must not sign the account out.
+        #expect(!AuthFailure.looksLikeAuthFailure(
+            ConnectorCLIError.commandFailed(command: "auth access-token", exitCode: 1,
+                                            message: "refresh failed with status 503")
+        ))
+    }
+
     @Test func nonAuthMessageIsNotAuthFailure() {
         #expect(!AuthFailure.looksLikeAuthFailure(
             ConnectorCLIError.commandFailed(command: "projects list", exitCode: 1, message: "boom")

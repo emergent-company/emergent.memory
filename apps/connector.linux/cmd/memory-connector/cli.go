@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -190,7 +191,13 @@ Use 'memory-connector auth <subcommand> --help' for details.`,
 			configFlags(cmd)
 			cmd.Flags().String("login-id", "", "login id returned by 'auth start'")
 		}, runAuthCancel),
-		leaf("access-token", "print the stored account's access token", "Print the stored account's OAuth access token, refreshing it first when expired or within 60 seconds of expiry. Never reads or prints the refresh token.", authJSONFlags, runAuthAccessToken),
+		leaf("access-token", "print the stored account's access token", "Print the stored account's OAuth access token, refreshing it first when expired or within five minutes of expiry. Never reads or prints the refresh token.", authJSONFlags, runAuthAccessToken),
+		leaf("refresh", "renew the stored session's access token", "Renew the stored account's access token when it is within --min-ttl of expiry (default 5m), serialized across processes so concurrent refreshes cannot race a single-use refresh token. Reports whether a refresh happened and when the token now expires.", func(cmd *cobra.Command) {
+			configFlags(cmd)
+			cmd.Flags().String("server", "", "server URL (defaults to config server_url or the active account)")
+			cmd.Flags().Duration("min-ttl", 5*time.Minute, "refresh when the access token expires within this duration")
+			cmd.Flags().Bool("json", false, "emit machine-readable JSON")
+		}, runAuthRefresh),
 		leaf("import", "store a session piped on stdin", "Read a single session JSON object from stdin and store it. It is the migration path for clients (such as the macOS app) that can read sessions the CLI cannot.", func(cmd *cobra.Command) {
 			configFlags(cmd)
 			cmd.Flags().String("server", "", "Memory server URL (required)")

@@ -56,12 +56,20 @@ final class AccountStore {
 
     private(set) var accounts: [Account] = []
     private(set) var activeAccountID: String?
-    /// Effective signed-in state: an account is active AND the connector CLI
-    /// holds a valid session for it. The non-secret index (`accounts.json`)
-    /// can outlive the CLI session, so this is deliberately NOT derived from
-    /// `activeAccountID != nil`. Reconciled on bootstrap, sign-in, switch, and
-    /// sign-out (and by `ensureConnectorSession`).
-    private(set) var isEffectivelySignedIn = false
+    /// The connector CLI session state for the active account. This
+    /// deliberately distinguishes "cannot reach the CLI right now" (`offline`)
+    /// from "the provider rejected the session" (`needsReauth`): the first must
+    /// never sign the user out. Reconciled on bootstrap, sign-in, switch,
+    /// sign-out, and every token read.
+    private(set) var sessionState: ConnectorSessionState = .unknown
+    /// Effective signed-in state: an account is active AND its session is not
+    /// known to be dead. The non-secret index (`accounts.json`) can outlive the
+    /// CLI session, so this is deliberately NOT derived from
+    /// `activeAccountID != nil` alone.
+    var isEffectivelySignedIn: Bool {
+        sessionState.keepsSignedIn && activeAccountID != nil
+    }
+
     /// Per-account connector CLI session validity, keyed by account id. Absent
     /// until the account's session has been checked at least once.
     private(set) var sessionValid: [String: Bool] = [:]
@@ -107,6 +115,28 @@ final class AccountStore {
     var connectorCLI: ConnectorCLI = .init()
     /// `--config` path passed to the connector CLI.
     var configPath: String = EngineManager.defaultConfigPath
+
+    // MARK: - Access token cache
+
+    /// A token returned by the CLI plus its expiry, kept in memory only.
+    private struct CachedToken: Sendable {
+        let accessToken: String
+        let expiresAt: Date
+    }
+
+    /// Last token read per account. Every read spawns a `memory-connector`
+    /// process, and one launch reads a token several times (dashboard, engine
+    /// config, project list, org names), so a short cache removes a burst of
+    /// process spawns.
+    private var tokenCache: [String: CachedToken] = [:]
+    /// In-flight token reads per account: concurrent callers await the same
+    /// task instead of racing their own copy.
+    private var tokenTasks: [String: Task<String, Error>] = [:]
+
+    /// A cached token is reused only while it keeps at least this much life: a
+    /// token that expires inside the floor is renewed rather than handed to an
+    /// API call that would fail moments later.
+    nonisolated static let tokenCacheFloor: TimeInterval = 60
 
     // MARK: - Init
 
@@ -253,7 +283,8 @@ final class AccountStore {
             }
             // The CLI just completed sign-in, so the session is valid now.
             sessionValid[accountID] = true
-            isEffectivelySignedIn = true
+            tokenCache[accountID] = nil
+            setSessionState(.valid)
             // The CLI status carries only the email; fill in a display name and
             // avatar from the API in the background (idempotent; a no-op when
             // the account already carries identity).
@@ -268,8 +299,8 @@ final class AccountStore {
 
     // MARK: - Connector CLI session bridge
 
-    /// Recomputes `isEffectivelySignedIn` from the connector CLI's session for
-    /// the active account. Call on bootstrap, sign-in, and account switch.
+    /// Recomputes the effective signed-in state from the connector CLI's session
+    /// for the active account. Call on bootstrap, sign-in, and account switch.
     /// Returns the reconciled value.
     @discardableResult
     func reconcileEffectiveSignedInState() async -> Bool {
@@ -277,26 +308,107 @@ final class AccountStore {
     }
 
     /// Re-asserts the connector CLI session for the active account, updating
-    /// `isEffectivelySignedIn` / `sessionValid` as a side effect. When the CLI
-    /// reports no valid session (the "app thinks signed in, CLI signed out"
-    /// wedge), it makes one best-effort attempt to import the app's session,
-    /// then re-checks. Returns true when the CLI ends signed in.
+    /// `sessionState` / `sessionValid` as a side effect.
+    ///
+    /// The order matters. A stored session whose access token has expired is
+    /// **renewed before anything is reported to the UI**, so a launch after a
+    /// long sleep (expired access token, perfectly good refresh token) comes
+    /// back signed in silently. Only a rejection from the provider, or a
+    /// genuinely absent session, ends in `.needsReauth`; an unreachable CLI ends
+    /// in `.offline`, which keeps the signed-in chrome — that is a retry, not a
+    /// sign-out.
+    ///
+    /// When the CLI reports no session at all (the historical "app thinks
+    /// signed in, CLI signed out" wedge), it still makes one best-effort import
+    /// and re-checks. Returns true when the CLI ends signed in.
     @discardableResult
     func ensureConnectorSession() async -> Bool {
         guard let account = activeAccount, let environment = account.environment else {
-            isEffectivelySignedIn = false
+            setSessionState(.unknown)
             return false
         }
-        if await connectorIsSignedIn(environment: environment) {
+        setSessionState(.refreshing)
+
+        guard let status = try? await connectorCLI.authStatus(serverURL: environment.serverURLString,
+                                                              configPath: configPath)
+        else {
+            // The CLI itself is unreachable (missing binary, killed process,
+            // timeout). The stored session is untouched — keep the chrome and
+            // let the next check decide.
+            setSessionState(.offline)
+            return false
+        }
+
+        if status.needsReauth == true {
+            markNeedsReauth(account.id)
+            return false
+        }
+
+        if status.signedIn {
+            if status.expired == true, status.canRefresh == true {
+                switch await renewSession(environment: environment, accountID: account.id) {
+                case .renewed:
+                    break
+                case .transient:
+                    // Stay signed in: the stored refresh token is still there,
+                    // the next attempt may well work.
+                    sessionValid[account.id] = true
+                    setSessionState(.offline)
+                    return false
+                case .rejected:
+                    return false
+                }
+            }
+            // The CLI reports the session as usable, so any stale re-auth mark
+            // on this account is out of date.
+            needsReauth.remove(account.id)
             sessionValid[account.id] = true
-            isEffectivelySignedIn = true
+            setSessionState(.valid)
             return true
         }
+
         _ = await importSessionToConnectorCLI(environment: environment, email: account.email)
         let valid = await connectorIsSignedIn(environment: environment)
         sessionValid[account.id] = valid
-        isEffectivelySignedIn = valid
+        if valid {
+            needsReauth.remove(account.id)
+            setSessionState(.valid)
+        } else {
+            markNeedsReauth(account.id)
+        }
         return valid
+    }
+
+    /// Outcome of a renewal attempt: only `.rejected` means the session is dead.
+    private enum RenewalOutcome {
+        case renewed
+        case transient
+        case rejected
+    }
+
+    /// Renews the stored session and reports what happened. The CLI keeps the
+    /// session (and marks it `needs_reauth`) when the provider rejects the
+    /// refresh token, so a failure is disambiguated by asking for the status
+    /// rather than by matching error text.
+    private func renewSession(environment: Environment, accountID: String) async -> RenewalOutcome {
+        do {
+            let refresh = try await connectorCLI.authRefresh(serverURL: environment.serverURLString,
+                                                             configPath: configPath)
+            if refresh.needsReauth == true {
+                markNeedsReauth(accountID)
+                return .rejected
+            }
+            // The CLI renewed it; drop any cached token so the next read takes
+            // the fresh one.
+            tokenCache[accountID] = nil
+            return .renewed
+        } catch {
+            if await isAuthRejection(error: error, environment: environment) {
+                markNeedsReauth(accountID)
+                return .rejected
+            }
+            return .transient
+        }
     }
 
     /// Marks the active account's session as no longer valid. Used by the app
@@ -305,11 +417,29 @@ final class AccountStore {
     /// and never disagrees with the project/identity surfaces.
     func markActiveSessionInvalid() {
         guard let activeAccountID else {
-            isEffectivelySignedIn = false
+            setSessionState(.unknown)
             return
         }
-        sessionValid[activeAccountID] = false
-        isEffectivelySignedIn = false
+        markNeedsReauth(activeAccountID)
+    }
+
+    /// Records that `accountID` needs a new sign-in, and reflects it in the
+    /// session state when that account is the active one.
+    private func markNeedsReauth(_ accountID: String) {
+        needsReauth.insert(accountID)
+        sessionValid[accountID] = false
+        tokenCache[accountID] = nil
+        if accountID == activeAccountID {
+            setSessionState(.needsReauth)
+        }
+    }
+
+    /// Updates `sessionState`, logging transitions only (a poll loop that keeps
+    /// reporting the same state must not fill the log).
+    private func setSessionState(_ state: ConnectorSessionState) {
+        guard sessionState != state else { return }
+        ConnectorLog.lifecycle("sessionState \(sessionState.rawValue) -> \(state.rawValue)")
+        sessionState = state
     }
 
     /// True when the connector CLI reports a valid session for `environment`.
@@ -395,8 +525,10 @@ final class AccountStore {
         ConnectorLog.lifecycle("activeAccountDidChange source=switchTo account=\(account.id)")
         activeAccountDidChange(account)
         // The CLI validated this account's session above.
+        needsReauth.remove(accountID)
         sessionValid[accountID] = true
-        isEffectivelySignedIn = true
+        tokenCache[accountID] = nil
+        setSessionState(.valid)
         // Restore/activate: enrich a stale index entry in the background.
         Task { await refreshIdentity(for: accountID) }
     }
@@ -422,6 +554,9 @@ final class AccountStore {
         identities[accountID] = nil
         needsReauth.remove(accountID)
         sessionValid[accountID] = nil
+        tokenCache[accountID] = nil
+        tokenTasks[accountID]?.cancel()
+        tokenTasks[accountID] = nil
         // A stale failed-sign-in message must not linger on the Connection /
         // About surfaces after this account is removed.
         lastError = nil
@@ -455,21 +590,37 @@ final class AccountStore {
     }
 
     /// A usable (refreshed if needed) access token for one account, obtained
-    /// from the connector CLI (`auth access-token`, which refreshes server-side
-    /// when near expiry). On failure only this account is marked as needing
-    /// re-auth (`needsReauth`), never the others.
+    /// from the connector CLI (`auth access-token`, which renews a token near
+    /// expiry — and serializes that renewal across processes).
     ///
-    /// An auth/session failure (the CLI has no valid session) is mapped to
-    /// `OIDCError.notSignedIn` so callers can tell an expected "no session"
-    /// condition from a genuine error; anything else keeps the existing
-    /// `oidcError(from:)` mapping.
+    /// Two things keep a burst of reads cheap: a short-lived cache of the last
+    /// token (each read is a process spawn) and single-flight coalescing, so
+    /// concurrent callers for one account share a single CLI invocation.
     ///
-    /// Note: `needsReauthentication` stays a synchronous set updated here (and
-    /// by `signIn`/`signOut`); querying the CLI is async, so a fully derived
-    /// value would break the existing synchronous signature used by the UI.
+    /// Failure classification is the point of `ConnectorSessionState`: only an
+    /// auth rejection marks the account as needing re-auth (and is mapped to
+    /// `OIDCError.notSignedIn` so callers can offer a sign-in affordance). A
+    /// transient failure — CLI unreachable, timeout, sandbox denial — surfaces
+    /// the error but leaves the account signed in, because signing the user out
+    /// for a network blip is what made the connector feel like it forgot them.
     func currentAccessToken(for accountID: String) async throws -> String {
+        if let cached = tokenCache[accountID], Self.tokenIsUsable(cached) {
+            return cached.accessToken
+        }
+        if let inFlight = tokenTasks[accountID] {
+            return try await inFlight.value
+        }
+        let task = Task { try await self.fetchAccessToken(for: accountID) }
+        tokenTasks[accountID] = task
+        defer { tokenTasks[accountID] = nil }
+        return try await task.value
+    }
+
+    /// The uncached token read. Callers must go through
+    /// `currentAccessToken(for:)` so the single-flight coalescing applies.
+    private func fetchAccessToken(for accountID: String) async throws -> String {
         guard let environment = account(id: accountID)?.environment else {
-            needsReauth.insert(accountID)
+            markNeedsReauth(accountID)
             throw AccountStoreError.unknownAccount(accountID)
         }
         do {
@@ -477,21 +628,62 @@ final class AccountStore {
                                                                configPath: configPath)
             needsReauth.remove(accountID)
             sessionValid[accountID] = true
+            if let expiresAt = Self.parseExpiry(token.expiresAt) {
+                tokenCache[accountID] = CachedToken(accessToken: token.accessToken, expiresAt: expiresAt)
+            }
             if accountID == activeAccountID {
-                isEffectivelySignedIn = true
+                setSessionState(.valid)
             }
             return token.accessToken
         } catch {
-            needsReauth.insert(accountID)
-            sessionValid[accountID] = false
-            if accountID == activeAccountID {
-                isEffectivelySignedIn = false
-            }
-            if AuthFailure.looksLikeAuthFailure(error) {
+            tokenCache[accountID] = nil
+            if await isAuthRejection(error: error, environment: environment) {
+                markNeedsReauth(accountID)
                 throw OIDCError.notSignedIn
+            }
+            if accountID == activeAccountID {
+                setSessionState(.offline)
             }
             throw Self.oidcError(from: error)
         }
+    }
+
+    /// True when a token-read failure means the session is genuinely dead rather
+    /// than temporarily unreachable.
+    ///
+    /// The CLI's own message is the first signal (`not signed in`, an OAuth
+    /// code), but it does not always carry one: a rejected refresh surfaces as
+    /// "refresh failed with status 400" while the CLI has already recorded
+    /// `needs_reauth` on the stored session. Asking the status is therefore the
+    /// authority, and it costs one extra process spawn only on the failure path.
+    /// A status the CLI cannot produce at all is not evidence of a dead session.
+    private func isAuthRejection(error: Error, environment: Environment) async -> Bool {
+        if AuthFailure.looksLikeAuthFailure(error) {
+            return true
+        }
+        let status = try? await connectorCLI.authStatus(serverURL: environment.serverURLString,
+                                                        configPath: configPath)
+        return status?.needsReauth == true
+    }
+
+    /// True while `token` keeps at least `tokenCacheFloor` of life.
+    private nonisolated static func tokenIsUsable(_ token: CachedToken, now: Date = Date()) -> Bool {
+        token.expiresAt.timeIntervalSince(now) > tokenCacheFloor
+    }
+
+    /// Parses the CLI's RFC 3339 `expires_at` (with or without fractional
+    /// seconds). A value that does not parse yields nil, and the token is then
+    /// simply not cached.
+    nonisolated static func parseExpiry(_ value: String) -> Date? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: trimmed) {
+            return date
+        }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: trimmed)
     }
 
     // MARK: - Identity backfill

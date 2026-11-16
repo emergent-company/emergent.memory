@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -432,7 +434,7 @@ func TestLogoutAll(t *testing.T) {
 	}
 }
 
-func TestRefreshFailureClearsSession(t *testing.T) {
+func TestRefreshRejectionKeepsSessionAndMarksNeedsReauth(t *testing.T) {
 	dir := t.TempDir()
 	deps := fakeDeps(t)
 	deps.RefreshToken = func(context.Context, *sdkauth.OIDCConfig, string, string) (*sdkauth.Credentials, error) {
@@ -447,8 +449,22 @@ func TestRefreshFailureClearsSession(t *testing.T) {
 	if _, err := m.Refresh(context.Background(), serverURL); err == nil {
 		t.Fatal("Refresh: expected error, got nil")
 	}
-	if sess, err := m.SessionFor(serverURL); err != nil || sess != nil {
-		t.Errorf("session after rejected refresh = (%v, %v), want (nil, nil)", sess, err)
+	// A rejection must not delete the session: the refresh token is the only
+	// thing that can recover the account without user interaction, and a
+	// single-use rotation raced by two processes used to land here. Mark the
+	// session instead, keeping both tokens.
+	sess, err := m.SessionFor(serverURL)
+	if err != nil {
+		t.Fatalf("SessionFor after rejected refresh: %v", err)
+	}
+	if sess == nil {
+		t.Fatal("session after rejected refresh = nil, want retained")
+	}
+	if !sess.NeedsReauth {
+		t.Error("NeedsReauth = false after a rejected refresh, want true")
+	}
+	if sess.RefreshToken != "refresh-1" {
+		t.Errorf("refresh token = %q, want refresh-1 retained", sess.RefreshToken)
 	}
 }
 
@@ -605,5 +621,186 @@ func TestImportCLISessionReadsWithoutMutating(t *testing.T) {
 func TestImportCLISessionMissingFile(t *testing.T) {
 	if _, err := ImportCLISession(filepath.Join(t.TempDir(), "nope.json")); err == nil {
 		t.Fatal("ImportCLISession on missing file: expected error, got nil")
+	}
+}
+
+// freshSession persists a session with an access token that expires in d.
+func freshSession(t *testing.T, m *Manager, serverURL, accessToken string, d time.Duration) {
+	t.Helper()
+	if err := m.Save(serverURL, &Session{
+		AccessToken:  accessToken,
+		RefreshToken: "refresh-1",
+		ExpiresAt:    time.Now().Add(d).UTC(),
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+}
+
+func TestAccessTokenRefreshesNearExpiry(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManagerWithDeps(dir, fakeDeps(t))
+	serverURL := "https://memory.example.test"
+	freshSession(t, m, serverURL, "stale", 30*time.Second)
+
+	token, err := m.AccessToken(context.Background(), serverURL, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("AccessToken: %v", err)
+	}
+	if token != "access-2" {
+		t.Errorf("AccessToken = %q, want the refreshed access-2", token)
+	}
+	stored, err := m.SessionFor(serverURL)
+	if err != nil || stored == nil {
+		t.Fatalf("SessionFor = (%v, %v)", stored, err)
+	}
+	if stored.AccessToken != "access-2" || stored.RefreshToken != "refresh-2" {
+		t.Errorf("stored session = %+v, want the refreshed token pair", stored)
+	}
+	if stored.NeedsReauth {
+		t.Error("NeedsReauth = true after a successful refresh")
+	}
+}
+
+func TestAccessTokenKeepsFreshToken(t *testing.T) {
+	dir := t.TempDir()
+	var refreshes int32
+	deps := fakeDeps(t)
+	base := deps.RefreshToken
+	deps.RefreshToken = func(ctx context.Context, oidc *sdkauth.OIDCConfig, clientID, credsPath string) (*sdkauth.Credentials, error) {
+		atomic.AddInt32(&refreshes, 1)
+		return base(ctx, oidc, clientID, credsPath)
+	}
+	m := NewManagerWithDeps(dir, deps)
+	serverURL := "https://memory.example.test"
+	freshSession(t, m, serverURL, "still-good", 2*time.Hour)
+
+	token, err := m.AccessToken(context.Background(), serverURL, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("AccessToken: %v", err)
+	}
+	if token != "still-good" {
+		t.Errorf("AccessToken = %q, want the stored token", token)
+	}
+	if got := atomic.LoadInt32(&refreshes); got != 0 {
+		t.Errorf("refreshes = %d, want 0 for a token outside the window", got)
+	}
+}
+
+func TestAccessTokenRejectionMarksNeedsReauth(t *testing.T) {
+	dir := t.TempDir()
+	deps := fakeDeps(t)
+	deps.RefreshToken = func(context.Context, *sdkauth.OIDCConfig, string, string) (*sdkauth.Credentials, error) {
+		return nil, &sdkauth.RefreshError{StatusCode: http.StatusBadRequest, Code: "invalid_grant"}
+	}
+	m := NewManagerWithDeps(dir, deps)
+	serverURL := "https://memory.example.test"
+	freshSession(t, m, serverURL, "stale", 0)
+
+	if _, err := m.AccessToken(context.Background(), serverURL, 5*time.Minute); err == nil {
+		t.Fatal("AccessToken: expected error from a rejected refresh")
+	}
+	stored, err := m.SessionFor(serverURL)
+	if err != nil || stored == nil {
+		t.Fatalf("SessionFor = (%v, %v), want the session retained", stored, err)
+	}
+	if !stored.NeedsReauth {
+		t.Error("NeedsReauth = false after a rejected refresh, want true")
+	}
+	if stored.RefreshToken != "refresh-1" {
+		t.Errorf("refresh token = %q, want refresh-1 retained", stored.RefreshToken)
+	}
+}
+
+// TestAccessTokenSerializesRefreshesAcrossManagers is the cross-process race in
+// miniature. Zitadel refresh tokens are single-use, and the macOS app spawns a
+// separate `memory-connector` process per token read, so two refreshes at once
+// mean one wins and the other is rejected — which the app used to surface as
+// "signed out". Two Managers over one directory stand in for two processes: the
+// lock is flock(2)-based, so each Manager's own file descriptor contends exactly
+// as a second process would.
+func TestAccessTokenSerializesRefreshesAcrossManagers(t *testing.T) {
+	dir := t.TempDir()
+	var refreshes int32
+	deps := fakeDeps(t)
+	base := deps.RefreshToken
+	deps.RefreshToken = func(ctx context.Context, oidc *sdkauth.OIDCConfig, clientID, credsPath string) (*sdkauth.Credentials, error) {
+		atomic.AddInt32(&refreshes, 1)
+		// Hold the refresh long enough that an unserialized second caller
+		// would definitely enter it too.
+		time.Sleep(100 * time.Millisecond)
+		return base(ctx, oidc, clientID, credsPath)
+	}
+	serverURL := "https://memory.example.test"
+	freshSession(t, NewManagerWithDeps(dir, deps), serverURL, "stale", 10*time.Second)
+
+	var wg sync.WaitGroup
+	tokens := make([]string, 2)
+	errs := make([]error, 2)
+	for i := range tokens {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			m := NewManagerWithDeps(dir, deps)
+			tokens[i], errs[i] = m.AccessToken(context.Background(), serverURL, 5*time.Minute)
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("AccessToken[%d]: %v", i, err)
+		}
+		if tokens[i] != "access-2" {
+			t.Errorf("AccessToken[%d] = %q, want the winner's access-2", i, tokens[i])
+		}
+	}
+	if got := atomic.LoadInt32(&refreshes); got != 1 {
+		t.Errorf("refreshes = %d, want 1 — the loser must reuse the winner's token", got)
+	}
+}
+
+func TestAccessTokenWithoutRefreshTokenReturnsStored(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManagerWithDeps(dir, fakeDeps(t))
+	serverURL := "https://memory.example.test"
+	if err := m.Save(serverURL, &Session{AccessToken: "no-refresh", ExpiresAt: time.Now().Add(-time.Minute)}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	token, err := m.AccessToken(context.Background(), serverURL, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("AccessToken: %v", err)
+	}
+	if token != "no-refresh" {
+		t.Errorf("AccessToken = %q, want the stored token", token)
+	}
+}
+
+func TestRefreshCodedNonGrantErrorIsNotARejection(t *testing.T) {
+	dir := t.TempDir()
+	deps := fakeDeps(t)
+	deps.RefreshToken = func(context.Context, *sdkauth.OIDCConfig, string, string) (*sdkauth.Credentials, error) {
+		// A 400 whose code is not about the grant itself: the client config is
+		// wrong, so an interactive sign-in would fail identically. Marking the
+		// account "needs re-auth" would loop the user through a useless login.
+		return nil, &sdkauth.RefreshError{StatusCode: http.StatusBadRequest, Code: "invalid_client"}
+	}
+	m := NewManagerWithDeps(dir, deps)
+	serverURL := "https://memory.example.test"
+	if _, err := m.Login(context.Background(), serverURL, io.Discard); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+
+	if _, err := m.Refresh(context.Background(), serverURL); err == nil {
+		t.Fatal("Refresh: expected the configuration error to surface")
+	}
+	sess, err := m.SessionFor(serverURL)
+	if err != nil || sess == nil {
+		t.Fatalf("SessionFor = (%v, %v), want retained", sess, err)
+	}
+	if sess.NeedsReauth {
+		t.Error("NeedsReauth = true for a non-grant error, want false")
+	}
+	if sess.RefreshToken != "refresh-1" {
+		t.Errorf("refresh token = %q, want refresh-1 kept", sess.RefreshToken)
 	}
 }
