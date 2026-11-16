@@ -507,12 +507,13 @@ func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *git
 			if err := h.publishReviewGate(ctx, client, repo, headSHA, gate, summary); err != nil {
 				return nil, err
 			}
-			if gate.Status == ReviewGateApproved {
+			switch gate.Status {
+			case ReviewGateApproved:
 				marker := fmt.Sprintf("Reviewed-SHA: %s\nVerdict: MERGE\n\n%s", headSHA, summary)
 				if err := client.CreateIssueComment(ctx, repo, number, marker); err != nil {
 					return nil, err
 				}
-			} else if gate.Status == ReviewGateChangesRequested {
+			case ReviewGateChangesRequested:
 				marker := fmt.Sprintf("Reviewed-SHA: %s\nVerdict: CHANGES_REQUESTED\n\n%s", headSHA, summary)
 				_ = client.CreateIssueComment(ctx, repo, number, marker)
 			}
