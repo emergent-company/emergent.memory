@@ -613,6 +613,11 @@ func runAuthRefresh(args []string, stdout, stderr io.Writer) int {
 	if doc.ExpiresAt != "" {
 		_, _ = fmt.Fprintf(stdout, "expires at: %s\n", doc.ExpiresAt)
 	}
+	// A session whose refresh token the provider already rejected still has a
+	// stored access token, so "fresh" alone would be misleading.
+	if doc.NeedsReauth {
+		_, _ = fmt.Fprintln(stdout, "needs re-auth: yes (the stored refresh token was rejected)")
+	}
 	return 0
 }
 
@@ -625,6 +630,11 @@ func authStatusFromSession(serverURL string, sess *account.Session) authStatus {
 	state.SignedIn = true
 	state.Email = sess.UserEmail
 	state.Issuer = sess.IssuerURL
+	// The refresh fields are part of the document everywhere it is produced:
+	// `auth complete`/`auth import` answering without them made the same
+	// session look different depending on which command printed it.
+	state.CanRefresh = sess.RefreshToken != ""
+	state.NeedsReauth = sess.NeedsReauth
 	if !sess.ExpiresAt.IsZero() {
 		state.ExpiresAt = sess.ExpiresAt.UTC().Format(time.RFC3339)
 	}

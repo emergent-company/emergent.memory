@@ -514,6 +514,13 @@ final class AccountStore {
             let status = try await connectorCLI.authStatus(serverURL: environment.serverURLString,
                                                            configPath: configPath)
             guard status.signedIn else { throw OIDCError.notSignedIn }
+            // `signed_in` only says a session is stored. One the provider has
+            // already rejected must not switch in as valid — it needs a new
+            // sign-in, and the account keeps that mark so the UI can offer it.
+            if status.needsReauth == true {
+                markNeedsReauth(accountID)
+                throw OIDCError.notSignedIn
+            }
         } catch {
             throw Self.oidcError(from: error)
         }

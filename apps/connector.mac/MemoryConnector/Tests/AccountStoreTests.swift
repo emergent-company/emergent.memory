@@ -124,12 +124,14 @@ final class AccountStoreTests: XCTestCase {
         """)
     }
 
-    private func stubAuthStatus(signedIn: [String: Bool] = [:]) {
+    private func stubAuthStatus(signedIn: [String: Bool] = [:], needsReauth: [String: Bool] = [:]) {
         cli.on("auth status") { arguments in
             let server = Self.flagValue("--server", in: arguments) ?? ""
             let signed = signedIn[server] ?? true
+            let reauth = needsReauth[server] ?? false
             return ProcessResult(stdout: """
-            {"schema_version":1,"server":"\(server)","signed_in":\(signed ? "true" : "false")}
+            {"schema_version":1,"server":"\(server)","signed_in":\(signed ? "true" : "false"),\
+            "needs_reauth":\(reauth ? "true" : "false")}
             """, exitCode: 0, timedOut: false)
         }
     }
@@ -517,6 +519,29 @@ final class AccountStoreTests: XCTestCase {
             XCTAssertEqual(error, .notSignedIn)
         }
         XCTAssertEqual(store.activeAccountID, devAccount.id, "failed switch leaves the active account unchanged")
+    }
+
+    @MainActor
+    func testSwitchToRejectedSessionAccountThrowsAndMarksReauth() async throws {
+        let store = makeStore()
+        stubComplete(email: "a@example.test")
+        let prodAccount = try await signIn(store, .prod)
+        stubComplete(email: "b@example.test", server: devServer, issuer: Environment.dev.issuerString)
+        let devAccount = try await signIn(store, .dev)
+
+        // `signed_in` stays true for a rejected session; `needs_reauth` is what
+        // says the account needs a new sign-in. Switching into it must not
+        // present it as a working session.
+        stubAuthStatus(needsReauth: [prodServer: true])
+        do {
+            try await store.switchTo(accountID: prodAccount.id)
+            XCTFail("expected notSignedIn")
+        } catch let error as OIDCError {
+            XCTAssertEqual(error, .notSignedIn)
+        }
+        XCTAssertEqual(store.activeAccountID, devAccount.id, "failed switch leaves the active account unchanged")
+        XCTAssertTrue(store.needsReauthentication(prodAccount.id),
+                      "the rejected account is marked so the UI can offer a sign-in")
     }
 
     @MainActor

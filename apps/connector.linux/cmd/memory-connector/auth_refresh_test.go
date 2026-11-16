@@ -197,6 +197,46 @@ func TestAuthStatusReportsRefreshFields(t *testing.T) {
 	}
 }
 
+// TestAuthStatusFromSessionCarriesRefreshFields covers the one document shape
+// several commands share: `auth complete` and `auth import` build it too, so a
+// session must look the same whichever command printed it.
+func TestAuthStatusFromSessionCarriesRefreshFields(t *testing.T) {
+	sess := &account.Session{
+		ServerURL:    "https://memory.example.test",
+		IssuerURL:    "https://issuer.test",
+		AccessToken:  "access-1",
+		RefreshToken: "refresh-1",
+		ExpiresAt:    time.Now().Add(time.Hour),
+		NeedsReauth:  true,
+		UserEmail:    "a@example.test",
+	}
+	doc := authStatusFromSession(sess.ServerURL, sess)
+	if !doc.SignedIn {
+		t.Error("signed_in = false, want true")
+	}
+	if !doc.CanRefresh {
+		t.Error("can_refresh = false, want true (a refresh token is stored)")
+	}
+	if !doc.NeedsReauth {
+		t.Error("needs_reauth = false, want true (the session recorded a rejection)")
+	}
+	if doc.Expired {
+		t.Error("expired = true, want false for a token an hour from now")
+	}
+
+	// No refresh token: not renewable, and nothing was rejected.
+	bare := &account.Session{ServerURL: sess.ServerURL, AccessToken: "access-1"}
+	bareDoc := authStatusFromSession(bare.ServerURL, bare)
+	if bareDoc.CanRefresh || bareDoc.NeedsReauth {
+		t.Errorf("doc = %+v, want can_refresh=false and needs_reauth=false", bareDoc)
+	}
+
+	// Absent session: the zero document, never a signed-in one.
+	if empty := authStatusFromSession("", nil); empty.SignedIn || empty.CanRefresh || empty.NeedsReauth {
+		t.Errorf("doc = %+v, want the zero status", empty)
+	}
+}
+
 func TestAuthStatusWithoutSessionReportsNoRefresh(t *testing.T) {
 	dir := t.TempDir()
 	serverURL := "https://memory.example.test"

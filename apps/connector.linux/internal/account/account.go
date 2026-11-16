@@ -603,7 +603,10 @@ func isAuthRejection(err error) bool {
 func (m *Manager) refreshTokenStillCurrent(serverURL, attempted string) bool {
 	cur, err := m.SessionFor(serverURL)
 	if err != nil || cur == nil {
-		// Cannot verify; preserve the clear-on-rejection behavior.
+		// Cannot verify. Treat the attempted token as current: a rejection is
+		// then attributed to it and the session is kept (marked needs_reauth)
+		// rather than discarded — the token is the one recovery path that
+		// needs no user.
 		return true
 	}
 	return cur.RefreshToken == attempted
