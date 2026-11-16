@@ -173,6 +173,7 @@ func TestEnsureIssuePRLink(t *testing.T) {
 	require.True(t, link.ClosesIssue)
 	require.NotNil(t, store.issueReq)
 	require.Equal(t, "review", *store.issueReq.Status)
+	require.Equal(t, "review", store.issueReq.Properties["status"])
 	require.Equal(t, "emergent-company/emergent.memory", store.issueReq.Properties["repo"])
 
 	// A draft conversion must not cancel the issue.
