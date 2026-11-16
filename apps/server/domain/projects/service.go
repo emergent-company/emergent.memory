@@ -16,6 +16,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/notifications"
 	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/internal/budgetwindow"
+	"github.com/emergent-company/emergent.memory/internal/database"
 	"github.com/emergent-company/emergent.memory/pkg/activity"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -67,6 +68,16 @@ type notifier interface {
 	Create(context.Context, notifications.CreateInput) (*notifications.Notification, error)
 }
 
+// IngestionBudgetUnparker makes a project's budget-blocked ingestion work
+// runnable again and drops any cached over-budget verdict. It is called when a
+// budget cap is raised or cleared, so the embedding queue recovers immediately
+// instead of after the parked jobs' backoff or the worker's cache TTL (issue
+// #724). Satisfied by extraction's chunk embedding worker, which the extraction
+// module provides into this service's fx params; absent means the hook is off.
+type IngestionBudgetUnparker interface {
+	UnparkProjectBudget(ctx context.Context, projectID string) error
+}
+
 // deletionRepository abstracts the persistence operations used by the project
 // deletion lifecycle (mark, inspect, cancel). *Repository satisfies it.
 // Keeping it an interface allows the lifecycle to be unit-tested without a DB.
@@ -80,11 +91,12 @@ type deletionRepository interface {
 type Service struct {
 	repo                *Repository
 	agentRepo           *agents.Repository
-	tokenRevoker        TokenRevoker        // optional; nil is safe
-	branchReader        BranchReader        // optional; nil is safe
-	orgMembershipReader OrgMembershipReader // optional; nil is safe
-	deletionRepo        deletionRepository  // optional; nil is safe
-	notificationsSvc    notifier            // optional; nil is safe
+	tokenRevoker        TokenRevoker            // optional; nil is safe
+	branchReader        BranchReader            // optional; nil is safe
+	orgMembershipReader OrgMembershipReader     // optional; nil is safe
+	deletionRepo        deletionRepository      // optional; nil is safe
+	notificationsSvc    notifier                // optional; nil is safe
+	ingestionUnparker   IngestionBudgetUnparker // optional; nil is safe
 	gracePeriod         time.Duration
 	log                 *slog.Logger
 }
@@ -98,10 +110,11 @@ type ServiceParams struct {
 	Log       *slog.Logger
 
 	// Optional cross-domain dependencies (nil-safe when not wired).
-	TokenRevoker        TokenRevoker           `optional:"true"`
-	BranchReader        BranchReader           `optional:"true"`
-	OrgMembershipReader OrgMembershipReader    `optional:"true"`
-	NotificationsSvc    *notifications.Service `optional:"true"`
+	TokenRevoker        TokenRevoker            `optional:"true"`
+	BranchReader        BranchReader            `optional:"true"`
+	OrgMembershipReader OrgMembershipReader     `optional:"true"`
+	NotificationsSvc    *notifications.Service  `optional:"true"`
+	IngestionUnparker   IngestionBudgetUnparker `optional:"true"`
 }
 
 // NewService creates a new project service
@@ -118,6 +131,7 @@ func NewService(p ServiceParams) *Service {
 		orgMembershipReader: p.OrgMembershipReader,
 		deletionRepo:        p.Repo,
 		notificationsSvc:    n,
+		ingestionUnparker:   p.IngestionUnparker,
 		gracePeriod:         DefaultDeletionGracePeriod,
 		log:                 p.Log.With(logger.Scope("projects.svc")),
 	}
@@ -130,6 +144,39 @@ func (s *Service) ConfigureDeletionGracePeriod(d time.Duration) {
 		return
 	}
 	s.gracePeriod = d
+}
+
+// unparkIngestionAfterBudgetChange makes a project's budget-blocked ingestion
+// work runnable again. It is best-effort: a queue hiccup must not fail the
+// budget write that unblocked the customer, and the park delay is bounded as the
+// fallback. The context is detached from the request so a client that disconnects
+// between the save and the un-park does not leave the queue parked (issue #724).
+func (s *Service) unparkIngestionAfterBudgetChange(ctx context.Context, projectID string) {
+	if s.ingestionUnparker == nil {
+		return
+	}
+	if err := s.ingestionUnparker.UnparkProjectBudget(context.WithoutCancel(ctx), projectID); err != nil {
+		s.log.Warn("failed to unpark budget-blocked ingestion jobs after budget change",
+			slog.String("projectID", projectID),
+			logger.Error(err))
+	}
+}
+
+// budgetCapRelaxed reports whether moving a cap from oldCap to newCap widens it
+// in a way that can lift a block: the cap was cleared (nil or non-positive means
+// unlimited, matching the enforcement gate) or raised. Introducing a cap where
+// there was none, lowering one, or leaving it alone is not a relaxation.
+func budgetCapRelaxed(oldCap, newCap *float64) bool {
+	newUncapped := newCap == nil || *newCap <= 0
+	oldUncapped := oldCap == nil || *oldCap <= 0
+	switch {
+	case newUncapped:
+		return !oldUncapped
+	case oldUncapped:
+		return false
+	default:
+		return *newCap > *oldCap
+	}
 }
 
 // ServiceListParams defines parameters for listing projects
@@ -240,7 +287,7 @@ func (s *Service) Create(ctx context.Context, req CreateProjectRequest, userID s
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer database.RollbackTx(s.log, tx) // no-op after a successful commit
 
 	// Check org exists with pessimistic lock
 	orgExists, err := s.repo.CheckOrgExistsWithLock(ctx, tx.Tx, req.OrgID)
@@ -352,6 +399,10 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateProjectReques
 	// Check if there are any updates to apply
 	hasUpdates := false
 
+	// A budget cap that is raised or cleared must un-park the project's
+	// budget-blocked ingestion work (issue #724), so keep the pre-update values.
+	oldBudgetUSD, oldBudgetWeeklyUSD := project.BudgetUSD, project.BudgetWeeklyUSD
+
 	if req.Name != nil {
 		name := strings.TrimSpace(*req.Name)
 		if name == "" {
@@ -457,6 +508,14 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateProjectReques
 	s.log.Info("project updated",
 		slog.String("projectID", project.ID),
 		slog.String("name", project.Name))
+
+	// Raising or clearing either cap lifts (or can lift) the project's budget
+	// block, so un-park its embedding jobs and drop the worker's cached verdict
+	// now rather than after the park backoff or the cache TTL (issue #724).
+	if budgetCapRelaxed(oldBudgetUSD, project.BudgetUSD) ||
+		budgetCapRelaxed(oldBudgetWeeklyUSD, project.BudgetWeeklyUSD) {
+		s.unparkIngestionAfterBudgetChange(ctx, project.ID)
+	}
 
 	dto := project.ToDTO()
 	s.enrichWithMainBranch(ctx, &dto)
@@ -1057,6 +1116,12 @@ func (s *Service) ResetBudgetPeriod(ctx context.Context, projectID string, windo
 	if err := s.repo.ResetBudgetWindowAnchor(ctx, projectID, bw, now); err != nil {
 		return nil, err
 	}
+
+	// The reset restarts this window's spend, so a project blocked by it is no
+	// longer over budget: wake its parked ingestion like a cap change does
+	// (issue #724). Without this, the documents keep reporting "budget exceeded"
+	// for up to the park delay after the admin's fix.
+	s.unparkIngestionAfterBudgetChange(ctx, projectID)
 
 	// Report the window the caller now sees, computed by the same package the
 	// provider uses for spend and alerts.

@@ -1,8 +1,169 @@
 ## Changelog
 
+## [0.97.0] - 2026-11-15
+
+### Breaking changes
+
+- **The env-configured GitHub webhook ingress is retired.** The gateway route
+  `/webhooks/github` and `AGENT_TRIGGER_TOKEN` no longer exist. GitHub Apps must
+  deliver to `/api/webhooks/source-apps/{webhookKey}` (created by the source-App
+  wizard); installs still pointing an App webhook at the old path stop receiving
+  events.
+
+### Added
+
+- Project-owned source Apps alongside org-wide credentials, with a guided
+  GitHub review setup wizard, installation repositories listed as checkboxes,
+  and GitHub review lanes surfaced as board work items.
+- A weekly spending window for usage budgets, with a usage-budget section and
+  admin controls.
+- `entity-write` over MCP can set an entity's display name.
+
+### Changed
+
+- Source triggers moved below settings on the source page, with a dedicated
+  trigger add page.
+- Provider resolution tries instance slugs first; model-config writes apply only
+  the supplied fields, atomically.
+- Gateway re-issues session cookies from post-refresh claims instead of
+  appending a second `Set-Cookie`.
+- GitHub App installation tokens are minted with bare repository names, and
+  trigger runs are trusted only when verified.
+
+## [0.96.0] - 2026-11-13
+
+### Added
+
+- Instance-wide email settings for Zitadel and Memory, managed by a platform
+  superadmin from **Settings → Platform email** (encrypted SMTP config, test
+  send, no restart required).
+- The deploy portal now has a separate Railway setup page, target-card
+  `deploy`/`planned` actions, and a **Skip email for now** option that points to
+  Platform email.
+- The installer creates the first human admin with a verified email and a
+  temporary password and grants the trusted `memory-superadmin` role.
+
 ## [Unreleased]
 
+### Changed
+
+**The queued-run sweep now covers fan-out and session runs** (2026-11-16)
+
+The stale-run reaper spared every run with a `root_run_id` or a `session_id`,
+so a fan-out child or an A2A/session turn whose dispatch job no worker could
+claim sat `submitted` for ever — the same stall #880 fixed for top-level runs
+(#893 scoped the sweep there). The sweep now reads the job ledger for those
+shapes too and re-enqueues or fails them exactly as it does a top-level run,
+with one guard: a run that a worker already claimed (`attempt_count > 0`) is
+never re-enqueued, because that risks a second turn, and is reported as a
+counted `spared` outcome instead of staying silent.
+
+**Source-App webhook failures answer in the apperror envelope** (2026-11-16)
+
+`POST /api/webhooks/source-apps/{webhookKey}` used to answer every failure with a
+plain-text body (`unknown app`, `invalid signature`, …), which a sender could only
+match as a string. Failures now come from the shared handler as
+`{"error":{"code","message"}}`: the message text is unchanged, so a webhook
+delivery log reads the same, and `code` is machine-readable. Statuses are
+unchanged — `400`, `401`, `404`, `503`, `500` — and the codes are
+`unreadable_body` (400, the body could not be read), `malformed_payload` (400),
+`invalid_signature` (401), `source_app_not_found` (404),
+`source_app_unconfigured` (503) and `internal_error` (500). The seven sites were
+also outside the ratchet that counts raw `echo.NewHTTPError`, so it now counts
+plain-text `c.String` error bodies as well (baseline 0).
+
+**Embedding-control failures answer the apperror envelope, and the ratchet counts c.JSON error bodies** (2026-11-16)
+
+The seventeen `c.JSON(4xx/5xx, map[string]any{"error": err.Error()})` bodies
+under `/api/embeddings/*` bypassed `apperror.HTTPErrorHandler` the same way, and
+a repository or provider failure put its raw message on the wire for the eight
+500 paths. Each failure now returns `*apperror.Error` with a code
+(`invalid_request_body` for a bad bind, `forbidden` for the deployment-wide
+refusal, `internal_error` otherwise), a message written for the caller, and the
+cause kept for the 5xx log line; `c.JSON` is used only for success bodies.
+`scripts/lint-ratchet.sh` now counts this shape too — non-test
+`c.JSON(http.Status<4xx|5xx>, map[...]{"error": ...})` lines, excluding 2xx
+success bodies and the `domain/mcp` JSON-RPC contract — pinned at baseline 0, so
+the next handler cannot reintroduce one unnoticed.
+
+**Error bodies from six handler families now come from the apperror envelope** (2026-11-16)
+
+The model-config, tracing, devtools (`/coverage`, `/docs`), backups, `/debug`
+and platform-email handlers built their failures with `echo.NewHTTPError`. Most
+passed a fixed string, but four sites put a cause on the wire or lost the code
+altogether: the Tempo passthrough relayed an upstream body and its status
+verbatim, an unreachable Tempo produced a 502 whose message named the URL and
+the DNS/TLS state, a Zitadel SMTP failure produced a 502 with the provider's
+result text, and the two "tracing not enabled" answers were a 503 that the shared
+handler could only label `internal_error` — indistinguishable from a Tempo
+outage. They now construct `*apperror.Error` with a code chosen per cause and a
+message written for the client, keeping the underlying error for logging:
+`invalid_project_id`, `invalid_request_body`, `invalid_path`,
+`invalid_retention`, `backup_not_ready`, `forbidden`, `not_found`,
+`tracing_disabled`, `tempo_query_error` and `service_unavailable`. Statuses are
+unchanged except:
+
+- a trace-store fault is reported as `503 service_unavailable` instead of being
+  relayed with Tempo's own status or body: upstream 5xx, an unreachable Tempo, a
+  Tempo `401`/`403` (its credentials are the server's, not the caller's), and a
+  `408`/`429` (retryable) all answer 503, so a trace store that is down no
+  longer looks like a Memory-server fault or a bad credential. `memory traces`
+  reads the error code to report the right cause.
+- a Tempo `404` is this API's `not_found`, and a rejected TraceQL query
+  (`400`/`409`/`422`) keeps its status with Tempo's diagnostic under
+  `tempo_query_error` (capped at 512 runes).
+- the production `/debug` 404 body reads "Resource not found" instead of
+  "Not found", and the `/docs` asset route now rejects a path-traversal attempt
+  with `403 forbidden` instead of serving it or answering 404.
+
 ### BREAKING CHANGES
+
+**A2A enforces `agents:read` / `agents:write` for session credentials** (2026-11-15)
+
+The A2A v1.0 surface (`/message:send`, `/message:stream`, `/tasks*`,
+`/extendedAgentCard`) used to skip its scope gate for every credential that was
+not an `emt_…` project API token: the guard returned early for OIDC/session
+callers, so `agents:read` / `agents:write` were decorative for them. The gate now
+applies to every credential (issue #660, shipped in #795), and every
+project-addressed route additionally requires the caller to belong to the
+addressed project's organization — `X-Project-ID` is a selector, never a grant.
+The unauthenticated global card is unchanged, and an `emt_…` token keeps the
+scopes it was minted with and stays bound to its own project.
+
+A signed-in session's scopes are derived from its project membership role, so the
+visible change is:
+
+| Project role | `agents:read` (card, task list/get) | `agents:write` (send, stream, cancel) |
+|---|---|---|
+| `project_admin` | yes | yes |
+| `project_user` | yes | **no** — now 403 |
+| `project_viewer` | yes | **no** — now 403 |
+
+A `superadmin_full` session keeps the full catalogue. A session with no project
+membership resolves to its `org_admin` entitlements when it has them, and
+otherwise to `MEMORY_OIDC_DEFAULT_SCOPES` (then to nothing); neither set carries
+`agents:*`, so it is refused on this surface unless that default is changed. An
+*unrecognised* project role — or a role lookup that fails — does not fall back
+to that default: it fails closed to no scopes at all. A `memory login` session is
+subject to the same matrix: `memory a2a discover`, `memory a2a tasks list` and
+`memory a2a tasks get` keep working for every project role, while `memory a2a
+send`, `memory a2a tasks cancel` and `memory acp` now need a project admin or a
+project token carrying `agents:write`. `memory acp` is the other A2A consumer:
+it forwards every prompt over `POST /message:stream`, so it is a write surface
+even though its documented setup uses `MEMORY_PROJECT_TOKEN`, whose defaults
+include `agents:*`. No documented flow promises A2A writes to a `project_user`
+or `project_viewer` session (their role grants graph, document and chat access,
+not agent management), and nothing in the web UI calls A2A, so the migration is
+to authenticate with an `emt_…` token carrying `agents:write` — the
+project-token defaults already include `agents:*`:
+
+```bash
+memory projects create-token <project> --scopes agents:read,agents:write
+```
+
+A caller who is not a member of the addressed project's organization is now
+refused as well (403, or 404 for an unknown project) instead of reaching another
+project's card, tasks and runs.
 
 **Embeddings are resolved only from the project's configured provider** (2026-11-12)
 
@@ -249,6 +410,20 @@ X-Project-ID: <projectId>
 See `/apps/server/src/modules/unified-search/` for implementation details.
 
 ### Fixed
+
+**A pack's bare scalar `items` is rejected instead of silently unenforced** (2026-11-15)
+
+An array property declaring `"items": "string"` instead of the object form
+`"items": {"type": "string"}` used to be accepted, installed and then validated
+nothing:
+`PropertyDefFromMap` only reads an object `items`, so the element schema was
+dropped without a word and `POST /api/graph/objects/validate` accepted an
+integer in a declared `array<string>`. `POST /api/schemas` and `PUT
+/api/schemas/:packId` now reject the bare scalar with a 400 naming the property
+and the expected object shape. The other non-object `items` forms — a tuple
+array of schemas, a boolean schema and `null` — are valid JSON Schema (or mean
+absent) and remain accepted, as before. The `code-memory` blueprint's seven
+scalar declarations are corrected to the object form (Closes #726).
 
 **Embedding resolution and `projects set-models` stop failing late and quietly** (2026-11-12)
 

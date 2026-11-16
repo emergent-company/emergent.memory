@@ -621,6 +621,7 @@ func gmailThreadRecords(t *gmail.Thread, cfg gmailConfig) []ObjectRecord {
 		rec := ObjectRecord{
 			Type: "EmailThread",
 			Key:  t.ID,
+			Name: subject,
 			Properties: map[string]any{
 				"subject":       subject,
 				"snippet":       t.Snippet,
@@ -684,7 +685,7 @@ func gmailThreadRecords(t *gmail.Thread, cfg gmailConfig) []ObjectRecord {
 			if account != "" {
 				props["account"] = account
 			}
-			records = append(records, ObjectRecord{Type: "EmailMessage", Key: m.ID, Properties: props})
+			records = append(records, ObjectRecord{Type: "EmailMessage", Key: m.ID, Name: msgSubject, Properties: props})
 		}
 	}
 	return records

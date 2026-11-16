@@ -1,0 +1,276 @@
+package main
+
+import (
+	"net/url"
+	"strconv"
+
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/table"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Session & run cost log ---
+
+// usageSessionsPageData is the payload of the run log page: one page of runs,
+// the breakdown that feeds the agent filter, and the paging state.
+type usageSessionsPageData struct {
+	Days  int
+	Runs  *UsageRunListResponse
+	// Agents is the per-agent breakdown over the same range. It names the filter
+	// chips and the current selection; nil means the chips are unavailable, not
+	// that the project has no agents — the log itself still renders.
+	Agents  *UsageByAgentResponse
+	AgentID string
+	Limit   int
+	Offset  int
+	HasPrev bool
+	HasNext bool
+	LoadErr error
+}
+
+// UsageSessionsPage renders the per-run cost log: the detail behind the usage
+// dashboard's "Agent runs" figure. A failed fetch renders the whole-page error
+// state.
+templ UsageSessionsPage(data usageSessionsPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@pageHeader("Project", "Sessions & runs", "Every agent run that recorded token usage, newest activity first. A chat conversation can hold many runs, and scheduled or delegated runs belong to no conversation — this log is per run, so the cost lines add up to the dashboard total.") {
+			// The page's one header action is the primary (brand-yellow) button,
+			// matching the primary button colour used across the system; it used to
+			// render as the steel secondary link (#857).
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/usage",
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--chart-column",
+				Attrs:   templ.Attributes{"data-testid": "sessions-back-to-usage"},
+			}) {
+				Usage dashboard
+			}
+		}
+		if data.LoadErr != nil {
+			@pageErrorNotice("Failed to load the run log", data.LoadErr)
+		} else {
+			@usageSessionsRanges(data)
+			@usageSessionsAgentFilter(data)
+			if data.Runs == nil || len(data.Runs.Data) == 0 {
+				@usageSessionsEmpty(data)
+			} else {
+				@usageSessionsTotals(data)
+				@usageSessionsTable(data.Runs.Data)
+				@usageSessionsPager(data)
+			}
+		}
+	}
+}
+
+// usageSessionsRanges renders the 7/30/90-day selector, keeping the agent
+// filter and dropping the page offset (a new range starts at the first page).
+templ usageSessionsRanges(data usageSessionsPageData) {
+	<div class="mb-4 flex items-center gap-3" data-testid="sessions-ranges">
+		<span class="text-muted-faint text-xs">Range</span>
+		<div class="join">
+			for _, n := range []int{7, 30, 90} {
+				{{ variant := ui.ButtonGhost
+				if data.Days == n {
+					variant = ui.ButtonPrimary
+				} }}
+				@ui.Button(ui.ButtonProps{
+					Type:       ui.ButtonTypeLink,
+					Href:       usageSessionsHref(n, data.AgentID, 0),
+					Variant:    variant,
+					Size:       ui.ButtonSM,
+					ExtraClass: "join-item",
+					Attrs:      templ.Attributes{"data-testid": "sessions-range-" + strconv.Itoa(n)},
+				}) {
+					{ strconv.Itoa(n) }d
+				}
+			}
+		</div>
+	</div>
+}
+
+// usageSessionsAgentFilter renders one chip per agent with spend in the range,
+// plus "All agents". Chips are links, so the filter survives a refresh and can
+// be shared.
+templ usageSessionsAgentFilter(data usageSessionsPageData) {
+	if data.Agents != nil && len(data.Agents.Data) > 0 {
+		<div class="mb-6 flex flex-wrap items-center gap-2" data-testid="sessions-agent-filter">
+			<span class="text-muted-faint text-xs">Agent</span>
+			@usageSessionsAgentChip(data, "", "All agents")
+			for _, row := range data.Agents.Data {
+				if row.Attributed() {
+					@usageSessionsAgentChip(data, row.AgentID, row.AgentName)
+				}
+			}
+		</div>
+	}
+}
+
+templ usageSessionsAgentChip(data usageSessionsPageData, agentID, label string) {
+	{{ variant := ui.ButtonGhost
+	if data.AgentID == agentID {
+		variant = ui.ButtonPrimary
+	} }}
+	@ui.Button(ui.ButtonProps{
+		Type:    ui.ButtonTypeLink,
+		Href:    usageSessionsHref(data.Days, agentID, 0),
+		Variant: variant,
+		Size:    ui.ButtonXS,
+		Attrs:   templ.Attributes{"data-testid": "sessions-agent-" + shortID(cmpOrNone(agentID))},
+	}) {
+		{ label }
+	}
+}
+
+// cmpOrNone keeps a chip's test id readable for the "All agents" link, which
+// carries no agent id.
+func cmpOrNone(agentID string) string {
+	if agentID == "" {
+		return "all"
+	}
+	return agentID
+}
+
+// usageSessionsTotals summarizes what the page is showing. The counts are over
+// the whole filtered range (not just this page) except the cost, which is this
+// page's rows — both are labelled, because a page of a long log showing the
+// range total next to its own rows reads as a missing row.
+templ usageSessionsTotals(data usageSessionsPageData) {
+	{{ shown := 0
+	total := 0
+	if data.Runs != nil {
+		shown = len(data.Runs.Data)
+		total = data.Runs.Total
+	} }}
+	@statRow([]ui.StatCardProps{
+		{Label: "Runs in range", Value: strconv.Itoa(total), Icon: "lucide--bot", IconColor: "bg-primary/15 text-primary", Attrs: templ.Attributes{"data-testid": "sessions-total-runs"}},
+		{Label: "On this page", Value: strconv.Itoa(shown), Icon: "lucide--list", IconColor: "bg-secondary/15 text-secondary", Attrs: templ.Attributes{"data-testid": "sessions-page-runs"}},
+		{Label: "Cost on this page", Value: formatCost(usageRunsCost(data.Runs.Data)), Icon: "lucide--dollar-sign", IconColor: "bg-accent/15 text-accent", Attrs: templ.Attributes{"data-testid": "sessions-page-cost"}},
+		{Label: "Tokens on this page", Value: compactNum(usageRunsTokens(data.Runs.Data)), Icon: "lucide--braces", IconColor: "bg-info/15 text-info", Attrs: templ.Attributes{"data-testid": "sessions-page-tokens"}},
+	}, StatRowOpts{Margin: "mb-6", ColsClass: "lg:grid-cols-4"})
+}
+
+// usageSessionsTable lists the runs. The timestamp links to the run's detail
+// page (status, steps, tool calls), which is where a surprising cost is
+// explained.
+templ usageSessionsTable(rows []UsageRunRow) {
+	@ui.Section("Run log", ui.SectionProps{Margin: "", CardClass: "overflow-hidden", BodyClass: "memory-density-flush"}) {
+		@table.TableWithProps(table.TableProps{Bordered: false, WrapperClass: "stacked-table", Attrs: templ.Attributes{"data-testid": "sessions-table", "style": "--h1:'Started';--h2:'Agent';--h3:'Status';--h4:'Model';--h5:'Tokens';--h6:'Cost'"}}) {
+			@table.TableHead() {
+				@table.TableHeadRow() {
+					@table.TableHeadCell("Started")
+					@table.TableHeadCell("Agent")
+					@table.TableHeadCell("Status")
+					@table.TableHeadCell("Model")
+					@table.TableHeadCell("Tokens")
+					@table.TableHeadCell("Cost")
+				}
+			}
+			@table.TableBody() {
+				for i, r := range rows {
+					@usageSessionsRow(strconv.Itoa(i), r)
+				}
+			}
+		}
+	}
+}
+
+templ usageSessionsRow(rowID string, r UsageRunRow) {
+	@table.TableRow(rowID, false, nil) {
+		@table.TableCell("", nil) {
+			<a href={ templ.URL("/runs/" + url.PathEscape(r.RunID)) } class="link link-hover text-sm" data-testid={ "sessions-run-" + shortID(r.RunID) }>
+				{ r.StartedAt.UTC().Format("2 Jan 15:04") }
+			</a>
+			if r.DurationMs != nil {
+				<span class="text-muted-faint ml-2 text-xs">{ toolDurationLabel(*r.DurationMs) }</span>
+			}
+		}
+		@table.TableCell("", nil) {
+			<span class="text-sm" data-testid={ "sessions-agent-name-" + shortID(cmpOrNone(r.AgentID)) }>{ r.AgentName }</span>
+			// Runs with no conversation behind them — scheduled, manual, webhook,
+			// A2A — are exactly the ones the old Sessions card could not show, so
+			// say where this one came from. Chat is the default and stays quiet.
+			if r.TriggerSource != nil && *r.TriggerSource != "" && *r.TriggerSource != "chat" {
+				<span class="text-muted-faint ml-1 text-xs" data-testid={ "sessions-trigger-" + shortID(r.RunID) }>{ usageTriggerLabel(*r.TriggerSource) }</span>
+			}
+		}
+		@table.TableCell("", nil) {
+			@runStatusBadge(r.Status)
+		}
+		@table.TableCell("", nil) {
+			if r.Model != nil && *r.Model != "" {
+				<span class="font-mono text-xs">{ *r.Model }</span>
+			} else {
+				<span class="text-muted-faint text-xs">—</span>
+			}
+		}
+		@table.TableCell("", nil) {
+			<span class="text-sm">{ compactNum(r.TokenCount()) }</span>
+			<span class="text-muted-faint ml-2 text-xs">{ compactNum(r.TotalCached) } cached</span>
+		}
+		@table.TableCell("", nil) {
+			<span class="text-sm font-medium">{ formatCost(r.EstimatedCostUSD) }</span>
+		}
+	}
+}
+
+// usageSessionsPager walks the log. It renders nothing when everything fits on
+// one page, so a short log does not show dead controls.
+templ usageSessionsPager(data usageSessionsPageData) {
+	if data.HasPrev || data.HasNext {
+		<div class="mt-4 flex items-center justify-between" data-testid="sessions-pager">
+			<div>
+				if data.HasPrev {
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeLink,
+						Href:    usageSessionsHref(data.Days, data.AgentID, max(0, data.Offset-data.Limit)),
+						Variant: ui.ButtonSecondary,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--arrow-left",
+						Attrs:   templ.Attributes{"data-testid": "sessions-newer"},
+					}) {
+						Newer
+					}
+				}
+			</div>
+			<div>
+				if data.HasNext {
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeLink,
+						Href:    usageSessionsHref(data.Days, data.AgentID, data.Offset+data.Limit),
+						Variant: ui.ButtonSecondary,
+						Size:    ui.ButtonSM,
+						Attrs:   templ.Attributes{"data-testid": "sessions-older"},
+					}) {
+						Older
+						@ui.IconSpan("lucide--arrow-right", "size-4")
+					}
+				}
+			</div>
+		</div>
+	}
+}
+
+// usageSessionsEmpty is the "no runs in range" state. It distinguishes a
+// filtered view from an empty project, because "no runs for this agent" and
+// "no runs at all" have different next steps.
+templ usageSessionsEmpty(data usageSessionsPageData) {
+	if data.AgentID != "" {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--bot",
+			Title:       "No runs for " + usageAgentFilterLabel(data.Agents, data.AgentID),
+			Description: "This agent recorded no usage in the selected range. Widen the range or pick another agent.",
+			Bordered:    true,
+			Class:       "py-12",
+		})
+	} else {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--bot",
+			Title:       "No agent runs in this range",
+			Description: "No run recorded token usage in the selected range. Try a wider range.",
+			Bordered:    true,
+			Class:       "py-12",
+		})
+	}
+}

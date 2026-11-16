@@ -66,7 +66,7 @@ full (`render/render.go:40-49`). `pageTitle` (`ui.go:34`) joins segments with
 | `components.MetaRow` / `MetaGrid` | `components/meta.templ:18,74` | definition-list cells; single label-style definition |
 | `components.EmptyDash` | `components/meta.templ:55` | muted em-dash for absent values |
 | `components.SubNav` / `SubNavItem` | `components/nav.templ:10,17` | sub-page nav rail |
-| `components.LinkRow` | `components/list.templ:38` | chat/session row |
+| `components.LinkRow` | `components/list.templ:49` | list-page row: documents phone cards, sessions, recent chats, inbox |
 | `components.StatusBadge` | `components/badge.templ:24` | L1 domain adapter |
 
 `pageHeader`/`detailHeader` are **Go functions, not templ components**, because

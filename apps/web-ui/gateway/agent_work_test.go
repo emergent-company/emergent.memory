@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net/url"
 	"testing"
 )
 
@@ -52,28 +53,63 @@ func TestValidateGatewayWorkRules(t *testing.T) {
 	}
 }
 
-func TestBuildBoardSwimlanesPerType(t *testing.T) {
-	compiled := &CompiledSchemaTypes{ObjectTypes: []CompiledType{
+func TestApplyWorkBoardItemsPerType(t *testing.T) {
+	types := []CompiledType{
 		{Name: "Bug", BoardEnabled: true, AllowedStatuses: []string{"open", "triaged", "closed"}},
 		{Name: "Task", BoardEnabled: true, AllowedStatuses: []string{"ready", "in_progress", "done"}},
 		{Name: "Empty", BoardEnabled: true, AllowedStatuses: []string{"a", "b"}},
-	}}
+	}
 	items := []WorkItem{
 		{Type: "Task", Status: "ready", CanonicalID: "t1"},
 		{Type: "Bug", Status: "open", CanonicalID: "b1"},
 		{Type: "Bug", Status: "open", CanonicalID: "b2"},
 	}
-	lanes := buildBoardSwimlanes(items, compiled)
-	if len(lanes) != 2 {
-		t.Fatalf("swimlanes = %d, want 2 (empty type hidden)", len(lanes))
+	data := workData{
+		ObjectTypes: types,
+		BoardTypes:  boardTypesFromCompiled(&CompiledSchemaTypes{ObjectTypes: types}),
 	}
-	if lanes[0].Type != "Bug" || lanes[1].Type != "Task" {
-		t.Fatalf("swimlane order = %s, %s", lanes[0].Type, lanes[1].Type)
+	applyWorkBoardItems(&data, items, nil)
+	if len(data.Matrices) != 2 {
+		t.Fatalf("matrices = %d, want 2 (empty type hidden)", len(data.Matrices))
 	}
-	if len(lanes[0].Lanes) != 3 || lanes[0].Lanes[0].Status != "open" {
-		t.Fatalf("Bug lanes = %#v", lanes[0].Lanes)
+	if data.Matrices[0].Type != "Bug" || data.Matrices[1].Type != "Task" {
+		t.Fatalf("matrix order = %s, %s", data.Matrices[0].Type, data.Matrices[1].Type)
 	}
-	if len(lanes[1].Lanes) != 3 || lanes[1].Lanes[0].Status != "ready" {
-		t.Fatalf("Task lanes = %#v", lanes[1].Lanes)
+	if len(data.Matrices[0].Columns) != 3 || data.Matrices[0].Columns[0].Status != "open" {
+		t.Fatalf("Bug columns = %#v", data.Matrices[0].Columns)
+	}
+	if len(data.Matrices[1].Columns) != 3 || data.Matrices[1].Columns[0].Status != "ready" {
+		t.Fatalf("Task columns = %#v", data.Matrices[1].Columns)
+	}
+
+	// An explicit filter that selects the empty type renders it with its lanes
+	// and no items (the empty type is hidden by the default view, not by the
+	// projection).
+	filtered := workData{
+		ObjectTypes: types,
+		BoardTypes:  data.BoardTypes,
+	}
+	applyWorkBoardItems(&filtered, items, url.Values{"filter": {"1"}, "type": {"Empty"}})
+	if len(filtered.Matrices) != 1 || filtered.Matrices[0].Type != "Empty" {
+		t.Fatalf("explicit filter matrices = %+v, want the Empty type", filtered.Matrices)
+	}
+	if len(filtered.Matrices[0].Columns) != 2 || filtered.Matrices[0].Total != 0 {
+		t.Errorf("Empty matrix = %+v, want 2 empty lanes", filtered.Matrices[0])
+	}
+}
+
+func TestParseRuleInvocation(t *testing.T) {
+	inv, err := parseRuleInvocation(`{"model":"provider/model","credential":{"kind":"github_app","permissions":{"contents":"write"}}}`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if inv["model"] != "provider/model" {
+		t.Fatalf("inv = %#v", inv)
+	}
+	if _, err := parseRuleInvocation(`[]`); err == nil {
+		t.Fatal("array accepted as invocation")
+	}
+	if inv, err := parseRuleInvocation("  "); err != nil || inv != nil {
+		t.Fatalf("empty = %#v, %v", inv, err)
 	}
 }

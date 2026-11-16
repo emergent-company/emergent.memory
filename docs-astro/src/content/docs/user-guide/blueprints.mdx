@@ -168,7 +168,10 @@ seed:
 
 Property `title` is the label the UI shows (the key stays visible beneath it);
 `url`, `sha256`, and `date` are validated property types, and `enum` constrains
-a primitive property to a fixed set of values. See
+a primitive property to a fixed set of values. A `string` property can declare
+`format: markdown` to have its value rendered as Markdown in the object preview,
+the object page and the device card (keep that field to a paragraph or two —
+long-form content belongs in a document). See
 [Schema § Property definitions](/developer-guide/schema/#property-definitions) for the full vocabulary.
 
 ### Type presentation (`ui`)

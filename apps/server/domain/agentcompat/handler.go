@@ -310,17 +310,22 @@ func (h *Handler) writeStream(c echo.Context, result *Result, model string, opts
 // classifyError maps service errors to appropriate HTTP status codes.
 //   - BudgetExceededError  → 429 Too Many Requests
 //   - QueueFullError       → 429 Too Many Requests
+//   - ErrRunAlreadyResumed → 409 Conflict (benign: the turn is running elsewhere)
 //   - DB / internal errors → 500 Internal Server Error
 //   - Agent/model errors   → 502 Bad Gateway
 //   - Everything else      → 400 Bad Request (invalid request)
 func classifyError(err error) int {
-	var budget *agents.BudgetExceededError
-	if errors.As(err, &budget) {
+	if _, ok := errors.AsType[*agents.BudgetExceededError](err); ok {
 		return http.StatusTooManyRequests // 429
 	}
-	var queue *agents.QueueFullError
-	if errors.As(err, &queue) {
+	if _, ok := errors.AsType[*agents.QueueFullError](err); ok {
 		return http.StatusTooManyRequests // 429
+	}
+	if errors.Is(err, agents.ErrRunAlreadyResumed) {
+		// Another follower claimed the pause: this request did not fail, it was
+		// overtaken. A client retrying must not get a 5xx it would treat as its
+		// own fault (issue #887).
+		return http.StatusConflict // 409
 	}
 	msg := err.Error()
 	// DB errors surfaced as wrapped fmt.Errorf strings contain "sql" or "pq" fragments.
@@ -338,13 +343,14 @@ func classifyError(err error) int {
 
 // classifyErrorType returns the OpenAI-compatible error type string.
 func classifyErrorType(err error) string {
-	var budget *agents.BudgetExceededError
-	if errors.As(err, &budget) {
+	if _, ok := errors.AsType[*agents.BudgetExceededError](err); ok {
 		return "rate_limit_exceeded"
 	}
-	var queue *agents.QueueFullError
-	if errors.As(err, &queue) {
+	if _, ok := errors.AsType[*agents.QueueFullError](err); ok {
 		return "rate_limit_exceeded"
+	}
+	if errors.Is(err, agents.ErrRunAlreadyResumed) {
+		return "invalid_state"
 	}
 	msg := err.Error()
 	if strings.Contains(msg, "database") || strings.Contains(msg, "sql") {

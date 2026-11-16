@@ -27,24 +27,6 @@ func newEchoCtx(method, path, body string) (echo.Context, *httptest.ResponseReco
 	return e.NewContext(req, rec), rec
 }
 
-// newHandlerWithFake returns a Handler backed by a testService (fakeRepo).
-func newHandlerWithFake() (*Handler, *testService, *fakeRepo) {
-	svc, fake := newTestService()
-	// Handler expects *Service; we satisfy that by calling NewHandler with a real
-	// *Service that wraps the fake via a shim. Since Handler only calls svc.List/
-	// Create/Update/Delete, we replace the inner service with a wrapper that
-	// converts testService calls to the matching *Service method signatures.
-	//
-	// Simpler: we test Handler using a concrete *Service that itself uses a
-	// fakeRepo. We do this by building a real *Service with a dummy *Repository
-	// (nil bun.IDB), then monkey-patching its repo field to a wrapper that
-	// satisfies the same method set. Because *Service.repo is *Repository (not
-	// an interface), we instead expose an alternative constructor only for tests.
-	_ = fake
-	_ = svc
-	return nil, svc, fake
-}
-
 // handlerSvcAdapter wraps testService to satisfy the interface that Handler uses.
 // Handler calls h.svc.List / Create / Update / Delete — so we shadow *Service
 // with this type for the handler tests.
@@ -153,7 +135,7 @@ func (h *testHandler) Delete(c echo.Context) error {
 func TestHandler_List_ReturnsTodos(t *testing.T) {
 	h, fake := newTestHandler()
 	// Pre-populate fake with one todo
-	fake.Create(context.Background(), &SessionTodo{SessionID: "sess-1", Content: "task A", Status: StatusDraft})
+	require.NoError(t, fake.Create(context.Background(), &SessionTodo{SessionID: "sess-1", Content: "task A", Status: StatusDraft}))
 
 	c, rec := newEchoCtx(http.MethodGet, "/", "")
 	c.SetParamNames("sessionId")
@@ -182,9 +164,9 @@ func TestHandler_List_EmptySessionID_Returns400(t *testing.T) {
 
 func TestHandler_List_StatusFilter(t *testing.T) {
 	h, fake := newTestHandler()
-	fake.Create(context.Background(), &SessionTodo{SessionID: "sess", Content: "draft task", Status: StatusDraft})
+	require.NoError(t, fake.Create(context.Background(), &SessionTodo{SessionID: "sess", Content: "draft task", Status: StatusDraft}))
 	todo2 := &SessionTodo{SessionID: "sess", Content: "done task", Status: StatusCompleted}
-	fake.Create(context.Background(), todo2)
+	require.NoError(t, fake.Create(context.Background(), todo2))
 
 	c, rec := newEchoCtx(http.MethodGet, "/?status=completed", "")
 	c.SetParamNames("sessionId")
@@ -248,7 +230,7 @@ func TestHandler_Create_InvalidJSON_Returns400(t *testing.T) {
 
 func TestHandler_Update_Returns200(t *testing.T) {
 	h, fake := newTestHandler()
-	fake.Create(context.Background(), &SessionTodo{SessionID: "sess", Content: "old", Status: StatusDraft})
+	require.NoError(t, fake.Create(context.Background(), &SessionTodo{SessionID: "sess", Content: "old", Status: StatusDraft}))
 	var todoID string
 	for id := range fake.todos {
 		todoID = id
@@ -270,7 +252,7 @@ func TestHandler_Update_Returns200(t *testing.T) {
 
 func TestHandler_Update_WrongSession_Returns404(t *testing.T) {
 	h, fake := newTestHandler()
-	fake.Create(context.Background(), &SessionTodo{SessionID: "sess-A", Content: "task", Status: StatusDraft})
+	require.NoError(t, fake.Create(context.Background(), &SessionTodo{SessionID: "sess-A", Content: "task", Status: StatusDraft}))
 	var todoID string
 	for id := range fake.todos {
 		todoID = id
@@ -306,7 +288,7 @@ func TestHandler_Update_MissingParams_Returns400(t *testing.T) {
 
 func TestHandler_Delete_Returns204(t *testing.T) {
 	h, fake := newTestHandler()
-	fake.Create(context.Background(), &SessionTodo{SessionID: "sess", Content: "task", Status: StatusDraft})
+	require.NoError(t, fake.Create(context.Background(), &SessionTodo{SessionID: "sess", Content: "task", Status: StatusDraft}))
 	var todoID string
 	for id := range fake.todos {
 		todoID = id
@@ -324,7 +306,7 @@ func TestHandler_Delete_Returns204(t *testing.T) {
 
 func TestHandler_Delete_WrongSession_Returns404(t *testing.T) {
 	h, fake := newTestHandler()
-	fake.Create(context.Background(), &SessionTodo{SessionID: "sess-A", Content: "task", Status: StatusDraft})
+	require.NoError(t, fake.Create(context.Background(), &SessionTodo{SessionID: "sess-A", Content: "task", Status: StatusDraft}))
 	var todoID string
 	for id := range fake.todos {
 		todoID = id

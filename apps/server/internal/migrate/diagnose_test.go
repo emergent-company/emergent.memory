@@ -130,11 +130,11 @@ func TestMissingMigrationsErrorUnwrap(t *testing.T) {
 	}
 
 	// The wrapped error must remain discoverable through Unwrap too.
-	var me2 *MissingMigrationsError
-	if !errors.As(got, &me2) {
-		t.Errorf("errors.As(got, *MissingMigrationsError) = false, want true")
+	me2, ok := errors.AsType[*MissingMigrationsError](got)
+	if !ok {
+		t.Errorf("errors.AsType[*MissingMigrationsError](got) = false, want true")
 	}
 	if me2 != me {
-		t.Errorf("errors.As(got) = %p, want the same error %p", me2, me)
+		t.Errorf("errors.AsType(got) = %p, want the same error %p", me2, me)
 	}
 }

@@ -43,6 +43,9 @@ type MemoryBackend interface {
 	CancelQuestion(ctx context.Context, questionID string) (*RespondQuestionResult, error)
 	ListAgentQuestions(ctx context.Context) ([]AgentQuestionItem, error)
 	ListToolApprovals(ctx context.Context) ([]ToolApprovalItem, error)
+	// ListPendingToolApprovals is the badge's read: the same audit trail
+	// filtered to rows still awaiting a decision.
+	ListPendingToolApprovals(ctx context.Context) ([]ToolApprovalItem, error)
 	CancelAgentRun(ctx context.Context, runID string) (bool, error)
 	ListSessionTodos(ctx context.Context, sessionID string) ([]SessionTodo, error)
 	ListConversations(ctx context.Context, includeArchived bool) (*ConversationList, error)
@@ -213,6 +216,7 @@ type MemoryBackend interface {
 	DeleteProjectSourceApp(ctx context.Context, appID string) error
 	ListSourceTriggers(ctx context.Context, sourceID string) ([]DSSourceTrigger, error)
 	CreateSourceTrigger(ctx context.Context, sourceID string, req *DSSourceTriggerRequest) (*DSSourceTrigger, error)
+	BackfillSourceIssues(ctx context.Context, sourceID string) (int, error)
 	UpdateSourceTrigger(ctx context.Context, sourceID, triggerID string, req *DSSourceTriggerRequest) (*DSSourceTrigger, error)
 	DeleteSourceTrigger(ctx context.Context, sourceID, triggerID string) error
 	ListProjectDSOAuthClients(ctx context.Context, projectID string) ([]DSOAuthClientConfig, error)
@@ -232,7 +236,7 @@ type MemoryBackend interface {
 	GetObjectEdges(ctx context.Context, objectID string) ([]GraphRelationship, error)
 	GetSimilarObjects(ctx context.Context, objectID string, limit int) ([]SimilarObject, error)
 	// Work items (object-driven work / Kanban board).
-	ListWorkItems(ctx context.Context, status, typeName string, limit int) ([]WorkItem, error)
+	ListWorkItems(ctx context.Context, status, typeName string, limit int, includeProperties bool) ([]WorkItem, error)
 	GetWorkItem(ctx context.Context, canonicalID string) (*WorkItemDetail, error)
 	ApproveWorkItem(ctx context.Context, canonicalID string) (*WorkItemAction, error)
 	RequestChangesWorkItem(ctx context.Context, canonicalID, feedback string) (*WorkItemAction, error)
@@ -280,6 +284,10 @@ type MemoryBackend interface {
 	ListBlueprintVersions(ctx context.Context, name string) ([]BlueprintRecord, error)
 	ListBlueprints(ctx context.Context) ([]BlueprintRecord, error)
 	CreateBlueprint(ctx context.Context, req *createBlueprintRequest) (*BlueprintRecord, error)
+	// Marketplace install flow (see market_install_client.go): resolve a code
+	// into a review payload, then apply it into the active project.
+	ResolveMarketInstall(ctx context.Context, market, code string) (*MarketResolveResult, error)
+	ApplyMarketInstall(ctx context.Context, market, code, projectID string, overrides map[string]string) (*MarketApplyResult, error)
 	ImportBlueprint(ctx context.Context, url, ref, token string) (*BlueprintRecord, error)
 	PreviewImportBlueprint(ctx context.Context, url, ref, token string) (*BlueprintPreview, error)
 	ImportAndApplyBlueprint(ctx context.Context, url, ref, token string, overrides map[string]string) (*BlueprintRecord, error)
@@ -342,6 +350,12 @@ type MemoryBackend interface {
 	DeleteProjectSetting(ctx context.Context, category, key string) error
 	GetProjectUsageSummary(ctx context.Context, since, until time.Time) (*UsageSummaryResponse, error)
 	GetProjectUsageTimeSeries(ctx context.Context, granularity string, since, until time.Time) (*UsageTimeSeriesResponse, error)
+	// GetProjectUsageByAgent is the per-agent breakdown of the same ledger,
+	// including the unattributed bucket (spend with no run behind it).
+	GetProjectUsageByAgent(ctx context.Context, since, until time.Time) (*UsageByAgentResponse, error)
+	// GetProjectUsageRuns is the per-run cost log: one row per agent run that
+	// spent tokens, most recent activity first, with the filtered total.
+	GetProjectUsageRuns(ctx context.Context, since, until time.Time, agentID string, limit, offset int) (*UsageRunListResponse, error)
 	// GetProjectBudgetState is the week/month budget position (cap, spend,
 	// remaining, status, reset timing). It backs the usage-page budget panels and
 	// the Usage nav badge.

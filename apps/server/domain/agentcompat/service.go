@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -161,23 +162,13 @@ func (s *Service) handleNewRun(
 
 	// Find or create the runtime agent record.
 	// The kb.agent_runs table requires a valid agent_id, so we ensure a
-	// runtime agent row exists that is backed by this definition.
-	agent, err := s.agentRepo.FindByName(ctx, projectID, agentDef.Name)
+	// runtime agent row exists that is backed by this definition. Routing
+	// through FindOrCreateRuntimeAgentForDefinition (rather than a name lookup
+	// followed by an unlinked Create) reuses any already-linked row and never
+	// mints an unlinked "agent-def:<id>" duplicate — the state #737 removes.
+	agent, err := s.agentRepo.FindOrCreateRuntimeAgentForDefinition(ctx, agentDef)
 	if err != nil {
 		return nil, fmt.Errorf("agent record lookup failed: %w", err)
-	}
-	if agent == nil {
-		// Create a lightweight runtime agent for this definition.
-		agent = &agents.Agent{
-			ProjectID:    projectID,
-			Name:         agentDef.Name,
-			StrategyType: "agent-def:" + agentDef.ID,
-			CronSchedule: "0 0 * * *", // required by schema, not used
-			TriggerType:  "manual",
-		}
-		if createErr := s.agentRepo.Create(ctx, agent); createErr != nil {
-			return nil, fmt.Errorf("failed to create runtime agent for definition %q: %w", agentDef.Name, createErr)
-		}
 	}
 
 	userMsg := buildUserMessage(req.Messages)
@@ -373,6 +364,17 @@ func (s *Service) executeStreaming(
 	return &Result{StreamEvents: ch}, nil
 }
 
+// resumeErrorMessage renders a resume failure for a caller whose HTTP status is
+// already committed (streaming): a resume that lost the claim to another
+// follower is not a failure of this caller's run — the turn is running under
+// that claim — so it must not read like a server-side error (issue #887).
+func resumeErrorMessage(err error) string {
+	if errors.Is(err, agents.ErrRunAlreadyResumed) {
+		return "this run was already resumed by another caller; the turn is running under that claim"
+	}
+	return err.Error()
+}
+
 func (s *Service) resumeStreaming(
 	ctx context.Context,
 	priorRun *agents.AgentRun,
@@ -389,7 +391,7 @@ func (s *Service) resumeStreaming(
 		result, err := s.executor.Resume(ctx, priorRun, resumeReq)
 		if err != nil {
 			s.log.Warn("agentcompat: streaming resume error", slog.String("error", err.Error()))
-			ch <- StreamEvent{Done: true, ErrorMsg: err.Error()}
+			ch <- StreamEvent{Done: true, ErrorMsg: resumeErrorMessage(err)}
 			return
 		}
 		usage := s.fetchUsage(ctx, result.RunID)

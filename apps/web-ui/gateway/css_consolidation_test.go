@@ -26,7 +26,7 @@ func renderPageShell(t *testing.T, content templ.Component) string {
 func renderPageShellWithOverlay(t *testing.T, overlayURL string, content templ.Component) string {
 	t.Helper()
 	return renderHTML(t, appShell(
-		"Agents", nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
+		"Agents", nil, nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
 		0,
 		nil,
 		nil, nil,
@@ -399,7 +399,7 @@ func renderPageShellWithSentry(t *testing.T, opts sentryHeadOpts) string {
 		return err
 	})
 	return renderHTML(t, appShell(
-		"Agents", nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
+		"Agents", nil, nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
 		0,
 		nil,
 		nil, nil,
@@ -410,4 +410,21 @@ func renderPageShellWithSentry(t *testing.T, opts sentryHeadOpts) string {
 		"",
 		feedbackOrderConfig{},
 	))
+}
+
+// TestPrimaryButtonUsesBrandYellow pins #857: a button that opts into the
+// primary variant must render yellow. The shared Memory theme sets the primary
+// tone to the brand yellow (brass), and daisyUI paints .btn-primary from that
+// token; the theme ships in go-daisy and this app imports it, so the compiled
+// sheet is the one place the two halves meet. A theme retune or a go-daisy bump
+// that moved primary off yellow would silently recolour every primary button —
+// the run log's header action included — without failing any markup test.
+func TestPrimaryButtonUsesBrandYellow(t *testing.T) {
+	css := compiledCSS(t)
+	if !strings.Contains(css, "--color-primary:oklch(74% .135 78)") {
+		t.Error("compiled css primary token is not the brand yellow oklch(74% .135 78)")
+	}
+	if !strings.Contains(css, ".btn-primary{--btn-color:var(--color-primary)") {
+		t.Error("compiled css has no .btn-primary rule painting from --color-primary")
+	}
 }

@@ -16,10 +16,19 @@ import (
 // root (outside /api/), mirroring RegisterACPRoutes and agentcompat/routes.go.
 //
 // Discovery (global card) is unauthenticated; everything else requires a Bearer
-// emt_* project token with the stated scope. Project addressing is
-// selector-scoped, never path-scoped: the project comes from the X-Project-ID
-// request header (or, for a project-scoped emt_* token, from the token itself).
-// An authenticated request with neither is rejected with PROJECT_REQUIRED.
+// credential carrying the stated scope. Project addressing is selector-scoped,
+// never path-scoped: the project comes from the X-Project-ID request header (or,
+// for a project-scoped emt_* token, from the token itself). An authenticated
+// request with neither is rejected with PROJECT_REQUIRED, and the addressed
+// project must be one the caller is a member of (see A2AHandler.addressedProject,
+// issue #660).
+//
+// Scope enforcement uses RequireScopes, not RequireAPITokenScopes: the latter is
+// a no-op for non-token callers, which left the surface enforcing no scope at
+// all for OIDC sessions (issue #660). RequireScopes checks the caller's effective
+// scopes for every credential type — the minted scopes for an emt_* token, the
+// role-derived scopes for a session — so an emt_* token behaves exactly as it did
+// and a session now needs the same scope as the token it replaces.
 func RegisterA2ARoutes(e *echo.Echo, h *A2AHandler, authMiddleware *auth.Middleware) {
 	// --- Discovery (global card: no auth) ---
 	e.GET("/.well-known/agent-card.json", h.GlobalAgentCardHandler)
@@ -28,7 +37,7 @@ func RegisterA2ARoutes(e *echo.Echo, h *A2AHandler, authMiddleware *auth.Middlew
 	extended := e.Group("/extendedAgentCard")
 	extended.Use(a2aErrorEnvelopeMiddleware)
 	extended.Use(authMiddleware.RequireAuth())
-	extended.Use(authMiddleware.RequireAPITokenScopes("agents:read"))
+	extended.Use(authMiddleware.RequireScopes("agents:read"))
 	extended.GET("", h.ExtendedAgentCardHandler)
 
 	// --- Message flow (agents:write) ---
@@ -39,14 +48,14 @@ func RegisterA2ARoutes(e *echo.Echo, h *A2AHandler, authMiddleware *auth.Middlew
 	// message:send is JSON (buffered envelope); message:stream is SSE and must
 	// not be buffered, so its auth/scope runs under a dedicated non-buffering
 	// envelope middleware.
-	messageWrite.POST(":send", h.SendMessage, authMiddleware.RequireAuth(), authMiddleware.RequireAPITokenScopes("agents:write"))
+	messageWrite.POST(":send", h.SendMessage, authMiddleware.RequireAuth(), authMiddleware.RequireScopes("agents:write"))
 	messageWrite.POST(":stream", h.StreamMessage, a2aStreamingAuthMiddleware(authMiddleware, "agents:write"))
 
 	// --- Task read (agents:read) ---
 	tasksRead := e.Group("/tasks")
 	tasksRead.Use(a2aErrorEnvelopeMiddleware)
 	tasksRead.Use(authMiddleware.RequireAuth())
-	tasksRead.Use(authMiddleware.RequireAPITokenScopes("agents:read"))
+	tasksRead.Use(authMiddleware.RequireScopes("agents:read"))
 	tasksRead.GET("", h.ListTasks)
 	tasksRead.GET("/:id", h.GetTask)
 	tasksRead.GET("/:id/pushNotificationConfigs", h.PushNotificationConfigsUnsupported)
@@ -56,7 +65,7 @@ func RegisterA2ARoutes(e *echo.Echo, h *A2AHandler, authMiddleware *auth.Middlew
 	tasksWrite := e.Group("/tasks")
 	tasksWrite.Use(a2aErrorEnvelopeMiddleware)
 	tasksWrite.Use(authMiddleware.RequireAuth())
-	tasksWrite.Use(authMiddleware.RequireAPITokenScopes("agents:write"))
+	tasksWrite.Use(authMiddleware.RequireScopes("agents:write"))
 	tasksWrite.POST("/:id/pushNotificationConfigs", h.PushNotificationConfigsUnsupported)
 	tasksWrite.PUT("/:id/pushNotificationConfigs/:configId", h.PushNotificationConfigsUnsupported)
 	tasksWrite.DELETE("/:id/pushNotificationConfigs", h.PushNotificationConfigsUnsupported)
@@ -104,8 +113,8 @@ func parseTaskActionSuffix(wildcard string) (taskID, action string, ok bool) {
 }
 
 // resolveTaskAction parses the trailing action suffix from the terminal wildcard
-// and enforces the per-action API-token scope, returning an A2A error on failure
-// so auth/scope rejections stay in the A2A wire format.
+// and enforces the per-action scope, returning an A2A error on failure so
+// auth/scope rejections stay in the A2A wire format.
 func resolveTaskAction(c echo.Context) (taskID, action string, a2aErr *A2AError) {
 	taskID, action, ok := parseTaskActionSuffix(c.Param("*"))
 	if !ok {
@@ -148,18 +157,24 @@ func (h *A2AHandler) DispatchTaskAction(c echo.Context) error {
 	}
 }
 
-// requireA2AScope enforces an API-token scope for an A2A operation, mirroring
-// RequireAPITokenScopes semantics: enforcement applies only when the caller is
-// authenticated via an emt_* API token (APITokenID != ""). OAuth/standalone
-// sessions pass through. Returns an A2A error so rejections use the A2A
-// envelope, not the platform's generic error shape.
+// requireA2AScope enforces an A2A operation's scope for every credential type.
+// It deliberately differs from RequireAPITokenScopes, which skips the check when
+// the caller is not an emt_* API token: on this surface a skipped check meant an
+// OIDC session was authorized by nothing at all (issue #660). A session's
+// effective scopes are role-derived (pkg/auth.resolveOIDCScopes), so the same
+// agents:read / agents:write vocabulary applies to both credential kinds.
+//
+// Callers that are not A2A tokens keep working: a project-scoped emt_* token
+// carries the same scopes it always did, and standalone/test sessions carry the
+// full catalogue. Returns an A2A error so rejections use the A2A envelope, not
+// the platform's generic error shape.
 //
 // Authentication is enforced upstream by a2aStreamingAuthMiddleware (which wraps
-// this dispatcher's route), so this performs only the scope check and does not
-// duplicate the auth guard.
+// this dispatcher's route), so a nil user is not this helper's failure mode and
+// is left to that guard.
 func requireA2AScope(c echo.Context, scope string) *A2AError {
 	user := auth.GetUser(c)
-	if user != nil && user.APITokenID != "" && !user.HasScope(scope) {
+	if user != nil && !user.HasScope(scope) {
 		return NewA2AError(A2ACodePermissionDenied, A2AReasonPermissionDenied, "insufficient permissions")
 	}
 	return nil
@@ -225,13 +240,16 @@ func (w *a2aResponseCapture) Write(b []byte) (int, error) {
 // envelope, then hands off to the handler WITHOUT buffering so SSE bodies are
 // not held. It is used on the streaming routes (:stream, :subscribe), where
 // a2aErrorEnvelopeMiddleware intentionally skips buffering.
+//
+// The scope gate is RequireScopes (every credential type), not
+// RequireAPITokenScopes (emt_* only) — see RegisterA2ARoutes for why.
 func a2aStreamingAuthMiddleware(authMiddleware *auth.Middleware, scopes ...string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		requireAuth := authMiddleware.RequireAuth()
 		terminal := echo.HandlerFunc(func(echo.Context) error { return nil })
 		var requireScope echo.MiddlewareFunc
 		if len(scopes) > 0 {
-			requireScope = authMiddleware.RequireAPITokenScopes(scopes...)
+			requireScope = authMiddleware.RequireScopes(scopes...)
 		}
 		return func(c echo.Context) error {
 			capture := newA2AResponseCapture()
@@ -330,16 +348,13 @@ func a2aErrorFrom(err error) *A2AError {
 	if err == nil {
 		return nil
 	}
-	var a2aErr *A2AError
-	if errors.As(err, &a2aErr) {
+	if a2aErr, ok := errors.AsType[*A2AError](err); ok {
 		return a2aErr
 	}
-	var appErr *apperror.Error
-	if errors.As(err, &appErr) {
+	if appErr, ok := errors.AsType[*apperror.Error](err); ok {
 		return a2aErrorFromStatus(appErr.HTTPStatus)
 	}
-	var he *echo.HTTPError
-	if errors.As(err, &he) {
+	if he, ok := errors.AsType[*echo.HTTPError](err); ok {
 		return a2aErrorFromStatus(he.Code)
 	}
 	return a2aErrorFromStatus(http.StatusInternalServerError)

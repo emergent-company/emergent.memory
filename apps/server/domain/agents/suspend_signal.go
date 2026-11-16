@@ -14,6 +14,13 @@ const (
 	// SuspendReasonAwaitingClientTool means the run is paused waiting for the OpenAI-compat
 	// client to execute a caller-supplied tool and POST the result back.
 	SuspendReasonAwaitingClientTool SuspendReason = "awaiting_client_tool"
+	// SuspendReasonStepLimit means the executor paused the run because it reached
+	// its step budget. Nothing is pending and no question row exists: a follow-up
+	// message continues the run (issue #867). Writing this marker is what lets a
+	// resume surface positively identify a step-limit pause, instead of inferring
+	// one from a missing suspend_context (which would fail open for any pause whose
+	// marker was never written).
+	SuspendReasonStepLimit SuspendReason = "step_limit"
 )
 
 // ToolConfirmation is one pending tool-policy confirmation within a batch. When

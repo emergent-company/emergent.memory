@@ -152,8 +152,8 @@ func assertGetDocumentNotFound(t *testing.T) {
 		t.Fatal("expected handler error for unknown slug")
 	}
 
-	var appErr *apperror.Error
-	if !errors.As(err, &appErr) {
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	if !ok {
 		t.Fatalf("error = %T (%v), want *apperror.Error", err, err)
 	}
 	if appErr.HTTPStatus != http.StatusNotFound {

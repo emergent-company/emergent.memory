@@ -460,7 +460,7 @@ func (r *Repository) TransferProject(ctx context.Context, projectID, destOrgID s
 		r.log.Error("failed to begin transaction", logger.Error(err))
 		return apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer database.RollbackTx(r.log, tx) // no-op after a successful commit
 
 	project, err := r.GetByIDWithLock(ctx, tx.Tx, projectID)
 	if err != nil {

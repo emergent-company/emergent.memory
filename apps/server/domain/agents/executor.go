@@ -652,6 +652,18 @@ type ExecuteRequest struct {
 	// event to the parent stream before execution proceeds.
 	OnRunCreated func(runID string)
 
+	// PauseClaimed reports that the caller ALREADY consumed the paused run's
+	// pause (Repository.ClaimPausedRunForResume) inside its own transaction
+	// before calling Resume. No caller in this tree sets it; it exists for a
+	// caller that must claim in a wider handler transaction (the A2A questionless
+	// branch in #881).
+	//
+	// Setting it without having actually claimed the pause re-opens #887: Resume
+	// skips its claim and two followers then execute the same turn. Leaving it
+	// false is the default and the safe choice — Resume claims the pause itself,
+	// and that claim is what serialises concurrent resumes.
+	PauseClaimed bool
+
 	// SubjectObjectID/SubjectObjectType identify the reaction target for this
 	// execution. The reaction dispatcher sets them from the trusted event target;
 	// they are never read from model/tool input. They are not persisted on the
@@ -683,6 +695,11 @@ type ExecuteRequest struct {
 	// They are merged into the sandbox container environment with lower priority
 	// than system keys (MEMORY_ACCOUNT_API_KEY, MEMORY_PROJECT_ID, MEMORY_SERVER_URL).
 	EnvVars map[string]string
+
+	// Invocation is the trigger-specific model/context/env/credential request.
+	// Queued runs carry it on the run row; this field covers inline trigger
+	// surfaces that have not created a run yet.
+	Invocation *AgentInvocation
 
 	// SessionID links this run to a session so built-in tools like
 	// set_session_title can update session metadata during execution.
@@ -863,6 +880,23 @@ type AgentExecutor struct {
 	// first user message (issue #330). Nil means time.Now. It is a field so
 	// tests can freeze it; runPipeline reads it exactly once per run.
 	now func() time.Time
+
+	// sourceCredentials mints a short-lived credential for a verified source
+	// (e.g. a GitHub App installation token) at run start. Nil disables the
+	// credential path; runs that do not request one are unaffected.
+	sourceCredentials SourceCredentialMinter
+}
+
+// SourceCredentialMinter is implemented by the sources domain. The executor
+// only names the source and the requested permissions; the implementation
+// owns the App key, installation id and token scope.
+type SourceCredentialMinter interface {
+	MintSourceCredential(ctx context.Context, projectID, sourceID, repo string, permissions map[string]string) (string, error)
+}
+
+// SetSourceCredentialMinter installs the run-time source credential minter.
+func (ae *AgentExecutor) SetSourceCredentialMinter(m SourceCredentialMinter) {
+	ae.sourceCredentials = m
 }
 
 // SkillCaptureHook is the post-run hook implemented by skills.CaptureService.
@@ -1077,6 +1111,88 @@ func NewAgentExecutor(
 	}
 }
 
+// applyInvocation merges a trigger invocation into the request and resolves
+// its source credential. The token is minted here, at run start, so a queued
+// run never carries an expiring installation token in its row.
+func (ae *AgentExecutor) applyInvocation(ctx context.Context, run *AgentRun, req *ExecuteRequest) error {
+	inv := req.Invocation
+	if run != nil && run.RunInvocation != nil {
+		inv = run.RunInvocation
+	}
+	if inv == nil {
+		return nil
+	}
+	inv = NormalizeInvocation(inv)
+	if err := ValidateInvocation(inv); err != nil {
+		return fmt.Errorf("invalid trigger invocation: %w", err)
+	}
+
+	if inv.Model != "" && req.Model == "" {
+		req.Model = inv.Model
+	}
+	if inv.MaxSteps != nil && req.MaxSteps == nil {
+		req.MaxSteps = inv.MaxSteps
+	}
+	if req.EnvVars == nil {
+		req.EnvVars = make(map[string]string, len(inv.EnvVars)+1)
+	}
+	for k, v := range inv.EnvVars {
+		if _, exists := req.EnvVars[k]; !exists {
+			req.EnvVars[k] = v
+		}
+	}
+	if len(inv.Context) > 0 {
+		if run != nil {
+			if run.TriggerMetadata == nil {
+				run.TriggerMetadata = map[string]any{}
+			}
+			run.TriggerMetadata["trigger_context"] = inv.Context
+		} else {
+			if req.TriggerMetadata == nil {
+				req.TriggerMetadata = map[string]any{}
+			}
+			req.TriggerMetadata["trigger_context"] = inv.Context
+		}
+	}
+
+	if inv.Credential == nil {
+		return nil
+	}
+	if ae.sourceCredentials == nil {
+		return fmt.Errorf("trigger invocation requests a source credential, but no credential provider is configured")
+	}
+
+	sourceID := strings.TrimSpace(inv.Credential.SourceID)
+	repo := ""
+	if run != nil && run.SourceSubject != nil {
+		if sourceID == "" {
+			sourceID = run.SourceSubject.SourceID
+		}
+		repo = run.SourceSubject.Repo
+	}
+	if run != nil && run.TriggerMetadata != nil {
+		if sourceID == "" {
+			sourceID, _ = run.TriggerMetadata["sourceId"].(string)
+		}
+		if repo == "" {
+			repo, _ = run.TriggerMetadata["repo"].(string)
+		}
+	}
+	if sourceID == "" || repo == "" {
+		return fmt.Errorf("trigger invocation requests a source credential, but the run has no sourceId/repo")
+	}
+	permissions := inv.Credential.Permissions
+	if len(permissions) == 0 {
+		permissions = map[string]string{PermissionContents: "read"}
+	}
+	token, err := ae.sourceCredentials.MintSourceCredential(ctx, req.ProjectID, sourceID, repo, permissions)
+	if err != nil {
+		return fmt.Errorf("mint source credential: %w", err)
+	}
+	req.EnvVars["GH_TOKEN"] = token
+	return nil
+}
+
 // EnsureExecutionEnabled reports whether agent execution is currently permitted
 // by the AGENT_EXECUTION_ENABLED kill switch, returning ErrExecutionDisabled when
 // it is off. Callers that create or claim work before reaching an executor entry
@@ -1137,6 +1253,9 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	dbCtx := context.Background()
 
 	if err := ae.ensureExecutionEnabled(req); err != nil {
+		return nil, err
+	}
+	if err := ae.applyInvocation(ctx, nil, &req); err != nil {
 		return nil, err
 	}
 
@@ -1395,6 +1514,17 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 
 	if err := ae.ensureExecutionEnabled(req); err != nil {
 		return nil, err
+	}
+	if err := ae.applyInvocation(ctx, run, &req); err != nil {
+		return nil, err
+	}
+	if run != nil {
+		if req.Model == "" && run.Model != nil {
+			req.Model = *run.Model
+		}
+		if req.MaxSteps == nil && run.MaxSteps != nil {
+			req.MaxSteps = run.MaxSteps
+		}
 	}
 
 	// The pre-created run was inserted by the caller without the trust marker;
@@ -1669,6 +1799,57 @@ func resolveRunTimeout(req ExecuteRequest) time.Duration {
 	return defaultRunTimeout
 }
 
+// ErrRunAlreadyResumed reports that a pause was consumed by another follower
+// before this resume could claim it. Two followers of one paused run (a client
+// retry, a double submit, a re-delivered wake) both read `input-required`; only
+// one claims it, and the loser must be rejected rather than executing the turn a
+// second time (issue #887).
+var ErrRunAlreadyResumed = errors.New("run is no longer awaiting input (already resumed)")
+
+// beginResumedRun creates the run that takes over priorRun's execution,
+// consuming the pause as part of the same transaction (issue #887). It is the
+// executor's resume claim: every non-A2A entry point (chat, question respond,
+// MCP respond, agentcompat, coordination wake) reaches the pause through here,
+// so none of them can turn a concurrent follower into a second execution.
+//
+// pauseClaimed short-circuits the claim for callers that already consumed the
+// pause themselves before calling Resume; they create the child with an ordinary
+// insert instead.
+func (ae *AgentExecutor) beginResumedRun(ctx context.Context, priorRun *AgentRun, opts CreateRunOptions, pauseClaimed bool) (*AgentRun, error) {
+	if pauseClaimed {
+		run, err := ae.repo.CreateRunWithOptions(ctx, opts)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create resumed run: %w", err)
+		}
+		return run, nil
+	}
+
+	run, claimed, err := ae.repo.CreateResumedRunFromPause(ctx, priorRun.ID, opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create resumed run: %w", err)
+	}
+	if !claimed {
+		return nil, fmt.Errorf("%w: run %s", ErrRunAlreadyResumed, priorRun.ID)
+	}
+	return run, nil
+}
+
+// pauseRunAtStepLimit records the step-limit suspend marker and then pauses the
+// run. A step-limit pause writes no question row, so the marker is the only
+// positive evidence that the pause is a continuation a follow-up message may
+// advance (issue #867); a resume surface must never infer that from a missing
+// marker. Best-effort on the marker: a failed write must not skip the pause.
+func (ae *AgentExecutor) pauseRunAtStepLimit(ctx context.Context, runID string, step int) {
+	sig := SuspendSignal{Reason: SuspendReasonStepLimit}
+	if err := ae.repo.UpdateSuspendContext(ctx, runID, sig.ToMap()); err != nil {
+		ae.log.Warn("failed to persist suspend_context for step limit",
+			slog.String("run_id", runID),
+			slog.String("error", err.Error()),
+		)
+	}
+	_ = ae.repo.PauseRun(ctx, runID, step)
+}
+
 func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req ExecuteRequest) (*ExecuteResult, error) {
 	startTime := time.Now()
 	dbCtx := context.Background()
@@ -1705,6 +1886,29 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	resumedFrom := priorRun.ID
 	if req.PreCreatedRun != nil {
 		newRun = req.PreCreatedRun
+		// The child already exists, so the pause is claimed on its own: without
+		// it two followers of one pause each execute the turn on their own
+		// pre-created run (issue #887).
+		if !req.PauseClaimed {
+			claimed, claimErr := ae.repo.ClaimPausedRunForResume(dbCtx, priorRun.ID)
+			if claimErr != nil {
+				return nil, fmt.Errorf("failed to claim paused run %s: %w", priorRun.ID, claimErr)
+			}
+			if !claimed {
+				// This follower lost: retire its pre-created run so it cannot
+				// leak as a live `working` row that never executes. The winner
+				// owns the turn. Callers that also fail it on the returned error
+				// are a no-op thanks to the guarded terminal transition.
+				if failErr := ae.repo.FailRunWithSteps(dbCtx, newRun.ID,
+					fmt.Sprintf("resume lost the race for run %s: %s", priorRun.ID, ErrRunAlreadyResumed), priorRun.StepCount); failErr != nil {
+					ae.log.Warn("failed to retire pre-created run after losing the resume claim",
+						slog.String("run_id", newRun.ID),
+						slog.String("error", failErr.Error()),
+					)
+				}
+				return nil, fmt.Errorf("%w: run %s", ErrRunAlreadyResumed, priorRun.ID)
+			}
+		}
 		newRun.TrustedInternal = priorRun.TrustedInternal
 		if err := ae.repo.UpdateRunTrustedInternal(dbCtx, newRun.ID, priorRun.TrustedInternal); err != nil {
 			ae.log.Warn("failed to persist trusted_internal on resumed run",
@@ -1714,7 +1918,7 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		}
 	} else {
 		var err error
-		newRun, err = ae.repo.CreateRunWithOptions(dbCtx, CreateRunOptions{
+		newRun, err = ae.beginResumedRun(dbCtx, priorRun, CreateRunOptions{
 			AgentID:          priorRun.AgentID,
 			ParentRunID:      req.ParentRunID,
 			MaxSteps:         &maxSteps,
@@ -1722,13 +1926,13 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 			InitialStepCount: priorRun.StepCount,
 			TriggerMetadata:  priorRun.TriggerMetadata,
 			TrustedInternal:  priorRun.TrustedInternal,
-			// The resumed run owns the work item from here: MarkRunResumed
-			// finalizes the paused checkpoint.
+			// The resumed run owns the work item from here, and the claim that
+			// created it finalizes the paused checkpoint.
 			SubjectObjectID:   priorRun.SubjectObjectID,
 			SubjectObjectType: priorRun.SubjectObjectType,
-		})
+		}, req.PauseClaimed)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create resumed run: %w", err)
+			return nil, err
 		}
 	}
 
@@ -1738,16 +1942,9 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		req.OnRunCreated(newRun.ID)
 	}
 
-	// Transition the prior paused run to running so it no longer appears stuck.
-	// The new run (newRun) carries the actual execution; the prior run's role is to
-	// serve as a checkpoint that has now been resumed.
-	if err := ae.repo.MarkRunResumed(dbCtx, priorRun.ID); err != nil {
-		ae.log.Warn("failed to mark prior run as resumed",
-			slog.String("prior_run_id", priorRun.ID),
-			slog.String("new_run_id", newRun.ID),
-			slog.String("error", err.Error()),
-		)
-	}
+	// The prior paused run is already terminal: the claim above finalized it
+	// before the child existed, which is what serialises concurrent resumes
+	// (issue #887).
 
 	// Copy session_id from prior run so the resumed run stays linked to the same session.
 	if priorRun.SessionID != nil {
@@ -3241,8 +3438,10 @@ func (ae *AgentExecutor) runPipeline(
 				slog.Int("step", currentStep),
 				slog.Int("max_steps", maxSteps),
 			)
-			// Pause the run instead of failing
-			_ = ae.repo.PauseRun(dbCtx, run.ID, currentStep)
+			// Pause the run instead of failing, recording WHY it paused. The marker
+			// is what lets a resume surface tell a step-limit pause from an
+			// unidentified one and refuse to advance the latter (issue #867).
+			ae.pauseRunAtStepLimit(dbCtx, run.ID, currentStep)
 			return &model.LLMResponse{
 				Content: genai.NewContentFromText("Step limit reached. Run has been paused.", genai.RoleModel),
 			}, nil

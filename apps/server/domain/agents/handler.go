@@ -24,6 +24,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/pgutils"
 	"github.com/emergent-company/emergent.memory/pkg/sse"
 )
 
@@ -249,13 +250,11 @@ func (h *Handler) enrichRunTrace(ctx context.Context, dto *AgentRunDTO, runID st
 //   - QueueFullError      → 429 Too Many Requests
 //   - other              → 500 Internal Server Error
 func mapExecutorError(err error) *apperror.Error {
-	var budgetErr *BudgetExceededError
-	if errors.As(err, &budgetErr) {
+	if _, ok := errors.AsType[*BudgetExceededError](err); ok {
 		return apperror.New(http.StatusPaymentRequired, "budget_exceeded",
 			"A project budget window (weekly or monthly) has been exceeded. Please review your spending, increase the budget, or reset the window.")
 	}
-	var queueErr *QueueFullError
-	if errors.As(err, &queueErr) {
+	if queueErr, ok := errors.AsType[*QueueFullError](err); ok {
 		return apperror.New(http.StatusTooManyRequests, "queue_full",
 			fmt.Sprintf("Agent run queue is full (%d/%d pending jobs). Wait for existing runs to complete before triggering new ones.",
 				queueErr.PendingJobs, queueErr.MaxPendingJobs))
@@ -491,7 +490,7 @@ func (h *Handler) CreateAgent(c echo.Context) error {
 
 	// Work-pickup validation: a work agent (linked definition carries a work
 	// config) must declare a single object type and a single pickup signal.
-	if err := ValidateWorkPickupForDefinition(h.definitionForID(c.Request().Context(), dto.AgentDefinitionID), dto.ReactionConfig); err != nil {
+	if err := ValidateWorkPickupForDefinition(h.definitionForID(c.Request().Context(), dto.ProjectID, dto.AgentDefinitionID), dto.ReactionConfig); err != nil {
 		return apperror.NewBadRequest(err.Error())
 	}
 
@@ -524,6 +523,9 @@ func (h *Handler) CreateAgent(c echo.Context) error {
 	if err := h.repo.Create(c.Request().Context(), agent); err != nil {
 		if strings.Contains(err.Error(), "foreign key") || strings.Contains(err.Error(), "violates foreign key") {
 			return apperror.NewNotFound("project", "not found")
+		}
+		if pgutils.IsUniqueViolation(err) {
+			return apperror.NewConflict("agent definition is already linked to another agent")
 		}
 		return apperror.NewInternal("failed to create agent", err)
 	}
@@ -629,7 +631,7 @@ func (h *Handler) UpdateAgent(c echo.Context) error {
 
 	// Work-pickup validation: a work agent (linked definition carries a work
 	// config) must declare a single object type and a single pickup signal.
-	if err := ValidateWorkPickupForDefinition(h.definitionForID(c.Request().Context(), agent.AgentDefinitionID), agent.ReactionConfig); err != nil {
+	if err := ValidateWorkPickupForDefinition(h.definitionForID(c.Request().Context(), agent.ProjectID, agent.AgentDefinitionID), agent.ReactionConfig); err != nil {
 		return apperror.NewBadRequest(err.Error())
 	}
 
@@ -647,6 +649,9 @@ func (h *Handler) UpdateAgent(c echo.Context) error {
 	}
 
 	if err := h.repo.Update(c.Request().Context(), agent); err != nil {
+		if pgutils.IsUniqueViolation(err) {
+			return apperror.NewConflict("agent definition is already linked to another agent")
+		}
 		return apperror.NewInternal("failed to update agent", err)
 	}
 
@@ -1727,7 +1732,7 @@ func (h *Handler) syncDefinitionWorkTriggers(ctx context.Context, def *AgentDefi
 	if len(types) == 0 {
 		return
 	}
-	agents, err := h.repo.FindAgentsByDefinitionID(ctx, def.ID)
+	agents, err := h.repo.FindAgentsByDefinitionID(ctx, def.ProjectID, def.ID)
 	if err != nil {
 		return
 	}
@@ -1751,18 +1756,38 @@ func (h *Handler) syncDefinitionWorkTriggers(ctx context.Context, def *AgentDefi
 			AgentDefinitionID: &defID,
 		}
 		if err := h.repo.CreateAgent(ctx, a); err != nil {
-			// A name collision from a concurrent save or a pre-existing runtime
-			// row: adopt that row instead of silently leaving the definition
-			// without a listener.
-			if existing, ferr := h.repo.FindAgentByName(ctx, def.ProjectID, def.Name); ferr == nil && existing != nil {
-				existing.ReactionConfig = a.ReactionConfig
-				existing.TriggerType = TriggerTypeReaction
-				existing.Enabled = def.Enabled
-				existing.AgentDefinitionID = &defID
-				if uerr := h.repo.Update(ctx, existing); uerr == nil {
-					h.triggers.SyncAgentTrigger(existing)
-				}
+			// A duplicate-key rejection on the (project_id, agent_definition_id)
+			// partial unique index means another binder already linked this
+			// definition. Re-resolve that winner and apply the reaction config to
+			// it, instead of adopting an unrelated same-name row (whose Update
+			// would hit the same index and leave the definition with no listener).
+			rows, ferr := h.repo.FindAgentsByDefinitionID(ctx, def.ProjectID, def.ID)
+			if ferr != nil {
+				slog.Error("sync definition work triggers: resolve winner after create conflict",
+					slog.String("definition_id", def.ID),
+					slog.String("project_id", def.ProjectID),
+					slog.String("error", ferr.Error()))
+				return
 			}
+			existing := pickRuntimeAgent(rows)
+			if existing == nil {
+				slog.Error("sync definition work triggers: create failed with no runtime row to adopt",
+					slog.String("definition_id", def.ID),
+					slog.String("project_id", def.ProjectID),
+					slog.String("error", err.Error()))
+				return
+			}
+			existing.ReactionConfig = a.ReactionConfig
+			existing.TriggerType = TriggerTypeReaction
+			existing.Enabled = def.Enabled
+			if uerr := h.repo.Update(ctx, existing); uerr != nil {
+				slog.Error("sync definition work triggers: failed to update the definition's reaction config",
+					slog.String("agent_id", existing.ID),
+					slog.String("definition_id", def.ID),
+					slog.String("error", uerr.Error()))
+				return
+			}
+			h.triggers.SyncAgentTrigger(existing)
 			return
 		}
 		h.triggers.SyncAgentTrigger(a)
@@ -3557,9 +3582,9 @@ func (h *Handler) resumeQuestionRun(ctx context.Context, p RespondParams, run *A
 		ResumedFrom:      &resumedFrom,
 		InitialStepCount: run.StepCount,
 		TriggerMetadata:  run.TriggerMetadata,
-		// Keep the work-item link on the resumed run: the parent checkpoint is
-		// finalized by MarkRunResumed, and a subject with no live run is
-		// reclaimable by the work reaper.
+		// Keep the work-item link on the resumed run: the resume claim finalizes
+		// the paused checkpoint, and a subject with no live run is reclaimable by
+		// the work reaper.
 		SubjectObjectID:   run.SubjectObjectID,
 		SubjectObjectType: run.SubjectObjectType,
 	})
@@ -3625,10 +3650,20 @@ func (h *Handler) resumeQuestionRun(ctx context.Context, p RespondParams, run *A
 					slog.String("error", repoErr.Error()),
 				)
 			}
-			// The pre-created resume run must also reach a terminal state: when the
-			// kill switch refused the resume the executor never touched it, so it
-			// would otherwise sit `running` until the stale-run reaper.
-			failRunIfExecutionDisabled(ctx, h.repo, preCreatedRun, err, slog.Default())
+			// The pre-created resume run must reach a terminal state on ANY
+			// failure, not only a kill-switch refusal: the claim can fail on a DB
+			// error before the executor ever touches the child, and a losing
+			// follower's child is only retired inside Resume — if that retirement
+			// itself failed, the row would sit `running` until the stale-run
+			// reaper. Resume is guarded too, so failing an already-terminal child
+			// is a no-op.
+			if repoErr := h.repo.FailRunWithSteps(ctx, preCreatedRun.ID,
+				fmt.Sprintf("resume failed before start: %s", err.Error()), run.StepCount); repoErr != nil {
+				slog.Error("failed to mark pre-created resume run as error",
+					slog.String("run_id", preCreatedRun.ID),
+					slog.String("error", repoErr.Error()),
+				)
+			}
 		}
 		// Notify the caller (share) that the resumed leg has settled so it can
 		// reconcile budget usage. Invoked last so Cleanup + failure marking are

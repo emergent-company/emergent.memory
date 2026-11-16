@@ -118,7 +118,16 @@ jobs:
 
       - name: Architectural debt ratchet
         working-directory: apps/server
-        run: ./scripts/lint-ratchet.sh
+        run: |
+          ./scripts/lint-ratchet.sh --self-test
+          ./scripts/lint-ratchet.sh
+
+      - name: Lint finding-count ratchet
+        # Pins the per-linter *total* (errcheck / staticcheck / unused) so the
+        # #853 baseline cannot drift back up. Deliberately separate from the
+        # pre-commit gate: a full golangci-lint pass is too slow for a hook.
+        working-directory: apps/server
+        run: ./scripts/lint-ratchet.sh --lint-counts
 
       - name: Go test coverage guard
         # Fails when a *_test.go package under apps/server is not referenced by

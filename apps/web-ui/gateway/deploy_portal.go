@@ -57,6 +57,25 @@ func (s *Server) deployPortalEnabled() bool {
 	return s.cfg.DeployPortalEnabled
 }
 
+// deployPortalDisabled is the 404 every deploy-portal route returns when the
+// capability is off. Echo's default 404 body (`{"message":"Not Found"}`) is the
+// same one an unregistered route produces, so a disabled portal and a dropped
+// route were indistinguishable — the gap that made a flag-off deployment look
+// like the #648 scope-rewrite regression. Naming the gate in the body keeps the
+// status a 404 while telling a caller which of the two it hit. No behaviour
+// changes when the portal is enabled.
+func deployPortalDisabled() error {
+	return echo.NewHTTPError(http.StatusNotFound, "deploy portal is disabled on this deployment")
+}
+
+// deployPortalUnconfigured is the OAuth-route 404 when the capability is on but
+// its Railway credentials are missing, so the body does not claim the portal is
+// disabled. LoadConfig refuses to start a gateway in this state, so it is a
+// belt-and-braces guard rather than a configuration an operator can reach.
+func deployPortalUnconfigured() error {
+	return echo.NewHTTPError(http.StatusNotFound, "deploy portal is not configured on this deployment")
+}
+
 func (s *Server) deployPortalConfigured() bool {
 	return s.cfg.RailwayOAuthClientID != "" && s.cfg.RailwayOAuthClientSecret != "" &&
 		s.cfg.RailwayOAuthRedirectURI != "" && len(s.cfg.DeploySessionSecret) >= 32
@@ -182,8 +201,11 @@ func (s *Server) registerDeployPortalRoutes(e *echo.Echo) {
 }
 
 func (s *Server) deployOAuthStart(c echo.Context) error {
-	if !s.deployPortalEnabled() || !s.deployPortalConfigured() {
-		return echo.ErrNotFound
+	if !s.deployPortalEnabled() {
+		return deployPortalDisabled()
+	}
+	if !s.deployPortalConfigured() {
+		return deployPortalUnconfigured()
 	}
 	stateBytes := make([]byte, 32)
 	verifierBytes := make([]byte, 32)
@@ -227,8 +249,11 @@ func (s *Server) deployOAuthStart(c echo.Context) error {
 }
 
 func (s *Server) deployOAuthCallback(c echo.Context) error {
-	if !s.deployPortalEnabled() || !s.deployPortalConfigured() {
-		return echo.ErrNotFound
+	if !s.deployPortalEnabled() {
+		return deployPortalDisabled()
+	}
+	if !s.deployPortalConfigured() {
+		return deployPortalUnconfigured()
 	}
 	if errCode := c.QueryParam("error"); errCode != "" {
 		c.SetCookie(&http.Cookie{Name: deployStateCookie, Value: "", Path: deployCookiePath, MaxAge: -1, HttpOnly: true, Secure: s.deployCookieSecure(), SameSite: http.SameSiteLaxMode})
@@ -369,7 +394,7 @@ func (s *Server) deployOAuthLogout(c echo.Context) error {
 
 func (s *Server) deployPortalPage(c echo.Context) error {
 	if !s.deployPortalEnabled() {
-		return echo.ErrNotFound
+		return deployPortalDisabled()
 	}
 	data := deployPortalData{Configured: s.deployPortalConfigured()}
 	if q := c.QueryParam("error"); q != "" {

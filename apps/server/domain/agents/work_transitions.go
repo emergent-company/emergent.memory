@@ -64,8 +64,7 @@ func isQuotaError(err error) bool {
 	if err == nil {
 		return false
 	}
-	var q *QuotaError
-	if errors.As(err, &q) {
+	if _, ok := errors.AsType[*QuotaError](err); ok {
 		return true
 	}
 	s := err.Error()
@@ -80,8 +79,7 @@ func isCapabilityError(err error) bool {
 	if err == nil {
 		return false
 	}
-	var c *CapabilityError
-	if errors.As(err, &c) {
+	if _, ok := errors.AsType[*CapabilityError](err); ok {
 		return true
 	}
 	s := err.Error()
@@ -196,7 +194,7 @@ func (p *WorkerPool) finishWorkRun(ctx context.Context, log *slog.Logger, job *A
 		// A review tool may have finalized the lane directly (done/revision) even
 		// though it is not a work_complete terminator. Treat a terminal lane as
 		// finalized instead of a protocol violation.
-		if head, err := p.workObjects.GetHeadObject(ctx, projectID, canonicalID); err == nil && isTerminalLaneStatus(head) {
+		if head, err := p.workObjects.GetHeadObject(ctx, projectID, canonicalID); err == nil && (isTerminalLaneStatus(head) || isIssueReviewFinal(head)) {
 			if err := p.repo.CompleteJob(ctx, job.ID, job.RunID); err != nil {
 				log.Warn("failed to complete finalized work run job", slog.String("error", err.Error()))
 			}
@@ -258,6 +256,10 @@ func (p *WorkerPool) finishWorkRun(ctx context.Context, log *slog.Logger, job *A
 	default: // deterministic / poison
 		p.poisonFailure(ctx, log, agentDef, canonicalID, projectID, subjectType, errMsg)
 	}
+}
+
+func isIssueReviewFinal(head *graph.WorkObjectHead) bool {
+	return head != nil && head.Type == "GitHubIssue" && head.Status == "review"
 }
 
 func failureMessage(execErr error, result *ExecuteResult) string {
@@ -408,16 +410,38 @@ func (p *WorkerPool) reenqueueWork(ctx context.Context, log *slog.Logger, agent 
 		subjectTypePtr = nil
 	}
 	meta := map[string]any{"work_trigger_event": string(EventTypeStatusChanged)}
-	if head, herr := p.workObjects.GetHeadObject(ctx, projectID, canonicalID); herr == nil && head != nil {
+	var head *graph.WorkObjectHead
+	if h, herr := p.workObjects.GetHeadObject(ctx, projectID, canonicalID); herr == nil && h != nil {
+		head = h
 		meta = workTriggerMetadata(head)
 	}
-	_, err := p.repo.CreateRunQueued(ctx, agent.ID, maxAttempts, CreateRunQueuedOptions{
+	var trigger *AgentWorkTrigger
+	if agentDef != nil && head != nil {
+		trigger = agentDef.MatchWorkTrigger(head.Type, head.Status)
+	}
+	inv := workRunInvocation(ctx, nil, projectID, head, trigger)
+	sourceTriggerID := workSourceTriggerID(head)
+	if prev, perr := p.repo.FindLatestRunForSubject(ctx, canonicalID); perr == nil && prev != nil && prev.AgentID == agent.ID {
+		if prev.RunInvocation != nil {
+			inv = prev.RunInvocation
+		}
+		if prev.SourceTriggerID != nil {
+			sourceTriggerID = prev.SourceTriggerID
+		}
+	}
+	opts := CreateRunQueuedOptions{
 		SubjectObjectID:   &canonicalID,
 		SubjectObjectType: subjectTypePtr,
-		TrustedInternal:   true,
+		TrustedInternal:   workRunTrusted(head),
 		NextRunAt:         nextRunAt,
 		TriggerMetadata:   meta,
-	})
+		Invocation:        inv,
+		SourceTriggerID:   sourceTriggerID,
+	}
+	if inv != nil {
+		opts.Priority = inv.Priority
+	}
+	_, err := p.repo.CreateRunQueued(ctx, agent.ID, maxAttempts, opts)
 	if err != nil {
 		if errors.Is(err, ErrWorkItemBusy) {
 			log.Info("work item already has a live run; re-enqueue skipped", slog.String("canonical_id", canonicalID))

@@ -64,14 +64,12 @@ func NewRetryConflict(message string) error {
 // database error was reported to the caller as a bad request with the driver
 // text in it.
 func (h *Handler) retryFailure(err error) error {
-	var conflict *RetryConflictError
-	if errors.As(err, &conflict) {
+	if conflict, ok := errors.AsType[*RetryConflictError](err); ok {
 		// A run that is still in flight is a conflict rather than a bad request:
 		// retrying it would process the document twice.
 		return apperror.NewConflict(conflict.Message)
 	}
-	var appErr *apperror.Error
-	if errors.As(err, &appErr) {
+	if appErr, ok := errors.AsType[*apperror.Error](err); ok {
 		return appErr
 	}
 	h.log.Error("retry extraction: retry failed", logger.Error(err))

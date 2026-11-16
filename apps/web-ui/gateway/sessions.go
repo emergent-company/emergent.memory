@@ -14,9 +14,10 @@ import (
 
 // --- session trace/log viewer ---
 
-// uiSessions renders the session list, most recent first, each linking to its
-// detail view (/sessions/:id). A failed fetch renders the whole-page error
-// state.
+// uiSessions renders the session list, newest created first (the list is
+// ordered by created_at and every row is labelled "Created ..."), each linking
+// to its detail view (/sessions/:id). A failed fetch renders the whole-page
+// error state.
 func (s *Server) uiSessions(c echo.Context) error {
 	ctx := c.Request().Context()
 	convs, err := s.memory.ListConversations(ctx, false)

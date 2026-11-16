@@ -94,6 +94,10 @@ type fakeMemory struct {
 	retriedParsingJobIDs []string
 	retryJobErr          error
 	bulkRetried          int
+	// bulkParsingErr makes the bulk conversion retry fail, so a test can pin its
+	// error redirect (the bulk extraction retry has no such injection point yet
+	// because no test needs one).
+	bulkParsingErr error
 	// bulkIncludeNonRetryable records the flag each bulk retry arrived with, so
 	// a test can pin that the panel's explicit "after fixing the cause" button
 	// is the only caller that sets it.
@@ -170,7 +174,9 @@ type fakeMemory struct {
 	questionMessage  string             // optional reject message received via RespondQuestion
 	questionCancelID string             // question id received via CancelQuestion
 	approvals        []ToolApprovalItem
+	pendingFetched   int // ListPendingToolApprovals calls, to pin the badge's filtered read
 	questions        []AgentQuestionItem
+	questionsErr     error // ListAgentQuestions failure
 	convErr          error // ListConversations failure
 	histErr          error // GetConversationHistory failure
 	documents        []Document
@@ -208,6 +214,7 @@ type fakeMemory struct {
 	lastLookupType     string              // last typeFilter passed to LookupGraphObjectByKey
 	lastLookupKey      string              // last key passed to LookupGraphObjectByKey
 	relns              []GraphRelationship // returned by ListRelationships
+	edgesErr           error               // GetObjectEdges failure, with the object still readable
 	branches           []Branch            // returned by ListBranches
 	extractionJobs     []ExtractionJob     // returned by ListExtractionJobs
 	extractionJobsErr  error               // ListProjectExtractionJobs failure
@@ -351,19 +358,20 @@ type fakeMemory struct {
 	ftsTypeFilter            string                          // last type filter passed to SearchObjectsFTS
 
 	// Work items (object-driven work / Kanban board).
-	workItems         []WorkItem      // returned by ListWorkItems
-	workItemsErr      error           // ListWorkItems failure
-	boardRuns         []BoardRun      // returned by ListBoardRuns
-	boardRunsErr      error           // ListBoardRuns failure
-	workItemDetail    *WorkItemDetail // returned by GetWorkItem
-	workItemDetailErr error           // GetWorkItem failure
-	workAction        *WorkItemAction // returned by action methods
-	workActionErr     error           // action failure
-	lastWorkItemID    string          // last canonicalId passed to an action
-	lastReassignTo    string          // last assignee passed to ReassignWorkItem
-	lastStatusTo      string          // last status passed to SetWorkItemStatus
-	lastFeedback      string          // last feedback passed to RequestChangesWorkItem
-	lastCommentBody   string          // last body passed to AddWorkComment
+	workItems                 []WorkItem      // returned by ListWorkItems
+	workItemsErr              error           // ListWorkItems failure
+	lastWorkItemsIncludeProps bool            // includeProperties of the last ListWorkItems call
+	boardRuns                 []BoardRun      // returned by ListBoardRuns
+	boardRunsErr              error           // ListBoardRuns failure
+	workItemDetail            *WorkItemDetail // returned by GetWorkItem
+	workItemDetailErr         error           // GetWorkItem failure
+	workAction                *WorkItemAction // returned by action methods
+	workActionErr             error           // action failure
+	lastWorkItemID            string          // last canonicalId passed to an action
+	lastReassignTo            string          // last assignee passed to ReassignWorkItem
+	lastStatusTo              string          // last status passed to SetWorkItemStatus
+	lastFeedback              string          // last feedback passed to RequestChangesWorkItem
+	lastCommentBody           string          // last body passed to AddWorkComment
 
 	// objects browser: cursor pagination + count + search.
 	pageObjects          []GraphObject        // returned by ListGraphObjectsPage
@@ -447,6 +455,22 @@ type fakeMemory struct {
 	savedGithubToken    *string                 // last token passed to SetGithubCredential
 	deletedBlueprints   []string                // ids passed to DeleteBlueprint
 	deleteBlueprintErr  error                   // DeleteBlueprint failure
+
+	// Marketplace install flow (see market_install_client.go). The resolve and
+	// apply results/errors let a handler test exercise the review page, the
+	// named error mapping and the confirm redirect without a backend.
+	marketResolveRes     *MarketResolveResult // returned by ResolveMarketInstall, when set
+	marketResolveErr     error                // ResolveMarketInstall failure
+	marketResolveCalls   int                  // ResolveMarketInstall call count
+	marketResolveMarket  string               // last market passed to ResolveMarketInstall
+	marketResolveCode    string               // last code passed to ResolveMarketInstall
+	marketApplyRes       *MarketApplyResult   // returned by ApplyMarketInstall, when set
+	marketApplyErr       error                // ApplyMarketInstall failure
+	marketApplyCalls     int                  // ApplyMarketInstall call count
+	marketApplyMarket    string               // last market passed to ApplyMarketInstall
+	marketApplyCode      string               // last code passed to ApplyMarketInstall
+	marketApplyProject   string               // last project passed to ApplyMarketInstall
+	marketApplyOverrides map[string]string    // last model overrides passed to ApplyMarketInstall
 
 	importBlueprintReq *importBlueprintRequest // last request passed to ImportBlueprint
 	importBlueprintRes *BlueprintRecord        // returned by ImportBlueprint, when set
@@ -586,6 +610,16 @@ type fakeMemory struct {
 	usageSummary *UsageSummaryResponse    // returned by GetProjectUsageSummary
 	usageSeries  *UsageTimeSeriesResponse // returned by GetProjectUsageTimeSeries
 	usageErr     error                    // failure for the usage methods
+
+	usageByAgent    *UsageByAgentResponse // returned by GetProjectUsageByAgent
+	usageByAgentErr error                 // failure for GetProjectUsageByAgent
+	usageRuns       *UsageRunListResponse // returned by GetProjectUsageRuns
+	usageRunsErr    error                 // failure for GetProjectUsageRuns
+	// usageRunsAgentID/usageRunsLimit/usageRunsOffset record the last paging
+	// call, so tests can assert the filter survives the round trip.
+	usageRunsAgentID string
+	usageRunsLimit   int
+	usageRunsOffset  int
 
 	budgetState    *BudgetState // returned by GetProjectBudgetState
 	budgetStateErr error        // failure for GetProjectBudgetState
@@ -1017,6 +1051,23 @@ func (f *fakeMemory) ListToolApprovals(ctx context.Context) ([]ToolApprovalItem,
 	return f.approvals, nil
 }
 
+// ListPendingToolApprovals mirrors the server's ?decision=pending filter, so a
+// test fixture can hold decided rows without the badge counting them.
+func (f *fakeMemory) ListPendingToolApprovals(ctx context.Context) ([]ToolApprovalItem, error) {
+	f.pendingFetched++
+	all, err := f.ListToolApprovals(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pending := make([]ToolApprovalItem, 0, len(all))
+	for _, a := range all {
+		if a.Decision == "pending" {
+			pending = append(pending, a)
+		}
+	}
+	return pending, nil
+}
+
 func (f *fakeMemory) CancelAgentRun(ctx context.Context, runID string) (bool, error) {
 	f.cancelRunID = runID
 	if f.cancelAgentRunErr != nil {
@@ -1037,6 +1088,9 @@ func (f *fakeMemory) ListSessionTodos(ctx context.Context, sessionID string) ([]
 }
 
 func (f *fakeMemory) ListAgentQuestions(ctx context.Context) ([]AgentQuestionItem, error) {
+	if f.questionsErr != nil {
+		return nil, f.questionsErr
+	}
 	return f.questions, nil
 }
 
@@ -1629,6 +1683,12 @@ func (f *fakeMemory) ListGraphRelationships(ctx context.Context, branchID string
 }
 
 func (f *fakeMemory) GetObjectEdges(ctx context.Context, objectID string) ([]GraphRelationship, error) {
+	// edgesErr simulates a partial read: the object itself still loads, but its
+	// relationship endpoints do not. The object surfaces render different things
+	// for that than for "this object has no connections".
+	if f.edgesErr != nil {
+		return nil, f.edgesErr
+	}
 	if f.docErr != nil {
 		return nil, f.docErr
 	}
@@ -1707,7 +1767,8 @@ func (f *fakeMemory) CreateRelationship(ctx context.Context, req *CreateRelation
 	return f.createRelErr
 }
 
-func (f *fakeMemory) ListWorkItems(ctx context.Context, status, typeName string, limit int) ([]WorkItem, error) {
+func (f *fakeMemory) ListWorkItems(ctx context.Context, status, typeName string, limit int, includeProperties bool) ([]WorkItem, error) {
+	f.lastWorkItemsIncludeProps = includeProperties
 	if f.workItemsErr != nil {
 		return nil, f.workItemsErr
 	}
@@ -2082,6 +2143,28 @@ func (f *fakeMemory) GetModelOverrides(ctx context.Context, name string) (map[st
 		return f.modelOverrides, nil
 	}
 	return map[string]string{}, nil
+}
+
+func (f *fakeMemory) ResolveMarketInstall(ctx context.Context, market, code string) (*MarketResolveResult, error) {
+	f.marketResolveCalls++
+	f.marketResolveMarket = market
+	f.marketResolveCode = code
+	if f.marketResolveErr != nil {
+		return nil, f.marketResolveErr
+	}
+	return f.marketResolveRes, nil
+}
+
+func (f *fakeMemory) ApplyMarketInstall(ctx context.Context, market, code, projectID string, overrides map[string]string) (*MarketApplyResult, error) {
+	f.marketApplyCalls++
+	f.marketApplyMarket = market
+	f.marketApplyCode = code
+	f.marketApplyProject = projectID
+	f.marketApplyOverrides = overrides
+	if f.marketApplyErr != nil {
+		return nil, f.marketApplyErr
+	}
+	return f.marketApplyRes, nil
 }
 
 func (f *fakeMemory) ListAppliedBlueprints(ctx context.Context) ([]AppliedBlueprint, error) {
@@ -2608,6 +2691,27 @@ func (f *fakeMemory) GetProjectUsageTimeSeries(ctx context.Context, granularity 
 		return &UsageTimeSeriesResponse{}, nil
 	}
 	return f.usageSeries, nil
+}
+
+func (f *fakeMemory) GetProjectUsageByAgent(ctx context.Context, since, until time.Time) (*UsageByAgentResponse, error) {
+	if f.usageByAgentErr != nil {
+		return nil, f.usageByAgentErr
+	}
+	if f.usageByAgent == nil {
+		return &UsageByAgentResponse{}, nil
+	}
+	return f.usageByAgent, nil
+}
+
+func (f *fakeMemory) GetProjectUsageRuns(ctx context.Context, since, until time.Time, agentID string, limit, offset int) (*UsageRunListResponse, error) {
+	f.usageRunsAgentID, f.usageRunsLimit, f.usageRunsOffset = agentID, limit, offset
+	if f.usageRunsErr != nil {
+		return nil, f.usageRunsErr
+	}
+	if f.usageRuns == nil {
+		return &UsageRunListResponse{Limit: limit, Offset: offset}, nil
+	}
+	return f.usageRuns, nil
 }
 
 // GetProjectBudgetState returns the canned budget reading (nil = unavailable,
@@ -5501,6 +5605,8 @@ func (f *fakeMemory) ListSourceTriggers(ctx context.Context, sourceID string) ([
 	}
 	return f.dsSourceTriggers[sourceID], nil
 }
+
+func (f *fakeMemory) BackfillSourceIssues(context.Context, string) (int, error) { return 0, nil }
 
 func (f *fakeMemory) CreateSourceTrigger(ctx context.Context, sourceID string, req *DSSourceTriggerRequest) (*DSSourceTrigger, error) {
 	if f.dsSourceTriggerErr != nil {

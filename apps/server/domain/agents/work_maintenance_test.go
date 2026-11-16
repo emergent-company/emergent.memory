@@ -86,3 +86,39 @@ func TestIsTerminalLaneStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkTriggerMetadataAcceptsIntegerIssueNumber(t *testing.T) {
+	meta := workTriggerMetadata(&graph.WorkObjectHead{Status: "ready", Type: "GitHubIssue", Properties: map[string]any{
+		"repo":         "emergent-company/emergent.memory",
+		"issue_number": 819,
+		"source_id":    "source-1",
+		"url":          "https://github.com/emergent-company/emergent.memory/issues/819",
+	}})
+	if meta["issueNumber"] != 819 || meta["sourceId"] != "source-1" || meta["subjectType"] != "issue" {
+		t.Fatalf("meta = %#v", meta)
+	}
+}
+
+func TestMergeWorkObjectMetadataPreservesEventAndAddsSource(t *testing.T) {
+	meta := map[string]any{"work_trigger_event": "created", "work_claim_status": "ready"}
+	mergeWorkObjectMetadata(meta, &graph.WorkObjectHead{Type: "GitHubIssue", Status: "ready", Properties: map[string]any{
+		"repo":         "emergent-company/emergent.memory",
+		"issue_number": 819,
+		"source_id":    "source-1",
+	}})
+	if meta["work_trigger_event"] != "created" || meta["repo"] != "emergent-company/emergent.memory" || meta["sourceId"] != "source-1" || meta["issueNumber"] != 819 {
+		t.Fatalf("meta = %#v", meta)
+	}
+}
+
+func TestIsIssueReviewFinal(t *testing.T) {
+	if !isIssueReviewFinal(&graph.WorkObjectHead{Type: "GitHubIssue", Status: "review"}) {
+		t.Fatal("issue review should finalize a coding run")
+	}
+	if isIssueReviewFinal(&graph.WorkObjectHead{Type: "GitHubIssue", Status: "ready"}) {
+		t.Fatal("ready issue must not finalize")
+	}
+	if isIssueReviewFinal(&graph.WorkObjectHead{Type: "GitHubReviewLane", Status: "review"}) {
+		t.Fatal("review lane must use its own finalizer")
+	}
+}

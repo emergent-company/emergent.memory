@@ -15,6 +15,26 @@ dependencies = [
     "httpx>=0.27.0",
 ]
 
+# Test-only dependencies (#773). The deployed image installs with
+# `uv sync --locked --no-dev` (Dockerfile), so nothing here can reach the voice
+# agent's runtime stack. `pytest` is the only import memory_bridge/tests needs
+# that the runtime does not already provide: the suite is plain functions over
+# stdlib + httpx + livekit.agents, and test_runtime_stack.py only builds the
+# objects the entrypoint builds. Keep this list test-only — the CI job asserts
+# pytest is NOT importable from the `--no-dev` install.
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["memory_bridge/tests"]
+# The image runs `uv sync --locked --no-dev --no-install-project` and imports
+# memory_bridge from the WORKDIR, so the tests must not depend on the project
+# being installed into site-packages: put the checkout root on sys.path and
+# `memory_bridge` resolves exactly as it does at runtime.
+pythonpath = ["."]
+
 [tool.setuptools.packages.find]
 where = ["."]
 

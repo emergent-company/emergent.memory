@@ -26,8 +26,7 @@ func (e *upstreamStatusError) Error() string {
 // upstream status crosses over, because it is part of the API's contract and
 // 401/403 tells the operator the key is the problem.
 func upstreamFailureText(service string, err error) string {
-	var statusErr *upstreamStatusError
-	if errors.As(err, &statusErr) {
+	if statusErr, ok := errors.AsType[*upstreamStatusError](err); ok {
 		return fmt.Sprintf("%s rejected the request (upstream status %d).", service, statusErr.Status)
 	}
 	return fmt.Sprintf("%s request failed. The failure was logged; retrying later may succeed.", service)

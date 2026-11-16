@@ -86,23 +86,6 @@ func (s *GraphEmbeddingWorkerTestSuite) createGraphObject(objectType, key string
 	return id
 }
 
-// getEmbedding retrieves the embedding for a graph object
-func (s *GraphEmbeddingWorkerTestSuite) getEmbedding(objectID string) ([]float32, *time.Time) {
-	var embedding []float32
-	var updatedAt *time.Time
-
-	// Query using raw SQL for pgvector column
-	err := s.testDB.DB.NewRaw(`
-		SELECT embedding_v2::float4[], embedding_updated_at 
-		FROM kb.graph_objects WHERE id = ?
-	`, objectID).Scan(s.ctx, &embedding, &updatedAt)
-
-	if err != nil {
-		return nil, nil
-	}
-	return embedding, updatedAt
-}
-
 // =============================================================================
 // Mock Embedding Service for Testing
 // =============================================================================
@@ -246,7 +229,7 @@ func (s *GraphEmbeddingWorkerTestSuite) TestWorker_ProcessesJob() {
 	// Stop worker
 	stopCtx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
 	defer cancel()
-	worker.Stop(stopCtx)
+	s.Require().NoError(worker.Stop(stopCtx))
 
 	// Verify embedding was generated
 	s.Equal(int64(1), mockEmbeds.CallCount())
@@ -288,7 +271,7 @@ func (s *GraphEmbeddingWorkerTestSuite) TestWorker_ProcessesMultipleJobs() {
 	// Stop worker
 	stopCtx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
 	defer cancel()
-	worker.Stop(stopCtx)
+	s.Require().NoError(worker.Stop(stopCtx))
 
 	// Verify all embeddings were generated
 	s.Equal(int64(5), mockEmbeds.CallCount())
@@ -331,7 +314,7 @@ func (s *GraphEmbeddingWorkerTestSuite) TestWorker_HandlesEmbeddingFailure() {
 	// Stop worker
 	stopCtx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
 	defer cancel()
-	worker.Stop(stopCtx)
+	s.Require().NoError(worker.Stop(stopCtx))
 
 	// Verify job was requeued (back to pending with error)
 	updatedJob, err := s.jobsService.GetJob(s.ctx, job.ID)
@@ -375,7 +358,7 @@ func (s *GraphEmbeddingWorkerTestSuite) TestWorker_HandlesMissingObject() {
 
 	stopCtx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
 	defer cancel()
-	worker.Stop(stopCtx)
+	s.Require().NoError(worker.Stop(stopCtx))
 
 	// Embedding service should not be called
 	s.Equal(int64(0), mockEmbeds.CallCount())
@@ -422,7 +405,7 @@ func (s *GraphEmbeddingWorkerTestSuite) TestWorker_ExtractsTextFromProperties() 
 	// Stop worker
 	stopCtx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
 	defer cancel()
-	worker.Stop(stopCtx)
+	s.Require().NoError(worker.Stop(stopCtx))
 
 	// Verify embedding was generated (text should include type, key, and all property values)
 	s.Equal(int64(1), mockEmbeds.CallCount())
@@ -472,7 +455,7 @@ func (s *GraphEmbeddingWorkerTestSuite) TestWorker_ProcessesHighPriorityFirst() 
 	// Stop worker
 	stopCtx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
 	defer cancel()
-	worker.Stop(stopCtx)
+	s.Require().NoError(worker.Stop(stopCtx))
 
 	// Verify both jobs completed - the priority ordering is verified by
 	// checking that dequeue fetches by priority DESC in the jobs service

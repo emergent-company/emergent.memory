@@ -1,9 +1,10 @@
 // usage-charts.js — dependency-free SVG bar charts for the usage dashboard.
 //
 // Reads the #usage-timeseries JSON payload embedded by the page
-// ({tokens:[{day,value}], sessions:[{day,value}]}) and renders one bar chart
-// into each target: #usage-token-chart (daily tokens) and #usage-session-chart
-// (daily sessions). Bars use the daisyUI primary theme color via CSS variable
+// ({tokens:[{day,value}], cost:[{day,value}], sessions:[{day,value}]}) and
+// renders one bar chart into each target: #usage-token-chart (daily tokens),
+// #usage-cost-chart (daily estimated spend, in dollars) and
+// #usage-session-chart (daily conversations). Bars use the daisyUI primary theme color via CSS variable
 // (--color-primary), day labels the base-content variable (--color-base-content). An all-zero series
 // renders a "no data" note instead of a flat chart.
 (function () {
@@ -27,10 +28,17 @@
   var LABEL_H = 20;
   var PLOT_H = H - LABEL_H;
 
-  renderChart('usage-token-chart', payload.tokens, 'tokens');
-  renderChart('usage-session-chart', payload.sessions, 'sessions');
+  // money formats one day's estimated spend. Cost is fractional, so the raw
+  // value would print as 0.012300000000000001 in a tooltip.
+  function money(v) {
+    return '$' + (Math.round(v * 10000) / 10000).toFixed(4);
+  }
 
-  function renderChart(targetId, points, unit) {
+  renderChart('usage-token-chart', payload.tokens, 'tokens', String);
+  renderChart('usage-cost-chart', payload.cost, 'cost', money);
+  renderChart('usage-session-chart', payload.sessions, 'sessions', String);
+
+  function renderChart(targetId, points, unit, format) {
     var target = document.getElementById(targetId);
     if (!target || !points || !points.length) {
       return;
@@ -69,7 +77,7 @@
       rect.setAttribute('rx', '2');
       rect.setAttribute('fill', 'var(--color-primary)');
       var title = document.createElementNS(SVG_NS, 'title');
-      title.textContent = p.day + ': ' + p.value + ' ' + unit;
+      title.textContent = p.day + ': ' + format(p.value) + ' ' + unit;
       rect.appendChild(title);
       svg.appendChild(rect);
 

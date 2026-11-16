@@ -237,6 +237,7 @@ var Module = fx.Module("extraction",
 		NewMCPDomainClassifierHandler,
 		// Expose cross-domain tool adapters to mcp.Service via fx (no setter injection).
 		provideEmbeddingControlHandlerForMCP,
+		provideProjectBudgetUnparkerForProjects,
 		provideSchemaIndexForMCP,
 		provideReextractionQueuerForMCP,
 		provideDocumentSignalsReaderForMCP,
@@ -255,6 +256,17 @@ var Module = fx.Module("extraction",
 		RegisterGovernorModeWatcherLifecycle,
 	),
 )
+
+// provideProjectBudgetUnparkerForProjects exposes the chunk embedding worker as
+// projects.IngestionBudgetUnparker, so a budget cap raised or cleared through the
+// project update path makes budget-parked ingestion jobs runnable immediately
+// instead of after their park backoff or the worker's cached verdict (issue
+// #724). The wiring lives here because projects cannot import extraction —
+// extraction imports projects — and projects takes the hook as an optional fx
+// param, so a caller that builds the projects service alone simply gets nil.
+func provideProjectBudgetUnparkerForProjects(worker *ChunkEmbeddingWorker) projects.IngestionBudgetUnparker {
+	return worker
+}
 
 // provideEmbeddingControlHandlerForMCP exposes the embedding control handler as
 // mcp.EmbeddingControlHandler so MCP tools can pause/resume/inspect embedding workers.

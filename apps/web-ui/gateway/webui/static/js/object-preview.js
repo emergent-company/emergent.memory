@@ -35,7 +35,7 @@
   var editLink = null, closeBtn = null;
   var lastFocused = null;
   // Focus is restored on close, but a board action (from the preview's action
-  // slot) swaps #board as it closes, removing the card that opened the preview.
+  // slot) swaps #work-board as it closes, removing the card that opened the preview.
   // pendingFocus holds the opener until htmx:after:swap so focus lands on the
   // refreshed card instead of falling to <body>.
   var pendingFocus = null;
@@ -235,6 +235,10 @@
     // surface's actions into #object-preview-actions-slot. Absent for chat
     // references, which stay read-only.
     if (ref.actions) params.push("actions=" + encodeURIComponent(ref.actions));
+    // The board's view state (its type filter), forwarded so the rendered action
+    // routes carry it: their responses re-render the board, which would otherwise
+    // widen a filtered board back to every type.
+    if (ref.boardQuery) params.push(ref.boardQuery);
     var url = scopedPath("/objects/" + ref.id) + "/preview" + (params.length ? "?" + params.join("&") : "");
     if (window.htmx && htmx.ajax) {
       htmx.ajax("GET", url, { target: "#object-preview-body", swap: "innerHTML" });
@@ -251,8 +255,8 @@
 
   // close hides the drawer and restores focus to the element that opened it.
   // deferFocus (used by a board action, see onAfterRequest) holds the restore
-  // until after the next htmx swap: the action re-renders #board, so focusing
-  // the opener synchronously would target a node the swap then removes.
+  // until after the next htmx swap: the action re-renders #work-board, so
+  // focusing the opener synchronously would target a node the swap then removes.
   function close(deferFocus) {
     if (!panel || !isOpen()) return;
     // Programmatic close while promoted: return to the drawer first so the
@@ -273,8 +277,8 @@
 
   // resolveBoardFocus re-finds the element to focus after a board swap: the
   // same card by data-canonical-id when it still exists (its lane may have
-  // changed), else the board container itself (#board carries tabindex="-1"),
-  // else the opener when it is still attached.
+  // changed), else the board container itself (#work-board carries
+  // tabindex="-1"), else the opener when it is still attached.
   function resolveBoardFocus(el) {
     if (!el) return null;
     var id = el.getAttribute ? el.getAttribute("data-canonical-id") : null;
@@ -283,7 +287,7 @@
       for (var i = 0; i < cards.length; i++) {
         if (cards[i].getAttribute("data-canonical-id") === id) return cards[i];
       }
-      var board = document.getElementById("board");
+      var board = document.getElementById("work-board");
       if (board) return board;
     }
     return document.contains(el) ? el : null;
@@ -473,19 +477,9 @@
     var elt = (ctx && ctx.sourceElement) || (detail && detail.elt);
     if (!elt || !elt.closest) return;
     if (elt.closest("#object-preview-actions-slot")) {
-      // The action swaps #board (outerHTML) and clears the drawer, so defer the
-      // focus restore to htmx:after:swap (see close/restorePendingFocus).
+      // The action morphs #work-board, so defer the focus restore to
+      // htmx:after:swap (see close/restorePendingFocus).
       close(true);
-      return;
-    }
-    // Board-item dialog path (#1439): the dialog opened by dragging a card
-    // review -> revision lives in #board-drawer, and its actions POST targeting
-    // #board while the BoardRefresh response OOB-clears #board-drawer. That
-    // removes the focused control, so hold the dialog's canonical id and let
-    // the post-swap restore re-focus the refreshed card (fallback #board).
-    if (elt.closest("#board-drawer")) {
-      var holder = elt.closest("[data-canonical-id]");
-      if (holder) pendingFocus = holder;
     }
   }
 

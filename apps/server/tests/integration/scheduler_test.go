@@ -236,7 +236,7 @@ func (s *SchedulerTestSuite) TestScheduler_TaskExecution() {
 	// Start scheduler
 	err = sched.Start(s.ctx)
 	s.Require().NoError(err)
-	defer sched.Stop(s.ctx)
+	defer func() { s.Require().NoError(sched.Stop(s.ctx)) }()
 
 	// Wait for task to execute (give it up to 3 seconds)
 	select {

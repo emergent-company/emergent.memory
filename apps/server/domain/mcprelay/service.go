@@ -169,7 +169,8 @@ func newSession(projectID, instanceID, version string, tools map[string]any, con
 func (s *Session) writeMessage(msgType int, data []byte) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	s.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+	// A deadline that cannot be set is reported by WriteMessage itself.
+	_ = s.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 	return s.conn.WriteMessage(msgType, data)
 }
 

@@ -195,8 +195,8 @@ func (c *Client) ListRepos(ctx context.Context) ([]Repo, error) {
 		// as end-of-list — they mean this page does not exist, not that the
 		// token sees extra repositories. 401/403 still propagate: they report a
 		// failed probe (bad credentials, rate limit), not an oversized listing.
-		var httpErr *HTTPError
-		if errors.As(err, &httpErr) &&
+		httpErr, ok := errors.AsType[*HTTPError](err)
+		if ok &&
 			(httpErr.StatusCode == http.StatusNotFound || httpErr.StatusCode == http.StatusUnprocessableEntity) {
 			return out, nil
 		}

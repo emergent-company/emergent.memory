@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -166,6 +167,14 @@ type Config struct {
 	// (SSRF guard default).
 	ProviderProbeAllow []string
 
+	// MarketURL is the primary external marketplace origin (MEMORY_MARKET_URL).
+	// Empty hides the Marketplace sidebar entry entirely.
+	MarketURL string
+	// MarketTrustedIssuers is the normalized market issuer allowlist
+	// (MEMORY_MARKET_TRUSTED_ISSUERS), primary first. Empty when no market is
+	// configured.
+	MarketTrustedIssuers []string
+
 	// TrustedProxyCIDRs (TRUSTED_PROXY_CIDRS, comma-separated) names the
 	// networks a forwarding proxy connects from. c.RealIP() reads
 	// X-Forwarded-For only when the socket peer is inside one of them,
@@ -188,6 +197,14 @@ type Config struct {
 }
 
 func LoadConfig() Config {
+	cfg, err := loadConfig()
+	if err != nil {
+		log.Fatalf("invalid configuration: %v", err)
+	}
+	return cfg
+}
+
+func loadConfig() (Config, error) {
 	env := envOr("SENTRY_ENVIRONMENT", "development")
 	tracesRate, replayRate := 0.2, 0.1
 	if env == "development" {
@@ -199,17 +216,24 @@ func LoadConfig() Config {
 	if deployRedirect == "" && publicBase != "" {
 		deployRedirect = publicBase + "/deploy/oauth/callback"
 	}
+	marketURL, marketIssuers, err := loadMarketConfig()
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
-		Port:               envOr("MEMORY_PORT", "8095"),
-		MemoryURL:          memoryURL,
-		MemoryPublicURL:    strings.TrimRight(envOr("MEMORY_PUBLIC_URL", memoryURL), "/"),
-		MemoryProjectID:    os.Getenv("MEMORY_PROJECT_ID"),
-		ClientAPIKey:       os.Getenv("TOKEN_API_KEY"),
-		BridgeBin:          envOr("BRIDGE_BIN", "python"),
-		BridgeArgs:         strings.Fields(envOr("BRIDGE_ARGS", "-m memory_bridge start")),
-		BridgeWorkdir:      os.Getenv("BRIDGE_WORKDIR"),
-		SupervisorInterval: durationOr("SUPERVISOR_INTERVAL", 5*time.Second),
-		WorkerIdleTTL:      durationOr("WORKER_IDLE_TTL", 0),
+		Port:                 envOr("MEMORY_PORT", "8095"),
+		MarketURL:            marketURL,
+		MarketTrustedIssuers: marketIssuers,
+		MemoryURL:            memoryURL,
+		MemoryPublicURL:      strings.TrimRight(envOr("MEMORY_PUBLIC_URL", memoryURL), "/"),
+		MemoryProjectID:      os.Getenv("MEMORY_PROJECT_ID"),
+		ClientAPIKey:         os.Getenv("TOKEN_API_KEY"),
+		BridgeBin:            envOr("BRIDGE_BIN", "python"),
+		BridgeArgs:           strings.Fields(envOr("BRIDGE_ARGS", "-m memory_bridge start")),
+		BridgeWorkdir:        os.Getenv("BRIDGE_WORKDIR"),
+		SupervisorInterval:   durationOr("SUPERVISOR_INTERVAL", 5*time.Second),
+		WorkerIdleTTL:        durationOr("WORKER_IDLE_TTL", 0),
 
 		VoiceDisabled: !envBoolOr("VOICE_SUPPORTED", true),
 
@@ -276,7 +300,71 @@ func LoadConfig() Config {
 		RailwayGraphQLURL:        envOr("RAILWAY_GRAPHQL_URL", "https://backboard.railway.com/graphql/v2"),
 		RailwayOAuthScopes:       splitCSV(envOr("RAILWAY_OAUTH_SCOPES", "openid,email,profile,offline_access,workspace:admin,project:admin")),
 		DeploySessionSecret:      os.Getenv("DEPLOY_SESSION_SECRET"),
+	}, nil
+}
+
+// loadMarketConfig parses MEMORY_MARKET_URL and MEMORY_MARKET_TRUSTED_ISSUERS.
+// The allowlist defaults to the primary URL when non-empty. Every issuer must be
+// an absolute http(s) origin with no credentials, path, query or fragment.
+func loadMarketConfig() (string, []string, error) {
+	primary := strings.TrimSpace(os.Getenv("MEMORY_MARKET_URL"))
+	if primary != "" {
+		normalized, err := normalizeMarketIssuer(primary)
+		if err != nil {
+			return "", nil, fmt.Errorf("MEMORY_MARKET_URL: %w", err)
+		}
+		primary = normalized
 	}
+	raw := splitCSV(os.Getenv("MEMORY_MARKET_TRUSTED_ISSUERS"))
+	if len(raw) == 0 && primary != "" {
+		raw = []string{primary}
+	}
+	seen := make(map[string]struct{}, len(raw))
+	issuers := make([]string, 0, len(raw))
+	for _, candidate := range raw {
+		normalized, err := normalizeMarketIssuer(candidate)
+		if err != nil {
+			return "", nil, fmt.Errorf("MEMORY_MARKET_TRUSTED_ISSUERS: %w", err)
+		}
+		if _, dup := seen[normalized]; dup {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		issuers = append(issuers, normalized)
+	}
+	return primary, issuers, nil
+}
+
+// normalizeMarketIssuer canonicalizes one market origin, rejecting anything
+// that is not an absolute http(s) origin.
+func normalizeMarketIssuer(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("issuer is empty")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("invalid issuer %q: %w", raw, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("invalid issuer %q: scheme must be http or https", raw)
+	}
+	if u.Host == "" {
+		return "", fmt.Errorf("invalid issuer %q: missing host", raw)
+	}
+	if u.User != nil {
+		return "", fmt.Errorf("invalid issuer %q: credentials are not allowed", raw)
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("invalid issuer %q: query and fragment are not allowed", raw)
+	}
+	if u.Path != "" && u.Path != "/" {
+		return "", fmt.Errorf("invalid issuer %q: must be an origin with no path", raw)
+	}
+	if u.Opaque != "" {
+		return "", fmt.Errorf("invalid issuer %q: opaque URLs are not allowed", raw)
+	}
+	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host), nil
 }
 
 func envOr(key, fallback string) string {

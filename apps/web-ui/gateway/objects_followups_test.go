@@ -1,11 +1,12 @@
 package main
 
 // Tests for the follow-ups collected in #667 (typed object page) and #699
-// (objects card grid + wiki). They live together because each one pins a
-// behaviour a review found missing, and the pairing makes the reason obvious to
-// the next reader. Component-level assertions stay next to the component tests
-// they extend (objects_browser_test.go, object_article_test.go), and the
-// resolver's collapse/expand parity is in object_view_test.go.
+// (objects card grid + wiki), and for the follow-ups those two reviews left
+// behind (#757, #758). They live together because each one pins a behaviour a
+// review found missing, and the pairing makes the reason obvious to the next
+// reader. Component-level assertions stay next to the component tests they
+// extend (objects_browser_test.go, object_article_test.go), and the resolver's
+// collapse/expand parity is in object_view_test.go.
 
 import (
 	"encoding/json"
@@ -229,6 +230,98 @@ func TestObjectViewSectionStaleHtmx(t *testing.T) {
 	}
 }
 
+// TestObjectViewSectionWithoutView covers #758 shape 1: the graceful branch used
+// to be reachable only once a view resolved, so when the object's type lost its
+// ui.view (a pack upgraded or re-installed with the view dropped) the swap 404ed
+// and htmx left the card frozen on screen, showing edges that no longer exist.
+// "No view to render" earns the same empty 200 as a stale index; a direct link
+// still 404s, because there the reader needs to know the section is not a page.
+func TestObjectViewSectionWithoutView(t *testing.T) {
+	f := &fakeMemory{
+		compiled: &CompiledSchemaTypes{ObjectTypes: []CompiledType{{Name: "Property", Label: "Property"}}},
+		objects:  []GraphObject{{ID: "o1", CanonicalID: "o1", Type: "Property", Name: "Home"}},
+		relns:    []GraphRelationship{{ID: "r1", Type: "concerns", SrcID: "d1", DstID: "o1"}},
+	}
+	e := newFollowupServer(f)
+
+	request := func(hx bool) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/objects/o1/relationships/sections/0", nil)
+		if hx {
+			req.Header.Set("HX-Request", "true")
+		}
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+
+	rec := request(true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("htmx swap without a view status = %d, want 200", rec.Code)
+	}
+	if body := strings.TrimSpace(rec.Body.String()); body != "" {
+		t.Errorf("htmx swap without a view must return an empty body so outerHTML removes the stale card, got %q", body)
+	}
+	if rec := request(false); rec.Code != http.StatusNotFound {
+		t.Errorf("direct section link without a view status = %d, want 404", rec.Code)
+	}
+}
+
+// TestObjectViewEdgeErrorStaysSilent covers #758 shape 2: an edge-read failure
+// must not look like "the view shows nothing here". The Overview already stayed
+// silent on it; the Relationships tab says so with its own error alert and never
+// with the empty-view note; and the section fragment removes the stale card
+// instead of 404ing the swap into a frozen one. All three derive the fact from
+// objectViewRenderable, so a future surface cannot pick a fourth answer.
+func TestObjectViewEdgeErrorStaysSilent(t *testing.T) {
+	f := viewFollowupMemory()
+	f.edgesErr = errTest
+	e := newFollowupServer(f)
+
+	request := func(path string, hx bool) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		if hx {
+			req.Header.Set("HX-Request", "true")
+		}
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// Overview: the page still paints, and neither the sections nor the note
+	// claim anything about this object's relationships.
+	rec := request("/objects/o1", false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("overview with an edge error status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, unwanted := range []string{`data-testid="object-view-sections"`, `data-testid="object-view-empty"`} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("overview must stay silent on an edge error, but rendered %q:\n%s", unwanted, body)
+		}
+	}
+
+	// Relationships: the edge error is the page's alert, not the empty-view note.
+	body = request("/objects/o1/relationships", false).Body.String()
+	if !strings.Contains(body, `data-testid="object-relationships-error"`) {
+		t.Errorf("relationships page must show its edge-error alert:\n%s", body)
+	}
+	if strings.Contains(body, `data-testid="object-view-empty"`) {
+		t.Errorf("an edge-read failure must not render the empty-view note:\n%s", body)
+	}
+
+	// The fragment: a swap removes the card, a direct link 404s.
+	rec = request("/objects/o1/relationships/sections/0?collapsed=1", true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("htmx swap during an edge error status = %d, want 200", rec.Code)
+	}
+	if body := strings.TrimSpace(rec.Body.String()); body != "" {
+		t.Errorf("htmx swap during an edge error must return an empty body so outerHTML removes the stale card, got %q", body)
+	}
+	if rec := request("/objects/o1/relationships/sections/0", false); rec.Code != http.StatusNotFound {
+		t.Errorf("direct section link during an edge error status = %d, want 404", rec.Code)
+	}
+}
+
 // TestObjectSimilarOverFetch covers #667.1: the vector search returns the top ten
 // neighbours, and on a dense object those can all be already linked. Filtering
 // after a fetch of exactly the display limit then emptied the section while
@@ -314,5 +407,53 @@ func TestObjectWikiSkipsAssigneeCandidates(t *testing.T) {
 	}
 	if f.listScheduledAgentsCalls != 0 {
 		t.Errorf("the wiki fetched assignee candidates %d times, want 0", f.listScheduledAgentsCalls)
+	}
+}
+
+// TestObjectWikiUndeclaredEdgeSections pins the wiki's half of the edge gate
+// (#771). The object-page variant groups an edge list by relationship type when
+// the type declares no ui.view, so its "is there something to show" question is
+// objectEdgesReadable — NOT objectViewRenderable, which also requires a declared
+// view. Binding the wiki to the view predicate would quietly empty the
+// Relationships area of every type that has not adopted a view, which is why the
+// derivation is split rather than shared whole.
+func TestObjectWikiUndeclaredEdgeSections(t *testing.T) {
+	f := &fakeMemory{
+		// No ui.view on the type: the page must group by relationship type.
+		compiled: &CompiledSchemaTypes{ObjectTypes: []CompiledType{{Name: "Property", Label: "Property"}}},
+		objects: []GraphObject{
+			{ID: "o1", CanonicalID: "o1", Type: "Property", Name: "Home"},
+			{ID: "d1", CanonicalID: "d1", Type: "Document", Name: "Deed"},
+		},
+		relns: []GraphRelationship{{ID: "r1", Type: "concerns", SrcID: "d1", DstID: "o1"}},
+	}
+	e := newFollowupServer(f)
+	get := func() string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/o1/wiki?view=page", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("wiki status = %d, want 200", rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	body := get()
+	for _, want := range []string{
+		`data-testid="object-wiki-section"`,
+		`>concerns<`,
+		`data-testid="object-wiki-relation-row"`,
+		"Deed",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("undeclared-view wiki page missing %q:\n%s", want, body)
+		}
+	}
+
+	// The other half of the gate: a failed edge read is not an empty edge list,
+	// so the page renders no section at all rather than claiming one.
+	f.edgesErr = errTest
+	if body := get(); strings.Contains(body, `data-testid="object-wiki-section"`) {
+		t.Errorf("an edge-read failure must not render an empty relationship group:\n%s", body)
 	}
 }

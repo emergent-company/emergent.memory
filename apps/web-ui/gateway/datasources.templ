@@ -742,6 +742,7 @@ templ dsConfigFieldInput(f dsConfigField) {
 					Variant: ui.ButtonOutline,
 					Size:    ui.ButtonSM,
 					Icon:    "lucide--list",
+					ExtraClass: "shrink-0",
 					Attrs: templ.Attributes{
 						"data-testid": f.dsLoadTestID(),
 						"hx-post":     f.dsLoadPath(),
@@ -749,7 +750,6 @@ templ dsConfigFieldInput(f dsConfigField) {
 						"hx-include":  "closest form",
 						"hx-target":   "#" + f.dsPickerID(),
 						"hx-swap":     "innerHTML",
-						"class":       "shrink-0",
 					},
 				}) {
 					{ f.dsLoadLabel() }
@@ -777,6 +777,7 @@ templ dsConfigFieldInput(f dsConfigField) {
 					Variant: ui.ButtonOutline,
 					Size:    ui.ButtonSM,
 					Icon:    "lucide--list",
+					ExtraClass: "shrink-0",
 					Attrs: templ.Attributes{
 						"data-testid": f.dsLoadTestID(),
 						"hx-post":     f.dsLoadPath(),
@@ -784,7 +785,6 @@ templ dsConfigFieldInput(f dsConfigField) {
 						"hx-include":  "closest form",
 						"hx-target":   "#" + f.dsPickerID(),
 						"hx-swap":     "innerHTML",
-						"class":       "shrink-0",
 					},
 				}) {
 					{ f.dsLoadLabel() }
@@ -988,7 +988,7 @@ templ dsSourceTriggersPanel(view dsSourceTriggersView) {
 				<div>
 					<h2 class="text-base font-semibold">Triggers</h2>
 					@ui.EmptyNote() {
-						Pull-request events on this source's repositories start an agent run. A source has one binding per event type.
+						Pull-request and issue events on this source's repositories can start an agent run. A source has one binding per event type.
 					}
 				</div>
 			</div>
@@ -1004,7 +1004,7 @@ templ dsSourceTriggersPanel(view dsSourceTriggersView) {
 			} else if len(view.Triggers) == 0 {
 				<div class="mt-3" data-testid="ds-triggers-empty">
 					@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
-						No triggers yet. Add one below to start an agent when a pull request event arrives.
+						No triggers yet. Add one below to start an agent when a pull request or issue event arrives.
 					}
 				</div>
 			} else {
@@ -1015,38 +1015,52 @@ templ dsSourceTriggersPanel(view dsSourceTriggersView) {
 				</ul>
 			}
 			// A source has one binding per event; the add action lives on its own
-			// page and is offered only while no pull_request binding exists.
-			if len(view.Triggers) == 0 {
-				if len(view.Agents) == 0 {
-					<div class="mt-4 flex flex-col gap-2 border-t border-base-content/10 pt-4" data-testid="ds-trigger-agents-empty">
-						@ui.EmptyNote(ui.EmptyNoteProps{}) {
-							This project has no agents yet. Create one before binding a trigger.
-						}
-						@ui.Button(ui.ButtonProps{
-							Type:    ui.ButtonTypeLink,
-							Href:    "/agents",
-							Variant: ui.ButtonOutline,
-							Size:    ui.ButtonSM,
-							Icon:    "lucide--bot",
-							Attrs:   templ.Attributes{"data-testid": "ds-trigger-agents-link"},
-						}) {
-							Open Agents
-						}
-					</div>
-				} else {
-					<div class="mt-4 border-t border-base-content/10 pt-4">
-						@ui.Button(ui.ButtonProps{
-							Type:    ui.ButtonTypeLink,
-							Href:    "/data-sources/" + url.PathEscape(view.SourceID) + "/triggers/new",
-							Variant: ui.ButtonPrimary,
-							Size:    ui.ButtonSM,
-							Icon:    "lucide--plus",
-							Attrs:   templ.Attributes{"data-testid": "ds-trigger-add"},
-						}) {
-							Add trigger
-						}
-					</div>
+			// page. Issue backfill is safe to repeat and never starts a run.
+			<div class="mt-4 border-t border-base-content/10 pt-4">
+				<form method="post" action={ templ.URL("/data-sources/" + url.PathEscape(view.SourceID) + "/issues/backfill") } class="inline-flex">
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonGhost,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--download",
+						Attrs:   templ.Attributes{"data-testid": "ds-issues-backfill"},
+					}) {
+						Import open issues
+					}
+				</form>
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
+					Adds every open issue as an unassigned board item. Importing never starts a run.
 				}
+			</div>
+			if len(view.Agents) == 0 {
+				<div class="mt-4 flex flex-col gap-2 border-t border-base-content/10 pt-4" data-testid="ds-trigger-agents-empty">
+					@ui.EmptyNote(ui.EmptyNoteProps{}) {
+						This project has no agents yet. Create one before binding a trigger.
+					}
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeLink,
+						Href:    "/agents",
+						Variant: ui.ButtonOutline,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--bot",
+						Attrs:   templ.Attributes{"data-testid": "ds-trigger-agents-link"},
+					}) {
+						Open Agents
+					}
+				</div>
+			} else if dsCanAddTrigger(view.Triggers) {
+				<div class="mt-4 border-t border-base-content/10 pt-4">
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeLink,
+						Href:    "/data-sources/" + url.PathEscape(view.SourceID) + "/triggers/new",
+						Variant: ui.ButtonPrimary,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--plus",
+						Attrs:   templ.Attributes{"data-testid": "ds-trigger-add"},
+					}) {
+						Add trigger
+					}
+				</div>
 			}
 		}
 	</div>
@@ -1066,7 +1080,7 @@ templ dsSourceTriggerRow(view dsSourceTriggersView, trigger DSSourceTrigger) {
 				Label:   trigger.EventType,
 				Variant: ui.BadgeNeutral,
 				Size:    ui.BadgeSizeSM,
-				Icon:    "lucide--git-pull-request",
+				Icon:    dsTriggerEventIcon(trigger.EventType),
 			})
 			<span class="text-sm font-medium" data-testid="ds-trigger-agent">{ dsTriggerAgentLabel(view.Agents, trigger) }</span>
 			<code class="text-xs text-muted" data-testid="ds-trigger-agent-id">{ trigger.AgentID }</code>
@@ -1090,7 +1104,7 @@ templ dsSourceTriggerRow(view dsSourceTriggersView, trigger DSSourceTrigger) {
 					{ dsTriggerToggleLabel(trigger.Enabled) }
 				}
 			</form>
-			<form method="post" action={ templ.URL("/data-sources/" + url.PathEscape(view.SourceID) + "/triggers/" + url.PathEscape(trigger.ID) + "/delete") } class="inline-flex" hx-confirm="Delete this trigger? The source stays connected, but pull-request events will no longer start this agent.">
+			<form method="post" action={ templ.URL("/data-sources/" + url.PathEscape(view.SourceID) + "/triggers/" + url.PathEscape(trigger.ID) + "/delete") } class="inline-flex" hx-confirm="Delete this trigger? The source stays connected, but this event will no longer start the agent.">
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeSubmit,
 					Variant: ui.ButtonGhost,
@@ -2088,7 +2102,7 @@ templ dsGmailEditFields(src *DSIntegration) {
 // source detail page so the settings form and the trigger list stay readable.
 templ DataSourceTriggerNewPage(src *DSIntegration, view dsSourceTriggersView, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@detailHeader(crumbsActive(nav.Crumbs("Data sources", "/data-sources", dsSourceName(*src), "/data-sources/"+url.PathEscape(src.ID), "Add trigger")), "", "Add trigger", "Start an agent when a pull request event arrives on this source's repositories.", detailHeaderOpts{Margin: "mb-6"}) {
+		@detailHeader(crumbsActive(nav.Crumbs("Data sources", "/data-sources", dsSourceName(*src), "/data-sources/"+url.PathEscape(src.ID), "Add trigger")), "", "Add trigger", "Start an agent when a pull request or issue event arrives on this source's repositories.", detailHeaderOpts{Margin: "mb-6"}) {
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,
 				Href:    "/data-sources/" + url.PathEscape(src.ID) + "#triggers",
@@ -2129,6 +2143,7 @@ templ DataSourceTriggerNewPage(src *DSIntegration, view dsSourceTriggersView, fl
 							<label class="text-sm font-medium" for="trigger-event-type">Event</label>
 							<select id="trigger-event-type" name="eventType" class="select w-full" data-testid="ds-trigger-event-type">
 								<option value="pull_request">pull_request</option>
+								<option value="issues">issues</option>
 							</select>
 						</div>
 						<div class="flex flex-col gap-1">
@@ -2146,6 +2161,36 @@ templ DataSourceTriggerNewPage(src *DSIntegration, view dsSourceTriggersView, fl
 							@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Optional. Leave blank for the default queue. }
 						</div>
 					</div>
+					<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+						<div class="flex flex-col gap-1">
+							<label class="text-sm font-medium" for="trigger-model">Model override</label>
+							<input id="trigger-model" name="model" type="text" class="input w-full" placeholder="agent default" data-testid="ds-trigger-model-input"/>
+						</div>
+						<div class="flex flex-col gap-1">
+							<label class="text-sm font-medium" for="trigger-max-steps">Max steps</label>
+							<input id="trigger-max-steps" name="maxSteps" type="number" min="1" class="input w-full" placeholder="agent default" data-testid="ds-trigger-max-steps-input"/>
+						</div>
+						<div class="flex flex-col gap-1">
+							<label class="text-sm font-medium" for="trigger-priority">Priority</label>
+							<input id="trigger-priority" name="priority" type="number" min="0" class="input w-full" placeholder="0" data-testid="ds-trigger-priority-input"/>
+						</div>
+					</div>
+					<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+						<div class="flex flex-col gap-1">
+							<label class="text-sm font-medium" for="trigger-context">Context JSON</label>
+							<textarea id="trigger-context" name="context" rows="3" class="textarea textarea-sm w-full font-mono text-xs" placeholder='{"instructions":"..."}' data-testid="ds-trigger-context-input"></textarea>
+							@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Optional static context. It cannot overwrite event fields. }
+						</div>
+						<div class="flex flex-col gap-1">
+							<label class="text-sm font-medium" for="trigger-env">Environment</label>
+							<textarea id="trigger-env" name="env" rows="3" class="textarea textarea-sm w-full font-mono text-xs" placeholder="CI=true&#10;TZ=UTC" data-testid="ds-trigger-env-input"></textarea>
+							@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Non-secret allowlisted keys only. }
+						</div>
+					</div>
+					<label class="flex items-center gap-2 text-sm">
+						<input type="checkbox" name="codingCredential" value="true" class="checkbox checkbox-sm" data-testid="ds-trigger-coding-credential"/>
+						Allow coding push (contents/pull requests/issues write, checks read)
+					</label>
 					<div class="flex items-center justify-end gap-2">
 						@ui.Button(ui.ButtonProps{
 							Type:    ui.ButtonTypeLink,
@@ -2174,7 +2219,7 @@ templ DataSourceTriggerNewPage(src *DSIntegration, view dsSourceTriggersView, fl
 
 // DataSourceWorkflowPage configures the reviewer lanes emitted by a github_app
 // source. Runs are created by the board, not by the dispatcher.
-templ DataSourceWorkflowPage(src *DSIntegration, wf *SourceWorkflow, loadErr error, flashMsg string, flashErr error) {
+templ DataSourceWorkflowPage(src *DSIntegration, wf *SourceWorkflow, editRows []dsWorkflowEditRow, agents []AgentDefinitionSummary, lanes []dsWorkflowLaneRow, loadErr error, flashMsg string, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Data sources", "/data-sources", dsSourceName(*src), "/data-sources/"+url.PathEscape(src.ID), "Workflow")), "", "Workflow", "Each reviewer lane becomes a board item with its own agent, retries and block state. Runs are created by the Board.", detailHeaderOpts{Margin: "mb-6"}) {
 			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/data-sources/" + url.PathEscape(src.ID), Variant: ui.ButtonOutline, Size: ui.ButtonSM, Icon: "lucide--arrow-left"}) { Back to source }
@@ -2183,13 +2228,58 @@ templ DataSourceWorkflowPage(src *DSIntegration, wf *SourceWorkflow, loadErr err
 		if loadErr != nil {
 			@pageErrorNotice("Workflow unavailable", loadErr)
 		}
+		if len(lanes) > 0 {
+			@components.PanelCard("Readiness", templ.Attributes{"data-testid": "ds-workflow-readiness"}) {
+				<ul class="flex flex-col gap-2">
+					for _, lane := range lanes {
+						<li class="flex flex-wrap items-center justify-between gap-2 rounded-box border border-base-content/10 px-3 py-2.5" data-testid="ds-workflow-lane">
+							<div class="flex min-w-0 flex-wrap items-center gap-2">
+								@ui.Badge(ui.BadgeProps{Label: lane.Lane, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeSM})
+								<span class="text-sm font-medium">{ lane.Agent }</span>
+								<span class="text-xs text-muted">queue: { lane.Queue }</span>
+							</div>
+							<div class="flex flex-wrap items-center gap-2">
+								if lane.AgentFound {
+									@ui.Badge(ui.BadgeProps{Label: "Agent", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeXS, Icon: "lucide--check"})
+								} else {
+									@ui.Badge(ui.BadgeProps{Label: "Missing agent", Variant: ui.BadgeError, Size: ui.BadgeSizeXS, Icon: "lucide--x"})
+								}
+								if lane.RuleReady {
+									@ui.Badge(ui.BadgeProps{Label: "Rule", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeXS, Icon: "lucide--check"})
+								} else {
+									@ui.Badge(ui.BadgeProps{Label: "Missing rule", Variant: ui.BadgeWarning, Size: ui.BadgeSizeXS, Icon: "lucide--alert-triangle"})
+								}
+								if lane.QueueFound {
+									@ui.Badge(ui.BadgeProps{Label: "Queue", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeXS, Icon: "lucide--check"})
+								} else {
+									@ui.Badge(ui.BadgeProps{Label: "Missing queue", Variant: ui.BadgeWarning, Size: ui.BadgeSizeXS, Icon: "lucide--alert-triangle"})
+								}
+							</div>
+						</li>
+					}
+				</ul>
+				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-3"}) {
+					Each lane runs only when its agent exists, has a GitHubReviewLane work rule triggered on ready, and its queue exists. Fix these under Work Settings.
+				}
+			}
+		}
 		@components.PanelCard("", templ.Attributes{"data-testid": "ds-workflow-page"}) {
 			<form method="post" action={ templ.URL("/data-sources/" + url.PathEscape(src.ID) + "/workflow") } class="flex flex-col gap-4">
-				<div class="flex flex-col gap-1">
-					<label class="text-sm font-medium" for="ds-workflow-reviewers">Reviewer lanes</label>
-					<textarea id="ds-workflow-reviewers" name="reviewers" rows="5" required class="textarea w-full font-mono text-xs" placeholder="security | security-review&#10;ui | ui-review" data-testid="ds-workflow-reviewers">{ sourceWorkflowText(wf) }</textarea>
+				<div class="flex flex-col gap-2">
+					<label class="text-sm font-medium">Reviewer lanes</label>
 					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
-						One line per lane: lane | agent-name. Every lane creates a GitHubReviewLane board item assigned to that agent.
+						Each row creates a GitHubReviewLane board item assigned to the selected agent.
+					}
+					for _, row := range editRows {
+						<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+							<input name="lane" type="text" class="input input-sm w-full" value={ row.Lane } placeholder="lane name" data-testid="ds-workflow-lane-input"/>
+							<select name="agent" class="select select-sm w-full" data-testid="ds-workflow-agent-select">
+								<option value="">Select an agent</option>
+								for _, agent := range agents {
+									<option value={ agent.Name } selected?={ agent.Name == row.Agent }>{ agent.Name }</option>
+								}
+							</select>
+						</div>
 					}
 				</div>
 				<div class="flex flex-wrap items-center gap-2">

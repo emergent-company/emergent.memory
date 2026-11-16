@@ -212,7 +212,7 @@ func TestRunPageHeaderKeepsTrailLinks(t *testing.T) {
 // page, so the header renders it once instead of Memory → Objects → the object.
 func TestObjectDetailFoldsTheGroupCrumb(t *testing.T) {
 	obj := &GraphObject{ID: "o1", CanonicalID: "o1", Type: "person", Key: "sam-lee"}
-	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, "", 0, nil, false))
+	html := renderHTML(t, ObjectDetailPage(objectDetailShellData{Obj: obj}, nil, nil))
 
 	items := breadcrumbItems(t, html)
 	if len(items) != 2 {
@@ -290,7 +290,7 @@ func TestOneH1PerPage(t *testing.T) {
 		page templ.Component
 		want int
 	}{
-		{"board (header then notice)", BoardPage(nil, nil, nil, boardAllowances{}, boardStatusMap{}, errTest), 1},
+		{"work board (error is the page)", WorkPage(workData{Section: workBoardSection, LoadErr: errTest}), 1},
 		{"agents list", AgentsPage(nil, nil, "", errTest, ""), 1},
 		{"approvals", ApprovalsPage(nil, nil, errTest), 1},
 		{"skills", SkillsPage(nil, errTest, nil, nil, newSkillProposalQuery("", ""), "", nil, "", nil), 1},

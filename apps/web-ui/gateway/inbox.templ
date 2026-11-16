@@ -3,6 +3,7 @@ package main
 import (
 	"strconv"
 
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/form"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
@@ -227,67 +228,92 @@ templ inboxRows(d inboxView) {
 	</div>
 }
 
-// inboxRow is one notification: leading icon tile (with unread dot), title +
-// message + metadata, and a trailing control cluster. A plain <div> (not
-// components.LinkRow) because rows host nested action buttons. When the
-// notification carries a navigation target its title/message block is an
-// anchor (`data-notification-open`) so clicking the item deep-links to the
-// pending question/approval and marks it read (issue #1362).
+// inboxRow is one notification, rendered as components.LinkRow (#756).
+//
+// Contract:
+//   - the anchor covers the leading icon tile, the title and the metadata line
+//     (when · category · source) — the part of the row that navigates;
+//   - the action cluster (resolve buttons, review-merge CTA, read/snooze/clear/
+//     dismiss) rides in LinkRow's trailing children slot, and the badges (origin
+//     project chip, New, Action) plus the message ride in the Details band —
+//     both render outside the anchor, because an <a> may not contain a button
+//     or a form;
+//   - the row root keeps data-notification-id / data-notification-unread, which
+//     inbox.js uses to find the row and its unread state, and data-href, so a
+//     tap anywhere on the row still opens the notification (app.js ignores
+//     clicks that land on a control) and marks it read on the way out. The open
+//     hook itself (data-notification-open + data-notif-id) stays on the anchor,
+//     where inbox.js marks the item read before navigating (issue #1362).
+//
+// A notification with no navigation target renders the same row without an
+// anchor or chevron (LinkRow's empty-href mode): there is nothing to open, so
+// the deep-link hooks are omitted too.
 templ inboxRow(d inboxView, n Notification) {
-	<div
-		id={ "notification-" + n.ID }
-		class={ "flex items-start gap-3 px-4 py-3 transition-colors hover:bg-base-200/40", templ.KV("bg-primary/5", !n.Read) }
-		data-notification-id={ n.ID }
-		data-notification-unread={ strconv.FormatBool(!n.Read) }
-	>
-		<div class="relative mt-0.5 shrink-0">
-			<span class="border-base-content/10 bg-base-200/60 grid size-9 place-items-center rounded-selector border">
-				@ui.IconSpan(notificationIcon(n), "size-4")
-			</span>
-			if !n.Read {
-				<span class="bg-primary border-base-100 absolute -top-0.5 -right-0.5 size-2.5 rounded-full border-2" aria-hidden="true"></span>
-			}
-		</div>
-		<div class="min-w-0 grow">
-			if n.ActionURL != "" {
-				<a
-					href={ templ.SafeURL(n.ActionURL) }
-					class="block min-w-0"
-					data-notification-open
-					data-notif-id={ n.ID }
-				>
-					@inboxRowBody(d, n)
-				</a>
-			} else {
-				@inboxRowBody(d, n)
-			}
-			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
-				{ notificationMeta(n) }
-			}
-		</div>
+	{{ href := templ.SafeURL("") }}
+	{{ attrs := templ.Attributes{
+		"id":                       "notification-" + n.ID,
+		"data-notification-id":     n.ID,
+		"data-notification-unread": strconv.FormatBool(!n.Read),
+	} }}
+	{{ linkAttrs := templ.Attributes{} }}
+	if n.ActionURL != "" {
+		{{ href = templ.SafeURL(n.ActionURL) }}
+		{{ attrs["data-href"] = n.ActionURL }}
+		{{ linkAttrs["data-notification-open"] = true }}
+		{{ linkAttrs["data-notif-id"] = n.ID }}
+	}
+	{{ var details templ.Component }}
+	if inboxRowHasDetails(d, n) {
+		{{ details = inboxRowDetails(d, n) }}
+	}
+	@components.LinkRow(href, inboxRowLeading(n), n.Title, notificationMeta(n), components.LinkRowOpts{
+		Attrs:     attrs,
+		LinkAttrs: linkAttrs,
+		Details:   details,
+	}) {
 		@inboxRowControls(n)
 		@inboxReviewMergeTarget(n)
+	}
+}
+
+// inboxRowHasDetails reports whether the details band would render anything, so
+// a plain read notification is not given an empty 12px band under its row.
+func inboxRowHasDetails(d inboxView, n Notification) bool {
+	return notificationProjectLabel(d, n) != "" || !n.Read || n.RequiresAction || n.Message != ""
+}
+
+// inboxRowLeading is the row's leading tile: the category icon, with the unread
+// dot overlaid. LinkRow owns the row surface, so the dot is the unread cue
+// (the "New" badge in the details band repeats it in text).
+templ inboxRowLeading(n Notification) {
+	<div class="relative mt-0.5 shrink-0">
+		<span class="border-base-content/10 bg-base-200/60 grid size-9 place-items-center rounded-selector border">
+			@ui.IconSpan(notificationIcon(n), "size-4")
+		</span>
+		if !n.Read {
+			<span class="bg-primary border-base-100 absolute -top-0.5 -right-0.5 size-2.5 rounded-full border-2" aria-hidden="true"></span>
+		}
 	</div>
 }
 
-// inboxRowBody is the navigable part of a notification row: title, the
-// originating-project chip (account scope only), state badges, and message.
-// Extracted so the same markup renders as plain content or inside the open
-// anchor.
-templ inboxRowBody(d inboxView, n Notification) {
+// inboxRowDetails is the band under the row: the state badges (origin project
+// on the account scopes, New, Action) and the message. It renders outside the
+// row anchor (LinkRowOpts.Details), so the badges do not become link text.
+templ inboxRowDetails(d inboxView, n Notification) {
 	{{ label := notificationProjectLabel(d, n) }}
-	<div class="flex flex-wrap items-center gap-2">
-		<p class={ "truncate text-sm", templ.KV("font-semibold", !n.Read), templ.KV("text-base-content/75", n.Read) }>{ n.Title }</p>
-		if label != "" {
-			@ui.Badge(ui.BadgeProps{Label: label, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Icon: "lucide--folder"})
-		}
-		if !n.Read {
-			@ui.Badge(ui.BadgeProps{Label: "New", Variant: ui.BadgePrimary, Size: ui.BadgeSizeXS})
-		}
-		if n.RequiresAction {
-			@ui.Badge(ui.BadgeProps{Label: "Action", Variant: ui.BadgeWarning, Size: ui.BadgeSizeXS, Icon: "lucide--hand"})
-		}
-	</div>
+	if label != "" || !n.Read || n.RequiresAction {
+		<div class="flex flex-wrap items-center gap-2">
+			if label != "" {
+				@ui.Badge(ui.BadgeProps{Label: label, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Icon: "lucide--folder"})
+			}
+			if !n.Read {
+				@ui.Badge(ui.BadgeProps{Label: "New", Variant: ui.BadgePrimary, Size: ui.BadgeSizeXS})
+			}
+			if n.RequiresAction {
+				@ui.Badge(ui.BadgeProps{Label: "Action", Variant: ui.BadgeWarning, Size: ui.BadgeSizeXS, Icon: "lucide--hand"})
+			}
+		</div>
+	}
 	if n.Message != "" {
 		@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-0.5 line-clamp-2"}) {
 			{ n.Message }

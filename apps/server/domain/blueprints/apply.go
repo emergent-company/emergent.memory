@@ -18,6 +18,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/pgutils"
 )
 
 // ApplyOptions controls blueprint apply behavior.
@@ -33,6 +34,17 @@ type ApplyOptions struct {
 	// an object type name already registered in the project. Without it, apply
 	// blocks with 409 before materializing anything.
 	MergeTypeConflicts bool `json:"mergeTypeConflicts,omitempty"`
+	// SkillProvenance stamps provenance on skills CREATED by this apply. It is
+	// used by the marketplace install path (source=marketplace, source_url =
+	// <issuer>/listings/<slug>). Existing skills keep their stored provenance.
+	SkillProvenance *SkillProvenance `json:"-"`
+}
+
+// SkillProvenance carries the marketplace provenance written onto created
+// skills.
+type SkillProvenance struct {
+	Source    string
+	SourceURL string
 }
 
 // ApplyPreview is the read-only result of previewing a blueprint apply: the
@@ -165,7 +177,7 @@ func (s *Service) Apply(ctx context.Context, blueprintID, projectID, userID stri
 	}
 
 	// Skills: create-or-update by name (global scope: project_id NULL, org_id NULL).
-	result.Skills, err = s.applySkills(ctx, manifest.Skills)
+	result.Skills, err = s.applySkills(ctx, manifest.Skills, opts.SkillProvenance)
 	if err != nil {
 		return nil, err
 	}
@@ -708,7 +720,7 @@ func (s *Service) applyAgents(ctx context.Context, projectID, blueprintID, bpNam
 			if err := s.agentRepo.UpdateDefinition(ctx, existing); err != nil {
 				return counts, apperror.ErrDatabase.WithInternal(err)
 			}
-			if err := s.ensureRuntimeAgent(ctx, projectID, blueprintID, existing, &am); err != nil {
+			if _, err := s.ensureRuntimeAgent(ctx, projectID, blueprintID, existing, &am); err != nil {
 				return counts, err
 			}
 			counts.Updated++
@@ -721,7 +733,7 @@ func (s *Service) applyAgents(ctx context.Context, projectID, blueprintID, bpNam
 			if err := s.agentRepo.CreateDefinition(ctx, def); err != nil {
 				return counts, apperror.ErrDatabase.WithInternal(err)
 			}
-			if err := s.ensureRuntimeAgent(ctx, projectID, blueprintID, def, &am); err != nil {
+			if _, err := s.ensureRuntimeAgent(ctx, projectID, blueprintID, def, &am); err != nil {
 				return counts, err
 			}
 			counts.Created++
@@ -734,7 +746,7 @@ func (s *Service) applyAgents(ctx context.Context, projectID, blueprintID, bpNam
 // org_id NULL). Both paths run the exported skills validation (name pattern,
 // non-empty description/content, content size cap). Updates preserve
 // provenance metadata unless the manifest explicitly provides new metadata.
-func (s *Service) applySkills(ctx context.Context, skillManifests []SkillManifest) (ApplyCounts, error) {
+func (s *Service) applySkills(ctx context.Context, skillManifests []SkillManifest, provenance *SkillProvenance) (ApplyCounts, error) {
 	var counts ApplyCounts
 	existing, err := s.skillsRepo.FindAll(ctx, nil, nil)
 	if err != nil {
@@ -775,6 +787,16 @@ func (s *Service) applySkills(ctx context.Context, skillManifests []SkillManifes
 			return counts, err
 		}
 
+		if provenance != nil {
+			if md == nil {
+				md = &skills.SkillMetadata{}
+			}
+			// Install provenance is authoritative: a marketplace install's
+			// created skills are stamped source=marketplace and its listing URL.
+			md.Source = provenance.Source
+			md.SourceURL = provenance.SourceURL
+		}
+
 		skill := &skills.Skill{
 			Name:        sm.Name,
 			Description: sm.Description,
@@ -798,6 +820,9 @@ func buildSeedObjectRequest(o SeedObjectRecord) graph.CreateGraphObjectRequest {
 		Key:        &o.Key,
 		Properties: o.Properties,
 		Labels:     o.Labels,
+	}
+	if o.Name != "" {
+		item.Name = &o.Name
 	}
 	if o.Status != "" {
 		item.Status = &o.Status
@@ -1145,16 +1170,16 @@ func applyWorkConfig(def *agents.AgentDefinition, m *AgentManifest) error {
 // ownership into its config map, and defaults an empty trigger type to
 // "reaction" (when a reaction config is present) or "schedule", and an empty
 // cron schedule to the daily "0 0 * * *" default (the column is NOT NULL).
-func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID string, def *agents.AgentDefinition, m *AgentManifest) error {
+func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID string, def *agents.AgentDefinition, m *AgentManifest) (*agents.Agent, error) {
 	if m.TriggerType == "" && m.ReactionConfig == nil && m.CronSchedule == "" && len(def.WorkConfig.ObjectRules) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// Work-pickup validation: a legacy work agent must declare a single object
 	// type and a single pickup signal; a rules-based agent may declare multiple
 	// types and derives its reaction config below.
 	if err := agents.ValidateWorkPickupForDefinition(def, m.ReactionConfig); err != nil {
-		return apperror.NewBadRequest("invalid reactionConfig for agent " + m.Name + ": " + err.Error())
+		return nil, apperror.NewBadRequest("invalid reactionConfig for agent " + m.Name + ": " + err.Error())
 	}
 
 	reactionConfig := m.ReactionConfig
@@ -1197,7 +1222,7 @@ func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID
 	// derived from objectRules rather than declared.
 	if triggerType == agents.TriggerTypeSchedule {
 		if err := agents.ValidateCronInterval(cron, s.minCronInterval()); err != nil {
-			return apperror.NewBadRequest(fmt.Sprintf(
+			return nil, apperror.NewBadRequest(fmt.Sprintf(
 				"agent %q: invalid cronSchedule: %v (runtime agents use standard 5-field cron — minute hour day-of-month month day-of-week; a seconds field is not accepted)",
 				m.Name, err))
 		}
@@ -1206,7 +1231,7 @@ func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID
 
 	existing, err := s.agentRepo.FindAgentByName(ctx, projectID, def.Name)
 	if err != nil {
-		return apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 	if existing != nil {
 		// Ownership gate: adopt a pre-existing runtime agent only when it is
@@ -1216,20 +1241,42 @@ func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID
 		// rebind its trigger config and later delete it on Unapply (mirroring
 		// applyAgents' definition-ownership discipline).
 		if bid, _ := existing.Config["sourceBlueprintId"].(string); bid != blueprintID {
-			return nil
+			return nil, nil
 		}
 
-		existing.TriggerType = triggerType
-		existing.ReactionConfig = reactionConfig
-		existing.CronSchedule = cron
-		existing.Enabled = true
-		existing.StrategyType = "agent-def:" + def.ID
-		existing.AgentDefinitionID = &defID
-		if existing.Config == nil {
-			existing.Config = map[string]any{}
+		row, err := s.stampRuntimeAgent(ctx, existing, blueprintID, defID, triggerType, reactionConfig, cron)
+		if err == nil {
+			return row, nil
 		}
-		existing.Config["sourceBlueprintId"] = blueprintID
-		return s.agentRepo.UpdateAgent(ctx, existing)
+		if !pgutils.IsUniqueViolation(err) {
+			return nil, apperror.NewDatabase("failed to update the runtime agent for blueprint apply", err)
+		}
+		// #789: the update lost the definition link to a row minted after this
+		// blueprint row was orphaned (apply → definition deleted, FK set to
+		// NULL → definition re-created through the agents API, which links a
+		// runtime row of its own → re-apply). Recover exactly like the create
+		// path: resolve the row that actually owns the link and gate the
+		// manifest config on the same ownership stamp.
+		winner, findErr := s.agentRepo.FindRuntimeAgentForDefinition(ctx, projectID, defID)
+		if findErr != nil {
+			return nil, apperror.NewDatabase("failed to resolve the runtime agent bound to the agent definition", findErr)
+		}
+		if winner == nil {
+			// A unique violation with no winning row is an inconsistent bind
+			// state; surface a legible conflict instead of ErrInternal.
+			return nil, apperror.NewConflict(fmt.Sprintf(
+				"agent %q: the agent definition link is held by another runtime agent that could not be resolved; remove the conflicting runtime agent and re-apply",
+				m.Name))
+		}
+		if bid, _ := winner.Config["sourceBlueprintId"].(string); bid != blueprintID {
+			// The winner belongs to another owner (a manual/API-created row or
+			// another blueprint). Never repurpose it: writing this manifest's
+			// config over it would rebind its trigger, and this blueprint's
+			// Unapply would delete it. The definition keeps the winner's link
+			// and the apply still succeeds, mirroring the create path.
+			return nil, nil
+		}
+		return s.stampRuntimeAgent(ctx, winner, blueprintID, defID, triggerType, reactionConfig, cron)
 	}
 
 	agent := &agents.Agent{
@@ -1243,7 +1290,43 @@ func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID
 		AgentDefinitionID: &defID,
 		Config:            map[string]any{"sourceBlueprintId": blueprintID},
 	}
-	return s.agentRepo.CreateAgent(ctx, agent)
+	// CreateRuntimeAgentForDefinition returns the winning row — the freshly
+	// created candidate on success, or on a bind race the row that actually owns
+	// the definition link. Apply the manifest config to that winner rather than
+	// discarding it (mirroring syncDefinitionWorkTriggers' conflict branch):
+	// without this, a create that lost a race would return a winner whose
+	// triggerType/reactionConfig/enabled were silently never applied.
+	winner, err := s.agentRepo.CreateRuntimeAgentForDefinition(ctx, agent)
+	if err != nil {
+		return nil, err
+	}
+	// Ownership gate (mirrors the existing-row branch above): when the create
+	// lost a bind race, the winner is a row another binder already linked to
+	// this definition. Never repurpose a row another blueprint owns — writing
+	// this manifest's config over it would rebind its trigger and later make it
+	// deletable by this blueprint's Unapply.
+	if bid, _ := winner.Config["sourceBlueprintId"].(string); bid != blueprintID {
+		return nil, nil
+	}
+	return s.stampRuntimeAgent(ctx, winner, blueprintID, defID, triggerType, reactionConfig, cron)
+}
+
+// stampRuntimeAgent applies the manifest's trigger configuration to row and
+// persists it. The existing-row update, the create, and the #789 bind-race
+// recovery all go through here so the three paths cannot drift on which fields
+// the manifest owns.
+func (s *Service) stampRuntimeAgent(ctx context.Context, row *agents.Agent, blueprintID, defID string, triggerType agents.AgentTriggerType, reactionConfig *agents.ReactionConfig, cron string) (*agents.Agent, error) {
+	row.TriggerType = triggerType
+	row.ReactionConfig = reactionConfig
+	row.CronSchedule = cron
+	row.Enabled = true
+	row.StrategyType = "agent-def:" + defID
+	row.AgentDefinitionID = &defID
+	if row.Config == nil {
+		row.Config = map[string]any{}
+	}
+	row.Config["sourceBlueprintId"] = blueprintID
+	return row, s.agentRepo.UpdateAgent(ctx, row)
 }
 
 // agentUIConfig marshals an AgentUIManifest into the opaque ui_config JSONB
@@ -1296,6 +1379,6 @@ func toSkillMetadata(m map[string]any) *skills.SkillMetadata {
 
 // isNotFound reports whether err is an apperror with the not_found code.
 func isNotFound(err error) bool {
-	var appErr *apperror.Error
-	return errors.As(err, &appErr) && appErr.Code == apperror.ErrNotFound.Code
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	return ok && appErr.Code == apperror.ErrNotFound.Code
 }

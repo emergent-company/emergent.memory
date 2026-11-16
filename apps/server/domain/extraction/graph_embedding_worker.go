@@ -419,7 +419,7 @@ func (w *GraphEmbeddingWorker) fetchObjects(ctx context.Context, jobs []*GraphEm
 	var rows []graphObjectRow
 	err := w.db.NewSelect().
 		TableExpr("kb.graph_objects").
-		Column("id", "type", "key", "properties", "project_id").
+		Column("id", "type", "name", "key", "properties", "project_id").
 		Where("id IN (?)", bun.In(ids)).
 		Scan(ctx, &rows)
 	if err != nil {
@@ -630,6 +630,7 @@ func (w *GraphEmbeddingWorker) storeEmbedding(ctx context.Context, it *embedding
 type graphObjectRow struct {
 	ID         string                 `bun:"id,type:uuid"`
 	Type       string                 `bun:"type"`
+	Name       *string                `bun:"name"`
 	Key        *string                `bun:"key"`
 	Properties map[string]interface{} `bun:"properties,type:jsonb"`
 	ProjectID  string                 `bun:"project_id,type:uuid"`
@@ -651,7 +652,7 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 	obj := &graphObjectRow{}
 	err := w.db.NewSelect().
 		TableExpr("kb.graph_objects").
-		Column("id", "type", "key", "properties", "project_id").
+		Column("id", "type", "name", "key", "properties", "project_id").
 		Where("id = ?", job.ObjectID).
 		Scan(ctx, obj)
 
@@ -781,7 +782,7 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 // the embedding — see issue #1478. Keeping a single implementation guarantees
 // the enqueue guard and the worker can never drift.
 func (w *GraphEmbeddingWorker) extractText(obj *graphObjectRow) string {
-	return embeddingtext.Text(obj.Type, obj.Key, obj.Properties)
+	return embeddingtext.Text(obj.Type, obj.Name, obj.Key, obj.Properties)
 }
 
 // vectorToString converts a float32 slice to PostgreSQL vector string format

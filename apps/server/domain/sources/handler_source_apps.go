@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
@@ -32,11 +33,12 @@ type updateSourceAppDTO struct {
 }
 
 type sourceTriggerDTO struct {
-	EventType   string         `json:"eventType"`
-	AgentID     string         `json:"agentId"`
-	Queue       string         `json:"queue"`
-	EventFilter map[string]any `json:"eventFilter"`
-	Enabled     *bool          `json:"enabled"`
+	EventType   string                  `json:"eventType"`
+	AgentID     string                  `json:"agentId"`
+	Queue       string                  `json:"queue"`
+	EventFilter map[string]any          `json:"eventFilter"`
+	Invocation  *agents.AgentInvocation `json:"invocation,omitempty"`
+	Enabled     *bool                   `json:"enabled"`
 }
 
 // RegisterSourceApp handles POST /api/orgs/:orgId/source-apps.
@@ -371,9 +373,7 @@ func (h *Handler) UpdateProjectSourceApp(c echo.Context) error {
 		return apperror.ErrBadRequest
 	}
 	user := auth.MustGetUser(c)
-	app, err := h.svc.UpdateSourceAppForProject(c.Request().Context(), projectID, user.ID, appID, UpdateSourceAppRequest{
-		Slug: dto.Slug, PrivateKey: dto.PrivateKey, WebhookSecret: dto.WebhookSecret,
-	})
+	app, err := h.svc.UpdateSourceAppForProject(c.Request().Context(), projectID, user.ID, appID, UpdateSourceAppRequest(dto))
 	if err != nil {
 		return err
 	}
@@ -432,6 +432,25 @@ func (h *Handler) ListInstallationRepositories(c echo.Context) error {
 		return err
 	}
 	return c.JSON(http.StatusOK, repos)
+}
+
+// BackfillSourceIssues handles POST /api/data-source-integrations/:id/issues/backfill.
+// It imports all open non-PR issues as unassigned board items; it never starts
+// a run, so a first install cannot launch every historical issue.
+func (h *Handler) BackfillSourceIssues(c echo.Context) error {
+	projectID, err := h.projectIDFromCaller(c)
+	if err != nil {
+		return err
+	}
+	sourceID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apperror.ErrBadRequest
+	}
+	count, err := h.svc.BackfillGitHubIssues(c.Request().Context(), projectID, sourceID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, map[string]any{"imported": count})
 }
 
 // GetSourceWorkflow handles GET /api/data-source-integrations/:id/workflow.

@@ -8,20 +8,6 @@ import (
 	"strings"
 )
 
-// hasWorkConfigForDefinition reports whether the definition referenced by
-// definitionID carries a non-zero work config (an object-driven work agent). A
-// nil or unresolvable id reports false (an inline reaction agent).
-func (h *Handler) hasWorkConfigForDefinition(ctx context.Context, definitionID *string) bool {
-	if definitionID == nil || *definitionID == "" {
-		return false
-	}
-	def, err := h.repo.FindDefinitionByID(ctx, *definitionID, nil)
-	if err != nil || def == nil {
-		return false
-	}
-	return !def.WorkConfig.IsZero()
-}
-
 // WorkRuleType is the schema-side shape validation needs for one object type.
 // Fields is the declared property-name set; AllowedStatuses the declared work
 // vocabulary. Both empty means "unconstrained".
@@ -80,6 +66,9 @@ func ValidateWorkRules(def *AgentDefinition, types map[string]WorkRuleType) erro
 				return fmt.Errorf("%s: trigger status %q is declared more than once", r.ObjectType, tr.Status)
 			}
 			seenTriggers[tr.Status] = true
+			if err := ValidateInvocation(tr.Invocation); err != nil {
+				return fmt.Errorf("%s: trigger %q: %w", r.ObjectType, tr.Status, err)
+			}
 		}
 
 		for j := range r.Transitions {
@@ -136,12 +125,15 @@ func ValidateWorkPickupForDefinition(def *AgentDefinition, rc *ReactionConfig) e
 	return nil
 }
 
-// definitionForID resolves a definition id, or nil when absent/unresolvable.
-func (h *Handler) definitionForID(ctx context.Context, definitionID *string) *AgentDefinition {
+// definitionForID resolves a definition id within a project, or nil when
+// absent/unresolvable. The lookup is project-scoped so a definition id from
+// another project resolves to nil and its work config is never consulted for
+// this project's agent.
+func (h *Handler) definitionForID(ctx context.Context, projectID string, definitionID *string) *AgentDefinition {
 	if definitionID == nil || *definitionID == "" {
 		return nil
 	}
-	def, err := h.repo.FindDefinitionByID(ctx, *definitionID, nil)
+	def, err := h.repo.FindDefinitionByID(ctx, *definitionID, &projectID)
 	if err != nil {
 		return nil
 	}

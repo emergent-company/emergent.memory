@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"context"
 	"log/slog"
 	"strings"
 
@@ -36,11 +37,27 @@ type A2AHandler struct {
 	// agent-card icon are served by the gateway on this host, not by the API
 	// host, so the icon must be anchored here rather than to appURL.
 	frontendURL string
+
+	// authorizeProject asserts that the authenticated caller may act on an
+	// addressed project. It is the A2A surface's single authorization
+	// chokepoint (issue #660), called from addressedProject on every
+	// authenticated handler. NewA2AHandler wires the real guard
+	// (auth.RequireProjectMembership against the repository's DB); the field is
+	// overridable so route-level tests can drive the deny/allow branches without
+	// a database. It is NOT a bypass: a nil value resolves the real guard lazily
+	// (see projectMembership), so authorization can never be skipped.
+	authorizeProject func(ctx context.Context, projectID string) error
 }
 
 // NewA2AHandler creates a new A2A handler.
 func NewA2AHandler(repo *Repository, executor *AgentExecutor, eventsSvc *events.Service, log *slog.Logger, cfg *config.Config) *A2AHandler {
 	h := &A2AHandler{repo: repo, executor: executor, eventsSvc: eventsSvc, log: log}
+	if repo != nil {
+		db := repo.DB()
+		h.authorizeProject = func(ctx context.Context, projectID string) error {
+			return auth.RequireProjectMembership(ctx, db, projectID)
+		}
+	}
 	if cfg != nil {
 		h.a2aOrigin = strings.TrimRight(cfg.A2AOrigin, "/")
 		h.appURL = strings.TrimRight(cfg.AppURL, "/")
@@ -72,6 +89,50 @@ func acpProjectID(c echo.Context) (string, error) {
 			"project context is required: send the X-Project-ID header, or use a project-scoped API token")
 	}
 	return user.ProjectID, nil
+}
+
+// addressedProject resolves the project an A2A request addresses and asserts the
+// caller is entitled to it. Every authenticated A2A handler resolves its project
+// through this method instead of calling acpProjectID directly (issue #660).
+//
+// The addressed project is selector-scoped, never path-scoped: it comes from the
+// X-Project-ID header (or a project-scoped emt_* token). RequireAuth copies that
+// header into user.ProjectID without verifying it, so a credential that is not
+// itself bound to a project — an OIDC session, an account-level token — could
+// otherwise name any tenant. RequireProjectMembership re-derives the owning
+// organization of the addressed project server-side and checks the caller's
+// membership, so a client-supplied project ID can never self-satisfy the check.
+// Project-bound emt_* tokens keep their existing behaviour: their project comes
+// from the token (acpProjectID prefers it over the header) and the guard's
+// token-binding branch accepts it.
+//
+// Failure semantics are the shared helper's: 401 without an authenticated user,
+// 403 for a non-member or a token bound elsewhere, 404 for a project that does
+// not exist, so the A2A surface gains no project-existence oracle.
+func (h *A2AHandler) addressedProject(c echo.Context) (string, error) {
+	projectID, err := acpProjectID(c)
+	if err != nil {
+		return "", err
+	}
+	if err := h.projectMembership()(c.Request().Context(), projectID); err != nil {
+		return "", err
+	}
+	return projectID, nil
+}
+
+// projectMembership returns the project-authorization hook the handler was
+// built with. authorizeProject is set by NewA2AHandler to the real guard; a
+// handler constructed by hand (unit tests) resolves the same guard lazily from
+// the repository, so a nil hook can never skip authorization — it can only run
+// it against a nil handle, which fails closed.
+func (h *A2AHandler) projectMembership() func(context.Context, string) error {
+	if h.authorizeProject != nil {
+		return h.authorizeProject
+	}
+	db := h.repo.DB()
+	return func(ctx context.Context, projectID string) error {
+		return auth.RequireProjectMembership(ctx, db, projectID)
+	}
 }
 
 // A2ACardVersion is the static AgentCard version string.
@@ -358,11 +419,12 @@ func (h *A2AHandler) ExtendedAgentCardHandler(c echo.Context) error {
 		return writeA2AError(c, a2aErr)
 	}
 
-	projectID, err := acpProjectID(c)
+	projectID, err := h.addressedProject(c)
 	if err != nil {
-		// 401 (no auth) / 400 PROJECT_REQUIRED (no project selector) — returned
-		// as an A2AError so a2aErrorEnvelopeMiddleware preserves the specific
-		// reason instead of collapsing it into INVALID_AGENT_RESPONSE.
+		// 401 (no auth) / 400 PROJECT_REQUIRED (no project selector) / 403
+		// (caller not entitled to the addressed project) — returned as an
+		// A2AError so a2aErrorEnvelopeMiddleware preserves the specific reason
+		// instead of collapsing it into INVALID_AGENT_RESPONSE.
 		return err
 	}
 

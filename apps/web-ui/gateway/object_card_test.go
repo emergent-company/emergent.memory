@@ -281,3 +281,39 @@ func TestObjectCardWorkflowCarriesPickerOptions(t *testing.T) {
 		}
 	})
 }
+
+// TestObjectCardMarksProseFields pins the device card's parity with the drawer's
+// markdown rule (#814): a long-form body arrives flagged markdown so a native
+// client can render it, while an ordinary text field stays plain.
+func TestObjectCardMarksProseFields(t *testing.T) {
+	f := &fakeMemory{
+		objects: []GraphObject{{
+			ID:   cardObjectID,
+			Type: "GitHubIssue",
+			Key:  "issue-814",
+			Properties: map[string]any{
+				"title": "A title",
+				"body":  "## What landed\n\nText.",
+				"_raw":  "hidden",
+			},
+		}},
+	}
+	e := newObjectCardEcho(f)
+	code, card := getCard(t, e, "/api/objects/"+cardObjectID+"/card")
+	if code != http.StatusOK {
+		t.Fatalf("status = %d", code)
+	}
+	if len(card.Sections) != 2 {
+		t.Fatalf("sections = %+v", card.Sections)
+	}
+	byName := map[string]objectCardField{}
+	for _, field := range card.Sections[1].Fields {
+		byName[field.Name] = field
+	}
+	if !byName["body"].Markdown {
+		t.Errorf("body field must be flagged markdown: %+v", byName["body"])
+	}
+	if byName["title"].Markdown {
+		t.Errorf("title field must stay plain text: %+v", byName["title"])
+	}
+}

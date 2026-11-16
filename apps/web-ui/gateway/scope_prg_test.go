@@ -80,6 +80,13 @@ func TestPrgScopedLeavesDeviceSessionAlone(t *testing.T) {
 // the shape production produced when a boosted POST answered with a bare
 // /documents?extractions_retried=5 and the browser followed it to a 404. The
 // handler now names the target in HX-Redirect itself, so htmx navigates scoped.
+//
+// The htmx shape is 200 + HX-Redirect, never 303 + HX-Redirect: htmx issues its
+// requests through window.fetch without a redirect option, so the browser
+// follows a 303 transparently and JS only sees the final 200 (whose body is the
+// followed page, still flagged HX-Request: true) — the HX-Redirect on the
+// intermediate 303 is discarded and htmx swaps that page into the boosted
+// target instead of navigating (#828).
 func TestRetryAllExtractionsRedirectIsScopedWithoutMiddleware(t *testing.T) {
 	f := &fakeMemory{bulkRetried: 5}
 	s, _ := newClientEcho(f, Config{AuthMode: "session"})
@@ -99,12 +106,14 @@ func TestRetryAllExtractionsRedirectIsScopedWithoutMiddleware(t *testing.T) {
 	req.Header.Set("HX-Boosted", "true")
 	e.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	// 200, not 303: a 3xx would be followed transparently by fetch and the
+	// HX-Redirect would never reach htmx (#828).
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for a boosted form; body %s", rec.Code, rec.Body.String())
 	}
 	want := "/o/org-1/p/proj-1/documents?extractions_retried=5"
-	if got := rec.Header().Get(echo.HeaderLocation); got != want {
-		t.Fatalf("location = %q, want %q", got, want)
+	if got := rec.Header().Get(echo.HeaderLocation); got != "" {
+		t.Fatalf("location = %q, want empty: a boosted form navigates via HX-Redirect, not Location", got)
 	}
 	if got := rec.Header().Get("HX-Redirect"); got != want {
 		t.Fatalf("HX-Redirect = %q, want %q", got, want)
@@ -129,6 +138,13 @@ func TestRetryAllExtractionsPlainFormRedirect(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/o/org-1/p/proj-1/documents/retry-extraction-failures", nil)
 	e.ServeHTTP(rec, req)
 
+	// 303, not 302: ui-rule-prg-contract names 303 for the plain-form half of
+	// the PRG contract, and a boosted request must never reach this branch with
+	// an HX-Redirect attached (a 3xx is followed by fetch, so the header would
+	// never reach htmx — #828, fixed by #838).
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303 for a plain form post", rec.Code)
+	}
 	if got, want := rec.Header().Get(echo.HeaderLocation), "/o/org-1/p/proj-1/documents?extractions_none=1"; got != want {
 		t.Fatalf("location = %q, want %q", got, want)
 	}
@@ -172,8 +188,10 @@ func TestRetryExtractionErrorRedirectCarriesScope(t *testing.T) {
 // request carries a base (#2479).
 //
 // This mounts the real chain (scopeRewrite + scopeLocation + the handler) on a
-// real server and asserts what a client receives.
-func TestRetryAllExtractionsScopesTheWireLocation(t *testing.T) {
+// real server and asserts what a client receives: the boosted form gets
+// 200 + a scoped HX-Redirect (303 would be followed by fetch and the header
+// would never reach htmx, #828).
+func TestRetryAllExtractionsScopesTheWireRedirect(t *testing.T) {
 	f := &fakeMemory{bulkRetried: 5}
 	s, _ := newClientEcho(f, Config{AuthMode: "session"})
 	e := echo.New()
@@ -200,11 +218,11 @@ func TestRetryAllExtractionsScopesTheWireLocation(t *testing.T) {
 	defer func() { _ = res.Body.Close() }()
 
 	want := "/o/org-1/p/proj-1/documents?extractions_retried=5"
-	if res.StatusCode != http.StatusSeeOther {
-		t.Fatalf("status = %d, want 303", res.StatusCode)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for a boosted form", res.StatusCode)
 	}
-	if got := res.Header.Get(echo.HeaderLocation); got != want {
-		t.Fatalf("wire location = %q, want %q", got, want)
+	if got := res.Header.Get(echo.HeaderLocation); got != "" {
+		t.Fatalf("wire location = %q, want empty for a boosted form", got)
 	}
 	if got := res.Header.Get("HX-Redirect"); got != want {
 		t.Fatalf("wire HX-Redirect = %q, want %q", got, want)

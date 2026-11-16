@@ -82,6 +82,64 @@ func sidebarGroups(base string, isOrgAdmin bool) []layout.SidebarGroup {
 	return sidebarGroupsWithWarn(base, isOrgAdmin, sidebarWarns{})
 }
 
+// marketSidebarItems builds the external Marketplace entries from config. The
+// primary market is labelled "Marketplace"; additional trusted issuers are
+// labelled by environment (dev/prod) so no two entries share an accessible
+// name. Returns nil when no market URL is configured, which hides the entry.
+func (s *Server) marketSidebarItems() []layout.SidebarItem {
+	if s.cfg.MarketURL == "" {
+		return nil
+	}
+	issuers := make([]string, 0, len(s.cfg.MarketTrustedIssuers)+1)
+	issuers = append(issuers, s.cfg.MarketURL)
+	seen := map[string]struct{}{s.cfg.MarketURL: {}}
+	for _, issuer := range s.cfg.MarketTrustedIssuers {
+		if _, dup := seen[issuer]; dup {
+			continue
+		}
+		seen[issuer] = struct{}{}
+		issuers = append(issuers, issuer)
+	}
+
+	usedLabels := make(map[string]struct{}, len(issuers))
+	items := make([]layout.SidebarItem, 0, len(issuers))
+	for i, issuer := range issuers {
+		label := "Marketplace"
+		if i > 0 {
+			label = marketIssuerLabel(issuer)
+		}
+		if _, dup := usedLabels[label]; dup {
+			label = label + " — " + marketIssuerHost(issuer)
+		}
+		usedLabels[label] = struct{}{}
+		items = append(items, layout.SidebarItem{
+			Label: label,
+			Href:  issuer,
+			Icon:  "lucide--store",
+		})
+	}
+	return items
+}
+
+// marketIssuerLabel derives the secondary-entry label from the issuer host.
+// The dev market is market.dev.memory.emergent-company.ai, so a bare "dev."
+// prefix is not enough: any host with a `.dev.` segment (or a leading `dev.`)
+// is the dev environment.
+func marketIssuerLabel(issuer string) string {
+	host := marketIssuerHost(issuer)
+	if host == "dev" || strings.HasPrefix(host, "dev.") || strings.Contains(host, ".dev.") {
+		return "Marketplace (dev)"
+	}
+	return "Marketplace (prod)"
+}
+
+func marketIssuerHost(issuer string) string {
+	if u, err := url.Parse(issuer); err == nil {
+		return strings.ToLower(u.Hostname())
+	}
+	return issuer
+}
+
 // sidebarSettingsHref reports whether href points at the sidebar's Settings hub
 // for any link base — "/settings" unscoped, "/o/{org}/settings" for an org
 // scope, "/o/{org}/p/{project}/settings" for a project scope. It exists so the
@@ -117,13 +175,23 @@ type sidebarWarns struct {
 	// (a capped window crossed its alert threshold) or "exhausted" (a cap was
 	// hit, so agent runs are blocked).
 	Budget string
+	// Approvals counts human-input items waiting on the Approvals page:
+	// pending tool approvals plus unanswered agent questions.
+	Approvals int
 }
 
-// sidebarGroupsWithWarn is sidebarGroups plus the attention badges: Documents
-// (terminal failure count) and Usage (budget level). The Documents badge counts
-// document-related terminal failures only; other areas surface in the Documents
-// panel and can earn their own badge later.
+// sidebarGroupsWithWarn is sidebarGroups plus the attention badges: Approvals
+// (pending human-input count), Documents (terminal failure count) and Usage
+// (budget level). The Documents badge counts document-related terminal failures
+// only; other areas surface in the Documents panel and can earn their own badge
+// later.
 func sidebarGroupsWithWarn(base string, isOrgAdmin bool, warns sidebarWarns) []layout.SidebarGroup {
+	return sidebarGroupsWithMarket(base, isOrgAdmin, warns)
+}
+
+// sidebarGroupsWithMarket is sidebarGroupsWithWarn plus the external marketplace
+// entries, which the page layer derives from config.
+func sidebarGroupsWithMarket(base string, isOrgAdmin bool, warns sidebarWarns) []layout.SidebarGroup {
 	documentsItem := layout.SidebarItem{Label: "Documents", Href: base + "/documents", Icon: "lucide--file-text"}
 	if warns.Documents > 0 {
 		documentsItem.Warn = sidebarWarnBadge(warns.Documents)
@@ -131,6 +199,10 @@ func sidebarGroupsWithWarn(base string, isOrgAdmin bool, warns sidebarWarns) []l
 	usageItem := layout.SidebarItem{Label: "Usage", Href: base + "/usage", Icon: "lucide--chart-column"}
 	if warns.Budget != "" {
 		usageItem.Warn = sidebarBudgetBadge(warns.Budget)
+	}
+	approvalsItem := layout.SidebarItem{Label: "Approvals", Href: base + "/settings/approvals", Icon: "lucide--shield-check"}
+	if warns.Approvals > 0 {
+		approvalsItem.Warn = sidebarApprovalsBadge(warns.Approvals)
 	}
 	memoryItems := []layout.SidebarItem{
 		{Label: "Objects", Href: base + "/objects", Icon: "lucide--box"},
@@ -155,16 +227,17 @@ func sidebarGroupsWithWarn(base string, isOrgAdmin bool, warns sidebarWarns) []l
 		// entry beats landing a non-admin on a page that degrades to an error.
 		projectItems = append(projectItems, layout.SidebarItem{Label: "Backups", Href: base + "/backups", Icon: "lucide--archive"})
 	}
+	topItems := []layout.SidebarItem{
+		approvalsItem,
+		{Label: "Chat", Href: base + "/chat", Icon: "lucide--messages-square"},
+		{Label: "Search", Href: base + "/search", Icon: "lucide--search"},
+		{Label: "Sessions", Href: base + "/sessions", Icon: "lucide--history"},
+	}
 	return []layout.SidebarGroup{
 		{
 			// Ungrouped top-level entries: pulled out of their groups to sit
 			// at the very top of the sidebar.
-			Items: []layout.SidebarItem{
-				{Label: "Approvals", Href: base + "/settings/approvals", Icon: "lucide--shield-check"},
-				{Label: "Chat", Href: base + "/chat", Icon: "lucide--messages-square"},
-				{Label: "Search", Href: base + "/search", Icon: "lucide--search"},
-				{Label: "Sessions", Href: base + "/sessions", Icon: "lucide--history"},
-			},
+			Items: topItems,
 		},
 		{
 			Label: "Work",
@@ -201,6 +274,10 @@ func sidebarGroupsWithWarn(base string, isOrgAdmin bool, warns sidebarWarns) []l
 // the delete-org danger zone. isOrgAdmin gates the Members entry (the page
 // exposes whole-org member PII, org_admin-only per #1015).
 func orgSidebarGroups(base string, isOrgAdmin bool) []layout.SidebarGroup {
+	return orgSidebarGroupsWithMarket(base, isOrgAdmin)
+}
+
+func orgSidebarGroupsWithMarket(base string, isOrgAdmin bool) []layout.SidebarGroup {
 	items := []layout.SidebarItem{
 		{Label: "Projects", Href: base, Icon: "lucide--folder"},
 	}
@@ -477,7 +554,16 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 		} else {
 			budgetLevel = budgetBadgeLevel(state)
 		}
-		groups = layout.ActiveSidebarGroups(sidebarGroupsWithWarn(navBase, isOrgAdmin(tree, backupsOrgID), sidebarWarns{Documents: documentsWarn, Budget: budgetLevel}), activePath)
+		// Approvals badge: human-input items waiting (pending tool approvals
+		// plus unanswered questions). Best-effort and cached for 30s; a failure
+		// just hides the badge.
+		approvalsPending := 0
+		if n, err := s.cachedPendingInputCount(c.Request().Context()); err != nil {
+			captureError(err)
+		} else {
+			approvalsPending = n
+		}
+		groups = layout.ActiveSidebarGroups(sidebarGroupsWithMarket(navBase, isOrgAdmin(tree, backupsOrgID), sidebarWarns{Documents: documentsWarn, Budget: budgetLevel, Approvals: approvalsPending}), activePath)
 		// Warn in the settings nav when the active project has zero configured
 		// LLM providers. Fail-safe helper: false on lookup errors.
 		providersMissing = s.projectHasNoProviders(c.Request().Context())
@@ -489,7 +575,7 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 		if orgNavBase == "" {
 			orgNavBase = "/o/" + activeOrgID
 		}
-		groups = layout.ActiveSidebarGroups(orgSidebarGroups(orgNavBase, isOrgAdmin(tree, activeOrgID)), activePath)
+		groups = layout.ActiveSidebarGroups(orgSidebarGroupsWithMarket(orgNavBase, isOrgAdmin(tree, activeOrgID)), activePath)
 	}
 	// Recent projects for the picker's "Recent" section (only when the user
 	// has more than ten projects). Recent ids come from the durable cookie,
@@ -572,7 +658,7 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 	// (literal href/action/hx-* in the page templates) must carry the scope base
 	// just like htmx partials, otherwise the first navigation after a full load
 	// hits an unscoped app path and 404s under the session-mode hard cut.
-	s.renderScoped(w, r, appShell(title, groups, providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, unreadNotifications, pendingInvites, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL, s.cfg.feedbackOverlayAPI(), s.cfg.feedbackOrder()), linkBase)
+	s.renderScoped(w, r, appShell(title, groups, s.marketSidebarItems(), providersMissing, agents, assistant, current, currentOrgName, activeOrg, groupProjectsByOrg(projects, orgs), orgs, recent, showRecent, unreadNotifications, pendingInvites, user, accounts, content, objectTypes, s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, s.cfg.FeedbackOverlayURL, s.cfg.feedbackOverlayAPI(), s.cfg.feedbackOrder()), linkBase)
 	return nil
 }
 
@@ -1009,7 +1095,14 @@ type scheduledRunRow struct {
 	AgentName string
 	Status    string
 	StartedAt string
-	Summary   string
+	// CompletedAt is the run's finish time (empty while it is still running).
+	// It is the rail row's last activity, so it drives both the row's sort
+	// position and the time its subtitle shows.
+	CompletedAt string
+	Summary     string
+	// AgentDefinitionID is the agent-definition id the run's runtime agent binds
+	// (empty when it binds none), in the id space the rail's agent filter uses.
+	AgentDefinitionID string
 	// Icon/Color carry the run agent's definition appearance (empty when
 	// undeclared or the definition is unknown), resolved in chatScheduledRuns.
 	Icon  string
@@ -1025,7 +1118,10 @@ type sharedSessionRow struct {
 	AgentName         string
 	Title             string
 	IsArchived        bool
-	ActivityRelative  string
+	// ActivityAt is the session's last activity as RFC3339 — the rail's sort
+	// key. ActivityRelative is that same instant as the row's display label.
+	ActivityAt       string
+	ActivityRelative string
 }
 
 // chatSharedSessions collects the project's owner-shared sessions (created by
@@ -1052,6 +1148,7 @@ func (s *Server) chatSharedSessions(ctx context.Context) []sharedSessionRow {
 			AgentName:         sess.AgentName,
 			Title:             title,
 			IsArchived:        sess.IsArchived,
+			ActivityAt:        last.UTC().Format(time.RFC3339Nano),
 			ActivityRelative:  relTime(last.UTC().Format(time.RFC3339)),
 		})
 	}
@@ -1072,23 +1169,31 @@ func (s *Server) chatScheduledRuns(ctx context.Context, appearances map[string]a
 		if a.TriggerType != "schedule" {
 			continue
 		}
+		defID := ""
 		var ap agentAppearance
 		if a.AgentDefinitionID != nil {
-			ap = appearances[*a.AgentDefinitionID]
+			defID = *a.AgentDefinitionID
+			ap = appearances[defID]
 		}
 		runs, err := s.memory.ListScheduledAgentRuns(ctx, a.ID)
 		if err != nil {
 			continue
 		}
 		for _, r := range runs {
+			completedAt := ""
+			if r.CompletedAt != nil {
+				completedAt = *r.CompletedAt
+			}
 			out = append(out, scheduledRunRow{
-				ID:        r.ID,
-				AgentName: a.Name,
-				Status:    r.Status,
-				StartedAt: r.StartedAt,
-				Summary:   scheduledRunPreview(r, a.Name),
-				Icon:      ap.Icon,
-				Color:     ap.Color,
+				ID:                r.ID,
+				AgentName:         a.Name,
+				Status:            r.Status,
+				StartedAt:         r.StartedAt,
+				CompletedAt:       completedAt,
+				Summary:           scheduledRunPreview(r, a.Name),
+				AgentDefinitionID: defID,
+				Icon:              ap.Icon,
+				Color:             ap.Color,
 			})
 		}
 	}
@@ -1097,13 +1202,14 @@ func (s *Server) chatScheduledRuns(ctx context.Context, appearances map[string]a
 
 // chatWorkRuns collects the project's object-driven (board/work) runs and its
 // extraction runs for the chat session rail. Each run row is matched (once, in
-// Go) against the work-item board projection so its title is the work item's key
-// when known, falling back to the run agent's name. Rows inherit the run agent's
-// definition appearance.
+// Go) against the work-item board projection so its title is the work item's
+// label when known (the same name → key → type+id rule the board card uses),
+// falling back to the run agent's name. Rows inherit the run agent's definition
+// appearance.
 func (s *Server) chatWorkRuns(ctx context.Context, appearances map[string]agentAppearance) []workRunRow {
 	// A board-listing failure must not hide the extraction rows below.
 	runs, _ := s.memory.ListBoardRuns(ctx, 50)
-	items, _ := s.memory.ListWorkItems(ctx, "", "", 1000)
+	items, _ := s.memory.ListWorkItems(ctx, "", "", 1000, false)
 	bySubject := make(map[string]WorkItem, len(items))
 	for _, it := range items {
 		if it.CanonicalID != "" {
@@ -1114,23 +1220,37 @@ func (s *Server) chatWorkRuns(ctx context.Context, appearances map[string]agentA
 	for _, r := range runs {
 		title := r.AgentName
 		if r.SubjectObjectID != nil {
+			// Same label rule as the board card: name, else a human key, else
+			// type + short id. A machine dedup key is an identity, not a title.
+			// Keyless objects still fall back to the run agent's name, as before.
 			if it, ok := bySubject[*r.SubjectObjectID]; ok && it.Key != "" {
-				title = it.Key
+				title = workItemLabel(it)
 			}
 		}
-		ap := appearances[r.AgentID]
+		// appearances is keyed by agent-definition id, so the run's definition id
+		// is what resolves its declared glyph and colour — NOT r.AgentID, which
+		// is the runtime agent (kb.agents.id) and never matches. Falling back to
+		// the runtime id here is what painted every board row with the neutral
+		// bot glyph.
+		ap := appearances[r.AgentDefinitionID]
+		completedAt := ""
+		if r.CompletedAt != nil {
+			completedAt = *r.CompletedAt
+		}
 		out = append(out, workRunRow{
 			// A board row IS the run: both the row id and the transcript target
 			// are the run id (the rail keys open-run off RunID).
-			ID:        r.ID,
-			RunID:     r.ID,
-			Origin:    "board",
-			Title:     title,
-			AgentName: r.AgentName,
-			Status:    r.Status,
-			StartedAt: r.StartedAt,
-			Icon:      ap.Icon,
-			Color:     ap.Color,
+			ID:                r.ID,
+			RunID:             r.ID,
+			Origin:            "board",
+			Title:             title,
+			AgentName:         r.AgentName,
+			AgentDefinitionID: r.AgentDefinitionID,
+			Status:            r.Status,
+			StartedAt:         r.StartedAt,
+			CompletedAt:       completedAt,
+			Icon:              ap.Icon,
+			Color:             ap.Color,
 		})
 	}
 	return append(out, s.extractionRunRows(ctx)...)

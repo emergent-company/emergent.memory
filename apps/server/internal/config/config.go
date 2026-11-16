@@ -171,6 +171,10 @@ type Config struct {
 	// pending update-check jobs. Default: 30s.
 	BlueprintUpdateJobInterval time.Duration `env:"BLUEPRINT_UPDATE_JOB_INTERVAL" envDefault:"30s"`
 
+	// Market configures the external marketplace: the sidebar destination and
+	// the explicit per-instance allowlist of trusted market issuers.
+	Market MarketConfig
+
 	// Features controls which optional domain modules are loaded at startup.
 	// See FeatureSet for per-flag documentation and defaults.
 	Features FeatureSet
@@ -1098,11 +1102,136 @@ func (c *Config) FrontendURL() string {
 	return strings.TrimRight(strings.TrimSpace(c.AppURL), "/")
 }
 
+// MarketConfig configures the external marketplace. URL is the primary market
+// origin shown in the sidebar (empty disables the entry entirely).
+// TrustedIssuers is the explicit allowlist an install redirect is validated
+// against; it defaults to URL when URL is set and the allowlist is empty. Every
+// issuer is stored as a normalized origin (scheme://host[:port], lower-case,
+// no trailing slash) so comparison is exact.
+type MarketConfig struct {
+	// URL is MEMORY_MARKET_URL: the primary market origin (sidebar destination).
+	URL string `env:"MEMORY_MARKET_URL"`
+	// TrustedIssuersRaw is MEMORY_MARKET_TRUSTED_ISSUERS: a comma-separated
+	// allowlist of market origins. Parsed into TrustedIssuers by Normalize.
+	TrustedIssuersRaw string `env:"MEMORY_MARKET_TRUSTED_ISSUERS"`
+	// OriginID is MEMORY_MARKET_ORIGIN_ID: the stable identity this instance
+	// announces when it registers with the market. Empty means the client
+	// generates a process-local id, which works for a stock instance but is not
+	// stable across restarts.
+	OriginID string `env:"MEMORY_MARKET_ORIGIN_ID"`
+	// TrustedIssuers is the normalized allowlist, primary first when the default
+	// applies. It is derived, never read from the environment directly.
+	TrustedIssuers []string `env:"-"`
+}
+
+// Normalize validates the configured market origins and derives the allowlist.
+// It refuses malformed values so a typo is a boot error rather than a silently
+// widened trust boundary. An empty URL with no allowlist disables the market.
+func (m *MarketConfig) Normalize() error {
+	m.OriginID = strings.TrimSpace(m.OriginID)
+	primary := strings.TrimSpace(m.URL)
+	if primary != "" {
+		normalized, err := normalizeMarketIssuer(primary)
+		if err != nil {
+			return fmt.Errorf("MEMORY_MARKET_URL: %w", err)
+		}
+		m.URL = normalized
+	} else {
+		m.URL = ""
+	}
+
+	raw := splitMarketCSV(m.TrustedIssuersRaw)
+	if len(raw) == 0 && m.URL != "" {
+		raw = []string{m.URL}
+	}
+	seen := make(map[string]struct{}, len(raw))
+	issuers := make([]string, 0, len(raw))
+	for _, candidate := range raw {
+		normalized, err := normalizeMarketIssuer(candidate)
+		if err != nil {
+			return fmt.Errorf("MEMORY_MARKET_TRUSTED_ISSUERS: %w", err)
+		}
+		if _, dup := seen[normalized]; dup {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		issuers = append(issuers, normalized)
+	}
+	m.TrustedIssuers = issuers
+	return nil
+}
+
+// Enabled reports whether a market URL is configured.
+func (m MarketConfig) Enabled() bool { return m.URL != "" }
+
+// IsTrustedIssuer reports whether issuer exactly matches a normalized allowlist
+// origin. Comparison is against normalized values, so callers must pass a URL
+// (the helper normalizes it) rather than comparing raw strings themselves.
+func (m MarketConfig) IsTrustedIssuer(issuer string) bool {
+	normalized, err := normalizeMarketIssuer(issuer)
+	if err != nil {
+		return false
+	}
+	for _, trusted := range m.TrustedIssuers {
+		if normalized == trusted {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeMarketIssuer validates one issuer as an absolute http(s) origin
+// (no credentials, query, fragment or path) and returns its canonical form.
+func normalizeMarketIssuer(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("issuer is empty")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("invalid issuer %q: %w", raw, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("invalid issuer %q: scheme must be http or https", raw)
+	}
+	if u.Host == "" {
+		return "", fmt.Errorf("invalid issuer %q: missing host", raw)
+	}
+	if u.User != nil {
+		return "", fmt.Errorf("invalid issuer %q: credentials are not allowed", raw)
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("invalid issuer %q: query and fragment are not allowed", raw)
+	}
+	if u.Path != "" && u.Path != "/" {
+		return "", fmt.Errorf("invalid issuer %q: must be an origin with no path", raw)
+	}
+	if u.Opaque != "" {
+		return "", fmt.Errorf("invalid issuer %q: opaque URLs are not allowed", raw)
+	}
+	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host), nil
+}
+
+// splitMarketCSV splits a comma-separated allowlist, trimming whitespace and
+// dropping empty entries. Empty input yields nil.
+func splitMarketCSV(raw string) []string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // NewConfig loads configuration from environment variables
 func NewConfig(log *slog.Logger) (*Config, error) {
 	cfg := &Config{}
 	if err := env.Parse(cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
+	}
+	if err := cfg.Market.Normalize(); err != nil {
+		return nil, err
 	}
 	// Reject a malformed TRUSTED_PROXY_CIDRS entry at startup instead of
 	// silently changing the client-IP trust model (the extractor itself fails

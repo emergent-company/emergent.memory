@@ -130,7 +130,7 @@ templ objectWikiViewSwitch(data objectWikiPageData) {
 // the same order — the details are still on the page, just not beside it, because
 // 320 px of viewport has no room for a second column.
 templ objectWikiArticle(data objectWikiPageData) {
-	{{ prose := objectArticleFor(*data.Obj) }}
+	{{ prose := objectArticleFor(*data.Obj, data.PropDefs) }}
 	<div class="grid grid-cols-1 gap-10 xl:grid-cols-[minmax(0,1fr)_17rem]" data-testid="object-wiki-article">
 		<article class="min-w-0">
 			@objectWikiProse(data, prose)
@@ -165,7 +165,7 @@ templ objectWikiArticle(data objectWikiPageData) {
 // the record itself is just noise, so the facts and relationships start the page
 // instead. The article variant keeps the empty state: there, prose is the page.
 templ objectWikiObjectPage(data objectWikiPageData) {
-	{{ prose := objectArticleFor(*data.Obj)
+	{{ prose := objectArticleFor(*data.Obj, data.PropDefs)
 	hasProse := prose.Lead != "" || prose.BodyHTML != "" }}
 	<div class="grid grid-cols-1 gap-10 xl:grid-cols-[minmax(0,1fr)_17rem]" data-testid="object-wiki-page">
 		<div class="flex min-w-0 flex-col gap-8">
@@ -275,7 +275,8 @@ templ objectWikiRelationRow(data objectWikiPageData, row objectViewItem, showDir
 	direction := ""
 	if showDirection {
 		direction = row.direction()
-	} }}
+	}
+	excerpt := objectExcerpt(row.Neighbour.Properties) }}
 	<div class="min-w-0 px-4 py-3" data-testid="object-wiki-relation-row" data-relationship-type={ row.RelType } data-direction={ row.direction() }>
 		@objectHeader(objectHeaderProps{
 			Variant:        objectHeaderRow,
@@ -287,8 +288,12 @@ templ objectWikiRelationRow(data objectWikiPageData, row objectViewItem, showDir
 			Href:           href,
 			Unresolved:     !row.Resolved,
 			Direction:      direction,
-			Excerpt:        objectExcerpt(row.Neighbour.Properties),
+			Excerpt:        excerpt,
 			IdentityTestID: "object-wiki-identity",
+			// Only a tall row — one whose excerpt wraps — puts the tile on the
+			// identity line; a row with no summary is two lines and reads
+			// better with the tile centred (feedback on this row).
+			TopAlign: excerpt != "",
 		})
 	</div>
 }
@@ -315,7 +320,18 @@ templ objectWikiDetailsRail(data objectWikiPageData, prose objectArticleProse) {
 					<div class="flex min-w-0 flex-col gap-0.5">
 						<dt class="text-muted-faint text-xs font-medium">{ r.Label }</dt>
 						<dd class="break-words">
-							if v := objectPropertyDisplay(r); v != "" {
+							{{ mdSource := objectRailMarkdownSource(r) }}
+							if mdSource != "" {
+								{{ body, truncated := markdownPreviewHTML(mdSource) }}
+								<div class="memory-md max-h-96 overflow-auto" data-rail-markdown>@templ.Raw(body)</div>
+								if truncated {
+									<div data-rail-truncated>
+										@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Tone: ui.EmptyNoteToneQuiet, Class: "mt-1"}) {
+											Truncated in this rail; the stored value is unchanged.
+										}
+									</div>
+								}
+							} else if v := objectPropertyDisplay(r); v != "" {
 								{ v }
 							} else {
 								@components.EmptyDash()

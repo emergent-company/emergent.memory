@@ -401,9 +401,7 @@ templ objectsActorAvatar(o objectActorOption) {
 			})
 		</span>
 	} else {
-		<span class="bg-base-200 text-base-content/70 inline-flex size-6 shrink-0 items-center justify-center rounded-full" aria-hidden="true" data-actor-avatar="agent">
-			@agentInlineGlyph(o.Icon, o.Color)
-		</span>
+		@agentAvatarBubble(o.Icon, o.Color, templ.Attributes{"data-actor-avatar": "agent"})
 	}
 }
 
@@ -805,10 +803,13 @@ type objectDetailShellData struct {
 	// declared ui.view (empty when the type declares none, which keeps the
 	// generic flat list).
 	ViewSections []objectViewSection
-	// HasView records that the type declares a ui.view at all. It is not
-	// len(ViewSections) > 0: a valid view can resolve to no group (every section
-	// empty and `more: false`), and that page must not fall back to the flat
-	// list showing exactly the relationship types the author opted out of.
+	// HasView records that the type declares a ui.view this load can render. It
+	// is not len(ViewSections) > 0: a valid view can resolve to no group (every
+	// section empty and `more: false`), and that page must not fall back to the
+	// flat list showing exactly the relationship types the author opted out of.
+	// It is also not "the type declares one": an edge-read failure must not look
+	// like "the view shows nothing here". objectViewRenderable is its single
+	// derivation; every surface sets this field from it.
 	HasView bool
 }
 
@@ -842,19 +843,20 @@ templ objectDetailShell(data objectDetailShellData) {
 
 // ObjectDetailPage renders the object Overview subpage: the shared header/rail
 // plus the workflow panel, record facts, the type's relationship sections,
-// editable properties, and type-property form. flashErr surfaces PRG feedback
-// (e.g. the "no agents configured" chat hint) as an auto-dismissing toast.
-// typeUIByType carries the compiled types' declared ui accents (icon/color) so
-// the header chip can render the object type's icon. trail is an optional origin
-// trail (e.g. a document's extraction history); when nil the header renders
-// Objects > <object>. typeLabel is the object type's display label ("" when the
-// schema could not be loaded), used as the schema card's heading. viewSections
-// is the object type's declared ui.view resolved against the object's edges —
-// empty for every type that declares none, which keeps this page unchanged.
-// hasView separates "no view" from "a view that shows nothing", so the Overview
-// says so exactly as the Relationships tab does: the user guide describes that
-// note as page-wide, and a reader who lands on the Overview first must not be
-// left thinking the object has no relationships.
+// editable properties, and type-property form.
+//
+// data is the same shell struct every other subpage takes. uiObject fills the
+// Overview-specific fields (ViewSections, HasView, FlashMsg/FlashErr) on it
+// before the render, so the page reads one representation of "this type's view
+// shows nothing" — objectDetailShellData.HasView — instead of taking the fact a
+// second time as a positional parameter. The Overview is always the active rail
+// item, so the page sets Active itself rather than trusting every caller (and
+// every direct component render in the tests) to pass it. EdgeCount drives the
+// empty-view note's "N connections" line; labelSuggestions are the key
+// autocomplete values, propDefs the type's schema fields, and data.TypeLabel the
+// schema card's heading ("" when the schema could not be loaded). Trail is the
+// optional origin trail (e.g. a document's extraction history); when nil the
+// header renders Objects > <object>.
 //
 // The editable fields live in two cards, matching the read-only preview
 // drawer: "Properties" carries the platform fields (key and labels) and
@@ -864,35 +866,21 @@ templ objectDetailShell(data objectDetailShellData) {
 // <form> spans both editable cards with a single terminal Save bar:
 // uiObjectUpdate always replaces labels with the submitted set, so a second,
 // labels-less form would wipe them.
-templ ObjectDetailPage(obj *GraphObject, branch objectBranchRef, sources []objectSource, assignees []boardAssigneeCandidate, loadErr error, flashMsg string, flashErr error, labelSuggestions []string, propDefs []objectPropertyDef, typeUIByType map[string]typeUI, status *objectStatusControl, trail []nav.BreadcrumbItem, typeLabel string, edgeCount int, viewSections []objectViewSection, hasView bool) {
-	{{ data := objectDetailShellData{
-		Obj:          obj,
-		Branch:       branch,
-		TypeUIByType: typeUIByType,
-		Status:       status,
-		Assignees:    assignees,
-		Trail:        trail,
-		TypeLabel:    typeLabel,
-		Active:       "overview",
-		FlashMsg:     flashMsg,
-		FlashErr:     flashErr,
-		LoadErr:      loadErr,
-		EdgeCount:    edgeCount,
-		ViewSections: viewSections,
-	} }}
+templ ObjectDetailPage(data objectDetailShellData, labelSuggestions []string, propDefs []objectPropertyDef) {
+	{{ data.Active = "overview" }}
 	@objectDetailShell(data) {
-		if obj != nil {
-			@objectSourceCard(sources)
-			@objectWorkflowPanel(obj, status, assignees, data.workControlTarget())
-			@objectDetailsCard(obj)
-			if len(viewSections) > 0 {
-				@objectViewSectionList(obj.ID, viewSections, typeUIByType, objectViewSurfaceOverview)
-			} else if hasView {
-				@objectViewEmptySection(obj.ID, edgeCount)
+		if data.Obj != nil {
+			@objectSourceCard(data.Sources)
+			@objectWorkflowPanel(data.Obj, data.Status, data.Assignees, data.workControlTarget())
+			@objectDetailsCard(data.Obj)
+			if len(data.ViewSections) > 0 {
+				@objectViewSectionList(data.Obj.ID, data.ViewSections, data.TypeUIByType, objectViewSurfaceOverview)
+			} else if data.HasView {
+				@objectViewEmptySection(data.Obj.ID, data.EdgeCount)
 			}
-			<form class="mt-6 flex flex-col gap-6" method="post" action={ templ.URL("/objects/" + url.PathEscape(obj.ID)) } hx-disable="find button.memory-save-btn">
-				@objectBuiltinPropertiesCard(obj, labelSuggestions, propDefs)
-				@objectTypePropertiesCard(obj, propDefs, typeLabel)
+			<form class="mt-6 flex flex-col gap-6" method="post" action={ templ.URL("/objects/" + url.PathEscape(data.Obj.ID)) } hx-disable="find button.memory-save-btn">
+				@objectBuiltinPropertiesCard(data.Obj, labelSuggestions, propDefs)
+				@objectTypePropertiesCard(data.Obj, propDefs, data.TypeLabel)
 				@components.StickyFormActions(components.StickyFormActionsProps{}) {
 					@components.SaveChangesButton()
 				}

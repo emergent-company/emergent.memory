@@ -45,6 +45,10 @@ templ NodeDetailContent(detail NodeDetail) {
 			style={ fmt.Sprintf("background:%s22;color:%s;border:1px solid %s44", detail.TypeColor, detail.TypeColor, detail.TypeColor) }
 		>{ detail.Type }</span>
 	</div>
+	<div>
+		<div class="text-[10px] uppercase tracking-wider text-gh-muted mb-1">Name</div>
+		<div class="text-[13px] font-semibold text-gh-text break-words">{ detail.Name }</div>
+	</div>
 	if detail.Key != "" {
 		<div>
 			<div class="text-[10px] uppercase tracking-wider text-gh-muted mb-1">Key</div>

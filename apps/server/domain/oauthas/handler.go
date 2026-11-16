@@ -342,8 +342,7 @@ func requireOAuthUser(c echo.Context) (*auth.AuthUser, error) {
 }
 
 func writeOAuthError(c echo.Context, err error) error {
-	var oe *OAuthError
-	if errors.As(err, &oe) {
+	if oe, ok := errors.AsType[*OAuthError](err); ok {
 		return c.JSON(oe.Status, OAuthErrorResponse{
 			Error:            oe.Code,
 			ErrorDescription: oe.Description,
@@ -358,8 +357,7 @@ func writeOAuthError(c echo.Context, err error) error {
 // writeAuthorizeError keeps authorize-surface failures at 400/403 even when the
 // underlying code is invalid_client (which is a 401 at the token endpoint).
 func writeAuthorizeError(c echo.Context, err error) error {
-	var oe *OAuthError
-	if errors.As(err, &oe) {
+	if oe, ok := errors.AsType[*OAuthError](err); ok {
 		status := oe.Status
 		if status == http.StatusUnauthorized {
 			status = http.StatusBadRequest

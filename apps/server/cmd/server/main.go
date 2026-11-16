@@ -1,7 +1,7 @@
 // Package main provides the entry point for the Memory API server
 //
 // @title Memory API
-// @version 0.95.0
+// @version 0.98.4
 // @description Memory Knowledge Base API - AI-powered knowledge management system
 // @contact.name Memory Team
 // @contact.url https://emergent-company.ai
@@ -52,6 +52,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/health"
 	"github.com/emergent-company/emergent.memory/domain/invites"
 	"github.com/emergent-company/emergent.memory/domain/journal"
+	"github.com/emergent-company/emergent.memory/domain/market"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
 	"github.com/emergent-company/emergent.memory/domain/mcprelay"
@@ -180,6 +181,7 @@ func coreFxOptions() fx.Option {
 		skills.Module,
 		schemas.Module,
 		blueprints.Module,
+		market.Module,
 		schemaregistry.Module,
 		useraccess.Module,
 		useractivity.Module,
@@ -275,8 +277,9 @@ func featureFxOptions(f config.FeatureSet) []fx.Option {
 	}
 	if f.MCP {
 		opts = append(opts, mcp.Module)
-		// Cross-domain wiring: set_session_title writes title to graph object Properties
-		// so clients using the graph API can read the updated title.
+		// Cross-domain wiring: set_session_title writes the title to the graph
+		// object's `name` column (the only title carrier, #824) so clients using the
+		// graph API can read the updated title.
 		opts = append(opts, fx.Provide(func(graphSvc *graph.Service) mcp.GraphObjectPatcher {
 			return graphSvc.PatchGraphObjectTitle
 		}))

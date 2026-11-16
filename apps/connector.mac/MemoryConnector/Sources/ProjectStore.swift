@@ -386,17 +386,18 @@ final class ProjectStore {
     }
 
     /// True when `error` is an auth/session failure: either the connector CLI
-    /// reports no valid session, or the failure text is one of the known
-    /// not-signed-in / rejected-token signals. The CLI status is the reliable
-    /// signal; the text match is the fallback when the status cannot be read
-    /// (e.g. the bundled binary is missing).
+    /// reports no valid session — or a session the provider already rejected
+    /// (`needs_reauth`, which keeps `signed_in` true) — or the failure text is
+    /// one of the known not-signed-in / rejected-token signals. The CLI status is
+    /// the reliable signal; the text match is the fallback when the status cannot
+    /// be read (e.g. the bundled binary is missing).
     static func isAuthFailure(_ error: Error,
                               cli: ConnectorCLI,
                               serverURL: String,
                               configPath: String) async -> Bool
     {
         if let status = try? await cli.authStatus(serverURL: serverURL, configPath: configPath),
-           !status.signedIn
+           !status.signedIn || status.needsReauth == true
         {
             return true
         }

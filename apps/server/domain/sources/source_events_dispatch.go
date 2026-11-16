@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -41,7 +42,14 @@ type SourceEventDispatcher struct {
 	minter      *githubapp.TokenMinter
 	newClient   func(baseURL, token string) *githubapp.Client
 	workObjects SourceWorkObjectStore
+	objectTypes ObjectTypeProvisioner
 	log         *slog.Logger
+}
+
+// SetObjectTypes installs the schema-pack provisioner so an issue event can
+// ensure GitHubIssue exists on a source created before the type was added.
+func (d *SourceEventDispatcher) SetObjectTypes(p ObjectTypeProvisioner) {
+	d.objectTypes = p
 }
 
 // SourceWorkObjectStore is the graph upsert surface the workflow dispatcher
@@ -127,6 +135,8 @@ func (d *SourceEventDispatcher) Process(ctx context.Context, v *VerifiedSourceEv
 	switch v.Event {
 	case "pull_request":
 		return d.handlePullRequest(ctx, v)
+	case "issues":
+		return d.handleIssues(ctx, v)
 	case "installation":
 		return d.handleInstallation(ctx, v)
 	case "installation_repositories":
@@ -177,6 +187,24 @@ func (d *SourceEventDispatcher) handlePullRequest(ctx context.Context, v *Verifi
 	subject := fmt.Sprintf("%s#%d", repoName, p.PullNumber())
 	if p.Action == "closed" || p.Action == "converted_to_draft" {
 		for _, src := range allowed {
+			linkState := "closed"
+			if p.Action == "converted_to_draft" {
+				linkState = "draft"
+			}
+			link, err := d.ensureIssuePRLink(ctx, src, p, &githubapp.PullRequestState{
+				HeadSHA: p.PullRequest.Head.SHA, State: linkState,
+			}, subject)
+			if err != nil {
+				return err
+			}
+			if link != nil && link.State == "merged" && link.ClosesIssue {
+				token, terr := d.mintToken(ctx, v.App, p.Installation.ID, repoName)
+				if terr == nil {
+					if cerr := d.newClient(d.apiBaseURL, token).CloseIssue(ctx, repoName, link.IssueNumber); cerr != nil && d.log != nil {
+						d.log.Warn("failed to close merged issue", "issue", link.IssueNumber, "repo", repoName, "error", cerr)
+					}
+				}
+			}
 			if handled, err := d.processWorkflowEvent(ctx, src, nil, &githubapp.PullRequestState{
 				HeadSHA: p.PullRequest.Head.SHA, State: "closed",
 			}, p, subject); err != nil {
@@ -220,6 +248,9 @@ func (d *SourceEventDispatcher) handlePullRequest(ctx context.Context, v *Verifi
 func (d *SourceEventDispatcher) dispatchPullRequestSource(ctx context.Context, v *VerifiedSourceEvent, src *Source, subject string, state *githubapp.PullRequestState) error {
 	p := v.Payload
 	repoName := p.Repository.FullName
+	if _, err := d.ensureIssuePRLink(ctx, src, p, state, subject); err != nil {
+		return err
+	}
 	ev := &SourceEvent{
 		ProjectID:   src.ProjectID,
 		SourceID:    src.ID,
@@ -265,6 +296,9 @@ func (d *SourceEventDispatcher) processPullRequestSource(ctx context.Context, v 
 	if handled {
 		return nil
 	}
+	if _, err := d.ensureIssuePRLink(ctx, src, p, state, subject); err != nil {
+		return err
+	}
 	claim, superseded, err := d.repo.ClaimSourceSubject(ctx, src.ProjectID, src.ID, subject, state.HeadSHA, p.PullRequest.Head.SHA)
 	if errors.Is(err, ErrSourceEventStaleHead) {
 		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventSkipped, nil, nil)
@@ -307,18 +341,25 @@ func (d *SourceEventDispatcher) processPullRequestSource(ctx context.Context, v 
 		"installationId": p.Installation.ID,
 		"deliveryId":     v.Delivery,
 	}
-	run, err := d.agents.CreateRunQueued(ctx, trigger.AgentID.String(), 1, agents.CreateRunQueuedOptions{
+	opts := agents.CreateRunQueuedOptions{
 		Queue:           defaultSourceQueue(trigger.Queue),
 		TriggerMessage:  &message,
 		TriggerMetadata: metadata,
+		Invocation:      agents.NormalizeInvocation(trigger.Invocation),
 		// Source runs are external: PR authors can open/synchronize a PR. The
 		// review tools get a narrow verified-source column instead of blanket
 		// internal trust.
 		TrustedInternal: false,
 		SourceSubject: &agents.SourceSubject{
-			SourceID: src.ID.String(), Repo: repoName, PRNumber: p.PullNumber(), HeadSHA: state.HeadSHA,
+			SourceID: src.ID.String(), Repo: repoName, Kind: "pull_request", PRNumber: p.PullNumber(), HeadSHA: state.HeadSHA,
 		},
-	})
+	}
+	triggerID := trigger.ID.String()
+	opts.SourceTriggerID = &triggerID
+	if opts.Invocation != nil {
+		opts.Priority = opts.Invocation.Priority
+	}
+	run, err := d.agents.CreateRunQueued(ctx, trigger.AgentID.String(), 1, opts)
 	if err != nil {
 		_, _ = d.repo.SetSourceEventClaimState(ctx, claim.ProjectID, claim.ID, SourceClaimPending)
 		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
@@ -341,6 +382,298 @@ func (d *SourceEventDispatcher) processPullRequestSource(ctx context.Context, v 
 	}
 	d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventDispatched, &runID, nil)
 	return nil
+}
+
+var prClosingIssueRe = regexp.MustCompile(`(?i)(?:closes|fixes|resolves)\s+#(\d+)`)
+var prAnyIssueRefRe = regexp.MustCompile(`(?i)(?:refs|references)\s+#(\d+)`)
+var prBranchIssueRe = regexp.MustCompile(`(?:^|/)(\d+)[-_]`)
+var prTitleIssueRe = regexp.MustCompile(`\(#(\d+)\)`)
+
+func issueReferenceForPullRequest(p *githubapp.WebhookPayload) (int, bool) {
+	if p == nil {
+		return 0, false
+	}
+	if m := prClosingIssueRe.FindStringSubmatch(p.PullRequest.Body); len(m) == 2 {
+		n, _ := strconv.Atoi(m[1])
+		if n > 0 {
+			return n, true
+		}
+	}
+	if m := prAnyIssueRefRe.FindStringSubmatch(p.PullRequest.Body); len(m) == 2 {
+		n, _ := strconv.Atoi(m[1])
+		if n > 0 {
+			return n, false
+		}
+	}
+	if m := prBranchIssueRe.FindStringSubmatch(p.PullRequest.Head.Ref); len(m) == 2 {
+		n, _ := strconv.Atoi(m[1])
+		if n > 0 {
+			return n, false
+		}
+	}
+	if m := prTitleIssueRe.FindStringSubmatch(p.PullRequest.Title); len(m) == 2 {
+		n, _ := strconv.Atoi(m[1])
+		if n > 0 {
+			return n, false
+		}
+	}
+	return 0, false
+}
+
+func issueNumberForPullRequest(p *githubapp.WebhookPayload) int {
+	n, _ := issueReferenceForPullRequest(p)
+	return n
+}
+
+// ensureIssuePRLink resolves the coding issue referenced by a PR and records a
+// server-owned link. The link is source-independent, so the review source can
+// resolve the issue even though the coding source owns the item.
+func (d *SourceEventDispatcher) ensureIssuePRLink(ctx context.Context, src *Source, p *githubapp.WebhookPayload, state *githubapp.PullRequestState, _ string) (*SourceIssuePRLink, error) {
+	if d.workObjects == nil || p == nil || src == nil {
+		return nil, nil
+	}
+	if d.objectTypes != nil {
+		if err := d.objectTypes.EnsureObjectTypes(ctx, src.ProjectID.String(), (&githubAppProvider{}).ObjectTypes()); err != nil {
+			return nil, fmt.Errorf("sources: ensure GitHub issue/pr object types: %w", err)
+		}
+	}
+	repoName := p.Repository.FullName
+	issueNumber, closesIssue := issueReferenceForPullRequest(p)
+	if issueNumber <= 0 {
+		return nil, nil
+	}
+	candidates, err := d.repo.FindGitHubAppSourcesForRepo(ctx, src.ProjectID, repoName)
+	if err != nil {
+		return nil, err
+	}
+	var issue *graph.GraphObject
+	var issueSourceID uuid.UUID
+	for i := range candidates {
+		key := fmt.Sprintf("github:%s:%s#%d", candidates[i].ID, repoName, issueNumber)
+		found, ferr := d.workObjects.FindHeadObjectByTypeAndKey(ctx, src.ProjectID.String(), "GitHubIssue", key)
+		if ferr != nil {
+			return nil, ferr
+		}
+		if found != nil {
+			issue = found
+			issueSourceID = candidates[i].ID
+			break
+		}
+	}
+	if issue == nil {
+		return nil, nil
+	}
+	prNumber := p.PullNumber()
+	merged := p.PullRequest.Merged || (state != nil && state.State == "closed" && p.PullRequest.Merged)
+	draft := p.Action == "converted_to_draft"
+	closed := p.Action == "closed" || (state != nil && state.State == "closed" && !merged)
+	linkState := p.PullRequest.State
+	if linkState == "" {
+		linkState = "open"
+	}
+	issueStatus := "review"
+	if merged && closesIssue {
+		linkState = "merged"
+		issueStatus = "done"
+	} else if closed {
+		linkState = "closed"
+		issueStatus = "cancelled"
+	} else if draft {
+		linkState = "draft"
+	}
+	branch := p.PullRequest.Head.Ref
+	headSHA := p.PullRequest.Head.SHA
+	if state != nil && state.HeadSHA != "" {
+		headSHA = state.HeadSHA
+	}
+	prURL := p.PullRequest.HTMLURL
+	if prURL == "" {
+		prURL = fmt.Sprintf("https://github.com/%s/pull/%d", repoName, prNumber)
+	}
+	link := &SourceIssuePRLink{
+		ProjectID: src.ProjectID, Repo: repoName, PRNumber: prNumber,
+		IssueCanonicalID: issue.CanonicalID, IssueNumber: issueNumber, IssueSourceID: issueSourceID,
+		PRURL: prURL, Branch: branch, HeadSHA: headSHA, State: linkState, ClosesIssue: closesIssue,
+	}
+	if err := d.repo.UpsertSourceIssuePRLink(ctx, link); err != nil {
+		return nil, err
+	}
+	issueProps := make(map[string]any, len(issue.Properties)+4)
+	for k, v := range issue.Properties {
+		issueProps[k] = v
+	}
+	issueProps["pr_number"] = prNumber
+	issueProps["pr_url"] = prURL
+	issueProps["pr_branch"] = branch
+	issueProps["pr_head_sha"] = headSHA
+	if issue.Status != nil && (*issue.Status == "done" || *issue.Status == "cancelled") && issueStatus == "review" {
+		issueStatus = *issue.Status
+	}
+	issueProps["status"] = issueStatus
+	issueKey := fmt.Sprintf("github:%s:%s#%d", issueSourceID, repoName, issueNumber)
+	if _, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
+		Type: "GitHubIssue", Key: &issueKey, Name: issue.Name, Status: &issueStatus, Properties: issueProps,
+	}, nil); err != nil {
+		return nil, err
+	}
+	return link, nil
+
+}
+
+func (d *SourceEventDispatcher) handleIssues(ctx context.Context, v *VerifiedSourceEvent) error {
+	p := v.Payload
+	if p == nil || !p.IsIssue() || p.AuthoredByIssue(v.App.Slug) {
+		return nil
+	}
+	repoName := p.Repository.FullName
+	sources, err := d.repo.ListSourcesByAppAndInstallation(ctx, v.App.ID, strconv.FormatInt(p.Installation.ID, 10))
+	if err != nil {
+		return err
+	}
+	for _, src := range sources {
+		if !repoAllowed(src.Config, repoName) {
+			continue
+		}
+		if d.objectTypes != nil {
+			if err := d.objectTypes.EnsureObjectTypes(ctx, src.ProjectID.String(), (&githubAppProvider{}).ObjectTypes()); err != nil {
+				return fmt.Errorf("sources: ensure GitHub issue object types: %w", err)
+			}
+		}
+		if err := d.processIssueSource(ctx, v, src); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *SourceEventDispatcher) processIssueSource(ctx context.Context, v *VerifiedSourceEvent, src *Source) error {
+	p := v.Payload
+	issue := p.Issue
+	repoName := p.Repository.FullName
+	subject := fmt.Sprintf("%s#%d", repoName, issue.Number)
+	labels := make([]any, 0, len(issue.Labels))
+	for _, label := range issue.Labels {
+		if name := strings.TrimSpace(label.Name); name != "" {
+			labels = append(labels, name)
+		}
+	}
+	payload := map[string]any{
+		"repo": repoName, "number": issue.Number, "title": issue.Title,
+		"state": issue.State, "url": issue.HTMLURL, "updatedAt": issue.UpdatedAt,
+		"labels": labels, "action": p.Action, "delivery": v.Delivery,
+	}
+	ev := &SourceEvent{
+		ProjectID: src.ProjectID, SourceID: src.ID, DeliveryID: v.Delivery,
+		EventType: "issues", Action: p.Action, SubjectType: "issue", SubjectRef: subject,
+		Payload: payload,
+	}
+	inserted, err := d.repo.InsertSourceEvent(ctx, ev)
+	if err != nil {
+		return err
+	}
+	if !inserted {
+		return nil
+	}
+	if d.workObjects == nil {
+		err := fmt.Errorf("sources: issue source has no work-object store")
+		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
+		return err
+	}
+
+	trigger, err := d.matchingTrigger(ctx, src.ProjectID, src.ID, "issues", p.Action)
+	if err != nil {
+		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
+		return err
+	}
+	closed := p.Action == "closed" || p.Action == "deleted" || strings.EqualFold(issue.State, "closed")
+	key := fmt.Sprintf("github:%s:%s#%d", src.ID.String(), repoName, issue.Number)
+	title := issue.Title
+	if title == "" {
+		title = subject
+	}
+	existing, err := d.workObjects.FindHeadObjectByTypeAndKey(ctx, src.ProjectID.String(), "GitHubIssue", key)
+	if err != nil {
+		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
+		return err
+	}
+	status := "ready"
+	assignee := ""
+	if existing != nil {
+		if existing.Status != nil {
+			status = *existing.Status
+		}
+		if existing.Assignee != nil {
+			assignee = *existing.Assignee
+		}
+	}
+	if closed {
+		if status != "done" {
+			status = "cancelled"
+		}
+		assignee = ""
+	} else if trigger != nil && p.IsRelevantIssueAction() {
+		switch {
+		case existing == nil || existing.Status == nil:
+			status = "ready"
+			assignee = d.triggerAgentName(ctx, src.ProjectID, trigger.AgentID)
+		case status == "ready":
+			assignee = d.triggerAgentName(ctx, src.ProjectID, trigger.AgentID)
+		case p.Action == "reopened" && (status == "cancelled" || status == "done"):
+			status = "ready"
+			assignee = d.triggerAgentName(ctx, src.ProjectID, trigger.AgentID)
+		}
+		if assignee == "" {
+			err := fmt.Errorf("sources: issue trigger %s references an agent that cannot be resolved", trigger.ID)
+			d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
+			return err
+		}
+	}
+	props := map[string]any{
+		"repo": repoName, "issue_number": issue.Number, "title": title,
+		"body": truncateUTF8(issue.Body, 16000), "state": issue.State,
+		"labels": labels, "url": issue.HTMLURL, "source_id": src.ID.String(), "status": status,
+	}
+	if trigger != nil && !closed && assignee != "" {
+		// Only the server-owned trigger id is stored. The invocation (including
+		// the credential request) is re-resolved from kb.source_triggers by the
+		// board, so a writable graph property can never mint a write token.
+		props["source_trigger_id"] = trigger.ID.String()
+	}
+	var assigneePtr *string
+	if assignee != "" {
+		assigneePtr = &assignee
+	}
+	resp, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
+		Type: "GitHubIssue", Key: &key, Name: &title, Status: &status,
+		Assignee: assigneePtr, Properties: props,
+	}, nil)
+	if err != nil {
+		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
+		return err
+	}
+	if closed && resp != nil {
+		d.cancelSubjectRuns(ctx, resp.CanonicalID.String())
+	}
+	state := SourceEventDispatched
+	if trigger == nil || closed {
+		state = SourceEventSkipped
+	}
+	d.markEvent(ctx, src.ProjectID, ev.ID, state, nil, nil)
+	return nil
+}
+
+// triggerAgentName resolves the runtime agent's display name for a board item
+// assignee. Board routing matches assignees by name.
+func (d *SourceEventDispatcher) triggerAgentName(ctx context.Context, projectID uuid.UUID, agentID uuid.UUID) string {
+	if d.agents == nil || agentID == uuid.Nil {
+		return ""
+	}
+	pid := projectID.String()
+	agent, err := d.agents.FindByID(ctx, agentID.String(), &pid)
+	if err != nil || agent == nil {
+		return ""
+	}
+	return agent.Name
 }
 
 func (d *SourceEventDispatcher) handleInstallation(ctx context.Context, v *VerifiedSourceEvent) error {

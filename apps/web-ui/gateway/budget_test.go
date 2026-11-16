@@ -8,10 +8,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/a-h/templ"
+	"github.com/emergent-company/go-daisy/devmode"
 	"github.com/labstack/echo/v4"
 )
 
@@ -102,14 +107,14 @@ func TestSidebarBudgetBadge(t *testing.T) {
 	if !found {
 		t.Fatal("Usage item missing from sidebar")
 	}
-	for _, want := range []string{`data-testid="budget-nav-badge"`, `data-level="warning"`, "Near limit"} {
+	for _, want := range []string{`data-testid="budget-nav-badge"`, `data-level="warning"`, "Near limit", "ml-1"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("warning badge missing %q: %s", want, html)
 		}
 	}
 
 	_, html = usageItem(t, "exhausted")
-	for _, want := range []string{`data-level="exhausted"`, "Over budget"} {
+	for _, want := range []string{`data-level="exhausted"`, "Over budget", "ml-1"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("exhausted badge missing %q: %s", want, html)
 		}
@@ -352,5 +357,93 @@ func TestUIBudgetResetAuthErrorWording(t *testing.T) {
 	}
 	if strings.Contains(body, "memory 403 forbidden") {
 		t.Errorf("usage page must not leak the backend error prefix:\n%s", body)
+	}
+}
+
+// renderBudgetFragment renders a templ fragment to HTML through the dev-mode
+// context the annotation contract requires (ui-guard check 3).
+func renderBudgetFragment(t *testing.T, c templ.Component) string {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := c.Render(devmode.WithDevMode(context.Background()), &buf); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	return buf.String()
+}
+
+// TestBudgetResetControlSubmits pins the reset button's submit contract.
+//
+// It was broken in production: the call passed "type": "submit" through
+// ButtonProps.Attrs while leaving Type empty, and ui.Button emits its own
+// type attribute first (type="button"). A browser honours the first one, so the
+// button rendered, the confirm dialog appeared, and the form was never
+// submitted — no request, no error, no change. Asserting the rendered tag
+// (rather than the source) is what catches that.
+func TestBudgetResetControlSubmits(t *testing.T) {
+	month := budgetWindow("month", 10, 9.78, "warning")
+	tests := []struct {
+		name string
+		html string
+	}{
+		{"usage page card", renderBudgetFragment(t, budgetWindowCard(month, "month"))},
+		{"settings page fields", renderBudgetFragment(t, budgetWindowFields("month", "Monthly", month.CapUSD, nil, month, nil))},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := strings.Count(tt.html, `type="submit"`); got != 1 {
+				t.Errorf("reset button should render exactly one type=\"submit\", got %d:\n%s", got, buttonTags(tt.html))
+			}
+			if strings.Contains(tt.html, `type="button"`) {
+				t.Errorf("reset button must not render type=\"button\" (it wins over submit):\n%s", buttonTags(tt.html))
+			}
+			if !strings.Contains(tt.html, `<form method="post" action="/settings/budget/reset"`) {
+				t.Errorf("reset control must be inside a POST form:\n%s", tt.html)
+			}
+		})
+	}
+}
+
+// buttonTags extracts the opening <button> tags from a rendered fragment, so a
+// failure shows the actual attributes rather than a wall of HTML.
+func buttonTags(html string) string {
+	var out []string
+	for _, part := range strings.Split(html, "<button")[1:] {
+		end := strings.Index(part, ">")
+		if end < 0 {
+			continue
+		}
+		out = append(out, "<button"+part[:end+1])
+	}
+	return strings.Join(out, "\n")
+}
+
+// TestTemplNoAttributeTypeRatchet keeps the duplicate-attribute trap from
+// coming back anywhere in the gateway: ui.Button/ui.SimpleButton own the
+// `type` attribute, and "type" inside a templ.Attributes literal emits a second
+// one. The Ratchet suffix puts this in the required ci job's
+// `go test -run Ratchet ./...` selection.
+func TestTemplNoAttributeTypeRatchet(t *testing.T) {
+	files, err := filepath.Glob("*.templ")
+	if err != nil {
+		t.Fatalf("glob templ files: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("no .templ files found — the scan is not looking at the gateway")
+	}
+	// Only a form-submission type is the trap; a JSON literal such as
+	// {"type": "service_account"} in a textarea placeholder is not.
+	trap := regexp.MustCompile(`"type":\s*"(submit|button|reset)"`)
+	for _, name := range files {
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		for i, line := range strings.Split(string(src), "\n") {
+			if !trap.MatchString(line) {
+				continue
+			}
+			t.Errorf("%s:%d passes \"type\" through templ.Attributes; set ButtonProps.Type instead "+
+				"(a duplicate type attribute leaves the first one — type=\"button\" — in effect)", name, i+1)
+		}
 	}
 }

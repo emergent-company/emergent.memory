@@ -352,6 +352,25 @@ func (s *ChunkEmbeddingJobsService) MarkPermanentlyFailed(ctx context.Context, i
 	return nil
 }
 
+// budgetBlockMaxDelaySec bounds how long a budget-blocked chunk job is parked.
+//
+// Budget parking is not a failure retry: the job is waiting for an external
+// condition (the project's cap), and attempt_count climbs on every dequeue while
+// the project is blocked. Reusing the generic MaxRetryDelaySec (one hour)
+// therefore parked a long-blocked queue at the ceiling on *every* park, so a cap
+// change or a window rollover still took up to an hour to be observed (issue
+// #724). Keep the same shape as the graph embedding workers' five-minute park.
+const budgetBlockMaxDelaySec = 300
+
+// budgetBlockMaxDelay is budgetBlockMaxDelaySec, or the configured max when that
+// is smaller, so an operator who sets a tighter cap is not overridden.
+func (s *ChunkEmbeddingJobsService) budgetBlockMaxDelay() int {
+	if s.cfg != nil && s.cfg.MaxRetryDelaySec > 0 && s.cfg.MaxRetryDelaySec < budgetBlockMaxDelaySec {
+		return s.cfg.MaxRetryDelaySec
+	}
+	return budgetBlockMaxDelaySec
+}
+
 // BudgetBlockDelaySec returns the bounded exponential backoff (seconds) used to
 // park a budget-blocked job. Delay doubles per attempt: base, 2*base, 4*base...
 // capped at max. Attempts below 1 are treated as 1. The exponent is capped at
@@ -381,6 +400,8 @@ func BudgetBlockDelaySec(attemptCount, baseSec, maxSec int) int {
 // exponential backoff instead of retrying it a fixed few minutes later. The
 // job stays 'pending' with a durable last_error so it resumes automatically
 // once the project budget is raised, but it is not reheated in a tight loop.
+// The park delay is bounded by budgetBlockMaxDelaySec, not the generic retry
+// ceiling: see budgetBlockMaxDelaySec (issue #724).
 func (s *ChunkEmbeddingJobsService) RescheduleBudgetExceeded(ctx context.Context, id string) (time.Duration, error) {
 	var attempt int
 	err := s.db.NewRaw(`UPDATE kb.chunk_embedding_jobs
@@ -389,17 +410,18 @@ func (s *ChunkEmbeddingJobsService) RescheduleBudgetExceeded(ctx context.Context
 			scheduled_at = now() + make_interval(secs => LEAST(?::double precision, ?::double precision * power(2, LEAST(GREATEST(attempt_count - 1, 0), 10)))),
 			updated_at = now()
 		WHERE id = ?
-		RETURNING attempt_count`, s.cfg.MaxRetryDelaySec, s.cfg.BaseRetryDelaySec, id).Scan(ctx, &attempt)
+		RETURNING attempt_count`, s.budgetBlockMaxDelay(), s.cfg.BaseRetryDelaySec, id).Scan(ctx, &attempt)
 	if err != nil {
 		return 0, fmt.Errorf("reschedule budget-exceeded chunk embedding job: %w", err)
 	}
-	return time.Duration(BudgetBlockDelaySec(attempt, s.cfg.BaseRetryDelaySec, s.cfg.MaxRetryDelaySec)) * time.Second, nil
+	return time.Duration(BudgetBlockDelaySec(attempt, s.cfg.BaseRetryDelaySec, s.budgetBlockMaxDelay())) * time.Second, nil
 }
 
 // RescheduleBudgetExceededForProject parks every due pending job and every
 // in-flight processing job for one project in a single UPDATE. Detecting the
 // budget once per project and parking the whole queue avoids one budget query
-// and one log line per job (the prod hot loop).
+// and one log line per job (the prod hot loop). The park delay is bounded by
+// budgetBlockMaxDelaySec (issue #724).
 func (s *ChunkEmbeddingJobsService) RescheduleBudgetExceededForProject(ctx context.Context, projectID string) (int64, error) {
 	res, err := s.db.NewRaw(`UPDATE kb.chunk_embedding_jobs cej
 		SET status = 'pending',
@@ -409,11 +431,41 @@ func (s *ChunkEmbeddingJobsService) RescheduleBudgetExceededForProject(ctx conte
 		WHERE (cej.status = 'processing' OR (cej.status = 'pending' AND cej.scheduled_at <= now()))
 		  AND cej.chunk_id IN (
 			SELECT c.id FROM kb.chunks c JOIN kb.documents d ON d.id = c.document_id WHERE d.project_id = ?
-		  )`, s.cfg.MaxRetryDelaySec, s.cfg.BaseRetryDelaySec, projectID).Exec(ctx)
+		  )`, s.budgetBlockMaxDelay(), s.cfg.BaseRetryDelaySec, projectID).Exec(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("park budget-exceeded chunk embedding jobs: %w", err)
 	}
 	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// UnparkBudgetExceededForProject makes one project's budget-parked chunk jobs
+// runnable immediately. It is the recovery half of budget parking: raising or
+// clearing a project's cap must take effect on the ingestion queue at once, not
+// after the parked jobs' backoff expires (issue #724). Only rows still carrying
+// the budget sentinel are touched — a job that failed for another reason keeps
+// its own retry schedule — and attempt_count is left alone so a genuinely
+// failing job keeps its history.
+func (s *ChunkEmbeddingJobsService) UnparkBudgetExceededForProject(ctx context.Context, projectID string) (int64, error) {
+	res, err := s.db.NewRaw(`UPDATE kb.chunk_embedding_jobs cej
+		SET status = 'pending',
+			scheduled_at = now(),
+			last_error = NULL,
+			updated_at = now()
+		WHERE cej.status = 'pending'
+		  AND cej.last_error = 'budget_exceeded'
+		  AND cej.chunk_id IN (
+			SELECT c.id FROM kb.chunks c JOIN kb.documents d ON d.id = c.document_id WHERE d.project_id = ?
+		  )`, projectID).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("unpark budget-exceeded chunk embedding jobs: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n > 0 {
+		s.log.Info("unparked budget-exceeded chunk embedding jobs",
+			slog.String("project_id", projectID),
+			slog.Int64("count", n))
+	}
 	return n, nil
 }
 

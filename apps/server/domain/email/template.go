@@ -122,7 +122,13 @@ func (ts *TemplateService) preloadTemplates() {
 		for _, entry := range entries {
 			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".hbs") {
 				name := strings.TrimSuffix(strings.TrimSuffix(entry.Name(), ".hbs"), ".mjml")
-				ts.loadLayout(name)
+				// A layout that fails to preload is loaded on demand later, where
+				// the send fails; record it here so a broken template file is
+				// visible at startup instead of only at send time.
+				if _, err := ts.loadLayout(name); err != nil {
+					ts.log.Warn("failed to preload layout",
+						slog.String("name", name), slog.String("error", err.Error()))
+				}
 			}
 		}
 	}
@@ -140,7 +146,10 @@ func (ts *TemplateService) preloadTemplates() {
 		}
 		if strings.HasSuffix(entry.Name(), ".hbs") {
 			name := strings.TrimSuffix(strings.TrimSuffix(entry.Name(), ".hbs"), ".mjml")
-			ts.loadTemplate(name)
+			if _, err := ts.loadTemplate(name); err != nil {
+				ts.log.Warn("failed to preload template",
+					slog.String("name", name), slog.String("error", err.Error()))
+			}
 		}
 	}
 

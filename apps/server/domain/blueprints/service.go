@@ -36,6 +36,11 @@ type AgentRepo interface {
 	// bound to a definition, and by Unapply to delete blueprint-owned agents.
 	FindAgentByName(ctx context.Context, projectID, name string) (*agents.Agent, error)
 	CreateAgent(ctx context.Context, agent *agents.Agent) error
+	CreateRuntimeAgentForDefinition(ctx context.Context, agent *agents.Agent) (*agents.Agent, error)
+	// FindRuntimeAgentForDefinition resolves the row that owns a definition's
+	// link, so an update that loses that link to another row can recover onto
+	// the winner instead of surfacing the unique violation (#789).
+	FindRuntimeAgentForDefinition(ctx context.Context, projectID, definitionID string) (*agents.Agent, error)
 	UpdateAgent(ctx context.Context, agent *agents.Agent) error
 	DeleteAgentsBySourceBlueprint(ctx context.Context, projectID, blueprintID string) (int, error)
 }
@@ -226,10 +231,11 @@ func (s *Service) CreateBlueprint(ctx context.Context, req *CreateBlueprintReque
 		UpdatedAt:              now,
 	}
 	// Origin is server-derived, never client-settable (the request field is
-	// json:"-"): only the internal GitHub-import path may set "import"; every
-	// other create path — including a forged `origin` in a JSON body — is
-	// user-authored. Built-ins are written by the seeder, not this path.
-	if bp.Origin != OriginImport {
+	// json:"-"): only the internal GitHub-import path may set "import" and only
+	// the marketplace install path may set "market"; every other create path —
+	// including a forged `origin` in a JSON body — is user-authored. Built-ins
+	// are written by the seeder, not this path.
+	if bp.Origin != OriginImport && bp.Origin != OriginMarket {
 		bp.Origin = OriginUser
 	}
 	if bp.Manifest == nil {

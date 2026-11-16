@@ -134,6 +134,7 @@ func TestStrictScopedPath(t *testing.T) {
 		{http.MethodGet, "/auth/login", false},
 		{http.MethodGet, "/share/agent", false},
 		{http.MethodGet, "/static/js/app.js", false},
+		{http.MethodGet, "/.well-known/memory-instance", false}, // public discovery document
 		{http.MethodGet, "/assets/x.css", false},
 		{http.MethodGet, "/dev/components", false},
 		{http.MethodGet, "/partial/invite-user-search", false},
@@ -159,6 +160,7 @@ func TestScopeRewriteHardCut(t *testing.T) {
 		e := echo.New()
 		e.Pre(s.scopeRewrite)
 		e.GET("/objects", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
+		e.GET("/.well-known/memory-instance", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
 		return e
 	}
 
@@ -167,6 +169,14 @@ func TestScopeRewriteHardCut(t *testing.T) {
 	newServer("session").ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("session unscoped /objects = %d, want 404", rec.Code)
+	}
+
+	// The public discovery document is not an app page: it must pass the hard
+	// cut in session mode or the market's browser check sees a 404.
+	rec = httptest.NewRecorder()
+	newServer("session").ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/.well-known/memory-instance", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("session /.well-known/memory-instance = %d, want 200", rec.Code)
 	}
 
 	// Dev mode: no session/URL authority, so unscoped navigation still works
@@ -396,7 +406,7 @@ func TestRewriteScopedHTML(t *testing.T) {
 	in := `<a href="/objects">o</a>` +
 		`<form action="/agents/7/settings/general" hx-post="/settings/tokens/new">x</form>` +
 		`<button data-reveal-url="/agents/7/share-links/l1/reveal">copy</button>` +
-		`<div hx-sse:connect="/board/stream"></div>` +
+		`<div hx-sse:connect="/work/board/stream"></div>` +
 		`<a href="/orgs/o2/members">members</a>` +
 		`<a href="/api/chat">api</a><a href="#x">f</a><a href="https://e.com">e</a>` +
 		`<a href="/o/other/p/x/objects">already</a>`
@@ -406,7 +416,7 @@ func TestRewriteScopedHTML(t *testing.T) {
 		`action="/o/o1/p/p1/agents/7/settings/general"`,
 		`hx-post="/o/o1/p/p1/settings/tokens/new"`,
 		`data-reveal-url="/o/o1/p/p1/agents/7/share-links/l1/reveal"`,
-		`hx-sse:connect="/o/o1/p/p1/board/stream"`,
+		`hx-sse:connect="/o/o1/p/p1/work/board/stream"`,
 		`href="/o/o2/members"`,
 		`href="/api/chat"`,
 		`href="#x"`,

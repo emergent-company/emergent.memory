@@ -70,8 +70,8 @@ func TestService_ListResources_GrantRevokedKeepsReconnect(t *testing.T) {
 	if strings.Contains(err.Error(), "list resources failed") {
 		t.Errorf("error was re-wrapped, losing the remediation: %q", err)
 	}
-	var appErr *apperror.Error
-	if !errors.As(err, &appErr) {
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	if !ok {
 		t.Fatalf("error = %v, want an *apperror.Error", err)
 	}
 	if appErr.Message != driveReconnectRequired {

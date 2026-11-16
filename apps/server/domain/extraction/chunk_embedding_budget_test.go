@@ -44,7 +44,9 @@ func TestRescheduleBudgetExceededForProjectParksJobs(t *testing.T) {
 	projectID := seedEmbeddingProject(t, ctx, db)
 	docID := seedChunkDocument(t, ctx, db, projectID)
 
-	attempts := []int{0, 1, 5}
+	// 304 is the attempt_count the production queue reached while it was parked
+	// (issue #724). Budget parking must stay on the short ceiling regardless.
+	attempts := []int{0, 1, 5, 304}
 	jobIDs := make([]string, len(attempts))
 	for i, attempt := range attempts {
 		chunkID := seedChunk(t, ctx, db, docID, i, "budget blocked chunk text")
@@ -61,7 +63,7 @@ func TestRescheduleBudgetExceededForProjectParksJobs(t *testing.T) {
 
 	n, err := svc.RescheduleBudgetExceededForProject(ctx, projectID)
 	require.NoError(t, err)
-	require.Equal(t, int64(3), n)
+	require.Equal(t, int64(len(attempts)), n)
 
 	type parkedRow struct {
 		Status    string  `bun:"status"`
@@ -81,15 +83,90 @@ func TestRescheduleBudgetExceededForProjectParksJobs(t *testing.T) {
 		require.NotNil(t, row.LastError)
 		assert.Equal(t, "budget_exceeded", *row.LastError)
 		assert.Greater(t, row.DelaySecs, 30.0, "job must be parked well into the future, not retried immediately")
-		assert.LessOrEqual(t, row.DelaySecs, float64(cfg.MaxRetryDelaySec)+5, "delay must stay bounded")
+		assert.LessOrEqual(t, row.DelaySecs, float64(budgetBlockMaxDelaySec)+5,
+			"budget parking must stay within the short budget ceiling, never the one-hour retry ceiling (#724)")
 		delays[attempts[i]] = row.DelaySecs
 	}
 
-	// attempt_count 0 and 1 both map to base (60s); 5 maps to 2^4*60 = 960s.
+	// attempt_count 0 and 1 both map to base (60s); 5 and 304 are clamped by the
+	// budget ceiling (300s), not by the generic MaxRetryDelaySec (3600s). This is
+	// the regression: a long-blocked queue used to park at 3600s on every park.
 	assert.InDelta(t, 60, delays[0], 5, "attempt 0 parks at base delay")
 	assert.InDelta(t, 60, delays[1], 5, "attempt 1 parks at base delay")
-	assert.InDelta(t, 960, delays[5], 30, "attempt 5 parks at 2^4 * base")
-	assert.Greater(t, delays[5], delays[1], "higher attempt must back off longer")
+	assert.InDelta(t, float64(budgetBlockMaxDelaySec), delays[5], 5,
+		"attempt 5 is clamped by the budget ceiling")
+	assert.InDelta(t, float64(budgetBlockMaxDelaySec), delays[304], 5,
+		"a long-parked queue must not fall back to the one-hour retry ceiling")
+	assert.Greater(t, delays[5], delays[1], "higher attempt must back off longer below the ceiling")
+}
+
+// TestUnparkBudgetExceededForProjectMakesJobsDue is the recovery half of #724:
+// once the admin raises or clears the cap, the project's budget-parked jobs must
+// be runnable immediately, while other retries keep their own schedule.
+func TestUnparkBudgetExceededForProjectMakesJobsDue(t *testing.T) {
+	ctx, db := openEmbeddingWorkerTestDB(t)
+	projectID := seedEmbeddingProject(t, ctx, db)
+	docID := seedChunkDocument(t, ctx, db, projectID)
+
+	// Two budget-parked jobs (the production shape: high attempt_count, parked at
+	// the ceiling) and one job failing for an unrelated reason.
+	insertParked := func(chunkIndex int, lastError string) string {
+		chunkID := seedChunk(t, ctx, db, docID, chunkIndex, "parked chunk text")
+		id := uuid.NewString()
+		_, err := db.NewRaw(`INSERT INTO kb.chunk_embedding_jobs
+			(id, chunk_id, status, attempt_count, last_error, scheduled_at, created_at, updated_at)
+			VALUES (?, ?, 'pending', 304, ?, now() + interval '1 hour', now(), now())`,
+			id, chunkID, lastError).Exec(ctx)
+		require.NoError(t, err)
+		return id
+	}
+	budgetOne := insertParked(0, "budget_exceeded")
+	budgetTwo := insertParked(1, "budget_exceeded")
+	unrelated := insertParked(2, "provider rate limited")
+
+	cfg := DefaultChunkEmbeddingConfig()
+	jobsSvc := NewChunkEmbeddingJobsService(db, quietLogger(), cfg)
+	worker := NewChunkEmbeddingWorker(jobsSvc, nil, db, cfg, quietLogger(), nil, nil, nil, true)
+	// A second worker on the same database models a second replica: it holds no
+	// local state, so everything it knows about the block it reads from shared
+	// state (issue #793).
+	otherReplica := NewChunkEmbeddingWorker(jobsSvc, nil, db, cfg, quietLogger(), nil, nil, nil, true)
+
+	worker.markBudgetBlocked(ctx, projectID)
+	require.True(t, worker.budgetBlockActive(ctx, projectID))
+	require.True(t, otherReplica.budgetBlockActive(ctx, projectID),
+		"the over-budget verdict must be visible to every replica, not just the one that cached it")
+
+	require.NoError(t, worker.UnparkProjectBudget(ctx, projectID))
+
+	assert.False(t, worker.budgetBlockActive(ctx, projectID),
+		"the cached over-budget verdict must be dropped so the budget is re-read")
+	assert.False(t, otherReplica.budgetBlockActive(ctx, projectID),
+		"a replica that did not serve the budget update must stop parking immediately, not wait for its cache TTL")
+
+	type row struct {
+		Status    string  `bun:"status"`
+		LastError *string `bun:"last_error"`
+		DelaySecs float64 `bun:"delay_secs"`
+	}
+	for _, id := range []string{budgetOne, budgetTwo} {
+		var r row
+		require.NoError(t, db.NewRaw(`SELECT status, last_error,
+			EXTRACT(EPOCH FROM (scheduled_at - now())) AS delay_secs
+			FROM kb.chunk_embedding_jobs WHERE id = ?`, id).Scan(ctx, &r))
+		assert.Equal(t, "pending", r.Status)
+		assert.Nil(t, r.LastError, "the budget sentinel must be cleared so the document stops reporting blocked")
+		assert.LessOrEqual(t, r.DelaySecs, 0.0, "the job must be due immediately")
+	}
+
+	var other row
+	require.NoError(t, db.NewRaw(`SELECT status, last_error,
+		EXTRACT(EPOCH FROM (scheduled_at - now())) AS delay_secs
+		FROM kb.chunk_embedding_jobs WHERE id = ?`, unrelated).Scan(ctx, &other))
+	require.NotNil(t, other.LastError)
+	assert.Equal(t, "provider rate limited", *other.LastError,
+		"an unpark must not clear a failure that was not the budget")
+	assert.Greater(t, other.DelaySecs, 30.0, "an unrelated retry keeps its own schedule")
 }
 
 // countingBudgetChecker is a fake BudgetChecker that records how often it is

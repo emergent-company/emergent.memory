@@ -59,11 +59,13 @@ func seedEmbeddingProject(t *testing.T, ctx context.Context, db bun.IDB) string 
 func seedEmbeddingObject(t *testing.T, ctx context.Context, db bun.IDB, projectID, name string) string {
 	t.Helper()
 	id := uuid.NewString()
-	props := `{"name":"` + name + `"}`
+	// The title is the `name` column, never a property (#824) — the relationship
+	// embedding text is built from it, and a fixture that wrote only
+	// properties.name would produce unnamed objects.
 	_, err := db.NewRaw(`INSERT INTO kb.graph_objects
-		(id, project_id, canonical_id, version, type, status, properties, labels, created_at, updated_at)
-		VALUES (?, ?, ?, 1, 'Thing', 'active', ?::jsonb, '{}'::text[], now(), now())`,
-		id, projectID, id, props).Exec(ctx)
+		(id, project_id, canonical_id, version, type, name, status, properties, labels, created_at, updated_at)
+		VALUES (?, ?, ?, 1, 'Thing', ?, 'active', '{}'::jsonb, '{}'::text[], now(), now())`,
+		id, projectID, id, name).Exec(ctx)
 	require.NoError(t, err)
 	return id
 }

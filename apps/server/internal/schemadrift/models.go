@@ -34,6 +34,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/invites"
 	"github.com/emergent-company/emergent.memory/domain/journal"
+	"github.com/emergent-company/emergent.memory/domain/market"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
 	"github.com/emergent-company/emergent.memory/domain/modelconfig"
@@ -195,6 +196,9 @@ var models = []any{
 	(*blueprints.BlueprintUpdateCheck)(nil),
 	(*blueprints.BlueprintUpdateJob)(nil),
 	(*blueprints.BlueprintModelOverride)(nil),
+
+	// domain/market
+	(*market.Install)(nil),
 	(*blueprints.GithubCredential)(nil),
 
 	// domain/skills
@@ -215,6 +219,7 @@ var models = []any{
 	(*sources.SourceEvent)(nil),
 	(*sources.SourceEventClaim)(nil),
 	(*sources.SourceWorkflow)(nil),
+	(*sources.SourceIssuePRLink)(nil),
 	(*sources.SyncJob)(nil),
 	(*sources.OAuthPendingState)(nil),
 	(*sources.OAuthClientConfig)(nil),

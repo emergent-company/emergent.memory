@@ -76,7 +76,7 @@ func (p *githubAppProvider) Catalog() Provider {
 	return Provider{
 		Type:        ProviderTypeGitHubApp,
 		Name:        "GitHub App / Bot",
-		Description: "Connect a GitHub App installation and trigger an agent on pull-request events.",
+		Description: "Connect a GitHub App installation and trigger an agent on pull-request or issue events.",
 		SourceType:  SourceTypeApp,
 		Vendor:      "github",
 		VendorName:  "GitHub",
@@ -238,14 +238,38 @@ func (p *githubAppProvider) ObjectTypes() *ObjectTypePack {
 	}
 	return &ObjectTypePack{
 		Name:          "github-app-workflow",
-		Version:       "1.0.0",
-		Description:   "GitHub App pull-request workflow objects.",
+		Version:       "1.2.0",
+		Description:   "GitHub App issue and pull-request workflow objects.",
 		SkipDiscovery: true,
 		ObjectTypes: []ObjectTypeDefinition{
 			{
 				Name: "GitHubPullRequest", Label: "GitHub pull request",
 				Description:    "Parent object for one GitHub pull request.",
 				Properties:     statusProps,
+				SkipExtraction: true,
+			},
+			{
+				Name: "GitHubIssue", Label: "GitHub issue",
+				Description:     "One GitHub issue available for manual or automatic coding work.",
+				BoardEnabled:    true,
+				AllowedStatuses: []string{"ready", "in_progress", "review", "revision", "blocked", "done", "cancelled"},
+				InitialStatus:   "ready",
+				Properties: map[string]any{
+					"repo":              map[string]any{"type": "string"},
+					"issue_number":      map[string]any{"type": "number"},
+					"title":             map[string]any{"type": "string"},
+					"body":              map[string]any{"type": "string"},
+					"state":             map[string]any{"type": "string"},
+					"labels":            map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"url":               map[string]any{"type": "string"},
+					"source_id":         map[string]any{"type": "string"},
+					"status":            map[string]any{"type": "string"},
+					"source_trigger_id": map[string]any{"type": "string"},
+					"pr_number":         map[string]any{"type": "number"},
+					"pr_url":            map[string]any{"type": "string"},
+					"pr_branch":         map[string]any{"type": "string"},
+					"pr_head_sha":       map[string]any{"type": "string"},
+				},
 				SkipExtraction: true,
 			},
 			{

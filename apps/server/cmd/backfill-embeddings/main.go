@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -29,6 +28,8 @@ type relationshipRow struct {
 	Type          string
 	SrcID         string
 	DstID         string
+	SrcName       *string
+	DstName       *string
 	SrcProperties []byte // JSONB → []byte from database/sql
 	SrcKey        *string
 	DstProperties []byte
@@ -135,11 +136,8 @@ func main() {
 		for _, row := range rows {
 			processed++
 
-			srcProps := parseProperties(row.SrcProperties)
-			dstProps := parseProperties(row.DstProperties)
-
-			srcName := getDisplayName(srcProps, row.SrcKey, row.SrcID)
-			dstName := getDisplayName(dstProps, row.DstKey, row.DstID)
+			srcName := getDisplayName(row.SrcName, row.SrcKey, row.SrcID)
+			dstName := getDisplayName(row.DstName, row.DstKey, row.DstID)
 			tripletText := generateTripletText(srcName, dstName, row.Type)
 
 			if dryRun {
@@ -273,8 +271,8 @@ func countNullEmbeddings(ctx context.Context, db *sql.DB, projectID string) (int
 func fetchBatch(ctx context.Context, db *sql.DB, limit int, projectID string) ([]relationshipRow, error) {
 	query := `
 		SELECT r.id, r.type, r.src_id::text, r.dst_id::text,
-		       src.properties, src.key,
-		       dst.properties, dst.key
+		       src.name, src.key, src.properties,
+		       dst.name, dst.key, dst.properties
 		FROM kb.graph_relationships r
 		JOIN kb.graph_objects src ON src.id = r.src_id
 		JOIN kb.graph_objects dst ON dst.id = r.dst_id
@@ -299,8 +297,8 @@ func fetchBatch(ctx context.Context, db *sql.DB, limit int, projectID string) ([
 		var r relationshipRow
 		if err := rows.Scan(
 			&r.ID, &r.Type, &r.SrcID, &r.DstID,
-			&r.SrcProperties, &r.SrcKey,
-			&r.DstProperties, &r.DstKey,
+			&r.SrcName, &r.SrcKey, &r.SrcProperties,
+			&r.DstName, &r.DstKey, &r.DstProperties,
 		); err != nil {
 			return nil, fmt.Errorf("scan row: %w", err)
 		}
@@ -331,12 +329,12 @@ func humanizeRelationType(relType string) string {
 	return strings.ToLower(strings.ReplaceAll(relType, "_", " "))
 }
 
-// getDisplayName picks the best display name from object properties/key/id.
-func getDisplayName(properties map[string]any, key *string, id string) string {
-	if properties != nil {
-		if name, ok := properties["name"].(string); ok && name != "" {
-			return name
-		}
+// getDisplayName picks the display name: the object's first-class name, else
+// its key, else its id. properties.name is an ordinary property, never a title
+// (#824).
+func getDisplayName(name *string, key *string, id string) string {
+	if name != nil && *name != "" {
+		return *name
 	}
 	if key != nil && *key != "" {
 		return *key
@@ -363,18 +361,6 @@ func vectorToString(v []float32) string {
 	}
 	result += "]"
 	return result
-}
-
-// parseProperties unmarshals JSONB bytes into a map.
-func parseProperties(data []byte) map[string]any {
-	if len(data) == 0 {
-		return nil
-	}
-	var props map[string]any
-	if err := json.Unmarshal(data, &props); err != nil {
-		return nil
-	}
-	return props
 }
 
 // getEnvDefault returns the environment variable value or a default.

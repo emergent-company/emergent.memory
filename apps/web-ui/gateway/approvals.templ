@@ -50,6 +50,25 @@ templ ApprovalsPage(approvals []ToolApprovalItem, questions []AgentQuestionItem,
 	}
 }
 
+// sidebarApprovalsBadge is the Approvals nav count: human-input items waiting
+// (pending tool approvals plus unanswered questions). It is an attention cue,
+// not a failure — a pending approval is normal operation — so it uses the
+// primary intent rather than the Documents badge's error intent.
+templ sidebarApprovalsBadge(n int) {
+	@components.BadgeWithClass(components.BadgeWithClassProps{
+		BadgeProps: ui.BadgeProps{
+			Label:   processingBadgeCount(n),
+			Variant: ui.BadgePrimary,
+			Size:    ui.BadgeSizeXS,
+			Attrs: templ.Attributes{
+				"data-testid": "approvals-nav-badge",
+				"title":       "Items waiting for your input",
+			},
+		},
+		Class: "ml-1",
+	})
+}
+
 // questionRow renders one pending agent question through the shared question
 // card. The card shows the interaction's answer control (option rows for a
 // single choice, a checkbox group for a multi-select, a text input for an

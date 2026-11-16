@@ -73,9 +73,57 @@ func TestObjectExcerptScalarProse(t *testing.T) {
 		})
 	}
 
-	prose := objectArticleFor(GraphObject{Properties: map[string]any{"description": float64(2024)}})
+	prose := objectArticleFor(GraphObject{Properties: map[string]any{"description": float64(2024)}}, nil)
 	if prose.Lead != "2024" {
 		t.Errorf("numeric-looking description must become the article lead, got lead=%q body=%q", prose.Lead, prose.BodyHTML)
+	}
+}
+
+// TestObjectExcerptKeyMatching pins both halves of the excerpt matcher's key
+// rule: case and separators are tolerated, extra words are not. The positive
+// half (Description/DESCRIPTION/description all match) is what makes a pack's
+// prose render at all; the negative half is the guard rail — `long_description`
+// is a *different property*, and a "helpful" future change (substring or
+// word-prefix matching) would silently start rendering it as the description
+// (#761, object-browser spec).
+func TestObjectExcerptKeyMatching(t *testing.T) {
+	// Case is irrelevant: the same property spelled three ways is one property.
+	for _, key := range []string{"Description", "DESCRIPTION", "description"} {
+		t.Run("matches "+key, func(t *testing.T) {
+			if got := objectExcerpt(map[string]any{key: "Body"}); got != "Body" {
+				t.Errorf("objectExcerpt(%s: Body) = %q, want %q", key, got, "Body")
+			}
+		})
+	}
+
+	// An extra word makes it a different property, whatever the separators.
+	for _, key := range []string{"long_description", "Long Description", "LONG_DESCRIPTION", "longDescription"} {
+		t.Run("does not match "+key, func(t *testing.T) {
+			if got := objectExcerpt(map[string]any{key: "Long body"}); got != "" {
+				t.Errorf("objectExcerpt(%s: Long body) = %q, want no excerpt: %s is not a description", key, got, key)
+			}
+		})
+	}
+
+	// The fold drops separators and spaces but keeps case, so EqualFold is what
+	// makes those spellings one property — under their own normalized name,
+	// never under "description".
+	longFolded := normalizeProseKey("long_description")
+	for _, alt := range []string{"Long Description", "LONG_DESCRIPTION"} {
+		if !strings.EqualFold(longFolded, normalizeProseKey(alt)) {
+			t.Fatalf("long-form key spellings must fold together: %q vs %q", longFolded, normalizeProseKey(alt))
+		}
+	}
+	if strings.EqualFold(longFolded, normalizeProseKey("description")) {
+		t.Fatalf("a long-form key must not fold onto %q", normalizeProseKey("description"))
+	}
+	if _, _, ok := prosePropertyNamed(map[string]any{"long_description": "Long body"}, longFolded); !ok {
+		t.Errorf("prosePropertyNamed must still resolve the folded long-form name")
+	}
+
+	// A description beside a long description still wins as the excerpt.
+	if got := objectExcerpt(map[string]any{"description": "Short", "long_description": "Long body"}); got != "Short" {
+		t.Errorf("description must win over long_description, got %q", got)
 	}
 }
 
@@ -117,7 +165,7 @@ func TestObjectArticleLeadAndBodySplit(t *testing.T) {
 		prose := objectArticleFor(GraphObject{Properties: map[string]any{
 			"summary": "The lead sentence.",
 			"content": "## History\n\nSigned in 1901.\n\n## Notes\n\nFiled under land.",
-		}})
+		}}, nil)
 		if prose.Lead != "The lead sentence." {
 			t.Errorf("lead = %q", prose.Lead)
 		}
@@ -136,7 +184,7 @@ func TestObjectArticleLeadAndBodySplit(t *testing.T) {
 		prose := objectArticleFor(GraphObject{Properties: map[string]any{
 			"summary":     "The short version.",
 			"description": "The long version.\n\n## Detail\n\nMore of it.",
-		}})
+		}}, nil)
 		if prose.Lead != "The short version." {
 			t.Errorf("lead = %q", prose.Lead)
 		}
@@ -151,7 +199,7 @@ func TestObjectArticleLeadAndBodySplit(t *testing.T) {
 	t.Run("body only promotes its first paragraph", func(t *testing.T) {
 		prose := objectArticleFor(GraphObject{Properties: map[string]any{
 			"content": "The opening paragraph.\n\n## Details\n\nMore text.",
-		}})
+		}}, nil)
 		if prose.Lead != "The opening paragraph." {
 			t.Errorf("lead = %q", prose.Lead)
 		}
@@ -167,7 +215,7 @@ func TestObjectArticleLeadAndBodySplit(t *testing.T) {
 	})
 
 	t.Run("single-paragraph body has no body left", func(t *testing.T) {
-		prose := objectArticleFor(GraphObject{Properties: map[string]any{"content": "Only one paragraph."}})
+		prose := objectArticleFor(GraphObject{Properties: map[string]any{"content": "Only one paragraph."}}, nil)
 		if prose.Lead != "Only one paragraph." {
 			t.Errorf("lead = %q", prose.Lead)
 		}
@@ -180,7 +228,7 @@ func TestObjectArticleLeadAndBodySplit(t *testing.T) {
 		prose := objectArticleFor(GraphObject{Properties: map[string]any{
 			"summary": "Same opening.",
 			"content": "Same opening.\n\n## Rest\n\nAfter.",
-		}})
+		}}, nil)
 		if prose.Lead != "Same opening." {
 			t.Errorf("lead = %q", prose.Lead)
 		}
@@ -196,7 +244,7 @@ func TestObjectArticleLeadAndBodySplit(t *testing.T) {
 		for _, key := range []string{"summary", "excerpt", "abstract", "description"} {
 			prose := objectArticleFor(GraphObject{Properties: map[string]any{
 				key: "The opening paragraph.\n\n## Detail\n\nMore text.",
-			}})
+			}}, nil)
 			if prose.Lead != "The opening paragraph." {
 				t.Errorf("%s: lead = %q", key, prose.Lead)
 			}
@@ -216,7 +264,7 @@ func TestObjectArticleLeadAndBodySplit(t *testing.T) {
 		// description is in both precedence lists on purpose.
 		prose := objectArticleFor(GraphObject{Properties: map[string]any{
 			"description": "The opening.\n\n## Detail\n\nMore text.",
-		}})
+		}}, nil)
 		if prose.Lead != "The opening." {
 			t.Errorf("lead = %q", prose.Lead)
 		}
@@ -229,7 +277,7 @@ func TestObjectArticleLeadAndBodySplit(t *testing.T) {
 	})
 
 	t.Run("no prose", func(t *testing.T) {
-		prose := objectArticleFor(GraphObject{Properties: map[string]any{"count": 1}})
+		prose := objectArticleFor(GraphObject{Properties: map[string]any{"count": 1}}, nil)
 		if prose.Lead != "" || prose.BodyHTML != "" || len(prose.Headings) != 0 {
 			t.Errorf("expected empty prose, got %+v", prose)
 		}
@@ -418,6 +466,15 @@ func TestObjectWikiPageObjectVariant(t *testing.T) {
 			t.Errorf("object-page variant missing %q", want)
 		}
 	}
+	// Feedback on this row (#763): the type tile sits on the identity line, not
+	// centred against the two-line excerpt the row carries.
+	rowAt := strings.Index(html, `data-testid="object-wiki-relation-row"`)
+	if rowAt < 0 {
+		t.Fatal("missing the relationship row marker")
+	}
+	if row := html[rowAt:]; !strings.Contains(row, "flex min-w-0 items-start gap-3") {
+		t.Errorf("a relationship row's type tile must align to the top of the row:\n%s", row)
+	}
 	// History moved into the shared details rail, so it is present here too —
 	// once, not twice.
 	if got := strings.Count(html, `href="/objects/o1/history"`); got != 1 {
@@ -445,6 +502,48 @@ func TestObjectWikiPageObjectVariant(t *testing.T) {
 	}
 	if strings.Contains(html, `data-testid="object-wiki-article"`) {
 		t.Error("the object-page variant must not render the article layout")
+	}
+}
+
+// TestObjectWikiRelationRowAlignsTallRowsOnly pins the #763 delta: a row opts
+// the type tile onto its first line only when it carries an excerpt, because an
+// excerpt-less row is two lines tall and reads better with the tile centred. A
+// mixed group must therefore render both alignments.
+func TestObjectWikiRelationRowAlignsTallRowsOnly(t *testing.T) {
+	data := objectWikiPageData{
+		Obj:  &GraphObject{ID: "o1", CanonicalID: "o1", Type: "note", Key: "Deed"},
+		View: objectWikiViewPage,
+		Sections: []objectViewSection{{
+			Title: "Tasks",
+			Rows: []objectViewItem{
+				{
+					RelID: "r1", RelType: "relates_to", Resolved: true,
+					Neighbour: GraphObject{
+						ID: "n1", Type: "task", Key: "With a summary",
+						Properties: map[string]any{"summary": "Leaky after the storm."},
+					},
+				},
+				{
+					RelID: "r2", RelType: "relates_to", Resolved: true,
+					Neighbour: GraphObject{ID: "n2", Type: "task", Key: "Bare"},
+				},
+			},
+			Total: 2,
+			Limit: objectWikiSectionLimit,
+		}},
+	}
+	html := renderHTML(t, objectWikiPage(data))
+
+	sectionAt := strings.Index(html, `data-testid="object-wiki-section"`)
+	if sectionAt < 0 {
+		t.Fatal("missing the relationship section")
+	}
+	rows := html[sectionAt:]
+	if got := strings.Count(rows, "flex min-w-0 items-start gap-3"); got != 1 {
+		t.Errorf("excerpt-bearing rows top-aligned = %d, want 1 (the tall row):\n%s", got, rows)
+	}
+	if got := strings.Count(rows, "flex min-w-0 items-center gap-3"); got != 1 {
+		t.Errorf("excerpt-less rows centred = %d, want 1 (the two-line row):\n%s", got, rows)
 	}
 }
 
@@ -762,4 +861,76 @@ func TestObjectWikiHrefForms(t *testing.T) {
 	if got := objectsWikiViewHref(objectsPageData{}, objectWikiViewPage); got != "?wiki_view=page" {
 		t.Errorf("bare browse switch link = %q", got)
 	}
+}
+
+// TestObjectArticleExplicitMarkdownBody pins the explicit content type on the
+// object page: a property the schema declares `format: markdown` is the body
+// even when its key is not among the article's conventional body names, and it
+// wins over one that is. A format declared on a non-string type is ignored, so
+// the page falls back to the conventional keys exactly as before.
+func TestObjectArticleExplicitMarkdownBody(t *testing.T) {
+	markdownDef := func(name string) objectPropertyDef {
+		return objectPropertyDef{Name: name, Type: "string", Format: "markdown"}
+	}
+
+	t.Run("declared format beats the conventional body key", func(t *testing.T) {
+		prose := objectArticleFor(GraphObject{Properties: map[string]any{
+			"content": "The conventional body.",
+			"readme":  "## Declared\n\nThe schema's choice.",
+		}}, []objectPropertyDef{{Name: "content", Type: "string"}, markdownDef("readme")})
+		if prose.BodyKey != "readme" {
+			t.Fatalf("body key = %q, want readme", prose.BodyKey)
+		}
+		if !strings.Contains(prose.BodyHTML, "choice.") {
+			t.Errorf("declared markdown must render as the body: %q", prose.BodyHTML)
+		}
+		if strings.Contains(prose.BodyHTML, "The conventional body.") {
+			t.Errorf("the conventional body must not also render: %q", prose.BodyHTML)
+		}
+	})
+
+	t.Run("unrelated format leaves the heuristic alone", func(t *testing.T) {
+		prose := objectArticleFor(GraphObject{Properties: map[string]any{
+			"content": "## History\n\nSigned in 1901.",
+		}}, []objectPropertyDef{{Name: "content", Type: "string", Format: "email"}})
+		if prose.BodyKey != "content" {
+			t.Fatalf("body key = %q, want content", prose.BodyKey)
+		}
+	})
+
+	t.Run("markdown on a non-string type is ignored", func(t *testing.T) {
+		prose := objectArticleFor(GraphObject{Properties: map[string]any{
+			"content": "The conventional body.",
+			"tags":    "not prose",
+		}}, []objectPropertyDef{
+			{Name: "content", Type: "string"},
+			{Name: "tags", Type: "array", Format: "markdown"},
+		})
+		if prose.BodyKey != "content" {
+			t.Fatalf("body key = %q, want content", prose.BodyKey)
+		}
+	})
+
+	t.Run("the lead property is not stolen as the body", func(t *testing.T) {
+		prose := objectArticleFor(GraphObject{Properties: map[string]any{
+			"summary": "The lead.",
+			"notes":   "## Body\n\nFrom the notes field.",
+		}}, []objectPropertyDef{markdownDef("summary"), markdownDef("notes")})
+		if prose.LeadKey != "summary" || prose.BodyKey != "notes" {
+			t.Fatalf("consumed keys = %q/%q, want summary/notes", prose.LeadKey, prose.BodyKey)
+		}
+		if prose.Lead != "The lead." {
+			t.Errorf("lead = %q", prose.Lead)
+		}
+	})
+
+	t.Run("an empty declared field falls back to the heuristic", func(t *testing.T) {
+		prose := objectArticleFor(GraphObject{Properties: map[string]any{
+			"content": "The conventional body.",
+			"readme":  "",
+		}}, []objectPropertyDef{markdownDef("readme")})
+		if prose.BodyKey != "content" {
+			t.Fatalf("body key = %q, want the conventional fallback", prose.BodyKey)
+		}
+	})
 }

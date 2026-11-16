@@ -22,6 +22,19 @@
 #      header.)
 #   2. New migrations must be numbered strictly above max(base) AND
 #      contiguous ascending starting at max+1 — no gaps, no duplicates.
+#   3. A new migration must not build a plain `CREATE INDEX` on a table that
+#      already exists on the base branch: on a populated table that takes a
+#      SHARE lock and blocks writes for the whole build. Use
+#      `CREATE INDEX CONCURRENTLY` (`-- +goose NO TRANSACTION`) and the
+#      drop-then-create + post-condition guard from 00012/00161/00170 — see
+#      apps/server/migrations/README.md, "Build indexes CONCURRENTLY". Only
+#      *added* migrations are checked — the plain index builds already applied
+#      by earlier migrations are applied debt and are deliberately not rewritten
+#      (issue #844, section 2). Both the Up and the Down are inspected: a
+#      rollback that rebuilds an index on a populated table locks it just the
+#      same.
+#      For a deliberate exception, put this on the line before the statement:
+#        -- index-concurrently-allowed: <reason>
 #
 # Offline is tolerated the same way as base-check.sh: warn-and-skip.
 set -euo pipefail
@@ -71,6 +84,7 @@ done <<< "$base_files"
 echo "migration-number: max($base) = $max_base"
 
 status=0
+numbering_bad=0
 added_versions=""
 
 # 1. Existing migrations must not be modified, renamed, or deleted. Single
@@ -89,6 +103,7 @@ while IFS= read -r f; do
   if [ -z "$v" ]; then
     echo "migration-number: FAIL new migration does not match NNNNN_name.sql: $f" >&2
     status=1
+    numbering_bad=1
     continue
   fi
   added_versions="$added_versions $v"
@@ -100,6 +115,7 @@ dupes="$(printf '%s\n' "$sorted" | uniq -d)"
 if [ -n "$dupes" ]; then
   echo "migration-number: FAIL duplicate new migration version(s): $(printf '%s' "$dupes" | tr '\n' ' ') (Goose silently skips the later one)" >&2
   status=1
+  numbering_bad=1
 fi
 
 # Above max + contiguous ascending: expect max+1, max+2, ...
@@ -108,15 +124,109 @@ for v in $(printf '%s\n' "$sorted" | sort -n -u); do
   if [ "$v" -lt "$expected" ]; then
     echo "migration-number: FAIL new migration version $v is not above max($max_base) (a lower/equal version is silently skipped by Goose)" >&2
     status=1
+    numbering_bad=1
   elif [ "$v" -gt "$expected" ]; then
     echo "migration-number: FAIL gap in new migrations: expected $expected before $v (new migrations must be contiguous ascending)" >&2
     status=1
+    numbering_bad=1
   fi
   expected="$((v + 1))"
 done
 
+# 3. A new migration must not build a plain CREATE INDEX on a table that already
+#    exists on the base branch (SHARE lock for the whole build on a populated
+#    table). Tables created by the same set of new migrations are exempt, because
+#    they are empty — that is what the base-table census below approximates. The
+#    census is every CREATE TABLE name in the base migrations, so it also covers
+#    tables that were later dropped; a migration that re-creates one of those and
+#    indexes it plainly needs the escape hatch.
+census_rc=0
+base_tables_raw="$(git grep -hoiE 'CREATE TABLE( IF NOT EXISTS)?[[:space:]]+([a-z0-9_]+\.)?[a-z0-9_]+' "$base" -- "$mig_dir" 2>/dev/null)" || census_rc=$?
+check_indexes=1
+if [ "$census_rc" -gt 1 ]; then
+  echo "migration-number: WARNING base table census failed (git grep exit $census_rc); skipping the CONCURRENTLY check" >&2
+  check_indexes=0
+elif [ -z "$base_tables_raw" ]; then
+  echo "migration-number: WARNING base table census is empty; skipping the CONCURRENTLY check" >&2
+  check_indexes=0
+fi
+base_tables="$(printf '%s\n' "$base_tables_raw" \
+  | sed -E 's/.*[[:space:]]([a-z0-9_]+\.)?([a-z0-9_]+)$/\2/' | tr '[:upper:]' '[:lower:]' | sort -u)"
+
+# Emit "<file>:<line>: <table>" for each offending statement in one migration
+# file. Statements are split on `;` so a wrapped `CREATE INDEX ... \n ON kb.t
+# (...)` is caught, and also so two statements sharing a line cannot mask each
+# other (a `DROP INDEX CONCURRENTLY` next to a plain create used to hide it).
+# `--` and `/* ... */` comments are stripped, double quotes removed (so
+# "kb"."invites" resolves), and matching is done on a lowercased copy: mawk 1.3.4
+# mis-matches long runs of single-character bracket classes
+# (e.g. /[Cc][Oo][Nn][Cc].../), which silently defeated the CONCURRENTLY
+# exclusion.
+index_offenders() {
+  awk -v tables="$base_tables" '
+    BEGIN { n = split(tables, t, "\n"); for (i = 1; i <= n; i++) if (t[i] != "") base[t[i]] = 1 }
+    function check(stmt, at) {
+      if (stmt !~ /create[ \t]+(unique[ \t]+)?index[ \t]/) return
+      if (stmt ~ /concurrently/) return
+      if (!match(stmt, /on[ \t]+(only[ \t]+)?([a-z0-9_]+\.)?[a-z0-9_]+/)) return
+      tbl = substr(stmt, RSTART, RLENGTH)
+      sub(/^on[ \t]+(only[ \t]+)?/, "", tbl)
+      sub(/^.*\./, "", tbl)
+      if (tbl in base) printf "%s:%d: CREATE INDEX on pre-existing table %s is not CONCURRENTLY\n", FILENAME, at, tbl
+    }
+    {
+      line = $0
+      if (inb) {
+        p = index(line, "*/")
+        if (p == 0) next
+        line = substr(line, p + 2)
+        inb = 0
+      }
+      while ((p = index(line, "/*")) > 0) {
+        rest = substr(line, p + 2)
+        q = index(rest, "*/")
+        if (q == 0) { line = substr(line, 1, p - 1); inb = 1; break }
+        line = substr(line, 1, p - 1) substr(rest, q + 2)
+      }
+      if (tolower(line) ~ /^[ \t]*--[ \t]*index-concurrently-allowed:/) { pending = 1; next }
+      sub(/--.*/, "", line)
+      line = tolower(line)
+      gsub(/"/, "", line)
+      if (line !~ /[^ \t]/) next
+      if (buf == "") at = NR
+      buf = buf " " line
+      while ((p = index(buf, ";")) > 0) {
+        stmt = substr(buf, 1, p - 1)
+        buf = substr(buf, p + 1)
+        if (stmt ~ /[a-z0-9_]/) { if (!pending) check(stmt, at); pending = 0 }
+      }
+    }
+  ' "$1" || true
+}
+
+if [ "$check_indexes" -eq 1 ]; then
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    grep -qxF "$f" <<< "$base_files" && continue
+    [ -f "$f" ] || continue
+    offenders="$(index_offenders "$f")"
+    if [ -n "$offenders" ]; then
+      while IFS= read -r o; do
+        echo "migration-number: FAIL $o" >&2
+      done <<< "$offenders"
+      echo "migration-number: FAIL use CREATE INDEX CONCURRENTLY (-- +goose NO TRANSACTION) for a pre-existing table; 00012/00161/00170 are the pattern." >&2
+      echo "migration-number: FAIL if the exception is deliberate, put '-- index-concurrently-allowed: <reason>' on the line before the statement." >&2
+      status=1
+    fi
+  done <<< "$current_files"
+fi
+
 if [ "$status" -ne 0 ]; then
-  echo "migration-number: FAILED (next free version is $((max_base + 1)))" >&2
+  if [ "$numbering_bad" -ne 0 ]; then
+    echo "migration-number: FAILED (next free version is $((max_base + 1)))" >&2
+  else
+    echo "migration-number: FAILED (see the violation(s) above; numbering itself is valid)" >&2
+  fi
   exit 1
 fi
 

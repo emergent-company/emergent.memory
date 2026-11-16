@@ -1113,14 +1113,14 @@ func (h *Handler) StreamChat(c echo.Context) error {
 		// stays an ordinary turn — its own approval card owns that decision.
 		if q, qErr := h.agentRepo.FindPendingQuestionByConversation(ctx, user.ProjectID, conv.ID.String()); qErr == nil && q != nil {
 			if handled := h.resumeForAnswer(runCtx, sseWriter, conv, q, pendingQuestionAnswer(&req, message), message, user); handled {
-				_ = sseWriter.WriteData(sse.NewDoneEvent())
+				_ = sseWriter.WriteData(sse.NewDoneEvent()) // best-effort: nothing follows a done frame
 				sseWriter.Close()
 				return nil
 			}
 		}
 
 		agentResult := h.streamAgentChat(runCtx, conv, message, user.ProjectID, user.OrgID, user.ID, sseWriter, "", "", "", strings.TrimSpace(req.Model), normalizedEffort)
-		sseWriter.WriteData(sse.NewDoneEvent())
+		_ = sseWriter.WriteData(sse.NewDoneEvent()) // best-effort: the stream is ending
 		sseWriter.Close()
 		if agentResult != nil && agentResult.Cleanup != nil {
 			go agentResult.Cleanup()
@@ -1132,12 +1132,13 @@ func (h *Handler) StreamChat(c echo.Context) error {
 	if os.Getenv("CHAT_TEST_DETERMINISTIC") == "1" {
 		// Emit synthetic tokens for testing
 		for i := 0; i < 5; i++ {
-			sseWriter.WriteData(sse.NewTokenEvent("token-" + strconv.Itoa(i)))
+			// Deterministic test scaffolding: there is no consumer to recover for.
+			_ = sseWriter.WriteData(sse.NewTokenEvent("token-" + strconv.Itoa(i)))
 			if i < 4 {
-				sseWriter.WriteData(sse.NewTokenEvent(" "))
+				_ = sseWriter.WriteData(sse.NewTokenEvent(" "))
 			}
 		}
-		sseWriter.WriteData(sse.NewDoneEvent())
+		_ = sseWriter.WriteData(sse.NewDoneEvent())
 		sseWriter.Close()
 		return nil
 	}
@@ -1182,6 +1183,14 @@ func (h *Handler) StreamChat(c echo.Context) error {
 	// fall back to the legacy server-wide vertex client if the factory is unavailable.
 	var fullResponse strings.Builder
 	var llmErr error
+	// writeErr records the first failed SSE write in the token loops. A failed
+	// write means the client is gone (reload, navigation, network drop).
+	// Generation itself is bound to the request context, so the provider stream
+	// normally ends on the next token with a context error, llmErr is set, and
+	// the partial answer is not persisted. writeErr's job is narrower: stop
+	// attempting writes to a dead connection, and let the disconnect be logged
+	// as a disconnect rather than as a provider failure.
+	var writeErr error
 	if h.modelFactory != nil {
 		var llmModel adkmodel.LLM
 		var createErr error
@@ -1230,7 +1239,11 @@ func (h *Handler) StreamChat(c echo.Context) error {
 				for _, part := range resp.Content.Parts {
 					if part != nil && part.Text != "" {
 						fullResponse.WriteString(part.Text)
-						sseWriter.WriteData(sse.NewTokenEvent(part.Text))
+						if writeErr == nil {
+							if werr := sseWriter.WriteData(sse.NewTokenEvent(part.Text)); werr != nil {
+								writeErr = werr
+							}
+						}
 					}
 				}
 			}
@@ -1254,7 +1267,11 @@ func (h *Handler) StreamChat(c echo.Context) error {
 			SystemPrompt: systemPrompt,
 		}, func(token string) {
 			fullResponse.WriteString(token)
-			sseWriter.WriteData(sse.NewTokenEvent(token))
+			if writeErr == nil {
+				if werr := sseWriter.WriteData(sse.NewTokenEvent(token)); werr != nil {
+					writeErr = werr
+				}
+			}
 		})
 		if llmErr != nil {
 			llmSpan.RecordError(llmErr)
@@ -1267,11 +1284,18 @@ func (h *Handler) StreamChat(c echo.Context) error {
 		llmErr = fmt.Errorf("no LLM provider configured")
 	}
 
+	if writeErr != nil {
+		h.log.Info("chat: client disconnected mid-stream; generation finished without streaming",
+			slog.String("conversation_id", conv.ID.String()),
+			slog.String("error", writeErr.Error()),
+		)
+	}
+
 	if llmErr != nil {
 		// Emit error event
 		span.RecordError(llmErr)
 		span.SetStatus(codes.Error, llmErr.Error())
-		sseWriter.WriteData(sse.NewErrorEvent(friendlyProviderError(llmErr)))
+		_ = sseWriter.WriteData(sse.NewErrorEvent(friendlyProviderError(llmErr))) // best-effort: the client may already be gone
 	} else {
 		// Persist the assistant response synchronously, on the caller's DB
 		// handle. A fire-and-forget goroutine here shares that handle with the
@@ -1293,7 +1317,7 @@ func (h *Handler) StreamChat(c echo.Context) error {
 	}
 
 	// Emit done event
-	sseWriter.WriteData(sse.NewDoneEvent())
+	_ = sseWriter.WriteData(sse.NewDoneEvent()) // best-effort: see writeErr above
 	sseWriter.Close()
 
 	if llmErr == nil {
@@ -1462,7 +1486,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 			slog.String("agent_definition_id", agentDefID),
 			slog.String("conversation_id", conv.ID.String()),
 		)
-		sseWriter.WriteData(sse.NewErrorEvent("Failed to load agent definition"))
+		_ = sseWriter.WriteData(sse.NewErrorEvent("Failed to load agent definition")) // best-effort: the request is already failing
 		return nil
 	}
 
@@ -1565,7 +1589,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 				slog.String("error", err.Error()),
 				slog.String("agent_definition_id", agentDefID),
 			)
-			sseWriter.WriteData(sse.NewErrorEvent("Failed to create agent session: " + err.Error()))
+			_ = sseWriter.WriteData(sse.NewErrorEvent("Failed to create agent session: " + apperror.PublicMessage(err))) // best-effort: the request is already failing
 			return nil
 		}
 	}
@@ -1578,7 +1602,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 		run, err := h.agentRepo.CreateRun(ctx, dummyAgent.ID)
 		if err != nil {
 			h.log.Error("failed to create stub run", slog.String("error", err.Error()))
-			sseWriter.WriteData(sse.NewErrorEvent("Failed to create stub run"))
+			_ = sseWriter.WriteData(sse.NewErrorEvent("Failed to create stub run")) // best-effort: the request is already failing
 			return nil
 		}
 		runID := run.ID
@@ -1719,7 +1743,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 				slog.String("run_id", result.RunID),
 				slog.String("error", errMsg),
 			)
-			sseWriter.WriteData(sse.NewErrorEvent(friendlyProviderError(fmt.Errorf("%s", errMsg))))
+			_ = sseWriter.WriteData(sse.NewErrorEvent(friendlyProviderError(fmt.Errorf("%s", errMsg)))) // best-effort: the run already failed
 		}
 		return result
 	}
@@ -2031,7 +2055,7 @@ func (h *Handler) resumeForAnswer(ctx context.Context, sseWriter *sse.Writer, co
 		ResumedFrom:      &resumedFrom,
 		InitialStepCount: run.StepCount,
 		TriggerMetadata:  run.TriggerMetadata,
-		// The resumed run owns the work item; MarkRunResumed finalizes the
+		// The resumed run owns the work item; the resume claim finalizes the
 		// paused checkpoint, so the subject must not be lost on the child.
 		SubjectObjectID:   run.SubjectObjectID,
 		SubjectObjectType: run.SubjectObjectType,
@@ -2471,7 +2495,7 @@ func (h *Handler) QueryStream(c echo.Context) error {
 	if queryResult != nil {
 		queryRunID = queryResult.RunID
 	}
-	sseWriter.WriteData(sse.NewDoneEventWithRun(queryRunID))
+	_ = sseWriter.WriteData(sse.NewDoneEventWithRun(queryRunID)) // best-effort: nothing follows a done frame
 	sseWriter.Close()
 	if queryResult != nil && queryResult.Cleanup != nil {
 		go queryResult.Cleanup()
@@ -2558,8 +2582,10 @@ func (h *Handler) AskStream(c echo.Context) error {
 		if err := sseWriter.WriteData(sse.NewMetaEvent("00000000-0000-0000-0000-000000000000")); err != nil {
 			return nil
 		}
-		sseWriter.WriteData(sse.NewTokenEvent("No projects found in your account. Create one first:\n\n```bash\nmemory projects create --name \"My Project\"\n```"))
-		sseWriter.WriteData(sse.NewDoneEvent())
+		// Static guidance for a client with no project: if either write fails the
+		// client is gone and there is nothing more this handler can do.
+		_ = sseWriter.WriteData(sse.NewTokenEvent("No projects found in your account. Create one first:\n\n```bash\nmemory projects create --name \"My Project\"\n```"))
+		_ = sseWriter.WriteData(sse.NewDoneEvent())
 		sseWriter.Close()
 		return nil
 	}
@@ -2639,7 +2665,7 @@ func (h *Handler) AskStream(c echo.Context) error {
 
 	askResult := h.streamAgentChat(ctx, conv, augmentedMessage, agentProjectID, user.OrgID, user.ID, sseWriter, "", "", "", "", "")
 	span.SetStatus(codes.Ok, "")
-	sseWriter.WriteData(sse.NewDoneEvent())
+	_ = sseWriter.WriteData(sse.NewDoneEvent()) // best-effort: the stream is ending
 	sseWriter.Close()
 	if askResult != nil && askResult.Cleanup != nil {
 		go askResult.Cleanup()
@@ -2728,6 +2754,26 @@ func rememberFileText(content *string, guide string) (text string, fromGuide boo
 	}
 	trimmedGuide := strings.TrimSpace(guide)
 	return trimmedGuide, trimmedGuide != ""
+}
+
+// rememberForgetRuntimeAgent resolves the kb.agents row a Remember/Forget run
+// executes as. The definition owns at most ONE runtime row — migration 00303's
+// (project_id, agent_definition_id) partial unique index — so every one of the
+// six Remember/Forget kickoff sites (sync/async × remember, remember/file,
+// forget) must resolve the definition's existing row instead of minting a
+// feature-named one of its own. Minting a second linked row is what made these
+// runs answer 500 with 23505 (#737/#738); routing them all through one helper
+// keeps that single resolution point testable and greppable (#790).
+//
+// label names the caller's surface ("sync remember", "async forget", …) and is
+// kept in the wrapped 500 message so the failing leg is identifiable from the
+// response body.
+func (h *Handler) rememberForgetRuntimeAgent(ctx context.Context, agentDef *agents.AgentDefinition, label string) (*agents.Agent, error) {
+	row, err := h.agentRepo.FindOrCreateRuntimeAgentForDefinition(ctx, agentDef)
+	if err != nil {
+		return nil, apperror.NewInternal("failed to create agent session for "+label, err)
+	}
+	return row, nil
 }
 
 // RememberStream handles POST /api/projects/:projectId/remember.
@@ -2966,24 +3012,9 @@ func (h *Handler) RememberStream(c echo.Context) error {
 	switch mode {
 	case "async":
 		// Fire-and-forget: launch agent in background, return 202 with run_id immediately.
-		dummyName := "Remember session for " + agentDef.Name
-		dummyAgent, _ := h.agentRepo.FindByName(ctx, projectID, dummyName)
-		if dummyAgent == nil {
-			dummyAgent = &agents.Agent{
-				ProjectID:         projectID,
-				Name:              dummyName,
-				StrategyType:      "remember-session:" + agentDef.ID,
-				AgentDefinitionID: &agentDef.ID,
-				CronSchedule:      "0 0 * * *",
-				TriggerType:       "manual",
-			}
-			if err := h.agentRepo.Create(ctx, dummyAgent); err != nil {
-				return apperror.NewInternal("failed to create agent session for async remember", err)
-			}
-		} else if dummyAgent.AgentDefinitionID == nil || *dummyAgent.AgentDefinitionID != agentDef.ID {
-			// Backfill FK for agents created before this fix.
-			dummyAgent.AgentDefinitionID = &agentDef.ID
-			_ = h.agentRepo.Update(ctx, dummyAgent)
+		dummyAgent, err := h.rememberForgetRuntimeAgent(ctx, agentDef, "async remember")
+		if err != nil {
+			return err
 		}
 		run, runErr := h.agentRepo.CreateRun(ctx, dummyAgent.ID)
 		if runErr != nil {
@@ -3052,24 +3083,9 @@ func (h *Handler) RememberStream(c echo.Context) error {
 
 	case "sync":
 		// Synchronous: wait for the agent to finish, return JSON result.
-		dummyName := "Remember session for " + agentDef.Name
-		dummyAgent, _ := h.agentRepo.FindByName(ctx, projectID, dummyName)
-		if dummyAgent == nil {
-			dummyAgent = &agents.Agent{
-				ProjectID:         projectID,
-				Name:              dummyName,
-				StrategyType:      "remember-session:" + agentDef.ID,
-				AgentDefinitionID: &agentDef.ID,
-				CronSchedule:      "0 0 * * *",
-				TriggerType:       "manual",
-			}
-			if err := h.agentRepo.Create(ctx, dummyAgent); err != nil {
-				return apperror.NewInternal("failed to create agent session for sync remember", err)
-			}
-		} else if dummyAgent.AgentDefinitionID == nil || *dummyAgent.AgentDefinitionID != agentDef.ID {
-			// Backfill FK for agents created before this fix.
-			dummyAgent.AgentDefinitionID = &agentDef.ID
-			_ = h.agentRepo.Update(ctx, dummyAgent)
+		dummyAgent, err := h.rememberForgetRuntimeAgent(ctx, agentDef, "sync remember")
+		if err != nil {
+			return err
 		}
 		execReq := agents.ExecuteRequest{
 			Agent:           dummyAgent,
@@ -3120,12 +3136,81 @@ func (h *Handler) RememberStream(c echo.Context) error {
 				}
 			}
 		}
-		sseWriter.WriteData(sse.NewDoneEventWithRunAndTrace(rememberRunID, rememberTraceID))
+		_ = sseWriter.WriteData(sse.NewDoneEventWithRunAndTrace(rememberRunID, rememberTraceID)) // best-effort: the stream is ending
 		sseWriter.Close()
 		if rememberResult != nil && rememberResult.Cleanup != nil {
 			go rememberResult.Cleanup()
 		}
 		return nil
+	}
+}
+
+// Document conversion states the upload pipeline reports. They are stored
+// verbatim in documents.conversion_status.
+const (
+	conversionStatusCompleted = "completed"
+	conversionStatusFailed    = "failed"
+)
+
+// Conversion wait budget for a freshly uploaded file. The 120s ceiling is the
+// historical budget — it bounds how long a synchronous upload may hold a request
+// goroutine — and 2s is short enough that a small file converts on the first
+// poll or two.
+const (
+	conversionPollTimeout  = 120 * time.Second
+	conversionPollInterval = 2 * time.Second
+)
+
+// awaitConversion waits for documentID to leave the converting state, returning
+// the last conversion status it observed.
+//
+// It exists because the previous implementation slept in the request goroutine
+// with `time.Sleep` and never looked at ctx: a client that disconnected held a
+// request goroutine (and one query every 2s) for up to two minutes, and a
+// shutdown could not interrupt it. The wait now checks ctx before the first
+// query and then races three events — the request context, the single timeout
+// timer, and the poll ticker — so a disconnect costs at most one in-flight
+// GetByID rather than the rest of the budget.
+//
+// cancelled reports that the caller's context ended before the document reached
+// a terminal state, so the caller has nobody to answer. Every other outcome
+// returns the last status observed (empty when the document could not be read
+// at all) with cancelled=false: completed and failed are terminal, and a spent
+// budget or an unreadable document leaves the caller to decide what a missing
+// conversion means for the request, exactly as before.
+func (h *Handler) awaitConversion(ctx context.Context, projectID, documentID string) (status string, cancelled bool) {
+	if ctx.Err() != nil {
+		return "", true
+	}
+
+	timeout := time.NewTimer(conversionPollTimeout)
+	defer timeout.Stop()
+	ticker := time.NewTicker(conversionPollInterval)
+	defer ticker.Stop()
+
+	for {
+		doc, err := h.docSvc.GetByID(ctx, projectID, documentID)
+		if err != nil {
+			if ctx.Err() != nil {
+				return "", true
+			}
+			// Proceed anyway: GetContent below reports whether text is available.
+			return "", false
+		}
+		if doc.ConversionStatus != nil {
+			status = *doc.ConversionStatus
+		}
+		if status == conversionStatusCompleted || status == conversionStatusFailed {
+			return status, false
+		}
+
+		select {
+		case <-ctx.Done():
+			return "", true
+		case <-timeout.C:
+			return "", false // budget spent: fall through to the content check
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -3260,29 +3345,23 @@ func (h *Handler) RememberFile(c echo.Context) error {
 	}
 	documentID := uploadResult.DocumentID
 
-	// Poll for conversion completion (max 120s, 2s interval).
-	// Duplicate documents are already converted — skip polling.
+	// Wait for conversion completion (max 120s, 2s interval).
+	// Duplicate documents are already converted — skip waiting.
 	if !uploadResult.IsDuplicate && h.docSvc != nil {
-		const pollTimeout = 120 * time.Second
-		const pollInterval = 2 * time.Second
-		deadline := time.Now().Add(pollTimeout)
-		for time.Now().Before(deadline) {
-			doc, docErr := h.docSvc.GetByID(ctx, projectID, documentID)
-			if docErr != nil {
-				break // proceed anyway; content may still be available
-			}
-			status := ""
-			if doc.ConversionStatus != nil {
-				status = *doc.ConversionStatus
-			}
-			if status == "completed" {
-				break
-			}
-			if status == "failed" {
-				return apperror.New(http.StatusUnprocessableEntity, "conversion_failed",
-					"File could not be converted to text. Check that the file type is supported.")
-			}
-			time.Sleep(pollInterval)
+		conversionStatus, cancelled := h.awaitConversion(ctx, projectID, documentID)
+		if cancelled {
+			// The client went away (or the server is shutting down) while the
+			// parser was still working. Nobody is left to answer: this is a
+			// routine event on an endpoint that may wait two minutes, so it is
+			// not an error response and not an error-level log line.
+			h.log.Info("remember/file: upload abandoned before conversion completed",
+				slog.String("document_id", documentID),
+			)
+			return nil
+		}
+		if conversionStatus == conversionStatusFailed {
+			return apperror.New(http.StatusUnprocessableEntity, "conversion_failed",
+				"File could not be converted to text. Check that the file type is supported.")
 		}
 	}
 
@@ -3428,23 +3507,9 @@ func (h *Handler) RememberFile(c echo.Context) error {
 
 	switch req.Mode {
 	case "async":
-		dummyName := "Remember session for " + agentDef.Name
-		dummyAgent, _ := h.agentRepo.FindByName(ctx, projectID, dummyName)
-		if dummyAgent == nil {
-			dummyAgent = &agents.Agent{
-				ProjectID:         projectID,
-				Name:              dummyName,
-				StrategyType:      "remember-session:" + agentDef.ID,
-				AgentDefinitionID: &agentDef.ID,
-				CronSchedule:      "0 0 * * *",
-				TriggerType:       "manual",
-			}
-			if err := h.agentRepo.Create(ctx, dummyAgent); err != nil {
-				return apperror.NewInternal("failed to create agent session for async remember/file", err)
-			}
-		} else if dummyAgent.AgentDefinitionID == nil || *dummyAgent.AgentDefinitionID != agentDef.ID {
-			dummyAgent.AgentDefinitionID = &agentDef.ID
-			_ = h.agentRepo.Update(ctx, dummyAgent)
+		dummyAgent, err := h.rememberForgetRuntimeAgent(ctx, agentDef, "async remember/file")
+		if err != nil {
+			return err
 		}
 		run, runErr := h.agentRepo.CreateRun(ctx, dummyAgent.ID)
 		if runErr != nil {
@@ -3512,23 +3577,9 @@ func (h *Handler) RememberFile(c echo.Context) error {
 		})
 
 	case "sync":
-		dummyName := "Remember session for " + agentDef.Name
-		dummyAgent, _ := h.agentRepo.FindByName(ctx, projectID, dummyName)
-		if dummyAgent == nil {
-			dummyAgent = &agents.Agent{
-				ProjectID:         projectID,
-				Name:              dummyName,
-				StrategyType:      "remember-session:" + agentDef.ID,
-				AgentDefinitionID: &agentDef.ID,
-				CronSchedule:      "0 0 * * *",
-				TriggerType:       "manual",
-			}
-			if err := h.agentRepo.Create(ctx, dummyAgent); err != nil {
-				return apperror.NewInternal("failed to create agent session for sync remember/file", err)
-			}
-		} else if dummyAgent.AgentDefinitionID == nil || *dummyAgent.AgentDefinitionID != agentDef.ID {
-			dummyAgent.AgentDefinitionID = &agentDef.ID
-			_ = h.agentRepo.Update(ctx, dummyAgent)
+		dummyAgent, err := h.rememberForgetRuntimeAgent(ctx, agentDef, "sync remember/file")
+		if err != nil {
+			return err
 		}
 		execReq := agents.ExecuteRequest{
 			Agent:           dummyAgent,
@@ -3579,7 +3630,7 @@ func (h *Handler) RememberFile(c echo.Context) error {
 				}
 			}
 		}
-		sseWriter.WriteData(sse.NewDoneEventWithRunAndTrace(rememberRunID, rememberTraceID))
+		_ = sseWriter.WriteData(sse.NewDoneEventWithRunAndTrace(rememberRunID, rememberTraceID)) // best-effort: the stream is ending
 		sseWriter.Close()
 		if rememberResult != nil && rememberResult.Cleanup != nil {
 			go rememberResult.Cleanup()
@@ -3772,20 +3823,9 @@ func (h *Handler) ForgetStream(c echo.Context) error {
 
 	switch mode {
 	case "async":
-		dummyName := "Forget session for " + agentDef.Name
-		dummyAgent, _ := h.agentRepo.FindByName(ctx, projectID, dummyName)
-		if dummyAgent == nil {
-			dummyAgent = &agents.Agent{
-				ProjectID:         projectID,
-				Name:              dummyName,
-				StrategyType:      "forget-session:" + agentDef.ID,
-				AgentDefinitionID: &agentDef.ID,
-				CronSchedule:      "0 0 * * *",
-				TriggerType:       "manual",
-			}
-			if err := h.agentRepo.Create(ctx, dummyAgent); err != nil {
-				return apperror.NewInternal("failed to create agent session for async forget", err)
-			}
+		dummyAgent, err := h.rememberForgetRuntimeAgent(ctx, agentDef, "async forget")
+		if err != nil {
+			return err
 		}
 		run, runErr := h.agentRepo.CreateRun(ctx, dummyAgent.ID)
 		if runErr != nil {
@@ -3829,20 +3869,9 @@ func (h *Handler) ForgetStream(c echo.Context) error {
 		})
 
 	case "sync":
-		dummyName := "Forget session for " + agentDef.Name
-		dummyAgent, _ := h.agentRepo.FindByName(ctx, projectID, dummyName)
-		if dummyAgent == nil {
-			dummyAgent = &agents.Agent{
-				ProjectID:         projectID,
-				Name:              dummyName,
-				StrategyType:      "forget-session:" + agentDef.ID,
-				AgentDefinitionID: &agentDef.ID,
-				CronSchedule:      "0 0 * * *",
-				TriggerType:       "manual",
-			}
-			if err := h.agentRepo.Create(ctx, dummyAgent); err != nil {
-				return apperror.NewInternal("failed to create agent session for sync forget", err)
-			}
+		dummyAgent, err := h.rememberForgetRuntimeAgent(ctx, agentDef, "sync forget")
+		if err != nil {
+			return err
 		}
 		execReq := agents.ExecuteRequest{
 			Agent:           dummyAgent,
@@ -3885,7 +3914,7 @@ func (h *Handler) ForgetStream(c echo.Context) error {
 		if forgetResult != nil {
 			forgetRunID = forgetResult.RunID
 		}
-		sseWriter.WriteData(sse.NewDoneEventWithRun(forgetRunID))
+		_ = sseWriter.WriteData(sse.NewDoneEventWithRun(forgetRunID)) // best-effort: the stream is ending
 		sseWriter.Close()
 		if forgetResult != nil && forgetResult.Cleanup != nil {
 			go forgetResult.Cleanup()

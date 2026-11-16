@@ -62,10 +62,10 @@ which agents a caller can actually invoke.
 
 ## Authentication and tenancy
 
-Every route except the global card requires a Bearer token. This page documents
-the **project API token** (`emt_…`), which is the supported integration
-credential; the scope below is the token's, checked against the `scopes` list the
-token was minted with:
+Every route except the global card requires a Bearer credential carrying the
+route's scope. This page documents the **project API token** (`emt_…`), which is
+the supported integration credential; its scope is checked against the `scopes`
+list the token was minted with.
 
 | Route | Scope |
 |---|---|
@@ -75,6 +75,34 @@ token was minted with:
 | `POST /tasks/{id}:cancel` | `agents:write` |
 | `POST /tasks/{id}:subscribe` | `agents:read` |
 | `GET /extendedAgentCard` | `agents:read` |
+
+The same scope is enforced for **signed-in sessions** (for example a `memory
+login` credential), where it is resolved from the caller's role in the addressed
+project rather than from the token's claims:
+
+| Project role | `agents:read` | `agents:write` |
+|---|---|---|
+| `project_admin` | yes | yes |
+| `project_user` | yes | no |
+| `project_viewer` | yes | no |
+
+Every project role carries `agents:read`, so any member can fetch the card and
+read tasks. `agents:write` — `message:send`, `message:stream` and
+`tasks/{id}:cancel` — comes only with `project_admin`; a `project_user` or
+`project_viewer` session, including `memory a2a send` or `memory acp` after
+`memory login`, is refused with `PERMISSION_DENIED`. `memory acp` forwards every
+prompt over `message:stream`, so it is a write surface even though it drives an
+agent rather than a task; its documented setup uses `MEMORY_PROJECT_TOKEN`,
+whose default scopes include `agents:*`.
+
+A `superadmin_full` session carries the full catalogue. A session with no
+project membership resolves to its `org_admin` entitlements when it has them,
+and otherwise to the deployment's `MEMORY_OIDC_DEFAULT_SCOPES`; neither set
+includes `agents:*` by default, so it is refused here unless the default is
+changed. An **unrecognised** project role — or a role lookup that fails — does
+not fall back to that default: the mapping fails closed to no scopes at all, so
+the session is refused here even when `MEMORY_OIDC_DEFAULT_SCOPES` names
+`agents:*`.
 
 The card declares a single bearer security scheme, for `emt_…` tokens, and no
 OAuth2 or OIDC scheme. The server does run an OAuth 2.1 authorization server
@@ -87,7 +115,11 @@ token carrying the scope you need (see [Not supported](#not-supported)).
 The project comes from the `X-Project-ID` header, or from the token itself when
 the token is project-scoped (a project-scoped token cannot be redirected to a
 different project by the header). A request with neither is rejected with
-`PROJECT_REQUIRED`.
+`PROJECT_REQUIRED`, and an addressed project whose organization the caller does
+not belong to is rejected with `PERMISSION_DENIED` (or `NOT_FOUND` when the
+project does not exist) — the header is a selector, never a grant. The scope is
+checked before the selector: a credential that does not carry the route's scope
+is refused with `PERMISSION_DENIED` even if it also omits `X-Project-ID`.
 
 ## Message flow
 

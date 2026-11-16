@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -692,23 +691,41 @@ func (s *Service) executeCreateSchema(ctx context.Context, projectID string, arg
 			relTypeSchemasMap[typeName] = rt
 		}
 	}
+	// The REST handler in front of CreatePack rejects an empty definition set,
+	// and this tool advertises object_type_schemas as required, but nothing
+	// enforced it on the MCP path: a call with no usable object types installed
+	// an empty pack that could never validate anything (#811).
+	if len(objTypeSchemasMap) == 0 {
+		return nil, apperror.ErrBadRequest.WithMessage("object_type_schemas is required")
+	}
+
 	objTypeSchemasJSON, _ := json.Marshal(objTypeSchemasMap)
 	relTypeSchemasJSON, _ := json.Marshal(relTypeSchemasMap)
 
-	// Validate optional scopeKey declarations fail-closed (issue #1177): this
-	// tool writes registry json_schema directly, bypassing CreatePack/UpdatePack
-	// where that validation otherwise lives, so a malformed declaration could
-	// otherwise be persisted and later silently ignored by entity-query.
-	typeSchemaRaws := make(map[string]json.RawMessage, len(objTypeSchemasMap))
+	// Validate the definitions fail-closed before writing anything. This tool
+	// inserts kb.graph_schemas and the registry rows directly, bypassing
+	// CreatePack/UpdatePack where the pack-definition guard otherwise lives, so
+	// it must run that same shared guard rather than a partial copy: a bare
+	// scalar `items` (#726) and a malformed scopeKey declaration (#1177) both
+	// installed silently through this path otherwise (#811).
+	objSchemaRaws := make(map[string]json.RawMessage, len(objTypeSchemasMap))
 	for typeName, ot := range objTypeSchemasMap {
 		raw, mErr := json.Marshal(ot)
 		if mErr != nil {
 			return nil, fmt.Errorf("marshal object type %s: %w", typeName, mErr)
 		}
-		typeSchemaRaws[typeName] = raw
+		objSchemaRaws[typeName] = raw
 	}
-	if errs := schemas.ValidateTypeSchemaScopeKeys(typeSchemaRaws); len(errs) > 0 {
-		return nil, fmt.Errorf("invalid scopeKey declaration: %s", strings.Join(errs, "; "))
+	relSchemaRaws := make(map[string]json.RawMessage, len(relTypeSchemasMap))
+	for typeName, rt := range relTypeSchemasMap {
+		raw, mErr := json.Marshal(rt)
+		if mErr != nil {
+			return nil, fmt.Errorf("marshal relationship type %s: %w", typeName, mErr)
+		}
+		relSchemaRaws[typeName] = raw
+	}
+	if err := schemas.ValidatePackDefinitionMap(objSchemaRaws, relSchemaRaws); err != nil {
+		return nil, err
 	}
 
 	// Create schema
@@ -913,7 +930,7 @@ func (s *Service) executeListMigrationArchives(ctx context.Context, projectID st
 	for _, obj := range objects {
 		archiveCount := len(obj.MigrationArchive)
 		output += fmt.Sprintf("Object: %s\n", obj.ID)
-		output += fmt.Sprintf("  Name: %s\n", obj.Properties["name"])
+		output += fmt.Sprintf("  Name: %s\n", graphObjectName(obj.Name))
 		output += fmt.Sprintf("  Type: %s\n", obj.Type)
 		if obj.SchemaVersion != nil {
 			output += fmt.Sprintf("  Current Version: %s\n", *obj.SchemaVersion)
@@ -1000,7 +1017,7 @@ func (s *Service) executeGetMigrationArchive(ctx context.Context, projectID stri
 	}
 
 	output := fmt.Sprintf("Migration Archive for Object: %s\n", obj.ID)
-	output += fmt.Sprintf("Name: %s\n", obj.Properties["name"])
+	output += fmt.Sprintf("Name: %s\n", graphObjectName(obj.Name))
 	output += fmt.Sprintf("Type: %s\n", obj.Type)
 	if obj.SchemaVersion != nil {
 		output += fmt.Sprintf("Current Version: %s\n\n", *obj.SchemaVersion)

@@ -1,6 +1,7 @@
 package superadmin
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -38,7 +39,7 @@ func (h *Handler) UpdateEmailSettings(c echo.Context) error {
 		return apperror.NewBadRequest("invalid email settings payload")
 	}
 	if err := h.emailSettings.Validate(c.Request().Context(), in); err != nil {
-		return apperror.NewBadRequest(err.Error())
+		return err
 	}
 	if in.Enabled {
 		if h.zitadelEmail == nil {
@@ -62,7 +63,7 @@ func (h *Handler) UpdateEmailSettings(c echo.Context) error {
 		}
 	}
 	if _, err := h.emailSettings.Save(c.Request().Context(), in, user); err != nil {
-		return apperror.NewBadRequest(err.Error())
+		return err
 	}
 	view, err := h.emailSettings.View(c.Request().Context())
 	if err != nil {
@@ -98,7 +99,9 @@ func (h *Handler) TestEmailSettings(c echo.Context) error {
 	})
 	if err != nil || !result.Success {
 		if err == nil {
-			err = echo.NewHTTPError(http.StatusBadGateway, result.Error)
+			// Send reports a provider rejection as result.Error with a nil
+			// error; keep it as the logged cause, not an HTTP status carrier.
+			err = errors.New(result.Error)
 		}
 		return apperror.New(http.StatusBadGateway, "email_test_failed", "failed to send test email").WithInternal(err)
 	}

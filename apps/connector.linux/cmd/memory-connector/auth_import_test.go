@@ -274,3 +274,154 @@ func TestAuthImportNoStoredSessionStoresNoRefreshToken(t *testing.T) {
 		t.Errorf("RefreshToken = %q, want empty with no stored session", sess.RefreshToken)
 	}
 }
+
+// TestAuthImportKeepsNeedsReauthWhenTheRefreshTokenIsKept is the regression this
+// change exists for: importing a marked session without a refresh token (the
+// macOS app pipes only the access token) kept the rejected token but dropped the
+// mark, so the client believed the session was renewable, refreshed, got
+// invalid_grant, and only then marked it again.
+func TestAuthImportKeepsNeedsReauthWhenTheRefreshTokenIsKept(t *testing.T) {
+	dir := t.TempDir()
+	serverURL := "https://memory.example.test"
+	configPath := writeAuthConfig(t, dir, serverURL)
+	seedAccessSession(t, configPath, serverURL, &account.Session{
+		ServerURL:    serverURL,
+		IssuerURL:    "https://issuer.test",
+		AccessToken:  "access-stale",
+		RefreshToken: "refresh-rejected",
+		ExpiresAt:    time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
+		NeedsReauth:  true,
+	})
+
+	// The app's exact document shape: access token, expiry, issuer, email — no
+	// refresh token, and no needs_reauth.
+	withAuthStdin(t, `{"access_token":"at-new","expires_at":"2031-01-02T03:04:05Z",`+
+		`"issuer":"https://issuer.test","email":"user@example.com"}`)
+
+	code, stdout, stderr := runAuthCapture("import", "--config", configPath, "--server", serverURL, "--json")
+	if code != 0 {
+		t.Fatalf("code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	var doc struct {
+		SignedIn    bool `json:"signed_in"`
+		CanRefresh  bool `json:"can_refresh"`
+		NeedsReauth bool `json:"needs_reauth"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		t.Fatalf("decode %q: %v", stdout, err)
+	}
+	if !doc.NeedsReauth {
+		t.Errorf("import document reports needs_reauth = false for a kept rejected token: %s", stdout)
+	}
+	if !doc.SignedIn || !doc.CanRefresh {
+		t.Errorf("document = %+v, want signed_in and can_refresh for a kept session", doc)
+	}
+
+	sess, err := account.NewManager(account.BaseDirForConfig(configPath)).SessionFor(serverURL)
+	if err != nil || sess == nil {
+		t.Fatalf("SessionFor = (%v, %v), want a persisted session", sess, err)
+	}
+	if sess.RefreshToken != "refresh-rejected" {
+		t.Errorf("RefreshToken = %q, want the stored refresh token kept", sess.RefreshToken)
+	}
+	if !sess.NeedsReauth {
+		t.Error("NeedsReauth = false after importing over the rejected token, want the mark kept")
+	}
+	if sess.AccessToken != "at-new" {
+		t.Errorf("AccessToken = %q, want at-new (the payload still wins)", sess.AccessToken)
+	}
+}
+
+// TestAuthImportReplacingTheRefreshTokenClearsNeedsReauth is the deliberate
+// reset: the mark described the rejected token, so replacing that token — and
+// only replacing it — clears the mark.
+func TestAuthImportReplacingTheRefreshTokenClearsNeedsReauth(t *testing.T) {
+	dir := t.TempDir()
+	serverURL := "https://memory.example.test"
+	configPath := writeAuthConfig(t, dir, serverURL)
+	seedAccessSession(t, configPath, serverURL, &account.Session{
+		ServerURL:    serverURL,
+		AccessToken:  "access-stale",
+		RefreshToken: "refresh-rejected",
+		ExpiresAt:    time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
+		NeedsReauth:  true,
+	})
+
+	withAuthStdin(t, `{"access_token":"at-new","refresh_token":"refresh-new",`+
+		`"expires_at":"2031-01-02T03:04:05Z"}`)
+
+	if code, _, stderr := runAuthCapture("import", "--config", configPath, "--server", serverURL); code != 0 {
+		t.Fatalf("code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+
+	sess, err := account.NewManager(account.BaseDirForConfig(configPath)).SessionFor(serverURL)
+	if err != nil || sess == nil {
+		t.Fatalf("SessionFor = (%v, %v), want a persisted session", sess, err)
+	}
+	if sess.RefreshToken != "refresh-new" {
+		t.Errorf("RefreshToken = %q, want refresh-new", sess.RefreshToken)
+	}
+	if sess.NeedsReauth {
+		t.Error("NeedsReauth = true after the rejected token was replaced, want the mark cleared")
+	}
+}
+
+// TestAuthImportCarriesAnExplicitNeedsReauth lets an importer state the truth
+// about a session the CLI has not seen rejected itself.
+func TestAuthImportCarriesAnExplicitNeedsReauth(t *testing.T) {
+	dir := t.TempDir()
+	serverURL := "https://memory.example.test"
+	configPath := writeAuthConfig(t, dir, serverURL)
+	withAuthStdin(t, `{"access_token":"at-1","refresh_token":"rt-1","needs_reauth":true}`)
+
+	code, stdout, stderr := runAuthCapture("import", "--config", configPath, "--server", serverURL, "--json")
+	if code != 0 {
+		t.Fatalf("code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	var doc struct {
+		NeedsReauth bool `json:"needs_reauth"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		t.Fatalf("decode %q: %v", stdout, err)
+	}
+	if !doc.NeedsReauth {
+		t.Errorf("needs_reauth = false, want the payload's assertion carried into the document: %s", stdout)
+	}
+
+	sess, err := account.NewManager(account.BaseDirForConfig(configPath)).SessionFor(serverURL)
+	if err != nil || sess == nil {
+		t.Fatalf("SessionFor = (%v, %v), want a persisted session", sess, err)
+	}
+	if !sess.NeedsReauth {
+		t.Error("NeedsReauth = false after an import that asserted it, want true")
+	}
+}
+
+// TestAuthImportExplicitFalseDoesNotClearNeedsReauth pins the asymmetry: an
+// import may assert a rejection, but it may never deny one for a token that is
+// still stored — that would resurrect the dead session by another route.
+func TestAuthImportExplicitFalseDoesNotClearNeedsReauth(t *testing.T) {
+	dir := t.TempDir()
+	serverURL := "https://memory.example.test"
+	configPath := writeAuthConfig(t, dir, serverURL)
+	seedAccessSession(t, configPath, serverURL, &account.Session{
+		ServerURL:    serverURL,
+		AccessToken:  "access-stale",
+		RefreshToken: "refresh-rejected",
+		ExpiresAt:    time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
+		NeedsReauth:  true,
+	})
+	withAuthStdin(t, `{"access_token":"at-new","refresh_token":"refresh-rejected","needs_reauth":false}`)
+
+	if code, _, stderr := runAuthCapture("import", "--config", configPath, "--server", serverURL); code != 0 {
+		t.Fatalf("code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+
+	sess, err := account.NewManager(account.BaseDirForConfig(configPath)).SessionFor(serverURL)
+	if err != nil || sess == nil {
+		t.Fatalf("SessionFor = (%v, %v), want a persisted session", sess, err)
+	}
+	if !sess.NeedsReauth {
+		t.Error("NeedsReauth = false after importing needs_reauth:false over the rejected token, want the mark kept")
+	}
+}

@@ -243,6 +243,16 @@ func a2aStatusUpdate(taskID, contextID string, state TaskState, msgText string) 
 	return StreamResponse{StatusUpdate: su}
 }
 
+// a2aResumeConflictResponse reports, inside a stream that has already started,
+// that a concurrent follow-up consumed the pause and owns the task. It carries no
+// terminal state: the winner is still executing the task.
+func a2aResumeConflictResponse(taskID, contextID string) StreamResponse {
+	msg := textStatusMessage("This task is already being resumed by another follow-up. Follow it with tasks/" + taskID + ":subscribe.")
+	msg.TaskID = taskID
+	msg.ContextID = contextID
+	return StreamResponse{Message: msg}
+}
+
 // a2aDeltaEventType maps an internal stream event to the reused run-event
 // type persisted alongside emission. Returns false when the event has no
 // persistence counterpart (tool-approval gate, unknown).
@@ -331,7 +341,7 @@ func (h *A2AHandler) StreamMessage(c echo.Context) error {
 		return writeA2AError(c, a2aErr)
 	}
 
-	projectID, err := acpProjectID(c)
+	projectID, err := h.addressedProject(c)
 	if err != nil {
 		return err
 	}
@@ -466,33 +476,10 @@ func (h *A2AHandler) streamResumeTask(c echo.Context, projectID, userID, userMes
 		return writeA2AError(c, a2aInvalidStateError(fmt.Sprintf("task is not awaiting input (state %s)", MapRunStatusToTaskState(latest.Status))))
 	}
 
-	questions, err := h.repo.FindPendingQuestionsByRunID(ctx, latest.ID)
-	if err != nil || len(questions) == 0 {
-		return writeA2AError(c, a2aInvalidStateError("no pending question for task"))
+	resumeMsg, pauseClaimed, resumeErr := h.prepareA2AResume(ctx, latest, userMessage, userID)
+	if resumeErr != nil {
+		return writeA2AError(c, resumeErr)
 	}
-
-	// Kill switch: check BEFORE claiming the pending question, otherwise a
-	// disabled resume consumes the question and permanently strands the task
-	// (same guarantee as the JSON /message path).
-	if h.executor != nil {
-		if err := h.executor.EnsureExecutionEnabled(); err != nil {
-			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, err.Error()))
-		}
-	}
-
-	claimed, err := h.repo.AnswerQuestion(ctx, questions[0].ID, userMessage, userID)
-	if err != nil {
-		h.log.Error("failed to answer question", "task_id", taskID, "error", err)
-		return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to answer question"))
-	}
-	if !claimed {
-		return writeA2AError(c, a2aInvalidStateError("question is no longer pending"))
-	}
-
-	resumeMsg := fmt.Sprintf(
-		"Previously you asked: \"%s\"\nThe user responded: \"%s\"\nContinue from where you left off.",
-		questions[0].Question, userMessage,
-	)
 
 	def, err := h.repo.ResolveDefinitionForAgent(ctx, latest.Agent)
 	if err != nil {
@@ -514,6 +501,7 @@ func (h *A2AHandler) streamResumeTask(c echo.Context, projectID, userID, userMes
 		OrgID:           h.a2aOrgID(ctx, c, projectID),
 		UserID:          userID,
 		UserMessage:     resumeMsg,
+		PauseClaimed:    pauseClaimed,
 		// TrustedInternal defaults false: an A2A surface must not reach internal agents.
 		RenderA2UI: true, // A2A stream renders A2UI surfaces (artifactUpdate)
 	}
@@ -594,6 +582,14 @@ func (h *A2AHandler) streamRun(
 	}
 	if result != nil && result.Cleanup != nil {
 		defer result.Cleanup()
+	}
+	if errors.Is(execErr, ErrRunAlreadyResumed) {
+		// Another follow-up consumed the pause first and owns the task. The
+		// stream has already started, so report it as a message and emit no
+		// terminal lifecycle event: the concurrent resume is still working, so
+		// marking this task failed (or completed) would be a lie (issue #887).
+		write(a2aResumeConflictResponse(taskID, contextID))
+		return nil
 	}
 	if execErr != nil {
 		h.log.Error("a2a stream run failed", "task_id", taskID, "error", execErr.Error())

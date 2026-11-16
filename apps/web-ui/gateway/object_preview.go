@@ -81,15 +81,19 @@ func (s *Server) renderObjectPreview(c echo.Context, id, relID string, boardSurf
 	}
 
 	// ?actions=board renders the board's work-item surface into the preview's
-	// action slot — the status-gated actions followed by the merged comments
-	// thread — so the drawer is a usable surface, not just a summary. Chat
-	// previews carry no actions param and stay read-only. A failed work-item
-	// fetch leaves the slot empty — intentionally not captured, so a missing
-	// work item never degrades the object summary.
+	// action slot — the status-gated actions followed by the declared
+	// deliverables and the merged comments thread — so the drawer is a usable
+	// surface, not just a summary. Chat previews carry no actions param and stay
+	// read-only. A failed work-item fetch leaves the slot empty — intentionally
+	// not captured, so a missing work item never degrades the object summary.
+	//
+	// The request's board view state (object-preview.js forwards it from the
+	// board that opened the drawer) rides on the action routes, because their
+	// responses re-render the board and would otherwise widen a filtered board.
 	var actions templ.Component
 	if boardSurface {
 		if detail, werr := s.memory.GetWorkItem(ctx, id); werr == nil && detail != nil && detail.Item != nil {
-			actions = boardPreviewBoardSlot(detail.Item, s.boardStatusMap(ctx), detail.Comments, detail.Feedback)
+			actions = workPreviewBoardSlot(detail.Item, s.boardStatusMap(ctx), detail.Comments, detail.Feedback, s.resolveBoardDeliverables(ctx, detail.Runs), boardViewQuery(c.QueryParams()))
 		}
 	}
 
@@ -158,7 +162,9 @@ func (s *Server) objectPreviewRelationshipLabel(ctx context.Context, objectID, r
 // it (empty for built-in fields, which carry no schema prose), and the value.
 // Name, when set, is the raw schema property name — exposed as the label's
 // tooltip because the label itself is humanised. Mono renders identifier values
-// monospaced, and Empty de-emphasises a row that has no value.
+// monospaced, and Empty de-emphasises a row that has no value. Markdown marks a
+// long-form prose value the row renders as sanitized markdown rather than as
+// escaped plain text (see objectPreviewFieldMarkdown).
 type objectPreviewField struct {
 	Label       string
 	Description string
@@ -166,6 +172,7 @@ type objectPreviewField struct {
 	Name        string
 	Empty       bool
 	Mono        bool
+	Markdown    bool
 }
 
 // objectPreviewSchema is the compiled-schema context the drawer renders with:
@@ -255,6 +262,7 @@ func objectPreviewTypeFields(o GraphObject, schema objectPreviewSchema) []object
 			Description: d.Description,
 			Value:       value,
 			Empty:       value == "",
+			Markdown:    value != "" && objectPropertyDefMarkdown(d),
 		})
 	}
 	for _, p := range objectPreviewStoredProperties(o) {
@@ -262,13 +270,69 @@ func objectPreviewTypeFields(o GraphObject, schema objectPreviewSchema) []object
 			continue
 		}
 		out = append(out, objectPreviewField{
-			Label: objectPreviewFieldLabel(p.Key),
-			Name:  p.Key,
-			Value: p.Value,
-			Empty: p.Value == "",
+			Label:    objectPreviewFieldLabel(p.Key),
+			Name:     p.Key,
+			Value:    p.Value,
+			Empty:    p.Value == "",
+			Markdown: p.Value != "" && objectPreviewFieldMarkdown(p.Key, ""),
 		})
 	}
 	return out
+}
+
+// objectPropertyDefMarkdown reports whether a schema property's value renders as
+// markdown on every read surface. The schema's explicit `format: markdown`
+// content declaration wins — that is the contract an author states, and it beats
+// a `widget: "input"` hint that would otherwise keep the value on one line. For
+// schemas that declare no format, the long-form heuristics (#814) decide.
+func objectPropertyDefMarkdown(def objectPropertyDef) bool {
+	return def.Markdown() || objectPreviewFieldMarkdown(def.Name, def.Widget)
+}
+
+// markdownPreviewHTML renders a property value as sanitized markdown for the
+// bounded read surfaces (the preview drawer and the object page's details rail),
+// capping the source at maxTextPreviewChars. The cap is presentation only: the
+// stored value is never truncated, and the caller renders a "truncated" note so
+// the reader knows the row is partial. Mid-fence truncation degrades to an open
+// code block (goldmark runs to end of input), which is the same trade the
+// document preview makes.
+func markdownPreviewHTML(value string) (body string, truncated bool) {
+	if runes := []rune(value); len(runes) > maxTextPreviewChars {
+		value = string(runes[:maxTextPreviewChars])
+		truncated = true
+	}
+	return renderMarkdown(value), truncated
+}
+
+// objectPreviewFieldMarkdown reports whether a preview row's value is long-form
+// prose authored as markdown, so the drawer renders it instead of escaping it
+// (#814: a GitHub issue's `body` read as literal "## …", tables and all).
+//
+// This is the fallback for schemas that declare no content format. A row whose
+// property declares `format: markdown` is handled by objectPropertyDefMarkdown
+// and never needs the key/widget heuristic.
+//
+// The schema's widget hint wins: an explicit "input" asks for one line, so its
+// value stays plain text even under a prose key, while "textarea" is the
+// schema's own "free-form long text" marker and is prose whatever the key is
+// called. Without a hint the key decides, using the article's body vocabulary
+// (objectArticleBodyKeys) so the drawer and the object page agree on which
+// field holds the document. Matching folds case and separators, so a schema
+// that spells the key "Body" or "BODY" is still recognised.
+func objectPreviewFieldMarkdown(name, widget string) bool {
+	switch widget {
+	case "input":
+		return false
+	case "textarea":
+		return true
+	}
+	folded := normalizeProseKey(name)
+	for _, key := range objectArticleBodyKeys {
+		if strings.EqualFold(folded, key) {
+			return true
+		}
+	}
+	return false
 }
 
 // objectPreviewDeclaredLabel is the row label for a property the schema declares:

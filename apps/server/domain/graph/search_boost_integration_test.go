@@ -123,17 +123,23 @@ func TestRecencyBoostZeroProducesBaselineIntegration(t *testing.T) {
 		db.ExecContext(context.Background(), "DELETE FROM kb.graph_objects WHERE project_id = ?", projectID) //nolint:errcheck
 	})
 
-	for i := 0; i < 3; i++ {
-		objID := uuid.New()
+	// The three objects are one fixture: identical properties, type and
+	// timestamps, so nothing but the id distinguishes them. A fixed created_at
+	// (rather than NOW() per INSERT) removes the microsecond differences that a
+	// time-derived scoring component would turn into a legitimate score
+	// difference — the assumption this test used to make silently.
+	objIDs := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
+	fixtureTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, objID := range objIDs {
 		_, err := db.ExecContext(context.Background(), `
 			INSERT INTO kb.graph_objects
 				(id, project_id, branch_id, canonical_id, supersedes_id, version, type, status,
 				 properties, labels, content_hash, created_at, updated_at)
 			VALUES
 				(?, ?, NULL, ?, NULL, 1, ?, 'active',
-				 '{"name": "baseline-search-test"}'::jsonb, '{}'::text[], ?, NOW(), NOW())
+				 '{"name": "baseline-search-test"}'::jsonb, '{}'::text[], ?, ?, ?)
 		`, objID, projectID, objID, "BaselineTest",
-			fmt.Sprintf("hash-baseline-%s", objID.String()))
+			fmt.Sprintf("hash-baseline-%s", objID.String()), fixtureTime, fixtureTime)
 		require.NoError(t, err)
 	}
 
@@ -159,10 +165,6 @@ func TestRecencyBoostZeroProducesBaselineIntegration(t *testing.T) {
 	assert.Equal(t, baseResp.Total, boostResp.Total,
 		"recency_boost=0 should return same total as no boost")
 
-	// Zero boost adds 0 to every score, so the two requests must return the
-	// same set of objects. The three seeded objects are equally relevant
-	// (identical properties and FTS rank) with no vector input, so all fused
-	// scores are equal and ordering is now deterministic: ascending by id.
 	baseIDs := make([]uuid.UUID, 0, len(baseResp.Data))
 	for _, item := range baseResp.Data {
 		baseIDs = append(baseIDs, item.Object.ID)
@@ -172,14 +174,45 @@ func TestRecencyBoostZeroProducesBaselineIntegration(t *testing.T) {
 		boostIDs = append(boostIDs, item.Object.ID)
 	}
 
-	// Equally-scored results must be ordered ascending by id.
-	sortedIDs := slices.Clone(baseIDs)
-	sort.Slice(sortedIDs, func(i, j int) bool {
-		return slices.Compare(sortedIDs[i][:], sortedIDs[j][:]) < 0
-	})
-	assert.Equal(t, sortedIDs, baseIDs,
-		"equally-scored results must be ordered ascending by id")
+	// Zero boost adds 0 to every score, so the two requests must return the same
+	// set of objects. Compare sets, not sequences: whether two results tie on
+	// fused score is a property of the scoring model, not of this fixture, and a
+	// non-tie is a legitimate order (score, then id), not a regression (#712).
+	baseSet := slices.Clone(baseIDs)
+	boostSet := slices.Clone(boostIDs)
+	sortUUIDs(baseSet)
+	sortUUIDs(boostSet)
+	assert.Equal(t, baseSet, boostSet,
+		"recency_boost=0 must return the same objects as no boost")
 
-	assert.Equal(t, baseIDs, boostIDs,
-		"recency_boost=0 must return identical ordered results")
+	// The property the code guarantees is the tie-break, not that the fixture
+	// ties: results are ordered by fused score descending, and equal-scored
+	// results ascend by id. Grouping on the returned fused score states exactly
+	// that, and a group of one is trivially ordered — so a fixture whose scores
+	// differ no longer flips a meaningful assertion (the comparator itself is
+	// pinned by TestFusedLessLexicalFirst).
+	for start := 0; start < len(baseResp.Data); {
+		end := start + 1
+		for end < len(baseResp.Data) && baseResp.Data[end].Score == baseResp.Data[start].Score {
+			end++
+		}
+		groupIDs := make([]uuid.UUID, 0, end-start)
+		for _, item := range baseResp.Data[start:end] {
+			groupIDs = append(groupIDs, item.Object.ID)
+		}
+		sorted := slices.Clone(groupIDs)
+		sortUUIDs(sorted)
+		assert.Equal(t, sorted, groupIDs,
+			"results tied on fused score %v must be ordered ascending by id (positions %d..%d)",
+			baseResp.Data[start].Score, start, end-1)
+		start = end
+	}
+}
+
+// sortUUIDs sorts ids ascending by their byte representation, which is the
+// order fusedLess uses for its final tie-break.
+func sortUUIDs(ids []uuid.UUID) {
+	sort.Slice(ids, func(i, j int) bool {
+		return slices.Compare(ids[i][:], ids[j][:]) < 0
+	})
 }

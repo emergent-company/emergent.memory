@@ -106,6 +106,50 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	return nil
 }
 
+// IssueState is the issue subset used by the coding workflow and backfill.
+type IssueState struct {
+	Number    int    `json:"number"`
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	State     string `json:"state"`
+	HTMLURL   string `json:"html_url"`
+	UpdatedAt string `json:"updated_at"`
+	Labels    []struct {
+		Name string `json:"name"`
+	} `json:"labels"`
+	User struct {
+		Login string `json:"login"`
+		Type  string `json:"type"`
+	} `json:"user"`
+	PullRequest *struct{} `json:"pull_request,omitempty"`
+}
+
+// ListOpenIssues reads one page of open issues. GitHub's issues endpoint also
+// returns pull requests; callers must skip entries with PullRequest set.
+func (c *Client) ListOpenIssues(ctx context.Context, repo string, page int) ([]IssueState, error) {
+	if page < 1 {
+		page = 1
+	}
+	q := url.Values{}
+	q.Set("state", "open")
+	q.Set("per_page", "30")
+	q.Set("page", fmt.Sprintf("%d", page))
+	var out []IssueState
+	if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/issues?%s", repo, q.Encode()), nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GetIssue reads one issue's live state.
+func (c *Client) GetIssue(ctx context.Context, repo string, number int) (*IssueState, error) {
+	var out IssueState
+	if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/issues/%d", repo, number), nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // GetPullRequest reads the live PR state.
 func (c *Client) GetPullRequest(ctx context.Context, repo string, number int) (*PullRequestState, error) {
 	var raw struct {
@@ -204,5 +248,12 @@ func (c *Client) CreateReviewedCheck(ctx context.Context, repo, headSHA, conclus
 func (c *Client) CreateIssueComment(ctx context.Context, repo string, number int, body string) error {
 	return c.do(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/issues/%d/comments", repo, number), map[string]any{
 		"body": body,
+	}, nil)
+}
+
+// CloseIssue closes an issue as completed after its linked coding PR merges.
+func (c *Client) CloseIssue(ctx context.Context, repo string, number int) error {
+	return c.do(ctx, http.MethodPatch, fmt.Sprintf("/repos/%s/issues/%d", repo, number), map[string]any{
+		"state": "closed",
 	}, nil)
 }

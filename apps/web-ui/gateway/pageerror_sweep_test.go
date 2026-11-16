@@ -100,12 +100,12 @@ var sweptPages = []sweepPage{
 		},
 	},
 	{
-		name:   "board",
-		path:   "/board",
+		name:   "work board",
+		path:   "/work/board",
 		setErr: func(f *fakeMemory, err error) { f.workItemsErr = err },
 		mount: func(s *Server) *echo.Echo {
 			e := echo.New()
-			e.GET("/board", s.uiBoard)
+			e.GET("/work/:section", s.uiWorkSection)
 			return e
 		},
 	},
@@ -116,6 +116,16 @@ var sweptPages = []sweepPage{
 		mount: func(s *Server) *echo.Echo {
 			e := echo.New()
 			e.GET("/usage", s.uiUsage)
+			return e
+		},
+	},
+	{
+		name:   "usage run log",
+		path:   "/usage/sessions",
+		setErr: func(f *fakeMemory, err error) { f.usageRunsErr = err },
+		mount: func(s *Server) *echo.Echo {
+			e := echo.New()
+			e.GET("/usage/sessions", s.uiUsageSessions)
 			return e
 		},
 	},

@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/internal/config"
@@ -332,4 +333,81 @@ func TestWorkReconciler_EnqueuesReadyObject(t *testing.T) {
 	rc.reconcile(ctx)
 
 	require.Equal(t, 1, countQueuedRuns(t, db, ctx, agentID, canonicalID))
+}
+
+// TestWorkReconciler_SkipsUnassignedGitHubIssue is the incident regression:
+// a backfilled issue is ready and unassigned, and must not start a coding run.
+// The same item assigned to the listening agent must still dispatch.
+func TestWorkReconciler_SkipsUnassignedGitHubIssue(t *testing.T) {
+	ctx, db, repo, projectID := setupWorkObjectDispatch(t)
+	defID := insertWorkDefinition(t, db, ctx, projectID, "coder",
+		`{"status":{"ready":"ready"},"objectRules":[{"objectType":"GitHubIssue","triggers":[{"status":"ready"}]}]}`)
+	agentID := insertWorkAgent(t, db, ctx, projectID, "coder", defID)
+	_, err := db.ExecContext(ctx,
+		`UPDATE kb.agents SET trigger_type='reaction', reaction_config='{"objectTypes":["GitHubIssue"],"events":["created","status_changed"]}'::jsonb WHERE id=?`,
+		agentID)
+	require.NoError(t, err)
+
+	unassignedID := uuid.NewString()
+	assignedID := uuid.NewString()
+	insertGitHubIssueObject(t, db, ctx, projectID, unassignedID, "issue-1", "")
+	insertGitHubIssueObject(t, db, ctx, projectID, assignedID, "issue-2", "coder")
+
+	store := &fakeListStore{heads: []*graph.WorkObjectHead{
+		{ProjectID: projectID, CanonicalID: unassignedID, Status: "ready", Type: "GitHubIssue"},
+		{ProjectID: projectID, CanonicalID: assignedID, Status: "ready", Type: "GitHubIssue", Assignee: "coder"},
+	}}
+	rc := NewWorkReconciler(repo, testAgentLogger(), time.Minute)
+	rc.SetWorkObjectStore(store)
+
+	rc.reconcile(ctx)
+
+	require.Equal(t, 0, countQueuedRuns(t, db, ctx, agentID, unassignedID))
+	require.Equal(t, 1, countQueuedRuns(t, db, ctx, agentID, assignedID))
+}
+
+func insertGitHubIssueObject(t *testing.T, db *bun.DB, ctx context.Context, projectID, canonicalID, key, assignee string) {
+	t.Helper()
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO kb.graph_objects (id, project_id, type, canonical_id, version, key, status, assignee)
+		 VALUES (?, ?, 'GitHubIssue', ?, 1, ?, 'ready', NULLIF(?, ''))`,
+		canonicalID, projectID, canonicalID, key, assignee)
+	require.NoError(t, err)
+}
+
+type issueReviewFinalStore struct{ fakeWorkObjectStore }
+
+func (s *issueReviewFinalStore) GetHeadObject(_ context.Context, _, canonicalID string) (*graph.WorkObjectHead, error) {
+	return &graph.WorkObjectHead{CanonicalID: canonicalID, Type: "GitHubIssue", Status: "review"}, nil
+}
+
+func TestFinishWorkRun_FinalizesIssueInReview(t *testing.T) {
+	ctx, db, repo, projectID := setupWorkObjectDispatch(t)
+	defID := insertWorkDefinition(t, db, ctx, projectID, "coder",
+		`{"status":{"ready":"ready"},"objectRules":[{"objectType":"GitHubIssue","triggers":[{"status":"ready"}]}]}`)
+	agentID := insertWorkAgent(t, db, ctx, projectID, "coder", defID)
+	canonicalID := uuid.NewString()
+	insertGitHubIssueObject(t, db, ctx, projectID, canonicalID, "issue-review", "coder")
+	run, err := repo.CreateRunQueued(ctx, agentID, 1, CreateRunQueuedOptions{
+		SubjectObjectID: &canonicalID, SubjectObjectType: strPtr("GitHubIssue"), TrustedInternal: false,
+	})
+	require.NoError(t, err)
+	var job AgentRunJob
+	require.NoError(t, db.NewSelect().Model(&job).Where("run_id = ?", run.ID).Scan(ctx))
+	agent, err := repo.FindByID(ctx, agentID, &projectID)
+	require.NoError(t, err)
+	def, err := repo.ResolveDefinitionForAgent(ctx, agent)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `UPDATE kb.agents SET consecutive_failures = 3 WHERE id = ?`, agentID)
+	require.NoError(t, err)
+
+	pool := &WorkerPool{repo: repo, workObjects: &issueReviewFinalStore{}, log: testAgentLogger()}
+	pool.finishWorkRun(ctx, testAgentLogger(), &job, run, agent, def, &ExecuteResult{Status: RunStatusSuccess}, nil)
+
+	var status string
+	require.NoError(t, db.NewSelect().Table("kb.agent_run_jobs").Column("status").Where("id = ?", job.ID).Scan(ctx, &status))
+	require.Equal(t, string(JobStatusCompleted), status)
+	var failures int
+	require.NoError(t, db.NewSelect().Table("kb.agents").Column("consecutive_failures").Where("id = ?", agentID).Scan(ctx, &failures))
+	require.Zero(t, failures)
 }

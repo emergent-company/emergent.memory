@@ -130,9 +130,16 @@ func main() {
 	// Unscoped OAuth landing: re-scope /data-sources requests (exempt from the
 	// hard cut in strictScopedPath) onto the caller's active project.
 	e.Use(s.dataSourcesScopeRedirect)
+	// Marketplace install links from the external market arrive unscoped;
+	// re-scope them onto the caller's active project (or the project picker).
+	e.Use(s.marketplaceScopeRedirect)
 	// Scope rewrite: strip the /o/... prefix before routing so the flat route
 	// table below is reused unchanged (Pre middlewares run before routing).
 	e.Pre(s.scopeRewrite)
+
+	// Public discovery document (see publicAuthPath). The marketplace fetches it
+	// cross-origin from the browser to check install capability and trust.
+	e.GET("/.well-known/memory-instance", s.memoryInstanceWellKnown)
 
 	// Internal worker endpoint — exempt from session auth (see publicAuthPath);
 	// gated by a per-worker credential in the X-Worker-Key header instead.
@@ -490,6 +497,7 @@ func main() {
 	e.GET("/data-sources/:id/workflow", s.uiDataSourceWorkflow)
 	e.POST("/data-sources/:id/workflow", s.uiDataSourceWorkflowSave)
 	e.POST("/data-sources/:id/triggers", s.uiDataSourceTriggerCreate)
+	e.POST("/data-sources/:id/issues/backfill", s.uiDataSourceBackfillIssues)
 	e.POST("/data-sources/:id/triggers/:triggerId/toggle", s.uiDataSourceTriggerToggle)
 	e.POST("/data-sources/:id/triggers/:triggerId/delete", s.uiDataSourceTriggerDelete)
 	e.GET("/objects", s.uiObjects)
@@ -541,6 +549,10 @@ func main() {
 	// Blueprint derivation from the project's effective types (design D5).
 	e.POST("/schema/blueprints/derive", s.deriveSchemaBlueprint, s.requireSchemaWrite)
 	e.POST("/schema/blueprints/:id/versions/derive", s.deriveSchemaBlueprintVersion, s.requireSchemaWrite)
+	// Marketplace install review (P5): an authenticated, project-scoped flow.
+	// GET shows a side-effect-free review; POST applies after confirmation.
+	e.GET("/marketplace/install", s.uiMarketInstall)
+	e.POST("/marketplace/install", s.uiMarketInstallConfirm)
 	e.GET("/blueprints", s.uiBlueprints)
 	e.GET("/blueprints/migrations", s.uiMigrations)
 	e.GET("/blueprints/:id", s.uiBlueprint)
@@ -804,9 +816,14 @@ func main() {
 	e.GET("/sessions/:id", s.uiSession)
 	e.GET("/share-sessions/:id", s.uiShareSessionTranscript)
 	e.GET("/usage", s.uiUsage)
-	// Kanban board (object-driven work): columns + card drawer + human actions.
+	// The per-run cost log behind the usage dashboard's agent figures.
+	e.GET("/usage/sessions", s.uiUsageSessions)
+	// Work (object-driven work): the board, its live stream and its settings.
+	// /board is the retired board's URL, kept as a redirect for bookmarks.
 	e.GET("/board", s.uiBoardRedirect)
 	e.GET("/work", s.uiWork)
+	e.GET("/work/board/partial", s.uiWorkBoardPartial)
+	e.GET("/work/board/stream", s.workBoardStream)
 	e.GET("/work/:section", s.uiWorkSection)
 	e.GET("/work/settings/rules/new", s.uiWorkRuleNew)
 	e.GET("/work/settings/rules/edit", s.uiWorkRuleEdit)
@@ -815,16 +832,11 @@ func main() {
 	e.POST("/work/settings/agents/:id", s.uiWorkAgentDefaults)
 	e.POST("/work/items/:canonicalId/status", s.uiWorkSetStatus)
 	e.POST("/work/items/:canonicalId/unblock", s.uiWorkUnblock)
-	e.GET("/board/partial", s.uiBoardPartial)
-	e.GET("/board/stream", s.boardStream)
-	e.GET("/board/items/:canonicalId", s.uiBoardItem)
-	e.POST("/board/items/:canonicalId/approve", s.uiBoardApprove)
-	e.POST("/board/items/:canonicalId/request-changes", s.uiBoardRequestChanges)
-	e.POST("/board/items/:canonicalId/comments", s.uiBoardComment)
-	e.POST("/board/items/:canonicalId/retry", s.uiBoardRetry)
-	e.POST("/board/items/:canonicalId/reassign", s.uiBoardReassign)
-	e.POST("/board/items/:canonicalId/status", s.uiBoardSetStatus)
-	e.POST("/board/items/:canonicalId/cancel", s.uiBoardCancel)
+	e.POST("/work/items/:canonicalId/approve", s.uiWorkApprove)
+	e.POST("/work/items/:canonicalId/request-changes", s.uiWorkRequestChanges)
+	e.POST("/work/items/:canonicalId/comments", s.uiWorkComment)
+	e.POST("/work/items/:canonicalId/retry", s.uiWorkRetry)
+	e.POST("/work/items/:canonicalId/cancel", s.uiWorkCancel)
 
 	// Inbox page + project-event notification preferences (inbox subsystem).
 	// /partial/inbox-list is the server-rendered fragment the page's JS swaps in

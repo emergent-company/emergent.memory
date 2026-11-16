@@ -3,9 +3,11 @@ package agents
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -341,10 +343,11 @@ func (r *Repository) listWorkAgentStatuses(ctx context.Context) (ready, inProgre
 // workMaintenance is the shared base for the periodic work-status reaper and
 // reconciler.
 type workMaintenance struct {
-	repo        *Repository
-	workObjects WorkObjectStore
-	log         *slog.Logger
-	interval    time.Duration
+	repo           *Repository
+	workObjects    WorkObjectStore
+	workInvocation WorkInvocationResolver
+	log            *slog.Logger
+	interval       time.Duration
 
 	stopCh  chan struct{}
 	doneCh  chan struct{}
@@ -497,6 +500,10 @@ type WorkReconciler struct {
 }
 
 // NewWorkReconciler creates a reconciler.
+func (rc *WorkReconciler) SetWorkInvocationResolver(r WorkInvocationResolver) {
+	rc.workInvocation = r
+}
+
 func NewWorkReconciler(repo *Repository, log *slog.Logger, interval time.Duration) *WorkReconciler {
 	if interval <= 0 {
 		interval = defaultWorkReconcilerInterval
@@ -570,6 +577,9 @@ func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead) 
 	if blocked, err := rc.repo.IsWorkBlocked(ctx, h.CanonicalID); err == nil && blocked {
 		return
 	}
+	if skipUnassignedIssue(h.Type, h.Assignee) {
+		return
+	}
 	agents, err := rc.repo.FindReactionAgentsForType(ctx, h.ProjectID, h.Type, h.Assignee)
 	if err != nil {
 		rc.log.Warn("failed to resolve listening agents", slog.String("canonical_id", h.CanonicalID), slog.String("error", err.Error()))
@@ -581,24 +591,41 @@ func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead) 
 		return
 	}
 	for _, agent := range agents {
+		var def *AgentDefinition
 		// Skip a listener whose rules do not pick up this status: the claim guard
 		// would reject it anyway, but enqueuing a doomed run is noise.
-		if def, derr := rc.repo.ResolveDefinitionForAgent(ctx, agent); derr == nil && def != nil {
+		if resolved, derr := rc.repo.ResolveDefinitionForAgent(ctx, agent); derr == nil && resolved != nil {
+			def = resolved
 			if !def.TriggerAllowsStatus(h.Type, h.Status) {
 				continue
 			}
 		}
 		canonicalID := h.CanonicalID
 		objectType := h.Type
-		if _, err := rc.repo.CreateRunQueued(ctx, agent.ID, 1, CreateRunQueuedOptions{
+		var trigger *AgentWorkTrigger
+		if def != nil {
+			trigger = def.MatchWorkTrigger(h.Type, h.Status)
+		}
+		inv := workRunInvocation(ctx, rc.workInvocation, h.ProjectID, h, trigger)
+		opts := CreateRunQueuedOptions{
 			SubjectObjectID:   &canonicalID,
 			SubjectObjectType: &objectType,
-			TrustedInternal:   true,
+			TrustedInternal:   workRunTrusted(h),
+			Invocation:        inv,
+			SourceTriggerID:   workSourceTriggerID(h),
 			// Record the claim source as the object's current status: the
 			// reconciler scans both ready and trigger statuses, and the claim must
 			// CAS from whatever status the object is stranded in.
 			TriggerMetadata: workTriggerMetadata(h),
-		}); err != nil {
+		}
+		if inv != nil {
+			opts.Priority = inv.Priority
+		}
+		if trigger != nil && trigger.Prompt != "" {
+			prompt := trigger.Prompt
+			opts.TriggerMessage = &prompt
+		}
+		if _, err := rc.repo.CreateRunQueued(ctx, agent.ID, 1, opts); err != nil {
 			if errors.Is(err, ErrWorkItemBusy) {
 				continue
 			}
@@ -662,6 +689,50 @@ func resolveWorkObjectPolicy(ctx context.Context, workObjects WorkObjectStore, a
 	return pol
 }
 
+func intProperty(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int32:
+		return int(n)
+	case int64:
+		return int(n)
+	case uint:
+		return int(n)
+	case uint32:
+		return int(n)
+	case uint64:
+		return int(n)
+	case float32:
+		return int(n)
+	case float64:
+		return int(n)
+	case json.Number:
+		i, _ := n.Int64()
+		return int(i)
+	case string:
+		i, _ := strconv.Atoi(n)
+		return i
+	default:
+		return 0
+	}
+}
+
+// mergeWorkObjectMetadata copies identity fields (repo, issue number, source,
+// subject) into a dispatch metadata map without overwriting the event/claim
+// keys that describe why this dispatch happened.
+func mergeWorkObjectMetadata(meta map[string]any, h *graph.WorkObjectHead) {
+	if meta == nil || h == nil {
+		return
+	}
+	for k, v := range workTriggerMetadata(h) {
+		if k == "work_trigger_event" || k == "work_claim_status" {
+			continue
+		}
+		meta[k] = v
+	}
+}
+
 func workTriggerMetadata(h *graph.WorkObjectHead) map[string]any {
 	meta := map[string]any{
 		"work_trigger_event": string(EventTypeStatusChanged),
@@ -671,16 +742,27 @@ func workTriggerMetadata(h *graph.WorkObjectHead) map[string]any {
 		return meta
 	}
 	repo, _ := h.Properties["repo"].(string)
-	prNumber, _ := h.Properties["pr_number"].(float64)
-	if repo == "" || prNumber <= 0 {
+	prNumber := intProperty(h.Properties["pr_number"])
+	issueNumber := intProperty(h.Properties["issue_number"])
+	if repo == "" || (prNumber <= 0 && issueNumber <= 0) {
 		return meta
 	}
 	meta["repo"] = repo
-	meta["prNumber"] = int(prNumber)
-	meta["headSha"] = h.Properties["head_sha"]
-	meta["subjectRef"] = fmt.Sprintf("%s#%d", repo, int(prNumber))
 	if sid, _ := h.Properties["source_id"].(string); sid != "" {
 		meta["sourceId"] = sid
+	}
+	if prNumber > 0 {
+		meta["prNumber"] = int(prNumber)
+		meta["headSha"] = h.Properties["head_sha"]
+		meta["subjectType"] = "pull_request"
+		meta["subjectRef"] = fmt.Sprintf("%s#%d", repo, int(prNumber))
+		return meta
+	}
+	meta["issueNumber"] = int(issueNumber)
+	meta["subjectType"] = "issue"
+	meta["subjectRef"] = fmt.Sprintf("%s#%d", repo, int(issueNumber))
+	if url, _ := h.Properties["url"].(string); url != "" {
+		meta["issueUrl"] = url
 	}
 	return meta
 }

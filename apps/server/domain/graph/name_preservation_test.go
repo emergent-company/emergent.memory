@@ -31,7 +31,7 @@ func TestClassifyMergeObjectNameOnlyChange(t *testing.T) {
 func TestBuildChangesetObjectSetsName(t *testing.T) {
 	obj, err := buildChangesetObject(
 		uuid.New(), nil, uuid.New(),
-		&ChangesetObjectItem{Type: "Task", Properties: map[string]any{"name": "Fix redirect"}},
+		&ChangesetObjectItem{Type: "Task", Name: ptrName("Fix redirect"), Properties: map[string]any{"name": "Fix redirect"}},
 		nil, ActorSystem, nil,
 	)
 	require.NoError(t, err)

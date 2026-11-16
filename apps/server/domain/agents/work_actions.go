@@ -21,9 +21,10 @@ import (
 // only adds the surrounding bookkeeping (review columns, append-only feedback,
 // rework/retry enqueue, escalation tasks, and in-flight-run cancellation).
 type WorkActionService struct {
-	repo        *Repository
-	workObjects WorkObjectStore
-	log         *slog.Logger
+	repo           *Repository
+	workObjects    WorkObjectStore
+	workInvocation WorkInvocationResolver
+	log            *slog.Logger
 }
 
 // NewWorkActionService creates the human-action service.
@@ -34,6 +35,11 @@ func NewWorkActionService(repo *Repository, log *slog.Logger) *WorkActionService
 // SetWorkObjectStore injects the graph work-object surface after construction.
 func (s *WorkActionService) SetWorkObjectStore(store WorkObjectStore) {
 	s.workObjects = store
+}
+
+// SetWorkInvocationResolver installs the source-trigger invocation resolver.
+func (s *WorkActionService) SetWorkInvocationResolver(r WorkInvocationResolver) {
+	s.workInvocation = r
 }
 
 // WorkActionResult is the outcome of a human action, returned to the handler
@@ -112,6 +118,12 @@ func (s *WorkActionService) Approve(ctx context.Context, projectID, canonicalID,
 // concurrencyStrategy: skip. Once the revision cap is reached it escalates to a
 // human (kb.tasks) and does NOT re-enqueue. The rework run's id is persisted on
 // the feedback round it produced (rather than trusting a caller-supplied id).
+// RequestWorkItemChanges is the source-tool adapter for RequestChanges.
+func (s *WorkActionService) RequestWorkItemChanges(ctx context.Context, projectID, canonicalID, author, text string) error {
+	_, err := s.RequestChanges(ctx, projectID, canonicalID, author, text)
+	return err
+}
+
 func (s *WorkActionService) RequestChanges(ctx context.Context, projectID, canonicalID, author, text string) (*WorkActionResult, error) {
 	head, agent, def, err := s.resolveWorkContext(ctx, projectID, canonicalID)
 	if err != nil {
@@ -209,11 +221,21 @@ func (s *WorkActionService) Unblock(ctx context.Context, projectID, canonicalID,
 	_ = s.repo.ClearWorkItemState(ctx, projectID, canonicalID)
 	res := &WorkActionResult{}
 	if agent != nil {
+		var trigger *AgentWorkTrigger
+		if def != nil {
+			trigger = def.MatchWorkTrigger(head.Type, head.Status)
+		}
+		inv := workRunInvocation(ctx, s.workInvocation, head.ProjectID, head, trigger)
 		opts := CreateRunQueuedOptions{
 			SubjectObjectID:   &head.CanonicalID,
 			SubjectObjectType: &head.Type,
-			TrustedInternal:   true,
+			TrustedInternal:   workRunTrusted(head),
 			TriggerMetadata:   workTriggerMetadata(head),
+			Invocation:        inv,
+			SourceTriggerID:   workSourceTriggerID(head),
+		}
+		if inv != nil {
+			opts.Priority = inv.Priority
 		}
 		if note != "" {
 			opts.TriggerMessage = &note
@@ -483,17 +505,29 @@ func (s *WorkActionService) enqueueWorkRun(ctx context.Context, head *graph.Work
 	if agentDef != nil && agentDef.WorkConfig.RetryPolicy.MaxAttempts > 0 {
 		maxAttempts = agentDef.WorkConfig.RetryPolicy.MaxAttempts
 	}
+	var trigger *AgentWorkTrigger
+	if agentDef != nil {
+		trigger = agentDef.MatchWorkTrigger(head.Type, head.Status)
+	}
+	inv := workRunInvocation(ctx, s.workInvocation, head.ProjectID, head, trigger)
 	opts := CreateRunQueuedOptions{
 		SubjectObjectID:   &head.CanonicalID,
 		SubjectObjectType: &head.Type,
-		TrustedInternal:   true,
+		TrustedInternal:   workRunTrusted(head),
 		TriggerMetadata:   workTriggerMetadata(head),
+		Invocation:        inv,
+		SourceTriggerID:   workSourceTriggerID(head),
+	}
+	if inv != nil {
+		opts.Priority = inv.Priority
 	}
 	if len(feedback) > 0 {
 		if opts.TriggerMetadata == nil {
 			opts.TriggerMetadata = map[string]any{}
 		}
 		opts.TriggerMetadata["work_feedback"] = feedback
+		msg := "Rework this item using the review feedback in work_feedback. Update the existing pull request branch; do not open a second pull request."
+		opts.TriggerMessage = &msg
 	}
 	run, err := s.repo.CreateRunQueued(ctx, agent.ID, maxAttempts, opts)
 	if err != nil {

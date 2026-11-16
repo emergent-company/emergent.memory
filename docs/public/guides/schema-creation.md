@@ -4,7 +4,7 @@ title: Schema Creation Guide
 category: guides
 tags: [schemas, mcp, api]
 description: Create and manage schemas through MCP and the REST API
-lastUpdated: 2026-03-22
+lastUpdated: 2026-11-15
 readTime: 15
 related: []
 ---
@@ -30,7 +30,10 @@ Schemas can be created via:
 2. **REST API** - `/api/schemas/projects/:projectId/*` (HTTP clients)
 3. **CLI** - `memory schemas create --file <path>` (JSON or YAML files)
 
-Both MCP and REST methods use identical field definitions and validation.
+Both MCP and REST methods use identical field definitions and validation: each
+path runs the same schema-definition guard, so a definition rejected on one
+(for example a bare scalar `items`, or a `scopeKey` naming an undeclared
+property) is rejected on the other with the same message.
 
 ---
 
@@ -168,6 +171,7 @@ Entity type schemas use **JSON Schema** to define object properties, validation 
 | Feature        | Type        | Example                                        |
 | -------------- | ----------- | ---------------------------------------------- |
 | **String**     | `string`    | `"type": "string"`                             |
+| **Markdown**   | `format`    | `"type": "string", "format": "markdown"` renders the value as Markdown in the object preview, the object page and the device card. Presentation only — the value is still a `string`, never validated or coerced |
 | **Label**      | `title`     | `"title": "Publication date"` (human-friendly field name) |
 | **URL**        | `url`       | `"type": "url"` (http/https, validated)         |
 | **MD5**        | `md5`       | `"type": "md5"` (32 hex characters)            |
@@ -201,7 +205,10 @@ type, and an element of the wrong type is rejected with its index
 is applied when an object is created, and `enum` is enforced on writes and
 drives the editor's select. The remaining JSON-Schema keywords (`pattern`,
 `minLength`, `maxLength`, `minItems`, `maxItems`) are carried through for
-documentation and tooling but are **not** enforced when an object is written.
+documentation and tooling but are **not** enforced when an object is written. A
+bare scalar `items` (`"items": "string"`) is not a schema and is rejected when
+the schema is created or updated, over REST and MCP alike — write
+`"items": {"type": "string"}` so element validation runs.
 
 `enum` is enforced on primitive property types: `string` (including the
 semantic and hex-digest spellings) and `number`/`integer`/`boolean`, on object
@@ -216,6 +223,18 @@ value. An empty enum list on a primitive property is rejected when the schema is
 write above or below the bound is rejected. `format` on a `string` property is
 enforced for `email`, `phone`, `country`, `currency` and `time`, and is
 documentation-only for anything else.
+
+`format: "markdown"` is a content declaration, not a value type: the stored
+value stays a string, no write is rejected, and every read surface (the object
+preview, the object page's article and details rail, and the device object card)
+renders it as sanitized Markdown instead of escaped text. The declaration beats
+the long-form key heuristic the UI otherwise applies, so a field called
+`release_notes` reads as authored while a `body` declared with `format: email`
+does not. Keep an inline markdown property short: about **5,000 characters**
+(a paragraph or two, a list, a link, a small table) is the useful ceiling.
+Preview rows render at most the first **20,000 characters** and mark the rest
+truncated. Anything longer — multiple sections, images, text you want searchable
+— belongs in a Markdown document linked to the object, not in a property.
 
 The semantic and digest types normalize what they store: `url` must be an
 absolute `http`/`https` URL with a host; a hash must be exactly its digest

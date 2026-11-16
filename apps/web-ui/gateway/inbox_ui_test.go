@@ -204,6 +204,187 @@ func TestInboxPageActionableRowDeepLink(t *testing.T) {
 	}
 }
 
+// TestRenderInboxRowsUseLinkRow pins #756: inbox rows are components.LinkRow —
+// one anchor over the leading tile, title and metadata line — rather than a
+// hand-rolled row whose body anchor wrapped the badges, the message and the
+// action cluster. Everything interactive stays outside that anchor (the trailing
+// control cluster) and everything supplementary rides in the Details band, so
+// no button or second link nests in the link. The row root keeps the hooks
+// inbox.js reconciles on (id, data-notification-id, data-notification-unread)
+// and data-href, so a tap anywhere on the row still opens the notification.
+//
+// The second fixture carries no ActionURL: it renders the same row with no
+// anchor and no chevron, because there is nothing to open.
+func TestRenderInboxRowsUseLinkRow(t *testing.T) {
+	opened := Notification{
+		ID: "n-open", Scope: "project", ProjectID: "p1", Category: "question",
+		Title: "Agent needs your input", Message: "Which fruit?",
+		RequiresAction: true, Read: false,
+		ActionURL: "/chat?c=conv-1", ActionLabel: "Review",
+		Actions:   []NotificationAction{{Label: "Accept", Value: "accept"}},
+		CreatedAt: "2026-09-20T10:00:00Z",
+	}
+	untargeted := Notification{
+		ID: "n-plain", Scope: "project", ProjectID: "p1", Category: "permission",
+		Title: "Role changed", Message: "You are now an admin", Read: true,
+		CreatedAt: "2026-09-21T10:00:00Z",
+	}
+	markup := renderHTML(t, InboxPage(inboxView{
+		Scope: "all", Tab: "all",
+		ProjectNames:  map[string]string{"p1": "Acme"},
+		Notifications: []Notification{opened, untargeted},
+	}))
+
+	// The conversion must not reintroduce an anchor inside an anchor or a form
+	// or button inside a link.
+	assertNoNestedAnchors(t, markup)
+
+	listAt := strings.Index(markup, `data-inbox-list`)
+	if listAt < 0 {
+		t.Fatal("inbox list not rendered")
+	}
+	region := markup[listAt:]
+
+	// --- the row that opens something -------------------------------------
+	row := inboxRowSlice(t, region, opened.ID, untargeted.ID)
+	for _, want := range []string{
+		`id="notification-n-open"`,
+		`data-notification-id="n-open"`,
+		`data-notification-unread="true"`,
+		`data-href="/chat?c=conv-1"`,
+		`data-notif-action="read"`,
+		`data-notif-action="resolve"`,
+		`data-notif-verb="accept"`,
+		">New<",
+		"Action",
+		"Acme",
+		"Which fruit?",
+	} {
+		if !strings.Contains(row, want) {
+			t.Errorf("openable row missing %q:\n%s", want, row)
+		}
+	}
+	if got := strings.Count(row, "<a "); got != 1 {
+		t.Errorf("openable row renders %d anchors, want 1 (LinkRow's)", got)
+	}
+	if got := strings.Count(row, "lucide--chevron-right"); got != 1 {
+		t.Errorf("openable row renders %d chevrons, want 1", got)
+	}
+
+	anchor := anchorSegment(t, row)
+	for _, want := range []string{
+		`href="/chat?c=conv-1"`,
+		`data-notification-open`,
+		`data-notif-id="n-open"`,
+		opened.Title,
+		notificationMeta(opened),
+	} {
+		if !strings.Contains(anchor, want) {
+			t.Errorf("row anchor missing %q:\n%s", want, anchor)
+		}
+	}
+	// The anchor covers the title block only: the action cluster, the badges
+	// and the message render outside it.
+	for _, unwanted := range []string{
+		`data-notif-action=`,
+		`data-notif-verb=`,
+		"<button",
+		"<form",
+		"Which fruit?",
+		">New<",
+		"Action",
+		"Acme",
+	} {
+		if strings.Contains(anchor, unwanted) {
+			t.Errorf("anchor contains %q; only the leading/title/meta block may be inside the row link:\n%s", unwanted, anchor)
+		}
+	}
+
+	// --- the row with nothing to open -------------------------------------
+	plain := inboxRowSlice(t, region, untargeted.ID, "")
+	for _, want := range []string{
+		`id="notification-n-plain"`,
+		`data-notification-id="n-plain"`,
+		`data-notification-unread="false"`,
+		`data-notif-action="unread"`,
+		untargeted.Title,
+		notificationMeta(untargeted),
+		untargeted.Message,
+	} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("untargeted row missing %q:\n%s", want, plain)
+		}
+	}
+	for _, unwanted := range []string{`<a `, "data-href=", "data-notification-open", "lucide--chevron-right"} {
+		if strings.Contains(plain, unwanted) {
+			t.Errorf("untargeted row renders %q; a row with no navigation target must not advertise one:\n%s", unwanted, plain)
+		}
+	}
+}
+
+// TestInboxRowWithoutDetailsOmitsBand pins that a read notification with nothing
+// to add — no message, no badges — is not given LinkRow's details band, which
+// would otherwise leave an empty 12px strip under the row.
+func TestInboxRowWithoutDetailsOmitsBand(t *testing.T) {
+	bare := Notification{
+		ID: "n-bare", Scope: "account", Category: "system", Title: "Signed in",
+		Read: true, CreatedAt: "2026-09-22T10:00:00Z",
+	}
+	withBody := Notification{
+		ID: "n-body", Scope: "account", Category: "system", Title: "Signed in",
+		Message: "From a new device", Read: true, CreatedAt: "2026-09-23T10:00:00Z",
+	}
+	markup := renderHTML(t, InboxPage(inboxView{
+		Scope: "account", Tab: "all", Notifications: []Notification{bare, withBody},
+	}))
+
+	listed := markup[strings.Index(markup, "data-inbox-list"):]
+	if row := inboxRowSlice(t, listed, bare.ID, withBody.ID); strings.Contains(row, "px-4 pb-3") {
+		t.Errorf("row with no details content still rendered the details band:\n%s", row)
+	}
+	row := inboxRowSlice(t, listed, withBody.ID, "")
+	if !strings.Contains(row, "px-4 pb-3") || !strings.Contains(row, withBody.Message) {
+		t.Errorf("row with a message lost its details band:\n%s", row)
+	}
+}
+
+// inboxRowSlice returns the markup of one row, from its root start tag through
+// the start of the next row (or the end of the region). Rows are siblings, so
+// the next row's id marker is the boundary. The slice starts at the row root's
+// `<`: templ spreads an attribute map in map order, so the id is not reliably
+// the first attribute on the tag.
+func inboxRowSlice(t *testing.T, region, id, nextID string) string {
+	t.Helper()
+	marker := `id="notification-` + id + `"`
+	at := strings.Index(region, marker)
+	if at < 0 {
+		t.Fatalf("row %q not rendered", id)
+	}
+	rest := region[strings.LastIndex(region[:at], "<"):]
+	if nextID != "" {
+		if next := strings.Index(rest, `id="notification-`+nextID+`"`); next >= 0 {
+			rest = rest[:strings.LastIndex(rest[:next], "<")]
+		}
+	}
+	return rest
+}
+
+// anchorSegment returns the markup of the region's first anchor, opening tag
+// through closing tag, so an assertion about what a row link contains cannot be
+// satisfied by a sibling element that happens to carry the same attribute.
+func anchorSegment(t *testing.T, markup string) string {
+	t.Helper()
+	open := strings.Index(markup, "<a ")
+	if open < 0 {
+		t.Fatalf("no anchor in %s", markup)
+	}
+	end := strings.Index(markup[open:], "</a>")
+	if end < 0 {
+		t.Fatalf("anchor never closes in %s", markup)
+	}
+	return markup[open : open+end+len("</a>")]
+}
+
 func TestInboxPageNonActionableOpenLink(t *testing.T) {
 	n := Notification{
 		ID: "n2", Scope: "account", Title: "Role changed", Read: true,
@@ -348,7 +529,7 @@ func TestNotificationsBellCapsAtNinePlus(t *testing.T) {
 // navbar bell.
 func TestAppShellRendersBell(t *testing.T) {
 	html := renderHTML(t, appShell(
-		"Inbox", nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
+		"Inbox", nil, nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
 		7,
 		nil,
 		&currentUser{Name: "Ada", Sub: "sub-a"}, nil, templ.NopComponent, nil,

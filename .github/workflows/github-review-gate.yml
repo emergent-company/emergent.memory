@@ -1,6 +1,8 @@
 name: GitHub review gate
 
-# Arms the merge guard and enables auto-merge from the review bot's marker.
+# Dispatches the merge guard and enables auto-merge on the review bot's marker.
+# That marker is advisory: it never satisfies the required `verify` context and
+# never authorizes a merge — see the trust note below.
 #
 # The review agent posts a conversation comment:
 #
@@ -13,11 +15,18 @@ name: GitHub review gate
 # for the current head, it dispatches a fresh guard run and enables auto-merge;
 # a rejection disables auto-merge.
 #
-# Trust: `GITHUB_REVIEW_BOT_LOGINS` is a repository variable naming the review
-# bot login(s) (comma/space separated, e.g. `memory-reviewer[bot]`). The legacy
-# singular `GITHUB_REVIEW_BOT_LOGIN` is still read when the list is unset. Every
-# listed App's immutable user id must also be in `MERGE_GUARD_TRUSTED_USER_IDS`,
-# so the guard itself accepts the marker. Both gates are required; this workflow
+# Trust: `REVIEW_BOT_LOGINS` is a repository variable naming the review bot
+# login(s) (comma/space separated, e.g. `memory-reviewer[bot]`). The legacy
+# singular `REVIEW_BOT_LOGIN` is still read when the list is unset. It is the
+# producer setting only: it selects whose comment this workflow reads, and it
+# grants no trust. Do NOT add a listed App's immutable user id to
+# `MERGE_GUARD_TRUSTED_USER_IDS` — that allowlist is human identities only, and
+# a bot id in it is a documented misconfiguration that makes the merge guard
+# delta-only: the bot's marker on the newest head is then the entire review. A
+# bot marker is advisory: this workflow dispatches the guard and arms auto-merge
+# on it, but the marker never satisfies the required `verify` context and never
+# authorizes a merge, so the armed auto-merge waits for a trusted human or
+# independent marker on the same head. That wait is intended. This workflow
 # never trusts a human-commenter.
 on:
   issue_comment:
@@ -42,8 +51,8 @@ jobs:
           PR: ${{ github.event.issue.number }}
           BODY: ${{ github.event.comment.body }}
           AUTHOR: ${{ github.event.comment.user.login }}
-          BOT_LOGINS: ${{ vars.GITHUB_REVIEW_BOT_LOGINS }}
-          BOT_LOGIN_LEGACY: ${{ vars.GITHUB_REVIEW_BOT_LOGIN }}
+          BOT_LOGINS: ${{ vars.REVIEW_BOT_LOGINS }}
+          BOT_LOGIN_LEGACY: ${{ vars.REVIEW_BOT_LOGIN }}
         run: |
           set -euo pipefail
 
@@ -53,7 +62,7 @@ jobs:
             logins="${BOT_LOGIN_LEGACY:-}"
           fi
           if [[ -z "${logins//[[:space:],]/}" ]]; then
-            echo "GITHUB_REVIEW_BOT_LOGINS is unset; review gate is disabled"
+            echo "REVIEW_BOT_LOGINS is unset; review gate is disabled"
             exit 0
           fi
           # Comma, space, tab, or newline separated; GitHub logins are

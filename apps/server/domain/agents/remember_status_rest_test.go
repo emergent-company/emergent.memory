@@ -118,8 +118,8 @@ func TestGetRunRememberStatus_NotFoundMapsTo404(t *testing.T) {
 
 	err := h.GetRunRememberStatus(c)
 
-	var appErr *apperror.Error
-	if !errors.As(err, &appErr) {
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	if !ok {
 		t.Fatalf("expected *apperror.Error, got %T: %v", err, err)
 	}
 	if appErr.HTTPStatus != http.StatusNotFound {
@@ -146,8 +146,8 @@ func TestGetRunRememberStatus_MissingParamsReturn400(t *testing.T) {
 
 			err := h.GetRunRememberStatus(c)
 
-			var appErr *apperror.Error
-			if !errors.As(err, &appErr) {
+			appErr, ok := errors.AsType[*apperror.Error](err)
+			if !ok {
 				t.Fatalf("expected *apperror.Error, got %T: %v", err, err)
 			}
 			if appErr.HTTPStatus != http.StatusBadRequest {

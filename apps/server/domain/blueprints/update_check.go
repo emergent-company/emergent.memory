@@ -148,8 +148,7 @@ func updateAvailable(appliedVersion, latestVersion, appliedHash, latestHash stri
 // isRepoNotFound reports whether err is the codeload "repository or ref not
 // found" failure (used to hint that a private repo needs a credential).
 func isRepoNotFound(err error) bool {
-	var apErr *apperror.Error
-	if errors.As(err, &apErr) {
+	if apErr, ok := errors.AsType[*apperror.Error](err); ok {
 		return strings.Contains(apErr.Message, "not found")
 	}
 	return false
@@ -159,8 +158,8 @@ func isRepoNotFound(err error) bool {
 // "already exists" class). Used by the update path to treat a duplicate create
 // as already-created and continue.
 func isConflict(err error) bool {
-	var apErr *apperror.Error
-	return errors.As(err, &apErr) && apErr.Code == apperror.ErrConflict.Code
+	apErr, ok := errors.AsType[*apperror.Error](err)
+	return ok && apErr.Code == apperror.ErrConflict.Code
 }
 
 // ──────────────────────────────────────────────
@@ -589,8 +588,7 @@ func updateConflictResult(err error) json.RawMessage {
 		"requiresMerge": true,
 		"message":       err.Error(),
 	}
-	var apErr *apperror.Error
-	if errors.As(err, &apErr) {
+	if apErr, ok := errors.AsType[*apperror.Error](err); ok {
 		payload["message"] = apErr.Message
 		if apErr.Details != nil {
 			if conflicts, ok := apErr.Details["conflicts"]; ok {

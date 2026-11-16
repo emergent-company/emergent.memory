@@ -295,11 +295,14 @@ func processingRetryFormAttrs(r processingRetryAction) templ.Attributes {
 // sidebarWarnBadge is the Documents nav count. It counts document problems
 // only; other areas will get their own badges if they need one.
 templ sidebarWarnBadge(n int) {
-	@ui.Badge(ui.BadgeProps{
-		Label:   processingBadgeCount(n),
-		Variant: ui.BadgeError,
-		Size:    ui.BadgeSizeXS,
-		Attrs:   templ.Attributes{"data-testid": "documents-problem-badge", "class": "ml-1"},
+	@components.BadgeWithClass(components.BadgeWithClassProps{
+		BadgeProps: ui.BadgeProps{
+			Label:   processingBadgeCount(n),
+			Variant: ui.BadgeError,
+			Size:    ui.BadgeSizeXS,
+			Attrs:   templ.Attributes{"data-testid": "documents-problem-badge"},
+		},
+		Class: "ml-1",
 	})
 }
 

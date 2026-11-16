@@ -33,7 +33,7 @@ interface MemberDto {
   email?: string;
 }
 
-/** The label the assignee picker renders for a member (gateway/board.go buildBoardAssigneeCandidates). */
+/** The label the assignee picker renders for a member (gateway/work_board.go buildBoardAssigneeCandidates). */
 function memberLabel(m: MemberDto): string {
   const name = (m.displayName ?? '').trim();
   return name !== '' ? name : (m.email ?? '').trim();
@@ -41,7 +41,7 @@ function memberLabel(m: MemberDto): string {
 
 /** The board card, scoped to one status column. */
 function cardIn(page: Page, status: string) {
-  return page.locator(`[data-board-column="${status}"]`).getByTestId(`board-card-${canonicalId}`);
+  return page.locator(`[data-board-column="${status}"]`).getByTestId(`work-card-${canonicalId}`);
 }
 
 /**
@@ -50,7 +50,7 @@ function cardIn(page: Page, status: string) {
  * native dialog).
  */
 async function openPreview(page: Page): Promise<void> {
-  await page.getByTestId(`board-card-${canonicalId}`).click();
+  await page.getByTestId(`work-card-${canonicalId}`).click();
   const panel = page.locator('#object-preview-panel');
   await expect(panel).toHaveAttribute('aria-hidden', 'false');
   // The summary and the ?actions=board action slot load over htmx.
@@ -145,8 +145,8 @@ test.describe.serial('board work-item lifecycle', () => {
 
   test('renders the seeded item in the ready lane and opens the shared preview', async ({ page }) => {
     expect(canonicalId, 'beforeAll must seed the item').toBeTruthy();
-    await goto(page, '/board');
-    await expectAppPage(page, /Board/);
+    await goto(page, '/work/board');
+    await expectAppPage(page, /Work/);
 
     await expect(cardIn(page, 'ready')).toBeVisible();
 
@@ -161,7 +161,7 @@ test.describe.serial('board work-item lifecycle', () => {
 
   test('approve moves a review item to done', async ({ page }) => {
     await setStatus(page, 'review');
-    await goto(page, '/board');
+    await goto(page, '/work/board');
     await openPreview(page);
 
     await previewActions(page).getByRole('button', { name: 'Approve' }).click();
@@ -174,7 +174,7 @@ test.describe.serial('board work-item lifecycle', () => {
 
   test('retry moves a blocked item back to ready', async ({ page }) => {
     await setStatus(page, 'blocked');
-    await goto(page, '/board');
+    await goto(page, '/work/board');
     await openPreview(page);
 
     await previewActions(page).getByRole('button', { name: 'Retry' }).click();
@@ -194,7 +194,7 @@ test.describe.serial('board work-item lifecycle', () => {
     const target = memberLabel(members[0] ?? {});
     expect(target, 'a project member must exist to reassign').toBeTruthy();
 
-    await goto(page, '/board');
+    await goto(page, '/work/board');
     await openPreview(page);
 
     // The picker now lives in the preview's top workflow strip. Its menu is
@@ -221,7 +221,7 @@ test.describe.serial('board work-item lifecycle', () => {
   });
 
   test('cancel moves the item to blocked', async ({ page }) => {
-    await goto(page, '/board');
+    await goto(page, '/work/board');
     await openPreview(page);
 
     await previewActions(page).getByRole('button', { name: 'Cancel' }).click();

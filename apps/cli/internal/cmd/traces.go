@@ -231,7 +231,19 @@ func tracesGet(cmd *cobra.Command, path string, params url.Values, projectID str
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 	if resp.StatusCode == http.StatusServiceUnavailable {
-		return nil, fmt.Errorf("tracing is not enabled on the server (OTEL_EXPORTER_OTLP_ENDPOINT not configured)")
+		// 503 covers two opposite situations: this deployment has no tracing
+		// backend configured (an operator mistake the user can report), and a
+		// configured Tempo backend that is down or unreachable (#843). Only the
+		// first is a configuration problem, so key on the envelope code.
+		var envelope struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(body, &envelope) == nil && envelope.Error.Code == "tracing_disabled" {
+			return nil, fmt.Errorf("tracing is not enabled on the server (OTEL_EXPORTER_OTLP_ENDPOINT not configured)")
+		}
+		return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))

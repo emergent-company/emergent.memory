@@ -36,8 +36,7 @@ func (s *Service) TriggerSync(ctx context.Context, projectID, sourceID uuid.UUID
 			// *apperror.Error renders as "<code>: <message>", and nesting that
 			// inside another validation error reads as a doubled code.
 			detail := verr.Error()
-			var appErr *apperror.Error
-			if errors.As(verr, &appErr) {
+			if appErr, ok := errors.AsType[*apperror.Error](verr); ok {
 				detail = appErr.Message
 			}
 			return nil, apperror.NewValidation("choose a sync target before syncing: " + detail)

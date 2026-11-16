@@ -15,7 +15,6 @@ import (
 func rstr(s string) *string        { return &s }
 func rint(i int) *int              { return &i }
 func rf32(f float32) *float32      { return &f }
-func rtime(t time.Time) *time.Time { return &t }
 func ruuid(u uuid.UUID) *uuid.UUID { return &u }
 
 func TestResponseOptsFromArgs(t *testing.T) {
@@ -72,6 +71,7 @@ func testObject() *graph.GraphObjectResponse {
 		SupersedesID:      &supersedes,
 		Version:           4,
 		Type:              "person",
+		Name:              rstr("Alice"),
 		Key:               rstr("alice"),
 		Status:            rstr("active"),
 		Namespace:         rstr("test"),
@@ -211,25 +211,26 @@ func TestSlimEntity(t *testing.T) {
 		}
 	})
 
-	t.Run("name omitted when property is not a string", func(t *testing.T) {
+	t.Run("name is the column, never properties.name", func(t *testing.T) {
 		o := testObject()
-		o.Properties = map[string]any{"name": 42}
+		o.Name = nil
+		o.Properties = map[string]any{"name": "Property only", "title": "Property title"}
 		got := slimEntity(o, ResponseOpts{FieldStrategy: "full"})
 		if _, ok := got["name"]; ok {
-			t.Errorf("name should be omitted for non-string property, got %v", got)
+			t.Errorf("name must not be derived from properties, got %v", got)
 		}
 	})
 
-	t.Run("name omitted when property name is empty string", func(t *testing.T) {
+	t.Run("name omitted when the column is empty string", func(t *testing.T) {
 		o := testObject()
-		o.Properties = map[string]any{"name": ""}
+		o.Name = rstr("")
 		got := slimEntity(o, ResponseOpts{FieldStrategy: "full"})
 		if _, ok := got["name"]; ok {
 			t.Errorf("name should be omitted when empty, got %v", got)
 		}
 	})
 
-	t.Run("fields projection selects keys and prepends name", func(t *testing.T) {
+	t.Run("fields projection selects exactly the requested keys", func(t *testing.T) {
 		got := slimEntity(testObject(), ResponseOpts{Fields: []string{"age"}})
 		props, ok := got["properties"].(map[string]any)
 		if !ok {
@@ -241,8 +242,10 @@ func TestSlimEntity(t *testing.T) {
 		if _, ok := props["city"]; ok {
 			t.Errorf("projection should exclude unrequested key city, got %v", props)
 		}
-		if _, ok := props["name"]; !ok {
-			t.Errorf("projection should prepend name when absent from fields, got %v", props)
+		// properties.name is an ordinary property now, not a title that every
+		// payload must carry (#824).
+		if _, ok := props["name"]; ok {
+			t.Errorf("projection should not add properties.name for an unrequested key, got %v", props)
 		}
 	})
 
@@ -496,6 +499,7 @@ func TestSlimTraverseResponse(t *testing.T) {
 					CanonicalID: uuid.MustParse("11111111-1111-1111-1111-111111111111"),
 					Depth:       0,
 					Type:        "person",
+					Name:        rstr("Alice"),
 					Key:         rstr("alice"),
 					Labels:      []string{"a"},
 					Properties:  map[string]any{"name": "Alice"},
@@ -842,5 +846,48 @@ func TestSlimSearchResponse_BranchProvenanceAndScopeNote(t *testing.T) {
 	unscoped := slimSearchResponse(&graph.SearchResponse{Data: []*graph.SearchResultItem{mainItem}, Total: 1, Meta: &graph.SearchResponseMeta{}}, ResponseOpts{})
 	if _, ok := unscoped["meta"]; ok {
 		t.Errorf("meta should stay verbose-only when no branch scope ran: %v", unscoped)
+	}
+}
+
+// TestSlimTraverseNodeUsesNameColumn pins #824 on the traversal shape: the name
+// comes from the object's name column, and a node with only properties.name is
+// nameless rather than titled by a property.
+func TestSlimTraverseNodeUsesNameColumn(t *testing.T) {
+	node := &graph.TraverseNode{
+		CanonicalID: uuid.MustParse("11111111-1111-1111-1111-111111111111"),
+		Type:        "person",
+		Key:         rstr("alice"),
+		Name:        rstr("Alice"),
+		Properties:  map[string]any{"name": "Property Alice"},
+	}
+	got := slimTraverseNode(node, ResponseOpts{})
+	if got["name"] != "Alice" {
+		t.Errorf("name = %v, want the name column Alice", got["name"])
+	}
+
+	node.Name = nil
+	got = slimTraverseNode(node, ResponseOpts{})
+	if _, ok := got["name"]; ok {
+		t.Errorf("a node without a name column must not fall back to properties.name, got %v", got)
+	}
+}
+
+// TestSlimSimilarResultUsesNameColumn is the same contract on the
+// similar-objects shape.
+func TestSlimSimilarResultUsesNameColumn(t *testing.T) {
+	sr := &graph.SimilarObjectResult{
+		ID:         uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+		Type:       "person",
+		Distance:   0.2,
+		Name:       rstr("Alice"),
+		Properties: map[string]any{"name": "Property Alice"},
+	}
+	if got := slimSimilarResult(sr, ResponseOpts{}); got["name"] != "Alice" {
+		t.Errorf("name = %v, want the name column Alice", got["name"])
+	}
+
+	sr.Name = nil
+	if got := slimSimilarResult(sr, ResponseOpts{}); got["name"] != nil {
+		t.Errorf("a nameless result must not fall back to properties.name, got %v", got["name"])
 	}
 }

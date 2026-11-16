@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/githubapp"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -69,6 +70,7 @@ type SourceTriggerInput struct {
 	AgentID     string
 	Queue       string
 	EventFilter map[string]any
+	Invocation  *agents.AgentInvocation
 	Enabled     *bool
 }
 
@@ -204,8 +206,7 @@ func validateSourceAppPrivateKey(raw string) error {
 	case errors.Is(err, githubapp.ErrPrivateKeyNotRSA):
 		return apperror.NewBadRequest("privateKey is not an RSA key; GitHub App private keys must be RSA")
 	case errors.Is(err, githubapp.ErrPrivateKeyTooWeak):
-		var weak *githubapp.WeakPrivateKeyError
-		if errors.As(err, &weak) {
+		if weak, ok := errors.AsType[*githubapp.WeakPrivateKeyError](err); ok {
 			return apperror.NewBadRequest(fmt.Sprintf(
 				"privateKey is too weak; the RSA modulus must be at least %d bits, but this key is %d bits",
 				githubapp.MinRSAPrivateKeyBits, weak.Bits))
@@ -434,6 +435,7 @@ func (s *Service) CreateSourceTrigger(ctx context.Context, projectID, sourceID u
 		AgentID:     mustUUID(agentID),
 		Queue:       defaultSourceQueue(in.Queue),
 		EventFilter: in.EventFilter,
+		Invocation:  agents.NormalizeInvocation(in.Invocation),
 		Enabled:     enabled,
 	}
 	if trigger.EventFilter == nil {
@@ -475,6 +477,9 @@ func (s *Service) UpdateSourceTrigger(ctx context.Context, projectID, sourceID, 
 	if in.EventFilter != nil {
 		trigger.EventFilter = in.EventFilter
 	}
+	if in.Invocation != nil {
+		trigger.Invocation = agents.NormalizeInvocation(in.Invocation)
+	}
 	if in.Enabled != nil {
 		trigger.Enabled = *in.Enabled
 	}
@@ -508,8 +513,11 @@ func (s *Service) validateTriggerInput(ctx context.Context, projectID uuid.UUID,
 	if eventType == "" && requireAll {
 		return "", apperror.NewValidation("eventType is required")
 	}
-	if eventType != "" && src.Provider == ProviderTypeGitHubApp && eventType != "pull_request" {
-		return "", apperror.NewValidation("github_app supports only the pull_request event")
+	if eventType != "" && src.Provider == ProviderTypeGitHubApp && eventType != "pull_request" && eventType != "issues" {
+		return "", apperror.NewValidation("github_app supports only pull_request and issues events")
+	}
+	if err := agents.ValidateInvocation(in.Invocation); err != nil {
+		return "", apperror.NewValidation("invocation: " + err.Error())
 	}
 	if strings.TrimSpace(in.AgentID) == "" {
 		if requireAll {
@@ -533,12 +541,29 @@ func (s *Service) resolveTriggerAgentID(ctx context.Context, projectID uuid.UUID
 		return "", apperror.NewInternal("agent resolver is not configured", nil)
 	}
 	projectIDStr := projectID.String()
+	// A disabled definition cannot run: its runs fail as "agent is disabled" in
+	// the worker, so accepting the bind would leave a binding that queues work it
+	// can never run. Refuse the bind here rather than in the shared resolver —
+	// A2A/MCP resolution deliberately resolves disabled agents and must keep
+	// reporting "agent is disabled".
+	if def, err := s.agentRepo.FindDefinitionByID(ctx, agentID.String(), &projectIDStr); err != nil {
+		return "", apperror.NewInternal("failed to resolve agent", err)
+	} else if def != nil && !def.Enabled {
+		return "", apperror.NewValidation("agent " + def.Name + " is disabled; enable it before binding a trigger")
+	}
 	agent, err := s.agentRepo.ResolveRuntimeAgentByID(ctx, projectIDStr, agentID.String())
 	if err != nil {
 		return "", apperror.NewInternal("failed to resolve agent", err)
 	}
 	if agent == nil {
 		return "", apperror.NewNotFound("Agent", raw)
+	}
+	// A disabled runtime agent (not only a disabled definition) cannot run: its
+	// runs fail as "agent is disabled" in the worker, so accepting the bind would
+	// leave a binding that queues work it can never run. The definition check
+	// above covers definition ids; this covers a disabled runtime-agent id.
+	if !agent.Enabled {
+		return "", apperror.NewValidation("agent " + agent.Name + " is disabled; enable it before binding a trigger")
 	}
 	return agent.ID, nil
 }

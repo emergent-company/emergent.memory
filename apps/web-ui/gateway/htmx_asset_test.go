@@ -23,7 +23,7 @@ const htmxAssetSHA256 = "a0abb04f2f45a1f89d1d4844023245537e5e6014c87b144553e0607
 // `hx-partial` blanking the body, `hx-sync` stale-response overwrites,
 // `hx-trigger` on boosted elements, the `changed` modifier, and adds a
 // reconnect timeout to `hx-sse`/`hx-multipart`. Those fixes are load-bearing
-// for the board's `hx-sse` live refresh (see `board.go` boardStream).
+// for the board's `hx-sse` live refresh (see `work_stream.go` workBoardStream).
 //
 // Note: the same-id attribute-restore trap (#1267) is still fixed by the
 // `hx-alpine-compat` extension (#1275), loaded after htmx and before deferred

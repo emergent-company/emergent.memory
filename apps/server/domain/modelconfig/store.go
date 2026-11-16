@@ -48,10 +48,19 @@ func (s *Store) GetProjectModelConfig(ctx context.Context, projectID uuid.UUID) 
 func (s *Store) UpsertProjectModelConfig(ctx context.Context, projectID uuid.UUID, patch ProjectModelConfigPatch) (*ProjectModelConfig, error) {
 	cfg := &ProjectModelConfig{}
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		// Create the row if it does not exist, leaning on the column defaults
-		// ('' models, NOW() timestamps) and leaving an existing row untouched.
+		// Create the row if it does not exist, naming every model column so both
+		// "unset" representations stay one representation (#730). The model
+		// columns default to '' in DDL, but the two provider-slug columns added
+		// by migration 00189 are nullable with no default: an INSERT that named
+		// only project_id stored NULL there for the pair the patch did not set,
+		// and NULL also means "unresolved legacy row" to that migration. Leaning
+		// on an existing row instead of overwriting it keeps this a partial
+		// update. An existing row is left untouched.
 		if _, err := tx.NewRaw(
-			`INSERT INTO kb.project_model_config (project_id) VALUES (?)
+			`INSERT INTO kb.project_model_config
+				(project_id, generative_model, embedding_model,
+				 generative_provider_slug, embedding_provider_slug)
+			 VALUES (?, '', '', '', '')
 			 ON CONFLICT (project_id) DO NOTHING`,
 			projectID,
 		).Exec(ctx); err != nil {

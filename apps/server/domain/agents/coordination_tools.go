@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -589,7 +590,8 @@ func executeSingleSpawn(ctx context.Context, deps *CoordinationToolDeps, req Spa
 			ExecutionMode:     ExecutionModeExecute,
 			AgentDefinitionID: &def.ID,
 		}
-		if createErr := deps.Repo.Create(ctx, agent); createErr != nil {
+		created, createErr := deps.Repo.CreateRuntimeAgentForDefinition(ctx, agent)
+		if createErr != nil {
 			msg := fmt.Sprintf("failed to create runtime agent for definition %q: %s", req.AgentName, createErr.Error())
 			emitFailed(msg)
 			return SpawnResult{
@@ -598,6 +600,7 @@ func executeSingleSpawn(ctx context.Context, deps *CoordinationToolDeps, req Spa
 				Error:     msg,
 			}
 		}
+		agent = created
 	}
 
 	// Determine timeout — explicit timeout overrides agent definition's default_timeout
@@ -737,6 +740,28 @@ func executeSingleSpawn(ctx context.Context, deps *CoordinationToolDeps, req Spa
 			defer result.Cleanup()
 		}
 		if err != nil {
+			if errors.Is(err, ErrRunAlreadyResumed) {
+				// Another follower (a client retry, a re-delivered wake) claimed
+				// this pause first and is executing the turn. Nothing this caller
+				// started was lost, and reporting `error` would make the parent
+				// believe the delegated work failed — and very likely retry a
+				// resume that will be rejected again. Hand back a running status
+				// with a note instead (issue #887).
+				note := "resume already claimed by another caller; that claim is executing the turn (this caller did not start it)"
+				deps.emitSubagent(SubagentUpdate{
+					ID:          syntheticID,
+					ParentRunID: deps.ParentRunID,
+					AgentName:   req.AgentName,
+					Task:        req.Task,
+					Status:      "running",
+				})
+				return SpawnResult{
+					AgentName: req.AgentName,
+					RunID:     *req.ResumeRunID,
+					Status:    RunStatusRunning,
+					Summary:   map[string]any{"note": note},
+				}
+			}
 			emitTerminal(result, err)
 			return SpawnResult{
 				AgentName: req.AgentName,
