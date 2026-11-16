@@ -1157,6 +1157,9 @@ templ objectTypeProperties(properties []PropertyDetail, showLabel bool) {
 					if p.Type != "" {
 						@propertyTypeBadge(p.Type)
 					}
+					if p.Format != "" {
+						@ui.Badge(ui.BadgeProps{Label: p.Format, Variant: ui.BadgeInfo, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Attrs: templ.Attributes{"data-property-format": p.Format}})
+					}
 					if p.Required {
 						@ui.Badge(ui.BadgeProps{Label: "required", Variant: ui.BadgeError, Size: ui.BadgeSizeXS})
 					}
@@ -1181,9 +1184,14 @@ templ objectTypeProperties(properties []PropertyDetail, showLabel bool) {
 						<tr>
 							<td>@propertyName(p)</td>
 							<td>
-								if p.Type != "" {
-									@propertyTypeBadge(p.Type)
-								}
+								<div class="flex flex-wrap items-center gap-1">
+									if p.Type != "" {
+										@propertyTypeBadge(p.Type)
+									}
+									if p.Format != "" {
+										@ui.Badge(ui.BadgeProps{Label: p.Format, Variant: ui.BadgeInfo, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Attrs: templ.Attributes{"data-property-format": p.Format}})
+									}
+								</div>
 							</td>
 							<td>
 								if p.Required {

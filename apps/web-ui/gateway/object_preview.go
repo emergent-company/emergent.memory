@@ -262,7 +262,7 @@ func objectPreviewTypeFields(o GraphObject, schema objectPreviewSchema) []object
 			Description: d.Description,
 			Value:       value,
 			Empty:       value == "",
-			Markdown:    value != "" && objectPreviewFieldMarkdown(d.Name, d.Widget),
+			Markdown:    value != "" && objectPropertyDefMarkdown(d),
 		})
 	}
 	for _, p := range objectPreviewStoredProperties(o) {
@@ -280,9 +280,37 @@ func objectPreviewTypeFields(o GraphObject, schema objectPreviewSchema) []object
 	return out
 }
 
+// objectPropertyDefMarkdown reports whether a schema property's value renders as
+// markdown on every read surface. The schema's explicit `format: markdown`
+// content declaration wins — that is the contract an author states, and it beats
+// a `widget: "input"` hint that would otherwise keep the value on one line. For
+// schemas that declare no format, the long-form heuristics (#814) decide.
+func objectPropertyDefMarkdown(def objectPropertyDef) bool {
+	return def.Markdown() || objectPreviewFieldMarkdown(def.Name, def.Widget)
+}
+
+// markdownPreviewHTML renders a property value as sanitized markdown for the
+// bounded read surfaces (the preview drawer and the object page's details rail),
+// capping the source at maxTextPreviewChars. The cap is presentation only: the
+// stored value is never truncated, and the caller renders a "truncated" note so
+// the reader knows the row is partial. Mid-fence truncation degrades to an open
+// code block (goldmark runs to end of input), which is the same trade the
+// document preview makes.
+func markdownPreviewHTML(value string) (body string, truncated bool) {
+	if runes := []rune(value); len(runes) > maxTextPreviewChars {
+		value = string(runes[:maxTextPreviewChars])
+		truncated = true
+	}
+	return renderMarkdown(value), truncated
+}
+
 // objectPreviewFieldMarkdown reports whether a preview row's value is long-form
 // prose authored as markdown, so the drawer renders it instead of escaping it
 // (#814: a GitHub issue's `body` read as literal "## …", tables and all).
+//
+// This is the fallback for schemas that declare no content format. A row whose
+// property declares `format: markdown` is handled by objectPropertyDefMarkdown
+// and never needs the key/widget heuristic.
 //
 // The schema's widget hint wins: an explicit "input" asks for one line, so its
 // value stays plain text even under a prose key, while "textarea" is the

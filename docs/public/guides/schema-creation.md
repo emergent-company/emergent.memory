@@ -171,6 +171,7 @@ Entity type schemas use **JSON Schema** to define object properties, validation 
 | Feature        | Type        | Example                                        |
 | -------------- | ----------- | ---------------------------------------------- |
 | **String**     | `string`    | `"type": "string"`                             |
+| **Markdown**   | `format`    | `"type": "string", "format": "markdown"` renders the value as Markdown in the object preview, the object page and the device card. Presentation only — the value is still a `string`, never validated or coerced |
 | **Label**      | `title`     | `"title": "Publication date"` (human-friendly field name) |
 | **URL**        | `url`       | `"type": "url"` (http/https, validated)         |
 | **MD5**        | `md5`       | `"type": "md5"` (32 hex characters)            |
@@ -222,6 +223,18 @@ value. An empty enum list on a primitive property is rejected when the schema is
 write above or below the bound is rejected. `format` on a `string` property is
 enforced for `email`, `phone`, `country`, `currency` and `time`, and is
 documentation-only for anything else.
+
+`format: "markdown"` is a content declaration, not a value type: the stored
+value stays a string, no write is rejected, and every read surface (the object
+preview, the object page's article and details rail, and the device object card)
+renders it as sanitized Markdown instead of escaped text. The declaration beats
+the long-form key heuristic the UI otherwise applies, so a field called
+`release_notes` reads as authored while a `body` declared with `format: email`
+does not. Keep an inline markdown property short: about **5,000 characters**
+(a paragraph or two, a list, a link, a small table) is the useful ceiling.
+Preview rows render at most the first **20,000 characters** and mark the rest
+truncated. Anything longer — multiple sections, images, text you want searchable
+— belongs in a Markdown document linked to the object, not in a property.
 
 The semantic and digest types normalize what they store: `url` must be an
 absolute `http`/`https` URL with a host; a hash must be exactly its digest
