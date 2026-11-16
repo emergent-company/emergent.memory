@@ -136,54 +136,90 @@ done
 # 3. A new migration must not build a plain CREATE INDEX on a table that already
 #    exists on the base branch (SHARE lock for the whole build on a populated
 #    table). Tables created by the same set of new migrations are exempt, because
-#    they are empty — that is what the base-table census below approximates.
-base_tables="$(git grep -hoiE 'CREATE TABLE( IF NOT EXISTS)?[[:space:]]+([a-z0-9_]+\.)?[a-z0-9_]+' "$base" -- "$mig_dir" 2>/dev/null \
-  | sed -E 's/.*[[:space:]]([a-z0-9_]+\.)?([a-z0-9_]+)$/\2/' | tr '[:upper:]' '[:lower:]' | sort -u || true)"
+#    they are empty — that is what the base-table census below approximates. The
+#    census is every CREATE TABLE name in the base migrations, so it also covers
+#    tables that were later dropped; a migration that re-creates one of those and
+#    indexes it plainly needs the escape hatch.
+census_rc=0
+base_tables_raw="$(git grep -hoiE 'CREATE TABLE( IF NOT EXISTS)?[[:space:]]+([a-z0-9_]+\.)?[a-z0-9_]+' "$base" -- "$mig_dir" 2>/dev/null)" || census_rc=$?
+check_indexes=1
+if [ "$census_rc" -gt 1 ]; then
+  echo "migration-number: WARNING base table census failed (git grep exit $census_rc); skipping the CONCURRENTLY check" >&2
+  check_indexes=0
+elif [ -z "$base_tables_raw" ]; then
+  echo "migration-number: WARNING base table census is empty; skipping the CONCURRENTLY check" >&2
+  check_indexes=0
+fi
+base_tables="$(printf '%s\n' "$base_tables_raw" \
+  | sed -E 's/.*[[:space:]]([a-z0-9_]+\.)?([a-z0-9_]+)$/\2/' | tr '[:upper:]' '[:lower:]' | sort -u)"
 
-# Emit "<file>: <table>" for each offending statement in one migration file.
-# Statements are accumulated until a semicolon so a wrapped
-# `CREATE INDEX ... \n ON kb.t (...)` is caught; comments are stripped first.
-# Matching is done on a lowercased copy: mawk 1.3.4 mis-matches long runs of
-# single-character bracket classes (e.g. /[Cc][Oo][Nn][Cc].../), which silently
-# defeated the CONCURRENTLY exclusion.
+# Emit "<file>:<line>: <table>" for each offending statement in one migration
+# file. Statements are split on `;` so a wrapped `CREATE INDEX ... \n ON kb.t
+# (...)` is caught, and also so two statements sharing a line cannot mask each
+# other (a `DROP INDEX CONCURRENTLY` next to a plain create used to hide it).
+# `--` and `/* ... */` comments are stripped, double quotes removed (so
+# "kb"."invites" resolves), and matching is done on a lowercased copy: mawk 1.3.4
+# mis-matches long runs of single-character bracket classes
+# (e.g. /[Cc][Oo][Nn][Cc].../), which silently defeated the CONCURRENTLY
+# exclusion.
 index_offenders() {
   awk -v tables="$base_tables" '
     BEGIN { n = split(tables, t, "\n"); for (i = 1; i <= n; i++) if (t[i] != "") base[t[i]] = 1 }
+    function check(stmt, at) {
+      if (stmt !~ /create[ \t]+(unique[ \t]+)?index[ \t]/) return
+      if (stmt ~ /concurrently/) return
+      if (!match(stmt, /on[ \t]+(only[ \t]+)?([a-z0-9_]+\.)?[a-z0-9_]+/)) return
+      tbl = substr(stmt, RSTART, RLENGTH)
+      sub(/^on[ \t]+(only[ \t]+)?/, "", tbl)
+      sub(/^.*\./, "", tbl)
+      if (tbl in base) printf "%s:%d: CREATE INDEX on pre-existing table %s is not CONCURRENTLY\n", FILENAME, at, tbl
+    }
     {
-      if ($0 ~ /^[ \t]*--[ \t]*index-concurrently-allowed:/) { allowed = 1; next }
-      line = tolower($0)
-      sub(/--.*/, "", line)
-      buf = buf " " line
-      if (line !~ /;/) next
-      stmt = buf
-      if (stmt ~ /create[ \t]+(unique[ \t]+)?index[ \t]/ \
-          && stmt !~ /concurrently/ && !allowed) {
-        if (match(stmt, /on[ \t]+(only[ \t]+)?([a-z_][a-z0-9_]*\.)?[a-z_][a-z0-9_]*/)) {
-          tbl = substr(stmt, RSTART, RLENGTH)
-          sub(/^on[ \t]+(only[ \t]+)?/, "", tbl)
-          sub(/^.*\./, "", tbl)
-          if (tbl in base) printf "%s:%d: CREATE INDEX on pre-existing table %s is not CONCURRENTLY\n", FILENAME, NR, tbl
-        }
+      line = $0
+      if (inb) {
+        p = index(line, "*/")
+        if (p == 0) next
+        line = substr(line, p + 2)
+        inb = 0
       }
-      buf = ""; allowed = 0
+      while ((p = index(line, "/*")) > 0) {
+        rest = substr(line, p + 2)
+        q = index(rest, "*/")
+        if (q == 0) { line = substr(line, 1, p - 1); inb = 1; break }
+        line = substr(line, 1, p - 1) substr(rest, q + 2)
+      }
+      if (tolower(line) ~ /^[ \t]*--[ \t]*index-concurrently-allowed:/) { pending = 1; next }
+      sub(/--.*/, "", line)
+      line = tolower(line)
+      gsub(/"/, "", line)
+      if (line !~ /[^ \t]/) next
+      if (buf == "") at = NR
+      buf = buf " " line
+      while ((p = index(buf, ";")) > 0) {
+        stmt = substr(buf, 1, p - 1)
+        buf = substr(buf, p + 1)
+        if (stmt ~ /[a-z0-9_]/) { if (!pending) check(stmt, at); pending = 0 }
+      }
     }
   ' "$1" || true
 }
 
-while IFS= read -r f; do
-  [ -z "$f" ] && continue
-  grep -qxF "$f" <<< "$base_files" && continue
-  [ -f "$f" ] || continue
-  offenders="$(index_offenders "$f")"
-  if [ -n "$offenders" ]; then
-    while IFS= read -r o; do
-      echo "migration-number: FAIL $o" >&2
-    done <<< "$offenders"
-    echo "migration-number: FAIL use CREATE INDEX CONCURRENTLY (-- +goose NO TRANSACTION) for a pre-existing table; 00161/00170 are the pattern." >&2
-    echo "migration-number: FAIL if the exception is deliberate, put '-- index-concurrently-allowed: <reason>' on the line before the statement." >&2
-    status=1
-  fi
-done <<< "$current_files"
+if [ "$check_indexes" -eq 1 ]; then
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    grep -qxF "$f" <<< "$base_files" && continue
+    [ -f "$f" ] || continue
+    offenders="$(index_offenders "$f")"
+    if [ -n "$offenders" ]; then
+      while IFS= read -r o; do
+        echo "migration-number: FAIL $o" >&2
+      done <<< "$offenders"
+      echo "migration-number: FAIL use CREATE INDEX CONCURRENTLY (-- +goose NO TRANSACTION) for a pre-existing table; 00012/00161/00170 are the pattern." >&2
+      echo "migration-number: FAIL if the exception is deliberate, put '-- index-concurrently-allowed: <reason>' on the line before the statement." >&2
+      status=1
+    fi
+  done <<< "$current_files"
+fi
 
 if [ "$status" -ne 0 ]; then
   if [ "$numbering_bad" -ne 0 ]; then

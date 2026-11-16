@@ -4,22 +4,25 @@
 --
 -- A foreign key is enforced without an index on the referencing column, but a
 -- DELETE or UPDATE of the referenced kb.orgs row then has to sequentially scan
--- every child table to find rows that cascade. Every other org-scoped table
--- already carries one (kb.idx_restores_org, kb.idx_skills_org_id,
--- kb.idx_org_tool_settings_org_id, kb.idx_backups_org_project ...), so these four
--- close the same gap for discovery_jobs, document_parsing_jobs, invites and
--- skill_reviews.
+-- every child table to find rows that cascade. 12 of the 14 org-scoped tables
+-- already carry an org-leading index (kb.idx_restores_org, kb.idx_skills_org_id,
+-- kb.idx_org_tool_settings_org_id, kb.idx_backups_org_project ...); only
+-- kb.projects and kb.backup_schedules have none. These four close the gap for
+-- discovery_jobs, document_parsing_jobs, invites and skill_reviews.
 --
 -- CONCURRENTLY because all four tables are created by earlier migrations and can
 -- be populated in a running environment: a plain CREATE INDEX holds SHARE and
--- blocks writes for the whole build (this is the 94-index debt issue #844 records
--- in section 2; 00161/00170 are the pattern for doing it right). CONCURRENTLY
--- cannot run inside a transaction, hence NO TRANSACTION — each statement commits
--- on its own.
+-- blocks writes for the whole build (the debt issue #844 records in section 2;
+-- 00012/00161/00170 are the pattern for doing it right). CONCURRENTLY cannot run
+-- inside a transaction, hence NO TRANSACTION — each statement commits on its
+-- own.
 --
 -- A failed CONCURRENTLY build leaves an INVALID index behind, and
 -- `IF NOT EXISTS` would then skip it forever. So each index is dropped first
--- (that also drops an invalid leftover) and re-created; the DO block at the end
+-- (that also drops an invalid leftover) and re-created — which, like 00170, means
+-- re-running the file rebuilds even a healthy index, at the cost of four
+-- concurrent builds and a window with no index; that is the price of a retry that
+-- cannot silently skip a broken build. The DO block at the end
 -- re-derives the expected catalog state from pg_index and raises if any index is
 -- missing, invalid or not ready, so goose refuses to record the version and a
 -- retry rebuilds. Same shape as 00170; `go run ./cmd/migrate -c verify` runs the
