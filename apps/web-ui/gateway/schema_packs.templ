@@ -110,11 +110,13 @@ templ schemaPackRowCard(r schemaPackRow) {
 		@typeIconTile(icon, color)
 		<div class="min-w-0 flex-1">
 			<div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-				if r.Href != "" {
-					<a class="text-warning truncate text-sm font-medium hover:underline" href={ templ.URL(r.Href) } data-testid="schema-pack-title" data-schema-pack-title-href={ r.Href }>{ r.Title }</a>
-				} else {
-					<span class="text-warning truncate text-sm font-medium" data-testid="schema-pack-title">{ r.Title }</span>
-				}
+				<span class="text-warning truncate text-sm font-medium" data-testid="schema-pack-title">
+					if r.Href != "" {
+						<a class="hover:underline" href={ templ.URL(r.Href) } data-schema-pack-title-href={ r.Href }>{ r.Title }</a>
+					} else {
+						{ r.Title }
+					}
+				</span>
 				@ui.Badge(ui.BadgeProps{Label: "v" + p.Version, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
 				@ownerBadge(p, ui.BadgeSizeXS)
 				if r.Subtitle != "" {
