@@ -116,12 +116,29 @@ func TestStreamNewTask_DisabledDoesNotCreateRun(t *testing.T) {
 type a2aResumeDriver struct {
 	mu      sync.Mutex
 	queries []string
+
+	// noPendingQuestions makes the fake question query return zero rows, as it
+	// does for a run the executor paused at its step limit (issue #867).
+	noPendingQuestions bool
 }
 
 func (d *a2aResumeDriver) reset() {
 	d.mu.Lock()
 	d.queries = nil
+	d.noPendingQuestions = false
 	d.mu.Unlock()
+}
+
+func (d *a2aResumeDriver) setNoPendingQuestions(v bool) {
+	d.mu.Lock()
+	d.noPendingQuestions = v
+	d.mu.Unlock()
+}
+
+func (d *a2aResumeDriver) questionRows() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return !d.noPendingQuestions
 }
 
 func (d *a2aResumeDriver) record(q string) {
@@ -159,6 +176,9 @@ func (c *a2aResumeConn) QueryContext(_ context.Context, q string, _ []driver.Nam
 	case strings.Contains(q, `FROM "kb"."agent_runs"`):
 		return &a2aRunRows{}, nil
 	case strings.Contains(q, `FROM "kb"."agent_questions"`):
+		if !c.d.questionRows() {
+			return rootEmptyRows{}, nil
+		}
 		return &a2aQuestionRows{}, nil
 	default:
 		return rootEmptyRows{}, nil

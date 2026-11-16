@@ -466,33 +466,10 @@ func (h *A2AHandler) streamResumeTask(c echo.Context, projectID, userID, userMes
 		return writeA2AError(c, a2aInvalidStateError(fmt.Sprintf("task is not awaiting input (state %s)", MapRunStatusToTaskState(latest.Status))))
 	}
 
-	questions, err := h.repo.FindPendingQuestionsByRunID(ctx, latest.ID)
-	if err != nil || len(questions) == 0 {
-		return writeA2AError(c, a2aInvalidStateError("no pending question for task"))
+	resumeMsg, resumeErr := h.prepareA2AResume(ctx, latest, userMessage, userID)
+	if resumeErr != nil {
+		return writeA2AError(c, resumeErr)
 	}
-
-	// Kill switch: check BEFORE claiming the pending question, otherwise a
-	// disabled resume consumes the question and permanently strands the task
-	// (same guarantee as the JSON /message path).
-	if h.executor != nil {
-		if err := h.executor.EnsureExecutionEnabled(); err != nil {
-			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, err.Error()))
-		}
-	}
-
-	claimed, err := h.repo.AnswerQuestion(ctx, questions[0].ID, userMessage, userID)
-	if err != nil {
-		h.log.Error("failed to answer question", "task_id", taskID, "error", err)
-		return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to answer question"))
-	}
-	if !claimed {
-		return writeA2AError(c, a2aInvalidStateError("question is no longer pending"))
-	}
-
-	resumeMsg := fmt.Sprintf(
-		"Previously you asked: \"%s\"\nThe user responded: \"%s\"\nContinue from where you left off.",
-		questions[0].Question, userMessage,
-	)
 
 	def, err := h.repo.ResolveDefinitionForAgent(ctx, latest.Agent)
 	if err != nil {
