@@ -186,6 +186,60 @@ fi
 	})
 }
 
+// ConfigureGitAuth writes git and GitHub CLI credentials into a sandbox so the
+// agent can push and open pull requests, not just read the repository.
+//
+// It is a post-assignment setup step rather than container environment: a
+// warm-pool hit discards the CreateContainerRequest.Env the provisioner built,
+// so env vars reach a cold-booted container only. Writing the config files works
+// on both paths and survives for the life of the sandbox.
+//
+// The token is passed to the shell through ExecRequest.Env, so it never appears
+// in the command string (which providers may log or expose as a process
+// argument). It is written to files in the workspace container, which is
+// isolated and ephemeral — deliberately not to the agent definition, whose
+// stored config keeps only the secret *reference* (#1844).
+func (cs *CheckoutService) ConfigureGitAuth(ctx context.Context, provider Provider, providerID, token string) error {
+	if token == "" {
+		return nil
+	}
+
+	// git: a credential-helper store entry, so `git push/fetch` authenticates even
+	// when the agent re-clones or adds a remote. `gh`: hosts.yml, the same shape
+	// `gh auth login --with-token` writes.
+	const script = `set -e
+umask 077
+mkdir -p "$HOME/.config/gh"
+cat > "$HOME/.config/gh/hosts.yml" <<EOF
+github.com:
+    users:
+        x-access-token:
+            oauth_token: $GH_TOKEN
+    oauth_token: $GH_TOKEN
+    git_protocol: https
+    user: x-access-token
+EOF
+printf 'https://x-access-token:%s@github.com\n' "$GH_TOKEN" > "$HOME/.git-credentials"
+git config --global credential.helper store
+`
+
+	result, err := provider.Exec(ctx, providerID, &ExecRequest{
+		Command: script,
+		Workdir: "/workspace",
+		Env:     map[string]string{"GH_TOKEN": token},
+	})
+	if err != nil {
+		return fmt.Errorf("configure sandbox git auth: %w", err)
+	}
+	if result.ExitCode != 0 {
+		// Exit code and stderr only — the command carries no token, and the stderr
+		// from these builtins cannot echo one.
+		return fmt.Errorf("configure sandbox git auth: exit %d: %s", result.ExitCode, sanitizeGitOutput(result.Stderr))
+	}
+	cs.log.Info("sandbox git auth configured")
+	return nil
+}
+
 // configureGitIdentity sets the git user.name and user.email in the workspace.
 func (cs *CheckoutService) configureGitIdentity(ctx context.Context, provider Provider, providerID string) {
 	var name, email string
