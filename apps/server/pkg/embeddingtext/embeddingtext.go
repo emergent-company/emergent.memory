@@ -64,16 +64,31 @@ func IsSkippedKey(key string) bool { return skipKeys[key] }
 //
 // Token order (most important → least important):
 //  1. objectType
-//  2. stripped key (namespace prefix removed)
-//  3. boosted fields (name/title/description/summary/label) — each repeated ×2
-//  4. remaining string/numeric/bool property values, visited in sorted key order
+//  2. the object title from the `name` column — each repeated ×2
+//  3. stripped key (namespace prefix removed)
+//  4. boosted fields (name/title/description/summary/label) — each repeated ×2
+//  5. remaining string/numeric/bool property values, visited in sorted key order
+//
+// The title is `name`, the column, and it is the same title every read path
+// renders (#824); properties `name`/`title` remain prose and are still boosted,
+// unless they merely repeat the column (then they are already counted).
 //
 // Skips: IDs, UUIDs, URLs, internal metadata keys (skipKeys), large numerics.
 // Output is capped at MaxChars characters (word-boundary truncation).
-func Text(objectType string, key *string, properties map[string]any) string {
+func Text(objectType string, name *string, key *string, properties map[string]any) string {
 	tokens := make([]string, 0, 16)
 
 	tokens = append(tokens, objectType)
+
+	// The title lives in the `name` column only (#824): it is read here, not
+	// re-derived from properties.
+	title := ""
+	if name != nil {
+		title = strings.TrimSpace(*name)
+	}
+	if title != "" && isEmbeddableString(title) {
+		tokens = append(tokens, title, title) // ×2 repetition
+	}
 
 	// Strip namespace prefix from key (e.g. "ns:sarah" → "sarah").
 	if key != nil && *key != "" {
@@ -93,6 +108,10 @@ func Text(objectType string, key *string, properties map[string]any) string {
 			continue
 		}
 		if s, ok := v.(string); ok && isEmbeddableString(s) {
+			// A prose copy of the title is already in the vector from the column.
+			if title != "" && strings.EqualFold(strings.TrimSpace(s), title) {
+				continue
+			}
 			tokens = append(tokens, s, s) // ×2 repetition
 		}
 	}
@@ -165,8 +184,8 @@ func Text(objectType string, key *string, properties map[string]any) string {
 
 // Hash returns the SHA-256 digest of Text for the given object state. Two
 // states with the same digest have byte-identical embedding text.
-func Hash(objectType string, key *string, properties map[string]any) [32]byte {
-	return sha256.Sum256([]byte(Text(objectType, key, properties)))
+func Hash(objectType string, name *string, key *string, properties map[string]any) [32]byte {
+	return sha256.Sum256([]byte(Text(objectType, name, key, properties)))
 }
 
 // Normalize returns props converted to the concrete Go types encoding/json

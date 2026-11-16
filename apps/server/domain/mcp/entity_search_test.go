@@ -12,9 +12,11 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// insertSearchEntity inserts a HEAD graph object with an explicit key and
-// properties so that kb.update_graph_objects_fts builds the tsvector from the
-// same inputs as production. Returns the object id.
+// insertSearchEntity inserts a HEAD graph object with an explicit key, name and
+// prose properties so that kb.update_graph_objects_fts builds the tsvector from
+// the same inputs as production. The title lives in the `name` column only: a
+// `properties` name is never written, so a read that falls back to it fails
+// here. Returns the object id.
 func insertSearchEntity(t *testing.T, db bun.IDB, projectID, typ, key, title, name, description string, createdAt time.Time) string {
 	t.Helper()
 	ctx := context.Background()
@@ -23,20 +25,21 @@ func insertSearchEntity(t *testing.T, db bun.IDB, projectID, typ, key, title, na
 	if title != "" {
 		props["title"] = title
 	}
-	if name != "" {
-		props["name"] = name
-	}
 	if description != "" {
 		props["description"] = description
 	}
 	propsJSON, err := json.Marshal(props)
 	require.NoError(t, err)
+	var nameArg any
+	if name != "" {
+		nameArg = name
+	}
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO kb.graph_objects
-			(id, project_id, branch_id, canonical_id, supersedes_id, version, type, key, status,
+			(id, project_id, branch_id, canonical_id, supersedes_id, version, type, key, name, status,
 			 properties, labels, created_at, updated_at)
-		VALUES (?, ?, NULL, ?, NULL, 1, ?, ?, 'active', ?::jsonb, '{}'::text[], ?, ?)
-	`, id, projectID, id, typ, key, string(propsJSON), createdAt, createdAt)
+		VALUES (?, ?, NULL, ?, NULL, 1, ?, ?, ?, 'active', ?::jsonb, '{}'::text[], ?, ?)
+	`, id, projectID, id, typ, key, nameArg, string(propsJSON), createdAt, createdAt)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_, _ = db.ExecContext(context.Background(), "DELETE FROM kb.graph_objects WHERE id = ?", id)
@@ -59,14 +62,16 @@ func insertSearchEntityVersion(t *testing.T, db bun.IDB, projectID, typ, key, na
 		id = uuid.NewString()
 	}
 	ctx := context.Background()
-	propsJSON, err := json.Marshal(map[string]any{"name": name})
-	require.NoError(t, err)
-	_, err = db.ExecContext(ctx, `
+	var nameArg any
+	if name != "" {
+		nameArg = name
+	}
+	_, err := db.ExecContext(ctx, `
 		INSERT INTO kb.graph_objects
-			(id, project_id, branch_id, canonical_id, supersedes_id, version, type, key, status,
+			(id, project_id, branch_id, canonical_id, supersedes_id, version, type, key, name, status,
 			 properties, labels, created_at, updated_at)
-		VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 'active', ?::jsonb, '{}'::text[], ?, ?)
-	`, id, projectID, canonicalID, supersedesID, version, typ, key, string(propsJSON), createdAt, updatedAt)
+		VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'active', '{}'::jsonb, '{}'::text[], ?, ?)
+	`, id, projectID, canonicalID, supersedesID, version, typ, key, nameArg, createdAt, updatedAt)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_, _ = db.ExecContext(context.Background(), "DELETE FROM kb.graph_objects WHERE canonical_id = ?", canonicalID)
@@ -254,7 +259,7 @@ func TestEntitySearchReturnsOnlyCurrentVersion(t *testing.T) {
 	assert.Equal(t, canonicalID.String(), hit.ID, "hit must carry the canonical object id, not a version id")
 	assert.Equal(t, 2, hit.Version, "hit must carry the current version number")
 	assert.True(t, headAt.Equal(hit.UpdatedAt), "hit must carry the current version's updated_at, got %s", hit.UpdatedAt)
-	assert.Equal(t, "Zephyrine Alice Current", hit.Name, "hit must carry the current version's properties")
+	assert.Equal(t, "Zephyrine Alice Current", hit.Name, "hit must carry the current version's name")
 	assert.Equal(t, 1, out.Count)
 }
 

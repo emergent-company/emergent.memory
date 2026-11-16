@@ -477,22 +477,12 @@ func (s *Service) excludedSearchTypes(ctx context.Context, projectID uuid.UUID) 
 	return out
 }
 
-// nameFromProps extracts the "name" property from a properties map, or returns an empty string.
-// objectTitle prefers the first-class name and falls back to the properties
-// convention, for event metadata that still reports a human title.
+// objectTitle reports the event metadata title. The first-class name is the
+// only title: properties["name"] is an ordinary property and is never a
+// fallback (#824).
 func objectTitle(o *GraphObject) string {
 	if o.Name != nil {
 		return *o.Name
-	}
-	return nameFromProps(o.Properties)
-}
-
-func nameFromProps(props map[string]any) string {
-	if props == nil {
-		return ""
-	}
-	if v, ok := props["name"].(string); ok {
-		return v
 	}
 	return ""
 }
@@ -589,8 +579,8 @@ func embeddingTextUnchanged(prev, next *GraphObject) bool {
 	// caller-supplied Go values (int, []string, …) that the worker — reading the
 	// persisted JSONB back — would see as float64/[]any. Hashing the two views
 	// without normalizing could miss a real change (Copilot #1488 review).
-	return embeddingtext.Hash(prev.Type, prev.Key, embeddingtext.Normalize(prev.Properties)) ==
-		embeddingtext.Hash(next.Type, next.Key, embeddingtext.Normalize(next.Properties))
+	return embeddingtext.Hash(prev.Type, prev.Name, prev.Key, embeddingtext.Normalize(prev.Properties)) ==
+		embeddingtext.Hash(next.Type, next.Name, next.Key, embeddingtext.Normalize(next.Properties))
 }
 
 // carryEmbeddingIfUnchanged keeps a newly-created version's embedding in sync
@@ -602,13 +592,13 @@ func embeddingTextUnchanged(prev, next *GraphObject) bool {
 // embedding text). An unchanged row that was never embedded is left to the
 // self-healing embedding sweep.
 func (s *Service) carryEmbeddingIfUnchanged(ctx context.Context, tx bun.Tx, prev, next *GraphObject, propsUnchanged bool) (bool, error) {
-	// Fast path only when properties AND key are unchanged: embedding text is
-	// built from type + stripped key + properties, so with both provably
-	// identical the Normalize+Text walk can be skipped. A raw key change may
-	// still be semantically identical (the builder strips namespace prefixes and
-	// omits UUID keys), so fall back to the exact #1488 comparison rather than
-	// assuming any key change alters the text.
-	if !propsUnchanged || !sameOptionalString(prev.Key, next.Key) {
+	// Fast path only when properties, key AND name are unchanged: embedding text
+	// is built from type + title (`name` column) + stripped key + properties, so
+	// with all three provably identical the Normalize+Text walk can be skipped.
+	// A raw key change may still be semantically identical (the builder strips
+	// namespace prefixes and omits UUID keys), so fall back to the exact #1488
+	// comparison rather than assuming any key change alters the text.
+	if !propsUnchanged || !sameOptionalString(prev.Key, next.Key) || !sameOptionalString(prev.Name, next.Name) {
 		if !embeddingTextUnchanged(prev, next) {
 			return true, nil
 		}
@@ -1348,7 +1338,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 	// Board-enabled items need a claimable key; mint an internal one when the
 	// caller did not supply it (users only see name/ref).
 	if isBoardEnabledConfig(workCfg) && (req.Key == nil || *req.Key == "") {
-		k := autoWorkKey(req.Type, resolveObjectName(req.Name, req.Properties))
+		k := autoWorkKey(req.Type, resolveObjectName(req.Name))
 		req.Key = &k
 	}
 	if err := requireBoardEnabledKey(workCfg, req.Key); err != nil {
@@ -1369,7 +1359,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 		ProjectID:       projectID,
 		BranchID:        req.BranchID,
 		Type:            req.Type,
-		Name:            resolveObjectName(req.Name, validatedProps),
+		Name:            resolveObjectName(req.Name),
 		Key:             req.Key,
 		Status:          createStatus,
 		Assignee:        req.Assignee,
@@ -1483,7 +1473,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 			ProjectID:       projectID,
 			BranchID:        req.BranchID,
 			Type:            req.Type,
-			Name:            resolveObjectName(req.Name, validatedProps),
+			Name:            resolveObjectName(req.Name),
 			Key:             req.Key,
 			Status:          statusForWrite(validatedProps, createStatus),
 			Assignee:        req.Assignee,
@@ -1515,10 +1505,16 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 
 	// Object exists - check if it was deleted
 	if existing.DeletedAt != nil {
-		// Was deleted, create new version to "restore" with new properties
+		// Was deleted, create new version to "restore" with new properties. The
+		// restore keeps the tombstoned title unless the caller names it: the
+		// name is not part of the property payload that triggered the upsert.
+		restoreName := existing.Name
+		if req.Name != nil {
+			restoreName = trimName(*req.Name)
+		}
 		newVersion := &GraphObject{
 			Type:            req.Type,
-			Name:            resolveObjectName(req.Name, validatedProps),
+			Name:            restoreName,
 			Key:             req.Key,
 			Status:          statusForWrite(validatedProps, req.Status),
 			Assignee:        req.Assignee,
@@ -1589,13 +1585,12 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 		}
 	}
 
-	// Title: an explicit name wins; otherwise backfill from the merged
-	// properties the first time a title is available.
+	// Title: only an explicit name writes it. properties["name"]/["title"] are
+	// ordinary properties, never a title, and an upsert that omits the name
+	// preserves the current one.
 	newName := existing.Name
 	if req.Name != nil {
 		newName = trimName(*req.Name)
-	} else if newName == nil {
-		newName = resolveObjectName(nil, newProps)
 	}
 	nameChanged := !namesEqual(newName, existing.Name)
 
@@ -1856,13 +1851,12 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 		newKey = req.Key
 	}
 
-	// Handle title: explicit name wins; otherwise preserve, backfilling from
-	// merged properties when the object never had a title.
+	// Handle title: only an explicit name writes it. properties["name"] and
+	// ["title"] are ordinary properties, never a title, and a patch that omits
+	// the name preserves the current one.
 	newName := current.Name
 	if req.Name != nil {
 		newName = trimName(*req.Name)
-	} else if newName == nil {
-		newName = resolveObjectName(nil, newProps)
 	}
 
 	// Handle assignee: use req.Assignee if provided, otherwise preserve current.
@@ -2406,13 +2400,12 @@ func normalizeRelationType(relType string) string {
 	return strings.ToLower(b.String())
 }
 
-// getDisplayName extracts a display name from a graph object.
-// Tries properties["name"] first, falls back to Key if name is missing or empty.
+// getDisplayName extracts a display name from a graph object for embedding text.
+// The first-class name is the only title; a nameless object falls back to its
+// key and then its id, never to properties["name"] (#824).
 func getDisplayName(obj *GraphObject) string {
-	if obj.Properties != nil {
-		if name, ok := obj.Properties["name"].(string); ok && name != "" {
-			return name
-		}
+	if obj.Name != nil && *obj.Name != "" {
+		return *obj.Name
 	}
 	if obj.Key != nil && *obj.Key != "" {
 		return *obj.Key
@@ -4820,6 +4813,7 @@ func (s *Service) TraverseGraph(ctx context.Context, projectID uuid.UUID, req *T
 			CanonicalID: id,
 			Depth:       result.NodeDepths[id],
 			Type:        obj.Type,
+			Name:        obj.Name,
 			Key:         obj.Key,
 			Labels:      obj.Labels,
 			Properties:  s.NormaliseDatePropertyValues(ctx, projectID, obj.Type, obj.Properties),
@@ -5129,8 +5123,8 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 				summary.SimilarityScore = 1.0
 				cid := same.CanonicalID
 				summary.SimilarTargetID = &cid
-				if name, ok := same.Properties["name"].(string); ok {
-					summary.SimilarTargetName = name
+				if same.Name != nil {
+					summary.SimilarTargetName = *same.Name
 				}
 			}
 		}
@@ -5280,8 +5274,8 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 			sum.SimilarityScore = 1.0 - dist
 			cid := similar.CanonicalID
 			sum.SimilarTargetID = &cid
-			if name, ok := similar.Properties["name"].(string); ok {
-				sum.SimilarTargetName = name
+			if similar.Name != nil {
+				sum.SimilarTargetName = *similar.Name
 			}
 			addedCount--
 			similarCount++
@@ -5344,8 +5338,8 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 			}
 			if src := sourceObjects[s.CanonicalID]; src != nil {
 				entry["type"] = src.Type
-				if name, ok := src.Properties["name"].(string); ok {
-					entry["name"] = name
+				if src.Name != nil {
+					entry["name"] = *src.Name
 				}
 			}
 			if len(s.Conflicts) > 0 {
@@ -6504,7 +6498,7 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 			ProjectID:  projectID,
 			BranchID:   objReq.BranchID,
 			Type:       objReq.Type,
-			Name:       resolveObjectName(objReq.Name, validatedProps),
+			Name:       resolveObjectName(objReq.Name),
 			Key:        objReq.Key,
 			Status:     statusForWrite(validatedProps, createStatus),
 			Properties: validatedProps,

@@ -16,18 +16,20 @@ import (
 
 // seedEntityQuerySortVolume bulk-inserts LegalParagraph HEAD rows shaped like
 // the statute corpus used to reproduce #1206: keys
-// lov/law-<l>#kapittel-<c>-paragraf-<p>, distinct `name` properties, and a
-// boundary-sized content blob. branchArg selects the branch (nil = main).
+// lov/law-<l>#kapittel-<c>-paragraf-<p>, distinct `name` columns (the title
+// carrier, #824), and a boundary-sized content blob. branchArg selects the
+// branch (nil = main).
 func seedEntityQuerySortVolume(t *testing.T, db bun.IDB, projectID string, branchArg any, laws, chapters, paras int) {
 	t.Helper()
 	_, err := db.ExecContext(context.Background(), `
 		INSERT INTO kb.graph_objects
-			(id, project_id, branch_id, canonical_id, supersedes_id, version, type, key, status,
+			(id, project_id, branch_id, canonical_id, supersedes_id, version, type, key, name, status,
 			 properties, labels, created_at, updated_at)
 		SELECT
 			gen_random_uuid(), ?::uuid, ?::uuid, gen_random_uuid(), NULL, 1, 'LegalParagraph',
-			'lov/law-' || l || '#kapittel-' || c || '-paragraf-' || p, 'active',
-			jsonb_build_object('name', 'p-'||l||'-'||c||'-'||p,
+			'lov/law-' || l || '#kapittel-' || c || '-paragraf-' || p,
+			'p-'||l||'-'||c||'-'||p, 'active',
+			jsonb_build_object(
 				'content', repeat('x', 256),
 				'law_ref_id', 'lov/law-'||l, 'chapter_id', 'kapittel-'||c),
 			'{}'::text[], now() - (random() * interval '2 hours'), now()
@@ -41,22 +43,22 @@ func seedEntityQuerySortVolume(t *testing.T, db bun.IDB, projectID string, branc
 }
 
 // sortNameQuery mirrors the exact type/pagination query entity-query builds for
-// sort_by=name (default DESC), including the bounded left(..., N) expression and
-// the go.key tiebreak that the partial index must match.
+// sort_by=name (default DESC), including the bounded left(..., N) expression over
+// the title column and the go.key tiebreak that the partial index must match.
 var sortNameQuery = fmt.Sprintf(`
-	SELECT go.id, go.key, COALESCE(go.properties->>'name','') AS name
+	SELECT go.id, go.key, COALESCE(go.name,'') AS name
 	FROM kb.graph_objects go
 	WHERE go.deleted_at IS NULL AND go.project_id = ?::uuid
 		AND go.supersedes_id IS NULL
 		AND go.branch_id IS NULL
 		AND go.type = 'LegalParagraph'
-	ORDER BY left(go.properties->>'name', %d) DESC NULLS LAST, go.key
+	ORDER BY left(go.name, %d) DESC NULLS LAST, go.key
 	LIMIT ? OFFSET 0`, entityQueryNameSortKeyChars)
 
 // TestExecuteQueryEntities_NameSortUsesExpressionIndex is the #1206 ordering
 // regression: a whole-type sort_by=name (no narrowing key_prefix) must be
-// served by idx_graph_objects_project_type_name as an ordered index scan, with
-// no Sort node and no scan of the graph_objects heap. Before the index the
+// served by idx_graph_objects_project_type_title_sort as an ordered index scan,
+// with no Sort node and no scan of the graph_objects heap. Before the index the
 // planner materialised every HEAD row of the type and sorted it.
 func TestExecuteQueryEntities_NameSortUsesExpressionIndex(t *testing.T) {
 	db := connectTestDB(t)
@@ -64,7 +66,7 @@ func TestExecuteQueryEntities_NameSortUsesExpressionIndex(t *testing.T) {
 	seedEntityQuerySortVolume(t, db, projectID, nil, 1000, 5, 10) // 50k rows
 
 	plan := keyPrefixExplain(t, db, sortNameQuery, projectID, 25)
-	require.Contains(t, plan, "Index Scan using idx_graph_objects_project_type_name", plan)
+	require.Contains(t, plan, "Index Scan using idx_graph_objects_project_type_title_sort", plan)
 	require.NotContains(t, plan, "Seq Scan on graph_objects", plan)
 	require.NotContains(t, plan, "Sort", plan)
 
@@ -95,7 +97,7 @@ func TestExecuteQueryEntities_NameSortUsesExpressionIndex(t *testing.T) {
 }
 
 const branchKeyPrefixQuery = `
-	SELECT go.id, go.key, COALESCE(go.properties->>'name','') AS name
+	SELECT go.id, go.key, COALESCE(go.name,'') AS name
 	FROM kb.graph_objects go
 	WHERE go.deleted_at IS NULL AND go.project_id = ?::uuid
 		AND go.supersedes_id IS NULL
@@ -143,10 +145,28 @@ func TestExecuteQueryEntities_BranchKeyPrefixUsesBranchIndex(t *testing.T) {
 	assert.Empty(t, out.Warning, "key_prefix must be a recognized parameter (no warning)")
 }
 
+// insertQueryEntityTitle inserts a HEAD LegalParagraph whose title lives in the
+// `name` column — the only title carrier (#824). properties stays independent.
+func insertQueryEntityTitle(t *testing.T, db bun.IDB, projectID, key, name string) string {
+	t.Helper()
+	id := uuid.NewString()
+	_, err := db.ExecContext(context.Background(), `
+		INSERT INTO kb.graph_objects
+			(id, project_id, branch_id, canonical_id, supersedes_id, version, type, key, name, status,
+			 properties, labels, created_at, updated_at)
+		VALUES (?, ?, NULL, ?, NULL, 1, 'LegalParagraph', ?, ?, 'active', '{}'::jsonb, '{}'::text[], now(), now())
+	`, id, projectID, id, key, name)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(context.Background(), "DELETE FROM kb.graph_objects WHERE id = ?", id)
+	})
+	return id
+}
+
 // longQueryEntityName returns a 20 KB high-entropy ASCII name. High entropy
 // matters: repeated input TOAST-compresses below the index tuple limit, whereas
-// incompressible JSONB text does not. Indexing the unbounded
-// properties->>'name' fails such an insert with SQLSTATE 54000.
+// incompressible text does not. Indexing the unbounded `name` column fails such
+// an insert with SQLSTATE 54000; the bounded left(..., N) expression does not.
 func longQueryEntityName(t *testing.T) string {
 	t.Helper()
 	b := make([]byte, 10240)
@@ -156,18 +176,17 @@ func longQueryEntityName(t *testing.T) string {
 }
 
 // TestExecuteQueryEntities_LongNameDoesNotBreakNameSortIndex is the review
-// regression: `properties` has no size cap, so an unbounded name expression
-// index turns a previously working write into a failing one. With the bounded
-// left(..., N) expression the long-name insert succeeds, the ordering query
-// still uses the index, and no Sort node appears.
+// regression: `name` is unbounded (the API caps it at 512, the column does not),
+// so an unbounded expression index turns a previously working write into a
+// failing one. With the bounded left(..., N) expression the long-name insert
+// succeeds, the ordering query still uses the index, and no Sort node appears.
 func TestExecuteQueryEntities_LongNameDoesNotBreakNameSortIndex(t *testing.T) {
 	db := connectTestDB(t)
 	_, projectID := seedProject(t, db)
 	seedEntityQuerySortVolume(t, db, projectID, nil, 200, 5, 10) // 10k rows
 
 	const longKey = "lov/long#kapittel-1-paragraf-long"
-	insertQueryEntity(t, db, projectID, longKey,
-		map[string]any{"name": longQueryEntityName(t), "content": "x"})
+	insertQueryEntityTitle(t, db, projectID, longKey, longQueryEntityName(t))
 
 	var count int
 	require.NoError(t, db.NewRaw(
@@ -176,34 +195,33 @@ func TestExecuteQueryEntities_LongNameDoesNotBreakNameSortIndex(t *testing.T) {
 	assert.Equal(t, 1, count, "long-name row must be insertable with the index present")
 
 	plan := keyPrefixExplain(t, db, sortNameQuery, projectID, 25)
-	require.Contains(t, plan, "Index Scan using idx_graph_objects_project_type_name", plan)
+	require.Contains(t, plan, "Index Scan using idx_graph_objects_project_type_title_sort", plan)
 	require.NotContains(t, plan, "Sort", plan)
 }
 
-// TestMigration199_NameIndexBuildsWithLongNameRow proves CREATE INDEX
-// CONCURRENTLY on the bounded expression succeeds even when an oversized name
+// TestMigration311_TitleIndexBuildsWithLongNameRow proves CREATE INDEX
+// CONCURRENTLY on the bounded expression succeeds even when an oversized title
 // row already exists — the raw-expression index (or its CONCURRENTLY build)
 // fails with SQLSTATE 54000 in that situation.
-func TestMigration199_NameIndexBuildsWithLongNameRow(t *testing.T) {
+func TestMigration311_TitleIndexBuildsWithLongNameRow(t *testing.T) {
 	db := connectTestDB(t)
 	_, projectID := seedProject(t, db)
 
 	_, err := db.ExecContext(context.Background(),
-		`DROP INDEX CONCURRENTLY IF EXISTS kb.idx_graph_objects_project_type_name`)
+		`DROP INDEX CONCURRENTLY IF EXISTS kb.idx_graph_objects_project_type_title_sort`)
 	require.NoError(t, err)
 
-	insertQueryEntity(t, db, projectID, "lov/long#kapittel-1-paragraf-build",
-		map[string]any{"name": longQueryEntityName(t)})
+	insertQueryEntityTitle(t, db, projectID, "lov/long#kapittel-1-paragraf-build", longQueryEntityName(t))
 
 	_, err = db.ExecContext(context.Background(), `
-		CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_graph_objects_project_type_name
-		  ON kb.graph_objects (project_id, type, left(properties->>'name', 256) DESC NULLS LAST, key)
+		CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_graph_objects_project_type_title_sort
+		  ON kb.graph_objects (project_id, type, left(name, 256) DESC NULLS LAST, key)
 		  WHERE deleted_at IS NULL AND supersedes_id IS NULL AND branch_id IS NULL`)
-	require.NoError(t, err, "CREATE INDEX CONCURRENTLY must not fail on an oversized-name row")
+	require.NoError(t, err, "CREATE INDEX CONCURRENTLY must not fail on an oversized-title row")
 
 	var exists bool
 	require.NoError(t, db.NewRaw(
-		`SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'kb' AND indexname = 'idx_graph_objects_project_type_name')`,
+		`SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'kb' AND indexname = 'idx_graph_objects_project_type_title_sort')`,
 	).Scan(context.Background(), &exists))
 	require.True(t, exists)
 }

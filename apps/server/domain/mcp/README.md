@@ -715,11 +715,11 @@ version, so merging the branch applies the delete to main.
 Supply an optional `key` per entity for idempotent operations — if an entity with the same (type, key) already exists it is updated in-place rather than duplicated.
 
 `name` is the entity's **display name** — the title the app's object list and
-`entity action:"query"` render. It is a column, not a property: `properties.name`
-is a convention used only to derive it when `name` is omitted, and on an existing
-object a properties-only write leaves the column untouched. Pass `name` whenever
-the display name is not the property value (a variant keyed
-`ui-variant-ui-Button-buttonsize` titled `Button size`, for example).
+`entity action:"query"` render. It is a column and the **only** source of the
+title: `properties.name` and `properties.title` are ordinary properties and are
+never read as one. Omit `name` and the entity is created nameless, displayed as
+`type · #ref`. Pass `name` whenever the record has a display name (a variant
+keyed `ui-variant-ui-Button-buttonsize` titled `Button size`, for example).
 
 ```json
 {
