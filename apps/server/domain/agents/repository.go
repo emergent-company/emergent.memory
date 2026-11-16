@@ -479,6 +479,10 @@ func (r *Repository) MarkStaleRunsAsError(ctx context.Context, threshold time.Du
 	n, _ := res.RowsAffected()
 	return int(n), nil
 }
+
+// GetRecentRuns returns an agent's most recent runs, newest first. The Agent
+// relation is loaded so AgentRun.ToDTO can fall back to the runtime agent's
+// agent_definition_id for runs whose own column is NULL (issue #873).
 func (r *Repository) GetRecentRuns(ctx context.Context, agentID string, limit int) ([]*AgentRun, error) {
 	if limit <= 0 {
 		limit = 10
@@ -486,6 +490,7 @@ func (r *Repository) GetRecentRuns(ctx context.Context, agentID string, limit in
 	var runs []*AgentRun
 	err := r.db.NewSelect().
 		Model(&runs).
+		Relation("Agent").
 		Where("agent_id = ?", agentID).
 		Order("started_at DESC").
 		Limit(limit).
@@ -2428,11 +2433,14 @@ func (r *Repository) UpdateRunTools(ctx context.Context, runID string, tools []s
 	return err
 }
 
-// FindChildRuns returns all child runs of a parent run.
+// FindChildRuns returns all child runs of a parent run. The Agent relation is
+// loaded so AgentRun.ToDTO can fall back to the runtime agent's
+// agent_definition_id for runs whose own column is NULL (issue #873).
 func (r *Repository) FindChildRuns(ctx context.Context, parentRunID string) ([]*AgentRun, error) {
 	var runs []*AgentRun
 	err := r.db.NewSelect().
 		Model(&runs).
+		Relation("Agent").
 		Where("parent_run_id = ?", parentRunID).
 		Order("started_at ASC").
 		Scan(ctx)
@@ -2584,7 +2592,10 @@ type RunFilters struct {
 	Status  *AgentRunStatus
 }
 
-// FindRunsByProjectPaginated returns paginated agent runs for a project.
+// FindRunsByProjectPaginated returns paginated agent runs for a project. The
+// Agent relation is loaded (alongside the project-scoping join, which uses the
+// distinct "a" alias) so AgentRun.ToDTO can fall back to the runtime agent's
+// agent_definition_id for runs whose own column is NULL (issue #873).
 func (r *Repository) FindRunsByProjectPaginated(ctx context.Context, projectID string, filters RunFilters, limit, offset int) ([]*AgentRun, int, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 20
@@ -2595,6 +2606,7 @@ func (r *Repository) FindRunsByProjectPaginated(ctx context.Context, projectID s
 
 	q := r.db.NewSelect().
 		Model((*AgentRun)(nil)).
+		Relation("Agent").
 		Join("JOIN kb.agents AS a ON a.id = ar.agent_id").
 		Where("a.project_id = ?", projectID)
 
@@ -4876,6 +4888,13 @@ func (r *Repository) ListA2ARuns(ctx context.Context, projectID, contextID strin
 
 	rootsQuery := r.db.NewSelect().
 		Model((*AgentRun)(nil)).
+		// Relation("Agent") is a belongs-to LEFT JOIN, so a run whose runtime
+		// agent was deleted still lists (with a nil Agent) instead of vanishing.
+		// The run a caller receives is the chain tail, built by a2aListingRun
+		// from a tail that already loads the relation; loading it here too keeps
+		// the root copies attributable for AgentRun.ToDTO's agent_definition_id
+		// fallback (issue #873).
+		Relation("Agent").
 		Join("JOIN kb.agents AS a ON a.id = ar.agent_id").
 		Where("a.project_id = ?", projectID).
 		Where("ar.resumed_from IS NULL")
