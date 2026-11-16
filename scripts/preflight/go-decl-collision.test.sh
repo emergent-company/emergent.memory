@@ -427,6 +427,22 @@ run_guard --base live --head head
 expect_status 0 "a comment-only change does not trigger the base scan"
 
 # ---------------------------------------------------------------------------
+# 10b. The base has not advanced since the merge-base, so its changed-package
+#      list is empty. That is a clean OK, not an awk "NF set to negative" error.
+# ---------------------------------------------------------------------------
+fresh
+git_ checkout -q -b head main
+put pkg/head.go <<'GO'
+package pkg
+
+func OnlyOnBranch() {}
+GO
+commit "head adds a name, base has not advanced"
+run_guard --base main --head head
+expect_status 0 "a branch ahead of an unchanged base is OK"
+expect_contains "the empty base diff is handled" "no Go package changed on both sides"
+
+# ---------------------------------------------------------------------------
 # 11. Defaults: no origin and no cached base means warn-and-skip, not failure
 #     (the network must never turn a PR red).
 # ---------------------------------------------------------------------------

@@ -186,7 +186,7 @@ if [[ -z "$changed" ]]; then
   exit 0
 fi
 packages=$(printf '%s\n' "$changed" |
-  awk -F/ -v OFS=/ '{ if (NF == 1) { print "." } else { NF--; print } }' | sort -u)
+  awk -F/ -v OFS=/ 'NF == 0 { next } { if (NF == 1) { print "." } else { NF--; print } }' | sort -u)
 
 # A collision needs BOTH sides to change the same package. Intersecting the two
 # changed-package sets first makes the common PR (touching packages the base did
@@ -194,7 +194,7 @@ packages=$(printf '%s\n' "$changed" |
 base_changed=$(git diff --name-only --diff-filter=ACMRT "$merge_base" "$base_ref" -- '*.go' |
   grep -v '/testdata/' || true)
 base_packages=$(printf '%s\n' "$base_changed" |
-  awk -F/ -v OFS=/ '{ if (NF == 1) { print "." } else { NF--; print } }' | sort -u)
+  awk -F/ -v OFS=/ 'NF == 0 { next } { if (NF == 1) { print "." } else { NF--; print } }' | sort -u)
 packages=$(comm -12   <(printf '%s\n' "$packages" | sed '/^$/d')   <(printf '%s\n' "$base_packages" | sed '/^$/d'))
 if [[ -z "$packages" ]]; then
   printf 'go-decl-collision: OK (no Go package changed on both sides of %s)\n' "$base_ref"
