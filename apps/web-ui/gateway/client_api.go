@@ -261,7 +261,7 @@ func (s *Server) boardSessionSummaries(ctx context.Context) []sessionSummary {
 	}
 	out := make([]sessionSummary, 0, len(runs))
 	for _, run := range runs {
-		sm := sessionSummary{Room: run.ID, Origin: "board"}
+		sm := sessionSummary{Room: run.ID, Origin: "board", AgentDefinitionID: run.AgentDefinitionID}
 		if run.StartedAt != "" {
 			sm.StartedAt = &run.StartedAt
 		}

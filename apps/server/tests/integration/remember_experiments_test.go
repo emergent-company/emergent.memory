@@ -837,25 +837,6 @@ func (s *RememberExperimentsTestSuite) avgHintLength(schemaID string) float64 {
 	return float64(total) / float64(len(prompts.TypeHints))
 }
 
-// resetSchemas truncates project schema state so successive runs start clean.
-func (s *RememberExperimentsTestSuite) resetSchemas() {
-	_, _ = s.testDB.DB.NewRaw(`DELETE FROM kb.project_schemas WHERE project_id = ?`, s.projectID).Exec(s.ctx)
-	_, _ = s.testDB.DB.NewRaw(`DELETE FROM kb.graph_schemas WHERE project_id = ?`, s.projectID).Exec(s.ctx)
-	_, _ = s.testDB.DB.NewRaw(`DELETE FROM kb.documents WHERE project_id = ?`, s.projectID).Exec(s.ctx)
-}
-
-// clearExperiment removes a previously seeded experiment agent + setting.
-func (s *RememberExperimentsTestSuite) clearExperiment() {
-	_, _ = s.testDB.DB.NewRaw(
-		`DELETE FROM kb.agent_definitions WHERE project_id = ? AND name != ?`,
-		s.projectID, agents.CanonicalRememberAgentName,
-	).Exec(s.ctx)
-	_, _ = s.testDB.DB.NewRaw(
-		`DELETE FROM kb.project_settings WHERE project_id = ? AND category = ?`,
-		s.projectID, agents.SettingsCategoryRememberConfig,
-	).Exec(s.ctx)
-}
-
 // ---------------------------------------------------------------------------
 // V4 — kbPurpose grounding via project_info (server-side fix)
 // ---------------------------------------------------------------------------

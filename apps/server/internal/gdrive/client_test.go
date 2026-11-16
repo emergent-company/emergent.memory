@@ -240,8 +240,8 @@ func TestExportTextMaxBytesAbort(t *testing.T) {
 	_, err = c.ExportText(context.Background(), "doc1", "application/vnd.google-apps.document")
 	require.Error(t, err)
 
-	var se *SizeError
-	require.True(t, errors.As(err, &se), "expected SizeError, got %T: %v", err, err)
+	se, ok := errors.AsType[*SizeError](err)
+	require.True(t, ok, "expected SizeError, got %T: %v", err, err)
 	require.Equal(t, int64(10), se.Limit)
 }
 
@@ -258,8 +258,8 @@ func TestDownloadFileMaxBytesAbort(t *testing.T) {
 	_, err = c.DownloadFile(context.Background(), "bin1")
 	require.Error(t, err)
 
-	var se *SizeError
-	require.True(t, errors.As(err, &se))
+	_, ok := errors.AsType[*SizeError](err)
+	require.True(t, ok)
 }
 
 func TestTestConnectionSuccess(t *testing.T) {

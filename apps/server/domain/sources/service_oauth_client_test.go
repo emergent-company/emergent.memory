@@ -136,8 +136,8 @@ func TestResolveOAuthClient_NoClientIsActionableError(t *testing.T) {
 	if err == nil {
 		t.Fatal("resolveOAuthClient() with no org and no deployment default = nil, want error")
 	}
-	var appErr *apperror.Error
-	if !errors.As(err, &appErr) {
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	if !ok {
 		t.Fatalf("resolveOAuthClient() error type = %T, want *apperror.Error", err)
 	}
 	if appErr.Code != "validation_error" {
@@ -163,8 +163,8 @@ func TestResolveOAuthClient_NoClient_NoDeploymentDefaultOmitsEnvVar(t *testing.T
 	if err == nil {
 		t.Fatal("resolveOAuthClient(github) with no org and no deployment default = nil, want error")
 	}
-	var appErr *apperror.Error
-	if !errors.As(err, &appErr) {
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	if !ok {
 		t.Fatalf("resolveOAuthClient() error type = %T, want *apperror.Error", err)
 	}
 	if !strings.Contains(appErr.Message, ProviderTypeGitHub) {

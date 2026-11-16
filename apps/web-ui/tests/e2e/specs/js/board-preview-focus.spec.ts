@@ -7,9 +7,9 @@ import path from 'node:path';
 //
 // Root cause: htmx v4 fires `htmx:after:request` BEFORE it swaps the response,
 // so object-preview.js closed the drawer and restored focus to the card that
-// opened it, then the `#board` outerHTML swap removed that card and focus fell
+// opened it, then the `#work-board` morph removed that card and focus fell
 // to <body>. The fix defers the restore to `htmx:after:swap` and re-finds the
-// card by data-canonical-id (falling back to #board, which carries tabindex="-1").
+// card by data-canonical-id (falling back to #work-board, which carries tabindex="-1").
 //
 // Loads app.js's sibling object-preview.js verbatim into a bare page with a
 // stubbed MemoryChatHost (resize grip) and htmx. No gateway, no memory API.
@@ -20,7 +20,7 @@ const OBJECT_PREVIEW_JS = path.resolve(
 );
 
 const PAGE_HTML = `<!doctype html><html><body>
-  <div id="board" tabindex="-1" data-testid="board">
+  <div id="work-board" tabindex="-1" data-work-board data-testid="work-board">
     <section data-board-column="ready"><div class="lane-body">
       <div id="card-w1" draggable="true" data-board-card data-board-status="ready"
            data-board-open-preview aria-haspopup="dialog" role="button" tabindex="0"
@@ -35,7 +35,7 @@ const PAGE_HTML = `<!doctype html><html><body>
       <button id="object-preview-close" type="button">close</button>
       <div id="object-preview-body"></div>
       <div id="object-preview-actions-slot">
-        <button id="action-approve" type="button" hx-post="/board/items/w1/approve">Approve</button>
+        <button id="action-approve" type="button" hx-post="/work/items/w1/approve">Approve</button>
       </div>
     </aside>
   </div>
@@ -83,11 +83,11 @@ async function fireSuccessfulAction(page: Page): Promise<void> {
 }
 
 // Replace the board with fresh markup carrying a same-canonical-id card, as the
-// board action's outerHTML swap of #board does, then fire htmx:after:swap.
+// board action's morph of #work-board does, then fire htmx:after:swap.
 async function swapBoard(page: Page, inner: string): Promise<void> {
   await page.evaluate((html) => {
-    const board = document.getElementById('board');
-    if (!board) throw new Error('missing #board');
+    const board = document.getElementById('work-board');
+    if (!board) throw new Error('missing #work-board');
     board.innerHTML = html;
     board.dispatchEvent(new CustomEvent('htmx:after:swap', { bubbles: true }));
   }, inner);
@@ -110,7 +110,7 @@ test.describe('Board preview action focus (#1427)', () => {
     // The action resolves and the preview closes, but the swap is still pending.
     await fireSuccessfulAction(page);
 
-    // The board swap re-renders #board, moving the card to another lane.
+    // The board swap re-renders #work-board, moving the card to another lane.
     await swapBoard(
       page,
       `<section data-board-column="review"><div class="lane-body">
@@ -130,7 +130,7 @@ test.describe('Board preview action focus (#1427)', () => {
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
 
-  test('focus falls back to #board when the card is gone after the swap', async ({ page }) => {
+  test('focus falls back to #work-board when the card is gone after the swap', async ({ page }) => {
     const errors = await bootstrap(page);
 
     await page.evaluate(() => {
@@ -149,7 +149,7 @@ test.describe('Board preview action focus (#1427)', () => {
       id: document.activeElement?.id ?? '',
       tag: document.activeElement?.tagName ?? '',
     }));
-    expect(active.id).toBe('board');
+    expect(active.id).toBe('work-board');
     expect(active.tag).not.toBe('BODY');
 
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);

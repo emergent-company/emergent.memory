@@ -45,10 +45,10 @@ func TestGraphObjectResponse_MarshalJSON(t *testing.T) {
 
 	// Values match
 	var idStr, canStr, verStr, entStr string
-	json.Unmarshal(raw["id"], &idStr)
-	json.Unmarshal(raw["canonical_id"], &canStr)
-	json.Unmarshal(raw["version_id"], &verStr)
-	json.Unmarshal(raw["entity_id"], &entStr)
+	require.NoError(t, json.Unmarshal(raw["id"], &idStr))
+	require.NoError(t, json.Unmarshal(raw["canonical_id"], &canStr))
+	require.NoError(t, json.Unmarshal(raw["version_id"], &verStr))
+	require.NoError(t, json.Unmarshal(raw["entity_id"], &entStr))
 
 	assert.Equal(t, objID.String(), idStr)
 	assert.Equal(t, canID.String(), canStr)
@@ -91,8 +91,8 @@ func TestGraphRelationshipResponse_MarshalJSON(t *testing.T) {
 	assert.Contains(t, raw, "entity_id")
 
 	var verStr, entStr string
-	json.Unmarshal(raw["version_id"], &verStr)
-	json.Unmarshal(raw["entity_id"], &entStr)
+	require.NoError(t, json.Unmarshal(raw["version_id"], &verStr))
+	require.NoError(t, json.Unmarshal(raw["entity_id"], &entStr))
 
 	assert.Equal(t, relID.String(), verStr)
 	assert.Equal(t, canID.String(), entStr)
@@ -148,7 +148,7 @@ func TestGraphRelationshipResponse_MarshalJSON_WithInverse(t *testing.T) {
 	assert.Contains(t, invRaw, "entity_id", "inverse should also have entity_id")
 
 	var invVerStr string
-	json.Unmarshal(invRaw["version_id"], &invVerStr)
+	require.NoError(t, json.Unmarshal(invRaw["version_id"], &invVerStr))
 	assert.Equal(t, invID.String(), invVerStr)
 }
 
@@ -178,10 +178,10 @@ func TestExpandNode_MarshalJSON(t *testing.T) {
 
 	// Value assertions
 	var idStr, canStr, verStr, entStr string
-	json.Unmarshal(raw["id"], &idStr)
-	json.Unmarshal(raw["canonical_id"], &canStr)
-	json.Unmarshal(raw["version_id"], &verStr)
-	json.Unmarshal(raw["entity_id"], &entStr)
+	require.NoError(t, json.Unmarshal(raw["id"], &idStr))
+	require.NoError(t, json.Unmarshal(raw["canonical_id"], &canStr))
+	require.NoError(t, json.Unmarshal(raw["version_id"], &verStr))
+	require.NoError(t, json.Unmarshal(raw["entity_id"], &entStr))
 
 	assert.Equal(t, nodeID.String(), idStr)
 	assert.Equal(t, canID.String(), canStr)
@@ -215,10 +215,10 @@ func TestTraverseNode_MarshalJSON(t *testing.T) {
 
 	// Value assertions
 	var idStr, canStr, verStr, entStr string
-	json.Unmarshal(raw["id"], &idStr)
-	json.Unmarshal(raw["canonical_id"], &canStr)
-	json.Unmarshal(raw["version_id"], &verStr)
-	json.Unmarshal(raw["entity_id"], &entStr)
+	require.NoError(t, json.Unmarshal(raw["id"], &idStr))
+	require.NoError(t, json.Unmarshal(raw["canonical_id"], &canStr))
+	require.NoError(t, json.Unmarshal(raw["version_id"], &verStr))
+	require.NoError(t, json.Unmarshal(raw["entity_id"], &entStr))
 
 	assert.Equal(t, nodeID.String(), idStr)
 	assert.Equal(t, canID.String(), canStr)
@@ -253,10 +253,10 @@ func TestAnalyticsObjectItem_MarshalJSON(t *testing.T) {
 
 	// Value assertions
 	var idStr, canStr, verStr, entStr string
-	json.Unmarshal(raw["id"], &idStr)
-	json.Unmarshal(raw["canonical_id"], &canStr)
-	json.Unmarshal(raw["version_id"], &verStr)
-	json.Unmarshal(raw["entity_id"], &entStr)
+	require.NoError(t, json.Unmarshal(raw["id"], &idStr))
+	require.NoError(t, json.Unmarshal(raw["canonical_id"], &canStr))
+	require.NoError(t, json.Unmarshal(raw["version_id"], &verStr))
+	require.NoError(t, json.Unmarshal(raw["entity_id"], &entStr))
 
 	assert.Equal(t, objID.String(), idStr)
 	assert.Equal(t, canID.String(), canStr)
@@ -290,10 +290,10 @@ func TestSimilarObjectResult_MarshalJSON(t *testing.T) {
 
 	// Value assertions
 	var idStr, canStr, verStr, entStr string
-	json.Unmarshal(raw["id"], &idStr)
-	json.Unmarshal(raw["canonical_id"], &canStr)
-	json.Unmarshal(raw["version_id"], &verStr)
-	json.Unmarshal(raw["entity_id"], &entStr)
+	require.NoError(t, json.Unmarshal(raw["id"], &idStr))
+	require.NoError(t, json.Unmarshal(raw["canonical_id"], &canStr))
+	require.NoError(t, json.Unmarshal(raw["version_id"], &verStr))
+	require.NoError(t, json.Unmarshal(raw["entity_id"], &entStr))
 
 	assert.Equal(t, objID.String(), idStr)
 	assert.Equal(t, canID.String(), canStr)

@@ -140,8 +140,8 @@ func TestGetRegistryServerHandlerNotFound(t *testing.T) {
 	c.SetParamValues("io.github.github/does-not-exist")
 
 	err = h.GetRegistryServer(c)
-	var appErr *apperror.Error
-	if !errors.As(err, &appErr) {
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	if !ok {
 		t.Fatalf("expected *apperror.Error, got %T: %v", err, err)
 	}
 	if appErr.HTTPStatus != http.StatusNotFound {

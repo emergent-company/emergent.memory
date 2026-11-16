@@ -13,8 +13,7 @@ import (
 // pgError extracts a *pgconn.PgError from anywhere in the error chain.
 // Returns nil if err is not (or does not wrap) a Postgres error.
 func pgError(err error) *pgconn.PgError {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		return pgErr
 	}
 	return nil
@@ -64,8 +63,7 @@ func HTTPErrorHandler(log *slog.Logger) echo.HTTPErrorHandler {
 		}
 
 		// Handle our custom app errors first (errors.As unwraps fmt.Errorf chains)
-		var appErr *Error
-		if errors.As(err, &appErr) {
+		if appErr, ok := errors.AsType[*Error](err); ok {
 			code = appErr.HTTPStatus
 			errorObj["code"] = appErr.Code
 			errorObj["message"] = appErr.Message

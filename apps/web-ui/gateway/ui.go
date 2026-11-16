@@ -1100,6 +1100,9 @@ type scheduledRunRow struct {
 	// position and the time its subtitle shows.
 	CompletedAt string
 	Summary     string
+	// AgentDefinitionID is the agent-definition id the run's runtime agent binds
+	// (empty when it binds none), in the id space the rail's agent filter uses.
+	AgentDefinitionID string
 	// Icon/Color carry the run agent's definition appearance (empty when
 	// undeclared or the definition is unknown), resolved in chatScheduledRuns.
 	Icon  string
@@ -1166,9 +1169,11 @@ func (s *Server) chatScheduledRuns(ctx context.Context, appearances map[string]a
 		if a.TriggerType != "schedule" {
 			continue
 		}
+		defID := ""
 		var ap agentAppearance
 		if a.AgentDefinitionID != nil {
-			ap = appearances[*a.AgentDefinitionID]
+			defID = *a.AgentDefinitionID
+			ap = appearances[defID]
 		}
 		runs, err := s.memory.ListScheduledAgentRuns(ctx, a.ID)
 		if err != nil {
@@ -1180,14 +1185,15 @@ func (s *Server) chatScheduledRuns(ctx context.Context, appearances map[string]a
 				completedAt = *r.CompletedAt
 			}
 			out = append(out, scheduledRunRow{
-				ID:          r.ID,
-				AgentName:   a.Name,
-				Status:      r.Status,
-				StartedAt:   r.StartedAt,
-				CompletedAt: completedAt,
-				Summary:     scheduledRunPreview(r, a.Name),
-				Icon:        ap.Icon,
-				Color:       ap.Color,
+				ID:                r.ID,
+				AgentName:         a.Name,
+				Status:            r.Status,
+				StartedAt:         r.StartedAt,
+				CompletedAt:       completedAt,
+				Summary:           scheduledRunPreview(r, a.Name),
+				AgentDefinitionID: defID,
+				Icon:              ap.Icon,
+				Color:             ap.Color,
 			})
 		}
 	}
@@ -1221,7 +1227,12 @@ func (s *Server) chatWorkRuns(ctx context.Context, appearances map[string]agentA
 				title = workItemLabel(it)
 			}
 		}
-		ap := appearances[r.AgentID]
+		// appearances is keyed by agent-definition id, so the run's definition id
+		// is what resolves its declared glyph and colour — NOT r.AgentID, which
+		// is the runtime agent (kb.agents.id) and never matches. Falling back to
+		// the runtime id here is what painted every board row with the neutral
+		// bot glyph.
+		ap := appearances[r.AgentDefinitionID]
 		completedAt := ""
 		if r.CompletedAt != nil {
 			completedAt = *r.CompletedAt
@@ -1229,16 +1240,17 @@ func (s *Server) chatWorkRuns(ctx context.Context, appearances map[string]agentA
 		out = append(out, workRunRow{
 			// A board row IS the run: both the row id and the transcript target
 			// are the run id (the rail keys open-run off RunID).
-			ID:          r.ID,
-			RunID:       r.ID,
-			Origin:      "board",
-			Title:       title,
-			AgentName:   r.AgentName,
-			Status:      r.Status,
-			StartedAt:   r.StartedAt,
-			CompletedAt: completedAt,
-			Icon:        ap.Icon,
-			Color:       ap.Color,
+			ID:                r.ID,
+			RunID:             r.ID,
+			Origin:            "board",
+			Title:             title,
+			AgentName:         r.AgentName,
+			AgentDefinitionID: r.AgentDefinitionID,
+			Status:            r.Status,
+			StartedAt:         r.StartedAt,
+			CompletedAt:       completedAt,
+			Icon:              ap.Icon,
+			Color:             ap.Color,
 		})
 	}
 	return append(out, s.extractionRunRows(ctx)...)

@@ -99,6 +99,13 @@ BASELINE_RESPONSE_TYPES=6     # non-httputil APIResponse/PaginatedResponse/Succe
 # directly should use apperror.New so the client gets a code and a sanitised
 # message — dev-rule-go-apperror-only.
 BASELINE_ECHO_HTTPERROR=6
+# Raw `errors.As(` call sites in tree (tests included), excluding the published
+# SDK module. Pinned at 0 (2026-11-16, #853): every site in the server module is
+# now `errors.AsType[T]`, which the compiler type-checks and which cannot be
+# handed a nil target. The five `pkg/sdk` sites stay on `errors.As`: that module
+# declares `go 1.25.0` for its external consumers, and the standard library
+# gates AsType at 1.26. A new non-SDK `errors.As` is a regression.
+BASELINE_GO_ERRORS_AS=0
 
 auth_guards=$(count_matches -rn "if user == nil" --include="*.go" --exclude="*_test.go" domain/)
 setters=$(count_matches -rn "func (s \*Service) Set[A-Z]\|func (h \*Handler) Set[A-Z]" --include="*.go" --exclude="*_test.go" domain/)
@@ -106,6 +113,7 @@ apperror_style_a=$(count_matches -rn "\.WithMessage\|\.WithInternal" --include="
 response_types=$(count_matches -rn "type APIResponse\|type PaginatedResponse\|type SuccessResponse" --include="*.go" --exclude="*_test.go" domain/)
 # Full-line comments are excluded so documenting the rule does not trip it.
 echo_http_errors=$(count_raw_echo_httperrors .)
+errors_as=$(count_matches -rn "errors\.As(" --include="*.go" --exclude-dir=sdk .)
 
 fail=0
 
@@ -124,5 +132,54 @@ check "cross-domain setters"   "$setters"          "$BASELINE_SETTERS"
 check "apperror Style A"       "$apperror_style_a" "$BASELINE_APPERROR_STYLEA"
 check "response type dupes"    "$response_types"   "$BASELINE_RESPONSE_TYPES"
 check "raw echo.NewHTTPError"  "$echo_http_errors" "$BASELINE_ECHO_HTTPERROR"
+check "errors.As call sites"    "$errors_as"        "$BASELINE_GO_ERRORS_AS"
+
+# --lint-counts pins the *total* golangci-lint finding count per linter, which
+# is what #853 pays down and what must not creep back afterwards. The grep
+# counters above are cheap enough for a pre-commit hook; a full golangci-lint
+# pass is not, so CI runs this mode explicitly (server.yml, "Lint finding-count
+# ratchet"). The lint step itself uses --new-from-rev, which only sees findings
+# the change introduces — this is what stops the *baseline* from rising again.
+# Lower these as the debt is paid; never raise them, a change that needs a
+# higher number is the regression.
+if [ "${1:-}" = "--lint-counts" ]; then
+  BASELINE_LINT_ERRCHECK=0      # 61 after #843, 0 since #853 (test-file sweep)
+  BASELINE_LINT_STATICCHECK=99  # untouched by #853; dominated by QF1001 + API naming
+  BASELINE_LINT_UNUSED=0        # 16 after #843, 0 since #853 (dead helpers)
+
+  if ! command -v golangci-lint >/dev/null 2>&1; then
+    echo "RATCHET ERROR: golangci-lint is not on PATH, cannot count findings" >&2
+    exit 2
+  fi
+
+  lint_json=$(mktemp)
+  trap 'rm -f "$lint_json"' EXIT
+  lint_status=0
+  golangci-lint run --allow-parallel-runners \
+    --output.json.path="$lint_json" --output.text.path=/dev/null ./... >/dev/null 2>&1 \
+    || lint_status=$?
+  # golangci-lint exits 1 when it *reports* issues — the normal case here.
+  # Anything above that is a configuration or tooling failure, and a count from
+  # a run that never inspected the tree would read as clean, exactly the trap
+  # grep_matches guards above.
+  if [ "$lint_status" -gt 1 ]; then
+    echo "RATCHET ERROR: golangci-lint exited $lint_status, cannot count findings" >&2
+    exit 2
+  fi
+
+  lint_count() {
+    local out status=0
+    out=$(grep -o "\"FromLinter\":\"$1\"" "$lint_json") || status=$?
+    if [ "$status" -gt 1 ]; then
+      echo "RATCHET ERROR: cannot read golangci-lint output for $1" >&2
+      exit 2
+    fi
+    printf '%s\n' "$out" | awk 'NF { n++ } END { print n + 0 }'
+  }
+
+  check "golangci errcheck"    "$(lint_count errcheck)"    "$BASELINE_LINT_ERRCHECK"
+  check "golangci staticcheck" "$(lint_count staticcheck)" "$BASELINE_LINT_STATICCHECK"
+  check "golangci unused"      "$(lint_count unused)"      "$BASELINE_LINT_UNUSED"
+fi
 
 exit "$fail"

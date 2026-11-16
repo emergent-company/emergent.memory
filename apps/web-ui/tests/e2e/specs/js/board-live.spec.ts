@@ -2,12 +2,12 @@ import { test, expect, type Page } from '@playwright/test';
 import path from 'node:path';
 import fs from 'node:fs';
 
-// Hermetic browser-level guard for the board's live refresh: the shipped
+// Hermetic browser-level guard for the work board's live refresh: the shipped
 // htmx 4.0.1 bundle plus the vendored hx-sse extension, the exact SSE frame
-// shape `boardStream` writes, and the real `<hx-partial hx-target hx-swap>`
+// shape `workBoardStream` writes, and the real `<hx-partial hx-target hx-swap>`
 // directives — driven in a Chromium engine with no gateway and no memory API.
 //
-// This is the contract the Go side cannot cover on its own: `board_stream.go`
+// This is the contract the Go side cannot cover on its own: `work_stream.go`
 // can prove it *writes* frames, but only a browser can prove htmx *applies*
 // them. A frame shape the extension rejects (wrong tag name, a swap style htmx
 // does not implement, a multi-line payload split incorrectly) fails here.
@@ -17,30 +17,32 @@ import fs from 'node:fs';
 const HTMX_JS = path.resolve(__dirname, '../../../../gateway/webui/static/js/htmx.min.js');
 const SSE_JS = path.resolve(__dirname, '../../../../gateway/webui/static/js/hx-sse.js');
 
-// Markup mirroring board.templ: the stable swap regions, the connection anchor,
-// and the #board region the stream replaces. The header node is part of the
-// initial render only — the stream never targets it.
+// Markup mirroring work.templ / work_board_live.templ: the three stable swap
+// regions (#work-board, #work-board-count, #work-board-health), the connection
+// anchor, and the type filter outside the swapped region (a morph must not close
+// an open dropdown).
 const BASE_HTML = `<!doctype html>
 <html><head><meta charset="utf-8"></head><body>
-  <div id="board-header" data-testid="board-header"><h1>Board</h1></div>
-  <div id="board-health" data-testid="board-health"></div>
-  <div id="board-live" hx-sse:connect="/board/stream" aria-hidden="true"></div>
-  <div id="board" data-testid="board" tabindex="-1" data-board-status-map='{"ready":"ready"}'>
+  <div id="work-board-count" data-testid="work-board-count">2 of 3 types</div>
+  <div id="work-board-health" data-testid="work-board-health"></div>
+  <div id="work-board-live" hx-sse:connect="/work/board/stream" aria-hidden="true"></div>
+  <div id="work-board" data-testid="work-board" tabindex="-1" data-work-board data-board-status-map='{"ready":"ready"}'>
     <section class="memory-board__lane" data-board-column="ready"><div class="lane-body">Stale card</div></section>
   </div>
-  <div id="board-drawer" data-testid="board-drawer"></div>
   <script src="/htmx.min.js"></script>
   <script src="/hx-sse.js"></script>
 </body></html>`;
 
-// One SSE frame exactly as writeSSEPartial emits it: the <hx-partial> directive
-// and its HTML, every line of the pair prefixed with `data: `, blank-line
-// terminated. The board fragment must NOT carry the drawer, so a background
-// refresh cannot close it.
+// One SSE frame set exactly as writeSSEPartial emits it: the <hx-partial>
+// directive and its HTML, every line of the pair prefixed with `data: `,
+// blank-line terminated. The matrices frame carries no out-of-band directive, so
+// a background refresh can only replace the region it names.
 const FRAMES =
-  'data: <hx-partial hx-target="#board" hx-swap="outerMorph"><div id="board" data-testid="board" tabindex="-1" data-board-status-map=\'{"ready":"ready"}\'><section class="memory-board__lane" data-board-column="ready"><div class="lane-body">Live card</div></section></div></hx-partial>\n' +
+  'data: <hx-partial hx-target="#work-board" hx-swap="outerMorph"><div id="work-board" data-testid="work-board" tabindex="-1" data-work-board data-board-status-map=\'{"ready":"ready"}\'><section class="memory-board__lane" data-board-column="ready"><div class="lane-body">Live card</div></section></div></hx-partial>\n' +
   '\n' +
-  'data: <hx-partial hx-target="#board-health" hx-swap="outerMorph"><div id="board-health" data-testid="board-health"><p id="health">degraded</p></div></hx-partial>\n' +
+  'data: <hx-partial hx-target="#work-board-count" hx-swap="outerMorph"><div id="work-board-count" data-testid="work-board-count">3 of 3 types</div></hx-partial>\n' +
+  '\n' +
+  'data: <hx-partial hx-target="#work-board-health" hx-swap="outerMorph"><div id="work-board-health" data-testid="work-board-health"><p id="health">degraded</p></div></hx-partial>\n' +
   '\n';
 
 async function routePage(page: Page): Promise<string[]> {
@@ -50,7 +52,7 @@ async function routePage(page: Page): Promise<string[]> {
     if (url.pathname === '/') {
       return route.fulfill({ contentType: 'text/html', body: BASE_HTML });
     }
-    if (url.pathname === '/board/stream') {
+    if (url.pathname === '/work/board/stream') {
       streamRequests.push(url.pathname + url.search);
       return route.fulfill({ contentType: 'text/event-stream', body: FRAMES });
     }
@@ -71,8 +73,8 @@ async function routePage(page: Page): Promise<string[]> {
   return streamRequests;
 }
 
-test.describe('board live refresh (htmx hx-sse + <hx-partial> frames)', () => {
-  test('the stream morphs #board and #board-health in place', async ({ page }) => {
+test.describe('work board live refresh (htmx hx-sse + <hx-partial> frames)', () => {
+  test('the stream morphs #work-board, #work-board-count and #work-board-health in place', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', (err) => errors.push(err.message));
     const streamRequests = await routePage(page);
@@ -82,21 +84,17 @@ test.describe('board live refresh (htmx hx-sse + <hx-partial> frames)', () => {
     // The anchor connects once, at page load.
     await expect.poll(() => streamRequests.length, { timeout: 10_000 }).toBeGreaterThan(0);
 
-    // #board is replaced by the frame's fragment (outerMorph on the same id).
-    await expect(page.locator('#board .lane-body')).toHaveText('Live card');
+    // #work-board is replaced by the frame's fragment (outerMorph on the same id).
+    await expect(page.locator('#work-board .lane-body')).toHaveText('Live card');
 
-    // The health readout is outside #board; it updates only if the extra partial
-    // is applied, which is what makes it live. The page header is not a frame
-    // target at all: it carries no count or state, so nothing about it changes.
+    // The count and health readouts are outside #work-board; they update only if
+    // their own partials are applied, which is what makes them live.
     await expect(page.locator('#health')).toHaveText('degraded');
-
-    // A background frame must never clear the drawer: that OOB clear belongs to
-    // the action response (BoardRefresh), not the live stream.
-    await expect(page.locator('#board-drawer')).toBeAttached();
+    await expect(page.locator('#work-board-count')).toHaveText('3 of 3 types');
 
     // Morphing in place keeps the focusable board node, so keyboard users do not
     // lose their place on every update.
-    await expect(page.locator('#board')).toHaveAttribute('tabindex', '-1');
+    await expect(page.locator('#work-board')).toHaveAttribute('tabindex', '-1');
 
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
@@ -114,7 +112,7 @@ test.describe('board live refresh (htmx hx-sse + <hx-partial> frames)', () => {
       if (url.pathname === '/') {
         return route.fulfill({ contentType: 'text/html', body: BASE_HTML });
       }
-      if (url.pathname === '/board/stream') {
+      if (url.pathname === '/work/board/stream') {
         attempts += 1;
         return route.fulfill({
           contentType: 'text/event-stream',
@@ -136,7 +134,7 @@ test.describe('board live refresh (htmx hx-sse + <hx-partial> frames)', () => {
     await expect.poll(() => attempts, { timeout: 10_000 }).toBeGreaterThan(1);
 
     // No frames were swapped, so the last good board is still what the user sees.
-    await expect(page.locator('#board .lane-body')).toHaveText('Stale card');
+    await expect(page.locator('#work-board .lane-body')).toHaveText('Stale card');
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
 });

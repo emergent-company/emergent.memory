@@ -89,8 +89,8 @@ var truncateLockTimeout = 5 * time.Second
 // lock at the time"; the statement was aborted, no rows were truncated, and it
 // is safe to retry on the same connection once the other side has finished.
 func isTransientLockError(err error) bool {
-	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) {
+	pgErr, ok := errors.AsType[*pgconn.PgError](err)
+	if !ok {
 		return false
 	}
 	return pgErr.Code == "40P01" || pgErr.Code == "55P03"

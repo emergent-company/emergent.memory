@@ -112,8 +112,8 @@ func TestSourceStore_CRUD_ProjectScoped(t *testing.T) {
 	if _, err := svc.Get(ctx, projectB, uuid.MustParse(created.ID)); err == nil {
 		t.Fatal("cross-project Get() = nil error, want not-found")
 	} else {
-		var appErr *apperror.Error
-		if !errors.As(err, &appErr) || appErr.HTTPStatus != 404 {
+		appErr, ok := errors.AsType[*apperror.Error](err)
+		if !ok || appErr.HTTPStatus != 404 {
 			t.Fatalf("cross-project Get() error = %v, want 404 not-found", err)
 		}
 	}

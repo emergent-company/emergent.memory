@@ -206,8 +206,7 @@ func validateSourceAppPrivateKey(raw string) error {
 	case errors.Is(err, githubapp.ErrPrivateKeyNotRSA):
 		return apperror.NewBadRequest("privateKey is not an RSA key; GitHub App private keys must be RSA")
 	case errors.Is(err, githubapp.ErrPrivateKeyTooWeak):
-		var weak *githubapp.WeakPrivateKeyError
-		if errors.As(err, &weak) {
+		if weak, ok := errors.AsType[*githubapp.WeakPrivateKeyError](err); ok {
 			return apperror.NewBadRequest(fmt.Sprintf(
 				"privateKey is too weak; the RSA modulus must be at least %d bits, but this key is %d bits",
 				githubapp.MinRSAPrivateKeyBits, weak.Bits))

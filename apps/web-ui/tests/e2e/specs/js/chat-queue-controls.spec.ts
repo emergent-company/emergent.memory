@@ -129,7 +129,6 @@ const SKELETON = `<!doctype html>
 <div id="chat-root" data-conv="${CONV_ID}">
   <aside id="chat-rail">
     <div id="chat-rail-resize" role="separator" aria-orientation="vertical" aria-label="Resize session list"></div>
-    <select id="chat-agent-filter" aria-label="Filter sessions by agent"><option value="">All agents</option></select>
     <select id="chat-origin-filter" aria-label="Filter sessions by type"><option value="">All types</option></select>
     <div id="chat-rail-list">
       <div data-action="resume-session" data-id="conv-2" data-agent="" data-origin="manual">Idle session</div>

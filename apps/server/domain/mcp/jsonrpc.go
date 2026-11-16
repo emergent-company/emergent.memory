@@ -63,8 +63,8 @@ var ServerInfo = map[string]string{
 // client "retry" for a URI or prompt name it should correct instead. Only an app
 // error carries a status worth mapping; anything else is genuinely internal.
 func jsonRPCErrorCodeFor(err error) int {
-	var appErr *apperror.Error
-	if !errors.As(err, &appErr) {
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	if !ok {
 		return ErrCodeInternalError
 	}
 	switch appErr.HTTPStatus {

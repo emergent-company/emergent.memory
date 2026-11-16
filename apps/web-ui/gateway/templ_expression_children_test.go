@@ -21,8 +21,8 @@ import (
 //
 // Two guards, the second wider than the component that exposed the bug:
 //
-//  1. TestBoardDrawerRendersWorkItemKey renders the affected component and
-//     asserts the value appears and the source expression does not.
+//  1. TestWorkCardRendersItemLabel renders the affected component and asserts
+//     the value appears and the source expression does not.
 //  2. TestNoLiteralExpressionChildrenInGeneratedTemplates sweeps the generated
 //     *_templ.go output for a raw-text write whose literal is a code-shaped Go
 //     expression — exactly the shape the parser bug produces, anywhere in the
@@ -32,21 +32,22 @@ import (
 //     expression, so no allowlist is needed. TestIsLiteralExpression pins the
 //     classifier on both sides.
 
-// TestBoardDrawerRendersWorkItemKey is the rendered-output assertion: the drawer
-// title must show the item's key value, never the source expression.
-func TestBoardDrawerRendersWorkItemKey(t *testing.T) {
-	const sentinel = "BOARD-KEY-SENTINEL"
-	detail := &WorkItemDetail{
-		Item: &WorkItem{CanonicalID: "w1", Type: "Task", Key: sentinel, Status: "todo"},
-	}
+// TestWorkCardRendersItemLabel is the rendered-output assertion: the card shows
+// the item's label value (the object header's name/key), never the source
+// expression.
+func TestWorkCardRendersItemLabel(t *testing.T) {
+	const sentinel = "BOARD-LABEL-SENTINEL"
+	item := WorkItem{CanonicalID: "w1", Type: "Task", Key: "k", Name: sentinel, Status: "todo"}
 
-	html := renderHTML(t, BoardDrawer(detail, boardStatusMap{}, nil, nil, "", nil))
+	html := renderHTML(t, workCard(item, workData{}))
 
 	if !strings.Contains(html, sentinel) {
-		t.Fatalf("drawer title must render the work-item key %q; not found in rendered output", sentinel)
+		t.Fatalf("card must render the work-item label %q; not found in rendered output", sentinel)
 	}
-	if strings.Contains(html, "item.Key") {
-		t.Fatalf("drawer title rendered the literal expression `item.Key` instead of its value (#1903)")
+	for _, expr := range []string{"it.Name", "it.Key"} {
+		if strings.Contains(html, expr) {
+			t.Fatalf("card rendered the literal expression %q instead of its value (#1903)", expr)
+		}
 	}
 }
 

@@ -636,8 +636,8 @@ func TestCreateShareInstanceMissingToolsRejected(t *testing.T) {
 
 	resp, err := svc.CreateShareInstance(context.Background(), "proj", "user", "http://h", CreateShareInstanceRequest{Name: "All"})
 	require.Error(t, err)
-	var appErr *apperror.Error
-	require.True(t, errors.As(err, &appErr))
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	require.True(t, ok)
 	assert.Equal(t, 422, appErr.HTTPStatus)
 	assert.Nil(t, resp)
 	assert.Empty(t, store.byID, "no instance may be created without a tool allowlist")
@@ -669,8 +669,8 @@ func TestCreateShareInstanceEmptyToolsRejected(t *testing.T) {
 	empty := []string{}
 	_, err := svc.CreateShareInstance(context.Background(), "proj", "user", "", CreateShareInstanceRequest{Name: "X", Tools: &empty})
 	require.Error(t, err)
-	var appErr *apperror.Error
-	require.True(t, errors.As(err, &appErr))
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	require.True(t, ok)
 	assert.Equal(t, 422, appErr.HTTPStatus)
 	assert.Empty(t, store.byID)
 }
@@ -681,8 +681,8 @@ func TestCreateShareInstanceUnknownToolRejected(t *testing.T) {
 	tools := []string{"definitely-not-a-tool"}
 	_, err := svc.CreateShareInstance(context.Background(), "proj", "user", "", CreateShareInstanceRequest{Name: "X", Tools: &tools})
 	require.Error(t, err)
-	var appErr *apperror.Error
-	require.True(t, errors.As(err, &appErr))
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	require.True(t, ok)
 	assert.Equal(t, 422, appErr.HTTPStatus)
 }
 
@@ -691,8 +691,8 @@ func TestCreateShareInstanceNonAdmin(t *testing.T) {
 	svc := newTestService(store, &fakeTokenSvc{role: "project_user"}, &fakeAgentDir{})
 	_, err := svc.CreateShareInstance(context.Background(), "proj", "user", "", CreateShareInstanceRequest{Name: "X"})
 	require.Error(t, err)
-	var appErr *apperror.Error
-	require.True(t, errors.As(err, &appErr))
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	require.True(t, ok)
 	assert.Equal(t, 403, appErr.HTTPStatus)
 }
 
@@ -702,8 +702,8 @@ func TestCreateShareInstanceDuplicateName(t *testing.T) {
 	svc := newTestService(store, &fakeTokenSvc{}, &fakeAgentDir{})
 	_, err := svc.CreateShareInstance(context.Background(), "proj", "user", "", CreateShareInstanceRequest{Name: "team a"})
 	require.Error(t, err)
-	var appErr *apperror.Error
-	require.True(t, errors.As(err, &appErr))
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	require.True(t, ok)
 	assert.Equal(t, 409, appErr.HTTPStatus)
 }
 
@@ -716,8 +716,8 @@ func TestCreateShareInstanceAgentsRejected(t *testing.T) {
 	agents := []string{uuid.NewString()}
 	_, err := svc.CreateShareInstance(context.Background(), "proj", "user", "", CreateShareInstanceRequest{Name: "X", Agents: &agents})
 	require.Error(t, err)
-	var appErr *apperror.Error
-	require.True(t, errors.As(err, &appErr))
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	require.True(t, ok)
 	assert.Equal(t, 422, appErr.HTTPStatus)
 	assert.Empty(t, store.byID, "no instance may be created for a rejected agent allowlist")
 }
@@ -733,8 +733,8 @@ func TestUpdateShareInstanceAgentsRejected(t *testing.T) {
 	agents := []string{uuid.NewString()}
 	_, err := svc.UpdateShareInstance(context.Background(), "proj", "user", "i1", UpdateShareInstanceRequest{Agents: &agents})
 	require.Error(t, err)
-	var appErr *apperror.Error
-	require.True(t, errors.As(err, &appErr))
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	require.True(t, ok)
 	assert.Equal(t, 422, appErr.HTTPStatus)
 	assert.Equal(t, "Team A", store.byID["i1"].Name, "instance must be unchanged")
 	assert.Equal(t, []string{"entity-search"}, store.byID["i1"].AllowedTools)
@@ -1074,8 +1074,8 @@ func TestToolAllowlistRejectsAgentExecutionTool(t *testing.T) {
 	tools := []string{"entity-search", "trigger_agent"}
 	_, err := svc.CreateShareInstance(context.Background(), "proj", "user", "", CreateShareInstanceRequest{Name: "X", Tools: &tools})
 	require.Error(t, err)
-	var appErr *apperror.Error
-	require.True(t, errors.As(err, &appErr))
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	require.True(t, ok)
 	assert.Equal(t, 422, appErr.HTTPStatus)
 	assert.Empty(t, store.byID)
 

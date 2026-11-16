@@ -1,7 +1,6 @@
 package agents
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -252,18 +251,4 @@ func TestIntegrationUpdateAgent_ValidCronAccepted(t *testing.T) {
 		t.Skip("POSTGRES_HOST not set; skipping DB integration test")
 	}
 	t.Skip("requires agents tables and a known agent ID; run after: task migrate")
-}
-
-// ---------- JSON error body shape (helpers) ----------
-
-// errorBodyCode extracts the "error.code" field from an HTTP response recorded by httptest.
-func errorBodyCode(t *testing.T, body []byte) string {
-	t.Helper()
-	var wrapper struct {
-		Error struct {
-			Code string `json:"code"`
-		} `json:"error"`
-	}
-	require.NoError(t, json.Unmarshal(body, &wrapper))
-	return wrapper.Error.Code
 }

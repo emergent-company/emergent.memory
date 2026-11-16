@@ -280,8 +280,8 @@ func (c *Client) call(ctx context.Context, fn func(context.Context) error) error
 
 // retryable reports whether err is a throttle or transient server failure.
 func retryable(err error) bool {
-	var apiErr *googleapi.Error
-	if !errors.As(err, &apiErr) {
+	apiErr, ok := errors.AsType[*googleapi.Error](err)
+	if !ok {
 		return false
 	}
 	switch {
@@ -304,8 +304,8 @@ func retryable(err error) bool {
 
 // retryAfter returns the server's Retry-After hint, capped at MaxRetryDelay.
 func retryAfter(err error) (time.Duration, bool) {
-	var apiErr *googleapi.Error
-	if !errors.As(err, &apiErr) || apiErr.Header == nil {
+	apiErr, ok := errors.AsType[*googleapi.Error](err)
+	if !ok || apiErr.Header == nil {
 		return 0, false
 	}
 	raw := strings.TrimSpace(apiErr.Header.Get("Retry-After"))

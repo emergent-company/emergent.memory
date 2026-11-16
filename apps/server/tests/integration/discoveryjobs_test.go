@@ -1783,37 +1783,6 @@ func waitForExtraction(t *testing.T, ctx context.Context, testDB *testutil.TestD
 	return false
 }
 
-// waitForObjects polls until at least one graph object exists for the project.
-// Deprecated: use waitForExtraction for more reliable job-level waiting.
-func waitForObjects(t *testing.T, ctx context.Context, testDB *testutil.TestDB, projectID string, timeout time.Duration) bool {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		var count int
-		err := testDB.DB.NewRaw(
-			"SELECT COUNT(*) FROM kb.graph_objects WHERE project_id = ?::uuid AND supersedes_id IS NULL",
-			projectID,
-		).Scan(ctx, &count)
-		if err == nil && count > 0 {
-			t.Logf("  background extraction complete: %d objects found", count)
-			return true
-		}
-		// Check if extraction job finished (even if it produced 0 objects)
-		var jobStatus string
-		_ = testDB.DB.NewRaw(
-			`SELECT status FROM kb.object_extraction_jobs WHERE project_id = ?::uuid ORDER BY created_at DESC LIMIT 1`,
-			projectID,
-		).Scan(ctx, &jobStatus)
-		if jobStatus == "completed" || jobStatus == "failed" {
-			t.Logf("  extraction job reached terminal status: %s (objects: %d)", jobStatus, count)
-			return count > 0
-		}
-		time.Sleep(2 * time.Second)
-	}
-	t.Logf("  ⚠ no objects appeared after %v (extraction may be slow or failed)", timeout)
-	return false
-}
-
 // TestReExtractionComparison runs two remember extractions with the same document
 // and prints a human-readable comparison summary of what changed.
 func TestReExtractionComparison(t *testing.T) {

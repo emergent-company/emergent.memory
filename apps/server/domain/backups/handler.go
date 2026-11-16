@@ -220,8 +220,7 @@ func parseRetentionDays(c echo.Context) (int, *apperror.Error) {
 func readArchiveUpload(c echo.Context) ([]byte, *apperror.Error) {
 	file, err := c.FormFile("file")
 	if err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			return nil, apperror.New(http.StatusRequestEntityTooLarge, "file_too_large", "archive exceeds maximum size")
 		}
 		return nil, apperror.NewBadRequest("file field is required")

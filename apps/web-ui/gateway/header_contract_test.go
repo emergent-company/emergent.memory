@@ -290,7 +290,7 @@ func TestOneH1PerPage(t *testing.T) {
 		page templ.Component
 		want int
 	}{
-		{"board (header then notice)", BoardPage(nil, nil, nil, boardAllowances{}, boardStatusMap{}, errTest), 1},
+		{"work board (error is the page)", WorkPage(workData{Section: workBoardSection, LoadErr: errTest}), 1},
 		{"agents list", AgentsPage(nil, nil, "", errTest, ""), 1},
 		{"approvals", ApprovalsPage(nil, nil, errTest), 1},
 		{"skills", SkillsPage(nil, errTest, nil, nil, newSkillProposalQuery("", ""), "", nil, "", nil), 1},
