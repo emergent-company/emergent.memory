@@ -6,7 +6,8 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "astro": "astro"
+    "astro": "astro",
+    "shots:port": "node scripts/port-images.mjs && python3 scripts/port_mkdocs.py"
   },
   "dependencies": {
     "@astrojs/starlight": "^0.43.1",
