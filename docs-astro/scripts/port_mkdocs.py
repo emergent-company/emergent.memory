@@ -31,7 +31,7 @@ HERE = Path(__file__).resolve().parent
 PROJECT = HERE.parent                       # docs-astro/
 DEFAULT_SRC = PROJECT.parent / "docs" / "site"
 DST = PROJECT / "src" / "content" / "docs"
-BASE = "/emergent.memory"
+BASE = ""  # site is served at the host root: docs.memory.emergent-company.ai/
 
 # Pages included in the POC. (source path, output path, title)
 # The landing page (`index.mdx`) and the API reference (`api-reference.mdx`) are
@@ -43,13 +43,38 @@ PAGES = [
     ("developer-guide/cli-reference.md", "developer-guide/cli-reference.mdx", "CLI Reference"),
     ("developer-guide/schema.md", "developer-guide/schema.mdx", "Schema"),
     ("developer-guide/security-scopes.md", "developer-guide/security-scopes.mdx", "Security Scopes"),
+    ("developer-guide/a2a-protocol.md", "developer-guide/a2a-protocol.mdx", "A2A and A2UI"),
+    ("developer-guide/cli-auth.md", "developer-guide/cli-auth.mdx", "CLI Authentication"),
+    ("developer-guide/email-setup.md", "developer-guide/email-setup.mdx", "Email Setup"),
+    ("developer-guide/extraction.md", "developer-guide/extraction.mdx", "Extraction Pipeline"),
+    ("developer-guide/health-ops.md", "developer-guide/health-ops.mdx", "Health & Ops"),
+    ("developer-guide/provider-setup.md", "developer-guide/provider-setup.mdx", "Provider Setup"),
+    ("developer-guide/scheduler.md", "developer-guide/scheduler.mdx", "Background Scheduler"),
+    ("developer-guide/service-accounts.md", "developer-guide/service-accounts.mdx", "Service Accounts"),
+    ("developer-guide/sandbox.md", "developer-guide/sandbox.mdx", "Sandbox"),
+    ("developer-guide/mcp-relay.md", "developer-guide/mcp-relay.mdx", "MCP Relay"),
     ("user-guide/index.md", "user-guide.mdx", "User Guide"),
     ("user-guide/knowledge-graph.md", "user-guide/knowledge-graph.mdx", "Knowledge Graph"),
     ("user-guide/agents.md", "user-guide/agents.mdx", "Agents"),
     ("user-guide/branches.md", "user-guide/branches.mdx", "Branches"),
     ("user-guide/datasources.md", "user-guide/datasources.mdx", "Data Sources"),
+    ("user-guide/api-tokens.md", "user-guide/api-tokens.mdx", "API Tokens"),
+    ("user-guide/backups.md", "user-guide/backups.mdx", "Backups"),
+    ("user-guide/blueprints.md", "user-guide/blueprints.mdx", "Blueprints"),
+    ("user-guide/chat.md", "user-guide/chat.mdx", "Chat"),
+    ("user-guide/documents.md", "user-guide/documents.mdx", "Documents"),
+    ("user-guide/integrations.md", "user-guide/integrations.mdx", "Integrations"),
+    ("user-guide/model-setup.md", "user-guide/model-setup.mdx", "Model Setup"),
+    ("user-guide/notifications.md", "user-guide/notifications.mdx", "Notifications"),
+    ("user-guide/tasks.md", "user-guide/tasks.mdx", "Tasks"),
     ("tutorials/deploy-to-railway.md", "tutorials/deploy-to-railway.mdx", "Deploy on Railway"),
     ("go-sdk/index.md", "go-sdk.mdx", "Go SDK"),
+    ("go-sdk/authentication.md", "go-sdk/authentication.mdx", "Authentication"),
+    ("go-sdk/changelog.md", "go-sdk/changelog.mdx", "Changelog"),
+    ("go-sdk/error-handling.md", "go-sdk/error-handling.mdx", "Error Handling"),
+    ("go-sdk/graph-id-model.md", "go-sdk/graph-id-model.mdx", "Graph ID Model"),
+    ("go-sdk/multi-tenancy.md", "go-sdk/multi-tenancy.mdx", "Multi-Tenancy"),
+    ("go-sdk/streaming.md", "go-sdk/streaming.mdx", "Streaming"),
     ("python-sdk.md", "python-sdk.mdx", "Python SDK"),
     ("swift-sdk.md", "swift-sdk.mdx", "Swift SDK"),
     ("cli.md", "cli.mdx", "CLI"),
@@ -418,7 +443,22 @@ def main():
     }
     DST.mkdir(parents=True, exist_ok=True)
 
-    for src_rel, dst_rel, title in PAGES:
+    # The generated per-package Go SDK reference is ported wholesale rather than
+    # listed in PAGES: the SDK guides link into it (Authentication → auth,
+    # Streaming → chat, …), so a partial port turns those into 404s, and the
+    # pages are one per package with only an H1 and Go doc bodies. The generator
+    # writes the package name as the H1.
+    pages = list(PAGES)
+    for ref in sorted((src_root / "go-sdk" / "reference").glob("*.md")):
+        first = next((l for l in ref.read_text().splitlines() if l.startswith("# ")), "# " + ref.stem)
+        pages.append((f"go-sdk/reference/{ref.name}", f"go-sdk/reference/{ref.stem}.mdx", first[2:].strip()))
+    pages.append(("developer-guide/schema-registry.md", "developer-guide/schema-registry.mdx", "Schema Registry"))
+    # The link checker classifies a target as "outside the subset" by this set,
+    # so it has to see the pages appended above, not just the literal PAGES.
+    PORTS.clear()
+    PORTS.update(src for src, _dst, _title in pages)
+
+    for src_rel, dst_rel, title in pages:
         src = src_root / src_rel
         if not src.exists():
             print(f"MISSING SOURCE {src_rel}")

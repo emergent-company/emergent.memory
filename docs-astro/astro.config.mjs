@@ -3,10 +3,17 @@ import starlight from '@astrojs/starlight';
 import icon from 'astro-icon';
 
 // POC: Astro/Starlight port of docs/site (MkDocs Material).
-// Published at https://emergent-company.github.io/emergent.memory/
+//
+// Served at the root of its own hostname (docs.memory.emergent-company.ai), so
+// `base` is `/` and every internal link is root-relative. `DOCS_SITE` only
+// moves the *canonical* origin — what `site` feeds (canonical tags, sitemap,
+// Open Graph) — so the dev deployment can name itself
+// (https://docs.dev.memory.emergent-company.ai) without the link graph moving.
+const site = process.env.DOCS_SITE || 'https://docs.memory.emergent-company.ai';
+
 export default defineConfig({
-  site: 'https://emergent-company.github.io',
-  base: '/emergent.memory',
+  site,
+  base: '/',
   integrations: [
     // Iconify `lucide` set — the icon set the product UI draws (the gateway
     // renders `lucide--<name>` classes). No runtime JS: SVGs are inlined at
@@ -82,9 +89,18 @@ export default defineConfig({
           items: [
             { label: 'Overview', slug: 'user-guide' },
             { label: 'Knowledge Graph', slug: 'user-guide/knowledge-graph' },
+            { label: 'Documents', slug: 'user-guide/documents' },
+            { label: 'Chat', slug: 'user-guide/chat' },
             { label: 'Agents', slug: 'user-guide/agents' },
+            { label: 'Blueprints', slug: 'user-guide/blueprints' },
             { label: 'Branches', slug: 'user-guide/branches' },
             { label: 'Data Sources', slug: 'user-guide/datasources' },
+            { label: 'API Tokens', slug: 'user-guide/api-tokens' },
+            { label: 'Backups', slug: 'user-guide/backups' },
+            { label: 'Notifications', slug: 'user-guide/notifications' },
+            { label: 'Tasks', slug: 'user-guide/tasks' },
+            { label: 'Integrations', slug: 'user-guide/integrations' },
+            { label: 'Model Setup', slug: 'user-guide/model-setup' },
           ],
         },
         {
@@ -95,16 +111,43 @@ export default defineConfig({
           label: 'Developer Guide',
           items: [
             { label: 'Overview', slug: 'developer-guide' },
+            { label: 'Provider Setup', slug: 'developer-guide/provider-setup' },
             { label: 'MCP Servers', slug: 'developer-guide/mcp-servers' },
-            { label: 'CLI Reference', slug: 'developer-guide/cli-reference' },
-            { label: 'Schema', slug: 'developer-guide/schema' },
+            { label: 'Extraction Pipeline', slug: 'developer-guide/extraction' },
+            { label: 'Email Setup', slug: 'developer-guide/email-setup' },
+            { label: 'Health & Ops', slug: 'developer-guide/health-ops' },
             { label: 'Security Scopes', slug: 'developer-guide/security-scopes' },
+            { label: 'Background Scheduler', slug: 'developer-guide/scheduler' },
+            { label: 'CLI Reference', slug: 'developer-guide/cli-reference' },
+            { label: 'CLI Authentication', slug: 'developer-guide/cli-auth' },
+            { label: 'Service Accounts', slug: 'developer-guide/service-accounts' },
+            { label: 'Sandbox', slug: 'developer-guide/sandbox' },
+            { label: 'MCP Relay', slug: 'developer-guide/mcp-relay' },
+            { label: 'A2A and A2UI', slug: 'developer-guide/a2a-protocol' },
+            { label: 'Schema', slug: 'developer-guide/schema' },
+            { label: 'Schema Registry', slug: 'developer-guide/schema-registry' },
           ],
         },
         {
           label: 'SDKs',
           items: [
-            { label: 'Go SDK', slug: 'go-sdk' },
+            {
+              // One group per language. The Go SDK is the only one with pages
+              // of its own (guides + the generated per-package reference), and
+              // the reference stays collapsed under its own label so 34 package
+              // pages do not push the rest of the sidebar off screen.
+              label: 'Go SDK',
+              items: [
+                { label: 'Overview', slug: 'go-sdk' },
+                { label: 'Authentication', slug: 'go-sdk/authentication' },
+                { label: 'Multi-Tenancy', slug: 'go-sdk/multi-tenancy' },
+                { label: 'Error Handling', slug: 'go-sdk/error-handling' },
+                { label: 'Streaming', slug: 'go-sdk/streaming' },
+                { label: 'Graph ID Model', slug: 'go-sdk/graph-id-model' },
+                { label: 'Changelog', slug: 'go-sdk/changelog' },
+                { label: 'Reference', items: [{ autogenerate: { directory: 'go-sdk/reference' } }] },
+              ],
+            },
             { label: 'Python SDK', slug: 'python-sdk' },
             { label: 'Swift SDK', slug: 'swift-sdk' },
           ],
