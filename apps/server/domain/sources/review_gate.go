@@ -22,6 +22,11 @@ const (
 	ReviewGateChangesRequested = "changes_requested"
 )
 
+var (
+	ErrReviewGateNotFound  = errors.New("sources: review gate not found")
+	ErrReviewerNotRequired = errors.New("sources: reviewer is not required for this gate")
+)
+
 // ReviewReviewer is one reviewer agent required for a gate. The snapshot is
 // stored on the gate so removing a label later cannot remove a requirement for
 // the same head.
@@ -162,13 +167,13 @@ func (s *ReviewGateService) RecordVerdict(ctx context.Context, projectID uuid.UU
 		Where("head_sha = ?", headSHA).
 		Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, errors.New("sources: review gate not found for this head; ensure the subject first")
+		return nil, ErrReviewGateNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("sources: read review gate: %w", err)
 	}
 	if !containsReviewer(gate.RequiredReviewers, reviewerID.String()) {
-		return nil, fmt.Errorf("sources: reviewer %s is not required for this gate", reviewerID)
+		return &gate, fmt.Errorf("%w: %s", ErrReviewerNotRequired, reviewerID)
 	}
 	if reviewerName == "" {
 		reviewerName = reviewerID.String()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -497,11 +498,12 @@ func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *git
 		return nil, err
 	}
 	reviewerID, reviewerName := h.reviewerIdentity(ctx, projectID)
+	legacy := true
 	if h.reviewGates != nil && reviewerID != "" {
 		gate, gateErr := h.reviewGates.RecordVerdict(ctx, uuid.MustParse(projectID), "GitHubPullRequest", fmt.Sprintf("%s#%d", repo, number), headSHA, reviewerID, reviewerName, verdict, summary)
-		if gateErr != nil {
-			slog.Default().Warn("review verdict not recorded in review gate", "repo", repo, "number", number, "error", gateErr)
-		} else if gate != nil {
+		switch {
+		case gateErr == nil && gate != nil:
+			legacy = false
 			if err := h.publishReviewGate(ctx, client, repo, headSHA, gate, summary); err != nil {
 				return nil, err
 			}
@@ -514,8 +516,15 @@ func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *git
 				marker := fmt.Sprintf("Reviewed-SHA: %s\nVerdict: CHANGES_REQUESTED\n\n%s", headSHA, summary)
 				_ = client.CreateIssueComment(ctx, repo, number, marker)
 			}
+		case errors.Is(gateErr, ErrReviewGateNotFound):
+			// Legacy review sources with no parent gate keep the old single-lane path.
+		case errors.Is(gateErr, ErrReviewerNotRequired) && gate != nil && len(gate.RequiredReviewers) == 0:
+			// No reviewer agents configured for this subject; preserve the old path.
+		default:
+			return nil, fmt.Errorf("review gate: %w", gateErr)
 		}
-	} else {
+	}
+	if legacy {
 		if err := client.CreateReviewedCheck(ctx, repo, headSHA, conclusion, checkTitle, summary); err != nil {
 			return nil, err
 		}
