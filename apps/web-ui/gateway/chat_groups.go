@@ -16,7 +16,11 @@ type conversationGroup struct {
 	// Expanded is true when the active conversation is the root or one of its
 	// descendants, so opening a sub-chat reveals the branch that owns it.
 	Expanded bool
+	// latest is the newest activity instant in the subtree and the group's sort
+	// key. latestAt is that same conversation's raw updated_at, so the root row
+	// can render the instant it is ordered by instead of the idle root's own.
 	latest   time.Time
+	latestAt string
 }
 
 // conversationDescendant is one nested row. Depth is its distance from the
@@ -36,6 +40,12 @@ type sessionRailRowOptions struct {
 	SubchatCount     int
 	SubchatsExpanded bool
 	Collapsed        bool
+	// ActivityAt overrides the instant the row's subtitle shows. A group root
+	// passes the subtree's newest updated_at (the instant orderRailEntries sorts
+	// the group by), so a collapsed group whose sub-chat is the recent one does
+	// not read older than the row beneath it. Empty means the row's own
+	// UpdatedAt.
+	ActivityAt string
 }
 
 func boolString(v bool) string {
@@ -78,6 +88,7 @@ func groupConversations(convs []Conversation, activeID string) []conversationGro
 		root        Conversation
 		descendants []conversationDescendant
 		latest      time.Time
+		latestAt    string
 	}
 	groups := make(map[string]*grouping, len(convs))
 	order := make([]string, 0, len(convs))
@@ -86,7 +97,7 @@ func groupConversations(convs []Conversation, activeID string) []conversationGro
 		root, depth := conversationRoot(c, byID)
 		g, ok := groups[root.ID]
 		if !ok {
-			g = &grouping{root: root, latest: parseRailTime(root.UpdatedAt)}
+			g = &grouping{root: root, latest: parseRailTime(root.UpdatedAt), latestAt: root.UpdatedAt}
 			groups[root.ID] = g
 			order = append(order, root.ID)
 		}
@@ -95,6 +106,7 @@ func groupConversations(convs []Conversation, activeID string) []conversationGro
 		}
 		if t := parseRailTime(c.UpdatedAt); t.After(g.latest) {
 			g.latest = t
+			g.latestAt = c.UpdatedAt
 		}
 	}
 
@@ -122,6 +134,7 @@ func groupConversations(convs []Conversation, activeID string) []conversationGro
 			Descendants: g.descendants,
 			Expanded:    expanded,
 			latest:      g.latest,
+			latestAt:    g.latestAt,
 		})
 	}
 

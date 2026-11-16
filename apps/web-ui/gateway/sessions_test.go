@@ -179,7 +179,7 @@ func TestSessionsListRoute(t *testing.T) {
 	if !strings.Contains(body, "Newer") || !strings.Contains(body, "Older") {
 		t.Fatalf("sessions missing from list:\n%s", body)
 	}
-	// most recent first
+	// newest created first (the rows are labelled Created ...)
 	if strings.Index(body, "Newer") > strings.Index(body, "Older") {
 		t.Error("sessions not sorted most-recent-first")
 	}
