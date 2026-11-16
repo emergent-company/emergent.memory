@@ -28,6 +28,10 @@ This guide covers topics for developers integrating with, extending, or operatin
 
     Health check endpoints, the diagnostics probe, debug stats, and the auto-generated OpenAPI spec.
 
+-   **[Deploy Portal](deploy-portal.md)**
+
+    The public `/deploy` page: its Railway OAuth routes, the four variables that enable it, and what a `404` from it means.
+
 -   **[Security Scopes](security-scopes.md)**
 
     Complete reference for all 38 permission scopes, umbrella scope expansions, and which scopes are assignable to API tokens.
