@@ -322,6 +322,11 @@ func (d *SourceEventDispatcher) ensureReviewSubject(ctx context.Context, v *Veri
 	if title == "" {
 		title = subject
 	}
+	if d.objectTypes != nil {
+		if err := d.objectTypes.EnsureObjectTypes(ctx, src.ProjectID.String(), (&githubAppProvider{}).ObjectTypes()); err != nil {
+			return fmt.Errorf("sources: ensure review subject schema: %w", err)
+		}
+	}
 	key := fmt.Sprintf("github:%s:%s#%d", src.ID.String(), repoName, p.PullNumber())
 	props := map[string]any{
 		"repo": repoName, "pr_number": p.PullNumber(), "title": title,
@@ -1199,6 +1204,11 @@ func (d *SourceEventDispatcher) processWorkflowEvent(ctx context.Context, src *S
 	}
 	if d.workObjects == nil {
 		return false, fmt.Errorf("sources: workflow source has no work-object store")
+	}
+	if d.objectTypes != nil {
+		if err := d.objectTypes.EnsureObjectTypes(ctx, src.ProjectID.String(), (&githubAppProvider{}).ObjectTypes()); err != nil {
+			return true, fmt.Errorf("sources: ensure workflow schema: %w", err)
+		}
 	}
 	var cfg SourceWorkflowConfig
 	raw, _ := json.Marshal(wf.Config)
