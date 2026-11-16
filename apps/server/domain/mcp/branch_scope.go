@@ -104,7 +104,7 @@ func (s *Service) branchReadAllowedByScope(ctx context.Context, projectID string
 	}
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return fmt.Errorf("invalid project_id: %w", err)
+		return toolArgErrorf("invalid project_id: %w", err)
 	}
 	if err := s.branchAllowedByScope(ctx, projectUUID, branchID); err != nil {
 		return err
@@ -235,7 +235,7 @@ func (s *Service) branchScopeDedupClause(ctx context.Context, projectID string, 
 	}
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return "", nil, fmt.Errorf("invalid project_id: %w", err)
+		return "", nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 	ids, err := s.inScopeBranchIDs(ctx, projectUUID, scope)
 	if err != nil {

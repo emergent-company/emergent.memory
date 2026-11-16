@@ -9,6 +9,7 @@ import SwiftUI
 struct ConnectionPage: View {
     @SwiftUI.Environment(AccountStore.self) private var accountStore
     @SwiftUI.Environment(ProjectStore.self) private var projectStore
+    @SwiftUI.Environment(LaunchAtLogin.self) private var launchAtLogin
 
     @State private var alertMessage: String?
     @State private var confirmSignOut = false
@@ -16,9 +17,11 @@ struct ConnectionPage: View {
     var body: some View {
         Form {
             memoryAccountSection
+            generalSection
         }
         .formStyle(.grouped)
         .navigationTitle("Connection")
+        .onAppear { launchAtLogin.refresh() }
         .alert("Memory", isPresented: Binding(
             get: { alertMessage != nil },
             set: {
@@ -132,6 +135,39 @@ struct ConnectionPage: View {
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+    }
+
+    // MARK: - General
+
+    /// Launch-at-login: the system owns the flag, so the toggle reads it and an
+    /// attempt to change it is reflected back from what macOS actually reports.
+    private var generalSection: some View {
+        Section {
+            Toggle(isOn: Binding(
+                get: { launchAtLogin.isEnabled },
+                set: { launchAtLogin.setEnabled($0) }
+            )) {
+                Text("Open Memory at login")
+            }
+            .toggleStyle(.switch)
+
+            if let error = launchAtLogin.lastError {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if launchAtLogin.requiresApproval {
+                        Button("Open Login Items…") { launchAtLogin.openLoginItemsSettings() }
+                            .controlSize(.small)
+                    }
+                }
+            }
+        } header: {
+            Text("General")
+        } footer: {
+            Text("The connector starts in the menu bar so your connected projects stay online without opening the window.")
         }
     }
 

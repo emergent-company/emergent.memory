@@ -88,7 +88,8 @@ func (c *Client) VerifyAssertion(ctx context.Context, issuer, token string, audi
 
 // VerifyTrustDocument verifies a listing trust document against the issuer's
 // key set. The document must be an ES256 JWT with aud=memory-listing-trust, a
-// matching issuer, a live expiry, and a listing subject.
+// matching issuer, a live expiry, a listing subject, and an explicit
+// verified:true claim. An omitted claim is treated as not verified.
 func (c *Client) VerifyTrustDocument(ctx context.Context, issuer, token string) (*TrustClaims, error) {
 	base, err := c.trustedIssuer(issuer)
 	if err != nil {
@@ -111,7 +112,13 @@ func (c *Client) VerifyTrustDocument(ctx context.Context, issuer, token string) 
 	if notYetValidWithinLeeway(now, claims.NotBefore) {
 		return nil, ErrTrustInvalid("trust document is not yet valid")
 	}
-	if claims.Verified != nil && !*claims.Verified {
+	// Fail closed: only an explicit verified:true vouches for the listing. A
+	// document that omits the claim is refused, so verification cannot silently
+	// depend on the market's producer contract emitting it.
+	if claims.Verified == nil {
+		return nil, ErrTrustInvalid("trust document does not state that the listing is verified")
+	}
+	if !*claims.Verified {
 		return nil, ErrTrustInvalid("trust document does not vouch for the listing")
 	}
 	if claims.ListingSlug == "" {

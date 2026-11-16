@@ -12,6 +12,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/internal/outbound"
 	"github.com/emergent-company/emergent.memory/internal/webcrawl"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 // Web connector constants. MaxPageBytes/MaxTotalBytes/MaxCacheBytes are the v1
@@ -239,7 +240,7 @@ func (c *webConnector) TestConnection(ctx context.Context, cfg map[string]any) e
 		return fmt.Errorf("web: connection test to %q failed: %w", first, err)
 	}
 	if len(resp.Body) > webTestByteCap {
-		return fmt.Errorf("web: %q response body exceeds the %d-byte connection-test cap", first, webTestByteCap)
+		return apperror.NewValidationf("web: %q response body exceeds the %d-byte connection-test cap", first, webTestByteCap)
 	}
 	if resp.Status < 200 || resp.Status >= 300 {
 		return fmt.Errorf("web: %q returned HTTP %d", first, resp.Status)

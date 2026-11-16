@@ -1,5 +1,8 @@
 package main
 
+// guard: the tightened budget tables the consistency ratchets compare
+// against (data only — the ratchets' own tests live next door).
+
 // consistency_ratchet_budget_test.go holds the seeded budget tables for the
 // consistency ratchet. Both tables are declared tight (exact equality) against
 // the counts the corresponding scanners produce on the current tree, so the

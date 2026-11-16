@@ -67,6 +67,36 @@ type PKCEOptions struct {
 	// Issuer, when set, is used directly and skips GET /api/auth/issuer
 	// discovery (serverURL may then be empty).
 	Issuer string
+	// Prompt sets the OIDC `prompt` parameter. PromptNone is the silent
+	// re-auth: the provider answers from an existing SSO session and fails
+	// with `login_required` when it cannot, so no interaction is shown.
+	Prompt string
+	// LoginHint sets the OIDC `login_hint` parameter (the account's email),
+	// which tells the provider which identity a silent re-auth is for.
+	LoginHint string
+}
+
+// PromptNone is the OIDC `prompt=none` value: authenticate without any user
+// interface, or fail with `login_required` / `interaction_required`.
+const PromptNone = "none"
+
+// PromptValues are the `prompt` values StartPKCE accepts. A client that passes
+// anything else gets a usage error instead of a request the provider rejects.
+var PromptValues = []string{PromptNone, "login", "consent", "select_account", "create"}
+
+// ValidPrompt reports whether prompt is one of PromptValues (the empty string
+// means "omit the parameter" and is valid).
+func ValidPrompt(prompt string) bool {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return true
+	}
+	for _, v := range PromptValues {
+		if prompt == v {
+			return true
+		}
+	}
+	return false
 }
 
 // StartPKCE begins an authorization-code + PKCE login. It resolves the OIDC
@@ -140,7 +170,15 @@ func (m *Manager) StartPKCE(ctx context.Context, serverURL, redirectURI string, 
 		return nil, err
 	}
 
-	authorizeURL, err := buildAuthorizeURL(oidc.AuthorizationEndpoint, clientID, redirectURI, m.scopes, state, pkceChallenge(verifier))
+	authorizeURL, err := buildAuthorizeURL(oidc.AuthorizationEndpoint, authorizeParams{
+		ClientID:    clientID,
+		RedirectURI: redirectURI,
+		Scopes:      m.scopes,
+		State:       state,
+		Challenge:   pkceChallenge(verifier),
+		Prompt:      strings.TrimSpace(opts.Prompt),
+		LoginHint:   strings.TrimSpace(opts.LoginHint),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -317,20 +355,40 @@ func pkceChallenge(verifier string) string {
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
+// authorizeParams are the parameters of one authorization request. A struct
+// rather than seven positional strings, because the optional ones (Prompt,
+// LoginHint) are the ones a caller must not confuse.
+type authorizeParams struct {
+	ClientID    string
+	RedirectURI string
+	Scopes      []string
+	State       string
+	Challenge   string
+	// Prompt and LoginHint are omitted from the URL when empty.
+	Prompt    string
+	LoginHint string
+}
+
 // buildAuthorizeURL assembles the authorization request URL.
-func buildAuthorizeURL(endpoint, clientID, redirectURI string, scopes []string, state, challenge string) (string, error) {
+func buildAuthorizeURL(endpoint string, p authorizeParams) (string, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil {
 		return "", fmt.Errorf("account: parse authorization endpoint: %w", err)
 	}
 	q := u.Query()
 	q.Set("response_type", "code")
-	q.Set("client_id", clientID)
-	q.Set("redirect_uri", redirectURI)
-	q.Set("scope", strings.Join(scopes, " "))
-	q.Set("state", state)
-	q.Set("code_challenge", challenge)
+	q.Set("client_id", p.ClientID)
+	q.Set("redirect_uri", p.RedirectURI)
+	q.Set("scope", strings.Join(p.Scopes, " "))
+	q.Set("state", p.State)
+	q.Set("code_challenge", p.Challenge)
 	q.Set("code_challenge_method", "S256")
+	if p.Prompt != "" {
+		q.Set("prompt", p.Prompt)
+	}
+	if p.LoginHint != "" {
+		q.Set("login_hint", p.LoginHint)
+	}
 	u.RawQuery = q.Encode()
 	return u.String(), nil
 }

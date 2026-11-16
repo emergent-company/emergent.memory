@@ -867,14 +867,17 @@ Carol Davis is Director of Product. Dave Lee is a Senior Engineer reporting to B
 	djRepo := discoveryjobs.NewRepository(testDB.DB, log)
 	djSvc := discoveryjobs.NewService(djRepo, docsSvc, cfg, mf, log)
 
-	// Create a stub discovery job.
+	// Create a stub discovery job. organization_id is notnull and foreign-keyed
+	// to organizations (migration 00306), so the fixture must carry the project's
+	// org rather than the zero UUID.
 	stubJob := &discoveryjobs.DiscoveryJob{
-		ID:        uuid.New(),
-		ProjectID: projectUUID,
-		Status:    discoveryjobs.StatusCompleted,
-		KBPurpose: "HR org-chart system",
-		Progress:  discoveryjobs.JSONMap{"message": "stub"},
-		Config:    discoveryjobs.JSONMap{"document_ids": []string{doc.ID}},
+		ID:             uuid.New(),
+		OrganizationID: uuid.MustParse(orgID),
+		ProjectID:      projectUUID,
+		Status:         discoveryjobs.StatusCompleted,
+		KBPurpose:      "HR org-chart system",
+		Progress:       discoveryjobs.JSONMap{"message": "stub"},
+		Config:         discoveryjobs.JSONMap{"document_ids": []string{doc.ID}},
 	}
 	require.NoError(t, djRepo.Create(ctx, stubJob))
 
@@ -962,12 +965,13 @@ when the solk touches the gravity-well. A match lasts 5 phases of 8 zorns each.`
 	djSvc := discoveryjobs.NewService(djRepo, docsSvc, cfg, mf, log)
 
 	stubJob := &discoveryjobs.DiscoveryJob{
-		ID:        uuid.New(),
-		ProjectID: projectUUID,
-		Status:    discoveryjobs.StatusCompleted,
-		KBPurpose: "Fictional sports tracking",
-		Progress:  discoveryjobs.JSONMap{"message": "stub"},
-		Config:    discoveryjobs.JSONMap{"document_ids": []string{doc.ID}},
+		ID:             uuid.New(),
+		OrganizationID: uuid.MustParse(orgID),
+		ProjectID:      projectUUID,
+		Status:         discoveryjobs.StatusCompleted,
+		KBPurpose:      "Fictional sports tracking",
+		Progress:       discoveryjobs.JSONMap{"message": "stub"},
+		Config:         discoveryjobs.JSONMap{"document_ids": []string{doc.ID}},
 	}
 	require.NoError(t, djRepo.Create(ctx, stubJob))
 

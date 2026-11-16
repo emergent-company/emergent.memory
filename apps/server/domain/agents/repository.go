@@ -2400,6 +2400,27 @@ func (r *Repository) ClaimPausedRunForResume(ctx context.Context, runID string) 
 	return n > 0, nil
 }
 
+// ResumeClaimLostError explains a resume claim that matched no rows (issue
+// #912). A 0-row claim only says the pause is no longer `input-required`; it does
+// not say why, and the two reasons mean opposite things to the caller:
+//
+//   - another caller claimed the pause and owns the turn — ErrRunAlreadyResumed;
+//   - the pause left `input-required` for another reason (cancelled, failed,
+//     deleted) — ErrRunPauseNotResumable, because no turn will ever execute
+//     under it.
+//
+// The row is read back and the verdict returned with the run's real status,
+// rather than asserting a turn is running without checking. A failure to read
+// the row is surfaced as-is: inventing either verdict would be the same lie in a
+// different direction.
+func (r *Repository) ResumeClaimLostError(ctx context.Context, runID string) error {
+	run, err := r.FindRunByID(ctx, runID)
+	if err != nil {
+		return fmt.Errorf("read run %s after a lost resume claim: %w", runID, err)
+	}
+	return lostResumeClaimError(run, runID)
+}
+
 // CreateResumedRunFromPause atomically consumes a paused run's pause and inserts
 // the run that takes over its execution (issue #887).
 //

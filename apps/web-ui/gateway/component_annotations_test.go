@@ -1,5 +1,7 @@
 package main
 
+// guard: the always-on dev-mode annotation switch — must gate every PR.
+
 import (
 	"net/http"
 	"net/http/httptest"

@@ -19,6 +19,7 @@ struct MemoryConnectorApp: App {
                 .environment(environment.accountStore)
                 .environment(environment.projectStore)
                 .environment(environment.recentProjects)
+                .environment(environment.launchAtLogin)
                 .environment(environment.appState)
                 .environment(environment.identity)
                 .environment(environment.avatarStore)
@@ -26,7 +27,7 @@ struct MemoryConnectorApp: App {
                 .environment(environment.statusMonitor)
                 .environment(environment.updater)
                 .background(WindowOpenBridge())
-                .task { await environment.bootstrap() }
+                .task { await environment.startup() }
         }
         .commands {
             // Standard application menu: Settings (⌘,) and About work while the

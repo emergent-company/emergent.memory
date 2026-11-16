@@ -468,3 +468,53 @@ func TestStartPKCEClientIDRequired(t *testing.T) {
 		t.Fatal("StartPKCE with no effective client id: expected error, got nil")
 	}
 }
+
+// Prompt/LoginHint are the silent re-auth parameters: they must survive into
+// the authorize URL, and an unset one must not appear at all.
+func TestStartPKCECarriesPromptAndLoginHint(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManagerWithDeps(dir, pkceDeps(t, time.Now, unusedExchange))
+
+	pl, err := m.StartPKCE(context.Background(), "https://memory.example.test", "myapp://callback", PKCEOptions{
+		Prompt:    PromptNone,
+		LoginHint: "person@example.test",
+	})
+	if err != nil {
+		t.Fatalf("StartPKCE: %v", err)
+	}
+	u, err := url.Parse(pl.AuthorizeURL)
+	if err != nil {
+		t.Fatalf("parse authorize URL: %v", err)
+	}
+	if got := u.Query().Get("prompt"); got != PromptNone {
+		t.Errorf("prompt = %q, want %q", got, PromptNone)
+	}
+	if got := u.Query().Get("login_hint"); got != "person@example.test" {
+		t.Errorf("login_hint = %q", got)
+	}
+
+	plain, err := m.StartPKCE(context.Background(), "https://memory.example.test", "myapp://callback", PKCEOptions{})
+	if err != nil {
+		t.Fatalf("StartPKCE (interactive): %v", err)
+	}
+	pu, err := url.Parse(plain.AuthorizeURL)
+	if err != nil {
+		t.Fatalf("parse authorize URL: %v", err)
+	}
+	if pu.Query().Has("prompt") || pu.Query().Has("login_hint") {
+		t.Errorf("interactive authorize URL carries silent parameters: %s", plain.AuthorizeURL)
+	}
+}
+
+func TestValidPrompt(t *testing.T) {
+	for _, ok := range []string{"", "none", "login", "consent", "select_account", "create"} {
+		if !ValidPrompt(ok) {
+			t.Errorf("ValidPrompt(%q) = false, want true", ok)
+		}
+	}
+	for _, bad := range []string{"none-ish", "NONE", "silent", "force"} {
+		if ValidPrompt(bad) {
+			t.Errorf("ValidPrompt(%q) = true, want false", bad)
+		}
+	}
+}

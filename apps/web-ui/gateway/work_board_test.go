@@ -185,7 +185,13 @@ func TestWorkBoardCountReadout(t *testing.T) {
 // dropping it widens a filtered board to every type behind a control that still
 // shows the subset, and carrying unrelated params would leak the rest of the
 // request into every action URL.
+//
+// The values are also resolved against the board's own types (#878), so the
+// published query and the rendered matrices come from one set: a repeat, an
+// unknown type and a type the board does not enable are all dropped here rather
+// than published and then ignored by the renderer.
 func TestBoardViewQuery(t *testing.T) {
+	boardTypes := []CompiledType{{Name: "Task", BoardEnabled: true}, {Name: "Bug", BoardEnabled: true}}
 	tests := []struct {
 		name, in, want string
 	}{
@@ -194,6 +200,10 @@ func TestBoardViewQuery(t *testing.T) {
 		{"types only", "type=Task", "type=Task"},
 		{"filter and types", "filter=1&type=Task&type=Bug", "filter=1&type=Task&type=Bug"},
 		{"blank type dropped", "filter=1&type=&type=Task", "filter=1&type=Task"},
+		{"repeated type dropped", "filter=1&type=Task&type=Task", "filter=1&type=Task"},
+		{"unknown type dropped", "filter=1&type=Task&type=Nope", "filter=1&type=Task"},
+		{"non-board type dropped", "filter=1&type=Task&type=Note", "filter=1&type=Task"},
+		{"unknown type alone leaves the filter", "filter=1&type=Nope", "filter=1"},
 		{"unrelated params dropped", "filter=1&type=Task&section=board&agent=a1&q=x", "filter=1&type=Task"},
 		{"filter flag must be exactly 1", "filter=0&type=Task", "type=Task"},
 	}
@@ -203,10 +213,25 @@ func TestBoardViewQuery(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseQuery(%q): %v", tt.in, err)
 			}
-			if got := boardViewQuery(in).Encode(); got != tt.want {
+			if got := boardViewQuery(in, boardTypes).Encode(); got != tt.want {
 				t.Errorf("boardViewQuery(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestBoardViewQueryWithoutSchema pins the preview's fail-open half: when the
+// compiled schema is unavailable, boardViewQuery cannot tell a real type from a
+// stale one, so it must still forward the selection it cannot validate (a
+// filtered board must not widen on a schema hiccup) while still dropping the
+// values that cannot mean anything.
+func TestBoardViewQueryWithoutSchema(t *testing.T) {
+	in, err := url.ParseQuery("filter=1&type=Task&type=Task&type=&type=Bug")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := boardViewQuery(in, nil).Encode(); got != "filter=1&type=Task&type=Bug" {
+		t.Errorf("boardViewQuery without schema = %q, want filter=1&type=Task&type=Bug", got)
 	}
 }
 
@@ -623,6 +648,39 @@ func TestObjectPreviewBoardActionsSlot(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("board preview missing %q:\n%s", want, body)
+		}
+	}
+}
+
+// TestObjectPreviewBoardActionsSlotCarriesTheView pins the drawer's half of the
+// board's view state (#878): renderObjectPreview hands boardViewQuery to the
+// action slot, which is what makes an action taken from a filtered board return
+// to that board still filtered. The unfiltered case above cannot catch a dropped
+// argument — it expects a bare path — so the filtered case is the one that fails
+// if the query stops being passed.
+func TestObjectPreviewBoardActionsSlotCarriesTheView(t *testing.T) {
+	f := &fakeMemory{
+		compiled: &CompiledSchemaTypes{ObjectTypes: []CompiledType{
+			{Name: "BoardTask", BoardEnabled: true, AllowedStatuses: []string{"review", "done", "cancelled"}},
+		}},
+		objects: []GraphObject{{ID: "w1", Type: "BoardTask", Key: "k", Status: "review"}},
+		workItemDetail: &WorkItemDetail{
+			Item: &WorkItem{CanonicalID: "w1", Type: "BoardTask", Key: "k", Status: "review"},
+		},
+	}
+	_, e := newWorkBoardEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/w1/preview?actions=board&filter=1&type=BoardTask", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`/work/items/w1/approve?filter=1&amp;type=BoardTask`,
+		`/work/items/w1/request-changes?filter=1&amp;type=BoardTask`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("board preview action slot lost the board's view state, missing %q:\n%s", want, body)
 		}
 	}
 }

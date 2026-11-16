@@ -137,7 +137,7 @@ func (s *Service) executeGetTrace(ctx context.Context, args map[string]any) (*To
 
 	traceID, _ := args["trace_id"].(string)
 	if traceID == "" {
-		return nil, fmt.Errorf("get_trace: 'trace_id' is required")
+		return nil, toolArgErrorf("get_trace: 'trace_id' is required")
 	}
 
 	url := s.tempoBaseURL + "/api/traces/" + traceID

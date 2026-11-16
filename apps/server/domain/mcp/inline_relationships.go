@@ -139,7 +139,7 @@ func processInlineRelationships(
 			field, reason = "source_id", inlineRelReasonUnknownSourceID
 			resolvedID, err = deps.ResolveID(sourceIDStr)
 			if err != nil {
-				fail(i, reason, fmt.Sprintf("cannot resolve source_id %q: %v", sourceIDStr, err))
+				fail(i, reason, fmt.Sprintf("cannot resolve source_id %q: %s", sourceIDStr, apperror.PublicMessage(err)))
 				continue
 			}
 		} else {
@@ -151,7 +151,7 @@ func processInlineRelationships(
 			field, reason = "target_id", inlineRelReasonUnknownTargetID
 			resolvedID, err = deps.ResolveID(targetIDStr)
 			if err != nil {
-				fail(i, reason, fmt.Sprintf("cannot resolve target_id %q: %v", targetIDStr, err))
+				fail(i, reason, fmt.Sprintf("cannot resolve target_id %q: %s", targetIDStr, apperror.PublicMessage(err)))
 				continue
 			}
 		}

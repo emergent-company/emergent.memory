@@ -28,7 +28,7 @@ func (s *Service) getTypesForNamespace(ctx context.Context, projectID string, na
 
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	if namespaceFilter == "" {
@@ -69,7 +69,7 @@ func (s *Service) getSystemNamespaceTypes(ctx context.Context, projectID string,
 
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	type row struct {
@@ -103,10 +103,10 @@ func parseMinScoreArg(args map[string]any) (*float32, error) {
 	}
 	f, ok := raw.(float64)
 	if !ok {
-		return nil, fmt.Errorf("invalid min_score: must be a number between 0 and 1")
+		return nil, toolArgErrorf("invalid min_score: must be a number between 0 and 1")
 	}
 	if f < 0 || f > 1 {
-		return nil, fmt.Errorf("invalid min_score: must be between 0 and 1")
+		return nil, toolArgErrorf("invalid min_score: must be between 0 and 1")
 	}
 	v := float32(f)
 	return &v, nil
@@ -176,12 +176,12 @@ func buildHybridUnifiedRequest(args map[string]any, query string, limit int, typ
 func (s *Service) executeHybridSearch(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	query, ok := args["query"].(string)
 	if !ok || query == "" {
-		return nil, fmt.Errorf("missing required parameter: query")
+		return nil, toolArgErrorf("missing required parameter: query")
 	}
 
 	opts := responseOptsFromArgs(args)
@@ -509,12 +509,12 @@ func filterSearchItemsByScope(scope *TypeScope, items []*graph.SearchResultItem)
 func (s *Service) executeSemanticSearch(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	query, ok := args["query"].(string)
 	if !ok || query == "" {
-		return nil, fmt.Errorf("missing required parameter: query")
+		return nil, toolArgErrorf("missing required parameter: query")
 	}
 
 	opts := responseOptsFromArgs(args)
@@ -656,17 +656,17 @@ func (s *Service) executeSemanticSearch(ctx context.Context, projectID string, a
 func (s *Service) executeFindSimilar(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	entityIDStr, ok := args["entity_id"].(string)
 	if !ok || entityIDStr == "" {
-		return nil, fmt.Errorf("missing required parameter: entity_id")
+		return nil, toolArgErrorf("missing required parameter: entity_id")
 	}
 
 	entityID, err := uuid.Parse(entityIDStr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid entity_id: %w", err)
+		return nil, toolArgErrorf("invalid entity_id: %w", err)
 	}
 
 	limit := 10
@@ -696,7 +696,7 @@ func (s *Service) executeFindSimilar(ctx context.Context, projectID string, args
 
 	scope := TypeScopeFromContext(ctx)
 	if typeFilter != nil && !scope.AllowsObject(*typeFilter) {
-		return nil, fmt.Errorf("find similar: object type %q is not allowed for this agent", *typeFilter)
+		return nil, toolForbiddenf("find similar: object type %q is not allowed for this agent", *typeFilter)
 	}
 
 	opts := responseOptsFromArgs(args)
@@ -728,12 +728,12 @@ func (s *Service) executeFindSimilar(ctx context.Context, projectID string, args
 func (s *Service) executeTraverseGraph(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	startEntityIDStr, ok := args["start_entity_id"].(string)
 	if !ok || startEntityIDStr == "" {
-		return nil, fmt.Errorf("missing required parameter: start_entity_id")
+		return nil, toolArgErrorf("missing required parameter: start_entity_id")
 	}
 
 	startEntityID, err := uuid.Parse(startEntityIDStr)
@@ -741,7 +741,7 @@ func (s *Service) executeTraverseGraph(ctx context.Context, projectID string, ar
 		// Not a UUID — try resolving as an entity key.
 		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, startEntityIDStr)
 		if keyErr != nil {
-			return nil, fmt.Errorf("invalid start_entity_id: %q is not a UUID and key lookup failed: %w", startEntityIDStr, keyErr)
+			return nil, invalidEntityRefError("start_entity_id", startEntityIDStr, keyErr)
 		}
 		startEntityID = resolved
 	}
@@ -824,7 +824,7 @@ func (s *Service) executeTraverseGraph(ctx context.Context, projectID string, ar
 func (s *Service) executeListRelationships(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	limit := 50
@@ -847,7 +847,7 @@ func (s *Service) executeListRelationships(ctx context.Context, projectID string
 
 	if t, ok := args["type"].(string); ok && t != "" {
 		if !scope.AllowsRelationship(t) {
-			return nil, fmt.Errorf("list relationships: relationship type %q is not allowed for this agent", t)
+			return nil, toolForbiddenf("list relationships: relationship type %q is not allowed for this agent", t)
 		}
 		params.Type = &t
 	}
@@ -855,7 +855,7 @@ func (s *Service) executeListRelationships(ctx context.Context, projectID string
 	if srcID, ok := args["source_id"].(string); ok && srcID != "" {
 		id, err := uuid.Parse(srcID)
 		if err != nil {
-			return nil, fmt.Errorf("invalid source_id: %w", err)
+			return nil, toolArgErrorf("invalid source_id: %w", err)
 		}
 		params.SrcID = &id
 	}
@@ -863,7 +863,7 @@ func (s *Service) executeListRelationships(ctx context.Context, projectID string
 	if dstID, ok := args["target_id"].(string); ok && dstID != "" {
 		id, err := uuid.Parse(dstID)
 		if err != nil {
-			return nil, fmt.Errorf("invalid target_id: %w", err)
+			return nil, toolArgErrorf("invalid target_id: %w", err)
 		}
 		params.DstID = &id
 	}
@@ -921,23 +921,23 @@ func (s *Service) lookupRelationshipType(ctx context.Context, projectID string, 
 func (s *Service) executeUpdateRelationship(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	relIDStr, ok := args["relationship_id"].(string)
 	if !ok || relIDStr == "" {
-		return nil, fmt.Errorf("missing required parameter: relationship_id")
+		return nil, toolArgErrorf("missing required parameter: relationship_id")
 	}
 
 	relID, err := uuid.Parse(relIDStr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid relationship_id: %w", err)
+		return nil, toolArgErrorf("invalid relationship_id: %w", err)
 	}
 
 	scope := TypeScopeFromContext(ctx)
 	if typ, lerr := s.lookupRelationshipType(ctx, projectID, relID); lerr == nil {
 		if !scope.AllowsRelationship(typ) {
-			return nil, fmt.Errorf("update relationship: relationship type is not allowed for this agent's scope")
+			return nil, toolForbiddenf("update relationship: relationship type is not allowed for this agent's scope")
 		}
 	}
 
@@ -989,16 +989,16 @@ func (s *Service) executeUpdateRelationship(ctx context.Context, projectID strin
 func (s *Service) executeDeleteRelationship(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	if raw, present := args["relationship_ids"]; present {
 		ids, ok := raw.([]any)
 		if !ok {
-			return nil, fmt.Errorf("invalid relationship_ids: must be an array of relationship UUIDs")
+			return nil, toolArgErrorf("invalid relationship_ids: must be an array of relationship UUIDs")
 		}
 		if len(ids) == 0 {
-			return nil, fmt.Errorf("missing or empty relationship_ids array")
+			return nil, toolArgErrorf("missing or empty relationship_ids array")
 		}
 		if len(ids) > batchMutationMaxItems {
 			return nil, batchOverLimitError("relationship-delete", len(ids))
@@ -1073,10 +1073,10 @@ func (s *Service) executeDeleteRelationship(ctx context.Context, projectID strin
 
 	relIDStr, ok := args["relationship_id"].(string)
 	if !ok || relIDStr == "" {
-		return nil, fmt.Errorf("missing required parameter: relationship_id")
+		return nil, toolArgErrorf("missing required parameter: relationship_id")
 	}
 	if _, err := uuid.Parse(relIDStr); err != nil {
-		return nil, fmt.Errorf("invalid relationship_id: %w", err)
+		return nil, toolArgErrorf("invalid relationship_id: %w", err)
 	}
 
 	// Resolve the branch param (an omitted branch inherits an agent-run
@@ -1104,7 +1104,7 @@ func (s *Service) executeDeleteRelationship(ctx context.Context, projectID strin
 func (s *Service) deleteRelationshipOne(ctx context.Context, projectUUID uuid.UUID, projectID, relIDStr string, branchID *uuid.UUID, reason *string) (uuid.UUID, error) {
 	relID, err := uuid.Parse(relIDStr)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("invalid relationship_id: %w", err)
+		return uuid.Nil, toolArgErrorf("invalid relationship_id: %w", err)
 	}
 
 	if branchID != nil {
@@ -1130,7 +1130,7 @@ func (s *Service) deleteRelationshipOne(ctx context.Context, projectUUID uuid.UU
 func (s *Service) executeListTags(ctx context.Context, projectID string) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	tags, err := s.graphService.GetTags(ctx, projectUUID, nil)
