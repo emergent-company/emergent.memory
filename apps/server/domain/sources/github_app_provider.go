@@ -86,7 +86,7 @@ func (p *githubAppProvider) Catalog() Provider {
 		// The pack this provider installs, so the Schema UI can group it under
 		// Data Sources and link it to the installed apps.
 		SchemaPack:        "github-app-workflow",
-		SchemaPackVersion: "1.3.0",
+		SchemaPackVersion: "1.4.0",
 	}
 }
 
@@ -255,11 +255,12 @@ func (p *githubAppProvider) ObjectTypes() *ObjectTypePack {
 		"base_sha":  map[string]any{"type": "string"},
 		"title":     map[string]any{"type": "string"},
 		"state":     map[string]any{"type": "string"},
+		"labels":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 		"status":    map[string]any{"type": "string"},
 	}
 	return &ObjectTypePack{
 		Name:          "github-app-workflow",
-		Version:       "1.3.0",
+		Version:       "1.4.0",
 		Description:   "GitHub App issue and pull-request workflow objects.",
 		Source:        "provider:github_app",
 		SkipDiscovery: true,

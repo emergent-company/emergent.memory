@@ -461,6 +461,18 @@ func (ts *TriggerService) handleEvent(ctx context.Context, objectType string, ev
 			continue
 		}
 
+		// Value predicates run against the current HEAD, not the event payload:
+		// `updated` carries changed paths, not the whole property set.
+		if agent.ReactionConfig != nil && len(agent.ReactionConfig.Match) > 0 {
+			if ts.workObjects == nil {
+				continue
+			}
+			head, herr := ts.workObjects.GetHeadObject(ctx, projectID, objectID)
+			if herr != nil || head == nil || !ReactionMatchesProperties(agent.ReactionConfig, head.Properties) {
+				continue
+			}
+		}
+
 		// Per-agent agent-origin gate, replacing the old global drop.
 		if !shouldTriggerAgentForActor(agent, actor) {
 			ts.log.Info("skipping agent-originated event for agent",
