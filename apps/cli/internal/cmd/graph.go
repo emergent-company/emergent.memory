@@ -803,7 +803,7 @@ When --key is given, the object is keyed for idempotent operations:
 			if graphOutputFlag == "json" {
 				return json.NewEncoder(out).Encode(obj)
 			}
-			fmt.Fprintf(out, "%s\t%s\t%s\n", obj.EntityID, obj.Type, objectName(obj.Name))
+			_, _ = fmt.Fprintf(out, "%s\t%s\t%s\n", obj.EntityID, obj.Type, objectName(obj.Name))
 			return nil
 		}
 
@@ -811,7 +811,7 @@ When --key is given, the object is keyed for idempotent operations:
 		if err != nil {
 			// --key with no --upsert: treat a 409 conflict as "already exists, skip"
 			if graphKeyFlag != "" && sdkerrors.IsConflict(err) {
-				fmt.Fprintf(out, "Object with type %q and key %q already exists, skipping.\n", graphTypeFlag, graphKeyFlag)
+				_, _ = fmt.Fprintf(out, "Object with type %q and key %q already exists, skipping.\n", graphTypeFlag, graphKeyFlag)
 				return nil
 			}
 			return fmt.Errorf("failed to create object: %w", err)
@@ -821,7 +821,7 @@ When --key is given, the object is keyed for idempotent operations:
 			return json.NewEncoder(out).Encode(obj)
 		}
 
-		fmt.Fprintf(out, "%s\t%s\t%s\n", obj.EntityID, obj.Type, objectName(obj.Name))
+		_, _ = fmt.Fprintf(out, "%s\t%s\t%s\n", obj.EntityID, obj.Type, objectName(obj.Name))
 		return nil
 	},
 }
@@ -1725,9 +1725,9 @@ func printSubgraphResult(out io.Writer, resp *sdkgraph.CreateSubgraphResponse, o
 		return json.NewEncoder(out).Encode(resp)
 	}
 	for _, o := range resp.Objects {
-		fmt.Fprintf(out, "%s\t%s\t%s\n", o.EntityID, o.Type, objectName(o.Name))
+		_, _ = fmt.Fprintf(out, "%s\t%s\t%s\n", o.EntityID, o.Type, objectName(o.Name))
 	}
-	fmt.Fprintf(out, "Created %d objects, %d relationships\n", len(resp.Objects), len(resp.Relationships))
+	_, _ = fmt.Fprintf(out, "Created %d objects, %d relationships\n", len(resp.Objects), len(resp.Relationships))
 	return nil
 }
 
@@ -1786,7 +1786,7 @@ func runSubgraphChunked(cmd *cobra.Command, g *sdkgraph.Client, sg subgraphInput
 		totalObjs += len(resp.Objects)
 		totalRels += len(resp.Relationships)
 		for _, o := range resp.Objects {
-			fmt.Fprintf(out, "%s\t%s\t%s\n", o.EntityID, o.Type, objectName(o.Name))
+			_, _ = fmt.Fprintf(out, "%s\t%s\t%s\n", o.EntityID, o.Type, objectName(o.Name))
 		}
 		for k, v := range resp.RefMap {
 			mergedRefMap[k] = v
@@ -2008,7 +2008,7 @@ func runSubgraphOnBranch(cmd *cobra.Command, g *sdkgraph.Client, sg subgraphInpu
 			entityByRef[slot.input.Ref] = obj.EntityID
 		}
 		if graphOutputFlag != "json" {
-			fmt.Fprintf(out, "%s\t%s\t%s\n", obj.EntityID, obj.Type, objectName(obj.Name))
+			_, _ = fmt.Fprintf(out, "%s\t%s\t%s\n", obj.EntityID, obj.Type, objectName(obj.Name))
 		}
 	}
 
