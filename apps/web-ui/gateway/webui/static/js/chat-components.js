@@ -2353,6 +2353,134 @@
     return null;
   }
 
+  /* ---------- transcript day dividers ---------- */
+
+  // The transcript groups messages by the reader's LOCAL calendar day, the way
+  // messaging apps do: one quiet "Today" / "Yesterday" / "Wed, 12 Nov" divider
+  // before the first row of each day. Timestamps are ISO strings (or epoch
+  // millis); the day key is derived in the browser so a server-side UTC clock
+  // never decides what "today" means for the reader.
+  //
+  // The last announced day is kept on the container itself, so the live stream
+  // (chat-stream.js bubbles) and a full history render agree: a live turn on
+  // the day already on screen adds no second divider, and a turn after midnight
+  // adds exactly one.
+  var DAY_STATE_KEY = "__memoryDayKey";
+
+  function toDate(when) {
+    if (when == null || when === "") return null;
+    var d = when instanceof Date ? when : new Date(when);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  function pad2(n) {
+    return n < 10 ? "0" + n : String(n);
+  }
+
+  function dayKeyOf(d) {
+    return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+  }
+
+  function dayKey(when) {
+    var d = toDate(when);
+    return d ? dayKeyOf(d) : "";
+  }
+
+  function dayLabel(when) {
+    var d = toDate(when);
+    if (!d) return "";
+    var now = new Date();
+    var key = dayKeyOf(d);
+    if (key === dayKeyOf(now)) return "Today";
+    var yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    if (key === dayKeyOf(yesterday)) return "Yesterday";
+    var opts = { weekday: "short", month: "short", day: "numeric" };
+    if (d.getFullYear() !== now.getFullYear()) opts.year = "numeric";
+    return d.toLocaleDateString(undefined, opts);
+  }
+
+  // formatSessionStart renders the transcript's "Session started" instant for
+  // the reader's locale. Kept here (not in chat.js) so the js-dom gate can test
+  // the exact text format the page shows.
+  function formatSessionStart(when) {
+    var d = toDate(when);
+    if (!d) return "";
+    return d.toLocaleDateString(undefined, {
+      weekday: "short", year: "numeric", month: "short", day: "numeric",
+    }) + " · " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  }
+
+  // seedDay marks a day as already announced without painting a divider. The
+  // chat page seeds the session-start day from the "Session started" line, so
+  // the first message is not announced twice.
+  function seedDay(container, when) {
+    if (!container) return;
+    var key = dayKey(when);
+    if (key) container[DAY_STATE_KEY] = key;
+  }
+
+  function resetDayDivider(container) {
+    if (container) container[DAY_STATE_KEY] = "";
+  }
+
+  // maybeDayDivider paints a day separator before `when` when the container has
+  // not yet announced that local day, and returns the element (or null when one
+  // already exists / the timestamp is unusable).
+  function maybeDayDivider(container, when) {
+    if (!container) return null;
+    var d = toDate(when);
+    if (!d) return null;
+    var key = dayKeyOf(d);
+    if (container[DAY_STATE_KEY] === key) return null;
+    container[DAY_STATE_KEY] = key;
+    var label = dayLabel(d);
+    var el = document.createElement("div");
+    el.className = "memory-day-divider";
+    el.setAttribute("role", "separator");
+    el.setAttribute("aria-label", "Messages from " + label);
+    el.setAttribute("data-day", key);
+    var span = document.createElement("span");
+    span.className = "memory-day-divider-label";
+    span.textContent = label;
+    el.appendChild(span);
+    container.appendChild(el);
+    return el;
+  }
+
+  // timelineItemTime mirrors MemoryChatHost.itemTime (a run_end is stamped by
+  // its completed_at so the divider follows the render order the sorter
+  // produced). Returns "" when the item carries no usable time — a missing
+  // timestamp must not announce 1970 as a transcript day.
+  function timelineItemTime(item) {
+    var H = window.MemoryChatHost;
+    var t = H && typeof H.itemTime === "function" ? H.itemTime(item) : 0;
+    if (!t && item && item.created_at) {
+      t = new Date(item.created_at).getTime();
+    }
+    return t > 0 ? t : "";
+  }
+
+  // itemPaints reports whether a timeline item renders a visible row. It is the
+  // shared truth for the tool-run planner (which groups only painted consecutive
+  // steps) and the day-divider pass (which must not announce a day for an item
+  // that paints nothing).
+  function itemPaints(item, showRunMarkers) {
+    var CS = window.MemoryChatStream || {};
+    if (!item || typeof item !== "object") return false;
+    if (item.kind === "tool_call") return true;
+    if (item.kind === "run_start") return !!showRunMarkers;
+    if (item.kind === "run_end") return !!showRunMarkers || isFailedRun(item.run_status);
+    if (item.kind !== "message") return false;
+    var content = item.content || {};
+    var text = content.text || "";
+    var html = content.html || "";
+    if (item.role === "user") return !!(text && !(CS.isResumePrompt && CS.isResumePrompt(text)));
+    if (item.role === "tool" || item.role === "system") return false;
+    if (text && CS.isPauseNotice && CS.isPauseNotice(text)) return false;
+    if (Array.isArray(content.a2ui) && content.a2ui.length) return true;
+    return !!(text || html || content.reasoning);
+  }
+
   // planToolRuns maps a timeline index to the consecutive group it belongs to.
   // A group is 2+ renderable tool calls with nothing that renders in between and
   // no boundary: thinking, assistant text, a question/approval, ask_user, an
@@ -2368,19 +2496,7 @@
       return !!(CS.isThinkingMessage && CS.isThinkingMessage(content));
     }
     function paints(item) {
-      if (!item || typeof item !== "object") return false;
-      if (item.kind === "tool_call") return true;
-      if (item.kind === "run_start") return !!showRunMarkers;
-      if (item.kind === "run_end") return !!showRunMarkers || isFailedRun(item.run_status);
-      if (item.kind !== "message") return false;
-      var content = item.content || {};
-      var text = content.text || "";
-      var html = content.html || "";
-      if (item.role === "user") return !!(text && !(CS.isResumePrompt && CS.isResumePrompt(text)));
-      if (item.role === "tool" || item.role === "system") return false;
-      if (text && CS.isPauseNotice && CS.isPauseNotice(text)) return false;
-      if (Array.isArray(content.a2ui) && content.a2ui.length) return true;
-      return !!(text || html || content.reasoning);
+      return itemPaints(item, showRunMarkers);
     }
     // splits reports a boundary between tool calls even when the item itself
     // does not paint (a thinking item with no prose still ends a group).
@@ -2453,7 +2569,7 @@
   // the per-surface deviations are carried by `flags` (with page-local callbacks
   // in `ctx`).
   //
-  // flags — the REAL deviations between the two call sites, no others:
+  // flags — the per-call deviations, no others:
   //   showRunMarkers  render run_start/run_end boundary rows (and the
   //                   failed-run fallback). Both surfaces default to false: the
   //                   boundaries are a debug affordance, hidden in the normal
@@ -2471,11 +2587,20 @@
   //                   the run-scope meta annotation — so it is a single flag.)
   //   silent          the side panel suppresses the per-bubble scrollToBottom and
   //                   scrolls once at the end; chat scrolls on every bubble.
+  //   startedAt       the active conversation's created_at. The /chat page heads
+  //                   the transcript with a "Session started" line for that
+  //                   instant, so this day is seeded as already announced and its
+  //                   first message gets no duplicate day divider. Other hosts
+  //                   (side panel, share page, run transcript) omit it and the
+  //                   first day is announced normally.
   //
-  // Thinking is NOT a flag: every surface renders it. An operator run writes
-  // its answer text on the same record as the next tool call, so a surface that
-  // skipped thinking items lost the assistant's prose, not just the reasoning —
-  // which is exactly what the assistant drawer did.
+  // Day dividers are NOT a flag: every transcript announces its local calendar
+  // days, the way messaging apps do ("Today", "Yesterday", "Wed, 12 Nov").
+  //
+  // Thinking is NOT a flag either: every surface renders it. An operator run
+  // writes its answer text on the same record as the next tool call, so a
+  // surface that skipped thinking items lost the assistant's prose, not just
+  // the reasoning — which is exactly what the assistant drawer did.
   //
   // ctx — page-local hooks and state (kept on the host page):
   //   container                              required — the message list element
@@ -2483,8 +2608,11 @@
   //   getAgentName()                         assistant display name
   //   begin()                                pre-render DOM reset (chat preserves
   //                                          the working placeholder + hideEmpty)
-  //   addUserMessage(text, silent, meta)
-  //   addAssistantMessage(html, name, silent, meta) -> Element|null
+  //   addUserMessage(text, silent, meta, createdAt)
+  //   addAssistantMessage(html, name, silent, meta, opts) -> Element|null
+  //                                          opts.createdAt stamps the bubble's
+  //                                          day (history); the live stream omits it
+  //                                          and the bubble belongs to "now"
   //   toolChip(tool, status, detail, payload)
   //   renderHistoryQuestion(input, questionId, answer)
   //   renderThinkingBlock(text, html, kind)  optional — a host that omits it
@@ -2507,6 +2635,12 @@
     // A timeline render is a full rebuild of the transcript: start with no
     // rendered surfaces so replay keys into a clean registry (see resetA2UI).
     resetA2UI(container);
+    // Day dividers are per-rebuild too. flags.startedAt names the day the
+    // transcript already heads with a "Session started" line, so that day is
+    // seeded as announced and its first message does not get a duplicate
+    // divider.
+    resetDayDivider(container);
+    if (flags.startedAt) seedDay(container, flags.startedAt);
 
     // The server timeline is already chronological, but be explicit about it:
     // stable-sort by effective time, then step_number (a per-run counter, so it
@@ -2585,6 +2719,12 @@
     for (var i = 0; i < items.length; i++) {
       var item = items[i];
       if (!item || typeof item !== "object") continue;
+      // A day divider precedes the first row that actually paints on a new
+      // local day. Hidden items (system/tool result/pause notice/empty
+      // thinking) paint nothing and so never announce a day. An open tool-run
+      // group owns its rows, so a group that crosses midnight is not split by a
+      // divider appended after its wrapper.
+      if (!openRun && itemPaints(item, showRunMarkers)) maybeDayDivider(container, timelineItemTime(item));
       var currentThinking = itemProducesThinking(item);
       // Run-transcript annotation: step number + relative time under each
       // message/tool item. Only on a dedicated run page (flags.showMeta);
@@ -2766,7 +2906,7 @@
                 stageInputCard(ctx.badgeCtx, stage, stageKind, text, meta);
               } else {
                 var userText = ctx.stripContextPreamble ? ctx.stripContextPreamble(text) : text;
-                ctx.addUserMessage(userText, silent, meta);
+                ctx.addUserMessage(userText, silent, meta, item.created_at);
               }
             }
           } else if (item.role === "tool") {
@@ -2821,7 +2961,7 @@
               authoredBy,
               silent,
               meta,
-              stage ? { header: authoredBy } : null
+              { header: stage ? authoredBy : "", createdAt: item.created_at }
             );
             if (turnEl && runCtx) turnFooters.push({ el: turnEl, ctx: runCtx });
             // Grounded citations ride on the history item; render the Sources
@@ -3200,6 +3340,13 @@
     captureLiveToolRunChoice: captureLiveToolRunChoice,
     adoptNewestToolRunChoice: adoptNewestToolRunChoice,
     renderTimeline: renderTimeline,
+    dayKey: dayKey,
+    dayLabel: dayLabel,
+    formatSessionStart: formatSessionStart,
+    maybeDayDivider: maybeDayDivider,
+    seedDay: seedDay,
+    resetDayDivider: resetDayDivider,
+    itemPaints: itemPaints,
     humanizeTypeName: humanizeTypeName,
     sourcesFooter: sourcesFooter,
     attachSources: attachSources,

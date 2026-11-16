@@ -55,7 +55,8 @@ templ ChatPage(agents []AgentDefinitionSummary, convs *ConversationList, appeara
 // chat.js drives resume + streaming via the /api/* endpoints. runControl holds
 // the active conversation's server-rendered dock cards and session todos.
 templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, appearances map[string]agentAppearance, schedRuns []scheduledRunRow, shared []sharedSessionRow, workRuns []workRunRow, preselect string, convID string, prompt string, voiceEnabled bool, modelWarnings map[string]string, runControl chatRunControl) {
-	<div id="chat-root" data-conv={ convID } data-prompt={ prompt } class="flex h-full flex-col md:flex-row">
+	{{ startISO := conversationStartedAt(convs, convID) }}
+	<div id="chat-root" data-conv={ convID } data-conv-started={ startISO } data-prompt={ prompt } class="flex h-full flex-col md:flex-row">
 		<!-- Mobile-only scrim behind the session rail. chat.js toggles it with
 		     the rail; it never shows at md+ where the rail is in flow. -->
 		<div id="chat-rail-backdrop" class="fixed inset-0 z-30 hidden bg-black/40 md:hidden" data-chat-rail-backdrop data-action="toggle-chat-rail"></div>
@@ -254,6 +255,7 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 										@chatSuggestion("Help me draft a status update")
 									</div>
 								}
+								@chatSessionStart(startISO)
 								<!-- Session todo card. Pre-rendered when the active
 							     conversation's ACP session has todos; chat.js
 							     refreshes it in place from /partial/chat-todos. -->
@@ -1252,4 +1254,24 @@ templ chatSuggestion(text string) {
 	>
 		{ text }
 	</button>
+}
+
+// chatSessionStart heads the transcript with when the active conversation was
+// started. startISO is empty for a new chat (the line stays hidden until the
+// first turn creates the conversation) and chat.js fills the <time> text in the
+// browser's local timezone, so the server never stamps a UTC wall clock the
+// reader has to translate. The client also seeds the transcript's day-divider
+// state from it so the first day is not announced twice (start line + "Today"
+// divider).
+templ chatSessionStart(startISO string) {
+	<div
+		id="chat-session-start"
+		data-testid="chat-session-start"
+		class={ "memory-session-start", templ.KV("hidden", startISO == "") }
+		data-started-at={ startISO }
+	>
+		@ui.IconSpan("lucide--clock", "size-3.5 shrink-0")
+		<span>Session started</span>
+		<time id="chat-session-start-time" datetime={ startISO }></time>
+	</div>
 }
