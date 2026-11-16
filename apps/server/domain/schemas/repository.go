@@ -997,6 +997,21 @@ func (r *Repository) DeleteAssignmentIfOwned(ctx context.Context, projectID, sch
 	return n > 0, nil
 }
 
+// packChecksum fingerprints a pack's definition so a content change is
+// detectable without diffing every field. It covers the four definition blobs
+// in a stable shape (the same inputs the API exposes).
+func packChecksum(objectTypeSchemas, relationshipTypeSchemas, uiConfigs, extractionPrompts json.RawMessage) string {
+	content := map[string]json.RawMessage{
+		"object_type_schemas":       objectTypeSchemas,
+		"relationship_type_schemas": relationshipTypeSchemas,
+		"ui_configs":                uiConfigs,
+		"extraction_prompts":        extractionPrompts,
+	}
+	b, _ := json.Marshal(content)
+	sum := md5.Sum(b)
+	return hex.EncodeToString(sum[:])
+}
+
 // CreatePack creates a new schema scoped to the given project
 func (r *Repository) CreatePack(ctx context.Context, projectID string, req *CreatePackRequest) (*GraphMemorySchema, error) {
 	objectTypeSchemas := req.GetObjectTypeSchemas()
@@ -1004,18 +1019,12 @@ func (r *Repository) CreatePack(ctx context.Context, projectID string, req *Crea
 	uiConfigs := req.GetUIConfigs()
 	extractionPrompts := req.GetExtractionPrompts()
 
-	// Compute checksum from schemas
-	checksumContent := map[string]json.RawMessage{
-		"object_type_schemas":       objectTypeSchemas,
-		"relationship_type_schemas": relationshipTypeSchemas,
-		"ui_configs":                uiConfigs,
-		"extraction_prompts":        extractionPrompts,
-	}
-	checksumBytes, _ := json.Marshal(checksumContent)
-	checksumHash := md5.Sum(checksumBytes)
-	checksum := hex.EncodeToString(checksumHash[:])
+	checksum := packChecksum(objectTypeSchemas, relationshipTypeSchemas, uiConfigs, extractionPrompts)
 
-	source := "manual"
+	source := req.Source
+	if source == "" {
+		source = "manual"
+	}
 	now := time.Now()
 
 	pack := &GraphMemorySchema{
@@ -1124,6 +1133,10 @@ func (r *Repository) UpdatePack(ctx context.Context, packID, projectID string, r
 		pack.DocumentationURL = req.DocumentationURL
 		q = q.Set("documentation_url = ?", *req.DocumentationURL)
 	}
+	if req.Source != nil {
+		pack.Source = req.Source
+		q = q.Set("source = ?", *req.Source)
+	}
 	if len(req.ObjectTypeSchemas) > 0 {
 		pack.ObjectTypeSchemas = req.ObjectTypeSchemas
 		q = q.Set("object_type_schemas = ?", req.ObjectTypeSchemas)
@@ -1144,6 +1157,12 @@ func (r *Repository) UpdatePack(ctx context.Context, packID, projectID string, r
 		pack.Migrations = req.Migrations
 		q = q.Set("migrations = ?", req.Migrations)
 	}
+	// Every update recomputes the fingerprint: the definition changes on a
+	// provider reconcile (and on any API edit), and a stale checksum would lie
+	// about the content it describes.
+	checksum := packChecksum(pack.ObjectTypeSchemas, pack.RelationshipTypeSchemas, pack.UIConfigs, pack.ExtractionPrompts)
+	pack.Checksum = &checksum
+	q = q.Set("checksum = ?", checksum)
 
 	if _, err := q.Returning("updated_at").Exec(ctx); err != nil {
 		r.log.Error("failed to update schema", logger.Error(err))
@@ -2000,6 +2019,24 @@ func (r *Repository) GetProjectPackByNameVersion(ctx context.Context, projectID,
 		Where("project_id = ?", projectID).
 		Where("name = ?", name).
 		Where("version = ?", version).
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		return nil, apperror.NewNotFound("schema", name)
+	}
+	return &pack, nil
+}
+
+// GetLatestProjectPackByName returns the project-scoped pack with this name,
+// newest first, regardless of version. Provider packs are code-owned and
+// reconciled in place, so name (not name+version) identifies the one row.
+func (r *Repository) GetLatestProjectPackByName(ctx context.Context, projectID, name string) (*GraphMemorySchema, error) {
+	var pack GraphMemorySchema
+	err := r.db.NewSelect().
+		Model(&pack).
+		Where("project_id = ?", projectID).
+		Where("name = ?", name).
+		Order("created_at DESC").
 		Limit(1).
 		Scan(ctx)
 	if err != nil {

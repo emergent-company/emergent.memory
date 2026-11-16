@@ -109,6 +109,44 @@ func TestNormalizeInstallationID(t *testing.T) {
 	}
 }
 
+// TestGitHubAppPackProvenanceAndPresentation pins the metadata the Schema UI
+// depends on: the pack names its provider as its source, the catalog exposes the
+// pack identity, and every emitted type carries a presentation block from the
+// supported icon catalog with an accent colour.
+func TestGitHubAppPackProvenanceAndPresentation(t *testing.T) {
+	p := newGitHubAppProvider()
+	typed, ok := p.(TypedObjectProvider)
+	if !ok {
+		t.Fatal("github app provider does not declare object types")
+	}
+	pack := typed.ObjectTypes()
+	if pack == nil {
+		t.Fatal("github app provider declares no pack")
+	}
+	if pack.Name != "github-app-workflow" || pack.Version != "1.3.0" {
+		t.Errorf("pack identity = %s@%s", pack.Name, pack.Version)
+	}
+	if pack.Source != "provider:github_app" {
+		t.Errorf("pack source = %q, want provider:github_app", pack.Source)
+	}
+	cat := p.Catalog()
+	if cat.SchemaPack != pack.Name || cat.SchemaPackVersion != pack.Version {
+		t.Errorf("catalog pack = %s@%s, want %s@%s", cat.SchemaPack, cat.SchemaPackVersion, pack.Name, pack.Version)
+	}
+	for _, def := range pack.ObjectTypes {
+		if def.UI == nil {
+			t.Errorf("%s: no ui block", def.Name)
+			continue
+		}
+		if icon, _ := def.UI["icon"].(string); icon == "" {
+			t.Errorf("%s: no icon", def.Name)
+		}
+		if color, _ := def.UI["color"].(string); color == "" {
+			t.Errorf("%s: no color", def.Name)
+		}
+	}
+}
+
 func TestGitHubAppProviderNormalizeAssigneeLogin(t *testing.T) {
 	p, ok := newGitHubAppProvider().(ConfigNormalizer)
 	if !ok {

@@ -66,9 +66,14 @@ type ObjectRelationship struct {
 
 // ObjectTypePack is a provider-declared schema pack installed on connect.
 type ObjectTypePack struct {
-	Name              string
-	Version           string
-	Description       string
+	Name        string
+	Version     string
+	Description string
+	// Source names what created the pack, recorded on the schema row so the
+	// Schema-packs UI can group it (e.g. "provider:github_app"). Empty means the
+	// generic "manual" value. Provider packs are code-owned, so a re-connect or
+	// webhook reconciles the stored pack rather than creating a second copy.
+	Source            string
 	ObjectTypes       []ObjectTypeDefinition
 	RelationshipTypes []RelationshipTypeDefinition
 	// SkipDiscovery suppresses automatic schema discovery for this provider:
@@ -78,9 +83,12 @@ type ObjectTypePack struct {
 
 // ObjectTypeDefinition is one object type in a pack.
 type ObjectTypeDefinition struct {
-	Name            string
-	Label           string
-	Description     string
+	Name        string
+	Label       string
+	Description string
+	// UI is the type-level presentation block ({"icon":..., "color":...}) stored
+	// on the object type, the same shape a blueprint's pack declares.
+	UI              map[string]any
 	Properties      map[string]any
 	Required        []string
 	SkipExtraction  bool
