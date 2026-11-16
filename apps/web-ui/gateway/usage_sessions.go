@@ -48,8 +48,6 @@ func (s *Server) uiUsageSessions(c echo.Context) error {
 		runs    *UsageRunListResponse
 		runsErr error
 		byAgent *UsageByAgentResponse
-		defs    []AgentDefinitionSummary
-		runtime []RuntimeAgent
 	)
 	var g errgroup.Group
 	g.Go(func() error {
@@ -62,24 +60,39 @@ func (s *Server) uiUsageSessions(c echo.Context) error {
 		byAgent, _ = s.memory.GetProjectUsageByAgent(ctx, since, until)
 		return nil
 	})
-	// The rows wear each agent's declared glyph, so the picker reads like the
-	// chat rail's and the objects page's. Appearance is decoration: a failed
-	// fetch leaves every row on the generic bot mark, exactly as an agent whose
-	// definition is gone renders, so this failure is not surfaced either.
-	g.Go(func() error {
-		defs, _ = s.memory.ListAgentDefinitions(ctx)
-		return nil
-	})
-	// The breakdown reports kb.agents ids while a definition's appearance is
-	// keyed by kb.agent_definitions id, so the two fetches above cannot be joined
-	// on the row's own id; this fetch supplies the runtime agent's definition id.
-	// Best-effort for the same reason as the definitions: an unreachable map only
-	// costs the glyph, and every row stays on the generic bot mark.
-	g.Go(func() error {
-		runtime, _ = s.memory.ListRuntimeAgents(ctx, s.currentProjectID(ctx))
-		return nil
-	})
 	_ = g.Wait()
+
+	// Appearance is decoration for the picker alone, so its two fetches wait for
+	// the breakdown: a failed log renders the error state and a breakdown with no
+	// attributed agent renders no picker, and in both cases the glyphs would be
+	// painted nowhere. Skipping them saves a round trip and costs no row.
+	var (
+		defs    []AgentDefinitionSummary
+		runtime []RuntimeAgent
+	)
+	if runsErr == nil && usageAttributedRows(byAgent) > 0 {
+		var ag errgroup.Group
+		// The rows wear each agent's declared glyph, so the picker reads like the
+		// chat rail's and the objects page's. A failed fetch leaves every row on
+		// the generic bot mark, exactly as an agent whose definition is gone
+		// renders, so these failures are not surfaced either.
+		ag.Go(func() error {
+			defs, _ = s.memory.ListAgentDefinitions(ctx)
+			return nil
+		})
+		// The breakdown reports kb.agents ids while a definition's appearance is
+		// keyed by kb.agent_definitions id, so the two cannot be joined on the
+		// row's own id; this fetch supplies the runtime agent's definition id.
+		// ListRuntimeAgents takes an explicit project id, so resolve it the way
+		// MemoryClient.projectIDFor scopes the two fetches above (the session's
+		// active project, else the static dev/API-key one) — a map built for a
+		// different project would silently miss.
+		ag.Go(func() error {
+			runtime, _ = s.memory.ListRuntimeAgents(ctx, s.currentProjectID(ctx))
+			return nil
+		})
+		_ = ag.Wait()
+	}
 
 	data := usageSessionsPageData{
 		Days:         days,
@@ -116,9 +129,10 @@ func usageSessionsHref(days int, agentID string, offset int) string {
 	return "/usage/sessions?" + q.Encode()
 }
 
-// usageAgentFilterLabel names the filter's current selection, falling back to
-// the id when the breakdown could not name it (a filter carried in a URL from a
-// range where the agent has no usage).
+// usageAgentFilterLabel names the filter's current selection. An empty filter is
+// "All agents"; a filter naming an agent the breakdown cannot name (a URL
+// carried from a range where that agent has no usage) says so in words instead
+// of putting a bare id — often a UUID — in front of an operator.
 func usageAgentFilterLabel(byAgent *UsageByAgentResponse, agentID string) string {
 	if agentID == "" {
 		return "All agents"
@@ -130,7 +144,23 @@ func usageAgentFilterLabel(byAgent *UsageByAgentResponse, agentID string) string
 			}
 		}
 	}
-	return agentID
+	return "unknown agent"
+}
+
+// usageAttributedRows counts the breakdown rows that name an agent. The
+// unattributed bucket is not an agent and cannot be filtered, so a breakdown
+// with none of these has no picker to paint.
+func usageAttributedRows(byAgent *UsageByAgentResponse) int {
+	if byAgent == nil {
+		return 0
+	}
+	n := 0
+	for _, row := range byAgent.Data {
+		if row.Attributed() {
+			n++
+		}
+	}
+	return n
 }
 
 // usageSessionsAgentOptions builds the agent picker's rows from the per-agent

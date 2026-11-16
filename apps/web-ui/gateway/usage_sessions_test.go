@@ -365,6 +365,13 @@ func TestUsageSessionsAgentPicker(t *testing.T) {
 	body := rec.Body.String()
 	picker := usageAgentPickerBlock(t, body)
 
+	// One render, one runtime-agent read: the picker's appearance join is a
+	// single fetch for the whole menu, not one per row. (The sibling definitions
+	// fetch cannot be counted this way — the page shell reads that catalog too.)
+	if got := f.catalogCallCount("ListRuntimeAgents"); got != 1 {
+		t.Errorf("runtime agents fetched %d times, want 1", got)
+	}
+
 	// The feedback overlay anchors on this wrapper, so it has to survive the
 	// change from a chip row to a menu (the issue's anchor_stable contract).
 	if !strings.Contains(body, `data-testid="sessions-agent-filter"`) {
@@ -373,9 +380,14 @@ func TestUsageSessionsAgentPicker(t *testing.T) {
 	if !strings.Contains(tagAround(t, body, `data-testid="sessions-agent-picker"`), "data-gd-menu-root") {
 		t.Errorf("the picker is not a go-daisy menu root:\n%s", body)
 	}
-	// The closed trigger is a menu button that names the selection.
+	// The closed trigger is a menu button that names the selection. data-gd-menu-
+	// trigger is the hook go-daisy's runtime binds to open the menu and run
+	// roving focus, so without it the control is decorative: clicking or pressing
+	// Enter does nothing. It is asserted here because deleting it renders
+	// byte-identical visible markup.
 	trigger := usageAgentPickerTrigger(t, picker)
 	for _, want := range []string{
+		"data-gd-menu-trigger",
 		`role="button"`,
 		`aria-haspopup="menu"`,
 		`aria-label="Filter runs by agent: All agents"`,
@@ -384,7 +396,12 @@ func TestUsageSessionsAgentPicker(t *testing.T) {
 			t.Errorf("picker trigger missing %q: %s", want, trigger)
 		}
 	}
-	// A real menu, with one radio row per identity.
+	// A real menu, with one radio row per identity. A long project lists one row
+	// per agent that recorded usage, so the menu scrolls instead of pushing the
+	// rest of the page down.
+	if tag := tagAround(t, picker, `role="menu"`); !strings.Contains(tag, "overflow-y-auto") || !strings.Contains(tag, "max-h-96") {
+		t.Errorf("the agent menu must cap its height and scroll: %s", tag)
+	}
 	if !strings.Contains(body, `role="menu"`) || !strings.Contains(body, `aria-label="Filter runs by agent"`) {
 		t.Error("the picker does not render a labelled menu")
 	}
@@ -471,12 +488,17 @@ func TestUsageSessionsAgentPicker(t *testing.T) {
 		t.Errorf("rows must keep the selected range:\n%s", filtered)
 	}
 
-	// A filter that names an agent with no usage in the range keeps the id as
-	// its label rather than resetting the control to "All agents".
+	// A filter that names an agent with no usage in the range stays selected, but
+	// the control says "unknown agent" rather than resetting to "All agents" and
+	// rather than showing the operator a bare id (these are UUIDs in production).
 	rec = httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/usage/sessions?agent=ghost", nil))
-	if ghost := rec.Body.String(); !strings.Contains(ghost, `aria-label="Filter runs by agent: ghost"`) {
-		t.Errorf("an unlisted active agent must still name the filter:\n%s", ghost)
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/usage/sessions?agent=9f1c0a2e-6b41-4c8d-9a2f-0e7d3b5a1c22", nil))
+	ghost := rec.Body.String()
+	if !strings.Contains(ghost, `aria-label="Filter runs by agent: unknown agent"`) {
+		t.Errorf("an unlisted active agent must be labelled in words:\n%s", ghost)
+	}
+	if strings.Contains(ghost, "Filter runs by agent: 9f1c0a2e") {
+		t.Errorf("an unlisted active agent must not show its raw id as the label:\n%s", ghost)
 	}
 
 	// No breakdown, no picker: a menu with nothing to pick cannot narrow.
@@ -485,6 +507,27 @@ func TestUsageSessionsAgentPicker(t *testing.T) {
 	emptyEcho.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/usage/sessions", nil))
 	if emptyBody := rec.Body.String(); strings.Contains(emptyBody, `data-testid="sessions-agent-picker"`) {
 		t.Error("the picker must not render without an agent breakdown")
+	}
+}
+
+// TestUsageSessionsSkipsAppearanceFetchesWhenThePickerCannotRender pins the cost
+// side of the appearance join: both fetches exist only to paint picker rows, so
+// a failed log (whole-page error state) or a breakdown with no attributed agent
+// (no picker) must not spend two round trips on markup that cannot render.
+func TestUsageSessionsSkipsAppearanceFetchesWhenThePickerCannotRender(t *testing.T) {
+	for name, f := range map[string]*fakeMemory{
+		"failed log":        {usageRunsErr: errors.New("boom"), usageByAgent: sampleUsageByAgent()},
+		"unattributed only": {usageByAgent: &UsageByAgentResponse{Data: []UsageByAgentRow{{TotalText: 5, EstimatedCostUSD: 0.01}}}},
+	} {
+		_, e := newUsageSessionsEcho(f)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/usage/sessions", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d", name, rec.Code)
+		}
+		if got := f.catalogCallCount("ListRuntimeAgents"); got != 0 {
+			t.Errorf("%s: runtime agents fetched %d times, want 0", name, got)
+		}
 	}
 }
 

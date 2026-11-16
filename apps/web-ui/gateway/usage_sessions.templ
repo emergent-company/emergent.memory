@@ -140,7 +140,7 @@ templ usageSessionsAgentFilter(data usageSessionsPageData) {
 					<span class="min-w-0 truncate">{ usageAgentFilterLabel(data.Agents, data.AgentID) }</span>
 					@ui.IconSpan("lucide--chevron-down", "ml-auto size-3.5 shrink-0 opacity-60")
 				</div>
-				@ui.DropdownMenu(templ.Attributes{"aria-label": "Filter runs by agent", "class": "w-max min-w-56 max-w-[28rem]"}) {
+				@ui.DropdownMenu(templ.Attributes{"aria-label": "Filter runs by agent", "class": "w-max min-w-56 max-w-[28rem] max-h-96 overflow-y-auto"}) {
 					<li role="none">
 						<a
 							href={ templ.URL(usageSessionsHref(data.Days, "", 0)) }
