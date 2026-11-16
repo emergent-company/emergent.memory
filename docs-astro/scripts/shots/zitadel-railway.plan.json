@@ -1,0 +1,128 @@
+{
+  "tutorial": "deploy-to-railway",
+  "instance": "railway-deployment",
+  "baseUrl": "https://memory-web-ui-production-3640b7d1.up.railway.app",
+  "locale": "en-US",
+  "viewport": {
+    "width": 1600,
+    "height": 900
+  },
+  "colorScheme": "dark",
+  "deviceScaleFactor": 4,
+  "vars": {
+    "oldPassword": {
+      "env": "SHOT_OLD_PASSWORD"
+    },
+    "newPassword": {
+      "env": "SHOT_NEW_PASSWORD"
+    }
+  },
+  "steps": [
+    {
+      "name": "the deployment's own app; the Zitadel session resumes where the run stopped",
+      "goto": "/"
+    },
+    {
+      "click": {
+        "selector": "a:has-text('Sign in'), button:has-text('Sign in')"
+      }
+    },
+    {
+      "waitFor": {
+        "selector": "h1:has-text('2-Factor Setup'), h1:has-text('Change Password')",
+        "timeout": 60000
+      }
+    },
+    {
+      "pause": 1500
+    },
+    {
+      "when": {
+        "text": "2-Factor Setup"
+      },
+      "expect": [
+        "2-Factor Setup",
+        "Skip"
+      ]
+    },
+    {
+      "when": {
+        "text": "2-Factor Setup"
+      },
+      "shot": {
+        "id": "11-2fa-setup",
+        "clip": {
+          "x": 580,
+          "y": 257,
+          "width": 440,
+          "height": 487
+        }
+      }
+    },
+    {
+      "when": {
+        "text": "2-Factor Setup"
+      },
+      "clickIfPresent": {
+        "selector": "button[name=skip]",
+        "timeout": 5000
+      }
+    },
+    {
+      "waitFor": {
+        "text": "Change Password",
+        "timeout": 60000
+      }
+    },
+    {
+      "pause": 1500
+    },
+    {
+      "expect": [
+        "Change Password",
+        "Old Password",
+        "Password confirmation"
+      ]
+    },
+    {
+      "shot": {
+        "id": "12-first-password-change",
+        "clip": "xpath=//h1/ancestor::div[contains(@class,'content-container')][1]",
+        "pad": 0
+      }
+    },
+    {
+      "name": "replace the generated password, which is what completes the bootstrap",
+      "type": {
+        "selector": "#change-old-password",
+        "value": "${oldPassword}"
+      }
+    },
+    {
+      "type": {
+        "selector": "#change-new-password",
+        "value": "${newPassword}"
+      }
+    },
+    {
+      "type": {
+        "selector": "#change-password-confirmation",
+        "value": "${newPassword}"
+      }
+    },
+    {
+      "click": {
+        "selector": "xpath=//button[normalize-space()='Next']"
+      }
+    },
+    {
+      "name": "the change returns to the app",
+      "pause": 9000
+    },
+    {
+      "shot": {
+        "id": "13-memory-projects"
+      }
+    }
+  ]
+}

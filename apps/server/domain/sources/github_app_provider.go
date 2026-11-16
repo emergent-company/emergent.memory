@@ -83,6 +83,10 @@ func (p *githubAppProvider) Catalog() Provider {
 		Vendor:      "github",
 		VendorName:  "GitHub",
 		Available:   true,
+		// The pack this provider installs, so the Schema UI can group it under
+		// Data Sources and link it to the installed apps.
+		SchemaPack:        "github-app-workflow",
+		SchemaPackVersion: "1.3.0",
 	}
 }
 
@@ -141,7 +145,11 @@ func (p *githubAppProvider) NormalizeConfig(cfg map[string]any) {
 		cfg["repos"] = appRepoList(v)
 	}
 	if v, ok := cfg["assignee_login"]; ok {
-		cfg["assignee_login"] = strings.TrimSpace(fmt.Sprint(v))
+		if v == nil {
+			cfg["assignee_login"] = ""
+		} else {
+			cfg["assignee_login"] = strings.TrimSpace(fmt.Sprint(v))
+		}
 	}
 }
 
@@ -251,19 +259,22 @@ func (p *githubAppProvider) ObjectTypes() *ObjectTypePack {
 	}
 	return &ObjectTypePack{
 		Name:          "github-app-workflow",
-		Version:       "1.2.0",
+		Version:       "1.3.0",
 		Description:   "GitHub App issue and pull-request workflow objects.",
+		Source:        "provider:github_app",
 		SkipDiscovery: true,
 		ObjectTypes: []ObjectTypeDefinition{
 			{
 				Name: "GitHubPullRequest", Label: "GitHub pull request",
 				Description:    "Parent object for one GitHub pull request.",
+				UI:             map[string]any{"icon": "git-pull-request", "color": "#4F46E5"},
 				Properties:     statusProps,
 				SkipExtraction: true,
 			},
 			{
 				Name: "GitHubIssue", Label: "GitHub issue",
 				Description:     "One GitHub issue available for manual or automatic coding work.",
+				UI:              map[string]any{"icon": "circle", "color": "#10B981"},
 				BoardEnabled:    true,
 				AllowedStatuses: []string{"ready", "in_progress", "review", "revision", "blocked", "done", "cancelled"},
 				InitialStatus:   "ready",
@@ -277,6 +288,7 @@ func (p *githubAppProvider) ObjectTypes() *ObjectTypePack {
 					"url":               map[string]any{"type": "string"},
 					"source_id":         map[string]any{"type": "string"},
 					"status":            map[string]any{"type": "string"},
+					"claim_conflict":    map[string]any{"type": "boolean"},
 					"source_trigger_id": map[string]any{"type": "string"},
 					"pr_number":         map[string]any{"type": "number"},
 					"pr_url":            map[string]any{"type": "string"},
@@ -288,6 +300,7 @@ func (p *githubAppProvider) ObjectTypes() *ObjectTypePack {
 			{
 				Name: "GitHubReviewLane", Label: "GitHub review lane",
 				Description:     "One reviewer lane on a GitHub pull request.",
+				UI:              map[string]any{"icon": "users", "color": "#7C3AED"},
 				BoardEnabled:    true,
 				AllowedStatuses: []string{"ready", "in_progress", "review", "revision", "blocked", "done", "cancelled"},
 				InitialStatus:   "ready",

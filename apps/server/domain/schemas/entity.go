@@ -608,6 +608,10 @@ type CreatePackRequest struct {
 	License          *string `json:"license,omitempty"`
 	RepositoryURL    *string `json:"repository_url,omitempty"`
 	DocumentationURL *string `json:"documentation_url,omitempty"`
+	// Source names what created the pack: "manual" when empty, "provider:<type>"
+	// for a source-provider pack, and whatever a blueprint/registry writer sets.
+	// It is registry metadata, not a value the API client controls.
+	Source string `json:"source,omitempty"`
 
 	// Migrations is the optional upgrade-path block for this schema version.
 	Migrations *SchemaMigrationHints `json:"migrations,omitempty" yaml:"migrations,omitempty"`
@@ -702,6 +706,9 @@ type UpdatePackRequest struct {
 	License          *string `json:"license,omitempty"`
 	RepositoryURL    *string `json:"repository_url,omitempty"`
 	DocumentationURL *string `json:"documentation_url,omitempty"`
+	// Source, when set, rewrites the pack's provenance token (e.g. a provider
+	// reconciling a pack it owns).
+	Source *string `json:"source,omitempty"`
 	// ObjectTypeSchemas is the request shape only: a JSON array of
 	// {"name","label","properties",...} objects, which is also what blueprint
 	// apply/seeder write. The map-of-type-name → schema stored form (legacy

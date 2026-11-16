@@ -36,6 +36,11 @@ type DSProvider struct {
 	// strategies (e.g. ["drive.file","drive.readonly"]). The org OAuth-client
 	// form renders its strategy control from it.
 	Strategies []string `json:"strategies,omitempty"`
+	// SchemaPack names the object-type pack the provider installs on connect,
+	// so the Schema packs page can group it under Data Sources and link it to
+	// the provider's installed sources.
+	SchemaPack        string `json:"schemaPack,omitempty"`
+	SchemaPackVersion string `json:"schemaPackVersion,omitempty"`
 }
 
 // DSProviderSupportsOAuth reports whether a provider advertises the oauth auth

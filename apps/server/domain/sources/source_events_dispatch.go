@@ -552,6 +552,13 @@ const (
 	issueClaimManagerLabel = "manager: memory-coding"
 )
 
+func issueClaimLabelStyle(name string) (color, description string) {
+	if name == issueClaimManagerLabel {
+		return "5319e7", "Memory coding issue claim manager"
+	}
+	return "fbca04", "Issue claimed by an agent"
+}
+
 // issueClaimResult describes the live GitHub claim state and the labels the
 // board item should mirror. configured=false means the source has no
 // assignee_login, so the legacy no-claim path is preserved.
@@ -681,15 +688,33 @@ func (d *SourceEventDispatcher) claimIssue(ctx context.Context, v *VerifiedSourc
 	}
 	needAssignee := !hasIssueAssignee(issue, login)
 
-	// Assign first so a failed label write can roll the assignment back
-	// without removing a pre-existing assignment.
+	// GitHub silently ignores unknown labels on an issue write. Create the
+	// claim labels first, then assign, then verify the add response.
+	for _, label := range missing {
+		color, description := issueClaimLabelStyle(label)
+		if err := client.EnsureIssueLabel(ctx, repoName, label, color, description); err != nil {
+			return result, fmt.Errorf("sources: ensure issue claim label %q: %w", label, err)
+		}
+	}
 	if needAssignee {
 		if err := client.AddIssueAssignees(ctx, repoName, v.Payload.Issue.Number, []string{login}); err != nil {
 			return result, fmt.Errorf("sources: assign responsible issue owner %q: %w", login, err)
 		}
 	}
 	if len(missing) > 0 {
-		if err := client.AddIssueLabels(ctx, repoName, v.Payload.Issue.Number, missing); err != nil {
+		added, err := client.AddIssueLabels(ctx, repoName, v.Payload.Issue.Number, missing)
+		if err == nil {
+			for _, label := range missing {
+				if !hasIssueLabel(added, label) {
+					err = fmt.Errorf("label %q was not applied", label)
+					break
+				}
+			}
+		}
+		if err != nil {
+			for _, label := range missing {
+				_ = client.RemoveIssueLabel(ctx, repoName, v.Payload.Issue.Number, label)
+			}
 			if needAssignee {
 				_ = client.RemoveIssueAssignees(ctx, repoName, v.Payload.Issue.Number, []string{login})
 			}
@@ -778,7 +803,7 @@ func (d *SourceEventDispatcher) processIssueSource(ctx context.Context, v *Verif
 		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
 		return err
 	}
-	checkClaim := trigger != nil && !closed && (wantStart || (existing != nil && status == "ready"))
+	checkClaim := trigger != nil && !closed && (wantStart || (existing != nil && (status == "ready" || status == "in_progress")))
 	claim := issueClaimResult{}
 	if checkClaim {
 		claim, err = d.claimIssue(ctx, v, src, repoName, agentName)
@@ -853,7 +878,7 @@ func (d *SourceEventDispatcher) processIssueSource(ctx context.Context, v *Verif
 		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
 		return err
 	}
-	if closed && resp != nil {
+	if (closed || claim.foreign) && resp != nil {
 		d.cancelSubjectRuns(ctx, resp.CanonicalID.String())
 	}
 	state := SourceEventDispatched

@@ -80,6 +80,9 @@ func (p *gmailProvider) Catalog() Provider {
 		Vendor:      "google",
 		VendorName:  "Google",
 		Available:   true,
+		SchemaPack:  "email-core",
+		// The pack version is declared in ObjectTypes below.
+		SchemaPackVersion: "1.0.0",
 	}
 }
 
@@ -156,6 +159,7 @@ func (p *gmailProvider) ObjectTypes() *ObjectTypePack {
 		Name:          "email-core",
 		Version:       "1.0.0",
 		Description:   "Email message and thread objects synced from a mailbox.",
+		Source:        "provider:gmail",
 		SkipDiscovery: true,
 		ObjectTypes: []ObjectTypeDefinition{
 			{

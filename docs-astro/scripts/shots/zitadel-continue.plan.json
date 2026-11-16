@@ -1,0 +1,50 @@
+{
+  "tutorial": "deploy-to-railway",
+  "instance": "railway-deployment",
+  "baseUrl": "https://memory-web-ui-production-421c9d5f.up.railway.app",
+  "locale": "en-US",
+  "viewport": {
+    "width": 1600,
+    "height": 900
+  },
+  "colorScheme": "dark",
+  "deviceScaleFactor": 4,
+  "steps": [
+    {
+      "name": "the live deployment: the Zitadel session from the last run is already signed in",
+      "goto": "/"
+    },
+    {
+      "click": {
+        "selector": "a:has-text('Sign in'), button:has-text('Sign in')"
+      }
+    },
+    {
+      "pause": 4000
+    },
+    {
+      "expect": "2-Factor Setup"
+    },
+    {
+      "name": "probe: what the 2FA screen actually is, before guessing a clip",
+      "shot": {
+        "id": "probe-2fa"
+      }
+    },
+    {
+      "name": "the tutorial says skip it",
+      "click": {
+        "selector": "button[name=skip]"
+      }
+    },
+    {
+      "pause": 4000
+    },
+    {
+      "name": "probe: where the skip lands",
+      "shot": {
+        "id": "probe-after-skip"
+      }
+    }
+  ]
+}
