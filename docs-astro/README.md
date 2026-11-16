@@ -235,9 +235,10 @@ because the structure does not exist upstream:
 | `…/getting-started/self-hosted.mdx` | Installer → first admin → project → blueprint → client, with the Railway install's own figures |
 | `…/getting-started/memory-cloud.mdx` | Sign in → project → blueprint → client, on the hosted instance |
 
-The sidebar puts the group first in the User Guide, matching the order a reader
-actually needs. Both detail pages end at the same third of the work — a project,
-a blueprint, a client — so that section is one component,
+The sidebar puts the group at the top of the sidebar, above the User Guide,
+matching the order a reader actually needs — the guide is what you read before
+you have an instance, not after. Both detail pages end at the same third of the
+work — a project, a blueprint, a client — so that section is one component,
 `src/components/ConnectOptions.astro`, parameterised by the instance's API and
 app hostnames rather than written twice: the MCP share, the CLI commands and the
 `curl` call cannot drift apart between the two pages. It is an Astro component,
