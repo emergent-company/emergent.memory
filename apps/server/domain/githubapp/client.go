@@ -250,3 +250,10 @@ func (c *Client) CreateIssueComment(ctx context.Context, repo string, number int
 		"body": body,
 	}, nil)
 }
+
+// CloseIssue closes an issue as completed after its linked coding PR merges.
+func (c *Client) CloseIssue(ctx context.Context, repo string, number int) error {
+	return c.do(ctx, http.MethodPatch, fmt.Sprintf("/repos/%s/issues/%d", repo, number), map[string]any{
+		"state": "closed",
+	}, nil)
+}

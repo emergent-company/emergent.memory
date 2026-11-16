@@ -191,10 +191,17 @@ func (d *SourceEventDispatcher) handlePullRequest(ctx context.Context, v *Verifi
 			if p.Action == "converted_to_draft" {
 				linkState = "draft"
 			}
-			if _, err := d.ensureIssuePRLink(ctx, src, p, &githubapp.PullRequestState{
+			link, err := d.ensureIssuePRLink(ctx, src, p, &githubapp.PullRequestState{
 				HeadSHA: p.PullRequest.Head.SHA, State: linkState,
-			}, subject); err != nil {
+			}, subject)
+			if err != nil {
 				return err
+			}
+			if link != nil && link.State == "merged" && link.ClosesIssue {
+				token, terr := d.mintToken(ctx, v.App, p.Installation.ID, repoName)
+				if terr == nil {
+					_ = d.newClient(d.apiBaseURL, token).CloseIssue(ctx, repoName, link.IssueNumber)
+				}
 			}
 			if handled, err := d.processWorkflowEvent(ctx, src, nil, &githubapp.PullRequestState{
 				HeadSHA: p.PullRequest.Head.SHA, State: "closed",
@@ -497,6 +504,7 @@ func (d *SourceEventDispatcher) ensureIssuePRLink(ctx context.Context, src *Sour
 	issueProps["pr_url"] = prURL
 	issueProps["pr_branch"] = branch
 	issueProps["pr_head_sha"] = headSHA
+	issueProps["status"] = issueStatus
 	if issue.Status != nil && (*issue.Status == "done" || *issue.Status == "cancelled") && issueStatus == "review" {
 		issueStatus = *issue.Status
 	}
