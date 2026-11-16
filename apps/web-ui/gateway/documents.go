@@ -231,24 +231,45 @@ func (s *Server) collectExtractionRelationships(ctx context.Context, branchID st
 	return out
 }
 
-// graphObjectLabel returns a display label for an object using only fields
-// common to all types: its key, else the type + short id. It deliberately does
-// NOT fall back to type-specific properties (name/title/summary/content), which
-// can be arbitrarily long and are not present on every object type.
-var machineObjectKey = regexp.MustCompile(`^[a-z0-9_-]+-[0-9a-f]{12}$`)
+// machineObjectKey matches the two machine-generated identity shapes: the legacy
+// generated key ("<type>-<12 hex>") and a source-scoped dedup key
+// ("<provider>:<uuid>:<external id>", e.g.
+// "github:357590e8-6cbf-46bb-8c29-d8f839dd4ba8:emergent-company/emergent.memory#772").
+// Either is an identity, never a title.
+var machineObjectKey = regexp.MustCompile(`^[a-z0-9_-]+-[0-9a-f]{12}$|^[a-z][a-z0-9_-]*:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:.+$`)
 
+// graphObjectLabel returns a display label for an object using only fields
+// common to all types: its name, else a non-machine key, else the type + short
+// id. It deliberately does NOT fall back to type-specific properties
+// (title/summary/content), which can be arbitrarily long and are not present on
+// every object type.
 func graphObjectLabel(o GraphObject) string {
-	if o.Name != "" {
-		return o.Name
+	return objectLabel(o.Name, o.Key, o.Type, o.ID)
+}
+
+// workItemLabel is graphObjectLabel for a work-item projection, which carries the
+// same three inputs under different field names. The board card, the board-origin
+// session preview and any other surface naming a work item use this one rule, so
+// a card, a preview and a page head cannot disagree about what an object is
+// called.
+func workItemLabel(it WorkItem) string {
+	return objectLabel(it.Name, it.Key, it.Type, it.CanonicalID)
+}
+
+// objectLabel resolves an object's display label from the three fields every
+// object surface carries.
+func objectLabel(name, key, objType, id string) string {
+	if name != "" {
+		return name
 	}
 	// Machine keys (the old generated "<type>-<12 hex>") are never titles.
-	if o.Key != "" && !machineObjectKey.MatchString(o.Key) {
-		return o.Key
+	if key != "" && !machineObjectKey.MatchString(key) {
+		return key
 	}
-	if o.Type != "" {
-		return o.Type + " " + shortID(o.ID)
+	if objType != "" {
+		return objType + " " + shortID(id)
 	}
-	return shortID(o.ID)
+	return shortID(id)
 }
 
 // graphObjectLabelByID resolves a relationship endpoint id to its object label

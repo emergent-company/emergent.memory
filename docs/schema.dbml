@@ -1057,6 +1057,7 @@ Table "kb"."discovery_jobs" {
   "updated_at" timestamptz [not null, default: `now()`]
 
   Indexes {
+    (organization_id) [name: "idx_discovery_jobs_organization_id"]
     (project_id) [name: "idx_discovery_jobs_project_id"]
     (status) [name: "idx_discovery_jobs_status"]
     (project_id) [name: "uq_discovery_jobs_one_active", unique, note: '(status <> ALL (ARRAY[\'completed\'::text, \'failed\'::text, \'cancelled\'::text]))']
@@ -1130,6 +1131,7 @@ Table "kb"."document_parsing_jobs" {
 
   Indexes {
     (document_id) [name: "idx_document_parsing_jobs_document", note: '(document_id IS NOT NULL)']
+    (organization_id) [name: "idx_document_parsing_jobs_organization_id"]
     (status, updated_at) [name: "idx_document_parsing_jobs_orphaned", note: '(status = \'processing\'::text)']
     (status, created_at) [name: "idx_document_parsing_jobs_pending", note: '(status = \'pending\'::text)']
     (project_id) [name: "idx_document_parsing_jobs_project"]
@@ -1597,6 +1599,10 @@ Table "kb"."invites" {
   "revoked_at" timestamptz
   "created_at" timestamptz [not null, default: `now()`]
   "invited_by_user_id" uuid
+
+  Indexes {
+    (organization_id) [name: "idx_invites_organization_id"]
+  }
 }
 
 Table "kb"."llm_call_logs" {
@@ -2664,6 +2670,7 @@ Table "kb"."skill_reviews" {
     (agent_id, created_at) [name: "idx_skill_reviews_agent"]
     (status, created_at) [name: "idx_skill_reviews_claim", note: '(status = \'pending\'::text)']
     (agent_id) [name: "idx_skill_reviews_one_active", unique, note: '((status = ANY (ARRAY[\'pending\'::text, \'running\'::text])) AND (agent_id IS NOT NULL))']
+    (org_id) [name: "idx_skill_reviews_org_id"]
     (agent_run_id) [name: "idx_skill_reviews_run", unique, note: '(agent_run_id IS NOT NULL)']
   }
 }
@@ -3185,10 +3192,12 @@ Ref: "kb"."chunk_embedding_budget_blocks"."project_id" > "kb"."projects"."id"
 Ref: "kb"."chunk_embedding_jobs"."chunk_id" > "kb"."chunks"."id"
 Ref: "kb"."chunk_revisions"."chunk_id" > "kb"."chunks"."id"
 Ref: "kb"."chunks"."document_id" > "kb"."documents"."id"
+Ref: "kb"."discovery_jobs"."organization_id" > "kb"."orgs"."id"
 Ref: "kb"."discovery_type_candidates"."job_id" > "kb"."discovery_jobs"."id"
 Ref: "kb"."document_artifacts"."document_id" > "kb"."documents"."id"
 Ref: "kb"."document_parsing_jobs"."document_id" > "kb"."documents"."id"
 Ref: "kb"."document_parsing_jobs"."extraction_job_id" > "kb"."object_extraction_jobs"."id"
+Ref: "kb"."document_parsing_jobs"."organization_id" > "kb"."orgs"."id"
 Ref: "kb"."document_parsing_jobs"."project_id" > "kb"."projects"."id"
 Ref: "kb"."documents"."project_id" > "kb"."projects"."id"
 Ref: "kb"."documents"."created_by_user_id" > "core"."user_profiles"."id"
@@ -3210,6 +3219,7 @@ Ref: "kb"."graph_relationships"."project_id" > "kb"."projects"."id"
 Ref: "kb"."graph_schemas"."parent_version_id" > "kb"."graph_schemas"."id"
 Ref: "kb"."invites"."project_id" > "kb"."projects"."id"
 Ref: "kb"."invites"."invited_by_user_id" > "core"."user_profiles"."id"
+Ref: "kb"."invites"."organization_id" > "kb"."orgs"."id"
 Ref: "kb"."llm_usage_events"."org_id" > "kb"."orgs"."id"
 Ref: "kb"."llm_usage_events"."project_id" > "kb"."projects"."id"
 Ref: "kb"."llm_usage_events"."run_id" > "kb"."agent_runs"."id"
@@ -3275,6 +3285,7 @@ Ref: "kb"."sessions"."project_id" > "kb"."projects"."id"
 Ref: "kb"."skill_proposals"."base_skill_id" > "kb"."skills"."id"
 Ref: "kb"."skill_proposals"."project_id" > "kb"."projects"."id"
 Ref: "kb"."skill_proposals"."review_id" > "kb"."skill_reviews"."id"
+Ref: "kb"."skill_reviews"."org_id" > "kb"."orgs"."id"
 Ref: "kb"."skill_reviews"."project_id" > "kb"."projects"."id"
 Ref: "kb"."skill_usage"."project_id" > "kb"."projects"."id"
 Ref: "kb"."skill_usage"."skill_id" > "kb"."skills"."id"

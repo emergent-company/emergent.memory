@@ -803,3 +803,104 @@ func TestObjectPreviewInterceptionScope(t *testing.T) {
 		t.Error("object-preview.js must not key interception on a data-testid: the sources block stopped emitting citation-link in #1228, so such a branch is unreachable (#2251)")
 	}
 }
+
+// TestObjectPreviewFieldMarkdown pins which rows are rich text (#814): the
+// article's body vocabulary (body/content/notes/description) is markdown so a
+// GitHub issue's body renders as authored instead of as literal source, an
+// explicit "textarea" widget hint is prose whatever the key is called, and an
+// explicit "input" hint keeps even a prose key single-line plain text.
+func TestObjectPreviewFieldMarkdown(t *testing.T) {
+	cases := []struct {
+		name, key, widget string
+		want              bool
+	}{
+		{"body", "body", "", true},
+		{"content", "content", "", true},
+		{"notes", "notes", "", true},
+		{"description", "description", "", true},
+		{"body case folded", "Body", "", true},
+		{"body with textarea", "body", "textarea", true},
+		{"body forced single line", "body", "input", false},
+		{"textarea prose key", "instructions", "textarea", true},
+		{"identifier is not prose", "id", "", false},
+		{"title is not long-form", "title", "", false},
+		{"unknown textarea value is not prose", "title", "bogus", false},
+	}
+	for _, c := range cases {
+		if got := objectPreviewFieldMarkdown(c.key, c.widget); got != c.want {
+			t.Errorf("%s: objectPreviewFieldMarkdown(%q, %q) = %v, want %v", c.name, c.key, c.widget, got, c.want)
+		}
+	}
+}
+
+// TestObjectPreviewBodyRendersMarkdown is the regression for the captured
+// feedback: the preview drawer showed an issue body's markdown source ("## What
+// landed", pipe tables, backticks) as escaped text. The body row must render
+// through the sanitized markdown path inside the same data-preview-field anchor,
+// while a non-prose row (title) stays plain text.
+func TestObjectPreviewBodyRendersMarkdown(t *testing.T) {
+	obj := &GraphObject{
+		ID:   "11111111-1111-1111-1111-111111111111",
+		Type: "GitHubIssue",
+		Key:  "issue-814",
+		Properties: map[string]any{
+			"title": "**not** markdown",
+			"body":  "## What landed\n\nA **major** bump:\n\n| | `openai` |\n|---|---|\n| before | 2.x |\n\n<script>alert(1)</script>",
+		},
+	}
+	html := renderHTML(t, objectPreviewContent(obj, nil, "", objectPreviewSchema{
+		TypeLabel:  "GitHub issue",
+		Properties: []objectPropertyDef{{Name: "body"}, {Name: "title"}},
+	}, nil))
+
+	for _, want := range []string{
+		`data-preview-markdown`,
+		`<h2>What landed</h2>`,
+		`<strong>major</strong>`,
+		`<table`,
+		`<code>openai</code>`,
+		// The anchor the feedback was captured on survives the change.
+		`data-preview-field`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("body row missing rendered markdown %q\n%s", want, html)
+		}
+	}
+	for _, not := range []string{
+		`## What landed`,
+		`**major**`,
+		`<script>`,
+	} {
+		if strings.Contains(html, not) {
+			t.Errorf("body row still contains literal/unsafe %q\n%s", not, html)
+		}
+	}
+	// The non-prose row is untouched: escaped literal asterisks, no emphasis.
+	if !strings.Contains(html, "**not** markdown") {
+		t.Errorf("non-prose title should stay literal\n%s", html)
+	}
+	if strings.Contains(html, "<strong>not</strong>") {
+		t.Errorf("non-prose title must not render as markdown\n%s", html)
+	}
+}
+
+// TestObjectPreviewEmptyBodyStaysPlain pins the empty-row rule: an empty prose
+// value shows the muted em dash, and no markdown wrapper is emitted for it.
+func TestObjectPreviewEmptyBodyStaysPlain(t *testing.T) {
+	obj := &GraphObject{
+		ID:         "11111111-1111-1111-1111-111111111111",
+		Type:       "GitHubIssue",
+		Key:        "issue-814",
+		Properties: map[string]any{"body": ""},
+	}
+	html := renderHTML(t, objectPreviewContent(obj, nil, "", objectPreviewSchema{
+		TypeLabel:  "GitHub issue",
+		Properties: []objectPropertyDef{{Name: "body"}},
+	}, nil))
+	if strings.Contains(html, "data-preview-markdown") {
+		t.Errorf("empty body must not render a markdown wrapper\n%s", html)
+	}
+	if !strings.Contains(html, `data-empty`) {
+		t.Errorf("empty body row should stay tagged data-empty\n%s", html)
+	}
+}

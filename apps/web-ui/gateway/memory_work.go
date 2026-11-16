@@ -13,12 +13,17 @@ type WorkItem struct {
 	ProjectID   string `json:"projectId"`
 	CanonicalID string `json:"canonicalId"`
 	Type        string `json:"type"`
-	Key         string `json:"key"`
-	Status      string `json:"status"`
-	Assignee    string `json:"assignee"`
-	Version     int    `json:"version"`
-	NeedsReview bool   `json:"needsReview"`
-	UpdatedAt   string `json:"updatedAt"`
+	// Name is the object's first-class human title; empty when it has none.
+	Name string `json:"name"`
+	// Ref is the display-only "#<12 hex>" identity derived from the canonical id.
+	Ref         string         `json:"ref"`
+	Key         string         `json:"key"`
+	Status      string         `json:"status"`
+	Assignee    string         `json:"assignee"`
+	Version     int            `json:"version"`
+	NeedsReview bool           `json:"needsReview"`
+	UpdatedAt   string         `json:"updatedAt"`
+	Properties  map[string]any `json:"properties"`
 
 	LatestRunStatus       string `json:"latestRunStatus"`
 	LatestRunFailureClass string `json:"latestRunFailureClass"`
@@ -112,8 +117,10 @@ func (m *MemoryClient) workItemsPath(ctx context.Context) string {
 }
 
 // ListWorkItems lists the board projection of work items. status empty = all
-// statuses; typeName empty = all board-enabled types.
-func (m *MemoryClient) ListWorkItems(ctx context.Context, status, typeName string, limit int) ([]WorkItem, error) {
+// statuses; typeName empty = all board-enabled types. includeProperties asks for
+// the HEAD property bag, which only a card excerpt needs — a run→item join over
+// the full list must not pay for it.
+func (m *MemoryClient) ListWorkItems(ctx context.Context, status, typeName string, limit int, includeProperties bool) ([]WorkItem, error) {
 	q := url.Values{}
 	if status != "" {
 		q.Set("status", status)
@@ -125,6 +132,9 @@ func (m *MemoryClient) ListWorkItems(ctx context.Context, status, typeName strin
 		limit = 200
 	}
 	q.Set("limit", strconv.Itoa(limit))
+	if includeProperties {
+		q.Set("include", "properties")
+	}
 	var env successEnvelope[[]WorkItem]
 	if err := m.do(ctx, http.MethodGet, m.workItemsPath(ctx)+"?"+q.Encode(), nil, &env); err != nil {
 		return nil, err

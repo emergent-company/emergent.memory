@@ -138,6 +138,13 @@ func TestRetryAllExtractionsPlainFormRedirect(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/o/org-1/p/proj-1/documents/retry-extraction-failures", nil)
 	e.ServeHTTP(rec, req)
 
+	// 303, not 302: ui-rule-prg-contract names 303 for the plain-form half of
+	// the PRG contract, and a boosted request must never reach this branch with
+	// an HX-Redirect attached (a 3xx is followed by fetch, so the header would
+	// never reach htmx — #828, fixed by #838).
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303 for a plain form post", rec.Code)
+	}
 	if got, want := rec.Header().Get(echo.HeaderLocation), "/o/org-1/p/proj-1/documents?extractions_none=1"; got != want {
 		t.Fatalf("location = %q, want %q", got, want)
 	}

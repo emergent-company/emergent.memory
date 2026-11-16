@@ -13,8 +13,10 @@ import (
 // The ref is cosmetic. It is immutable (canonical_id never changes), stable
 // across versions and branches, and MUST NOT be accepted as a write handle —
 // callers address objects by UUID only. It is derived here and mirrored by the
-// idx_graph_objects_ref expression index and the FTS trigger so SQL and Go
-// agree on the format.
+// FTS builder kb.graph_object_fts (migration 00280), which takes the last 12
+// hex characters of the dash-stripped canonical_id at query time so SQL and Go
+// agree on the format. No covering expression index exists: the ref is
+// cosmetic and is never queried on its own.
 func ObjectRef(canonicalID uuid.UUID) string {
 	if canonicalID == uuid.Nil {
 		return ""

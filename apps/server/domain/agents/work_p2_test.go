@@ -374,3 +374,40 @@ func insertGitHubIssueObject(t *testing.T, db *bun.DB, ctx context.Context, proj
 		canonicalID, projectID, canonicalID, key, assignee)
 	require.NoError(t, err)
 }
+
+type issueReviewFinalStore struct{ fakeWorkObjectStore }
+
+func (s *issueReviewFinalStore) GetHeadObject(_ context.Context, _, canonicalID string) (*graph.WorkObjectHead, error) {
+	return &graph.WorkObjectHead{CanonicalID: canonicalID, Type: "GitHubIssue", Status: "review"}, nil
+}
+
+func TestFinishWorkRun_FinalizesIssueInReview(t *testing.T) {
+	ctx, db, repo, projectID := setupWorkObjectDispatch(t)
+	defID := insertWorkDefinition(t, db, ctx, projectID, "coder",
+		`{"status":{"ready":"ready"},"objectRules":[{"objectType":"GitHubIssue","triggers":[{"status":"ready"}]}]}`)
+	agentID := insertWorkAgent(t, db, ctx, projectID, "coder", defID)
+	canonicalID := uuid.NewString()
+	insertGitHubIssueObject(t, db, ctx, projectID, canonicalID, "issue-review", "coder")
+	run, err := repo.CreateRunQueued(ctx, agentID, 1, CreateRunQueuedOptions{
+		SubjectObjectID: &canonicalID, SubjectObjectType: strPtr("GitHubIssue"), TrustedInternal: false,
+	})
+	require.NoError(t, err)
+	var job AgentRunJob
+	require.NoError(t, db.NewSelect().Model(&job).Where("run_id = ?", run.ID).Scan(ctx))
+	agent, err := repo.FindByID(ctx, agentID, &projectID)
+	require.NoError(t, err)
+	def, err := repo.ResolveDefinitionForAgent(ctx, agent)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `UPDATE kb.agents SET consecutive_failures = 3 WHERE id = ?`, agentID)
+	require.NoError(t, err)
+
+	pool := &WorkerPool{repo: repo, workObjects: &issueReviewFinalStore{}, log: testAgentLogger()}
+	pool.finishWorkRun(ctx, testAgentLogger(), &job, run, agent, def, &ExecuteResult{Status: RunStatusSuccess}, nil)
+
+	var status string
+	require.NoError(t, db.NewSelect().Table("kb.agent_run_jobs").Column("status").Where("id = ?", job.ID).Scan(ctx, &status))
+	require.Equal(t, string(JobStatusCompleted), status)
+	var failures int
+	require.NoError(t, db.NewSelect().Table("kb.agents").Column("consecutive_failures").Where("id = ?", agentID).Scan(ctx, &failures))
+	require.Zero(t, failures)
+}

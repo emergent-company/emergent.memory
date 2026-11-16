@@ -168,7 +168,7 @@ func TestWorkCardIsInteractive(t *testing.T) {
 		IsWorking:          true,
 		LatestRunStatus:    "running",
 		LatestRunAgentName: "editor-agent",
-	}, []string{"Article"}))
+	}, workData{FilterExplicit: true, SelectedTypes: []string{"Article"}}))
 	for _, want := range []string{
 		`data-board-open-preview`,
 		`data-board-card`,
@@ -184,6 +184,65 @@ func TestWorkCardIsInteractive(t *testing.T) {
 	}
 	if strings.Contains(html, `Label: "review"`) || strings.Contains(html, `>review<`) {
 		t.Error("card must not render a review badge")
+	}
+}
+
+// TestWorkCardRendersObjectHeader pins the card's identity block to the shared
+// object header: the type tile, the type · ref line, the object's built-in name
+// and a prose excerpt — the same five things the objects page card shows. The
+// machine key must never stand in for the title.
+func TestWorkCardRendersObjectHeader(t *testing.T) {
+	const name = "Add rate limiting to the public API"
+	data := workData{
+		FilterExplicit: true,
+		SelectedTypes:  []string{"Task"},
+		TypeUI:         map[string]typeUI{"Task": {Icon: "lucide--file-text", Color: "#ff0000"}},
+	}
+	html := renderHTML(t, workCard(WorkItem{
+		CanonicalID: "9cc039e3-8ea3-42f0-a43d-2dda1a9f7ae9",
+		Ref:         "#000000000c1",
+		Name:        name,
+		Key:         "github:357590e8-6cbf-4d54-9a6f-0a6e0b1c2d3e:emergent-company/emergent.memory#772",
+		Type:        "Task",
+		Status:      "ready",
+		Assignee:    "Ada Lovelace",
+		Properties:  map[string]any{"description": "The token bucket is exhausted under burst traffic."},
+	}, data))
+	for _, want := range []string{
+		name,
+		"#000000000c1",
+		"Task",
+		"lucide--file-text", // the type's declared icon
+		"#ff0000",           // and its declared colour
+		"The token bucket",  // the prose excerpt from properties
+		"Ada Lovelace",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("work card missing %q", want)
+		}
+	}
+	if strings.Contains(html, "github:357590e8") {
+		t.Error("card must not render the machine key when the object has a name")
+	}
+}
+
+// TestWorkItemLabelFallsBack pins the label chain every object surface shares:
+// name, then a human key, then type + short id, and never a machine key.
+func TestWorkItemLabelFallsBack(t *testing.T) {
+	cases := []struct {
+		name string
+		item WorkItem
+		want string
+	}{
+		{"name wins", WorkItem{Name: "Ship it", Key: "task-1", Type: "Task"}, "Ship it"},
+		{"human key", WorkItem{Key: "fix-login", Type: "Task", CanonicalID: "abc"}, "fix-login"},
+		{"machine key skipped", WorkItem{Key: "task-0123456789ab", Type: "Task", CanonicalID: "0123456789abcdef"}, "Task 0123456789"},
+		{"type and short id", WorkItem{Type: "Task", CanonicalID: "0123456789abcdef"}, "Task 0123456789"},
+	}
+	for _, tc := range cases {
+		if got := workItemLabel(tc.item); got != tc.want {
+			t.Errorf("%s: label = %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 

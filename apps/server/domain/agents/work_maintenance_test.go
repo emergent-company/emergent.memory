@@ -110,3 +110,15 @@ func TestMergeWorkObjectMetadataPreservesEventAndAddsSource(t *testing.T) {
 		t.Fatalf("meta = %#v", meta)
 	}
 }
+
+func TestIsIssueReviewFinal(t *testing.T) {
+	if !isIssueReviewFinal(&graph.WorkObjectHead{Type: "GitHubIssue", Status: "review"}) {
+		t.Fatal("issue review should finalize a coding run")
+	}
+	if isIssueReviewFinal(&graph.WorkObjectHead{Type: "GitHubIssue", Status: "ready"}) {
+		t.Fatal("ready issue must not finalize")
+	}
+	if isIssueReviewFinal(&graph.WorkObjectHead{Type: "GitHubReviewLane", Status: "review"}) {
+		t.Fatal("review lane must use its own finalizer")
+	}
+}

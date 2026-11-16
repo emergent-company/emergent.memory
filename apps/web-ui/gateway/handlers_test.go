@@ -354,19 +354,20 @@ type fakeMemory struct {
 	ftsTypeFilter            string                          // last type filter passed to SearchObjectsFTS
 
 	// Work items (object-driven work / Kanban board).
-	workItems         []WorkItem      // returned by ListWorkItems
-	workItemsErr      error           // ListWorkItems failure
-	boardRuns         []BoardRun      // returned by ListBoardRuns
-	boardRunsErr      error           // ListBoardRuns failure
-	workItemDetail    *WorkItemDetail // returned by GetWorkItem
-	workItemDetailErr error           // GetWorkItem failure
-	workAction        *WorkItemAction // returned by action methods
-	workActionErr     error           // action failure
-	lastWorkItemID    string          // last canonicalId passed to an action
-	lastReassignTo    string          // last assignee passed to ReassignWorkItem
-	lastStatusTo      string          // last status passed to SetWorkItemStatus
-	lastFeedback      string          // last feedback passed to RequestChangesWorkItem
-	lastCommentBody   string          // last body passed to AddWorkComment
+	workItems                 []WorkItem      // returned by ListWorkItems
+	workItemsErr              error           // ListWorkItems failure
+	lastWorkItemsIncludeProps bool            // includeProperties of the last ListWorkItems call
+	boardRuns                 []BoardRun      // returned by ListBoardRuns
+	boardRunsErr              error           // ListBoardRuns failure
+	workItemDetail            *WorkItemDetail // returned by GetWorkItem
+	workItemDetailErr         error           // GetWorkItem failure
+	workAction                *WorkItemAction // returned by action methods
+	workActionErr             error           // action failure
+	lastWorkItemID            string          // last canonicalId passed to an action
+	lastReassignTo            string          // last assignee passed to ReassignWorkItem
+	lastStatusTo              string          // last status passed to SetWorkItemStatus
+	lastFeedback              string          // last feedback passed to RequestChangesWorkItem
+	lastCommentBody           string          // last body passed to AddWorkComment
 
 	// objects browser: cursor pagination + count + search.
 	pageObjects          []GraphObject        // returned by ListGraphObjectsPage
@@ -1762,7 +1763,8 @@ func (f *fakeMemory) CreateRelationship(ctx context.Context, req *CreateRelation
 	return f.createRelErr
 }
 
-func (f *fakeMemory) ListWorkItems(ctx context.Context, status, typeName string, limit int) ([]WorkItem, error) {
+func (f *fakeMemory) ListWorkItems(ctx context.Context, status, typeName string, limit int, includeProperties bool) ([]WorkItem, error) {
+	f.lastWorkItemsIncludeProps = includeProperties
 	if f.workItemsErr != nil {
 		return nil, f.workItemsErr
 	}

@@ -158,7 +158,9 @@ func (s *Server) objectPreviewRelationshipLabel(ctx context.Context, objectID, r
 // it (empty for built-in fields, which carry no schema prose), and the value.
 // Name, when set, is the raw schema property name — exposed as the label's
 // tooltip because the label itself is humanised. Mono renders identifier values
-// monospaced, and Empty de-emphasises a row that has no value.
+// monospaced, and Empty de-emphasises a row that has no value. Markdown marks a
+// long-form prose value the row renders as sanitized markdown rather than as
+// escaped plain text (see objectPreviewFieldMarkdown).
 type objectPreviewField struct {
 	Label       string
 	Description string
@@ -166,6 +168,7 @@ type objectPreviewField struct {
 	Name        string
 	Empty       bool
 	Mono        bool
+	Markdown    bool
 }
 
 // objectPreviewSchema is the compiled-schema context the drawer renders with:
@@ -255,6 +258,7 @@ func objectPreviewTypeFields(o GraphObject, schema objectPreviewSchema) []object
 			Description: d.Description,
 			Value:       value,
 			Empty:       value == "",
+			Markdown:    value != "" && objectPreviewFieldMarkdown(d.Name, d.Widget),
 		})
 	}
 	for _, p := range objectPreviewStoredProperties(o) {
@@ -262,13 +266,41 @@ func objectPreviewTypeFields(o GraphObject, schema objectPreviewSchema) []object
 			continue
 		}
 		out = append(out, objectPreviewField{
-			Label: objectPreviewFieldLabel(p.Key),
-			Name:  p.Key,
-			Value: p.Value,
-			Empty: p.Value == "",
+			Label:    objectPreviewFieldLabel(p.Key),
+			Name:     p.Key,
+			Value:    p.Value,
+			Empty:    p.Value == "",
+			Markdown: p.Value != "" && objectPreviewFieldMarkdown(p.Key, ""),
 		})
 	}
 	return out
+}
+
+// objectPreviewFieldMarkdown reports whether a preview row's value is long-form
+// prose authored as markdown, so the drawer renders it instead of escaping it
+// (#814: a GitHub issue's `body` read as literal "## …", tables and all).
+//
+// The schema's widget hint wins: an explicit "input" asks for one line, so its
+// value stays plain text even under a prose key, while "textarea" is the
+// schema's own "free-form long text" marker and is prose whatever the key is
+// called. Without a hint the key decides, using the article's body vocabulary
+// (objectArticleBodyKeys) so the drawer and the object page agree on which
+// field holds the document. Matching folds case and separators, so a schema
+// that spells the key "Body" or "BODY" is still recognised.
+func objectPreviewFieldMarkdown(name, widget string) bool {
+	switch widget {
+	case "input":
+		return false
+	case "textarea":
+		return true
+	}
+	folded := normalizeProseKey(name)
+	for _, key := range objectArticleBodyKeys {
+		if strings.EqualFold(folded, key) {
+			return true
+		}
+	}
+	return false
 }
 
 // objectPreviewDeclaredLabel is the row label for a property the schema declares:
