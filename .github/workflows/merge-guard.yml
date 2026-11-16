@@ -40,15 +40,16 @@ run-name: merge-guard PR ${{ github.event.inputs.pr || github.event.pull_request
 # A marker is trusted only when its author is OWNER/COLLABORATOR or their
 # immutable user id is in the MERGE_GUARD_TRUSTED_USER_IDS repository variable
 # (MEMBER alone is org membership, not write access). Fork contributors and bots
-# cannot mint one: the allowlist is human identities only, and a bot id in it is
-# a misconfiguration, not a supported configuration. With a bot id listed the
-# gate becomes delta-only — a bot marker on the newest head satisfies `verify` on
-# its own, so the review gate closes on the bot's word alone, with no human marker
-# required. A bot marker is otherwise advisory: `github-review-gate.yml` still
-# dispatches this guard and arms auto-merge on one, but the marker never
-# satisfies `verify` and never authorizes a merge, so the armed auto-merge waits
-# for a trusted human or independent marker on the same head. That wait is
-# intended.
+# cannot mint one: a bot is rejected by its `user.type`, whatever its association
+# and whatever the allowlist says (#1290, #1310). That rejection is explicit
+# rather than a consequence of the allowlist staying clean, because a bot id *can*
+# get into the variable — this repo still listed one when #1290 closed, and it was
+# re-added hours later — and an id-trusting predicate would re-open the hole
+# silently. A bot marker is therefore always advisory: a bot's verdict neither
+# approves nor blocks. `github-review-gate.yml` still dispatches this guard and
+# arms auto-merge on a bot marker, but the marker never satisfies `verify` and
+# never authorizes a merge, so the armed auto-merge waits for a trusted human or
+# independent marker on the same head. That wait is intended.
 #
 # A push changes the head, so the automatic run has no marker that can name it.
 # On that path the published `merge-guard` CHECK RUN stays **neutral** ("awaiting
@@ -141,12 +142,15 @@ jobs:
           # `author_association: MEMBER` is org membership, not write access, so
           # MEMBER is trusted only when the immutable user id is in the
           # MERGE_GUARD_TRUSTED_USER_IDS repo variable. OWNER and COLLABORATOR
-          # imply an explicit grant. The latest marker's current body counts;
+          # imply an explicit grant. A bot is rejected by `user.type` whatever the
+          # allowlist says (#1290, #1310). The latest marker's current body counts;
           # post a new comment rather than editing.
           read -r -d '' MARKER_JQ <<'JQ' || true
           ($trusted_ids // "" | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != ""))) as $allow
           | [
             .[]
+            # A bot is advisory, never a reviewer (#1290, #1310).
+            | select(.user.type != "Bot")
             | select(
                 .author_association == "OWNER"
                 or .author_association == "COLLABORATOR"
@@ -184,6 +188,9 @@ jobs:
           ($trusted_ids // "" | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != ""))) as $allow
           | [
             .[]
+            # A bot's verdict is advisory in both directions: it never approves
+            # and never blocks (#1290, #1310).
+            | select(.user.type != "Bot")
             | select(
                 .author_association == "OWNER"
                 or .author_association == "COLLABORATOR"
