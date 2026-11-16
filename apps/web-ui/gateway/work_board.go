@@ -18,7 +18,7 @@ var boardStatusOrder = []string{"ready", "in_progress", "review", "revision", "b
 
 // boardItemLimit caps how many work items the board fetches in one page. There
 // is no pagination yet, so a capped board renders an explicit notice
-// (board.templ) rather than silently hiding older items.
+// (work_board_live.templ) rather than silently hiding older items.
 const boardItemLimit = 200
 
 // boardStatusLabel humanises a work status for the column header.
@@ -57,30 +57,6 @@ func boardStatusIntent(status string) ui.BadgeIntent {
 	}
 }
 
-// boardRunIntent maps a run execution status to its badge tone (L1 adapter).
-func boardRunIntent(status string) ui.BadgeIntent {
-	switch status {
-	case "success", "completed":
-		return ui.BadgeSuccess
-	case "error", "failed":
-		return ui.BadgeError
-	case "running", "queued":
-		return ui.BadgeInfo
-	case "paused":
-		return ui.BadgeWarning
-	case "skipped", "cancelled", "cancelling":
-		return ui.BadgeNeutral
-	default:
-		return ui.BadgeGhost
-	}
-}
-
-// boardLane groups work items under one status lane.
-type boardLane struct {
-	Status string
-	Items  []WorkItem
-}
-
 // boardStatusMap is the project's work-path status mapping: which object status
 // value means each work-item lifecycle phase. It lets the board translate its
 // fixed transition set (retry/approve/request-changes/cancel) into whatever
@@ -109,7 +85,7 @@ func defaultBoardStatusMap() boardStatusMap {
 	}
 }
 
-// statusMapJSON serialises the map for the #board[data-board-status-map]
+// statusMapJSON serialises the map for the #work-board[data-board-status-map]
 // attribute app.js reads to derive drag transitions. Falls back to "" on the
 // (practically impossible) marshal error.
 func (m boardStatusMap) statusMapJSON() string {
@@ -195,34 +171,6 @@ func (s *Server) boardStatusMap(ctx context.Context) boardStatusMap {
 	return boardStatusMapFromDefinitions(defs)
 }
 
-// boardStatusesFromCompiled derives the canonical global board lane order from
-// the compiled schema's board-enabled object types (union, declaration order,
-// de-duplicated first-seen). The agent-scoped Work board uses per-type lanes via
-// boardLanesForType instead.
-func boardStatusesFromCompiled(compiled *CompiledSchemaTypes) []string {
-	if compiled == nil {
-		return nil
-	}
-	var out []string
-	seen := make(map[string]struct{})
-	for _, t := range visibleCompiledTypes(compiled.ObjectTypes) {
-		if !t.BoardEnabled {
-			continue
-		}
-		for _, s := range t.AllowedStatuses {
-			if s == "" {
-				continue
-			}
-			if _, ok := seen[s]; ok {
-				continue
-			}
-			seen[s] = struct{}{}
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
 // boardTypesFromCompiled returns the visible board-enabled object types in
 // deterministic (alphabetical) order.
 func boardTypesFromCompiled(compiled *CompiledSchemaTypes) []CompiledType {
@@ -257,44 +205,6 @@ func boardLanesForType(t CompiledType) []string {
 	return out
 }
 
-// boardSwimlane is one object type's stacked row: its lanes plus the item count.
-type boardSwimlane struct {
-	Type  string
-	Lanes []boardLane
-	Count int
-}
-
-// buildBoardSwimlanes groups items into one stacked swimlane per object type.
-// Types are alphabetical; a type with no items is omitted. Item-only statuses
-// stay as extra lanes within their own type.
-func buildBoardSwimlanes(items []WorkItem, compiled *CompiledSchemaTypes) []boardSwimlane {
-	byType := make(map[string][]WorkItem)
-	for _, it := range items {
-		byType[it.Type] = append(byType[it.Type], it)
-	}
-	var out []boardSwimlane
-	seen := make(map[string]bool)
-	for _, t := range boardTypesFromCompiled(compiled) {
-		seen[t.Name] = true
-		its := byType[t.Name]
-		if len(its) == 0 {
-			continue
-		}
-		out = append(out, boardSwimlane{Type: t.Name, Lanes: buildBoardColumns(its, boardLanesForType(t)), Count: len(its)})
-	}
-	var extra []string
-	for typ := range byType {
-		if !seen[typ] {
-			extra = append(extra, typ)
-		}
-	}
-	sort.Strings(extra)
-	for _, typ := range extra {
-		out = append(out, boardSwimlane{Type: typ, Lanes: buildBoardColumns(byType[typ], nil), Count: len(byType[typ])})
-	}
-	return out
-}
-
 // RuleFor returns the definition's rule for an object type, or nil.
 func (w *AgentWorkConfig) RuleFor(objectType string) *AgentObjectRule {
 	if w == nil {
@@ -306,38 +216,6 @@ func (w *AgentWorkConfig) RuleFor(objectType string) *AgentObjectRule {
 		}
 	}
 	return nil
-}
-
-// buildBoardColumns groups items into columns by status in the schema-declared
-// order (falling back to the canonical order when schemaStatuses is empty),
-// appending any custom statuses (sorted) after the known ones. Canonical lanes
-// render even when empty so the board's drag targets are stable.
-func buildBoardColumns(items []WorkItem, schemaStatuses []string) []boardLane {
-	byStatus := make(map[string][]WorkItem)
-	for _, it := range items {
-		byStatus[it.Status] = append(byStatus[it.Status], it)
-	}
-	base := schemaStatuses
-	if len(base) == 0 {
-		base = boardStatusOrder
-	}
-	seen := make(map[string]bool)
-	cols := make([]boardLane, 0, len(base)+len(byStatus))
-	for _, s := range base {
-		seen[s] = true
-		cols = append(cols, boardLane{Status: s, Items: byStatus[s]})
-	}
-	var extra []string
-	for s := range byStatus {
-		if !seen[s] {
-			extra = append(extra, s)
-		}
-	}
-	sort.Strings(extra)
-	for _, s := range extra {
-		cols = append(cols, boardLane{Status: s, Items: byStatus[s]})
-	}
-	return cols
 }
 
 // boardUnhealthyAgents returns the runtime reaction agents that are unhealthy
@@ -405,32 +283,6 @@ func (a boardAllowances) allowed(typeName string) []string {
 	return a[typeName]
 }
 
-// lanes filters the board lane order down to the statuses the item's type allows.
-// It backs the drawer's "Set status" menu: offering a status the type refuses is
-// the same dead end the drop targets avoid. When nothing intersects — a type whose
-// declared set the board does not render — the list is returned unchanged rather
-// than emptied, so a rendering gap cannot silently remove the control.
-func (a boardAllowances) lanes(statuses []string, typeName string) []string {
-	allowed := a.allowed(typeName)
-	if len(allowed) == 0 {
-		return statuses
-	}
-	set := make(map[string]struct{}, len(allowed))
-	for _, s := range allowed {
-		set[s] = struct{}{}
-	}
-	out := make([]string, 0, len(statuses))
-	for _, s := range statuses {
-		if _, ok := set[s]; ok {
-			out = append(out, s)
-		}
-	}
-	if len(out) == 0 {
-		return statuses
-	}
-	return out
-}
-
 // allowedJSON renders the statuses an object of typeName may be moved to as a
 // JSON array for the card's data-board-allowed attribute, or "" when its type is
 // unconstrained (the attribute is then omitted). JSON rather than a comma list so
@@ -447,150 +299,23 @@ func (a boardAllowances) allowedJSON(typeName string) string {
 	return string(raw)
 }
 
-// boardSchema best-effort derives the board's lane order and per-type allowed
-// statuses from one compiled-schema fetch. A fetch failure is captured and yields
-// nil for both (canonical lanes, unconstrained cards), so the board never breaks
-// on a schema outage.
-func (s *Server) boardSchema(ctx context.Context) ([]string, boardAllowances) {
-	compiled, err := s.memory.GetCompiledTypes(ctx)
-	if err != nil {
-		captureError(err)
-		return nil, nil
-	}
-	return boardStatusesFromCompiled(compiled), boardAllowancesFromCompiled(compiled)
-}
-
 // uiBoardRedirect sends the legacy /board route to the global Work board.
 func (s *Server) uiBoardRedirect(c echo.Context) error {
 	return c.Redirect(308, "/work/board")
 }
 
-// uiBoard renders the Kanban board page. A failed fetch renders the whole-page
-// error state.
-func (s *Server) uiBoard(c echo.Context) error {
-	ctx := c.Request().Context()
-	items, err := s.memory.ListWorkItems(ctx, "", "", boardItemLimit, false)
-	if err != nil {
-		return s.page(c, pageTitle("Board"), BoardPage(nil, nil, nil, nil, defaultBoardStatusMap(), userFacingError(err)))
-	}
-	agents, aerr := s.memory.ListScheduledAgents(ctx)
-	if aerr != nil {
-		captureError(aerr)
-		agents = nil
-	}
-	statuses, allowances := s.boardSchema(ctx)
-	return s.page(c, pageTitle("Board"), BoardPage(items, agents, statuses, allowances, s.boardStatusMap(ctx), nil))
-}
-
-// uiBoardPartial renders just the board columns (the htmx swap region), used by
-// background refreshes (drag cancellation replay) and manual reloads. It does
-// NOT include the drawer out-of-band clear: a background refresh must never
-// close a drawer the user is typing in.
-func (s *Server) uiBoardPartial(c echo.Context) error {
-	return s.renderBoardPartial(c, nil)
-}
-
-// renderBoardColumns fetches the current work items and renders the action
-// response: the columns plus the out-of-band drawer clear, so an action taken
-// from the drawer closes it. actionErr, when non-nil, becomes the error banner.
-func (s *Server) renderBoardColumns(c echo.Context, actionErr error) error {
-	ctx := c.Request().Context()
-	items, err := s.memory.ListWorkItems(ctx, "", "", boardItemLimit, false)
+// uiWorkBoardPartial renders just the board's swap region. The live stream
+// defers a columns frame while a card is being dragged (app.js); when the drag
+// ends without a drop, the deferred refresh is replayed through this route so the
+// board cannot stay stale after a cancelled drag.
+func (s *Server) uiWorkBoardPartial(c echo.Context) error {
+	data := workData{Section: workBoardSection}
 	errMsg := ""
-	if actionErr != nil {
-		errMsg = actionErr.Error()
-	} else if err != nil {
-		errMsg = err.Error()
+	if err := s.loadWorkBoard(c.Request().Context(), c, &data); err != nil {
+		errMsg = userFacingError(err).Error()
 	}
-	statuses, allowances := s.boardSchema(ctx)
-	renderPartial(c.Response().Writer, c.Request(), BoardRefresh(items, statuses, allowances, s.boardStatusMap(ctx), errMsg))
+	renderPartial(c.Response().Writer, c.Request(), WorkBoardFrame(data, errMsg))
 	return nil
-}
-
-// renderBoardPartial is renderBoardColumns without the drawer swap: the
-// response for background refreshes (the live stream's catch-up and a replay
-// after a cancelled drag).
-func (s *Server) renderBoardPartial(c echo.Context, actionErr error) error {
-	ctx := c.Request().Context()
-	items, err := s.memory.ListWorkItems(ctx, "", "", boardItemLimit, false)
-	errMsg := ""
-	if actionErr != nil {
-		errMsg = actionErr.Error()
-	} else if err != nil {
-		errMsg = err.Error()
-	}
-	statuses, allowances := s.boardSchema(ctx)
-	renderPartial(c.Response().Writer, c.Request(), BoardColumnsFrame(items, statuses, allowances, s.boardStatusMap(ctx), errMsg))
-	return nil
-}
-
-// boardDeliverable is one declared deliverable on a completed run, resolved to
-// its graph object when a lookup succeeds. Type/Key come straight from the run
-// summary; ObjectID/Resolved are filled by the resolution pass.
-type boardDeliverable struct {
-	Type     string
-	Key      string
-	ObjectID string
-	Resolved bool
-}
-
-// boardDeliverables flattens a work item's runs (newest first, as the server
-// returns them) into de-duplicated deliverables, newest declaration first. Each
-// run's Summary["deliverables"] is decoded defensively from raw JSON ([]any of
-// map[string]any with string type/key); malformed entries are dropped and a
-// missing/renamed key is tolerated, so the helper never panics.
-func boardDeliverables(runs []WorkItemRun) []boardDeliverable {
-	seen := make(map[string]bool)
-	var out []boardDeliverable
-	for _, run := range runs {
-		for _, d := range decodeBoardDeliverables(run.Summary) {
-			key := d.Type + "\x00" + d.Key
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			out = append(out, d)
-		}
-	}
-	return out
-}
-
-// decodeBoardDeliverables decodes one run summary's deliverables array into
-// boardDeliverable values, dropping entries that are not {type, key} string
-// pairs.
-func decodeBoardDeliverables(summary map[string]any) []boardDeliverable {
-	raw, ok := summary["deliverables"]
-	if !ok {
-		return nil
-	}
-	items, ok := raw.([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]boardDeliverable, 0, len(items))
-	for _, item := range items {
-		m, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		t, _ := m["type"].(string)
-		k, _ := m["key"].(string)
-		if t == "" || k == "" {
-			continue
-		}
-		out = append(out, boardDeliverable{Type: t, Key: k})
-	}
-	return out
-}
-
-// boardCompletionSummary returns the newest run's completion note (its
-// Summary["summary"] prose), or "" when absent.
-func boardCompletionSummary(runs []WorkItemRun) string {
-	if len(runs) == 0 {
-		return ""
-	}
-	s, _ := runs[0].Summary["summary"].(string)
-	return s
 }
 
 // boardComment is one entry in the merged "Activity" thread: a durable comment
@@ -645,79 +370,46 @@ func boardCommentLess(a, b boardComment) bool {
 	return a.Body < b.Body
 }
 
-// uiBoardItem renders the card drawer (a native dialog) for one work item. It
-// resolves each declared deliverable to its object (best-effort: a miss or
-// lookup failure leaves that row as missing) and passes the result plus the
-// newest run's completion note into the drawer.
-func (s *Server) uiBoardItem(c echo.Context) error {
-	ctx := c.Request().Context()
-	canonicalID := c.Param("canonicalId")
-	detail, err := s.memory.GetWorkItem(ctx, canonicalID)
-	if err != nil {
-		renderPartial(c.Response().Writer, c.Request(), BoardDrawerError(err))
-		return nil
-	}
-	deliverables := boardDeliverables(detail.Runs)
-	for i := range deliverables {
-		obj, lerr := s.memory.LookupGraphObjectByKey(ctx, deliverables[i].Type, deliverables[i].Key)
-		if lerr != nil {
-			captureError(lerr)
-			continue
-		}
-		if obj == nil {
-			continue
-		}
-		deliverables[i].Resolved = true
-		deliverables[i].ObjectID = firstNonEmpty(obj.CanonicalID, obj.ID)
-	}
-	statuses, allowances := s.boardSchema(ctx)
-	renderPartial(c.Response().Writer, c.Request(), BoardDrawer(detail, s.boardStatusMap(ctx), allowances.lanes(statuses, detail.Item.Type), deliverables, boardCompletionSummary(detail.Runs), s.boardAssigneeCandidates(ctx)))
-	return nil
-}
+// The work board's action routes. They are the preview drawer's status-gated
+// actions: the drawer renders them into the preview's actions slot, so their
+// response is the refreshed board — the drawer itself closes on a successful
+// POST (object-preview.js), leaving the board behind it up to date.
 
-func (s *Server) uiBoardApprove(c echo.Context) error {
+func (s *Server) uiWorkApprove(c echo.Context) error {
 	_, err := s.memory.ApproveWorkItem(c.Request().Context(), c.Param("canonicalId"))
-	return s.renderBoardColumns(c, err)
+	return s.renderWorkBoard(c, err)
 }
 
-func (s *Server) uiBoardRequestChanges(c echo.Context) error {
+func (s *Server) uiWorkRequestChanges(c echo.Context) error {
 	_, err := s.memory.RequestChangesWorkItem(c.Request().Context(), c.Param("canonicalId"), c.FormValue("feedback"))
-	return s.renderBoardColumns(c, err)
+	return s.renderWorkBoard(c, err)
 }
 
-func (s *Server) uiBoardComment(c echo.Context) error {
+func (s *Server) uiWorkComment(c echo.Context) error {
 	_, err := s.memory.AddWorkComment(c.Request().Context(), c.Param("canonicalId"), c.FormValue("body"))
-	return s.renderBoardColumns(c, err)
+	return s.renderWorkBoard(c, err)
 }
 
-func (s *Server) uiBoardRetry(c echo.Context) error {
+func (s *Server) uiWorkRetry(c echo.Context) error {
 	_, err := s.memory.RetryWorkItem(c.Request().Context(), c.Param("canonicalId"))
-	return s.renderBoardColumns(c, err)
+	return s.renderWorkBoard(c, err)
 }
 
-func (s *Server) uiBoardReassign(c echo.Context) error {
-	_, err := s.memory.ReassignWorkItem(c.Request().Context(), c.Param("canonicalId"), c.FormValue("assignee"))
-	return s.renderBoardColumns(c, err)
-}
-
-func (s *Server) uiBoardSetStatus(c echo.Context) error {
-	_, err := s.memory.SetWorkItemStatus(c.Request().Context(), c.Param("canonicalId"), c.FormValue("status"))
-	return s.renderBoardColumns(c, err)
-}
-
-func (s *Server) uiBoardCancel(c echo.Context) error {
+func (s *Server) uiWorkCancel(c echo.Context) error {
 	_, err := s.memory.CancelWorkItem(c.Request().Context(), c.Param("canonicalId"))
-	return s.renderBoardColumns(c, err)
+	return s.renderWorkBoard(c, err)
 }
 
-// boardItemPath builds the drawer route for a work item.
-func boardItemPath(canonicalID string) string {
-	return "/board/items/" + url.PathEscape(canonicalID)
-}
-
-// boardActionPath builds an action route for a work item.
-func boardActionPath(canonicalID, action string) string {
-	return "/board/items/" + url.PathEscape(canonicalID) + "/" + action
+// workActionPath builds an action route for a work item. view is the board's
+// view state: the action's response re-renders the board (renderWorkBoard reads
+// the request's own query), so the filter has to ride on the action URL or the
+// response would widen a filtered board to every type.
+func workActionPath(canonicalID, action string, view url.Values) string {
+	path := "/work/items/" + url.PathEscape(canonicalID) + "/" + action
+	if q := view.Encode(); q != "" {
+		return path + "?" + q
+	}
+	return path
 }
 
 // boardAssigneeCandidate is one option in the ticket-style assignee picker.
@@ -770,38 +462,82 @@ func (s *Server) boardAssigneeCandidates(ctx context.Context) []boardAssigneeCan
 	return buildBoardAssigneeCandidates(agents, members)
 }
 
-// boardStatusOptions returns the work-path status values (the statusMap
-// vocabulary) a user may set an item to, in canonical phase order, excluding the
-// item's current status.
-func boardStatusOptions(statusMap boardStatusMap, lanes []string, current string) []string {
-	out := make([]string, 0, len(lanes)+6)
-	seen := make(map[string]bool, len(lanes)+6)
-	add := func(v string) {
-		if v == "" || v == current || seen[v] {
-			return
+// boardDeliverable is one declared deliverable on a completed run, resolved to
+// its graph object when a lookup succeeds. Type/Key come straight from the run
+// summary; ObjectID/Resolved are filled by the resolution pass.
+type boardDeliverable struct {
+	Type     string
+	Key      string
+	ObjectID string
+	Resolved bool
+}
+
+// boardDeliverables flattens a work item's runs (newest first, as the server
+// returns them) into de-duplicated deliverables, newest declaration first. Each
+// run's Summary["deliverables"] is decoded defensively from raw JSON ([]any of
+// map[string]any with string type/key); malformed entries are dropped and a
+// missing/renamed key is tolerated, so the helper never panics.
+func boardDeliverables(runs []WorkItemRun) []boardDeliverable {
+	seen := make(map[string]bool)
+	var out []boardDeliverable
+	for _, run := range runs {
+		for _, d := range decodeBoardDeliverables(run.Summary) {
+			key := d.Type + "\x00" + d.Key
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, d)
 		}
-		seen[v] = true
-		out = append(out, v)
 	}
-	// Prefer the board's rendered lanes: they are the statuses this project
-	// actually uses, so the menu offers exactly the columns a user can see (and
-	// drag to). The canonical vocabulary is only a fallback for a board that
-	// rendered no lanes.
-	if len(lanes) > 0 {
-		for _, v := range lanes {
-			add(v)
+	return out
+}
+
+// resolveBoardDeliverables resolves each declared deliverable to its graph
+// object. Resolution is best-effort presentation: a lookup failure is captured
+// and the deliverable keeps Resolved == false, which renders it as "not found"
+// rather than dropping the row.
+func (s *Server) resolveBoardDeliverables(ctx context.Context, runs []WorkItemRun) []boardDeliverable {
+	deliverables := boardDeliverables(runs)
+	for i := range deliverables {
+		obj, err := s.memory.LookupGraphObjectByKey(ctx, deliverables[i].Type, deliverables[i].Key)
+		if err != nil {
+			captureError(err)
+			continue
 		}
-		return out
+		if obj == nil {
+			continue
+		}
+		deliverables[i].Resolved = true
+		deliverables[i].ObjectID = firstNonEmpty(obj.CanonicalID, obj.ID)
 	}
-	for _, v := range []string{
-		statusMap.Ready,
-		statusMap.InProgress,
-		statusMap.Review,
-		statusMap.Revision,
-		statusMap.Blocked,
-		statusMap.Done,
-	} {
-		add(v)
+	return deliverables
+}
+
+// decodeBoardDeliverables decodes one run summary's deliverables array into
+// boardDeliverable values, dropping entries that are not {type, key} string
+// pairs.
+func decodeBoardDeliverables(summary map[string]any) []boardDeliverable {
+	raw, ok := summary["deliverables"]
+	if !ok {
+		return nil
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]boardDeliverable, 0, len(items))
+	for _, item := range items {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		t, _ := m["type"].(string)
+		k, _ := m["key"].(string)
+		if t == "" || k == "" {
+			continue
+		}
+		out = append(out, boardDeliverable{Type: t, Key: k})
 	}
 	return out
 }

@@ -15,7 +15,7 @@ export interface BoardSchemaHandle {
   relationshipType?: string;
 }
 
-/** The six canonical board statuses (gateway/board.go boardStatusOrder). */
+/** The six canonical board statuses (gateway/work_board.go boardStatusOrder). */
 const BOARD_STATUSES = ['ready', 'in_progress', 'review', 'revision', 'blocked', 'done'];
 
 /**
