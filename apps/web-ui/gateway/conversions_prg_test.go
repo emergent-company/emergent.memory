@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/labstack/echo/v4"
@@ -165,15 +167,52 @@ func TestRetryAllConversionsErrorRedirectCarriesScope(t *testing.T) {
 		t.Fatalf("status = %d, want 303 for a plain form post", rec.Code)
 	}
 	loc := rec.Header().Get(echo.HeaderLocation)
-	if want := "/o/org-1/p/proj-1/documents?err="; len(loc) <= len(want) || loc[:len(want)] != want {
+	if want := "/o/org-1/p/proj-1/documents?err="; !strings.HasPrefix(loc, want) {
 		t.Fatalf("location = %q, want prefix %q", loc, want)
 	}
 }
 
-// TestRetryAllConversionsRoute pins that the handler is reachable at the path
-// main.go registers and that it drives the bulk conversion retry — the route is
-// otherwise only asserted by the handler-level tests above.
+// The error path has the same two wire shapes as the success path: a boosted
+// form gets 200 + HX-Redirect carrying ?err= (a 303 would be followed by fetch
+// and the flash would never reach htmx), while the test above pins the plain
+// form's 303 + Location.
+func TestRetryAllConversionsBoostedErrorRedirect(t *testing.T) {
+	f := &fakeMemory{bulkParsingErr: errConversionRetryUnavailable}
+	s, _ := newClientEcho(f, Config{AuthMode: "session"})
+	e := mountScopedConversionsRetry(s)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/o/org-1/p/proj-1"+conversionsRetryRoute, nil)
+	req.Header.Set("HX-Request", "true")
+	req.Header.Set("HX-Boosted", "true")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for a boosted form; body %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get(echo.HeaderLocation); got != "" {
+		t.Fatalf("location = %q, want empty: a boosted form navigates via HX-Redirect, not Location", got)
+	}
+	loc := rec.Header().Get("HX-Redirect")
+	if want := "/o/org-1/p/proj-1/documents?err="; !strings.HasPrefix(loc, want) {
+		t.Fatalf("HX-Redirect = %q, want prefix %q", loc, want)
+	}
+}
+
+// TestRetryAllConversionsRoute pins that the handler is reachable at the
+// production path and that main.go registers that path on it. The router is
+// assembled inside func main, which a test cannot call, so the production half
+// is a source check of the registration line rather than a request through the
+// real router.
 func TestRetryAllConversionsRoute(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	if want := `e.POST("` + conversionsRetryRoute + `", s.uiRetryAllConversions)`; !strings.Contains(string(src), want) {
+		t.Fatalf("main.go does not register %s on uiRetryAllConversions: want %q", conversionsRetryRoute, want)
+	}
+
 	f := &fakeMemory{bulkRetried: 2}
 	s, e := newClientEcho(f, Config{})
 	e.POST(conversionsRetryRoute, s.uiRetryAllConversions)

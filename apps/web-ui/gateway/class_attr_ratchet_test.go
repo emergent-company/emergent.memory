@@ -23,9 +23,19 @@ import (
 // it: the explicit slot says what the utility is for. Every other call site that
 // reaches for Attrs reads as if the class were applied and renders without it.
 //
-// Best-effort and line-oriented, like the other source scans in this package: it
-// reads authored .templ, tolerates nested calls and strings, and cannot tell a
-// comment that quotes the call from a real one.
+// Scope and limitations. This is a literal scan of authored .templ sources: it
+// sees a "class" key written inside a call whose callee is listed below,
+// tolerates nested calls and strings, and cannot tell a comment that quotes the
+// call from a real one. It deliberately does not see a class that arrives by a
+// variable or a forwarding helper — `attrs := templ.Attributes{"class": …}`
+// passed in, `attrs["class"] = …` after construction, a `p := ui.BadgeProps{}`
+// variable, `@ui.Badge (…)` with a space, or a helper that spreads an Attrs map
+// into a listed callee — and it covers only the callees listed below. Local
+// components with the same shape and no class slot are outside it today
+// (components.LinkRow, components.CardHeader, components.SecretRevealModal,
+// components.InlineFormActions, components.StickyFormActions, and the question
+// card's option buttons); none has a live caller passing a class. Those shapes
+// are caught in review, not here.
 
 // classHookCallee names a callee whose own class attribute is written before
 // Attrs is spread, plus the supported slot to use instead.
@@ -165,8 +175,9 @@ func TestClassInAttrsScannerCatchesTheShape(t *testing.T) {
 }
 
 // TestClassInAttrsRatchet is the guard half of #855: no authored template passes
-// a class through Attrs to a class-owning component — a primitive, a wrapper, or
-// a component that forwards into one.
+// a class through Attrs to a class-owning primitive or one of the listed
+// wrappers. It is a literal scan — see the scope note above for what it cannot
+// see.
 func TestClassInAttrsRatchet(t *testing.T) {
 	files, err := filepath.Glob("*.templ")
 	if err != nil {

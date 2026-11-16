@@ -19,6 +19,12 @@ import (
 // class order (ui-rule-test-the-contract): a duplicate class attribute is the
 // defect being fixed, and "the token asked for is present in the single class
 // attribute" is the whole claim. The parity tests are what keep the copy honest.
+//
+// The behavioural tests end in `Ratchet` because the required `ci` job runs only
+// `go test -run Ratchet ./...` for this module (ci.yml, "Consistency
+// ratchets"): class_attr_ratchet_test.go stops a new "class" literal, but it
+// cannot notice this merge disappearing from the wrappers, and that is the
+// regression the names must make runnable on the PR.
 
 // rootTag returns the first element's opening tag, from "<tag" through ">".
 func rootTag(t *testing.T, html string) string {
@@ -67,7 +73,7 @@ func hasClassToken(class, token string) bool {
 	return false
 }
 
-func TestBadgeClassLandsInTheSingleRootClassAttribute(t *testing.T) {
+func TestBadgeClassMergeRatchet(t *testing.T) {
 	html := renderHTML(t, BadgeWithClass(BadgeWithClassProps{
 		BadgeProps: ui.BadgeProps{
 			Label:   "3",
@@ -89,7 +95,7 @@ func TestBadgeClassLandsInTheSingleRootClassAttribute(t *testing.T) {
 	assertContains(t, tag, `data-testid="documents-problem-badge"`)
 }
 
-func TestBadgeHrefVariantAlsoMergesTheClass(t *testing.T) {
+func TestBadgeHrefClassMergeRatchet(t *testing.T) {
 	html := renderHTML(t, BadgeWithClass(BadgeWithClassProps{
 		BadgeProps: ui.BadgeProps{Label: "run", Variant: ui.BadgeGhost, Href: "/runs/1", DirectLabel: true},
 		Class:      "hover:opacity-70",
@@ -105,7 +111,7 @@ func TestBadgeHrefVariantAlsoMergesTheClass(t *testing.T) {
 	}
 }
 
-func TestAlertClassLandsInTheSingleRootClassAttribute(t *testing.T) {
+func TestAlertClassMergeRatchet(t *testing.T) {
 	html := renderHTML(t, AlertWithClass(AlertWithClassProps{
 		AlertProps: ui.AlertProps{
 			Type:    ui.AlertError,
@@ -149,7 +155,7 @@ func normalizeClasses(html string) string {
 // TestBadgeAndAlertFoldAClassLeftInAttrs pins the read-delete-merge shape: a
 // caller that still passes "class" through Attrs (the pre-#855 shape, e.g. a
 // site converted later) gets the utility applied once instead of dropped.
-func TestBadgeAndAlertFoldAClassLeftInAttrs(t *testing.T) {
+func TestBadgeAndAlertFoldAClassLeftInAttrsRatchet(t *testing.T) {
 	attrs := templ.Attributes{"class": "ml-1", "data-testid": "folded"}
 
 	badge := renderHTML(t, BadgeWithClass(BadgeWithClassProps{
@@ -228,7 +234,7 @@ func TestBadgeNeverRendersASecondClassAttributeForAnUnfoldableValue(t *testing.T
 // StatusBadgeOpts.Attrs still accepts a class (the pre-#855 shape) and the badge
 // applies it once, because StatusBadge renders through BadgeWithClass. Without
 // the fold the shape would recreate #855 one call frame down.
-func TestStatusBadgeFoldsClassFromAttrs(t *testing.T) {
+func TestStatusBadgeFoldsClassFromAttrsRatchet(t *testing.T) {
 	html := renderHTML(t, StatusBadge("Pending", ui.BadgeWarning, "", StatusBadgeOpts{
 		Attrs: templ.Attributes{"class": "ml-1", "data-testid": "pending-badge"},
 	}))
