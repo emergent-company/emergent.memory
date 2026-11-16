@@ -2,6 +2,8 @@ package sandbox
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -141,4 +143,75 @@ func TestResolveGitTokenForConfig_Precedence(t *testing.T) {
 	t.Setenv("DATABASE_PASSWORD", "db-secret")
 	cfg = &AgentSandboxConfig{GitTokenSecretRef: "DATABASE_PASSWORD", GitToken: "ghp_legacy"}
 	assert.Equal(t, "ghp_legacy", ResolveGitTokenForConfig(cfg))
+}
+
+// recordingProvider records Exec calls. The embedded Provider interface panics
+// on any other method, which is the point: the git-auth setup step must need
+// nothing but Exec, so it works on a warm-pool container.
+type recordingProvider struct {
+	Provider
+	execs []*ExecRequest
+	res   *ExecResult
+	err   error
+}
+
+func (p *recordingProvider) Exec(_ context.Context, _ string, req *ExecRequest) (*ExecResult, error) {
+	p.execs = append(p.execs, req)
+	if p.res != nil || p.err != nil {
+		return p.res, p.err
+	}
+	return &ExecResult{ExitCode: 0}, nil
+}
+
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+func TestConfigureGitAuth_ConfiguresGitAndGhWithoutLeakingToken(t *testing.T) {
+	const token = "github_pat_test_value_must_not_reach_the_command"
+
+	prov := &recordingProvider{}
+	cs := NewCheckoutService(nil, discardLogger())
+
+	if err := cs.ConfigureGitAuth(context.Background(), prov, "ws-1", token); err != nil {
+		t.Fatalf("ConfigureGitAuth returned error: %v", err)
+	}
+	if len(prov.execs) != 1 {
+		t.Fatalf("expected exactly one exec, got %d", len(prov.execs))
+	}
+
+	req := prov.execs[0]
+	// The token travels in the exec environment, never in the command string:
+	// providers may log the command or expose it as a process argument.
+	assert.NotContains(t, req.Command, token, "token must not appear in the command text")
+	assert.NotContains(t, req.Command, "github_pat_", "command must not carry a token literal")
+	assert.Equal(t, token, req.Env["GH_TOKEN"])
+
+	// Both consumers must be set up: git (credential store entry) and the GitHub
+	// CLI (hosts.yml) — the agent needs push *and* `gh pr create`.
+	assert.Contains(t, req.Command, ".git-credentials")
+	assert.Contains(t, req.Command, "credential.helper store")
+	assert.Contains(t, req.Command, ".config/gh/hosts.yml")
+	assert.Equal(t, "/workspace", req.Workdir)
+}
+
+func TestConfigureGitAuth_EmptyTokenIsNoop(t *testing.T) {
+	prov := &recordingProvider{}
+	cs := NewCheckoutService(nil, discardLogger())
+
+	if err := cs.ConfigureGitAuth(context.Background(), prov, "ws-1", ""); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assert.Empty(t, prov.execs, "no token means the sandbox is left untouched")
+}
+
+func TestConfigureGitAuth_SurfacesNonZeroExit(t *testing.T) {
+	prov := &recordingProvider{res: &ExecResult{ExitCode: 1, Stderr: "permission denied"}}
+	cs := NewCheckoutService(nil, discardLogger())
+
+	err := cs.ConfigureGitAuth(context.Background(), prov, "ws-1", "token")
+	if err == nil {
+		t.Fatal("expected an error when the setup command fails")
+	}
+	assert.Contains(t, err.Error(), "permission denied")
 }

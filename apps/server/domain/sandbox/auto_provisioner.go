@@ -393,6 +393,19 @@ func (ap *AutoProvisioner) attemptProvision(
 	for k, v := range runtimeEnvVars {
 		containerEnv[k] = v
 	}
+
+	// Git credential. A coding agent's job is not only to read the repository: it
+	// branches, commits, pushes and opens a pull request, so the sandbox needs an
+	// authenticated remote *and* an authenticated `gh`. The credential is resolved
+	// once here and applied as a post-assignment setup step (see
+	// ConfigureGitAuth) rather than through containerReq.Env: a warm-pool hit
+	// discards Env entirely, and the pool is the normal path.
+	//
+	// The value is never persisted by this: an agent definition stores only
+	// git_token_secret_ref (the name of a server environment variable), so no
+	// plaintext token enters the database (#1844).
+	gitToken := ResolveGitTokenForConfig(cfg, runtimeEnvVars)
+
 	// System keys always win — inject SDK credentials if an ephemeral token was minted.
 	// Note: MEMORY_API_URL is already set by the gVisor provider to
 	// http://host.docker.internal:<port> so that sandbox containers can reach
@@ -475,6 +488,19 @@ func (ap *AutoProvisioner) attemptProvision(
 		}
 	}
 
+	// Configure push/PR credentials for the sandbox. Applied here — after the
+	// container is assigned — so it lands on warm-pool containers too, which
+	// never see the CreateContainerRequest.Env built above. Best-effort like the
+	// clone below: a sandbox with no credential is still usable for reading.
+	if ap.checkoutSvc != nil && gitToken != "" {
+		if authErr := ap.checkoutSvc.ConfigureGitAuth(ctx, provider, containerProviderID, gitToken); authErr != nil {
+			ap.log.Warn("failed to configure sandbox git credentials",
+				"workspace_id", ws.ID,
+				"error", authErr,
+			)
+		}
+	}
+
 	// Clone repository if needed
 	if shouldCheckout && repoURL != "" && ap.checkoutSvc != nil {
 		ap.log.Info("cloning repository",
@@ -482,10 +508,10 @@ func (ap *AutoProvisioner) attemptProvision(
 			"repo_url", repoURL,
 			"branch", branch,
 		)
-		// Resolve a git token with precedence git_token_secret_ref → legacy literal
-		// → runtime env vars (GH_TOKEN before GITHUB_TOKEN within each), so private
-		// repositories clone authenticated. The token is never logged.
-		gitToken := ResolveGitTokenForConfig(cfg, runtimeEnvVars)
+		// Reuse the token resolved above (precedence: git_token_secret_ref →
+		// legacy literal → runtime env vars, GH_TOKEN before GITHUB_TOKEN), so the
+		// clone authenticates with the same credential the sandbox will push with.
+		// The token is never logged.
 		if cloneErr := ap.checkoutSvc.CloneRepository(ctx, provider, containerProviderID, repoURL, branch, "/workspace", gitToken); cloneErr != nil {
 			ap.log.Warn("repository clone failed",
 				"workspace_id", ws.ID,
