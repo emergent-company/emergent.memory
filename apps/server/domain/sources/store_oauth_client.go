@@ -763,8 +763,7 @@ func duplicateError(err error) bool {
 		return false
 	}
 	const namedAppIndexPrefix = "idx_oauth_client_configs_"
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		return pgErr.Code == "23505" && strings.Contains(pgErr.ConstraintName, namedAppIndexPrefix)
 	}
 	// A wrapper that lost the typed error still carries the SQLSTATE and index

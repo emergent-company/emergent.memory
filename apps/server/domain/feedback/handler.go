@@ -126,13 +126,11 @@ func (h *Handler) Submit(c echo.Context) error {
 }
 
 func (h *Handler) mapError(c echo.Context, err error) error {
-	var validation *ValidationError
-	if errors.As(err, &validation) {
+	if validation, ok := errors.AsType[*ValidationError](err); ok {
 		return apperror.NewBadRequest(validation.Message)
 	}
 
-	var limited *RateLimitError
-	if errors.As(err, &limited) {
+	if limited, ok := errors.AsType[*RateLimitError](err); ok {
 		seconds := int(limited.RetryAfter.Round(time.Second) / time.Second)
 		if seconds < 1 {
 			seconds = 1
@@ -142,8 +140,7 @@ func (h *Handler) mapError(c echo.Context, err error) error {
 			"You have submitted a lot of feedback in the last hour. Please try again later.")
 	}
 
-	var inProgress *InProgressError
-	if errors.As(err, &inProgress) {
+	if inProgress, ok := errors.AsType[*InProgressError](err); ok {
 		seconds := int(inProgress.RetryAfter.Round(time.Second) / time.Second)
 		if seconds < 1 {
 			seconds = 1

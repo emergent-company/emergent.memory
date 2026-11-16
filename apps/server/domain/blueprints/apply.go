@@ -1376,6 +1376,6 @@ func toSkillMetadata(m map[string]any) *skills.SkillMetadata {
 
 // isNotFound reports whether err is an apperror with the not_found code.
 func isNotFound(err error) bool {
-	var appErr *apperror.Error
-	return errors.As(err, &appErr) && appErr.Code == apperror.ErrNotFound.Code
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	return ok && appErr.Code == apperror.ErrNotFound.Code
 }

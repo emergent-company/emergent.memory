@@ -3121,8 +3121,7 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 			return nil, ErrWorkItemBusy
 		}
 		// Unwrap QueueFullError from the transaction wrapper so callers can type-assert it.
-		var qfe *QueueFullError
-		if errors.As(err, &qfe) {
+		if qfe, ok := errors.AsType[*QueueFullError](err); ok {
 			return nil, qfe
 		}
 		return nil, err
@@ -3242,8 +3241,7 @@ func (r *Repository) EnqueueWorkRunDeduped(ctx context.Context, logEntry *AgentP
 		if isLiveRunConflict(err) {
 			return nil, false, nil
 		}
-		var qfe *QueueFullError
-		if errors.As(err, &qfe) {
+		if qfe, ok := errors.AsType[*QueueFullError](err); ok {
 			return nil, claimed, qfe
 		}
 		return nil, claimed, err

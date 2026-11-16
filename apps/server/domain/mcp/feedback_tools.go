@@ -58,8 +58,7 @@ func (s *Service) executeSubmitFeedback(ctx context.Context, projectID string, a
 		// A concurrent identical submission is holding the claim: a defined,
 		// retryable answer (REST returns 409 + Retry-After for the same case),
 		// not a tool failure.
-		var inProgress *feedback.InProgressError
-		if errors.As(err, &inProgress) {
+		if inProgress, ok := errors.AsType[*feedback.InProgressError](err); ok {
 			seconds := int(inProgress.RetryAfter.Round(time.Second) / time.Second)
 			if seconds < 1 {
 				seconds = 1

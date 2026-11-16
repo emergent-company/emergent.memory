@@ -146,8 +146,8 @@ func (s *Service) CallAgentOnce(ctx context.Context, projectID, agentID, message
 // agentRunErrorResult converts a RunAgentOnce failure into a structured,
 // isError tool result. Unknown errors are treated as run failures.
 func agentRunErrorResult(err error) *ToolResult {
-	runErr := new(AgentRunError)
-	if !errors.As(err, &runErr) {
+	runErr, ok := errors.AsType[*AgentRunError](err)
+	if !ok {
 		// Same rule as the session path: a failure that is not a curated run
 		// error can be a storage or transport fault, so only an app error's
 		// client-facing message may cross back to the caller.

@@ -250,13 +250,11 @@ func (h *Handler) enrichRunTrace(ctx context.Context, dto *AgentRunDTO, runID st
 //   - QueueFullError      → 429 Too Many Requests
 //   - other              → 500 Internal Server Error
 func mapExecutorError(err error) *apperror.Error {
-	var budgetErr *BudgetExceededError
-	if errors.As(err, &budgetErr) {
+	if _, ok := errors.AsType[*BudgetExceededError](err); ok {
 		return apperror.New(http.StatusPaymentRequired, "budget_exceeded",
 			"A project budget window (weekly or monthly) has been exceeded. Please review your spending, increase the budget, or reset the window.")
 	}
-	var queueErr *QueueFullError
-	if errors.As(err, &queueErr) {
+	if queueErr, ok := errors.AsType[*QueueFullError](err); ok {
 		return apperror.New(http.StatusTooManyRequests, "queue_full",
 			fmt.Sprintf("Agent run queue is full (%d/%d pending jobs). Wait for existing runs to complete before triggering new ones.",
 				queueErr.PendingJobs, queueErr.MaxPendingJobs))

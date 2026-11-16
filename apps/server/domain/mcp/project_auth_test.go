@@ -17,8 +17,7 @@ import (
 
 // apperrorStatus extracts the HTTP status from an apperror.Error (0 if not one).
 func apperrorStatus(err error) int {
-	var e *apperror.Error
-	if errors.As(err, &e) {
+	if e, ok := errors.AsType[*apperror.Error](err); ok {
 		return e.HTTPStatus
 	}
 	return 0

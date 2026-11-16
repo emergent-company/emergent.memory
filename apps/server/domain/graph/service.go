@@ -2011,8 +2011,8 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 		// If none exists, fall back to main HEAD and create a branch-local tombstone.
 		branchHead, err := s.repo.GetHeadByCanonicalID(ctx, tx.Tx, projectID, current.CanonicalID, branchID)
 		if err != nil {
-			var appErr *apperror.Error
-			if !errors.As(err, &appErr) || appErr.HTTPStatus != 404 {
+			appErr, ok := errors.AsType[*apperror.Error](err)
+			if !ok || appErr.HTTPStatus != 404 {
 				return err
 			}
 			// No branch-local HEAD — fetch main HEAD and create tombstone directly on branch.
@@ -7030,8 +7030,8 @@ func (s *Service) PatchGraphObjectTitle(ctx context.Context, projectID, objectID
 	}, nil)
 	if err != nil {
 		// Object not found is non-fatal — session may not yet exist as a graph object.
-		var appErr *apperror.Error
-		if errors.As(err, &appErr) && appErr.HTTPStatus == 404 {
+		appErr, ok := errors.AsType[*apperror.Error](err)
+		if ok && appErr.HTTPStatus == 404 {
 			return nil
 		}
 		return fmt.Errorf("PatchGraphObjectTitle: %w", err)

@@ -82,8 +82,8 @@ func TestParseGitHubURL_Guard(t *testing.T) {
 			t.Parallel()
 			_, _, _, err := parseGitHubURL(tc.in, "")
 			require.Error(t, err)
-			var apErr *apperror.Error
-			require.True(t, errors.As(err, &apErr), "want *apperror.Error, got %T", err)
+			apErr, ok := errors.AsType[*apperror.Error](err)
+			require.True(t, ok, "want *apperror.Error, got %T", err)
 			assert.Equal(t, http.StatusBadRequest, apErr.HTTPStatus)
 		})
 	}
@@ -155,8 +155,8 @@ func testGitHubFetcher(t *testing.T, baseURL string, maxArchive, maxExtract int6
 func requireAppError(t *testing.T, err error, status int) {
 	t.Helper()
 	require.Error(t, err)
-	var apErr *apperror.Error
-	require.True(t, errors.As(err, &apErr), "want *apperror.Error, got %T: %v", err, err)
+	apErr, ok := errors.AsType[*apperror.Error](err)
+	require.True(t, ok, "want *apperror.Error, got %T: %v", err, err)
 	assert.Equal(t, status, apErr.HTTPStatus, "status = %d, want %d: %v", apErr.HTTPStatus, status, err)
 }
 

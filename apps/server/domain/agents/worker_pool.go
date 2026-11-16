@@ -8,8 +8,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/emergent-company/emergent.memory/domain/graph"
 )
 
 // WorkerPool executes queued agent runs using per-queue worker sets. A
@@ -519,24 +517,6 @@ func claimTriggerEvent(run *AgentRun) ReactionEventType {
 	}
 	ev, _ := run.TriggerMetadata["work_trigger_event"].(string)
 	return ReactionEventType(ev)
-}
-
-// claimFromCurrentStatus claims an assignee-picked object from its current HEAD
-// status to in_progress. Reading the HEAD just before the transition means the
-// transition's from-status assert re-checks it under the object's lock, so a
-// concurrent claim that already moved the object loses the race.
-func (p *WorkerPool) claimFromCurrentStatus(ctx context.Context, agent *Agent, run *AgentRun, inProgressStatus string) (bool, error) {
-	head, err := p.workObjects.GetHeadObject(ctx, agent.ProjectID, *run.SubjectObjectID)
-	if err != nil {
-		return false, err
-	}
-	if head == nil {
-		return false, nil
-	}
-	return p.workObjects.TransitionWorkObject(ctx, agent.ProjectID, *run.SubjectObjectID, graph.WorkObjectTransition{
-		FromStatus: head.Status,
-		ToStatus:   inProgressStatus,
-	})
 }
 
 // isReworkRun reports whether a subject-object run is a rework run enqueued by a

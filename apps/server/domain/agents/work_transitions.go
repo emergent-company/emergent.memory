@@ -64,8 +64,7 @@ func isQuotaError(err error) bool {
 	if err == nil {
 		return false
 	}
-	var q *QuotaError
-	if errors.As(err, &q) {
+	if _, ok := errors.AsType[*QuotaError](err); ok {
 		return true
 	}
 	s := err.Error()
@@ -80,8 +79,7 @@ func isCapabilityError(err error) bool {
 	if err == nil {
 		return false
 	}
-	var c *CapabilityError
-	if errors.As(err, &c) {
+	if _, ok := errors.AsType[*CapabilityError](err); ok {
 		return true
 	}
 	s := err.Error()
