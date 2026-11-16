@@ -306,7 +306,63 @@ For large schema changes, split into multiple migrations:
 - One for data migration
 - One for removing old tables
 
-### 5. Test Migrations
+### 5. Build indexes CONCURRENTLY on pre-existing tables
+
+A plain `CREATE INDEX` holds a `SHARE` lock on its table for the whole build, so it
+blocks every write (not reads) until it finishes. That is fine inside the migration
+that creates the table — nothing else can see it yet — and wrong for a table an
+earlier migration created, which may already hold millions of rows.
+
+On a table that already exists, build the index concurrently:
+
+```sql
+-- +goose NO TRANSACTION
+-- +goose Up
+DROP INDEX CONCURRENTLY IF EXISTS kb.idx_jobs_org_id;
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_jobs_org_id
+    ON kb.jobs (org_id);
+```
+
+`00161` is where this discipline starts (the embedding indexes; `00170` is the
+fuller reference implementation, including the post-condition guard). The rules:
+
+- **`-- +goose NO TRANSACTION`** — `CREATE`/`DROP INDEX CONCURRENTLY` cannot run
+  inside a transaction, so the file cannot be wrapped in one. Each statement then
+  commits on its own: a run that fails halfway leaves the earlier statements
+  applied and the version unrecorded.
+- **Drop the target name first, then create.** `CONCURRENTLY IF NOT EXISTS`
+  silently skips an `INVALID` index left by an interrupted build, so a retry would
+  otherwise complete without a usable index. The drop makes the retry rebuild.
+- **Raise if the index is not valid.** Append the `DO` block from `00170`
+  (`pg_index.indisvalid AND indisready`) so goose refuses to record the version
+  when the build did not take effect — this is the failure `00164` hit (issue #734)
+  and the reason `mark-applied` must not be used to paper over it. The same check
+  is available read-only as `go run ./cmd/migrate -c verify`.
+- **Index names stay unqualified** in `CREATE INDEX`; the schema comes from the
+  table reference.
+- **Adding a foreign key?** Add the index for the referencing column in the same
+  change — every org- and project-scoped table already carries one — and use
+  `ADD CONSTRAINT … NOT VALID` then `VALIDATE CONSTRAINT` in a separate statement
+  (the `00257`/`00258` and `00266`/`00267` lock pattern) so the table is not held
+  under `ACCESS EXCLUSIVE` for a full scan.
+
+`scripts/preflight/migration-number.sh` enforces this for **new** migrations: a
+plain `CREATE INDEX` on a table that exists on the base branch fails the preflight
+and CI. For a deliberate exception write `-- index-concurrently-allowed: <reason>`
+on the line before the statement. The 94 plain index builds that predate `00161`
+are applied migrations and are deliberately left alone — rewriting them would be a
+locking no-op on every environment (`#844`, section 2).
+
+### 6. Baseline `"IDX_<hash>"` index names are deliberate
+
+`00001_baseline.sql` carries 28 quoted `"IDX_<hash>"` index names (and `"FK_<hash>"`
+constraint names) from the ORM that produced the baseline export. They sit beside
+conventional `idx_*` / `uq_*` names, look like junk in `\di`, and are **not** a
+finding: renaming one is a locking `ALTER INDEX` on a production object for zero
+behaviour change. New schema uses the `idx_*` / `uq_*` convention; the baseline
+hash names stay as history.
+
+### 7. Test Migrations
 
 ```bash
 # Apply
