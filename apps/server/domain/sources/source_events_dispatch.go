@@ -390,7 +390,7 @@ func (d *SourceEventDispatcher) processIssueSource(ctx context.Context, v *Verif
 	issue := p.Issue
 	repoName := p.Repository.FullName
 	subject := fmt.Sprintf("%s#%d", repoName, issue.Number)
-	labels := make([]string, 0, len(issue.Labels))
+	labels := make([]any, 0, len(issue.Labels))
 	for _, label := range issue.Labels {
 		if name := strings.TrimSpace(label.Name); name != "" {
 			labels = append(labels, name)
