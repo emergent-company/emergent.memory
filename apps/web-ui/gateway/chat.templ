@@ -92,13 +92,13 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 					     chat.js; while selection is on, every conversation row
 					     shows a checkbox and the footer action bar appears. -->
 					@ui.Button(ui.ButtonProps{
-						Type:       ui.ButtonTypeButton,
-						Variant:    ui.ButtonGhost,
-						Size:       ui.ButtonSM,
-						Shape:      ui.ButtonShapeSquare,
-						Icon:       "lucide--list-checks",
-						AriaLabel:  "Select sessions",
-						Attrs:      templ.Attributes{"data-action": "toggle-session-select", "data-testid": "toggle-session-select", "aria-pressed": "false"},
+						Type:      ui.ButtonTypeButton,
+						Variant:   ui.ButtonGhost,
+						Size:      ui.ButtonSM,
+						Shape:     ui.ButtonShapeSquare,
+						Icon:      "lucide--list-checks",
+						AriaLabel: "Select sessions",
+						Attrs:     templ.Attributes{"data-action": "toggle-session-select", "data-testid": "toggle-session-select", "aria-pressed": "false"},
 					})
 					@ui.Button(ui.ButtonProps{
 						Type:       ui.ButtonTypeButton,
@@ -719,70 +719,77 @@ templ railEntryUnhandled(kind railEntryKind) {
 // arrows, Home/End, typeahead and Escape work here (the objects picker leaves
 // its trigger unwired and gets no roving focus).
 templ chatAgentFilter(agents []AgentDefinitionSummary) {
-	@ui.Dropdown(ui.DropdownBottom, templ.Attributes{"data-testid": "chat-agent-filter"}) {
-		<div
-			tabindex="0"
-			role="button"
-			data-gd-menu-trigger
-			aria-haspopup="menu"
-			aria-label="Filter sessions by agent: All agents"
-			class="select select-sm select-bordered flex h-auto min-h-8 w-full cursor-pointer items-center gap-2 text-left"
-		>
-			<span id="chat-agent-filter-glyph" class="flex shrink-0 items-center">
-				@chatAgentAllGlyph()
-			</span>
-			<span id="chat-agent-filter-label" class="min-w-0 truncate">All agents</span>
-		</div>
-		@ui.DropdownMenu(templ.Attributes{"aria-label": "Filter sessions by agent", "class": "w-full min-w-56 max-w-[28rem]"}) {
-			<li role="none">
-				<button
-					type="button"
-					role="menuitemradio"
-					data-gd-menu-item
-					data-action="filter-agent"
-					data-agent-id=""
-					data-agent-label="All agents"
-					aria-checked="true"
-					class="menu-active min-w-0 text-left"
-				>
-					<span class="flex min-w-0 items-center gap-2">
-						@chatAgentAllGlyph()
-						<span class="min-w-0 truncate">All agents</span>
-						<span class="ml-auto shrink-0" data-agent-check="true">
-							@ui.IconSpan("lucide--check", "size-4 text-primary")
-						</span>
-					</span>
-				</button>
-			</li>
-			// An empty <li> is daisyUI's menu divider (background + .1 opacity);
-			// the opacity utility restores it to a line you can actually see.
-			<li role="separator" class="bg-base-content/20 my-1 h-px opacity-100"></li>
-			for _, a := range agents {
+	// The wrapper exists because ui.Dropdown renders daisyUI's .dropdown root,
+	// which is display:inline-block: the trigger's w-full would resolve against
+	// the root's shrink-to-fit width, leaving the control narrower than the
+	// sibling type <select class="w-full">. A block wrapper gives w-full the
+	// rail's content width to measure against.
+	<div class="w-full">
+		@ui.Dropdown(ui.DropdownBottom, templ.Attributes{"data-testid": "chat-agent-filter"}) {
+			<div
+				tabindex="0"
+				role="button"
+				data-gd-menu-trigger
+				aria-haspopup="menu"
+				aria-label="Filter sessions by agent: All agents"
+				class="select select-sm select-bordered flex h-auto min-h-8 w-full cursor-pointer items-center gap-2 text-left"
+			>
+				<span id="chat-agent-filter-glyph" class="flex shrink-0 items-center">
+					@chatAgentAllGlyph()
+				</span>
+				<span id="chat-agent-filter-label" class="min-w-0 truncate">All agents</span>
+			</div>
+			@ui.DropdownMenu(templ.Attributes{"aria-label": "Filter sessions by agent", "class": "w-full min-w-56 max-w-[28rem]"}) {
 				<li role="none">
 					<button
 						type="button"
 						role="menuitemradio"
 						data-gd-menu-item
 						data-action="filter-agent"
-						data-agent-id={ a.ID }
-						data-agent-label={ a.Name }
-						aria-checked="false"
-						class="min-w-0 text-left"
+						data-agent-id=""
+						data-agent-label="All agents"
+						aria-checked="true"
+						class="menu-active min-w-0 text-left"
 					>
 						<span class="flex min-w-0 items-center gap-2">
-							@agentAvatarBubble(agentIcon(a.UIConfig), agentColor(a.UIConfig), templ.Attributes{"data-agent-avatar": "agent"})
-							<span class="min-w-0 truncate">{ a.Name }</span>
-							// Always rendered so chat.js toggles a class instead of
-							// rewriting the row; an inactive row just hides the check.
-							<span class="ml-auto hidden shrink-0" data-agent-check="true">
+							@chatAgentAllGlyph()
+							<span class="min-w-0 truncate">All agents</span>
+							<span class="ml-auto shrink-0" data-agent-check="true">
 								@ui.IconSpan("lucide--check", "size-4 text-primary")
 							</span>
 						</span>
 					</button>
 				</li>
+				// An empty <li> is daisyUI's menu divider (background + .1 opacity);
+				// the opacity utility restores it to a line you can actually see.
+				<li role="separator" class="bg-base-content/20 my-1 h-px opacity-100"></li>
+				for _, a := range agents {
+					<li role="none">
+						<button
+							type="button"
+							role="menuitemradio"
+							data-gd-menu-item
+							data-action="filter-agent"
+							data-agent-id={ a.ID }
+							data-agent-label={ a.Name }
+							aria-checked="false"
+							class="min-w-0 text-left"
+						>
+							<span class="flex min-w-0 items-center gap-2">
+								@agentAvatarBubble(agentIcon(a.UIConfig), agentColor(a.UIConfig), templ.Attributes{"data-agent-avatar": "agent"})
+								<span class="min-w-0 truncate">{ a.Name }</span>
+								// Always rendered so chat.js toggles a class instead of
+								// rewriting the row; an inactive row just hides the check.
+								<span class="ml-auto hidden shrink-0" data-agent-check="true">
+									@ui.IconSpan("lucide--check", "size-4 text-primary")
+								</span>
+							</span>
+						</button>
+					</li>
+				}
 			}
 		}
-	}
+	</div>
 }
 
 // chatAgentAllGlyph is the "every agent" mark: the same neutral bubble the agent
@@ -1049,12 +1056,12 @@ templ scheduledRailItem(r scheduledRunRow) {
 // document's filename when known, else the agent name; Icon/Color carry the run
 // agent's definition appearance.
 type workRunRow struct {
-	ID          string
-	RunID       string
-	Origin      string
-	Href        string
-	Title       string
-	AgentName   string
+	ID        string
+	RunID     string
+	Origin    string
+	Href      string
+	Title     string
+	AgentName string
 	// AgentDefinitionID is the agent-definition id the run belongs to, in the
 	// same id space the rail's agent filter uses (the run's own definition FK
 	// when set, else its runtime agent's). It is empty for an extraction job
