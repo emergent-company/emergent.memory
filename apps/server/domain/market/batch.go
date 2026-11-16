@@ -151,6 +151,11 @@ func (c *Client) registeredInstanceID(issuer string) string {
 // request_ids (POST /v1/entitlements/{id}/authorize). calls <= 0 asks for a
 // full 20-call batch.
 //
+// A live cached batch that still has at least calls ids left is returned
+// without a market round trip, so a hot path (one authorization per outbound
+// call) does not buy a batch per call. Only when the cache is empty, expired or
+// too small for the request is a new batch minted.
+//
 // When the market is unreachable or rate-limiting, a still-valid cached batch
 // is returned instead. If the cached batch is empty or expired the caller gets
 // ErrBatchExhausted / ErrBatchExpired: the instance has no attributable call
@@ -170,6 +175,9 @@ func (c *Client) Authorize(ctx context.Context, issuer, entitlementID string, ca
 	}
 	if calls > limit {
 		return nil, ErrBatchTooLarge(calls, limit)
+	}
+	if batch := c.reusableBatch(base, entitlementID, calls); batch != nil {
+		return batch, nil
 	}
 
 	payload := authorizeRequest{
@@ -196,6 +204,12 @@ func (c *Client) Authorize(ctx context.Context, issuer, entitlementID string, ca
 		return nil, ErrEntitlementInactive(fmt.Sprintf("market authorize returned HTTP %d", res.StatusCode))
 	case res.StatusCode == http.StatusTooManyRequests:
 		return c.fallbackBatch(base, entitlementID, ErrMarketRateLimited("authorization is rate limited"))
+	case isClientRejection(res.StatusCode):
+		// Any other 4xx is the market refusing to authorize this entitlement;
+		// serving from a cached batch would attribute calls the market has just
+		// declined, so the batch is dropped and nothing is served.
+		c.dropBatch(base, entitlementID)
+		return nil, ErrEntitlementInactive(fmt.Sprintf("market authorize returned HTTP %d", res.StatusCode))
 	default:
 		return c.fallbackBatch(base, entitlementID,
 			ErrMarketUnreachable(fmt.Sprintf("market authorize returned HTTP %d", res.StatusCode)))
@@ -228,6 +242,28 @@ func (c *Client) Authorize(ctx context.Context, issuer, entitlementID string, ca
 			"issuer", base, "error", err)
 	}
 	return batch, nil
+}
+
+// reusableBatch returns the cached batch for this entitlement when it can still
+// satisfy a request for calls: unexpired and holding at least that many unused
+// ids. nil means the caller must ask the market for a new batch.
+//
+// It is deliberately conservative about size — handing back a batch with fewer
+// ids than asked for would make the caller serve un-attributable calls — and
+// about expiry — the seller refuses attribution once the assertion window
+// closes, so an expired batch is never reused, only replaced.
+func (c *Client) reusableBatch(issuer, entitlementID string, calls int) *AuthorizationBatch {
+	now := c.now()
+	c.inProduct.mu.Lock()
+	cached := c.inProduct.batches[batchKey(issuer, entitlementID)]
+	c.inProduct.mu.Unlock()
+	if cached == nil || !now.Before(cached.expiresAt) {
+		return nil
+	}
+	if cached.batch.Remaining() < calls {
+		return nil
+	}
+	return cached.batch
 }
 
 func (c *Client) batchLimit() int {

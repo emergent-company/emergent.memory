@@ -51,6 +51,9 @@ type fakeInProductMarket struct {
 	claimStatus      int
 	authorizeStatus  int
 	usageStatus      int
+	registerStatus   int
+	catalogStatus    int
+	trustStatus      int
 	authorizeExpires time.Time
 	batchCalls       int
 	forgetIssued     bool
@@ -95,6 +98,13 @@ func newFakeInProductMarket(t *testing.T) *fakeInProductMarket {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
+		m.mu.Lock()
+		status := m.registerStatus
+		m.mu.Unlock()
+		if status != 0 {
+			w.WriteHeader(status)
+			return
+		}
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		m.mu.Lock()
@@ -110,6 +120,13 @@ func newFakeInProductMarket(t *testing.T) *fakeInProductMarket {
 	mux.HandleFunc(pathCatalog, func(w http.ResponseWriter, r *http.Request) {
 		if m.offline.Load() {
 			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		m.mu.Lock()
+		status := m.catalogStatus
+		m.mu.Unlock()
+		if status != 0 {
+			w.WriteHeader(status)
 			return
 		}
 		m.mu.Lock()
@@ -228,8 +245,13 @@ func newFakeInProductMarket(t *testing.T) *fakeInProductMarket {
 			return
 		}
 		m.mu.Lock()
+		status := m.trustStatus
 		token := m.trustToken
 		m.mu.Unlock()
+		if status != 0 {
+			w.WriteHeader(status)
+			return
+		}
 		if token == "" {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -455,7 +477,7 @@ func TestInProductPathRegisterBrowseVerifyClaimAuthorizeServeAndReport(t *testin
 	if err != nil {
 		t.Fatalf("verify trust: %v", err)
 	}
-	if claims.ListingSlug != "hosted-mcp" || !claims.Verified {
+	if claims.ListingSlug != "hosted-mcp" || claims.Verified == nil || !*claims.Verified {
 		t.Fatalf("trust claims = %+v", claims)
 	}
 
@@ -898,5 +920,456 @@ func TestClientFromConfigReceivesTheProcessLogger(t *testing.T) {
 	}
 	if client.log != log {
 		t.Fatal("NewClientFromConfig dropped the process logger, so outage diagnostics go nowhere")
+	}
+}
+
+// TestClockSkewWithinLeewayIsTolerated: the market and the instance keep
+// independent clocks, so a token minted there can look a couple of seconds early
+// or a couple of seconds old here. Both must verify. Beyond the leeway the token
+// is genuinely not valid and must still be refused.
+func TestClockSkewWithinLeewayIsTolerated(t *testing.T) {
+	clock := newFakeClock(time.Now())
+	m := newFakeInProductMarket(t)
+	client := newInProductClient(t, m, clock, nil)
+	ctx := context.Background()
+	now := clock.Now()
+
+	assertionClaims := func(exp time.Time, nbf *time.Time) map[string]any {
+		claims := map[string]any{
+			"iss":            m.url,
+			"aud":            "https://seller.example/mcp",
+			"exp":            exp.Unix(),
+			"entitlement_id": "ent-1",
+		}
+		if nbf != nil {
+			claims["nbf"] = nbf.Unix()
+		}
+		return claims
+	}
+	trustClaims := func(exp time.Time, nbf *time.Time) map[string]any {
+		claims := map[string]any{
+			"iss":          m.url,
+			"aud":          TrustDocumentAudience,
+			"sub":          "hosted-mcp",
+			"listing_slug": "hosted-mcp",
+			"exp":          exp.Unix(),
+		}
+		if nbf != nil {
+			claims["nbf"] = nbf.Unix()
+		}
+		return claims
+	}
+
+	t.Run("assertion valid but 2s in the future", func(t *testing.T) {
+		nbf := now.Add(2 * time.Second)
+		token := m.sign(t, m.key, assertionClaims(now.Add(time.Hour), &nbf))
+		if _, err := client.VerifyAssertion(ctx, m.url, token, "https://seller.example/mcp"); err != nil {
+			t.Fatalf("a 2s clock skew must not refuse a valid assertion: %v", err)
+		}
+	})
+
+	t.Run("assertion expired 2s ago", func(t *testing.T) {
+		token := m.sign(t, m.key, assertionClaims(now.Add(-2*time.Second), nil))
+		if _, err := client.VerifyAssertion(ctx, m.url, token, "https://seller.example/mcp"); err != nil {
+			t.Fatalf("a 2s clock skew must not refuse a just-expired assertion: %v", err)
+		}
+	})
+
+	t.Run("trust document valid but 2s in the future", func(t *testing.T) {
+		nbf := now.Add(2 * time.Second)
+		token := m.sign(t, m.key, trustClaims(now.Add(time.Hour), &nbf))
+		if _, err := client.VerifyTrustDocument(ctx, m.url, token); err != nil {
+			t.Fatalf("a 2s clock skew must not refuse a valid trust document: %v", err)
+		}
+	})
+
+	t.Run("trust document expired 2s ago", func(t *testing.T) {
+		token := m.sign(t, m.key, trustClaims(now.Add(-2*time.Second), nil))
+		if _, err := client.VerifyTrustDocument(ctx, m.url, token); err != nil {
+			t.Fatalf("a 2s clock skew must not refuse a just-expired trust document: %v", err)
+		}
+	})
+
+	t.Run("assertion not valid beyond the leeway", func(t *testing.T) {
+		nbf := now.Add(clockSkewLeeway + time.Second)
+		token := m.sign(t, m.key, assertionClaims(now.Add(time.Hour), &nbf))
+		_, err := client.VerifyAssertion(ctx, m.url, token, "https://seller.example/mcp")
+		expectCode(t, err, CodeAssertionInvalid)
+		if !strings.Contains(err.Error(), "not yet valid") {
+			t.Fatalf("error does not explain the not-before failure: %v", err)
+		}
+	})
+
+	t.Run("assertion expired beyond the leeway", func(t *testing.T) {
+		token := m.sign(t, m.key, assertionClaims(now.Add(-clockSkewLeeway-time.Second), nil))
+		_, err := client.VerifyAssertion(ctx, m.url, token, "https://seller.example/mcp")
+		expectCode(t, err, CodeAssertionInvalid)
+		if !strings.Contains(err.Error(), "expired") {
+			t.Fatalf("error does not explain the expiry: %v", err)
+		}
+	})
+
+	t.Run("trust document expired beyond the leeway", func(t *testing.T) {
+		token := m.sign(t, m.key, trustClaims(now.Add(-clockSkewLeeway-time.Second), nil))
+		_, err := client.VerifyTrustDocument(ctx, m.url, token)
+		expectCode(t, err, CodeTrustInvalid)
+	})
+}
+
+// TestMarketRejectionIsNotAnOutage pins the status classification: a 4xx the
+// market returns is a refusal of our request, so it must not be reported as
+// market_unreachable (which drives retry/backoff and usage replay). 5xx and 408
+// stay outages.
+func TestMarketRejectionIsNotAnOutage(t *testing.T) {
+	cases := []struct {
+		name   string
+		route  string
+		status int
+		call   func(ctx context.Context, c *Client, m *fakeInProductMarket) error
+		want   string
+	}{
+		{
+			name:   "browse 400",
+			route:  "catalog",
+			status: http.StatusBadRequest,
+			call: func(ctx context.Context, c *Client, m *fakeInProductMarket) error {
+				_, err := c.Browse(ctx, m.url, BrowseQuery{Kind: KindMCP})
+				return err
+			},
+			want: CodeMarketRejected,
+		},
+		{
+			name:   "browse 401",
+			route:  "catalog",
+			status: http.StatusUnauthorized,
+			call: func(ctx context.Context, c *Client, m *fakeInProductMarket) error {
+				_, err := c.Browse(ctx, m.url, BrowseQuery{Kind: KindMCP})
+				return err
+			},
+			want: CodeMarketRejected,
+		},
+		{
+			name:   "browse 403",
+			route:  "catalog",
+			status: http.StatusForbidden,
+			call: func(ctx context.Context, c *Client, m *fakeInProductMarket) error {
+				_, err := c.Browse(ctx, m.url, BrowseQuery{Kind: KindMCP})
+				return err
+			},
+			want: CodeMarketRejected,
+		},
+		{
+			name:   "trust document 403",
+			route:  "trust",
+			status: http.StatusForbidden,
+			call: func(ctx context.Context, c *Client, m *fakeInProductMarket) error {
+				_, err := c.FetchTrustDocument(ctx, m.url, "hosted-mcp")
+				return err
+			},
+			want: CodeMarketRejected,
+		},
+		{
+			name:   "claim 400",
+			route:  "claim",
+			status: http.StatusBadRequest,
+			call: func(ctx context.Context, c *Client, m *fakeInProductMarket) error {
+				_, err := c.Claim(ctx, m.url, ClaimRequest{ListingSlug: "hosted-mcp"})
+				return err
+			},
+			want: CodeClaimFailed,
+		},
+		{
+			name:   "claim 405",
+			route:  "claim",
+			status: http.StatusMethodNotAllowed,
+			call: func(ctx context.Context, c *Client, m *fakeInProductMarket) error {
+				_, err := c.Claim(ctx, m.url, ClaimRequest{ListingSlug: "hosted-mcp"})
+				return err
+			},
+			want: CodeClaimFailed,
+		},
+		{
+			name:   "usage 401",
+			route:  "usage",
+			status: http.StatusUnauthorized,
+			call: func(ctx context.Context, c *Client, m *fakeInProductMarket) error {
+				batch, err := c.Authorize(ctx, m.url, "ent-1", 1)
+				if err != nil {
+					return err
+				}
+				id, ok := batch.Take()
+				if !ok {
+					t.Fatal("authorize handed out no request id")
+				}
+				return c.ReportUsage(ctx, m.url, UsageReport{RequestID: id})
+			},
+			want: CodeUsageRejected,
+		},
+		{
+			name:   "register 400",
+			route:  "register",
+			status: http.StatusBadRequest,
+			call: func(ctx context.Context, c *Client, m *fakeInProductMarket) error {
+				_, err := c.Register(ctx, m.url, RegisterRequest{})
+				return err
+			},
+			want: CodeRegistrationFailed,
+		},
+		{
+			name:   "register 502 is still an outage",
+			route:  "register",
+			status: http.StatusBadGateway,
+			call: func(ctx context.Context, c *Client, m *fakeInProductMarket) error {
+				_, err := c.Register(ctx, m.url, RegisterRequest{})
+				return err
+			},
+			want: CodeMarketUnreach,
+		},
+		{
+			name:   "browse 500 is still an outage",
+			route:  "catalog",
+			status: http.StatusInternalServerError,
+			call: func(ctx context.Context, c *Client, m *fakeInProductMarket) error {
+				_, err := c.Browse(ctx, m.url, BrowseQuery{Kind: KindMCP})
+				return err
+			},
+			want: CodeMarketUnreach,
+		},
+		{
+			name:   "claim 503 is still an outage",
+			route:  "claim",
+			status: http.StatusServiceUnavailable,
+			call: func(ctx context.Context, c *Client, m *fakeInProductMarket) error {
+				_, err := c.Claim(ctx, m.url, ClaimRequest{ListingSlug: "hosted-mcp"})
+				return err
+			},
+			want: CodeMarketUnreach,
+		},
+		{
+			name:   "browse 408 is still an outage",
+			route:  "catalog",
+			status: http.StatusRequestTimeout,
+			call: func(ctx context.Context, c *Client, m *fakeInProductMarket) error {
+				_, err := c.Browse(ctx, m.url, BrowseQuery{Kind: KindMCP})
+				return err
+			},
+			want: CodeMarketUnreach,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newFakeInProductMarket(t)
+			m.mu.Lock()
+			switch tc.route {
+			case "register":
+				m.registerStatus = tc.status
+			case "trust":
+				m.trustStatus = tc.status
+			case "claim":
+				m.claimStatus = tc.status
+			case "usage":
+				m.usageStatus = tc.status
+			default:
+				m.catalogStatus = tc.status
+			}
+			m.mu.Unlock()
+			client := newInProductClient(t, m, newFakeClock(time.Now()), nil)
+			err := tc.call(context.Background(), client, m)
+			expectCode(t, err, tc.want)
+		})
+	}
+}
+
+// TestUsageReportRejectionIsDroppedAndOutageIsQueued: a 4xx is refused for good
+// (replaying it unchanged would be refused again), so it is surfaced and not
+// queued; a 5xx is an outage, so the report is queued and replayed.
+func TestUsageReportRejectionIsDroppedAndOutageIsQueued(t *testing.T) {
+	t.Run("4xx is surfaced and not queued", func(t *testing.T) {
+		clock := newFakeClock(time.Now())
+		m := newFakeInProductMarket(t)
+		client := newInProductClient(t, m, clock, nil)
+		ctx := context.Background()
+		batch, err := client.Authorize(ctx, m.url, "ent-1", 1)
+		if err != nil {
+			t.Fatalf("authorize: %v", err)
+		}
+		id, _ := batch.Take()
+		m.mu.Lock()
+		m.usageStatus = http.StatusUnauthorized
+		m.mu.Unlock()
+
+		err = client.ReportUsage(ctx, m.url, UsageReport{RequestID: id})
+		expectCode(t, err, CodeUsageRejected)
+
+		attempts := m.usageAttempts.Load()
+		if err := client.FlushUsage(ctx, m.url); err != nil {
+			t.Fatalf("flush after a rejected report: %v", err)
+		}
+		if got := m.usageAttempts.Load(); got != attempts {
+			t.Fatalf("flush replayed a rejected report: %d attempts became %d", attempts, got)
+		}
+	})
+
+	t.Run("5xx is queued and replayed", func(t *testing.T) {
+		clock := newFakeClock(time.Now())
+		m := newFakeInProductMarket(t)
+		client := newInProductClient(t, m, clock, nil)
+		ctx := context.Background()
+		batch, err := client.Authorize(ctx, m.url, "ent-1", 1)
+		if err != nil {
+			t.Fatalf("authorize: %v", err)
+		}
+		id, _ := batch.Take()
+		m.mu.Lock()
+		m.usageStatus = http.StatusServiceUnavailable
+		m.mu.Unlock()
+
+		if err := client.ReportUsage(ctx, m.url, UsageReport{RequestID: id}); err != nil {
+			t.Fatalf("an outage-shaped usage report must be deferred, not returned: %v", err)
+		}
+		if got := m.usageAccepted.Load(); got != 0 {
+			t.Fatalf("market accepted %d reports while answering 503", got)
+		}
+
+		m.mu.Lock()
+		m.usageStatus = 0
+		m.mu.Unlock()
+		if err := client.FlushUsage(ctx, m.url); err != nil {
+			t.Fatalf("flush: %v", err)
+		}
+		if got := m.usageAccepted.Load(); got != 1 {
+			t.Fatalf("replayed reports accepted = %d, want 1", got)
+		}
+	})
+}
+
+func TestMarketRejectionIsNotRetryable(t *testing.T) {
+	if isRetryableMarketError(ErrMarketRejected("catalog browse", http.StatusBadRequest)) {
+		t.Fatal("a market rejection must not be replayed as if the market were down")
+	}
+	if !isRetryableMarketError(ErrMarketUnreachable("")) {
+		t.Fatal("an unreachable market must stay retryable")
+	}
+}
+
+// TestTrustDocumentThatDisclaimsVerificationIsRefused pins item 3: a document
+// with a good signature but "verified": false must not let the listing through.
+// BrowseVerified already promises to drop an unverified listing, so the claim is
+// enforced rather than treated as informational.
+func TestTrustDocumentThatDisclaimsVerificationIsRefused(t *testing.T) {
+	clock := newFakeClock(time.Now())
+	m := newFakeInProductMarket(t)
+	client := newInProductClient(t, m, clock, nil)
+	ctx := context.Background()
+
+	m.mu.Lock()
+	m.trustToken = m.sign(t, m.key, map[string]any{
+		"iss":          m.url,
+		"aud":          TrustDocumentAudience,
+		"sub":          "hosted-mcp",
+		"listing_slug": "hosted-mcp",
+		"verified":     false,
+		"exp":          time.Now().Add(time.Hour).Unix(),
+	})
+	m.mu.Unlock()
+
+	_, err := client.VerifyListingTrust(ctx, m.url, &Listing{Slug: "hosted-mcp"})
+	expectCode(t, err, CodeTrustInvalid)
+	if !strings.Contains(err.Error(), "does not vouch") {
+		t.Fatalf("error does not explain the disclaimed verification: %v", err)
+	}
+
+	var logBuf bytes.Buffer
+	loggingClient := newInProductClient(t, m, clock, &logBuf)
+	catalog, err := loggingClient.BrowseVerified(ctx, m.url, BrowseQuery{Kind: KindMCP, Delivery: DeliveryHosted})
+	if err != nil {
+		t.Fatalf("browse verified: %v", err)
+	}
+	if len(catalog.Listings) != 0 {
+		t.Fatalf("offered %d listings the market disclaimed", len(catalog.Listings))
+	}
+	if !strings.Contains(logBuf.String(), "dropping unverified market listing") {
+		t.Fatalf("log does not explain the drop:\n%s", logBuf.String())
+	}
+}
+
+// TestTrustDocumentWithoutVerificationClaimIsAccepted: the claim is optional. A
+// document that omits it is still signed by the market, which is the trust
+// anchor, so it is accepted and Verified stays nil (not stated, not false).
+func TestTrustDocumentWithoutVerificationClaimIsAccepted(t *testing.T) {
+	clock := newFakeClock(time.Now())
+	m := newFakeInProductMarket(t)
+	client := newInProductClient(t, m, clock, nil)
+	ctx := context.Background()
+
+	m.mu.Lock()
+	m.trustToken = m.sign(t, m.key, map[string]any{
+		"iss":          m.url,
+		"aud":          TrustDocumentAudience,
+		"sub":          "hosted-mcp",
+		"listing_slug": "hosted-mcp",
+		"exp":          time.Now().Add(time.Hour).Unix(),
+	})
+	m.mu.Unlock()
+
+	claims, err := client.VerifyListingTrust(ctx, m.url, &Listing{Slug: "hosted-mcp"})
+	if err != nil {
+		t.Fatalf("a document without the optional verified claim must verify: %v", err)
+	}
+	if claims.Verified != nil {
+		t.Fatalf("Verified = %t, want nil when the claim is absent", *claims.Verified)
+	}
+}
+
+// TestAuthorizeReusesALiveBatchUntilItExpires: a hot path authorizes once per
+// outbound call, so a live batch with enough ids must be handed back without a
+// market round trip; only an empty, too-small or expired batch buys a new one.
+func TestAuthorizeReusesALiveBatchUntilItExpires(t *testing.T) {
+	clock := newFakeClock(time.Now())
+	m := newFakeInProductMarket(t)
+	client := newInProductClient(t, m, clock, nil)
+	ctx := context.Background()
+
+	first, err := client.Authorize(ctx, m.url, "ent-1", 2)
+	if err != nil {
+		t.Fatalf("first authorize: %v", err)
+	}
+	if got := m.authorizeHits.Load(); got != 1 {
+		t.Fatalf("authorize hits = %d, want 1", got)
+	}
+
+	second, err := client.Authorize(ctx, m.url, "ent-1", 1)
+	if err != nil {
+		t.Fatalf("second authorize: %v", err)
+	}
+	if second != first {
+		t.Fatal("a live batch was not reused")
+	}
+	if got := m.authorizeHits.Load(); got != 1 {
+		t.Fatalf("reuse still bought a batch: authorize hits = %d, want 1", got)
+	}
+	if got := second.Remaining(); got != 2 {
+		t.Fatalf("reused batch remaining = %d, want 2", got)
+	}
+	if _, ok := second.Take(); !ok {
+		t.Fatal("reused batch handed out no id")
+	}
+
+	// Past the local 60 s window the cache must not be reused; the market is
+	// asked for a fresh batch.
+	clock.Advance(MaxBatchTTL + time.Second)
+	m.mu.Lock()
+	m.authorizeExpires = clock.Now().Add(MaxBatchTTL)
+	m.mu.Unlock()
+
+	third, err := client.Authorize(ctx, m.url, "ent-1", 2)
+	if err != nil {
+		t.Fatalf("authorize after expiry: %v", err)
+	}
+	if third == first {
+		t.Fatal("an expired batch was reused")
+	}
+	if got := m.authorizeHits.Load(); got != 2 {
+		t.Fatalf("authorize hits after expiry = %d, want 2", got)
 	}
 }
