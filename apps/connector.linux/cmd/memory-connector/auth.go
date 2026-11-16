@@ -454,9 +454,17 @@ func runAuthCancel(args []string, stdout, stderr io.Writer) int {
 	}
 
 	m := newAuthManager(account.BaseDirForConfig(*configPath))
-	if err := m.CancelPKCE(*loginID); err != nil {
+	cancelled, err := m.CancelPKCE(*loginID)
+	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "memory-connector auth cancel: %v\n", err)
 		return 1
+	}
+	if !cancelled {
+		// Best-effort and idempotent: an unknown, expired or already-completed
+		// login has nothing left to cancel, so say that rather than claim a
+		// cancel that did not happen.
+		_, _ = fmt.Fprintf(stdout, "memory-connector auth: no pending login %s (already absent)\n", *loginID)
+		return 0
 	}
 	_, _ = fmt.Fprintf(stdout, "memory-connector auth: cancelled login %s\n", *loginID)
 	return 0

@@ -308,6 +308,56 @@ final class AccountStoreSilentReauthTests: XCTestCase {
     }
 }
 
+/// The background-hygiene cases: a bounded browser wait, and a second episode
+/// after a success. They live in an extension because the test type above is at
+/// SwiftLint's `type_body_length` limit — an extension is a separate
+/// declaration, so it counts on its own (same reason the helpers below are
+/// file-scoped).
+extension AccountStoreSilentReauthTests {
+    /// A silent attempt shows no login page, but that is not the same as showing
+    /// no window: an IdP that answers with an HTML page instead of a callback
+    /// must not leave one up from a background trigger, so the wait is bounded
+    /// and expiring it is the same clean decline as `login_required`.
+    @MainActor
+    func testSilentAttemptBoundsTheBrowserWait() async throws {
+        let (store, account) = try await makeSignedInStore()
+        stubNeedsReauthStatus()
+        fakeAuth.handler = { _ in .failure(OIDCError.cancelled) }
+
+        let signedIn = await store.ensureConnectorSession()
+
+        XCTAssertFalse(signedIn)
+        XCTAssertEqual(fakeAuth.requestedTimeouts, [OAuthCallback.silentBrowserTimeout],
+                       "background work must not leave a browser window up indefinitely")
+        XCTAssertTrue(store.needsReauthentication(account.id),
+                      "expiry is a clean decline: the mark and the affordance stay")
+        XCTAssertNil(store.lastError)
+        XCTAssertEqual(calls("auth cancel").count, 1, "the pending login is discarded")
+    }
+
+    /// A success ends the episode, so the one-shot guard is cleared: the next
+    /// rejection is a NEW episode and may attempt again. `fetchAccessToken`
+    /// bounds the retried read, so clearing cannot loop the browser.
+    @MainActor
+    func testSuccessClearsTheGuardSoALaterEpisodeCanTryAgain() async throws {
+        let (store, account) = try await makeSignedInStore()
+        stubNeedsReauthStatus()
+        stubComplete()
+        let callback = try silentReauthCallbackURL(query: "code=code-1&state=\(state)")
+        fakeAuth.handler = { _ in .success(callback) }
+
+        _ = await store.ensureConnectorSession()
+        XCTAssertEqual(calls("auth start").count, 1)
+
+        _ = await store.ensureConnectorSession()
+
+        XCTAssertEqual(calls("auth start").count, 2,
+                       "a success must not disable silent re-auth for the rest of the session")
+        XCTAssertFalse(store.needsReauthentication(account.id))
+        XCTAssertEqual(store.sessionState, .valid)
+    }
+}
+
 /// File-scoped so the test type above stays within SwiftLint's body limit.
 private func silentReauthCallbackURL(query: String) throws -> URL {
     try XCTUnwrap(URL(string: "\(OAuthCallback.redirectURI)?\(query)"))
