@@ -83,7 +83,7 @@ The Railway card takes you to Railway's consent screen first. The installer need
 `workspace:admin` so it can create the project, its services and its bucket; you
 can revoke that access later in Railway account settings.
 
-<Screenshot src="/emergent.memory/assets/tutorials/railway/02-authorize-railway.webp" alt="Authorize the Memory installer" width={450} height={658} />
+<Screenshot src="/assets/tutorials/railway/02-authorize-railway.webp" alt="Authorize the Memory installer" width={450} height={658} />
 
 Back in the wizard, choose the workspace that should own the deployment. The
 **Admin email** becomes the first platform superadmin: it defaults to the account
@@ -93,7 +93,7 @@ If email delivery is not configured yet, leave **Skip email for now** checked an
 add SMTP later from **Settings → Platform email**. Until then Zitadel
 verification, password reset and 2FA emails, and Memory invitations, do not work.
 
-<Screenshot src="/emergent.memory/assets/tutorials/railway/03-workspace-admin-email.webp" alt="Workspace and admin email" width={707} height={454} />
+<Screenshot src="/assets/tutorials/railway/03-workspace-admin-email.webp" alt="Workspace and admin email" width={707} height={454} />
 
 Click **deploy** and the installer creates the Railway project, deploys the
 published template and bootstraps Zitadel. It takes about fifteen to twenty
@@ -103,7 +103,7 @@ open.
 The success card holds **Open Memory** and the temporary admin password, printed
 once. Copy the password now: nothing will show it again.
 
-<Screenshot src="/emergent.memory/assets/tutorials/railway/07-install-complete.webp" alt="Install complete, with a link to open Memory" width={752} height={591} />
+<Screenshot src="/assets/tutorials/railway/07-install-complete.webp" alt="Install complete, with a link to open Memory" width={752} height={591} />
 
 ### Docker
 
@@ -152,7 +152,7 @@ temporary password comes from depends on the target: Railway prints it once on
 the success card, Docker writes it to `deploy/docker/admin-credentials.env`, and
 the cloud bundles name the file in their own output.
 
-<Screenshot src="/emergent.memory/assets/tutorials/railway/08-memory-signin.webp" alt="Memory sign-in" width={392} height={293} />
+<Screenshot src="/assets/tutorials/railway/08-memory-signin.webp" alt="Memory sign-in" width={392} height={293} />
 
 Sign-in runs through the bundled Zitadel, so you will be asked for the admin
 address and the temporary password, then walked through two things that exist
@@ -163,11 +163,11 @@ only for the first account:
 - **A forced password change** — set a real password. The temporary one stops
   working here.
 
-<Screenshot src="/emergent.memory/assets/tutorials/railway/12-first-password-change.webp" alt="Change the temporary password" width={440} height={613} />
+<Screenshot src="/assets/tutorials/railway/12-first-password-change.webp" alt="Change the temporary password" width={440} height={613} />
 
 You land on the projects page, as a superadmin of an instance that is now yours.
 
-<Screenshot src="/emergent.memory/assets/tutorials/railway/13-memory-projects.webp" alt="Memory projects page" width={1600} height={900} />
+<Screenshot src="/assets/tutorials/railway/13-memory-projects.webp" alt="Memory projects page" width={1600} height={900} />
 
 ## 5. Create your first project
 
@@ -219,11 +219,11 @@ rather than assuming.
 
 ## What's next
 
-- [Knowledge Graph](/emergent.memory/user-guide/knowledge-graph/) — objects,
+- [Knowledge Graph](user-guide/knowledge-graph/) — objects,
   relationships, search and traversal.
-- [Agents](/emergent.memory/user-guide/agents/) — scheduled and event-driven
+- [Agents](user-guide/agents/) — scheduled and event-driven
   work over the graph.
-- [Data Sources](/emergent.memory/user-guide/datasources/) — pull external
+- [Data Sources](user-guide/datasources/) — pull external
   systems in and keep them in sync.
-- [Deploy on Railway](/emergent.memory/tutorials/deploy-to-railway/) — the same
+- [Deploy on Railway](tutorials/deploy-to-railway/) — the same
   install, with every screen and every prerequisite spelled out.

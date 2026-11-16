@@ -26,7 +26,7 @@ Open the [Memory installer](https://deploy.memory.emergent-company.ai) and
 choose **Railway**. Docker, Google Cloud and AWS are offered on the same page as
 a downloadable bundle, which this tutorial does not cover.
 
-<Screenshot src="/emergent.memory/assets/tutorials/railway/01-choose-target.webp" alt="Choose Railway" width={752} height={555} />
+<Screenshot src="/assets/tutorials/railway/01-choose-target.webp" alt="Choose Railway" width={752} height={555} />
 
 ## 2. Authorize the installer
 
@@ -34,7 +34,7 @@ Click **deploy**. Railway asks you to authorize the Memory installer. The
 installer needs `workspace:admin` so it can create and configure the project,
 services and bucket. Review the permissions and click **Authorize**.
 
-<Screenshot src="/emergent.memory/assets/tutorials/railway/02-authorize-railway.webp" alt="Authorize the Memory installer" width={450} height={658} />
+<Screenshot src="/assets/tutorials/railway/02-authorize-railway.webp" alt="Authorize the Memory installer" width={450} height={658} />
 
 You can revoke this access later in Railway account settings. The portal stores
 the OAuth session in a sealed cookie; it does not store your Railway password.
@@ -51,7 +51,7 @@ checked to finish the install; configure SMTP later from **Settings → Platform
 email**. Until email is configured, Zitadel verification, password reset and 2FA,
 and Memory invite emails are unavailable.
 
-<Screenshot src="/emergent.memory/assets/tutorials/railway/03-workspace-admin-email.webp" alt="Workspace and admin email" width={707} height={454} />
+<Screenshot src="/assets/tutorials/railway/03-workspace-admin-email.webp" alt="Workspace and admin email" width={707} height={454} />
 
 Click **deploy**.
 
@@ -63,18 +63,18 @@ the page polls for status.
 
 First the Railway project is created:
 
-<Screenshot src="/emergent.memory/assets/tutorials/railway/04-progress-project.webp" alt="Creating the Railway project" width={752} height={356} />
+<Screenshot src="/assets/tutorials/railway/04-progress-project.webp" alt="Creating the Railway project" width={752} height={356} />
 
 The template then creates Postgres/pgvector, xberg, Zitadel, `memory-server`,
 `memory-web-ui`, and the `memory-documents` bucket. Domains are assigned and
 Zitadel is bootstrapped automatically:
 
-<Screenshot src="/emergent.memory/assets/tutorials/railway/05-progress-zitadel.webp" alt="Waiting for Zitadel" width={752} height={356} />
+<Screenshot src="/assets/tutorials/railway/05-progress-zitadel.webp" alt="Waiting for Zitadel" width={752} height={356} />
 
 The runner writes the OIDC and admin credentials into both Memory services and
 restarts them:
 
-<Screenshot src="/emergent.memory/assets/tutorials/railway/06-progress-restart.webp" alt="Restarting Memory services" width={752} height={356} />
+<Screenshot src="/assets/tutorials/railway/06-progress-restart.webp" alt="Restarting Memory services" width={752} height={356} />
 
 ## 5. Copy the temporary password
 
@@ -84,7 +84,7 @@ Memory URL, the first admin email, and a **masked temporary password**. Use
 the account that created the install so it can be retrieved after the page is
 reloaded.
 
-<Screenshot src="/emergent.memory/assets/tutorials/railway/07-install-complete.webp" alt="Install complete" width={752} height={591} />
+<Screenshot src="/assets/tutorials/railway/07-install-complete.webp" alt="Install complete" width={752} height={591} />
 
 <Aside type="caution" title="The temporary password is a live credential">
 
@@ -97,24 +97,24 @@ commit.
 Click **Open Memory** on the success card. The app opens in a new tab; click
 **Sign in** to start the Zitadel flow.
 
-<Screenshot src="/emergent.memory/assets/tutorials/railway/08-memory-signin.webp" alt="Memory sign-in" width={392} height={293} />
+<Screenshot src="/assets/tutorials/railway/08-memory-signin.webp" alt="Memory sign-in" width={392} height={293} />
 
 ## 7. Sign in with the first admin account
 
 Enter the admin email from step 3.
 
-<Screenshot src="/emergent.memory/assets/tutorials/railway/09-zitadel-login.webp" alt="Zitadel login name" width={440} height={242} />
+<Screenshot src="/assets/tutorials/railway/09-zitadel-login.webp" alt="Zitadel login name" width={440} height={242} />
 
 Enter the temporary password from step 5.
 
-<Screenshot src="/emergent.memory/assets/tutorials/railway/10-zitadel-password.webp" alt="Zitadel password" width={440} height={424} />
+<Screenshot src="/assets/tutorials/railway/10-zitadel-password.webp" alt="Zitadel password" width={440} height={424} />
 
 Zitadel offers to enroll a second factor at this point, before the password
 change. Click **Skip** at the bottom left for this first login — you can add an
 authenticator app or a device factor later, and you should before handing the
 account to a team.
 
-<Screenshot src="/emergent.memory/assets/tutorials/railway/11-2fa-setup.webp" alt="2-Factor Setup, with Skip at the bottom left" width={440} height={487} />
+<Screenshot src="/assets/tutorials/railway/11-2fa-setup.webp" alt="2-Factor Setup, with Skip at the bottom left" width={440} height={487} />
 
 The first admin is imported with `passwordChangeRequired`, so Zitadel requires a
 new password before the app opens. Enter the temporary password as the old one,
@@ -122,7 +122,7 @@ choose a new password and repeat it in **Password confirmation**: the checklist
 under the fields turns green as each rule is met, and **Next** stays disabled
 until they all are.
 
-<Screenshot src="/emergent.memory/assets/tutorials/railway/12-first-password-change.webp" alt="Change the temporary password" width={440} height={613} />
+<Screenshot src="/assets/tutorials/railway/12-first-password-change.webp" alt="Change the temporary password" width={440} height={613} />
 
 Zitadel then confirms with "Your password was changed successfully." — click
 **Next** there, and Zitadel returns to Memory.
@@ -132,7 +132,7 @@ Zitadel then confirms with "Your password was changed successfully." — click
 You should land on the organization's Projects page, with a Memory project
 created automatically. The footer shows the deployed product version.
 
-<Screenshot src="/emergent.memory/assets/tutorials/railway/13-memory-projects.webp" alt="Memory projects page" width={1600} height={900} />
+<Screenshot src="/assets/tutorials/railway/13-memory-projects.webp" alt="Memory projects page" width={1600} height={900} />
 
 At this point the full stack is running:
 
