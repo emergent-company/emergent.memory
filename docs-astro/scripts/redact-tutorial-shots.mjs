@@ -3,7 +3,7 @@
  * redact-tutorial-shots — strip personal data out of the Railway walkthrough
  * screenshots before they can reach a public docs site.
  *
- * The originals in `emergent.memory.infra/docs/guides/railway-install/assets/`
+ * The originals in the infra repository's `docs/guides/railway-install/assets/`
  * were captured from a real install, so they carry the installer's account
  * email (and, on the OAuth consent page, the account avatar). Docs publish to a
  * public site, so the images that reach `docs/site/assets/` are redacted here.

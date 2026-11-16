@@ -361,9 +361,10 @@ it is stored. The two cannot quietly disagree: the Tutorial names this plan in
 looks like: a page describing v4's login beside pictures of v1's.
 
 ```bash
-EXP=/root/emergent.memory.infra/scripts/tutorials-export.py
+# Run from the infra-repository checkout that owns docs/tutorials-graph.md.
+EXP=scripts/tutorials-export.py
 python3 $EXP --md    deploy-to-railway --out docs/site/tutorials/deploy-to-railway.md
-python3 $EXP --check --captures /root/emergent.memory-wt/astro-docs-poc
+python3 $EXP --check --captures <path-to-docs-astro-checkout>
 ```
 
 `--md` reproduces the published page **byte for byte**, so a diff is the review.
