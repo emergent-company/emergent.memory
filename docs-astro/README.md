@@ -1,7 +1,8 @@
 # docs-astro — Astro/Starlight port of the Memory docs (POC)
 
-Status: **proof of concept**. 18 pages of the 77 in `docs/site` — 16 converted by
-`scripts/port_mkdocs.py`, 2 hand-written (`index.mdx`, `api-reference.mdx`).
+Status: **proof of concept**. 20 pages of the 77 in `docs/site` — 15 converted by
+`scripts/port_mkdocs.py`, 5 hand-written (`index.mdx`, `api-reference.mdx`, and
+the three `user-guide/getting-started/` pages).
 The site builds, serves, and is themed against the product web UI. It is not
 wired into CI, not published, and the old MkDocs site is untouched.
 
@@ -197,8 +198,8 @@ Two Starlight details cost real time and are worth knowing before editing
 
 `scripts/port_mkdocs.py` is the converter and the single source of the
 generated MDX — **edit the script, not the `.mdx` files** (re-running it
-overwrites them; the two hand-written pages, `index.mdx` and
-`api-reference.mdx`, are excluded from its page list).
+overwrites them). The hand-written pages are excluded from its page list:
+`index.mdx`, `api-reference.mdx`, and the Getting Started trio below.
 
 It handles, and reports:
 
@@ -220,6 +221,36 @@ TARGETS"), lists pages linked from the subset but not yet converted (22 in this
 POC), and reports an unmapped `:material-*:` name or an unparsed grid-card line
 instead of guessing. A full port needs the snippet rule and the remaining 59
 pages.
+
+## Getting Started — the one place the POC changes the IA
+
+The MkDocs site opens the User Guide with a single `getting-started.md` that
+starts at "create an organization", which assumes an instance already exists and
+never says how you got one. The POC replaces that page with three, hand-written
+because the structure does not exist upstream:
+
+| Page | Holds |
+|---|---|
+| `user-guide/getting-started.mdx` | The choice: self-hosted or Memory Cloud, a comparison table, and what both paths then share |
+| `…/getting-started/self-hosted.mdx` | Installer → first admin → project → blueprint → client, with the Railway install's own figures |
+| `…/getting-started/memory-cloud.mdx` | Sign in → project → blueprint → client, on the hosted instance |
+
+The sidebar puts the group first in the User Guide, matching the order a reader
+actually needs. Both detail pages end at the same third of the work — a project,
+a blueprint, a client — so that section is one component,
+`src/components/ConnectOptions.astro`, parameterised by the instance's API and
+app hostnames rather than written twice: the MCP share, the CLI commands and the
+`curl` call cannot drift apart between the two pages. It is an Astro component,
+so its prose is HTML (no backtick fences) and the snippets go through
+`astro-expressive-code`'s `<Code>`, which is what fenced markdown compiles to —
+same theme slots, same frame.
+
+Figures so far are the self-hosted install's, re-used from the tutorial: the
+install path is genuinely screenshotted end to end. The blueprint install, the
+MCP Sharing screen and the API-token screen still need captures; they belong in
+`shots/installer.plan.json` (which already ends logged in as the admin it just
+created, so the flow continues with no second login) rather than being taken by
+hand.
 
 ## Screenshots
 

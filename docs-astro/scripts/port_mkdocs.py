@@ -44,7 +44,6 @@ PAGES = [
     ("developer-guide/schema.md", "developer-guide/schema.mdx", "Schema"),
     ("developer-guide/security-scopes.md", "developer-guide/security-scopes.mdx", "Security Scopes"),
     ("user-guide/index.md", "user-guide.mdx", "User Guide"),
-    ("user-guide/getting-started.md", "user-guide/getting-started.mdx", "Getting Started"),
     ("user-guide/knowledge-graph.md", "user-guide/knowledge-graph.mdx", "Knowledge Graph"),
     ("user-guide/agents.md", "user-guide/agents.mdx", "Agents"),
     ("user-guide/branches.md", "user-guide/branches.mdx", "Branches"),
