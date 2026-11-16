@@ -113,13 +113,14 @@ func (s *ReviewGateService) Ensure(ctx context.Context, projectID uuid.UUID, sub
 			Where("subject_type = ?", subjectType).
 			Where("subject_ref = ?", subjectRef).
 			Where("head_sha = ?", headSHA).
+			For("UPDATE").
 			Scan(ctx)
 		if errors.Is(err, sql.ErrNoRows) {
 			gate = ReviewGate{
 				ProjectID: projectID, SubjectType: subjectType, SubjectRef: subjectRef,
 				HeadSHA: headSHA, RequiredReviewers: required, Status: ReviewGatePending,
 			}
-			if _, err := tx.NewInsert().Model(&gate).Exec(ctx); err != nil {
+			if _, err := tx.NewInsert().Model(&gate).Returning("*").Exec(ctx); err != nil {
 				return fmt.Errorf("sources: create review gate: %w", err)
 			}
 			result = &gate
@@ -177,6 +178,7 @@ func (s *ReviewGateService) RecordVerdict(ctx context.Context, projectID uuid.UU
 			Where("subject_type = ?", subjectType).
 			Where("subject_ref = ?", subjectRef).
 			Where("head_sha = ?", headSHA).
+			For("UPDATE").
 			Scan(ctx)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrReviewGateNotFound

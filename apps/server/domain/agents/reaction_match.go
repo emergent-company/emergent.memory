@@ -28,6 +28,8 @@ func propertyAt(properties map[string]any, path string) (any, bool) {
 	if path == "" || path == "/" {
 		return properties, properties != nil
 	}
+	// modelref:allow — this splits a JSON-pointer path into property segments,
+	// not a routed model name.
 	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
 	var cur any = properties
 	for _, part := range parts {

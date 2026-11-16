@@ -339,7 +339,7 @@ func (d *SourceEventDispatcher) ensureReviewSubject(ctx context.Context, v *Veri
 		if err != nil {
 			return fmt.Errorf("sources: ensure review gate: %w", err)
 		}
-		if gate != nil && gate.Status == ReviewGatePending && v != nil && v.App != nil {
+		if gate != nil && len(gate.RequiredReviewers) > 0 && gate.Status == ReviewGatePending && v != nil && v.App != nil {
 			if token, terr := d.mintToken(ctx, v.App, p.Installation.ID, repoName); terr == nil {
 				_ = d.newClient(d.apiBaseURL, token).CreateCheck(ctx, repoName, headSHA, "reviewed", "in_progress", "", "reviewed: pending", "Waiting for all required reviewers.")
 			}

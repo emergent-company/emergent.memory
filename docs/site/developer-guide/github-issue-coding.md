@@ -86,7 +86,7 @@ Example:
 {
   "objectTypes": ["GitHubPullRequest"],
   "events": ["created", "updated"],
-  "properties": ["/head_sha"],
+  "properties": ["/head_sha", "/labels"],
   "match": [
     {"path": "/labels", "operator": "contains", "value": "review:ui"}
   ],

@@ -572,7 +572,7 @@ func (h *ReviewToolHandler) reviewerIdentity(ctx context.Context, projectID stri
 	if runID == "" {
 		return "", ""
 	}
-	run, err := h.agentRuns.FindRunByID(ctx, runID)
+	run, err := h.agentRuns.FindRunByIDForProject(ctx, runID, projectID)
 	if err != nil || run == nil || run.AgentID == "" {
 		return "", ""
 	}
