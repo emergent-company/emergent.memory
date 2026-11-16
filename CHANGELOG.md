@@ -47,6 +47,24 @@
 
 ### Changed
 
+**The sources webhook ingress and the embedding-control endpoints answer the apperror envelope** (2026-11-16)
+
+The seven plain-text `c.String(4xx/5xx, …)` bodies on
+`POST /api/webhooks/source-apps/{webhookKey}` and the seventeen
+`c.JSON(4xx/5xx, map[string]any{"error": err.Error()})` bodies under
+`/api/embeddings/*` bypassed `apperror.HTTPErrorHandler`, so a client received an
+unstructured body it could not branch on and a repository or provider failure
+reached the wire verbatim. A webhook sender now gets the same
+`{"error":{"code","message"}}` envelope as every other client
+(`invalid_signature`, `malformed_payload`, `source_app_not_found`,
+`source_app_unconfigured`, `unreadable_body`), and an embedding-control failure
+answers a coded `invalid_request_body`, `forbidden` or `internal_error` whose
+message is written for the caller while the cause stays in the 5xx log line.
+`scripts/lint-ratchet.sh` now counts both error-body shapes — a `c.String` with
+a 4xx/5xx status, and a `c.JSON` 4xx/5xx whose body is a
+`map[...]{"error": ...}` literal — so the next handler cannot reintroduce one
+unnoticed.
+
 **Error bodies from six handler families now come from the apperror envelope** (2026-11-16)
 
 The model-config, tracing, devtools (`/coverage`, `/docs`), backups, `/debug`

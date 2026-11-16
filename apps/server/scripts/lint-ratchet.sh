@@ -68,6 +68,31 @@ count_plain_text_error_bodies() {
       END { print n + 0 }'
 }
 
+# count_json_error_bodies prints non-test
+# `c.JSON(http.Status<4xx|5xx>, map[...]{"error": ...})` call sites in tree.
+# That shape writes the message itself instead of going through
+# apperror.HTTPErrorHandler, and it is invisible to both counters above: the
+# sources webhook family was c.String, while #863 found this one in
+# domain/extraction/embedding_control_handler.go, where a repository or provider
+# failure reached the wire as raw err.Error() text. Full-line comments are
+# excluded like above, a 2xx c.JSON is a success body, and domain/mcp is
+# excluded because its JSON-RPC error object is the protocol contract its
+# clients parse (the #863 scoping note).
+count_json_error_bodies() {
+  grep_matches -rn "c\.JSON(http\.Status" --include="*.go" --exclude="*_test.go" "$1" \
+    | awk '
+      /^[^:]+:[0-9]+:[[:space:]]*(\/\/|\/\*|\*[ \/])/ { next }
+      $0 ~ /(^|\/)domain\/mcp\// { next }
+      {
+        if (!match($0, /c\.JSON\(http\.Status[A-Za-z]+/)) next
+        st = substr($0, RSTART, RLENGTH)
+        sub(/^c\.JSON\(http\./, "", st)
+        if (st ~ /^Status(OK|Created|Accepted|NoContent|MovedPermanently|Found|NotModified|TemporaryRedirect|PermanentRedirect)$/) next
+        if ($0 ~ /map\[string\](any|string)\{"error":/) n++
+      }
+      END { print n + 0 }'
+}
+
 # --self-test exercises the counters' three outcomes on a scratch tree: a match
 # counts, no match is zero, and an unreadable path aborts instead of reading as a
 # clean zero. It needs no checkout, so CI can run it before the real gate.
@@ -87,6 +112,9 @@ if [ "${1:-}" = "--self-test" ]; then
     '// c.String(http.StatusBadRequest, "commented out") is banned too.' \
     'c.String(http.StatusNotFound, "unknown app")' \
     'c.String(http.StatusOK, "OK")' \
+    '// c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()}) is banned too.' \
+    'c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})' \
+    'c.JSON(http.StatusOK, map[string]any{"error": "a success body is not an error body"})' \
     >"$scratch/assets.go"
 
   self_fail() {
@@ -102,6 +130,9 @@ if [ "${1:-}" = "--self-test" ]; then
 
   got=$(count_plain_text_error_bodies "$scratch")
   [ "$got" = 1 ] || self_fail "expected 1 plain-text error body (comment and 2xx excluded), got $got"
+
+  got=$(count_json_error_bodies "$scratch")
+  [ "$got" = 1 ] || self_fail "expected 1 JSON error body (comment and 2xx excluded), got $got"
 
   got=$(count_matches "no\.such\.pattern" "$scratch/assets.go")
   [ "$got" = 0 ] || self_fail "expected 0 matches, got $got"
@@ -134,6 +165,13 @@ BASELINE_ECHO_HTTPERROR=6
 # `c.String(http.StatusOK, "OK")` is a success body and is not counted.
 # dev-rule-go-apperror-only.
 BASELINE_PLAINTEXT_ERRORS=0
+# Raw `c.JSON(http.Status<4xx|5xx>, map[...]{"error": ...})` error bodies in
+# non-test server code. Zero: every client-visible error body is the apperror
+# envelope, and this shape was putting raw err.Error() text on the wire.
+# #863 converted the seventeen embedding-control sites and added this counter;
+# a 2xx c.JSON and the JSON-RPC error objects under domain/mcp are not error
+# bodies. dev-rule-go-apperror-only.
+BASELINE_JSON_ERRORS=0
 
 auth_guards=$(count_matches -rn "if user == nil" --include="*.go" --exclude="*_test.go" domain/)
 setters=$(count_matches -rn "func (s \*Service) Set[A-Z]\|func (h \*Handler) Set[A-Z]" --include="*.go" --exclude="*_test.go" domain/)
@@ -142,6 +180,7 @@ response_types=$(count_matches -rn "type APIResponse\|type PaginatedResponse\|ty
 # Full-line comments are excluded so documenting the rule does not trip it.
 echo_http_errors=$(count_raw_echo_httperrors .)
 plaintext_errors=$(count_plain_text_error_bodies .)
+json_errors=$(count_json_error_bodies .)
 
 fail=0
 
@@ -161,5 +200,6 @@ check "apperror Style A"       "$apperror_style_a" "$BASELINE_APPERROR_STYLEA"
 check "response type dupes"    "$response_types"   "$BASELINE_RESPONSE_TYPES"
 check "raw echo.NewHTTPError"  "$echo_http_errors" "$BASELINE_ECHO_HTTPERROR"
 check "plain-text error body"  "$plaintext_errors" "$BASELINE_PLAINTEXT_ERRORS"
+check "JSON error body"        "$json_errors"      "$BASELINE_JSON_ERRORS"
 
 exit "$fail"
