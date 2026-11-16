@@ -438,7 +438,7 @@ func (h *A2AHandler) streamNewTask(c echo.Context, projectID, userID, userMessag
 		RenderA2UI: true, // A2A stream renders A2UI surfaces (artifactUpdate)
 	}
 
-	return h.streamRun(c, projectID, run.ID, contextID, run, execReq, false)
+	return h.streamRun(c, projectID, run.ID, contextID, run, execReq, false, nil)
 }
 
 // streamResumeTask resumes an INPUT_REQUIRED task with a follow-up message and
@@ -466,7 +466,7 @@ func (h *A2AHandler) streamResumeTask(c echo.Context, projectID, userID, userMes
 		return writeA2AError(c, a2aInvalidStateError(fmt.Sprintf("task is not awaiting input (state %s)", MapRunStatusToTaskState(latest.Status))))
 	}
 
-	resumeMsg, resumeErr := h.prepareA2AResume(ctx, latest, userMessage, userID)
+	resumeMsg, claim, resumeErr := h.prepareA2AResume(ctx, latest, userMessage, userID)
 	if resumeErr != nil {
 		return writeA2AError(c, resumeErr)
 	}
@@ -495,18 +495,22 @@ func (h *A2AHandler) streamResumeTask(c echo.Context, projectID, userID, userMes
 		RenderA2UI: true, // A2A stream renders A2UI surfaces (artifactUpdate)
 	}
 
-	return h.streamRun(c, projectID, taskID, streamCtxID, latest, execReq, true)
+	return h.streamRun(c, projectID, taskID, streamCtxID, latest, execReq, true, claim)
 }
 
 // streamRun executes (or resumes) a run and streams A2A StreamResponse events
 // over SSE. taskID is the stable A2A task id; run is the run passed to the
 // executor (the fresh run on new-task, the latest paused run on resume).
+// claim is the run claim prepareA2AResume took for a continuation resume (nil on
+// the new-task path and when a question was claimed instead); it is released if
+// the resume does not take ownership.
 func (h *A2AHandler) streamRun(
 	c echo.Context,
 	projectID, taskID, contextID string,
 	run *AgentRun,
 	execReq ExecuteRequest,
 	resume bool,
+	claim *a2aResumeClaim,
 ) error {
 	ctx := c.Request().Context()
 	bgCtx := context.Background()
@@ -571,6 +575,11 @@ func (h *A2AHandler) streamRun(
 	}
 	if result != nil && result.Cleanup != nil {
 		defer result.Cleanup()
+	}
+	if execErr != nil || result == nil {
+		// The run (or resume) never took ownership of the work: drop the
+		// continuation claim so the task stays resumable.
+		claim.release()
 	}
 	if execErr != nil {
 		h.log.Error("a2a stream run failed", "task_id", taskID, "error", execErr.Error())

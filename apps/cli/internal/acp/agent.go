@@ -2,7 +2,6 @@ package acp
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -395,15 +394,13 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 	}
 
 	stream, err := a.client.StreamMessage(promptCtx, req)
-	if err != nil && resumeTaskID != "" && isNoPendingQuestionError(err) {
+	if err != nil && resumeTaskID != "" && isInvalidStateError(err) {
 		// Safety net for servers that predate the continuation fix (issue
-		// #867): a paused task with nothing to answer used to be rejected with
-		// "no pending question for task". The latched task id is unusable, so
-		// retry once as a new task in the same context instead of failing the
-		// turn. Newer servers resume the task instead and never reach this.
-		req.Message.TaskID = ""
-		req.Message.Metadata = map[string]any{a2a.SkillIDMetadataKey: skill}
-		req.Message.ContextID = contextID
+		// #867): a paused task with nothing to answer used to be rejected as
+		// INVALID_STATE. The latched task id is unusable, so retry once as a
+		// new task in the same context instead of failing the turn. Newer
+		// servers resume the task instead and never reach this.
+		req = a2aNewTaskRetry(req, skill, contextID)
 		stream, err = a.client.StreamMessage(promptCtx, req)
 	}
 	if err != nil {
@@ -432,16 +429,40 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 	return PromptResponse{StopReason: stopReason}, nil
 }
 
-// isNoPendingQuestionError reports whether err is the A2A INVALID_STATE
-// rejection an older server returns for a resume of a paused task that has no
-// pending question (the step-limit pause, issue #867). It is matched by the
-// stable reason and message because no SDK constant is exported for it.
-func isNoPendingQuestionError(err error) bool {
-	var a2aErr *a2a.Error
-	if !errors.As(err, &a2aErr) {
-		return false
+// a2aReasonInvalidState is the A2A error reason the server returns when it
+// refuses a resume: the task is not awaiting input, it has no pending question,
+// or a concurrent follow-up already claimed it.
+const a2aReasonInvalidState = "INVALID_STATE"
+
+// isInvalidStateError reports whether err is an A2A INVALID_STATE rejection. It
+// matches the structured reason from the parsed error envelope rather than the
+// human-readable message, so a reworded message cannot silently disable the
+// retry, and an unrelated error that happens to carry the same words cannot
+// trigger it.
+func isInvalidStateError(err error) bool {
+	return a2a.Reason(err) == a2aReasonInvalidState
+}
+
+// a2aNewTaskRetry rewrites a resume request into a new-task request in the same
+// context: the latched task id is cleared, the skill id is recorded so the retry
+// targets the same agent, and any metadata the original request carried is
+// preserved.
+func a2aNewTaskRetry(req a2a.SendMessageRequest, skill, contextID string) a2a.SendMessageRequest {
+	req.Message.TaskID = ""
+	meta := make(map[string]any, len(req.Message.Metadata)+1)
+	for k, v := range req.Message.Metadata {
+		meta[k] = v
 	}
-	return strings.Contains(a2aErr.Message, "no pending question for task")
+	if skill != "" {
+		meta[a2a.SkillIDMetadataKey] = skill
+	}
+	if len(meta) > 0 {
+		req.Message.Metadata = meta
+	}
+	if contextID != "" {
+		req.Message.ContextID = contextID
+	}
+	return req
 }
 
 // consumeStream drains an A2A SSE stream, emitting agent_message_chunk deltas

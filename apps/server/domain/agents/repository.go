@@ -2309,6 +2309,55 @@ func (r *Repository) CancelRunIfPaused(ctx context.Context, runID string) (bool,
 	return n > 0, nil
 }
 
+// runResumeClaimKey is the suspend_context key recording that a follow-up
+// message has claimed a paused run for resume. It serialises concurrent
+// follow-ups on a pause that has no question row to claim (the step-limit
+// continuation, issue #867). The value is the claim id.
+const runResumeClaimKey = "resume_claim"
+
+// ClaimPausedRun atomically records a resume claim on a paused run, so exactly
+// one of several concurrent follow-up messages proceeds to the executor
+// (issue #867). A pause with no pending question has no question row to claim,
+// so the run itself is claimed here; the claim lives in suspend_context because
+// the row must stay paused until the executor's MarkRunResumed finalizes the
+// checkpoint. Returns true when this caller owns the claim: false means the row
+// is no longer paused or another caller already claimed it.
+func (r *Repository) ClaimPausedRun(ctx context.Context, runID, claimID string) (bool, error) {
+	res, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("suspend_context = jsonb_set(COALESCE(suspend_context, '{}'::jsonb), '{resume_claim}', to_jsonb(?::text))", claimID).
+		Where("id = ?", runID).
+		Where("status = ?", RunStatusPaused).
+		Where("COALESCE(suspend_context->>'resume_claim', '') = ''").
+		Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// ReleasePausedRunClaim drops a claim taken by ClaimPausedRun when the resume did
+// not take ownership (the executor refused it or failed before creating the
+// resumed run), leaving the task resumable. It only removes its own claim and
+// only from a still-paused row: once MarkRunResumed finalized the checkpoint the
+// claim is inert and the guard leaves the row untouched. Returns true when a
+// claim was released.
+func (r *Repository) ReleasePausedRunClaim(ctx context.Context, runID, claimID string) (bool, error) {
+	res, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("suspend_context = suspend_context - ?", runResumeClaimKey).
+		Where("id = ?", runID).
+		Where("status = ?", RunStatusPaused).
+		Where("suspend_context->>'resume_claim' = ?", claimID).
+		Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // MarkRunResumed finalizes the paused checkpoint run once a new resumed run has
 // been created. The checkpoint must reach a terminal state: this used to flip it
 // to `running` and clear completed_at, and nothing ever finalized it, so every

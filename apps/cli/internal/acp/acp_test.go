@@ -361,6 +361,69 @@ func TestHITLResume_NoPendingQuestionRetriesAsNewTask(t *testing.T) {
 	}
 }
 
+// TestA2ANewTaskRetry_PreservesMetadata pins the retry rewrite: the latched task
+// id is cleared, the skill id is set for the new task, and metadata the original
+// request carried survives (issue #867 review).
+func TestA2ANewTaskRetry_PreservesMetadata(t *testing.T) {
+	req := a2a.SendMessageRequest{Message: a2a.Message{
+		TaskID:    "task-1",
+		ContextID: "ctx-old",
+		Metadata: map[string]any{
+			"keep":                 "me",
+			a2a.SkillIDMetadataKey: "stale-skill",
+		},
+	}}
+
+	got := a2aNewTaskRetry(req, "research-agent", "ctx-1")
+
+	if got.Message.TaskID != "" {
+		t.Fatalf("taskId = %q, want empty", got.Message.TaskID)
+	}
+	if got.Message.ContextID != "ctx-1" {
+		t.Fatalf("contextId = %q, want ctx-1", got.Message.ContextID)
+	}
+	if v, _ := got.Message.Metadata["keep"].(string); v != "me" {
+		t.Fatalf("metadata keep = %v, want \"me\" (unrelated metadata must survive)", got.Message.Metadata["keep"])
+	}
+	if v, _ := got.Message.Metadata[a2a.SkillIDMetadataKey].(string); v != "research-agent" {
+		t.Fatalf("metadata skill = %v, want research-agent", got.Message.Metadata[a2a.SkillIDMetadataKey])
+	}
+	if req.Message.TaskID != "task-1" || req.Message.ContextID != "ctx-old" {
+		t.Fatalf("the original request must not be mutated")
+	}
+}
+
+// TestA2ANewTaskRetry_EmptySkillLeavesNoSkillKey pins that an unknown skill does
+// not overwrite the map with an empty-string skill id.
+func TestA2ANewTaskRetry_EmptySkillLeavesNoSkillKey(t *testing.T) {
+	req := a2a.SendMessageRequest{Message: a2a.Message{
+		Metadata: map[string]any{"keep": "me"},
+	}}
+
+	got := a2aNewTaskRetry(req, "", "")
+
+	if _, ok := got.Message.Metadata[a2a.SkillIDMetadataKey]; ok {
+		t.Fatalf("empty skill must not be written into metadata: %v", got.Message.Metadata)
+	}
+	if v, _ := got.Message.Metadata["keep"].(string); v != "me" {
+		t.Fatalf("metadata keep = %v, want \"me\"", got.Message.Metadata["keep"])
+	}
+}
+
+// TestIsInvalidStateError pins the structured match: the reason decides, not the
+// human-readable message.
+func TestIsInvalidStateError(t *testing.T) {
+	if !isInvalidStateError(&a2a.Error{Reason: "INVALID_STATE", Message: "reworded by a newer server"}) {
+		t.Fatalf("a structured INVALID_STATE must match regardless of wording")
+	}
+	if isInvalidStateError(&a2a.Error{Reason: "TASK_NOT_FOUND", Message: "no pending question for task"}) {
+		t.Fatalf("a different reason must not match even with the legacy wording")
+	}
+	if isInvalidStateError(errors.New("no pending question for task")) {
+		t.Fatalf("a non-A2A error must not match")
+	}
+}
+
 func TestPromptEmptyNoBackendCall(t *testing.T) {
 	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("unexpected HTTP request for empty prompt")
