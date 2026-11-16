@@ -527,8 +527,7 @@ func retryJobFailure(err error, jobID, projectID string, log *slog.Logger) error
 		return apperror.NewConflict(err.Error())
 	}
 
-	var appErr *apperror.Error
-	if errors.As(err, &appErr) {
+	if _, ok := errors.AsType[*apperror.Error](err); ok {
 		return err
 	}
 

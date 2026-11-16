@@ -707,8 +707,8 @@ func requireAppError(t *testing.T, err error, wantStatus int, wantMessagePart st
 	if err == nil {
 		t.Fatalf("expected an error for an unknown value")
 	}
-	var appErr *apperror.Error
-	if !errors.As(err, &appErr) {
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	if !ok {
 		t.Fatalf("error is not a client-facing app error: %T %v", err, err)
 	}
 	assert.Equal(t, wantStatus, appErr.HTTPStatus)

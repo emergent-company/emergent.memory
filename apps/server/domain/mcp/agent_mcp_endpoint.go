@@ -126,8 +126,8 @@ func agentMCPKeyTokenNameDisambiguated(label, agentID string) string {
 // isTokenNameExists reports whether the apitoken failure is the project-unique
 // name conflict.
 func isTokenNameExists(err error) bool {
-	var appErr *apperror.Error
-	return errors.As(err, &appErr) && appErr.Code == "token_name_exists"
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	return ok && appErr.Code == "token_name_exists"
 }
 
 // agentMCPEndpointURL builds the per-agent MCP endpoint URL from a base URL.
@@ -345,8 +345,8 @@ func (s *Service) GetAgentEndpoint(ctx context.Context, projectID, userID, baseU
 	}
 	agent, err := s.resolveEndpointAgent(ctx, projectID, agentID)
 	if err != nil {
-		var appErr *apperror.Error
-		if errors.As(err, &appErr) && appErr.HTTPStatus == 422 {
+		appErr, ok := errors.AsType[*apperror.Error](err)
+		if ok && appErr.HTTPStatus == 422 {
 			// A definition with no runtime agent has no endpoint: not found.
 			return nil, apperror.NewNotFound("Agent MCP endpoint", agentID)
 		}

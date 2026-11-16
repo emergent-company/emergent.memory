@@ -265,8 +265,8 @@ func classifyAuthRequired(ctx context.Context, pm *ProxyManager, server *MCPServ
 // isAuthRejection reports whether an error chain contains an HTTP 401/403
 // rejection from the remote MCP server.
 func isAuthRejection(err error) bool {
-	var rejected *ErrMCPAuthRejected
-	return err != nil && errors.As(err, &rejected)
+	_, ok := errors.AsType[*ErrMCPAuthRejected](err)
+	return err != nil && ok
 }
 
 // classifyInstallAuth classifies a tool-discovery error for the registry

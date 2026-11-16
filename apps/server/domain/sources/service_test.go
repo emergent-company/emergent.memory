@@ -238,8 +238,7 @@ func TestCreate_RejectsMissingRefreshToken(t *testing.T) {
 	if err == nil {
 		t.Fatal("Create() with no refresh_token = nil, want error")
 	}
-	var appErr *apperror.Error
-	if !errors.As(err, &appErr) {
+	if _, ok := errors.AsType[*apperror.Error](err); !ok {
 		t.Fatalf("Create() error type = %T, want *apperror.Error", err)
 	}
 }

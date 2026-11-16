@@ -25,8 +25,8 @@ func TestValidatePackDefinitionMapRunsTheSharedGuard(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected the scalar items declaration to be rejected")
 		}
-		var appErr *apperror.Error
-		if !errors.As(err, &appErr) || appErr.HTTPStatus != http.StatusBadRequest {
+		appErr, ok := errors.AsType[*apperror.Error](err)
+		if !ok || appErr.HTTPStatus != http.StatusBadRequest {
 			t.Fatalf("expected a 400 apperror, got %T %v", err, err)
 		}
 		for _, want := range []string{
@@ -84,8 +84,8 @@ func TestValidatePackDefinitionMapRunsTheSharedGuard(t *testing.T) {
 
 	t.Run("non-object definition is a 400 naming the type", func(t *testing.T) {
 		err := ValidatePackDefinitionMap(map[string]json.RawMessage{"Broken": raw(`"not a schema"`)}, nil)
-		var appErr *apperror.Error
-		if !errors.As(err, &appErr) || appErr.HTTPStatus != http.StatusBadRequest {
+		appErr, ok := errors.AsType[*apperror.Error](err)
+		if !ok || appErr.HTTPStatus != http.StatusBadRequest {
 			t.Fatalf("expected a 400 apperror, got %T %v", err, err)
 		}
 		if !strings.Contains(appErr.Message, `object type "Broken" must be a JSON object schema`) {

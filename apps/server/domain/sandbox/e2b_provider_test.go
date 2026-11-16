@@ -3,6 +3,7 @@ package sandbox
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,27 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// The mock control-plane handlers below answer with JSON or a short body. A
+// failed encode, decode or write means the client sees a truncated or empty
+// response, so the error is recorded against the test instead of dropped.
+// assert (not require) is deliberate: these run on the httptest handler
+// goroutine, where FailNow would abort the wrong goroutine.
+func encodeJSON(t *testing.T, w http.ResponseWriter, v any) {
+	t.Helper()
+	assert.NoError(t, json.NewEncoder(w).Encode(v))
+}
+
+func decodeJSON(t *testing.T, r io.Reader, v any) {
+	t.Helper()
+	assert.NoError(t, json.NewDecoder(r).Decode(v))
+}
+
+func writeMockBody(t *testing.T, w http.ResponseWriter, body string) {
+	t.Helper()
+	_, err := w.Write([]byte(body))
+	assert.NoError(t, err)
+}
 
 func TestE2BProvider_Capabilities(t *testing.T) {
 	p := &E2BProvider{
@@ -199,7 +221,7 @@ func TestE2BProvider_ControlPlaneCall_Success(t *testing.T) {
 		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		encodeJSON(t, w, map[string]string{"status": "ok"})
 	}))
 	defer server.Close()
 
@@ -218,7 +240,7 @@ func TestE2BProvider_ControlPlaneCall_Success(t *testing.T) {
 func TestE2BProvider_ControlPlaneCall_Error(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte("forbidden"))
+		writeMockBody(t, w, "forbidden")
 	}))
 	defer server.Close()
 
@@ -259,8 +281,8 @@ func TestE2BProvider_Create_Success(t *testing.T) {
 	// Mock control plane API
 	cpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/sandboxes" && r.Method == http.MethodPost {
-			json.NewDecoder(r.Body).Decode(&capturedReq)
-			json.NewEncoder(w).Encode(e2bCreateSandboxResponse{
+			decodeJSON(t, r.Body, &capturedReq)
+			encodeJSON(t, w, e2bCreateSandboxResponse{
 				SandboxID:       "sb-new-123",
 				EnvdAccessToken: "envd-token-abc",
 				Domain:          "e2b.app",
@@ -317,8 +339,8 @@ func TestE2BProvider_Create_DefaultTemplate(t *testing.T) {
 
 	cpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/sandboxes" {
-			json.NewDecoder(r.Body).Decode(&capturedReq)
-			json.NewEncoder(w).Encode(e2bCreateSandboxResponse{
+			decodeJSON(t, r.Body, &capturedReq)
+			encodeJSON(t, w, e2bCreateSandboxResponse{
 				SandboxID:       "sb-default",
 				EnvdAccessToken: "tok",
 			})
@@ -381,7 +403,7 @@ func TestE2BProvider_Destroy_Success(t *testing.T) {
 func TestE2BProvider_Destroy_AlreadyGone(t *testing.T) {
 	cpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte("404 not found"))
+		writeMockBody(t, w, "404 not found")
 	}))
 	defer cpServer.Close()
 
@@ -400,7 +422,7 @@ func TestE2BProvider_Destroy_AlreadyGone(t *testing.T) {
 func TestE2BProvider_Health_Healthy(t *testing.T) {
 	cpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v2/sandboxes" && r.URL.Query().Get("limit") == "1" {
-			json.NewEncoder(w).Encode([]e2bListedSandbox{})
+			encodeJSON(t, w, []e2bListedSandbox{})
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -426,7 +448,7 @@ func TestE2BProvider_Health_Healthy(t *testing.T) {
 func TestE2BProvider_Health_Unhealthy(t *testing.T) {
 	cpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte("invalid api key"))
+		writeMockBody(t, w, "invalid api key")
 	}))
 	defer cpServer.Close()
 
@@ -451,10 +473,10 @@ func TestE2BProvider_EnvdReadFile(t *testing.T) {
 		path := r.URL.Query().Get("path")
 		switch path {
 		case "/home/user/test.txt":
-			w.Write([]byte("file content here"))
+			writeMockBody(t, w, "file content here")
 		case "/nonexistent":
 			w.WriteHeader(http.StatusNotFound)
-			w.Write([]byte("not found"))
+			writeMockBody(t, w, "not found")
 		default:
 			w.WriteHeader(http.StatusBadRequest)
 		}
@@ -549,7 +571,7 @@ func TestE2BProvider_ExecViaCommandsAPI_Success(t *testing.T) {
 	envdServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/commands/run" && r.Method == http.MethodPost {
 			var req map[string]any
-			json.NewDecoder(r.Body).Decode(&req)
+			decodeJSON(t, r.Body, &req)
 
 			// Verify command structure
 			assert.Equal(t, "/bin/bash", req["cmd"])
@@ -558,7 +580,7 @@ func TestE2BProvider_ExecViaCommandsAPI_Success(t *testing.T) {
 			assert.Equal(t, "-c", args[1])
 			assert.Contains(t, args[2], "echo hello")
 
-			json.NewEncoder(w).Encode(map[string]any{
+			encodeJSON(t, w, map[string]any{
 				"stdout":   "hello\n",
 				"stderr":   "",
 				"exitCode": 0,
@@ -604,7 +626,7 @@ func TestE2BProvider_ExecViaCommandsAPI_Success(t *testing.T) {
 			Stderr   string `json:"stderr"`
 			ExitCode int    `json:"exitCode"`
 		}
-		json.NewDecoder(resp.Body).Decode(&cmdResult)
+		assert.NoError(t, json.NewDecoder(resp.Body).Decode(&cmdResult))
 
 		return &ExecResult{
 			Stdout:   cmdResult.Stdout,
@@ -703,7 +725,7 @@ func TestE2BProvider_Stop_NotFound(t *testing.T) {
 func TestE2BProvider_Resume_Success(t *testing.T) {
 	cpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/connect") {
-			json.NewEncoder(w).Encode(e2bCreateSandboxResponse{
+			encodeJSON(t, w, e2bCreateSandboxResponse{
 				SandboxID:       "sb-1",
 				EnvdAccessToken: "new-token",
 				Domain:          "updated.e2b.app",
@@ -741,9 +763,9 @@ func TestE2BProvider_MaxTimeoutClamped(t *testing.T) {
 	cpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/sandboxes" {
 			var req e2bCreateSandboxRequest
-			json.NewDecoder(r.Body).Decode(&req)
+			decodeJSON(t, r.Body, &req)
 			capturedTimeout = req.Timeout
-			json.NewEncoder(w).Encode(e2bCreateSandboxResponse{
+			encodeJSON(t, w, e2bCreateSandboxResponse{
 				SandboxID: "sb-1",
 			})
 			return
@@ -835,7 +857,7 @@ func TestE2BProvider_QuotaUsage_Initial(t *testing.T) {
 func TestE2BProvider_QuotaUsage_AfterCreateAndDestroy(t *testing.T) {
 	cpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/sandboxes" && r.Method == http.MethodPost {
-			json.NewEncoder(w).Encode(e2bCreateSandboxResponse{
+			encodeJSON(t, w, e2bCreateSandboxResponse{
 				SandboxID:       "sb-quota-1",
 				EnvdAccessToken: "tok",
 			})
@@ -887,7 +909,7 @@ func TestE2BProvider_QuotaUsage_AfterCreateAndDestroy(t *testing.T) {
 
 func TestE2BProvider_HealthIncludesQuota(t *testing.T) {
 	cpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]e2bListedSandbox{})
+		encodeJSON(t, w, []e2bListedSandbox{})
 	}))
 	defer cpServer.Close()
 

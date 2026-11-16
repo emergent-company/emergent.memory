@@ -8,20 +8,6 @@ import (
 	"strings"
 )
 
-// hasWorkConfigForDefinition reports whether the definition referenced by
-// definitionID carries a non-zero work config (an object-driven work agent). A
-// nil or unresolvable id reports false (an inline reaction agent).
-func (h *Handler) hasWorkConfigForDefinition(ctx context.Context, definitionID *string) bool {
-	if definitionID == nil || *definitionID == "" {
-		return false
-	}
-	def, err := h.repo.FindDefinitionByID(ctx, *definitionID, nil)
-	if err != nil || def == nil {
-		return false
-	}
-	return !def.WorkConfig.IsZero()
-}
-
 // WorkRuleType is the schema-side shape validation needs for one object type.
 // Fields is the declared property-name set; AllowedStatuses the declared work
 // vocabulary. Both empty means "unconstrained".

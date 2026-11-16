@@ -53,6 +53,17 @@ count_raw_echo_httperrors() {
 # ingress. Full-line comments are excluded like above, and a success-status use
 # (`c.String(http.StatusOK, "OK")` in the health handler) is not an error body,
 # so it is not counted.
+#
+# Deliberate limitation, so it is not mistaken for full coverage: the pattern is
+# a single-line `c.String(http.Status<Name>, …)` call. A multi-line call, or a
+# status held in a variable (`c.String(code, msg)`), is NOT matched — grep cannot
+# classify a computed expression, and a broader `c.String\(` match would need a
+# parser to avoid counting success bodies and would fail open on shapes it
+# mis-reads. No such site exists today, so the baseline of 0 is honest; a
+# reviewer still checks a computed-status c.String by hand. The excluded status
+# list below is the 2xx/3xx set an error body would not use; a rarer 1xx/2xx
+# code (e.g. 206 PartialContent) would read as a false positive, which is loud
+# rather than silent, and is corrected by adding it here.
 count_plain_text_error_bodies() {
   grep_matches -rn "c\.String(http\.Status" --include="*.go" --exclude="*_test.go" "$1" \
     | awk '
@@ -61,7 +72,7 @@ count_plain_text_error_bodies() {
         if (match($0, /c\.String\(http\.Status[A-Za-z]+/)) {
           st = substr($0, RSTART, RLENGTH)
           sub(/^c\.String\(http\./, "", st)
-          if (st ~ /^Status(OK|Created|Accepted|NoContent|MovedPermanently|Found|NotModified|TemporaryRedirect|PermanentRedirect)$/) next
+          if (st ~ /^Status(OK|Created|Accepted|NoContent|MultipleChoices|MovedPermanently|Found|NotModified|UseProxy|TemporaryRedirect|PermanentRedirect)$/) next
           n++
         }
       }
@@ -112,6 +123,7 @@ if [ "${1:-}" = "--self-test" ]; then
     '// c.String(http.StatusBadRequest, "commented out") is banned too.' \
     'c.String(http.StatusNotFound, "unknown app")' \
     'c.String(http.StatusOK, "OK")' \
+    'c.String(http.StatusMultipleChoices, "choices")' \
     '// c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()}) is banned too.' \
     'c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})' \
     'c.JSON(http.StatusOK, map[string]any{"error": "a success body is not an error body"})' \
@@ -129,7 +141,7 @@ if [ "${1:-}" = "--self-test" ]; then
   [ "$got" = 2 ] || self_fail "expected 2 counted lines (comments excluded), got $got"
 
   got=$(count_plain_text_error_bodies "$scratch")
-  [ "$got" = 1 ] || self_fail "expected 1 plain-text error body (comment and 2xx excluded), got $got"
+  [ "$got" = 1 ] || self_fail "expected 1 plain-text error body (comment and 2xx/3xx excluded), got $got"
 
   got=$(count_json_error_bodies "$scratch")
   [ "$got" = 1 ] || self_fail "expected 1 JSON error body (comment and 2xx excluded), got $got"
@@ -172,7 +184,13 @@ BASELINE_PLAINTEXT_ERRORS=0
 # a 2xx c.JSON and the JSON-RPC error objects under domain/mcp are not error
 # bodies. dev-rule-go-apperror-only.
 BASELINE_JSON_ERRORS=0
-
+# Raw `errors.As(` call sites in tree (tests included), excluding the published
+# SDK module. Pinned at 0 (2026-11-16, #853): every site in the server module is
+# now `errors.AsType[T]`, which the compiler type-checks and which cannot be
+# handed a nil target. The five `pkg/sdk` sites stay on `errors.As`: that module
+# declares `go 1.25.0` for its external consumers, and the standard library
+# gates AsType at 1.26. A new non-SDK `errors.As` is a regression.
+BASELINE_GO_ERRORS_AS=0
 auth_guards=$(count_matches -rn "if user == nil" --include="*.go" --exclude="*_test.go" domain/)
 setters=$(count_matches -rn "func (s \*Service) Set[A-Z]\|func (h \*Handler) Set[A-Z]" --include="*.go" --exclude="*_test.go" domain/)
 apperror_style_a=$(count_matches -rn "\.WithMessage\|\.WithInternal" --include="*.go" --exclude="*_test.go" domain/ pkg/)
@@ -181,6 +199,7 @@ response_types=$(count_matches -rn "type APIResponse\|type PaginatedResponse\|ty
 echo_http_errors=$(count_raw_echo_httperrors .)
 plaintext_errors=$(count_plain_text_error_bodies .)
 json_errors=$(count_json_error_bodies .)
+errors_as=$(count_matches -rn "errors\.As(" --include="*.go" --exclude-dir=sdk .)
 
 fail=0
 
@@ -201,5 +220,54 @@ check "response type dupes"    "$response_types"   "$BASELINE_RESPONSE_TYPES"
 check "raw echo.NewHTTPError"  "$echo_http_errors" "$BASELINE_ECHO_HTTPERROR"
 check "plain-text error body"  "$plaintext_errors" "$BASELINE_PLAINTEXT_ERRORS"
 check "JSON error body"        "$json_errors"      "$BASELINE_JSON_ERRORS"
+check "errors.As call sites"    "$errors_as"        "$BASELINE_GO_ERRORS_AS"
+
+# --lint-counts pins the *total* golangci-lint finding count per linter, which
+# is what #853 pays down and what must not creep back afterwards. The grep
+# counters above are cheap enough for a pre-commit hook; a full golangci-lint
+# pass is not, so CI runs this mode explicitly (server.yml, "Lint finding-count
+# ratchet"). The lint step itself uses --new-from-rev, which only sees findings
+# the change introduces — this is what stops the *baseline* from rising again.
+# Lower these as the debt is paid; never raise them, a change that needs a
+# higher number is the regression.
+if [ "${1:-}" = "--lint-counts" ]; then
+  BASELINE_LINT_ERRCHECK=0      # 61 after #843, 0 since #853 (test-file sweep)
+  BASELINE_LINT_STATICCHECK=99  # untouched by #853; dominated by QF1001 + API naming
+  BASELINE_LINT_UNUSED=0        # 16 after #843, 0 since #853 (dead helpers)
+
+  if ! command -v golangci-lint >/dev/null 2>&1; then
+    echo "RATCHET ERROR: golangci-lint is not on PATH, cannot count findings" >&2
+    exit 2
+  fi
+
+  lint_json=$(mktemp)
+  trap 'rm -f "$lint_json"' EXIT
+  lint_status=0
+  golangci-lint run --allow-parallel-runners \
+    --output.json.path="$lint_json" --output.text.path=/dev/null ./... >/dev/null 2>&1 \
+    || lint_status=$?
+  # golangci-lint exits 1 when it *reports* issues — the normal case here.
+  # Anything above that is a configuration or tooling failure, and a count from
+  # a run that never inspected the tree would read as clean, exactly the trap
+  # grep_matches guards above.
+  if [ "$lint_status" -gt 1 ]; then
+    echo "RATCHET ERROR: golangci-lint exited $lint_status, cannot count findings" >&2
+    exit 2
+  fi
+
+  lint_count() {
+    local out status=0
+    out=$(grep -o "\"FromLinter\":\"$1\"" "$lint_json") || status=$?
+    if [ "$status" -gt 1 ]; then
+      echo "RATCHET ERROR: cannot read golangci-lint output for $1" >&2
+      exit 2
+    fi
+    printf '%s\n' "$out" | awk 'NF { n++ } END { print n + 0 }'
+  }
+
+  check "golangci errcheck"    "$(lint_count errcheck)"    "$BASELINE_LINT_ERRCHECK"
+  check "golangci staticcheck" "$(lint_count staticcheck)" "$BASELINE_LINT_STATICCHECK"
+  check "golangci unused"      "$(lint_count unused)"      "$BASELINE_LINT_UNUSED"
+fi
 
 exit "$fail"

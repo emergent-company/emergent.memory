@@ -15,7 +15,6 @@ import (
 func rstr(s string) *string        { return &s }
 func rint(i int) *int              { return &i }
 func rf32(f float32) *float32      { return &f }
-func rtime(t time.Time) *time.Time { return &t }
 func ruuid(u uuid.UUID) *uuid.UUID { return &u }
 
 func TestResponseOptsFromArgs(t *testing.T) {

@@ -236,8 +236,8 @@ func mcpOAuthError(err error) error {
 // registration-unavailable case. Either way it is one actionable sentence with
 // no internal identifiers.
 func oauthClientRequiredMessage(err error) string {
-	var rej *oauthRegistrationRejected
-	if errors.As(err, &rej) && rej.Status != 0 {
+	rej, ok := errors.AsType[*oauthRegistrationRejected](err)
+	if ok && rej.Status != 0 {
 		return fmt.Sprintf("the authorization server rejected dynamic client registration (HTTP %d); this server needs a pre-registered OAuth client — configure one for this server and retry", rej.Status)
 	}
 	return "this authorization server will not issue a client — dynamic client registration is unavailable or was rejected; configure a pre-registered OAuth client for this server and retry"

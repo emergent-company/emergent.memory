@@ -97,8 +97,8 @@ func PublicMessage(err error) string {
 	if err == nil {
 		return ""
 	}
-	var appErr *Error
-	if errors.As(err, &appErr) && appErr.Message != "" {
+	appErr, ok := errors.AsType[*Error](err)
+	if ok && appErr.Message != "" {
 		return appErr.Message
 	}
 	return ErrInternal.Message

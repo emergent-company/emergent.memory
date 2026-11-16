@@ -185,7 +185,7 @@ func (s *ChunkEmbeddingWorkerTestSuite) TestWorker_ProcessesJob() {
 	// Stop worker
 	stopCtx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
 	defer cancel()
-	worker.Stop(stopCtx)
+	s.Require().NoError(worker.Stop(stopCtx))
 
 	// Check job status
 	completedJob, err := s.jobsService.GetJob(s.ctx, job.ID)
@@ -240,7 +240,7 @@ func (s *ChunkEmbeddingWorkerTestSuite) TestWorker_ProcessesMultipleJobs() {
 	// Stop worker
 	stopCtx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
 	defer cancel()
-	worker.Stop(stopCtx)
+	s.Require().NoError(worker.Stop(stopCtx))
 
 	// Verify all embeddings were generated
 	s.Equal(int64(5), mockEmbeds.CallCount())
@@ -288,7 +288,7 @@ func (s *ChunkEmbeddingWorkerTestSuite) TestWorker_HandlesEmbeddingFailure() {
 	// Stop worker
 	stopCtx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
 	defer cancel()
-	worker.Stop(stopCtx)
+	s.Require().NoError(worker.Stop(stopCtx))
 
 	// Verify job was requeued (back to pending with error)
 	updatedJob, err := s.jobsService.GetJob(s.ctx, job.ID)
@@ -380,7 +380,7 @@ func (s *ChunkEmbeddingWorkerTestSuite) TestWorker_ProcessesHighPriorityFirst() 
 	// Stop worker
 	stopCtx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
 	defer cancel()
-	worker.Stop(stopCtx)
+	s.Require().NoError(worker.Stop(stopCtx))
 
 	// Verify both jobs completed - the priority ordering is verified by
 	// checking that dequeue fetches by priority DESC in the jobs service

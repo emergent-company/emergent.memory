@@ -682,8 +682,8 @@ func (r *Repository) ResolveAction(ctx context.Context, userID, notificationID, 
 	// A conflict or an absent row is the client's answer, not a server fault:
 	// the handler turns it into a 409/404. Only an internal failure is worth an
 	// error log, so an expected refusal does not look like an outage in the log.
-	var appErr *apperror.Error
-	if errors.As(err, &appErr) && appErr.HTTPStatus >= http.StatusInternalServerError {
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	if ok && appErr.HTTPStatus >= http.StatusInternalServerError {
 		r.log.Error("failed to resolve notification action", logger.Error(err))
 	}
 	return err

@@ -313,3 +313,27 @@ func TestUsageSessionsBackendFailure(t *testing.T) {
 		t.Errorf("error state missing:\n%s", body)
 	}
 }
+
+// TestUsageSessionsBackToUsageIsPrimary pins #857: the run log's one header
+// action renders with the system's primary (brand-yellow) button variant
+// instead of the steel secondary link it used to be. The feedback overlay
+// anchors on data-testid, so that selector must survive the variant change.
+func TestUsageSessionsBackToUsageIsPrimary(t *testing.T) {
+	f := &fakeMemory{usageRuns: sampleUsageRuns(), usageByAgent: sampleUsageByAgent()}
+	_, e := newUsageSessionsEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/usage/sessions", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+
+	tag := tagAround(t, rec.Body.String(), `data-testid="sessions-back-to-usage"`)
+	for _, want := range []string{"btn btn-primary btn-sm", `href="/usage"`} {
+		if !strings.Contains(tag, want) {
+			t.Errorf("back-to-usage tag missing %q: %s", want, tag)
+		}
+	}
+	if strings.Contains(tag, "btn-secondary") {
+		t.Errorf("back-to-usage must not render the steel secondary variant: %s", tag)
+	}
+}
