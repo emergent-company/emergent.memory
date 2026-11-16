@@ -720,11 +720,13 @@ templ railEntryUnhandled(kind railEntryKind) {
 // its trigger unwired and gets no roving focus).
 templ chatAgentFilter(agents []AgentDefinitionSummary) {
 	// The wrapper exists because ui.Dropdown renders daisyUI's .dropdown root,
-	// which is display:inline-block: the trigger's w-full would resolve against
-	// the root's shrink-to-fit width, leaving the control narrower than the
-	// sibling type <select class="w-full">. A block wrapper gives w-full the
-	// rail's content width to measure against.
-	<div class="w-full">
+	// which is display:inline-block and shrinks to its content — the trigger's
+	// w-full then measures that shrink-to-fit width, leaving the control at
+	// 125 px against the sibling type <select class="w-full">'s 247 px. A plain
+	// block wrapper is not enough (the inline-block child still shrink-wraps);
+	// grid blockifies the root into a stretched grid item, so the trigger spans
+	// the rail exactly like the native select beside it.
+	<div class="grid w-full">
 		@ui.Dropdown(ui.DropdownBottom, templ.Attributes{"data-testid": "chat-agent-filter"}) {
 			<div
 				tabindex="0"
