@@ -1,5 +1,9 @@
 node_modules/
 dist/
+# brand/dist/ IS committed: the artefacts are generated but checked in, so the
+# Swift/Go/mkdocs consumers need no Python to use them. brand:check fails when
+# they drift from the token source.
+!brand/dist/
 .next/
 
 # MkDocs build output (root-level site/ only, not docs/site/ which is our source)
