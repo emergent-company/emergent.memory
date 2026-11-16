@@ -289,6 +289,17 @@ func (r *AgentRun) ToDTO() *AgentRunDTO {
 	}
 	if r.Agent != nil {
 		dto.AgentName = r.Agent.Name
+		// A run created through a runtime agent (work/board dispatch, scheduler,
+		// reaction) leaves the column NULL: the definition it executed under lives
+		// on kb.agents.agent_definition_id, which the loaders already join in as
+		// the Agent relation (see ListBoardRunsByProjectID). Report it so callers
+		// can attribute a run to the agent definition the user picked, instead of
+		// guessing that two independent id spaces are the same one. The column
+		// stays authoritative when set — a definition switch on the runtime agent
+		// must not rewrite the history of runs that already ran.
+		if dto.AgentDefinitionID == nil && r.Agent.AgentDefinitionID != nil && *r.Agent.AgentDefinitionID != "" {
+			dto.AgentDefinitionID = r.Agent.AgentDefinitionID
+		}
 	}
 	if r.Model != nil {
 		dto.Model = *r.Model

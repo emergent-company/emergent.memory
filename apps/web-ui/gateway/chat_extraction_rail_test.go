@@ -19,7 +19,8 @@ func TestChatRailRendersExtractionOrigin(t *testing.T) {
 		{
 			ID: "board-run-1", RunID: "board-run-1", Origin: "board",
 			Title: "ACME-42", AgentName: "Kanban agent",
-			Status: "completed", StartedAt: "2026-11-03T10:00:00Z",
+			AgentDefinitionID: "ad-kanban",
+			Status:            "completed", StartedAt: "2026-11-03T10:00:00Z",
 		},
 		{
 			ID: "job-1", RunID: "run-1", Origin: "extraction",
@@ -39,6 +40,7 @@ func TestChatRailRendersExtractionOrigin(t *testing.T) {
 	for _, want := range []string{
 		`data-origin="board"`,
 		`data-run-id="board-run-1"`,
+		`data-agent="ad-kanban"`,
 		`data-origin="extraction"`,
 		`data-action="open-run"`,
 		`data-run-id="run-1"`,
@@ -48,6 +50,13 @@ func TestChatRailRendersExtractionOrigin(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Errorf("extraction rail missing %q\n%s", want, html)
 		}
+	}
+	// Every row kind carries data-agent, so the agent filter is one pure DOM pass
+	// over the whole rail rather than a conversation-only special case. Rows that
+	// cannot be attributed (extraction jobs have no agent definition) carry ""
+	// and are therefore visible only under "All agents".
+	if got, want := strings.Count(html, `data-agent="`), len(rows); got != want {
+		t.Errorf("rows carrying data-agent = %d, want %d (one per row)\n%s", got, want, html)
 	}
 	if strings.Contains(html, `data-run-id="job-2"`) {
 		t.Error("a run-less extraction job must link to its history page, not open a run")
