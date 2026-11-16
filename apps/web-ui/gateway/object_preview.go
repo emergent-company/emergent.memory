@@ -81,15 +81,19 @@ func (s *Server) renderObjectPreview(c echo.Context, id, relID string, boardSurf
 	}
 
 	// ?actions=board renders the board's work-item surface into the preview's
-	// action slot — the status-gated actions followed by the merged comments
-	// thread — so the drawer is a usable surface, not just a summary. Chat
-	// previews carry no actions param and stay read-only. A failed work-item
-	// fetch leaves the slot empty — intentionally not captured, so a missing
-	// work item never degrades the object summary.
+	// action slot — the status-gated actions followed by the declared
+	// deliverables and the merged comments thread — so the drawer is a usable
+	// surface, not just a summary. Chat previews carry no actions param and stay
+	// read-only. A failed work-item fetch leaves the slot empty — intentionally
+	// not captured, so a missing work item never degrades the object summary.
+	//
+	// The request's board view state (object-preview.js forwards it from the
+	// board that opened the drawer) rides on the action routes, because their
+	// responses re-render the board and would otherwise widen a filtered board.
 	var actions templ.Component
 	if boardSurface {
 		if detail, werr := s.memory.GetWorkItem(ctx, id); werr == nil && detail != nil && detail.Item != nil {
-			actions = boardPreviewBoardSlot(detail.Item, s.boardStatusMap(ctx), detail.Comments, detail.Feedback)
+			actions = workPreviewBoardSlot(detail.Item, s.boardStatusMap(ctx), detail.Comments, detail.Feedback, s.resolveBoardDeliverables(ctx, detail.Runs), boardViewQuery(c.QueryParams()))
 		}
 	}
 
