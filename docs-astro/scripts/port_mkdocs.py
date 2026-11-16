@@ -233,7 +233,13 @@ def resolve_target(target: str, src_rel: str, routes, stats) -> str | None:
 def rewrite_links(line: str, src_rel: str, routes, stats):
     """Point `*.md` links at the Starlight route of the target page."""
     def fix(m):
-        route = resolve_target(m.group("target"), src_rel, routes, stats)
+        target = m.group("target")
+        # MD_LINK keys on the `.md` suffix, so an external link to somebody
+        # else's `CHANGELOG.md` matches too. It is not a page here and has no
+        # route: leave it alone rather than reporting it as a broken target.
+        if "://" in target:
+            return m.group(0)
+        route = resolve_target(target, src_rel, routes, stats)
         if route is None:
             return m.group(0)
         return f"]({route}{m.group('frag') or ''})"

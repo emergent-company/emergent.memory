@@ -281,25 +281,34 @@ image path both sites share:
    selector, or a measured `{x, y, width, height}` in CSS pixels) and `pad`, so
    the figure is the subject the reader is looking at — the Zitadel card, the
    sign-in card — rather than the whole browser window, and a re-capture lands
-   ready to publish. `scripts/redact-tutorial-shots.mjs` (an `OPS` table of crops
-   and colour-sampled masks) was the ingest for the hand-taken originals; it
-   stays only for that legacy path and deliberately `SKIP`s the files the runner
-   produces.
+   ready to publish.
 
-2. `scripts/port-images.mjs` — caps each picture at **2400 px wide** (a 2× zoom
+2. **Redact** — `scripts/redact-tutorial-shots.mjs`. A scripted capture is not a
+   clean capture: the installer's own screens name the Railway account the
+   capture host is signed into (`Railway connected as <address>.`, the workspace
+   picker, the install ID), so the same figures that a human once had to blur
+   still need it afterwards. The mask boxes are in **native capture pixels** and
+   each entry declares the width it was measured at, so a capture at another
+   scale aborts instead of blanking a patch of empty panel; every capture must be
+   named in `OPS` (mask) or `CLEAN` (verified to carry nothing), so a renamed or
+   newly added figure cannot be published unclassified. The fill is the modal
+   colour of a clear strip of the same surface — no invented text — and each mask
+   is re-read from the written file and asserted uniform before the run counts.
+
+3. `scripts/port-images.mjs` — caps each picture at **2400 px wide** (a 2× zoom
    ceiling over a 4× capture's on-screen width, so zooming never has to
    downsample first), writes a WebP next to the PNG for MkDocs plus a copy under
    `public/`, and records `width`/`height` (real pixels) with `cssWidth`/
    `cssHeight` (pixels ÷ the `.shots.json` ratio) in `manifest.json`.
 
-3. `scripts/port_mkdocs.py` — reads that manifest and turns each
+4. `scripts/port_mkdocs.py` — reads that manifest and turns each
    `![alt](path)` into `<Screenshot src alt width height />` sized to the **CSS**
    size, so the browser reserves the right box and the page does not jump as the
    images arrive. A picture missing from the manifest is reported as
    `missing_shots` rather than emitted with no dimensions.
 
 Regenerating the set after a new app version is therefore: capture, copy,
-`npm run shots:port` (steps 2 and 3 in one), `npm run build`.
+`npm run shots:port` (redact, port and convert in one), `npm run build`.
 
 ```bash
 # on the capture host
@@ -309,6 +318,12 @@ node scripts/shots.mjs scripts/shots/installer.plan.json \
 # where the docs are built
 cp captures/<run>/*.png captures/<run>/.shots.json docs/site/assets/tutorials/railway/
 cd docs-astro && npm run shots:port && npm run build
+
+# shots:port is three steps, and the order matters — redaction happens on the
+# capture, before anything is resized:
+#   node scripts/redact-tutorial-shots.mjs   # masks, in native pixels
+#   node scripts/port-images.mjs             # → WebP + manifest
+#   python3 scripts/port_mkdocs.py           # → MDX with width/height
 ```
 
 `.shots.json` is merged rather than replaced, so re-shooting two figures against
@@ -361,10 +376,10 @@ it is stored. The two cannot quietly disagree: the Tutorial names this plan in
 looks like: a page describing v4's login beside pictures of v1's.
 
 ```bash
-# Run from the infra-repository checkout that owns docs/tutorials-graph.md.
-EXP=scripts/tutorials-export.py
-python3 $EXP --md    deploy-to-railway --out docs/site/tutorials/deploy-to-railway.md
-python3 $EXP --check --captures <path-to-docs-astro-checkout>
+# `tutorials-export.py` ships with the internal rig repo, next to the graph pack.
+EXP=<rig>/scripts/tutorials-export.py
+python3 "$EXP" --md    deploy-to-railway --out docs/site/tutorials/deploy-to-railway.md
+python3 "$EXP" --check --captures <product-checkout>
 ```
 
 `--md` reproduces the published page **byte for byte**, so a diff is the review.

@@ -1,169 +1,189 @@
 #!/usr/bin/env node
 /**
  * redact-tutorial-shots — strip personal data out of the Railway walkthrough
- * screenshots before they can reach a public docs site.
+ * figures before they can reach a public docs site.
  *
- * The originals in the infra repository's `docs/guides/railway-install/assets/`
- * were captured from a real install, so they carry the installer's account
- * email (and, on the OAuth consent page, the account avatar). Docs publish to a
- * public site, so the images that reach `docs/site/assets/` are redacted here.
+ * The captures come from a real install, so they carry the installer's Railway
+ * account address and workspace name. Docs publish to a public site, so the
+ * pictures are redacted here, then `port-images.mjs` derives the WebP both sites
+ * serve. Run from `docs-astro/`:
  *
- * Redaction is deliberately dumb: cover the region with the colour sampled from
- * the same UI surface, or crop the region away entirely. No fake text is drawn,
- * so nothing anyone reads on the page is invented.
+ *   node scripts/shots.mjs            # (re)capture the 4x PNGs
+ *   node scripts/redact-tutorial-shots.mjs
+ *   node scripts/port-images.mjs
  *
- * Run from `docs-astro/`:  node scripts/redact-tutorial-shots.mjs <originals-dir>
- * Then:                    node scripts/port-images.mjs
+ * Redaction is deliberately dumb: cover the region with the background colour
+ * measured from a clear strip of the same surface. No fake text is drawn, so
+ * nothing anyone reads in a figure is invented — a blanked value reads as a
+ * blanked value.
+ *
+ * Coordinates are NATIVE capture pixels (the PNGs are 4x device pixels), and
+ * each entry declares the width it was measured at. A recapture at a different
+ * scale would move every edge, so a width mismatch aborts rather than silently
+ * masking empty panel next to the value — the failure mode this script had when
+ * its masks were authored in the 1600px render space while the files were 4x.
  */
 import sharp from 'sharp';
-import { mkdir, readdir } from 'node:fs/promises';
 import path from 'node:path';
-import { trimDeadSpace } from './lib/frame.mjs';
-
-const SRC = process.argv[2];
-if (!SRC) {
-  console.error('usage: node scripts/redact-tutorial-shots.mjs <originals-dir>');
-  process.exit(2);
-}
+import { readdir } from 'node:fs/promises';
 
 const REPO = path.resolve(import.meta.dirname, '../..');
-const OUT = path.join(REPO, 'docs/site/assets/tutorials/railway');
-const WIDTH = 1600;
+const DIR = process.argv[2] ?? path.join(REPO, 'docs/site/assets/tutorials/railway');
 
-/**
- * Per-image operations in 1600px-wide coordinates. `pad` widens the dead-space
- * trim for one picture (default 32px). `crop` runs first, so a
- * mask's `box` and `sample` are in the cropped image's coordinate space; the
- * fill is sampled from `sample`, a point on the same UI surface clear of text.
- */
+/** The green "Railway connected as <email>." pill, identical on every progress screen. */
+const BANNER = {
+  width: 3008,
+  // "as <email>." — leaving "Railway connected" intact so the banner still reads
+  // as a sentence instead of a truncated fragment.
+  box: { left: 686, top: 462, width: 490, height: 66 },
+  // Pill surface, right of the sentence and clear of every glyph.
+  from: { left: 1250, top: 462, width: 1400, height: 66 },
+};
+
 const OPS = {
-  // The consent card is the subject. Cropping above it removes both the
-  // account avatar and the "Signed in as <email>" line in one step, and cropping
-  // below it drops Railway's marketing footer.
-  '02-authorize-railway.png': { crop: { left: 0, top: 238, width: 1600, height: 574 } },
-  // Cropping above the form removes the "Railway connected as <email>" banner
-  // in one step, and Railway's marketing footer goes with the bottom crop.
   '03-workspace-admin-email.png': {
-    // The banner (which named the installer's account) goes with the crop; the
-    // two form fields keep their borders but lose their values.
-    crop: { left: 0, top: 93, width: 1600, height: 734 },
+    width: 2828,
     masks: [
-      { box: { left: 597, top: 32, width: 412, height: 21 }, sample: { x: 900, y: 40 } }, // workspace value
-      { box: { left: 597, top: 87, width: 412, height: 20 }, sample: { x: 900, y: 97 } }, // admin email value
+      // The workspace the installer picked ("<name>'s Projects"). The admin email
+      // beside it is already the neutral admin@example.com, so it stays.
+      {
+        box: { left: 110, top: 238, width: 640, height: 64 },
+        from: { left: 800, top: 238, width: 1200, height: 64 },
+      },
     ],
   },
-  // The sign-in screen is one small card in a large empty field. Cropped tight
-  // it is ~310px wide; the page caps how far a screenshot may be scaled up, so
-  // it renders near its own size rather than as a speck in a black panel.
-  '08-memory-signin.png': { pad: 40 },
-  // Every progress screen repeats the same green banner naming the installer's
-  // Railway account. The address is blanked everywhere it appears — with the
-  // leading "as", so the banner still reads as a sentence ("Railway connected")
-  // instead of a dangling fragment. The fill is the pill's own colour, sampled
-  // clear of the text.
-  '04-progress-project.png': {
-    masks: [{ box: { left: 670, top: 66, width: 80, height: 22 }, sample: { x: 900, y: 78 } }],
-  },
-  '05-progress-zitadel.png': {
-    masks: [{ box: { left: 670, top: 66, width: 80, height: 22 }, sample: { x: 900, y: 78 } }],
-  },
-  '06-progress-restart.png': {
-    masks: [{ box: { left: 670, top: 66, width: 80, height: 22 }, sample: { x: 900, y: 78 } }],
-  },
+  '04-progress-project.png': { width: BANNER.width, masks: [BANNER] },
+  '05-progress-zitadel.png': { width: BANNER.width, masks: [BANNER] },
+  '06-progress-restart.png': { width: BANNER.width, masks: [BANNER] },
   '07-install-complete.png': {
+    width: 3008,
     masks: [
-      { box: { left: 670, top: 66, width: 80, height: 22 }, sample: { x: 900, y: 78 } }, // banner email
-      { box: { left: 594, top: 234, width: 416, height: 32 }, sample: { x: 900, y: 250 } }, // admin email row
+      BANNER,
+      // The success panel's install identifier. Only the hex is covered — the
+      // "Install ID" label (ends x=335) stays, so the row still reads as a
+      // labelled value that is deliberately withheld, not as missing chrome.
+      {
+        box: { left: 344, top: 1944, width: 886, height: 44 },
+        from: { left: 1300, top: 1944, width: 1400, height: 44 },
+      },
     ],
-  },
-  // The password step shows the account as an avatar pill; only the address is
-  // blanked, so the pill still reads as "the account you just typed".
-  // Zitadel pads its pages with a huge empty field and pins a "powered by
-  // ZITADEL" strip to the bottom-left, which would hold the trim box open
-  // around the whole viewport. The strip is page furniture rather than part of
-  // the step, so it goes before the trim measures the form.
-  '09-zitadel-login.png': { crop: { left: 0, top: 0, width: 1600, height: 700 } },
-  '10-zitadel-password.png': {
-    crop: { left: 0, top: 0, width: 1600, height: 700 },
-    masks: [{ box: { left: 698, top: 223, width: 82, height: 19 }, sample: { x: 950, y: 230 } }],
-  },
-  '11-zitadel-2fa-skip.png': {
-    // Not published. The Polish original stays in the infra guide's `assets/`;
-    // Zitadel only offers this screen when the login policy allows second
-    // factors, and the current Zitadel v4 login could not be driven past its
-    // password change on dev, so there is no English capture to replace it
-    // with. The tutorial keeps the step as prose until there is one.
-  },
-  // Chrome's "Save login?" bubble sits over the top-right corner of the page and
-  // is browser chrome, not the product, so the frame is cropped to end before it.
-  '13-memory-projects.png': { crop: { left: 0, top: 0, width: 1320, height: 827 } },
-  '12-first-password-change.png': {
-    crop: { left: 0, top: 0, width: 1320, height: 780 },
-    masks: [{ box: { left: 676, top: 200, width: 248, height: 19 }, sample: { x: 900, y: 210 } }],
   },
 };
 
 /**
- * Trim a screenshot's dead space — the rule lives in `lib/frame.mjs` because
- * `shots.mjs` needs the same one for a live capture.
+ * Figures that carry no personal data, checked by eye against the current
+ * captures. Listing them is the point: a recaptured or renamed figure that is in
+ * neither table stops the run, so an unclassified picture cannot be published
+ * unredacted by omission.
  */
-
-/**
- * Files that are never produced from the infra guide's originals:
- *
- * - 09, 10, 12 are captured in English by `scripts/shots.mjs`, and a fresh dev
- *   capture carries no installer account, so there is nothing to redact and
- *   re-running this script must not put the Polish originals back.
- * - 11 has no English capture yet (see its entry above), so its Polish original
- *   must not be published either.
- */
-const SKIP = new Set([
+const CLEAN = new Set([
+  '01-choose-target.png',
+  '02-authorize-railway.png',
+  '08-memory-signin.png',
   '09-zitadel-login.png',
   '10-zitadel-password.png',
-  '11-zitadel-2fa-skip.png',
+  '11-2fa-setup.png',
   '12-first-password-change.png',
+  '13-memory-projects.png',
 ]);
 
-await mkdir(OUT, { recursive: true });
-const files = (await readdir(SRC)).filter((f) => f.endsWith('.png')).sort();
+/** The modal colour of a rect, and the share of its pixels that carry it. */
+async function modalColour(img, rect) {
+  const { data, info } = await img.extract(rect).raw().toBuffer({ resolveWithObject: true });
+  const counts = new Map();
+  for (let i = 0; i < data.length; i += info.channels) {
+    const key = (data[i] << 16) | (data[i + 1] << 8) | data[i + 2];
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const [key, n] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+  const total = data.length / info.channels;
+  return { r: (key >> 16) & 255, g: (key >> 8) & 255, b: key & 255, share: n / total };
+}
 
-for (const file of files) {
-  if (SKIP.has(file)) {
-    console.log(`${file.padEnd(34)} skipped — see scripts/shots/zitadel.plan.json`);
-    continue;
+/** Every pixel of a rect must equal the colour — the proof the mask landed. */
+async function assertUniform(img, rect, colour) {
+  const { data, info } = await img.extract(rect).raw().toBuffer({ resolveWithObject: true });
+  for (let i = 0; i < data.length; i += info.channels) {
+    if (data[i] !== colour.r || data[i + 1] !== colour.g || data[i + 2] !== colour.b) {
+      const px = (i / info.channels) % rect.width;
+      const row = Math.floor(i / info.channels / rect.width);
+      throw new Error(
+        `mask left an uncovered pixel at ${rect.left + px},${rect.top + row} ` +
+          `(found ${data[i]},${data[i + 1]},${data[i + 2]}, fill ${colour.r},${colour.g},${colour.b})`,
+      );
+    }
   }
-  const ops = OPS[file] ?? { masks: [] };
-  let img = sharp(path.join(SRC, file)).resize({ width: WIDTH, withoutEnlargement: true });
-  const { width, height } = await img.metadata().then((m) => ({
-    width: Math.min(m.width, WIDTH),
-    height: Math.round((m.height * Math.min(m.width, WIDTH)) / m.width),
-  }));
-  if (ops.crop) {
-    img = sharp(await img.toBuffer()).extract(ops.crop);
-    img = sharp(await img.toBuffer());
-  }
-  const composites = [];
-  for (const mask of ops.masks ?? []) {
-    const px = await sharp(await img.toBuffer())
-      .extract({ left: mask.sample.x, top: mask.sample.y, width: 1, height: 1 })
-      .raw()
-      .toBuffer();
-    const fill = { r: px[0], g: px[1], b: px[2], alpha: 1 };
-    composites.push({
-      input: {
-        create: { width: mask.box.width, height: mask.box.height, channels: 4, background: fill },
-      },
-      left: mask.box.left,
-      top: mask.box.top,
-    });
-  }
-  const rendered = await img.composite(composites).png({ compressionLevel: 9, palette: true }).toBuffer();
-  const trimmed = await trimDeadSpace(rendered, ops.pad);
-  const meta = await sharp(trimmed.buffer).metadata();
-  const { size } = await sharp(trimmed.buffer).toFile(path.join(OUT, file));
-  const n = (ops.masks ?? []).length + (ops.crop ? 1 : 0);
-  const trim = trimmed.cropped ? `  trimmed to ${Math.round(trimmed.share * 100)}%` : '';
-  console.log(
-    `${file.padEnd(34)} ${meta.width}x${meta.height}  ${n} redaction(s)${trim}  ${Math.round(size / 1024)}K`,
+}
+
+const pngs = (await readdir(DIR)).filter((f) => f.endsWith('.png')).sort();
+if (!pngs.length) {
+  // A fresh clone carries no captures (they are gitignored), and neither does a
+  // docs build that never ran the capture. Nothing to redact, and nothing to
+  // publish either.
+  console.log(`no PNG captures in ${path.relative(REPO, DIR)} — nothing to redact`);
+  process.exit(0);
+}
+const unknown = pngs.filter((f) => !OPS[f] && !CLEAN.has(f));
+if (unknown.length) {
+  throw new Error(
+    `unclassified figure(s): ${unknown.join(', ')}. Every capture must either ` +
+      'carry a mask op (personal data is on it) or be listed in CLEAN — add it to ' +
+      'the table that matches what the picture actually shows.',
   );
 }
+const files = pngs.filter((f) => OPS[f]);
+
+for (const file of files) {
+  const ops = OPS[file];
+  const src = path.join(DIR, file);
+  const { width } = await sharp(src).metadata();
+  if (width !== ops.width) {
+    throw new Error(
+      `${file} is ${width}px wide, but the masks were measured at ${ops.width}px. ` +
+        'Re-measure the boxes for this capture scale rather than masking the wrong place.',
+    );
+  }
+
+  const masks = [];
+  for (const mask of ops.masks) {
+    const fill = await modalColour(sharp(src), mask.from);
+    if (fill.share < 0.5) {
+      throw new Error(
+        `${file}: the sample strip ${JSON.stringify(mask.from)} is not one surface ` +
+          `(modal colour only ${(fill.share * 100).toFixed(0)}%) — pick a clear strip`,
+      );
+    }
+    masks.push({ ...mask, fill });
+  }
+
+  const out = await sharp(src)
+    .composite(
+      masks.map(({ box, fill }) => ({
+        input: {
+          create: {
+            ...box,
+            channels: 4,
+            background: { r: fill.r, g: fill.g, b: fill.b, alpha: 1 },
+          },
+        },
+        left: box.left,
+        top: box.top,
+      })),
+    )
+    .png({ compressionLevel: 9 })
+    .toBuffer();
+
+  // Read the result back, not the source: this is the file the site publishes.
+  // A sharp instance is single-use, so each check needs its own.
+  for (const { box, fill } of masks) await assertUniform(sharp(out), box, fill);
+
+  await sharp(out).toFile(src);
+  const covered = masks.map((m) => `${m.box.left}×${m.box.top}+${m.box.width}+${m.box.height}`);
+  console.log(`${file.padEnd(28)} ${masks.length} mask(s)  ${covered.join(' ')}`);
+}
+
+console.log(
+  `\nredacted ${files.length} of ${pngs.length} figure(s) in ${path.relative(REPO, DIR)}` +
+    ` (${pngs.length - files.length} verified clean)`,
+);
+console.log('next: node scripts/port-images.mjs');
