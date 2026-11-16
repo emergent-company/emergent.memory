@@ -200,7 +200,9 @@ func (d *SourceEventDispatcher) handlePullRequest(ctx context.Context, v *Verifi
 			if link != nil && link.State == "merged" && link.ClosesIssue {
 				token, terr := d.mintToken(ctx, v.App, p.Installation.ID, repoName)
 				if terr == nil {
-					_ = d.newClient(d.apiBaseURL, token).CloseIssue(ctx, repoName, link.IssueNumber)
+					if cerr := d.newClient(d.apiBaseURL, token).CloseIssue(ctx, repoName, link.IssueNumber); cerr != nil && d.log != nil {
+						d.log.Warn("failed to close merged issue", "issue", link.IssueNumber, "repo", repoName, "error", cerr)
+					}
 				}
 			}
 			if handled, err := d.processWorkflowEvent(ctx, src, nil, &githubapp.PullRequestState{
@@ -504,10 +506,10 @@ func (d *SourceEventDispatcher) ensureIssuePRLink(ctx context.Context, src *Sour
 	issueProps["pr_url"] = prURL
 	issueProps["pr_branch"] = branch
 	issueProps["pr_head_sha"] = headSHA
-	issueProps["status"] = issueStatus
 	if issue.Status != nil && (*issue.Status == "done" || *issue.Status == "cancelled") && issueStatus == "review" {
 		issueStatus = *issue.Status
 	}
+	issueProps["status"] = issueStatus
 	issueKey := fmt.Sprintf("github:%s:%s#%d", issueSourceID, repoName, issueNumber)
 	if _, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
 		Type: "GitHubIssue", Key: &issueKey, Status: &issueStatus, Properties: issueProps,
