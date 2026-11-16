@@ -229,7 +229,7 @@ type boardStreamState struct {
 // columns, the header only when the count changed, and the health readout only
 // when the set of unhealthy agents changed.
 func (st *boardStreamState) push() error {
-	items, itemsErr := st.s.memory.ListWorkItems(st.ctx, "", "", boardItemLimit)
+	items, itemsErr := st.s.memory.ListWorkItems(st.ctx, "", "", boardItemLimit, false)
 	errMsg := ""
 	if itemsErr != nil {
 		captureError(itemsErr)

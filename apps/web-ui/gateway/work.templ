@@ -150,7 +150,7 @@ templ workTypeBlock(m workMatrix, data workData) {
 		</header>
 		@workMatrixView(m, data)
 		<div class="md:hidden">
-			@workSimpleLanes(m, workFilterTypes(data))
+			@workSimpleLanes(m, data)
 		</div>
 	</section>
 }
@@ -160,7 +160,7 @@ templ workMatrixView(m workMatrix, data workData) {
 	{{ cols := m.Columns }}
 	{{ template := "grid gap-px" }}
 	<div class="hidden overflow-auto rounded-box border border-base-content/10 md:block">
-		<div class={ template } style={ "grid-template-columns: 11rem repeat(" + strconv.Itoa(len(cols)) + ", minmax(10rem, 1fr))" }>
+		<div class={ template } style={ "grid-template-columns: 11rem repeat(" + strconv.Itoa(len(cols)) + ", minmax(12rem, 1fr))" }>
 			<div class="sticky left-0 z-10 bg-base-200 px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted">Execution</div>
 			for _, col := range cols {
 				<div class="flex items-center gap-1.5 bg-base-200 px-3 py-2">
@@ -178,7 +178,7 @@ templ workMatrixView(m workMatrix, data workData) {
 				</summary>
 				for _, row := range g.Rows {
 					if row.Count > 0 || row.Key == "working" || row.Key == "blocked" || row.Key == "review" {
-						<div class={ template } style={ "grid-template-columns: 11rem repeat(" + strconv.Itoa(len(cols)) + ", minmax(10rem, 1fr))" }>
+						<div class={ template } style={ "grid-template-columns: 11rem repeat(" + strconv.Itoa(len(cols)) + ", minmax(12rem, 1fr))" }>
 							<div class="sticky left-0 z-10 flex items-center gap-1.5 bg-base-100 px-3 py-2">
 								<span class="text-[11px] font-medium text-muted">{ row.Label }</span>
 								<span class="font-mono text-[10px] text-muted-faint">{ strconv.Itoa(row.Count) }</span>
@@ -186,7 +186,7 @@ templ workMatrixView(m workMatrix, data workData) {
 							for _, col := range cols {
 								<div class="memory-board__lane min-h-12 bg-base-100 px-2 py-2 align-top" data-board-column={ col.Status }>
 									for _, it := range row.Cells[col.Status] {
-										@workCard(it, workFilterTypes(data))
+										@workCard(it, data)
 									}
 								</div>
 							}
@@ -200,16 +200,16 @@ templ workMatrixView(m workMatrix, data workData) {
 
 // workSimpleLanes is the narrow-screen fallback: status lanes only, with the
 // schema status name verbatim.
-templ workSimpleLanes(m workMatrix, filterTypes []string) {
+templ workSimpleLanes(m workMatrix, data workData) {
 	<div class="grid grid-flow-col auto-cols-[minmax(14rem,1fr)] gap-3 overflow-x-auto pb-3">
 		for _, col := range m.Columns {
-			@workLaneView(col, workColumnItems(m, col.Status), filterTypes)
+			@workLaneView(col, workColumnItems(m, col.Status), data)
 		}
 	</div>
 }
 
 // workLaneView is the mobile status lane: raw status name + colored dot.
-templ workLaneView(col workColumn, items []WorkItem, filterTypes []string) {
+templ workLaneView(col workColumn, items []WorkItem, data workData) {
 	<section class="memory-board__lane flex min-w-0 flex-col rounded-box border border-base-content/10 bg-base-200" data-board-column={ col.Status } aria-label={ col.Label }>
 		<header class="flex items-center gap-2 border-base-content/10 border-b px-3 py-2.5">
 			<span class={ "size-2 shrink-0 rounded-full " + workStatusDotClass(col.Status) } aria-hidden="true"></span>
@@ -218,7 +218,7 @@ templ workLaneView(col workColumn, items []WorkItem, filterTypes []string) {
 		</header>
 		<div class="flex min-h-12 grow flex-col gap-2 p-2">
 			for _, it := range items {
-				@workCard(it, filterTypes)
+				@workCard(it, data)
 			}
 			if len(items) == 0 {
 				<div class="grid place-items-center rounded-field border border-dashed border-base-content/10 py-6 text-[11px] text-muted-faint">Empty</div>
@@ -227,12 +227,16 @@ templ workLaneView(col workColumn, items []WorkItem, filterTypes []string) {
 	</section>
 }
 
-// workCard is the matrix card with execution, attention, and person chips.
-templ workCard(it WorkItem, filterTypes []string) {
+// workCard is the matrix card: the shared object header (type tile, type · ref,
+// name, excerpt — the same identity the objects page renders), then the
+// execution, attention and person chips.
+templ workCard(it WorkItem, data workData) {
 	{{ runAgent := ""
 	if it.IsWorking {
 		runAgent = it.LatestRunAgentName
-	} }}
+	}
+	filterTypes := workFilterTypes(data)
+	tui := typeUIOf(data.TypeUI, it.Type) }}
 	<div
 		class={ "mb-1.5 rounded-field border border-l-4 border-base-content/10 bg-base-100 p-2 shadow-sm " + workStatusAccentClass(it.Status) }
 		data-testid={ "work-card-" + it.CanonicalID }
@@ -245,8 +249,18 @@ templ workCard(it WorkItem, filterTypes []string) {
 		tabindex="0"
 		aria-haspopup="dialog"
 	>
-		<div class="flex items-center gap-1.5">
-			<span class="min-w-0 truncate text-xs font-medium">{ it.Key }</span>
+		<div class="flex min-w-0 items-start justify-between gap-1.5">
+			<div class="flex min-w-0 flex-1">
+				@objectHeader(objectHeaderProps{
+					Variant: objectHeaderRow,
+					Type:    it.Type,
+					Icon:    tui.Icon,
+					Color:   tui.Color,
+					Ref:     objectDisplayRef(it.Ref, it.CanonicalID),
+					Label:   workItemLabel(it),
+					Excerpt: objectExcerpt(it.Properties),
+				})
+			</div>
 			if it.Blocked {
 				@ui.Badge(ui.BadgeProps{Label: "blocked", Variant: ui.BadgeError, Size: ui.BadgeSizeXS})
 			}
