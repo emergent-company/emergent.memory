@@ -305,25 +305,33 @@ A plan is one browser session and an ordered list of steps (`goto`, `type`,
 `click`, `waitFor`, `expect`, `shot`), because a tutorial is one path through
 the UI.
 
-**The page is generated, and so is the single-step plan.** Both live in the
-`tutorials` pack of the Memory graph (infra repo: `docs/tutorials-graph.md`), so
-the prose a reader follows and the actions the runner performs are one entity and
-cannot drift — the retracted draft of this tutorial is what drift looks like: a
-page describing v4's login beside pictures of v1's.
+**The page is generated from the graph; the plan is a script it links to.** The
+page — steps, prose and the figures each step shows — lives in the `tutorials`
+pack of the Memory graph (infra repo: `docs/tutorials-graph.md`). The plan stays
+here, hand-authored, because a selector cannot be run, diffed or debugged where
+it is stored. The two cannot quietly disagree: the Tutorial names this plan in
+`capture_plan`, and a check compares the figures on the page with the plan's
+`shot` entries, in order. The retracted draft of this tutorial is what drift
+looks like: a page describing v4's login beside pictures of v1's.
 
 ```bash
 EXP=/root/emergent.memory.infra/scripts/tutorials-export.py
-python3 $EXP --plan deploy-to-railway --out docs-astro/scripts/shots/zitadel.plan.json
-python3 $EXP --md   deploy-to-railway --out docs/site/tutorials/deploy-to-railway.md
+python3 $EXP --md    deploy-to-railway --out docs/site/tutorials/deploy-to-railway.md
+python3 $EXP --check --captures /root/emergent.memory-wt/astro-docs-poc
 ```
 
-`--md` reproduces the published page **byte for byte**, and `--plan` reproduces its
-own output — but that plan covers **step 7 only**. `shots/installer.plan.json`,
-the end-to-end 62-step run that produces all thirteen figures, is still
-hand-authored: the pack models one of the eight steps today, and its actions for
-that step predate the 2FA screen, so a generated plan would time out there.
-Until that authoring is finished, edit the installer plan by hand and the page in
-the graph — hand-editing `deploy-to-railway.md` loses the next `--md`.
+`--md` reproduces the published page **byte for byte**, so a diff is the review.
+`--check` reports graph-vs-snapshot drift; with `--captures` it also refuses a
+page whose figures and plan disagree — a figure nothing captures, a shot nothing
+uses, a reordered step (reported at the position they diverge), a capture below
+4×, a light-theme capture, a non-English browser, a figure with no alt text, or a
+page with pictures and no `capture_plan`. A plan it cannot read at all is exit 2
+(`cannot proceed`), not drift. `shots/installer.plan.json`, the end-to-end
+62-step run that produces all thirteen figures, is that linked plan.
+
+Edit the page in the graph — hand-editing `deploy-to-railway.md` loses the next
+`--md` — and edit the plan on a capture change. Nothing about the two is
+generated from the other.
 
 Credentials come from `vars`, which name **environment variables**, so no secret
 is committed. `--only <shot-id>` replays the plan up to one picture.
@@ -486,10 +494,13 @@ a row there rather than hand-editing generated MDX.
    absolute CDN-era URL for `/emergent.memory/openapi.json`).
 5. **Fonts**: the app declares no webfont (system sans), so the docs do the
    same. If the product ever adopts one, `--sl-font` follows.
-6. **The capture plan is half-generated.** The `tutorials` pack models one of
-   the eight Railway steps (`--plan` emits step 7 only), and its actions for that
-   step predate the 2FA screen, so `installer.plan.json` — the run that produces
-   all thirteen figures — is still hand-authored. Finishing the pack needs the
-   remaining seven steps modelled, with `when` guards (the runner has them) on
-   the screens that only some installs show; after that the figures regenerate
-   from the graph like the page does.
+6. **The capture plan is a script, not graph data** — deliberately, and settled
+   the other way round from the first draft. `installer.plan.json`, the run that
+   produces all thirteen figures, is hand-authored; the graph links to it with
+   `capture_plan` and `--check --captures` compares the page's figures against
+   its `shot` entries, in order, so the two cannot drift silently. Storing the
+   selectors as entities was tried and dropped: it made four of the runner's
+   features (`when`, `clip`+`pad`, `setVar`, literal-vs-env values) into schema
+   fields and left the selectors unreviewable. What the split cannot do is notice
+   a *stale* picture — a capture that still matches the plan but no longer
+   matches the app — which stays a `status: stale` decision and a re-run.
