@@ -34,10 +34,14 @@ type usageSessionsPageData struct {
 templ UsageSessionsPage(data usageSessionsPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@pageHeader("Project", "Sessions & runs", "Every agent run that recorded token usage, newest activity first. A chat conversation can hold many runs, and scheduled or delegated runs belong to no conversation — this log is per run, so the cost lines add up to the dashboard total.") {
+			// #857: yellow is the system's button colour. The brand primary is
+			// brass, so the page's action uses the primary fill instead of the
+			// steel secondary that read as a blue button. The anchor contract is
+			// unchanged: same data-testid, href, icon and "Usage dashboard" text.
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,
 				Href:    "/usage",
-				Variant: ui.ButtonSecondary,
+				Variant: ui.ButtonPrimary,
 				Size:    ui.ButtonSM,
 				Icon:    "lucide--chart-column",
 				Attrs:   templ.Attributes{"data-testid": "sessions-back-to-usage"},
