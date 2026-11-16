@@ -1,5 +1,8 @@
 package main
 
+// guard: table.TableWithProps must keep its classes in its own class
+// attribute, not Attrs — must gate every PR.
+
 import (
 	"os"
 	"path/filepath"
