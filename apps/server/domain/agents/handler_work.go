@@ -65,9 +65,13 @@ type UpdateWorkItemStatusDTO struct {
 // work object's HEAD joined to its latest run's execution status, plus the
 // derived unroutable flag.
 type WorkItemDTO struct {
-	ProjectID             string `json:"projectId"`
-	CanonicalID           string `json:"canonicalId"`
-	Type                  string `json:"type"`
+	ProjectID   string `json:"projectId"`
+	CanonicalID string `json:"canonicalId"`
+	Type        string `json:"type"`
+	// Name is the HEAD's first-class human title (the `name` column), empty when
+	// the object has none. Ref is the display-only "#<12 hex>" identity.
+	Name                  string `json:"name"`
+	Ref                   string `json:"ref"`
 	Key                   string `json:"key"`
 	Status                string `json:"status"`
 	Assignee              string `json:"assignee"`
@@ -85,16 +89,20 @@ type WorkItemDTO struct {
 	BlockReason           string `json:"blockReason,omitempty"`
 	BlockedAt             string `json:"blockedAt,omitempty"`
 	Unroutable            bool   `json:"unroutable"`
+	// Properties is the HEAD's property bag, so a card can render the same
+	// excerpt the objects page renders without a second fetch.
+	Properties map[string]any `json:"properties,omitempty"`
 }
 
 func toWorkItemDTO(it *graph.WorkItem) *WorkItemDTO {
 	if it == nil {
 		return nil
 	}
-	return &WorkItemDTO{
+	dto := &WorkItemDTO{
 		ProjectID:             it.ProjectID,
 		CanonicalID:           it.CanonicalID,
 		Type:                  it.Type,
+		Ref:                   it.Ref,
 		Key:                   it.Key,
 		Status:                it.Status,
 		Assignee:              it.Assignee,
@@ -112,7 +120,12 @@ func toWorkItemDTO(it *graph.WorkItem) *WorkItemDTO {
 		Unroutable:            it.Unroutable,
 		NextRunAt:             formatTimePtr(it.NextRunAt),
 		BlockedAt:             formatTimePtr(it.BlockedAt),
+		Properties:            it.Properties,
 	}
+	if it.Name != nil {
+		dto.Name = *it.Name
+	}
+	return dto
 }
 
 func formatTimePtr(t *time.Time) string {

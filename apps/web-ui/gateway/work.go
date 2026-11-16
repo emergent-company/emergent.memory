@@ -28,19 +28,22 @@ type workData struct {
 	Definitions       map[string]*AgentDefinition
 	ObjectTypes       []CompiledType
 	RelationshipTypes []CompiledType
-	BoardTypes        []CompiledType
-	SelectedTypes     []string
-	TypeCounts        map[string]int
-	Matrices          []workMatrix
-	FilterExplicit    bool
-	ScopeBase         string
-	LaneOpen          map[string]bool
-	Items             []WorkItem
-	Allowances        boardAllowances
-	Rules             []workRuleRow
-	FlashMsg          string
-	FlashErr          error
-	LoadErr           error
+	// TypeUI indexes the compiled types' declared icon/colour by type name, so a
+	// card renders the same tile the objects page does.
+	TypeUI         map[string]typeUI
+	BoardTypes     []CompiledType
+	SelectedTypes  []string
+	TypeCounts     map[string]int
+	Matrices       []workMatrix
+	FilterExplicit bool
+	ScopeBase      string
+	LaneOpen       map[string]bool
+	Items          []WorkItem
+	Allowances     boardAllowances
+	Rules          []workRuleRow
+	FlashMsg       string
+	FlashErr       error
+	LoadErr        error
 }
 
 // workRuleRow is one (agent, object type) rule in the aggregated table.
@@ -106,6 +109,7 @@ func (s *Server) loadWorkData(ctx context.Context, c echo.Context, data *workDat
 		data.ObjectTypes = compiled.ObjectTypes
 		data.RelationshipTypes = compiled.RelationshipTypes
 	}
+	data.TypeUI = objectTypeUIMap(data.ObjectTypes)
 	data.BoardTypes = boardTypesFromCompiled(compiled)
 	data.Allowances = boardAllowancesFromCompiled(compiled)
 	data.ScopeBase = linkBaseFromContext(ctx)

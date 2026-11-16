@@ -34,8 +34,13 @@ func TestListWorkItems_JoinsLatestRun(t *testing.T) {
 
 	ready := "ready"
 	blocked := "blocked"
+	nameA := "Ship the release notes"
 	objA, err := svc.Create(ctx, projectID, &graph.CreateGraphObjectRequest{
-		Type: "BoardTask", Key: strPtr("a-1"), Status: &ready,
+		Type:       "BoardTask",
+		Key:        strPtr("a-1"),
+		Name:       &nameA,
+		Status:     &ready,
+		Properties: map[string]any{"description": "Draft the 0.99 release notes."},
 	}, nil)
 	require.NoError(t, err)
 	objB, err := svc.Create(ctx, projectID, &graph.CreateGraphObjectRequest{
@@ -83,12 +88,19 @@ func TestListWorkItems_JoinsLatestRun(t *testing.T) {
 	require.Equal(t, "error", a.LatestRunStatus)
 	require.Equal(t, "deterministic", a.LatestRunFailureClass)
 	require.Equal(t, 2, a.RunCount)
+	require.NotNil(t, a.Name)
+	require.Equal(t, nameA, *a.Name)
+	require.Equal(t, graph.ObjectRef(objA.CanonicalID), a.Ref)
+	require.Equal(t, "Draft the 0.99 release notes.", a.Properties["description"])
 
 	b := byCanonical[objB.CanonicalID.String()]
 	require.NotNil(t, b)
 	require.Equal(t, "blocked", b.Status)
 	require.Equal(t, "", b.LatestRunStatus)
 	require.Equal(t, 0, b.RunCount)
+	// A nameless object stays nil so a card can fall back to key/type+id.
+	require.Nil(t, b.Name)
+	require.Equal(t, graph.ObjectRef(objB.CanonicalID), b.Ref)
 
 	// Status filter.
 	readyOnly, err := svc.ListWorkItems(ctx, projectID.String(), "ready", "", 100)

@@ -305,13 +305,14 @@ func (s *Server) extractionSessionSummaries(ctx context.Context) []sessionSummar
 	return out
 }
 
-// boardRunPreview picks the matched work item's key (when the run's subject
-// object matches a board work item), falling back to the run summary text and
-// then the agent name, truncated to 160 runes.
+// boardRunPreview picks the matched work item's label — the same name/key/type
+// rule the board card renders — when the run's subject object matches a board
+// work item, falling back to the run summary text and then the agent name,
+// truncated to 160 runes.
 func boardRunPreview(run BoardRun, items map[string]WorkItem) string {
 	if run.SubjectObjectID != nil {
 		if it, ok := items[*run.SubjectObjectID]; ok {
-			if t := strings.TrimSpace(it.Key); t != "" {
+			if t := strings.TrimSpace(workItemLabel(it)); t != "" {
 				return truncateRunes(t, 160)
 			}
 		}

@@ -13,12 +13,17 @@ type WorkItem struct {
 	ProjectID   string `json:"projectId"`
 	CanonicalID string `json:"canonicalId"`
 	Type        string `json:"type"`
-	Key         string `json:"key"`
-	Status      string `json:"status"`
-	Assignee    string `json:"assignee"`
-	Version     int    `json:"version"`
-	NeedsReview bool   `json:"needsReview"`
-	UpdatedAt   string `json:"updatedAt"`
+	// Name is the object's first-class human title; empty when it has none.
+	Name string `json:"name"`
+	// Ref is the display-only "#<12 hex>" identity derived from the canonical id.
+	Ref         string         `json:"ref"`
+	Key         string         `json:"key"`
+	Status      string         `json:"status"`
+	Assignee    string         `json:"assignee"`
+	Version     int            `json:"version"`
+	NeedsReview bool           `json:"needsReview"`
+	UpdatedAt   string         `json:"updatedAt"`
+	Properties  map[string]any `json:"properties"`
 
 	LatestRunStatus       string `json:"latestRunStatus"`
 	LatestRunFailureClass string `json:"latestRunFailureClass"`
