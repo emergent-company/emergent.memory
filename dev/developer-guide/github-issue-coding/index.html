@@ -964,10 +964,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#independent-review" class="md-nav__link">
+  <a href="#independent-review-and-rework-loop" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Independent review
+        Independent review and rework loop
       
     </span>
   </a>
@@ -3103,10 +3103,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#independent-review" class="md-nav__link">
+  <a href="#independent-review-and-rework-loop" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Independent review
+        Independent review and rework loop
       
     </span>
   </a>
@@ -3199,10 +3199,20 @@ the <code>gh</code> CLI are available:</p>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>gh<span class="w"> </span>pr<span class="w"> </span>merge<span class="w"> </span>--auto<span class="w"> </span>--squash
 </code></pre></div>
 <p>Use the configured base branch; do not push directly to the protected branch.</p>
-<h2 id="independent-review">Independent review<a class="headerlink" href="#independent-review" title="Permanent link">&para;</a></h2>
-<p>The review workflow remains unchanged: a separate review agent reads the PR
-diff and submits its verdict, which posts the trusted <code>Reviewed-SHA</code> marker.
-Auto-merge only completes once the required checks and that marker are present.</p>
+<h2 id="independent-review-and-rework-loop">Independent review and rework loop<a class="headerlink" href="#independent-review-and-rework-loop" title="Permanent link">&para;</a></h2>
+<p>A separate review agent reads the PR diff and submits its verdict, which posts
+the trusted <code>Reviewed-SHA</code> marker. The PR is linked to its coding issue by
+<code>Closes #N</code>, <code>Refs #N</code>, a <code>fix/&lt;N&gt;-...</code> branch, or <code>(#N)</code> in the title.</p>
+<ul>
+<li><strong>MERGE</strong>: the issue item moves to <code>done</code>, the issue is closed, and auto-merge
+  completes once required checks are green.</li>
+<li><strong>CHANGES_REQUESTED</strong>: the issue item moves to <code>revision</code>, the review text is
+  stored as work feedback, and the coding agent is enqueued again with the PR
+  number and branch. It must push to the same branch; opening a second PR is a
+  failure. The PR <code>synchronize</code> event triggers a fresh review.</li>
+</ul>
+<p>The loop is capped by the coding agent's <code>revisionLimit</code> (default 3), after which
+the item is blocked for a human.</p>
 <h2 id="invocation-environment-allowlist">Invocation environment allowlist<a class="headerlink" href="#invocation-environment-allowlist" title="Permanent link">&para;</a></h2>
 <p>Only non-secret keys are accepted: <code>CI</code>, <code>LANG</code>, <code>LC_ALL</code>, <code>TERM</code>, <code>TZ</code>, and
 <code>GOMAXPROCS</code>. <code>GH_TOKEN</code>/<code>GITHUB_TOKEN</code> are server-injected and cannot be set by
