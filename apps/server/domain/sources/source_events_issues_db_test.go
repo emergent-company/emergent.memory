@@ -116,15 +116,11 @@ func testRSAKeyPEM(t *testing.T) []byte {
 type fakePRLinkStore struct {
 	issue    *graph.GraphObject
 	issueReq *graph.CreateGraphObjectRequest
-	linkReq  *graph.CreateGraphObjectRequest
 }
 
 func (f *fakePRLinkStore) CreateOrUpdate(_ context.Context, _ uuid.UUID, req *graph.CreateGraphObjectRequest, _ *uuid.UUID) (*graph.GraphObjectResponse, bool, error) {
-	switch req.Type {
-	case "GitHubIssue":
+	if req.Type == "GitHubIssue" {
 		f.issueReq = req
-	case "GitHubIssuePullRequest":
-		f.linkReq = req
 	}
 	return &graph.GraphObjectResponse{CanonicalID: uuid.New()}, true, nil
 }
@@ -156,7 +152,9 @@ func TestEnsureIssuePRLink(t *testing.T) {
 	require.NoError(t, err)
 
 	issueCanonical := uuid.New()
-	store := &fakePRLinkStore{issue: &graph.GraphObject{CanonicalID: issueCanonical, Type: "GitHubIssue", Status: ptr("in_progress")}}
+	store := &fakePRLinkStore{issue: &graph.GraphObject{CanonicalID: issueCanonical, Type: "GitHubIssue", Status: ptr("in_progress"), Properties: map[string]any{
+		"repo": "emergent-company/emergent.memory", "issue_number": 7, "source_id": sourceID.String(), "title": "fix",
+	}}}
 	d := NewSourceEventDispatcher(repo, nil, &config.Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	d.workObjects = store
 	p := &githubapp.WebhookPayload{
@@ -169,11 +167,13 @@ func TestEnsureIssuePRLink(t *testing.T) {
 	}
 	_, err = d.ensureIssuePRLink(ctx, src, p, &githubapp.PullRequestState{State: "open", HeadSHA: strings.Repeat("a", 40)}, "owner/repo#42")
 	require.NoError(t, err)
-	require.NotNil(t, store.linkReq)
-	require.Equal(t, "GitHubIssuePullRequest", store.linkReq.Type)
-	require.Equal(t, issueCanonical.String(), store.linkReq.Properties["issue_canonical_id"])
+	link, err := repo.FindSourceIssuePRLink(ctx, projectID, "owner/repo", 42)
+	require.NoError(t, err)
+	require.Equal(t, issueCanonical, link.IssueCanonicalID)
+	require.True(t, link.ClosesIssue)
 	require.NotNil(t, store.issueReq)
 	require.Equal(t, "review", *store.issueReq.Status)
+	require.Equal(t, "emergent-company/emergent.memory", store.issueReq.Properties["repo"])
 }
 
 func ptr(s string) *string { return &s }

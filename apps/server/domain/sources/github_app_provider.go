@@ -273,23 +273,6 @@ func (p *githubAppProvider) ObjectTypes() *ObjectTypePack {
 				SkipExtraction: true,
 			},
 			{
-				Name: "GitHubIssuePullRequest", Label: "GitHub issue pull request",
-				Description: "Project-level link between a coding issue and its pull request.",
-				Properties: map[string]any{
-					"repo":               map[string]any{"type": "string"},
-					"issue_number":       map[string]any{"type": "number"},
-					"issue_canonical_id": map[string]any{"type": "string"},
-					"issue_source_id":    map[string]any{"type": "string"},
-					"pr_number":          map[string]any{"type": "number"},
-					"pr_url":             map[string]any{"type": "string"},
-					"branch":             map[string]any{"type": "string"},
-					"head_sha":           map[string]any{"type": "string"},
-					"state":              map[string]any{"type": "string"},
-					"review_status":      map[string]any{"type": "string"},
-				},
-				SkipExtraction: true,
-			},
-			{
 				Name: "GitHubReviewLane", Label: "GitHub review lane",
 				Description:     "One reviewer lane on a GitHub pull request.",
 				BoardEnabled:    true,

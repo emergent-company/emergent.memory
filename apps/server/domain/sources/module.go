@@ -197,7 +197,6 @@ func provideSourceWorkObjectStore(svc *graph.Service) SourceWorkObjectStore { re
 func WireReviewToolWorkObjectStore(h *ReviewToolHandler, svc *graph.Service) {
 	if h != nil && svc != nil {
 		h.SetWorkItemStatusWriter(svc)
-		h.SetWorkObjectStore(svc)
 	}
 }
 

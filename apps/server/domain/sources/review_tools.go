@@ -70,14 +70,14 @@ func truncateUTF8(s string, max int) string {
 // names, AgentOnly property and TrustedInternal gate they had under
 // domain/githubapp (#579).
 type ReviewToolHandler struct {
-	repo        *Repository
-	key         []byte // raw AES-256 key bytes (LLM_ENCRYPTION_KEY)
-	apiBaseURL  string
-	minter      *githubapp.TokenMinter
-	newClient   func(baseURL, token string) *githubapp.Client
-	workItems   WorkItemStatusWriter
-	workObjects SourceWorkObjectStore
-	reworker    WorkItemReworker
+	repo       *Repository
+	key        []byte // raw AES-256 key bytes (LLM_ENCRYPTION_KEY)
+	apiBaseURL string
+	minter     *githubapp.TokenMinter
+	newClient  func(baseURL, token string) *githubapp.Client
+	workItems  WorkItemStatusWriter
+	links      IssuePRLinkReader
+	reworker   WorkItemReworker
 }
 
 // WorkItemStatusWriter finalizes the board lane a review run was dispatched for.
@@ -91,12 +91,13 @@ type WorkItemReworker interface {
 	RequestWorkItemChanges(ctx context.Context, projectID, canonicalID, author, text string) error
 }
 
+// IssuePRLinkReader reads the server-owned issue/PR link.
+type IssuePRLinkReader interface {
+	FindSourceIssuePRLink(ctx context.Context, projectID uuid.UUID, repo string, prNumber int) (*SourceIssuePRLink, error)
+}
+
 // SetWorkItemStatusWriter injects the graph work-object writer.
 func (h *ReviewToolHandler) SetWorkItemStatusWriter(w WorkItemStatusWriter) { h.workItems = w }
-
-// SetWorkObjectStore injects the graph reader used to resolve the issue linked
-// to a reviewed pull request.
-func (h *ReviewToolHandler) SetWorkObjectStore(store SourceWorkObjectStore) { h.workObjects = store }
 
 // SetWorkItemReworker injects the coding rework dispatcher.
 func (h *ReviewToolHandler) SetWorkItemReworker(r WorkItemReworker) { h.reworker = r }
@@ -119,6 +120,7 @@ func NewReviewToolHandler(repo *Repository, cfg *config.Config, log *slog.Logger
 	}
 	return &ReviewToolHandler{
 		repo:       repo,
+		links:      repo,
 		key:        key,
 		apiBaseURL: baseURL,
 		minter:     githubapp.NewTokenMinter(baseURL, nil),
@@ -426,35 +428,19 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 // executeReviewSubmit is moved verbatim from domain/githubapp/tools.go: it
 // enforces the live-head binding and the same-run evidence rule, then posts the
 // review, the reviewed check and the merge-guard marker with byte-exact text.
-func (h *ReviewToolHandler) linkedIssue(ctx context.Context, projectID, repo string, number int) *graph.GraphObject {
-	if h.workObjects == nil || projectID == "" || repo == "" || number <= 0 {
+func (h *ReviewToolHandler) linkedIssue(ctx context.Context, projectID, repo string, number int) *SourceIssuePRLink {
+	if h.links == nil || projectID == "" || repo == "" || number <= 0 {
 		return nil
 	}
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
 		return nil
 	}
-	link, err := h.workObjects.FindHeadObjectByTypeAndKey(ctx, projectUUID.String(), "GitHubIssuePullRequest", issuePRLinkKey(repo, number))
-	if err != nil || link == nil {
+	link, err := h.links.FindSourceIssuePRLink(ctx, projectUUID, repo, number)
+	if err != nil {
 		return nil
 	}
 	return link
-}
-
-func intArgOrZero(v any) int {
-	switch n := v.(type) {
-	case int:
-		return n
-	case int64:
-		return int(n)
-	case float64:
-		return int(n)
-	case json.Number:
-		i, _ := n.Int64()
-		return int(i)
-	default:
-		return 0
-	}
 }
 
 func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *githubapp.Client, projectID, repo string, args map[string]any) (*mcp.ToolResult, error) {
@@ -514,25 +500,14 @@ func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *git
 			laneStatus = "revision"
 		}
 		_, _ = h.workItems.UpdateWorkObjectStatus(auth.WithActor(ctx, graph.ActorSystem, nil), projectID, canonicalID, laneStatus, "review")
-	} else if link := h.linkedIssue(ctx, projectID, repo, number); link != nil {
-		issueCanonical, _ := link.Properties["issue_canonical_id"].(string)
-		if issueCanonical != "" {
-			if verdict == "MERGE" {
-				if h.workItems != nil {
-					_, _ = h.workItems.UpdateWorkObjectStatus(auth.WithActor(ctx, graph.ActorSystem, nil), projectID, issueCanonical, "done", "review")
-				}
-				if issueNumber := intArgOrZero(link.Properties["issue_number"]); issueNumber > 0 {
-					_ = client.CloseIssue(ctx, repo, issueNumber)
-				}
-			} else {
-				reworked := false
-				if h.reworker != nil {
-					reworked = h.reworker.RequestWorkItemChanges(ctx, projectID, issueCanonical, "review", summary) == nil
-				}
-				if !reworked && h.workItems != nil {
-					_, _ = h.workItems.UpdateWorkObjectStatus(auth.WithActor(ctx, graph.ActorSystem, nil), projectID, issueCanonical, "revision", "review")
-				}
-			}
+	} else if link := h.linkedIssue(ctx, projectID, repo, number); link != nil && verdict == "CHANGES_REQUESTED" {
+		issueCanonical := link.IssueCanonicalID.String()
+		reworked := false
+		if h.reworker != nil {
+			reworked = h.reworker.RequestWorkItemChanges(ctx, projectID, issueCanonical, "review", summary) == nil
+		}
+		if !reworked && h.workItems != nil {
+			_, _ = h.workItems.UpdateWorkObjectStatus(auth.WithActor(ctx, graph.ActorSystem, nil), projectID, issueCanonical, "revision", "review")
 		}
 	}
 	return &mcp.ToolResult{

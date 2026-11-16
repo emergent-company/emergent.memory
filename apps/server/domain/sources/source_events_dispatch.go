@@ -371,40 +371,51 @@ func (d *SourceEventDispatcher) processPullRequestSource(ctx context.Context, v 
 	return nil
 }
 
-var prIssueRefRe = regexp.MustCompile(`(?i)(?:closes|fixes|resolves|refs)\s+#(\d+)`)
+var prClosingIssueRe = regexp.MustCompile(`(?i)(?:closes|fixes|resolves)\s+#(\d+)`)
+var prAnyIssueRefRe = regexp.MustCompile(`(?i)(?:refs|references)\s+#(\d+)`)
 var prBranchIssueRe = regexp.MustCompile(`(?:^|/)(\d+)[-_]`)
 var prTitleIssueRe = regexp.MustCompile(`\(#(\d+)\)`)
 
-func issueNumberForPullRequest(p *githubapp.WebhookPayload) int {
+func issueReferenceForPullRequest(p *githubapp.WebhookPayload) (int, bool) {
 	if p == nil {
-		return 0
+		return 0, false
 	}
-	for _, re := range []*regexp.Regexp{prIssueRefRe, prBranchIssueRe, prTitleIssueRe} {
-		text := p.PullRequest.Body
-		switch re {
-		case prBranchIssueRe:
-			text = p.PullRequest.Head.Ref
-		case prTitleIssueRe:
-			text = p.PullRequest.Title
-		}
-		if m := re.FindStringSubmatch(text); len(m) == 2 {
-			n, _ := strconv.Atoi(m[1])
-			if n > 0 {
-				return n
-			}
+	if m := prClosingIssueRe.FindStringSubmatch(p.PullRequest.Body); len(m) == 2 {
+		n, _ := strconv.Atoi(m[1])
+		if n > 0 {
+			return n, true
 		}
 	}
-	return 0
+	if m := prAnyIssueRefRe.FindStringSubmatch(p.PullRequest.Body); len(m) == 2 {
+		n, _ := strconv.Atoi(m[1])
+		if n > 0 {
+			return n, false
+		}
+	}
+	if m := prBranchIssueRe.FindStringSubmatch(p.PullRequest.Head.Ref); len(m) == 2 {
+		n, _ := strconv.Atoi(m[1])
+		if n > 0 {
+			return n, false
+		}
+	}
+	if m := prTitleIssueRe.FindStringSubmatch(p.PullRequest.Title); len(m) == 2 {
+		n, _ := strconv.Atoi(m[1])
+		if n > 0 {
+			return n, false
+		}
+	}
+	return 0, false
 }
 
-func issuePRLinkKey(repo string, number int) string {
-	return fmt.Sprintf("github:pr:%s#%d", repo, number)
+func issueNumberForPullRequest(p *githubapp.WebhookPayload) int {
+	n, _ := issueReferenceForPullRequest(p)
+	return n
 }
 
 // ensureIssuePRLink resolves the coding issue referenced by a PR and records a
-// project-level link. The link is source-independent, so the review source can
+// server-owned link. The link is source-independent, so the review source can
 // resolve the issue even though the coding source owns the item.
-func (d *SourceEventDispatcher) ensureIssuePRLink(ctx context.Context, src *Source, p *githubapp.WebhookPayload, state *githubapp.PullRequestState, subject string) (*graph.GraphObject, error) {
+func (d *SourceEventDispatcher) ensureIssuePRLink(ctx context.Context, src *Source, p *githubapp.WebhookPayload, state *githubapp.PullRequestState, _ string) (*SourceIssuePRLink, error) {
 	if d.workObjects == nil || p == nil || src == nil {
 		return nil, nil
 	}
@@ -414,7 +425,7 @@ func (d *SourceEventDispatcher) ensureIssuePRLink(ctx context.Context, src *Sour
 		}
 	}
 	repoName := p.Repository.FullName
-	issueNumber := issueNumberForPullRequest(p)
+	issueNumber, closesIssue := issueReferenceForPullRequest(p)
 	if issueNumber <= 0 {
 		return nil, nil
 	}
@@ -423,7 +434,7 @@ func (d *SourceEventDispatcher) ensureIssuePRLink(ctx context.Context, src *Sour
 		return nil, err
 	}
 	var issue *graph.GraphObject
-	var issueSourceID string
+	var issueSourceID uuid.UUID
 	for i := range candidates {
 		key := fmt.Sprintf("github:%s:%s#%d", candidates[i].ID, repoName, issueNumber)
 		found, ferr := d.workObjects.FindHeadObjectByTypeAndKey(ctx, src.ProjectID.String(), "GitHubIssue", key)
@@ -432,44 +443,56 @@ func (d *SourceEventDispatcher) ensureIssuePRLink(ctx context.Context, src *Sour
 		}
 		if found != nil {
 			issue = found
-			issueSourceID = candidates[i].ID.String()
+			issueSourceID = candidates[i].ID
 			break
 		}
 	}
 	if issue == nil {
 		return nil, nil
 	}
+	prNumber := p.PullNumber()
 	merged := p.PullRequest.Merged || (state != nil && state.State == "closed" && p.PullRequest.Merged)
-	closed := p.Action == "closed" || p.Action == "converted_to_draft" || (state != nil && state.State == "closed")
-	linkStatus := "open"
+	draft := p.Action == "converted_to_draft"
+	closed := p.Action == "closed" || (state != nil && state.State == "closed" && !merged)
+	linkState := p.PullRequest.State
+	if linkState == "" {
+		linkState = "open"
+	}
 	issueStatus := "review"
-	if merged {
-		linkStatus = "merged"
+	if merged && closesIssue {
+		linkState = "merged"
 		issueStatus = "done"
 	} else if closed {
-		linkStatus = "closed"
+		linkState = "closed"
 		issueStatus = "cancelled"
+	} else if draft {
+		linkState = "draft"
+	}
+	branch := p.PullRequest.Head.Ref
+	headSHA := p.PullRequest.Head.SHA
+	if state != nil && state.HeadSHA != "" {
+		headSHA = state.HeadSHA
 	}
 	prURL := p.PullRequest.HTMLURL
 	if prURL == "" {
-		prURL = fmt.Sprintf("https://github.com/%s/pull/%d", repoName, p.PullNumber())
+		prURL = fmt.Sprintf("https://github.com/%s/pull/%d", repoName, prNumber)
 	}
-	linkKey := issuePRLinkKey(repoName, p.PullNumber())
-	linkProps := map[string]any{
-		"repo": repoName, "issue_number": issueNumber, "issue_canonical_id": issue.CanonicalID.String(),
-		"issue_source_id": issueSourceID, "pr_number": p.PullNumber(), "pr_url": prURL,
-		"branch": p.PullRequest.Head.Ref, "head_sha": p.PullRequest.Head.SHA,
-		"state": p.PullRequest.State, "review_status": linkStatus,
+	link := &SourceIssuePRLink{
+		ProjectID: src.ProjectID, Repo: repoName, PRNumber: prNumber,
+		IssueCanonicalID: issue.CanonicalID, IssueNumber: issueNumber, IssueSourceID: issueSourceID,
+		PRURL: prURL, Branch: branch, HeadSHA: headSHA, State: linkState, ClosesIssue: closesIssue,
 	}
-	if _, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
-		Type: "GitHubIssuePullRequest", Key: &linkKey, Name: &subject, Properties: linkProps,
-	}, nil); err != nil {
+	if err := d.repo.UpsertSourceIssuePRLink(ctx, link); err != nil {
 		return nil, err
 	}
-	issueProps := map[string]any{
-		"pr_number": p.PullNumber(), "pr_url": prURL, "pr_branch": p.PullRequest.Head.Ref,
-		"pr_head_sha": p.PullRequest.Head.SHA,
+	issueProps := make(map[string]any, len(issue.Properties)+4)
+	for k, v := range issue.Properties {
+		issueProps[k] = v
 	}
+	issueProps["pr_number"] = prNumber
+	issueProps["pr_url"] = prURL
+	issueProps["pr_branch"] = branch
+	issueProps["pr_head_sha"] = headSHA
 	if issue.Status != nil && (*issue.Status == "done" || *issue.Status == "cancelled") && issueStatus == "review" {
 		issueStatus = *issue.Status
 	}
@@ -479,7 +502,8 @@ func (d *SourceEventDispatcher) ensureIssuePRLink(ctx context.Context, src *Sour
 	}, nil); err != nil {
 		return nil, err
 	}
-	return issue, nil
+	return link, nil
+
 }
 
 func (d *SourceEventDispatcher) handleIssues(ctx context.Context, v *VerifiedSourceEvent) error {
