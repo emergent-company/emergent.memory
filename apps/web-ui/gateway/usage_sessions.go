@@ -48,27 +48,37 @@ func (s *Server) uiUsageSessions(c echo.Context) error {
 		runs    *UsageRunListResponse
 		runsErr error
 		byAgent *UsageByAgentResponse
+		defs    []AgentDefinitionSummary
 	)
 	var g errgroup.Group
 	g.Go(func() error {
 		runs, runsErr = s.memory.GetProjectUsageRuns(ctx, since, until, agentID, usageSessionsPageSize, offset)
 		return nil
 	})
-	// The agent filter chips come from the same breakdown the dashboard shows;
-	// a failure only costs the chips, not the log.
+	// The agent picker's rows come from the same breakdown the dashboard shows;
+	// a failure only costs the picker, not the log.
 	g.Go(func() error {
 		byAgent, _ = s.memory.GetProjectUsageByAgent(ctx, since, until)
+		return nil
+	})
+	// The rows wear each agent's declared glyph, so the picker reads like the
+	// chat rail's and the objects page's. Appearance is decoration: a failed
+	// fetch leaves every row on the generic bot mark, exactly as an agent whose
+	// definition is gone renders, so this failure is not surfaced either.
+	g.Go(func() error {
+		defs, _ = s.memory.ListAgentDefinitions(ctx)
 		return nil
 	})
 	_ = g.Wait()
 
 	data := usageSessionsPageData{
-		Days:    days,
-		AgentID: agentID,
-		Agents:  byAgent,
-		Runs:    runs,
-		Limit:   usageSessionsPageSize,
-		Offset:  offset,
+		Days:         days,
+		AgentID:      agentID,
+		Agents:       byAgent,
+		AgentOptions: usageSessionsAgentOptions(byAgent, defs),
+		Runs:         runs,
+		Limit:        usageSessionsPageSize,
+		Offset:       offset,
 	}
 	// The error state renders the error's message, so a raw backend failure has
 	// to be sanitized here, exactly as the dashboard does (#1671).
@@ -111,6 +121,47 @@ func usageAgentFilterLabel(byAgent *UsageByAgentResponse, agentID string) string
 		}
 	}
 	return agentID
+}
+
+// usageSessionsAgentOptions builds the agent picker's rows from the per-agent
+// breakdown, in the order the breakdown returns them, joined with each agent's
+// declared appearance so a row wears the glyph the agent wears elsewhere. Only
+// attributed rows become options: the unattributed bucket is not an agent and
+// cannot be filtered by agent id.
+func usageSessionsAgentOptions(byAgent *UsageByAgentResponse, defs []AgentDefinitionSummary) []usageSessionsAgentOption {
+	if byAgent == nil {
+		return nil
+	}
+	out := make([]usageSessionsAgentOption, 0, len(byAgent.Data))
+	for _, row := range byAgent.Data {
+		if !row.Attributed() {
+			continue
+		}
+		appearance := agentUIForList(defs, row.AgentID)
+		out = append(out, usageSessionsAgentOption{
+			ID:    row.AgentID,
+			Name:  row.AgentName,
+			Icon:  appearance.Icon,
+			Color: appearance.Color,
+		})
+	}
+	return out
+}
+
+// usageSessionsAgentOptionOf returns the picker row for an agent id, so the
+// closed trigger can borrow the same mark its row renders. known is false for an
+// unfiltered log and for a filter that names an agent the breakdown does not
+// list (see usageAgentFilterLabel).
+func usageSessionsAgentOptionOf(options []usageSessionsAgentOption, agentID string) (usageSessionsAgentOption, bool) {
+	if agentID == "" {
+		return usageSessionsAgentOption{}, false
+	}
+	for _, o := range options {
+		if o.ID == agentID {
+			return o, true
+		}
+	}
+	return usageSessionsAgentOption{}, false
 }
 
 // usageTriggerLabel shortens a run's trigger source for the log's agent cell.

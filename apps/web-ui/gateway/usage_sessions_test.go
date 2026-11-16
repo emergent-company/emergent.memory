@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -272,6 +273,147 @@ func TestUsageSessionsPagingKeepsFilter(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("paged run log missing %q", want)
 		}
+	}
+}
+
+// TestUsageSessionsAgentPicker pins the run log's agent filter as the avatar
+// dropdown #856 asked for, in the shape the objects page's actor picker and the
+// chat rail's agent filter already ship: a menu of identities behind a
+// select-styled trigger, one row per agent wearing its own mark, and an "All
+// agents" row that clears the filter.
+func TestUsageSessionsAgentPicker(t *testing.T) {
+	f := &fakeMemory{
+		usageRuns:    sampleUsageRuns(),
+		usageByAgent: sampleUsageByAgent(),
+		agents: []AgentDefinitionSummary{
+			{ID: "agent-1", Name: "coding", UIConfig: json.RawMessage(`{"icon":"bug","color":"#ff0000"}`)},
+		},
+	}
+	_, e := newUsageSessionsEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/usage/sessions?days=30&offset=50", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	// The feedback overlay anchors on this wrapper, so it has to survive the
+	// change from a chip row to a menu (the issue's anchor_stable contract).
+	if !strings.Contains(body, `data-testid="sessions-agent-filter"`) {
+		t.Fatal("the agent control must keep the sessions-agent-filter anchor")
+	}
+	if !strings.Contains(tagAround(t, body, `data-testid="sessions-agent-picker"`), "data-gd-menu-root") {
+		t.Errorf("the picker is not a go-daisy menu root:\n%s", body)
+	}
+	// The closed trigger is a menu button that names the selection.
+	trigger := tagAround(t, body, "data-gd-menu-trigger")
+	for _, want := range []string{
+		`role="button"`,
+		`aria-haspopup="menu"`,
+		`aria-label="Filter runs by agent: All agents"`,
+	} {
+		if !strings.Contains(trigger, want) {
+			t.Errorf("picker trigger missing %q: %s", want, trigger)
+		}
+	}
+	// A real menu, with one radio row per identity.
+	if !strings.Contains(body, `role="menu"`) || !strings.Contains(body, `aria-label="Filter runs by agent"`) {
+		t.Error("the picker does not render a labelled menu")
+	}
+	if got := strings.Count(body, `role="menuitemradio"`); got != 3 {
+		t.Errorf("menu rows = %d, want 3 (All agents + two agents that recorded usage)", got)
+	}
+	if got := strings.Count(body, "data-gd-menu-item"); got != 3 {
+		t.Errorf("rows wired for keyboard navigation = %d, want 3", got)
+	}
+
+	// Rows are links: the filter survives a refresh and can be shared, and
+	// picking one keeps the range while dropping the page offset.
+	for _, want := range []string{
+		`href="/usage/sessions?days=30"`,
+		`href="/usage/sessions?agent=agent-1&amp;days=30"`,
+		`href="/usage/sessions?agent=agent-2&amp;days=30"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("picker row missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "agent=agent-1&amp;days=30&amp;offset=50") {
+		t.Error("picking an agent must start at the first page, not keep the offset")
+	}
+
+	// Every row wears a mark: the group bubble for "All agents", the agent's own
+	// glyph (or the generic bot) per agent.
+	if got := strings.Count(body, `data-agent-avatar="all"`); got != 2 {
+		t.Errorf("agent-all marks = %d, want 2 (trigger + All agents row)", got)
+	}
+	if got := strings.Count(body, `data-agent-avatar="agent"`); got != 2 {
+		t.Errorf("agent marks = %d, want 2 (one per agent row)", got)
+	}
+
+	// With no filter, "All agents" is the checked row and nothing else is.
+	if !strings.Contains(tagAround(t, body, `data-testid="sessions-agent-all"`), `aria-checked="true"`) {
+		t.Error("the unfiltered picker must check the All agents row")
+	}
+	if !strings.Contains(tagAround(t, body, `data-testid="sessions-agent-agent-1"`), `aria-checked="false"`) {
+		t.Error("an unselected agent row must not be checked")
+	}
+
+	// Filtered: the trigger and the checked row follow the selection, and the
+	// rows still carry the request's range.
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/usage/sessions?days=7&agent=agent-1", nil))
+	filtered := rec.Body.String()
+	if !strings.Contains(filtered, `aria-label="Filter runs by agent: coding"`) {
+		t.Errorf("the trigger must name the selected agent:\n%s", filtered)
+	}
+	if !strings.Contains(tagAround(t, filtered, `data-testid="sessions-agent-agent-1"`), `aria-checked="true"`) {
+		t.Error("the selected agent's row must be checked")
+	}
+	if strings.Contains(tagAround(t, filtered, `data-testid="sessions-agent-all"`), `aria-checked="true"`) {
+		t.Error("a filtered picker must not also check All agents")
+	}
+	if !strings.Contains(filtered, `href="/usage/sessions?agent=agent-2&amp;days=7"`) {
+		t.Errorf("rows must keep the selected range:\n%s", filtered)
+	}
+
+	// A filter that names an agent with no usage in the range keeps the id as
+	// its label rather than resetting the control to "All agents".
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/usage/sessions?agent=ghost", nil))
+	if ghost := rec.Body.String(); !strings.Contains(ghost, `aria-label="Filter runs by agent: ghost"`) {
+		t.Errorf("an unlisted active agent must still name the filter:\n%s", ghost)
+	}
+
+	// No breakdown, no picker: a menu with nothing to pick cannot narrow.
+	_, emptyEcho := newUsageSessionsEcho(&fakeMemory{})
+	rec = httptest.NewRecorder()
+	emptyEcho.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/usage/sessions", nil))
+	if emptyBody := rec.Body.String(); strings.Contains(emptyBody, `data-testid="sessions-agent-picker"`) {
+		t.Error("the picker must not render without an agent breakdown")
+	}
+}
+
+// TestUsageSessionsAgentOptions pins the picker's row source: attributed agents
+// in the breakdown's order, each carrying the appearance its definition
+// declares, with the unattributed bucket dropped and a missing definition left
+// on the generic mark.
+func TestUsageSessionsAgentOptions(t *testing.T) {
+	defs := []AgentDefinitionSummary{
+		{ID: "agent-2", Name: "ui-auditor", UIConfig: json.RawMessage(`{"icon":"eye","color":"#00ff00"}`)},
+	}
+	got := usageSessionsAgentOptions(sampleUsageByAgent(), defs)
+	if len(got) != 2 {
+		t.Fatalf("options = %d, want 2 (the unattributed bucket is not an agent): %+v", len(got), got)
+	}
+	if o := got[0]; o.ID != "agent-1" || o.Name != "coding" || o.Icon != "" || o.Color != "" {
+		t.Errorf("got[0] = %+v, want agent-1/coding with no declared appearance", o)
+	}
+	if o := got[1]; o.ID != "agent-2" || o.Name != "ui-auditor" || o.Icon != "eye" || o.Color != "#00ff00" {
+		t.Errorf("got[1] = %+v, want agent-2/ui-auditor with its declared appearance", o)
+	}
+	if got := usageSessionsAgentOptions(nil, defs); got != nil {
+		t.Errorf("a missing breakdown must yield no options, got %+v", got)
 	}
 }
 
