@@ -306,7 +306,74 @@ For large schema changes, split into multiple migrations:
 - One for data migration
 - One for removing old tables
 
-### 5. Test Migrations
+### 5. Build indexes CONCURRENTLY on pre-existing tables
+
+A plain `CREATE INDEX` holds a `SHARE` lock on its table for the whole build, so it
+blocks every write (not reads) until it finishes. That is fine inside the migration
+that creates the table — nothing else can see it yet — and wrong for a table an
+earlier migration created, which may already hold millions of rows.
+
+On a table that already exists, build the index concurrently:
+
+```sql
+-- +goose NO TRANSACTION
+-- +goose Up
+DROP INDEX CONCURRENTLY IF EXISTS kb.idx_jobs_org_id;
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_jobs_org_id
+    ON kb.jobs (org_id);
+```
+
+`00012_add_relationship_embedding_index.sql` is the earliest use in the tree and
+already documents why; `00161` (embedding indexes) and `00170` are the recent
+reference implementations — `00170` in particular carries the post-condition
+guard. The rules:
+
+- **`-- +goose NO TRANSACTION`** — `CREATE`/`DROP INDEX CONCURRENTLY` cannot run
+  inside a transaction, so the file cannot be wrapped in one. Each statement then
+  commits on its own: a run that fails halfway leaves the earlier statements
+  applied and the version unrecorded.
+- **Drop the target name first, then create.** `CONCURRENTLY IF NOT EXISTS`
+  silently skips an `INVALID` index left by an interrupted build, so a retry would
+  otherwise complete without a usable index. The drop makes the retry rebuild.
+- **Raise if the index is not valid.** Append the `DO` block from `00170`
+  (`pg_index.indisvalid AND indisready`) so goose refuses to record the version
+  when the build did not take effect — this is the failure `00164` hit (issue #734)
+  and the reason `mark-applied` must not be used to paper over it.
+  `go run ./cmd/migrate -c verify` is the read-only relative: it reports indexes
+  that exist but are not `indisvalid`/`indisready`, so it catches an invalid build
+  and not one that left no index at all.
+- **Index names stay unqualified** in `CREATE INDEX`; the schema comes from the
+  table reference.
+- **Adding a foreign key?** Add the index for the referencing column when the
+  child table is large or an org/project delete matters — most scoped tables
+  already carry one, but not all (`kb.projects` and `kb.backup_schedules` are the
+  org-side exceptions, 8 of the 46 project FKs have none) — and split the
+  constraint: `ADD CONSTRAINT … NOT VALID` in one migration, `VALIDATE CONSTRAINT`
+  in the next (`00257` -> `00258`, `00266` -> `00267`, `00306` -> `00308`). Both
+  statements in one transaction hold the `ADD`'s `SHARE ROW EXCLUSIVE` — which
+  blocks writes — until the `VALIDATE`'s scan finishes; alone, the `ADD` commits at
+  once and the `VALIDATE` takes only `SHARE UPDATE EXCLUSIVE`.
+
+`scripts/preflight/migration-number.sh` enforces this for **new** migrations: a
+plain `CREATE INDEX` on a table that exists on the base branch fails the preflight
+and CI, in the `Up` and the `Down` alike (a rollback that rebuilds an index on a
+populated table locks it just the same). For a deliberate exception write
+`-- index-concurrently-allowed: <reason>` on the line before the statement. The
+plain index builds already applied by earlier migrations — including several after
+`00161`, so this is a convention that was followed unevenly rather than a cut-off
+— are applied migrations and are deliberately left alone; rewriting them would be
+a locking no-op on every environment (`#844`, section 2).
+
+### 6. Baseline `"IDX_<hash>"` index names are deliberate
+
+`00001_baseline.sql` carries 28 quoted `"IDX_<hash>"` index names (and `"FK_<hash>"`
+constraint names) from the ORM that produced the baseline export. They sit beside
+conventional `idx_*` / `uq_*` names, look like junk in `\di`, and are **not** a
+finding: renaming one is a locking `ALTER INDEX` on a production object for zero
+behaviour change. New schema uses the `idx_*` / `uq_*` convention; the baseline
+hash names stay as history.
+
+### 7. Test Migrations
 
 ```bash
 # Apply
