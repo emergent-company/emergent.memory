@@ -463,9 +463,17 @@ func (a *Agent) consumeStream(ctx context.Context, stream *a2a.SSEStream, emitte
 
 	// knownTaskID is the id already reported to track; it is cleared once the
 	// turn stops running so a late session/cancel has nothing to cancel.
-	var knownTaskID string
+	// turnTaskID is the id this turn runs under, kept for the turn's lifetime:
+	// tool-call ids are namespaced with it because the server's artifact ids
+	// restart at tool-call-1 for every stream (and one ACP session is one A2A
+	// context, so every prompt is a new task).
+	var knownTaskID, turnTaskID string
 	noteTask := func(id string) {
-		if id == "" || id == knownTaskID || track == nil {
+		if id == "" {
+			return
+		}
+		turnTaskID = id
+		if id == knownTaskID || track == nil {
 			return
 		}
 		knownTaskID = id
@@ -499,7 +507,7 @@ func (a *Agent) consumeStream(ctx context.Context, stream *a2a.SSEStream, emitte
 				contextID = au.ContextID
 			}
 			noteTask(au.TaskID)
-			if tc, ok := toolCallFromArtifact(au); ok {
+			if tc, ok := toolCallFromArtifact(au, turnTaskID); ok {
 				if err := emitter.emitToolCall(tc); err != nil {
 					return contextID, "", StopReasonEndTurn, err
 				}
@@ -570,6 +578,9 @@ func (a *Agent) consumeStream(ctx context.Context, stream *a2a.SSEStream, emitte
 			}
 			noteTask(ev.Task.ID)
 			switch ev.Task.Status.State {
+			case a2a.TaskStateCompleted:
+				// A terminal snapshot ends the turn: nothing is left to cancel.
+				clearTask()
 			case a2a.TaskStateFailed, a2a.TaskStateRejected:
 				stopReason = StopReasonRefusal
 				clearTask()
@@ -729,8 +740,8 @@ const workingNotice = "Working…"
 // toolCall is one ACP tool call derived from an A2A tool artifact. The server
 // emits the start artifact as a structured Data part {toolName, input} and the
 // end artifact as {toolName, output} with Append:true under the same artifact id
-// (apps/server/domain/agents/a2a_stream.go), so the artifact id is the stable
-// ACP toolCallId.
+// (apps/server/domain/agents/a2a_stream.go). The artifact id is only unique
+// within one stream, so the ACP toolCallId is taskID + ":" + artifact id.
 type toolCall struct {
 	ID        string
 	Name      string
@@ -745,11 +756,24 @@ type toolCall struct {
 // It reports false for anything that is not a tool artifact: the growing text
 // artifact, A2UI surfaces, and any other structured data a future server version
 // emits. Non-object Data parts (A2UI's array of surface messages) never match.
-func toolCallFromArtifact(au *a2a.TaskArtifactUpdateEvent) (toolCall, bool) {
+//
+// taskID namespaces the artifact id into the ACP toolCallId. The server's
+// toolSeq restarts at 1 per stream, and one ACP session is one A2A context in
+// which every prompt is a new task, so a bare artifact id repeats on every turn
+// and a client that keys by it folds the earlier call into the new one.
+// Namespacing here, client-side, also pairs correctly against older servers.
+// (A resumed stream of the same task restarts the artifact sequence too, so the
+// two sides of a pause can still share an id; closing that needs a stream nonce
+// in the server's artifact id — tracked as a known gap, not fixed here.)
+func toolCallFromArtifact(au *a2a.TaskArtifactUpdateEvent, taskID string) (toolCall, bool) {
 	if au == nil || au.Artifact.ArtifactID == "" {
 		return toolCall{}, false
 	}
-	tc := toolCall{ID: au.Artifact.ArtifactID, Name: au.Artifact.Name, End: au.Append}
+	id := au.Artifact.ArtifactID
+	if taskID != "" {
+		id = taskID + ":" + id
+	}
+	tc := toolCall{ID: id, Name: au.Artifact.Name, End: au.Append}
 	for _, p := range au.Artifact.Parts {
 		data, ok := p.Data.(map[string]any)
 		if !ok {

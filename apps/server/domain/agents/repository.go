@@ -2310,10 +2310,8 @@ func (r *Repository) CancelRunIfPaused(ctx context.Context, runID string) (bool,
 }
 
 // ClaimPausedRunForResume atomically consumes a paused run's pause, so two
-// concurrent follow-ups to the same pause cannot both resume it. It applies the
-// same terminal transition MarkRunResumed finalizes the checkpoint with, but
-// BEFORE the resumed child run exists and with the row count as the verdict,
-// which is the only thing that serialises the two:
+// concurrent follow-ups to the same pause cannot both resume it. The row count
+// is the verdict, which is the only thing that serialises the two:
 //
 //	handler A  SELECT … status=input-required …  ─┐ both see "paused"
 //	handler B  SELECT … status=input-required …  ─┘
@@ -2321,19 +2319,26 @@ func (r *Repository) CancelRunIfPaused(ctx context.Context, runID string) (bool,
 //	handler B  UPDATE … WHERE status=input-required   → 0 rows, rejected
 //
 // Without it a questionless pause had no claim at all: executor.Resume reads the
-// in-memory status and MarkRunResumed runs only after the child insert, so both
-// followers created a child run and executed the same turn twice (issue #867
-// follow-up). A pause that does carry a pending question is already serialised by
-// AnswerQuestion's claim on the question row; this is that claim's counterpart.
+// in-memory status and the checkpoint finalize runs only after the child insert,
+// so both followers created a child run and executed the same turn twice (issue
+// #867 follow-up). A pause that does carry a pending question is already
+// serialised by AnswerQuestion's claim on the question row; this is that claim's
+// counterpart.
 //
-// A claim that later loses its child to a hard failure leaves the checkpoint
-// successful, so the retry is rejected instead of running twice — the same
-// consume-then-run trade the question claim makes.
+// The claim moves the row to "working", NOT to a terminal state: between this
+// write and the child-run insert the checkpoint is the latest run in the chain,
+// so GetTask and CancelTask look at it. A terminal checkpoint would answer
+// TASK_NOT_CANCELABLE for a turn that is about to run; "working" is accepted by
+// both, and the cancel is carried into the child by
+// FinalizeResumedCheckpoint + the executor. It also keeps the row non-terminal
+// while the resumed child does not exist yet, so a hard failure can restore the
+// pause (ReleasePausedRunClaim) instead of dropping the user's message.
 func (r *Repository) ClaimPausedRunForResume(ctx context.Context, runID string) (bool, error) {
 	res, err := r.db.NewUpdate().
 		Model((*AgentRun)(nil)).
-		Set("status = ?", RunStatusSuccess).
-		Set("completed_at = NOW()").
+		Set("status = ?", RunStatusRunning).
+		Set("last_step_at = NOW()").
+		Set("completed_at = NULL").
 		Where("id = ?", runID).
 		Where("status = ?", RunStatusPaused).
 		Exec(ctx)
@@ -2344,21 +2349,61 @@ func (r *Repository) ClaimPausedRunForResume(ctx context.Context, runID string) 
 	return n > 0, nil
 }
 
-// MarkRunResumed finalizes the paused checkpoint run once a new resumed run has
-// been created. The checkpoint must reach a terminal state: this used to flip it
-// to `running` and clear completed_at, and nothing ever finalized it, so every
-// resumed run left its parent permanently stuck in "working" — visible as a
-// stalled run in the UI and counted as live work. Execution has moved to the new
-// run; the checkpoint records that it was resumed and is marked successful.
-func (r *Repository) MarkRunResumed(ctx context.Context, runID string) error {
-	_, err := r.db.NewUpdate().
+// ReleasePausedRunClaim restores a pause that a resume consumed but never turned
+// into a child run, so the user's follow-up is retryable instead of being
+// silently dropped. It only acts while the claim still owns the row: status is
+// the intermediate "working" written by ClaimPausedRunForResume and no child run
+// points back at it. Once the child exists the claim is real (finalized by
+// FinalizeResumedCheckpoint) and this is a no-op. A claim that loses its child to
+// a hard failure is exactly the case a plain terminal claim could not express.
+func (r *Repository) ReleasePausedRunClaim(ctx context.Context, runID string) (bool, error) {
+	res, err := r.db.NewUpdate().
 		Model((*AgentRun)(nil)).
-		Set("status = ?", RunStatusSuccess).
+		Set("status = ?", RunStatusPaused).
+		Set("completed_at = NULL").
+		Where("id = ?", runID).
+		Where("status = ?", RunStatusRunning).
+		Where("NOT EXISTS (SELECT 1 FROM kb.agent_runs AS child WHERE child.resumed_from = ?)", runID).
+		Exec(ctx)
+	if err != nil {
+		return false, fmt.Errorf("ReleasePausedRunClaim: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// FinalizeResumedCheckpoint finalizes the run a resume moved out of the pause,
+// once the resumed child run exists. The checkpoint must reach a terminal state:
+// it used to be flipped to `running` with completed_at cleared and nothing ever
+// finalized it, so every resumed run left its parent permanently stuck in
+// "working" — visible as a stalled run in the UI and counted as live work.
+//
+// It is status-aware because the resume window is cancellable: the A2A
+// continuation claims the pause into "working" before calling Resume, so a
+// CancelTask that lands before the child exists writes "cancelling" on this same
+// row. That intent finalizes as "cancelled" (and the executor propagates it to
+// the child), while an ordinary resume finalizes as successful. A plain
+// `WHERE status = paused` write would miss a claimed row and leave it stuck.
+//
+// A run that is already terminal returns "" with no error: the checkpoint was
+// finalized by a concurrent path and there is nothing left to write.
+func (r *Repository) FinalizeResumedCheckpoint(ctx context.Context, runID string) (AgentRunStatus, error) {
+	var status AgentRunStatus
+	err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = CASE WHEN status = ? THEN ? ELSE ? END", RunStatusCancelling, RunStatusCancelled, RunStatusSuccess).
 		Set("completed_at = NOW()").
 		Where("id = ?", runID).
-		Where("status = ?", RunStatusPaused).
-		Exec(ctx)
-	return err
+		Where("status IN (?)", bun.In([]AgentRunStatus{RunStatusPaused, RunStatusRunning, RunStatusCancelling})).
+		Returning("status").
+		Scan(ctx, &status)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("FinalizeResumedCheckpoint: %w", err)
+	}
+	return status, nil
 }
 
 // UpdateStepCount updates the step count for a running agent.

@@ -1840,8 +1840,8 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 			InitialStepCount: priorRun.StepCount,
 			TriggerMetadata:  priorRun.TriggerMetadata,
 			TrustedInternal:  priorRun.TrustedInternal,
-			// The resumed run owns the work item from here: MarkRunResumed
-			// finalizes the paused checkpoint.
+			// The resumed run owns the work item from here:
+			// FinalizeResumedCheckpoint finalizes the pause/claim.
 			SubjectObjectID:   priorRun.SubjectObjectID,
 			SubjectObjectType: priorRun.SubjectObjectType,
 		})
@@ -1856,15 +1856,28 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		req.OnRunCreated(newRun.ID)
 	}
 
-	// Transition the prior paused run to running so it no longer appears stuck.
-	// The new run (newRun) carries the actual execution; the prior run's role is to
-	// serve as a checkpoint that has now been resumed.
-	if err := ae.repo.MarkRunResumed(dbCtx, priorRun.ID); err != nil {
-		ae.log.Warn("failed to mark prior run as resumed",
+	// Transition the run this resume moved out of the pause. The new run
+	// (newRun) carries the actual execution; the prior run's role is to serve as
+	// a checkpoint that has now been resumed. The write is status-aware: a
+	// continuation claims the pause into "working" before calling Resume, so a
+	// cancel that landed in the claim-to-child window shows up here as
+	// "cancelling" and finalizes as "cancelled" — propagated to the child so the
+	// turn does not execute for a cancel that already arrived.
+	checkpointStatus, cpErr := ae.repo.FinalizeResumedCheckpoint(dbCtx, priorRun.ID)
+	if cpErr != nil {
+		ae.log.Warn("failed to finalize prior run as resumed",
 			slog.String("prior_run_id", priorRun.ID),
 			slog.String("new_run_id", newRun.ID),
-			slog.String("error", err.Error()),
+			slog.String("error", cpErr.Error()),
 		)
+	} else if checkpointStatus == RunStatusCancelled && newRun.ID != "" {
+		if err := ae.repo.SetRunCancelling(dbCtx, newRun.ID); err != nil {
+			ae.log.Warn("failed to propagate a cancel to the resumed run",
+				slog.String("prior_run_id", priorRun.ID),
+				slog.String("new_run_id", newRun.ID),
+				slog.String("error", err.Error()),
+			)
+		}
 	}
 
 	// Copy session_id from prior run so the resumed run stays linked to the same session.

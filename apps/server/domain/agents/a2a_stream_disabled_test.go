@@ -140,13 +140,14 @@ func (d *a2aResumeDriver) setClaimDenied(denied bool) {
 }
 
 // claimDenied reports whether the given statement is the resume claim and the
-// test configured it to lose.
+// test configured it to lose. The claim moves the pause into the non-terminal
+// "working" intermediate and clears completed_at; that pair identifies it.
 func (d *a2aResumeDriver) claimDenied(q string) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.denyResumeClaim &&
-		strings.Contains(q, `SET status = 'completed'`) &&
-		strings.Contains(q, "completed_at = NOW()")
+		strings.Contains(q, `SET status = 'working'`) &&
+		strings.Contains(q, "completed_at = NULL")
 }
 
 // setQuestionsMissing makes the pending-question query return no rows: the shape

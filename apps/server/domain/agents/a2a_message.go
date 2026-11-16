@@ -839,12 +839,16 @@ func (h *A2AHandler) resumeA2ATask(c echo.Context, projectID, userID, userMessag
 			}
 			if execErr != nil {
 				h.log.Error("a2a async resume failed", "task_id", taskID, "error", execErr.Error())
+				// The continuation claimed the pause; if Resume failed before a
+				// child run existed, restore it so the follow-up is retryable.
+				h.releaseResumeClaim(bgCtx, latest)
 			}
 		}()
-		// Synthesize the immediate WORKING snapshot without mutating the row: the
-		// paused run stays paused until executor.Resume creates the child run and
-		// marks it resumed, so a failed Resume cannot wedge the task as stuck
-		// "running" with no child run.
+		// Synthesize the immediate WORKING snapshot without mutating the row. The
+		// questionless branch has already claimed the pause into "working" (so a
+		// cancel or GetTask in the window sees live work, not a terminal
+		// checkpoint), and this snapshot matches that state; a failure that never
+		// creates a child run restores the pause via releaseResumeClaim.
 		task := resumeAsyncSnapshot(latest, taskID)
 		return writeA2AJSON(c, SendMessageResponse{Task: &task})
 	}
@@ -855,6 +859,9 @@ func (h *A2AHandler) resumeA2ATask(c echo.Context, projectID, userID, userMessag
 	}
 	if execErr != nil {
 		h.log.Error("a2a resume failed", "task_id", taskID, "error", execErr.Error())
+		// See releaseResumeClaim: the claim is not left owning a row that no
+		// execution will finalize.
+		h.releaseResumeClaim(ctx, latest)
 	}
 
 	return h.respondWithA2ATask(c, projectID, taskID)

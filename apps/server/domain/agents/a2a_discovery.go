@@ -47,6 +47,13 @@ type A2AHandler struct {
 	// a database. It is NOT a bypass: a nil value resolves the real guard lazily
 	// (see projectMembership), so authorization can never be skipped.
 	authorizeProject func(ctx context.Context, projectID string) error
+
+	// resumeRun drives the resume half of streamRun. Nil means the real
+	// executor (h.executor.Resume); tests set it to drive the resume path —
+	// claim, late-tracked child run, failed resume — without an executor or a
+	// database. It is the seam that keeps the abandoned-stream cancel and the
+	// compensating release wired to the code that actually runs.
+	resumeRun func(ctx context.Context, run *AgentRun, req ExecuteRequest) (*ExecuteResult, error)
 }
 
 // NewA2AHandler creates a new A2A handler.

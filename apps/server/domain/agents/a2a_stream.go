@@ -460,6 +460,27 @@ func (h *A2AHandler) cancelAbandonedStream(ctx context.Context, runID string) {
 	}
 }
 
+// releaseResumeClaim restores a pause that a resume consumed but never turned
+// into a child run, so a failed follow-up is retryable instead of being silently
+// dropped against a checkpoint that execution will never finalize. See
+// Repository.ReleasePausedRunClaim for the guard; when the child does exist this
+// is a no-op.
+func (h *A2AHandler) releaseResumeClaim(ctx context.Context, run *AgentRun) {
+	if h.repo == nil || run == nil || run.ID == "" {
+		return
+	}
+	restored, err := h.repo.ReleasePausedRunClaim(ctx, run.ID)
+	if err != nil {
+		h.log.Error("failed to release paused run claim",
+			"run_id", run.ID, "error", err.Error())
+		return
+	}
+	if restored {
+		h.log.Warn("resume failed before creating a child run; restored the pause",
+			"run_id", run.ID)
+	}
+}
+
 // StreamMessage handles POST /message:stream (SSE). Each `data:` line is a
 // StreamResponse discriminated by member presence. With no message.taskId it
 // streams a new task; with a taskId it resumes an INPUT_REQUIRED task.
@@ -771,7 +792,11 @@ func (h *A2AHandler) streamRun(
 	var result *ExecuteResult
 	var execErr error
 	if resume {
-		result, execErr = h.executor.Resume(ctx, run, execReq)
+		if h.resumeRun != nil {
+			result, execErr = h.resumeRun(ctx, run, execReq)
+		} else {
+			result, execErr = h.executor.Resume(ctx, run, execReq)
+		}
 	} else {
 		result, execErr = h.executor.ExecuteWithRun(ctx, run, execReq)
 	}
@@ -780,10 +805,19 @@ func (h *A2AHandler) streamRun(
 	}
 	if execErr != nil {
 		h.log.Error("a2a stream run failed", "task_id", taskID, "error", execErr.Error())
-		// Defence in depth: if the switch was flipped after the pre-check, the
-		// executor refused before touching the row, so fail it terminal rather
-		// than leaving it `running` until the stale-run reaper.
-		failRunIfExecutionDisabled(bgCtx, h.repo, run, execErr, h.log)
+		if resume {
+			// The continuation claims the pause before Resume runs. If Resume
+			// failed before creating a child run, the claim owns a row that no
+			// execution will ever finalize; restore the pause so the follow-up
+			// is retryable and GetTask stops reporting live work. Once the child
+			// exists this is a no-op and the child carries the failure.
+			h.releaseResumeClaim(bgCtx, run)
+		} else {
+			// Defence in depth: if the switch was flipped after the pre-check, the
+			// executor refused before touching the row, so fail it terminal rather
+			// than leaving it `running` until the stale-run reaper.
+			failRunIfExecutionDisabled(bgCtx, h.repo, run, execErr, h.log)
+		}
 	}
 
 	h.streamTerminal(bgCtx, writer, tr, projectID, taskID, result, execErr)
