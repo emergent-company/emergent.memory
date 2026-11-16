@@ -19,12 +19,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/githubapp"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/testdb"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	cryptoutil "github.com/emergent-company/emergent.memory/pkg/crypto"
 )
 
@@ -130,6 +132,27 @@ func TestSourceEventDispatcher(t *testing.T) {
 	// Invalid signature and unknown app fail closed.
 	require.ErrorIs(t, dispatcher.HandleWebhook(ctx, app.WebhookKey, "pull_request", "d-bad", "sha256=deadbeef", payload("opened", currentHead)), ErrSourceEventInvalidSignature)
 	require.ErrorIs(t, dispatcher.HandleWebhook(ctx, uuid.New(), "pull_request", "d-unknown", "sha256=00", payload("opened", currentHead)), ErrSourceAppNotFound)
+
+	// #863: the ingress itself answers with the apperror envelope, not the
+	// plain-text bodies it used to write, so a sender can branch on error.code.
+	e := echo.New()
+	e.HTTPErrorHandler = apperror.HTTPErrorHandler(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	RegisterSourceEventRoutes(e, NewSourceEventHandler(dispatcher))
+	post := func(target, signature string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, target, strings.NewReader(`{"action":"opened"}`))
+		req.Header.Set("X-GitHub-Event", "pull_request")
+		req.Header.Set("X-GitHub-Delivery", "d-http")
+		req.Header.Set("X-Hub-Signature-256", signature)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+	rec := post("/api/webhooks/source-apps/"+app.WebhookKey.String(), "sha256=deadbeef")
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	require.JSONEq(t, `{"error":{"code":"invalid_signature","message":"invalid signature"}}`, rec.Body.String())
+	rec = post("/api/webhooks/source-apps/"+uuid.New().String(), "sha256=00")
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	require.JSONEq(t, `{"error":{"code":"source_app_not_found","message":"unknown app"}}`, rec.Body.String())
 
 	// Disabled trigger: a new head claims but does not enqueue.
 	trigger.Enabled = false

@@ -1,6 +1,22 @@
 // mock-memory.mjs — STATEFUL mock of the Memory API for e2e tests.
 // The gateway points at this (MEMORY_URL=http://localhost:$MOCK_PORT) so tests
 // are deterministic and never touch production memory.
+//
+// STATE IS SHARED ACROSS SPEC FILES. One mock process backs a whole Playwright
+// run (datasources.config.ts: workers 1, fullyParallel false), so anything a test
+// writes — a source, a sync job, a saved credential, an OAuth app — is still
+// there for the next test unless something removes it. Two consequences:
+//
+//   - a spec must never rely on another spec's residue, and must not assume the
+//     store is empty because its own file started first;
+//   - a spec that asserts an empty list is asserting the *store*, so it depends
+//     on the reset below (POST /__mock/reset, called before every test by the
+//     `test` exported from fixtures.ts), not on alphabetically-earlier files.
+//
+// Post a body-less POST to /__mock/reset to restore the Data Sources store
+// (sources, sync jobs, saved credentials, OAuth clients/apps) to the seed below.
+// It is mock-only and deliberately narrow: chat, share and notification state
+// belong to their own suites and are not touched.
 import http from "node:http";
 
 // Both ports are required. `run-e2e.sh` derives them per run and exports the
@@ -524,7 +540,10 @@ const dsMockFolders = {
   "folder-two": { name: "Second Folder" },
 };
 
-let dsSources = [
+// dsSeedSources is the pristine source list a reset restores: the two sources
+// every Data Sources spec may assume exist (the OAuth bounce-back lands on s1;
+// s2 is the fixed-scope Gmail source the credentials card renders).
+const dsSeedSources = () => [
   {
     row: {
       id: "s1",
@@ -567,6 +586,7 @@ let dsSources = [
     config: { query: "in:inbox", max_threads: 5000 },
   },
 ]; // [{ row, config }] — the full config (incl. credentials) is server-side only; dsIntegration returns a stripped copy.
+let dsSources = dsSeedSources();
 let dsJobsBySource = {}; // sourceId -> [job], newest first.
 let dsCounter = 1;
 let dsJobCounter = 1;
@@ -574,7 +594,7 @@ let dsJobCounter = 1;
 // Project-scoped saved credentials (metadata only; the credential material is
 // server-side and never returned). Seeded with one GitHub token so the connect
 // form and the credentials page have something to pick and edit.
-let dsSavedCredentials = [
+const dsSeedSavedCredentials = () => [
   {
     id: "cred-gh-1",
     providerType: "github",
@@ -584,7 +604,27 @@ let dsSavedCredentials = [
     updatedAt: "2026-09-01T00:00:00Z",
   },
 ];
+let dsSavedCredentials = dsSeedSavedCredentials();
 let dsSavedCredCounter = 1;
+
+// dsResetStore restores the Data Sources store to the seed above. Every spec in
+// the datasources project starts from this state (fixtures.ts POSTs
+// /__mock/reset before each test), so an empty-list assertion tests the UI, not
+// the run order. Chat, share and notification state belong to their own suites
+// and are intentionally left alone.
+function dsResetStore() {
+  dsSources = dsSeedSources();
+  dsJobsBySource = {};
+  dsCounter = 1;
+  dsJobCounter = 1;
+  dsSavedCredentials = dsSeedSavedCredentials();
+  dsSavedCredCounter = 1;
+  dsOAuthState.org.clear();
+  dsOAuthState.project.clear();
+  dsOAuthAppState.org.clear();
+  dsOAuthAppState.project.clear();
+  dsAppCounter = 0;
+}
 
 // dsSavedCredentialView projects a stored credential into the read DTO: metadata
 // plus the live usage count derived from the sources, so delete can mirror the
@@ -1029,6 +1069,19 @@ function readBody(req, cb) {
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const path = url.pathname;
+
+  // --- mock-only control surface ---------------------------------------------
+  //
+  // POST /__mock/reset restores the Data Sources store to its seed (see
+  // dsResetStore). It is the reason a spec can assert an empty list: one mock
+  // process backs every spec file in a run, and this is the only thing that
+  // takes the previous test's residue back out. fixtures.ts posts it before each
+  // test in the datasources project. POST-only so a link prefetch or a crawler
+  // cannot wipe the store mid-run.
+  if (path === "/__mock/reset" && req.method === "POST") {
+    dsResetStore();
+    return json(res, { ok: true });
+  }
 
   // --- public agent-share (anonymous, bearer key + X-End-User-Ref) -----------
 

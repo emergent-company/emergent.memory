@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../fixtures';
 import { createTraleSource, deleteDriveSource } from '../../helpers/datasources';
 
 // Trale data source connect + edit, driven by the provider catalog. Trale is
