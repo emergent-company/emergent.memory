@@ -1155,6 +1155,16 @@ func TestMarketRejectionIsNotAnOutage(t *testing.T) {
 			},
 			want: CodeMarketUnreach,
 		},
+		{
+			name:   "browse 425 is still an outage",
+			route:  "catalog",
+			status: http.StatusTooEarly,
+			call: func(ctx context.Context, c *Client, m *fakeInProductMarket) error {
+				_, err := c.Browse(ctx, m.url, BrowseQuery{Kind: KindMCP})
+				return err
+			},
+			want: CodeMarketUnreach,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1229,6 +1239,41 @@ func TestUsageReportRejectionIsDroppedAndOutageIsQueued(t *testing.T) {
 		}
 		if got := m.usageAccepted.Load(); got != 0 {
 			t.Fatalf("market accepted %d reports while answering 503", got)
+		}
+
+		m.mu.Lock()
+		m.usageStatus = 0
+		m.mu.Unlock()
+		if err := client.FlushUsage(ctx, m.url); err != nil {
+			t.Fatalf("flush: %v", err)
+		}
+		if got := m.usageAccepted.Load(); got != 1 {
+			t.Fatalf("replayed reports accepted = %d, want 1", got)
+		}
+	})
+
+	// F1: 425 Too Early means "ask again shortly", so it belongs with 408/429 on
+	// the retryable side. Treating it as a rejection would drop the attribution
+	// for a call that is already served.
+	t.Run("425 is retryable and replayed", func(t *testing.T) {
+		clock := newFakeClock(time.Now())
+		m := newFakeInProductMarket(t)
+		client := newInProductClient(t, m, clock, nil)
+		ctx := context.Background()
+		batch, err := client.Authorize(ctx, m.url, "ent-1", 1)
+		if err != nil {
+			t.Fatalf("authorize: %v", err)
+		}
+		id, _ := batch.Take()
+		m.mu.Lock()
+		m.usageStatus = http.StatusTooEarly
+		m.mu.Unlock()
+
+		if err := client.ReportUsage(ctx, m.url, UsageReport{RequestID: id}); err != nil {
+			t.Fatalf("a 425 usage report must be deferred, not dropped: %v", err)
+		}
+		if got := m.usageAccepted.Load(); got != 0 {
+			t.Fatalf("market accepted %d reports while answering 425", got)
 		}
 
 		m.mu.Lock()
@@ -1338,21 +1383,26 @@ func TestAuthorizeReusesALiveBatchUntilItExpires(t *testing.T) {
 		t.Fatalf("authorize hits = %d, want 1", got)
 	}
 
-	second, err := client.Authorize(ctx, m.url, "ent-1", 1)
+	grant, err := client.Authorize(ctx, m.url, "ent-1", 1)
 	if err != nil {
 		t.Fatalf("second authorize: %v", err)
 	}
-	if second != first {
-		t.Fatal("a live batch was not reused")
+	if grant == first {
+		t.Fatal("the second authorize returned the shared batch instead of a grant")
 	}
 	if got := m.authorizeHits.Load(); got != 1 {
 		t.Fatalf("reuse still bought a batch: authorize hits = %d, want 1", got)
 	}
-	if got := second.Remaining(); got != 2 {
-		t.Fatalf("reused batch remaining = %d, want 2", got)
+	if got := len(grant.RequestIDs); got != 1 {
+		t.Fatalf("grant carries %d ids, want exactly the 1 reserved", got)
 	}
-	if _, ok := second.Take(); !ok {
-		t.Fatal("reused batch handed out no id")
+	if got := freeIDS(t, grant); len(got) != 1 {
+		t.Fatalf("grant handed out %d ids, want 1", len(got))
+	}
+	// The reservation is taken out of the shared batch, so the first handle no
+	// longer offers that id.
+	if got := first.Remaining(); got != 1 {
+		t.Fatalf("shared batch remaining = %d, want 1 after a 1-id reservation", got)
 	}
 
 	// Past the local 60 s window the cache must not be reused; the market is
@@ -1372,4 +1422,174 @@ func TestAuthorizeReusesALiveBatchUntilItExpires(t *testing.T) {
 	if got := m.authorizeHits.Load(); got != 2 {
 		t.Fatalf("authorize hits after expiry = %d, want 2", got)
 	}
+}
+
+// TestAuthorizeReservationsAreExclusive pins F5: two authorizations against the
+// same live batch must be allocated disjoint ids, not both be told "there are
+// enough left" and race for them.
+func TestAuthorizeReservationsAreExclusive(t *testing.T) {
+	clock := newFakeClock(time.Now())
+	m := newFakeInProductMarket(t)
+	client := newInProductClient(t, m, clock, nil)
+	ctx := context.Background()
+
+	if _, err := client.Authorize(ctx, m.url, "ent-1", 6); err != nil {
+		t.Fatalf("first authorize: %v", err)
+	}
+
+	a, err := client.Authorize(ctx, m.url, "ent-1", 3)
+	if err != nil {
+		t.Fatalf("authorize A: %v", err)
+	}
+	b, err := client.Authorize(ctx, m.url, "ent-1", 3)
+	if err != nil {
+		t.Fatalf("authorize B: %v", err)
+	}
+	if got := m.authorizeHits.Load(); got != 1 {
+		t.Fatalf("authorize hits = %d, want 1 (both reservations from one batch)", got)
+	}
+
+	idsA := freeIDS(t, a)
+	idsB := freeIDS(t, b)
+	if len(idsA) != 3 || len(idsB) != 3 {
+		t.Fatalf("reserved %d and %d ids, want 3 and 3", len(idsA), len(idsB))
+	}
+	seen := make(map[string]struct{}, 6)
+	for _, id := range append(idsA, idsB...) {
+		if _, dup := seen[id]; dup {
+			t.Fatalf("request id %q was handed to two authorizations", id)
+		}
+		seen[id] = struct{}{}
+	}
+}
+
+// TestAuthorizeMintsWhenTheCachedBatchIsTooSmall pins the other half of the
+// reuse rule: a live batch with fewer ids than requested is not handed out.
+func TestAuthorizeMintsWhenTheCachedBatchIsTooSmall(t *testing.T) {
+	clock := newFakeClock(time.Now())
+	m := newFakeInProductMarket(t)
+	client := newInProductClient(t, m, clock, nil)
+	ctx := context.Background()
+
+	first, err := client.Authorize(ctx, m.url, "ent-1", 2)
+	if err != nil {
+		t.Fatalf("first authorize: %v", err)
+	}
+	if _, err := client.Authorize(ctx, m.url, "ent-1", 1); err != nil {
+		t.Fatalf("reserving the first id: %v", err)
+	}
+	if got := first.Remaining(); got != 1 {
+		t.Fatalf("remaining = %d, want 1", got)
+	}
+
+	if _, err := client.Authorize(ctx, m.url, "ent-1", 2); err != nil {
+		t.Fatalf("authorize for a batch larger than the cache: %v", err)
+	}
+	if got := m.authorizeHits.Load(); got != 2 {
+		t.Fatalf("authorize hits = %d, want 2: a too-small batch must not be reused", got)
+	}
+}
+
+// TestAuthorizeRetainsABatchThatIsNotYetValid pins F8: an assertion whose nbf is
+// a few seconds in the future passes verification under the clock-skew leeway,
+// but the batch must not hand out a request id before that instant — a call
+// served then cannot be attributed.
+func TestAuthorizeRetainsABatchThatIsNotYetValid(t *testing.T) {
+	clock := newFakeClock(time.Now())
+	m := newFakeInProductMarket(t)
+	client := newInProductClient(t, m, clock, nil)
+	ctx := context.Background()
+	notBefore := clock.Now().Add(30 * time.Second)
+
+	m.mu.Lock()
+	m.assertionToken = m.sign(t, m.key, map[string]any{
+		"iss":            m.url,
+		"aud":            "https://seller.example/mcp",
+		"nbf":            notBefore.Unix(),
+		"exp":            clock.Now().Add(time.Hour).Unix(),
+		"entitlement_id": "ent-1",
+		"request_ids":    requestIDs(20),
+	})
+	m.mu.Unlock()
+
+	batch, err := client.Authorize(ctx, m.url, "ent-1", 2)
+	if err != nil {
+		t.Fatalf("authorize: %v", err)
+	}
+	if id, ok := batch.Take(); ok {
+		t.Fatalf("a not-yet-valid batch handed out %q", id)
+	}
+	if ids, ok := batch.Reserve(1); ok {
+		t.Fatalf("a not-yet-valid batch reserved %v", ids)
+	}
+
+	// Once the not-before instant passes the same batch becomes usable; the
+	// window is not thrown away, only withheld until the seller accepts it.
+	clock.Advance(31 * time.Second)
+	if id, ok := batch.Take(); !ok || id == "" {
+		t.Fatal("the batch did not become usable after its not-before instant")
+	}
+}
+
+// freeIDS drains a batch through Take, failing the test if it runs dry.
+func freeIDS(t *testing.T, batch *AuthorizationBatch) []string {
+	t.Helper()
+	var ids []string
+	for {
+		id, ok := batch.Take()
+		if !ok {
+			return ids
+		}
+		ids = append(ids, id)
+	}
+}
+
+// TestAuthorizeFourHundredDropsTheCachedBatch pins the Authorize 4xx branch: a
+// 402 says this entitlement may not be authorized, so the cached batch must not
+// be served afterwards (its calls could not be attributed), while a 408 is an
+// outage and stays retryable.
+func TestAuthorizeFourHundredDropsTheCachedBatch(t *testing.T) {
+	t.Run("402 is a refusal and drops the cached batch", func(t *testing.T) {
+		clock := newFakeClock(time.Now())
+		m := newFakeInProductMarket(t)
+		client := newInProductClient(t, m, clock, nil)
+		ctx := context.Background()
+
+		if _, err := client.Authorize(ctx, m.url, "ent-1", 2); err != nil {
+			t.Fatalf("authorize: %v", err)
+		}
+		m.mu.Lock()
+		m.authorizeStatus = http.StatusPaymentRequired
+		m.mu.Unlock()
+
+		// Ask for more than the cached batch holds, so the market is consulted
+		// and answers 4xx on the live cache.
+		_, err := client.Authorize(ctx, m.url, "ent-1", 20)
+		expectCode(t, err, CodeEntitlementInactive)
+
+		// The cached batch is gone: with the market now unreachable there is
+		// nothing to fall back to, so the outage itself surfaces. Serving the
+		// dropped batch would return nil here.
+		m.mu.Lock()
+		m.authorizeStatus = 0
+		m.mu.Unlock()
+		m.offline.Store(true)
+		_, err = client.Authorize(ctx, m.url, "ent-1", 1)
+		expectCode(t, err, CodeMarketUnreach)
+	})
+
+	t.Run("408 on a cold cache is a retryable outage", func(t *testing.T) {
+		clock := newFakeClock(time.Now())
+		m := newFakeInProductMarket(t)
+		client := newInProductClient(t, m, clock, nil)
+		m.mu.Lock()
+		m.authorizeStatus = http.StatusRequestTimeout
+		m.mu.Unlock()
+
+		_, err := client.Authorize(context.Background(), m.url, "ent-1", 2)
+		expectCode(t, err, CodeMarketUnreach)
+		if !isRetryableMarketError(err) {
+			t.Fatalf("a 408 on authorize must stay retryable: %v", err)
+		}
+	})
 }

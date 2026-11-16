@@ -104,7 +104,7 @@ func ErrMarketUnreachable(detail string) *apperror.Error {
 }
 
 // ErrMarketRejected reports that the market answered and refused the request:
-// a 4xx other than 408 (transport-shaped) and 429 (throttling, with its own
+// a 4xx other than 408/425 (transport-shaped) and 429 (throttling, with its own
 // code). A 400/401/403 is ours to fix, so it must not be dressed up as an egress
 // failure or queued for retry as if the market had been down.
 func ErrMarketRejected(operation string, status int) *apperror.Error {
@@ -116,11 +116,15 @@ func ErrMarketRejected(operation string, status int) *apperror.Error {
 }
 
 // isClientRejection reports whether status is the market answering "no" to a
-// request it understood, as opposed to an outage. 408 and 429 are excluded:
-// a timeout is transport-shaped and throttling has its own retryable code.
+// request it understood, as opposed to an outage. 408 (Request Timeout), 425
+// (Too Early) and 429 (Too Many Requests) are excluded: a timeout and an
+// "ask again shortly" are transport-shaped, and throttling has its own
+// retryable code. Treating 425 as a rejection would drop a usage report that a
+// retry would have accepted.
 func isClientRejection(status int) bool {
 	return status >= 400 && status < 500 &&
 		status != http.StatusRequestTimeout &&
+		status != http.StatusTooEarly &&
 		status != http.StatusTooManyRequests
 }
 

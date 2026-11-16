@@ -326,8 +326,12 @@ func (c *Client) Browse(ctx context.Context, issuer string, query BrowseQuery) (
 // BrowseVerified browses and verifies every listing's trust document before
 // returning it. A listing whose document is missing, invalid, expired, for a
 // different slug, for a different digest, or that explicitly says the listing is
-// not verified is dropped and logged; the instance never offers a listing the
-// market has not vouched for.
+// not verified is dropped and logged.
+//
+// The last clause is the limit of the promise: an explicit verified:false is
+// enforced, but a document that omits the claim means "not stated" and is
+// accepted on its signature (see TrustClaims.Verified), so this depends on the
+// market's producer contract emitting the claim.
 func (c *Client) BrowseVerified(ctx context.Context, issuer string, query BrowseQuery) (*Catalog, error) {
 	catalog, err := c.Browse(ctx, issuer, query)
 	if err != nil {
@@ -382,10 +386,12 @@ type TrustClaims struct {
 	Publisher   string          `json:"publisher,omitempty"`
 	Digest      string          `json:"digest,omitempty"`
 	// Verified is the market's statement, inside the signed document, that this
-	// listing passed its review. It is a pointer so "not stated" and "stated
-	// false" are distinguishable: an explicit false is refused by
-	// VerifyTrustDocument, while an omitted claim is informational and the
-	// document's signature is the trust anchor.
+	// listing passed its review. It is a pointer so "not stated" (nil) and
+	// "stated false" are distinguishable: an explicit false is refused by
+	// VerifyTrustDocument, while an omitted claim means not stated and is
+	// fail-open — the listing is accepted on the signature alone. Enforcement
+	// therefore depends on the market's producer contract setting the claim;
+	// see BrowseVerified.
 	Verified *bool `json:"verified,omitempty"`
 }
 
