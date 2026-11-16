@@ -315,7 +315,10 @@ pre-commit:
     # debt is paid down (whole tree format-clean); the residual structural
     # SwiftLint violations are captured in apps/connector.mac/.swiftlint.baseline
     # and ignored, so only new drift fails. No `root:` so {staged_files} stay
-    # repo-root-relative. See Scripts/lint-swift.sh for the ratchet rationale.
+    # repo-root-relative. Missing tools fail closed (#925) rather than skipping
+    # green; a host that cannot install them may set LINT_SWIFT_SKIP=1, which
+    # warns loudly and is refused in CI. See Scripts/lint-swift.sh for the
+    # ratchet rationale.
     - name: connector-mac-swift
       glob:
         - "apps/connector.mac/*.swift"
