@@ -4100,6 +4100,44 @@ func (r *Repository) RequestRunCancellation(ctx context.Context, runID string) (
 	return n > 0, nil
 }
 
+// cancellableWhileStreamingStatuses are the statuses in which a run is still
+// doing work on behalf of a stream consumer: "queued" (not started yet),
+// "running" (stepping) and "cancelling" (a cancel intent is already recorded).
+//
+// "paused" (the row value is "input-required") is deliberately excluded. A paused
+// run has stopped and is waiting for a resume, so a consumer that vanished must
+// not turn the pause into a cancel —
+// that parks the task in "cancelling" and strands the resume the user is about to
+// send (issue #867). A terminal row is excluded for the same reason every terminal
+// write is guarded: the first terminal transition wins.
+func cancellableWhileStreamingStatuses() []string {
+	return []string{
+		string(RunStatusQueued),
+		string(RunStatusRunning),
+		string(RunStatusCancelling),
+	}
+}
+
+// RequestRunCancellationIfActive is RequestRunCancellation for a caller that lost
+// the run's stream consumer rather than a user asking to cancel: it records the
+// same durable cancel intent, but only while the run is still active (see
+// cancellableWhileStreamingStatuses). It reports whether the transition was
+// applied, so the caller can skip notifying the executor about a run that is
+// already paused or finished.
+func (r *Repository) RequestRunCancellationIfActive(ctx context.Context, runID string) (bool, error) {
+	res, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusCancelling).
+		Where("id = ?", runID).
+		Where("status IN (?)", bun.In(cancellableWhileStreamingStatuses())).
+		Exec(ctx)
+	if err != nil {
+		return false, fmt.Errorf("RequestRunCancellationIfActive: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // RunIsCancelling reports whether the run currently carries the durable cancel
 // intent (status "cancelling"). The executor calls this at step boundaries to
 // observe a cancel committed by any instance, including one whose local cancel

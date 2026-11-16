@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -114,14 +115,42 @@ func TestStreamNewTask_DisabledDoesNotCreateRun(t *testing.T) {
 // =============================================================================
 
 type a2aResumeDriver struct {
-	mu      sync.Mutex
-	queries []string
+	mu           sync.Mutex
+	queries      []string
+	noQuestions  bool
+	questionsErr bool
 }
 
 func (d *a2aResumeDriver) reset() {
 	d.mu.Lock()
 	d.queries = nil
+	d.noQuestions = false
+	d.questionsErr = false
 	d.mu.Unlock()
+}
+
+// setQuestionsMissing makes the pending-question query return no rows: the shape
+// a resume sees when the run paused for a reason that writes no question row
+// (step limit, watchdog) — issue #867.
+func (d *a2aResumeDriver) setQuestionsMissing(missing bool) {
+	d.mu.Lock()
+	d.noQuestions = missing
+	d.mu.Unlock()
+}
+
+// setQuestionsError makes the pending-question query fail, so a test can tell a
+// broken read apart from an empty question set.
+func (d *a2aResumeDriver) setQuestionsError(fail bool) {
+	d.mu.Lock()
+	d.questionsErr = fail
+	d.mu.Unlock()
+}
+
+// questionMode reports the configured behaviour of the pending-question query.
+func (d *a2aResumeDriver) questionMode() (missing, failing bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.noQuestions, d.questionsErr
 }
 
 func (d *a2aResumeDriver) record(q string) {
@@ -159,6 +188,13 @@ func (c *a2aResumeConn) QueryContext(_ context.Context, q string, _ []driver.Nam
 	case strings.Contains(q, `FROM "kb"."agent_runs"`):
 		return &a2aRunRows{}, nil
 	case strings.Contains(q, `FROM "kb"."agent_questions"`):
+		missing, failing := c.d.questionMode()
+		if failing {
+			return nil, errors.New("agent_questions read failed")
+		}
+		if missing {
+			return rootEmptyRows{}, nil
+		}
 		return &a2aQuestionRows{}, nil
 	default:
 		return rootEmptyRows{}, nil

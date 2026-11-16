@@ -242,6 +242,23 @@ func hitlMetadata(run *AgentRun) map[string]any {
 	}
 }
 
+// a2aResumeMessage builds the turn message a resumed task hands the executor.
+//
+// When the pause left a pending question (ask_user or a tool confirmation), the
+// message is the user's answer quoted against the question so the model sees what
+// it asked. When it did not — a step-limit or watchdog pause writes no question
+// row — the user's own message IS the continuation and is passed through
+// unchanged (issue #867).
+func a2aResumeMessage(question *AgentQuestion, userMessage string) string {
+	if question == nil {
+		return userMessage
+	}
+	return fmt.Sprintf(
+		"Previously you asked: \"%s\"\nThe user responded: \"%s\"\nContinue from where you left off.",
+		question.Question, userMessage,
+	)
+}
+
 // internalStatusesForTaskState maps an A2A TaskState filter to the set of
 // internal statuses it represents. Returns nil when the state is unknown.
 func internalStatusesForTaskState(state TaskState) []AgentRunStatus {
@@ -746,8 +763,17 @@ func (h *A2AHandler) resumeA2ATask(c echo.Context, projectID, userID, userMessag
 	}
 
 	questions, err := h.repo.FindPendingQuestionsByRunID(ctx, latest.ID)
-	if err != nil || len(questions) == 0 {
-		return writeA2AError(c, a2aInvalidStateError("no pending question for task"))
+	if err != nil {
+		h.log.Error("failed to load pending questions", "task_id", taskID, "error", err)
+		return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to load pending questions"))
+	}
+	// A paused run with no pending question is a continuation, not a question:
+	// a step-limit or watchdog pause leaves no question row, and the client has
+	// already latched the task id from the INPUT_REQUIRED status, so rejecting
+	// the follow-up would strand the task (issue #867).
+	var question *AgentQuestion
+	if len(questions) > 0 {
+		question = questions[0]
 	}
 
 	// Kill switch: check BEFORE claiming the pending question, otherwise a
@@ -760,19 +786,18 @@ func (h *A2AHandler) resumeA2ATask(c echo.Context, projectID, userID, userMessag
 
 	// Atomically claim the pending question (mirror ACP AnswerQuestion path); a
 	// concurrent responder wins and this call loses.
-	claimed, err := h.repo.AnswerQuestion(ctx, questions[0].ID, userMessage, userID)
-	if err != nil {
-		h.log.Error("failed to answer question", "task_id", taskID, "error", err)
-		return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to answer question"))
-	}
-	if !claimed {
-		return writeA2AError(c, a2aInvalidStateError("question is no longer pending"))
+	if question != nil {
+		claimed, err := h.repo.AnswerQuestion(ctx, question.ID, userMessage, userID)
+		if err != nil {
+			h.log.Error("failed to answer question", "task_id", taskID, "error", err)
+			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to answer question"))
+		}
+		if !claimed {
+			return writeA2AError(c, a2aInvalidStateError("question is no longer pending"))
+		}
 	}
 
-	resumeMsg := fmt.Sprintf(
-		"Previously you asked: \"%s\"\nThe user responded: \"%s\"\nContinue from where you left off.",
-		questions[0].Question, userMessage,
-	)
+	resumeMsg := a2aResumeMessage(question, userMessage)
 
 	def, err := h.repo.ResolveDefinitionForAgent(ctx, latest.Agent)
 	if err != nil {
