@@ -438,6 +438,7 @@ type PropertyDetail struct {
 	Title       string
 	Type        string
 	Widget      string
+	Format      string
 	Description string
 	Required    bool
 }
@@ -649,6 +650,7 @@ func propertiesFromMap(v any) []PropertyDetail {
 			Title:       strAny(p["title"]),
 			Type:        strAny(p["type"]),
 			Widget:      strAny(p["widget"]),
+			Format:      strAny(p["format"]),
 			Description: strAny(p["description"]),
 			Required:    boolAny(p["required"]),
 		})

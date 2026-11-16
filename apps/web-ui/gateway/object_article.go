@@ -67,9 +67,16 @@ var (
 // its second paragraph rather than losing it to the lead's first line. A wiki page
 // that repeats its opening line in larger type reads like a bug, so a body that
 // opens with the lead's own paragraph has that paragraph removed.
-func objectArticleFor(obj GraphObject) objectArticleProse {
+func objectArticleFor(obj GraphObject, propDefs []objectPropertyDef) objectArticleProse {
 	leadKey, leadRaw, _ := firstProseProperty(obj.Properties, objectArticleLeadKeys)
-	bodyKey, bodyRaw, _ := firstProseProperty(obj.Properties, objectArticleBodyKeys)
+	// An explicit `format: markdown` property is the schema's statement of which
+	// field holds the document, so it beats the conventional key vocabulary. The
+	// heuristics still apply when the schema declares none, which keeps objects
+	// whose types predate the format working unchanged.
+	bodyKey, bodyRaw, _ := firstMarkdownBodyProperty(obj.Properties, propDefs, leadKey)
+	if bodyKey == "" {
+		bodyKey, bodyRaw, _ = firstProseProperty(obj.Properties, objectArticleBodyKeys)
+	}
 
 	if leadRaw == "" && bodyRaw == "" {
 		return objectArticleProse{}
@@ -106,6 +113,24 @@ func objectArticleFor(obj GraphObject) objectArticleProse {
 
 	prose.BodyHTML, prose.Headings = renderArticleMarkdown(bodyRaw)
 	return prose
+}
+
+// firstMarkdownBodyProperty returns the first declared `format: markdown`
+// property that holds prose, in the schema's deterministic name order, skipping
+// the property already consumed as the lead. Matching tolerates the case and
+// separator spellings prosePropertyNamed accepts.
+func firstMarkdownBodyProperty(props map[string]any, propDefs []objectPropertyDef, leadKey string) (key, value string, ok bool) {
+	for _, def := range propDefs {
+		if !def.Markdown() || (leadKey != "" && strings.EqualFold(def.Name, leadKey)) {
+			continue
+		}
+		name, s, found := prosePropertyNamed(props, def.Name)
+		if !found || strings.TrimSpace(s) == "" {
+			continue
+		}
+		return name, s, true
+	}
+	return "", "", false
 }
 
 // firstProseProperty returns the first non-empty string property in keys, in
