@@ -345,8 +345,7 @@ func (w *ChunkEmbeddingWorker) processTrackedJob(ctx context.Context, job *Chunk
 		}
 	}()
 	if err := w.processJob(ctx, job); err != nil {
-		var budgetErr *EmbeddingBudgetExceededError
-		if errors.As(err, &budgetErr) {
+		if budgetErr, ok := errors.AsType[*EmbeddingBudgetExceededError](err); ok {
 			w.log.Debug("chunk embedding job parked (budget exceeded)",
 				slog.String("job_id", job.ID),
 				slog.String("project_id", budgetErr.ProjectID))

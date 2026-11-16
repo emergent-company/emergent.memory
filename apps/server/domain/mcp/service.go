@@ -4142,8 +4142,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 	})
 
 	if err != nil {
-		var scopeErr *entityQueryScopeError
-		if errors.As(err, &scopeErr) {
+		if scopeErr, ok := errors.AsType[*entityQueryScopeError](err); ok {
 			return nil, scopeErr
 		}
 		if errors.Is(queryCtx.Err(), context.DeadlineExceeded) {
@@ -5646,8 +5645,8 @@ func (s *Service) deleteEntityOne(ctx context.Context, projectUUID uuid.UUID, pr
 // whole batch after a timeout cannot append another tombstone or report a false
 // failure.
 func isAlreadyDeletedError(err error) bool {
-	var appErr *apperror.Error
-	if !errors.As(err, &appErr) || appErr.HTTPStatus != http.StatusBadRequest {
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	if !ok || appErr.HTTPStatus != http.StatusBadRequest {
 		return false
 	}
 	msg := strings.ToLower(appErr.Message)

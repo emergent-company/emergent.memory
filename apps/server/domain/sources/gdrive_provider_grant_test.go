@@ -135,8 +135,8 @@ func TestDrivePickerSession_GrantStatusIsUnprocessable(t *testing.T) {
 		AppID:        "12345",
 		Strategy:     string(ScopeStrategyDriveReadonly),
 	})
-	var appErr *apperror.Error
-	if !errors.As(err, &appErr) {
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	if !ok {
 		t.Fatalf("error = %v, want an *apperror.Error", err)
 	}
 	if appErr.HTTPStatus != http.StatusUnprocessableEntity {
@@ -189,8 +189,7 @@ func TestDriveEnumerate_ClientRejectionNamesTheAdministrator(t *testing.T) {
 	if !errors.Is(err, errDriveClientRejected) {
 		t.Fatalf("error = %v, want the rejected-client remediation", err)
 	}
-	var appErr *apperror.Error
-	if errors.As(err, &appErr) {
+	if appErr, ok := errors.AsType[*apperror.Error](err); ok {
 		t.Errorf("client rejection was mapped to %v", appErr)
 	}
 }
@@ -234,8 +233,8 @@ func TestDriveListResources_GrantRevokedMapsToReconnect(t *testing.T) {
 			if strings.Contains(err.Error(), "invalid_grant") {
 				t.Errorf("ListResources(revoked grant) leaked the raw provider error: %q", err)
 			}
-			var appErr *apperror.Error
-			if !errors.As(err, &appErr) {
+			appErr, ok := errors.AsType[*apperror.Error](err)
+			if !ok {
 				t.Fatalf("error = %v, want an *apperror.Error", err)
 			}
 			if appErr.HTTPStatus != http.StatusUnprocessableEntity {
@@ -258,8 +257,7 @@ func TestDriveListResources_TransientStaysRaw(t *testing.T) {
 	if !errors.Is(err, raw) {
 		t.Fatalf("error = %v, want the raw provider error", err)
 	}
-	var appErr *apperror.Error
-	if errors.As(err, &appErr) {
+	if appErr, ok := errors.AsType[*apperror.Error](err); ok {
 		t.Errorf("transient error was mapped to %v", appErr)
 	}
 }
@@ -276,8 +274,7 @@ func TestDriveListResources_MissingCredentialStaysRaw(t *testing.T) {
 	if !errors.Is(err, raw) {
 		t.Fatalf("error = %v, want the raw constructor error", err)
 	}
-	var appErr *apperror.Error
-	if errors.As(err, &appErr) {
+	if appErr, ok := errors.AsType[*apperror.Error](err); ok {
 		t.Errorf("constructor error was mapped to %v", appErr)
 	}
 }

@@ -1264,8 +1264,7 @@ func (s *Service) ExecuteSchemaMigration(ctx context.Context, projectID string, 
 			if errors.Is(listErr, errMaxObjectsReached) {
 				continue
 			}
-			var apErr *apperror.Error
-			if errors.As(listErr, &apErr) {
+			if apErr, ok := errors.AsType[*apperror.Error](listErr); ok {
 				return nil, apErr
 			}
 			return nil, fmt.Errorf("failed to list objects of type %s: %w", typeName, listErr)
@@ -1426,8 +1425,7 @@ func (s *Service) RollbackSchemaMigration(ctx context.Context, projectID string,
 		return nil
 	})
 	if err != nil {
-		var apErr *apperror.Error
-		if errors.As(err, &apErr) {
+		if apErr, ok := errors.AsType[*apperror.Error](err); ok {
 			return nil, apErr
 		}
 		return nil, apperror.ErrDatabase.WithInternal(err)

@@ -119,8 +119,8 @@ func TestParseRSAPrivateKeyRejectsWeakKey(t *testing.T) {
 			if !errors.Is(err, ErrPrivateKeyTooWeak) {
 				t.Fatalf("err = %v, want ErrPrivateKeyTooWeak", err)
 			}
-			var weak *WeakPrivateKeyError
-			if !errors.As(err, &weak) || weak.Bits != 1024 {
+			weak, ok := errors.AsType[*WeakPrivateKeyError](err)
+			if !ok || weak.Bits != 1024 {
 				t.Fatalf("err = %v, want WeakPrivateKeyError{Bits: 1024}", err)
 			}
 			if !strings.Contains(err.Error(), "1024") || !strings.Contains(err.Error(), "2048") {

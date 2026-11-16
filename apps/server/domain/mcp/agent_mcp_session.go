@@ -102,8 +102,8 @@ func runErrorKindAndMessage(err error) (string, string) {
 	if err == nil {
 		return string(AgentRunErrorFailed), "agent run failed"
 	}
-	runErr := new(AgentRunError)
-	if errors.As(err, &runErr) {
+	runErr, ok := errors.AsType[*AgentRunError](err)
+	if ok {
 		kind := string(runErr.Kind)
 		if kind == "" {
 			kind = string(AgentRunErrorFailed)

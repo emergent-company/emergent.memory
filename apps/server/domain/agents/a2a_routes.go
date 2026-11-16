@@ -348,16 +348,13 @@ func a2aErrorFrom(err error) *A2AError {
 	if err == nil {
 		return nil
 	}
-	var a2aErr *A2AError
-	if errors.As(err, &a2aErr) {
+	if a2aErr, ok := errors.AsType[*A2AError](err); ok {
 		return a2aErr
 	}
-	var appErr *apperror.Error
-	if errors.As(err, &appErr) {
+	if appErr, ok := errors.AsType[*apperror.Error](err); ok {
 		return a2aErrorFromStatus(appErr.HTTPStatus)
 	}
-	var he *echo.HTTPError
-	if errors.As(err, &he) {
+	if he, ok := errors.AsType[*echo.HTTPError](err); ok {
 		return a2aErrorFromStatus(he.Code)
 	}
 	return a2aErrorFromStatus(http.StatusInternalServerError)

@@ -563,7 +563,8 @@ func TestPublicMessage(t *testing.T) {
 			if got != tt.want {
 				t.Fatalf("PublicMessage() = %q, want %q", got, tt.want)
 			}
-			if tt.err != nil && !errors.As(tt.err, new(*Error)) && got == driverErr.Error() {
+			_, isAppError := errors.AsType[*Error](tt.err)
+			if tt.err != nil && !isAppError && got == driverErr.Error() {
 				t.Fatalf("PublicMessage leaked the raw error text %q", got)
 			}
 		})

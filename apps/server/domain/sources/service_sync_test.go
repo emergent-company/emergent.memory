@@ -51,8 +51,8 @@ func TestTriggerSync_IncompleteConfig_Rejected(t *testing.T) {
 	if err == nil {
 		t.Fatal("TriggerSync(incomplete) = nil error, want validation error")
 	}
-	var appErr *apperror.Error
-	if !errors.As(err, &appErr) {
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	if !ok {
 		t.Fatalf("TriggerSync(incomplete) error type = %T, want *apperror.Error", err)
 	}
 	if appErr.HTTPStatus != 422 {
@@ -117,8 +117,8 @@ func TestTriggerSync_ParkedSource_Rejected(t *testing.T) {
 	if err == nil {
 		t.Fatal("TriggerSync(parked) = nil error, want validation error")
 	}
-	var appErr *apperror.Error
-	if !errors.As(err, &appErr) {
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	if !ok {
 		t.Fatalf("TriggerSync(parked) error type = %T, want *apperror.Error", err)
 	}
 	if appErr.HTTPStatus != 422 {

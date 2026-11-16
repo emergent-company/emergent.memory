@@ -30,8 +30,8 @@ func TestAuthStatusTransportClassifiesRejection(t *testing.T) {
 	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			_, err := authStatusTransport{base: stubTransport{status: status}}.RoundTrip(req)
-			var authErr *ErrMCPAuthRejected
-			if !errors.As(err, &authErr) {
+			authErr, ok := errors.AsType[*ErrMCPAuthRejected](err)
+			if !ok {
 				t.Fatalf("err = %v, want *ErrMCPAuthRejected", err)
 			}
 			if authErr.Status != status {

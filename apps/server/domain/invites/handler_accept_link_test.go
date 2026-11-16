@@ -88,8 +88,8 @@ func TestAcceptViaLinkRefusesWithoutWebUIHost(t *testing.T) {
 	h := NewHandler(nil, cfg, nil, nil, nil)
 
 	err := h.AcceptViaLink(*c)
-	var appErr *apperror.Error
-	if !errors.As(err, &appErr) {
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	if !ok {
 		t.Fatalf("AcceptViaLink error = %v, want *apperror.Error", err)
 	}
 	if appErr.HTTPStatus != http.StatusServiceUnavailable {
@@ -104,8 +104,8 @@ func TestAcceptViaLinkRequiresToken(t *testing.T) {
 	h := NewHandler(nil, cfg, nil, nil, nil)
 
 	err := h.AcceptViaLink(*c)
-	var appErr *apperror.Error
-	if !errors.As(err, &appErr) {
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	if !ok {
 		t.Fatalf("AcceptViaLink error = %v, want *apperror.Error", err)
 	}
 	if appErr.HTTPStatus != http.StatusBadRequest {

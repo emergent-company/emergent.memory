@@ -102,8 +102,8 @@ func TestRetryOnTransientLockSurfacesPersistentFailure(t *testing.T) {
 	if !errors.Is(err, original) {
 		t.Fatalf("error %v does not wrap the original transient error %v", err, original)
 	}
-	var pgErrOut *pgconn.PgError
-	if !errors.As(err, &pgErrOut) || pgErrOut.Code != "40P01" {
+	pgErrOut, ok := errors.AsType[*pgconn.PgError](err)
+	if !ok || pgErrOut.Code != "40P01" {
 		t.Fatalf("error %v does not preserve SQLSTATE 40P01", err)
 	}
 	if !strings.Contains(err.Error(), "(after 5 attempts)") {

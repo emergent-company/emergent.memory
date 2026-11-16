@@ -439,8 +439,8 @@ func TestRegisterClientValidation(t *testing.T) {
 			svc, _, _, _, _ := newServiceFixture(t, tc.cfg)
 			_, err := svc.RegisterClient(context.Background(), tc.req)
 			require.Error(t, err)
-			var oe *OAuthError
-			require.True(t, errors.As(err, &oe))
+			oe, ok := errors.AsType[*OAuthError](err)
+			require.True(t, ok)
 			require.Equal(t, tc.wantCode, oe.Code)
 			require.Equal(t, tc.wantStatus, oe.Status)
 		})
@@ -899,8 +899,8 @@ func TestSlugify(t *testing.T) {
 func requireOAuthError(t *testing.T, err error, code string, status int) {
 	t.Helper()
 	require.Error(t, err)
-	var oe *OAuthError
-	require.True(t, errors.As(err, &oe), "expected OAuthError, got %T: %v", err, err)
+	oe, ok := errors.AsType[*OAuthError](err)
+	require.True(t, ok, "expected OAuthError, got %T: %v", err, err)
 	require.Equal(t, code, oe.Code)
 	require.Equal(t, status, oe.Status)
 }

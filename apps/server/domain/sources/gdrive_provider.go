@@ -71,8 +71,8 @@ var driveClientRejectionCodes = []string{"invalid_client", "unauthorized_client"
 // timeouts, network errors) are deliberately not matched: those deserve a
 // retry, not a reconnect.
 func isDriveGrantRejected(err error) bool {
-	var retrieveErr *oauth2.RetrieveError
-	if !errors.As(err, &retrieveErr) {
+	retrieveErr, ok := errors.AsType[*oauth2.RetrieveError](err)
+	if !ok {
 		return false
 	}
 	if retrieveErr.ErrorCode == "invalid_grant" {
@@ -85,8 +85,8 @@ func isDriveGrantRejected(err error) bool {
 // itself (invalid_client / unauthorized_client). It is a separate question from a
 // rejected grant because the fix belongs to an administrator, not the user.
 func isDriveClientRejected(err error) bool {
-	var retrieveErr *oauth2.RetrieveError
-	if !errors.As(err, &retrieveErr) {
+	retrieveErr, ok := errors.AsType[*oauth2.RetrieveError](err)
+	if !ok {
 		return false
 	}
 	for _, code := range driveClientRejectionCodes {
@@ -395,8 +395,8 @@ func (p *googleDriveProvider) ResolveResourceTargets(ctx context.Context, creds 
 // the specific message: blaming the account on a guess is worse than a slightly
 // vague message that the user can retry.
 func driveFolderUnavailable(err error) bool {
-	var apiErr *googleapi.Error
-	if !errors.As(err, &apiErr) {
+	apiErr, ok := errors.AsType[*googleapi.Error](err)
+	if !ok {
 		return false
 	}
 	switch apiErr.Code {

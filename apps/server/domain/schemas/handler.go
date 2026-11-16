@@ -242,8 +242,7 @@ func mergePreviewBindErrorMessage(err error) string {
 	// Echo wraps decoder failures in *echo.HTTPError. Unwrap to the decoder
 	// error so the client-facing message is built from the field name, not from
 	// Echo's "code=400, message=..." rendering.
-	var echoErr *echo.HTTPError
-	if errors.As(err, &echoErr) {
+	if echoErr, ok := errors.AsType[*echo.HTTPError](err); ok {
 		switch {
 		case echoErr.Internal != nil:
 			err = echoErr.Internal
@@ -259,8 +258,8 @@ func mergePreviewBindErrorMessage(err error) string {
 		return fmt.Sprintf("invalid request body: %s; %s", strings.TrimPrefix(msg, "json: "), mergePreviewPackKeysHint)
 	}
 
-	var typeErr *json.UnmarshalTypeError
-	if errors.As(err, &typeErr) && typeErr.Field != "" {
+	typeErr, ok := errors.AsType[*json.UnmarshalTypeError](err)
+	if ok && typeErr.Field != "" {
 		return fmt.Sprintf("invalid request body: field %q has the wrong JSON type", typeErr.Field)
 	}
 
