@@ -437,7 +437,14 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 	newContextID, newPendingTaskID, stopReason, err := a.consumeStream(promptCtx, stream, emitter, func(taskID string) {
 		a.mu.Lock()
 		rec.taskID = taskID
+		dropped := sess.dropped
 		a.mu.Unlock()
+		if dropped && taskID != "" {
+			// The session was closed/deleted between stream setup and the task
+			// id arriving; its in-flight ids were collected at drop time, so
+			// cancel this one directly rather than stranding the run.
+			a.cancelTask(taskID)
+		}
 	})
 	if err != nil {
 		return nil, err
@@ -695,7 +702,15 @@ func (a *Agent) cancel(params CancelParams) {
 // own.
 func (a *Agent) stopTurn(t turnCancel) {
 	t.cancel()
-	if t.taskID == "" || a.client == nil {
+	a.cancelTask(t.taskID)
+}
+
+// cancelTask asks the platform to cancel one A2A task. It is best-effort and
+// bounded: the call runs on its own goroutine so the ACP client is never blocked
+// on it, and a hung Memory server cannot leak that goroutine past
+// cancelTaskTimeout.
+func (a *Agent) cancelTask(taskID string) {
+	if taskID == "" || a.client == nil {
 		return
 	}
 	go func(taskID string) {
@@ -704,7 +719,7 @@ func (a *Agent) stopTurn(t turnCancel) {
 		if _, err := a.client.CancelTask(ctx, taskID); err != nil {
 			a.logf("acp: session/cancel: cancel Memory task %s: %v", taskID, err)
 		}
-	}(t.taskID)
+	}(taskID)
 }
 
 // logf writes a best-effort diagnostic to the process error log (stderr). The
