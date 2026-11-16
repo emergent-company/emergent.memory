@@ -53,6 +53,17 @@ count_raw_echo_httperrors() {
 # ingress. Full-line comments are excluded like above, and a success-status use
 # (`c.String(http.StatusOK, "OK")` in the health handler) is not an error body,
 # so it is not counted.
+#
+# Deliberate limitation, so it is not mistaken for full coverage: the pattern is
+# a single-line `c.String(http.Status<Name>, …)` call. A multi-line call, or a
+# status held in a variable (`c.String(code, msg)`), is NOT matched — grep cannot
+# classify a computed expression, and a broader `c.String\(` match would need a
+# parser to avoid counting success bodies and would fail open on shapes it
+# mis-reads. No such site exists today, so the baseline of 0 is honest; a
+# reviewer still checks a computed-status c.String by hand. The excluded status
+# list below is the 2xx/3xx set an error body would not use; a rarer 1xx/2xx
+# code (e.g. 206 PartialContent) would read as a false positive, which is loud
+# rather than silent, and is corrected by adding it here.
 count_plain_text_error_bodies() {
   grep_matches -rn "c\.String(http\.Status" --include="*.go" --exclude="*_test.go" "$1" \
     | awk '
@@ -61,7 +72,7 @@ count_plain_text_error_bodies() {
         if (match($0, /c\.String\(http\.Status[A-Za-z]+/)) {
           st = substr($0, RSTART, RLENGTH)
           sub(/^c\.String\(http\./, "", st)
-          if (st ~ /^Status(OK|Created|Accepted|NoContent|MovedPermanently|Found|NotModified|TemporaryRedirect|PermanentRedirect)$/) next
+          if (st ~ /^Status(OK|Created|Accepted|NoContent|MultipleChoices|MovedPermanently|Found|NotModified|UseProxy|TemporaryRedirect|PermanentRedirect)$/) next
           n++
         }
       }
@@ -87,6 +98,7 @@ if [ "${1:-}" = "--self-test" ]; then
     '// c.String(http.StatusBadRequest, "commented out") is banned too.' \
     'c.String(http.StatusNotFound, "unknown app")' \
     'c.String(http.StatusOK, "OK")' \
+    'c.String(http.StatusMultipleChoices, "choices")' \
     >"$scratch/assets.go"
 
   self_fail() {
@@ -101,7 +113,7 @@ if [ "${1:-}" = "--self-test" ]; then
   [ "$got" = 2 ] || self_fail "expected 2 counted lines (comments excluded), got $got"
 
   got=$(count_plain_text_error_bodies "$scratch")
-  [ "$got" = 1 ] || self_fail "expected 1 plain-text error body (comment and 2xx excluded), got $got"
+  [ "$got" = 1 ] || self_fail "expected 1 plain-text error body (comment and 2xx/3xx excluded), got $got"
 
   got=$(count_matches "no\.such\.pattern" "$scratch/assets.go")
   [ "$got" = 0 ] || self_fail "expected 0 matches, got $got"

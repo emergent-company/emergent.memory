@@ -32,10 +32,12 @@ func NewSourceEventHandler(dispatcher *SourceEventDispatcher) *SourceEventHandle
 // used to answer with seven plain-text c.String bodies, which was invisible to
 // the echo.NewHTTPError ratchet and gave the sender nothing to branch on: the
 // delivery log still shows a readable message, and the code now distinguishes
-// invalid_signature, malformed_payload, source_app_not_found and
-// source_app_unconfigured instead of matching a string. The ratchet was widened
-// in the same change (scripts/lint-ratchet.sh counts c.String error bodies), so
-// the explicit exception this handler used to be is not silently re-created.
+// the six causes instead of a string match — 400 unreadable_body (a body read
+// that failed), 400 malformed_payload, 401 invalid_signature,
+// 404 source_app_not_found, 503 source_app_unconfigured and 500 internal_error.
+// The ratchet was widened in the same change (scripts/lint-ratchet.sh counts
+// c.String error bodies), so the explicit exception this handler used to be is
+// not silently re-created.
 func (h *SourceEventHandler) Webhook(c echo.Context) error {
 	key, err := uuid.Parse(c.Param("webhookKey"))
 	if err != nil {

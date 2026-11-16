@@ -47,6 +47,20 @@
 
 ### Changed
 
+**Source-App webhook failures answer in the apperror envelope** (2026-11-16)
+
+`POST /api/webhooks/source-apps/{webhookKey}` used to answer every failure with a
+plain-text body (`unknown app`, `invalid signature`, …), which a sender could only
+match as a string. Failures now come from the shared handler as
+`{"error":{"code","message"}}`: the message text is unchanged, so a webhook
+delivery log reads the same, and `code` is machine-readable. Statuses are
+unchanged — `400`, `401`, `404`, `503`, `500` — and the codes are
+`unreadable_body` (400, the body could not be read), `malformed_payload` (400),
+`invalid_signature` (401), `source_app_not_found` (404),
+`source_app_unconfigured` (503) and `internal_error` (500). The seven sites were
+also outside the ratchet that counts raw `echo.NewHTTPError`, so it now counts
+plain-text `c.String` error bodies as well (baseline 0).
+
 **Error bodies from six handler families now come from the apperror envelope** (2026-11-16)
 
 The model-config, tracing, devtools (`/coverage`, `/docs`), backups, `/debug`
