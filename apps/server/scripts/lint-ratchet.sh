@@ -46,6 +46,28 @@ count_raw_echo_httperrors() {
     | awk '!/^[^:]+:[0-9]+:[[:space:]]*(\/\/|\/\*|\*[ \/])/ { n++ } END { print n + 0 }'
 }
 
+# count_plain_text_error_bodies prints non-test `c.String(http.Status<4xx|5xx>...)`
+# call sites in tree. c.String writes a bare text/plain body, which bypasses
+# apperror.HTTPErrorHandler just as directly as a raw echo.NewHTTPError but is
+# invisible to the counter above — the gap #863 found in the sources webhook
+# ingress. Full-line comments are excluded like above, and a success-status use
+# (`c.String(http.StatusOK, "OK")` in the health handler) is not an error body,
+# so it is not counted.
+count_plain_text_error_bodies() {
+  grep_matches -rn "c\.String(http\.Status" --include="*.go" --exclude="*_test.go" "$1" \
+    | awk '
+      /^[^:]+:[0-9]+:[[:space:]]*(\/\/|\/\*|\*[ \/])/ { next }
+      {
+        if (match($0, /c\.String\(http\.Status[A-Za-z]+/)) {
+          st = substr($0, RSTART, RLENGTH)
+          sub(/^c\.String\(http\./, "", st)
+          if (st ~ /^Status(OK|Created|Accepted|NoContent|MovedPermanently|Found|NotModified|TemporaryRedirect|PermanentRedirect)$/) next
+          n++
+        }
+      }
+      END { print n + 0 }'
+}
+
 # --self-test exercises the counters' three outcomes on a scratch tree: a match
 # counts, no match is zero, and an unreadable path aborts instead of reading as a
 # clean zero. It needs no checkout, so CI can run it before the real gate.
@@ -62,6 +84,9 @@ if [ "${1:-}" = "--self-test" ]; then
     ' */' \
     'var first = echo.NewHTTPError(500)' \
     '*ptr = echo.NewHTTPError(502)' \
+    '// c.String(http.StatusBadRequest, "commented out") is banned too.' \
+    'c.String(http.StatusNotFound, "unknown app")' \
+    'c.String(http.StatusOK, "OK")' \
     >"$scratch/assets.go"
 
   self_fail() {
@@ -74,6 +99,9 @@ if [ "${1:-}" = "--self-test" ]; then
 
   got=$(count_raw_echo_httperrors "$scratch")
   [ "$got" = 2 ] || self_fail "expected 2 counted lines (comments excluded), got $got"
+
+  got=$(count_plain_text_error_bodies "$scratch")
+  [ "$got" = 1 ] || self_fail "expected 1 plain-text error body (comment and 2xx excluded), got $got"
 
   got=$(count_matches "no\.such\.pattern" "$scratch/assets.go")
   [ "$got" = 0 ] || self_fail "expected 0 matches, got $got"
@@ -99,6 +127,13 @@ BASELINE_RESPONSE_TYPES=6     # non-httputil APIResponse/PaginatedResponse/Succe
 # directly should use apperror.New so the client gets a code and a sanitised
 # message — dev-rule-go-apperror-only.
 BASELINE_ECHO_HTTPERROR=6
+# Plain-text `c.String(http.Status<4xx|5xx>, ...)` error bodies in non-test
+# server code. Zero: every client-visible error body is the apperror envelope.
+# #863 converted the seven sources webhook-ingress sites and added this counter
+# so the shape cannot come back unseen; the health handler's
+# `c.String(http.StatusOK, "OK")` is a success body and is not counted.
+# dev-rule-go-apperror-only.
+BASELINE_PLAINTEXT_ERRORS=0
 
 auth_guards=$(count_matches -rn "if user == nil" --include="*.go" --exclude="*_test.go" domain/)
 setters=$(count_matches -rn "func (s \*Service) Set[A-Z]\|func (h \*Handler) Set[A-Z]" --include="*.go" --exclude="*_test.go" domain/)
@@ -106,6 +141,7 @@ apperror_style_a=$(count_matches -rn "\.WithMessage\|\.WithInternal" --include="
 response_types=$(count_matches -rn "type APIResponse\|type PaginatedResponse\|type SuccessResponse" --include="*.go" --exclude="*_test.go" domain/)
 # Full-line comments are excluded so documenting the rule does not trip it.
 echo_http_errors=$(count_raw_echo_httperrors .)
+plaintext_errors=$(count_plain_text_error_bodies .)
 
 fail=0
 
@@ -124,5 +160,6 @@ check "cross-domain setters"   "$setters"          "$BASELINE_SETTERS"
 check "apperror Style A"       "$apperror_style_a" "$BASELINE_APPERROR_STYLEA"
 check "response type dupes"    "$response_types"   "$BASELINE_RESPONSE_TYPES"
 check "raw echo.NewHTTPError"  "$echo_http_errors" "$BASELINE_ECHO_HTTPERROR"
+check "plain-text error body"  "$plaintext_errors" "$BASELINE_PLAINTEXT_ERRORS"
 
 exit "$fail"
