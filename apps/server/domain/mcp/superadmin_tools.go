@@ -731,7 +731,7 @@ func (s *Service) executeSuperadminUserGet(ctx context.Context, args map[string]
 	}
 	userID := superadminArgString(args, "user_id")
 	if userID == "" {
-		return nil, fmt.Errorf("user_get: 'user_id' is required")
+		return nil, toolArgErrorf("user_get: 'user_id' is required")
 	}
 	res, err := h.GetUser(ctx, userID)
 	if err != nil {
@@ -759,7 +759,7 @@ func (s *Service) executeSuperadminOrgGet(ctx context.Context, args map[string]a
 	}
 	orgID := superadminArgString(args, "org_id")
 	if orgID == "" {
-		return nil, fmt.Errorf("org_get: 'org_id' is required")
+		return nil, toolArgErrorf("org_get: 'org_id' is required")
 	}
 	res, err := h.GetOrg(ctx, orgID)
 	if err != nil {
@@ -787,7 +787,7 @@ func (s *Service) executeSuperadminProjectGet(ctx context.Context, args map[stri
 	}
 	projectID := superadminArgString(args, "project_id")
 	if projectID == "" {
-		return nil, fmt.Errorf("project_record_get: 'project_id' is required")
+		return nil, toolArgErrorf("project_record_get: 'project_id' is required")
 	}
 	res, err := h.GetProject(ctx, projectID)
 	if err != nil {
@@ -803,7 +803,7 @@ func (s *Service) executeSuperadminProjectMemberList(ctx context.Context, args m
 	}
 	projectID := superadminArgString(args, "project_id")
 	if projectID == "" {
-		return nil, fmt.Errorf("project_member_list: 'project_id' is required")
+		return nil, toolArgErrorf("project_member_list: 'project_id' is required")
 	}
 	res, err := h.ListProjectMembers(ctx, projectID)
 	if err != nil {
@@ -833,7 +833,7 @@ func (s *Service) executeSuperadminEmailJobGet(ctx context.Context, args map[str
 	}
 	jobID := superadminArgString(args, "job_id")
 	if jobID == "" {
-		return nil, fmt.Errorf("email_job_get: 'job_id' is required")
+		return nil, toolArgErrorf("email_job_get: 'job_id' is required")
 	}
 	res, err := h.GetEmailJob(ctx, jobID)
 	if err != nil {
@@ -943,7 +943,7 @@ func (s *Service) executeSuperadminUserDelete(ctx context.Context, args map[stri
 	}
 	userID := superadminArgString(args, "user_id")
 	if userID == "" {
-		return nil, fmt.Errorf("user_delete: 'user_id' is required")
+		return nil, toolArgErrorf("user_delete: 'user_id' is required")
 	}
 	if !s.superadminConfirm(args) {
 		return s.superadminDryRun("delete user", map[string]any{"user_id": userID})
@@ -961,7 +961,7 @@ func (s *Service) executeSuperadminOrgDelete(ctx context.Context, args map[strin
 	}
 	orgID := superadminArgString(args, "org_id")
 	if orgID == "" {
-		return nil, fmt.Errorf("org_delete: 'org_id' is required")
+		return nil, toolArgErrorf("org_delete: 'org_id' is required")
 	}
 	if !s.superadminConfirm(args) {
 		return s.superadminDryRun("delete organization", map[string]any{"org_id": orgID})
@@ -979,7 +979,7 @@ func (s *Service) executeSuperadminProjectDelete(ctx context.Context, args map[s
 	}
 	projectID := superadminArgString(args, "project_id")
 	if projectID == "" {
-		return nil, fmt.Errorf("project_delete: 'project_id' is required")
+		return nil, toolArgErrorf("project_delete: 'project_id' is required")
 	}
 	if !s.superadminConfirm(args) {
 		return s.superadminDryRun("delete project", map[string]any{"project_id": projectID})
@@ -997,7 +997,7 @@ func (s *Service) executeSuperadminGrant(ctx context.Context, args map[string]an
 	}
 	userID := superadminArgString(args, "user_id")
 	if userID == "" {
-		return nil, fmt.Errorf("superadmin_grant: 'user_id' is required")
+		return nil, toolArgErrorf("superadmin_grant: 'user_id' is required")
 	}
 	if !s.superadminConfirm(args) {
 		return s.superadminDryRun("grant superadmin_readonly", map[string]any{"user_id": userID})
@@ -1021,7 +1021,7 @@ func (s *Service) executeSuperadminProjectMemberCreate(ctx context.Context, args
 	userID := superadminArgString(args, "user_id")
 	role := superadminArgString(args, "role")
 	if projectID == "" || userID == "" || role == "" {
-		return nil, fmt.Errorf("project_member_create: 'project_id', 'user_id' and 'role' are required")
+		return nil, toolArgErrorf("project_member_create: 'project_id', 'user_id' and 'role' are required")
 	}
 	if !s.superadminConfirm(args) {
 		return s.superadminDryRun("add project member", map[string]any{"project_id": projectID, "user_id": userID, "role": role})
@@ -1040,7 +1040,7 @@ func (s *Service) executeSuperadminProjectMemberDelete(ctx context.Context, args
 	projectID := superadminArgString(args, "project_id")
 	userID := superadminArgString(args, "user_id")
 	if projectID == "" || userID == "" {
-		return nil, fmt.Errorf("project_member_delete: 'project_id' and 'user_id' are required")
+		return nil, toolArgErrorf("project_member_delete: 'project_id' and 'user_id' are required")
 	}
 	if !s.superadminConfirm(args) {
 		return s.superadminDryRun("remove project member", map[string]any{"project_id": projectID, "user_id": userID})
@@ -1058,7 +1058,7 @@ func (s *Service) executeSuperadminServiceTokenCreate(ctx context.Context, args 
 	}
 	name := superadminArgString(args, "name")
 	if name == "" {
-		return nil, fmt.Errorf("service_token_create: 'name' is required")
+		return nil, toolArgErrorf("service_token_create: 'name' is required")
 	}
 	if !s.superadminConfirm(args) {
 		return s.superadminDryRun("create service token", map[string]any{"name": name})
@@ -1081,7 +1081,7 @@ func (s *Service) executeSuperadminEmbeddingJobDelete(ctx context.Context, args 
 	}
 	ids := superadminArgStringSlice(args, "ids")
 	if len(ids) == 0 {
-		return nil, fmt.Errorf("embedding_job_delete: 'ids' is required")
+		return nil, toolArgErrorf("embedding_job_delete: 'ids' is required")
 	}
 	if !s.superadminConfirm(args) {
 		return s.superadminDryRun("delete embedding jobs", map[string]any{"ids": ids})
@@ -1130,7 +1130,7 @@ func (s *Service) executeSuperadminExtractionJobDelete(ctx context.Context, args
 	}
 	ids := superadminArgStringSlice(args, "ids")
 	if len(ids) == 0 {
-		return nil, fmt.Errorf("extraction_job_delete: 'ids' is required")
+		return nil, toolArgErrorf("extraction_job_delete: 'ids' is required")
 	}
 	if !s.superadminConfirm(args) {
 		return s.superadminDryRun("delete extraction jobs", map[string]any{"ids": ids})
@@ -1149,7 +1149,7 @@ func (s *Service) executeSuperadminExtractionJobCancel(ctx context.Context, args
 	}
 	ids := superadminArgStringSlice(args, "ids")
 	if len(ids) == 0 {
-		return nil, fmt.Errorf("extraction_job_cancel: 'ids' is required")
+		return nil, toolArgErrorf("extraction_job_cancel: 'ids' is required")
 	}
 	if !s.superadminConfirm(args) {
 		return s.superadminDryRun("cancel extraction jobs", map[string]any{"ids": ids})
@@ -1168,7 +1168,7 @@ func (s *Service) executeSuperadminDocumentParsingJobDelete(ctx context.Context,
 	}
 	ids := superadminArgStringSlice(args, "ids")
 	if len(ids) == 0 {
-		return nil, fmt.Errorf("document_parsing_job_delete: 'ids' is required")
+		return nil, toolArgErrorf("document_parsing_job_delete: 'ids' is required")
 	}
 	if !s.superadminConfirm(args) {
 		return s.superadminDryRun("delete document parsing jobs", map[string]any{"ids": ids})
@@ -1187,7 +1187,7 @@ func (s *Service) executeSuperadminDocumentParsingJobRetry(ctx context.Context, 
 	}
 	ids := superadminArgStringSlice(args, "ids")
 	if len(ids) == 0 {
-		return nil, fmt.Errorf("document_parsing_job_retry: 'ids' is required")
+		return nil, toolArgErrorf("document_parsing_job_retry: 'ids' is required")
 	}
 	if !s.superadminConfirm(args) {
 		return s.superadminDryRun("retry document parsing jobs", map[string]any{"ids": ids})

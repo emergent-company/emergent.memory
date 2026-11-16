@@ -436,22 +436,29 @@ func (h *Handler) handleToolsCall(c echo.Context, req *Request, user *auth.AuthU
 			slog.String("tool", params.Name),
 			logger.Error(err),
 		)
-		// Deliberately NOT PublicMessage: this channel carries two kinds of
-		// error, and only one is safe to collapse. A domain failure is an
-		// *apperror (its client message survives PublicMessage), but a tool's
-		// own argument validation is a plain error — hundreds of them across the
-		// tool set — and the agent must see which argument is wrong. Sanitising
-		// this line therefore requires converting that validation class to app
-		// errors first (#668); until then the tool's text is the contract, and
-		// the tool implementations are in this package, not an untrusted lower
-		// layer.
-		return NewErrorResponse(req.ID, ErrCodeInternalError,
-			"Tool execution failed: "+err.Error(),
-			nil,
-		)
+		return toolExecutionErrorResponse(req.ID, err)
 	}
 
 	return NewSuccessResponse(req.ID, result)
+}
+
+// toolExecutionErrorResponse renders an ExecuteTool failure for the JSON-RPC
+// caller. Two kinds of error arrive here and only one is safe to relay
+// (issue #668):
+//
+//   - Tool argument validation is a validation app error (toolArgErrorf). Its
+//     message names the argument to fix, so it reaches the caller — with the
+//     "Tool execution failed: " prefix the channel has always used — and
+//     jsonRPCErrorCodeFor maps it to invalid-params.
+//   - Everything else is a driver, service or unexpected failure. Those carry
+//     detail the caller must not see (SQL, upstream bodies), so PublicMessage
+//     collapses anything that is not an *apperror.Error to one fixed sentence.
+//     A domain failure that *is* an app error keeps its own public message.
+func toolExecutionErrorResponse(id json.RawMessage, err error) *Response {
+	return NewErrorResponse(id, jsonRPCErrorCodeFor(err),
+		"Tool execution failed: "+apperror.PublicMessage(err),
+		nil,
+	)
 }
 
 // getSession returns the session for a token

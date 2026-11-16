@@ -89,7 +89,7 @@ func (s *Service) executeSessionTodoList(ctx context.Context, projectID string, 
 	ownerUserID := sessionTodoOwnerUserID(ctx)
 	sessionID, _ := args["session_id"].(string)
 	if sessionID == "" {
-		return nil, fmt.Errorf("session-todo-list: 'session_id' is required")
+		return nil, toolArgErrorf("session-todo-list: 'session_id' is required")
 	}
 	var statuses []sessiontodos.TodoStatus
 	if statusStr, _ := args["statuses"].(string); statusStr != "" {
@@ -126,7 +126,7 @@ func (s *Service) executeSessionTodoUpdate(ctx context.Context, projectID string
 	sessionID, _ := args["session_id"].(string)
 	todoID, _ := args["todo_id"].(string)
 	if sessionID == "" || todoID == "" {
-		return nil, fmt.Errorf("session-todo-update: 'session_id' and 'todo_id' are required")
+		return nil, toolArgErrorf("session-todo-update: 'session_id' and 'todo_id' are required")
 	}
 	req := sessiontodos.UpdateTodoRequest{}
 	if statusStr, _ := args["status"].(string); statusStr != "" {

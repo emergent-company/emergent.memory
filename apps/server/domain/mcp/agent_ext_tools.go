@@ -181,7 +181,7 @@ func (s *Service) executeListAgentQuestions(ctx context.Context, projectID strin
 	}
 	runID, _ := args["run_id"].(string)
 	if runID == "" {
-		return nil, fmt.Errorf("list_agent_questions: 'run_id' is required")
+		return nil, toolArgErrorf("list_agent_questions: 'run_id' is required")
 	}
 	return s.agentToolHandler.ExecuteListAgentQuestions(ctx, projectID, args)
 }
@@ -200,10 +200,10 @@ func (s *Service) executeRespondToAgentQuestion(ctx context.Context, projectID s
 	questionID, _ := args["question_id"].(string)
 	response, _ := args["response"].(string)
 	if questionID == "" {
-		return nil, fmt.Errorf("respond_to_agent_question: 'question_id' is required")
+		return nil, toolArgErrorf("respond_to_agent_question: 'question_id' is required")
 	}
 	if response == "" {
-		return nil, fmt.Errorf("respond_to_agent_question: 'response' is required")
+		return nil, toolArgErrorf("respond_to_agent_question: 'response' is required")
 	}
 	return s.agentToolHandler.ExecuteRespondToAgentQuestion(ctx, projectID, args)
 }
@@ -214,7 +214,7 @@ func (s *Service) executeListAgentHooks(ctx context.Context, projectID string, a
 	}
 	agentID, _ := args["agent_id"].(string)
 	if agentID == "" {
-		return nil, fmt.Errorf("list_agent_hooks: 'agent_id' is required")
+		return nil, toolArgErrorf("list_agent_hooks: 'agent_id' is required")
 	}
 	return s.agentToolHandler.ExecuteListAgentHooks(ctx, projectID, args)
 }
@@ -226,10 +226,10 @@ func (s *Service) executeCreateAgentHook(ctx context.Context, projectID string, 
 	agentID, _ := args["agent_id"].(string)
 	label, _ := args["label"].(string)
 	if agentID == "" {
-		return nil, fmt.Errorf("create_agent_hook: 'agent_id' is required")
+		return nil, toolArgErrorf("create_agent_hook: 'agent_id' is required")
 	}
 	if label == "" {
-		return nil, fmt.Errorf("create_agent_hook: 'label' is required")
+		return nil, toolArgErrorf("create_agent_hook: 'label' is required")
 	}
 	return s.agentToolHandler.ExecuteCreateAgentHook(ctx, projectID, args)
 }
@@ -240,7 +240,7 @@ func (s *Service) executeDeleteAgentHook(ctx context.Context, projectID string, 
 	}
 	hookID, _ := args["hook_id"].(string)
 	if hookID == "" {
-		return nil, fmt.Errorf("delete_agent_hook: 'hook_id' is required")
+		return nil, toolArgErrorf("delete_agent_hook: 'hook_id' is required")
 	}
 	return s.agentToolHandler.ExecuteDeleteAgentHook(ctx, projectID, args)
 }
@@ -258,7 +258,7 @@ func (s *Service) executeGetADKSession(ctx context.Context, projectID string, ar
 	}
 	sessionID, _ := args["session_id"].(string)
 	if sessionID == "" {
-		return nil, fmt.Errorf("get_adk_session: 'session_id' is required")
+		return nil, toolArgErrorf("get_adk_session: 'session_id' is required")
 	}
 	return s.agentToolHandler.ExecuteGetADKSession(ctx, projectID, args)
 }

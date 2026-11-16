@@ -1,6 +1,29 @@
 package mcp
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+)
+
+// toolArgErrorf reports an argument the caller can correct. It returns a
+// validation app error, not a plain one, because the ExecuteTool channel has to
+// tell the two classes apart (issue #668):
+//
+//   - handleToolsCall renders apperror.PublicMessage for that channel. A domain
+//     failure keeps its client-facing message; anything that is not an app
+//     error is collapsed to "An internal error occurred" so a driver message
+//     cannot leak. A tool's own argument validation must therefore *be* an app
+//     error, or the caller would lose the one detail it can act on.
+//   - jsonRPCErrorCodeFor maps it to -32602 (invalid params) instead of -32603,
+//     so a mistyped argument is not reported as a server fault.
+//
+// %w is formatted into the message rather than attached as an internal cause:
+// the wrapped error here describes the caller's own input (a UUID parse, a JSON
+// decode), and that text is the part the caller needs.
+func toolArgErrorf(format string, args ...any) error {
+	return apperror.NewValidation(fmt.Errorf(format, args...).Error())
+}
 
 // boolToolArg reads an optional boolean tool argument. An absent or null
 // argument takes the zero value; a value that is present but not a JSON boolean
@@ -23,7 +46,7 @@ func boolToolArgPtr(args map[string]any, name string) (*bool, error) {
 	}
 	v, ok := raw.(bool)
 	if !ok {
-		return nil, fmt.Errorf("%s must be a boolean, got %T", name, raw)
+		return nil, toolArgErrorf("%s must be a boolean, got %T", name, raw)
 	}
 	return &v, nil
 }
@@ -50,7 +73,7 @@ func validateBooleanArgs(def *ToolDefinition, args map[string]any) error {
 			continue
 		}
 		if _, ok := raw.(bool); !ok {
-			return fmt.Errorf("%s must be a boolean, got %T", name, raw)
+			return toolArgErrorf("%s must be a boolean, got %T", name, raw)
 		}
 	}
 	return nil

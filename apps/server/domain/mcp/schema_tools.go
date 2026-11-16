@@ -92,10 +92,10 @@ func (s *Service) getSchemaVersion(ctx context.Context, projectID string) (strin
 
 func (s *Service) executeSchemaVersion(ctx context.Context, projectID string) (*ToolResult, error) {
 	if projectID == "" {
-		return nil, fmt.Errorf("project context required")
+		return nil, toolArgErrorf("project context required")
 	}
 	if _, err := uuid.Parse(projectID); err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	version, err := s.getSchemaVersion(ctx, projectID)
@@ -138,7 +138,7 @@ func (s *Service) executeSchemaIconList(_ context.Context, _ string) (*ToolResul
 
 func (s *Service) executeListSchemas(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	if projectID == "" {
-		return nil, fmt.Errorf("project context required")
+		return nil, toolArgErrorf("project context required")
 	}
 
 	search, _ := args["search"].(string)
@@ -244,7 +244,7 @@ func (s *Service) executeListSchemas(ctx context.Context, projectID string, args
 func (s *Service) executeGetSchema(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	schemaID, _ := args["schema_id"].(string)
 	if schemaID == "" {
-		return nil, fmt.Errorf("schema_id is required")
+		return nil, toolArgErrorf("schema_id is required")
 	}
 
 	scope := TypeScopeFromContext(ctx)
@@ -369,7 +369,7 @@ func (s *Service) executeGetAvailableTemplates(ctx context.Context, projectID st
 func (s *Service) executeGetInstalledTemplates(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	type installedRow struct {
@@ -460,7 +460,7 @@ func (s *Service) executeGetInstalledTemplates(ctx context.Context, projectID st
 
 func (s *Service) executeSchemaPackClaims(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	if projectID == "" {
-		return nil, fmt.Errorf("project context required")
+		return nil, toolArgErrorf("project context required")
 	}
 	if s.schemasSvc == nil {
 		return nil, fmt.Errorf("schemas service not available")
@@ -481,15 +481,15 @@ func (s *Service) executeSchemaPackClaims(ctx context.Context, projectID string,
 
 func (s *Service) executeAssignSchema(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	if projectID == "" {
-		return nil, fmt.Errorf("project context required")
+		return nil, toolArgErrorf("project context required")
 	}
 	if _, err := uuid.Parse(projectID); err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	schemaID, _ := args["schema_id"].(string)
 	if schemaID == "" {
-		return nil, fmt.Errorf("schema_id is required")
+		return nil, toolArgErrorf("schema_id is required")
 	}
 
 	force, err := boolToolArg(args, "force")
@@ -530,15 +530,15 @@ func (s *Service) executeAssignSchema(ctx context.Context, projectID string, arg
 
 func (s *Service) executeUpdateTemplateAssignment(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	if projectID == "" {
-		return nil, fmt.Errorf("project context required")
+		return nil, toolArgErrorf("project context required")
 	}
 	if _, err := uuid.Parse(projectID); err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	schemaID, _ := args["schema_id"].(string)
 	if schemaID == "" {
-		return nil, fmt.Errorf("schema_id is required")
+		return nil, toolArgErrorf("schema_id is required")
 	}
 
 	active, err := boolToolArg(args, "active")
@@ -563,15 +563,15 @@ func (s *Service) executeUpdateTemplateAssignment(ctx context.Context, projectID
 
 func (s *Service) executeUninstallSchema(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	if projectID == "" {
-		return nil, fmt.Errorf("project context required")
+		return nil, toolArgErrorf("project context required")
 	}
 	if _, err := uuid.Parse(projectID); err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	schemaID, _ := args["schema_id"].(string)
 	if schemaID == "" {
-		return nil, fmt.Errorf("schema_id is required")
+		return nil, toolArgErrorf("schema_id is required")
 	}
 
 	if s.schemasSvc == nil {
@@ -599,11 +599,11 @@ func optionalJSONObject(args map[string]any, key string) (json.RawMessage, error
 	}
 	m, ok := args[key].(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("%s must be an object, got %T", key, args[key])
+		return nil, toolArgErrorf("%s must be an object, got %T", key, args[key])
 	}
 	raw, err := json.Marshal(m)
 	if err != nil {
-		return nil, fmt.Errorf("invalid %s: %w", key, err)
+		return nil, toolArgErrorf("invalid %s: %w", key, err)
 	}
 	return raw, nil
 }
@@ -611,12 +611,12 @@ func optionalJSONObject(args map[string]any, key string) (json.RawMessage, error
 func (s *Service) executeCreateSchema(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	name, _ := args["name"].(string)
 	if name == "" {
-		return nil, fmt.Errorf("name is required")
+		return nil, toolArgErrorf("name is required")
 	}
 
 	version, _ := args["version"].(string)
@@ -645,7 +645,7 @@ func (s *Service) executeCreateSchema(ctx context.Context, projectID string, arg
 	var objectTypes []map[string]any
 	if objTypesJSON, ok := args["object_types"].(string); ok && objTypesJSON != "" {
 		if err := json.Unmarshal([]byte(objTypesJSON), &objectTypes); err != nil {
-			return nil, fmt.Errorf("invalid object_types JSON: %w", err)
+			return nil, toolArgErrorf("invalid object_types JSON: %w", err)
 		}
 	} else if objTypesMap, ok := args["object_type_schemas"].(map[string]any); ok {
 		// LLM passes {"type_name": {schema...}, ...}
@@ -663,7 +663,7 @@ func (s *Service) executeCreateSchema(ctx context.Context, projectID string, arg
 	var relTypes []map[string]any
 	if relTypesJSON, ok := args["relationship_types"].(string); ok && relTypesJSON != "" {
 		if err := json.Unmarshal([]byte(relTypesJSON), &relTypes); err != nil {
-			return nil, fmt.Errorf("invalid relationship_types JSON: %w", err)
+			return nil, toolArgErrorf("invalid relationship_types JSON: %w", err)
 		}
 	} else if relTypesMap, ok := args["relationship_type_schemas"].(map[string]any); ok {
 		for typeName, schema := range relTypesMap {
@@ -792,15 +792,15 @@ func (s *Service) executeCreateSchema(ctx context.Context, projectID string, arg
 
 func (s *Service) executeDeleteSchema(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	if projectID == "" {
-		return nil, fmt.Errorf("project context required")
+		return nil, toolArgErrorf("project context required")
 	}
 	if _, err := uuid.Parse(projectID); err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	packID, _ := args["schema_id"].(string)
 	if packID == "" {
-		return nil, fmt.Errorf("schema_id is required")
+		return nil, toolArgErrorf("schema_id is required")
 	}
 
 	if s.schemasSvc == nil {
@@ -833,7 +833,7 @@ func (s *Service) executePreviewSchemaMigration(ctx context.Context, projectID s
 	if fromVersion == "" || toVersion == "" {
 		return &ToolResult{
 			Content: []ContentBlock{{Type: "text", Text: "Error: from_version and to_version are required"}},
-		}, fmt.Errorf("from_version and to_version are required")
+		}, toolArgErrorf("from_version and to_version are required")
 	}
 
 	projectUUID, err := uuid.Parse(projectID)
@@ -961,7 +961,7 @@ func (s *Service) executeGetMigrationArchive(ctx context.Context, projectID stri
 	if objectIDStr == "" {
 		return &ToolResult{
 			Content: []ContentBlock{{Type: "text", Text: "Error: object_id is required"}},
-		}, fmt.Errorf("object_id is required")
+		}, toolArgErrorf("object_id is required")
 	}
 
 	objectID, err := uuid.Parse(objectIDStr)
@@ -1067,7 +1067,7 @@ func (s *Service) executeGetMigrationArchive(ctx context.Context, projectID stri
 func (s *Service) executeSchemaHistory(ctx context.Context, projectID string) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	type historyRow struct {
@@ -1140,7 +1140,7 @@ func (s *Service) executeSchemaHistory(ctx context.Context, projectID string) (*
 func (s *Service) executeSchemaCompiledTypes(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
+		return nil, toolArgErrorf("invalid project_id: %w", err)
 	}
 
 	scope := TypeScopeFromContext(ctx)
@@ -1292,7 +1292,7 @@ func (s *Service) executeSchemaMigratePreview(ctx context.Context, projectID str
 	fromSchemaID, _ := args["from_schema_id"].(string)
 	toSchemaID, _ := args["to_schema_id"].(string)
 	if fromSchemaID == "" || toSchemaID == "" {
-		return nil, fmt.Errorf("from_schema_id and to_schema_id are required")
+		return nil, toolArgErrorf("from_schema_id and to_schema_id are required")
 	}
 
 	result, err := s.schemasSvc.PreviewSchemaMigration(ctx, projectID, &schemas.SchemaMigrationPreviewRequest{
@@ -1314,7 +1314,7 @@ func (s *Service) executeSchemaMigrateExecute(ctx context.Context, projectID str
 	fromSchemaID, _ := args["from_schema_id"].(string)
 	toSchemaID, _ := args["to_schema_id"].(string)
 	if fromSchemaID == "" || toSchemaID == "" {
-		return nil, fmt.Errorf("from_schema_id and to_schema_id are required")
+		return nil, toolArgErrorf("from_schema_id and to_schema_id are required")
 	}
 
 	force, err := boolToolArg(args, "force")
@@ -1346,7 +1346,7 @@ func (s *Service) executeSchemaMigrateRollback(ctx context.Context, projectID st
 
 	toVersion, _ := args["to_version"].(string)
 	if toVersion == "" {
-		return nil, fmt.Errorf("to_version is required")
+		return nil, toolArgErrorf("to_version is required")
 	}
 	restoreTypeRegistry, err := boolToolArg(args, "restore_type_registry")
 	if err != nil {
@@ -1371,7 +1371,7 @@ func (s *Service) executeSchemaMigrateCommit(ctx context.Context, projectID stri
 
 	throughVersion, _ := args["through_version"].(string)
 	if throughVersion == "" {
-		return nil, fmt.Errorf("through_version is required")
+		return nil, toolArgErrorf("through_version is required")
 	}
 
 	result, err := s.schemasSvc.CommitMigrationArchive(ctx, projectID, &schemas.CommitMigrationArchiveRequest{
@@ -1391,7 +1391,7 @@ func (s *Service) executeSchemaMigrationJobStatus(ctx context.Context, projectID
 
 	jobID, _ := args["job_id"].(string)
 	if jobID == "" {
-		return nil, fmt.Errorf("job_id is required")
+		return nil, toolArgErrorf("job_id is required")
 	}
 
 	job, err := s.schemasSvc.GetMigrationJobStatus(ctx, projectID, jobID)
