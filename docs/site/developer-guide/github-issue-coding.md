@@ -86,6 +86,9 @@ Example:
 {
   "objectTypes": ["GitHubReviewLane"],
   "events": ["created", "updated"],
+  "match": [
+    {"path": "/status", "operator": "equals", "value": "ready"}
+  ],
   "reviewer": true,
   "reviewSubjectType": "GitHubPullRequest",
   "reviewMatch": [
@@ -97,8 +100,11 @@ Example:
 
 - A reviewer with no `reviewMatch` is the default reviewer.
 - `objectTypes`/`events` drive the reviewer's own lane work item.
+- `match` on `status=ready` prevents a cancelled lane from waking the reviewer.
 - `reviewSubjectType`/`reviewMatch` select the reviewer from the parent review
   subject.
+- The source creates one lane work item per required reviewer and head;
+  superseded head lanes are cancelled.
 - Every matching reviewer is required for the current head.
 - Added reviewers are sticky for that head; a new head requires a fresh set.
 - Reviewer verdicts are aggregated server-side; a reviewer cannot set the
