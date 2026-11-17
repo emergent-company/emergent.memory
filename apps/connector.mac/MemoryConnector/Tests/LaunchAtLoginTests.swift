@@ -60,6 +60,23 @@ final class LaunchAtLoginTests: XCTestCase {
         XCTAssertTrue(model.isEnabled)
         XCTAssertTrue(model.requiresApproval)
         XCTAssertNil(model.lastError)
+        XCTAssertNil(model.approvalNotice, "a registered app needs no approval instruction")
+    }
+
+    func testPendingRegistrationIsExplainedAfterRelaunch() {
+        // What a relaunch sees: macOS left the registration pending, the
+        // toggle is off, and `onAppear` re-reads the status.
+        let service = FakeService()
+        service.approval = true
+        let model = LaunchAtLogin(service: service)
+
+        model.refresh()
+
+        XCTAssertFalse(model.isEnabled)
+        XCTAssertTrue(model.requiresApproval)
+        XCTAssertNil(model.lastError, "a pending approval is not a failure")
+        XCTAssertEqual(model.approvalNotice, LaunchAtLogin.approvalInstruction,
+                       "the instruction must survive a relaunch, not only a toggle change")
     }
 
     func testEnablingRegistersAndReReadsTheStatus() {
@@ -71,6 +88,7 @@ final class LaunchAtLoginTests: XCTestCase {
         XCTAssertEqual(service.setCalls, [true])
         XCTAssertTrue(model.isEnabled)
         XCTAssertNil(model.lastError)
+        XCTAssertNil(model.approvalNotice)
     }
 
     func testDisablingUnregistersWithoutAnError() {
@@ -94,6 +112,7 @@ final class LaunchAtLoginTests: XCTestCase {
 
         XCTAssertFalse(model.isEnabled, "the toggle must not claim a registration that failed")
         XCTAssertEqual(model.lastError, FakeError.refused.localizedDescription)
+        XCTAssertNil(model.approvalNotice, "a refusal is an error, not a pending approval")
     }
 
     func testRegistrationAwaitingApprovalExplainsWhereToApprove() {
@@ -105,8 +124,8 @@ final class LaunchAtLoginTests: XCTestCase {
 
         XCTAssertFalse(model.isEnabled)
         XCTAssertTrue(model.requiresApproval)
-        XCTAssertEqual(model.lastError,
-                       "Approve Memory in System Settings › General › Login Items to finish.")
+        XCTAssertNil(model.lastError, "a pending approval is not a failure")
+        XCTAssertEqual(model.approvalNotice, LaunchAtLogin.approvalInstruction)
     }
 
     func testRegistrationDroppedWithoutApprovalIsReported() {
@@ -118,6 +137,7 @@ final class LaunchAtLoginTests: XCTestCase {
 
         XCTAssertFalse(model.isEnabled)
         XCTAssertEqual(model.lastError, "macOS did not register Memory to open at login.")
+        XCTAssertNil(model.approvalNotice)
     }
 
     func testRefreshAdoptsAChangeMadeOutsideTheApp() {
@@ -129,5 +149,20 @@ final class LaunchAtLoginTests: XCTestCase {
         model.refresh()
 
         XCTAssertTrue(model.isEnabled, "the system is the source of truth, not a cached flag")
+    }
+
+    func testRefreshClearsThePendingNoticeOnceApproved() {
+        let service = FakeService()
+        service.approval = true
+        let model = LaunchAtLogin(service: service)
+        XCTAssertEqual(model.approvalNotice, LaunchAtLogin.approvalInstruction)
+
+        service.approval = false
+        service.enabled = true
+        model.refresh()
+
+        XCTAssertTrue(model.isEnabled)
+        XCTAssertFalse(model.requiresApproval)
+        XCTAssertNil(model.approvalNotice, "an approved registration needs no instruction")
     }
 }
