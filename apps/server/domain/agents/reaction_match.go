@@ -100,13 +100,28 @@ func (r *Repository) FindReviewerAgentsForObject(ctx context.Context, projectID,
 		if agent == nil || agent.ProjectID != projectID || agent.ReactionConfig == nil || !agent.ReactionConfig.Reviewer {
 			continue
 		}
-		if !reactionMatchesType(agent.ReactionConfig, objectType) {
+		subjectType := agent.ReactionConfig.ReviewSubjectType
+		if subjectType == "" {
+			subjectType = objectType
+		}
+		if !strings.EqualFold(subjectType, objectType) {
 			continue
 		}
-		if !ReactionMatchesProperties(agent.ReactionConfig, properties) {
+		match := agent.ReactionConfig.ReviewMatch
+		if len(match) == 0 {
+			match = agent.ReactionConfig.Match
+		}
+		if !reactionMatchList(match, properties) {
 			continue
 		}
 		out = append(out, agent)
 	}
 	return out, nil
+}
+
+func reactionMatchList(matches []ReactionPropertyMatch, properties map[string]any) bool {
+	if len(matches) == 0 {
+		return true
+	}
+	return ReactionMatchesProperties(&ReactionConfig{Match: matches}, properties)
 }
