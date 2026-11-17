@@ -336,6 +336,10 @@ func (d *SourceEventDispatcher) ensureReviewSubject(ctx context.Context, v *Veri
 		}
 	}
 	key := fmt.Sprintf("github:%s:%s#%d", src.ID.String(), repoName, p.PullNumber())
+	previousHead := ""
+	if prev, perr := d.workObjects.FindHeadObjectByTypeAndKey(ctx, src.ProjectID.String(), "GitHubPullRequest", key); perr == nil && prev != nil {
+		previousHead, _ = prev.Properties["head_sha"].(string)
+	}
 	props := map[string]any{
 		"repo": repoName, "pr_number": p.PullNumber(), "title": title,
 		"head_sha": headSHA, "base_sha": p.PullRequest.Base.SHA,
@@ -353,7 +357,7 @@ func (d *SourceEventDispatcher) ensureReviewSubject(ctx context.Context, v *Veri
 			return fmt.Errorf("sources: ensure review gate: %w", err)
 		}
 		if gate != nil && len(gate.RequiredReviewers) > 0 {
-			if err := d.ensureReviewLanes(ctx, src, p, state, subject, headSHA, gate); err != nil {
+			if err := d.ensureReviewLanes(ctx, src, p, state, subject, previousHead, headSHA, gate); err != nil {
 				return fmt.Errorf("sources: ensure review lanes: %w", err)
 			}
 			if gate.Status == ReviewGatePending && v != nil && v.App != nil {
@@ -369,7 +373,7 @@ func (d *SourceEventDispatcher) ensureReviewSubject(ctx context.Context, v *Veri
 // ensureReviewLanes materializes one claimable work item per required reviewer.
 // The parent GitHubPullRequest is shared state, so reviewer agents cannot use it
 // as their work subject: the work claim permits one live run per subject.
-func (d *SourceEventDispatcher) ensureReviewLanes(ctx context.Context, src *Source, p *githubapp.WebhookPayload, state *githubapp.PullRequestState, subject, headSHA string, gate *ReviewGate) error {
+func (d *SourceEventDispatcher) ensureReviewLanes(ctx context.Context, src *Source, p *githubapp.WebhookPayload, state *githubapp.PullRequestState, subject, previousHead, headSHA string, gate *ReviewGate) error {
 	repoName := p.Repository.FullName
 	title := strings.TrimSpace(p.PullRequest.Title)
 	if title == "" {
@@ -380,9 +384,16 @@ func (d *SourceEventDispatcher) ensureReviewLanes(ctx context.Context, src *Sour
 		if strings.TrimSpace(reviewer.AgentID) == "" || strings.TrimSpace(reviewer.Name) == "" {
 			continue
 		}
-		laneKey := parentKey + ":review:" + reviewer.AgentID
+		laneKey := parentKey + ":review:" + reviewer.AgentID + ":" + headSHA
 		laneName := title + " · " + reviewer.Name
 		status := "ready"
+		if previousHead != "" && previousHead != headSHA {
+			oldKey := parentKey + ":review:" + reviewer.AgentID + ":" + previousHead
+			if old, oerr := d.workObjects.FindHeadObjectByTypeAndKey(ctx, src.ProjectID.String(), "GitHubReviewLane", oldKey); oerr == nil && old != nil {
+				// New head: retire the stale reviewer run before waking the new lane.
+				d.cancelSubjectRuns(ctx, old.CanonicalID.String())
+			}
+		}
 		existing, err := d.workObjects.FindHeadObjectByTypeAndKey(ctx, src.ProjectID.String(), "GitHubReviewLane", laneKey)
 		if err != nil {
 			return err
@@ -396,7 +407,6 @@ func (d *SourceEventDispatcher) ensureReviewLanes(ctx context.Context, src *Sour
 					status = *existing.Status
 				}
 			} else if oldHead != "" {
-				// New head: retire the stale reviewer run before waking the lane.
 				d.cancelSubjectRuns(ctx, existing.CanonicalID.String())
 			}
 		}
