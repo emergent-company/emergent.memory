@@ -32036,8 +32036,19 @@
                         "type": "string"
                     }
                 },
+                "reviewMatch": {
+                    "description": "ReviewMatch is evaluated against the parent subject properties for gate\nselection. It is separate from Match, which filters the reviewer's lane\nwork item.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_agents.ReactionPropertyMatch"
+                    }
+                },
+                "reviewSubjectType": {
+                    "description": "ReviewSubjectType is the parent review subject the gate matches. It defaults\nto the dispatch object type when empty.",
+                    "type": "string"
+                },
                 "reviewer": {
-                    "description": "Reviewer marks an object-driven review lane. The review gate requires every\nenabled reviewer whose Match predicates accept the subject.",
+                    "description": "Reviewer marks an object-driven review lane. The gate selects reviewers\nagainst ReviewSubjectType/ReviewMatch, while ObjectTypes/Events drive the\nper-reviewer lane work item.",
                     "type": "boolean"
                 }
             }
