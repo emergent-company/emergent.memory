@@ -308,7 +308,7 @@ func reviewSubjectLabels(labels []string) []any {
 // reviewer agents that match it. Reviewer selection is agent-driven; this
 // function never writes a reviewer list into the source.
 func (d *SourceEventDispatcher) ensureReviewSubject(ctx context.Context, v *VerifiedSourceEvent, src *Source, p *githubapp.WebhookPayload, state *githubapp.PullRequestState, subject string) error {
-	if d.workObjects == nil || p == nil || src == nil || !sourceOwnsReviewGate(src) {
+	if d.workObjects == nil || p == nil || src == nil || !d.sourceOwnsReviewGate(ctx, src) {
 		return nil
 	}
 	repoName := p.Repository.FullName
@@ -1397,17 +1397,29 @@ func (d *SourceEventDispatcher) processWorkflowEvent(ctx context.Context, src *S
 }
 
 // sourceOwnsReviewGate keeps a repo with both a coding source and a review
-// source from creating two gates and two reviewer lanes for the same PR. A
-// source opts out with config {"review_gate": false}; absent config preserves
-// the existing single-source default.
-func sourceOwnsReviewGate(src *Source) bool {
-	if src == nil || src.Config == nil {
+// source from creating two gates and two reviewer lanes for the same PR. The
+// ownership signal is server-side: a source that has any pull_request trigger
+// owns review subjects. A source with only issue triggers does not. No source
+// config can disable the gate. A source with no triggers keeps the historical
+// fail-open behavior.
+func (d *SourceEventDispatcher) sourceOwnsReviewGate(ctx context.Context, src *Source) bool {
+	if d.repo == nil || src == nil {
 		return true
 	}
-	if v, ok := src.Config["review_gate"].(bool); ok {
-		return v
+	triggers, err := d.repo.ListSourceTriggers(ctx, src.ProjectID, src.ID)
+	if err != nil || len(triggers) == 0 {
+		return true
 	}
-	return true
+	return triggersOwnReviewGate(triggers)
+}
+
+func triggersOwnReviewGate(triggers []*SourceTrigger) bool {
+	for _, trigger := range triggers {
+		if trigger != nil && strings.EqualFold(trigger.EventType, "pull_request") {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *SourceEventDispatcher) cancelSubjectRuns(ctx context.Context, canonicalID string) {
