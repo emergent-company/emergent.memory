@@ -276,13 +276,9 @@ func (s *Service) executeSync(
 	req *ChatCompletionRequest,
 	pause *clientPauseState,
 ) (*Result, error) {
-	var textBuf strings.Builder
+	var textBuf textDeltaCollector
 
-	execReq.StreamCallback = func(ev agents.StreamEvent) {
-		if ev.Type == agents.StreamEventTextDelta {
-			textBuf.WriteString(ev.Text)
-		}
-	}
+	execReq.StreamCallback = textBuf.callback
 
 	result, err := s.executor.Execute(ctx, execReq)
 	if err != nil {
@@ -294,7 +290,7 @@ func (s *Service) executeSync(
 		return s.buildClientToolCallResult(req.Model, result.RunID, pause), nil
 	}
 
-	resp := s.buildResponse(req.Model, textBuf.String(), result)
+	resp := s.buildResponse(req.Model, textBuf.text(), result)
 	resp.Usage = s.fetchUsage(ctx, result.RunID)
 	return &Result{Response: resp}, nil
 }
@@ -306,13 +302,9 @@ func (s *Service) resumeSync(
 	req *ChatCompletionRequest,
 	pause *clientPauseState,
 ) (*Result, error) {
-	var textBuf strings.Builder
+	var textBuf textDeltaCollector
 
-	resumeReq.StreamCallback = func(ev agents.StreamEvent) {
-		if ev.Type == agents.StreamEventTextDelta {
-			textBuf.WriteString(ev.Text)
-		}
-	}
+	resumeReq.StreamCallback = textBuf.callback
 
 	result, err := s.executor.Resume(ctx, priorRun, resumeReq)
 	if err != nil {
@@ -323,7 +315,7 @@ func (s *Service) resumeSync(
 		return s.buildClientToolCallResult(req.Model, result.RunID, pause), nil
 	}
 
-	resp := s.buildResponse(req.Model, textBuf.String(), result)
+	resp := s.buildResponse(req.Model, textBuf.text(), result)
 	resp.Usage = s.fetchUsage(ctx, result.RunID)
 	return &Result{Response: resp}, nil
 }
