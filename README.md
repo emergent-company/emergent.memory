@@ -87,3 +87,5 @@ and the docs workflow). It is served at `/openapi.json` by a running server.
 
 This project is licensed under the [MIT License](LICENSE) (© 2024-2026 Emergent
 Company). Third-party components are attributed in [NOTICE](NOTICE).
+
+<!-- reviewer production smoke test -->
