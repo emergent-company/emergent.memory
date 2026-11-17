@@ -139,7 +139,7 @@ func lucideIconInEntry(html, href string) string {
 
 // bundledLucideIcons returns the icon names in the exact @iconify-json/lucide
 // set the gateway's Tailwind @iconify/tailwind4 plugin compiles from. The
-// node_modules tree is a build artifact (symlinked by `task css`), so skip when
+// node_modules tree is a build artifact (installed by `task css`), so skip when
 // it is not present rather than failing a cold checkout.
 func bundledLucideIcons(t *testing.T) map[string]struct{} {
 	t.Helper()
