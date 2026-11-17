@@ -380,9 +380,26 @@ func (d *SourceEventDispatcher) ensureReviewLanes(ctx context.Context, src *Sour
 		if strings.TrimSpace(reviewer.AgentID) == "" || strings.TrimSpace(reviewer.Name) == "" {
 			continue
 		}
-		laneKey := parentKey + ":review:" + reviewer.AgentID + ":" + headSHA
+		laneKey := parentKey + ":review:" + reviewer.AgentID
 		laneName := title + " · " + reviewer.Name
 		status := "ready"
+		existing, err := d.workObjects.FindHeadObjectByTypeAndKey(ctx, src.ProjectID.String(), "GitHubReviewLane", laneKey)
+		if err != nil {
+			return err
+		}
+		if existing != nil {
+			oldHead, _ := existing.Properties["head_sha"].(string)
+			if oldHead == headSHA {
+				// A label/comment replay on the same head must not reset a lane
+				// that is already reviewed or running.
+				if existing.Status != nil && *existing.Status != "" {
+					status = *existing.Status
+				}
+			} else if oldHead != "" {
+				// New head: retire the stale reviewer run before waking the lane.
+				d.cancelSubjectRuns(ctx, existing.CanonicalID.String())
+			}
+		}
 		assignee := reviewer.Name
 		props := map[string]any{
 			"repo": repoName, "pr_number": p.PullNumber(), "head_sha": headSHA,

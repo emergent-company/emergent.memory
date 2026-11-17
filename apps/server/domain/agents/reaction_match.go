@@ -107,11 +107,7 @@ func (r *Repository) FindReviewerAgentsForObject(ctx context.Context, projectID,
 		if !strings.EqualFold(subjectType, objectType) {
 			continue
 		}
-		match := agent.ReactionConfig.ReviewMatch
-		if len(match) == 0 {
-			match = agent.ReactionConfig.Match
-		}
-		if !reactionMatchList(match, properties) {
+		if !reactionMatchList(agent.ReactionConfig.ReviewMatch, properties) {
 			continue
 		}
 		out = append(out, agent)
