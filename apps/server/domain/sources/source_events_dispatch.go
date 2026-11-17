@@ -296,6 +296,14 @@ func (d *SourceEventDispatcher) dispatchPullRequestSource(ctx context.Context, v
 	return nil
 }
 
+func reviewSubjectLabels(labels []string) []any {
+	out := make([]any, 0, len(labels))
+	for _, label := range labels {
+		out = append(out, label)
+	}
+	return out
+}
+
 // ensureReviewSubject emits the provider-owned review subject and snapshots the
 // reviewer agents that match it. Reviewer selection is agent-driven; this
 // function never writes a reviewer list into the source.
@@ -322,11 +330,24 @@ func (d *SourceEventDispatcher) ensureReviewSubject(ctx context.Context, v *Veri
 	if title == "" {
 		title = subject
 	}
+	if d.objectTypes != nil {
+		if err := d.objectTypes.EnsureObjectTypes(ctx, src.ProjectID.String(), (&githubAppProvider{}).ObjectTypes()); err != nil {
+			return fmt.Errorf("sources: ensure review subject schema: %w", err)
+		}
+	}
 	key := fmt.Sprintf("github:%s:%s#%d", src.ID.String(), repoName, p.PullNumber())
+	previousHead := ""
+	if prev, perr := d.workObjects.FindHeadObjectByTypeAndKey(ctx, src.ProjectID.String(), "GitHubPullRequest", key); perr != nil {
+		if d.log != nil {
+			d.log.Warn("sources: could not read previous review subject head", "error", perr)
+		}
+	} else if prev != nil {
+		previousHead, _ = prev.Properties["head_sha"].(string)
+	}
 	props := map[string]any{
 		"repo": repoName, "pr_number": p.PullNumber(), "title": title,
 		"head_sha": headSHA, "base_sha": p.PullRequest.Base.SHA,
-		"state": p.PullRequest.State, "labels": labels, "status": "open",
+		"state": p.PullRequest.State, "labels": reviewSubjectLabels(labels), "status": "open",
 	}
 	resp, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
 		Type: "GitHubPullRequest", Key: &key, Name: &title, Properties: props,
@@ -339,10 +360,85 @@ func (d *SourceEventDispatcher) ensureReviewSubject(ctx context.Context, v *Veri
 		if err != nil {
 			return fmt.Errorf("sources: ensure review gate: %w", err)
 		}
-		if gate != nil && len(gate.RequiredReviewers) > 0 && gate.Status == ReviewGatePending && v != nil && v.App != nil {
-			if token, terr := d.mintToken(ctx, v.App, p.Installation.ID, repoName); terr == nil {
-				_ = d.newClient(d.apiBaseURL, token).CreateCheck(ctx, repoName, headSHA, "reviewed", "in_progress", "", "reviewed: pending", "Waiting for all required reviewers.")
+		if gate != nil && len(gate.RequiredReviewers) > 0 {
+			if err := d.ensureReviewLanes(ctx, src, p, state, subject, previousHead, headSHA, gate); err != nil {
+				return fmt.Errorf("sources: ensure review lanes: %w", err)
 			}
+			if gate.Status == ReviewGatePending && v != nil && v.App != nil {
+				if token, terr := d.mintToken(ctx, v.App, p.Installation.ID, repoName); terr == nil {
+					_ = d.newClient(d.apiBaseURL, token).CreateCheck(ctx, repoName, headSHA, "reviewed", "in_progress", "", "reviewed: pending", "Waiting for all required reviewers.")
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// ensureReviewLanes materializes one claimable work item per required reviewer.
+// The parent GitHubPullRequest is shared state, so reviewer agents cannot use it
+// as their work subject: the work claim permits one live run per subject.
+func (d *SourceEventDispatcher) ensureReviewLanes(ctx context.Context, src *Source, p *githubapp.WebhookPayload, state *githubapp.PullRequestState, subject, previousHead, headSHA string, gate *ReviewGate) error {
+	repoName := p.Repository.FullName
+	title := strings.TrimSpace(p.PullRequest.Title)
+	if title == "" {
+		title = subject
+	}
+	parentKey := fmt.Sprintf("github:%s:%s#%d", src.ID.String(), repoName, p.PullNumber())
+	for _, reviewer := range gate.RequiredReviewers {
+		if strings.TrimSpace(reviewer.AgentID) == "" || strings.TrimSpace(reviewer.Name) == "" {
+			continue
+		}
+		laneKey := parentKey + ":review:" + reviewer.AgentID + ":" + headSHA
+		laneName := title + " · " + reviewer.Name
+		status := "ready"
+		if previousHead != "" && previousHead != headSHA {
+			oldKey := parentKey + ":review:" + reviewer.AgentID + ":" + previousHead
+			if old, oerr := d.workObjects.FindHeadObjectByTypeAndKey(ctx, src.ProjectID.String(), "GitHubReviewLane", oldKey); oerr == nil && old != nil {
+				// New head: retire the stale reviewer run and lane. A cancelled
+				// lane is not re-enqueued by the work reconciler.
+				d.cancelSubjectRuns(ctx, old.CanonicalID.String())
+				cancelled := "cancelled"
+				props := make(map[string]any, len(old.Properties)+1)
+				for k, val := range old.Properties {
+					props[k] = val
+				}
+				props["status"] = cancelled
+				if _, _, cerr := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
+					Type: "GitHubReviewLane", Key: &oldKey, Name: old.Name, Status: &cancelled,
+					Properties: props,
+				}, nil); cerr != nil {
+					return cerr
+				}
+			}
+		}
+		existing, err := d.workObjects.FindHeadObjectByTypeAndKey(ctx, src.ProjectID.String(), "GitHubReviewLane", laneKey)
+		if err != nil {
+			return err
+		}
+		if existing != nil {
+			oldHead, _ := existing.Properties["head_sha"].(string)
+			if oldHead == headSHA {
+				// A label/comment replay on the same head must not reset a lane
+				// that is already reviewed or running.
+				if existing.Status != nil && *existing.Status != "" {
+					status = *existing.Status
+				}
+			} else if oldHead != "" {
+				d.cancelSubjectRuns(ctx, existing.CanonicalID.String())
+			}
+		}
+		assignee := reviewer.Name
+		props := map[string]any{
+			"repo": repoName, "pr_number": p.PullNumber(), "head_sha": headSHA,
+			"base_sha": p.PullRequest.Base.SHA, "title": title, "state": p.PullRequest.State,
+			"status": status, "lane": reviewer.Name, "agent": reviewer.Name,
+			"source_id": src.ID.String(),
+		}
+		if _, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
+			Type: "GitHubReviewLane", Key: &laneKey, Name: &laneName, Status: &status,
+			Assignee: &assignee, Properties: props,
+		}, nil); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -1200,6 +1296,11 @@ func (d *SourceEventDispatcher) processWorkflowEvent(ctx context.Context, src *S
 	if d.workObjects == nil {
 		return false, fmt.Errorf("sources: workflow source has no work-object store")
 	}
+	if d.objectTypes != nil {
+		if err := d.objectTypes.EnsureObjectTypes(ctx, src.ProjectID.String(), (&githubAppProvider{}).ObjectTypes()); err != nil {
+			return true, fmt.Errorf("sources: ensure workflow schema: %w", err)
+		}
+	}
 	var cfg SourceWorkflowConfig
 	raw, _ := json.Marshal(wf.Config)
 	if err := json.Unmarshal(raw, &cfg); err != nil || len(cfg.Reviewers) == 0 {
@@ -1232,7 +1333,7 @@ func (d *SourceEventDispatcher) processWorkflowEvent(ctx context.Context, src *S
 	parentProps := map[string]any{
 		"repo": repoName, "pr_number": p.PullNumber(), "head_sha": state.HeadSHA,
 		"base_sha": p.PullRequest.Base.SHA, "title": title, "state": p.PullRequest.State,
-		"labels": labels, "status": parentStatus,
+		"labels": reviewSubjectLabels(labels), "status": parentStatus,
 	}
 	if _, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
 		Type: "GitHubPullRequest", Key: &parentKey, Name: &title, Status: &parentStatus, Properties: parentProps,
