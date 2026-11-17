@@ -352,10 +352,66 @@ func (d *SourceEventDispatcher) ensureReviewSubject(ctx context.Context, v *Veri
 		if err != nil {
 			return fmt.Errorf("sources: ensure review gate: %w", err)
 		}
-		if gate != nil && len(gate.RequiredReviewers) > 0 && gate.Status == ReviewGatePending && v != nil && v.App != nil {
-			if token, terr := d.mintToken(ctx, v.App, p.Installation.ID, repoName); terr == nil {
-				_ = d.newClient(d.apiBaseURL, token).CreateCheck(ctx, repoName, headSHA, "reviewed", "in_progress", "", "reviewed: pending", "Waiting for all required reviewers.")
+		if gate != nil && len(gate.RequiredReviewers) > 0 {
+			if err := d.ensureReviewLanes(ctx, src, p, state, subject, headSHA, gate); err != nil {
+				return fmt.Errorf("sources: ensure review lanes: %w", err)
 			}
+			if gate.Status == ReviewGatePending && v != nil && v.App != nil {
+				if token, terr := d.mintToken(ctx, v.App, p.Installation.ID, repoName); terr == nil {
+					_ = d.newClient(d.apiBaseURL, token).CreateCheck(ctx, repoName, headSHA, "reviewed", "in_progress", "", "reviewed: pending", "Waiting for all required reviewers.")
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// ensureReviewLanes materializes one claimable work item per required reviewer.
+// The parent GitHubPullRequest is shared state, so reviewer agents cannot use it
+// as their work subject: the work claim permits one live run per subject.
+func (d *SourceEventDispatcher) ensureReviewLanes(ctx context.Context, src *Source, p *githubapp.WebhookPayload, state *githubapp.PullRequestState, subject, headSHA string, gate *ReviewGate) error {
+	repoName := p.Repository.FullName
+	title := strings.TrimSpace(p.PullRequest.Title)
+	if title == "" {
+		title = subject
+	}
+	parentKey := fmt.Sprintf("github:%s:%s#%d", src.ID.String(), repoName, p.PullNumber())
+	for _, reviewer := range gate.RequiredReviewers {
+		if strings.TrimSpace(reviewer.AgentID) == "" || strings.TrimSpace(reviewer.Name) == "" {
+			continue
+		}
+		laneKey := parentKey + ":review:" + reviewer.AgentID
+		laneName := title + " · " + reviewer.Name
+		status := "ready"
+		existing, err := d.workObjects.FindHeadObjectByTypeAndKey(ctx, src.ProjectID.String(), "GitHubReviewLane", laneKey)
+		if err != nil {
+			return err
+		}
+		if existing != nil {
+			oldHead, _ := existing.Properties["head_sha"].(string)
+			if oldHead == headSHA {
+				// A label/comment replay on the same head must not reset a lane
+				// that is already reviewed or running.
+				if existing.Status != nil && *existing.Status != "" {
+					status = *existing.Status
+				}
+			} else if oldHead != "" {
+				// New head: retire the stale reviewer run before waking the lane.
+				d.cancelSubjectRuns(ctx, existing.CanonicalID.String())
+			}
+		}
+		assignee := reviewer.Name
+		props := map[string]any{
+			"repo": repoName, "pr_number": p.PullNumber(), "head_sha": headSHA,
+			"base_sha": p.PullRequest.Base.SHA, "title": title, "state": p.PullRequest.State,
+			"status": status, "lane": reviewer.Name, "agent": reviewer.Name,
+			"source_id": src.ID.String(),
+		}
+		if _, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
+			Type: "GitHubReviewLane", Key: &laneKey, Name: &laneName, Status: &status,
+			Assignee: &assignee, Properties: props,
+		}, nil); err != nil {
+			return err
 		}
 	}
 	return nil

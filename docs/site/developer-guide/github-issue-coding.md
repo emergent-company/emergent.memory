@@ -84,27 +84,29 @@ Example:
 
 ```json
 {
-  "objectTypes": ["GitHubPullRequest"],
+  "objectTypes": ["GitHubReviewLane"],
   "events": ["created", "updated"],
-  "properties": ["/head_sha", "/labels"],
-  "match": [
+  "reviewer": true,
+  "reviewSubjectType": "GitHubPullRequest",
+  "reviewMatch": [
     {"path": "/labels", "operator": "contains", "value": "review:ui"}
   ],
-  "reviewer": true,
   "concurrencyStrategy": "skip"
 }
 ```
 
-- A reviewer with no `match` is the default reviewer.
-- `properties` filters which changed property paths wake an `updated` agent.
-- `match` evaluates the current HEAD properties; supported operators are
-  `contains`, `equals` and `exists`.
+- A reviewer with no `reviewMatch` is the default reviewer.
+- `objectTypes`/`events` drive the reviewer's own lane work item.
+- `reviewSubjectType`/`reviewMatch` select the reviewer from the parent review
+  subject.
 - Every matching reviewer is required for the current head.
 - Added reviewers are sticky for that head; a new head requires a fresh set.
 - Reviewer verdicts are aggregated server-side; a reviewer cannot set the
   aggregate approval or publish the provider check directly.
 
-The GitHub adapter publishes the aggregate `reviewed` check and the source
+The source creates one `GitHubReviewLane` work item per required reviewer so
+parallel reviewers do not contend for the parent subject's work claim. The
+GitHub adapter publishes the aggregate `reviewed` check and the source
 discovers the reviewer agents from the project. Do not add a source workflow
 reviewer list for new review sources.
 
