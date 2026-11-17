@@ -337,7 +337,11 @@ func (d *SourceEventDispatcher) ensureReviewSubject(ctx context.Context, v *Veri
 	}
 	key := fmt.Sprintf("github:%s:%s#%d", src.ID.String(), repoName, p.PullNumber())
 	previousHead := ""
-	if prev, perr := d.workObjects.FindHeadObjectByTypeAndKey(ctx, src.ProjectID.String(), "GitHubPullRequest", key); perr == nil && prev != nil {
+	if prev, perr := d.workObjects.FindHeadObjectByTypeAndKey(ctx, src.ProjectID.String(), "GitHubPullRequest", key); perr != nil {
+		if d.log != nil {
+			d.log.Warn("sources: could not read previous review subject head", "error", perr)
+		}
+	} else if prev != nil {
 		previousHead, _ = prev.Properties["head_sha"].(string)
 	}
 	props := map[string]any{
@@ -390,8 +394,21 @@ func (d *SourceEventDispatcher) ensureReviewLanes(ctx context.Context, src *Sour
 		if previousHead != "" && previousHead != headSHA {
 			oldKey := parentKey + ":review:" + reviewer.AgentID + ":" + previousHead
 			if old, oerr := d.workObjects.FindHeadObjectByTypeAndKey(ctx, src.ProjectID.String(), "GitHubReviewLane", oldKey); oerr == nil && old != nil {
-				// New head: retire the stale reviewer run before waking the new lane.
+				// New head: retire the stale reviewer run and lane. A cancelled
+				// lane is not re-enqueued by the work reconciler.
 				d.cancelSubjectRuns(ctx, old.CanonicalID.String())
+				cancelled := "cancelled"
+				props := make(map[string]any, len(old.Properties)+1)
+				for k, val := range old.Properties {
+					props[k] = val
+				}
+				props["status"] = cancelled
+				if _, _, cerr := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
+					Type: "GitHubReviewLane", Key: &oldKey, Name: old.Name, Status: &cancelled,
+					Properties: props,
+				}, nil); cerr != nil {
+					return cerr
+				}
 			}
 		}
 		existing, err := d.workObjects.FindHeadObjectByTypeAndKey(ctx, src.ProjectID.String(), "GitHubReviewLane", laneKey)
