@@ -26,3 +26,36 @@ const (
 func Terminal() []Status {
 	return []Status{Success, Skipped, Error, Cancelled}
 }
+
+// Live returns the non-terminal run statuses that still count as live: a run in
+// one of them owns its subject work object's single claim slot. Input-required
+// is live on purpose — a human answering a question must not have the item
+// reclaimed and executed twice (see workLiveRunStatuses in domain/agents).
+//
+// Use this (or IsLive) instead of comparing status literals: the canonical
+// values changed once already (00113), and predicates written against the old
+// names silently matched nothing.
+func Live() []Status {
+	return []Status{Queued, Running, Paused}
+}
+
+// LiveStrings returns Live() as plain strings, for query builders (bun.In) and
+// comparison against wire values that are not typed as Status.
+func LiveStrings() []string {
+	live := Live()
+	out := make([]string, len(live))
+	for i, s := range live {
+		out[i] = string(s)
+	}
+	return out
+}
+
+// IsLive reports whether s is one of the Live statuses.
+func IsLive(s Status) bool {
+	switch s {
+	case Queued, Running, Paused:
+		return true
+	default:
+		return false
+	}
+}

@@ -7,6 +7,13 @@ import (
 	"strconv"
 )
 
+// runStatusSubmitted is the canonical "enqueued, waiting for a worker" run
+// status the work board branches on. The web-ui is a separate Go module and
+// cannot import apps/server/pkg/runstatus, so the value is mirrored here. 00113
+// renamed the old "queued" spelling to this, and a literal comparison against
+// the old name silently matched nothing (issue #992).
+const runStatusSubmitted = "submitted"
+
 // WorkItem is one board card: a board-enabled work object (graph object) joined
 // to its latest run's execution status. Mirrors the server's WorkItemDTO.
 type WorkItem struct {

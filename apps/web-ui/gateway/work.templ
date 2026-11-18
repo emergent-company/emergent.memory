@@ -267,7 +267,7 @@ templ workCard(it WorkItem, data workData) {
 			if it.Assignee == "" {
 				@workUnassignedChip()
 			}
-			if it.NextRunAt != "" && it.LatestRunStatus == "queued" {
+			if it.NextRunAt != "" && it.LatestRunStatus == runStatusSubmitted {
 				@ui.Badge(ui.BadgeProps{Label: "retry scheduled", Variant: ui.BadgeWarning, Size: ui.BadgeSizeXS})
 			}
 		</div>
