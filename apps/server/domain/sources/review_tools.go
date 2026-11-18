@@ -35,6 +35,14 @@ const (
 	// commit cannot blow up the agent context.
 	maxPatchBytes = 6000
 	maxDiffBytes  = 200000
+
+	// githubCommitFileListCap is the maximum number of changed files GitHub's
+	// commit endpoint lists; a commit at the cap may hide more files.
+	githubCommitFileListCap = 300
+	// githubPRFileListCap mirrors githubapp.ListPullRequestFiles' pagination bound
+	// (30 pages of 100). A listing at the cap may have more files GitHub never
+	// returned, so the pull request diff cannot be certified complete.
+	githubPRFileListCap = 3000
 )
 
 // commitSHARe pins head_sha to a commit id before it reaches a URL path or the
@@ -57,6 +65,14 @@ func validCommitSHA(sha string) bool {
 // number so evidence read for PR #1 can never justify a verdict on PR #2.
 func diffEvidenceKey(repo string, number int, sha string) string {
 	return fmt.Sprintf("githubapp:prdiff:%s#%d@%s", strings.ToLower(repo), number, sha)
+}
+
+// diffFileEvidenceKey names the run-scoped fact "github-pr-diff rendered this
+// changed file of repo#number@sha in full". A payload too large for one result is
+// finished with the tool's path/files arguments, and executeReviewSubmit accepts
+// the per-file union once every changed file has been read in full (#1006).
+func diffFileEvidenceKey(repo string, number int, sha, filename string) string {
+	return fmt.Sprintf("githubapp:prdiff-file:%s#%d@%s:%s", strings.ToLower(repo), number, sha, filename)
 }
 
 // truncateUTF8 cuts s to at most max bytes without splitting a UTF-8 sequence.
@@ -90,6 +106,10 @@ type ReviewToolHandler struct {
 	reviewGates *ReviewGateService
 	agentRuns   *agents.Repository
 	log         *slog.Logger
+	// maxResultBytes is the agent executor's per-result model-context bound. A diff
+	// bigger than this would reach the model cut while this run had already
+	// recorded evidence for it, so the tool renders below the bound instead (#1006).
+	maxResultBytes int
 }
 
 // WorkItemStatusWriter finalizes the board lane a review run was dispatched for.
@@ -125,9 +145,11 @@ func (h *ReviewToolHandler) SetAgentRuns(r *agents.Repository) { h.agentRuns = r
 // open kb.source_apps blobs, not the removed GITHUB_APP_ENCRYPTION_KEY.
 func NewReviewToolHandler(repo *Repository, cfg *config.Config, log *slog.Logger) *ReviewToolHandler {
 	keyHex, baseURL := "", ""
+	maxResultBytes := 0
 	if cfg != nil {
 		keyHex = cfg.LLMProvider.EncryptionKey
 		baseURL = cfg.GitHubSource.APIBaseURL
+		maxResultBytes = agents.ToolResultMaxBytesFor(cfg.MCP, toolPRDiff)
 	}
 	key, err := hex.DecodeString(keyHex)
 	if err != nil {
@@ -145,7 +167,8 @@ func NewReviewToolHandler(repo *Repository, cfg *config.Config, log *slog.Logger
 		newClient: func(baseURL, token string) *githubapp.Client {
 			return githubapp.NewClient(baseURL, token, nil)
 		},
-		log: log,
+		log:            log,
+		maxResultBytes: maxResultBytes,
 	}
 }
 
@@ -408,6 +431,10 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 	if !validCommitSHA(headSHA) {
 		return nil, apperror.NewValidationf("github app tool: head_sha %q is not a commit SHA (40 lowercase hex)", headSHA)
 	}
+	selection, err := diffSelection(args)
+	if err != nil {
+		return nil, err
+	}
 	number, ok := intArg(args, "number")
 	if !ok || number <= 0 {
 		if subject, hasSubject := mcp.RunSubjectFromContext(ctx); hasSubject &&
@@ -416,9 +443,9 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 		}
 	}
 	if ok && number > 0 {
-		return h.executePullRequestDiff(ctx, client, projectID, repo, number, headSHA)
+		return h.executePullRequestDiff(ctx, client, projectID, repo, number, headSHA, selection)
 	}
-	return h.executeCommitDiff(ctx, client, repo, headSHA)
+	return h.executeCommitDiff(ctx, client, repo, headSHA, selection)
 }
 
 // executePullRequestDiff reads GET /pulls/{number}/files, the diff of the
@@ -426,7 +453,13 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 // name. An empty result is a genuinely unapprovable head: the tool returns a
 // validation error (never an internal one) and moves the review gate to a
 // terminal state instead of leaving it pending forever.
-func (h *ReviewToolHandler) executePullRequestDiff(ctx context.Context, client *githubapp.Client, projectID, repo string, number int, headSHA string) (*mcp.ToolResult, error) {
+//
+// The rendered result is bounded and truncation is machine-readable
+// (truncated/truncatedFiles/complete). A truncated read records no whole-diff
+// evidence, so it cannot authorize github-review-submit (#1006); the agent
+// finishes a large change with the path/files selection, which records per-file
+// evidence, and submit accepts the union once every changed file is read in full.
+func (h *ReviewToolHandler) executePullRequestDiff(ctx context.Context, client *githubapp.Client, projectID, repo string, number int, headSHA string, selection map[string]struct{}) (*mcp.ToolResult, error) {
 	state, err := client.GetPullRequest(ctx, repo, number)
 	if err != nil {
 		return nil, err
@@ -445,28 +478,34 @@ func (h *ReviewToolHandler) executePullRequestDiff(ctx context.Context, client *
 		h.markHeadUnapprovable(ctx, client, projectID, repo, number, headSHA, reason)
 		return nil, apperror.NewValidationf("github app tool: %s", reason)
 	}
-	mcp.MarkRunEvidence(ctx, diffEvidenceKey(repo, number, headSHA))
 
 	title := strings.TrimSpace(state.Title)
 	header := fmt.Sprintf("pull request %s#%d at %s", repo, number, headSHA)
 	if title != "" {
 		header += "\n" + title
 	}
-	return &mcp.ToolResult{
-		Content: []mcp.ContentBlock{{Type: "text", Text: renderDiffFiles(header, files)}},
-		StructuredContent: map[string]any{
-			"sha":    headSHA,
-			"number": number,
-			"files":  len(files),
-		},
-	}, nil
+	rendered, result, err := h.renderBounded(ctx, headSHA, header, files, selection, len(files) >= githubPRFileListCap)
+	if err != nil {
+		return nil, err
+	}
+	for _, filename := range rendered.completeFiles {
+		mcp.MarkRunEvidence(ctx, diffFileEvidenceKey(repo, number, headSHA, filename))
+	}
+	// Record that this run saw the whole diff for this pull request. A truncated
+	// or filtered read records per-file evidence at most, so submit can still be
+	// reached once the run reads the remaining files, but never on a half-read
+	// diff.
+	if rendered.complete {
+		mcp.MarkRunEvidence(ctx, diffEvidenceKey(repo, number, headSHA))
+	}
+	return result, nil
 }
 
 // executeCommitDiff serves one commit's first-parent diff for context. It never
 // records review evidence: the verified object is the pull request, and a merge
 // commit's first-parent diff can be empty while the PR is large. An empty
 // commit diff is a validation error, not a successful empty tool result.
-func (h *ReviewToolHandler) executeCommitDiff(ctx context.Context, client *githubapp.Client, repo, headSHA string) (*mcp.ToolResult, error) {
+func (h *ReviewToolHandler) executeCommitDiff(ctx context.Context, client *githubapp.Client, repo, headSHA string, selection map[string]struct{}) (*mcp.ToolResult, error) {
 	diff, err := client.GetCommit(ctx, repo, headSHA)
 	if err != nil {
 		return nil, err
@@ -476,37 +515,369 @@ func (h *ReviewToolHandler) executeCommitDiff(ctx context.Context, client *githu
 			headSHA)
 	}
 	header := fmt.Sprintf("commit %s\n%s", diff.SHA, strings.TrimSpace(diff.Message))
-	return &mcp.ToolResult{
-		Content: []mcp.ContentBlock{{Type: "text", Text: renderDiffFiles(header, diff.Files)}},
-		StructuredContent: map[string]any{
-			"sha":   diff.SHA,
-			"files": len(diff.Files),
-		},
-	}, nil
+	_, result, err := h.renderBounded(ctx, diff.SHA, header, diff.Files, selection, len(diff.Files) >= githubCommitFileListCap)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
-// renderDiffFiles bounds each patch and the whole rendered result so a large
-// pull request cannot blow up the agent context.
-func renderDiffFiles(header string, files []githubapp.CommitFile) string {
-	var b strings.Builder
-	b.WriteString(header)
-	b.WriteString("\n\n")
-	for _, file := range files {
-		patch := file.Patch
-		if len(patch) > maxPatchBytes {
-			patch = truncateUTF8(patch, maxPatchBytes) + "\n… patch truncated"
+// renderBounded renders files under this tool's caps and, when the executor's
+// per-result bound is known, shrinks the text until the marshalled result fits
+// it. The executor bounds a tool result before the model sees it, so a payload
+// that passes this tool's caps but exceeds that bound would reach the model cut
+// while this run had already recorded evidence for it -- the same
+// truncated-verdict failure through a different cap (#1006). Re-rendering
+// recomputes which files are complete, so evidence is only recorded for content
+// the model received in full.
+func (h *ReviewToolHandler) renderBounded(ctx context.Context, sha, header string, files []githubapp.CommitFile, selection map[string]struct{}, listingCapped bool) (*diffRender, *mcp.ToolResult, error) {
+	textBudget := h.diffTextBudget()
+	rendered, err := renderDiffFiles(sha, header, files, selection, textBudget, listingCapped)
+	if err != nil {
+		return nil, nil, err
+	}
+	result := diffToolResult(sha, len(files), selection, rendered)
+	if h.maxResultBytes <= 0 {
+		return rendered, result, nil
+	}
+	for attempt := 0; attempt < 4; attempt++ {
+		raw, marshalErr := json.Marshal(result)
+		if marshalErr != nil || len(raw) <= h.maxResultBytes {
+			break
 		}
-		fmt.Fprintf(&b, "--- %s (%s, +%d/-%d)\n%s\n\n", file.Filename, file.Status, file.Additions, file.Deletions, patch)
-		if b.Len() >= maxDiffBytes {
-			b.WriteString("… diff truncated\n")
+		textBudget -= len(raw) - h.maxResultBytes + 512
+		if textBudget < 512 {
+			textBudget = 512
+		}
+		next, rerr := renderDiffFiles(sha, header, files, selection, textBudget, listingCapped)
+		if rerr != nil {
+			break
+		}
+		rendered, result = next, diffToolResult(sha, len(files), selection, next)
+	}
+	if raw, marshalErr := json.Marshal(result); marshalErr != nil || len(raw) > h.maxResultBytes {
+		// The configured bound is too small to carry even the envelope. Never
+		// claim a complete read (or record evidence) for a payload the model
+		// cannot receive whole; the truncation flags stay honest instead.
+		rendered.truncated = true
+		rendered.complete = false
+		rendered.truncatedFiles = append(rendered.truncatedFiles, rendered.completeFiles...)
+		rendered.completeFiles = nil
+		result = diffToolResult(sha, len(files), selection, rendered)
+	}
+	return rendered, result, nil
+}
+
+// diffTextBudget is the largest diff text this tool emits. It never exceeds
+// maxDiffBytes and, when the executor's per-result bound is known, starts below
+// it so the result envelope fits; renderBounded shrinks further and measures the
+// marshalled result, since JSON escaping varies by content.
+func (h *ReviewToolHandler) diffTextBudget() int {
+	if h.maxResultBytes > 0 && h.maxResultBytes < maxDiffBytes {
+		return h.maxResultBytes
+	}
+	return maxDiffBytes
+}
+
+// diffToolResult builds the agent-facing result from one render. truncatedFiles
+// is always a slice so the schema type stays stable (an empty list, not null).
+func diffToolResult(sha string, fileCount int, selection map[string]struct{}, rendered *diffRender) *mcp.ToolResult {
+	truncatedFiles := rendered.truncatedFiles
+	if truncatedFiles == nil {
+		truncatedFiles = []string{}
+	}
+	return &mcp.ToolResult{
+		Content: []mcp.ContentBlock{{Type: "text", Text: rendered.text}},
+		StructuredContent: map[string]any{
+			"sha":            sha,
+			"files":          fileCount,
+			"rendered":       rendered.rendered,
+			"complete":       rendered.complete,
+			"truncated":      rendered.truncated,
+			"truncatedFiles": truncatedFiles,
+			"partial":        selection != nil,
+		},
+	}
+}
+
+// diffSelection parses the optional path/files arguments. A selection makes the
+// tool render only the named changed files, at the whole-result budget instead
+// of the per-file one: that is how an agent reads past a truncation. Matching is
+// exact (a leading ./ or / is ignored); a miss is a validation error naming the
+// changed files rather than a silently empty diff.
+func diffSelection(args map[string]any) (map[string]struct{}, error) {
+	if args == nil {
+		return nil, nil
+	}
+	selection := make(map[string]struct{})
+	add := func(path string) {
+		if path = normalizeDiffPath(path); path != "" {
+			selection[path] = struct{}{}
+		}
+	}
+	add(stringArg(args, "path"))
+	switch files := args["files"].(type) {
+	case nil:
+	case []any:
+		for _, value := range files {
+			if path, ok := value.(string); ok {
+				add(path)
+			}
+		}
+	case []string:
+		for _, path := range files {
+			add(path)
+		}
+	default:
+		return nil, apperror.NewValidation("github app tool: files must be an array of changed file paths")
+	}
+	if len(selection) == 0 {
+		return nil, nil
+	}
+	return selection, nil
+}
+
+// normalizeDiffPath trims a path as GitHub reports it. Agents sometimes prefix a
+// repository-relative path with ./ or /.
+func normalizeDiffPath(path string) string {
+	path = strings.TrimSpace(path)
+	path = strings.TrimPrefix(path, "./")
+	return strings.TrimPrefix(path, "/")
+}
+
+// sanitizeDiffPath neutralises control characters in a PR-controlled filename
+// before it is interpolated into model-visible tool text, so a crafted filename
+// cannot forge lines (for example a fake Reviewed-SHA marker) in the diff output.
+// Structured content keeps the raw name; JSON escaping covers it there.
+func sanitizeDiffPath(path string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\t' || r == '\n' || r == '\r' || r < 0x20 || r == 0x7f {
+			return '?'
+		}
+		// Unicode line/paragraph separators and bidi/format controls are not
+		// visible in a terminal but some renderers and tokenizers treat them as
+		// line breaks or direction overrides, so a crafted name could still
+		// reshape the model-visible text.
+		switch r {
+		case 0x200e, 0x200f, 0x2028, 0x2029:
+			return '?'
+		}
+		if (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) {
+			return '?'
+		}
+		return r
+	}, path)
+}
+
+// patchWithheld reports that GitHub returned no patch for a file whose content a
+// reviewer cannot otherwise see. The API omits the patch for a binary file and
+// for a diff over its patch-size limit. It also omits it for a pure path move or
+// a mode-only change, which carry no line diff. A binary file reports
+// additions/deletions of 0 (line counts are undefined for it), so those counts
+// cannot separate it from a mode-only change; only a rename/copy with no changed
+// lines is provably content-free. Everything else fails closed: a file whose
+// bytes were never returned must never count as read (#1006).
+func patchWithheld(file githubapp.CommitFile) bool {
+	if file.Patch != "" {
+		return false
+	}
+	switch file.Status {
+	case "renamed", "copied":
+		// A pure path move changed no content. A rename that also changed content
+		// carries a patch, or at least a non-zero line count (a renamed binary that
+		// also changed bytes reports 0/0 like a mode-only edit, so it is the one
+		// residual ambiguity and is accepted only because nothing distinguishes it
+		// from a content-free move in the API).
+		return file.Additions != 0 || file.Deletions != 0
+	default:
+		return true
+	}
+}
+
+// diffRender is the rendered, bounded form of one diff.
+type diffRender struct {
+	text string
+	// rendered is the number of changed files whose header reached the payload.
+	rendered int
+	// truncated reports that the payload was cut (a patch or the whole result).
+	truncated bool
+	// truncatedFiles names every changed file whose returned content is
+	// incomplete: cut mid-patch or not rendered at all. It never names a file
+	// excluded by a path/files selection.
+	truncatedFiles []string
+	// completeFiles names the files whose full patch is in the payload.
+	completeFiles []string
+	// complete reports that this one call rendered every changed file in full,
+	// which is the only thing that authorizes a verdict without per-file reads.
+	complete bool
+}
+
+type diffSegment struct {
+	filename string
+	text     string
+	complete bool
+	// withheld reports that GitHub returned no patch for a file whose content the
+	// reviewer cannot see (binary, a diff over the API's patch limit, or a
+	// mode-only change). Re-reading the file cannot recover it, so it must never
+	// count as read.
+	withheld bool
+}
+
+// renderDiffFiles renders the changed files under the payload caps. textBudget
+// is the hard ceiling on the returned text (already resolved against the
+// executor's per-result bound). It is pure: the caller records evidence from
+// completeFiles/complete, so a segment cut by the final size cap is never
+// reported as fully read.
+func renderDiffFiles(sha, header string, files []githubapp.CommitFile, selection map[string]struct{}, textBudget int, fileListCapped bool) (*diffRender, error) {
+	if selection != nil {
+		present := make(map[string]struct{}, len(files))
+		for _, file := range files {
+			present[file.Filename] = struct{}{}
+		}
+		for path := range selection {
+			if _, ok := present[path]; !ok {
+				return nil, apperror.NewValidationf("github app tool: path %q is not among the changed files of %s (%s)", path, sha, summarizedFiles(files))
+			}
+		}
+	}
+	if textBudget < 1 {
+		textBudget = 1
+	}
+	patchBudget := maxPatchBytes
+	if selection != nil {
+		// A file-filtered read spends the whole-result budget on the selected
+		// files: the caller asked for them precisely because the unfiltered
+		// payload was cut.
+		patchBudget = textBudget
+	}
+	if patchBudget > textBudget {
+		patchBudget = textBudget
+	}
+	prefix := header + "\n\n"
+	if fileListCapped {
+		// Put the warning at the top so the size cap cannot cut it.
+		prefix += fmt.Sprintf("… warning: the change lists %d changed files (GitHub's listing cap); files beyond it were not returned.\n\n", len(files))
+	}
+	segments := make([]diffSegment, 0, len(files))
+	total := len(prefix)
+	for _, file := range files {
+		if selection != nil {
+			if _, ok := selection[file.Filename]; !ok {
+				continue
+			}
+		}
+		patch := file.Patch
+		complete := true
+		withheld := patchWithheld(file)
+		if withheld {
+			// GitHub omits the patch for binary files, for diffs over its patch-size
+			// limit, and for mode-only changes. A file that changed but whose content
+			// was never returned cannot count as read (#1006).
+			complete = false
+		} else if len(patch) > patchBudget {
+			patch = truncateUTF8(patch, patchBudget)
+			complete = false
+		}
+		name := sanitizeDiffPath(file.Filename)
+		var b strings.Builder
+		fmt.Fprintf(&b, "--- %s (%s, +%d/-%d)\n%s\n\n", name, file.Status, file.Additions, file.Deletions, patch)
+		switch {
+		case withheld:
+			fmt.Fprintf(&b, "… patch unavailable for %s: GitHub withheld it (binary, over its patch limit, or mode-only); treat the change as not fully reviewed\n\n", name)
+		case !complete && selection != nil:
+			// Re-reading the same file cannot help: it alone exceeds the
+			// payload budget, so say so instead of inviting a loop.
+			fmt.Fprintf(&b, "… patch truncated for %s: this file alone exceeds the payload limit; treat the change as not fully reviewed\n\n", name)
+		case !complete:
+			fmt.Fprintf(&b, "… patch truncated for %s: re-fetch this file with github-pr-diff path=%q\n\n", name, name)
+		}
+		segments = append(segments, diffSegment{filename: file.Filename, text: b.String(), complete: complete, withheld: withheld})
+		total += b.Len()
+		if total >= textBudget {
 			break
 		}
 	}
-	text := b.String()
-	if len(text) > maxDiffBytes {
-		text = truncateUTF8(text, maxDiffBytes) + "\n… diff truncated"
+
+	var b strings.Builder
+	b.WriteString(prefix)
+	ends := make([]int, len(segments))
+	for i, segment := range segments {
+		b.WriteString(segment.text)
+		ends[i] = b.Len()
 	}
-	return text
+	text := b.String()
+	kept := len(text)
+	if kept > textBudget {
+		trimmed := truncateUTF8(text, textBudget)
+		text = trimmed + "\n… diff truncated\n"
+		// The rune-boundary trim can drop a byte or two below textBudget; compare
+		// segment ends against what was actually kept, not the nominal cap.
+		kept = len(trimmed)
+	}
+
+	result := &diffRender{text: text, rendered: len(segments)}
+	truncatedFiles := make([]string, 0)
+	rendered := make(map[string]struct{}, len(segments))
+	for i, segment := range segments {
+		rendered[segment.filename] = struct{}{}
+		if segment.complete && ends[i] <= kept {
+			result.completeFiles = append(result.completeFiles, segment.filename)
+			continue
+		}
+		result.truncated = true
+		truncatedFiles = append(truncatedFiles, segment.filename)
+	}
+	for _, file := range files {
+		if selection != nil {
+			if _, ok := selection[file.Filename]; !ok {
+				continue
+			}
+		}
+		if _, ok := rendered[file.Filename]; !ok {
+			// Cut by the whole-result budget before its header was written.
+			result.truncated = true
+			truncatedFiles = append(truncatedFiles, file.Filename)
+		}
+	}
+	if fileListCapped {
+		// The API listed at most this many files; anything beyond is invisible to
+		// the tool, so no call can certify the diff complete.
+		result.truncated = true
+	}
+	result.truncatedFiles = truncatedFiles
+	result.complete = selection == nil && !result.truncated && len(files) > 0
+	return result, nil
+}
+
+// summarizedFiles renders changed file names for a validation error, bounded so
+// a large change cannot turn the error into a payload of its own.
+func summarizedFiles(files []githubapp.CommitFile) string {
+	names := make([]string, 0, len(files))
+	for _, file := range files {
+		names = append(names, file.Filename)
+	}
+	return summarizedNames(names)
+}
+
+// summarizedNames renders up to 20 sanitized names, then a count of the rest.
+// Names are PR-controlled, so they are neutralised before entering an error the
+// model reads.
+func summarizedNames(names []string) string {
+	const limit = 20
+	if len(names) == 0 {
+		return "none"
+	}
+	render := func(in []string) string {
+		out := make([]string, len(in))
+		for i, name := range in {
+			out[i] = sanitizeDiffPath(name)
+		}
+		return strings.Join(out, ", ")
+	}
+	if len(names) <= limit {
+		return render(names)
+	}
+	return render(names[:limit]) + fmt.Sprintf(", … %d more", len(names)-limit)
 }
 
 // markHeadUnapprovable moves the head's review gate to a terminal state and
@@ -595,22 +966,14 @@ func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *git
 		return nil, apperror.NewValidationf("github app tool: PR head is %s, not the reviewed %s; re-review the new head", state.HeadSHA, headSHA)
 	}
 	// Same-run binding: the verdict may only name a pull request head whose
-	// non-empty diff this run read through github-pr-diff. A prompt injection in
-	// PR text cannot make the agent approve a change it never fetched. Evidence
-	// is keyed on (repo, number, head SHA) because the reviewed object is the
-	// pull request, not one commit's first-parent diff (#1022).
+	// non-empty diff this run read in full through github-pr-diff. A prompt
+	// injection in PR text cannot make the agent approve a change it never
+	// fetched. Evidence is keyed on (repo, number, head SHA) because the reviewed
+	// object is the pull request, not one commit's first-parent diff (#1022).
 	if !mcp.RunHasEvidence(ctx, diffEvidenceKey(repo, number, headSHA)) {
-		reason := fmt.Sprintf("no non-empty github-pr-diff result for %s#%d@%s in this run; fetch the pull request diff for the exact reviewed head before submitting",
-			repo, number, headSHA)
-		// A genuinely empty pull request can never receive a verdict. Detect it
-		// here too (not only in github-pr-diff) so a run that skipped the diff
-		// cannot leave the gate pending forever.
-		if files, ferr := client.ListPullRequestFiles(ctx, repo, number); ferr == nil && len(files) == 0 {
-			reason = fmt.Sprintf("pull request %s#%d has no changed files at head %s; there is nothing to review and no verdict can be recorded for this head",
-				repo, number, headSHA)
-			h.markHeadUnapprovable(ctx, client, projectID, repo, number, headSHA, reason)
+		if err := h.requireCompleteDiffRead(ctx, client, projectID, repo, number, headSHA); err != nil {
+			return nil, err
 		}
-		return nil, apperror.NewValidationf("github app tool: %s", reason)
 	}
 
 	if err := client.CreateReview(ctx, repo, number, headSHA, event, summary); err != nil {
@@ -689,6 +1052,41 @@ func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *git
 			"conclusion": conclusion,
 		},
 	}, nil
+}
+
+// requireCompleteDiffRead is the finishing path for a diff too large for one
+// result. It reads the pull request's changed-file list (the reviewed object)
+// and requires per-file evidence for every one of them, then marks the aggregate
+// key so a later submit in the same run does not repeat the check. A file the
+// run only saw truncated, or whose patch GitHub withheld, has no evidence, so
+// the verdict stays refused (#1006). A genuinely empty pull request is a
+// terminal, unapprovable head: the gate is moved out of pending and the caller
+// gets a validation error.
+func (h *ReviewToolHandler) requireCompleteDiffRead(ctx context.Context, client *githubapp.Client, projectID, repo string, number int, headSHA string) error {
+	files, err := client.ListPullRequestFiles(ctx, repo, number)
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		reason := fmt.Sprintf("pull request %s#%d has no changed files at head %s; there is nothing to review and no verdict can be recorded for this head",
+			repo, number, headSHA)
+		h.markHeadUnapprovable(ctx, client, projectID, repo, number, headSHA, reason)
+		return apperror.NewValidationf("github app tool: %s", reason)
+	}
+	if len(files) >= githubPRFileListCap {
+		return apperror.NewValidationf("github app tool: pull request %s#%d lists %d changed files, GitHub's listing cap (pagination bound); files beyond it cannot be read, so the diff cannot be certified complete", repo, number, len(files))
+	}
+	unread := make([]string, 0)
+	for _, file := range files {
+		if !mcp.RunHasEvidence(ctx, diffFileEvidenceKey(repo, number, headSHA, file.Filename)) {
+			unread = append(unread, file.Filename)
+		}
+	}
+	if len(unread) > 0 {
+		return apperror.NewValidationf("github app tool: the github-pr-diff result for %s#%d@%s was truncated or partial; this run did not fully read %s. Re-fetch each of those files with github-pr-diff path=<file> (or files=[...]) and read every changed file before submitting", repo, number, headSHA, summarizedNames(unread))
+	}
+	mcp.MarkRunEvidence(ctx, diffEvidenceKey(repo, number, headSHA))
+	return nil
 }
 
 func (h *ReviewToolHandler) reviewerIdentity(ctx context.Context, projectID string) (string, string) {
