@@ -81,7 +81,6 @@ var Module = fx.Module("agents",
 	),
 )
 
-
 // registerCitationSchemaRepo attaches the compiled-type source to the read-side
 // citation derivations (REST run transcript, share live emit, share replay,
 // MCP session history) so type_label/type_color survive reload exactly as they
