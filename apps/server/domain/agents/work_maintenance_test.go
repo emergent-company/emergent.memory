@@ -83,11 +83,16 @@ func TestWorkTriggerMetadataIncludesSourceSubjectOnlyForLaneObjects(t *testing.T
 	if got := workSourceSubject(&graph.WorkObjectHead{Status: "ready", Properties: map[string]any{"title": "x"}}); got != nil {
 		t.Fatalf("plain work object got a source subject: %#v", got)
 	}
-	// An issue object has no head SHA and is not a pull request subject.
-	if got := workSourceSubject(&graph.WorkObjectHead{Status: "ready", Properties: map[string]any{
+	// An issue object carries no head SHA but is still a trusted coding subject:
+	// the issue lane needs it for its implicit source credential.
+	issue := workSourceSubject(&graph.WorkObjectHead{Status: "ready", Properties: map[string]any{
 		"repo": "acme/repo", "issue_number": float64(9), "source_id": "src-1",
-	}}); got != nil {
-		t.Fatalf("issue object got a pull request subject: %#v", got)
+	}})
+	if issue == nil || issue.Kind != "issue" || issue.IssueNumber != 9 || issue.SourceID != "src-1" || issue.Repo != "acme/repo" {
+		t.Fatalf("issue source subject = %#v", issue)
+	}
+	if issue.RepositoryValid() {
+		t.Fatalf("an issue subject must not validate as a pull request subject: %#v", issue)
 	}
 }
 

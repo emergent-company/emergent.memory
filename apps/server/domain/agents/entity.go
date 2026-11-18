@@ -316,6 +316,11 @@ type CreateRunOptions struct {
 	// checkpoint is finalized.
 	SubjectObjectID   *string
 	SubjectObjectType *string
+	// SourceSubject is the server-trusted source identity persisted on the run.
+	// A resume must carry it from the prior run so the resumed turn keeps the
+	// same verified source binding (and implicit credential); it is never read
+	// from trigger metadata.
+	SourceSubject *SourceSubject
 }
 
 // SourceSubject is the verified GitHub source subject for a run.
