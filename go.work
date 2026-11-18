@@ -6,6 +6,7 @@ use (
 	./apps/server
 	./apps/server/pkg/sdk
 	./apps/web-ui/gateway
+	./brand
 	./blueprints/code-memory-blueprint/tools/api-audit
 	./blueprints/code-memory-blueprint/tools/branch-verify
 	./blueprints/code-memory-blueprint/tools/context-action-map

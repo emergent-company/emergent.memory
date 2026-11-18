@@ -106,6 +106,12 @@ func TestClientIssueClaimOperations(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/owner/repo/issues/8":
 			_, _ = w.Write([]byte(`{"number":8,"title":"fix","state":"open","labels":[{"name":"bug"}],"assignees":[{"login":"mkucharz"}]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/owner/repo/labels/manager: memory-coding":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/owner/repo/labels":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"name":"manager: memory-coding"}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/owner/repo/issues/8/labels":
 			_, _ = w.Write([]byte(`[{"name":"status: in-progress"}]`))
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/owner/repo/issues/8/assignees":
@@ -132,7 +138,10 @@ func TestClientIssueClaimOperations(t *testing.T) {
 	if len(issue.Assignees) != 1 || issue.Assignees[0].Login != "mkucharz" {
 		t.Fatalf("assignees = %#v", issue.Assignees)
 	}
-	if err := c.AddIssueLabels(context.Background(), "owner/repo", 8, []string{"status: in-progress"}); err != nil {
+	if err := c.EnsureIssueLabel(context.Background(), "owner/repo", "manager: memory-coding", "5319e7", "Memory coding issue claim manager"); err != nil {
+		t.Fatalf("EnsureIssueLabel: %v", err)
+	}
+	if _, err := c.AddIssueLabels(context.Background(), "owner/repo", 8, []string{"status: in-progress"}); err != nil {
 		t.Fatalf("AddIssueLabels: %v", err)
 	}
 	if err := c.AddIssueAssignees(context.Background(), "owner/repo", 8, []string{"mkucharz"}); err != nil {
@@ -144,7 +153,7 @@ func TestClientIssueClaimOperations(t *testing.T) {
 	if err := c.RemoveIssueAssignees(context.Background(), "owner/repo", 8, []string{"mkucharz"}); err != nil {
 		t.Fatalf("RemoveIssueAssignees: %v", err)
 	}
-	if len(calls) != 5 {
+	if len(calls) != 7 {
 		t.Fatalf("calls = %#v", calls)
 	}
 }

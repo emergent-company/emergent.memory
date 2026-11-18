@@ -116,6 +116,12 @@ func (m *Manager) StartPKCE(ctx context.Context, serverURL, redirectURI string, 
 	if strings.TrimSpace(redirectURI) == "" {
 		return nil, errors.New("account: redirect URI is required")
 	}
+	// Enforce PromptValues at the API boundary, not only in the CLI, so a
+	// programmatic caller cannot send a prompt the provider will reject.
+	if !ValidPrompt(opts.Prompt) {
+		return nil, fmt.Errorf("account: unsupported prompt %q (want one of %s)",
+			strings.TrimSpace(opts.Prompt), strings.Join(PromptValues, ", "))
+	}
 
 	now := m.now()
 	m.pruneExpiredPending(now)
@@ -245,6 +251,19 @@ func (m *Manager) CompletePKCE(ctx context.Context, serverURL, loginID, code, st
 		sess.UserEmail = id.Email
 		sess.UserID = id.UserID
 	}
+	// Hold the same cross-process refresh lock `Refresh`/`AccessToken` take.
+	// This PR makes `auth complete` run automatically (silent re-auth from the
+	// app), so the window is reachable: without the lock a concurrent
+	// `auth refresh` that read the session before this write would persist its
+	// pre-call snapshot with NeedsReauth=true over the session just completed —
+	// re-marking a good session and consuming the one-shot silent attempt. The
+	// code exchange and identity call above stay outside the lock so a slow IdP
+	// blocks no refresher; only the two writes are serialized.
+	unlock, err := m.lockRefresh(serverURL)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	if err := m.Save(serverURL, sess); err != nil {
 		return nil, err
 	}
@@ -255,9 +274,23 @@ func (m *Manager) CompletePKCE(ctx context.Context, serverURL, loginID, code, st
 }
 
 // CancelPKCE discards a pending login. It is best-effort: an unknown login id
-// is not an error.
-func (m *Manager) CancelPKCE(loginID string) error {
-	return m.deletePending(loginID)
+// is not an error. The bool reports whether a pending record was actually
+// removed, so a caller can say "already absent" instead of claiming a cancel.
+func (m *Manager) CancelPKCE(loginID string) (bool, error) {
+	if !validLoginID(loginID) {
+		return false, nil
+	}
+	b, err := m.pendingStore().Load(pendingFileName(loginID))
+	if err != nil {
+		return false, err
+	}
+	if b == nil {
+		return false, nil
+	}
+	if err := m.deletePending(loginID); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (m *Manager) pendingDir() string { return filepath.Join(m.baseDir, "pending") }

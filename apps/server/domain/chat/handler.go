@@ -1529,46 +1529,11 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 		userMessage = historyBuf.String()
 	}
 
-	// Collect the full response text for persistence
-	var fullResponse strings.Builder
-
-	// Collect any A2UI surfaces emitted during the run so they can contribute
-	// to citation derivation alongside the answer text.
-	var surfaces []a2ui.Message
-
-	// Build the StreamCallback that maps executor events to SSE events
-	streamCallback := func(event agents.StreamEvent) {
-		switch event.Type {
-		case agents.StreamEventTextDelta:
-			fullResponse.WriteString(event.Text)
-			_ = sseWriter.WriteData(sse.NewTokenEvent(event.Text))
-		case agents.StreamEventThinking:
-			_ = sseWriter.WriteData(sse.NewThinkingEvent(event.ID, event.Role, event.Text, event.Done))
-		case agents.StreamEventToolCallStart:
-			_ = sseWriter.WriteData(sse.NewMCPToolEventWithID(event.Tool, "started", event.ID, event.Input, ""))
-		case agents.StreamEventToolCallEnd:
-			status := event.Status
-			if status == "" {
-				status = "completed"
-				if event.Error != "" {
-					status = "error"
-				}
-			}
-			_ = sseWriter.WriteData(sse.NewMCPToolEventWithID(event.Tool, status, event.ID, event.Output, event.Error))
-		case agents.StreamEventError:
-			_ = sseWriter.WriteData(sse.NewErrorEvent(event.Error))
-		case agents.StreamEventToolApproval:
-			_ = sseWriter.WriteData(sse.NewApprovalEvent(event.Tool, event.Input, event.QuestionID))
-		case agents.StreamEventA2UI:
-			// Persist/replay only the authoritative frame: progressive frames are
-			// partial and a teardown deletes the surface, so appending them would
-			// store a duplicated or already-deleted card (#427).
-			surfaces = finalA2UISurfaces(surfaces, event)
-			_ = sseWriter.WriteData(sse.NewUIEvent(event.SurfaceID, event.A2UI))
-		case agents.StreamEventSubagent:
-			_ = sseWriter.WriteData(sse.NewSubagentEvent(event.SubagentID, event.ParentRunID, event.RunID, event.AgentName, event.Task, event.Status, event.Error))
-		}
-	}
+	// Build the StreamCallback that maps executor events to SSE events. The
+	// callback body runs on ADK's parallel tool goroutines, so the sink owns
+	// the accumulated text/surfaces under a mutex (issue #916).
+	sink := newChatStreamSink(sseWriter)
+	streamCallback := sink.handle
 
 	var result *agents.ExecuteResult
 
@@ -1734,7 +1699,8 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 	// StreamCallback normally emits a StreamEventError during execution, but
 	// some early-failure paths (session creation, context cancellation) skip
 	// the callback.  Emit the error event here so the client always sees it.
-	responseText := fullResponse.String()
+	responseText := sink.text()
+	surfaces := sink.finalSurfaces()
 	if result != nil && result.Status == agents.RunStatusError && responseText == "" {
 		if errMsg, ok := result.Summary["error"].(string); ok && errMsg != "" {
 			h.log.Warn("agent run ended with error status",
@@ -2079,40 +2045,10 @@ func (h *Handler) resumeForAnswer(ctx context.Context, sseWriter *sse.Writer, co
 		q.Question, message,
 	)
 
-	var fullResponse strings.Builder
-	var surfaces []a2ui.Message
-	streamCallback := func(event agents.StreamEvent) {
-		switch event.Type {
-		case agents.StreamEventTextDelta:
-			fullResponse.WriteString(event.Text)
-			_ = sseWriter.WriteData(sse.NewTokenEvent(event.Text))
-		case agents.StreamEventThinking:
-			_ = sseWriter.WriteData(sse.NewThinkingEvent(event.ID, event.Role, event.Text, event.Done))
-		case agents.StreamEventToolCallStart:
-			_ = sseWriter.WriteData(sse.NewMCPToolEventWithID(event.Tool, "started", event.ID, event.Input, ""))
-		case agents.StreamEventToolCallEnd:
-			status := event.Status
-			if status == "" {
-				status = "completed"
-				if event.Error != "" {
-					status = "error"
-				}
-			}
-			_ = sseWriter.WriteData(sse.NewMCPToolEventWithID(event.Tool, status, event.ID, event.Output, event.Error))
-		case agents.StreamEventError:
-			_ = sseWriter.WriteData(sse.NewErrorEvent(event.Error))
-		case agents.StreamEventToolApproval:
-			_ = sseWriter.WriteData(sse.NewApprovalEvent(event.Tool, event.Input, event.QuestionID))
-		case agents.StreamEventA2UI:
-			// Persist/replay only the authoritative frame: progressive frames are
-			// partial and a teardown deletes the surface, so appending them would
-			// store a duplicated or already-deleted card (#427).
-			surfaces = finalA2UISurfaces(surfaces, event)
-			_ = sseWriter.WriteData(sse.NewUIEvent(event.SurfaceID, event.A2UI))
-		case agents.StreamEventSubagent:
-			_ = sseWriter.WriteData(sse.NewSubagentEvent(event.SubagentID, event.ParentRunID, event.RunID, event.AgentName, event.Task, event.Status, event.Error))
-		}
-	}
+	// The resumed turn's callback body runs on ADK's parallel tool goroutines,
+	// so it uses the same serialised sink as the first leg (issue #916).
+	sink := newChatStreamSink(sseWriter)
+	streamCallback := sink.handle
 
 	// The resumed run outlives the SSE request for the same reason the initial
 	// run does (issue #1149): a browser reload must not fail it.
@@ -2153,7 +2089,8 @@ func (h *Handler) resumeForAnswer(ctx context.Context, sseWriter *sse.Writer, co
 		// A reasoner that answers entirely in thinking mode delivers no text
 		// delta, so recover the answer from the run's persisted messages (same
 		// safety net as the first leg in streamAgentChat).
-		text := fullResponse.String()
+		text := sink.text()
+		surfaces := sink.finalSurfaces()
 		if text == "" && result.Status == agents.RunStatusSuccess {
 			if runMsgs, msgErr := h.agentRepo.FindMessagesByRunID(ctx, result.RunID); msgErr == nil {
 				text = lastAgentReplyText(runMsgs)

@@ -45,6 +45,11 @@ struct SystemLaunchAtLoginService: LaunchAtLoginService {
 @MainActor
 @Observable
 final class LaunchAtLogin {
+    /// What to tell the user while macOS is holding the registration for
+    /// approval. Shared with the tests so the copy stays pinned.
+    static let approvalInstruction =
+        "Approve Memory in System Settings › General › Login Items to finish."
+
     private let service: LaunchAtLoginService
 
     /// True when the app is registered to open at login.
@@ -53,26 +58,36 @@ final class LaunchAtLogin {
     private(set) var requiresApproval: Bool
     /// User-facing failure text from the last attempt, if any.
     private(set) var lastError: String?
+    /// Informational text while the registration is pending approval.
+    ///
+    /// Deliberately separate from `lastError`: nothing failed, the user still
+    /// has an action to take. It is derived on every `refresh()` so a relaunch
+    /// with an unapproved registration explains the off toggle instead of
+    /// leaving the user to toggle it again to find out why.
+    private(set) var approvalNotice: String?
 
     init(service: LaunchAtLoginService = SystemLaunchAtLoginService()) {
         self.service = service
         isEnabled = service.isEnabled
         requiresApproval = service.requiresApproval
+        approvalNotice = requiresApproval && !isEnabled ? Self.approvalInstruction : nil
     }
 
-    /// Re-reads the system status (on appear, and after every change).
+    /// Re-reads the system status (on appear, when the app becomes active, and
+    /// after every change), re-deriving the pending-approval notice with it.
     func refresh() {
         isEnabled = service.isEnabled
         requiresApproval = service.requiresApproval
+        approvalNotice = requiresApproval && !isEnabled ? Self.approvalInstruction : nil
     }
 
     /// Applies `enabled`, then reflects what the system actually reports.
     ///
     /// A refusal (the system said no, or the app is not in a location macOS
     /// will register) surfaces as `lastError`; a registration that lands in
-    /// `.requiresApproval` tells the user where to approve it, because the
-    /// toggle staying off with no explanation is the failure mode this exists to
-    /// avoid.
+    /// `.requiresApproval` surfaces as the informational `approvalNotice`
+    /// instead, because the toggle staying off with no explanation is the
+    /// failure mode this exists to avoid.
     func setEnabled(_ enabled: Bool) {
         lastError = nil
         do {
@@ -82,10 +97,8 @@ final class LaunchAtLogin {
             ConnectorLog.lifecycle("launchAtLogin failed enabled=\(enabled) error=\(error.localizedDescription)")
         }
         refresh()
-        if lastError == nil, enabled, !isEnabled {
-            lastError = requiresApproval
-                ? "Approve Memory in System Settings › General › Login Items to finish."
-                : "macOS did not register Memory to open at login."
+        if lastError == nil, enabled, !isEnabled, !requiresApproval {
+            lastError = "macOS did not register Memory to open at login."
         }
     }
 

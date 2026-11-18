@@ -323,8 +323,12 @@ func TestCancelPKCE(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartPKCE: %v", err)
 	}
-	if err := m.CancelPKCE(pl.LoginID); err != nil {
+	cancelled, err := m.CancelPKCE(pl.LoginID)
+	if err != nil {
 		t.Fatalf("CancelPKCE: %v", err)
+	}
+	if !cancelled {
+		t.Error("CancelPKCE = false, want true when a pending record existed")
 	}
 	if _, err := os.Stat(filepath.Join(dir, "pending", pl.LoginID+".json")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("pending record should be gone after cancel (err=%v)", err)
@@ -332,9 +336,70 @@ func TestCancelPKCE(t *testing.T) {
 	if _, err := m.CompletePKCE(context.Background(), serverURL, pl.LoginID, "code", pl.State); !errors.Is(err, ErrUnknownLogin) {
 		t.Errorf("CompletePKCE after cancel = %v, want ErrUnknownLogin", err)
 	}
-	// Best-effort: cancelling again is not an error.
-	if err := m.CancelPKCE(pl.LoginID); err != nil {
+	// Best-effort: cancelling again is not an error, and reports that there was
+	// nothing left to cancel (the caller prints "already absent", not a lie).
+	cancelled, err = m.CancelPKCE(pl.LoginID)
+	if err != nil {
 		t.Errorf("second CancelPKCE = %v, want nil", err)
+	}
+	if cancelled {
+		t.Error("second CancelPKCE = true, want false (already absent)")
+	}
+	for _, badID := range []string{"", "../../etc/passwd"} {
+		cancelled, err = m.CancelPKCE(badID)
+		if err != nil || cancelled {
+			t.Errorf("CancelPKCE(%q) = (%v, %v), want (false, nil)", badID, cancelled, err)
+		}
+	}
+}
+
+// TestCompletePKCEWritesUnderRefreshLock proves the completed session is
+// persisted while the cross-process refresh lock is held. Without it, a
+// concurrent `auth refresh` that read the session before this write persists its
+// pre-call snapshot with NeedsReauth=true over the session just completed,
+// re-marking a good session and consuming the one-shot silent attempt.
+//
+// The interleaving itself cannot be ordered deterministically here: there is no
+// hook at the persistence boundary, so forcing "refresh-read -> complete-write
+// -> refresh-write" would need a wall-clock wait. The lock is therefore replaced
+// with a fake that reports whether the session exists when it is released, which
+// fails without the fix (the fake is never called) without any timing.
+func TestCompletePKCEWritesUnderRefreshLock(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	serverURL := "https://memory.example.test"
+	m := NewManagerWithDeps(dir, pkceDeps(t, func() time.Time { return now }, func(context.Context, *sdkauth.OIDCConfig, string, string, string, string) (*sdkauth.Credentials, error) {
+		return &sdkauth.Credentials{AccessToken: "access-new", RefreshToken: "refresh-new", ExpiresAt: now.Add(time.Hour)}, nil
+	}))
+
+	pl, err := m.StartPKCE(context.Background(), serverURL, "myapp://callback",
+		PKCEOptions{Prompt: PromptNone, LoginHint: "person@example.test"})
+	if err != nil {
+		t.Fatalf("StartPKCE: %v", err)
+	}
+
+	acquires, releases := 0, 0
+	persistedAtRelease := false
+	m.refreshLock = func(lockedServer string) (func(), error) {
+		acquires++
+		if lockedServer != serverURL {
+			t.Errorf("refresh lock taken for %q, want %q", lockedServer, serverURL)
+		}
+		return func() {
+			releases++
+			sess, err := m.SessionFor(serverURL)
+			persistedAtRelease = err == nil && sess != nil && sess.AccessToken == "access-new"
+		}, nil
+	}
+
+	if _, err := m.CompletePKCE(context.Background(), serverURL, pl.LoginID, "code", pl.State); err != nil {
+		t.Fatalf("CompletePKCE: %v", err)
+	}
+	if acquires != 1 || releases != 1 {
+		t.Errorf("refresh lock acquired %d time(s), released %d; want 1 and 1", acquires, releases)
+	}
+	if !persistedAtRelease {
+		t.Error("session was not persisted while the refresh lock was held; a concurrent refresh can overwrite it")
 	}
 }
 
@@ -347,6 +412,17 @@ func TestStartPKCEValidation(t *testing.T) {
 	}
 	if _, err := m.StartPKCE(context.Background(), "https://memory.example.test", "  ", PKCEOptions{}); err == nil {
 		t.Error("StartPKCE with empty redirect URI: expected error")
+	}
+	// PromptValues is enforced at the API boundary too, not only in the CLI.
+	if _, err := m.StartPKCE(context.Background(), "https://memory.example.test", "myapp://callback",
+		PKCEOptions{Prompt: "bogus"}); err == nil {
+		t.Error("StartPKCE with an unsupported prompt: expected error")
+	}
+	for _, prompt := range PromptValues {
+		if _, err := m.StartPKCE(context.Background(), "https://memory.example.test", "myapp://callback",
+			PKCEOptions{Prompt: prompt}); err != nil {
+			t.Errorf("StartPKCE with supported prompt %q: %v", prompt, err)
+		}
 	}
 }
 

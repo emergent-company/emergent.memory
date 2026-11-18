@@ -1,0 +1,80 @@
+{
+  "01-choose-target.webp": {
+    "width": 2400,
+    "height": 1771,
+    "cssWidth": 752,
+    "cssHeight": 555
+  },
+  "02-authorize-railway.webp": {
+    "width": 1800,
+    "height": 2632,
+    "cssWidth": 450,
+    "cssHeight": 658
+  },
+  "03-workspace-admin-email.webp": {
+    "width": 2400,
+    "height": 1541,
+    "cssWidth": 707,
+    "cssHeight": 454
+  },
+  "04-progress-project.webp": {
+    "width": 2400,
+    "height": 1136,
+    "cssWidth": 752,
+    "cssHeight": 356
+  },
+  "05-progress-zitadel.webp": {
+    "width": 2400,
+    "height": 1136,
+    "cssWidth": 752,
+    "cssHeight": 356
+  },
+  "06-progress-restart.webp": {
+    "width": 2400,
+    "height": 1136,
+    "cssWidth": 752,
+    "cssHeight": 356
+  },
+  "07-install-complete.webp": {
+    "width": 2400,
+    "height": 1886,
+    "cssWidth": 752,
+    "cssHeight": 591
+  },
+  "08-memory-signin.webp": {
+    "width": 1568,
+    "height": 1172,
+    "cssWidth": 392,
+    "cssHeight": 293
+  },
+  "09-zitadel-login.webp": {
+    "width": 1760,
+    "height": 968,
+    "cssWidth": 440,
+    "cssHeight": 242
+  },
+  "10-zitadel-password.webp": {
+    "width": 1760,
+    "height": 1696,
+    "cssWidth": 440,
+    "cssHeight": 424
+  },
+  "11-2fa-setup.webp": {
+    "width": 1760,
+    "height": 1948,
+    "cssWidth": 440,
+    "cssHeight": 487
+  },
+  "12-first-password-change.webp": {
+    "width": 1760,
+    "height": 2452,
+    "cssWidth": 440,
+    "cssHeight": 613
+  },
+  "13-memory-projects.webp": {
+    "width": 2400,
+    "height": 1350,
+    "cssWidth": 1600,
+    "cssHeight": 900
+  }
+}

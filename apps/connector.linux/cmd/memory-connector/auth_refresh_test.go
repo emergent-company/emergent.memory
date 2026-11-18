@@ -237,6 +237,31 @@ func TestAuthStatusFromSessionCarriesRefreshFields(t *testing.T) {
 	}
 }
 
+// TestAuthStatusWireShapeForExpiredSessionWithoutRefreshToken pins the exact
+// bytes the macOS client classifies on. `can_refresh` must be PRESENT and false
+// for a session with no refresh token: Go's `omitempty` used to drop it, and
+// Swift decodes an absent key to nil rather than false, so the client's
+// "expired and cannot renew → sign in" branch was unreachable for exactly this
+// session and it was retried as transient forever.
+func TestAuthStatusWireShapeForExpiredSessionWithoutRefreshToken(t *testing.T) {
+	sess := &account.Session{
+		ServerURL:   "https://api.example.test",
+		AccessToken: "access-1",
+		ExpiresAt:   time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+	}
+	b, err := json.Marshal(authStatusFromSession(sess.ServerURL, sess))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	// The same bytes appear in the macOS tests (`ProjectFailureTests`); they are
+	// the document, not a hand-written subset of it.
+	const want = `{"schema_version":1,"server":"https://api.example.test","signed_in":true,` +
+		`"expires_at":"2026-01-02T03:04:05Z","expired":true,"can_refresh":false}`
+	if string(b) != want {
+		t.Errorf("auth status document =\n%s\nwant:\n%s", b, want)
+	}
+}
+
 func TestAuthStatusWithoutSessionReportsNoRefresh(t *testing.T) {
 	dir := t.TempDir()
 	serverURL := "https://memory.example.test"

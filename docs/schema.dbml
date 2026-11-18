@@ -2467,6 +2467,41 @@ Table "kb"."retrieval_traces" {
 }
 // kb.retrieval_traces: Persisted retrieval traces for unified search debugging and reconstruction
 
+Table "kb"."review_gates" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid [not null]
+  "subject_type" text [not null]
+  "subject_ref" text [not null]
+  "head_sha" text [not null]
+  "required_reviewers" jsonb [not null, default: '[]']
+  "status" text [not null, default: 'pending']
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (project_id, subject_type, subject_ref, head_sha) [unique]
+    (project_id, subject_type, subject_ref, created_at) [name: "idx_review_gates_subject"]
+  }
+}
+
+Table "kb"."review_verdicts" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "gate_id" uuid [not null]
+  "project_id" uuid [not null]
+  "reviewer_agent_id" uuid [not null]
+  "reviewer_name" text [not null]
+  "head_sha" text [not null]
+  "verdict" text [not null]
+  "evidence" text [not null, default: '']
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (gate_id, reviewer_agent_id) [unique]
+    (gate_id, created_at) [name: "idx_review_verdicts_gate"]
+  }
+}
+
 Table "kb"."run_events" {
   "id" uuid [pk, default: `gen_random_uuid()`]
   "run_id" uuid [not null]
@@ -3278,6 +3313,9 @@ Ref: "kb"."restores"."backup_id" > "kb"."backups"."id"
 Ref: "kb"."restores"."created_by" > "core"."user_profiles"."id"
 Ref: "kb"."restores"."organization_id" > "kb"."orgs"."id"
 Ref: "kb"."retrieval_traces"."project_id" > "kb"."projects"."id"
+Ref: "kb"."review_gates"."project_id" > "kb"."projects"."id"
+Ref: "kb"."review_verdicts"."gate_id" > "kb"."review_gates"."id"
+Ref: "kb"."review_verdicts"."project_id" > "kb"."projects"."id"
 Ref: "kb"."run_events"."run_id" > "kb"."agent_runs"."id"
 Ref: "kb"."schema_studio_messages"."session_id" > "kb"."schema_studio_sessions"."id"
 Ref: "kb"."schema_studio_sessions"."project_id" > "kb"."projects"."id"

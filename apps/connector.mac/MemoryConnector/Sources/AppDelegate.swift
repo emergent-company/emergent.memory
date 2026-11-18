@@ -17,10 +17,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // this guard is belt-and-suspenders that also skips the status item.
         guard !UITestMode.isActive else { return }
         let app = AppEnvironment.shared
-        // The one launch settle: session → connection → data → engine. Gated so
-        // only connected projects with valid configs run, and ordered so the
-        // session is renewed (or silently re-authed) BEFORE anything reads a
-        // token and before an engine child is started against a stale config.
+        // Local engine FIRST, synchronously, from the config already on disk:
+        // the settle below talks to the CLI and can retry for minutes, and a
+        // previously-working engine must not be down while a remote call is
+        // slow. Starting is gated on each project's config binding it, so a
+        // stale config still cannot run.
+        app.syncEngineWithConnections()
+        // Then the one launch settle: session → connection → data → engine.
+        // Ordered so the session is renewed (or silently re-authed) before
+        // anything reads a token, and so a project whose failure is permanent is
+        // reconciled out of the engine set.
         Task { await app.startup() }
         app.statusItemController.start()
     }

@@ -47,6 +47,24 @@ final class ProjectFailureTests: XCTestCase {
         XCTAssertEqual(ProjectFailure.classifyMessage("HTTP 404: not found"), .permanent)
     }
 
+    func testBracketedProjectNameDoesNotShadowTheRealStatus() {
+        // A bracketed project name (with `401` in it) must not decide anything:
+        // the status that follows is the real one.
+        XCTAssertEqual(ProjectFailure.classifyMessage(
+            "[Work 401 Audit] create failed: [404] not_found: project not found"
+        ), .permanent)
+        XCTAssertEqual(ProjectFailure.classifyMessage(
+            "[401 Reasons] create failed: [503] unavailable"
+        ), .transient)
+    }
+
+    func testStatusDigitsInsideAProjectNameAreNotAuth() {
+        // No recognisable status token at all, so the documented default applies
+        // (keep the connection and retry) — never `.auth`.
+        XCTAssertEqual(ProjectFailure.classifyMessage("[Work 401 Audit] create failed"), .transient)
+        XCTAssertEqual(ProjectFailure.classifyMessage("project 401-audit is unreachable"), .transient)
+    }
+
     // MARK: - Transport text (no status code)
 
     func testTransportFailureIsTransient() {
@@ -71,6 +89,18 @@ final class ProjectFailureTests: XCTestCase {
 
     private let signedInStatus = #"{"schema_version":1,"server":"https://api.example.test","signed_in":true}"#
     private let needsReauthStatus = #"{"schema_version":1,"server":"https://api.example.test","signed_in":true,"needs_reauth":true}"#
+    /// The exact bytes `auth status --json` emits for an expired session with no
+    /// refresh token (`apps/connector.linux`, pinned by
+    /// `TestAuthStatusWireShapeForExpiredSessionWithoutRefreshToken`). Copied from
+    /// the document rather than hand-written: the previous fixture added
+    /// `"can_refresh":false` to a shape the CLI never emitted, which hid the fact
+    /// that the classifier could not see it.
+    private let expiredNoRefreshStatus = #"{"schema_version":1,"server":"https://api.example.test","signed_in":true,"expires_at":"2026-01-02T03:04:05Z","expired":true,"can_refresh":false}"#
+    /// The shape an older CLI emits for the same session (`can_refresh` tagged
+    /// `omitempty`, so the false value was dropped) and a session that never
+    /// recorded an expiry: absence must mean the same as false.
+    private let expiredNoRefreshLegacyStatus = #"{"schema_version":1,"signed_in":true,"expired":true}"#
+    private let expiredRefreshableStatus = #"{"schema_version":1,"server":"https://api.example.test","signed_in":true,"expires_at":"2026-01-02T03:04:05Z","expired":true,"can_refresh":true}"#
 
     private func classify(_ message: String, status: String?) async -> ProjectFailure {
         let stub = StubCLI()
@@ -95,6 +125,37 @@ final class ProjectFailureTests: XCTestCase {
         // connection down.
         let failure = await classify("[404] not_found: project not found", status: needsReauthStatus)
         XCTAssertEqual(failure, .auth)
+    }
+
+    func testExpiredSessionThatCannotRefreshIsAuth() async {
+        // Expired with no refresh token: retrying can never renew it, so it must
+        // land on the sign-in affordance instead of looping as transient.
+        let failure = await classify("[404] not_found: project not found", status: expiredNoRefreshStatus)
+        XCTAssertEqual(failure, .auth)
+    }
+
+    func testExpiredSessionWithOmittedCanRefreshIsAuth() async {
+        // An older CLI omits `can_refresh` when it is false (and a session with
+        // no recorded expiry omits `expires_at`): absent must mean the same as
+        // false, or the branch is unreachable against that CLI.
+        let failure = await classify("[404] not_found: project not found",
+                                     status: expiredNoRefreshLegacyStatus)
+        XCTAssertEqual(failure, .auth)
+    }
+
+    func testAProjectNamedLikeAStatusCarriesNoStatus() {
+        // A project named exactly `[404]` has no detail text after the bracket,
+        // so it is not the server SDK's `[<status>] <detail>` shape; the
+        // connection is kept rather than disconnected permanently.
+        XCTAssertEqual(ProjectFailure.classifyMessage("[404]"), .transient)
+        XCTAssertEqual(ProjectFailure.classifyMessage(#"project "[401]" failed"#), .transient)
+    }
+
+    func testExpiredSessionThatCanRefreshKeepsTheProjectVerdict() async {
+        // A renewable token is not an auth failure: a dead project is still
+        // disconnected rather than hidden behind a sign-in prompt.
+        let failure = await classify("[404] not_found: project not found", status: expiredRefreshableStatus)
+        XCTAssertEqual(failure, .permanent)
     }
 
     func testAuthTextShortCircuitsTheStatusRead() async {

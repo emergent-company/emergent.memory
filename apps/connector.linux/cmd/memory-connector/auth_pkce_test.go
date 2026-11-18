@@ -157,6 +157,44 @@ func TestAuthStartRejectsUnknownPrompt(t *testing.T) {
 	}
 }
 
+// TestRootCommandCarriesSilentFlagsToAuthorizeURL crosses the REAL entry point:
+// cobra leaf -> stdlibArgs -> runAuthStart -> StartPKCE -> buildAuthorizeURL. It
+// fails if the leaf stops registering --prompt/--login-hint, because cobra
+// rejects an unregistered flag before runAuthStart runs — the failure the
+// direct runAuthStart tests could not see.
+func TestRootCommandCarriesSilentFlagsToAuthorizeURL(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "memory-connector.yml")
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	withFakePKCEManager(t, pkceTestDeps(&now))
+
+	out, errOut, err := executeRoot("auth", "start",
+		"--config", configPath,
+		"--server", "https://memory.example.test",
+		"--redirect-uri", "myapp://callback",
+		"--prompt", "none",
+		"--login-hint", "person@example.test",
+		"--json")
+	if err != nil {
+		t.Fatalf("auth start through the root command: %v (stderr: %s)", err, errOut)
+	}
+	var doc struct {
+		AuthorizeURL string `json:"authorize_url"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("unmarshal start JSON: %v\n%s", err, out)
+	}
+	u, err := url.Parse(doc.AuthorizeURL)
+	if err != nil {
+		t.Fatalf("parse authorize_url: %v", err)
+	}
+	if got := u.Query().Get("prompt"); got != "none" {
+		t.Errorf("authorize prompt = %q, want none", got)
+	}
+	if got := u.Query().Get("login_hint"); got != "person@example.test" {
+		t.Errorf("authorize login_hint = %q, want person@example.test", got)
+	}
+}
+
 func TestAuthStartText(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "memory-connector.yml")
 	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)

@@ -363,7 +363,15 @@ templ OrgLandingPage(data orgPageData) {
 templ orgProjectsToolbar(deletableCount int) {
 	<div class="flex min-h-11 items-center gap-3 border-b border-base-content/10 px-4">
 		if deletableCount > 0 {
-			<div x-show="count > 0" class="flex items-center">
+			// `style="display: none"` is the server-rendered closed state, not a
+			// redundancy with `x-show`: Alpine applies `x-show` only once it has
+			// booted, so without it the destructive submit paints on first render
+			// and disappears a moment later — a red "Delete N selected" button on a
+			// page where nothing is selected. The objects browser's bulk bar
+			// (objects_browser.templ) carries the same inline state for the same
+			// reason, including htmx boosted swaps stripping a display Alpine had
+			// set on the previous DOM.
+			<div x-show="count > 0" style="display: none" class="flex items-center">
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeSubmit,
 					Variant: ui.ButtonError,

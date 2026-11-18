@@ -44,7 +44,34 @@ type schemaPackSummary struct {
 	// declares it (name+version match). Nil for global and project-authored
 	// packs with no owning blueprint.
 	Provenance *ProvenanceInfo
+
+	// Category buckets the pack on the Schema packs page: "manual",
+	// "blueprints", "data-sources" or "built-in". assignPackCategories fills it;
+	// it is presentation only and never stored.
+	Category string
+	// ProviderType/ProviderLabel identify the data-source provider that
+	// installs this pack (set only for Category data-sources).
+	ProviderType  string
+	ProviderLabel string
+	// LinkedSources are the installed apps (data sources) of that provider,
+	// one list row each on the packs page and links on the pack detail.
+	LinkedSources []packLinkedSource
 }
+
+// packLinkedSource is one installed app a data-source pack is linked to.
+type packLinkedSource struct {
+	ID   string
+	Name string
+}
+
+// Schema-packs page categories. Fixed order: Manual, Blueprints, Data Sources,
+// Built-in.
+const (
+	packCategoryManual     = "manual"
+	packCategoryBlueprints = "blueprints"
+	packCategoryDataSource = "data-sources"
+	packCategoryBuiltIn    = "built-in"
+)
 
 // global reports whether the pack is global (not project-owned).
 func (p schemaPackSummary) global() bool { return p.ProjectID == "" }
@@ -162,21 +189,34 @@ func buildSchemaPackSummaries(compiled *CompiledSchemaTypes, metas []SchemaInfo,
 	return out
 }
 
-// schemaPackGroup is the Schema packs list's grouping unit: every active pack
-// that the same applied blueprint declares. Blueprint is nil for packs no
-// blueprint declares (global/built-in and project-authored packs).
-type schemaPackGroup struct {
-	// Key is the group's stable identity ("blueprint:<id>" or "none"), exposed
-	// as a data attribute for tests.
-	Key string
-	// Label is the blueprint's display name + version, or "No blueprint".
-	Label     string
-	Blueprint *ProvenanceInfo
-	Packs     []schemaPackSummary
+// schemaPackRow is one rendered pack row: the pack, the title it shows (the
+// pack name, or an installed app's name for a data-source row), an optional
+// secondary line, and where the title links ("" = not a link).
+type schemaPackRow struct {
+	Pack     schemaPackSummary
+	Title    string
+	Subtitle string
+	Href     string
 }
 
-// BlueprintID returns the owning blueprint's id, or "" when the group holds
-// packs no blueprint declares.
+// schemaPackGroup is one group inside a section. Blueprint sections carry one
+// group per applied blueprint (its heading links to the blueprint); a provider
+// section carries one group per data-source provider; manual/built-in sections
+// carry a single heading-less group.
+type schemaPackGroup struct {
+	// Key is the group's stable identity (e.g. "blueprint:<id>", "provider:github_app"
+	// or the section key for a single group), exposed as a data attribute.
+	Key string
+	// Label is the group heading, or "" for a heading-less group.
+	Label string
+	// Href is the heading's link target, "" when the heading is plain.
+	Href      string
+	Blueprint *ProvenanceInfo
+	Rows      []schemaPackRow
+}
+
+// BlueprintID returns the owning blueprint's id, or "" when the group holds no
+// blueprint.
 func (g schemaPackGroup) BlueprintID() string {
 	if g.Blueprint == nil {
 		return ""
@@ -184,36 +224,233 @@ func (g schemaPackGroup) BlueprintID() string {
 	return g.Blueprint.BlueprintID
 }
 
-// groupSchemaPacks buckets packs by owning blueprint so the list renders the
-// blueprint once as a group heading instead of a provenance chip on every row —
-// the same treatment the compiled-schema page gives its type groups. Blueprint
-// groups come first, ordered case-insensitively by label, with unowned packs
-// last; packs inside a group keep the order buildSchemaPackSummaries produced
-// (name, then version).
+// schemaPackSection is one top-level section of the packs page.
+type schemaPackSection struct {
+	Key    string
+	Label  string
+	Groups []schemaPackGroup
+}
+
+// assignPackCategories buckets each pack and, for a data-source pack, resolves
+// its provider and installed apps. Precedence: an owning blueprint wins; then an
+// explicit provider token or the provider catalog's declared pack name; then a
+// global/builtin row; everything else is a manual, project-authored pack.
+//
+// The provider-catalog match is what makes an already-stored pack classify
+// correctly before its row has been reconciled to the new provenance token.
+func assignPackCategories(packs []schemaPackSummary, providers []DSProvider, sources []DSIntegration) {
+	providerByPack := make(map[string]DSProvider, len(providers))
+	providerByType := make(map[string]DSProvider, len(providers))
+	for _, p := range providers {
+		providerByType[p.Type] = p
+		if p.SchemaPack != "" {
+			providerByPack[p.SchemaPack] = p
+		}
+	}
+	sourcesByType := make(map[string][]DSIntegration, len(providers))
+	for _, src := range sources {
+		sourcesByType[src.ProviderType] = append(sourcesByType[src.ProviderType], src)
+	}
+
+	for i := range packs {
+		p := &packs[i]
+		p.Category, p.ProviderType, p.ProviderLabel, p.LinkedSources = "", "", "", nil
+		if p.Provenance != nil {
+			p.Category = packCategoryBlueprints
+			continue
+		}
+		if pt := providerTypeForPack(*p, providerByPack); pt != "" {
+			p.Category = packCategoryDataSource
+			p.ProviderType = pt
+			prov, ok := providerByType[pt]
+			if ok && prov.Name != "" {
+				p.ProviderLabel = prov.Name
+			} else {
+				p.ProviderLabel = pt
+			}
+			for _, src := range sourcesByType[pt] {
+				p.LinkedSources = append(p.LinkedSources, packLinkedSource{ID: src.ID, Name: dsSourceName(src)})
+			}
+			sort.SliceStable(p.LinkedSources, func(a, b int) bool {
+				return strings.ToLower(p.LinkedSources[a].Name) < strings.ToLower(p.LinkedSources[b].Name)
+			})
+			continue
+		}
+		if p.Source == "builtin" || p.global() {
+			p.Category = packCategoryBuiltIn
+			continue
+		}
+		p.Category = packCategoryManual
+	}
+}
+
+// providerTypeForPack resolves the data-source provider that owns a pack: the
+// explicit provider token first, then the catalog's declared pack name (by the
+// pack's denormalised schema name or its displayed name).
+func providerTypeForPack(p schemaPackSummary, providerByPack map[string]DSProvider) string {
+	if strings.HasPrefix(p.Source, "provider:") {
+		return strings.TrimPrefix(p.Source, "provider:")
+	}
+	for _, name := range []string{p.schemaName, p.Name} {
+		if name == "" {
+			continue
+		}
+		if prov, ok := providerByPack[name]; ok {
+			return prov.Type
+		}
+	}
+	return ""
+}
+
+// groupSchemaPacks buckets blueprint-owned packs by owning blueprint, ordered
+// case-insensitively by label. The packs page renders these inside the
+// "Blueprints" section so the owning blueprint is the group heading (linked),
+// exactly as before the section was introduced.
 func groupSchemaPacks(packs []schemaPackSummary) []schemaPackGroup {
 	index := make(map[string]int, len(packs))
 	groups := make([]schemaPackGroup, 0, len(packs))
 	for _, p := range packs {
-		key, label := "none", "No blueprint"
-		if p.Provenance != nil {
-			key, label = "blueprint:"+p.Provenance.BlueprintID, typeProvenanceLabel(p.Provenance)
+		if p.Provenance == nil {
+			continue
 		}
+		key := "blueprint:" + p.Provenance.BlueprintID
 		i, ok := index[key]
 		if !ok {
 			i = len(groups)
 			index[key] = i
-			groups = append(groups, schemaPackGroup{Key: key, Label: label, Blueprint: p.Provenance})
+			groups = append(groups, schemaPackGroup{
+				Key:       key,
+				Label:     typeProvenanceLabel(p.Provenance),
+				Href:      "/blueprints/" + url.PathEscape(p.Provenance.BlueprintID),
+				Blueprint: p.Provenance,
+			})
 		}
-		groups[i].Packs = append(groups[i].Packs, p)
+		groups[i].Rows = append(groups[i].Rows, schemaPackRow{Pack: p, Title: p.Name})
 	}
 	sort.SliceStable(groups, func(a, b int) bool {
-		leftOwned, rightOwned := groups[a].Blueprint != nil, groups[b].Blueprint != nil
-		if leftOwned != rightOwned {
-			return leftOwned
-		}
 		return strings.ToLower(groups[a].Label) < strings.ToLower(groups[b].Label)
 	})
 	return groups
+}
+
+// schemaPackSections builds the packs page's four fixed sections from
+// categorised summaries, omitting an empty section. Data-source rows are one per
+// installed app; a provider pack with no installed app still gets one plain row
+// so the pack is never hidden.
+func schemaPackSections(packs []schemaPackSummary) []schemaPackSection {
+	manual := make([]schemaPackRow, 0)
+	builtin := make([]schemaPackRow, 0)
+	for _, p := range packs {
+		switch p.Category {
+		case packCategoryManual:
+			manual = append(manual, schemaPackRow{Pack: p, Title: p.Name})
+		case packCategoryBuiltIn:
+			builtin = append(builtin, schemaPackRow{Pack: p, Title: p.Name})
+		}
+	}
+
+	providerIndex := map[string]int{}
+	providerGroups := make([]schemaPackGroup, 0)
+	for _, p := range packs {
+		if p.Category != packCategoryDataSource {
+			continue
+		}
+		i, ok := providerIndex[p.ProviderType]
+		if !ok {
+			i = len(providerGroups)
+			providerIndex[p.ProviderType] = i
+			providerGroups = append(providerGroups, schemaPackGroup{
+				Key:   "provider:" + p.ProviderType,
+				Label: p.ProviderLabel,
+			})
+		}
+		if len(p.LinkedSources) == 0 {
+			providerGroups[i].Rows = append(providerGroups[i].Rows, schemaPackRow{
+				Pack:     p,
+				Title:    p.ProviderLabel,
+				Subtitle: p.Name + " v" + p.Version,
+			})
+			continue
+		}
+		for _, src := range p.LinkedSources {
+			providerGroups[i].Rows = append(providerGroups[i].Rows, schemaPackRow{
+				Pack:     p,
+				Title:    src.Name,
+				Subtitle: p.Name + " v" + p.Version,
+				Href:     "/data-sources/" + url.PathEscape(src.ID),
+			})
+		}
+	}
+	sort.SliceStable(providerGroups, func(a, b int) bool {
+		return strings.ToLower(providerGroups[a].Label) < strings.ToLower(providerGroups[b].Label)
+	})
+
+	blueprintGroups := groupSchemaPacks(packs)
+
+	sections := make([]schemaPackSection, 0, 4)
+	appendSection := func(key, label string, groups []schemaPackGroup) {
+		if len(groups) == 0 {
+			return
+		}
+		sections = append(sections, schemaPackSection{Key: key, Label: label, Groups: groups})
+	}
+	if len(manual) > 0 {
+		appendSection(packCategoryManual, "Manual", []schemaPackGroup{{Key: packCategoryManual, Rows: manual}})
+	}
+	if len(blueprintGroups) > 0 {
+		appendSection(packCategoryBlueprints, "Blueprints", blueprintGroups)
+	}
+	if len(providerGroups) > 0 {
+		appendSection(packCategoryDataSource, "Data Sources", providerGroups)
+	}
+	if len(builtin) > 0 {
+		appendSection(packCategoryBuiltIn, "Built-in", []schemaPackGroup{{Key: packCategoryBuiltIn, Rows: builtin}})
+	}
+	return sections
+}
+
+// packCount is the number of distinct packs in a section (a data-source pack
+// can contribute one row per installed app, so counting rows would overstate
+// it).
+func (s schemaPackSection) packCount() int {
+	seen := make(map[string]struct{}, len(s.Groups))
+	for _, g := range s.Groups {
+		for _, r := range g.Rows {
+			seen[r.Pack.ID] = struct{}{}
+		}
+	}
+	return len(seen)
+}
+
+// packSourceDisplay renders a stored provenance token for a surface that has no
+// category context (the pending-pack review page).
+func packSourceDisplay(source string) string {
+	switch {
+	case source == "" || source == "manual":
+		return "Manual"
+	case source == "builtin":
+		return "Built-in"
+	case strings.HasPrefix(source, "provider:"):
+		return strings.TrimPrefix(source, "provider:")
+	default:
+		return source
+	}
+}
+
+// sourceLabel is the pack detail's provenance line: the category in words, never
+// the stored token. A blueprint-owned pack returns "" because the detail page
+// already links the owning blueprint in its own meta row.
+func (p schemaPackSummary) sourceLabel() string {
+	switch p.Category {
+	case packCategoryBlueprints:
+		return ""
+	case packCategoryDataSource:
+		return p.ProviderLabel
+	case packCategoryBuiltIn:
+		return "Built-in"
+	default:
+		return "Manual"
+	}
 }
 
 // --- handlers ---
@@ -228,8 +465,13 @@ func (s *Server) uiSchemaPacks(c echo.Context) error {
 	}
 	metas, merr := s.memory.ListAllSchemas(ctx)
 	captureError(merr)
+	providers, perr := s.memory.ListDSProviders(ctx)
+	captureError(perr)
+	sources, serr := s.memory.ListDSIntegrations(ctx)
+	captureError(serr)
 	packs := buildSchemaPackSummaries(compiled, metas, s.buildProvenanceIndex(ctx))
-	return s.page(c, pageTitle("Schema packs"), SchemaPacksPage(packs, nil))
+	assignPackCategories(packs, providers, sources)
+	return s.page(c, pageTitle("Schema packs"), SchemaPacksPage(schemaPackSections(packs), nil))
 }
 
 // uiSchemaPack renders one active pack's read-only detail: metadata plus the
@@ -247,7 +489,12 @@ func (s *Server) uiSchemaPack(c echo.Context) error {
 	}
 	metas, merr := s.memory.ListAllSchemas(ctx)
 	captureError(merr)
+	providers, perr := s.memory.ListDSProviders(ctx)
+	captureError(perr)
+	sources, serr := s.memory.ListDSIntegrations(ctx)
+	captureError(serr)
 	packs := buildSchemaPackSummaries(compiled, metas, s.buildProvenanceIndex(ctx))
+	assignPackCategories(packs, providers, sources)
 	for i := range packs {
 		if packs[i].ID == id {
 			notice := flashFromQuery(c, []flashParam{{key: "installed", msg: packInstalledNotice}})
