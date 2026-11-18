@@ -141,6 +141,7 @@ func TestSourceEventDispatcher(t *testing.T) {
 	// and the head is not left permanently claimed.
 	agentsRepo.SetBudgetGuard(sourceBudgetExceeded{}, true, nil)
 	cappedHead := strings.Repeat("e", 40)
+	currentHead = cappedHead // fake GitHub advertises this head as live
 	require.NoError(t, deliver("d-budget", payload("synchronize", cappedHead)))
 	evBudget, err := repo.FindSourceEventByDelivery(ctx, projectID, sourceID, "d-budget")
 	require.NoError(t, err)
