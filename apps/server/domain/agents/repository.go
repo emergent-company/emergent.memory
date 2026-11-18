@@ -58,6 +58,14 @@ type Repository struct {
 	// nil-safe.
 	agentRestoreMu        sync.RWMutex
 	agentRestoreListeners []func(ctx context.Context, projectID string, agentIDs []string)
+
+	// workBudgetParkListeners are invoked when the enqueue-time spending gate
+	// refuses a work dispatch. They surface the refusal to the caller that owns
+	// a dependent required check (for example the review lane's `reviewed`
+	// check) instead of leaving it in_progress forever (#1032). Registered once
+	// at construction by the sources module; nil-safe.
+	workBudgetParkMu        sync.RWMutex
+	workBudgetParkListeners []WorkBudgetParkListener
 }
 
 // NewRepository creates a new agents repository
@@ -93,7 +101,7 @@ func (r *Repository) checkBudgetGate(ctx context.Context, projectID string) erro
 	}
 	return &BudgetExceededError{
 		ProjectID: projectID,
-		Message:   fmt.Sprintf("project %s has exceeded its spending budget", projectID),
+		Message:   budgetExceededMessage(projectID),
 	}
 }
 
