@@ -259,4 +259,4 @@ docker compose -f ~/.memory/docker/docker-compose.yml --env-file ~/.memory/confi
 
 - [README.md](./README.md) — deployment overview
 - [UPGRADING_OBJECT_STORE.md](./UPGRADING_OBJECT_STORE.md) — object-store migration
-- [../../docs/site/](../../docs/site/) — API, SDK and MCP documentation
+- [../../docs-astro/](../../docs-astro/) — API, SDK and MCP documentation, published at <https://docs.memory.emergent-company.ai/>

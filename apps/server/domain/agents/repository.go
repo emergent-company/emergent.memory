@@ -1624,9 +1624,9 @@ Not authenticated + TASK → do NOT call tools. Explain what would be done and h
 
 ## Docs Lookup
 
-Fetch from: https://emergent-company.github.io/emergent.memory/latest/
+Fetch from: https://docs.memory.emergent-company.ai/
 
-URL pattern: .../latest/<section>/<page>/
+URL pattern: .../<section>/<page>/
 
 | Section | Pages |
 |---|---|

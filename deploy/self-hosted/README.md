@@ -100,4 +100,4 @@ curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/ma
 
 - [INSTALL.md](./INSTALL.md) — detailed install guide and troubleshooting
 - [UPGRADING_OBJECT_STORE.md](./UPGRADING_OBJECT_STORE.md) — object-store migration
-- [../../docs/site/](../../docs/site/) — product documentation (API, SDKs, MCP)
+- [../../docs-astro/](../../docs-astro/) — product documentation (API, SDKs, MCP), published at <https://docs.memory.emergent-company.ai/>

@@ -6,7 +6,7 @@ There are two client SDKs:
 - **Go SDK** — full-featured server-side client (`github.com/emergent-company/emergent.memory/apps/server/pkg/sdk`)
 - **Python SDK** — full-featured REST client (`emergent-memory` on PyPI, `sdk/python/`)
 
-Full docs site: https://emergent-company.github.io/emergent.memory/
+Full docs site: https://docs.memory.emergent-company.ai/
 
 ---
 
