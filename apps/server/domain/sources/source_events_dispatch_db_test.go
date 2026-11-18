@@ -139,7 +139,7 @@ func TestSourceEventDispatcher(t *testing.T) {
 	// A capped project blocks dispatch: the delivery is recorded skipped with
 	// the budget reason and the subject claim is retired, so no run is created
 	// and the head is not left permanently claimed.
-	agentsRepo.SetBudgetGuard(sourceBudgetExceeded{}, true, nil)
+	agentsRepo.SetBudgetGate(sourceBudgetExceeded{}, true)
 	cappedHead := strings.Repeat("e", 40)
 	currentHead = cappedHead // fake GitHub advertises this head as live
 	require.NoError(t, deliver("d-budget", payload("synchronize", cappedHead)))
@@ -152,7 +152,7 @@ func TestSourceEventDispatcher(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, SourceClaimCancelled, claimBudget.State)
 	require.Equal(t, 1, countSourceRuns(t, db, agentID))
-	agentsRepo.SetBudgetGuard(nil, false, nil)
+	agentsRepo.SetBudgetGate(nil, false)
 
 	// Invalid signature and unknown app fail closed.
 	require.ErrorIs(t, dispatcher.HandleWebhook(ctx, app.WebhookKey, "pull_request", "d-bad", "sha256=deadbeef", payload("opened", currentHead)), ErrSourceEventInvalidSignature)

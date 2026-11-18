@@ -859,10 +859,8 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 		if err := h.executor.EnsureExecutionEnabled(); err != nil {
 			return apperror.New(http.StatusServiceUnavailable, "agent_execution_disabled", err.Error())
 		}
-		// Budget pre-flight: the same guarantee for the spending cap. Check
-		// before inserting so a capped project gets 402 and no run row, instead
-		// of an accepted background run that later fails.
-		if err := h.executor.CheckBudget(c.Request().Context(), agent.ProjectID); err != nil {
+		// Budget: refuse before creating the run row for the same reason.
+		if err := h.executor.ensureBudgetAvailable(c.Request().Context(), agent.ProjectID, agent.ID, "http_trigger"); err != nil {
 			return mapExecutorError(err)
 		}
 	}
@@ -875,7 +873,7 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 		AgentDefinitionID: agentDefID,
 	})
 	if err != nil {
-		return mapExecutorError(err)
+		return apperror.NewInternal("failed to create agent run", err)
 	}
 
 	// Resolve org ID for the agent's project so the tracking model can
@@ -3578,7 +3576,7 @@ func (h *Handler) resumeQuestionRun(ctx context.Context, p RespondParams, run *A
 	// Budget pre-flight before creating the resumed run row: a capped project
 	// gets 402 and no row, rather than a pending run that can never execute.
 	if h.executor != nil {
-		if err := h.executor.CheckBudget(ctx, agent.ProjectID); err != nil {
+		if err := h.executor.ensureBudgetAvailable(ctx, agent.ProjectID, agent.ID, "http_respond"); err != nil {
 			return nil, mapExecutorError(err)
 		}
 	}

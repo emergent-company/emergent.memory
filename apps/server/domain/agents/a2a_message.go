@@ -834,7 +834,7 @@ func (h *A2AHandler) startA2ATask(c echo.Context, projectID, userID, userMessage
 		}
 		// Budget pre-flight before creating the run row: a capped project must
 		// not leave an A2A run that can never execute.
-		if err := h.executor.CheckBudget(ctx, projectID); err != nil {
+		if err := h.executor.ensureBudgetAvailable(ctx, projectID, agent.ID, "a2a"); err != nil {
 			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, err.Error()))
 		}
 	}

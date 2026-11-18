@@ -353,7 +353,8 @@ func (h *Handler) EnqueueWorkItem(c echo.Context) error {
 		TrustedInternal: true,
 	})
 	if err != nil {
-		return apperror.NewInternal("failed to enqueue work item", err)
+		// Budget/queue rejections are typed; surface them as 402/429 instead of 500.
+		return mapExecutorError(err)
 	}
 
 	return c.JSON(http.StatusAccepted, SuccessResponse(&EnqueueWorkItemResponseDTO{

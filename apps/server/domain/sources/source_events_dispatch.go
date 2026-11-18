@@ -526,18 +526,13 @@ func (d *SourceEventDispatcher) processPullRequestSource(ctx context.Context, v 
 	}
 	run, err := d.agents.CreateRunQueued(ctx, trigger.AgentID.String(), 1, opts)
 	if err != nil {
-		// A project spending cap blocks dispatch, not delivery: record the
-		// delivery as skipped with the reason and retire the subject claim so
-		// the head is not left permanently claimed by a delivery that cannot
-		// start. The sender should not retry into the same cap.
-		if _, blocked := errors.AsType[*agents.BudgetExceededError](err); blocked {
-			if _, claimErr := d.repo.SetSourceEventClaimState(ctx, claim.ProjectID, claim.ID, SourceClaimCancelled); claimErr != nil && d.log != nil {
-				d.log.Warn("failed to retire budget-blocked source claim", "subject", subject, "error", claimErr)
-			}
+		// A budget block is not a delivery failure: no run exists to attach, so
+		// retire the claim and record the event as skipped with the reason. A
+		// later push (or the next fetch) is a fresh delivery and can dispatch
+		// once the window resets.
+		if _, ok := errors.AsType[*agents.BudgetExceededError](err); ok {
+			_, _ = d.repo.SetSourceEventClaimState(ctx, claim.ProjectID, claim.ID, SourceClaimCancelled)
 			d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventSkipped, nil, err)
-			if d.log != nil {
-				d.log.Warn("source delivery skipped: project budget exceeded", "subject", subject, "error", err)
-			}
 			return nil
 		}
 		_, _ = d.repo.SetSourceEventClaimState(ctx, claim.ProjectID, claim.ID, SourceClaimPending)

@@ -9,6 +9,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func budgetBlocked(err error) bool {
+	if err == nil {
+		return false
+	}
+	_, ok := errors.AsType[*BudgetExceededError](err)
+	return ok
+}
+
 func countRunsForAgent(t *testing.T, ctx context.Context, repo *Repository, agentID string) int {
 	t.Helper()
 	var count int
@@ -25,11 +33,11 @@ func TestCreateRunQueued_BudgetBlockedCreatesNoRun(t *testing.T) {
 	defID := insertWorkDefinition(t, db, ctx, projectID, "researcher", `{}`)
 	agentID := insertWorkAgent(t, db, ctx, projectID, "researcher", defID)
 
-	repo.SetBudgetGuard(&fakeBudgetChecker{exceeded: true}, true, testAgentLogger())
+	repo.SetBudgetGate(&fakeBudgetChecker{exceeded: true}, true)
 
 	run, err := repo.CreateRunQueued(ctx, agentID, 1)
 	require.Nil(t, run)
-	require.True(t, isBudgetExceededError(err))
+	require.True(t, budgetBlocked(err))
 	require.Zero(t, countRunsForAgent(t, ctx, repo, agentID), "a budget block must not create a run row")
 
 	var jobs int
@@ -47,11 +55,11 @@ func TestCreateRunWithOptions_BudgetBlockedCreatesNoRun(t *testing.T) {
 	defID := insertWorkDefinition(t, db, ctx, projectID, "researcher", `{}`)
 	agentID := insertWorkAgent(t, db, ctx, projectID, "researcher", defID)
 
-	repo.SetBudgetGuard(&fakeBudgetChecker{exceeded: true}, true, testAgentLogger())
+	repo.SetBudgetGate(&fakeBudgetChecker{exceeded: true}, true)
 
 	run, err := repo.CreateRunWithOptions(ctx, CreateRunOptions{AgentID: agentID})
 	require.Nil(t, run)
-	require.True(t, isBudgetExceededError(err))
+	require.True(t, budgetBlocked(err))
 	require.Zero(t, countRunsForAgent(t, ctx, repo, agentID))
 }
 
@@ -75,12 +83,12 @@ func TestEnqueueWorkRunDeduped_BudgetBlockedLeavesNoClaim(t *testing.T) {
 		Status:        ProcessingStatusPending,
 	}
 
-	repo.SetBudgetGuard(&fakeBudgetChecker{exceeded: true}, true, testAgentLogger())
+	repo.SetBudgetGate(&fakeBudgetChecker{exceeded: true}, true)
 
 	run, claimed, err := repo.EnqueueWorkRunDeduped(ctx, logEntry, agentID, 1, opts)
 	require.Nil(t, run)
 	require.False(t, claimed)
-	require.True(t, isBudgetExceededError(err))
+	require.True(t, budgetBlocked(err))
 	require.Zero(t, countRunsForAgent(t, ctx, repo, agentID))
 
 	var logs int
@@ -99,7 +107,7 @@ func TestCreateRunQueued_BudgetQueryErrorFailsOpen(t *testing.T) {
 	agentID := insertWorkAgent(t, db, ctx, projectID, "researcher", defID)
 
 	checker := &fakeBudgetChecker{err: errors.New("usage query unavailable")}
-	repo.SetBudgetGuard(checker, true, testAgentLogger())
+	repo.SetBudgetGate(checker, true)
 
 	run, err := repo.CreateRunQueued(ctx, agentID, 1)
 	require.NoError(t, err)
