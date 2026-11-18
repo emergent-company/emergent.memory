@@ -61,8 +61,12 @@ for (const dir of DIRS) {
   // output, and copying it first would only be overwritten.
   const entries = (await readdir(srcDir)).filter((f) => !f.startsWith('.'));
   const files = entries.filter((f) => /\.(png|jpe?g)$/i.test(f)).sort();
-  const regenerated = new Set(files.map((f) => f.replace(/\.(png|jpe?g)$/i, '.webp')));
-  for (const file of entries.filter((f) => RECORDING.test(f) && !regenerated.has(f)).sort()) {
+  // Case-insensitively, because the extension check above is: `Poster.PNG` writes
+  // `Poster.webp`, and a sibling `Poster.WEBP` would otherwise mirror first.
+  const regenerated = new Set(
+    files.map((f) => f.replace(/\.(png|jpe?g)$/i, '.webp').toLowerCase()),
+  );
+  for (const file of entries.filter((f) => RECORDING.test(f) && !regenerated.has(f.toLowerCase())).sort()) {
     const from = path.join(srcDir, file);
     await copyFile(from, path.join(outDir, file));
     console.log(`${dir}/${file}  mirrored  ${Math.round((await stat(from)).size / 1024)}K`);
