@@ -787,3 +787,12 @@ all — the `*-ui.spec.ts` files were authored but never executed.)
   live `chromium` project via `testIgnore`. `run-e2e.sh` generates templ on an
   unwarmed tree before building the gateway.
 - Voice/LiveKit/STT and the iOS client are not browser-testable and are out of scope.
+
+## Workflow lab
+
+`specs/workflow/` is the GitHub workflow lab: a real public fixture repo, the
+dev project, and browser assertions for the board/object detail. It is opt-in;
+without `E2E_WORKFLOW_*` the specs skip. The infra workflow-lab runbook documents
+the fixture labels, the deterministic `ci` workflow and the required coding-App
+prerequisite. `E2E_WORKFLOW_BLOCK_OBJECT_ID` must name a seeded stale (terminal)
+block so the detail panel shows `Clear stale block` and hides `Retry`.
