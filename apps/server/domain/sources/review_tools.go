@@ -237,18 +237,27 @@ func NewReviewToolHandler(repo *Repository, cfg *config.Config, log *slog.Logger
 }
 
 // diffPageBudget turns a deployment's effective per-tool result cap into the
-// ceiling for one diff response. A cap of 0 (no per-result bound) means the
-// default boundary, which is also what the handler falls back to; a negative
-// cap disables per-result bounding outright, the same way it does for the
-// executor, so the page may use the requested size.
+// ceiling for one diff response. A negative cap disables per-result bounding
+// outright, the same way it does for the executor, so the page may use the
+// requested size; a zero cap means the default boundary, which is also what the
+// handler falls back to.
+//
+// A positive budget is never allowed to reach those two sentinels: a cap at or
+// below the envelope margin leaves no room for a page, and the safe answer is
+// the smallest positive budget (which fails closed in executePRDiff), not a
+// negative one that would read as "unbounded" and serve a page the model
+// boundary would cut.
 func diffPageBudget(capBytes int) int {
-	if capBytes == 0 {
-		capBytes = agents.DefaultToolResultMaxBytes
-	}
 	if capBytes < 0 {
 		return -1
 	}
-	return capBytes - diffEnvelopeMargin
+	if capBytes == 0 {
+		capBytes = agents.DefaultToolResultMaxBytes
+	}
+	if budget := capBytes - diffEnvelopeMargin; budget > 0 {
+		return budget
+	}
+	return 1
 }
 
 // pageBudget is the ceiling executePRDiff must fit one response into, or 0 when
@@ -605,7 +614,7 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 		// and no range may be recorded as read. Serving it anyway is exactly the
 		// "approved bytes nobody saw" failure this paging exists to close.
 		if over := diffEnvelopeBytes(text) - budget; over > 0 {
-			return nil, apperror.NewValidationf("github app tool: one diff page cannot fit this deployment's tool-result bound (%d bytes over); read the change narrowly with path=<substring>", over)
+			return nil, apperror.NewValidationf("github app tool: one diff page cannot fit this deployment's tool-result bound (page budget %d bytes, %d over); raise MCP_TOOL_RESULT_MAX_BYTES or the github-pr-diff override, or read narrowly with path=<substring> (a narrowed read is not review evidence)", budget, over)
 		}
 	}
 

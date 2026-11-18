@@ -15,6 +15,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/githubapp"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/internal/config"
 )
 
 // bigPatch is a patch body several times the old 6000-byte per-file bound. A
@@ -394,6 +395,40 @@ func TestDiffPageBudgetFromCap(t *testing.T) {
 	require.Equal(t, defaultDiffEnvelopeBudget, diffPageBudget(0))
 	require.Equal(t, 65536-diffEnvelopeMargin, diffPageBudget(65536))
 	require.Equal(t, -1, diffPageBudget(-1), "a negative cap disables per-result bounding")
+
+	// A positive cap with no room left for a page must not collapse into either
+	// sentinel: 0 would read as "default" (129 KiB) and a negative value as
+	// "unbounded", both of which would serve a page the executor cuts at the real
+	// cap — with the range already recorded as read.
+	for _, cap := range []int{1, 1024, 2047, 2048, diffEnvelopeMargin, diffEnvelopeMargin + 1, 4096} {
+		got := diffPageBudget(cap)
+		require.Greater(t, got, 0, "cap %d must leave a positive budget", cap)
+		require.LessOrEqual(t, got, cap, "cap %d must not budget more than the cap", cap)
+	}
+	require.Equal(t, 1, diffPageBudget(1024), "no room under a tiny cap is a budget that fails closed")
+	require.Equal(t, 2048, diffPageBudget(4096))
+}
+
+// TestPRDiffTinyConfiguredCapFailsClosed pins the sentinel collision the round-4
+// review measured through the production constructor: a cap of 1024 used to
+// collapse into "unbounded" and serve a 30 KB page cut at 1 KB, with evidence
+// recorded for the whole diff. It must refuse instead.
+func TestPRDiffTinyConfiguredCapFailsClosed(t *testing.T) {
+	head := "7788990011223344556677889900112233445566"
+	files := []map[string]any{
+		{"filename": "apps/server/a.go", "status": "modified", "additions": 400, "deletions": 0, "patch": bigPatch(400)},
+	}
+	client, reviews := diffServer(t, head, files)
+	h := NewReviewToolHandler(nil, &config.Config{MCP: config.MCPConfig{ToolResultMaxBytes: 1024}}, nil)
+	require.Equal(t, 1, h.pageBudget())
+	ctx := mcp.ContextWithNewToolResultCache(context.Background())
+
+	_, err := h.executePRDiff(ctx, client, "owner/repo", head, "", 0, 0)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "tool-result bound")
+	require.Contains(t, err.Error(), "MCP_TOOL_RESULT_MAX_BYTES", "the refusal must name the knob to turn")
+	require.Error(t, submitVerdict(h, ctx, client, head))
+	require.Equal(t, 0, *reviews)
 }
 
 // TestPRDiffPathFilterNarrowsWithoutEvidence pins the other half: an agent that
