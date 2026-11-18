@@ -76,8 +76,10 @@ func real() error {
 `)
 
 	findings, err := ScanDir(dir, Exemptions{
-		Files:    map[string]string{"cache.go": "serialises a cache key, never reaches a caller"},
-		Messages: map[string]string{"connection testing is not supported": "a platform fact, not the caller's argument"},
+		Files: map[string]string{"cache.go": "serialises a cache key, never reaches a caller"},
+		Sites: map[Site]string{
+			{File: "provider.go", Message: "connection testing is not supported for trigger sources"}: "a platform fact, not the caller's argument",
+		},
 	})
 	if err != nil {
 		t.Fatalf("ScanDir: %v", err)
@@ -88,6 +90,83 @@ func real() error {
 	}
 	if findings[0].File != "provider.go" || findings[0].Line != 8 {
 		t.Fatalf("finding = %+v, want provider.go:8", findings[0])
+	}
+}
+
+// TestSiteExemptionDoesNotLeakToANewSite is the #930 acceptance test. The
+// exemption keys used to be message substrings, so a future caller-facing error
+// that merely contained an exempted phrase was silently exempt from the scan —
+// the scan stopped being a gate for exactly the class it exists to catch. A
+// site key pins the file and the exact literal, so neither a longer message
+// that starts with the phrase nor a copy in another file can inherit it.
+func TestSiteExemptionDoesNotLeakToANewSite(t *testing.T) {
+	dir := t.TempDir()
+	// The reviewed, exempted call.
+	write(t, dir, "probe.go", `package fixture
+
+func existing() error {
+	return fmt.Errorf("object not found")
+}
+`)
+	// A new caller-facing error that contains the exempted phrase.
+	write(t, dir, "newcall.go", `package fixture
+
+func regression() error {
+	return fmt.Errorf("object not found: %q", id)
+}
+`)
+	// The same literal in a file the exemption was not written for.
+	write(t, dir, "copy.go", `package fixture
+
+func copied() error {
+	return fmt.Errorf("object not found")
+}
+`)
+
+	findings, err := ScanDir(dir, Exemptions{Sites: map[Site]string{
+		{File: "probe.go", Message: "object not found"}: "scope probe",
+	}})
+	if err != nil {
+		t.Fatalf("ScanDir: %v", err)
+	}
+
+	got := make(map[string]int, len(findings))
+	for _, f := range findings {
+		got[f.File] = f.Line
+	}
+	if len(findings) != 2 {
+		t.Fatalf("findings = %+v, want exactly the two unexempted sites", findings)
+	}
+	if got["newcall.go"] != 4 {
+		t.Errorf("a message that only contains the exempted phrase must still be reported: %+v", findings)
+	}
+	if got["copy.go"] != 4 {
+		t.Errorf("an exempted literal in another file must still be reported: %+v", findings)
+	}
+	if _, ok := got["probe.go"]; ok {
+		t.Errorf("the reviewed site must stay exempt: %+v", findings)
+	}
+}
+
+// TestFirstStringLiteralReadsTheReviewedMessage guards the key extraction: an
+// exemption names the literal the call passes, so a multi-line call or one with
+// an escaped quote must still produce the message a reviewer wrote down.
+func TestFirstStringLiteralReadsTheReviewedMessage(t *testing.T) {
+	tests := []struct {
+		args string
+		want string
+		ok   bool
+	}{
+		{`"missing required parameter: entity_id"`, "missing required parameter: entity_id", true},
+		{"\n\t\t\"invalid \\\"thing\\\" value\",\n\t\tname,\n", `invalid "thing" value`, true},
+		{"`raw message: not found`", "raw message: not found", true},
+		{"msg", "", false},
+	}
+	for _, tt := range tests {
+		got, ok := firstStringLiteral(tt.args)
+		if ok != tt.ok || got != tt.want {
+			t.Errorf("firstStringLiteral(%q) = (%q, %v), want (%q, %v)", tt.args, got, ok, tt.want, tt.ok)
+		}
 	}
 }
 

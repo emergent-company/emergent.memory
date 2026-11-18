@@ -360,14 +360,13 @@ func TestNoPlainArgumentValidationErrors(t *testing.T) {
 			// by canonicalToolCacheKey and never reaches a caller.
 			"tool_result_cache.go": "cache-key canonicalisation",
 		},
-		Messages: map[string]string{
+		// Each key pins one call: the file it lives in and the exact literal it
+		// passes, so a new caller-facing error that merely contains an exempted
+		// phrase is still reported (#930).
+		Sites: map[toolargscan.Site]string{
 			// The internal cause of an apperror.NewInternal: never rendered to
 			// the caller (only logged), so it is not a public message.
-			"auto-created branch has invalid UUID": "internal cause",
-			// Scope probes: the caller ignores the error and only skips a type
-			// check, so the text is never rendered into a result.
-			"relationship not found": "scope probe",
-			"object not found":       "scope probe",
+			{File: "service.go", Message: "auto-created branch has invalid UUID %q: %w"}: "internal cause",
 		},
 	})
 	require.NoError(t, err)
