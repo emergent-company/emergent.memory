@@ -9,13 +9,14 @@ func githubAppToolDefinitions() []ToolDefinition {
 		{
 			Name:         "github-pr-diff",
 			AgentOnly:    true,
-			Description:  "Read the diff and changed files for one commit SHA of a GitHub repository connected to this project. Review the exact SHA named by the review subject; do not assume the PR's current head.",
+			Description:  "Read the changed files of a GitHub pull request at one commit SHA (or, without a pull request number, one commit's own diff for context). Review the exact SHA named by the review subject; do not assume the PR's current head.",
 			OutputSchema: objectOutputSchema(),
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
 					"repo":     {Type: "string", Description: "Repository as owner/name"},
 					"head_sha": {Type: "string", Description: "Commit SHA to review (the reviewed head)"},
+					"number":   {Type: "number", Description: "Pull request number. When omitted, the run's verified review subject supplies it; only a diff with a number is review evidence."},
 				},
 				Required: []string{"repo", "head_sha"},
 			},
@@ -23,7 +24,7 @@ func githubAppToolDefinitions() []ToolDefinition {
 		{
 			Name:         "github-review-submit",
 			AgentOnly:    true,
-			Description:  "Submit a review verdict for a GitHub pull request at an exact commit SHA. Posts the review, a head-bound `reviewed` check, and the `Reviewed-SHA` merge-guard marker. Fails closed if the PR head moved or the diff was not read in this run.",
+			Description:  "Submit a review verdict for a GitHub pull request at an exact commit SHA. Posts the review, a head-bound `reviewed` check, and the `Reviewed-SHA` merge-guard marker. Fails closed if the PR head moved or the pull request diff was not read in this run.",
 			OutputSchema: objectOutputSchema(),
 			InputSchema: InputSchema{
 				Type: "object",

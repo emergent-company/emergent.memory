@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -625,6 +626,7 @@ func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead) 
 			TrustedInternal:   workRunTrusted(h),
 			Invocation:        inv,
 			SourceTriggerID:   workSourceTriggerID(h),
+			SourceSubject:     workSourceSubject(h),
 			// Record the claim source as the object's current status: the
 			// reconciler scans both ready and trigger statuses, and the claim must
 			// CAS from whatever status the object is stranded in.
@@ -742,6 +744,30 @@ func mergeWorkObjectMetadata(meta map[string]any, h *graph.WorkObjectHead) {
 			continue
 		}
 		meta[k] = v
+	}
+}
+
+// workSourceSubject returns the verified source subject a source-derived work
+// object carries, so a work-dispatched run (a review lane or a claimed review
+// subject) binds its review tools to the pull request the dispatcher recorded.
+// Only server-written properties are read; a model cannot set them. Review
+// evidence and verdicts must key on the pull request (repo#number@headSha), so
+// the run needs that subject even though it was not enqueued by the webhook
+// ingress directly (#1022).
+func workSourceSubject(h *graph.WorkObjectHead) *SourceSubject {
+	if h == nil || h.Properties == nil {
+		return nil
+	}
+	sourceID, _ := h.Properties["source_id"].(string)
+	repo, _ := h.Properties["repo"].(string)
+	prNumber := intProperty(h.Properties["pr_number"])
+	headSHA, _ := h.Properties["head_sha"].(string)
+	if strings.TrimSpace(sourceID) == "" || strings.TrimSpace(repo) == "" || prNumber <= 0 || strings.TrimSpace(headSHA) == "" {
+		return nil
+	}
+	return &SourceSubject{
+		SourceID: sourceID, Repo: repo, Kind: "pull_request",
+		PRNumber: prNumber, HeadSHA: headSHA,
 	}
 }
 

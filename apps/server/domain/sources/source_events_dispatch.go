@@ -373,7 +373,18 @@ func (d *SourceEventDispatcher) ensureReviewSubject(ctx context.Context, v *Veri
 		if err != nil {
 			return fmt.Errorf("sources: ensure review gate: %w", err)
 		}
-		if gate != nil && len(gate.RequiredReviewers) > 0 {
+		switch {
+		case gate == nil:
+		case gate.Status == ReviewGateUnapprovable:
+			// The head has no reviewable diff. Do not materialize another round
+			// of reviewer lanes for a verdict that can never be recorded; make
+			// the required check terminal with the recorded reason (#1022).
+			if v != nil && v.App != nil {
+				if token, terr := d.mintToken(ctx, v.App, p.Installation.ID, repoName); terr == nil {
+					_ = d.newClient(d.apiBaseURL, token).CreateReviewedCheck(ctx, repoName, headSHA, "failure", "reviewed: unapprovable", reviewGateUnapprovableSummary(gate))
+				}
+			}
+		case len(gate.RequiredReviewers) > 0:
 			if err := d.ensureReviewLanes(ctx, src, p, state, subject, previousHead, headSHA, gate); err != nil {
 				return fmt.Errorf("sources: ensure review lanes: %w", err)
 			}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -176,5 +177,47 @@ func TestGetCommitAllowsLargeCommitPayload(t *testing.T) {
 	}
 	if len(diff.Files) != 1 || diff.Files[0].Filename != "big.go" {
 		t.Fatalf("diff = %#v", diff)
+	}
+}
+
+// TestClientListPullRequestFilesPaginates pins that the pull-request diff read
+// follows every page. A reviewed PR routinely has more than 100 changed files
+// (the #1014 reproduction had 132); stopping after the first page would weaken
+// the review evidence and truncate the diff the agent reads (#1022).
+func TestClientListPullRequestFilesPaginates(t *testing.T) {
+	pageCalls := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/owner/repo/pulls/7/files" {
+			http.NotFound(w, r)
+			return
+		}
+		page := r.URL.Query().Get("page")
+		pageCalls = append(pageCalls, page+"?per_page="+r.URL.Query().Get("per_page"))
+		files := make([]map[string]any, 0)
+		switch page {
+		case "1":
+			for i := 0; i < pullRequestFilesPerPage; i++ {
+				files = append(files, map[string]any{"filename": "file-" + strconv.Itoa(i) + ".go"})
+			}
+		case "2":
+			files = append(files, map[string]any{"filename": "last-a.go"}, map[string]any{"filename": "last-b.go"})
+		default:
+			t.Fatalf("unexpected page %q", page)
+		}
+		_ = json.NewEncoder(w).Encode(files)
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, "ghs_test", server.Client())
+	files, err := c.ListPullRequestFiles(context.Background(), "owner/repo", 7)
+	if err != nil {
+		t.Fatalf("ListPullRequestFiles: %v", err)
+	}
+	if len(files) != pullRequestFilesPerPage+2 {
+		t.Fatalf("files = %d, want %d", len(files), pullRequestFilesPerPage+2)
+	}
+	want := []string{"1?per_page=" + strconv.Itoa(pullRequestFilesPerPage), "2?per_page=" + strconv.Itoa(pullRequestFilesPerPage)}
+	if strings.Join(pageCalls, ",") != strings.Join(want, ",") {
+		t.Fatalf("pages = %v, want %v", pageCalls, want)
 	}
 }
