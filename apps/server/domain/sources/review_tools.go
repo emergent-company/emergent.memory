@@ -70,6 +70,65 @@ func truncateUTF8(s string, max int) string {
 	return s[:max]
 }
 
+// sourceSelection records how a review tool chose the source it acts through,
+// so the tool response can name the App that served a diff. A source-triggered
+// run is unambiguous; a manual/queue run has no provenance, which is the case
+// this resolves (#1029).
+type sourceSelection string
+
+const (
+	// sourceSelectionRunSubject: the dispatcher-persisted subject of a
+	// source-triggered run named the source.
+	sourceSelectionRunSubject sourceSelection = "run-subject"
+	// sourceSelectionRunMetadata: the run's trigger metadata named the source
+	// explicitly (metadata.sourceId), e.g. an operator-initiated queue run.
+	sourceSelectionRunMetadata sourceSelection = "run-metadata"
+	// sourceSelectionReviewTrigger: the run carried no provenance and the repo
+	// is allowlisted by several sources, but exactly one of them carries a
+	// pull_request trigger -- the App that reviews pull requests.
+	sourceSelectionReviewTrigger sourceSelection = "review-trigger"
+	// sourceSelectionAllowlist: the repo is allowlisted by exactly one source.
+	sourceSelectionAllowlist sourceSelection = "allowlist"
+)
+
+// resolvedReviewSource is the source a review tool will act through, why it was
+// chosen, and the App binding needed to mint a token.
+type resolvedReviewSource struct {
+	source    *Source
+	app       *SourceApp
+	selection sourceSelection
+}
+
+// attribution renders the resolved source for the tool response, so a manual
+// run that carried no provenance can see which App served its diff.
+func (r *resolvedReviewSource) attribution() string {
+	if r == nil || r.source == nil {
+		return ""
+	}
+	id := r.source.ID.String()
+	if name := strings.TrimSpace(r.source.DisplayName); name != "" {
+		return fmt.Sprintf("%s (%s), selected by %s", name, id, r.selection)
+	}
+	return fmt.Sprintf("%s, selected by %s", id, r.selection)
+}
+
+// fields adds the resolved source to a tool result's structured content. It is
+// the machine-readable half of the "say which source served this" requirement.
+func (r *resolvedReviewSource) fields(out map[string]any) map[string]any {
+	if out == nil {
+		out = map[string]any{}
+	}
+	if r == nil || r.source == nil {
+		return out
+	}
+	out["sourceId"] = r.source.ID.String()
+	out["sourceSelection"] = string(r.selection)
+	if name := strings.TrimSpace(r.source.DisplayName); name != "" {
+		out["sourceName"] = name
+	}
+	return out
+}
+
 // ReviewToolHandler executes the two agent review tools against a
 // github_app source: it resolves (project, repo) to a source through the
 // kb.sources repo allowlist, reads the App key from kb.source_apps, mints an
@@ -238,10 +297,11 @@ func (h *ReviewToolHandler) ExecuteGitHubAppTool(ctx context.Context, projectID,
 	if err := validateReviewSubject(ctx, toolName, repo, args); err != nil {
 		return nil, err
 	}
-	src, app, err := h.resolveSource(ctx, projectUUID, repo)
+	resolved, err := h.resolveSource(ctx, projectUUID, repo)
 	if err != nil {
 		return nil, err
 	}
+	src, app := resolved.source, resolved.app
 	installationID, err := strconv.ParseInt(*src.ExternalAccountID, 10, 64)
 	if err != nil || installationID <= 0 {
 		return nil, fmt.Errorf("sources: github_app source %s has a non-numeric installation id %q; cannot mint a token",
@@ -268,9 +328,9 @@ func (h *ReviewToolHandler) ExecuteGitHubAppTool(ctx context.Context, projectID,
 
 	switch toolName {
 	case toolPRDiff:
-		return h.executePRDiff(ctx, client, projectID, repo, args)
+		return h.executePRDiff(ctx, client, projectID, repo, resolved, args)
 	case toolReviewSubmit:
-		return h.executeReviewSubmit(ctx, client, projectID, repo, args)
+		return h.executeReviewSubmit(ctx, client, projectID, repo, resolved, args)
 	default:
 		return nil, apperror.NewValidationf("sources: unsupported review tool %q", toolName)
 	}
@@ -282,35 +342,89 @@ func (h *ReviewToolHandler) ExecuteGitHubAppTool(ctx context.Context, projectID,
 //
 // The sourceId path never falls back to another source: a run whose own source
 // cannot serve its repo is a misconfiguration, and guessing could post a review
-// through the wrong App. The fallback requires exactly one allowlist match;
-// zero or many fail closed naming what was found.
-func (h *ReviewToolHandler) resolveSource(ctx context.Context, projectID uuid.UUID, repo string) (*Source, *SourceApp, error) {
+// through the wrong App. The fallback requires exactly one allowlist match,
+// except that a repo allowlisted by several sources is narrowed to the single
+// source with a pull_request trigger (see uniqueReviewOwner); zero or several
+// such owners fail closed naming what was found.
+func (h *ReviewToolHandler) resolveSource(ctx context.Context, projectID uuid.UUID, repo string) (*resolvedReviewSource, error) {
 	// Prefer the dispatcher-persisted subject's source over the run metadata
 	// sourceId, which is model-settable on spawned runs.
 	if subject, ok := mcp.RunSubjectFromContext(ctx); ok && subject.SourceID != "" {
-		return h.resolveRunSource(ctx, projectID, repo, subject.SourceID)
+		src, app, err := h.resolveRunSource(ctx, projectID, repo, subject.SourceID)
+		if err != nil {
+			return nil, err
+		}
+		return &resolvedReviewSource{source: src, app: app, selection: sourceSelectionRunSubject}, nil
 	}
 	if sourceID := mcp.RunSourceIDFromContext(ctx); sourceID != "" {
-		return h.resolveRunSource(ctx, projectID, repo, sourceID)
+		src, app, err := h.resolveRunSource(ctx, projectID, repo, sourceID)
+		if err != nil {
+			return nil, err
+		}
+		return &resolvedReviewSource{source: src, app: app, selection: sourceSelectionRunMetadata}, nil
 	}
 	candidates, err := h.repo.FindGitHubAppSourcesForRepo(ctx, projectID, repo)
 	if err != nil {
-		return nil, nil, fmt.Errorf("sources: resolve github_app source for %s: %w", repo, err)
+		return nil, fmt.Errorf("sources: resolve github_app source for %s: %w", repo, err)
 	}
+	var chosen Source
+	selection := sourceSelectionAllowlist
 	switch len(candidates) {
 	case 0:
-		return nil, nil, apperror.NewValidationf("sources: no github_app source allows repo %s in this project", repo)
+		return nil, apperror.NewValidationf("sources: no github_app source allows repo %s in this project", repo)
 	case 1:
+		chosen = candidates[0]
 	default:
-		return nil, nil, apperror.NewValidationf("sources: repo %s is allowlisted by %d github_app sources in this project (%s); refusing to guess",
-			repo, len(candidates), namedSourceCandidates(candidates))
+		owner, reason, err := h.uniqueReviewOwner(ctx, projectID, repo, candidates)
+		if err != nil {
+			return nil, err
+		}
+		if owner == nil {
+			return nil, apperror.NewValidationf("sources: repo %s is allowlisted by %d github_app sources in this project (%s); %s; refusing to guess (pass the run metadata sourceId to name the source a review should use)",
+				repo, len(candidates), namedSourceCandidates(candidates), reason)
+		}
+		chosen, selection = *owner, sourceSelectionReviewTrigger
 	}
-	src := candidates[0]
-	app, err := h.resolveSourceApp(ctx, &src)
+	app, err := h.resolveSourceApp(ctx, &chosen)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return &src, app, nil
+	return &resolvedReviewSource{source: &chosen, app: app, selection: selection}, nil
+}
+
+// uniqueReviewOwner narrows an ambiguous allowlist match to the one source
+// whose review tooling is enabled: it carries a pull_request trigger. That is
+// the only server-side signal that says which App reviews pull requests, and a
+// manual/queue run carries no source provenance of its own, so without this a
+// project with both a "coding" and a "review" App on one repo could never run
+// an operator-initiated review (#1029).
+//
+// The rule only breaks a tie. Zero owners (no source is review-enabled) or
+// several owners still fail closed with a reason, because guessing could post a
+// review through the wrong App. A nil owner with a nil error means "ambiguous".
+func (h *ReviewToolHandler) uniqueReviewOwner(ctx context.Context, projectID uuid.UUID, repo string, candidates []Source) (*Source, string, error) {
+	owners := make([]Source, 0, len(candidates))
+	for _, candidate := range candidates {
+		triggers, err := h.repo.ListSourceTriggers(ctx, projectID, candidate.ID)
+		if err != nil {
+			return nil, "", fmt.Errorf("sources: list triggers for github_app source %s: %w", sourceLabel(&candidate), err)
+		}
+		if triggersServePullRequests(triggers) {
+			owners = append(owners, candidate)
+		}
+	}
+	switch len(owners) {
+	case 1:
+		if h.log != nil {
+			h.log.Info("sources: review tool resolved an ambiguous repo to its pull_request source",
+				"repo", repo, "source", sourceLabel(&owners[0]))
+		}
+		return &owners[0], "", nil
+	case 0:
+		return nil, "none of them has a pull_request trigger", nil
+	default:
+		return nil, fmt.Sprintf("%d of them have a pull_request trigger (%s)", len(owners), namedSourceCandidates(owners)), nil
+	}
 }
 
 // resolveRunSource loads the run's own source inside the project and validates
@@ -400,7 +514,7 @@ func validateReviewSubject(ctx context.Context, toolName, repo string, args map[
 // (from the call or the run's verified subject) selects the pull request diff,
 // which is what evidence is keyed on; without one it serves the commit's
 // first-parent diff for context only (#1022).
-func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp.Client, projectID, repo string, args map[string]any) (*mcp.ToolResult, error) {
+func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp.Client, projectID, repo string, resolved *resolvedReviewSource, args map[string]any) (*mcp.ToolResult, error) {
 	headSHA := stringArg(args, "head_sha")
 	if headSHA == "" {
 		return nil, apperror.NewValidation("github app tool: head_sha is required")
@@ -416,9 +530,9 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 		}
 	}
 	if ok && number > 0 {
-		return h.executePullRequestDiff(ctx, client, projectID, repo, number, headSHA)
+		return h.executePullRequestDiff(ctx, client, projectID, repo, resolved, number, headSHA)
 	}
-	return h.executeCommitDiff(ctx, client, repo, headSHA)
+	return h.executeCommitDiff(ctx, client, repo, resolved, headSHA)
 }
 
 // executePullRequestDiff reads GET /pulls/{number}/files, the diff of the
@@ -426,7 +540,7 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 // name. An empty result is a genuinely unapprovable head: the tool returns a
 // validation error (never an internal one) and moves the review gate to a
 // terminal state instead of leaving it pending forever.
-func (h *ReviewToolHandler) executePullRequestDiff(ctx context.Context, client *githubapp.Client, projectID, repo string, number int, headSHA string) (*mcp.ToolResult, error) {
+func (h *ReviewToolHandler) executePullRequestDiff(ctx context.Context, client *githubapp.Client, projectID, repo string, resolved *resolvedReviewSource, number int, headSHA string) (*mcp.ToolResult, error) {
 	state, err := client.GetPullRequest(ctx, repo, number)
 	if err != nil {
 		return nil, err
@@ -452,13 +566,16 @@ func (h *ReviewToolHandler) executePullRequestDiff(ctx context.Context, client *
 	if title != "" {
 		header += "\n" + title
 	}
+	if attribution := resolved.attribution(); attribution != "" {
+		header += "\nsource: " + attribution
+	}
 	return &mcp.ToolResult{
 		Content: []mcp.ContentBlock{{Type: "text", Text: renderDiffFiles(header, files)}},
-		StructuredContent: map[string]any{
+		StructuredContent: resolved.fields(map[string]any{
 			"sha":    headSHA,
 			"number": number,
 			"files":  len(files),
-		},
+		}),
 	}, nil
 }
 
@@ -466,7 +583,7 @@ func (h *ReviewToolHandler) executePullRequestDiff(ctx context.Context, client *
 // records review evidence: the verified object is the pull request, and a merge
 // commit's first-parent diff can be empty while the PR is large. An empty
 // commit diff is a validation error, not a successful empty tool result.
-func (h *ReviewToolHandler) executeCommitDiff(ctx context.Context, client *githubapp.Client, repo, headSHA string) (*mcp.ToolResult, error) {
+func (h *ReviewToolHandler) executeCommitDiff(ctx context.Context, client *githubapp.Client, repo string, resolved *resolvedReviewSource, headSHA string) (*mcp.ToolResult, error) {
 	diff, err := client.GetCommit(ctx, repo, headSHA)
 	if err != nil {
 		return nil, err
@@ -476,12 +593,15 @@ func (h *ReviewToolHandler) executeCommitDiff(ctx context.Context, client *githu
 			headSHA)
 	}
 	header := fmt.Sprintf("commit %s\n%s", diff.SHA, strings.TrimSpace(diff.Message))
+	if attribution := resolved.attribution(); attribution != "" {
+		header += "\nsource: " + attribution
+	}
 	return &mcp.ToolResult{
 		Content: []mcp.ContentBlock{{Type: "text", Text: renderDiffFiles(header, diff.Files)}},
-		StructuredContent: map[string]any{
+		StructuredContent: resolved.fields(map[string]any{
 			"sha":   diff.SHA,
 			"files": len(diff.Files),
-		},
+		}),
 	}, nil
 }
 
@@ -563,7 +683,7 @@ func (h *ReviewToolHandler) linkedIssue(ctx context.Context, projectID, repo str
 // executeReviewSubmit enforces the live-head binding and the same-run evidence
 // rule, then posts the review, the reviewed check and the merge-guard marker
 // with byte-exact text.
-func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *githubapp.Client, projectID, repo string, args map[string]any) (*mcp.ToolResult, error) {
+func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *githubapp.Client, projectID, repo string, resolved *resolvedReviewSource, args map[string]any) (*mcp.ToolResult, error) {
 	number, ok := intArg(args, "number")
 	if !ok || number <= 0 {
 		return nil, apperror.NewValidation("github app tool: number is required")
@@ -680,14 +800,14 @@ func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *git
 	}
 	return &mcp.ToolResult{
 		Content: []mcp.ContentBlock{{Type: "text", Text: fmt.Sprintf("%s posted for %s#%d at %s", verdict, repo, number, headSHA)}},
-		StructuredContent: map[string]any{
+		StructuredContent: resolved.fields(map[string]any{
 			"repo":       repo,
 			"number":     number,
 			"headSha":    headSHA,
 			"verdict":    verdict,
 			"event":      event,
 			"conclusion": conclusion,
-		},
+		}),
 	}, nil
 }
 
