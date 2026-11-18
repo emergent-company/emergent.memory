@@ -16,6 +16,10 @@ enum AuthFailure {
     /// (the refresh token expired, was revoked, or was rotated away); a refresh
     /// failure that carries it must not be treated as transient, or the account
     /// silently retries a token that can never work again.
+    ///
+    /// The HTTP status is read through `statusToken(in:)`, never by looking for
+    /// the digits alone: a project name, path or id containing `401` (e.g.
+    /// `[Work 401 Audit] create failed`) is not an auth failure.
     static func looksLikeAuthFailure(_ error: Error) -> Bool {
         let text = ((error as? ConnectorCLIError)?.errorDescription ?? error.localizedDescription)
             .lowercased()
@@ -23,6 +27,53 @@ enum AuthFailure {
             || text.contains("invalid_grant")
             || text.contains("invalid_token")
             || text.contains("unauthorized")
-            || text.contains("401")
+            || statusToken(in: text) == 401
     }
+
+    /// The first HTTP status token in `text`, when it carries one.
+    ///
+    /// Only the shapes the connector CLI and the server SDK actually emit are
+    /// accepted, and each is anchored to its own syntax so text that merely
+    /// contains the digits (a project name, a port, an id) can never be read as
+    /// a status:
+    ///
+    /// - `[<status>] …` / `[<status>] <code>: …` — the server SDK's error text
+    ///   (`apps/server/pkg/sdk/errors`: `fmt.Sprintf("[%d] %s", …)`, the detail
+    ///   the CLI prefixes with `memory-connector projects use: …`). The bracket
+    ///   must be closed AND followed by the detail text, so a project name that
+    ///   is exactly `[503]` (or starts with three digits, `[404 Reasons] …`) is
+    ///   not a status and the scan continues.
+    /// - `status <status>` — the CLI/Go shape for a refresh failure, e.g.
+    ///   `refresh failed with status 400`.
+    /// - `HTTP <status>` — `OIDCError.httpStatus`'s own text, e.g.
+    ///   `The identity provider returned HTTP 401.`
+    ///
+    /// Digits alone are never a token: `[Work 401 Audit] create failed` has no
+    /// status, and a bare `404` that the CLI does not emit as `[404]` is left
+    /// unparsed rather than guessed at.
+    static func statusToken(in text: String) -> Int? {
+        guard let regex = statusRegex else { return nil }
+        let full = NSRange(text.startIndex ..< text.endIndex, in: text)
+        guard let match = regex.firstMatch(in: text, options: [], range: full) else { return nil }
+        for group in 1 ... 3 {
+            let range = match.range(at: group)
+            guard range.location != NSNotFound, let value = Int((text as NSString).substring(with: range))
+            else { continue }
+            return value
+        }
+        return nil
+    }
+
+    /// The three anchored shapes above, sharing one left-to-right scan so the
+    /// first recognised token wins (the status that follows a bracketed project
+    /// name cannot be shadowed by the name).
+    ///
+    /// The bracketed form requires whitespace and then at least one character
+    /// after it: real output is `[<status>] <detail>`, while a project named
+    /// exactly `[503]` is followed by the end of the string (or by punctuation
+    /// the name is quoted with) and is not a status.
+    private static let statusRegex = try? NSRegularExpression(
+        pattern: #"\[(\d{3})\](?=\s+\S)|\bstatus\s+(\d{3})\b|\bhttp\s+(\d{3})\b"#,
+        options: [.caseInsensitive]
+    )
 }

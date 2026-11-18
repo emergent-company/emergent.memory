@@ -107,18 +107,25 @@ func TestUISchemaPacksRoute(t *testing.T) {
 		"Schema packs", "personal-memory", "v1.0.0", "a pack",
 		"Project", "1 object type", "1 relationship type",
 		`href="/schema/packs/pack-1"`, "Add schema", "1 pack",
-		`data-testid="schema-pack-card"`, `data-schema-pack-group="none"`, "No blueprint",
+		`data-testid="schema-pack-card"`, `data-schema-pack-section="manual"`, "Manual",
+		`href="/schema/object-types/person"`, `data-testid="schema-pack-type-link"`,
+		`data-testid="schema-pack-title"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("packs list missing %q", want)
 		}
 	}
+	// A manual pack's title is not a link; the type chip and the explicit
+	// Details link are what navigate.
+	if strings.Contains(body, `data-schema-pack-title-href`) {
+		t.Error("manual pack title must not be a link")
+	}
 }
 
-// TestGroupSchemaPacks pins the packs list's grouping rules: packs whose
-// blueprint declares them group under that blueprint (blueprint groups first,
-// ordered case-insensitively by label), and packs no blueprint declares land in
-// one trailing "No blueprint" group.
+// TestGroupSchemaPacks pins the Blueprints section's grouping rules: only
+// blueprint-owned packs appear, one group per blueprint, ordered
+// case-insensitively by the blueprint label, with a heading that links to the
+// blueprint.
 func TestGroupSchemaPacks(t *testing.T) {
 	groups := groupSchemaPacks([]schemaPackSummary{
 		{ID: "cars", Name: "cars", Version: "1.0.0"},
@@ -130,21 +137,105 @@ func TestGroupSchemaPacks(t *testing.T) {
 	for _, g := range groups {
 		keys = append(keys, g.Key)
 	}
-	if want := []string{"blueprint:bp2", "blueprint:bp1", "none"}; strings.Join(keys, ",") != strings.Join(want, ",") {
+	if want := []string{"blueprint:bp2", "blueprint:bp1"}; strings.Join(keys, ",") != strings.Join(want, ",") {
 		t.Fatalf("group order = %v, want %v", keys, want)
 	}
-	if groups[0].BlueprintID() != "bp2" || groups[2].BlueprintID() != "" {
-		t.Errorf("blueprint ids = %q / %q, want bp2 / empty", groups[0].BlueprintID(), groups[2].BlueprintID())
+	if groups[0].BlueprintID() != "bp2" || groups[1].BlueprintID() != "bp1" {
+		t.Errorf("blueprint ids = %q / %q, want bp2 / bp1", groups[0].BlueprintID(), groups[1].BlueprintID())
 	}
-	if groups[2].Label != "No blueprint" {
-		t.Errorf("unowned group label = %q, want %q", groups[2].Label, "No blueprint")
+	if groups[1].Href != "/blueprints/bp1" {
+		t.Errorf("blueprint heading href = %q, want /blueprints/bp1", groups[1].Href)
 	}
-	var unowned []string
-	for _, p := range groups[2].Packs {
-		unowned = append(unowned, p.ID)
+	var owned []string
+	for _, r := range groups[0].Rows {
+		owned = append(owned, r.Pack.ID)
 	}
-	if strings.Join(unowned, ",") != "cars,overrides" {
-		t.Errorf("unowned group packs = %v, want cars,overrides", unowned)
+	if strings.Join(owned, ",") != "notes" {
+		t.Errorf("blueprint bp2 rows = %v, want notes", owned)
+	}
+}
+
+// TestAssignPackCategories pins the four-way classification and its precedence:
+// an owning blueprint wins, then a provider token, then the provider catalog's
+// declared pack name (the pre-reconcile fallback for an existing row), then a
+// global/builtin row; the rest is manual.
+func TestAssignPackCategories(t *testing.T) {
+	providers := []DSProvider{
+		{Type: "github_app", Name: "GitHub App / Bot", SchemaPack: "github-app-workflow"},
+	}
+	sources := []DSIntegration{
+		{ID: "src-1", Name: "emergent-company/emergent.memory", ProviderType: "github_app"},
+		{ID: "src-2", Name: "mkucharz/memory", ProviderType: "github_app"},
+	}
+	packs := []schemaPackSummary{
+		{ID: "bp", Name: "pack", Provenance: &ProvenanceInfo{BlueprintID: "bp1"}},
+		{ID: "token", Name: "github-app-workflow", ProjectID: "p1", Source: "provider:github_app"},
+		{ID: "catalog", Name: "github-app-workflow", ProjectID: "p1", Source: "manual"},
+		{ID: "builtin", Name: "session-message-types", Source: "builtin"},
+		{ID: "manual", Name: "cars", ProjectID: "p1", Source: "manual"},
+	}
+	assignPackCategories(packs, providers, sources)
+
+	if packs[0].Category != packCategoryBlueprints {
+		t.Errorf("blueprint-owned category = %q", packs[0].Category)
+	}
+	for _, i := range []int{1, 2} {
+		if packs[i].Category != packCategoryDataSource {
+			t.Errorf("pack %d category = %q, want data-sources", i, packs[i].Category)
+		}
+		if packs[i].ProviderLabel != "GitHub App / Bot" {
+			t.Errorf("pack %d provider label = %q", i, packs[i].ProviderLabel)
+		}
+		if len(packs[i].LinkedSources) != 2 || packs[i].LinkedSources[0].ID != "src-1" {
+			t.Errorf("pack %d linked sources = %+v", i, packs[i].LinkedSources)
+		}
+	}
+	if packs[3].Category != packCategoryBuiltIn {
+		t.Errorf("global builtin category = %q", packs[3].Category)
+	}
+	if packs[4].Category != packCategoryManual {
+		t.Errorf("manual category = %q", packs[4].Category)
+	}
+}
+
+// TestSchemaPackSections pins the fixed section order and the data-source rows:
+// one row per installed app, each linking to that app's detail page, and a
+// provider with no installed app still gets a plain row.
+func TestSchemaPackSections(t *testing.T) {
+	packs := []schemaPackSummary{
+		{ID: "m1", Name: "cars", Category: packCategoryManual},
+		{ID: "b1", Name: "personal-memory", Category: packCategoryBlueprints, Provenance: &ProvenanceInfo{BlueprintID: "bp1", BlueprintName: "personal-memory", BlueprintVersion: "1.0.0"}},
+		{ID: "d1", Name: "github-app-workflow", Version: "1.3.0", Category: packCategoryDataSource, ProviderType: "github_app", ProviderLabel: "GitHub App / Bot", LinkedSources: []packLinkedSource{{ID: "src-1", Name: "org/repo"}, {ID: "src-2", Name: "me/repo"}}},
+		{ID: "d2", Name: "email-core", Version: "1.0.0", Category: packCategoryDataSource, ProviderType: "gmail", ProviderLabel: "Gmail"},
+		{ID: "g1", Name: "session-message-types", Category: packCategoryBuiltIn},
+	}
+	sections := schemaPackSections(packs)
+	var keys []string
+	for _, sec := range sections {
+		keys = append(keys, sec.Key)
+	}
+	if want := []string{"manual", "blueprints", "data-sources", "built-in"}; strings.Join(keys, ",") != strings.Join(want, ",") {
+		t.Fatalf("section order = %v, want %v", keys, want)
+	}
+	if sections[0].Groups[0].Rows[0].Title != "cars" || sections[0].Groups[0].Rows[0].Href != "" {
+		t.Errorf("manual row = %+v, want plain title", sections[0].Groups[0].Rows[0])
+	}
+	if sections[1].Groups[0].Href != "/blueprints/bp1" {
+		t.Errorf("blueprint group href = %q", sections[1].Groups[0].Href)
+	}
+	dsRows := sections[2].Groups[0].Rows
+	if sections[2].Groups[0].Label != "GitHub App / Bot" || len(dsRows) != 2 {
+		t.Fatalf("data-source group = %+v", sections[2].Groups[0])
+	}
+	if dsRows[0].Title != "org/repo" || dsRows[0].Href != "/data-sources/src-1" || dsRows[0].Subtitle != "github-app-workflow v1.3.0" {
+		t.Errorf("data-source row = %+v", dsRows[0])
+	}
+	emailRows := sections[2].Groups[1].Rows
+	if len(emailRows) != 1 || emailRows[0].Href != "" || emailRows[0].Title != "Gmail" {
+		t.Errorf("unlinked provider row = %+v, want one plain Gmail row", emailRows)
+	}
+	if sections[3].Groups[0].Rows[0].Title != "session-message-types" || sections[3].Groups[0].Rows[0].Href != "" {
+		t.Errorf("built-in row = %+v", sections[3].Groups[0].Rows[0])
 	}
 }
 
@@ -167,7 +258,7 @@ func TestUISchemaPacksRouteGlobalPackWithoutCatalog(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"session-message-types", "Global", `href="/schema/packs/global-1"`} {
+	for _, want := range []string{"session-message-types", "Global", `href="/schema/packs/global-1"`, `data-schema-pack-section="built-in"`, "Built-in"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("global pack list missing %q", want)
 		}
@@ -221,6 +312,7 @@ func TestUISchemaPackDetailRoute(t *testing.T) {
 		"Object types", "Relationship types",
 		`href="/schema/object-types/person"`, "knows",
 		"Pack details", `href="/schema/packs" aria-current="page"`,
+		"Source", "Manual",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("pack detail missing %q", want)
@@ -229,6 +321,44 @@ func TestUISchemaPackDetailRoute(t *testing.T) {
 	// The pack's types are scoped to the pack: another pack's type must not leak.
 	if strings.Contains(body, "agent-notes") {
 		t.Error("types from another pack leaked into the detail")
+	}
+}
+
+// TestUISchemaPackDetailDataSource pins the data-source provenance on the pack
+// detail: the friendly provider label replaces the raw token, and each installed
+// app is a link to its data-source page.
+func TestUISchemaPackDetailDataSource(t *testing.T) {
+	f := &fakeMemory{
+		compiled: &CompiledSchemaTypes{ObjectTypes: []CompiledType{
+			{Name: "GitHubIssue", SchemaID: "pack-gh", SchemaName: "github-app-workflow", SchemaVersion: "1.3.0"},
+		}},
+		schemas: []SchemaInfo{{ID: "pack-gh", Name: "github-app-workflow", Version: "1.3.0", ProjectID: "p1", Source: "provider:github_app"}},
+		dsProviders: []DSProvider{
+			{Type: "github_app", Name: "GitHub App / Bot", SchemaPack: "github-app-workflow"},
+		},
+		dsIntegrations: []DSIntegration{
+			{ID: "src-1", Name: "emergent-company/emergent.memory", ProviderType: "github_app"},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/schema/packs/:id", s.uiSchemaPack)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/schema/packs/pack-gh", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"GitHub App / Bot", "Installed apps", `href="/data-sources/src-1"`, "emergent-company/emergent.memory",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("data-source pack detail missing %q", want)
+		}
+	}
+	if strings.Contains(body, "provider:github_app") {
+		t.Error("data-source pack detail must not print the raw provenance token")
 	}
 }
 

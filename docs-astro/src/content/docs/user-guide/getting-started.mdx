@@ -1,0 +1,68 @@
+---
+title: "Getting Started"
+description: Get a Memory instance, your first project, a blueprint, and a client connected — self-hosted or on Memory Cloud.
+---
+
+import { Aside, LinkButton } from '@astrojs/starlight/components';
+import Card from '../../../components/Card.astro';
+import CardGrid from '../../../components/CardGrid.astro';
+
+Memory runs in two shapes. Pick yours, then follow one path — after the first
+step they are the same work: a project, a blueprint, and a client connected.
+
+<CardGrid>
+<Card title="Self-hosted" icon="lucide:server">
+
+Run Memory on infrastructure you control through a single installer — Railway,
+Docker, Google Cloud or AWS. Your database, your keys, your network.
+
+<LinkButton href="/user-guide/getting-started/self-hosted/" variant="primary" icon="right-arrow">Install your own instance</LinkButton>
+
+</Card>
+<Card title="Memory Cloud" icon="lucide:cloud">
+
+Use the instance we run and maintain. Nothing to install and nothing to upgrade —
+sign in and you are a project away from a working graph.
+
+<LinkButton href="/user-guide/getting-started/memory-cloud/" variant="secondary" icon="right-arrow">Use Memory Cloud</LinkButton>
+
+</Card>
+</CardGrid>
+
+## Which one?
+
+| | Self-hosted | Memory Cloud |
+|---|---|---|
+| **Who runs it** | You — the containers, database, object storage and identity stack all run in your account | Us |
+| **First step** | Run the installer (about 20 minutes, mostly waiting) | Sign in with your account |
+| **What you need** | A Railway, Docker or cloud account, and a domain for a production install | An invitation from your organization |
+| **Best for** | Data residency, private networks, on-premise CI, full control of upgrades | Getting to a working graph the same day, with no infrastructure to own |
+| **Upgrades** | You choose when to move | We roll them out |
+
+<Aside type="note" title="You can move between them">
+
+The API, the CLI and the graph model are identical, so a project exported from
+one instance imports into the other. Start where it is easiest to start.
+
+</Aside>
+
+## What both paths give you
+
+Whichever path you take, the same three things come next:
+
+1. **A project** — the workspace that holds your graph, documents, agents and
+   branches. An organization can own several.
+2. **A blueprint** — a versioned bundle of object types, agents, skills and seed
+   data that installs a working domain model in one action. You do not start
+   from an empty schema.
+3. **A client** — an MCP share for an AI client, the `memory` CLI for a terminal,
+   or the REST API for anything else. All three use the same credentials.
+
+## Where to go next
+
+- [Deploy on Railway](/tutorials/deploy-to-railway/) — the full
+  walkthrough of a self-hosted install, every screen explained.
+- [Knowledge Graph](/user-guide/knowledge-graph/) — what you are
+  actually storing once you are connected.
+- [Blueprints](/developer-guide/cli-reference/) — the CLI's
+  blueprint commands, for installing the same bundle from a script.

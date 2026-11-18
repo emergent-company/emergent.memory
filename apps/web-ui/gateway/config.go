@@ -175,6 +175,12 @@ type Config struct {
 	// configured.
 	MarketTrustedIssuers []string
 
+	// DocsURL is the documentation site origin (MEMORY_DOCS_URL). Empty hides
+	// the Docs sidebar entry — the same shape as MarketURL, because a
+	// self-hosted instance may have no public docs host to point at, and a link
+	// to somebody else's docs is worse than no link.
+	DocsURL string
+
 	// TrustedProxyCIDRs (TRUSTED_PROXY_CIDRS, comma-separated) names the
 	// networks a forwarding proxy connects from. c.RealIP() reads
 	// X-Forwarded-For only when the socket peer is inside one of them,
@@ -220,11 +226,16 @@ func loadConfig() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	docsURL, err := loadDocsURL()
+	if err != nil {
+		return Config{}, err
+	}
 
 	return Config{
 		Port:                 envOr("MEMORY_PORT", "8095"),
 		MarketURL:            marketURL,
 		MarketTrustedIssuers: marketIssuers,
+		DocsURL:              docsURL,
 		MemoryURL:            memoryURL,
 		MemoryPublicURL:      strings.TrimRight(envOr("MEMORY_PUBLIC_URL", memoryURL), "/"),
 		MemoryProjectID:      os.Getenv("MEMORY_PROJECT_ID"),
@@ -333,6 +344,35 @@ func loadMarketConfig() (string, []string, error) {
 		issuers = append(issuers, normalized)
 	}
 	return primary, issuers, nil
+}
+
+// loadDocsURL parses MEMORY_DOCS_URL, the documentation site the sidebar links
+// to. Empty hides the entry. Unlike a market issuer — which must be a bare
+// origin, because it is compared against OIDC issuers — a docs site may live
+// under a path (`https://example.com/docs`), so only the parts that would make
+// the link unsafe or ambiguous are refused.
+func loadDocsURL() (string, error) {
+	raw := strings.TrimSpace(os.Getenv("MEMORY_DOCS_URL"))
+	if raw == "" {
+		return "", nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("MEMORY_DOCS_URL: invalid URL %q: %w", raw, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("MEMORY_DOCS_URL: %q must be an absolute http(s) URL", raw)
+	}
+	if u.Host == "" {
+		return "", fmt.Errorf("MEMORY_DOCS_URL: %q is missing a host", raw)
+	}
+	if u.User != nil {
+		return "", fmt.Errorf("MEMORY_DOCS_URL: %q must not carry credentials", raw)
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("MEMORY_DOCS_URL: %q must not carry a query or fragment", raw)
+	}
+	return strings.TrimRight(u.String(), "/"), nil
 }
 
 // normalizeMarketIssuer canonicalizes one market origin, rejecting anything

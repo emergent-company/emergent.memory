@@ -281,15 +281,29 @@
 
     /* ---------- bubbles ---------- */
 
+    // announceDay paints the transcript's day divider for `when` (or now when
+    // the caller has no timestamp). The shared component owns the per-container
+    // "last announced day" state, so the live stream and a full history render
+    // never announce the same day twice.
+    function announceDay(when) {
+      var C = window.MemoryChatComponents;
+      if (C && typeof C.maybeDayDivider === "function") {
+        C.maybeDayDivider(ctx.messages, when || new Date());
+      }
+    }
+
     // meta is an optional run-transcript annotation ("step N · 5m ago")
     // rendered as a quiet footer under the bubble when set; every other call
     // site (live stream, history, side panel) omits it → no footer.
-    function addUserMessage(text, silent, meta) {
+    // createdAt stamps the bubble's transcript day when history is replayed;
+    // live turns omit it and the bubble belongs to "now".
+    function addUserMessage(text, silent, meta, createdAt) {
       // A user turn is a new run boundary: the previous turn's run is final.
       closeLiveGroup();
       closeLiveRun();
       if (ctx.onActivity) ctx.onActivity("user");
       ctx.hideEmpty();
+      announceDay(createdAt);
       var wrap = document.createElement("div");
       wrap.className = "chat chat-end memory-rise";
       wrap.innerHTML =
@@ -304,8 +318,11 @@
 
     // meta behaves as in addUserMessage: appended under the bubble only when set.
     // Returns the message wrapper so the host can attach a turn footer.
+    // opts.createdAt stamps the bubble's transcript day (history replay); the
+    // live path omits it.
     function addAssistantMessage(html, name, silent, meta, opts) {
       ctx.hideEmpty();
+      announceDay(opts && opts.createdAt);
       var header = opts && opts.header
         ? '<div class="chat-header text-xs text-muted">' + escapeHTML(opts.header) + "</div>"
         : "";
@@ -331,6 +348,7 @@
       closeLiveRun();
       if (ctx.onActivity) ctx.onActivity("assistant");
       ctx.hideEmpty();
+      announceDay();
       var b = document.createElement("div");
       b.className = "chat chat-start memory-rise memory-assistant";
       b.innerHTML =

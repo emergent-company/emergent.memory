@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	sdkauth "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/auth"
 
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/account"
 )
@@ -423,5 +426,123 @@ func TestAuthImportExplicitFalseDoesNotClearNeedsReauth(t *testing.T) {
 	}
 	if !sess.NeedsReauth {
 		t.Error("NeedsReauth = false after importing needs_reauth:false over the rejected token, want the mark kept")
+	}
+}
+
+// TestAuthImportWhitespaceOnlyRefreshTokenDifferenceKeepsNeedsReauth pins the
+// trim: a payload that repeats the rejected token with trailing whitespace is
+// the same token, so it must not count as a replacement and clear the mark.
+func TestAuthImportWhitespaceOnlyRefreshTokenDifferenceKeepsNeedsReauth(t *testing.T) {
+	dir := t.TempDir()
+	serverURL := "https://memory.example.test"
+	configPath := writeAuthConfig(t, dir, serverURL)
+	seedAccessSession(t, configPath, serverURL, &account.Session{
+		ServerURL:    serverURL,
+		IssuerURL:    "https://issuer.test",
+		AccessToken:  "access-stale",
+		RefreshToken: "refresh-rejected",
+		ExpiresAt:    time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
+		NeedsReauth:  true,
+	})
+
+	// JSON \n decodes to a real newline: the shape a shell `echo` pipes.
+	withAuthStdin(t, `{"access_token":"at-new","refresh_token":"refresh-rejected\n"}`)
+
+	code, stdout, stderr := runAuthCapture("import", "--config", configPath, "--server", serverURL, "--json")
+	if code != 0 {
+		t.Fatalf("code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	var doc struct {
+		NeedsReauth bool `json:"needs_reauth"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		t.Fatalf("decode %q: %v", stdout, err)
+	}
+	if !doc.NeedsReauth {
+		t.Errorf("needs_reauth = false for a whitespace-only repeat of the rejected token: %s", stdout)
+	}
+
+	sess, err := account.NewManager(account.BaseDirForConfig(configPath)).SessionFor(serverURL)
+	if err != nil || sess == nil {
+		t.Fatalf("SessionFor = (%v, %v), want a persisted session", sess, err)
+	}
+	if sess.RefreshToken != "refresh-rejected" {
+		t.Errorf("RefreshToken = %q, want the stored token (whitespace trimmed), not a new value", sess.RefreshToken)
+	}
+	if !sess.NeedsReauth {
+		t.Error("NeedsReauth = false after a whitespace-only repeat, want the mark kept")
+	}
+}
+
+// TestAuthImportWaitsForAnInFlightRefresh is the race the lock closes: a refresh
+// rotates the single-use refresh token while the import is between its read and
+// its Save. An unlocked import writes the pre-rotation token back, so the next
+// refresh is rejected (wasted round trip and a marked session). Serialized on
+// the refresh lock, the import waits for the rotation and keeps its result.
+func TestAuthImportWaitsForAnInFlightRefresh(t *testing.T) {
+	dir := t.TempDir()
+	serverURL := "https://memory.example.test"
+	configPath := writeAuthConfig(t, dir, serverURL)
+	seedAccessSession(t, configPath, serverURL, &account.Session{
+		ServerURL:    serverURL,
+		IssuerURL:    "https://issuer.test",
+		AccessToken:  "access-stale",
+		RefreshToken: "refresh-1",
+		ExpiresAt:    time.Now().Add(-time.Minute),
+	})
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	deps := refreshDeps(t)
+	deps.RefreshToken = func(context.Context, *sdkauth.OIDCConfig, string, string) (*sdkauth.Credentials, error) {
+		close(started)
+		<-release
+		return &sdkauth.Credentials{
+			AccessToken:  "access-renewed",
+			RefreshToken: "refresh-2",
+			ExpiresAt:    time.Now().Add(12 * time.Hour),
+		}, nil
+	}
+	withAccessTokenManager(t, deps)
+
+	// A refresh that has read the session and is about to rotate its token.
+	m := newAuthManager(account.BaseDirForConfig(configPath))
+	refreshDone := make(chan error, 1)
+	go func() {
+		_, err := m.Refresh(context.Background(), serverURL)
+		refreshDone <- err
+	}()
+	<-started
+
+	withAuthStdin(t, `{"access_token":"access-imported","expires_at":"2031-01-02T03:04:05Z"}`)
+	importDone := make(chan int, 1)
+	go func() {
+		code, _, _ := runAuthCapture("import", "--config", configPath, "--server", serverURL)
+		importDone <- code
+	}()
+
+	select {
+	case code := <-importDone:
+		t.Fatalf("auth import finished (code %d) while a refresh held the lock", code)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	close(release)
+	if err := <-refreshDone; err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if code := <-importDone; code != 0 {
+		t.Fatalf("auth import code = %d, want 0", code)
+	}
+
+	sess, err := account.NewManager(account.BaseDirForConfig(configPath)).SessionFor(serverURL)
+	if err != nil || sess == nil {
+		t.Fatalf("SessionFor = (%v, %v), want a persisted session", sess, err)
+	}
+	if sess.RefreshToken != "refresh-2" {
+		t.Errorf("RefreshToken = %q, want the rotated refresh-2 (the import resurrected the pre-rotation token)", sess.RefreshToken)
+	}
+	if sess.AccessToken != "access-imported" {
+		t.Errorf("AccessToken = %q, want the imported access-imported", sess.AccessToken)
 	}
 }

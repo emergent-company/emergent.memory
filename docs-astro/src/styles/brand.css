@@ -1,0 +1,973 @@
+/* ==========================================================================
+   Memory docs theme.
+
+   Maps the product web UI's daisyUI brand theme onto Starlight's design
+   tokens. Source of truth:
+     apps/web-ui/gateway/webui/css/app.css  →  @plugin "daisyui/theme"
+     go-daisy/components/css/theme-memory.css (the brand palette itself)
+   and the `.memory-md` prose block further down app.css.
+
+   Palette: ink-navy surfaces, brass primary, steel secondary, mint accent.
+   1rem = 15px, radii field .25 / box .5 / selector 1rem.
+
+   Two themes. The product app ships a single theme — `themes: dark --default`
+   in app.css — so **dark is the canonical one** and every literal below is
+   either one of those tokens or a direct port of a `.memory-md` / chrome rule.
+   The light theme is *derived*, not invented: same hue and chroma, lightness
+   inverted around the token's own midpoint, with the brass/steel/mint accents
+   darkened only where they carry text on a light surface (the app's L=0.74
+   brass is a 2:1 contrast on white, which is a fill colour, not an ink one).
+   Nothing here changes what dark mode looks like.
+
+   Structure: shared metrics/fonts → dark tokens → light tokens → rules. Every
+   hairline, overlay and tint in the rules goes through a `--mem-*` variable, so
+   a theme is one block, not a diff through the whole file.
+   ========================================================================== */
+
+/* ---------- shared: metrics, type, brand accents ------------------------- */
+:root {
+  /* --- metrics ------------------------------------------------------------ */
+  --sl-nav-height: 3.5rem;
+  --sl-sidebar-width: 17rem;
+  --sl-content-width: 51rem;
+
+  /* --- type: app.css declares no webfont, so the app renders system sans -- */
+  --sl-font: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --sl-font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
+    'Liberation Mono', monospace;
+
+  /* --- brand accents: identical in both themes ---------------------------- */
+  --mem-brass: oklch(0.74 0.135 78);   /* --color-primary */
+  --mem-steel: oklch(0.64 0.105 240);  /* --color-secondary */
+  --mem-mint: oklch(0.76 0.15 162);    /* --color-accent */
+  --mem-brass-ink: oklch(0.2 0.04 78); /* --color-primary-content */
+}
+
+/* ---------- dark: the app's own theme ------------------------------------ */
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* --- surfaces: daisyUI base-100 / 200 / 300 ----------------------------- */
+  --sl-color-bg: oklch(0.175 0.014 274);            /* base-200 — page */
+  --sl-color-bg-nav: oklch(0.215 0.016 274);        /* base-100 — surface */
+  --sl-color-bg-sidebar: oklch(0.215 0.016 274);    /* base-100 */
+  --sl-color-bg-inline-code: oklch(0.74 0.135 78 / 0.14);
+  --sl-color-bg-accent: oklch(0.74 0.135 78);       /* primary */
+
+  --sl-color-black: oklch(0.135 0.012 274);         /* base-300 — deepest */
+  --sl-color-white: oklch(0.93 0.008 265);          /* base-content — ink */
+
+  /* --- text --------------------------------------------------------------- */
+  --sl-color-text: oklch(0.93 0.008 265);           /* base-content */
+  --sl-color-text-accent: oklch(0.74 0.135 78);     /* primary (brass) */
+  --sl-color-text-invert: oklch(0.2 0.04 78);       /* primary-content */
+
+  /* --- gray ramp: derived from base-content, mirrors --color-muted-* ------ */
+  --sl-color-gray-1: oklch(0.93 0.008 265);
+  --sl-color-gray-2: oklch(0.855 0.009 265);        /* muted-bright */
+  --sl-color-gray-3: oklch(0.705 0.011 265);        /* muted-strong */
+  --sl-color-gray-4: oklch(0.545 0.012 270);        /* muted */
+  --sl-color-gray-5: oklch(0.335 0.015 274);
+  --sl-color-gray-6: oklch(0.265 0.02 274);         /* neutral */
+  --sl-color-gray-7: oklch(0.215 0.016 274);        /* base-100 */
+
+  /* --- accent: --color-primary (brass) ------------------------------------ */
+  --sl-color-accent-low: oklch(0.315 0.06 78);
+  --sl-color-accent: oklch(0.74 0.135 78);
+  --sl-color-accent-high: oklch(0.855 0.1 82);
+
+  /* --- hairlines ---------------------------------------------------------- */
+  --sl-color-hairline-light: oklch(1 0 0 / 0.09);
+  --sl-color-hairline: oklch(1 0 0 / 0.07);
+  --sl-color-hairline-shade: oklch(0.135 0.012 274);
+
+  /* --- semantic layer for the rules below --------------------------------- */
+  --mem-page: #0e1017;                    /* pre-paint guard, = base-200 */
+  --mem-surface: oklch(0.215 0.016 274);  /* card / panel body (base-100) */
+  --mem-surface-hover: oklch(0.23 0.017 274);
+  --mem-line-faint: oklch(1 0 0 / 0.018);
+  --mem-line: oklch(1 0 0 / 0.07);
+  --mem-line-strong: oklch(1 0 0 / 0.09);
+  --mem-line-heavy: oklch(1 0 0 / 0.16);
+  --mem-line-control: oklch(1 0 0 / 0.14);
+  --mem-fill-weak: oklch(1 0 0 / 0.018);
+  --mem-fill: oklch(1 0 0 / 0.035);
+  --mem-fill-mid: oklch(1 0 0 / 0.045);
+  --mem-nav-active-bg: oklch(0.74 0.135 78 / 0.12);
+  --mem-chip-bg: oklch(0.74 0.135 78 / 0.14);
+  --mem-chip-border: oklch(0.74 0.135 78 / 0.24);
+  --mem-chip-fg: oklch(0.82 0.09 78);
+  --mem-link-underline: oklch(0.74 0.135 78 / 0.45);
+  --mem-link-hover: oklch(0.82 0.12 80);
+  --mem-glow-brass: oklch(0.74 0.135 78 / 0.07);
+  --mem-glow-steel: oklch(0.64 0.105 240 / 0.05);
+
+  /* --- asides: steel / mint / brass / error ------------------------------- */
+  --mem-note-fg: oklch(0.79 0.09 240);
+  --mem-note-edge: oklch(0.64 0.105 240);
+  --mem-note-bg: oklch(0.64 0.105 240 / 0.1);
+  --mem-tip-fg: oklch(0.85 0.12 162);
+  --mem-tip-edge: oklch(0.76 0.15 162);
+  --mem-tip-bg: oklch(0.76 0.15 162 / 0.1);
+  --mem-tip-ink: oklch(0.2 0.04 162);
+  --mem-caution-fg: oklch(0.88 0.12 82);
+  --mem-caution-edge: oklch(0.81 0.155 82);
+  --mem-caution-bg: oklch(0.81 0.155 82 / 0.1);
+  --mem-danger-fg: oklch(0.8 0.13 26);
+  --mem-danger-edge: oklch(0.63 0.2 26);
+  --mem-danger-bg: oklch(0.63 0.2 26 / 0.12);
+}
+
+/* ---------- light: derived from the same tokens ---------------------------
+   Rule applied throughout: keep the hue and chroma of the dark token, invert
+   its lightness (L' = 1 − L) and then pull it toward the surface so text keeps
+   AA on white. Surfaces stay on hue 274 (ink-navy) at the lowest chroma so the
+   page reads as the same family as the app, not a generic grey. */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  /* --- surfaces: base-200 page, base-100 surface -------------------------- */
+  --sl-color-bg: oklch(0.985 0.003 274);            /* page */
+  --sl-color-bg-nav: oklch(1 0 0);                  /* surface */
+  --sl-color-bg-sidebar: oklch(1 0 0);
+  --sl-color-bg-inline-code: oklch(0.74 0.135 78 / 0.16);
+  --sl-color-bg-accent: oklch(0.74 0.135 78);
+
+  --sl-color-black: oklch(1 0 0);                   /* background, per Starlight */
+  --sl-color-white: oklch(0.24 0.02 274);           /* highest-contrast ink */
+
+  /* --- text: 0.28 L is ~11:1 on the page; headings take --sl-color-white -- */
+  --sl-color-text: oklch(0.3 0.018 274);
+  --sl-color-text-accent: oklch(0.52 0.12 78);      /* brass, darkened for ink */
+  --sl-color-text-invert: oklch(0.2 0.04 78);
+
+  /* --- gray ramp (1 = darkest ink, 7 = lightest surface) ------------------ */
+  --sl-color-gray-1: oklch(0.24 0.02 274);
+  --sl-color-gray-2: oklch(0.36 0.017 274);
+  --sl-color-gray-3: oklch(0.46 0.015 274);
+  --sl-color-gray-4: oklch(0.56 0.013 270);
+  --sl-color-gray-5: oklch(0.8 0.008 274);
+  --sl-color-gray-6: oklch(0.9 0.006 274);
+  --sl-color-gray-7: oklch(0.97 0.004 274);
+
+  /* --- accent ------------------------------------------------------------ */
+  --sl-color-accent-low: oklch(0.94 0.05 78);       /* brass tint */
+  --sl-color-accent: oklch(0.74 0.135 78);
+  --sl-color-accent-high: oklch(0.42 0.1 78);
+
+  /* --- hairlines: ink at low alpha, the dark theme's white at low alpha --- */
+  --sl-color-hairline-light: oklch(0.2 0.02 274 / 0.16);
+  --sl-color-hairline: oklch(0.2 0.02 274 / 0.12);
+  --sl-color-hairline-shade: oklch(0.9 0.006 274);
+
+  /* --- semantic layer ---------------------------------------------------- */
+  --mem-page: #fbfbfd;
+  --mem-surface: oklch(1 0 0);
+  --mem-surface-hover: oklch(0.99 0.004 274);
+  --mem-line-faint: oklch(0.2 0.02 274 / 0.04);
+  --mem-line: oklch(0.2 0.02 274 / 0.12);
+  --mem-line-strong: oklch(0.2 0.02 274 / 0.16);
+  --mem-line-heavy: oklch(0.2 0.02 274 / 0.24);
+  --mem-line-control: oklch(0.2 0.02 274 / 0.2);
+  --mem-fill-weak: oklch(0.2 0.02 274 / 0.022);
+  --mem-fill: oklch(0.2 0.02 274 / 0.035);
+  --mem-fill-mid: oklch(0.2 0.02 274 / 0.045);
+  --mem-nav-active-bg: oklch(0.74 0.135 78 / 0.18);
+  --mem-chip-bg: oklch(0.74 0.135 78 / 0.16);
+  --mem-chip-border: oklch(0.74 0.135 78 / 0.4);
+  --mem-chip-fg: oklch(0.45 0.1 78);
+  --mem-link-underline: oklch(0.52 0.12 78 / 0.45);
+  --mem-link-hover: oklch(0.42 0.11 78);
+  --mem-glow-brass: oklch(0.74 0.135 78 / 0.05);
+  --mem-glow-steel: oklch(0.64 0.105 240 / 0.04);
+
+  /* --- asides: ink dark enough for AA on the tinted panel ---------------- */
+  --mem-note-fg: oklch(0.42 0.1 240);
+  --mem-note-edge: oklch(0.55 0.105 240);
+  --mem-note-bg: oklch(0.55 0.105 240 / 0.08);
+  --mem-tip-fg: oklch(0.4 0.12 162);
+  --mem-tip-edge: oklch(0.58 0.14 162);
+  --mem-tip-bg: oklch(0.58 0.14 162 / 0.08);
+  --mem-tip-ink: oklch(0.99 0.005 162);
+  --mem-caution-fg: oklch(0.45 0.11 82);
+  --mem-caution-edge: oklch(0.7 0.15 82);
+  --mem-caution-bg: oklch(0.7 0.15 82 / 0.1);
+  --mem-danger-fg: oklch(0.45 0.17 26);
+  --mem-danger-edge: oklch(0.58 0.19 26);
+  --mem-danger-bg: oklch(0.58 0.19 26 / 0.08);
+}
+
+/* The app sets 1rem = 15px (app.css `html`), so every rem-based utility in the
+   product scales down from the browser default. Doubles as the pre-paint guard
+   colour (base-200 in dark, its derived light twin otherwise). */
+html {
+  font-size: 15px;
+  background-color: var(--mem-page);
+}
+
+/* Atmosphere: soft brass glow top-right, faint steel glow bottom-left — the
+   app's `body` background (app.css "Atmosphere" block).
+
+   The colour is declared here, not left to Starlight, because the embedded
+   Scalar reference injects its own preflight `body{background-color:
+   var(--scalar-background-1)}` later in the cascade (equal specificity, so it
+   wins by order). `html > body` outranks it, and keeps a light page light
+   behind a Scalar panel that is fixed to its own dark theme. */
+html > body {
+  background-color: var(--sl-color-bg);
+  background-image:
+    radial-gradient(1100px 520px at 88% -12%, var(--mem-glow-brass), transparent 62%),
+    radial-gradient(900px 600px at -10% 110%, var(--mem-glow-steel), transparent 60%);
+  background-repeat: no-repeat, no-repeat;
+  background-attachment: fixed;
+}
+
+/* ---------- chrome: header ------------------------------------------------
+   The app topbar is base-100 with one full-width hairline on its bottom edge.
+   Starlight nests a `<div class="header">` inside `<header class="header">`,
+   so a bare `.header` rule draws the same line twice — the inner one inset
+   from the logo to the social icons. Match the element only. */
+header.header {
+  border-bottom: 1px solid var(--mem-line);
+}
+
+/* The app has no rule between the topbar and the page body, and no rule above
+   the first section; Starlight adds one between stacked content panels. */
+.content-panel + .content-panel {
+  border-top: 0;
+}
+
+.site-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  gap: 0.625rem;
+  color: var(--sl-color-white);
+}
+
+/* Search control: a field, not a pill — --radius-field (0.25rem). */
+site-search button[data-open-modal] {
+  border-radius: 0.25rem;
+  border-color: var(--mem-line-strong);
+  background-color: var(--sl-color-bg);
+  color: var(--sl-color-gray-3);
+}
+
+site-search button[data-open-modal]:hover {
+  border-color: oklch(0.74 0.135 78 / 0.45);
+  color: var(--sl-color-white);
+}
+
+/* Theme switch (src/components/ThemeToggle.astro). One ghost icon button, the
+   way the app draws its header icon buttons: no fill at rest, muted glyph,
+   --radius-field on hover. The glyph is the theme the reader is *in* (moon on
+   dark, sun on light), the same semantics as Starlight's own picker. Both icons
+   are in the DOM and swapped in CSS, so the correct one is painted with the
+   first frame — no wrong-glyph flash before the script runs. */
+.mem-theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.25rem; /* --radius-field */
+  background: none;
+  color: var(--sl-color-gray-3);
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+/* Hover is a colour change, not a fill: on a touch device a tapped button keeps
+   `:hover`, and a stuck grey box behind a bare glyph reads as a broken control. */
+.mem-theme-toggle:hover {
+  background: none;
+  color: var(--sl-color-white);
+}
+
+/* Brass ring, not the UA outline: the same focus treatment as the app's
+   controls, and it sits inside the 2rem box so the header height is stable. */
+.mem-theme-toggle:focus-visible {
+  outline: 2px solid var(--sl-color-text-accent);
+  outline-offset: 1px;
+}
+
+.mem-theme-toggle .mem-theme-icon {
+  width: 1.0625rem;
+  height: 1.0625rem;
+}
+
+.mem-theme-toggle .is-sun {
+  display: none;
+}
+
+:root[data-theme='light'] .mem-theme-toggle .is-moon {
+  display: none;
+}
+
+:root[data-theme='light'] .mem-theme-toggle .is-sun {
+  display: block;
+}
+
+/* Mobile: the switch belongs in the topbar too, not only inside the drawer.
+   Starlight hides its whole `.right-group` below 50rem because the fixed menu
+   button owns that corner, so bring the group back and drop the parts that are
+   duplicated in the drawer (social icons, language select). No margin is needed:
+   Starlight pads the header's inline-end by the menu button's width on exactly
+   the routes that render that button (`[data-has-sidebar] .header`), and splash
+   routes render neither. The drawer's own copy is hidden below 50rem — one
+   switch per viewport, always reachable. */
+@media (max-width: 49.99rem) {
+  header.header .right-group {
+    display: flex;
+  }
+
+  header.header .right-group :is(.social-icons, starlight-lang-select) {
+    display: none;
+  }
+
+  #starlight__sidebar starlight-theme-select {
+    display: none;
+  }
+
+  /* Below 50rem the search collapses to a glyph, so it belongs with the switch
+     instead of floating in the middle of the bar: push its wrapper to the end
+     and the header's own gap (--sl-nav-gap) sets the distance between the two
+     controls. */
+  header.header .header > div:has(site-search) {
+    margin-inline-start: auto;
+  }
+
+  /* Both controls are bare glyphs on mobile. The bordered field is right for a
+     search box that shows an input; an icon with a box around it is not, and
+     neither is a fill on hover that a tap leaves stuck. */
+  header.header site-search button[data-open-modal] {
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    border: 0;
+    background: none;
+  }
+
+  header.header site-search button[data-open-modal]:hover {
+    border: 0;
+    background: none;
+    color: var(--sl-color-white);
+  }
+}
+
+/* Splash routes (the home page, the API reference) have no sidebar to anchor
+   the bar, so Starlight lays it out against the viewport while the content is
+   confined to `--sl-content-width`. That leaves the logo and the right-hand
+   icons out at the screen edge, well outside the column the prose sits in. Copy
+   the column's own geometry onto the bar instead, which means following
+   Starlight's two regimes:
+
+   - below 72rem the column is left-anchored inside the content gutter
+     (`--sl-content-pad-x`, which is NOT `--sl-nav-pad-x` between 50 and 72rem),
+     so the bar keeps that gutter on the left and stops where the column stops;
+   - from 72rem Starlight centres the column with `margin-inline: auto`, so both
+     sides become the column's margin. `max()` keeps a full-bleed column (the
+     API reference, 96rem) on the plain gutter rather than collapsing to zero.
+
+   The media query is deliberately the same one Starlight uses for the centring,
+   so the bar changes regime exactly when the prose does. */
+:root:not([data-has-sidebar]) header.header {
+  padding-inline: var(--sl-content-pad-x)
+    max(
+      var(--sl-content-pad-x),
+      calc(100% - var(--sl-content-pad-x) - var(--sl-content-width))
+    );
+}
+
+@media (min-width: 72rem) {
+  :root:not([data-has-sidebar]) header.header {
+    padding-inline: max(
+      var(--sl-content-pad-x),
+      calc((100% - var(--sl-content-width)) / 2)
+    );
+  }
+}
+
+/* ---------- chrome: sidebar ------------------------------------------------ */
+#starlight__sidebar {
+  border-inline-end: 1px solid var(--mem-line);
+}
+
+.sidebar-content {
+  font-size: 0.875rem;
+}
+
+/* Group labels mirror the app's breadcrumb chrome: small, tracked, uppercase. */
+.sidebar-content .group-label > span,
+.sidebar-content .group-label {
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--sl-color-gray-3);
+}
+
+.sidebar-content a {
+  border-radius: 1rem; /* --radius-selector */
+  padding-inline: 0.65rem;
+}
+
+.sidebar-content a:hover {
+  background-color: var(--mem-fill-mid);
+  color: var(--sl-color-white);
+}
+
+/* Active page: brass tint at --radius-selector, as the app's nav pills. */
+.sidebar-content a[aria-current='page'],
+.sidebar-content a[aria-current='page']:hover {
+  background-color: var(--mem-nav-active-bg);
+  color: var(--sl-color-text-accent);
+  font-weight: 600;
+}
+
+/* ---------- chrome: "On this page" ---------------------------------------- */
+.right-sidebar-panel h2,
+mobile-starlight-toc h2 {
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--sl-color-gray-3);
+}
+
+.right-sidebar a[aria-current='true'] {
+  color: var(--sl-color-text-accent);
+}
+
+/* ---------- prose: headings (app.css `.memory-md` heading scale) ----------- */
+.sl-markdown-content :is(h1, h2, h3, h4, h5, h6):not(:where(.not-content *)) {
+  color: var(--sl-color-white);
+}
+
+h1#_top {
+  font-size: 2rem;
+  letter-spacing: -0.011em;
+  border-bottom: 1px solid var(--mem-line-strong);
+  padding-bottom: 0.35em;
+}
+
+.sl-markdown-content h2:not(:where(.not-content *)) {
+  font-size: 1.5rem;
+  letter-spacing: -0.005em;
+}
+
+/* The heading itself is inline inside `.sl-heading-wrapper` (that is how the
+   anchor link sits on the same line), so the app's full-width hairline under
+   an h2 has to go on the wrapper, not on the inline heading box. */
+.sl-markdown-content .sl-heading-wrapper.level-h2 {
+  border-bottom: 1px solid var(--mem-line);
+  padding-bottom: 0.3em;
+}
+
+.sl-markdown-content h3:not(:where(.not-content *)) {
+  font-size: 1.1875rem;
+  letter-spacing: -0.005em;
+}
+
+.sl-markdown-content h4:not(:where(.not-content *)) {
+  font-size: 1.0625rem;
+}
+
+/* Headings are often written as `## \`memory init\``; the brass inline-code
+   chip must not be inherited into a heading (it would render as a button). */
+.sl-markdown-content :is(h1, h2, h3, h4, h5, h6) code:not(:where(.not-content *)) {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font-size: 0.9em;
+}
+
+/* Anchor-link marker: muted until hover, then brass. Explicit parent selectors
+   because the prose link rule below (`.sl-markdown-content a`, 0-2-1) would
+   otherwise win over a bare `.sl-anchor-link` — and it sets `text-decoration`,
+   which the marker must not inherit. */
+.sl-markdown-content .sl-heading-wrapper > .sl-anchor-link {
+  color: var(--sl-color-gray-4);
+  margin-inline-start: 0.35em;
+  text-decoration: none;
+}
+
+.sl-markdown-content .sl-heading-wrapper > .sl-anchor-link:hover {
+  color: var(--sl-color-text-accent);
+}
+
+/* ---------- prose: links — brass, restrained underline -------------------
+   Two exclusions, for two different shapes: `:not(.not-content)` skips an
+   element that *carries* Starlight's opt-out class (LinkButton, card CTAs),
+   `:not(:where(.not-content *))` skips a descendant of one. Missing the first
+   is what underlined every card button. */
+.sl-markdown-content a:not(.not-content):not(:where(.not-content *)) {
+  color: var(--sl-color-text-accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--mem-link-underline);
+  transition: color 0.15s ease, text-decoration-color 0.15s ease;
+}
+
+.sl-markdown-content a:not(.not-content):not(:where(.not-content *)):hover {
+  color: var(--mem-link-hover);
+  text-decoration-color: var(--sl-color-text-accent);
+}
+
+/* LinkCard is a card, not prose: the title is a panel heading, so it takes the
+   card's ink and no underline. `> .sl-link-card a` outranks the prose rule. */
+.sl-markdown-content .sl-link-card a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.sl-markdown-content .sl-link-card a:hover {
+  color: var(--sl-color-text-accent);
+  text-decoration: none;
+}
+
+/* ---------- prose: inline code — brass-tinted chip at --radius-field ------ */
+.sl-markdown-content code:not(:where(.not-content *)):not(pre code) {
+  font-size: 0.85em;
+  background-color: var(--mem-chip-bg);
+  border: 1px solid var(--mem-chip-border);
+  color: var(--mem-chip-fg);
+  padding: 0.12em 0.4em;
+  border-radius: 0.25rem;
+}
+
+/* ---------- prose: fenced blocks ----------------------------------------- */
+.sl-markdown-content pre:not(:where(.not-content *)) {
+  border: 1px solid var(--mem-line);
+  border-radius: 0.5rem;
+}
+
+/* Expressive Code frame: --radius-box, base-200 body, hairline edge. */
+/* Surface + chrome slots of the code frame. Expressive Code emits the tab bar,
+   active tab and tooltip colours as these vars; leaving them at the default
+   palette is what made a light theme show dark tab strips. */
+.expressive-code .frame {
+  --ec-frm-edBg: var(--sl-color-bg);
+  --ec-frm-trmBg: var(--sl-color-bg);
+  --ec-frm-trmTtbBg: var(--mem-surface);
+  --ec-frm-edTabBarBg: var(--mem-surface);
+  --ec-frm-edActTabBg: var(--sl-color-bg);
+  --ec-frm-edTabBarBrdBtmCol: var(--mem-line);
+  --ec-frm-edTabBarBrdCol: var(--mem-line);
+  --ec-frm-edActTabBrdCol: var(--mem-line);
+  --ec-frm-trmTtbBrdBtmCol: var(--mem-line);
+  --ec-frm-inlBtnBrd: var(--mem-line);
+  --ec-frm-frameBoxShdCssVal: none;
+  --ec-frm-tooltipSuccessBg: var(--mem-tip-edge);
+  --ec-frm-tooltipSuccessFg: var(--mem-tip-ink);
+}
+
+.expressive-code .frame.has-title:not(.is-terminal) .title {
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+}
+
+/* ---------- prose: blockquote — brass accent bar -------------------------- */
+.sl-markdown-content blockquote:not(:where(.not-content *)) {
+  border-inline-start: 3px solid oklch(0.74 0.135 78 / 0.55);
+  border-radius: 0 0.5rem 0.5rem 0;
+  background-color: var(--mem-fill);
+  color: var(--sl-color-gray-2);
+  padding: 0.5em 1em;
+}
+
+/* ---------- prose: tables ------------------------------------------------ */
+.sl-markdown-content table:not(:where(.not-content *)) {
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.sl-markdown-content :is(th, td):not(:where(.not-content *)) {
+  border-bottom: 1px solid var(--mem-line-strong);
+  padding: 0.5em 0.85em;
+  text-align: left;
+  vertical-align: top;
+}
+
+.sl-markdown-content thead th:not(:where(.not-content *)) {
+  background-color: var(--mem-fill-mid);
+  border-bottom: 1px solid var(--mem-line-heavy);
+  font-weight: 600;
+  color: var(--sl-color-white);
+}
+
+.sl-markdown-content tbody tr:nth-child(even) {
+  background-color: var(--mem-fill-weak);
+}
+
+.sl-markdown-content tbody tr:last-child td:not(:where(.not-content *)) {
+  border-bottom: 0;
+}
+
+/* ---------- prose: rule — warm hairline ---------------------------------- */
+.sl-markdown-content hr:not(:where(.not-content *)) {
+  border: 0;
+  border-top: 1px solid oklch(0.74 0.135 78 / 0.2);
+}
+
+/* ---------- components: screenshots -------------------------------------
+   Product screenshots are dark UI captures dropped into a page that may be
+   light, so they get the same treatment as the Scalar embed: seamless in dark,
+   a hairline ring in light. The zoom dialog is a native <dialog> — the image is
+   the hit target, a click outside it closes. */
+.sl-markdown-content .screenshot {
+  margin: 1.5rem 0;
+}
+
+.sl-markdown-content .screenshot-open {
+  display: block;
+  width: 100%;
+  /* Narrow captures stop at their own pixel width (see Screenshot.astro) and
+     sit centred rather than stretched. */
+  margin-inline: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0.5rem;
+  background: none;
+  cursor: zoom-in;
+  overflow: hidden;
+}
+
+.sl-markdown-content .screenshot-open img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 0.5rem;
+  transition: border-color 0.15s ease;
+}
+
+/* The ring sits on the wrapper so the image's own box is untouched. */
+.sl-markdown-content .screenshot-open {
+  box-shadow: 0 0 0 1px var(--mem-line);
+  transition: box-shadow 0.15s ease;
+}
+
+.sl-markdown-content .screenshot-open:hover {
+  box-shadow: 0 0 0 1px var(--mem-line-heavy);
+}
+
+.sl-markdown-content .screenshot-open:focus-visible {
+  outline: 2px solid var(--sl-color-accent-high, var(--sl-color-text-accent));
+  outline-offset: 2px;
+}
+
+.sl-markdown-content .screenshot figcaption {
+  margin-top: 0.5rem;
+  color: var(--sl-color-gray-3);
+  font-size: var(--sl-text-sm);
+  line-height: 1.5;
+}
+
+.screenshot-dialog {
+  /* Tailwind's preflight sets `margin: 0` on every element, which removes the
+     `margin: auto` a modal <dialog> is centred with — the panel then renders at
+     the top-left corner (fixed to `inset: 0`). Restating it here is the fix, not
+     a preference: without it the zoom opens off-centre. */
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: fit-content;
+  height: fit-content;
+  box-sizing: border-box;
+  max-width: min(96vw, 1600px);
+  max-height: 94vh;
+  padding: 0;
+  border: 1px solid var(--mem-line-heavy);
+  border-radius: 0.75rem;
+  background-color: var(--mem-surface);
+  overflow: hidden;
+  cursor: zoom-out;
+}
+
+.screenshot-dialog::backdrop {
+  background: oklch(0 0 0 / 0.72);
+  backdrop-filter: blur(2px);
+}
+
+.screenshot-dialog img {
+  display: block;
+  max-width: 96vw;
+  max-height: 94vh;
+  width: auto;
+  height: auto;
+}
+
+/* The dialog has no <h2>, so Starlight's dialog-free page title rules do not
+   apply; align the close control with the card's top-right corner. */
+.screenshot-dialog-close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--mem-line-heavy);
+  border-radius: 0.375rem;
+  background-color: oklch(0 0 0 / 0.55);
+  color: oklch(0.98 0 0);
+  font-size: var(--sl-text-xs);
+  cursor: pointer;
+}
+
+.screenshot-dialog-close:hover {
+  background-color: oklch(0 0 0 / 0.75);
+}
+
+/* ---------- components: cards -------------------------------------------
+   base-100 surface, hairline edge at --radius-box. Starlight tints each card's
+   icon chip from a rotating accent palette; the app has no such chips, so the
+   icon is a flat brass glyph. */
+.sl-markdown-content .card {
+  --sl-card-border: transparent;
+  --sl-card-bg: transparent;
+  border: 1px solid var(--mem-line-strong);
+  border-radius: 0.5rem;
+  background-color: var(--mem-surface);
+  gap: 0.75rem;
+  padding: 1.25rem 1.375rem;
+  height: 100%;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+/* Cards in a row share the row's height, so the call to action has to be
+   pinned to the bottom-right of the card rather than trailing the copy —
+   otherwise a one-line card and a four-line card put their buttons at
+   different heights. `row-gap` is the floor under that pin: `margin-top: auto`
+   only absorbs *slack*, and the tallest card in a row has none, so without it
+   the button sits flush against the last line of copy. It also spaces stacked
+   blocks inside a card, whose paragraph margins are reset to zero. */
+.sl-markdown-content .card .body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  row-gap: 0.75rem;
+}
+
+.sl-markdown-content .card .body > .sl-link-button:last-child {
+  margin: auto 0 0 auto;
+  align-self: flex-end;
+}
+
+/* A card whose copy ends in a code span (module path, package name) should not
+   let that span stretch: only the button sits at the bottom edge. */
+.sl-markdown-content .card .body > :not(.sl-link-button):last-child:not(:has(+ .sl-link-button)) {
+  margin-bottom: 0;
+}
+
+.sl-markdown-content .card:hover {
+  border-color: oklch(0.74 0.135 78 / 0.35);
+  background-color: var(--mem-surface-hover);
+}
+
+.sl-markdown-content .card .title {
+  gap: 0.625rem;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--sl-color-white);
+}
+
+.sl-markdown-content .card .icon {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--sl-color-text-accent);
+}
+
+/* A ported grid card links its whole title (Material renders the first line as
+   the link), so the heading anchor is panel ink, underlined only on hover. */
+.sl-markdown-content .card .title a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.sl-markdown-content .card .title a:hover {
+  color: var(--sl-color-text-accent);
+  text-decoration: none;
+}
+
+.card-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+}
+
+/* Four cards in a three-column track leave the last one stranded on a row of
+   its own, which reads as a broken grid rather than a set of equal options.
+   Two columns is the only balanced arrangement for four, and it needs more
+   room per card than the 16rem default, so a four-card grid raises its own
+   minimum and drops to one column when two 20rem columns no longer fit —
+   a squeezed two-up with wrapped buttons is worse than a single column.
+   Grids of two, three, five or more keep the auto-fit decision above. */
+.card-grid:has(> :nth-child(4)):not(:has(> :nth-child(5))) {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+}
+
+/* Cards own their vertical rhythm: a markdown paragraph's top margin would
+   otherwise offset the first card in a row from the rest. */
+.card-grid > * {
+  margin-top: 0 !important;
+}
+
+/* ---------- components: buttons -----------------------------------------
+   The app's controls are fields, not pills: --radius-field (0.25rem), brass
+   fill with `primary-content` ink. */
+.sl-link-button {
+  border-radius: 0.25rem;
+  padding: 0.5rem 0.875rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+@media (min-width: 50rem) {
+  .sl-link-button {
+    padding: 0.5rem 0.875rem;
+    font-size: 0.875rem;
+  }
+}
+
+.sl-link-button.primary {
+  background: var(--mem-brass);
+  border-color: var(--mem-brass);
+  color: var(--mem-brass-ink);
+  font-weight: 600;
+}
+
+.sl-link-button.primary:hover {
+  background: oklch(0.8 0.13 80);
+  border-color: oklch(0.8 0.13 80);
+  color: var(--mem-brass-ink);
+}
+
+.sl-link-button.secondary {
+  border-color: var(--mem-line-control);
+  color: var(--sl-color-white);
+}
+
+.sl-link-button.secondary:hover {
+  border-color: oklch(0.74 0.135 78 / 0.6);
+  color: var(--sl-color-text-accent);
+}
+
+.sl-link-button svg {
+  width: 1em;
+  height: 1em;
+}
+
+/* ---------- components: asides -----------------------------------------
+   The product palette has no purple, so map Starlight's aside family onto
+   steel (note), mint (tip), brass (caution) and error red (danger). Both
+   themes share the shape; each supplies its own fg/edge/tint. */
+.starlight-aside {
+  border-inline-start-width: 3px;
+  border-radius: 0.5rem;
+  padding: 0.875rem 1rem;
+}
+
+.starlight-aside--note {
+  --sl-color-asides-text-accent: var(--mem-note-fg);
+  --sl-color-asides-border: var(--mem-note-edge);
+  background-color: var(--mem-note-bg);
+}
+
+.starlight-aside--tip {
+  --sl-color-asides-text-accent: var(--mem-tip-fg);
+  --sl-color-asides-border: var(--mem-tip-edge);
+  background-color: var(--mem-tip-bg);
+}
+
+.starlight-aside--caution {
+  --sl-color-asides-text-accent: var(--mem-caution-fg);
+  --sl-color-asides-border: var(--mem-caution-edge);
+  background-color: var(--mem-caution-bg);
+}
+
+.starlight-aside--danger {
+  --sl-color-asides-text-accent: var(--mem-danger-fg);
+  --sl-color-asides-border: var(--mem-danger-edge);
+  background-color: var(--mem-danger-bg);
+}
+
+.starlight-aside__title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+/* ---------- components: tabs ------------------------------------------- */
+.sl-markdown-content starlight-tabs .tab > [role='tab'][aria-selected='true'] {
+  color: var(--sl-color-white);
+  border-bottom: 2px solid var(--sl-color-text-accent);
+  font-weight: 600;
+}
+
+.sl-markdown-content starlight-tabs .tab > [role='tab'] {
+  font-size: 0.875rem;
+  padding-block: 0.5rem;
+}
+
+/* ---------- components: badges ----------------------------------------- */
+.sl-badge {
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+/* ---------- splash / landing ------------------------------------------- */
+body:has(.hero) {
+  --sl-content-width: 62rem;
+}
+
+/* The API reference is a full-width app surface, not prose: drop the prose
+   column cap and let Scalar fill the viewport below the header. */
+body:has(.api-page) {
+  --sl-content-width: 96rem;
+}
+
+.api-page {
+  margin-block: 0;
+}
+
+.api-page .scalar-app,
+.api-page .scalar-container {
+  height: calc(100vh - var(--sl-nav-height) - 6rem);
+}
+
+/* Scalar ships its own dark theme and injects it at runtime (v1.78 renders
+   from `@scalar/client-side-rendering` on the CDN), so re-declaring its
+   `--scalar-*` tokens from here has no effect — verified by screenshot: the
+   page is pixel-identical with and without the overrides. `configuration.darkMode`
+   is fixed at build time, so the embedded reference stays dark in both themes;
+   branding it needs Scalar's own theme/customCss hook, a follow-up. The layout
+   rules above (full width, height) do apply. */
+
+/* The reference is therefore a dark app surface inside the page. In dark it is
+   seamless; in light it needs an edge, or it reads as a page that failed to
+   load its stylesheet. A ring (not a border) leaves Scalar's own box metrics,
+   sticky sidebar and scroll behaviour untouched. */
+:root[data-theme='light'] .api-page .scalar-app {
+  box-shadow: 0 0 0 1px var(--mem-line-heavy);
+}
+
+.hero h1 {
+  font-size: 2.5rem;
+  letter-spacing: -0.02em;
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.hero .tagline {
+  color: var(--sl-color-gray-2);
+  font-size: 1.0625rem;
+  line-height: 1.65;
+  max-width: 34rem;
+}

@@ -33,7 +33,9 @@ Options:
 
 Channels:
   stable  Install the newest v* release (default).
-  dev     Install the rolling dev build from the 'dev' tag.
+  dev     Install the rolling dev build from the 'connector-dev' tag. The
+          legacy 'dev' tag is still accepted as a fallback while the channel
+          migration (#956) completes; 'dev' shadows the dev branch for git fetch.
 
 Environment:
   INSTALL_DIR                 Same as --dir
@@ -114,16 +116,30 @@ main() {
 
     if [ "$channel" = "dev" ]; then
         [ -n "$version" ] && error "--version cannot be combined with --channel dev"
-        log "Resolving newest dev build (tag dev)..."
-        dev_asset=$(curl -fsSL "${API_URL}/tags/dev" \
+        # The dev channel is published under `connector-dev`, namespaced by app
+        # like `cli-dev` and `mac-dev`. Do not fetch a tag named like a branch:
+        # a `dev` tag makes `git fetch origin dev` resolve the tag instead of the
+        # branch (#956), which is why the channel moved off that name. The legacy
+        # `dev` tag stays a fallback for builds published before the migration.
+        dev_tag=""
+        dev_json=""
+        for candidate in connector-dev dev; do
+            if dev_json=$(curl -fsSL "${API_URL}/tags/${candidate}" 2>/dev/null); then
+                dev_tag="$candidate"
+                break
+            fi
+        done
+        [ -n "$dev_tag" ] || error "No dev build published (looked for tags 'connector-dev' and 'dev')."
+        log "Resolving newest dev build (tag ${dev_tag})..."
+        dev_asset=$(printf '%s' "$dev_json" \
             | grep -o '"name":[[:space:]]*"memory-connector_[^"]*_'"${os}"'_'"${arch}"'\.tar\.gz"' \
             | sed -e 's/.*"name":[[:space:]]*"//' -e 's/"$//' \
             | head -1)
-        [ -z "$dev_asset" ] && error "No dev build for ${os}/${arch} (tag dev)."
+        [ -z "$dev_asset" ] && error "No dev build for ${os}/${arch} (tag ${dev_tag})."
         version=$(printf '%s' "$dev_asset" \
             | sed -e 's/^memory-connector_//' -e 's/_'"${os}"'_'"${arch}"'\.tar\.gz$//')
         asset="$dev_asset"
-        download_url="${BASE_URL}/dev/${asset}"
+        download_url="${BASE_URL}/${dev_tag}/${asset}"
     else
         if [ -z "$version" ]; then
             log "Resolving newest connector release..."
