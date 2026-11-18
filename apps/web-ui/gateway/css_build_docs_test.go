@@ -9,11 +9,11 @@ import (
 
 // TestCSSTaskCommentDescribesSelfContainedNodeModules pins #913: the header
 // comment in webui/css/app.css claimed node_modules was symlinked from
-// /root/go-daisy/node_modules. That stopped being true when the agent rig made
-// its go-daisy checkout opt-in (infra#1312) — the css task installs this
-// module's own pinned deps. A reader on a fresh host followed the stale comment
-// to a directory the rig does not create and could conclude their environment
-// was broken, so the comment must describe the task that exists.
+// /root/go-daisy/node_modules. That stopped being true when the css task began
+// installing this module's own pinned deps instead. A reader on a fresh host
+// followed the stale comment to a directory nothing creates and could conclude
+// their environment was broken, so the comment must describe the task that
+// exists.
 func TestCSSTaskCommentDescribesSelfContainedNodeModules(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("webui", "css", "app.css"))
 	if err != nil {
