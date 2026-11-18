@@ -95,8 +95,8 @@ func TestForeignIssueClaimConflict(t *testing.T) {
 		},
 	}
 	err := foreignIssueClaimConflict(claimed)
-	var appErr *apperror.Error
-	if !errors.As(err, &appErr) {
+	appErr, ok := errors.AsType[*apperror.Error](err)
+	if !ok {
 		t.Fatalf("a peer-claimed issue must yield an app error, got %v", err)
 	}
 	if appErr.HTTPStatus != http.StatusConflict {
