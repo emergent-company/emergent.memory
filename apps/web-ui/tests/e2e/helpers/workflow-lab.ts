@@ -4,6 +4,8 @@ export const workflowRepo = process.env.E2E_WORKFLOW_REPO ?? '';
 export const workflowOrgId = process.env.E2E_WORKFLOW_ORG_ID ?? '';
 export const workflowProjectId = process.env.E2E_WORKFLOW_PROJECT_ID ?? '';
 export const workflowObjectId = process.env.E2E_WORKFLOW_BLOCK_OBJECT_ID ?? '';
+export const workflowFailureObjectId = process.env.E2E_WORKFLOW_FAILURE_OBJECT_ID ?? '';
+export const workflowFailureRunId = process.env.E2E_WORKFLOW_FAILURE_RUN_ID ?? '';
 export const workflowToken = process.env.E2E_WORKFLOW_GITHUB_TOKEN ?? '';
 
 export function workflowConfigured(): boolean {

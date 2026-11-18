@@ -2,6 +2,8 @@ import { test, expect } from '@playwright/test';
 import {
   workflowConfigured,
   workflowObjectId,
+  workflowFailureObjectId,
+  workflowFailureRunId,
   workflowPath,
   gotoWorkflow,
   createExternalIssue,
@@ -25,6 +27,20 @@ test.describe('workflow lab board', () => {
     await expect(panel.locator('p').filter({ hasText: /work execution|run ended|stale|protocol/i })).toBeVisible();
     await expect(panel.getByRole('button', { name: /clear (stale )?block/i })).toBeVisible();
     await expect(panel.getByRole('button', { name: 'Retry' })).toHaveCount(0);
+  });
+
+  test('agent hard failure shows its reason in the object panel and run page', async ({ page }) => {
+    test.skip(!workflowFailureObjectId || !workflowFailureRunId, 'E2E_WORKFLOW_FAILURE_* not set');
+    await page.goto(workflowPath(`/objects/${workflowFailureObjectId}`));
+
+    const panel = page.getByTestId('object-work-block');
+    await expect(panel).toBeVisible();
+    await expect(panel.getByText('blocked', { exact: true })).toBeVisible();
+    await expect(panel.getByText('deterministic', { exact: true })).toBeVisible();
+    await expect(panel.getByText(/fixture hard failure: provider returned 500/)).toBeVisible();
+
+    await page.goto(workflowPath(`/runs/${workflowFailureRunId}`));
+    await expect(page.getByText(/This run failed: fixture hard failure: provider returned 500/)).toBeVisible();
   });
 
   test('board has a sticky fixed first column and a badge-only blocked card', async ({ page }) => {
