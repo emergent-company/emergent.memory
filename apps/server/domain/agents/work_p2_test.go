@@ -287,13 +287,14 @@ func TestFinishWorkRun_BudgetBlockDoesNotConsumeItemBudget(t *testing.T) {
 
 	var jobStatus string
 	require.NoError(t, repo.db.NewRaw(`SELECT status FROM kb.agent_run_jobs WHERE id = ?`, job.ID).Scan(ctx, &jobStatus))
-	require.Equal(t, string(JobStatusCompleted), jobStatus, "the job is retired, not failed")
+	require.Equal(t, string(JobStatusFailed), jobStatus, "the job is retired without requeue; the item transition owns recovery")
 
-	skipped, err := repo.FindRunByID(ctx, run.ID)
+	// The budget case returns the item to ready and fails the run/job without
+	// spending the item failure budget; it does not mark the run skipped.
+	finalRun, err := repo.FindRunByID(ctx, run.ID)
 	require.NoError(t, err)
-	require.Equal(t, AgentRunStatus(RunStatusSkipped), skipped.Status)
-	require.NotNil(t, skipped.SkipReason)
-	require.Contains(t, *skipped.SkipReason, "budget")
+	require.Equal(t, RunStatusError, finalRun.Status)
+	require.Nil(t, finalRun.SkipReason)
 }
 
 // stringErr is a minimal error wrapper for classification tests.
