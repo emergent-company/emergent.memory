@@ -359,6 +359,7 @@ type conversationRunState struct {
 	pendingQuestions []string
 	activeRunID      string
 	activeRunStatus  string
+	failure          string
 	bucket           string
 	// progressCount and progressMark are the monotonic step/message/tool
 	// progress signal: the number of step-bearing items (messages + tool calls)
@@ -386,7 +387,7 @@ func runStateFingerprint(st *conversationRunState) string {
 	if st == nil {
 		return ""
 	}
-	return fmt.Sprintf("%d|%s|%s|%s|%v|%v|%d|%s", st.runEndCount, st.bucket, st.activeRunID, st.activeRunStatus, st.pendingApprovals, st.pendingQuestions, st.progressCount, st.progressMark)
+	return fmt.Sprintf("%d|%s|%s|%s|%s|%v|%v|%d|%s", st.runEndCount, st.bucket, st.activeRunID, st.activeRunStatus, st.failure, st.pendingApprovals, st.pendingQuestions, st.progressCount, st.progressMark)
 }
 
 // isProgressItem reports whether a timeline item is step/message/tool progress
@@ -412,6 +413,7 @@ type refreshPayload struct {
 	Bucket           string `json:"bucket"`
 	RunID            string `json:"runId"`
 	RunStatus        string `json:"runStatus"`
+	Failure          string `json:"failure,omitempty"`
 	PendingApprovals int    `json:"pendingApprovals"`
 	PendingQuestions int    `json:"pendingQuestions"`
 }
@@ -428,6 +430,7 @@ func refreshFrame(st *conversationRunState) []byte {
 		Bucket:           st.bucket,
 		RunID:            st.activeRunID,
 		RunStatus:        st.activeRunStatus,
+		Failure:          st.failure,
 		PendingApprovals: len(st.pendingApprovals),
 		PendingQuestions: len(st.pendingQuestions),
 	})
@@ -597,6 +600,7 @@ func (s *Server) runState(ctx context.Context, runID string, approvals []ToolApp
 	}
 	st.activeRunID = cmp.Or(run.ID, runID)
 	st.activeRunStatus = run.Status
+	st.failure = runFailureText(run.Status, run.ErrorMessage, run.FailureClass, run.Summary)
 	// Recompute with the real status so run:<id> reports running/failed/…
 	// rather than a permanent done bucket.
 	st.bucket = deriveRunBucket(st.activeRunStatus, st.pendingApprovals, st.pendingQuestions)
@@ -616,9 +620,12 @@ func runStateFromTimeline(items []TimelineItem, approvals []ToolApprovalItem, qu
 			st.runEndCount++
 			st.activeRunID = it.RunID
 			st.activeRunStatus = it.RunStatus
+			msg := it.ErrorMessage
+			st.failure = runFailureText(it.RunStatus, &msg, nil, nil)
 		case "run_start":
 			st.activeRunID = it.RunID
 			st.activeRunStatus = it.RunStatus
+			st.failure = ""
 		}
 		if isProgressItem(it) {
 			st.progressCount++

@@ -376,3 +376,16 @@ func TestRailSubtitleShowsFailureReason(t *testing.T) {
 		t.Errorf("successful run subtitle = %q, want no failure text", got)
 	}
 }
+
+// TestChatRailConversationShowsFailure pins that a failed manual conversation
+// row carries the failure reason, not just the Failed badge.
+func TestChatRailConversationShowsFailure(t *testing.T) {
+	convs := &ConversationList{Conversations: []Conversation{{
+		ID: "conv-1", Title: "Broken chat", Bucket: runBucketFailed,
+		Failure: "provider quota exceeded",
+	}}}
+	html := renderHTML(t, chatRailList(convs, map[string]agentAppearance{}, nil, nil, nil, ""))
+	if !strings.Contains(html, "provider quota exceeded") {
+		t.Errorf("rail row missing failure reason:\n%s", html)
+	}
+}

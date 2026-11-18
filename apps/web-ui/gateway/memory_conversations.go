@@ -36,6 +36,7 @@ type Conversation struct {
 	// present on memory's list response — populated by chatRailData). json:"-"
 	// keeps them out of the /api/conversations response.
 	Bucket           string `json:"-"`
+	Failure          string `json:"-"`
 	PendingApprovals int    `json:"-"`
 	PendingQuestions int    `json:"-"`
 }

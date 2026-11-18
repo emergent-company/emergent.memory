@@ -918,7 +918,7 @@ templ sessionRailRow(c Conversation, ap agentAppearance, active bool, opts sessi
 			</div>
 			<div class="font-medium text-sm">{ c.Title }</div>
 			<div class="flex min-w-0 items-center gap-1.5">
-				<span class="truncate text-xs text-muted">{ railSubtitle(subtitleName, subtitleAt) }</span>
+				<span class="truncate text-xs text-muted">{ railSubtitleWithFailure(subtitleName, subtitleAt, c.Failure) }</span>
 				if opts.SubchatCount > 0 {
 					@ui.Button(ui.ButtonProps{
 						Variant:    ui.ButtonGhost,
@@ -1190,6 +1190,16 @@ func railSubtitle(agentName, updatedAt string) string {
 		return relTime(updatedAt)
 	}
 	return agentName + " · " + relTime(updatedAt)
+}
+
+// railSubtitleWithFailure appends a failed session's reason to its rail
+// subtitle. Rows without a failure keep the exact railSubtitle output.
+func railSubtitleWithFailure(agentName, updatedAt, failure string) string {
+	base := railSubtitle(agentName, updatedAt)
+	if failure == "" {
+		return base
+	}
+	return base + " · " + truncateRunes(failure, 60)
 }
 
 // railEmptyClass returns the class for the session rail's "no conversations
