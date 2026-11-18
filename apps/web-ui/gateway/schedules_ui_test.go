@@ -455,3 +455,11 @@ func TestScheduleRunSubtitleShowsFailureReason(t *testing.T) {
 		t.Errorf("failure-class subtitle = %q, want the humanised class", got)
 	}
 }
+
+// TestScheduleRunTitleHumanizesStatus pins that a latest-runs row does not
+// leak a raw wire status such as input-required.
+func TestScheduleRunTitleHumanizesStatus(t *testing.T) {
+	if got := scheduleRunTitle(ScheduledAgentRun{ID: "run-1", Status: "input-required"}); !strings.Contains(got, "needs input") {
+		t.Errorf("scheduleRunTitle = %q, want humanized status", got)
+	}
+}
