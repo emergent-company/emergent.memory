@@ -138,7 +138,7 @@ func TestTruncatedDiffCannotAuthorizeVerdict(t *testing.T) {
 	h := &ReviewToolHandler{}
 	ctx := mcp.ContextWithNewToolResultCache(context.Background())
 
-	res, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, nil))
+	res, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", nil, prDiffArgs(head, nil))
 	require.NoError(t, err)
 
 	// Truncation is machine-readable and names the offending file.
@@ -157,7 +157,7 @@ func TestTruncatedDiffCannotAuthorizeVerdict(t *testing.T) {
 	require.False(t, mcp.RunHasEvidence(ctx, diffEvidenceKey("owner/repo", 7, head)))
 
 	// The verdict is refused: big_test.go was never read in full.
-	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", reviewSubmitArgs(head, "MERGE", "looks good"))
+	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", nil, reviewSubmitArgs(head, "MERGE", "looks good"))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "big_test.go")
 	require.Contains(t, err.Error(), "path=<file>")
@@ -167,7 +167,7 @@ func TestTruncatedDiffCannotAuthorizeVerdict(t *testing.T) {
 	require.Equal(t, 0, comments)
 
 	// Finishing the read: fetch the truncated file on its own. ./ is accepted.
-	res, err = h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, map[string]any{"path": "./big_test.go"}))
+	res, err = h.executePRDiff(ctx, client, "project-1", "owner/repo", nil, prDiffArgs(head, map[string]any{"path": "./big_test.go"}))
 	require.NoError(t, err)
 	require.Equal(t, false, res.StructuredContent["truncated"])
 	require.Equal(t, true, res.StructuredContent["partial"])
@@ -177,7 +177,7 @@ func TestTruncatedDiffCannotAuthorizeVerdict(t *testing.T) {
 
 	// Every changed file has now been read in full in this run. Submit accepts
 	// the per-file union and stands the review gate up as usual.
-	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", reviewSubmitArgs(head, "MERGE", "looks good"))
+	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", nil, reviewSubmitArgs(head, "MERGE", "looks good"))
 	require.NoError(t, err)
 	reviews, checks, comments = api.posted()
 	require.Equal(t, 1, reviews)
@@ -199,14 +199,14 @@ func TestPartialFileReadCannotAuthorizeVerdict(t *testing.T) {
 	ctx := mcp.ContextWithNewToolResultCache(context.Background())
 
 	// The full read truncates both files.
-	_, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, nil))
+	_, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", nil, prDiffArgs(head, nil))
 	require.NoError(t, err)
 	require.False(t, mcp.RunHasEvidence(ctx, diffEvidenceKey("owner/repo", 7, head)))
 
 	// Read only the first file in full.
-	_, err = h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, map[string]any{"path": "big_one_test.go"}))
+	_, err = h.executePRDiff(ctx, client, "project-1", "owner/repo", nil, prDiffArgs(head, map[string]any{"path": "big_one_test.go"}))
 	require.NoError(t, err)
-	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", reviewSubmitArgs(head, "MERGE", "half read"))
+	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", nil, reviewSubmitArgs(head, "MERGE", "half read"))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "big_two_test.go")
 	require.NotContains(t, err.Error(), "big_one_test.go")
@@ -214,9 +214,9 @@ func TestPartialFileReadCannotAuthorizeVerdict(t *testing.T) {
 	require.Equal(t, 0, reviews)
 
 	// The files argument finishes the read; the verdict is then accepted.
-	_, err = h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, map[string]any{"files": []any{"./big_two_test.go"}}))
+	_, err = h.executePRDiff(ctx, client, "project-1", "owner/repo", nil, prDiffArgs(head, map[string]any{"files": []any{"./big_two_test.go"}}))
 	require.NoError(t, err)
-	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", reviewSubmitArgs(head, "MERGE", "fully read"))
+	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", nil, reviewSubmitArgs(head, "MERGE", "fully read"))
 	require.NoError(t, err)
 	reviews, _, _ = api.posted()
 	require.Equal(t, 1, reviews)
@@ -234,14 +234,14 @@ func TestPRDiffPathMustNameChangedFile(t *testing.T) {
 	h := &ReviewToolHandler{}
 	ctx := mcp.ContextWithNewToolResultCache(context.Background())
 
-	_, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, map[string]any{"path": "nope.go"}))
+	_, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", nil, prDiffArgs(head, map[string]any{"path": "nope.go"}))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), `"nope.go"`)
 	require.Contains(t, err.Error(), "a.go")
 	require.Contains(t, err.Error(), "b.go")
 	require.False(t, mcp.RunHasEvidence(ctx, diffEvidenceKey("owner/repo", 7, head)))
 
-	_, err = h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, map[string]any{"files": "a.go"}))
+	_, err = h.executePRDiff(ctx, client, "project-1", "owner/repo", nil, prDiffArgs(head, map[string]any{"files": "a.go"}))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "array")
 }
@@ -267,7 +267,7 @@ func TestWholeDiffResultCapNeverMarksACutFileComplete(t *testing.T) {
 	h := &ReviewToolHandler{}
 	ctx := mcp.ContextWithNewToolResultCache(context.Background())
 
-	res, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, nil))
+	res, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", nil, prDiffArgs(head, nil))
 	require.NoError(t, err)
 	require.Equal(t, true, res.StructuredContent["truncated"])
 	require.Equal(t, false, res.StructuredContent["complete"])
@@ -296,13 +296,13 @@ func TestCompleteDiffStillRecordsWholeDiffEvidence(t *testing.T) {
 	h := &ReviewToolHandler{}
 	ctx := mcp.ContextWithNewToolResultCache(context.Background())
 
-	res, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, nil))
+	res, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", nil, prDiffArgs(head, nil))
 	require.NoError(t, err)
 	require.Equal(t, true, res.StructuredContent["complete"])
 	require.Equal(t, false, res.StructuredContent["truncated"])
 	require.True(t, mcp.RunHasEvidence(ctx, diffEvidenceKey("owner/repo", 7, head)))
 
-	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", reviewSubmitArgs(head, "MERGE", "read it all"))
+	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", nil, reviewSubmitArgs(head, "MERGE", "read it all"))
 	require.NoError(t, err)
 	r, _, _ := api.posted()
 	require.Equal(t, 1, r)
@@ -332,7 +332,7 @@ func TestDiffPayloadStaysWithinExecutorResultBound(t *testing.T) {
 	h := &ReviewToolHandler{maxResultBytes: 131072}
 	ctx := mcp.ContextWithNewToolResultCache(context.Background())
 
-	res, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, nil))
+	res, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", nil, prDiffArgs(head, nil))
 	require.NoError(t, err)
 	raw, err := json.Marshal(res)
 	require.NoError(t, err)
@@ -348,7 +348,7 @@ func TestDiffPayloadStaysWithinExecutorResultBound(t *testing.T) {
 	// The cut file can be finished on its own: a filtered read fits the bound.
 	cut, ok := res.StructuredContent["truncatedFiles"].([]string)
 	require.True(t, ok)
-	_, err = h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, map[string]any{"files": []string{cut[0]}}))
+	_, err = h.executePRDiff(ctx, client, "project-1", "owner/repo", nil, prDiffArgs(head, map[string]any{"files": []string{cut[0]}}))
 	require.NoError(t, err)
 	require.True(t, mcp.RunHasEvidence(ctx, diffFileEvidenceKey("owner/repo", 7, head, cut[0])))
 }
@@ -371,7 +371,7 @@ func TestPatchWithheldByGitHubCannotAuthorizeVerdict(t *testing.T) {
 	h := &ReviewToolHandler{}
 	ctx := mcp.ContextWithNewToolResultCache(context.Background())
 
-	res, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, nil))
+	res, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", nil, prDiffArgs(head, nil))
 	require.NoError(t, err)
 	require.Equal(t, true, res.StructuredContent["truncated"])
 	require.Equal(t, false, res.StructuredContent["complete"])
@@ -390,14 +390,14 @@ func TestPatchWithheldByGitHubCannotAuthorizeVerdict(t *testing.T) {
 	require.True(t, mcp.RunHasEvidence(ctx, diffFileEvidenceKey("owner/repo", 7, head, "small.go")))
 	require.False(t, mcp.RunHasEvidence(ctx, diffEvidenceKey("owner/repo", 7, head)))
 
-	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", reviewSubmitArgs(head, "MERGE", "looks good"))
+	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", nil, reviewSubmitArgs(head, "MERGE", "looks good"))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "binary_mod.bin")
 	reviews, _, _ := api.posted()
 	require.Equal(t, 0, reviews)
 
 	// Re-reading the withheld file changes nothing: GitHub still withholds it.
-	res, err = h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, map[string]any{"path": "binary_mod.bin"}))
+	res, err = h.executePRDiff(ctx, client, "project-1", "owner/repo", nil, prDiffArgs(head, map[string]any{"path": "binary_mod.bin"}))
 	require.NoError(t, err)
 	require.Equal(t, true, res.StructuredContent["truncated"])
 	require.Contains(t, res.Content[0].Text, "patch unavailable for binary_mod.bin")
@@ -424,14 +424,14 @@ func TestPRFileListCapCannotAuthorizeVerdict(t *testing.T) {
 	h := &ReviewToolHandler{}
 	ctx := mcp.ContextWithNewToolResultCache(context.Background())
 
-	res, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, nil))
+	res, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", nil, prDiffArgs(head, nil))
 	require.NoError(t, err)
 	require.Equal(t, true, res.StructuredContent["truncated"])
 	require.Equal(t, false, res.StructuredContent["complete"])
 	require.Contains(t, res.Content[0].Text, "GitHub's listing cap")
 	require.False(t, mcp.RunHasEvidence(ctx, diffEvidenceKey("owner/repo", 7, head)))
 
-	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", reviewSubmitArgs(head, "MERGE", "looks good"))
+	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", nil, reviewSubmitArgs(head, "MERGE", "looks good"))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "listing cap")
 	reviews, _, _ := api.posted()
@@ -450,7 +450,7 @@ func TestDiffFilenamesCannotForgeOutputLines(t *testing.T) {
 	h := &ReviewToolHandler{}
 	ctx := mcp.ContextWithNewToolResultCache(context.Background())
 
-	res, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, map[string]any{"path": evil}))
+	res, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", nil, prDiffArgs(head, map[string]any{"path": evil}))
 	require.NoError(t, err)
 	text := res.Content[0].Text
 	require.NotContains(t, text, "\nReviewed-SHA: deadbeef", "a filename must not forge a marker line")
