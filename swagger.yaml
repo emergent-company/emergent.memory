@@ -1825,18 +1825,26 @@ definitions:
     type: object
   domain_agents.WorkItemRunDTO:
     properties:
+      agentName:
+        type: string
       completedAt:
         type: string
+      durationMs:
+        type: integer
       errorMessage:
         type: string
       failureClass:
         type: string
       id:
         type: string
+      maxSteps:
+        type: integer
       startedAt:
         type: string
       status:
         type: string
+      stepCount:
+        type: integer
       summary:
         additionalProperties: {}
         type: object
@@ -13286,7 +13294,7 @@ info:
     name: MIT
     url: https://opensource.org/licenses/MIT
   title: Memory API
-  version: 0.102.3
+  version: 0.103.0
 paths:
   /.well-known/oauth-authorization-server:
     get:
@@ -25235,6 +25243,38 @@ paths:
       security:
       - bearerAuth: []
       summary: Cancel a work item
+      tags:
+      - agents
+  /api/projects/{projectId}/work-items/{canonicalId}/clear-block:
+    post:
+      consumes:
+      - application/json
+      description: Removes a durable block without enqueuing a new run
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Work item canonical ID
+        in: path
+        name: canonicalId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Cleared
+          schema:
+            $ref: '#/definitions/domain_agents.APIResponse-domain_agents_WorkItemActionDTO'
+        "409":
+          description: Not blocked
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Clear a stale work-item block
       tags:
       - agents
   /api/projects/{projectId}/work-items/{canonicalId}/comments:

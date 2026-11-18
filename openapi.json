@@ -16,7 +16,7 @@
             "name": "MIT",
             "url": "https://opensource.org/licenses/MIT"
         },
-        "version": "0.102.3"
+        "version": "0.103.0"
     },
     "basePath": "/",
     "paths": {
@@ -18157,6 +18157,56 @@
                 }
             }
         },
+        "/api/projects/{projectId}/work-items/{canonicalId}/clear-block": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Removes a durable block without enqueuing a new run",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "Clear a stale work-item block",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Work item canonical ID",
+                        "name": "canonicalId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Cleared",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_WorkItemActionDTO"
+                        }
+                    },
+                    "409": {
+                        "description": "Not blocked",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/projects/{projectId}/work-items/{canonicalId}/comments": {
             "post": {
                 "security": [
@@ -32530,8 +32580,14 @@
         "domain_agents.WorkItemRunDTO": {
             "type": "object",
             "properties": {
+                "agentName": {
+                    "type": "string"
+                },
                 "completedAt": {
                     "type": "string"
+                },
+                "durationMs": {
+                    "type": "integer"
                 },
                 "errorMessage": {
                     "type": "string"
@@ -32542,11 +32598,17 @@
                 "id": {
                     "type": "string"
                 },
+                "maxSteps": {
+                    "type": "integer"
+                },
                 "startedAt": {
                     "type": "string"
                 },
                 "status": {
                     "type": "string"
+                },
+                "stepCount": {
+                    "type": "integer"
                 },
                 "summary": {
                     "type": "object",
