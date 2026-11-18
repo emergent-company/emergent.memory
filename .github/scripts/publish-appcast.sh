@@ -67,6 +67,18 @@ deltas=( "${source_dir}"/*.delta )
 # file the feed *does* reference is always kept.
 bash "${script_dir}/prune-appcast-orphans.sh" "${channel}"
 
+# The branch is one budget shared with the docs site, and the docs side is what
+# breaks it: every release tag makes `mike deploy` add a full ~13 MiB versioned
+# docs tree, nothing removed the superseded ones, and 24 of them plus the
+# appcast reached 523 MiB against the aggregate guard below -- so this publish
+# failed on tag v0.101.0 (#976, recurrence of #7). Reclaim that here, before the
+# guard measures the tree: the retention window keeps the newest trees and drops
+# the rest, rewriting versions.json in the same commit. Best-effort, because a
+# prune that cannot run must not fail a publish on its own -- the guard below
+# still refuses to push an over-budget tree.
+bash "${script_dir}/prune-doc-versions.sh" --root . \
+  || echo "warning: could not prune superseded docs versions" >&2
+
 # Aggregate guard: check-pages-file-size.sh protects GitHub's 100 MiB per-file
 # push limit; this protects the separate 1 GB limit on a *published* Pages site,
 # above which GitHub stops building and the feed/docs silently go stale.
@@ -74,15 +86,21 @@ bash "${script_dir}/check-pages-tree-size.sh" .
 
 git config user.name "github-actions[bot]"
 git config user.email "github-actions[bot]@users.noreply.github.com"
-git add "${dest_rel}"
+# -A: the docs retention prune above deletes whole version trees and rewrites
+# versions.json outside ${dest_rel}, and this private clone has no other pending
+# changes, so staging everything stages exactly this publish.
+git add -A
 if git diff --cached --quiet; then
   echo "no feed changes to publish"
   exit 0
 fi
 git commit -q -m "appcast(${channel}): ${marketing}"
 
-# The docs site also deploys to gh-pages; retry with rebase to tolerate a
-# concurrent deploy.
+# The docs site also deploys to gh-pages, and the docs retention prune above
+# rewrites versions.json, so the two now touch the same file; the shared
+# `gh-pages-deploy` concurrency group is what keeps them from racing (a docs
+# deploy is queued behind this publish). Retry with rebase for the residual
+# case, where the other push landed before this one started.
 for attempt in 1 2 3 4 5; do
   if git push origin HEAD:gh-pages; then
     echo "published ${channel} feed to ${pages_url}/${dest_rel}/"
