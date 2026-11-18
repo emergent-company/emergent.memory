@@ -107,7 +107,7 @@ templ runMetaHeader(full *AgentRunFull, trace runTraceMeta) {
 		}
 		@monoMeta(run.ID, "text-muted-faint")
 	</div>
-	if failure := runFailureText(run.ErrorMessage, run.FailureClass); failure != "" {
+	if failure := runFailureText(run.Status, run.ErrorMessage, run.FailureClass, run.Summary); failure != "" {
 		@components.AlertWithClass(components.AlertWithClassProps{
 			AlertProps: ui.AlertProps{
 				Type:    ui.AlertError,

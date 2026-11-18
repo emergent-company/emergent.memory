@@ -180,8 +180,8 @@ func boardRunDuration(run WorkItemRun) string {
 // the parked reason for a paused one, and the agent's own final summary for a
 // completed one. The second return value is the tone the template renders.
 func boardRunOutcome(run WorkItemRun) (string, string) {
-	if run.ErrorMessage != nil && strings.TrimSpace(*run.ErrorMessage) != "" {
-		return strings.TrimSpace(*run.ErrorMessage), "error"
+	if failure := runFailureText(run.Status, run.ErrorMessage, run.FailureClass, run.Summary); failure != "" {
+		return failure, "error"
 	}
 	if reason, ok := run.Summary["reason"].(string); ok {
 		switch reason {
@@ -190,12 +190,6 @@ func boardRunOutcome(run WorkItemRun) (string, string) {
 		case "awaiting_user_input":
 			return "Waiting for your response", "warning"
 		}
-	}
-	if msg, ok := run.Summary["error"].(string); ok && strings.TrimSpace(msg) != "" {
-		return strings.TrimSpace(msg), "error"
-	}
-	if run.FailureClass != nil && strings.TrimSpace(*run.FailureClass) != "" {
-		return "Failure: " + humanRunToken(*run.FailureClass), "error"
 	}
 	if summary, ok := run.Summary["summary"].(string); ok && strings.TrimSpace(summary) != "" {
 		return strings.TrimSpace(summary), ""
