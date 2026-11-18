@@ -794,4 +794,5 @@ all — the `*-ui.spec.ts` files were authored but never executed.)
 dev project, and browser assertions for the board/object detail. It is opt-in;
 without `E2E_WORKFLOW_*` the specs skip. The infra workflow-lab runbook documents
 the fixture labels, the deterministic `ci` workflow and the required coding-App
-prerequisite.
+prerequisite. `E2E_WORKFLOW_BLOCK_OBJECT_ID` must name a seeded stale (terminal)
+block so the detail panel shows `Clear stale block` and hides `Retry`.

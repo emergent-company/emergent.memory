@@ -39,7 +39,7 @@ test.describe('workflow lab board', () => {
     await expect(first).toBeVisible();
     expect(await first.evaluate((el) => getComputedStyle(el).position)).toBe('sticky');
 
-    const card = board.getByTestId(`work-card-${workflowObjectId}`);
+    const card = matrix.getByTestId(`work-card-${workflowObjectId}`);
     await expect(card).toBeVisible();
     await expect(card.getByText('blocked', { exact: true })).toBeVisible();
     await expect(card.getByRole('button', { name: /clear|unblock/i })).toHaveCount(0);
