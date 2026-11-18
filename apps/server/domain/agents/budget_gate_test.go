@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/internal/config"
 )
 
@@ -90,4 +91,26 @@ func TestRepositoryCheckBudgetGate(t *testing.T) {
 func TestClassifyRunFailureBudget(t *testing.T) {
 	cls := classifyRunFailure(&BudgetExceededError{ProjectID: "p1"}, nil)
 	require.Equal(t, FailureClassBudget, cls)
+}
+
+func TestBudgetCheckerOrNil(t *testing.T) {
+	var nilSvc *provider.UsageService
+	require.Nil(t, budgetCheckerOrNil(nilSvc))
+	require.NotNil(t, budgetCheckerOrNil(&provider.UsageService{}))
+}
+
+// TestBudgetGateWiredAtEntryPoints is the regression guard for the wiring: the
+// gate must be called from each entry point, not merely exist.
+func TestBudgetGateWiredAtEntryPoints(t *testing.T) {
+	ctx := context.Background()
+	ae := newBudgetTestExecutor(&fakeBudgetChecker{exceeded: true}, true)
+	ae.safeguards.ExecutionEnabled = true
+
+	var budgetErr *BudgetExceededError
+	_, err := ae.Execute(ctx, ExecuteRequest{ProjectID: "p1"})
+	require.True(t, errors.As(err, &budgetErr), "Execute")
+	_, err = ae.ExecuteWithRun(ctx, nil, ExecuteRequest{ProjectID: "p1"})
+	require.True(t, errors.As(err, &budgetErr), "ExecuteWithRun")
+	_, err = ae.Resume(ctx, nil, ExecuteRequest{ProjectID: "p1"})
+	require.True(t, errors.As(err, &budgetErr), "Resume")
 }

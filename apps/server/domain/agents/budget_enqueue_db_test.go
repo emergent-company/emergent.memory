@@ -55,6 +55,27 @@ func TestCreateRunQueuedBudgetGate(t *testing.T) {
 		require.NotNil(t, run)
 	})
 
+	t.Run("deduped work enqueue is blocked without claims", func(t *testing.T) {
+		repo.SetBudgetGate(&fakeBudgetChecker{exceeded: true}, true)
+		logEntry := &AgentProcessingLog{
+			AgentID:       agentID,
+			GraphObjectID: uuid.NewString(),
+			ObjectVersion: 1,
+			EventType:     ReactionEventType("created"),
+		}
+		run, claimed, err := repo.EnqueueWorkRunDeduped(ctx, logEntry, agentID, 1, CreateRunQueuedOptions{})
+		var budgetErr *BudgetExceededError
+		require.True(t, errors.As(err, &budgetErr))
+		require.Nil(t, run)
+		require.False(t, claimed)
+		runs, jobs := countRows()
+		require.Zero(t, runs)
+		require.Zero(t, jobs)
+		var logs int
+		require.NoError(t, db.NewRaw(`SELECT COUNT(*) FROM kb.agent_processing_log WHERE agent_id = ?`, agentID).Scan(ctx, &logs))
+		require.Zero(t, logs)
+	})
+
 	t.Run("under budget proceeds", func(t *testing.T) {
 		repo.SetBudgetGate(&fakeBudgetChecker{exceeded: false}, true)
 		run, err := repo.CreateRunQueued(ctx, agentID, 1)

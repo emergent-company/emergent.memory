@@ -537,6 +537,18 @@ type budgetChecker interface {
 	CheckBudgetExceeded(ctx context.Context, projectID string) (bool, error)
 }
 
+// budgetCheckerOrNil converts a concrete usage service into the budget gate,
+// preserving nil. Assigning a typed-nil *provider.UsageService directly into an
+// interface produces a non-nil interface whose method call nil-derefs the
+// receiver, which is exactly the wiring a deployment without a provider module
+// hands the executor.
+func budgetCheckerOrNil(svc *provider.UsageService) budgetChecker {
+	if svc == nil {
+		return nil
+	}
+	return svc
+}
+
 // BudgetExceededError is returned by Execute when one of a project's spending
 // windows (weekly or monthly) has reached its limit and
 // BUDGET_ENFORCEMENT_ENABLED=true.
@@ -1110,7 +1122,7 @@ func NewAgentExecutor(
 		modelLimits:      modelLimits,
 		apiTokenSvc:      apiTokenSvc,
 		memoryAPIURL:     memoryAPIURL,
-		usageService:     usageService,
+		usageService:     budgetCheckerOrNil(usageService),
 		eventsSvc:        eventsSvc,
 		notificationsSvc: notificationsSvc,
 		safeguards:       cfg.AgentSafeguards,
@@ -1547,6 +1559,17 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 	// worker runs). The enqueue surfaces gate too; this is the backstop for a
 	// run created before the window was exhausted.
 	if err := ae.ensureBudgetAvailable(ctx, req.ProjectID, ae.resolveAgentID(req), "execute_with_run"); err != nil {
+		// The run row already exists on these surfaces (A2A, session trigger,
+		// worker pool). Finalize it here so a budget block cannot leave it
+		// `running` until the stale-run reaper.
+		if run != nil {
+			if repoErr := ae.repo.FailRunWithSteps(dbCtx, run.ID, err.Error(), run.StepCount); repoErr != nil {
+				ae.log.Error("failed to mark run terminal after budget block",
+					slog.String("run_id", run.ID),
+					slog.String("error", repoErr.Error()),
+				)
+			}
+		}
 		return nil, err
 	}
 	if run != nil {
