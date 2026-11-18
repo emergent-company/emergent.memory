@@ -8,9 +8,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/githubapp"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 )
@@ -229,6 +231,98 @@ func TestPRDiffPartialReadIsNotEvidence(t *testing.T) {
 	}
 	require.NoError(t, submitVerdict(h, ctx, client, head))
 	require.Equal(t, 1, *reviews)
+}
+
+// TestPRDiffPageFitsModelBoundary pins the size contract of a page: it is not
+// just the requested patch bytes — the file index rides along and the envelope
+// JSON-escapes the text — so the marshalled response must stay under the bound
+// the model context applies (agents.DefaultToolResultMaxBytes). A page that
+// overshoots is cut tail-first in the model's view, and the evidence recorded for
+// it would then name bytes the model never saw (#1022).
+func TestPRDiffPageFitsModelBoundary(t *testing.T) {
+	head := "aabbccddeeff00112233445566778899aabbccdd"
+	wide := make([]map[string]any, 0, 300)
+	for i := 0; i < 300; i++ {
+		wide = append(wide, map[string]any{
+			"filename":  fmt.Sprintf("apps/server/domain/a/deeply/nested/package/file_%03d_with_a_long_explanatory_name.go", i),
+			"status":    "modified",
+			"additions": 60, "deletions": 0,
+			"patch": bigPatch(60),
+		})
+	}
+	// A patch of very short lines escapes at ~4 bytes in for every 3 bytes of
+	// text, so the requested page size alone cannot keep the envelope under the
+	// model boundary: the sizing loop has to shrink the page to what fits.
+	verbose := []map[string]any{
+		{"filename": "assets/generated.txt", "status": "added", "additions": 60000, "deletions": 0,
+			"patch": "@@ -0,0 +1,60000 @@\n" + strings.Repeat("+a\n", 60000)},
+	}
+	scenarios := []struct {
+		name       string
+		files      []map[string]any
+		wantShrunk bool
+	}{
+		{"300 files with long paths", wide, false},
+		{"newline-heavy patch", verbose, true},
+	}
+	for _, sc := range scenarios {
+		for _, limit := range []int{0, 120000} {
+			client, reviews := diffServer(t, head, sc.files)
+			h := &ReviewToolHandler{}
+			ctx := mcp.ContextWithNewToolResultCache(context.Background())
+
+			res, err := h.executePRDiff(ctx, client, "owner/repo", head, "", 0, limit)
+			require.NoError(t, err)
+			text := diffText(t, res)
+			envelope, err := json.Marshal(map[string]any{"ok": true, "result": text})
+			require.NoError(t, err)
+			require.LessOrEqual(t, len(envelope), agents.DefaultToolResultMaxBytes,
+				"%s, limit=%d produced a %d-byte envelope; the model context cuts at %d",
+				sc.name, limit, len(envelope), agents.DefaultToolResultMaxBytes)
+			next := res.StructuredContent["next_offset"].(int)
+			require.Greater(t, next, 0, "%s cannot fit in one page", sc.name)
+			if sc.wantShrunk {
+				require.Less(t, next, maxDiffPageBytes,
+					"the envelope bound, not the requested page size, must decide this page")
+			}
+			require.Equal(t, false, res.StructuredContent["evidence"], "one page of a large diff is not the whole read")
+			require.Error(t, submitVerdict(h, ctx, client, head))
+			require.Equal(t, 0, *reviews)
+		}
+	}
+}
+
+// TestPRDiffOffsetMidRuneSnapsBack pins forward progress: an offset computed
+// arithmetically can land inside a multi-byte character. The page must then start
+// at the character boundary — valid UTF-8, a non-zero range, a next_offset that
+// actually advances — never an empty page that repeats itself forever.
+func TestPRDiffOffsetMidRuneSnapsBack(t *testing.T) {
+	head := "00112233445566778899aabbccddeeff00112233"
+	files := []map[string]any{
+		{"filename": "docs/übersicht.md", "status": "modified", "additions": 40, "deletions": 0,
+			"patch": strings.Repeat("+äöü — ein Satz mit Mehrbyte-Zeichen\n", 40)},
+	}
+	client, _ := diffServer(t, head, files)
+	h := &ReviewToolHandler{}
+	ctx := mcp.ContextWithNewToolResultCache(context.Background())
+
+	full, err := h.executePRDiff(ctx, client, "owner/repo", head, "", 0, 0)
+	require.NoError(t, err)
+	whole := patchSlice(t, diffText(t, full))
+	total := full.StructuredContent["total_bytes"].(int)
+	require.Equal(t, total, len(whole))
+
+	// The second byte of a two-byte rune: not a boundary.
+	mid := strings.Index(whole, "ü") + 1
+	require.Greater(t, mid, 0)
+
+	res, err := h.executePRDiff(ctx, client, "owner/repo", head, "", mid, 1000)
+	require.NoError(t, err)
+	served := patchSlice(t, diffText(t, res))
+	require.True(t, utf8.ValidString(served), "a page must not start mid-rune")
+	require.Equal(t, mid-1, res.StructuredContent["offset"], "the offset is snapped back to the rune boundary")
+	require.True(t, strings.HasPrefix(served, "übersicht.md"))
+	require.Greater(t, res.StructuredContent["next_offset"].(int), mid-1, "the page must advance")
 }
 
 // TestPRDiffPathFilterNarrowsWithoutEvidence pins the other half: an agent that

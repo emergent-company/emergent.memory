@@ -99,15 +99,15 @@ func TestBoundToolResultResponse_RepresentativeOversized(t *testing.T) {
 	}
 	resp := map[string]any{"ok": true, "entities": rows}
 	before := mustJSONSize(t, resp)
-	require.Greater(t, before, defaultToolResultMaxBytes)
+	require.Greater(t, before, DefaultToolResultMaxBytes)
 
-	got, changed := boundToolResultResponse("entity-query", resp, defaultToolResultMaxBytes)
+	got, changed := boundToolResultResponse("entity-query", resp, DefaultToolResultMaxBytes)
 	require.True(t, changed)
 	after := mustJSONSize(t, got)
 	t.Logf("representative entity-query result: before=%d bytes after=%d bytes (cap=%d, reduction=%.1f%%)",
-		before, after, defaultToolResultMaxBytes, 100*float64(before-after)/float64(before))
+		before, after, DefaultToolResultMaxBytes, 100*float64(before-after)/float64(before))
 
-	assert.LessOrEqual(t, after, defaultToolResultMaxBytes)
+	assert.LessOrEqual(t, after, DefaultToolResultMaxBytes)
 	assert.Equal(t, true, got["truncated"])
 }
 
@@ -131,7 +131,7 @@ func TestBoundToolResultResponse_NegativeCapDisables(t *testing.T) {
 
 func TestToolResultBounds_MaxBytesFor(t *testing.T) {
 	// Zero values fall back to the generous default.
-	assert.Equal(t, defaultToolResultMaxBytes, ToolResultBounds{}.maxBytesFor("entity-query"))
+	assert.Equal(t, DefaultToolResultMaxBytes, ToolResultBounds{}.maxBytesFor("entity-query"))
 	// Explicit global cap applies to every tool...
 	assert.Equal(t, 1234, ToolResultBounds{MaxBytes: 1234}.maxBytesFor("entity-query"))
 	// ...unless a per-tool override exists.
@@ -154,7 +154,7 @@ func TestToolResultBounds_MaxBytesFor(t *testing.T) {
 func TestToolResultBoundsFromConfig_DefaultsAndOverrides(t *testing.T) {
 	// Default config: zero values fall back at use time.
 	b := toolResultBoundsFromConfig(config.MCPConfig{})
-	assert.Equal(t, defaultToolResultMaxBytes, b.maxBytesFor("entity-query"))
+	assert.Equal(t, DefaultToolResultMaxBytes, b.maxBytesFor("entity-query"))
 	assert.Equal(t, defaultToolResultTotalBudgetBytes, b.totalBudget())
 
 	// Configured global cap + per-tool override + total budget.

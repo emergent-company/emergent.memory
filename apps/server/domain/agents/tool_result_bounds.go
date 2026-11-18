@@ -29,11 +29,11 @@ import (
 // The bound is deliberately honest: a truncated result carries an explicit,
 // actionable marker the model can act on, never a silent drop.
 const (
-	// defaultToolResultMaxBytes bounds one tool result as seen by the model.
+	// DefaultToolResultMaxBytes bounds one tool result as seen by the model.
 	// 128 KiB is generous: normal read/search results observed in production
 	// (11–56 KB) pass through unchanged; only pathological payloads (e.g. a
 	// 361 KB entity-edges-get) are truncated.
-	defaultToolResultMaxBytes = 128 << 10
+	DefaultToolResultMaxBytes = 128 << 10
 
 	// defaultToolResultTotalBudgetBytes bounds the SUM of all tool results in a
 	// single model request. When exceeded, the oldest results are elided
@@ -104,7 +104,7 @@ func (b ToolResultBounds) maxBytesFor(tool string) int {
 	if b.MaxBytes > 0 {
 		return b.MaxBytes
 	}
-	return defaultToolResultMaxBytes
+	return DefaultToolResultMaxBytes
 }
 
 func (b ToolResultBounds) totalBudget() int {

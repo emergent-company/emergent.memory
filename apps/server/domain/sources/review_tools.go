@@ -41,11 +41,30 @@ const (
 	// The per-file patch is therefore no longer truncated (the old 6000-byte
 	// bound is what cut ~43% of that promotion mid-hunk); the page is, and the
 	// page ceiling stays below the model boundary that cuts every tool result
-	// (agents.defaultToolResultMaxBytes, 128 KiB). Every response states
+	// (agents.DefaultToolResultMaxBytes, 128 KiB). Every response states
 	// total_bytes and next_offset at the top, so an agent reads on from where it
 	// stopped instead of retrying the same call and seeing the same cut.
-	maxDiffPageBytes     = 120000
+	//
+	// These are the *requested* page size. The response carries a file index and
+	// JSON-escapes the patch text, so a page is additionally bounded by what
+	// actually fits in the tool-result envelope (diffEnvelopeBudget): see the
+	// sizing loop in executePRDiff.
+	maxDiffPageBytes     = 100000
 	defaultDiffPageBytes = 80000
+
+	// maxDiffIndexBytes and maxIndexFiles bound the file index that heads every
+	// page. GitHub serves at most 300 files for a commit, so the index covers a
+	// real change in full; the byte cap keeps a page of pathological paths from
+	// eating the patch budget.
+	maxDiffIndexBytes = 16000
+	maxIndexFiles     = 300
+
+	// diffEnvelopeBudget is the ceiling for one diff response as the model sees
+	// it — the {"ok":true,"result":<text>} envelope — with a margin under
+	// agents.DefaultToolResultMaxBytes. Overshooting that boundary is not a
+	// visible error: the model context cuts the tail, so the page would claim
+	// bytes the reader never saw.
+	diffEnvelopeBudget = agents.DefaultToolResultMaxBytes - 2048
 )
 
 // commitSHARe pins head_sha to a commit id before it reaches a URL path or the
@@ -500,7 +519,38 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 	if offset > len(patches) {
 		return nil, apperror.NewValidationf("github app tool: offset %d is past the end of the diff (%d bytes)", offset, len(patches))
 	}
+	// Snap a mid-rune offset back to the start of its character. A caller that
+	// computes an offset arithmetically would otherwise get a page that begins
+	// with a broken UTF-8 sequence, or (when the backing-off end lands on the
+	// same byte) a zero-length page that reports next_offset == offset and never
+	// advances.
+	for offset > 0 && offset < len(patches) && !utf8.RuneStart(patches[offset]) {
+		offset--
+	}
+
+	// The page is bounded twice: by the requested byte count, and by what actually
+	// fits in the model's tool-result envelope. The second bound has to be measured
+	// on the rendered response — the index rides along and JSON escaping inflates
+	// the patch text (every newline becomes \n, every quote \") — and it has to be
+	// applied *before* the range is recorded as read, or the evidence would name
+	// bytes the model context silently cut away.
 	end := pageEnd(patches, offset, diffPage(limit))
+	text := diffPageText(diff, files, pathFilter, patches, offset, end)
+	for guard := 0; guard < 8; guard++ {
+		over := diffEnvelopeBytes(text) - diffEnvelopeBudget
+		if over <= 0 {
+			break
+		}
+		shrunk := end - over
+		if floor := offset + runeWidth(patches, offset); shrunk < floor {
+			shrunk = floor
+		}
+		if shrunk >= end {
+			break
+		}
+		end = pageEnd(patches, offset, shrunk-offset)
+		text = diffPageText(diff, files, pathFilter, patches, offset, end)
+	}
 
 	// Evidence is the whole patch text of this commit, not one page of it: a
 	// prompt-injected run must not be able to approve a 632 KB promotion after
@@ -515,10 +565,26 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 		}
 	}
 
-	// The index and the page declaration come first, before the patch text: the
-	// model boundary truncates a tool result tail-first (see
-	// agents.defaultToolResultMaxBytes), so anything a caller must not miss — how
-	// big the diff is and where to read on from — has to sit at the top.
+	return &mcp.ToolResult{
+		Content: []mcp.ContentBlock{{Type: "text", Text: text}},
+		StructuredContent: map[string]any{
+			"sha":         diff.SHA,
+			"files":       len(diff.Files),
+			"returned":    len(files),
+			"path":        pathFilter,
+			"total_bytes": len(patches),
+			"offset":      offset,
+			"next_offset": nextOffset(end, len(patches)),
+			"evidence":    evidenced,
+		},
+	}, nil
+}
+
+// diffPageText renders one page of a commit diff: the page declaration and the
+// file index first — the model boundary truncates a tool result tail-first (see
+// agents.DefaultToolResultMaxBytes), so anything a reader must not miss sits at
+// the top — then the patch slice [offset,end).
+func diffPageText(diff *githubapp.CommitDiff, files []githubapp.CommitFile, pathFilter, patches string, offset, end int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "commit %s\n%s\n\n", diff.SHA, strings.TrimSpace(diff.Message))
 	fmt.Fprintf(&b, "files: %d", len(files))
@@ -536,12 +602,12 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 		b.WriteString(" — end of diff\n")
 	}
 	b.WriteString("--- index ---\n")
-	indexed := files
-	const maxIndexFiles = 400
-	if len(indexed) > maxIndexFiles {
-		indexed = indexed[:maxIndexFiles]
-	}
-	for _, file := range indexed {
+	indexStart := b.Len()
+	indexed := 0
+	for _, file := range files {
+		if indexed >= maxIndexFiles || b.Len()-indexStart >= maxDiffIndexBytes {
+			break
+		}
 		note := ""
 		if file.Patch == "" && file.Additions+file.Deletions > 0 {
 			// GitHub omits the patch body for binary and oversized files: say so,
@@ -549,9 +615,11 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 			note = "  (no patch body from the API)"
 		}
 		fmt.Fprintf(&b, "%s\t+%d/-%d\t%dB\t%s%s\n", file.Status, file.Additions, file.Deletions, len(file.Patch), file.Filename, note)
+		indexed++
 	}
-	if len(files) > len(indexed) {
-		fmt.Fprintf(&b, "… and %d more files (index truncated; the patch text below covers all of them)\n", len(files)-len(indexed))
+	if indexed < len(files) {
+		fmt.Fprintf(&b, "… and %d more files (index capped at %d files / %d bytes; the patch text below covers the whole selection)\n",
+			len(files)-indexed, maxIndexFiles, maxDiffIndexBytes)
 	}
 	fmt.Fprintf(&b, "--- patches [%d,%d) of %d bytes ---\n", offset, end, len(patches))
 	b.WriteString(patches[offset:end])
@@ -560,20 +628,30 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 	} else {
 		fmt.Fprintf(&b, "\n\n[end of diff: %d bytes]\n", len(patches))
 	}
+	return b.String()
+}
 
-	return &mcp.ToolResult{
-		Content: []mcp.ContentBlock{{Type: "text", Text: b.String()}},
-		StructuredContent: map[string]any{
-			"sha":         diff.SHA,
-			"files":       len(diff.Files),
-			"returned":    len(files),
-			"path":        pathFilter,
-			"total_bytes": len(patches),
-			"offset":      offset,
-			"next_offset": nextOffset(end, len(patches)),
-			"evidence":    evidenced,
-		},
-	}, nil
+// diffEnvelopeBytes is the size of a page as the model sees it: the executor
+// hands a tool result over as {"ok":true,"result":<text>}, which agents bounds
+// at agents.DefaultToolResultMaxBytes.
+func diffEnvelopeBytes(text string) int {
+	encoded, err := json.Marshal(map[string]any{"ok": true, "result": text})
+	if err != nil {
+		return len(text)
+	}
+	return len(encoded)
+}
+
+// runeWidth is the byte length of the character at offset (1 for an invalid
+// byte, 0 past the end) — the smallest slice a page may carry and still advance.
+func runeWidth(s string, offset int) int {
+	if offset >= len(s) {
+		return 0
+	}
+	if _, size := utf8.DecodeRuneInString(s[offset:]); size > 0 {
+		return size
+	}
+	return 1
 }
 
 // nextOffset is the offset to read on from, or 0 when this page reached the end.
@@ -584,10 +662,11 @@ func nextOffset(end, total int) int {
 	return end
 }
 
-// diffPage bounds one response page: the hard ceiling an explicit limit may
+// diffPage bounds one requested page: the hard ceiling an explicit limit may
 // reach and the default when the caller names none. Both stay under the model
-// boundary that cuts every tool result (agents.defaultToolResultMaxBytes, 128 KiB
-// / MCP_TOOL_RESULT_MAX_BYTES), so a page arrives whole and the trailing page
+// boundary that cuts every tool result (agents.DefaultToolResultMaxBytes, 128 KiB
+// / MCP_TOOL_RESULT_MAX_BYTES), and executePRDiff additionally fits the rendered
+// response into diffEnvelopeBudget, so a page arrives whole and the trailing page
 // declaration is never the part that gets cut.
 func diffPage(limit int) int {
 	if limit <= 0 {
