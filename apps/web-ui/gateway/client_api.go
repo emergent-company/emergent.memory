@@ -227,7 +227,7 @@ func (s *Server) scheduledSessionSummaries(ctx context.Context) []sessionSummary
 	var out []sessionSummary
 	for i, agent := range scheduled {
 		for _, run := range runsByAgent[i] {
-			sm := sessionSummary{Room: run.ID, Origin: "scheduled", Failure: runFailureText(run.Status, run.ErrorMessage, run.FailureClass, run.Summary)}
+			sm := sessionSummary{Room: run.ID, Origin: "scheduled", Bucket: deriveRunBucket(run.Status, nil, nil), Failure: runFailureText(run.Status, run.ErrorMessage, run.FailureClass, run.Summary)}
 			if agent.AgentDefinitionID != nil {
 				sm.AgentDefinitionID = *agent.AgentDefinitionID
 			}
@@ -263,7 +263,7 @@ func (s *Server) boardSessionSummaries(ctx context.Context) []sessionSummary {
 	}
 	out := make([]sessionSummary, 0, len(runs))
 	for _, run := range runs {
-		sm := sessionSummary{Room: run.ID, Origin: "board", AgentDefinitionID: run.AgentDefinitionID, Failure: runFailureText(run.Status, run.ErrorMessage, run.FailureClass, run.Summary)}
+		sm := sessionSummary{Room: run.ID, Origin: "board", AgentDefinitionID: run.AgentDefinitionID, Bucket: deriveRunBucket(run.Status, nil, nil), Failure: runFailureText(run.Status, run.ErrorMessage, run.FailureClass, run.Summary)}
 		if run.StartedAt != "" {
 			sm.StartedAt = &run.StartedAt
 		}
@@ -289,7 +289,7 @@ func (s *Server) extractionSessionSummaries(ctx context.Context) []sessionSummar
 		if row.RunID == "" {
 			continue
 		}
-		sm := sessionSummary{Room: row.RunID, Origin: "extraction", Failure: row.Failure}
+		sm := sessionSummary{Room: row.RunID, Origin: "extraction", Bucket: deriveRunBucket(row.Status, nil, nil), Failure: row.Failure}
 		if row.StartedAt != "" {
 			started := row.StartedAt
 			sm.StartedAt = &started

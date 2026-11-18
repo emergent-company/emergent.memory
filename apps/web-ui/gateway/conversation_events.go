@@ -451,7 +451,7 @@ func deriveRunBucket(status string, pendingApprovals, pendingQuestions []string)
 		return runBucketNeedsInput
 	}
 	switch status {
-	case "failed":
+	case "failed", "error":
 		return runBucketFailed
 	case "submitted", "working", "cancelling":
 		return runBucketRunning

@@ -707,3 +707,11 @@ func TestRunStateFromTimelineCapturesFailure(t *testing.T) {
 		t.Errorf("completed run kept a stale failure: %q", st.failure)
 	}
 }
+
+// TestDeriveRunBucketLegacyError pins the legacy "error" status onto the failed
+// bucket, matching the failure-copy status gate.
+func TestDeriveRunBucketLegacyError(t *testing.T) {
+	if got := deriveRunBucket("error", nil, nil); got != runBucketFailed {
+		t.Errorf("deriveRunBucket(error) = %q, want %q", got, runBucketFailed)
+	}
+}

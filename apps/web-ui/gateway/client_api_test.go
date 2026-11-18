@@ -948,3 +948,22 @@ func TestListSessionsReportsConversationFailure(t *testing.T) {
 		t.Errorf("session = %+v, want failed + reason", s)
 	}
 }
+
+// TestScheduledSessionSummariesCarryBucketAndFailure pins the run-backed session
+// JSON fields for scheduled runs.
+func TestScheduledSessionSummariesCarryBucketAndFailure(t *testing.T) {
+	f := &fakeMemory{
+		scheduledAgents: []ScheduledAgent{{ID: "a1", Name: "Nightly", TriggerType: "schedule"}},
+		scheduledRuns: map[string][]ScheduledAgentRun{
+			"a1": {{ID: "run-1", Status: "failed", StartedAt: "2026-08-26T10:00:00Z", ErrorMessage: strPtr("boom")}},
+		},
+	}
+	s := &Server{memory: f}
+	sums := s.scheduledSessionSummaries(context.Background())
+	if len(sums) != 1 {
+		t.Fatalf("summaries = %d, want 1", len(sums))
+	}
+	if sums[0].Bucket != runBucketFailed || sums[0].Failure != "boom" {
+		t.Errorf("summary = %+v, want failed + reason", sums[0])
+	}
+}
