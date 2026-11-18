@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -31,19 +32,20 @@ const (
 	toolPRDiff       = "github-pr-diff"
 	toolReviewSubmit = "github-review-submit"
 
-	// maxPatchBytes bounds each file patch and maxDiffBytes the whole result so a
-	// large commit cannot blow up the agent context.
+	// A commit's diff is served in whole-file patches, paged by byte offset: a
+	// release promotion is one commit carrying every change since the last
+	// promotion (137 files / 632 KB of patch at v0.103.0), and one response that
+	// large cannot be held — the review agent's own context cut it at ~122 KB and
+	// it then (correctly) refused to approve a diff it had only partly read.
 	//
-	// The per-file bound used to be 6000, which made a release promotion
-	// unreviewable: a promotion is one commit carrying every change since the
-	// last one (~137 files / ~214 KB at v0.103.0), and any file whose patch was
-	// larger than the bound lost its tail. The review agent refused to approve a
-	// diff it could only partly read, correctly, so the gate could never reach a
-	// verdict. The diff-wide bound is now the only practical limit; an agent that
-	// still cannot fit the whole diff can narrow with the "path" argument, and a
-	// filtered read deliberately does not satisfy the review-submit evidence rule.
-	maxPatchBytes = 200000
-	maxDiffBytes  = 2000000
+	// The per-file patch is therefore no longer truncated (the old 6000-byte
+	// bound is what cut ~43% of that promotion mid-hunk); the page is, and the
+	// page ceiling stays below the model boundary that cuts every tool result
+	// (agents.defaultToolResultMaxBytes, 128 KiB). Every response states
+	// total_bytes and next_offset at the top, so an agent reads on from where it
+	// stopped instead of retrying the same call and seeing the same cut.
+	maxDiffPageBytes     = 120000
+	defaultDiffPageBytes = 80000
 )
 
 // commitSHARe pins head_sha to a commit id before it reaches a URL path or the
@@ -61,6 +63,52 @@ func validCommitSHA(sha string) bool {
 // only be posted for a commit this run actually read.
 func diffEvidenceKey(repo, sha string) string {
 	return "githubapp:diff:" + strings.ToLower(repo) + "@" + sha
+}
+
+// diffPageKey names one byte range of repo@sha's patch text that this run was
+// served. A diff larger than one page is read across several calls, so the
+// aggregate diffEvidenceKey may only be recorded once these ranges tile the
+// whole text — an agent that read the first page and the last page has not read
+// the change in between, and must not be able to approve it.
+func diffPageKey(repo, sha string, start, end int) string {
+	return fmt.Sprintf("githubapp:diffpage:%s@%s:%d:%d", strings.ToLower(repo), sha, start, end)
+}
+
+// diffFullyRead reports whether the ranges recorded for repo@sha cover [0,total)
+// with no gap, ignoring overlaps and out-of-order reads.
+func diffFullyRead(ctx context.Context, repo, sha string, total int) bool {
+	if total <= 0 {
+		return false
+	}
+	prefix := fmt.Sprintf("githubapp:diffpage:%s@%s:", strings.ToLower(repo), sha)
+	type span struct{ start, end int }
+	spans := make([]span, 0, 8)
+	for _, key := range mcp.RunEvidenceKeys(ctx, prefix) {
+		parts := strings.SplitN(strings.TrimPrefix(key, prefix), ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		start, startErr := strconv.Atoi(parts[0])
+		end, endErr := strconv.Atoi(parts[1])
+		if startErr != nil || endErr != nil {
+			continue
+		}
+		spans = append(spans, span{start: start, end: end})
+	}
+	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
+	covered := 0
+	for _, s := range spans {
+		if s.start > covered {
+			return false
+		}
+		if s.end > covered {
+			covered = s.end
+		}
+		if covered >= total {
+			return true
+		}
+	}
+	return covered >= total
 }
 
 // truncateUTF8 cuts s to at most max bytes without splitting a UTF-8 sequence.
@@ -270,7 +318,9 @@ func (h *ReviewToolHandler) ExecuteGitHubAppTool(ctx context.Context, projectID,
 
 	switch toolName {
 	case toolPRDiff:
-		return h.executePRDiff(ctx, client, repo, stringArg(args, "head_sha"), stringArg(args, "path"))
+		offset, _ := intArg(args, "offset")
+		limit, _ := intArg(args, "limit")
+		return h.executePRDiff(ctx, client, repo, stringArg(args, "head_sha"), stringArg(args, "path"), offset, limit)
 	case toolReviewSubmit:
 		return h.executeReviewSubmit(ctx, client, projectID, repo, args)
 	default:
@@ -400,16 +450,21 @@ func validateReviewSubject(ctx context.Context, toolName, repo string, args map[
 	return nil
 }
 
-// executePRDiff is moved verbatim from domain/githubapp/tools.go: it validates
-// the commit SHA, records run-scoped evidence for a non-empty diff, and
-// truncates large payloads.
+// executePRDiff is moved from domain/githubapp/tools.go: it validates the commit
+// SHA, records run-scoped evidence for a non-empty diff, and serves the diff in
+// whole-file patches, paged by byte offset.
 //
-// pathFilter narrows the output to files whose name contains it, so an agent
-// that cannot fit the whole diff in its context can still read one file in
-// full. A filtered read records no evidence: the review-submit rule is that the
-// run read the whole change it approves, and one narrowed path proves nothing
-// about the rest of it.
-func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp.Client, repo, headSHA, pathFilter string) (*mcp.ToolResult, error) {
+// A promotion-sized commit cannot be served in one response — the review agent's
+// context cut the v0.103.0 promotion at ~122 KB of a 632 KB diff and it then
+// refused to approve a change it had only partly read (#1022). Every response
+// therefore carries the full file index plus a slice of the patch text, with
+// total_bytes and next_offset, so the agent continues from where it stopped
+// instead of retrying the same call and seeing the same cut.
+//
+// pathFilter narrows the payload to files whose name contains it. A filtered read
+// records no evidence: the review-submit rule is that the run read the change it
+// approves, and one narrowed path proves nothing about the rest of it.
+func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp.Client, repo, headSHA, pathFilter string, offset, limit int) (*mcp.ToolResult, error) {
 	if headSHA == "" {
 		return nil, apperror.NewValidation("github app tool: head_sha is required")
 	}
@@ -430,52 +485,131 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 			}
 		}
 	}
-	// Record that this run saw a real (non-empty) diff for this commit. The
-	// review submit tool requires this evidence so a prompt-injected run cannot
-	// post a verdict without reading the change it approves.
-	if pathFilter == "" && len(files) > 0 {
-		mcp.MarkRunEvidence(ctx, diffEvidenceKey(repo, diff.SHA))
+	// The patch body is assembled for the whole (possibly filtered) selection so
+	// an offset always means the same byte of the same text, whatever page the
+	// caller asked for.
+	var body strings.Builder
+	for _, file := range files {
+		fmt.Fprintf(&body, "--- %s (%s, +%d/-%d)\n%s\n\n", file.Filename, file.Status, file.Additions, file.Deletions, file.Patch)
 	}
+	patches := body.String()
+
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > len(patches) {
+		return nil, apperror.NewValidationf("github app tool: offset %d is past the end of the diff (%d bytes)", offset, len(patches))
+	}
+	end := pageEnd(patches, offset, diffPage(limit))
+
+	// Evidence is the whole patch text of this commit, not one page of it: a
+	// prompt-injected run must not be able to approve a 632 KB promotion after
+	// reading 80 KB of it. Pages accumulate; the aggregate fact is recorded only
+	// once the pages tile [0,len(patches)).
+	evidenced := false
+	if pathFilter == "" && len(files) > 0 {
+		mcp.MarkRunEvidence(ctx, diffPageKey(repo, diff.SHA, offset, end))
+		if diffFullyRead(ctx, repo, diff.SHA, len(patches)) {
+			mcp.MarkRunEvidence(ctx, diffEvidenceKey(repo, diff.SHA))
+			evidenced = true
+		}
+	}
+
+	// The index and the page declaration come first, before the patch text: the
+	// model boundary truncates a tool result tail-first (see
+	// agents.defaultToolResultMaxBytes), so anything a caller must not miss — how
+	// big the diff is and where to read on from — has to sit at the top.
 	var b strings.Builder
 	fmt.Fprintf(&b, "commit %s\n%s\n\n", diff.SHA, strings.TrimSpace(diff.Message))
-	fmt.Fprintf(&b, "files: %d of %d", len(files), len(diff.Files))
+	fmt.Fprintf(&b, "files: %d", len(files))
+	if len(files) != len(diff.Files) {
+		fmt.Fprintf(&b, " of %d", len(diff.Files))
+	}
 	if pathFilter != "" {
 		fmt.Fprintf(&b, " (path filter %q; a filtered read is not review evidence)", pathFilter)
 	}
-	b.WriteString("\n\n")
-	coverage := "complete"
-	for i, file := range files {
-		patch := file.Patch
-		if len(patch) > maxPatchBytes {
-			patch = truncateUTF8(patch, maxPatchBytes) + "\n… patch truncated"
-			coverage = "incomplete: at least one patch is truncated"
-		}
-		fmt.Fprintf(&b, "--- %s (%s, +%d/-%d)\n%s\n\n", file.Filename, file.Status, file.Additions, file.Deletions, patch)
-		if b.Len() >= maxDiffBytes {
-			if i < len(files)-1 {
-				b.WriteString("… diff truncated\n")
-				coverage = "incomplete: remaining files omitted by the size limit"
-			}
-			break
-		}
+	fmt.Fprintf(&b, ", patch bytes: %d\n", len(patches))
+	fmt.Fprintf(&b, "page: bytes %d..%d of %d", offset, end, len(patches))
+	if end < len(patches) {
+		fmt.Fprintf(&b, " — call again with offset=%d for the rest\n", end)
+	} else {
+		b.WriteString(" — end of diff\n")
 	}
-	text := b.String()
-	if len(text) > maxDiffBytes {
-		text = truncateUTF8(text, maxDiffBytes) + "\n… diff truncated"
-		coverage = "incomplete: remaining files omitted by the size limit"
+	b.WriteString("--- index ---\n")
+	indexed := files
+	const maxIndexFiles = 400
+	if len(indexed) > maxIndexFiles {
+		indexed = indexed[:maxIndexFiles]
 	}
-	text += "\ncoverage: " + coverage
+	for _, file := range indexed {
+		note := ""
+		if file.Patch == "" && file.Additions+file.Deletions > 0 {
+			// GitHub omits the patch body for binary and oversized files: say so,
+			// so "no hunk text" is never read as "no change".
+			note = "  (no patch body from the API)"
+		}
+		fmt.Fprintf(&b, "%s\t+%d/-%d\t%dB\t%s%s\n", file.Status, file.Additions, file.Deletions, len(file.Patch), file.Filename, note)
+	}
+	if len(files) > len(indexed) {
+		fmt.Fprintf(&b, "… and %d more files (index truncated; the patch text below covers all of them)\n", len(files)-len(indexed))
+	}
+	fmt.Fprintf(&b, "--- patches [%d,%d) of %d bytes ---\n", offset, end, len(patches))
+	b.WriteString(patches[offset:end])
+	if end < len(patches) {
+		fmt.Fprintf(&b, "\n\n[page: bytes %d..%d of %d; next_offset=%d]\n", offset, end, len(patches), end)
+	} else {
+		fmt.Fprintf(&b, "\n\n[end of diff: %d bytes]\n", len(patches))
+	}
+
 	return &mcp.ToolResult{
-		Content: []mcp.ContentBlock{{Type: "text", Text: text}},
+		Content: []mcp.ContentBlock{{Type: "text", Text: b.String()}},
 		StructuredContent: map[string]any{
-			"sha":      diff.SHA,
-			"files":    len(diff.Files),
-			"returned": len(files),
-			"path":     pathFilter,
-			"coverage": coverage,
-			"evidence": pathFilter == "" && len(files) > 0,
+			"sha":         diff.SHA,
+			"files":       len(diff.Files),
+			"returned":    len(files),
+			"path":        pathFilter,
+			"total_bytes": len(patches),
+			"offset":      offset,
+			"next_offset": nextOffset(end, len(patches)),
+			"evidence":    evidenced,
 		},
 	}, nil
+}
+
+// nextOffset is the offset to read on from, or 0 when this page reached the end.
+func nextOffset(end, total int) int {
+	if end >= total {
+		return 0
+	}
+	return end
+}
+
+// diffPage bounds one response page: the hard ceiling an explicit limit may
+// reach and the default when the caller names none. Both stay under the model
+// boundary that cuts every tool result (agents.defaultToolResultMaxBytes, 128 KiB
+// / MCP_TOOL_RESULT_MAX_BYTES), so a page arrives whole and the trailing page
+// declaration is never the part that gets cut.
+func diffPage(limit int) int {
+	if limit <= 0 {
+		return defaultDiffPageBytes
+	}
+	if limit > maxDiffPageBytes {
+		return maxDiffPageBytes
+	}
+	return limit
+}
+
+// pageEnd returns the exclusive end of a page starting at offset, backed off to a
+// UTF-8 rune boundary so a multi-byte character is never split across pages.
+func pageEnd(s string, offset, limit int) int {
+	end := offset + limit
+	if end >= len(s) {
+		return len(s)
+	}
+	for end > offset && !utf8.RuneStart(s[end]) {
+		end--
+	}
+	return end
 }
 
 // executeReviewSubmit is moved verbatim from domain/githubapp/tools.go: it
@@ -528,11 +662,13 @@ func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *git
 		return nil, fmt.Errorf("github app tool: PR head is %s, not the reviewed %s; re-review the new head", state.HeadSHA, headSHA)
 	}
 	// Same-run binding: the verdict may only name a commit whose non-empty diff
-	// this run read through github-pr-diff. A prompt injection in PR text cannot
-	// make the agent approve a change it never fetched (and an empty diff has
-	// nothing to approve). Fail closed when the run carries no evidence.
+	// this run read through github-pr-diff — in full, page by page. A prompt
+	// injection in PR text cannot make the agent approve a change it never
+	// fetched (and an empty diff has nothing to approve). Fail closed when the run
+	// carries no evidence, as a validation error: the caller has to be told how to
+	// finish, and an internal error hides the instruction behind a 500.
 	if !mcp.RunHasEvidence(ctx, diffEvidenceKey(repo, headSHA)) {
-		return nil, fmt.Errorf("github app tool: no non-empty github-pr-diff result for %s@%s in this run; fetch the diff for the exact reviewed commit before submitting", repo, headSHA)
+		return nil, apperror.NewValidationf("github app tool: %s@%s was not read in full by this run; call github-pr-diff for the exact reviewed commit and continue with offset=<next_offset> on each page until it reports the end of the diff, then submit", repo, headSHA)
 	}
 
 	if err := client.CreateReview(ctx, repo, number, headSHA, event, summary); err != nil {
