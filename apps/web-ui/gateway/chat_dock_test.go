@@ -644,8 +644,8 @@ func TestChatRailDataCarriesBucket(t *testing.T) {
 	if got := byID["c2"]; got.Bucket != runBucketNeedsInput || got.PendingApprovals != 1 || got.PendingQuestions != 0 {
 		t.Errorf("c2 row = bucket %q approvals %d questions %d, want needs_input/1/0", got.Bucket, got.PendingApprovals, got.PendingQuestions)
 	}
-	// c3 is nested, so it must not fetch history; its pending approval and
-	// question still badge from the project-wide snapshots.
+	// c3 is nested but still gets its own state fetch; its pending approval and
+	// question badge from the fetched state (or the snapshot fallback).
 	if got := byID["c3"]; got.Bucket != runBucketNeedsInput || got.PendingApprovals != 1 || got.PendingQuestions != 1 {
 		t.Errorf("c3 row = bucket %q approvals %d questions %d, want needs_input/1/1", got.Bucket, got.PendingApprovals, got.PendingQuestions)
 	}
@@ -803,4 +803,30 @@ func TestGetConversationTodos(t *testing.T) {
 			})
 		}
 	})
+}
+
+// TestChatRailDataNestedSubchatFailure pins that a nested sub-chat now carries
+// its own failed run's reason, even though the parent's state is separate.
+func TestChatRailDataNestedSubchatFailure(t *testing.T) {
+	f := &fakeMemory{
+		convs: []Conversation{
+			{ID: "parent", Title: "Parent"},
+			{ID: "child", Title: "Sub-chat", ParentConversationID: "parent"},
+		},
+		histories: map[string]*ConversationHistory{
+			"child": {ConversationID: "child", Items: []json.RawMessage{mustJSON(TimelineItem{
+				Kind: "run_end", RunID: "r2", RunStatus: "failed", ErrorMessage: "provider quota exceeded",
+			})}},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	_, _, convs, _, _, _, err := s.chatRailData(t.Context(), false)
+	if err != nil {
+		t.Fatalf("chatRailData: %v", err)
+	}
+	for _, c := range convs.Conversations {
+		if c.ID == "child" && (c.Bucket != runBucketFailed || c.Failure != "provider quota exceeded") {
+			t.Errorf("nested child = bucket %q failure %q, want failed + reason", c.Bucket, c.Failure)
+		}
+	}
 }

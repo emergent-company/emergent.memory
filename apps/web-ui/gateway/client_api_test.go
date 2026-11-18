@@ -846,9 +846,8 @@ func TestMessageRecordCarriesAssistantCitations(t *testing.T) {
 // TestListSessionsParentAndRunState pins the additive fields the iOS Chats list
 // needs: the sub-chat parent id, and the rail badge inputs (bucket + pending
 // decision counts) derived from the same state the web rail shows. A nested
-// child uses only its pending decisions (the rail never loads a nested
-// transcript); an orphan whose parent is missing from the response keeps its
-// own run state.
+// child now uses its own history too, so its failure reason is visible; an
+// orphan whose parent is missing from the response keeps its own run state.
 func TestListSessionsParentAndRunState(t *testing.T) {
 	runEnd := func(id, status string) json.RawMessage {
 		return json.RawMessage(`{"kind":"run_end","run_id":"` + id + `","run_status":"` + status + `"}`)
@@ -861,8 +860,8 @@ func TestListSessionsParentAndRunState(t *testing.T) {
 		},
 		histories: map[string]*ConversationHistory{
 			"parent": {Items: []json.RawMessage{runEnd("r1", "failed")}},
-			// The child's own history is a failed run, but nested rows take the
-			// pending-decisions branch instead.
+			// The child's own history is a failed run; its pending approval still
+			// outranks that failure in the derived bucket.
 			"child":  {Items: []json.RawMessage{runEnd("r2", "failed")}},
 			"orphan": {Items: []json.RawMessage{runEnd("r3", "failed")}},
 		},
