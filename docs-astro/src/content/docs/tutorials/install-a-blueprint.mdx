@@ -82,9 +82,6 @@ with the blueprint's own version beside it — v4.1.1 — the GitHub repository 
 came from, and when it was applied. That version is the blueprint's, not the
 app's, and it is what **Check for updates** compares against the repository.
 
-The name opens the blueprint's detail page, which lists the packs and object
-types the import installed.
-
 <Aside type="note" title="The copy in the project is the one that matters">
 
 Two projects can carry the same blueprint and drift apart, because what was
@@ -96,8 +93,19 @@ version, a re-check and an update come from.
 
 Open **Schema**. The blueprint's six packs are now the project's type registry:
 23 object types over 55 relationship types, which is everything the packs
-declare. (A project that already carried types of its own would show those as
-well; this one started empty.)
+declare.
+
+| Pack | Object types |
+| --- | --- |
+| `personal-memory` | `Person`, `Organization`, `Obligation`, `Task`, `Project`, `Event`, `FinancialTransaction`, `Contact`, `Place`, `Note`, `File`, `Fact`, `Habit` |
+| `pm-companies` | `LegalEntity`, `Contract` |
+| `pm-money` | `Account` |
+| `pm-assets` | `Vehicle`, `Property`, `InsurancePolicy`, `Domain`, `Server` |
+| `pm-legal` | `LegalCase` |
+| `pm-knowledge` | `Guide` |
+
+A project that already carried types of its own would show those as well; this
+one started empty.
 
 ## 8. Meet the agents
 
