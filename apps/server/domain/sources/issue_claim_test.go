@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/githubapp"
 )
 
@@ -50,5 +51,15 @@ func TestSourceAssigneeLogin(t *testing.T) {
 	}
 	if got := sourceAssigneeLogin(&Source{Config: map[string]any{}}); got != "" {
 		t.Fatalf("empty assignee = %q", got)
+	}
+}
+
+// TestIssueClaimLaneMatchesAgentsDomain guards the one value both dispatch paths
+// must agree on: the manager label the platform writes when it claims an issue.
+// The issue-trigger path (this package) and the board path (agents) each carry
+// it, and a divergence would make one path dispatch work the other refuses.
+func TestIssueClaimLaneMatchesAgentsDomain(t *testing.T) {
+	if want := "manager: " + agents.IssueClaimLane; issueClaimManagerLabel != want {
+		t.Fatalf("issueClaimManagerLabel = %q, want %q (agents.IssueClaimLane)", issueClaimManagerLabel, want)
 	}
 }
