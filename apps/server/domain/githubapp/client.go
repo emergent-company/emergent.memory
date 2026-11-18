@@ -13,8 +13,12 @@ import (
 )
 
 const (
-	defaultAPIBase    = "https://api.github.com"
-	maxAPIResponse    = 1 << 20
+	defaultAPIBase = "https://api.github.com"
+	// A commit payload for a merge commit can exceed 1 MiB once the PR has
+	// merged the current base and the commit carries hundreds of files. The
+	// review diff tool decodes the full JSON before truncating the rendered
+	// patch, so the response buffer must be larger than the raw body.
+	maxAPIResponse    = 8 << 20
 	githubAPIVersion  = "2022-11-28"
 	checkNameReviewed = "reviewed"
 )
