@@ -428,6 +428,10 @@ func (p *WorkerPool) blockWorkObject(ctx context.Context, log *slog.Logger, cano
 // skip path. The retry attempt budget honours per-type retryPolicy overrides
 // (P4.3): type > agent definition > default.
 func (p *WorkerPool) reenqueueWork(ctx context.Context, log *slog.Logger, agent *Agent, agentDef *AgentDefinition, canonicalID, projectID, subjectType string, backoffAt time.Time) {
+	// Deliberately not guarded by skipForeignIssueClaim: this re-enqueues a run
+	// we already own after a failure or timeout, so it is not a fresh dispatch.
+	// A mirrored peer claim cannot hand the item to another lane here; every
+	// fresh-dispatch path (board, reconciler, human actions) applies the guard.
 	maxAttempts := p.resolveWorkPolicy(ctx, projectID, subjectType, agentDef).maxAttempts
 	var nextRunAt *time.Time
 	if backoffAt.After(time.Now()) {

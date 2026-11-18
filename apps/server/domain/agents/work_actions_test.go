@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net/http"
 	"testing"
 
 	"github.com/google/uuid"
@@ -14,6 +15,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/testdb"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
@@ -435,4 +437,98 @@ func TestWorkActionsSetStatus_NeedsReviewOnReview(t *testing.T) {
 		canonicalID,
 	).Scan(ctx, &needsReview))
 	require.False(t, needsReview)
+}
+
+// createGitHubIssueWorkObject inserts a GitHubIssue work object carrying the
+// mirrored issue labels the claim guard reads from properties.
+func createGitHubIssueWorkObject(t *testing.T, ctx context.Context, gSvc *graph.Service, projectID, key, status, assignee string, labels []string) string {
+	t.Helper()
+	obj, err := gSvc.Create(ctx, uuid.MustParse(projectID), &graph.CreateGraphObjectRequest{
+		Type:       "GitHubIssue",
+		Key:        &key,
+		Status:     &status,
+		Assignee:   &assignee,
+		Properties: map[string]any{"labels": labels},
+	}, nil)
+	require.NoError(t, err)
+	return obj.CanonicalID.String()
+}
+
+// TestWorkActionsUnblock_SkipsForeignClaimedIssue is the #999 regression: an
+// item blocked after our run failed is offered Unblock on the board, but the
+// issue has since been claimed by a peer lane. Unblocking must refuse with a
+// 409 instead of clearing the block and starting a run over the peer's claim.
+func TestWorkActionsUnblock_SkipsForeignClaimedIssue(t *testing.T) {
+	ctx, db, repo, gSvc, projectID := setupWorkActions(t)
+	defID := insertWorkDefinition(t, db, ctx, projectID, "coder", `{}`)
+	insertWorkAgent(t, db, ctx, projectID, "coder", defID)
+
+	canonicalID := createGitHubIssueWorkObject(t, ctx, gSvc, projectID, "k-issue-claimed", "blocked", "coder",
+		[]string{"status: in-progress", "manager: lane-5d320db5"})
+	require.NoError(t, repo.UpsertWorkBlock(ctx, &WorkBlock{
+		CanonicalID: canonicalID,
+		ProjectID:   projectID,
+		Reason:      "our run failed",
+	}))
+
+	_, err := newWorkActions(repo, gSvc).Unblock(ctx, projectID, canonicalID, "try again")
+	require.Error(t, err)
+	var appErr *apperror.Error
+	require.ErrorAs(t, err, &appErr)
+	require.Equal(t, http.StatusConflict, appErr.HTTPStatus)
+
+	require.Equal(t, 0, countQueuedSubjectRuns(t, ctx, repo, canonicalID),
+		"a peer-claimed issue must not start a run")
+	blocked, err := repo.IsWorkBlocked(ctx, canonicalID)
+	require.NoError(t, err)
+	require.True(t, blocked, "a refused unblock must leave the durable block intact")
+	require.Equal(t, "blocked", workHeadStatus(t, ctx, gSvc, projectID, canonicalID))
+}
+
+// TestWorkActionsUnblock_AllowsOwnClaim verifies the guard is scoped to peer
+// claims: our own mirrored claim still unblocks and re-enqueues.
+func TestWorkActionsUnblock_AllowsOwnClaim(t *testing.T) {
+	ctx, db, repo, gSvc, projectID := setupWorkActions(t)
+	defID := insertWorkDefinition(t, db, ctx, projectID, "coder", `{}`)
+	insertWorkAgent(t, db, ctx, projectID, "coder", defID)
+
+	canonicalID := createGitHubIssueWorkObject(t, ctx, gSvc, projectID, "k-issue-ours", "blocked", "coder",
+		[]string{"status: in-progress", "manager: memory-coding"})
+	require.NoError(t, repo.UpsertWorkBlock(ctx, &WorkBlock{
+		CanonicalID: canonicalID,
+		ProjectID:   projectID,
+		Reason:      "our run failed",
+	}))
+
+	res, err := newWorkActions(repo, gSvc).Unblock(ctx, projectID, canonicalID, "try again")
+	require.NoError(t, err)
+	require.NotEmpty(t, res.RunID)
+	require.Equal(t, 1, countQueuedSubjectRuns(t, ctx, repo, canonicalID))
+	blocked, err := repo.IsWorkBlocked(ctx, canonicalID)
+	require.NoError(t, err)
+	require.False(t, blocked)
+}
+
+// TestWorkActionsRequestChanges_SkipsForeignClaimedIssue verifies the related
+// #999 defect: request-changes on a peer-claimed issue must return the 409
+// before the review→revision transition, so the item is not stranded in
+// revision with the feedback dropped.
+func TestWorkActionsRequestChanges_SkipsForeignClaimedIssue(t *testing.T) {
+	ctx, db, repo, gSvc, projectID := setupWorkActions(t)
+	defID := insertWorkDefinition(t, db, ctx, projectID, "coder", `{"requiresReview":true}`)
+	insertWorkAgent(t, db, ctx, projectID, "coder", defID)
+
+	canonicalID := createGitHubIssueWorkObject(t, ctx, gSvc, projectID, "k-issue-review", "review", "coder",
+		[]string{"status: in-progress", "manager: lane-5d320db5"})
+
+	_, err := newWorkActions(repo, gSvc).RequestChanges(ctx, projectID, canonicalID, "reviewer-1", "please fix")
+	require.Error(t, err)
+	var appErr *apperror.Error
+	require.ErrorAs(t, err, &appErr)
+	require.Equal(t, http.StatusConflict, appErr.HTTPStatus)
+
+	require.Equal(t, "review", workHeadStatus(t, ctx, gSvc, projectID, canonicalID),
+		"a refused request-changes must not move the item to revision")
+	require.Equal(t, 0, countWorkFeedback(t, ctx, repo, projectID, canonicalID))
+	require.Equal(t, 0, countQueuedSubjectRuns(t, ctx, repo, canonicalID))
 }
