@@ -598,6 +598,9 @@ func addPendingQuestions(st *conversationRunState, conversationID string, questi
 			seen[q.ID] = true
 		}
 	}
+	// The snapshot may have added a question after runStateFromTimeline derived
+	// the bucket; recompute so a question-only child still badges needs_input.
+	st.bucket = deriveRunBucket(st.activeRunStatus, st.pendingApprovals, st.pendingQuestions)
 }
 
 // runState derives the same change-detection state as conversationState, but

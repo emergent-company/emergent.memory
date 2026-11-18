@@ -830,3 +830,29 @@ func TestChatRailDataNestedSubchatFailure(t *testing.T) {
 		}
 	}
 }
+
+// TestChatRailDataQuestionOnlyNestedChildBucketsNeedsInput pins the helper's
+// target case: an unanswered question with no ask_user tool call must still
+// promote the child to needs_input.
+func TestChatRailDataQuestionOnlyNestedChildBucketsNeedsInput(t *testing.T) {
+	f := &fakeMemory{
+		convs: []Conversation{
+			{ID: "parent", Title: "Parent"},
+			{ID: "child", Title: "Sub-chat", ParentConversationID: "parent"},
+		},
+		histories: map[string]*ConversationHistory{
+			"child": {ConversationID: "child", Items: []json.RawMessage{}},
+		},
+		questions: []AgentQuestionItem{{ID: "q1", ConversationID: "child", Question: "continue?"}},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	_, _, convs, _, _, _, err := s.chatRailData(t.Context(), false)
+	if err != nil {
+		t.Fatalf("chatRailData: %v", err)
+	}
+	for _, c := range convs.Conversations {
+		if c.ID == "child" && (c.Bucket != runBucketNeedsInput || c.PendingQuestions != 1) {
+			t.Errorf("question-only nested child = bucket %q questions %d, want needs_input/1", c.Bucket, c.PendingQuestions)
+		}
+	}
+}
