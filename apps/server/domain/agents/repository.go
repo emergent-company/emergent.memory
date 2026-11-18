@@ -2217,6 +2217,15 @@ func newAgentRun(opts CreateRunOptions) *AgentRun {
 }
 
 func (r *Repository) CreateRunWithOptions(ctx context.Context, opts CreateRunOptions) (*AgentRun, error) {
+	// Budget gate for every pre-created run row (HTTP trigger/respond, A2A,
+	// chat, approvals). A blocked caller gets the typed error and no row is
+	// inserted, so nothing is left behind that can never execute.
+	if r != nil && r.budgetGate != nil && r.budgetEnforcement {
+		projectID, _, _ := r.resolveAgentRouting(ctx, opts.AgentID, "", 0)
+		if err := r.checkBudgetGate(ctx, projectID); err != nil {
+			return nil, err
+		}
+	}
 	run := newAgentRun(opts)
 	_, err := r.db.NewInsert().
 		Model(run).

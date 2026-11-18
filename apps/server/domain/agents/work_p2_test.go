@@ -249,6 +249,54 @@ func TestFinishWorkRun_QuotaDoesNotConsumeBudget(t *testing.T) {
 	require.Nil(t, mustState(t, ctx, repo, projectID, canonicalID))
 }
 
+// TestClassifyRunFailure_Budget pins the budget block out of the deterministic
+// poison path that would otherwise spend the item failure budget and block it.
+func TestClassifyRunFailure_Budget(t *testing.T) {
+	cls := classifyRunFailure(&BudgetExceededError{ProjectID: "p-1"}, nil)
+	require.Equal(t, FailureClassBudget, cls)
+	require.NotEqual(t, FailureClassDeterministic, cls)
+}
+
+// TestFinishWorkRun_BudgetBlockDoesNotConsumeItemBudget is the regression for
+// the budget-enforcement gap: a project spending-cap block must not be treated
+// as a deterministic item failure, must not spend the item failure budget, must
+// not block the item, and must not increment the agent failure counter.
+func TestFinishWorkRun_BudgetBlockDoesNotConsumeItemBudget(t *testing.T) {
+	ctx, repo, pool, projectID, canonicalID, job, run := setupFinishWork(t)
+
+	agent, err := repo.FindByID(ctx, run.AgentID, nil)
+	require.NoError(t, err)
+	def, err := repo.ResolveDefinitionForAgent(ctx, agent)
+	require.NoError(t, err)
+
+	pool.finishWorkRun(ctx, testAgentLogger(), job, run, agent, def, nil,
+		&BudgetExceededError{ProjectID: projectID, Message: "project is over budget"})
+
+	require.Nil(t, mustState(t, ctx, repo, projectID, canonicalID), "budget block must not spend the item failure budget")
+
+	var taskCount int
+	require.NoError(t, repo.db.NewRaw(
+		`SELECT COUNT(*) FROM kb.tasks WHERE source_id = ? AND type = 'work-escalation'`,
+		canonicalID,
+	).Scan(ctx, &taskCount))
+	require.Zero(t, taskCount, "budget block must not block the item")
+
+	updated, err := repo.FindByID(ctx, run.AgentID, nil)
+	require.NoError(t, err)
+	require.Zero(t, updated.ConsecutiveFailures, "budget block must not increment the agent failure counter")
+
+	var jobStatus string
+	require.NoError(t, repo.db.NewRaw(`SELECT status FROM kb.agent_run_jobs WHERE id = ?`, job.ID).Scan(ctx, &jobStatus))
+	require.Equal(t, string(JobStatusFailed), jobStatus, "the job is retired without requeue; the item transition owns recovery")
+
+	// The budget case returns the item to ready and fails the run/job without
+	// spending the item failure budget; it does not mark the run skipped.
+	finalRun, err := repo.FindRunByID(ctx, run.ID)
+	require.NoError(t, err)
+	require.Equal(t, RunStatusError, finalRun.Status)
+	require.Nil(t, finalRun.SkipReason)
+}
+
 // stringErr is a minimal error wrapper for classification tests.
 type stringErr string
 

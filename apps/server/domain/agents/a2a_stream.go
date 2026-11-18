@@ -450,6 +450,11 @@ func (h *A2AHandler) streamNewTask(c echo.Context, projectID, userID, userMessag
 		if err := h.executor.EnsureExecutionEnabled(); err != nil {
 			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, err.Error()))
 		}
+		// Budget pre-flight before creating the run row: a capped project must
+		// not leave an A2A run that can never execute.
+		if err := h.executor.ensureBudgetAvailable(ctx, projectID, agent.ID, "a2a"); err != nil {
+			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, err.Error()))
+		}
 	}
 
 	triggerSource := "a2a"

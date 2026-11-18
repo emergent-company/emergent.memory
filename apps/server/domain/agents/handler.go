@@ -3573,6 +3573,14 @@ func (h *Handler) cancelQuestion(ctx context.Context, p RespondParams) (*AgentQu
 // with the given resolved user message and optional reject message. It returns
 // the pre-created run (whose ID clients poll) or an error.
 func (h *Handler) resumeQuestionRun(ctx context.Context, p RespondParams, run *AgentRun, agent *Agent, agentDef *AgentDefinition, userMessage, rejectMessage string) (*AgentRun, error) {
+	// Budget pre-flight before creating the resumed run row: a capped project
+	// gets 402 and no row, rather than a pending run that can never execute.
+	if h.executor != nil {
+		if err := h.executor.ensureBudgetAvailable(ctx, agent.ProjectID, agent.ID, "http_respond"); err != nil {
+			return nil, mapExecutorError(err)
+		}
+	}
+
 	orgID := p.OrgID
 	if orgID == "" {
 		orgID, _ = h.repo.GetOrgIDByProjectID(ctx, agent.ProjectID)
