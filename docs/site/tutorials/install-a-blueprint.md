@@ -39,11 +39,10 @@ way in: **Import**.
 
 ## 3. Choose Import
 
-Click **Import**. A blueprint is installed from a repository, not from an uploaded
-archive, so the dialog asks for one thing: a URL.
-
-**New from registry** sits next to it for blueprints that are published to a
-registry; the personal-memory blueprint is not, so this walkthrough uses the URL.
+Click **Import**. The **Import from GitHub** dialog opens with three fields: a
+repository URL, an optional **Ref** (a branch, tag or commit) and an optional
+**Access token** for a private repository. Nothing is uploaded — the server reads
+the repository itself, so all it needs is where the repository is.
 
 ## 4. Paste the repository URL
 
@@ -61,10 +60,10 @@ reach GitHub even when your browser can.
 
 ## 5. Import, and let it apply
 
-Click **Import**. In one request the server fetches the repository, reads every
-pack and agent in it, creates the blueprint, publishes it, and applies it to this
-project. For a blueprint this size that is a few seconds, and there is no second
-confirmation to accept.
+Click **Import**. One click does the rest: the server fetches the repository, reads
+every pack and agent in it, creates the blueprint, publishes it, and applies it to
+this project. For a blueprint this size that is a few seconds, and there is no
+second confirmation to accept.
 
 An import into a project that already has some of these object types stops at a
 merge review instead: it shows the colliding types and applies nothing until you
@@ -72,10 +71,13 @@ confirm the merge.
 
 ## 6. Check the installed entry
 
-The gallery comes back with the blueprint in its installed list: **personal-memory
-v4.1.1**, a link to the repository it came from, and the packs it contributed.
-That version is the blueprint's own, not the app's, and it is what **Check for
-updates** compares against the repository.
+The gallery comes back with the blueprint under **Installed**: **personal-memory**
+with the blueprint's own version beside it — v4.1.1 — the GitHub repository it
+came from, and when it was applied. That version is the blueprint's, not the
+app's, and it is what **Check for updates** compares against the repository.
+
+The name opens the blueprint's detail page, which lists the packs and object
+types the import installed.
 
 !!! note "The copy in the project is the one that matters"
 
@@ -86,20 +88,9 @@ updates** compares against the repository.
 ## 7. See the schema it brought
 
 Open **Schema**. The blueprint's six packs are now the project's type registry:
-23 object types over 55 relationship types.
-
-| Pack | Object types |
-| --- | --- |
-| `personal-memory` | `Person`, `Organization`, `Obligation`, `Task`, `Project`, `Event`, `FinancialTransaction`, `Contact`, `Place`, `Note`, `File`, `Fact`, `Habit` |
-| `pm-companies` | `LegalEntity`, `Contract` |
-| `pm-money` | `Account` |
-| `pm-assets` | `Vehicle`, `Property`, `InsurancePolicy`, `Domain`, `Server` |
-| `pm-legal` | `LegalCase` |
-| `pm-knowledge` | `Guide` |
-
-Every object type also declares how its own page is laid out — the sections a
-`Property` shows, the fields a `Vehicle` previews inline — in the same pack that
-declares the type. There is no per-project page configuration to write.
+23 object types over 55 relationship types, which is everything the packs
+declare. (A project that already carried types of its own would show those as
+well; this one started empty.)
 
 ## 8. Meet the agents
 
@@ -111,7 +102,7 @@ repository.
 | `memory-extractor` | manual | Extracts objects from emails, events and conversations, and gives each a stable key |
 | `obligations-watcher` | daily, 05:00 server time | Turns upcoming obligations into tasks, and rolls an obligation forward when its task is done |
 | `daily-briefing` | manual | A read-only briefing: events, deadlines, tasks, people, money, habits, notes |
-| `personal-kb-agent` | chat | Saves and recalls on request |
+| `personal-kb-agent` | on request, in chat | Saves and recalls on request; it declares no trigger of its own and is exposed to chat instead |
 
 None of them pins a model; each inherits the project's default at run time, which
 is why the install needed no AI key.

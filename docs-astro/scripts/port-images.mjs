@@ -56,15 +56,18 @@ for (const dir of DIRS) {
 
   // Recordings are mirrored verbatim, before (and independently of) the raster
   // pass: a video-only tutorial has no PNG here, and the `continue` below would
-  // otherwise skip the copy and ship a page whose `<video>` 404s.
+  // otherwise skip the copy and ship a page whose `<video>` 404s. A WebP that a
+  // PNG or JPEG beside it regenerates is skipped — it is this script's own
+  // output, and copying it first would only be overwritten.
   const entries = (await readdir(srcDir)).filter((f) => !f.startsWith('.'));
-  for (const file of entries.filter((f) => RECORDING.test(f)).sort()) {
+  const files = entries.filter((f) => /\.(png|jpe?g)$/i.test(f)).sort();
+  const regenerated = new Set(files.map((f) => f.replace(/\.(png|jpe?g)$/i, '.webp')));
+  for (const file of entries.filter((f) => RECORDING.test(f) && !regenerated.has(f)).sort()) {
     const from = path.join(srcDir, file);
     await copyFile(from, path.join(outDir, file));
-    console.log(`${dir}/${file}  copied verbatim  ${Math.round((await stat(from)).size / 1024)}K`);
+    console.log(`${dir}/${file}  mirrored  ${Math.round((await stat(from)).size / 1024)}K`);
   }
 
-  const files = entries.filter((f) => /\.(png|jpe?g)$/i.test(f)).sort();
   if (!files.length) {
     console.log(`${dir}: no rasters found — nothing to resize`);
     continue;
