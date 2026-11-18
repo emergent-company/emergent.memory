@@ -20,6 +20,12 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, errLog io.Writer, age
 	s := newStream(in, out)
 	var wg sync.WaitGroup
 
+	// Diagnostics from background work (a failed follow-up CancelTask) go to the
+	// error log, never to the ACP wire.
+	agent.mu.Lock()
+	agent.errLog = errLog
+	agent.mu.Unlock()
+
 	// runCtx is cancelled on a terminal read error (not on EOF) so in-flight
 	// prompts are aborted instead of leaking. On EOF, in-flight prompts are
 	// drained normally — EOF signals "no more requests", not cancellation.

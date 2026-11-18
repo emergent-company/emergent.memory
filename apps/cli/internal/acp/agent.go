@@ -12,12 +12,6 @@ import (
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/a2a"
 )
 
-// cancelTaskTimeout bounds the best-effort CancelTask request sent when an ACP
-// session/cancel (or a session teardown) abandons an in-flight turn. The call
-// runs on its own goroutine so the ACP client is never blocked on it, but a
-// hung Memory server must not leak that goroutine forever.
-const cancelTaskTimeout = 5 * time.Second
-
 // defaultMaxSessions is the strict upper bound on the number of sessions tracked
 // in memory. A long-lived agent fronting many sessions (e.g. an IDE reusing one
 // ACP process) would otherwise grow its session map without bound; once the cap
@@ -26,6 +20,12 @@ const cancelTaskTimeout = 5 * time.Second
 // refused rather than growing the map (see newSession), so the bound holds
 // exactly at this value.
 const defaultMaxSessions = 256
+
+// cancelTaskTimeout bounds the follow-up CancelTask call a session/cancel makes.
+// That call is a best-effort notification of the server, so it must never delay
+// the cancelled prompt reply: it runs on its own goroutine and is abandoned
+// (logged) when it exceeds this budget.
+const cancelTaskTimeout = 5 * time.Second
 
 // Agent bridges ACP method calls to the Memory A2A surface. Each ACP session
 // maps to a Memory agent (skill) turn; consecutive prompts in the same session
@@ -42,10 +42,25 @@ type Agent struct {
 	seq         uint64 // monotonic tick updated on each session use, for LRU
 	maxSessions int    // bounded session map size; <= 0 disables eviction
 
+	// errLog receives best-effort diagnostics (a failed follow-up CancelTask,
+	// for instance) that must never reach the ACP wire on stdout. Run wires it
+	// to the process stderr; a nil value discards them.
+	errLog io.Writer
+
 	// testHookAfterLookup, when non-nil, runs after the session lookup and
 	// before the turn registration critical section. Test-only seam for
 	// deterministically exercising the lookup/registration race.
 	testHookAfterLookup func()
+}
+
+// promptTurn is one in-flight prompt turn. It carries the turn's cancel
+// function plus the A2A task id observed on the stream, so a session/cancel can
+// stop the Memory run itself and not just the local request (issue #868). The
+// task id is written by the streaming goroutine and read by cancel, so both
+// sides hold Agent.mu.
+type promptTurn struct {
+	cancel context.CancelFunc
+	taskID string
 }
 
 // session is the per-session state tracked by the agent.
@@ -53,19 +68,11 @@ type session struct {
 	skill         string // selected skill slug; defaults to the agent's default skill
 	contextID     string
 	pendingTaskID string // set when the last turn paused for HITL input
-	// cancels holds one cancel function per in-flight prompt turn, keyed by the
-	// turn generation. Tracking per turn (rather than a single slot) keeps every
+	// cancels holds one entry per in-flight prompt turn, keyed by the turn
+	// generation. Tracking per turn (rather than a single slot) keeps every
 	// concurrent turn cancellable: a cancel notification cancels them all and
 	// each turn removes only its own entry when it ends, so none is orphaned.
-	cancels map[uint64]context.CancelFunc
-	// tasks maps each in-flight turn generation to the A2A task id observed on
-	// its stream. The bridge only reserved the local request before: cancelling
-	// the ACP turn closed the SSE stream but left the Memory run executing in
-	// its sandbox. Tracking the task id per turn lets session/cancel ask the
-	// platform to cancel the run as well (issue #868). The id is recorded as
-	// soon as the first stream event carries it, not when the turn pauses,
-	// because a cancel can land at any point mid-run.
-	tasks map[uint64]string
+	cancels map[uint64]*promptTurn
 	// cancelledThrough is the highest turn generation for which a session/cancel
 	// has been requested. A turn whose generation is <= cancelledThrough
 	// resolves "cancelled" at registration instead of starting a backend turn.
@@ -82,19 +89,6 @@ type session struct {
 
 // inFlight reports the number of prompt turns currently running for the session.
 func (s *session) inFlight() int { return len(s.cancels) }
-
-// taskIDsLocked returns the A2A task ids of every in-flight turn, so abandoning
-// the session can ask the platform to cancel those runs. The caller must hold
-// a.mu.
-func (s *session) taskIDsLocked() []string {
-	ids := make([]string, 0, len(s.tasks))
-	for _, id := range s.tasks {
-		if id != "" {
-			ids = append(ids, id)
-		}
-	}
-	return ids
-}
 
 // NewAgent creates an ACP agent that fronts the given A2A client and targets
 // the Memory agent identified by skill (its RFC1123 slug). modes is the list of
@@ -261,19 +255,15 @@ func (a *Agent) dropSession(sessionID string) {
 	// Sticky barrier against the prompt lookup/registration window: a prompt
 	// that has already looked this session up must not run a turn for it.
 	sess.dropped = true
-	fns := make([]context.CancelFunc, 0, len(sess.cancels))
-	for _, fn := range sess.cancels {
-		fns = append(fns, fn)
+	turns := make([]turnCancel, 0, len(sess.cancels))
+	for _, t := range sess.cancels {
+		turns = append(turns, turnCancel{cancel: t.cancel, taskID: t.taskID})
 	}
-	taskIDs := sess.taskIDsLocked()
 	a.mu.Unlock()
 	// Invoke the cancel functions outside the lock, as cancel does.
-	for _, fn := range fns {
-		fn()
+	for _, t := range turns {
+		a.stopTurn(t)
 	}
-	// Dropping a session is a cancel for its in-flight turns too: closing the
-	// local stream alone would leave the Memory runs executing (issue #868).
-	a.cancelTasks(taskIDs)
 }
 
 // deleteSession handles the ACP session/delete method: drop the session's state
@@ -374,12 +364,10 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 	sess.turn++
 	turn := sess.turn
 	if sess.cancels == nil {
-		sess.cancels = make(map[uint64]context.CancelFunc)
+		sess.cancels = make(map[uint64]*promptTurn)
 	}
-	sess.cancels[turn] = cancel
-	if sess.tasks == nil {
-		sess.tasks = make(map[uint64]string)
-	}
+	rec := &promptTurn{cancel: cancel}
+	sess.cancels[turn] = rec
 	dropped := sess.dropped
 	cancelled := turn <= sess.cancelledThrough
 	if resumeTaskID != "" {
@@ -394,7 +382,6 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 	defer func() {
 		a.mu.Lock()
 		delete(sess.cancels, turn)
-		delete(sess.tasks, turn)
 		a.mu.Unlock()
 	}()
 
@@ -434,8 +421,7 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 		// Safety net for servers that predate the continuation fix (issue
 		// #867): a paused task with nothing to answer used to be rejected as
 		// INVALID_STATE. The latched task id is unusable, so retry once as a
-		// new task in the same context instead of failing the turn. Newer
-		// servers resume the task instead and never reach this.
+		// new task in the same context instead of failing the turn.
 		req = a2aNewTaskRetry(req, skill, contextID)
 		stream, err = a.client.StreamMessage(promptCtx, req)
 	}
@@ -447,24 +433,19 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 	}
 	defer func() { _ = stream.Close() }()
 
-	emitter := &textEmitter{sid: p.SessionID, send: send}
-	// Record the A2A task id on the session as soon as the stream reveals it, so
-	// a session/cancel arriving mid-run can cancel that task on the platform.
-	onTaskID := func(id string) {
+	emitter := &sessionEmitter{sid: p.SessionID, send: send}
+	newContextID, newPendingTaskID, stopReason, err := a.consumeStream(promptCtx, stream, emitter, func(taskID string) {
 		a.mu.Lock()
+		rec.taskID = taskID
 		dropped := sess.dropped
-		if !dropped && sess.tasks != nil {
-			sess.tasks[turn] = id
-		}
 		a.mu.Unlock()
-		if dropped {
+		if dropped && taskID != "" {
 			// The session was closed/deleted between stream setup and the task
-			// id arriving: its in-flight task ids were collected at drop time,
-			// so cancel this one directly rather than stranding the run.
-			a.cancelTasks([]string{id})
+			// id arriving; its in-flight ids were collected at drop time, so
+			// cancel this one directly rather than stranding the run.
+			a.cancelTask(taskID)
 		}
-	}
-	newContextID, newPendingTaskID, stopReason, err := a.consumeStream(promptCtx, stream, emitter, onTaskID)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -517,27 +498,46 @@ func a2aNewTaskRetry(req a2a.SendMessageRequest, skill, contextID string) a2a.Se
 	return req
 }
 
-// consumeStream drains an A2A SSE stream, emitting agent_message_chunk deltas
-// for streamed text and terminal question/error messages. It returns the
-// accumulated contextId, any pending HITL task id, the stop reason, and an error
-// (only for transport failures). onTaskID, when non-nil, is called with the
-// stream's task id as soon as the first event carries it, so the caller can
-// cancel that task if the client later abandons the turn.
-func (a *Agent) consumeStream(ctx context.Context, stream *a2a.SSEStream, emitter *textEmitter, onTaskID func(string)) (string, string, string, error) {
+// consumeStream drains an A2A SSE stream, emitting session/update deltas as they
+// arrive: agent_message_chunk for streamed text, tool_call/tool_call_update for
+// the server's structured tool artifacts, and a single agent_thought_chunk on
+// the turn's WORKING transition so the client shows progress before the first
+// step produces output. It returns the accumulated contextId, any pending HITL
+// task id, the stop reason, and an error (only for transport failures).
+//
+// track receives the A2A task id as soon as an event names it, and "" once the
+// turn stops running (terminal or paused), so a session/cancel can cancel the
+// right Memory run without cancelling a paused task the user is about to resume.
+func (a *Agent) consumeStream(ctx context.Context, stream *a2a.SSEStream, emitter *sessionEmitter, track func(string)) (string, string, string, error) {
 	var contextID, pendingTaskID string
 	stopReason := StopReasonEndTurn
-	seenTaskID := ""
-	// observe records the task id once, on first sight. The id is stable across
-	// a turn (and across a HITL resume), so later repeats are no-ops.
-	observe := func(id string) {
-		if id == "" || id == seenTaskID {
+
+	// knownTaskID is the id already reported to track; it is cleared once the
+	// turn stops running so a late session/cancel has nothing to cancel.
+	// turnTaskID is the id this turn runs under, kept for the turn's lifetime:
+	// tool-call ids are namespaced with it because the server's artifact ids
+	// restart at tool-call-1 for every stream (and one ACP session is one A2A
+	// context, so every prompt is a new task).
+	var knownTaskID, turnTaskID string
+	noteTask := func(id string) {
+		if id == "" {
 			return
 		}
-		seenTaskID = id
-		if onTaskID != nil {
-			onTaskID(id)
+		turnTaskID = id
+		if id == knownTaskID || track == nil {
+			return
 		}
+		knownTaskID = id
+		track(id)
 	}
+	clearTask := func() {
+		if knownTaskID == "" || track == nil {
+			return
+		}
+		knownTaskID = ""
+		track("")
+	}
+	working := false
 
 	for {
 		ev, err := stream.Next()
@@ -553,34 +553,53 @@ func (a *Agent) consumeStream(ctx context.Context, stream *a2a.SSEStream, emitte
 
 		switch {
 		case ev.ArtifactUpdate != nil:
-			observe(ev.ArtifactUpdate.TaskID)
-			if ev.ArtifactUpdate.ContextID != "" {
-				contextID = ev.ArtifactUpdate.ContextID
+			au := ev.ArtifactUpdate
+			if au.ContextID != "" {
+				contextID = au.ContextID
 			}
-			if err := emitter.emit(artifactText(ev.ArtifactUpdate.Artifact)); err != nil {
+			noteTask(au.TaskID)
+			if tc, ok := toolCallFromArtifact(au, turnTaskID); ok {
+				if err := emitter.emitToolCall(tc); err != nil {
+					return contextID, "", StopReasonEndTurn, err
+				}
+				continue
+			}
+			if err := emitter.emit(artifactText(au.Artifact)); err != nil {
 				return contextID, "", StopReasonEndTurn, err
 			}
 
 		case ev.Message != nil:
-			observe(ev.Message.TaskID)
 			if ev.Message.ContextID != "" {
 				contextID = ev.Message.ContextID
 			}
+			noteTask(ev.Message.TaskID)
 			if err := emitter.emit(messageText(ev.Message)); err != nil {
 				return contextID, "", StopReasonEndTurn, err
 			}
 
 		case ev.StatusUpdate != nil:
 			su := ev.StatusUpdate
-			observe(su.TaskID)
 			if su.ContextID != "" {
 				contextID = su.ContextID
 			}
+			noteTask(su.TaskID)
 			switch su.Status.State {
+			case a2a.TaskStateWorking:
+				// The turn has started but has produced nothing yet: one
+				// progress frame so a slow first step is not invisible.
+				if !working {
+					working = true
+					if err := emitter.emitWorking(); err != nil {
+						return contextID, "", stopReason, err
+					}
+				}
 			case a2a.TaskStateInputRequired:
 				// HITL pause: record the task id for a later resume and surface
 				// the question. The server closes the stream after this event.
+				// The run is no longer executing, so a cancel from here on must
+				// not cancel it (that would strand the paused task).
 				pendingTaskID = su.TaskID
+				clearTask()
 				if q := messageText(su.Status.Message); q != "" {
 					if err := emitter.emit(q); err != nil {
 						return contextID, "", stopReason, err
@@ -590,6 +609,7 @@ func (a *Agent) consumeStream(ctx context.Context, stream *a2a.SSEStream, emitte
 				// A failed/rejected turn is not a clean end_turn; surface the
 				// failure message and report refusal so clients can distinguish.
 				stopReason = StopReasonRefusal
+				clearTask()
 				if msg := messageText(su.Status.Message); msg != "" {
 					if err := emitter.emit(msg); err != nil {
 						return contextID, "", stopReason, err
@@ -597,24 +617,31 @@ func (a *Agent) consumeStream(ctx context.Context, stream *a2a.SSEStream, emitte
 				}
 			case a2a.TaskStateCanceled:
 				stopReason = StopReasonCancelled
+				clearTask()
 			}
 
 		case ev.Task != nil:
 			// Initial SUBMITTED snapshot or terminal snapshot. Its text is
 			// already emitted via artifact/message events; capture context id
 			// and any terminal failure/cancellation state.
-			observe(ev.Task.ID)
 			if ev.Task.ContextID != "" {
 				contextID = ev.Task.ContextID
 			}
+			noteTask(ev.Task.ID)
 			switch ev.Task.Status.State {
+			case a2a.TaskStateCompleted:
+				// A terminal snapshot ends the turn: nothing is left to cancel.
+				clearTask()
 			case a2a.TaskStateFailed, a2a.TaskStateRejected:
 				stopReason = StopReasonRefusal
+				clearTask()
 			case a2a.TaskStateCanceled:
 				stopReason = StopReasonCancelled
+				clearTask()
 			}
 		}
 	}
+	clearTask()
 
 	if ctx.Err() != nil {
 		return contextID, "", StopReasonCancelled, nil
@@ -622,23 +649,30 @@ func (a *Agent) consumeStream(ctx context.Context, stream *a2a.SSEStream, emitte
 	return contextID, pendingTaskID, stopReason, nil
 }
 
+// turnCancel is a snapshot of an in-flight turn taken under Agent.mu: the local
+// cancel function plus the Memory task id (empty when the stream has not named
+// one yet, or the turn has already stopped running).
+type turnCancel struct {
+	cancel context.CancelFunc
+	taskID string
+}
+
 // cancel handles the session/cancel notification by cancelling every in-flight
-// prompt for the session. The cancel functions are copied under the lock so they
-// are never read concurrently with the writes in prompt. It also advances the
+// prompt for the session, locally and on the server. The turns are copied under
+// the lock so their cancel functions and task ids are never read concurrently
+// with the writes in prompt and consumeStream. It also advances the
 // cancelledThrough watermark so a turn that has looked the session up but not yet
-// registered its cancel function still observes the cancel; the cancel functions
-// are invoked outside the lock.
+// registered its cancel function still observes the cancel; the cancels are
+// invoked outside the lock.
 func (a *Agent) cancel(params CancelParams) {
 	a.mu.Lock()
 	sess := a.sessions[params.SessionID]
-	var fns []context.CancelFunc
-	var taskIDs []string
+	var turns []turnCancel
 	if sess != nil {
-		fns = make([]context.CancelFunc, 0, len(sess.cancels))
-		for _, fn := range sess.cancels {
-			fns = append(fns, fn)
+		turns = make([]turnCancel, 0, len(sess.cancels))
+		for _, t := range sess.cancels {
+			turns = append(turns, turnCancel{cancel: t.cancel, taskID: t.taskID})
 		}
-		taskIDs = sess.taskIDsLocked()
 		// Record the cancel against the turn generation. With a turn in flight it
 		// applies up to the newest registered generation; with none in flight it
 		// applies to the next turn to register (a cancel racing a prompt's
@@ -654,45 +688,65 @@ func (a *Agent) cancel(params CancelParams) {
 		}
 	}
 	a.mu.Unlock()
-	for _, fn := range fns {
-		fn()
+	for _, t := range turns {
+		a.stopTurn(t)
 	}
-	// Cancelling the local request only stops the SSE consumer; the Memory run
-	// keeps executing unless the platform is told to cancel it (issue #868).
-	a.cancelTasks(taskIDs)
 }
 
-// cancelTasks asks the Memory server to cancel the given A2A tasks on a
-// best-effort, fire-and-forget basis. Each request has its own bounded context
-// (not the turn's cancelled one), so it can still reach the server after the
-// local stream was torn down, and the ACP client is never blocked on it: the
-// turn resolves "cancelled" whether or not the call succeeds. Failures are
-// swallowed deliberately — the server treats a dropped SSE connection as a
-// cancel as well, so the two paths are each other's backstop.
-func (a *Agent) cancelTasks(taskIDs []string) {
-	for _, id := range taskIDs {
-		if id == "" {
-			continue
+// stopTurn stops one in-flight turn: it cancels the local stream request and, as
+// a backstop, cancels the Memory run behind it. Cancelling only the local context
+// left the run executing in its sandbox — 9 more minutes and 30 steps on the
+// reported turn (issue #868) — because the server does not reliably observe a
+// dropped SSE connection. CancelTask is a no-op for a task the server has already
+// finalised, so it is safe to send even when the stream is about to end on its
+// own.
+func (a *Agent) stopTurn(t turnCancel) {
+	t.cancel()
+	a.cancelTask(t.taskID)
+}
+
+// cancelTask asks the platform to cancel one A2A task. It is best-effort and
+// bounded: the call runs on its own goroutine so the ACP client is never blocked
+// on it, and a hung Memory server cannot leak that goroutine past
+// cancelTaskTimeout.
+func (a *Agent) cancelTask(taskID string) {
+	if taskID == "" || a.client == nil {
+		return
+	}
+	go func(taskID string) {
+		ctx, cancel := context.WithTimeout(context.Background(), cancelTaskTimeout)
+		defer cancel()
+		if _, err := a.client.CancelTask(ctx, taskID); err != nil {
+			a.logf("acp: session/cancel: cancel Memory task %s: %v", taskID, err)
 		}
-		go func(taskID string) {
-			ctx, cancel := context.WithTimeout(context.Background(), cancelTaskTimeout)
-			defer cancel()
-			_, _ = a.client.CancelTask(ctx, taskID)
-		}(id)
-	}
+	}(taskID)
 }
 
-// textEmitter dedupes and emits incremental text deltas. A2A stream events carry
-// the full growing text (and the terminal message/task repeat the final text),
-// so it emits only the suffix not yet sent, falling back to the full text when a
-// non-monotonic value arrives.
-type textEmitter struct {
+// logf writes a best-effort diagnostic to the process error log (stderr). The
+// ACP wire is stdout only, so nothing diagnostic may be written there.
+func (a *Agent) logf(format string, args ...any) {
+	a.mu.Lock()
+	w := a.errLog
+	a.mu.Unlock()
+	if w == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(w, format+"\n", args...)
+}
+
+// sessionEmitter emits ACP session/update notifications for one prompt turn. It
+// dedupes incremental text deltas — A2A stream events carry the full growing text
+// (and the terminal message/task repeat the final text), so it emits only the
+// suffix not yet sent, falling back to the full text when a non-monotonic value
+// arrives — and maps the server's structured tool artifacts onto ACP tool_call
+// frames.
+type sessionEmitter struct {
 	sid     string
 	send    func(any) error
 	emitted string
 }
 
-func (e *textEmitter) emit(text string) error {
+func (e *sessionEmitter) emit(text string) error {
 	if text == "" {
 		return nil
 	}
@@ -710,6 +764,184 @@ func (e *textEmitter) emit(text string) error {
 		e.emitted = text
 		return e.send(sessionUpdate(e.sid, text))
 	}
+}
+
+// emitToolCall reports one tool-call artifact to the client as a tool_call (on
+// the start artifact) or tool_call_update (on the Append:true end artifact).
+// Without this the bridge kept only text parts and dropped every tool artifact,
+// so a 30-step turn was invisible until the final message (issue #866).
+func (e *sessionEmitter) emitToolCall(tc toolCall) error {
+	return e.send(toolCallFrame(e.sid, tc))
+}
+
+// emitWorking reports the turn's WORKING transition as a single thought chunk so
+// the client shows the turn as started even when the first model step takes
+// minutes to produce anything. It is sent once per turn (the server emits one
+// WORKING status per stream).
+func (e *sessionEmitter) emitWorking() error {
+	return e.send(map[string]any{
+		"jsonrpc": jsonrpcVersion,
+		"method":  "session/update",
+		"params": map[string]any{
+			"sessionId": e.sid,
+			"update": map[string]any{
+				"sessionUpdate": "agent_thought_chunk",
+				"content":       map[string]any{"type": "text", "text": workingNotice},
+			},
+		},
+	})
+}
+
+// workingNotice is the text of the single progress frame emitted on a turn's
+// WORKING transition. It is a status line, not model output.
+const workingNotice = "Working…"
+
+// toolCall is one ACP tool call derived from an A2A tool artifact. The server
+// emits the start artifact as a structured Data part {toolName, input} and the
+// end artifact as {toolName, output} with Append:true under the same artifact id
+// (apps/server/domain/agents/a2a_stream.go). The artifact id is only unique
+// within one stream, so the ACP toolCallId is taskID + ":" + artifact id.
+type toolCall struct {
+	ID        string
+	Name      string
+	Input     any
+	HasInput  bool
+	Output    any
+	HasOutput bool
+	End       bool
+}
+
+// toolCallFromArtifact extracts the tool-call payload from an artifact update.
+// It reports false for anything that is not a tool artifact: the growing text
+// artifact, A2UI surfaces, and any other structured data a future server version
+// emits. Non-object Data parts (A2UI's array of surface messages) never match.
+//
+// taskID namespaces the artifact id into the ACP toolCallId. The server's
+// toolSeq restarts at 1 per stream, and one ACP session is one A2A context in
+// which every prompt is a new task, so a bare artifact id repeats on every turn
+// and a client that keys by it folds the earlier call into the new one.
+// Namespacing here, client-side, also pairs correctly against older servers.
+// (A resumed stream of the same task restarts the artifact sequence too, so the
+// two sides of a pause can still share an id; closing that needs a stream nonce
+// in the server's artifact id — tracked as a known gap, not fixed here.)
+func toolCallFromArtifact(au *a2a.TaskArtifactUpdateEvent, taskID string) (toolCall, bool) {
+	if au == nil || au.Artifact.ArtifactID == "" {
+		return toolCall{}, false
+	}
+	id := au.Artifact.ArtifactID
+	if taskID != "" {
+		id = taskID + ":" + id
+	}
+	tc := toolCall{ID: id, Name: au.Artifact.Name, End: au.Append}
+	for _, p := range au.Artifact.Parts {
+		data, ok := p.Data.(map[string]any)
+		if !ok {
+			continue
+		}
+		if name, ok := data["toolName"].(string); ok && name != "" {
+			tc.Name = name
+		}
+		if v, ok := data["input"]; ok {
+			tc.Input, tc.HasInput = v, true
+		}
+		if v, ok := data["output"]; ok {
+			tc.Output, tc.HasOutput = v, true
+		}
+	}
+	if tc.Name == "" && !tc.HasInput && !tc.HasOutput {
+		return toolCall{}, false
+	}
+	if tc.Name == "" {
+		tc.Name = "tool"
+	}
+	return tc, true
+}
+
+// toolCallFrame builds the ACP session/update for one tool artifact: a tool_call
+// with status "pending" on the start artifact (the server emits it before
+// executing the tool) and a tool_call_update with status "completed" carrying
+// rawOutput on the end artifact.
+func toolCallFrame(sessionID string, tc toolCall) any {
+	update := map[string]any{
+		"sessionUpdate": "tool_call",
+		"toolCallId":    tc.ID,
+		"title":         tc.Name,
+		"kind":          toolKind(tc.Name),
+		"status":        "pending",
+	}
+	if tc.End {
+		update = map[string]any{
+			"sessionUpdate": "tool_call_update",
+			"toolCallId":    tc.ID,
+			"status":        "completed",
+		}
+		if tc.HasOutput {
+			update["rawOutput"] = tc.Output
+		}
+	} else if tc.HasInput {
+		update["rawInput"] = tc.Input
+	}
+	return map[string]any{
+		"jsonrpc": jsonrpcVersion,
+		"method":  "session/update",
+		"params": map[string]any{
+			"sessionId": sessionID,
+			"update":    update,
+		},
+	}
+}
+
+// toolKinds pins the ACP ToolKind for the workspace and web tools a Memory
+// coding agent uses, so a client renders the right icon instead of "other". A
+// tool added to the server without a row here still reaches the client: toolKind
+// falls back to a keyword match, then to "other".
+var toolKinds = map[string]string{
+	"workspace_bash":     "execute",
+	"workspace_git":      "execute",
+	"run_python":         "execute",
+	"run_go":             "execute",
+	"workspace_read":     "read",
+	"workspace_glob":     "search",
+	"workspace_grep":     "search",
+	"workspace_ast_grep": "search",
+	"workspace_write":    "edit",
+	"workspace_edit":     "edit",
+	"web-fetch":          "fetch",
+}
+
+// toolKind maps a Memory tool name onto an ACP ToolKind. The explicit table wins,
+// then a keyword match. The keyword order matters: the specific verbs are checked
+// before "run_"/"git", which are substrings of names like `run_read` and would
+// otherwise classify a read (or an edit) as shell execution.
+func toolKind(name string) string {
+	lower := strings.ToLower(name)
+	if kind, ok := toolKinds[lower]; ok {
+		return kind
+	}
+	switch {
+	case hasAny(lower, "read", "cat", "view"):
+		return "read"
+	case hasAny(lower, "grep", "glob", "search", "find"):
+		return "search"
+	case hasAny(lower, "write", "edit", "patch", "replace"):
+		return "edit"
+	case hasAny(lower, "fetch", "download", "http"):
+		return "fetch"
+	case hasAny(lower, "bash", "shell", "exec", "command", "run_", "git"):
+		return "execute"
+	default:
+		return "other"
+	}
+}
+
+// hasAny reports whether s contains any of the substrings.
+func hasAny(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 // sessionUpdate builds a session/update agent_message_chunk notification.

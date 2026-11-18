@@ -220,6 +220,8 @@ var models = []any{
 	(*sources.SourceEventClaim)(nil),
 	(*sources.SourceWorkflow)(nil),
 	(*sources.SourceIssuePRLink)(nil),
+	(*sources.ReviewGate)(nil),
+	(*sources.ReviewVerdict)(nil),
 	(*sources.SyncJob)(nil),
 	(*sources.OAuthPendingState)(nil),
 	(*sources.OAuthClientConfig)(nil),

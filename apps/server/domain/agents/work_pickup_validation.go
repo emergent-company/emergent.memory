@@ -156,6 +156,18 @@ func ValidateWorkPickup(hasWorkConfig bool, rc *ReactionConfig) error {
 	if rc == nil {
 		return errors.New("work agent requires a reaction config declaring exactly one object type and one pickup signal")
 	}
+	// A reviewer lane is a special work lane: it must be able to wake on both
+	// creation and later head/label updates, so the single-pickup-signal rule
+	// does not apply to it. Its gate still requires concurrencyStrategy skip.
+	if rc.Reviewer {
+		if rc.ConcurrencyStrategy != ConcurrencySkip {
+			return fmt.Errorf("reviewer agent must set concurrencyStrategy: skip (got %q)", rc.ConcurrencyStrategy)
+		}
+		if len(rc.ObjectTypes) == 0 {
+			return errors.New("reviewer agent must declare an object type")
+		}
+		return nil
+	}
 	if len(rc.ObjectTypes) != 1 {
 		return fmt.Errorf("work agent must declare exactly one object type (got %d)", len(rc.ObjectTypes))
 	}
