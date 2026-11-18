@@ -114,6 +114,13 @@ func TestResolveGitToken_Precedence(t *testing.T) {
 	}
 }
 
+func TestResolveGitTokenForRun_PrefersSourceCredential(t *testing.T) {
+	t.Setenv(GitTokenSecretRefEnv, "ghp_server")
+	cfg := &AgentSandboxConfig{GitTokenSecretRef: GitTokenSecretRefEnv, EnvVars: map[string]string{"GH_TOKEN": "ghp_env"}}
+	assert.Equal(t, "ghp_run", ResolveGitTokenForRun(cfg, map[string]string{"GH_TOKEN": "ghp_run"}))
+	assert.Equal(t, "ghp_server", ResolveGitTokenForRun(cfg))
+}
+
 func TestResolveGitTokenForConfig_Precedence(t *testing.T) {
 	// The secret ref wins over everything else, and resolves from the server env.
 	t.Setenv(GitTokenSecretRefEnv, "ghp_server")

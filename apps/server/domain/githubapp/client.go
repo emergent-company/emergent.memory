@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -21,6 +22,13 @@ const (
 	maxAPIResponse    = 8 << 20
 	githubAPIVersion  = "2022-11-28"
 	checkNameReviewed = "reviewed"
+
+	// pullRequestFilesPerPage and maxPullRequestFilesPages bound the paginated
+	// pull-request files read. GitHub caps a pull request at 3000 files, which
+	// is exactly 30 pages at 100 per page, so the loop covers every file the
+	// API will report without an unbounded request chain.
+	pullRequestFilesPerPage  = 100
+	maxPullRequestFilesPages = 30
 )
 
 // PullRequestState is the live PR state read just before reviewing or posting.
@@ -275,7 +283,7 @@ func (c *Client) GetPullRequest(ctx context.Context, repo string, number int) (*
 	}, nil
 }
 
-// CommitFile is one changed file in a commit diff.
+// CommitFile is one changed file in a commit or pull request diff.
 type CommitFile struct {
 	Filename  string `json:"filename"`
 	Status    string `json:"status"`
@@ -295,6 +303,12 @@ type CommitDiff struct {
 // moving PR head) keeps the diff aligned with the reviewed SHA. The SHA is
 // validated at the tool boundary and path-escaped here so a crafted value cannot
 // retarget the request (e.g. at a branch name).
+//
+// The commit endpoint reports the commit's difference from its first parent.
+// For a merge commit whose tree matches its first parent (a merge of the base
+// branch into a feature branch) that diff is empty even though the pull request
+// changes many files (#1022). Use ListPullRequestFiles when the reviewed object
+// is the pull request, not the single commit.
 func (c *Client) GetCommit(ctx context.Context, repo, sha string) (*CommitDiff, error) {
 	var raw struct {
 		SHA    string `json:"sha"`
@@ -307,6 +321,34 @@ func (c *Client) GetCommit(ctx context.Context, repo, sha string) (*CommitDiff, 
 		return nil, err
 	}
 	return &CommitDiff{SHA: raw.SHA, Message: raw.Commit.Message, Files: raw.Files}, nil
+}
+
+// ListPullRequestFiles reads every changed file of a pull request across all
+// result pages. This is the diff of the reviewed object (repo#number at its
+// current head) rather than one commit's first-parent diff, so a merge commit
+// that does not change its first parent's tree cannot hide the PR's changes
+// (#1022).
+//
+// The caller must bind the result to the reviewed head: files are read for the
+// pull request's live head, so read GetPullRequest and compare HeadSHA before
+// treating them as evidence for a specific SHA.
+func (c *Client) ListPullRequestFiles(ctx context.Context, repo string, number int) ([]CommitFile, error) {
+	files := make([]CommitFile, 0)
+	for page := 1; page <= maxPullRequestFilesPages; page++ {
+		q := url.Values{}
+		q.Set("per_page", strconv.Itoa(pullRequestFilesPerPage))
+		q.Set("page", strconv.Itoa(page))
+		var pageFiles []CommitFile
+		if err := c.do(ctx, http.MethodGet,
+			fmt.Sprintf("/repos/%s/pulls/%d/files?%s", repo, number, q.Encode()), nil, &pageFiles); err != nil {
+			return nil, err
+		}
+		files = append(files, pageFiles...)
+		if len(pageFiles) < pullRequestFilesPerPage {
+			break
+		}
+	}
+	return files, nil
 }
 
 // CreateReview posts an APPROVE or REQUEST_CHANGES review bound to headSHA.

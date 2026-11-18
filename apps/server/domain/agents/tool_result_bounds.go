@@ -29,11 +29,11 @@ import (
 // The bound is deliberately honest: a truncated result carries an explicit,
 // actionable marker the model can act on, never a silent drop.
 const (
-	// DefaultToolResultMaxBytes bounds one tool result as seen by the model.
+	// defaultToolResultMaxBytes bounds one tool result as seen by the model.
 	// 128 KiB is generous: normal read/search results observed in production
 	// (11–56 KB) pass through unchanged; only pathological payloads (e.g. a
 	// 361 KB entity-edges-get) are truncated.
-	DefaultToolResultMaxBytes = 128 << 10
+	defaultToolResultMaxBytes = 128 << 10
 
 	// defaultToolResultTotalBudgetBytes bounds the SUM of all tool results in a
 	// single model request. When exceeded, the oldest results are elided
@@ -104,20 +104,17 @@ func (b ToolResultBounds) maxBytesFor(tool string) int {
 	if b.MaxBytes > 0 {
 		return b.MaxBytes
 	}
-	return DefaultToolResultMaxBytes
+	return defaultToolResultMaxBytes
 }
 
-// MaxToolResultBytesFor resolves the effective per-result cap for one tool name
-// from the deployment config: a per-tool override, else the global
-// MCP_TOOL_RESULT_MAX_BYTES, else DefaultToolResultMaxBytes. A negative result
-// means per-result bounding is disabled.
-//
-// A tool that sizes its own response against this boundary must resolve it here
-// rather than assume the compiled default: a deployment that lowers the cap
-// would otherwise have its responses tail-cut after the tool had already
-// recorded them as delivered.
-func MaxToolResultBytesFor(cfgMCP config.MCPConfig, tool string) int {
-	return toolResultBoundsFromConfig(cfgMCP).maxBytesFor(tool)
+// ToolResultMaxBytesFor exposes the resolved per-result model-context cap for a
+// single tool. A producer that must not hand the model a silently cut payload
+// (the GitHub review diff, whose truncation would invalidate its own evidence)
+// uses it to bound the result it emits. It returns the same value
+// boundModelRequestToolResults would apply, including per-tool overrides; a
+// negative value means the per-result layer is disabled.
+func ToolResultMaxBytesFor(cfg config.MCPConfig, toolName string) int {
+	return toolResultBoundsFromConfig(cfg).maxBytesFor(toolName)
 }
 
 func (b ToolResultBounds) totalBudget() int {
