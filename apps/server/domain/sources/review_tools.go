@@ -59,12 +59,23 @@ const (
 	maxDiffIndexBytes = 16000
 	maxIndexFiles     = 300
 
-	// diffEnvelopeBudget is the ceiling for one diff response as the model sees
-	// it — the {"ok":true,"result":<text>} envelope — with a margin under
-	// agents.DefaultToolResultMaxBytes. Overshooting that boundary is not a
-	// visible error: the model context cuts the tail, so the page would claim
-	// bytes the reader never saw.
-	diffEnvelopeBudget = agents.DefaultToolResultMaxBytes - 2048
+	// maxDiffMessageBytes clips the commit message that heads every page. That
+	// text comes from the commit object and is therefore attacker-controlled on
+	// a fork PR, and unlike the patch it cannot be shrunk by paging: one long
+	// message would otherwise push every page over the tool-result boundary, so
+	// the reader would be shown the message and none of the change.
+	maxDiffMessageBytes = 2000
+
+	// diffEnvelopeMargin is headroom under a deployment's per-tool result cap for
+	// the envelope's own keys ({"ok":true,"result":…}) and their escaping.
+	diffEnvelopeMargin = 2048
+
+	// defaultDiffEnvelopeBudget is the fallback ceiling for one diff response when
+	// the handler was built without a resolved cap (unit tests, an unbounded
+	// deployment): the compiled default boundary, less the margin above. The
+	// production budget is resolved per deployment — see
+	// ReviewToolHandler.resultBudget.
+	defaultDiffEnvelopeBudget = agents.DefaultToolResultMaxBytes - diffEnvelopeMargin
 )
 
 // commitSHARe pins head_sha to a commit id before it reaches a URL path or the
@@ -160,6 +171,10 @@ type ReviewToolHandler struct {
 	reworker    WorkItemReworker
 	reviewGates *ReviewGateService
 	agentRuns   *agents.Repository
+	// resultBudget is the byte ceiling for one github-pr-diff response as the
+	// model sees it, resolved from the deployment's effective per-tool result cap
+	// at construction (0 → defaultDiffEnvelopeBudget). See diffPageBudget.
+	resultBudget int
 }
 
 // WorkItemStatusWriter finalizes the board lane a review run was dispatched for.
@@ -195,9 +210,11 @@ func (h *ReviewToolHandler) SetAgentRuns(r *agents.Repository) { h.agentRuns = r
 // open kb.source_apps blobs, not the removed GITHUB_APP_ENCRYPTION_KEY.
 func NewReviewToolHandler(repo *Repository, cfg *config.Config, log *slog.Logger) *ReviewToolHandler {
 	keyHex, baseURL := "", ""
+	budget := 0
 	if cfg != nil {
 		keyHex = cfg.LLMProvider.EncryptionKey
 		baseURL = cfg.GitHubSource.APIBaseURL
+		budget = diffPageBudget(agents.MaxToolResultBytesFor(cfg.MCP, toolPRDiff))
 	}
 	key, err := hex.DecodeString(keyHex)
 	if err != nil {
@@ -207,14 +224,43 @@ func NewReviewToolHandler(repo *Repository, cfg *config.Config, log *slog.Logger
 		key = nil
 	}
 	return &ReviewToolHandler{
-		repo:       repo,
-		links:      repo,
-		key:        key,
-		apiBaseURL: baseURL,
-		minter:     githubapp.NewTokenMinter(baseURL, nil),
+		repo:         repo,
+		links:        repo,
+		key:          key,
+		apiBaseURL:   baseURL,
+		minter:       githubapp.NewTokenMinter(baseURL, nil),
+		resultBudget: budget,
 		newClient: func(baseURL, token string) *githubapp.Client {
 			return githubapp.NewClient(baseURL, token, nil)
 		},
+	}
+}
+
+// diffPageBudget turns a deployment's effective per-tool result cap into the
+// ceiling for one diff response. A cap of 0 (no per-result bound) means the
+// default boundary, which is also what the handler falls back to; a negative
+// cap disables per-result bounding outright, the same way it does for the
+// executor, so the page may use the requested size.
+func diffPageBudget(capBytes int) int {
+	if capBytes == 0 {
+		capBytes = agents.DefaultToolResultMaxBytes
+	}
+	if capBytes < 0 {
+		return -1
+	}
+	return capBytes - diffEnvelopeMargin
+}
+
+// pageBudget is the ceiling executePRDiff must fit one response into, or 0 when
+// the deployment bounds nothing.
+func (h *ReviewToolHandler) pageBudget() int {
+	switch {
+	case h.resultBudget < 0:
+		return 0
+	case h.resultBudget > 0:
+		return h.resultBudget
+	default:
+		return defaultDiffEnvelopeBudget
 	}
 }
 
@@ -536,20 +582,31 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 	// bytes the model context silently cut away.
 	end := pageEnd(patches, offset, diffPage(limit))
 	text := diffPageText(diff, files, pathFilter, patches, offset, end)
-	for guard := 0; guard < 8; guard++ {
-		over := diffEnvelopeBytes(text) - diffEnvelopeBudget
-		if over <= 0 {
-			break
+	budget := h.pageBudget()
+	if budget > 0 {
+		for guard := 0; guard < 8; guard++ {
+			over := diffEnvelopeBytes(text) - budget
+			if over <= 0 {
+				break
+			}
+			shrunk := end - over
+			if floor := offset + runeWidth(patches, offset); shrunk < floor {
+				shrunk = floor
+			}
+			if shrunk >= end {
+				break
+			}
+			end = pageEnd(patches, offset, shrunk-offset)
+			text = diffPageText(diff, files, pathFilter, patches, offset, end)
 		}
-		shrunk := end - over
-		if floor := offset + runeWidth(patches, offset); shrunk < floor {
-			shrunk = floor
+		// Fail closed. If even the smallest page — a clipped message, a bounded
+		// index, one character of patch — does not fit the deployment's bound, the
+		// model would be shown a tail-cut response, so no page can be handed over
+		// and no range may be recorded as read. Serving it anyway is exactly the
+		// "approved bytes nobody saw" failure this paging exists to close.
+		if over := diffEnvelopeBytes(text) - budget; over > 0 {
+			return nil, apperror.NewValidationf("github app tool: one diff page cannot fit this deployment's tool-result bound (%d bytes over); read the change narrowly with path=<substring>", over)
 		}
-		if shrunk >= end {
-			break
-		}
-		end = pageEnd(patches, offset, shrunk-offset)
-		text = diffPageText(diff, files, pathFilter, patches, offset, end)
 	}
 
 	// Evidence is the whole patch text of this commit, not one page of it: a
@@ -585,8 +642,12 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 // agents.DefaultToolResultMaxBytes), so anything a reader must not miss sits at
 // the top — then the patch slice [offset,end).
 func diffPageText(diff *githubapp.CommitDiff, files []githubapp.CommitFile, pathFilter, patches string, offset, end int) string {
+	message := strings.TrimSpace(diff.Message)
+	if len(message) > maxDiffMessageBytes {
+		message = truncateUTF8(message, maxDiffMessageBytes) + "\n… (commit message truncated)"
+	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "commit %s\n%s\n\n", diff.SHA, strings.TrimSpace(diff.Message))
+	fmt.Fprintf(&b, "commit %s\n%s\n\n", diff.SHA, message)
 	fmt.Fprintf(&b, "files: %d", len(files))
 	if len(files) != len(diff.Files) {
 		fmt.Fprintf(&b, " of %d", len(diff.Files))
@@ -687,6 +748,16 @@ func pageEnd(s string, offset, limit int) int {
 	}
 	for end > offset && !utf8.RuneStart(s[end]) {
 		end--
+	}
+	// A limit smaller than the character at offset would back off to an empty
+	// page, whose next_offset repeats the offset and never advances — an agent
+	// following it would re-request the same page forever. Serve the whole
+	// character instead: a page is never empty while bytes remain.
+	if end == offset && offset < len(s) {
+		end = offset + runeWidth(s, offset)
+		if end > len(s) {
+			end = len(s)
+		}
 	}
 	return end
 }

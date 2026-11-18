@@ -107,6 +107,19 @@ func (b ToolResultBounds) maxBytesFor(tool string) int {
 	return DefaultToolResultMaxBytes
 }
 
+// MaxToolResultBytesFor resolves the effective per-result cap for one tool name
+// from the deployment config: a per-tool override, else the global
+// MCP_TOOL_RESULT_MAX_BYTES, else DefaultToolResultMaxBytes. A negative result
+// means per-result bounding is disabled.
+//
+// A tool that sizes its own response against this boundary must resolve it here
+// rather than assume the compiled default: a deployment that lowers the cap
+// would otherwise have its responses tail-cut after the tool had already
+// recorded them as delivered.
+func MaxToolResultBytesFor(cfgMCP config.MCPConfig, tool string) int {
+	return toolResultBoundsFromConfig(cfgMCP).maxBytesFor(tool)
+}
+
 func (b ToolResultBounds) totalBudget() int {
 	if b.TotalBudgetBytes != 0 {
 		return b.TotalBudgetBytes

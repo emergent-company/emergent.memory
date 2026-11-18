@@ -152,7 +152,6 @@ func TestToolResultBounds_MaxBytesFor(t *testing.T) {
 }
 
 func TestToolResultBoundsFromConfig_DefaultsAndOverrides(t *testing.T) {
-	// Default config: zero values fall back at use time.
 	b := toolResultBoundsFromConfig(config.MCPConfig{})
 	assert.Equal(t, DefaultToolResultMaxBytes, b.maxBytesFor("entity-query"))
 	assert.Equal(t, defaultToolResultTotalBudgetBytes, b.totalBudget())
@@ -166,6 +165,24 @@ func TestToolResultBoundsFromConfig_DefaultsAndOverrides(t *testing.T) {
 	assert.Equal(t, 64<<10, b.maxBytesFor("entity-query"))
 	assert.Equal(t, 262144, b.maxBytesFor("entity-edges-get"))
 	assert.Equal(t, 1<<20, b.totalBudget())
+}
+
+// TestMaxToolResultBytesFor pins the exported resolver a tool that sizes its own
+// response against the model boundary must use: the per-tool override, else the
+// global cap, else the compiled default — with a negative cap reported as
+// "bounding disabled" rather than silently replaced by the default.
+func TestMaxToolResultBytesFor(t *testing.T) {
+	assert.Equal(t, DefaultToolResultMaxBytes, MaxToolResultBytesFor(config.MCPConfig{}, "github-pr-diff"))
+	assert.Equal(t, 64<<10, MaxToolResultBytesFor(config.MCPConfig{ToolResultMaxBytes: 64 << 10}, "github-pr-diff"))
+	assert.Equal(t, 32<<10, MaxToolResultBytesFor(config.MCPConfig{
+		ToolResultMaxBytes:          64 << 10,
+		ToolResultMaxBytesOverrides: "github-pr-diff=32768",
+	}, "github-pr-diff"))
+	assert.Equal(t, 64<<10, MaxToolResultBytesFor(config.MCPConfig{
+		ToolResultMaxBytes:          64 << 10,
+		ToolResultMaxBytesOverrides: "github-pr-diff=32768",
+	}, "entity-query"))
+	assert.Equal(t, -1, MaxToolResultBytesFor(config.MCPConfig{ToolResultMaxBytes: -1}, "github-pr-diff"))
 }
 
 func TestParseToolResultMaxBytesOverrides(t *testing.T) {
