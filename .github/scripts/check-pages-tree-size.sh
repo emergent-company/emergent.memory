@@ -53,6 +53,11 @@ mib=$(( total / 1024 / 1024 ))
 echo "pages tree: ${total} bytes (${mib} MiB) across ${count} file(s); guard ${limit_mib} MiB"
 if [ "$total" -gt "$limit_bytes" ]; then
   echo "error: gh-pages tree is ${mib} MiB (${total} bytes), over the ${limit_mib} MiB aggregate guard; GitHub stops publishing Pages sites over 1 GB" >&2
+  # The branch carries more than the caller's own files: the docs site's
+  # versioned trees share it with the Sparkle appcast. Point at the retention
+  # step rather than leaving the operator to guess which publisher to prune
+  # (#976 -- the tree was 24 unbounded versioned docs trees plus the appcast).
+  echo "hint: the docs site's versioned trees occupy this branch too; .github/scripts/prune-doc-versions.sh (docs workflow) keeps only the newest ones. Removing files here by hand is not needed -- prune the publisher that grew." >&2
   exit 1
 fi
 echo "pages tree size ok — within the ${limit_mib} MiB aggregate guard"
