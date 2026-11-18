@@ -226,7 +226,7 @@ templ objectWorkflowPanel(obj *GraphObject, ctrl *objectStatusControl, candidate
 // actions live here where there is room.
 templ objectWorkBlockPanel(obj *GraphObject, work *WorkItem) {
 	if obj != nil && work != nil && work.Blocked {
-		{{ stale := obj.Status == "done" || obj.Status == "cancelled" || obj.Status == "answered" || obj.Status == "closed"
+		{{ stale := obj.Status == "done" || obj.Status == "cancelled" || obj.Status == "answered" || obj.Status == "closed" || obj.Status == "revision"
 		returnTo := "/objects/" + url.PathEscape(obj.ID)
 		reason := work.BlockReason
 		if reason == "" { reason = "Work execution is blocked." }

@@ -470,13 +470,6 @@ func workTypeChecked(data workData, name string) bool {
 
 // workFilterTypes returns the explicit selection for action forms; nil when the
 // board is showing all types.
-func workFilterTypes(data workData) []string {
-	if !data.FilterExplicit {
-		return nil
-	}
-	return data.SelectedTypes
-}
-
 // boardViewQuery reduces a request's query to the board's own view state. The
 // type filter is that state, and it has to survive the three surfaces that
 // re-render the board without the user's filter form: the live stream (which
