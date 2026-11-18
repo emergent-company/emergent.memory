@@ -1215,7 +1215,7 @@ func (s *Server) chatScheduledRuns(ctx context.Context, appearances map[string]a
 				StartedAt:         r.StartedAt,
 				CompletedAt:       completedAt,
 				Summary:           scheduledRunPreview(r, a.Name),
-				Failure:           runFailureText(r.ErrorMessage, r.FailureClass),
+				Failure:           runFailureText(r.Status, r.ErrorMessage, r.FailureClass, r.Summary),
 				AgentDefinitionID: defID,
 				Icon:              ap.Icon,
 				Color:             ap.Color,
@@ -1276,7 +1276,7 @@ func (s *Server) chatWorkRuns(ctx context.Context, appearances map[string]agentA
 			CompletedAt:       completedAt,
 			Icon:              ap.Icon,
 			Color:             ap.Color,
-			Failure:           runFailureText(r.ErrorMessage, r.FailureClass),
+			Failure:           runFailureText(r.Status, r.ErrorMessage, r.FailureClass, r.Summary),
 		})
 	}
 	return append(out, s.extractionRunRows(ctx)...)
@@ -1325,7 +1325,7 @@ func (s *Server) extractionRunRows(ctx context.Context) []workRunRow {
 			Status:      job.Status,
 			StartedAt:   startedAt,
 			CompletedAt: job.CompletedAt,
-			Failure:     runFailureText(job.ErrorMessage, nil),
+			Failure:     runFailureText(job.Status, job.ErrorMessage, nil, nil),
 		}
 		if row.RunID == "" && job.SourceID != "" {
 			row.Href = "/documents/" + url.PathEscape(job.SourceID) + "/extractions/" + url.PathEscape(job.ID)

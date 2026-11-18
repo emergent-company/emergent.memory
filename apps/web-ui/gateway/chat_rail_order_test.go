@@ -365,9 +365,9 @@ func TestRailSubtitleShowsFailureReason(t *testing.T) {
 	board := workRunRow{
 		ID: "run-1", RunID: "run-1", Origin: "board", Title: "Task",
 		Status: "failed", StartedAt: "2026-11-15T08:00:00Z",
-		Failure: "Deterministic failure",
+		Failure: "The agent hit an unrecoverable error",
 	}
-	if got := runRailSubtitleWithFailure(board.Status, board.StartedAt, board.Failure); !strings.Contains(got, "Deterministic failure") {
+	if got := runRailSubtitleWithFailure(board.Status, board.StartedAt, board.Failure); !strings.Contains(got, "The agent hit an unrecoverable error") {
 		t.Errorf("board rail subtitle = %q, want the humanised class", got)
 	}
 
