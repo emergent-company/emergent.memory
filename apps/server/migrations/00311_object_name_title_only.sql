@@ -56,12 +56,10 @@ UPDATE kb.graph_objects
 
 -- ---- 2. Repair: a legacy property title moves into the column --------------
 -- Before #824 a session's title was written by PatchGraphObjectTitle into
--- `properties.title` (set_session_title). The broader source was the base
--- resolveObjectName, which consulted `properties.title` on any create/patch
--- until #898 deleted that fallback; now that no read path consults properties,
--- such a title would be lost to every reader, so it is moved into `name` once,
--- where it belongs. Extraction is not a source: it writes `properties.name`
--- (domain/extraction/object_extraction_worker.go), never `properties.title`.
+-- `properties.title` (set_session_title), and sessions were not the only writer
+-- to use that convention (entities created with `name: &key` by extraction are
+-- the same shape). Now that no read path consults properties, that title would
+-- be lost to every reader, so it is moved into `name` once, where it belongs.
 -- Precedence is deliberate: a real legacy title beats the key backfill below, so
 -- this runs first. A machine-shaped title is not a title and is left alone; the
 -- object then falls to the key backfill or stays nameless.
