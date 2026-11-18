@@ -46,12 +46,18 @@ type WorkItem struct {
 	Unroutable bool `json:"unroutable"`
 }
 
-// WorkItemRun is a compact run summary in a work-item detail response.
+// WorkItemRun is a compact run summary in a work-item detail response. It
+// mirrors the server's WorkItemRunDTO, including the fields the preview's run
+// history needs to name the agent and show how far the run got.
 type WorkItemRun struct {
 	ID           string         `json:"id"`
+	AgentName    string         `json:"agentName,omitempty"`
 	Status       string         `json:"status"`
 	StartedAt    string         `json:"startedAt"`
 	CompletedAt  *string        `json:"completedAt"`
+	DurationMs   *int           `json:"durationMs,omitempty"`
+	StepCount    int            `json:"stepCount"`
+	MaxSteps     *int           `json:"maxSteps,omitempty"`
 	ErrorMessage *string        `json:"errorMessage"`
 	FailureClass *string        `json:"failureClass"`
 	Summary      map[string]any `json:"summary"`
