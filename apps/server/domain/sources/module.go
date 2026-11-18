@@ -154,7 +154,7 @@ var SourceEventsModule = fx.Module("source-events",
 		NewSchemaProvisioner,
 		NewReviewGateService,
 	),
-	fx.Invoke(RegisterSourceEventRoutes, WireAgentRepository, WireSourceWorkObjectStore, WireSourceCredentialMinter, WireWorkInvocationResolver, WireSourceObjectTypes, WireSourceReviewGates, WireReviewToolReviewGates, WireReviewToolAgentRuns, WireReviewToolReworker),
+	fx.Invoke(RegisterSourceEventRoutes, WireAgentRepository, WireSourceWorkObjectStore, WireSourceCredentialMinter, WireWorkInvocationResolver, WireSourceObjectTypes, WireSourceReviewGates, WireReviewToolReviewGates, WireReviewToolAgentRuns, WireReviewToolReworker, WireWorkBudgetParkListener),
 )
 
 // WireSourceCredentialMinter lets the executor mint a source-scoped GitHub App
@@ -172,6 +172,15 @@ func WireSourceCredentialMinter(ae *agents.AgentExecutor, h *ReviewToolHandler) 
 func WireSourceObjectTypes(d *SourceEventDispatcher, p ObjectTypeProvisioner) {
 	if d != nil && p != nil {
 		d.SetObjectTypes(p)
+	}
+}
+
+// WireWorkBudgetParkListener makes a review lane parked by the project spending
+// gate publish a visible `reviewed` check instead of leaving the required check
+// in_progress with no reviewer ever scheduled (#1032).
+func WireWorkBudgetParkListener(r *agents.Repository, d *SourceEventDispatcher) {
+	if r != nil && d != nil {
+		r.AddWorkBudgetParkListener(d.OnWorkBudgetParked)
 	}
 }
 

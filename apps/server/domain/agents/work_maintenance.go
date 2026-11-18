@@ -547,6 +547,9 @@ func (rc *WorkReconciler) reconcile(ctx context.Context) {
 		rc.log.Warn("failed to resolve ready statuses", slog.String("error", err.Error()))
 		return
 	}
+	// One budget verdict per project per reconcile pass: a capped project may
+	// have many parked items and the gate query must not be repeated per item.
+	budgetErrs := map[string]error{}
 	for _, status := range readyStatuses {
 		heads, err := rc.workObjects.ListWorkObjectsByStatus(ctx, "", status, time.Time{}, 500)
 		if err != nil {
@@ -570,15 +573,40 @@ func (rc *WorkReconciler) reconcile(ctx context.Context) {
 			if liveJob {
 				continue // pending/processing job already covers it
 			}
-			rc.enqueue(ctx, h)
+			rc.enqueue(ctx, h, budgetErrs)
 		}
 	}
 }
 
 // enqueue wakes the listening agent(s) for a ready object.
-func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead) {
-	if blocked, err := rc.repo.IsWorkBlocked(ctx, h.CanonicalID); err == nil && blocked {
-		return
+func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead, budgetErrs map[string]error) {
+	if block, err := rc.repo.GetWorkBlock(ctx, h.CanonicalID); err == nil && block != nil {
+		if !isBudgetBlock(block) {
+			return
+		}
+		// A budget park is auto-recoverable: clearing it is what makes a raised
+		// cap or reset window resume the item without a human unblock. While
+		// the project is still over cap, returning here is the reconciler's
+		// stop condition — no run is attempted, so no refusal is logged per
+		// tick.
+		budgetErr, ok := budgetErrs[h.ProjectID]
+		if !ok {
+			budgetErr = rc.repo.checkBudgetGate(ctx, h.ProjectID)
+			budgetErrs[h.ProjectID] = budgetErr
+		}
+		if budgetErr != nil {
+			return
+		}
+		if _, cerr := rc.repo.ClearWorkBlock(ctx, h.CanonicalID); cerr != nil {
+			rc.log.Warn("failed to clear budget work block",
+				slog.String("canonical_id", h.CanonicalID),
+				slog.String("error", cerr.Error()),
+			)
+			return
+		}
+		rc.log.Info("budget block cleared; work item is dispatchable again",
+			slog.String("canonical_id", h.CanonicalID),
+		)
 	}
 	if skipUnassignedIssue(h.Type, h.Assignee) {
 		return
@@ -643,11 +671,51 @@ func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead) 
 			if errors.Is(err, ErrWorkItemBusy) {
 				continue
 			}
+			if isBudgetFailure(err) {
+				rc.parkBudgetRefused(ctx, h, agent, err)
+				continue
+			}
 			rc.log.Warn("failed to enqueue reconciled work run", slog.String("canonical_id", h.CanonicalID), slog.String("agent_id", agent.ID), slog.String("error", err.Error()))
 			continue
 		}
 		rc.log.Info("reconciled work object enqueued", slog.String("canonical_id", h.CanonicalID), slog.String("agent", agent.Name))
 	}
+}
+
+// isBudgetBlock reports whether a durable block was recorded by the spending
+// gate (as opposed to a poison item or a human cancel).
+func isBudgetBlock(block *WorkBlock) bool {
+	return block != nil && block.FailureClass != nil && *block.FailureClass == string(FailureClassBudget)
+}
+
+// parkBudgetRefused records the same visible, durable park the trigger path
+// uses, and notifies listeners so a dependent required check can publish an
+// unavailable reason (#1032).
+func (rc *WorkReconciler) parkBudgetRefused(ctx context.Context, h *graph.WorkObjectHead, agent *Agent, cause error) {
+	reason := fmt.Sprintf("dispatch refused: %s", cause.Error())
+	if perr := rc.repo.ParkWorkItemForBudget(ctx, h.ProjectID, h.CanonicalID, reason); perr != nil {
+		rc.log.Warn("failed to park work item after budget refusal",
+			slog.String("canonical_id", h.CanonicalID),
+			slog.String("agent_id", agent.ID),
+			slog.String("error", perr.Error()),
+		)
+	}
+	rc.repo.NotifyWorkBudgetParked(ctx, WorkBudgetParkedEvent{
+		ProjectID:   h.ProjectID,
+		CanonicalID: h.CanonicalID,
+		ObjectType:  h.Type,
+		AgentID:     agent.ID,
+		AgentName:   agent.Name,
+		Reason:      reason,
+		Head:        h,
+	})
+	rc.log.Warn("reconciled work dispatch refused by project budget; item parked",
+		slog.String("canonical_id", h.CanonicalID),
+		slog.String("object_type", h.Type),
+		slog.String("agent_id", agent.ID),
+		slog.String("project_id", h.ProjectID),
+		slog.String("error", cause.Error()),
+	)
 }
 
 // resolveOwningAgentForHead resolves the agent (and its definition) that owns a

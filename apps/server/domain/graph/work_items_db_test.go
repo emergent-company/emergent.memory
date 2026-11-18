@@ -156,3 +156,42 @@ func TestListWorkItems_JoinsLatestRun(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, findLive().IsWorking, "a completed run is not working")
 }
+
+// TestListWorkItems_ProjectsBlockFailureClass is the #1032 visibility guard: a
+// budget-parked item must project the block's failure class, so the board can
+// distinguish a spending-cap park from a poisoned item or a human cancel.
+func TestListWorkItems_ProjectsBlockFailureClass(t *testing.T) {
+	ctx, svc, projectID, _, db := setupTwoProjectService(t)
+
+	schemaID := uuid.NewString()
+	_, err := db.NewRaw(`
+		INSERT INTO kb.graph_schemas (id, name, version, object_type_schemas, relationship_type_schemas, created_at, updated_at)
+		VALUES (?::uuid, 'budget-park-pack', '1.0.0', ?::jsonb, '{}'::jsonb, NOW(), NOW())
+	`, schemaID, `[{"name":"BoardTask","boardEnabled":true}]`).Exec(ctx)
+	require.NoError(t, err)
+	assignmentID := uuid.NewString()
+	_, err = db.NewRaw(`
+		INSERT INTO kb.project_schemas (id, project_id, schema_id, active, installed_at, created_at, updated_at)
+		VALUES (?::uuid, ?::uuid, ?::uuid, true, NOW(), NOW(), NOW())
+	`, assignmentID, projectID, schemaID).Exec(ctx)
+	require.NoError(t, err)
+
+	ready := "ready"
+	obj, err := svc.Create(ctx, projectID, &graph.CreateGraphObjectRequest{
+		Type: "BoardTask", Key: strPtr("budget-parked"), Status: &ready,
+	}, nil)
+	require.NoError(t, err)
+
+	_, err = db.NewRaw(`
+		INSERT INTO kb.work_blocks (canonical_id, project_id, reason, failure_class, blocked_at, created_at, updated_at)
+		VALUES (?::uuid, ?::uuid, ?, 'budget', NOW(), NOW(), NOW())
+	`, obj.CanonicalID.String(), projectID.String(), "dispatch refused: budget exceeded; raise budget_usd").Exec(ctx)
+	require.NoError(t, err)
+
+	items, err := svc.ListWorkItems(ctx, projectID.String(), "", "BoardTask", 100)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.True(t, items[0].Blocked)
+	require.Equal(t, "budget", items[0].BlockFailureClass)
+	require.Contains(t, items[0].BlockReason, "budget_usd")
+}

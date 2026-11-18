@@ -252,7 +252,7 @@ func (h *Handler) enrichRunTrace(ctx context.Context, dto *AgentRunDTO, runID st
 func mapExecutorError(err error) *apperror.Error {
 	if _, ok := errors.AsType[*BudgetExceededError](err); ok {
 		return apperror.New(http.StatusPaymentRequired, "budget_exceeded",
-			"A project budget window (weekly or monthly) has been exceeded. Please review your spending, increase the budget, or reset the window.")
+			"A project budget window (weekly or monthly) has been exceeded. Raise budget_usd in the project's budget settings or reset the window to resume agent work.")
 	}
 	if queueErr, ok := errors.AsType[*QueueFullError](err); ok {
 		return apperror.New(http.StatusTooManyRequests, "queue_full",
