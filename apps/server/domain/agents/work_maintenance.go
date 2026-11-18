@@ -14,6 +14,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/pkg/runstatus"
 )
 
 // Work maintenance intervals and thresholds. These are the P2 defaults; the
@@ -25,17 +26,14 @@ const (
 	defaultWorkReconcilerInterval = 1 * time.Minute
 )
 
-// liveRunStatuses are the run states that still own their subject work object
-// (queued/running/paused). A paused run (ask_user) is live: a human waiting on
-// a question must not have the item reclaimed and run twice.
-var workLiveRunStatuses = []string{
-	string(RunStatusQueued),
-	string(RunStatusRunning),
-	string(RunStatusPaused),
-}
+// workLiveRunStatuses are the run states that still own their subject work
+// object. A paused run (ask_user) is live: a human waiting on a question must
+// not have the item reclaimed and run twice. The list comes from runstatus so
+// the predicate cannot drift from the canonical vocabulary again (00113).
+var workLiveRunStatuses = runstatus.LiveStrings()
 
 // HasLiveRunForSubject reports whether any run for the subject object is live
-// (queued, running, or paused).
+// (submitted, working, or input-required).
 func (r *Repository) HasLiveRunForSubject(ctx context.Context, canonicalID string) (bool, error) {
 	var count int
 	err := r.db.NewRaw(
@@ -69,7 +67,7 @@ func (r *Repository) FindLatestRunForSubject(ctx context.Context, canonicalID st
 	return run, nil
 }
 
-// FindLiveRunsForSubject returns the live (queued/running/paused) runs linked to
+// FindLiveRunsForSubject returns the live (submitted/working/input-required) runs linked to
 // the subject work object, used by cancel to stop the in-flight run(s).
 func (r *Repository) FindLiveRunsForSubject(ctx context.Context, canonicalID string) ([]*AgentRun, error) {
 	var runs []*AgentRun
@@ -85,7 +83,10 @@ func (r *Repository) FindLiveRunsForSubject(ctx context.Context, canonicalID str
 }
 
 // ListRunsForSubject returns the runs linked to the subject work object, newest
-// first, capped at limit. It backs the board card drawer's run history.
+// first, capped at limit. It backs the board card drawer's run history, so the
+// Agent relation is preloaded: the drawer names which agent ran, a fact the run
+// row itself does not carry (agent_id is a runtime kb.agents row, not the
+// definition the human picked).
 func (r *Repository) ListRunsForSubject(ctx context.Context, canonicalID string, limit int) ([]*AgentRun, error) {
 	if limit <= 0 {
 		limit = 20
@@ -93,6 +94,7 @@ func (r *Repository) ListRunsForSubject(ctx context.Context, canonicalID string,
 	var runs []*AgentRun
 	err := r.db.NewSelect().
 		Model(&runs).
+		Relation("Agent").
 		Where("subject_object_id = ?", canonicalID).
 		Order("created_at DESC").
 		Limit(limit).
@@ -456,7 +458,7 @@ func (r *WorkStatusReaper) reap(ctx context.Context) {
 				continue
 			}
 			if live {
-				continue // still owned by a queued/running/paused run
+				continue // still owned by a live (submitted/working/input-required) run
 			}
 			r.release(ctx, h)
 		}
@@ -578,6 +580,16 @@ func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead) 
 		return
 	}
 	if skipUnassignedIssue(h.Type, h.Assignee) {
+		return
+	}
+	// An issue another lane claimed stays with that lane: the reconciler scans
+	// every ready-status object, so without this it would re-dispatch the coding
+	// agent on an issue a peer session owns (emergent.memory #990/#987).
+	if skipForeignIssueClaim(h.Type, h) {
+		rc.log.Info("skipping reconciled work object: issue claimed by another lane",
+			slog.String("canonical_id", h.CanonicalID),
+			slog.String("object_type", h.Type),
+		)
 		return
 	}
 	agents, err := rc.repo.FindReactionAgentsForType(ctx, h.ProjectID, h.Type, h.Assignee)

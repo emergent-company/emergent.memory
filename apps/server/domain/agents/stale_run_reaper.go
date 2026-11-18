@@ -27,11 +27,21 @@ const (
 	// (issue #880). It matches the stale-run window: a run that has been idle
 	// this long was never dispatched at all, not merely waiting in line.
 	queuedRunDispatchThreshold = 30 * time.Minute
+
+	// pausedWorkRunParkThreshold is how long a paused (input-required) work run
+	// with nothing pending may hold its subject's claim before the reaper
+	// cancels it and blocks the work item (issue #993). A pause that is waiting
+	// on a human (question, tool confirmation, child run) is never reaped; this
+	// window only bounds a pause nothing can wake, such as a step-limit park.
+	pausedWorkRunParkThreshold = 30 * time.Minute
 )
 
 // StaleRunReaper periodically scans for agent runs stuck in "running" status
 // and marks them as errored. This handles cases where the CLI connection drops
-// without a graceful close, leaving runs in "running" forever.
+// without a graceful close, leaving runs in "running" forever. It also bounds
+// paused work runs that nothing can resume: a step-limit park is not terminal
+// and counts as live, so without this sweep it would suppress its subject's
+// dispatch for ever (issue #993).
 type StaleRunReaper struct {
 	repo    *Repository
 	log     *slog.Logger
@@ -169,6 +179,90 @@ func (r *StaleRunReaper) reap(ctx context.Context) {
 	} else if m > 0 {
 		r.log.Info("finalized stale cancelling agent runs as cancelled",
 			slog.Int("count", m),
+		)
+	}
+
+	r.reapAbandonedPausedWorkRuns(ctx)
+}
+
+// reapAbandonedPausedWorkRuns cancels paused work runs with nothing pending and
+// blocks their work items when no human resumes them within the park threshold.
+//
+// A paused run is non-terminal by design and counts as live for its subject, so
+// the dispatch reconciler skips the item and no error ever surfaces. Cancelling
+// the run is what releases the claim. Blocking the item (the durable
+// kb.work_blocks ledger, which preserves the workflow status) then keeps the
+// reconciler from instantly re-dispatching a fresh run into the same exhausted
+// budget, and gives the board a reason to show. A human unblock or retry clears
+// the block and starts a new run.
+//
+// The cancel is guarded (CancelRunIfPaused): if a resume won the race between
+// listing and this update, the run is no longer paused and is left alone.
+func (r *StaleRunReaper) reapAbandonedPausedWorkRuns(ctx context.Context) {
+	candidates, err := r.repo.ListAbandonedPausedWorkRuns(ctx, pausedWorkRunParkThreshold, 500)
+	if err != nil {
+		r.log.Warn("failed to list abandoned paused work runs",
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+	for _, c := range candidates {
+		cancelled, err := r.repo.CancelRunIfPaused(ctx, c.RunID)
+		if err != nil {
+			r.log.Warn("failed to cancel abandoned paused work run",
+				slog.String("run_id", c.RunID),
+				slog.String("canonical_id", c.SubjectObjectID),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
+		if !cancelled {
+			// A human resumed the pause between the list and the guarded update.
+			continue
+		}
+		// Defensive: the query only lists runs with no pending question, but a
+		// question must never outlive the run it belongs to.
+		_ = r.repo.CancelPendingQuestionsForRun(ctx, c.RunID)
+
+		// A second live run can exist only if the live-subject index is inert
+		// (issue #992) or a dispatch raced the cancel. If one does, it owns the
+		// item: blocking now would strand a run that is still working.
+		otherLive, err := r.repo.HasLiveRunForSubject(ctx, c.SubjectObjectID)
+		if err != nil {
+			r.log.Warn("failed to check other live runs after reaping paused run",
+				slog.String("run_id", c.RunID),
+				slog.String("canonical_id", c.SubjectObjectID),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
+		if otherLive {
+			r.log.Info("cancelled abandoned paused work run but spared its item: another live run owns it",
+				slog.String("run_id", c.RunID),
+				slog.String("canonical_id", c.SubjectObjectID),
+			)
+			continue
+		}
+
+		reason := abandonedPausedWorkRunBlockReason(c, pausedWorkRunParkThreshold)
+		if err := r.repo.UpsertWorkBlock(ctx, &WorkBlock{
+			CanonicalID: c.SubjectObjectID,
+			ProjectID:   c.ProjectID,
+			Reason:      reason,
+			RunID:       &c.RunID,
+		}); err != nil {
+			r.log.Warn("failed to block work item after reaping paused run",
+				slog.String("run_id", c.RunID),
+				slog.String("canonical_id", c.SubjectObjectID),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
+		r.log.Warn("cancelled abandoned paused work run and blocked its work item",
+			slog.String("run_id", c.RunID),
+			slog.String("canonical_id", c.SubjectObjectID),
+			slog.Int("step_count", c.StepCount),
+			slog.String("pause_reason", c.PauseReason),
 		)
 	}
 }

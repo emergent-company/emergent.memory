@@ -86,6 +86,7 @@ func TestListWorkItems_JoinsLatestRun(t *testing.T) {
 	require.Equal(t, "BoardTask", a.Type)
 	require.Equal(t, "a-1", a.Key)
 	require.Equal(t, "error", a.LatestRunStatus)
+	require.False(t, a.IsWorking, "a terminal run is not working")
 	require.Equal(t, "deterministic", a.LatestRunFailureClass)
 	require.Equal(t, 2, a.RunCount)
 	require.NotNil(t, a.Name)
@@ -113,4 +114,45 @@ func TestListWorkItems_JoinsLatestRun(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, researchOnly, 1)
 	require.Equal(t, objB.CanonicalID.String(), researchOnly[0].CanonicalID)
+
+	// IsWorking must follow the canonical run statuses. Before #992 it compared
+	// the retired queued/running/paused names, so it was false for every live
+	// run and the board never showed execution state.
+	nameC := "Live run task"
+	objC, err := svc.Create(ctx, projectID, &graph.CreateGraphObjectRequest{
+		Type: "BoardTask", Key: strPtr("c-1"), Name: &nameC, Status: &ready,
+	}, nil)
+	require.NoError(t, err)
+	insertRun(objC.CanonicalID.String(), "working", "", time.Now())
+
+	findLive := func() *graph.WorkItem {
+		t.Helper()
+		items, err := svc.ListWorkItems(ctx, projectID.String(), "", "BoardTask", 100)
+		require.NoError(t, err)
+		for _, it := range items {
+			if it.CanonicalID == objC.CanonicalID.String() {
+				return it
+			}
+		}
+		require.FailNow(t, "live item missing from the board projection")
+		return nil
+	}
+
+	live := findLive()
+	require.Equal(t, "working", live.LatestRunStatus)
+	require.True(t, live.IsWorking, "a working run must mark the item as working")
+
+	// A run parked on a human is still live.
+	_, err = db.NewRaw(
+		`UPDATE kb.agent_runs SET status = 'input-required' WHERE subject_object_id = ?::uuid`,
+		objC.CanonicalID.String()).Exec(ctx)
+	require.NoError(t, err)
+	require.True(t, findLive().IsWorking, "an input-required run must mark the item as working")
+
+	// Once the run is terminal the item stops showing execution.
+	_, err = db.NewRaw(
+		`UPDATE kb.agent_runs SET status = 'completed', completed_at = now() WHERE subject_object_id = ?::uuid`,
+		objC.CanonicalID.String()).Exec(ctx)
+	require.NoError(t, err)
+	require.False(t, findLive().IsWorking, "a completed run is not working")
 }

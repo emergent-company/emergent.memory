@@ -225,6 +225,7 @@ templ workCard(it WorkItem, data workData) {
 	if it.IsWorking {
 		runAgent = it.LatestRunAgentName
 	}
+	showRunStatus := runAgent != "" || workRunLive(it.LatestRunStatus)
 	tui := typeUIOf(data.TypeUI, it.Type) }}
 	<div
 		class={ "mb-1.5 rounded-field border border-l-4 border-base-content/10 bg-base-100 p-2 shadow-sm " + workStatusAccentClass(it.Status) }
@@ -233,6 +234,8 @@ templ workCard(it WorkItem, data workData) {
 		data-board-open-preview=""
 		data-canonical-id={ it.CanonicalID }
 		data-board-status={ it.Status }
+		data-latest-run-id={ it.LatestRunID }
+		data-run-count={ strconv.Itoa(it.RunCount) }
 		data-board-allowed={ data.Allowances.allowedJSON(it.Type) }
 		draggable="true"
 		role="button"
@@ -258,7 +261,14 @@ templ workCard(it WorkItem, data workData) {
 		<div class="mt-1.5 flex flex-wrap items-center gap-2">
 			if runAgent != "" {
 				@workPersonChip(runAgent)
-				@ui.Badge(ui.BadgeProps{Label: it.LatestRunStatus, Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS, Dot: true})
+			}
+			// The run chip is state, not progress: it renders whenever a run is
+			// live, including a paused one, so "needs input" is visible even when
+			// IsWorking has not caught up with the run row. The label is humanised
+			// (the wire values are "input-required" / "submitted") and the card
+			// says "paused" where the preview spells out "needs input".
+			if showRunStatus {
+				@ui.Badge(ui.BadgeProps{Label: workCardRunStatusLabel(it.LatestRunStatus), Variant: workRunStatusIntent(it.LatestRunStatus), Size: ui.BadgeSizeXS, Dot: true})
 			}
 			if it.Assignee != "" && it.Assignee != runAgent {
 				@workPersonChip(it.Assignee)
@@ -266,7 +276,7 @@ templ workCard(it WorkItem, data workData) {
 			if it.Assignee == "" {
 				@workUnassignedChip()
 			}
-			if it.NextRunAt != "" && it.LatestRunStatus == "queued" {
+			if it.NextRunAt != "" && it.LatestRunStatus == runStatusSubmitted {
 				@ui.Badge(ui.BadgeProps{Label: "retry scheduled", Variant: ui.BadgeWarning, Size: ui.BadgeSizeXS})
 			}
 		</div>

@@ -10,9 +10,9 @@ func TestBuildWorkMatrixBuckets(t *testing.T) {
 		{Name: "Task", BoardEnabled: true, AllowedStatuses: []string{"draft", "review", "done"}},
 	}}
 	items := []WorkItem{
-		{Type: "Task", CanonicalID: "t1", Status: "draft", IsWorking: true, LatestRunStatus: "running"},
-		{Type: "Task", CanonicalID: "t2", Status: "draft", IsWorking: true, LatestRunStatus: "queued"},
-		{Type: "Task", CanonicalID: "t3", Status: "draft", IsWorking: true, LatestRunStatus: "queued", NextRunAt: "2026-01-01T00:00:00Z"},
+		{Type: "Task", CanonicalID: "t1", Status: "draft", IsWorking: true, LatestRunStatus: "working"},
+		{Type: "Task", CanonicalID: "t2", Status: "draft", IsWorking: true, LatestRunStatus: runStatusSubmitted},
+		{Type: "Task", CanonicalID: "t3", Status: "draft", IsWorking: true, LatestRunStatus: runStatusSubmitted, NextRunAt: "2026-01-01T00:00:00Z"},
 		{Type: "Task", CanonicalID: "t4", Status: "draft", Blocked: true, BlockReason: "missing"},
 		{Type: "Task", CanonicalID: "t5", Status: "review", NeedsReview: true},
 		{Type: "Task", CanonicalID: "t6", Status: "done"},
@@ -166,7 +166,7 @@ func TestWorkCardIsInteractive(t *testing.T) {
 		Status:             "review",
 		Assignee:           "Ada Lovelace",
 		IsWorking:          true,
-		LatestRunStatus:    "running",
+		LatestRunStatus:    "working",
 		LatestRunAgentName: "editor-agent",
 	}, workData{FilterExplicit: true, SelectedTypes: []string{"Article"}}))
 	for _, want := range []string{

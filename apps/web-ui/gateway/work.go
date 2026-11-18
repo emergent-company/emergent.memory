@@ -578,10 +578,10 @@ func bucketFor(it WorkItem) string {
 		return "blocked"
 	}
 	if it.IsWorking {
-		if it.LatestRunStatus == "queued" && it.NextRunAt != "" {
+		if it.LatestRunStatus == runStatusSubmitted && it.NextRunAt != "" {
 			return "retrying"
 		}
-		if it.LatestRunStatus == "queued" {
+		if it.LatestRunStatus == runStatusSubmitted {
 			return "queued"
 		}
 		return "working"
