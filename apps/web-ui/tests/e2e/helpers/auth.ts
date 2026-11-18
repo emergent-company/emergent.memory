@@ -153,8 +153,14 @@ export async function login(page: Page): Promise<void> {
       // Forced password change: Zitadel requires a DIFFERENT new password to
       // clear the flag (re-entering the current one is rejected). Use the
       // one-time rotation value when set, else derive a different valid value.
-      const nextPassword =
-        process.env.E2E_TEST_USER_NEW_PASSWORD || `${password}X`;
+      const nextPassword = process.env.E2E_TEST_USER_NEW_PASSWORD;
+      if (!nextPassword) {
+        throw new Error(
+          'Zitadel requires a password change, but E2E_TEST_USER_NEW_PASSWORD is not set. ' +
+            'Set a one-time new password and update E2E_TEST_USER_PASSWORD after the change; ' +
+            'do not let the suite rotate a shared credential silently.',
+        );
+      }
       const newPw = page.getByRole('textbox', { name: /new password/i }).first();
       const confirmPw = page
         .getByRole('textbox', { name: /confirm password|password confirmation/i })
@@ -330,7 +336,13 @@ export async function completeZitadelLogin(
     if (await oldPw.isVisible().catch(() => false)) {
       // Forced password change: Zitadel requires a DIFFERENT new password to
       // clear the flag (re-entering the current one is rejected).
-      const nextPassword = process.env.E2E_TEST_USER_NEW_PASSWORD || creds.password;
+      const nextPassword = process.env.E2E_TEST_USER_NEW_PASSWORD;
+      if (!nextPassword) {
+        throw new Error(
+          'Zitadel requires a password change, but E2E_TEST_USER_NEW_PASSWORD is not set. ' +
+            'Set a one-time new password and update E2E_TEST_USER_PASSWORD after the change.',
+        );
+      }
       await page.getByRole('textbox', { name: 'New Password' }).fill(nextPassword);
       await page.getByRole('textbox', { name: 'Password confirmation' }).fill(nextPassword);
       await oldPw.fill(creds.password);
