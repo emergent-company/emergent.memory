@@ -859,6 +859,10 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 		if err := h.executor.EnsureExecutionEnabled(); err != nil {
 			return apperror.New(http.StatusServiceUnavailable, "agent_execution_disabled", err.Error())
 		}
+		// Budget: refuse before creating the run row for the same reason.
+		if err := h.executor.ensureBudgetAvailable(c.Request().Context(), agent.ProjectID, agent.ID, "http_trigger"); err != nil {
+			return mapExecutorError(err)
+		}
 	}
 
 	run, err := h.repo.CreateRunWithOptions(c.Request().Context(), CreateRunOptions{

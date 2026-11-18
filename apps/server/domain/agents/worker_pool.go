@@ -336,6 +336,20 @@ func (p *WorkerPool) executeJob(ctx context.Context, log *slog.Logger, job *Agen
 
 	if execErr != nil {
 		log.Warn("queued agent run failed", slog.String("error", execErr.Error()))
+
+		// A budget block is neither a run failure nor the agent's fault: retire
+		// the job without requeue and skip the consecutive-failure counter, so a
+		// long budget window cannot auto-disable every agent in the project.
+		if isBudgetFailure(execErr) {
+			if err := p.repo.FailJob(ctx, job.ID, job.RunID, execErr.Error(), false, time.Time{}); err != nil {
+				log.Warn("failed to retire budget-blocked job", slog.String("error", err.Error()))
+			}
+			// Wake the parent with a distinct status so it is not left waiting;
+			// the parent's own enqueue is budget-gated too, so this cannot storm.
+			p.reenqueueParent(ctx, log, run, agent.Name, "", "budget_blocked")
+			return
+		}
+
 		requeue := job.AttemptCount < job.MaxAttempts
 		nextRunAt := time.Now().Add(backoff(job.AttemptCount))
 		if err := p.repo.FailJob(ctx, job.ID, job.RunID, execErr.Error(), requeue, nextRunAt); err != nil {
