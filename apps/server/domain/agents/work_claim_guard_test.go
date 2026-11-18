@@ -1,9 +1,12 @@
 package agents
 
 import (
+	"errors"
+	"net/http"
 	"testing"
 
 	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 // TestForeignIssueClaim locks the peer-claim rule the board path applies. Each
@@ -79,5 +82,38 @@ func TestSkipForeignIssueClaim(t *testing.T) {
 	}
 	if skipForeignIssueClaim("PullRequest", claimed) {
 		t.Fatal("the claim guard applies to GitHub issues only")
+	}
+}
+
+// TestForeignIssueClaimConflict locks the human-action refusal: a peer-claimed
+// issue yields the 409 the handlers surface, while every other head passes.
+func TestForeignIssueClaimConflict(t *testing.T) {
+	claimed := &graph.WorkObjectHead{
+		Type: "GitHubIssue",
+		Properties: map[string]any{
+			"labels": []any{"status: in-progress", "manager: lane-5d320db5"},
+		},
+	}
+	err := foreignIssueClaimConflict(claimed)
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) {
+		t.Fatalf("a peer-claimed issue must yield an app error, got %v", err)
+	}
+	if appErr.HTTPStatus != http.StatusConflict {
+		t.Fatalf("peer-claim refusal status = %d, want %d", appErr.HTTPStatus, http.StatusConflict)
+	}
+	if appErr.Code != "conflict" {
+		t.Fatalf("peer-claim refusal code = %q, want conflict", appErr.Code)
+	}
+
+	free := &graph.WorkObjectHead{Type: "GitHubIssue", Properties: map[string]any{"labels": []any{"bug"}}}
+	ours := &graph.WorkObjectHead{
+		Type:       "GitHubIssue",
+		Properties: map[string]any{"labels": []any{"status: in-progress", "manager: memory-coding"}},
+	}
+	for _, head := range []*graph.WorkObjectHead{nil, free, ours, {Type: "ResearchRequest"}} {
+		if err := foreignIssueClaimConflict(head); err != nil {
+			t.Fatalf("foreignIssueClaimConflict must allow %+v, got %v", head, err)
+		}
 	}
 }
