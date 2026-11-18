@@ -16,7 +16,7 @@
             "name": "MIT",
             "url": "https://opensource.org/licenses/MIT"
         },
-        "version": "0.102.1"
+        "version": "0.102.2"
     },
     "basePath": "/",
     "paths": {
@@ -39759,14 +39759,14 @@
         "domain_mcpregistry.MCPServerTarget": {
             "type": "string",
             "enum": [
+                "auto",
                 "server",
-                "device",
-                "auto"
+                "device"
             ],
             "x-enum-varnames": [
+                "importTargetAuto",
                 "TargetServer",
-                "TargetDevice",
-                "importTargetAuto"
+                "TargetDevice"
             ]
         },
         "domain_mcpregistry.MCPServerToolDTO": {
