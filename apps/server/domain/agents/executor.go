@@ -1343,16 +1343,21 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 
 	// Create the run record
 	createOpts := CreateRunOptions{
-		AgentID:           ae.resolveAgentID(req),
-		ParentRunID:       req.ParentRunID,
-		RootRunID:         req.RootRunID,
-		MaxSteps:          &maxSteps,
-		TriggerSource:     req.TriggerSource,
-		TriggerMetadata:   req.TriggerMetadata,
-		TrustedInternal:   req.TrustedInternal,
-		SubjectObjectID:   req.SubjectObjectID,
-		SubjectObjectType: req.SubjectObjectType,
-		SourceSubject:     req.SourceSubject,
+		AgentID:         ae.resolveAgentID(req),
+		ParentRunID:     req.ParentRunID,
+		RootRunID:       req.RootRunID,
+		MaxSteps:        &maxSteps,
+		TriggerSource:   req.TriggerSource,
+		TriggerMetadata: req.TriggerMetadata,
+		TrustedInternal: req.TrustedInternal,
+		SourceSubject:   req.SourceSubject,
+		// SubjectObjectID/Type are deliberately not copied here. Execute is also
+		// the inline reaction path, and kb.agent_runs.subject_object_id is reserved
+		// for work-owned queued runs: persisting it for every inline run would put
+		// those runs in the live-subject unique index and collide with a queued
+		// work run (or another inline listener) on the same object. Only the
+		// source credential needs the trusted subject; reaction dedupe stays on
+		// TriggerMetadata.
 	}
 	if req.AgentDefinition != nil {
 		createOpts.AgentDefinitionID = &req.AgentDefinition.ID
