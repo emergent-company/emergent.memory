@@ -206,6 +206,7 @@ func (p *WorkerPool) finishWorkRun(ctx context.Context, log *slog.Logger, job *A
 			}
 			_ = p.repo.ResetFailureCounter(ctx, agent.ID)
 			_ = p.repo.ClearWorkItemState(ctx, projectID, canonicalID)
+			p.clearWorkBlock(ctx, log, canonicalID)
 			log.Info("work run finalized with terminator", slog.String("terminator", term), slog.String("canonical_id", canonicalID))
 			return
 		}
@@ -218,6 +219,7 @@ func (p *WorkerPool) finishWorkRun(ctx context.Context, log *slog.Logger, job *A
 			}
 			_ = p.repo.ResetFailureCounter(ctx, agent.ID)
 			_ = p.repo.ClearWorkItemState(ctx, projectID, canonicalID)
+			p.clearWorkBlock(ctx, log, canonicalID)
 			log.Info("work run finalized by tool", slog.String("status", head.Status), slog.String("canonical_id", canonicalID))
 			return
 		}
@@ -241,10 +243,14 @@ func (p *WorkerPool) finishWorkRun(ctx context.Context, log *slog.Logger, job *A
 		}
 		reason, _ := result.Summary["reason"].(string)
 		if reason == "user_cancelled" {
-			p.blockWorkObject(ctx, log, canonicalID, projectID, subjectType, agentDef, "cancelled by user", FailureClassHuman)
-		} else {
-			p.transitionToReady(ctx, log, canonicalID, projectID, subjectType, agentDef)
+			// Cancellation is a terminal outcome, not a work failure. The
+			// cancel action already moved the item; do not create a durable
+			// block that would keep showing a blocked badge on a cancelled item.
+			p.clearWorkBlock(ctx, log, canonicalID)
+			log.Info("work run cancelled by user", slog.String("canonical_id", canonicalID))
+			return
 		}
+		p.transitionToReady(ctx, log, canonicalID, projectID, subjectType, agentDef)
 		return
 	}
 
@@ -393,6 +399,14 @@ func (p *WorkerPool) transitionToReady(ctx context.Context, log *slog.Logger, ca
 		log.Warn("work item ready transition failed", slog.String("canonical_id", canonicalID), slog.String("error", err.Error()))
 	} else if !ok {
 		log.Warn("work item ready transition skipped (not in progress)", slog.String("canonical_id", canonicalID))
+	}
+}
+
+// clearWorkBlock removes a durable block left by an earlier run. Terminal
+// success/cancellation must not leave a stale blocked badge on the object.
+func (p *WorkerPool) clearWorkBlock(ctx context.Context, log *slog.Logger, canonicalID string) {
+	if _, err := p.repo.ClearWorkBlock(ctx, canonicalID); err != nil {
+		log.Warn("failed to clear work block", slog.String("canonical_id", canonicalID), slog.String("error", err.Error()))
 	}
 }
 

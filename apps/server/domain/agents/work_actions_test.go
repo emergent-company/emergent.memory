@@ -286,6 +286,31 @@ func TestWorkActionsRetry(t *testing.T) {
 	require.Equal(t, 1, countQueuedSubjectRuns(t, ctx, repo, canonicalID))
 }
 
+// TestWorkActionsClearBlock verifies the durable block can be repaired without
+// enqueueing another run, and the item keeps its current status.
+func TestWorkActionsClearBlock(t *testing.T) {
+	ctx, _, repo, gSvc, projectID := setupWorkActions(t)
+	canonicalID := createWorkObject(t, ctx, gSvc, projectID, "k-clear", "done", "researcher")
+	require.NoError(t, repo.UpsertWorkBlock(ctx, &WorkBlock{
+		CanonicalID: canonicalID, ProjectID: projectID, Reason: "stale", FailureClass: strPtr("protocol"),
+	}))
+	_, err := repo.IncrementWorkItemFailure(ctx, projectID, canonicalID, "protocol", nil)
+	require.NoError(t, err)
+
+	res, err := newWorkActions(repo, gSvc).ClearBlock(ctx, projectID, canonicalID)
+	require.NoError(t, err)
+	require.Equal(t, "done", res.Head.Status)
+	require.Empty(t, res.RunID)
+	require.Equal(t, 0, countQueuedSubjectRuns(t, ctx, repo, canonicalID))
+
+	blocked, err := repo.IsWorkBlocked(ctx, canonicalID)
+	require.NoError(t, err)
+	require.False(t, blocked)
+	st, err := repo.GetWorkItemState(ctx, projectID, canonicalID)
+	require.NoError(t, err)
+	require.Nil(t, st)
+}
+
 // TestWorkActionsRetry_NotBlockedRejected verifies retry only applies to blocked
 // items.
 func TestWorkActionsRetry_NotBlockedRejected(t *testing.T) {

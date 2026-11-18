@@ -1812,6 +1812,11 @@ func (f *fakeMemory) RetryWorkItem(ctx context.Context, canonicalID string) (*Wo
 	return f.workAction, f.workActionErr
 }
 
+func (f *fakeMemory) ClearWorkItemBlock(ctx context.Context, canonicalID string) (*WorkItemAction, error) {
+	f.lastWorkItemID = canonicalID
+	return f.workAction, f.workActionErr
+}
+
 func (f *fakeMemory) ReassignWorkItem(ctx context.Context, canonicalID, assignee string) (*WorkItemAction, error) {
 	f.lastWorkItemID = canonicalID
 	f.lastReassignTo = assignee

@@ -511,6 +511,33 @@ func (h *Handler) UnblockWorkItem(c echo.Context) error {
 	}))
 }
 
+// ClearWorkItemBlock handles POST /api/projects/:projectId/work-items/:canonicalId/clear-block
+//
+// @Summary      Clear a stale work-item block
+// @Description  Removes a durable block without enqueuing a new run
+// @Tags         agents
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID"
+// @Param        canonicalId path string true "Work item canonical ID"
+// @Success      200 {object} APIResponse[WorkItemActionDTO] "Cleared"
+// @Failure      409 {object} apperror.Error "Not blocked"
+// @Router       /api/projects/{projectId}/work-items/{canonicalId}/clear-block [post]
+// @Security     bearerAuth
+func (h *Handler) ClearWorkItemBlock(c echo.Context) error {
+	projectID, canonicalID, err := h.workActionParams(c)
+	if err != nil {
+		return err
+	}
+	res, err := h.workActions.ClearBlock(c.Request().Context(), projectID, canonicalID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, SuccessResponse(&WorkItemActionDTO{
+		Item: toWorkItemHeadDTO(res.Head),
+	}))
+}
+
 // ReassignWorkItem handles POST /api/projects/:projectId/work-items/:canonicalId/reassign
 //
 // @Summary      Reassign a work item

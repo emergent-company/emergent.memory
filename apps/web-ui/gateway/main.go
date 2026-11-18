@@ -832,6 +832,7 @@ func main() {
 	e.POST("/work/settings/agents/:id", s.uiWorkAgentDefaults)
 	e.POST("/work/items/:canonicalId/status", s.uiWorkSetStatus)
 	e.POST("/work/items/:canonicalId/unblock", s.uiWorkUnblock)
+	e.POST("/work/items/:canonicalId/clear-block", s.uiWorkClearBlock)
 	e.POST("/work/items/:canonicalId/approve", s.uiWorkApprove)
 	e.POST("/work/items/:canonicalId/request-changes", s.uiWorkRequestChanges)
 	e.POST("/work/items/:canonicalId/comments", s.uiWorkComment)

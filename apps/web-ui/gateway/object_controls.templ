@@ -221,6 +221,44 @@ templ objectWorkflowPanel(obj *GraphObject, ctrl *objectStatusControl, candidate
 	}
 }
 
+// objectWorkBlockPanel renders the durable work block on the object detail
+// page. The board card only carries the badge; the reason and the two safe
+// actions live here where there is room.
+templ objectWorkBlockPanel(obj *GraphObject, work *WorkItem) {
+	if obj != nil && work != nil && work.Blocked {
+		{{ stale := obj.Status == "done" || obj.Status == "cancelled" || obj.Status == "answered" || obj.Status == "closed"
+		returnTo := "/objects/" + url.PathEscape(obj.ID)
+		reason := work.BlockReason
+		if reason == "" { reason = "Work execution is blocked." }
+		class := work.LatestRunFailureClass
+		if class == "" { class = "unknown" }
+		clearLabel := "Clear block"
+		if stale { clearLabel = "Clear stale block" } }}
+		<section class="mt-6 rounded-box border border-error/30 bg-error/5 p-4" data-testid="object-work-block">
+			<div class="flex flex-wrap items-center gap-2">
+				@ui.Badge(ui.BadgeProps{Label: "blocked", Variant: ui.BadgeError, Size: ui.BadgeSizeSM})
+				<span class="text-xs font-medium text-muted">{ class }</span>
+				if work.BlockedAt != "" {
+					<span class="text-xs text-muted-faint">{ work.BlockedAt }</span>
+				}
+			</div>
+			<p class="mt-2 max-w-3xl whitespace-pre-wrap text-sm text-base-content/80">{ reason }</p>
+			<div class="mt-3 flex flex-wrap gap-2">
+				<form method="post" action={ templ.URL("/work/items/" + url.PathEscape(work.CanonicalID) + "/clear-block") }>
+					<input type="hidden" name="return_to" value={ returnTo }/>
+					@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) { { clearLabel } }
+				</form>
+				if !stale {
+					<form method="post" action={ templ.URL("/work/items/" + url.PathEscape(work.CanonicalID) + "/retry") }>
+						<input type="hidden" name="return_to" value={ returnTo }/>
+						@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Retry }
+					</form>
+				}
+			</div>
+		</section>
+	}
+}
+
 // objectRailCount renders a rail item's trailing count pill. An empty label
 // renders nothing, so a zero count simply leaves the item unbadged.
 templ objectRailCount(label, testID string) {

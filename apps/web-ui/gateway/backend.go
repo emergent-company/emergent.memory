@@ -242,6 +242,7 @@ type MemoryBackend interface {
 	RequestChangesWorkItem(ctx context.Context, canonicalID, feedback string) (*WorkItemAction, error)
 	AddWorkComment(ctx context.Context, canonicalID, body string) (*WorkItemAction, error)
 	RetryWorkItem(ctx context.Context, canonicalID string) (*WorkItemAction, error)
+	ClearWorkItemBlock(ctx context.Context, canonicalID string) (*WorkItemAction, error)
 	ReassignWorkItem(ctx context.Context, canonicalID, assignee string) (*WorkItemAction, error)
 	SetWorkItemStatus(ctx context.Context, canonicalID, status string) (*WorkItemAction, error)
 	CancelWorkItem(ctx context.Context, canonicalID string) (*WorkItemAction, error)

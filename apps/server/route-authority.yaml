@@ -1864,6 +1864,10 @@ routes:
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(agents:write)
     - method: POST
+      path: /api/projects/:projectId/work-items/:canonicalId/clear-block
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(agents:write)
+    - method: POST
       path: /api/projects/:projectId/work-items/:canonicalId/comments
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(agents:write)

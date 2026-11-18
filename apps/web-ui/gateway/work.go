@@ -821,6 +821,19 @@ func (s *Server) uiWorkUnblock(c echo.Context) error {
 	return c.Redirect(http.StatusSeeOther, returnTo)
 }
 
+// uiWorkClearBlock removes a stale block without retrying the work item. It is
+// the state-repair action shown on an object detail page.
+func (s *Server) uiWorkClearBlock(c echo.Context) error {
+	returnTo := safeLocalPath(c.FormValue("return_to"))
+	if returnTo == "" {
+		returnTo = workBoardReturnPath(c.Request().Form["type"])
+	}
+	if _, err := s.memory.ClearWorkItemBlock(c.Request().Context(), c.Param("canonicalId")); err != nil {
+		return redirectWithError(c, returnTo, err)
+	}
+	return c.Redirect(http.StatusSeeOther, returnTo)
+}
+
 // uiWorkSetStatus performs an exact-status move from the Work board drag/drop.
 // The matrix reloads itself after a successful move.
 func (s *Server) uiWorkSetStatus(c echo.Context) error {
