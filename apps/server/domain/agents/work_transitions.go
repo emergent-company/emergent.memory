@@ -25,7 +25,20 @@ const (
 	FailureClassCapability    FailureClass = "capability"
 	FailureClassProtocol      FailureClass = "protocol"
 	FailureClassTimeout       FailureClass = "timeout"
+	// FailureClassBudget is a project spending-window block. It is neither the
+	// agent's fault nor the item's: it must not increment the agent failure
+	// counter (which auto-disables agents) nor consume the item failure budget.
+	FailureClassBudget FailureClass = "budget"
 )
+
+// isBudgetFailure reports whether err is a project budget-window block.
+func isBudgetFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	_, ok := errors.AsType[*BudgetExceededError](err)
+	return ok
+}
 
 // defaultWorkFailureLimit is the per-item failure budget applied when the agent
 // definition's workConfig does not set failureLimit.
@@ -89,6 +102,11 @@ func isCapabilityError(err error) bool {
 // classifyRunFailure maps a run's terminal outcome to a failure class.
 func classifyRunFailure(execErr error, result *ExecuteResult) FailureClass {
 	if execErr != nil {
+		// Budget is checked before quota: a budget gate may fail open and a
+		// provider quota message must not be mistaken for a project cap.
+		if isBudgetFailure(execErr) {
+			return FailureClassBudget
+		}
 		if isQuotaError(execErr) {
 			return FailureClassQuota
 		}
@@ -188,6 +206,7 @@ func (p *WorkerPool) finishWorkRun(ctx context.Context, log *slog.Logger, job *A
 			}
 			_ = p.repo.ResetFailureCounter(ctx, agent.ID)
 			_ = p.repo.ClearWorkItemState(ctx, projectID, canonicalID)
+			p.clearWorkBlock(ctx, log, canonicalID)
 			log.Info("work run finalized with terminator", slog.String("terminator", term), slog.String("canonical_id", canonicalID))
 			return
 		}
@@ -200,6 +219,7 @@ func (p *WorkerPool) finishWorkRun(ctx context.Context, log *slog.Logger, job *A
 			}
 			_ = p.repo.ResetFailureCounter(ctx, agent.ID)
 			_ = p.repo.ClearWorkItemState(ctx, projectID, canonicalID)
+			p.clearWorkBlock(ctx, log, canonicalID)
 			log.Info("work run finalized by tool", slog.String("status", head.Status), slog.String("canonical_id", canonicalID))
 			return
 		}
@@ -223,10 +243,14 @@ func (p *WorkerPool) finishWorkRun(ctx context.Context, log *slog.Logger, job *A
 		}
 		reason, _ := result.Summary["reason"].(string)
 		if reason == "user_cancelled" {
-			p.blockWorkObject(ctx, log, canonicalID, projectID, subjectType, agentDef, "cancelled by user", FailureClassHuman)
-		} else {
-			p.transitionToReady(ctx, log, canonicalID, projectID, subjectType, agentDef)
+			// Cancellation is a terminal outcome, not a work failure. The
+			// cancel action already moved the item; do not create a durable
+			// block that would keep showing a blocked badge on a cancelled item.
+			p.clearWorkBlock(ctx, log, canonicalID)
+			log.Info("work run cancelled by user", slog.String("canonical_id", canonicalID))
+			return
 		}
+		p.transitionToReady(ctx, log, canonicalID, projectID, subjectType, agentDef)
 		return
 	}
 
@@ -242,6 +266,16 @@ func (p *WorkerPool) finishWorkRun(ctx context.Context, log *slog.Logger, job *A
 	}
 
 	switch cls {
+	case FailureClassBudget:
+		// Budget block: nothing the agent or the item did wrong. Release the
+		// ready→in_progress claim so the item can be picked up once the window
+		// resets, and leave both the agent failure counter and the item failure
+		// budget untouched.
+		p.transitionToReady(ctx, log, canonicalID, projectID, subjectType, agentDef)
+		log.Warn("work run blocked by project budget; item returned to ready",
+			slog.String("canonical_id", canonicalID),
+			slog.String("project_id", projectID),
+		)
 	case FailureClassQuota:
 		// agent-level only: no item change, no item budget.
 		p.handleFailure(ctx, log, agent)
@@ -368,6 +402,14 @@ func (p *WorkerPool) transitionToReady(ctx context.Context, log *slog.Logger, ca
 	}
 }
 
+// clearWorkBlock removes a durable block left by an earlier run. Terminal
+// success/cancellation must not leave a stale blocked badge on the object.
+func (p *WorkerPool) clearWorkBlock(ctx context.Context, log *slog.Logger, canonicalID string) {
+	if _, err := p.repo.ClearWorkBlock(ctx, canonicalID); err != nil {
+		log.Warn("failed to clear work block", slog.String("canonical_id", canonicalID), slog.String("error", err.Error()))
+	}
+}
+
 // blockWorkObject transitions an item to blocked and creates a human-facing
 // dead-letter task.
 func (p *WorkerPool) blockWorkObject(ctx context.Context, log *slog.Logger, canonicalID, projectID, subjectType string, agentDef *AgentDefinition, errMsg string, cls FailureClass) {
@@ -400,6 +442,10 @@ func (p *WorkerPool) blockWorkObject(ctx context.Context, log *slog.Logger, cano
 // skip path. The retry attempt budget honours per-type retryPolicy overrides
 // (P4.3): type > agent definition > default.
 func (p *WorkerPool) reenqueueWork(ctx context.Context, log *slog.Logger, agent *Agent, agentDef *AgentDefinition, canonicalID, projectID, subjectType string, backoffAt time.Time) {
+	// Deliberately not guarded by skipForeignIssueClaim: this re-enqueues a run
+	// we already own after a failure or timeout, so it is not a fresh dispatch.
+	// A mirrored peer claim cannot hand the item to another lane here; every
+	// fresh-dispatch path (board, reconciler, human actions) applies the guard.
 	maxAttempts := p.resolveWorkPolicy(ctx, projectID, subjectType, agentDef).maxAttempts
 	var nextRunAt *time.Time
 	if backoffAt.After(time.Now()) {

@@ -132,6 +132,11 @@ func (s *WorkActionService) RequestChanges(ctx context.Context, projectID, canon
 	if text == "" {
 		return nil, apperror.New(http.StatusBadRequest, "bad_request", "feedback is required")
 	}
+	// Refuse before the review→revision transition: otherwise a peer-claimed
+	// issue is moved with no rework run and the feedback is dropped.
+	if err := foreignIssueClaimConflict(head); err != nil {
+		return nil, err
+	}
 	wc := workConfigOf(def)
 	st := def.EffectiveWorkStatus(head.Type)
 	var reworkAgentID *uuid.UUID
@@ -193,6 +198,11 @@ func (s *WorkActionService) RequestChanges(ctx context.Context, projectID, canon
 
 	runIDEnqueued, err := s.enqueueWorkRun(ctx, head, agent, def, feedbackList)
 	if err != nil {
+		// Preserve an app error (notably the peer-claim 409) so the handler
+		// surfaces the real status instead of a generic 500.
+		if appErr, ok := errors.AsType[*apperror.Error](err); ok {
+			return nil, appErr
+		}
 		return nil, apperror.NewInternal("failed to enqueue rework run", err)
 	}
 	// Persist the feedback round with the id of the rework run it produced.
@@ -209,6 +219,11 @@ func (s *WorkActionService) RequestChanges(ctx context.Context, projectID, canon
 func (s *WorkActionService) Unblock(ctx context.Context, projectID, canonicalID, note string) (*WorkActionResult, error) {
 	head, agent, def, err := s.resolveWorkContext(ctx, projectID, canonicalID)
 	if err != nil {
+		return nil, err
+	}
+	// Refuse before clearing the durable block (and before any run): the issue
+	// is owned by another lane, so this item must not start work.
+	if err := foreignIssueClaimConflict(head); err != nil {
 		return nil, err
 	}
 	cleared, err := s.repo.ClearWorkBlock(ctx, canonicalID)
@@ -258,6 +273,27 @@ func (s *WorkActionService) Unblock(ctx context.Context, projectID, canonicalID,
 		return nil, err
 	}
 	return res, nil
+}
+
+// ClearBlock removes a durable block without enqueuing a run. It is the
+// state-repair action for a stale block on an object that is already terminal.
+func (s *WorkActionService) ClearBlock(ctx context.Context, projectID, canonicalID string) (*WorkActionResult, error) {
+	if _, _, _, err := s.resolveWorkContext(ctx, projectID, canonicalID); err != nil {
+		return nil, err
+	}
+	cleared, err := s.repo.ClearWorkBlock(ctx, canonicalID)
+	if err != nil {
+		return nil, err
+	}
+	if !cleared {
+		return nil, apperror.New(http.StatusConflict, "conflict", "work item is not blocked")
+	}
+	_ = s.repo.ClearWorkItemState(ctx, projectID, canonicalID)
+	head, err := s.workObjects.GetHeadObject(ctx, projectID, canonicalID)
+	if err != nil {
+		return nil, err
+	}
+	return &WorkActionResult{Head: head}, nil
 }
 
 // Retry returns a blocked work item to ready and enqueues it, clearing the
@@ -495,11 +531,29 @@ func (s *WorkActionService) GetWorkItemDetail(ctx context.Context, projectID, ca
 	return detail, nil
 }
 
+// foreignIssueClaimConflict returns the 409 a human action must return when the
+// work object is a GitHub issue another lane already claimed. Centralised so
+// every action that can start a run refuses with the same status/message before
+// mutating the item.
+func foreignIssueClaimConflict(head *graph.WorkObjectHead) error {
+	if head == nil || !skipForeignIssueClaim(head.Type, head) {
+		return nil
+	}
+	return apperror.New(http.StatusConflict, "conflict",
+		"issue is claimed by another lane; this work item cannot start a run")
+}
+
 // enqueueWorkRun enqueues a fresh run for the subject work object, optionally
 // carrying the full rework feedback history in the trigger metadata.
 func (s *WorkActionService) enqueueWorkRun(ctx context.Context, head *graph.WorkObjectHead, agent *Agent, agentDef *AgentDefinition, feedback []map[string]any) (string, error) {
 	if agent == nil {
 		return "", fmt.Errorf("no agent to enqueue work run")
+	}
+	// A human action (retry, request-changes) must not start a run on an issue
+	// another lane claimed: the board still says `ready`, the issue says
+	// `in-progress` under a peer manager.
+	if err := foreignIssueClaimConflict(head); err != nil {
+		return "", err
 	}
 	maxAttempts := 1
 	if agentDef != nil && agentDef.WorkConfig.RetryPolicy.MaxAttempts > 0 {

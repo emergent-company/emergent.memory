@@ -79,6 +79,48 @@ must reference the issue with a closing keyword (`Closes #N`, `Fixes #N`, or
 `Resolves #N`) so the merge closes it. Label and comment writes from the
 integration's own App are ignored, so claiming cannot re-trigger the source.
 
+## Reviewer agents
+
+Reviewers are normal reaction agents, not a source-level reviewer list. The
+source emits a board object for each pull request; reviewer agents subscribe by
+object type and property predicates.
+
+Example:
+
+```json
+{
+  "objectTypes": ["GitHubReviewLane"],
+  "events": ["created", "updated"],
+  "match": [
+    {"path": "/status", "operator": "equals", "value": "ready"}
+  ],
+  "reviewer": true,
+  "reviewSubjectType": "GitHubPullRequest",
+  "reviewMatch": [
+    {"path": "/labels", "operator": "contains", "value": "review:ui"}
+  ],
+  "concurrencyStrategy": "skip"
+}
+```
+
+- A reviewer with no `reviewMatch` is the default reviewer.
+- `objectTypes`/`events` drive the reviewer's own lane work item.
+- `match` on `status=ready` prevents a cancelled lane from waking the reviewer.
+- `reviewSubjectType`/`reviewMatch` select the reviewer from the parent review
+  subject.
+- The source creates one lane work item per required reviewer and head;
+  superseded head lanes are cancelled.
+- Every matching reviewer is required for the current head.
+- Added reviewers are sticky for that head; a new head requires a fresh set.
+- Reviewer verdicts are aggregated server-side; a reviewer cannot set the
+  aggregate approval or publish the provider check directly.
+
+The source creates one `GitHubReviewLane` work item per required reviewer so
+parallel reviewers do not contend for the parent subject's work claim. The
+GitHub adapter publishes the aggregate `reviewed` check and the source
+discovers the reviewer agents from the project. Do not add a source workflow
+reviewer list for new review sources.
+
 ## Run inside the sandbox
 
 The coding agent uses the existing workspace tools. A `workspace_git push` and
@@ -107,6 +149,17 @@ the trusted `Reviewed-SHA` marker. The PR is linked to its coding issue by
   stored as work feedback, and the coding agent is enqueued again with the PR
   number and branch. It must push to the same branch; opening a second PR is a
   failure. The PR `synchronize` event triggers a fresh review.
+
+A pull request authored by a source-trigger run (a GitHub App bot) needs at
+least two reviewer agents. The server snapshots that quorum on the review gate
+and never lowers it for the head: a project with a single reviewer agent leaves
+`reviewed` pending (and logs an under-configured error) instead of letting the
+reviewing App's one bot verdict satisfy "all reviewers approved" (#1005). An
+unknown author also fails closed to the two-reviewer quorum. The quorum counts
+distinct reviewer agents; it does not prove they use a different App credential,
+so keep the review App separate from the coding App (above) and configure two
+distinct reviewer agents. Human-authored pull requests keep the
+single-reviewer default.
 
 The loop is capped by the coding agent's `revisionLimit` (default 3), after which
 the item is blocked for a human.

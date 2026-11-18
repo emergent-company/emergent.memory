@@ -11,10 +11,12 @@
  *   tailwindcss -i webui/css/app.css -o webui/static/css/app.css --minify
  *
  * node_modules (tailwindcss v4, daisyUI 5.5.19, @iconify/tailwind4) is
- * symlinked from /root/go-daisy/node_modules by the css task, so bare
- * @import/@plugin specifiers resolve and Tailwind's automatic source
- * detection can run. Explicit @source directives below declare exactly which
- * project files contribute utility classes.
+ * installed by the css task from this module's own package.json and
+ * package-lock.json (`npm ci` when node_modules is absent) — no external
+ * checkout required — so bare @import/@plugin specifiers resolve and
+ * Tailwind's automatic source detection can run. The task also vendors
+ * go-daisy for the CSS package (@source'd below). The explicit @source
+ * directives declare exactly which project files contribute utility classes.
  */
 
 @import "tailwindcss";

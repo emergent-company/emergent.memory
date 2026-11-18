@@ -14,6 +14,15 @@
 # and is never linted — a lexical prefix match alone is escapable because `*`
 # crosses `/` (e.g. `apps/ios/../connector.mac/...`).
 #
+# Missing tooling FAILS CLOSED. A skip-and-exit-0 used to let the lefthook
+# `connector-mac-swift` hook report success without linting anything, because
+# the baseline is count-sensitive: touching any baselined file invalidates its
+# entry, and that regression then reached `dev` unseen (#925). When
+# swiftformat/swiftlint are not on PATH this script exits non-zero with install
+# instructions. The only opt-out is an explicit LINT_SWIFT_SKIP=1 on a local
+# host, which prints a loud warning; CI refuses it, so the ratchet always runs
+# where a merge is gated.
+#
 # SwiftFormat debt is fully paid down — the whole tree is format-clean, so any
 # touched file must stay clean. SwiftLint still carries a small set of
 # structural violations (long files/types/functions, high cyclomatic
@@ -27,6 +36,7 @@
 # Usage:
 #   Scripts/lint-swift.sh [file ...]      # lint the given Swift files
 #   BASE=<ref> Scripts/lint-swift.sh      # lint files changed since <ref>
+#   LINT_SWIFT_SKIP=1 Scripts/lint-swift.sh  # local-only opt-out (loud; CI refuses)
 set -euo pipefail
 
 repo_root="$(cd "$(git rev-parse --show-toplevel)" && pwd -P)"
@@ -59,11 +69,55 @@ canonical_path() {
   return 1
 }
 
-if ! command -v swiftformat >/dev/null 2>&1 || ! command -v swiftlint >/dev/null 2>&1; then
-  echo "swiftformat/swiftlint not installed, skipping Mac connector lint"
-  echo "  install: brew install swiftformat swiftlint"
-  echo "  (CI installs the Linux release binaries; see .github/workflows/connector.yml)"
-  exit 0
+# Is this a CI run? Any GitHub Actions run counts (GITHUB_ACTIONS is always set
+# there), and so does a truthy CI. Local shells that export CI=false/0/no do
+# not. Used only to refuse the explicit skip opt-out — CI must never skip.
+is_ci() {
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    return 0
+  fi
+  case "${CI:-}" in
+    '' | 0 | false | FALSE | False | no | NO) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+missing_tools=()
+command -v swiftformat >/dev/null 2>&1 || missing_tools+=(swiftformat)
+command -v swiftlint >/dev/null 2>&1 || missing_tools+=(swiftlint)
+
+if [ "${#missing_tools[@]}" -ne 0 ]; then
+  {
+    echo "lint-swift: missing Mac connector lint tool(s): ${missing_tools[*]}"
+    echo "lint-swift: the ratchet cannot run, so this is NOT a clean result."
+    echo "lint-swift: install them:"
+    echo "lint-swift:   macOS (Homebrew): brew install swiftformat swiftlint"
+    echo "lint-swift:   Linux (CI assets), from .github/workflows/connector.yml:"
+    echo "lint-swift:     swiftformat_linux.zip        -> install as 'swiftformat'"
+    echo "lint-swift:     swiftlint_linux_amd64.zip    -> install 'swiftlint-static' as 'swiftlint'"
+    echo "lint-swift:   the pinned versions are connector.yml's SWIFTFORMAT_VERSION"
+    echo "lint-swift:   and SWIFTLINT_VERSION."
+  } >&2
+
+  if [ -n "${LINT_SWIFT_SKIP:-}" ]; then
+    if [ "${LINT_SWIFT_SKIP}" != "1" ]; then
+      echo "lint-swift: LINT_SWIFT_SKIP=${LINT_SWIFT_SKIP} is not a recognised opt-out; use LINT_SWIFT_SKIP=1." >&2
+      exit 1
+    fi
+    if is_ci; then
+      echo "lint-swift: LINT_SWIFT_SKIP=1 is refused in CI — the ratchet must run here." >&2
+      exit 1
+    fi
+    {
+      echo "lint-swift: WARNING: LINT_SWIFT_SKIP=1 — SKIPPING Mac connector lint."
+      echo "lint-swift: WARNING: nothing was linted; this is a deliberate local opt-out."
+      echo "lint-swift: WARNING: CI refuses this opt-out, so drift is still caught before merge."
+    } >&2
+    exit 0
+  fi
+
+  echo "lint-swift: failing closed (set LINT_SWIFT_SKIP=1 to skip on a local host)." >&2
+  exit 1
 fi
 
 # Swift pathspecs, scoped to the connector tree. `**/*.swift` covers nested

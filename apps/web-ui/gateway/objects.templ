@@ -792,6 +792,10 @@ type objectDetailShellData struct {
 	// Compiled carries the schema used by the Overview/Relationships editors;
 	// History and Similar only need the header fields above.
 	Compiled *CompiledSchemaTypes
+	// WorkItem is the work-board projection when this object is board-enabled;
+	// its block reason is rendered on Overview. Nil for non-work objects and
+	// when the work read fails.
+	WorkItem *WorkItem
 	// Sources is the object's extraction provenance, rendered on Overview only.
 	Sources []objectSource
 	// Edges is the object's relationship list, fetched once here so every
@@ -872,6 +876,7 @@ templ ObjectDetailPage(data objectDetailShellData, labelSuggestions []string, pr
 		if data.Obj != nil {
 			@objectSourceCard(data.Sources)
 			@objectWorkflowPanel(data.Obj, data.Status, data.Assignees, data.workControlTarget())
+			@objectWorkBlockPanel(data.Obj, data.WorkItem)
 			@objectDetailsCard(data.Obj)
 			if len(data.ViewSections) > 0 {
 				@objectViewSectionList(data.Obj.ID, data.ViewSections, data.TypeUIByType, objectViewSurfaceOverview)

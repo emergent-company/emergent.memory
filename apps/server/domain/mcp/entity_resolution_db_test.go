@@ -84,3 +84,22 @@ func TestResolveEntityIDByKeyPrefersMain(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, mainCanonical, got, "main-only key lookup must resolve to the main copy")
 }
+
+// TestSuggestEntityKeysByFuzzyReturnsStoreFault is the #930 half that used to be
+// swallowed: `if queryErr != nil || len(rows) == 0 { return nil }` made a failed
+// suggestion query look exactly like "no similar keys". The error is now
+// returned, so the resolver can record the fault instead of reporting the miss as
+// clean evidence. A cancelled context makes the advisory query fail while the
+// assertion stays independent of what the database contains.
+func TestSuggestEntityKeysByFuzzyReturnsStoreFault(t *testing.T) {
+	db := connectTestDB(t)
+	_, projectID := seedProject(t, db)
+	svc := &Service{db: db}
+
+	faulted, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	suggestions, err := svc.suggestEntityKeysByFuzzy(faulted, uuid.MustParse(projectID), "missing-key", 3)
+	require.Error(t, err, "a store fault must not read as \"no similar keys\"")
+	assert.Empty(t, suggestions)
+}

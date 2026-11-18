@@ -16,15 +16,30 @@ Handles:
 
 Run from `docs-astro/`:
 
-    python3 scripts/port_mkdocs.py [--src ../docs/site]
+    python3 scripts/port_mkdocs.py [--src ../docs/site] [--out <dir>]
+    python3 scripts/port_mkdocs.py --check
+    python3 scripts/port_mkdocs.py --self-test
 
 It rewrites `src/content/docs/`, so it is the single source of the converted
 pages — edit the converter, not the generated MDX.
+
+`--check` is the drift gate. It writes a fresh port into a temp directory, diffs
+it against the tree, and exits non-zero listing every page that is stale,
+missing, or present although the port would no longer generate it. The direction
+is fixed: `docs/site` is the source, so the fix is always "regenerate the port",
+never "edit the MDX" — a hand edit to a generated page fails too. The five
+hand-written pages are excluded, so a page dropped from `PAGES` cannot be
+satisfied by leaving its MDX behind. `scripts/preflight/docs-port.sh` runs
+`--check` and `--self-test` in the `ci` job and the local preflight lane, so the
+drift cannot merge.
 """
 import argparse
 import json
 import posixpath
 import re
+import shutil
+import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -84,6 +99,18 @@ PAGES = [
     ("swift-sdk.md", "swift-sdk.mdx", "Swift SDK"),
     ("cli.md", "cli.mdx", "CLI"),
 ]
+
+# The pages `PAGES` deliberately does not generate. `--check` never demands
+# them, so hand-editing them is free — and a generated page missing from the
+# tree can only be excused by being on this list (a page dropped from `PAGES`
+# is therefore reported, not silently accepted).
+HAND_WRITTEN = (
+    "index.mdx",
+    "api-reference.mdx",
+    "user-guide/getting-started.mdx",
+    "user-guide/getting-started/self-hosted.mdx",
+    "user-guide/getting-started/memory-cloud.mdx",
+)
 
 ASIDE = {
     "note": "note", "abstract": "note", "summary": "note", "tldr": "note",
@@ -439,11 +466,31 @@ def replace_shortcodes_document(lines, src_rel, stats):
     return out
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--src", type=Path, default=Path(DEFAULT_SRC))
-    args = ap.parse_args()
-    src_root = args.src
+# --------------------------------------------------------------------------- #
+# the port
+# --------------------------------------------------------------------------- #
+def pages_to_port(src_root: Path):
+    """Every (source, output, title) the port generates, in output order."""
+    pages = list(PAGES)
+    # The generated per-package Go SDK reference is ported wholesale rather than
+    # listed in PAGES: the SDK guides link into it (Authentication -> auth,
+    # Streaming -> chat, …), so a partial port turns those into 404s, and the
+    # pages are one per package with only an H1 and Go doc bodies. The generator
+    # writes the package name as the H1.
+    for ref in sorted((src_root / "go-sdk" / "reference").glob("*.md")):
+        first = next((l for l in ref.read_text().splitlines() if l.startswith("# ")), "# " + ref.stem)
+        pages.append((f"go-sdk/reference/{ref.name}", f"go-sdk/reference/{ref.stem}.mdx", first[2:].strip()))
+    pages.append(("developer-guide/schema-registry.md", "developer-guide/schema-registry.mdx", "Schema Registry"))
+    return pages
+
+
+def port(src_root: Path, out_root: Path, quiet=False):
+    """Convert `docs/site` into `out_root`.
+
+    Returns (written, missing_sources, stats): the output paths actually written,
+    the source pages `PAGES` (or the derived list) names that do not exist, and
+    the warning sets the caller reports.
+    """
     routes = build_link_map(src_root)
     stats = {
         "missing": set(),
@@ -452,30 +499,24 @@ def main():
         "unparsed_cards": set(),
         "missing_shots": set(),
     }
-    DST.mkdir(parents=True, exist_ok=True)
-
-    # The generated per-package Go SDK reference is ported wholesale rather than
-    # listed in PAGES: the SDK guides link into it (Authentication → auth,
-    # Streaming → chat, …), so a partial port turns those into 404s, and the
-    # pages are one per package with only an H1 and Go doc bodies. The generator
-    # writes the package name as the H1.
-    pages = list(PAGES)
-    for ref in sorted((src_root / "go-sdk" / "reference").glob("*.md")):
-        first = next((l for l in ref.read_text().splitlines() if l.startswith("# ")), "# " + ref.stem)
-        pages.append((f"go-sdk/reference/{ref.name}", f"go-sdk/reference/{ref.stem}.mdx", first[2:].strip()))
-    pages.append(("developer-guide/schema-registry.md", "developer-guide/schema-registry.mdx", "Schema Registry"))
+    out_root.mkdir(parents=True, exist_ok=True)
+    pages = pages_to_port(src_root)
     # The link checker classifies a target as "outside the subset" by this set,
     # so it has to see the pages appended above, not just the literal PAGES.
     PORTS.clear()
     PORTS.update(src for src, _dst, _title in pages)
 
+    written = []
+    missing_sources = []
     for src_rel, dst_rel, title in pages:
         src = src_root / src_rel
         if not src.exists():
-            print(f"MISSING SOURCE {src_rel}")
+            missing_sources.append(src_rel)
+            if not quiet:
+                print(f"MISSING SOURCE {src_rel}")
             continue
         text, _fm = strip_frontmatter(src.read_text())
-        if SNIPPET.search(text):
+        if SNIPPET.search(text) and not quiet:
             print(f"SNIPPET (not converted) {src_rel}")
         lines = text.split("\n")
 
@@ -494,28 +535,244 @@ def main():
         if any("<Screenshot " in line for line in body):
             imports.append(component_import(dst_rel, "Screenshot"))
         out = ["---", f'title: "{title}"', "---", "", "\n".join(imports), ""] + body
-        dest = DST / dst_rel
+        dest = out_root / dst_rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text("\n".join(out).rstrip() + "\n")
-        print(f"ok {src_rel} -> {dst_rel}")
+        written.append(dst_rel)
+        if not quiet:
+            print(f"ok {src_rel} -> {dst_rel}")
 
-    if stats["missing"]:
-        print("\nBROKEN LINK TARGETS (no such page in docs/site):")
-        for item in sorted(stats["missing"]):
-            print(f"  {item}")
-    if stats["out_of_subset"]:
-        print(f"\nLINKED PAGES OUTSIDE THIS POC SUBSET ({len(stats['out_of_subset'])}):")
-        for item in sorted(stats["out_of_subset"]):
-            print(f"  {item}")
-    if stats["unmapped_icons"]:
-        print("\nUNMAPPED :material-*: SHORTCODES (dropped — add to material-icons.json):")
-        for item in sorted(stats["unmapped_icons"]):
-            print(f"  {item}")
-    if stats["unparsed_cards"]:
-        print("\nUNPARSED GRID-CARD LINES (kept as markdown — check the block):")
-        for item in sorted(stats["unparsed_cards"]):
-            print(f"  {item}")
+    if not quiet:
+        if stats["missing"]:
+            print("\nBROKEN LINK TARGETS (no such page in docs/site):")
+            for item in sorted(stats["missing"]):
+                print(f"  {item}")
+        if stats["out_of_subset"]:
+            print(f"\nLINKED PAGES OUTSIDE THIS POC SUBSET ({len(stats['out_of_subset'])}):")
+            for item in sorted(stats["out_of_subset"]):
+                print(f"  {item}")
+        if stats["unmapped_icons"]:
+            print("\nUNMAPPED :material-*: SHORTCODES (dropped — add to material-icons.json):")
+            for item in sorted(stats["unmapped_icons"]):
+                print(f"  {item}")
+        if stats["unparsed_cards"]:
+            print("\nUNPARSED GRID-CARD LINES (kept as markdown — check the block):")
+            for item in sorted(stats["unparsed_cards"]):
+                print(f"  {item}")
+    return written, missing_sources, stats
+
+
+# --------------------------------------------------------------------------- #
+# drift check
+# --------------------------------------------------------------------------- #
+def find_drift(src_root: Path, tree_root: Path):
+    """Diff a fresh port of `src_root` against the committed `tree_root`.
+
+    Returns a list of findings (dicts: `kind`, `path`, `detail`); empty means the
+    tree is exactly what `port()` would write. The hand-written pages are not
+    expected and are not reported; any other page the port would not produce is.
+    """
+    findings = []
+    with tempfile.TemporaryDirectory(prefix="docs-port-") as tmp:
+        fresh = Path(tmp)
+        written, missing_sources, _stats = port(src_root, fresh, quiet=True)
+
+        for src_rel in missing_sources:
+            findings.append({
+                "kind": "missing-source",
+                "path": src_rel,
+                "detail": f"docs/site/{src_rel} does not exist, so no MDX can be generated for it",
+            })
+
+        expected = set(written)
+        for dst_rel in written:
+            want = (fresh / dst_rel).read_bytes()
+            dest = tree_root / dst_rel
+            if not dest.exists():
+                findings.append({
+                    "kind": "missing",
+                    "path": dst_rel,
+                    "detail": "the port generates this page but the tree does not have it",
+                })
+            elif dest.read_bytes() != want:
+                findings.append({
+                    "kind": "stale",
+                    "path": dst_rel,
+                    "detail": "differs from a fresh port (behind docs/site, or edited by hand)",
+                })
+
+        if tree_root.is_dir():
+            for path in sorted(tree_root.rglob("*.mdx")):
+                rel = path.relative_to(tree_root).as_posix()
+                if rel in expected or rel in HAND_WRITTEN:
+                    continue
+                findings.append({
+                    "kind": "orphan",
+                    "path": rel,
+                    "detail": "the port does not generate this page and it is not one of the five hand-written pages",
+                })
+    return findings
+
+
+def report(findings, tree_root: Path) -> int:
+    """Print the drift findings; returns the exit status (0 clean, 1 drift)."""
+    if not findings:
+        print(f"docs port check OK: {tree_root} is a faithful port of docs/site")
+        return 0
+
+    by_kind = {}
+    for f in findings:
+        by_kind.setdefault(f["kind"], []).append(f)
+    total = len(findings)
+    print(f"docs port check FAILED: {total} page(s) out of sync with docs/site\n")
+    for kind in ("missing-source", "stale", "missing", "orphan"):
+        for f in by_kind.get(kind, []):
+            print(f"  {kind:<14} {f['path']}")
+            print(f"                 {f['detail']}")
+    print(
+        "\ndocs/site is the source; docs-astro/src/content/docs is generated.\n"
+        "Regenerate the port and commit the result (never hand-edit a generated page):\n"
+        "\n"
+        "  cd docs-astro && npm run shots:port\n"
+        "\n"
+        "The five hand-written pages (index.mdx, api-reference.mdx and\n"
+        "user-guide/getting-started*) are excluded from this check."
+    )
+    return 1
+
+
+# --------------------------------------------------------------------------- #
+# self-test
+# --------------------------------------------------------------------------- #
+def self_test(src_root: Path, tree_root: Path) -> int:
+    """Drive `find_drift` over copies of the real tree plus mutated fixtures.
+
+    Uses the checked-in tree rather than a synthetic site, so the fixtures are
+    the pages the gate actually guards; every mutation happens in a temp copy.
+    """
+    failures = []
+
+    def check_case(name, tree, want_kinds, want_path=None, src=None, exact=True):
+        findings = find_drift(src or src_root, tree)
+        kinds = {f["kind"] for f in findings}
+        paths = {f["path"] for f in findings}
+        ok = (kinds == set(want_kinds) if exact else set(want_kinds) <= kinds) and (
+            want_path is None or want_path in paths
+        )
+        print(f"  {'ok  ' if ok else 'FAIL'} {name}")
+        if not ok:
+            failures.append((name, findings))
+
+    print("docs port self-test:")
+    check_case("checked-in tree is a faithful port", tree_root, [])
+
+    with tempfile.TemporaryDirectory(prefix="docs-port-test-") as tmp:
+        tmp = Path(tmp)
+
+        def fresh_tree(name):
+            tree = tmp / name
+            shutil.copytree(tree_root, tree)
+            return tree
+
+        tree = fresh_tree("no-hand-written")
+        (tree / "index.mdx").unlink()
+        check_case("a hand-written page may be missing", tree, [])
+
+        def append_to(tree, rel, text):
+            path = tree / rel
+            path.write_text(path.read_text() + text)
+
+        tree = fresh_tree("hand-edit")
+        append_to(tree, "developer-guide/schema.mdx", "\nHand edit.\n")
+        check_case(
+            "a hand edit to a generated page fails",
+            tree,
+            {"stale"},
+            "developer-guide/schema.mdx",
+        )
+
+        tree = fresh_tree("deleted-page")
+        (tree / "user-guide/agents.mdx").unlink()
+        check_case(
+            "a deleted generated page fails",
+            tree,
+            {"missing"},
+            "user-guide/agents.mdx",
+        )
+
+        tree = fresh_tree("leftover-page")
+        (tree / "developer-guide/leftover.mdx").write_text('---\ntitle: "x"\n---\n')
+        check_case(
+            "an MDX the port would not generate fails",
+            tree,
+            {"orphan"},
+            "developer-guide/leftover.mdx",
+        )
+
+        # The direction: a source change with no port run is drift, reported
+        # against the generated page.
+        src = tmp / "src-edited"
+        shutil.copytree(src_root, src)
+        append_to(src, "developer-guide/schema.md", "\nA new sentence.\n")
+        check_case(
+            "a source change that was not ported fails",
+            tree_root,
+            {"stale"},
+            "developer-guide/schema.mdx",
+            src=src,
+        )
+
+        # A page PAGES names but docs/site lacks is reported, not skipped. It is
+        # also an orphan (the tree still carries its MDX) and can cost other
+        # pages their link route, so only the kinds of interest are asserted.
+        src = tmp / "src-missing-page"
+        shutil.copytree(src_root, src)
+        (src / "user-guide" / "agents.md").unlink()
+        check_case(
+            "a page PAGES names but docs/site lacks fails",
+            tree_root,
+            {"missing-source", "orphan", "stale"},
+            "user-guide/agents.md",
+            src=src,
+            exact=False,
+        )
+
+    if failures:
+        print(f"self-test FAILED: {len(failures)} case(s)", file=sys.stderr)
+        for name, findings in failures:
+            print(f"  {name}: {findings}", file=sys.stderr)
+        return 1
+    print("self-test OK: clean tree, hand-written exclusion, stale/missing/orphan cases")
+    return 0
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(
+        description="Convert docs/site MkDocs pages to Starlight MDX, or check the committed port for drift.",
+    )
+    ap.add_argument("--src", type=Path, default=Path(DEFAULT_SRC))
+    ap.add_argument("--out", type=Path, default=DST)
+    ap.add_argument(
+        "--check",
+        action="store_true",
+        help="verify the tree is a faithful port of docs/site (exit 1 on drift)",
+    )
+    ap.add_argument("--self-test", action="store_true", help="run the built-in drift-check fixtures")
+    args = ap.parse_args(argv)
+
+    if not args.src.is_dir():
+        print(f"ERROR: source tree not found: {args.src}", file=sys.stderr)
+        return 2
+
+    if args.self_test:
+        return self_test(args.src, args.out)
+
+    if args.check:
+        return report(find_drift(args.src, args.out), args.out)
+
+    port(args.src, args.out)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

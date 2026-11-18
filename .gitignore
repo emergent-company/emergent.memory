@@ -315,3 +315,7 @@ threads.tsv
 # and it is only readable next to files that are themselves ignored.
 docs/site/assets/tutorials/**/*.png
 docs/site/assets/tutorials/**/.shots.json
+# The redaction state: the op table and output hash of the last run, so
+# re-running the pipeline over an already-redacted capture is not mistaken for
+# a mask that missed its value. It describes captures that are ignored too.
+docs/site/assets/tutorials/**/.redaction-state.json

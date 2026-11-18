@@ -921,14 +921,37 @@ func (h *ReviewToolHandler) reviewerIdentity(ctx context.Context, projectID stri
 }
 
 func (h *ReviewToolHandler) publishReviewGate(ctx context.Context, client *githubapp.Client, repo, headSHA string, gate *ReviewGate, summary string) error {
+	if gate == nil {
+		return client.CreateCheck(ctx, repo, headSHA, "reviewed", "in_progress", "", "reviewed: pending", "Waiting for all required reviewers.")
+	}
 	switch gate.Status {
 	case ReviewGateApproved:
+		// Defence in depth: the aggregate must never publish a green check for an
+		// under-quorum reviewer set even if an older row or a direct caller
+		// bypassed evaluate (#1005).
+		if len(gate.RequiredReviewers) < gate.minimumReviewers() {
+			return client.CreateCheck(ctx, repo, headSHA, "reviewed", "in_progress", "", "reviewed: pending", reviewGatePendingSummary(gate))
+		}
 		return client.CreateReviewedCheck(ctx, repo, headSHA, "success", "reviewed: all reviewers approved", summary)
 	case ReviewGateChangesRequested:
 		return client.CreateReviewedCheck(ctx, repo, headSHA, "failure", "reviewed: changes requested", summary)
 	default:
-		return client.CreateCheck(ctx, repo, headSHA, "reviewed", "in_progress", "", "reviewed: pending", "Waiting for all required reviewers.")
+		return client.CreateCheck(ctx, repo, headSHA, "reviewed", "in_progress", "", "reviewed: pending", reviewGatePendingSummary(gate))
 	}
+}
+
+// reviewGatePendingSummary explains why the reviewed check is still pending. An
+// under-configured gate names the missing independent reviewer instead of the
+// generic wait text, so the operator can fix the agent configuration (#1005).
+func reviewGatePendingSummary(gate *ReviewGate) string {
+	if gate == nil {
+		return "Waiting for all required reviewers."
+	}
+	required, minimum := len(gate.RequiredReviewers), gate.minimumReviewers()
+	if required < minimum {
+		return fmt.Sprintf("Waiting for %d independent reviewers: %d of %d configured.", minimum, required, minimum)
+	}
+	return "Waiting for all required reviewers."
 }
 
 func intArg(args map[string]any, key string) (int, bool) {

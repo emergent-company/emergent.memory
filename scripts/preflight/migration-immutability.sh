@@ -58,21 +58,23 @@ mig_dir="apps/server/migrations"
 
 # Refresh the base ref. A stale local ref is exactly the hazard this guard
 # exists to catch. Tolerate no-network gracefully: fall back to a cached ref, or
-# skip when none exists. A single-branch clone's default refspec can update only
-# FETCH_HEAD, leaving <remote>/<branch> unborn, so materialise that tracking ref
-# explicitly before giving up; otherwise a shallow PR clone skips the guard.
+# skip when none exists.
+#
+# An explicit refspec, never the bare branch name (#956): a tag with the same
+# name as the branch makes `git fetch origin <branch>` resolve the TAG and exit
+# 0 (even with --no-tags), so the base ref is never refreshed. The explicit
+# destination also materialises <remote>/<branch> in a single-branch clone,
+# whose default refspec would otherwise update only FETCH_HEAD and let a
+# shallow PR clone skip the guard. The leading `+` keeps a force-pushed base
+# refreshable instead of falling back to the cached ref.
 branch="${base#origin/}"
-if ! git fetch --quiet --no-tags origin "$branch" 2>/dev/null; then
+if ! git fetch --quiet --no-tags origin \
+     "+refs/heads/$branch:refs/remotes/origin/$branch" 2>/dev/null; then
   if git rev-parse --verify --quiet "$base" >/dev/null 2>&1; then
     echo "migration-immutability: WARNING could not reach origin; using cached $base" >&2
   else
     echo "migration-immutability: WARNING could not reach origin and no cached $base; skipping" >&2
     exit 0
-  fi
-fi
-if ! git rev-parse --verify --quiet "$base" >/dev/null 2>&1; then
-  if [ "$base" = "origin/$branch" ]; then
-    git fetch --quiet --no-tags origin "refs/heads/$branch:refs/remotes/origin/$branch" 2>/dev/null || true
   fi
 fi
 if ! git rev-parse --verify --quiet "$base" >/dev/null 2>&1; then

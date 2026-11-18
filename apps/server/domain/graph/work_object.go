@@ -10,6 +10,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/runstatus"
 )
 
 // WorkObjectHead is the HEAD projection of a work object the agents domain
@@ -78,7 +79,8 @@ type WorkItem struct {
 	LatestRunFailureClass string
 	LatestRunID           string
 	LatestRunAgentName    string
-	// IsWorking is true while the latest run is live (queued/running/paused).
+	// IsWorking is true while the latest run is live: submitted, working, or
+	// input-required (runstatus.Live).
 	IsWorking bool
 	// NextRunAt is the scheduled retry time for a queued run.
 	NextRunAt *time.Time
@@ -701,7 +703,7 @@ func (s *Service) ListWorkItems(ctx context.Context, projectID, status, typeName
 			item.LatestRunAgentName = run.AgentName
 			item.NextRunAt = run.NextRunAt
 			item.RunCount = run.RunCount
-			item.IsWorking = run.Status == "queued" || run.Status == "running" || run.Status == "paused"
+			item.IsWorking = runstatus.IsLive(runstatus.Status(run.Status))
 			if run.FailureClass != nil {
 				item.LatestRunFailureClass = *run.FailureClass
 			}

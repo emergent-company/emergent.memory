@@ -332,8 +332,9 @@ function registerEdgeType(t) { edgeTypeCounts[t] = (edgeTypeCounts[t] || 0) + 1;
 
 function nodeSize(deg) { return Math.min(14 + Math.sqrt(deg) * 4, 48); }
 
-// machineObjectKey mirrors the server, migration 00311 and the web-ui gateway
-// regexes: the current minted key ("<type>-<12 hex>"), the legacy minted key
+// MACHINE_OBJECT_KEY has the same three forms as migration 00311 and the web-ui
+// gateway (apps/web-ui/gateway/documents.go), and matches machineObjectKey in
+// server.go: the current minted key ("<type>-<12 hex>"), the legacy minted key
 // ("<type>-<8 hex>") and a source-scoped dedup key
 // ("<provider>:<uuid>:<external id>"). Any of them is an identity, never a title.
 const MACHINE_OBJECT_KEY = /^[a-z0-9_-]+-[0-9a-f]{12}$|^[a-z0-9_-]+-[0-9a-f]{8}$|^[a-z][a-z0-9_-]*:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:.+$/;

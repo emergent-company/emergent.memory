@@ -141,14 +141,42 @@ func formatTimePtr(t *time.Time) string {
 }
 
 // WorkItemRunDTO is a compact run summary in the work-item detail response.
+// AgentName, StepCount, MaxSteps and DurationMs are what make the drawer's run
+// history legible: which agent ran, how far it got against its limit, and how
+// long it took. They come from the run's preloaded Agent relation and its own
+// columns, so no extra query is issued.
 type WorkItemRunDTO struct {
 	ID           string         `json:"id"`
+	AgentName    string         `json:"agentName,omitempty"`
 	Status       string         `json:"status"`
 	StartedAt    time.Time      `json:"startedAt"`
 	CompletedAt  *time.Time     `json:"completedAt"`
+	DurationMs   *int           `json:"durationMs,omitempty"`
+	StepCount    int            `json:"stepCount"`
+	MaxSteps     *int           `json:"maxSteps,omitempty"`
 	ErrorMessage *string        `json:"errorMessage,omitempty"`
 	FailureClass *string        `json:"failureClass,omitempty"`
 	Summary      map[string]any `json:"summary,omitempty"`
+}
+
+// toWorkItemRunDTO maps one run row onto the drawer's compact projection.
+func toWorkItemRunDTO(run *AgentRun) WorkItemRunDTO {
+	dto := WorkItemRunDTO{
+		ID:           run.ID,
+		Status:       string(run.Status),
+		StartedAt:    run.StartedAt,
+		CompletedAt:  run.CompletedAt,
+		DurationMs:   run.DurationMs,
+		StepCount:    run.StepCount,
+		MaxSteps:     run.MaxSteps,
+		ErrorMessage: run.ErrorMessage,
+		FailureClass: run.FailureClass,
+		Summary:      run.Summary,
+	}
+	if run.Agent != nil {
+		dto.AgentName = run.Agent.Name
+	}
+	return dto
 }
 
 // WorkItemFeedbackDTO is a feedback round in the work-item detail response.
@@ -239,15 +267,7 @@ func (h *Handler) GetWorkItem(c echo.Context) error {
 		if run == nil {
 			continue
 		}
-		dto.Runs = append(dto.Runs, WorkItemRunDTO{
-			ID:           run.ID,
-			Status:       string(run.Status),
-			StartedAt:    run.StartedAt,
-			CompletedAt:  run.CompletedAt,
-			ErrorMessage: run.ErrorMessage,
-			FailureClass: run.FailureClass,
-			Summary:      run.Summary,
-		})
+		dto.Runs = append(dto.Runs, toWorkItemRunDTO(run))
 	}
 	return c.JSON(http.StatusOK, SuccessResponse(dto))
 }
@@ -508,6 +528,33 @@ func (h *Handler) UnblockWorkItem(c echo.Context) error {
 	return c.JSON(http.StatusOK, SuccessResponse(&WorkItemActionDTO{
 		Item:  toWorkItemHeadDTO(res.Head),
 		RunID: res.RunID,
+	}))
+}
+
+// ClearWorkItemBlock handles POST /api/projects/:projectId/work-items/:canonicalId/clear-block
+//
+// @Summary      Clear a stale work-item block
+// @Description  Removes a durable block without enqueuing a new run
+// @Tags         agents
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID"
+// @Param        canonicalId path string true "Work item canonical ID"
+// @Success      200 {object} APIResponse[WorkItemActionDTO] "Cleared"
+// @Failure      409 {object} apperror.Error "Not blocked"
+// @Router       /api/projects/{projectId}/work-items/{canonicalId}/clear-block [post]
+// @Security     bearerAuth
+func (h *Handler) ClearWorkItemBlock(c echo.Context) error {
+	projectID, canonicalID, err := h.workActionParams(c)
+	if err != nil {
+		return err
+	}
+	res, err := h.workActions.ClearBlock(c.Request().Context(), projectID, canonicalID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, SuccessResponse(&WorkItemActionDTO{
+		Item: toWorkItemHeadDTO(res.Head),
 	}))
 }
 
