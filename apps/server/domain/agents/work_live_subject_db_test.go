@@ -49,8 +49,11 @@ func TestIsLiveRunConflict(t *testing.T) {
 
 // TestAgentRunLiveSubjectUniqueIndex proves the constraint the work claim
 // relies on: at most one non-terminal (live) run per subject_object_id. Two
-// live runs must violate idx_agent_runs_live_subject, while a terminal run plus
-// a live one (and live runs for different subjects) are allowed.
+// live runs must violate idx_agent_runs_live_subject — including when the
+// second run belongs to a different agent, since the index is built on
+// subject_object_id alone and the claim therefore cannot be dodged by handing
+// the subject to another agent (#1019). A terminal run plus a live one (and
+// live runs for different subjects) are allowed.
 func TestAgentRunLiveSubjectUniqueIndex(t *testing.T) {
 	if testing.Short() {
 		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
@@ -62,43 +65,53 @@ func TestAgentRunLiveSubjectUniqueIndex(t *testing.T) {
 
 	_, projectID := insertOrgAndProject(t, db, ctx)
 	agentID := insertRuntimeAgent(t, db, ctx, projectID, "live-subject-agent")
+	// A second agent on the same project. The claim is per subject, not per
+	// (agent, subject), and this agent is what pins that property.
+	otherAgentID := insertRuntimeAgent(t, db, ctx, projectID, "live-subject-other-agent")
 
-	insertRun := func(subject, status string) error {
+	insertRun := func(agent, subject, status string) error {
 		_, err := db.ExecContext(ctx,
 			`INSERT INTO kb.agent_runs (id, agent_id, status, subject_object_id, subject_object_type, started_at, created_at)
 			 VALUES (?, ?, ?, ?::uuid, 'GitHubIssue', now(), ?)`,
-			uuid.NewString(), agentID, status, subject, time.Now())
+			uuid.NewString(), agent, status, subject, time.Now())
 		return err
+	}
+	assertLiveConflict := func(t *testing.T, err error) {
+		t.Helper()
+		require.Error(t, err)
+		var pgErr *pgconn.PgError
+		require.ErrorAs(t, err, &pgErr)
+		require.Equal(t, pgutils.CodeUniqueViolation, pgErr.Code)
+		require.Equal(t, "idx_agent_runs_live_subject", pgErr.ConstraintName)
+		require.True(t, isLiveRunConflict(err), "a real index violation must map to ErrWorkItemBusy")
 	}
 
 	subject := uuid.NewString()
-	require.NoError(t, insertRun(subject, string(RunStatusRunning)))
+	require.NoError(t, insertRun(agentID, subject, string(RunStatusRunning)))
 
 	// A second live run for the same subject is the race the claim index exists
 	// to prevent.
-	err := insertRun(subject, string(RunStatusQueued))
-	require.Error(t, err)
-	var pgErr *pgconn.PgError
-	require.ErrorAs(t, err, &pgErr)
-	require.Equal(t, pgutils.CodeUniqueViolation, pgErr.Code)
-	require.Equal(t, "idx_agent_runs_live_subject", pgErr.ConstraintName)
-	require.True(t, isLiveRunConflict(err), "a real index violation must map to ErrWorkItemBusy")
+	assertLiveConflict(t, insertRun(agentID, subject, string(RunStatusQueued)))
 
-	// A paused/input-required run also owns the slot.
-	err = insertRun(subject, string(RunStatusPaused))
-	require.Error(t, err)
-	require.True(t, isLiveRunConflict(err))
+	// The same subject held by *another* agent is refused too: a second agent
+	// cannot claim a subject that a live run already owns. This is the property
+	// the work-claim guard relies on when it refuses a cross-agent dispatch.
+	assertLiveConflict(t, insertRun(otherAgentID, subject, string(RunStatusQueued)))
 
-	// Once the first run is terminal, a new live run may claim the subject.
-	_, err = db.ExecContext(ctx,
+	// A paused/input-required run also owns the slot, regardless of its agent.
+	assertLiveConflict(t, insertRun(otherAgentID, subject, string(RunStatusPaused)))
+
+	// Once the first run is terminal, a new live run — here by the other agent —
+	// may claim the subject.
+	_, err := db.ExecContext(ctx,
 		`UPDATE kb.agent_runs SET status = ?, completed_at = now() WHERE subject_object_id = ?::uuid`,
 		string(RunStatusSuccess), subject)
 	require.NoError(t, err)
-	require.NoError(t, insertRun(subject, string(RunStatusQueued)))
+	require.NoError(t, insertRun(otherAgentID, subject, string(RunStatusQueued)))
 
 	// The index is per subject, not global: another subject has its own slot.
-	require.NoError(t, insertRun(uuid.NewString(), string(RunStatusRunning)))
-	require.NoError(t, insertRun(uuid.NewString(), string(RunStatusPaused)))
+	require.NoError(t, insertRun(agentID, uuid.NewString(), string(RunStatusRunning)))
+	require.NoError(t, insertRun(otherAgentID, uuid.NewString(), string(RunStatusPaused)))
 }
 
 // TestAgentRunLiveSubjectMigrationHealsDuplicates proves 00315's data step:
