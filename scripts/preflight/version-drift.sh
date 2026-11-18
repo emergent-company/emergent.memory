@@ -27,6 +27,12 @@
 #      marker auto-tag.yml honours, so a bump that won't tag may ride along;
 #   3. a commit subject in the range matches `chore: release vX.Y.Z`.
 #
+# `task release` emits subject (3) and stages only the version carriers (#1026),
+# so the two paths agree on one subject. scripts/preflight/version-drift.test.sh
+# exercises this attribution rule offline — here it only runs in CI, so a subject
+# the rule rejects must not wait until after the push to be discovered. That
+# suite also pins the release task's subject to one this guard accepts.
+#
 # Only runs in CI, where a base ref (and PR_LABELS for PRs) is present. The
 # local pre-commit hook runs before the commit subject exists and has no base
 # ref, so it skips attribution; CI is the authoritative gate. The drift checks

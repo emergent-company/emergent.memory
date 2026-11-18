@@ -176,9 +176,17 @@ way to a build, and the docs workflow runs it before publishing.
 ### Step 3: Commit Changes
 
 ```bash
-git add VERSION apps/server/cmd/server/main.go
-git commit -m "chore(api): bump version to 0.5.0"
+git add VERSION apps/server/cmd/server/main.go apps/ios/VoiceAgent.xcodeproj/project.pbxproj
+git commit -m "chore: release v0.5.0"
 ```
+
+The subject matters: a PR that changes `VERSION` is attributed to a release
+only when a commit subject matches `chore: release vX.Y.Z`, a subject carries
+`[skip release]`, or the PR has the `release` label. Anything else fails the
+version-drift guard in CI (`scripts/preflight/version-drift.sh`). The `release`
+task in `Taskfile.yml` emits the same subject, and
+`scripts/preflight/version-drift.test.sh` checks offline that it stays one the
+guard accepts.
 
 ### Step 4: Tag and Push
 
