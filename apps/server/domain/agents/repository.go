@@ -2212,6 +2212,7 @@ func newAgentRun(opts CreateRunOptions) *AgentRun {
 		TrustedInternal:   opts.TrustedInternal,
 		SubjectObjectID:   opts.SubjectObjectID,
 		SubjectObjectType: opts.SubjectObjectType,
+		SourceSubject:     opts.SourceSubject,
 		Tools:             []string{},
 	}
 }

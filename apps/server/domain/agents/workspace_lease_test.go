@@ -253,6 +253,26 @@ func TestProvisionWorkspace_SharedLeaseSkipsProvisioning(t *testing.T) {
 	assert.Same(t, ws, res.Workspace, "the child must use the parent's container, not a new one")
 }
 
+// A borrowing child must never mint a source credential: the container it
+// attaches to belongs to another run and may be bound to a different repo. The
+// shared-lease path returns before the mint call.
+func TestProvisionWorkspace_SharedLeaseDoesNotMintCredential(t *testing.T) {
+	ae := newSharedTestExecutor()
+	minter := &fakeSourceCredentialMinter{}
+	ae.sourceCredentials = minter
+
+	res, err := ae.provisionWorkspace(context.Background(), "run-child", &ExecuteRequest{
+		AgentDefinition: sandboxedDefinition(),
+		ProjectID:       "proj-1",
+		SourceSubject:   issueSubject(),
+		WorkspaceLease:  &sandbox.WorkspaceLease{Workspace: sharedTestWorkspace(), OwnerRunID: "run-parent"},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.True(t, res.Borrowed)
+	assert.Zero(t, minter.calls, "a delegating run attaching to a parent workspace must not mint")
+}
+
 func TestProvisionWorkspace_SharedLeaseRequiresDelegateSandbox(t *testing.T) {
 	ae := newSharedTestExecutor()
 

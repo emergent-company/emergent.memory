@@ -693,6 +693,13 @@ type ExecuteRequest struct {
 	SubjectObjectID   *string
 	SubjectObjectType *string
 
+	// SourceSubject is the server-trusted verified source identity for this run.
+	// It is copied from AgentRun.SourceSubject (a dispatcher-written column) and
+	// is never derived from trigger metadata — queued runs and spawned children
+	// can carry model-settable TriggerMetadata, so a credential or review binding
+	// must key on this field only.
+	SourceSubject *SourceSubject
+
 	// ReasoningEffort, when non-empty, is applied to the resolved model via the
 	// provider.ReasoningEffortConfigurator interface (OpenAI Responses-only
 	// graded efforts such as "max"). Empty leaves the provider default in place.
@@ -1551,6 +1558,26 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 	if err := ae.ensureExecutionEnabled(req); err != nil {
 		return nil, err
 	}
+	// A queued worker run reaches this entry point with only its run row as
+	// context. Copy the trusted, server-written columns the executor needs so
+	// the implicit source-credential path and provenance-sensitive tools work
+	// for work-dispatched runs exactly as they do for inline triggers. The
+	// request wins when it already carries a value; SourceSubject and the
+	// subject object are never taken from model-settable TriggerMetadata.
+	if run != nil {
+		if req.SourceSubject == nil {
+			req.SourceSubject = run.SourceSubject
+		}
+		if req.SubjectObjectID == nil {
+			req.SubjectObjectID = run.SubjectObjectID
+		}
+		if req.SubjectObjectType == nil {
+			req.SubjectObjectType = run.SubjectObjectType
+		}
+		if req.TriggerMetadata == nil {
+			req.TriggerMetadata = run.TriggerMetadata
+		}
+	}
 	if err := ae.applyInvocation(ctx, run, &req); err != nil {
 		return nil, err
 	}
@@ -2021,6 +2048,12 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 				slog.String("error", err.Error()),
 			)
 		}
+		// The resumed turn inherits the prior run's verified source binding. The
+		// pre-created row was inserted by the caller, so carry the trusted column
+		// onto it in memory for provisioning and in-process dispatch.
+		if newRun.SourceSubject == nil {
+			newRun.SourceSubject = priorRun.SourceSubject
+		}
 	} else {
 		var err error
 		newRun, err = ae.beginResumedRun(dbCtx, priorRun, CreateRunOptions{
@@ -2035,10 +2068,22 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 			// created it finalizes the paused checkpoint.
 			SubjectObjectID:   priorRun.SubjectObjectID,
 			SubjectObjectType: priorRun.SubjectObjectType,
+			// A resumed turn keeps the prior run's verified source subject (and
+			// with it the implicit credential it is entitled to).
+			SourceSubject: priorRun.SourceSubject,
 		}, req.PauseClaimed)
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	// Carry the trusted source binding into the request for provisioning and
+	// dispatch. Never re-derive it: trigger metadata is model-settable.
+	if req.SourceSubject == nil {
+		req.SourceSubject = newRun.SourceSubject
+	}
+	if req.SourceSubject == nil {
+		req.SourceSubject = priorRun.SourceSubject
 	}
 
 	// Notify the caller as soon as the resumed run row exists so a parent run
@@ -2607,51 +2652,70 @@ func sharedWorkspaceResult(lease *sandbox.WorkspaceLease, def *AgentDefinition) 
 	}, ""
 }
 
-// provisionWorkspace provisions a workspace for the agent run if configured.
-// Returns (nil, nil) if workspace provisioning is disabled, not configured, or not needed.
-// Returns (result, nil) on success or degraded provisioning.
-// Returns (nil, error) for fatal pre-provisioning failures (e.g. image not ready) —
-// callers must fail the run with RunStatusError.
-// applySourceGitCredential mints the triggering source's short-lived GitHub
-// App token and exposes it only to this run's sandbox environment. The source
-// credential wins over deployment git-token fallbacks for clone and push.
-func (ae *AgentExecutor) applySourceGitCredential(ctx context.Context, req *ExecuteRequest) error {
+// applySourceGitCredential mints a short-lived GitHub App token for a verified
+// issue coding lane and exposes it only to this run's sandbox environment. It
+// is best-effort: a mint failure is logged and the run provisions without a
+// credential (the explicit invocation path stays fail-closed in applyInvocation).
+//
+// Trust boundary: the identity comes ONLY from req.SourceSubject, the
+// dispatcher-written run column copied by ExecuteWithRun/Resume. Trigger
+// metadata and work-object properties are model/user-writable and are never
+// consulted here. Only an issue subject gets an implicit write credential; a
+// pull-request subject keeps the narrower explicit-review path.
+func (ae *AgentExecutor) applySourceGitCredential(ctx context.Context, runID string, req *ExecuteRequest) {
 	if ae == nil || ae.sourceCredentials == nil || req == nil || req.AgentDefinition == nil || len(req.AgentDefinition.SandboxConfig) == 0 {
-		return nil
+		return
 	}
 	if req.EnvVars != nil && req.EnvVars["GH_TOKEN"] != "" {
-		return nil
+		ae.log.Debug("source git credential skipped: caller-supplied GH_TOKEN wins",
+			slog.String("run_id", runID),
+			slog.String("project_id", req.ProjectID),
+		)
+		return
 	}
-	sourceID, _ := req.TriggerMetadata["sourceId"].(string)
-	repo, _ := req.TriggerMetadata["repo"].(string)
-	if (sourceID == "" || repo == "") && ae.workObjects != nil {
-		if canonicalID, _ := req.TriggerMetadata["subjectObjectId"].(string); canonicalID != "" {
-			if head, err := ae.workObjects.GetHeadObject(ctx, req.ProjectID, canonicalID); err == nil && head != nil && head.Properties != nil {
-				if sourceID == "" {
-					sourceID, _ = head.Properties["source_id"].(string)
-				}
-				if repo == "" {
-					repo, _ = head.Properties["repo"].(string)
-				}
-			}
+	if !req.SourceSubject.IssueValid() {
+		if req.SourceSubject.RepositoryValid() {
+			ae.log.Debug("implicit source git credential not minted for pull-request subject",
+				slog.String("run_id", runID),
+				slog.String("source_id", req.SourceSubject.SourceID),
+				slog.String("repo", req.SourceSubject.Repo),
+			)
 		}
+		return
 	}
-	if sourceID == "" || repo == "" {
-		return nil
-	}
-	token, err := ae.sourceCredentials.MintSourceCredential(ctx, req.ProjectID, sourceID, repo, map[string]string{
-		"contents": "write", "pull_requests": "write", "issues": "write", "checks": "read",
+	subject := req.SourceSubject
+	token, err := ae.sourceCredentials.MintSourceCredential(ctx, req.ProjectID, subject.SourceID, subject.Repo, map[string]string{
+		PermissionContents:     "write",
+		PermissionPullRequests: "write",
 	})
 	if err != nil {
-		return fmt.Errorf("mint source git credential: %w", err)
+		// Never log the token; the error text comes from the minter and omits it.
+		ae.log.Warn("failed to mint implicit source git credential; provisioning without one",
+			slog.String("run_id", runID),
+			slog.String("project_id", req.ProjectID),
+			slog.String("source_id", subject.SourceID),
+			slog.String("repo", subject.Repo),
+			slog.String("error", err.Error()),
+		)
+		return
 	}
 	if req.EnvVars == nil {
 		req.EnvVars = map[string]string{}
 	}
 	req.EnvVars["GH_TOKEN"] = token
-	return nil
+	ae.log.Info("minted implicit source git credential for run",
+		slog.String("run_id", runID),
+		slog.String("project_id", req.ProjectID),
+		slog.String("source_id", subject.SourceID),
+		slog.String("repo", subject.Repo),
+	)
 }
 
+// provisionWorkspace provisions a workspace for the agent run if configured.
+// Returns (nil, nil) if workspace provisioning is disabled, not configured, or not needed.
+// Returns (result, nil) on success or degraded provisioning.
+// Returns (nil, error) for fatal pre-provisioning failures (e.g. image not ready) —
+// callers must fail the run with RunStatusError.
 func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, req *ExecuteRequest) (*sandbox.ProvisioningResult, error) {
 	// Check preconditions: feature enabled, provisioner available, definition has workspace config
 	if !ae.wsEnabled || ae.provisioner == nil {
@@ -2659,9 +2723,6 @@ func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, r
 	}
 	if req.AgentDefinition == nil || len(req.AgentDefinition.SandboxConfig) == 0 {
 		return nil, nil
-	}
-	if err := ae.applySourceGitCredential(ctx, req); err != nil {
-		return nil, err
 	}
 
 	// Shared-sandbox path: a delegating run handed us a lease on its live
@@ -2701,6 +2762,11 @@ func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, r
 		slog.String("run_id", runID),
 		slog.String("agent_definition_id", req.AgentDefinition.ID),
 	)
+
+	// Only a run that actually provisions gets an implicit source credential.
+	// A borrowing child returned above and must never mint: its container belongs
+	// to another run and may be bound to a different source/repo entirely.
+	ae.applySourceGitCredential(ctx, runID, req)
 
 	// Check image readiness before attempting provisioning.
 	// If the image is still pulling or in error state, fail the run immediately
