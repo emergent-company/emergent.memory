@@ -146,16 +146,23 @@ export async function login(page: Page): Promise<void> {
       await page.waitForLoadState('domcontentloaded');
       continue;
     }
-    const oldPw = page.getByRole('textbox', { name: 'Old Password' });
+    // Zitadel v1 uses "Old Password"; the v2 login UI uses "Current
+    // Password *". Accept both labels, and both confirmation spellings.
+    const oldPw = page.getByRole('textbox', { name: /old password|current password/i }).first();
     if (await oldPw.isVisible().catch(() => false)) {
       // Forced password change: Zitadel requires a DIFFERENT new password to
       // clear the flag (re-entering the current one is rejected). Use the
-      // one-time rotation value when set, else reuse the current password.
-      const nextPassword = process.env.E2E_TEST_USER_NEW_PASSWORD || password;
-      await page.getByRole('textbox', { name: 'New Password' }).fill(nextPassword);
-      await page.getByRole('textbox', { name: 'Password confirmation' }).fill(nextPassword);
+      // one-time rotation value when set, else derive a different valid value.
+      const nextPassword =
+        process.env.E2E_TEST_USER_NEW_PASSWORD || `${password}X`;
+      const newPw = page.getByRole('textbox', { name: /new password/i }).first();
+      const confirmPw = page
+        .getByRole('textbox', { name: /confirm password|password confirmation/i })
+        .first();
+      await newPw.fill(nextPassword);
+      await confirmPw.fill(nextPassword);
       await oldPw.fill(password);
-      await page.getByRole('button', { name: /next|continue/i }).click();
+      await page.getByRole('button', { name: /next|continue/i }).first().click();
       await page.waitForLoadState('domcontentloaded');
       continue;
     }
