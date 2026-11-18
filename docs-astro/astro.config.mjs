@@ -105,7 +105,10 @@ export default defineConfig({
         },
         {
           label: 'Tutorials',
-          items: [{ label: 'Deploy on Railway', slug: 'tutorials/deploy-to-railway' }],
+          items: [
+            { label: 'Deploy on Railway', slug: 'tutorials/deploy-to-railway' },
+            { label: 'Install a blueprint', slug: 'tutorials/install-a-blueprint' },
+          ],
         },
         {
           label: 'Developer Guide',

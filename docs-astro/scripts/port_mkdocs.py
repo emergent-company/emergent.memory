@@ -88,6 +88,7 @@ PAGES = [
     ("user-guide/notifications.md", "user-guide/notifications.mdx", "Notifications"),
     ("user-guide/tasks.md", "user-guide/tasks.mdx", "Tasks"),
     ("tutorials/deploy-to-railway.md", "tutorials/deploy-to-railway.mdx", "Deploy on Railway"),
+    ("tutorials/install-a-blueprint.md", "tutorials/install-a-blueprint.mdx", "Install a blueprint"),
     ("go-sdk/index.md", "go-sdk.mdx", "Go SDK"),
     ("go-sdk/authentication.md", "go-sdk/authentication.mdx", "Authentication"),
     ("go-sdk/changelog.md", "go-sdk/changelog.mdx", "Changelog"),
