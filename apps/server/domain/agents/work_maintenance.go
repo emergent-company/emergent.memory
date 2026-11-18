@@ -85,7 +85,10 @@ func (r *Repository) FindLiveRunsForSubject(ctx context.Context, canonicalID str
 }
 
 // ListRunsForSubject returns the runs linked to the subject work object, newest
-// first, capped at limit. It backs the board card drawer's run history.
+// first, capped at limit. It backs the board card drawer's run history, so the
+// Agent relation is preloaded: the drawer names which agent ran, a fact the run
+// row itself does not carry (agent_id is a runtime kb.agents row, not the
+// definition the human picked).
 func (r *Repository) ListRunsForSubject(ctx context.Context, canonicalID string, limit int) ([]*AgentRun, error) {
 	if limit <= 0 {
 		limit = 20
@@ -93,6 +96,7 @@ func (r *Repository) ListRunsForSubject(ctx context.Context, canonicalID string,
 	var runs []*AgentRun
 	err := r.db.NewSelect().
 		Model(&runs).
+		Relation("Agent").
 		Where("subject_object_id = ?", canonicalID).
 		Order("created_at DESC").
 		Limit(limit).

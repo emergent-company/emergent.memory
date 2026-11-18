@@ -221,7 +221,7 @@ test.describe.serial('board comments thread', () => {
     await expect(previewBoard(page).getByRole('heading', { name: 'Activity' })).toBeVisible();
     await expect(previewBoard(page).getByTestId('board-preview-comment-empty')).toBeVisible();
     await expect(previewBoard(page).getByTestId('board-preview-comment-empty')).toHaveText(
-      'No activity yet',
+      'No comments yet',
     );
     await expect(commentRows(page)).toHaveCount(0);
     expect((await threadEntries(page)).length).toBe(0);
