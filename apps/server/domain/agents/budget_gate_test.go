@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -48,8 +49,8 @@ func TestEnsureBudgetAvailable(t *testing.T) {
 	t.Run("exceeded and enforced blocks", func(t *testing.T) {
 		ae := newBudgetTestExecutor(&fakeBudgetChecker{exceeded: true}, true)
 		err := ae.ensureBudgetAvailable(ctx, "p1", "a1", "resume")
-		var budgetErr *BudgetExceededError
-		require.True(t, errors.As(err, &budgetErr))
+		budgetErr, ok := errors.AsType[*BudgetExceededError](err)
+		require.True(t, ok)
 		require.Equal(t, "p1", budgetErr.ProjectID)
 	})
 
@@ -77,8 +78,8 @@ func TestRepositoryCheckBudgetGate(t *testing.T) {
 	t.Run("enforced gate blocks", func(t *testing.T) {
 		r := NewRepository(nil)
 		r.SetBudgetGate(&fakeBudgetChecker{exceeded: true}, true)
-		var budgetErr *BudgetExceededError
-		require.True(t, errors.As(r.checkBudgetGate(ctx, "p1"), &budgetErr))
+		_, ok := errors.AsType[*BudgetExceededError](r.checkBudgetGate(ctx, "p1"))
+		require.True(t, ok)
 	})
 
 	t.Run("gate error fails open", func(t *testing.T) {
@@ -91,6 +92,16 @@ func TestRepositoryCheckBudgetGate(t *testing.T) {
 func TestClassifyRunFailureBudget(t *testing.T) {
 	cls := classifyRunFailure(&BudgetExceededError{ProjectID: "p1"}, nil)
 	require.Equal(t, FailureClassBudget, cls)
+}
+
+// TestIsBudgetFailure guards the predicate the budget tests assert with: it
+// must recognise a wrapped BudgetExceededError and reject anything else, or a
+// test asserting through it would pass on the wrong error.
+func TestIsBudgetFailure(t *testing.T) {
+	require.False(t, isBudgetFailure(nil))
+	require.False(t, isBudgetFailure(errors.New("db down")))
+	require.True(t, isBudgetFailure(&BudgetExceededError{ProjectID: "p1"}))
+	require.True(t, isBudgetFailure(fmt.Errorf("enqueue: %w", &BudgetExceededError{ProjectID: "p1"})))
 }
 
 func TestBudgetCheckerOrNil(t *testing.T) {
@@ -106,11 +117,10 @@ func TestBudgetGateWiredAtEntryPoints(t *testing.T) {
 	ae := newBudgetTestExecutor(&fakeBudgetChecker{exceeded: true}, true)
 	ae.safeguards.ExecutionEnabled = true
 
-	var budgetErr *BudgetExceededError
 	_, err := ae.Execute(ctx, ExecuteRequest{ProjectID: "p1"})
-	require.True(t, errors.As(err, &budgetErr), "Execute")
+	require.True(t, isBudgetFailure(err), "Execute")
 	_, err = ae.ExecuteWithRun(ctx, nil, ExecuteRequest{ProjectID: "p1"})
-	require.True(t, errors.As(err, &budgetErr), "ExecuteWithRun")
+	require.True(t, isBudgetFailure(err), "ExecuteWithRun")
 	_, err = ae.Resume(ctx, nil, ExecuteRequest{ProjectID: "p1"})
-	require.True(t, errors.As(err, &budgetErr), "Resume")
+	require.True(t, isBudgetFailure(err), "Resume")
 }

@@ -2,7 +2,6 @@ package agents
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
@@ -43,8 +42,7 @@ func TestCreateRunQueuedBudgetGate(t *testing.T) {
 	t.Run("enforced gate blocks without inserting rows", func(t *testing.T) {
 		repo.SetBudgetGate(&fakeBudgetChecker{exceeded: true}, true)
 		_, err := repo.CreateRunQueued(ctx, agentID, 1)
-		var budgetErr *BudgetExceededError
-		require.True(t, errors.As(err, &budgetErr))
+		require.True(t, isBudgetFailure(err))
 		runs, jobs := countRows()
 		require.Zero(t, runs)
 		require.Zero(t, jobs)
@@ -72,8 +70,7 @@ func TestCreateRunQueuedBudgetGate(t *testing.T) {
 			EventType:     ReactionEventType("created"),
 		}
 		run, claimed, err := repo.EnqueueWorkRunDeduped(ctx, logEntry, dedupAgentID, 1, CreateRunQueuedOptions{})
-		var budgetErr *BudgetExceededError
-		require.True(t, errors.As(err, &budgetErr))
+		require.True(t, isBudgetFailure(err))
 		require.Nil(t, run)
 		require.False(t, claimed)
 		var runs, jobs, logs int
@@ -124,8 +121,7 @@ func TestExecuteWithRunBudgetBlockFinalizesRun(t *testing.T) {
 		log:          testAgentLogger(),
 	}
 	_, err = ae.ExecuteWithRun(ctx, run, ExecuteRequest{ProjectID: projectID})
-	var budgetErr *BudgetExceededError
-	require.True(t, errors.As(err, &budgetErr))
+	require.True(t, isBudgetFailure(err))
 
 	var row struct {
 		Status       string  `bun:"status"`
