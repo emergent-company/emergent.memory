@@ -145,6 +145,17 @@ the trusted `Reviewed-SHA` marker. The PR is linked to its coding issue by
   number and branch. It must push to the same branch; opening a second PR is a
   failure. The PR `synchronize` event triggers a fresh review.
 
+A pull request authored by a source-trigger run (a GitHub App bot) needs at
+least two reviewer agents. The server snapshots that quorum on the review gate
+and never lowers it for the head: a project with a single reviewer agent leaves
+`reviewed` pending (and logs an under-configured error) instead of letting the
+reviewing App's one bot verdict satisfy "all reviewers approved" (#1005). An
+unknown author also fails closed to the two-reviewer quorum. The quorum counts
+distinct reviewer agents; it does not prove they use a different App credential,
+so keep the review App separate from the coding App (above) and configure two
+distinct reviewer agents. Human-authored pull requests keep the
+single-reviewer default.
+
 The loop is capped by the coding agent's `revisionLimit` (default 3), after which
 the item is blocked for a human.
 

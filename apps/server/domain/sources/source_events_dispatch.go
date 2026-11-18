@@ -344,10 +344,23 @@ func (d *SourceEventDispatcher) ensureReviewSubject(ctx context.Context, v *Veri
 	} else if prev != nil {
 		previousHead, _ = prev.Properties["head_sha"].(string)
 	}
+	// The author identity is part of the review subject: a bot author marks a
+	// source-trigger run, and the gate needs a second independent reviewer agent
+	// before it may approve (#1005).
+	authorLogin, authorType := strings.TrimSpace(p.PullRequest.User.Login), strings.TrimSpace(p.PullRequest.User.Type)
+	if state != nil {
+		if login := strings.TrimSpace(state.UserLogin); login != "" {
+			authorLogin = login
+		}
+		if typ := strings.TrimSpace(state.UserType); typ != "" {
+			authorType = typ
+		}
+	}
 	props := map[string]any{
 		"repo": repoName, "pr_number": p.PullNumber(), "title": title,
 		"head_sha": headSHA, "base_sha": p.PullRequest.Base.SHA,
 		"state": p.PullRequest.State, "labels": reviewSubjectLabels(labels), "status": "open",
+		"author": authorLogin, "author_type": authorType,
 	}
 	resp, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
 		Type: "GitHubPullRequest", Key: &key, Name: &title, Properties: props,

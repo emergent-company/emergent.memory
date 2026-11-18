@@ -257,6 +257,10 @@ func (p *githubAppProvider) ObjectTypes() *ObjectTypePack {
 		"state":     map[string]any{"type": "string"},
 		"labels":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 		"status":    map[string]any{"type": "string"},
+		"author":    map[string]any{"type": "string"},
+		// author_type is "Bot" for a source-trigger-authored pull request; the
+		// review gate uses it to require a second independent reviewer (#1005).
+		"author_type": map[string]any{"type": "string"},
 	}
 	return &ObjectTypePack{
 		Name:          "github-app-workflow",
