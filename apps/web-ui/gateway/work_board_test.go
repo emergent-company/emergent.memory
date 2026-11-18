@@ -559,6 +559,7 @@ func TestWorkPreviewBoardSlotRendersActivity(t *testing.T) {
 		},
 		nil,
 		nil,
+		nil,
 	))
 	for _, want := range []string{
 		`data-testid="board-preview-comment-row"`,
@@ -598,7 +599,7 @@ func TestWorkPreviewBoardSlotRendersActivity(t *testing.T) {
 // an unresolved one renders muted with a "not found" hint and no link.
 func TestWorkPreviewBoardSlotRendersDeliverables(t *testing.T) {
 	item := &WorkItem{CanonicalID: "w1", Type: "Task", Key: "ship-1", Status: "done"}
-	resolved := renderHTML(t, workPreviewBoardSlot(item, defaultBoardStatusMap(), nil, nil,
+	resolved := renderHTML(t, workPreviewBoardSlot(item, defaultBoardStatusMap(), nil, nil, nil,
 		[]boardDeliverable{{Type: "Note", Key: "release-notes", ObjectID: "canon-9", Resolved: true}}, nil))
 	for _, want := range []string{"Deliverables", `data-testid="board-deliverable"`, `href="/objects/canon-9/wiki"`, "release-notes"} {
 		if !strings.Contains(resolved, want) {
@@ -609,7 +610,7 @@ func TestWorkPreviewBoardSlotRendersDeliverables(t *testing.T) {
 		t.Error("resolved deliverable must not render the missing marker")
 	}
 
-	missing := renderHTML(t, workPreviewBoardSlot(item, defaultBoardStatusMap(), nil, nil,
+	missing := renderHTML(t, workPreviewBoardSlot(item, defaultBoardStatusMap(), nil, nil, nil,
 		[]boardDeliverable{{Type: "Note", Key: "ghost"}}, nil))
 	if !strings.Contains(missing, `data-testid="board-deliverable-missing"`) || !strings.Contains(missing, "not found") {
 		t.Errorf("unresolved deliverable not marked:\n%s", missing)
@@ -627,6 +628,16 @@ func TestObjectPreviewBoardActionsSlot(t *testing.T) {
 		objects: []GraphObject{{ID: "w1", Type: "BoardTask", Key: "k", Status: "review"}},
 		workItemDetail: &WorkItemDetail{
 			Item: &WorkItem{CanonicalID: "w1", Type: "BoardTask", Key: "k", Status: "review"},
+			// The run history rides on the same detail payload; the board slot must
+			// render it, not just consume its deliverables.
+			Runs: []WorkItemRun{{
+				ID:          "run-1",
+				AgentName:   "coding",
+				Status:      "completed",
+				StartedAt:   "2026-11-18T10:00:00Z",
+				CompletedAt: strPtr("2026-11-18T10:01:00Z"),
+				Summary:     map[string]any{"summary": "implemented the change"},
+			}},
 		},
 	}
 	_, e := newWorkBoardEcho(f)
@@ -640,6 +651,12 @@ func TestObjectPreviewBoardActionsSlot(t *testing.T) {
 		`id="object-preview-actions-slot"`,
 		`/work/items/w1/approve`,
 		`/work/items/w1/request-changes`,
+		// The run history reaches the preview through the detail payload.
+		"Work runs",
+		`data-testid="board-run-row"`,
+		"coding",
+		`href="/runs/run-1"`,
+		"implemented the change",
 		// The merged thread + inline form are reachable from the card-click
 		// preview path (no comments seeded, so the muted empty state renders).
 		`data-testid="board-preview-comment-empty"`,

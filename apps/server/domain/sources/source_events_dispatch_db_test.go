@@ -30,6 +30,13 @@ import (
 	cryptoutil "github.com/emergent-company/emergent.memory/pkg/crypto"
 )
 
+// sourceBudgetExceeded reports every project as over its spending cap.
+type sourceBudgetExceeded struct{}
+
+func (sourceBudgetExceeded) CheckBudgetExceeded(context.Context, string) (bool, error) {
+	return true, nil
+}
+
 func TestSourceEventDispatcher(t *testing.T) {
 	if testing.Short() {
 		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
@@ -128,6 +135,24 @@ func TestSourceEventDispatcher(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, SourceEventSkipped, ev2.State)
 	require.Equal(t, 1, countSourceRuns(t, db, agentID))
+
+	// A capped project blocks dispatch: the delivery is recorded skipped with
+	// the budget reason and the subject claim is retired, so no run is created
+	// and the head is not left permanently claimed.
+	agentsRepo.SetBudgetGate(sourceBudgetExceeded{}, true)
+	cappedHead := strings.Repeat("e", 40)
+	currentHead = cappedHead // fake GitHub advertises this head as live
+	require.NoError(t, deliver("d-budget", payload("synchronize", cappedHead)))
+	evBudget, err := repo.FindSourceEventByDelivery(ctx, projectID, sourceID, "d-budget")
+	require.NoError(t, err)
+	require.Equal(t, SourceEventSkipped, evBudget.State)
+	require.NotNil(t, evBudget.Error)
+	require.Contains(t, *evBudget.Error, "budget")
+	claimBudget, err := repo.FindSourceEventClaim(ctx, projectID, sourceID, "owner/repo#7", cappedHead)
+	require.NoError(t, err)
+	require.Equal(t, SourceClaimCancelled, claimBudget.State)
+	require.Equal(t, 1, countSourceRuns(t, db, agentID))
+	agentsRepo.SetBudgetGate(nil, false)
 
 	// Invalid signature and unknown app fail closed.
 	require.ErrorIs(t, dispatcher.HandleWebhook(ctx, app.WebhookKey, "pull_request", "d-bad", "sha256=deadbeef", payload("opened", currentHead)), ErrSourceEventInvalidSignature)

@@ -185,6 +185,12 @@ func TestDispatchMatchedAgent_Dedup(t *testing.T) {
 
 // TestDispatchMatchedAgent_AssigneeRouting verifies an assigned object wakes
 // only the listener whose name matches the assignee.
+//
+// The non-assignee is offered each subject *before* the assignee, while no live
+// run holds that subject's claim. Since migration 00315 the live-subject index
+// refuses a second dispatch for an already-claimed subject regardless of the
+// dispatching agent, so asserting the non-assignee's zero after the assignee's
+// run exists would pass even with assignee routing deleted (#1019).
 func TestDispatchMatchedAgent_AssigneeRouting(t *testing.T) {
 	ctx, db, repo, projectID := setupWorkObjectDispatch(t)
 
@@ -201,20 +207,32 @@ func TestDispatchMatchedAgent_AssigneeRouting(t *testing.T) {
 	reviewer, err := repo.FindByID(ctx, reviewerID, nil)
 	require.NoError(t, err)
 
-	canonicalID := uuid.NewString()
-	insertWorkObject(t, db, ctx, projectID, canonicalID, "gemini-model-2026", "ready")
-	input := map[string]any{
-		"id":      canonicalID,
-		"version": 1,
-		"data":    map[string]any{"assignee": "researcher"},
+	dispatch := func(agent *Agent, subject, assignee string) {
+		t.Helper()
+		ts.dispatchMatchedAgent(ctx, agent, "ResearchRequest", EventTypeCreated, projectID, map[string]any{
+			"id":      subject,
+			"version": 1,
+			"data":    map[string]any{"assignee": assignee},
+		})
 	}
 
-	// The assignee is "researcher": the researcher is enqueued, the reviewer is not.
-	ts.dispatchMatchedAgent(ctx, researcher, "ResearchRequest", EventTypeCreated, projectID, input)
-	ts.dispatchMatchedAgent(ctx, reviewer, "ResearchRequest", EventTypeCreated, projectID, input)
+	// Object assigned to "researcher": only the researcher may enqueue.
+	researcherSubject := uuid.NewString()
+	insertWorkObject(t, db, ctx, projectID, researcherSubject, "gemini-model-2026", "ready")
+	dispatch(reviewer, researcherSubject, "researcher")
+	require.Equal(t, 0, countQueuedRuns(t, db, ctx, reviewerID, researcherSubject),
+		"the non-assignee must not claim a subject assigned to someone else")
+	dispatch(researcher, researcherSubject, "researcher")
+	require.Equal(t, 1, countQueuedRuns(t, db, ctx, researcherID, researcherSubject))
 
-	require.Equal(t, 1, countQueuedRuns(t, db, ctx, researcherID, canonicalID))
-	require.Equal(t, 0, countQueuedRuns(t, db, ctx, reviewerID, canonicalID))
+	// Mirror case, assigned to "reviewer": only the reviewer may enqueue.
+	reviewerSubject := uuid.NewString()
+	insertWorkObject(t, db, ctx, projectID, reviewerSubject, "gemini-model-2027", "ready")
+	dispatch(researcher, reviewerSubject, "reviewer")
+	require.Equal(t, 0, countQueuedRuns(t, db, ctx, researcherID, reviewerSubject),
+		"routing must follow the assignee, not the dispatching agent")
+	dispatch(reviewer, reviewerSubject, "reviewer")
+	require.Equal(t, 1, countQueuedRuns(t, db, ctx, reviewerID, reviewerSubject))
 }
 
 // TestDispatchMatchedAgent_NoWorkConfigKeepsInline verifies an agent without a

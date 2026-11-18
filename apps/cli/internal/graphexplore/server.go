@@ -414,11 +414,18 @@ func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
 		idx++
 	}
 
+	// The detail panel's Name field is the stored title only; a nameless object
+	// renders as a dash instead of a synthesized label (see NodeDetail).
+	name := ""
+	if node.Name != nil {
+		name = strings.TrimSpace(*node.Name)
+	}
+
 	detail := NodeDetail{
 		ID:         id,
 		Type:       typeName,
 		TypeColor:  s.typeColor(typeName),
-		Name:       objectLabel(node.Name, node.Key, typeName, id),
+		Name:       name,
 		Key:        node.Key,
 		Labels:     node.Labels,
 		Properties: props,
@@ -773,9 +780,11 @@ type nodeInfo struct {
 
 // machineObjectKey matches the machine-generated identity shapes: the current
 // generated key ("<type>-<12 hex>"), the legacy generated key ("<type>-<8 hex>")
-// and a source-scoped dedup key ("<provider>:<uuid>:<external id>"). It mirrors
-// the server, migration 00311 and the web-ui gateway regexes (the fourth copy of
-// this rule); any of them is an identity, never a title (#824).
+// and a source-scoped dedup key ("<provider>:<uuid>:<external id>"). It has the
+// same three forms as migration 00311 and the web-ui gateway
+// (apps/web-ui/gateway/documents.go); this file and its JS twin
+// (static/graph_explore.js) are the CLI's copies of that rule. Any of them is an
+// identity, never a title (#824).
 var machineObjectKey = regexp.MustCompile(`^[a-z0-9_-]+-[0-9a-f]{12}$|^[a-z0-9_-]+-[0-9a-f]{8}$|^[a-z][a-z0-9_-]*:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:.+$`)
 
 // objectLabel resolves an object's display label from the fields every object

@@ -46,10 +46,34 @@ type a2aStreamTranslator struct {
 	// for; they are folded into the final ROLE_AGENT message metadata.
 	thinking []string
 
-	// toolSeq/toolArtID give each tool-call trajectory a stable artifactId so a
-	// call's start and end deltas accumulate onto the same artifact.
+	// toolArtID is the artifactId of the most recent tool call, so a call's
+	// start and end deltas accumulate onto the same artifact. The id is derived
+	// from the ADK function-call id (StreamEvent.ID) when the event carries one:
+	// a per-translator counter restarts on every stream, and a resumed stream
+	// builds a fresh translator for the same task, so a counter would make the
+	// resumed turn reuse the paused turn's toolCallIds (#904). toolSeq is only
+	// the fallback for events that arrive without a function-call id.
 	toolSeq   int
 	toolArtID string
+}
+
+// toolCallArtifactID builds the A2A artifactId for a tool call from its ADK
+// function-call id. The prefix keeps tool artifacts distinguishable from the
+// text ("artifact-<task>") and A2UI ("a2ui-<surface>") artifact ids on the same
+// task; the id part is what makes it unique per call rather than per stream.
+func toolCallArtifactID(functionCallID string) string {
+	return "tool-call-" + functionCallID
+}
+
+// nextToolArtifactID assigns the artifactId for a newly started tool call,
+// preferring the function-call id and falling back to the per-stream counter
+// when the event carries none.
+func (t *a2aStreamTranslator) nextToolArtifactID(ev StreamEvent) string {
+	if ev.ID != "" {
+		return toolCallArtifactID(ev.ID)
+	}
+	t.toolSeq++
+	return fmt.Sprintf("tool-call-%d", t.toolSeq)
 }
 
 // newA2aStreamTranslator builds a translator for a task/context pair.
@@ -88,8 +112,7 @@ func (t *a2aStreamTranslator) translate(ev StreamEvent) []StreamResponse {
 		return nil
 
 	case StreamEventToolCallStart:
-		t.toolSeq++
-		t.toolArtID = fmt.Sprintf("tool-call-%d", t.toolSeq)
+		t.toolArtID = t.nextToolArtifactID(ev)
 		return []StreamResponse{{
 			ArtifactUpdate: &TaskArtifactUpdateEvent{
 				TaskID:    t.taskID,
@@ -103,12 +126,19 @@ func (t *a2aStreamTranslator) translate(ev StreamEvent) []StreamResponse {
 		}}
 
 	case StreamEventToolCallEnd:
+		// The end carries the same function-call id as its start, so deriving
+		// the id here keeps the pair correlated even when another call started
+		// in between; the last assignment is the fallback for an id-less event.
+		artID := t.toolArtID
+		if ev.ID != "" {
+			artID = toolCallArtifactID(ev.ID)
+		}
 		return []StreamResponse{{
 			ArtifactUpdate: &TaskArtifactUpdateEvent{
 				TaskID:    t.taskID,
 				ContextID: t.contextID,
 				Artifact: Artifact{
-					ArtifactID: t.toolArtID,
+					ArtifactID: artID,
 					Name:       ev.Tool,
 					Parts:      []Part{{Data: map[string]any{"toolName": ev.Tool, "output": ev.Output}}},
 				},
@@ -418,6 +448,11 @@ func (h *A2AHandler) streamNewTask(c echo.Context, projectID, userID, userMessag
 	// JSON /message path).
 	if h.executor != nil {
 		if err := h.executor.EnsureExecutionEnabled(); err != nil {
+			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, err.Error()))
+		}
+		// Budget pre-flight before creating the run row: a capped project must
+		// not leave an A2A run that can never execute.
+		if err := h.executor.ensureBudgetAvailable(ctx, projectID, agent.ID, "a2a"); err != nil {
 			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, err.Error()))
 		}
 	}

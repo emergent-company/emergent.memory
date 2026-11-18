@@ -139,9 +139,18 @@ tasks:
         sed -i "s|MARKETING_VERSION = .*;|MARKETING_VERSION = {{.VERSION}};|" apps/ios/VoiceAgent.xcodeproj/project.pbxproj
       - task: server:swagger
       - |
-        git add VERSION apps/server/cmd/server/main.go apps/ios/VoiceAgent.xcodeproj/project.pbxproj apps/cli/internal/skillsfs/skills/memory-cli-reference/SKILL.md
+        # The commit carries the version carriers only. SKILL.md is generated
+        # from the CLI help text and has no version of its own (its frontmatter
+        # is `version: "1.0"`), so staging it would fold an unrelated generated
+        # diff into the release commit. `scripts/preflight/cli-skill-pin.sh`
+        # decides whether it is in sync.
+        git add VERSION apps/server/cmd/server/main.go apps/ios/VoiceAgent.xcodeproj/project.pbxproj
         git status
-        git commit -m "chore: bump version to {{.VERSION}}"
+        # The subject must be one the release-attribution rule in
+        # scripts/preflight/version-drift.sh recognises, or CI rejects the bump:
+        #   chore: release vX.Y.Z (this), a `[skip release]` marker, or the PR's
+        #   `release` label. Offline coverage: version-drift.test.sh.
+        git commit -m "chore: release v{{.VERSION}}"
         git tag v{{.VERSION}}
         git push origin HEAD
         git push origin v{{.VERSION}}

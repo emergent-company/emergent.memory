@@ -619,6 +619,19 @@ func (ts *TriggerService) enqueueWorkRun(ctx context.Context, agent *Agent, agen
 			return // object gone
 		}
 	}
+	// A board item mirrored from a GitHub issue another lane already claimed
+	// must not start a second run. The claim lives in the issue's labels
+	// (`status: in-progress`, `manager: <lane>`), so it is visible here without
+	// a GitHub round trip — and a duplicate coding run is work thrown away.
+	if skipForeignIssueClaim(objectType, head) {
+		ts.log.Info("skipping object-driven run: issue claimed by another lane",
+			slog.String("object_type", objectType),
+			slog.String("agent", agent.Name),
+			slog.String("project_id", projectID),
+			slog.String("canonical_id", canonicalID),
+		)
+		return
+	}
 	version, hasVersion := intFromInput(input["version"])
 	if !hasVersion {
 		if head == nil {

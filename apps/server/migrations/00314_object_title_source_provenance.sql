@@ -1,0 +1,24 @@
+-- +goose Up
+--
+-- #918: provenance of the legacy `properties.title` values 00311 repaired.
+--
+-- 00311 is already applied on every environment, so its commentary can no
+-- longer be corrected in place (scripts/preflight/migration-immutability.sh).
+-- This migration records the corrected attribution; it has no DDL because the
+-- repair 00311 performed is unchanged and correct.
+--
+-- Before #824 a session's title was written by PatchGraphObjectTitle into
+-- `properties.title` (set_session_title). The broader source was the base
+-- resolveObjectName, which consulted `properties.title` on any create/patch
+-- until #898 deleted that fallback. Extraction is not a source: it writes
+-- `properties.name` (apps/server/domain/extraction/object_extraction_worker.go),
+-- never `properties.title`.
+--
+-- 00311's precedence still holds: a real legacy title beats the key backfill,
+-- a machine-shaped title is not a title and is left alone, and an object that
+-- falls through either step stays nameless rather than displaying an identity
+-- string as a title.
+
+-- +goose Down
+-- Documentation only: nothing to revert. 00311's data repair is not reversed
+-- (see its Down section for why).

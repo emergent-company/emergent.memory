@@ -249,6 +249,54 @@ func TestFinishWorkRun_QuotaDoesNotConsumeBudget(t *testing.T) {
 	require.Nil(t, mustState(t, ctx, repo, projectID, canonicalID))
 }
 
+// TestClassifyRunFailure_Budget pins the budget block out of the deterministic
+// poison path that would otherwise spend the item failure budget and block it.
+func TestClassifyRunFailure_Budget(t *testing.T) {
+	cls := classifyRunFailure(&BudgetExceededError{ProjectID: "p-1"}, nil)
+	require.Equal(t, FailureClassBudget, cls)
+	require.NotEqual(t, FailureClassDeterministic, cls)
+}
+
+// TestFinishWorkRun_BudgetBlockDoesNotConsumeItemBudget is the regression for
+// the budget-enforcement gap: a project spending-cap block must not be treated
+// as a deterministic item failure, must not spend the item failure budget, must
+// not block the item, and must not increment the agent failure counter.
+func TestFinishWorkRun_BudgetBlockDoesNotConsumeItemBudget(t *testing.T) {
+	ctx, repo, pool, projectID, canonicalID, job, run := setupFinishWork(t)
+
+	agent, err := repo.FindByID(ctx, run.AgentID, nil)
+	require.NoError(t, err)
+	def, err := repo.ResolveDefinitionForAgent(ctx, agent)
+	require.NoError(t, err)
+
+	pool.finishWorkRun(ctx, testAgentLogger(), job, run, agent, def, nil,
+		&BudgetExceededError{ProjectID: projectID, Message: "project is over budget"})
+
+	require.Nil(t, mustState(t, ctx, repo, projectID, canonicalID), "budget block must not spend the item failure budget")
+
+	var taskCount int
+	require.NoError(t, repo.db.NewRaw(
+		`SELECT COUNT(*) FROM kb.tasks WHERE source_id = ? AND type = 'work-escalation'`,
+		canonicalID,
+	).Scan(ctx, &taskCount))
+	require.Zero(t, taskCount, "budget block must not block the item")
+
+	updated, err := repo.FindByID(ctx, run.AgentID, nil)
+	require.NoError(t, err)
+	require.Zero(t, updated.ConsecutiveFailures, "budget block must not increment the agent failure counter")
+
+	var jobStatus string
+	require.NoError(t, repo.db.NewRaw(`SELECT status FROM kb.agent_run_jobs WHERE id = ?`, job.ID).Scan(ctx, &jobStatus))
+	require.Equal(t, string(JobStatusFailed), jobStatus, "the job is retired without requeue; the item transition owns recovery")
+
+	// The budget case returns the item to ready and fails the run/job without
+	// spending the item failure budget; it does not mark the run skipped.
+	finalRun, err := repo.FindRunByID(ctx, run.ID)
+	require.NoError(t, err)
+	require.Equal(t, RunStatusError, finalRun.Status)
+	require.Nil(t, finalRun.SkipReason)
+}
+
 // stringErr is a minimal error wrapper for classification tests.
 type stringErr string
 
@@ -373,6 +421,52 @@ func insertGitHubIssueObject(t *testing.T, db *bun.DB, ctx context.Context, proj
 		 VALUES (?, ?, 'GitHubIssue', ?, 1, ?, 'ready', NULLIF(?, ''))`,
 		canonicalID, projectID, canonicalID, key, assignee)
 	require.NoError(t, err)
+}
+
+// TestWorkReconciler_SkipsIssueClaimedByAnotherLane is the #990 regression: a
+// board item assigned to the coding agent but claimed on GitHub by a peer lane
+// (`status: in-progress` plus that lane's `manager:` label) must not dispatch,
+// while the platform's own claim still may re-dispatch (rework).
+func TestWorkReconciler_SkipsIssueClaimedByAnotherLane(t *testing.T) {
+	ctx, db, repo, projectID := setupWorkObjectDispatch(t)
+	defID := insertWorkDefinition(t, db, ctx, projectID, "coder",
+		`{"status":{"ready":"ready"},"objectRules":[{"objectType":"GitHubIssue","triggers":[{"status":"ready"}]}]}`)
+	agentID := insertWorkAgent(t, db, ctx, projectID, "coder", defID)
+	_, err := db.ExecContext(ctx,
+		`UPDATE kb.agents SET trigger_type='reaction', reaction_config='{"objectTypes":["GitHubIssue"],"events":["created","status_changed"]}'::jsonb WHERE id=?`,
+		agentID)
+	require.NoError(t, err)
+
+	claimedID := uuid.NewString()
+	oursID := uuid.NewString()
+	insertGitHubIssueObject(t, db, ctx, projectID, claimedID, "issue-claimed", "coder")
+	insertGitHubIssueObject(t, db, ctx, projectID, oursID, "issue-ours", "coder")
+
+	store := &fakeListStore{heads: []*graph.WorkObjectHead{
+		{
+			ProjectID: projectID, CanonicalID: claimedID, Status: "ready",
+			Type: "GitHubIssue", Assignee: "coder",
+			Properties: map[string]any{"labels": []any{
+				"status: in-progress", "manager: memory-coding", "manager: lane-5d320db5",
+			}},
+		},
+		{
+			ProjectID: projectID, CanonicalID: oursID, Status: "ready",
+			Type: "GitHubIssue", Assignee: "coder",
+			Properties: map[string]any{"labels": []any{
+				"status: in-progress", "manager: memory-coding",
+			}},
+		},
+	}}
+	rc := NewWorkReconciler(repo, testAgentLogger(), time.Minute)
+	rc.SetWorkObjectStore(store)
+
+	rc.reconcile(ctx)
+
+	require.Equal(t, 0, countQueuedRuns(t, db, ctx, agentID, claimedID),
+		"a peer-claimed issue must not start a coding run")
+	require.Equal(t, 1, countQueuedRuns(t, db, ctx, agentID, oursID),
+		"the platform's own claim must still dispatch")
 }
 
 type issueReviewFinalStore struct{ fakeWorkObjectStore }
