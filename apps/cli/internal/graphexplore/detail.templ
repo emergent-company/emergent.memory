@@ -47,7 +47,11 @@ templ NodeDetailContent(detail NodeDetail) {
 	</div>
 	<div>
 		<div class="text-[10px] uppercase tracking-wider text-gh-muted mb-1">Name</div>
-		<div class="text-[13px] font-semibold text-gh-text break-words">{ detail.Name }</div>
+		if detail.Name != "" {
+			<div class="text-[13px] font-semibold text-gh-text break-words">{ detail.Name }</div>
+		} else {
+			<div class="text-[13px] text-gh-muted">—</div>
+		}
 	</div>
 	if detail.Key != "" {
 		<div>

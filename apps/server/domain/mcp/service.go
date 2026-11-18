@@ -174,8 +174,9 @@ type Service struct {
 	// auditSuperadmin degrades to structured logs only when unset.
 	superadminAuditWriter SuperadminAuditWriter
 
-	// graphObjectTitlePatcher patches graph object Properties.title when set_session_title runs.
-	// Stored as a func to avoid a circular import (mcp already imports graph).
+	// graphObjectTitlePatcher patches the graph object's `name` column — the only
+	// title carrier (#824) — when set_session_title runs. Stored as a func to
+	// avoid a circular import (mcp already imports graph).
 	graphObjectTitlePatcher func(ctx context.Context, projectID, objectID, title string) error
 
 	// Domain classification and schema tools (injected via setters to avoid import cycle)
@@ -8151,8 +8152,9 @@ func parseJournalSince(s string) (time.Time, error) {
 // receive the session ID via a [Session: <id>] prompt tag can pass it explicitly.
 //
 // In addition to updating the session record (kb.sessions.title), it also
-// patches the session's graph object Properties.title so external integrations that
-// read sessions via the graph API (GET /api/graph/objects/:id) see the updated title.
+// patches the session's graph object `name` column — the only title carrier
+// (#824) — so external integrations that read sessions via the graph API
+// (GET /api/graph/objects/:id) see the updated title.
 func (s *Service) executeSetSessionTitle(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	title, _ := args["title"].(string)
 	if title == "" {

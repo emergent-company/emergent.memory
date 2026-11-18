@@ -40,9 +40,10 @@ type SessionHistoryProvider interface {
 	GetConversationFullHistoryRaw(ctx context.Context, projectID, ownerUserID, sessionID string) ([]map[string]any, error)
 }
 
-// GraphObjectPatcher patches graph object Properties.title when set_session_title runs.
-// Satisfied by graph.Service.PatchGraphObjectTitle — defined as a func type to avoid
-// a circular import (mcp already imports graph).
+// GraphObjectPatcher patches a graph object's `name` column — the only title
+// carrier (#824) — when set_session_title runs. Satisfied by
+// graph.Service.PatchGraphObjectTitle; defined as a func type to avoid a
+// circular import (mcp already imports graph).
 type GraphObjectPatcher func(ctx context.Context, projectID, objectID, title string) error
 
 // ProjectOrgAdminAuthorizer asserts the caller is an org_admin of the addressed
