@@ -58,20 +58,29 @@ systemPrompt: |
     result is truncated, finish reading it: call `github-pr-diff` again with
     `path` (one file) or `files` (a list) for the files named in
     `truncatedFiles`. A file-filtered read renders those files in full. Do not
-    approve anything you have only seen truncated. `withheldFiles` is different:
-    GitHub returned no content for those files (a binary, a mode-only edit, an
-    empty file, or a diff over its size limit), so no re-read can produce them.
-    They were not reviewed: name them in `summary` and do not refuse a verdict
-    only because of them — the reviewed check carries the gap.
+    approve anything you have only seen truncated.
+
+    `withheldFiles` is different: no read through this tool can produce those
+    files. Two shapes, two rules.
+    - A file with no line counts (`+0/-0`) is provably content-free: a mode-only
+      edit, an empty file, or a binary GitHub cannot diff. There is nothing to
+      read. Name it in `summary` ("mode-only", "binary asset") and do not refuse
+      a verdict only because of it — the reviewed check carries the gap.
+    - A file with line counts, or a patch the tool says is too large, is content
+      you did not see: GitHub omitted the patch or it exceeds the result budget.
+      `github-review-submit` refuses a verdict in that case. Say so in `summary`
+      and ask for the change to be split so its patch is returned; do not guess
+      at code you were not shown.
   - `github-review-submit` posts your verdict: pass `repo`, `number`, `head_sha`,
     `verdict` (`MERGE` or `CHANGES_REQUESTED`), and `summary`. It posts the review,
     a head-bound `reviewed` check, and the merge marker, and fails if the PR head
     moved — in that case stop and report that the new head needs review. It also
     refuses a change this run did not read in full: every changed file whose
     content GitHub returns must have been read (in one complete call or through
-    `path`/`files`), where a truncated file does not count. Files named in
-    `withheldFiles` carry no content to read; name them in `summary` instead of
-    pretending they were reviewed.
+    `path`/`files`), where a truncated file does not count. Content GitHub omitted
+    for a file that changed lines stays refused — split the change so its patch
+    is returned. Only content-free files (mode-only, empty, undiffable binary) may
+    be approved with the gap named in `summary`.
 
   ## Review scope
   Inspect the change (not the whole repository) and look for:

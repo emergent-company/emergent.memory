@@ -547,7 +547,8 @@ func (h *ReviewToolHandler) executeCommitDiff(ctx context.Context, client *githu
 // the model received in full.
 func (h *ReviewToolHandler) renderBounded(ctx context.Context, sha, header string, files []githubapp.CommitFile, selection map[string]struct{}, listingCapped bool) (*diffRender, *mcp.ToolResult, error) {
 	textBudget := h.diffTextBudget()
-	rendered, err := renderDiffFiles(sha, header, files, selection, textBudget, listingCapped)
+	wholeBudget := textBudget
+	rendered, err := renderDiffFiles(sha, header, files, selection, textBudget, wholeBudget, listingCapped)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -564,7 +565,7 @@ func (h *ReviewToolHandler) renderBounded(ctx context.Context, sha, header strin
 		if textBudget < 512 {
 			textBudget = 512
 		}
-		next, rerr := renderDiffFiles(sha, header, files, selection, textBudget, listingCapped)
+		next, rerr := renderDiffFiles(sha, header, files, selection, textBudget, wholeBudget, listingCapped)
 		if rerr != nil {
 			break
 		}
@@ -755,7 +756,7 @@ type diffSegment struct {
 // executor's per-result bound). It is pure: the caller records evidence from
 // completeFiles/complete, so a segment cut by the final size cap is never
 // reported as fully read.
-func renderDiffFiles(sha, header string, files []githubapp.CommitFile, selection map[string]struct{}, textBudget int, fileListCapped bool) (*diffRender, error) {
+func renderDiffFiles(sha, header string, files []githubapp.CommitFile, selection map[string]struct{}, textBudget, wholeBudget int, fileListCapped bool) (*diffRender, error) {
 	if selection != nil {
 		present := make(map[string]struct{}, len(files))
 		for _, file := range files {
@@ -796,26 +797,30 @@ func renderDiffFiles(sha, header string, files []githubapp.CommitFile, selection
 		patch := file.Patch
 		complete := true
 		withheld := patchWithheld(file)
-		if withheld {
+		unrenderable := !withheld && !diffPatchRenderable(file, wholeBudget)
+		if withheld || unrenderable {
 			// GitHub omits the patch for binary files, for diffs over its patch-size
 			// limit, and for mode-only changes. A file that changed but whose content
-			// was never returned cannot count as read (#1006).
+			// was never returned cannot count as read (#1006). A patch no selection
+			// can render (wholeBudget is the same measure the submit gate uses) is
+			// equally unread, so both are reported as withheld content.
 			complete = false
+			withheld = true
 		} else if len(patch) > patchBudget {
 			patch = truncateUTF8(patch, patchBudget)
 			complete = false
-			// Under a path/files selection the patch budget is the whole-result
-			// budget, so a file that still does not fit can never be rendered by any
-			// re-read. Unfiltered, the per-file cap is what cut it and a selection
-			// can still produce it.
-			withheld = selection != nil
 		}
 		name := sanitizeDiffPath(file.Filename)
 		var b strings.Builder
 		fmt.Fprintf(&b, "--- %s (%s, +%d/-%d)\n%s\n\n", name, file.Status, file.Additions, file.Deletions, patch)
 		switch {
+		case withheld && diffContentFree(file):
+			fmt.Fprintf(&b, "… no diff body for %s: a mode-only edit, an empty file, or a binary GitHub cannot diff; there is no content to read\n\n", name)
 		case withheld:
-			fmt.Fprintf(&b, "… patch unavailable for %s: GitHub withheld it (binary, over its patch limit, or mode-only); treat the change as not fully reviewed\n\n", name)
+			// GitHub's patch limit, or a patch too large for this tool. Either way
+			// no read through this tool can show the change, so name the remedy
+			// instead of inviting a loop.
+			fmt.Fprintf(&b, "… patch unavailable for %s (%s, +%d/-%d): GitHub did not return it and no read through this tool can render it; split the change so the patch is returned\n\n", name, file.Status, file.Additions, file.Deletions)
 		case !complete && selection != nil:
 			// Re-reading the same file cannot help: it alone exceeds the
 			// payload budget, so say so instead of inviting a loop.
@@ -1133,32 +1138,67 @@ func (h *ReviewToolHandler) requireCompleteDiffRead(ctx context.Context, client 
 	budget := h.diffTextBudget()
 	unread := make([]string, 0)
 	gaps := make([]string, 0)
+	blocked := make([]string, 0)
 	for _, file := range files {
 		if mcp.RunHasEvidence(ctx, diffFileEvidenceKey(repo, number, headSHA, file.Filename)) {
 			continue
 		}
-		if diffContentUnavailable(file, budget) {
+		switch {
+		case diffContentFree(file):
+			// Provably nothing to read: a mode-only edit, an empty file, or a
+			// rename with no content. Reporting it as a gap is honest; blocking on
+			// it would refuse every pull request carrying a chmod (#1037).
 			gaps = append(gaps, file.Filename)
-			continue
+		case patchWithheld(file) || !diffPatchRenderable(file, budget):
+			// Content exists -- GitHub omitted the patch for a diff over its limit,
+			// or the patch alone exceeds this tool's result budget -- and no read
+			// here can show it. Fail closed: approving a source change nobody saw
+			// is worse than refusing the verdict, and the reply names the remedy.
+			blocked = append(blocked, file.Filename)
+		default:
+			unread = append(unread, file.Filename)
 		}
-		unread = append(unread, file.Filename)
+	}
+	if len(blocked) > 0 {
+		return gaps, apperror.NewValidationf("github app tool: pull request %s#%d at head %s changes %s, whose patches GitHub does not return or that exceed this tool's result budget; no read here can show that content, so no verdict can be recorded from it. Split the change so each patch is returned, then review the new head", repo, number, headSHA, summarizedNames(blocked))
 	}
 	if len(unread) > 0 {
 		return gaps, apperror.NewValidationf("github app tool: the github-pr-diff result for %s#%d@%s was truncated or partial; this run did not fully read %s. Re-fetch each of those files with github-pr-diff path=<file> (or files=[...]) and read every changed file before submitting", repo, number, headSHA, summarizedNames(unread))
 	}
-	mcp.MarkRunEvidence(ctx, diffEvidenceKey(repo, number, headSHA))
+	if len(gaps) == 0 {
+		// Only a diff with no reported gap is fully accounted for; keeping this
+		// unmarked makes every later submit in the run re-check and re-name the
+		// gap, so a second review body never silently drops it (#1041 review).
+		mcp.MarkRunEvidence(ctx, diffEvidenceKey(repo, number, headSHA))
+	}
 	return gaps, nil
 }
 
-// diffContentUnavailable reports whether no re-read can produce this file's
-// content: GitHub withheld the patch (binary, mode-only, empty file, or a diff
-// over its patch limit) or the patch alone exceeds this tool's whole-result
-// budget. Such a file is a reported gap rather than a blocking one -- the API
-// gives no way to tell a mode-only edit from a binary that changed bytes, so
-// blocking on it would refuse every pull request carrying an image, a wasm
-// fixture or a chmod (#1037).
-func diffContentUnavailable(file githubapp.CommitFile, budget int) bool {
-	return patchWithheld(file) || len(file.Patch) > budget
+// diffContentFree reports whether a file GitHub returned without a patch
+// provably carries no content to read: a mode-only edit, an empty file, or a
+// rename/copy with no changed lines. The API cannot tell such a file from a
+// binary that changed bytes, and blocking on the ambiguity would refuse every
+// pull request carrying an image, a wasm fixture or a chmod -- including the
+// release promotion -- so that shape is reported as a gap instead (#1037).
+//
+// A withheld patch with nonzero line counts is *not* content-free: real content
+// exists and GitHub merely omitted it, so it stays fail-closed (#1041 review).
+func diffContentFree(file githubapp.CommitFile) bool {
+	return patchWithheld(file) && file.Additions == 0 && file.Deletions == 0
+}
+
+// diffHeaderReserve is the header this tool always renders before the first
+// patch: the commit sha / pull request line, the bounded title or commit
+// message, and the listing-cap warning. A single-file selection still pays it.
+const diffHeaderReserve = 2048
+
+// diffPatchRenderable reports whether any selection can render this patch. It
+// uses the same whole-result budget in the diff tool and in the submit gate, so a
+// file can never be "withheld" to one and "readable" to the other -- the loop
+// that leaves a verdict refused with no re-read able to satisfy it (#1041
+// review).
+func diffPatchRenderable(file githubapp.CommitFile, wholeBudget int) bool {
+	return len(file.Patch) <= wholeBudget-diffHeaderReserve
 }
 
 // withDiffGaps appends the files whose content GitHub did not return to the
@@ -1168,7 +1208,7 @@ func withDiffGaps(summary string, gaps []string) string {
 	if len(gaps) == 0 {
 		return summary
 	}
-	return fmt.Sprintf("%s\n\nNot reviewable: %s (GitHub returned no content for these files -- binary, mode-only, empty, or over its patch limit -- so they were not read)", summary, summarizedNames(gaps))
+	return fmt.Sprintf("%s\n\nNot reviewable: %s (GitHub returned no content for these files -- a mode-only edit, an empty file, or a binary it cannot diff -- so there is nothing to read)", summary, summarizedNames(gaps))
 }
 
 func (h *ReviewToolHandler) reviewerIdentity(ctx context.Context, projectID string) (string, string) {
