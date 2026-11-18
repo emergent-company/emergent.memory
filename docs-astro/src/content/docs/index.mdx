@@ -1,0 +1,95 @@
+---
+title: Memory Documentation
+description: Official documentation for the Memory platform, its Go, Python and Swift SDKs, and the Memory CLI
+template: splash
+hero:
+  tagline: A graph-native AI memory platform. This site documents how to use the platform, integrate with it, and build on top of it.
+  actions:
+    - text: User Guide
+      link: /user-guide/
+      icon: right-arrow
+      variant: primary
+    - text: Developer Guide
+      link: /developer-guide/
+      icon: right-arrow
+      variant: secondary
+    - text: CLI User Guide
+      link: /cli/
+      icon: right-arrow
+      variant: minimal
+---
+
+import { LinkCard, LinkButton } from '@astrojs/starlight/components';
+import Card from '../../components/Card.astro';
+import CardGrid from '../../components/CardGrid.astro';
+
+## Guides
+
+<CardGrid>
+  <Card title="User Guide" icon="lucide:pencil">
+    Step-by-step guides for end users of the Memory platform — knowledge graph,
+    documents, agents, chat, and more.
+
+    <LinkButton href="/user-guide/" variant="secondary" icon="right-arrow">Open the User Guide</LinkButton>
+  </Card>
+  <Card title="Developer Guide" icon="lucide:settings-2">
+    Reference for developers integrating with or extending Memory — provider
+    setup, type registry, MCP servers, extraction pipeline, security scopes.
+
+    <LinkButton href="/developer-guide/" variant="secondary" icon="right-arrow">Open the Developer Guide</LinkButton>
+  </Card>
+  <Card title="Memory CLI" icon="lucide:laptop">
+    Install the `memory` CLI, sign in, select a project, and run the everyday
+    commands — `init`, `ask`, `status`, document ingest, and graph queries.
+
+    <LinkButton href="/cli/" variant="secondary" icon="right-arrow">Open the CLI guide</LinkButton>
+  </Card>
+</CardGrid>
+
+## SDKs
+
+<CardGrid>
+  <Card title="Go SDK" icon="lucide:puzzle">
+    A fully type-safe client library covering the complete Memory API surface —
+    30 service clients, dual authentication, multi-tenancy, streaming SSE, and
+    structured error handling.
+
+    `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk`
+
+    <LinkButton href="/go-sdk/" variant="secondary" icon="right-arrow">Get started with the Go SDK</LinkButton>
+  </Card>
+  <Card title="Python SDK" icon="lucide:puzzle">
+    A full-featured client library for the Memory API — 14 sub-clients, three
+    auth modes, SSE streaming, and structured error handling.
+
+    Package `emergent-memory` (not yet on PyPI — install from source)
+
+    <LinkButton href="/python-sdk/" variant="secondary" icon="right-arrow">Python SDK reference</LinkButton>
+  </Card>
+  <Card title="Swift SDK" icon="lucide:puzzle">
+    An `actor`-based client for iOS 15+ and macOS 12+ that reaches the server
+    through a Go C-bridge. Not yet published as a standalone Swift Package —
+    you build the bridge's XCFramework and add the package by local path.
+
+    Package `EmergentKit` under `swift/EmergentKit`
+
+    <LinkButton href="/swift-sdk/" variant="secondary" icon="right-arrow">Swift SDK reference</LinkButton>
+  </Card>
+</CardGrid>
+
+## LLM reference files
+
+For LLM context injection, flat markdown reference files are available:
+
+<LinkCard
+  title="docs/llms.md — combined reference"
+  href="https://github.com/emergent-company/emergent.memory/blob/main/docs/llms.md"
+/>
+<LinkCard
+  title="docs/llms-go-sdk.md — Go SDK reference"
+  href="https://github.com/emergent-company/emergent.memory/blob/main/docs/llms-go-sdk.md"
+/>
+<LinkCard
+  title="docs/llms-python-sdk.md — Python SDK reference"
+  href="https://github.com/emergent-company/emergent.memory/blob/main/docs/llms-python-sdk.md"
+/>

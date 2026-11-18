@@ -143,7 +143,7 @@ func TestA2AStreamTranslator_ThinkingFoldsIntoFinalMessageMetadata(t *testing.T)
 func TestA2AStreamTranslator_ToolCall_DataPart(t *testing.T) {
 	tr := newA2aStreamTranslator("t1", "c1")
 
-	start := tr.translate(StreamEvent{Type: StreamEventToolCallStart, Tool: "search", Input: map[string]any{"q": "x"}})
+	start := tr.translate(StreamEvent{Type: StreamEventToolCallStart, Tool: "search", ID: "call-1", Input: map[string]any{"q": "x"}})
 	require.Len(t, start, 1)
 	au := start[0].ArtifactUpdate
 	require.NotNil(t, au)
@@ -153,9 +153,10 @@ func TestA2AStreamTranslator_ToolCall_DataPart(t *testing.T) {
 	assert.Equal(t, "search", data["toolName"])
 	assert.Equal(t, map[string]any{"q": "x"}, data["input"])
 	artID := au.Artifact.ArtifactID
+	assert.Equal(t, "tool-call-call-1", artID, "tool artifactId must key on the function-call id")
 	assertSingleMember(t, start[0])
 
-	end := tr.translate(StreamEvent{Type: StreamEventToolCallEnd, Tool: "search", Output: map[string]any{"r": "y"}})
+	end := tr.translate(StreamEvent{Type: StreamEventToolCallEnd, Tool: "search", ID: "call-1", Output: map[string]any{"r": "y"}})
 	require.Len(t, end, 1)
 	au2 := end[0].ArtifactUpdate
 	require.NotNil(t, au2)
@@ -166,6 +167,72 @@ func TestA2AStreamTranslator_ToolCall_DataPart(t *testing.T) {
 	assert.Equal(t, map[string]any{"r": "y"}, data2["output"])
 	assert.True(t, au2.Append, "tool end must append to the start artifact")
 	assertSingleMember(t, end[0])
+}
+
+// TestA2AStreamTranslator_ToolCallIDs_UniqueAcrossResumedStreams is the
+// fail-first regression for #904: a resumed stream constructs a fresh translator
+// for the same task, so a per-translator counter restarted and the resumed
+// turn's first tool call reused the paused turn's first toolCallId (an ACP client
+// keying tool cards by toolCallId then folded the new call into the old card).
+// The artifactId is derived from the ADK function-call id, which is unique per
+// call across the session, so two streams of one task must not collide.
+func TestA2AStreamTranslator_ToolCallIDs_UniqueAcrossResumedStreams(t *testing.T) {
+	// Turn 1: the task pauses mid-turn after one tool call.
+	paused := newA2aStreamTranslator("task-1", "ctx-1")
+	first := paused.translate(StreamEvent{Type: StreamEventToolCallStart, Tool: "search", ID: "call-a", Input: map[string]any{"q": "one"}})
+	require.Len(t, first, 1)
+	firstID := first[0].ArtifactUpdate.Artifact.ArtifactID
+
+	// Turn 2: the resume builds a new translator for the same task.
+	resumed := newA2aStreamTranslator("task-1", "ctx-1")
+	second := resumed.translate(StreamEvent{Type: StreamEventToolCallStart, Tool: "search", ID: "call-b", Input: map[string]any{"q": "two"}})
+	require.Len(t, second, 1)
+	secondID := second[0].ArtifactUpdate.Artifact.ArtifactID
+
+	assert.NotEqual(t, firstID, secondID, "a resumed stream must not reuse the paused turn's toolCallId")
+	assert.Equal(t, "tool-call-call-a", firstID)
+	assert.Equal(t, "tool-call-call-b", secondID)
+}
+
+// TestA2AStreamTranslator_ToolCallIDs_InterleavedEndsCorrelate pins the other
+// half of keying on the function-call id: parallel tool calls of one response
+// start and finish out of order, so an end must carry its own call's id rather
+// than whichever call started last.
+func TestA2AStreamTranslator_ToolCallIDs_InterleavedEndsCorrelate(t *testing.T) {
+	tr := newA2aStreamTranslator("task-1", "ctx-1")
+
+	a := tr.translate(StreamEvent{Type: StreamEventToolCallStart, Tool: "a", ID: "call-a"})
+	b := tr.translate(StreamEvent{Type: StreamEventToolCallStart, Tool: "b", ID: "call-b"})
+	require.Len(t, a, 1)
+	require.Len(t, b, 1)
+	aID := a[0].ArtifactUpdate.Artifact.ArtifactID
+	bID := b[0].ArtifactUpdate.Artifact.ArtifactID
+	require.NotEqual(t, aID, bID)
+
+	// a finishes first even though b started last.
+	endA := tr.translate(StreamEvent{Type: StreamEventToolCallEnd, Tool: "a", ID: "call-a"})
+	require.Len(t, endA, 1)
+	assert.Equal(t, aID, endA[0].ArtifactUpdate.Artifact.ArtifactID, "end of a must land on a's artifact")
+
+	endB := tr.translate(StreamEvent{Type: StreamEventToolCallEnd, Tool: "b", ID: "call-b"})
+	require.Len(t, endB, 1)
+	assert.Equal(t, bID, endB[0].ArtifactUpdate.Artifact.ArtifactID, "end of b must land on b's artifact")
+	assert.True(t, endB[0].ArtifactUpdate.Append)
+}
+
+// TestA2AStreamTranslator_ToolCallIDs_NoIDFallsBackToSequence keeps the
+// id-less path working (and pairing start with end) for any event source that
+// does not populate StreamEvent.ID.
+func TestA2AStreamTranslator_ToolCallIDs_NoIDFallsBackToSequence(t *testing.T) {
+	tr := newA2aStreamTranslator("task-1", "ctx-1")
+
+	start := tr.translate(StreamEvent{Type: StreamEventToolCallStart, Tool: "search"})
+	require.Len(t, start, 1)
+	assert.Equal(t, "tool-call-1", start[0].ArtifactUpdate.Artifact.ArtifactID)
+
+	end := tr.translate(StreamEvent{Type: StreamEventToolCallEnd, Tool: "search"})
+	require.Len(t, end, 1)
+	assert.Equal(t, "tool-call-1", end[0].ArtifactUpdate.Artifact.ArtifactID, "id-less end must pair with its start")
 }
 
 func TestA2AStreamTranslator_Error_FailedStatusUpdate(t *testing.T) {

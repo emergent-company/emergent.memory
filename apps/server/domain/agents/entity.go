@@ -103,6 +103,21 @@ const (
 type ReactionConfig struct {
 	ObjectTypes []string            `json:"objectTypes"`
 	Events      []ReactionEventType `json:"events"`
+	// Match carries value predicates evaluated against the current object
+	// properties. It is distinct from Properties, which filters the changed
+	// property paths of an updated event.
+	Match []ReactionPropertyMatch `json:"match,omitempty"`
+	// Reviewer marks an object-driven review lane. The gate selects reviewers
+	// against ReviewSubjectType/ReviewMatch, while ObjectTypes/Events drive the
+	// per-reviewer lane work item.
+	Reviewer bool `json:"reviewer,omitempty"`
+	// ReviewSubjectType is the parent review subject the gate matches. It defaults
+	// to the dispatch object type when empty.
+	ReviewSubjectType string `json:"reviewSubjectType,omitempty"`
+	// ReviewMatch is evaluated against the parent subject properties for gate
+	// selection. It is separate from Match, which filters the reviewer's lane
+	// work item.
+	ReviewMatch []ReactionPropertyMatch `json:"reviewMatch,omitempty"`
 	// Properties, when the agent subscribes to the `updated` event, filters
 	// updates to those whose changed property paths (RFC 6901 JSON Pointers)
 	// intersect this list. Empty means the `updated` signal matches any emitted
@@ -122,6 +137,15 @@ type ReactionConfig struct {
 	// it. nil (unset) = true = ignore. Explicit false allows self-triggering.
 	// Only consulted when IgnoreAgentTriggered is explicitly false.
 	IgnoreSelfTriggered *bool `json:"ignoreSelfTriggered,omitempty"`
+}
+
+// ReactionPropertyMatch is one value predicate over an object property. Path is
+// an RFC 6901-style pointer without the leading slash requirement (e.g.
+// "/labels" or "labels"). Supported operators: contains, equals, exists.
+type ReactionPropertyMatch struct {
+	Path     string `json:"path"`
+	Operator string `json:"operator"`
+	Value    any    `json:"value,omitempty"`
 }
 
 // AgentCapabilities defines capability restrictions for agents

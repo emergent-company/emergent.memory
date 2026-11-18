@@ -53,14 +53,22 @@ final class AppEnvironment {
     /// config path and the later swap can reconcile against a stale config.
     private var settleChain: Task<Void, Never>?
 
-    /// The one launch settle: session → connection → engine. Held so a launch
-    /// from the app delegate and the main window's `.task` (which can both fire)
-    /// share a single run instead of re-asserting twice.
+    /// The one launch settle in flight: session → connection → data → engine.
+    /// The app delegate and the main window's `.task` can both fire, and a
+    /// system wake can arrive during either, so all of them join one run
+    /// instead of re-asserting twice. It is cleared when the run finishes (see
+    /// `SingleFlight`), so a later trigger — a wake, or the window being
+    /// reopened — settles (and refreshes) again.
     ///
     /// Internal rather than private: `startup()` lives in
     /// `AppEnvironment+LaunchSettle.swift`, and an extension cannot see a
     /// `private` member of another file.
-    var startupTask: Task<Void, Never>?
+    let startupFlight = SingleFlight<Void>()
+
+    /// Single-flight for the connection settle itself, shared by the launch and
+    /// wake paths so one cannot double-settle (or double-count retries) while
+    /// the other is running.
+    let settleFlight = SingleFlight<ProjectStore.ReassertOutcome>()
 
     /// How the launch/wake settle retries a transient project failure. Injectable
     /// so a test can drive it with no clock.
@@ -68,7 +76,7 @@ final class AppEnvironment {
 
     /// System-wake observer: a laptop that slept past its access token's life
     /// needs the same settle a cold launch gets. Internal for the same reason as
-    /// `startupTask`.
+    /// `startupFlight`.
     var wakeObserver: NSObjectProtocol?
 
     /// - Parameter legacyMigrator: injectable override for tests. `nil` builds

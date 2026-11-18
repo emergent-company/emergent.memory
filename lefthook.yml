@@ -141,6 +141,18 @@ pre-commit:
         - "docs/**/*.md"
       run: bash scripts/preflight/docs-stale-paths.sh
 
+    # ── Brand — brand/ ───────────────────────────────────────────────────────
+    # The token file is the only hand-edited brand source; everything under
+    # brand/dist/, brand/brand.go and brand/logo/mark/*.svg is generated. This
+    # refuses a commit that changes one without the other, drops a contrast pair
+    # below WCAG 2.2 AA, or breaks the mark's stroke = gap = 1u grid contract.
+    # Single source of truth: scripts/preflight/brand.sh (also run by
+    # scripts/preflight/all.sh).
+    - name: preflight-brand
+      glob:
+        - "brand/**"
+      run: bash scripts/preflight/brand.sh
+
     # ── CLI — apps/cli ───────────────────────────────────────────────────────
     - name: cli-gofmt
       root: apps/cli

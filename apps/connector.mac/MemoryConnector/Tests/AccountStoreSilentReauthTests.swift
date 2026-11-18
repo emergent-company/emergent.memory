@@ -15,12 +15,12 @@ final class AccountStoreSilentReauthTests: XCTestCase {
     private var suiteName = ""
     private var defaults = UserDefaults(suiteName: "") ?? .standard
     private var root = FileManager.default.temporaryDirectory
-    private var fakeAuth = FakeAuthenticator()
-    private var cli = StubCLI()
+    var fakeAuth = FakeAuthenticator()
+    var cli = StubCLI()
 
-    private let prodServer = Environment.prod.serverURLString
+    let prodServer = Environment.prod.serverURLString
     private let loginID = "silent-login"
-    private let state = "state-1"
+    let state = "state-1"
 
     override func setUpWithError() throws {
         suiteName = "mc-silent-reauth-\(UUID().uuidString)"
@@ -49,8 +49,11 @@ final class AccountStoreSilentReauthTests: XCTestCase {
 
     // MARK: - Fixtures
 
+    // Shared with `AccountStoreSilentReauthEpisodeTests`, which is a separate
+    // file because this one is at SwiftLint's `file_length` limit.
+
     @MainActor
-    private func makeSignedInStore() async throws -> (AccountStore, Account) {
+    func makeSignedInStore() async throws -> (AccountStore, Account) {
         let account = Account(id: "prod:a@example.test",
                               environmentID: "prod",
                               email: "a@example.test",
@@ -75,7 +78,7 @@ final class AccountStoreSilentReauthTests: XCTestCase {
         return (store, account)
     }
 
-    private func stubSignedInStatus() {
+    func stubSignedInStatus() {
         cli.on("auth status") { arguments in
             let server = silentReauthFlag("--server", in: arguments) ?? ""
             return ProcessResult(stdout: """
@@ -85,7 +88,7 @@ final class AccountStoreSilentReauthTests: XCTestCase {
     }
 
     /// The provider rejected the stored session but kept it on disk.
-    private func stubNeedsReauthStatus() {
+    func stubNeedsReauthStatus() {
         cli.on("auth status") { arguments in
             let server = silentReauthFlag("--server", in: arguments) ?? ""
             return ProcessResult(stdout: """
@@ -113,7 +116,7 @@ final class AccountStoreSilentReauthTests: XCTestCase {
         """)
     }
 
-    private func stubComplete() {
+    func stubComplete() {
         cli.on("auth complete", json: """
         {"schema_version":1,"server":"\(prodServer)","signed_in":true,\
         "email":"a@example.test","issuer":"https://auth.example.test",\
@@ -125,7 +128,7 @@ final class AccountStoreSilentReauthTests: XCTestCase {
         cli.on("auth cancel") { _ in ProcessResult(stdout: "", exitCode: 0, timedOut: false) }
     }
 
-    private func calls(_ command: String) -> [[String]] {
+    func calls(_ command: String) -> [[String]] {
         cli.calls.filter { Array($0.prefix(2)).joined(separator: " ") == command }
     }
 
@@ -305,6 +308,56 @@ final class AccountStoreSilentReauthTests: XCTestCase {
                        "the second rejection is the same episode, so it must not attempt again")
         XCTAssertTrue(store.needsReauthentication(account.id))
         XCTAssertNil(store.lastError)
+    }
+}
+
+/// The background-hygiene cases: a bounded browser wait, and a second episode
+/// after a success. They live in an extension because the test type above is at
+/// SwiftLint's `type_body_length` limit — an extension is a separate
+/// declaration, so it counts on its own (same reason the helpers below are
+/// file-scoped).
+extension AccountStoreSilentReauthTests {
+    /// A silent attempt shows no login page, but that is not the same as showing
+    /// no window: an IdP that answers with an HTML page instead of a callback
+    /// must not leave one up from a background trigger, so the wait is bounded
+    /// and expiring it is the same clean decline as `login_required`.
+    @MainActor
+    func testSilentAttemptBoundsTheBrowserWait() async throws {
+        let (store, account) = try await makeSignedInStore()
+        stubNeedsReauthStatus()
+        fakeAuth.handler = { _ in .failure(OIDCError.cancelled) }
+
+        let signedIn = await store.ensureConnectorSession()
+
+        XCTAssertFalse(signedIn)
+        XCTAssertEqual(fakeAuth.requestedTimeouts, [OAuthCallback.silentBrowserTimeout],
+                       "background work must not leave a browser window up indefinitely")
+        XCTAssertTrue(store.needsReauthentication(account.id),
+                      "expiry is a clean decline: the mark and the affordance stay")
+        XCTAssertNil(store.lastError)
+        XCTAssertEqual(calls("auth cancel").count, 1, "the pending login is discarded")
+    }
+
+    /// A success ends the episode, so the one-shot guard is cleared: the next
+    /// rejection is a NEW episode and may attempt again. `fetchAccessToken`
+    /// bounds the retried read, so clearing cannot loop the browser.
+    @MainActor
+    func testSuccessDoesNotDisableALaterEpisode() async throws {
+        let (store, account) = try await makeSignedInStore()
+        stubNeedsReauthStatus()
+        stubComplete()
+        let callback = try silentReauthCallbackURL(query: "code=code-1&state=\(state)")
+        fakeAuth.handler = { _ in .success(callback) }
+
+        _ = await store.ensureConnectorSession()
+        XCTAssertEqual(calls("auth start").count, 1)
+
+        _ = await store.ensureConnectorSession()
+
+        XCTAssertEqual(calls("auth start").count, 2,
+                       "a success must not disable silent re-auth for the rest of the session")
+        XCTAssertFalse(store.needsReauthentication(account.id))
+        XCTAssertEqual(store.sessionState, .valid)
     }
 }
 

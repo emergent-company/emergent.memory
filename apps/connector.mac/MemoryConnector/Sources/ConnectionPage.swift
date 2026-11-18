@@ -10,6 +10,7 @@ struct ConnectionPage: View {
     @SwiftUI.Environment(AccountStore.self) private var accountStore
     @SwiftUI.Environment(ProjectStore.self) private var projectStore
     @SwiftUI.Environment(LaunchAtLogin.self) private var launchAtLogin
+    @SwiftUI.Environment(\.scenePhase) private var scenePhase
 
     @State private var alertMessage: String?
     @State private var confirmSignOut = false
@@ -22,6 +23,14 @@ struct ConnectionPage: View {
         .formStyle(.grouped)
         .navigationTitle("Connection")
         .onAppear { launchAtLogin.refresh() }
+        // The system owns the flag: a change made in System Settings while the
+        // window sits open must be reflected when the user comes back, not only
+        // on the next appear.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                launchAtLogin.refresh()
+            }
+        }
         .alert("Memory", isPresented: Binding(
             get: { alertMessage != nil },
             set: {
@@ -159,9 +168,19 @@ struct ConnectionPage: View {
                         .foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                     if launchAtLogin.requiresApproval {
-                        Button("Open Login Items…") { launchAtLogin.openLoginItemsSettings() }
-                            .controlSize(.small)
+                        openLoginItemsButton
                     }
+                }
+            } else if let notice = launchAtLogin.approvalNotice {
+                // A registration macOS is holding for approval is not a
+                // failure — it is an action the user still has to take. Shown
+                // on appear too, so a relaunch explains the off toggle.
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(notice, systemImage: "info.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    openLoginItemsButton
                 }
             }
         } header: {
@@ -169,6 +188,11 @@ struct ConnectionPage: View {
         } footer: {
             Text("The connector starts in the menu bar so your connected projects stay online without opening the window.")
         }
+    }
+
+    private var openLoginItemsButton: some View {
+        Button("Open Login Items…") { launchAtLogin.openLoginItemsSettings() }
+            .controlSize(.small)
     }
 
     // MARK: - Active identity

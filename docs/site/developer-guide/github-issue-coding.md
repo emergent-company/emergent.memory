@@ -60,11 +60,12 @@ responsible for issues this source starts. On opening or reopening an issue,
 the integration:
 
 1. reads the live issue and refuses to start if another agent has claimed it
-   (`status: in-progress` or `status: blocked` with a different `manager:`), or
-   if it is assigned to someone else;
-2. assigns the configured responsible user;
-3. adds `status: in-progress` and `manager: memory-coding`; and
-4. posts a receipt comment naming the agent.
+   (any `status: blocked`, any other `manager:` label, or `status: in-progress`
+   without `manager: memory-coding`), or if it is assigned to someone else;
+2. creates the claim labels when the repository does not have them yet;
+3. assigns the configured responsible user;
+4. adds `status: in-progress` and `manager: memory-coding`; and
+5. posts a receipt comment naming the agent.
 
 The responsible user stays assigned for the life of the issue. The labels are
 the claim signal peer agents read; `manager: memory-coding` identifies the
@@ -72,6 +73,48 @@ agent, while the graph keeps the precise agent and run identity. A coding PR
 must reference the issue with a closing keyword (`Closes #N`, `Fixes #N`, or
 `Resolves #N`) so the merge closes it. Label and comment writes from the
 integration's own App are ignored, so claiming cannot re-trigger the source.
+
+## Reviewer agents
+
+Reviewers are normal reaction agents, not a source-level reviewer list. The
+source emits a board object for each pull request; reviewer agents subscribe by
+object type and property predicates.
+
+Example:
+
+```json
+{
+  "objectTypes": ["GitHubReviewLane"],
+  "events": ["created", "updated"],
+  "match": [
+    {"path": "/status", "operator": "equals", "value": "ready"}
+  ],
+  "reviewer": true,
+  "reviewSubjectType": "GitHubPullRequest",
+  "reviewMatch": [
+    {"path": "/labels", "operator": "contains", "value": "review:ui"}
+  ],
+  "concurrencyStrategy": "skip"
+}
+```
+
+- A reviewer with no `reviewMatch` is the default reviewer.
+- `objectTypes`/`events` drive the reviewer's own lane work item.
+- `match` on `status=ready` prevents a cancelled lane from waking the reviewer.
+- `reviewSubjectType`/`reviewMatch` select the reviewer from the parent review
+  subject.
+- The source creates one lane work item per required reviewer and head;
+  superseded head lanes are cancelled.
+- Every matching reviewer is required for the current head.
+- Added reviewers are sticky for that head; a new head requires a fresh set.
+- Reviewer verdicts are aggregated server-side; a reviewer cannot set the
+  aggregate approval or publish the provider check directly.
+
+The source creates one `GitHubReviewLane` work item per required reviewer so
+parallel reviewers do not contend for the parent subject's work claim. The
+GitHub adapter publishes the aggregate `reviewed` check and the source
+discovers the reviewer agents from the project. Do not add a source workflow
+reviewer list for new review sources.
 
 ## Run inside the sandbox
 

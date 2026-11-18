@@ -1,0 +1,31 @@
+---
+title: API Reference
+description: Interactive REST API reference for Memory
+template: splash
+tableOfContents: false
+pagefind: false
+---
+
+import { ScalarComponent } from '@scalar/astro';
+
+{/* 420 endpoints of the Memory API. The Swagger spec is generated in CI and is
+    not committed (`apps/server/docs/swagger/` is a build output), so the POC
+    reads the copy the current publish workflow already drops next to the site.
+    A real port should copy it into `public/` from the docs workflow and point
+    this at the same-origin path `/openapi.json`. */}
+<div class="api-page">
+
+<ScalarComponent
+  renderMode="client"
+  configuration={{
+    url: 'https://emergent-company.github.io/emergent.memory/swagger.json',
+    pageTitle: 'Memory API Reference',
+    hideDarkModeToggle: true,
+    theme: 'default',
+    darkMode: true,
+    layout: 'modern',
+    agent: { disabled: true },
+  }}
+/>
+
+</div>

@@ -152,8 +152,9 @@ var SourceEventsModule = fx.Module("source-events",
 		NewSourceEventHandler,
 		NewSourceTriggerInvocationResolver,
 		NewSchemaProvisioner,
+		NewReviewGateService,
 	),
-	fx.Invoke(RegisterSourceEventRoutes, WireAgentRepository, WireSourceWorkObjectStore, WireSourceCredentialMinter, WireWorkInvocationResolver, WireSourceObjectTypes, WireReviewToolReworker),
+	fx.Invoke(RegisterSourceEventRoutes, WireAgentRepository, WireSourceWorkObjectStore, WireSourceCredentialMinter, WireWorkInvocationResolver, WireSourceObjectTypes, WireSourceReviewGates, WireReviewToolReviewGates, WireReviewToolAgentRuns, WireReviewToolReworker),
 )
 
 // WireSourceCredentialMinter lets the executor mint a source-scoped GitHub App
@@ -171,6 +172,13 @@ func WireSourceCredentialMinter(ae *agents.AgentExecutor, h *ReviewToolHandler) 
 func WireSourceObjectTypes(d *SourceEventDispatcher, p ObjectTypeProvisioner) {
 	if d != nil && p != nil {
 		d.SetObjectTypes(p)
+	}
+}
+
+// WireSourceReviewGates installs the server-owned review aggregation service.
+func WireSourceReviewGates(d *SourceEventDispatcher, g *ReviewGateService) {
+	if d != nil && g != nil {
+		d.SetReviewGateService(g)
 	}
 }
 
@@ -197,6 +205,22 @@ func provideSourceWorkObjectStore(svc *graph.Service) SourceWorkObjectStore { re
 func WireReviewToolWorkObjectStore(h *ReviewToolHandler, svc *graph.Service) {
 	if h != nil && svc != nil {
 		h.SetWorkItemStatusWriter(svc)
+	}
+}
+
+// WireReviewToolReviewGates lets a reviewer record its verdict in the
+// server-owned review gate.
+func WireReviewToolReviewGates(h *ReviewToolHandler, g *ReviewGateService) {
+	if h != nil && g != nil {
+		h.SetReviewGateService(g)
+	}
+}
+
+// WireReviewToolAgentRuns lets the review tool identify the reviewer agent from
+// the run context.
+func WireReviewToolAgentRuns(h *ReviewToolHandler, r *agents.Repository) {
+	if h != nil && r != nil {
+		h.SetAgentRuns(r)
 	}
 }
 

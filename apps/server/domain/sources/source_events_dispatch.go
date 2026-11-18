@@ -43,6 +43,7 @@ type SourceEventDispatcher struct {
 	newClient   func(baseURL, token string) *githubapp.Client
 	workObjects SourceWorkObjectStore
 	objectTypes ObjectTypeProvisioner
+	reviewGates *ReviewGateService
 	log         *slog.Logger
 }
 
@@ -50,6 +51,11 @@ type SourceEventDispatcher struct {
 // ensure GitHubIssue exists on a source created before the type was added.
 func (d *SourceEventDispatcher) SetObjectTypes(p ObjectTypeProvisioner) {
 	d.objectTypes = p
+}
+
+// SetReviewGateService installs the server-owned review aggregation service.
+func (d *SourceEventDispatcher) SetReviewGateService(g *ReviewGateService) {
+	d.reviewGates = g
 }
 
 // SourceWorkObjectStore is the graph upsert surface the workflow dispatcher
@@ -220,7 +226,10 @@ func (d *SourceEventDispatcher) handlePullRequest(ctx context.Context, v *Verifi
 		}
 		return nil
 	}
-	if p.ShouldSkipPullRequest() || !p.IsRelevantPullRequestAction() {
+	if p.ShouldSkipPullRequest() {
+		return nil
+	}
+	if !p.IsRelevantPullRequestAction() && p.Action != "labeled" && p.Action != "unlabeled" {
 		return nil
 	}
 
@@ -287,8 +296,164 @@ func (d *SourceEventDispatcher) dispatchPullRequestSource(ctx context.Context, v
 	return nil
 }
 
+func reviewSubjectLabels(labels []string) []any {
+	out := make([]any, 0, len(labels))
+	for _, label := range labels {
+		out = append(out, label)
+	}
+	return out
+}
+
+// ensureReviewSubject emits the provider-owned review subject and snapshots the
+// reviewer agents that match it. Reviewer selection is agent-driven; this
+// function never writes a reviewer list into the source.
+func (d *SourceEventDispatcher) ensureReviewSubject(ctx context.Context, v *VerifiedSourceEvent, src *Source, p *githubapp.WebhookPayload, state *githubapp.PullRequestState, subject string) error {
+	if d.workObjects == nil || p == nil || src == nil {
+		return nil
+	}
+	repoName := p.Repository.FullName
+	headSHA := p.PullRequest.Head.SHA
+	if state != nil && state.HeadSHA != "" {
+		headSHA = state.HeadSHA
+	}
+	labels := make([]string, 0)
+	if state != nil && len(state.Labels) > 0 {
+		labels = append(labels, state.Labels...)
+	} else {
+		for _, label := range p.PullRequest.Labels {
+			if name := strings.TrimSpace(label.Name); name != "" {
+				labels = append(labels, name)
+			}
+		}
+	}
+	title := p.PullRequest.Title
+	if title == "" {
+		title = subject
+	}
+	if d.objectTypes != nil {
+		if err := d.objectTypes.EnsureObjectTypes(ctx, src.ProjectID.String(), (&githubAppProvider{}).ObjectTypes()); err != nil {
+			return fmt.Errorf("sources: ensure review subject schema: %w", err)
+		}
+	}
+	key := fmt.Sprintf("github:%s:%s#%d", src.ID.String(), repoName, p.PullNumber())
+	previousHead := ""
+	if prev, perr := d.workObjects.FindHeadObjectByTypeAndKey(ctx, src.ProjectID.String(), "GitHubPullRequest", key); perr != nil {
+		if d.log != nil {
+			d.log.Warn("sources: could not read previous review subject head", "error", perr)
+		}
+	} else if prev != nil {
+		previousHead, _ = prev.Properties["head_sha"].(string)
+	}
+	props := map[string]any{
+		"repo": repoName, "pr_number": p.PullNumber(), "title": title,
+		"head_sha": headSHA, "base_sha": p.PullRequest.Base.SHA,
+		"state": p.PullRequest.State, "labels": reviewSubjectLabels(labels), "status": "open",
+	}
+	resp, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
+		Type: "GitHubPullRequest", Key: &key, Name: &title, Properties: props,
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("sources: upsert review subject: %w", err)
+	}
+	if d.reviewGates != nil && resp != nil {
+		gate, err := d.reviewGates.Ensure(ctx, src.ProjectID, "GitHubPullRequest", subject, headSHA, props)
+		if err != nil {
+			return fmt.Errorf("sources: ensure review gate: %w", err)
+		}
+		if gate != nil && len(gate.RequiredReviewers) > 0 {
+			if err := d.ensureReviewLanes(ctx, src, p, state, subject, previousHead, headSHA, gate); err != nil {
+				return fmt.Errorf("sources: ensure review lanes: %w", err)
+			}
+			if gate.Status == ReviewGatePending && v != nil && v.App != nil {
+				if token, terr := d.mintToken(ctx, v.App, p.Installation.ID, repoName); terr == nil {
+					_ = d.newClient(d.apiBaseURL, token).CreateCheck(ctx, repoName, headSHA, "reviewed", "in_progress", "", "reviewed: pending", "Waiting for all required reviewers.")
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// ensureReviewLanes materializes one claimable work item per required reviewer.
+// The parent GitHubPullRequest is shared state, so reviewer agents cannot use it
+// as their work subject: the work claim permits one live run per subject.
+func (d *SourceEventDispatcher) ensureReviewLanes(ctx context.Context, src *Source, p *githubapp.WebhookPayload, state *githubapp.PullRequestState, subject, previousHead, headSHA string, gate *ReviewGate) error {
+	repoName := p.Repository.FullName
+	title := strings.TrimSpace(p.PullRequest.Title)
+	if title == "" {
+		title = subject
+	}
+	parentKey := fmt.Sprintf("github:%s:%s#%d", src.ID.String(), repoName, p.PullNumber())
+	for _, reviewer := range gate.RequiredReviewers {
+		if strings.TrimSpace(reviewer.AgentID) == "" || strings.TrimSpace(reviewer.Name) == "" {
+			continue
+		}
+		laneKey := parentKey + ":review:" + reviewer.AgentID + ":" + headSHA
+		laneName := title + " · " + reviewer.Name
+		status := "ready"
+		if previousHead != "" && previousHead != headSHA {
+			oldKey := parentKey + ":review:" + reviewer.AgentID + ":" + previousHead
+			if old, oerr := d.workObjects.FindHeadObjectByTypeAndKey(ctx, src.ProjectID.String(), "GitHubReviewLane", oldKey); oerr == nil && old != nil {
+				// New head: retire the stale reviewer run and lane. A cancelled
+				// lane is not re-enqueued by the work reconciler.
+				d.cancelSubjectRuns(ctx, old.CanonicalID.String())
+				cancelled := "cancelled"
+				props := make(map[string]any, len(old.Properties)+1)
+				for k, val := range old.Properties {
+					props[k] = val
+				}
+				props["status"] = cancelled
+				if _, _, cerr := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
+					Type: "GitHubReviewLane", Key: &oldKey, Name: old.Name, Status: &cancelled,
+					Properties: props,
+				}, nil); cerr != nil {
+					return cerr
+				}
+			}
+		}
+		existing, err := d.workObjects.FindHeadObjectByTypeAndKey(ctx, src.ProjectID.String(), "GitHubReviewLane", laneKey)
+		if err != nil {
+			return err
+		}
+		if existing != nil {
+			oldHead, _ := existing.Properties["head_sha"].(string)
+			if oldHead == headSHA {
+				// A label/comment replay on the same head must not reset a lane
+				// that is already reviewed or running.
+				if existing.Status != nil && *existing.Status != "" {
+					status = *existing.Status
+				}
+			} else if oldHead != "" {
+				d.cancelSubjectRuns(ctx, existing.CanonicalID.String())
+			}
+		}
+		assignee := reviewer.Name
+		props := map[string]any{
+			"repo": repoName, "pr_number": p.PullNumber(), "head_sha": headSHA,
+			"base_sha": p.PullRequest.Base.SHA, "title": title, "state": p.PullRequest.State,
+			"status": status, "lane": reviewer.Name, "agent": reviewer.Name,
+			"source_id": src.ID.String(),
+		}
+		if _, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
+			Type: "GitHubReviewLane", Key: &laneKey, Name: &laneName, Status: &status,
+			Assignee: &assignee, Properties: props,
+		}, nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (d *SourceEventDispatcher) processPullRequestSource(ctx context.Context, v *VerifiedSourceEvent, src *Source, subject string, state *githubapp.PullRequestState, ev *SourceEvent) error {
 	p := v.Payload
+	if err := d.ensureReviewSubject(ctx, v, src, p, state, subject); err != nil {
+		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
+		return err
+	}
+	if p.Action == "labeled" || p.Action == "unlabeled" {
+		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventDispatched, nil, nil)
+		return nil
+	}
 	handled, err := d.processWorkflowEvent(ctx, src, ev, state, p, subject)
 	if err != nil {
 		return err
@@ -552,6 +717,13 @@ const (
 	issueClaimManagerLabel = "manager: memory-coding"
 )
 
+func issueClaimLabelStyle(name string) (color, description string) {
+	if name == issueClaimManagerLabel {
+		return "5319e7", "Memory coding issue claim manager"
+	}
+	return "fbca04", "Issue claimed by an agent"
+}
+
 // issueClaimResult describes the live GitHub claim state and the labels the
 // board item should mirror. configured=false means the source has no
 // assignee_login, so the legacy no-claim path is preserved.
@@ -681,15 +853,33 @@ func (d *SourceEventDispatcher) claimIssue(ctx context.Context, v *VerifiedSourc
 	}
 	needAssignee := !hasIssueAssignee(issue, login)
 
-	// Assign first so a failed label write can roll the assignment back
-	// without removing a pre-existing assignment.
+	// GitHub silently ignores unknown labels on an issue write. Create the
+	// claim labels first, then assign, then verify the add response.
+	for _, label := range missing {
+		color, description := issueClaimLabelStyle(label)
+		if err := client.EnsureIssueLabel(ctx, repoName, label, color, description); err != nil {
+			return result, fmt.Errorf("sources: ensure issue claim label %q: %w", label, err)
+		}
+	}
 	if needAssignee {
 		if err := client.AddIssueAssignees(ctx, repoName, v.Payload.Issue.Number, []string{login}); err != nil {
 			return result, fmt.Errorf("sources: assign responsible issue owner %q: %w", login, err)
 		}
 	}
 	if len(missing) > 0 {
-		if err := client.AddIssueLabels(ctx, repoName, v.Payload.Issue.Number, missing); err != nil {
+		added, err := client.AddIssueLabels(ctx, repoName, v.Payload.Issue.Number, missing)
+		if err == nil {
+			for _, label := range missing {
+				if !hasIssueLabel(added, label) {
+					err = fmt.Errorf("label %q was not applied", label)
+					break
+				}
+			}
+		}
+		if err != nil {
+			for _, label := range missing {
+				_ = client.RemoveIssueLabel(ctx, repoName, v.Payload.Issue.Number, label)
+			}
 			if needAssignee {
 				_ = client.RemoveIssueAssignees(ctx, repoName, v.Payload.Issue.Number, []string{login})
 			}
@@ -778,7 +968,7 @@ func (d *SourceEventDispatcher) processIssueSource(ctx context.Context, v *Verif
 		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
 		return err
 	}
-	checkClaim := trigger != nil && !closed && (wantStart || (existing != nil && status == "ready"))
+	checkClaim := trigger != nil && !closed && (wantStart || (existing != nil && (status == "ready" || status == "in_progress")))
 	claim := issueClaimResult{}
 	if checkClaim {
 		claim, err = d.claimIssue(ctx, v, src, repoName, agentName)
@@ -853,7 +1043,7 @@ func (d *SourceEventDispatcher) processIssueSource(ctx context.Context, v *Verif
 		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
 		return err
 	}
-	if closed && resp != nil {
+	if (closed || claim.foreign) && resp != nil {
 		d.cancelSubjectRuns(ctx, resp.CanonicalID.String())
 	}
 	state := SourceEventDispatched
@@ -1106,6 +1296,11 @@ func (d *SourceEventDispatcher) processWorkflowEvent(ctx context.Context, src *S
 	if d.workObjects == nil {
 		return false, fmt.Errorf("sources: workflow source has no work-object store")
 	}
+	if d.objectTypes != nil {
+		if err := d.objectTypes.EnsureObjectTypes(ctx, src.ProjectID.String(), (&githubAppProvider{}).ObjectTypes()); err != nil {
+			return true, fmt.Errorf("sources: ensure workflow schema: %w", err)
+		}
+	}
 	var cfg SourceWorkflowConfig
 	raw, _ := json.Marshal(wf.Config)
 	if err := json.Unmarshal(raw, &cfg); err != nil || len(cfg.Reviewers) == 0 {
@@ -1125,9 +1320,20 @@ func (d *SourceEventDispatcher) processWorkflowEvent(ctx context.Context, src *S
 		parentStatus = "closed"
 		laneStatus = "cancelled"
 	}
+	labels := make([]string, 0)
+	if state != nil && len(state.Labels) > 0 {
+		labels = append(labels, state.Labels...)
+	} else {
+		for _, label := range p.PullRequest.Labels {
+			if name := strings.TrimSpace(label.Name); name != "" {
+				labels = append(labels, name)
+			}
+		}
+	}
 	parentProps := map[string]any{
 		"repo": repoName, "pr_number": p.PullNumber(), "head_sha": state.HeadSHA,
-		"base_sha": p.PullRequest.Base.SHA, "title": title, "state": p.PullRequest.State, "status": parentStatus,
+		"base_sha": p.PullRequest.Base.SHA, "title": title, "state": p.PullRequest.State,
+		"labels": reviewSubjectLabels(labels), "status": parentStatus,
 	}
 	if _, _, err := d.workObjects.CreateOrUpdate(ctx, src.ProjectID, &graph.CreateGraphObjectRequest{
 		Type: "GitHubPullRequest", Key: &parentKey, Name: &title, Status: &parentStatus, Properties: parentProps,

@@ -123,6 +123,11 @@ publishes them to a GitHub release for the tag.
   build. Version embeds the short commit sha (`0.0.0-dev.<sha>`). Install with
   `install.sh --channel dev`.
 
+  The installer falls back to the legacy `dev` tag if no `connector-dev`
+  release exists yet, so builds published before the rename still install. The
+  channel must not stay on `dev`: a tag named like a branch shadows it for
+  `git fetch origin dev` (#956).
+
 Both channels publish a `manifest.json` release asset (app, channel, version,
 per-platform asset URLs + sha256) as the seed for a future in-app updater.
 

@@ -3,7 +3,6 @@ package agents
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"testing"
 
@@ -161,7 +160,7 @@ func TestClaimPausedRunForResumeIsSingleUse(t *testing.T) {
 	_, err := tdb.DB.ExecContext(ctx,
 		`INSERT INTO kb.agents (id, name, strategy_type, cron_schedule, project_id)
 		 VALUES (?, ?, 'graph', '', ?)`,
-		agentID, fmt.Sprintf("resume-claim-887"), projectID)
+		agentID, "resume-claim-887", projectID)
 	require.NoError(t, err)
 
 	paused, err := repo.CreateRunWithOptions(ctx, CreateRunOptions{AgentID: agentID})

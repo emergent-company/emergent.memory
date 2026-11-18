@@ -46,6 +46,12 @@ func TestNoPlainToolArgumentValidationErrors(t *testing.T) {
 			"sources: invalid project id":        "board resolver (error ignored)",
 			"sources: invalid source trigger id": "board resolver (error ignored)",
 
+			// Server-owned review gate sentinels. These are matched with
+			// errors.Is by the review tool to choose the legacy path; they are
+			// not tool-argument refusals.
+			"sources: review gate not found":                  "review gate sentinel",
+			"sources: reviewer is not required for this gate": "review gate sentinel",
+
 			// Store guards: the value is server-derived, so a gap is a bug in
 			// the caller's plumbing, not something a tool caller can correct.
 			"project context is required for source trigger/event rows": "store guard",
