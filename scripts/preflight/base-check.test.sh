@@ -108,6 +108,23 @@ else
   printf '%s\n' "$out" | sed 's/^/    /'
 fi
 
+# 3. A force-pushed base must still refresh. Without the leading `+` on the
+#    refspec, `git fetch` refuses the non-fast-forward update, base-check falls
+#    back to the cached tip and reports the rewritten branch as fresh.
+git_quiet -C "$work" checkout -q -B dev "$base_old"
+printf 'four\n' >"$work/file"
+git_quiet -C "$work" commit -am four
+divergent=$(git -C "$work" rev-parse HEAD)
+git_quiet -C "$work" push --force origin refs/heads/dev:refs/heads/dev
+run "$clone"
+if ((status == 1)) && [[ $out == *"behind"* ]] \
+  && [ "$(git -C "$clone" rev-parse refs/remotes/origin/dev)" = "$divergent" ]; then
+  ok "force-pushed base refreshes instead of using the cached tip"
+else
+  no "force-pushed base refreshes instead of using the cached tip (exit $status)"
+  printf '%s\n' "$out" | sed 's/^/    /'
+fi
+
 if ((failures)); then
   printf 'base-check tests: %d failure(s)\n' "$failures"
   exit 1

@@ -49,8 +49,11 @@ base="origin/$base_branch"
 # `* tag dev -> FETCH_HEAD` and exits 0 -- even with --no-tags -- leaving
 # origin/dev untouched. This guard would then compare against a stale tip and
 # either call a stale base fresh or a fresh base stale.
+#
+# The leading `+` lets a force-pushed base update the tracking ref instead of
+# making the fetch fail and silently fall back to the cached (stale) ref.
 if ! git fetch --quiet --no-tags origin \
-     "refs/heads/$base_branch:refs/remotes/origin/$base_branch"; then
+     "+refs/heads/$base_branch:refs/remotes/origin/$base_branch"; then
   if git rev-parse --verify --quiet "$base" >/dev/null 2>&1; then
     echo "base-check: WARNING could not reach origin; using cached $base" >&2
   else
@@ -76,13 +79,13 @@ if [ "$behind" -gt 0 ]; then
   if [ "$warn" -eq 1 ]; then
     echo "base-check: WARN HEAD is $behind commit(s) behind $base ($base_sha)." >&2
     echo "base-check:       rebase before opening/merging a PR:" >&2
-    echo "base-check:         git fetch origin refs/heads/$base_branch:refs/remotes/origin/$base_branch" >&2
+    echo "base-check:         git fetch origin +refs/heads/$base_branch:refs/remotes/origin/$base_branch" >&2
     echo "base-check:         git merge --ff-only $base" >&2
     exit 0
   fi
   echo "base-check: FAIL HEAD is $behind commit(s) behind $base ($base_sha)." >&2
   echo "base-check:       the tree was based on a stale $base_branch; rebase first:" >&2
-  echo "base-check:         git fetch origin refs/heads/$base_branch:refs/remotes/origin/$base_branch" >&2
+  echo "base-check:         git fetch origin +refs/heads/$base_branch:refs/remotes/origin/$base_branch" >&2
   echo "base-check:         git merge --ff-only $base" >&2
   exit 1
 fi

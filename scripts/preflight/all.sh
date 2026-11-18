@@ -22,9 +22,19 @@ for script in base-check.sh base-check.test.sh migration-number.sh go-decl-colli
   fi
 done
 
+# The connector dev channel must not resolve a tag named like a branch (#956).
+# install.test.sh stubs curl/tar, so it runs offline.
+echo "==> apps/connector.linux/install.test.sh"
+if bash "$root/apps/connector.linux/install.test.sh"; then
+  echo "==> apps/connector.linux/install.test.sh PASSED"
+else
+  echo "==> apps/connector.linux/install.test.sh FAILED"
+  status=1
+fi
+
 if [ "$status" -ne 0 ]; then
   echo "preflight: FAILED"
   exit 1
 fi
 
-echo "preflight: OK (base, base-check tests, migration numbering, cross-branch Go declaration collisions, gofmt, CLI skill pin, stale docs, skip census, mcp authz, modelref split, runrole guard, schemadrift, gitleaks waivers, gitleaks env files, ui guardrails, brand tokens)"
+echo "preflight: OK (base, base-check tests, migration numbering, cross-branch Go declaration collisions, gofmt, CLI skill pin, stale docs, skip census, mcp authz, modelref split, runrole guard, schemadrift, gitleaks waivers, gitleaks env files, ui guardrails, brand tokens, connector install channel)"

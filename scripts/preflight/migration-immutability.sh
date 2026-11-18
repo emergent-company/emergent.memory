@@ -65,10 +65,11 @@ mig_dir="apps/server/migrations"
 # 0 (even with --no-tags), so the base ref is never refreshed. The explicit
 # destination also materialises <remote>/<branch> in a single-branch clone,
 # whose default refspec would otherwise update only FETCH_HEAD and let a
-# shallow PR clone skip the guard.
+# shallow PR clone skip the guard. The leading `+` keeps a force-pushed base
+# refreshable instead of falling back to the cached ref.
 branch="${base#origin/}"
 if ! git fetch --quiet --no-tags origin \
-     "refs/heads/$branch:refs/remotes/origin/$branch" 2>/dev/null; then
+     "+refs/heads/$branch:refs/remotes/origin/$branch" 2>/dev/null; then
   if git rev-parse --verify --quiet "$base" >/dev/null 2>&1; then
     echo "migration-immutability: WARNING could not reach origin; using cached $base" >&2
   else
