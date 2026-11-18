@@ -375,6 +375,52 @@ func insertGitHubIssueObject(t *testing.T, db *bun.DB, ctx context.Context, proj
 	require.NoError(t, err)
 }
 
+// TestWorkReconciler_SkipsIssueClaimedByAnotherLane is the #990 regression: a
+// board item assigned to the coding agent but claimed on GitHub by a peer lane
+// (`status: in-progress` plus that lane's `manager:` label) must not dispatch,
+// while the platform's own claim still may re-dispatch (rework).
+func TestWorkReconciler_SkipsIssueClaimedByAnotherLane(t *testing.T) {
+	ctx, db, repo, projectID := setupWorkObjectDispatch(t)
+	defID := insertWorkDefinition(t, db, ctx, projectID, "coder",
+		`{"status":{"ready":"ready"},"objectRules":[{"objectType":"GitHubIssue","triggers":[{"status":"ready"}]}]}`)
+	agentID := insertWorkAgent(t, db, ctx, projectID, "coder", defID)
+	_, err := db.ExecContext(ctx,
+		`UPDATE kb.agents SET trigger_type='reaction', reaction_config='{"objectTypes":["GitHubIssue"],"events":["created","status_changed"]}'::jsonb WHERE id=?`,
+		agentID)
+	require.NoError(t, err)
+
+	claimedID := uuid.NewString()
+	oursID := uuid.NewString()
+	insertGitHubIssueObject(t, db, ctx, projectID, claimedID, "issue-claimed", "coder")
+	insertGitHubIssueObject(t, db, ctx, projectID, oursID, "issue-ours", "coder")
+
+	store := &fakeListStore{heads: []*graph.WorkObjectHead{
+		{
+			ProjectID: projectID, CanonicalID: claimedID, Status: "ready",
+			Type: "GitHubIssue", Assignee: "coder",
+			Properties: map[string]any{"labels": []any{
+				"status: in-progress", "manager: memory-coding", "manager: lane-5d320db5",
+			}},
+		},
+		{
+			ProjectID: projectID, CanonicalID: oursID, Status: "ready",
+			Type: "GitHubIssue", Assignee: "coder",
+			Properties: map[string]any{"labels": []any{
+				"status: in-progress", "manager: memory-coding",
+			}},
+		},
+	}}
+	rc := NewWorkReconciler(repo, testAgentLogger(), time.Minute)
+	rc.SetWorkObjectStore(store)
+
+	rc.reconcile(ctx)
+
+	require.Equal(t, 0, countQueuedRuns(t, db, ctx, agentID, claimedID),
+		"a peer-claimed issue must not start a coding run")
+	require.Equal(t, 1, countQueuedRuns(t, db, ctx, agentID, oursID),
+		"the platform's own claim must still dispatch")
+}
+
 type issueReviewFinalStore struct{ fakeWorkObjectStore }
 
 func (s *issueReviewFinalStore) GetHeadObject(_ context.Context, _, canonicalID string) (*graph.WorkObjectHead, error) {

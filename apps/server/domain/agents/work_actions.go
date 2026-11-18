@@ -501,6 +501,13 @@ func (s *WorkActionService) enqueueWorkRun(ctx context.Context, head *graph.Work
 	if agent == nil {
 		return "", fmt.Errorf("no agent to enqueue work run")
 	}
+	// A human action (retry, request-changes) must not start a run on an issue
+	// another lane claimed: the board still says `ready`, the issue says
+	// `in-progress` under a peer manager.
+	if skipForeignIssueClaim(head.Type, head) {
+		return "", apperror.New(http.StatusConflict, "conflict",
+			"issue is claimed by another lane; this work item cannot start a run")
+	}
 	maxAttempts := 1
 	if agentDef != nil && agentDef.WorkConfig.RetryPolicy.MaxAttempts > 0 {
 		maxAttempts = agentDef.WorkConfig.RetryPolicy.MaxAttempts
