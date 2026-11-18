@@ -78,8 +78,21 @@ var Module = fx.Module("agents",
 		registerHandlerTriggerService,
 		registerCitationSchemaRepo,
 		registerSkillCaptureAdapter,
+		wireRepositoryBudgetGuard,
 	),
 )
+
+// wireRepositoryBudgetGuard installs the spending-cap gate on the repository so
+// every run-enqueue surface (CreateRunQueued, EnqueueWorkRunDeduped) and every
+// pre-created run row consults both spending windows before inserting. Runs
+// only after providers are built, so the usage service is available. A nil usage
+// service (tests, degraded wiring) leaves the gate disabled.
+func wireRepositoryBudgetGuard(repo *Repository, usage *provider.UsageService, cfg *config.Config, log *slog.Logger) {
+	if repo == nil || usage == nil || cfg == nil {
+		return
+	}
+	repo.SetBudgetGuard(usage, cfg.AgentSafeguards.BudgetEnforcementEnabled, log)
+}
 
 // registerCitationSchemaRepo attaches the compiled-type source to the read-side
 // citation derivations (REST run transcript, share live emit, share replay,

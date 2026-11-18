@@ -851,7 +851,7 @@ type AgentExecutor struct {
 	modelLimits      ModelLimitsLookup // nil if provider module is not registered
 	apiTokenSvc      ephemeralTokenSvc // nil if not configured; used for ephemeral sandbox tokens
 	memoryAPIURL     string            // API endpoint injected into sandbox sessions
-	usageService     *provider.UsageService
+	budgetChecker    BudgetChecker
 	eventsSvc        *events.Service        // nil if events module not registered; used by ask_user SSE notification
 	notificationsSvc *notifications.Service // nil-safe; central notification producer for ask_user
 	safeguards       config.AgentSafeguardsConfig
@@ -1077,7 +1077,7 @@ func NewAgentExecutor(
 	sessionService session.Service,
 	modelLimits ModelLimitsLookup,
 	apiTokenSvc *apitoken.Service,
-	usageService *provider.UsageService,
+	budgetChecker BudgetChecker,
 	eventsSvc *events.Service,
 	notificationsSvc *notifications.Service,
 	log *slog.Logger,
@@ -1102,7 +1102,7 @@ func NewAgentExecutor(
 		modelLimits:      modelLimits,
 		apiTokenSvc:      apiTokenSvc,
 		memoryAPIURL:     memoryAPIURL,
-		usageService:     usageService,
+		budgetChecker:    budgetChecker,
 		eventsSvc:        eventsSvc,
 		notificationsSvc: notificationsSvc,
 		safeguards:       cfg.AgentSafeguards,
@@ -1247,6 +1247,19 @@ func failRunIfExecutionDisabled(ctx context.Context, repo runFailer, run *AgentR
 	}
 }
 
+// CheckBudget applies the project spending-cap pre-flight to projectID. It
+// returns a *BudgetExceededError when either spending window (weekly or
+// monthly) is exhausted and BUDGET_ENFORCEMENT_ENABLED is on. A missing checker,
+// an empty project id and a failed budget query all fail open (nil), so a
+// broken usage query never halts agents. HTTP surfaces call this BEFORE
+// creating a run row so a blocked request returns 402 without persisting one.
+func (ae *AgentExecutor) CheckBudget(ctx context.Context, projectID string) error {
+	if ae == nil {
+		return nil
+	}
+	return checkProjectBudget(ctx, ae.budgetChecker, ae.safeguards.BudgetEnforcementEnabled, projectID, ae.log)
+}
+
 // Execute runs an agent from scratch using the provided request.
 func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*ExecuteResult, error) {
 	startTime := time.Now()
@@ -1255,30 +1268,11 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	if err := ae.ensureExecutionEnabled(req); err != nil {
 		return nil, err
 	}
-	if err := ae.applyInvocation(ctx, nil, &req); err != nil {
+	if err := ae.CheckBudget(ctx, req.ProjectID); err != nil {
 		return nil, err
 	}
-
-	// Budget pre-flight check — hard stop when either spending window (week or
-	// month) has reached its cap. CheckBudgetExceeded covers both.
-	if ae.usageService != nil && req.ProjectID != "" {
-		exceeded, err := ae.usageService.CheckBudgetExceeded(ctx, req.ProjectID)
-		if err != nil {
-			// Fail-open: log warning but proceed so a broken budget query never halts agents.
-			ae.log.Warn("budget pre-flight check failed, proceeding",
-				slog.String("project_id", req.ProjectID),
-				slog.String("error", err.Error()),
-			)
-		} else if exceeded && ae.safeguards.BudgetEnforcementEnabled {
-			ae.log.Warn("agent execution blocked: project budget exceeded",
-				slog.String("project_id", req.ProjectID),
-				slog.String("agent_id", ae.resolveAgentID(req)),
-			)
-			return nil, &BudgetExceededError{
-				ProjectID: req.ProjectID,
-				Message:   fmt.Sprintf("project %s has exceeded its spending budget", req.ProjectID),
-			}
-		}
+	if err := ae.applyInvocation(ctx, nil, &req); err != nil {
+		return nil, err
 	}
 
 	// Validate depth
@@ -1513,6 +1507,12 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 	dbCtx := context.Background()
 
 	if err := ae.ensureExecutionEnabled(req); err != nil {
+		return nil, err
+	}
+	// Budget pre-flight BEFORE touching the pre-created run row: every surface
+	// that reaches execution through ExecuteWithRun (HTTP/session, A2A,
+	// worker pool) is gated here, not only the interactive Execute path.
+	if err := ae.CheckBudget(ctx, req.ProjectID); err != nil {
 		return nil, err
 	}
 	if err := ae.applyInvocation(ctx, run, &req); err != nil {
@@ -1895,6 +1895,12 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	dbCtx := context.Background()
 
 	if err := ae.ensureExecutionEnabled(req); err != nil {
+		return nil, err
+	}
+	// Budget pre-flight BEFORE claiming the pause or creating the resumed run
+	// row: approvals, A2A, agentcompat and coordination all resume through
+	// here, so none of them can spend past a project cap.
+	if err := ae.CheckBudget(ctx, req.ProjectID); err != nil {
 		return nil, err
 	}
 

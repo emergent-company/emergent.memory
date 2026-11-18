@@ -25,6 +25,11 @@ const (
 	FailureClassCapability    FailureClass = "capability"
 	FailureClassProtocol      FailureClass = "protocol"
 	FailureClassTimeout       FailureClass = "timeout"
+	// FailureClassBudget is a project spending-cap block. It is deliberately
+	// distinct from every item/agent failure class: it consumes no item
+	// failure budget, does not block the item, and does not increment the
+	// agent failure counter.
+	FailureClassBudget FailureClass = "budget"
 )
 
 // defaultWorkFailureLimit is the per-item failure budget applied when the agent
@@ -89,6 +94,9 @@ func isCapabilityError(err error) bool {
 // classifyRunFailure maps a run's terminal outcome to a failure class.
 func classifyRunFailure(execErr error, result *ExecuteResult) FailureClass {
 	if execErr != nil {
+		if isBudgetExceededError(execErr) {
+			return FailureClassBudget
+		}
 		if isQuotaError(execErr) {
 			return FailureClassQuota
 		}
@@ -233,6 +241,22 @@ func (p *WorkerPool) finishWorkRun(ctx context.Context, log *slog.Logger, job *A
 	// failure — classify and route.
 	cls := classifyRunFailure(execErr, result)
 	errMsg := failureMessage(execErr, result)
+
+	// budget block — retire the run without touching any failure budget. A
+	// project spending cap is not an item defect: do not increment the item
+	// failure count, do not block the item, and do not increment the agent
+	// failure counter. The item is left in its pickup status; the enqueue gate
+	// stops a fresh run until the cap resets.
+	if cls == FailureClassBudget {
+		if err := p.repo.SkipRun(ctx, job.RunID, errMsg); err != nil {
+			log.Warn("failed to mark budget-blocked work run skipped", slog.String("error", err.Error()))
+		}
+		if err := p.repo.PauseJob(ctx, job.ID); err != nil {
+			log.Warn("failed to retire budget-blocked work job", slog.String("error", err.Error()))
+		}
+		log.Warn("work run blocked by project budget; item unchanged", slog.String("canonical_id", canonicalID))
+		return
+	}
 
 	// Fail the job without requeue: the item transition below decides whether a
 	// fresh run is enqueued (with backoff), so the job's own attempt budget is

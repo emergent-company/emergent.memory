@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -51,11 +52,51 @@ type Repository struct {
 	// nil-safe.
 	agentRestoreMu        sync.RWMutex
 	agentRestoreListeners []func(ctx context.Context, projectID string, agentIDs []string)
+
+	// budgetChecker is the project spending-cap gate applied by every enqueue
+	// surface (CreateRunQueued, EnqueueWorkRunDeduped) before a run row is
+	// created. Optional: nil in repository-only tests, which disables the gate.
+	budgetChecker     BudgetChecker
+	budgetEnforcement bool
+	budgetLog         *slog.Logger
 }
 
 // NewRepository creates a new agents repository
 func NewRepository(db bun.IDB) *Repository {
 	return &Repository{db: db}
+}
+
+// SetBudgetGuard installs the spending-cap gate consulted by every run-enqueue
+// surface. It is wired from the module once the usage service is available.
+// Passing a nil checker disables the gate (repository-only tests). A failed
+// budget query fails open, matching the executor's pre-flight.
+func (r *Repository) SetBudgetGuard(checker BudgetChecker, enabled bool, log ...*slog.Logger) {
+	if r == nil {
+		return
+	}
+	r.budgetChecker = checker
+	r.budgetEnforcement = enabled
+	r.budgetLog = nil
+	if len(log) > 0 {
+		r.budgetLog = log[0]
+	}
+}
+
+// checkEnqueueBudget refuses a new run when the project has exhausted either
+// spending window. HTTP and queued callers receive the typed
+// *BudgetExceededError, so no run row (or dispatch job) is created.
+func (r *Repository) checkEnqueueBudget(ctx context.Context, projectID string) error {
+	if r == nil {
+		return nil
+	}
+	return checkProjectBudget(ctx, r.budgetChecker, r.budgetEnforcement, projectID, r.budgetLog)
+}
+
+// budgetGateActive reports whether a spending-cap checker is wired and
+// enforcement is on. Callers use it to skip the project lookup entirely when
+// the gate cannot block anything (e.g. repository-only tests).
+func (r *Repository) budgetGateActive() bool {
+	return r != nil && r.budgetChecker != nil && r.budgetEnforcement
 }
 
 // DB exposes the handle the repository was built on. Authorization helpers that
@@ -2178,6 +2219,14 @@ func newAgentRun(opts CreateRunOptions) *AgentRun {
 }
 
 func (r *Repository) CreateRunWithOptions(ctx context.Context, opts CreateRunOptions) (*AgentRun, error) {
+	// Budget gate for every pre-created run row (HTTP trigger/respond, A2A,
+	// chat). A blocked request gets the typed error and leaves no row behind.
+	if r.budgetGateActive() {
+		projectID, _, _ := r.resolveAgentRouting(ctx, opts.AgentID, "", 0)
+		if err := r.checkEnqueueBudget(ctx, projectID); err != nil {
+			return nil, err
+		}
+	}
 	run := newAgentRun(opts)
 	_, err := r.db.NewInsert().
 		Model(run).
@@ -3256,6 +3305,9 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 		o = opts[0]
 	}
 	projectID, queue, priority := r.resolveAgentRouting(ctx, agentID, o.Queue, o.Priority)
+	if err := r.checkEnqueueBudget(ctx, projectID); err != nil {
+		return nil, err
+	}
 	var run *AgentRun
 	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		var err error
@@ -3361,6 +3413,9 @@ func (r *Repository) enqueueWorkRunInTx(ctx context.Context, tx bun.Tx, agentID 
 // suppress redelivery. It returns claimed=false when the key is already taken.
 func (r *Repository) EnqueueWorkRunDeduped(ctx context.Context, logEntry *AgentProcessingLog, agentID string, maxAttempts int, opts CreateRunQueuedOptions) (*AgentRun, bool, error) {
 	projectID, queue, priority := r.resolveAgentRouting(ctx, agentID, opts.Queue, opts.Priority)
+	if err := r.checkEnqueueBudget(ctx, projectID); err != nil {
+		return nil, false, err
+	}
 	var run *AgentRun
 	claimed := false
 	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {

@@ -832,6 +832,11 @@ func (h *A2AHandler) startA2ATask(c echo.Context, projectID, userID, userMessage
 		if err := h.executor.EnsureExecutionEnabled(); err != nil {
 			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, err.Error()))
 		}
+		// Budget pre-flight before creating the run row: a capped project must
+		// not leave an A2A run that can never execute.
+		if err := h.executor.CheckBudget(ctx, projectID); err != nil {
+			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, err.Error()))
+		}
 	}
 	run, err := h.repo.CreateRunWithOptions(ctx, CreateRunOptions{
 		AgentID:        agent.ID,
