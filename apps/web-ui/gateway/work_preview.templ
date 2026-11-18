@@ -25,10 +25,23 @@ import (
 // while the board refreshes from the project event stream (object_controls.go).
 
 // workPreviewBoardSlot renders the work-item surface inside the preview drawer:
-// the status-gated actions, the completed runs' declared deliverables, then the
+// an attention strip when the latest run is parked, the status-gated actions,
+// the object's run history, the completed runs' declared deliverables, then the
 // merged Activity thread and its inline form.
-templ workPreviewBoardSlot(item *WorkItem, statusMap boardStatusMap, comments []WorkItemComment, feedback []WorkItemFeedback, deliverables []boardDeliverable, view url.Values) {
+templ workPreviewBoardSlot(item *WorkItem, statusMap boardStatusMap, comments []WorkItemComment, feedback []WorkItemFeedback, runs []WorkItemRun, deliverables []boardDeliverable, view url.Values) {
+	if attention := boardRunAttention(runs); attention != nil {
+		@workPreviewRunAttention(item, runs[0], *attention, view)
+	}
 	@workPreviewActionButtons(item, statusMap, view)
+	// The runs section sits above Activity and Deliverables: it is the only place
+	// an object's execution history is visible, and the deliverables are derived
+	// from those same runs. Always rendered (with an explicit empty state) so a
+	// never-run object does not look identical to one whose runs were dropped.
+	<div class="mt-5">
+		@objectPreviewSection("Work runs") {
+			@workPreviewRuns(runs)
+		}
+	</div>
 	// Always rendered, even with nothing declared: the section is the human's
 	// only view of what a completed run produced, so "nothing declared" has to be
 	// stated rather than left looking like an absence of the feature.
@@ -42,6 +55,92 @@ templ workPreviewBoardSlot(item *WorkItem, statusMap boardStatusMap, comments []
 			@boardCommentsThread(boardComments(comments, feedback), "board-preview-comment")
 			@boardCommentForm(item.CanonicalID, "board-preview-comment", view)
 		}
+	</div>
+}
+
+// workPreviewRunAttention is the preview's attention strip for a parked run. It
+// is deliberately not the durable `blocked` state: a paused run is transient,
+// does not suppress dispatch, and needs a person only to decide whether to
+// continue it or stop it. Continue opens the run page, where the paused
+// transcript (and any pending question/approval) is actionable; the paused-run
+// resume lifecycle itself is tracked separately, so this surface adds no new
+// mutation endpoint. Cancel reuses the work-item cancel action below.
+templ workPreviewRunAttention(item *WorkItem, latest WorkItemRun, row boardRunRow, view url.Values) {
+	<div
+		class="mb-3 rounded-box border border-warning/40 bg-warning/10 px-3 py-2.5"
+		data-testid="board-run-attention"
+		role="status"
+	>
+		<div class="flex items-start gap-2">
+			@ui.IconSpan("lucide--pause-circle", "size-4 shrink-0 text-warning")
+			<div class="min-w-0">
+				<p class="text-sm font-medium" data-testid="board-run-attention-title">{ boardRunAttentionTitle(latest, row) }</p>
+				<div class="mt-0.5 text-[11px] text-muted">{ row.AgentName } · started { row.Started }</div>
+			</div>
+		</div>
+		<div class="mt-2 flex flex-wrap items-center gap-2">
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/runs/" + url.PathEscape(latest.ID),
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--play",
+			}) {
+				Continue
+			}
+			@workActionButton("Cancel", "lucide--ban", ui.ButtonGhost, workActionPath(item.CanonicalID, "cancel", view))
+		</div>
+	</div>
+}
+
+// workPreviewRuns renders one row per run, newest first. Each row names the
+// agent, humanises the wire status, shows the step usage against the limit, and
+// links to the run transcript. An explicit empty state keeps a never-run object
+// from reading as a missing feature.
+templ workPreviewRuns(runs []WorkItemRun) {
+	{{ rows := boardRunRows(runs) }}
+	<div class="space-y-1.5">
+		for _, row := range rows {
+			@workPreviewRunRow(row)
+		}
+		if len(rows) == 0 {
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Attrs: tpl.Attributes{"data-testid": "board-run-empty"}}) { No runs yet }
+		}
+	</div>
+}
+
+// workPreviewRunRow is one run's summary: agent + status + start, steps and
+// duration, the outcome line, then the PR and transcript links.
+templ workPreviewRunRow(row boardRunRow) {
+	<div class="rounded-box border border-base-content/10 px-2.5 py-1.5" data-testid="board-run-row" data-run-id={ row.ID }>
+		<div class="flex flex-wrap items-center gap-1.5">
+			<span class="min-w-0 truncate text-sm font-medium" data-testid="board-run-agent">{ row.AgentName }</span>
+			@ui.Badge(ui.BadgeProps{Label: row.StatusLabel, Variant: row.StatusIntent, Size: ui.BadgeSizeXS, Dot: true})
+			<span class="ml-auto text-[10px] text-muted-faint" data-testid="board-run-started">{ row.Started }</span>
+		</div>
+		<div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-muted">
+			if row.Steps != "" {
+				<span data-testid="board-run-steps">{ row.Steps }</span>
+			}
+			if row.Duration != "" {
+				<span data-testid="board-run-duration">{ row.Duration }</span>
+			}
+		</div>
+		if row.Outcome != "" {
+			<p class={ "mt-1 text-xs break-words " + boardRunOutcomeClass(row.OutcomeTone) } data-testid="board-run-outcome">{ row.Outcome }</p>
+		}
+		<div class="mt-1 flex flex-wrap items-center gap-2 text-[10px]">
+			if row.PRURL != "" {
+				<a
+					href={ tpl.URL(row.PRURL) }
+					target="_blank"
+					rel="noopener noreferrer"
+					class="link link-hover text-muted"
+					data-testid="board-run-pr"
+				>Pull request</a>
+			}
+			<a href={ tpl.URL("/runs/" + url.PathEscape(row.ID)) } class="link link-hover text-muted" data-testid="board-run-link">View run</a>
+		</div>
 	</div>
 }
 
@@ -182,7 +281,7 @@ templ boardCommentsThread(entries []boardComment, testIDPrefix string) {
 			}
 		}
 		if len(entries) == 0 {
-			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Attrs: tpl.Attributes{"data-testid": testIDPrefix + "-empty"}}) { No activity yet }
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Attrs: tpl.Attributes{"data-testid": testIDPrefix + "-empty"}}) { No comments yet }
 		}
 	</div>
 }
