@@ -107,6 +107,16 @@ func (b ToolResultBounds) maxBytesFor(tool string) int {
 	return defaultToolResultMaxBytes
 }
 
+// ToolResultMaxBytesFor exposes the resolved per-result model-context cap for a
+// single tool. A producer that must not hand the model a silently cut payload
+// (the GitHub review diff, whose truncation would invalidate its own evidence)
+// uses it to bound the result it emits. It returns the same value
+// boundModelRequestToolResults would apply, including per-tool overrides; a
+// negative value means the per-result layer is disabled.
+func ToolResultMaxBytesFor(cfg config.MCPConfig, toolName string) int {
+	return toolResultBoundsFromConfig(cfg).maxBytesFor(toolName)
+}
+
 func (b ToolResultBounds) totalBudget() int {
 	if b.TotalBudgetBytes != 0 {
 		return b.TotalBudgetBytes
