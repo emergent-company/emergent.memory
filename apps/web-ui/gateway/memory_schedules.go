@@ -41,6 +41,7 @@ type ScheduledAgentRun struct {
 	CompletedAt   *string        `json:"completedAt"`
 	Summary       map[string]any `json:"summary"`
 	ErrorMessage  *string        `json:"errorMessage"`
+	FailureClass  *string        `json:"failureClass,omitempty"`
 	TriggerSource *string        `json:"triggerSource"`
 }
 

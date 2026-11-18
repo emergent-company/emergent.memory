@@ -347,3 +347,32 @@ func TestChatRailGroupRootShowsSubtreeActivity(t *testing.T) {
 		t.Errorf("collapsed group root row must not show the idle root's time %q, got %s", rootAtLabel, rootRow)
 	}
 }
+
+// TestRailSubtitleShowsFailureReason pins that a failed run's rail row carries
+// its reason, while a run without one keeps the plain status/time line.
+func TestRailSubtitleShowsFailureReason(t *testing.T) {
+	failed := scheduledRunRow{
+		AgentName:   "Daily briefing",
+		Status:      "failed",
+		StartedAt:   "2026-11-15T08:00:00Z",
+		CompletedAt: "2026-11-15T08:05:00Z",
+		Failure:     "provider quota exhausted",
+	}
+	if got := railRunSubtitle(failed); !strings.Contains(got, "provider quota exhausted") {
+		t.Errorf("scheduled rail subtitle = %q, want the failure text", got)
+	}
+
+	board := workRunRow{
+		ID: "run-1", RunID: "run-1", Origin: "board", Title: "Task",
+		Status: "failed", StartedAt: "2026-11-15T08:00:00Z",
+		Failure: "Failure: Deterministic",
+	}
+	if got := runRailSubtitleWithFailure(board.Status, board.StartedAt, board.Failure); !strings.Contains(got, "Failure: Deterministic") {
+		t.Errorf("board rail subtitle = %q, want the humanised class", got)
+	}
+
+	ok := scheduledRunRow{Status: "completed", StartedAt: "2026-11-15T08:00:00Z"}
+	if got := railRunSubtitle(ok); strings.Contains(got, "Failure") {
+		t.Errorf("successful run subtitle = %q, want no failure text", got)
+	}
+}

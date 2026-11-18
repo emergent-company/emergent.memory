@@ -322,7 +322,9 @@ func scheduleRunSubtitle(r ScheduledAgentRun) string {
 	if r.CompletedAt != nil && *r.CompletedAt != "" {
 		s += " · finished " + relTime(*r.CompletedAt)
 	}
-	if p := scheduleRunSummary(r); p != "" {
+	if failure := runFailureText(r.ErrorMessage, r.FailureClass); failure != "" {
+		s += " · " + truncateRunes(failure, 60)
+	} else if p := scheduleRunSummary(r); p != "" {
 		s += " · " + p
 	}
 	return s
