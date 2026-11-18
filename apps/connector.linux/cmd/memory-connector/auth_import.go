@@ -56,6 +56,14 @@ type authImportPayload struct {
 // made, so import is fast, deterministic, and works offline. The payload's
 // optional `email` is trusted when present.
 //
+// Import is a read-modify-write of the stored session, so it runs through
+// Manager.UpdateSession, which holds the refresh lock across the read and the
+// Save. Without that lock a concurrent `auth refresh` can rotate the single-use
+// refresh token between the two, and the import then writes the pre-rotation
+// token back — a session that is stale by construction (its next refresh gets
+// invalid_grant and is marked). The lock makes the import either happen before
+// the rotation or observe its result.
+//
 // Two fields are merged from the stored session rather than clobbered: the
 // refresh token when the payload omits it, and the needs_reauth mark, which is
 // a property of that stored refresh token and not of the import event — see the
@@ -108,52 +116,61 @@ func runAuthImport(args []string, stdout, stderr io.Writer) int {
 		expiresAt = parsed
 	}
 
-	refreshToken := firstNonEmpty(payload.RefreshToken, payload.RefreshTokenAlt)
+	importedRefreshToken := firstNonEmpty(payload.RefreshToken, payload.RefreshTokenAlt)
 
 	m := newAuthManager(account.BaseDirForConfig(*configPath))
-	stored, err := m.SessionFor(*server)
+	sess, err := m.UpdateSession(*server, func(stored *account.Session) error {
+		// Tokens carry no meaningful whitespace, so trim on the way in: a
+		// payload that repeats the stored token with a trailing newline (as a
+		// shell would pipe it) then neither replaces the token nor persists a
+		// value the token endpoint would reject.
+		refreshToken := strings.TrimSpace(importedRefreshToken)
+		// Merge instead of clobber: when the payload omits the refresh token,
+		// carry over the stored session's so an import that carries only the
+		// access token does not destroy the IdP-minted refresh token.
+		if refreshToken == "" {
+			refreshToken = strings.TrimSpace(stored.RefreshToken)
+		}
+
+		// needs_reauth marks the stored refresh token the provider rejected, so
+		// it belongs to that token rather than to the import event, and an
+		// import must not clear it by omission: importing a session that still
+		// carries the rejected token with the mark gone would leave a session
+		// that looks renewable, and the client would only rediscover the
+		// rejection on its next refresh. The mark therefore follows the token —
+		// it survives while the import keeps the stored refresh token (the
+		// payload omitted it, or repeated it) and drops when the import replaces
+		// that token, because the rejection described the old one. Replacing the
+		// refresh token is the deliberate reset.
+		//
+		// The comparison trims both sides: a payload that differs only in
+		// whitespace repeats the token, so it must not count as a replacement
+		// and clear the mark.
+		needsReauth := stored.NeedsReauth &&
+			strings.TrimSpace(refreshToken) == strings.TrimSpace(stored.RefreshToken)
+		// An importer that knows the session is already rejected can say so,
+		// which also marks a token the CLI has not seen rejected itself. `false`
+		// is accepted (a client may echo a whole session document) but never
+		// clears a mark recorded for a token that is still stored — that is the
+		// resurrection this rule exists to prevent.
+		if (payload.NeedsReauth != nil && *payload.NeedsReauth) ||
+			(payload.NeedsReauthAlt != nil && *payload.NeedsReauthAlt) {
+			needsReauth = true
+		}
+
+		// The payload document replaces the stored one, apart from the merged
+		// token and mark above (import never persisted client_id or user_id).
+		*stored = account.Session{
+			IssuerURL:    firstNonEmpty(payload.Issuer, payload.IssuerURL),
+			AccessToken:  accessToken,
+			RefreshToken: refreshToken,
+			ExpiresAt:    expiresAt,
+			UserEmail:    firstNonEmpty(payload.Email, payload.UserEmail),
+			NeedsReauth:  needsReauth,
+		}
+		return nil
+	})
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "memory-connector auth import: %v\n", err)
-		return 1
-	}
-	// Merge instead of clobber: when the payload omits the refresh token,
-	// carry over the stored session's so an import that carries only the
-	// access token does not destroy the IdP-minted refresh token.
-	if refreshToken == "" && stored != nil {
-		refreshToken = stored.RefreshToken
-	}
-
-	// needs_reauth marks the stored refresh token the provider rejected, so it
-	// belongs to that token rather than to the import event, and an import must
-	// not clear it by omission: importing a session that still carries the
-	// rejected token with the mark gone would leave a session that looks
-	// renewable, and the client would only rediscover the rejection on its next
-	// refresh. The mark therefore follows the token — it survives while the
-	// import keeps the stored refresh token (the payload omitted it, or repeated
-	// it) and drops when the import replaces that token, because the rejection
-	// described the old one. Replacing the refresh token is the deliberate reset.
-	needsReauth := stored != nil && stored.NeedsReauth && refreshToken == stored.RefreshToken
-	// An importer that knows the session is already rejected can say so, which
-	// also marks a token the CLI has not seen rejected itself. `false` is
-	// accepted (a client may echo a whole session document) but never clears a
-	// mark recorded for a token that is still stored — that is the resurrection
-	// this rule exists to prevent.
-	if (payload.NeedsReauth != nil && *payload.NeedsReauth) ||
-		(payload.NeedsReauthAlt != nil && *payload.NeedsReauthAlt) {
-		needsReauth = true
-	}
-
-	sess := &account.Session{
-		ServerURL:    *server,
-		IssuerURL:    firstNonEmpty(payload.Issuer, payload.IssuerURL),
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
-		ExpiresAt:    expiresAt,
-		UserEmail:    firstNonEmpty(payload.Email, payload.UserEmail),
-		NeedsReauth:  needsReauth,
-	}
-
-	if err := m.Save(*server, sess); err != nil {
 		_, _ = fmt.Fprintf(stderr, "memory-connector auth import: %v\n", err)
 		return 1
 	}
