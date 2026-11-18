@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -30,9 +31,30 @@ type Exemptions struct {
 	// argument refusal.
 	Files map[string]string
 
-	// Messages maps a substring of a call's message to why that particular
-	// message is not a tool argument refusal.
-	Messages map[string]string
+	// Sites maps one concrete call site to why it is not a tool argument
+	// refusal. Use this rather than a phrase-wide exemption: see Site.
+	Sites map[Site]string
+}
+
+// Site pins an exemption to one concrete constructor call: the file that holds
+// it and the exact text of the call's first message literal. Both must match.
+//
+// The keys used to be bare substrings of the message, so an exemption written
+// for one site also silenced every future site that happened to contain the
+// same phrase — the scan stopped being a gate for the class it exists to catch
+// (#930). An exact literal under a named file cannot be inherited by a new
+// caller-facing error unless that error repeats the message verbatim in the
+// same file, which is the same message under review again.
+type Site struct {
+	// File is the base name of the file holding the call, as reported in
+	// Finding.File.
+	File string
+
+	// Message is the exact content of the call's first string literal (the
+	// format string for fmt.Errorf). For a message built from several
+	// literals, it is the first one, so pin a site whose message starts with
+	// the reviewed phrase.
+	Message string
 }
 
 // Finding is one offending call site.
@@ -84,7 +106,7 @@ func Scan(paths []string, ex Exemptions) ([]Finding, error) {
 			if args == "" || !keywordRe.MatchString(args) {
 				continue
 			}
-			if exemptMessage(args, ex.Messages) {
+			if exemptSite(base, args, ex.Sites) {
 				continue
 			}
 			findings = append(findings, Finding{
@@ -158,13 +180,52 @@ func skipQuoted(text string, start int, quote byte) int {
 	return len(text) - 1
 }
 
-func exemptMessage(args string, messages map[string]string) bool {
-	for substring := range messages {
-		if strings.Contains(args, substring) {
-			return true
+// exemptSite reports whether this call is one of the exempted sites. The file
+// and the call's first message literal must both match exactly, so an
+// exemption written for one call cannot silence a different one that merely
+// contains the same phrase (#930).
+func exemptSite(file, args string, sites map[Site]string) bool {
+	if len(sites) == 0 {
+		return false
+	}
+	literal, ok := firstStringLiteral(args)
+	if !ok {
+		return false
+	}
+	_, exempt := sites[Site{File: file, Message: literal}]
+	return exempt
+}
+
+// firstStringLiteral returns the content of the first Go string literal in a
+// call's argument list, so an exemption can name the exact message a call
+// passes. It skips rune literals and reports false when a call passes no
+// literal at all (a message held in a variable cannot be pinned, so it is not
+// exemptable by literal).
+func firstStringLiteral(args string) (string, bool) {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case '"':
+			end := skipQuoted(args, i, '"')
+			if end <= i {
+				return "", false
+			}
+			if lit, err := strconv.Unquote(args[i : end+1]); err == nil {
+				return lit, true
+			}
+			// An unterminated or otherwise unquotable literal: fall back to
+			// the raw content so the scan still offers a stable key.
+			return args[i+1 : end], true
+		case '`':
+			end := strings.IndexByte(args[i+1:], '`')
+			if end < 0 {
+				return "", false
+			}
+			return args[i+1 : i+1+end], true
+		case '\'':
+			i = skipQuoted(args, i, '\'')
 		}
 	}
-	return false
+	return "", false
 }
 
 // firstNonEmptyLine keeps the failure output to the line that carries the

@@ -174,8 +174,9 @@ type Service struct {
 	// auditSuperadmin degrades to structured logs only when unset.
 	superadminAuditWriter SuperadminAuditWriter
 
-	// graphObjectTitlePatcher patches graph object Properties.title when set_session_title runs.
-	// Stored as a func to avoid a circular import (mcp already imports graph).
+	// graphObjectTitlePatcher patches the graph object's `name` column — the only
+	// title carrier (#824) — when set_session_title runs. Stored as a func to
+	// avoid a circular import (mcp already imports graph).
 	graphObjectTitlePatcher func(ctx context.Context, projectID, objectID, title string) error
 
 	// Domain classification and schema tools (injected via setters to avoid import cycle)
@@ -5128,8 +5129,16 @@ func (s *Service) resolveEntityIDByKey(ctx context.Context, projectID uuid.UUID,
 			return uuid.Nil, apperror.NewInternal("An internal error occurred",
 				fmt.Errorf("resolve entity key %q: %w", key, err))
 		}
-		// Fetch fuzzy suggestions to help agents self-correct.
-		suggestions := s.suggestEntityKeysByFuzzy(ctx, projectID, key, 3)
+		// Fetch fuzzy suggestions to help agents self-correct. The suggestion
+		// query is advisory: the miss above is already established, so a fault in
+		// it must not turn the caller's 404 into a 500 — but it must not be
+		// swallowed either, or a lost suggestion reads as "no similar keys"
+		// (#930). Record it and keep the caller-addressable miss.
+		suggestions, suggestErr := s.suggestEntityKeysByFuzzy(ctx, projectID, key, 3)
+		if suggestErr != nil {
+			s.logToolFailure("entity key suggestion lookup failed", suggestErr,
+				"key", key, "project_id", projectID.String())
+		}
 		if len(suggestions) > 0 {
 			return uuid.Nil, notFoundf("entity_key_not_found",
 				"entity with key %q not found — did you mean one of these? %s. Use the exact key shown with entity-update or relationship-create.",
@@ -5149,7 +5158,12 @@ func (s *Service) resolveEntityIDByKey(ctx context.Context, projectID uuid.UUID,
 //
 // This is intentionally lightweight (no pg_trgm dependency required) and runs a
 // single query, so it is safe to call on every key-not-found path.
-func (s *Service) suggestEntityKeysByFuzzy(ctx context.Context, projectID uuid.UUID, key string, limit int) []string {
+//
+// The query error is returned rather than folded into "no suggestions" (#930):
+// a store fault and an empty result are different facts, and the caller decides
+// which one it can act on. The caller keeps its 404 (the key really is missing)
+// and records the fault, so a lost suggestion is never reported as a clean miss.
+func (s *Service) suggestEntityKeysByFuzzy(ctx context.Context, projectID uuid.UUID, key string, limit int) ([]string, error) {
 	type row struct {
 		Key  string `bun:"key"`
 		Type string `bun:"type"`
@@ -5173,9 +5187,11 @@ func (s *Service) suggestEntityKeysByFuzzy(ctx context.Context, projectID uuid.U
 		ORDER BY key, version DESC
 		LIMIT 200`
 
-	queryErr := s.db.NewRaw(sampleQuery, sampleArgs...).Scan(ctx, &rows)
-	if queryErr != nil || len(rows) == 0 {
-		return nil
+	if err := s.db.NewRaw(sampleQuery, sampleArgs...).Scan(ctx, &rows); err != nil {
+		return nil, fmt.Errorf("query entity key suggestions: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
 	}
 
 	// First token of the searched key (e.g. "alice" from "alice-smith").
@@ -5199,7 +5215,7 @@ func (s *Service) suggestEntityKeysByFuzzy(ctx context.Context, projectID uuid.U
 			suggestions = append(suggestions, fmt.Sprintf("%q (%s)", r.Key, r.Type))
 			seen[r.Key] = true
 			if len(suggestions) >= limit {
-				return suggestions
+				return suggestions, nil
 			}
 		}
 	}
@@ -5212,17 +5228,66 @@ func (s *Service) suggestEntityKeysByFuzzy(ctx context.Context, projectID uuid.U
 			suggestions = append(suggestions, fmt.Sprintf("%q (%s)", r.Key, r.Type))
 			seen[r.Key] = true
 			if len(suggestions) >= limit {
-				return suggestions
+				return suggestions, nil
 			}
 		}
 	}
-	return suggestions
+	return suggestions, nil
+}
+
+// errTypeScopeTargetNotFound marks a type lookup whose object or relationship
+// genuinely does not exist, as distinct from a lookup fault. The two failure
+// modes must stay distinguishable at the type-scope gates (#930): a miss means
+// there is nothing to authorize and the caller's write path reports it as the
+// 404 it is, while a fault means the gate cannot decide and must fail closed.
+// The text is never rendered to a caller.
+var errTypeScopeTargetNotFound = errors.New("type scope lookup: target does not exist")
+
+// asTypeScopeMiss maps the graph service's not-found onto the miss sentinel and
+// leaves every other failure as the fault it is. The repository reports an
+// absent row as a 404 app error (not a nil object), so without this the gates
+// would treat every miss as a lookup fault and turn 404s into 500s (#930). Any
+// error that is not a not-found app error — database down, context cancelled,
+// malformed id — stays a fault.
+func asTypeScopeMiss(err error) error {
+	if err == nil {
+		return nil
+	}
+	if appErr, ok := errors.AsType[*apperror.Error](err); ok && appErr.HTTPStatus == http.StatusNotFound {
+		return errTypeScopeTargetNotFound
+	}
+	return err
+}
+
+// typeForScopeGate resolves a target's type for a type-scope check.
+//
+// It returns found=false with a nil error only when the target provably does
+// not exist: the gate then has nothing to check and the write path still
+// reports the miss, so a real 404 stays a 404. A lookup fault returns a
+// sanitised internal app error instead, because skipping an authorization
+// check on a store failure turns a transient error into a scope bypass (#930).
+// The error is an app error so every tools/call transport relays the stable
+// sentence and keeps the driver detail out of the caller's response.
+//
+// The lookup is a parameter rather than a method call so the fault path is
+// testable without a database: the guard is the point, not the plumbing.
+func typeForScopeGate(lookup func() (string, error)) (typ string, found bool, err error) {
+	typ, lerr := lookup()
+	if lerr == nil {
+		return typ, true, nil
+	}
+	if errors.Is(lerr, errTypeScopeTargetNotFound) {
+		return "", false, nil
+	}
+	return "", false, apperror.NewInternal("An internal error occurred", lerr)
 }
 
 // lookupObjectType returns the current type of a graph object by physical or
 // canonical id. It is routed through the graph service so the mcp package issues
 // no raw SQL (the mcp-authz guard forbids unclassified raw access).
-// lookupObjectType resolves an entity's object type.
+//
+// A missing object is reported as errTypeScopeTargetNotFound so a type-scope
+// gate can tell "nothing to authorize" from "could not look it up" (#930).
 func (s *Service) lookupObjectType(ctx context.Context, projectID string, entityID uuid.UUID) (string, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
@@ -5230,10 +5295,10 @@ func (s *Service) lookupObjectType(ctx context.Context, projectID string, entity
 	}
 	obj, err := s.graphService.GetByID(ctx, projectUUID, entityID, false)
 	if err != nil {
-		return "", err
+		return "", asTypeScopeMiss(err)
 	}
 	if obj == nil {
-		return "", fmt.Errorf("object not found")
+		return "", errTypeScopeTargetNotFound
 	}
 	return obj.Type, nil
 }
@@ -5260,7 +5325,8 @@ func (s *Service) outOfScopeRelationshipEndpoint(ctx context.Context, projectID 
 
 // lookupObjectTypeIncludingDeleted is lookupObjectType for a possibly
 // soft-deleted object, needed by the entity-restore gate (which must see the
-// type of the deleted row being restored).
+// type of the deleted row being restored). It reports a missing row as
+// errTypeScopeTargetNotFound, like lookupObjectType.
 func (s *Service) lookupObjectTypeIncludingDeleted(ctx context.Context, projectID string, entityID uuid.UUID) (string, error) {
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
@@ -5268,10 +5334,10 @@ func (s *Service) lookupObjectTypeIncludingDeleted(ctx context.Context, projectI
 	}
 	obj, err := s.graphService.GetByIDIncludingDeleted(ctx, projectUUID, entityID)
 	if err != nil {
-		return "", err
+		return "", asTypeScopeMiss(err)
 	}
 	if obj == nil {
-		return "", fmt.Errorf("object not found")
+		return "", errTypeScopeTargetNotFound
 	}
 	return obj.Type, nil
 }
@@ -5412,7 +5478,16 @@ func (s *Service) updateEntityOne(ctx context.Context, projectUUID uuid.UUID, pr
 
 	scope := TypeScopeFromContext(ctx)
 	writeRules := AgentWriteRulesFromContext(ctx)
-	if typ, lerr := s.lookupObjectType(ctx, projectID, entityID); lerr == nil {
+	// The type-scope check is an authorization control, so a lookup fault must
+	// fail closed instead of skipping it (#930). A genuine miss returns
+	// found=false and falls through to Patch, which reports the 404 as before.
+	typ, found, lerr := typeForScopeGate(func() (string, error) {
+		return s.lookupObjectType(ctx, projectID, entityID)
+	})
+	if lerr != nil {
+		return nil, lerr
+	}
+	if found {
 		if !scope.AllowsObject(typ) {
 			return nil, toolForbiddenf("update entity: object type is not allowed for this agent's scope")
 		}
@@ -5643,7 +5718,16 @@ func (s *Service) deleteEntityOne(ctx context.Context, projectUUID uuid.UUID, pr
 
 	writeRules := AgentWriteRulesFromContext(ctx)
 	scope := TypeScopeFromContext(ctx)
-	if typ, lerr := s.lookupObjectType(ctx, projectID, entityID); lerr == nil {
+	// Fail closed on a lookup fault: skipping the scope check on a store error
+	// would authorize a delete the agent's allowlist forbids (#930). A miss
+	// falls through to Delete, which reports the 404 as before.
+	typ, found, lerr := typeForScopeGate(func() (string, error) {
+		return s.lookupObjectType(ctx, projectID, entityID)
+	})
+	if lerr != nil {
+		return uuid.Nil, lerr
+	}
+	if found {
 		if !scope.AllowsObject(typ) {
 			return uuid.Nil, toolForbiddenf("delete entity: object type is not allowed for this agent's scope")
 		}
@@ -5973,13 +6057,21 @@ func (s *Service) executeRestoreEntity(ctx context.Context, projectID string, ar
 
 	// Scope gate: restoring echoes the object (incl. its type), so a scoped agent
 	// must not restore an object whose type is outside its allowlist. The row is
-	// soft-deleted, so the include-deleted lookup is required; a lookup error
-	// falls through to Restore, which reports not-found/not-deleted as before.
+	// soft-deleted, so the include-deleted lookup is required.
+	//
+	// A lookup fault refuses the restore (#930): falling through would let a
+	// store error skip the gate and restore an out-of-scope object. A genuine
+	// miss still falls through to Restore, which reports not-found/not-deleted
+	// as before.
 	scope := TypeScopeFromContext(ctx)
-	if typ, lerr := s.lookupObjectTypeIncludingDeleted(ctx, projectID, entityID); lerr == nil {
-		if !scope.AllowsObject(typ) {
-			return nil, toolForbiddenf("restore entity: object type is not allowed for this agent's scope")
-		}
+	typ, found, lerr := typeForScopeGate(func() (string, error) {
+		return s.lookupObjectTypeIncludingDeleted(ctx, projectID, entityID)
+	})
+	if lerr != nil {
+		return nil, lerr
+	}
+	if found && !scope.AllowsObject(typ) {
+		return nil, toolForbiddenf("restore entity: object type is not allowed for this agent's scope")
 	}
 
 	// Restore patches the version chain of the row it is given, and a chain
@@ -8151,8 +8243,9 @@ func parseJournalSince(s string) (time.Time, error) {
 // receive the session ID via a [Session: <id>] prompt tag can pass it explicitly.
 //
 // In addition to updating the session record (kb.sessions.title), it also
-// patches the session's graph object Properties.title so external integrations that
-// read sessions via the graph API (GET /api/graph/objects/:id) see the updated title.
+// patches the session's graph object `name` column — the only title carrier
+// (#824) — so external integrations that read sessions via the graph API
+// (GET /api/graph/objects/:id) see the updated title.
 func (s *Service) executeSetSessionTitle(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	title, _ := args["title"].(string)
 	if title == "" {

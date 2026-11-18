@@ -477,7 +477,8 @@ func TestTypeScope_FuzzySuggestionsNoExcludedType(t *testing.T) {
 	svc := &Service{db: db}
 
 	pid := uuid.MustParse(projectID)
-	suggestions := svc.suggestEntityKeysByFuzzy(ctx, pid, "shared-missing", 10)
+	suggestions, err := svc.suggestEntityKeysByFuzzy(ctx, pid, "shared-missing", 10)
+	require.NoError(t, err)
 	require.NotEmpty(t, suggestions)
 	for _, s := range suggestions {
 		assert.NotContains(t, s, "Person", "suggestion must not leak excluded type")

@@ -24,9 +24,13 @@ type RelationshipType struct {
 
 // NodeDetail holds data for the right panel when a node is selected.
 type NodeDetail struct {
-	ID         string          `json:"id"`
-	Type       string          `json:"type"`
-	TypeColor  string          `json:"type_color"`
+	ID        string `json:"id"`
+	Type      string `json:"type"`
+	TypeColor string `json:"type_color"`
+	// Name is the object's stored title (the `name` column), empty when it is
+	// nameless (#824). The panel renders a dash in that case rather than the
+	// graph's synthesized `type + short id` label, which would read like a stored
+	// name under a "Name" heading.
 	Name       string          `json:"name"`
 	Key        string          `json:"key"`
 	Labels     []string        `json:"labels"`
