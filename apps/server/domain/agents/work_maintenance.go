@@ -580,6 +580,16 @@ func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead) 
 	if skipUnassignedIssue(h.Type, h.Assignee) {
 		return
 	}
+	// An issue another lane claimed stays with that lane: the reconciler scans
+	// every ready-status object, so without this it would re-dispatch the coding
+	// agent on an issue a peer session owns (emergent.memory #990/#987).
+	if skipForeignIssueClaim(h.Type, h) {
+		rc.log.Info("skipping reconciled work object: issue claimed by another lane",
+			slog.String("canonical_id", h.CanonicalID),
+			slog.String("object_type", h.Type),
+		)
+		return
+	}
 	agents, err := rc.repo.FindReactionAgentsForType(ctx, h.ProjectID, h.Type, h.Assignee)
 	if err != nil {
 		rc.log.Warn("failed to resolve listening agents", slog.String("canonical_id", h.CanonicalID), slog.String("error", err.Error()))
