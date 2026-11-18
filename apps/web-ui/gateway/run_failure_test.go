@@ -119,6 +119,7 @@ func TestRunFailureTextRedactsSecrets(t *testing.T) {
 	openAIKey := "sk-" + strings.Repeat("b", 30)
 	stripeLive := "sk_" + "live_" + strings.Repeat("d", 24)
 	stripeRestricted := "rk_" + "test_" + strings.Repeat("e", 24)
+	jwt := strings.Join([]string{"eyJhbGciOiJIUzI1NiJ9", "eyJzdWIiOiIxMjM0NTY3ODkwIn0", "abcdefghijklmnop"}, ".")
 	cases := []struct {
 		name string
 		msg  string
@@ -136,7 +137,7 @@ func TestRunFailureTextRedactsSecrets(t *testing.T) {
 		{"query api_key", "https://x.test/cb?API_KEY=abc123&x=1", []string{"abc123"}, "https://x.test/cb?API_KEY=[redacted]&x=1"},
 		{"stripe live key", "billing said " + stripeLive, []string{stripeLive}, "billing said [redacted]"},
 		{"stripe restricted key", "billing said " + stripeRestricted, []string{stripeRestricted}, "billing said [redacted]"},
-		{"jwt", "bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop", []string{"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop"}, "bearer [redacted]"},
+		{"jwt", "bearer " + jwt, []string{jwt}, "bearer [redacted]"},
 	}
 	for _, c := range cases {
 		got := runFailureText("failed", strPtr(c.msg), nil, nil)
