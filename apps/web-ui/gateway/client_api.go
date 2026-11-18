@@ -97,12 +97,6 @@ func (s *Server) listSessions(c echo.Context) error {
 		captureError(qErr)
 		questions = nil
 	}
-	// A child is only nested while its parent is in this same list. An orphan
-	// promoted to a root keeps its own run state, mirroring the rail.
-	visible := make(map[string]bool, len(list.Conversations))
-	for _, conv := range list.Conversations {
-		visible[conv.ID] = true
-	}
 	summaries := make([]sessionSummary, len(list.Conversations))
 	runConcurrently(len(list.Conversations), func(i int) {
 		conv := list.Conversations[i]
@@ -115,7 +109,6 @@ func (s *Server) listSessions(c echo.Context) error {
 			ParentConversationID: conv.ParentConversationID,
 			Bucket:               runBucketDone,
 		}
-		nested := conv.ParentConversationID != "" && visible[conv.ParentConversationID]
 		if conv.CreatedAt != "" {
 			sm.StartedAt = &conv.CreatedAt
 		}
@@ -135,31 +128,14 @@ func (s *Server) listSessions(c echo.Context) error {
 			if p := sessionPreview(items); p != "" {
 				sm.Preview = &p
 			}
-			if nested {
-				// The rail never loads a nested sub-chat's transcript for its
-				// badge (ui.go); pending decisions alone decide the state.
-				for _, a := range approvals {
-					if a.ConversationID == conv.ID && a.Decision == "pending" {
-						sm.PendingApprovals++
-					}
-				}
-				for _, q := range questions {
-					if q.ConversationID == conv.ID && (q.Response == nil || *q.Response == "") {
-						sm.PendingQuestions++
-					}
-				}
-				if sm.PendingApprovals > 0 || sm.PendingQuestions > 0 {
-					sm.Bucket = runBucketNeedsInput
-				}
-			} else {
-				st := runStateFromTimeline(items, approvals, questions, func(a ToolApprovalItem) bool {
-					return a.ConversationID == conv.ID
-				})
-				sm.Bucket = st.bucket
-				sm.Failure = st.failure
-				sm.PendingApprovals = len(st.pendingApprovals)
-				sm.PendingQuestions = len(st.pendingQuestions)
-			}
+			st := runStateFromTimeline(items, approvals, questions, func(a ToolApprovalItem) bool {
+				return a.ConversationID == conv.ID
+			})
+			addPendingQuestions(st, conv.ID, questions)
+			sm.Bucket = st.bucket
+			sm.Failure = st.failure
+			sm.PendingApprovals = len(st.pendingApprovals)
+			sm.PendingQuestions = len(st.pendingQuestions)
 		}
 		// history fetch failure: keep zeros, nil preview and the "done" bucket
 		summaries[i] = sm

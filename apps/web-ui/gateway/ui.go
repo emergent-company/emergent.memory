@@ -927,51 +927,40 @@ func (s *Server) chatRailData(ctx context.Context, includeArchived bool) (agents
 		captureError(qErr)
 		questions = nil
 	}
-	// Nested sub-chats are internal loopback sessions. Their transcript is not
-	// shown until the group is opened, so fetching one history per child would
-	// multiply the rail's request count for badges nobody sees (17 sub-chats in
-	// one observed chat). Pending approvals and questions are already in the
-	// project-wide snapshots, so badge those without loading a transcript; an
-	// orphan promoted to a root is not nested and keeps the full state fetch.
-	visible := make(map[string]bool, len(convs.Conversations))
-	for _, c := range convs.Conversations {
-		visible[c.ID] = true
-	}
-	isSubchat := make(map[string]bool, len(convs.Conversations))
-	for _, c := range convs.Conversations {
-		if c.ParentConversationID != "" && visible[c.ParentConversationID] {
-			isSubchat[c.ID] = true
-		}
-	}
+	// Every conversation — including a nested sub-chat — gets the same state
+	// fetch so its failure reason is visible. The fan-out is bounded by
+	// runConcurrently, and a failed history fetch falls back to the
+	// project-wide pending-decision snapshots rather than dropping the badge.
+	states := make([]*conversationRunState, len(convs.Conversations))
+	stateErrs := make([]error, len(convs.Conversations))
+	runConcurrently(len(convs.Conversations), func(i int) {
+		states[i], stateErrs[i] = s.conversationState(ctx, convs.Conversations[i].ID, approvals, questions)
+	})
 	for i := range convs.Conversations {
 		c := &convs.Conversations[i]
-		if isSubchat[c.ID] {
-			for _, a := range approvals {
-				if a.ConversationID == c.ID && a.Decision == "pending" {
-					c.PendingApprovals++
-				}
-			}
-			for _, q := range questions {
-				if q.ConversationID == c.ID && (q.Response == nil || *q.Response == "") {
-					c.PendingQuestions++
-				}
-			}
-			if c.PendingApprovals > 0 || c.PendingQuestions > 0 {
-				c.Bucket = runBucketNeedsInput
-			} else {
-				c.Bucket = runBucketDone
-			}
+		if st := states[i]; st != nil && stateErrs[i] == nil {
+			c.Bucket = st.bucket
+			c.Failure = st.failure
+			c.PendingApprovals = len(st.pendingApprovals)
+			c.PendingQuestions = len(st.pendingQuestions)
 			continue
 		}
-		st, serr := s.conversationState(ctx, c.ID, approvals, questions)
-		if serr != nil {
+		// Fallback: keep the pending badges from the project-wide snapshots.
+		for _, a := range approvals {
+			if a.ConversationID == c.ID && a.Decision == "pending" {
+				c.PendingApprovals++
+			}
+		}
+		for _, q := range questions {
+			if q.ConversationID == c.ID && (q.Response == nil || *q.Response == "") {
+				c.PendingQuestions++
+			}
+		}
+		if c.PendingApprovals > 0 || c.PendingQuestions > 0 {
+			c.Bucket = runBucketNeedsInput
+		} else {
 			c.Bucket = runBucketDone
-			continue
 		}
-		c.Bucket = st.bucket
-		c.Failure = st.failure
-		c.PendingApprovals = len(st.pendingApprovals)
-		c.PendingQuestions = len(st.pendingQuestions)
 	}
 	schedRuns = s.chatScheduledRuns(ctx, appearances)
 	shared = s.chatSharedSessions(ctx)

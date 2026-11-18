@@ -570,9 +570,37 @@ func (s *Server) conversationState(ctx context.Context, id string, approvals []T
 	if err != nil {
 		return nil, err
 	}
-	return runStateFromTimeline(parseTimeline(hist.Items), approvals, questions, func(a ToolApprovalItem) bool {
+	st := runStateFromTimeline(parseTimeline(hist.Items), approvals, questions, func(a ToolApprovalItem) bool {
 		return a.ConversationID == id
-	}), nil
+	})
+	addPendingQuestions(st, id, questions)
+	return st, nil
+}
+
+// addPendingQuestions folds unanswered project-wide questions into the state.
+// runStateFromTimeline can only infer pending questions from an ask_user tool
+// call; older/other producers leave a question row without that call, and the
+// rail still needs its badge.
+func addPendingQuestions(st *conversationRunState, conversationID string, questions []AgentQuestionItem) {
+	if st == nil {
+		return
+	}
+	seen := make(map[string]bool, len(st.pendingQuestions))
+	for _, id := range st.pendingQuestions {
+		seen[id] = true
+	}
+	for _, q := range questions {
+		if q.ConversationID != conversationID || seen[q.ID] {
+			continue
+		}
+		if q.Response == nil || *q.Response == "" {
+			st.pendingQuestions = append(st.pendingQuestions, q.ID)
+			seen[q.ID] = true
+		}
+	}
+	// The snapshot may have added a question after runStateFromTimeline derived
+	// the bucket; recompute so a question-only child still badges needs_input.
+	st.bucket = deriveRunBucket(st.activeRunStatus, st.pendingApprovals, st.pendingQuestions)
 }
 
 // runState derives the same change-detection state as conversationState, but
