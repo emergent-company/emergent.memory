@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -155,5 +156,25 @@ func TestClientIssueClaimOperations(t *testing.T) {
 	}
 	if len(calls) != 7 {
 		t.Fatalf("calls = %#v", calls)
+	}
+}
+
+func TestGetCommitAllowsLargeCommitPayload(t *testing.T) {
+	patch := strings.Repeat("x", (1<<20)+4096)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"sha":    "head-sha",
+			"commit": map[string]any{"message": "merge"},
+			"files":  []map[string]any{{"filename": "big.go", "status": "modified", "additions": 1, "deletions": 0, "patch": patch}},
+		})
+	}))
+	defer server.Close()
+
+	diff, err := NewClient(server.URL, "ghs_test", server.Client()).GetCommit(context.Background(), "owner/repo", "head-sha")
+	if err != nil {
+		t.Fatalf("GetCommit large payload: %v", err)
+	}
+	if len(diff.Files) != 1 || diff.Files[0].Filename != "big.go" {
+		t.Fatalf("diff = %#v", diff)
 	}
 }
