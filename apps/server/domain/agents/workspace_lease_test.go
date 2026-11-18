@@ -239,7 +239,7 @@ func TestProvisionWorkspace_SharedLeaseSkipsProvisioning(t *testing.T) {
 	var res *sandbox.ProvisioningResult
 	require.NotPanics(t, func() {
 		var err error
-		res, err = ae.provisionWorkspace(context.Background(), "run-child", ExecuteRequest{
+		res, err = ae.provisionWorkspace(context.Background(), "run-child", &ExecuteRequest{
 			AgentDefinition: sandboxedDefinition(),
 			ProjectID:       "proj-1",
 			WorkspaceLease:  &sandbox.WorkspaceLease{Workspace: ws, OwnerRunID: "run-parent"},
@@ -256,7 +256,7 @@ func TestProvisionWorkspace_SharedLeaseSkipsProvisioning(t *testing.T) {
 func TestProvisionWorkspace_SharedLeaseRequiresDelegateSandbox(t *testing.T) {
 	ae := newSharedTestExecutor()
 
-	res, err := ae.provisionWorkspace(context.Background(), "run-child", ExecuteRequest{
+	res, err := ae.provisionWorkspace(context.Background(), "run-child", &ExecuteRequest{
 		AgentDefinition: &AgentDefinition{ID: "def-nosandbox"},
 		ProjectID:       "proj-1",
 		WorkspaceLease:  &sandbox.WorkspaceLease{Workspace: sharedTestWorkspace(), OwnerRunID: "run-parent"},

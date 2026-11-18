@@ -1475,7 +1475,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	stopHeartbeat := ae.repo.StartRunHeartbeat(run.ID, defaultRunHeartbeatInterval)
 	defer stopHeartbeat()
 
-	wsResult, wsErr = ae.provisionWorkspace(ctx, run.ID, req)
+	wsResult, wsErr = ae.provisionWorkspace(ctx, run.ID, &req)
 	if wsErr != nil {
 		// Fatal provisioning failure (e.g. image not ready) — fail the run
 		errMsg := wsErr.Error()
@@ -1701,7 +1701,7 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 	stopHeartbeat := ae.repo.StartRunHeartbeat(run.ID, defaultRunHeartbeatInterval)
 	defer stopHeartbeat()
 
-	wsResult, wsErr = ae.provisionWorkspace(ctx, run.ID, req)
+	wsResult, wsErr = ae.provisionWorkspace(ctx, run.ID, &req)
 	if wsErr != nil {
 		errMsg := wsErr.Error()
 		_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, errMsg, 0)
@@ -2141,7 +2141,7 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	stopHeartbeat := ae.repo.StartRunHeartbeat(newRun.ID, defaultRunHeartbeatInterval)
 	defer stopHeartbeat()
 
-	wsResult, wsErr = ae.provisionWorkspace(ctx, newRun.ID, req)
+	wsResult, wsErr = ae.provisionWorkspace(ctx, newRun.ID, &req)
 	if wsErr != nil {
 		errMsg := wsErr.Error()
 		_ = ae.repo.FailRunWithSteps(dbCtx, newRun.ID, errMsg, priorRun.StepCount)
@@ -2612,13 +2612,56 @@ func sharedWorkspaceResult(lease *sandbox.WorkspaceLease, def *AgentDefinition) 
 // Returns (result, nil) on success or degraded provisioning.
 // Returns (nil, error) for fatal pre-provisioning failures (e.g. image not ready) —
 // callers must fail the run with RunStatusError.
-func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, req ExecuteRequest) (*sandbox.ProvisioningResult, error) {
+// applySourceGitCredential mints the triggering source's short-lived GitHub
+// App token and exposes it only to this run's sandbox environment. The source
+// credential wins over deployment git-token fallbacks for clone and push.
+func (ae *AgentExecutor) applySourceGitCredential(ctx context.Context, req *ExecuteRequest) error {
+	if ae == nil || ae.sourceCredentials == nil || req == nil || req.AgentDefinition == nil || len(req.AgentDefinition.SandboxConfig) == 0 {
+		return nil
+	}
+	if req.EnvVars != nil && req.EnvVars["GH_TOKEN"] != "" {
+		return nil
+	}
+	sourceID, _ := req.TriggerMetadata["sourceId"].(string)
+	repo, _ := req.TriggerMetadata["repo"].(string)
+	if (sourceID == "" || repo == "") && ae.workObjects != nil {
+		if canonicalID, _ := req.TriggerMetadata["subjectObjectId"].(string); canonicalID != "" {
+			if head, err := ae.workObjects.GetHeadObject(ctx, req.ProjectID, canonicalID); err == nil && head != nil && head.Properties != nil {
+				if sourceID == "" {
+					sourceID, _ = head.Properties["source_id"].(string)
+				}
+				if repo == "" {
+					repo, _ = head.Properties["repo"].(string)
+				}
+			}
+		}
+	}
+	if sourceID == "" || repo == "" {
+		return nil
+	}
+	token, err := ae.sourceCredentials.MintSourceCredential(ctx, req.ProjectID, sourceID, repo, map[string]string{
+		"contents": "write", "pull_requests": "write", "issues": "write", "checks": "read",
+	})
+	if err != nil {
+		return fmt.Errorf("mint source git credential: %w", err)
+	}
+	if req.EnvVars == nil {
+		req.EnvVars = map[string]string{}
+	}
+	req.EnvVars["GH_TOKEN"] = token
+	return nil
+}
+
+func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, req *ExecuteRequest) (*sandbox.ProvisioningResult, error) {
 	// Check preconditions: feature enabled, provisioner available, definition has workspace config
 	if !ae.wsEnabled || ae.provisioner == nil {
 		return nil, nil
 	}
 	if req.AgentDefinition == nil || len(req.AgentDefinition.SandboxConfig) == 0 {
 		return nil, nil
+	}
+	if err := ae.applySourceGitCredential(ctx, req); err != nil {
+		return nil, err
 	}
 
 	// Shared-sandbox path: a delegating run handed us a lease on its live
