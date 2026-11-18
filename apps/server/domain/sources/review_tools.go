@@ -36,6 +36,13 @@ const (
 	maxPatchBytes = 6000
 	maxDiffBytes  = 200000
 
+	// maxDiffMessageBytes bounds the commit message that commit mode carries in
+	// its result header. The message is attacker-controlled on a fork pull
+	// request and is charged against the same text budget as the patch, so an
+	// unbounded message is rendered in full while the change itself is cut --
+	// the reader would see only the message and none of the diff (#1037).
+	maxDiffMessageBytes = 2000
+
 	// githubCommitFileListCap is the maximum number of changed files GitHub's
 	// commit endpoint lists; a commit at the cap may hide more files.
 	githubCommitFileListCap = 300
@@ -514,7 +521,7 @@ func (h *ReviewToolHandler) executeCommitDiff(ctx context.Context, client *githu
 		return nil, apperror.NewValidationf("github app tool: commit %s has an empty diff (its tree matches its first parent); pass the pull request number to read the reviewed pull request's diff",
 			headSHA)
 	}
-	header := fmt.Sprintf("commit %s\n%s", diff.SHA, strings.TrimSpace(diff.Message))
+	header := fmt.Sprintf("commit %s\n%s", diff.SHA, truncateUTF8(strings.TrimSpace(diff.Message), maxDiffMessageBytes))
 	_, result, err := h.renderBounded(ctx, diff.SHA, header, diff.Files, selection, len(diff.Files) >= githubCommitFileListCap)
 	if err != nil {
 		return nil, err
@@ -965,12 +972,20 @@ func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *git
 	if state.HeadSHA != headSHA {
 		return nil, apperror.NewValidationf("github app tool: PR head is %s, not the reviewed %s; re-review the new head", state.HeadSHA, headSHA)
 	}
-	// Same-run binding: the verdict may only name a pull request head whose
+	// Same-run binding: a MERGE verdict may only name a pull request head whose
 	// non-empty diff this run read in full through github-pr-diff. A prompt
 	// injection in PR text cannot make the agent approve a change it never
 	// fetched. Evidence is keyed on (repo, number, head SHA) because the reviewed
 	// object is the pull request, not one commit's first-parent diff (#1022).
-	if !mcp.RunHasEvidence(ctx, diffEvidenceKey(repo, number, headSHA)) {
+	//
+	// CHANGES_REQUESTED is deliberately exempt. Requiring full evidence for a
+	// rejection turns a review into a permanent block: a diff containing a file
+	// GitHub will not return (binary, over its patch limit) can never be read in
+	// full, so the agent could neither approve nor reject, and the gate hung
+	// in_progress exactly as #1022 did (#1037). A rejection cannot authorize
+	// anything -- it moves the gate to its terminal changes_requested state --
+	// so the fail-closed rule belongs on the approving verdict alone.
+	if verdict == "MERGE" && !mcp.RunHasEvidence(ctx, diffEvidenceKey(repo, number, headSHA)) {
 		if err := h.requireCompleteDiffRead(ctx, client, projectID, repo, number, headSHA); err != nil {
 			return nil, err
 		}
@@ -1075,11 +1090,28 @@ func (h *ReviewToolHandler) requireCompleteDiffRead(ctx context.Context, client 
 	if len(files) >= githubPRFileListCap {
 		return apperror.NewValidationf("github app tool: pull request %s#%d lists %d changed files, GitHub's listing cap (pagination bound); files beyond it cannot be read, so the diff cannot be certified complete", repo, number, len(files))
 	}
+	budget := h.diffTextBudget()
 	unread := make([]string, 0)
+	unreadable := make([]string, 0)
 	for _, file := range files {
-		if !mcp.RunHasEvidence(ctx, diffFileEvidenceKey(repo, number, headSHA, file.Filename)) {
-			unread = append(unread, file.Filename)
+		if mcp.RunHasEvidence(ctx, diffFileEvidenceKey(repo, number, headSHA, file.Filename)) {
+			continue
 		}
+		unread = append(unread, file.Filename)
+		// No re-read can produce the content of these files: GitHub withholds it
+		// entirely for a binary file and for a diff over its patch limit, and a
+		// patch longer than this tool's whole-result budget cannot be rendered even
+		// as a single-file selection. Waiting for evidence that can never arrive is
+		// what left the gate in_progress for ever (#1037).
+		if patchWithheld(file) || len(file.Patch) > budget {
+			unreadable = append(unreadable, file.Filename)
+		}
+	}
+	if len(unreadable) > 0 {
+		reason := fmt.Sprintf("pull request %s#%d at head %s changes %s, whose content GitHub does not return (binary file, patch over GitHub's limit, or a patch larger than this tool can render); no re-read can produce it, so no verdict can be recorded for this head",
+			repo, number, headSHA, summarizedNames(unreadable))
+		h.markHeadUnapprovable(ctx, client, projectID, repo, number, headSHA, reason)
+		return apperror.NewValidationf("github app tool: %s", reason)
 	}
 	if len(unread) > 0 {
 		return apperror.NewValidationf("github app tool: the github-pr-diff result for %s#%d@%s was truncated or partial; this run did not fully read %s. Re-fetch each of those files with github-pr-diff path=<file> (or files=[...]) and read every changed file before submitting", repo, number, headSHA, summarizedNames(unread))
