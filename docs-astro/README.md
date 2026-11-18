@@ -229,6 +229,39 @@ block it cannot parse is skipped; both counts are zero today. Neither is
 "converted" — the only form it leaves alone by design is a `--8<--` snippet, and
 no page under `docs/site` uses one today.
 
+### The port cannot silently lag
+
+`src/content/docs/` is committed, so the port is a *snapshot*: without a gate, a
+PR that edits only `docs/site` builds green in both sites and the published
+(Astro) site keeps the previous text (#954). `scripts/port_mkdocs.py --check` is
+that gate. It ports into a temp directory, diffs the result against the tree and
+exits non-zero naming every page that is:
+
+| Finding | Meaning |
+|---|---|
+| `stale` | the MDX differs from a fresh port — behind `docs/site`, or hand-edited |
+| `missing` | the port generates the page but the tree has no such file |
+| `orphan` | the tree has the page and the port would not generate it, and it is not one of the five hand-written pages |
+
+`docs/site` is the source, so the remedy is always **`npm run shots:port`**, never
+editing the MDX — a hand edit fails the check too. The hand-written pages are
+excluded by name (`HAND_WRITTEN` in the script), which is why a page dropped from
+`PAGES` is reported as an orphan instead of being quietly accepted.
+
+The gate is `scripts/preflight/docs-port.sh`, registered in
+`scripts/preflight/all.sh` — which the branch-protection-required `ci` job runs,
+and so does the local preflight lane, so the person editing `docs/site` sees it
+before pushing. It runs on every PR rather than being path-filtered: the check is
+~0.3 s of stdlib `python3` (plus ~1 s for the self-test), it reads only committed
+files — the screenshot manifest, not the images — so it needs no Node or npm, and
+it fails closed when the converter is missing.
+
+```bash
+cd docs-astro
+npm run docs:check   # python3 scripts/port_mkdocs.py --check
+npm run docs:test    # its built-in fixtures (clean, hand edit, delete, orphan, source-ahead)
+```
+
 ## Getting Started — the one place the POC changes the IA
 
 The MkDocs site opens the User Guide with a single `getting-started.md` that
