@@ -7,6 +7,7 @@ import {
   createExternalIssue,
   setIssueState,
   expectCardTitle,
+  expectCardStatus,
 } from '../../helpers/workflow-lab';
 
 test.describe.configure({ mode: 'serial' });
@@ -32,15 +33,18 @@ test.describe('workflow lab board', () => {
     const board = page.getByTestId('work-board');
     await expect(board).toBeVisible();
 
-    const matrix = board.locator('div.overflow-x-auto').first();
+    // The board renders one matrix per object type and a narrow-screen lane
+    // fallback for the same item. Scope to the matrix that contains the fixture
+    // card, then use its desktop card (the first in DOM order).
+    const card = board.getByTestId(`work-card-${workflowObjectId}`).first();
+    await expect(card).toBeVisible();
+    const matrix = card.locator('xpath=ancestor::div[contains(@class,"overflow-x-auto")][1]');
     await expect(matrix).toBeVisible();
     expect(await matrix.evaluate((el) => getComputedStyle(el).overflowX)).toBe('auto');
     const first = matrix.locator('.sticky.left-0').first();
     await expect(first).toBeVisible();
     expect(await first.evaluate((el) => getComputedStyle(el).position)).toBe('sticky');
 
-    const card = matrix.getByTestId(`work-card-${workflowObjectId}`);
-    await expect(card).toBeVisible();
     await expect(card.getByText('blocked', { exact: true })).toBeVisible();
     await expect(card.getByRole('button', { name: /clear|unblock/i })).toHaveCount(0);
     await expect(card.getByPlaceholder(/optional note/i)).toHaveCount(0);
@@ -54,10 +58,9 @@ test.describe('workflow lab board', () => {
     await expectCardTitle(page, title);
 
     await setIssueState(issue.number, 'closed');
-    await page.reload();
-    await expect(page.getByText(title, { exact: false })).toHaveCount(0);
+    await expectCardStatus(page, title, 'cancelled');
 
     await setIssueState(issue.number, 'open');
-    await expectCardTitle(page, title);
+    await expectCardStatus(page, title, 'ready');
   });
 });
