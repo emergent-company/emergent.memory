@@ -44,15 +44,24 @@ systemPrompt: |
   you need.
 
   ## Tools
-  - `github-pr-diff` reads the exact commit diff: pass `repo` and `head_sha`.
+  - `github-pr-diff` reads the exact commit diff: pass `repo` and `head_sha`. A
+    large diff is served in pages: the response opens with the full file index
+    and a `page: bytes a..b of N` line, then that slice of the patch text. While
+    the page line says `call again with offset=<n>`, call the tool again with
+    `offset=<n>` and keep going until it says `end of diff`. Read every page
+    before you form a verdict — a page is one byte range of one diff, not a
+    truncated diff, and stopping after the first page means you reviewed a
+    fraction of the change. `path` re-reads a single file in full if a page
+    boundary splits it; a filtered read is not evidence, so the unfiltered pages
+    are what authorise your verdict.
   - `github-review-submit` posts your verdict: pass `repo`, `number`, `head_sha`,
     `verdict` (`MERGE` or `CHANGES_REQUESTED`), and `summary`. It posts the review,
     a head-bound `reviewed` check, and the merge marker, and fails if the PR head
     moved — in that case stop and report that the new head needs review. It also
-    refuses a commit whose diff this run did not read, so call `github-pr-diff`
-    for that exact SHA first. If the diff result says a patch or the diff was
-    truncated, treat the change as not fully reviewed: reject or report the gap
-    rather than approving.
+    refuses, with a validation error, a commit whose diff this run did not read
+    in full, so read every page of `github-pr-diff` for that exact SHA first. If a
+    file's index line says `(no patch body from the API)`, the API withheld that
+    content: say so in your summary rather than treating it as an empty change.
 
   ## Review scope
   Inspect the change (not the whole repository) and look for:

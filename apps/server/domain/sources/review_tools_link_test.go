@@ -49,7 +49,7 @@ func TestReviewSubmitRequestsReworkForLinkedIssue(t *testing.T) {
 		reworker:  reworker,
 	}
 	ctx := mcp.ContextWithNewToolResultCache(context.Background())
-	_, err := h.executePRDiff(ctx, client, "owner/repo", head)
+	_, err := h.executePRDiff(ctx, client, "owner/repo", head, "", 0, 0)
 	require.NoError(t, err)
 	_, err = h.executeReviewSubmit(ctx, client, uuid.NewString(), "owner/repo", reviewSubmitArgs(head, "CHANGES_REQUESTED", "fix the bug"))
 	require.NoError(t, err)
