@@ -15,7 +15,7 @@ func runFailureText(errorMessage *string, failureClass *string) string {
 	}
 	if failureClass != nil {
 		if class := strings.TrimSpace(*failureClass); class != "" {
-			return "Failure: " + humanRunToken(class)
+			return humanRunToken(class) + " failure"
 		}
 	}
 	return ""

@@ -451,7 +451,7 @@ func TestScheduleRunSubtitleShowsFailureReason(t *testing.T) {
 		ID: "r2", Status: "failed", StartedAt: started, CompletedAt: &completed,
 		FailureClass: strPtr("deterministic"),
 	}
-	if got := scheduleRunSubtitle(withClass); !strings.Contains(got, "Failure: Deterministic") {
+	if got := scheduleRunSubtitle(withClass); !strings.Contains(got, "Deterministic failure") {
 		t.Errorf("failure-class subtitle = %q, want the humanised class", got)
 	}
 }
