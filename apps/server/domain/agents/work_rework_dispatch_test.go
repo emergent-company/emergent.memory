@@ -110,10 +110,16 @@ func TestRequestChanges_OwnerNotDoubleDispatched(t *testing.T) {
 	requireRunCarriesFeedback(t, ctx, repo, res.RunID)
 }
 
-// TestRequestChanges_SecondAgentStillDispatches verifies the suppression is
-// owner-scoped: a second work agent that also declares the revision status is
-// still dispatched, because its id differs from the payload's rework_agent_id.
-func TestRequestChanges_SecondAgentStillDispatches(t *testing.T) {
+// TestRequestChanges_SecondAgentBlockedBySubjectClaim pins how owner-scoped
+// rework suppression combines with the one-live-run-per-subject invariant
+// (#992, migration 00315): the explicit feedback-carrying rework run holds the
+// subject's claim, so a second work agent that also declares the revision
+// status is refused as ErrWorkItemBusy rather than queueing a second run for
+// the same object. Before 00315 the index predicate matched no row, so the
+// duplicate dispatch this test used to expect was only possible because the
+// invariant was inert; the live-subject index test is
+// TestAgentRunLiveSubjectUniqueIndex.
+func TestRequestChanges_SecondAgentBlockedBySubjectClaim(t *testing.T) {
 	ctx, db, repo, gSvc, ts, projectID := setupReworkDispatch(t)
 	ownerID := insertReworkListeningAgent(t, db, ctx, repo, ts, projectID, "researcher", reworkWorkConfig)
 	secondID := insertReworkListeningAgent(t, db, ctx, repo, ts, projectID, "designer", reworkWorkConfig)
@@ -142,8 +148,10 @@ func TestRequestChanges_SecondAgentStillDispatches(t *testing.T) {
 	assertQueuedRunsSettled(t, ctx, db, ownerID, canonicalID, 1)
 	requireRunCarriesFeedback(t, ctx, repo, res.RunID)
 
-	// The second agent still gets its own status_changed dispatch.
-	assertQueuedRunsSettled(t, ctx, db, secondID, canonicalID, 1)
+	// The subject is claimed by that live run, so the second agent's
+	// status_changed dispatch is refused as a live-subject conflict (#992)
+	// instead of queueing a second run for the same object.
+	assertQueuedRunsSettled(t, ctx, db, secondID, canonicalID, 0)
 }
 
 // TestTransitionIntoTriggerStatus_DispatchesNormally verifies a plain
