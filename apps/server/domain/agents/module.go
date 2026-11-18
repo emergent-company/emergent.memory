@@ -143,6 +143,7 @@ func provideAgentExecutor(
 	notificationsSvc *notifications.Service,
 	log *slog.Logger,
 ) *AgentExecutor {
+	repo.SetBudgetGate(usageSvc, cfg.AgentSafeguards.BudgetEnforcementEnabled)
 	return NewAgentExecutor(modelFactory, toolPool, repo, skillRepo, embeddingsSvc, provisioner, cfg, sessionService, providerRepo, apiTokenSvc, usageSvc, eventsSvc, notificationsSvc, log)
 }
 

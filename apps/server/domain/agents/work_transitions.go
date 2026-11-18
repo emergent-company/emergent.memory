@@ -25,7 +25,20 @@ const (
 	FailureClassCapability    FailureClass = "capability"
 	FailureClassProtocol      FailureClass = "protocol"
 	FailureClassTimeout       FailureClass = "timeout"
+	// FailureClassBudget is a project spending-window block. It is neither the
+	// agent's fault nor the item's: it must not increment the agent failure
+	// counter (which auto-disables agents) nor consume the item failure budget.
+	FailureClassBudget FailureClass = "budget"
 )
+
+// isBudgetFailure reports whether err is a project budget-window block.
+func isBudgetFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	_, ok := errors.AsType[*BudgetExceededError](err)
+	return ok
+}
 
 // defaultWorkFailureLimit is the per-item failure budget applied when the agent
 // definition's workConfig does not set failureLimit.
@@ -89,6 +102,11 @@ func isCapabilityError(err error) bool {
 // classifyRunFailure maps a run's terminal outcome to a failure class.
 func classifyRunFailure(execErr error, result *ExecuteResult) FailureClass {
 	if execErr != nil {
+		// Budget is checked before quota: a budget gate may fail open and a
+		// provider quota message must not be mistaken for a project cap.
+		if isBudgetFailure(execErr) {
+			return FailureClassBudget
+		}
 		if isQuotaError(execErr) {
 			return FailureClassQuota
 		}
@@ -242,6 +260,16 @@ func (p *WorkerPool) finishWorkRun(ctx context.Context, log *slog.Logger, job *A
 	}
 
 	switch cls {
+	case FailureClassBudget:
+		// Budget block: nothing the agent or the item did wrong. Release the
+		// ready→in_progress claim so the item can be picked up once the window
+		// resets, and leave both the agent failure counter and the item failure
+		// budget untouched.
+		p.transitionToReady(ctx, log, canonicalID, projectID, subjectType, agentDef)
+		log.Warn("work run blocked by project budget; item returned to ready",
+			slog.String("canonical_id", canonicalID),
+			slog.String("project_id", projectID),
+		)
 	case FailureClassQuota:
 		// agent-level only: no item change, no item budget.
 		p.handleFailure(ctx, log, agent)

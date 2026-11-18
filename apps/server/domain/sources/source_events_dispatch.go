@@ -526,6 +526,15 @@ func (d *SourceEventDispatcher) processPullRequestSource(ctx context.Context, v 
 	}
 	run, err := d.agents.CreateRunQueued(ctx, trigger.AgentID.String(), 1, opts)
 	if err != nil {
+		// A budget block is not a delivery failure: no run exists to attach, so
+		// retire the claim and record the event as skipped with the reason. A
+		// later push (or the next fetch) is a fresh delivery and can dispatch
+		// once the window resets.
+		if _, ok := errors.AsType[*agents.BudgetExceededError](err); ok {
+			_, _ = d.repo.SetSourceEventClaimState(ctx, claim.ProjectID, claim.ID, SourceClaimCancelled)
+			d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventSkipped, nil, err)
+			return nil
+		}
 		_, _ = d.repo.SetSourceEventClaimState(ctx, claim.ProjectID, claim.ID, SourceClaimPending)
 		d.markEvent(ctx, src.ProjectID, ev.ID, SourceEventFailed, nil, err)
 		return fmt.Errorf("sources: enqueue source trigger: %w", err)
