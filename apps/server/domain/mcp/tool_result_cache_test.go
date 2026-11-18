@@ -349,39 +349,3 @@ func TestIsCacheableReadOnlyTool(t *testing.T) {
 		}
 	}
 }
-
-// TestRunEvidenceKeys pins the accumulating-evidence primitive: facts recorded
-// one increment at a time (a diff read page by page) are returned by prefix and
-// never leak a key the run did not record or across runs.
-func TestRunEvidenceKeys(t *testing.T) {
-	const prefix = "pages:repo@sha:"
-	ctx := ContextWithNewToolResultCache(context.Background())
-	MarkRunEvidence(ctx, prefix+"0:80000")
-	MarkRunEvidence(ctx, prefix+"80000:160000")
-	MarkRunEvidence(ctx, "other:repo@sha")
-
-	got := RunEvidenceKeys(ctx, prefix)
-	want := []string{prefix + "0:80000", prefix + "80000:160000"}
-	if len(got) != len(want) {
-		t.Fatalf("RunEvidenceKeys(%q) = %v, want %v", prefix, got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("RunEvidenceKeys(%q)[%d] = %q, want %q", prefix, i, got[i], want[i])
-		}
-	}
-
-	if keys := RunEvidenceKeys(context.Background(), prefix); len(keys) != 0 {
-		t.Fatalf("no run cache must yield no evidence, got %v", keys)
-	}
-	if keys := RunEvidenceKeys(ctx, ""); len(keys) != 0 {
-		t.Fatalf("empty prefix must yield nothing, got %v", keys)
-	}
-	if keys := RunEvidenceKeys(ctx, "absent:"); len(keys) != 0 {
-		t.Fatalf("absent prefix must yield nothing, got %v", keys)
-	}
-	other := ContextWithNewToolResultCache(context.Background())
-	if keys := RunEvidenceKeys(other, prefix); len(keys) != 0 {
-		t.Fatalf("evidence must not cross runs, got %v", keys)
-	}
-}

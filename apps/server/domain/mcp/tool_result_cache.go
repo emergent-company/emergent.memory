@@ -132,28 +132,6 @@ func RunHasEvidence(ctx context.Context, key string) bool {
 	return ok
 }
 
-// RunEvidenceKeys returns, in lexicographic order, every run-scoped evidence key
-// that carries prefix. Facts that accumulate by degree rather than existing at
-// all — "these byte ranges of a diff were read" — are recorded one key per
-// increment, and the caller folds them into a single fact itself. It is empty
-// when ctx carries no run cache.
-func RunEvidenceKeys(ctx context.Context, prefix string) []string {
-	c := toolResultCacheFromContext(ctx)
-	if c == nil || prefix == "" {
-		return nil
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	keys := make([]string, 0, len(c.evidence))
-	for key := range c.evidence {
-		if strings.HasPrefix(key, prefix) {
-			keys = append(keys, key)
-		}
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 // get returns a fresh copy of the cached result. Each entry is stored as
 // marshalled bytes so a hit can never alias a caller's mutable map/slice.
 func (c *ToolResultCache) get(key string) (*ToolResult, bool) {

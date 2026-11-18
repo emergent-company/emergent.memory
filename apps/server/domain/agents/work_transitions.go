@@ -483,6 +483,7 @@ func (p *WorkerPool) reenqueueWork(ctx context.Context, log *slog.Logger, agent 
 		TriggerMetadata:   meta,
 		Invocation:        inv,
 		SourceTriggerID:   sourceTriggerID,
+		SourceSubject:     workSourceSubject(head),
 	}
 	if inv != nil {
 		opts.Priority = inv.Priority

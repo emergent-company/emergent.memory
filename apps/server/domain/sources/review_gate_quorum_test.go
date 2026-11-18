@@ -75,6 +75,24 @@ func TestReviewGateAuthorUnknown(t *testing.T) {
 	require.False(t, reviewGateAuthorUnknown("GitHubIssue", nil), "only pull-request subjects use the bot-only quorum")
 }
 
+// TestReviewGateMinimumReviewersCappedByConfigured pins the deadlock fix: the
+// stored policy quorum (2 for a source-authored subject) is capped at the number
+// of configured reviewer agents, so a one-reviewer project is satisfiable while a
+// two-reviewer one still needs both.
+func TestReviewGateMinimumReviewersCappedByConfigured(t *testing.T) {
+	one := []ReviewReviewer{{AgentID: "a", Name: "review"}}
+	two := []ReviewReviewer{{AgentID: "a", Name: "review"}, {AgentID: "b", Name: "security"}}
+
+	require.Equal(t, 1, (&ReviewGate{MinReviewers: 2, RequiredReviewers: one}).minimumReviewers(),
+		"a quorum of two with one configured reviewer would stall forever")
+	require.Equal(t, 2, (&ReviewGate{MinReviewers: 2, RequiredReviewers: two}).minimumReviewers(),
+		"two configured reviewers keep the two-reviewer rule")
+	require.Equal(t, 1, (&ReviewGate{MinReviewers: 1, RequiredReviewers: one}).minimumReviewers())
+	require.Equal(t, 2, (&ReviewGate{MinReviewers: 2}).minimumReviewers(),
+		"no configured reviewer keeps the stored minimum so the gate stays visibly under-configured")
+	require.Equal(t, ReviewGateMinReviewersDefault, (*ReviewGate)(nil).minimumReviewers())
+}
+
 func TestReviewGateStatusRequiresQuorum(t *testing.T) {
 	reviewer := func(id string) ReviewReviewer { return ReviewReviewer{AgentID: id, Name: id} }
 	one := []ReviewReviewer{reviewer("a")}
@@ -108,10 +126,12 @@ func TestReviewGateStatusRequiresQuorum(t *testing.T) {
 		"no reviewer configured cannot approve")
 }
 
-// TestPublishReviewGateNeverGreensUnderQuorum covers the provider-check
-// boundary: an approved status for an under-quorum gate must still publish a
-// pending check, never success (#1005).
-func TestPublishReviewGateNeverGreensUnderQuorum(t *testing.T) {
+// TestPublishReviewGateGreensASatisfiedQuorum covers the provider-check
+// boundary. The effective quorum is capped at the configured reviewer count, so
+// a single-reviewer project publishes success once that reviewer approved; a
+// two-reviewer project keeps the two-reviewer rule (its status only reaches
+// approved through reviewGateStatus).
+func TestPublishReviewGateGreensASatisfiedQuorum(t *testing.T) {
 	newServer := func(body *map[string]any) *httptest.Server {
 		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			require.Equal(t, "/repos/acme/repo/check-runs", r.URL.Path)
@@ -124,7 +144,7 @@ func TestPublishReviewGateNeverGreensUnderQuorum(t *testing.T) {
 	head := strings.Repeat("a", 40)
 	handler := &ReviewToolHandler{}
 
-	t.Run("under quorum stays pending", func(t *testing.T) {
+	t.Run("single reviewer is satisfiable", func(t *testing.T) {
 		var body map[string]any
 		srv := newServer(&body)
 		defer srv.Close()
@@ -136,12 +156,11 @@ func TestPublishReviewGateNeverGreensUnderQuorum(t *testing.T) {
 		}
 		err := handler.publishReviewGate(context.Background(), githubapp.NewClient(srv.URL, "t", srv.Client()), "acme/repo", head, gate, "looks good")
 		require.NoError(t, err)
-		require.Equal(t, "in_progress", body["status"])
-		require.NotContains(t, body, "conclusion")
-		require.Contains(t, body["output"].(map[string]any)["summary"], "2 independent reviewers")
+		require.Equal(t, "completed", body["status"])
+		require.Equal(t, "success", body["conclusion"])
 	})
 
-	t.Run("satisfied quorum goes green", func(t *testing.T) {
+	t.Run("two reviewers satisfied", func(t *testing.T) {
 		var body map[string]any
 		srv := newServer(&body)
 		defer srv.Close()

@@ -21,6 +21,11 @@ const (
 	ReviewGatePending          = "pending"
 	ReviewGateApproved         = "approved"
 	ReviewGateChangesRequested = "changes_requested"
+	// ReviewGateUnapprovable is terminal: no verdict can ever be recorded for
+	// the head (for example a pull request with no changed files). The required
+	// reviewed check must go red with the recorded reason instead of staying
+	// in_progress forever (#1022).
+	ReviewGateUnapprovable = "unapprovable"
 
 	// ReviewGateMinReviewersDefault is the quorum for a subject authored by a
 	// human: one configured reviewer agent is enough.
@@ -67,17 +72,35 @@ type ReviewGate struct {
 	// in-flight single-reviewer gate cannot silently satisfy the aggregate.
 	MinReviewers int       `bun:"min_reviewers,notnull,default:1" json:"minReviewers"`
 	Status       string    `bun:"status,notnull" json:"status"`
+	StatusReason string    `bun:"status_reason,notnull,default:''" json:"statusReason"`
 	CreatedAt    time.Time `bun:"created_at,notnull,default:now()" json:"createdAt"`
 	UpdatedAt    time.Time `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
 }
 
-// minimumReviewers returns the gate's quorum, treating a zero value (a legacy
-// in-memory gate or a row created before the column existed) as the default.
+// minimumReviewers returns the gate's effective quorum, treating a zero value (a
+// legacy in-memory gate or a row created before the column existed) as the
+// default.
+//
+// A quorum larger than the configured reviewer set can never be met: the gate
+// stays pending forever and the required `reviewed` check never turns green. That
+// is the deadlock #1005's two-reviewer rule creates for a source-authored subject
+// in a project with a single reviewer agent (emergent.memory#1030). Asking every
+// configured reviewer to approve is the most the gate can require, so the
+// effective quorum is capped at the configured count. A gate with no reviewer
+// agent keeps the stored minimum, so an under-configured gate still reports the
+// missing reviewer instead of silently approving nobody.
 func (g *ReviewGate) minimumReviewers() int {
-	if g == nil || g.MinReviewers < ReviewGateMinReviewersDefault {
+	if g == nil {
 		return ReviewGateMinReviewersDefault
 	}
-	return g.MinReviewers
+	minReviewers := g.MinReviewers
+	if minReviewers < ReviewGateMinReviewersDefault {
+		minReviewers = ReviewGateMinReviewersDefault
+	}
+	if configured := len(g.RequiredReviewers); configured > 0 && minReviewers > configured {
+		minReviewers = configured
+	}
+	return minReviewers
 }
 
 // ReviewVerdict is one reviewer's head-bound verdict.
@@ -184,7 +207,12 @@ func (s *ReviewGateService) Ensure(ctx context.Context, projectID uuid.UUID, sub
 			}
 		}
 		if changed {
-			gate.Status = s.evaluate(ctx, tx, &gate)
+			// Unapprovable is terminal for the head: a configuration replay
+			// must not turn a terminal gate back into an indefinitely pending
+			// one (#1022).
+			if gate.Status != ReviewGateUnapprovable {
+				gate.Status = s.evaluate(ctx, tx, &gate)
+			}
 			gate.UpdatedAt = time.Now().UTC()
 			raw, _ := json.Marshal(gate.RequiredReviewers)
 			if _, err := tx.NewRaw(`UPDATE kb.review_gates
@@ -249,8 +277,72 @@ func reviewGateAuthorUnknown(subjectType string, properties map[string]any) bool
 	return strings.TrimSpace(authorType) == "" && strings.TrimSpace(author) == ""
 }
 
+// MarkUnapprovable moves a head's gate to the terminal unapprovable state with
+// a reason. It is how a review tool reports that the head has no reviewable
+// diff (no changed files), so the gate and the required reviewed check stop
+// waiting forever for a verdict that can never exist (#1022).
+//
+// A missing gate is reported as ErrReviewGateNotFound so legacy sources keep
+// their old path. Any other error is a real write failure.
+func (s *ReviewGateService) MarkUnapprovable(ctx context.Context, projectID uuid.UUID, subjectType, subjectRef, headSHA, reason string) (*ReviewGate, error) {
+	if s == nil || s.repo == nil {
+		return nil, errors.New("sources: review gate service is not configured")
+	}
+	subjectRef = strings.ToLower(strings.TrimSpace(subjectRef))
+	headSHA = strings.TrimSpace(headSHA)
+	reason = strings.TrimSpace(reason)
+	if subjectType == "" || subjectRef == "" || headSHA == "" {
+		return nil, apperror.NewValidation("sources: unapprovable review gate requires subject type, subject ref and head sha")
+	}
+	if reason == "" {
+		reason = "No verdict can be recorded for this head."
+	}
+	var result *ReviewGate
+	err := s.repo.projectTx(ctx, projectID, func(ctx context.Context, tx bun.Tx) error {
+		var gate ReviewGate
+		err := tx.NewSelect().Model(&gate).
+			Where("project_id = ?", projectID).
+			Where("subject_type = ?", subjectType).
+			Where("subject_ref = ?", subjectRef).
+			Where("head_sha = ?", headSHA).
+			For("UPDATE").
+			Scan(ctx)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrReviewGateNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("sources: read review gate: %w", err)
+		}
+		gate.Status = ReviewGateUnapprovable
+		gate.StatusReason = reason
+		gate.UpdatedAt = time.Now().UTC()
+		if _, err := tx.NewUpdate().Model(&gate).
+			Set("status = ?", gate.Status).
+			Set("status_reason = ?", gate.StatusReason).
+			Set("updated_at = ?", gate.UpdatedAt).
+			Where("id = ?", gate.ID).Exec(ctx); err != nil {
+			return fmt.Errorf("sources: mark review gate unapprovable: %w", err)
+		}
+		result = &gate
+		return nil
+	})
+	if err != nil {
+		if result != nil {
+			return result, err
+		}
+		return nil, err
+	}
+	if s.log != nil {
+		s.log.Error("sources: review gate is unapprovable; the reviewed check cannot turn green",
+			"subject", subjectRef, "head_sha", headSHA, "reason", reason)
+	}
+	return result, nil
+}
+
 // RecordVerdict writes one reviewer's verdict and recomputes the gate. A
-// reviewer not in the gate's required snapshot cannot influence it.
+// reviewer not in the gate's required snapshot cannot influence it. A terminal
+// unapprovable head accepts no verdict: the gate has no reviewable diff, so a
+// late verdict cannot flip it back to pending or approved (#1022).
 func (s *ReviewGateService) RecordVerdict(ctx context.Context, projectID uuid.UUID, subjectType, subjectRef, headSHA, reviewerAgentID, reviewerName, verdict, evidence string) (*ReviewGate, error) {
 	if s == nil || s.repo == nil {
 		return nil, errors.New("sources: review gate service is not configured")
@@ -279,6 +371,10 @@ func (s *ReviewGateService) RecordVerdict(ctx context.Context, projectID uuid.UU
 		}
 		if err != nil {
 			return fmt.Errorf("sources: read review gate: %w", err)
+		}
+		if gate.Status == ReviewGateUnapprovable {
+			result = &gate
+			return apperror.NewValidationf("sources: review gate for %s@%s is unapprovable: %s", subjectRef, headSHA, reviewGateUnapprovableSummary(&gate))
 		}
 		if !containsReviewer(gate.RequiredReviewers, reviewerID.String()) {
 			result = &gate
