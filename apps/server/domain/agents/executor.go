@@ -1343,13 +1343,16 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 
 	// Create the run record
 	createOpts := CreateRunOptions{
-		AgentID:         ae.resolveAgentID(req),
-		ParentRunID:     req.ParentRunID,
-		RootRunID:       req.RootRunID,
-		MaxSteps:        &maxSteps,
-		TriggerSource:   req.TriggerSource,
-		TriggerMetadata: req.TriggerMetadata,
-		TrustedInternal: req.TrustedInternal,
+		AgentID:           ae.resolveAgentID(req),
+		ParentRunID:       req.ParentRunID,
+		RootRunID:         req.RootRunID,
+		MaxSteps:          &maxSteps,
+		TriggerSource:     req.TriggerSource,
+		TriggerMetadata:   req.TriggerMetadata,
+		TrustedInternal:   req.TrustedInternal,
+		SubjectObjectID:   req.SubjectObjectID,
+		SubjectObjectType: req.SubjectObjectType,
+		SourceSubject:     req.SourceSubject,
 	}
 	if req.AgentDefinition != nil {
 		createOpts.AgentDefinitionID = &req.AgentDefinition.ID
@@ -1361,6 +1364,9 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		// The pre-created run was inserted by the caller without the trust marker;
 		// the request is authoritative here, so carry it onto the run row.
 		run.TrustedInternal = req.TrustedInternal
+		if run.SourceSubject == nil {
+			run.SourceSubject = req.SourceSubject
+		}
 		if err := ae.repo.UpdateRunTrustedInternal(dbCtx, run.ID, req.TrustedInternal); err != nil {
 			ae.log.Warn("failed to persist trusted_internal on agent run",
 				slog.String("run_id", run.ID),
