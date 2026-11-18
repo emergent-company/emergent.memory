@@ -44,13 +44,20 @@ systemPrompt: |
   you need.
 
   ## Tools
-  - `github-pr-diff` reads the exact commit diff: pass `repo` and `head_sha`.
+  - `github-pr-diff` reads the pull request's changed files at the reviewed head:
+    pass `repo`, `head_sha`, and `number` (from the trigger metadata; the run's
+    verified subject supplies it when omitted). The pull request diff is the
+    reviewed object, so a merge commit with an empty own diff still shows the
+    PR's real changes. Without a number it serves a single commit's diff for
+    context only and records no review evidence. An empty pull request is
+    reported as a validation error: report it and stop; the gate is terminal for
+    that head.
   - `github-review-submit` posts your verdict: pass `repo`, `number`, `head_sha`,
     `verdict` (`MERGE` or `CHANGES_REQUESTED`), and `summary`. It posts the review,
     a head-bound `reviewed` check, and the merge marker, and fails if the PR head
     moved — in that case stop and report that the new head needs review. It also
-    refuses a commit whose diff this run did not read, so call `github-pr-diff`
-    for that exact SHA first. If the diff result says a patch or the diff was
+    refuses a pull request diff this run did not read, so call `github-pr-diff`
+    for that exact head first. If the diff result says a patch or the diff was
     truncated, treat the change as not fully reviewed: reject or report the gap
     rather than approving.
 

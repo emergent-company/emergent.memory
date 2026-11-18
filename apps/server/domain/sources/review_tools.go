@@ -48,10 +48,15 @@ func validCommitSHA(sha string) bool {
 }
 
 // diffEvidenceKey names the run-scoped fact "github-pr-diff returned a non-empty
-// diff for repo@sha". executeReviewSubmit requires it so a review verdict can
-// only be posted for a commit this run actually read.
-func diffEvidenceKey(repo, sha string) string {
-	return "githubapp:diff:" + strings.ToLower(repo) + "@" + sha
+// diff for repo#number@sha". executeReviewSubmit requires it so a review verdict
+// can only be posted for a pull request this run actually read.
+//
+// The reviewed object is the pull request (repo#number at a head SHA), not one
+// commit's first-parent diff: a merge commit can have an empty first-parent diff
+// while the pull request changes hundreds of files (#1022). The key carries the
+// number so evidence read for PR #1 can never justify a verdict on PR #2.
+func diffEvidenceKey(repo string, number int, sha string) string {
+	return fmt.Sprintf("githubapp:prdiff:%s#%d@%s", strings.ToLower(repo), number, sha)
 }
 
 // truncateUTF8 cuts s to at most max bytes without splitting a UTF-8 sequence.
@@ -84,6 +89,7 @@ type ReviewToolHandler struct {
 	reworker    WorkItemReworker
 	reviewGates *ReviewGateService
 	agentRuns   *agents.Repository
+	log         *slog.Logger
 }
 
 // WorkItemStatusWriter finalizes the board lane a review run was dispatched for.
@@ -139,6 +145,7 @@ func NewReviewToolHandler(repo *Repository, cfg *config.Config, log *slog.Logger
 		newClient: func(baseURL, token string) *githubapp.Client {
 			return githubapp.NewClient(baseURL, token, nil)
 		},
+		log: log,
 	}
 }
 
@@ -261,7 +268,7 @@ func (h *ReviewToolHandler) ExecuteGitHubAppTool(ctx context.Context, projectID,
 
 	switch toolName {
 	case toolPRDiff:
-		return h.executePRDiff(ctx, client, repo, stringArg(args, "head_sha"))
+		return h.executePRDiff(ctx, client, projectID, repo, args)
 	case toolReviewSubmit:
 		return h.executeReviewSubmit(ctx, client, projectID, repo, args)
 	default:
@@ -378,42 +385,113 @@ func validateReviewSubject(ctx context.Context, toolName, repo string, args map[
 		return nil
 	}
 	if !strings.EqualFold(repo, subject.Repo) {
-		return fmt.Errorf("github app tool: repo %q does not match the triggering subject %q", repo, subject.Repo)
+		return apperror.NewValidationf("github app tool: repo %q does not match the triggering subject %q", repo, subject.Repo)
 	}
 	if head := stringArg(args, "head_sha"); head != "" && head != subject.HeadSHA {
-		return fmt.Errorf("github app tool: head_sha %q does not match the triggering subject %q", head, subject.HeadSHA)
+		return apperror.NewValidationf("github app tool: head_sha %q does not match the triggering subject %q", head, subject.HeadSHA)
 	}
-	if toolName == toolReviewSubmit {
-		if number, ok := intArg(args, "number"); ok && number != subject.PRNumber {
-			return fmt.Errorf("github app tool: PR number %d does not match the triggering subject #%d", number, subject.PRNumber)
-		}
+	if number, ok := intArg(args, "number"); ok && number != subject.PRNumber {
+		return apperror.NewValidationf("github app tool: PR number %d does not match the triggering subject #%d", number, subject.PRNumber)
 	}
 	return nil
 }
 
-// executePRDiff is moved verbatim from domain/githubapp/tools.go: it validates
-// the commit SHA, records run-scoped evidence for a non-empty diff, and
-// truncates large payloads.
-func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp.Client, repo, headSHA string) (*mcp.ToolResult, error) {
+// executePRDiff reads the diff of the reviewed object. A pull request number
+// (from the call or the run's verified subject) selects the pull request diff,
+// which is what evidence is keyed on; without one it serves the commit's
+// first-parent diff for context only (#1022).
+func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp.Client, projectID, repo string, args map[string]any) (*mcp.ToolResult, error) {
+	headSHA := stringArg(args, "head_sha")
 	if headSHA == "" {
 		return nil, apperror.NewValidation("github app tool: head_sha is required")
 	}
 	if !validCommitSHA(headSHA) {
 		return nil, apperror.NewValidationf("github app tool: head_sha %q is not a commit SHA (40 lowercase hex)", headSHA)
 	}
+	number, ok := intArg(args, "number")
+	if !ok || number <= 0 {
+		if subject, hasSubject := mcp.RunSubjectFromContext(ctx); hasSubject &&
+			strings.EqualFold(subject.Repo, repo) && subject.HeadSHA == headSHA && subject.PRNumber > 0 {
+			number, ok = subject.PRNumber, true
+		}
+	}
+	if ok && number > 0 {
+		return h.executePullRequestDiff(ctx, client, projectID, repo, number, headSHA)
+	}
+	return h.executeCommitDiff(ctx, client, repo, headSHA)
+}
+
+// executePullRequestDiff reads GET /pulls/{number}/files, the diff of the
+// reviewed object. A non-empty result is the evidence a verdict is allowed to
+// name. An empty result is a genuinely unapprovable head: the tool returns a
+// validation error (never an internal one) and moves the review gate to a
+// terminal state instead of leaving it pending forever.
+func (h *ReviewToolHandler) executePullRequestDiff(ctx context.Context, client *githubapp.Client, projectID, repo string, number int, headSHA string) (*mcp.ToolResult, error) {
+	state, err := client.GetPullRequest(ctx, repo, number)
+	if err != nil {
+		return nil, err
+	}
+	if state.HeadSHA != headSHA {
+		return nil, apperror.NewValidationf("github app tool: PR %s#%d head is %s, not the requested %s; fetch the diff for the live head",
+			repo, number, state.HeadSHA, headSHA)
+	}
+	files, err := client.ListPullRequestFiles(ctx, repo, number)
+	if err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		reason := fmt.Sprintf("pull request %s#%d has no changed files at head %s; there is nothing to review and no verdict can be recorded for this head",
+			repo, number, headSHA)
+		h.markHeadUnapprovable(ctx, client, projectID, repo, number, headSHA, reason)
+		return nil, apperror.NewValidationf("github app tool: %s", reason)
+	}
+	mcp.MarkRunEvidence(ctx, diffEvidenceKey(repo, number, headSHA))
+
+	title := strings.TrimSpace(state.Title)
+	header := fmt.Sprintf("pull request %s#%d at %s", repo, number, headSHA)
+	if title != "" {
+		header += "\n" + title
+	}
+	return &mcp.ToolResult{
+		Content: []mcp.ContentBlock{{Type: "text", Text: renderDiffFiles(header, files)}},
+		StructuredContent: map[string]any{
+			"sha":    headSHA,
+			"number": number,
+			"files":  len(files),
+		},
+	}, nil
+}
+
+// executeCommitDiff serves one commit's first-parent diff for context. It never
+// records review evidence: the verified object is the pull request, and a merge
+// commit's first-parent diff can be empty while the PR is large. An empty
+// commit diff is a validation error, not a successful empty tool result.
+func (h *ReviewToolHandler) executeCommitDiff(ctx context.Context, client *githubapp.Client, repo, headSHA string) (*mcp.ToolResult, error) {
 	diff, err := client.GetCommit(ctx, repo, headSHA)
 	if err != nil {
 		return nil, err
 	}
-	// Record that this run saw a real (non-empty) diff for this commit. The
-	// review submit tool requires this evidence so a prompt-injected run cannot
-	// post a verdict without reading the change it approves.
-	if len(diff.Files) > 0 {
-		mcp.MarkRunEvidence(ctx, diffEvidenceKey(repo, diff.SHA))
+	if len(diff.Files) == 0 {
+		return nil, apperror.NewValidationf("github app tool: commit %s has an empty diff (its tree matches its first parent); pass the pull request number to read the reviewed pull request's diff",
+			headSHA)
 	}
+	header := fmt.Sprintf("commit %s\n%s", diff.SHA, strings.TrimSpace(diff.Message))
+	return &mcp.ToolResult{
+		Content: []mcp.ContentBlock{{Type: "text", Text: renderDiffFiles(header, diff.Files)}},
+		StructuredContent: map[string]any{
+			"sha":   diff.SHA,
+			"files": len(diff.Files),
+		},
+	}, nil
+}
+
+// renderDiffFiles bounds each patch and the whole rendered result so a large
+// pull request cannot blow up the agent context.
+func renderDiffFiles(header string, files []githubapp.CommitFile) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "commit %s\n%s\n\n", diff.SHA, strings.TrimSpace(diff.Message))
-	for _, file := range diff.Files {
+	b.WriteString(header)
+	b.WriteString("\n\n")
+	for _, file := range files {
 		patch := file.Patch
 		if len(patch) > maxPatchBytes {
 			patch = truncateUTF8(patch, maxPatchBytes) + "\n… patch truncated"
@@ -428,18 +506,45 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 	if len(text) > maxDiffBytes {
 		text = truncateUTF8(text, maxDiffBytes) + "\n… diff truncated"
 	}
-	return &mcp.ToolResult{
-		Content: []mcp.ContentBlock{{Type: "text", Text: text}},
-		StructuredContent: map[string]any{
-			"sha":   diff.SHA,
-			"files": len(diff.Files),
-		},
-	}, nil
+	return text
 }
 
-// executeReviewSubmit is moved verbatim from domain/githubapp/tools.go: it
-// enforces the live-head binding and the same-run evidence rule, then posts the
-// review, the reviewed check and the merge-guard marker with byte-exact text.
+// markHeadUnapprovable moves the head's review gate to a terminal state and
+// publishes a failing reviewed check, so a head with no reviewable diff cannot
+// hang the required check in_progress forever (#1022). The gate update is best
+// effort because the tool still owes the caller its validation error; a failure
+// here is logged (and retried by the next webhook replay, which republishes the
+// terminal state).
+func (h *ReviewToolHandler) markHeadUnapprovable(ctx context.Context, client *githubapp.Client, projectID, repo string, number int, headSHA, reason string) {
+	if h.reviewGates != nil {
+		projectUUID, err := uuid.Parse(projectID)
+		if err != nil {
+			if h.log != nil {
+				h.log.Warn("sources: cannot mark review gate unapprovable: invalid project id", "project_id", projectID, "error", err)
+			}
+		} else {
+			subjectRef := fmt.Sprintf("%s#%d", repo, number)
+			_, gateErr := h.reviewGates.MarkUnapprovable(ctx, projectUUID, "GitHubPullRequest", subjectRef, headSHA, reason)
+			switch {
+			case gateErr == nil:
+			case errors.Is(gateErr, ErrReviewGateNotFound):
+				// Legacy review sources with no parent gate keep the old path.
+			default:
+				if h.log != nil {
+					h.log.Error("sources: mark review gate unapprovable",
+						"subject", subjectRef, "head_sha", headSHA, "error", gateErr)
+				}
+			}
+		}
+	}
+	if client == nil {
+		return
+	}
+	if err := client.CreateReviewedCheck(ctx, repo, headSHA, "failure", "reviewed: unapprovable", reason); err != nil && h.log != nil {
+		h.log.Error("sources: publish unapprovable reviewed check", "repo", repo, "head_sha", headSHA, "error", err)
+	}
+}
+
 func (h *ReviewToolHandler) linkedIssue(ctx context.Context, projectID, repo string, number int) *SourceIssuePRLink {
 	if h.links == nil || projectID == "" || repo == "" || number <= 0 {
 		return nil
@@ -455,6 +560,9 @@ func (h *ReviewToolHandler) linkedIssue(ctx context.Context, projectID, repo str
 	return link
 }
 
+// executeReviewSubmit enforces the live-head binding and the same-run evidence
+// rule, then posts the review, the reviewed check and the merge-guard marker
+// with byte-exact text.
 func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *githubapp.Client, projectID, repo string, args map[string]any) (*mcp.ToolResult, error) {
 	number, ok := intArg(args, "number")
 	if !ok || number <= 0 {
@@ -484,14 +592,25 @@ func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *git
 		return nil, err
 	}
 	if state.HeadSHA != headSHA {
-		return nil, fmt.Errorf("github app tool: PR head is %s, not the reviewed %s; re-review the new head", state.HeadSHA, headSHA)
+		return nil, apperror.NewValidationf("github app tool: PR head is %s, not the reviewed %s; re-review the new head", state.HeadSHA, headSHA)
 	}
-	// Same-run binding: the verdict may only name a commit whose non-empty diff
-	// this run read through github-pr-diff. A prompt injection in PR text cannot
-	// make the agent approve a change it never fetched (and an empty diff has
-	// nothing to approve). Fail closed when the run carries no evidence.
-	if !mcp.RunHasEvidence(ctx, diffEvidenceKey(repo, headSHA)) {
-		return nil, fmt.Errorf("github app tool: no non-empty github-pr-diff result for %s@%s in this run; fetch the diff for the exact reviewed commit before submitting", repo, headSHA)
+	// Same-run binding: the verdict may only name a pull request head whose
+	// non-empty diff this run read through github-pr-diff. A prompt injection in
+	// PR text cannot make the agent approve a change it never fetched. Evidence
+	// is keyed on (repo, number, head SHA) because the reviewed object is the
+	// pull request, not one commit's first-parent diff (#1022).
+	if !mcp.RunHasEvidence(ctx, diffEvidenceKey(repo, number, headSHA)) {
+		reason := fmt.Sprintf("no non-empty github-pr-diff result for %s#%d@%s in this run; fetch the pull request diff for the exact reviewed head before submitting",
+			repo, number, headSHA)
+		// A genuinely empty pull request can never receive a verdict. Detect it
+		// here too (not only in github-pr-diff) so a run that skipped the diff
+		// cannot leave the gate pending forever.
+		if files, ferr := client.ListPullRequestFiles(ctx, repo, number); ferr == nil && len(files) == 0 {
+			reason = fmt.Sprintf("pull request %s#%d has no changed files at head %s; there is nothing to review and no verdict can be recorded for this head",
+				repo, number, headSHA)
+			h.markHeadUnapprovable(ctx, client, projectID, repo, number, headSHA, reason)
+		}
+		return nil, apperror.NewValidationf("github app tool: %s", reason)
 	}
 
 	if err := client.CreateReview(ctx, repo, number, headSHA, event, summary); err != nil {
@@ -522,7 +641,14 @@ func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *git
 		case errors.Is(gateErr, ErrReviewerNotRequired) && gate != nil && len(gate.RequiredReviewers) == 0:
 			// No reviewer agents configured for this subject; preserve the old path.
 		default:
-			return nil, fmt.Errorf("review gate: %w", gateErr)
+			// A gate that already holds a caller-visible validation refusal (for
+			// example a terminal unapprovable head) is relayed as-is; only a
+			// genuine server failure becomes an internal error.
+			var validation *apperror.Error
+			if errors.As(gateErr, &validation) {
+				return nil, gateErr
+			}
+			return nil, apperror.NewInternal("github app tool: the review gate could not record the verdict", gateErr)
 		}
 	}
 	if legacy {
@@ -599,6 +725,8 @@ func (h *ReviewToolHandler) publishReviewGate(ctx context.Context, client *githu
 		return client.CreateReviewedCheck(ctx, repo, headSHA, "success", "reviewed: all reviewers approved", summary)
 	case ReviewGateChangesRequested:
 		return client.CreateReviewedCheck(ctx, repo, headSHA, "failure", "reviewed: changes requested", summary)
+	case ReviewGateUnapprovable:
+		return client.CreateReviewedCheck(ctx, repo, headSHA, "failure", "reviewed: unapprovable", reviewGateUnapprovableSummary(gate))
 	default:
 		return client.CreateCheck(ctx, repo, headSHA, "reviewed", "in_progress", "", "reviewed: pending", reviewGatePendingSummary(gate))
 	}
@@ -616,6 +744,17 @@ func reviewGatePendingSummary(gate *ReviewGate) string {
 		return fmt.Sprintf("Waiting for %d independent reviewers: %d of %d configured.", minimum, required, minimum)
 	}
 	return "Waiting for all required reviewers."
+}
+
+// reviewGateUnapprovableSummary renders the terminal reason recorded on the
+// gate so the failing reviewed check says why the head cannot be approved.
+func reviewGateUnapprovableSummary(gate *ReviewGate) string {
+	if gate != nil {
+		if reason := strings.TrimSpace(gate.StatusReason); reason != "" {
+			return reason
+		}
+	}
+	return "No verdict can be recorded for this head."
 }
 
 func intArg(args map[string]any, key string) (int, bool) {

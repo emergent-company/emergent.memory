@@ -270,9 +270,11 @@ type AgentRun struct {
 	// reachability invariant holds for the whole call chain, not just the first
 	// hop (issue #954).
 	TrustedInternal bool `bun:"trusted_internal,notnull,default:false" json:"trustedInternal"`
-	// SourceSubject is written only by the source-event dispatcher. It is the
-	// verified repo/PR/SHA subject the review tools bind to; never read it from
-	// trigger_metadata (model-settable on spawned runs).
+	// SourceSubject is written only by server-side dispatch: the source-event
+	// dispatcher for the ingress run, and the work-dispatch paths for a
+	// source-derived work object (a review lane) so its review tools keep the
+	// same verified repo/PR/SHA binding. Never read it from trigger_metadata
+	// (model-settable on spawned runs).
 	SourceSubject *SourceSubject `bun:"source_subject,type:jsonb" json:"sourceSubject,omitempty"`
 	// RunInvocation is the snapshotted trigger invocation for this run. It is
 	// server-written (never from model tool input) and carries no secrets.

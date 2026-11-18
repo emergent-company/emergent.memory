@@ -248,6 +248,7 @@ func (s *WorkActionService) Unblock(ctx context.Context, projectID, canonicalID,
 			TriggerMetadata:   workTriggerMetadata(head),
 			Invocation:        inv,
 			SourceTriggerID:   workSourceTriggerID(head),
+			SourceSubject:     workSourceSubject(head),
 		}
 		if inv != nil {
 			opts.Priority = inv.Priority
@@ -571,6 +572,7 @@ func (s *WorkActionService) enqueueWorkRun(ctx context.Context, head *graph.Work
 		TriggerMetadata:   workTriggerMetadata(head),
 		Invocation:        inv,
 		SourceTriggerID:   workSourceTriggerID(head),
+		SourceSubject:     workSourceSubject(head),
 	}
 	if inv != nil {
 		opts.Priority = inv.Priority

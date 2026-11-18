@@ -66,11 +66,28 @@ func TestWorkTriggerMetadataIncludesSourceSubjectOnlyForLaneObjects(t *testing.T
 	if _, ok := plain["repo"]; ok {
 		t.Fatalf("plain work object got source keys: %#v", plain)
 	}
-	lane := workTriggerMetadata(&graph.WorkObjectHead{Status: "ready", Properties: map[string]any{
+	head := &graph.WorkObjectHead{Status: "ready", Properties: map[string]any{
 		"repo": "acme/repo", "pr_number": float64(7), "head_sha": "abc", "source_id": "src-1",
-	}})
+	}}
+	lane := workTriggerMetadata(head)
 	if lane["repo"] != "acme/repo" || lane["prNumber"] != 7 || lane["headSha"] != "abc" || lane["subjectRef"] != "acme/repo#7" || lane["sourceId"] != "src-1" {
 		t.Fatalf("lane metadata = %#v", lane)
+	}
+	// A work-dispatched review lane run must carry the verified source subject
+	// as a run column too: the review tools key evidence on repo#number@headSha,
+	// and trigger_metadata is model-settable while this column is not (#1022).
+	subject := workSourceSubject(head)
+	if subject == nil || subject.SourceID != "src-1" || subject.Repo != "acme/repo" || subject.PRNumber != 7 || subject.HeadSHA != "abc" {
+		t.Fatalf("lane source subject = %#v", subject)
+	}
+	if got := workSourceSubject(&graph.WorkObjectHead{Status: "ready", Properties: map[string]any{"title": "x"}}); got != nil {
+		t.Fatalf("plain work object got a source subject: %#v", got)
+	}
+	// An issue object has no head SHA and is not a pull request subject.
+	if got := workSourceSubject(&graph.WorkObjectHead{Status: "ready", Properties: map[string]any{
+		"repo": "acme/repo", "issue_number": float64(9), "source_id": "src-1",
+	}}); got != nil {
+		t.Fatalf("issue object got a pull request subject: %#v", got)
 	}
 }
 

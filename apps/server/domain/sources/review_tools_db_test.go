@@ -21,6 +21,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/testdb"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	cryptoutil "github.com/emergent-company/emergent.memory/pkg/crypto"
 )
 
@@ -125,6 +126,7 @@ type reviewToolsAPI struct {
 
 	mu          sync.Mutex
 	currentHead string
+	prFiles     []map[string]any
 	tokenMints  map[int64]int
 	reviews     int
 	checks      int
@@ -138,6 +140,7 @@ func newReviewToolsAPI(t *testing.T) *reviewToolsAPI {
 	t.Helper()
 	api := &reviewToolsAPI{
 		currentHead: strings.Repeat("a", 40),
+		prFiles:     []map[string]any{{"filename": "a.go", "status": "modified", "additions": 1, "deletions": 0, "patch": "@@ -1 +1 @@"}},
 		tokenMints:  map[int64]int{},
 	}
 	api.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -156,6 +159,8 @@ func newReviewToolsAPI(t *testing.T) *reviewToolsAPI {
 				"sha": sha, "commit": map[string]any{"message": "fix"},
 				"files": []map[string]any{{"filename": "a.go", "status": "modified", "additions": 1, "deletions": 0, "patch": "@@ -1 +1 @@"}},
 			})
+		case strings.HasSuffix(r.URL.Path, "/pulls/7/files"):
+			_ = json.NewEncoder(w).Encode(api.prFiles)
 		case strings.HasSuffix(r.URL.Path, "/pulls/7"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"number": 7, "title": "fix", "state": "open",
@@ -191,6 +196,12 @@ func (a *reviewToolsAPI) setHead(sha string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.currentHead = sha
+}
+
+func (a *reviewToolsAPI) setPullRequestFiles(files []map[string]any) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.prFiles = files
 }
 
 func (a *reviewToolsAPI) mintCount(installation int64) int {
@@ -231,7 +242,7 @@ func TestReviewToolsResolveSourceAndSubmit(t *testing.T) {
 	// Resolves the allowlisted repo case-insensitively through the source and
 	// reads a PR diff with the installation token minted for that source.
 	diff, err := f.handler.ExecuteGitHubAppTool(f.ctx, f.project.String(), toolPRDiff, map[string]any{
-		"repo": "owner/repo", "head_sha": head,
+		"repo": "owner/repo", "number": float64(7), "head_sha": head,
 	})
 	require.NoError(t, err)
 	require.Contains(t, diff.Content[0].Text, "a.go")
@@ -469,4 +480,65 @@ func TestReviewToolsAmbiguousSourceFailsClosed(t *testing.T) {
 	require.Contains(t, err.Error(), "bot-b")
 	require.Zero(t, api.mintCount(42))
 	require.Zero(t, api.mintCount(43))
+}
+
+// TestReviewToolsEmptyPullRequestTerminatesGate pins #1022's third requirement:
+// a head with no reviewable diff must not leave the gate (and the required
+// reviewed check) in_progress forever. The diff tool returns a validation error
+// and moves the gate to its terminal unapprovable state with the reason; a
+// later verdict and a webhook replay cannot reopen it.
+func TestReviewToolsEmptyPullRequestTerminatesGate(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	f := newReviewToolsFixture(t, "review_tools_unapprovable")
+	app := f.addApp(t, 501, "reviewer")
+	f.addSource(t, f.project, app, "bot", "42", []string{"owner/repo"}, SourceStatusActive)
+
+	reviewerID := uuid.New()
+	required := `[{"agentId":"` + reviewerID.String() + `","name":"review"}]`
+	_, err := f.db.DB.ExecContext(f.ctx, `INSERT INTO kb.review_gates
+		(project_id, subject_type, subject_ref, head_sha, required_reviewers, status)
+		VALUES (?, 'GitHubPullRequest', 'owner/repo#7', ?, ?::jsonb, 'pending')`,
+		f.project, strings.Repeat("a", 40), required)
+	require.NoError(t, err)
+
+	api := newReviewToolsAPI(t)
+	api.setPullRequestFiles(nil)
+	f.buildHandler(t, api)
+	svc := NewReviewGateService(f.repo, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	f.handler.SetReviewGateService(svc)
+
+	head := strings.Repeat("a", 40)
+	_, err = f.handler.ExecuteGitHubAppTool(f.ctx, f.project.String(), toolPRDiff, map[string]any{
+		"repo": "owner/repo", "number": float64(7), "head_sha": head,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no changed files")
+	var appErr *apperror.Error
+	require.ErrorAs(t, err, &appErr, "an empty pull request is a validation error, never an internal error")
+	require.Equal(t, apperror.ErrValidation.Code, appErr.Code)
+
+	var status, reason string
+	require.NoError(t, f.db.DB.QueryRowContext(f.ctx,
+		`SELECT status, status_reason FROM kb.review_gates WHERE project_id = ? AND subject_ref = 'owner/repo#7' AND head_sha = ?`,
+		f.project, head).Scan(&status, &reason))
+	require.Equal(t, ReviewGateUnapprovable, status, "the gate must leave pending for a terminal state")
+	require.Contains(t, reason, "no changed files")
+	require.Equal(t, "failure", api.checkBody["conclusion"])
+	require.Equal(t, "reviewed: unapprovable", api.checkBody["output"].(map[string]any)["title"])
+
+	// No verdict can be recorded on the terminal head.
+	_, err = svc.RecordVerdict(f.ctx, f.project, "GitHubPullRequest", "owner/repo#7", head,
+		reviewerID.String(), "review", "MERGE", "looks good")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unapprovable")
+
+	// A webhook replay (Ensure) must not reopen it as pending.
+	gate, err := svc.Ensure(f.ctx, f.project, "GitHubPullRequest", "owner/repo#7", head, map[string]any{
+		"repo": "owner/repo", "author": "mkucharz", "author_type": "User",
+	})
+	require.NoError(t, err)
+	require.Equal(t, ReviewGateUnapprovable, gate.Status)
+	require.Contains(t, gate.StatusReason, "no changed files")
 }
