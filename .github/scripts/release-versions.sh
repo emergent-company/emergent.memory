@@ -47,7 +47,7 @@
 #                             when it resolves, else HEAD)
 #       Signals for changed=false:
 #         1. CHECK_PREV_TAG must BE the previous release tag. A force-moved
-#            rolling tag (`cli-dev`, `dev`, `mac-dev`, ...) is the #2087/0.88.0
+#            rolling tag (`cli-dev`, `connector-dev`, `mac-dev`, ...) is the #2087/0.88.0
 #            root cause; failing this alone catches that incident.
 #         2. The image *inputs* must diff empty against the *independently*
 #            resolved previous release tag: the service tree plus every local

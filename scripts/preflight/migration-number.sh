@@ -50,7 +50,14 @@ mig_dir="apps/server/migrations"
 # the hazard this guard exists to catch (a worktree handed an outdated base would
 # otherwise compare against an old ref and MISS a real collision). Tolerate
 # no-network gracefully: fall back to a cached ref, or skip when none exists.
-if ! git fetch --quiet origin "$base_branch"; then
+#
+# Full refspec, never the bare branch name (#956): a tag named like the branch
+# makes `git fetch origin <branch>` resolve the tag and exit 0 (even with
+# --no-tags), so origin/<branch> is never refreshed and this guard compares
+# against a stale tip. The leading `+` keeps a force-pushed base refreshable
+# instead of falling back to the cached ref.
+if ! git fetch --quiet --no-tags origin \
+     "+refs/heads/$base_branch:refs/remotes/origin/$base_branch"; then
   if git rev-parse --verify --quiet "$base" >/dev/null 2>&1; then
     echo "migration-number: WARNING could not reach origin; using cached $base" >&2
   else
