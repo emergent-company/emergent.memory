@@ -16,7 +16,7 @@ const maxRunFailureTextRunes = 500
 var (
 	runFailureGitHubTokenRe   = regexp.MustCompile(`gh[pousr]_[A-Za-z0-9]{20,}`)
 	runFailureGitHubPATRe     = regexp.MustCompile(`github_pat_[A-Za-z0-9_]{20,}`)
-	runFailureOpenAIKeyRe     = regexp.MustCompile(`sk-[A-Za-z0-9]{20,}`)
+	runFailureOpenAIKeyRe     = regexp.MustCompile(`sk-[A-Za-z0-9_-]{20,}`)
 	runFailureSlackTokenRe    = regexp.MustCompile(`xox[baprs]-[A-Za-z0-9-]{10,}`)
 	runFailureBearerRe        = regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._-]{10,}`)
 	runFailureQuerySecretRe   = regexp.MustCompile(`(?i)([?&](?:access_token|api_key|apikey|password|secret|token)=)[^&\s#]*`)
@@ -96,7 +96,7 @@ func humanFailureClass(class string) string {
 	case "", "unknown":
 		return "Run failed"
 	default:
-		return humanRunToken(class)
+		return boundRunFailureText(humanRunToken(class))
 	}
 }
 

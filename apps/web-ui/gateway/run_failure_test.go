@@ -126,6 +126,8 @@ func TestRunFailureTextRedactsSecrets(t *testing.T) {
 		{"github token", "request rejected for " + githubToken, []string{githubToken}, "request rejected for [redacted]"},
 		{"github pat", "bad token github_pat_" + strings.Repeat("c", 30), []string{"github_pat_" + strings.Repeat("c", 30)}, "bad token [redacted]"},
 		{"openai key", "invalid key " + openAIKey, []string{openAIKey}, "invalid key [redacted]"},
+		{"openai project key", "invalid key sk-proj-abcdefghijklmnopqrstuvwxyz012345", []string{"sk-proj-abcdefghijklmnopqrstuvwxyz012345"}, "invalid key [redacted]"},
+		{"anthropic key", "bad key sk-ant-api03-abcdefghijklmnopqrstuvwxyz", []string{"sk-ant-api03-abcdefghijklmnopqrstuvwxyz"}, "bad key [redacted]"},
 		{"slack token", "slack said xoxb-1234567890-abcdef", []string{"xoxb-1234567890-abcdef"}, "slack said [redacted]"},
 		{"bearer", "Authorization: Bearer abcdefghij.token-123", []string{"abcdefghij.token-123"}, "Authorization: [redacted]"},
 		{"query token", "callback https://x.test/cb?token=secretvalue&state=ok", []string{"secretvalue"}, "callback https://x.test/cb?token=[redacted]&state=ok"},
