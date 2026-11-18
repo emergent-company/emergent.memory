@@ -2477,6 +2477,7 @@ Table "kb"."review_gates" {
   "status" text [not null, default: 'pending']
   "created_at" timestamptz [not null, default: `now()`]
   "updated_at" timestamptz [not null, default: `now()`]
+  "min_reviewers" integer [not null, default: 1]
 
   Indexes {
     (project_id, subject_type, subject_ref, head_sha) [unique]
