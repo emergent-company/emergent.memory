@@ -16,6 +16,7 @@ func githubAppToolDefinitions() []ToolDefinition {
 				Properties: map[string]PropertySchema{
 					"repo":     {Type: "string", Description: "Repository as owner/name"},
 					"head_sha": {Type: "string", Description: "Commit SHA to review (the reviewed head)"},
+					"path":     {Type: "string", Description: "Optional substring filter on changed file names. Use it to read one file in full when the whole diff is too large; a filtered read is not review evidence, so read the unfiltered diff for the reviewed SHA before submitting a verdict."},
 				},
 				Required: []string{"repo", "head_sha"},
 			},

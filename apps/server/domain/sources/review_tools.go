@@ -31,10 +31,19 @@ const (
 	toolPRDiff       = "github-pr-diff"
 	toolReviewSubmit = "github-review-submit"
 
-	// maxPatchBytes bounds each file patch and the whole diff result so a large
-	// commit cannot blow up the agent context.
-	maxPatchBytes = 6000
-	maxDiffBytes  = 200000
+	// maxPatchBytes bounds each file patch and maxDiffBytes the whole result so a
+	// large commit cannot blow up the agent context.
+	//
+	// The per-file bound used to be 6000, which made a release promotion
+	// unreviewable: a promotion is one commit carrying every change since the
+	// last one (~137 files / ~214 KB at v0.103.0), and any file whose patch was
+	// larger than the bound lost its tail. The review agent refused to approve a
+	// diff it could only partly read, correctly, so the gate could never reach a
+	// verdict. The diff-wide bound is now the only practical limit; an agent that
+	// still cannot fit the whole diff can narrow with the "path" argument, and a
+	// filtered read deliberately does not satisfy the review-submit evidence rule.
+	maxPatchBytes = 200000
+	maxDiffBytes  = 2000000
 )
 
 // commitSHARe pins head_sha to a commit id before it reaches a URL path or the
@@ -261,7 +270,7 @@ func (h *ReviewToolHandler) ExecuteGitHubAppTool(ctx context.Context, projectID,
 
 	switch toolName {
 	case toolPRDiff:
-		return h.executePRDiff(ctx, client, repo, stringArg(args, "head_sha"))
+		return h.executePRDiff(ctx, client, repo, stringArg(args, "head_sha"), stringArg(args, "path"))
 	case toolReviewSubmit:
 		return h.executeReviewSubmit(ctx, client, projectID, repo, args)
 	default:
@@ -394,7 +403,13 @@ func validateReviewSubject(ctx context.Context, toolName, repo string, args map[
 // executePRDiff is moved verbatim from domain/githubapp/tools.go: it validates
 // the commit SHA, records run-scoped evidence for a non-empty diff, and
 // truncates large payloads.
-func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp.Client, repo, headSHA string) (*mcp.ToolResult, error) {
+//
+// pathFilter narrows the output to files whose name contains it, so an agent
+// that cannot fit the whole diff in its context can still read one file in
+// full. A filtered read records no evidence: the review-submit rule is that the
+// run read the whole change it approves, and one narrowed path proves nothing
+// about the rest of it.
+func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp.Client, repo, headSHA, pathFilter string) (*mcp.ToolResult, error) {
 	if headSHA == "" {
 		return nil, apperror.NewValidation("github app tool: head_sha is required")
 	}
@@ -405,34 +420,60 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 	if err != nil {
 		return nil, err
 	}
+	pathFilter = strings.TrimSpace(pathFilter)
+	files := diff.Files
+	if pathFilter != "" {
+		files = make([]githubapp.CommitFile, 0, len(diff.Files))
+		for _, file := range diff.Files {
+			if strings.Contains(file.Filename, pathFilter) {
+				files = append(files, file)
+			}
+		}
+	}
 	// Record that this run saw a real (non-empty) diff for this commit. The
 	// review submit tool requires this evidence so a prompt-injected run cannot
 	// post a verdict without reading the change it approves.
-	if len(diff.Files) > 0 {
+	if pathFilter == "" && len(files) > 0 {
 		mcp.MarkRunEvidence(ctx, diffEvidenceKey(repo, diff.SHA))
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "commit %s\n%s\n\n", diff.SHA, strings.TrimSpace(diff.Message))
-	for _, file := range diff.Files {
+	fmt.Fprintf(&b, "files: %d of %d", len(files), len(diff.Files))
+	if pathFilter != "" {
+		fmt.Fprintf(&b, " (path filter %q; a filtered read is not review evidence)", pathFilter)
+	}
+	b.WriteString("\n\n")
+	coverage := "complete"
+	for i, file := range files {
 		patch := file.Patch
 		if len(patch) > maxPatchBytes {
 			patch = truncateUTF8(patch, maxPatchBytes) + "\n… patch truncated"
+			coverage = "incomplete: at least one patch is truncated"
 		}
 		fmt.Fprintf(&b, "--- %s (%s, +%d/-%d)\n%s\n\n", file.Filename, file.Status, file.Additions, file.Deletions, patch)
 		if b.Len() >= maxDiffBytes {
-			b.WriteString("… diff truncated\n")
+			if i < len(files)-1 {
+				b.WriteString("… diff truncated\n")
+				coverage = "incomplete: remaining files omitted by the size limit"
+			}
 			break
 		}
 	}
 	text := b.String()
 	if len(text) > maxDiffBytes {
 		text = truncateUTF8(text, maxDiffBytes) + "\n… diff truncated"
+		coverage = "incomplete: remaining files omitted by the size limit"
 	}
+	text += "\ncoverage: " + coverage
 	return &mcp.ToolResult{
 		Content: []mcp.ContentBlock{{Type: "text", Text: text}},
 		StructuredContent: map[string]any{
-			"sha":   diff.SHA,
-			"files": len(diff.Files),
+			"sha":      diff.SHA,
+			"files":    len(diff.Files),
+			"returned": len(files),
+			"path":     pathFilter,
+			"coverage": coverage,
+			"evidence": pathFilter == "" && len(files) > 0,
 		},
 	}, nil
 }

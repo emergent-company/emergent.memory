@@ -80,7 +80,7 @@ func TestReviewSubmitRequiresDiffInSameRun(t *testing.T) {
 	require.Equal(t, 0, reviews, "no review may be posted without reading the diff")
 
 	// Reading the exact commit records evidence; the same run may now submit.
-	_, err = h.executePRDiff(ctx, client, "owner/repo", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	_, err = h.executePRDiff(ctx, client, "owner/repo", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "")
 	require.NoError(t, err)
 	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", args())
 	require.NoError(t, err)
@@ -93,7 +93,7 @@ func TestReviewSubmitRequiresDiffInSameRun(t *testing.T) {
 	head = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	files = nil
 	emptyCtx := mcp.ContextWithNewToolResultCache(context.Background())
-	_, err = h.executePRDiff(emptyCtx, client, "owner/repo", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	_, err = h.executePRDiff(emptyCtx, client, "owner/repo", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "")
 	require.NoError(t, err)
 	_, err = h.executeReviewSubmit(emptyCtx, client, "project-1", "owner/repo", map[string]any{
 		"repo": "owner/repo", "number": float64(7), "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -104,7 +104,7 @@ func TestReviewSubmitRequiresDiffInSameRun(t *testing.T) {
 	require.Equal(t, 1, reviews)
 
 	// A branch name is not a commit: the diff tool refuses it before any request.
-	_, err = h.executePRDiff(context.Background(), client, "owner/repo", "main")
+	_, err = h.executePRDiff(context.Background(), client, "owner/repo", "main", "")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not a commit SHA")
 }
@@ -141,7 +141,7 @@ func TestReviewSubmitFinalizesWorkLane(t *testing.T) {
 	writer := &fakeLaneWriter{}
 	h := &ReviewToolHandler{workItems: writer}
 	ctx := mcp.ContextWithWorkObjectID(mcp.ContextWithNewToolResultCache(context.Background()), "lane-1")
-	_, err := h.executePRDiff(ctx, client, "owner/repo", head)
+	_, err := h.executePRDiff(ctx, client, "owner/repo", head, "")
 	require.NoError(t, err)
 	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", map[string]any{
 		"repo": "owner/repo", "number": float64(7), "head_sha": head, "verdict": "CHANGES_REQUESTED", "summary": "fix it",
