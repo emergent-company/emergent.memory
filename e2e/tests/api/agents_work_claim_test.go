@@ -15,6 +15,12 @@
 // peer-claimed one must enqueue nothing. No GitHub App, no model provider and no
 // sandbox are involved — the claim is a label on the work object, which is
 // exactly what the guard reads.
+//
+// Coverage boundary: this locks the dispatch path only. The work reconciler
+// ticks every defaultWorkReconcilerInterval (1 minute), far longer than this
+// test observes, so removing just the reconciler's enqueue guard would not
+// redden it; that path is covered by the DB test
+// TestWorkReconciler_SkipsIssueClaimedByAnotherLane (#997).
 package api_test
 
 import (
@@ -23,7 +29,15 @@ import (
 	"time"
 )
 
-const workClaimPollTimeout = 30 * time.Second
+const (
+	workClaimPollTimeout  = 30 * time.Second
+	workClaimPollInterval = 200 * time.Millisecond
+	// workClaimQuietPeriod is how long a suppressed dispatch must stay
+	// suppressed before the test believes it. Dispatch runs asynchronously two
+	// goroutine hops past the write that triggered it, so one instantaneous read
+	// can miss a run that is about to commit — see awaitBoardRunsStaysZero.
+	workClaimQuietPeriod = 2 * time.Second
+)
 
 // workClaimFixture creates a work definition that picks up GitHubIssue in
 // `ready`, and returns the assignee name dispatch routes on. Creating a
@@ -114,15 +128,94 @@ func boardRunsFor(t *testing.T, rl *runLog, projectID, token, canonicalID string
 	return n
 }
 
-// awaitBoardRuns waits for the work object to reach the wanted run count, which
-// is 0 when the guard is expected to suppress dispatch entirely.
+// awaitBoardRuns waits for the work object to reach the wanted run count. It is
+// the positive barrier: callers ask for the run a dispatch must create, and a
+// timeout reports the stale count so the failure is loud.
 func awaitBoardRuns(t *testing.T, rl *runLog, projectID, token, canonicalID string, want int) int {
 	t.Helper()
 	deadline := time.Now().Add(workClaimPollTimeout)
 	for boardRunsFor(t, rl, projectID, token, canonicalID) < want && time.Now().Before(deadline) {
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(workClaimPollInterval)
 	}
 	return boardRunsFor(t, rl, projectID, token, canonicalID)
+}
+
+// awaitBoardRunsStaysZero watches the work object across a quiet period and
+// returns the first non-zero count it sees, or 0 when the count never moved.
+//
+// The negative half of the guard cannot be asserted with a single read. Dispatch
+// is asynchronous two hops deep: events.Emit runs each subscriber in
+// `go sub.callback` (domain/events/service.go), and handleEvent then runs
+// `go dispatchMatchedAgent` (domain/agents/triggers.go). A run count of 0 taken
+// right after the positive barrier therefore proves nothing about the claimed
+// item — its dispatch attempt may still be in flight. Observing for a fixed
+// dwell means a regression that removed the guard has ample time to insert its
+// run and turn this test red, instead of passing vacuously on a lucky sample.
+func awaitBoardRunsStaysZero(t *testing.T, rl *runLog, projectID, token, canonicalID string, dwell time.Duration) int {
+	t.Helper()
+	return observeStaysZero(func() int {
+		return boardRunsFor(t, rl, projectID, token, canonicalID)
+	}, dwell, workClaimPollInterval)
+}
+
+// observeStaysZero polls sample until dwell has elapsed and returns the first
+// non-zero count it sees, or 0 if the count stayed zero throughout. It samples
+// at least once, and never trusts a single zero inside the window: the loop
+// only returns 0 after a sample taken at or past the deadline. Split from the
+// HTTP helper so that contract is testable without a server.
+func observeStaysZero(sample func() int, dwell, interval time.Duration) int {
+	deadline := time.Now().Add(dwell)
+	for {
+		if got := sample(); got != 0 {
+			return got
+		}
+		if !time.Now().Before(deadline) {
+			return 0
+		}
+		time.Sleep(interval)
+	}
+}
+
+// TestObserveStaysZero pins the quiet-period contract: a run that appears part
+// way through the window is still caught, and an all-zero window is only
+// reported after the whole dwell has been observed.
+func TestObserveStaysZero(t *testing.T) {
+	t.Run("catches a run that appears inside the window", func(t *testing.T) {
+		calls := 0
+		got := observeStaysZero(func() int {
+			calls++
+			if calls >= 3 {
+				return 1
+			}
+			return 0
+		}, time.Second, time.Millisecond)
+		if got != 1 {
+			t.Fatalf("got %d, want 1 — a later insert must fail the assertion", got)
+		}
+		if calls != 3 {
+			t.Fatalf("sample called %d times, want 3 (return on the first non-zero)", calls)
+		}
+	})
+
+	t.Run("observes the full dwell before reporting zero", func(t *testing.T) {
+		const dwell = 40 * time.Millisecond
+		calls := 0
+		start := time.Now()
+		got := observeStaysZero(func() int {
+			calls++
+			return 0
+		}, dwell, 5*time.Millisecond)
+		elapsed := time.Since(start)
+		if got != 0 {
+			t.Fatalf("got %d, want 0", got)
+		}
+		if calls < 2 {
+			t.Fatalf("sample called %d time(s); one read is the vacuous assertion this helper exists to prevent", calls)
+		}
+		if elapsed < dwell {
+			t.Fatalf("returned after %s, before the %s dwell elapsed", elapsed, dwell)
+		}
+	})
 }
 
 // TestWorkClaim_PeerClaimedIssueIsNotDispatched is the end-to-end lock on the
@@ -149,8 +242,13 @@ func TestWorkClaim_PeerClaimedIssueIsNotDispatched(t *testing.T) {
 	if got := awaitBoardRuns(t, rl, projectID, token, freeID, 1); got != 1 {
 		t.Fatalf("unclaimed ready issue: got %d board runs, want 1", got)
 	}
-	if got := boardRunsFor(t, rl, projectID, token, claimedID); got != 0 {
-		t.Fatalf("peer-claimed issue: got %d board runs, want 0 — the board dispatched work another lane owns (#990)", got)
+
+	// Do not sample once here: the claimed item's dispatch attempt is async and
+	// the barrier above only proves the unclaimed item's finished. Observe it
+	// across a quiet period so a late insert still fails (see the helper).
+	if got := awaitBoardRunsStaysZero(t, rl, projectID, token, claimedID, workClaimQuietPeriod); got != 0 {
+		t.Fatalf("peer-claimed issue: got %d board runs over a %s quiet period, want 0 — the board dispatched work another lane owns (#990)",
+			got, workClaimQuietPeriod)
 	}
 }
 
