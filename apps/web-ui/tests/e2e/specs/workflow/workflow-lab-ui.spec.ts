@@ -26,29 +26,28 @@ test.describe('workflow lab board', () => {
     await expect(panel.getByRole('button', { name: 'Retry' })).toHaveCount(0);
   });
 
-  test('board has a sticky fixed first column and horizontally scrollable matrix', async ({ page }) => {
+  test('board has a sticky fixed first column and a badge-only blocked card', async ({ page }) => {
+    test.skip(!workflowObjectId, 'E2E_WORKFLOW_BLOCK_OBJECT_ID not set');
     await gotoWorkflow(page, '/work/board');
     const board = page.getByTestId('work-board');
     await expect(board).toBeVisible();
 
     const matrix = board.locator('div.overflow-x-auto').first();
-    if ((await matrix.count()) > 0) {
-      const overflow = await matrix.evaluate((el) => getComputedStyle(el).overflowX);
-      expect(overflow).toBe('auto');
-      const first = matrix.locator('.sticky.left-0').first();
-      await expect(first).toBeVisible();
-      const pos = await first.evaluate((el) => getComputedStyle(el).position);
-      expect(pos).toBe('sticky');
-    }
+    await expect(matrix).toBeVisible();
+    expect(await matrix.evaluate((el) => getComputedStyle(el).overflowX)).toBe('auto');
+    const first = matrix.locator('.sticky.left-0').first();
+    await expect(first).toBeVisible();
+    expect(await first.evaluate((el) => getComputedStyle(el).position)).toBe('sticky');
 
-    const cards = board.locator('[data-testid^="work-card-"]');
-    if ((await cards.count()) > 0) {
-      await expect(cards.first().getByPlaceholder(/optional note/i)).toHaveCount(0);
-      await expect(cards.first().getByRole('button', { name: /unblock/i })).toHaveCount(0);
-    }
+    const card = board.getByTestId(`work-card-${workflowObjectId}`);
+    await expect(card).toBeVisible();
+    await expect(card.getByText('blocked', { exact: true })).toBeVisible();
+    await expect(card.getByRole('button', { name: /clear|unblock/i })).toHaveCount(0);
+    await expect(card.getByPlaceholder(/optional note/i)).toHaveCount(0);
   });
 
   test('external issue close/reopen is reflected on the board', async ({ page }) => {
+    await gotoWorkflow(page, '/work/board');
     const title = `external-${Date.now()}`;
     const issue = await createExternalIssue(title);
     await expectCardTitle(page, title);
@@ -56,5 +55,8 @@ test.describe('workflow lab board', () => {
     await setIssueState(issue.number, 'closed');
     await page.reload();
     await expect(page.getByText(title, { exact: false })).toHaveCount(0);
+
+    await setIssueState(issue.number, 'open');
+    await expectCardTitle(page, title);
   });
 });
