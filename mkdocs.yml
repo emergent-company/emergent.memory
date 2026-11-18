@@ -83,6 +83,7 @@ nav:
   - Tutorials:
     - Deploy on Railway: tutorials/deploy-to-railway.md
     - Install a blueprint: tutorials/install-a-blueprint.md
+    - Configure an MCP share: tutorials/configure-mcp-share.md
   - Developer Guide:
     - Overview: developer-guide/index.md
     - Provider Setup: developer-guide/provider-setup.md

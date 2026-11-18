@@ -1,0 +1,170 @@
+# Configure an MCP share
+
+Create a scoped key that lets an outside MCP client — Claude Desktop, Claude Code, Cursor, or your own agent — read one project without being handed your own token. A share is a project API token with a tool allowlist: you tick the tools, the page shows the endpoint and the key exactly once, and the client configs come ready to paste.
+
+## Before you start
+
+- A Memory project, open in the app. A share is bound to one project and reaches only that project's graph.
+- An MCP client that speaks HTTP transport, or one that can run `npx mcp-remote` (Claude Desktop). The dialog prints configs for Claude Desktop, Claude Code, Cursor and Cloud Code.
+- No deploy and no restart: a share is a project API token with an allowlist, created and revoked from the app.
+
+!!! note "A share is a key with a tool allowlist"
+
+    A share is not a second server or a second deployment. The key it mints is an
+    ordinary project API token, and the tools you tick decide which scopes that
+    token carries — so the same key works over MCP and, for those scopes, over the
+    REST API. Sharing only ever narrows: platform administration, project
+    settings, credential minting and agent execution are never on the list.
+
+## 1. Open MCP Servers
+
+In the project sidebar, under **PROJECT**, click **MCP Servers**. The page lists
+the servers that give agents their tools; a project that has registered none
+still shows the built-in **Memory tools** server, and that is the server a share
+draws its tools from.
+
+Click **Sharing** in the page header, beside **Add server**. It opens a different
+page: **MCP Servers** is the registry agents read, **MCP Sharing** is where a
+scoped key for an outside client is minted.
+
+## 2. Start a new share
+
+The **MCP Sharing** page lists this project's shares. A project with none says
+**No MCP shares yet** and offers **Create a share**; once shares exist, the header
+offers **New share** instead. Both open the same form, **New MCP share** — *Name
+the share and choose what an outside MCP client can reach.*
+
+## 3. Name the share
+
+**Name** is required and must be unique within the project. It is what the list
+and the reveal dialog call the share, so pick something the recipient will
+recognise later; the field's example, `e.g. research-assistant`, is a fair shape.
+
+**Description** is optional and is shown under the name in the list. Say who or
+what the key is for — when two keys look alike, this line is what tells them
+apart.
+
+## 4. Start from a preset
+
+**Start from a preset** offers six curated sets. Each chip names the set and the
+number of tools it selects — the count is resolved against this project's catalog
+when the page loads, so it can differ from a neighbouring project.
+
+| Preset | What it grants |
+|---|---|
+| **Read-only** (the default) | Search, graph reads, document and journal reads, schema reads, skill reads, and agent and run reads. No tool in this set writes. |
+| **Knowledge writer** | Read-only, plus creating, editing and deleting objects, relationships, documents and journal notes. |
+| **Schema & blueprints** | Graph reads, then schema read/write, schema migrations and blueprints. |
+| **Agent observer** | Agent, run, question and session reads, plus search and graph reads. |
+| **Documents** | Uploading, listing, retrieving and deleting documents, plus document classification, keyword search and semantic search. |
+| **Full access** | Every tool a share key can carry. |
+
+Clicking a preset **replaces** the current selection rather than adding to it. The
+ticks stay editable afterwards, so start from the closest set and trim it in the
+next step.
+
+## 5. Trim the tool list
+
+**Memory tools** lists everything a share may expose, grouped by area — Agents,
+Documents, Feedback, Graph, Journal, Projects, Schema, Search, Session and Skills.
+Above the list, the counter shows the current selection (`23 selected` for the
+default Read-only preset) with **Select all** and **Clear** beside it, and
+**Search tools…** filters by tool name, description, category and required scope.
+
+Each row names the scope its tool needs — `requires graph:read`, for instance.
+That scope is what the key carries, which is why a share cannot write through the
+REST API either: the allowlist decides the token's scopes, not only what the MCP
+surface offers.
+
+At least one tool is required; the form will not submit an empty set.
+
+## 6. Optionally email the key
+
+**Email the key (optional)** takes one or more addresses separated by commas.
+Each recipient gets the endpoint, the key and the same ready-to-paste client
+configs, with the sender named in the message — the option to use when the person
+who will hold the key is not the person creating it.
+
+Leave the field empty to hand the key over yourself in the next step.
+
+!!! note "A failed email does not fail the share"
+
+    If the deployment cannot send mail, the share is still created and the key
+    still works. The dialog says the invite did not go out and keeps the key on
+    screen, so copy it and pass it on another way.
+
+## 7. Create it, and copy the key
+
+Click **Create share**. The list comes back with a one-time dialog open over it,
+headed **Share created**, holding everything the recipient needs:
+
+- the key, with **Copy key**;
+- **Endpoint** — this deployment's MCP URL, ending in `/api/mcp`, with **Copy**;
+- a Claude Desktop shortcut: **Download bundle** fetches a `.mcpb` file that adds
+  the server when double-clicked, and **Copy link** copies the private bundle or
+  install link, both of which carry this key;
+- the warning that the key is not shown again, with the way back to it;
+- **Client setup** — four blocks that already contain the endpoint and the key.
+
+Click **Done — I've saved the key** once the key is somewhere safe.
+
+!!! warning "The key exists in this response only"
+
+    Closing the dialog loses the key. It can be emailed to a recipient later from
+    the share's **⋯** menu; if nobody has it, **Issue a new key** mints another and
+    the old key stops working immediately.
+
+## 8. Connect a client
+
+Paste the block for the client you are setting up. The four differ only in shape:
+
+- **Claude Code** — one command,
+  `claude mcp add --transport http memory <endpoint> --header "Authorization: Bearer <key>"`;
+- **Claude Desktop** — an `mcpServers` entry that runs
+  `npx -y mcp-remote <endpoint> --header "Authorization: Bearer <key>"`;
+- **Cursor** — an `mcpServers` entry with `url` and a `headers` object;
+- **Cloud Code** — the same entry keyed `httpUrl`.
+
+A client that speaks HTTP transport directly needs only the endpoint and the
+header, `Authorization: Bearer <key>`.
+
+!!! warning "The snippets are the secret"
+
+    Every block holds the live key, and so do the dialog's private links. Paste
+    them into the client, not into a ticket, a chat or a repository.
+
+## 9. Confirm it works
+
+Back on **MCP Sharing**, the share is a row: its name, an **active** badge, the
+description, the tool count (**23 tools** for a Read-only share), when it was
+created, and **last used** — `never used` until a client calls one of its tools.
+The list header counts them (**1 SHARE**).
+
+Ask the client to call a tool from the set — `search` is on the Read-only preset —
+and the row's last-used time moves. If nothing moves, the endpoint or the key is
+wrong; there is nothing else in the share to configure.
+
+## Managing a live share
+
+The row's **⋯** menu is the whole lifecycle:
+
+| Action | What it does |
+|---|---|
+| **Edit tools** | Rewrites the allowlist in place. The key stays the same and its scopes move with the ticks. |
+| **Duplicate share** | Opens the create form pre-filled with this share's description and tools, under a free name (`<name> (copy)`). The copy gets its own key; the source share is untouched. |
+| **View writes** | Opens the object browser filtered to the objects this share's key created or last updated. |
+| **Invite by email** | Emails the *current* key and the client configs to new addresses, so clients already using the share keep working. |
+| **Issue a new key** | Mints a replacement and invalidates the old key immediately; the new key is shown once. |
+| **Revoke share** | Invalidates the key for good. The confirmation is explicit: any MCP client using it stops working, and it cannot be undone. |
+
+Who holds a key is recorded: the list shows the addresses it was emailed to, and
+marks a share **read & write** when its tools can modify the graph.
+
+## Next
+
+The reference — every preset, the API behind the form, and the CLI — is
+[MCP Servers → Sharing a scoped key](../developer-guide/mcp-servers.md#sharing-a-scoped-key-with-someone-else).
+
+A share is a key for one project. To give an agent its own MCP endpoint, with its
+own key and request history, use **Manage an agent endpoint** on the Sharing page
+instead.

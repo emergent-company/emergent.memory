@@ -108,6 +108,7 @@ export default defineConfig({
           items: [
             { label: 'Deploy on Railway', slug: 'tutorials/deploy-to-railway' },
             { label: 'Install a blueprint', slug: 'tutorials/install-a-blueprint' },
+            { label: 'Configure an MCP share', slug: 'tutorials/configure-mcp-share' },
           ],
         },
         {
