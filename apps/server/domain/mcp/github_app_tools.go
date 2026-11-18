@@ -9,7 +9,7 @@ func githubAppToolDefinitions() []ToolDefinition {
 		{
 			Name:         "github-pr-diff",
 			AgentOnly:    true,
-			Description:  "Read the changed files of a GitHub pull request at one commit SHA (or, without a pull request number, one commit's own diff for context). Review the exact SHA named by the review subject; do not assume the PR's current head. The result marks itself truncated when a patch or the whole payload was cut; re-fetch the files named in truncatedFiles with the path (or files) argument to read them in full before submitting a verdict.",
+			Description:  "Read the changed files of a GitHub pull request at one commit SHA (or, without a pull request number, one commit's own diff for context). Review the exact SHA named by the review subject; do not assume the PR's current head. The result marks itself truncated when a patch or the whole payload was cut; re-fetch the files named in truncatedFiles with the path (or files) argument to read them in full before submitting a verdict. A file GitHub returns without a patch (binary, over its patch limit) or one too large for any re-read can never be read in full: the head then cannot be approved, and the result says so.",
 			OutputSchema: objectOutputSchema(),
 			InputSchema: InputSchema{
 				Type: "object",
@@ -30,7 +30,7 @@ func githubAppToolDefinitions() []ToolDefinition {
 		{
 			Name:         "github-review-submit",
 			AgentOnly:    true,
-			Description:  "Submit a review verdict for a GitHub pull request at an exact commit SHA. Posts the review, a head-bound `reviewed` check, and the `Reviewed-SHA` merge-guard marker. Fails closed if the PR head moved or the full diff of every changed file was not read in this run.",
+			Description:  "Submit a review verdict for a GitHub pull request at an exact commit SHA. Posts the review, a head-bound `reviewed` check, and the `Reviewed-SHA` merge-guard marker. A MERGE fails closed if the PR head moved or the full diff of every changed file was not read in this run; CHANGES_REQUESTED authorizes nothing and is always recordable.",
 			OutputSchema: objectOutputSchema(),
 			InputSchema: InputSchema{
 				Type: "object",

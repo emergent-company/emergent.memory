@@ -97,3 +97,49 @@ func TestReviewGateSingleReviewerApprovesWhenQuorumCapped(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, ReviewGateApproved, gate.Status)
 }
+
+// TestReviewGateUnapprovableAcceptsRejectionOnly pins the #1037 half of the
+// terminal state: an unapprovable head accepts no approval (the content that
+// would justify it can never be read), but a rejection authorizes nothing and
+// must stay recordable. The terminal status and its reason are preserved.
+func TestReviewGateUnapprovableAcceptsRejectionOnly(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	ctx := context.Background()
+	db := testdb.SetupTestDBOrFail(t, ctx, "review_gate_unapprovable")
+	defer db.Close()
+	repo := NewRepository(db.DB, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	orgID, projectID := uuid.New(), uuid.New()
+	_, err := db.DB.ExecContext(ctx, `INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgID, "review-unapprovable-org")
+	require.NoError(t, err)
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`, projectID, orgID, "review-unapprovable-project")
+	require.NoError(t, err)
+
+	reviewer := uuid.New()
+	required := `[{"agentId":"` + reviewer.String() + `","name":"review"}]`
+	reason := "changes asset.bin, which GitHub withholds; this head cannot be approved"
+	_, err = db.DB.ExecContext(ctx, `INSERT INTO kb.review_gates
+		(project_id, subject_type, subject_ref, head_sha, required_reviewers, status, status_reason)
+		VALUES (?, 'GitHubPullRequest', 'owner/repo#7', 'head-1', ?::jsonb, 'unapprovable', ?)`, projectID, required, reason)
+	require.NoError(t, err)
+
+	svc := NewReviewGateService(repo, nil, log)
+
+	// No approval can bring a terminal head back.
+	_, err = svc.RecordVerdict(ctx, projectID, "GitHubPullRequest", "owner/repo#7", "head-1", reviewer.String(), "review", "MERGE", "ok")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unapprovable")
+
+	// A rejection is still recorded and the terminal reason survives.
+	gate, err := svc.RecordVerdict(ctx, projectID, "GitHubPullRequest", "owner/repo#7", "head-1", reviewer.String(), "review", "CHANGES_REQUESTED", "asset.bin cannot be reviewed")
+	require.NoError(t, err)
+	require.Equal(t, ReviewGateUnapprovable, gate.Status, "a rejection must not reopen a terminal head")
+	require.Equal(t, reason, gate.StatusReason)
+
+	var verdicts int
+	require.NoError(t, db.DB.NewRaw(`SELECT count(*) FROM kb.review_verdicts WHERE gate_id = ?`, gate.ID).Scan(ctx, &verdicts))
+	require.Equal(t, 1, verdicts, "the rejection is recorded for audit")
+}

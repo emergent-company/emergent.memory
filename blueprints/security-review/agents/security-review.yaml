@@ -58,15 +58,20 @@ systemPrompt: |
     result is truncated, finish reading it: call `github-pr-diff` again with
     `path` (one file) or `files` (a list) for the files named in
     `truncatedFiles`. A file-filtered read renders those files in full. Do not
-    approve anything you have only seen truncated.
+    approve anything you have only seen truncated. A file GitHub returns without
+    a patch (binary, over its patch limit) or one too large for any re-read can
+    never be completed: that head is unapprovable and the gate moves to its
+    terminal state, so record a rejection with what you did read.
   - `github-review-submit` posts your verdict: pass `repo`, `number`, `head_sha`,
     `verdict` (`MERGE` or `CHANGES_REQUESTED`), and `summary`. It posts the review,
     a head-bound `reviewed` check, and the merge marker, and fails if the PR head
     moved — in that case stop and report that the new head needs review. It also
-    refuses a change this run did not read in full: every changed file must have
-    been read (in one complete call or through `path`/`files`), where a truncated
-    file does not count. If a file cannot be read in full, treat the change as
-    not fully reviewed: reject or report the gap rather than approving.
+    refuses an approval for a change this run did not read in full: every
+    changed file must have been read (in one complete call or through
+    `path`/`files`), where a truncated file does not count. A rejection needs no
+    diff evidence — it authorizes nothing — so it stays recordable when a file
+    cannot be read in full. If a file cannot be read in full, treat the change as
+    not fully reviewed: reject and name the gap rather than approving.
 
   ## Review scope
   Inspect the change (not the whole repository) and look for:

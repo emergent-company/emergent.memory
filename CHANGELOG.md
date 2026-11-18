@@ -47,6 +47,21 @@
 
 ### Changed
 
+**A review head whose diff cannot be read in full now fails terminally, and a rejection is always recordable** (2026-11-18)
+
+Two `github-pr-diff` shapes left the review gate `in_progress` for ever: a changed
+file GitHub returns without a patch (a binary, or a diff over its patch limit), and
+a patch larger than the tool's whole-result budget. Neither can be completed by any
+re-read, so `requireCompleteDiffRead` refused *every* verdict — including
+`CHANGES_REQUESTED`, which authorizes nothing — and the required `reviewed` check
+never left pending. Such a head now moves straight to the terminal `unapprovable`
+state with the reason on the `reviewed` check, and a rejection needs no same-run
+diff evidence: only `MERGE` is bound to reading every changed file. A gate already
+recorded unapprovable accepts a rejection (for audit) but no approval. On the same
+path, `executeCommitDiff` bounds the rendered commit message: on a fork pull
+request it is attacker-controlled and was charged against the diff budget, so a
+long message could be shown whole while the change itself was cut.
+
 **The queued-run sweep now covers fan-out and session runs** (2026-11-16)
 
 The stale-run reaper spared every run with a `root_run_id` or a `session_id`,

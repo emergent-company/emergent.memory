@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -35,6 +36,19 @@ const (
 	// commit cannot blow up the agent context.
 	maxPatchBytes = 6000
 	maxDiffBytes  = 200000
+
+	// maxCommitMessageBytes bounds the commit message rendered in a commit diff
+	// header. A fork pull request's commit message is attacker-controlled and is
+	// charged against the same result budget as the change itself, so an
+	// unbounded message would be shown whole while the diff the reviewer is meant
+	// to read was cut (#1037).
+	maxCommitMessageBytes = 1000
+
+	// diffEnvelopeAllowance is the room one diff payload needs beyond its text:
+	// the JSON envelope, the structured content and the per-file header. A patch
+	// within this margin of the whole-result text budget cannot be rendered in
+	// full by any re-read, so it is content the head can never certify.
+	diffEnvelopeAllowance = 1024
 
 	// githubCommitFileListCap is the maximum number of changed files GitHub's
 	// commit endpoint lists; a commit at the cap may hide more files.
@@ -479,14 +493,28 @@ func (h *ReviewToolHandler) executePullRequestDiff(ctx context.Context, client *
 		return nil, apperror.NewValidationf("github app tool: %s", reason)
 	}
 
-	title := strings.TrimSpace(state.Title)
-	header := fmt.Sprintf("pull request %s#%d at %s", repo, number, headSHA)
-	if title != "" {
-		header += "\n" + title
-	}
+	header := prDiffHeader(repo, number, headSHA, state.Title)
 	rendered, result, err := h.renderBounded(ctx, headSHA, header, files, selection, len(files) >= githubPRFileListCap)
 	if err != nil {
 		return nil, err
+	}
+	// Content GitHub withholds, or a patch no re-read can render in full, is
+	// evidence that can never arrive: the head cannot be approved and must not
+	// wait forever in pending (#1037). The diff itself is still returned so the
+	// reviewer can record a rejection from what it did read.
+	unreadable := rendered.unreadableFiles
+	if len(selection) == 1 {
+		// A filtered read of exactly one file that still could not render it in
+		// full cannot do better on a retry: same file, same budget. That is the
+		// other shape of "no re-read can complete this evidence" (#1037).
+		for _, name := range rendered.truncatedFiles {
+			if _, selected := selection[name]; selected && !slices.Contains(unreadable, name) {
+				unreadable = append(unreadable, name)
+			}
+		}
+	}
+	if reason := unapprovableDiffReason(repo, number, headSHA, len(files), unreadable); reason != "" {
+		h.markHeadUnapprovable(ctx, client, projectID, repo, number, headSHA, reason)
 	}
 	for _, filename := range rendered.completeFiles {
 		mcp.MarkRunEvidence(ctx, diffFileEvidenceKey(repo, number, headSHA, filename))
@@ -514,7 +542,11 @@ func (h *ReviewToolHandler) executeCommitDiff(ctx context.Context, client *githu
 		return nil, apperror.NewValidationf("github app tool: commit %s has an empty diff (its tree matches its first parent); pass the pull request number to read the reviewed pull request's diff",
 			headSHA)
 	}
-	header := fmt.Sprintf("commit %s\n%s", diff.SHA, strings.TrimSpace(diff.Message))
+	message := strings.TrimSpace(diff.Message)
+	if len(message) > maxCommitMessageBytes {
+		message = truncateUTF8(message, maxCommitMessageBytes) + "\n… commit message truncated\n"
+	}
+	header := fmt.Sprintf("commit %s\n%s", diff.SHA, message)
 	_, result, err := h.renderBounded(ctx, diff.SHA, header, diff.Files, selection, len(diff.Files) >= githubCommitFileListCap)
 	if err != nil {
 		return nil, err
@@ -532,10 +564,16 @@ func (h *ReviewToolHandler) executeCommitDiff(ctx context.Context, client *githu
 // the model received in full.
 func (h *ReviewToolHandler) renderBounded(ctx context.Context, sha, header string, files []githubapp.CommitFile, selection map[string]struct{}, listingCapped bool) (*diffRender, *mcp.ToolResult, error) {
 	textBudget := h.diffTextBudget()
-	rendered, err := renderDiffFiles(sha, header, files, selection, textBudget, listingCapped)
+	// A file whose patch GitHub withheld, or which no single-file read can
+	// render in full, can never complete its evidence. Compute that once so the
+	// payload can warn about it and the caller can move the gate to its terminal
+	// state instead of waiting for content that cannot arrive (#1037).
+	unreadable := h.unreadableFiles(files, selection)
+	rendered, err := renderDiffFiles(sha, header, files, selection, textBudget, listingCapped, unreadable)
 	if err != nil {
 		return nil, nil, err
 	}
+	rendered.unreadableFiles = unreadable
 	result := diffToolResult(sha, len(files), selection, rendered)
 	if h.maxResultBytes <= 0 {
 		return rendered, result, nil
@@ -549,10 +587,11 @@ func (h *ReviewToolHandler) renderBounded(ctx context.Context, sha, header strin
 		if textBudget < 512 {
 			textBudget = 512
 		}
-		next, rerr := renderDiffFiles(sha, header, files, selection, textBudget, listingCapped)
+		next, rerr := renderDiffFiles(sha, header, files, selection, textBudget, listingCapped, unreadable)
 		if rerr != nil {
 			break
 		}
+		next.unreadableFiles = unreadable
 		rendered, result = next, diffToolResult(sha, len(files), selection, next)
 	}
 	if raw, marshalErr := json.Marshal(result); marshalErr != nil || len(raw) > h.maxResultBytes {
@@ -577,6 +616,50 @@ func (h *ReviewToolHandler) diffTextBudget() int {
 		return h.maxResultBytes
 	}
 	return maxDiffBytes
+}
+
+// wholeResultPatchBudget is the largest patch a file-filtered read can render.
+// A filtered read spends the whole text budget on one file, so a patch that does
+// not fit this budget -- minus the envelope allowance and the per-file header --
+// cannot be captured by any re-read.
+func (h *ReviewToolHandler) wholeResultPatchBudget() int {
+	budget := h.diffTextBudget() - diffEnvelopeAllowance
+	if budget < 1 {
+		return 1
+	}
+	return budget
+}
+
+// unreadableFiles names the changed files whose full content no call can ever
+// produce: GitHub withheld the patch (binary, over its patch limit, or a
+// mode-only change) or the patch alone exceeds the whole-result budget. Re-reading
+// one of them cannot complete its evidence, so a head that changes one can never
+// be approved (#1037).
+func (h *ReviewToolHandler) unreadableFiles(files []githubapp.CommitFile, selection map[string]struct{}) []string {
+	budget := h.wholeResultPatchBudget()
+	unreadable := make([]string, 0)
+	for _, file := range files {
+		if selection != nil {
+			if _, ok := selection[file.Filename]; !ok {
+				continue
+			}
+		}
+		if patchWithheld(file) || len(file.Patch) > budget {
+			unreadable = append(unreadable, file.Filename)
+		}
+	}
+	return unreadable
+}
+
+// prDiffHeader renders the model-visible header of a pull request diff. GitHub
+// bounds a pull request title, so it is not a payload of its own; a commit
+// message is not (executeCommitDiff bounds it explicitly).
+func prDiffHeader(repo string, number int, headSHA, title string) string {
+	header := fmt.Sprintf("pull request %s#%d at %s", repo, number, headSHA)
+	if title = strings.TrimSpace(title); title != "" {
+		header += "\n" + title
+	}
+	return header
 }
 
 // diffToolResult builds the agent-facing result from one render. truncatedFiles
@@ -707,6 +790,11 @@ type diffRender struct {
 	truncatedFiles []string
 	// completeFiles names the files whose full patch is in the payload.
 	completeFiles []string
+	// unreadableFiles names the changed files whose content no call can ever
+	// produce (a withheld patch or one larger than the whole-result budget).
+	// They can never count as read, so a head that changes one cannot be
+	// approved (#1037).
+	unreadableFiles []string
 	// complete reports that this one call rendered every changed file in full,
 	// which is the only thing that authorizes a verdict without per-file reads.
 	complete bool
@@ -728,7 +816,7 @@ type diffSegment struct {
 // executor's per-result bound). It is pure: the caller records evidence from
 // completeFiles/complete, so a segment cut by the final size cap is never
 // reported as fully read.
-func renderDiffFiles(sha, header string, files []githubapp.CommitFile, selection map[string]struct{}, textBudget int, fileListCapped bool) (*diffRender, error) {
+func renderDiffFiles(sha, header string, files []githubapp.CommitFile, selection map[string]struct{}, textBudget int, fileListCapped bool, unreadableFiles []string) (*diffRender, error) {
 	if selection != nil {
 		present := make(map[string]struct{}, len(files))
 		for _, file := range files {
@@ -753,10 +841,19 @@ func renderDiffFiles(sha, header string, files []githubapp.CommitFile, selection
 	if patchBudget > textBudget {
 		patchBudget = textBudget
 	}
+	unreadable := make(map[string]struct{}, len(unreadableFiles))
+	for _, name := range unreadableFiles {
+		unreadable[name] = struct{}{}
+	}
 	prefix := header + "\n\n"
 	if fileListCapped {
 		// Put the warning at the top so the size cap cannot cut it.
 		prefix += fmt.Sprintf("… warning: the change lists %d changed files (GitHub's listing cap); files beyond it were not returned.\n\n", len(files))
+	}
+	if len(unreadable) > 0 {
+		// The warning is static so the size accounting stays stable; the exact
+		// files are named in each file's note and in the gate reason.
+		prefix += "… warning: this change includes content GitHub will not return and no re-read can render in full; this head cannot be approved. Record CHANGES_REQUESTED with your findings.\n\n"
 	}
 	segments := make([]diffSegment, 0, len(files))
 	total := len(prefix)
@@ -779,18 +876,23 @@ func renderDiffFiles(sha, header string, files []githubapp.CommitFile, selection
 			complete = false
 		}
 		name := sanitizeDiffPath(file.Filename)
+		_, unrenderable := unreadable[file.Filename]
 		var b strings.Builder
-		fmt.Fprintf(&b, "--- %s (%s, +%d/-%d)\n%s\n\n", name, file.Status, file.Additions, file.Deletions, patch)
+		// The note comes before the patch so the whole-result trim, which cuts
+		// the tail, can never remove the explanation the reviewer needs.
+		fmt.Fprintf(&b, "--- %s (%s, +%d/-%d)\n", name, file.Status, file.Additions, file.Deletions)
 		switch {
 		case withheld:
-			fmt.Fprintf(&b, "… patch unavailable for %s: GitHub withheld it (binary, over its patch limit, or mode-only); treat the change as not fully reviewed\n\n", name)
-		case !complete && selection != nil:
+			fmt.Fprintf(&b, "… patch unavailable for %s: GitHub withheld it (binary, over its patch limit, or mode-only); treat the change as not fully reviewed\n", name)
+		case !complete && (selection != nil || unrenderable):
 			// Re-reading the same file cannot help: it alone exceeds the
 			// payload budget, so say so instead of inviting a loop.
-			fmt.Fprintf(&b, "… patch truncated for %s: this file alone exceeds the payload limit; treat the change as not fully reviewed\n\n", name)
+			fmt.Fprintf(&b, "… patch truncated for %s: this file alone exceeds the payload limit; treat the change as not fully reviewed\n", name)
 		case !complete:
-			fmt.Fprintf(&b, "… patch truncated for %s: re-fetch this file with github-pr-diff path=%q\n\n", name, name)
+			fmt.Fprintf(&b, "… patch truncated for %s: re-fetch this file with github-pr-diff path=%q\n", name, name)
 		}
+		b.WriteString(patch)
+		b.WriteString("\n\n")
 		segments = append(segments, diffSegment{filename: file.Filename, text: b.String(), complete: complete, withheld: withheld})
 		total += b.Len()
 		if total >= textBudget {
@@ -847,6 +949,21 @@ func renderDiffFiles(sha, header string, files []githubapp.CommitFile, selection
 	result.truncatedFiles = truncatedFiles
 	result.complete = selection == nil && !result.truncated && len(files) > 0
 	return result, nil
+}
+
+// unapprovableDiffReason explains why a head's changed content can never be
+// certified complete by any re-read, or returns "" when it can. A rejection is
+// still recordable for such a head; only approval needs the full diff (#1037).
+func unapprovableDiffReason(repo string, number int, headSHA string, fileCount int, unreadable []string) string {
+	switch {
+	case fileCount >= githubPRFileListCap:
+		return fmt.Sprintf("pull request %s#%d lists %d changed files, GitHub's listing cap; files beyond it were not returned and cannot be read, so this head cannot be approved",
+			repo, number, fileCount)
+	case len(unreadable) > 0:
+		return fmt.Sprintf("pull request %s#%d at head %s changes %s, which GitHub withholds or no re-read can render in full (binary, over GitHub's patch limit, or larger than the whole-result budget); this head cannot be approved",
+			repo, number, headSHA, summarizedNames(unreadable))
+	}
+	return ""
 }
 
 // summarizedFiles renders changed file names for a validation error, bounded so
@@ -965,12 +1082,15 @@ func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *git
 	if state.HeadSHA != headSHA {
 		return nil, apperror.NewValidationf("github app tool: PR head is %s, not the reviewed %s; re-review the new head", state.HeadSHA, headSHA)
 	}
-	// Same-run binding: the verdict may only name a pull request head whose
+	// Same-run binding: an approval may only name a pull request head whose
 	// non-empty diff this run read in full through github-pr-diff. A prompt
 	// injection in PR text cannot make the agent approve a change it never
 	// fetched. Evidence is keyed on (repo, number, head SHA) because the reviewed
 	// object is the pull request, not one commit's first-parent diff (#1022).
-	if !mcp.RunHasEvidence(ctx, diffEvidenceKey(repo, number, headSHA)) {
+	//
+	// A rejection authorizes nothing, so it is always recordable: refusing it for
+	// unread content left the gate pending forever with no way out (#1037).
+	if verdict == "MERGE" && !mcp.RunHasEvidence(ctx, diffEvidenceKey(repo, number, headSHA)) {
 		if err := h.requireCompleteDiffRead(ctx, client, projectID, repo, number, headSHA); err != nil {
 			return nil, err
 		}
@@ -1057,10 +1177,14 @@ func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *git
 // result. It reads the pull request's changed-file list (the reviewed object)
 // and requires per-file evidence for every one of them, then marks the aggregate
 // key so a later submit in the same run does not repeat the check. A file the
-// run only saw truncated, or whose patch GitHub withheld, has no evidence, so
-// the verdict stays refused (#1006). A genuinely empty pull request is a
-// terminal, unapprovable head: the gate is moved out of pending and the caller
-// gets a validation error.
+// run only saw truncated has no evidence, so the approval stays refused until it
+// is read with path/files (#1006).
+//
+// A head whose remaining content cannot be produced by any re-read -- a withheld
+// patch, a patch larger than the whole-result budget, GitHub's file-listing cap,
+// or no changed files at all -- is terminal: the gate is moved out of pending
+// with the reason and the caller gets a validation error, instead of waiting for
+// evidence that can never arrive (#1022, #1037).
 func (h *ReviewToolHandler) requireCompleteDiffRead(ctx context.Context, client *githubapp.Client, projectID, repo string, number int, headSHA string) error {
 	files, err := client.ListPullRequestFiles(ctx, repo, number)
 	if err != nil {
@@ -1072,8 +1196,9 @@ func (h *ReviewToolHandler) requireCompleteDiffRead(ctx context.Context, client 
 		h.markHeadUnapprovable(ctx, client, projectID, repo, number, headSHA, reason)
 		return apperror.NewValidationf("github app tool: %s", reason)
 	}
-	if len(files) >= githubPRFileListCap {
-		return apperror.NewValidationf("github app tool: pull request %s#%d lists %d changed files, GitHub's listing cap (pagination bound); files beyond it cannot be read, so the diff cannot be certified complete", repo, number, len(files))
+	if reason := unapprovableDiffReason(repo, number, headSHA, len(files), h.unreadableFiles(files, nil)); reason != "" {
+		h.markHeadUnapprovable(ctx, client, projectID, repo, number, headSHA, reason)
+		return apperror.NewValidationf("github app tool: %s", reason)
 	}
 	unread := make([]string, 0)
 	for _, file := range files {

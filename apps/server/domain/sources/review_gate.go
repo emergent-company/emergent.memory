@@ -278,9 +278,12 @@ func reviewGateAuthorUnknown(subjectType string, properties map[string]any) bool
 }
 
 // MarkUnapprovable moves a head's gate to the terminal unapprovable state with
-// a reason. It is how a review tool reports that the head has no reviewable
-// diff (no changed files), so the gate and the required reviewed check stop
-// waiting forever for a verdict that can never exist (#1022).
+// a reason. It is how a review tool reports that the head can never be approved:
+// it has no changed files, GitHub withholds a changed file's content, a patch is
+// larger than any re-read can render, or the file listing hit GitHub's
+// pagination cap. The gate and the required reviewed check then stop waiting
+// forever for evidence that can never exist; a rejection is still recordable
+// (#1022, #1037).
 //
 // A missing gate is reported as ErrReviewGateNotFound so legacy sources keep
 // their old path. Any other error is a real write failure.
@@ -341,8 +344,10 @@ func (s *ReviewGateService) MarkUnapprovable(ctx context.Context, projectID uuid
 
 // RecordVerdict writes one reviewer's verdict and recomputes the gate. A
 // reviewer not in the gate's required snapshot cannot influence it. A terminal
-// unapprovable head accepts no verdict: the gate has no reviewable diff, so a
-// late verdict cannot flip it back to pending or approved (#1022).
+// unapprovable head accepts no approval: the gate has no fully reviewable diff,
+// so a late MERGE cannot flip it back to pending or approved (#1022). A
+// rejection authorizes nothing and stays recordable, so a reviewer can still say
+// what is wrong with a head whose content GitHub would not return (#1037).
 func (s *ReviewGateService) RecordVerdict(ctx context.Context, projectID uuid.UUID, subjectType, subjectRef, headSHA, reviewerAgentID, reviewerName, verdict, evidence string) (*ReviewGate, error) {
 	if s == nil || s.repo == nil {
 		return nil, errors.New("sources: review gate service is not configured")
@@ -372,7 +377,11 @@ func (s *ReviewGateService) RecordVerdict(ctx context.Context, projectID uuid.UU
 		if err != nil {
 			return fmt.Errorf("sources: read review gate: %w", err)
 		}
-		if gate.Status == ReviewGateUnapprovable {
+		// Unapprovable is terminal for the head: only an approval can turn the
+		// required check green, so only an approval is refused. The rejection is
+		// still recorded for audit and keeps the terminal status and reason.
+		terminalUnapprovable := gate.Status == ReviewGateUnapprovable
+		if terminalUnapprovable && verdict == "MERGE" {
 			result = &gate
 			return apperror.NewValidationf("sources: review gate for %s@%s is unapprovable: %s", subjectRef, headSHA, reviewGateUnapprovableSummary(&gate))
 		}
@@ -396,7 +405,9 @@ func (s *ReviewGateService) RecordVerdict(ctx context.Context, projectID uuid.UU
 		`, gate.ID, projectID, reviewerID, reviewerName, headSHA, verdict, evidence).Exec(ctx); err != nil {
 			return fmt.Errorf("sources: record review verdict: %w", err)
 		}
-		gate.Status = s.evaluate(ctx, tx, &gate)
+		if !terminalUnapprovable {
+			gate.Status = s.evaluate(ctx, tx, &gate)
+		}
 		gate.UpdatedAt = time.Now().UTC()
 		if _, err := tx.NewUpdate().Model(&gate).
 			Set("status = ?", gate.Status).
