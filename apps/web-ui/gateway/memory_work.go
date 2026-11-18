@@ -232,6 +232,15 @@ func (m *MemoryClient) AddWorkComment(ctx context.Context, canonicalID, body str
 	return &env.Data, nil
 }
 
+// ClearWorkItemBlock removes a stale durable block without enqueueing a run.
+func (m *MemoryClient) ClearWorkItemBlock(ctx context.Context, canonicalID string) (*WorkItemAction, error) {
+	var env successEnvelope[WorkItemAction]
+	if err := m.do(ctx, http.MethodPost, m.workItemsPath(ctx)+"/"+url.PathEscape(canonicalID)+"/clear-block", nil, &env); err != nil {
+		return nil, err
+	}
+	return &env.Data, nil
+}
+
 // RetryWorkItem returns a blocked work item to ready and enqueues it.
 func (m *MemoryClient) RetryWorkItem(ctx context.Context, canonicalID string) (*WorkItemAction, error) {
 	var env successEnvelope[WorkItemAction]

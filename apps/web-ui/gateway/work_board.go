@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/url"
 	"sort"
 	"strings"
@@ -392,6 +393,12 @@ func (s *Server) uiWorkComment(c echo.Context) error {
 
 func (s *Server) uiWorkRetry(c echo.Context) error {
 	_, err := s.memory.RetryWorkItem(c.Request().Context(), c.Param("canonicalId"))
+	if returnTo := safeLocalPath(c.FormValue("return_to")); returnTo != "" {
+		if err != nil {
+			return redirectWithError(c, returnTo, err)
+		}
+		return c.Redirect(http.StatusSeeOther, returnTo)
+	}
 	return s.renderWorkBoard(c, err)
 }
 

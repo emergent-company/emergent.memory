@@ -149,8 +149,8 @@ templ workTypeBlock(m workMatrix, data workData) {
 templ workMatrixView(m workMatrix, data workData) {
 	{{ cols := m.Columns }}
 	{{ template := "grid gap-px" }}
-	<div class="hidden overflow-auto rounded-box border border-base-content/10 md:block">
-		<div class={ template } style={ "grid-template-columns: 11rem repeat(" + strconv.Itoa(len(cols)) + ", minmax(12rem, 1fr))" }>
+	<div class="hidden overflow-x-auto overflow-y-visible overscroll-x-contain rounded-box border border-base-content/10 md:block">
+		<div class={ template } style={ "grid-template-columns: 12rem repeat(" + strconv.Itoa(len(cols)) + ", minmax(14rem, 1fr))" }>
 			<div class="sticky left-0 z-10 bg-base-200 px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted">Execution</div>
 			for _, col := range cols {
 				<div class="flex items-center gap-1.5 bg-base-200 px-3 py-2">
@@ -168,7 +168,7 @@ templ workMatrixView(m workMatrix, data workData) {
 				</summary>
 				for _, row := range g.Rows {
 					if row.Count > 0 || row.Key == "working" || row.Key == "blocked" || row.Key == "review" {
-						<div class={ template } style={ "grid-template-columns: 11rem repeat(" + strconv.Itoa(len(cols)) + ", minmax(12rem, 1fr))" }>
+						<div class={ template } style={ "grid-template-columns: 12rem repeat(" + strconv.Itoa(len(cols)) + ", minmax(14rem, 1fr))" }>
 							<div class="sticky left-0 z-10 flex items-center gap-1.5 bg-base-100 px-3 py-2">
 								<span class="text-[11px] font-medium text-muted">{ row.Label }</span>
 								<span class="font-mono text-[10px] text-muted-faint">{ strconv.Itoa(row.Count) }</span>
@@ -226,7 +226,6 @@ templ workCard(it WorkItem, data workData) {
 		runAgent = it.LatestRunAgentName
 	}
 	showRunStatus := runAgent != "" || workRunLive(it.LatestRunStatus)
-	filterTypes := workFilterTypes(data)
 	tui := typeUIOf(data.TypeUI, it.Type) }}
 	<div
 		class={ "mb-1.5 rounded-field border border-l-4 border-base-content/10 bg-base-100 p-2 shadow-sm " + workStatusAccentClass(it.Status) }
@@ -281,16 +280,6 @@ templ workCard(it WorkItem, data workData) {
 				@ui.Badge(ui.BadgeProps{Label: "retry scheduled", Variant: ui.BadgeWarning, Size: ui.BadgeSizeXS})
 			}
 		</div>
-		if it.Blocked {
-			<span class="mt-1 block text-[11px] text-muted">{ it.BlockReason }</span>
-			<form method="post" action={ templ.SafeURL("/work/items/" + url.PathEscape(it.CanonicalID) + "/unblock") } class="mt-1 flex gap-1" onclick="event.stopPropagation()">
-				for _, t := range filterTypes {
-					<input type="hidden" name="type" value={ t }/>
-				}
-				<input name="note" type="text" placeholder="optional note" class="input input-xs w-full"/>
-				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) { Unblock }
-			</form>
-		}
 	</div>
 }
 

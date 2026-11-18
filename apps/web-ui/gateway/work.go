@@ -468,15 +468,6 @@ func workTypeChecked(data workData, name string) bool {
 	return slices.Contains(data.SelectedTypes, name)
 }
 
-// workFilterTypes returns the explicit selection for action forms; nil when the
-// board is showing all types.
-func workFilterTypes(data workData) []string {
-	if !data.FilterExplicit {
-		return nil
-	}
-	return data.SelectedTypes
-}
-
 // boardViewQuery reduces a request's query to the board's own view state. The
 // type filter is that state, and it has to survive the three surfaces that
 // re-render the board without the user's filter form: the live stream (which
@@ -816,6 +807,19 @@ func (s *Server) uiWorkUnblock(c echo.Context) error {
 		return redirectWithError(c, returnTo, fmt.Errorf("unblock is not supported by this backend"))
 	}
 	if _, err := u.UnblockWorkItem(c.Request().Context(), c.Param("canonicalId"), note); err != nil {
+		return redirectWithError(c, returnTo, err)
+	}
+	return c.Redirect(http.StatusSeeOther, returnTo)
+}
+
+// uiWorkClearBlock removes a stale block without retrying the work item. It is
+// the state-repair action shown on an object detail page.
+func (s *Server) uiWorkClearBlock(c echo.Context) error {
+	returnTo := safeLocalPath(c.FormValue("return_to"))
+	if returnTo == "" {
+		returnTo = workBoardReturnPath(c.Request().Form["type"])
+	}
+	if _, err := s.memory.ClearWorkItemBlock(c.Request().Context(), c.Param("canonicalId")); err != nil {
 		return redirectWithError(c, returnTo, err)
 	}
 	return c.Redirect(http.StatusSeeOther, returnTo)

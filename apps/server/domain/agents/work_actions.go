@@ -276,6 +276,27 @@ func (s *WorkActionService) Unblock(ctx context.Context, projectID, canonicalID,
 	return res, nil
 }
 
+// ClearBlock removes a durable block without enqueuing a run. It is the
+// state-repair action for a stale block on an object that is already terminal.
+func (s *WorkActionService) ClearBlock(ctx context.Context, projectID, canonicalID string) (*WorkActionResult, error) {
+	if _, _, _, err := s.resolveWorkContext(ctx, projectID, canonicalID); err != nil {
+		return nil, err
+	}
+	cleared, err := s.repo.ClearWorkBlock(ctx, canonicalID)
+	if err != nil {
+		return nil, err
+	}
+	if !cleared {
+		return nil, apperror.New(http.StatusConflict, "conflict", "work item is not blocked")
+	}
+	_ = s.repo.ClearWorkItemState(ctx, projectID, canonicalID)
+	head, err := s.workObjects.GetHeadObject(ctx, projectID, canonicalID)
+	if err != nil {
+		return nil, err
+	}
+	return &WorkActionResult{Head: head}, nil
+}
+
 // Retry returns a blocked work item to ready and enqueues it, clearing the
 // failure ledger. Returns a conflict when the item is not blocked.
 

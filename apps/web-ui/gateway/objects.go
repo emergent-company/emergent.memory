@@ -814,6 +814,12 @@ func (s *Server) loadObjectDetailShell(ctx context.Context, id, from string, sur
 	branchRef := resolveObjectBranch(branches, obj.BranchID)
 	sources := objectSources(*obj)
 	s.resolveObjectSourceNames(ctx, sources)
+	var workItem *WorkItem
+	if obj.CanonicalID != "" {
+		if detail, werr := s.memory.GetWorkItem(ctx, obj.CanonicalID); werr == nil && detail != nil {
+			workItem = detail.Item
+		}
+	}
 
 	var (
 		typeUIByType  map[string]typeUI
@@ -846,6 +852,7 @@ func (s *Server) loadObjectDetailShell(ctx context.Context, id, from string, sur
 		TypeLabel:    typeLabel,
 		From:         from,
 		Compiled:     compiled,
+		WorkItem:     workItem,
 		Sources:      sources,
 		Edges:        edges,
 		EdgeCount:    len(edges),
