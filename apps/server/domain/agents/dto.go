@@ -51,6 +51,7 @@ type AgentRunDTO struct {
 	Summary      map[string]any `json:"summary"`
 	ErrorMessage *string        `json:"errorMessage"`
 	SkipReason   *string        `json:"skipReason"`
+	FailureClass *string        `json:"failureClass,omitempty"`
 
 	// Multi-agent coordination fields
 	ParentRunID *string `json:"parentRunId,omitempty"`
@@ -276,6 +277,7 @@ func (r *AgentRun) ToDTO() *AgentRunDTO {
 		Summary:           r.Summary,
 		ErrorMessage:      r.ErrorMessage,
 		SkipReason:        r.SkipReason,
+		FailureClass:      r.FailureClass,
 		ParentRunID:       r.ParentRunID,
 		StepCount:         r.StepCount,
 		MaxSteps:          r.MaxSteps,

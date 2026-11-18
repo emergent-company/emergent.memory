@@ -263,3 +263,15 @@ func TestRenderScheduleDetailRunsSection(t *testing.T) {
 		t.Error("empty runs state must not render run rows")
 	}
 }
+
+// TestRenderRunPageFailureClassFallback asserts the run page explains a failure
+// even when the run has no error_message and only a failure class.
+func TestRenderRunPageFailureClassFallback(t *testing.T) {
+	full := sampleRunFull()
+	full.Run.ErrorMessage = nil
+	full.Run.FailureClass = strPtr("deterministic")
+	html := renderHTML(t, RunPage(runPageData{Run: full}))
+	if !strings.Contains(html, "This run failed: Failure: Deterministic") {
+		t.Errorf("run page missing failure-class fallback:\n%s", html)
+	}
+}

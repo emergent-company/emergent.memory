@@ -431,3 +431,27 @@ func TestUIRouteSchedules(t *testing.T) {
 		t.Errorf("toggle off should forward enabled=false, got %v", f.setEnabledSchedVal)
 	}
 }
+
+// TestScheduleRunSubtitleShowsFailureReason pins that a failed run's latest-runs
+// row names why it failed: the explicit error message when present, else the
+// humanised failure class, so a failed run is never just "failed".
+func TestScheduleRunSubtitleShowsFailureReason(t *testing.T) {
+	completed := time.Now().Add(-time.Minute).Format(time.RFC3339)
+	started := time.Now().Add(-2 * time.Minute).Format(time.RFC3339)
+
+	withError := ScheduledAgentRun{
+		ID: "r1", Status: "failed", StartedAt: started, CompletedAt: &completed,
+		ErrorMessage: strPtr("provider quota exhausted"),
+	}
+	if got := scheduleRunSubtitle(withError); !strings.Contains(got, "provider quota exhausted") {
+		t.Errorf("error-message subtitle = %q, want the error text", got)
+	}
+
+	withClass := ScheduledAgentRun{
+		ID: "r2", Status: "failed", StartedAt: started, CompletedAt: &completed,
+		FailureClass: strPtr("deterministic"),
+	}
+	if got := scheduleRunSubtitle(withClass); !strings.Contains(got, "Failure: Deterministic") {
+		t.Errorf("failure-class subtitle = %q, want the humanised class", got)
+	}
+}

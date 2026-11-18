@@ -1121,6 +1121,9 @@ type scheduledRunRow struct {
 	// position and the time its subtitle shows.
 	CompletedAt string
 	Summary     string
+	// Failure is the run's human-readable failure reason (empty when it has
+	// none), shown on the rail row so a failed run is not silent.
+	Failure string
 	// AgentDefinitionID is the agent-definition id the run's runtime agent binds
 	// (empty when it binds none), in the id space the rail's agent filter uses.
 	AgentDefinitionID string
@@ -1212,6 +1215,7 @@ func (s *Server) chatScheduledRuns(ctx context.Context, appearances map[string]a
 				StartedAt:         r.StartedAt,
 				CompletedAt:       completedAt,
 				Summary:           scheduledRunPreview(r, a.Name),
+				Failure:           runFailureText(r.ErrorMessage, r.FailureClass),
 				AgentDefinitionID: defID,
 				Icon:              ap.Icon,
 				Color:             ap.Color,
@@ -1272,6 +1276,7 @@ func (s *Server) chatWorkRuns(ctx context.Context, appearances map[string]agentA
 			CompletedAt:       completedAt,
 			Icon:              ap.Icon,
 			Color:             ap.Color,
+			Failure:           runFailureText(r.ErrorMessage, r.FailureClass),
 		})
 	}
 	return append(out, s.extractionRunRows(ctx)...)
@@ -1320,6 +1325,7 @@ func (s *Server) extractionRunRows(ctx context.Context) []workRunRow {
 			Status:      job.Status,
 			StartedAt:   startedAt,
 			CompletedAt: job.CompletedAt,
+			Failure:     runFailureText(job.ErrorMessage, nil),
 		}
 		if row.RunID == "" && job.SourceID != "" {
 			row.Href = "/documents/" + url.PathEscape(job.SourceID) + "/extractions/" + url.PathEscape(job.ID)
