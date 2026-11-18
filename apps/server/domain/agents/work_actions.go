@@ -200,8 +200,7 @@ func (s *WorkActionService) RequestChanges(ctx context.Context, projectID, canon
 	if err != nil {
 		// Preserve an app error (notably the peer-claim 409) so the handler
 		// surfaces the real status instead of a generic 500.
-		var appErr *apperror.Error
-		if errors.As(err, &appErr) {
+		if appErr, ok := errors.AsType[*apperror.Error](err); ok {
 			return nil, appErr
 		}
 		return nil, apperror.NewInternal("failed to enqueue rework run", err)
