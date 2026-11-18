@@ -21,7 +21,7 @@ test.describe('workflow lab board', () => {
     const panel = page.getByTestId('object-work-block');
     await expect(panel).toBeVisible();
     await expect(panel.getByText('blocked', { exact: true })).toBeVisible();
-    await expect(panel.getByText(/work execution|run ended|stale|protocol/i)).toBeVisible();
+    await expect(panel.locator('p').filter({ hasText: /work execution|run ended|stale|protocol/i })).toBeVisible();
     await expect(panel.getByRole('button', { name: /clear (stale )?block/i })).toBeVisible();
     await expect(panel.getByRole('button', { name: 'Retry' })).toHaveCount(0);
   });
@@ -47,6 +47,7 @@ test.describe('workflow lab board', () => {
   });
 
   test('external issue close/reopen is reflected on the board', async ({ page }) => {
+    test.skip(process.env.E2E_WORKFLOW_CODING_ISSUES !== '1', 'fixture coding App does not subscribe to issues yet');
     await gotoWorkflow(page, '/work/board');
     const title = `external-${Date.now()}`;
     const issue = await createExternalIssue(title);
