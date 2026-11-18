@@ -82,6 +82,7 @@ nav:
     - Model Setup: user-guide/model-setup.md
   - Tutorials:
     - Deploy on Railway: tutorials/deploy-to-railway.md
+    - Install a blueprint: tutorials/install-a-blueprint.md
   - Developer Guide:
     - Overview: developer-guide/index.md
     - Provider Setup: developer-guide/provider-setup.md

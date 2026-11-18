@@ -1,0 +1,28 @@
+WEBVTT
+
+NOTE
+install-a-blueprint · 8 cue(s) · seed install-a-blueprint-v1
+
+00:00:02.214 --> 00:00:04.437
+A new project: no agents yet, and no object types of its own.
+
+00:00:06.523 --> 00:00:07.734
+Open Blueprints — the schema packs this project has installed.
+
+00:00:07.734 --> 00:00:09.815
+Choose Import. A blueprint is installed from a repository, not an upload.
+
+00:00:09.815 --> 00:00:12.934
+Paste the repository: github.com/mkucharz/personal-memory-blueprint.
+
+00:00:12.934 --> 00:00:15.245
+Import creates, publishes and applies the blueprint in one step.
+
+00:00:15.245 --> 00:00:17.088
+personal-memory v4.1.1 is installed, and can be updated from the same URL.
+
+00:00:19.158 --> 00:00:21.390
+Schema is what arrived: 23 object types, compiled into the graph.
+
+00:00:23.032 --> 00:00:25.446
+And four agents are ready to run against those types.

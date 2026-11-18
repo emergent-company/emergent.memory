@@ -9,12 +9,13 @@
  * writes a WebP next to the originals (MkDocs serves WebP too), mirrors the
  * directory into `public/`, and records the real pixel dimensions in
  * `manifest.json` so the Markdown → MDX port can emit `width`/`height` and stop
- * the page jumping while images load.
+ * the page jumping while images load. Recordings (`walkthrough.webm`, its
+ * `.vtt`, and the poster) are mirrored verbatim — see `RECORDING`.
  *
  * Run from `docs-astro/`:  node scripts/port-images.mjs
  */
 import sharp from 'sharp';
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const REPO = path.resolve(import.meta.dirname, '../..');
@@ -22,7 +23,16 @@ const SITE = path.join(REPO, 'docs/site');
 const PUBLIC = path.join(REPO, 'docs-astro/public');
 
 /** Source dir (relative to docs/site) → public dir (relative to docs-astro/public). */
-const DIRS = ['assets/tutorials/railway'];
+const DIRS = ['assets/tutorials/railway', 'assets/tutorials/install-a-blueprint'];
+
+// A tutorial may carry a recording as well as figures. Those files are not
+// pictures to resize, and they are not Markdown references either — a `<video>`
+// is raw HTML, which the MDX port leaves untouched, so nothing rewrites their
+// paths and the copy has to be a plain mirror. MkDocs serves them straight out of
+// `docs/site`; the Astro build serves only `public/`, so a `.webm`, its `.vtt`
+// and the poster 404 there unless they are copied. `redact-tutorial-shots.mjs`
+// ignores them for the same reason it ignores the WebPs.
+const RECORDING = /\.(webm|mp4|vtt|webp)$/i;
 
 // The WebP is what both sites serve, so its ceiling is the *display* ceiling:
 // a figure is shown at most 2x its CSS size, and a 4x capture has to survive
@@ -44,9 +54,19 @@ for (const dir of DIRS) {
     /* no plan captured here yet */
   }
 
-  const files = (await readdir(srcDir)).filter((f) => /\.(png|jpe?g)$/i.test(f)).sort();
+  // Recordings are mirrored verbatim, before (and independently of) the raster
+  // pass: a video-only tutorial has no PNG here, and the `continue` below would
+  // otherwise skip the copy and ship a page whose `<video>` 404s.
+  const entries = (await readdir(srcDir)).filter((f) => !f.startsWith('.'));
+  for (const file of entries.filter((f) => RECORDING.test(f)).sort()) {
+    const from = path.join(srcDir, file);
+    await copyFile(from, path.join(outDir, file));
+    console.log(`${dir}/${file}  copied verbatim  ${Math.round((await stat(from)).size / 1024)}K`);
+  }
+
+  const files = entries.filter((f) => /\.(png|jpe?g)$/i.test(f)).sort();
   if (!files.length) {
-    console.log(`${dir}: no rasters found — nothing to do`);
+    console.log(`${dir}: no rasters found — nothing to resize`);
     continue;
   }
 
