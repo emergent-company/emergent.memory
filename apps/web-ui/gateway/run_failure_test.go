@@ -11,8 +11,8 @@ func TestRunFailureText(t *testing.T) {
 	}{
 		{"error wins over class", strPtr("boom"), strPtr("deterministic"), "boom"},
 		{"error only", strPtr("  boom  "), nil, "boom"},
-		{"class fallback", nil, strPtr("deterministic"), "Failure: Deterministic"},
-		{"empty error falls back to class", strPtr("  "), strPtr("retryable"), "Failure: Retryable"},
+		{"class fallback", nil, strPtr("deterministic"), "Deterministic failure"},
+		{"empty error falls back to class", strPtr("  "), strPtr("retryable"), "Retryable failure"},
 		{"neither", nil, nil, ""},
 		{"empty class", nil, strPtr("  "), ""},
 	}

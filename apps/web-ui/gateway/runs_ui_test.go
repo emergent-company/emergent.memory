@@ -271,7 +271,7 @@ func TestRenderRunPageFailureClassFallback(t *testing.T) {
 	full.Run.ErrorMessage = nil
 	full.Run.FailureClass = strPtr("deterministic")
 	html := renderHTML(t, RunPage(runPageData{Run: full}))
-	if !strings.Contains(html, "This run failed: Failure: Deterministic") {
+	if !strings.Contains(html, "This run failed: Deterministic failure") {
 		t.Errorf("run page missing failure-class fallback:\n%s", html)
 	}
 }
