@@ -26,6 +26,23 @@ for script in base-check.sh base-check.test.sh version-drift.test.sh migration-n
   fi
 done
 
+# The release tag reconcile/dispatch decision tables (#1047): a release PR
+# merged by `app/github-actions` raises its push from GITHUB_TOKEN, for which
+# GitHub starts no workflow runs, so auto-tag's push trigger never fires and the
+# tag (and the whole fan-out) never happens. Both suites drive the scripts the
+# review gate and the scheduled watchdog call, with a fake `gh` on PATH: offline,
+# no credentials. They run here so the required `ci` job exercises them without
+# a workflow-file change.
+for suite in reconcile-release-tag.test.sh dispatch-release-tag.test.sh; do
+  echo "==> .github/scripts/$suite"
+  if bash "$root/.github/scripts/$suite"; then
+    echo "==> .github/scripts/$suite PASSED"
+  else
+    echo "==> .github/scripts/$suite FAILED"
+    status=1
+  fi
+done
+
 # The connector dev channel must not resolve a tag named like a branch (#956).
 # install.test.sh stubs curl/tar, so it runs offline.
 echo "==> apps/connector.linux/install.test.sh"
@@ -41,4 +58,4 @@ if [ "$status" -ne 0 ]; then
   exit 1
 fi
 
-echo "preflight: OK (base, base-check tests, version-drift tests, migration numbering, cross-branch Go declaration collisions, gofmt, CLI skill pin, stale docs, Astro docs port, skip census, mcp authz, modelref split, runrole guard, schemadrift, gitleaks waivers, gitleaks env files, connector lint self-test, ui guardrails, brand tokens, gh-pages budget self-tests, connector install channel)"
+echo "preflight: OK (base, base-check tests, version-drift tests, migration numbering, cross-branch Go declaration collisions, gofmt, CLI skill pin, stale docs, Astro docs port, skip census, mcp authz, modelref split, runrole guard, schemadrift, gitleaks waivers, gitleaks env files, connector lint self-test, ui guardrails, brand tokens, gh-pages budget self-tests, connector install channel, release tag reconcile/dispatch)"
