@@ -31,7 +31,9 @@ const (
 	// would let the reviewing App's own bot verdict satisfy "all reviewers
 	// approved" for a PR another App authored, which is the self-approval gap in
 	// #1005. A one-agent required set is a configuration error: the gate stays
-	// pending instead of turning the required `reviewed` check green.
+	// pending instead of turning the required `reviewed` check green. The quorum
+	// is agent-level, not a credential check: the review App must still be
+	// separate from the coding App, and an unknown author fails closed to it.
 	ReviewGateMinReviewersSourceAuthored = 2
 )
 
@@ -125,6 +127,10 @@ func (s *ReviewGateService) Ensure(ctx context.Context, projectID uuid.UUID, sub
 		return nil, errors.New("sources: review gate requires subject type, subject ref and head sha")
 	}
 	minReviewers := reviewGateMinReviewers(subjectType, properties)
+	if reviewGateAuthorUnknown(subjectType, properties) && s.log != nil {
+		s.log.Warn("sources: review subject has no author metadata; applying the source-authored reviewer quorum",
+			"subject", subjectRef, "head_sha", headSHA)
+	}
 	required := make([]ReviewReviewer, 0)
 	if s.agents != nil {
 		matched, err := s.agents.FindReviewerAgentsForObject(ctx, projectID.String(), subjectType, properties)
@@ -206,21 +212,41 @@ func (s *ReviewGateService) Ensure(ctx context.Context, projectID uuid.UUID, sub
 
 // reviewGateMinReviewers derives the quorum from the subject's author metadata.
 // A GitHub App bot author is a source-trigger run; a human author keeps the
-// default single-reviewer gate. The login suffix is a fallback for payloads
-// where only the author login is available.
+// default single-reviewer gate. Unknown author metadata fails closed: an older
+// GitHubPullRequest row or an Ensure caller that does not forward the author
+// props must not silently fall back to the one-reviewer rule this change exists
+// to remove (#1005). The login suffix is a fallback for payloads where only the
+// author login is available.
 func reviewGateMinReviewers(subjectType string, properties map[string]any) int {
 	if !strings.EqualFold(strings.TrimSpace(subjectType), "GitHubPullRequest") {
 		return ReviewGateMinReviewersDefault
 	}
 	authorType, _ := properties["author_type"].(string)
-	if strings.EqualFold(strings.TrimSpace(authorType), "Bot") {
+	author, _ := properties["author"].(string)
+	authorType = strings.TrimSpace(authorType)
+	author = strings.TrimSpace(author)
+	if authorType == "" && author == "" {
 		return ReviewGateMinReviewersSourceAuthored
 	}
-	author, _ := properties["author"].(string)
-	if strings.HasSuffix(strings.ToLower(strings.TrimSpace(author)), "[bot]") {
+	if strings.EqualFold(authorType, "Bot") {
+		return ReviewGateMinReviewersSourceAuthored
+	}
+	if strings.HasSuffix(strings.ToLower(author), "[bot]") {
 		return ReviewGateMinReviewersSourceAuthored
 	}
 	return ReviewGateMinReviewersDefault
+}
+
+// reviewGateAuthorUnknown reports whether a GitHubPullRequest subject carries no
+// author identity. Ensure logs it so the stricter fail-closed quorum is visible
+// rather than silently chosen.
+func reviewGateAuthorUnknown(subjectType string, properties map[string]any) bool {
+	if !strings.EqualFold(strings.TrimSpace(subjectType), "GitHubPullRequest") {
+		return false
+	}
+	authorType, _ := properties["author_type"].(string)
+	author, _ := properties["author"].(string)
+	return strings.TrimSpace(authorType) == "" && strings.TrimSpace(author) == ""
 }
 
 // RecordVerdict writes one reviewer's verdict and recomputes the gate. A

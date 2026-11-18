@@ -42,10 +42,16 @@ func TestReviewGateMinReviewersSourceAuthored(t *testing.T) {
 			want:        ReviewGateMinReviewersDefault,
 		},
 		{
-			name:        "missing author metadata defaults to one",
+			name:        "missing author metadata fails closed",
 			subjectType: "GitHubPullRequest",
 			properties:  nil,
-			want:        ReviewGateMinReviewersDefault,
+			want:        ReviewGateMinReviewersSourceAuthored,
+		},
+		{
+			name:        "empty author metadata fails closed",
+			subjectType: "GitHubPullRequest",
+			properties:  map[string]any{"author": "", "author_type": ""},
+			want:        ReviewGateMinReviewersSourceAuthored,
 		},
 		{
 			name:        "other subject types keep the default",
@@ -59,6 +65,14 @@ func TestReviewGateMinReviewersSourceAuthored(t *testing.T) {
 			require.Equal(t, tc.want, reviewGateMinReviewers(tc.subjectType, tc.properties))
 		})
 	}
+}
+
+func TestReviewGateAuthorUnknown(t *testing.T) {
+	require.True(t, reviewGateAuthorUnknown("GitHubPullRequest", nil))
+	require.True(t, reviewGateAuthorUnknown("GitHubPullRequest", map[string]any{"author": " ", "author_type": ""}))
+	require.False(t, reviewGateAuthorUnknown("GitHubPullRequest", map[string]any{"author": "mkucharz", "author_type": "User"}))
+	require.False(t, reviewGateAuthorUnknown("GitHubPullRequest", map[string]any{"author": "memory-coding[bot]", "author_type": "Bot"}))
+	require.False(t, reviewGateAuthorUnknown("GitHubIssue", nil), "only pull-request subjects use the bot-only quorum")
 }
 
 func TestReviewGateStatusRequiresQuorum(t *testing.T) {

@@ -10,11 +10,17 @@
 ALTER TABLE kb.review_gates
     ADD COLUMN IF NOT EXISTS min_reviewers INTEGER NOT NULL DEFAULT 1;
 
+-- minimumReviewers() coerces values below 1, but the row itself must stay
+-- valid: a manual or future write may not persist a meaningless quorum.
+ALTER TABLE kb.review_gates
+    ADD CONSTRAINT review_gates_min_reviewers_check CHECK (min_reviewers >= 1);
+
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
 
+ALTER TABLE kb.review_gates DROP CONSTRAINT IF EXISTS review_gates_min_reviewers_check;
 ALTER TABLE kb.review_gates DROP COLUMN IF EXISTS min_reviewers;
 
 -- +goose StatementEnd
