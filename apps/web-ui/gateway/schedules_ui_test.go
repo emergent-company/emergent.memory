@@ -462,4 +462,8 @@ func TestScheduleRunTitleHumanizesStatus(t *testing.T) {
 	if got := scheduleRunTitle(ScheduledAgentRun{ID: "run-1", Status: "input-required"}); !strings.Contains(got, "needs input") {
 		t.Errorf("scheduleRunTitle = %q, want humanized status", got)
 	}
+	body := renderHTML(t, scheduleRunsSection([]ScheduledAgentRun{{ID: "run-1", Status: "input-required", StartedAt: "2026-08-26T10:00:00Z"}}))
+	if strings.Contains(body, ">input-required<") || !strings.Contains(body, "needs input") {
+		t.Errorf("schedule run badge leaked raw status:\n%s", body)
+	}
 }
