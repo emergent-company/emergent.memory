@@ -47,6 +47,7 @@ type diffReviewAPI struct {
 	head     string
 	message  string
 	files    []map[string]any
+	bodies   []string
 	reviews  int
 	checks   int
 	comments int
@@ -93,8 +94,13 @@ func newDiffReviewAPI(t *testing.T, head string, files []map[string]any) *diffRe
 			}
 			_ = json.NewEncoder(w).Encode(files[start:end])
 		case r.URL.Path == "/repos/owner/repo/pulls/7/reviews":
+			var payload struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
 			api.mu.Lock()
 			api.reviews++
+			api.bodies = append(api.bodies, payload.Body)
 			api.mu.Unlock()
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"id":1}`))
@@ -120,6 +126,17 @@ func newDiffReviewAPI(t *testing.T, head string, files []map[string]any) *diffRe
 
 func (a *diffReviewAPI) client() *githubapp.Client {
 	return githubapp.NewClient(a.server.URL, "ghs_test", a.server.Client())
+}
+
+// lastReviewBody is the body of the most recently created review, which is
+// where a diff gap must be called out.
+func (a *diffReviewAPI) lastReviewBody() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.bodies) == 0 {
+		return ""
+	}
+	return a.bodies[len(a.bodies)-1]
 }
 
 func (a *diffReviewAPI) posted() (reviews, checks, comments int) {
@@ -357,12 +374,13 @@ func TestDiffPayloadStaysWithinExecutorResultBound(t *testing.T) {
 	require.True(t, mcp.RunHasEvidence(ctx, diffFileEvidenceKey("owner/repo", 7, head, cut[0])))
 }
 
-// TestPatchWithheldByGitHubCannotAuthorizeVerdict covers files GitHub returns
-// without a patch: no content was ever available, so the file must not count as
-// read and re-fetching it cannot help. A binary file reports additions/deletions
-// of 0 (GitHub cannot count lines in it), so it must be detected by the absent
-// patch, not by the line counts -- a 12/3 binary is not a shape GitHub produces.
-func TestPatchWithheldByGitHubCannotAuthorizeVerdict(t *testing.T) {
+// TestWithheldPatchIsReportedButDoesNotBlockTheVerdict covers files GitHub
+// returns without a patch: no content was ever available, so the file must not
+// count as read, re-fetching it cannot help, and -- because the API cannot tell
+// a mode-only edit from a binary that changed bytes -- it must not refuse the
+// verdict either. A binary file reports additions/deletions of 0 (GitHub cannot
+// count lines in it), so it is detected by the absent patch, not by line counts.
+func TestWithheldPatchIsReportedButDoesNotBlockTheVerdict(t *testing.T) {
 	head := truncationHead
 	api := newDiffReviewAPI(t, head, []map[string]any{
 		{"filename": "binary_new.bin", "status": "added", "additions": 0, "deletions": 0},
@@ -377,35 +395,61 @@ func TestPatchWithheldByGitHubCannotAuthorizeVerdict(t *testing.T) {
 
 	res, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, nil))
 	require.NoError(t, err)
-	require.Equal(t, true, res.StructuredContent["truncated"])
 	require.Equal(t, false, res.StructuredContent["complete"])
-	truncated, ok := res.StructuredContent["truncatedFiles"].([]string)
+	// A withheld file is not "truncated": no re-read can make it whole.
+	require.Equal(t, false, res.StructuredContent["truncated"])
+	withheld, ok := res.StructuredContent["withheldFiles"].([]string)
 	require.True(t, ok)
-	require.Contains(t, truncated, "binary_new.bin")
-	require.Contains(t, truncated, "binary_mod.bin")
-	require.Contains(t, truncated, "mode_only.sh")
-	// A pure rename changed no content and must not be blocked.
-	require.NotContains(t, truncated, "renamed.go")
+	require.Contains(t, withheld, "binary_new.bin")
+	require.Contains(t, withheld, "binary_mod.bin")
+	require.Contains(t, withheld, "mode_only.sh")
+	// A pure rename changed no content and is read in full.
+	require.NotContains(t, withheld, "renamed.go")
 	require.Contains(t, res.Content[0].Text, "patch unavailable for binary_new.bin")
 	require.False(t, mcp.RunHasEvidence(ctx, diffFileEvidenceKey("owner/repo", 7, head, "binary_new.bin")))
-	require.False(t, mcp.RunHasEvidence(ctx, diffFileEvidenceKey("owner/repo", 7, head, "binary_mod.bin")))
 	require.False(t, mcp.RunHasEvidence(ctx, diffFileEvidenceKey("owner/repo", 7, head, "mode_only.sh")))
 	require.True(t, mcp.RunHasEvidence(ctx, diffFileEvidenceKey("owner/repo", 7, head, "renamed.go")))
 	require.True(t, mcp.RunHasEvidence(ctx, diffFileEvidenceKey("owner/repo", 7, head, "small.go")))
 	require.False(t, mcp.RunHasEvidence(ctx, diffEvidenceKey("owner/repo", 7, head)))
 
+	// The verdict stands: the readable files were all read, and the unreadable
+	// ones are named on the review instead of wedging the head.
 	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", reviewSubmitArgs(head, "MERGE", "looks good"))
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "binary_mod.bin")
+	require.NoError(t, err)
 	reviews, _, _ := api.posted()
-	require.Equal(t, 0, reviews)
+	require.Equal(t, 1, reviews)
+	require.Contains(t, api.lastReviewBody(), "Not reviewable:")
+	require.Contains(t, api.lastReviewBody(), "binary_mod.bin")
+	require.NotContains(t, api.lastReviewBody(), "renamed.go", "a read file is not a gap")
 
-	// Re-reading the withheld file changes nothing: GitHub still withholds it.
+	// Re-reading a withheld file changes nothing: GitHub still withholds it.
 	res, err = h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, map[string]any{"path": "binary_mod.bin"}))
 	require.NoError(t, err)
-	require.Equal(t, true, res.StructuredContent["truncated"])
+	require.Equal(t, false, res.StructuredContent["truncated"])
 	require.Contains(t, res.Content[0].Text, "patch unavailable for binary_mod.bin")
 	require.False(t, mcp.RunHasEvidence(ctx, diffFileEvidenceKey("owner/repo", 7, head, "binary_mod.bin")))
+}
+
+// TestModeOnlyChangeAloneCanBeApproved is the release-blocking shape the review
+// flagged (#1037): a diff whose only change is a chmod carries no bytes at all,
+// so it must be approvable rather than terminal.
+func TestModeOnlyChangeAloneCanBeApproved(t *testing.T) {
+	head := truncationHead
+	api := newDiffReviewAPI(t, head, []map[string]any{
+		{"filename": "run.sh", "status": "modified", "additions": 0, "deletions": 0},
+	})
+	client := api.client()
+	h := &ReviewToolHandler{}
+	ctx := mcp.ContextWithNewToolResultCache(context.Background())
+
+	_, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, nil))
+	require.NoError(t, err)
+
+	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", reviewSubmitArgs(head, "MERGE", "executable bit only"))
+	require.NoError(t, err)
+	reviews, _, _ := api.posted()
+	require.Equal(t, 1, reviews)
+	require.Contains(t, api.lastReviewBody(), "run.sh")
 }
 
 // TestPRFileListCapCannotAuthorizeVerdict covers GitHub's pagination cap on the
@@ -467,11 +511,11 @@ func TestChangesRequestedSurvivesAWithheldPatch(t *testing.T) {
 	require.Equal(t, 1, reviews)
 }
 
-// TestUnreadablePatchMarksTheHeadUnapprovable pins the terminal half of #1037:
-// when GitHub withholds a changed file's content, no verdict that needs a full
-// read can ever be recorded, so the gate leaves pending and the reviewed check
-// goes red with the reason instead of waiting for evidence that cannot arrive.
-func TestUnreadablePatchMarksTheHeadUnapprovable(t *testing.T) {
+// TestAnUnreadablePatchDoesNotWedgeTheHead pins the half of #1037 that the
+// first attempt got wrong: making a withheld file terminal would make every
+// pull request containing an image, a wasm fixture or a chmod permanently
+// unapprovable -- including the release promotion. The gap is named instead.
+func TestAnUnreadablePatchDoesNotWedgeTheHead(t *testing.T) {
 	head := truncationHead
 	api := newDiffReviewAPI(t, head, []map[string]any{
 		{"filename": "blob.bin", "status": "modified", "additions": 0, "deletions": 0},
@@ -484,20 +528,20 @@ func TestUnreadablePatchMarksTheHeadUnapprovable(t *testing.T) {
 	_, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, nil))
 	require.NoError(t, err)
 
-	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", reviewSubmitArgs(head, "MERGE", "looks good"))
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "blob.bin")
-	require.Contains(t, err.Error(), "no verdict can be recorded for this head")
-	reviews, checks, _ := api.posted()
-	require.Equal(t, 0, reviews, "an unreadable head must not be approved")
-	require.GreaterOrEqual(t, checks, 1, "the reviewed check must go red with the reason")
+	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", reviewSubmitArgs(head, "MERGE", "binary asset, nothing to diff"))
+	require.NoError(t, err, "a withheld file must not refuse the verdict")
+	reviews, _, _ := api.posted()
+	require.Equal(t, 1, reviews)
+	require.Contains(t, api.lastReviewBody(), "blob.bin", "the gap must be named on the review")
+	// The gate is not terminal: a later head can still be reviewed.
+	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", reviewSubmitArgs(head, "MERGE", "re-checked"))
+	require.NoError(t, err)
 }
 
-// TestPatchTooLargeToRenderMarksTheHeadUnapprovable covers the other shape no
-// re-read can fix: a patch longer than the whole-result budget cannot be
-// rendered even as a single-file selection, so the head is unapprovable rather
-// than pending for ever.
-func TestPatchTooLargeToRenderMarksTheHeadUnapprovable(t *testing.T) {
+// TestPatchTooLargeToRenderIsAGapNotABlock covers the other shape no re-read can
+// fix: a patch longer than the whole-result budget cannot be rendered even as a
+// single-file selection, so it is reported rather than left pending for ever.
+func TestPatchTooLargeToRenderIsAGapNotABlock(t *testing.T) {
 	head := truncationHead
 	api := newDiffReviewAPI(t, head, []map[string]any{
 		{"filename": "huge.generated.go", "status": "modified", "additions": 1, "deletions": 0,
@@ -507,13 +551,13 @@ func TestPatchTooLargeToRenderMarksTheHeadUnapprovable(t *testing.T) {
 	h := &ReviewToolHandler{}
 	ctx := mcp.ContextWithNewToolResultCache(context.Background())
 
-	_, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, nil))
+	res, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, nil))
 	require.NoError(t, err)
+	require.Equal(t, true, res.StructuredContent["truncated"])
 
-	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", reviewSubmitArgs(head, "MERGE", "looks good"))
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "huge.generated.go")
-	require.Contains(t, err.Error(), "no verdict can be recorded for this head")
+	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", reviewSubmitArgs(head, "MERGE", "generated file"))
+	require.NoError(t, err)
+	require.Contains(t, api.lastReviewBody(), "huge.generated.go")
 }
 
 // TestDiffFilenamesCannotForgeOutputLines neutralises PR-controlled filenames in
