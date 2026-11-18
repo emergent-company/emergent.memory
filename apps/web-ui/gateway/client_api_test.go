@@ -910,3 +910,41 @@ func TestListSessionsParentAndRunState(t *testing.T) {
 		t.Errorf("orphan = %+v, want its own failed state", o)
 	}
 }
+
+// TestListSessionsReportsConversationFailure pins that the sessions JSON carries
+// the failed run's reason alongside the existing bucket.
+func TestListSessionsReportsConversationFailure(t *testing.T) {
+	item := json.RawMessage(`{"kind":"run_end","run_id":"run-1","run_status":"failed","error_message":"provider quota exceeded"}`)
+	f := &fakeMemory{
+		convs: []Conversation{{
+			ID: "conv-fail", Title: "Broken chat",
+			CreatedAt: "2026-08-26T10:00:00Z", UpdatedAt: "2026-08-26T10:05:00Z",
+		}},
+		histories: map[string]*ConversationHistory{
+			"conv-fail": {ConversationID: "conv-fail", Items: []json.RawMessage{item}},
+		},
+	}
+	_, e := newClientEcho(f, Config{})
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/sessions", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Sessions []struct {
+			Room    string `json:"room"`
+			Bucket  string `json:"bucket"`
+			Failure string `json:"failure"`
+		} `json:"sessions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Sessions) != 1 {
+		t.Fatalf("want 1 session, got %d", len(got.Sessions))
+	}
+	s := got.Sessions[0]
+	if s.Bucket != runBucketFailed || s.Failure != "provider quota exceeded" {
+		t.Errorf("session = %+v, want failed + reason", s)
+	}
+}

@@ -17,6 +17,8 @@ var (
 	runFailureGitHubTokenRe   = regexp.MustCompile(`gh[pousr]_[A-Za-z0-9]{20,}`)
 	runFailureGitHubPATRe     = regexp.MustCompile(`github_pat_[A-Za-z0-9_]{20,}`)
 	runFailureOpenAIKeyRe     = regexp.MustCompile(`sk-[A-Za-z0-9_-]{20,}`)
+	runFailureStripeKeyRe     = regexp.MustCompile(`\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b`)
+	runFailureJWTRe           = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`)
 	runFailureSlackTokenRe    = regexp.MustCompile(`xox[baprs]-[A-Za-z0-9-]{10,}`)
 	runFailureBearerRe        = regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._-]{10,}`)
 	runFailureQuerySecretRe   = regexp.MustCompile(`(?i)([?&](?:access_token|api_key|apikey|password|secret|token)=)[^&\s#]*`)
@@ -25,6 +27,8 @@ var (
 		runFailureGitHubPATRe,
 		runFailureOpenAIKeyRe,
 		runFailureSlackTokenRe,
+		runFailureStripeKeyRe,
+		runFailureJWTRe,
 		runFailureBearerRe,
 	}
 )

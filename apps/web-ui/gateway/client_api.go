@@ -64,6 +64,7 @@ type sessionSummary struct {
 	// list as before.
 	ParentConversationID string `json:"parent_conversation_id,omitempty"`
 	Bucket               string `json:"bucket,omitempty"`
+	Failure              string `json:"failure,omitempty"`
 	PendingApprovals     int    `json:"pending_approvals,omitempty"`
 	PendingQuestions     int    `json:"pending_questions,omitempty"`
 }
@@ -155,6 +156,7 @@ func (s *Server) listSessions(c echo.Context) error {
 					return a.ConversationID == conv.ID
 				})
 				sm.Bucket = st.bucket
+				sm.Failure = st.failure
 				sm.PendingApprovals = len(st.pendingApprovals)
 				sm.PendingQuestions = len(st.pendingQuestions)
 			}
@@ -225,7 +227,7 @@ func (s *Server) scheduledSessionSummaries(ctx context.Context) []sessionSummary
 	var out []sessionSummary
 	for i, agent := range scheduled {
 		for _, run := range runsByAgent[i] {
-			sm := sessionSummary{Room: run.ID, Origin: "scheduled"}
+			sm := sessionSummary{Room: run.ID, Origin: "scheduled", Failure: runFailureText(run.Status, run.ErrorMessage, run.FailureClass, run.Summary)}
 			if agent.AgentDefinitionID != nil {
 				sm.AgentDefinitionID = *agent.AgentDefinitionID
 			}
@@ -261,7 +263,7 @@ func (s *Server) boardSessionSummaries(ctx context.Context) []sessionSummary {
 	}
 	out := make([]sessionSummary, 0, len(runs))
 	for _, run := range runs {
-		sm := sessionSummary{Room: run.ID, Origin: "board", AgentDefinitionID: run.AgentDefinitionID}
+		sm := sessionSummary{Room: run.ID, Origin: "board", AgentDefinitionID: run.AgentDefinitionID, Failure: runFailureText(run.Status, run.ErrorMessage, run.FailureClass, run.Summary)}
 		if run.StartedAt != "" {
 			sm.StartedAt = &run.StartedAt
 		}
@@ -287,7 +289,7 @@ func (s *Server) extractionSessionSummaries(ctx context.Context) []sessionSummar
 		if row.RunID == "" {
 			continue
 		}
-		sm := sessionSummary{Room: row.RunID, Origin: "extraction"}
+		sm := sessionSummary{Room: row.RunID, Origin: "extraction", Failure: row.Failure}
 		if row.StartedAt != "" {
 			started := row.StartedAt
 			sm.StartedAt = &started

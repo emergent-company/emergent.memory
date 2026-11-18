@@ -969,6 +969,7 @@ func (s *Server) chatRailData(ctx context.Context, includeArchived bool) (agents
 			continue
 		}
 		c.Bucket = st.bucket
+		c.Failure = st.failure
 		c.PendingApprovals = len(st.pendingApprovals)
 		c.PendingQuestions = len(st.pendingQuestions)
 	}
