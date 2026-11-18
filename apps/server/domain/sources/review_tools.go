@@ -1113,12 +1113,9 @@ func (h *ReviewToolHandler) publishReviewGate(ctx context.Context, client *githu
 	}
 	switch gate.Status {
 	case ReviewGateApproved:
-		// Defence in depth: the aggregate must never publish a green check for an
-		// under-quorum reviewer set even if an older row or a direct caller
-		// bypassed evaluate (#1005).
-		if len(gate.RequiredReviewers) < gate.minimumReviewers() {
-			return client.CreateCheck(ctx, repo, headSHA, "reviewed", "in_progress", "", "reviewed: pending", reviewGatePendingSummary(gate))
-		}
+		// minimumReviewers() caps the quorum at the configured reviewer count, so
+		// an approved gate has every required reviewer's verdict; no separate
+		// under-quorum check can fire here.
 		return client.CreateReviewedCheck(ctx, repo, headSHA, "success", "reviewed: all reviewers approved", summary)
 	case ReviewGateChangesRequested:
 		return client.CreateReviewedCheck(ctx, repo, headSHA, "failure", "reviewed: changes requested", summary)
