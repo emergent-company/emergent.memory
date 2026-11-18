@@ -461,6 +461,43 @@ Three guards make a bad capture fail instead of being written:
   with `themeStorage`);
 - **expect** — required page text, so a redirect into a login wall is caught.
 
+### Recording a walkthrough, not a set of figures
+
+Some tutorials are easier to follow as a short video: the *Install a blueprint*
+walkthrough is 28 seconds of a real import, with a checklist panel on the right
+that fills in as each step lands. That recording is a **path plan** under
+`scripts/paths/`, run by
+[`mkucharz/ui-path-recorder`](https://github.com/mkucharz/ui-path-recorder) — a
+separate skill, not vendored here:
+
+```bash
+# a signed-in profile, made once (headless is fine; recording needs a display)
+node dev-login.mjs --profile .profile-personal
+# then record: the runner writes 01-main.webm, 01-main.vtt and a poster
+node <recorder>/scripts/path-shots.mjs scripts/paths/install-a-blueprint.plan.json \
+  --profile .profile-personal --video --video-fps 30
+```
+
+A path plan is the caption-carrying cousin of a shot plan: the same `goto`,
+`click` and `waitFor` steps, plus the narration each step writes as a subtitle
+and the side panel that lists what the walkthrough shows. It takes **no `shot`
+entries**, so `--check` applies the 1× ratio rule instead of the 4× figure rule —
+a recording encodes what Chromium painted, and a 1080p frame at 2× is already
+sharper than the video carries.
+
+The three files belong in one directory under `docs/site/assets/tutorials/<slug>/`
+(`walkthrough.webm`, `walkthrough.vtt`, `poster.webp`), because a re-shoot
+replaces that directory whole and `--check` refuses a caption or poster from
+somewhere else. `port-images.mjs` mirrors them verbatim into
+`docs-astro/public/assets/` — they are not rasters to resize and no Markdown
+reference rewrites a `<video src>`, so without that copy the Astro build serves a
+page whose player 404s. The Tutorial names all three paths (`video`,
+`video_captions`, `video_poster`) and the page emits one `<video>` above the
+written steps, which stay: the page is what search indexes.
+
+Keep the master (1920×1080 at 2×, ~4 MB) out of the repo — it is what goes to
+YouTube — and commit the compressed ~1440×810 copy instead.
+
 ### Flows that need a human once: the Railway installer
 
 `shots/installer.plan.json` walks the public installer at

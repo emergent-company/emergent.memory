@@ -1,0 +1,113 @@
+{
+  "tutorial": "install-a-blueprint",
+  "description": "Install the personal-memory blueprint from a GitHub URL in a fresh project, then show what it put in the graph: 23 object types and four agents. The panel mixes the two steps with the three results, so the video answers both 'how do I install one' and 'what do I get'.",
+  "instance": "dev",
+  "baseUrl": "${MEMORY_URL}",
+  "locale": "en-US",
+  "timezoneId": "UTC",
+  "viewport": { "width": 1920, "height": 1080 },
+  "colorScheme": "dark",
+  "deviceScaleFactor": 2,
+  "humanize": { "seed": "install-a-blueprint-v1", "speed": 1 },
+  "video": {
+    "checklist": {
+      "title": "Install, then check",
+      "subtitle": "Two steps in, three results out.",
+      "side": "right",
+      "width": 360,
+      "layout": "dock"
+    },
+    "intro": {
+      "title": "Install a blueprint",
+      "subtitle": "The personal-memory blueprint: six schema packs, 23 object types and four agents, installed from a GitHub URL.",
+      "bullets": ["The URL is the whole install", "The graph is what arrives", "About a minute"]
+    },
+    "outro": {
+      "title": "That is the install",
+      "subtitle": "The same URL installs the same graph, and every type and agent it adds is visible in the app.",
+      "bullets": ["Blueprints → Import from GitHub", "github.com/mkucharz/personal-memory-blueprint"]
+    },
+    "theme": "memory"
+  },
+  "steps": [
+    {
+      "name": "a fresh project",
+      "caption": "A new project: no agents yet, and no object types of its own.",
+      "goto": "/",
+      "expect": { "selector": "a.menu-item[href$='/blueprints']" },
+      "hold": 900
+    },
+    {
+      "name": "open the blueprints page",
+      "click": "a.menu-item[href$='/blueprints']",
+      "waitFor": { "selector": "[data-testid=\"blueprint-import-open\"]" },
+      "hold": 700
+    },
+    {
+      "name": "the blueprints gallery",
+      "caption": "Open Blueprints — the schema packs this project has installed.",
+      "check": "Open the blueprints gallery",
+      "expect": { "selector": "[data-testid=\"blueprint-import-open\"]" },
+      "hold": 1200
+    },
+    {
+      "name": "open the import dialog",
+      "caption": "Choose Import. A blueprint is installed from a repository, not an upload.",
+      "click": "[data-testid=\"blueprint-import-open\"]",
+      "waitFor": { "selector": "[data-testid=\"blueprint-import-url\"]" },
+      "expect": { "selector": ["#blueprint-import-url", "[data-testid=\"blueprint-import-submit\"]"] },
+      "hold": 900
+    },
+    {
+      "name": "paste the repository URL",
+      "caption": "Paste the repository: github.com/mkucharz/personal-memory-blueprint.",
+      "check": "Import from GitHub by URL",
+      "fill": {
+        "selector": "#blueprint-import-url",
+        "value": "https://github.com/mkucharz/personal-memory-blueprint"
+      },
+      "hold": 1000
+    },
+    {
+      "name": "import it",
+      "caption": "Import creates, publishes and applies the blueprint in one step.",
+      "click": "[data-testid=\"blueprint-import-submit\"]",
+      "waitFor": { "url": "installed=1", "timeout": 90000 },
+      "hold": 400
+    },
+    {
+      "name": "the blueprint is installed",
+      "caption": "personal-memory v4.1.1 is installed, and can be updated from the same URL.",
+      "check": "personal-memory installed",
+      "waitFor": { "selector": "[data-testid=\"blueprint-source-link\"]" },
+      "expect": "personal-memory v4.1.1",
+      "hold": 1800
+    },
+    {
+      "name": "open the schema",
+      "click": "a.menu-item[href$='/schema']",
+      "waitFor": { "text": "23 types" },
+      "hold": 700
+    },
+    {
+      "name": "the schema is what arrived",
+      "caption": "Schema is what arrived: 23 object types, compiled into the graph.",
+      "check": "23 object types in the graph",
+      "expect": { "selector": "[data-testid=\"schema-type-cards\"]" },
+      "hold": 2200
+    },
+    {
+      "name": "open the agents",
+      "click": "a.menu-item[href$='/agents']",
+      "waitFor": { "text": "4 AGENTS" },
+      "hold": 700
+    },
+    {
+      "name": "four agents are ready",
+      "caption": "And four agents are ready to run against those types.",
+      "check": "Four agents ready to run",
+      "expect": ["personal-kb-agent", "obligations-watcher"],
+      "hold": 2400
+    }
+  ]
+}
