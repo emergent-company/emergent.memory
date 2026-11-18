@@ -1007,8 +1007,7 @@ func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *git
 			// A gate that already holds a caller-visible validation refusal (for
 			// example a terminal unapprovable head) is relayed as-is; only a
 			// genuine server failure becomes an internal error.
-			var validation *apperror.Error
-			if errors.As(gateErr, &validation) {
+			if _, ok := errors.AsType[*apperror.Error](gateErr); ok {
 				return nil, gateErr
 			}
 			return nil, apperror.NewInternal("github app tool: the review gate could not record the verdict", gateErr)
