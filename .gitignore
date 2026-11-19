@@ -203,7 +203,6 @@ apps/cli/.env
 vertex-sa-key.json
 tui.json
 opencode.jsonc.tui-migration.bak
-docs/hooks/__pycache__/
 apps/server/swiftbridge
 
 # auto-added by commit skill — 2026-03-09

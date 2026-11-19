@@ -138,8 +138,9 @@ jobs:
       # from `github.ref_name` — dispatching on `main` would build the wrong tree
       # or no-op. The list lives in .github/release-workflows.txt so this step
       # and the coverage check above cannot disagree; each entry must accept
-      # `workflow_dispatch` (that is why docs.yml and connector-release.yml
-      # declare it).
+      # `workflow_dispatch` (that is why connector-release.yml declares it —
+      # docs.yml declares it for hand-run builds, but a release tag no longer
+      # starts it).
       #
       # python-sdk-release.yml is deliberately absent from the manifest: it
       # triggers on `python-sdk/v*`, not on a release tag.

@@ -1,19 +1,15 @@
 name: Docs
 
-concurrency:
-  # Shared with mac-release.yml / mac-dev.yml, which publish the Sparkle appcast
-  # to the same gh-pages branch: GitHub serializes every run in this group so
-  # their pushes cannot race (a job-level group of the same name contends too).
-  # cancel-in-progress: false so a release publish is never cancelled by a newer
-  # docs run.
-  group: gh-pages-deploy
-  cancel-in-progress: false
-
 # The docs site is `docs-astro/` (Astro + Starlight) and it is the only docs
 # system: there is no MkDocs tree to build and no versioned deploy here. The
 # site itself is published by the infra repo (`scripts/deploy-docs.sh` →
 # `.github/workflows/deploy-docs.yml`), so what this workflow owns is the build
-# gate and the raw files that still live on gh-pages.
+# gate — that a page compiles before it can reach production.
+#
+# Publishing the files that still live on the `gh-pages` branch root (the API
+# spec, the `llms*.md` entry points, the redirect pages) is a separate workflow,
+# `publish-gh-pages-raw.yml`: it has to run when the API changes rather than
+# when a page does, and it must not pay for this build.
 #
 # No tag trigger: versioned docs are gone with mike, so a release has no docs
 # work to do. `docs.yml` was in `.github/release-workflows.txt` for the mike
@@ -25,10 +21,6 @@ on:
       - main
     paths:
       - 'docs-astro/**'
-      # The raw files synced to gh-pages below, and the generator wiring for the
-      # spec (#270 — it is generated, not committed).
-      - 'docs/llms*.md'
-      - '.github/actions/generate-openapi/**'
       # Self-change so a runner/build migration is exercised by its own PR and
       # by the merge, instead of silently waiting for the next docs edit.
       - '.github/workflows/docs.yml'
@@ -36,14 +28,14 @@ on:
   # fan-out: the manifest that enforces that (`.github/release-workflows.txt`)
   # lists only workflows a release tag starts, and this one no longer does.
   workflow_dispatch:
-  # Docs build only on promotion/hotfix PRs (`dev -> main`, `fix -> main`) and
-  # pushes to main; feature PRs to dev skip it to keep the fast lane fast.
+  # Docs build on promotion/hotfix PRs (`dev -> main`, `fix -> main`): that is
+  # the gate before the site's source reaches production. Feature PRs to `dev`
+  # skip it to keep the fast lane fast — the MkDocs workflow this replaces was
+  # `main`-only in exactly the same way.
   pull_request:
     branches: [main]
     paths:
       - 'docs-astro/**'
-      - 'docs/llms*.md'
-      - '.github/actions/generate-openapi/**'
       - '.github/workflows/docs.yml'
 
 jobs:
@@ -78,72 +70,3 @@ jobs:
       # which is what `mkdocs build --strict` used to cover for the other tree.
       - name: Build site
         run: npm run build
-
-  sync-gh-pages:
-    name: Sync raw files to gh-pages
-    # Push-to-main only (never a fork PR). The gh-pages-deploy concurrency group
-    # still serialises it against the appcast publishers.
-    runs-on: [self-hosted, linux, x64, memory]
-    needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      # The OpenAPI spec is generated, not committed (#270); it is copied to
-      # gh-pages below, so it must exist in the checkout first.
-      - uses: ./.github/actions/generate-openapi
-
-      - name: Configure git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Sync root-level files to gh-pages
-        run: |
-          # gh-pages no longer carries a docs site — the site is served from the
-          # docs host (see docs-astro/ and the infra repo's deploy-docs.sh). What
-          # remains here are the files consumers fetch directly, at the branch
-          # root: the API spec (the docs site's API reference reads it) and the
-          # llms*.md entry points. Nothing versioned, nothing per-branch.
-          #
-          # Publish from a LINKED WORKTREE instead of `git checkout gh-pages`
-          # in this one (#464). Checking gh-pages out here deleted `.github/`
-          # from the workspace, so the runner's post-step for the local
-          # `./.github/actions/generate-openapi` action failed with
-          # "Can't find 'action.yml'" on every release — a red check on a deploy
-          # that had already succeeded (steps 9/10 passed, step 19 failed).
-          # Ordering alone cannot fix it: a composite action's post-step always
-          # runs at job end, after any mutation. So do not mutate the primary
-          # checkout at all; the local action stays resolvable and the deploy is
-          # the only thing that changes.
-          set -euo pipefail
-          git fetch origin gh-pages
-          publish_dir="$(mktemp -d "$RUNNER_TEMP/gh-pages.XXXXXX")"
-          # FETCH_HEAD, not origin/gh-pages: actions/checkout installs its own
-          # (single-ref) fetch refspec, so only the command-line fetch result is
-          # guaranteed to be here. --detach keeps this worktree off any branch
-          # name, so two jobs can never contend for one.
-          git worktree add --detach "$publish_dir" FETCH_HEAD
-          cp apps/server/docs/swagger/swagger.json "$publish_dir/swagger.json"
-          cp apps/server/docs/swagger/swagger.yaml "$publish_dir/swagger.yaml"
-          cp apps/server/docs/swagger/swagger.json "$publish_dir/openapi.json"
-          cp docs/llms.md "$publish_dir/llms.md"
-          cp docs/llms-go-sdk.md "$publish_dir/llms-go-sdk.md"
-          cp docs/llms-python-sdk.md "$publish_dir/llms-python-sdk.md"
-          git -C "$publish_dir" add swagger.json swagger.yaml openapi.json llms.md llms-go-sdk.md llms-python-sdk.md
-          git -C "$publish_dir" diff --cached --quiet || git -C "$publish_dir" commit -m "docs: sync root-level raw files [skip ci]"
-          # Pull-rebase-and-retry, matching publish-appcast.sh: the appcast
-          # publisher pushes the same branch and may land first. The helper runs
-          # in the worktree and is read from this checkout, which is no longer
-          # switched to gh-pages (so it no longer has to be staged in /tmp).
-          ( cd "$publish_dir" && bash "$GITHUB_WORKSPACE/.github/scripts/push-gh-pages-with-retry.sh" )
-          git worktree remove --force "$publish_dir"
-          # The invariant this step exists to keep: the local action the runner
-          # resolves its post-step against is still present in this workspace.
-          # A checkout that mutates the tree again fails here instead of at the
-          # end of the job, where it reads as a deploy failure (#464).
-          test -f .github/actions/generate-openapi/action.yml

@@ -2,11 +2,13 @@
 # Push the current HEAD to `gh-pages` with the same pull-rebase-and-retry loop
 # used by .github/scripts/publish-appcast.sh.
 #
-# Both the docs workflow (mike) and the Mac appcast publisher push to the same
-# `gh-pages` branch. They share the `gh-pages-deploy` concurrency group, so
-# GitHub serializes their runs; a manual push or a run from another branch can
-# still land first, so retry with a rebase to tolerate that residual race. The
-# content lives in disjoint directories, so the rebase never conflicts.
+# Two publishers push to the same `gh-pages` branch: the docs raw-file sync
+# (`publish-gh-pages-raw.yml`: the API spec and the `llms*.md` files at the
+# branch root) and the Mac appcast publisher. They share the `gh-pages-deploy`
+# concurrency group, so GitHub serializes their runs; a manual push or a run
+# from another branch can still land first, so retry with a rebase to tolerate
+# that residual race. The content lives in disjoint paths, so the rebase never
+# conflicts.
 #
 # Usage: push-gh-pages-with-retry.sh [branch]   (default branch: gh-pages)
 # Env:   PUSH_ATTEMPTS (default 5, matching publish-appcast.sh)
