@@ -6,6 +6,7 @@
 package docs_test
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,18 @@ import (
 // The Astro docs site (product `docs-astro/`), served at the host root. The
 // MkDocs build that published under /latest/ on GitHub Pages is retired.
 const docsBaseURL = "https://docs.memory.emergent-company.ai"
+
+// htmlNoiseRE matches markup that carries no visible text: scripts, styles and
+// any other tag.  Starlight wraps inline code and links in tags, so raw HTML
+// splits phrases such as "`memory` CLI" into "<code>memory</code> CLI".
+var htmlNoiseRE = regexp.MustCompile(`(?s)<script.*?</script>|<style.*?</style>|<[^>]+>`)
+
+// visibleText returns the human-readable text of an HTML document, with tags
+// removed and whitespace collapsed, so assertions can match what a reader sees
+// regardless of the markup around it.
+func visibleText(body string) string {
+	return strings.Join(strings.Fields(htmlNoiseRE.ReplaceAllString(body, " ")), " ")
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Home page
@@ -246,13 +259,15 @@ func TestDocSite_GoSDKPage(t *testing.T) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // TestDocSite_GettingStartedCLIExamples verifies the getting-started page
-// contains specific code examples that users should follow.
+// documents how to connect a client — the `memory` CLI, an MCP client and the
+// REST API.  The page has no SDK code examples, so asserting on `memory sdk` or
+// `memory go` would fail for content that was never there.
 func TestDocSite_GettingStartedCLIExamples(t *testing.T) {
 	rl := newRunLog(t)
 	t.Cleanup(rl.Close)
-	rl.Describe("Verify getting-started page contains expected code examples",
+	rl.Describe("Verify getting-started page documents the CLI and other clients",
 		"GET the getting-started page",
-		"Assert page contains 'memory sdk' or 'memory go' SDK references",
+		"Assert page mentions the 'memory' CLI, MCP clients and the REST API",
 	)
 
 	skipIfDocsUnreachable(t, rl)
@@ -269,18 +284,15 @@ func TestDocSite_GettingStartedCLIExamples(t *testing.T) {
 		rl.Failf("expected HTTP 200, got %d", status)
 	}
 
-	rl.Section("Verify code examples in page content")
-	lower := strings.ToLower(body)
-	patterns := []string{"memory sdk", "memory go"}
-	found := false
-	for _, p := range patterns {
-		if strings.Contains(lower, p) {
-			found = true
-			rl.Printf("  found example: %s", p)
+	rl.Section("Verify client references in page content")
+	lower := strings.ToLower(visibleText(body))
+	expectedClients := []string{"memory cli", "mcp", "rest api"}
+	for _, client := range expectedClients {
+		if !strings.Contains(lower, client) {
+			t.Errorf("getting-started page missing expected client reference %q", client)
+		} else {
+			rl.Printf("  found client reference: %s", client)
 		}
-	}
-	if !found {
-		t.Errorf("getting-started page missing expected SDK examples (checked: %v)", patterns)
 	}
 }
 
