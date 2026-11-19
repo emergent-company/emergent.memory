@@ -56,7 +56,6 @@ be committed. It fails on five things:
 | `brand.go` | Go (`package brand`): hex constants for the CLI's lipgloss styling. |
 | `dist/json/memory.tokens.flat.json` | Any tool that wants resolved values without a CSS engine. |
 | `dist/js/brand.js` | Charts and non-Tailwind web surfaces. |
-| `dist/mkdocs/brand.css` + `palette.yml` | The docs site, replacing Material's stock indigo. |
 | `dist/contrast.md` | The published contrast matrix — the receipt for every pair above. |
 | `logo/manifest.json` | The grid contract and asset list, for tooling. |
 | `logo/mark/*.svg`, `logo/explore/glyphs.svg` | The mark, its tiles, and the lattice proof. |
@@ -135,7 +134,6 @@ of the theme block and are migrated next, one surface at a time:
 - `apps/web-ui/gateway/webui/css/app.css`
 - the deploy portal and the infrastructure dashboard (both in the infra control repo)
 - the marketing site's `theme/input.css` (a separate repository)
-- `mkdocs.yml` (still on Material `indigo`)
 - `apps/server/templates/email`
 - `apps/cli/internal/ui`
 

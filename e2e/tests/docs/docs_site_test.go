@@ -11,7 +11,9 @@ import (
 	"time"
 )
 
-const docsBaseURL = "https://emergent-company.github.io/emergent.memory/latest"
+// The Astro docs site (product `docs-astro/`), served at the host root. The
+// MkDocs build that published under /latest/ on GitHub Pages is retired.
+const docsBaseURL = "https://docs.memory.emergent-company.ai"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Home page

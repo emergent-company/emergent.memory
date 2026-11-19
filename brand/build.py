@@ -622,66 +622,6 @@ def js() -> str:
     )
 
 
-def mkdocs_css() -> str:
-    c = roles("dark")
-    return "\n".join(
-        [
-            f"/* {HEADER} */",
-            "/* Material for MkDocs: brand the docs site without forking the theme.",
-            " * Pair with `palette: primary: custom` / `accent: custom` in mkdocs.yml. */",
-            "",
-            ":root, [data-md-color-scheme=\"slate\"] {",
-            f"  --md-primary-fg-color: {c['interactive.primary'].hex};",
-            f"  --md-primary-fg-color--light: {COLOR['color.brass.400'].hex};",
-            f"  --md-primary-fg-color--dark: {COLOR['color.brass.700'].hex};",
-            f"  --md-accent-fg-color: {c['interactive.accent'].hex};",
-            f"  --md-default-bg-color: {c['surface.page'].hex};",
-            f"  --md-default-fg-color: {c['content.body'].hex};",
-            f"  --md-typeset-color: {c['content.body'].hex};",
-            f"  --md-code-bg-color: {c['surface.deep'].hex};",
-            "}",
-            "",
-            "[data-md-color-scheme=\"default\"] {",
-            f"  --md-primary-fg-color: {COLOR['semantic.light.interactive.primary'].hex};",
-            f"  --md-accent-fg-color: {COLOR['semantic.light.interactive.accent'].hex};",
-            f"  --md-default-bg-color: {COLOR['semantic.light.surface.page'].hex};",
-            f"  --md-default-fg-color: {COLOR['semantic.light.content.body'].hex};",
-            f"  --md-typeset-color: {COLOR['semantic.light.content.body'].hex};",
-            "}",
-            "",
-            ".md-typeset h1, .md-typeset h2, .md-typeset h3 {",
-            f"  font-weight: {dim('type.weight.heading')};",
-            f"  letter-spacing: {dim('type.tracking.heading')};",
-            "}",
-            "",
-        ]
-    )
-
-
-def mkdocs_palette() -> str:
-    return "\n".join(
-        [
-            "# " + HEADER,
-            "# Paste under `theme:` in mkdocs.yml. `custom` makes Material read the",
-            "# variables shipped by brand/dist/mkdocs/brand.css instead of indigo.",
-            "palette:",
-            "  - scheme: default",
-            "    primary: custom",
-            "    accent: custom",
-            "    toggle:",
-            "      icon: material/brightness-7",
-            "      name: Switch to dark mode",
-            "  - scheme: slate",
-            "    primary: custom",
-            "    accent: custom",
-            "    toggle:",
-            "      icon: material/brightness-4",
-            "      name: Switch to light mode",
-            "",
-        ]
-    )
-
-
 def contrast_md() -> str:
     rows = ["| Pair | Ratio | Required | WCAG 2.2 |", "|---|---|---|---|"]
     failures = []
@@ -963,8 +903,6 @@ def outputs() -> dict[Path, str]:
         ROOT / "brand.go": go(),
         DIST / "json" / "memory.tokens.flat.json": flat_json(),
         DIST / "js" / "brand.js": js(),
-        DIST / "mkdocs" / "brand.css": mkdocs_css(),
-        DIST / "mkdocs" / "palette.yml": mkdocs_palette(),
         ROOT / "logo" / "manifest.json": manifest(),
         ROOT / "logo" / "mark" / "mark-v1.svg": mark_svg(MARK_V1, "M"),
         ROOT / "logo" / "mark" / "mark-v1-tile.svg": tile_svg(

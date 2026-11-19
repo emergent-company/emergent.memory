@@ -9,84 +9,80 @@ concurrency:
   group: gh-pages-deploy
   cancel-in-progress: false
 
+# The docs site is `docs-astro/` (Astro + Starlight) and it is the only docs
+# system: there is no MkDocs tree to build and no versioned deploy here. The
+# site itself is published by the infra repo (`scripts/deploy-docs.sh` →
+# `.github/workflows/deploy-docs.yml`), so what this workflow owns is the build
+# gate and the raw files that still live on gh-pages.
+#
+# No tag trigger: versioned docs are gone with mike, so a release has no docs
+# work to do. `docs.yml` was in `.github/release-workflows.txt` for the mike
+# deploy; it is not any more, and check-release-fanout.py keeps the manifest
+# equal to the workflows a release tag actually starts.
 on:
   push:
     branches:
       - main
     paths:
-      - 'docs/**'
-      - 'mkdocs.yml'
-      # The OpenAPI spec is generated, not committed (#270), and this workflow
-      # generates it — so a change to the generator wiring must exercise it.
+      - 'docs-astro/**'
+      # The raw files synced to gh-pages below, and the generator wiring for the
+      # spec (#270 — it is generated, not committed).
+      - 'docs/llms*.md'
       - '.github/actions/generate-openapi/**'
       # Self-change so a runner/build migration is exercised by its own PR and
       # by the merge, instead of silently waiting for the next docs edit.
       - '.github/workflows/docs.yml'
-    tags:
-      - 'v*'
-  # Started by auto-tag.yml's dispatch fallback when no PAT is available to make
-  # the tag push trigger workflows (#116). The version-publish job below runs on
-  # `workflow_dispatch` **on a tag ref** as well as on a tag push; dispatching on
-  # a branch stays inert, which is what makes this safe to trigger by hand.
+  # Kept for a hand-run build. It is no longer part of auto-tag's release
+  # fan-out: the manifest that enforces that (`.github/release-workflows.txt`)
+  # lists only workflows a release tag starts, and this one no longer does.
   workflow_dispatch:
   # Docs build only on promotion/hotfix PRs (`dev -> main`, `fix -> main`) and
   # pushes to main; feature PRs to dev skip it to keep the fast lane fast.
   pull_request:
     branches: [main]
     paths:
-      - 'docs/**'
-      - 'mkdocs.yml'
+      - 'docs-astro/**'
+      - 'docs/llms*.md'
       - '.github/actions/generate-openapi/**'
       - '.github/workflows/docs.yml'
 
 jobs:
   build:
     name: Build docs
-    # Self-hosted: mkdocs + mike are pure-Python and a docs build is
-    # PR-triggered on every docs/** change — one of the largest recurring
-    # hosted-minute consumers. Fork guard as everywhere else.
+    # Self-hosted: the Astro build is PR-triggered on every docs-astro/** change
+    # and pulls a node_modules tree — one of the largest recurring hosted-minute
+    # consumers. Fork guard as everywhere else.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64, memory]
     permissions:
       contents: read
+    defaults:
+      run:
+        working-directory: docs-astro
     steps:
       - uses: actions/checkout@v4
+
+      # Astro 7's floor is node >= 22.23.4 and @scalar/astro's is >= 22, so the
+      # 22 line is the minimum that builds this tree. The product's own copy is
+      # pinned by `docs-astro/package-lock.json`, which `npm ci` requires to be
+      # in sync — a dependency bump without a lock refresh fails here.
+      - uses: actions/setup-node@v4
         with:
-          fetch-depth: 0  # mike needs full history
-
-      # The OpenAPI spec is generated, not committed (#270). The llms_files hook
-      # copies it into the built site and only warns when it is absent, so a docs
-      # build without this step would publish an /api-reference page whose
-      # Swagger UI points at a 404.
-      - uses: ./.github/actions/generate-openapi
-
-      # uv pins one interpreter, so the docs build is identical on both hosts of
-      # the self-hosted pool whatever their distro Python looks like. They do
-      # differ — only one is Debian, and the other's Python state is not
-      # recorded — and that divergence is the reason for the pin.
-      - name: Set up Python 3.12 (uv)
-        uses: astral-sh/setup-uv@v10.3.0
-        with:
-          python-version: '3.12'
-          enable-cache: true
-
-      - name: Create virtualenv
-        run: |
-          uv venv --python 3.12 "$RUNNER_TEMP/venv-docs"
-          echo "$RUNNER_TEMP/venv-docs/bin" >> "$GITHUB_PATH"
-          echo "VIRTUAL_ENV=$RUNNER_TEMP/venv-docs" >> "$GITHUB_ENV"
+          node-version: '22'
 
       - name: Install dependencies
-        run: uv pip install -r docs/requirements.txt
+        run: npm ci
 
-      - name: Build docs (strict)
-        run: mkdocs build --strict
+      # The whole gate. `astro build` fails on a broken component, a page whose
+      # frontmatter is invalid, a missing asset import and an MDX syntax error —
+      # which is what `mkdocs build --strict` used to cover for the other tree.
+      - name: Build site
+        run: npm run build
 
-  deploy-latest:
-    name: Deploy latest (main)
-    # Self-hosted: push-to-main only (never a fork PR), so no guard is
-    # needed. The gh-pages-deploy concurrency group still serialises it against
-    # the appcast publishers.
+  sync-gh-pages:
+    name: Sync raw files to gh-pages
+    # Push-to-main only (never a fork PR). The gh-pages-deploy concurrency group
+    # still serialises it against the appcast publishers.
     runs-on: [self-hosted, linux, x64, memory]
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -101,139 +97,19 @@ jobs:
       # gh-pages below, so it must exist in the checkout first.
       - uses: ./.github/actions/generate-openapi
 
-      # uv pins one interpreter, so the docs build is identical on both hosts of
-      # the self-hosted pool whatever their distro Python looks like. They do
-      # differ — only one is Debian, and the other's Python state is not
-      # recorded — and that divergence is the reason for the pin.
-      - name: Set up Python 3.12 (uv)
-        uses: astral-sh/setup-uv@v10.3.0
-        with:
-          python-version: '3.12'
-          enable-cache: true
-
-      - name: Create virtualenv
-        run: |
-          uv venv --python 3.12 "$RUNNER_TEMP/venv-docs"
-          echo "$RUNNER_TEMP/venv-docs/bin" >> "$GITHUB_PATH"
-          echo "VIRTUAL_ENV=$RUNNER_TEMP/venv-docs" >> "$GITHUB_ENV"
-
-      - name: Install dependencies
-        run: uv pip install -r docs/requirements.txt
-
       - name: Configure git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Deploy as latest
-        run: |
-          # mike neither fetches nor rebases (it fails hard on a non-FF push), so
-          # refresh the gh-pages tracking ref it compares against. The shared
-          # `gh-pages-deploy` concurrency group already serializes the pushes.
-          git fetch origin gh-pages
-          mike deploy --push --update-aliases dev latest
-
       - name: Sync root-level files to gh-pages
         run: |
-          # Publish from a LINKED WORKTREE instead of `git checkout gh-pages`
-          # in this one (#464). Checking gh-pages out here deleted `.github/`
-          # from the workspace, so the runner's post-step for the local
-          # `./.github/actions/generate-openapi` action failed with
-          # "Can't find 'action.yml'" on every release — a red check on a deploy
-          # that had already succeeded (steps 9/10 passed, step 19 failed).
-          # Ordering alone cannot fix it: a composite action's post-step always
-          # runs at job end, after any mutation. So do not mutate the primary
-          # checkout at all; the local action stays resolvable and the deploy is
-          # the only thing that changes.
-          set -euo pipefail
-          git fetch origin gh-pages
-          publish_dir="$(mktemp -d "$RUNNER_TEMP/gh-pages.XXXXXX")"
-          # FETCH_HEAD, not origin/gh-pages: actions/checkout installs its own
-          # (single-ref) fetch refspec, so only the command-line fetch result is
-          # guaranteed to be here. --detach keeps this worktree off any branch
-          # name, so two jobs can never contend for one.
-          git worktree add --detach "$publish_dir" FETCH_HEAD
-          cp apps/server/docs/swagger/swagger.json "$publish_dir/swagger.json"
-          cp apps/server/docs/swagger/swagger.yaml "$publish_dir/swagger.yaml"
-          cp apps/server/docs/swagger/swagger.json "$publish_dir/openapi.json"
-          cp docs/llms.md "$publish_dir/llms.md"
-          cp docs/llms-go-sdk.md "$publish_dir/llms-go-sdk.md"
-          cp docs/llms-python-sdk.md "$publish_dir/llms-python-sdk.md"
-          git -C "$publish_dir" add swagger.json swagger.yaml openapi.json llms.md llms-go-sdk.md llms-python-sdk.md
-          git -C "$publish_dir" diff --cached --quiet || git -C "$publish_dir" commit -m "docs: sync root-level raw files [skip ci]"
-          # Pull-rebase-and-retry, matching publish-appcast.sh: the appcast
-          # publisher pushes the same branch and may land first. The helper runs
-          # in the worktree and is read from this checkout, which is no longer
-          # switched to gh-pages (so it no longer has to be staged in /tmp).
-          ( cd "$publish_dir" && bash "$GITHUB_WORKSPACE/.github/scripts/push-gh-pages-with-retry.sh" )
-          git worktree remove --force "$publish_dir"
-          # The invariant this step exists to keep: the local action the runner
-          # resolves its post-step against is still present in this workspace.
-          # A checkout that mutates the tree again fails here instead of at the
-          # end of the job, where it reads as a deploy failure (#464).
-          test -f .github/actions/generate-openapi/action.yml
-
-  deploy-version:
-    name: Deploy versioned release
-    runs-on: [self-hosted, linux, x64, memory]
-    needs: build
-    # A tag push *or* auto-tag's dispatch on a tag ref (#116). The ref test is
-    # what keeps a hand-dispatch on a branch inert.
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && startsWith(github.ref, 'refs/tags/v')
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      # The OpenAPI spec is generated, not committed (#270); it is copied to
-      # gh-pages below, so it must exist in the checkout first.
-      - uses: ./.github/actions/generate-openapi
-
-      # uv pins one interpreter, so the docs build is identical on both hosts of
-      # the self-hosted pool whatever their distro Python looks like. They do
-      # differ — only one is Debian, and the other's Python state is not
-      # recorded — and that divergence is the reason for the pin.
-      - name: Set up Python 3.12 (uv)
-        uses: astral-sh/setup-uv@v10.3.0
-        with:
-          python-version: '3.12'
-          enable-cache: true
-
-      - name: Create virtualenv
-        run: |
-          uv venv --python 3.12 "$RUNNER_TEMP/venv-docs"
-          echo "$RUNNER_TEMP/venv-docs/bin" >> "$GITHUB_PATH"
-          echo "VIRTUAL_ENV=$RUNNER_TEMP/venv-docs" >> "$GITHUB_ENV"
-
-      - name: Install dependencies
-        run: uv pip install -r docs/requirements.txt
-
-      - name: Configure git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Extract version from tag
-        id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-
-      - name: Deploy versioned docs and update latest alias
-        env:
-          VERSION: ${{ steps.version.outputs.VERSION }}
-        run: |
-          # mike neither fetches nor rebases (it fails hard on a non-FF push), so
-          # refresh the gh-pages tracking ref it compares against. The shared
-          # `gh-pages-deploy` concurrency group already serializes the pushes.
-          git fetch origin gh-pages
-          # Remove 'latest' if it exists as a standalone version (not alias) to avoid conflicts
-          mike delete --push latest 2>/dev/null || true
-          mike deploy --push --update-aliases "${VERSION}" latest
-          mike set-default --push latest
-
-      - name: Sync root-level files to gh-pages
-        run: |
+          # gh-pages no longer carries a docs site — the site is served from the
+          # docs host (see docs-astro/ and the infra repo's deploy-docs.sh). What
+          # remains here are the files consumers fetch directly, at the branch
+          # root: the API spec (the docs site's API reference reads it) and the
+          # llms*.md entry points. Nothing versioned, nothing per-branch.
+          #
           # Publish from a LINKED WORKTREE instead of `git checkout gh-pages`
           # in this one (#464). Checking gh-pages out here deleted `.github/`
           # from the workspace, so the runner's post-step for the local

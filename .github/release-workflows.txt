@@ -22,7 +22,6 @@ cli-release.yml
 publish-workspace-image.yml
 server-sdk-release.yml
 release-versions.yml|--field tag=@TAG@
-docs.yml
 connector-release.yml
 ios-release.yml
 mac-release.yml
