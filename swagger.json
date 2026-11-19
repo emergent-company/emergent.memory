@@ -16,7 +16,7 @@
             "name": "MIT",
             "url": "https://opensource.org/licenses/MIT"
         },
-        "version": "0.104.0"
+        "version": "0.103.0"
     },
     "basePath": "/",
     "paths": {
@@ -31471,6 +31471,9 @@
                     "type": "integer"
                 },
                 "errorMessage": {
+                    "type": "string"
+                },
+                "failureClass": {
                     "type": "string"
                 },
                 "id": {
