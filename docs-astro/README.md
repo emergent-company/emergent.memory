@@ -474,13 +474,18 @@ recording: `1920×1080`, `colorScheme: "dark"`, `deviceScaleFactor: 2`, a pinned
 figure rule — a recording encodes what Chromium painted, and a 1080p frame at 2×
 is already sharper than the video carries.
 
+Run these **from `docs-astro/`**: it is the only directory whose `.gitignore`
+covers `captures/` and `.profile/`, and started at the repo root the profile — a
+live session — lands on a path nothing ignores.
+
 ```bash
+cd docs-astro
 # once per host: a visible window opens, sign in, press Enter
-node <recorder>/scripts/path-shots.mjs --login \
-  --login-url "$MEMORY_URL/" --profile .profile-personal
+node /tmp/ui-path-recorder/scripts/path-shots.mjs --login \
+  --login-url "$MEMORY_URL/" --profile .profile/personal
 # then record; --profile implies a headed browser, so run it where a display exists
-node <recorder>/scripts/path-shots.mjs scripts/paths/install-a-blueprint.plan.json \
-  --profile .profile-personal --video --video-fps 30 --review
+node /tmp/ui-path-recorder/scripts/path-shots.mjs scripts/paths/install-a-blueprint.plan.json \
+  --profile .profile/personal --video --video-fps 30 --review
 ```
 
 The run lands in `captures/<slug>-<stamp>/`: `video/01-main.webm` (the master),
