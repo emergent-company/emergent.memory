@@ -457,34 +457,64 @@ walkthrough is 28 seconds of a real import, with a checklist panel on the right
 that fills in as each step lands. That recording is a **path plan** under
 `scripts/paths/`, run by
 [`mkucharz/ui-path-recorder`](https://github.com/mkucharz/ui-path-recorder) — a
-separate skill, not vendored here:
+separate skill, not vendored here. Clone it and install what it records through:
 
 ```bash
-# a signed-in profile, made once (headless is fine; recording needs a display)
-node dev-login.mjs --profile .profile-personal
-# then record: the runner writes 01-main.webm, 01-main.vtt and a poster
-node <recorder>/scripts/path-shots.mjs scripts/paths/install-a-blueprint.plan.json \
-  --profile .profile-personal --video --video-fps 30
+git clone https://github.com/mkucharz/ui-path-recorder /tmp/ui-path-recorder
+cd /tmp/ui-path-recorder && npm ci && npx playwright-core install chromium ffmpeg
 ```
 
 A path plan is the caption-carrying cousin of a shot plan: the same `goto`,
-`click` and `waitFor` steps, plus the narration each step writes as a subtitle
-and the side panel that lists what the walkthrough shows. It takes **no `shot`
-entries**, so `--check` applies the 1× ratio rule instead of the 4× figure rule —
-a recording encodes what Chromium painted, and a 1080p frame at 2× is already
-sharper than the video carries.
+`click` and `waitFor` steps, plus a caption for each screen a viewer must
+understand, the checklist rows the steps tick, an intro card and an end card.
+`paths/install-a-blueprint.plan.json` is the reference — copy its shape for a new
+recording: `1920×1080`, `colorScheme: "dark"`, `deviceScaleFactor: 2`, a pinned
+`humanize.seed`, `video.theme: "memory"` and a docked 360 px checklist. It takes
+**no `shot` entries**, so `--check` applies the 1× ratio rule instead of the 4×
+figure rule — a recording encodes what Chromium painted, and a 1080p frame at 2×
+is already sharper than the video carries.
 
-The three files belong in one directory under
-`public/assets/tutorials/<slug>/` (`walkthrough.webm`, `walkthrough.vtt`,
-`poster.webp`), because a re-shoot replaces that directory whole and `--check`
-refuses a caption or poster from somewhere else. They are committed where they
-play — Astro serves `public/` at the host root, so the page's `<video>` names
-`/assets/...` and there is no copy step to keep in step. The Tutorial names all
-three paths (`video`, `video_captions`, `video_poster`) and the page emits one
-`<video>` above the written steps, which stay: the page is what search indexes.
+```bash
+# once per host: a visible window opens, sign in, press Enter
+node <recorder>/scripts/path-shots.mjs --login \
+  --login-url "$MEMORY_URL/" --profile .profile-personal
+# then record; --profile implies a headed browser, so run it where a display exists
+node <recorder>/scripts/path-shots.mjs scripts/paths/install-a-blueprint.plan.json \
+  --profile .profile-personal --video --video-fps 30 --review
+```
 
-Keep the master (1920×1080 at 2×, ~4 MB) out of the repo — it is what goes to
-YouTube — and commit the compressed ~1440×810 copy instead.
+The run lands in `captures/<slug>-<stamp>/`: `video/01-main.webm` (the master),
+`video/01-main.vtt`, and `review.html`. Watch the video before publishing it — a
+recording is the one artefact whose defects are invisible in a still.
+
+Publishing is three files in one directory under
+`public/assets/tutorials/<slug>/` — `walkthrough.webm`, `walkthrough.vtt`,
+`poster.webp` — because a re-shoot replaces that directory whole and `--check`
+refuses a caption or poster from somewhere else:
+
+```bash
+slug=install-a-blueprint
+out=public/assets/tutorials/$slug
+# 1440×810 VP9, no audio — the published install-a-blueprint is 715 KB for 27.7 s
+ffmpeg -y -i captures/<run>/video/01-main.webm -vf scale=1440:810:flags=lanczos \
+  -c:v libvpx-vp9 -b:v 0 -crf 34 -row-mt 1 -cpu-used 2 -r 30 -an $out/walkthrough.webm
+cp captures/<run>/video/01-main.vtt $out/walkthrough.vtt
+# a frame that carries the point, caption pill included
+ffmpeg -y -ss <seconds> -i $out/walkthrough.webm -frames:v 1 \
+  -vf scale=1280:720:flags=lanczos -c:v libwebp -quality 82 $out/poster.webp
+```
+
+The runner writes no poster — its review player uses the first frame — so that
+last command is the poster. Keep the master out of the repo (it is the file for
+YouTube): the 1440×810 copy is a deliberate size/quality trade, and the 1080p
+master is several times the bytes for detail the page's 1280 px player does not
+show at 1×.
+
+The three files are committed where they play — Astro serves `public/` at the
+host root, so the page's `<video>` names `/assets/...` and there is no copy step
+to keep in step. The Tutorial names all three paths (`video`, `video_captions`,
+`video_poster`) and the page emits one `<video>` above the written steps, which
+stay: the page is what search indexes.
 
 ### Flows that need a human once: the Railway installer
 
