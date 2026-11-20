@@ -322,7 +322,7 @@
     "stroke": { "$type": "number", "$value": 1.75 }
   },
   "logo": {
-    "$description": "Two artefacts. logo.mark is the shipping identity: a brass tile with the drawn M, in a 64u square so every asset is the same drawing at a different scale. logo.grid and logo.tile are the letter lattice the M was first cut on - an exploration, not the identity. brand/logo/tile/README.md is the mark's contract; brand/logo/mark/DIRECTION.md is the lattice's.",
+    "$description": "Two artefacts. logo.mark is the shipping identity: a brass tile with the drawn M, in a 64u square so every asset is the same drawing at a different scale. logo.grid and logo.tile are the letter lattice the M was first cut on - an exploration, not the identity. design-system/logo/tile/README.md is the mark's contract; design-system/logo/mark/DIRECTION.md is the lattice's.",
     "mark": {
       "$description": "The M is a path, not live text: the shipped monogram set the letter in the system font, so its shape changed per platform and could not be exported. This drawing is the letter, in its own 24u frame.",
       "side": { "$type": "number", "$value": 64, "$description": "Plate side. Every variant shares this coordinate space." },
