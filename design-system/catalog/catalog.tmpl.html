@@ -1,0 +1,634 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory design system</title>
+<!--
+  GENERATED PAGE — edit design-system/catalog/catalog.tmpl.html and the
+  emitters in design-system/build.py. Never edit index.html.
+
+  This file is one artefact among the generated set: `design-system/build.py
+  --check` fails when it is stale, exactly like the CSS and the Swift. The
+  token block below IS design-system/dist/css/brand.tokens.css, inlined
+  verbatim, so the page paints with the shipped values and the light toggle
+  proves the light tokens rather than a mock-up of them.
+-->
+<style>
+{{TOKENS_CSS}}
+</style>
+<style>
+/* ── page shell ─────────────────────────────────────────────────────────── */
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--brand-surface-page);
+  color: var(--brand-content-body);
+  font-family: var(--brand-font-body);
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--brand-primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, .mono, .tk { font-family: var(--brand-font-mono); font-size: 0.8125rem; }
+
+.top {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: 1.25rem;
+  padding: 0.85rem 1.5rem;
+  background: color-mix(in oklch, var(--brand-surface-page) 88%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--brand-border-line);
+}
+.brandline { display: flex; align-items: center; gap: 0.65rem; color: var(--brand-content-strong); }
+.brandline svg { width: 22px; height: 22px; display: block; }
+.brandline b { font-weight: var(--brand-weight-heading); letter-spacing: var(--brand-tracking-heading); }
+.brandline span { color: var(--brand-content-body); opacity: .65; font-weight: 400; }
+.top .stats { margin-left: auto; display: flex; gap: 1.1rem; color: var(--brand-content-body); opacity: .7; font-size: 0.75rem; }
+.top .stats b { color: var(--brand-content-strong); font-weight: 600; }
+.toggle {
+  border: 1px solid var(--brand-border-strong); background: var(--brand-surface-base);
+  color: var(--brand-content-strong); border-radius: var(--brand-radius-full);
+  padding: 0.35rem 0.8rem; font: inherit; font-size: 0.75rem; cursor: pointer;
+  transition: background var(--brand-motion-fast) var(--brand-ease-standard);
+}
+.toggle:hover { background: var(--brand-surface-raised); }
+
+.shell { display: grid; grid-template-columns: 15rem minmax(0, 1fr); gap: 2.5rem; max-width: 84rem; margin: 0 auto; padding: 2rem 1.5rem 5rem; }
+.toc { position: sticky; top: 4.5rem; align-self: start; font-size: 0.8125rem; }
+.toc h4 { margin: 1.4rem 0 .4rem; font-size: 0.6875rem; letter-spacing: var(--brand-tracking-eyebrow); text-transform: uppercase; color: var(--brand-content-body); opacity: .55; font-weight: 600; }
+.toc a { display: block; padding: .22rem 0; color: var(--brand-content-body); opacity: .8; }
+.toc a:hover { color: var(--brand-primary); opacity: 1; text-decoration: none; }
+
+main { min-width: 0; }
+section { margin: 0 0 4rem; scroll-margin-top: 4.5rem; }
+.eyebrow { margin: 0 0 .5rem; font-size: 0.6875rem; letter-spacing: var(--brand-tracking-eyebrow); text-transform: uppercase; color: var(--brand-primary); font-weight: 600; }
+h1 { font-size: clamp(2rem, 4vw, 2.9rem); line-height: 1.1; letter-spacing: var(--brand-tracking-tight); margin: 0 0 .8rem; color: var(--brand-content-strong); font-weight: var(--brand-weight-heading); }
+h2 { font-size: 1.6rem; line-height: 1.2; letter-spacing: var(--brand-tracking-heading); margin: 0 0 .6rem; color: var(--brand-content-strong); font-weight: var(--brand-weight-heading); }
+h3 { font-size: 1.05rem; margin: 2.2rem 0 .7rem; color: var(--brand-content-strong); font-weight: 600; letter-spacing: var(--brand-tracking-heading); }
+h3:first-child { margin-top: 0; }
+p.lede { font-size: 1.0625rem; max-width: 46rem; color: var(--brand-content-body); }
+p.note { max-width: 46rem; opacity: .8; }
+p.note b { color: var(--brand-content-strong); }
+
+.card { background: var(--brand-surface-base); border: 1px solid var(--brand-border-line); border-radius: var(--brand-radius-selector); padding: 1.25rem; }
+.grid { display: grid; gap: 1rem; }
+.g2 { grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
+.g3 { grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); }
+
+/* ── colour ─────────────────────────────────────────────────────────────── */
+.ramp { display: grid; grid-template-columns: 5.5rem repeat(auto-fit, minmax(2.1rem, 1fr)); gap: 2px; align-items: stretch; }
+.ramp .name { font-family: var(--brand-font-mono); font-size: 0.75rem; align-self: center; color: var(--brand-content-strong); }
+.sw { min-height: 3.2rem; display: flex; align-items: flex-end; justify-content: center; padding-bottom: .3rem; border-radius: 3px; cursor: pointer; position: relative; }
+.sw span { font-family: var(--brand-font-mono); font-size: 0.5625rem; opacity: 0; transition: opacity var(--brand-motion-fast); }
+.sw:hover span { opacity: .9; }
+.ramp + .ramp { margin-top: 4px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+th, td { text-align: left; padding: .45rem .55rem; border-bottom: 1px solid var(--brand-border-line); vertical-align: middle; }
+th { font-size: 0.6875rem; letter-spacing: var(--brand-tracking-eyebrow); text-transform: uppercase; opacity: .6; font-weight: 600; }
+td.num { font-family: var(--brand-font-mono); text-align: right; white-space: nowrap; }
+.pass { color: var(--brand-success); font-weight: 600; }
+.fail { color: var(--brand-error); font-weight: 700; }
+.rolesplit { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 1rem; }
+.rolelist { padding: 0; margin: 0; list-style: none; }
+.rolelist li { display: flex; align-items: center; gap: .6rem; padding: .28rem 0; border-bottom: 1px solid var(--brand-border-line); }
+.rolelist li:last-child { border-bottom: 0; }
+.rolelist .dot { width: 1.1rem; height: 1.1rem; border-radius: 50%; border: 1px solid var(--brand-border-strong); flex: 0 0 auto; }
+.rolelist .n { font-family: var(--brand-font-mono); font-size: 0.75rem; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rolelist .v { font-family: var(--brand-font-mono); font-size: 0.6875rem; opacity: .55; }
+[data-theme="brand-light"] .card { border-color: color-mix(in oklch, var(--brand-border-line) 100%, transparent); }
+
+/* ── type ───────────────────────────────────────────────────────────────── */
+.spec { display: flex; align-items: baseline; gap: 1.5rem; padding: .55rem 0; border-bottom: 1px solid var(--brand-border-line); }
+.spec .meta { flex: 0 0 8.5rem; font-family: var(--brand-font-mono); font-size: 0.6875rem; opacity: .6; }
+.spec .sample { color: var(--brand-content-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── space / radius / motion ────────────────────────────────────────────── */
+.bar { display: flex; align-items: center; gap: .8rem; padding: .18rem 0; }
+.bar .lbl { flex: 0 0 4.5rem; font-family: var(--brand-font-mono); font-size: 0.6875rem; opacity: .65; }
+.bar .fill { height: .85rem; background: var(--brand-primary); border-radius: 2px; opacity: .85; }
+.radii { display: flex; gap: 1rem; flex-wrap: wrap; }
+.radii figure { margin: 0; text-align: center; }
+.radii .box { width: 4.5rem; height: 4.5rem; background: var(--brand-surface-raised); border: 1px solid var(--brand-border-strong); }
+.radii figcaption { font-family: var(--brand-font-mono); font-size: 0.6875rem; opacity: .65; margin-top: .4rem; }
+.motion { display: grid; gap: .6rem; }
+.motion .row { display: flex; align-items: center; gap: .9rem; }
+.motion .track { position: relative; height: .6rem; flex: 1; background: var(--brand-surface-deep); border-radius: var(--brand-radius-full); overflow: hidden; }
+.motion .puck { position: absolute; inset: 0 auto 0 0; width: 12%; background: var(--brand-primary); border-radius: var(--brand-radius-full); }
+.motion .row:hover .puck { width: 88%; }
+.motion .lbl { flex: 0 0 9rem; font-family: var(--brand-font-mono); font-size: 0.6875rem; opacity: .7; }
+
+/* ── identity ───────────────────────────────────────────────────────────── */
+.hero { display: flex; align-items: center; gap: 2.2rem; flex-wrap: wrap; }
+.hero > svg { display: block; filter: drop-shadow(0 18px 40px oklch(0.62 0.16 62 / .28)); flex: 0 0 auto; }
+.hero-copy { max-width: 30rem; }
+.hero-copy h3 { margin: 0 0 .5rem; }
+.ladder { display: flex; align-items: flex-end; gap: 1.6rem; flex-wrap: wrap; }
+.ladder figure { margin: 0; text-align: center; }
+.ladder figure svg { display: block; }
+.ladder figcaption { font-family: var(--brand-font-mono); font-size: 0.625rem; opacity: .55; margin-top: .5rem; }
+.texttest { display: flex; align-items: center; gap: .5rem; font-size: 14px; color: var(--brand-content-body); }
+.texttest svg { display: block; flex: 0 0 auto; }
+.anatomy { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2.5rem; align-items: center; }
+.anatomy .rolelist li { align-items: flex-start; }
+.anatomy .rolelist .n { flex: 0 0 5.5rem; }
+.anatomy .rolelist .v { white-space: normal; text-align: left; line-height: 1.45; }
+.anatomy-stage { position: relative; display: grid; place-items: center; }
+.anatomy-stage > svg { display: block; }
+.anatomy-stage .guides { position: absolute; inset: 0; width: 100%; height: 100%; color: var(--brand-content-body); pointer-events: none; }
+.tiles { display: flex; gap: 1.6rem; align-items: flex-end; flex-wrap: wrap; }
+.tiles figure { margin: 0; text-align: center; }
+.tiles svg { display: block; margin: 0 auto; }
+.tiles figcaption { font-family: var(--brand-font-mono); font-size: 0.625rem; opacity: .55; margin-top: .45rem; white-space: nowrap; }
+.clearbox { display: inline-grid; place-items: center; background: repeating-linear-gradient(45deg, color-mix(in oklch, var(--brand-primary) 14%, transparent) 0 6px, transparent 6px 12px); border-radius: 4px; }
+.clearbox svg { display: block; }
+.tileplate { display: grid; place-items: center; border-radius: 22%; }
+.stretch svg { transform: scaleX(1.45); display: block; }
+.rot { transform: rotate(18deg); }
+.dodont { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 1rem; }
+.dodont figure { margin: 0; }
+.dodont .stage { display: grid; place-items: center; height: 7rem; background: var(--brand-surface-deep); border: 1px solid var(--brand-border-line); border-radius: var(--brand-radius-box); color: var(--brand-content-strong); overflow: hidden; }
+.dodont .stage.tight { gap: .3rem; }
+.dodont figcaption { margin-top: .45rem; font-size: 0.75rem; color: var(--brand-error); }
+
+/* ── workbench ──────────────────────────────────────────────────────────── */
+.wb { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.25rem; }
+.wb .panel { background: var(--brand-surface-base); border: 1px solid var(--brand-border-line); border-radius: var(--brand-radius-selector); padding: 1rem; }
+.wb .panel h4 { margin: 0 0 .7rem; font-size: .75rem; letter-spacing: var(--brand-tracking-eyebrow); text-transform: uppercase; opacity: .6; font-weight: 600; }
+.wb .controls { display: grid; gap: .85rem; }
+.wb .ctl { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr) 5rem; align-items: center; gap: .6rem; font-family: var(--brand-font-mono); font-size: .6875rem; }
+.wb .ctl output { text-align: right; opacity: .7; }
+.wb .ctl.pol { grid-template-columns: 5.5rem minmax(0, 1fr); align-items: start; padding-top: .2rem; }
+.wb input[type="range"] { width: 100%; accent-color: var(--brand-primary); }
+.wb .polarity { display: flex; gap: .35rem; flex-wrap: wrap; }
+.wb .polarity .btn { flex: 1 1 auto; min-width: 4.5rem; padding-inline: .5rem; }
+.wb .polarity .btn.on { border-color: var(--brand-primary); background: var(--brand-primary); color: var(--brand-on-primary); }
+.wbpreviews { display: flex; align-items: flex-end; gap: 1.5rem; flex-wrap: wrap; padding: .3rem 0 .1rem; }
+.wbpreviews figure { margin: 0; text-align: center; }
+.wbpreviews .plate { display: grid; place-items: center; }
+.wbpreviews figcaption { font-family: var(--brand-font-mono); font-size: 0.5625rem; opacity: .5; margin-top: .45rem; }
+.verdict {
+  display: block; margin-top: 1.1rem; padding: .75rem .95rem;
+  font-size: 0.8125rem; line-height: 1.5;
+  border-radius: var(--brand-radius-box); border: 1px solid;
+}
+.verdict.ok { color: var(--brand-success); border-color: color-mix(in oklch, var(--brand-success) 45%, transparent); background: color-mix(in oklch, var(--brand-success) 10%, transparent); }
+.verdict.bad { color: var(--brand-error); border-color: color-mix(in oklch, var(--brand-error) 45%, transparent); background: color-mix(in oklch, var(--brand-error) 10%, transparent); }
+pre.out { margin: .8rem 0 0; padding: .8rem .9rem; background: var(--brand-surface-inset); border: 1px solid var(--brand-border-line); border-radius: var(--brand-radius-box); overflow-x: auto; font-size: .75rem; line-height: 1.45; }
+.btnrow { display: flex; gap: .5rem; margin-top: .8rem; flex-wrap: wrap; }
+.btn {
+  font: inherit; font-size: .75rem; padding: .38rem .8rem; cursor: pointer;
+  border-radius: var(--brand-radius-field); border: 1px solid var(--brand-border-strong);
+  background: var(--brand-surface-raised); color: var(--brand-content-strong);
+}
+.btn:hover { border-color: var(--brand-primary); }
+.btn.primary { background: var(--brand-primary); color: var(--brand-on-primary); border-color: transparent; font-weight: 600; }
+.btn.ghost { background: transparent; }
+.btn.danger { background: var(--brand-error); color: var(--brand-on-error); border-color: transparent; }
+
+/* ── component specimen ─────────────────────────────────────────────────── */
+.specimen { display: flex; gap: .8rem; flex-wrap: wrap; align-items: center; }
+.field { width: 100%; max-width: 20rem; padding: .5rem .7rem; border-radius: var(--brand-radius-field); border: 1px solid var(--brand-border-strong); background: var(--brand-surface-deep); color: var(--brand-content-body); font: inherit; font-size: .8125rem; }
+.field:focus { outline: var(--brand-focus-width) solid var(--brand-primary); outline-offset: var(--brand-focus-offset); border-color: var(--brand-primary); }
+.chip { display: inline-flex; align-items: center; gap: .35rem; padding: .18rem .55rem; border-radius: var(--brand-radius-full); font-size: .6875rem; font-weight: 600; }
+.chip.ok { background: var(--brand-success); color: var(--brand-on-success); }
+.chip.warn { background: var(--brand-warning); color: var(--brand-on-warning); }
+.chip.err { background: var(--brand-error); color: var(--brand-on-error); }
+.chip.info { background: var(--brand-info); color: var(--brand-on-info); }
+.dotline { display: flex; gap: 1rem; flex-wrap: wrap; }
+.dotline span { display: inline-flex; align-items: center; gap: .35rem; font-size: .75rem; opacity: .8; }
+.dotline i { width: .55rem; height: .55rem; border-radius: 50%; display: inline-block; }
+
+/* ── misc ───────────────────────────────────────────────────────────────── */
+pre.snippet { background: var(--brand-surface-inset); border: 1px solid var(--brand-border-line); border-radius: var(--brand-radius-box); padding: .9rem 1rem; overflow-x: auto; font-size: .75rem; line-height: 1.5; }
+.map { font-family: var(--brand-font-mono); font-size: .75rem; line-height: 1.75; opacity: .85; white-space: pre; overflow-x: auto; }
+footer { border-top: 1px solid var(--brand-border-line); padding: 1.5rem; text-align: center; font-size: .75rem; opacity: .55; }
+@media (max-width: 78rem) {
+  .wb { grid-template-columns: 1fr; }
+}
+@media (max-width: 60rem) {
+  .shell { grid-template-columns: 1fr; }
+  .toc { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .motion .row:hover .puck { width: 12%; }
+  html { scroll-behavior: auto; }
+}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="brandline">
+    {{BRAND_MARK}}
+    <b>Memory</b><span>design system</span>
+  </div>
+  <div class="stats">{{STATS}}</div>
+  <button class="toggle" id="themeToggle" type="button">Light</button>
+</header>
+
+<div class="shell">
+  <nav class="toc">
+    <h4>Foundations</h4>
+    <a href="#colour">Colour</a>
+    <a href="#contrast">Contrast</a>
+    <a href="#type">Typography</a>
+    <a href="#space">Space</a>
+    <a href="#shape">Radius</a>
+    <a href="#motion">Motion</a>
+    <h4>Identity</h4>
+    <a href="#mark">The mark</a>
+    <a href="#variants">Variants</a>
+    <a href="#clearspace">Clear space</a>
+    <a href="#never">Never</a>
+    <h4>Working</h4>
+    <a href="#workbench">Tile workbench</a>
+    <a href="#components">Components</a>
+    <a href="#using">Using it</a>
+  </nav>
+
+  <main>
+    <section id="top">
+      <p class="eyebrow">Design system · v1</p>
+      <h1>One token source. Everything else generated.</h1>
+      <p class="lede">Memory's foundations and identity in one place, rendered from the artefacts the
+        product actually ships — not a mock-up of them. The colours below are the shipped CSS
+        custom properties, the mark is the shipped SVG geometry, and the contrast table is the
+        same computation the build gate runs.</p>
+      <p class="note">Values live here; component <b>anatomy</b> lives in <code>go-daisy</code>
+        and UI <b>patterns</b> live in the <code>ui-patterns</code> graph pack. This page federates
+        the three — it owns none of them twice.</p>
+    </section>
+
+    <section id="colour">
+      <p class="eyebrow">Foundations</p>
+      <h2>Colour</h2>
+      <p class="note">Two tiers are public. <b>Reference</b> ramps are raw steps named by hue —
+        never used directly in product code. <b>Semantic</b> roles are what a surface asks for.
+        Every source colour is authored in <code>oklch</code>; sRGB hex exists for consumers that
+        cannot parse it, and is computed, never typed.</p>
+
+      <h3>Reference ramps</h3>
+      <div class="card">{{RAMP_INK}}{{RAMP_PAPER}}{{RAMP_BRASS}}{{RAMP_STEEL}}{{RAMP_MINT}}{{RAMP_EMBER}}</div>
+      <h3>Categorical series</h3>
+      <p class="note">Chart colours, assigned in order. Aliases where a ramp step is already the
+        right value; the rest are authored for even perceptual spacing.</p>
+      <div class="card">{{DATA_SERIES}}</div>
+
+      <h3>Semantic roles</h3>
+      <p class="note">Both modes side by side. The right panel is forced to the light theme, so it
+        proves the light tokens rather than describing them — and neither panel follows the page
+        toggle.</p>
+      <div class="rolesplit">{{SEMANTIC_MATRIX}}</div>
+    </section>
+
+    <section id="contrast">
+      <p class="eyebrow">Foundations</p>
+      <h2>Contrast</h2>
+      <p class="note">Measured from the resolved colours at build time. Text pairs target
+        <b>4.5:1</b> (WCAG 2.2 SC 1.4.3); UI-component pairs target <b>3:1</b> (SC 1.4.11). The gate
+        fails the build on any regression, so a failure cannot reach this page.</p>
+      <div class="card">{{CONTRAST_TABLE}}</div>
+    </section>
+
+    <section id="type">
+      <p class="eyebrow">Foundations</p>
+      <h2>Typography</h2>
+      <p class="note">The system stack, on purpose: no web font, no licence, native rendering. The
+        scale, weight, tracking and leading are tokens, so tuning them ships no file.</p>
+      <div class="card">{{TYPE_STACKS}}</div>
+      <h3>Scale</h3>
+      <div class="card">{{TYPE_SCALE}}</div>
+    </section>
+
+    <section id="space">
+      <p class="eyebrow">Foundations</p>
+      <h2>Space</h2>
+      <p class="note">A 4px-based ladder. Steps exist so spacing is a decision made once, not a
+        number invented per component.</p>
+      <div class="card">{{SPACE_SCALE}}</div>
+    </section>
+
+    <section id="shape">
+      <p class="eyebrow">Foundations</p>
+      <h2>Radius</h2>
+      <p class="note">Four levers, not a scale: a selector is generous, a field is tight, a box sits
+        between them, and a pill is round. Components consume the lever, never a literal.</p>
+      <div class="card">{{RADIUS_SCALE}}</div>
+    </section>
+
+    <section id="motion">
+      <p class="eyebrow">Foundations</p>
+      <h2>Motion</h2>
+      <p class="note">Two easings and three durations. Hover a row to see its timing; the
+        reduced-motion rule collapses it to nothing, which is the only correct fallback.</p>
+      <div class="card">{{MOTION_SPEC}}</div>
+    </section>
+
+    <section id="mark">
+      <p class="eyebrow">Identity</p>
+      <h2>The mark</h2>
+      <p class="note">A brass tile with an <b>M</b>. The letter is a path, not live text: the
+        shipped monogram set the M in the system font, so its shape changed with the font stack,
+        could not be exported as an outline, and could not be used where no CSS exists — an app
+        icon, a favicon, an email. This is the same mark drawn once, in a 64u square, so every
+        asset is one drawing at a different scale.</p>
+      <div class="card">
+        <div class="hero">
+          {{TILE_HERO}}
+          <div class="hero-copy">
+            <h3>One drawing, every size</h3>
+            <p class="note">Favicon, app icon, sidebar avatar, social card: one file, four variants.
+              A squircle plate, a fixed gradient angle, and a glyph that keeps its counters at 16px.</p>
+          </div>
+        </div>
+      </div>
+      <h3>Anatomy</h3>
+      {{TILE_ANATOMY}}
+      <h3>Scale ladder</h3>
+      <p class="note">The deciding size is not the large one — it is <b>16px beside 14px text</b>,
+        the mark's most common appearance (favicon, app switcher, sidebar header).</p>
+      <div class="card">
+        <div class="ladder">{{TILE_SIZES}}</div>
+        <div style="margin-top:2rem;display:flex;gap:2.5rem;flex-wrap:wrap;align-items:center">
+          <div class="texttest">{{BRAND_MARK}} Memory</div>
+          <div class="texttest">{{BRAND_MARK}} Memory · docs</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="variants">
+      <p class="eyebrow">Identity</p>
+      <h2>Variants</h2>
+      <p class="note">A variant changes the plate, never the letter. <b>Primary</b> is the
+        default; <b>one colour</b> is a <code>currentColor</code> plate with the glyph knocked
+        out, for inline markup and CSS masks; <b>reverse</b> is an ink plate with a brass glyph,
+        for brass-heavy or light surfaces. The glyph alone is a quiet secondary mark — never the
+        app icon.</p>
+      <div class="card"><div class="tiles">{{TILE_VARIANTS}}</div></div>
+      <h3>Contrast</h3>
+      <p class="note">The glyph is a large solid shape but it is still text, so it holds 4.5:1
+        against the whole gradient, not only its midpoint.</p>
+      <div class="card">{{TILE_CONTRAST}}</div>
+    </section>
+
+    <section id="clearspace">
+      <p class="eyebrow">Identity</p>
+      <h2>Clear space</h2>
+      <p class="note">A quarter of the tile side on every side — the hatched ring below. Nothing
+        enters it: no text, no rule, no edge of a container.</p>
+      <div class="card">{{TILE_CLEAR}}</div>
+    </section>
+
+    <section id="never">
+      <p class="eyebrow">Identity</p>
+      <h2>Never</h2>
+      <p class="note">Four ways the tile is not used. Each one breaks a rule the gate or the
+        manifest states, which is why they are shown rather than described.</p>
+      <div class="card"><div class="dodont">{{TILE_NEVER}}</div></div>
+    </section>
+
+    <section id="workbench">
+      <p class="eyebrow">Working</p>
+      <h2>Tile workbench</h2>
+      <p class="note">The three numbers the tile is made of. Drag them and watch the ladder: the
+        verdict mirrors <code>build.py</code>'s <code>mark_problems()</code> exactly — radius,
+        cap ratio and 16px legibility — so a value that would fail <code>task brand:check</code>
+        says so here first. Copy the values into <code>logo.mark.*</code> when they read right at
+        16px.</p>
+      <div class="wb">
+        <div class="panel">
+          <h4>Geometry</h4>
+          <div class="controls">
+            <label class="ctl"><span>radius</span>
+              <input type="range" id="wbRadius" min="10" max="24" step="1" value="14">
+              <output id="wbRadiusOut"></output>
+            </label>
+            <label class="ctl"><span>glyph cap</span>
+              <input type="range" id="wbCap" min="18" max="34" step="1" value="26">
+              <output id="wbCapOut"></output>
+            </label>
+            <label class="ctl"><span>gradient</span>
+              <input type="range" id="wbAngle" min="0" max="355" step="5" value="140">
+              <output id="wbAngleOut"></output>
+            </label>
+            <div class="ctl pol"><span>polarity</span>
+              <div class="polarity">
+                <button class="btn on" type="button" data-pol="primary">primary</button>
+                <button class="btn ghost" type="button" data-pol="mono">mono</button>
+                <button class="btn ghost" type="button" data-pol="reverse">reverse</button>
+              </div>
+            </div>
+          </div>
+          <div class="verdict ok" id="wbVerdict">—</div>
+          <div class="btnrow" style="margin-top:1.1rem">
+            <button class="btn ghost" id="wbReset" type="button">Reset</button>
+            <button class="btn primary" id="wbCopy" type="button">Copy token values</button>
+          </div>
+          <pre class="out" id="wbOut"></pre>
+        </div>
+        <div class="panel">
+          <h4>Preview</h4>
+          <div class="wbpreviews" id="wbPreviews"></div>
+          <p class="note" style="margin-top:1.2rem">At 16px the only question is whether the letter
+            still reads. If the counters close, the glyph is too large for the plate — not the
+            radius too small.</p>
+        </div>
+      </div>
+      <script type="application/json" id="wbData">{{TILE_JSON}}</script>
+    </section>
+
+    <section id="components">
+      <p class="eyebrow">Working</p>
+      <h2>Components <span style="font-size:.75rem;font-weight:400;opacity:.6">— specimen, not catalogue</span></h2>
+      <p class="note">Painted with the tokens below, to show the foundations carrying an interface.
+        Component <b>anatomy</b> — states, spacing, slots — belongs to <code>go-daisy</code>, and the
+        web UI's component catalogue is the <code>ui-patterns</code> pack. Nothing here is a
+        component contract.</p>
+      <div class="card grid" style="gap:1.6rem">
+        <div class="specimen">
+          <button class="btn primary" type="button">Primary</button>
+          <button class="btn" type="button">Secondary</button>
+          <button class="btn ghost" type="button">Ghost</button>
+          <button class="btn danger" type="button">Destructive</button>
+        </div>
+        <div class="specimen">
+          <span class="chip ok">success</span><span class="chip warn">warning</span>
+          <span class="chip err">error</span><span class="chip info">info</span>
+        </div>
+        <div class="specimen">
+          <input class="field" placeholder="A field, with the focus ring on tab">
+          <input class="field" value="Focused" style="outline:2px solid var(--brand-primary);outline-offset:2px;border-color:var(--brand-primary)">
+        </div>
+        <div class="grid g2">
+          <div class="card" style="background:var(--brand-surface-raised)">
+            <h3 style="margin:0 0 .3rem">Surface on surface</h3>
+            <p class="note" style="margin:0">Raised panel over a base one, a hairline border, body
+              text at the contrast this page's table reports.</p>
+          </div>
+          <div class="card" style="background:var(--brand-surface-deep)">
+            <h3 style="margin:0 0 .3rem">Recessed</h3>
+            <p class="note" style="margin:0">The same relationships inverted: a well rather than a
+              card.</p>
+          </div>
+        </div>
+        <div class="dotline">
+          <span><i style="background:var(--brand-data-1)"></i>data-1</span>
+          <span><i style="background:var(--brand-data-2)"></i>data-2</span>
+          <span><i style="background:var(--brand-data-3)"></i>data-3</span>
+          <span><i style="background:var(--brand-data-4)"></i>data-4</span>
+          <span><i style="background:var(--brand-data-5)"></i>data-5</span>
+          <span><i style="background:var(--brand-data-6)"></i>data-6</span>
+          <span><i style="background:var(--brand-data-7)"></i>data-7</span>
+          <span><i style="background:var(--brand-data-8)"></i>data-8</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="using">
+      <p class="eyebrow">Working</p>
+      <h2>Using it</h2>
+      <p class="note">Import order matters, and <code>themes: false</code> is load-bearing: without
+        it daisyUI emits its own light and dark themes after ours and they win. The theme file is
+        plain custom properties on purpose, so it needs no toolchain — which is also what makes it
+        usable from an email template.</p>
+      <pre class="snippet">{{IMPORT_SNIPPET}}</pre>
+      <h3>Where things live</h3>
+      <div class="card"><div class="map">{{FILE_MAP}}</div></div>
+      <h3>What is not here yet</h3>
+      <p class="note">The wordmark and lockups, PNG/favicon rasterisation of the tile (the SVGs are
+        the source), social cards, and the migration of the four surfaces that still carry their own
+        copy of the theme block. The letter lattice the M was first cut on is kept under
+        <code>design-system/logo/mark/</code> as an exploration, not the identity. The catalogue page
+        above is the first consumer — it is the proof that the tokens alone can build an interface.</p>
+    </section>
+  </main>
+</div>
+
+<footer>
+  Generated by <code>design-system/build.py</code> from
+  <code>design-system/tokens/memory.tokens.json</code> — do not edit this file.
+</footer>
+
+<script>
+/* ── theme toggle: flips the real light tokens, not a mock ───────────────── */
+const root = document.documentElement;
+const toggle = document.getElementById('themeToggle');
+const setTheme = (light) => {
+  if (light) root.setAttribute('data-theme', 'brand-light');
+  else root.removeAttribute('data-theme');
+  toggle.textContent = light ? 'Dark' : 'Light';
+  try { localStorage.setItem('ds-theme', light ? 'light' : 'dark'); } catch (e) {}
+};
+setTheme((() => { try { return localStorage.getItem('ds-theme') === 'light'; } catch (e) { return false; } })());
+toggle.addEventListener('click', () => setTheme(root.getAttribute('data-theme') !== 'brand-light'));
+
+/* ── copy any token value on click ──────────────────────────────────────── */
+const copy = async (text) => {
+  try { await navigator.clipboard.writeText(text); return true; }
+  catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand('copy'); ta.remove(); return ok;
+  }
+};
+document.querySelectorAll('[data-copy]').forEach((el) => {
+  el.addEventListener('click', async () => {
+    const ok = await copy(el.dataset.copy);
+    const label = el.querySelector('span');
+    if (label && ok) { const t = label.textContent; label.textContent = 'copied'; setTimeout(() => (label.textContent = t), 900); }
+  });
+});
+
+/* ── workbench ──────────────────────────────────────────────────────────── */
+const TILE = JSON.parse(document.getElementById('wbData').textContent);
+const SIZES = [16, 32, 64, 128];
+const radiusCtl = document.getElementById('wbRadius');
+const capCtl = document.getElementById('wbCap');
+const angleCtl = document.getElementById('wbAngle');
+const previews = document.getElementById('wbPreviews');
+let polarity = 'primary';
+
+function plateColors() {
+  if (polarity === 'mono') {
+    return { bg: 'var(--brand-content-strong)', fg: 'var(--brand-surface-base)' };
+  }
+  if (polarity === 'reverse') {
+    return { bg: TILE.plate, fg: TILE.onInk };
+  }
+  return {
+    bg: `linear-gradient(${angleCtl.value}deg, ${TILE.from}, ${TILE.to})`,
+    fg: TILE.ink,
+  };
+}
+
+function renderTile() {
+  const side = TILE.side;
+  const r = +radiusCtl.value, c = +capCtl.value, a = +angleCtl.value;
+  const rp = r / side, cp = c / side;
+  document.getElementById('wbRadiusOut').textContent = `${r}u · ${(rp * 100).toFixed(1)}%`;
+  document.getElementById('wbCapOut').textContent = `${c}u · ${(cp * 100).toFixed(1)}%`;
+  document.getElementById('wbAngleOut').textContent = `${a}°`;
+  const col = plateColors();
+  const radiusPct = (rp * 100).toFixed(2);
+
+  previews.innerHTML = SIZES.map((s) => {
+    const glyph = (s * cp).toFixed(2);
+    return `<figure>
+      <div class="plate" style="width:${s}px;height:${s}px;border-radius:${radiusPct}%;background:${col.bg}">
+        <svg width="${glyph}" height="${glyph}" viewBox="0 0 24 24" fill="${col.fg}"><path d="${TILE.path}"/></svg>
+      </div>
+      <figcaption>${s}px</figcaption></figure>`;
+  }).join('');
+
+  /* Mirrors mark_problems(): same ranges, same rounding, same 16px rule. */
+  const fails = [];
+  if (rp < TILE.rMin || rp > TILE.rMax) fails.push(`radius ${(rp * 100).toFixed(1)}% outside 20–24%`);
+  if (cp < TILE.cMin || cp > TILE.cMax) fails.push(`cap ${(cp * 100).toFixed(1)}% outside 36–44%`);
+  if ((c * 16) / side < 6) fails.push(`glyph is ${((c * 16) / side).toFixed(1)}px at a 16px tile (min 6px)`);
+  const box = document.getElementById('wbVerdict');
+  box.className = 'verdict ' + (fails.length ? 'bad' : 'ok');
+  box.textContent = fails.length ? '✗ ' + fails.join(' · ') : '✓ In range — radius, cap and 16px legibility pass.';
+
+  document.getElementById('wbOut').textContent = JSON.stringify(
+    { radius: r, glyphCap: c, gradientAngle: a }, null, 2);
+}
+
+radiusCtl.addEventListener('input', renderTile);
+capCtl.addEventListener('input', renderTile);
+angleCtl.addEventListener('input', renderTile);
+document.querySelectorAll('[data-pol]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    polarity = btn.dataset.pol;
+    document.querySelectorAll('[data-pol]').forEach((b) => {
+      b.classList.toggle('on', b === btn);
+      b.classList.toggle('ghost', b !== btn);
+    });
+    renderTile();
+  });
+});
+document.getElementById('wbReset').addEventListener('click', () => {
+  radiusCtl.value = TILE.radius;
+  capCtl.value = TILE.cap;
+  angleCtl.value = TILE.angle;
+  polarity = 'primary';
+  document.querySelectorAll('[data-pol]').forEach((b) => {
+    b.classList.toggle('on', b.dataset.pol === 'primary');
+    b.classList.toggle('ghost', b.dataset.pol !== 'primary');
+  });
+  renderTile();
+});
+document.getElementById('wbCopy').addEventListener('click', async () => {
+  const ok = await copy(document.getElementById('wbOut').textContent);
+  const btn = document.getElementById('wbCopy');
+  const t = btn.textContent;
+  btn.textContent = ok ? 'Copied' : 'Copy failed';
+  setTimeout(() => (btn.textContent = t), 1000);
+});
+renderTile();
+</script>
+</body>
+</html>

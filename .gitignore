@@ -1,9 +1,9 @@
 node_modules/
 dist/
-# brand/dist/ IS committed: the artefacts are generated but checked in, so the
+# design-system/dist/ IS committed: the artefacts are generated but checked in, so the
 # Swift/Go consumers need no Python to use them. brand:check fails when
 # they drift from the token source.
-!brand/dist/
+!design-system/dist/
 .next/
 
 # Ignore build outputs in all packages

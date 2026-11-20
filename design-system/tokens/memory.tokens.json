@@ -1,0 +1,357 @@
+{
+  "$description": "Memory brand tokens. DTCG Design Tokens Format Module 2025.10 (Final Community Group Report, 28 Oct 2025). This file is the ONLY place a brand value may be written by hand; everything under design-system/dist/ is generated from it by design-system/build.py and checked by scripts/preflight/design-system.sh. Three tiers: color.* is the reference tier (raw ramps), semantic.* is the system tier (roles that alias ramps), and components take their shape from go-daisy, never from here.",
+  "color": {
+    "$type": "color",
+    "$description": "Reference tier. Named by hue and step, never by role. Do not use these directly in product code; use semantic.*.",
+    "ink": {
+      "$description": "Ink-navy surface ramp (hue 274). The product's dark surfaces and, at the light end, its body copy.",
+      "1000": {
+        "$value": { "colorSpace": "oklch", "components": [0.105, 0.01, 274] },
+        "$description": "Deepest elevation, inset wells."
+      },
+      "950": {
+        "$value": { "colorSpace": "oklch", "components": [0.135, 0.012, 274] },
+        "$description": "Base-300: deepest surface."
+      },
+      "900": {
+        "$value": { "colorSpace": "oklch", "components": [0.175, 0.014, 274] },
+        "$description": "Base-200: page background."
+      },
+      "800": {
+        "$value": { "colorSpace": "oklch", "components": [0.215, 0.016, 274] },
+        "$description": "Base-100: default surface."
+      },
+      "700": {
+        "$value": { "colorSpace": "oklch", "components": [0.265, 0.02, 274] },
+        "$description": "Neutral: raised surface, borders on dark."
+      },
+      "600": {
+        "$value": { "colorSpace": "oklch", "components": [0.335, 0.024, 274] }
+      },
+      "500": {
+        "$value": { "colorSpace": "oklch", "components": [0.45, 0.026, 274] }
+      },
+      "400": {
+        "$value": { "colorSpace": "oklch", "components": [0.6, 0.025, 274] }
+      },
+      "300": {
+        "$value": { "colorSpace": "oklch", "components": [0.72, 0.02, 274] }
+      },
+      "200": {
+        "$value": { "colorSpace": "oklch", "components": [0.84, 0.012, 274] }
+      },
+      "100": {
+        "$value": { "colorSpace": "oklch", "components": [0.93, 0.008, 265] },
+        "$description": "Base-content: body copy on dark."
+      },
+      "50": {
+        "$value": { "colorSpace": "oklch", "components": [0.975, 0.004, 265] },
+        "$description": "Strongest content: headings, values."
+      }
+    },
+    "paper": {
+      "$description": "Light-surface ramp. Defined for docs, email and print; not shipped as a product theme yet (see semantic.light).",
+      "50": {
+        "$value": { "colorSpace": "oklch", "components": [0.99, 0.003, 274] }
+      },
+      "100": {
+        "$value": { "colorSpace": "oklch", "components": [0.975, 0.005, 274] }
+      },
+      "200": {
+        "$value": { "colorSpace": "oklch", "components": [0.95, 0.007, 274] }
+      },
+      "300": {
+        "$value": { "colorSpace": "oklch", "components": [0.92, 0.009, 274] }
+      },
+      "400": {
+        "$value": { "colorSpace": "oklch", "components": [0.86, 0.01, 274] }
+      }
+    },
+    "brass": {
+      "$description": "Primary. The butler's tray: warm metal, used for the one action that matters on a screen.",
+      "50": { "$value": { "colorSpace": "oklch", "components": [0.97, 0.02, 78] } },
+      "100": { "$value": { "colorSpace": "oklch", "components": [0.94, 0.04, 78] } },
+      "200": { "$value": { "colorSpace": "oklch", "components": [0.89, 0.07, 78] } },
+      "300": { "$value": { "colorSpace": "oklch", "components": [0.84, 0.1, 78] } },
+      "400": { "$value": { "colorSpace": "oklch", "components": [0.795, 0.12, 78] } },
+      "500": { "$value": { "colorSpace": "oklch", "components": [0.74, 0.135, 78] } },
+      "600": { "$value": { "colorSpace": "oklch", "components": [0.66, 0.128, 78] } },
+      "700": { "$value": { "colorSpace": "oklch", "components": [0.55, 0.11, 78] } },
+      "800": { "$value": { "colorSpace": "oklch", "components": [0.42, 0.085, 78] } },
+      "900": { "$value": { "colorSpace": "oklch", "components": [0.3, 0.06, 78] } },
+      "950": { "$value": { "colorSpace": "oklch", "components": [0.2, 0.04, 78] } }
+    },
+    "steel": {
+      "$description": "Secondary. Cold structural blue: links, metadata, information.",
+      "50": { "$value": { "colorSpace": "oklch", "components": [0.97, 0.01, 240] } },
+      "100": { "$value": { "colorSpace": "oklch", "components": [0.93, 0.03, 240] } },
+      "200": { "$value": { "colorSpace": "oklch", "components": [0.87, 0.055, 240] } },
+      "300": { "$value": { "colorSpace": "oklch", "components": [0.8, 0.08, 240] } },
+      "400": { "$value": { "colorSpace": "oklch", "components": [0.72, 0.095, 240] } },
+      "500": { "$value": { "colorSpace": "oklch", "components": [0.64, 0.105, 240] } },
+      "600": { "$value": { "colorSpace": "oklch", "components": [0.56, 0.1, 240] } },
+      "700": { "$value": { "colorSpace": "oklch", "components": [0.46, 0.09, 240] } },
+      "800": { "$value": { "colorSpace": "oklch", "components": [0.36, 0.07, 240] } },
+      "900": { "$value": { "colorSpace": "oklch", "components": [0.26, 0.05, 240] } },
+      "950": { "$value": { "colorSpace": "oklch", "components": [0.18, 0.03, 240] } }
+    },
+    "mint": {
+      "$description": "Accent. The graph's own green: success, provenance, the live edge.",
+      "50": { "$value": { "colorSpace": "oklch", "components": [0.97, 0.02, 162] } },
+      "100": { "$value": { "colorSpace": "oklch", "components": [0.93, 0.05, 162] } },
+      "200": { "$value": { "colorSpace": "oklch", "components": [0.88, 0.09, 162] } },
+      "300": { "$value": { "colorSpace": "oklch", "components": [0.82, 0.12, 162] } },
+      "400": { "$value": { "colorSpace": "oklch", "components": [0.79, 0.14, 162] } },
+      "500": { "$value": { "colorSpace": "oklch", "components": [0.76, 0.15, 162] } },
+      "600": { "$value": { "colorSpace": "oklch", "components": [0.66, 0.135, 162] } },
+      "700": { "$value": { "colorSpace": "oklch", "components": [0.55, 0.11, 162] } },
+      "800": { "$value": { "colorSpace": "oklch", "components": [0.43, 0.08, 162] } },
+      "900": { "$value": { "colorSpace": "oklch", "components": [0.32, 0.06, 162] } },
+      "950": { "$value": { "colorSpace": "oklch", "components": [0.17, 0.04, 162] } }
+    },
+    "ember": {
+      "$description": "Error/destructive ramp. Red-shifted so it never reads as brass at small sizes.",
+      "200": { "$value": { "colorSpace": "oklch", "components": [0.88, 0.06, 26] } },
+      "300": { "$value": { "colorSpace": "oklch", "components": [0.8, 0.12, 26] } },
+      "400": { "$value": { "colorSpace": "oklch", "components": [0.7, 0.19, 26] } },
+      "500": { "$value": { "colorSpace": "oklch", "components": [0.63, 0.2, 26] } },
+      "600": { "$value": { "colorSpace": "oklch", "components": [0.56, 0.18, 26] } },
+      "700": { "$value": { "colorSpace": "oklch", "components": [0.46, 0.15, 26] } },
+      "950": { "$value": { "colorSpace": "oklch", "components": [0.18, 0.05, 26] } }
+    },
+    "data": {
+      "$description": "Categorical series for charts (usage, runs, graph stats). Assigned in order; never reordered, so a series keeps its colour across surfaces. Distinguishable in greyscale by lightness order.",
+      "1": { "$value": "{color.brass.500}" },
+      "2": { "$value": "{color.steel.500}" },
+      "3": { "$value": "{color.mint.500}" },
+      "4": { "$value": { "colorSpace": "oklch", "components": [0.68, 0.16, 15] } },
+      "5": { "$value": { "colorSpace": "oklch", "components": [0.66, 0.17, 305] } },
+      "6": { "$value": { "colorSpace": "oklch", "components": [0.7, 0.11, 195] } },
+      "7": { "$value": { "colorSpace": "oklch", "components": [0.8, 0.14, 65] } },
+      "8": { "$value": { "colorSpace": "oklch", "components": [0.64, 0.16, 270] } }
+    }
+  },
+  "semantic": {
+    "$type": "color",
+    "$description": "System tier. Roles a surface asks for. dark is the shipped theme; light is defined and generated but not compiled into the product build.",
+    "dark": {
+      "surface": {
+        "page": { "$value": "{color.ink.900}", "$description": "The app background behind every panel." },
+        "base": { "$value": "{color.ink.800}", "$description": "Default card/panel surface (daisyUI base-100)." },
+        "raised": { "$value": "{color.ink.700}", "$description": "Hover, popover and raised chrome (daisyUI neutral)." },
+        "deep": { "$value": "{color.ink.950}", "$description": "Recessed regions: code wells, insets (base-300)." },
+        "inset": { "$value": "{color.ink.1000}" }
+      },
+      "content": {
+        "body": { "$value": "{color.ink.100}", "$description": "Default text (daisyUI base-content)." },
+        "strong": { "$value": "{color.ink.50}", "$description": "Headings and figures that must win against body copy." }
+      },
+      "border": {
+        "line": { "$value": "{color.ink.700}", "$description": "Default 1px hairline. Decorative: it separates, it does not carry meaning." },
+        "strong": { "$value": "{color.ink.400}", "$description": "Input outlines and dividers that carry meaning. Holds 3:1 against surface.base (SC 1.4.11); ink.600 and darker do not." }
+      },
+      "interactive": {
+        "primary": { "$value": "{color.brass.500}" },
+        "onPrimary": { "$value": "{color.brass.950}" },
+        "secondary": { "$value": "{color.steel.500}" },
+        "onSecondary": { "$value": "{color.steel.950}" },
+        "accent": { "$value": "{color.mint.500}" },
+        "onAccent": { "$value": "{color.mint.950}" }
+      },
+      "status": {
+        "info": { "$value": "{color.steel.400}" },
+        "onInfo": { "$value": "{color.steel.950}" },
+        "success": { "$value": "{color.mint.500}" },
+        "onSuccess": { "$value": "{color.mint.950}" },
+        "warning": { "$value": "{color.brass.400}" },
+        "onWarning": { "$value": "{color.brass.950}" },
+        "error": { "$value": "{color.ember.500}" },
+        "onError": { "$value": "{color.ember.950}" }
+      },
+      "focus": {
+        "ring": { "$value": "{color.brass.400}", "$description": "2px ring, 2px offset. Never colour-only: pair with an outline change (SC 1.4.1)." }
+      }
+    },
+    "light": {
+      "surface": {
+        "page": { "$value": "{color.paper.200}" },
+        "base": { "$value": "{color.paper.100}" },
+        "raised": { "$value": "{color.paper.50}" },
+        "deep": { "$value": "{color.paper.300}" },
+        "inset": { "$value": "{color.paper.400}" }
+      },
+      "content": {
+        "body": { "$value": "{color.ink.900}" },
+        "strong": { "$value": "{color.ink.1000}" }
+      },
+      "border": {
+        "line": { "$value": "{color.ink.500}" },
+        "strong": { "$value": "{color.ink.600}" }
+      },
+      "interactive": {
+        "primary": { "$value": "{color.brass.800}" },
+        "onPrimary": { "$value": "{color.brass.50}" },
+        "secondary": { "$value": "{color.steel.800}" },
+        "onSecondary": { "$value": "{color.steel.50}" },
+        "accent": { "$value": "{color.mint.800}" },
+        "onAccent": { "$value": "{color.mint.50}" }
+      },
+      "status": {
+        "info": { "$value": "{color.steel.800}" },
+        "onInfo": { "$value": "{color.steel.50}" },
+        "success": { "$value": "{color.mint.800}" },
+        "onSuccess": { "$value": "{color.mint.50}" },
+        "warning": { "$value": "{color.brass.800}" },
+        "onWarning": { "$value": "{color.brass.50}" },
+        "error": { "$value": "{color.ember.700}" },
+        "onError": { "$value": "{color.ember.200}" }
+      },
+      "focus": {
+        "ring": { "$value": "{color.brass.700}" }
+      }
+    }
+  },
+  "type": {
+    "$description": "Typography. The UI stays on the system stack by decision: no web font, no licence, native rendering. The scale, weights and tracking are therefore the only levers, which is exactly why they are tokens. A future brand typeface is a change here plus woff2 files, nothing else.",
+    "fontFamily": {
+      "body": {
+        "$type": "fontFamily",
+        "$value": ["ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "Roboto", "Helvetica Neue", "Arial", "sans-serif"],
+        "$description": "Body copy, controls, UI chrome."
+      },
+      "heading": {
+        "$type": "fontFamily",
+        "$value": ["ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "Roboto", "Helvetica Neue", "Arial", "sans-serif"],
+        "$description": "Semantic headings and display strings. Same stack today; separate so it can diverge."
+      },
+      "mono": {
+        "$type": "fontFamily",
+        "$value": ["ui-monospace", "SFMono-Regular", "SF Mono", "Menlo", "Consolas", "Liberation Mono", "monospace"],
+        "$description": "Code, IDs, CLI/TUI, object keys."
+      }
+    },
+    "size": {
+      "$type": "dimension",
+      "xs": { "$value": { "value": 0.75, "unit": "rem" } },
+      "sm": { "$value": { "value": 0.875, "unit": "rem" } },
+      "base": { "$value": { "value": 1, "unit": "rem" } },
+      "lg": { "$value": { "value": 1.125, "unit": "rem" } },
+      "xl": { "$value": { "value": 1.25, "unit": "rem" } },
+      "2xl": { "$value": { "value": 1.5, "unit": "rem" } },
+      "3xl": { "$value": { "value": 1.875, "unit": "rem" } },
+      "4xl": { "$value": { "value": 2.25, "unit": "rem" } },
+      "5xl": { "$value": { "value": 3, "unit": "rem" } }
+    },
+    "weight": {
+      "$type": "fontWeight",
+      "body": { "$value": 400 },
+      "medium": { "$value": 500 },
+      "heading": { "$value": 600 },
+      "bold": { "$value": 700 }
+    },
+    "tracking": {
+      "$type": "dimension",
+      "tight": { "$value": { "value": -0.03, "unit": "em" }, "$description": "Display strings and hero type." },
+      "heading": { "$value": { "value": -0.01, "unit": "em" } },
+      "body": { "$value": { "value": 0, "unit": "em" } },
+      "eyebrow": { "$value": { "value": 0.05, "unit": "em" }, "$description": "Uppercase overline labels." }
+    },
+    "leading": {
+      "$type": "number",
+      "tight": { "$value": 1.25 },
+      "body": { "$value": 1.5 },
+      "loose": { "$value": 1.65 }
+    }
+  },
+  "space": {
+    "$type": "dimension",
+    "$description": "4px base scale. Only these steps; a bespoke gap is a design smell.",
+    "1": { "$value": { "value": 0.25, "unit": "rem" } },
+    "2": { "$value": { "value": 0.5, "unit": "rem" } },
+    "3": { "$value": { "value": 0.75, "unit": "rem" } },
+    "4": { "$value": { "value": 1, "unit": "rem" } },
+    "5": { "$value": { "value": 1.25, "unit": "rem" } },
+    "6": { "$value": { "value": 1.5, "unit": "rem" } },
+    "8": { "$value": { "value": 2, "unit": "rem" } },
+    "10": { "$value": { "value": 2.5, "unit": "rem" } },
+    "12": { "$value": { "value": 3, "unit": "rem" } },
+    "16": { "$value": { "value": 4, "unit": "rem" } },
+    "20": { "$value": { "value": 5, "unit": "rem" } },
+    "24": { "$value": { "value": 6, "unit": "rem" } }
+  },
+  "radius": {
+    "$type": "dimension",
+    "$description": "daisyUI's three semantic levers. Tailwind's literal scale is aliased onto these by the generated CSS, so `rounded-lg` follows the theme. The mark is square by contrast: the UI is warm, the stamp is deliberate.",
+    "selector": { "$value": { "value": 1, "unit": "rem" }, "$description": "Buttons, chips, pills-that-are-not-pills." },
+    "field": { "$value": { "value": 0.25, "unit": "rem" }, "$description": "Inputs, selects, small controls." },
+    "box": { "$value": { "value": 0.5, "unit": "rem" }, "$description": "Cards, panels, popovers." },
+    "full": { "$value": { "value": 9999, "unit": "px" } }
+  },
+  "border": {
+    "$type": "dimension",
+    "width": { "$value": { "value": 1, "unit": "px" } },
+    "width-strong": { "$value": { "value": 2, "unit": "px" }, "$description": "Focus ring width, selected states." }
+  },
+  "elevation": {
+    "$description": "daisyUI depth knob plus a flat default. Memory does not use drop shadows for hierarchy; surface steps do that.",
+    "depth": { "$type": "number", "$value": 1 },
+    "noise": { "$type": "number", "$value": 0 }
+  },
+  "motion": {
+    "$description": "Short, mechanical, never bouncy. Respect prefers-reduced-motion: every consumer must be able to fall back to 0ms.",
+    "duration": {
+      "$type": "duration",
+      "fast": { "$value": { "value": 120, "unit": "ms" } },
+      "base": { "$value": { "value": 180, "unit": "ms" } },
+      "slow": { "$value": { "value": 320, "unit": "ms" } }
+    },
+    "easing": {
+      "$type": "cubicBezier",
+      "standard": { "$value": [0.4, 0, 0.2, 1] },
+      "exit": { "$value": [0.4, 0, 1, 1] }
+    }
+  },
+  "icon": {
+    "$description": "Lucide, via @iconify-json/lucide. Sizes are the only legal values; a custom icon is a documented exception, not a habit.",
+    "size": {
+      "$type": "dimension",
+      "sm": { "$value": { "value": 1, "unit": "rem" } },
+      "md": { "$value": { "value": 1.25, "unit": "rem" } },
+      "lg": { "$value": { "value": 1.5, "unit": "rem" } }
+    },
+    "stroke": { "$type": "number", "$value": 1.75 }
+  },
+  "logo": {
+    "$description": "Two artefacts. logo.mark is the shipping identity: a brass tile with the drawn M, in a 64u square so every asset is the same drawing at a different scale. logo.grid and logo.tile are the letter lattice the M was first cut on - an exploration, not the identity. brand/logo/tile/README.md is the mark's contract; brand/logo/mark/DIRECTION.md is the lattice's.",
+    "mark": {
+      "$description": "The M is a path, not live text: the shipped monogram set the letter in the system font, so its shape changed per platform and could not be exported. This drawing is the letter, in its own 24u frame.",
+      "side": { "$type": "number", "$value": 64, "$description": "Plate side. Every variant shares this coordinate space." },
+      "radius": { "$type": "number", "$value": 14, "$description": "22% of the side - the shipped monogram's ratio, and the docs favicon's rx/64." },
+      "glyphCap": { "$type": "number", "$value": 26, "$description": "Glyph height, 41% of the side. pad = (side - glyphCap) / 2, so the letter is optically centred on both axes." },
+      "glyphStroke": { "$type": "number", "$value": 6, "$description": "Stem width in the glyph's own 24u frame (25% of its width)." },
+      "gradientAngle": { "$type": "number", "$value": 140, "$description": "CSS degrees, measured like linear-gradient(): clockwise from 'to top'. The shipped monogram and the app icon agree on this angle." },
+      "gradientFrom": { "$type": "color", "$value": "{color.brass.400}" },
+      "gradientTo": { "$type": "color", "$value": "{color.brass.600}" },
+      "glyphInk": { "$type": "color", "$value": "{color.brass.950}" },
+      "plateInk": { "$type": "color", "$value": "{color.ink.900}", "$description": "One-colour reverse: ink plate, brass glyph." },
+      "glyphOnInk": { "$type": "color", "$value": "{color.brass.400}" },
+      "clearSpace": { "$type": "number", "$value": 16, "$description": "Clear space around the tile = a quarter of the side, on every side." }
+    },
+    "grid": {
+      "capHeight": { "$type": "number", "$value": 5 },
+      "letterWidth": { "$type": "number", "$value": 4 },
+      "stroke": { "$type": "number", "$value": 1, "$description": "Must equal gap. This equality is what the style is." },
+      "gap": { "$type": "number", "$value": 1 },
+      "pitch": { "$type": "number", "$value": 8, "$description": "Letter advance = letterWidth + one full letter-width of air." },
+      "wideLetterWidth": { "$type": "number", "$value": 5, "$description": "M and W only: the documented wide-letter exception." }
+    },
+    "tile": {
+      "capMultiplier": { "$type": "number", "$value": 3, "$description": "Lattice exploration only: tile side = 3 x cap-height, square, the letter centred with one cap-height of air. The shipping mark's plate is logo.mark." },
+      "side": { "$type": "number", "$value": 15, "$description": "3 x cap-height, in lattice units." },
+      "pad": { "$type": "number", "$value": 5, "$description": "(tile.side - capHeight) / 2 = one cap-height = 1 pitch of air on every side." }
+    },
+    "clearspace": {
+      "multiplier": { "$type": "number", "$value": 8, "$description": "Minimum clear space around the mark = 8u (one letter pitch) on every side." }
+    }
+  }
+}

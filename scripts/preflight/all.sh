@@ -24,7 +24,7 @@ status=0
 # tag is absent, which turns that silent miss into a red required check on the
 # next PR. It needs no workflow file; release-tag.test.sh is its hermetic suite
 # (a temporary bare origin, no network).
-for script in base-check.sh base-check.test.sh version-drift.test.sh release-tag.sh release-tag.test.sh migration-number.sh go-decl-collision.sh gofmt-tracked.sh cli-skill-pin.sh docs-stale-paths.sh skip-census.sh mcp-authz.sh modelref-split.sh runrole-guard.sh schemadrift-guard.sh gitleaks-waivers.sh gitleaks-env-files.sh connector-lint-self-test.sh ui-guard.sh brand.sh gh-pages-budget.sh; do
+for script in base-check.sh base-check.test.sh version-drift.test.sh release-tag.sh release-tag.test.sh migration-number.sh go-decl-collision.sh gofmt-tracked.sh cli-skill-pin.sh docs-stale-paths.sh skip-census.sh mcp-authz.sh modelref-split.sh runrole-guard.sh schemadrift-guard.sh gitleaks-waivers.sh gitleaks-env-files.sh connector-lint-self-test.sh ui-guard.sh design-system.sh gh-pages-budget.sh; do
   echo "==> $script"
   if bash "$dir/$script"; then
     echo "==> $script PASSED"
