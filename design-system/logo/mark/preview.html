@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Memory — mark preview</title>
+<!--
+  Human preview of the LATTICE EXPLORATION (not the identity). Not generated: it references the
+  assets by path so it cannot silently disagree with them, and it styles itself
+  from brand/dist/css/brand.tokens.css so what you see is the token output.
+
+  Note the consumption pattern on `.mark`: an SVG used through <img> is an
+  isolated document, so fill="currentColor" inside it resolves to black, not to
+  the colour of the <img>. The currentColor assets are therefore applied as a
+  CSS mask and the colour comes from the element behind them. The tiles are
+  self-contained and are used as plain <img>.
+
+  Open directly:  xdg-open design-system/logo/mark/preview.html
+-->
+<link rel="stylesheet" href="../../dist/css/brand.tokens.css">
+<style>
+  html { background: var(--brand-surface-page); }
+  body {
+    margin: 0;
+    padding: 40px;
+    font-family: var(--brand-font-body);
+    color: var(--brand-content-body);
+    display: grid;
+    gap: 40px;
+  }
+  h1 { font-size: 15px; font-weight: 600; letter-spacing: var(--brand-tracking-eyebrow); text-transform: uppercase; color: var(--brand-content-body); margin: 0 0 4px; }
+  h2 { font-size: 13px; font-weight: 400; color: var(--brand-content-body); opacity: .6; margin: 0; }
+  section { display: grid; gap: 16px; }
+  .sizes { display: flex; align-items: flex-end; gap: 32px; flex-wrap: wrap; }
+  .swatch { display: grid; gap: 8px; justify-items: center; }
+  .swatch b { font: 400 11px/1 var(--brand-font-mono); color: var(--brand-content-body); opacity: .5; font-weight: 400; }
+  .panel { background: var(--brand-surface-base); border: 1px solid var(--brand-border-line); border-radius: var(--brand-radius-box); padding: 28px; }
+  .pair { display: flex; gap: 24px; flex-wrap: wrap; }
+  .onink { background: var(--brand-surface-deep); border-radius: var(--brand-radius-box); padding: 28px; }
+  .onpaper { background: var(--brand-surface-base); border: 1px solid var(--brand-border-line); border-radius: var(--brand-radius-box); padding: 28px; }
+  .onink .inkish, .onpaper .inkish { color: var(--brand-content-strong); }
+  .onpaper .inkish { color: #0b0e18; }
+
+  /* The one consumption rule that matters: colour comes from the element,
+     shape comes from the asset. */
+  .mark {
+    display: block;
+    background: currentColor;
+    -webkit-mask: var(--mark) center / contain no-repeat;
+    mask: var(--mark) center / contain no-repeat;
+    --mark: url(mark-v1.svg);
+  }
+  .glyphs {
+    display: block;
+    background: currentColor;
+    -webkit-mask: url(../explore/glyphs.svg) left center / contain no-repeat;
+    mask: url(../explore/glyphs.svg) left center / contain no-repeat;
+    width: 560px; height: 96px;
+  }
+
+  .clearspace { position: relative; display: grid; place-items: center; width: 300px; height: 300px; border: 1px dashed var(--brand-border-strong); border-radius: 6px; }
+  .clearspace .mark { width: 96px; height: 96px; }
+  .hdr { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: var(--brand-radius-box); background: var(--brand-surface-base); border: 1px solid var(--brand-border-line); width: max-content; color: var(--brand-content-strong); }
+  .hdr .mark { width: 16px; height: 16px; }
+  .hdr span { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+  .hdr.light { background: #f2efe9; border-color: #cdc6b6; color: #0b0e18; }
+  .grid2 { display: flex; gap: 24px; flex-wrap: wrap; align-items: center; }
+  .bad .label { font-size: 11px; color: var(--brand-error); }
+  .rot { transform: rotate(14deg); }
+  .stretch { transform: scaleX(1.7); }
+  .grad { background: linear-gradient(135deg, var(--brand-primary), var(--brand-accent)); padding: 12px; border-radius: 8px; color: #000; }
+  .rules { display: grid; gap: 6px; font-size: 13px; opacity: .8; max-width: 74ch; line-height: 1.55; }
+  .lightdemo { background: #f2efe9; color: #0b0e18; padding: 28px; border-radius: var(--brand-radius-box); }
+  .lightdemo h1, .lightdemo h2 { color: #0b0e18; }
+</style>
+
+<section>
+  <div>
+    <h1>Primary mark</h1>
+    <h2>fill=currentColor · box 5u × 5u · stroke = gap = 1u · applied as a CSS mask</h2>
+  </div>
+  <div class="onink inkish">
+    <div class="sizes">
+      <div class="swatch"><i class="mark" style="width:96px;height:96px"></i><b>96</b></div>
+      <div class="swatch"><i class="mark" style="width:64px;height:64px"></i><b>64</b></div>
+      <div class="swatch"><i class="mark" style="width:48px;height:48px"></i><b>48</b></div>
+      <div class="swatch"><i class="mark" style="width:32px;height:32px"></i><b>32</b></div>
+      <div class="swatch"><i class="mark" style="width:24px;height:24px"></i><b>24</b></div>
+      <div class="swatch"><i class="mark" style="width:20px;height:20px"></i><b>20</b></div>
+      <div class="swatch"><i class="mark" style="width:16px;height:16px"></i><b>16 · min</b></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div>
+    <h1>Tile</h1>
+    <h2>Self-contained: square of 3 × cap-height, mark centred, one cap-height of air each side</h2>
+  </div>
+  <div class="grid2">
+    <div class="swatch"><img src="mark/mark-v1-tile.svg" width="180" height="180" alt="Memory tile"><b>180</b></div>
+    <div class="swatch"><img src="mark/mark-v1-tile.svg" width="64" height="64" alt=""><b>64</b></div>
+    <div class="swatch"><img src="mark/mark-v1-tile.svg" width="32" height="32" alt=""><b>32 · min</b></div>
+    <div class="swatch"><img src="mark/mark-v1-tile.svg" width="16" height="16" alt=""><b>16 · below min</b></div>
+    <div class="swatch"><img src="mark/mark-v1-tile-light.svg" width="64" height="64" alt=""><b>light</b></div>
+  </div>
+</section>
+
+<section>
+  <div>
+    <h1>Polarity</h1>
+    <h2>One asset, both polarities — the colour is the surface's, never the file's</h2>
+  </div>
+  <div class="pair">
+    <div class="onpaper" data-theme="brand-light" style="color:#0b0e18"><i class="mark" style="width:120px;height:120px"></i></div>
+    <div class="onink inkish"><i class="mark" style="width:120px;height:120px"></i></div>
+  </div>
+</section>
+
+<section>
+  <div>
+    <h1>Clear space</h1>
+    <h2>8u on every side = one letter pitch. Dashed edge marks the floor, never the target.</h2>
+  </div>
+  <div class="clearspace inkish" style="color:var(--brand-content-strong)"><i class="mark" style="width:96px;height:96px"></i></div>
+</section>
+
+<section>
+  <div>
+    <h1>At size, beside type</h1>
+    <h2>16px is the test that decides the whole construction</h2>
+  </div>
+  <div class="grid2">
+    <div class="hdr"><i class="mark"></i><span>Memory</span></div>
+    <div class="hdr light"><i class="mark"></i><span>Memory</span></div>
+  </div>
+</section>
+
+<section>
+  <div>
+    <h1>The letter system</h1>
+    <h2>Same lattice, same rules. The wordmark is drawn from this set, never typed as live text.</h2>
+  </div>
+  <div class="onink inkish"><i class="glyphs"></i></div>
+  <div class="rules">
+    <div>· Orthogonal only: no curves, no radii, square terminals.</div>
+    <div>· A segment may be long, never thicker than 1u — the gate rejects any filled 2×2 block.</div>
+    <div>· The inner form is inset 1u from the cap line and stops short of the baseline, so a letter's feet are its outer stems.</div>
+    <div>· M and W are the only wide letters; every other box is 4u.</div>
+  </div>
+</section>
+
+<section>
+  <div>
+    <h1>Light surface</h1>
+    <h2>The same tokens under data-theme="brand-light" — generated, not compiled into the product build</h2>
+  </div>
+  <div class="lightdemo" data-theme="brand-light">
+    <div class="grid2">
+      <div class="swatch"><img src="mark/mark-v1-tile-light.svg" width="80" height="80" alt=""><b style="color:#0b0e18;opacity:.5">tile</b></div>
+      <div class="hdr light" style="border-color:#cdc6b6"><i class="mark"></i><span>Memory</span></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div>
+    <h1>Never</h1>
+    <h2>Four ways a mark loses its authority</h2>
+  </div>
+  <div class="grid2 bad inkish" style="color:var(--brand-content-strong)">
+    <div class="swatch"><i class="mark rot" style="width:72px;height:72px"></i><span class="label">rotate</span></div>
+    <div class="swatch"><i class="mark stretch" style="width:72px;height:72px"></i><span class="label">stretch</span></div>
+    <div class="swatch grad"><i class="mark" style="width:72px;height:72px"></i><span class="label">on a gradient</span></div>
+    <div class="swatch"><i class="mark" style="width:72px;height:72px;color:#7a5cff"></i><span class="label">recolour</span></div>
+  </div>
+</section>
+</html>
