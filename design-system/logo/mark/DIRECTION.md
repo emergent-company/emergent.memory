@@ -60,10 +60,12 @@ The two geometric rules that do the most work:
 What the gate checks, precisely: cap height is 5 rows, the box is at least 4u
 wide, and there is no filled 2×2 block anywhere — that last test is the encoded
 form of "never thicker than 1u". It does **not** enforce rule 1: a 3u gap between
-two segments builds cleanly. The equality of stroke and gap is a design rule
-judged by eye on `mark/preview.html`, not a build assertion; only the thickness half of
-it is mechanical. Stating that difference here is deliberate, because a rule the
-gate pretends to enforce and does not is worse than one it admits is judgement.
+two segments builds cleanly. The equality of stroke and gap is asserted for the
+*token pair* — `build.py` raises when `logo.grid.stroke != logo.grid.gap` — but a
+glyph's drawn gaps are never measured, so the drawing is judged by eye on
+`mark/preview.html`; only the thickness half is mechanical there. Stating that
+difference here is deliberate, because a rule the gate pretends to enforce and
+does not is worse than one it admits is judgement.
 
 ## The one idea
 

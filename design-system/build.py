@@ -735,10 +735,12 @@ def manifest() -> str:
 #
 # The mark is data, not a drawing. Each glyph is cells on the letter lattice,
 # written as ASCII so a diff shows the letterform and a reviewer can see the
-# 1u rhythm. Two things are asserted rather than trusted: every run is exactly
-# one unit wide (stroke = gap = 1u, the equality that *is* the style), and the
-# merged output carries no adjacent <rect>s, because adjacent rects leave
-# hairline seams once the mark is painted at 200px and up.
+# 1u rhythm. One thing is asserted: every run is exactly one unit wide
+# (stroke = gap = 1u, the equality that *is* the style). The second property —
+# that the merged output carries no adjacent <rect>s — is a property of the
+# rectangle merge, not a check: adjacent rects would leave hairline seams once
+# the mark is painted at 200px and up, so it was verified by eye on every glyph
+# in the sheet rather than encoded as a test.
 #
 # Curves, radii and gradients inside the glyph are therefore impossible: there
 # is no place in this representation to put one.
