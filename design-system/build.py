@@ -4,8 +4,9 @@
 Source of truth is the DTCG token file; this script only translates it. Nothing
 under design-system/dist/ or design-system/brand.go is hand-edited, and `--check` fails when the
 committed output stops matching the source, when a colour pair drops below WCAG
-2.2 AA, when the token file is not DTCG-conformant, or when a declared logo
-asset is missing.
+2.2 AA, when the token file is not DTCG-conformant, when a declared logo asset
+is missing, when the mark or a lattice glyph breaks its contract, or when a
+page in this directory references an asset that is not on disk.
 
     python3 design-system/build.py            # write
     python3 design-system/build.py --check    # verify, exit 1 on drift/violation
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -735,12 +737,12 @@ def manifest() -> str:
 #
 # The mark is data, not a drawing. Each glyph is cells on the letter lattice,
 # written as ASCII so a diff shows the letterform and a reviewer can see the
-# 1u rhythm. One thing is asserted: every run is exactly one unit wide
-# (stroke = gap = 1u, the equality that *is* the style). The second property —
-# that the merged output carries no adjacent <rect>s — is a property of the
-# rectangle merge, not a check: adjacent rects would leave hairline seams once
-# the mark is painted at 200px and up, so it was verified by eye on every glyph
-# in the sheet rather than encoded as a test.
+# 1u rhythm. Every measurable invariant is asserted rather than trusted: a run
+# is exactly one unit thick (stroke = gap = 1u, the equality that *is* the
+# style), the glyph keeps its cap height and letter box, and the outline that
+# is emitted paints exactly the cells the ASCII defines. The drawing is a
+# single path (see glyph_outline) because abutting <rect>s leave a hairline
+# seam once the mark is painted at 200px and up.
 #
 # Curves, radii and gradients inside the glyph are therefore impossible: there
 # is no place in this representation to put one.
@@ -834,45 +836,124 @@ def parse_glyph(art: str, name: str) -> tuple[set[tuple[int, int]], int, int]:
     return cells, width, len(rows)
 
 
-def to_rects(cells: set[tuple[int, int]]) -> list[tuple[int, int, int, int]]:
-    """Merge cells into the fewest rectangles, so no seam lands inside the mark."""
-    remaining = set(cells)
-    rects: list[tuple[int, int, int, int]] = []
-    for y in sorted({c[1] for c in cells}):
-        x = 0
-        max_x = max(c[0] for c in cells)
-        while x <= max_x:
-            if (x, y) not in remaining:
-                x += 1
-                continue
-            x0 = x
-            while (x, y) in remaining:
-                x += 1
-            x1 = x
-            y1 = y + 1
-            while all((xx, y1) in remaining for xx in range(x0, x1)):
-                y1 += 1
-            for yy in range(y, y1):
-                for xx in range(x0, x1):
-                    remaining.discard((xx, yy))
-            rects.append((x0, y, x1 - x0, y1 - y))
-    return rects
+# The first cut filled a glyph with one <rect> per merged run. That is
+# seam-free only while no two rects touch, and an orthogonal letter is full of
+# L-shaped strokes — the M's shoulder, the A's crossbar — which no rectangle
+# decomposition can express without two rects meeting along an edge. So the
+# comment claiming "no adjacent rects" was false for five of the six sample
+# glyphs (the M alone had two abutting pairs), and a hairline of the page shows
+# through every shared edge once the glyph is painted large. The glyph is now
+# traced as the boundary of the filled cells: one path, even-odd fill, the same
+# representation as the shipping mark. `mark_problems()` proves the outline
+# paints exactly the cells it was derived from.
+
+_CELL_EDGES = (
+    ((0, 0), (1, 0)),
+    ((1, 0), (1, 1)),
+    ((1, 1), (0, 1)),
+    ((0, 1), (0, 0)),
+)
+
+# Clockwise order of a direction in screen coordinates (x right, y down).
+_DIRECTION = {(1, 0): 0, (0, 1): 1, (-1, 0): 2, (0, -1): 3}
+# At a vertex where the outline pinches — two cells meeting at a corner — take
+# the rightmost turn available (right, straight, left, back), so the two sides
+# are traced as separate loops instead of one figure eight that would enclose
+# the empty cells between them.
+_TURN_PREFERENCE = {1: 0, 0: 1, 3: 2, 2: 3}
+
+
+def glyph_outline(cells: set[tuple[int, int]]) -> list[list[tuple[int, int]]]:
+    """Closed rectilinear loops tracing the boundary of the filled cells.
+
+    Edges shared by two cells cancel (they are interior); the survivors are
+    walked into loops, each a polygon in cell units, and the corners left on a
+    straight run are dropped. The loops are drawn with `fill-rule="evenodd"`,
+    which makes a counter (the A's) a hole whatever the winding.
+    """
+    edges: set[tuple[tuple[int, int], tuple[int, int]]] = set()
+    for x, y in cells:
+        for (dx0, dy0), (dx1, dy1) in _CELL_EDGES:
+            a, b = (x + dx0, y + dy0), (x + dx1, y + dy1)
+            if (b, a) in edges:
+                edges.discard((b, a))
+            else:
+                edges.add((a, b))
+    outgoing: dict[tuple[int, int], list[tuple[int, int]]] = {}
+    for a, b in edges:
+        outgoing.setdefault(a, []).append(b)
+
+    loops: list[list[tuple[int, int]]] = []
+    remaining = set(edges)
+    while remaining:
+        start = min(remaining)
+        loop = [start[0]]
+        current = start
+        while True:
+            remaining.discard(current)
+            (ax, ay), (bx, by) = current
+            loop.append((bx, by))
+            if (bx, by) == start[0]:
+                break
+            heading = (bx - ax, by - ay)
+            candidates = [c for c in outgoing[(bx, by)] if ((bx, by), c) in remaining]
+            if not candidates:
+                raise TokenError(f"outline: the glyph's boundary does not close at {(bx, by)}")
+            (bx, by) = min(
+                candidates,
+                key=lambda c: _TURN_PREFERENCE[
+                    (_DIRECTION[(c[0] - bx, c[1] - by)] - _DIRECTION[heading]) % 4
+                ],
+            )
+            current = (current[1], (bx, by))
+        loops.append(_straight_run_ends(loop))
+    return loops
+
+
+def _straight_run_ends(loop: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Drop the vertices that sit inside a straight run (the loop is closed)."""
+    points = loop[:-1]  # the walk repeats its first point at the end
+    out = []
+    for i, (x, y) in enumerate(points):
+        px, py = points[i - 1]
+        nx, ny = points[(i + 1) % len(points)]
+        if (px == x == nx) or (py == y == ny):
+            continue
+        out.append((x, y))
+    return out
+
+
+def glyph_outline_d(cells: set[tuple[int, int]], unit: int = 1) -> str:
+    """SVG path data for one glyph, in `unit`-scaled coordinates."""
+    return " ".join(
+        f"M{loop[0][0] * unit},{loop[0][1] * unit}"
+        + "".join(f" L{x * unit},{y * unit}" for x, y in loop[1:])
+        + " Z"
+        for loop in glyph_outline(cells)
+    )
+
+
+def outline_paints(loops: list[list[tuple[int, int]]], px: float, py: float) -> bool:
+    """Even-odd point-in-outline: the test an SVG renderer applies to the path."""
+    crossings = 0
+    for loop in loops:
+        for i in range(len(loop)):
+            (x1, y1), (x2, y2) = loop[i], loop[(i + 1) % len(loop)]
+            if (y1 > py) != (y2 > py):
+                if x1 + (py - y1) * (x2 - x1) / (y2 - y1) > px:
+                    crossings += 1
+    return crossings % 2 == 1
 
 
 def mark_svg(art: str, name: str, unit: int = 24) -> str:
     """The mark alone on its 5x5 box, single colour via currentColor."""
     cells, w, h = parse_glyph(art, name)
-    rects = to_rects(cells)
-    body = "".join(
-        f'<rect x="{x * unit}" y="{y * unit}" width="{rw * unit}" height="{rh * unit}"/>'
-        for x, y, rw, rh in rects
-    )
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         f'<!-- {HEADER.split(" — ")[0]} -->\n'
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w * unit} {h * unit}" '
         'fill="currentColor" role="img" aria-label="Memory">\n'
-        f"  {body}\n"
+        f'  <path d="{glyph_outline_d(cells, unit)}" fill-rule="evenodd"/>\n'
         "</svg>\n"
     )
 
@@ -891,10 +972,9 @@ def tile_svg(art: str, name: str, plate: Color, glyph: Color, unit: int = 24) ->
     px = side * unit
     ox = ((side - w) // 2) * unit
     oy = ((side - h) // 2) * unit
-    body = "".join(
-        f'<rect x="{ox + x * unit}" y="{oy + y * unit}" width="{rw * unit}" height="{rh * unit}" '
-        f'fill="{glyph.hex}"/>'
-        for x, y, rw, rh in to_rects(cells)
+    body = (
+        f'<g transform="translate({ox},{oy})" fill="{glyph.hex}">'
+        f'<path d="{glyph_outline_d(cells, unit)}" fill-rule="evenodd"/></g>'
     )
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -917,11 +997,11 @@ def glyph_sheet_svg(unit: int = 24) -> str:
     total_h = cap * unit
     x = 0
     parts = []
-    for cells, w, h in parsed.values():
-        for rx, ry, rw, rh in to_rects(cells):
-            parts.append(
-                f'<rect x="{x + rx * unit}" y="{ry * unit}" width="{rw * unit}" height="{rh * unit}"/>'
-            )
+    for cells, w, _h in parsed.values():
+        parts.append(
+            f'<g transform="translate({x},0)">'
+            f'<path d="{glyph_outline_d(cells, unit)}" fill-rule="evenodd"/></g>'
+        )
         x += (w + pitch) * unit
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -1004,6 +1084,17 @@ def mark_problems() -> list[str]:
         problems.append(f"mark: the glyph is {cap * 16 / side:.1f}px at a 16px tile — under 6px it mushes")
     if pad <= 0:
         problems.append("mark: glyphCap must be smaller than side")
+    # Clear space is published (logo.mark.clearSpace, logo/manifest.json, the
+    # tile README and the catalogue) and previously consumed only as
+    # presentation, so any number passed. A quarter of the side is the rule
+    # every usage example in the README relies on; assert it like the ratios.
+    air = float(SEM["logo.mark.clearSpace"])
+    if air <= 0:
+        problems.append(f"mark: clearSpace = {air:g}, must be positive")
+    elif air != side / 4:
+        problems.append(
+            f"mark: clearSpace = {air:g}, expected side/4 = {side / 4:g} (a quarter of the tile, on every side)"
+        )
     ink = COLOR["logo.mark.glyphInk"]
     for name in ("gradientFrom", "gradientTo"):
         r = contrast(ink.linear, COLOR[f"logo.mark.{name}"].linear)
@@ -1019,6 +1110,25 @@ def mark_problems() -> list[str]:
         problems.append("mark: a glyph coordinate falls outside the 24u frame")
     if stroke <= 0 or stroke * 2 >= GLYPH_FRAME:
         problems.append("mark: glyphStroke leaves no counter space")
+    # The glyph is emitted as one path, so there is no shared edge to leak a
+    # seam through. That makes the outline itself the thing that must be right:
+    # it has to paint exactly the cells the ASCII defines. Checked for every
+    # glyph the sheet ships, not just the mark, because the same tracer draws
+    # all of them.
+    for name, art in GLYPH_SAMPLES.items():
+        cells, w, h = parse_glyph(art, name)
+        loops = glyph_outline(cells)
+        if not loops:
+            problems.append(f"mark: glyph {name} traces no outline")
+            continue
+        for y in range(h):
+            for x in range(w):
+                painted = outline_paints(loops, x + 0.5, y + 0.5)
+                if painted != ((x, y) in cells):
+                    problems.append(
+                        f"mark: glyph {name} outline paints cell {x},{y} = {painted}, "
+                        f"the letter has it {'filled' if (x, y) in cells else 'empty'}"
+                    )
     return problems
 
 
@@ -1504,6 +1614,65 @@ def catalog() -> str:
     return page
 
 
+# ── pages ─────────────────────────────────────────────────────────────────
+#
+# --check can only compare files the generator writes, so a hand-written page
+# sits outside the gate entirely: #1069 moved logo/mark/*.svg and left
+# preview.html pointing at the old path, and six images on the page the tile
+# README names as the eyeball check were broken until a reviewer noticed. This
+# scan closes that hole for every page in the directory, generated or not.
+
+_PAGE_REF_PATTERNS = (
+    re.compile(r'\bsrc\s*=\s*"([^"]*)"'),
+    re.compile(r"\bsrc\s*=\s*'([^']*)'"),
+    re.compile(r'\bhref\s*=\s*"([^"]*)"'),
+    re.compile(r"\bhref\s*=\s*'([^']*)'"),
+    re.compile(r"url\(\s*['\"]?([^'\")]+)['\"]?\s*\)"),
+)
+
+
+def page_refs(text: str) -> list[str]:
+    """Every asset reference a page makes, whichever way it is quoted."""
+    refs: list[str] = []
+    for pattern in _PAGE_REF_PATTERNS:
+        refs.extend(pattern.findall(text))
+    return refs
+
+
+def asset_target(page: Path, ref: str) -> Path | None:
+    """Where `ref` should land on disk, or None when it is not a local asset.
+
+    Not a local asset: an in-page anchor, an external URL, a data URI, or a
+    template placeholder (catalog.tmpl.html is rendered, not served). A path
+    starting with `/` is resolved from the repository root, which is how the
+    READMEs spell the served paths.
+    """
+    ref = ref.strip()
+    if not ref or ref.startswith(("#", "//")) or "{{" in ref:
+        return None
+    if ":" in ref.split("/", 1)[0]:
+        return None  # scheme: http:, https:, data:, mailto:, tel:, ...
+    ref = ref.split("#", 1)[0].split("?", 1)[0]
+    if not ref:
+        return None
+    if ref.startswith("/"):
+        return ROOT.parent / ref.lstrip("/")
+    return page.parent / ref
+
+
+def page_asset_problems() -> list[str]:
+    """Every src=/href=/url() in a design-system page must resolve on disk."""
+    problems = []
+    for page in sorted(ROOT.rglob("*.html")):
+        for ref in page_refs(page.read_text()):
+            target = asset_target(page, ref)
+            if target is not None and not target.exists():
+                problems.append(
+                    f"page asset: {page.relative_to(ROOT.parent)} references {ref!r}, which does not exist"
+                )
+    return problems
+
+
 # ── driver ────────────────────────────────────────────────────────────────
 
 
@@ -1562,6 +1731,7 @@ def main(argv: list[str]) -> int:
     if failures:
         problems += failures
     problems += mark_problems()
+    problems += page_asset_problems()
 
     if check:
         for path, content in files.items():

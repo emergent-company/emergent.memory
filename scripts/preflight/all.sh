@@ -16,6 +16,12 @@ status=0
 # (#1026): the rule only runs in CI, so without this suite a subject the guard
 # rejects -- what `task release` used to emit -- is discovered after the push.
 # It also pins the release task's subject to one the guard accepts.
+# design-system.test.sh covers design-system.sh (#1071): its fail-closed
+# branch (tokens present, generator missing -- the state the brand.sh ->
+# design-system.sh rename produced during #1069), its "nothing to check" pass,
+# genuine drift, the clearSpace rule the token file publishes, and a page that
+# points at an asset which moved. It needs no Go toolchain: every case exits
+# before the wrapper's `go vet`.
 # release-tag.sh is the observer for #1047: a release PR merged by
 # `app/github-actions` raises its push from GITHUB_TOKEN, GitHub starts no
 # workflow runs for it, and auto-tag's push trigger never fires -- so the tag,
@@ -24,7 +30,7 @@ status=0
 # tag is absent, which turns that silent miss into a red required check on the
 # next PR. It needs no workflow file; release-tag.test.sh is its hermetic suite
 # (a temporary bare origin, no network).
-for script in base-check.sh base-check.test.sh version-drift.test.sh release-tag.sh release-tag.test.sh migration-number.sh go-decl-collision.sh gofmt-tracked.sh cli-skill-pin.sh docs-stale-paths.sh skip-census.sh mcp-authz.sh modelref-split.sh runrole-guard.sh schemadrift-guard.sh gitleaks-waivers.sh gitleaks-env-files.sh connector-lint-self-test.sh ui-guard.sh design-system.sh gh-pages-budget.sh; do
+for script in base-check.sh base-check.test.sh version-drift.test.sh release-tag.sh release-tag.test.sh migration-number.sh go-decl-collision.sh gofmt-tracked.sh cli-skill-pin.sh docs-stale-paths.sh skip-census.sh mcp-authz.sh modelref-split.sh runrole-guard.sh schemadrift-guard.sh gitleaks-waivers.sh gitleaks-env-files.sh connector-lint-self-test.sh ui-guard.sh design-system.test.sh design-system.sh gh-pages-budget.sh; do
   echo "==> $script"
   if bash "$dir/$script"; then
     echo "==> $script PASSED"
@@ -66,4 +72,4 @@ if [ "$status" -ne 0 ]; then
   exit 1
 fi
 
-echo "preflight: OK (base, base-check tests, version-drift tests, migration numbering, cross-branch Go declaration collisions, gofmt, CLI skill pin, stale docs, Astro docs port, skip census, mcp authz, modelref split, runrole guard, schemadrift, gitleaks waivers, gitleaks env files, connector lint self-test, ui guardrails, brand tokens, gh-pages budget self-tests, connector install channel, release tag reconcile/dispatch, release tag drift)"
+echo "preflight: OK (base, base-check tests, version-drift tests, migration numbering, cross-branch Go declaration collisions, gofmt, CLI skill pin, stale docs, Astro docs port, skip census, mcp authz, modelref split, runrole guard, schemadrift, gitleaks waivers, gitleaks env files, connector lint self-test, ui guardrails, brand gate tests, brand tokens, gh-pages budget self-tests, connector install channel, release tag reconcile/dispatch, release tag drift)"

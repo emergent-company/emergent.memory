@@ -3,5 +3,5 @@
 <!-- side = 15u = 3 x cap-height; glyph centred, 5u of air each side -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 360" role="img" aria-label="Memory">
   <rect width="360" height="360" fill="#f6f7fa"/>
-  <rect x="120" y="120" width="24" height="120" fill="#030406"/><rect x="216" y="120" width="24" height="120" fill="#030406"/><rect x="144" y="144" width="24" height="24" fill="#030406"/><rect x="192" y="144" width="24" height="24" fill="#030406"/><rect x="168" y="168" width="24" height="24" fill="#030406"/>
+  <g transform="translate(120,120)" fill="#030406"><path d="M0,0 L24,0 L24,24 L48,24 L48,48 L24,48 L24,120 L0,120 Z M48,48 L72,48 L72,72 L48,72 Z M72,24 L96,24 L96,0 L120,0 L120,120 L96,120 L96,48 L72,48 Z" fill-rule="evenodd"/></g>
 </svg>
