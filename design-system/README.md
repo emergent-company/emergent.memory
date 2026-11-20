@@ -34,19 +34,29 @@ task brand:preview   # open the generated catalogue page
 
 `brand:check` is also a pre-commit job (`lefthook run pre-commit`) and part of
 `scripts/preflight/all.sh`, so a stale artefact or a contrast regression cannot
-be committed. It fails on five things:
+be committed. It fails on six things:
 
 1. **Drift** — a generated file no longer matches what the token file produces.
 2. **Contrast** — any pair in `CONTRAST_PAIRS` (in `build.py`) below WCAG 2.2 AA:
    4.5:1 for text, 3:1 for UI (SC 1.4.3, 1.4.11).
 3. **Mark** — the tile contract: radius / side inside 0.20–0.24, glyph / side
-   inside 0.36–0.44, a glyph that is at least 6px at a 16px tile, and glyph ink
-   at 4.5:1 against both ends of the gradient. The lattice exploration is checked
-   separately for its 1u thickness and cap-height rules.
+   inside 0.36–0.44, a glyph that is at least 6px at a 16px tile, glyph ink at
+   4.5:1 against both ends of the gradient, and `logo.mark.clearSpace` exactly
+   `side / 4` — the value the catalogue, the manifest and the tile README all
+   publish, so it is asserted instead of merely rendered. The lattice
+   exploration is checked separately for its 1u thickness and cap-height rules,
+   and its outline is proved to paint exactly the cells its ASCII defines.
 4. **Conformance** — a malformed token file: no `$type`, a non-`oklch` source
    colour, a broken or circular alias, or a semantic role present in only one
    mode.
-5. **Go compilation** — `go vet ./design-system` on the generated package. Every other
+5. **Page assets** — every `src=`, `href=` and CSS `url()` in a
+   `design-system/**/*.html` page has to resolve on disk. `--check` can only
+   compare files the generator writes, so a hand-written page (the lattice
+   preview) sat outside the gate: #1069 moved `logo/mark/*.svg` and left six
+   broken images behind on the page the tile README names as the eyeball check.
+   Anchors, paint servers (`url(#plate4)`), absolute URLs and the template's
+   own placeholders are not assets and are skipped.
+6. **Go compilation** — `go vet ./design-system` on the generated package. Every other
    Go job in CI is rooted in its own module, so without this step a syntax error
    in `brand.go` would land silently. `design-system/` is its own module
    (`github.com/emergent-company/emergent.memory/design-system`, package `brand`)

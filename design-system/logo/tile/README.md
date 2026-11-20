@@ -43,7 +43,7 @@ lets one file serve a 16px favicon and a 1024px icon.
 | `logo.mark.glyphInk` | `brass.950` | The glyph. 9.4:1 on the light end, 5.7:1 on the dark end. |
 | `logo.mark.plateInk` | `ink.900` | The reverse plate. |
 | `logo.mark.glyphOnInk` | `brass.400` | The reverse glyph, 9.9:1 on the plate. |
-| `logo.mark.clearSpace` | 16u | A quarter of the side, on every side. Nothing enters it. |
+| `logo.mark.clearSpace` | 16u | A quarter of the side, on every side. Nothing enters it. The gate asserts `clearSpace == side / 4`. |
 
 The glyph's apex stops 1u short of the baseline (inner 14u, outer 23u in its 24u
 frame). That is what keeps the counters open at 16px: below about 6px of glyph the
