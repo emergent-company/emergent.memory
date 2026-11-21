@@ -335,9 +335,19 @@ func (s *Service) Create(ctx context.Context, req CreateProjectRequest, userID s
 		BudgetAlertThreshold:       defaultAlertThreshold,
 		BudgetWeeklyUSD:            &defaultWeeklyBudget,
 		BudgetWeeklyAlertThreshold: defaultAlertThreshold,
+		// The bun insert writes every field, so the Go zero value would
+		// otherwise override the column's DEFAULT 'partial'.
+		AutoMergeExtractionPolicy: AutoMergePolicyPartial,
 	}
 	if req.AutoMergeExtractionBranches != nil {
 		project.AutoMergeExtractionBranches = *req.AutoMergeExtractionBranches
+	}
+	if req.AutoMergeExtractionPolicy != nil {
+		policy, err := normalizeRequestedAutoMergePolicy(*req.AutoMergeExtractionPolicy)
+		if err != nil {
+			return nil, err
+		}
+		project.AutoMergeExtractionPolicy = policy
 	}
 	if err := s.repo.Create(ctx, tx.Tx, project); err != nil {
 		return nil, err
@@ -444,6 +454,15 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateProjectReques
 		hasUpdates = true
 	}
 
+	if req.AutoMergeExtractionPolicy != nil {
+		policy, err := normalizeRequestedAutoMergePolicy(*req.AutoMergeExtractionPolicy)
+		if err != nil {
+			return nil, err
+		}
+		project.AutoMergeExtractionPolicy = policy
+		hasUpdates = true
+	}
+
 	if req.AutoDiscoveryEnabled != nil {
 		project.AutoDiscoveryEnabled = *req.AutoDiscoveryEnabled
 		hasUpdates = true
@@ -520,6 +539,23 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateProjectReques
 	dto := project.ToDTO()
 	s.enrichWithMainBranch(ctx, &dto)
 	return &dto, nil
+}
+
+// normalizeRequestedAutoMergePolicy trims and validates a caller-supplied
+// auto-merge policy. Rejecting an unknown value is deliberate: silently falling
+// back to the default would make a typo'd "enrich" ingest park every
+// near-duplicate exactly like the setting the caller tried to change (#1074).
+func normalizeRequestedAutoMergePolicy(policy string) (string, error) {
+	policy = strings.TrimSpace(policy)
+	if !IsValidAutoMergePolicy(policy) {
+		return "", apperror.New(400, "validation-failed", fmt.Sprintf(
+			"auto_merge_extraction_policy must be one of: %s",
+			strings.Join(ValidAutoMergePolicies(), ", "),
+		)).WithDetails(map[string]any{
+			"auto_merge_extraction_policy": []string{"must be one of: " + strings.Join(ValidAutoMergePolicies(), ", ")},
+		})
+	}
+	return policy, nil
 }
 
 // Transfer reparents a project to another organization.

@@ -2310,6 +2310,7 @@ Table "kb"."projects" {
   "budget_weekly_alert_threshold" numeric(3,2) [not null, default: 0.80]
   "budget_week_anchor" timestamptz
   "budget_month_anchor" timestamptz
+  "auto_merge_extraction_policy" text [not null, default: 'partial']
 
   Indexes {
     (deleted_at) [name: "idx_projects_deleted_at", note: '(deleted_at IS NULL)']

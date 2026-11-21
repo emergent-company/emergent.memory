@@ -72,6 +72,20 @@ func TestGetByIDStatsReportsPendingExtractionMerge(t *testing.T) {
 	insertObject(&agentBranch, "agent-1")
 	insertObject(nil, "main-1")
 
+	// Auto-merge journal events (#1074): only the latest event on an unmerged
+	// extraction branch counts. The older 5 and the merged branch's 99 must not
+	// be summed in; the expected left-for-review backlog is 3.
+	insertMergeEvent := func(branchID uuid.UUID, leftForReview int, age string) {
+		_, err := db.ExecContext(ctx, `
+			INSERT INTO kb.project_journal (project_id, branch_id, event_type, metadata, created_at)
+			VALUES (?, ?, 'merge', jsonb_build_object('left_for_review_count', ?), NOW() - ?::interval)
+		`, pid, branchID, leftForReview, age)
+		require.NoError(t, err)
+	}
+	insertMergeEvent(pendingBranch, 5, "2 hours")
+	insertMergeEvent(pendingBranch, 3, "1 hour")
+	insertMergeEvent(mergedBranch, 99, "30 minutes")
+
 	repo := projects.NewRepository(db, slog.Default())
 	project, err := repo.GetByID(ctx, projectID, true)
 	require.NoError(t, err)
@@ -82,6 +96,7 @@ func TestGetByIDStatsReportsPendingExtractionMerge(t *testing.T) {
 	require.Equal(t, 1, got.BranchCount, "only the unmerged extraction branch counts")
 	require.Equal(t, 2, got.ObjectCount, "only live objects on the pending branch count")
 	require.Equal(t, 1, got.MainGraphObjectCount, "main-graph objects are what default reads see")
+	require.Equal(t, 3, got.LeftForReviewCount, "latest auto-merge leftovers on the unmerged branch")
 	require.False(t, got.Stranded)
 
 	// The list query uses a different SELECT shape (a membership join); it must
@@ -103,4 +118,5 @@ func TestGetByIDStatsReportsPendingExtractionMerge(t *testing.T) {
 	require.NotNil(t, list[0].Stats)
 	require.NotNil(t, list[0].Stats.PendingExtractionMerge)
 	require.Equal(t, 2, list[0].Stats.PendingExtractionMerge.ObjectCount)
+	require.Equal(t, 3, list[0].Stats.PendingExtractionMerge.LeftForReviewCount)
 }
