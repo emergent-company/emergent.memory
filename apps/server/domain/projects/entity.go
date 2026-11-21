@@ -24,6 +24,48 @@ const (
 	DefaultBudgetAlertThreshold = 0.80
 )
 
+// Auto-merge policies accepted for kb.projects.auto_merge_extraction_policy.
+//
+// "partial" is the safe default: clean additions and fast-forwards land, while
+// conflicting or near-duplicate objects stay on the staging branch for review.
+// "enrich" lets an unattended ingest absorb near-duplicates into the existing
+// object instead of parking them, which is what a project ingesting without a
+// reviewer wants (#1074). Other branch-merge presets remain available to a
+// caller of the merge endpoint itself; they are not project settings.
+const (
+	AutoMergePolicyPartial = "partial"
+	AutoMergePolicyEnrich  = "enrich"
+)
+
+// ValidAutoMergePolicies lists the accepted project auto-merge policies in a
+// stable order. Error messages use it so the advertised values and the
+// validated ones cannot drift apart.
+func ValidAutoMergePolicies() []string {
+	return []string{AutoMergePolicyPartial, AutoMergePolicyEnrich}
+}
+
+// IsValidAutoMergePolicy reports whether policy is an accepted project
+// auto-merge policy.
+func IsValidAutoMergePolicy(policy string) bool {
+	switch policy {
+	case AutoMergePolicyPartial, AutoMergePolicyEnrich:
+		return true
+	default:
+		return false
+	}
+}
+
+// NormalizeAutoMergePolicy maps an unset or unrecognised persisted value to the
+// safe default. It is used on the read side (the extraction worker), so a row
+// written before the column existed, or edited outside the API, can never make
+// auto-merge silently destructive.
+func NormalizeAutoMergePolicy(policy string) string {
+	if IsValidAutoMergePolicy(policy) {
+		return policy
+	}
+	return AutoMergePolicyPartial
+}
+
 // Project represents a project in the kb.projects table
 type Project struct {
 	bun.BaseModel `bun:"table:kb.projects,alias:p"`
@@ -43,8 +85,14 @@ type Project struct {
 	ExtractionConfig map[string]any `bun:"extraction_config,type:jsonb" json:"extraction_config,omitempty"`
 
 	// AutoMergeExtractionBranches enables auto-merging extraction staging branches
-	// into the main graph once extraction completes (partial merge; added in migration 00129).
+	// into the main graph once extraction completes (added in migration 00129).
 	AutoMergeExtractionBranches bool `bun:"auto_merge_extraction_branches,notnull,default:false" json:"auto_merge_extraction_branches"`
+
+	// AutoMergeExtractionPolicy selects the merge policy auto-merge uses (added
+	// in migration 00318). "partial" (the default) leaves ambiguous objects on
+	// the branch for review; "enrich" absorbs near-duplicates into the existing
+	// object so unattended ingest does not silently stall (#1074).
+	AutoMergeExtractionPolicy string `bun:"auto_merge_extraction_policy,notnull,default:'partial'" json:"auto_merge_extraction_policy"`
 
 	// AutoDiscoveryEnabled starts a schema-discovery job after a source sync
 	// creates documents (added in migration 00260). It defaults to true so a
@@ -161,6 +209,13 @@ type PendingExtractionMergeStats struct {
 	ObjectCount          int `json:"objectCount"`
 	RelationshipCount    int `json:"relationshipCount"`
 	MainGraphObjectCount int `json:"mainGraphObjectCount"`
+	// LeftForReviewCount is how many objects the most recent auto-merge left on
+	// the project's unmerged extraction branches (the merge journal's
+	// left_for_review_count, summed over branches). A non-zero value means
+	// auto-merge ran but deliberately parked work for a human; surfacing it here
+	// makes a stalled unattended ingest visible without reading merge logs
+	// (#1074).
+	LeftForReviewCount int `json:"leftForReviewCount"`
 	// Stranded is true when extraction produced objects but the main graph is
 	// empty, so every default read reports nothing.
 	Stranded bool `json:"stranded"`
@@ -183,6 +238,9 @@ type ProjectDTO struct {
 	Stats                      *ProjectStats                    `json:"stats,omitempty"`
 	// AutoMergeExtractionBranches is emitted only when true.
 	AutoMergeExtractionBranches *bool `json:"auto_merge_extraction_branches,omitempty"`
+	// AutoMergeExtractionPolicy is always emitted: its column defaults to
+	// "partial", so an omitted field would read as an empty/unknown policy.
+	AutoMergeExtractionPolicy string `json:"auto_merge_extraction_policy"`
 	// AutoDiscoveryEnabled is always emitted (unlike the other booleans): the
 	// column defaults to true, so an absent field would read as "off" in a UI
 	// that renders a toggle and silently disable discovery for every project.
@@ -237,6 +295,9 @@ type CreateProjectRequest struct {
 	// explicit (nil keeps the opt-in default of false) so creating a project
 	// never silently changes what default graph reads return (#496).
 	AutoMergeExtractionBranches *bool `json:"auto_merge_extraction_branches,omitempty"`
+	// AutoMergeExtractionPolicy overrides the "partial" default when present.
+	// Accepted values are listed by ValidAutoMergePolicies.
+	AutoMergeExtractionPolicy *string `json:"auto_merge_extraction_policy,omitempty"`
 }
 
 // TransferProjectRequest is the request body for transferring a project to another org.
@@ -278,6 +339,7 @@ type UpdateProjectRequest struct {
 	BudgetWeeklyUSD             *float64       `json:"budget_weekly_usd,omitempty"`
 	BudgetWeeklyAlertThreshold  *float64       `json:"budget_weekly_alert_threshold,omitempty"`
 	AutoMergeExtractionBranches *bool          `json:"auto_merge_extraction_branches,omitempty"`
+	AutoMergeExtractionPolicy   *string        `json:"auto_merge_extraction_policy,omitempty"`
 	AutoDiscoveryEnabled        *bool          `json:"auto_discovery_enabled,omitempty"`
 	AutoExtractSourceSyncs      *bool          `json:"auto_extract_source_syncs,omitempty"`
 	// SkillCapture replaces the project capture policy when present. An object
@@ -304,6 +366,10 @@ func (p *Project) ToDTO() ProjectDTO {
 		BudgetAlertThreshold: &p.BudgetAlertThreshold,
 		Stats:                p.Stats,
 		SkillCapture:         p.SkillCapture,
+		// The column is NOT NULL with a "partial" default, but a zero-value
+		// struct (or a row scanned before the migration ran) must still read as
+		// the safe default rather than as an unknown policy.
+		AutoMergeExtractionPolicy: NormalizeAutoMergePolicy(p.AutoMergeExtractionPolicy),
 	}
 
 	if p.BudgetWeeklyUSD != nil {
