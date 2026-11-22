@@ -2244,6 +2244,19 @@ func OrderedByUserOrPrior(userID string, prior *string) *string {
 	return prior
 }
 
+// UpdateRunOrderedByUser records who ordered an already-created run. Pre-created
+// rows (chat capture, A2A, a queued child) are inserted before the executor
+// resolves the ordering person, so the executor writes it here rather than
+// leaving the row unattributable for its whole life.
+func (r *Repository) UpdateRunOrderedByUser(ctx context.Context, runID string, userID string) error {
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("ordered_by_user_id = ?", userID).
+		Where("id = ?", runID).
+		Exec(ctx)
+	return err
+}
+
 // CreateRunWithOptions creates a new agent run with coordination options.
 func (r *Repository) CreateRunWithOptions(ctx context.Context, opts CreateRunOptions) (*AgentRun, error) {
 	// Budget gate for every pre-created run row (HTTP trigger/respond, A2A,

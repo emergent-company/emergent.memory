@@ -71,28 +71,40 @@ type AgentRunOrderer struct {
 // returned, so a version stamped with a foreign run id cannot attribute a
 // stranger. The caller treats an error as "no orderer known" rather than
 // failing the surface.
+//
+// The endpoint caps the set at agentRunIDsFilterMax, so a larger page is read in
+// batches and the results merged: a silently truncated read would leave later
+// versions unattributed without the caller ever knowing.
 func (m *MemoryClient) GetRunOrderers(ctx context.Context, runIDs []string) (map[string]string, error) {
 	if len(runIDs) == 0 {
 		return nil, nil
 	}
-	q := url.Values{}
-	q.Set("ids", strings.Join(runIDs, ","))
-	q.Set("limit", strconv.Itoa(len(runIDs)))
-	var env successEnvelope[struct {
-		Items []AgentRunOrderer `json:"items"`
-	}]
-	if err := m.do(ctx, http.MethodGet, "/api/projects/"+m.projectIDFor(ctx)+"/agent-runs?"+q.Encode(), nil, &env); err != nil {
-		return nil, err
-	}
-	out := make(map[string]string, len(env.Data.Items))
-	for _, r := range env.Data.Items {
-		if r.ID == "" || r.OrderedByUserID == "" {
-			continue
+	out := make(map[string]string, len(runIDs))
+	for start := 0; start < len(runIDs); start += agentRunIDsFilterMax {
+		end := min(start+agentRunIDsFilterMax, len(runIDs))
+		batch := runIDs[start:end]
+		q := url.Values{}
+		q.Set("ids", strings.Join(batch, ","))
+		q.Set("limit", strconv.Itoa(len(batch)))
+		var env successEnvelope[struct {
+			Items []AgentRunOrderer `json:"items"`
+		}]
+		if err := m.do(ctx, http.MethodGet, "/api/projects/"+m.projectIDFor(ctx)+"/agent-runs?"+q.Encode(), nil, &env); err != nil {
+			return nil, err
 		}
-		out[r.ID] = r.OrderedByUserID
+		for _, r := range env.Data.Items {
+			if r.ID == "" || r.OrderedByUserID == "" {
+				continue
+			}
+			out[r.ID] = r.OrderedByUserID
+		}
 	}
 	return out, nil
 }
+
+// agentRunIDsFilterMax mirrors the server's cap on the `?ids=` set (see the
+// agent-runs handler). A request above it would be answered partially.
+const agentRunIDsFilterMax = 100
 
 // GetRunFull fetches one run's full transcript (run + messages + tool calls).
 func (m *MemoryClient) GetRunFull(ctx context.Context, runID string) (*AgentRunFull, error) {

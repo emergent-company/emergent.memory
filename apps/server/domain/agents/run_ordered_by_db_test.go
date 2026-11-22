@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"log/slog"
 	"testing"
 
 	"github.com/google/uuid"
@@ -124,6 +125,75 @@ func TestCreateRunWithOptions_PersistsOrderedByUser(t *testing.T) {
 	stored = nil
 	require.NoError(t, db.NewRaw(`SELECT ordered_by_user_id FROM kb.agent_runs WHERE id = ?`, unowned.ID).Scan(ctx, &stored))
 	require.Nil(t, stored)
+}
+
+// TestPersistPreCreatedOrderer pins the rule for a run whose row a caller
+// inserted before the ordering person was known (chat capture, A2A, a queued
+// child, a resume): the authenticated user wins, a delegated run inherits the
+// parent's orderer — an agent does not order its own work — a resume by a
+// non-user principal keeps the prior orderer, and a run with neither stays NULL
+// rather than claiming an orderer.
+func TestPersistPreCreatedOrderer(t *testing.T) {
+	ctx, db, repo, projectID := setupWorkObjectDispatch(t)
+	defID := insertWorkDefinition(t, db, ctx, projectID, "researcher", `{}`)
+	agentID := insertWorkAgent(t, db, ctx, projectID, "researcher", defID)
+	userID := uuid.NewString()
+
+	storedOrderer := func(runID string) *string {
+		var stored *string
+		require.NoError(t, db.NewRaw(`SELECT ordered_by_user_id FROM kb.agent_runs WHERE id = ?`, runID).Scan(ctx, &stored))
+		return stored
+	}
+
+	parent, err := repo.CreateRunWithOptions(ctx, CreateRunOptions{
+		AgentID:         agentID,
+		OrderedByUserID: OrderedByUser(userID),
+	})
+	require.NoError(t, err)
+
+	exec := &AgentExecutor{repo: repo, log: slog.Default()}
+
+	// A delegated child inherits the order behind the parent run.
+	child, err := repo.CreateRunWithOptions(ctx, CreateRunOptions{AgentID: agentID, ParentRunID: &parent.ID})
+	require.NoError(t, err)
+	require.Nil(t, child.OrderedByUserID)
+	exec.persistPreCreatedOrderer(ctx, child, "", nil)
+	require.NotNil(t, child.OrderedByUserID)
+	require.Equal(t, userID, *child.OrderedByUserID)
+	require.NotNil(t, storedOrderer(child.ID))
+	require.Equal(t, userID, *storedOrderer(child.ID))
+
+	// The authenticated user wins over the parent's orderer.
+	otherUser := uuid.NewString()
+	childByUser, err := repo.CreateRunWithOptions(ctx, CreateRunOptions{AgentID: agentID, ParentRunID: &parent.ID})
+	require.NoError(t, err)
+	exec.persistPreCreatedOrderer(ctx, childByUser, otherUser, nil)
+	require.NotNil(t, childByUser.OrderedByUserID)
+	require.Equal(t, otherUser, *childByUser.OrderedByUserID)
+
+	// A delegation whose transport carries only the orchestration root still
+	// inherits the order the whole tree ran under.
+	rootChild, err := repo.CreateRunWithOptions(ctx, CreateRunOptions{AgentID: agentID, RootRunID: &parent.ID})
+	require.NoError(t, err)
+	require.Nil(t, rootChild.ParentRunID)
+	exec.persistPreCreatedOrderer(ctx, rootChild, "", nil)
+	require.NotNil(t, rootChild.OrderedByUserID)
+	require.Equal(t, userID, *rootChild.OrderedByUserID)
+
+	// A resume by a principal that is not a user (a share end user) keeps the
+	// prior run's orderer instead of erasing the attribution.
+	resumed, err := repo.CreateRunWithOptions(ctx, CreateRunOptions{AgentID: agentID})
+	require.NoError(t, err)
+	exec.persistPreCreatedOrderer(ctx, resumed, "share-end-user-42", OrderedByUser(userID))
+	require.NotNil(t, resumed.OrderedByUserID)
+	require.Equal(t, userID, *resumed.OrderedByUserID)
+
+	// Neither a user nor a parent: nobody ordered it, and the column stays NULL.
+	lonely, err := repo.CreateRunWithOptions(ctx, CreateRunOptions{AgentID: agentID})
+	require.NoError(t, err)
+	exec.persistPreCreatedOrderer(ctx, lonely, "", nil)
+	require.Nil(t, lonely.OrderedByUserID)
+	require.Nil(t, storedOrderer(lonely.ID))
 }
 
 // TestFindRunsByProjectPaginated_IDSFilter verifies the batch read object

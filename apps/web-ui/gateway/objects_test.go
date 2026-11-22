@@ -5066,6 +5066,49 @@ func TestRenderObjectProvenanceRail(t *testing.T) {
 	}
 }
 
+// TestRenderObjectProvenanceRailOrderedBy pins the rail's provenance-v2 line: an
+// agent's write on a person's order names that person, keeps the agent as the
+// mechanism, and does not repeat the credential. The rail and the history
+// timeline must not disagree about who is accountable for a version.
+func TestRenderObjectProvenanceRailOrderedBy(t *testing.T) {
+	prov := objectVersionProvenance{
+		Actor:          "researcher",
+		ActorKind:      "agent",
+		ActorHref:      "/agents/a1",
+		How:            "agent MCP link",
+		When:           "5h ago",
+		OrderedBy:      "Maciek Kucharz",
+		OrderedByTitle: "ordered_by_user_id=u1",
+	}
+	html := renderHTML(t, objectProvenanceRail(&GraphObject{ID: "o1", Type: "note", Version: 4}, nil, prov))
+	for _, want := range []string{
+		`data-testid="object-wiki-provenance-write"`,
+		"Maciek Kucharz",
+		"order",
+		"written by",
+		"researcher",
+		`href="/agents/a1"`,
+		`title="ordered_by_user_id=u1"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("provenance rail missing %q:\n%s", want, html)
+		}
+	}
+	if strings.Contains(html, "agent MCP link") {
+		t.Errorf("the credential must not be repeated when the order explains the write:\n%s", html)
+	}
+
+	// No orderer: the rail renders exactly what it did before.
+	plain := renderHTML(t, objectProvenanceRail(&GraphObject{ID: "o1", Type: "note", Version: 4}, nil,
+		objectVersionProvenance{Actor: "researcher", ActorKind: "agent", How: "agent MCP link", When: "5h ago"}))
+	if !strings.Contains(plain, "written by") || !strings.Contains(plain, "agent MCP link") {
+		t.Errorf("a write with no orderer must keep naming the credential:\n%s", plain)
+	}
+	if strings.Contains(plain, "'s order") {
+		t.Errorf("a write with no orderer must not claim one:\n%s", plain)
+	}
+}
+
 // --- object breadcrumb origin ---
 
 func TestParseExtractionOrigin(t *testing.T) {

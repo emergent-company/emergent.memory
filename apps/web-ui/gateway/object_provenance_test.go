@@ -300,6 +300,46 @@ func TestObjectProvenanceAvatarRenders(t *testing.T) {
 	}
 }
 
+// TestObjectsCardFooterOrderedBy pins the card footer's provenance-v2 bar: the
+// person who ordered the agent's write leads, the agent is the mechanism ("via
+// researcher"), and the credential is not repeated — the same rule the history
+// timeline follows. A version with no orderer keeps the rendering it had before.
+func TestObjectsCardFooterOrderedBy(t *testing.T) {
+	identities := []objectActorOption{
+		{Type: "user", ID: "u1", Label: "Maciek Dev"},
+		{Type: "agent", ID: "a1", Label: "researcher"},
+	}
+	version := GraphObject{
+		ID: "o1", Version: 2, Type: "Task", Key: "boiler",
+		ActorType: "agent", ActorID: "a1", CredentialKind: "mcp_link", RunID: "run-1",
+		CreatedAt: time.Now().Add(-5 * time.Hour).UTC().Format(time.RFC3339),
+	}
+
+	ordered := renderHTML(t, objectsBrowserCard(
+		newObjectsBrowserRow(version, nil, identities, map[string]string{"run-1": "u1"}, 0), false, false))
+	if !strings.Contains(ordered, "Maciek Dev") {
+		t.Errorf("card footer must name the person who ordered the write:\n%s", ordered)
+	}
+	if !strings.Contains(ordered, "via researcher") {
+		t.Errorf("the agent is the mechanism and must still be named:\n%s", ordered)
+	}
+	if strings.Contains(ordered, "agent MCP link") {
+		t.Errorf("the credential must not be repeated when the order explains the write:\n%s", ordered)
+	}
+	if !strings.Contains(ordered, `data-testid="object-actor-avatar"`) {
+		t.Errorf("the orderer's identity mark must render:\n%s", ordered)
+	}
+
+	plain := renderHTML(t, objectsBrowserCard(
+		newObjectsBrowserRow(version, nil, identities, nil, 0), false, false))
+	if !strings.Contains(plain, "researcher") || !strings.Contains(plain, "agent MCP link") {
+		t.Errorf("a version with no orderer must keep naming the agent and its credential:\n%s", plain)
+	}
+	if strings.Contains(plain, "Maciek Dev") {
+		t.Errorf("a version with no orderer must not attribute one:\n%s", plain)
+	}
+}
+
 // TestObjectsPageNamesOrgWriter is the end-to-end version of the roster rule:
 // a scoped browse request (session org set by applyScope) renders the ORG
 // member who wrote the object, with the identity mark — not the

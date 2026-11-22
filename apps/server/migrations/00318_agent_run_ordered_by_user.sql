@@ -11,6 +11,11 @@
 -- before this column existed. A reader must then claim no orderer rather than
 -- infer one from trigger_metadata, which a model can set.
 --
+-- A delegated run (an agent spawning another agent) carries the orderer of the
+-- work it belongs to, and a resume by a principal that is not a person keeps the
+-- orderer it resumed: attribution is never erased by an agent or a share link,
+-- and an agent is never recorded as an orderer itself.
+--
 -- No foreign key: user identities live in the identity provider (Zitadel), not in
 -- this database, which is also why kb.chat_conversations.owner_user_id and the
 -- graph write stamp's actor_id carry bare UUIDs.

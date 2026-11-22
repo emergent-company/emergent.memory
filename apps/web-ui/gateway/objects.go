@@ -429,11 +429,16 @@ func (s *Server) loadObjectBrowsePage(ctx context.Context, data *objectsPageData
 	// agent-scoped view, and the cursor page), so an appended or scoped page is
 	// attributed exactly like the first one. The orderer read is one
 	// project-scoped request for the whole page.
-	identities, orderers := s.objectProvenanceInputs(ctx, objects)
+	//
+	// The browse page has already loaded the full roster for its actor filter, so
+	// that branch pays only the run read: the roster it holds includes people, and
+	// an orderer resolves against it. Re-fetching it here was a second identical
+	// round trip per page.
 	if data.ActorOptions == nil {
-		data.ActorOptions = identities
+		data.ActorOptions, data.RunOrderers = s.objectProvenanceInputs(ctx, objects)
+	} else {
+		data.RunOrderers = s.objectRunOrderers(ctx, objects)
 	}
-	data.RunOrderers = orderers
 	return nil
 }
 

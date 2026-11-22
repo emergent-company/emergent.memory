@@ -2983,11 +2983,18 @@ func (h *Handler) RememberStream(c echo.Context) error {
 		if err != nil {
 			return err
 		}
-		run, runErr := h.agentRepo.CreateRun(ctx, dummyAgent.ID)
+		// The capture agent writes objects on the signed-in person's order, so the
+		// row carries it from insert: this is the most common user-ordered agent
+		// write, and a row that only gains an orderer later (or never) leaves every
+		// object it wrote unattributed.
+		run, runErr := h.agentRepo.CreateRunWithOptions(ctx, agents.CreateRunOptions{
+			AgentID:         dummyAgent.ID,
+			OrderedByUserID: agents.OrderedByUser(user.ID),
+		})
 		if runErr != nil {
 			return apperror.NewInternal("failed to create async run record", runErr)
 		}
-		preCreated := &agents.AgentRun{ID: run.ID, AgentID: dummyAgent.ID}
+		preCreated := &agents.AgentRun{ID: run.ID, AgentID: dummyAgent.ID, OrderedByUserID: run.OrderedByUserID}
 		execReq := agents.ExecuteRequest{
 			Agent:           dummyAgent,
 			AgentDefinition: agentDef,
@@ -3478,11 +3485,18 @@ func (h *Handler) RememberFile(c echo.Context) error {
 		if err != nil {
 			return err
 		}
-		run, runErr := h.agentRepo.CreateRun(ctx, dummyAgent.ID)
+		// The capture agent writes objects on the signed-in person's order, so the
+		// row carries it from insert: this is the most common user-ordered agent
+		// write, and a row that only gains an orderer later (or never) leaves every
+		// object it wrote unattributed.
+		run, runErr := h.agentRepo.CreateRunWithOptions(ctx, agents.CreateRunOptions{
+			AgentID:         dummyAgent.ID,
+			OrderedByUserID: agents.OrderedByUser(user.ID),
+		})
 		if runErr != nil {
 			return apperror.NewInternal("failed to create async run record", runErr)
 		}
-		preCreated := &agents.AgentRun{ID: run.ID, AgentID: dummyAgent.ID}
+		preCreated := &agents.AgentRun{ID: run.ID, AgentID: dummyAgent.ID, OrderedByUserID: run.OrderedByUserID}
 		execReq := agents.ExecuteRequest{
 			Agent:           dummyAgent,
 			AgentDefinition: agentDef,
@@ -3794,11 +3808,18 @@ func (h *Handler) ForgetStream(c echo.Context) error {
 		if err != nil {
 			return err
 		}
-		run, runErr := h.agentRepo.CreateRun(ctx, dummyAgent.ID)
+		// The capture agent writes objects on the signed-in person's order, so the
+		// row carries it from insert: this is the most common user-ordered agent
+		// write, and a row that only gains an orderer later (or never) leaves every
+		// object it wrote unattributed.
+		run, runErr := h.agentRepo.CreateRunWithOptions(ctx, agents.CreateRunOptions{
+			AgentID:         dummyAgent.ID,
+			OrderedByUserID: agents.OrderedByUser(user.ID),
+		})
 		if runErr != nil {
 			return apperror.NewInternal("failed to create async run record", runErr)
 		}
-		preCreated := &agents.AgentRun{ID: run.ID, AgentID: dummyAgent.ID}
+		preCreated := &agents.AgentRun{ID: run.ID, AgentID: dummyAgent.ID, OrderedByUserID: run.OrderedByUserID}
 		execReq := agents.ExecuteRequest{
 			Agent:           dummyAgent,
 			AgentDefinition: agentDef,
