@@ -107,7 +107,7 @@ type ListConversationsResult struct {
 // CreateConversationRequest is the request body for creating a conversation
 type CreateConversationRequest struct {
 	Title       string  `json:"title" validate:"required,max=512"`
-	Message     string  `json:"message" validate:"required,max=100000"`
+	Message     string  `json:"message" validate:"omitempty,max=100000"`
 	CanonicalID *string `json:"canonicalId,omitempty" validate:"omitempty,uuid"`
 
 	// ParentConversationID and SpawnSource are set only by internal loopback

@@ -19,7 +19,6 @@ import (
 // the browser does a full document load. Wiring the filters as htmx requests to
 // the region is the fix; docs/ui-patterns.md §3 is the contract.
 const (
-	objectsResultsRegion   = "objects-results"
 	documentsResultsRegion = "documents-results"
 	searchResultsRegion    = "search-results"
 	inboxResultsRegion     = "inbox-list"
@@ -28,7 +27,7 @@ const (
 // targetsResultsRegion reports whether this request is an HTMX GET aimed at a
 // list view's results region rather than at the page itself.
 //
-// A filter form requests the *page* URL (hx-get="/objects", never a /partial
+// A filter form requests the *page* URL (hx-get="/search", never a /partial
 // route) so the URL htmx pushes into history reloads, bookmarks, and shares
 // correctly; the server then chooses between the whole page and the region from
 // the HX-Target header. htmx v4 sends that header as "<tag>#<id>" — hence the

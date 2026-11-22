@@ -321,7 +321,6 @@ func TestRenderObjectsProvenanceDefaultsToAny(t *testing.T) {
 func TestRenderObjectsProvenanceFilterHiddenInSearch(t *testing.T) {
 	html := renderHTML(t, ObjectsPage(objectsPageData{
 		Query: "sam",
-		Mode:  "unified",
 	}))
 	for _, bad := range []string{`name="provenance"`, `aria-label="Provenance"`, `name="actor"`, `aria-label="Actor"`} {
 		if strings.Contains(html, bad) {
@@ -396,10 +395,10 @@ func TestUIObjectsProvenanceParams(t *testing.T) {
 	f := &fakeMemory{}
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
-	e.GET("/objects", s.uiObjects)
+	e.GET("/search", s.uiSearch)
 
 	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?actor_type=agent&actor_id=abc-123&provenance=created", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search?actor_type=agent&actor_id=abc-123&provenance=created", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -409,14 +408,14 @@ func TestUIObjectsProvenanceParams(t *testing.T) {
 
 	// unknown provenance normalizes to the default
 	rec = httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?provenance=bogus", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search?provenance=bogus", nil))
 	if f.lastPageProvenance != defaultObjectProvenance {
 		t.Errorf("unknown provenance = %q, want %q", f.lastPageProvenance, defaultObjectProvenance)
 	}
 
 	// actor_id without actor_type is dropped (the server rejects the pair)
 	rec = httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?actor_id=abc-123", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search?actor_id=abc-123", nil))
 	if f.lastPageActorType != "" || f.lastPageActorID != "" {
 		t.Errorf("stray actor_id must be dropped, got %q/%q", f.lastPageActorType, f.lastPageActorID)
 	}
@@ -424,7 +423,7 @@ func TestUIObjectsProvenanceParams(t *testing.T) {
 	// actor_type without actor_id is dropped too: it would narrow to NULL-actor
 	// rows, not a usable any-actor filter.
 	rec = httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?actor_type=agent", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search?actor_type=agent", nil))
 	if f.lastPageActorType != "" || f.lastPageActorID != "" {
 		t.Errorf("actor_type without actor_id must be dropped, got %q/%q", f.lastPageActorType, f.lastPageActorID)
 	}
@@ -439,12 +438,12 @@ func TestUIObjectsFilterChangeKeepsActor(t *testing.T) {
 	f := &fakeMemory{}
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
-	e.GET("/objects", s.uiObjects)
+	e.GET("/search", s.uiSearch)
 
 	// The provenance click the issue reported, with the pair carried along.
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
-		"/objects?branch=&type=&provenance=created&actor_type=agent&actor_id=a-1", nil))
+		"/search?branch=&type=&provenance=created&actor_type=agent&actor_id=a-1", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -457,7 +456,7 @@ func TestUIObjectsFilterChangeKeepsActor(t *testing.T) {
 	// pair: falling through to it would keep the actor the user just cleared.
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
-		"/objects?actor=clear&actor_type=agent&actor_id=a-1", nil))
+		"/search?actor=clear&actor_type=agent&actor_id=a-1", nil))
 	if f.lastPageActorType != "" || f.lastPageActorID != "" {
 		t.Errorf("actor=clear must clear the pair, got %q/%q", f.lastPageActorType, f.lastPageActorID)
 	}
@@ -465,7 +464,7 @@ func TestUIObjectsFilterChangeKeepsActor(t *testing.T) {
 	// A fresh pick still wins over the pair the form was rendered with.
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
-		"/objects?actor=user:u-9&actor_type=agent&actor_id=a-1", nil))
+		"/search?actor=user:u-9&actor_type=agent&actor_id=a-1", nil))
 	if f.lastPageActorType != "user" || f.lastPageActorID != "u-9" {
 		t.Errorf("fresh pick = %q/%q, want user/u-9", f.lastPageActorType, f.lastPageActorID)
 	}
@@ -485,14 +484,14 @@ func TestUIObjectsFilterChangeKeepsActor(t *testing.T) {
 func TestUIObjectsRegionDispatch(t *testing.T) {
 	regionHeader := func(req *http.Request) *http.Request {
 		req.Header.Set("HX-Request", "true")
-		req.Header.Set("HX-Target", "div#"+objectsResultsRegion)
+		req.Header.Set("HX-Target", "div#"+searchResultsRegion)
 		return req
 	}
 	bodyFor := func(t *testing.T, f *fakeMemory, path, source string) string {
 		t.Helper()
 		s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 		e := echo.New()
-		e.GET("/objects", s.uiObjects)
+		e.GET("/search", s.uiSearch)
 		e.GET("/agents/:id/objects", s.uiAgentObjects)
 		req := regionHeader(httptest.NewRequest(http.MethodGet, path, nil))
 		if source != "" {
@@ -507,7 +506,7 @@ func TestUIObjectsRegionDispatch(t *testing.T) {
 	}
 	assertRegionOnly := func(t *testing.T, body string) {
 		t.Helper()
-		if !strings.Contains(body, `id="`+objectsResultsRegion+`"`) {
+		if !strings.Contains(body, `id="`+searchResultsRegion+`"`) {
 			t.Errorf("region request must return the results region: %s", body)
 		}
 		for _, chrome := range []string{`id="main-content"`, "<html", `id="objects-filters-form"`} {
@@ -534,7 +533,7 @@ func TestUIObjectsRegionDispatch(t *testing.T) {
 		f := &fakeMemory{searchResults: []ObjectSearchResult{
 			{Object: GraphObject{ID: "o1", Type: "person", Key: "sam-lee"}, Score: 0.9},
 		}}
-		body := bodyFor(t, f, "/objects?q=sam&mode=hybrid", objectsSearchFormSource)
+		body := bodyFor(t, f, "/search?q=sam", objectsSearchFormSource)
 		assertRegionOnly(t, body)
 		if !strings.Contains(body, `id="objects-filter-controls"`) || !strings.Contains(body, `hx-swap-oob="innerHTML"`) {
 			t.Errorf("a search must refresh the filter row out of band: %s", body)
@@ -543,7 +542,7 @@ func TestUIObjectsRegionDispatch(t *testing.T) {
 
 	t.Run("a plain filter change leaves the row alone", func(t *testing.T) {
 		f := &fakeMemory{}
-		body := bodyFor(t, f, "/objects?branch=b1", "form#objects-filters-form")
+		body := bodyFor(t, f, "/search?branch=b1", "form#objects-filters-form")
 		assertRegionOnly(t, body)
 		// Replacing the row on every change would drop focus out of the select
 		// the user just operated, so it is refreshed only when it can differ.
@@ -554,7 +553,7 @@ func TestUIObjectsRegionDispatch(t *testing.T) {
 
 	t.Run("an actor pick refreshes the row", func(t *testing.T) {
 		f := &fakeMemory{}
-		body := bodyFor(t, f, "/objects?actor=user:u-1", "form#objects-filters-form")
+		body := bodyFor(t, f, "/search?actor=user:u-1", "form#objects-filters-form")
 		assertRegionOnly(t, body)
 		if !strings.Contains(body, `id="objects-filter-controls"`) {
 			t.Errorf("an actor pick must refresh the filter row: %s", body)
@@ -570,18 +569,18 @@ func TestUIObjectsCombinedActorParam(t *testing.T) {
 	f := &fakeMemory{}
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
-	e.GET("/objects", s.uiObjects)
+	e.GET("/search", s.uiSearch)
 
 	t.Run("user pair", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?actor=user:u-1&provenance=updated", nil))
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search?actor=user:u-1&provenance=updated", nil))
 		if f.lastPageActorType != "user" || f.lastPageActorID != "u-1" || f.lastPageProvenance != "updated" {
 			t.Errorf("parsed pair = %q/%q/%q, want user/u-1/updated", f.lastPageActorType, f.lastPageActorID, f.lastPageProvenance)
 		}
 	})
 	t.Run("agent pair", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?actor=agent:a-1", nil))
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search?actor=agent:a-1", nil))
 		if f.lastPageActorType != "agent" || f.lastPageActorID != "a-1" {
 			t.Errorf("parsed pair = %q/%q, want agent/a-1", f.lastPageActorType, f.lastPageActorID)
 		}
@@ -593,7 +592,7 @@ func TestUIObjectsCombinedActorParam(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?"+query, nil))
+			e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search?"+query, nil))
 			if f.lastPageActorType != "" || f.lastPageActorID != "" {
 				t.Errorf("%s must drop the pair, got %q/%q", query, f.lastPageActorType, f.lastPageActorID)
 			}
@@ -622,10 +621,10 @@ func TestUIObjectsBareProvenanceCleared(t *testing.T) {
 	f := &fakeMemory{}
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
-	e.GET("/objects", s.uiObjects)
+	e.GET("/search", s.uiSearch)
 
 	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?provenance=created", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search?provenance=created", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -660,70 +659,50 @@ func TestUIObjectsPartialCarriesProvenance(t *testing.T) {
 }
 
 func TestRenderObjectsPageSearchStatsLoadMore(t *testing.T) {
-	// search mode: query input, mode selector, and result rows with a score badge.
+	// Search: the query box, its submit, the scope and cap filters in the filter
+	// row, and the object cards. No mode chooser survives — the page always ranks
+	// with the server's fused search.
 	searchHTML := renderHTML(t, ObjectsPage(objectsPageData{
 		Query: "sam",
-		Mode:  "hybrid",
+		In:    searchScopeAll,
+		Limit: defaultSearchLimit,
 		Results: []ObjectSearchResult{
 			{Object: GraphObject{ID: "o1", Type: "person", Key: "sam-lee"}, Score: 0.87},
 		},
 	}))
 	for _, want := range []string{
-		`name="q"`, `value="sam"`, `name="mode"`, "Full-text", "Hybrid",
-		"sam-lee", "0.87",
+		`name="q"`, `value="sam"`, `name="in"`, `name="limit"`,
+		`data-testid="search-query"`, "Search", "0.87",
+		"sam-lee",
 	} {
 		if !strings.Contains(searchHTML, want) {
 			t.Errorf("search page missing %q", want)
 		}
 	}
-	// split button: the primary submit carries the SELECTED mode, and each
-	// dropdown option is its own submit button that announces its selected
-	// state (role=menuitemradio + aria-checked).
-	searchForm := objectSearchFormHTML(t, searchHTML)
-	if !strings.Contains(searchForm, "Hybrid Search") {
-		t.Errorf("primary label must reflect the selected mode:\n%s", searchForm)
-	}
-	if tag := firstSubmitTag(searchForm); !strings.Contains(tag, `name="mode"`) || !strings.Contains(tag, `value="hybrid"`) {
-		t.Errorf("primary submit must carry the selected mode, got %s", tag)
-	}
-	for _, want := range []string{
-		"Fuses graph and text ranking for the best overall matches.",
-		"Blends keyword and semantic (vector) matching.",
-		"Keyword matching only — fast and exact.",
-	} {
-		if !strings.Contains(searchForm, want) {
-			t.Errorf("search form missing mode description %q", want)
+	for _, bad := range []string{`name="mode"`, "Unified Search", "Hybrid Search"} {
+		if strings.Contains(searchHTML, bad) {
+			t.Errorf("search page must not render the retired mode chooser %q", bad)
 		}
 	}
-	if got := strings.Count(searchForm, `role="menuitemradio"`); got != 3 {
-		t.Errorf("want 3 mode menuitemradio options, got %d", got)
-	}
-	if got := strings.Count(searchForm, `aria-checked="true"`); got != 1 {
-		t.Errorf("want exactly one checked mode, got %d", got)
-	}
-	if got := strings.Count(searchForm, `aria-checked="false"`); got != 2 {
-		t.Errorf("want two unchecked modes, got %d", got)
-	}
-	// Truthful ARIA: the dropdown is daisyUI's CSS-only focus dropdown, so it
-	// must not advertise a static expanded state, and mode selection must be
-	// plain form submits rather than relying on inline JS.
-	if strings.Contains(searchForm, "aria-expanded") || strings.Contains(searchForm, "aria-haspopup") {
-		t.Error("CSS-only dropdown must not claim aria-expanded/aria-haspopup")
-	}
-	if strings.Contains(searchForm, "onclick=") {
-		t.Error("mode selection must work without inline JS (plain submit buttons)")
-	}
 	if strings.Contains(searchHTML, "Load more") {
-		t.Error("search mode must not render a Load more button")
+		t.Error("a query must not render a Load more button: it has no cursor pagination")
 	}
 
-	// search no-hits state
-	noHits := renderHTML(t, ObjectsPage(objectsPageData{Query: "zzz", Mode: "fulltext"}))
-	if !strings.Contains(noHits, "No matching objects") {
+	// The limit control only bounds a query; browsing has a fixed page size.
+	browseNoLimit := renderHTML(t, ObjectsPage(objectsPageData{
+		Objects: []GraphObject{{ID: "o1", Type: "person", Key: "sam-lee"}},
+	}))
+	if strings.Contains(browseNoLimit, `name="limit"`) {
+		t.Error("browse must not render the result-cap control")
+	}
+
+	// Search no-hits state.
+	noHits := renderHTML(t, ObjectsPage(objectsPageData{Query: "zzz", In: searchScopeAll}))
+	if !strings.Contains(noHits, `data-testid="search-empty"`) {
 		t.Error("search no-hits state missing")
 	}
 
-	// browse mode with stats + load-more
+	// Browse with stats + load-more.
 	browseHTML := renderHTML(t, ObjectsPage(objectsPageData{
 		Objects:    []GraphObject{{ID: "o1", Type: "person", Key: "sam-lee"}},
 		HasMore:    true,
@@ -737,77 +716,60 @@ func TestRenderObjectsPageSearchStatsLoadMore(t *testing.T) {
 	}
 }
 
-// TestRenderObjectsPageSearchUnified renders the unified search mode: the
-// Unified mode option and a unified result row (labels + score) that omits the
-// status/embedding badges unavailable in unified results.
-func TestRenderObjectsPageSearchUnified(t *testing.T) {
+// TestRenderObjectsPageSearchObjectCards renders an object hit as a card: the
+// key, the type, the labels and the score badge, with no status/embedding chips
+// the hydrated hit may not carry.
+func TestRenderObjectsPageSearchObjectCards(t *testing.T) {
 	html := renderHTML(t, ObjectsPage(objectsPageData{
 		Query: "sam",
-		Mode:  "unified",
+		In:    searchScopeAll,
 		Results: []ObjectSearchResult{
 			{Object: GraphObject{ID: "c1", Type: "person", Key: "sam-lee", Status: "confirmed", EmbeddingStatus: "embedded", Labels: []string{"contact"}}, Score: 0.88},
 		},
 	}))
 	for _, want := range []string{
-		"Unified", "sam-lee", "0.88", "contact", "person",
+		"sam-lee", "0.88", "contact", "person",
 	} {
 		if !strings.Contains(html, want) {
-			t.Errorf("unified search page missing %q", want)
+			t.Errorf("search object card missing %q", want)
 		}
 	}
-	if strings.Contains(html, "confirmed") || strings.Contains(html, "Embedded") {
-		t.Error("unified row must not render status/embedding badges")
-	}
 }
 
-// TestRenderObjectsSearchDefaultUnified pins the new default: an absent mode
-// selects Unified, so the primary submit button reads "Unified Search" and
-// carries mode=unified (not fulltext). The mode rides on the submit buttons,
-// not a hidden input, so it works without JS.
-func TestRenderObjectsSearchDefaultUnified(t *testing.T) {
-	form := objectSearchFormHTML(t, renderHTML(t, ObjectsPage(objectsPageData{Query: "sam"})))
-	if !strings.Contains(form, "Unified Search") {
-		t.Errorf("default primary label missing:\n%s", form)
-	}
-	if tag := firstSubmitTag(form); !strings.Contains(tag, `name="mode"`) || !strings.Contains(tag, `value="unified"`) {
-		t.Errorf("default primary submit must carry mode=unified, got %s", tag)
-	}
-	if strings.Contains(form, `<input type="hidden" name="mode"`) {
-		t.Error("mode must be carried by the submit buttons, not a hidden input")
-	}
-}
-
-// TestRenderObjectsSearchUnknownModeNormalized pins label/dispatch agreement:
-// an unrecognised mode value normalizes to the default, so the button reads
-// "Unified Search" and no raw unknown value leaks into the control.
-func TestRenderObjectsSearchUnknownModeNormalized(t *testing.T) {
-	form := objectSearchFormHTML(t, renderHTML(t, ObjectsPage(objectsPageData{Query: "sam", Mode: "bogus"})))
-	if !strings.Contains(form, "Unified Search") {
-		t.Errorf("unknown mode must render the normalized default label:\n%s", form)
-	}
-	if tag := firstSubmitTag(form); !strings.Contains(tag, `value="unified"`) {
-		t.Errorf("unknown mode must normalize the submitted value to unified, got %s", tag)
-	}
-	if strings.Contains(form, `value="bogus"`) {
-		t.Error("raw unknown mode value must not leak into the control")
-	}
-	if got := strings.Count(form, `aria-checked="true"`); got != 1 {
-		t.Errorf("want exactly one checked mode after normalization, got %d", got)
-	}
-}
-
-// TestNormalizeObjectsSearchMode pins the normalization contract directly.
-func TestNormalizeObjectsSearchMode(t *testing.T) {
+// TestNormalizeSearchScope pins the `in` normalization contract: anything that
+// is not documents or objects is the widest scope, so the rendered selection and
+// the dispatched legs always agree.
+func TestNormalizeSearchScope(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
-		{"", "unified"},
-		{"unified", "unified"},
-		{"hybrid", "hybrid"},
-		{"fulltext", "fulltext"},
-		{"bogus", "unified"},
-		{"FULLTEXT", "unified"}, // case-sensitive; unknown → default
+		{"", searchScopeAll},
+		{"all", searchScopeAll},
+		{"documents", searchScopeDocuments},
+		{"objects", searchScopeObjects},
+		{"bogus", searchScopeAll},
+		{"DOCUMENTS", searchScopeAll}, // case-sensitive; unknown → all
 	} {
-		if got := normalizeObjectsSearchMode(tc.in); got != tc.want {
-			t.Errorf("normalizeObjectsSearchMode(%q) = %q, want %q", tc.in, got, tc.want)
+		if got := normalizeSearchScope(tc.in); got != tc.want {
+			t.Errorf("normalizeSearchScope(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestNormalizeSearchLimit pins the cap normalization: only the offered values
+// survive, everything else falls back to the default.
+func TestNormalizeSearchLimit(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want int
+	}{
+		{"", defaultSearchLimit},
+		{"10", searchLimitMin},
+		{"25", searchLimitMid},
+		{"50", searchLimitMax},
+		{"500", defaultSearchLimit},
+		{"abc", defaultSearchLimit},
+	} {
+		if got := normalizeSearchLimit(tc.in); got != tc.want {
+			t.Errorf("normalizeSearchLimit(%q) = %d, want %d", tc.in, got, tc.want)
 		}
 	}
 }
@@ -820,7 +782,7 @@ func TestRenderObjectDetailPage(t *testing.T) {
 	html := renderHTML(t, ObjectDetailPage(objectDetailShellData{Obj: obj}, nil, nil))
 	for _, want := range []string{
 		"sam-lee", "person", "first_name", "Sam", "relationship", "colleague",
-		`href="/objects"`,
+		`href="/search"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("object detail missing %q", want)
@@ -1025,7 +987,7 @@ func TestRenderObjectViewSectionAffordances(t *testing.T) {
 	for _, want := range []string{
 		"+399 more not shown",
 		`data-testid="object-view-browse-all"`,
-		`href="/objects?type=Document"`,
+		`href="/search?type=Document"`,
 		"Browse all Document",
 		`data-testid="object-view-show-fewer"`,
 	} {
@@ -1215,7 +1177,7 @@ func TestRenderObjectDetailPageTypedView(t *testing.T) {
 func TestRenderObjectDetailMetaProvenance(t *testing.T) {
 	count := 4
 	obj := &GraphObject{ID: "o1", Type: "Property", Ref: "prop-1", DataClass: "synthesized", CredentialKind: "mcp_link", RevisionCount: &count}
-	html := renderHTML(t, objectDetailChips(obj, objectBranchRef{}, nil, nil, "overview"))
+	html := renderHTML(t, objectDetailChips(obj, objectBranchRef{}))
 	for _, want := range []string{
 		`data-testid="object-data-class"`,
 		`data-data-class="synthesized"`,
@@ -1241,7 +1203,7 @@ func TestRenderObjectDetailMetaProvenance(t *testing.T) {
 	}
 
 	// Absent fields (write responses) render no chip at all.
-	bare := renderHTML(t, objectDetailChips(&GraphObject{ID: "o2", Type: "Note"}, objectBranchRef{}, nil, nil, "overview"))
+	bare := renderHTML(t, objectDetailChips(&GraphObject{ID: "o2", Type: "Note"}, objectBranchRef{}))
 	for _, bad := range []string{`data-testid="object-data-class"`, `data-testid="object-revision-count"`, `data-testid="object-credential-kind"`} {
 		if strings.Contains(bare, bad) {
 			t.Errorf("absent provenance rendered %q:\n%s", bad, bare)
@@ -1249,7 +1211,7 @@ func TestRenderObjectDetailMetaProvenance(t *testing.T) {
 	}
 	// A single revision is not history worth counting.
 	one := 1
-	fromSource := renderHTML(t, objectDetailChips(&GraphObject{ID: "o3", Type: "Note", DataClass: "source", RevisionCount: &one}, objectBranchRef{}, nil, nil, "overview"))
+	fromSource := renderHTML(t, objectDetailChips(&GraphObject{ID: "o3", Type: "Note", DataClass: "source", RevisionCount: &one}, objectBranchRef{}))
 	if strings.Contains(fromSource, "versions") {
 		t.Error("a single revision must not render a versions link")
 	}
@@ -1257,7 +1219,7 @@ func TestRenderObjectDetailMetaProvenance(t *testing.T) {
 		t.Errorf("a source-owned version must carry its own glyph:\n%s", fromSource)
 	}
 	// An unknown class leaks nothing into the header.
-	if html := renderHTML(t, objectDetailChips(&GraphObject{ID: "o4", Type: "Note", DataClass: "mystery"}, objectBranchRef{}, nil, nil, "overview")); strings.Contains(html, "mystery") {
+	if html := renderHTML(t, objectDetailChips(&GraphObject{ID: "o4", Type: "Note", DataClass: "mystery"}, objectBranchRef{})); strings.Contains(html, "mystery") {
 		t.Error("an unknown data class must not render")
 	}
 }
@@ -1398,23 +1360,28 @@ func TestRenderObjectDetailTwoPropertyCards(t *testing.T) {
 		t.Errorf("Save rendered %d times, want a single terminal bar: %s", got, html)
 	}
 
-	detailsStart := strings.Index(html, `data-testid="object-record-facts"`)
+	// The record facts moved into the page's metadata rail, so the DOM order is
+	// now: the editable column's two cards, then the rail that carries them.
 	builtinStart := strings.Index(html, `data-testid="object-builtin-properties"`)
 	schemaStart := strings.Index(html, `data-testid="object-type-properties"`)
-	if detailsStart < 0 || builtinStart < 0 || schemaStart < 0 || builtinStart < detailsStart || schemaStart < builtinStart {
-		t.Fatalf("details/property panels missing or out of order:\n%s", html)
+	factsStart := strings.Index(html, `data-testid="object-record-facts"`)
+	if builtinStart < 0 || schemaStart < 0 || factsStart < 0 || schemaStart < builtinStart {
+		t.Fatalf("property panels or record facts missing, or the property cards out of order: %d/%d/%d\n%s", builtinStart, schemaStart, factsStart, html)
 	}
-	if !strings.Contains(html, ">Details</h2>") {
-		t.Errorf("record facts should be their own Details panel:\n%s", html)
+	if factsStart < schemaStart {
+		t.Fatalf("record facts belong to the rail after the editable column:\n%s", html)
 	}
-	details, builtin, schema := html[detailsStart:builtinStart], html[builtinStart:schemaStart], html[schemaStart:]
-	// Details panel: the read-only record facts, above Properties.
+	if !strings.Contains(html, ">Metadata</h2>") {
+		t.Errorf("record facts should sit under the rail's Metadata heading:\n%s", html)
+	}
+	builtin, schema, rail := html[builtinStart:schemaStart], html[schemaStart:factsStart], html[factsStart:]
+	// The rail: the wiki's own Metadata group, beside the editable column.
 	for _, want := range []string{
-		"Version", "v3", "Created",
+		"Type", "Branch", "Version", "v3",
 		`11111111-1111-1111-1111-111111111111`,
 	} {
-		if !strings.Contains(details, want) {
-			t.Errorf("details panel missing %q:\n%s", want, details)
+		if !strings.Contains(rail, want) {
+			t.Errorf("rail metadata missing %q:\n%s", want, rail)
 		}
 	}
 	// Card 1: the editable platform fields only.
@@ -2094,13 +2061,13 @@ func TestObjectsRoutes(t *testing.T) {
 	}
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
-	e.GET("/objects", s.uiObjects)
+	e.GET("/search", s.uiSearch)
 	e.GET("/objects/:id", s.uiObject)
 	e.GET("/objects/:id/relationships", s.uiObjectRelationshipsPage)
 
 	// list page (main branch — the b1 object is excluded)
 	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search", nil))
 	body := rec.Body.String()
 	if rec.Code != http.StatusOK || !strings.Contains(body, "sam-lee") {
 		t.Fatalf("list page: status=%d body=%s", rec.Code, body)
@@ -2111,7 +2078,7 @@ func TestObjectsRoutes(t *testing.T) {
 
 	// type filter keeps only the matching type
 	rec = httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?type=task", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search?type=task", nil))
 	body = rec.Body.String()
 	if !strings.Contains(body, "call dentist") || strings.Contains(body, "sam-lee") {
 		t.Fatalf("type filter: body=%s", body)
@@ -2119,7 +2086,7 @@ func TestObjectsRoutes(t *testing.T) {
 
 	// branch filter shows only that branch's objects
 	rec = httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?branch=b1", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search?branch=b1", nil))
 	body = rec.Body.String()
 	if !strings.Contains(body, "branch-person") || strings.Contains(body, "sam-lee") {
 		t.Fatalf("branch filter: body=%s", body)
@@ -2269,13 +2236,19 @@ func TestObjectsStatsDeferredCarriesBranch(t *testing.T) {
 			t.Errorf("deferred stats strip missing %q, got:\n%s", want, html)
 		}
 	}
-	// The loaded strip replaces the element, so it must carry the same wiring.
+	// The loaded strip replaces the element (swap: outerHTML), and htmx fires
+	// `load` on inserted content: a loaded strip carrying `load` re-armed itself
+	// on every swap and the page polled the counters in a tight loop. It keeps
+	// only the dispatched refresh event.
 	loaded := renderHTML(t, ObjectsPage(objectsPageData{
 		Objects: []GraphObject{{ID: "o1", Type: "person", Key: "sam-lee"}},
 		Stats:   &objectsStats{TotalObjects: 2},
 	}))
-	if !strings.Contains(loaded, `hx-trigger="load, objects-stats-refresh"`) {
+	if !strings.Contains(loaded, `hx-trigger="objects-stats-refresh"`) {
 		t.Errorf("loaded stats strip lost its refresh wiring:\n%s", loaded)
+	}
+	if strings.Contains(loaded, `hx-trigger="load, objects-stats-refresh"`) {
+		t.Errorf("loaded stats strip must not carry `load`: htmx fires it on insertion, so the strip refetches itself forever:\n%s", loaded)
 	}
 }
 
@@ -2335,41 +2308,16 @@ func TestUIObjectsStatsPartialFullPageLoadRedirects(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("full-page stats load status = %d, want 303", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/objects" {
-		t.Errorf("full-page stats load location = %q, want /objects", loc)
+	if loc := rec.Header().Get("Location"); loc != "/search" {
+		t.Errorf("full-page stats load location = %q, want /search", loc)
 	}
 }
 
-func TestUIObjectsSearchRoute(t *testing.T) {
-	f := &fakeMemory{
-		searchResults: []ObjectSearchResult{
-			{Object: GraphObject{ID: "o1", Type: "person", Key: "sam-lee"}, Score: 0.9},
-		},
-	}
-	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
-	e := echo.New()
-	e.GET("/objects", s.uiObjects)
-
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?q=sam&mode=hybrid", nil))
-	body := rec.Body.String()
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", rec.Code, body)
-	}
-	if !strings.Contains(body, "sam-lee") || !strings.Contains(body, "0.90") {
-		t.Errorf("search body missing result: %s", body)
-	}
-	if f.lastSearchMode != "hybrid" || f.lastSearchQuery != "sam" {
-		t.Errorf("search = %q/%q, want hybrid/sam", f.lastSearchMode, f.lastSearchQuery)
-	}
-	if strings.Contains(body, "Load more") {
-		t.Error("search route must not render Load more")
-	}
-}
-
-// TestUIObjectsUnifiedRoute exercises GET /objects?mode=unified: it dispatches
-// to SearchObjectsUnified and renders the unified row.
-func TestUIObjectsUnifiedRoute(t *testing.T) {
+// TestUISearchRunsOneRankedPath pins the merged page's single search path: a
+// query goes to SearchObjectsUnified (the fused, hydrated object leg) and never
+// to the retired fulltext/hybrid SearchObjects. The mode chooser is gone with
+// those paths, so a query has no mode to dispatch on at all.
+func TestUISearchRunsOneRankedPath(t *testing.T) {
 	f := &fakeMemory{
 		unifiedResults: []ObjectSearchResult{
 			{Object: GraphObject{ID: "c1", Type: "person", Key: "sam-lee"}, Score: 0.9},
@@ -2377,83 +2325,28 @@ func TestUIObjectsUnifiedRoute(t *testing.T) {
 	}
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
-	e.GET("/objects", s.uiObjects)
+	e.GET("/search", s.uiSearch)
 
 	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?q=sam&mode=unified", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search?q=sam", nil))
 	body := rec.Body.String()
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, body)
 	}
-	if !strings.Contains(body, "sam-lee") || !strings.Contains(body, "0.90") {
-		t.Errorf("unified search body missing result: %s", body)
+	if !strings.Contains(body, "sam-lee") {
+		t.Errorf("search body missing the object hit: %s", body)
 	}
-	if f.lastUnifiedQuery != "sam" || f.lastUnifiedLimit != 25 {
-		t.Errorf("unified search = %q/%d, want sam/25", f.lastUnifiedQuery, f.lastUnifiedLimit)
-	}
-	if f.lastSearchMode != "" {
-		t.Errorf("fulltext/hybrid SearchObjects must not run for unified mode, got mode %q", f.lastSearchMode)
-	}
-}
-
-// TestUIObjectsDefaultModeUnified pins the handler default: GET /objects?q=…
-// with no mode must dispatch the unified search (the split button's default),
-// not full-text. Previously an absent mode fell back to fulltext.
-func TestUIObjectsDefaultModeUnified(t *testing.T) {
-	f := &fakeMemory{
-		unifiedResults: []ObjectSearchResult{
-			{Object: GraphObject{ID: "o1", Type: "person", Key: "sam-lee"}, Score: 0.9},
-		},
-	}
-	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
-	e := echo.New()
-	e.GET("/objects", s.uiObjects)
-
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?q=sam", nil))
-	body := rec.Body.String()
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", rec.Code, body)
-	}
-	if f.lastUnifiedQuery != "sam" {
-		t.Errorf("omitted mode should dispatch unified search, got unified query %q", f.lastUnifiedQuery)
+	if f.lastUnifiedQuery != "sam" || f.lastUnifiedLimit != defaultSearchLimit {
+		t.Errorf("object leg = %q/%d, want sam/%d", f.lastUnifiedQuery, f.lastUnifiedLimit, defaultSearchLimit)
 	}
 	if f.lastSearchMode != "" {
-		t.Errorf("omitted mode must not dispatch fulltext/hybrid SearchObjects, got mode %q", f.lastSearchMode)
+		t.Errorf("the retired fulltext/hybrid SearchObjects must never run, got mode %q", f.lastSearchMode)
 	}
-	if !strings.Contains(body, "Unified Search") {
-		t.Errorf("default search body missing Unified Search label: %s", body)
+	if strings.Contains(body, `name="mode"`) {
+		t.Error("the page must not render a mode control")
 	}
-}
-
-// TestUIObjectsUnknownModeNormalized pins label/dispatch agreement at the
-// handler: an unsupported `mode` normalizes to unified, so the request does NOT
-// fall through to the full-text SearchObjects path and the rendered label says
-// "Unified Search".
-func TestUIObjectsUnknownModeNormalized(t *testing.T) {
-	f := &fakeMemory{
-		unifiedResults: []ObjectSearchResult{
-			{Object: GraphObject{ID: "o1", Type: "person", Key: "sam-lee"}, Score: 0.9},
-		},
-	}
-	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
-	e := echo.New()
-	e.GET("/objects", s.uiObjects)
-
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?q=sam&mode=bogus", nil))
-	body := rec.Body.String()
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", rec.Code, body)
-	}
-	if f.lastUnifiedQuery != "sam" {
-		t.Errorf("unsupported mode must normalize and dispatch unified, got unified query %q", f.lastUnifiedQuery)
-	}
-	if f.lastSearchMode != "" {
-		t.Errorf("unsupported mode must not fall through to fulltext SearchObjects, got mode %q", f.lastSearchMode)
-	}
-	if !strings.Contains(body, "Unified Search") {
-		t.Errorf("unsupported mode body missing normalized label: %s", body)
+	if strings.Contains(body, "Load more") {
+		t.Error("a query must not render Load more: it has no cursor pagination")
 	}
 }
 
@@ -2471,22 +2364,6 @@ func objectSearchFormHTML(t *testing.T, html string) string {
 		t.Fatal("objects search form close tag not found")
 	}
 	return rest[:j]
-}
-
-// firstSubmitTag returns the opening tag of the first submit button in html, so
-// tests can assert which mode the primary action submits without pinning the
-// full attribute order.
-func firstSubmitTag(html string) string {
-	const marker = `<button type="submit"`
-	i := strings.Index(html, marker)
-	if i < 0 {
-		return ""
-	}
-	rest := html[i:]
-	if j := strings.Index(rest, ">"); j >= 0 {
-		return rest[:j]
-	}
-	return rest
 }
 
 // TestRenderObjectsSearchFormLayout pins the /objects search row's layout
@@ -2570,8 +2447,8 @@ func TestUIObjectsKnowledge(t *testing.T) {
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, req)
 
-		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/objects" {
-			t.Fatalf("status=%d location=%q, want 303 /objects", rec.Code, rec.Header().Get("Location"))
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/search" {
+			t.Fatalf("status=%d location=%q, want 303 /search", rec.Code, rec.Header().Get("Location"))
 		}
 		if f.lastKnowledgeQ != "" {
 			t.Errorf("QueryKnowledge called for empty question: %q", f.lastKnowledgeQ)
@@ -2588,8 +2465,8 @@ func TestUIObjectsKnowledge(t *testing.T) {
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, req)
 
-		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/objects" {
-			t.Fatalf("status=%d location=%q, want 303 /objects", rec.Code, rec.Header().Get("Location"))
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/search" {
+			t.Fatalf("status=%d location=%q, want 303 /search", rec.Code, rec.Header().Get("Location"))
 		}
 		if f.lastKnowledgeQ != "" {
 			t.Errorf("QueryKnowledge called for whitespace-only question: %q", f.lastKnowledgeQ)
@@ -4716,6 +4593,37 @@ func TestObjectMutationInvalidatesLabelSuggestions(t *testing.T) {
 	})
 }
 
+// TestUIObjectsRedirectsToSearch pins the retirement of /objects: it is a
+// permanent redirect to /search (the single browse+search page), it carries the
+// query string so a bookmarked filter survives, and it drops `mode`, the one
+// parameter /search has no use for.
+func TestUIObjectsRedirectsToSearch(t *testing.T) {
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: &fakeMemory{}}
+	e := echo.New()
+	e.GET("/objects", s.uiObjects)
+
+	cases := []struct {
+		name, target, want string
+	}{
+		{"no query", "/objects", "/search"},
+		{"query forwarded", "/objects?q=boiler&type_name=Task", "/search?q=boiler&type_name=Task"},
+		{"mode dropped", "/objects?q=boiler&mode=objects", "/search?q=boiler"},
+		{"only mode", "/objects?mode=objects", "/search"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.target, nil))
+			if rec.Code != http.StatusMovedPermanently {
+				t.Fatalf("status = %d, want 301", rec.Code)
+			}
+			if got := rec.Header().Get("Location"); got != tc.want {
+				t.Errorf("Location = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestUIObjectChat(t *testing.T) {
 	newServer := func(f *fakeMemory) *Server { return &Server{cfg: Config{DefaultAgent: "memory"}, memory: f} }
 	newRouter := func(f *fakeMemory) (*Server, *echo.Echo) {
@@ -4744,12 +4652,18 @@ func TestUIObjectChat(t *testing.T) {
 	}
 	_, e := newRouter(f)
 
+	// An object chat opens empty. Memory get-or-creates the conversation by
+	// canonical id and stores no message; the object reaches the agent from the
+	// server's per-turn context appendix. So the deep link is the plain open
+	// link: no ?prompt= (an auto-sent turn is what ordered work on open) and no
+	// ?canonical= (the conversation is already bound to it).
 	rec := get(e, "/objects/o1/chat")
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want 303", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/chat?c=conv-9&agent=a1" {
-		t.Errorf("location = %q, want /chat?c=conv-9&agent=a1", loc)
+	loc := rec.Header().Get("Location")
+	if loc != "/chat?c=conv-9&agent=a1" {
+		t.Errorf("location = %q, want the plain open link", loc)
 	}
 	if f.convCanonicalID != "c1" {
 		t.Errorf("canonicalId = %q, want c1", f.convCanonicalID)
@@ -4757,9 +4671,33 @@ func TestUIObjectChat(t *testing.T) {
 	if f.convTitle != "sam-lee" {
 		t.Errorf("title = %q, want sam-lee", f.convTitle)
 	}
-	if !strings.Contains(f.convMessage, "Help me work with this knowledge-graph object.") {
-		t.Errorf("message = %q, want object instruction", f.convMessage)
+	if f.convMessage != "" {
+		t.Errorf("message = %q, want empty (an object chat seeds no turn)", f.convMessage)
 	}
+
+	// The conversation has run before: open it. Clicking the button again must
+	// not re-ask the agent, so no prompt/canonical is carried.
+	f.details = map[string]*ConversationDetail{
+		"conv-9": {ID: "conv-9", SessionID: "sess-1"},
+	}
+	rec = get(e, "/objects/o1/chat")
+	if got := rec.Header().Get("Location"); got != "/chat?c=conv-9&agent=a1" {
+		t.Errorf("already-run location = %q, want the plain open link", got)
+	}
+
+	// No canonical id: nothing for the per-turn appendix to resolve, so it takes
+	// the legacy seeded-instruction path and only opens the conversation (the
+	// instruction must not auto-send for an unlinked conversation).
+	f.details = nil
+	f.objects[0].CanonicalID = ""
+	rec = get(e, "/objects/o1/chat")
+	if got := rec.Header().Get("Location"); got != "/chat?c=conv-9&agent=a1" {
+		t.Errorf("no-canonical location = %q, want the plain open link", got)
+	}
+	if !strings.Contains(f.convMessage, "Help me work with this knowledge-graph object.") {
+		t.Errorf("no-canonical message = %q, want the object instruction", f.convMessage)
+	}
+	f.objects[0].CanonicalID = "c1"
 
 	// unknown object: fail-safe redirect back
 	rec = get(e, "/objects/nope/chat")
@@ -4777,7 +4715,7 @@ func TestUIObjectChat(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("no agent: status=%d", rec.Code)
 	}
-	loc := rec.Header().Get("Location")
+	loc = rec.Header().Get("Location")
 	if !strings.HasPrefix(loc, "/objects/o1?err=") {
 		t.Fatalf("no agent: location=%q, want /objects/o1?err=...", loc)
 	}
@@ -4804,6 +4742,69 @@ func TestUIObjectChat(t *testing.T) {
 	rec = get(e3, "/objects/o1/chat")
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/objects/o1" {
 		t.Fatalf("create err: status=%d location=%q", rec.Code, rec.Header().Get("Location"))
+	}
+
+	// Mixed deploy: a server that predates the object-context model rejects the
+	// empty message with 400 "message is required". That is the one failure worth
+	// falling back for, so the button keeps working — the conversation is seeded
+	// with the instruction and the deep link auto-sends it, as before. The fake
+	// only fails the first (empty) attempt.
+	legacyErr := &memoryHTTPError{Status: http.StatusBadRequest, Message: "message is required"}
+	f4 := &fakeMemory{
+		objects: []GraphObject{{ID: "o1", CanonicalID: "c1", Type: "person", Key: "sam-lee"}},
+		agents:  []AgentDefinitionSummary{{ID: "a1", Name: "diane", IsDefault: true, Enabled: true}},
+		defs: map[string]*AgentDefinition{
+			"a1": {ID: "a1", Name: "diane", Enabled: true, Tools: []string{"entity-update", "relationship-create"}},
+		},
+		createConvID:     "conv-9",
+		createConvErrSeq: []error{legacyErr},
+	}
+	_, e4 := newRouter(f4)
+	rec = get(e4, "/objects/o1/chat")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("legacy fallback: status = %d, want 303", rec.Code)
+	}
+	lu, lerr := url.Parse(rec.Header().Get("Location"))
+	if lerr != nil {
+		t.Fatalf("legacy fallback location %q does not parse: %v", rec.Header().Get("Location"), lerr)
+	}
+	if lu.Path != "/chat" {
+		t.Errorf("legacy fallback path = %q, want /chat", lu.Path)
+	}
+	if lu.Query().Get("canonical") != "c1" {
+		t.Errorf("legacy fallback canonical = %q, want c1", lu.Query().Get("canonical"))
+	}
+	if !strings.Contains(lu.Query().Get("prompt"), "Help me work with this knowledge-graph object.") {
+		t.Errorf("legacy fallback prompt = %q, want the object instruction", lu.Query().Get("prompt"))
+	}
+	if f4.convMessage != "" && !strings.Contains(f4.convMessage, "Help me work with this knowledge-graph object.") {
+		t.Errorf("legacy fallback message = %q, want empty or the instruction", f4.convMessage)
+	}
+}
+
+// TestIsMessageRequiredError pins the feature-detect that decides whether the
+// gateway falls back to the seeded-instruction object chat: only a 400 whose
+// message says the field is required. Any other failure must not silently
+// switch behaviour.
+func TestIsMessageRequiredError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"message is required", &memoryHTTPError{Status: http.StatusBadRequest, Message: "message is required"}, true},
+		{"capitalised", &memoryHTTPError{Status: http.StatusBadRequest, Message: "Message is required"}, true},
+		{"other 400", &memoryHTTPError{Status: http.StatusBadRequest, Message: "invalid canonicalId format"}, false},
+		{"same message, 500", &memoryHTTPError{Status: http.StatusInternalServerError, Message: "message is required"}, false},
+		{"plain error", fmt.Errorf("message is required"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isMessageRequiredError(tc.err); got != tc.want {
+				t.Errorf("isMessageRequiredError(%v) = %t, want %t", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -4840,22 +4841,22 @@ func TestRenderObjectBranchChip(t *testing.T) {
 			name:   "main",
 			branch: objectBranchRef{},
 			want:   []string{`data-testid="object-branch-chip"`, "main"},
-			absent: []string{`href="/objects?branch=`, "lucide--git-branch"},
+			absent: []string{`href="/search?branch=`, "lucide--git-branch"},
 		},
 		{
 			name:   "open",
 			branch: objectBranchRef{ID: "b1", Name: "extract-1"},
-			want:   []string{`data-testid="object-branch-chip"`, "extract-1", `href="/objects?branch=b1"`, "lucide--git-branch"},
+			want:   []string{`data-testid="object-branch-chip"`, "extract-1", `href="/search?branch=b1"`, "lucide--git-branch"},
 		},
 		{
 			name:   "merged",
 			branch: objectBranchRef{ID: "b2", Name: "extract-2", MergedAt: "2026-08-27T00:00:00Z"},
-			want:   []string{`data-testid="object-branch-chip"`, "extract-2", "merged", `href="/objects?branch=b2"`},
+			want:   []string{`data-testid="object-branch-chip"`, "extract-2", "merged", `href="/search?branch=b2"`},
 		},
 		{
 			name:   "unknown",
 			branch: objectBranchRef{ID: "missing"},
-			want:   []string{`data-testid="object-branch-chip"`, "missing", `href="/objects?branch=missing`},
+			want:   []string{`data-testid="object-branch-chip"`, "missing", `href="/search?branch=missing`},
 		},
 	}
 	for _, tc := range cases {
@@ -4926,7 +4927,98 @@ func TestResolveObjectSourceNames(t *testing.T) {
 	})
 }
 
-func TestRenderObjectSourceCard(t *testing.T) {
+// TestObjectRailMetadataGroupShared pins that the object Overview's right rail
+// is the wiki page's own Metadata group, not a lookalike: both pages must
+// contain the exact markup objectMetadataRail renders, so a change to one
+// sidebar cannot silently diverge from the other.
+func TestObjectRailMetadataGroupShared(t *testing.T) {
+	obj := &GraphObject{
+		ID: "11111111-1111-1111-1111-111111111111", CanonicalID: "11111111-1111-1111-1111-111111111111",
+		Type: "person", Name: "sam-lee", Key: "sam-lee", Version: 3,
+		EmbeddingStatus: "embedded", EmbeddingUpdatedAt: "2026-11-12T10:01:50Z",
+	}
+	branch := objectBranchRef{ID: "b1", Name: "extract-1"}
+
+	block := renderHTML(t, objectMetadataRail(obj, branch))
+	if !strings.Contains(block, ">Metadata</h2>") || !strings.Contains(block, `data-testid="object-record-facts"`) {
+		t.Fatalf("metadata block does not look like the rail group:\n%s", block)
+	}
+	// The group is the wiki's fact set: no Created (created_at is the version's
+	// timestamp, not the object's), and the type, branch, embedding, version and
+	// id are all present.
+	for _, want := range []string{"Type", "Branch", "extract-1", "Embedding", "Version", "v3", `11111111-1111-1111-1111-111111111111`} {
+		if !strings.Contains(block, want) {
+			t.Errorf("metadata block missing %q:\n%s", want, block)
+		}
+	}
+	if strings.Contains(block, "Created") {
+		t.Errorf("metadata block must not carry Created:\n%s", block)
+	}
+
+	wiki := renderHTML(t, objectWikiPage(objectWikiPageData{Obj: obj, Branch: branch, TypeLabel: "Person"}))
+	overview := renderHTML(t, ObjectDetailPage(objectDetailShellData{Obj: obj, Branch: branch}, nil, nil))
+	for name, page := range map[string]string{"wiki": wiki, "overview": overview} {
+		if !strings.Contains(page, block) {
+			t.Errorf("%s page does not render the shared metadata rail block:\n%s", name, page)
+		}
+	}
+	// The retired lookalikes must be gone from the Overview.
+	for _, gone := range []string{`data-testid="object-detail-badges"`, `data-testid="object-source-card"`} {
+		if strings.Contains(overview, gone) {
+			t.Errorf("overview still renders the retired %q:\n%s", gone, overview)
+		}
+	}
+}
+
+// TestObjectDetailRailStacksFirst pins the narrow-screen order: below xl the
+// grid collapses to one column, and the state rail (Metadata, Workflow,
+// Provenance) must come before the editable content rather than after it, so the
+// page does not open on a form with its version, branch and status below the
+// fold. At xl the source order is restored, putting the rail in the right column.
+func TestObjectDetailRailStacksFirst(t *testing.T) {
+	obj := &GraphObject{ID: "o1", Type: "note", Key: "Deed", Version: 2}
+	html := renderHTML(t, ObjectDetailPage(objectDetailShellData{Obj: obj}, nil, nil))
+
+	mainTag := tagOfClass(t, html, "order-2 flex min-w-0")
+	asideTag := tagOfClass(t, html, "order-1 flex min-w-0")
+	if !strings.Contains(mainTag, "xl:order-1") {
+		t.Errorf("content column should return to first at xl: %s", mainTag)
+	}
+	if !strings.Contains(asideTag, "xl:order-2") {
+		t.Errorf("rail should return to second at xl: %s", asideTag)
+	}
+	if strings.Index(html, asideTag) < strings.Index(html, mainTag) {
+		t.Error("the rail should be authored after the content; CSS order lifts it below xl only")
+	}
+}
+
+// tagOfClass returns the opening tag whose class attribute contains want.
+func tagOfClass(t *testing.T, html, want string) string {
+	t.Helper()
+	for _, open := range []string{"<div", "<aside"} {
+		idx := 0
+		for {
+			i := strings.Index(html[idx:], open)
+			if i < 0 {
+				break
+			}
+			start := idx + i
+			end := strings.Index(html[start:], ">")
+			if end < 0 {
+				break
+			}
+			tag := html[start : start+end+1]
+			if strings.Contains(tag, want) {
+				return tag
+			}
+			idx = start + len(open)
+		}
+	}
+	t.Fatalf("no opening tag with class fragment %q", want)
+	return ""
+}
+
+func TestRenderObjectProvenanceRail(t *testing.T) {
 	sources := []objectSource{
 		{
 			DocumentID:      "doc1",
@@ -4942,9 +5034,10 @@ func TestRenderObjectSourceCard(t *testing.T) {
 			JobID:           "",
 		},
 	}
-	html := renderHTML(t, objectSourceCard(sources))
+	html := renderHTML(t, objectProvenanceRail(&GraphObject{ID: "o1", Type: "note", DataClass: "source"}, sources, objectVersionProvenance{}))
 	for _, want := range []string{
-		`data-testid="object-source-card"`,
+		`data-testid="object-wiki-provenance"`,
+		`data-testid="object-wiki-provenance-class"`,
 		"Spec.md",
 		`href="/documents/doc1"`,
 		"v3",
@@ -4952,8 +5045,12 @@ func TestRenderObjectSourceCard(t *testing.T) {
 		`title="jobid1234567890"`,
 	} {
 		if !strings.Contains(html, want) {
-			t.Errorf("source card missing %q:\n%s", want, html)
+			t.Errorf("provenance rail missing %q:\n%s", want, html)
 		}
+	}
+	// A zero Provenance renders no write line: the source chain is all there is.
+	if strings.Contains(html, `data-testid="object-wiki-provenance-write"`) {
+		t.Errorf("zero provenance must not render a write line:\n%s", html)
 	}
 	// legacy fallback: unresolved name renders the short document id
 	if !strings.Contains(html, "doc2") {
@@ -4962,6 +5059,10 @@ func TestRenderObjectSourceCard(t *testing.T) {
 	// no job → no job link on the legacy row
 	if strings.Contains(html, `href="/documents/doc2/extractions"`) {
 		t.Errorf("source without a job must not render a job link:\n%s", html)
+	}
+	// Nothing to say → no group at all, so the rail never grows an empty heading.
+	if bare := renderHTML(t, objectProvenanceRail(&GraphObject{ID: "o1", Type: "note"}, nil, objectVersionProvenance{})); bare != "" {
+		t.Errorf("an object with no provenance must render nothing, got:\n%s", bare)
 	}
 }
 
@@ -5119,7 +5220,7 @@ func TestObjectDetailFromHandler(t *testing.T) {
 		t.Fatalf("invalid origin status = %d, want 200", rec.Code)
 	}
 	region = breadcrumbRegion(rec.Body.String())
-	if !strings.Contains(region, `href="/objects"`) || !strings.Contains(region, ">sam-lee<") {
+	if !strings.Contains(region, `href="/search"`) || !strings.Contains(region, ">sam-lee<") {
 		t.Errorf("invalid origin must fall back to Objects > <object>: %s", region)
 	}
 }
@@ -5652,10 +5753,10 @@ func TestUIObjectsCredentialScope(t *testing.T) {
 	}
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
-	e.GET("/objects", s.uiObjects)
+	e.GET("/search", s.uiSearch)
 
 	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?credential_id=tok-9&via=analyst", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search?credential_id=tok-9&via=analyst", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -5682,9 +5783,9 @@ func TestUIObjectsCredentialScope(t *testing.T) {
 	plain := &fakeMemory{pageObjects: []GraphObject{{ID: "o1", Type: "note"}}}
 	s2 := &Server{cfg: Config{DefaultAgent: "memory"}, memory: plain}
 	e2 := echo.New()
-	e2.GET("/objects", s2.uiObjects)
+	e2.GET("/search", s2.uiSearch)
 	rec2 := httptest.NewRecorder()
-	e2.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/objects?credential_id=tok-9", nil))
+	e2.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/search?credential_id=tok-9", nil))
 	if !strings.Contains(rec2.Body.String(), "an MCP share key") {
 		t.Error("anonymous credential scope must say it is an MCP share key")
 	}

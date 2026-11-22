@@ -94,6 +94,20 @@
     return false;
   })();
 
+  // canonicalParam is an object-chat deep link's canonical id: it lets the first
+  // auto-sent turn resolve memory's get-or-create conversation (?prompt= asks for
+  // a turn, `canonical` says which standing conversation it belongs to). Captured
+  // once at init like debugParam, because updateUrl() rewrites the /chat URL to
+  // just `?c=<id>` as soon as the server adopts the conversation — after that the
+  // id is redundant, so it is cleared with the conversation's arrival.
+  var canonicalParam = (function () {
+    try {
+      return new URLSearchParams(window.location.search || "").get("canonical") || "";
+    } catch (e) {
+      return "";
+    }
+  })();
+
   // --- agentic run-control state ---
   var liveRunId = "";       // active run id (refresh payload runId / newest run lifecycle item)
   var liveRunStatus = "";   // active run status (submitted/working/input-required/failed/…)
@@ -206,6 +220,10 @@
         var isNew = evt.conversationId !== conversationId && !railHas(evt.conversationId);
         var prevId = conversationId;
         conversationId = evt.conversationId;
+        // The deep link's canonical id has done its job: the conversation it
+        // resolved is now this page's scope, and every later turn threads the
+        // id instead.
+        canonicalParam = "";
         // The first turn stamped the start line optimistically; only a
         // conversation adopted without one needs a fallback instant.
         if (!chatStartedAt) updateSessionStart(new Date().toISOString());
@@ -253,6 +271,11 @@
     streamPayload: function (agent, text, surfaceAction) {
       var p = { agentDefinitionId: agent, message: text };
       if (conversationId) p.conversationId = conversationId;
+      // Only a first turn on a get-or-create (object-chat) conversation needs
+      // the canonical id: it is what makes memory resolve the conversation that
+      // was seeded for this object instead of starting another one. Cleared once
+      // the conversation is adopted (see onMeta).
+      else if (canonicalParam) p.canonicalId = canonicalParam;
       if (surfaceAction) p.surfaceAction = surfaceAction;
       if (modelSelect) {
         var m = modelSelect.value || "";
@@ -1052,6 +1075,9 @@
     replayFrames = [];
     transcriptReady = false;
     conversationId = "";
+    // A new chat is not the object-chat deep link's conversation: dropping the
+    // canonical id keeps the next turn from resolving back into it.
+    canonicalParam = "";
     updateSessionStart(""); // a fresh chat has no session-start line
     applyComposerSelection();
     activeRunId = "";

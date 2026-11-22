@@ -1332,8 +1332,8 @@ When a question requires a complete list ("how many", "list all", "which ones"):
 ## Versioning
 Entities are versioned. Each update creates a new version; the canonical ID stays constant across versions.
 - entity-query always returns the current (HEAD) version. Each entity in the response's data.entities carries a "version" field (integer, starting at 1).
-- To see all versions of an entity: call entity-history with the canonical entity_id. Returns [{version, physical_id, updated_at}, ...].
-- To fetch a specific historical version's properties: call entity-query with ids=[physical_id] (the physical_id from entity-history, NOT the canonical_id).` + "\n\n" + citationInstruction
+- To see all versions of an entity: call entity-history with the canonical entity_id. Returns [{version, physical_id, updated_at}, ...]. It is a history listing only: no properties.
+- entity-history does not return properties, and entity-query's ids[] resolves only live heads (a superseded physical_id comes back in missing_ids), so there is no tool call that reads an older version's properties. Say so if a question needs them, rather than calling entity-query with a stale physical_id.` + "\n\n" + citationInstruction
 
 // EnsureGraphQueryAgent returns the graph-query-agent for the project, creating it if it
 // does not exist yet. Uses VisibilityInternal so it never appears in the public list.

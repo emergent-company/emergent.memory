@@ -137,12 +137,13 @@ func TestObjectPreviewContentIdentity(t *testing.T) {
 }
 
 // TestObjectPreviewStatusPlacement pins where an object's status is read: a
-// type that declares a workflow shows the editable top-strip status picker and
-// does not repeat the mirrored status property in its type panel; a type with
-// no workflow shows its own declared status property in the type panel and no
-// workflow controls (the Scenario shape that prompted the fix).
+// type that declares a workflow shows the editable top-strip status picker, and
+// a `status` property is ordinary data that renders in the type panel beside it
+// — never folded away, because the two are different things. A type with no
+// workflow shows only its declared status property and no workflow controls
+// (the Scenario shape that prompted the fix).
 func TestObjectPreviewStatusPlacement(t *testing.T) {
-	t.Run("workflow type shows the status picker and hides the mirrored property", func(t *testing.T) {
+	t.Run("workflow type shows the picker beside the status property", func(t *testing.T) {
 		obj := &GraphObject{
 			Type: "Task", Key: "T-1", Status: "in_progress",
 			Properties: map[string]any{"status": "in_progress", "title": "Do it"},
@@ -164,8 +165,10 @@ func TestObjectPreviewStatusPlacement(t *testing.T) {
 		if strings.Contains(html, "Workflow status") {
 			t.Errorf("preview must not render a read-only Workflow status row:\n%s", html)
 		}
-		if strings.Contains(html, `title="status"`) {
-			t.Errorf("mirrored status property must not repeat in the type panel:\n%s", html)
+		// The status property is the object's own data, not a mirror of the work
+		// lane: it renders whatever the type declared, even beside a workflow.
+		if !strings.Contains(html, `title="status"`) {
+			t.Errorf("the declared status property must still render in the type panel:\n%s", html)
 		}
 		if !strings.Contains(html, "Do it") {
 			t.Errorf("type property missing:\n%s", html)
@@ -416,10 +419,12 @@ func TestObjectPreviewNotFound(t *testing.T) {
 	}
 }
 
-// TestObjectPreviewStatusHumanised pins the status-label contract: the preview
-// renders the humanised status (not the raw key) in the header badge, while
-// preserving the raw value for machine fidelity.
-func TestObjectPreviewStatusHumanised(t *testing.T) {
+// TestObjectPreviewNoWorkflowChrome pins the separation: an object whose type
+// declares no workflow renders no workflow chrome in the preview at all. Its
+// status is a schema property, so it can only appear as a property row — a
+// value in the work-status column can never masquerade as a workflow state
+// there.
+func TestObjectPreviewNoWorkflowChrome(t *testing.T) {
 	obj := &GraphObject{
 		ID:     "11111111-1111-1111-1111-111111111111",
 		Type:   "note",
@@ -428,14 +433,14 @@ func TestObjectPreviewStatusHumanised(t *testing.T) {
 	}
 	html := renderHTML(t, objectPreviewContent(obj, nil, "", objectPreviewSchema{}, nil))
 
-	if !strings.Contains(html, "In progress") {
-		t.Errorf("status should be humanised to 'In progress':\n%s", html)
+	if strings.Contains(html, `data-status=`) {
+		t.Errorf("a type with no workflow must not render a status badge:\n%s", html)
 	}
-	if !strings.Contains(html, `data-status="in_progress"`) {
-		t.Errorf("raw status must be preserved in data-status:\n%s", html)
+	if strings.Contains(html, "Workflow status") {
+		t.Errorf("a type with no workflow must not render a workflow row:\n%s", html)
 	}
 	if strings.Contains(html, ">in_progress<") {
-		t.Errorf("raw status key must not be rendered as a text label:\n%s", html)
+		t.Errorf("the status column must not be rendered as a label:\n%s", html)
 	}
 }
 

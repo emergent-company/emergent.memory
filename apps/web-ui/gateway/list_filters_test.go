@@ -19,18 +19,18 @@ func TestTargetsResultsRegion(t *testing.T) {
 		region string
 		want   bool
 	}{
-		{name: "no header is a document load", target: "", region: objectsResultsRegion, want: false},
-		{name: "tag and id", target: "div#objects-results", region: objectsResultsRegion, want: true},
-		{name: "bare id still matches", target: objectsResultsRegion, region: objectsResultsRegion, want: true},
+		{name: "no header is a document load", target: "", region: searchResultsRegion, want: false},
+		{name: "tag and id", target: "div#search-results", region: searchResultsRegion, want: true},
+		{name: "bare id still matches", target: searchResultsRegion, region: searchResultsRegion, want: true},
 		{name: "surrounding space is ignored", target: "  div#search-results ", region: searchResultsRegion, want: true},
-		{name: "another region", target: "div#documents-results", region: objectsResultsRegion, want: false},
-		{name: "a longer id is not a prefix match", target: "div#objects-results-footer", region: objectsResultsRegion, want: false},
-		{name: "the page shell is not a region", target: "div#main-content", region: objectsResultsRegion, want: false},
+		{name: "another region", target: "div#documents-results", region: searchResultsRegion, want: false},
+		{name: "a longer id is not a prefix match", target: "div#search-results-footer", region: searchResultsRegion, want: false},
+		{name: "the page shell is not a region", target: "div#main-content", region: searchResultsRegion, want: false},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "/objects", nil)
+			req := httptest.NewRequest("GET", "/search", nil)
 			if tc.target != "" {
 				req.Header.Set("HX-Target", tc.target)
 			}
@@ -46,13 +46,13 @@ func TestTargetsResultsRegion(t *testing.T) {
 // is shared by every list surface — so it should fail loudly here, once, rather
 // than silently in one view's markup.
 func TestListFilterAttrs(t *testing.T) {
-	region := regionFilterAttrs("/objects", objectsResultsRegion)
+	region := regionFilterAttrs("/search", searchResultsRegion)
 	for key, want := range map[string]string{
-		"hx-get":       "/objects", // the page URL, never a fragment route
-		"hx-target":    "#objects-results",
+		"hx-get":       "/search", // the page URL, never a fragment route
+		"hx-target":    "#search-results",
 		"hx-swap":      "outerHTML", // the region is replaced, not filled
 		"hx-push-url":  "true",
-		"hx-indicator": "#objects-results-loading",
+		"hx-indicator": "#search-results-loading",
 	} {
 		if got := region[key]; got != want {
 			t.Errorf("regionFilterAttrs()[%q] = %q, want %q", key, got, want)
@@ -62,7 +62,7 @@ func TestListFilterAttrs(t *testing.T) {
 	// Every list region drives the indicator its own region names, and every
 	// helper passes it through: without it htmx marks the control that fired the
 	// request, so a filter change shows no spinner (#744).
-	for _, region := range []string{objectsResultsRegion, documentsResultsRegion, searchResultsRegion, inboxResultsRegion} {
+	for _, region := range []string{documentsResultsRegion, searchResultsRegion, inboxResultsRegion} {
 		want := "#" + region + "-loading"
 		for name, attrs := range map[string]templ.Attributes{
 			"regionFilterAttrs":     regionFilterAttrs("/list", region),
@@ -78,7 +78,7 @@ func TestListFilterAttrs(t *testing.T) {
 
 	// A select-only filter applies on pick and on submit (the objects actor
 	// picker is a menu of submit buttons).
-	if got := filterFormAttrs("/objects", objectsResultsRegion)["hx-trigger"]; got != "change, submit" {
+	if got := filterFormAttrs("/search", searchResultsRegion)["hx-trigger"]; got != "change, submit" {
 		t.Errorf("filterFormAttrs hx-trigger = %q, want %q", got, "change, submit")
 	}
 

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -153,8 +152,8 @@ func TestObjectExcerptCardRenders(t *testing.T) {
 	if !strings.Contains(html, "A one-line summary.") {
 		t.Error("card must render the resolved excerpt")
 	}
-	if strings.Count(html, `line-clamp-3`) != 1 {
-		t.Errorf("excerpt clamp = %d, want only the object with prose to carry one", strings.Count(html, "line-clamp-3"))
+	if strings.Count(html, `line-clamp-2`) != 1 {
+		t.Errorf("excerpt clamp = %d, want only the object with prose to carry one", strings.Count(html, "line-clamp-2"))
 	}
 }
 
@@ -172,11 +171,8 @@ func TestObjectArticleLeadAndBodySplit(t *testing.T) {
 		if prose.LeadKey != "summary" || prose.BodyKey != "content" {
 			t.Errorf("consumed keys = %q/%q", prose.LeadKey, prose.BodyKey)
 		}
-		if !strings.Contains(prose.BodyHTML, "<h2 id=\"history\">History</h2>") {
-			t.Errorf("body must render markdown headings with ids: %q", prose.BodyHTML)
-		}
-		if len(prose.Headings) != 2 || prose.Headings[0].Text != "History" || prose.Headings[1].Text != "Notes" {
-			t.Errorf("headings = %+v", prose.Headings)
+		if !strings.Contains(prose.BodyHTML, "<h2>History</h2>") || !strings.Contains(prose.BodyHTML, "<h2>Notes</h2>") {
+			t.Errorf("body must render the markdown headings: %q", prose.BodyHTML)
 		}
 	})
 
@@ -209,8 +205,8 @@ func TestObjectArticleLeadAndBodySplit(t *testing.T) {
 		if !strings.Contains(prose.BodyHTML, "More text.") {
 			t.Errorf("body must keep the rest: %q", prose.BodyHTML)
 		}
-		if len(prose.Headings) != 1 || prose.Headings[0].ID != "details" {
-			t.Errorf("headings = %+v", prose.Headings)
+		if !strings.Contains(prose.BodyHTML, "<h2>Details</h2>") {
+			t.Errorf("body must keep the heading tree: %q", prose.BodyHTML)
 		}
 	})
 
@@ -254,8 +250,8 @@ func TestObjectArticleLeadAndBodySplit(t *testing.T) {
 			if strings.Contains(prose.BodyHTML, "The opening paragraph.") {
 				t.Errorf("%s: the promoted lead must not repeat in the body: %q", key, prose.BodyHTML)
 			}
-			if len(prose.Headings) != 1 || prose.Headings[0].ID != "detail" {
-				t.Errorf("%s: headings = %+v", key, prose.Headings)
+			if !strings.Contains(prose.BodyHTML, "<h2>Detail</h2>") {
+				t.Errorf("%s: the promoted body must keep its heading tree: %q", key, prose.BodyHTML)
 			}
 		}
 	})
@@ -278,44 +274,19 @@ func TestObjectArticleLeadAndBodySplit(t *testing.T) {
 
 	t.Run("no prose", func(t *testing.T) {
 		prose := objectArticleFor(GraphObject{Properties: map[string]any{"count": 1}}, nil)
-		if prose.Lead != "" || prose.BodyHTML != "" || len(prose.Headings) != 0 {
+		if prose.Lead != "" || prose.BodyHTML != "" {
 			t.Errorf("expected empty prose, got %+v", prose)
 		}
 	})
 }
 
-func TestRenderArticleMarkdownHeadingIDs(t *testing.T) {
-	html, headings := renderArticleMarkdown("## Why\n\nA.\n\n## Why\n\nB.\n\n### Deep dive\n\nC.")
-
-	if len(headings) != 3 {
-		t.Fatalf("headings = %+v, want 3", headings)
-	}
-	wantIDs := []string{"why", "why-2", "deep-dive"}
-	for i, want := range wantIDs {
-		if headings[i].ID != want {
-			t.Errorf("heading %d id = %q, want %q", i, headings[i].ID, want)
-		}
-		if !strings.Contains(html, `id="`+want+`"`) {
-			t.Errorf("rendered body missing id %q: %s", want, html)
-		}
-	}
-	if headings[2].Level != 3 {
-		t.Errorf("level = %d, want 3", headings[2].Level)
-	}
-	// Headings keep their text; only the tag gains an id.
-	if !strings.Contains(html, ">Why<") || !strings.Contains(html, ">Deep dive<") {
-		t.Errorf("heading text lost: %s", html)
-	}
-
-	// Empty markdown renders nothing rather than an empty wrapper.
-	if html, headings := renderArticleMarkdown("   \n"); html != "" || headings != nil {
-		t.Errorf("blank body = %q / %+v, want empty", html, headings)
-	}
-}
-
 // --- wiki page ---------------------------------------------------------------
 
-func TestObjectWikiPageArticleVariant(t *testing.T) {
+// TestObjectWikiPageLayout pins the wiki's one layout: a content head, the prose
+// overview, the type's key facts, then one section per relationship group, with
+// the facts a reader cannot find elsewhere in the details rail. There is no
+// variant switch: the retired article layout must not render, in any form.
+func TestObjectWikiPageLayout(t *testing.T) {
 	obj := &GraphObject{
 		ID: "o1", CanonicalID: "o1", Type: "note", Key: "Deed", Version: 3,
 		Labels:     []string{"land"},
@@ -323,7 +294,6 @@ func TestObjectWikiPageArticleVariant(t *testing.T) {
 	}
 	data := objectWikiPageData{
 		Obj:       obj,
-		View:      objectWikiViewArticle,
 		PropDefs:  []objectPropertyDef{{Name: "owner", Title: "Owner", Type: "string"}},
 		TypeLabel: "Note",
 		EdgeCount: 2,
@@ -336,57 +306,65 @@ func TestObjectWikiPageArticleVariant(t *testing.T) {
 		`<h1`,
 		`Deed`,
 		`data-testid="object-ref"`,
-		`data-testid="object-wiki-article"`,
+		`data-testid="object-wiki-page"`,
 		`data-testid="object-lead">A short lead.<`,
 		`data-testid="object-body"`,
-		`<h2 id="history">History</h2>`,
-		`<h2 id="notes">Notes</h2>`,
-		`On this page`,
-		`href="#history"`,
-		`href="#notes"`,
-		// The article variant is reading-only: Edit opens the object's own page.
-		`href="/objects/o1"`,
-		`data-testid="object-wiki-edit"`,
-		// Chat is the third read-only link out of the wiki (with Edit and
-		// History): the object's own chat page, not an embedded composer.
-		`data-testid="object-wiki-chat"`,
-		`href="/objects/o1/chat"`,
-		// History lives in the shared details rail, not a page-action row, so
-		// both variants carry it exactly once.
-		`>History</h2>`,
-		`href="/objects/o1/history"`,
-		`Note Properties`,
+		`<h2>History</h2>`,
+		`<h2>Notes</h2>`,
+		// The key facts are the layout's property surface, titled from the type.
+		`data-testid="object-wiki-key-facts"`,
+		`>Note Properties<`,
 		`>Owner<`,
 		`Ada Lovelace`,
+		// Reading-only: Edit opens the object's own page, Chat its chat page.
+		`href="/objects/o1"`,
+		`data-testid="object-wiki-edit"`,
+		`data-testid="object-wiki-chat"`,
+		`href="/objects/o1/chat"`,
+		// History lives in the details rail, exactly once.
+		`href="/objects/o1/history"`,
 		`2 relationships`,
-		// Both variants are always offered by the switch.
-		`data-testid="object-wiki-view-article"`,
-		`data-testid="object-wiki-view-page"`,
-		`href="/objects/o1/wiki?view=page"`,
-		// The switch is icon-only, so each option carries an accessible name and
-		// the active one announces itself.
-		`aria-label="Article view"`,
-		`aria-label="Object page view"`,
+		`>Labels<`,
+		`land`,
 	} {
 		if !strings.Contains(html, want) {
-			t.Errorf("article variant missing %q", want)
+			t.Errorf("wiki page missing %q", want)
 		}
 	}
 
+	// The variant switch and the article layout are gone.
+	for _, unwanted := range []string{
+		`data-testid="object-wiki-article"`,
+		`data-testid="object-wiki-view-article"`,
+		`data-testid="object-wiki-view-page"`,
+		`aria-label="Article view"`,
+		`aria-label="Object page view"`,
+		`On this page`,
+		`?view=`,
+		`wiki_view=`,
+	} {
+		if strings.Contains(html, unwanted) {
+			t.Errorf("retired variant machinery rendered: %q", unwanted)
+		}
+	}
+	if got := strings.Count(html, `aria-current="page"`); got != 0 {
+		t.Errorf("aria-current rendered %d times, want none (no active variant)", got)
+	}
+
 	// The wiki has no page chrome: no breadcrumb trail (the reader arrives from
-	// a list, not from a hierarchy), no action button row.
+	// a list, not from a hierarchy), no action button row, no edit form.
 	if strings.Contains(html, "breadcrumbs") {
 		t.Error("the wiki must not render a breadcrumb trail")
 	}
-	// Exactly one option is current, and the article variant renders in it.
-	if got := strings.Count(html, `aria-current="page"`); got != 1 {
-		t.Errorf("aria-current rendered %d times, want once (one active variant)", got)
+	if strings.Contains(html, `action="/objects/o1"`) {
+		t.Error("the wiki is read-only and must never render the edit form")
 	}
+
 	// The head reads like a browse card: type icon on the left, the type/ref
 	// identity line first, the object's name second, and no separate type badge.
-	head, _, ok := strings.Cut(html, `data-testid="object-wiki-article"`)
+	head, _, ok := strings.Cut(html, `data-testid="object-wiki-page"`)
 	if !ok {
-		t.Fatal("missing the article variant marker")
+		t.Fatal("missing the wiki page marker")
 	}
 	if got := strings.Count(head, `data-testid="object-wiki-identity"`); got != 1 {
 		t.Errorf("identity line rendered %d times in the head, want 1", got)
@@ -401,16 +379,9 @@ func TestObjectWikiPageArticleVariant(t *testing.T) {
 		t.Error("the wiki head must not render the type as a badge")
 	}
 
-	// The article's prose is not repeated in the details rail.
+	// The prose is not repeated in the details rail.
 	if got := strings.Count(html, "A short lead."); got != 1 {
 		t.Errorf("lead rendered %d times, want once (the rail must skip the consumed property)", got)
-	}
-	// The article variant does not render the object-page layout.
-	if strings.Contains(html, `data-testid="object-wiki-page"`) {
-		t.Error("the article variant must not render the object-page layout")
-	}
-	if strings.Contains(html, `action="/objects/o1"`) {
-		t.Error("the wiki is read-only and must never render the edit form")
 	}
 }
 
@@ -425,7 +396,6 @@ func TestObjectWikiPageObjectVariant(t *testing.T) {
 	}
 	data := objectWikiPageData{
 		Obj:       obj,
-		View:      objectWikiViewPage,
 		TypeLabel: "Note",
 		PropDefs:  []objectPropertyDef{{Name: "owner", Title: "Owner", Type: "string"}},
 		EdgeCount: 1,
@@ -447,7 +417,9 @@ func TestObjectWikiPageObjectVariant(t *testing.T) {
 		`data-testid="object-wiki-head"`,
 		`data-testid="object-wiki-page"`,
 		`data-testid="object-wiki-key-facts"`,
-		`Key facts`,
+		// The property card is titled from the type label, the same heading the
+		// rail and the editor's card use.
+		`>Note Properties<`,
 		`>Owner<`,
 		`Ada Lovelace`,
 		`Overview`,
@@ -456,15 +428,28 @@ func TestObjectWikiPageObjectVariant(t *testing.T) {
 		`>Tasks<`,
 		`data-testid="object-wiki-relation-row"`,
 		`Fix the roof`,
-		// Neighbour links stay in the wiki, in the variant being read.
-		`href="/objects/n1/wiki?view=page"`,
+		// Neighbour links stay in the wiki.
+		`href="/objects/n1/wiki"`,
 		`Leaky after the storm.`,
-		`Relationships by type`,
+		// One relationships rail in the page view: the by-type breakdown, under
+		// the plain "Relationships" heading.
+		`>Relationships<`,
 		`All 1 relationships`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("object-page variant missing %q", want)
 		}
+	}
+	if strings.Contains(html, "Relationships by type") {
+		t.Error("the page view renders one relationships rail, so the by-type title must be gone")
+	}
+	// The rail must not repeat the property list the body card already carries:
+	// one value, one place.
+	if strings.Contains(html, `id="object-wiki-rail-facts"`) {
+		t.Error("the page view's rail must not repeat the body card's properties")
+	}
+	if got := strings.Count(html, `data-empties-toggle=`); got > 1 {
+		t.Errorf("page view carries %d fold-empty controls, want at most the body card's", got)
 	}
 	// Feedback on this row (#763): the type tile sits on the identity line, not
 	// centred against the two-line excerpt the row carries.
@@ -481,9 +466,13 @@ func TestObjectWikiPageObjectVariant(t *testing.T) {
 		t.Errorf("History rail link rendered %d times, want once", got)
 	}
 	// The Source rail labels itself: the row renders inside the rail, not as a
-	// second "Source" card with its own heading.
-	if got := strings.Count(html, ">Source</h2>"); got != 1 {
-		t.Errorf("Source rail rendered %d times, want once", got)
+	// second "Source" card with its own heading. Since the provenance group
+	// absorbed the sources, that heading is the group's.
+	if got := strings.Count(html, ">Provenance</h2>"); got != 1 {
+		t.Errorf("provenance group rendered %d times, want once", got)
+	}
+	if strings.Contains(html, ">Source</h2>") {
+		t.Error("the source rows belong to the provenance group, not to a second block")
 	}
 	if !strings.Contains(html, "Kickoff.pdf") {
 		t.Error("object-page variant missing the source document row")
@@ -500,9 +489,6 @@ func TestObjectWikiPageObjectVariant(t *testing.T) {
 	if strings.Contains(html, "breadcrumbs") {
 		t.Error("the wiki must not render a breadcrumb trail")
 	}
-	if strings.Contains(html, `data-testid="object-wiki-article"`) {
-		t.Error("the object-page variant must not render the article layout")
-	}
 }
 
 // TestObjectWikiRelationRowAlignsTallRowsOnly pins the #763 delta: a row opts
@@ -511,8 +497,7 @@ func TestObjectWikiPageObjectVariant(t *testing.T) {
 // mixed group must therefore render both alignments.
 func TestObjectWikiRelationRowAlignsTallRowsOnly(t *testing.T) {
 	data := objectWikiPageData{
-		Obj:  &GraphObject{ID: "o1", CanonicalID: "o1", Type: "note", Key: "Deed"},
-		View: objectWikiViewPage,
+		Obj: &GraphObject{ID: "o1", CanonicalID: "o1", Type: "note", Key: "Deed"},
 		Sections: []objectViewSection{{
 			Title: "Tasks",
 			Rows: []objectViewItem{
@@ -547,25 +532,6 @@ func TestObjectWikiRelationRowAlignsTallRowsOnly(t *testing.T) {
 	}
 }
 
-func TestObjectWikiPageEmptyProseState(t *testing.T) {
-	obj := &GraphObject{ID: "o1", Type: "note", Key: "Bare"}
-	html := renderHTML(t, objectWikiPage(objectWikiPageData{Obj: obj, View: objectWikiViewArticle}))
-
-	if !strings.Contains(html, `data-testid="object-wiki-empty"`) {
-		t.Error("an object with no prose must render the empty state")
-	}
-	if !strings.Contains(html, "No description yet") {
-		t.Error("the empty state must say what is missing")
-	}
-	if strings.Contains(html, "On this page") {
-		t.Error("a page with no headings must not render an empty table of contents")
-	}
-}
-
-// TestObjectWikiPageOverviewLeads pins the object-page variant's order: the
-// overview opens the page (a reader arriving from a list wants to know what the
-// object is before reading its fields), key facts follow it, and relationship
-// sections come last.
 func TestObjectWikiPageOverviewLeads(t *testing.T) {
 	obj := &GraphObject{
 		ID: "o1", Type: "note", Key: "Deed",
@@ -573,7 +539,7 @@ func TestObjectWikiPageOverviewLeads(t *testing.T) {
 	}
 	data := objectWikiPageData{
 		Obj:       obj,
-		View:      objectWikiViewPage,
+		TypeLabel: "Note",
 		PropDefs:  []objectPropertyDef{{Name: "owner", Title: "Owner", Type: "string"}},
 		EdgeCount: 1,
 		Sections: []objectViewSection{{
@@ -586,13 +552,13 @@ func TestObjectWikiPageOverviewLeads(t *testing.T) {
 	html := renderHTML(t, objectWikiPage(data))
 
 	overview := strings.Index(html, `>Overview<`)
-	facts := strings.Index(html, `>Key facts<`)
+	facts := strings.Index(html, `>Note Properties<`)
 	relations := strings.Index(html, `data-testid="object-wiki-section"`)
 	if overview < 0 || facts < 0 || relations < 0 {
 		t.Fatalf("object-page variant missing a block (overview=%d facts=%d relations=%d)", overview, facts, relations)
 	}
 	if overview >= facts || facts >= relations {
-		t.Errorf("order must be overview → key facts → relationships, got overview=%d facts=%d relations=%d", overview, facts, relations)
+		t.Errorf("order must be overview → type properties → relationships, got overview=%d facts=%d relations=%d", overview, facts, relations)
 	}
 	if !strings.Contains(html, `data-testid="object-lead">A short lead.<`) {
 		t.Error("the overview must carry the object's prose")
@@ -603,9 +569,9 @@ func TestObjectWikiPageOverviewLeads(t *testing.T) {
 	// page instead.
 	bare := &GraphObject{ID: "o2", Type: "note", Key: "Bare", Properties: map[string]any{"owner": "Ada Lovelace"}}
 	bareHTML := renderHTML(t, objectWikiPage(objectWikiPageData{
-		Obj:      bare,
-		View:     objectWikiViewPage,
-		PropDefs: data.PropDefs,
+		Obj:       bare,
+		TypeLabel: data.TypeLabel,
+		PropDefs:  data.PropDefs,
 	}))
 	if strings.Contains(bareHTML, `>Overview<`) {
 		t.Errorf("an object with no prose must not render an Overview heading:\n%s", bareHTML)
@@ -613,15 +579,18 @@ func TestObjectWikiPageOverviewLeads(t *testing.T) {
 	if strings.Contains(bareHTML, `data-testid="object-wiki-empty"`) {
 		t.Error("the object-page variant must omit the overview, not render its empty state")
 	}
-	if !strings.Contains(bareHTML, `>Key facts<`) {
-		t.Error("the page must still start with the record's facts")
+	if !strings.Contains(bareHTML, `>Note Properties<`) {
+		t.Error("the page must still start with the type's properties")
 	}
 }
 
 // TestUIObjectWikiVariants pins the handler wiring: the wiki defaults to the
 // article, ?view=page renders the object page and persists the choice, and a
 // later request without the query reads the persisted variant from the cookie.
-func TestUIObjectWikiVariants(t *testing.T) {
+// TestUIObjectWikiRetiredViewParams pins the wiki's handler: it renders the one
+// layout, and a request that still carries a retired variant selector is
+// redirected to the bare URL rather than silently served a different page.
+func TestUIObjectWikiRetiredViewParams(t *testing.T) {
 	compiled := &CompiledSchemaTypes{ObjectTypes: []CompiledType{{Name: "Note", Label: "Note"}}}
 	f := &fakeMemory{
 		compiled: compiled,
@@ -639,39 +608,29 @@ func TestUIObjectWikiVariants(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), `data-testid="object-wiki-article"`) {
-		t.Error("the wiki must default to the article variant")
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-testid="object-wiki-page"`) {
+		t.Error("the wiki must render the object-page layout")
+	}
+	if strings.Contains(body, `data-testid="object-wiki-view-`) {
+		t.Error("the wiki must not render a variant switch")
+	}
+	if len(rec.Result().Cookies()) != 0 {
+		t.Errorf("the wiki must not set a view cookie, got %v", rec.Result().Cookies())
 	}
 
-	rec = httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/o1/wiki?view=page", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), `data-testid="object-wiki-page"`) {
-		t.Error("?view=page must render the object-page variant")
-	}
-	persisted := false
-	for _, cookie := range rec.Result().Cookies() {
-		if cookie.Name == objectWikiViewCookie && cookie.Value == objectWikiViewPage {
-			persisted = true
+	for _, legacy := range []string{"/objects/o1/wiki?view=page", "/objects/o1/wiki?view=article", "/objects/o1/wiki?wiki_view=article"} {
+		rec = httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, legacy, nil))
+		if rec.Code != http.StatusMovedPermanently {
+			t.Errorf("GET %s = %d, want a 301", legacy, rec.Code)
 		}
-	}
-	if !persisted {
-		t.Error("an explicit variant must be persisted as a cookie")
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/objects/o1/wiki", nil)
-	req.AddCookie(&http.Cookie{Name: objectWikiViewCookie, Value: objectWikiViewPage})
-	rec = httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-	if !strings.Contains(rec.Body.String(), `data-testid="object-wiki-page"`) {
-		t.Error("the persisted variant must be used when the query omits it")
+		if loc := rec.Header().Get("Location"); loc != "/objects/o1/wiki" {
+			t.Errorf("GET %s redirected to %q, want the bare wiki URL", legacy, loc)
+		}
 	}
 }
 
-// TestUIObjectPageStaysClassic pins the revert: the object's own route is still
-// the editable page, with the form on screen and no wiki layout.
 func TestUIObjectPageStaysClassic(t *testing.T) {
 	compiled := &CompiledSchemaTypes{ObjectTypes: []CompiledType{{Name: "Note", Label: "Note"}}}
 	f := &fakeMemory{
@@ -699,175 +658,17 @@ func TestUIObjectPageStaysClassic(t *testing.T) {
 	}
 }
 
-// TestUIObjectWikiSwitchRoundTrip pins the variant switch as a *control*: going
-// to the object page and back to the article must both work, even though the
-// chosen variant is persisted as a cookie.
-//
-// A control link that omits the default variant is read back from that cookie,
-// which made the switch look one-way: the article option's href was
-// /objects/{id}/wiki, the cookie still said "page", and clicking it re-rendered
-// the page. So control links spell the variant out (objectWikiControlHref) while
-// card links keep the short default form (objectWikiHref).
-func TestUIObjectWikiSwitchRoundTrip(t *testing.T) {
-	compiled := &CompiledSchemaTypes{ObjectTypes: []CompiledType{{Name: "Note", Label: "Note"}}}
-	f := &fakeMemory{
-		compiled: compiled,
-		objects: []GraphObject{{
-			ID: "o1", CanonicalID: "o1", Type: "Note", Key: "Deed", Version: 2,
-			Properties: map[string]any{"summary": "A short lead."},
-		}},
+// TestObjectWikiHref pins the one link helper every surface uses: the canonical
+// wiki URL, with no retired variant selector attached.
+func TestObjectWikiHref(t *testing.T) {
+	if got := objectWikiHref("o1"); got != "/objects/o1/wiki" {
+		t.Errorf("objectWikiHref(o1) = %q, want /objects/o1/wiki", got)
 	}
-	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
-	e := echo.New()
-	e.GET("/objects/:id/wiki", s.uiObjectWiki)
-
-	var cookie *http.Cookie
-	get := func(url string) string {
-		t.Helper()
-		req := httptest.NewRequest(http.MethodGet, url, nil)
-		if cookie != nil {
-			req.AddCookie(cookie)
-		}
-		rec := httptest.NewRecorder()
-		e.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("GET %s = %d, want 200", url, rec.Code)
-		}
-		for _, c := range rec.Result().Cookies() {
-			if c.Name == objectWikiViewCookie {
-				cookie = c
-			}
-		}
-		return rec.Body.String()
-	}
-	switchHref := func(html, view string) string {
-		t.Helper()
-		re := regexp.MustCompile(`href="([^"]*)"[^>]*data-testid="object-wiki-view-` + view + `"`)
-		m := re.FindStringSubmatch(html)
-		if m == nil {
-			t.Fatalf("no %s switch link", view)
-		}
-		return m[1]
-	}
-
-	// Default article, then to the object page.
-	if body := get("/objects/o1/wiki"); !strings.Contains(body, `data-testid="object-wiki-article"`) {
-		t.Fatal("the wiki must default to the article variant")
-	}
-	body := get("/objects/o1/wiki?view=page")
-	if !strings.Contains(body, `data-testid="object-wiki-page"`) {
-		t.Fatal("?view=page must render the object page")
-	}
-
-	// Back to the article. The persisted cookie must not win over the control.
-	articleHref := switchHref(body, "article")
-	if !strings.Contains(articleHref, "view=article") {
-		t.Errorf("the article control must spell its variant out, got %q", articleHref)
-	}
-	body = get(articleHref)
-	if !strings.Contains(body, `data-testid="object-wiki-article"`) {
-		t.Error("switching back to the article re-rendered the object page")
-	}
-	if strings.Contains(body, `data-testid="object-wiki-page"`) {
-		t.Error("the article variant must not render the object-page layout")
-	}
-
-	// And forward again, so neither direction is one-way.
-	pageHref := switchHref(body, "page")
-	if !strings.Contains(pageHref, "view=page") {
-		t.Errorf("the object-page control must spell its variant out, got %q", pageHref)
-	}
-	if body = get(pageHref); !strings.Contains(body, `data-testid="object-wiki-page"`) {
-		t.Error("switching to the object page did not render it")
+	if got := objectWikiHref("a/b"); got != "/objects/a%2Fb/wiki" {
+		t.Errorf("objectWikiHref must escape the id, got %q", got)
 	}
 }
 
-// TestObjectWikiViewPreference pins the resolution order the switch depends on:
-// an explicit query parameter beats the persisted cookie, and an unrecognised
-// value never renders an empty page.
-func TestObjectWikiViewPreference(t *testing.T) {
-	pref := func(url string, cookie string) (string, bool) {
-		t.Helper()
-		req := httptest.NewRequest(http.MethodGet, url, nil)
-		if cookie != "" {
-			req.AddCookie(&http.Cookie{Name: objectWikiViewCookie, Value: cookie})
-		}
-		e := echo.New()
-		var got string
-		var explicit bool
-		e.GET("/w", func(c echo.Context) error {
-			got, explicit = objectWikiViewPreference(c)
-			return c.NoContent(http.StatusNoContent)
-		})
-		rec := httptest.NewRecorder()
-		e.ServeHTTP(rec, req)
-		if rec.Code != http.StatusNoContent {
-			t.Fatalf("handler not reached for %s", url)
-		}
-		return got, explicit
-	}
-
-	cases := []struct {
-		name     string
-		url      string
-		cookie   string
-		want     string
-		explicit bool
-	}{
-		{"no preference", "/w", "", objectWikiViewArticle, false},
-		{"cookie page", "/w", objectWikiViewPage, objectWikiViewPage, false},
-		{"query page wins over cookie", "/w?view=page", objectWikiViewArticle, objectWikiViewPage, true},
-		{"query article wins over cookie", "/w?view=article", objectWikiViewPage, objectWikiViewArticle, true},
-		{"browse-side parameter", "/w?wiki_view=page", "", objectWikiViewPage, true},
-		{"query beats the browse-side parameter", "/w?view=article&wiki_view=page", "", objectWikiViewArticle, true},
-		{"unknown value falls back to the article", "/w?view=nonsense", "", objectWikiViewArticle, true},
-		{"case-insensitive", "/w?view=PAGE", "", objectWikiViewPage, true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got, explicit := pref(tc.url, tc.cookie)
-			if got != tc.want || explicit != tc.explicit {
-				t.Errorf("preference = (%q, %v), want (%q, %v)", got, explicit, tc.want, tc.explicit)
-			}
-		})
-	}
-}
-
-// TestObjectWikiHrefForms pins the two href shapes: a card link omits the default
-// variant, a control link always names one.
-func TestObjectWikiHrefForms(t *testing.T) {
-	if got := objectWikiHref("o1", objectWikiViewArticle); got != "/objects/o1/wiki" {
-		t.Errorf("default card link = %q, want the short form", got)
-	}
-	if got := objectWikiHref("o1", ""); got != "/objects/o1/wiki" {
-		t.Errorf("no-opinion link = %q, want the reader's variant to decide", got)
-	}
-	if got := objectWikiHref("o1", objectWikiViewPage); got != "/objects/o1/wiki?view=page" {
-		t.Errorf("object-page card link = %q", got)
-	}
-	if got := objectWikiControlHref("o1", objectWikiViewArticle); got != "/objects/o1/wiki?view=article" {
-		t.Errorf("article control link = %q, want the variant spelled out", got)
-	}
-	if got := objectWikiControlHref("o1", objectWikiViewPage); got != "/objects/o1/wiki?view=page" {
-		t.Errorf("object-page control link = %q", got)
-	}
-
-	// The browse-side switch always names its variant, so switching back to the
-	// article persists a choice instead of reading the old one back.
-	data := objectsPageData{TypeFilter: "task"}
-	if got := objectsWikiViewHref(data, objectWikiViewArticle); !strings.Contains(got, "wiki_view=article") || !strings.Contains(got, "type=task") {
-		t.Errorf("browse switch link = %q, want wiki_view=article and the active filter", got)
-	}
-	if got := objectsWikiViewHref(objectsPageData{}, objectWikiViewPage); got != "?wiki_view=page" {
-		t.Errorf("bare browse switch link = %q", got)
-	}
-}
-
-// TestObjectArticleExplicitMarkdownBody pins the explicit content type on the
-// object page: a property the schema declares `format: markdown` is the body
-// even when its key is not among the article's conventional body names, and it
-// wins over one that is. A format declared on a non-string type is ignored, so
-// the page falls back to the conventional keys exactly as before.
 func TestObjectArticleExplicitMarkdownBody(t *testing.T) {
 	markdownDef := func(name string) objectPropertyDef {
 		return objectPropertyDef{Name: name, Type: "string", Format: "markdown"}
@@ -933,4 +734,281 @@ func TestObjectArticleExplicitMarkdownBody(t *testing.T) {
 			t.Fatalf("body key = %q, want the conventional fallback", prose.BodyKey)
 		}
 	})
+}
+
+// TestObjectWikiFoldsEmptyProperties pins the property surfaces' folded state.
+// Each view lists the type's properties exactly once — the page view in its body
+// card, the article view in the rail, because its prose has already consumed the
+// summary — so each carries one eye, one data-empty row and one folded row. The
+// eye only renders when something is filled and something is not. A page whose
+// fields are all unset folds nothing: the list still names the declared fields
+// rather than rendering an empty table.
+// TestObjectWikiFoldsEmptyProperties pins the property surface's folded state.
+// The page lists the type's properties exactly once, in its key-facts table, so
+// it carries one eye, one data-empty row and one folded row. The eye only
+// renders when something is filled and something is not. A page whose fields are
+// all unset folds nothing: the list still names the declared fields rather than
+// rendering an empty table.
+func TestObjectWikiFoldsEmptyProperties(t *testing.T) {
+	newPage := func(props map[string]any) objectWikiPageData {
+		obj := GraphObject{ID: "o1", Type: "note", Key: "the-note", Properties: props}
+		return objectWikiPageData{
+			Obj:       &obj,
+			TypeLabel: "Note",
+			PropDefs: []objectPropertyDef{
+				{Name: "owner", Title: "Owner", Type: "string"},
+				{Name: "reviewed_by", Title: "Reviewed by", Type: "string"},
+			},
+		}
+	}
+
+	html := renderHTML(t, objectWikiPage(newPage(map[string]any{
+		"summary": "A short lead.",
+		"owner":   "Ada Lovelace",
+	})))
+
+	if !strings.Contains(html, `<table class="table table-sm" id="object-wiki-key-facts"`) {
+		t.Errorf("the properties must render as a two-column table:\n%s", html)
+	}
+	if got := strings.Count(html, `data-empties-toggle="object-wiki-key-facts"`); got != 1 {
+		t.Errorf("the key-facts table rendered %d fold controls, want 1", got)
+	}
+	// One surface: the rail must not repeat the list the body already carries.
+	if strings.Contains(html, "object-wiki-rail-facts") {
+		t.Error("the rail must not carry a second property list")
+	}
+	for _, want := range []string{`data-label-show="Show all"`, `data-label-hide="Hide empty"`} {
+		if got := strings.Count(html, want); got != 1 {
+			t.Errorf("%s rendered %d times, want 1", want, got)
+		}
+	}
+	if got := strings.Count(html, `data-empty`); got != 1 {
+		t.Errorf("unset property tagged %d times, want 1", got)
+	}
+	if got := strings.Count(html, "display:none"); got != 1 {
+		t.Errorf("unset property folded %d times, want 1", got)
+	}
+	if !strings.Contains(html, ">Ada Lovelace</td>") {
+		t.Error("a filled property must render its value in the properties table")
+	}
+
+	// Nothing to unfold: no eye, and the empties stay visible rather than
+	// leaving the list blank.
+	allUnset := renderHTML(t, objectWikiPage(newPage(map[string]any{"summary": "A short lead."})))
+	if strings.Contains(allUnset, "data-empties-toggle=") {
+		t.Error("no filled field means nothing to unfold, so no eye may render")
+	}
+	if strings.Contains(allUnset, "display:none") {
+		t.Error("with every field unset nothing is folded")
+	}
+	if !strings.Contains(allUnset, "Reviewed by") {
+		t.Error("an all-unset list must still name its declared fields")
+	}
+}
+
+func TestObjectWikiRailProvenance(t *testing.T) {
+	obj := &GraphObject{
+		ID: "o1", CanonicalID: "o1", Type: "note", Key: "Deed", Version: 3,
+		DataClass: "synthesized", CredentialKind: "session",
+		ActorType: "user", ActorID: "u1",
+		EmbeddingStatus: "embedded", EmbeddingUpdatedAt: "2026-11-12T10:01:50Z",
+	}
+	data := objectWikiPageData{
+		Obj:       obj,
+		TypeLabel: "Note",
+		Identities: []objectActorOption{
+			{Type: "user", ID: "u1", Label: "Ada Lovelace"},
+		},
+		Sources: []objectSource{{
+			DocumentID: "d1", DocumentName: "Kickoff.pdf", DocumentVersion: "v3", ExtractedAt: "2026-11-10T09:20:00Z",
+		}},
+	}
+	data.Provenance = objectProvenanceOf(*obj, data.Identities)
+	html := renderHTML(t, objectWikiPage(data))
+
+	meta := strings.Index(html, ">Metadata<")
+	branch := strings.Index(html, `data-testid="object-branch-chip"`)
+	embed := strings.Index(html, `data-testid="object-embedding"`)
+	prov := strings.Index(html, ">Provenance<")
+	if meta < 0 || branch < 0 || embed < 0 || prov < 0 {
+		t.Fatalf("rail blocks missing (metadata=%d branch=%d embedding=%d provenance=%d)", meta, branch, embed, prov)
+	}
+	// Branch and embedding are record facts: after the Metadata heading, before
+	// the group below it.
+	if meta >= branch || branch >= embed || embed >= prov {
+		t.Errorf("order must be metadata → branch → embedding → provenance, got %d/%d/%d/%d", meta, branch, embed, prov)
+	}
+	// And not in the header: everything before the Metadata heading is the head.
+	if strings.Contains(html[:meta], "object-branch-chip") || strings.Contains(html[:meta], "object-embedding") {
+		t.Error("the header must not repeat the branch or embedding badge the rail carries")
+	}
+
+	// The chain reads oldest first: the source document, then the class, then the
+	// writer of the version on screen.
+	source := strings.Index(html, "Kickoff.pdf")
+	class := strings.Index(html, `data-testid="object-wiki-provenance-class"`)
+	write := strings.Index(html, `data-testid="object-wiki-provenance-write"`)
+	if source < 0 || class < 0 || write < 0 {
+		t.Fatalf("provenance entries missing (source=%d class=%d write=%d)", source, class, write)
+	}
+	if source >= class || class >= write {
+		t.Errorf("provenance order must be source → class → write, got %d/%d/%d", source, class, write)
+	}
+	for _, want := range []string{
+		"Synthesized",
+		"Version 3",
+		"written by",
+		"Ada Lovelace",
+		"via web session",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("provenance list missing %q", want)
+		}
+	}
+	// The read path's created_at is the version's timestamp, not the object's, so
+	// the rail must not present it as a creation date.
+	if strings.Contains(html, ">Created<") {
+		t.Error("the rail must not label a version timestamp as the object's creation")
+	}
+
+	// The embedding badge is outlined (border + text colour, no fill) and carries
+	// the vector's timestamp in its tooltip.
+	window := html[max(0, embed-400):min(len(html), embed+400)]
+	if !strings.Contains(window, "badge-outline") {
+		t.Errorf("the embedding badge must be outlined:\n%s", window)
+	}
+	if !strings.Contains(window, `title="Vector last written `) {
+		t.Errorf("the embedding badge must title the vector's timestamp:\n%s", window)
+	}
+	if strings.Contains(html, "Embedded <") || strings.Contains(html, "Embedded 3") {
+		t.Error("the separate relative-time line is superseded by the badge tooltip")
+	}
+
+	// The History block counts versions from the version number when the server
+	// reports no revision_count.
+	if !strings.Contains(html, "3 versions") {
+		t.Error("history must count the object's versions even without revision_count")
+	}
+	if strings.Contains(html, "No versions recorded") {
+		t.Error("an object with a version number must never claim there are no versions")
+	}
+	if strings.Contains(html, "View history") {
+		t.Error("a known count renders the count, not the unknown-count fallback")
+	}
+}
+
+// TestObjectWikiRailProvenanceDegrades pins the two empty states: no sources and
+// no write stamp renders no group at all, and a system actor is named as such
+// rather than dropped from the chain.
+func TestObjectWikiRailProvenanceDegrades(t *testing.T) {
+	bare := &GraphObject{ID: "o1", CanonicalID: "o1", Type: "note", Key: "Deed"}
+	html := renderHTML(t, objectWikiPage(objectWikiPageData{Obj: bare, TypeLabel: "Note"}))
+	if strings.Contains(html, "object-wiki-provenance") || strings.Contains(html, ">Provenance<") {
+		t.Error("an object with no source, class or write stamp renders no provenance group")
+	}
+	// No revision_count and no version number: offer the history, do not claim an
+	// empty one.
+	if !strings.Contains(html, "View history") {
+		t.Error("an unknown version count must offer the history rather than a count")
+	}
+
+	system := &GraphObject{ID: "o2", CanonicalID: "o2", Type: "note", Key: "Deed", Version: 1, ActorType: "system", CredentialKind: "none"}
+	data := objectWikiPageData{Obj: system, TypeLabel: "Note"}
+	data.Provenance = objectProvenanceOf(*system, nil)
+	html = renderHTML(t, objectWikiPage(data))
+	if !strings.Contains(html, ">System<") {
+		t.Error("a background write must be named as System")
+	}
+	if strings.Contains(html, "via ") {
+		t.Error("a write with no credential must not render a credential")
+	}
+}
+
+// TestObjectWikiRailWorkflow pins the Workflow rail group: a type that declares
+// a workflow shows its status badge and assignee there, read-only, and the
+// header carries no status chip. The two values are the object's position in its
+// type's work process; the pickers stay on the object page it links to.
+func TestObjectWikiRailWorkflow(t *testing.T) {
+	obj := &GraphObject{
+		ID: "o1", CanonicalID: "o1", Type: "task", Key: "t1", Version: 2,
+		Status: "in_progress", Assignee: "Ada Lovelace",
+	}
+	data := objectWikiPageData{
+		Obj: obj, TypeLabel: "Task",
+		Status: &objectStatusControl{Show: true, Options: []string{"ready", "in_progress", "done"}},
+	}
+	html := renderHTML(t, objectWikiPage(data))
+
+	if got := strings.Count(html, ">Workflow</h2>"); got != 1 {
+		t.Errorf("workflow group rendered %d times, want once", got)
+	}
+	start := strings.Index(html, `data-testid="object-wiki-workflow"`)
+	if start < 0 {
+		t.Fatal("missing the workflow rail group")
+	}
+	group := html[start:]
+	if end := strings.Index(group, "</section>"); end > 0 {
+		group = group[:end]
+	}
+	if !strings.Contains(group, "In progress") {
+		t.Errorf("workflow group must show the humanised status label:\n%s", group)
+	}
+	if !strings.Contains(group, `data-status="in_progress"`) {
+		t.Errorf("workflow group must carry the raw status:\n%s", group)
+	}
+	if !strings.Contains(group, "Ada Lovelace") {
+		t.Errorf("workflow group must name the assignee:\n%s", group)
+	}
+	if strings.Contains(group, `data-testid="object-status-control"`) {
+		t.Error("the wiki is read-only and must not render the status picker")
+	}
+	if !strings.Contains(group, `href="/objects/o1"`) {
+		t.Errorf("workflow group must link to the object page:\n%s", group)
+	}
+	// The link is the group's pencil, inline at the end of the last row — not a
+	// sentence of its own after the list.
+	if dl := strings.Index(group, "</dl>"); dl > 0 {
+		edit := strings.Index(group, `data-testid="object-wiki-workflow-edit"`)
+		if edit < 0 || edit > dl {
+			t.Errorf("the workflow edit link must sit inside the group's last row, before </dl>:\n%s", group)
+		}
+		if strings.Contains(group[:dl], "Change on the object page") {
+			t.Error("the workflow group must not carry the old sentence link")
+		}
+	}
+	// The header is everything before the rail: no status chip there.
+	if at := strings.Index(html, ">Metadata</h2>"); at > 0 && strings.Contains(html[:at], "data-status=") {
+		t.Error("the header must not repeat the workflow status badge")
+	}
+}
+
+// TestObjectWikiRailWorkflowAbsent pins the other side of the separation: an
+// object whose type declares no workflow has no workflow at all. A value in the
+// work-status column is not a state of that type, so no group and no badge
+// render, and the declared `status` property stays the one place the value is
+// read — exactly once.
+func TestObjectWikiRailWorkflowAbsent(t *testing.T) {
+	obj := &GraphObject{
+		ID: "o1", CanonicalID: "o1", Type: "obligation", Key: "ob-boiler", Version: 3,
+		Status:     "active",
+		Properties: map[string]any{"status": "active", "title": "Boiler service"},
+	}
+	data := objectWikiPageData{
+		Obj: obj, TypeLabel: "Obligation",
+		PropDefs: []objectPropertyDef{{Name: "status", Title: "Status", Type: "string"}},
+	}
+	html := renderHTML(t, objectWikiPage(data))
+
+	if strings.Contains(html, ">Workflow</h2>") {
+		t.Error("a type that declares no workflow must not render the workflow group")
+	}
+	if strings.Contains(html, "data-status=") {
+		t.Error("a type that declares no workflow must not render a status badge")
+	}
+	if got := strings.Count(html, ">active</td>"); got != 1 {
+		t.Errorf("the status property rendered %d times, want once", got)
+	}
+	if strings.Contains(html, ">Active<") {
+		t.Error("the workflow label must not be derived from a property value")
+	}
 }

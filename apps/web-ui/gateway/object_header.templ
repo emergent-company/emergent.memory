@@ -53,7 +53,7 @@ templ objectHeader(p objectHeaderProps) {
 		@typeIconTile(p.Icon, p.Color, tile)
 		<div class="min-w-0 flex-1">
 			<div class="flex min-w-0 items-center justify-between gap-2">
-				@objectIdentityLine(p.Type, p.Color, p.Ref, p.IdentityTestID)
+				@objectIdentityLine(p.Type, p.Ref, p.IdentityTestID)
 				if p.Direction != "" {
 					if p.Direction == "in" {
 						<span class="text-muted-subtle shrink-0" title="Points at this object" aria-label="Incoming relationship">
@@ -98,27 +98,25 @@ templ objectHeader(p objectHeaderProps) {
 }
 
 // objectIdentityLine is the type · ref line above an object's name: the type, a
-// dot tinted with the type's declared colour, and the display ref. It is one
-// component so a card, a row and a page head cannot drift apart, and it carries
-// its own `data-component` because a report on the line itself should still name
-// an object component rather than the tile beside it.
-templ objectIdentityLine(objType, color, ref, testID string) {
+// muted separator dot, and the display ref. It is one component so a card, a row
+// and a page head cannot drift apart, and it carries its own `data-component`
+// because a report on the line itself should still name an object component
+// rather than the tile beside it.
+//
+// The dot is untinted on purpose: the type's colour belongs to the icon tile
+// that sits immediately beside this line, and a second splash of the same hue in
+// a line whose only job is to say "which object" reads as a competing signal. A
+// muted dot of the line's own text colour keeps it a separator.
+templ objectIdentityLine(objType, ref, testID string) {
 	{{
 		lineAttrs := templ.Attributes{}
 		if testID != "" {
 			lineAttrs["data-testid"] = testID
 		}
-		dotAttrs := templ.Attributes{
-			"class":       "bg-base-content/25 size-1.5 shrink-0 rounded-full",
-			"aria-hidden": "true",
-		}
-		if style := typeDotStyle(color); style != "" {
-			dotAttrs["style"] = style
-		}
 	}}
 	<div class="text-muted flex min-w-0 items-center gap-1.5 font-mono text-[11px]" { lineAttrs... } { devmode.Attrs(ctx, "gateway/ObjectIdentityLine")... }>
 		<span class="truncate">{ objType }</span>
-		<span { dotAttrs... }></span>
+		<span class="size-1.5 shrink-0 rounded-full bg-current opacity-40" aria-hidden="true"></span>
 		<span class="shrink-0" data-testid="object-ref">{ ref }</span>
 	</div>
 }

@@ -21,6 +21,22 @@ import (
 // the kind of edit a refactor makes silently (#699).
 const objectsCardsGridClass = "grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4"
 
+// objectsCardHeightClass fixes every card at one height (h-44 = 11rem = 176px),
+// so a row of cards is a row of equal boxes instead of boxes that end wherever
+// their content does — the grid stretches items, but `h-full` only equalises a
+// card against the tallest one *in its own row*, so a row of short cards still
+// came out short and a card's footer sat at a different baseline from its
+// neighbour's in the next row.
+//
+// The height is the card's own rows plus slack: p-3 top (12) + identity line
+// (16) + name (20) + two-row excerpt (~40) + chips pt-2 (8) + chips min-h-6 (24)
+// + chips pb-2 (8) + footer h-8 (32) = 160px, leaving 16px the description does
+// not claim. Anything longer is clipped by the card's `overflow-hidden`, and the
+// excerpt itself is clamped to two rows, so the height is a floor by arithmetic
+// rather than a guess. It is a constant because the card is the only consumer
+// and the layout test asserts the same string the markup renders (#699).
+const objectsCardHeightClass = "h-44"
+
 // objectsStatsStripClass keeps the three-figure stats band inside the viewport on
 // a phone: the strip itself is full width, and each `.stat` is allowed to shrink
 // (min-w-0) with its title wrapping and its type stepping down, rather than
@@ -110,11 +126,26 @@ const objectsBrowserSelectionJS = `{
 // page-preview iframe — the preview re-renders its sample rows from the same
 // query string.
 func objectsSortHref(data objectsPageData, dir string) string {
+	q := objectsQueryValues(data)
+	if dir != "" && dir != "desc" {
+		q.Set("order", dir)
+	}
+	return "?" + q.Encode()
+}
+
+// objectsQueryValues is the query-only state every self-built href in the
+// browser carries: the active query, its scope and cap, and every applied
+// filter. A link that dropped one of them would land the reader on a different
+// list than the one they clicked from.
+func objectsQueryValues(data objectsPageData) url.Values {
 	q := url.Values{}
 	if data.Query != "" {
 		q.Set("q", data.Query)
-		if data.Mode != "" {
-			q.Set("mode", data.Mode)
+		if scope := searchScopeOf(data); scope != searchScopeAll {
+			q.Set("in", scope)
+		}
+		if limit := searchLimitOf(data); limit != defaultSearchLimit {
+			q.Set("limit", strconv.Itoa(limit))
 		}
 	}
 	if data.TypeFilter != "" {
@@ -138,9 +169,17 @@ func objectsSortHref(data objectsPageData, dir string) string {
 			q.Set("via", data.ViaShare)
 		}
 	}
-	if dir != "" && dir != "desc" {
-		q.Set("order", dir)
-	}
+	return q
+}
+
+// objectsSearchShowAllHref is the "show all" link of the search summary and of
+// the no-strong-matches state: the same query with the held-back hits included.
+// Query-only for the same reason the sort link is — it resolves against whichever
+// page rendered the note (the browser, the agent-scoped list, or the gallery
+// preview).
+func objectsSearchShowAllHref(data objectsPageData) string {
+	q := objectsQueryValues(data)
+	q.Set("all", "1")
 	return "?" + q.Encode()
 }
 
@@ -152,10 +191,10 @@ func objectsNextSortDir(data objectsPageData) string {
 	return "asc"
 }
 
-// objectsFormAttrs is the htmx wiring for the objects toolbar's forms: each
-// request carries the form's values to the page URL, replaces #objects-results
-// in place, and pushes the URL so reloading keeps the filters. Searching and
-// filtering therefore behave alike — the list changes, the header, stats strip,
+// objectsFormAttrs is the htmx wiring for the search page's toolbar forms: each
+// request carries the form's values to the page URL, replaces #search-results in
+// place, and pushes the URL so reloading keeps the filters. Searching and
+// filtering therefore behave alike — the results change, the header, stats strip,
 // and controls stay where they are — and neither is a document navigation.
 //
 // The gallery preview renders no wiring: it has no backend, and it must not
@@ -166,9 +205,9 @@ func objectsFormAttrs(data objectsPageData, onChange bool, action string) templ.
 	}
 	var attrs templ.Attributes
 	if onChange {
-		attrs = filterFormAttrs(action, objectsResultsRegion)
+		attrs = filterFormAttrs(action, searchResultsRegion)
 	} else {
-		attrs = submitFilterFormAttrs(action, objectsResultsRegion)
+		attrs = submitFilterFormAttrs(action, searchResultsRegion)
 	}
 	attrs["data-objects-list-refresh"] = "true"
 	return attrs
@@ -210,9 +249,6 @@ type objectsBrowserRowView struct {
 	Label            string
 	Type             string
 	Excerpt          string
-	Status           string
-	StatusLabel      string
-	StatusIntent     ui.BadgeIntent
 	EmbeddingLabel   string
 	EmbeddingVariant ui.BadgeIntent
 	EmbeddingIcon    string
@@ -221,22 +257,16 @@ type objectsBrowserRowView struct {
 	CreatedAt        string
 	Score            float32
 	UI               typeUI
-	// DataClass* describe how the server classified this version (source,
-	// synthesized, adopted). Empty when unreported, in which case the card
-	// renders no chip rather than inventing provenance.
-	DataClassLabel  string
-	DataClassIntent ui.BadgeIntent
-	DataClassIcon   string
-	DataClassHint   string
 	// Writer is the version's resolved write stamp: who wrote it, through which
 	// credential, and the audit tooltip behind the name. When is the relative age
 	// the card shows in its footer (a card is a glance, not an audit row, so the
 	// history timeline's absolute stamp would be out of place).
 	Writer objectVersionProvenance
 	When   string
-	// RevisionCount is reported on read paths only (a materialized view), so the
-	// card links to the history only when the server actually said how many
-	// versions exist.
+	// RevisionCount is the number of recorded versions and HasRevisionCount says
+	// whether it is known at all: the card links to the history only when the
+	// count means something. See objectVersionCount for how it is derived when
+	// the server reports no revision_count.
 	RevisionCount    int
 	HasRevisionCount bool
 }
@@ -265,16 +295,12 @@ func objectsBrowserRows(data objectsPageData) []objectsBrowserRowView {
 func newObjectsBrowserRow(o GraphObject, typeUIByType map[string]typeUI, identities []objectActorOption, score float32) objectsBrowserRowView {
 	embedLabel, embedVariant := embeddingStatusBadge(o.EmbeddingStatus)
 	embedIcon, embedClass := embeddingStatusIcon(o.EmbeddingStatus)
-	classLabel, classIntent, classIcon, classHint := dataClassChip(o.DataClass)
 	r := objectsBrowserRowView{
 		ID:               o.ID,
 		Ref:              o.Ref,
 		Label:            graphObjectLabel(o),
 		Type:             o.Type,
 		Excerpt:          objectExcerpt(o.Properties),
-		Status:           o.Status,
-		StatusLabel:      boardStatusLabel(o.Status),
-		StatusIntent:     boardStatusIntent(o.Status),
 		EmbeddingLabel:   embedLabel,
 		EmbeddingVariant: embedVariant,
 		EmbeddingIcon:    embedIcon,
@@ -283,15 +309,11 @@ func newObjectsBrowserRow(o GraphObject, typeUIByType map[string]typeUI, identit
 		CreatedAt:        o.CreatedAt,
 		Score:            score,
 		UI:               typeUIOf(typeUIByType, o.Type),
-		DataClassLabel:   classLabel,
-		DataClassIntent:  classIntent,
-		DataClassIcon:    classIcon,
-		DataClassHint:    classHint,
 		Writer:           objectProvenanceOf(o, identities),
 		When:             relTime(o.CreatedAt),
 	}
-	if o.RevisionCount != nil && *o.RevisionCount > 0 {
-		r.RevisionCount = *o.RevisionCount
+	if n, known := objectVersionCount(o); known {
+		r.RevisionCount = n
 		r.HasRevisionCount = true
 	}
 	return r
