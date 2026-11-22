@@ -246,14 +246,27 @@ func (h *Handler) enrichRunTrace(ctx context.Context, dto *AgentRunDTO, runID st
 	dto.TokenUsage = usage
 }
 
+// BudgetExceededAppError returns the canonical 402 response when err is (or
+// wraps) a *BudgetExceededError, and nil otherwise. It is exported so every
+// HTTP surface that can hit the budget gate names the same condition with the
+// same wording: the chat capture endpoints pre-create their run through
+// CreateRunWithOptions, and a blocked project there must be told the product's
+// name for the refusal (402 budget_exceeded) rather than "internal error".
+func BudgetExceededAppError(err error) *apperror.Error {
+	if _, ok := errors.AsType[*BudgetExceededError](err); !ok {
+		return nil
+	}
+	return apperror.New(http.StatusPaymentRequired, "budget_exceeded",
+		"A project budget window (weekly or monthly) has been exceeded. Please review your spending, increase the budget, or reset the window.")
+}
+
 // mapExecutorError converts typed executor errors to appropriate HTTP responses.
 //   - BudgetExceededError → 402 Payment Required
 //   - QueueFullError      → 429 Too Many Requests
 //   - other              → 500 Internal Server Error
 func mapExecutorError(err error) *apperror.Error {
-	if _, ok := errors.AsType[*BudgetExceededError](err); ok {
-		return apperror.New(http.StatusPaymentRequired, "budget_exceeded",
-			"A project budget window (weekly or monthly) has been exceeded. Please review your spending, increase the budget, or reset the window.")
+	if appErr := BudgetExceededAppError(err); appErr != nil {
+		return appErr
 	}
 	if queueErr, ok := errors.AsType[*QueueFullError](err); ok {
 		return apperror.New(http.StatusTooManyRequests, "queue_full",
@@ -2158,6 +2171,13 @@ func (h *Handler) DeleteDefinition(c echo.Context) error {
 
 // --- Project-Scoped Run History Handlers ---
 
+// AgentRunIDsFilterMax is the maximum number of run ids one `?ids=` batch read
+// accepts, and therefore the widest page a caller holding a batch can ask for.
+// The web-ui gateway batches its object-provenance reads at the mirror of this
+// value; the gateway's TestAgentRunIDsFilterMaxMatchesServerRatchet asserts the
+// two stay equal, so changing one side cannot silently truncate the other.
+const AgentRunIDsFilterMax = 100
+
 // parseRunIDs splits and validates a comma-separated ids filter. Only uuid-shaped
 // values survive: the column is a uuid type, so passing anything else to the
 // query would turn a typo into a 500 rather than a smaller answer. Duplicates
@@ -2179,7 +2199,7 @@ func parseRunIDs(raw string) []string {
 		}
 		seen[id] = struct{}{}
 		ids = append(ids, id)
-		if len(ids) == 100 {
+		if len(ids) == AgentRunIDsFilterMax {
 			break
 		}
 	}
@@ -2227,7 +2247,7 @@ func (h *Handler) ListProjectRuns(c echo.Context) error {
 			return apperror.NewBadRequest("ids must be a comma-separated list of run ids")
 		}
 		if len(filters.IDs) > limit {
-			limit = min(len(filters.IDs), 100)
+			limit = min(len(filters.IDs), AgentRunIDsFilterMax)
 		}
 	}
 
