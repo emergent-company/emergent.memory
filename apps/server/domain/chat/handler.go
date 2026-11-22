@@ -680,7 +680,10 @@ func validateCreateConversationRequest(req *CreateConversationRequest) error {
 	if len(req.Title) > 512 {
 		return apperror.ErrBadRequest.WithMessage("title must be at most 512 characters")
 	}
-	if req.Message == "" {
+	// An object-attached conversation may open without a message: the object's
+	// facts are injected per turn from canonicalId, so there is nothing to seed
+	// and the first turn is whichever the user types.
+	if strings.TrimSpace(req.Message) == "" && req.CanonicalID == nil {
 		return apperror.ErrBadRequest.WithMessage("message is required")
 	}
 	if len(req.Message) > 100000 {
@@ -1069,6 +1072,26 @@ func (h *Handler) StreamChat(c echo.Context) error {
 	// Annotate span with conversation_id now that we have it
 	span.SetAttributes(attribute.String("memory.chat.conversation_id", conv.ID.String()))
 
+	// An object-attached conversation carries its object in the system prompt,
+	// re-derived here on every turn from the conversation's canonical id. That
+	// is the whole object-chat context model: the conversation itself stays
+	// empty until the user types, and an API caller that only knows the
+	// conversation id gets exactly what a browser click gets.
+	objectAppendix := ""
+	if conv.CanonicalID != nil {
+		objectCtx, ocErr := h.svc.repo.LoadObjectContext(ctx, user.ProjectID, *conv.CanonicalID)
+		switch {
+		case ocErr != nil:
+			h.log.Warn("failed to load object context for chat",
+				slog.String("conversation_id", conv.ID.String()),
+				slog.String("canonical_id", conv.CanonicalID.String()),
+				slog.String("error", ocErr.Error()),
+			)
+		case objectCtx != nil:
+			objectAppendix = renderObjectContext(objectCtx)
+		}
+	}
+
 	// Now that validation is done and conversation is ready, start SSE streaming
 	w := c.Response().Writer
 	sseWriter := sse.NewWriter(w)
@@ -1119,7 +1142,7 @@ func (h *Handler) StreamChat(c echo.Context) error {
 			}
 		}
 
-		agentResult := h.streamAgentChat(runCtx, conv, message, user.ProjectID, user.OrgID, user.ID, sseWriter, "", "", "", strings.TrimSpace(req.Model), normalizedEffort)
+		agentResult := h.streamAgentChat(runCtx, conv, message, user.ProjectID, user.OrgID, user.ID, sseWriter, "", "", objectAppendix, strings.TrimSpace(req.Model), normalizedEffort)
 		_ = sseWriter.WriteData(sse.NewDoneEvent()) // best-effort: the stream is ending
 		sseWriter.Close()
 		if agentResult != nil && agentResult.Cleanup != nil {
@@ -1166,6 +1189,9 @@ func (h *Handler) StreamChat(c echo.Context) error {
 	systemPrompt := os.Getenv("CHAT_SYSTEM_PROMPT")
 	if systemPrompt == "" {
 		systemPrompt = "You are a helpful assistant specialized in knowledge graphs and data schemas. Answer questions clearly using markdown formatting."
+	}
+	if objectAppendix != "" {
+		systemPrompt += "\n\n" + objectAppendix
 	}
 
 	var retrievalCtx json.RawMessage

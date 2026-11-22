@@ -151,7 +151,20 @@ func (s *Service) CreateConversation(ctx context.Context, projectID, ownerUserID
 		UpdatedAt:            now,
 	}
 
-	// Create the initial user message
+	// Create the initial user message. An object-attached conversation opens
+	// empty: the object is carried in the agent's system prompt, re-derived
+	// from canonical_id on every turn (object_context.go), so a seeded role=user
+	// row would put words in the user's mouth — the old seeded "FIRST review…
+	// THEN apply" instruction is what made clicking chat order work nobody asked
+	// for. The conversation is created with no messages and the first turn is
+	// the user's own.
+	if strings.TrimSpace(req.Message) == "" {
+		if err := s.repo.Create(ctx, conv); err != nil {
+			return nil, err
+		}
+		return conv, nil
+	}
+
 	msg := &Message{
 		Role:      RoleUser,
 		Content:   req.Message,

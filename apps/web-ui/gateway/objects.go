@@ -2134,22 +2134,21 @@ func (s *Server) uiObjectCreate(c echo.Context) error {
 	return c.Redirect(http.StatusSeeOther, "/objects/"+url.PathEscape(created.ID))
 }
 
-// uiObjectChat starts (or resumes) the refinement conversation linked to an
-// object: it get-or-creates the canonical conversation seeded with the object
-// instruction, then deep-links into /chat with the editor agent preselected.
-// When no editor agent resolves, it redirects back with an ?err= flash telling
-// the user to create an agent first — never a silent no-op.
+// uiObjectChat opens the conversation that belongs to an object: memory
+// get-or-creates it by canonical id, stores no message, and the object reaches
+// the agent from the server's per-turn context appendix. Opening the chat
+// therefore orders nothing — the user's first message is the first turn — and a
+// second click resolves the same conversation instead of minting another one.
 //
-// Creating the conversation does not execute anything: memory records the
-// instruction as the conversation's opening user message and starts no run, so
-// deep-linking with only ?c= left the reader on an unanswered instruction and
-// every later click resolved the same idle conversation — the button looked
-// dead. A conversation that has never run therefore opens with the instruction
-// as the auto-sent first turn (?prompt= plus the canonical id); chat.js submits
-// it through /api/chat, where memory's get-or-create resolves this same
-// conversation, so the instruction is not written twice, and the first
-// agent-backed turn is what binds the agent. A conversation that has already run
-// just opens: clicking the button again must not re-ask the agent.
+// When no editor agent resolves it redirects back with an ?err= flash telling the
+// user to create an agent first — never a silent no-op.
+//
+// Legacy fallback, two cases: an object with no canonical id has nothing for the
+// context appendix to resolve, and a server that predates it rejects an empty
+// message. Both keep the old behaviour — the conversation is seeded with the
+// object instruction as its first user message, and the deep link auto-sends it
+// (?prompt= plus the canonical id), because a conversation holding an unanswered
+// instruction otherwise looks like a dead button.
 func (s *Server) uiObjectChat(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
@@ -2161,20 +2160,37 @@ func (s *Server) uiObjectChat(c echo.Context) error {
 	if agentID == "" {
 		return redirectWithError(c, "/objects/"+url.PathEscape(id), fmt.Errorf("no editor-capable agent — in Project settings pick an agent with %s", editorCapabilityRequirement))
 	}
+	label := graphObjectLabel(*obj)
+	openLink := func(convID string) string {
+		return "/chat?c=" + url.QueryEscape(convID) + "&agent=" + url.QueryEscape(agentID)
+	}
+
+	if obj.CanonicalID != "" {
+		convID, err := s.memory.CreateObjectConversation(ctx, obj.CanonicalID, label, "")
+		if err == nil {
+			return c.Redirect(http.StatusSeeOther, openLink(convID))
+		}
+		if !isMessageRequiredError(err) {
+			return c.Redirect(http.StatusSeeOther, "/objects/"+url.PathEscape(id))
+		}
+		// Older server: fall through to the seeded instruction.
+	}
+
 	instruction := objectChatInstruction(obj)
-	convID, err := s.memory.CreateObjectConversation(ctx, obj.CanonicalID, graphObjectLabel(*obj), instruction)
+	convID, err := s.memory.CreateObjectConversation(ctx, obj.CanonicalID, label, instruction)
 	if err != nil {
 		return c.Redirect(http.StatusSeeOther, "/objects/"+url.PathEscape(id))
 	}
-	// SessionID is set once an agent run exists for the conversation. Without a
-	// canonical id there is nothing for the chat turn to resolve against, so
-	// those objects keep the plain open link rather than starting an unlinked
-	// conversation on every click.
+	// Without a canonical id there is nothing for the chat turn to resolve
+	// against, so those objects get the plain open link rather than starting an
+	// unlinked conversation on every click.
 	if obj.CanonicalID == "" {
-		return c.Redirect(http.StatusSeeOther, "/chat?c="+url.QueryEscape(convID)+"&agent="+url.QueryEscape(agentID))
+		return c.Redirect(http.StatusSeeOther, openLink(convID))
 	}
+	// A conversation that has already run just opens: clicking the button again
+	// must not re-ask the agent.
 	if detail, derr := s.memory.GetConversation(ctx, convID); derr != nil || detail.SessionID != "" {
-		return c.Redirect(http.StatusSeeOther, "/chat?c="+url.QueryEscape(convID)+"&agent="+url.QueryEscape(agentID))
+		return c.Redirect(http.StatusSeeOther, openLink(convID))
 	}
 	q := url.Values{}
 	q.Set("agent", agentID)
