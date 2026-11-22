@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -80,6 +81,12 @@ func (r *Repository) LoadObjectContext(ctx context.Context, projectID string, ca
 		Where("go.project_id = ?", projectID).
 		Where("go.deleted_at IS NULL").
 		Where("go.supersedes_id IS NULL").
+		// branch_id IS NULL is the default-read convention for the main graph: a
+		// fork re-uses canonical_id on the branch, so without this predicate two
+		// live heads match and the appendix can present an unmerged branch draft
+		// (and flip between turns). The object page the user clicked shows main,
+		// so the chat must read main too.
+		Where("go.branch_id IS NULL").
 		Limit(1).
 		Scan(ctx, &row)
 	if err != nil {
@@ -197,7 +204,7 @@ func objectPropertyValue(v any) (string, bool) {
 	case bool:
 		out = fmt.Sprintf("%t", val)
 	case float64:
-		out = strings.TrimSuffix(fmt.Sprintf("%f", val), ".000000")
+		out = strconv.FormatFloat(val, 'f', -1, 64)
 	case json.Number:
 		out = val.String()
 	default:
@@ -211,8 +218,10 @@ func objectPropertyValue(v any) (string, bool) {
 	if out == "" {
 		return "", false
 	}
-	if len(out) > objectContextMaxPropertyValue {
-		out = out[:objectContextMaxPropertyValue] + "…"
+	if runes := []rune(out); len(runes) > objectContextMaxPropertyValue {
+		// Truncate by rune, not byte: a multi-byte rune sliced at the boundary
+		// would put invalid UTF-8 into the system prompt.
+		out = string(runes[:objectContextMaxPropertyValue]) + "…"
 	}
 	return out, true
 }

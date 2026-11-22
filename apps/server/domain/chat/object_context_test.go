@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -98,4 +99,30 @@ func TestRenderObjectContextBounds(t *testing.T) {
 	out := renderObjectContext(oc)
 	assert.Less(t, len(out), objectContextMaxBytes+600, "appendix must stay bounded")
 	assert.Contains(t, out, "omitted")
+}
+
+// TestObjectPropertyValueTruncatesByRune pins that a multi-byte value sliced at
+// the bound stays valid UTF-8: the appendix goes into a system prompt, and a
+// half-cut rune there is corruption, not truncation.
+func TestObjectPropertyValueTruncatesByRune(t *testing.T) {
+	// 3-byte runes: a byte slice at 200 lands mid-rune, a rune slice does not.
+	value := strings.Repeat("→", objectContextMaxPropertyValue+50)
+
+	out, ok := objectPropertyValue(value)
+	assert.True(t, ok)
+	assert.Contains(t, out, "…")
+	assert.True(t, utf8.ValidString(out), "truncated value must be valid UTF-8")
+	assert.LessOrEqual(t, utf8.RuneCountInString(out), objectContextMaxPropertyValue+1)
+}
+
+// TestObjectPropertyValueNumbers pins that a number renders as the number the
+// object carries, not its %f form (2.5, not 2.500000).
+func TestObjectPropertyValueNumbers(t *testing.T) {
+	out, ok := objectPropertyValue(2.5)
+	assert.True(t, ok)
+	assert.Equal(t, "2.5", out)
+
+	out, ok = objectPropertyValue(3.0)
+	assert.True(t, ok)
+	assert.Equal(t, "3", out)
 }

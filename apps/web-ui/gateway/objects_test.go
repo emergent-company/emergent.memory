@@ -4593,6 +4593,37 @@ func TestObjectMutationInvalidatesLabelSuggestions(t *testing.T) {
 	})
 }
 
+// TestUIObjectsRedirectsToSearch pins the retirement of /objects: it is a
+// permanent redirect to /search (the single browse+search page), it carries the
+// query string so a bookmarked filter survives, and it drops `mode`, the one
+// parameter /search has no use for.
+func TestUIObjectsRedirectsToSearch(t *testing.T) {
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: &fakeMemory{}}
+	e := echo.New()
+	e.GET("/objects", s.uiObjects)
+
+	cases := []struct {
+		name, target, want string
+	}{
+		{"no query", "/objects", "/search"},
+		{"query forwarded", "/objects?q=boiler&type_name=Task", "/search?q=boiler&type_name=Task"},
+		{"mode dropped", "/objects?q=boiler&mode=objects", "/search?q=boiler"},
+		{"only mode", "/objects?mode=objects", "/search"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.target, nil))
+			if rec.Code != http.StatusMovedPermanently {
+				t.Fatalf("status = %d, want 301", rec.Code)
+			}
+			if got := rec.Header().Get("Location"); got != tc.want {
+				t.Errorf("Location = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestUIObjectChat(t *testing.T) {
 	newServer := func(f *fakeMemory) *Server { return &Server{cfg: Config{DefaultAgent: "memory"}, memory: f} }
 	newRouter := func(f *fakeMemory) (*Server, *echo.Echo) {

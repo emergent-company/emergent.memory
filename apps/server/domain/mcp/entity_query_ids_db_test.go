@@ -102,4 +102,19 @@ func TestEntityQueryIDsAcceptsVersionID(t *testing.T) {
 		assert.Equal(t, []string{unknown}, data.MissingIDs)
 		assert.Contains(t, data.Warning, "none of the 1 requested ids resolve")
 	})
+
+	t.Run("compact strategy keeps the missing_ids warning", func(t *testing.T) {
+		// field_strategy=compact already warns that the properties request was
+		// ignored; that must not overwrite the only signal that an id did not
+		// resolve.
+		unknown := uuid.NewString()
+		data := runEntityQuery(t, svc, projectID, map[string]any{
+			"ids":            []any{unknown},
+			"field_strategy": "compact",
+			"fields":         []any{"priority"},
+		})
+		assert.Equal(t, []string{unknown}, data.MissingIDs)
+		assert.Contains(t, data.Warning, "field_strategy=compact")
+		assert.Contains(t, data.Warning, "missing_ids")
+	})
 }

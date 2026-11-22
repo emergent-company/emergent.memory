@@ -99,3 +99,44 @@ func TestLoadObjectContextReturnsLiveHead(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, unknown)
 }
+
+// TestLoadObjectContextIgnoresBranchForks pins the default-read convention:
+// branch_id IS NULL. A fork re-uses the canonical id on its branch, so both the
+// main head and the branch draft are live heads (supersedes_id IS NULL) and
+// match the canonical-id filter. Without the branch predicate the appendix can
+// present an unmerged branch draft — and flip between turns. The branch row is
+// inserted first so a plan that scans in insertion order would pick it.
+func TestLoadObjectContextIgnoresBranchForks(t *testing.T) {
+	env := newRepoEnv(t)
+	canonical := uuid.NewString()
+	mainHead, branchDraft := uuid.NewString(), uuid.NewString()
+	// branch_id has no FK on kb.graph_objects (migrations/00128), so any id
+	// identifies the fork.
+	branch := uuid.NewString()
+
+	_, err := env.db.DB.NewRaw(`
+		INSERT INTO kb.graph_objects
+			(id, project_id, branch_id, canonical_id, supersedes_id, version, type, key, name, status,
+			 properties, labels, created_at, updated_at)
+		VALUES (?, ?, ?, ?, NULL, 9, 'Task', 'boiler-service-parts', 'BRANCH DRAFT', 'draft',
+			'{"priority": "low"}'::jsonb, '{}'::text[], now(), now())
+	`, branchDraft, env.projectID, branch, canonical).Exec(env.ctx)
+	require.NoError(t, err)
+
+	_, err = env.db.DB.NewRaw(`
+		INSERT INTO kb.graph_objects
+			(id, project_id, branch_id, canonical_id, supersedes_id, version, type, key, name, status,
+			 properties, labels, created_at, updated_at)
+		VALUES (?, ?, NULL, ?, NULL, 1, 'Task', 'boiler-service-parts', 'Boiler service', 'ready',
+			'{"priority": "high"}'::jsonb, '{}'::text[], now() - interval '1 day', now())
+	`, mainHead, env.projectID, canonical).Exec(env.ctx)
+	require.NoError(t, err)
+
+	oc, err := env.repo.LoadObjectContext(env.ctx, env.projectID, uuid.MustParse(canonical))
+	require.NoError(t, err)
+	require.NotNil(t, oc)
+	assert.Equal(t, mainHead, oc.VersionID.String(), "the appendix must read the main head, never a branch draft")
+	assert.Equal(t, 1, oc.Version)
+	assert.Equal(t, "ready", oc.Status)
+	assert.Equal(t, "high", oc.Properties["priority"])
+}

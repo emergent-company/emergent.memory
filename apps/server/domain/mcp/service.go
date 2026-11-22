@@ -491,7 +491,7 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 		{
 			Name:         "entity-query",
 			OutputSchema: envelopeOutputSchema(),
-			Description:  "Query entity instances by type with pagination and filtering. Returns actual entity data from the knowledge graph. Pass include_properties=true (or a fields list) to return the properties blob; by default properties are omitted to bound large pages. Pass ids[] to fetch specific entities by canonical ID (bypasses type/pagination). Use branch parameter to query a specific branch (e.g. \"plan/main\"); omit for main branch.",
+			Description:  "Query entity instances by type with pagination and filtering. Returns actual entity data from the knowledge graph. Pass include_properties=true (or a fields list) to return the properties blob; by default properties are omitted to bound large pages. Pass ids[] to fetch specific entities by id: either the canonical ID or the current version (physical) ID resolves, so an id copied from an object page works (bypasses type/pagination). Only live heads resolve — a superseded version id is reported in missing_ids with a warning rather than returned. Use branch parameter to query a specific branch (e.g. \"plan/main\"); omit for main branch.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -501,7 +501,7 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 					},
 					"ids": {
 						Type:        "array",
-						Description: "Optional list of canonical entity IDs to fetch directly. When provided, type_name and pagination params are ignored. ids[] already selects entities explicitly, so combining it with key_prefix is rejected (not silently ignored).",
+						Description: "Optional list of entity IDs to fetch directly: each may be the canonical ID or the current version (physical) ID — either resolves, matching the object page's URLs. Only live heads resolve, so a superseded version id comes back in missing_ids with a warning instead of as an entity. When provided, type_name and pagination params are ignored. ids[] already selects entities explicitly, so combining it with key_prefix is rejected (not silently ignored).",
 						Items:       &PropertySchema{Type: "string"},
 					},
 					"branch": {
@@ -567,7 +567,7 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 		{
 			Name:         "entity-history",
 			OutputSchema: objectOutputSchema(),
-			Description:  "Get the version history of an entity by canonical ID or key. Returns a list of versions with their physical IDs, version numbers, and timestamps. Use entity-query with ids=[physical_id] to fetch the full properties of a specific historical version. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			Description:  "Get the version history of an entity by canonical ID or key. Returns a list of versions with their physical IDs, version numbers, and timestamps. This is a history listing only: it returns no properties. entity-query ids[] resolves live heads only, so passing a superseded physical_id there reports it in missing_ids rather than returning that version's properties. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -4487,10 +4487,17 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 		warning = fmt.Sprintf("%d of %d requested ids did not resolve (missing_ids)", len(missingIDs), len(requestedIDs))
 	}
 	if propertiesSuppressed {
-		result.Warning = "include_properties/fields ignored because field_strategy=compact; omit field_strategy to return properties."
-	} else {
-		result.Warning = warning
+		// Keep the missing_ids warning: under field_strategy=compact it is the
+		// only signal that an id the caller asked for does not resolve, and
+		// overwriting it was how the loud case went silent.
+		suppressed := "include_properties/fields ignored because field_strategy=compact; omit field_strategy to return properties."
+		if warning != "" {
+			warning = suppressed + " " + warning
+		} else {
+			warning = suppressed
+		}
 	}
+	result.Warning = warning
 	return envelopeResult(true, result, nil, "")
 }
 
