@@ -567,7 +567,7 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 		{
 			Name:         "entity-history",
 			OutputSchema: objectOutputSchema(),
-			Description:  "Get the version history of an entity by canonical ID or key. Returns a list of versions with their physical IDs, version numbers, and timestamps. This is a history listing only: it returns no properties. entity-query ids[] resolves live heads only, so passing a superseded physical_id there reports it in missing_ids rather than returning that version's properties. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			Description:  "Get the version history of an entity by canonical ID or key. Returns {entity_id, versions: [{version, physical_id, updated_at}], count} for the main branch; verbose=true adds canonical_id. This is a history listing only — it returns no properties, and entity-query's ids[] resolves live heads only, so a superseded physical_id there comes back in missing_ids instead of returning that version's properties.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -575,14 +575,9 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 						Type:        "string",
 						Description: "The canonical UUID or key of the entity to get history for",
 					},
-					"fields": {
-						Type:        "array",
-						Description: "Optional list of property field names to return from the properties blob (e.g. [\"method\",\"path\"]). id, type, key, name are always returned. Omit to return all properties (only when field_strategy=\"full\").",
-						Items:       &PropertySchema{Type: "string"},
-					},
 					"verbose": {
 						Type:        "boolean",
-						Description: "When true, include non-typical metadata: score breakdown, timestamps, versioning, branch, external-sync fields. Default false.",
+						Description: "When true, also return the entity's canonical_id. Default false.",
 					},
 				},
 				Required: []string{"entity_id"},
@@ -4489,10 +4484,10 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 	if propertiesSuppressed {
 		// Keep the missing_ids warning: under field_strategy=compact it is the
 		// only signal that an id the caller asked for does not resolve, and
-		// overwriting it was how the loud case went silent.
+		// overwriting it was how the loud case went silent. It leads.
 		suppressed := "include_properties/fields ignored because field_strategy=compact; omit field_strategy to return properties."
 		if warning != "" {
-			warning = suppressed + " " + warning
+			warning = warning + " " + suppressed
 		} else {
 			warning = suppressed
 		}
