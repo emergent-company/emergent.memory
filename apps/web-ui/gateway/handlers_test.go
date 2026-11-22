@@ -666,6 +666,9 @@ type fakeMemory struct {
 	transferredToOrg     string         // last destination org id passed to TransferProject
 	transferProjectErr   error          // failure for TransferProject
 	orgMembers           []OrgMemberDto // returned by ListOrgMembers
+	listOrgMembersCalls  int            // number of ListOrgMembers invocations
+	orgMembersOrgID      string         // last org id passed to ListOrgMembers
+	orgMembersErr        error          // failure for ListOrgMembers
 	addedOrgMemberEmail  string
 	addedOrgMemberRole   string
 	addOrgMemberErr      error
@@ -4291,6 +4294,11 @@ func (f *fakeMemory) DeleteOrg(ctx context.Context, orgID string) error {
 }
 
 func (f *fakeMemory) ListOrgMembers(ctx context.Context, orgID string) ([]OrgMemberDto, error) {
+	f.listOrgMembersCalls++
+	f.orgMembersOrgID = orgID
+	if f.orgMembersErr != nil {
+		return nil, f.orgMembersErr
+	}
 	return f.orgMembers, nil
 }
 

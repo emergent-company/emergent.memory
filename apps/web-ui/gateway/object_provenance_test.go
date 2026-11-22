@@ -129,6 +129,214 @@ func TestObjectHistorySubpageNamesWriter(t *testing.T) {
 	}
 }
 
+// TestObjectProvenanceOfResolvedUserAvatar pins the identity mark: a user actor
+// that resolved to a person carries initials (and a photo when the page can
+// serve one), while the unresolved "<Type> · <short id>" placeholder and any
+// non-user actor carry neither — the mark decorates a person, not a stub.
+func TestObjectProvenanceOfResolvedUserAvatar(t *testing.T) {
+	known := []objectActorOption{
+		{Type: "user", ID: "u1", Label: "Maciek Dev", AvatarURL: "/api/user/avatar?v=k"},
+		{Type: "agent", ID: "a1", Label: "researcher"},
+	}
+
+	p := objectProvenanceOf(GraphObject{ActorType: "user", ActorID: "u1", CredentialKind: "session"}, known)
+	if p.ActorInitials != "MD" {
+		t.Errorf("initials = %q, want MD", p.ActorInitials)
+	}
+	if p.ActorAvatar != "/api/user/avatar?v=k" {
+		t.Errorf("avatar = %q, want the served photo", p.ActorAvatar)
+	}
+
+	// A writer missing from the roster renders the honest fallback with no mark.
+	ghost := objectProvenanceOf(GraphObject{ActorType: "user", ActorID: "u-gone", CredentialKind: "session"}, known)
+	if ghost.ActorInitials != "" || ghost.ActorAvatar != "" {
+		t.Errorf("unresolved user actor got an identity mark: %+v", ghost)
+	}
+	if !strings.HasPrefix(ghost.Actor, "User · ") {
+		t.Errorf("unresolved user actor = %q, want the type/id fallback", ghost.Actor)
+	}
+
+	// An agent has a name and a link, never a face.
+	agent := objectProvenanceOf(GraphObject{ActorType: "agent", ActorID: "a1"}, known)
+	if agent.ActorInitials != "" || agent.ActorAvatar != "" {
+		t.Errorf("agent actor got a user avatar: %+v", agent)
+	}
+}
+
+// TestObjectActorIdentitiesPrefersOrgMembers pins which roster names a writer.
+// Access to a project's objects is granted by ORGANIZATION membership (the
+// server's write guard), so an org member who holds no project membership can
+// still write — and must still be named. Without a session org (an API-key
+// path) the project roster remains the only list, and a failed org read falls
+// back to it instead of losing the user options.
+func TestObjectActorIdentitiesPrefersOrgMembers(t *testing.T) {
+	orgMembers := []OrgMemberDto{{ID: "u1", Email: "maciek@example.com", DisplayName: ptr("Maciek Dev")}}
+	members := []ProjectMemberDto{{ID: "u2", DisplayName: "Alice"}}
+
+	t.Run("session org", func(t *testing.T) {
+		f := &fakeMemory{orgMembers: orgMembers, members: members}
+		s := &Server{cfg: Config{}, memory: f}
+		ctx := withSessionContext(context.Background(), &sessionContext{
+			OrgID: "o1", Sub: "u1", Picture: "avatars/me.jpg",
+		})
+		options := s.objectActorIdentities(ctx, true, false)
+
+		if f.listOrgMembersCalls != 1 || f.orgMembersOrgID != "o1" {
+			t.Errorf("org members read = %d (org %q), want one read for o1", f.listOrgMembersCalls, f.orgMembersOrgID)
+		}
+		if f.listMembersCalls != 0 {
+			t.Errorf("project members read %d times, want 0 when the session names its org", f.listMembersCalls)
+		}
+		if len(options) != 1 || options[0].Label != "Maciek Dev" || options[0].Type != "user" {
+			t.Fatalf("options = %+v, want the named org member", options)
+		}
+		// The signed-in user's own photo is the only avatar a page can serve.
+		if options[0].AvatarURL != "/api/user/avatar?v=avatars%2Fme.jpg" {
+			t.Errorf("self avatar = %q, want the session-scoped proxy", options[0].AvatarURL)
+		}
+	})
+
+	t.Run("no session org", func(t *testing.T) {
+		f := &fakeMemory{orgMembers: orgMembers, members: members}
+		s := &Server{cfg: Config{}, memory: f}
+		options := s.objectActorIdentities(context.Background(), true, false)
+
+		if f.listOrgMembersCalls != 0 || f.listMembersCalls != 1 {
+			t.Errorf("reads = org %d / project %d, want the project roster only", f.listOrgMembersCalls, f.listMembersCalls)
+		}
+		if len(options) != 1 || options[0].Label != "Alice" {
+			t.Fatalf("options = %+v, want the project member", options)
+		}
+	})
+
+	t.Run("org read fails", func(t *testing.T) {
+		f := &fakeMemory{
+			orgMembersErr: context.DeadlineExceeded,
+			members:       members,
+		}
+		s := &Server{cfg: Config{}, memory: f}
+		ctx := withSessionContext(context.Background(), &sessionContext{OrgID: "o1", Sub: "u1"})
+		options := s.objectActorIdentities(ctx, true, false)
+
+		if len(options) != 1 || options[0].Label != "Alice" {
+			t.Fatalf("options = %+v, want the project-roster fallback", options)
+		}
+	})
+
+	// An autoprovisioned profile can be an empty roster row: no display name, no
+	// name parts, no email. The caller's own writes still get the name from the
+	// claims they signed in with, instead of resolving to a bare id.
+	t.Run("nameless self profile", func(t *testing.T) {
+		f := &fakeMemory{orgMembers: []OrgMemberDto{{ID: "u1"}}}
+		s := &Server{cfg: Config{}, memory: f}
+		ctx := withSessionContext(context.Background(), &sessionContext{
+			OrgID: "o1", Sub: "u1", Name: "Maciek Dev", Picture: "avatars/me.jpg",
+		})
+		options := s.objectActorIdentities(ctx, true, false)
+
+		if len(options) != 1 || options[0].Label != "Maciek Dev" {
+			t.Fatalf("options = %+v, want the caller named from the claims", options)
+		}
+		if options[0].AvatarURL == "" {
+			t.Error("the caller's own avatar must be attached to their option")
+		}
+	})
+
+	// A roster that does not list the caller at all still gets them: their
+	// writes are in the filter's data whether or not a membership row exists.
+	t.Run("self missing from roster", func(t *testing.T) {
+		f := &fakeMemory{orgMembers: orgMembers}
+		s := &Server{cfg: Config{}, memory: f}
+		ctx := withSessionContext(context.Background(), &sessionContext{
+			OrgID: "o1", Sub: "u9", Name: "Maciek Dev",
+		})
+		options := s.objectActorIdentities(ctx, true, false)
+
+		var found bool
+		for _, o := range options {
+			if o.ID == "u9" && o.Label == "Maciek Dev" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("options = %+v, want the caller appended", options)
+		}
+	})
+}
+
+// TestObjectProvenanceAvatarRenders pins the mark on both surfaces that show a
+// write stamp: the browse card's footer and the history timeline. The card and
+// the timeline render the same component, so a change that adds a face to one
+// and not the other would be a drift, not a decision.
+func TestObjectProvenanceAvatarRenders(t *testing.T) {
+	identities := []objectActorOption{{Type: "user", ID: "u1", Label: "Maciek Dev"}}
+	version := GraphObject{
+		ID: "o1", Version: 2, Type: "Task", Key: "boiler", ActorType: "user", ActorID: "u1",
+		CredentialKind: "session", CreatedAt: time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339),
+	}
+
+	card := renderHTML(t, objectsBrowserCard(
+		newObjectsBrowserRow(version, nil, identities, 0), false, false))
+	if !strings.Contains(card, `data-testid="object-actor-avatar"`) {
+		t.Errorf("card footer must carry the writer's identity mark:\n%s", card)
+	}
+	if !strings.Contains(card, "Maciek Dev") {
+		t.Errorf("card footer must name the writer:\n%s", card)
+	}
+
+	history := renderHTML(t, objectPreviewHistory([]GraphObject{version}, identities))
+	if !strings.Contains(history, `data-testid="object-actor-avatar"`) {
+		t.Errorf("history entry must carry the writer's identity mark:\n%s", history)
+	}
+	if !strings.Contains(history, "Maciek Dev") {
+		t.Errorf("history entry must name the writer:\n%s", history)
+	}
+
+	// An unresolved writer has no mark: the fallback is a placeholder.
+	ghost := renderHTML(t, objectPreviewHistory([]GraphObject{version}, nil))
+	if strings.Contains(ghost, `data-testid="object-actor-avatar"`) {
+		t.Errorf("unresolved writer must not get an identity mark:\n%s", ghost)
+	}
+}
+
+// TestObjectsPageNamesOrgWriter is the end-to-end version of the roster rule:
+// a scoped browse request (session org set by applyScope) renders the ORG
+// member who wrote the object, with the identity mark — not the
+// "User · <short id>" placeholder the project roster alone produced.
+func TestObjectsPageNamesOrgWriter(t *testing.T) {
+	f := &fakeMemory{
+		orgMembers: []OrgMemberDto{{ID: "u1", Email: "maciek@example.com", DisplayName: ptr("Maciek Dev")}},
+		pageObjects: []GraphObject{{
+			ID: "o1", Type: "Task", Key: "boiler", ActorType: "user", ActorID: "u1",
+			CredentialKind: "session",
+			CreatedAt:      time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
+		}},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/search", s.uiSearch)
+
+	req := httptest.NewRequest(http.MethodGet, "/search", nil)
+	req = req.WithContext(withSessionContext(req.Context(), &sessionContext{
+		OrgID: "o1", ProjectID: "p1", Sub: "u1", Name: "Maciek Dev", Picture: "avatars/me.jpg",
+	}))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	html := rec.Body.String()
+	if !strings.Contains(html, "Maciek Dev") {
+		t.Errorf("card footer must name the org member who wrote the object:\n%s", html)
+	}
+	if strings.Contains(html, "User · ") {
+		t.Errorf("a resolvable writer must not render the placeholder label:\n%s", html)
+	}
+	if !strings.Contains(html, `data-testid="object-actor-avatar"`) {
+		t.Errorf("card footer must carry the writer's identity mark:\n%s", html)
+	}
+}
+
 // TestObjectProvenanceOfUnstampedVersion pins the empty case: a version written
 // before the write stamp existed renders no provenance line at all rather than
 // claiming a writer.

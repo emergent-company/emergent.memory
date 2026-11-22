@@ -95,6 +95,11 @@ type StickyFormActionsProps struct {
 	// Rail mirrors layout.Rail's grid so the actions align to the rail's
 	// content column on lg while the strip still spans the full pane.
 	Rail bool
+	// Full drops the ContainerLG width cap so the actions line up with a page
+	// that renders in layout.ContainerFull (the work board, the object pages)
+	// instead of centering at max-w-6xl inside a wider surface. The gutter stays;
+	// only the cap goes.
+	Full bool
 	// Class is appended to the bar root (caller-owned spacing/overrides).
 	Class string
 	// Attrs is spread last on the bar root element.
@@ -121,16 +126,23 @@ type StickyFormActionsProps struct {
 // would pin to the viewport bottom rather than the dialog. Keep the go-daisy
 // form.FormActions footer there.
 templ StickyFormActions(props StickyFormActionsProps) {
-	{{ align := formActionsAlign(props.Align) }}
+	{{ align := formActionsAlign(props.Align)
+	// The bar's content row shares the page container's width: ContainerLG's
+	// cap by default, and no cap when the page itself is full-bleed — otherwise
+	// the buttons would center under a form that spans the whole pane.
+	width := "max-w-6xl"
+	if props.Full {
+		width = "max-w-none"
+	} }}
 	<div { devmode.Attrs(ctx, "components/StickyFormActions")... } class={ "sticky-form-actions", props.Class } { props.Attrs... }>
 		<div class="sfa__surface">
 			if props.Rail {
-				<div class="mx-auto w-full max-w-6xl px-6 py-3 lg:grid lg:grid-cols-[11rem_minmax(0,1fr)] lg:gap-6 lg:px-8">
+				<div class={ "mx-auto w-full px-6 py-3 lg:grid lg:grid-cols-[11rem_minmax(0,1fr)] lg:gap-6 lg:px-8", width }>
 					<div class="hidden lg:block" aria-hidden="true"></div>
 					<div class={ "flex flex-wrap items-center gap-2", align }>{ children... }</div>
 				</div>
 			} else {
-				<div class={ "mx-auto w-full max-w-6xl px-6 py-3 lg:px-8", "flex flex-wrap items-center gap-2", align }>{ children... }</div>
+				<div class={ "mx-auto w-full px-6 py-3 lg:px-8", "flex flex-wrap items-center gap-2", align, width }>{ children... }</div>
 			}
 		</div>
 	</div>

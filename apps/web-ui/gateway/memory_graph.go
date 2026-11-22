@@ -539,8 +539,13 @@ type unifiedSearchResult struct {
 // the graph, returning only the type=="graph" hits normalized to
 // ObjectSearchResult. types is a comma-joined list of type names (empty = no
 // type filter). Results below minSearchScore are dropped and the top `limit`
-// graph hits are kept. Unified results carry fields (object properties) but
-// not created_at/status/embedding_status, so callers must not render those.
+// graph hits are kept.
+//
+// The endpoint itself returns only id/type/key/fields/labels, so each hit is
+// enriched in one follow-up ids read (hydrateSearchObjects) that restores the
+// write stamp, created_at, status and embedding state — everything a card or a
+// row renders. A hit that read does not return keeps the sparse object, so a
+// caller may render those fields but must tolerate their absence.
 func (m *MemoryClient) SearchObjectsUnified(ctx context.Context, query, types, branchID string, limit int) ([]ObjectSearchResult, error) {
 	body := map[string]any{
 		"query":       query,
@@ -585,5 +590,56 @@ func (m *MemoryClient) SearchObjectsUnified(ctx context.Context, query, types, b
 			break
 		}
 	}
+	m.hydrateSearchObjects(ctx, branchID, out)
 	return out, nil
+}
+
+// hydrateSearchObjects fills in the parts of each hit the unified endpoint does
+// not return: the write stamp (who wrote this version, through which
+// credential), created_at, status, labels and the embedding state. Without them
+// a search card loses the footer line every browse card carries — the search
+// page then looked like a list of objects with no provenance at all.
+//
+// It is one ids-scoped list read for the whole page, not one GET per hit: the
+// list endpoint takes `ids` and returns the same objects the browse page reads,
+// so the card renderer needs no second code path. The read is best-effort —
+// a search that succeeded must not fail because its enrichment did — and a hit
+// the list does not return keeps the sparse object it had, which renders as a
+// card without a writer line rather than as an error.
+func (m *MemoryClient) hydrateSearchObjects(ctx context.Context, branchID string, hits []ObjectSearchResult) {
+	if len(hits) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(hits))
+	for _, h := range hits {
+		if h.Object.ID != "" {
+			ids = append(ids, h.Object.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	full, err := m.ListGraphObjects(ctx, branchID, "", ids)
+	if err != nil {
+		captureError(err)
+		return
+	}
+	byID := make(map[string]GraphObject, len(full)*2)
+	for _, o := range full {
+		byID[o.ID] = o
+		if o.CanonicalID != "" {
+			byID[o.CanonicalID] = o
+		}
+	}
+	for i := range hits {
+		o, ok := byID[hits[i].Object.ID]
+		if !ok {
+			continue
+		}
+		score := hits[i].Score
+		hits[i].Object = o
+		// The rank is the search's, never the list's: the list order is
+		// created_at, and overwriting the score with it would reorder the page.
+		hits[i].Score = score
+	}
 }

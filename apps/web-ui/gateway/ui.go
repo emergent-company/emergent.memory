@@ -226,7 +226,13 @@ func sidebarGroupsWithMarket(base string, isOrgAdmin bool, warns sidebarWarns) [
 		approvalsItem.Warn = sidebarApprovalsBadge(warns.Approvals)
 	}
 	memoryItems := []layout.SidebarItem{
-		{Label: "Objects", Href: base + "/objects", Icon: "lucide--box"},
+		// Search is the Memory group's landing page: it browses every object
+		// memory stores and searches document text in one surface, so it is what
+		// "Memory" means as a destination. It stays first for that reason — the
+		// group crumb on every Memory page points here (navGroupHref is derived
+		// from the first item), and the object trail's own "Objects" root folds
+		// into it because they land on the same page.
+		{Label: "Search", Href: base + "/search", Icon: "lucide--search"},
 		{Label: "Embeddings", Href: base + "/embeddings", Icon: "lucide--scan-line"},
 		{Label: "Schema", Href: base + "/schema", Icon: "lucide--git-branch"},
 		{Label: "Blueprints", Href: base + "/blueprints", Icon: "lucide--library"},
@@ -251,7 +257,6 @@ func sidebarGroupsWithMarket(base string, isOrgAdmin bool, warns sidebarWarns) [
 	topItems := []layout.SidebarItem{
 		approvalsItem,
 		{Label: "Chat", Href: base + "/chat", Icon: "lucide--messages-square"},
-		{Label: "Search", Href: base + "/search", Icon: "lucide--search"},
 		{Label: "Sessions", Href: base + "/sessions", Icon: "lucide--history"},
 	}
 	return []layout.SidebarGroup{

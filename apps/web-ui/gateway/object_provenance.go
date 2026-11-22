@@ -34,6 +34,16 @@ type objectVersionProvenance struct {
 	// ActorTitle is the audit tooltip: the recorded (actor_type, actor_id) pair,
 	// never a name the server did not send.
 	ActorTitle string
+	// ActorInitials is the avatar fallback for a resolved user actor: the first
+	// letters of the resolved name. "" when the label is the unresolved
+	// "<Type> · <short id>" fallback — a circle reading "U" for "User · f0364…"
+	// would decorate the placeholder instead of the person.
+	ActorInitials string
+	// ActorAvatar is a servable avatar URL for the resolved actor, when one can
+	// be served at all: only the signed-in user's photo is (the gateway's avatar
+	// proxy is session-scoped), so this is "" for anyone else and the initials
+	// carry the identity instead.
+	ActorAvatar string
 	// How names the credential the write used ("API key", "agent MCP link",
 	// "web session"); "" when the stamp carries none (background writes).
 	How string
@@ -70,8 +80,18 @@ func objectProvenanceOf(v GraphObject, identities []objectActorOption) objectVer
 			// concept, not a writer), so it is bypassed for that case.
 			if v.ActorID == "" {
 				p.Actor = actorTypeLabel(v.ActorType)
+			} else if opt, ok := actorOptionOf(identities, v.ActorType, v.ActorID); ok {
+				// Resolved: the person's (or agent's) own name, plus the avatar a
+				// user actor is drawn as. Both only travel with a real identity —
+				// the fallback label below is a placeholder, not somebody to
+				// paint a face on.
+				p.Actor = opt.Label
+				if p.ActorKind == "user" {
+					p.ActorInitials = initials(opt.Label)
+					p.ActorAvatar = opt.AvatarURL
+				}
 			} else {
-				p.Actor = actorOptionLabel(identities, v.ActorType, v.ActorID)
+				p.Actor = actorTypeLabel(v.ActorType) + " · " + shortActorID(v.ActorID)
 			}
 		}
 		if p.ActorKind == "agent" && v.ActorID != "" {
@@ -164,20 +184,62 @@ func (s *Server) objectActorIdentitiesFor(ctx context.Context, versions []GraphO
 }
 
 // objectActorIdentities fetches the project's selectable actors, optionally
-// scoped to one group: members as actor_type "user", agent definitions as
+// scoped to one group: people as actor_type "user", agent definitions as
 // actor_type "agent". Both fetches are best-effort and run concurrently — a
 // failure drops that group rather than blanking the surface, and the caller's
 // label falls back to "<Type> · <short id>".
+//
+// People come from the ORGANIZATION's member list, not the project's, because
+// org membership is what grants access to a project's objects: the server's
+// write guard admits any member of the project's owning org
+// (`pkg/auth/project_membership.go`), and a writer need not hold a
+// `kb.project_memberships` row. Resolving from project members alone therefore
+// left ordinary writes attributed to "<Type> · <short id>" — the writer is a
+// real, named colleague who simply is not on the project roster. A request
+// without a session org (an API-key path) keeps the project-member list, which
+// is the only roster that token can see.
 func (s *Server) objectActorIdentities(ctx context.Context, wantUsers, wantAgents bool) []objectActorOption {
 	var (
-		members   []ProjectMemberDto
-		agents    []AgentDefinitionSummary
-		memberErr error
-		agentErr  error
+		orgMembers []OrgMemberDto
+		members    []ProjectMemberDto
+		agents     []AgentDefinitionSummary
+		memberErr  error
+		agentErr   error
 	)
+	// The signed-in user's own photo is the one avatar a page can actually
+	// serve: /api/user/avatar is session-scoped, so it is attached only to that
+	// user's option and everyone else falls back to initials.
+	orgID, selfID, selfLabel, selfAvatar := "", "", "", ""
+	if sc, ok := sessionContextFrom(ctx); ok {
+		orgID, selfID = sc.OrgID, sc.Sub
+		selfAvatar = resolveSelfAvatar(sc.AvatarOverrideURL, sc.Picture)
+		// The claims are the one place the signed-in user's name is guaranteed:
+		// a roster row can exist with no display name and no email (an
+		// autoprovisioned profile), and then the write stamp has nothing to
+		// resolve to but an id.
+		if name := strings.TrimSpace(sc.Name); name != "" {
+			selfLabel = name
+		} else {
+			selfLabel = strings.TrimSpace(sc.Email)
+		}
+	}
 	var g errgroup.Group
 	if wantUsers {
-		g.Go(func() error { members, memberErr = s.memory.ListMembers(ctx); return nil })
+		g.Go(func() error {
+			if orgID == "" {
+				members, memberErr = s.memory.ListMembers(ctx)
+				return nil
+			}
+			orgMembers, memberErr = s.memory.ListOrgMembers(ctx, orgID)
+			if memberErr != nil {
+				// An org directory that answers nothing still leaves the project
+				// roster to name people by, so fall back rather than losing the
+				// filter's user options entirely.
+				orgMembers = nil
+				members, memberErr = s.memory.ListMembers(ctx)
+			}
+			return nil
+		})
 	}
 	if wantAgents {
 		g.Go(func() error { agents, agentErr = s.memory.ListAgentDefinitions(ctx); return nil })
@@ -186,13 +248,29 @@ func (s *Server) objectActorIdentities(ctx context.Context, wantUsers, wantAgent
 	captureError(memberErr)
 	captureError(agentErr)
 
-	options := make([]objectActorOption, 0, len(members)+len(agents))
+	options := make([]objectActorOption, 0, len(orgMembers)+len(members)+len(agents))
+	for _, m := range orgMembers {
+		avatar := ""
+		if m.ID == selfID {
+			avatar = selfAvatar
+		}
+		options = append(options, objectActorOption{
+			Type:      "user",
+			ID:        m.ID,
+			Label:     orgMemberDisplayName(m),
+			AvatarURL: avatar,
+		})
+	}
 	for _, m := range members {
+		avatar := m.AvatarURL
+		if m.ID == selfID && avatar == "" {
+			avatar = selfAvatar
+		}
 		options = append(options, objectActorOption{
 			Type:      "user",
 			ID:        m.ID,
 			Label:     memberActorLabel(m),
-			AvatarURL: strings.TrimSpace(m.AvatarURL),
+			AvatarURL: avatar,
 		})
 	}
 	for _, a := range agents {
@@ -204,5 +282,35 @@ func (s *Server) objectActorIdentities(ctx context.Context, wantUsers, wantAgent
 			Color: agentColor(a.UIConfig),
 		})
 	}
-	return options
+	return selfActorOption(options, selfID, selfLabel, selfAvatar)
+}
+
+// selfActorOption makes sure the signed-in user is nameable. A roster entry can
+// exist with nothing in it — an autoprovisioned profile with no display name, no
+// name parts and no email — and then every one of that user's own writes reads
+// as "<Type> · <short id>": the least scrutable possible attribution, on the
+// one writer whose name the page knows for certain, because it is on the ID
+// token. So an option for the caller with an empty or id-shaped label is
+// replaced by the claims' name, and a roster that does not list the caller at
+// all still gets one row.
+func selfActorOption(options []objectActorOption, selfID, selfLabel, selfAvatar string) []objectActorOption {
+	if selfID == "" {
+		return options
+	}
+	for i, o := range options {
+		if o.Type != "user" || o.ID != selfID {
+			continue
+		}
+		if selfLabel != "" && (strings.TrimSpace(o.Label) == "" || o.Label == o.ID) {
+			options[i].Label = selfLabel
+		}
+		if options[i].AvatarURL == "" {
+			options[i].AvatarURL = selfAvatar
+		}
+		return options
+	}
+	if selfLabel == "" {
+		return options
+	}
+	return append(options, objectActorOption{Type: "user", ID: selfID, Label: selfLabel, AvatarURL: selfAvatar})
 }

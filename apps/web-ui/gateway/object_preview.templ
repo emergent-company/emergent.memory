@@ -161,15 +161,6 @@ templ objectPreviewContent(obj *GraphObject, typeUIByType map[string]typeUI, rel
 			<div class="min-w-0">
 				<div class="mb-1 flex flex-wrap items-center gap-2">
 					@typeNameChip(obj.Type, ui.BadgePrimary, tui.Icon, tui.Color)
-					// Workflow types render the status as the editable top-strip
-					// trigger below; a second read-only badge here would duplicate it.
-					if obj.Status != "" && objectWorkControlDisabled(opts.Status) {
-						@components.StatusBadge(boardStatusLabel(obj.Status), boardStatusIntent(obj.Status), "", components.StatusBadgeOpts{
-							Size:  ui.BadgeSizeSM,
-							Dot:   true,
-							Attrs: templ.Attributes{"data-status": obj.Status},
-						})
-					}
 				</div>
 				<div class="flex items-center gap-1.5">
 					<h3 id="object-preview-heading" class="text-base leading-tight font-semibold break-words">{ graphObjectLabel(*obj) }</h3>
@@ -394,6 +385,11 @@ templ objectPreviewHistoryEntry(v GraphObject, prev *GraphObject, identities []o
 							@ui.Badge(ui.BadgeProps{Label: "system", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
 						}
 						if prov.Actor != "" {
+							@objectActorAvatar(objectActorAvatarProps{
+								Initials: prov.ActorInitials,
+								Avatar:   prov.ActorAvatar,
+								Name:     prov.Actor,
+							})
 							if prov.ActorHref != "" {
 								<a href={ templ.URL(prov.ActorHref) } class="text-muted-strong min-w-0 truncate hover:underline" title={ prov.ActorTitle }>{ prov.Actor }</a>
 							} else {

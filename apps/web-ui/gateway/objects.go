@@ -32,23 +32,51 @@ type objectsStats struct {
 	EmbedErr     error // non-nil → embedding queue stats unavailable
 }
 
-// objectsPageData carries everything the objects browser renders, in one struct
-// so the page signature stays stable while its presentation evolves. Browse
-// mode fills Objects/HasMore/NextCursor/Stats; search mode fills Results.
+// objectsPageData carries everything the /search page renders, in one struct so
+// the page signature stays stable while its presentation evolves. Browse mode
+// fills Objects/HasMore/NextCursor/Stats; search mode fills Documents (the text
+// leg) and Results (the object leg). The agent-scoped view fills the browse
+// fields only.
 type objectsPageData struct {
-	Query      string
-	Mode       string // normalized to "fulltext" | "hybrid" | "unified"
+	Query string
+	// In is the search scope: all | documents | objects (the `in` param). It
+	// selects which leg a query runs and is normalized at entry.
+	In string
+	// Limit is the result cap a query asks for. Zero on a browse request, where
+	// the page size is fixed (see listParams).
+	Limit      int
 	TypeFilter string
 	BranchID   string
 	// Order is the browse list's created_at direction: "asc", or "" for the
 	// server default (newest first). Search results are relevance-ranked and
 	// ignore it. Kept as "" for the default so URLs stay clean and every
 	// pre-existing link keeps its meaning.
-	Order        string
-	Types        []string
-	Branches     []Branch
-	Objects      []GraphObject        // browse mode rows
-	Results      []ObjectSearchResult // search mode hits
+	Order    string
+	Types    []string
+	Branches []Branch
+	Objects  []GraphObject        // browse mode rows
+	Results  []ObjectSearchResult // search mode object hits
+	// Documents carries the text leg's hits for a query: document chunks, which
+	// render above the object cards in their own section.
+	Documents []searchDocumentHit
+	// Meta is the text leg's result accounting, rendered in the search summary.
+	Meta UnifiedSearchMetadata
+	// EmbeddingModelMissing is set only when a query returned nothing and the
+	// project has no embedding model configured — the one actionable reason a
+	// semantic search can come back empty. Never set on a successful run that
+	// found hits, and never set for the objects-only scope.
+	EmbeddingModelMissing bool
+	// HiddenCount is how many unified hits the page left out of the grid because
+	// they fell below the relevance floor (see objectSearchResultsShown). They
+	// are counted and offered behind a link rather than dropped: the floor is a
+	// provisional calibration, so a wrong one must cost a click rather than an
+	// object.
+	HiddenCount int
+	// Lookup is set when the query was an object-id lookup rather than a
+	// relevance search (see parseObjectSearchQuery). It carries the id and,
+	// when nothing resolved, why — so the page can explain instead of showing
+	// an anonymous empty result.
+	Lookup       *objectSearchLookup
 	HasMore      bool
 	NextCursor   string
 	Stats        *objectsStats // nil → deferred stats partial; non-nil → loaded
@@ -98,11 +126,6 @@ type objectsPageData struct {
 	// or its failure) into the page's toasts.
 	FlashMsg string
 	FlashErr error
-
-	// WikiView is the reader's chosen wiki variant ("article" | "page"). Cards
-	// link into the wiki carrying it, and the results bar's switch changes it.
-	// Empty normalizes to the article.
-	WikiView string
 }
 
 // listParams builds the graph-object list query for this page's active filters
@@ -397,71 +420,31 @@ func (s *Server) loadObjectBrowsePage(ctx context.Context, data *objectsPageData
 	return nil
 }
 
-// uiObjects renders the objects browser: searchable graph objects, filterable
-// by type, branch, and actor provenance, with a small stats section and
-// cursor-paginated browse.
+// uiObjects retires the objects page as a destination: /search renders the same
+// cards, filters and query form, plus the document-text leg that only it can
+// show, so a second page over the same list was two answers to one question.
+// The redirect carries the query string, so a bookmarked filter or a type-scoped
+// link still lands on the same list; `mode` is the one parameter that means
+// nothing on /search and is dropped.
 func (s *Server) uiObjects(c echo.Context) error {
-	ctx := c.Request().Context()
-	branchID := c.QueryParam("branch")
-	typeFilter := c.QueryParam("type")
-	query := c.QueryParam("q")
-	mode := normalizeObjectsSearchMode(c.QueryParam("mode"))
-	cursor := c.QueryParam("cursor")
-	actorType, actorID := objectActorFilter(c)
-	wikiView, wikiViewExplicit := objectWikiViewPreference(c)
-	if wikiViewExplicit {
-		setObjectWikiViewPreference(c, wikiView)
+	target := "/search"
+	if q := objectsRedirectQuery(c.Request().URL.RawQuery); q != "" {
+		target += "?" + q
 	}
+	return c.Redirect(http.StatusMovedPermanently, target)
+}
 
-	data := objectsPageData{
-		Query:        query,
-		Mode:         mode,
-		TypeFilter:   typeFilter,
-		BranchID:     branchID,
-		ActorType:    actorType,
-		ActorID:      actorID,
-		Provenance:   effectiveObjectProvenance(c.QueryParam("provenance"), actorType),
-		CredentialID: strings.TrimSpace(c.QueryParam("credential_id")),
-		ViaShare:     objectViaShareLabel(c.QueryParam("via")),
-		Order:        normalizeObjectOrder(c.QueryParam("order")),
-		FlashMsg:     objectsBulkFlash(c),
-		FlashErr:     flashError(c),
-		WikiView:     wikiView,
+// objectsRedirectQuery forwards a retired /objects query string to /search,
+// dropping the search-mode parameter the merged page no longer has. The raw
+// string is preserved otherwise rather than re-encoded, so a value the objects
+// page accepted keeps travelling unchanged.
+func objectsRedirectQuery(raw string) string {
+	values, err := url.ParseQuery(raw)
+	if err != nil {
+		return raw
 	}
-	s.loadObjectFilterOptions(ctx, &data)
-
-	if query != "" {
-		// Search endpoints do not accept the actor provenance filter, so search
-		// mode stays project-wide; the provenance control is hidden there.
-		var results []ObjectSearchResult
-		var err error
-		if mode == "unified" {
-			results, err = s.memory.SearchObjectsUnified(ctx, query, typeFilter, branchID, 25)
-		} else {
-			results, _, err = s.memory.SearchObjects(ctx, mode, query, typeFilter, branchID, 25, 0)
-		}
-		if err != nil {
-			data.LoadErr = userFacingError(err)
-			return s.renderObjects(c, pageTitle("Objects"), data)
-		}
-		data.Results = results
-		return s.renderObjects(c, pageTitle("Objects"), data)
-	}
-
-	// Browse mode: one page of 25 (most-recent-first). The object count and
-	// embedding-queue stats for the small stats section are optional and slow
-	// (issue #1098: /api/embeddings/progress ~29s, /api/graph/objects/count
-	// ~6s), so they are fetched by a deferred HTMX partial (/objects/stats)
-	// after first paint instead of gating the browse render. data.Stats is left
-	// nil to select that deferred path. The selectable actor identities are
-	// loaded only in browse mode: the actor filter is browse-only (the search
-	// endpoints cannot apply it), so search mode does not pay for the fetches.
-	s.loadObjectActorOptions(ctx, &data)
-	if err := s.loadObjectBrowsePage(ctx, &data, cursor); err != nil {
-		data.LoadErr = userFacingError(err)
-		return s.renderObjects(c, pageTitle("Objects"), data)
-	}
-	return s.renderObjects(c, pageTitle("Objects"), data)
+	values.Del("mode")
+	return values.Encode()
 }
 
 // objectActorFilter reads and normalizes the actor provenance pair from the
@@ -530,22 +513,19 @@ func (s *Server) uiObjectsPartial(c echo.Context) error {
 	branchID := c.QueryParam("branch")
 	typeFilter := c.QueryParam("type")
 	query := c.QueryParam("q")
-	mode := c.QueryParam("mode")
 	cursor := c.QueryParam("cursor")
 	actorType, actorID := objectActorFilter(c)
 	provenance := effectiveObjectProvenance(c.QueryParam("provenance"), actorType)
 	order := normalizeObjectOrder(c.QueryParam("order"))
 
-	// Search mode has no cursor pagination (it renders the top 25 only).
+	// A query has no cursor pagination (it renders the top `limit` only).
 	if query != "" {
 		renderPartial(c.Response().Writer, c.Request(), objectsBrowserRowsPartial(objectsPageData{}))
 		return nil
 	}
 
-	wikiView, _ := objectWikiViewPreference(c)
 	data := objectsPageData{
 		Query:        query,
-		Mode:         mode,
 		TypeFilter:   typeFilter,
 		BranchID:     branchID,
 		ActorType:    actorType,
@@ -554,7 +534,6 @@ func (s *Server) uiObjectsPartial(c echo.Context) error {
 		CredentialID: strings.TrimSpace(c.QueryParam("credential_id")),
 		ViaShare:     objectViaShareLabel(c.QueryParam("via")),
 		Order:        order,
-		WikiView:     wikiView,
 	}
 	if err := s.loadObjectBrowsePage(ctx, &data, cursor); err != nil {
 		captureError(err)
@@ -579,9 +558,6 @@ func objectsPartialURL(data objectsPageData) string {
 	}
 	if data.Query != "" {
 		q.Set("q", data.Query)
-	}
-	if data.Mode != "" {
-		q.Set("mode", data.Mode)
 	}
 	if data.TypeFilter != "" {
 		q.Set("type", data.TypeFilter)
@@ -616,7 +592,7 @@ func objectsPartialURL(data objectsPageData) string {
 // agent-scoped route) go through it so a filter behaves identically in both:
 // the list is replaced in place and the page around it never moves.
 func (s *Server) renderObjects(c echo.Context, title string, data objectsPageData) error {
-	if targetsResultsRegion(c.Request(), objectsResultsRegion) {
+	if targetsResultsRegion(c.Request(), searchResultsRegion) {
 		// Picking an actor is the one filter change that rewrites the filter row
 		// itself: the closed trigger's label and avatar, the menu's checks, and
 		// whether the provenance toggle exists at all follow it. It is also the
@@ -630,8 +606,8 @@ func (s *Server) renderObjects(c echo.Context, title string, data objectsPageDat
 		// bring them back — neither happens without a reload otherwise. Nothing
 		// else rewrites the row, and replacing it on every change would drop
 		// focus out of the select the user just operated.
-		modeChanged := hxSource(c.Request()) == objectsSearchFormSource
-		renderPartial(c.Response().Writer, c.Request(), objectsResultsFragment(data, actorPicked || modeChanged))
+		searchSubmitted := hxSource(c.Request()) == objectsSearchFormSource
+		renderPartial(c.Response().Writer, c.Request(), objectsResultsFragment(data, actorPicked || searchSubmitted))
 		return nil
 	}
 	return s.page(c, title, ObjectsPage(data))
@@ -654,7 +630,7 @@ func (s *Server) uiObjectsStatsPartial(c echo.Context) error {
 	// must land on the objects page, not on a bare unstyled fragment with only
 	// the counters (issue #235).
 	if c.Request().Header.Get("HX-Request") != "true" {
-		return c.Redirect(http.StatusSeeOther, "/objects")
+		return c.Redirect(http.StatusSeeOther, "/search")
 	}
 	ctx, cancel := context.WithTimeout(c.Request().Context(), optionalFetchTimeout)
 	defer cancel()
@@ -687,58 +663,6 @@ func searchScoreLabel(f float32) string {
 	return strconv.FormatFloat(float64(f), 'f', 2, 32)
 }
 
-// defaultObjectsSearchMode is the search mode used when a request omits `mode`
-// (or supplies an unrecognised value). Unified fuses graph and text ranking, so
-// the default search is not keyword-only.
-const defaultObjectsSearchMode = "unified"
-
-// normalizeObjectsSearchMode coerces a raw `mode` query value to one of the
-// three modes the search handlers accept. An absent or unrecognised value falls
-// back to the default, so the rendered label, the value the form submits, and
-// the dispatched search always agree. Without this, `objectsSearchModeLabel`
-// would render the default label while `SearchObjects` fell through to its
-// full-text implementation.
-func normalizeObjectsSearchMode(mode string) string {
-	switch mode {
-	case "fulltext", "hybrid", "unified":
-		return mode
-	default:
-		return defaultObjectsSearchMode
-	}
-}
-
-// objectsSearchMode is one search mode option of the split search button's
-// dropdown: the submitted value plus its label and a short description of what
-// the mode does.
-type objectsSearchMode struct {
-	Value       string
-	Label       string
-	Description string
-}
-
-// objectsSearchModes lists the search modes in display order (best default
-// first) with their dropdown copy. The order matches the modes the search
-// handlers accept (unified / hybrid / fulltext).
-func objectsSearchModes() []objectsSearchMode {
-	return []objectsSearchMode{
-		{Value: "unified", Label: "Unified", Description: "Fuses graph and text ranking for the best overall matches."},
-		{Value: "hybrid", Label: "Hybrid", Description: "Blends keyword and semantic (vector) matching."},
-		{Value: "fulltext", Label: "Full-text", Description: "Keyword matching only — fast and exact."},
-	}
-}
-
-// objectsSearchModeLabel renders the display label for a search mode, falling
-// back to the default (Unified) for an absent or unknown value so the split
-// button always shows a mode.
-func objectsSearchModeLabel(mode string) string {
-	for _, m := range objectsSearchModes() {
-		if m.Value == mode {
-			return m.Label
-		}
-	}
-	return "Unified"
-}
-
 // uiObjectsKnowledge runs the "ask the graph" RAG Q&A (POST /objects/knowledge)
 // and returns the grounded answer as an HTMX fragment for the answer box. An
 // empty question redirects back to the browser; a backend failure renders an
@@ -751,7 +675,7 @@ func (s *Server) uiObjectsKnowledge(c echo.Context) error {
 	question := strings.TrimSpace(c.FormValue("question"))
 	branch := c.FormValue("branch")
 	if question == "" {
-		return c.Redirect(http.StatusSeeOther, "/objects")
+		return c.Redirect(http.StatusSeeOther, "/search")
 	}
 	answer, sessionID, err := s.memory.QueryKnowledge(ctx, question, branch)
 	if err != nil {
@@ -904,9 +828,10 @@ func (s *Server) objectViewSections(ctx context.Context, data objectDetailShellD
 	return resolveObjectViewSections(view, data.Obj, data.Edges, related, data.TypeUIByType)
 }
 
-// uiObject renders the object Overview subpage: the workflow panel, record
-// facts, the type's declared relationship sections, and editable properties.
-// The Relationships tab keeps the complete, unfiltered edge list.
+// uiObject renders the object Overview subpage: the editable record on the left,
+// and a rail on the right carrying the Metadata and Provenance groups the wiki
+// page renders plus the editable Workflow pickers. The Relationships tab keeps
+// the complete, unfiltered edge list.
 func (s *Server) uiObject(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
@@ -918,6 +843,12 @@ func (s *Server) uiObject(c echo.Context) error {
 		return s.page(c, pageTitle("Object"), ObjectDetailPage(data, nil, nil))
 	}
 	obj := data.Obj
+
+	// The rail's Provenance group is the wiki's own component
+	// (objectProvenanceRail), so the Overview resolves the write stamp the same
+	// way the wiki page does: one best-effort identity lookup, and only when the
+	// version carries a user or agent actor.
+	data.Provenance = objectProvenanceOf(*obj, s.objectActorIdentitiesFor(ctx, []GraphObject{*obj}))
 
 	labelSuggestions := s.objectLabelSuggestions(ctx)
 
@@ -2208,6 +2139,17 @@ func (s *Server) uiObjectCreate(c echo.Context) error {
 // instruction, then deep-links into /chat with the editor agent preselected.
 // When no editor agent resolves, it redirects back with an ?err= flash telling
 // the user to create an agent first — never a silent no-op.
+//
+// Creating the conversation does not execute anything: memory records the
+// instruction as the conversation's opening user message and starts no run, so
+// deep-linking with only ?c= left the reader on an unanswered instruction and
+// every later click resolved the same idle conversation — the button looked
+// dead. A conversation that has never run therefore opens with the instruction
+// as the auto-sent first turn (?prompt= plus the canonical id); chat.js submits
+// it through /api/chat, where memory's get-or-create resolves this same
+// conversation, so the instruction is not written twice, and the first
+// agent-backed turn is what binds the agent. A conversation that has already run
+// just opens: clicking the button again must not re-ask the agent.
 func (s *Server) uiObjectChat(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
@@ -2219,11 +2161,26 @@ func (s *Server) uiObjectChat(c echo.Context) error {
 	if agentID == "" {
 		return redirectWithError(c, "/objects/"+url.PathEscape(id), fmt.Errorf("no editor-capable agent — in Project settings pick an agent with %s", editorCapabilityRequirement))
 	}
-	convID, err := s.memory.CreateObjectConversation(ctx, obj.CanonicalID, graphObjectLabel(*obj), objectChatInstruction(obj))
+	instruction := objectChatInstruction(obj)
+	convID, err := s.memory.CreateObjectConversation(ctx, obj.CanonicalID, graphObjectLabel(*obj), instruction)
 	if err != nil {
 		return c.Redirect(http.StatusSeeOther, "/objects/"+url.PathEscape(id))
 	}
-	return c.Redirect(http.StatusSeeOther, "/chat?c="+url.QueryEscape(convID)+"&agent="+url.QueryEscape(agentID))
+	// SessionID is set once an agent run exists for the conversation. Without a
+	// canonical id there is nothing for the chat turn to resolve against, so
+	// those objects keep the plain open link rather than starting an unlinked
+	// conversation on every click.
+	if obj.CanonicalID == "" {
+		return c.Redirect(http.StatusSeeOther, "/chat?c="+url.QueryEscape(convID)+"&agent="+url.QueryEscape(agentID))
+	}
+	if detail, derr := s.memory.GetConversation(ctx, convID); derr != nil || detail.SessionID != "" {
+		return c.Redirect(http.StatusSeeOther, "/chat?c="+url.QueryEscape(convID)+"&agent="+url.QueryEscape(agentID))
+	}
+	q := url.Values{}
+	q.Set("agent", agentID)
+	q.Set("prompt", instruction)
+	q.Set("canonical", obj.CanonicalID)
+	return c.Redirect(http.StatusSeeOther, "/chat?"+q.Encode())
 }
 
 // uiObjectMerge starts a merge session: redirects to /chat with the merge
@@ -2821,14 +2778,14 @@ func credentialKindLabel(kind string) string {
 	}
 }
 
-// objectBranchChipHref returns the chip's link target (the object browser
-// filtered to this branch), or "" for the main graph so the chip renders as a
-// plain badge.
+// objectBranchChipHref returns the chip's link target (the search page filtered
+// to this branch), or "" for the main graph so the chip renders as a plain
+// badge.
 func objectBranchChipHref(b objectBranchRef) string {
 	if b.ID == "" {
 		return ""
 	}
-	return "/objects?branch=" + url.QueryEscape(b.ID)
+	return "/search?branch=" + url.QueryEscape(b.ID)
 }
 
 // objectSourceDocumentLabel renders a source record's document display label:

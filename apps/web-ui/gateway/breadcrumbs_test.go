@@ -130,8 +130,8 @@ func TestConvertedPagesRenderDetailTrails(t *testing.T) {
 	}{
 		{"backup detail", backupDetailHeader(&Backup{ProjectName: "Acme"}), "/settings", "Acme"},
 		{"notification settings", NotificationPreferencesPage(notificationPrefsView{}), "/inbox", "Notification settings"},
-		{"connect a data source", DataSourceNewPage(nil, nil, nil, nil, dsSavedCredentialPicker{}, nil, nil, nil), "/objects", "Connect a data source"},
-		{"blueprint model map", BlueprintImportModelMapPage(BlueprintModelMapData{}), "/objects", "Review blueprint models"},
+		{"connect a data source", DataSourceNewPage(nil, nil, nil, nil, dsSavedCredentialPicker{}, nil, nil, nil), "/search", "Connect a data source"},
+		{"blueprint model map", BlueprintImportModelMapPage(BlueprintModelMapData{}), "/search", "Review blueprint models"},
 		{"credentials", CredentialsPage(dsCredentialsPageData{}), "/settings", "Credentials"},
 		{"org landing", OrgLandingPage(orgPageData{Org: &Org{ID: "org_1", Name: "Acme"}}), "/orgs", "Acme"},
 		{"org members", OrgMembersPage(orgMembersPageData{Org: &Org{ID: "org_1", Name: "Acme"}}), "/orgs", "Members"},

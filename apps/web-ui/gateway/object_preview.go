@@ -238,23 +238,18 @@ func objectPreviewBuiltinFields(o *GraphObject) []objectPreviewField {
 // rows carrying the schema's own description, in key order (a compiled type's
 // property map has no declaration order of its own), followed
 // by any stored property the schema does not declare (agents may write keys the
-// type did not anticipate) so nothing is silently hidden. The mirrored `status`
-// property is dropped when the Workflow status row already shows it; for a type
-// with no workflow it stays here, which is where a Scenario's "proposed" status
-// is read.
+// type did not anticipate) so nothing is silently hidden.
+//
+// A `status` property is an ordinary property and always renders here: the
+// workflow status is a separate value (the type's work lane, shown by the work
+// strip) and only a type that declares one has it. The two are never folded
+// together — a type may declare a `status` property for its own purposes, and
+// hiding it once a workflow status existed would drop the reader's data.
 func objectPreviewTypeFields(o GraphObject, schema objectPreviewSchema) []objectPreviewField {
 	declared := make(map[string]bool, len(schema.Properties))
 	out := make([]objectPreviewField, 0, len(schema.Properties)+len(o.Properties))
-	// The mirrored `status` property is folded into the Workflow status row only
-	// when that row actually carries a value: a workflow type whose column is
-	// empty but whose property is set (a batch/upsert write path does not mirror
-	// it) still shows the stored value here rather than hiding it.
-	foldStatus := schema.HasWorkflow && o.Status != ""
 	for _, d := range schema.Properties {
 		declared[d.Name] = true
-		if d.Name == "status" && foldStatus {
-			continue
-		}
 		value := objectPreviewValue(o.Properties[d.Name])
 		out = append(out, objectPreviewField{
 			Label:       objectPreviewDeclaredLabel(d),
@@ -266,7 +261,7 @@ func objectPreviewTypeFields(o GraphObject, schema objectPreviewSchema) []object
 		})
 	}
 	for _, p := range objectPreviewStoredProperties(o) {
-		if declared[p.Key] || (p.Key == "status" && foldStatus) {
+		if declared[p.Key] {
 			continue
 		}
 		out = append(out, objectPreviewField{
@@ -542,7 +537,10 @@ func objectPreviewChangesDerived(cur, prev GraphObject) []objectChange {
 	}
 
 	for _, k := range slices.Sorted(maps.Keys(keys)) {
-		if strings.HasPrefix(k, "_") || k == "status" {
+		// A `status` property is ordinary data: a change to it is a property
+		// change like any other, reported as /status beside the workflow status
+		// entry above (which is the type's work lane, not this property).
+		if strings.HasPrefix(k, "_") {
 			continue
 		}
 		cv, cok := cur.Properties[k]
