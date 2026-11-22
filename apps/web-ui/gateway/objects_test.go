@@ -4621,36 +4621,18 @@ func TestUIObjectChat(t *testing.T) {
 	}
 	_, e := newRouter(f)
 
-	// A conversation that has never run opens with the instruction as the
-	// auto-sent first turn, carrying the canonical id so memory's get-or-create
-	// resolves the conversation that was just seeded for this object. Deep-
-	// linking with only ?c= is what made the button look dead: the seeded
-	// instruction sat there and nothing ever executed the agent.
+	// An object chat opens empty. Memory get-or-creates the conversation by
+	// canonical id and stores no message; the object reaches the agent from the
+	// server's per-turn context appendix. So the deep link is the plain open
+	// link: no ?prompt= (an auto-sent turn is what ordered work on open) and no
+	// ?canonical= (the conversation is already bound to it).
 	rec := get(e, "/objects/o1/chat")
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want 303", rec.Code)
 	}
 	loc := rec.Header().Get("Location")
-	u, uerr := url.Parse(loc)
-	if uerr != nil {
-		t.Fatalf("location %q does not parse: %v", loc, uerr)
-	}
-	if u.Path != "/chat" {
-		t.Errorf("location path = %q, want /chat", u.Path)
-	}
-	if got := u.Query().Get("agent"); got != "a1" {
-		t.Errorf("agent = %q, want a1", got)
-	}
-	if got := u.Query().Get("canonical"); got != "c1" {
-		t.Errorf("canonical = %q, want c1", got)
-	}
-	if !strings.Contains(u.Query().Get("prompt"), "Help me work with this knowledge-graph object.") {
-		t.Errorf("prompt = %q, want the object instruction", u.Query().Get("prompt"))
-	}
-	// The seeded conversation is opened by its canonical id, not by ?c=: a turn
-	// sent with a conversationId would persist the instruction a second time.
-	if u.Query().Get("c") != "" {
-		t.Errorf("location carries c=%q; the first turn must resolve through the canonical id", u.Query().Get("c"))
+	if loc != "/chat?c=conv-9&agent=a1" {
+		t.Errorf("location = %q, want the plain open link", loc)
 	}
 	if f.convCanonicalID != "c1" {
 		t.Errorf("canonicalId = %q, want c1", f.convCanonicalID)
@@ -4658,8 +4640,8 @@ func TestUIObjectChat(t *testing.T) {
 	if f.convTitle != "sam-lee" {
 		t.Errorf("title = %q, want sam-lee", f.convTitle)
 	}
-	if !strings.Contains(f.convMessage, "Help me work with this knowledge-graph object.") {
-		t.Errorf("message = %q, want object instruction", f.convMessage)
+	if f.convMessage != "" {
+		t.Errorf("message = %q, want empty (an object chat seeds no turn)", f.convMessage)
 	}
 
 	// The conversation has run before: open it. Clicking the button again must
@@ -4672,13 +4654,17 @@ func TestUIObjectChat(t *testing.T) {
 		t.Errorf("already-run location = %q, want the plain open link", got)
 	}
 
-	// No canonical id: there is nothing for a turn to resolve against, so the
-	// conversation is only opened.
+	// No canonical id: nothing for the per-turn appendix to resolve, so it takes
+	// the legacy seeded-instruction path and only opens the conversation (the
+	// instruction must not auto-send for an unlinked conversation).
 	f.details = nil
 	f.objects[0].CanonicalID = ""
 	rec = get(e, "/objects/o1/chat")
 	if got := rec.Header().Get("Location"); got != "/chat?c=conv-9&agent=a1" {
 		t.Errorf("no-canonical location = %q, want the plain open link", got)
+	}
+	if !strings.Contains(f.convMessage, "Help me work with this knowledge-graph object.") {
+		t.Errorf("no-canonical message = %q, want the object instruction", f.convMessage)
 	}
 	f.objects[0].CanonicalID = "c1"
 
@@ -4725,6 +4711,69 @@ func TestUIObjectChat(t *testing.T) {
 	rec = get(e3, "/objects/o1/chat")
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/objects/o1" {
 		t.Fatalf("create err: status=%d location=%q", rec.Code, rec.Header().Get("Location"))
+	}
+
+	// Mixed deploy: a server that predates the object-context model rejects the
+	// empty message with 400 "message is required". That is the one failure worth
+	// falling back for, so the button keeps working — the conversation is seeded
+	// with the instruction and the deep link auto-sends it, as before. The fake
+	// only fails the first (empty) attempt.
+	legacyErr := &memoryHTTPError{Status: http.StatusBadRequest, Message: "message is required"}
+	f4 := &fakeMemory{
+		objects: []GraphObject{{ID: "o1", CanonicalID: "c1", Type: "person", Key: "sam-lee"}},
+		agents:  []AgentDefinitionSummary{{ID: "a1", Name: "diane", IsDefault: true, Enabled: true}},
+		defs: map[string]*AgentDefinition{
+			"a1": {ID: "a1", Name: "diane", Enabled: true, Tools: []string{"entity-update", "relationship-create"}},
+		},
+		createConvID:     "conv-9",
+		createConvErrSeq: []error{legacyErr},
+	}
+	_, e4 := newRouter(f4)
+	rec = get(e4, "/objects/o1/chat")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("legacy fallback: status = %d, want 303", rec.Code)
+	}
+	lu, lerr := url.Parse(rec.Header().Get("Location"))
+	if lerr != nil {
+		t.Fatalf("legacy fallback location %q does not parse: %v", rec.Header().Get("Location"), lerr)
+	}
+	if lu.Path != "/chat" {
+		t.Errorf("legacy fallback path = %q, want /chat", lu.Path)
+	}
+	if lu.Query().Get("canonical") != "c1" {
+		t.Errorf("legacy fallback canonical = %q, want c1", lu.Query().Get("canonical"))
+	}
+	if !strings.Contains(lu.Query().Get("prompt"), "Help me work with this knowledge-graph object.") {
+		t.Errorf("legacy fallback prompt = %q, want the object instruction", lu.Query().Get("prompt"))
+	}
+	if f4.convMessage != "" && !strings.Contains(f4.convMessage, "Help me work with this knowledge-graph object.") {
+		t.Errorf("legacy fallback message = %q, want empty or the instruction", f4.convMessage)
+	}
+}
+
+// TestIsMessageRequiredError pins the feature-detect that decides whether the
+// gateway falls back to the seeded-instruction object chat: only a 400 whose
+// message says the field is required. Any other failure must not silently
+// switch behaviour.
+func TestIsMessageRequiredError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"message is required", &memoryHTTPError{Status: http.StatusBadRequest, Message: "message is required"}, true},
+		{"capitalised", &memoryHTTPError{Status: http.StatusBadRequest, Message: "Message is required"}, true},
+		{"other 400", &memoryHTTPError{Status: http.StatusBadRequest, Message: "invalid canonicalId format"}, false},
+		{"same message, 500", &memoryHTTPError{Status: http.StatusInternalServerError, Message: "message is required"}, false},
+		{"plain error", fmt.Errorf("message is required"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isMessageRequiredError(tc.err); got != tc.want {
+				t.Errorf("isMessageRequiredError(%v) = %t, want %t", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 
