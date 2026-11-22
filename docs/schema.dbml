@@ -494,6 +494,7 @@ Table "kb"."agent_runs" {
   "source_subject" jsonb
   "run_invocation" jsonb
   "source_trigger_id" uuid
+  "ordered_by_user_id" uuid [note: 'Authenticated user who ordered this run; NULL when no person did.']
 
   Indexes {
     (agent_id) [name: "idx_agent_runs_agent_id"]

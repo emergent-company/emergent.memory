@@ -278,21 +278,21 @@ func objectsBrowserRows(data objectsPageData) []objectsBrowserRowView {
 	if data.Query != "" {
 		rows := make([]objectsBrowserRowView, 0, len(data.Results))
 		for _, r := range data.Results {
-			rows = append(rows, newObjectsBrowserRow(r.Object, data.TypeUIByType, data.ActorOptions, r.Score))
+			rows = append(rows, newObjectsBrowserRow(r.Object, data.TypeUIByType, data.ActorOptions, data.RunOrderers, r.Score))
 		}
 		return rows
 	}
 
 	rows := make([]objectsBrowserRowView, 0, len(data.Objects))
 	for _, o := range data.Objects {
-		rows = append(rows, newObjectsBrowserRow(o, data.TypeUIByType, data.ActorOptions, 0))
+		rows = append(rows, newObjectsBrowserRow(o, data.TypeUIByType, data.ActorOptions, data.RunOrderers, 0))
 	}
 	return rows
 }
 
 // newObjectsBrowserRow is the single mapping from a graph object to the card
 // view. Browse rows pass score 0 because they have no relevance chip.
-func newObjectsBrowserRow(o GraphObject, typeUIByType map[string]typeUI, identities []objectActorOption, score float32) objectsBrowserRowView {
+func newObjectsBrowserRow(o GraphObject, typeUIByType map[string]typeUI, identities []objectActorOption, orderers map[string]string, score float32) objectsBrowserRowView {
 	embedLabel, embedVariant := embeddingStatusBadge(o.EmbeddingStatus)
 	embedIcon, embedClass := embeddingStatusIcon(o.EmbeddingStatus)
 	r := objectsBrowserRowView{
@@ -309,7 +309,7 @@ func newObjectsBrowserRow(o GraphObject, typeUIByType map[string]typeUI, identit
 		CreatedAt:        o.CreatedAt,
 		Score:            score,
 		UI:               typeUIOf(typeUIByType, o.Type),
-		Writer:           objectProvenanceOf(o, identities),
+		Writer:           objectProvenanceOf(o, identities, orderers),
 		When:             relTime(o.CreatedAt),
 	}
 	if n, known := objectVersionCount(o); known {

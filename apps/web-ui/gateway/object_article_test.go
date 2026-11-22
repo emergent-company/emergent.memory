@@ -823,7 +823,7 @@ func TestObjectWikiRailProvenance(t *testing.T) {
 			DocumentID: "d1", DocumentName: "Kickoff.pdf", DocumentVersion: "v3", ExtractedAt: "2026-11-10T09:20:00Z",
 		}},
 	}
-	data.Provenance = objectProvenanceOf(*obj, data.Identities)
+	data.Provenance = objectProvenanceOf(*obj, data.Identities, nil)
 	html := renderHTML(t, objectWikiPage(data))
 
 	meta := strings.Index(html, ">Metadata<")
@@ -914,7 +914,7 @@ func TestObjectWikiRailProvenanceDegrades(t *testing.T) {
 
 	system := &GraphObject{ID: "o2", CanonicalID: "o2", Type: "note", Key: "Deed", Version: 1, ActorType: "system", CredentialKind: "none"}
 	data := objectWikiPageData{Obj: system, TypeLabel: "Note"}
-	data.Provenance = objectProvenanceOf(*system, nil)
+	data.Provenance = objectProvenanceOf(*system, nil, nil)
 	html = renderHTML(t, objectWikiPage(data))
 	if !strings.Contains(html, ">System<") {
 		t.Error("a background write must be named as System")

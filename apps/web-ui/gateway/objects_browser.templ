@@ -573,28 +573,41 @@ templ objectsBrowserCard(r objectsBrowserRowView, search bool, preview bool) {
 // version written before the write stamp existed shows nothing rather than a
 // guessed actor — and only the age falls back to the object's created time.
 templ objectsCardWriter(r objectsBrowserRowView) {
+	{{ w := r.Writer }}
+	{{ primary, primaryInitials, primaryAvatar := w.Actor, w.ActorInitials, w.ActorAvatar }}
+	{{ primaryTitle := w.ActorTitle }}
+	{{ primaryHref := w.ActorHref }}
+	{{ mechanism := "" }}
+	if w.OrderedBy != "" {
+		{{ primary, primaryInitials, primaryAvatar = w.OrderedBy, w.OrderedByInitials, w.OrderedByAvatar }}
+		{{ primaryTitle = w.OrderedByTitle }}
+		{{ primaryHref = "" }}
+		{{ mechanism = w.Actor }}
+	} else {
+		{{ mechanism = w.How }}
+	}
 	<span class="inline-flex min-w-0 items-center gap-1">
-		if r.Writer.Actor != "" || r.Writer.ActorInitials != "" {
+		if primary != "" || primaryInitials != "" {
 			@objectActorAvatar(objectActorAvatarProps{
-				Initials: r.Writer.ActorInitials,
-				Avatar:   r.Writer.ActorAvatar,
-				Name:     r.Writer.Actor,
+				Initials: primaryInitials,
+				Avatar:   primaryAvatar,
+				Name:     primary,
 			})
 		}
-		if r.Writer.Actor != "" {
+		if primary != "" {
 			// min-w-0 so the name is the part that gives way when the bar is
-			// full: it truncates, and the credential, age and version count
+			// full: it truncates, and the mechanism, age and version count
 			// keep their width.
-			<span class="min-w-0 truncate" title={ r.Writer.ActorTitle }>
-				if r.Writer.ActorHref != "" {
-					<a href={ templ.URL(r.Writer.ActorHref) } class="hover:text-base-content relative z-10 font-medium hover:underline">{ r.Writer.Actor }</a>
+			<span class="min-w-0 truncate" title={ primaryTitle }>
+				if primaryHref != "" {
+					<a href={ templ.URL(primaryHref) } class="hover:text-base-content relative z-10 font-medium hover:underline">{ primary }</a>
 				} else {
-					<span class="text-base-content/70 font-medium">{ r.Writer.Actor }</span>
+					<span class="text-base-content/70 font-medium">{ primary }</span>
 				}
 			</span>
-			if r.Writer.How != "" {
+			if mechanism != "" {
 				<span class="shrink-0" aria-hidden="true">·</span>
-				<span class="shrink-0">via { r.Writer.How }</span>
+				<span class="shrink-0">via { mechanism }</span>
 			}
 			if r.When != "" && r.When != "—" {
 				<span class="shrink-0" aria-hidden="true">·</span>
