@@ -63,6 +63,10 @@ type AgentRunDTO struct {
 	TraceID   *string `json:"traceId,omitempty"`
 	RootRunID *string `json:"rootRunId,omitempty"`
 
+	// OrderedByUserID names the person who ordered this run, so a caller can
+	// show the human behind an agent's work. Absent when nobody did.
+	OrderedByUserID *string `json:"orderedByUserId,omitempty"`
+
 	// Model used for this run (resolved at execution time)
 	Model string `json:"model,omitempty"`
 
@@ -284,6 +288,7 @@ func (r *AgentRun) ToDTO() *AgentRunDTO {
 		ResumedFrom:       r.ResumedFrom,
 		TraceID:           r.TraceID,
 		RootRunID:         r.RootRunID,
+		OrderedByUserID:   r.OrderedByUserID,
 		AgentDefinitionID: r.AgentDefinitionID,
 		SessionID:         r.SessionID,
 		SubjectObjectID:   r.SubjectObjectID,

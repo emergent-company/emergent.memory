@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -50,6 +52,46 @@ type AgentRunFull struct {
 	Messages  []*AgentRunMessage  `json:"messages"`
 	ToolCalls []*AgentRunToolCall `json:"toolCalls"`
 	ParentRun *ScheduledAgentRun  `json:"parentRun,omitempty"`
+}
+
+// AgentRunOrderer is the one fact object provenance needs from a run: the person
+// who ordered it. Only these two fields are read, so the batch request stays a
+// narrow projection rather than pulling whole run DTOs.
+type AgentRunOrderer struct {
+	ID              string `json:"id"`
+	OrderedByUserID string `json:"orderedByUserId,omitempty"`
+}
+
+// GetRunOrderers resolves, in one project-scoped read, who ordered each of the
+// given runs. It backs object provenance v2: an agent's write names the human who
+// ordered the run that made it.
+//
+// A run nobody ordered (a source trigger, a schedule, background extraction) is
+// absent from the result or maps to "". Ids outside the project are never
+// returned, so a version stamped with a foreign run id cannot attribute a
+// stranger. The caller treats an error as "no orderer known" rather than
+// failing the surface.
+func (m *MemoryClient) GetRunOrderers(ctx context.Context, runIDs []string) (map[string]string, error) {
+	if len(runIDs) == 0 {
+		return nil, nil
+	}
+	q := url.Values{}
+	q.Set("ids", strings.Join(runIDs, ","))
+	q.Set("limit", strconv.Itoa(len(runIDs)))
+	var env successEnvelope[struct {
+		Items []AgentRunOrderer `json:"items"`
+	}]
+	if err := m.do(ctx, http.MethodGet, "/api/projects/"+m.projectIDFor(ctx)+"/agent-runs?"+q.Encode(), nil, &env); err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(env.Data.Items))
+	for _, r := range env.Data.Items {
+		if r.ID == "" || r.OrderedByUserID == "" {
+			continue
+		}
+		out[r.ID] = r.OrderedByUserID
+	}
+	return out, nil
 }
 
 // GetRunFull fetches one run's full transcript (run + messages + tool calls).

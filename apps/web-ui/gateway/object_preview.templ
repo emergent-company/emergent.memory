@@ -337,7 +337,7 @@ templ objectPreviewNotFound() {
 // key. identities resolves the actor ids to names (see objectActorIdentities);
 // an unresolved actor still renders as "<Type> · <short id>". The drawer is
 // narrow, so everything wraps rather than introducing horizontal scroll.
-templ objectPreviewHistory(versions []GraphObject, identities []objectActorOption) {
+templ objectPreviewHistory(versions []GraphObject, identities []objectActorOption, orderers map[string]string) {
 	if len(versions) == 0 {
 		<div class="text-muted flex items-center gap-2 py-1 text-sm">
 			@ui.IconSpan("lucide--history", "size-4 shrink-0 text-muted-faint")
@@ -346,7 +346,7 @@ templ objectPreviewHistory(versions []GraphObject, identities []objectActorOptio
 	} else {
 		<ol class="flex flex-col gap-3" data-testid="object-preview-history">
 			for i, v := range versions {
-				@objectPreviewHistoryEntry(v, objectPreviewPrevious(versions, i), identities)
+				@objectPreviewHistoryEntry(v, objectPreviewPrevious(versions, i), identities, orderers)
 			}
 		</ol>
 	}
@@ -358,8 +358,8 @@ templ objectPreviewHistory(versions []GraphObject, identities []objectActorOptio
 // for that version. Native <details> is keyboard operable (Enter/Space on the
 // summary) with no JS, so the timeline stays scannable collapsed and every entry
 // is independently expandable.
-templ objectPreviewHistoryEntry(v GraphObject, prev *GraphObject, identities []objectActorOption) {
-	{{ prov := objectProvenanceOf(v, identities) }}
+templ objectPreviewHistoryEntry(v GraphObject, prev *GraphObject, identities []objectActorOption, orderers map[string]string) {
+	{{ prov := objectProvenanceOf(v, identities, orderers) }}
 	<li class="border-base-content/10 border-l-2">
 		<details class="group" data-testid="object-preview-history-entry">
 			<summary class="flex cursor-pointer list-none flex-col gap-1 py-0.5 pl-3 [&::-webkit-details-marker]:hidden">
@@ -384,7 +384,22 @@ templ objectPreviewHistoryEntry(v GraphObject, prev *GraphObject, identities []o
 						} else if prov.ActorKind == "system" {
 							@ui.Badge(ui.BadgeProps{Label: "system", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
 						}
-						if prov.Actor != "" {
+						if prov.OrderedBy != "" {
+							@objectActorAvatar(objectActorAvatarProps{
+								Initials: prov.OrderedByInitials,
+								Avatar:   prov.OrderedByAvatar,
+								Name:     prov.OrderedBy,
+							})
+							<span class="text-muted-strong min-w-0 break-words" title={ prov.OrderedByTitle }>on { objectPossessive(prov.OrderedBy) } order</span>
+							if prov.Actor != "" {
+								<span class="text-muted-faint whitespace-nowrap">via</span>
+								if prov.ActorHref != "" {
+									<a href={ templ.URL(prov.ActorHref) } class="text-muted-strong min-w-0 truncate hover:underline" title={ prov.ActorTitle }>{ prov.Actor }</a>
+								} else {
+									<span class="text-muted-strong min-w-0 truncate" title={ prov.ActorTitle }>{ prov.Actor }</span>
+								}
+							}
+						} else if prov.Actor != "" {
 							@objectActorAvatar(objectActorAvatarProps{
 								Initials: prov.ActorInitials,
 								Avatar:   prov.ActorAvatar,
@@ -396,11 +411,15 @@ templ objectPreviewHistoryEntry(v GraphObject, prev *GraphObject, identities []o
 								<span class="text-muted-strong min-w-0 truncate" title={ prov.ActorTitle }>{ prov.Actor }</span>
 							}
 						}
-						if prov.How != "" {
+						if prov.How != "" && prov.OrderedBy == "" {
 							<span class="text-muted-faint whitespace-nowrap">via { prov.How }</span>
 						}
 						if prov.Run != "" {
-							<span class="text-muted-faint font-mono whitespace-nowrap" title={ prov.RunTitle }>{ prov.Run }</span>
+							if prov.RunHref != "" {
+								<a href={ templ.URL(prov.RunHref) } class="text-muted-faint font-mono whitespace-nowrap hover:underline" title={ prov.RunTitle } data-testid="object-preview-history-run">{ prov.Run }</a>
+							} else {
+								<span class="text-muted-faint font-mono whitespace-nowrap" title={ prov.RunTitle }>{ prov.Run }</span>
+							}
 						}
 					</div>
 				}

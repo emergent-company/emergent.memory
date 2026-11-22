@@ -1351,6 +1351,11 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		TriggerMetadata: req.TriggerMetadata,
 		TrustedInternal: req.TrustedInternal,
 		SourceSubject:   req.SourceSubject,
+		// The ordering person is the run's authenticated user, carried from the
+		// entry point that resolved one (manual trigger, chat, an answered
+		// question). Background and source-triggered paths leave UserID empty or
+		// "system", which persists NULL: nobody ordered those.
+		OrderedByUserID: OrderedByUser(req.UserID),
 		// SubjectObjectID/Type are deliberately not copied here. Execute is also
 		// the inline reaction path, and kb.agent_runs.subject_object_id is reserved
 		// for work-owned queued runs: persisting it for every inline run would put
@@ -2082,6 +2087,10 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 			// A resumed turn keeps the prior run's verified source subject (and
 			// with it the implicit credential it is entitled to).
 			SourceSubject: priorRun.SourceSubject,
+			// And it keeps the order behind it: the answering person when they
+			// are a user, otherwise the orderer already recorded on the run
+			// being resumed, so a share or service principal cannot erase it.
+			OrderedByUserID: OrderedByUserOrPrior(req.UserID, priorRun.OrderedByUserID),
 		}, req.PauseClaimed)
 		if err != nil {
 			return nil, err

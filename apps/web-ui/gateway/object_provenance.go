@@ -52,6 +52,20 @@ type objectVersionProvenance struct {
 	Run string
 	// RunTitle carries the full run and root-run ids for the tooltip.
 	RunTitle string
+	// RunHref links the run chip to that run's transcript page (the gateway's
+	// /runs/:runId). "" when the version carries no run, so the chip stays plain
+	// text rather than a dead link.
+	RunHref string
+	// OrderedBy is the person who ordered the run that wrote this version — the
+	// human authority behind an agent's write, rendered as "on <name>'s order".
+	// "" unless the actor is an agent, the run recorded an ordering user, and
+	// that user resolved to a member of the project's org. Never inferred from
+	// the actor or from trigger metadata.
+	OrderedBy         string
+	OrderedByInitials string
+	OrderedByAvatar   string
+	// OrderedByTitle is the audit tooltip: the recorded ordering user id.
+	OrderedByTitle string
 	// When is the absolute local timestamp; WhenTitle adds the relative age and
 	// the raw server value.
 	When      string
@@ -62,7 +76,7 @@ type objectVersionProvenance struct {
 // project's resolved actor identities (see objectActorIdentities); an
 // unresolved actor still renders — as "<Type> · <short id>" — rather than
 // disappearing, because an unknown writer is still a writer.
-func objectProvenanceOf(v GraphObject, identities []objectActorOption) objectVersionProvenance {
+func objectProvenanceOf(v GraphObject, identities []objectActorOption, orderers map[string]string) objectVersionProvenance {
 	var p objectVersionProvenance
 	if v.ActorType != "" {
 		// The actor type is a closed set (user | agent | system). An unknown
@@ -102,9 +116,24 @@ func objectProvenanceOf(v GraphObject, identities []objectActorOption) objectVer
 	p.How = credentialKindLabel(v.CredentialKind)
 	if v.RunID != "" {
 		p.Run = "run " + shortRunID(v.RunID)
+		p.RunHref = "/runs/" + url.PathEscape(v.RunID)
 		p.RunTitle = "agent run " + v.RunID
 		if v.RootRunID != "" && v.RootRunID != v.RunID {
 			p.RunTitle += " · root run " + v.RootRunID
+		}
+	}
+	// An agent's write is the orderer's write: the agent carried out work a
+	// person asked for. Name that person when the run recorded one — the row
+	// column is the authority, and it is only ever written from an
+	// authenticated user at run creation.
+	if p.ActorKind == "agent" && v.RunID != "" {
+		if uid := strings.TrimSpace(orderers[v.RunID]); uid != "" {
+			if opt, ok := actorOptionOf(identities, "user", uid); ok {
+				p.OrderedBy = opt.Label
+				p.OrderedByInitials = initials(opt.Label)
+				p.OrderedByAvatar = opt.AvatarURL
+				p.OrderedByTitle = "Ordered by " + opt.Label + " (" + uid + ")"
+			}
 		}
 	}
 	p.When, p.WhenTitle = objectVersionWhen(v.CreatedAt)
@@ -163,12 +192,68 @@ func objectVersionWhen(iso string) (text, title string) {
 	return text, "Recorded " + iso
 }
 
-// objectActorIdentitiesFor resolves the identities a timeline names, fetching
-// only the groups the versions actually reference: a project's members for
-// "user" actors and its agent definitions for "agent" actors. A timeline with no
-// stamped actor costs nothing.
-func (s *Server) objectActorIdentitiesFor(ctx context.Context, versions []GraphObject) []objectActorOption {
-	wantUsers, wantAgents := false, false
+// objectPossessive forms a display name's possessive for a provenance line
+// ("on Maciek Kucharz's order"). A name already ending in s takes a bare
+// apostrophe, which is the form readers expect of a surname like Davies.
+func objectPossessive(name string) string {
+	if name == "" {
+		return ""
+	}
+	if strings.HasSuffix(name, "s") || strings.HasSuffix(name, "S") {
+		return name + "'"
+	}
+	return name + "'s"
+}
+
+// objectRunOrderers resolves who ordered each distinct run among versions, in
+// one project-scoped read, so a page of history costs one extra request rather
+// than one per entry. Best-effort by design: a failure yields nil, and every line
+// then renders exactly as it did before ordering attribution existed. A missing
+// read must never invent an orderer, and must never blank the provenance line.
+func (s *Server) objectRunOrderers(ctx context.Context, versions []GraphObject) map[string]string {
+	ids := make([]string, 0, len(versions))
+	seen := make(map[string]struct{}, len(versions))
+	for _, v := range versions {
+		if v.ActorType != "agent" || v.RunID == "" {
+			continue
+		}
+		if _, dup := seen[v.RunID]; dup {
+			continue
+		}
+		seen[v.RunID] = struct{}{}
+		ids = append(ids, v.RunID)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	orderers, err := s.memory.GetRunOrderers(ctx, ids)
+	if err != nil {
+		captureError(err)
+		return nil
+	}
+	return orderers
+}
+
+// objectProvenanceInputs resolves everything a provenance line needs for a set of
+// versions: the actor identities, and who ordered each run. The two lookups are
+// coupled because an orderer is a person who need not be an actor on any of these
+// versions — asking only for the actor kinds would leave every "on <name>'s
+// order" unresolved.
+func (s *Server) objectProvenanceInputs(ctx context.Context, versions []GraphObject) ([]objectActorOption, map[string]string) {
+	orderers := s.objectRunOrderers(ctx, versions)
+	wantUsers, wantAgents := objectActorKinds(versions)
+	if len(orderers) > 0 {
+		wantUsers = true
+	}
+	if !wantUsers && !wantAgents {
+		return nil, orderers
+	}
+	return s.objectActorIdentities(ctx, wantUsers, wantAgents), orderers
+}
+
+// objectActorKinds reports which identity groups a provenance line needs to
+// resolve the version actors themselves.
+func objectActorKinds(versions []GraphObject) (wantUsers, wantAgents bool) {
 	for _, v := range versions {
 		switch v.ActorType {
 		case "user":
@@ -177,10 +262,7 @@ func (s *Server) objectActorIdentitiesFor(ctx context.Context, versions []GraphO
 			wantAgents = true
 		}
 	}
-	if !wantUsers && !wantAgents {
-		return nil
-	}
-	return s.objectActorIdentities(ctx, wantUsers, wantAgents)
+	return wantUsers, wantAgents
 }
 
 // objectActorIdentities fetches the project's selectable actors, optionally

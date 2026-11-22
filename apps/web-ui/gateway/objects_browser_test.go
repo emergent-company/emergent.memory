@@ -1064,7 +1064,7 @@ func TestObjectsBrowserRowVersionCount(t *testing.T) {
 		"neither reported":     {GraphObject{ID: "o3", Type: "note"}, 0, false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			row := newObjectsBrowserRow(tc.obj, nil, nil, 0)
+			row := newObjectsBrowserRow(tc.obj, nil, nil, nil, 0)
 			if row.HasRevisionCount != tc.wantKnown || row.RevisionCount != tc.wantCount {
 				t.Errorf("count = %d/%v, want %d/%v", row.RevisionCount, row.HasRevisionCount, tc.wantCount, tc.wantKnown)
 			}

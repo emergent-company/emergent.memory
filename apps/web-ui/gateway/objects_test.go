@@ -5625,7 +5625,7 @@ func TestObjectSubpages(t *testing.T) {
 			Status: &objectStatusControl{Show: true, Options: []string{"ready", "done"}},
 			Active: "history",
 		}
-		body := renderHTML(t, objectHistoryPage(data, nil, nil, nil))
+		body := renderHTML(t, objectHistoryPage(data, nil, nil, nil, nil))
 		if !strings.Contains(body, `data-status="ready"`) {
 			t.Errorf("history subpage should keep the read-only header status badge:\n%s", body)
 		}

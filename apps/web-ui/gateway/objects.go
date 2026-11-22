@@ -109,6 +109,12 @@ type objectsPageData struct {
 	// then still renders any active selection.
 	ActorOptions []objectActorOption
 
+	// RunOrderers maps an agent run id to the person who ordered it, for the
+	// provenance line's "on <name>'s order". Filled per page (one batch read);
+	// empty when no run was ordered by a person or the read failed, in which
+	// case the card names the agent alone.
+	RunOrderers map[string]string
+
 	// AgentID/AgentName mark the agent-scoped view (GET /agents/:id/objects):
 	// the provenance filter is fixed to (agent, AgentID), the page renders an
 	// agent-scoped header, and the global search / Q&A are omitted because the
@@ -417,6 +423,17 @@ func (s *Server) loadObjectBrowsePage(ctx context.Context, data *objectsPageData
 	data.Objects = objects
 	data.HasMore = nextCursor != ""
 	data.NextCursor = nextCursor
+	// The cards name each version's writer, and when an agent wrote it, the
+	// person whose order it acted on. Both lookups are best-effort and belong
+	// here, in the one loader every browse surface shares (generic browse,
+	// agent-scoped view, and the cursor page), so an appended or scoped page is
+	// attributed exactly like the first one. The orderer read is one
+	// project-scoped request for the whole page.
+	identities, orderers := s.objectProvenanceInputs(ctx, objects)
+	if data.ActorOptions == nil {
+		data.ActorOptions = identities
+	}
+	data.RunOrderers = orderers
 	return nil
 }
 
@@ -848,7 +865,8 @@ func (s *Server) uiObject(c echo.Context) error {
 	// (objectProvenanceRail), so the Overview resolves the write stamp the same
 	// way the wiki page does: one best-effort identity lookup, and only when the
 	// version carries a user or agent actor.
-	data.Provenance = objectProvenanceOf(*obj, s.objectActorIdentitiesFor(ctx, []GraphObject{*obj}))
+	provenanceIdentities, orderers := s.objectProvenanceInputs(ctx, []GraphObject{*obj})
+	data.Provenance = objectProvenanceOf(*obj, provenanceIdentities, orderers)
 
 	labelSuggestions := s.objectLabelSuggestions(ctx)
 
@@ -886,7 +904,7 @@ func (s *Server) uiObjectHistoryPage(c echo.Context) error {
 	data.Active = "history"
 	data.FlashErr = flashError(c)
 	if data.LoadErr != nil {
-		return s.page(c, pageTitle("Object"), objectHistoryPage(data, nil, nil, nil))
+		return s.page(c, pageTitle("Object"), objectHistoryPage(data, nil, nil, nil, nil))
 	}
 
 	versions, err := s.memory.GetObjectHistory(ctx, id)
@@ -894,11 +912,11 @@ func (s *Server) uiObjectHistoryPage(c echo.Context) error {
 		captureError(err)
 		versions = nil
 	}
-	identities := s.objectActorIdentitiesFor(ctx, versions)
+	identities, orderers := s.objectProvenanceInputs(ctx, versions)
 	if c.QueryParam("updated") != "" {
 		data.FlashMsg = "Object updated."
 	}
-	return s.page(c, pageTitle(graphObjectLabel(*data.Obj)), objectHistoryPage(data, versions, identities, err))
+	return s.page(c, pageTitle(graphObjectLabel(*data.Obj)), objectHistoryPage(data, versions, identities, orderers, err))
 }
 
 // uiObjectSimilarPage renders the Similar objects subpage. It intentionally does

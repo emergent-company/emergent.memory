@@ -121,7 +121,7 @@ func (s *Server) uiSearch(c echo.Context) error {
 			for _, r := range results {
 				shown = append(shown, r.Object)
 			}
-			data.ActorOptions = s.objectActorIdentitiesFor(ctx, shown)
+			data.ActorOptions, data.RunOrderers = s.objectProvenanceInputs(ctx, shown)
 		}
 		return s.renderObjects(c, pageTitle("Search"), data)
 	}
@@ -157,15 +157,16 @@ func (s *Server) uiSearch(c echo.Context) error {
 		data.Results = objectSearchResultsShown(results, objectSearchShowsAll(c.QueryParam("all")))
 		data.HiddenCount = len(results) - len(data.Results)
 		// The enriched hits carry a real write stamp, so a user or agent writer
-		// needs a name to render. Only the actor kinds present on the page are
-		// fetched: a page of extraction-written objects (actor "system") costs
-		// no extra request.
+		// needs a name to render — and when an agent wrote the hit, the person
+		// whose order it acted on needs one too. Only what the page references is
+		// fetched: a page of extraction-written objects (actor "system", no
+		// orderer) costs no extra request.
 		if len(data.Results) > 0 {
 			shown := make([]GraphObject, 0, len(data.Results))
 			for _, r := range data.Results {
 				shown = append(shown, r.Object)
 			}
-			data.ActorOptions = s.objectActorIdentitiesFor(ctx, shown)
+			data.ActorOptions, data.RunOrderers = s.objectProvenanceInputs(ctx, shown)
 		}
 	}
 

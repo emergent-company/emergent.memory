@@ -452,7 +452,7 @@ func TestObjectPreviewHistoryNewestFirst(t *testing.T) {
 		{ID: "2", Version: 2, Type: "note", Key: "k", Status: "in_progress", CreatedAt: "2026-01-02T00:00:00Z"},
 		{ID: "1", Version: 1, Type: "note", Key: "k", Status: "ready", CreatedAt: "2026-01-01T00:00:00Z"},
 	}
-	html := renderHTML(t, objectPreviewHistory(versions, nil))
+	html := renderHTML(t, objectPreviewHistory(versions, nil, nil))
 
 	for _, want := range []string{"v2", "v1", "In progress", `data-testid="object-preview-history"`, "k"} {
 		if !strings.Contains(html, want) {
@@ -466,7 +466,7 @@ func TestObjectPreviewHistoryNewestFirst(t *testing.T) {
 
 // TestObjectPreviewHistoryEmptyAndError pins the timeline's degenerate states.
 func TestObjectPreviewHistoryEmptyAndError(t *testing.T) {
-	if html := renderHTML(t, objectPreviewHistory(nil, nil)); !strings.Contains(html, "No change history recorded.") {
+	if html := renderHTML(t, objectPreviewHistory(nil, nil, nil)); !strings.Contains(html, "No change history recorded.") {
 		t.Errorf("empty history missing message:\n%s", html)
 	}
 	if html := renderHTML(t, objectPreviewHistoryError()); !strings.Contains(html, "History unavailable") {
@@ -483,7 +483,7 @@ func TestObjectPreviewHistoryEntryExpandable(t *testing.T) {
 		{ID: "2", Version: 2, Type: "note", Key: "k", Status: "ready",
 			ChangeSummary: map[string]any{"added": map[string]any{"/summary": "hello"}}},
 	}
-	html := renderHTML(t, objectPreviewHistory(versions, nil))
+	html := renderHTML(t, objectPreviewHistory(versions, nil, nil))
 	for _, want := range []string{
 		`<details`,
 		`<summary`,
@@ -510,7 +510,7 @@ func TestObjectPreviewHistoryChangeSummary(t *testing.T) {
 			},
 		},
 	}
-	html := renderHTML(t, objectPreviewHistory(versions, nil))
+	html := renderHTML(t, objectPreviewHistory(versions, nil, nil))
 	for _, want := range []string{
 		"+ /author",
 		"+ /summary",
@@ -540,7 +540,7 @@ func TestObjectPreviewHistoryMergeProvenance(t *testing.T) {
 			},
 		},
 	}
-	html := renderHTML(t, objectPreviewHistory(versions, nil))
+	html := renderHTML(t, objectPreviewHistory(versions, nil, nil))
 	for _, want := range []string{
 		"source: merge",
 		"strategy: three-way",
@@ -577,7 +577,7 @@ func TestObjectPreviewHistoryDerivedFallback(t *testing.T) {
 			},
 		},
 	}
-	html := renderHTML(t, objectPreviewHistory(versions, nil))
+	html := renderHTML(t, objectPreviewHistory(versions, nil, nil))
 	for _, want := range []string{
 		"status: ready → in_progress",
 		"assignee: alice → bob",
@@ -602,14 +602,14 @@ func TestObjectPreviewHistoryNoChangesNote(t *testing.T) {
 		{ID: "2", Version: 2, Type: "BoardTask", Key: "k", Status: "ready"},
 		{ID: "1", Version: 1, Type: "BoardTask", Key: "k", Status: "ready"},
 	}
-	if html := renderHTML(t, objectPreviewHistory(same, nil)); !strings.Contains(html, note) {
+	if html := renderHTML(t, objectPreviewHistory(same, nil, nil)); !strings.Contains(html, note) {
 		t.Errorf("identical versions missing no-changes note:\n%s", html)
 	}
 
 	single := []GraphObject{
 		{ID: "1", Version: 1, Type: "BoardTask", Key: "k", Status: "ready"},
 	}
-	if html := renderHTML(t, objectPreviewHistory(single, nil)); !strings.Contains(html, note) {
+	if html := renderHTML(t, objectPreviewHistory(single, nil, nil)); !strings.Contains(html, note) {
 		t.Errorf("single version missing no-changes note:\n%s", html)
 	}
 }
@@ -629,7 +629,7 @@ func TestObjectPreviewChangesToleratesUnexpectedShape(t *testing.T) {
 		},
 		{ID: "1", Version: 1, Type: "note", Key: "k", Status: "ready"},
 	}
-	html := renderHTML(t, objectPreviewHistory(versions, nil))
+	html := renderHTML(t, objectPreviewHistory(versions, nil, nil))
 	if !strings.Contains(html, "status: ready → in_progress") {
 		t.Errorf("unexpected change_summary shape should fall back to derivation:\n%s", html)
 	}

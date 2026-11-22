@@ -2190,7 +2190,6 @@ func (r *Repository) UpdateRunTrustedInternal(ctx context.Context, runID string,
 	return err
 }
 
-// CreateRunWithOptions creates a new agent run with coordination options.
 // newAgentRun builds an AgentRun from CreateRunOptions without persisting it.
 // Shared by CreateRunWithOptions and the share run reservation path.
 func newAgentRun(opts CreateRunOptions) *AgentRun {
@@ -2213,10 +2212,39 @@ func newAgentRun(opts CreateRunOptions) *AgentRun {
 		SubjectObjectID:   opts.SubjectObjectID,
 		SubjectObjectType: opts.SubjectObjectType,
 		SourceSubject:     opts.SourceSubject,
+		OrderedByUserID:   opts.OrderedByUserID,
 		Tools:             []string{},
 	}
 }
 
+// OrderedByUser is the row value for the person who ordered a run: nil unless
+// the id is a real user uuid. "system", empty and share-run end-user refs are
+// not identities resolvable to a project member, and a non-uuid would fail the
+// column, so each persists NULL — provenance then claims no orderer instead of
+// inventing one.
+func OrderedByUser(userID string) *string {
+	if userID == "" || userID == "system" {
+		return nil
+	}
+	if _, err := uuid.Parse(userID); err != nil {
+		return nil
+	}
+	id := userID
+	return &id
+}
+
+// OrderedByUserOrPrior is OrderedByUser with continuity for a resume: when the
+// answering principal is not a user (a share-run end user, an empty principal),
+// the run keeps the orderer recorded on the run it resumed instead of losing the
+// attribution. Exported because the chat resume builds its own child row.
+func OrderedByUserOrPrior(userID string, prior *string) *string {
+	if id := OrderedByUser(userID); id != nil {
+		return id
+	}
+	return prior
+}
+
+// CreateRunWithOptions creates a new agent run with coordination options.
 func (r *Repository) CreateRunWithOptions(ctx context.Context, opts CreateRunOptions) (*AgentRun, error) {
 	// Budget gate for every pre-created run row (HTTP trigger/respond, A2A,
 	// chat, approvals). A blocked caller gets the typed error and no row is
@@ -2773,6 +2801,11 @@ func (r *Repository) FindRunLogEntries(ctx context.Context, runID string) ([]*Ru
 type RunFilters struct {
 	AgentID *string
 	Status  *AgentRunStatus
+	// IDs restricts the read to these runs. A caller that holds run ids — the
+	// gateway resolving provenance for a page of object versions — asks once for
+	// the whole set instead of one request per id. Ids outside the project are
+	// silently absent from the result, never leaked.
+	IDs []string
 }
 
 // FindRunsByProjectPaginated returns paginated agent runs for a project. The
@@ -2798,6 +2831,9 @@ func (r *Repository) FindRunsByProjectPaginated(ctx context.Context, projectID s
 	}
 	if filters.Status != nil {
 		q = q.Where("ar.status = ?", *filters.Status)
+	}
+	if len(filters.IDs) > 0 {
+		q = q.Where("ar.id IN (?)", bun.In(filters.IDs))
 	}
 
 	totalCount, err := q.Count(ctx)

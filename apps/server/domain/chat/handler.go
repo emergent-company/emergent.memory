@@ -2051,6 +2051,10 @@ func (h *Handler) resumeForAnswer(ctx context.Context, sseWriter *sse.Writer, co
 		// paused checkpoint, so the subject must not be lost on the child.
 		SubjectObjectID:   run.SubjectObjectID,
 		SubjectObjectType: run.SubjectObjectType,
+		// The resume continues the same work on the answering person's order.
+		// A share or anonymous principal has no user uuid, so the orderer is
+		// carried over from the run being resumed rather than dropped.
+		OrderedByUserID: agents.OrderedByUserOrPrior(user.ID, run.OrderedByUserID),
 	})
 	if err != nil {
 		_ = h.agentRepo.ReopenQuestion(ctx, q.ID)

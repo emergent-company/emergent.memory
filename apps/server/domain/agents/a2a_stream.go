@@ -462,6 +462,8 @@ func (h *A2AHandler) streamNewTask(c echo.Context, projectID, userID, userMessag
 		AgentID:        agent.ID,
 		TriggerSource:  &triggerSource,
 		TriggerMessage: &userMessage,
+		// An authenticated A2A caller ordered this run; an anonymous one did not.
+		OrderedByUserID: OrderedByUser(userID),
 	})
 	if err != nil {
 		h.log.Error("failed to create run", "agent_id", agent.ID, "error", err)

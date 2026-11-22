@@ -131,8 +131,8 @@ func (s *Server) uiObjectHistoryPartial(c echo.Context) error {
 		renderPartial(c.Response().Writer, c.Request(), objectPreviewHistoryError())
 		return nil
 	}
-	identities := s.objectActorIdentitiesFor(ctx, versions)
-	renderPartial(c.Response().Writer, c.Request(), objectPreviewHistory(versions, identities))
+	identities, orderers := s.objectProvenanceInputs(ctx, versions)
+	renderPartial(c.Response().Writer, c.Request(), objectPreviewHistory(versions, identities, orderers))
 	return nil
 }
 

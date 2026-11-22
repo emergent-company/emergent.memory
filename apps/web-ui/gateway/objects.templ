@@ -1027,7 +1027,7 @@ templ ObjectDetailPage(data objectDetailShellData, labelSuggestions []string, pr
 // objectHistoryPage renders the History subpage: the shared shell plus the full
 // version timeline. A failed history fetch degrades only this section; the
 // object header and rail stay usable.
-templ objectHistoryPage(data objectDetailShellData, versions []GraphObject, identities []objectActorOption, historyErr error) {
+templ objectHistoryPage(data objectDetailShellData, versions []GraphObject, identities []objectActorOption, orderers map[string]string, historyErr error) {
 	@objectDetailShell(data) {
 		@ui.Section("History", ui.SectionProps{
 			BodyClass: "memory-density-comfortable",
@@ -1042,7 +1042,7 @@ templ objectHistoryPage(data objectDetailShellData, versions []GraphObject, iden
 				})
 			} else {
 				<div data-testid="object-history-page">
-					@objectPreviewHistory(versions, identities)
+					@objectPreviewHistory(versions, identities, orderers)
 				</div>
 			}
 		}

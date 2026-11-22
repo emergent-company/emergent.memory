@@ -173,8 +173,9 @@ func (s *Server) uiObjectWiki(c echo.Context) error {
 	// The rail names the version's writer, so resolve the actor names the read
 	// path cannot: one best-effort lookup, and only when the version carries a
 	// user or agent actor (a system write needs no lookup).
-	data.Identities = s.objectActorIdentitiesFor(ctx, []GraphObject{*shell.Obj})
-	data.Provenance = objectProvenanceOf(*shell.Obj, data.Identities)
+	identities, orderers := s.objectProvenanceInputs(ctx, []GraphObject{*shell.Obj})
+	data.Identities = identities
+	data.Provenance = objectProvenanceOf(*shell.Obj, identities, orderers)
 	if shell.Compiled != nil {
 		data.PropDefs = compiledTypePropertyDefs(shell.Compiled.ObjectTypes, shell.Obj.Type)
 	}
