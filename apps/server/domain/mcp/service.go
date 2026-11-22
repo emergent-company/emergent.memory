@@ -4348,15 +4348,15 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 
 	scope := TypeScopeFromContext(ctx)
 
-	canonicalIDs := make([]uuid.UUID, 0, len(idStrs))
+	requestedIDs := make([]uuid.UUID, 0, len(idStrs))
 	for _, s := range idStrs {
 		id, err := uuid.Parse(s)
 		if err != nil {
 			continue // skip malformed IDs
 		}
-		canonicalIDs = append(canonicalIDs, id)
+		requestedIDs = append(requestedIDs, id)
 	}
-	if len(canonicalIDs) == 0 {
+	if len(requestedIDs) == 0 {
 		return nil, toolArgErrorf("ids: no valid UUIDs provided")
 	}
 
@@ -4397,7 +4397,14 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 	if err != nil {
 		return nil, err
 	}
-	branchQueryArgs = append([]any{bun.In(canonicalIDs), projectUUID}, branchQueryArgs...)
+	// ids[] accepts EITHER an entity's canonical id or one of its version row
+	// ids: a caller that got the id from a URL, a citation, a run transcript or
+	// an older tool result holds a version id, and matching canonical only made
+	// those lookups return an empty page with no error (the object-chat deep
+	// link started every session by claiming the supplied id did not resolve).
+	// The REST object lookup has always matched both (repository.go: `id IN (?)
+	// OR canonical_id IN (?)`); this path now agrees with it (#object-chat).
+	branchQueryArgs = append([]any{bun.In(requestedIDs), bun.In(requestedIDs), projectUUID}, branchQueryArgs...)
 
 	var entities []entityRow
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -4416,7 +4423,7 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 				COALESCE(go.updated_at, go.created_at) as updated_at,
 				go.type as type_name
 			FROM kb.graph_objects go
-			WHERE go.canonical_id IN (?)
+			WHERE (go.id IN (?) OR go.canonical_id IN (?))
 				AND go.deleted_at IS NULL
 				AND go.project_id = ?
 				AND go.supersedes_id IS NULL
@@ -4428,6 +4435,20 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 	}
 
 	resultEntities := make([]Entity, 0, len(entities))
+	// Presence is a property of the row set, not of the type scope: an entity
+	// the caller's scope filters out still exists, so it must not be reported
+	// as missing.
+	found := make(map[uuid.UUID]bool, len(entities)*2)
+	for _, e := range entities {
+		found[e.ID] = true
+		found[e.CanonicalID] = true
+	}
+	var missingIDs []string
+	for _, id := range requestedIDs {
+		if !found[id] {
+			missingIDs = append(missingIDs, id.String())
+		}
+	}
 	for _, e := range entities {
 		if !scope.AllowsObject(e.TypeName) {
 			continue
@@ -4454,9 +4475,21 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 			Offset:  0,
 			HasMore: false,
 		},
+		MissingIDs: missingIDs,
+	}
+	warning := ""
+	switch {
+	case len(missingIDs) > 0 && len(resultEntities) == 0:
+		// The loud case: nothing the caller asked for exists. Say so instead of
+		// returning a success-shaped empty page.
+		warning = fmt.Sprintf("none of the %d requested ids resolve to a live entity in this project (missing_ids); check that the id is not from another project or a deleted version", len(missingIDs))
+	case len(missingIDs) > 0:
+		warning = fmt.Sprintf("%d of %d requested ids did not resolve (missing_ids)", len(missingIDs), len(requestedIDs))
 	}
 	if propertiesSuppressed {
 		result.Warning = "include_properties/fields ignored because field_strategy=compact; omit field_strategy to return properties."
+	} else {
+		result.Warning = warning
 	}
 	return envelopeResult(true, result, nil, "")
 }
