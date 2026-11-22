@@ -2743,6 +2743,18 @@ func (h *Handler) rememberForgetRuntimeAgent(ctx context.Context, agentDef *agen
 	return row, nil
 }
 
+// mapAsyncRunCreateError maps a pre-created capture run failure to the HTTP
+// error the caller sees. CreateRunWithOptions runs the budget gate, so a project
+// at its weekly or monthly limit returns *agents.BudgetExceededError; that is a
+// named, actionable condition (402 budget_exceeded), not an internal error. Any
+// other failure keeps the 500 with the operation label.
+func mapAsyncRunCreateError(err error) *apperror.Error {
+	if appErr := agents.BudgetExceededAppError(err); appErr != nil {
+		return appErr
+	}
+	return apperror.NewInternal("failed to create async run record", err)
+}
+
 // RememberStream handles POST /api/projects/:projectId/remember.
 // It is the unified domain-aware memory endpoint: raw text is persisted as a document,
 // the domain-remember-agent classifies it, discovers or reuses a schema pack, and
@@ -2992,7 +3004,7 @@ func (h *Handler) RememberStream(c echo.Context) error {
 			OrderedByUserID: agents.OrderedByUser(user.ID),
 		})
 		if runErr != nil {
-			return apperror.NewInternal("failed to create async run record", runErr)
+			return mapAsyncRunCreateError(runErr)
 		}
 		preCreated := &agents.AgentRun{ID: run.ID, AgentID: dummyAgent.ID, OrderedByUserID: run.OrderedByUserID}
 		execReq := agents.ExecuteRequest{
@@ -3494,7 +3506,7 @@ func (h *Handler) RememberFile(c echo.Context) error {
 			OrderedByUserID: agents.OrderedByUser(user.ID),
 		})
 		if runErr != nil {
-			return apperror.NewInternal("failed to create async run record", runErr)
+			return mapAsyncRunCreateError(runErr)
 		}
 		preCreated := &agents.AgentRun{ID: run.ID, AgentID: dummyAgent.ID, OrderedByUserID: run.OrderedByUserID}
 		execReq := agents.ExecuteRequest{
@@ -3817,7 +3829,7 @@ func (h *Handler) ForgetStream(c echo.Context) error {
 			OrderedByUserID: agents.OrderedByUser(user.ID),
 		})
 		if runErr != nil {
-			return apperror.NewInternal("failed to create async run record", runErr)
+			return mapAsyncRunCreateError(runErr)
 		}
 		preCreated := &agents.AgentRun{ID: run.ID, AgentID: dummyAgent.ID, OrderedByUserID: run.OrderedByUserID}
 		execReq := agents.ExecuteRequest{
