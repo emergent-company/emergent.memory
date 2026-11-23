@@ -8,7 +8,7 @@ import path from 'node:path';
 //
 // The markup is NOT hand-copied here. Both documents under specs/js/fixtures/
 // are rendered from the shipping `objectPreviewHistory` templ by
-// TestE2EObjectPreviewFixtures (apps/web-ui/gateway/object_preview_e2e_fixtures_test.go),
+// TestE2EObjectPreviewFixturesRatchet (apps/web-ui/gateway/object_preview_e2e_fixtures_test.go),
 // which re-renders them on every `go test` run. A templ change that alters the
 // markup therefore fails that Go test until the fixtures are regenerated with
 // `-update-fixtures`, so the fixture diff lands in the same PR as the template

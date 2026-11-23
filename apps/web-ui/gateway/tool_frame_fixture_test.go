@@ -1,5 +1,8 @@
 package main
 
+// guard: the shared live-tool-call frame fixture the gateway and the iOS app
+// both read — the emitted enrichment must stay identical to it (#1087).
+
 import (
 	"bytes"
 	"encoding/json"
@@ -28,7 +31,13 @@ type toolFrameFixture struct {
 	} `json:"frames"`
 }
 
-func TestChatToolFramesMatchTheSharedFixture(t *testing.T) {
+// TestChatToolFramesMatchTheSharedFixtureRatchet drives the real enrichment
+// path over every committed frame and asserts the emitted fields are exactly
+// the upstream frame plus the fixture's `expected` enrichment. It ends in
+// Ratchet so the required `ci` job's `go test -run 'Ratchet' ./...` runs it on
+// every gateway PR; the dev -> main promotion's full `go test` was the only
+// place it ran before #1087.
+func TestChatToolFramesMatchTheSharedFixtureRatchet(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Clean(toolFrameFixturePath))
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
