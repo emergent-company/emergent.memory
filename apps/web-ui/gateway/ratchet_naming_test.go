@@ -50,13 +50,24 @@ import (
 //  4. `ci.yml`'s gateway invocation still selects `Ratchet`. If the selection
 //     is ever widened or renamed, it must be changed together with this file
 //     and the markers — otherwise every guard silently stops running.
+//     Widened once, for the generated js-dom fixture guard added in #1084:
+//     `-run 'Ratchet|TestE2EObjectPreviewFixtures'` (#1085/#1086). That form is
+//     recorded here rather than left implicit because rule 2 cannot reach an
+//     unmarked file, and the fixture guards are exactly that shape. It is a
+//     stopgap: the durable route is to name every fixture guard `…Ratchet` and
+//     return to the single alternative, so each new guard costs no coordination
+//     edit — tracked in #1087, which also covers the two fixture guards
+//     (`popover_runtime_fixture_test.go`, `tool_frame_fixture_test.go`) that are
+//     still unselected.
 //
 // Scope. This is a source scan of the module's `*_test.go` files: it cannot
 // tell whether an unmarked, plainly-named file was INTENDED to guard something
 // (budget_test.go's TestTemplNoAttributeTypeRatchet lives in a mixed file and
 // is one example that stays outside the marker set), so the residual gap is a
 // guard written into a brand-new mixed test file — the place a review comment
-// on the file has to catch it. Every other shape is a failing test.
+// on the file has to catch it. Every other shape is a failing test. Known
+// members of that residual gap today: the three committed-fixture guards named
+// above, of which only the object-history one is currently selected (#1087).
 
 const (
 	// guardMarkerPrefix opens the declaration that a file is a guard. The
