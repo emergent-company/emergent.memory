@@ -427,7 +427,7 @@ npx playwright test --config=js-dom.config.ts   # or: task e2e:js
   `objectPreviewHistory` templ into `specs/js/fixtures/object-preview-history-*.html`
   on every `go test` run and fails when the committed fixture drifts (#1083).
   Regenerate after an intentional template change with
-  `go test ./gateway -run TestE2EObjectPreviewFixtures -update-fixtures`, so the
+  `go test ./gateway -run TestE2EObjectPreviewFixturesRatchet -update-fixtures`, so the
   fixture diff lands in the same PR. A spec whose markup is a bare skeleton for
   JS wiring may mirror ids/data-attributes, but its header must not claim to
   verify the template: reverting the template cannot break it.

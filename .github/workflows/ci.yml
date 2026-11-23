@@ -563,13 +563,11 @@ jobs:
       # reads `go.work` rather than the gateway `go.mod`, and the promotion
       # additionally runs `go build`/`go vet`/full `go test` — of which the static
       # half is covered here, since `golangci-lint` type-checks every package and
-      # `go test -run Ratchet` compiles every test file. What compiling cannot
-      # cover is a test whose whole assertion is a comparison — the generated
-      # js-dom fixtures (#1084): `object_preview_e2e_fixtures_test.go` re-renders
-      # the templ and fails when the committed fixture drifted, so it has to be
-      # *run* here, not merely built. Without it a template change lands on `dev`
-      # green and the drift surfaces on the promotion, which is the #649 cost this
-      # block exists to remove (#1085).
+      # `go test -run Ratchet` compiles every test file. A test whose whole
+      # assertion is a comparison is the exception that compiling cannot cover,
+      # so the committed-fixture drift guards (the js-dom fixtures, the pinned
+      # popover runtime, the shared tool-frame fixture) are named `…Ratchet` to
+      # be RUN here — one route, pinned by `ratchet_naming_test.go` (#1085, #1087).
       #
       # WHY `GOWORK: "off"`. Same reason as `web-ui.yml`: the shipped gateway
       # image builds `apps/web-ui/gateway` alone, and a workspace resolves MVS to
@@ -691,16 +689,17 @@ jobs:
           GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint-cache
           GOWORK: "off"
         run: golangci-lint run --allow-parallel-runners ./...
-      - name: Consistency ratchets and generated-fixture guards
+      - name: Consistency ratchets
         if: steps.gateway-scope.outputs.changed == 'true'
         working-directory: apps/web-ui/gateway
         env:
           GOWORK: "off"
-        # `TestE2EObjectPreviewFixtures` is in the run set for the reason above:
-        # it re-renders the shipping templ over the committed js-dom fixtures, so
-        # a template change fails here, on the PR that makes it, instead of on the
-        # promotion (#1085). It costs <50 ms in a binary this step already builds.
-        run: go test -run 'Ratchet|TestE2EObjectPreviewFixtures' ./...
+        # One route, not one alternative per guard: a committed-file comparison
+        # (the js-dom fixtures, the pinned popover runtime, the shared tool-frame
+        # fixture) is only covered when it RUNS, so each is named `…Ratchet` and
+        # listed in `ratchet_naming_test.go`'s `committedFixtureGuards`, which
+        # fails if the selection stops reaching it (#1085, #1087).
+        run: go test -run 'Ratchet' ./...
       - name: Meta checks
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: 'echo "Meta CI: no meta checks remain in this repository."'

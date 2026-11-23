@@ -1,5 +1,9 @@
 package main
 
+// guard: the object-history js-dom fixtures rendered from the shipping
+// objectPreviewHistory templ — a template change must regenerate them in the
+// same PR (#1083, selected by name since #1087).
+
 import (
 	"flag"
 	"os"
@@ -28,17 +32,21 @@ type e2eFixture struct {
 	render func(t *testing.T) string
 }
 
-// TestE2EObjectPreviewFixtures keeps the object-history browser fixtures in
-// sync with objectPreviewHistory. The specs assert native <details> disclosure
-// behaviour in a real Chromium engine; the markup they drive must be the one
-// the gateway renders, because a hand-copied fixture silently drifts from the
-// template (the v2 provenance fixture had already lost the actor and status
-// badges and invented the avatar internals before #1083).
+// TestE2EObjectPreviewFixturesRatchet keeps the object-history browser
+// fixtures in sync with objectPreviewHistory. The specs assert native
+// <details> disclosure behaviour in a real Chromium engine; the markup they
+// drive must be the one the gateway renders, because a hand-copied fixture
+// silently drifts from the template (the v2 provenance fixture had already
+// lost the actor and status badges and invented the avatar internals before
+// #1083).
 //
 // Regenerate after an intentional templ change:
 //
-//	go test ./gateway -run TestE2EObjectPreviewFixtures -update-fixtures
-func TestE2EObjectPreviewFixtures(t *testing.T) {
+//	go test ./gateway -run TestE2EObjectPreviewFixturesRatchet -update-fixtures
+//
+// It ends in Ratchet so the required `ci` job's `go test -run 'Ratchet' ./...`
+// runs it on every gateway PR; before #1087 it only ran on the promotion.
+func TestE2EObjectPreviewFixturesRatchet(t *testing.T) {
 	// The "when" stamp formats in the viewer's zone; pin it so the fixture is
 	// byte-identical on every machine and CI timezone.
 	prevLocation := objectVersionLocation
@@ -161,11 +169,11 @@ func checkE2EFixture(t *testing.T, name, got string) {
 	}
 	want, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read %s: %v — regenerate with `go test ./gateway -run TestE2EObjectPreviewFixtures -update-fixtures`", path, err)
+		t.Fatalf("read %s: %v — regenerate with `go test ./gateway -run TestE2EObjectPreviewFixturesRatchet -update-fixtures`", path, err)
 	}
 	if string(want) != got {
 		t.Errorf("%s is stale: the rendered template no longer matches it. "+
-			"Regenerate with `go test ./gateway -run TestE2EObjectPreviewFixtures -update-fixtures` "+
+			"Regenerate with `go test ./gateway -run TestE2EObjectPreviewFixturesRatchet -update-fixtures` "+
 			"and commit the diff with the template change.", path)
 	}
 }

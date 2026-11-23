@@ -50,24 +50,16 @@ import (
 //  4. `ci.yml`'s gateway invocation still selects `Ratchet`. If the selection
 //     is ever widened or renamed, it must be changed together with this file
 //     and the markers — otherwise every guard silently stops running.
-//     Widened once, for the generated js-dom fixture guard added in #1084:
-//     `-run 'Ratchet|TestE2EObjectPreviewFixtures'` (#1085/#1086). That form is
-//     recorded here rather than left implicit because rule 2 cannot reach an
-//     unmarked file, and the fixture guards are exactly that shape. It is a
-//     stopgap: the durable route is to name every fixture guard `…Ratchet` and
-//     return to the single alternative, so each new guard costs no coordination
-//     edit — tracked in #1087, which also covers the two fixture guards
-//     (`popover_runtime_fixture_test.go`, `tool_frame_fixture_test.go`) that are
-//     still unselected.
 //
 // Scope. This is a source scan of the module's `*_test.go` files: it cannot
 // tell whether an unmarked, plainly-named file was INTENDED to guard something
 // (budget_test.go's TestTemplNoAttributeTypeRatchet lives in a mixed file and
 // is one example that stays outside the marker set), so the residual gap is a
 // guard written into a brand-new mixed test file — the place a review comment
-// on the file has to catch it. Every other shape is a failing test. Known
-// members of that residual gap today: the three committed-fixture guards named
-// above, of which only the object-history one is currently selected (#1087).
+// on the file has to catch it. The committed-fixture drift class (#1087) is
+// pinned by name in committedFixtureGuards below, so renaming one of those
+// guards out of the selection fails even after the file stops looking like a
+// guard to the scan. Every other shape is a failing test.
 
 const (
 	// guardMarkerPrefix opens the declaration that a file is a guard. The
@@ -335,21 +327,98 @@ func TestGuardNamingFindingsCatchTheRegressionRatchet(t *testing.T) {
 	}
 }
 
-// TestRatchetSelectionStillSelectsTheConventionRatchet checks the other side of
-// the convention: ci.yml's gateway invocation must still select `Ratchet`. A
-// widened pattern is fine (keep a `Ratchet` alternative); removing it turns
-// every guard this file approves into dead weight.
-func TestRatchetSelectionStillSelectsTheConventionRatchet(t *testing.T) {
+// committedFixtureGuards are the gateway's committed-fixture drift guards:
+// each test's whole assertion compares freshly rendered output with a file
+// committed to the repository, so compiling it is not enough — it has to RUN
+// on the PR that changes the renderer or the fixture. They follow the same
+// Ratchet-name route as every other guard rather than adding another `-run`
+// alternative to ci.yml (#1087). This list is the one place that says which
+// files the class is, so removing a marker and renaming a test out of the
+// selection still fails here even though the file would then look like a plain
+// test file to the scan above.
+var committedFixtureGuards = []string{
+	"object_preview_e2e_fixtures_test.go",
+	"popover_runtime_fixture_test.go",
+	"tool_frame_fixture_test.go",
+}
+
+// readRatchetSelectionPatterns reads ci.yml's gateway invocation patterns. It
+// is shared by the selection checks so they cannot disagree about which file
+// they are enforcing.
+func readRatchetSelectionPatterns(t *testing.T) []string {
+	t.Helper()
 	const workflow = "../../../.github/workflows/ci.yml"
 	src, err := os.ReadFile(workflow)
 	if err != nil {
 		t.Fatalf("read %s: %v — this guard compares the naming convention with the required ci job, so it needs the repository checkout around the gateway module", workflow, err)
 	}
-
 	patterns := ratchetSelectionPatterns(string(src))
 	if len(patterns) == 0 {
 		t.Fatalf("no `go test -run '<pattern>' ./...` invocation found in %s — the gateway's required test step changed shape; update this guard together with ci.yml (issue #910)", workflow)
 	}
+	return patterns
+}
+
+// TestCommittedFixtureGuardsAreSelectedRatchet pins the #1087 class. The three
+// guards it names were committed-file comparisons that only ran in the
+// promotion's full `go test`; a drifted fixture landed on `dev` green and first
+// failed on `dev -> main`, where a rerun moves the head and invalidates the
+// Reviewed-SHA marker (#649). Each one now has a `// guard:` marker and a
+// Ratchet-named test, and this test reads the real ci.yml pattern to prove that
+// selection runs every top-level test in the file. Add a file here when a new
+// committed-fixture guard appears — that is the same-PR record rule 4 asks for.
+func TestCommittedFixtureGuardsAreSelectedRatchet(t *testing.T) {
+	files, err := collectGuardTestFiles(".")
+	if err != nil {
+		t.Fatalf("walk the gateway module: %v", err)
+	}
+	byPath := make(map[string]guardTestFile, len(files))
+	for _, file := range files {
+		byPath[file.path] = file
+	}
+
+	patterns := readRatchetSelectionPatterns(t)
+	for _, path := range committedFixtureGuards {
+		file, ok := byPath[path]
+		if !ok {
+			t.Errorf("%s is missing — the committed-fixture guard list in this file no longer matches the tree; update both together (issue #1087)", path)
+			continue
+		}
+		if !file.hasMarker {
+			t.Errorf("%s: no `%s <what it guards>` marker — it is a committed-fixture guard, so it must both declare that and be selected by name (issue #1087)", path, guardMarkerPrefix)
+		}
+		if len(file.tests) == 0 {
+			t.Errorf("%s: no top-level tests found — the committed-fixture guard moved or was deleted; update this list with the move (issue #1087)", path)
+			continue
+		}
+		for _, name := range file.tests {
+			if !strings.HasSuffix(name, ratchetSuffix) {
+				t.Errorf("%s: %s does not end in %q — a committed-fixture guard that `go test -run 'Ratchet'` cannot select never gates a feature PR; rename it to %s%s (issue #1087)", path, name, ratchetSuffix, name, ratchetSuffix)
+			}
+			selected := false
+			for _, pattern := range patterns {
+				matched, err := regexp.MatchString(pattern, name)
+				if err != nil {
+					t.Fatalf("ci.yml pattern %q is not a valid regexp: %v (issue #1087)", pattern, err)
+				}
+				if matched {
+					selected = true
+					break
+				}
+			}
+			if !selected {
+				t.Errorf("%s: ci.yml runs %v but none of them matches %s — a committed-fixture guard that the required job does not select first fails on the dev -> main promotion (issue #1087)", path, patterns, name)
+			}
+		}
+	}
+}
+
+// TestRatchetSelectionStillSelectsTheConventionRatchet checks the other side of
+// the convention: ci.yml's gateway invocation must still select `Ratchet`. A
+// widened pattern is fine (keep a `Ratchet` alternative); removing it turns
+// every guard this file approves into dead weight.
+func TestRatchetSelectionStillSelectsTheConventionRatchet(t *testing.T) {
+	patterns := readRatchetSelectionPatterns(t)
 	for _, pattern := range patterns {
 		for _, alternative := range strings.Split(pattern, "|") {
 			if strings.TrimSpace(alternative) == ratchetSuffix {
