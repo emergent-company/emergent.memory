@@ -1,175 +1,133 @@
 import { test, expect } from '@playwright/test';
+import fs from 'node:fs';
+import path from 'node:path';
 
-// Hermetic DOM-level spec for the object-preview History timeline's change
-// list: every history entry is a native <details>/<summary> (collapsed by
-// default, keyboard operable, no JS) whose body reveals the changes recorded
-// for that version — a recorded change_summary renders "+ /path" (added),
-// "− /path" (removed), and "/path: from → to" (updated), while a version with
-// no summary derives "status: from → to" from the preceding version.
+// Hermetic DOM-level spec for the object-preview History timeline: every history
+// entry is a native <details>/<summary> (collapsed by default, keyboard
+// operable, no JS) whose body reveals the changes recorded for that version.
 //
-// The summary is also where provenance v2 lives: an agent's write that a person
-// ordered reads "on <name>'s order · via <agent>" (the credential is dropped —
-// the agent and the run already say how), while a write with no recorded orderer
-// keeps the pre-v2 "via agent MCP link" line. PROVENANCE_HTML covers that pair.
+// The markup is NOT hand-copied here. Both documents under specs/js/fixtures/
+// are rendered from the shipping `objectPreviewHistory` templ by
+// TestE2EObjectPreviewFixtures (apps/web-ui/gateway/object_preview_e2e_fixtures_test.go),
+// which re-renders them on every `go test` run. A templ change that alters the
+// markup therefore fails that Go test until the fixtures are regenerated with
+// `-update-fixtures`, so the fixture diff lands in the same PR as the template
+// change and this spec always drives what ships (#1083). The previous
+// hand-maintained fixture had already silently lost the actor and status
+// badges and invented the avatar internals.
 //
-// No gateway, no memory API, no auth. The fixtures mirror the markup the
-// gateway's `objectPreviewHistory` templ emits (the Go unit tests assert the
-// same contract; this spec proves the native disclosure actually expands in a
-// real browser engine, which a string assertion cannot).
-const HISTORY_HTML = `<!doctype html><html><body>
-<ol class="flex flex-col gap-3" data-testid="object-preview-history">
-  <li class="border-base-content/10 border-l-2">
-    <details class="group" data-testid="object-preview-history-entry">
-      <summary class="flex cursor-pointer list-none flex-col gap-1 py-0.5 pl-3 [&::-webkit-details-marker]:hidden">
-        <div class="flex flex-wrap items-center gap-2">
-          <span class="font-mono text-xs font-medium">v2</span>
-        </div>
-      </summary>
-      <div class="flex flex-col pl-3 pt-1" data-testid="object-preview-history-changes">
-        <ul class="flex flex-col gap-0.5 pb-1">
-          <li><span class="text-success font-mono text-xs">+ /summary</span></li>
-          <li><span class="text-error font-mono text-xs">− /old</span></li>
-          <li><span class="font-mono text-xs break-words">/title: draft → final</span></li>
-        </ul>
-      </div>
-    </details>
-  </li>
-  <li class="border-base-content/10 border-l-2">
-    <details class="group" data-testid="object-preview-history-entry">
-      <summary class="flex cursor-pointer list-none flex-col gap-1 py-0.5 pl-3 [&::-webkit-details-marker]:hidden">
-        <div class="flex flex-wrap items-center gap-2">
-          <span class="font-mono text-xs font-medium">v1</span>
-        </div>
-      </summary>
-      <div class="flex flex-col pl-3 pt-1" data-testid="object-preview-history-changes">
-        <ul class="flex flex-col gap-0.5 pb-1">
-          <li><span class="font-mono text-xs break-words">status: ready → in_progress</span></li>
-        </ul>
-      </div>
-    </details>
-  </li>
-</ol>
-</body></html>`;
+// What this spec adds over the Go render tests is the browser behaviour: the
+// native disclosure really expands, and the provenance line really is in the
+// always-visible summary. No gateway, no memory API, no auth.
+
+const FIXTURE_DIR = path.resolve(__dirname, 'fixtures');
+const CHANGES_HTML = fs.readFileSync(
+  path.join(FIXTURE_DIR, 'object-preview-history-changes.html'),
+  'utf8',
+);
+const PROVENANCE_HTML = fs.readFileSync(
+  path.join(FIXTURE_DIR, 'object-preview-history-provenance.html'),
+  'utf8',
+);
 
 test.describe('Object preview history change list', () => {
   test('entries are collapsed by default and expand to reveal their changes', async ({ page }) => {
-    await page.setContent(HISTORY_HTML);
+    await page.setContent(CHANGES_HTML);
 
     const entries = page.getByTestId('object-preview-history-entry');
-    await expect(entries).toHaveCount(2);
+    await expect(entries).toHaveCount(3);
 
-    // Collapsed: neither version's change list is visible until expanded.
+    // Collapsed: no version's change list is visible until expanded.
     await expect(page.getByText('+ /summary')).toBeHidden();
     await expect(page.getByText('status: ready → in_progress')).toBeHidden();
 
-    // Expanding the first entry reveals its change list…
+    // Expanding the first entry reveals its recorded change_summary lines…
     await entries.nth(0).locator('summary').click();
     await expect(page.getByText('+ /summary')).toBeVisible();
     await expect(page.getByText('− /old')).toBeVisible();
     await expect(page.getByText('/title: draft → final')).toBeVisible();
 
-    // …while the second entry stays collapsed.
+    // …while the other entries stay collapsed.
     await expect(page.getByText('status: ready → in_progress')).toBeHidden();
+    await expect(page.getByText('No recorded changes for this version.')).toBeHidden();
   });
 
   test('a summary is keyboard operable (Enter expands it)', async ({ page }) => {
-    await page.setContent(HISTORY_HTML);
+    await page.setContent(CHANGES_HTML);
 
     const summary = page.getByTestId('object-preview-history-entry').nth(1).locator('summary');
     await summary.focus();
     await summary.press('Enter');
 
+    // This version carries no change_summary, so its list is derived by
+    // diffing the preceding version — the point is that the native summary is
+    // operable without JS.
     await expect(page.getByText('status: ready → in_progress')).toBeVisible();
   });
 });
 
-// Provenance v2 pair: v4 is an agent's write a person ordered (the orderer leads,
-// the agent is the mechanism, the credential is dropped); v3 predates the
-// orderer and keeps the pre-v2 line. Both are collapsed entries, so the line is
-// visible without expanding anything — that is the point of putting it in the
-// summary.
-const PROVENANCE_HTML = `<!doctype html><html><body>
-<ol class="flex flex-col gap-3" data-testid="object-preview-history">
-  <li class="border-base-content/10 border-l-2">
-    <details class="group" data-testid="object-preview-history-entry">
-      <summary class="flex cursor-pointer list-none flex-col gap-1 py-0.5 pl-3 [&::-webkit-details-marker]:hidden">
-        <div class="flex flex-wrap items-center gap-2">
-          <span class="font-mono text-xs font-medium">v4</span>
-          <span class="text-muted-faint ml-auto text-xs whitespace-nowrap" title="Recorded 2026-01-02T09:30:00Z · 2h ago" data-testid="object-preview-history-when">2 Jan 2026, 09:30</span>
-          <span class="size-3.5 shrink-0 text-muted-faint transition-transform group-open:rotate-180"></span>
-        </div>
-        <div class="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs" data-testid="object-preview-history-provenance">
-          <span class="shrink-0" aria-hidden="true" data-testid="object-actor-avatar"><span class="size-6 rounded-full bg-base-200 text-[10px]">MK</span></span>
-          <span class="text-muted-strong min-w-0 break-words" title="Ordered by Maciek Kucharz (u1)">on Maciek Kucharz's order</span>
-          <span class="text-muted-faint whitespace-nowrap">via</span>
-          <a href="/agents/a1" class="text-muted-strong min-w-0 truncate hover:underline" title="agent a1">researcher</a>
-          <a href="/runs/0193f2a1-0000-4000-8000-000000000001" class="text-muted-faint font-mono whitespace-nowrap hover:underline" title="agent run 0193f2a1-0000-4000-8000-000000000001" data-testid="object-preview-history-run">run 0193f2a1</a>
-        </div>
-        <div class="text-muted min-w-0 text-xs break-words">note:pr-42</div>
-      </summary>
-      <div class="flex flex-col pl-3 pt-1" data-testid="object-preview-history-changes">
-        <ul class="flex flex-col gap-0.5 pb-1">
-          <li><span class="font-mono text-xs break-words">/status: in_progress → done</span></li>
-        </ul>
-      </div>
-    </details>
-  </li>
-  <li class="border-base-content/10 border-l-2">
-    <details class="group" data-testid="object-preview-history-entry">
-      <summary class="flex cursor-pointer list-none flex-col gap-1 py-0.5 pl-3 [&::-webkit-details-marker]:hidden">
-        <div class="flex flex-wrap items-center gap-2">
-          <span class="font-mono text-xs font-medium">v3</span>
-          <span class="text-muted-faint ml-auto text-xs whitespace-nowrap" title="Recorded 2026-01-01T09:30:00Z" data-testid="object-preview-history-when">1 Jan 2026, 09:30</span>
-          <span class="size-3.5 shrink-0 text-muted-faint transition-transform group-open:rotate-180"></span>
-        </div>
-        <div class="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs" data-testid="object-preview-history-provenance">
-          <a href="/agents/a1" class="text-muted-strong min-w-0 truncate hover:underline" title="agent a1">researcher</a>
-          <span class="text-muted-faint whitespace-nowrap">via agent MCP link</span>
-          <a href="/runs/0193f2a1-0000-4000-8000-000000000002" class="text-muted-faint font-mono whitespace-nowrap hover:underline" title="agent run 0193f2a1-0000-4000-8000-000000000002" data-testid="object-preview-history-run">run 0193f2a1</a>
-        </div>
-        <div class="text-muted min-w-0 text-xs break-words">note:pr-42</div>
-      </summary>
-      <div class="flex flex-col pl-3 pt-1" data-testid="object-preview-history-changes">
-        <ul class="flex flex-col gap-0.5 pb-1">
-          <li><span class="text-success font-mono text-xs">+ /status</span></li>
-        </ul>
-      </div>
-    </details>
-  </li>
-</ol>
-</body></html>`;
-
 test.describe('Object preview history provenance line', () => {
-  test('an ordered write leads with the person, then the agent, and drops the credential', async ({ page }) => {
+  test('an ordered write leads with the person, then the agent, and drops the credential', async ({
+    page,
+  }) => {
     await page.setContent(PROVENANCE_HTML);
 
-    const row = page.getByTestId('object-preview-history-provenance').first();
+    const entry = page.getByTestId('object-preview-history-entry').first();
+    const row = entry.getByTestId('object-preview-history-provenance');
 
-    // The person who ordered the work leads the line, with their identity mark.
+    // The summary chrome the template renders: the workflow status badge and
+    // the absolute stamp with the raw server value in the tooltip.
+    await expect(entry.locator('[data-status="done"]')).toHaveText('Done');
+    const when = entry.getByTestId('object-preview-history-when');
+    await expect(when).toHaveText('2 Jan 2024, 09:30');
+    await expect(when).toHaveAttribute('title', 'Recorded 2024-01-02T09:30:00Z');
+
+    // The agent badge marks the mechanism, then the person who ordered the
+    // work leads the line with their identity mark.
+    await expect(row.locator('.badge-ghost')).toHaveText('agent');
     await expect(row).toContainText("on Maciek Kucharz's order");
-    await expect(row.getByTestId('object-actor-avatar')).toBeVisible();
 
-    // The agent is the mechanism, and it links to its definition page.
-    await expect(row).toContainText('via');
+    // The mark is ui.AvatarFull, not a hand-drawn circle: .avatar wrapping an
+    // initials placeholder is that component's class contract.
+    const avatar = row.getByTestId('object-actor-avatar');
+    await expect(avatar).toBeVisible();
+    await expect(avatar.locator('.avatar > .avatar-placeholder')).toHaveText('MK');
+
+    // The agent links to its definition page, and the run chip to its run.
     const agentLink = row.getByRole('link', { name: 'researcher' });
     await expect(agentLink).toBeVisible();
     await expect(agentLink).toHaveAttribute('href', '/agents/a1');
-
-    // The run chip still identifies the run and links to it.
     const runChip = row.getByTestId('object-preview-history-run');
     await expect(runChip).toHaveText('run 0193f2a1');
-    await expect(runChip).toHaveAttribute('href', '/runs/0193f2a1-0000-4000-8000-000000000001');
+    await expect(runChip).toHaveAttribute(
+      'href',
+      '/runs/0193f2a1-0000-4000-8000-000000000001',
+    );
 
     // v2 does not repeat the credential: "via <agent>" already says how.
     await expect(row).not.toContainText('MCP link');
+
+    // The provenance line is in the always-visible summary, not behind the
+    // disclosure.
+    await expect(row).toBeVisible();
   });
 
-  test('a write with no recorded orderer keeps the writer-and-credential line', async ({ page }) => {
+  test('a write with no recorded orderer keeps the writer-and-credential line', async ({
+    page,
+  }) => {
     await page.setContent(PROVENANCE_HTML);
 
-    const row = page.getByTestId('object-preview-history-provenance').nth(1);
+    const entry = page.getByTestId('object-preview-history-entry').nth(1);
+    const row = entry.getByTestId('object-preview-history-provenance');
+
+    await expect(entry.locator('[data-status="in_progress"]')).toHaveText('In progress');
+    await expect(entry.getByTestId('object-preview-history-when')).toHaveAttribute(
+      'title',
+      'Recorded 2024-01-01T09:30:00Z',
+    );
 
     // No orderer: the agent stands alone with the credential, as before v2.
+    await expect(row.locator('.badge-ghost')).toHaveText('agent');
     await expect(row).toContainText('researcher');
     await expect(row).toContainText('via agent MCP link');
     await expect(row).not.toContainText('order');
@@ -181,8 +139,6 @@ test.describe('Object preview history provenance line', () => {
       '/runs/0193f2a1-0000-4000-8000-000000000002',
     );
 
-    // The provenance line is in the always-visible summary, not behind the
-    // disclosure.
     await expect(row).toBeVisible();
   });
 });

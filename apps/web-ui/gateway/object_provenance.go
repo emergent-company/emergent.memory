@@ -171,6 +171,11 @@ func actorProvenanceTitle(actorType, actorID string) string {
 	}
 }
 
+// objectVersionLocation is the zone the absolute history stamp is rendered in.
+// Production follows the viewer's zone; a test that pins rendered HTML may swap
+// in a fixed zone so the same markup renders on every machine (#1083).
+var objectVersionLocation = func() *time.Location { return time.Local }
+
 // objectVersionWhen formats a version's creation time for the timeline: an
 // absolute local stamp (a history spans months, so "3 days ago" stops being
 // precise) with the relative age and the raw server value as the tooltip. An
@@ -183,7 +188,7 @@ func objectVersionWhen(iso string) (text, title string) {
 	if err != nil {
 		return iso, ""
 	}
-	text = t.Local().Format("2 Jan 2006, 15:04")
+	text = t.In(objectVersionLocation()).Format("2 Jan 2006, 15:04")
 	// relTime falls back to a bare date for anything older than a week, which
 	// the absolute text already carries — don't repeat it in the tooltip.
 	if rel := relTime(iso); rel != "" && rel != "—" && rel != t.Format("2006-01-02") {
