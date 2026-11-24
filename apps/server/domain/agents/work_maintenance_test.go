@@ -121,6 +121,26 @@ func TestWorkTriggerMetadataAcceptsIntegerIssueNumber(t *testing.T) {
 	}
 }
 
+// TestWorkTriggerMetadataBindsLinkedIssueToPullRequestHead pins #1091: a coding
+// issue linked to a pull request carries pr_number/pr_head_sha/pr_branch (not
+// head_sha), so a rework run dispatched from a blocking review verdict must
+// still receive the pull request number, the reviewed head SHA and the branch
+// it has to update.
+func TestWorkTriggerMetadataBindsLinkedIssueToPullRequestHead(t *testing.T) {
+	meta := workTriggerMetadata(&graph.WorkObjectHead{Status: "revision", Type: "GitHubIssue", Properties: map[string]any{
+		"repo":         "acme/repo",
+		"issue_number": float64(42),
+		"pr_number":    float64(7),
+		"pr_head_sha":  "abc123",
+		"pr_branch":    "fix/42-review-finding",
+		"source_id":    "src-1",
+	}})
+	require.Equal(t, 7, meta["prNumber"])
+	require.Equal(t, "abc123", meta["headSha"])
+	require.Equal(t, "fix/42-review-finding", meta["branch"])
+	require.Equal(t, "acme/repo#7", meta["subjectRef"])
+}
+
 func TestMergeWorkObjectMetadataPreservesEventAndAddsSource(t *testing.T) {
 	meta := map[string]any{"work_trigger_event": "created", "work_claim_status": "ready"}
 	mergeWorkObjectMetadata(meta, &graph.WorkObjectHead{Type: "GitHubIssue", Status: "ready", Properties: map[string]any{
