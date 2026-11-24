@@ -1083,14 +1083,24 @@ func (h *ReviewToolHandler) executeReviewSubmit(ctx context.Context, client *git
 			laneStatus = "revision"
 		}
 		_, _ = h.workItems.UpdateWorkObjectStatus(auth.WithActor(ctx, graph.ActorSystem, nil), projectID, canonicalID, laneStatus, "review")
-	} else if link := h.linkedIssue(ctx, projectID, repo, number); link != nil && verdict == "CHANGES_REQUESTED" {
-		issueCanonical := link.IssueCanonicalID.String()
-		reworked := false
-		if h.reworker != nil {
-			reworked = h.reworker.RequestWorkItemChanges(ctx, projectID, issueCanonical, "review", summary) == nil
-		}
-		if !reworked && h.workItems != nil {
-			_, _ = h.workItems.UpdateWorkObjectStatus(auth.WithActor(ctx, graph.ActorSystem, nil), projectID, issueCanonical, "revision", "review")
+	}
+	// A blocking verdict must have a consumer, whatever dispatched this run. A
+	// board-dispatched review run (the normal lane path) previously only moved
+	// its lane to revision: the linked coding issue stayed in review and no run
+	// picked the finding up, so the PR was stranded until a human pushed the fix
+	// (#1091). Always transition the linked issue review→revision and enqueue its
+	// coding agent with the finding; that run pushes to the existing PR branch
+	// and the new head is reviewed by a fresh lane.
+	if verdict == "CHANGES_REQUESTED" {
+		if link := h.linkedIssue(ctx, projectID, repo, number); link != nil {
+			issueCanonical := link.IssueCanonicalID.String()
+			reworked := false
+			if h.reworker != nil {
+				reworked = h.reworker.RequestWorkItemChanges(ctx, projectID, issueCanonical, "review", summary) == nil
+			}
+			if !reworked && h.workItems != nil {
+				_, _ = h.workItems.UpdateWorkObjectStatus(auth.WithActor(ctx, graph.ActorSystem, nil), projectID, issueCanonical, "revision", "review")
+			}
 		}
 	}
 	return &mcp.ToolResult{
