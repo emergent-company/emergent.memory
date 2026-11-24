@@ -128,7 +128,7 @@ func TestRenderScopePickerTwoColumnGroups(t *testing.T) {
 // pre-checked only when every scope in its area is selected; a partially
 // selected group leaves it unchecked (the client scripts set indeterminate).
 func TestRenderScopePickerGroupToggleState(t *testing.T) {
-	all := []string{"schema:read", "schema:write", "schema:migrate", "documents:read"}
+	all := []string{"schema:read", "schema:write", "schema:migrate", "discovery:read", "discovery:write", "documents:read"}
 	html := renderHTML(t, apiTokenScopePickerContent(all, apiTokenScopePickerConfig{}))
 
 	schemas := scopeGroupToggleTag(scopeGroupBlock(html, apiTokenAreaSchemas))
