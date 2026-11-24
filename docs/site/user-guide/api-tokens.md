@@ -73,6 +73,8 @@ All tokens use the prefix `emt_` (e.g. `emt_abc123...`). Tokens are:
 | `journal:read` | Read the project journal |
 | `extraction:read` | View extraction jobs |
 | `extraction:write` | Manage extraction jobs |
+| `discovery:read` | View schema discovery jobs and results |
+| `discovery:write` | Start, retry, cancel and finalize schema discovery |
 | `tasks:read` | Read tasks |
 | `tasks:write` | Resolve and cancel tasks |
 | `notifications:read` | Read notifications |

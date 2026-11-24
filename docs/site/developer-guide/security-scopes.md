@@ -85,12 +85,12 @@ There are two kinds of scopes:
 | `extraction:write` | Create, cancel, retry extraction jobs |
 | `schema:read` | Read type registry, template packs, compiled types |
 
-### Data sources & discovery
+### Data sources & schema discovery
 
 | Scope | Grants access to |
 |---|---|
-| `discovery:read` | List datasources, sync jobs |
-| `discovery:write` | Create, update, delete datasources; trigger syncs |
+| `discovery:read` | View schema discovery jobs and their results |
+| `discovery:write` | Start, retry, cancel and finalize schema discovery jobs |
 
 ### Tasks & notifications
 
