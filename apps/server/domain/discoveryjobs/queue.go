@@ -3,12 +3,14 @@ package discoveryjobs
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
+	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -25,6 +27,8 @@ func pqArray(ids []uuid.UUID) pq.StringArray {
 
 // discoveryRequest is a queued batch of document ids awaiting a discovery run.
 type discoveryRequest struct {
+	bun.BaseModel `bun:"table:kb.discovery_requests,alias:dr"`
+
 	ID          uuid.UUID   `bun:"id,pk"`
 	ProjectID   uuid.UUID   `bun:"project_id"`
 	DocumentIDs []uuid.UUID `bun:"document_ids,array"`
@@ -72,10 +76,11 @@ func (r *Repository) Enqueue(ctx context.Context, projectID uuid.UUID, documentI
 func (r *Repository) ListQueued(ctx context.Context) ([]discoveryRequest, error) {
 	var rows []discoveryRequest
 	err := r.db.NewSelect().
-		Model(&rows).
+		Table("kb.discovery_requests").
+		Column("id", "project_id", "document_ids", "status", "attempts", "updated_at").
 		Where("status = ?", requestQueued).
 		Order("updated_at ASC").
-		Scan(ctx)
+		Scan(ctx, &rows)
 	if err != nil {
 		r.log.Error("discovery queue: list", logger.Error(err))
 		return nil, apperror.ErrInternal.WithInternal(err)
@@ -98,49 +103,110 @@ func (r *Repository) RecoverStaleRunning(ctx context.Context) error {
 	return nil
 }
 
-// Claim marks a queued request running and returns its document ids and attempt
-// count atomically via RETURNING. ok=false when another runner claimed it first.
+// Claim atomically takes the queued request's document ids (clearing the row so
+// a concurrent Enqueue during the run window appends only new ids) and marks it
+// running. ok=false when another runner claimed it first.
 func (r *Repository) Claim(ctx context.Context, requestID uuid.UUID) ([]uuid.UUID, int, bool, error) {
-	var ids []uuid.UUID
-	var attempts int
-	err := r.db.NewRaw(`
-		UPDATE kb.discovery_requests
-		SET status = 'running', attempts = attempts + 1, updated_at = now()
-		WHERE id = ? AND status = 'queued'
-		RETURNING document_ids, attempts`, requestID).Scan(ctx, &ids, &attempts)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, 0, false, nil
+	var (
+		ids      []uuid.UUID
+		attempts int
+		ok       bool
+	)
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var raw string
+		err := tx.NewRaw(`
+			SELECT array_to_json(document_ids)::text, attempts
+			FROM kb.discovery_requests
+			WHERE id = ? AND status = 'queued'
+			FOR UPDATE`, requestID).Scan(ctx, &raw, &attempts)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return err
 		}
+		if _, err := tx.NewRaw(`
+			UPDATE kb.discovery_requests
+			SET status = 'running', attempts = attempts + 1, document_ids = '{}', updated_at = now()
+			WHERE id = ?`, requestID).Exec(ctx); err != nil {
+			return err
+		}
+		ids = parseUUIDArray(raw)
+		attempts++ // the UPDATE above incremented the stored counter
+		ok = true
+		return nil
+	})
+	if err != nil {
 		r.log.Error("discovery queue: claim", logger.Error(err))
 		return nil, 0, false, apperror.ErrInternal.WithInternal(err)
 	}
-	return ids, attempts, true, nil
+	return ids, attempts, ok, nil
 }
 
-// Finish removes a request, or returns the remainder of its ids to the queue
-// (as queued) after a capped partial run.
-func (r *Repository) Finish(ctx context.Context, requestID uuid.UUID, keep []uuid.UUID) error {
-	if len(keep) > 0 {
-		_, err := r.db.NewRaw(`
-			UPDATE kb.discovery_requests
-			SET document_ids = ?, status = 'queued', updated_at = now()
-			WHERE id = ?`, pqArray(keep), requestID).Exec(ctx)
-		if err != nil {
-			r.log.Error("discovery queue: finish (requeue)", logger.Error(err))
-			return apperror.ErrInternal.WithInternal(err)
-		}
+// parseUUIDArray decodes a Postgres array_to_json array of UUIDs ("[..]") into
+// uuid values; unparseable entries are skipped.
+func parseUUIDArray(raw string) []uuid.UUID {
+	if raw == "" || raw == "null" {
 		return nil
 	}
-	_, err := r.db.NewDelete().
-		Table("kb.discovery_requests").
-		Where("id = ?", requestID).
-		Exec(ctx)
-	if err != nil {
-		r.log.Error("discovery queue: finish", logger.Error(err))
-		return apperror.ErrInternal.WithInternal(err)
+	var strs []string
+	if err := json.Unmarshal([]byte(raw), &strs); err != nil {
+		return nil
 	}
-	return nil
+	out := make([]uuid.UUID, 0, len(strs))
+	for _, s := range strs {
+		if u, err := uuid.Parse(s); err == nil {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+// Finish requeues a request's remainder (or its newly-enqueued ids) and drops
+// the row only when it is empty. keep are the claimed ids to return to the
+// queue (e.g. the portion beyond a per-run cap, or the full set after a failed
+// start). The union with any ids enqueued during the run window is computed in
+// Go so no id is dropped and no array-literal cast ambiguity is involved.
+func (r *Repository) Finish(ctx context.Context, requestID uuid.UUID, keep []uuid.UUID) error {
+	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var raw string
+		err := tx.NewRaw(`SELECT array_to_json(document_ids)::text FROM kb.discovery_requests WHERE id = ? FOR UPDATE`, requestID).Scan(ctx, &raw)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return err
+		}
+		union := mergeUUIDs(parseUUIDArray(raw), keep)
+		if len(union) == 0 {
+			if _, err := tx.NewDelete().Table("kb.discovery_requests").Where("id = ?", requestID).Exec(ctx); err != nil {
+				return err
+			}
+			return nil
+		}
+		_, err = tx.NewRaw(`UPDATE kb.discovery_requests SET document_ids = ?, status = 'queued', updated_at = now() WHERE id = ?`, pqArray(union), requestID).Exec(ctx)
+		return err
+	})
+}
+
+// mergeUUIDs returns the set union of a and b, preserving order and dropping
+// duplicates (a queue only needs each document analysed once).
+func mergeUUIDs(a, b []uuid.UUID) []uuid.UUID {
+	seen := make(map[uuid.UUID]bool, len(a)+len(b))
+	out := make([]uuid.UUID, 0, len(a)+len(b))
+	for _, id := range a {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	for _, id := range b {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // Enqueue queues document ids for a discovery run. It is the sync worker's

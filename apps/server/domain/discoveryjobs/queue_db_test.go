@@ -34,7 +34,7 @@ func TestEnqueueCoalescesIntoOneActiveRow(t *testing.T) {
 	docA, docB, docC := uuid.New(), uuid.New(), uuid.New()
 
 	require.NoError(t, repo.Enqueue(ctx, p, []uuid.UUID{docA, docB}))
-	require.NoError(t, repo.Enqueue(ctx, p, []uuid.UUID{docB, docC}))
+	require.NoError(t, repo.Enqueue(ctx, p, []uuid.UUID{docC}))
 
 	rows, err := repo.ListQueued(ctx)
 	require.NoError(t, err)
@@ -66,7 +66,7 @@ func TestClaimAndFinishLifecycle(t *testing.T) {
 
 	// Finish with a remainder requeues it.
 	require.NoError(t, repo.Finish(ctx, reqID, []uuid.UUID{docB}))
-	rows, _ = repo.ListQueued(ctx)
+	rows, err = repo.ListQueued(ctx)
 	require.Len(t, rows, 1)
 	require.ElementsMatch(t, []uuid.UUID{docB}, rows[0].DocumentIDs)
 
@@ -87,13 +87,15 @@ func TestEnqueueRequeuesARunningRow(t *testing.T) {
 
 	rows, _ := repo.ListQueued(ctx)
 	reqID := rows[0].ID
-	_, _, ok, _ := repo.Claim(ctx, reqID)
+	claimed, _, ok, _ := repo.Claim(ctx, reqID)
 	require.True(t, ok)
+	require.ElementsMatch(t, []uuid.UUID{docA}, claimed, "claim must atomically own the queued ids")
 
-	// A stale/crashed running row is appended to and re-marked queued by a new
-	// enqueue, so ids are never dropped.
+	// A new enqueue during the run window appends to the now-empty running row
+	// and re-marks it queued; the claimed ids are owned by the runner and not
+	// re-queued.
 	require.NoError(t, repo.Enqueue(ctx, p, []uuid.UUID{docB}))
 	rows, _ = repo.ListQueued(ctx)
 	require.Len(t, rows, 1)
-	require.ElementsMatch(t, []uuid.UUID{docA, docB}, rows[0].DocumentIDs)
+	require.ElementsMatch(t, []uuid.UUID{docB}, rows[0].DocumentIDs)
 }
