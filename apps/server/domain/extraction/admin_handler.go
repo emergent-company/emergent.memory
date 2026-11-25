@@ -137,6 +137,45 @@ func (h *AdminHandler) CreateJob(c echo.Context) error {
 	return c.JSON(http.StatusCreated, SuccessResponse(job.ToDTO()))
 }
 
+// BackfillRequest is the body for POST /api/admin/extraction-jobs/projects/:projectId/backfill.
+type BackfillRequest struct {
+	Filter string `json:"filter"` // stale_schema | never | failed (default stale_schema)
+	Limit  int    `json:"limit"`  // 0 = no limit; capped at 1000
+	DryRun bool   `json:"dry_run"`
+}
+
+// Backfill selects documents matching a filter and enqueues an extraction job
+// for each, used to re-extract documents after a schema change (or repair
+// never-extracted / failed documents).
+func (h *AdminHandler) Backfill(c echo.Context) error {
+	projectID := c.Param("projectId")
+
+	var req BackfillRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	filter := BackfillFilter(req.Filter)
+	switch filter {
+	case BackfillStaleSchema, BackfillNever, BackfillFailed:
+	default:
+		filter = BackfillStaleSchema
+	}
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	result, err := h.jobsService.Backfill(c.Request().Context(), projectID, filter, limit, req.DryRun)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
 // ListJobs handles GET /api/admin/extraction-jobs/projects/:projectId
 // Lists extraction jobs for a project with pagination
 func (h *AdminHandler) ListJobs(c echo.Context) error {
