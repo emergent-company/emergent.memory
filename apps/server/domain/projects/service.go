@@ -457,30 +457,10 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateProjectReques
 		hasUpdates = true
 	}
 
-	if req.PipelineMode != nil {
-		mode := *req.PipelineMode
-		if err := pipeline.Validate(pipeline.Policy{Mode: mode}); err != nil {
-			return nil, apperror.New(400, "validation-failed", "invalid pipeline_mode").WithDetails(map[string]any{
-				"pipeline_mode": []string{err.Error()},
-			})
+	if req.PipelineMode != nil || req.PipelinePolicy != nil {
+		if err := applyPipelineUpdate(project, req); err != nil {
+			return nil, err
 		}
-		project.PipelineMode = mode
-		hasUpdates = true
-	}
-
-	if req.PipelinePolicy != nil {
-		policy, err := pipeline.Parse(*req.PipelinePolicy)
-		if err != nil {
-			return nil, apperror.New(400, "validation-failed", "invalid pipeline_policy").WithDetails(map[string]any{
-				"pipeline_policy": []string{err.Error()},
-			})
-		}
-		if err := pipeline.Validate(policy); err != nil {
-			return nil, apperror.New(400, "validation-failed", "invalid pipeline_policy").WithDetails(map[string]any{
-				"pipeline_policy": []string{err.Error()},
-			})
-		}
-		project.PipelinePolicy = *req.PipelinePolicy
 		hasUpdates = true
 	}
 

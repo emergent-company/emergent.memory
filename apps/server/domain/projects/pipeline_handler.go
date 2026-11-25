@@ -79,6 +79,41 @@ func (h *Handler) GetPipeline(c echo.Context) error {
 	})
 }
 
+// applyPipelineUpdate applies a pipeline policy update to a project in place.
+// Policy wins over mode when both are present; a mode-only update resets the
+// policy to that preset's defaults. It returns a 400 apperror on invalid input.
+func applyPipelineUpdate(project *Project, req UpdateProjectRequest) error {
+	if req.PipelinePolicy != nil {
+		p, err := pipeline.Parse(*req.PipelinePolicy)
+		if err != nil {
+			return apperror.New(400, "validation-failed", "invalid pipeline_policy").WithDetails(map[string]any{
+				"pipeline_policy": []string{err.Error()},
+			})
+		}
+		if p.Mode == "" {
+			p.Mode = pipeline.ModeSuggest
+		}
+		if err := pipeline.Validate(p); err != nil {
+			return apperror.New(400, "validation-failed", "invalid pipeline_policy").WithDetails(map[string]any{
+				"pipeline_policy": []string{err.Error()},
+			})
+		}
+		project.PipelinePolicy = p.Marshal()
+		project.PipelineMode = p.Mode
+		return nil
+	}
+
+	mode := *req.PipelineMode
+	if err := pipeline.Validate(pipeline.Policy{Mode: mode}); err != nil {
+		return apperror.New(400, "validation-failed", "invalid pipeline_mode").WithDetails(map[string]any{
+			"pipeline_mode": []string{err.Error()},
+		})
+	}
+	project.PipelineMode = mode
+	project.PipelinePolicy = pipeline.DefaultPolicy(mode).Marshal()
+	return nil
+}
+
 // PutPipeline handles PUT /api/projects/:id/pipeline.
 func (h *Handler) PutPipeline(c echo.Context) error {
 	user := auth.MustGetUser(c)
@@ -95,35 +130,10 @@ func (h *Handler) PutPipeline(c echo.Context) error {
 
 	upd := UpdateProjectRequest{}
 	if req.Mode != nil {
-		mode := *req.Mode
-		if err := pipeline.Validate(pipeline.Policy{Mode: mode}); err != nil {
-			return apperror.New(400, "validation-failed", "invalid mode").WithDetails(map[string]any{
-				"mode": []string{err.Error()},
-			})
-		}
-		upd.PipelineMode = &mode
+		upd.PipelineMode = req.Mode
 	}
 	if req.Policy != nil {
-		p, err := pipeline.Parse(*req.Policy)
-		if err != nil {
-			return apperror.New(400, "validation-failed", "invalid policy").WithDetails(map[string]any{
-				"policy": []string{err.Error()},
-			})
-		}
-		if err := pipeline.Validate(p); err != nil {
-			return apperror.New(400, "validation-failed", "invalid policy").WithDetails(map[string]any{
-				"policy": []string{err.Error()},
-			})
-		}
-		if p.Mode == "" {
-			p.Mode = pipeline.ModeSuggest
-		}
-		if req.Mode == nil {
-			mode := p.Mode
-			upd.PipelineMode = &mode
-		}
-		raw := p.Marshal()
-		upd.PipelinePolicy = &raw
+		upd.PipelinePolicy = req.Policy
 	}
 
 	if _, err := h.svc.Update(c.Request().Context(), id, upd); err != nil {

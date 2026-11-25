@@ -147,18 +147,35 @@ func (p Policy) IsZero() bool {
 
 // Validate checks the policy's enum values and numeric ranges.
 func Validate(p Policy) error {
-	if p.Mode != "" && !validMode(p.Mode) {
+	if p.Mode == "" {
+		return fmt.Errorf("mode is required")
+	}
+	if !validMode(p.Mode) {
 		return fmt.Errorf("mode must be one of %v", ValidModes)
 	}
 	if p.Discovery.MinConfidence < 0 || p.Discovery.MinConfidence > 1 {
 		return fmt.Errorf("discovery.min_confidence must be within [0,1]")
 	}
-	if p.Discovery.BatchSize < 0 || p.Discovery.MaxDocsPerRun < 0 || p.Discovery.MaxTypeBudget < 0 ||
-		p.Discovery.MaxTotalTypes < 0 || p.Discovery.StabilityRuns < 0 || p.Discovery.DebounceHours < 0 {
-		return fmt.Errorf("discovery counts must be non-negative")
+	if p.Discovery.BatchSize < 0 || p.Discovery.BatchSize > 50 {
+		return fmt.Errorf("discovery.batch_size must be within [0,50]")
 	}
-	if p.Apply.MaxNewTypesPerRun < 0 {
-		return fmt.Errorf("apply.max_new_types_per_run must be non-negative")
+	if p.Discovery.MaxDocsPerRun < 0 || p.Discovery.MaxDocsPerRun > 5000 {
+		return fmt.Errorf("discovery.max_docs_per_run must be within [0,5000]")
+	}
+	if p.Discovery.MaxTypeBudget < 0 || p.Discovery.MaxTypeBudget > 100 {
+		return fmt.Errorf("discovery.max_type_budget must be within [0,100]")
+	}
+	if p.Discovery.MaxTotalTypes < 0 || p.Discovery.MaxTotalTypes > 200 {
+		return fmt.Errorf("discovery.max_total_types must be within [0,200]")
+	}
+	if p.Discovery.StabilityRuns < 0 || p.Discovery.StabilityRuns > 10 {
+		return fmt.Errorf("discovery.stability_runs must be within [0,10]")
+	}
+	if p.Discovery.DebounceHours < 0 || p.Discovery.DebounceHours > 168 {
+		return fmt.Errorf("discovery.debounce_hours must be within [0,168]")
+	}
+	if p.Apply.MaxNewTypesPerRun < 0 || p.Apply.MaxNewTypesPerRun > 100 {
+		return fmt.Errorf("apply.max_new_types_per_run must be within [0,100]")
 	}
 	if p.Apply.Target != "" && p.Apply.Target != "auto_pack" {
 		return fmt.Errorf("apply.target must be \"auto_pack\"")
@@ -168,8 +185,8 @@ func Validate(p Policy) error {
 	default:
 		return fmt.Errorf("extract.re_extract_on_schema_change must be off, incremental or full")
 	}
-	if p.Extract.BackfillLimitPerRun < 0 {
-		return fmt.Errorf("extract.backfill_limit_per_run must be non-negative")
+	if p.Extract.BackfillLimitPerRun < 0 || p.Extract.BackfillLimitPerRun > 1000 {
+		return fmt.Errorf("extract.backfill_limit_per_run must be within [0,1000]")
 	}
 	switch p.Merge.Policy {
 	case "", "partial", "enrich":
@@ -179,8 +196,11 @@ func Validate(p Policy) error {
 	if p.Merge.SimilarityThreshold < 0 || p.Merge.SimilarityThreshold > 1 {
 		return fmt.Errorf("merge.similarity_threshold must be within [0,1]")
 	}
-	if p.Merge.BranchRetentionDays < 0 || p.Merge.SweepIntervalMinutes < 0 {
-		return fmt.Errorf("merge counts must be non-negative")
+	if p.Merge.BranchRetentionDays < 0 || p.Merge.BranchRetentionDays > 365 {
+		return fmt.Errorf("merge.branch_retention_days must be within [0,365]")
+	}
+	if p.Merge.SweepIntervalMinutes < 0 || p.Merge.SweepIntervalMinutes > 1440 {
+		return fmt.Errorf("merge.sweep_interval_minutes must be within [0,1440]")
 	}
 	if p.Budget.DiscoverySpendCapUSDPerDay < 0 || p.Budget.ExtractionSpendCapUSDPerDay < 0 {
 		return fmt.Errorf("budget caps must be non-negative")
