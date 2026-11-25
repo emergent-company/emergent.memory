@@ -977,8 +977,6 @@ definitions:
         type: integer
       errorMessage:
         type: string
-      failureClass:
-        type: string
       id:
         type: string
       maxSteps:
@@ -13296,7 +13294,7 @@ info:
     name: MIT
     url: https://opensource.org/licenses/MIT
   title: Memory API
-  version: 0.103.0
+  version: 0.104.1
 paths:
   /.well-known/oauth-authorization-server:
     get:
