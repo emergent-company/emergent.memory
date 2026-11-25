@@ -1,6 +1,7 @@
 package discoveryjobs
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"strconv"
@@ -26,8 +27,20 @@ var Module = fx.Module("discoveryjobs",
 	fx.Invoke(
 		RegisterRoutes,
 		wireAutoApply,
+		startQueueRunner,
 	),
 )
+
+// startQueueRunner begins draining kb.discovery_requests in the background. It
+// stops when the fx application shuts down.
+func startQueueRunner(lc fx.Lifecycle, svc *Service) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			go svc.StartQueueRunner(ctx, 30*time.Second)
+			return nil
+		},
+	})
+}
 
 // wireAutoApply injects the project-policy reader into the discovery service so
 // pipeline_mode=auto projects can have their discovered schema applied at

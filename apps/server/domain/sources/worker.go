@@ -31,7 +31,10 @@ type pendingSourceRelationship struct {
 // sync ingests new documents. It is optional (nil-safe): a source with no new
 // documents, or a container without the discovery module, skips delegation.
 type DiscoveryStarter interface {
-	StartDiscovery(ctx context.Context, projectID uuid.UUID, documentIDs []uuid.UUID) error
+	// Enqueue queues document ids for a discovery run instead of starting one
+	// immediately: a collision with an in-flight run or a crash no longer drops
+	// the ids (they are drained by the discovery queue runner).
+	Enqueue(ctx context.Context, projectID uuid.UUID, documentIDs []uuid.UUID) error
 	// AutoDiscoveryEnabled reports the project's auto-discovery setting. When
 	// it returns false, a sync must not start discovery; an error means the
 	// setting could not be read and delegation is skipped.
@@ -633,7 +636,7 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 			continue
 		}
 		successful++
-		if result.Created {
+		if result.Created || result.NewVersion {
 			createdDocIDs = append(createdDocIDs, result.DocumentID)
 		}
 		if err := w.svc.repo.UpdateSyncJobProgress(ctx, job.ID, progress(nil, nil)); err != nil {
@@ -827,13 +830,11 @@ func (w *SyncWorker) delegateDiscovery(ctx context.Context, projectID uuid.UUID,
 	if len(ids) == 0 {
 		return
 	}
-	if startErr := w.discovery.StartDiscovery(ctx, projectID, ids); startErr != nil {
-		// Includes the 409 a run in flight returns. Those documents are not
-		// analysed by that run, and a later sync only delegates its own new
-		// documents, so nothing picks them up automatically: the manual run on
-		// the Schema page (or a retry) is the way to cover them. This line is
-		// the operator trace.
-		log.Warn("discovery delegation failed", "error", startErr)
+	// Queue the ids rather than starting a run directly: the discovery queue
+	// runner drains them with a per-run cap, and a collision with an in-flight
+	// run no longer drops them.
+	if enqueueErr := w.discovery.Enqueue(ctx, projectID, ids); enqueueErr != nil {
+		log.Warn("discovery enqueue failed", "error", enqueueErr)
 	}
 }
 
