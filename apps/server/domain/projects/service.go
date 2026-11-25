@@ -14,6 +14,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/notifications"
+	"github.com/emergent-company/emergent.memory/domain/pipeline"
 	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/internal/budgetwindow"
 	"github.com/emergent-company/emergent.memory/internal/database"
@@ -335,6 +336,8 @@ func (s *Service) Create(ctx context.Context, req CreateProjectRequest, userID s
 		BudgetAlertThreshold:       defaultAlertThreshold,
 		BudgetWeeklyUSD:            &defaultWeeklyBudget,
 		BudgetWeeklyAlertThreshold: defaultAlertThreshold,
+		PipelineMode:               pipeline.ModeSuggest,
+		PipelinePolicy:             pipeline.DefaultPolicy(pipeline.ModeSuggest).Marshal(),
 	}
 	if req.AutoMergeExtractionBranches != nil {
 		project.AutoMergeExtractionBranches = *req.AutoMergeExtractionBranches
@@ -451,6 +454,33 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateProjectReques
 
 	if req.AutoExtractSourceSyncs != nil {
 		project.AutoExtractSourceSyncs = *req.AutoExtractSourceSyncs
+		hasUpdates = true
+	}
+
+	if req.PipelineMode != nil {
+		mode := *req.PipelineMode
+		if err := pipeline.Validate(pipeline.Policy{Mode: mode}); err != nil {
+			return nil, apperror.New(400, "validation-failed", "invalid pipeline_mode").WithDetails(map[string]any{
+				"pipeline_mode": []string{err.Error()},
+			})
+		}
+		project.PipelineMode = mode
+		hasUpdates = true
+	}
+
+	if req.PipelinePolicy != nil {
+		policy, err := pipeline.Parse(*req.PipelinePolicy)
+		if err != nil {
+			return nil, apperror.New(400, "validation-failed", "invalid pipeline_policy").WithDetails(map[string]any{
+				"pipeline_policy": []string{err.Error()},
+			})
+		}
+		if err := pipeline.Validate(policy); err != nil {
+			return nil, apperror.New(400, "validation-failed", "invalid pipeline_policy").WithDetails(map[string]any{
+				"pipeline_policy": []string{err.Error()},
+			})
+		}
+		project.PipelinePolicy = *req.PipelinePolicy
 		hasUpdates = true
 	}
 
