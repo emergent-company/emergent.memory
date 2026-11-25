@@ -22,6 +22,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/google/uuid"
 )
 
 const (
@@ -242,6 +243,31 @@ func (s *Service) List(ctx context.Context, params ServiceListParams) ([]Project
 		result[i] = dto
 	}
 	return result, nil
+}
+
+// Policy returns the project's resolved knowledge-pipeline policy. It is the
+// slice discovery's auto-apply path consumes (via discoveryjobs.
+// PipelinePolicyReader).
+func (s *Service) Policy(ctx context.Context, projectID uuid.UUID) (pipeline.Policy, error) {
+	project, err := s.repo.GetByID(ctx, projectID.String(), false)
+	if err != nil {
+		return pipeline.Policy{}, err
+	}
+	if project == nil {
+		return pipeline.Policy{}, apperror.ErrProjectNotFound
+	}
+	p, _, err := resolvePipeline(project.PipelineMode, project.PipelinePolicy)
+	return p, err
+}
+
+// BumpSchemaGeneration increments the project's schema generation counter after
+// an effective schema change (discovery auto-apply), so extraction backfill can
+// detect which documents predate it.
+func (s *Service) BumpSchemaGeneration(ctx context.Context, projectID uuid.UUID) error {
+	if err := s.repo.BumpSchemaGeneration(ctx, projectID.String()); err != nil {
+		return err
+	}
+	return nil
 }
 
 // GetByID returns a project by ID

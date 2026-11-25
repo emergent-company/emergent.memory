@@ -11,6 +11,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
 )
@@ -24,8 +25,20 @@ var Module = fx.Module("discoveryjobs",
 	),
 	fx.Invoke(
 		RegisterRoutes,
+		wireAutoApply,
 	),
 )
+
+// wireAutoApply injects the project-policy reader into the discovery service so
+// pipeline_mode=auto projects can have their discovered schema applied at
+// completion. discoveryjobs imports projects here (projects never imports
+// discoveryjobs), so there is no cycle; a missing projects service is nil-safe.
+func wireAutoApply(svc *Service, proj *projects.Service) {
+	if svc == nil || proj == nil {
+		return
+	}
+	svc.SetPipelinePolicyReader(proj)
+}
 
 // NewService creates a new discovery jobs service.
 // modelFactory is injected by the adk.Module registered in main.go.

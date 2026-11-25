@@ -730,6 +730,58 @@ func (r *Repository) InstallSchemaToProject(ctx context.Context, projectID, sche
 	}
 	return nil
 }
+
+// MarkAutoApplied records the auto-apply decision on a discovery job so a
+// replay or a duplicate run cannot apply the same diff twice.
+func (r *Repository) MarkAutoApplied(ctx context.Context, jobID uuid.UUID, report JSONMap) error {
+	_, err := r.db.NewUpdate().
+		Model((*DiscoveryJob)(nil)).
+		Set("auto_applied = ?", true).
+		Set("applied_report = ?", report).
+		Where("id = ?", jobID).
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to mark discovery job auto-applied", logger.Error(err))
+		return apperror.ErrInternal.WithInternal(err)
+	}
+	return nil
+}
+
+// MarkDiscoveredSchemaReviewed flips a pending discovered pack to reviewed
+// (installed) so a later discovery run reconciles into a fresh pending pack
+// instead of mutating the one that is now active.
+func (r *Repository) MarkDiscoveredSchemaReviewed(ctx context.Context, packID uuid.UUID) error {
+	_, err := r.db.NewUpdate().
+		Table("kb.graph_schemas").
+		Set("pending_review = ?", false).
+		Set("updated_at = now()").
+		Where("id = ?", packID).
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to mark discovered schema reviewed", logger.Error(err))
+		return apperror.ErrInternal.WithInternal(err)
+	}
+	return nil
+}
+
+// DeactivateOtherDiscoveredAssignments deactivates any other installed
+// discovered-pack assignment for a project, keeping exactly one active auto
+// pack. Manual packs are never touched.
+func (r *Repository) DeactivateOtherDiscoveredAssignments(ctx context.Context, projectID, keepSchemaID uuid.UUID) error {
+	_, err := r.db.NewUpdate().
+		Table("kb.project_schemas").
+		Set("active = ?", false).
+		Where("project_id = ?", projectID).
+		Where("schema_id != ?", keepSchemaID).
+		Where("schema_id IN (SELECT id FROM kb.graph_schemas WHERE source = 'discovered')").
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to deactivate other discovered assignments", logger.Error(err))
+		return apperror.ErrInternal.WithInternal(err)
+	}
+	return nil
+}
+
 func (r *Repository) UpdateSchemaExtractionPrompts(ctx context.Context, schemaID uuid.UUID, prompts json.RawMessage) error {
 	_, err := r.db.NewUpdate().
 		Table("kb.graph_schemas").

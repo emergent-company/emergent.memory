@@ -93,6 +93,9 @@ type Service struct {
 	// new start supersedes it. Zero disables takeover (every active job holds
 	// its claim); the module wires DefaultStaleJobAfter.
 	staleAfter time.Duration
+	// policyReader enables auto-apply at completion; nil keeps the manual-only
+	// finalize path (see SetPipelinePolicyReader).
+	policyReader PipelinePolicyReader
 }
 
 // documentCap is the effective per-run document cap.
@@ -1250,6 +1253,10 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		s.handleJobError(ctx, jobID, err)
 		return
 	}
+
+	// Auto-apply (pipeline_mode=auto): gate and install the reconciled pack, or
+	// record why it was declined. Best-effort; never fails the completed job.
+	s.maybeAutoApply(ctx, projectID, jobID, schemaID, refinedTypes, registeredTypes)
 
 	s.log.Info("discovery job completed",
 		slog.String("job_id", jobID.String()),
