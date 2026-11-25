@@ -2,6 +2,9 @@ package discoveryjobs
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,13 +23,6 @@ func pqArray(ids []uuid.UUID) pq.StringArray {
 	return out
 }
 
-// Enqueue queues document ids for a discovery run. It is the sync worker's
-// entry point: ids are coalesced into the project's queued request and drained
-// by StartQueueRunner, so a concurrent run or crash cannot drop them.
-func (s *Service) Enqueue(ctx context.Context, projectID uuid.UUID, documentIDs []uuid.UUID) error {
-	return s.repo.Enqueue(ctx, projectID, documentIDs)
-}
-
 // discoveryRequest is a queued batch of document ids awaiting a discovery run.
 type discoveryRequest struct {
 	ID          uuid.UUID   `bun:"id,pk"`
@@ -40,34 +36,33 @@ type discoveryRequest struct {
 const (
 	requestQueued  = "queued"
 	requestRunning = "running"
+	// maxQueueAttempts is how many times a request may fail to start before its
+	// ids are dropped rather than requeued forever.
+	maxQueueAttempts = 5
+	// staleRunningAfter is how long a request may sit in 'running' before a
+	// crash between Claim and Finish is assumed and the row is re-queued.
+	staleRunningAfter = 10 * time.Minute
 )
 
 // Enqueue adds document ids to a project's discovery request queue, coalescing
-// into the single queued row. Ids that fail to parse as UUIDs are ignored.
+// into the single active row. Ids are never dropped: a running row (stale or
+// in-flight) is appended to and re-marked queued, which the runner only claims
+// once no discovery job is active for the project.
 func (r *Repository) Enqueue(ctx context.Context, projectID uuid.UUID, documentIDs []uuid.UUID) error {
 	if len(documentIDs) == 0 {
 		return nil
 	}
-	res, err := r.db.NewUpdate().
-		Table("kb.discovery_requests").
-		Set("document_ids = document_ids || ?", pqArray(documentIDs)).
-		Set("updated_at = now()").
-		Where("project_id = ?", projectID).
-		Where("status = ?", requestQueued).
-		Exec(ctx)
+	_, err := r.db.NewRaw(`
+		INSERT INTO kb.discovery_requests (id, project_id, document_ids, status)
+		VALUES (gen_random_uuid(), ?, ?, 'queued')
+		ON CONFLICT (project_id) WHERE status IN ('queued','running')
+		DO UPDATE SET
+			document_ids = kb.discovery_requests.document_ids || EXCLUDED.document_ids,
+			status = 'queued',
+			updated_at = now()`,
+		projectID, pqArray(documentIDs)).Exec(ctx)
 	if err != nil {
-		r.log.Error("discovery queue: merge", logger.Error(err))
-		return apperror.ErrInternal.WithInternal(err)
-	}
-	if n, _ := res.RowsAffected(); n > 0 {
-		return nil
-	}
-	_, err = r.db.NewInsert().
-		Model(&discoveryRequest{ID: uuid.New(), ProjectID: projectID, DocumentIDs: documentIDs, Status: requestQueued}).
-		On("CONFLICT (project_id) WHERE status IN ('queued','running') DO NOTHING").
-		Exec(ctx)
-	if err != nil {
-		r.log.Error("discovery queue: insert", logger.Error(err))
+		r.log.Error("discovery queue: enqueue", logger.Error(err))
 		return apperror.ErrInternal.WithInternal(err)
 	}
 	return nil
@@ -88,50 +83,54 @@ func (r *Repository) ListQueued(ctx context.Context) ([]discoveryRequest, error)
 	return rows, nil
 }
 
-// Claim marks a request running and returns its document ids, so the runner can
-// start a discovery run over them. It returns ok=false when another runner
-// claimed it first.
-func (r *Repository) Claim(ctx context.Context, requestID uuid.UUID) ([]uuid.UUID, bool, error) {
-	var ids []uuid.UUID
-	res, err := r.db.NewUpdate().
-		Table("kb.discovery_requests").
-		Set("status = ?", requestRunning).
-		Set("attempts = attempts + 1").
-		Set("updated_at = now()").
-		Where("id = ?", requestID).
-		Where("status = ?", requestQueued).
-		Exec(ctx)
+// RecoverStaleRunning re-queues running requests whose updated_at is older than
+// the threshold, repairing rows a crash left between Claim and Finish.
+func (r *Repository) RecoverStaleRunning(ctx context.Context) error {
+	_, err := r.db.NewRaw(`
+		UPDATE kb.discovery_requests
+		SET status = 'queued', updated_at = now()
+		WHERE status = 'running' AND updated_at < now() - (? * interval '1 second')`,
+		staleRunningAfter.Seconds()).Exec(ctx)
 	if err != nil {
-		r.log.Error("discovery queue: claim", logger.Error(err))
-		return nil, false, apperror.ErrInternal.WithInternal(err)
+		r.log.Error("discovery queue: recover stale", logger.Error(err))
+		return apperror.ErrInternal.WithInternal(err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return nil, false, nil
-	}
-	err = r.db.NewSelect().
-		Table("kb.discovery_requests").
-		Column("document_ids").
-		Where("id = ?", requestID).
-		Scan(ctx, &ids)
-	if err != nil {
-		r.log.Error("discovery queue: read ids", logger.Error(err))
-		return nil, false, apperror.ErrInternal.WithInternal(err)
-	}
-	return ids, true, nil
+	return nil
 }
 
-// Finish removes a request after its run completed (or returns the remainder to
-// the queue on error, capped at maxAttempts).
-func (r *Repository) Finish(ctx context.Context, requestID uuid.UUID, keep []uuid.UUID, maxAttempts int) error {
+// Claim marks a queued request running and returns its document ids and attempt
+// count atomically via RETURNING. ok=false when another runner claimed it first.
+func (r *Repository) Claim(ctx context.Context, requestID uuid.UUID) ([]uuid.UUID, int, bool, error) {
+	var ids []uuid.UUID
+	var attempts int
+	err := r.db.NewRaw(`
+		UPDATE kb.discovery_requests
+		SET status = 'running', attempts = attempts + 1, updated_at = now()
+		WHERE id = ? AND status = 'queued'
+		RETURNING document_ids, attempts`, requestID).Scan(ctx, &ids, &attempts)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, 0, false, nil
+		}
+		r.log.Error("discovery queue: claim", logger.Error(err))
+		return nil, 0, false, apperror.ErrInternal.WithInternal(err)
+	}
+	return ids, attempts, true, nil
+}
+
+// Finish removes a request, or returns the remainder of its ids to the queue
+// (as queued) after a capped partial run.
+func (r *Repository) Finish(ctx context.Context, requestID uuid.UUID, keep []uuid.UUID) error {
 	if len(keep) > 0 {
-		_, err := r.db.NewUpdate().
-			Table("kb.discovery_requests").
-			Set("document_ids = ?", pqArray(keep)).
-			Set("status = ?", requestQueued).
-			Set("updated_at = now()").
-			Where("id = ?", requestID).
-			Exec(ctx)
-		return err
+		_, err := r.db.NewRaw(`
+			UPDATE kb.discovery_requests
+			SET document_ids = ?, status = 'queued', updated_at = now()
+			WHERE id = ?`, pqArray(keep), requestID).Exec(ctx)
+		if err != nil {
+			r.log.Error("discovery queue: finish (requeue)", logger.Error(err))
+			return apperror.ErrInternal.WithInternal(err)
+		}
+		return nil
 	}
 	_, err := r.db.NewDelete().
 		Table("kb.discovery_requests").
@@ -142,6 +141,13 @@ func (r *Repository) Finish(ctx context.Context, requestID uuid.UUID, keep []uui
 		return apperror.ErrInternal.WithInternal(err)
 	}
 	return nil
+}
+
+// Enqueue queues document ids for a discovery run. It is the sync worker's
+// entry point: ids are coalesced into the project's queued request and drained
+// by StartQueueRunner, so a concurrent run or crash cannot drop them.
+func (s *Service) Enqueue(ctx context.Context, projectID uuid.UUID, documentIDs []uuid.UUID) error {
+	return s.repo.Enqueue(ctx, projectID, documentIDs)
 }
 
 // StartQueueRunner begins draining the queue until ctx is cancelled.
@@ -161,10 +167,15 @@ func (s *Service) StartQueueRunner(ctx context.Context, interval time.Duration) 
 	}
 }
 
-// drainQueue claims queued requests for projects with no active discovery run
-// and starts a run over their document ids, capping to the per-run document
-// cap and returning any remainder to the queue.
+// drainQueue recovers stale running rows, then claims queued requests for
+// projects with no active discovery run and starts a run over their document
+// ids, capping to the per-run document cap and returning the remainder (or a
+// failed start's full set) to the queue.
 func (s *Service) drainQueue(ctx context.Context) {
+	if err := s.repo.RecoverStaleRunning(ctx); err != nil {
+		s.log.Warn("discovery queue: recover failed", logger.Error(err))
+	}
+
 	reqs, err := s.repo.ListQueued(ctx)
 	if err != nil {
 		s.log.Warn("discovery queue: list failed", logger.Error(err))
@@ -180,11 +191,12 @@ func (s *Service) drainQueue(ctx context.Context) {
 			continue
 		}
 
-		ids, ok, cerr := s.repo.Claim(ctx, req.ID)
-		if cerr != nil || !ok {
-			if cerr != nil {
-				s.log.Warn("discovery queue: claim failed", logger.Error(cerr))
-			}
+		ids, attempts, ok, cerr := s.repo.Claim(ctx, req.ID)
+		if cerr != nil {
+			s.log.Warn("discovery queue: claim failed", logger.Error(cerr))
+			continue
+		}
+		if !ok {
 			continue
 		}
 
@@ -202,15 +214,22 @@ func (s *Service) drainQueue(ctx context.Context) {
 			Trigger:     DiscoveryTriggerSourceSync,
 		})
 		if serr != nil {
-			// A 409 (run appeared between our check and now) or any other
-			// failure returns the ids to the queue for a later tick.
 			s.log.Warn("discovery queue: start failed", logger.Error(serr))
-			if ferr := s.repo.Finish(ctx, req.ID, ids, 0); ferr != nil {
+			if attempts >= maxQueueAttempts {
+				s.log.Error("discovery queue: dropping request after repeated failures",
+					slog.String("project_id", req.ProjectID.String()),
+					slog.Int("attempts", attempts))
+				if ferr := s.repo.Finish(ctx, req.ID, nil); ferr != nil {
+					s.log.Warn("discovery queue: drop failed", logger.Error(ferr))
+				}
+				continue
+			}
+			if ferr := s.repo.Finish(ctx, req.ID, ids); ferr != nil {
 				s.log.Warn("discovery queue: requeue failed", logger.Error(ferr))
 			}
 			continue
 		}
-		if ferr := s.repo.Finish(ctx, req.ID, keep, 0); ferr != nil {
+		if ferr := s.repo.Finish(ctx, req.ID, keep); ferr != nil {
 			s.log.Warn("discovery queue: finish failed", logger.Error(ferr))
 		}
 	}

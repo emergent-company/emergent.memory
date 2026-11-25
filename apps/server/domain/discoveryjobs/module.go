@@ -32,11 +32,18 @@ var Module = fx.Module("discoveryjobs",
 )
 
 // startQueueRunner begins draining kb.discovery_requests in the background. It
-// stops when the fx application shuts down.
+// uses a cancelable background context (the fx OnStart ctx carries a short
+// start timeout and would kill the runner seconds after boot), cancelled on
+// shutdown via OnStop.
 func startQueueRunner(lc fx.Lifecycle, svc *Service) {
+	runnerCtx, cancel := context.WithCancel(context.Background())
 	lc.Append(fx.Hook{
-		OnStart: func(ctx context.Context) error {
-			go svc.StartQueueRunner(ctx, 30*time.Second)
+		OnStart: func(context.Context) error {
+			go svc.StartQueueRunner(runnerCtx, 30*time.Second)
+			return nil
+		},
+		OnStop: func(context.Context) error {
+			cancel()
 			return nil
 		},
 	})
