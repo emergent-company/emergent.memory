@@ -1390,8 +1390,12 @@ func (s *ObjectExtractionJobsService) TriggerForDocument(ctx context.Context, pr
 // auto-apply bumps whenever the effective installed schema changes (P2). Backfill
 // compares a job's stored generation to this to find stale documents.
 func (s *ObjectExtractionJobsService) CurrentSchemaGeneration(ctx context.Context, projectID string) (int, error) {
+	return s.currentSchemaGeneration(ctx, s.db, projectID)
+}
+
+func (s *ObjectExtractionJobsService) currentSchemaGeneration(ctx context.Context, db bun.IDB, projectID string) (int, error) {
 	var gen int
-	err := s.db.NewSelect().
+	err := db.NewSelect().
 		Table("kb.projects").
 		Column("schema_generation").
 		Where("id = ?", projectID).
@@ -1429,38 +1433,44 @@ type BackfillResult struct {
 
 // Backfill selects documents matching filter and enqueues an extraction job
 // for each (up to limit), skipping documents that already have an active job.
-// dry_run computes the selection without creating jobs. Runs are serialized per
-// project with an advisory lock so two backfills cannot double-enqueue.
+// dry_run computes the selection without creating jobs. The selection is
+// serialized per project with a transaction-scoped advisory lock.
 func (s *ObjectExtractionJobsService) Backfill(ctx context.Context, projectID string, filter BackfillFilter, limit int, dryRun bool) (*BackfillResult, error) {
-	gen, err := s.CurrentSchemaGeneration(ctx, projectID)
-	if err != nil {
-		return nil, err
+	if limit <= 0 {
+		limit = 50
 	}
-	res := &BackfillResult{Filter: filter, CurrentGeneration: gen, DryRun: dryRun}
+	if limit > 1000 {
+		limit = 1000
+	}
 
+	res := &BackfillResult{Filter: filter, DryRun: dryRun}
 	lockKey := "backfill:" + projectID
-	if _, err := s.db.NewRaw("SELECT pg_advisory_lock(hashtext(?))", lockKey).Exec(ctx); err != nil {
-		return nil, fmt.Errorf("acquire backfill lock: %w", err)
-	}
-	defer func() {
-		_, _ = s.db.NewRaw("SELECT pg_advisory_unlock(hashtext(?))", lockKey).Exec(ctx)
-	}()
 
-	docs, err := s.backfillCandidates(ctx, projectID, filter, gen)
+	var docs []string
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtext(?))", lockKey).Exec(ctx); err != nil {
+			return fmt.Errorf("acquire backfill lock: %w", err)
+		}
+		gen, err := s.currentSchemaGeneration(ctx, tx, projectID)
+		if err != nil {
+			return err
+		}
+		res.CurrentGeneration = gen
+		docs, err = s.backfillCandidates(ctx, tx, projectID, filter, gen, limit)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
+
 	res.Selected = len(docs)
-	if limit > 0 && len(docs) > limit {
-		docs = docs[:limit]
-	}
 	res.DocumentIDs = docs
 	if dryRun {
 		return res, nil
 	}
 
 	for _, docID := range docs {
-		if s.hasActiveJob(ctx, docID) {
+		if s.hasActiveJob(ctx, s.db, docID) {
 			res.Skipped++
 			continue
 		}
@@ -1474,21 +1484,22 @@ func (s *ObjectExtractionJobsService) Backfill(ctx context.Context, projectID st
 	return res, nil
 }
 
-// backfillCandidates returns document ids matching the filter.
-func (s *ObjectExtractionJobsService) backfillCandidates(ctx context.Context, projectID string, filter BackfillFilter, currentGen int) ([]string, error) {
+// backfillCandidates returns up to limit document ids matching the filter. The
+// LIMIT is applied in SQL so an unbounded candidate set is never materialised.
+func (s *ObjectExtractionJobsService) backfillCandidates(ctx context.Context, db bun.IDB, projectID string, filter BackfillFilter, currentGen, limit int) ([]string, error) {
 	var docs []string
 	var err error
 	switch filter {
 	case BackfillNever:
-		err = s.db.NewRaw(`
+		err = db.NewRaw(`
 			SELECT d.id FROM kb.documents d
 			WHERE d.project_id = ?
 			  AND NOT EXISTS (SELECT 1 FROM kb.object_extraction_jobs j WHERE j.document_id = d.id)
-			ORDER BY d.created_at`, projectID).Scan(ctx, &docs)
+			ORDER BY d.created_at LIMIT ?`, projectID, limit).Scan(ctx, &docs)
 	case BackfillFailed:
 		// Latest terminal failure only: a document that succeeded afterwards
 		// must not re-enqueue every run.
-		err = s.db.NewRaw(`
+		err = db.NewRaw(`
 			SELECT d.id FROM kb.documents d
 			WHERE d.project_id = ?
 			  AND (
@@ -1497,9 +1508,9 @@ func (s *ObjectExtractionJobsService) backfillCandidates(ctx context.Context, pr
 			    ORDER BY j.completed_at DESC NULLS LAST, j.created_at DESC
 			    LIMIT 1
 			  ) IN ('failed','dead_letter')
-			ORDER BY d.created_at`, projectID).Scan(ctx, &docs)
+			ORDER BY d.created_at LIMIT ?`, projectID, limit).Scan(ctx, &docs)
 	case BackfillStaleSchema:
-		err = s.db.NewRaw(`
+		err = db.NewRaw(`
 			SELECT d.id FROM kb.documents d
 			WHERE d.project_id = ?
 			  AND (
@@ -1509,16 +1520,16 @@ func (s *ObjectExtractionJobsService) backfillCandidates(ctx context.Context, pr
 			    ORDER BY j.completed_at DESC NULLS LAST, j.created_at DESC
 			    LIMIT 1
 			  ) IS NOT FALSE
-			ORDER BY d.created_at`, projectID, currentGen).Scan(ctx, &docs)
+			ORDER BY d.created_at LIMIT ?`, projectID, currentGen, limit).Scan(ctx, &docs)
 	}
 	return docs, err
 }
 
 // hasActiveJob reports whether a document already has a pending/processing
 // extraction job, so backfill never double-enqueues it.
-func (s *ObjectExtractionJobsService) hasActiveJob(ctx context.Context, documentID string) bool {
+func (s *ObjectExtractionJobsService) hasActiveJob(ctx context.Context, db bun.IDB, documentID string) bool {
 	var one int
-	err := s.db.NewRaw(`
+	err := db.NewRaw(`
 		SELECT 1 FROM kb.object_extraction_jobs
 		WHERE document_id = ? AND status IN ('pending','processing')
 		LIMIT 1`, documentID).Scan(ctx, &one)
