@@ -93,6 +93,9 @@ type Service struct {
 	// new start supersedes it. Zero disables takeover (every active job holds
 	// its claim); the module wires DefaultStaleJobAfter.
 	staleAfter time.Duration
+	// policyReader enables auto-apply at completion; nil keeps the manual-only
+	// finalize path (see SetPipelinePolicyReader).
+	policyReader PipelinePolicyReader
 }
 
 // documentCap is the effective per-run document cap.
@@ -310,6 +313,9 @@ func (s *Service) StartDiscovery(ctx context.Context, projectID uuid.UUID, req *
 			"document_count":        len(req.DocumentIDs),
 			"total_documents":       totalDocuments,
 		},
+		// AppliedReport is non-nil on creation so the NOT NULL jsonb column
+		// never receives a NULL from a nil map on insert.
+		AppliedReport:           JSONMap{},
 		KBPurpose:               projectInfo,
 		DiscoveredTypes:         JSONArray{},
 		DiscoveredRelationships: JSONArray{},
@@ -1250,6 +1256,10 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		s.handleJobError(ctx, jobID, err)
 		return
 	}
+
+	// Auto-apply (pipeline_mode=auto): gate and install the reconciled pack, or
+	// record why it was declined. Best-effort; never fails the completed job.
+	s.maybeAutoApply(ctx, projectID, jobID, schemaID, refinedTypes, registeredTypes)
 
 	s.log.Info("discovery job completed",
 		slog.String("job_id", jobID.String()),
@@ -2852,6 +2862,7 @@ func (s *Service) FinalizeDiscoveryFromMCP(ctx context.Context, req interface{})
 			KBPurpose:      kbPurpose,
 			Progress:       JSONMap{"message": "stub job created by MCP finalize"},
 			Config:         JSONMap{"document_ids": []string{r.DocumentID}},
+			AppliedReport:  JSONMap{},
 		}
 		if createErr := s.repo.Create(ctx, stub); createErr != nil {
 			return nil, fmt.Errorf("create stub discovery job: %w", createErr)

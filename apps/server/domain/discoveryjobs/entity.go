@@ -23,10 +23,15 @@ type DiscoveryJob struct {
 	SchemaID                *uuid.UUID `bun:"schema_id,type:uuid" json:"schemaId,omitempty"`
 	ErrorMessage            *string    `bun:"error_message" json:"errorMessage,omitempty"`
 	RetryCount              int        `bun:"retry_count,default:0" json:"retryCount"`
-	CreatedAt               time.Time  `bun:"created_at,notnull,default:now()" json:"createdAt"`
-	StartedAt               *time.Time `bun:"started_at" json:"startedAt,omitempty"`
-	CompletedAt             *time.Time `bun:"completed_at" json:"completedAt,omitempty"`
-	UpdatedAt               time.Time  `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+	// AutoApplied records that the auto-apply hook already processed this job
+	// (whether it installed the pack or declined it); the report carries the
+	// per-type decisions. Added in migration 00320.
+	AutoApplied   bool       `bun:"auto_applied,notnull,default:false" json:"autoApplied"`
+	AppliedReport JSONMap    `bun:"applied_report,type:jsonb,notnull,default:'{}'::jsonb" json:"appliedReport,omitempty"`
+	CreatedAt     time.Time  `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	StartedAt     *time.Time `bun:"started_at" json:"startedAt,omitempty"`
+	CompletedAt   *time.Time `bun:"completed_at" json:"completedAt,omitempty"`
+	UpdatedAt     time.Time  `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
 }
 
 // DiscoveryTypeCandidate represents a discovered type candidate

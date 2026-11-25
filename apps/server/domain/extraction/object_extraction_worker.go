@@ -22,6 +22,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/notifications"
+	"github.com/emergent-company/emergent.memory/domain/pipeline"
 	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -771,7 +772,7 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 				return nil, &extractionBatchError{Batch: i + 1, Total: len(batches), Err: err}
 			}
 
-			result, err := w.persistResults(ctx, job, pipelineOutput, stagingBranchID, documentVersion)
+			result, err := w.persistResults(ctx, job, pipelineOutput, stagingBranchID, documentVersion, schemas)
 			if err != nil {
 				w.deleteStagingBranch(ctx, job, stagingBranchID)
 				return nil, fmt.Errorf("persist results (batch %d/%d): %w", i+1, len(batches), err)
@@ -829,6 +830,20 @@ func accumulateBatchResults(total, batch *ObjectExtractionResults) {
 	total.ObjectsMerged += batch.ObjectsMerged
 	total.RelationshipsCreated += batch.RelationshipsCreated
 	total.CreatedObjectIDs = append(total.CreatedObjectIDs, batch.CreatedObjectIDs...)
+	total.DroppedObjects += batch.DroppedObjects
+	total.DroppedRelationships += batch.DroppedRelationships
+	if len(batch.DroppedObjectTypes) > 0 {
+		seen := map[string]bool{}
+		for _, t := range total.DroppedObjectTypes {
+			seen[t] = true
+		}
+		for _, t := range batch.DroppedObjectTypes {
+			if !seen[t] {
+				seen[t] = true
+				total.DroppedObjectTypes = append(total.DroppedObjectTypes, t)
+			}
+		}
+	}
 }
 
 // autoMergeEnabled reports whether the project has auto-merge enabled.
@@ -842,6 +857,36 @@ func (w *ObjectExtractionWorker) autoMergeEnabled(ctx context.Context, projectID
 		return false
 	}
 	return project != nil && project.AutoMergeExtractionBranches
+}
+
+// autoMergePolicy resolves the branch-merge policy for extraction branches from
+// the project's knowledge-pipeline policy. It falls back to "partial" when the
+// policy is absent, unparseable or does not name a merge policy.
+func (w *ObjectExtractionWorker) autoMergePolicy(ctx context.Context, projectID uuid.UUID) string {
+	const fallback = "partial"
+	if w.projectsRepo == nil {
+		return fallback
+	}
+	project, err := w.projectsRepo.GetByID(ctx, projectID.String(), false)
+	if err != nil || project == nil {
+		return fallback
+	}
+	pol, err := pipeline.Resolve(project.PipelineMode, project.PipelinePolicy)
+	if err != nil {
+		return fallback
+	}
+	return resolveAutoMergePolicy(pol.Merge.Policy)
+}
+
+// resolveAutoMergePolicy maps a stored merge-policy enum to a value
+// BranchMergeRequest accepts; anything unrecognised falls back to partial.
+func resolveAutoMergePolicy(policy string) string {
+	switch policy {
+	case "partial", "enrich":
+		return policy
+	default:
+		return "partial"
+	}
 }
 
 // autoMergeExtractionBranch waits for the staging branch to be fully embedded,
@@ -867,7 +912,7 @@ func (w *ObjectExtractionWorker) autoMergeExtractionBranch(ctx context.Context, 
 	req := &graph.BranchMergeRequest{
 		SourceBranchID:    branchID,
 		Execute:           true,
-		Policy:            "partial",
+		Policy:            w.autoMergePolicy(ctx, projectID),
 		WaitForEmbeddings: true,
 	}
 	result, err := w.graphService.MergeBranch(ctx, projectID, nil, req)
@@ -1225,10 +1270,42 @@ func (w *ObjectExtractionWorker) persistResults(
 	output *agents.ExtractionPipelineOutput,
 	stagingBranchID *uuid.UUID,
 	documentVersion int,
+	schemas *ExtractionSchemas,
 ) (*ObjectExtractionResults, error) {
 	projectID, err := uuid.Parse(job.ProjectID)
 	if err != nil {
 		return nil, fmt.Errorf("parse project_id: %w", err)
+	}
+
+	// Strict typing: only the effective installed schema's object/relationship
+	// types may be persisted. The model can emit types outside it (spelling
+	// variants, invented types); those are dropped here and counted so the run
+	// reports the leak instead of polluting the graph.
+	//
+	// Strictness is skipped when no schema is installed (the bootstrap/open
+	// path relies on the static EntityExtractionSchema fallback and must not be
+	// zeroed) and can be turned off per project via extract.strict_types.
+	strict := true
+	if w.projectsRepo != nil {
+		if project, perr := w.projectsRepo.GetByID(ctx, job.ProjectID, false); perr == nil && project != nil {
+			if pol, polerr := pipeline.Resolve(project.PipelineMode, project.PipelinePolicy); polerr == nil {
+				strict = pol.Extract.StrictTypes
+			}
+		}
+	}
+	filterObjects := strict && schemas != nil && len(schemas.ObjectSchemas) > 0
+	allowedObjects := map[string]bool{}
+	if filterObjects {
+		for name := range schemas.ObjectSchemas {
+			allowedObjects[name] = true
+		}
+	}
+	filterRelationships := strict && schemas != nil && len(schemas.RelationshipSchemas) > 0
+	allowedRelationships := map[string]bool{}
+	if filterRelationships {
+		for name := range schemas.RelationshipSchemas {
+			allowedRelationships[name] = true
+		}
 	}
 
 	jobUUID, err := uuid.Parse(job.ID)
@@ -1267,7 +1344,18 @@ func (w *ObjectExtractionWorker) persistResults(
 	// objectsCreated counts only genuinely new graph rows (created=true).
 	objectsCreated := 0
 	objectsMerged := 0
+	droppedObjects := 0
+	droppedObjectTypes := []string{}
+	seenDroppedObjectTypes := map[string]bool{}
 	for _, entity := range output.Entities {
+		if filterObjects && !allowedObjects[entity.Type] {
+			droppedObjects++
+			if !seenDroppedObjectTypes[entity.Type] {
+				seenDroppedObjectTypes[entity.Type] = true
+				droppedObjectTypes = append(droppedObjectTypes, entity.Type)
+			}
+			continue
+		}
 		properties := map[string]any{
 			"name":        entity.Name,
 			"description": entity.Description,
@@ -1345,7 +1433,12 @@ func (w *ObjectExtractionWorker) persistResults(
 
 	// Create relationships
 	relationshipsCreated := 0
+	droppedRelationships := 0
 	for _, rel := range output.Relationships {
+		if filterRelationships && !allowedRelationships[rel.Type] {
+			droppedRelationships++
+			continue
+		}
 		srcID, srcOK := tempIDToObjectID[rel.SourceRef]
 		dstID, dstOK := tempIDToObjectID[rel.TargetRef]
 
@@ -1397,12 +1490,18 @@ func (w *ObjectExtractionWorker) persistResults(
 		FailedItems:          len(output.Entities) - successfulItems,
 		DiscoveredTypes:      discoveredTypes,
 		CreatedObjectIDs:     createdObjectIDs,
+		DroppedObjects:       droppedObjects,
+		DroppedObjectTypes:   droppedObjectTypes,
+		DroppedRelationships: droppedRelationships,
 		DebugInfo: JSON{
-			"entity_count":       len(output.Entities),
-			"objects_created":    objectsCreated,
-			"objects_merged":     objectsMerged,
-			"relationship_count": len(output.Relationships),
-			"orphan_rate":        agents.CalculateOrphanRate(output.Entities, output.Relationships),
+			"entity_count":          len(output.Entities),
+			"objects_created":       objectsCreated,
+			"objects_merged":        objectsMerged,
+			"relationship_count":    len(output.Relationships),
+			"orphan_rate":           agents.CalculateOrphanRate(output.Entities, output.Relationships),
+			"dropped_objects":       droppedObjects,
+			"dropped_object_types":  droppedObjectTypes,
+			"dropped_relationships": droppedRelationships,
 		},
 	}, nil
 }

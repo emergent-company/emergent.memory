@@ -499,6 +499,12 @@ type ObjectExtractionResults struct {
 	// SkippedTypes lists the object types omitted because their installed schema
 	// sets skipExtraction (sorted). They are also written to DebugInfo.
 	SkippedTypes []string
+	// DroppedObjects / DroppedRelationships count entities/relationships the
+	// model produced whose type is not in the effective installed schema; they
+	// are discarded (strict typing) and reported rather than persisted.
+	DroppedObjects       int
+	DroppedObjectTypes   []string
+	DroppedRelationships int
 	// OutcomeWarning is set when the run's outcome needs naming: types skipped
 	// by skipExtraction and/or a run that wrote no objects. It rides the same
 	// debug_info/notification path as VarianceWarning (#233).

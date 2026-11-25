@@ -34,12 +34,9 @@ type PutPipelineRequest struct {
 // the stored value is empty (legacy rows). It returns whether the stored policy
 // is customized relative to the preset.
 func resolvePipeline(mode string, raw json.RawMessage) (pipeline.Policy, bool, error) {
-	p, err := pipeline.Parse(raw)
+	p, err := pipeline.Resolve(mode, raw)
 	if err != nil {
 		return pipeline.Policy{}, false, err
-	}
-	if p.IsZero() {
-		return pipeline.DefaultPolicy(mode), false, nil
 	}
 	if err := pipeline.Validate(p); err != nil {
 		return pipeline.Policy{}, false, err
