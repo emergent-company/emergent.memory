@@ -709,6 +709,10 @@ func (r *Repository) SetJobMemorySchema(ctx context.Context, jobID, schemaID uui
 
 // InstallSchemaToProject inserts a row into kb.project_schemas to make the schema active in the project.
 func (r *Repository) InstallSchemaToProject(ctx context.Context, projectID, schemaID uuid.UUID) error {
+	return r.installSchemaToProject(ctx, r.db, projectID, schemaID)
+}
+
+func (r *Repository) installSchemaToProject(ctx context.Context, db bun.IDB, projectID, schemaID uuid.UUID) error {
 	type row struct {
 		bun.BaseModel `bun:"table:kb.project_schemas"`
 		ProjectID     uuid.UUID `bun:"project_id,type:uuid"`
@@ -720,7 +724,7 @@ func (r *Repository) InstallSchemaToProject(ctx context.Context, projectID, sche
 		SchemaID:  schemaID,
 		Active:    true,
 	}
-	_, err := r.db.NewInsert().
+	_, err := db.NewInsert().
 		Model(rec).
 		On("CONFLICT (project_id, schema_id) DO UPDATE SET active = EXCLUDED.active").
 		Exec(ctx)
@@ -731,27 +735,11 @@ func (r *Repository) InstallSchemaToProject(ctx context.Context, projectID, sche
 	return nil
 }
 
-// MarkAutoApplied records the auto-apply decision on a discovery job so a
-// replay or a duplicate run cannot apply the same diff twice.
-func (r *Repository) MarkAutoApplied(ctx context.Context, jobID uuid.UUID, report JSONMap) error {
-	_, err := r.db.NewUpdate().
-		Model((*DiscoveryJob)(nil)).
-		Set("auto_applied = ?", true).
-		Set("applied_report = ?", report).
-		Where("id = ?", jobID).
-		Exec(ctx)
-	if err != nil {
-		r.log.Error("failed to mark discovery job auto-applied", logger.Error(err))
-		return apperror.ErrInternal.WithInternal(err)
-	}
-	return nil
-}
-
-// MarkDiscoveredSchemaReviewed flips a pending discovered pack to reviewed
+// markDiscoveredSchemaReviewed flips a pending discovered pack to reviewed
 // (installed) so a later discovery run reconciles into a fresh pending pack
 // instead of mutating the one that is now active.
-func (r *Repository) MarkDiscoveredSchemaReviewed(ctx context.Context, packID uuid.UUID) error {
-	_, err := r.db.NewUpdate().
+func (r *Repository) markDiscoveredSchemaReviewed(ctx context.Context, db bun.IDB, packID uuid.UUID) error {
+	_, err := db.NewUpdate().
 		Table("kb.graph_schemas").
 		Set("pending_review = ?", false).
 		Set("updated_at = now()").
@@ -764,11 +752,11 @@ func (r *Repository) MarkDiscoveredSchemaReviewed(ctx context.Context, packID uu
 	return nil
 }
 
-// DeactivateOtherDiscoveredAssignments deactivates any other installed
+// deactivateOtherDiscoveredAssignments deactivates any other installed
 // discovered-pack assignment for a project, keeping exactly one active auto
 // pack. Manual packs are never touched.
-func (r *Repository) DeactivateOtherDiscoveredAssignments(ctx context.Context, projectID, keepSchemaID uuid.UUID) error {
-	_, err := r.db.NewUpdate().
+func (r *Repository) deactivateOtherDiscoveredAssignments(ctx context.Context, db bun.IDB, projectID, keepSchemaID uuid.UUID) error {
+	_, err := db.NewUpdate().
 		Table("kb.project_schemas").
 		Set("active = ?", false).
 		Where("project_id = ?", projectID).
@@ -780,6 +768,60 @@ func (r *Repository) DeactivateOtherDiscoveredAssignments(ctx context.Context, p
 		return apperror.ErrInternal.WithInternal(err)
 	}
 	return nil
+}
+
+// ApplyDiscoveredSchema reviews, deactivates prior discovered assignments and
+// installs a discovered pack in one transaction so a mid-way failure cannot
+// leave a reviewed-but-uninstalled orphan.
+func (r *Repository) ApplyDiscoveredSchema(ctx context.Context, projectID, packID uuid.UUID) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		r.log.Error("auto-apply: begin transaction", logger.Error(err))
+		return apperror.ErrInternal.WithInternal(err)
+	}
+	defer tx.Rollback()
+
+	if err := r.markDiscoveredSchemaReviewed(ctx, tx, packID); err != nil {
+		return err
+	}
+	if err := r.deactivateOtherDiscoveredAssignments(ctx, tx, projectID, packID); err != nil {
+		return err
+	}
+	if err := r.installSchemaToProject(ctx, tx, projectID, packID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		r.log.Error("auto-apply: commit transaction", logger.Error(err))
+		return apperror.ErrInternal.WithInternal(err)
+	}
+	return nil
+}
+
+// MarkAutoApplied records the auto-apply decision on a discovery job, fenced on
+// auto_applied=false so a replay cannot double-record. It returns whether this
+// call performed the write (the caller only bumps the schema generation when it
+// did).
+func (r *Repository) MarkAutoApplied(ctx context.Context, jobID uuid.UUID, report JSONMap) (bool, error) {
+	res, err := r.db.NewUpdate().
+		Model((*DiscoveryJob)(nil)).
+		Set("auto_applied = ?", true).
+		Set("applied_report = ?", report).
+		Where("id = ?", jobID).
+		Where("auto_applied = ?", false).
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to mark discovery job auto-applied", logger.Error(err))
+		return false, apperror.ErrInternal.WithInternal(err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// MarkDiscoveredSchemaReviewed flips a pending discovered pack to reviewed
+// (installed) so a later discovery run reconciles into a fresh pending pack
+// instead of mutating the one that is now active.
+func (r *Repository) MarkDiscoveredSchemaReviewed(ctx context.Context, packID uuid.UUID) error {
+	return r.markDiscoveredSchemaReviewed(ctx, r.db, packID)
 }
 
 func (r *Repository) UpdateSchemaExtractionPrompts(ctx context.Context, schemaID uuid.UUID, prompts json.RawMessage) error {

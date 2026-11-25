@@ -830,6 +830,20 @@ func accumulateBatchResults(total, batch *ObjectExtractionResults) {
 	total.ObjectsMerged += batch.ObjectsMerged
 	total.RelationshipsCreated += batch.RelationshipsCreated
 	total.CreatedObjectIDs = append(total.CreatedObjectIDs, batch.CreatedObjectIDs...)
+	total.DroppedObjects += batch.DroppedObjects
+	total.DroppedRelationships += batch.DroppedRelationships
+	if len(batch.DroppedObjectTypes) > 0 {
+		seen := map[string]bool{}
+		for _, t := range total.DroppedObjectTypes {
+			seen[t] = true
+		}
+		for _, t := range batch.DroppedObjectTypes {
+			if !seen[t] {
+				seen[t] = true
+				total.DroppedObjectTypes = append(total.DroppedObjectTypes, t)
+			}
+		}
+	}
 }
 
 // autoMergeEnabled reports whether the project has auto-merge enabled.
@@ -1267,14 +1281,28 @@ func (w *ObjectExtractionWorker) persistResults(
 	// types may be persisted. The model can emit types outside it (spelling
 	// variants, invented types); those are dropped here and counted so the run
 	// reports the leak instead of polluting the graph.
+	//
+	// Strictness is skipped when no schema is installed (the bootstrap/open
+	// path relies on the static EntityExtractionSchema fallback and must not be
+	// zeroed) and can be turned off per project via extract.strict_types.
+	strict := true
+	if w.projectsRepo != nil {
+		if project, perr := w.projectsRepo.GetByID(ctx, job.ProjectID, false); perr == nil && project != nil {
+			if pol, polerr := pipeline.Parse(project.PipelinePolicy); polerr == nil && !pol.IsZero() {
+				strict = pol.Extract.StrictTypes
+			}
+		}
+	}
+	filterObjects := strict && schemas != nil && len(schemas.ObjectSchemas) > 0
 	allowedObjects := map[string]bool{}
-	if schemas != nil {
+	if filterObjects {
 		for name := range schemas.ObjectSchemas {
 			allowedObjects[name] = true
 		}
 	}
+	filterRelationships := strict && schemas != nil && len(schemas.RelationshipSchemas) > 0
 	allowedRelationships := map[string]bool{}
-	if schemas != nil {
+	if filterRelationships {
 		for name := range schemas.RelationshipSchemas {
 			allowedRelationships[name] = true
 		}
@@ -1320,7 +1348,7 @@ func (w *ObjectExtractionWorker) persistResults(
 	droppedObjectTypes := []string{}
 	seenDroppedObjectTypes := map[string]bool{}
 	for _, entity := range output.Entities {
-		if !allowedObjects[entity.Type] {
+		if filterObjects && !allowedObjects[entity.Type] {
 			droppedObjects++
 			if !seenDroppedObjectTypes[entity.Type] {
 				seenDroppedObjectTypes[entity.Type] = true
@@ -1407,7 +1435,7 @@ func (w *ObjectExtractionWorker) persistResults(
 	relationshipsCreated := 0
 	droppedRelationships := 0
 	for _, rel := range output.Relationships {
-		if !allowedRelationships[rel.Type] {
+		if filterRelationships && !allowedRelationships[rel.Type] {
 			droppedRelationships++
 			continue
 		}

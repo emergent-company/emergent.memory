@@ -32,7 +32,8 @@ var Module = fx.Module("discoveryjobs",
 // wireAutoApply injects the project-policy reader into the discovery service so
 // pipeline_mode=auto projects can have their discovered schema applied at
 // completion. discoveryjobs imports projects here (projects never imports
-// discoveryjobs), so there is no cycle; a missing projects service is nil-safe.
+// discoveryjobs), so there is no cycle; fx resolves *projects.Service as part
+// of the same application.
 func wireAutoApply(svc *Service, proj *projects.Service) {
 	if svc == nil || proj == nil {
 		return

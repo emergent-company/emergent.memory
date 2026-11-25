@@ -76,7 +76,44 @@ func (s *Service) maybeAutoApply(ctx context.Context, projectID, jobID, schemaID
 		registered[name] = true
 	}
 
+	decline := func(reason string) {
+		report := JSONMap{
+			"mode":     pol.Mode,
+			"applied":  false,
+			"declined": reason,
+			"pack_id":  schemaID.String(),
+		}
+		if _, err := s.repo.MarkAutoApplied(ctx, jobID, report); err != nil {
+			s.log.Warn("auto-apply: failed to record decline", slog.String("job_id", jobID.String()), logger.Error(err))
+		}
+		s.log.Info("auto-apply: declined discovered schema",
+			slog.String("job_id", jobID.String()), slog.String("reason", reason))
+	}
+
+	// Additive-only is a hard invariant in v1: apply never removes or retypes a
+	// registered type. Quarantine of dropped extraction types is P3.
+	if len(refinedTypes) == 0 {
+		decline("no types discovered")
+		return
+	}
+
 	accepted, decisions := gateApplyTypes(pol, refinedTypes)
+	if len(accepted) != len(refinedTypes) {
+		report := JSONMap{
+			"mode":      pol.Mode,
+			"applied":   false,
+			"declined":  "types declined by gates",
+			"decisions": decisions,
+			"pack_id":   schemaID.String(),
+		}
+		if _, err := s.repo.MarkAutoApplied(ctx, jobID, report); err != nil {
+			s.log.Warn("auto-apply: failed to record decline", slog.String("job_id", jobID.String()), logger.Error(err))
+		}
+		s.log.Info("auto-apply: declined discovered schema",
+			slog.String("job_id", jobID.String()), slog.String("reason", "types declined by gates"))
+		return
+	}
+
 	newTypes := make([]string, 0, len(accepted))
 	for _, name := range accepted {
 		if !registered[name] {
@@ -84,56 +121,43 @@ func (s *Service) maybeAutoApply(ctx context.Context, projectID, jobID, schemaID
 		}
 	}
 
-	declinedReason := ""
 	switch {
-	case len(refinedTypes) == 0:
-		declinedReason = "no types discovered"
-	case len(accepted) == 0:
-		declinedReason = "all types declined by gates"
 	case len(newTypes) > pol.Apply.MaxNewTypesPerRun:
-		declinedReason = "too many new types in one run"
-	case len(accepted) > pol.Discovery.MaxTotalTypes:
-		declinedReason = "would exceed max_total_types"
+		decline("too many new types in one run")
+		return
+	case len(refinedTypes) > pol.Discovery.MaxTotalTypes:
+		decline("would exceed max_total_types")
+		return
 	}
 
 	report := JSONMap{
 		"mode":      pol.Mode,
-		"applied":   declinedReason == "",
-		"declined":  declinedReason,
+		"applied":   true,
 		"new_types": newTypes,
 		"accepted":  accepted,
 		"decisions": decisions,
 		"pack_id":   schemaID.String(),
 	}
-	if declinedReason != "" {
-		if err := s.repo.MarkAutoApplied(ctx, jobID, report); err != nil {
-			s.log.Warn("auto-apply: failed to record decline", slog.String("job_id", jobID.String()), logger.Error(err))
-		}
-		s.log.Info("auto-apply: declined discovered schema",
-			slog.String("job_id", jobID.String()), slog.String("reason", declinedReason))
-		return
-	}
 
-	// Install: mark the reconciled pack reviewed, deactivate any prior
-	// discovered-pack assignment (one active auto pack per project), install,
-	// then bump the schema generation so extraction backfill can react.
-	if err := s.repo.MarkDiscoveredSchemaReviewed(ctx, schemaID); err != nil {
-		s.log.Warn("auto-apply: failed to mark pack reviewed", slog.String("pack_id", schemaID.String()), logger.Error(err))
+	// Apply: review the pack, deactivate prior discovered assignments and
+	// install in one transaction, then record the apply with a fence so a
+	// replay cannot double-bump the schema generation.
+	if err := s.repo.ApplyDiscoveredSchema(ctx, projectID, schemaID); err != nil {
+		s.log.Warn("auto-apply: failed to apply pack", slog.String("pack_id", schemaID.String()), logger.Error(err))
 		return
 	}
-	if err := s.repo.DeactivateOtherDiscoveredAssignments(ctx, projectID, schemaID); err != nil {
-		s.log.Warn("auto-apply: failed to deactivate prior discovered packs", logger.Error(err))
+	applied, err := s.repo.MarkAutoApplied(ctx, jobID, report)
+	if err != nil {
+		s.log.Warn("auto-apply: failed to record apply", slog.String("job_id", jobID.String()), logger.Error(err))
+		return
 	}
-	if err := s.repo.InstallSchemaToProject(ctx, projectID, schemaID); err != nil {
-		s.log.Warn("auto-apply: failed to install pack", slog.String("pack_id", schemaID.String()), logger.Error(err))
+	if !applied {
+		s.log.Warn("auto-apply: apply already recorded; skipping generation bump",
+			slog.String("job_id", jobID.String()))
 		return
 	}
 	if err := s.policyReader.BumpSchemaGeneration(ctx, projectID); err != nil {
 		s.log.Warn("auto-apply: failed to bump schema generation", logger.Error(err))
-		return
-	}
-	if err := s.repo.MarkAutoApplied(ctx, jobID, report); err != nil {
-		s.log.Warn("auto-apply: failed to record apply", slog.String("job_id", jobID.String()), logger.Error(err))
 		return
 	}
 	s.log.Info("auto-applied discovered schema",
