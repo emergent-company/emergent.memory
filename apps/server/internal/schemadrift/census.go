@@ -60,6 +60,7 @@ var censusExclusions = map[string]string{
 	modulePath + "/domain/extraction.embeddingCacheRow":     "unexported model domain/extraction.embeddingCacheRow; cannot be referenced cross-package",
 	modulePath + "/domain/mcp.auditLogRow":                  "unexported model domain/mcp.auditLogRow (kb.audit_log); cannot be referenced cross-package",
 	modulePath + "/domain/mcpregistry.mcpOAuthPendingState": "unexported model domain/mcpregistry.mcpOAuthPendingState (kb.oauth_pending_states, shared with sources.OAuthPendingState); cannot be referenced cross-package",
+	modulePath + "/domain/discoveryjobs.discoveryRequest":   "unexported model domain/discoveryjobs.discoveryRequest (kb.discovery_requests); cannot be referenced cross-package",
 }
 
 // census returns every bun model struct in the source tree as a slice (one
