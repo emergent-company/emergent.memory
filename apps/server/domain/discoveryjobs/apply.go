@@ -34,8 +34,9 @@ type appliedTypeDecision struct {
 }
 
 // gateApplyTypes applies the per-type acceptance gates: relationship-like types
-// are always declined, and a type below min_confidence is declined. It returns
-// the accepted type names and the full decision list.
+// are always declined, malformed type names are declined, and a type below
+// min_confidence is declined. It returns the accepted type names and the full
+// decision list.
 func gateApplyTypes(pol pipeline.Policy, types []DiscoveredType) (accepted []string, decisions []appliedTypeDecision) {
 	accepted = make([]string, 0, len(types))
 	decisions = make([]appliedTypeDecision, 0, len(types))
@@ -43,6 +44,8 @@ func gateApplyTypes(pol pipeline.Policy, types []DiscoveredType) (accepted []str
 		switch {
 		case extraction.IsRelationshipObjectType(t.TypeName):
 			decisions = append(decisions, appliedTypeDecision{Type: t.TypeName, Reason: "relationship-like type"})
+		case !validTypeName(t.TypeName):
+			decisions = append(decisions, appliedTypeDecision{Type: t.TypeName, Reason: "invalid type name"})
 		case t.Confidence < pol.Discovery.MinConfidence:
 			decisions = append(decisions, appliedTypeDecision{Type: t.TypeName, Reason: "below min_confidence"})
 		default:
@@ -51,6 +54,30 @@ func gateApplyTypes(pol pipeline.Policy, types []DiscoveredType) (accepted []str
 		}
 	}
 	return accepted, decisions
+}
+
+// validTypeName rejects discovered type names that would be unsafe to promote
+// into live schema: they become the strict extraction allowlist and later feed
+// prompts, so an LLM- or document-derived name must be a short, plain
+// identifier. This closes the prompt-injection/data-poisoning path a fully
+// automatic install would otherwise open.
+func validTypeName(name string) bool {
+	if len(name) == 0 || len(name) > 64 {
+		return false
+	}
+	for i, r := range name {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z':
+		case r >= '0' && r <= '9':
+			if i == 0 {
+				return false
+			}
+		case r == ' ' || r == '_' || r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // maybeAutoApply runs the auto-apply gate after a discovery job has reconciled
@@ -139,16 +166,11 @@ func (s *Service) maybeAutoApply(ctx context.Context, projectID, jobID, schemaID
 		"pack_id":   schemaID.String(),
 	}
 
-	// Apply: review the pack, deactivate prior discovered assignments and
-	// install in one transaction, then record the apply with a fence so a
-	// replay cannot double-bump the schema generation.
-	if err := s.repo.ApplyDiscoveredSchema(ctx, projectID, schemaID); err != nil {
-		s.log.Warn("auto-apply: failed to apply pack", slog.String("pack_id", schemaID.String()), logger.Error(err))
-		return
-	}
-	applied, err := s.repo.MarkAutoApplied(ctx, jobID, report)
+	// Apply: fence + review + deactivate + install run in one serialized
+	// transaction; the fence is what makes a replay idempotent.
+	applied, err := s.repo.ApplyDiscoveredSchema(ctx, projectID, schemaID, jobID, report)
 	if err != nil {
-		s.log.Warn("auto-apply: failed to record apply", slog.String("job_id", jobID.String()), logger.Error(err))
+		s.log.Warn("auto-apply: failed to apply pack", slog.String("pack_id", schemaID.String()), logger.Error(err))
 		return
 	}
 	if !applied {

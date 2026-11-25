@@ -313,6 +313,9 @@ func (s *Service) StartDiscovery(ctx context.Context, projectID uuid.UUID, req *
 			"document_count":        len(req.DocumentIDs),
 			"total_documents":       totalDocuments,
 		},
+		// AppliedReport is non-nil on creation so the NOT NULL jsonb column
+		// never receives a NULL from a nil map on insert.
+		AppliedReport:           JSONMap{},
 		KBPurpose:               projectInfo,
 		DiscoveredTypes:         JSONArray{},
 		DiscoveredRelationships: JSONArray{},
@@ -2859,6 +2862,7 @@ func (s *Service) FinalizeDiscoveryFromMCP(ctx context.Context, req interface{})
 			KBPurpose:      kbPurpose,
 			Progress:       JSONMap{"message": "stub job created by MCP finalize"},
 			Config:         JSONMap{"document_ids": []string{r.DocumentID}},
+			AppliedReport:  JSONMap{},
 		}
 		if createErr := s.repo.Create(ctx, stub); createErr != nil {
 			return nil, fmt.Errorf("create stub discovery job: %w", createErr)

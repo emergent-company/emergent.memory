@@ -12,8 +12,9 @@ func TestGateApplyTypes(t *testing.T) {
 	types := []DiscoveredType{
 		{TypeName: "Person", Confidence: 0.9},
 		{TypeName: "Organization", Confidence: 0.8},
-		{TypeName: "Relationship", Confidence: 0.9}, // relationship-like
-		{TypeName: "Junk", Confidence: 0.4},         // below confidence
+		{TypeName: "Relationship", Confidence: 0.9},    // relationship-like
+		{TypeName: "Junk", Confidence: 0.4},            // below confidence
+		{TypeName: "Mal)formed!Name", Confidence: 0.9}, // invalid type name
 	}
 
 	accepted, decisions := gateApplyTypes(pol, types)
@@ -33,5 +34,23 @@ func TestGateApplyTypes(t *testing.T) {
 	}
 	if reasons["Junk"] != "below min_confidence" {
 		t.Fatalf("Junk reason = %q", reasons["Junk"])
+	}
+	if reasons["Mal)formed!Name"] != "invalid type name" {
+		t.Fatalf("Malformed name reason = %q", reasons["Mal)formed!Name"])
+	}
+}
+
+func TestValidTypeName(t *testing.T) {
+	valid := []string{"Person", "Meeting Series", "DecisionOption", "Org-2", "A"}
+	for _, s := range valid {
+		if !validTypeName(s) {
+			t.Fatalf("validTypeName(%q) = false, want true", s)
+		}
+	}
+	invalid := []string{"", "1st", "bad)name", "a;b", "😀", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	for _, s := range invalid {
+		if validTypeName(s) {
+			t.Fatalf("validTypeName(%q) = true, want false", s)
+		}
 	}
 }

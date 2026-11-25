@@ -257,6 +257,21 @@ func Parse(raw json.RawMessage) (Policy, error) {
 	return p, nil
 }
 
+// Resolve returns the effective policy for a project: the stored policy, or the
+// mode's preset when the stored value is empty (legacy rows). It is the single
+// resolution path — callers must not parse the stored JSON independently, or
+// they diverge from the auto-apply gate on mode/preset fallback.
+func Resolve(mode string, raw json.RawMessage) (Policy, error) {
+	p, err := Parse(raw)
+	if err != nil {
+		return Policy{}, err
+	}
+	if p.IsZero() {
+		return DefaultPolicy(mode), nil
+	}
+	return p, nil
+}
+
 // parseSectionKeys are the top-level sections a complete policy must carry.
 var parseSectionKeys = []string{"mode", "discovery", "apply", "extract", "merge", "budget"}
 

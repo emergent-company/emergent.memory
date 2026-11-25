@@ -770,31 +770,54 @@ func (r *Repository) deactivateOtherDiscoveredAssignments(ctx context.Context, d
 	return nil
 }
 
-// ApplyDiscoveredSchema reviews, deactivates prior discovered assignments and
-// installs a discovered pack in one transaction so a mid-way failure cannot
-// leave a reviewed-but-uninstalled orphan.
-func (r *Repository) ApplyDiscoveredSchema(ctx context.Context, projectID, packID uuid.UUID) error {
+// ApplyDiscoveredSchema fences on the job's auto_applied flag, then reviews,
+// deactivates prior discovered assignments and installs a discovered pack in
+// one transaction, serialized per project with an advisory lock. It returns
+// whether this call performed the install (the caller only bumps the schema
+// generation when it did), so a replay or a concurrent run cannot re-apply an
+// older pack or double-bump.
+func (r *Repository) ApplyDiscoveredSchema(ctx context.Context, projectID, packID, jobID uuid.UUID, report JSONMap) (bool, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		r.log.Error("auto-apply: begin transaction", logger.Error(err))
-		return apperror.ErrInternal.WithInternal(err)
+		return false, apperror.ErrInternal.WithInternal(err)
 	}
 	defer tx.Rollback()
 
+	if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtext(?))", "discovery-apply:"+projectID.String()).Exec(ctx); err != nil {
+		r.log.Error("auto-apply: acquire advisory lock", logger.Error(err))
+		return false, apperror.ErrInternal.WithInternal(err)
+	}
+
+	res, err := tx.NewUpdate().
+		Model((*DiscoveryJob)(nil)).
+		Set("auto_applied = ?", true).
+		Set("applied_report = ?", report).
+		Where("id = ?", jobID).
+		Where("auto_applied = ?", false).
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("auto-apply: fence discovery job", logger.Error(err))
+		return false, apperror.ErrInternal.WithInternal(err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return false, nil
+	}
+
 	if err := r.markDiscoveredSchemaReviewed(ctx, tx, packID); err != nil {
-		return err
+		return false, err
 	}
 	if err := r.deactivateOtherDiscoveredAssignments(ctx, tx, projectID, packID); err != nil {
-		return err
+		return false, err
 	}
 	if err := r.installSchemaToProject(ctx, tx, projectID, packID); err != nil {
-		return err
+		return false, err
 	}
 	if err := tx.Commit(); err != nil {
 		r.log.Error("auto-apply: commit transaction", logger.Error(err))
-		return apperror.ErrInternal.WithInternal(err)
+		return false, apperror.ErrInternal.WithInternal(err)
 	}
-	return nil
+	return true, nil
 }
 
 // MarkAutoApplied records the auto-apply decision on a discovery job, fenced on

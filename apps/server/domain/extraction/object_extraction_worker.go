@@ -871,8 +871,8 @@ func (w *ObjectExtractionWorker) autoMergePolicy(ctx context.Context, projectID 
 	if err != nil || project == nil {
 		return fallback
 	}
-	pol, err := pipeline.Parse(project.PipelinePolicy)
-	if err != nil || pol.IsZero() {
+	pol, err := pipeline.Resolve(project.PipelineMode, project.PipelinePolicy)
+	if err != nil {
 		return fallback
 	}
 	return resolveAutoMergePolicy(pol.Merge.Policy)
@@ -1288,7 +1288,7 @@ func (w *ObjectExtractionWorker) persistResults(
 	strict := true
 	if w.projectsRepo != nil {
 		if project, perr := w.projectsRepo.GetByID(ctx, job.ProjectID, false); perr == nil && project != nil {
-			if pol, polerr := pipeline.Parse(project.PipelinePolicy); polerr == nil && !pol.IsZero() {
+			if pol, polerr := pipeline.Resolve(project.PipelineMode, project.PipelinePolicy); polerr == nil {
 				strict = pol.Extract.StrictTypes
 			}
 		}
