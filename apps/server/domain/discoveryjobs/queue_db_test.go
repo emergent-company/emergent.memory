@@ -65,7 +65,7 @@ func TestClaimAndFinishLifecycle(t *testing.T) {
 	require.False(t, ok2)
 
 	// Finish with a remainder requeues it.
-	require.NoError(t, repo.Finish(ctx, reqID, []uuid.UUID{docB}))
+	require.NoError(t, repo.Finish(ctx, reqID, []uuid.UUID{docA, docB}, []uuid.UUID{docB}))
 	rows, err = repo.ListQueued(ctx)
 	require.Len(t, rows, 1)
 	require.ElementsMatch(t, []uuid.UUID{docB}, rows[0].DocumentIDs)
@@ -73,12 +73,12 @@ func TestClaimAndFinishLifecycle(t *testing.T) {
 	// Finish with no remainder removes the row.
 	_, _, ok3, _ := repo.Claim(ctx, rows[0].ID)
 	require.True(t, ok3)
-	require.NoError(t, repo.Finish(ctx, rows[0].ID, nil))
+	require.NoError(t, repo.Finish(ctx, rows[0].ID, []uuid.UUID{docB}, nil))
 	rows, _ = repo.ListQueued(ctx)
 	require.Len(t, rows, 0)
 }
 
-func TestEnqueueRequeuesARunningRow(t *testing.T) {
+func TestEnqueueAppendsToRunningRowWithoutLosingIds(t *testing.T) {
 	ctx := context.Background()
 	repo, projectID := queueRepo(t, ctx)
 	p := uuid.MustParse(projectID)
@@ -89,13 +89,18 @@ func TestEnqueueRequeuesARunningRow(t *testing.T) {
 	reqID := rows[0].ID
 	claimed, _, ok, _ := repo.Claim(ctx, reqID)
 	require.True(t, ok)
-	require.ElementsMatch(t, []uuid.UUID{docA}, claimed, "claim must atomically own the queued ids")
+	require.ElementsMatch(t, []uuid.UUID{docA}, claimed)
 
-	// A new enqueue during the run window appends to the now-empty running row
-	// and re-marks it queued; the claimed ids are owned by the runner and not
-	// re-queued.
+	// A new enqueue during the run window appends to the running row without
+	// flipping its status (so a second runner cannot claim it mid-flight).
 	require.NoError(t, repo.Enqueue(ctx, p, []uuid.UUID{docB}))
 	rows, _ = repo.ListQueued(ctx)
+	require.Len(t, rows, 0, "running row must not be re-queued by Enqueue")
+
+	// Finish with the full claimed set requeued (a failed start) keeps the
+	// claimed ids AND the newly-enqueued id.
+	require.NoError(t, repo.Finish(ctx, reqID, claimed, claimed))
+	rows, _ = repo.ListQueued(ctx)
 	require.Len(t, rows, 1)
-	require.ElementsMatch(t, []uuid.UUID{docB}, rows[0].DocumentIDs)
+	require.ElementsMatch(t, []uuid.UUID{docA, docB}, rows[0].DocumentIDs)
 }

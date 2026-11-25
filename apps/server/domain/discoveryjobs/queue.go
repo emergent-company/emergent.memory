@@ -49,9 +49,9 @@ const (
 )
 
 // Enqueue adds document ids to a project's discovery request queue, coalescing
-// into the single active row. Ids are never dropped: a running row (stale or
-// in-flight) is appended to and re-marked queued, which the runner only claims
-// once no discovery job is active for the project.
+// into the single active row. Ids are never dropped: a running row is appended
+// to without changing its status (a second instance cannot re-claim it), and a
+// stale running row is recovered by RecoverStaleRunning, which keeps its ids.
 func (r *Repository) Enqueue(ctx context.Context, projectID uuid.UUID, documentIDs []uuid.UUID) error {
 	if len(documentIDs) == 0 {
 		return nil
@@ -62,7 +62,6 @@ func (r *Repository) Enqueue(ctx context.Context, projectID uuid.UUID, documentI
 		ON CONFLICT (project_id) WHERE status IN ('queued','running')
 		DO UPDATE SET
 			document_ids = kb.discovery_requests.document_ids || EXCLUDED.document_ids,
-			status = 'queued',
 			updated_at = now()`,
 		projectID, pqArray(documentIDs)).Exec(ctx)
 	if err != nil {
@@ -103,9 +102,11 @@ func (r *Repository) RecoverStaleRunning(ctx context.Context) error {
 	return nil
 }
 
-// Claim atomically takes the queued request's document ids (clearing the row so
-// a concurrent Enqueue during the run window appends only new ids) and marks it
-// running. ok=false when another runner claimed it first.
+// Claim atomically marks a queued request running and returns its document ids
+// and attempt count. The ids stay in the row (running) so a crash between Claim
+// and the discovery run's durable creation does not lose them: RecoverStaleRunning
+// re-queues the row with its ids intact. ok=false when another runner claimed it
+// first.
 func (r *Repository) Claim(ctx context.Context, requestID uuid.UUID) ([]uuid.UUID, int, bool, error) {
 	var (
 		ids      []uuid.UUID
@@ -127,7 +128,7 @@ func (r *Repository) Claim(ctx context.Context, requestID uuid.UUID) ([]uuid.UUI
 		}
 		if _, err := tx.NewRaw(`
 			UPDATE kb.discovery_requests
-			SET status = 'running', attempts = attempts + 1, document_ids = '{}', updated_at = now()
+			SET status = 'running', attempts = attempts + 1, updated_at = now()
 			WHERE id = ?`, requestID).Exec(ctx); err != nil {
 			return err
 		}
@@ -162,12 +163,14 @@ func parseUUIDArray(raw string) []uuid.UUID {
 	return out
 }
 
-// Finish requeues a request's remainder (or its newly-enqueued ids) and drops
-// the row only when it is empty. keep are the claimed ids to return to the
-// queue (e.g. the portion beyond a per-run cap, or the full set after a failed
-// start). The union with any ids enqueued during the run window is computed in
-// Go so no id is dropped and no array-literal cast ambiguity is involved.
-func (r *Repository) Finish(ctx context.Context, requestID uuid.UUID, keep []uuid.UUID) error {
+// Finish records that a run over `claimed` ids completed: `keep` are the claimed
+// ids that still need a run (e.g. the portion beyond a per-run cap, or the full
+// set after a failed start). It removes the ids that were actually started
+// (claimed - keep) from the row and re-queues the rest, including any ids a
+// concurrent Enqueue appended during the run. The row is dropped only when
+// nothing remains.
+func (r *Repository) Finish(ctx context.Context, requestID uuid.UUID, claimed, keep []uuid.UUID) error {
+	run := subtract(claimed, keep)
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		var raw string
 		err := tx.NewRaw(`SELECT array_to_json(document_ids)::text FROM kb.discovery_requests WHERE id = ? FOR UPDATE`, requestID).Scan(ctx, &raw)
@@ -177,32 +180,27 @@ func (r *Repository) Finish(ctx context.Context, requestID uuid.UUID, keep []uui
 			}
 			return err
 		}
-		union := mergeUUIDs(parseUUIDArray(raw), keep)
-		if len(union) == 0 {
+		final := subtract(parseUUIDArray(raw), run)
+		if len(final) == 0 {
 			if _, err := tx.NewDelete().Table("kb.discovery_requests").Where("id = ?", requestID).Exec(ctx); err != nil {
 				return err
 			}
 			return nil
 		}
-		_, err = tx.NewRaw(`UPDATE kb.discovery_requests SET document_ids = ?, status = 'queued', updated_at = now() WHERE id = ?`, pqArray(union), requestID).Exec(ctx)
+		_, err = tx.NewRaw(`UPDATE kb.discovery_requests SET document_ids = ?, status = 'queued', updated_at = now() WHERE id = ?`, pqArray(final), requestID).Exec(ctx)
 		return err
 	})
 }
 
-// mergeUUIDs returns the set union of a and b, preserving order and dropping
-// duplicates (a queue only needs each document analysed once).
-func mergeUUIDs(a, b []uuid.UUID) []uuid.UUID {
-	seen := make(map[uuid.UUID]bool, len(a)+len(b))
-	out := make([]uuid.UUID, 0, len(a)+len(b))
-	for _, id := range a {
-		if !seen[id] {
-			seen[id] = true
-			out = append(out, id)
-		}
-	}
+// subtract returns the ids in a that are not in b (order preserved).
+func subtract(a, b []uuid.UUID) []uuid.UUID {
+	remove := make(map[uuid.UUID]bool, len(b))
 	for _, id := range b {
-		if !seen[id] {
-			seen[id] = true
+		remove[id] = true
+	}
+	out := make([]uuid.UUID, 0, len(a))
+	for _, id := range a {
+		if !remove[id] {
 			out = append(out, id)
 		}
 	}
@@ -285,17 +283,18 @@ func (s *Service) drainQueue(ctx context.Context) {
 				s.log.Error("discovery queue: dropping request after repeated failures",
 					slog.String("project_id", req.ProjectID.String()),
 					slog.Int("attempts", attempts))
-				if ferr := s.repo.Finish(ctx, req.ID, nil); ferr != nil {
+				if ferr := s.repo.Finish(ctx, req.ID, ids, nil); ferr != nil {
 					s.log.Warn("discovery queue: drop failed", logger.Error(ferr))
 				}
 				continue
 			}
-			if ferr := s.repo.Finish(ctx, req.ID, ids); ferr != nil {
+			// Nothing started: re-queue the full claimed set.
+			if ferr := s.repo.Finish(ctx, req.ID, ids, ids); ferr != nil {
 				s.log.Warn("discovery queue: requeue failed", logger.Error(ferr))
 			}
 			continue
 		}
-		if ferr := s.repo.Finish(ctx, req.ID, keep); ferr != nil {
+		if ferr := s.repo.Finish(ctx, req.ID, ids, keep); ferr != nil {
 			s.log.Warn("discovery queue: finish failed", logger.Error(ferr))
 		}
 	}
