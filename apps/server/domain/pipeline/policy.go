@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 )
 
 // Modes. Suggest is the safe default: discovery runs automatically and proposes
@@ -146,13 +147,24 @@ func (p Policy) IsZero() bool {
 	return reflect.DeepEqual(p, Policy{})
 }
 
-// Validate checks the policy's enum values and numeric ranges.
-func Validate(p Policy) error {
-	if p.Mode == "" {
+// ValidateMode checks a mode label in isolation (used by the mode-only update
+// path, which validates the mode before resetting the policy to that preset).
+func ValidateMode(mode string) error {
+	if mode == "" {
 		return fmt.Errorf("mode is required")
 	}
-	if !validMode(p.Mode) {
+	if !validMode(mode) {
 		return fmt.Errorf("mode must be one of %v", ValidModes)
+	}
+	return nil
+}
+
+// Validate checks the policy's enum values and numeric ranges. Enum fields are
+// required (no empty fallthrough): a policy is always fully resolved, so a
+// blank enum means a malformed write rather than "use the default".
+func Validate(p Policy) error {
+	if err := ValidateMode(p.Mode); err != nil {
+		return err
 	}
 	if p.Discovery.MinConfidence < 0 || p.Discovery.MinConfidence > 1 {
 		return fmt.Errorf("discovery.min_confidence must be within [0,1]")
@@ -178,11 +190,11 @@ func Validate(p Policy) error {
 	if p.Apply.MaxNewTypesPerRun < 0 || p.Apply.MaxNewTypesPerRun > 100 {
 		return fmt.Errorf("apply.max_new_types_per_run must be within [0,100]")
 	}
-	if p.Apply.Target != "" && p.Apply.Target != "auto_pack" {
+	if p.Apply.Target != "auto_pack" {
 		return fmt.Errorf("apply.target must be \"auto_pack\"")
 	}
 	switch p.Extract.ReExtractOnSchemaChange {
-	case "", "off", "incremental", "full":
+	case "off", "incremental", "full":
 	default:
 		return fmt.Errorf("extract.re_extract_on_schema_change must be off, incremental or full")
 	}
@@ -190,7 +202,7 @@ func Validate(p Policy) error {
 		return fmt.Errorf("extract.backfill_limit_per_run must be within [0,1000]")
 	}
 	switch p.Merge.Policy {
-	case "", "partial", "enrich":
+	case "partial", "enrich":
 	default:
 		return fmt.Errorf("merge.policy must be partial or enrich")
 	}
@@ -248,10 +260,11 @@ func Parse(raw json.RawMessage) (Policy, error) {
 // parseSectionKeys are the top-level sections a complete policy must carry.
 var parseSectionKeys = []string{"mode", "discovery", "apply", "extract", "merge", "budget"}
 
-// ParseComplete decodes a policy for a write: every top-level section must be
-// present, no unknown top-level or nested key is allowed, and Mode must be a
-// non-empty known value. It rejects sparse documents so a partial PUT can never
-// silently zero the safety defaults the caller did not mention.
+// ParseComplete decodes a policy for a write: every top-level section and every
+// field inside it must be present, no unknown top-level or nested key is
+// allowed, and Mode must be a non-empty known value. It rejects sparse
+// documents so a partial PUT can never silently zero the safety defaults the
+// caller did not mention.
 func ParseComplete(raw json.RawMessage) (Policy, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
@@ -272,6 +285,33 @@ func ParseComplete(raw json.RawMessage) (Policy, error) {
 		}
 		if !found {
 			return Policy{}, fmt.Errorf("unknown policy key %q", k)
+		}
+	}
+	// Every nested field must be present too: a present-but-empty section is the
+	// same silent-zero hazard the top-level check prevents.
+	for _, section := range []struct {
+		key    string
+		sample any
+	}{
+		{"discovery", DiscoveryPolicy{}},
+		{"apply", ApplyPolicy{}},
+		{"extract", ExtractPolicy{}},
+		{"merge", MergePolicy{}},
+		{"budget", BudgetPolicy{}},
+	} {
+		var sub map[string]json.RawMessage
+		if err := json.Unmarshal(obj[section.key], &sub); err != nil {
+			return Policy{}, fmt.Errorf("policy.%s must be an object: %w", section.key, err)
+		}
+		t := reflect.TypeOf(section.sample)
+		for i := 0; i < t.NumField(); i++ {
+			name := strings.Split(t.Field(i).Tag.Get("json"), ",")[0]
+			if name == "" || name == "-" {
+				continue
+			}
+			if _, ok := sub[name]; !ok {
+				return Policy{}, fmt.Errorf("policy is incomplete: missing %q — send the full resolved policy", section.key+"."+name)
+			}
 		}
 	}
 	p, err := Parse(raw)

@@ -66,9 +66,9 @@ func (h *Handler) GetPipeline(c echo.Context) error {
 
 	p, customized, err := resolvePipeline(project.PipelineMode, project.PipelinePolicy)
 	if err != nil {
-		return apperror.New(500, "policy-invalid", "stored pipeline_policy is invalid").WithDetails(map[string]any{
-			"pipeline_policy": []string{err.Error()},
-		})
+		// Do not leak the stored value's parse/validation detail to callers; the
+		// failure is a server-side data problem, not a client mistake.
+		return apperror.New(500, "policy-invalid", "stored pipeline_policy is invalid")
 	}
 
 	return c.JSON(200, PipelineView{
@@ -100,8 +100,11 @@ func applyPipelineUpdate(project *Project, req UpdateProjectRequest) error {
 		return nil
 	}
 
+	if req.PipelineMode == nil {
+		return nil
+	}
 	mode := *req.PipelineMode
-	if err := pipeline.Validate(pipeline.Policy{Mode: mode}); err != nil {
+	if err := pipeline.ValidateMode(mode); err != nil {
 		return apperror.New(400, "validation-failed", "invalid pipeline_mode").WithDetails(map[string]any{
 			"pipeline_mode": []string{err.Error()},
 		})
