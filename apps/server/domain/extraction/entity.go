@@ -159,13 +159,11 @@ type ObjectExtractionJob struct {
 	RunID     *string   `bun:"run_id,type:uuid"`
 	CreatedAt time.Time `bun:"created_at,notnull,default:now()"`
 	UpdatedAt time.Time `bun:"updated_at,notnull,default:now()"`
-	// SchemaStamp is a hash of the project's registered object/relationship type
-	// names at job creation (column schema_fingerprint). Backfill compares it
-	// against the current fingerprint to find documents extracted under a stale
-	// schema. Named SchemaStamp to avoid colliding with the SchemaFingerprint()
-	// method that compares enabled-types for run-variance. Added in migration
-	// 00321.
-	SchemaStamp *string `bun:"schema_fingerprint" json:"schema_fingerprint,omitempty"`
+	// SchemaGeneration is the project's schema_generation at job creation
+	// (column schema_generation). Backfill compares it against the project's
+	// current generation to find documents extracted before a schema change.
+	// Added in migration 00321.
+	SchemaGeneration *int `bun:"schema_generation" json:"schema_generation,omitempty"`
 }
 
 // ------------------------------------------------------------------

@@ -162,7 +162,10 @@ func (h *AdminHandler) Backfill(c echo.Context) error {
 		filter = BackfillStaleSchema
 	}
 	limit := req.Limit
-	if limit < 0 || limit > 1000 {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 1000 {
 		limit = 1000
 	}
 
