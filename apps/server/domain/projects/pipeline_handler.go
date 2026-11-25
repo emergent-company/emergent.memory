@@ -84,14 +84,11 @@ func (h *Handler) GetPipeline(c echo.Context) error {
 // policy to that preset's defaults. It returns a 400 apperror on invalid input.
 func applyPipelineUpdate(project *Project, req UpdateProjectRequest) error {
 	if req.PipelinePolicy != nil {
-		p, err := pipeline.Parse(*req.PipelinePolicy)
+		p, err := pipeline.ParseComplete(*req.PipelinePolicy)
 		if err != nil {
 			return apperror.New(400, "validation-failed", "invalid pipeline_policy").WithDetails(map[string]any{
 				"pipeline_policy": []string{err.Error()},
 			})
-		}
-		if p.Mode == "" {
-			p.Mode = pipeline.ModeSuggest
 		}
 		if err := pipeline.Validate(p); err != nil {
 			return apperror.New(400, "validation-failed", "invalid pipeline_policy").WithDetails(map[string]any{

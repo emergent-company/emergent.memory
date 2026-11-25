@@ -9,6 +9,7 @@
 package pipeline
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -229,14 +230,56 @@ func (p Policy) Marshal() json.RawMessage {
 	return b
 }
 
-// Parse decodes raw into a Policy. An empty raw yields a zero Policy.
+// Parse decodes raw into a Policy. An empty raw yields a zero Policy. Unknown
+// keys are rejected so a typo cannot silently zero a knob.
 func Parse(raw json.RawMessage) (Policy, error) {
 	if len(raw) == 0 {
 		return Policy{}, nil
 	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
 	var p Policy
-	if err := json.Unmarshal(raw, &p); err != nil {
+	if err := dec.Decode(&p); err != nil {
 		return Policy{}, err
+	}
+	return p, nil
+}
+
+// parseSectionKeys are the top-level sections a complete policy must carry.
+var parseSectionKeys = []string{"mode", "discovery", "apply", "extract", "merge", "budget"}
+
+// ParseComplete decodes a policy for a write: every top-level section must be
+// present, no unknown top-level or nested key is allowed, and Mode must be a
+// non-empty known value. It rejects sparse documents so a partial PUT can never
+// silently zero the safety defaults the caller did not mention.
+func ParseComplete(raw json.RawMessage) (Policy, error) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return Policy{}, fmt.Errorf("policy must be a JSON object: %w", err)
+	}
+	for _, k := range parseSectionKeys {
+		if _, ok := obj[k]; !ok {
+			return Policy{}, fmt.Errorf("policy is incomplete: missing %q — send the full resolved policy", k)
+		}
+	}
+	for k := range obj {
+		found := false
+		for _, known := range parseSectionKeys {
+			if k == known {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return Policy{}, fmt.Errorf("unknown policy key %q", k)
+		}
+	}
+	p, err := Parse(raw)
+	if err != nil {
+		return Policy{}, err
+	}
+	if p.Mode == "" {
+		return Policy{}, fmt.Errorf("policy.mode is required")
 	}
 	return p, nil
 }

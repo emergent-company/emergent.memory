@@ -1406,7 +1406,7 @@ routes:
     - method: PUT
       path: /api/projects/:id/pipeline
       level: auth
-      note: RequireAuth, RequireAPITokenScopes(projects:read)
+      note: RequireAuth, RequireAPITokenScopes(projects:read), RequireAPITokenScopes(projects:write)
     - method: POST
       path: /api/projects/:id/pipeline/preview
       level: auth

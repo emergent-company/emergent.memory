@@ -97,25 +97,22 @@ func TestApplyPipelineUpdatePolicyWinsOverMode(t *testing.T) {
 	}
 }
 
-func TestApplyPipelineUpdatePolicyWithoutModeDefaultsSuggest(t *testing.T) {
+func TestApplyPipelineUpdateRejectsPartialPolicy(t *testing.T) {
 	p := &Project{PipelineMode: pipeline.ModeSuggest, PipelinePolicy: pipeline.DefaultPolicy(pipeline.ModeSuggest).Marshal()}
 	raw := json.RawMessage(`{"discovery":{"debounce_hours":1},"apply":{"max_new_types_per_run":2}}`)
-	req := UpdateProjectRequest{PipelinePolicy: rawPtr(raw)}
-	if err := applyPipelineUpdate(p, req); err != nil {
-		t.Fatalf("applyPipelineUpdate: %v", err)
+	if err := applyPipelineUpdate(p, UpdateProjectRequest{PipelinePolicy: rawPtr(raw)}); err == nil {
+		t.Fatal("expected a partial policy to be rejected (safety defaults must not be silently zeroed)")
 	}
-	if p.PipelineMode != pipeline.ModeSuggest {
-		t.Fatalf("mode = %q, want suggest default", p.PipelineMode)
-	}
-	got, customized, err := resolvePipeline(p.PipelineMode, p.PipelinePolicy)
-	if err != nil {
-		t.Fatalf("resolvePipeline: %v", err)
-	}
-	if got.Discovery.DebounceHours != 1 || got.Apply.MaxNewTypesPerRun != 2 {
-		t.Fatalf("overrides not applied: %+v", got)
-	}
-	if !customized {
-		t.Fatal("overridden policy must be customized")
+}
+
+func TestApplyPipelineUpdateRejectsUnknownKey(t *testing.T) {
+	p := &Project{PipelineMode: pipeline.ModeSuggest, PipelinePolicy: pipeline.DefaultPolicy(pipeline.ModeSuggest).Marshal()}
+	auto := pipeline.DefaultPolicy(pipeline.ModeAuto)
+	raw := auto.Marshal()
+	// Inject an unknown top-level key.
+	raw = json.RawMessage(`{"mode":"auto","discovery":{"debounce_hours":1},"apply":{"max_new_types_per_run":2},"extract":{"re_extract_on_schema_change":"off"},"merge":{"policy":"partial"},"budget":{},"bogus":1}`)
+	if err := applyPipelineUpdate(p, UpdateProjectRequest{PipelinePolicy: rawPtr(raw)}); err == nil {
+		t.Fatal("expected an unknown policy key to be rejected")
 	}
 }
 

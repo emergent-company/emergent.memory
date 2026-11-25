@@ -37,11 +37,15 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Scope: project:write
 	g.PATCH("/:id", h.Update)
 
-	// Knowledge-pipeline policy (see domain/pipeline). Read requires project
-	// membership; write requires project admin (enforced in the handler).
+	// Knowledge-pipeline policy (see domain/pipeline). Reads require project
+	// membership; the write additionally requires projects:write scope on top of
+	// the group's projects:read (a read-only token must not mutate the policy),
+	// and the handler re-checks project admin.
 	g.GET("/:id/pipeline", h.GetPipeline)
-	g.PUT("/:id/pipeline", h.PutPipeline)
 	g.POST("/:id/pipeline/preview", h.PreviewPipeline)
+	pipelineWrite := g.Group("")
+	pipelineWrite.Use(authMiddleware.RequireAPITokenScopes("projects:write"))
+	pipelineWrite.PUT("/:id/pipeline", h.PutPipeline)
 
 	// Transfer project to another org
 	// Scope: project:write

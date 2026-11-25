@@ -85,6 +85,34 @@ func TestParseRoundTrip(t *testing.T) {
 	}
 }
 
+func TestParseRejectsUnknownKey(t *testing.T) {
+	_, err := Parse(json.RawMessage(`{"mode":"auto","bogus":1}`))
+	if err == nil {
+		t.Fatal("expected unknown key to be rejected")
+	}
+}
+
+func TestParseCompleteRequiresAllSections(t *testing.T) {
+	if _, err := ParseComplete(DefaultPolicy(ModeAuto).Marshal()); err != nil {
+		t.Fatalf("complete policy rejected: %v", err)
+	}
+
+	partial := json.RawMessage(`{"mode":"auto","discovery":{"debounce_hours":1}}`)
+	if _, err := ParseComplete(partial); err == nil {
+		t.Fatal("expected missing sections to be rejected")
+	}
+
+	noMode := json.RawMessage(`{"discovery":{},"apply":{},"extract":{},"merge":{},"budget":{}}`)
+	if _, err := ParseComplete(noMode); err == nil {
+		t.Fatal("expected missing mode to be rejected")
+	}
+
+	unknown := json.RawMessage(`{"mode":"auto","discovery":{},"apply":{},"extract":{},"merge":{},"budget":{},"bogus":1}`)
+	if _, err := ParseComplete(unknown); err == nil {
+		t.Fatal("expected unknown top-level key to be rejected")
+	}
+}
+
 func TestZeroPolicy(t *testing.T) {
 	if !(Policy{}).IsZero() {
 		t.Fatal("empty policy must be zero")
