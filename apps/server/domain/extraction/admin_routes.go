@@ -32,6 +32,7 @@ func RegisterAdminRoutes(e *echo.Echo, h *AdminHandler, authMiddleware *auth.Mid
 	projectScoped.POST("/projects/:projectId/bulk-cancel", h.BulkCancelJobs)
 	projectScoped.DELETE("/projects/:projectId/bulk-delete", h.BulkDeleteJobs)
 	projectScoped.POST("/projects/:projectId/bulk-retry", h.BulkRetryJobs)
+	projectScoped.POST("/projects/:projectId/backfill", h.Backfill)
 
 	// Parsing jobs live in a sibling admin group, not under extraction-jobs:
 	// they are a different queue with a different retry contract, but share

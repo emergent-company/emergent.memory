@@ -1939,10 +1939,12 @@ Table "kb"."object_extraction_jobs" {
   "created_object_ids" uuid[] [not null, default: '{}']
   "trace_id" text
   "run_id" uuid [note: 'Agent run that records this job\'s pipeline transcript (kb.agent_runs); NULL for jobs that predate the link or when transcript recording is unavailable.']
+  "schema_fingerprint" text
 
   Indexes {
     (project_id) [name: "IDX_1c7f91f13d7e1a438519d37ec3"]
     (status) [name: "IDX_3844c9efd6d2e06105a117f90c"]
+    (document_id, completed_at) [name: "idx_object_extraction_jobs_doc_fp", note: '(status = \'completed\'::text)']
     (document_id, created_at) [name: "idx_object_extraction_jobs_document_created"]
     (run_id) [name: "idx_object_extraction_jobs_run_id"]
     (trace_id) [name: "idx_object_extraction_jobs_trace_id", note: '(trace_id IS NOT NULL)']

@@ -2,12 +2,15 @@ package extraction
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -242,6 +245,14 @@ func (s *ObjectExtractionJobsService) CreateJob(ctx context.Context, opts Create
 		Logs:             JSONArray{},
 		CreatedAt:        now,
 		UpdatedAt:        now,
+	}
+	// Stamp the schema fingerprint so backfill can later tell which jobs ran
+	// under a schema that has since changed. Best-effort: a project with no
+	// registered types yields an empty-hash fingerprint, not an error.
+	if fp, ferr := s.CurrentSchemaFingerprint(ctx, opts.ProjectID); ferr == nil {
+		job.SchemaStamp = &fp
+	} else {
+		s.log.Warn("failed to stamp schema fingerprint", slog.String("projectId", opts.ProjectID), logger.Error(ferr))
 	}
 
 	_, err := s.db.NewInsert().
@@ -1376,6 +1387,145 @@ func (s *ObjectExtractionJobsService) TriggerForDocument(ctx context.Context, pr
 		SourceType: func() *string { v := "document"; return &v }(),
 	})
 	return err
+}
+
+// CurrentSchemaFingerprint hashes the project's registered object type names —
+// the effective schema set extraction runs against. Backfill compares a job's
+// stored fingerprint to this to find documents extracted under a stale schema.
+func (s *ObjectExtractionJobsService) CurrentSchemaFingerprint(ctx context.Context, projectID string) (string, error) {
+	var names []string
+	err := s.db.NewSelect().
+		Table("kb.project_object_schema_registry").
+		Column("type_name").
+		Where("project_id = ?", projectID).
+		Order("type_name ASC").
+		Scan(ctx, &names)
+	if err != nil {
+		return "", fmt.Errorf("read registered type names: %w", err)
+	}
+	return hashTypeNames(names), nil
+}
+
+// hashTypeNames is the pure fingerprint core: a stable, order-sensitive hash of
+// the registered type names.
+func hashTypeNames(names []string) string {
+	sum := sha256.Sum256([]byte(strings.Join(names, "\n")))
+	return hex.EncodeToString(sum[:])
+}
+
+// BackfillFilter selects which documents a backfill run re-extracts.
+type BackfillFilter string
+
+const (
+	// BackfillStaleSchema selects documents whose latest completed extraction
+	// job has no fingerprint or a fingerprint different from the current one.
+	BackfillStaleSchema BackfillFilter = "stale_schema"
+	// BackfillNever selects documents with no extraction job at all.
+	BackfillNever BackfillFilter = "never"
+	// BackfillFailed selects documents whose latest extraction job ended in a
+	// failed/dead-letter terminal state.
+	BackfillFailed BackfillFilter = "failed"
+)
+
+// BackfillResult reports a backfill run.
+type BackfillResult struct {
+	Filter      BackfillFilter `json:"filter"`
+	CurrentFP   string         `json:"current_fingerprint"`
+	Selected    int            `json:"selected"`
+	Enqueued    int            `json:"enqueued"`
+	Skipped     int            `json:"skipped"` // had an active job already
+	DryRun      bool           `json:"dry_run"`
+	DocumentIDs []string       `json:"document_ids,omitempty"`
+}
+
+// Backfill selects documents matching filter and enqueues an extraction job
+// for each (up to limit), skipping documents that already have an active job.
+// dry_run computes the selection without creating jobs.
+func (s *ObjectExtractionJobsService) Backfill(ctx context.Context, projectID string, filter BackfillFilter, limit int, dryRun bool) (*BackfillResult, error) {
+	fp, err := s.CurrentSchemaFingerprint(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	res := &BackfillResult{Filter: filter, CurrentFP: fp, DryRun: dryRun}
+
+	docs, err := s.backfillCandidates(ctx, projectID, filter, fp)
+	if err != nil {
+		return nil, err
+	}
+	res.Selected = len(docs)
+	if limit > 0 && len(docs) > limit {
+		docs = docs[:limit]
+	}
+	res.DocumentIDs = docs
+	if dryRun {
+		return res, nil
+	}
+
+	for _, docID := range docs {
+		if s.hasActiveJob(ctx, docID) {
+			res.Skipped++
+			continue
+		}
+		d := docID
+		if err := s.TriggerForDocument(ctx, projectID, d); err != nil {
+			s.log.Warn("backfill: failed to enqueue", slog.String("document_id", docID), logger.Error(err))
+			continue
+		}
+		res.Enqueued++
+	}
+	return res, nil
+}
+
+// backfillCandidates returns document ids matching the filter.
+func (s *ObjectExtractionJobsService) backfillCandidates(ctx context.Context, projectID string, filter BackfillFilter, currentFP string) ([]string, error) {
+	var docs []string
+	var err error
+	switch filter {
+	case BackfillNever:
+		err = s.db.NewRaw(`
+			SELECT d.id FROM kb.documents d
+			WHERE d.project_id = ?
+			  AND NOT EXISTS (SELECT 1 FROM kb.object_extraction_jobs j WHERE j.document_id = d.id)
+			ORDER BY d.created_at`, projectID).Scan(ctx, &docs)
+	case BackfillFailed:
+		err = s.db.NewRaw(`
+			SELECT d.id FROM kb.documents d
+			WHERE d.project_id = ?
+			  AND EXISTS (
+			    SELECT 1 FROM kb.object_extraction_jobs j
+			    WHERE j.document_id = d.id AND j.status IN ('failed','dead_letter')
+			  )
+			ORDER BY d.created_at`, projectID).Scan(ctx, &docs)
+	case BackfillStaleSchema:
+		err = s.db.NewRaw(`
+			SELECT d.id FROM kb.documents d
+			WHERE d.project_id = ?
+			  AND (
+			    NOT EXISTS (SELECT 1 FROM kb.object_extraction_jobs j WHERE j.document_id = d.id AND j.status = 'completed')
+			    OR EXISTS (
+			      SELECT 1 FROM kb.object_extraction_jobs j
+			      WHERE j.document_id = d.id AND j.status = 'completed'
+			        AND (j.schema_fingerprint IS NULL OR j.schema_fingerprint <> ?)
+			        AND NOT EXISTS (
+			          SELECT 1 FROM kb.object_extraction_jobs j2
+			          WHERE j2.document_id = d.id AND j2.status = 'completed' AND j2.completed_at > j.completed_at
+			        )
+			    )
+			  )
+			ORDER BY d.created_at`, projectID, currentFP).Scan(ctx, &docs)
+	}
+	return docs, err
+}
+
+// hasActiveJob reports whether a document already has a pending/running
+// extraction job, so backfill never double-enqueues it.
+func (s *ObjectExtractionJobsService) hasActiveJob(ctx context.Context, documentID string) bool {
+	var one int
+	err := s.db.NewRaw(`
+		SELECT 1 FROM kb.object_extraction_jobs
+		WHERE document_id = ? AND status IN ('pending','processing','queued')
+		LIMIT 1`, documentID).Scan(ctx, &one)
+	return err == nil
 }
 
 // SetTraceID records the OpenTelemetry trace id on the job row. A write is
