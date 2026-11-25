@@ -107,10 +107,8 @@ func TestApplyPipelineUpdateRejectsPartialPolicy(t *testing.T) {
 
 func TestApplyPipelineUpdateRejectsUnknownKey(t *testing.T) {
 	p := &Project{PipelineMode: pipeline.ModeSuggest, PipelinePolicy: pipeline.DefaultPolicy(pipeline.ModeSuggest).Marshal()}
-	auto := pipeline.DefaultPolicy(pipeline.ModeAuto)
-	raw := auto.Marshal()
 	// Inject an unknown top-level key.
-	raw = json.RawMessage(`{"mode":"auto","discovery":{"debounce_hours":1},"apply":{"max_new_types_per_run":2},"extract":{"re_extract_on_schema_change":"off"},"merge":{"policy":"partial"},"budget":{},"bogus":1}`)
+	raw := json.RawMessage(`{"mode":"auto","discovery":{"debounce_hours":1},"apply":{"max_new_types_per_run":2},"extract":{"re_extract_on_schema_change":"off"},"merge":{"policy":"partial"},"budget":{},"bogus":1}`)
 	if err := applyPipelineUpdate(p, UpdateProjectRequest{PipelinePolicy: rawPtr(raw)}); err == nil {
 		t.Fatal("expected an unknown policy key to be rejected")
 	}
