@@ -1399,6 +1399,18 @@ routes:
       path: /api/projects/:id/members/:userId
       level: auth
       note: RequireAuth, RequireAPITokenScopes(projects:read)
+    - method: GET
+      path: /api/projects/:id/pipeline
+      level: auth
+      note: RequireAuth, RequireAPITokenScopes(projects:read)
+    - method: PUT
+      path: /api/projects/:id/pipeline
+      level: auth
+      note: RequireAuth, RequireAPITokenScopes(projects:read), RequireAPITokenScopes(projects:write)
+    - method: POST
+      path: /api/projects/:id/pipeline/preview
+      level: auth
+      note: RequireAuth, RequireAPITokenScopes(projects:read)
     - method: POST
       path: /api/projects/:id/restore
       level: auth
