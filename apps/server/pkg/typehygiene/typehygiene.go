@@ -154,6 +154,12 @@ func singularize(s string) string {
 	if singular, ok := irregularPlurals[s]; ok {
 		return singular
 	}
+	// Words whose plural equals their singular ("series", "species", and
+	// compounds like "televisionseries") end in "ies" but are NOT plural — the
+	// suffix rule below would mangle them ("series" -> "sery").
+	if strings.HasSuffix(s, "series") || strings.HasSuffix(s, "species") {
+		return s
+	}
 	switch {
 	case strings.HasSuffix(s, "ies") && len(s) > 3:
 		return s[:len(s)-3] + "y"
