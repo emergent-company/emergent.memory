@@ -45,6 +45,12 @@ var irregularPlurals = map[string]string{
 var synonyms = map[string]string{
 	"organisation": "organization",
 	"place":        "location",
+	// A story/roster "character" is a person: the same human is discovered as
+	// "Character" one run and "Person" the next, which would otherwise split the
+	// entity and re-extract the whole corpus under two types.
+	"character": "person",
+	// "TVEpisode" vs "Episode" — a narrower spelling of the same entity.
+	"tvepisode": "episode",
 }
 
 // NormalizeKey returns the comparison key for a discovered type name.
