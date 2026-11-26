@@ -198,8 +198,9 @@ test.describe.serial('board work-item lifecycle', () => {
     await openPreview(page);
 
     // The picker now lives in the preview's top workflow strip. Its menu is
-    // CSS-only (revealed via :focus-within), so fall back to explicit focus if
-    // the click lands without moving focus (headless quirk).
+    // revealed via daisyUI's :focus-within (wired by the go-daisy a11y
+    // runtime), so fall back to explicit focus if the click lands without
+    // moving focus (headless quirk).
     const control = page.getByTestId('object-assignee-control');
     const trigger = control.getByRole('button', { name: 'Assignee' });
     const menu = control.getByRole('menu', { name: 'Assignee' });

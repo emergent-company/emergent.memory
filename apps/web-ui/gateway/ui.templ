@@ -879,7 +879,7 @@ templ headerActions(actions []headerAction) {
 					Size:    ui.ButtonSM,
 					Icon:    "lucide--ellipsis",
 					Shape:   ui.ButtonShapeSquare,
-					Attrs:   templ.Attributes{"aria-label": "More actions", "aria-haspopup": "menu"},
+					Attrs:   templ.Attributes{"aria-label": "More actions", "aria-haspopup": "menu", "data-gd-menu-trigger": ""},
 				})
 				@ui.DropdownMenu(templ.Attributes{"aria-label": "More actions", "class": "w-56"}) {
 					for _, a := range actions[1:] {

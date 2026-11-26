@@ -155,11 +155,11 @@ var daisyFixtures = map[string]daisyFixtureSpec{
 	},
 	"Dropdown": {
 		PropsType:   "align DropdownAlign, attrs templ.Attributes",
-		Description: "A CSS focus-within dropdown shell with a visible trigger and menu.",
+		Description: "A focus-within dropdown shell upgraded by the go-daisy a11y runtime (trigger carries data-gd-menu-trigger).",
 		Render: func() templ.Component {
 			return withChildren(ui.Dropdown(ui.DropdownEnd, nil),
 				join(
-					withChildren(ui.Button(ui.ButtonProps{Type: ui.ButtonTypeButton, Variant: ui.ButtonGhost, Size: ui.ButtonSM}), templ.Raw("Actions")),
+					withChildren(ui.Button(ui.ButtonProps{Type: ui.ButtonTypeButton, Variant: ui.ButtonGhost, Size: ui.ButtonSM, Attrs: templ.Attributes{"data-gd-menu-trigger": ""}}), templ.Raw("Actions")),
 					withChildren(ui.DropdownMenu(nil), templ.Raw(`<li><a>Rename</a></li><li><a>Duplicate</a></li><li><a class="text-error">Delete</a></li>`)),
 				),
 			)
@@ -171,7 +171,7 @@ var daisyFixtures = map[string]daisyFixtureSpec{
 		Render: func() templ.Component {
 			return withChildren(ui.Dropdown(ui.DropdownEnd, nil),
 				join(
-					withChildren(ui.Button(ui.ButtonProps{Type: ui.ButtonTypeButton, Variant: ui.ButtonGhost, Size: ui.ButtonSM}), templ.Raw("More")),
+					withChildren(ui.Button(ui.ButtonProps{Type: ui.ButtonTypeButton, Variant: ui.ButtonGhost, Size: ui.ButtonSM, Attrs: templ.Attributes{"data-gd-menu-trigger": ""}}), templ.Raw("More")),
 					withChildren(ui.DropdownMenu(nil), templ.Raw(`<li><a>Export</a></li><li><a>Archive</a></li>`)),
 				),
 			)
