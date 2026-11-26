@@ -1115,6 +1115,17 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		documentIDs = append(documentIDs, id)
 	}
 
+	// Fetch the project's existing types up front so the discovery prompt can
+	// tell the model to reuse a name for the same concept instead of minting a
+	// near duplicate (e.g. "Person" beside "Character") that would split the
+	// graph.
+	existingTypes := []ExistingType{}
+	if registered, err := s.repo.RegisteredTypeNames(ctx, projectID); err == nil {
+		if current, err := s.repo.CurrentDiscoveredSchema(ctx, projectID); err == nil {
+			existingTypes = buildExistingTypes(registered, current)
+		}
+	}
+
 	// Step 1: Batch documents
 	batches := s.batchDocuments(documentIDs, config.BatchSize)
 	s.log.Info("processing batches", slog.Int("batch_count", len(batches)))
@@ -1142,7 +1153,7 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 			attribute.Int("memory.batch.number", batchNum),
 			attribute.Int("memory.batch.documents", len(batch)),
 		)
-		if err := s.extractTypesFromBatch(batchCtx, jobID, batch, batchNum, job.KBPurpose, discoveryDefaultMaxTypes); err != nil {
+		if err := s.extractTypesFromBatch(batchCtx, jobID, batch, batchNum, job.KBPurpose, discoveryDefaultMaxTypes, existingTypes); err != nil {
 			failedBatches++
 			batchErrors = append(batchErrors, fmt.Sprintf("Batch %d: %v", batchNum, err))
 			s.log.Error("batch extraction failed", slog.Int("batch", batchNum), logger.Error(err))
@@ -1417,7 +1428,7 @@ func (s *Service) decideDiscoveryBatch(response string, callErr error, docCount 
 // typeBudget is the number of types the prompt asks for (zero means the
 // default). It is carried through the split so a batch that had to be split
 // keeps the budget its caller chose, and the caller may lower it on a retry.
-func (s *Service) extractTypesFromBatch(ctx context.Context, jobID uuid.UUID, documentIDs []uuid.UUID, batchNum int, kbPurpose string, typeBudget int) error {
+func (s *Service) extractTypesFromBatch(ctx context.Context, jobID uuid.UUID, documentIDs []uuid.UUID, batchNum int, kbPurpose string, typeBudget int, existingTypes []ExistingType) error {
 	// Get document contents
 	docs, err := s.repo.GetDocumentContents(ctx, documentIDs)
 	if err != nil {
@@ -1429,7 +1440,7 @@ func (s *Service) extractTypesFromBatch(ctx context.Context, jobID uuid.UUID, do
 		return nil
 	}
 
-	groups, err := s.discoverBatchTypes(ctx, docs, batchNum, kbPurpose, typeBudget)
+	groups, err := s.discoverBatchTypes(ctx, docs, batchNum, kbPurpose, typeBudget, existingTypes)
 	if err != nil {
 		return err
 	}
@@ -1494,8 +1505,8 @@ func documentIDs(docs []DocumentContent) []uuid.UUID {
 // complete answer that legitimately found no types is a valid batch, not a
 // failure. Taking loaded documents (rather than ids) keeps the retry
 // decision-testable without a database.
-func (s *Service) discoverBatchTypes(ctx context.Context, docs []DocumentContent, batchNum int, kbPurpose string, typeBudget int) ([]discoveredGroup, error) {
-	prompt := s.buildTypeDiscoveryPrompt(docs, kbPurpose, typeBudget)
+func (s *Service) discoverBatchTypes(ctx context.Context, docs []DocumentContent, batchNum int, kbPurpose string, typeBudget int, existingTypes []ExistingType) ([]discoveredGroup, error) {
+	prompt := s.buildTypeDiscoveryPrompt(docs, kbPurpose, typeBudget, existingTypes)
 
 	response, callErr := s.completeWithLLM(ctx, prompt)
 	if callErr != nil && !errors.Is(callErr, ErrOutputTruncated) {
@@ -1515,7 +1526,7 @@ func (s *Service) discoverBatchTypes(ctx context.Context, docs []DocumentContent
 			slog.Int("batch", batchNum),
 			slog.Int("type_budget", budget),
 			slog.Int("reduced_budget", discoveryReducedMaxTypes))
-		return s.discoverBatchTypes(ctx, docs, batchNum, kbPurpose, discoveryReducedMaxTypes)
+		return s.discoverBatchTypes(ctx, docs, batchNum, kbPurpose, discoveryReducedMaxTypes, existingTypes)
 	}
 	if outcome.RetrySmaller {
 		mid := len(docs) / 2
@@ -1523,11 +1534,11 @@ func (s *Service) discoverBatchTypes(ctx context.Context, docs []DocumentContent
 			slog.Int("batch", batchNum),
 			slog.Int("documents", len(docs)),
 			slog.Int("half", mid))
-		left, err := s.discoverBatchTypes(ctx, docs[:mid], batchNum, kbPurpose, typeBudget)
+		left, err := s.discoverBatchTypes(ctx, docs[:mid], batchNum, kbPurpose, typeBudget, existingTypes)
 		if err != nil {
 			return nil, err
 		}
-		right, err := s.discoverBatchTypes(ctx, docs[mid:], batchNum, kbPurpose, typeBudget)
+		right, err := s.discoverBatchTypes(ctx, docs[mid:], batchNum, kbPurpose, typeBudget, existingTypes)
 		if err != nil {
 			return nil, err
 		}
@@ -1562,11 +1573,28 @@ func (s *Service) effectiveTypeBudget(typeBudget int) int {
 // buildTypeDiscoveryPrompt builds the LLM prompt for type discovery. typeBudget
 // bounds how many types the model is asked for; the reduced budget is used to
 // retry a single document whose answer overflowed the output limit.
-func (s *Service) buildTypeDiscoveryPrompt(docs []DocumentContent, kbPurpose string, typeBudget int) string {
+// existingTypes are the project's already-installed types: the prompt names them
+// so the model reuses a name for the same concept instead of minting a near
+// duplicate (e.g. "Person" beside "Character") that would split the graph.
+func (s *Service) buildTypeDiscoveryPrompt(docs []DocumentContent, kbPurpose string, typeBudget int, existingTypes []ExistingType) string {
 	budget := s.effectiveTypeBudget(typeBudget)
 	var combinedContent strings.Builder
 	for _, doc := range docs {
 		fmt.Fprintf(&combinedContent, "=== %s ===\n%s\n\n", doc.Filename, doc.Content)
+	}
+
+	existingSection := ""
+	if len(existingTypes) > 0 {
+		var eb strings.Builder
+		eb.WriteString("The knowledge base already tracks these entity types. Reuse one of these names when the documents describe the same kind of entity; only propose a NEW type name for a genuinely new kind of entity:\n")
+		for _, e := range existingTypes {
+			if e.Description != "" {
+				fmt.Fprintf(&eb, "- %s: %s\n", e.Name, e.Description)
+			} else {
+				fmt.Fprintf(&eb, "- %s\n", e.Name)
+			}
+		}
+		existingSection = eb.String()
 	}
 
 	return fmt.Sprintf(`You are analyzing a knowledge base with the following purpose:
@@ -1579,6 +1607,7 @@ Rules for type discovery:
 - Only create entity types for THINGS (nouns that have identity), not for actions, events, or relationships between things. For example, "ReportingRelationship" or "FoundingEvent" are NOT entity types — they are relationships and should be captured in the relationship discovery phase instead.
 - If a value appears as a distinct classifiable concept with multiple instances (e.g., a category like "Electronics", "Accessories", "Hardware"), treat it as a separate entity type — do NOT flatten it into a string property of another type.
 - Prefer fewer, cleaner types over many overlapping types. Merge similar types (e.g., "Employee" and "Person" → just "Person").
+- %s
 
 For each type, provide:
 - type_name: A clear, singular name (e.g., "Customer", "Product", "Issue")
@@ -1603,7 +1632,7 @@ Return ONLY a JSON object with this structure (no markdown, no code blocks):
       "occurrences": 5
     }
   ]
-}`, kbPurpose, budget, combinedContent.String())
+}`, kbPurpose, budget, existingSection, combinedContent.String())
 }
 
 // extractJSON strips prose and markdown fences, returning the JSON object found.
