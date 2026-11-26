@@ -125,21 +125,20 @@ func (s *Service) maybeAutoApply(ctx context.Context, projectID, jobID, schemaID
 	}
 
 	accepted, decisions := gateApplyTypes(pol, refinedTypes)
-	if len(accepted) != len(refinedTypes) {
-		report := JSONMap{
-			"mode":      pol.Mode,
-			"applied":   false,
-			"declined":  "types declined by gates",
-			"decisions": decisions,
-			"pack_id":   schemaID.String(),
-		}
-		if _, err := s.repo.MarkAutoApplied(ctx, jobID, report); err != nil {
-			s.log.Warn("auto-apply: failed to record decline", slog.String("job_id", jobID.String()), logger.Error(err))
-		}
-		s.log.Info("auto-apply: declined discovered schema",
-			slog.String("job_id", jobID.String()), slog.String("reason", "types declined by gates"))
+	if len(accepted) == 0 {
+		decline("all types declined by gates")
 		return
 	}
+
+	// An installed discovered pack means this is an incremental extend; on the
+	// first apply (no installed pack) the new-type cap would wrongly block the
+	// bootstrap, so it is only enforced when extending.
+	installed, err := s.repo.InstalledDiscoveredSchema(ctx, projectID)
+	if err != nil {
+		s.log.Warn("auto-apply: installed-pack lookup failed", logger.Error(err))
+		return
+	}
+	isExtend := installed != nil
 
 	newTypes := make([]string, 0, len(accepted))
 	for _, name := range accepted {
@@ -149,11 +148,19 @@ func (s *Service) maybeAutoApply(ctx context.Context, projectID, jobID, schemaID
 	}
 
 	switch {
-	case len(newTypes) > pol.Apply.MaxNewTypesPerRun:
+	case isExtend && len(newTypes) > pol.Apply.MaxNewTypesPerRun:
 		decline("too many new types in one run")
 		return
-	case len(refinedTypes) > pol.Discovery.MaxTotalTypes:
+	case len(accepted) > pol.Discovery.MaxTotalTypes:
 		decline("would exceed max_total_types")
+		return
+	}
+
+	// Filter the reconciled pack down to the accepted types (dropping
+	// relationship-like / low-confidence / invalid-name types) so a declined
+	// type is never installed.
+	if err := s.filterDiscoveredPack(ctx, schemaID, accepted); err != nil {
+		s.log.Warn("auto-apply: filter pack failed", logger.Error(err))
 		return
 	}
 
@@ -187,4 +194,82 @@ func (s *Service) maybeAutoApply(ctx context.Context, projectID, jobID, schemaID
 		slog.String("pack_id", schemaID.String()),
 		slog.Int("accepted", len(accepted)),
 		slog.Int("new_types", len(newTypes)))
+}
+
+// filterDiscoveredPack rewrites the pending discovered pack's object and
+// relationship schemas so only the accepted type names remain, so a type the
+// gate declined is never installed.
+func (s *Service) filterDiscoveredPack(ctx context.Context, packID uuid.UUID, accepted []string) error {
+	pack, err := s.repo.GetMemorySchema(ctx, packID)
+	if err != nil {
+		return err
+	}
+	keep := make(map[string]bool, len(accepted))
+	for _, name := range accepted {
+		keep[name] = true
+	}
+
+	obj := make(JSONMap, len(accepted))
+	for name, schema := range pack.ObjectTypeSchemas {
+		if keep[name] {
+			obj[name] = schema
+		}
+	}
+
+	rel := make(JSONMap)
+	for name, raw := range pack.RelationshipTypeSchemas {
+		if !relationshipUsesOnly(raw, keep) {
+			continue
+		}
+		rel[name] = raw
+	}
+
+	ui := make(JSONMap, len(accepted))
+	for name, cfg := range pack.UIConfigs {
+		if keep[name] {
+			ui[name] = cfg
+		}
+	}
+
+	return s.repo.UpdateMemorySchema(ctx, packID, obj, rel, ui)
+}
+
+// relationshipUsesOnly reports whether a relationship schema's source and
+// target types are all in keep. Source/target names may be single strings or
+// arrays under the sourceType(s)/targetType(s) keys.
+func relationshipUsesOnly(raw any, keep map[string]bool) bool {
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return false
+	}
+	allIn := func(v any) bool {
+		switch t := v.(type) {
+		case string:
+			return keep[t]
+		case []any:
+			for _, e := range t {
+				if s, ok := e.(string); !ok || !keep[s] {
+					return false
+				}
+			}
+			return true
+		case []string:
+			for _, s := range t {
+				if !keep[s] {
+					return false
+				}
+			}
+			return true
+		}
+		return false
+	}
+	src := m["sourceTypes"]
+	if src == nil {
+		src = m["sourceType"]
+	}
+	dst := m["targetTypes"]
+	if dst == nil {
+		dst = m["targetType"]
+	}
+	return allIn(src) && allIn(dst)
 }
