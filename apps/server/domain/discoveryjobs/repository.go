@@ -906,6 +906,29 @@ func (r *Repository) UpdateSchemaExtractionPrompts(ctx context.Context, schemaID
 	return nil
 }
 
+// GetSchemaExtractionPrompts reads the stored extraction prompts for a schema
+// (the raw JSON, or nil when none are stored yet). The discovery run compares
+// the embedded `__fingerprint` against the freshly computed one so an unchanged
+// schema skips regenerating the same hints.
+func (r *Repository) GetSchemaExtractionPrompts(ctx context.Context, schemaID uuid.UUID) (json.RawMessage, error) {
+	var row struct {
+		ExtractionPrompts json.RawMessage `bun:"extraction_prompts,type:jsonb"`
+	}
+	err := r.db.NewSelect().
+		Table("kb.graph_schemas").
+		Column("extraction_prompts").
+		Where("id = ?", schemaID).
+		Scan(ctx, &row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		r.log.Error("failed to read schema extraction prompts", logger.Error(err))
+		return nil, apperror.ErrInternal.WithInternal(err)
+	}
+	return row.ExtractionPrompts, nil
+}
+
 // GetDocumentContent fetches raw document text by ID without project-scope check.
 // Used by schema enrichment to load document text when no project context is available.
 func (r *Repository) GetDocumentContent(ctx context.Context, documentID string) string {
