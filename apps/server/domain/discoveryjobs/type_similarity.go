@@ -62,27 +62,30 @@ func (s *Service) mergeSemanticallySimilarTypes(ctx context.Context, types []Dis
 
 	existing := buildExistingTypes(registered, current)
 	candidates := append([]ExistingType(nil), existing...)
-	seen := make(map[string]bool, len(existing))
+	installed := make(map[string]bool, len(existing))
 	for _, e := range existing {
-		seen[e.Name] = true
+		installed[e.Name] = true
 	}
 	// A taxonomy type that is also already installed must not be offered twice;
-	// the richer taxonomy entry (description/tags) still wins schema adoption
-	// through taxonomyByName below.
+	// the project's installed entry is the one the classifier compares against.
 	for _, tx := range s.taxonomy {
-		if seen[tx.Name] {
+		if installed[tx.Name] {
 			continue
 		}
-		seen[tx.Name] = true
 		candidates = append(candidates, tx)
 	}
 	if len(candidates) == 0 {
 		return types
 	}
 
-	// Built-in taxonomy names adopt their full canonical schema on a match.
+	// A built-in taxonomy name adopts its full canonical schema on a match, but
+	// only when the project has not already installed that name: the project's
+	// own schema is authoritative and must not be replaced by the taxonomy one.
 	taxonomyByName := make(map[string]ExistingType, len(s.taxonomy))
 	for _, tx := range s.taxonomy {
+		if installed[tx.Name] {
+			continue
+		}
 		taxonomyByName[tx.Name] = tx
 	}
 
@@ -116,21 +119,56 @@ func (s *Service) mergeSemanticallySimilarTypes(ctx context.Context, types []Dis
 		t.TypeName = match
 		// Adopt the full canonical schema when the match is a built-in taxonomy
 		// type, so the well-described properties/tags replace the ad-hoc
-		// discovered ones.
+		// discovered ones. The taxonomy is process-lived, so copy rather than
+		// alias its maps/slices: a later in-place mutation of the discovered
+		// type must never corrupt the shared canonical taxonomy.
 		if tx, ok := taxonomyByName[match]; ok {
 			if tx.Description != "" {
 				t.Description = tx.Description
 			}
 			if len(tx.Properties) > 0 {
-				t.Properties = tx.Properties
+				t.Properties = cloneProperties(tx.Properties)
 			}
 			if len(tx.Required) > 0 {
-				t.RequiredProperties = tx.Required
+				t.RequiredProperties = append([]string(nil), tx.Required...)
 			}
 		}
 		out = append(out, t)
 	}
 	return out
+}
+
+// cloneProperties deep-copies a taxonomy property map (including nested maps
+// and slices) so a per-run discovered type never aliases the process-lived
+// taxonomy schema.
+func cloneProperties(in map[string]any) map[string]any {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = clonePropertyValue(v)
+	}
+	return out
+}
+
+// clonePropertyValue recursively copies the container values a decoded
+// taxonomy property can hold. Scalars are immutable and returned as-is.
+func clonePropertyValue(v any) any {
+	switch val := v.(type) {
+	case map[string]any:
+		return cloneProperties(val)
+	case []any:
+		out := make([]any, len(val))
+		for i, item := range val {
+			out[i] = clonePropertyValue(item)
+		}
+		return out
+	case []string:
+		return append([]string(nil), val...)
+	default:
+		return v
+	}
 }
 
 // buildExistingTypes assembles the comparison set: registered names first, then
@@ -237,7 +275,7 @@ func buildTypeClassificationPrompt(discovered []DiscoveredType, existing []Exist
 	sort.Slice(es, func(i, j int) bool { return es[i].Name < es[j].Name })
 
 	var b strings.Builder
-	b.WriteString(`You are classifying whether discovered knowledge-graph types are the same concept as existing types. A "same concept" means the two types describe the same kind of entity (e.g. "Character" and "Person" for a human in a story; "Company" and "Organization"). They are NOT the same when they describe different kinds (e.g. a person vs a location, a show vs an episode). Use the description and tags of each existing type to decide.
+	b.WriteString(`You are classifying whether discovered knowledge-graph types are the same concept as existing types. A "same concept" means the two types describe the same kind of entity (e.g. "Company" and "Organization"; "TV Show" and "Show"). They are NOT the same when they describe different kinds (e.g. a person vs a location, a show vs an episode). A fictional character is NOT a real human being: "Character" (a fictional persona in a story) and "Person" (a real, specific human) are deliberately DISTINCT types, as are "Character" and "Actor". Never match a fictional character onto a real person or vice versa. Use the description and tags of each existing type to decide.
 
 Discovered types:
 `)

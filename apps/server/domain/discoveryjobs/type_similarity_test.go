@@ -2,6 +2,7 @@ package discoveryjobs
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -11,17 +12,17 @@ func fakeComplete(resp string) func(context.Context, string) (string, error) {
 
 func TestClassifierTypeSimilarityResolve(t *testing.T) {
 	m := NewClassifierTypeSimilarity(fakeComplete(
-		`{"matches":[{"type":"Character","same_as":"Person","confidence":0.95},{"type":"Location","same_as":null,"confidence":1.0}]}`),
+		`{"matches":[{"type":"Company","same_as":"Organization","confidence":0.95},{"type":"Location","same_as":null,"confidence":1.0}]}`),
 		0.90, quietLogger())
 
 	matches, err := m.Resolve(context.Background(),
-		[]DiscoveredType{{TypeName: "Character"}, {TypeName: "Location"}},
-		[]ExistingType{{Name: "Person"}})
+		[]DiscoveredType{{TypeName: "Company"}, {TypeName: "Location"}},
+		[]ExistingType{{Name: "Organization"}})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if matches["Character"] != "Person" {
-		t.Fatalf("Character match = %q, want Person", matches["Character"])
+	if matches["Company"] != "Organization" {
+		t.Fatalf("Company match = %q, want Organization", matches["Company"])
 	}
 	if _, ok := matches["Location"]; ok {
 		t.Fatalf("Location must not match (same_as null)")
@@ -30,11 +31,11 @@ func TestClassifierTypeSimilarityResolve(t *testing.T) {
 
 func TestClassifierTypeSimilarityBelowThreshold(t *testing.T) {
 	m := NewClassifierTypeSimilarity(fakeComplete(
-		`{"matches":[{"type":"Character","same_as":"Person","confidence":0.7}]}`),
+		`{"matches":[{"type":"Company","same_as":"Organization","confidence":0.7}]}`),
 		0.90, quietLogger())
 
 	matches, err := m.Resolve(context.Background(),
-		[]DiscoveredType{{TypeName: "Character"}}, []ExistingType{{Name: "Person"}})
+		[]DiscoveredType{{TypeName: "Company"}}, []ExistingType{{Name: "Organization"}})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -46,11 +47,11 @@ func TestClassifierTypeSimilarityBelowThreshold(t *testing.T) {
 func TestClassifierTypeSimilarityRejectsHallucinatedExisting(t *testing.T) {
 	// The model returns an existing name that is not in the comparison set.
 	m := NewClassifierTypeSimilarity(fakeComplete(
-		`{"matches":[{"type":"Character","same_as":"Zorg","confidence":0.99}]}`),
+		`{"matches":[{"type":"Company","same_as":"Zorg","confidence":0.99}]}`),
 		0.90, quietLogger())
 
 	matches, err := m.Resolve(context.Background(),
-		[]DiscoveredType{{TypeName: "Character"}}, []ExistingType{{Name: "Person"}})
+		[]DiscoveredType{{TypeName: "Company"}}, []ExistingType{{Name: "Organization"}})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -72,6 +73,27 @@ func TestBuildTypeClassificationPromptDeterministic(t *testing.T) {
 	}
 }
 
+// TestBuildTypeClassificationPromptKeepsCharacterAndPersonDistinct pins the
+// prompt to the tv-movies taxonomy: Character (fictional) and Person (real) are
+// deliberately distinct, so the same-concept example must not cite them and the
+// prompt must call the distinction out. A match adopts the canonical schema, so
+// a bad example would collapse real people into fictional characters.
+func TestBuildTypeClassificationPromptKeepsCharacterAndPersonDistinct(t *testing.T) {
+	prompt := buildTypeClassificationPrompt(
+		[]DiscoveredType{{TypeName: "Character", Description: "a fictional persona"}},
+		[]ExistingType{{Name: "Person", Description: "a real human being"}})
+
+	if strings.Contains(prompt, `"Character" and "Person" for a human`) {
+		t.Fatal("prompt must not cite Character/Person as an example of the same concept")
+	}
+	if !strings.Contains(prompt, `"Company" and "Organization"`) {
+		t.Fatal("prompt must keep a taxonomy-aligned same-concept example")
+	}
+	if !strings.Contains(prompt, "A fictional character is NOT a real human being") {
+		t.Fatal("prompt must state that a fictional character is not a real human being")
+	}
+}
+
 type fakeTypeSimilarity struct{ mapping map[string]string }
 
 func (f *fakeTypeSimilarity) Resolve(_ context.Context, discovered []DiscoveredType, _ []ExistingType) (map[string]string, error) {
@@ -85,14 +107,14 @@ func (f *fakeTypeSimilarity) Resolve(_ context.Context, discovered []DiscoveredT
 }
 
 func TestMergeSemanticallySimilarTypes(t *testing.T) {
-	svc := &Service{typeSimilarity: &fakeTypeSimilarity{mapping: map[string]string{"Character": "Person"}}, log: quietLogger()}
+	svc := &Service{typeSimilarity: &fakeTypeSimilarity{mapping: map[string]string{"Company": "Organization"}}, log: quietLogger()}
 	types := []DiscoveredType{
-		{TypeName: "Character", Description: "a character in a story"},
+		{TypeName: "Company", Description: "a company in the story"},
 		{TypeName: "Location", Description: "a place"},
 	}
-	out := svc.mergeSemanticallySimilarTypes(context.Background(), types, []string{"Person"}, nil)
-	if out[0].TypeName != "Person" {
-		t.Fatalf("Character was not merged onto Person, got %q", out[0].TypeName)
+	out := svc.mergeSemanticallySimilarTypes(context.Background(), types, []string{"Organization"}, nil)
+	if out[0].TypeName != "Organization" {
+		t.Fatalf("Company was not merged onto Organization, got %q", out[0].TypeName)
 	}
 	if out[1].TypeName != "Location" {
 		t.Fatalf("Location should stay, got %q", out[1].TypeName)
@@ -119,11 +141,11 @@ func TestMergeSemanticallySimilarTypesNilResolver(t *testing.T) {
 
 func TestMergeSemanticallySimilarTypesAdoptsTaxonomySchema(t *testing.T) {
 	svc := &Service{
-		typeSimilarity: &fakeTypeSimilarity{mapping: map[string]string{"Person": "Character"}},
+		typeSimilarity: &fakeTypeSimilarity{mapping: map[string]string{"Company": "Organization"}},
 		taxonomy: []ExistingType{{
-			Name:        "Character",
-			Description: "A fictional character in a TV show",
-			Tags:        []string{"character", "persona"},
+			Name:        "Organization",
+			Description: "A company, institution or other organized group named in the content",
+			Tags:        []string{"organization", "company"},
 			Properties:  map[string]any{"name": map[string]any{"type": "string"}},
 			Required:    []string{"name"},
 		}},
@@ -131,14 +153,14 @@ func TestMergeSemanticallySimilarTypesAdoptsTaxonomySchema(t *testing.T) {
 	}
 
 	out := svc.mergeSemanticallySimilarTypes(context.Background(),
-		[]DiscoveredType{{TypeName: "Person", Description: "a person", Properties: map[string]any{"foo": "bar"}}},
+		[]DiscoveredType{{TypeName: "Company", Description: "a company", Properties: map[string]any{"foo": "bar"}}},
 		nil, nil)
 
 	got := out[0]
-	if got.TypeName != "Character" {
-		t.Fatalf("renamed to %q, want Character", got.TypeName)
+	if got.TypeName != "Organization" {
+		t.Fatalf("renamed to %q, want Organization", got.TypeName)
 	}
-	if got.Description != "A fictional character in a TV show" {
+	if got.Description != "A company, institution or other organized group named in the content" {
 		t.Fatalf("description not adopted: %q", got.Description)
 	}
 	if _, ok := got.Properties["name"]; !ok {
@@ -146,5 +168,87 @@ func TestMergeSemanticallySimilarTypesAdoptsTaxonomySchema(t *testing.T) {
 	}
 	if len(got.RequiredProperties) != 1 || got.RequiredProperties[0] != "name" {
 		t.Fatalf("required not adopted: %v", got.RequiredProperties)
+	}
+}
+
+// TestMergeSemanticallySimilarTypesInstalledTypeKeepsOwnSchema pins that a
+// project type that is already installed under a taxonomy name is authoritative:
+// a match onto it must not replace its description/properties/required with the
+// taxonomy schema.
+func TestMergeSemanticallySimilarTypesInstalledTypeKeepsOwnSchema(t *testing.T) {
+	svc := &Service{
+		typeSimilarity: &fakeTypeSimilarity{mapping: map[string]string{"Studio": "Organization"}},
+		taxonomy: []ExistingType{{
+			Name:        "Organization",
+			Description: "taxonomy description",
+			Properties:  map[string]any{"name": map[string]any{"type": "string"}},
+			Required:    []string{"name"},
+		}},
+		log: quietLogger(),
+	}
+
+	out := svc.mergeSemanticallySimilarTypes(context.Background(),
+		[]DiscoveredType{{
+			TypeName:    "Studio",
+			Description: "the project's own description",
+			Properties:  map[string]any{"founded": map[string]any{"type": "number"}},
+		}},
+		[]string{"Organization"}, nil)
+
+	got := out[0]
+	if got.TypeName != "Organization" {
+		t.Fatalf("renamed to %q, want Organization", got.TypeName)
+	}
+	if got.Description != "the project's own description" {
+		t.Fatalf("installed type must keep its description, got %q", got.Description)
+	}
+	if _, ok := got.Properties["name"]; ok {
+		t.Fatalf("installed type must not inherit taxonomy properties: %v", got.Properties)
+	}
+	if _, ok := got.Properties["founded"]; !ok {
+		t.Fatalf("installed type must keep its own properties: %v", got.Properties)
+	}
+	if len(got.RequiredProperties) != 0 {
+		t.Fatalf("installed type must not inherit taxonomy required, got %v", got.RequiredProperties)
+	}
+}
+
+// TestMergeSemanticallySimilarTypesDeepCopiesTaxonomySchema pins that adopting a
+// taxonomy schema copies it: mutating the per-run discovered type must never
+// corrupt the process-lived canonical taxonomy for later runs.
+func TestMergeSemanticallySimilarTypesDeepCopiesTaxonomySchema(t *testing.T) {
+	taxonomyProps := map[string]any{
+		"name": map[string]any{"type": "string"},
+		"tags": []any{"organization", "company"},
+	}
+	svc := &Service{
+		typeSimilarity: &fakeTypeSimilarity{mapping: map[string]string{"Studio": "Organization"}},
+		taxonomy: []ExistingType{{
+			Name:       "Organization",
+			Properties: taxonomyProps,
+			Required:   []string{"name"},
+		}},
+		log: quietLogger(),
+	}
+
+	out := svc.mergeSemanticallySimilarTypes(context.Background(),
+		[]DiscoveredType{{TypeName: "Studio"}}, nil, nil)
+
+	out[0].Properties["name"].(map[string]any)["type"] = "number"
+	out[0].Properties["tags"].([]any)[0] = "mutated"
+	out[0].Properties["extra"] = true
+	out[0].RequiredProperties[0] = "mutated"
+
+	if got := taxonomyProps["name"].(map[string]any)["type"]; got != "string" {
+		t.Fatalf("nested taxonomy property was aliased, got %v", got)
+	}
+	if got := taxonomyProps["tags"].([]any)[0]; got != "organization" {
+		t.Fatalf("nested taxonomy slice was aliased, got %v", got)
+	}
+	if _, ok := taxonomyProps["extra"]; ok {
+		t.Fatal("taxonomy map gained a key through the adopted copy")
+	}
+	if got := svc.taxonomy[0].Required[0]; got != "name" {
+		t.Fatalf("taxonomy required slice was aliased, got %q", got)
 	}
 }
