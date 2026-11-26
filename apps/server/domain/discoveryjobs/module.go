@@ -121,12 +121,18 @@ func wireTaxonomy(svc *Service) {
 	}
 	taxonomy := make([]ExistingType, 0, len(defs))
 	for _, d := range defs {
+		icon, _ := d.UI["icon"].(string)
+		color, _ := d.UI["color"].(string)
 		taxonomy = append(taxonomy, ExistingType{
 			Name:        d.Name,
 			Description: d.Description,
+			Category:    d.Category,
+			Parent:      d.Parent,
 			Tags:        d.Labels,
 			Properties:  d.Properties,
 			Required:    d.Required,
+			Icon:        icon,
+			Color:       color,
 		})
 	}
 	svc.SetTaxonomy(taxonomy)

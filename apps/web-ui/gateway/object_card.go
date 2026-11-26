@@ -348,7 +348,9 @@ func objectCardTypeOf(name, label string, tui typeUI) objectCardType {
 		t.Label = name
 	}
 	if cls := typeIconClass(tui.Icon); cls != "" {
-		t.Icon = strings.TrimPrefix(cls, "lucide--")
+		// Send the bare name; the iOS client maps both families from one
+		// SF Symbol table (Tabler and Lucide share bare names where they overlap).
+		t.Icon = strings.TrimPrefix(strings.TrimPrefix(cls, "lucide--"), "tabler--")
 	} else {
 		t.Glyph = strings.TrimSpace(tui.Icon)
 	}

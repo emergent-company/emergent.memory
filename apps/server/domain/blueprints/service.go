@@ -72,6 +72,10 @@ type Service struct {
 	// persist a schedule the trigger service refuses (#354).
 	minCronIntervalMinutes int
 
+	// catalogEmbedder powers semantic catalog type resolution. Nil means
+	// lexical-only; wired by the fx module when the embeddings service is on.
+	catalogEmbedder TextEmbedder
+
 	log *slog.Logger
 }
 

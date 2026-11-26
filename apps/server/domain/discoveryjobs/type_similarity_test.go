@@ -252,3 +252,18 @@ func TestMergeSemanticallySimilarTypesDeepCopiesTaxonomySchema(t *testing.T) {
 		t.Fatalf("taxonomy required slice was aliased, got %q", got)
 	}
 }
+
+// TestTaxonomyUIStyle pins the curated taxonomy UI accent lookup used when a
+// discovered type adopts a canonical taxonomy type.
+func TestTaxonomyUIStyle(t *testing.T) {
+	s := &Service{taxonomy: []ExistingType{
+		{Name: "Movie", Icon: "tabler--movie", Color: "#DB2777"},
+	}}
+	icon, color, ok := s.taxonomyUIStyle("Movie")
+	if !ok || icon != "tabler--movie" || color != "#DB2777" {
+		t.Fatalf("taxonomyUIStyle(Movie) = %q, %q, %v", icon, color, ok)
+	}
+	if _, _, ok := s.taxonomyUIStyle("Nope"); ok {
+		t.Fatal("taxonomyUIStyle(Nope) = ok, want not ok")
+	}
+}

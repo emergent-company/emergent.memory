@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -45,6 +46,14 @@ var (
 	// install model-mapping flags
 	blueprintsMapModelFlag []string
 	blueprintsNoMapFlag    bool
+
+	// catalog-install flags
+	blueprintsCatalogTypesFlag   []string
+	blueprintsCatalogNameFlag    string
+	blueprintsCatalogVersionFlag string
+	blueprintsCatalogReplaceFlag bool
+	blueprintsCatalogLimitFlag   int
+	blueprintsCatalogModeFlag    string
 )
 
 // ─────────────────────────────────────────────
@@ -301,6 +310,9 @@ Subcommands:
   memory blueprints install <source>    Apply blueprints from a directory or GitHub URL
   memory blueprints inspect <source>    List contents of a blueprint without installing
   memory blueprints validate <source>   Validate a blueprint offline (no API calls)
+  memory blueprints catalog-install     Install endpoint-gated schema.org catalog types
+  memory blueprints catalog-resolve     Rank catalog types for a free-text query
+  memory blueprints catalog-show        Show one catalog type (parents, children, relationships)
   memory blueprints dump <output-dir>   Export project graph data as JSONL seed files
 
 Examples:
@@ -1045,6 +1057,283 @@ var blueprintsGithubTokenCmd = &cobra.Command{
 	Long:  `Manage the project-scoped GitHub personal access token used for update checks.`,
 }
 
+// ─────────────────────────────────────────────
+// blueprintsCatalogInstallCmd — install schema.org catalog types
+// ─────────────────────────────────────────────
+
+var blueprintsCatalogInstallCmd = &cobra.Command{
+	Use:   "catalog-install [type ...]",
+	Short: "Install endpoint-gated types from the built-in schema.org catalog",
+	Long: `Install types from the built-in schema.org catalog into the current project.
+
+Only the requested types are materialized. Relationship types are installed only
+when BOTH endpoint types are installed (endpoint-gated); a relationship whose
+other endpoint is not installed is reported as deferred. Re-running with more
+types reconciles and activates deferred relationships.
+
+Type names may be passed positionally or with repeated --type flags.
+
+Examples:
+
+  memory blueprints catalog-install Movie Person
+  memory blueprints catalog-install --type Movie --type Person
+  memory blueprints catalog-install Product Offer Brand
+  memory blueprints catalog-install Movie --name my-catalog --project my-project
+  memory blueprints catalog-install Movie --replace   # remove other catalog types`,
+	Args: cobra.ArbitraryArgs,
+	RunE: runBlueprintsCatalogInstall,
+}
+
+type catalogInstallResult struct {
+	PackID        string   `json:"packId"`
+	Created       bool     `json:"created"`
+	Types         []string `json:"types"`
+	Relationships []string `json:"relationships"`
+	Deferred      []string `json:"deferred"`
+	Removed       []string `json:"removed"`
+	Unknown       []string `json:"unknown"`
+	Problems      []string `json:"problems"`
+}
+
+func runBlueprintsCatalogInstall(cmd *cobra.Command, args []string) error {
+	types := append([]string(nil), args...)
+	types = append(types, blueprintsCatalogTypesFlag...)
+	if len(types) == 0 {
+		return fmt.Errorf("name at least one catalog type (positionally or with --type)")
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	projectID, err := resolveProjectContext(cmd, blueprintsProjectFlag)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	body, err := json.Marshal(map[string]any{
+		"types":   types,
+		"name":    blueprintsCatalogNameFlag,
+		"version": blueprintsCatalogVersionFlag,
+		"replace": blueprintsCatalogReplaceFlag,
+	})
+	if err != nil {
+		return err
+	}
+
+	data, err := blueprintRequest(c, http.MethodPost, c.BaseURL()+"/api/blueprints/catalog/install", body)
+	if err != nil {
+		return err
+	}
+
+	var res catalogInstallResult
+	if err := json.Unmarshal(data, &res); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+
+	out := cmd.OutOrStdout()
+	action := "updated"
+	if res.Created {
+		action = "created"
+	}
+	fmt.Fprintf(out, "Catalog pack %s.\n", action)
+	fmt.Fprintf(out, "Types (%d): %s\n", len(res.Types), strings.Join(res.Types, ", "))
+	if len(res.Relationships) > 0 {
+		fmt.Fprintf(out, "Active relationships (%d): %s\n", len(res.Relationships), strings.Join(res.Relationships, ", "))
+	}
+	if len(res.Removed) > 0 {
+		fmt.Fprintf(out, "Removed (%d, relationships to these deactivated): %s\n", len(res.Removed), strings.Join(res.Removed, ", "))
+	}
+	if len(res.Deferred) > 0 {
+		fmt.Fprintf(out, "Deferred (%d, install the missing endpoint to activate): %s\n", len(res.Deferred), strings.Join(res.Deferred, ", "))
+	}
+	if len(res.Unknown) > 0 {
+		fmt.Fprintf(out, "Unknown types (not in catalog): %s\n", strings.Join(res.Unknown, ", "))
+	}
+	if len(res.Problems) > 0 {
+		fmt.Fprintf(out, "Catalog problems: %s\n", strings.Join(res.Problems, "; "))
+	}
+	return nil
+}
+
+// ─────────────────────────────────────────────
+// blueprintsCatalogResolveCmd — rank catalog types for a query
+// ─────────────────────────────────────────────
+
+var blueprintsCatalogResolveCmd = &cobra.Command{
+	Use:   "catalog-resolve <query>",
+	Short: "Rank built-in schema.org catalog types for a free-text query",
+	Long: `Rank catalog types for a free-text concept, so you can pick canonical names
+before installing them with catalog-install. Matches names, labels, aliases,
+categories, parents and descriptions lexically.
+
+Examples:
+
+  memory blueprints catalog-resolve film
+  memory blueprints catalog-resolve "tv series"
+  memory blueprints catalog-resolve commerce --limit 5`,
+	Args: cobra.ExactArgs(1),
+	RunE: runBlueprintsCatalogResolve,
+}
+
+type catalogTypeMatch struct {
+	Name     string   `json:"name"`
+	Label    string   `json:"label"`
+	Category string   `json:"category"`
+	Parent   string   `json:"parent"`
+	Score    float64  `json:"score"`
+	Matched  []string `json:"matched"`
+}
+
+func runBlueprintsCatalogResolve(cmd *cobra.Command, args []string) error {
+	query := strings.TrimSpace(args[0])
+	if query == "" {
+		return fmt.Errorf("query is required")
+	}
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	projectID, err := resolveProjectContext(cmd, blueprintsProjectFlag)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	path := c.BaseURL() + "/api/blueprints/catalog/resolve?q=" + url.QueryEscape(query)
+	if blueprintsCatalogLimitFlag > 0 {
+		path += "&limit=" + fmt.Sprintf("%d", blueprintsCatalogLimitFlag)
+	}
+	if blueprintsCatalogModeFlag != "" {
+		path += "&mode=" + url.QueryEscape(blueprintsCatalogModeFlag)
+	}
+	data, err := blueprintRequest(c, http.MethodGet, path, nil)
+	if err != nil {
+		return err
+	}
+	var matches []catalogTypeMatch
+	if err := json.Unmarshal(data, &matches); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+
+	out := cmd.OutOrStdout()
+	if len(matches) == 0 {
+		fmt.Fprintf(out, "No catalog types matched %q.\n", query)
+		return nil
+	}
+	fmt.Fprintf(out, "Catalog matches for %q:\n", query)
+	for i, m := range matches {
+		detail := m.Category
+		if m.Parent != "" {
+			detail += ", parent " + m.Parent
+		}
+		fmt.Fprintf(out, "  %2d. %-22s %.3f  (%s)", i+1, m.Name, m.Score, detail)
+		if len(m.Matched) > 0 {
+			fmt.Fprintf(out, "  [%s]", strings.Join(m.Matched, ","))
+		}
+		fmt.Fprintln(out)
+	}
+	return nil
+}
+
+// ─────────────────────────────────────────────
+// blueprintsCatalogShowCmd — show one catalog type
+// ─────────────────────────────────────────────
+
+var blueprintsCatalogShowCmd = &cobra.Command{
+	Use:   "catalog-show <name>",
+	Short: "Show one schema.org catalog type (parents, children, relationships)",
+	Long: `Show one catalog type's hierarchy and the candidate relationships that touch
+it. Read-only; use catalog-resolve first if you do not know the exact name.
+
+Examples:
+
+  memory blueprints catalog-show Movie
+  memory blueprints catalog-show CreativeWork`,
+	Args: cobra.ExactArgs(1),
+	RunE: runBlueprintsCatalogShow,
+}
+
+type catalogTypeDef struct {
+	Name        string         `json:"name"`
+	Label       string         `json:"label"`
+	Description string         `json:"description"`
+	Category    string         `json:"category"`
+	Parent      string         `json:"parent"`
+	Labels      []string       `json:"labels"`
+	Properties  map[string]any `json:"properties"`
+}
+
+type catalogRelationship struct {
+	Name        string `json:"name"`
+	SourceType  string `json:"sourceType"`
+	TargetType  string `json:"targetType"`
+	Description string `json:"description"`
+}
+
+type catalogTypeDetail struct {
+	Type                 catalogTypeDef        `json:"type"`
+	Ancestors            []string              `json:"ancestors"`
+	Children             []string              `json:"children"`
+	RelatedRelationships []catalogRelationship `json:"relatedRelationships"`
+}
+
+func runBlueprintsCatalogShow(cmd *cobra.Command, args []string) error {
+	name := strings.TrimSpace(args[0])
+	if name == "" {
+		return fmt.Errorf("name is required")
+	}
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	projectID, err := resolveProjectContext(cmd, blueprintsProjectFlag)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	data, err := blueprintRequest(c, http.MethodGet, c.BaseURL()+"/api/blueprints/catalog/type?name="+url.QueryEscape(name), nil)
+	if err != nil {
+		return err
+	}
+	var d catalogTypeDetail
+	if err := json.Unmarshal(data, &d); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "%s (%s)\n", d.Type.Name, d.Type.Label)
+	if d.Type.Category != "" {
+		fmt.Fprintf(out, "Category: %s\n", d.Type.Category)
+	}
+	if len(d.Ancestors) > 0 {
+		fmt.Fprintf(out, "Ancestors: %s\n", strings.Join(d.Ancestors, " > "))
+	}
+	if len(d.Children) > 0 {
+		fmt.Fprintf(out, "Subtypes: %s\n", strings.Join(d.Children, ", "))
+	}
+	if len(d.Type.Labels) > 0 {
+		fmt.Fprintf(out, "Aliases: %s\n", strings.Join(d.Type.Labels, ", "))
+	}
+	if len(d.Type.Properties) > 0 {
+		keys := make([]string, 0, len(d.Type.Properties))
+		for k := range d.Type.Properties {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		fmt.Fprintf(out, "Properties (%d): %s\n", len(keys), strings.Join(keys, ", "))
+	}
+	if len(d.RelatedRelationships) > 0 {
+		fmt.Fprintf(out, "Relationships (%d):\n", len(d.RelatedRelationships))
+		for _, r := range d.RelatedRelationships {
+			fmt.Fprintf(out, "  - %s: %s -> %s\n", r.Name, r.SourceType, r.TargetType)
+		}
+	}
+	return nil
+}
+
 func init() {
 	// --project is persistent so it's inherited by all subcommands
 	blueprintsCmd.PersistentFlags().StringVar(&blueprintsProjectFlag, "project", "", "Project ID or name (overrides config/env)")
@@ -1081,6 +1370,17 @@ func init() {
 	blueprintsCmd.AddCommand(blueprintsInspectCmd)
 	blueprintsCmd.AddCommand(blueprintsCheckUpdatesCmd)
 	blueprintsCmd.AddCommand(blueprintsUpdateCmd)
+	blueprintsCmd.AddCommand(blueprintsCatalogInstallCmd)
+	blueprintsCmd.AddCommand(blueprintsCatalogResolveCmd)
+	blueprintsCmd.AddCommand(blueprintsCatalogShowCmd)
+
+	// catalog-install flags
+	blueprintsCatalogInstallCmd.Flags().StringArrayVar(&blueprintsCatalogTypesFlag, "type", nil, "Catalog type to install (repeatable, e.g. --type Movie)")
+	blueprintsCatalogInstallCmd.Flags().StringVar(&blueprintsCatalogNameFlag, "name", "", "Project schema pack name (default schemaorg-catalog)")
+	blueprintsCatalogInstallCmd.Flags().StringVar(&blueprintsCatalogVersionFlag, "version", "", "Project schema pack version (default 1.0.0)")
+	blueprintsCatalogInstallCmd.Flags().BoolVar(&blueprintsCatalogReplaceFlag, "replace", false, "Make the named types authoritative; remove catalog types not listed (deactivates their relationships)")
+	blueprintsCatalogResolveCmd.Flags().IntVar(&blueprintsCatalogLimitFlag, "limit", 0, "Maximum matches to return (default 10, max 50)")
+	blueprintsCatalogResolveCmd.Flags().StringVar(&blueprintsCatalogModeFlag, "mode", "", "Matching strategy: lexical, semantic, or hybrid (default hybrid; semantic needs a project embedding model)")
 
 	blueprintsGithubTokenCmd.AddCommand(blueprintsGithubTokenSetCmd)
 	blueprintsGithubTokenSetCmd.Flags().StringVar(&blueprintsGithubTokenFlag, "token", "", "GitHub personal access token (read from stdin when omitted)")

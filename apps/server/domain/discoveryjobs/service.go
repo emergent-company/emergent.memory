@@ -585,11 +585,28 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID uuid.U
 			"required":   t.RequiredProperties,
 			"properties": t.Properties,
 		}
+		icon := s.suggestIconForType(t.TypeName)
+		color := s.generateColorForType(t.TypeName)
+		// A type aligned onto a canonical taxonomy entry inherits its curated UI
+		// accent, so the taxonomy's Tabler icon reaches the installed schema
+		// instead of the name-guessed fallback.
+		if taxIcon, taxColor, ok := s.taxonomyUIStyle(t.TypeName); ok {
+			if taxIcon != "" {
+				icon = taxIcon
+			}
+			if taxColor != "" {
+				color = taxColor
+			}
+		}
 		uiConfigs[t.TypeName] = map[string]any{
-			"icon":        s.suggestIconForType(t.TypeName),
-			"color":       s.generateColorForType(t.TypeName),
+			"icon":        icon,
+			"color":       color,
 			"displayName": t.TypeName,
 			"description": t.Description,
+		}
+		if cat, ok := s.taxonomyCategory(t.TypeName); ok && cat != "" {
+			// Category is a free-form ui_configs key the UI reads for grouping.
+			uiConfigs[t.TypeName].(map[string]any)["category"] = cat
 		}
 	}
 
@@ -2845,12 +2862,26 @@ func (s *Service) relationshipsToSchemas(relationships []DiscoveredRelationship)
 func (s *Service) typesToUIConfigs(types []DiscoveredType) JSONMap {
 	configs := make(JSONMap)
 	for _, t := range types {
-		configs[t.TypeName] = map[string]any{
-			"icon":        s.suggestIconForType(t.TypeName),
-			"color":       s.generateColorForType(t.TypeName),
+		icon := s.suggestIconForType(t.TypeName)
+		color := s.generateColorForType(t.TypeName)
+		if taxIcon, taxColor, ok := s.taxonomyUIStyle(t.TypeName); ok {
+			if taxIcon != "" {
+				icon = taxIcon
+			}
+			if taxColor != "" {
+				color = taxColor
+			}
+		}
+		cfg := map[string]any{
+			"icon":        icon,
+			"color":       color,
 			"displayName": t.TypeName,
 			"description": t.Description,
 		}
+		if cat, ok := s.taxonomyCategory(t.TypeName); ok && cat != "" {
+			cfg["category"] = cat
+		}
+		configs[t.TypeName] = cfg
 	}
 	return configs
 }
@@ -2863,9 +2894,9 @@ func (s *Service) suggestIconForType(typeName string) string {
 	case strings.Contains(lower, "requirement"):
 		return "file-text"
 	case strings.Contains(lower, "task"):
-		return "check-square"
+		return "list"
 	case strings.Contains(lower, "issue"):
-		return "alert-circle"
+		return "alert-triangle"
 	case strings.Contains(lower, "risk"):
 		return "alert-triangle"
 	case strings.Contains(lower, "person"), strings.Contains(lower, "user"):

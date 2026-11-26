@@ -33,9 +33,21 @@ type TypeSimilarity interface {
 type ExistingType struct {
 	Name        string
 	Description string
-	Tags        []string
-	Properties  map[string]any
-	Required    []string
+	// Category is the optional browse/grouping lens ("media", "commerce", …).
+	// It is a disambiguation hint, not a subtyping edge.
+	Category string
+	// Parent is the optional canonical supertype (schema.org subClassOf), e.g.
+	// Movie -> CreativeWork. A hint for alignment, not a compiled edge.
+	Parent     string
+	Tags       []string
+	Properties map[string]any
+	Required   []string
+	// Icon and Color are the taxonomy type's declared UI accent (e.g.
+	// "tabler--movie", "#DB2777"). A discovered type that adopts this canonical
+	// type inherits them, so curated taxonomy styling reaches the installed
+	// schema instead of a name-guessed icon.
+	Icon  string
+	Color string
 }
 
 // SetTypeSimilarity injects the semantic type classifier. Nil-safe: without it,
@@ -49,6 +61,28 @@ func (s *Service) SetTypeSimilarity(t TypeSimilarity) {
 // the classifier matches only the project's installed types.
 func (s *Service) SetTaxonomy(t []ExistingType) {
 	s.taxonomy = t
+}
+
+// taxonomyUIStyle returns the declared UI icon and color for a canonical
+// taxonomy type. Empty strings mean the taxonomy did not declare that facet.
+func (s *Service) taxonomyUIStyle(name string) (icon, color string, ok bool) {
+	for _, t := range s.taxonomy {
+		if t.Name == name {
+			return t.Icon, t.Color, true
+		}
+	}
+	return "", "", false
+}
+
+// taxonomyCategory returns the browse/grouping category declared by a canonical
+// taxonomy type, if any.
+func (s *Service) taxonomyCategory(name string) (string, bool) {
+	for _, t := range s.taxonomy {
+		if t.Name == name {
+			return t.Category, true
+		}
+	}
+	return "", false
 }
 
 // mergeSemanticallySimilarTypes renames discovered types onto existing project
@@ -285,6 +319,12 @@ Discovered types:
 	b.WriteString("\nExisting types:\n")
 	for _, e := range es {
 		fmt.Fprintf(&b, "- %s: %s", e.Name, e.Description)
+		if e.Category != "" {
+			fmt.Fprintf(&b, " [category: %s]", e.Category)
+		}
+		if e.Parent != "" {
+			fmt.Fprintf(&b, " [parent: %s]", e.Parent)
+		}
 		if len(e.Tags) > 0 {
 			fmt.Fprintf(&b, " [tags: %s]", strings.Join(e.Tags, ", "))
 		}
