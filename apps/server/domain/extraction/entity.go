@@ -159,6 +159,11 @@ type ObjectExtractionJob struct {
 	RunID     *string   `bun:"run_id,type:uuid"`
 	CreatedAt time.Time `bun:"created_at,notnull,default:now()"`
 	UpdatedAt time.Time `bun:"updated_at,notnull,default:now()"`
+	// SchemaGeneration is the project's schema_generation at job creation
+	// (column schema_generation). Backfill compares it against the project's
+	// current generation to find documents extracted before a schema change.
+	// Added in migration 00321.
+	SchemaGeneration *int `bun:"schema_generation" json:"schema_generation,omitempty"`
 }
 
 // ------------------------------------------------------------------

@@ -9,9 +9,9 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// newSearchServer wires the Search page onto a bare echo router backed by a
-// fake memory client, mirroring the objects-page tests: s.page fetches the shell
-// data (agents/projects/orgs) from the same fake and renders the full page.
+// newSearchServer wires the merged search page onto a bare echo router backed by
+// a fake memory client, mirroring the objects-page tests: s.page fetches the
+// shell data (agents/projects/orgs) from the same fake and renders the full page.
 func newSearchServer(f *fakeMemory) *echo.Echo {
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
@@ -30,27 +30,31 @@ func searchPageBody(t *testing.T, f *fakeMemory, target string) string {
 }
 
 // TestUISearchEmptyQuerySkipsBackend pins the pre-query state: an empty or
-// whitespace-only query renders the explainer and never calls the search API.
+// whitespace-only query renders the browse list and never calls a search
+// endpoint. Browse is the rest state of the page, not a prompt to type.
 func TestUISearchEmptyQuerySkipsBackend(t *testing.T) {
 	for _, target := range []string{"/search", "/search?q=", "/search?q=%20%20"} {
 		f := &fakeMemory{}
 		body := searchPageBody(t, f, target)
-		if !strings.Contains(body, `data-testid="search-intro"`) {
-			t.Errorf("%s: body missing the intro state", target)
+		if !strings.Contains(body, "No objects yet") {
+			t.Errorf("%s: body missing the browse empty state", target)
 		}
 		if strings.Contains(body, `data-testid="search-results-summary"`) {
-			t.Errorf("%s: empty query rendered results", target)
+			t.Errorf("%s: empty query rendered a query summary", target)
 		}
 		if f.lastSearchUnified.Query != "" {
-			t.Errorf("%s: empty query dispatched a search (%+v)", target, f.lastSearchUnified)
+			t.Errorf("%s: empty query dispatched a text search (%+v)", target, f.lastSearchUnified)
+		}
+		if f.lastUnifiedQuery != "" {
+			t.Errorf("%s: empty query dispatched an object search (%q)", target, f.lastUnifiedQuery)
 		}
 	}
 }
 
-// TestUISearchDocumentsFilterRendersChunkHits covers the core case: a
-// documents-only search asks the endpoint for text results, resolves the
-// document name, and renders the passage with its match mode and score.
-func TestUISearchDocumentsFilterRendersChunkHits(t *testing.T) {
+// TestUISearchDocumentsScopeRendersChunkHits covers the documents-only scope: it
+// asks the text leg for text results, resolves the document name, and renders
+// the passage with its match mode and score — and does not run the object leg.
+func TestUISearchDocumentsScopeRendersChunkHits(t *testing.T) {
 	f := &fakeMemory{
 		documents: []Document{{ID: "doc-1", Filename: "quarterly-report.md"}},
 		searchUnifiedResp: &UnifiedSearchResponse{
@@ -62,7 +66,7 @@ func TestUISearchDocumentsFilterRendersChunkHits(t *testing.T) {
 		},
 	}
 
-	body := searchPageBody(t, f, "/search?q=revenue&type=documents")
+	body := searchPageBody(t, f, "/search?q=revenue&in=documents")
 
 	if f.lastSearchUnified.Query != "revenue" {
 		t.Errorf("query = %q, want revenue", f.lastSearchUnified.Query)
@@ -72,6 +76,9 @@ func TestUISearchDocumentsFilterRendersChunkHits(t *testing.T) {
 	}
 	if f.lastSearchUnified.Limit != defaultSearchLimit {
 		t.Errorf("limit = %d, want %d", f.lastSearchUnified.Limit, defaultSearchLimit)
+	}
+	if f.lastUnifiedQuery != "" {
+		t.Errorf("documents scope ran the object leg (%q)", f.lastUnifiedQuery)
 	}
 	for _, want := range []string{
 		"quarterly-report.md",
@@ -84,78 +91,81 @@ func TestUISearchDocumentsFilterRendersChunkHits(t *testing.T) {
 			t.Errorf("body missing %q", want)
 		}
 	}
-	// The filter excludes objects, so that section must not render at all — not
-	// even as an empty state.
-	if strings.Contains(body, `data-testid="search-hit-object"`) {
-		t.Error("documents filter rendered an object hit")
+	if strings.Contains(body, `data-testid="object-card"`) {
+		t.Error("documents scope rendered an object card")
 	}
-	if strings.Contains(body, `data-testid="search-hit-document"`) == false {
-		t.Error("documents filter did not render a document hit")
+	if !strings.Contains(body, `data-testid="search-hit-document"`) {
+		t.Error("documents scope did not render a document hit")
 	}
 }
 
-// TestUISearchDefaultFilterIsEverything pins the default: no type param searches
-// both result types and renders both sections.
-func TestUISearchDefaultFilterIsEverything(t *testing.T) {
+// TestUISearchDefaultScopeIsEverything pins the default: no `in` runs both legs
+// and renders the document section above the object cards. The object card links
+// through the id the object endpoint resolved (canonical-first).
+func TestUISearchDefaultScopeIsEverything(t *testing.T) {
 	f := &fakeMemory{
 		documents: []Document{{ID: "doc-1", Filename: "notes.md"}},
 		searchUnifiedResp: &UnifiedSearchResponse{
 			Results: []UnifiedSearchHit{
 				{Type: "text", ID: "chunk-1", DocumentID: "doc-1", Snippet: "alpha", Mode: "lexical", Score: 0.9},
-				{Type: "graph", ID: "obj-1", CanonicalID: "canon-1", ObjectType: "Note", Key: "alpha-note", Score: 0.5},
 				{Type: "relationship", ID: "rel-1", Score: 0.1},
 			},
+		},
+		unifiedResults: []ObjectSearchResult{
+			{Object: GraphObject{ID: "canon-1", Type: "Note", Key: "alpha-note"}, Score: 0.5},
 		},
 	}
 
 	body := searchPageBody(t, f, "/search?q=alpha")
 
-	if f.lastSearchUnified.ResultTypes != "both" {
-		t.Errorf("resultTypes = %q, want both", f.lastSearchUnified.ResultTypes)
+	if f.lastSearchUnified.ResultTypes != "text" {
+		t.Errorf("text leg resultTypes = %q, want text", f.lastSearchUnified.ResultTypes)
+	}
+	if f.lastUnifiedQuery != "alpha" {
+		t.Errorf("object leg query = %q, want alpha", f.lastUnifiedQuery)
 	}
 	if !strings.Contains(body, `data-testid="search-hit-document"`) {
-		t.Error("default filter did not render the document hit")
+		t.Error("default scope did not render the document hit")
 	}
-	if !strings.Contains(body, `data-testid="search-hit-object"`) {
-		t.Error("default filter did not render the object hit")
+	if !strings.Contains(body, `data-testid="object-card"`) {
+		t.Error("default scope did not render the object card")
 	}
-	// Objects link through their canonical id when the endpoint supplies one.
-	if !strings.Contains(body, "/objects/canon-1") {
-		t.Error("object hit did not link through its canonical id")
-	}
-	if strings.Contains(body, "/objects/obj-1") {
-		t.Error("object hit linked through the version id instead of the canonical id")
+	if !strings.Contains(body, "/objects/canon-1/wiki") {
+		t.Errorf("object card did not link through the resolved id:\n%s", body)
 	}
 }
 
-// TestUISearchObjectsFilter pins the objects-only filter: graph results only,
-// and no documents section.
-func TestUISearchObjectsFilter(t *testing.T) {
+// TestUISearchObjectsScope pins the objects-only scope: the object leg runs, the
+// text leg does not, and no documents prompt appears.
+func TestUISearchObjectsScope(t *testing.T) {
 	f := &fakeMemory{
-		searchUnifiedResp: &UnifiedSearchResponse{
-			Results: []UnifiedSearchHit{
-				{Type: "graph", ID: "obj-1", ObjectType: "Person", Key: "sam-lee", Score: 0.6},
-				{Type: "text", ID: "chunk-1", DocumentID: "doc-1", Snippet: "ignored", Score: 0.9},
-			},
+		unifiedResults: []ObjectSearchResult{
+			{Object: GraphObject{ID: "obj-1", Type: "Person", Key: "sam-lee"}, Score: 0.6},
 		},
 	}
 
-	body := searchPageBody(t, f, "/search?q=sam&type=objects")
+	body := searchPageBody(t, f, "/search?q=sam&in=objects")
 
-	if f.lastSearchUnified.ResultTypes != "graph" {
-		t.Errorf("resultTypes = %q, want graph", f.lastSearchUnified.ResultTypes)
+	if f.lastSearchUnified.Query != "" {
+		t.Errorf("objects scope ran the text leg (%q)", f.lastSearchUnified.Query)
+	}
+	if f.lastUnifiedQuery != "sam" {
+		t.Errorf("object leg query = %q, want sam", f.lastUnifiedQuery)
 	}
 	if !strings.Contains(body, "sam-lee") {
-		t.Error("objects filter did not render the object hit")
+		t.Error("objects scope did not render the object card")
 	}
 	if strings.Contains(body, `data-testid="search-hit-document"`) {
-		t.Error("objects filter rendered a document hit")
+		t.Error("objects scope rendered a document hit")
+	}
+	if strings.Contains(body, `data-testid="search-documents-prompt"`) {
+		t.Error("objects scope rendered the documents prompt")
 	}
 }
 
 // TestUISearchLimitNormalization pins the limit contract: offered values pass
-// through, anything else falls back to the default (label, submitted value and
-// dispatched limit stay in agreement).
+// through both legs, anything else falls back to the default (label, submitted
+// value and dispatched limit stay in agreement).
 func TestUISearchLimitNormalization(t *testing.T) {
 	cases := map[string]int{
 		"/search?q=a&limit=10":  searchLimitMin,
@@ -169,47 +179,50 @@ func TestUISearchLimitNormalization(t *testing.T) {
 		f := &fakeMemory{}
 		searchPageBody(t, f, target)
 		if f.lastSearchUnified.Limit != want {
-			t.Errorf("%s: limit = %d, want %d", target, f.lastSearchUnified.Limit, want)
+			t.Errorf("%s: text-leg limit = %d, want %d", target, f.lastSearchUnified.Limit, want)
+		}
+		if f.lastUnifiedLimit != want {
+			t.Errorf("%s: object-leg limit = %d, want %d", target, f.lastUnifiedLimit, want)
 		}
 	}
 }
 
-// TestUISearchUnknownTypeNormalizes pins the filter contract: an unsupported
-// type searches everything rather than narrowing to nothing.
-func TestUISearchUnknownTypeNormalizes(t *testing.T) {
+// TestUISearchUnknownScopeNormalizes pins the scope contract: an unsupported
+// `in` searches everything rather than narrowing to nothing, and the control the
+// reader sees matches the legs that ran.
+func TestUISearchUnknownScopeNormalizes(t *testing.T) {
 	f := &fakeMemory{}
-	body := searchPageBody(t, f, "/search?q=a&type=bogus")
+	body := searchPageBody(t, f, "/search?q=a&in=bogus")
 
-	if f.lastSearchUnified.ResultTypes != "both" {
-		t.Errorf("resultTypes = %q, want both", f.lastSearchUnified.ResultTypes)
+	if f.lastSearchUnified.Query != "a" {
+		t.Errorf("unknown scope skipped the text leg (%+v)", f.lastSearchUnified)
 	}
-	// The select must re-render with "all" selected, so the control the reader
-	// sees matches the search that ran.
+	if f.lastUnifiedQuery != "a" {
+		t.Errorf("unknown scope skipped the object leg (%q)", f.lastUnifiedQuery)
+	}
 	if !strings.Contains(body, `value="all" selected`) {
-		t.Error("unknown type did not render the normalized 'all' selection")
+		t.Error("unknown scope did not render the normalized 'all' selection")
 	}
 }
 
-// TestUISearchObjectHitOpensWiki pins the link target of an object hit: search
+// TestUISearchObjectHitOpensWiki pins the link target of an object card: search
 // is a list surface, so a hit opens the wiki rather than the editable object
 // page. The href carries no variant, so the reader's persisted wiki variant
 // decides how it opens.
 func TestUISearchObjectHitOpensWiki(t *testing.T) {
 	f := &fakeMemory{
-		searchUnifiedResp: &UnifiedSearchResponse{
-			Results: []UnifiedSearchHit{
-				{Type: "graph", ID: "obj-1", ObjectType: "Person", Key: "sam-lee", Score: 0.6},
-			},
+		unifiedResults: []ObjectSearchResult{
+			{Object: GraphObject{ID: "obj-1", Type: "Person", Key: "sam-lee"}, Score: 0.6},
 		},
 	}
 
-	body := searchPageBody(t, f, "/search?q=sam&type=objects")
+	body := searchPageBody(t, f, "/search?q=sam&in=objects")
 
 	if !strings.Contains(body, `href="/objects/obj-1/wiki"`) {
-		t.Errorf("object hit must open its wiki page:\n%s", body)
+		t.Errorf("object card must open its wiki page:\n%s", body)
 	}
 	if strings.Contains(body, `href="/objects/obj-1"`) {
-		t.Error("object hit must not land on the editable object page")
+		t.Error("object card must not land on the editable object page")
 	}
 	if strings.Contains(body, "/objects/obj-1/wiki?view=") {
 		t.Error("the wiki link must not pin a variant; the reader's preference decides")
@@ -227,20 +240,66 @@ func TestUISearchBackendErrorRendersPageError(t *testing.T) {
 	}
 }
 
-// TestUISearchZeroHitsRendersOnlyTheQueryEmptyState pins the empty-state shape:
-// a query with no hits anywhere gets one page-level empty state, not that plus
-// two section empty states stacked underneath it.
-func TestUISearchZeroHitsRendersOnlyTheQueryEmptyState(t *testing.T) {
+// TestUISearchZeroHitsRendersOneEmptyState pins the empty-state shape: a query
+// with no hits anywhere gets one empty state — the object grid's — and neither a
+// document empty card nor the documents prompt beside it.
+func TestUISearchZeroHitsRendersOneEmptyState(t *testing.T) {
 	f := &fakeMemory{}
 	body := searchPageBody(t, f, "/search?q=nothinghere")
 
 	if !strings.Contains(body, "No matches for") {
 		t.Error("zero-hit page did not render the query empty state")
 	}
-	for _, unwanted := range []string{"No document text matched", "No objects matched"} {
-		if strings.Contains(body, unwanted) {
-			t.Errorf("zero-hit page also rendered the section empty state %q", unwanted)
-		}
+	if strings.Contains(body, "No document text matched") {
+		t.Error("zero-hit page also rendered the document section empty state")
+	}
+	if strings.Contains(body, `data-testid="search-documents-prompt"`) {
+		t.Error("zero-hit page rendered the documents prompt")
+	}
+}
+
+// TestUISearchDocumentsPromptWhenOnlyObjectsMatch pins the quiet text-leg miss:
+// document text matched nothing but objects did, so the page says so in one line
+// with the escape to a documents-only search, instead of a full empty card.
+func TestUISearchDocumentsPromptWhenOnlyObjectsMatch(t *testing.T) {
+	f := &fakeMemory{
+		unifiedResults: []ObjectSearchResult{
+			{Object: GraphObject{ID: "obj-1", Type: "Note", Key: "a-note"}, Score: 0.6},
+		},
+	}
+	body := searchPageBody(t, f, "/search?q=a")
+
+	if !strings.Contains(body, `data-testid="search-documents-prompt"`) {
+		t.Error("missing the documents prompt when only objects matched")
+	}
+	if !strings.Contains(body, "in=documents") {
+		t.Error("the documents prompt must link to a documents-only search")
+	}
+	if strings.Contains(body, "No chunk of an ingested document") {
+		t.Error("the prompt must not render the full document empty card")
+	}
+}
+
+// TestUISearchDocumentsHaveHitsObjectsDoNot pins the opposite shape: documents
+// matched and objects did not, so the document rows stand alone with no object
+// empty state implying the whole search failed.
+func TestUISearchDocumentsHaveHitsObjectsDoNot(t *testing.T) {
+	f := &fakeMemory{
+		documents: []Document{{ID: "doc-1", Filename: "notes.md"}},
+		searchUnifiedResp: &UnifiedSearchResponse{
+			Results: []UnifiedSearchHit{{Type: "text", ID: "c1", DocumentID: "doc-1", Snippet: "alpha", Score: 0.8}},
+		},
+	}
+	body := searchPageBody(t, f, "/search?q=alpha")
+
+	if !strings.Contains(body, `data-testid="search-hit-document"`) {
+		t.Error("missing the document hit")
+	}
+	if strings.Contains(body, "No matches for") {
+		t.Error("a document-only result must not render the whole-query empty state")
+	}
+	if strings.Contains(body, `data-testid="objects-cards"`) {
+		t.Error("an empty object leg must not render the object grid")
 	}
 }
 
@@ -275,7 +334,7 @@ func TestUISearchZeroHitsWithEmbeddingModelHasNoHint(t *testing.T) {
 // text, so an objects-only search never pays for it.
 func TestUISearchObjectsOnlySkipsModelLookup(t *testing.T) {
 	f := &fakeMemory{}
-	searchPageBody(t, f, "/search?q=alpha&type=objects")
+	searchPageBody(t, f, "/search?q=alpha&in=objects")
 
 	if f.effectiveModelCalls != 0 {
 		t.Errorf("effective-model lookups = %d, want 0 for an objects-only search", f.effectiveModelCalls)
@@ -287,8 +346,8 @@ func TestUISearchObjectsOnlySkipsModelLookup(t *testing.T) {
 // fetch the model config either.
 func TestUISearchObjectHitsSkipModelLookup(t *testing.T) {
 	f := &fakeMemory{
-		searchUnifiedResp: &UnifiedSearchResponse{
-			Results: []UnifiedSearchHit{{Type: "graph", ID: "obj-1", ObjectType: "Note", Key: "a-note", Score: 0.6}},
+		unifiedResults: []ObjectSearchResult{
+			{Object: GraphObject{ID: "obj-1", Type: "Note", Key: "a-note"}, Score: 0.6},
 		},
 	}
 	searchPageBody(t, f, "/search?q=a")
@@ -314,14 +373,13 @@ func TestUISearchDocumentNameFallback(t *testing.T) {
 	}
 }
 
-// TestSplitSearchHits covers the union normalization directly: text and graph
-// items are kept, relationship items are dropped, and a graph hit with no
-// canonical id falls back to its object id.
-func TestSplitSearchHits(t *testing.T) {
-	docs, objs := splitSearchHits([]UnifiedSearchHit{
+// TestSplitDocumentHits covers the text-leg normalization directly: text items
+// are kept, graph and relationship items are dropped (the object leg renders
+// those), and a snippet's whitespace is collapsed.
+func TestSplitDocumentHits(t *testing.T) {
+	docs := splitDocumentHits([]UnifiedSearchHit{
 		{Type: "text", ID: "c1", DocumentID: "d1", Snippet: "a\n\n  b  ", Mode: "lexical", Score: 0.4},
 		{Type: "graph", ID: "obj-1", ObjectID: "obj-1", ObjectType: "Note", Key: "k", Score: 0.3},
-		{Type: "graph", ID: "obj-2", ObjectType: "Note", Key: "", Score: 0.2},
 		{Type: "relationship", ID: "rel-1", Score: 0.1},
 	})
 
@@ -330,15 +388,6 @@ func TestSplitSearchHits(t *testing.T) {
 	}
 	if docs[0].Snippet != "a b" {
 		t.Errorf("snippet = %q, want whitespace collapsed", docs[0].Snippet)
-	}
-	if len(objs) != 2 {
-		t.Fatalf("objects = %d, want 2 (relationship dropped)", len(objs))
-	}
-	if objs[0].ID != "obj-1" {
-		t.Errorf("object id = %q, want the object id when no canonical id is set", objs[0].ID)
-	}
-	if searchObjectLabel(objs[1]) != "Object obj-2" {
-		t.Errorf("keyless object label = %q, want the id fallback", searchObjectLabel(objs[1]))
 	}
 }
 

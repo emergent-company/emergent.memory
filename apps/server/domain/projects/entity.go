@@ -1,6 +1,7 @@
 package projects
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -24,48 +25,6 @@ const (
 	DefaultBudgetAlertThreshold = 0.80
 )
 
-// Auto-merge policies accepted for kb.projects.auto_merge_extraction_policy.
-//
-// "partial" is the safe default: clean additions and fast-forwards land, while
-// conflicting or near-duplicate objects stay on the staging branch for review.
-// "enrich" lets an unattended ingest absorb near-duplicates into the existing
-// object instead of parking them, which is what a project ingesting without a
-// reviewer wants (#1074). Other branch-merge presets remain available to a
-// caller of the merge endpoint itself; they are not project settings.
-const (
-	AutoMergePolicyPartial = "partial"
-	AutoMergePolicyEnrich  = "enrich"
-)
-
-// ValidAutoMergePolicies lists the accepted project auto-merge policies in a
-// stable order. Error messages use it so the advertised values and the
-// validated ones cannot drift apart.
-func ValidAutoMergePolicies() []string {
-	return []string{AutoMergePolicyPartial, AutoMergePolicyEnrich}
-}
-
-// IsValidAutoMergePolicy reports whether policy is an accepted project
-// auto-merge policy.
-func IsValidAutoMergePolicy(policy string) bool {
-	switch policy {
-	case AutoMergePolicyPartial, AutoMergePolicyEnrich:
-		return true
-	default:
-		return false
-	}
-}
-
-// NormalizeAutoMergePolicy maps an unset or unrecognised persisted value to the
-// safe default. It is used on the read side (the extraction worker), so a row
-// written before the column existed, or edited outside the API, can never make
-// auto-merge silently destructive.
-func NormalizeAutoMergePolicy(policy string) string {
-	if IsValidAutoMergePolicy(policy) {
-		return policy
-	}
-	return AutoMergePolicyPartial
-}
-
 // Project represents a project in the kb.projects table
 type Project struct {
 	bun.BaseModel `bun:"table:kb.projects,alias:p"`
@@ -85,14 +44,8 @@ type Project struct {
 	ExtractionConfig map[string]any `bun:"extraction_config,type:jsonb" json:"extraction_config,omitempty"`
 
 	// AutoMergeExtractionBranches enables auto-merging extraction staging branches
-	// into the main graph once extraction completes (added in migration 00129).
+	// into the main graph once extraction completes (partial merge; added in migration 00129).
 	AutoMergeExtractionBranches bool `bun:"auto_merge_extraction_branches,notnull,default:false" json:"auto_merge_extraction_branches"`
-
-	// AutoMergeExtractionPolicy selects the merge policy auto-merge uses (added
-	// in migration 00318). "partial" (the default) leaves ambiguous objects on
-	// the branch for review; "enrich" absorbs near-duplicates into the existing
-	// object so unattended ingest does not silently stall (#1074).
-	AutoMergeExtractionPolicy string `bun:"auto_merge_extraction_policy,notnull,default:'partial'" json:"auto_merge_extraction_policy"`
 
 	// AutoDiscoveryEnabled starts a schema-discovery job after a source sync
 	// creates documents (added in migration 00260). It defaults to true so a
@@ -106,6 +59,20 @@ type Project struct {
 	// documents. Defaults to false: synced items still chunk and embed, but
 	// extraction is opt-in so a sync never spends tokens unasked.
 	AutoExtractSourceSyncs bool `bun:"auto_extract_source_syncs,notnull,default:false" json:"auto_extract_source_syncs"`
+
+	// PipelineMode is the human-facing selector for the knowledge-pipeline
+	// policy (off | suggest | auto). The resolved knobs live in PipelinePolicy.
+	// Added in migration 00319.
+	PipelineMode string `bun:"pipeline_mode,notnull,default:'suggest'" json:"pipeline_mode"`
+
+	// PipelinePolicy is the fully-resolved knowledge-pipeline policy JSON
+	// (domain/pipeline.Policy). Added in migration 00319.
+	PipelinePolicy json.RawMessage `bun:"pipeline_policy,type:jsonb,notnull,default:'{}'" json:"pipeline_policy,omitempty"`
+
+	// SchemaGeneration is a monotonic counter bumped whenever the project's
+	// effective installed schema set changes; it fingerprints extraction jobs
+	// for incremental backfill. Added in migration 00319.
+	SchemaGeneration int `bun:"schema_generation,notnull,default:0" json:"schema_generation"`
 
 	// SkillCapture is the project-level automatic skill-capture policy (added in
 	// migration 00270_add_agent_skill_capture.sql). The zero value means "off",
@@ -238,9 +205,6 @@ type ProjectDTO struct {
 	Stats                      *ProjectStats                    `json:"stats,omitempty"`
 	// AutoMergeExtractionBranches is emitted only when true.
 	AutoMergeExtractionBranches *bool `json:"auto_merge_extraction_branches,omitempty"`
-	// AutoMergeExtractionPolicy is always emitted: its column defaults to
-	// "partial", so an omitted field would read as an empty/unknown policy.
-	AutoMergeExtractionPolicy string `json:"auto_merge_extraction_policy"`
 	// AutoDiscoveryEnabled is always emitted (unlike the other booleans): the
 	// column defaults to true, so an absent field would read as "off" in a UI
 	// that renders a toggle and silently disable discovery for every project.
@@ -248,6 +212,12 @@ type ProjectDTO struct {
 	// AutoExtractSourceSyncs is emitted only when true: the column defaults to
 	// false, so an absent field correctly reads as "off".
 	AutoExtractSourceSyncs *bool `json:"auto_extract_source_syncs,omitempty"`
+	// PipelineMode is the stored preset selector, always emitted.
+	PipelineMode string `json:"pipeline_mode"`
+	// PipelinePolicy is the stored resolved policy, emitted verbatim.
+	PipelinePolicy json.RawMessage `json:"pipeline_policy,omitempty"`
+	// SchemaGeneration is the schema fingerprint generation, always emitted.
+	SchemaGeneration int `json:"schema_generation"`
 	// MainBranchID is the UUID of the project's root branch (parent_branch_id IS NULL).
 	// Callers can use this as targetBranchID when merging without knowing the branch UUID,
 	// or pass the magic string "main" to the merge endpoint directly.
@@ -295,9 +265,6 @@ type CreateProjectRequest struct {
 	// explicit (nil keeps the opt-in default of false) so creating a project
 	// never silently changes what default graph reads return (#496).
 	AutoMergeExtractionBranches *bool `json:"auto_merge_extraction_branches,omitempty"`
-	// AutoMergeExtractionPolicy overrides the "partial" default when present.
-	// Accepted values are listed by ValidAutoMergePolicies.
-	AutoMergeExtractionPolicy *string `json:"auto_merge_extraction_policy,omitempty"`
 }
 
 // TransferProjectRequest is the request body for transferring a project to another org.
@@ -339,9 +306,14 @@ type UpdateProjectRequest struct {
 	BudgetWeeklyUSD             *float64       `json:"budget_weekly_usd,omitempty"`
 	BudgetWeeklyAlertThreshold  *float64       `json:"budget_weekly_alert_threshold,omitempty"`
 	AutoMergeExtractionBranches *bool          `json:"auto_merge_extraction_branches,omitempty"`
-	AutoMergeExtractionPolicy   *string        `json:"auto_merge_extraction_policy,omitempty"`
 	AutoDiscoveryEnabled        *bool          `json:"auto_discovery_enabled,omitempty"`
 	AutoExtractSourceSyncs      *bool          `json:"auto_extract_source_syncs,omitempty"`
+	// PipelineMode switches the knowledge-pipeline preset. When set without a
+	// policy, the stored policy resets to that mode's defaults.
+	PipelineMode *string `json:"pipeline_mode,omitempty"`
+	// PipelinePolicy replaces the fully-resolved policy JSON. Validated by
+	// domain/pipeline.Validate before it is stored.
+	PipelinePolicy *json.RawMessage `json:"pipeline_policy,omitempty"`
 	// SkillCapture replaces the project capture policy when present. An object
 	// with mode "off" disables capture; omitting the field leaves it untouched.
 	SkillCapture *skills.ProjectSkillCaptureConfig `json:"skill_capture,omitempty"`
@@ -366,10 +338,9 @@ func (p *Project) ToDTO() ProjectDTO {
 		BudgetAlertThreshold: &p.BudgetAlertThreshold,
 		Stats:                p.Stats,
 		SkillCapture:         p.SkillCapture,
-		// The column is NOT NULL with a "partial" default, but a zero-value
-		// struct (or a row scanned before the migration ran) must still read as
-		// the safe default rather than as an unknown policy.
-		AutoMergeExtractionPolicy: NormalizeAutoMergePolicy(p.AutoMergeExtractionPolicy),
+		PipelineMode:         p.PipelineMode,
+		PipelinePolicy:       p.PipelinePolicy,
+		SchemaGeneration:     p.SchemaGeneration,
 	}
 
 	if p.BudgetWeeklyUSD != nil {

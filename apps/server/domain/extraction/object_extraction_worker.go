@@ -22,6 +22,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/notifications"
+	"github.com/emergent-company/emergent.memory/domain/pipeline"
 	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -690,6 +691,15 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 	// provenance stamp is consistent across all batches of this job.
 	documentVersion := w.resolveDocumentVersion(ctx, job)
 
+	// Identity resolution: pass the project's existing entities (main graph, of
+	// the installed schema's types) so the model reuses them across documents
+	// instead of minting name variants the (project,type,name) dedup cannot
+	// merge.
+	var existingEntities []agents.ExistingEntityContext
+	if pid, err := uuid.Parse(job.ProjectID); err == nil {
+		existingEntities = w.existingEntitiesForTypes(ctx, pid, sortedObjectSchemaNames(schemas.ObjectSchemas))
+	}
+
 	var totalResult *ObjectExtractionResults
 	if selection != nil {
 		// A project-selected agent runs the job as a real agent run, writing into
@@ -726,12 +736,10 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 			traceLogger = newRunTraceLogger(w.runRecorder, runID, traceLogger, transcriptHeader, w.log)
 		}
 
-		// Identity resolution input: the top-k existing graph objects most
-		// similar to this document. Without it every document is extracted as
-		// if the graph were empty, so a person already in the graph is minted
-		// again under whatever spelling the transcript used (#1074). Best-effort:
-		// an unconfigured embedding service degrades to an empty list.
-		existingEntities := w.loadExistingEntities(ctx, job, schemas, batches[0])
+		// Identity-resolution index: the graph-native context filled above is
+		// keyed by canonical ID so persistence stores a re-mention under the
+		// existing object's identity instead of relying on cosine similarity
+		// alone (#1074).
 		existingByIdentityID := indexExistingEntities(existingEntities)
 
 		// Create extraction pipeline (shared across all batches).
@@ -780,7 +788,7 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 				return nil, &extractionBatchError{Batch: i + 1, Total: len(batches), Err: err}
 			}
 
-			result, err := w.persistResults(ctx, job, pipelineOutput, stagingBranchID, documentVersion, existingByIdentityID)
+			result, err := w.persistResults(ctx, job, pipelineOutput, stagingBranchID, documentVersion, existingByIdentityID, schemas)
 			if err != nil {
 				w.deleteStagingBranch(ctx, job, stagingBranchID)
 				return nil, fmt.Errorf("persist results (batch %d/%d): %w", i+1, len(batches), err)
@@ -801,10 +809,8 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 	// Auto-merge the staging branch into main when the project opts in.
 	// Best-effort: failures are logged and the branch is left for manual review.
 	mergedToMain := stagingBranchID == nil
-	if stagingBranchID != nil {
-		if enabled, policy := w.autoMergeConfig(ctx, job.ProjectID); enabled {
-			mergedToMain = w.autoMergeExtractionBranch(ctx, job, *stagingBranchID, policy)
-		}
+	if stagingBranchID != nil && w.autoMergeEnabled(ctx, job.ProjectID) {
+		mergedToMain = w.autoMergeExtractionBranch(ctx, job, *stagingBranchID)
 	}
 
 	// A re-extraction replaces what the same document previously produced. Once
@@ -835,44 +841,181 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 // total. It must add ObjectsMerged: persistResults upserts by (project, type,
 // name), so a later batch can merge what an earlier one created, and the
 // zero-object warning judges "produced" on created+merged (#233).
+// existingEntitiesMax caps how many existing entities are passed to the model
+// as identity-resolution context, so a large graph cannot bloat the prompt.
+const existingEntitiesMax = 200
+
+// sortedObjectSchemaNames returns the schema's object type names in a stable
+// order, so the same schema produces the same prompt on every run.
+func sortedObjectSchemaNames(schemas map[string]agents.ObjectSchema) []string {
+	names := make([]string, 0, len(schemas))
+	for name := range schemas {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// existingEntitiesForTypes fetches the project's existing objects on the main
+// graph (for the given types) as identity-resolution context. The model sees
+// the canonical id, name, type and description of each, so a later document
+// reuses "Monica Geller" instead of minting "Monica" as a separate entity.
+// Best-effort: a failure returns nil and extraction proceeds without the hint.
+func (w *ObjectExtractionWorker) existingEntitiesForTypes(ctx context.Context, projectID uuid.UUID, types []string) []agents.ExistingEntityContext {
+	if w.graphService == nil || len(types) == 0 {
+		return nil
+	}
+	resp, err := w.graphService.List(ctx, graph.ListParams{
+		ProjectID: projectID,
+		Types:     types,
+		Limit:     existingEntitiesMax,
+		SkipTotal: true,
+	})
+	if err != nil {
+		w.log.Warn("failed to load existing entities for identity resolution", logger.Error(err))
+		return nil
+	}
+	out := make([]agents.ExistingEntityContext, 0, len(resp.Items))
+	for _, obj := range resp.Items {
+		name := ""
+		if obj.Name != nil {
+			name = *obj.Name
+		} else if obj.Key != nil {
+			name = *obj.Key
+		}
+		if name == "" {
+			continue
+		}
+		// Key is the object's stored dedup identity. Persistence uses it so a
+		// re-mention lands on the same identity even when the model repeats a
+		// differently-spelled variant (#1074).
+		key := ""
+		if obj.Key != nil {
+			key = *obj.Key
+		}
+		desc := ""
+		if d, ok := obj.Properties["description"].(string); ok {
+			desc = d
+		}
+		out = append(out, agents.ExistingEntityContext{
+			ID:          obj.CanonicalID.String(),
+			Name:        name,
+			TypeName:    obj.Type,
+			Key:         key,
+			Description: desc,
+		})
+	}
+	return out
+}
+
 func accumulateBatchResults(total, batch *ObjectExtractionResults) {
 	total.ObjectsCreated += batch.ObjectsCreated
 	total.ObjectsMerged += batch.ObjectsMerged
 	total.RelationshipsCreated += batch.RelationshipsCreated
 	total.CreatedObjectIDs = append(total.CreatedObjectIDs, batch.CreatedObjectIDs...)
+	total.DroppedObjects += batch.DroppedObjects
+	total.DroppedRelationships += batch.DroppedRelationships
+	if len(batch.DroppedObjectTypes) > 0 {
+		seen := map[string]bool{}
+		for _, t := range total.DroppedObjectTypes {
+			seen[t] = true
+		}
+		for _, t := range batch.DroppedObjectTypes {
+			if !seen[t] {
+				seen[t] = true
+				total.DroppedObjectTypes = append(total.DroppedObjectTypes, t)
+			}
+		}
+	}
 }
 
-// autoMergeConfig reports whether the project has auto-merge enabled and which
-// merge policy it chose. A missing project or unreadable setting disables the
-// merge rather than guessing; an unset or unrecognised policy normalizes to the
-// non-destructive "partial" default.
-func (w *ObjectExtractionWorker) autoMergeConfig(ctx context.Context, projectID string) (bool, string) {
+// autoMergeEnabled reports whether the project has auto-merge enabled: the
+// legacy per-project toggle, or a knowledge-pipeline running in auto mode (which
+// implies auto-merge under its configured merge policy).
+func (w *ObjectExtractionWorker) autoMergeEnabled(ctx context.Context, projectID string) bool {
 	if w.projectsRepo == nil {
-		return false, projects.AutoMergePolicyPartial
+		return false
 	}
 	project, err := w.projectsRepo.GetByID(ctx, projectID, false)
 	if err != nil {
 		w.log.Warn("could not read project auto-merge setting", logger.Error(err))
-		return false, projects.AutoMergePolicyPartial
+		return false
 	}
-	return autoMergeConfigForProject(project)
+	if project == nil {
+		return false
+	}
+	if project.AutoMergeExtractionBranches {
+		return true
+	}
+	pol, err := pipeline.Resolve(project.PipelineMode, project.PipelinePolicy)
+	if err != nil {
+		return false
+	}
+	return pol.Mode == pipeline.ModeAuto
 }
 
-func autoMergeConfigForProject(project *projects.Project) (bool, string) {
-	if project == nil || !project.AutoMergeExtractionBranches {
-		return false, projects.AutoMergePolicyPartial
+// autoMergePolicy resolves the branch-merge policy for extraction branches from
+// the project's knowledge-pipeline policy. It falls back to "partial" when the
+// policy is absent, unparseable or does not name a merge policy.
+func (w *ObjectExtractionWorker) autoMergePolicy(ctx context.Context, projectID uuid.UUID) string {
+	const fallback = "partial"
+	if w.projectsRepo == nil {
+		return fallback
 	}
-	return true, projects.NormalizeAutoMergePolicy(project.AutoMergeExtractionPolicy)
+	project, err := w.projectsRepo.GetByID(ctx, projectID.String(), false)
+	if err != nil || project == nil {
+		return fallback
+	}
+	pol, err := pipeline.Resolve(project.PipelineMode, project.PipelinePolicy)
+	if err != nil {
+		return fallback
+	}
+	return resolveAutoMergePolicy(pol.Merge.Policy)
+}
+
+// resolveAutoMergePolicy maps a stored merge-policy enum to a value
+// BranchMergeRequest accepts; anything unrecognised falls back to partial.
+func resolveAutoMergePolicy(policy string) string {
+	switch policy {
+	case "partial", "enrich":
+		return policy
+	default:
+		return "partial"
+	}
+}
+
+// resolveAutoMergeThreshold returns the pipeline's similarity cutoff for the
+// auto-merge, or 0 when the policy leaves it unset (0 = the graph preset's
+// default). It is a pure function so the mapping is testable without a database.
+func resolveAutoMergeThreshold(threshold float32) float32 {
+	if threshold > 0 && threshold <= 1 {
+		return threshold
+	}
+	return 0
+}
+
+// autoMergeSimilarityThreshold resolves the project's pipeline similarity
+// cutoff for the auto-merge. 0 means "use the graph preset default".
+func (w *ObjectExtractionWorker) autoMergeSimilarityThreshold(ctx context.Context, projectID uuid.UUID) float32 {
+	if w.projectsRepo == nil {
+		return 0
+	}
+	project, err := w.projectsRepo.GetByID(ctx, projectID.String(), false)
+	if err != nil || project == nil {
+		return 0
+	}
+	pol, err := pipeline.Resolve(project.PipelineMode, project.PipelinePolicy)
+	if err != nil {
+		return 0
+	}
+	return resolveAutoMergeThreshold(pol.Merge.SimilarityThreshold)
 }
 
 // autoMergeExtractionBranch waits for the staging branch to be fully embedded,
-// then merges it into the main graph with the project's configured policy.
-// "partial" (the default) applies clean additions and fast-forwards but leaves
-// conflicting/similar objects on the branch for review; "enrich" additionally
-// absorbs near-duplicates into the existing object. It is best-effort —
-// failures never block extraction.
-func (w *ObjectExtractionWorker) autoMergeExtractionBranch(ctx context.Context, job *ObjectExtractionJob, branchID uuid.UUID, policy string) bool {
-	policy = projects.NormalizeAutoMergePolicy(policy)
+// then performs a partial merge into the main graph: clean additions and
+// fast-forwards are applied, while conflicting/similar objects are left on the
+// branch for human review. It is best-effort — failures never block extraction.
+func (w *ObjectExtractionWorker) autoMergeExtractionBranch(ctx context.Context, job *ObjectExtractionJob, branchID uuid.UUID) bool {
 	projectID, err := uuid.Parse(job.ProjectID)
 	if err != nil {
 		w.log.Warn("auto-merge skipped: invalid project id",
@@ -889,10 +1032,11 @@ func (w *ObjectExtractionWorker) autoMergeExtractionBranch(ctx context.Context, 
 	}
 
 	req := &graph.BranchMergeRequest{
-		SourceBranchID:    branchID,
-		Execute:           true,
-		Policy:            policy,
-		WaitForEmbeddings: true,
+		SourceBranchID:      branchID,
+		Execute:             true,
+		Policy:              w.autoMergePolicy(ctx, projectID),
+		WaitForEmbeddings:   true,
+		SimilarityThreshold: w.autoMergeSimilarityThreshold(ctx, projectID),
 	}
 	result, err := w.graphService.MergeBranch(ctx, projectID, nil, req)
 	if err != nil {
@@ -906,7 +1050,6 @@ func (w *ObjectExtractionWorker) autoMergeExtractionBranch(ctx context.Context, 
 	w.log.Info("extraction branch auto-merged",
 		slog.String("job_id", job.ID),
 		slog.String("branch_id", branchID.String()),
-		slog.String("policy", policy),
 		slog.Int("added", result.AddedCount),
 		slog.Int("fast_forward", result.FastForwardCount),
 		slog.Int("conflicts", result.ConflictCount),
@@ -929,6 +1072,13 @@ func (w *ObjectExtractionWorker) autoMergeExtractionBranch(ctx context.Context, 
 // is superseded; rows derived from a different document never name this input.
 func (w *ObjectExtractionWorker) supersedeStaleExtractionOutput(ctx context.Context, job *ObjectExtractionJob, results *ObjectExtractionResults) {
 	if job.DocumentID == nil {
+		return
+	}
+	// Additive re-extraction (the schema-change backfill path) must never
+	// supersede: its job is to find new entities of newly-installed types, not
+	// to replace what a previous run produced. Superseding here is what turns
+	// ordinary LLM variance into recall wobble.
+	if additive, ok := job.SourceMetadata["additive"].(bool); ok && additive {
 		return
 	}
 	// Only a complete run may supersede: a job that failed to persist some
@@ -1241,148 +1391,6 @@ func (w *ObjectExtractionWorker) loadSchemas(ctx context.Context, job *ObjectExt
 	return schemas, nil
 }
 
-// Existing-entity prompt context bounds. The prompt itself caps what it renders
-// (50 total, 10 per type); these values bound the retrieval so a large project
-// does not embed and scan an unbounded result set for every document.
-const (
-	existingEntityContextLimit = 50
-	// existingEntityMaxDistance is cosine distance. 0.35 keeps matches at
-	// similarity >= 0.65: close enough to be worth offering the model as an
-	// identity candidate, loose enough that a speech-to-text variant still
-	// appears.
-	existingEntityMaxDistance = 0.35
-)
-
-// loadExistingEntities fetches the top-k objects of the extractable types most
-// similar to the document, formatted as prompt context so the model reuses
-// known identities instead of minting new names (#1074). It reads the main
-// graph only (no branch) and never fails the job: a missing embedding service,
-// unconfigured embeddings or a query error degrades to no context.
-func (w *ObjectExtractionWorker) loadExistingEntities(ctx context.Context, job *ObjectExtractionJob, schemas *ExtractionSchemas, queryText string) []agents.ExistingEntityContext {
-	if w.graphService == nil || schemas == nil || strings.TrimSpace(queryText) == "" {
-		return nil
-	}
-	types := existingEntityTypes(job.EnabledTypes, schemas.ObjectSchemas)
-	if len(types) == 0 {
-		return nil
-	}
-	projectID, err := uuid.Parse(job.ProjectID)
-	if err != nil {
-		w.log.Warn("existing-entity context skipped: invalid project id",
-			slog.String("job_id", job.ID), logger.Error(err))
-		return nil
-	}
-
-	maxDistance := float32(existingEntityMaxDistance)
-	resp, err := w.graphService.VectorSearchByText(ctx, projectID, queryText, &graph.VectorSearchRequest{
-		Types:       types,
-		Limit:       existingEntityContextLimit,
-		MaxDistance: &maxDistance,
-	})
-	if err != nil {
-		w.log.Warn("existing-entity context unavailable, extracting without identity hints",
-			slog.String("job_id", job.ID), logger.Error(err))
-		return nil
-	}
-
-	existing := existingEntitiesFromSearch(resp, existingEntityContextLimit)
-	if len(existing) > 0 {
-		w.log.Info("loaded existing entities for identity resolution",
-			slog.String("job_id", job.ID),
-			slog.Int("count", len(existing)),
-			slog.Int("types", len(types)))
-	}
-	return existing
-}
-
-// existingEntityTypes returns the object types eligible for identity context:
-// the job's enabled types when set, otherwise every extractable schema type.
-// Sorted so two runs over the same schemas query with the same type list.
-func existingEntityTypes(enabledTypes []string, objectSchemas map[string]agents.ObjectSchema) []string {
-	if len(enabledTypes) > 0 {
-		types := make([]string, 0, len(enabledTypes))
-		seen := make(map[string]struct{}, len(enabledTypes))
-		for _, t := range enabledTypes {
-			t = strings.TrimSpace(t)
-			if t == "" {
-				continue
-			}
-			if _, dup := seen[t]; dup {
-				continue
-			}
-			seen[t] = struct{}{}
-			types = append(types, t)
-		}
-		sort.Strings(types)
-		return types
-	}
-	types := make([]string, 0, len(objectSchemas))
-	for name := range objectSchemas {
-		types = append(types, name)
-	}
-	sort.Strings(types)
-	return types
-}
-
-// existingEntitiesFromSearch converts vector-search hits into prompt context.
-// Entries without a usable name or ID are dropped: the model cannot reference
-// an identity it cannot name. limit is a defensive cap in case the search
-// implementation returns more than requested.
-func existingEntitiesFromSearch(resp *graph.SearchResponse, limit int) []agents.ExistingEntityContext {
-	if resp == nil || len(resp.Data) == 0 {
-		return nil
-	}
-	if limit <= 0 || limit > len(resp.Data) {
-		limit = len(resp.Data)
-	}
-	existing := make([]agents.ExistingEntityContext, 0, limit)
-	for _, item := range resp.Data {
-		if len(existing) >= limit {
-			break
-		}
-		if item == nil || item.Object == nil {
-			continue
-		}
-		obj := item.Object
-		name := ""
-		if obj.Name != nil {
-			name = strings.TrimSpace(*obj.Name)
-		}
-		if name == "" {
-			if v, ok := obj.Properties["name"].(string); ok {
-				name = strings.TrimSpace(v)
-			}
-		}
-		if name == "" {
-			continue
-		}
-		id := obj.CanonicalID.String()
-		if id == "00000000-0000-0000-0000-000000000000" || id == "" {
-			id = obj.ID.String()
-		}
-		key := ""
-		if obj.Key != nil {
-			key = strings.TrimSpace(*obj.Key)
-		}
-		description := ""
-		if v, ok := obj.Properties["description"].(string); ok {
-			description = strings.TrimSpace(v)
-		}
-		existing = append(existing, agents.ExistingEntityContext{
-			ID:          id,
-			Name:        name,
-			TypeName:    obj.Type,
-			Key:         key,
-			Description: description,
-			Similarity:  float64(item.Score),
-		})
-	}
-	if len(existing) == 0 {
-		return nil
-	}
-	return existing
-}
-
 // resolveExtractionIdentity returns the dedup key and display name to persist
 // for one extracted entity. Without an existing-entity reference it is the
 // trimmed extracted name (the historical behaviour). When the model named an
@@ -1445,10 +1453,44 @@ func (w *ObjectExtractionWorker) persistResults(
 	stagingBranchID *uuid.UUID,
 	documentVersion int,
 	existingByIdentityID map[string]agents.ExistingEntityContext,
+	schemas *ExtractionSchemas,
 ) (*ObjectExtractionResults, error) {
 	projectID, err := uuid.Parse(job.ProjectID)
 	if err != nil {
 		return nil, fmt.Errorf("parse project_id: %w", err)
+	}
+
+	// Strict typing: only the effective installed schema's object/relationship
+	// types may be persisted. The model can emit types outside it (spelling
+	// variants, invented types); those are dropped here and counted so the run
+	// reports the leak instead of polluting the graph.
+	//
+	// Strictness is skipped when no schema is installed (the bootstrap/open
+	// path relies on the static EntityExtractionSchema fallback and must not be
+	// zeroed) and can be turned off per project via extract.strict_types.
+	strict := true
+	quarantine := true
+	if w.projectsRepo != nil {
+		if project, perr := w.projectsRepo.GetByID(ctx, job.ProjectID, false); perr == nil && project != nil {
+			if pol, polerr := pipeline.Resolve(project.PipelineMode, project.PipelinePolicy); polerr == nil {
+				strict = pol.Extract.StrictTypes
+				quarantine = pol.Apply.QuarantineUnknownTypes
+			}
+		}
+	}
+	filterObjects := strict && schemas != nil && len(schemas.ObjectSchemas) > 0
+	allowedObjects := map[string]bool{}
+	if filterObjects {
+		for name := range schemas.ObjectSchemas {
+			allowedObjects[name] = true
+		}
+	}
+	filterRelationships := strict && schemas != nil && len(schemas.RelationshipSchemas) > 0
+	allowedRelationships := map[string]bool{}
+	if filterRelationships {
+		for name := range schemas.RelationshipSchemas {
+			allowedRelationships[name] = true
+		}
 	}
 
 	jobUUID, err := uuid.Parse(job.ID)
@@ -1487,9 +1529,33 @@ func (w *ObjectExtractionWorker) persistResults(
 	// objectsCreated counts only genuinely new graph rows (created=true).
 	objectsCreated := 0
 	objectsMerged := 0
+	droppedObjects := 0
+	droppedObjectTypes := []string{}
+	seenDroppedObjectTypes := map[string]bool{}
+	var quarantined []QuarantineItem
 	for _, entity := range output.Entities {
+		if filterObjects && !allowedObjects[entity.Type] {
+			droppedObjects++
+			if !seenDroppedObjectTypes[entity.Type] {
+				seenDroppedObjectTypes[entity.Type] = true
+				droppedObjectTypes = append(droppedObjectTypes, entity.Type)
+			}
+			if quarantine {
+				quarantined = append(quarantined, QuarantineItem{
+					Kind:     "object",
+					TypeName: entity.Type,
+					Payload: map[string]any{
+						"type":        entity.Type,
+						"name":        entity.Name,
+						"description": entity.Description,
+						"properties":  entity.Properties,
+					},
+				})
+			}
+			continue
+		}
 		// Identity resolution: when the extractor referenced an existing
-		// object (prompt context from loadExistingEntities), persist the
+		// object (prompt context from the project's main graph), persist the
 		// re-mention under that object's stored key even if the model used a
 		// different spelling. The merge then matches the existing identity
 		// deterministically instead of relying on cosine similarity (#1074).
@@ -1570,7 +1636,25 @@ func (w *ObjectExtractionWorker) persistResults(
 
 	// Create relationships
 	relationshipsCreated := 0
+	droppedRelationships := 0
 	for _, rel := range output.Relationships {
+		if filterRelationships && !allowedRelationships[rel.Type] {
+			droppedRelationships++
+			if quarantine {
+				quarantined = append(quarantined, QuarantineItem{
+					Kind:     "relationship",
+					TypeName: rel.Type,
+					Payload: map[string]any{
+						"type":        rel.Type,
+						"source_ref":  rel.SourceRef,
+						"target_ref":  rel.TargetRef,
+						"description": rel.Description,
+						"properties":  rel.Properties,
+					},
+				})
+			}
+			continue
+		}
 		srcID, srcOK := tempIDToObjectID[rel.SourceRef]
 		dstID, dstOK := tempIDToObjectID[rel.TargetRef]
 
@@ -1601,6 +1685,19 @@ func (w *ObjectExtractionWorker) persistResults(
 		relationshipsCreated++
 	}
 
+	// Quarantine the dropped unknown-type results so a reviewer can see what
+	// this run leaked. Best-effort: a failure is logged and the drop count still
+	// reports the leak; the persisted objects/relationships are unaffected.
+	quarantinedCount := 0
+	if len(quarantined) > 0 {
+		n, err := w.jobsService.QuarantineDropped(ctx, job.ProjectID, job.DocumentID, &job.ID, quarantined)
+		if err != nil {
+			w.log.Warn("quarantine: failed to record dropped results", logger.Error(err))
+		} else {
+			quarantinedCount = n
+		}
+	}
+
 	// Calculate discovered types
 	discoveredTypes := make([]any, 0)
 	typeSet := make(map[string]bool)
@@ -1622,12 +1719,20 @@ func (w *ObjectExtractionWorker) persistResults(
 		FailedItems:          len(output.Entities) - successfulItems,
 		DiscoveredTypes:      discoveredTypes,
 		CreatedObjectIDs:     createdObjectIDs,
+		DroppedObjects:       droppedObjects,
+		DroppedObjectTypes:   droppedObjectTypes,
+		DroppedRelationships: droppedRelationships,
+		Quarantined:          quarantinedCount,
 		DebugInfo: JSON{
-			"entity_count":       len(output.Entities),
-			"objects_created":    objectsCreated,
-			"objects_merged":     objectsMerged,
-			"relationship_count": len(output.Relationships),
-			"orphan_rate":        agents.CalculateOrphanRate(output.Entities, output.Relationships),
+			"entity_count":          len(output.Entities),
+			"objects_created":       objectsCreated,
+			"objects_merged":        objectsMerged,
+			"relationship_count":    len(output.Relationships),
+			"orphan_rate":           agents.CalculateOrphanRate(output.Entities, output.Relationships),
+			"dropped_objects":       droppedObjects,
+			"dropped_object_types":  droppedObjectTypes,
+			"dropped_relationships": droppedRelationships,
+			"quarantined":           quarantinedCount,
 		},
 	}, nil
 }

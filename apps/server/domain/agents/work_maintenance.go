@@ -802,9 +802,26 @@ func workTriggerMetadata(h *graph.WorkObjectHead) map[string]any {
 	}
 	if prNumber > 0 {
 		meta["prNumber"] = int(prNumber)
-		meta["headSha"] = h.Properties["head_sha"]
 		meta["subjectType"] = "pull_request"
 		meta["subjectRef"] = fmt.Sprintf("%s#%d", repo, int(prNumber))
+		// A review lane carries head_sha directly. A coding issue linked to a
+		// pull request carries the reviewed head as pr_head_sha and the branch
+		// as pr_branch, so a rework run dispatched from a blocking verdict knows
+		// which commit/branch the finding applies to (#1091).
+		headSHA, _ := h.Properties["head_sha"].(string)
+		if strings.TrimSpace(headSHA) == "" {
+			headSHA, _ = h.Properties["pr_head_sha"].(string)
+		}
+		if strings.TrimSpace(headSHA) != "" {
+			meta["headSha"] = headSHA
+		}
+		branch, _ := h.Properties["pr_branch"].(string)
+		if strings.TrimSpace(branch) == "" {
+			branch, _ = h.Properties["head_ref"].(string)
+		}
+		if strings.TrimSpace(branch) != "" {
+			meta["branch"] = branch
+		}
 		return meta
 	}
 	meta["issueNumber"] = int(issueNumber)

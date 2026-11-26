@@ -1,5 +1,9 @@
 package main
 
+// guard: the committed copy of go-daisy's popover runtime that the js-dom spec
+// loads — a go-daisy bump that changes the runtime must update the fixture in
+// the same PR (#1440, selected by name since #1087).
+
 import (
 	"os"
 	"os/exec"
@@ -8,7 +12,7 @@ import (
 	"testing"
 )
 
-// TestPopoverFixtureMatchesPinnedRuntime guards the #1440 harness. The js-dom
+// TestPopoverFixtureMatchesPinnedRuntimeRatchet guards the #1440 harness. The js-dom
 // spec specs/js/popover-runtime.spec.ts loads a *committed snapshot* of
 // go-daisy's staticfs/static/js/go-daisy-popover.js (the same file
 // ui.PopoverScript serves), not the module at build time. Without this pin, a
@@ -18,8 +22,9 @@ import (
 //
 // It re-resolves the module directory at the go.mod version and asserts the
 // committed fixture body still matches verbatim, ignoring the fixture's
-// one-line provenance header.
-func TestPopoverFixtureMatchesPinnedRuntime(t *testing.T) {
+// one-line provenance header. It ends in Ratchet so the required `ci` job's
+// `go test -run 'Ratchet' ./...` runs it on every gateway PR (#1087).
+func TestPopoverFixtureMatchesPinnedRuntimeRatchet(t *testing.T) {
 	const module = "github.com/emergent-company/go-daisy"
 	const rel = "staticfs/static/js/go-daisy-popover.js"
 
@@ -52,6 +57,7 @@ func TestPopoverFixtureMatchesPinnedRuntime(t *testing.T) {
 		}
 	}
 	if string(got) != string(want) {
-		t.Fatalf("popover fixture is out of sync with %s@go.mod — re-copy %s into tests/e2e/fixtures/", module, rel)
+		t.Fatalf("popover fixture is out of sync with %s@go.mod — after the bump run `GOWORK=off go mod vendor` in apps/web-ui/gateway, copy vendor/%s/%s over tests/e2e/fixtures/go-daisy-popover.js, and update the fixture's provenance header",
+			module, module, rel)
 	}
 }

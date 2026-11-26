@@ -1306,6 +1306,74 @@ func (ae *AgentExecutor) ensureBudgetAvailable(ctx context.Context, projectID, a
 	}
 }
 
+// inheritedOrderer resolves the ordering person a delegated run inherits: the
+// orderer of the run that delegated it, else the orderer of the root run of that
+// tree. A child's work was ordered by whoever ordered the work it belongs to —
+// an agent is never an orderer itself — so this is the honest attribution for a
+// spawn, and the root is what covers a delegation whose transport does not carry
+// the parent run id. Best-effort: a failed read logs and resolves to nil, and the
+// run then shows no orderer rather than a guessed one.
+func (ae *AgentExecutor) inheritedOrderer(dbCtx context.Context, parentRunID, rootRunID *string) *string {
+	ordered := ae.ordererOfRun(dbCtx, parentRunID)
+	if ordered != nil {
+		return ordered
+	}
+	// A top-level run is its own root, and the two ids then name one row: the
+	// parent read already answered for it.
+	if parentRunID != nil && rootRunID != nil && *parentRunID == *rootRunID {
+		return nil
+	}
+	return ae.ordererOfRun(dbCtx, rootRunID)
+}
+
+// ordererOfRun reads one run's recorded orderer, or nil when the id is absent,
+// the row is gone, or nobody ordered it.
+func (ae *AgentExecutor) ordererOfRun(dbCtx context.Context, runID *string) *string {
+	if runID == nil || *runID == "" {
+		return nil
+	}
+	run, err := ae.repo.FindRunByID(dbCtx, *runID)
+	if err != nil {
+		ae.log.Warn("failed to resolve a run's orderer",
+			slog.String("run_id", *runID),
+			slog.String("error", err.Error()),
+		)
+		return nil
+	}
+	if run == nil {
+		return nil
+	}
+	return run.OrderedByUserID
+}
+
+// persistPreCreatedOrderer records who ordered a run whose row a caller inserted
+// before the person was known — chat capture, A2A, a queued child, a resume. The
+// authenticated user wins; prior is the continuity fallback for a resume by a
+// non-user principal (a share end user, an empty principal), and a delegated row
+// otherwise inherits the parent run's orderer. A row that already carries an
+// orderer is left alone, and a failed lookup or write leaves it NULL rather than
+// inventing an attribution.
+func (ae *AgentExecutor) persistPreCreatedOrderer(dbCtx context.Context, run *AgentRun, userID string, prior *string) {
+	if run == nil || run.OrderedByUserID != nil {
+		return
+	}
+	ordered := OrderedByUserOrPrior(userID, prior)
+	if ordered == nil {
+		ordered = ae.inheritedOrderer(dbCtx, run.ParentRunID, run.RootRunID)
+	}
+	if ordered == nil {
+		return
+	}
+	if err := ae.repo.UpdateRunOrderedByUser(dbCtx, run.ID, *ordered); err != nil {
+		ae.log.Warn("failed to persist ordered_by_user_id on agent run",
+			slog.String("run_id", run.ID),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+	run.OrderedByUserID = ordered
+}
+
 // Execute runs an agent from scratch using the provided request.
 func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*ExecuteResult, error) {
 	startTime := time.Now()
@@ -1341,6 +1409,17 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		maxSteps = *req.AgentDefinition.MaxSteps
 	}
 
+	// The ordering person is the run's authenticated user, carried from the entry
+	// point that resolved one (manual trigger, chat, an answered question).
+	// Background and source-triggered paths leave UserID empty or "system", which
+	// persists NULL: nobody ordered those. A delegated run has no person of its
+	// own, so it inherits the orderer of the run that spawned it — an agent does
+	// not order work, the person behind the delegating run did.
+	orderedBy := OrderedByUser(req.UserID)
+	if orderedBy == nil {
+		orderedBy = ae.inheritedOrderer(dbCtx, req.ParentRunID, req.RootRunID)
+	}
+
 	// Create the run record
 	createOpts := CreateRunOptions{
 		AgentID:         ae.resolveAgentID(req),
@@ -1351,6 +1430,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		TriggerMetadata: req.TriggerMetadata,
 		TrustedInternal: req.TrustedInternal,
 		SourceSubject:   req.SourceSubject,
+		OrderedByUserID: orderedBy,
 		// SubjectObjectID/Type are deliberately not copied here. Execute is also
 		// the inline reaction path, and kb.agent_runs.subject_object_id is reserved
 		// for work-owned queued runs: persisting it for every inline run would put
@@ -1378,6 +1458,10 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 				slog.String("error", err.Error()),
 			)
 		}
+		// Same shape, same treatment: a caller can insert the row before the
+		// ordering person is resolved, so write it here rather than leave the run
+		// unattributable for its whole life.
+		ae.persistPreCreatedOrderer(dbCtx, run, req.UserID, nil)
 	} else {
 		var createErr error
 		run, createErr = ae.repo.CreateRunWithOptions(dbCtx, createOpts)
@@ -1630,6 +1714,11 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 			slog.String("error", err.Error()),
 		)
 	}
+	// A queued worker run reaches this entry point as a row a transport enqueued
+	// (scheduler, trigger_agent, parent wake) and its ordering person was not
+	// known then. Resolve it from the caller's principal, else from the run that
+	// delegated it — the worker is a deferred executor, not an ordering surface.
+	ae.persistPreCreatedOrderer(dbCtx, run, req.UserID, nil)
 
 	// Validate depth
 	maxDepth := req.MaxDepth
@@ -2059,6 +2148,10 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 				slog.String("error", err.Error()),
 			)
 		}
+		// The resume continues the prior run, so the orderer continues too: the
+		// answering person when one was resolved, otherwise the prior run's
+		// orderer, so a share or anonymous resume cannot erase attribution.
+		ae.persistPreCreatedOrderer(dbCtx, newRun, req.UserID, priorRun.OrderedByUserID)
 		// The resumed turn inherits the prior run's verified source binding. The
 		// pre-created row was inserted by the caller, so carry the trusted column
 		// onto it in memory for provisioning and in-process dispatch.
@@ -2082,6 +2175,10 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 			// A resumed turn keeps the prior run's verified source subject (and
 			// with it the implicit credential it is entitled to).
 			SourceSubject: priorRun.SourceSubject,
+			// And it keeps the order behind it: the answering person when they
+			// are a user, otherwise the orderer already recorded on the run
+			// being resumed, so a share or service principal cannot erase it.
+			OrderedByUserID: OrderedByUserOrPrior(req.UserID, priorRun.OrderedByUserID),
 		}, req.PauseClaimed)
 		if err != nil {
 			return nil, err

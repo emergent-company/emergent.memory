@@ -72,7 +72,7 @@ func TestBuiltinSeeder_RetiresStaleBuiltin(t *testing.T) {
 	ctx := context.Background()
 
 	require.NoError(t, seeder.Seed(ctx))
-	assertBlueprintCount(t, db, 5)
+	assertBlueprintCount(t, db, 6)
 
 	_, projectID := seedProject(t, db)
 	staleID := insertBuiltinBlueprintRow(t, db, "personal-memory", "2.0.0")
@@ -88,7 +88,7 @@ func TestBuiltinSeeder_RetiresStaleBuiltin(t *testing.T) {
 
 	require.NoError(t, seeder.Seed(ctx))
 
-	assertBlueprintCount(t, db, 5)
+	assertBlueprintCount(t, db, 6)
 	assert.Equal(t, 0, countRowsForRetire(t, db, `SELECT COUNT(*) FROM kb.blueprints WHERE id = ?`, staleID))
 	assertPackClaimCount(t, db, staleID, 0)
 	assert.Equal(t, 0, countRowsForRetire(t, db, `SELECT COUNT(*) FROM kb.blueprint_applications WHERE blueprint_id = ?`, staleID))
@@ -115,7 +115,7 @@ func TestBuiltinSeeder_RetiresStaleBuiltin(t *testing.T) {
 
 	// Re-running is idempotent and the bundled packs are untouched.
 	require.NoError(t, seeder.Seed(ctx))
-	assertBlueprintCount(t, db, 5)
+	assertBlueprintCount(t, db, 6)
 }
 
 // TestBuiltinSeeder_KeepsAppliedStaleBuiltin: a project currently on the
@@ -156,7 +156,7 @@ func TestBuiltinSeeder_RetirementIgnoresUnappliedAndKeepsBundled(t *testing.T) {
 
 	assert.Equal(t, 0, countRowsForRetire(t, db, `SELECT COUNT(*) FROM kb.blueprints WHERE id = ?`, goneID))
 	// All five bundled packs survive a retirement pass.
-	assertBlueprintCount(t, db, 5)
+	assertBlueprintCount(t, db, 6)
 }
 
 // TestBuiltinSeeder_RetirementIsKeyedOnExactVersion guards the rollback case:
@@ -212,5 +212,5 @@ func TestBuiltinSeeder_LeavesGlobalRowsTheSeederDidNotWrite(t *testing.T) {
 	require.NoError(t, seeder.Seed(ctx))
 
 	assert.Equal(t, 1, countRowsForRetire(t, db, `SELECT COUNT(*) FROM kb.blueprints WHERE id = ?`, legacyID))
-	assertBlueprintCount(t, db, 6)
+	assertBlueprintCount(t, db, 7)
 }

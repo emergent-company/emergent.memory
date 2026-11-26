@@ -293,6 +293,21 @@ func (r *Repository) GetOrganizationID(ctx context.Context, projectID string) (s
 	return orgID, true, nil
 }
 
+// BumpSchemaGeneration increments a project's schema_generation counter after
+// an effective schema change. It is atomic so concurrent applies cannot collide.
+func (r *Repository) BumpSchemaGeneration(ctx context.Context, projectID string) error {
+	_, err := r.db.NewUpdate().
+		Table("kb.projects").
+		Set("schema_generation = schema_generation + 1").
+		Where("id = ?", projectID).
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to bump schema generation", logger.Error(err), slog.String("id", projectID))
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
+}
+
 // AutoExtractSourceSyncs reports the project's auto-extract-after-source-sync
 // setting. The sync worker reads it once per job so it can pass the resolved
 // flag to the document ingestion seam; a missing project is an error because a

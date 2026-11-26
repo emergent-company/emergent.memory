@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/google/uuid"
@@ -184,6 +185,25 @@ func (r *Repository) MarkStarted(ctx context.Context, jobID uuid.UUID) error {
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
 		return ErrJobNoLongerActive
+	}
+	return nil
+}
+
+// SetTraceID records the OpenTelemetry trace id on the job row. A write is
+// skipped when traceID is empty (tracing disabled → NULL, no-op). Failures are
+// best-effort and never fail the enclosing run, mirroring extraction.
+func (r *Repository) SetTraceID(ctx context.Context, jobID uuid.UUID, traceID string) error {
+	if traceID == "" {
+		return nil
+	}
+	_, err := r.db.NewUpdate().
+		Model((*DiscoveryJob)(nil)).
+		Set("trace_id = ?", traceID).
+		Set("updated_at = now()").
+		Where("id = ?", jobID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("set trace id: %w", err)
 	}
 	return nil
 }
@@ -665,6 +685,31 @@ type MemorySchema struct {
 	UIConfigs               JSONMap   `bun:"ui_configs,type:jsonb"`
 }
 
+// InstalledDiscoveredSchema returns the project's currently installed
+// discovered pack (pending_review=false), or nil when the project has none yet.
+func (r *Repository) InstalledDiscoveredSchema(ctx context.Context, projectID uuid.UUID) (*MemorySchema, error) {
+	pack := &MemorySchema{}
+	err := r.db.NewSelect().
+		Table("kb.graph_schemas").
+		Column("id", "object_type_schemas", "relationship_type_schemas", "ui_configs").
+		Where("project_id = ?", projectID).
+		Where("source = 'discovered'").
+		Where("pending_review = false").
+		Where("superseded_by IS NULL").
+		Order("created_at DESC").
+		Order("id DESC").
+		Limit(1).
+		Scan(ctx, pack)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		r.log.Error("failed to get installed discovered schema", logger.Error(err))
+		return nil, apperror.ErrInternal.WithInternal(err)
+	}
+	return pack, nil
+}
+
 // UpdateMemorySchema updates an existing memory schema
 func (r *Repository) UpdateMemorySchema(ctx context.Context, packID uuid.UUID, objectSchemas, relSchemas, uiConfigs JSONMap) error {
 	_, err := r.db.NewUpdate().
@@ -709,6 +754,10 @@ func (r *Repository) SetJobMemorySchema(ctx context.Context, jobID, schemaID uui
 
 // InstallSchemaToProject inserts a row into kb.project_schemas to make the schema active in the project.
 func (r *Repository) InstallSchemaToProject(ctx context.Context, projectID, schemaID uuid.UUID) error {
+	return r.installSchemaToProject(ctx, r.db, projectID, schemaID)
+}
+
+func (r *Repository) installSchemaToProject(ctx context.Context, db bun.IDB, projectID, schemaID uuid.UUID) error {
 	type row struct {
 		bun.BaseModel `bun:"table:kb.project_schemas"`
 		ProjectID     uuid.UUID `bun:"project_id,type:uuid"`
@@ -720,7 +769,7 @@ func (r *Repository) InstallSchemaToProject(ctx context.Context, projectID, sche
 		SchemaID:  schemaID,
 		Active:    true,
 	}
-	_, err := r.db.NewInsert().
+	_, err := db.NewInsert().
 		Model(rec).
 		On("CONFLICT (project_id, schema_id) DO UPDATE SET active = EXCLUDED.active").
 		Exec(ctx)
@@ -730,6 +779,119 @@ func (r *Repository) InstallSchemaToProject(ctx context.Context, projectID, sche
 	}
 	return nil
 }
+
+// markDiscoveredSchemaReviewed flips a pending discovered pack to reviewed
+// (installed) so a later discovery run reconciles into a fresh pending pack
+// instead of mutating the one that is now active.
+func (r *Repository) markDiscoveredSchemaReviewed(ctx context.Context, db bun.IDB, packID uuid.UUID) error {
+	_, err := db.NewUpdate().
+		Table("kb.graph_schemas").
+		Set("pending_review = ?", false).
+		Set("updated_at = now()").
+		Where("id = ?", packID).
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to mark discovered schema reviewed", logger.Error(err))
+		return apperror.ErrInternal.WithInternal(err)
+	}
+	return nil
+}
+
+// deactivateOtherDiscoveredAssignments deactivates any other installed
+// discovered-pack assignment for a project, keeping exactly one active auto
+// pack. Manual packs are never touched.
+func (r *Repository) deactivateOtherDiscoveredAssignments(ctx context.Context, db bun.IDB, projectID, keepSchemaID uuid.UUID) error {
+	_, err := db.NewUpdate().
+		Table("kb.project_schemas").
+		Set("active = ?", false).
+		Where("project_id = ?", projectID).
+		Where("schema_id != ?", keepSchemaID).
+		Where("schema_id IN (SELECT id FROM kb.graph_schemas WHERE source = 'discovered')").
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to deactivate other discovered assignments", logger.Error(err))
+		return apperror.ErrInternal.WithInternal(err)
+	}
+	return nil
+}
+
+// ApplyDiscoveredSchema fences on the job's auto_applied flag, then reviews,
+// deactivates prior discovered assignments and installs a discovered pack in
+// one transaction, serialized per project with an advisory lock. It returns
+// whether this call performed the install (the caller only bumps the schema
+// generation when it did), so a replay or a concurrent run cannot re-apply an
+// older pack or double-bump.
+func (r *Repository) ApplyDiscoveredSchema(ctx context.Context, projectID, packID, jobID uuid.UUID, report JSONMap) (bool, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		r.log.Error("auto-apply: begin transaction", logger.Error(err))
+		return false, apperror.ErrInternal.WithInternal(err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtext(?))", "discovery-apply:"+projectID.String()).Exec(ctx); err != nil {
+		r.log.Error("auto-apply: acquire advisory lock", logger.Error(err))
+		return false, apperror.ErrInternal.WithInternal(err)
+	}
+
+	res, err := tx.NewUpdate().
+		Model((*DiscoveryJob)(nil)).
+		Set("auto_applied = ?", true).
+		Set("applied_report = ?", report).
+		Where("id = ?", jobID).
+		Where("auto_applied = ?", false).
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("auto-apply: fence discovery job", logger.Error(err))
+		return false, apperror.ErrInternal.WithInternal(err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return false, nil
+	}
+
+	if err := r.markDiscoveredSchemaReviewed(ctx, tx, packID); err != nil {
+		return false, err
+	}
+	if err := r.deactivateOtherDiscoveredAssignments(ctx, tx, projectID, packID); err != nil {
+		return false, err
+	}
+	if err := r.installSchemaToProject(ctx, tx, projectID, packID); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		r.log.Error("auto-apply: commit transaction", logger.Error(err))
+		return false, apperror.ErrInternal.WithInternal(err)
+	}
+	return true, nil
+}
+
+// MarkAutoApplied records the auto-apply decision on a discovery job, fenced on
+// auto_applied=false so a replay cannot double-record. It returns whether this
+// call performed the write (the caller only bumps the schema generation when it
+// did).
+func (r *Repository) MarkAutoApplied(ctx context.Context, jobID uuid.UUID, report JSONMap) (bool, error) {
+	res, err := r.db.NewUpdate().
+		Model((*DiscoveryJob)(nil)).
+		Set("auto_applied = ?", true).
+		Set("applied_report = ?", report).
+		Where("id = ?", jobID).
+		Where("auto_applied = ?", false).
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to mark discovery job auto-applied", logger.Error(err))
+		return false, apperror.ErrInternal.WithInternal(err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// MarkDiscoveredSchemaReviewed flips a pending discovered pack to reviewed
+// (installed) so a later discovery run reconciles into a fresh pending pack
+// instead of mutating the one that is now active.
+func (r *Repository) MarkDiscoveredSchemaReviewed(ctx context.Context, packID uuid.UUID) error {
+	return r.markDiscoveredSchemaReviewed(ctx, r.db, packID)
+}
+
 func (r *Repository) UpdateSchemaExtractionPrompts(ctx context.Context, schemaID uuid.UUID, prompts json.RawMessage) error {
 	_, err := r.db.NewUpdate().
 		Table("kb.graph_schemas").
@@ -742,6 +904,29 @@ func (r *Repository) UpdateSchemaExtractionPrompts(ctx context.Context, schemaID
 		return apperror.ErrInternal.WithInternal(err)
 	}
 	return nil
+}
+
+// GetSchemaExtractionPrompts reads the stored extraction prompts for a schema
+// (the raw JSON, or nil when none are stored yet). The discovery run compares
+// the embedded `__fingerprint` against the freshly computed one so an unchanged
+// schema skips regenerating the same hints.
+func (r *Repository) GetSchemaExtractionPrompts(ctx context.Context, schemaID uuid.UUID) (json.RawMessage, error) {
+	var row struct {
+		ExtractionPrompts json.RawMessage `bun:"extraction_prompts,type:jsonb"`
+	}
+	err := r.db.NewSelect().
+		Table("kb.graph_schemas").
+		Column("extraction_prompts").
+		Where("id = ?", schemaID).
+		Scan(ctx, &row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		r.log.Error("failed to read schema extraction prompts", logger.Error(err))
+		return nil, apperror.ErrInternal.WithInternal(err)
+	}
+	return row.ExtractionPrompts, nil
 }
 
 // GetDocumentContent fetches raw document text by ID without project-scope check.

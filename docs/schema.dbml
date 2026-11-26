@@ -494,6 +494,7 @@ Table "kb"."agent_runs" {
   "source_subject" jsonb
   "run_invocation" jsonb
   "source_trigger_id" uuid
+  "ordered_by_user_id" uuid [note: 'Authenticated user who ordered this run; NULL when no person did.']
 
   Indexes {
     (agent_id) [name: "idx_agent_runs_agent_id"]
@@ -1056,12 +1057,30 @@ Table "kb"."discovery_jobs" {
   "started_at" timestamptz
   "completed_at" timestamptz
   "updated_at" timestamptz [not null, default: `now()`]
+  "auto_applied" boolean [not null, default: false]
+  "applied_report" jsonb [not null, default: '{}']
+  "trace_id" text
 
   Indexes {
     (organization_id) [name: "idx_discovery_jobs_organization_id"]
     (project_id) [name: "idx_discovery_jobs_project_id"]
     (status) [name: "idx_discovery_jobs_status"]
     (project_id) [name: "uq_discovery_jobs_one_active", unique, note: '(status <> ALL (ARRAY[\'completed\'::text, \'failed\'::text, \'cancelled\'::text]))']
+  }
+}
+
+Table "kb"."discovery_requests" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid [not null]
+  "document_ids" uuid[] [not null, default: '{}']
+  "status" text [not null, default: 'queued']
+  "attempts" integer [not null, default: 0]
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (status, updated_at) [name: "idx_discovery_requests_status"]
+    (project_id) [name: "uidx_discovery_requests_active", unique, note: '(status = ANY (ARRAY[\'queued\'::text, \'running\'::text]))']
   }
 }
 
@@ -1337,6 +1356,25 @@ Table "kb"."external_sources" {
     (project_id, normalized_url) [name: "idx_external_sources_normalized_url"]
     (project_id, provider_type, external_id) [name: "idx_external_sources_project_provider_external_id", unique]
     (status, sync_policy, last_checked_at) [name: "idx_external_sources_sync_status", note: '(status = \'active\'::text)']
+  }
+}
+
+Table "kb"."extraction_quarantine" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid [not null]
+  "document_id" uuid
+  "job_id" uuid
+  "kind" text [not null]
+  "type_name" text [not null]
+  "payload" jsonb [not null, default: '{}']
+  "reason" text [not null, default: 'unknown_type']
+  "status" text [not null, default: 'open']
+  "created_at" timestamptz [not null, default: `now()`]
+  "resolved_at" timestamptz
+
+  Indexes {
+    (project_id, status, created_at) [name: "idx_extraction_quarantine_project_status"]
+    (type_name) [name: "idx_extraction_quarantine_type"]
   }
 }
 
@@ -1936,10 +1974,12 @@ Table "kb"."object_extraction_jobs" {
   "created_object_ids" uuid[] [not null, default: '{}']
   "trace_id" text
   "run_id" uuid [note: 'Agent run that records this job\'s pipeline transcript (kb.agent_runs); NULL for jobs that predate the link or when transcript recording is unavailable.']
+  "schema_generation" integer
 
   Indexes {
     (project_id) [name: "IDX_1c7f91f13d7e1a438519d37ec3"]
     (status) [name: "IDX_3844c9efd6d2e06105a117f90c"]
+    (document_id, completed_at) [name: "idx_object_extraction_jobs_doc_gen", note: '(status = \'completed\'::text)']
     (document_id, created_at) [name: "idx_object_extraction_jobs_document_created"]
     (run_id) [name: "idx_object_extraction_jobs_run_id"]
     (trace_id) [name: "idx_object_extraction_jobs_trace_id", note: '(trace_id IS NOT NULL)']
@@ -2310,7 +2350,9 @@ Table "kb"."projects" {
   "budget_weekly_alert_threshold" numeric(3,2) [not null, default: 0.80]
   "budget_week_anchor" timestamptz
   "budget_month_anchor" timestamptz
-  "auto_merge_extraction_policy" text [not null, default: 'partial']
+  "pipeline_mode" text [not null, default: 'suggest']
+  "pipeline_policy" jsonb [not null, default: '{}']
+  "schema_generation" integer [not null, default: 0]
 
   Indexes {
     (deleted_at) [name: "idx_projects_deleted_at", note: '(deleted_at IS NULL)']
@@ -3232,6 +3274,7 @@ Ref: "kb"."chunk_revisions"."chunk_id" > "kb"."chunks"."id"
 Ref: "kb"."chunks"."document_id" > "kb"."documents"."id"
 Ref: "kb"."discovery_jobs"."organization_id" > "kb"."orgs"."id"
 Ref: "kb"."discovery_jobs"."project_id" > "kb"."projects"."id"
+Ref: "kb"."discovery_requests"."project_id" > "kb"."projects"."id"
 Ref: "kb"."discovery_type_candidates"."job_id" > "kb"."discovery_jobs"."id"
 Ref: "kb"."document_artifacts"."document_id" > "kb"."documents"."id"
 Ref: "kb"."document_parsing_jobs"."document_id" > "kb"."documents"."id"
@@ -3249,6 +3292,7 @@ Ref: "kb"."email_templates"."updated_by" > "core"."user_profiles"."id"
 Ref: "kb"."email_templates"."current_version_id" > "kb"."email_template_versions"."id"
 Ref: "kb"."embedding_policies"."project_id" > "kb"."projects"."id"
 Ref: "kb"."external_sources"."project_id" > "kb"."projects"."id"
+Ref: "kb"."extraction_quarantine"."project_id" > "kb"."projects"."id"
 Ref: "kb"."github_issue_pull_requests"."project_id" > "kb"."projects"."id"
 Ref: "kb"."graph_embedding_jobs"."object_id" > "kb"."graph_objects"."id"
 Ref: "kb"."graph_objects"."project_id" > "kb"."projects"."id"

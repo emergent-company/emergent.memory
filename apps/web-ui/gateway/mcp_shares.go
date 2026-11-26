@@ -678,10 +678,10 @@ func mcpShareRecipientsTitle(emails []string) string {
 	return strings.Join(emails, ", ")
 }
 
-// mcpShareActivityHref links to the object browser scoped to the objects this
-// share's key created or last updated. The credential id is the value graph
-// write stamps record for the share's token; `via` carries the share name only
-// so the browser can label the scope (it never filters on it).
+// mcpShareActivityHref links to the search page's object list scoped to the
+// objects this share's key created or last updated. The credential id is the
+// value graph write stamps record for the share's token; `via` carries the share
+// name only so the list can label the scope (it never filters on it).
 func mcpShareActivityHref(inst MCPShareInstance) string {
 	if inst.TokenID == "" {
 		return ""
@@ -689,5 +689,5 @@ func mcpShareActivityHref(inst MCPShareInstance) string {
 	q := url.Values{}
 	q.Set("credential_id", inst.TokenID)
 	q.Set("via", inst.Name)
-	return "/objects?" + q.Encode()
+	return "/search?" + q.Encode()
 }

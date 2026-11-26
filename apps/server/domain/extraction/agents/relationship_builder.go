@@ -96,7 +96,12 @@ func NewRelationshipBuilderAgent(cfg RelationshipBuilderConfig) (agent.Agent, er
 			}
 
 			if len(entities) == 0 {
-				return "", fmt.Errorf("no entities to build relationships from")
+				// Nothing to relate: instruct the model to emit an empty
+				// relationship list rather than failing the whole pipeline.
+				// parseRelationships already degrades an empty/non-object
+				// answer to zero relationships, so a thin document completes
+				// with objects and no relationships instead of dead-lettering.
+				return "No entities were extracted from the document, so there are no relationships to build. Return an empty relationship list.", nil
 			}
 
 			// Get document text (required)

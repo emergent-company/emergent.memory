@@ -14,6 +14,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/notifications"
+	"github.com/emergent-company/emergent.memory/domain/pipeline"
 	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/internal/budgetwindow"
 	"github.com/emergent-company/emergent.memory/internal/database"
@@ -21,6 +22,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/google/uuid"
 )
 
 const (
@@ -243,6 +245,31 @@ func (s *Service) List(ctx context.Context, params ServiceListParams) ([]Project
 	return result, nil
 }
 
+// Policy returns the project's resolved knowledge-pipeline policy. It is the
+// slice discovery's auto-apply path consumes (via discoveryjobs.
+// PipelinePolicyReader).
+func (s *Service) Policy(ctx context.Context, projectID uuid.UUID) (pipeline.Policy, error) {
+	project, err := s.repo.GetByID(ctx, projectID.String(), false)
+	if err != nil {
+		return pipeline.Policy{}, err
+	}
+	if project == nil {
+		return pipeline.Policy{}, apperror.ErrProjectNotFound
+	}
+	p, _, err := resolvePipeline(project.PipelineMode, project.PipelinePolicy)
+	return p, err
+}
+
+// BumpSchemaGeneration increments the project's schema generation counter after
+// an effective schema change (discovery auto-apply), so extraction backfill can
+// detect which documents predate it.
+func (s *Service) BumpSchemaGeneration(ctx context.Context, projectID uuid.UUID) error {
+	if err := s.repo.BumpSchemaGeneration(ctx, projectID.String()); err != nil {
+		return err
+	}
+	return nil
+}
+
 // GetByID returns a project by ID
 func (s *Service) GetByID(ctx context.Context, id string, includeStats bool) (*ProjectDTO, error) {
 	if !isValidUUID(id) {
@@ -335,19 +362,11 @@ func (s *Service) Create(ctx context.Context, req CreateProjectRequest, userID s
 		BudgetAlertThreshold:       defaultAlertThreshold,
 		BudgetWeeklyUSD:            &defaultWeeklyBudget,
 		BudgetWeeklyAlertThreshold: defaultAlertThreshold,
-		// The bun insert writes every field, so the Go zero value would
-		// otherwise override the column's DEFAULT 'partial'.
-		AutoMergeExtractionPolicy: AutoMergePolicyPartial,
+		PipelineMode:               pipeline.ModeSuggest,
+		PipelinePolicy:             pipeline.DefaultPolicy(pipeline.ModeSuggest).Marshal(),
 	}
 	if req.AutoMergeExtractionBranches != nil {
 		project.AutoMergeExtractionBranches = *req.AutoMergeExtractionBranches
-	}
-	if req.AutoMergeExtractionPolicy != nil {
-		policy, err := normalizeRequestedAutoMergePolicy(*req.AutoMergeExtractionPolicy)
-		if err != nil {
-			return nil, err
-		}
-		project.AutoMergeExtractionPolicy = policy
 	}
 	if err := s.repo.Create(ctx, tx.Tx, project); err != nil {
 		return nil, err
@@ -454,15 +473,6 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateProjectReques
 		hasUpdates = true
 	}
 
-	if req.AutoMergeExtractionPolicy != nil {
-		policy, err := normalizeRequestedAutoMergePolicy(*req.AutoMergeExtractionPolicy)
-		if err != nil {
-			return nil, err
-		}
-		project.AutoMergeExtractionPolicy = policy
-		hasUpdates = true
-	}
-
 	if req.AutoDiscoveryEnabled != nil {
 		project.AutoDiscoveryEnabled = *req.AutoDiscoveryEnabled
 		hasUpdates = true
@@ -470,6 +480,13 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateProjectReques
 
 	if req.AutoExtractSourceSyncs != nil {
 		project.AutoExtractSourceSyncs = *req.AutoExtractSourceSyncs
+		hasUpdates = true
+	}
+
+	if req.PipelineMode != nil || req.PipelinePolicy != nil {
+		if err := applyPipelineUpdate(project, req); err != nil {
+			return nil, err
+		}
 		hasUpdates = true
 	}
 
@@ -539,23 +556,6 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateProjectReques
 	dto := project.ToDTO()
 	s.enrichWithMainBranch(ctx, &dto)
 	return &dto, nil
-}
-
-// normalizeRequestedAutoMergePolicy trims and validates a caller-supplied
-// auto-merge policy. Rejecting an unknown value is deliberate: silently falling
-// back to the default would make a typo'd "enrich" ingest park every
-// near-duplicate exactly like the setting the caller tried to change (#1074).
-func normalizeRequestedAutoMergePolicy(policy string) (string, error) {
-	policy = strings.TrimSpace(policy)
-	if !IsValidAutoMergePolicy(policy) {
-		return "", apperror.New(400, "validation-failed", fmt.Sprintf(
-			"auto_merge_extraction_policy must be one of: %s",
-			strings.Join(ValidAutoMergePolicies(), ", "),
-		)).WithDetails(map[string]any{
-			"auto_merge_extraction_policy": []string{"must be one of: " + strings.Join(ValidAutoMergePolicies(), ", ")},
-		})
-	}
-	return policy, nil
 }
 
 // Transfer reparents a project to another organization.

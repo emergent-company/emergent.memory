@@ -575,6 +575,11 @@ type QueryEntitiesResult struct {
 	Entities   []Entity        `json:"entities"`
 	Pagination *PaginationInfo `json:"pagination"`
 	Warning    string          `json:"warning,omitempty"`
+	// MissingIDs lists the ids[] values that matched no live entity, in the
+	// order they were requested. Without it an unknown id and an entity with no
+	// matches are the same empty page, which is what made a stale version id
+	// look like a deleted object.
+	MissingIDs []string `json:"missing_ids,omitempty"`
 }
 
 // SearchEntitiesResult represents the result of search_entities tool
