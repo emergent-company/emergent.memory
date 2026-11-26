@@ -2,9 +2,12 @@ package discoveryjobs
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"sort"
 	"strings"
@@ -1262,7 +1265,21 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		slog.Int("types_count", len(refinedTypes)))
 
 	// Phase 7: Generate SchemaExtractionPrompts and write back to the schema.
-	if prompts, promptErr := s.generateExtractionPrompts(ctx, refinedTypes, relationships, job.KBPurpose); promptErr != nil {
+	// Skip the LLM call when the stored hints already match this run's schema:
+	// a repeat discovery over an unchanged type/relationship set would otherwise
+	// pay for regenerating identical guidance.
+	fingerprint := extractionPromptsFingerprint(refinedTypes, relationships, job.KBPurpose)
+	reusePrompts := false
+	if existing, readErr := s.repo.GetSchemaExtractionPrompts(ctx, schemaID); readErr == nil && len(existing) > 0 {
+		var cached extractionPrompts
+		if json.Unmarshal(existing, &cached) == nil && cached.Fingerprint == fingerprint {
+			reusePrompts = true
+		}
+	}
+	if reusePrompts {
+		s.log.Info("reusing stored extraction prompts (schema unchanged)",
+			slog.String("job_id", jobID.String()))
+	} else if prompts, promptErr := s.generateExtractionPrompts(ctx, refinedTypes, relationships, job.KBPurpose); promptErr != nil {
 		s.log.Warn("failed to generate extraction prompts, continuing", slog.String("error", promptErr.Error()))
 	} else if prompts != nil {
 		if raw, merr := json.Marshal(prompts); merr == nil {
@@ -2250,12 +2267,11 @@ Discover important relationships between these types. Treat a property that
 names another discovered type (for example an Episode's "guest" property) as
 evidence of a relationship rather than a plain attribute.
 
-For each relationship, provide:
+For each relationship, provide ONLY:
 - from_type: The source type (must be one of the types above)
 - to_type: The target type (must be one of the types above)
 - relationship_name: A clear name for the relationship
-- description: What this relationship represents
-- cardinality: one-to-one, one-to-many, or many-to-many
+- description: At most 8 words describing the relationship
 - confidence: How confident you are about this relationship (0-1)
 
 Return ONLY a JSON object with this structure (no markdown, no code blocks):
@@ -2266,12 +2282,12 @@ Return ONLY a JSON object with this structure (no markdown, no code blocks):
       "to_type": "...",
       "relationship_name": "...",
       "description": "...",
-      "cardinality": "one-to-many",
       "confidence": 0.9
     }
   ]
 }
 
+Do not include cardinality. Keep each description to at most 8 words.
 Focus on the most important relationships.`, kbPurpose, s.buildRelationshipDiscoveryTypes(types))
 }
 
@@ -3006,11 +3022,15 @@ func toJSONStringArray(names []string) JSONArray {
 
 // extractionPrompts is a local mirror of extraction.SchemaExtractionPrompts
 // used to avoid an import cycle between discoveryjobs and extraction packages.
+// Fingerprint is not part of the extraction surface: it is written into the
+// stored JSON as `__fingerprint` so a later discovery run can skip regenerating
+// identical hints, and the extraction worker ignores it.
 type extractionPrompts struct {
 	DomainContext     string            `json:"domainContext,omitempty"`
 	TypeHints         map[string]string `json:"typeHints,omitempty"`
 	RelationshipHints map[string]string `json:"relationshipHints,omitempty"`
 	NegativeExamples  []string          `json:"negativeExamples,omitempty"`
+	Fingerprint       string            `json:"__fingerprint,omitempty"`
 }
 
 // generateExtractionPrompts calls the LLM to produce per-schema extraction hints
@@ -3089,7 +3109,42 @@ Return ONLY valid JSON with this exact structure:
 		attribute.Int("memory.discovery.relationship_hints_count", len(prompts.RelationshipHints)),
 		attribute.Int("memory.discovery.negative_examples_count", len(prompts.NegativeExamples)),
 	)
+	prompts.Fingerprint = extractionPromptsFingerprint(types, relationships, kbPurpose)
 	return &prompts, nil
+}
+
+// extractionPromptsFingerprint hashes the inputs that fully determine the
+// generated extraction hints, so a later discovery run over an unchanged schema
+// can reuse the stored hints instead of paying for another LLM call. It is a
+// content hash, not an identity: any change to a type name/description, a
+// relationship triple, or the project purpose changes the fingerprint.
+func extractionPromptsFingerprint(types []DiscoveredType, relationships []DiscoveredRelationship, kbPurpose string) string {
+	h := sha256.New()
+	_, _ = io.WriteString(h, kbPurpose)
+	_, _ = io.WriteString(h, "\x00")
+	typeNames := make([]string, 0, len(types))
+	byType := make(map[string]DiscoveredType, len(types))
+	for _, t := range types {
+		typeNames = append(typeNames, t.TypeName)
+		byType[t.TypeName] = t
+	}
+	sort.Strings(typeNames)
+	for _, name := range typeNames {
+		_, _ = io.WriteString(h, name)
+		_, _ = io.WriteString(h, "\x00")
+		_, _ = io.WriteString(h, byType[name].Description)
+		_, _ = io.WriteString(h, "\x00")
+	}
+	relKeys := make([]string, 0, len(relationships))
+	for _, r := range relationships {
+		relKeys = append(relKeys, r.SourceType+"\x00"+r.RelationType+"\x00"+r.TargetType)
+	}
+	sort.Strings(relKeys)
+	for _, k := range relKeys {
+		_, _ = io.WriteString(h, k)
+		_, _ = io.WriteString(h, "\x00")
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // strPtr returns a pointer to the given string value.
