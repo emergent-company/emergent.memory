@@ -691,6 +691,15 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 	// provenance stamp is consistent across all batches of this job.
 	documentVersion := w.resolveDocumentVersion(ctx, job)
 
+	// Identity resolution: pass the project's existing entities (main graph, of
+	// the installed schema's types) so the model reuses them across documents
+	// instead of minting name variants the (project,type,name) dedup cannot
+	// merge.
+	var existingEntities []agents.ExistingEntityContext
+	if pid, err := uuid.Parse(job.ProjectID); err == nil {
+		existingEntities = w.existingEntitiesForTypes(ctx, pid, sortedObjectSchemaNames(schemas.ObjectSchemas))
+	}
+
 	var totalResult *ObjectExtractionResults
 	if selection != nil {
 		// A project-selected agent runs the job as a real agent run, writing into
@@ -762,6 +771,7 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 				RelationshipSchemas: schemas.RelationshipSchemas,
 				AllowedTypes:        job.EnabledTypes,
 				DomainGuidance:      classificationResult.DomainGuidance,
+				ExistingEntities:    existingEntities,
 			}
 			if w.pipelineInputModifier != nil {
 				pipelineInput = w.pipelineInputModifier(pipelineInput)
@@ -825,6 +835,65 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 // total. It must add ObjectsMerged: persistResults upserts by (project, type,
 // name), so a later batch can merge what an earlier one created, and the
 // zero-object warning judges "produced" on created+merged (#233).
+// existingEntitiesMax caps how many existing entities are passed to the model
+// as identity-resolution context, so a large graph cannot bloat the prompt.
+const existingEntitiesMax = 200
+
+// sortedObjectSchemaNames returns the schema's object type names in a stable
+// order, so the same schema produces the same prompt on every run.
+func sortedObjectSchemaNames(schemas map[string]agents.ObjectSchema) []string {
+	names := make([]string, 0, len(schemas))
+	for name := range schemas {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// existingEntitiesForTypes fetches the project's existing objects on the main
+// graph (for the given types) as identity-resolution context. The model sees
+// the canonical id, name, type and description of each, so a later document
+// reuses "Monica Geller" instead of minting "Monica" as a separate entity.
+// Best-effort: a failure returns nil and extraction proceeds without the hint.
+func (w *ObjectExtractionWorker) existingEntitiesForTypes(ctx context.Context, projectID uuid.UUID, types []string) []agents.ExistingEntityContext {
+	if w.graphService == nil || len(types) == 0 {
+		return nil
+	}
+	resp, err := w.graphService.List(ctx, graph.ListParams{
+		ProjectID: projectID,
+		Types:     types,
+		Limit:     existingEntitiesMax,
+		SkipTotal: true,
+	})
+	if err != nil {
+		w.log.Warn("failed to load existing entities for identity resolution", logger.Error(err))
+		return nil
+	}
+	out := make([]agents.ExistingEntityContext, 0, len(resp.Items))
+	for _, obj := range resp.Items {
+		name := ""
+		if obj.Name != nil {
+			name = *obj.Name
+		} else if obj.Key != nil {
+			name = *obj.Key
+		}
+		if name == "" {
+			continue
+		}
+		desc := ""
+		if d, ok := obj.Properties["description"].(string); ok {
+			desc = d
+		}
+		out = append(out, agents.ExistingEntityContext{
+			ID:          obj.CanonicalID.String(),
+			Name:        name,
+			TypeName:    obj.Type,
+			Description: desc,
+		})
+	}
+	return out
+}
+
 func accumulateBatchResults(total, batch *ObjectExtractionResults) {
 	total.ObjectsCreated += batch.ObjectsCreated
 	total.ObjectsMerged += batch.ObjectsMerged
