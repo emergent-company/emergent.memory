@@ -1018,7 +1018,7 @@ func executeGitClone(ctx agent.Context, args map[string]any, deps WorkspaceToolD
 	// interactive workspace_git action=clone is authenticated the same way as the
 	// CheckoutService clone (GH_TOKEN before GITHUB_TOKEN within each map).
 	if deps.CheckoutService != nil {
-		gitToken := sandbox.ResolveGitTokenForConfig(deps.Config, deps.SessionEnv)
+		gitToken := sandbox.ResolveGitTokenForRun(deps.Config, deps.SessionEnv)
 		if err := deps.CheckoutService.CloneRepository(ctx, deps.Provider, deps.ProviderID, url, branch, destPath, gitToken); err != nil {
 			return map[string]any{"error": err.Error()}, nil
 		}

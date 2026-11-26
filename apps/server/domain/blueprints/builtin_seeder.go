@@ -24,6 +24,52 @@ import (
 //go:embed builtin_packs
 var builtinPacksFS embed.FS
 
+// ListBuiltinObjectTypes returns the object types defined by the bundled
+// taxonomy packs — the platform's common-entity taxonomy — as manifest
+// definitions (name, label, description, labels, properties). Discovery uses it
+// to align a proposed type against a canonical, well-described set before
+// inventing a new one, so the same concept keeps one name and schema across runs.
+// It reads the embedded manifests directly (no DB, no blueprint apply needed).
+// Only packs marked `taxonomy: true` are included: the other bundled packs
+// (task-board, agent-notes, session-message-types, dreaming-agent) define
+// platform-internal object types that must not be offered as alignment targets.
+//
+// A pack that fails to load is skipped with a warning rather than failing the
+// whole load: one malformed pack must not silently disable taxonomy alignment
+// for every other pack.
+func ListBuiltinObjectTypes() ([]ObjectTypeDef, error) {
+	return listBuiltinObjectTypes(builtinPacksFS, "builtin_packs")
+}
+
+// listBuiltinObjectTypes is the fs.FS-injectable core of ListBuiltinObjectTypes,
+// so per-pack error isolation can be tested without a malformed embedded pack.
+func listBuiltinObjectTypes(fsys fs.FS, root string) ([]ObjectTypeDef, error) {
+	entries, err := fs.ReadDir(fsys, root)
+	if err != nil {
+		return nil, err
+	}
+	var out []ObjectTypeDef
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		desc, err := loadBlueprintDir(fsys, path.Join(root, name), name)
+		if err != nil {
+			slog.Warn("skipping unloadable builtin blueprint pack",
+				slog.String("pack", name), logger.Error(err))
+			continue
+		}
+		for _, p := range desc.Packs {
+			if !p.Taxonomy {
+				continue
+			}
+			out = append(out, p.ObjectTypes...)
+		}
+	}
+	return out, nil
+}
+
 // BuiltinSeeder seeds the platform's built-in blueprints at server startup: each
 // bundled pack becomes a global published blueprint (project_id NULL,
 // origin='builtin'). It runs on every boot and is idempotent by (name, version).

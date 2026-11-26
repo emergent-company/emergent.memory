@@ -2,7 +2,8 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import icon from 'astro-icon';
 
-// POC: Astro/Starlight port of docs/site (MkDocs Material).
+// The Memory docs site (Astro + Starlight) — the only docs system; the MkDocs
+// Material build that published to GitHub Pages is retired.
 //
 // Served at the root of its own hostname (docs.memory.emergent-company.ai), so
 // `base` is `/` and every internal link is root-relative. `DOCS_SITE` only
@@ -71,9 +72,13 @@ export default defineConfig({
           href: 'https://github.com/emergent-company/emergent.memory',
         },
       ],
+      // Starlight appends the page's path **relative to the project root**
+      // (`src/content/docs/…`), so the base is the project root, not the
+      // content directory: naming `…/docs-astro/src/content/docs/` here doubles
+      // it.
       editLink: {
         baseUrl:
-          'https://github.com/emergent-company/emergent.memory/edit/dev/docs/site/',
+          'https://github.com/emergent-company/emergent.memory/edit/dev/docs-astro/',
       },
       sidebar: [
         {
@@ -105,7 +110,11 @@ export default defineConfig({
         },
         {
           label: 'Tutorials',
-          items: [{ label: 'Deploy on Railway', slug: 'tutorials/deploy-to-railway' }],
+          items: [
+            { label: 'Deploy on Railway', slug: 'tutorials/deploy-to-railway' },
+            { label: 'Install a blueprint', slug: 'tutorials/install-a-blueprint' },
+            { label: 'Configure an MCP share', slug: 'tutorials/configure-mcp-share' },
+          ],
         },
         {
           label: 'Developer Guide',

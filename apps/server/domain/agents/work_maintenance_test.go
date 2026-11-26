@@ -83,11 +83,16 @@ func TestWorkTriggerMetadataIncludesSourceSubjectOnlyForLaneObjects(t *testing.T
 	if got := workSourceSubject(&graph.WorkObjectHead{Status: "ready", Properties: map[string]any{"title": "x"}}); got != nil {
 		t.Fatalf("plain work object got a source subject: %#v", got)
 	}
-	// An issue object has no head SHA and is not a pull request subject.
-	if got := workSourceSubject(&graph.WorkObjectHead{Status: "ready", Properties: map[string]any{
+	// An issue object carries no head SHA but is still a trusted coding subject:
+	// the issue lane needs it for its implicit source credential.
+	issue := workSourceSubject(&graph.WorkObjectHead{Status: "ready", Properties: map[string]any{
 		"repo": "acme/repo", "issue_number": float64(9), "source_id": "src-1",
-	}}); got != nil {
-		t.Fatalf("issue object got a pull request subject: %#v", got)
+	}})
+	if issue == nil || issue.Kind != "issue" || issue.IssueNumber != 9 || issue.SourceID != "src-1" || issue.Repo != "acme/repo" {
+		t.Fatalf("issue source subject = %#v", issue)
+	}
+	if issue.RepositoryValid() {
+		t.Fatalf("an issue subject must not validate as a pull request subject: %#v", issue)
 	}
 }
 
@@ -114,6 +119,26 @@ func TestWorkTriggerMetadataAcceptsIntegerIssueNumber(t *testing.T) {
 	if meta["issueNumber"] != 819 || meta["sourceId"] != "source-1" || meta["subjectType"] != "issue" {
 		t.Fatalf("meta = %#v", meta)
 	}
+}
+
+// TestWorkTriggerMetadataBindsLinkedIssueToPullRequestHead pins #1091: a coding
+// issue linked to a pull request carries pr_number/pr_head_sha/pr_branch (not
+// head_sha), so a rework run dispatched from a blocking review verdict must
+// still receive the pull request number, the reviewed head SHA and the branch
+// it has to update.
+func TestWorkTriggerMetadataBindsLinkedIssueToPullRequestHead(t *testing.T) {
+	meta := workTriggerMetadata(&graph.WorkObjectHead{Status: "revision", Type: "GitHubIssue", Properties: map[string]any{
+		"repo":         "acme/repo",
+		"issue_number": float64(42),
+		"pr_number":    float64(7),
+		"pr_head_sha":  "abc123",
+		"pr_branch":    "fix/42-review-finding",
+		"source_id":    "src-1",
+	}})
+	require.Equal(t, 7, meta["prNumber"])
+	require.Equal(t, "abc123", meta["headSha"])
+	require.Equal(t, "fix/42-review-finding", meta["branch"])
+	require.Equal(t, "acme/repo#7", meta["subjectRef"])
 }
 
 func TestMergeWorkObjectMetadataPreservesEventAndAddsSource(t *testing.T) {

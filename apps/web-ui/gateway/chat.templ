@@ -918,7 +918,7 @@ templ sessionRailRow(c Conversation, ap agentAppearance, active bool, opts sessi
 			</div>
 			<div class="font-medium text-sm">{ c.Title }</div>
 			<div class="flex min-w-0 items-center gap-1.5">
-				<span class="truncate text-xs text-muted">{ railSubtitle(subtitleName, subtitleAt) }</span>
+				<span class="truncate text-xs text-muted">{ railSubtitleWithFailure(subtitleName, subtitleAt, c.Failure) }</span>
 				if opts.SubchatCount > 0 {
 					@ui.Button(ui.ButtonProps{
 						Variant:    ui.ButtonGhost,
@@ -1068,6 +1068,9 @@ type workRunRow struct {
 	CompletedAt       string
 	Icon              string
 	Color             string
+	// Failure is the run's human-readable failure reason (empty when it has
+	// none), appended to the row's subtitle so a failed run is not silent.
+	Failure string
 }
 
 // workRailItem is one board/work or extraction run in the session rail. It
@@ -1098,7 +1101,7 @@ templ workRailItem(r workRunRow) {
 			<div class="min-w-0 grow">
 				<p class="truncate text-sm font-medium">{ title }</p>
 				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
-					{ runRailSubtitle(r.Status, runActivityAt(r.StartedAt, r.CompletedAt)) }
+					{ runRailSubtitleWithFailure(r.Status, runActivityAt(r.StartedAt, r.CompletedAt), r.Failure) }
 				}
 			</div>
 			@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
@@ -1119,7 +1122,7 @@ templ workRailItem(r workRunRow) {
 		}}
 		@ui.ListRow(ui.ListRowProps{
 			Title:    title,
-			Subtitle: runRailSubtitle(r.Status, runActivityAt(r.StartedAt, r.CompletedAt)),
+			Subtitle: runRailSubtitleWithFailure(r.Status, runActivityAt(r.StartedAt, r.CompletedAt), r.Failure),
 			Leading:  agentInlineGlyph(r.Icon, r.Color),
 			Trailing: []templ.Component{ui.IconSpan("lucide--chevron-right", "size-4 text-muted-subtle")},
 			Attrs:    attrs,
@@ -1142,9 +1145,20 @@ func runRailSubtitle(status, activityAt string) string {
 	return boardStatusLabel(status) + " · " + relTime(activityAt)
 }
 
+// runRailSubtitleWithFailure appends a failed run's reason to the shared rail
+// subtitle. Rows without a failure keep runRailSubtitle's exact output, so the
+// list does not churn for successful runs.
+func runRailSubtitleWithFailure(status, activityAt, failure string) string {
+	base := runRailSubtitle(status, activityAt)
+	if failure == "" {
+		return base
+	}
+	return base + " · " + truncateRunes(failure, 60)
+}
+
 // railRunSubtitle builds the meta line for a scheduled run rail item.
 func railRunSubtitle(r scheduledRunRow) string {
-	return runRailSubtitle(r.Status, runActivityAt(r.StartedAt, r.CompletedAt))
+	return runRailSubtitleWithFailure(r.Status, runActivityAt(r.StartedAt, r.CompletedAt), r.Failure)
 }
 
 // sharedRailItem is one owner-shared session in the session rail. It opens a
@@ -1176,6 +1190,16 @@ func railSubtitle(agentName, updatedAt string) string {
 		return relTime(updatedAt)
 	}
 	return agentName + " · " + relTime(updatedAt)
+}
+
+// railSubtitleWithFailure appends a failed session's reason to its rail
+// subtitle. Rows without a failure keep the exact railSubtitle output.
+func railSubtitleWithFailure(agentName, updatedAt, failure string) string {
+	base := railSubtitle(agentName, updatedAt)
+	if failure == "" {
+		return base
+	}
+	return base + " · " + truncateRunes(failure, 60)
 }
 
 // railEmptyClass returns the class for the session rail's "no conversations

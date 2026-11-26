@@ -14,80 +14,40 @@ import (
 
 // --- Objects browser ---
 
-// objectsSearchControls is the text-query search row: a query input plus a split
-// search button. The primary action submits the surrounding form with the
-// currently selected mode; the joined chevron opens a dropdown listing the three
-// modes, each with a one-line description. Every mode option is a plain submit
-// button (`name="mode" value=…`) inside the form, so choosing a mode works with
-// JavaScript disabled: daisyUI's CSS opens the dropdown on focus and the button
-// submits the GET form. An absent or unrecognised mode normalizes to unified —
-// the strongest ranking — so the default search is not keyword-only.
-//
-// The dropdown is daisyUI's CSS-only (focus/focus-within) dropdown, so the
-// trigger carries no aria-expanded (there is no JS to keep it truthful) and no
-// aria-haspopup; the selected option is announced via role="menuitemradio" +
-// aria-checked instead.
+// objectsSearchControls is the text-query row: one search box and its submit.
+// The scope (everything / documents / objects) and the result cap are filter-row
+// controls, because they narrow the list the page shows rather than saying what
+// the query is; there is no search-mode chooser — the page always ranks with the
+// server's fused (unified) search, the only mode that spans both legs.
 //
 // The hidden filter inputs it renders are swapped out of band on every filter
-// response (#objects-search-hidden), so a search always resends the branch and
-// type the filter row currently shows instead of the ones the page loaded with.
-// Rendered by objectsBrowserToolbar inside the search form.
+// response (#objects-search-hidden), so a search always resends the branch, type,
+// scope and cap the filter row currently shows instead of the ones the page
+// loaded with. Rendered by objectsBrowserToolbar inside the search form.
 templ objectsSearchControls(data objectsPageData) {
-	{{ mode := normalizeObjectsSearchMode(data.Mode) }}
 	<div class="flex flex-col gap-2 sm:flex-row sm:items-center">
 		<label class="input input-bordered flex w-full min-w-0 flex-1 items-center gap-2">
 			@ui.IconSpan("lucide--search", "size-4 shrink-0 text-muted")
-			<input type="search" name="q" value={ data.Query } placeholder="Search objects…" class="grow" autocomplete="off" aria-label="Search objects"/>
+			<input type="search" name="q" value={ data.Query } placeholder="Search documents and objects, or paste an id…" class="grow" autocomplete="off" maxlength="800" aria-label="Search documents and objects" title="Search by words, or paste an object id (or write id:<id>) to open that object exactly" data-testid="search-query"/>
 		</label>
-		<div class="join shrink-0">
+		<div class="flex shrink-0 items-center gap-2">
 			@ui.Button(ui.ButtonProps{
-				Type:       ui.ButtonTypeSubmit,
-				Variant:    ui.ButtonPrimary,
-				Size:       ui.ButtonSM,
-				Icon:       "lucide--search",
-				ExtraClass: "join-item gap-2",
-				Attrs:      templ.Attributes{"name": "mode", "value": mode},
+				Type:    ui.ButtonTypeSubmit,
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--search",
 			}) {
-				{ objectsSearchModeLabel(mode) + " Search" }
+				Search
 			}
-			@ui.Dropdown(ui.DropdownEnd, nil) {
+			if data.Query != "" {
 				@ui.Button(ui.ButtonProps{
-					Type:       ui.ButtonTypeButton,
-					Variant:    ui.ButtonPrimary,
-					Size:       ui.ButtonSM,
-					Icon:       "lucide--chevron-down",
-					ExtraClass: "join-item",
-					AriaLabel:  "Choose search mode",
-				})
-				@ui.DropdownMenu(templ.Attributes{"aria-label": "Search mode", "class": "w-80"}) {
-					for _, m := range objectsSearchModes() {
-						{{
-							checked := "false"
-							if m.Value == mode {
-								checked = "true"
-							}
-						}}
-						<li role="none">
-							<button
-								type="submit"
-								name="mode"
-								value={ m.Value }
-								role="menuitemradio"
-								aria-checked={ checked }
-								class={ "min-w-0 break-words text-left", templ.KV("menu-active", m.Value == mode) }
-							>
-								<span class="flex w-full items-start gap-2">
-									<span class="min-w-0 grow">
-										<span class="block text-sm font-medium">{ m.Label }</span>
-										<span class="text-muted-faint block text-xs whitespace-normal">{ m.Description }</span>
-									</span>
-									if m.Value == mode {
-										@ui.IconSpan("lucide--check", "mt-0.5 size-4 shrink-0 text-primary")
-									}
-								</span>
-							</button>
-						</li>
-					}
+					Type:    ui.ButtonTypeLink,
+					Href:    objectsTargetURL(data),
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--x",
+				}) {
+					Clear
 				}
 			}
 		</div>
@@ -97,8 +57,9 @@ templ objectsSearchControls(data objectsPageData) {
 	</div>
 }
 
-// objectsTargetURL is the URL the objects filter form submits to: the agent's
-// scoped route on the agent-scoped view, the generic browser otherwise.
+// objectsTargetURL is the URL the toolbar's forms submit to: the agent's scoped
+// route on the agent-scoped view, the search page otherwise (/objects redirects
+// here, so a link to either lands on the same list).
 //
 // The provenance and actor controls are browse-only: the server's search
 // endpoints do not accept the actor filter, so they are hidden in search mode
@@ -107,7 +68,7 @@ func objectsTargetURL(data objectsPageData) string {
 	if data.AgentID != "" {
 		return "/agents/" + url.PathEscape(data.AgentID) + "/objects"
 	}
-	return "/objects"
+	return "/search"
 }
 
 // objectsFilterSelectClass is the chrome every control in the objects filter row
@@ -187,6 +148,31 @@ templ objectsFilterControls(data objectsPageData) {
 		<input type="hidden" name="credential_id" value={ data.CredentialID }/>
 		if data.ViaShare != "" {
 			<input type="hidden" name="via" value={ data.ViaShare }/>
+		}
+	}
+	// The scope and the result cap sit in the filter row, not the search row:
+	// they narrow what the page lists, so their change applies immediately and
+	// keeps the query the reader typed (the form carries `q` as a hidden input).
+	// Neither means anything on the agent-scoped view, which has no query form.
+	if !scoped {
+		@fm.FormControl("objects-filter-in", "Search in", fm.LabelAbove, "", "", nil) {
+			<select id="objects-filter-in" name="in" class="select select-sm" aria-label="Search in" data-testid="search-in-filter">
+				for _, opt := range searchScopeOptions() {
+					<option value={ opt.Value } selected?={ opt.Value == searchScopeOf(data) }>{ opt.Label }</option>
+				}
+			</select>
+		}
+		if data.Query != "" {
+			// The cap only bounds a query: browsing is cursor-paginated at a
+			// fixed page size, so offering it there would be a control that
+			// changes nothing.
+			@fm.FormControl("objects-filter-limit", "Results", fm.LabelAbove, "", "", nil) {
+				<select id="objects-filter-limit" name="limit" class="select select-sm" aria-label="Number of results" data-testid="search-limit-filter">
+					for _, opt := range searchLimitOptions() {
+						<option value={ strconv.Itoa(opt.Value) } selected?={ opt.Value == searchLimitOf(data) }>{ opt.Label }</option>
+					}
+				</select>
+			}
 		}
 	}
 	if len(data.Branches) > 0 {
@@ -405,19 +391,126 @@ templ objectsActorAvatar(o objectActorOption) {
 	}
 }
 
-// objectsSearchEmpty is the no-hits state: an empty state with a clear-search
-// escape hatch back to the full browse list.
-templ objectsSearchEmpty() {
+// objectsSearchEmpty is the no-hits state: the query matched nothing. The copy
+// follows the scope the search ran under — "nothing matched" covers document
+// text too when the search included it — and a project with no embedding model
+// is told why the semantic half could not contribute, since that is the one
+// configuration the reader can fix.
+//
+// It is also where the id lookup is discoverable: a reader who typed an id into
+// a relevance search lands here, and "paste the whole id" is the answer.
+templ objectsSearchEmpty(data objectsPageData) {
 	@ui.EmptyState(ui.EmptyStateProps{
 		Icon:        "lucide--search-x",
-		Title:       "No matching objects",
-		Description: "Nothing stored matches your search. Try different words, or clear it to keep browsing.",
+		Title:       "No matches for \"" + data.Query + "\"",
+		Description: searchEmptyDescription(data),
 		Bordered:    true,
 		Class:       "py-12",
+		Attrs:       templ.Attributes{"data-testid": "search-empty"},
+	}) {
+		<div class="flex flex-wrap items-center justify-center gap-2">
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    objectsTargetURL(data),
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--x",
+			}) {
+				Clear search
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/documents",
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--file-text",
+			}) {
+				Documents
+			}
+			if data.EmbeddingModelMissing {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    "/embeddings",
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--scan-line",
+				}) {
+					Embeddings
+				}
+			}
+		</div>
+	}
+}
+
+// objectsSearchEmptyDispatch picks the empty state for a query that produced
+// nothing to render: an id lookup explains its own miss, a query whose every hit
+// fell below the relevance floor offers the held-back rows, and anything else is
+// simply "no matches". Both the page's results region and the objects section use
+// it, so the three states cannot disagree about which one applies.
+templ objectsSearchEmptyDispatch(data objectsPageData) {
+	if data.Lookup != nil {
+		@objectsSearchLookupEmpty(data.Lookup)
+	} else if data.HiddenCount > 0 {
+		@objectsSearchWeakEmpty(data)
+	} else {
+		@objectsSearchEmpty(data)
+	}
+}
+
+// objectsSearchLookupEmpty is the empty state of an exact id lookup: the id did
+// not resolve, and the reason says which id or which mistake to check. It is
+// deliberately not "No matching objects" — a lookup is not a search, and telling
+// the reader nothing matched would hide the fact that the id itself was the
+// problem.
+templ objectsSearchLookupEmpty(lookup *objectSearchLookup) {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--fingerprint",
+		Title:       "No object with that id",
+		Description: lookup.Reason,
+		Bordered:    true,
+		Class:       "py-12",
+		Attrs:       templ.Attributes{"data-testid": "objects-search-lookup-empty"},
 	}) {
 		@ui.Button(ui.ButtonProps{
 			Type:    ui.ButtonTypeLink,
-			Href:    "/objects",
+			Href:    "/search",
+			Variant: ui.ButtonGhost,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--x",
+		}) {
+			Clear search
+		}
+	}
+}
+
+// objectsSearchWeakEmpty is the state a query reaches when every hit scored
+// below the relevance floor: unified search answered, but only with the nearest
+// objects it always returns — the tail of a vector search, not matches for what
+// was typed. The count and the one-click escape keep that judgement visible and
+// reversible: the page never claims there is nothing, and a floor set too high
+// costs one click rather than the answer.
+templ objectsSearchWeakEmpty(data objectsPageData) {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--search-x",
+		Title:       "No strong matches",
+		Description: countLabel(data.HiddenCount, "object came", "objects came") + " back, but all scored below the relevance floor — they are the nearest objects the search always returns, not matches for your words.",
+		Bordered:    true,
+		Class:       "py-12",
+		Attrs:       templ.Attributes{"data-testid": "objects-search-weak-empty"},
+	}) {
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeLink,
+			Href:    objectsSearchShowAllHref(data),
+			Variant: ui.ButtonGhost,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--chevron-down",
+			Attrs:   templ.Attributes{"data-testid": "objects-search-weak-show"},
+		}) {
+			{ "Show " + countLabel(data.HiddenCount, "result", "results") }
+		}
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeLink,
+			Href:    "/search",
 			Variant: ui.ButtonGhost,
 			Size:    ui.ButtonSM,
 			Icon:    "lucide--x",
@@ -449,7 +542,7 @@ templ objectsTypeEmpty() {
 	}) {
 		@ui.Button(ui.ButtonProps{
 			Type:    ui.ButtonTypeLink,
-			Href:    "/objects",
+			Href:    "/search",
 			Variant: ui.ButtonGhost,
 			Size:    ui.ButtonSM,
 			Icon:    "lucide--x",
@@ -502,7 +595,7 @@ templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef,
 		</div>
 	} else {
 		<div class={ pageFormChromeClass }>
-			@detailHeader(crumbsActive(nav.Crumbs("Objects", "/objects", "New object")), "", "New object", "Manually add an entity to the knowledge graph.", detailHeaderOpts{Margin: "mb-6"})
+			@detailHeader(crumbsActive(nav.Crumbs("Objects", "/search", "New object")), "", "New object", "Manually add an entity to the knowledge graph.", detailHeaderOpts{Margin: "mb-6"})
 			<form class="mb-6 flex flex-wrap items-center gap-2" method="get" action="/objects/new">
 				// requestSubmit, not submit: submit() dispatches no `submit`
 				// event, so the boosted form never sees it and the browser
@@ -798,6 +891,11 @@ type objectDetailShellData struct {
 	WorkItem *WorkItem
 	// Sources is the object's extraction provenance, rendered on Overview only.
 	Sources []objectSource
+	// Provenance is the write stamp of the version on screen — who wrote it, how
+	// they were authenticated, and when — resolved against Identities. The
+	// Overview renders it in the rail's Provenance group, the same component the
+	// wiki page uses; the other subpages leave it zero and never read it.
+	Provenance objectVersionProvenance
 	// Edges is the object's relationship list, fetched once here so every
 	// subpage can badge the Relationships rail item. EdgeCount is its length.
 	Edges     []GraphRelationship
@@ -831,8 +929,17 @@ func (d objectDetailShellData) workControlTarget() objectWorkControlTarget {
 // objectDetailShell renders the container, header, and sub-navigation rail
 // shared by every object subpage. Page-specific content (overview form, history
 // timeline, relationships list, deferred similar list) is passed as children.
+//
+// The container is full-bleed (go-daisy ContainerFull = max-w-none) rather than
+// the ContainerLG reading width every other page uses: the shell already spends
+// 11rem on the left sub-nav rail, and the Overview adds a 17rem metadata rail on
+// the right, so a max-w-6xl cap squeezed the record into a third of the pane.
+// The width is shared by all four subpages on purpose — navigating the rail must
+// not move the rail itself, and a per-page cap would shift it right on every
+// switch to/from the Overview. Container's own gutter (p-6 lg:p-8) is the small
+// padding the full-bleed surface keeps.
 templ objectDetailShell(data objectDetailShellData) {
-	@layout.Container(layout.ContainerLG, nil) {
+	@layout.Container(layout.ContainerFull, nil) {
 		if data.LoadErr != nil {
 			@pageError("Object unavailable", data.LoadErr)
 		} else {
@@ -846,8 +953,25 @@ templ objectDetailShell(data objectDetailShellData) {
 }
 
 // ObjectDetailPage renders the object Overview subpage: the shared header/rail
-// plus the workflow panel, record facts, the type's relationship sections,
-// editable properties, and type-property form.
+// plus a two-column body — the editable record on the left, the object's state
+// on the right.
+//
+// The right column is the same split the wiki page makes (objectWikiObjectPage):
+// the facts about this version and the workflow controls live in a 17rem rail
+// beside the content instead of stacked above it, so the record a reader came to
+// look at is not pushed below a wall of metadata. The Metadata and Provenance
+// groups are literally the wiki's components (objectMetadataRail,
+// objectProvenanceRail), so the two sidebars cannot drift apart; the rail is
+// hairline sections (objectWikiRail), not cards, because a rail of panels reads
+// as a second page.
+//
+// Below xl the grid is one column and the rail comes FIRST (order-1 against the
+// content's order-2, restored to source order at xl). A narrow screen has no
+// room for a side column, and on the editing surface the state — which version,
+// which branch, which status — is what a reader checks before the fields, so
+// burying it under the form made the page open on a Save bar. The wiki page keeps
+// content-first stacking on purpose: there the article is the page, and its rail
+// also carries Labels, Relationships and History.
 //
 // data is the same shell struct every other subpage takes. uiObject fills the
 // Overview-specific fields (ViewSections, HasView, FlashMsg/FlashErr) on it
@@ -865,31 +989,37 @@ templ objectDetailShell(data objectDetailShellData) {
 // The editable fields live in two cards, matching the read-only preview
 // drawer: "Properties" carries the platform fields (key and labels) and
 // "<Type> Properties" carries the type's schema fields, so platform data and
-// schema data never blur together. Workflow status and assignee are edited by
-// the Workflow panel above; record facts are their own read-only panel. One
-// <form> spans both editable cards with a single terminal Save bar:
-// uiObjectUpdate always replaces labels with the submitted set, so a second,
-// labels-less form would wipe them.
+// schema data never blur together. They stay in the left column as one <form>
+// with a single terminal Save bar: uiObjectUpdate always replaces labels with
+// the submitted set, so a second, labels-less form in the rail would wipe them.
+// Workflow status and assignee are edited in the rail's Workflow group, and the
+// header carries no state chips on this page — the rail is where they live.
 templ ObjectDetailPage(data objectDetailShellData, labelSuggestions []string, propDefs []objectPropertyDef) {
 	{{ data.Active = "overview" }}
 	@objectDetailShell(data) {
 		if data.Obj != nil {
-			@objectSourceCard(data.Sources)
-			@objectWorkflowPanel(data.Obj, data.Status, data.Assignees, data.workControlTarget())
-			@objectWorkBlockPanel(data.Obj, data.WorkItem)
-			@objectDetailsCard(data.Obj)
-			if len(data.ViewSections) > 0 {
-				@objectViewSectionList(data.Obj.ID, data.ViewSections, data.TypeUIByType, objectViewSurfaceOverview)
-			} else if data.HasView {
-				@objectViewEmptySection(data.Obj.ID, data.EdgeCount)
-			}
-			<form class="mt-6 flex flex-col gap-6" method="post" action={ templ.URL("/objects/" + url.PathEscape(data.Obj.ID)) } hx-disable="find button.memory-save-btn">
-				@objectBuiltinPropertiesCard(data.Obj, labelSuggestions, propDefs)
-				@objectTypePropertiesCard(data.Obj, propDefs, data.TypeLabel)
-				@components.StickyFormActions(components.StickyFormActionsProps{}) {
-					@components.SaveChangesButton()
-				}
-			</form>
+			<div class="grid grid-cols-1 gap-10 xl:grid-cols-[minmax(0,1fr)_17rem]" data-testid="object-detail-page">
+				<div class="order-2 flex min-w-0 flex-col gap-6 xl:order-1">
+					@objectWorkBlockPanel(data.Obj, data.WorkItem)
+					if len(data.ViewSections) > 0 {
+						@objectViewSectionList(data.Obj.ID, data.ViewSections, data.TypeUIByType, objectViewSurfaceOverview)
+					} else if data.HasView {
+						@objectViewEmptySection(data.Obj.ID, data.EdgeCount)
+					}
+					<form class="flex flex-col gap-6" method="post" action={ templ.URL("/objects/" + url.PathEscape(data.Obj.ID)) } hx-disable="find button.memory-save-btn">
+						@objectBuiltinPropertiesCard(data.Obj, labelSuggestions, propDefs)
+						@objectTypePropertiesCard(data.Obj, propDefs, data.TypeLabel)
+						@components.StickyFormActions(components.StickyFormActionsProps{Rail: true, Full: true}) {
+							@components.SaveChangesButton()
+						}
+					</form>
+				</div>
+				<aside class="order-1 flex min-w-0 flex-col gap-6 xl:order-2" aria-label="Object metadata">
+					@objectMetadataRail(data.Obj, data.Branch)
+					@objectWorkflowPanel(data.Obj, data.Status, data.Assignees, data.workControlTarget())
+					@objectProvenanceRail(data.Obj, data.Sources, data.Provenance)
+				</aside>
+			</div>
 		}
 	}
 }
@@ -897,7 +1027,7 @@ templ ObjectDetailPage(data objectDetailShellData, labelSuggestions []string, pr
 // objectHistoryPage renders the History subpage: the shared shell plus the full
 // version timeline. A failed history fetch degrades only this section; the
 // object header and rail stay usable.
-templ objectHistoryPage(data objectDetailShellData, versions []GraphObject, identities []objectActorOption, historyErr error) {
+templ objectHistoryPage(data objectDetailShellData, versions []GraphObject, identities []objectActorOption, orderers map[string]string, historyErr error) {
 	@objectDetailShell(data) {
 		@ui.Section("History", ui.SectionProps{
 			BodyClass: "memory-density-comfortable",
@@ -912,7 +1042,7 @@ templ objectHistoryPage(data objectDetailShellData, versions []GraphObject, iden
 				})
 			} else {
 				<div data-testid="object-history-page">
-					@objectPreviewHistory(versions, identities)
+					@objectPreviewHistory(versions, identities, orderers)
 				</div>
 			}
 		}
@@ -959,20 +1089,39 @@ func objectBreadcrumbs(obj *GraphObject, trail []nav.BreadcrumbItem) []nav.Bread
 	if len(trail) > 0 {
 		return trail
 	}
-	return crumbsActive(nav.Crumbs("Objects", "/objects", graphObjectLabel(*obj)))
+	return crumbsActive(nav.Crumbs("Objects", "/search", graphObjectLabel(*obj)))
 }
 
 // objectDetailHeader renders the object detail page header through the shared
-// detail header: the page's type chip, branch, status and embedding state are
-// chips under the description (never inline with, or above, the title), and the
-// single page action is the primary one.
+// detail header: the page's breadcrumb trail, the shared object header as the
+// title, and the single page action.
+//
+// The Overview carries no state chips. They moved into the page's right-hand
+// rail (objectMetadataRail and objectProvenanceRail, the wiki's own components),
+// beside the workflow pickers they belong with — the same split the wiki page
+// makes (objectWikiHead), where a chip row under the title repeated the branch
+// and the embedding state without the context that gives either meaning. The
+// other subpages have no state block of their own, so they keep the chip row.
+//
+// One escape hatch: when the schema could not be loaded, the rail's Workflow
+// group hides itself (it cannot tell whether the type declares a workflow, the
+// same way the wiki's read-only group does), so the stored status would
+// disappear from the page. In that case the header carries the status badge
+// alone — never the whole chip row, whose facts the rail already shows.
 templ objectDetailHeader(obj *GraphObject, branch objectBranchRef, typeUIByType map[string]typeUI, trail []nav.BreadcrumbItem, status *objectStatusControl, active string) {
 	{{ tui := typeUIOf(typeUIByType, obj.Type)
 	crumbs := objectBreadcrumbs(obj, trail)
+	// The chips are state only: the head below already names the object's type
+	// and ref, so a type badge here would say it twice.
+	var meta templ.Component
+	switch {
+	case active != "overview":
+		meta = objectDetailChips(obj, branch)
+	case objectWorkControlDisabled(status):
+		meta = objectDegradedStatus(obj)
+	}
 	opts := detailHeaderOpts{
-		// The chips are state only: the head below already names the object's
-		// type and ref, so a type badge here would say it twice.
-		Meta: objectDetailChips(obj, branch, typeUIByType, status, active),
+		Meta: meta,
 		// The title is the shared object header (tile, identity line, name), so
 		// an object is introduced by the same component here and on its wiki.
 		TitleBody: objectHeader(objectHeaderProps{
@@ -1007,9 +1156,26 @@ templ objectDetailHeader(obj *GraphObject, branch objectBranchRef, typeUIByType 
 	}
 }
 
-// objectDetailChips is the header's state row: branch, data class, writing
-// credential, version count, workflow status (suppressed on the Overview, whose
-// Workflow panel carries the editable control) and embedding state.
+// objectDegradedStatus is the one chip the Overview's header still renders: the
+// stored status, when the page has no workflow control to show it in — either
+// because the type declares no workflow or because a failed schema load left the
+// page unable to tell. It renders nothing for an object with no status, so the
+// header stays empty rather than gaining an empty row.
+templ objectDegradedStatus(obj *GraphObject) {
+	if obj.Status != "" {
+		@components.StatusBadge(boardStatusLabel(obj.Status), boardStatusIntent(obj.Status), "", components.StatusBadgeOpts{
+			Size:  ui.BadgeSizeSM,
+			Dot:   true,
+			Attrs: templ.Attributes{"data-status": obj.Status, "title": "The stored status, shown read-only because there is no workflow control on this page."},
+		})
+	}
+}
+
+// objectDetailChips is the state row of the object's subpages: branch, data
+// class, writing credential, version count, workflow status and embedding state.
+// The Overview renders it in its metadata rail instead of the header, so the
+// state sits beside the facts and the workflow pickers; History, Relationships
+// and Similar objects have no rail block and keep it under the title.
 //
 // The type and ref are deliberately absent: the page head is the shared object
 // header, which names the type on its identity line (like a browse card and a
@@ -1018,7 +1184,7 @@ templ objectDetailHeader(obj *GraphObject, branch objectBranchRef, typeUIByType 
 // count) stay, because a generated wiki entry and a hand-entered one must not
 // look identical, and both degrade to nothing when the server does not report
 // them (write responses do not).
-templ objectDetailChips(obj *GraphObject, branch objectBranchRef, typeUIByType map[string]typeUI, status *objectStatusControl, active string) {
+templ objectDetailChips(obj *GraphObject, branch objectBranchRef) {
 	@objectBranchChip(branch)
 	if lbl, variant, icon, hint := dataClassChip(obj.DataClass); lbl != "" {
 		@ui.Badge(ui.BadgeProps{
@@ -1033,10 +1199,10 @@ templ objectDetailChips(obj *GraphObject, branch objectBranchRef, typeUIByType m
 	if lbl := credentialKindLabel(obj.CredentialKind); lbl != "" {
 		<span class="text-muted-faint text-xs" data-testid="object-credential-kind" title="The credential the last write to this version used.">via { lbl }</span>
 	}
-	if obj.RevisionCount != nil && *obj.RevisionCount > 1 {
-		{{ versions := strconv.Itoa(*obj.RevisionCount) }}
+	if n, known := objectVersionCount(*obj); known && n > 1 {
+		{{ versions := objectVersionCountLabel(n) }}
 		@ui.Badge(ui.BadgeProps{
-			Label:   versions + " versions",
+			Label:   versions,
 			Variant: ui.BadgeNeutral,
 			Style:   ui.BadgeStyleSoft,
 			Size:    ui.BadgeSizeSM,
@@ -1045,7 +1211,10 @@ templ objectDetailChips(obj *GraphObject, branch objectBranchRef, typeUIByType m
 			Attrs:   templ.Attributes{"data-testid": "object-revision-count", "title": "Every recorded version of this object, newest first."},
 		})
 	}
-	if obj.Status != "" && !(active == "overview" && !objectWorkControlDisabled(status)) {
+	// Every surface that renders this row is read-only (History, Relationships,
+	// Similar objects): the Overview, the only editable one, renders its state in
+	// the metadata rail instead and has no chip row.
+	if obj.Status != "" {
 		@components.StatusBadge(boardStatusLabel(obj.Status), boardStatusIntent(obj.Status), "", components.StatusBadgeOpts{
 			Size:  ui.BadgeSizeSM,
 			Dot:   true,
@@ -1080,24 +1249,6 @@ templ objectBranchChip(branch objectBranchRef) {
 		Href:    objectBranchChipHref(branch),
 		Attrs:   templ.Attributes{"data-testid": "object-branch-chip"},
 	})
-}
-
-// objectSourceCard renders the object's extraction provenance (where it came
-// from): one row per `_sources` record — source document, version, extraction
-// job, and extracted-at time. Omitted when the object carries no provenance.
-templ objectSourceCard(sources []objectSource) {
-	if len(sources) > 0 {
-		@ui.Section("Source", ui.SectionProps{
-			Margin:    "mt-6",
-			BodyClass: "memory-density-comfortable",
-		}) {
-			<div class="flex flex-col gap-2" data-testid="object-source-card">
-				for _, src := range sources {
-					@objectSourceRow(src)
-				}
-			</div>
-		}
-	}
 }
 
 // objectSourceRow is one extraction-provenance record. The source document name
@@ -1137,9 +1288,10 @@ templ objectSourceRow(src objectSource) {
 
 // objectBuiltinPropertiesCard renders the editable platform fields of the
 // detail page: the title, the prose the wiki leads with, and labels. Workflow
-// status and assignee are edited in the Workflow panel, and record facts have
-// their own read-only panel, so neither is repeated here. POST /objects/{id}
-// delta-merges the submitted fields. The display ref and UUID are not editable.
+// status and assignee are edited in the rail's Workflow group, and the record
+// facts live in the rail's own read-only Metadata group, so neither is repeated
+// here. POST /objects/{id} delta-merges the submitted fields. The display ref and
+// UUID are not editable.
 //
 // The prose field is a platform field even though it is stored as an ordinary
 // property: the wiki resolves its overview from `summary`/`description`/`excerpt`/
@@ -1167,30 +1319,6 @@ templ objectBuiltinPropertiesCard(obj *GraphObject, labelSuggestions []string, p
 			}
 		</div>
 	}
-}
-
-// objectDetailsCard renders the read-only record facts as their own panel above
-// the editable Properties card.
-templ objectDetailsCard(obj *GraphObject) {
-	@ui.Section("Details", ui.SectionProps{
-		Margin:    "mt-6",
-		BodyClass: "memory-density-comfortable",
-	}) {
-		@objectRecordFacts(obj)
-	}
-}
-
-// objectRecordFacts renders the object's read-only record facts: Version,
-// Created, and ID. Workflow status and assignee are editable in the Workflow
-// panel, so they are not duplicated here.
-templ objectRecordFacts(obj *GraphObject) {
-	<div class="flex flex-col gap-3" data-testid="object-record-facts">
-		<dl class="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
-			@objectRecordFact("Version", objectPreviewVersionLabel(obj.Version), false)
-			@objectRecordFact("Created", objectPreviewCreated(obj.CreatedAt), false)
-			@objectRecordFact("ID", objectPreviewCanonicalID(*obj), true)
-		</dl>
-	</div>
 }
 
 // objectRecordFact is one read-only record fact: a small label over its value.
@@ -1422,7 +1550,7 @@ templ objectViewSectionCard(objID string, index int, section objectViewSection, 
 								if browseType := dominantNeighbourType(section.Rows); browseType != "" {
 									<a
 										class="link link-hover text-xs font-medium"
-										href={ templ.URL("/objects?type=" + url.QueryEscape(browseType)) }
+										href={ templ.URL("/search?type=" + url.QueryEscape(browseType)) }
 										data-testid="object-view-browse-all"
 									>
 										Browse all { relationshipTypeLabel(browseType) }
@@ -1466,7 +1594,7 @@ templ objectViewRow(row objectViewItem, typeUIByType map[string]typeUI, showDire
 	if row.Resolved {
 		// The wiki, like every other object link in the app (#699): the
 		// editable page is reached from the wiki, not from a neighbour list.
-		href = objectWikiHref(relationshipEndpointTarget(row.Neighbour), "")
+		href = objectWikiHref(relationshipEndpointTarget(row.Neighbour))
 	}
 	direction := ""
 	if showDirection {
@@ -1612,7 +1740,7 @@ templ relationshipEndpointLink(obj *GraphObject, related []GraphObject, id strin
 	hrefID := relationshipEndpointTarget(ep) }}
 	if resolved {
 		<a
-			href={ templ.URL(objectWikiHref(hrefID, "")) }
+			href={ templ.URL(objectWikiHref(hrefID)) }
 			class="group hover:bg-base-200/40 flex min-w-0 items-center gap-2 rounded-field px-1.5 py-0.5"
 			data-testid="object-relationship-endpoint"
 			data-object-id={ hrefID }
@@ -1790,7 +1918,7 @@ templ objectsCredentialScopeNotice(data objectsPageData) {
 		</div>
 		@ui.Button(ui.ButtonProps{
 			Type:    ui.ButtonTypeLink,
-			Href:    "/objects",
+			Href:    "/search",
 			Variant: ui.ButtonGhost,
 			Size:    ui.ButtonXS,
 			Icon:    "lucide--x",

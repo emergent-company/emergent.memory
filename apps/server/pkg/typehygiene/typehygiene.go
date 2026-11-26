@@ -39,9 +39,10 @@ var irregularPlurals = map[string]string{
 	"appendixes": "appendix",
 }
 
-// synonyms maps known spelling/word variants to one canonical key. Only pairs
-// that describe the same entity belong here; it is intentionally conservative
-// because a wrong synonym merges two real types.
+// synonyms maps known spelling/word variants to one canonical key. Only
+// spelling variants belong here (organisation -> organization); semantic
+// equivalence ("Character" vs "Person") is resolved by the discovery domain's
+// embedding-based similarity check, never by a hardcoded list.
 var synonyms = map[string]string{
 	"organisation": "organization",
 	"place":        "location",
@@ -147,6 +148,12 @@ func singularize(s string) string {
 	}
 	if singular, ok := irregularPlurals[s]; ok {
 		return singular
+	}
+	// Words whose plural equals their singular ("series", "species", and
+	// compounds like "televisionseries") end in "ies" but are NOT plural — the
+	// suffix rule below would mangle them ("series" -> "sery").
+	if strings.HasSuffix(s, "series") || strings.HasSuffix(s, "species") {
+		return s
 	}
 	switch {
 	case strings.HasSuffix(s, "ies") && len(s) > 3:

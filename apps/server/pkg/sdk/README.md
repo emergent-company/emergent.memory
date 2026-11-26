@@ -1,10 +1,10 @@
 # Memory Go SDK
 
-[![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://emergent-company.github.io/emergent.memory/)
+[![Documentation](https://img.shields.io/badge/docs-docs.memory-blue)](https://docs.memory.emergent-company.ai/)
 
 Official Go client library for the Memory API.
 
-> **Full documentation** — guides, per-package reference, and LLM-friendly reference files are published at **https://emergent-company.github.io/emergent.memory/**
+> **Full documentation** — guides, per-package reference, and LLM-friendly reference files are published at **https://docs.memory.emergent-company.ai/**
 
 ## Installation
 

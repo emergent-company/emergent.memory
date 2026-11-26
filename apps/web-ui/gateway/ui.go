@@ -226,7 +226,13 @@ func sidebarGroupsWithMarket(base string, isOrgAdmin bool, warns sidebarWarns) [
 		approvalsItem.Warn = sidebarApprovalsBadge(warns.Approvals)
 	}
 	memoryItems := []layout.SidebarItem{
-		{Label: "Objects", Href: base + "/objects", Icon: "lucide--box"},
+		// Search is the Memory group's landing page: it browses every object
+		// memory stores and searches document text in one surface, so it is what
+		// "Memory" means as a destination. It stays first for that reason — the
+		// group crumb on every Memory page points here (navGroupHref is derived
+		// from the first item), and the object trail's own "Objects" root folds
+		// into it because they land on the same page.
+		{Label: "Search", Href: base + "/search", Icon: "lucide--search"},
 		{Label: "Embeddings", Href: base + "/embeddings", Icon: "lucide--scan-line"},
 		{Label: "Schema", Href: base + "/schema", Icon: "lucide--git-branch"},
 		{Label: "Blueprints", Href: base + "/blueprints", Icon: "lucide--library"},
@@ -251,7 +257,6 @@ func sidebarGroupsWithMarket(base string, isOrgAdmin bool, warns sidebarWarns) [
 	topItems := []layout.SidebarItem{
 		approvalsItem,
 		{Label: "Chat", Href: base + "/chat", Icon: "lucide--messages-square"},
-		{Label: "Search", Href: base + "/search", Icon: "lucide--search"},
 		{Label: "Sessions", Href: base + "/sessions", Icon: "lucide--history"},
 	}
 	return []layout.SidebarGroup{
@@ -927,50 +932,40 @@ func (s *Server) chatRailData(ctx context.Context, includeArchived bool) (agents
 		captureError(qErr)
 		questions = nil
 	}
-	// Nested sub-chats are internal loopback sessions. Their transcript is not
-	// shown until the group is opened, so fetching one history per child would
-	// multiply the rail's request count for badges nobody sees (17 sub-chats in
-	// one observed chat). Pending approvals and questions are already in the
-	// project-wide snapshots, so badge those without loading a transcript; an
-	// orphan promoted to a root is not nested and keeps the full state fetch.
-	visible := make(map[string]bool, len(convs.Conversations))
-	for _, c := range convs.Conversations {
-		visible[c.ID] = true
-	}
-	isSubchat := make(map[string]bool, len(convs.Conversations))
-	for _, c := range convs.Conversations {
-		if c.ParentConversationID != "" && visible[c.ParentConversationID] {
-			isSubchat[c.ID] = true
-		}
-	}
+	// Every conversation — including a nested sub-chat — gets the same state
+	// fetch so its failure reason is visible. The fan-out is bounded by
+	// runConcurrently, and a failed history fetch falls back to the
+	// project-wide pending-decision snapshots rather than dropping the badge.
+	states := make([]*conversationRunState, len(convs.Conversations))
+	stateErrs := make([]error, len(convs.Conversations))
+	runConcurrently(len(convs.Conversations), func(i int) {
+		states[i], stateErrs[i] = s.conversationState(ctx, convs.Conversations[i].ID, approvals, questions)
+	})
 	for i := range convs.Conversations {
 		c := &convs.Conversations[i]
-		if isSubchat[c.ID] {
-			for _, a := range approvals {
-				if a.ConversationID == c.ID && a.Decision == "pending" {
-					c.PendingApprovals++
-				}
-			}
-			for _, q := range questions {
-				if q.ConversationID == c.ID && (q.Response == nil || *q.Response == "") {
-					c.PendingQuestions++
-				}
-			}
-			if c.PendingApprovals > 0 || c.PendingQuestions > 0 {
-				c.Bucket = runBucketNeedsInput
-			} else {
-				c.Bucket = runBucketDone
-			}
+		if st := states[i]; st != nil && stateErrs[i] == nil {
+			c.Bucket = st.bucket
+			c.Failure = st.failure
+			c.PendingApprovals = len(st.pendingApprovals)
+			c.PendingQuestions = len(st.pendingQuestions)
 			continue
 		}
-		st, serr := s.conversationState(ctx, c.ID, approvals, questions)
-		if serr != nil {
+		// Fallback: keep the pending badges from the project-wide snapshots.
+		for _, a := range approvals {
+			if a.ConversationID == c.ID && a.Decision == "pending" {
+				c.PendingApprovals++
+			}
+		}
+		for _, q := range questions {
+			if q.ConversationID == c.ID && (q.Response == nil || *q.Response == "") {
+				c.PendingQuestions++
+			}
+		}
+		if c.PendingApprovals > 0 || c.PendingQuestions > 0 {
+			c.Bucket = runBucketNeedsInput
+		} else {
 			c.Bucket = runBucketDone
-			continue
 		}
-		c.Bucket = st.bucket
-		c.PendingApprovals = len(st.pendingApprovals)
-		c.PendingQuestions = len(st.pendingQuestions)
 	}
 	schedRuns = s.chatScheduledRuns(ctx, appearances)
 	shared = s.chatSharedSessions(ctx)
@@ -1121,6 +1116,9 @@ type scheduledRunRow struct {
 	// position and the time its subtitle shows.
 	CompletedAt string
 	Summary     string
+	// Failure is the run's human-readable failure reason (empty when it has
+	// none), shown on the rail row so a failed run is not silent.
+	Failure string
 	// AgentDefinitionID is the agent-definition id the run's runtime agent binds
 	// (empty when it binds none), in the id space the rail's agent filter uses.
 	AgentDefinitionID string
@@ -1212,6 +1210,7 @@ func (s *Server) chatScheduledRuns(ctx context.Context, appearances map[string]a
 				StartedAt:         r.StartedAt,
 				CompletedAt:       completedAt,
 				Summary:           scheduledRunPreview(r, a.Name),
+				Failure:           runFailureText(r.Status, r.ErrorMessage, r.FailureClass, r.Summary),
 				AgentDefinitionID: defID,
 				Icon:              ap.Icon,
 				Color:             ap.Color,
@@ -1272,6 +1271,7 @@ func (s *Server) chatWorkRuns(ctx context.Context, appearances map[string]agentA
 			CompletedAt:       completedAt,
 			Icon:              ap.Icon,
 			Color:             ap.Color,
+			Failure:           runFailureText(r.Status, r.ErrorMessage, r.FailureClass, r.Summary),
 		})
 	}
 	return append(out, s.extractionRunRows(ctx)...)
@@ -1320,6 +1320,7 @@ func (s *Server) extractionRunRows(ctx context.Context) []workRunRow {
 			Status:      job.Status,
 			StartedAt:   startedAt,
 			CompletedAt: job.CompletedAt,
+			Failure:     runFailureText(job.Status, job.ErrorMessage, nil, nil),
 		}
 		if row.RunID == "" && job.SourceID != "" {
 			row.Href = "/documents/" + url.PathEscape(job.SourceID) + "/extractions/" + url.PathEscape(job.ID)

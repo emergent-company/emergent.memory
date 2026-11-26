@@ -693,6 +693,13 @@ type ExecuteRequest struct {
 	SubjectObjectID   *string
 	SubjectObjectType *string
 
+	// SourceSubject is the server-trusted verified source identity for this run.
+	// It is copied from AgentRun.SourceSubject (a dispatcher-written column) and
+	// is never derived from trigger metadata — queued runs and spawned children
+	// can carry model-settable TriggerMetadata, so a credential or review binding
+	// must key on this field only.
+	SourceSubject *SourceSubject
+
 	// ReasoningEffort, when non-empty, is applied to the resolved model via the
 	// provider.ReasoningEffortConfigurator interface (OpenAI Responses-only
 	// graded efforts such as "max"). Empty leaves the provider default in place.
@@ -1299,6 +1306,74 @@ func (ae *AgentExecutor) ensureBudgetAvailable(ctx context.Context, projectID, a
 	}
 }
 
+// inheritedOrderer resolves the ordering person a delegated run inherits: the
+// orderer of the run that delegated it, else the orderer of the root run of that
+// tree. A child's work was ordered by whoever ordered the work it belongs to —
+// an agent is never an orderer itself — so this is the honest attribution for a
+// spawn, and the root is what covers a delegation whose transport does not carry
+// the parent run id. Best-effort: a failed read logs and resolves to nil, and the
+// run then shows no orderer rather than a guessed one.
+func (ae *AgentExecutor) inheritedOrderer(dbCtx context.Context, parentRunID, rootRunID *string) *string {
+	ordered := ae.ordererOfRun(dbCtx, parentRunID)
+	if ordered != nil {
+		return ordered
+	}
+	// A top-level run is its own root, and the two ids then name one row: the
+	// parent read already answered for it.
+	if parentRunID != nil && rootRunID != nil && *parentRunID == *rootRunID {
+		return nil
+	}
+	return ae.ordererOfRun(dbCtx, rootRunID)
+}
+
+// ordererOfRun reads one run's recorded orderer, or nil when the id is absent,
+// the row is gone, or nobody ordered it.
+func (ae *AgentExecutor) ordererOfRun(dbCtx context.Context, runID *string) *string {
+	if runID == nil || *runID == "" {
+		return nil
+	}
+	run, err := ae.repo.FindRunByID(dbCtx, *runID)
+	if err != nil {
+		ae.log.Warn("failed to resolve a run's orderer",
+			slog.String("run_id", *runID),
+			slog.String("error", err.Error()),
+		)
+		return nil
+	}
+	if run == nil {
+		return nil
+	}
+	return run.OrderedByUserID
+}
+
+// persistPreCreatedOrderer records who ordered a run whose row a caller inserted
+// before the person was known — chat capture, A2A, a queued child, a resume. The
+// authenticated user wins; prior is the continuity fallback for a resume by a
+// non-user principal (a share end user, an empty principal), and a delegated row
+// otherwise inherits the parent run's orderer. A row that already carries an
+// orderer is left alone, and a failed lookup or write leaves it NULL rather than
+// inventing an attribution.
+func (ae *AgentExecutor) persistPreCreatedOrderer(dbCtx context.Context, run *AgentRun, userID string, prior *string) {
+	if run == nil || run.OrderedByUserID != nil {
+		return
+	}
+	ordered := OrderedByUserOrPrior(userID, prior)
+	if ordered == nil {
+		ordered = ae.inheritedOrderer(dbCtx, run.ParentRunID, run.RootRunID)
+	}
+	if ordered == nil {
+		return
+	}
+	if err := ae.repo.UpdateRunOrderedByUser(dbCtx, run.ID, *ordered); err != nil {
+		ae.log.Warn("failed to persist ordered_by_user_id on agent run",
+			slog.String("run_id", run.ID),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+	run.OrderedByUserID = ordered
+}
+
 // Execute runs an agent from scratch using the provided request.
 func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*ExecuteResult, error) {
 	startTime := time.Now()
@@ -1334,6 +1409,17 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		maxSteps = *req.AgentDefinition.MaxSteps
 	}
 
+	// The ordering person is the run's authenticated user, carried from the entry
+	// point that resolved one (manual trigger, chat, an answered question).
+	// Background and source-triggered paths leave UserID empty or "system", which
+	// persists NULL: nobody ordered those. A delegated run has no person of its
+	// own, so it inherits the orderer of the run that spawned it — an agent does
+	// not order work, the person behind the delegating run did.
+	orderedBy := OrderedByUser(req.UserID)
+	if orderedBy == nil {
+		orderedBy = ae.inheritedOrderer(dbCtx, req.ParentRunID, req.RootRunID)
+	}
+
 	// Create the run record
 	createOpts := CreateRunOptions{
 		AgentID:         ae.resolveAgentID(req),
@@ -1343,6 +1429,15 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		TriggerSource:   req.TriggerSource,
 		TriggerMetadata: req.TriggerMetadata,
 		TrustedInternal: req.TrustedInternal,
+		SourceSubject:   req.SourceSubject,
+		OrderedByUserID: orderedBy,
+		// SubjectObjectID/Type are deliberately not copied here. Execute is also
+		// the inline reaction path, and kb.agent_runs.subject_object_id is reserved
+		// for work-owned queued runs: persisting it for every inline run would put
+		// those runs in the live-subject unique index and collide with a queued
+		// work run (or another inline listener) on the same object. Only the
+		// source credential needs the trusted subject; reaction dedupe stays on
+		// TriggerMetadata.
 	}
 	if req.AgentDefinition != nil {
 		createOpts.AgentDefinitionID = &req.AgentDefinition.ID
@@ -1354,12 +1449,19 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		// The pre-created run was inserted by the caller without the trust marker;
 		// the request is authoritative here, so carry it onto the run row.
 		run.TrustedInternal = req.TrustedInternal
+		if run.SourceSubject == nil {
+			run.SourceSubject = req.SourceSubject
+		}
 		if err := ae.repo.UpdateRunTrustedInternal(dbCtx, run.ID, req.TrustedInternal); err != nil {
 			ae.log.Warn("failed to persist trusted_internal on agent run",
 				slog.String("run_id", run.ID),
 				slog.String("error", err.Error()),
 			)
 		}
+		// Same shape, same treatment: a caller can insert the row before the
+		// ordering person is resolved, so write it here rather than leave the run
+		// unattributable for its whole life.
+		ae.persistPreCreatedOrderer(dbCtx, run, req.UserID, nil)
 	} else {
 		var createErr error
 		run, createErr = ae.repo.CreateRunWithOptions(dbCtx, createOpts)
@@ -1475,7 +1577,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	stopHeartbeat := ae.repo.StartRunHeartbeat(run.ID, defaultRunHeartbeatInterval)
 	defer stopHeartbeat()
 
-	wsResult, wsErr = ae.provisionWorkspace(ctx, run.ID, req)
+	wsResult, wsErr = ae.provisionWorkspace(ctx, run.ID, &req)
 	if wsErr != nil {
 		// Fatal provisioning failure (e.g. image not ready) — fail the run
 		errMsg := wsErr.Error()
@@ -1551,6 +1653,26 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 	if err := ae.ensureExecutionEnabled(req); err != nil {
 		return nil, err
 	}
+	// A queued worker run reaches this entry point with only its run row as
+	// context. Copy the trusted, server-written columns the executor needs so
+	// the implicit source-credential path and provenance-sensitive tools work
+	// for work-dispatched runs exactly as they do for inline triggers. The
+	// request wins when it already carries a value; SourceSubject and the
+	// subject object are never taken from model-settable TriggerMetadata.
+	if run != nil {
+		if req.SourceSubject == nil {
+			req.SourceSubject = run.SourceSubject
+		}
+		if req.SubjectObjectID == nil {
+			req.SubjectObjectID = run.SubjectObjectID
+		}
+		if req.SubjectObjectType == nil {
+			req.SubjectObjectType = run.SubjectObjectType
+		}
+		if req.TriggerMetadata == nil {
+			req.TriggerMetadata = run.TriggerMetadata
+		}
+	}
 	if err := ae.applyInvocation(ctx, run, &req); err != nil {
 		return nil, err
 	}
@@ -1592,6 +1714,11 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 			slog.String("error", err.Error()),
 		)
 	}
+	// A queued worker run reaches this entry point as a row a transport enqueued
+	// (scheduler, trigger_agent, parent wake) and its ordering person was not
+	// known then. Resolve it from the caller's principal, else from the run that
+	// delegated it — the worker is a deferred executor, not an ordering surface.
+	ae.persistPreCreatedOrderer(dbCtx, run, req.UserID, nil)
 
 	// Validate depth
 	maxDepth := req.MaxDepth
@@ -1701,7 +1828,7 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 	stopHeartbeat := ae.repo.StartRunHeartbeat(run.ID, defaultRunHeartbeatInterval)
 	defer stopHeartbeat()
 
-	wsResult, wsErr = ae.provisionWorkspace(ctx, run.ID, req)
+	wsResult, wsErr = ae.provisionWorkspace(ctx, run.ID, &req)
 	if wsErr != nil {
 		errMsg := wsErr.Error()
 		_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, errMsg, 0)
@@ -2021,6 +2148,16 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 				slog.String("error", err.Error()),
 			)
 		}
+		// The resume continues the prior run, so the orderer continues too: the
+		// answering person when one was resolved, otherwise the prior run's
+		// orderer, so a share or anonymous resume cannot erase attribution.
+		ae.persistPreCreatedOrderer(dbCtx, newRun, req.UserID, priorRun.OrderedByUserID)
+		// The resumed turn inherits the prior run's verified source binding. The
+		// pre-created row was inserted by the caller, so carry the trusted column
+		// onto it in memory for provisioning and in-process dispatch.
+		if newRun.SourceSubject == nil {
+			newRun.SourceSubject = priorRun.SourceSubject
+		}
 	} else {
 		var err error
 		newRun, err = ae.beginResumedRun(dbCtx, priorRun, CreateRunOptions{
@@ -2035,10 +2172,26 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 			// created it finalizes the paused checkpoint.
 			SubjectObjectID:   priorRun.SubjectObjectID,
 			SubjectObjectType: priorRun.SubjectObjectType,
+			// A resumed turn keeps the prior run's verified source subject (and
+			// with it the implicit credential it is entitled to).
+			SourceSubject: priorRun.SourceSubject,
+			// And it keeps the order behind it: the answering person when they
+			// are a user, otherwise the orderer already recorded on the run
+			// being resumed, so a share or service principal cannot erase it.
+			OrderedByUserID: OrderedByUserOrPrior(req.UserID, priorRun.OrderedByUserID),
 		}, req.PauseClaimed)
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	// Carry the trusted source binding into the request for provisioning and
+	// dispatch. Never re-derive it: trigger metadata is model-settable.
+	if req.SourceSubject == nil {
+		req.SourceSubject = newRun.SourceSubject
+	}
+	if req.SourceSubject == nil {
+		req.SourceSubject = priorRun.SourceSubject
 	}
 
 	// Notify the caller as soon as the resumed run row exists so a parent run
@@ -2141,7 +2294,7 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	stopHeartbeat := ae.repo.StartRunHeartbeat(newRun.ID, defaultRunHeartbeatInterval)
 	defer stopHeartbeat()
 
-	wsResult, wsErr = ae.provisionWorkspace(ctx, newRun.ID, req)
+	wsResult, wsErr = ae.provisionWorkspace(ctx, newRun.ID, &req)
 	if wsErr != nil {
 		errMsg := wsErr.Error()
 		_ = ae.repo.FailRunWithSteps(dbCtx, newRun.ID, errMsg, priorRun.StepCount)
@@ -2607,12 +2760,71 @@ func sharedWorkspaceResult(lease *sandbox.WorkspaceLease, def *AgentDefinition) 
 	}, ""
 }
 
+// applySourceGitCredential mints a short-lived GitHub App token for a verified
+// issue coding lane and exposes it only to this run's sandbox environment. It
+// is best-effort: a mint failure is logged and the run provisions without a
+// credential (the explicit invocation path stays fail-closed in applyInvocation).
+//
+// Trust boundary: the identity comes ONLY from req.SourceSubject, the
+// dispatcher-written run column copied by ExecuteWithRun/Resume. Trigger
+// metadata and work-object properties are model/user-writable and are never
+// consulted here. Only an issue subject gets an implicit write credential; a
+// pull-request subject keeps the narrower explicit-review path.
+func (ae *AgentExecutor) applySourceGitCredential(ctx context.Context, runID string, req *ExecuteRequest) {
+	if ae == nil || ae.sourceCredentials == nil || req == nil || req.AgentDefinition == nil || len(req.AgentDefinition.SandboxConfig) == 0 {
+		return
+	}
+	if req.EnvVars != nil && req.EnvVars["GH_TOKEN"] != "" {
+		ae.log.Debug("source git credential skipped: caller-supplied GH_TOKEN wins",
+			slog.String("run_id", runID),
+			slog.String("project_id", req.ProjectID),
+		)
+		return
+	}
+	if !req.SourceSubject.IssueValid() {
+		if req.SourceSubject.RepositoryValid() {
+			ae.log.Debug("implicit source git credential not minted for pull-request subject",
+				slog.String("run_id", runID),
+				slog.String("source_id", req.SourceSubject.SourceID),
+				slog.String("repo", req.SourceSubject.Repo),
+			)
+		}
+		return
+	}
+	subject := req.SourceSubject
+	token, err := ae.sourceCredentials.MintSourceCredential(ctx, req.ProjectID, subject.SourceID, subject.Repo, map[string]string{
+		PermissionContents:     "write",
+		PermissionPullRequests: "write",
+	})
+	if err != nil {
+		// Never log the token; the error text comes from the minter and omits it.
+		ae.log.Warn("failed to mint implicit source git credential; provisioning without one",
+			slog.String("run_id", runID),
+			slog.String("project_id", req.ProjectID),
+			slog.String("source_id", subject.SourceID),
+			slog.String("repo", subject.Repo),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+	if req.EnvVars == nil {
+		req.EnvVars = map[string]string{}
+	}
+	req.EnvVars["GH_TOKEN"] = token
+	ae.log.Info("minted implicit source git credential for run",
+		slog.String("run_id", runID),
+		slog.String("project_id", req.ProjectID),
+		slog.String("source_id", subject.SourceID),
+		slog.String("repo", subject.Repo),
+	)
+}
+
 // provisionWorkspace provisions a workspace for the agent run if configured.
 // Returns (nil, nil) if workspace provisioning is disabled, not configured, or not needed.
 // Returns (result, nil) on success or degraded provisioning.
 // Returns (nil, error) for fatal pre-provisioning failures (e.g. image not ready) —
 // callers must fail the run with RunStatusError.
-func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, req ExecuteRequest) (*sandbox.ProvisioningResult, error) {
+func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, req *ExecuteRequest) (*sandbox.ProvisioningResult, error) {
 	// Check preconditions: feature enabled, provisioner available, definition has workspace config
 	if !ae.wsEnabled || ae.provisioner == nil {
 		return nil, nil
@@ -2658,6 +2870,11 @@ func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, r
 		slog.String("run_id", runID),
 		slog.String("agent_definition_id", req.AgentDefinition.ID),
 	)
+
+	// Only a run that actually provisions gets an implicit source credential.
+	// A borrowing child returned above and must never mint: its container belongs
+	// to another run and may be bound to a different source/repo entirely.
+	ae.applySourceGitCredential(ctx, runID, req)
 
 	// Check image readiness before attempting provisioning.
 	// If the image is still pulling or in error state, fail the run immediately

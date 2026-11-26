@@ -56,15 +56,16 @@ func TestParseBulkObjectIDsCaps(t *testing.T) {
 
 func TestObjectsBulkReturnPath(t *testing.T) {
 	cases := map[string]string{
-		"/objects":                               "/objects",
-		"/objects?type=task&order=asc":           "/objects?order=asc&type=task",
-		"/agents/a1/objects?provenance=created":  "/agents/a1/objects?provenance=created",
-		"/objects?bulk=delete&bulk_n=2&err=nope": "/objects",
-		"/objects/abc":                           "/objects",
-		"https://evil.example/objects":           "/objects",
-		"//evil.example/objects":                 "/objects",
-		"/agents/a1/settings":                    "/objects",
-		"":                                       "/objects",
+		"/search":                               "/search",
+		"/search?type=task&order=asc":           "/search?order=asc&type=task",
+		"/agents/a1/objects?provenance=created": "/agents/a1/objects?provenance=created",
+		"/search?bulk=delete&bulk_n=2&err=nope": "/search",
+		"/search/abc":                           "/search",
+		"https://evil.example/search":           "/search",
+		"//evil.example/search":                 "/search",
+		"/agents/a1/settings":                   "/search",
+		"/objects":                              "/search",
+		"":                                      "/search",
 	}
 	for in, want := range cases {
 		if got := objectsBulkReturnPath(in); got != want {
@@ -102,7 +103,7 @@ func TestObjectsBulkLabelAdd(t *testing.T) {
 		"ids":    {"o1"},
 		"action": {"label_add"},
 		"label":  {"infra"},
-		"back":   {"/objects?type=task"},
+		"back":   {"/search?type=task"},
 	})
 
 	if rec.Code != http.StatusSeeOther {
@@ -117,7 +118,7 @@ func TestObjectsBulkLabelAdd(t *testing.T) {
 	if got := strings.Join(f.lastUpdateReq.Labels, ","); got != "q3,infra" {
 		t.Errorf("labels = %q, want the existing label kept plus the new one", got)
 	}
-	want := "/objects?type=task&bulk=label_add&bulk_n=1"
+	want := "/search?type=task&bulk=label_add&bulk_n=1"
 	if loc := rec.Header().Get("Location"); loc != want {
 		t.Errorf("Location = %q, want %q", loc, want)
 	}
@@ -286,7 +287,7 @@ func TestObjectsBulkDeleteScopesToBranch(t *testing.T) {
 		"ids":    {"o1,o2"},
 		"action": {"delete"},
 		"branch": {"b-objs"},
-		"back":   {"/objects?branch=b-objs"},
+		"back":   {"/search?branch=b-objs"},
 	})
 
 	if got := strings.Join(f.deletedObjectBranches, ","); got != "b-objs,b-objs" {

@@ -748,27 +748,38 @@ func mergeWorkObjectMetadata(meta map[string]any, h *graph.WorkObjectHead) {
 }
 
 // workSourceSubject returns the verified source subject a source-derived work
-// object carries, so a work-dispatched run (a review lane or a claimed review
-// subject) binds its review tools to the pull request the dispatcher recorded.
-// Only server-written properties are read; a model cannot set them. Review
-// evidence and verdicts must key on the pull request (repo#number@headSha), so
-// the run needs that subject even though it was not enqueued by the webhook
-// ingress directly (#1022).
+// object carries, so a work-dispatched run binds its tools and its implicit
+// credential to the source the dispatcher recorded. Only server-written
+// properties are read; a model cannot set them. A review lane needs the pull
+// request (repo#number@headSha) so review evidence and verdicts key on it even
+// though the run was not enqueued by the webhook ingress directly (#1022). An
+// issue coding lane needs the trusted issue subject for the same reason: review
+// tools still use RepositoryValid, while the implicit source credential path
+// requires IssueValid.
 func workSourceSubject(h *graph.WorkObjectHead) *SourceSubject {
 	if h == nil || h.Properties == nil {
 		return nil
 	}
 	sourceID, _ := h.Properties["source_id"].(string)
 	repo, _ := h.Properties["repo"].(string)
-	prNumber := intProperty(h.Properties["pr_number"])
-	headSHA, _ := h.Properties["head_sha"].(string)
-	if strings.TrimSpace(sourceID) == "" || strings.TrimSpace(repo) == "" || prNumber <= 0 || strings.TrimSpace(headSHA) == "" {
+	if strings.TrimSpace(sourceID) == "" || strings.TrimSpace(repo) == "" {
 		return nil
 	}
-	return &SourceSubject{
-		SourceID: sourceID, Repo: repo, Kind: "pull_request",
-		PRNumber: prNumber, HeadSHA: headSHA,
+	prNumber := intProperty(h.Properties["pr_number"])
+	headSHA, _ := h.Properties["head_sha"].(string)
+	if prNumber > 0 && strings.TrimSpace(headSHA) != "" {
+		return &SourceSubject{
+			SourceID: sourceID, Repo: repo, Kind: "pull_request",
+			PRNumber: prNumber, HeadSHA: headSHA,
+		}
 	}
+	if issueNumber := intProperty(h.Properties["issue_number"]); issueNumber > 0 {
+		return &SourceSubject{
+			SourceID: sourceID, Repo: repo, Kind: "issue",
+			IssueNumber: issueNumber,
+		}
+	}
+	return nil
 }
 
 func workTriggerMetadata(h *graph.WorkObjectHead) map[string]any {
@@ -791,9 +802,26 @@ func workTriggerMetadata(h *graph.WorkObjectHead) map[string]any {
 	}
 	if prNumber > 0 {
 		meta["prNumber"] = int(prNumber)
-		meta["headSha"] = h.Properties["head_sha"]
 		meta["subjectType"] = "pull_request"
 		meta["subjectRef"] = fmt.Sprintf("%s#%d", repo, int(prNumber))
+		// A review lane carries head_sha directly. A coding issue linked to a
+		// pull request carries the reviewed head as pr_head_sha and the branch
+		// as pr_branch, so a rework run dispatched from a blocking verdict knows
+		// which commit/branch the finding applies to (#1091).
+		headSHA, _ := h.Properties["head_sha"].(string)
+		if strings.TrimSpace(headSHA) == "" {
+			headSHA, _ = h.Properties["pr_head_sha"].(string)
+		}
+		if strings.TrimSpace(headSHA) != "" {
+			meta["headSha"] = headSHA
+		}
+		branch, _ := h.Properties["pr_branch"].(string)
+		if strings.TrimSpace(branch) == "" {
+			branch, _ = h.Properties["head_ref"].(string)
+		}
+		if strings.TrimSpace(branch) != "" {
+			meta["branch"] = branch
+		}
 		return meta
 	}
 	meta["issueNumber"] = int(issueNumber)

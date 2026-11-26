@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -51,6 +53,58 @@ type AgentRunFull struct {
 	ToolCalls []*AgentRunToolCall `json:"toolCalls"`
 	ParentRun *ScheduledAgentRun  `json:"parentRun,omitempty"`
 }
+
+// AgentRunOrderer is the one fact object provenance needs from a run: the person
+// who ordered it. Only these two fields are read, so the batch request stays a
+// narrow projection rather than pulling whole run DTOs.
+type AgentRunOrderer struct {
+	ID              string `json:"id"`
+	OrderedByUserID string `json:"orderedByUserId,omitempty"`
+}
+
+// GetRunOrderers resolves, in one project-scoped read, who ordered each of the
+// given runs. It backs object provenance v2: an agent's write names the human who
+// ordered the run that made it.
+//
+// A run nobody ordered (a source trigger, a schedule, background extraction) is
+// absent from the result or maps to "". Ids outside the project are never
+// returned, so a version stamped with a foreign run id cannot attribute a
+// stranger. The caller treats an error as "no orderer known" rather than
+// failing the surface.
+//
+// The endpoint caps the set at agentRunIDsFilterMax, so a larger page is read in
+// batches and the results merged: a silently truncated read would leave later
+// versions unattributed without the caller ever knowing.
+func (m *MemoryClient) GetRunOrderers(ctx context.Context, runIDs []string) (map[string]string, error) {
+	if len(runIDs) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(runIDs))
+	for start := 0; start < len(runIDs); start += agentRunIDsFilterMax {
+		end := min(start+agentRunIDsFilterMax, len(runIDs))
+		batch := runIDs[start:end]
+		q := url.Values{}
+		q.Set("ids", strings.Join(batch, ","))
+		q.Set("limit", strconv.Itoa(len(batch)))
+		var env successEnvelope[struct {
+			Items []AgentRunOrderer `json:"items"`
+		}]
+		if err := m.do(ctx, http.MethodGet, "/api/projects/"+m.projectIDFor(ctx)+"/agent-runs?"+q.Encode(), nil, &env); err != nil {
+			return nil, err
+		}
+		for _, r := range env.Data.Items {
+			if r.ID == "" || r.OrderedByUserID == "" {
+				continue
+			}
+			out[r.ID] = r.OrderedByUserID
+		}
+	}
+	return out, nil
+}
+
+// agentRunIDsFilterMax mirrors the server's cap on the `?ids=` set (see the
+// agent-runs handler). A request above it would be answered partially.
+const agentRunIDsFilterMax = 100
 
 // GetRunFull fetches one run's full transcript (run + messages + tool calls).
 func (m *MemoryClient) GetRunFull(ctx context.Context, runID string) (*AgentRunFull, error) {

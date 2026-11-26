@@ -208,7 +208,7 @@ func TestRunPageHeaderKeepsTrailLinks(t *testing.T) {
 }
 
 // TestObjectDetailFoldsTheGroupCrumb covers the fold-by-destination rule: the
-// object trail root ("Objects" → /objects) is the Memory group's own landing
+// object trail root ("Objects" → /search) is the Memory group's own landing
 // page, so the header renders it once instead of Memory → Objects → the object.
 func TestObjectDetailFoldsTheGroupCrumb(t *testing.T) {
 	obj := &GraphObject{ID: "o1", CanonicalID: "o1", Type: "person", Key: "sam-lee"}
@@ -226,8 +226,8 @@ func TestObjectDetailFoldsTheGroupCrumb(t *testing.T) {
 	if link == nil {
 		t.Fatalf("root crumb is not a link: %s", breadcrumbText(root))
 	}
-	if got := attrValue(link, "href"); got != "/objects" {
-		t.Errorf("root href = %q, want the group's landing page /objects", got)
+	if got := attrValue(link, "href"); got != "/search" {
+		t.Errorf("root href = %q, want the group's landing page /search", got)
 	}
 	if findElementByTag(items[1], "a") != nil {
 		t.Errorf("the object itself must stay the active, non-navigable crumb")
@@ -307,8 +307,8 @@ func TestOneH1PerPage(t *testing.T) {
 		{"orgs list (error is the page)", OrgsPage(orgsPageData{LoadErr: errTest}), 1},
 		// Swap regions: rendered into a page that already has its header.
 		{"documents results", documentsResults(documentPageData{LoadErr: errTest}), 0},
-		{"search results", searchResultsPanel(searchPageData{LoadErr: errTest}), 0},
-		{"objects results", objectsBrowserResults(objectsPageData{LoadErr: errTest}), 0},
+		{"search results body", searchResultsBody(objectsPageData{LoadErr: errTest}), 0},
+		{"search results region", objectsBrowserResults(objectsPageData{LoadErr: errTest}), 0},
 		{"inbox list region", inboxListRegion(inboxView{LoadErr: errTest}), 0},
 	}
 	for _, tc := range cases {

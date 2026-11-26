@@ -480,6 +480,10 @@ func (h *StreamableHTTPHandler) processRequest(c echo.Context, req *Request, ses
 		return h.handleToolsList(c, req, session, user)
 	case "tools/call":
 		return h.handleToolsCall(c, req, session, user)
+	case "resources/list":
+		return h.handleResourcesList(c, req, session, user)
+	case "resources/read":
+		return h.handleResourcesRead(c, req, session, user)
 	case "prompts/list":
 		return h.handlePromptsList(c, req, session, user)
 	case "prompts/get":
@@ -491,7 +495,7 @@ func (h *StreamableHTTPHandler) processRequest(c echo.Context, req *Request, ses
 			"Method not found: "+req.Method,
 			map[string]any{
 				"method":            req.Method,
-				"supported_methods": []string{"initialize", "tools/list", "tools/call", "prompts/list", "prompts/get"},
+				"supported_methods": []string{"initialize", "tools/list", "tools/call", "resources/list", "resources/read", "prompts/list", "prompts/get"},
 			},
 		)
 	}
@@ -809,6 +813,69 @@ func (h *StreamableHTTPHandler) denyInstanceContent(c echo.Context, req *Request
 			kind+" are not available to this MCP share instance", nil)
 	}
 	return nil
+}
+
+// handleResourcesList handles resources/list method. The initialize response
+// advertises the resources capability, so this transport must serve it: a
+// client that checks capabilities before calling resources/list (Cloudflare's
+// MCP portal among them) otherwise fails sync against /api/mcp with -32601
+// (issue #1089).
+func (h *StreamableHTTPHandler) handleResourcesList(c echo.Context, req *Request, session *MCPSession, user *auth.AuthUser) *Response {
+	if !session.Initialized {
+		return NewErrorResponse(req.ID, ErrCodeInvalidRequest,
+			"Client must call initialize before resources/list",
+			map[string]string{"hint": "Call initialize method first to establish session"},
+		)
+	}
+	if resp := h.denyInstanceContent(c, req, user, "Resources"); resp != nil {
+		return resp
+	}
+	resources := h.svc.GetResourceDefinitions()
+	return NewSuccessResponse(req.ID, ResourcesListResult{Resources: resources})
+}
+
+// handleResourcesRead handles resources/read method. Project context follows the
+// session established at initialize, falling back to the authenticated user's
+// project, exactly like the other session-scoped methods on this transport.
+func (h *StreamableHTTPHandler) handleResourcesRead(c echo.Context, req *Request, session *MCPSession, user *auth.AuthUser) *Response {
+	if !session.Initialized {
+		return NewErrorResponse(req.ID, ErrCodeInvalidRequest,
+			"Client must call initialize before resources/read",
+			map[string]string{"hint": "Call initialize method first to establish session"},
+		)
+	}
+	if resp := h.denyInstanceContent(c, req, user, "Resources"); resp != nil {
+		return resp
+	}
+	var params ResourceReadParams
+	if len(req.Params) > 0 {
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return NewErrorResponse(req.ID, ErrCodeInvalidParams,
+				"Invalid resources/read params", map[string]string{"error": err.Error()})
+		}
+	}
+	if params.URI == "" {
+		return NewErrorResponse(req.ID, ErrCodeInvalidParams,
+			"Missing required parameter: uri",
+			map[string]any{"required": []string{"uri"}},
+		)
+	}
+	projectID := session.ProjectID
+	if projectID == "" {
+		projectID = user.ProjectID
+	}
+	result, err := h.svc.ReadResource(c.Request().Context(), projectID, params.URI)
+	if err != nil {
+		h.log.Error("resource read failed",
+			slog.String("uri", params.URI),
+			logger.Error(err),
+		)
+		return NewErrorResponse(req.ID, jsonRPCErrorCodeFor(err),
+			apperror.PublicMessage(err),
+			map[string]string{"uri": params.URI},
+		)
+	}
+	return NewSuccessResponse(req.ID, result)
 }
 
 // handlePromptsList handles prompts/list method

@@ -260,3 +260,17 @@ func TestWorkCardSurfacesPausedRun(t *testing.T) {
 		t.Errorf("card leaked the raw wire status:\n%s", html)
 	}
 }
+
+// TestBoardRunOutcomeIgnoresStaleErrorOnCompleted pins the status gate: a
+// terminal success with a stale error message must show its summary, not a
+// failure line.
+func TestBoardRunOutcomeIgnoresStaleErrorOnCompleted(t *testing.T) {
+	outcome, tone := boardRunOutcome(WorkItemRun{
+		Status:       "completed",
+		ErrorMessage: strPtr("stale failure"),
+		Summary:      map[string]any{"summary": "opened the PR"},
+	})
+	if outcome != "opened the PR" || tone != "" {
+		t.Errorf("boardRunOutcome = %q/%q, want the completed summary", outcome, tone)
+	}
+}

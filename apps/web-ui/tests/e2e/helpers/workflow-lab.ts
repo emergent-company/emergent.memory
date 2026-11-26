@@ -4,6 +4,8 @@ export const workflowRepo = process.env.E2E_WORKFLOW_REPO ?? '';
 export const workflowOrgId = process.env.E2E_WORKFLOW_ORG_ID ?? '';
 export const workflowProjectId = process.env.E2E_WORKFLOW_PROJECT_ID ?? '';
 export const workflowObjectId = process.env.E2E_WORKFLOW_BLOCK_OBJECT_ID ?? '';
+export const workflowFailureObjectId = process.env.E2E_WORKFLOW_FAILURE_OBJECT_ID ?? '';
+export const workflowFailureRunId = process.env.E2E_WORKFLOW_FAILURE_RUN_ID ?? '';
 export const workflowToken = process.env.E2E_WORKFLOW_GITHUB_TOKEN ?? '';
 
 export function workflowConfigured(): boolean {
@@ -45,7 +47,31 @@ export async function setIssueState(number: number, state: 'open' | 'closed'): P
   await github('PATCH', `/issues/${number}`, { state });
 }
 
+async function visibleBoardCard(page: Page, title: string, timeout = 30_000) {
+  const cards = page.locator('[data-board-card]').filter({ hasText: title });
+  await cards.first().waitFor({ state: 'attached', timeout });
+  // One type has one matrix; the board also renders a narrow-screen lane copy.
+  // Scope to the type block carrying this card, then open its Idle lane because
+  // ready/cancelled work is collapsed there by default.
+  const typeBlock = page
+    .locator('section[data-testid^="work-type-"]')
+    .filter({ has: cards })
+    .first();
+  const idle = typeBlock.locator('details').filter({ hasText: 'Idle' }).first();
+  if ((await idle.count()) > 0 && (await idle.getAttribute('open')) === null) {
+    await idle.locator('summary').first().click();
+  }
+  return typeBlock.locator('[data-board-card]').filter({ hasText: title }).filter({ visible: true }).first();
+}
+
 export async function expectCardTitle(page: Page, title: string, timeout = 30_000): Promise<void> {
   await page.reload();
-  await expect(page.getByText(title, { exact: false })).toBeVisible({ timeout });
+  await expect(await visibleBoardCard(page, title, timeout)).toBeVisible({ timeout });
+}
+
+export async function expectCardStatus(page: Page, title: string, status: string, timeout = 30_000): Promise<void> {
+  await page.reload();
+  const card = await visibleBoardCard(page, title, timeout);
+  await expect(card).toBeVisible({ timeout });
+  await expect(card).toHaveAttribute('data-board-status', status, { timeout });
 }

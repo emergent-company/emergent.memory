@@ -263,3 +263,31 @@ func TestRenderScheduleDetailRunsSection(t *testing.T) {
 		t.Error("empty runs state must not render run rows")
 	}
 }
+
+// TestRenderRunPageFailureClassFallback asserts the run page explains a failure
+// even when the run has no error_message and only a failure class.
+func TestRenderRunPageFailureClassFallback(t *testing.T) {
+	full := sampleRunFull()
+	full.Run.ErrorMessage = nil
+	full.Run.FailureClass = strPtr("deterministic")
+	html := renderHTML(t, RunPage(runPageData{Run: full}))
+	if !strings.Contains(html, "This run failed: The agent hit an unrecoverable error") {
+		t.Errorf("run page missing failure-class fallback:\n%s", html)
+	}
+}
+
+// TestRenderRunPageCancelledHasNoFailureAlert pins that a cancelled run never
+// renders "This run failed": its status badge already says cancelled, even when
+// the executor recorded an error message for the cancellation.
+func TestRenderRunPageCancelledHasNoFailureAlert(t *testing.T) {
+	full := sampleRunFull()
+	full.Run.Status = "cancelled"
+	full.Run.ErrorMessage = strPtr("cancelled by the user")
+	html := renderHTML(t, RunPage(runPageData{Run: full}))
+	if strings.Contains(html, "This run failed") {
+		t.Errorf("cancelled run must not render a failure alert:\n%s", html)
+	}
+	if strings.Contains(html, "cancelled by the user") {
+		t.Errorf("cancelled run must not render the recorded error:\n%s", html)
+	}
+}

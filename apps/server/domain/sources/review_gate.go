@@ -77,13 +77,30 @@ type ReviewGate struct {
 	UpdatedAt    time.Time `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
 }
 
-// minimumReviewers returns the gate's quorum, treating a zero value (a legacy
-// in-memory gate or a row created before the column existed) as the default.
+// minimumReviewers returns the gate's effective quorum, treating a zero value (a
+// legacy in-memory gate or a row created before the column existed) as the
+// default.
+//
+// A quorum larger than the configured reviewer set can never be met: the gate
+// stays pending forever and the required `reviewed` check never turns green. That
+// is the deadlock #1005's two-reviewer rule creates for a source-authored subject
+// in a project with a single reviewer agent (emergent.memory#1030). Asking every
+// configured reviewer to approve is the most the gate can require, so the
+// effective quorum is capped at the configured count. A gate with no reviewer
+// agent keeps the stored minimum, so an under-configured gate still reports the
+// missing reviewer instead of silently approving nobody.
 func (g *ReviewGate) minimumReviewers() int {
-	if g == nil || g.MinReviewers < ReviewGateMinReviewersDefault {
+	if g == nil {
 		return ReviewGateMinReviewersDefault
 	}
-	return g.MinReviewers
+	minReviewers := g.MinReviewers
+	if minReviewers < ReviewGateMinReviewersDefault {
+		minReviewers = ReviewGateMinReviewersDefault
+	}
+	if configured := len(g.RequiredReviewers); configured > 0 && minReviewers > configured {
+		minReviewers = configured
+	}
+	return minReviewers
 }
 
 // ReviewVerdict is one reviewer's head-bound verdict.

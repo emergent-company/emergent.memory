@@ -81,15 +81,11 @@ type discoveryStarterAdapter struct {
 	svc *discoveryjobs.Service
 }
 
-func (a *discoveryStarterAdapter) StartDiscovery(ctx context.Context, projectID uuid.UUID, documentIDs []uuid.UUID) error {
+func (a *discoveryStarterAdapter) Enqueue(ctx context.Context, projectID uuid.UUID, documentIDs []uuid.UUID) error {
 	if len(documentIDs) == 0 {
 		return nil
 	}
-	_, err := a.svc.StartDiscovery(ctx, projectID, &discoveryjobs.StartDiscoveryRequest{
-		DocumentIDs: documentIDs,
-		Trigger:     discoveryjobs.DiscoveryTriggerSourceSync,
-	})
-	return err
+	return a.svc.Enqueue(ctx, projectID, documentIDs)
 }
 
 // AutoDiscoveryEnabled reports the project's auto-discovery setting, read

@@ -64,7 +64,7 @@ This is a monorepo:
 | `sdk/`, `swift/` | Go, Python, and Swift SDKs |
 | `blueprints/` | Example agent and schema packs |
 | `deploy/self-hosted/` | Self-hosted installers and Compose stack |
-| `docs/site/` | Published documentation (mkdocs) |
+| `docs-astro/` | Published documentation (Astro + Starlight) |
 | `e2e/` | End-to-end test suite |
 
 ## Development
@@ -75,8 +75,8 @@ Requirements: **Go 1.26+**, **Docker with Compose v2**, **Task**, **Node 20+**
 
 ## Documentation
 
-- Published documentation: **https://emergent-company.github.io/emergent.memory/**
-- API reference: **[interactive](https://emergent-company.github.io/emergent.memory/latest/api-reference/)** · [`swagger.json`](https://emergent-company.github.io/emergent.memory/latest/swagger.json)
+- Published documentation: **https://docs.memory.emergent-company.ai/**
+- API reference: **[interactive](https://docs.memory.emergent-company.ai/api-reference/)** · [`swagger.json`](https://emergent-company.github.io/emergent.memory/swagger.json)
 - Database schema: [`docs/schema.dbml`](docs/schema.dbml)
 
 The OpenAPI spec is build output, not a checked-in file: generate it locally

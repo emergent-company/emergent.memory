@@ -846,9 +846,8 @@ func TestMessageRecordCarriesAssistantCitations(t *testing.T) {
 // TestListSessionsParentAndRunState pins the additive fields the iOS Chats list
 // needs: the sub-chat parent id, and the rail badge inputs (bucket + pending
 // decision counts) derived from the same state the web rail shows. A nested
-// child uses only its pending decisions (the rail never loads a nested
-// transcript); an orphan whose parent is missing from the response keeps its
-// own run state.
+// child now uses its own history too, so its failure reason is visible; an
+// orphan whose parent is missing from the response keeps its own run state.
 func TestListSessionsParentAndRunState(t *testing.T) {
 	runEnd := func(id, status string) json.RawMessage {
 		return json.RawMessage(`{"kind":"run_end","run_id":"` + id + `","run_status":"` + status + `"}`)
@@ -861,8 +860,8 @@ func TestListSessionsParentAndRunState(t *testing.T) {
 		},
 		histories: map[string]*ConversationHistory{
 			"parent": {Items: []json.RawMessage{runEnd("r1", "failed")}},
-			// The child's own history is a failed run, but nested rows take the
-			// pending-decisions branch instead.
+			// The child's own history is a failed run; its pending approval still
+			// outranks that failure in the derived bucket.
 			"child":  {Items: []json.RawMessage{runEnd("r2", "failed")}},
 			"orphan": {Items: []json.RawMessage{runEnd("r3", "failed")}},
 		},
@@ -908,5 +907,62 @@ func TestListSessionsParentAndRunState(t *testing.T) {
 	}
 	if o := byRoom["orphan"]; o.Parent != "missing" || o.Bucket != runBucketFailed {
 		t.Errorf("orphan = %+v, want its own failed state", o)
+	}
+}
+
+// TestListSessionsReportsConversationFailure pins that the sessions JSON carries
+// the failed run's reason alongside the existing bucket.
+func TestListSessionsReportsConversationFailure(t *testing.T) {
+	item := json.RawMessage(`{"kind":"run_end","run_id":"run-1","run_status":"failed","error_message":"provider quota exceeded"}`)
+	f := &fakeMemory{
+		convs: []Conversation{{
+			ID: "conv-fail", Title: "Broken chat",
+			CreatedAt: "2026-08-26T10:00:00Z", UpdatedAt: "2026-08-26T10:05:00Z",
+		}},
+		histories: map[string]*ConversationHistory{
+			"conv-fail": {ConversationID: "conv-fail", Items: []json.RawMessage{item}},
+		},
+	}
+	_, e := newClientEcho(f, Config{})
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/sessions", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Sessions []struct {
+			Room    string `json:"room"`
+			Bucket  string `json:"bucket"`
+			Failure string `json:"failure"`
+		} `json:"sessions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Sessions) != 1 {
+		t.Fatalf("want 1 session, got %d", len(got.Sessions))
+	}
+	s := got.Sessions[0]
+	if s.Bucket != runBucketFailed || s.Failure != "provider quota exceeded" {
+		t.Errorf("session = %+v, want failed + reason", s)
+	}
+}
+
+// TestScheduledSessionSummariesCarryBucketAndFailure pins the run-backed session
+// JSON fields for scheduled runs.
+func TestScheduledSessionSummariesCarryBucketAndFailure(t *testing.T) {
+	f := &fakeMemory{
+		scheduledAgents: []ScheduledAgent{{ID: "a1", Name: "Nightly", TriggerType: "schedule"}},
+		scheduledRuns: map[string][]ScheduledAgentRun{
+			"a1": {{ID: "run-1", Status: "failed", StartedAt: "2026-08-26T10:00:00Z", ErrorMessage: strPtr("boom")}},
+		},
+	}
+	s := &Server{memory: f}
+	sums := s.scheduledSessionSummaries(context.Background())
+	if len(sums) != 1 {
+		t.Fatalf("summaries = %d, want 1", len(sums))
+	}
+	if sums[0].Bucket != runBucketFailed || sums[0].Failure != "boom" {
+		t.Errorf("summary = %+v, want failed + reason", sums[0])
 	}
 }

@@ -1332,8 +1332,8 @@ When a question requires a complete list ("how many", "list all", "which ones"):
 ## Versioning
 Entities are versioned. Each update creates a new version; the canonical ID stays constant across versions.
 - entity-query always returns the current (HEAD) version. Each entity in the response's data.entities carries a "version" field (integer, starting at 1).
-- To see all versions of an entity: call entity-history with the canonical entity_id. Returns [{version, physical_id, updated_at}, ...].
-- To fetch a specific historical version's properties: call entity-query with ids=[physical_id] (the physical_id from entity-history, NOT the canonical_id).` + "\n\n" + citationInstruction
+- To see all versions of an entity: call entity-history with the canonical entity_id. Returns [{version, physical_id, updated_at}, ...]. It is a history listing only: no properties.
+- entity-history does not return properties, and entity-query's ids[] resolves only live heads (a superseded physical_id comes back in missing_ids), so there is no tool call that reads an older version's properties. Say so if a question needs them, rather than calling entity-query with a stale physical_id.` + "\n\n" + citationInstruction
 
 // EnsureGraphQueryAgent returns the graph-query-agent for the project, creating it if it
 // does not exist yet. Uses VisibilityInternal so it never appears in the public list.
@@ -1624,9 +1624,9 @@ Not authenticated + TASK → do NOT call tools. Explain what would be done and h
 
 ## Docs Lookup
 
-Fetch from: https://emergent-company.github.io/emergent.memory/latest/
+Fetch from: https://docs.memory.emergent-company.ai/
 
-URL pattern: .../latest/<section>/<page>/
+URL pattern: .../<section>/<page>/
 
 | Section | Pages |
 |---|---|
@@ -2190,7 +2190,6 @@ func (r *Repository) UpdateRunTrustedInternal(ctx context.Context, runID string,
 	return err
 }
 
-// CreateRunWithOptions creates a new agent run with coordination options.
 // newAgentRun builds an AgentRun from CreateRunOptions without persisting it.
 // Shared by CreateRunWithOptions and the share run reservation path.
 func newAgentRun(opts CreateRunOptions) *AgentRun {
@@ -2212,10 +2211,53 @@ func newAgentRun(opts CreateRunOptions) *AgentRun {
 		TrustedInternal:   opts.TrustedInternal,
 		SubjectObjectID:   opts.SubjectObjectID,
 		SubjectObjectType: opts.SubjectObjectType,
+		SourceSubject:     opts.SourceSubject,
+		OrderedByUserID:   opts.OrderedByUserID,
 		Tools:             []string{},
 	}
 }
 
+// OrderedByUser is the row value for the person who ordered a run: nil unless
+// the id is a real user uuid. "system", empty and share-run end-user refs are
+// not identities resolvable to a project member, and a non-uuid would fail the
+// column, so each persists NULL — provenance then claims no orderer instead of
+// inventing one.
+func OrderedByUser(userID string) *string {
+	if userID == "" || userID == "system" {
+		return nil
+	}
+	if _, err := uuid.Parse(userID); err != nil {
+		return nil
+	}
+	id := userID
+	return &id
+}
+
+// OrderedByUserOrPrior is OrderedByUser with continuity for a resume: when the
+// answering principal is not a user (a share-run end user, an empty principal),
+// the run keeps the orderer recorded on the run it resumed instead of losing the
+// attribution. Exported because the chat resume builds its own child row.
+func OrderedByUserOrPrior(userID string, prior *string) *string {
+	if id := OrderedByUser(userID); id != nil {
+		return id
+	}
+	return prior
+}
+
+// UpdateRunOrderedByUser records who ordered an already-created run. Pre-created
+// rows (chat capture, A2A, a queued child) are inserted before the executor
+// resolves the ordering person, so the executor writes it here rather than
+// leaving the row unattributable for its whole life.
+func (r *Repository) UpdateRunOrderedByUser(ctx context.Context, runID string, userID string) error {
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("ordered_by_user_id = ?", userID).
+		Where("id = ?", runID).
+		Exec(ctx)
+	return err
+}
+
+// CreateRunWithOptions creates a new agent run with coordination options.
 func (r *Repository) CreateRunWithOptions(ctx context.Context, opts CreateRunOptions) (*AgentRun, error) {
 	// Budget gate for every pre-created run row (HTTP trigger/respond, A2A,
 	// chat, approvals). A blocked caller gets the typed error and no row is
@@ -2772,6 +2814,11 @@ func (r *Repository) FindRunLogEntries(ctx context.Context, runID string) ([]*Ru
 type RunFilters struct {
 	AgentID *string
 	Status  *AgentRunStatus
+	// IDs restricts the read to these runs. A caller that holds run ids — the
+	// gateway resolving provenance for a page of object versions — asks once for
+	// the whole set instead of one request per id. Ids outside the project are
+	// silently absent from the result, never leaked.
+	IDs []string
 }
 
 // FindRunsByProjectPaginated returns paginated agent runs for a project. The
@@ -2797,6 +2844,9 @@ func (r *Repository) FindRunsByProjectPaginated(ctx context.Context, projectID s
 	}
 	if filters.Status != nil {
 		q = q.Where("ar.status = ?", *filters.Status)
+	}
+	if len(filters.IDs) > 0 {
+		q = q.Where("ar.id IN (?)", bun.In(filters.IDs))
 	}
 
 	totalCount, err := q.Count(ctx)

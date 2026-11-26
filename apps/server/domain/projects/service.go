@@ -14,6 +14,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/notifications"
+	"github.com/emergent-company/emergent.memory/domain/pipeline"
 	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/internal/budgetwindow"
 	"github.com/emergent-company/emergent.memory/internal/database"
@@ -21,6 +22,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/google/uuid"
 )
 
 const (
@@ -243,6 +245,31 @@ func (s *Service) List(ctx context.Context, params ServiceListParams) ([]Project
 	return result, nil
 }
 
+// Policy returns the project's resolved knowledge-pipeline policy. It is the
+// slice discovery's auto-apply path consumes (via discoveryjobs.
+// PipelinePolicyReader).
+func (s *Service) Policy(ctx context.Context, projectID uuid.UUID) (pipeline.Policy, error) {
+	project, err := s.repo.GetByID(ctx, projectID.String(), false)
+	if err != nil {
+		return pipeline.Policy{}, err
+	}
+	if project == nil {
+		return pipeline.Policy{}, apperror.ErrProjectNotFound
+	}
+	p, _, err := resolvePipeline(project.PipelineMode, project.PipelinePolicy)
+	return p, err
+}
+
+// BumpSchemaGeneration increments the project's schema generation counter after
+// an effective schema change (discovery auto-apply), so extraction backfill can
+// detect which documents predate it.
+func (s *Service) BumpSchemaGeneration(ctx context.Context, projectID uuid.UUID) error {
+	if err := s.repo.BumpSchemaGeneration(ctx, projectID.String()); err != nil {
+		return err
+	}
+	return nil
+}
+
 // GetByID returns a project by ID
 func (s *Service) GetByID(ctx context.Context, id string, includeStats bool) (*ProjectDTO, error) {
 	if !isValidUUID(id) {
@@ -335,6 +362,8 @@ func (s *Service) Create(ctx context.Context, req CreateProjectRequest, userID s
 		BudgetAlertThreshold:       defaultAlertThreshold,
 		BudgetWeeklyUSD:            &defaultWeeklyBudget,
 		BudgetWeeklyAlertThreshold: defaultAlertThreshold,
+		PipelineMode:               pipeline.ModeSuggest,
+		PipelinePolicy:             pipeline.DefaultPolicy(pipeline.ModeSuggest).Marshal(),
 	}
 	if req.AutoMergeExtractionBranches != nil {
 		project.AutoMergeExtractionBranches = *req.AutoMergeExtractionBranches
@@ -451,6 +480,13 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateProjectReques
 
 	if req.AutoExtractSourceSyncs != nil {
 		project.AutoExtractSourceSyncs = *req.AutoExtractSourceSyncs
+		hasUpdates = true
+	}
+
+	if req.PipelineMode != nil || req.PipelinePolicy != nil {
+		if err := applyPipelineUpdate(project, req); err != nil {
+			return nil, err
+		}
 		hasUpdates = true
 	}
 

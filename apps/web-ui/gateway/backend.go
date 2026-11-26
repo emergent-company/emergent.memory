@@ -31,6 +31,9 @@ type MemoryBackend interface {
 	TriggerAgent(ctx context.Context, agentID, prompt string, ctxValues map[string]string) (*TriggerResult, error)
 	ListScheduledAgentRuns(ctx context.Context, id string) ([]ScheduledAgentRun, error)
 	GetRunFull(ctx context.Context, runID string) (*AgentRunFull, error)
+	// GetRunOrderers resolves who ordered each run, in one project-scoped read.
+	// Object provenance uses it to name the human behind an agent's write.
+	GetRunOrderers(ctx context.Context, runIDs []string) (map[string]string, error)
 	GetRunQuestions(ctx context.Context, runID string) ([]AgentQuestionItem, error)
 	GetAgentRun(ctx context.Context, runID string) (*AgentRun, error)
 	GetAgentSandboxConfig(ctx context.Context, id string) (*AgentSandboxConfig, error)

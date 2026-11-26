@@ -2,9 +2,12 @@ package discoveryjobs
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"sort"
 	"strings"
@@ -12,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
@@ -93,6 +97,18 @@ type Service struct {
 	// new start supersedes it. Zero disables takeover (every active job holds
 	// its claim); the module wires DefaultStaleJobAfter.
 	staleAfter time.Duration
+	// policyReader enables auto-apply at completion; nil keeps the manual-only
+	// finalize path (see SetPipelinePolicyReader).
+	policyReader PipelinePolicyReader
+	// backfill triggers re-extraction after an auto-apply; nil keeps auto-apply
+	// apply-only (see SetBackfillTrigger).
+	backfill BackfillTrigger
+	// typeSimilarity merges semantically-similar discovered types onto existing
+	// project types; nil keeps the spelling-only reconcile (see SetTypeSimilarity).
+	typeSimilarity TypeSimilarity
+	// taxonomy is the built-in common-entity taxonomy discovery aligns proposed
+	// types against before inventing new ones (see SetTaxonomy).
+	taxonomy []ExistingType
 }
 
 // documentCap is the effective per-run document cap.
@@ -310,6 +326,9 @@ func (s *Service) StartDiscovery(ctx context.Context, projectID uuid.UUID, req *
 			"document_count":        len(req.DocumentIDs),
 			"total_documents":       totalDocuments,
 		},
+		// AppliedReport is non-nil on creation so the NOT NULL jsonb column
+		// never receives a NULL from a nil map on insert.
+		AppliedReport:           JSONMap{},
 		KBPurpose:               projectInfo,
 		DiscoveredTypes:         JSONArray{},
 		DiscoveredRelationships: JSONArray{},
@@ -430,6 +449,9 @@ func (s *Service) GetJobStatus(ctx context.Context, jobID uuid.UUID) (*JobStatus
 		DiscoveredTypes:         job.DiscoveredTypes,
 		DiscoveredRelationships: job.DiscoveredRelationships,
 		SchemaID:                job.SchemaID,
+		TraceID:                 job.TraceID,
+		AutoApplied:             job.AutoApplied,
+		AppliedReport:           job.AppliedReport,
 	}, nil
 }
 
@@ -453,6 +475,8 @@ func (s *Service) ListJobsForProject(ctx context.Context, projectID uuid.UUID) (
 			DiscoveredTypes:         job.DiscoveredTypes,
 			DiscoveredRelationships: job.DiscoveredRelationships,
 			SchemaID:                job.SchemaID,
+			AutoApplied:             job.AutoApplied,
+			AppliedReport:           job.AppliedReport,
 			Trigger:                 cfg.Trigger,
 			DocumentCount:           cfg.DocumentCount,
 			TotalDocuments:          cfg.TotalDocuments,
@@ -1033,6 +1057,23 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID uuid.U
 
 // processDiscoveryJob runs the discovery job in the background
 func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid.UUID) {
+	// Root the whole run in one trace so every LLM call this job makes nests
+	// under it and is retrievable by a single trace id. The goroutine was seeded
+	// with context.Background(), so this span is the trace root; it is persisted
+	// on the job row for the admin surface.
+	ctx, span := tracing.Start(ctx, "discovery.run",
+		attribute.String("memory.job.id", jobID.String()),
+		attribute.String("memory.project.id", projectID.String()),
+	)
+	defer span.End()
+	if sc := span.SpanContext(); sc.IsValid() && sc.TraceID().IsValid() {
+		traceID := sc.TraceID().String()
+		if err := s.repo.SetTraceID(ctx, jobID, traceID); err != nil {
+			s.log.Warn("failed to persist trace id on discovery job",
+				slog.String("job_id", jobID.String()), logger.Error(err))
+		}
+	}
+
 	s.log.Info("starting discovery job", slog.String("job_id", jobID.String()), slog.String("project_id", projectID.String()))
 
 	// Update status to analyzing. A job cancelled between the start request and
@@ -1077,6 +1118,17 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		documentIDs = append(documentIDs, id)
 	}
 
+	// Fetch the project's existing types up front so the discovery prompt can
+	// tell the model to reuse a name for the same concept instead of minting a
+	// near duplicate (e.g. "Person" beside "Character") that would split the
+	// graph.
+	existingTypes := []ExistingType{}
+	if registered, err := s.repo.RegisteredTypeNames(ctx, projectID); err == nil {
+		if current, err := s.repo.CurrentDiscoveredSchema(ctx, projectID); err == nil {
+			existingTypes = buildExistingTypes(registered, current)
+		}
+	}
+
 	// Step 1: Batch documents
 	batches := s.batchDocuments(documentIDs, config.BatchSize)
 	s.log.Info("processing batches", slog.Int("batch_count", len(batches)))
@@ -1100,14 +1152,21 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		batchNum := i + 1
 		s.updateProgress(ctx, jobID, batchNum, len(batches)+2, fmt.Sprintf("Analyzing batch %d/%d...", batchNum, len(batches)))
 
-		if err := s.extractTypesFromBatch(ctx, jobID, batch, batchNum, job.KBPurpose, discoveryDefaultMaxTypes); err != nil {
+		batchCtx, batchSpan := tracing.Start(ctx, "discovery.batch",
+			attribute.Int("memory.batch.number", batchNum),
+			attribute.Int("memory.batch.documents", len(batch)),
+		)
+		if err := s.extractTypesFromBatch(batchCtx, jobID, batch, batchNum, job.KBPurpose, discoveryDefaultMaxTypes, existingTypes); err != nil {
 			failedBatches++
 			batchErrors = append(batchErrors, fmt.Sprintf("Batch %d: %v", batchNum, err))
 			s.log.Error("batch extraction failed", slog.Int("batch", batchNum), logger.Error(err))
+			batchSpan.RecordError(err)
+			batchSpan.SetStatus(codes.Error, err.Error())
 			// Continue with other batches
 		} else {
 			successfulBatches++
 		}
+		batchSpan.End()
 	}
 
 	// If ALL batches failed, fail the entire job
@@ -1136,6 +1195,11 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		if err != nil {
 			s.log.Warn("relationship discovery failed, continuing without relationships", logger.Error(err))
 			relationships = []DiscoveredRelationship{}
+		} else {
+			// Symmetric with refineAndMergeTypes: a relationship the model is not
+			// confident about is not grounded enough to auto-apply, so it is left
+			// out of the refined output rather than installed as fact.
+			relationships = filterRelationshipsByConfidence(relationships, config.MinConfidence)
 		}
 	}
 
@@ -1167,6 +1231,12 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		s.handleJobError(ctx, jobID, err)
 		return
 	}
+
+	// Semantic merge: map discovered types onto existing project types by
+	// embedding similarity, before the spelling-only reconcile, so discovery
+	// converges without a hardcoded synonym table. Best-effort and nil-safe.
+	refinedTypes = s.mergeSemanticallySimilarTypes(ctx, refinedTypes, registeredTypes, currentSchema)
+
 	reconciled := s.reconcileDiscoveredSchema(registeredTypes, currentSchema, refinedTypes, relationships)
 	refinedTypes = reconciled.Types
 	relationships = reconciled.Relationships
@@ -1227,7 +1297,21 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		slog.Int("types_count", len(refinedTypes)))
 
 	// Phase 7: Generate SchemaExtractionPrompts and write back to the schema.
-	if prompts, promptErr := s.generateExtractionPrompts(ctx, refinedTypes, relationships, job.KBPurpose); promptErr != nil {
+	// Skip the LLM call when the stored hints already match this run's schema:
+	// a repeat discovery over an unchanged type/relationship set would otherwise
+	// pay for regenerating identical guidance.
+	fingerprint := extractionPromptsFingerprint(refinedTypes, relationships, job.KBPurpose)
+	reusePrompts := false
+	if existing, readErr := s.repo.GetSchemaExtractionPrompts(ctx, schemaID); readErr == nil && len(existing) > 0 {
+		var cached extractionPrompts
+		if json.Unmarshal(existing, &cached) == nil && cached.Fingerprint == fingerprint {
+			reusePrompts = true
+		}
+	}
+	if reusePrompts {
+		s.log.Info("reusing stored extraction prompts (schema unchanged)",
+			slog.String("job_id", jobID.String()))
+	} else if prompts, promptErr := s.generateExtractionPrompts(ctx, refinedTypes, relationships, job.KBPurpose); promptErr != nil {
 		s.log.Warn("failed to generate extraction prompts, continuing", slog.String("error", promptErr.Error()))
 	} else if prompts != nil {
 		if raw, merr := json.Marshal(prompts); merr == nil {
@@ -1250,6 +1334,10 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		s.handleJobError(ctx, jobID, err)
 		return
 	}
+
+	// Auto-apply (pipeline_mode=auto): gate and install the reconciled pack, or
+	// record why it was declined. Best-effort; never fails the completed job.
+	s.maybeAutoApply(ctx, projectID, jobID, schemaID, refinedTypes, registeredTypes)
 
 	s.log.Info("discovery job completed",
 		slog.String("job_id", jobID.String()),
@@ -1343,7 +1431,7 @@ func (s *Service) decideDiscoveryBatch(response string, callErr error, docCount 
 // typeBudget is the number of types the prompt asks for (zero means the
 // default). It is carried through the split so a batch that had to be split
 // keeps the budget its caller chose, and the caller may lower it on a retry.
-func (s *Service) extractTypesFromBatch(ctx context.Context, jobID uuid.UUID, documentIDs []uuid.UUID, batchNum int, kbPurpose string, typeBudget int) error {
+func (s *Service) extractTypesFromBatch(ctx context.Context, jobID uuid.UUID, documentIDs []uuid.UUID, batchNum int, kbPurpose string, typeBudget int, existingTypes []ExistingType) error {
 	// Get document contents
 	docs, err := s.repo.GetDocumentContents(ctx, documentIDs)
 	if err != nil {
@@ -1355,7 +1443,7 @@ func (s *Service) extractTypesFromBatch(ctx context.Context, jobID uuid.UUID, do
 		return nil
 	}
 
-	groups, err := s.discoverBatchTypes(ctx, docs, batchNum, kbPurpose, typeBudget)
+	groups, err := s.discoverBatchTypes(ctx, docs, batchNum, kbPurpose, typeBudget, existingTypes)
 	if err != nil {
 		return err
 	}
@@ -1420,8 +1508,8 @@ func documentIDs(docs []DocumentContent) []uuid.UUID {
 // complete answer that legitimately found no types is a valid batch, not a
 // failure. Taking loaded documents (rather than ids) keeps the retry
 // decision-testable without a database.
-func (s *Service) discoverBatchTypes(ctx context.Context, docs []DocumentContent, batchNum int, kbPurpose string, typeBudget int) ([]discoveredGroup, error) {
-	prompt := s.buildTypeDiscoveryPrompt(docs, kbPurpose, typeBudget)
+func (s *Service) discoverBatchTypes(ctx context.Context, docs []DocumentContent, batchNum int, kbPurpose string, typeBudget int, existingTypes []ExistingType) ([]discoveredGroup, error) {
+	prompt := s.buildTypeDiscoveryPrompt(docs, kbPurpose, typeBudget, existingTypes)
 
 	response, callErr := s.completeWithLLM(ctx, prompt)
 	if callErr != nil && !errors.Is(callErr, ErrOutputTruncated) {
@@ -1441,7 +1529,7 @@ func (s *Service) discoverBatchTypes(ctx context.Context, docs []DocumentContent
 			slog.Int("batch", batchNum),
 			slog.Int("type_budget", budget),
 			slog.Int("reduced_budget", discoveryReducedMaxTypes))
-		return s.discoverBatchTypes(ctx, docs, batchNum, kbPurpose, discoveryReducedMaxTypes)
+		return s.discoverBatchTypes(ctx, docs, batchNum, kbPurpose, discoveryReducedMaxTypes, existingTypes)
 	}
 	if outcome.RetrySmaller {
 		mid := len(docs) / 2
@@ -1449,11 +1537,11 @@ func (s *Service) discoverBatchTypes(ctx context.Context, docs []DocumentContent
 			slog.Int("batch", batchNum),
 			slog.Int("documents", len(docs)),
 			slog.Int("half", mid))
-		left, err := s.discoverBatchTypes(ctx, docs[:mid], batchNum, kbPurpose, typeBudget)
+		left, err := s.discoverBatchTypes(ctx, docs[:mid], batchNum, kbPurpose, typeBudget, existingTypes)
 		if err != nil {
 			return nil, err
 		}
-		right, err := s.discoverBatchTypes(ctx, docs[mid:], batchNum, kbPurpose, typeBudget)
+		right, err := s.discoverBatchTypes(ctx, docs[mid:], batchNum, kbPurpose, typeBudget, existingTypes)
 		if err != nil {
 			return nil, err
 		}
@@ -1488,11 +1576,28 @@ func (s *Service) effectiveTypeBudget(typeBudget int) int {
 // buildTypeDiscoveryPrompt builds the LLM prompt for type discovery. typeBudget
 // bounds how many types the model is asked for; the reduced budget is used to
 // retry a single document whose answer overflowed the output limit.
-func (s *Service) buildTypeDiscoveryPrompt(docs []DocumentContent, kbPurpose string, typeBudget int) string {
+// existingTypes are the project's already-installed types: the prompt names them
+// so the model reuses a name for the same concept instead of minting a near
+// duplicate (e.g. "Person" beside "Character") that would split the graph.
+func (s *Service) buildTypeDiscoveryPrompt(docs []DocumentContent, kbPurpose string, typeBudget int, existingTypes []ExistingType) string {
 	budget := s.effectiveTypeBudget(typeBudget)
 	var combinedContent strings.Builder
 	for _, doc := range docs {
 		fmt.Fprintf(&combinedContent, "=== %s ===\n%s\n\n", doc.Filename, doc.Content)
+	}
+
+	existingSection := ""
+	if len(existingTypes) > 0 {
+		var eb strings.Builder
+		eb.WriteString("The knowledge base already tracks these entity types. Reuse one of these names when the documents describe the same kind of entity; only propose a NEW type name for a genuinely new kind of entity:\n")
+		for _, e := range existingTypes {
+			if e.Description != "" {
+				fmt.Fprintf(&eb, "- %s: %s\n", e.Name, e.Description)
+			} else {
+				fmt.Fprintf(&eb, "- %s\n", e.Name)
+			}
+		}
+		existingSection = eb.String()
 	}
 
 	return fmt.Sprintf(`You are analyzing a knowledge base with the following purpose:
@@ -1505,6 +1610,7 @@ Rules for type discovery:
 - Only create entity types for THINGS (nouns that have identity), not for actions, events, or relationships between things. For example, "ReportingRelationship" or "FoundingEvent" are NOT entity types — they are relationships and should be captured in the relationship discovery phase instead.
 - If a value appears as a distinct classifiable concept with multiple instances (e.g., a category like "Electronics", "Accessories", "Hardware"), treat it as a separate entity type — do NOT flatten it into a string property of another type.
 - Prefer fewer, cleaner types over many overlapping types. Merge similar types (e.g., "Employee" and "Person" → just "Person").
+- %s
 
 For each type, provide:
 - type_name: A clear, singular name (e.g., "Customer", "Product", "Issue")
@@ -1529,7 +1635,7 @@ Return ONLY a JSON object with this structure (no markdown, no code blocks):
       "occurrences": 5
     }
   ]
-}`, kbPurpose, budget, combinedContent.String())
+}`, kbPurpose, budget, existingSection, combinedContent.String())
 }
 
 // extractJSON strips prose and markdown fences, returning the JSON object found.
@@ -2211,12 +2317,11 @@ Discover important relationships between these types. Treat a property that
 names another discovered type (for example an Episode's "guest" property) as
 evidence of a relationship rather than a plain attribute.
 
-For each relationship, provide:
+For each relationship, provide ONLY:
 - from_type: The source type (must be one of the types above)
 - to_type: The target type (must be one of the types above)
 - relationship_name: A clear name for the relationship
-- description: What this relationship represents
-- cardinality: one-to-one, one-to-many, or many-to-many
+- description: At most 8 words describing the relationship
 - confidence: How confident you are about this relationship (0-1)
 
 Return ONLY a JSON object with this structure (no markdown, no code blocks):
@@ -2227,12 +2332,12 @@ Return ONLY a JSON object with this structure (no markdown, no code blocks):
       "to_type": "...",
       "relationship_name": "...",
       "description": "...",
-      "cardinality": "one-to-many",
       "confidence": 0.9
     }
   ]
 }
 
+Do not include cardinality. Keep each description to at most 8 words.
 Focus on the most important relationships.`, kbPurpose, s.buildRelationshipDiscoveryTypes(types))
 }
 
@@ -2518,6 +2623,20 @@ func mergeDiscoveredTypes(types []DiscoveredType) []DiscoveredType {
 	}
 	sort.Slice(merged, func(i, j int) bool { return merged[i].TypeName < merged[j].TypeName })
 	return merged
+}
+
+// filterRelationshipsByConfidence drops relationships whose confidence is below
+// the discovery threshold, mirroring refineAndMergeTypes for types. A
+// relationship the model is not confident about is not grounded enough to treat
+// as fact, so it is left out of the refined pack rather than auto-applied.
+func filterRelationshipsByConfidence(relationships []DiscoveredRelationship, minConfidence float32) []DiscoveredRelationship {
+	out := make([]DiscoveredRelationship, 0, len(relationships))
+	for _, r := range relationships {
+		if r.Confidence >= minConfidence {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // dedupeDiscoveredRelationships keeps one relationship per source/relation/
@@ -2852,6 +2971,7 @@ func (s *Service) FinalizeDiscoveryFromMCP(ctx context.Context, req interface{})
 			KBPurpose:      kbPurpose,
 			Progress:       JSONMap{"message": "stub job created by MCP finalize"},
 			Config:         JSONMap{"document_ids": []string{r.DocumentID}},
+			AppliedReport:  JSONMap{},
 		}
 		if createErr := s.repo.Create(ctx, stub); createErr != nil {
 			return nil, fmt.Errorf("create stub discovery job: %w", createErr)
@@ -2966,11 +3086,15 @@ func toJSONStringArray(names []string) JSONArray {
 
 // extractionPrompts is a local mirror of extraction.SchemaExtractionPrompts
 // used to avoid an import cycle between discoveryjobs and extraction packages.
+// Fingerprint is not part of the extraction surface: it is written into the
+// stored JSON as `__fingerprint` so a later discovery run can skip regenerating
+// identical hints, and the extraction worker ignores it.
 type extractionPrompts struct {
 	DomainContext     string            `json:"domainContext,omitempty"`
 	TypeHints         map[string]string `json:"typeHints,omitempty"`
 	RelationshipHints map[string]string `json:"relationshipHints,omitempty"`
 	NegativeExamples  []string          `json:"negativeExamples,omitempty"`
+	Fingerprint       string            `json:"__fingerprint,omitempty"`
 }
 
 // generateExtractionPrompts calls the LLM to produce per-schema extraction hints
@@ -3049,7 +3173,42 @@ Return ONLY valid JSON with this exact structure:
 		attribute.Int("memory.discovery.relationship_hints_count", len(prompts.RelationshipHints)),
 		attribute.Int("memory.discovery.negative_examples_count", len(prompts.NegativeExamples)),
 	)
+	prompts.Fingerprint = extractionPromptsFingerprint(types, relationships, kbPurpose)
 	return &prompts, nil
+}
+
+// extractionPromptsFingerprint hashes the inputs that fully determine the
+// generated extraction hints, so a later discovery run over an unchanged schema
+// can reuse the stored hints instead of paying for another LLM call. It is a
+// content hash, not an identity: any change to a type name/description, a
+// relationship triple, or the project purpose changes the fingerprint.
+func extractionPromptsFingerprint(types []DiscoveredType, relationships []DiscoveredRelationship, kbPurpose string) string {
+	h := sha256.New()
+	_, _ = io.WriteString(h, kbPurpose)
+	_, _ = io.WriteString(h, "\x00")
+	typeNames := make([]string, 0, len(types))
+	byType := make(map[string]DiscoveredType, len(types))
+	for _, t := range types {
+		typeNames = append(typeNames, t.TypeName)
+		byType[t.TypeName] = t
+	}
+	sort.Strings(typeNames)
+	for _, name := range typeNames {
+		_, _ = io.WriteString(h, name)
+		_, _ = io.WriteString(h, "\x00")
+		_, _ = io.WriteString(h, byType[name].Description)
+		_, _ = io.WriteString(h, "\x00")
+	}
+	relKeys := make([]string, 0, len(relationships))
+	for _, r := range relationships {
+		relKeys = append(relKeys, r.SourceType+"\x00"+r.RelationType+"\x00"+r.TargetType)
+	}
+	sort.Strings(relKeys)
+	for _, k := range relKeys {
+		_, _ = io.WriteString(h, k)
+		_, _ = io.WriteString(h, "\x00")
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // strPtr returns a pointer to the given string value.
