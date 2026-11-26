@@ -83,13 +83,13 @@ func TestReviewSubmitRequiresPullRequestDiffInSameRun(t *testing.T) {
 	}
 
 	// No run cache at all: no evidence can exist, so the submit fails closed.
-	_, err := h.executeReviewSubmit(context.Background(), client, "project-1", "owner/repo", submitArgs(head, "MERGE", "looks good"))
+	_, err := h.executeReviewSubmit(context.Background(), client, "project-1", "owner/repo", nil, submitArgs(head, "MERGE", "looks good"))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "github-pr-diff")
 
 	// A run that read nothing is refused.
 	ctx := mcp.ContextWithNewToolResultCache(context.Background())
-	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", submitArgs(head, "MERGE", "looks good"))
+	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", nil, submitArgs(head, "MERGE", "looks good"))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "github-pr-diff")
 	var appErr *apperror.Error
@@ -98,9 +98,9 @@ func TestReviewSubmitRequiresPullRequestDiffInSameRun(t *testing.T) {
 	require.Equal(t, 0, reviews, "no review may be posted without reading the diff")
 
 	// Reading the pull request diff records evidence; the same run may submit.
-	_, err = h.executePRDiff(ctx, client, "project-1", "owner/repo", diffArgs(head))
+	_, err = h.executePRDiff(ctx, client, "project-1", "owner/repo", nil, diffArgs(head))
 	require.NoError(t, err)
-	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", submitArgs(head, "MERGE", "looks good"))
+	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", nil, submitArgs(head, "MERGE", "looks good"))
 	require.NoError(t, err)
 	require.Equal(t, 1, reviews)
 	require.Equal(t, 1, checks)
@@ -112,10 +112,10 @@ func TestReviewSubmitRequiresPullRequestDiffInSameRun(t *testing.T) {
 	head = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	commitFiles = nil
 	mergeCtx := mcp.ContextWithNewToolResultCache(context.Background())
-	res, err := h.executePRDiff(mergeCtx, client, "project-1", "owner/repo", diffArgs(head))
+	res, err := h.executePRDiff(mergeCtx, client, "project-1", "owner/repo", nil, diffArgs(head))
 	require.NoError(t, err, "an empty first-parent commit diff must not make the pull request unreviewable")
 	require.Contains(t, res.Content[0].Text, "a.go")
-	_, err = h.executeReviewSubmit(mergeCtx, client, "project-1", "owner/repo", submitArgs(head, "MERGE", "merge commit reviewed"))
+	_, err = h.executeReviewSubmit(mergeCtx, client, "project-1", "owner/repo", nil, submitArgs(head, "MERGE", "merge commit reviewed"))
 	require.NoError(t, err)
 	require.Equal(t, 2, reviews)
 
@@ -124,11 +124,11 @@ func TestReviewSubmitRequiresPullRequestDiffInSameRun(t *testing.T) {
 	head = "cccccccccccccccccccccccccccccccccccccccc"
 	commitFiles = []map[string]any{{"filename": "ctx.go", "status": "modified", "patch": "@@ -1 +1 @@"}}
 	commitOnlyCtx := mcp.ContextWithNewToolResultCache(context.Background())
-	_, err = h.executePRDiff(commitOnlyCtx, client, "project-1", "owner/repo", map[string]any{
+	_, err = h.executePRDiff(commitOnlyCtx, client, "project-1", "owner/repo", nil, map[string]any{
 		"repo": "owner/repo", "head_sha": head,
 	})
 	require.NoError(t, err)
-	_, err = h.executeReviewSubmit(commitOnlyCtx, client, "project-1", "owner/repo", submitArgs(head, "MERGE", "commit diff only"))
+	_, err = h.executeReviewSubmit(commitOnlyCtx, client, "project-1", "owner/repo", nil, submitArgs(head, "MERGE", "commit diff only"))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "github-pr-diff")
 	require.Equal(t, 2, reviews, "a commit-only diff must not authorize a verdict")
@@ -140,7 +140,7 @@ func TestReviewSubmitRequiresPullRequestDiffInSameRun(t *testing.T) {
 	commitFiles = []map[string]any{{"filename": "ignored.go", "status": "modified", "patch": "@@ -1 +1 @@"}}
 	emptyCtx := mcp.ContextWithNewToolResultCache(context.Background())
 	checksBefore := checks
-	_, err = h.executePRDiff(emptyCtx, client, "project-1", "owner/repo", diffArgs(head))
+	_, err = h.executePRDiff(emptyCtx, client, "project-1", "owner/repo", nil, diffArgs(head))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no changed files")
 	require.ErrorAs(t, err, &appErr)
@@ -149,7 +149,7 @@ func TestReviewSubmitRequiresPullRequestDiffInSameRun(t *testing.T) {
 	require.Contains(t, checkBody["output"].(map[string]any)["title"], "unapprovable")
 
 	// The submit path agrees, even if the agent skipped the diff call.
-	_, err = h.executeReviewSubmit(emptyCtx, client, "project-1", "owner/repo", submitArgs(head, "MERGE", "approved without reading anything"))
+	_, err = h.executeReviewSubmit(emptyCtx, client, "project-1", "owner/repo", nil, submitArgs(head, "MERGE", "approved without reading anything"))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no changed files")
 	require.Equal(t, 2, reviews)
@@ -157,14 +157,14 @@ func TestReviewSubmitRequiresPullRequestDiffInSameRun(t *testing.T) {
 	// An empty commit diff (no pull request number) is also a validation error
 	// rather than a successful empty tool result.
 	commitFiles = nil
-	_, err = h.executePRDiff(context.Background(), client, "project-1", "owner/repo", map[string]any{
+	_, err = h.executePRDiff(context.Background(), client, "project-1", "owner/repo", nil, map[string]any{
 		"repo": "owner/repo", "head_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "empty diff")
 
 	// A branch name is not a commit: the diff tool refuses it before any request.
-	_, err = h.executePRDiff(context.Background(), client, "project-1", "owner/repo", map[string]any{
+	_, err = h.executePRDiff(context.Background(), client, "project-1", "owner/repo", nil, map[string]any{
 		"repo": "owner/repo", "head_sha": "main",
 	})
 	require.Error(t, err)
@@ -203,11 +203,11 @@ func TestReviewSubmitFinalizesWorkLane(t *testing.T) {
 	writer := &fakeLaneWriter{}
 	h := &ReviewToolHandler{workItems: writer}
 	ctx := mcp.ContextWithWorkObjectID(mcp.ContextWithNewToolResultCache(context.Background()), "lane-1")
-	_, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", map[string]any{
+	_, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", nil, map[string]any{
 		"repo": "owner/repo", "number": float64(7), "head_sha": head,
 	})
 	require.NoError(t, err)
-	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", map[string]any{
+	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", nil, map[string]any{
 		"repo": "owner/repo", "number": float64(7), "head_sha": head, "verdict": "CHANGES_REQUESTED", "summary": "fix it",
 	})
 	require.NoError(t, err)
@@ -250,7 +250,7 @@ func TestPRDiffDerivesPullRequestNumberFromRunSubject(t *testing.T) {
 		mcp.ContextWithNewToolResultCache(context.Background()),
 		mcp.RunSubject{SourceID: "src-1", Repo: "owner/repo", PRNumber: 7, HeadSHA: head},
 	)
-	_, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", map[string]any{
+	_, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", nil, map[string]any{
 		"repo": "owner/repo", "head_sha": head,
 	})
 	require.NoError(t, err)

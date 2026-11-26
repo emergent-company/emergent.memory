@@ -1302,8 +1302,16 @@ func (ae *AgentExecutor) ensureBudgetAvailable(ctx context.Context, projectID, a
 	)
 	return &BudgetExceededError{
 		ProjectID: projectID,
-		Message:   fmt.Sprintf("project %s has exceeded its spending budget", projectID),
+		Message:   budgetExceededMessage(projectID),
 	}
+}
+
+// budgetExceededMessage is the user-facing refusal for an over-cap project. It
+// names the escape hatch (raise budget_usd or reset the window) instead of only
+// the project UUID, so an operator reading an MCP trigger/queue refusal knows
+// what to change to resume work (#1032).
+func budgetExceededMessage(projectID string) string {
+	return fmt.Sprintf("project %s has exceeded its spending budget; raise budget_usd in the project's budget settings or reset the budget window to resume agent work", projectID)
 }
 
 // inheritedOrderer resolves the ordering person a delegated run inherits: the

@@ -87,6 +87,7 @@ type WorkItemDTO struct {
 	RunCount              int    `json:"runCount"`
 	Blocked               bool   `json:"blocked"`
 	BlockReason           string `json:"blockReason,omitempty"`
+	BlockFailureClass     string `json:"blockFailureClass,omitempty"`
 	BlockedAt             string `json:"blockedAt,omitempty"`
 	Unroutable            bool   `json:"unroutable"`
 	// Properties is the HEAD's property bag, so a card can render the same
@@ -120,6 +121,7 @@ func toWorkItemDTO(it *graph.WorkItem, includeProperties bool) *WorkItemDTO {
 		RunCount:              it.RunCount,
 		Blocked:               it.Blocked,
 		BlockReason:           it.BlockReason,
+		BlockFailureClass:     it.BlockFailureClass,
 		Unroutable:            it.Unroutable,
 		NextRunAt:             formatTimePtr(it.NextRunAt),
 		BlockedAt:             formatTimePtr(it.BlockedAt),

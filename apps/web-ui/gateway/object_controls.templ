@@ -44,6 +44,7 @@ templ objectStatusPicker(target objectWorkControlTarget, current string, ctrl *o
 			<div
 				tabindex="0"
 				role="button"
+				data-gd-menu-trigger
 				class="flex cursor-pointer items-center rounded-full py-0.5 pr-2 pl-0.5 outline-none transition hover:ring-1 hover:ring-base-content/25 focus-visible:ring-1 focus-visible:ring-base-content/45"
 				aria-label="Change status"
 				aria-haspopup="menu"
@@ -99,6 +100,7 @@ templ objectAssigneeControl(target objectWorkControlTarget, current string, cand
 		<div
 			tabindex="0"
 			role="button"
+			data-gd-menu-trigger
 			class="flex cursor-pointer items-center gap-2 rounded-full py-0.5 pr-2.5 pl-0.5 outline-none transition hover:ring-1 hover:ring-base-content/25 focus-visible:ring-1 focus-visible:ring-base-content/45"
 			aria-label="Assignee"
 			aria-haspopup="menu"

@@ -63,9 +63,10 @@ async function openPreview(page: Page): Promise<void> {
 }
 
 /**
- * Open a CSS-only daisyUI dropdown by focusing its trigger (click, then an
- * explicit focus as a headless fallback), and return the open menu. Mirrors the
- * account-menu helper: .dropdown-content is revealed via :focus-within.
+ * Open a daisyUI dropdown by focusing its trigger (click, then an explicit
+ * focus as a headless fallback), and return the open menu. The trigger carries
+ * data-gd-menu-trigger, so the go-daisy a11y runtime owns the closing marker
+ * and .dropdown-content is revealed via :focus-within.
  */
 async function openDropdown(page: Page, label: string) {
   const trigger = page.getByRole('button', { name: label });
