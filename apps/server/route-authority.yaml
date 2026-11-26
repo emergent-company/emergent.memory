@@ -116,6 +116,14 @@ routes:
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: GET
+      path: /api/admin/extraction-jobs/projects/:projectId/quarantine
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: POST
+      path: /api/admin/extraction-jobs/projects/:projectId/quarantine/dismiss
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: GET
       path: /api/admin/extraction-jobs/projects/:projectId/statistics
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
