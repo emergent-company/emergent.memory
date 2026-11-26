@@ -189,6 +189,7 @@ func (s *Service) maybeAutoApply(ctx context.Context, projectID, jobID, schemaID
 		s.log.Warn("auto-apply: failed to bump schema generation", logger.Error(err))
 		return
 	}
+	s.maybeAutoBackfill(ctx, projectID, pol)
 	s.log.Info("auto-applied discovered schema",
 		slog.String("job_id", jobID.String()),
 		slog.String("pack_id", schemaID.String()),

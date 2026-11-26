@@ -61,6 +61,52 @@ func TestBackfillStaleSchemaSelection(t *testing.T) {
 	require.False(t, selected[currentDoc], "current document must not be selected")
 }
 
+// TestBackfillAllSelection pins that the "all" filter selects every document in
+// the project regardless of current extraction state — the "full" re-extraction
+// mode — while respecting the LIMIT.
+func TestBackfillAllSelection(t *testing.T) {
+	ctx, db := openEmbeddingWorkerTestDB(t)
+	projectID := seedEmbeddingProject(t, ctx, db)
+
+	doc := func() string {
+		id := uuid.NewString()
+		_, err := db.NewRaw(`INSERT INTO kb.documents (id, project_id, filename, created_at, updated_at)
+			VALUES (?, ?, 'doc.md', now(), now())`, id, projectID).Exec(ctx)
+		require.NoError(t, err)
+		return id
+	}
+
+	// One already extracted (completed under current generation), one never
+	// extracted, one failed — "all" must still select every one of them.
+	currentGen := 1
+	completed := doc()
+	_, err := db.NewRaw(`INSERT INTO kb.object_extraction_jobs
+		(id, project_id, document_id, status, schema_generation, completed_at, created_at, updated_at)
+		VALUES (?, ?, ?, 'completed', ?, now(), now(), now())`, uuid.NewString(), projectID, completed, currentGen).Exec(ctx)
+	require.NoError(t, err)
+
+	never := doc()
+
+	failed := doc()
+	_, err = db.NewRaw(`INSERT INTO kb.object_extraction_jobs
+		(id, project_id, document_id, status, completed_at, created_at, updated_at)
+		VALUES (?, ?, ?, 'failed', now(), now(), now())`, uuid.NewString(), projectID, failed).Exec(ctx)
+	require.NoError(t, err)
+
+	svc := NewObjectExtractionJobsService(db, quietLogger(), DefaultObjectExtractionConfig())
+	res, err := svc.Backfill(ctx, projectID, BackfillAll, 10, true)
+	require.NoError(t, err)
+	require.Equal(t, 3, res.Selected)
+
+	selected := map[string]bool{}
+	for _, id := range res.DocumentIDs {
+		selected[id] = true
+	}
+	require.True(t, selected[completed], "completed document must be selected by all")
+	require.True(t, selected[never], "never-extracted document must be selected by all")
+	require.True(t, selected[failed], "failed document must be selected by all")
+}
+
 // TestBackfillFailedIsLatestTerminal pins that a document whose latest job
 // succeeded is not re-selected by the failed filter even though it has an
 // earlier failed job.
