@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
@@ -439,6 +440,7 @@ func (s *Service) GetJobStatus(ctx context.Context, jobID uuid.UUID) (*JobStatus
 		DiscoveredTypes:         job.DiscoveredTypes,
 		DiscoveredRelationships: job.DiscoveredRelationships,
 		SchemaID:                job.SchemaID,
+		TraceID:                 job.TraceID,
 	}, nil
 }
 
@@ -1042,6 +1044,23 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID uuid.U
 
 // processDiscoveryJob runs the discovery job in the background
 func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid.UUID) {
+	// Root the whole run in one trace so every LLM call this job makes nests
+	// under it and is retrievable by a single trace id. The goroutine was seeded
+	// with context.Background(), so this span is the trace root; it is persisted
+	// on the job row for the admin surface.
+	ctx, span := tracing.Start(ctx, "discovery.run",
+		attribute.String("memory.job.id", jobID.String()),
+		attribute.String("memory.project.id", projectID.String()),
+	)
+	defer span.End()
+	if sc := span.SpanContext(); sc.IsValid() && sc.TraceID().IsValid() {
+		traceID := sc.TraceID().String()
+		if err := s.repo.SetTraceID(ctx, jobID, traceID); err != nil {
+			s.log.Warn("failed to persist trace id on discovery job",
+				slog.String("job_id", jobID.String()), logger.Error(err))
+		}
+	}
+
 	s.log.Info("starting discovery job", slog.String("job_id", jobID.String()), slog.String("project_id", projectID.String()))
 
 	// Update status to analyzing. A job cancelled between the start request and
@@ -1109,14 +1128,21 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		batchNum := i + 1
 		s.updateProgress(ctx, jobID, batchNum, len(batches)+2, fmt.Sprintf("Analyzing batch %d/%d...", batchNum, len(batches)))
 
-		if err := s.extractTypesFromBatch(ctx, jobID, batch, batchNum, job.KBPurpose, discoveryDefaultMaxTypes); err != nil {
+		batchCtx, batchSpan := tracing.Start(ctx, "discovery.batch",
+			attribute.Int("memory.batch.number", batchNum),
+			attribute.Int("memory.batch.documents", len(batch)),
+		)
+		if err := s.extractTypesFromBatch(batchCtx, jobID, batch, batchNum, job.KBPurpose, discoveryDefaultMaxTypes); err != nil {
 			failedBatches++
 			batchErrors = append(batchErrors, fmt.Sprintf("Batch %d: %v", batchNum, err))
 			s.log.Error("batch extraction failed", slog.Int("batch", batchNum), logger.Error(err))
+			batchSpan.RecordError(err)
+			batchSpan.SetStatus(codes.Error, err.Error())
 			// Continue with other batches
 		} else {
 			successfulBatches++
 		}
+		batchSpan.End()
 	}
 
 	// If ALL batches failed, fail the entire job

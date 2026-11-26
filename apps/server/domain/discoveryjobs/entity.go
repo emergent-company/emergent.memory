@@ -22,6 +22,7 @@ type DiscoveryJob struct {
 	DiscoveredRelationships JSONArray  `bun:"discovered_relationships,type:jsonb,default:'[]'::jsonb" json:"discoveredRelationships"`
 	SchemaID                *uuid.UUID `bun:"schema_id,type:uuid" json:"schemaId,omitempty"`
 	ErrorMessage            *string    `bun:"error_message" json:"errorMessage,omitempty"`
+	TraceID                 *string    `bun:"trace_id" json:"traceId,omitempty"`
 	RetryCount              int        `bun:"retry_count,default:0" json:"retryCount"`
 	// AutoApplied records that the auto-apply hook already processed this job
 	// (whether it installed the pack or declined it); the report carries the

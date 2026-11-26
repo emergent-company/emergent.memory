@@ -77,6 +77,7 @@ type JobStatusResponse struct {
 	DiscoveredTypes         JSONArray  `json:"discovered_types"`
 	DiscoveredRelationships JSONArray  `json:"discovered_relationships"`
 	SchemaID                *uuid.UUID `json:"schema_id,omitempty"`
+	TraceID                 *string    `json:"trace_id,omitempty"`
 }
 
 // JobListItem is a summary of a discovery job for listing
