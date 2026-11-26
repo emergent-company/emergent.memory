@@ -27,16 +27,28 @@ type TypeSimilarity interface {
 	Resolve(ctx context.Context, discovered []DiscoveredType, existing []ExistingType) (map[string]string, error)
 }
 
-// ExistingType is one already-installed type offered for comparison.
+// ExistingType is one already-installed (or built-in taxonomy) type offered for
+// comparison. Properties/Required/Tags are populated for built-in taxonomy
+// types so a match can adopt the full canonical schema.
 type ExistingType struct {
 	Name        string
 	Description string
+	Tags        []string
+	Properties  map[string]any
+	Required    []string
 }
 
 // SetTypeSimilarity injects the semantic type classifier. Nil-safe: without it,
 // discovery converges only on exact spelling/plural/synonym matches.
 func (s *Service) SetTypeSimilarity(t TypeSimilarity) {
 	s.typeSimilarity = t
+}
+
+// SetTaxonomy injects the built-in common-entity taxonomy types that discovery
+// aligns proposed types against before inventing new ones. Nil-safe: without it,
+// the classifier matches only the project's installed types.
+func (s *Service) SetTaxonomy(t []ExistingType) {
+	s.taxonomy = t
 }
 
 // mergeSemanticallySimilarTypes renames discovered types onto existing project
@@ -49,8 +61,16 @@ func (s *Service) mergeSemanticallySimilarTypes(ctx context.Context, types []Dis
 	}
 
 	existing := buildExistingTypes(registered, current)
-	if len(existing) == 0 {
+	candidates := append([]ExistingType(nil), existing...)
+	candidates = append(candidates, s.taxonomy...)
+	if len(candidates) == 0 {
 		return types
+	}
+
+	// Built-in taxonomy names adopt their full canonical schema on a match.
+	taxonomyByName := make(map[string]ExistingType, len(s.taxonomy))
+	for _, tx := range s.taxonomy {
+		taxonomyByName[tx.Name] = tx
 	}
 
 	resolver := typehygiene.NewResolver(registered...)
@@ -66,7 +86,7 @@ func (s *Service) mergeSemanticallySimilarTypes(ctx context.Context, types []Dis
 		return types
 	}
 
-	matches, err := s.typeSimilarity.Resolve(ctx, toResolve, existing)
+	matches, err := s.typeSimilarity.Resolve(ctx, toResolve, candidates)
 	if err != nil {
 		s.log.Warn("type similarity classification failed; keeping discovered names", logger.Error(err))
 		return types
@@ -75,8 +95,25 @@ func (s *Service) mergeSemanticallySimilarTypes(ctx context.Context, types []Dis
 	out := make([]DiscoveredType, 0, len(types))
 	out = append(out, keep...)
 	for _, t := range toResolve {
-		if match, ok := matches[t.TypeName]; ok && match != "" {
-			t.TypeName = match
+		match, ok := matches[t.TypeName]
+		if !ok || match == "" {
+			out = append(out, t)
+			continue
+		}
+		t.TypeName = match
+		// Adopt the full canonical schema when the match is a built-in taxonomy
+		// type, so the well-described properties/tags replace the ad-hoc
+		// discovered ones.
+		if tx, ok := taxonomyByName[match]; ok {
+			if tx.Description != "" {
+				t.Description = tx.Description
+			}
+			if len(tx.Properties) > 0 {
+				t.Properties = tx.Properties
+			}
+			if len(tx.Required) > 0 {
+				t.RequiredProperties = tx.Required
+			}
 		}
 		out = append(out, t)
 	}
@@ -187,7 +224,7 @@ func buildTypeClassificationPrompt(discovered []DiscoveredType, existing []Exist
 	sort.Slice(es, func(i, j int) bool { return es[i].Name < es[j].Name })
 
 	var b strings.Builder
-	b.WriteString(`You are classifying whether discovered knowledge-graph types are the same concept as existing types. A "same concept" means the two types describe the same kind of entity (e.g. "Character" and "Person" for a human in a story; "Company" and "Organization"). They are NOT the same when they describe different kinds (e.g. a person vs a location, a show vs an episode).
+	b.WriteString(`You are classifying whether discovered knowledge-graph types are the same concept as existing types. A "same concept" means the two types describe the same kind of entity (e.g. "Character" and "Person" for a human in a story; "Company" and "Organization"). They are NOT the same when they describe different kinds (e.g. a person vs a location, a show vs an episode). Use the description and tags of each existing type to decide.
 
 Discovered types:
 `)
@@ -196,7 +233,11 @@ Discovered types:
 	}
 	b.WriteString("\nExisting types:\n")
 	for _, e := range es {
-		fmt.Fprintf(&b, "- %s: %s\n", e.Name, e.Description)
+		fmt.Fprintf(&b, "- %s: %s", e.Name, e.Description)
+		if len(e.Tags) > 0 {
+			fmt.Fprintf(&b, " [tags: %s]", strings.Join(e.Tags, ", "))
+		}
+		b.WriteString("\n")
 	}
 	b.WriteString(`
 For each discovered type, decide whether it is the same concept as an existing type. If none matches, same_as must be null. Return ONLY JSON:

@@ -106,6 +106,9 @@ type Service struct {
 	// typeSimilarity merges semantically-similar discovered types onto existing
 	// project types; nil keeps the spelling-only reconcile (see SetTypeSimilarity).
 	typeSimilarity TypeSimilarity
+	// taxonomy is the built-in common-entity taxonomy discovery aligns proposed
+	// types against before inventing new ones (see SetTaxonomy).
+	taxonomy []ExistingType
 }
 
 // documentCap is the effective per-run document cap.

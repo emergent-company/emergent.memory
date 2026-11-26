@@ -10,12 +10,14 @@ import (
 
 	"go.uber.org/fx"
 
+	"github.com/emergent-company/emergent.memory/domain/blueprints"
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/extraction"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
 var Module = fx.Module("discoveryjobs",
@@ -30,6 +32,7 @@ var Module = fx.Module("discoveryjobs",
 		wireAutoApply,
 		wireAutoBackfill,
 		wireTypeSimilarity,
+		wireTaxonomy,
 		startQueueRunner,
 	),
 )
@@ -100,6 +103,33 @@ func typeSimilarityThresholdFromEnv() float32 {
 		return defaultTypeSimilarityThreshold
 	}
 	return float32(n)
+}
+
+// wireTaxonomy injects the built-in common-entity taxonomy into the discovery
+// service, so proposed types are aligned against a canonical, well-described set
+// before new ones are invented. It reads the embedded blueprint packs directly
+// (no DB, no blueprint apply). Best-effort: a failure leaves the taxonomy empty
+// and discovery still works against the project's installed types.
+func wireTaxonomy(svc *Service) {
+	if svc == nil {
+		return
+	}
+	defs, err := blueprints.ListBuiltinObjectTypes()
+	if err != nil {
+		svc.log.Warn("failed to load built-in type taxonomy; discovery runs without it", logger.Error(err))
+		return
+	}
+	taxonomy := make([]ExistingType, 0, len(defs))
+	for _, d := range defs {
+		taxonomy = append(taxonomy, ExistingType{
+			Name:        d.Name,
+			Description: d.Description,
+			Tags:        d.Labels,
+			Properties:  d.Properties,
+			Required:    d.Required,
+		})
+	}
+	svc.SetTaxonomy(taxonomy)
 }
 
 // NewService creates a new discovery jobs service.
