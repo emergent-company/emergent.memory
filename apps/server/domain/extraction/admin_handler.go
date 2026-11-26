@@ -176,6 +176,49 @@ func (h *AdminHandler) Backfill(c echo.Context) error {
 	return c.JSON(http.StatusOK, result)
 }
 
+// ListQuarantine handles GET /api/admin/extraction-jobs/projects/:projectId/quarantine
+// and lists the dropped unknown-type extraction results recorded for the project.
+func (h *AdminHandler) ListQuarantine(c echo.Context) error {
+	projectID := c.Param("projectId")
+	status := c.QueryParam("status")
+	limit := 100
+	if raw := c.QueryParam("limit"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	rows, err := h.jobsService.ListQuarantine(c.Request().Context(), projectID, status, limit)
+	if err != nil {
+		return apperror.NewInternal("failed to list quarantine", err)
+	}
+	return c.JSON(http.StatusOK, SuccessResponse(map[string]any{
+		"items": rows,
+		"total": len(rows),
+	}))
+}
+
+// DismissQuarantineRequest is the body for
+// POST /api/admin/extraction-jobs/projects/:projectId/quarantine/dismiss.
+type DismissQuarantineRequest struct {
+	IDs []string `json:"ids"`
+}
+
+// DismissQuarantine handles
+// POST /api/admin/extraction-jobs/projects/:projectId/quarantine/dismiss and
+// marks the named open quarantine rows resolved.
+func (h *AdminHandler) DismissQuarantine(c echo.Context) error {
+	projectID := c.Param("projectId")
+	var req DismissQuarantineRequest
+	if err := c.Bind(&req); err != nil || len(req.IDs) == 0 {
+		return apperror.NewBadRequest("ids is required")
+	}
+	n, err := h.jobsService.DismissQuarantine(c.Request().Context(), projectID, req.IDs)
+	if err != nil {
+		return apperror.NewInternal("failed to dismiss quarantine", err)
+	}
+	return c.JSON(http.StatusOK, SuccessResponse(map[string]any{"dismissed": n}))
+}
+
 // ListJobs handles GET /api/admin/extraction-jobs/projects/:projectId
 // Lists extraction jobs for a project with pagination
 func (h *AdminHandler) ListJobs(c echo.Context) error {

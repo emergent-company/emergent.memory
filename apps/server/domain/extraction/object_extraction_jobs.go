@@ -513,6 +513,10 @@ type ObjectExtractionResults struct {
 	DroppedObjects       int
 	DroppedObjectTypes   []string
 	DroppedRelationships int
+	// Quarantined counts the dropped unknown-type results recorded to
+	// kb.extraction_quarantine (when apply.quarantine_unknown_types is on);
+	// zero when quarantine is off or nothing was dropped.
+	Quarantined int
 	// OutcomeWarning is set when the run's outcome needs naming: types skipped
 	// by skipExtraction and/or a run that wrote no objects. It rides the same
 	// debug_info/notification path as VarianceWarning (#233).
