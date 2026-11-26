@@ -124,3 +124,17 @@ func TestBudgetGateWiredAtEntryPoints(t *testing.T) {
 	_, err = ae.Resume(ctx, nil, ExecuteRequest{ProjectID: "p1"})
 	require.True(t, isBudgetFailure(err), "Resume")
 }
+
+// TestBudgetExceededMessageNamesEscapeHatch pins the #1032 UX requirement: the
+// MCP trigger/queue refusal must name what to change (budget_usd, the budget
+// settings / window reset), not only the project UUID.
+func TestBudgetExceededMessageNamesEscapeHatch(t *testing.T) {
+	msg := budgetExceededMessage("p-1")
+	require.Contains(t, msg, "p-1")
+	require.Contains(t, msg, "exceeded its spending budget")
+	require.Contains(t, msg, "budget_usd")
+	require.Contains(t, msg, "reset the budget window")
+
+	err := (&BudgetExceededError{ProjectID: "p-1", Message: msg}).Error()
+	require.Equal(t, msg, err)
+}

@@ -694,6 +694,10 @@ func (ts *TriggerService) enqueueWorkRun(ctx context.Context, agent *Agent, agen
 	}
 	run, claimed, err := ts.repo.EnqueueWorkRunDeduped(ctx, logEntry, agent.ID, maxAttempts, opts)
 	if err != nil {
+		if isBudgetFailure(err) {
+			ts.parkBudgetRefusedWork(ctx, agent, objectType, canonicalID, projectID, head, err)
+			return
+		}
 		ts.log.Warn("failed to enqueue work run",
 			slog.String("agent_id", agent.ID),
 			slog.String("canonical_id", canonicalID),
@@ -714,6 +718,41 @@ func (ts *TriggerService) enqueueWorkRun(ctx context.Context, agent *Agent, agen
 		slog.String("canonical_id", canonicalID),
 		slog.Int("object_version", version),
 		slog.String("run_id", run.ID),
+	)
+}
+
+// parkBudgetRefusedWork makes an enqueue-time spending refusal a visible,
+// durable state instead of a lone WARN. The item is parked (failure_class
+// budget) so the reconciler stops re-attempting it every tick, and every
+// registered listener is told so a dependent required check can publish an
+// unavailable reason rather than wait for a run that was never scheduled.
+func (ts *TriggerService) parkBudgetRefusedWork(ctx context.Context, agent *Agent, objectType, canonicalID, projectID string, head *graph.WorkObjectHead, cause error) {
+	reason := fmt.Sprintf("dispatch refused: %s", cause.Error())
+	if ts.repo != nil {
+		if err := ts.repo.ParkWorkItemForBudget(ctx, projectID, canonicalID, reason); err != nil {
+			ts.log.Warn("failed to park work item after budget refusal",
+				slog.String("canonical_id", canonicalID),
+				slog.String("agent_id", agent.ID),
+				slog.String("error", err.Error()),
+			)
+		}
+		ts.repo.NotifyWorkBudgetParked(ctx, WorkBudgetParkedEvent{
+			ProjectID:   projectID,
+			CanonicalID: canonicalID,
+			ObjectType:  objectType,
+			AgentID:     agent.ID,
+			AgentName:   agent.Name,
+			Reason:      reason,
+			Head:        head,
+		})
+	}
+	ts.log.Warn("work dispatch refused by project budget; item parked",
+		slog.String("object_type", objectType),
+		slog.String("agent", agent.Name),
+		slog.String("agent_id", agent.ID),
+		slog.String("project_id", projectID),
+		slog.String("canonical_id", canonicalID),
+		slog.String("error", cause.Error()),
 	)
 }
 

@@ -257,7 +257,7 @@ func BudgetExceededAppError(err error) *apperror.Error {
 		return nil
 	}
 	return apperror.New(http.StatusPaymentRequired, "budget_exceeded",
-		"A project budget window (weekly or monthly) has been exceeded. Please review your spending, increase the budget, or reset the window.")
+		"A project budget window (weekly or monthly) has been exceeded. Raise budget_usd in the project's budget settings or reset the budget window to resume agent work.")
 }
 
 // mapExecutorError converts typed executor errors to appropriate HTTP responses.

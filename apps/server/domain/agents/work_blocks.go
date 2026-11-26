@@ -3,9 +3,13 @@ package agents
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/uptrace/bun"
+
+	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/domain/tasks"
 )
 
 // WorkBlock is the durable blocked state for a work item. It is keyed by the
@@ -91,4 +95,100 @@ func (r *Repository) IsWorkBlocked(ctx context.Context, canonicalID string) (boo
 		return false, err
 	}
 	return exists, nil
+}
+
+// budgetParkBlockedBy is the blocked_by marker for a durable park recorded by
+// the enqueue-time spending gate.
+const budgetParkBlockedBy = "budget-gate"
+
+// WorkBudgetParkedEvent describes a work dispatch the project spending gate
+// refused before a run or job row could be created. Listeners use it to publish
+// a caller-visible state (for example a head-bound review check) instead of
+// leaving an in-progress check waiting for a run that was never scheduled.
+type WorkBudgetParkedEvent struct {
+	ProjectID   string
+	CanonicalID string
+	ObjectType  string
+	AgentID     string
+	AgentName   string
+	Reason      string
+	Head        *graph.WorkObjectHead
+}
+
+// WorkBudgetParkListener observes an enqueue-time budget refusal. It runs on the
+// dispatch path, so implementations must be quick and must not fail the park.
+type WorkBudgetParkListener func(ctx context.Context, ev WorkBudgetParkedEvent)
+
+// AddWorkBudgetParkListener registers a listener for budget-parked dispatches.
+// Registered once at construction by the sources module; nil-safe.
+func (r *Repository) AddWorkBudgetParkListener(fn WorkBudgetParkListener) {
+	if r == nil || fn == nil {
+		return
+	}
+	r.workBudgetParkMu.Lock()
+	defer r.workBudgetParkMu.Unlock()
+	r.workBudgetParkListeners = append(r.workBudgetParkListeners, fn)
+}
+
+// NotifyWorkBudgetParked fans a budget-park event out to every listener. A
+// listener panic must not take down the triggering dispatch goroutine, and a
+// listener error is that listener's responsibility to log.
+func (r *Repository) NotifyWorkBudgetParked(ctx context.Context, ev WorkBudgetParkedEvent) {
+	if r == nil {
+		return
+	}
+	r.workBudgetParkMu.RLock()
+	listeners := append([]WorkBudgetParkListener(nil), r.workBudgetParkListeners...)
+	r.workBudgetParkMu.RUnlock()
+	for _, fn := range listeners {
+		func() {
+			defer func() { _ = recover() }()
+			fn(ctx, ev)
+		}()
+	}
+}
+
+// ParkWorkItemForBudget records the durable parked state for an item whose
+// dispatch the spending gate refused. The block is the stop condition for the
+// reconciler: while it is present the item is neither claimed nor re-enqueued,
+// so a capped project stops logging a refusal per tick. The state is
+// recoverable: when the cap is raised or the window reset the reconciler
+// clears a budget block, and a human can always unblock or retry the item.
+//
+// A dead-letter task is created only for the first park; refreshing an existing
+// block (a duplicate delivery) must not pile up duplicate escalations.
+func (r *Repository) ParkWorkItemForBudget(ctx context.Context, projectID, canonicalID, reason string) error {
+	if r == nil || canonicalID == "" {
+		return nil
+	}
+	existing, err := r.GetWorkBlock(ctx, canonicalID)
+	if err != nil {
+		return err
+	}
+	class := string(FailureClassBudget)
+	blockedBy := budgetParkBlockedBy
+	if err := r.UpsertWorkBlock(ctx, &WorkBlock{
+		CanonicalID:  canonicalID,
+		ProjectID:    projectID,
+		Reason:       reason,
+		FailureClass: &class,
+		BlockedBy:    &blockedBy,
+	}); err != nil {
+		return err
+	}
+	if existing != nil {
+		return nil
+	}
+	desc := fmt.Sprintf("class=%s: %s", FailureClassBudget, reason)
+	sourceType := "work_object"
+	_, err = r.CreateWorkTask(ctx, &tasks.Task{
+		ProjectID:   projectID,
+		Title:       "Work item parked (budget)",
+		Description: &desc,
+		Type:        "work-escalation",
+		Status:      "pending",
+		SourceType:  &sourceType,
+		SourceID:    &canonicalID,
+	})
+	return err
 }
