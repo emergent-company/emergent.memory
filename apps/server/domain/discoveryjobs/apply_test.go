@@ -10,11 +10,12 @@ func TestGateApplyTypes(t *testing.T) {
 	pol := pipeline.DefaultPolicy(pipeline.ModeAuto) // min_confidence 0.75
 
 	types := []DiscoveredType{
-		{TypeName: "Person", Confidence: 0.9},
-		{TypeName: "Organization", Confidence: 0.8},
-		{TypeName: "Relationship", Confidence: 0.9},    // relationship-like
-		{TypeName: "Junk", Confidence: 0.4},            // below confidence
-		{TypeName: "Mal)formed!Name", Confidence: 0.9}, // invalid type name
+		{TypeName: "Person", Confidence: 0.9, Frequency: 2},
+		{TypeName: "Organization", Confidence: 0.8, Frequency: 1},
+		{TypeName: "Relationship", Confidence: 0.9, Frequency: 2},    // relationship-like
+		{TypeName: "Junk", Confidence: 0.4, Frequency: 1},            // below confidence
+		{TypeName: "Mal)formed!Name", Confidence: 0.9, Frequency: 1}, // invalid type name
+		{TypeName: "Phantom", Confidence: 0.9, Frequency: 0},         // no example instances
 	}
 
 	accepted, decisions := gateApplyTypes(pol, types)
@@ -37,6 +38,9 @@ func TestGateApplyTypes(t *testing.T) {
 	}
 	if reasons["Mal)formed!Name"] != "invalid type name" {
 		t.Fatalf("Malformed name reason = %q", reasons["Mal)formed!Name"])
+	}
+	if reasons["Phantom"] != "ungrounded (no example instances)" {
+		t.Fatalf("Phantom reason = %q", reasons["Phantom"])
 	}
 }
 
