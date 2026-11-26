@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/google/uuid"
@@ -184,6 +185,25 @@ func (r *Repository) MarkStarted(ctx context.Context, jobID uuid.UUID) error {
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
 		return ErrJobNoLongerActive
+	}
+	return nil
+}
+
+// SetTraceID records the OpenTelemetry trace id on the job row. A write is
+// skipped when traceID is empty (tracing disabled → NULL, no-op). Failures are
+// best-effort and never fail the enclosing run, mirroring extraction.
+func (r *Repository) SetTraceID(ctx context.Context, jobID uuid.UUID, traceID string) error {
+	if traceID == "" {
+		return nil
+	}
+	_, err := r.db.NewUpdate().
+		Model((*DiscoveryJob)(nil)).
+		Set("trace_id = ?", traceID).
+		Set("updated_at = now()").
+		Where("id = ?", jobID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("set trace id: %w", err)
 	}
 	return nil
 }

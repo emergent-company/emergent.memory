@@ -1059,6 +1059,7 @@ Table "kb"."discovery_jobs" {
   "updated_at" timestamptz [not null, default: `now()`]
   "auto_applied" boolean [not null, default: false]
   "applied_report" jsonb [not null, default: '{}']
+  "trace_id" text
 
   Indexes {
     (organization_id) [name: "idx_discovery_jobs_organization_id"]
