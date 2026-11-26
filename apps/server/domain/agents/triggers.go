@@ -683,6 +683,7 @@ func (ts *TriggerService) enqueueWorkRun(ctx context.Context, agent *Agent, agen
 		TriggerMetadata:   meta,
 		Invocation:        inv,
 		SourceTriggerID:   workSourceTriggerID(head),
+		SourceSubject:     workSourceSubject(head),
 	}
 	if inv != nil {
 		opts.Priority = inv.Priority
@@ -978,6 +979,23 @@ func (ts *TriggerService) skipForConcurrency(ctx context.Context, agent *Agent, 
 	return active
 }
 
+// inlineWorkBinding resolves the trusted source subject and work-object identity
+// metadata for an inline reaction run. The source subject is the only field the
+// implicit credential path may use; the metadata is context for the model. A
+// missing object/store/head yields (nil, nil) and leaves the run unchanged.
+func (ts *TriggerService) inlineWorkBinding(ctx context.Context, projectID, objectID string) (*SourceSubject, map[string]any) {
+	if objectID == "" || ts.workObjects == nil {
+		return nil, nil
+	}
+	head, err := ts.workObjects.GetHeadObject(ctx, projectID, objectID)
+	if err != nil || head == nil {
+		return nil, nil
+	}
+	meta := map[string]any{}
+	mergeWorkObjectMetadata(meta, head)
+	return workSourceSubject(head), meta
+}
+
 // executeTriggeredAgent looks up the agent and its corresponding AgentDefinition,
 // then executes it via the AgentExecutor.
 //
@@ -1057,6 +1075,21 @@ func (ts *TriggerService) executeTriggeredAgent(ctx context.Context, agentID str
 		subjectObjectType = &objectType
 	}
 
+	// Inline reaction runs need the same trusted source binding as queued work
+	// runs: a source-derived object carries repo/issue identity in the
+	// dispatcher-written HEAD, and the implicit source credential requires that
+	// column (never the model-settable trigger metadata). Enrich the metadata for
+	// context too, but mint only from SourceSubject.
+	sourceSubject, workMetadata := ts.inlineWorkBinding(ctx, projectID, objectID)
+	if len(workMetadata) > 0 {
+		if triggerMetadata == nil {
+			triggerMetadata = map[string]any{}
+		}
+		for k, v := range workMetadata {
+			triggerMetadata[k] = v
+		}
+	}
+
 	// Execute the agent
 	result, err := ts.executor.Execute(ctx, ExecuteRequest{
 		Agent:             agent,
@@ -1068,6 +1101,7 @@ func (ts *TriggerService) executeTriggeredAgent(ctx context.Context, agentID str
 		TriggerMetadata:   triggerMetadata,
 		SubjectObjectID:   subjectObjectID,
 		SubjectObjectType: subjectObjectType,
+		SourceSubject:     sourceSubject,
 		TrustedInternal:   true, // scheduled runs are a trusted surface (full internal coordination)
 	})
 	if result != nil && result.Cleanup != nil {

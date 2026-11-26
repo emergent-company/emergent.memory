@@ -404,7 +404,7 @@ func (ap *AutoProvisioner) attemptProvision(
 	// The value is never persisted by this: an agent definition stores only
 	// git_token_secret_ref (the name of a server environment variable), so no
 	// plaintext token enters the database (#1844).
-	gitToken := ResolveGitTokenForConfig(cfg, runtimeEnvVars)
+	gitToken := ResolveGitTokenForRun(cfg, runtimeEnvVars)
 
 	// System keys always win — inject SDK credentials if an ephemeral token was minted.
 	// Note: MEMORY_API_URL is already set by the gVisor provider to

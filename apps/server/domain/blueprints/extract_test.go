@@ -113,3 +113,52 @@ func TestExtractArchiveEnforcesEntryAndByteLimits(t *testing.T) {
 		t.Fatalf("expected byte limit to refuse the archive")
 	}
 }
+
+// GitHub's codeload tarballs open with a PAX global header — a
+// `pax_global_header` entry carrying the commit id — and archive/tar returns it
+// from Next() like any other entry. Refusing it as a non-regular entry made
+// every web-UI "Import from GitHub" fail with
+// `unsafe archive: non-regular entries are not allowed`, so a real archive
+// shape has to extract, and the metadata must not land on disk.
+func TestExtractArchiveSkipsPaxGlobalHeader(t *testing.T) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if err := tw.WriteHeader(&tar.Header{
+		Typeflag:   tar.TypeXGlobalHeader,
+		Name:       "pax_global_header",
+		Format:     tar.FormatPAX,
+		PAXRecords: map[string]string{"comment": "a1b2c3d4e5f6"},
+	}); err != nil {
+		t.Fatalf("write global header: %v", err)
+	}
+	body := []byte(`{"name":"personal-memory","version":"4.1.1"}`)
+	if err := tw.WriteHeader(&tar.Header{
+		Name:     "personal-memory-blueprint-main/project.yaml",
+		Mode:     0o644,
+		Size:     int64(len(body)),
+		Typeflag: tar.TypeReg,
+	}); err != nil {
+		t.Fatalf("write file header: %v", err)
+	}
+	if _, err := tw.Write(body); err != nil {
+		t.Fatalf("write body: %v", err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("close tar: %v", err)
+	}
+
+	dir := t.TempDir()
+	if err := ExtractCanonicalTar(bytes.NewReader(buf.Bytes()), dir); err != nil {
+		t.Fatalf("archive with a pax global header was refused: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "personal-memory-blueprint-main/project.yaml"))
+	if err != nil {
+		t.Fatalf("expected the regular entry to be extracted: %v", err)
+	}
+	if string(got) != string(body) {
+		t.Fatalf("extracted body = %q, want %q", got, body)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "pax_global_header")); err == nil {
+		t.Fatalf("the pax global header was written to disk as a file")
+	}
+}

@@ -682,6 +682,39 @@
     charCountAll();
   });
 
+  /* ---------- fold/unfold the empty property rows ---------- */
+  /* [data-empties-toggle="<id>"] unfolds every [data-empty] row inside #<id>
+     (the Key facts table, the rail's property list). The server ships those
+     rows folded with an inline display:none, so the default state needs no
+     script and cannot flash, and the inline style out-specifies any daisy table
+     rule; the control only ever adds rows. The label, the glyph and
+     aria-pressed all come from the button's data-* attributes, so the markup
+     stays the single source of the copy. Delegated on document so it survives
+     HTMX swaps. */
+  document.addEventListener("click", function (ev) {
+    var btn = ev.target && ev.target.closest ? ev.target.closest("[data-empties-toggle]") : null;
+    if (!btn) return;
+    var scope = document.getElementById(btn.getAttribute("data-empties-toggle") || "");
+    if (!scope) return;
+    var show = btn.getAttribute("aria-pressed") !== "true";
+    var label = btn.getAttribute(show ? "data-label-hide" : "data-label-show") || "";
+    btn.setAttribute("aria-pressed", show ? "true" : "false");
+    if (label) {
+      btn.setAttribute("aria-label", label);
+      btn.setAttribute("title", label);
+    }
+    var icon = btn.querySelector(".iconify");
+    if (icon) {
+      icon.classList.toggle("lucide--eye", !show);
+      icon.classList.toggle("lucide--eye-off", show);
+    }
+    var text = btn.querySelector("[data-empties-label]");
+    if (text && label) text.textContent = label;
+    scope.querySelectorAll("[data-empty]").forEach(function (row) {
+      row.style.display = show ? "" : "none";
+    });
+  });
+
   /* ---------- schema editor + derive dialogs (delegated) ---------- */
   /* Native <dialog> open/close driven by data attributes, so the markup needs
      no inline handlers and the behaviour survives HTMX swaps (the listeners

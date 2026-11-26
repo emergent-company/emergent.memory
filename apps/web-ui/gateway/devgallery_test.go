@@ -666,6 +666,7 @@ func newDevGalleryServerWithFeedback(flag bool, feedbackURL string) (*Server, *e
 	e := echo.New()
 	e.GET("/dev/components", s.uiComponentGallery)
 	e.GET("/dev/components/preview/:slug", s.uiComponentPreview)
+	e.GET("/dev/components/pages/:slug", s.uiComponentPagePreview)
 	return s, e
 }
 
@@ -907,5 +908,44 @@ func TestAdoptionSectionFlagOff(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), `data-testid="adoption-gaps"`) {
 		t.Error("flag-off gallery must not render the adoption-gaps section")
+	}
+}
+
+// TestWorkflowWikiPreviewRendersWorkflowRail pins the one gallery page that
+// shows a workflow. The rail's Workflow group renders only for a type that
+// declares one, so the preview is where that surface can be seen without
+// changing a project's types — and a sample that quietly lost its status
+// control would make the preview look identical to the plain wiki.
+func TestWorkflowWikiPreviewRendersWorkflowRail(t *testing.T) {
+	_, e := newDevGalleryServer(true)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dev/components/pages/objects-wiki-workflow", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("workflow wiki preview = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="object-wiki-workflow"`,
+		"In progress",
+		"Dana Whitfield",
+		// The group's only action is the pencil that opens the object page; it is
+		// icon-only, so the accessible name is what a test can hold onto.
+		`data-testid="object-wiki-workflow-edit"`,
+		`aria-label="Edit the workflow on the object page"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("workflow wiki preview missing %q", want)
+		}
+	}
+	if strings.Contains(body, "Change on the object page") {
+		t.Error("the workflow group must not carry the old sentence link: the pencil replaces it")
+	}
+
+	// The plain wiki preview (a type with no declared workflow) must not grow
+	// the group: that distinction is the reason both previews exist.
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dev/components/pages/objects-wiki", nil))
+	if strings.Contains(rec.Body.String(), `data-testid="object-wiki-workflow"`) {
+		t.Error("the plain wiki preview must not render a Workflow group")
 	}
 }

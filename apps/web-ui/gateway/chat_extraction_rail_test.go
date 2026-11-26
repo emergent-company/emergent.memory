@@ -32,6 +32,7 @@ func TestChatRailRendersExtractionOrigin(t *testing.T) {
 			Href:  "/documents/doc-2/extractions/job-2",
 			Title: "Extraction job-2", AgentName: "Extraction",
 			Status: "failed", StartedAt: "2026-11-03T08:00:00Z",
+			Failure: "provider timeout",
 		},
 	}
 
@@ -46,6 +47,7 @@ func TestChatRailRendersExtractionOrigin(t *testing.T) {
 		`data-run-id="run-1"`,
 		`href="/documents/doc-2/extractions/job-2"`,
 		`handbook.pdf`,
+		`provider timeout`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("extraction rail missing %q\n%s", want, html)

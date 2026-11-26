@@ -77,6 +77,13 @@ type JobStatusResponse struct {
 	DiscoveredTypes         JSONArray  `json:"discovered_types"`
 	DiscoveredRelationships JSONArray  `json:"discovered_relationships"`
 	SchemaID                *uuid.UUID `json:"schema_id,omitempty"`
+	TraceID                 *string    `json:"trace_id,omitempty"`
+	// AutoApplied is set only for pipeline_mode=auto runs: whether the run's
+	// pack was installed automatically. AppliedReport carries the per-type
+	// decisions and, on a decline, the reason, so a caller can surface what the
+	// pipeline decided (and left for review) instead of a bare "completed".
+	AutoApplied   bool    `json:"auto_applied"`
+	AppliedReport JSONMap `json:"applied_report,omitempty"`
 }
 
 // JobListItem is a summary of a discovery job for listing
@@ -90,6 +97,8 @@ type JobListItem struct {
 	DiscoveredTypes         JSONArray  `json:"discovered_types"`
 	DiscoveredRelationships JSONArray  `json:"discovered_relationships"`
 	SchemaID                *uuid.UUID `json:"schema_id,omitempty"`
+	AutoApplied             bool       `json:"auto_applied"`
+	AppliedReport           JSONMap    `json:"applied_report,omitempty"`
 	// Trigger/scope/document counts describe what the run covered, so a caller
 	// can distinguish an automatic sync run from an explicit one and tell the
 	// user when the per-run cap limited a project-wide run.

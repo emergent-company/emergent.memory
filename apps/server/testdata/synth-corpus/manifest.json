@@ -1,0 +1,18 @@
+{
+  "name": "energy-startup",
+  "description": "Synthetic corpus for pipeline discovery eval: board/engineering meeting notes and technology one-pagers about a molten-iron energy-storage startup.",
+  "golden_types": [
+    "Person",
+    "Organization",
+    "Project",
+    "FundingRound",
+    "DecisionRecord",
+    "Role",
+    "Technology",
+    "Product",
+    "Site",
+    "StorageSystem",
+    "Equipment"
+  ],
+  "min_types": 8
+}

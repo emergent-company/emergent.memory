@@ -239,6 +239,13 @@ Every change is versioned. Retrieve the full revision history:
 GET /api/graph/objects/{id}/history
 ```
 
+Each version records who made the change — a person, an agent, or a background
+process — and how that writer was authenticated. When an agent wrote a version,
+the history also names the person whose order the run was executed on, so an
+agent's edit can be traced back to a colleague rather than stopping at the agent.
+The object card's footer shows the same attribution in one line, and the run chip
+in the history opens that run's transcript.
+
 Restore a previous version:
 
 ```http

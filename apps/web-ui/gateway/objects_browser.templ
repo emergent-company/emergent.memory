@@ -11,12 +11,17 @@ import (
 	"github.com/emergent-company/go-daisy/devmode"
 )
 
-// --- Objects browser ---
+// --- Objects browser (the search page) ---
 //
-// The objects page: a responsive card grid with per-card selection and a grouped
-// action bar, one compact toolbar card that stacks the search field over a single
-// filter line, a single stats strip instead of three stat cards, and "Ask the
-// graph" behind a header dialog instead of a permanent card.
+// /search is the page: browse the project's objects, or run one query across
+// document chunks and graph objects. The shape is a responsive card grid with
+// per-card selection and a grouped action bar, one compact toolbar card that
+// stacks the search field over a single filter line, a single stats strip instead
+// of three stat cards, and "Ask the graph" behind a header dialog.
+//
+// The page is still named ObjectsPage and still renders the agent-scoped view:
+// same grid, same cards, same browse path — only the header and the search form
+// differ, because the server's search endpoints cannot be provenance-scoped.
 //
 // data.Preview marks a dev-gallery render: pagination, search submission, and
 // bulk mutations render without their live wiring (no hx-* attributes, no
@@ -42,7 +47,7 @@ templ ObjectsPage(data objectsPageData) {
 				@objectsBrowserHeader(data)
 			}
 			if data.LoadErr != nil {
-				@pageErrorNotice("Failed to load objects", data.LoadErr)
+				@pageErrorNotice(objectsLoadErrorTitle(data), data.LoadErr)
 			} else {
 				if data.Query == "" && data.AgentID == "" && data.CredentialID != "" {
 					@objectsCredentialScopeNotice(data)
@@ -64,10 +69,20 @@ templ ObjectsPage(data objectsPageData) {
 	}
 }
 
+// objectsLoadErrorTitle names the failure the page is showing: a query that
+// failed is a failed search, and a list that failed is a failed load. The title
+// is the one thing that tells the reader which of the two just happened.
+func objectsLoadErrorTitle(data objectsPageData) string {
+	if data.Query != "" {
+		return "Search failed"
+	}
+	return "Failed to load objects"
+}
+
 // objectsBrowserHeader is the page header with the two primary affordances:
 // asking the graph (a dialog) and creating an object.
 templ objectsBrowserHeader(data objectsPageData) {
-	@pageHeader("Memory", "Objects", "Entities in the knowledge graph — people, tasks, notes, and everything else memory stores.") {
+	@pageHeader("Memory", "Search", "Search inside ingested documents and across the knowledge graph — or browse every object memory stores.") {
 		<div class="flex items-center gap-2">
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeButton,
@@ -102,19 +117,25 @@ templ objectsBrowserHeader(data objectsPageData) {
 // filter form's current values so the request is scoped to the new branch
 // instead of the one in the page's own URL.
 //
-// Both the placeholder and the loaded strip carry the same wiring, because the
-// loaded strip replaces this element (swap: outerHTML) and must stay
-// refreshable. Preview mode renders it without the fetch: the gallery has no
-// project behind it.
+// Preview mode renders it without the fetch: the gallery has no project behind
+// it.
 templ objectsBrowserStats(data objectsPageData) {
 	{{
+		// Only the placeholder carries `load`. htmx fires `load` on content it
+		// inserts, so a loaded strip that carried it too re-armed itself on every
+		// swap: the page fetched the counters in a tight loop for as long as it
+		// stayed open. The loaded strip keeps only the dispatched event.
+		trigger := "load, objects-stats-refresh"
+		if data.Stats != nil {
+			trigger = "objects-stats-refresh"
+		}
 		statsAttrs := templ.Attributes{
 			"id":           "objects-stats",
 			"class":        objectsStatsStripClass,
 			"aria-live":    "polite",
 			"hx-target":    "this",
 			"hx-swap":      "outerHTML",
-			"hx-trigger":   "load, objects-stats-refresh",
+			"hx-trigger":   trigger,
 			"hx-include":   "#objects-filters-form",
 			"hx-get":       "/objects/stats",
 		}
@@ -164,23 +185,23 @@ templ objectsBrowserStats(data objectsPageData) {
 	</div>
 }
 
-// objectsBrowserToolbar puts search and filters in one card: the search form
-// keeps the split mode button (mode rides on the submit button), and the filter
-// form applies each control on change (the actor picker applies on pick). They
-// stay two forms because a single form cannot carry both a submitted search mode
-// and a filter change without dropping one of them — so each form carries the
-// other's state as hidden inputs, and the results fragment refreshes both sets
-// (see objectsSearchHiddenFilters / objectsFilterHiddenFilters).
+// objectsBrowserToolbar puts search and filters in one card: the search form runs
+// on submit, and the filter form applies each control on change (the actor picker
+// applies on pick). They stay two forms because a single form cannot both apply
+// on every change and wait for a typed query to be submitted without dropping
+// one of the two behaviours — so each form carries the other's state as hidden
+// inputs, and the results fragment refreshes both sets (see
+// objectsSearchHiddenFilters / objectsFilterHiddenFilters).
 //
-// Both forms refresh #objects-results in place (see objectsFormAttrs): a filter
-// click changes the rows, not the page.
+// Both forms refresh #search-results in place (see objectsFormAttrs): a filter
+// click changes the results, not the page.
 //
 // The agent-scoped view has no search form (the server's search endpoints cannot
 // be provenance-scoped), so its card is the filter line alone and the divider
 // that separates the two rows goes with it.
 templ objectsBrowserToolbar(data objectsPageData) {
 	{{
-		searchAction := "/objects"
+		searchAction := objectsTargetURL(data)
 		filterAction := objectsTargetURL(data)
 		if data.Preview {
 			// Preview forms post nowhere: the gallery must not navigate away or
@@ -209,41 +230,21 @@ templ objectsBrowserToolbar(data objectsPageData) {
 					<div id="objects-filter-controls" class="contents">
 						@objectsFilterControls(data)
 					</div>
-					<span id="objects-results-loading" class="htmx-indicator loading loading-spinner loading-xs mb-2" aria-hidden="true"></span>
+					<span id="search-results-loading" class="htmx-indicator loading loading-spinner loading-xs mb-2" aria-hidden="true"></span>
 				</form>
 			</div>
 		}
 	</div>
 }
 
-// objectsBrowserResultsNote is the one-line search summary above the table:
-// how many rows matched and how they are ranked.
-templ objectsBrowserResultsNote(data objectsPageData) {
-	<div class="mb-2 flex flex-wrap items-center justify-between gap-2 px-1">
-		@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "min-w-0 truncate"}) {
-			{ countLabel(len(data.Results), "result", "results") } matching "{ data.Query }"
-		}
-		<span class="text-muted-faint shrink-0 text-xs">Ranked by relevance</span>
-	</div>
-}
-
-// objectsBrowserResults is the swap region for every objects filter: the results
-// note, the table (or its empty state), and the footer. Its id is the HX-Target
-// the toolbar's forms request (objectsResultsRegion) and the region a filter
-// response replaces — the page around it never moves.
+// objectsBrowserResults is the page's one results region — the document section
+// and the object cards, so a search replaces both in a single swap and a browse
+// filter replaces the grid. Its id is the HX-Target the toolbar's forms request
+// (searchResultsRegion) and the id the loading indicator derives from; the page
+// around it never moves.
 templ objectsBrowserResults(data objectsPageData) {
-	<div id="objects-results" data-testid="objects-results" data-objects-list-refresh="true">
-		if data.LoadErr != nil {
-			// A filter request that failed to load keeps the page: the error
-			// replaces the list instead of the whole surface. The page renders
-			// its header unconditionally, so this is a notice, never a second h1.
-			@pageErrorNotice("Failed to load objects", data.LoadErr)
-		} else {
-			if data.Query != "" {
-				@objectsBrowserResultsNote(data)
-			}
-			@objectsBrowserCards(data)
-		}
+	<div id="search-results" data-testid="search-results" data-objects-list-refresh="true">
+		@searchResultsBody(data)
 	</div>
 }
 
@@ -277,8 +278,8 @@ templ objectsResultsFragment(data objectsPageData, refreshRow bool) {
 }
 
 // objectsSearchHiddenFilters carries the filter state the search form cannot see
-// on its own: branch and type live in the sibling filter form, and a search must
-// resend them or it would drop the applied filters.
+// on its own: branch, type, scope and cap live in the sibling filter form, and a
+// search must resend them or it would drop the applied filters.
 templ objectsSearchHiddenFilters(data objectsPageData) {
 	if data.TypeFilter != "" {
 		<input type="hidden" name="type" value={ data.TypeFilter }/>
@@ -286,14 +287,19 @@ templ objectsSearchHiddenFilters(data objectsPageData) {
 	if data.BranchID != "" {
 		<input type="hidden" name="branch" value={ data.BranchID }/>
 	}
+	if scope := searchScopeOf(data); scope != searchScopeAll {
+		<input type="hidden" name="in" value={ scope }/>
+	}
+	if data.Limit > 0 && data.Limit != defaultSearchLimit {
+		<input type="hidden" name="limit" value={ strconv.Itoa(data.Limit) }/>
+	}
 }
 
 // objectsFilterHiddenFilters is the mirror of the block above: a filter change
-// must resend the query, mode, and sort order the search row currently shows.
+// must resend the query and sort order the search row currently shows.
 templ objectsFilterHiddenFilters(data objectsPageData) {
 	if data.Query != "" {
 		<input type="hidden" name="q" value={ data.Query }/>
-		<input type="hidden" name="mode" value={ data.Mode }/>
 	}
 	if data.Order != "" {
 		<input type="hidden" name="order" value={ data.Order }/>
@@ -302,24 +308,31 @@ templ objectsFilterHiddenFilters(data objectsPageData) {
 
 // objectsBrowserCards is the unified results surface: browse objects and search
 // hits render as the same card, so switching between browsing and searching does
-// not change the page's shape. Unified search hits carry no status or embedding
-// state (the endpoint does not return them), so the card drops those badges in
-// that mode instead of rendering empty ones.
+// not change the page's shape — including the footer's writer line, because the
+// unified hits are enriched with the same object record a browse row reads
+// (hydrateSearchObjects). A hit the enrichment could not resolve simply has
+// nothing to print there.
+//
+// showEmpty controls whether an empty grid renders the empty state. Browse mode
+// and an objects-only search do; a search that returned document hits renders
+// just those, because a full "no objects matched" panel under matching document
+// rows would read as a contradiction.
 //
 // One grid serves every width. It used to be a desktop table plus a hidden
 // mobile list, which meant every object existed twice in the DOM and "Load more"
 // had to append to both; the card is responsive instead.
-templ objectsBrowserCards(data objectsPageData) {
+templ objectsBrowserCards(data objectsPageData, showEmpty bool) {
 	{{
 		rows := objectsBrowserRows(data)
 		search := data.Query != ""
-		unified := search && data.Mode == "unified"
 	}}
 	if len(rows) == 0 {
-		if search {
-			@objectsSearchEmpty()
-		} else {
-			@objectsEmpty(data.TypeFilter)
+		if showEmpty {
+			if search {
+				@objectsSearchEmptyDispatch(data)
+			} else {
+				@objectsEmpty(data.TypeFilter)
+			}
 		}
 	} else {
 		@objectsBrowserResultsBar(data)
@@ -329,7 +342,7 @@ templ objectsBrowserCards(data objectsPageData) {
 			class={ objectsCardsGridClass }
 		>
 			for _, r := range rows {
-				@objectsBrowserCard(r, search, unified, data.WikiView, data.Preview)
+				@objectsBrowserCard(r, search, data.Preview)
 			}
 		</div>
 		@objectsBrowserFooter(data)
@@ -357,39 +370,8 @@ templ objectsBrowserResultsBar(data objectsPageData) {
 			<span>Select all</span>
 		</label>
 		<div class="flex flex-wrap items-center gap-3">
-			@objectsBrowserWikiViewSwitch(data)
 			@objectsBrowserSortControl(data)
 		</div>
-	</div>
-}
-
-// objectsBrowserWikiViewSwitch is the global wiki-variant switch, in the place a
-// list/card toggle usually sits. It decides which wiki variant a card opens, and
-// the handler persists it as a cookie so opening a card directly keeps the
-// choice. Each option is a plain link: no JavaScript, no state to lose on reload.
-templ objectsBrowserWikiViewSwitch(data objectsPageData) {
-	<div class="join" role="group" aria-label="Object page view">
-		for _, opt := range objectWikiViewOptions() {
-			{{ active := normalizeObjectWikiView(data.WikiView) == opt.Value
-			attrs := templ.Attributes{"data-testid": "objects-wiki-view-" + opt.Value}
-			href := objectsWikiViewHref(data, opt.Value)
-			variant := ui.ButtonGhost
-			if active {
-				variant = ui.ButtonPrimary
-				attrs["aria-current"] = "page"
-			} }}
-			@ui.Button(ui.ButtonProps{
-				Type:       ui.ButtonTypeLink,
-				Href:       href,
-				Variant:    variant,
-				Size:       ui.ButtonXS,
-				Icon:       opt.Icon,
-				ExtraClass: "join-item gap-1.5 font-normal",
-				Attrs:      attrs,
-			}) {
-				<span>{ opt.Label }</span>
-			}
-		}
 	</div>
 }
 
@@ -416,7 +398,7 @@ templ objectsBrowserSortControl(data objectsPageData) {
 			}
 			var attrs templ.Attributes
 			if !data.Preview {
-				attrs = regionFilterAttrs(href, objectsResultsRegion)
+				attrs = regionFilterAttrs(href, searchResultsRegion)
 				attrs["data-objects-list-refresh"] = "true"
 			} else {
 				attrs = templ.Attributes{}
@@ -444,8 +426,12 @@ templ objectsBrowserSortControl(data objectsPageData) {
 //
 // The card answers "what is this, and should I open it?" — the shared object
 // header (type tile, type · ref identity line, name, first paragraph of prose),
-// its workflow state and labels, who last wrote it. Everything else (the full
-// property set, relationships, the audit trail) is the object page's job.
+// its labels, who last wrote it. Everything else — the full property set, the
+// data class ("Synthesized", "From source", "Adopted"), the workflow state,
+// relationships, the audit trail — is the object page's job: on a browse grid
+// those chips repeat the same value on every object that shares it, and the
+// reader has already decided to open the card by then (the detail header and
+// `objectDetailChips` carry them with room to explain).
 //
 // The name is plain text inside the header and the whole card is one stretched
 // link instead: an object is introduced by the same component as a page head and
@@ -458,8 +444,8 @@ templ objectsBrowserSortControl(data objectsPageData) {
 // overlay above it. So the row is raised but passes clicks through, and only the
 // chips that carry a tooltip opt back into pointer events — the band between
 // chips still opens the card (#699).
-templ objectsBrowserCard(r objectsBrowserRowView, search, unified bool, wikiView string, preview bool) {
-	{{ href := objectWikiHref(r.ID, wikiView)
+templ objectsBrowserCard(r objectsBrowserRowView, search bool, preview bool) {
+	{{ href := objectWikiHref(r.ID)
 	linkAttrs := templ.Attributes{}
 	if preview {
 		// The gallery preview has no backend and no real objects behind it, so a
@@ -468,21 +454,36 @@ templ objectsBrowserCard(r objectsBrowserRowView, search, unified bool, wikiView
 		linkAttrs["onclick"] = "return false"
 	} }}
 	<div
-		class="border-base-content/10 bg-base-100 rounded-box group relative flex h-full flex-col border transition-shadow hover:shadow-md"
+		class={ "border-base-content/10 bg-base-100 rounded-box group relative flex flex-col overflow-hidden border transition-shadow hover:shadow-md " + objectsCardHeightClass }
 		data-testid="object-card"
 		{ devmode.Attrs(ctx, "gateway/ObjectCard")... }
 	>
-		<div class="flex items-start justify-between gap-2 p-3 pb-0">
+		// The header block is the card's one growing region (flex-1): the fixed
+		// height is spent on the rows that are always there, and whatever is left
+		// over collects *below the description* inside this block — "two rows of
+		// description, then space" — rather than as a gap above the footer. Growth
+		// here rather than an auto margin on the rows below is deliberate: two
+		// mt-auto siblings in one flex column split the slack between both gaps, so
+		// the footer would float half a gap above the card's floor.
+		<div class="flex min-h-0 flex-1 items-start justify-between gap-2 p-3 pb-0">
 			<div class="flex min-w-0 flex-1">
 				@objectHeader(objectHeaderProps{
 					Variant:      objectHeaderRow,
+					// The tile pins to the top of the text block, not to its middle:
+					// a card with an excerpt is three lines tall, and a centred tile
+					// then floats down beside the excerpt instead of marking the
+					// object's identity line.
+					TopAlign:     true,
 					Type:         r.Type,
 					Icon:         r.UI.Icon,
 					Color:        r.UI.Color,
 					Ref:          objectDisplayRef(r.Ref, r.ID),
 					Label:        r.Label,
 					Excerpt:      r.Excerpt,
-					ExcerptClass: "line-clamp-3",
+					// Two rows and no more: with a fixed card height a third row
+					// would either overflow or squeeze the rows below it, and the
+					// description is a teaser, not the object's body.
+					ExcerptClass: "line-clamp-2",
 					NameClass:    "group-hover:text-primary",
 				})
 			</div>
@@ -498,29 +499,36 @@ templ objectsBrowserCard(r objectsBrowserRowView, search, unified bool, wikiView
 				/>
 			</label>
 		</div>
-		<div class="relative z-10 pointer-events-none mt-auto flex min-h-6 flex-wrap items-center gap-1 px-3 pb-2 empty:hidden" data-testid="object-card-chips">
-			if r.DataClassLabel != "" {
-				<span class="tooltip tooltip-top pointer-events-auto inline-flex" data-tip={ r.DataClassHint }>
-					@ui.Badge(ui.BadgeProps{Label: r.DataClassLabel, Icon: r.DataClassIcon, Variant: r.DataClassIntent, Size: ui.BadgeSizeXS})
+		// The chips start where the card's text starts, not at the card's padding:
+		// they label the object, so they line up under the name rather than under
+		// the type tile. That inset is the header's own arithmetic — p-3 (12px) +
+		// the size-9 type tile (36px) + gap-3 (12px) — so it moves with them.
+		//
+		// The top padding is not decoration: without it a label sits flush against
+		// the last line of the excerpt on a full card, and the gap has to be a rule
+		// (always some distance to the text) rather than whatever the text height
+		// happens to leave.
+		//
+		// This row does not anchor itself: the fixed height's slack is spent in the
+		// header block above (flex-1), so the labels sit directly under the
+		// description's space. The row is hidden when a card carries no labels, so
+		// nothing here may be load-bearing for the card's floor — that is the
+		// footer's job, and it works on an unlabelled card for the same reason.
+		<div class="relative z-10 pointer-events-none flex min-h-6 flex-wrap items-center gap-1 pt-2 pl-[3.75rem] pr-3 pb-2 empty:hidden" data-testid="object-card-chips">
+			// No data-class chip and no workflow-state chip on a card: both are
+			// properties of the object, not of "should I open this?", and on a grid
+			// the same value repeats on every object that shares it. They live in
+			// the object page's header chips, where they have room to explain.
+			// Only an object that is not embedded earns a badge: "Embedded" on
+			// every card is noise, a pending or failed embedding is a reason to
+			// open it. Search hits carry the same state as browse rows now that
+			// the unified results are enriched, so the rule is the same in both
+			// modes.
+			if r.EmbeddingLabel != "" && r.EmbeddingIcon != "lucide--circle-check" {
+				<span class={ "tooltip tooltip-top pointer-events-auto inline-flex", r.EmbeddingClass } data-tip={ r.EmbeddingLabel }>
+					<span class={ "iconify shrink-0 text-base ", r.EmbeddingIcon } aria-hidden="true"></span>
+					<span class="sr-only">{ r.EmbeddingLabel }</span>
 				</span>
-			}
-			if !unified {
-				if r.Status != "" {
-					@components.StatusBadge(r.StatusLabel, r.StatusIntent, "", components.StatusBadgeOpts{
-						Size:  ui.BadgeSizeXS,
-						Dot:   true,
-						Attrs: templ.Attributes{"data-status": r.Status},
-					})
-				}
-				// Only an object that is not embedded earns a badge: "Embedded" on
-				// every card is noise, a pending or failed embedding is a reason to
-				// open it.
-				if r.EmbeddingLabel != "" && r.EmbeddingIcon != "lucide--circle-check" {
-					<span class={ "tooltip tooltip-top pointer-events-auto inline-flex", r.EmbeddingClass } data-tip={ r.EmbeddingLabel }>
-						<span class={ "iconify shrink-0 text-base ", r.EmbeddingIcon } aria-hidden="true"></span>
-						<span class="sr-only">{ r.EmbeddingLabel }</span>
-					</span>
-				}
 			}
 			for _, l := range firstLabels(r.Labels, 3) {
 				@ui.Badge(ui.BadgeProps{Label: l, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS})
@@ -535,7 +543,14 @@ templ objectsBrowserCard(r objectsBrowserRowView, search, unified bool, wikiView
 				</span>
 			}
 		</div>
-		<div class="border-base-content/10 text-muted-faint relative z-10 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 border-t px-3 py-2 text-[11px]">
+		// The footer is the card's floor: it is the last row of a fixed-height
+		// column whose only growing block is the header, so it lands on the bottom
+		// however short the text is, and `h-8` makes every card's bar the same
+		// height — a card that resolved a writer and one that only has an age must
+		// not sit on two different baselines in the same row of the grid. It never
+		// wraps: the writer line truncates and the version count holds its width
+		// (`shrink-0`), so the bar cannot grow a second line.
+		<div class="border-base-content/10 text-muted-faint relative z-10 flex h-8 min-w-0 shrink-0 items-center justify-between gap-x-2 overflow-hidden border-t px-3 text-[11px]">
 			@objectsCardWriter(r)
 			if r.HasRevisionCount {
 				<a
@@ -558,18 +573,41 @@ templ objectsBrowserCard(r objectsBrowserRowView, search, unified bool, wikiView
 // version written before the write stamp existed shows nothing rather than a
 // guessed actor — and only the age falls back to the object's created time.
 templ objectsCardWriter(r objectsBrowserRowView) {
+	{{ w := r.Writer }}
+	{{ primary, primaryInitials, primaryAvatar := w.Actor, w.ActorInitials, w.ActorAvatar }}
+	{{ primaryTitle := w.ActorTitle }}
+	{{ primaryHref := w.ActorHref }}
+	{{ mechanism := "" }}
+	if w.OrderedBy != "" {
+		{{ primary, primaryInitials, primaryAvatar = w.OrderedBy, w.OrderedByInitials, w.OrderedByAvatar }}
+		{{ primaryTitle = w.OrderedByTitle }}
+		{{ primaryHref = "" }}
+		{{ mechanism = w.Actor }}
+	} else {
+		{{ mechanism = w.How }}
+	}
 	<span class="inline-flex min-w-0 items-center gap-1">
-		if r.Writer.Actor != "" {
-			<span class="truncate" title={ r.Writer.ActorTitle }>
-				if r.Writer.ActorHref != "" {
-					<a href={ templ.URL(r.Writer.ActorHref) } class="hover:text-base-content relative z-10 font-medium hover:underline">{ r.Writer.Actor }</a>
+		if primary != "" || primaryInitials != "" {
+			@objectActorAvatar(objectActorAvatarProps{
+				Initials: primaryInitials,
+				Avatar:   primaryAvatar,
+				Name:     primary,
+			})
+		}
+		if primary != "" {
+			// min-w-0 so the name is the part that gives way when the bar is
+			// full: it truncates, and the mechanism, age and version count
+			// keep their width.
+			<span class="min-w-0 truncate" title={ primaryTitle }>
+				if primaryHref != "" {
+					<a href={ templ.URL(primaryHref) } class="hover:text-base-content relative z-10 font-medium hover:underline">{ primary }</a>
 				} else {
-					<span class="text-base-content/70 font-medium">{ r.Writer.Actor }</span>
+					<span class="text-base-content/70 font-medium">{ primary }</span>
 				}
 			</span>
-			if r.Writer.How != "" {
+			if mechanism != "" {
 				<span class="shrink-0" aria-hidden="true">·</span>
-				<span class="shrink-0">via { r.Writer.How }</span>
+				<span class="shrink-0">via { mechanism }</span>
 			}
 			if r.When != "" && r.When != "—" {
 				<span class="shrink-0" aria-hidden="true">·</span>
@@ -587,6 +625,26 @@ func objectVersionCountLabel(n int) string {
 		return "1 version"
 	}
 	return strconv.Itoa(n) + " versions"
+}
+
+// objectVersionCount is how many recorded versions an object has: the server's
+// revision_count when it reports one, otherwise the object's current version
+// number. The fallback is exact, not a guess — the history holds one row per
+// version, so version 3 is three versions — and it is what keeps the count
+// visible at all: revision_count comes from a materialized view that no read
+// query joins today, so the server ships it as null on every read path.
+//
+// known is false when neither is reported (a write response, or an object the
+// server has not versioned), which lets a caller offer "View history" instead of
+// claiming there are no versions.
+func objectVersionCount(o GraphObject) (n int, known bool) {
+	if o.RevisionCount != nil && *o.RevisionCount > 0 {
+		return *o.RevisionCount, true
+	}
+	if o.Version > 0 {
+		return o.Version, true
+	}
+	return 0, false
 }
 
 
@@ -637,11 +695,10 @@ templ objectsBrowserLoadMoreButton(data objectsPageData) {
 templ objectsBrowserRowsPartial(data objectsPageData) {
 	{{
 		search := data.Query != ""
-		unified := search && data.Mode == "unified"
 		rows := objectsBrowserRows(data)
 	}}
 	for _, r := range rows {
-		@objectsBrowserCard(r, search, unified, data.WikiView, data.Preview)
+		@objectsBrowserCard(r, search, data.Preview)
 	}
 	<div id="objects-load-more" hx-swap-oob="true">
 		if data.HasMore {

@@ -34,7 +34,7 @@ const (
 func (s *Server) uiObjectsBulk(c echo.Context) error {
 	ctx := c.Request().Context()
 	if err := c.Request().ParseForm(); err != nil {
-		return redirectWithError(c, "/objects", err)
+		return redirectWithError(c, "/search", err)
 	}
 	back := objectsBulkReturnPath(c.FormValue("back"))
 	ids := parseBulkObjectIDs(c.FormValue("ids"))
@@ -234,18 +234,19 @@ func parseBulkObjectIDs(raw string) []string {
 
 // objectsBulkReturnPath validates the `back` field the dialogs carry: the page
 // the selection was made on, so the redirect lands on the same filtered view.
-// Anything that is not this app's objects page (a host, a scheme, another path)
-// falls back to /objects instead of becoming an open redirect.
+// Anything that is not this app's search page or an agent-scoped object list (a
+// host, a scheme, another path) falls back to /search instead of becoming an
+// open redirect.
 func objectsBulkReturnPath(raw string) string {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.IsAbs() || u.Host != "" || strings.HasPrefix(u.Path, "//") {
-		return "/objects"
+		return "/search"
 	}
 	switch {
-	case u.Path == "/objects":
+	case u.Path == "/search":
 	case strings.HasPrefix(u.Path, "/agents/") && strings.HasSuffix(u.Path, "/objects"):
 	default:
-		return "/objects"
+		return "/search"
 	}
 	// Drop the params this handler writes, so a page reloaded from a flash URL
 	// does not re-show a stale toast.

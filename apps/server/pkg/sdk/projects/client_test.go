@@ -2,6 +2,7 @@ package projects_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -265,5 +266,58 @@ func TestProjectsCreateValidationError(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected validation error")
+	}
+}
+
+func TestProjectsPipeline(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	view := projects.PipelineView{
+		Mode:             "auto",
+		Policy:           json.RawMessage(`{"mode":"auto"}`),
+		Customized:       false,
+		SchemaGeneration: 2,
+	}
+
+	mock.On("GET", "/api/projects/proj-1/pipeline", func(w http.ResponseWriter, r *http.Request) {
+		testutil.JSONResponse(t, w, view)
+	})
+	mock.On("POST", "/api/projects/proj-1/pipeline/preview", func(w http.ResponseWriter, r *http.Request) {
+		testutil.JSONResponse(t, w, view)
+	})
+	mock.On("PUT", "/api/projects/proj-1/pipeline", func(w http.ResponseWriter, r *http.Request) {
+		testutil.AssertJSONBody(t, r, map[string]string{"mode": "auto"})
+		testutil.JSONResponse(t, w, view)
+	})
+
+	client, _ := sdk.New(sdk.Config{
+		ServerURL: mock.URL,
+		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: "test_key"},
+	})
+
+	got, err := client.Projects.GetPipeline(context.Background(), "proj-1")
+	if err != nil {
+		t.Fatalf("GetPipeline: %v", err)
+	}
+	if got.Mode != "auto" || got.SchemaGeneration != 2 {
+		t.Fatalf("GetPipeline = %+v", got)
+	}
+
+	prev, err := client.Projects.PreviewPipeline(context.Background(), "proj-1")
+	if err != nil {
+		t.Fatalf("PreviewPipeline: %v", err)
+	}
+	if prev.Mode != "auto" {
+		t.Fatalf("PreviewPipeline = %+v", prev)
+	}
+
+	mode := "auto"
+	set, err := client.Projects.SetPipeline(context.Background(), "proj-1", &projects.PutPipelineRequest{Mode: &mode})
+	if err != nil {
+		t.Fatalf("SetPipeline: %v", err)
+	}
+	if set.Mode != "auto" {
+		t.Fatalf("SetPipeline = %+v", set)
 	}
 }

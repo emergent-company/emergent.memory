@@ -29,7 +29,7 @@ func (f *fakeDiscoveryStarter) AutoDiscoveryEnabled(ctx context.Context, project
 	return f.enabled, f.lookupErr
 }
 
-func (f *fakeDiscoveryStarter) StartDiscovery(ctx context.Context, projectID uuid.UUID, documentIDs []uuid.UUID) error {
+func (f *fakeDiscoveryStarter) Enqueue(ctx context.Context, projectID uuid.UUID, documentIDs []uuid.UUID) error {
 	f.startCalls++
 	f.gotProject = projectID
 	f.gotIDs = documentIDs

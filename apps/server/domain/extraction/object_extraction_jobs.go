@@ -243,6 +243,14 @@ func (s *ObjectExtractionJobsService) CreateJob(ctx context.Context, opts Create
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
+	// Stamp the project's schema generation so backfill can later tell which
+	// jobs ran before a schema change (auto-apply bumps the counter). Best-
+	// effort: a missing project leaves it NULL, which backfill treats as stale.
+	if gen, gerr := s.CurrentSchemaGeneration(ctx, opts.ProjectID); gerr == nil {
+		job.SchemaGeneration = &gen
+	} else {
+		s.log.Warn("failed to stamp schema generation", slog.String("projectId", opts.ProjectID), logger.Error(gerr))
+	}
 
 	_, err := s.db.NewInsert().
 		Model(job).
@@ -499,6 +507,16 @@ type ObjectExtractionResults struct {
 	// SkippedTypes lists the object types omitted because their installed schema
 	// sets skipExtraction (sorted). They are also written to DebugInfo.
 	SkippedTypes []string
+	// DroppedObjects / DroppedRelationships count entities/relationships the
+	// model produced whose type is not in the effective installed schema; they
+	// are discarded (strict typing) and reported rather than persisted.
+	DroppedObjects       int
+	DroppedObjectTypes   []string
+	DroppedRelationships int
+	// Quarantined counts the dropped unknown-type results recorded to
+	// kb.extraction_quarantine (when apply.quarantine_unknown_types is on);
+	// zero when quarantine is off or nothing was dropped.
+	Quarantined int
 	// OutcomeWarning is set when the run's outcome needs naming: types skipped
 	// by skipExtraction and/or a run that wrote no objects. It rides the same
 	// debug_info/notification path as VarianceWarning (#233).
@@ -1362,14 +1380,188 @@ func (s *ObjectExtractionJobsService) GetJobLogSummary(ctx context.Context, jobI
 // This satisfies the documents.ExtractionJobCreator interface so the upload
 // handler can trigger extraction without importing this package.
 func (s *ObjectExtractionJobsService) TriggerForDocument(ctx context.Context, projectID, documentID string) error {
-	_, err := s.CreateJob(ctx, CreateObjectExtractionJobOptions{
+	return s.triggerForDocument(ctx, projectID, documentID, false)
+}
+
+// TriggerForDocumentAdditive creates a full extraction job that must NOT
+// supersede the document's prior entities. It is the schema-change backfill
+// path: re-extraction there is meant to find new entities of newly-installed
+// types, not to replace what a previous run produced.
+func (s *ObjectExtractionJobsService) TriggerForDocumentAdditive(ctx context.Context, projectID, documentID string) error {
+	return s.triggerForDocument(ctx, projectID, documentID, true)
+}
+
+func (s *ObjectExtractionJobsService) triggerForDocument(ctx context.Context, projectID, documentID string, additive bool) error {
+	opts := CreateObjectExtractionJobOptions{
 		ProjectID:  projectID,
 		DocumentID: &documentID,
 		SourceID:   &documentID,
 		JobType:    JobTypeFullExtraction,
 		SourceType: func() *string { v := "document"; return &v }(),
-	})
+	}
+	if additive {
+		opts.SourceMetadata = JSON{"additive": true}
+	}
+	_, err := s.CreateJob(ctx, opts)
 	return err
+}
+
+// CurrentSchemaGeneration reads the project's schema generation counter, which
+// auto-apply bumps whenever the effective installed schema changes (P2). Backfill
+// compares a job's stored generation to this to find stale documents.
+func (s *ObjectExtractionJobsService) CurrentSchemaGeneration(ctx context.Context, projectID string) (int, error) {
+	return s.currentSchemaGeneration(ctx, s.db, projectID)
+}
+
+func (s *ObjectExtractionJobsService) currentSchemaGeneration(ctx context.Context, db bun.IDB, projectID string) (int, error) {
+	var gen int
+	err := db.NewSelect().
+		Table("kb.projects").
+		Column("schema_generation").
+		Where("id = ?", projectID).
+		Scan(ctx, &gen)
+	if err != nil {
+		return 0, fmt.Errorf("read project schema_generation: %w", err)
+	}
+	return gen, nil
+}
+
+// BackfillFilter selects which documents a backfill run re-extracts.
+type BackfillFilter string
+
+const (
+	// BackfillStaleSchema selects documents whose latest completed extraction
+	// job has no generation or a generation older than the current one.
+	BackfillStaleSchema BackfillFilter = "stale_schema"
+	// BackfillNever selects documents with no extraction job at all.
+	BackfillNever BackfillFilter = "never"
+	// BackfillFailed selects documents whose latest extraction job ended in a
+	// failed/dead-letter terminal state (a later success clears it).
+	BackfillFailed BackfillFilter = "failed"
+	// BackfillAll selects every document in the project, regardless of current
+	// extraction state — the "full" re-extraction mode.
+	BackfillAll BackfillFilter = "all"
+)
+
+// BackfillResult reports a backfill run.
+type BackfillResult struct {
+	Filter            BackfillFilter `json:"filter"`
+	CurrentGeneration int            `json:"current_generation"`
+	Selected          int            `json:"selected"`
+	Enqueued          int            `json:"enqueued"`
+	Skipped           int            `json:"skipped"` // had an active job already
+	DryRun            bool           `json:"dry_run"`
+	DocumentIDs       []string       `json:"document_ids,omitempty"`
+}
+
+// Backfill selects documents matching filter and enqueues an extraction job
+// for each (up to limit), skipping documents that already have an active job.
+// dry_run computes the selection without creating jobs. The selection is
+// serialized per project with a transaction-scoped advisory lock.
+func (s *ObjectExtractionJobsService) Backfill(ctx context.Context, projectID string, filter BackfillFilter, limit int, dryRun bool) (*BackfillResult, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	res := &BackfillResult{Filter: filter, DryRun: dryRun}
+	lockKey := "backfill:" + projectID
+
+	var docs []string
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtext(?))", lockKey).Exec(ctx); err != nil {
+			return fmt.Errorf("acquire backfill lock: %w", err)
+		}
+		gen, err := s.currentSchemaGeneration(ctx, tx, projectID)
+		if err != nil {
+			return err
+		}
+		res.CurrentGeneration = gen
+		docs, err = s.backfillCandidates(ctx, tx, projectID, filter, gen, limit)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	res.Selected = len(docs)
+	res.DocumentIDs = docs
+	if dryRun {
+		return res, nil
+	}
+
+	for _, docID := range docs {
+		if s.hasActiveJob(ctx, s.db, docID) {
+			res.Skipped++
+			continue
+		}
+		d := docID
+		if err := s.TriggerForDocumentAdditive(ctx, projectID, d); err != nil {
+			s.log.Warn("backfill: failed to enqueue", slog.String("document_id", docID), logger.Error(err))
+			continue
+		}
+		res.Enqueued++
+	}
+	return res, nil
+}
+
+// backfillCandidates returns up to limit document ids matching the filter. The
+// LIMIT is applied in SQL so an unbounded candidate set is never materialised.
+func (s *ObjectExtractionJobsService) backfillCandidates(ctx context.Context, db bun.IDB, projectID string, filter BackfillFilter, currentGen, limit int) ([]string, error) {
+	var docs []string
+	var err error
+	switch filter {
+	case BackfillNever:
+		err = db.NewRaw(`
+			SELECT d.id FROM kb.documents d
+			WHERE d.project_id = ?
+			  AND NOT EXISTS (SELECT 1 FROM kb.object_extraction_jobs j WHERE j.document_id = d.id)
+			ORDER BY d.created_at LIMIT ?`, projectID, limit).Scan(ctx, &docs)
+	case BackfillFailed:
+		// Latest terminal failure only: a document that succeeded afterwards
+		// must not re-enqueue every run.
+		err = db.NewRaw(`
+			SELECT d.id FROM kb.documents d
+			WHERE d.project_id = ?
+			  AND (
+			    SELECT j.status FROM kb.object_extraction_jobs j
+			    WHERE j.document_id = d.id
+			    ORDER BY j.completed_at DESC NULLS LAST, j.created_at DESC
+			    LIMIT 1
+			  ) IN ('failed','dead_letter')
+			ORDER BY d.created_at LIMIT ?`, projectID, limit).Scan(ctx, &docs)
+	case BackfillStaleSchema:
+		err = db.NewRaw(`
+			SELECT d.id FROM kb.documents d
+			WHERE d.project_id = ?
+			  AND (
+			    SELECT j.schema_generation IS NULL OR j.schema_generation <> ?
+			    FROM kb.object_extraction_jobs j
+			    WHERE j.document_id = d.id AND j.status = 'completed'
+			    ORDER BY j.completed_at DESC NULLS LAST, j.created_at DESC
+			    LIMIT 1
+			  ) IS NOT FALSE
+			ORDER BY d.created_at LIMIT ?`, projectID, currentGen, limit).Scan(ctx, &docs)
+	case BackfillAll:
+		err = db.NewRaw(`
+			SELECT d.id FROM kb.documents d
+			WHERE d.project_id = ?
+			ORDER BY d.created_at LIMIT ?`, projectID, limit).Scan(ctx, &docs)
+	}
+	return docs, err
+}
+
+// hasActiveJob reports whether a document already has a pending/processing
+// extraction job, so backfill never double-enqueues it.
+func (s *ObjectExtractionJobsService) hasActiveJob(ctx context.Context, db bun.IDB, documentID string) bool {
+	var one int
+	err := db.NewRaw(`
+		SELECT 1 FROM kb.object_extraction_jobs
+		WHERE document_id = ? AND status IN ('pending','processing')
+		LIMIT 1`, documentID).Scan(ctx, &one)
+	return err == nil
 }
 
 // SetTraceID records the OpenTelemetry trace id on the job row. A write is

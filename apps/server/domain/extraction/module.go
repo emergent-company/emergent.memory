@@ -232,6 +232,7 @@ var Module = fx.Module("extraction",
 		provideEmbeddingEnqueuer,
 		provideRelEmbeddingEnqueuer,
 		provideEmbeddingSweepWorker,
+		provideBranchSweepWorker,
 		provideBackgroundPauser,
 		// Expose DomainClassifierHandler for chat handler to pre-classify documents.
 		NewMCPDomainClassifierHandler,
@@ -253,6 +254,7 @@ var Module = fx.Module("extraction",
 		RegisterDocumentParsingWorkerLifecycle,
 		RegisterObjectExtractionWorkerLifecycle,
 		RegisterEmbeddingSweepWorkerLifecycle,
+		RegisterBranchSweepWorkerLifecycle,
 		RegisterGovernorModeWatcherLifecycle,
 	),
 )
@@ -370,6 +372,7 @@ type ExtractionConfig struct {
 	DocumentParsing  *DocumentParsingConfig
 	ObjectExtraction *ObjectExtractionConfig
 	EmbeddingSweep   *EmbeddingSweepConfig
+	BranchSweep      *BranchSweepConfig
 }
 
 // NewExtractionConfig creates extraction configuration from app config
@@ -397,6 +400,7 @@ func NewExtractionConfig(cfg *config.Config) *ExtractionConfig {
 		DocumentParsing:  DefaultDocumentParsingConfig(),
 		ObjectExtraction: objCfg,
 		EmbeddingSweep:   DefaultEmbeddingSweepConfig(),
+		BranchSweep:      DefaultBranchSweepConfig(),
 	}
 }
 
@@ -610,6 +614,16 @@ func provideEmbeddingSweepWorker(
 
 // RegisterEmbeddingSweepWorkerLifecycle registers the sweep worker with fx lifecycle.
 func RegisterEmbeddingSweepWorkerLifecycle(lc fx.Lifecycle, worker *EmbeddingSweepWorker) {
+	RegisterWorkerLifecycle(lc, worker)
+}
+
+// provideBranchSweepWorker creates the extraction-branch retention sweep worker.
+func provideBranchSweepWorker(db bun.IDB, log *slog.Logger, cfg *ExtractionConfig) *BranchSweepWorker {
+	return NewBranchSweepWorker(db, log, cfg.BranchSweep)
+}
+
+// RegisterBranchSweepWorkerLifecycle registers the branch sweep worker with fx.
+func RegisterBranchSweepWorkerLifecycle(lc fx.Lifecycle, worker *BranchSweepWorker) {
 	RegisterWorkerLifecycle(lc, worker)
 }
 

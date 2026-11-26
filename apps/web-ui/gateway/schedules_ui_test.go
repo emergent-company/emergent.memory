@@ -431,3 +431,39 @@ func TestUIRouteSchedules(t *testing.T) {
 		t.Errorf("toggle off should forward enabled=false, got %v", f.setEnabledSchedVal)
 	}
 }
+
+// TestScheduleRunSubtitleShowsFailureReason pins that a failed run's latest-runs
+// row names why it failed: the explicit error message when present, else the
+// humanised failure class, so a failed run is never just "failed".
+func TestScheduleRunSubtitleShowsFailureReason(t *testing.T) {
+	completed := time.Now().Add(-time.Minute).Format(time.RFC3339)
+	started := time.Now().Add(-2 * time.Minute).Format(time.RFC3339)
+
+	withError := ScheduledAgentRun{
+		ID: "r1", Status: "failed", StartedAt: started, CompletedAt: &completed,
+		ErrorMessage: strPtr("provider quota exhausted"),
+	}
+	if got := scheduleRunSubtitle(withError); !strings.Contains(got, "provider quota exhausted") {
+		t.Errorf("error-message subtitle = %q, want the error text", got)
+	}
+
+	withClass := ScheduledAgentRun{
+		ID: "r2", Status: "failed", StartedAt: started, CompletedAt: &completed,
+		FailureClass: strPtr("deterministic"),
+	}
+	if got := scheduleRunSubtitle(withClass); !strings.Contains(got, "The agent hit an unrecoverable error") {
+		t.Errorf("failure-class subtitle = %q, want the humanised class", got)
+	}
+}
+
+// TestScheduleRunTitleHumanizesStatus pins that a latest-runs row does not
+// leak a raw wire status such as input-required.
+func TestScheduleRunTitleHumanizesStatus(t *testing.T) {
+	if got := scheduleRunTitle(ScheduledAgentRun{ID: "run-1", Status: "input-required"}); !strings.Contains(got, "needs input") {
+		t.Errorf("scheduleRunTitle = %q, want humanized status", got)
+	}
+	body := renderHTML(t, scheduleRunsSection([]ScheduledAgentRun{{ID: "run-1", Status: "input-required", StartedAt: "2026-08-26T10:00:00Z"}}))
+	if strings.Contains(body, ">input-required<") || !strings.Contains(body, "needs input") {
+		t.Errorf("schedule run badge leaked raw status:\n%s", body)
+	}
+}

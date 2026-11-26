@@ -1785,16 +1785,27 @@ func TestSearchObjectsHybrid(t *testing.T) {
 }
 
 // TestSearchObjectsUnified exercises POST /api/search/unified: the resultTypes
-// graph flag, types/branch_id only when set, and normalization of graph results
-// (canonical_id fallback, fields/labels mapping, score floor, non-graph skip).
+// graph flag, types/branch_id only when set, normalization of graph results
+// (canonical_id fallback, fields/labels mapping, score floor, non-graph skip),
+// and the one ids-scoped enrichment read that restores what the unified
+// endpoint omits.
 func TestSearchObjectsUnified(t *testing.T) {
 	var gotPath, gotMethod string
 	var gotBody map[string]any
+	var hydrateIDs string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/graph/objects/search" {
+			hydrateIDs = r.URL.Query().Get("ids")
+			_, _ = io.WriteString(w, `{"items":[
+				{"id":"c1","canonical_id":"c1","type":"person","key":"sam-lee","labels":["contact"],"actor_type":"user","actor_id":"u-1","credential_kind":"session","created_at":"2026-11-01T10:00:00Z","status":"active","properties":{"first_name":"Sam"}},
+				{"id":"c3","canonical_id":"c3","type":"note","key":"note-key","actor_type":"system","created_at":"2026-11-02T10:00:00Z","properties":{"content":"hello"}}
+			],"total":2}`)
+			return
+		}
 		gotPath = r.URL.Path
 		gotMethod = r.Method
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"results":[
 			{"type":"graph","id":"oid1","object_id":"oid1","canonical_id":"c1","object_type":"person","key":"sam-lee","score":0.88,"labels":["contact"],"fields":{"first_name":"Sam"}},
 			{"type":"text","id":"chunk1","snippet":"a chunk","score":0.9},
@@ -1840,6 +1851,49 @@ func TestSearchObjectsUnified(t *testing.T) {
 	}
 	if results[1].Object.ID != "c3" || results[1].Object.Properties["content"] != "hello" {
 		t.Errorf("result1 = %+v", results[1])
+	}
+
+	// The enrichment is one ids-scoped read for the whole page, and it restores
+	// the write stamp and age a card footer renders.
+	if hydrateIDs != "c1,c3" {
+		t.Errorf("hydrate ids = %q, want c1,c3", hydrateIDs)
+	}
+	if results[0].Object.ActorType != "user" || results[0].Object.ActorID != "u-1" {
+		t.Errorf("result0 actor = %q/%q, want the hydrated write stamp", results[0].Object.ActorType, results[0].Object.ActorID)
+	}
+	if results[0].Object.CreatedAt == "" || results[0].Object.Status != "active" {
+		t.Errorf("result0 = %+v, want a hydrated created_at and status", results[0].Object)
+	}
+	if results[0].Score != 0.88 {
+		t.Errorf("result0 score = %v after hydration, want the search's 0.88", results[0].Score)
+	}
+}
+
+// TestSearchObjectsUnifiedSurvivesHydrateFailure pins the enrichment's
+// best-effort contract: a failed ids read leaves the search results intact
+// (sparse, so a card renders without a writer line) rather than failing the
+// query the reader actually ran.
+func TestSearchObjectsUnifiedSurvivesHydrateFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/graph/objects/search" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"type":"graph","id":"o1","canonical_id":"c1","object_type":"person","key":"sam-lee","score":0.7}]}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	results, err := m.SearchObjectsUnified(context.Background(), "sam", "", "", 25)
+	if err != nil {
+		t.Fatalf("a failed enrichment must not fail the search: %v", err)
+	}
+	if len(results) != 1 || results[0].Object.ID != "c1" || results[0].Score != 0.7 {
+		t.Fatalf("results = %+v, want the unenriched hit", results)
+	}
+	if results[0].Object.ActorType != "" {
+		t.Errorf("actor = %q, want empty: the read that would have filled it failed", results[0].Object.ActorType)
 	}
 }
 

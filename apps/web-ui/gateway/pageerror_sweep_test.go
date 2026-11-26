@@ -131,11 +131,11 @@ var sweptPages = []sweepPage{
 	},
 	{
 		name:   "objects browse",
-		path:   "/objects",
+		path:   "/search",
 		setErr: func(f *fakeMemory, err error) { f.pageErr = err },
 		mount: func(s *Server) *echo.Echo {
 			e := echo.New()
-			e.GET("/objects", s.uiObjects)
+			e.GET("/search", s.uiSearch)
 			return e
 		},
 	},

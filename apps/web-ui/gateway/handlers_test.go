@@ -159,6 +159,7 @@ type fakeMemory struct {
 	approvalsErr     error                           // ListToolApprovals failure
 	createConvID     string                          // id returned by CreateObjectConversation
 	createConvErr    error                           // CreateObjectConversation failure
+	createConvErrSeq []error                         // per-call failures, consumed in order before createConvErr
 	convCanonicalID  string                          // last canonicalID passed to CreateObjectConversation
 	convTitle        string                          // last title passed to CreateObjectConversation
 	convMessage      string                          // last message passed to CreateObjectConversation
@@ -594,6 +595,9 @@ type fakeMemory struct {
 	triggerAgentErr          error                          // failure for TriggerAgent
 	runFull                  *AgentRunFull                  // returned by GetRunFull
 	runFullErr               error                          // failure for GetRunFull
+	runOrderers              map[string]string              // returned by GetRunOrderers
+	runOrderersErr           error                          // failure for GetRunOrderers
+	lastRunOrdererIDs        []string                       // last ids passed to GetRunOrderers
 	runQuestions             []AgentQuestionItem            // returned by GetRunQuestions
 	runQuestionsErr          error                          // failure for GetRunQuestions
 	agentRuns                map[string]*AgentRun           // returned by GetAgentRun per run id
@@ -666,6 +670,9 @@ type fakeMemory struct {
 	transferredToOrg     string         // last destination org id passed to TransferProject
 	transferProjectErr   error          // failure for TransferProject
 	orgMembers           []OrgMemberDto // returned by ListOrgMembers
+	listOrgMembersCalls  int            // number of ListOrgMembers invocations
+	orgMembersOrgID      string         // last org id passed to ListOrgMembers
+	orgMembersErr        error          // failure for ListOrgMembers
 	addedOrgMemberEmail  string
 	addedOrgMemberRole   string
 	addOrgMemberErr      error
@@ -979,6 +986,16 @@ func (f *fakeMemory) GetRunFull(ctx context.Context, runID string) (*AgentRunFul
 	return f.runFull, nil
 }
 
+// GetRunOrderers returns the fake's configured ordering map, recording the ids
+// the caller asked for so a test can assert one batch read covered the page.
+func (f *fakeMemory) GetRunOrderers(ctx context.Context, runIDs []string) (map[string]string, error) {
+	f.lastRunOrdererIDs = append([]string(nil), runIDs...)
+	if f.runOrderersErr != nil {
+		return nil, f.runOrderersErr
+	}
+	return f.runOrderers, nil
+}
+
 func (f *fakeMemory) GetRunQuestions(ctx context.Context, runID string) ([]AgentQuestionItem, error) {
 	if f.runQuestionsErr != nil {
 		return nil, f.runQuestionsErr
@@ -1141,6 +1158,13 @@ func (f *fakeMemory) DeleteConversation(ctx context.Context, id string) error {
 }
 
 func (f *fakeMemory) CreateObjectConversation(ctx context.Context, canonicalID, title, message string) (string, error) {
+	if len(f.createConvErrSeq) > 0 {
+		err := f.createConvErrSeq[0]
+		f.createConvErrSeq = f.createConvErrSeq[1:]
+		if err != nil {
+			return "", err
+		}
+	}
 	if f.createConvErr != nil {
 		return "", f.createConvErr
 	}
@@ -4291,6 +4315,11 @@ func (f *fakeMemory) DeleteOrg(ctx context.Context, orgID string) error {
 }
 
 func (f *fakeMemory) ListOrgMembers(ctx context.Context, orgID string) ([]OrgMemberDto, error) {
+	f.listOrgMembersCalls++
+	f.orgMembersOrgID = orgID
+	if f.orgMembersErr != nil {
+		return nil, f.orgMembersErr
+	}
 	return f.orgMembers, nil
 }
 

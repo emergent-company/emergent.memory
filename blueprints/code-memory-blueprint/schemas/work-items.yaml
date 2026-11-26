@@ -17,7 +17,7 @@ objectTypeSchemas:
     # claims is collected under a trailing "More connections" group unless
     # `more: false`. `dir` is in|out|both (default both) relative to the object,
     # and `limit` caps a section (default 8, max 50). See
-    # docs/site/user-guide/blueprints.md.
+    # docs-astro/src/content/docs/user-guide/blueprints.mdx.
     ui:
       icon: alert-triangle
       color: "#DC2626"

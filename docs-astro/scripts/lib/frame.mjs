@@ -1,7 +1,7 @@
 /**
  * Framing shared by the screenshot producers.
  *
- * Two producers write into `docs/site/assets/`: `redact-tutorial-shots.mjs`
+ * Two producers write into `docs-astro/public/assets/tutorials/`: `redact-tutorial-shots.mjs`
  * (the hand-captured originals, which need PII covered) and `shots.mjs` (a live
  * capture, already clean). Both end up with the same problem — the app paints a
  * narrow column on a full-viewport background, so most of the frame is empty

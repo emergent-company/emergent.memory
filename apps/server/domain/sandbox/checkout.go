@@ -324,6 +324,16 @@ func ResolveGitToken(envs ...map[string]string) string {
 	return ""
 }
 
+// ResolveGitTokenForRun resolves the effective token for a run: a run-scoped
+// source credential (GH_TOKEN minted by the source integration) wins over a
+// deployment/agent fallback. This is the path used by provisioning and clone.
+func ResolveGitTokenForRun(cfg *AgentSandboxConfig, runtimeEnv ...map[string]string) string {
+	if t := ResolveGitToken(runtimeEnv...); t != "" {
+		return t
+	}
+	return ResolveGitTokenForConfig(cfg)
+}
+
 // ResolveGitTokenForConfig resolves the effective git token for a sandbox config
 // using the documented precedence (first non-empty wins):
 //

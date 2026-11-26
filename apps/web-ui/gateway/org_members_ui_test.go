@@ -708,10 +708,12 @@ func itemLabels(g layout.SidebarGroup) []string {
 func TestSidebarGroupsProjectLayout(t *testing.T) {
 	want := [][]string{
 		// ungrouped top-level entries
-		{"Approvals", "Chat", "Search", "Sessions"},
+		{"Approvals", "Chat", "Sessions"},
 		{"Board", "Work Settings"},
 		{"Agents", "Schedules", "Skills"},
-		{"Objects", "Embeddings", "Schema", "Blueprints", "Documents", "Data Sources"},
+		// Search leads Memory: it is the group's landing page (the object list
+		// and document search in one surface), so every Memory crumb points here.
+		{"Search", "Embeddings", "Schema", "Blueprints", "Documents", "Data Sources"},
 		{"Settings", "Members", "API Tokens", "MCP Servers", "MCP Registry", "Usage", "Backups"},
 	}
 	// Group labels are asserted separately because index 0 is the unlabelled

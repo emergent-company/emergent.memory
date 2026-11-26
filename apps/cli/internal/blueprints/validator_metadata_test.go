@@ -59,7 +59,8 @@ func TestValidateObjectMetadata_CanonicalExtendedTypes(t *testing.T) {
 
 // TestValidateObjectMetadata_SemanticStringTypes pins the five semantic types
 // the server coerces (apps/server/domain/graph/validation.go coercePropertyValue)
-// and docs/site/developer-guide/schema.md documents, in both accepted spellings:
+// and docs-astro/src/content/docs/developer-guide/schema.mdx documents, in both
+// accepted spellings:
 // the bare type and `type: string` + `format`. A blueprint that followed the
 // docs used to fail --strict (#319). The validator treats `format` as inert
 // (the server enforces it on write), so the format half pins that the offline

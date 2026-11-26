@@ -1,0 +1,232 @@
+name: tv-movies
+version: 1.0.0
+taxonomy: true
+description: >
+  Canonical entity taxonomy for television and film: the common entity kinds a
+  transcript, review or production note describes. Auto-discovery aligns proposed
+  types against this set before inventing new ones, so the same concept keeps one
+  canonical name and schema. "Character" (fictional) and "Person" (real human)
+  are deliberately distinct.
+
+objectTypeSchemas:
+
+  - name: Show
+    label: Show
+    description: >
+      A television series or movie — the overarching production, e.g. "Friends"
+      or "Inception". Episodes and seasons belong to a Show.
+    properties:
+      title:
+        type: string
+        required: true
+        description: "The title of the show or movie."
+      genre:
+        type: string
+        description: "Primary genre (comedy, drama, sci-fi, ...)."
+      premiere_year:
+        type: number
+        title: Premiere year
+        description: "The year the show or movie first released."
+    labels:
+      - show
+      - series
+      - tv_show
+      - movie
+      - production
+    ui:
+      icon: "🎬"
+      color: "#6366F1"
+
+  - name: Season
+    label: Season
+    description: >
+      A season of a television series: an ordered group of episodes released
+      together. Belongs to a Show.
+    properties:
+      number:
+        type: number
+        required: true
+        description: "The season number within the show."
+      show:
+        type: string
+        description: "reference to Show"
+    labels:
+      - season
+      - tv_season
+    ui:
+      icon: "📅"
+      color: "#8B5CF6"
+
+  - name: Episode
+    label: Episode
+    description: >
+      An episode of a television series: a single installment. Belongs to a
+      Season or Show.
+    properties:
+      title:
+        type: string
+        required: true
+        description: "The episode title."
+      number:
+        type: number
+        description: "The episode number within its season."
+      season:
+        type: string
+        description: "reference to Season"
+      air_date:
+        type: string
+        title: Air date
+        description: "ISO date the episode first aired."
+    labels:
+      - episode
+      - tv_episode
+    ui:
+      icon: "📺"
+      color: "#14B8A6"
+
+  - name: Character
+    label: Character
+    description: >
+      A fictional character portrayed in a television show or movie — a persona
+      in the story, not a real human being. The cast of a show are Characters.
+    properties:
+      name:
+        type: string
+        required: true
+        description: "The character's name."
+      show:
+        type: string
+        description: "reference to Show"
+      actor:
+        type: string
+        description: "reference to Actor (the real person who portrays this character)"
+      description:
+        type: string
+        description: "A short description of the character's role in the story."
+    labels:
+      - character
+      - persona
+      - fictional_character
+    ui:
+      icon: "🧑‍🎤"
+      color: "#F59E0B"
+
+  - name: Actor
+    label: Actor
+    description: >
+      A real person who portrays a character in a show or movie — the human being
+      behind the role, distinct from the fictional Character.
+    properties:
+      name:
+        type: string
+        required: true
+        description: "The actor's full name."
+    labels:
+      - actor
+      - person
+      - human
+    ui:
+      icon: "🎭"
+      color: "#EF4444"
+
+  - name: Person
+    label: Person
+    description: >
+      A real, specific human being who is not a fictional character — a crew
+      member, a director, a public figure, or anyone else named as themselves.
+    properties:
+      name:
+        type: string
+        required: true
+        description: "The person's full name."
+    labels:
+      - person
+      - human
+      - individual
+    ui:
+      icon: "👤"
+      color: "#3B82F6"
+
+  - name: Location
+    label: Location
+    description: >
+      A physical place or venue named in the content — a city, building,
+      coffeehouse, museum, etc.
+    properties:
+      name:
+        type: string
+        required: true
+        description: "The location's name."
+      type:
+        type: string
+        description: "The kind of place (city, venue, building, ...)."
+    labels:
+      - location
+      - place
+      - venue
+    ui:
+      icon: "📍"
+      color: "#22C55E"
+
+  - name: Organization
+    label: Organization
+    description: >
+      A company, institution or other organized group named in the content —
+      a studio, network, university, law firm, etc.
+    properties:
+      name:
+        type: string
+        required: true
+        description: "The organization's name."
+    labels:
+      - organization
+      - company
+      - institution
+    ui:
+      icon: "🏢"
+      color: "#0EA5E9"
+
+  - name: Occupation
+    label: Occupation
+    description: >
+      A job, profession or role a person or character holds — chef, paleontologist,
+      waitress, actor, etc. Not a person; the role itself.
+    properties:
+      title:
+        type: string
+        required: true
+        description: "The occupation title."
+    labels:
+      - occupation
+      - job
+      - profession
+      - role
+    ui:
+      icon: "💼"
+      color: "#A855F7"
+
+relationshipTypeSchemas:
+
+  - name: appears_in
+    label: Appears In
+    description: "A Character appears in an Episode."
+    sourceType: Character
+    targetType: Episode
+
+  - name: portrays
+    label: Portrays
+    description: "An Actor portrays a Character."
+    sourceType: Actor
+    targetType: Character
+
+  - name: season_of
+    label: Season Of
+    description: "A Season belongs to a Show."
+    sourceType: Season
+    targetType: Show
+
+  - name: episode_of
+    label: Episode Of
+    description: "An Episode belongs to a Season or Show."
+    sourceType: Episode
+    targetType: Season

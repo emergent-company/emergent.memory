@@ -531,18 +531,20 @@ func TestRenderObjectEmbeddingBadges(t *testing.T) {
 		}
 	}
 
-	// detail header renders the muted "Embedded <time>" text when updated_at is set
+	// detail rail renders the embedding badge with the written-at time behind a
+	// tooltip: the rail has no room for a date line beside every other fact, so
+	// the freshness is one hover away from the state.
 	obj := &GraphObject{ID: "o1", Type: "person", Key: "sam", EmbeddingStatus: "embedded", EmbeddingUpdatedAt: "2026-09-20T10:00:00Z"}
 	html := renderHTML(t, ObjectDetailPage(objectDetailShellData{Obj: obj}, nil, nil))
-	if !strings.Contains(html, `class="text-muted text-xs">Embedded `) {
-		t.Errorf("detail header missing muted embedded-at timestamp: %s", html)
+	if !strings.Contains(html, "Vector last written") {
+		t.Errorf("detail rail badge missing the embedded-at tooltip: %s", html)
 	}
 
 	// no timestamp when updated_at is empty
 	objNoTime := &GraphObject{ID: "o1", Type: "person", Key: "sam", EmbeddingStatus: "embedded"}
 	htmlNoTime := renderHTML(t, ObjectDetailPage(objectDetailShellData{Obj: objNoTime}, nil, nil))
-	if strings.Contains(htmlNoTime, `text-muted text-xs">Embedded `) {
-		t.Errorf("detail header should omit the timestamp when updated_at is empty")
+	if strings.Contains(htmlNoTime, "Vector last written") {
+		t.Errorf("detail rail badge should omit the timestamp when updated_at is empty")
 	}
 }
 
