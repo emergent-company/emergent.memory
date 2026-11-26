@@ -40,6 +40,26 @@ for script in base-check.sh base-check.test.sh version-drift.test.sh release-tag
   fi
 done
 
+# The server architectural-debt ratchet (#1120). server.yml owns the script,
+# but that workflow is path-filtered and does not run on pushes to `dev`, so the
+# baselines drifted there (cross-domain setters 3 -> 7, apperror Style A
+# 1225 -> 1241) unseen until the next promotion -- while lefthook's pre-commit
+# run of the same script failed every server-side commit in the meantime. It is
+# a grep/awk pass with no build, no Postgres and no node, so it runs here with
+# the other cheap guards and lands in the required `ci` job without a
+# workflow-file change (the same route base-check.test.sh and the release-tag
+# suites below take). `--self-test` proves the counters still inspect the tree
+# before the gate trusts their zeros; the golangci-lint `--lint-counts` half
+# stays in server.yml, which has that toolchain installed.
+echo "==> apps/server/scripts/lint-ratchet.sh"
+if bash "$root/apps/server/scripts/lint-ratchet.sh" --self-test \
+   && bash "$root/apps/server/scripts/lint-ratchet.sh"; then
+  echo "==> apps/server/scripts/lint-ratchet.sh PASSED"
+else
+  echo "==> apps/server/scripts/lint-ratchet.sh FAILED"
+  status=1
+fi
+
 # The release tag reconcile/dispatch decision tables (#1047): a release PR
 # merged by `app/github-actions` raises its push from GITHUB_TOKEN, for which
 # GitHub starts no workflow runs, so auto-tag's push trigger never fires and the
@@ -72,4 +92,4 @@ if [ "$status" -ne 0 ]; then
   exit 1
 fi
 
-echo "preflight: OK (base, base-check tests, version-drift tests, migration numbering, cross-branch Go declaration collisions, gofmt, CLI skill pin, stale docs, Astro docs port, skip census, mcp authz, modelref split, runrole guard, schemadrift, gitleaks waivers, gitleaks env files, connector lint self-test, ui guardrails, brand gate tests, brand tokens, gh-pages budget self-tests, connector install channel, release tag reconcile/dispatch, release tag drift)"
+echo "preflight: OK (base, base-check tests, version-drift tests, migration numbering, cross-branch Go declaration collisions, gofmt, CLI skill pin, stale docs, Astro docs port, skip census, mcp authz, modelref split, runrole guard, schemadrift, gitleaks waivers, gitleaks env files, connector lint self-test, ui guardrails, brand gate tests, brand tokens, gh-pages budget self-tests, server architectural-debt ratchet, connector install channel, release tag reconcile/dispatch, release tag drift)"
