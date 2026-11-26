@@ -625,7 +625,7 @@ func (h *ReviewToolHandler) executePullRequestDiff(ctx context.Context, client *
 	if attribution := resolved.attribution(); attribution != "" {
 		header += "\nsource: " + attribution
 	}
-	rendered, result, err := h.renderBounded(ctx, headSHA, header, files, selection, len(files) >= githubPRFileListCap)
+	rendered, result, err := h.renderBounded(ctx, headSHA, header, files, selection, len(files) >= githubPRFileListCap, resolved)
 	if err != nil {
 		return nil, err
 	}
@@ -639,7 +639,9 @@ func (h *ReviewToolHandler) executePullRequestDiff(ctx context.Context, client *
 	if rendered.complete {
 		mcp.MarkRunEvidence(ctx, diffEvidenceKey(repo, number, headSHA))
 	}
-	return withResolvedSource(result, resolved), nil
+	// renderBounded attached the source attribution and measured the result with
+	// it, so nothing here may grow the payload past the executor's bound (#1124).
+	return result, nil
 }
 
 // executeCommitDiff serves one commit's first-parent diff for context. It never
@@ -659,11 +661,13 @@ func (h *ReviewToolHandler) executeCommitDiff(ctx context.Context, client *githu
 	if attribution := resolved.attribution(); attribution != "" {
 		header += "\nsource: " + attribution
 	}
-	_, result, err := h.renderBounded(ctx, diff.SHA, header, diff.Files, selection, len(diff.Files) >= githubCommitFileListCap)
+	_, result, err := h.renderBounded(ctx, diff.SHA, header, diff.Files, selection, len(diff.Files) >= githubCommitFileListCap, resolved)
 	if err != nil {
 		return nil, err
 	}
-	return withResolvedSource(result, resolved), nil
+	// renderBounded attached the source attribution and measured the result with
+	// it, so nothing here may grow the payload past the executor's bound (#1124).
+	return result, nil
 }
 
 // renderBounded renders files under this tool's caps and, when the executor's
@@ -674,14 +678,20 @@ func (h *ReviewToolHandler) executeCommitDiff(ctx context.Context, client *githu
 // truncated-verdict failure through a different cap (#1006). Re-rendering
 // recomputes which files are complete, so evidence is only recorded for content
 // the model received in full.
-func (h *ReviewToolHandler) renderBounded(ctx context.Context, sha, header string, files []githubapp.CommitFile, selection map[string]struct{}, listingCapped bool) (*diffRender, *mcp.ToolResult, error) {
+//
+// The resolved-source attribution is attached here, before the result is
+// marshalled for measurement, so the loop measures the payload that is actually
+// returned. Adding the attribution after the measurement pushed a render that
+// fit exactly up to the bound past it (#1124). The invariant follows: anything
+// outside renderBounded must not grow the returned result.
+func (h *ReviewToolHandler) renderBounded(ctx context.Context, sha, header string, files []githubapp.CommitFile, selection map[string]struct{}, listingCapped bool, resolved *resolvedReviewSource) (*diffRender, *mcp.ToolResult, error) {
 	textBudget := h.diffTextBudget()
 	wholeBudget := textBudget
 	rendered, err := renderDiffFiles(sha, header, files, selection, textBudget, wholeBudget, listingCapped)
 	if err != nil {
 		return nil, nil, err
 	}
-	result := diffToolResult(sha, len(files), selection, rendered)
+	result := withResolvedSource(diffToolResult(sha, len(files), selection, rendered), resolved)
 	if h.maxResultBytes <= 0 {
 		return rendered, result, nil
 	}
@@ -698,7 +708,8 @@ func (h *ReviewToolHandler) renderBounded(ctx context.Context, sha, header strin
 		if rerr != nil {
 			break
 		}
-		rendered, result = next, diffToolResult(sha, len(files), selection, next)
+		rendered = next
+		result = withResolvedSource(diffToolResult(sha, len(files), selection, next), resolved)
 	}
 	if raw, marshalErr := json.Marshal(result); marshalErr != nil || len(raw) > h.maxResultBytes {
 		// The configured bound is too small to carry even the envelope. Never
@@ -708,7 +719,7 @@ func (h *ReviewToolHandler) renderBounded(ctx context.Context, sha, header strin
 		rendered.complete = false
 		rendered.truncatedFiles = append(rendered.truncatedFiles, rendered.completeFiles...)
 		rendered.completeFiles = nil
-		result = diffToolResult(sha, len(files), selection, rendered)
+		result = withResolvedSource(diffToolResult(sha, len(files), selection, rendered), resolved)
 	}
 	return rendered, result, nil
 }

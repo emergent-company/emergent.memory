@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/emergent-company/emergent.memory/domain/githubapp"
@@ -681,4 +682,90 @@ func TestCommitModeCapsTheAttackerControlledMessage(t *testing.T) {
 	require.LessOrEqual(t, len(text), maxDiffBytes)
 	// Commit mode is context only: it never records review evidence.
 	require.False(t, mcp.RunHasEvidence(ctx, diffEvidenceKey("owner/repo", 7, head)))
+}
+
+// TestSourceAttributionIsMeasuredAgainstExecutorResultBound pins the #1124
+// invariant: renderBounded must measure the payload that is actually returned,
+// attribution included. The attribution used to be attached after the shrink
+// loop had marshalled the result, so a render that landed within a couple of
+// hundred bytes of the executor's bound was pushed over it -- the model received
+// a cut diff while the run had already recorded complete-diff evidence.
+func TestSourceAttributionIsMeasuredAgainstExecutorResultBound(t *testing.T) {
+	head := truncationHead
+	files := make([]map[string]any, 0, 3)
+	for i := 0; i < 3; i++ {
+		files = append(files, map[string]any{
+			"filename":  fmt.Sprintf("attributed_%d.go", i),
+			"status":    "modified",
+			"additions": 100,
+			"deletions": 0,
+			"patch":     strings.Repeat("+attributed line\n", 100),
+		})
+	}
+	api := newDiffReviewAPI(t, head, files)
+	client := api.client()
+
+	// Measure the payload without attribution under a budget wide enough that the
+	// shrink loop does not touch it.
+	wide := &ReviewToolHandler{maxResultBytes: maxDiffBytes}
+	bare, err := wide.executePRDiff(mcp.ContextWithNewToolResultCache(context.Background()), client, "project-1", "owner/repo", nil, prDiffArgs(head, nil))
+	require.NoError(t, err)
+	require.Equal(t, true, bare.StructuredContent["complete"])
+	bareRaw, err := json.Marshal(bare)
+	require.NoError(t, err)
+
+	resolved := &resolvedReviewSource{
+		source:    &Source{ID: uuid.MustParse("357590e8-ed26-4189-961e-7c62a2bfb7de"), DisplayName: "GitHub Review"},
+		selection: sourceSelectionRunSubject,
+	}
+
+	// A bound with only 16 bytes of headroom: the bare result fits and the
+	// attributed one does not.
+	bound := len(bareRaw) + 16
+	h := &ReviewToolHandler{maxResultBytes: bound}
+
+	// Show the failure mode the fix removes: with the old ordering the caller
+	// returned the measured result plus attribution appended afterwards, which is
+	// over the bound.
+	unattributed, err := h.executePRDiff(mcp.ContextWithNewToolResultCache(context.Background()), client, "project-1", "owner/repo", nil, prDiffArgs(head, nil))
+	require.NoError(t, err)
+	unattributedRaw, err := json.Marshal(unattributed)
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(unattributedRaw), bound)
+	leaked := &mcp.ToolResult{Content: unattributed.Content, StructuredContent: map[string]any{}}
+	for k, v := range unattributed.StructuredContent {
+		leaked.StructuredContent[k] = v
+	}
+	leakedRaw, err := json.Marshal(withResolvedSource(leaked, resolved))
+	require.NoError(t, err)
+	require.Greater(t, len(leakedRaw), bound,
+		"the fixture must sit close enough to the bound that post-measurement attribution crosses it")
+
+	// The real path keeps the attribution inside the measured payload.
+	ctx := mcp.ContextWithNewToolResultCache(context.Background())
+	res, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", resolved, prDiffArgs(head, nil))
+	require.NoError(t, err)
+	raw, err := json.Marshal(res)
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(raw), bound, "the attributed result must stay within the executor's bound")
+
+	// The attribution is still reported, in text and in structured content.
+	require.Equal(t, resolved.source.ID.String(), res.StructuredContent["sourceId"])
+	require.Equal(t, string(sourceSelectionRunSubject), res.StructuredContent["sourceSelection"])
+	require.Equal(t, "GitHub Review", res.StructuredContent["sourceName"])
+	require.Contains(t, res.Content[0].Text, "source: GitHub Review")
+
+	// The shrink happened inside renderBounded and stayed honest: the cut file is
+	// truncated, carries no complete-read evidence, and the whole diff is not
+	// certified complete, so a verdict cannot be reached on the half-read diff.
+	require.Equal(t, false, res.StructuredContent["complete"])
+	require.Equal(t, true, res.StructuredContent["truncated"])
+	require.False(t, mcp.RunHasEvidence(ctx, diffEvidenceKey("owner/repo", 7, head)))
+	truncatedNames, ok := res.StructuredContent["truncatedFiles"].([]string)
+	require.True(t, ok)
+	require.NotEmpty(t, truncatedNames)
+	for _, name := range truncatedNames {
+		require.False(t, mcp.RunHasEvidence(ctx, diffFileEvidenceKey("owner/repo", 7, head, name)),
+			"a file reported truncated must not carry complete-read evidence: %s", name)
+	}
 }
