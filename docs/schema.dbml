@@ -1358,6 +1358,25 @@ Table "kb"."external_sources" {
   }
 }
 
+Table "kb"."extraction_quarantine" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid [not null]
+  "document_id" uuid
+  "job_id" uuid
+  "kind" text [not null]
+  "type_name" text [not null]
+  "payload" jsonb [not null, default: '{}']
+  "reason" text [not null, default: 'unknown_type']
+  "status" text [not null, default: 'open']
+  "created_at" timestamptz [not null, default: `now()`]
+  "resolved_at" timestamptz
+
+  Indexes {
+    (project_id, status, created_at) [name: "idx_extraction_quarantine_project_status"]
+    (type_name) [name: "idx_extraction_quarantine_type"]
+  }
+}
+
 Table "kb"."feedback_dedupe_claims" {
   "owner_identity" text [pk]
   "dedupe_key" text [pk]
@@ -3272,6 +3291,7 @@ Ref: "kb"."email_templates"."updated_by" > "core"."user_profiles"."id"
 Ref: "kb"."email_templates"."current_version_id" > "kb"."email_template_versions"."id"
 Ref: "kb"."embedding_policies"."project_id" > "kb"."projects"."id"
 Ref: "kb"."external_sources"."project_id" > "kb"."projects"."id"
+Ref: "kb"."extraction_quarantine"."project_id" > "kb"."projects"."id"
 Ref: "kb"."github_issue_pull_requests"."project_id" > "kb"."projects"."id"
 Ref: "kb"."graph_embedding_jobs"."object_id" > "kb"."graph_objects"."id"
 Ref: "kb"."graph_objects"."project_id" > "kb"."projects"."id"

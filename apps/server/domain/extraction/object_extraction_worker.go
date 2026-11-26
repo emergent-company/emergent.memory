@@ -1286,10 +1286,12 @@ func (w *ObjectExtractionWorker) persistResults(
 	// path relies on the static EntityExtractionSchema fallback and must not be
 	// zeroed) and can be turned off per project via extract.strict_types.
 	strict := true
+	quarantine := true
 	if w.projectsRepo != nil {
 		if project, perr := w.projectsRepo.GetByID(ctx, job.ProjectID, false); perr == nil && project != nil {
 			if pol, polerr := pipeline.Resolve(project.PipelineMode, project.PipelinePolicy); polerr == nil {
 				strict = pol.Extract.StrictTypes
+				quarantine = pol.Apply.QuarantineUnknownTypes
 			}
 		}
 	}
@@ -1347,12 +1349,25 @@ func (w *ObjectExtractionWorker) persistResults(
 	droppedObjects := 0
 	droppedObjectTypes := []string{}
 	seenDroppedObjectTypes := map[string]bool{}
+	var quarantined []QuarantineItem
 	for _, entity := range output.Entities {
 		if filterObjects && !allowedObjects[entity.Type] {
 			droppedObjects++
 			if !seenDroppedObjectTypes[entity.Type] {
 				seenDroppedObjectTypes[entity.Type] = true
 				droppedObjectTypes = append(droppedObjectTypes, entity.Type)
+			}
+			if quarantine {
+				quarantined = append(quarantined, QuarantineItem{
+					Kind:     "object",
+					TypeName: entity.Type,
+					Payload: map[string]any{
+						"type":        entity.Type,
+						"name":        entity.Name,
+						"description": entity.Description,
+						"properties":  entity.Properties,
+					},
+				})
 			}
 			continue
 		}
@@ -1437,6 +1452,19 @@ func (w *ObjectExtractionWorker) persistResults(
 	for _, rel := range output.Relationships {
 		if filterRelationships && !allowedRelationships[rel.Type] {
 			droppedRelationships++
+			if quarantine {
+				quarantined = append(quarantined, QuarantineItem{
+					Kind:     "relationship",
+					TypeName: rel.Type,
+					Payload: map[string]any{
+						"type":        rel.Type,
+						"source_ref":  rel.SourceRef,
+						"target_ref":  rel.TargetRef,
+						"description": rel.Description,
+						"properties":  rel.Properties,
+					},
+				})
+			}
 			continue
 		}
 		srcID, srcOK := tempIDToObjectID[rel.SourceRef]
@@ -1469,6 +1497,19 @@ func (w *ObjectExtractionWorker) persistResults(
 		relationshipsCreated++
 	}
 
+	// Quarantine the dropped unknown-type results so a reviewer can see what
+	// this run leaked. Best-effort: a failure is logged and the drop count still
+	// reports the leak; the persisted objects/relationships are unaffected.
+	quarantinedCount := 0
+	if len(quarantined) > 0 {
+		n, err := w.jobsService.QuarantineDropped(ctx, job.ProjectID, job.DocumentID, &job.ID, quarantined)
+		if err != nil {
+			w.log.Warn("quarantine: failed to record dropped results", logger.Error(err))
+		} else {
+			quarantinedCount = n
+		}
+	}
+
 	// Calculate discovered types
 	discoveredTypes := make([]any, 0)
 	typeSet := make(map[string]bool)
@@ -1493,6 +1534,7 @@ func (w *ObjectExtractionWorker) persistResults(
 		DroppedObjects:       droppedObjects,
 		DroppedObjectTypes:   droppedObjectTypes,
 		DroppedRelationships: droppedRelationships,
+		Quarantined:          quarantinedCount,
 		DebugInfo: JSON{
 			"entity_count":          len(output.Entities),
 			"objects_created":       objectsCreated,
@@ -1502,6 +1544,7 @@ func (w *ObjectExtractionWorker) persistResults(
 			"dropped_objects":       droppedObjects,
 			"dropped_object_types":  droppedObjectTypes,
 			"dropped_relationships": droppedRelationships,
+			"quarantined":           quarantinedCount,
 		},
 	}, nil
 }
