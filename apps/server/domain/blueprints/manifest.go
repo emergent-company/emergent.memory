@@ -25,10 +25,10 @@ type ProjectManifest struct {
 
 // PackManifest describes a schema pack to create and assign.
 type PackManifest struct {
-	Name              string                        `json:"name"`
-	Version           string                        `json:"version"`
-	Description       string                        `json:"description"`
-	Author            string                        `json:"author"`
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+	Description string `json:"description"`
+	Author      string `json:"author"`
 	// Taxonomy marks the pack as a common-entity taxonomy whose object types
 	// are offered to discovery as canonical alignment targets. Only taxonomy
 	// packs feed ListBuiltinObjectTypes; feature packs (task-board, agent-notes,
