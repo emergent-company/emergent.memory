@@ -62,14 +62,16 @@ func TestBranchSweepReapsStaleBranches(t *testing.T) {
 	require.Equal(t, 1, res.ObjectsDeleted)
 	require.Equal(t, 1, res.RelationshipsDeleted)
 
-	// Stale branch row is gone and its object soft-deleted.
+	// Stale branch row is gone and its object soft-deleted + branch_id cleared.
 	var branchCount int
 	require.NoError(t, db.NewRaw(`SELECT count(*) FROM kb.branches WHERE id = ?`, stale).Scan(ctx, &branchCount))
 	require.Equal(t, 0, branchCount)
 
 	var deletedAt *time.Time
-	require.NoError(t, db.NewRaw(`SELECT deleted_at FROM kb.graph_objects WHERE id = ?`, staleObj).Scan(ctx, &deletedAt))
+	var objBranchID *string
+	require.NoError(t, db.NewRaw(`SELECT deleted_at, branch_id FROM kb.graph_objects WHERE id = ?`, staleObj).Scan(ctx, &deletedAt, &objBranchID))
 	require.NotNil(t, deletedAt, "stale branch object must be soft-deleted")
+	require.Nil(t, objBranchID, "soft-deleted object must have its branch_id cleared")
 
 	var relDeletedAt *time.Time
 	require.NoError(t, db.NewRaw(`SELECT deleted_at FROM kb.graph_relationships WHERE id = ?`, staleRel).Scan(ctx, &relDeletedAt))
@@ -100,4 +102,37 @@ func TestBranchSweepNonPositiveRetentionDisabled(t *testing.T) {
 	var count int
 	require.NoError(t, db.NewRaw(`SELECT count(*) FROM kb.branches WHERE id = ?`, id).Scan(ctx, &count))
 	require.Equal(t, 1, count, "non-positive retention must reap nothing")
+}
+
+// TestBranchSweepSkipsMergedBranch pins the TOCTOU guard: a branch that was
+// merged (merged_at set) after the candidate list was read is left untouched by
+// reapBranch — its objects stay live and the branch row survives.
+func TestBranchSweepSkipsMergedBranch(t *testing.T) {
+	ctx, db := openEmbeddingWorkerTestDB(t)
+	projectID := seedEmbeddingProject(t, ctx, db)
+
+	merged := uuid.NewString()
+	_, err := db.NewRaw(`INSERT INTO kb.branches (id, project_id, name, origin, created_at, merged_at)
+		VALUES (?, ?, ?, 'extraction', now() - interval '2 hours', now() - interval '1 hour')`, merged, projectID, "merged-branch").Exec(ctx)
+	require.NoError(t, err)
+
+	objID := uuid.NewString()
+	_, err = db.NewRaw(`INSERT INTO kb.graph_objects
+		(id, project_id, canonical_id, version, type, name, status, properties, labels, branch_id, created_at, updated_at)
+		VALUES (?, ?, ?, 1, 'Thing', ?, 'active', '{}'::jsonb, '{}'::text[], ?, now(), now())`,
+		objID, projectID, objID, "merged-obj", merged).Exec(ctx)
+	require.NoError(t, err)
+
+	worker := NewBranchSweepWorker(db, quietLogger(), &BranchSweepConfig{Interval: time.Minute, Retention: time.Hour})
+	_, _, reaped, err := worker.reapBranch(ctx, merged)
+	require.NoError(t, err)
+	require.False(t, reaped, "a merged branch must not be reaped")
+
+	var deletedAt *time.Time
+	require.NoError(t, db.NewRaw(`SELECT deleted_at FROM kb.graph_objects WHERE id = ?`, objID).Scan(ctx, &deletedAt))
+	require.Nil(t, deletedAt, "merged branch object must stay live")
+
+	var branchCount int
+	require.NoError(t, db.NewRaw(`SELECT count(*) FROM kb.branches WHERE id = ?`, merged).Scan(ctx, &branchCount))
+	require.Equal(t, 1, branchCount, "merged branch row must survive")
 }

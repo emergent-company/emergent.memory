@@ -2,6 +2,8 @@ package extraction
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,6 +15,10 @@ import (
 
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
+
+// branchSweepBatchSize caps how many stale branches one pass reaps, so a large
+// backlog cannot make a single sweep unbounded.
+const branchSweepBatchSize = 100
 
 // BranchSweepConfig configures the extraction-branch retention sweep.
 type BranchSweepConfig struct {
@@ -180,16 +186,21 @@ func (w *BranchSweepWorker) Sweep(ctx context.Context) (BranchSweepResult, error
 		Where("origin = 'extraction'").
 		Where("merged_at IS NULL").
 		Where("created_at < ?", cutoff).
+		Order("created_at ASC").
+		Limit(branchSweepBatchSize).
 		Scan(ctx, &ids)
 	if err != nil {
 		return res, fmt.Errorf("list stale extraction branches: %w", err)
 	}
 
 	for _, id := range ids {
-		objects, relationships, err := w.reapBranch(ctx, id)
+		objects, relationships, reaped, err := w.reapBranch(ctx, id)
 		if err != nil {
 			w.log.Warn("failed to reap extraction branch",
 				slog.String("branch_id", id), logger.Error(err))
+			continue
+		}
+		if !reaped {
 			continue
 		}
 		res.BranchesReaped++
@@ -199,14 +210,29 @@ func (w *BranchSweepWorker) Sweep(ctx context.Context) (BranchSweepResult, error
 	return res, nil
 }
 
-// reapBranch soft-deletes the branch's objects and relationships, then removes
-// the branch row and its lineage, all in one transaction so a crash cannot leave
-// a branch whose objects are half-reaped.
-func (w *BranchSweepWorker) reapBranch(ctx context.Context, branchID string) (objects, relationships int, err error) {
+// reapBranch soft-deletes the branch's objects and relationships (clearing their
+// branch_id so no dangling reference survives the branch removal), then removes
+// the branch row and its lineage, all in one transaction. The branch row is
+// locked and re-checked for merged_at IS NULL inside the transaction, so a
+// branch that a concurrent merge (or another replica) claimed after the
+// candidate list was read is left untouched.
+func (w *BranchSweepWorker) reapBranch(ctx context.Context, branchID string) (objects, relationships int, reaped bool, err error) {
 	err = w.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var mergedAt *time.Time
+		err := tx.NewRaw(`SELECT merged_at FROM kb.branches WHERE id = ? FOR UPDATE`, branchID).Scan(ctx, &mergedAt)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil // already gone
+			}
+			return fmt.Errorf("lock branch: %w", err)
+		}
+		if mergedAt != nil {
+			return nil // merged concurrently — do not touch it
+		}
+
 		objRes, err := tx.NewRaw(`
 			UPDATE kb.graph_objects
-			SET deleted_at = now(), updated_at = now()
+			SET deleted_at = now(), updated_at = now(), branch_id = NULL
 			WHERE branch_id = ? AND deleted_at IS NULL`, branchID).Exec(ctx)
 		if err != nil {
 			return fmt.Errorf("soft-delete objects: %w", err)
@@ -217,7 +243,7 @@ func (w *BranchSweepWorker) reapBranch(ctx context.Context, branchID string) (ob
 
 		relRes, err := tx.NewRaw(`
 			UPDATE kb.graph_relationships
-			SET deleted_at = now()
+			SET deleted_at = now(), branch_id = NULL
 			WHERE branch_id = ? AND deleted_at IS NULL`, branchID).Exec(ctx)
 		if err != nil {
 			return fmt.Errorf("soft-delete relationships: %w", err)
@@ -229,10 +255,11 @@ func (w *BranchSweepWorker) reapBranch(ctx context.Context, branchID string) (ob
 		if _, err := tx.NewRaw(`DELETE FROM kb.branch_lineage WHERE branch_id = ?`, branchID).Exec(ctx); err != nil {
 			return fmt.Errorf("delete branch lineage: %w", err)
 		}
-		if _, err := tx.NewRaw(`DELETE FROM kb.branches WHERE id = ?`, branchID).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`DELETE FROM kb.branches WHERE id = ? AND merged_at IS NULL`, branchID).Exec(ctx); err != nil {
 			return fmt.Errorf("delete branch: %w", err)
 		}
+		reaped = true
 		return nil
 	})
-	return objects, relationships, err
+	return objects, relationships, reaped, err
 }
