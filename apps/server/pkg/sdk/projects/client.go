@@ -418,3 +418,105 @@ func (c *Client) RemoveMember(ctx context.Context, projectID, userID string) err
 
 	return nil
 }
+
+// PipelineView is the resolved knowledge-pipeline policy for a project: the mode
+// label, the fully-resolved policy JSON, whether it differs from the mode's
+// preset, and the schema generation the pipeline has reached.
+type PipelineView struct {
+	Mode             string          `json:"mode"`
+	Policy           json.RawMessage `json:"policy"`
+	Customized       bool            `json:"customized"`
+	SchemaGeneration int             `json:"schema_generation"`
+}
+
+// PutPipelineRequest updates a project's pipeline policy. Setting Mode alone
+// resets the policy to that mode's preset; setting Policy stores the resolved
+// policy verbatim. Policy wins when both are set.
+type PutPipelineRequest struct {
+	Mode   *string          `json:"mode,omitempty"`
+	Policy *json.RawMessage `json:"policy,omitempty"`
+}
+
+// GetPipeline returns the project's resolved knowledge-pipeline policy.
+func (c *Client) GetPipeline(ctx context.Context, id string) (*PipelineView, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/projects/"+url.PathEscape(id)+"/pipeline", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	if err := c.auth.Authenticate(req); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+	var view PipelineView
+	if err := json.NewDecoder(resp.Body).Decode(&view); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return &view, nil
+}
+
+// SetPipeline updates a project's pipeline policy and returns the resolved view.
+func (c *Client) SetPipeline(ctx context.Context, id string, req *PutPipelineRequest) (*PipelineView, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+	return c.putPipeline(ctx, id, body)
+}
+
+// PreviewPipeline returns what GetPipeline returns: the resolved policy and
+// schema generation (apply/backfill forecasts land once auto-apply reports
+// them). It exists as its own method so callers do not hard-code the preview
+// path.
+func (c *Client) PreviewPipeline(ctx context.Context, id string) (*PipelineView, error) {
+	req, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/projects/"+url.PathEscape(id)+"/pipeline/preview", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	if err := c.auth.Authenticate(req); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+	var view PipelineView
+	if err := json.NewDecoder(resp.Body).Decode(&view); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return &view, nil
+}
+
+func (c *Client) putPipeline(ctx context.Context, id string, body []byte) (*PipelineView, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, "PUT", c.base+"/api/projects/"+url.PathEscape(id)+"/pipeline", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if err := c.auth.Authenticate(httpReq); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+	var view PipelineView
+	if err := json.NewDecoder(resp.Body).Decode(&view); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return &view, nil
+}

@@ -4346,6 +4346,83 @@ memory orgs list [flags]
       --members   Include members with roles
 ```
 
+## memory pipeline
+
+Manage the knowledge pipeline policy
+
+### Synopsis
+
+Get, set and preview a project's knowledge-pipeline policy.
+
+The pipeline governs how schema discovery, auto-apply, backfill and extraction
+run without a human in the loop. It has three presets:
+
+  off      discovery does not run automatically; nothing is applied
+  suggest  discovery proposes a candidate schema; nothing is applied (default)
+  auto     discovery runs, the discovered schema is applied, and documents are
+           re-extracted against the new schema
+
+The policy is per-project. Every knob is exposed, but the presets are the
+intended starting point; see 'memory pipeline set --help'.
+
+### Options
+
+```
+  -h, --help             help for pipeline
+      --project string   Project name or ID (uses the configured project if omitted)
+```
+
+## memory pipeline get
+
+Show the resolved pipeline policy
+
+```
+memory pipeline get [name-or-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for get
+```
+
+## memory pipeline preview
+
+Preview the resolved pipeline policy
+
+```
+memory pipeline preview [name-or-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for preview
+```
+
+## memory pipeline set
+
+Set the pipeline mode
+
+### Synopsis
+
+Set a project's pipeline mode to one of off, suggest or auto.
+
+Setting a mode resets the full policy to that preset's defaults. To set an
+individual knob instead, pass --policy-file with a complete resolved policy
+JSON (the shape returned by 'memory pipeline get --json').
+
+```
+memory pipeline set <off|suggest|auto> [name-or-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help                 help for set
+      --policy-file string   Path to a complete resolved policy JSON (use '-' for stdin; overrides the mode)
+```
+
 ## memory projects
 
 Manage projects
