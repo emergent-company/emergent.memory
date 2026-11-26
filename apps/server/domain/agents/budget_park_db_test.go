@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -111,6 +112,53 @@ func TestTriggerBudgetRefusalParksAndNotifies(t *testing.T) {
 		canonicalID,
 	).Scan(ctx, &taskCount))
 	require.Equal(t, 1, taskCount)
+}
+
+// TestParkWorkItemForBudgetConcurrentDeliveriesEscalateOnce exercises the race
+// the sequential test above cannot: several deliveries for one canonical id
+// parked at the same instant. The upsert reports insertion via
+// RETURNING (xmax = 0), and only that one caller may mint the escalation task.
+// A rewrite of the upsert (or a return to select-then-insert) would produce
+// duplicate escalations here even though the sequential path stays green.
+func TestParkWorkItemForBudgetConcurrentDeliveriesEscalateOnce(t *testing.T) {
+	ctx, db, repo, projectID := setupWorkObjectDispatch(t)
+	canonicalID := uuid.NewString()
+
+	const deliveries = 8
+	reasons := make([]string, deliveries)
+	for i := range reasons {
+		reasons[i] = fmt.Sprintf("dispatch %d refused: still over cap", i)
+	}
+	errs := make([]error, deliveries)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < deliveries; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			errs[i] = repo.ParkWorkItemForBudget(ctx, projectID, canonicalID, reasons[i])
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	for i, err := range errs {
+		require.NoError(t, err, "concurrent delivery %d", i)
+	}
+
+	var taskCount int
+	require.NoError(t, db.NewRaw(
+		`SELECT COUNT(*) FROM kb.tasks WHERE source_id = ? AND type = 'work-escalation'`,
+		canonicalID,
+	).Scan(ctx, &taskCount))
+	require.Equal(t, 1, taskCount, "exactly one concurrent delivery may mint the escalation task")
+
+	block, err := repo.GetWorkBlock(ctx, canonicalID)
+	require.NoError(t, err)
+	require.NotNil(t, block, "every delivery must leave the durable budget park in place")
+	require.NotNil(t, block.FailureClass)
+	require.Equal(t, string(FailureClassBudget), *block.FailureClass)
 }
 
 // TestWorkReconciler_BudgetRefusalParksAndResumes pins both halves of the
