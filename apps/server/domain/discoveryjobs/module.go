@@ -16,6 +16,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 )
 
 var Module = fx.Module("discoveryjobs",
@@ -29,6 +30,7 @@ var Module = fx.Module("discoveryjobs",
 		RegisterRoutes,
 		wireAutoApply,
 		wireAutoBackfill,
+		wireTypeSimilarity,
 		startQueueRunner,
 	),
 )
@@ -73,6 +75,32 @@ func wireAutoBackfill(svc *Service, jobs *extraction.ObjectExtractionJobsService
 		return
 	}
 	svc.SetBackfillTrigger(jobs)
+}
+
+// wireTypeSimilarity injects the embedding-based semantic type merger into the
+// discovery service, so discovery converges semantically-similar types without a
+// hardcoded synonym table. discoveryjobs imports embeddings (never the reverse),
+// so there is no cycle.
+func wireTypeSimilarity(svc *Service, embeds *embeddings.Service) {
+	if svc == nil || embeds == nil {
+		return
+	}
+	svc.SetTypeSimilarity(NewEmbeddingTypeSimilarity(embeds, typeSimilarityThresholdFromEnv(), svc.log))
+}
+
+// typeSimilarityThresholdFromEnv reads the cosine cutoff for the semantic type
+// merge (DISCOVERY_TYPE_SIMILARITY_THRESHOLD, default 0.85). A value outside
+// (0,1] falls back to the default.
+func typeSimilarityThresholdFromEnv() float32 {
+	raw := strings.TrimSpace(os.Getenv("DISCOVERY_TYPE_SIMILARITY_THRESHOLD"))
+	if raw == "" {
+		return defaultTypeSimilarityThreshold
+	}
+	n, err := strconv.ParseFloat(raw, 32)
+	if err != nil || n <= 0 || n > 1 {
+		return defaultTypeSimilarityThreshold
+	}
+	return float32(n)
 }
 
 // NewService creates a new discovery jobs service.

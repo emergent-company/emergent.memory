@@ -103,6 +103,9 @@ type Service struct {
 	// backfill triggers re-extraction after an auto-apply; nil keeps auto-apply
 	// apply-only (see SetBackfillTrigger).
 	backfill BackfillTrigger
+	// typeSimilarity merges semantically-similar discovered types onto existing
+	// project types; nil keeps the spelling-only reconcile (see SetTypeSimilarity).
+	typeSimilarity TypeSimilarity
 }
 
 // documentCap is the effective per-run document cap.
@@ -1214,6 +1217,12 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		s.handleJobError(ctx, jobID, err)
 		return
 	}
+
+	// Semantic merge: map discovered types onto existing project types by
+	// embedding similarity, before the spelling-only reconcile, so discovery
+	// converges without a hardcoded synonym table. Best-effort and nil-safe.
+	refinedTypes = s.mergeSemanticallySimilarTypes(ctx, refinedTypes, registeredTypes, currentSchema)
+
 	reconciled := s.reconcileDiscoveredSchema(registeredTypes, currentSchema, refinedTypes, relationships)
 	refinedTypes = reconciled.Types
 	relationships = reconciled.Relationships

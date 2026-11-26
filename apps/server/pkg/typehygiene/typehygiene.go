@@ -39,18 +39,13 @@ var irregularPlurals = map[string]string{
 	"appendixes": "appendix",
 }
 
-// synonyms maps known spelling/word variants to one canonical key. Only pairs
-// that describe the same entity belong here; it is intentionally conservative
-// because a wrong synonym merges two real types.
+// synonyms maps known spelling/word variants to one canonical key. Only
+// spelling variants belong here (organisation -> organization); semantic
+// equivalence ("Character" vs "Person") is resolved by the discovery domain's
+// embedding-based similarity check, never by a hardcoded list.
 var synonyms = map[string]string{
 	"organisation": "organization",
 	"place":        "location",
-	// A story/roster "character" is a person: the same human is discovered as
-	// "Character" one run and "Person" the next, which would otherwise split the
-	// entity and re-extract the whole corpus under two types.
-	"character": "person",
-	// "TVEpisode" vs "Episode" — a narrower spelling of the same entity.
-	"tvepisode": "episode",
 }
 
 // NormalizeKey returns the comparison key for a discovered type name.
