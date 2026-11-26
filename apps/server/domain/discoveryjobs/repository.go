@@ -665,6 +665,31 @@ type MemorySchema struct {
 	UIConfigs               JSONMap   `bun:"ui_configs,type:jsonb"`
 }
 
+// InstalledDiscoveredSchema returns the project's currently installed
+// discovered pack (pending_review=false), or nil when the project has none yet.
+func (r *Repository) InstalledDiscoveredSchema(ctx context.Context, projectID uuid.UUID) (*MemorySchema, error) {
+	pack := &MemorySchema{}
+	err := r.db.NewSelect().
+		Table("kb.graph_schemas").
+		Column("id", "object_type_schemas", "relationship_type_schemas", "ui_configs").
+		Where("project_id = ?", projectID).
+		Where("source = 'discovered'").
+		Where("pending_review = false").
+		Where("superseded_by IS NULL").
+		Order("created_at DESC").
+		Order("id DESC").
+		Limit(1).
+		Scan(ctx, pack)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		r.log.Error("failed to get installed discovered schema", logger.Error(err))
+		return nil, apperror.ErrInternal.WithInternal(err)
+	}
+	return pack, nil
+}
+
 // UpdateMemorySchema updates an existing memory schema
 func (r *Repository) UpdateMemorySchema(ctx context.Context, packID uuid.UUID, objectSchemas, relSchemas, uiConfigs JSONMap) error {
 	_, err := r.db.NewUpdate().
