@@ -171,12 +171,15 @@ templ loginPage(sentryDSN string, sentryEnvironment string, sentryTracesSampleRa
 // emitted at the reference site, i.e. back inside the menu markup).
 //
 // Presentation is breakpoint-dependent, content is not: md and up keeps the
-// compact focus dropdown, while below md the same list opens in a full-screen
-// dialog (projectPickerDialog). The dropdown cannot work at phone widths —
-// dropdown-end anchors a ~330px panel to a trigger that sits near the left of
-// the navbar, so on a 390px viewport the menu starts at x = -52px and every
-// label is clipped. projectSwitcherLabel, projectPickerItems and
-// projectPickerActions are shared by both presentations, so they cannot drift.
+// compact focus dropdown (upgraded by the shared go-daisy a11y runtime — the
+// trigger must carry data-gd-menu-trigger so the runtime clears the closed
+// marker between opens and manages keyboard semantics), while below md the
+// same list opens in a full-screen dialog (projectPickerDialog). The dropdown
+// cannot work at phone widths — dropdown-end anchors a ~330px panel to a
+// trigger that sits near the left of the navbar, so on a 390px viewport the
+// menu starts at x = -52px and every label is clipped. projectSwitcherLabel,
+// projectPickerItems and projectPickerActions are shared by both presentations,
+// so they cannot drift.
 templ projectSwitcher(current *ProjectRef, currentOrgName string, activeOrg *Org, projectGroups []projectGroup, orgs []Org, recentProjects []ProjectRef, showRecent bool, pendingInvites []PendingInviteDto) {
 	<div class="hidden min-w-0 md:block">
 		@ui.Dropdown(ui.DropdownEnd, nil) {
@@ -186,10 +189,11 @@ templ projectSwitcher(current *ProjectRef, currentOrgName string, activeOrg *Org
 				Size:       ui.ButtonSM,
 				ExtraClass: "gap-1.5 font-normal min-w-0 shrink",
 				Attrs: templ.Attributes{
-					"tabindex":      "0",
-					"aria-haspopup": "menu",
-					"aria-label":    "Switch project",
-					"data-testid":   "project-switcher",
+					"tabindex":            "0",
+					"aria-haspopup":       "menu",
+					"aria-label":          "Switch project",
+					"data-testid":         "project-switcher",
+					"data-gd-menu-trigger": "",
 				},
 			}) {
 				@projectSwitcherLabel(current, currentOrgName, activeOrg, len(pendingInvites))

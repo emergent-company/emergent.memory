@@ -26,9 +26,10 @@ function displayNameOf(p: ProfileDto): string {
 
 /**
  * Open the topbar account dropdown. daisyUI reveals .dropdown-content via
- * :focus-within on the wrapper — the trigger is focusable (tabindex=0) so a
- * real .click() focuses it; guard a headless quirk where the click lands but
- * focus does not move by falling back to explicit .focus().
+ * :focus-within on the wrapper (the go-daisy a11y runtime keeps the closing
+ * marker in sync once the trigger carries data-gd-menu-trigger); the trigger is
+ * focusable (tabindex=0) so a real .click() focuses it. Guard a headless quirk
+ * where the click lands but focus does not move by falling back to .focus().
  */
 async function openAccountMenu(page: Page) {
   const trigger = page.getByTestId('account-menu-trigger');
@@ -127,6 +128,24 @@ test('topbar account trigger is avatar-only; dropdown shows name + email identit
   await expect(profileLink).toBeVisible();
   await expect(profileLink).toHaveAttribute('href', '/profile');
   await expect(menu.getByRole('button', { name: 'Log out' })).toBeVisible();
+});
+
+test('account menu reopens after an outside click', async ({ page }) => {
+  // Regression: without data-gd-menu-trigger on the trigger, the go-daisy a11y
+  // runtime stamps data-gd-menu-closed on the root but never clears it, so the
+  // CSS-driven menu stays visibility:hidden on every reopen until a reload.
+  await goto(page, '/agents');
+  await expectAppPage(page, /Agents/);
+
+  const { trigger, menu } = await openAccountMenu(page);
+
+  // A real click outside the root (past the account menu) closes it.
+  await page.locator('#main-content h1').first().click();
+  await expect(menu).toBeHidden();
+
+  // Second open must actually show the menu again — not just hold focus.
+  await trigger.click();
+  await expect(menu).toBeVisible();
 });
 
 test('profile identity card second line is the email, not a duplicated name', async ({
