@@ -1380,13 +1380,29 @@ func (s *ObjectExtractionJobsService) GetJobLogSummary(ctx context.Context, jobI
 // This satisfies the documents.ExtractionJobCreator interface so the upload
 // handler can trigger extraction without importing this package.
 func (s *ObjectExtractionJobsService) TriggerForDocument(ctx context.Context, projectID, documentID string) error {
-	_, err := s.CreateJob(ctx, CreateObjectExtractionJobOptions{
+	return s.triggerForDocument(ctx, projectID, documentID, false)
+}
+
+// TriggerForDocumentAdditive creates a full extraction job that must NOT
+// supersede the document's prior entities. It is the schema-change backfill
+// path: re-extraction there is meant to find new entities of newly-installed
+// types, not to replace what a previous run produced.
+func (s *ObjectExtractionJobsService) TriggerForDocumentAdditive(ctx context.Context, projectID, documentID string) error {
+	return s.triggerForDocument(ctx, projectID, documentID, true)
+}
+
+func (s *ObjectExtractionJobsService) triggerForDocument(ctx context.Context, projectID, documentID string, additive bool) error {
+	opts := CreateObjectExtractionJobOptions{
 		ProjectID:  projectID,
 		DocumentID: &documentID,
 		SourceID:   &documentID,
 		JobType:    JobTypeFullExtraction,
 		SourceType: func() *string { v := "document"; return &v }(),
-	})
+	}
+	if additive {
+		opts.SourceMetadata = JSON{"additive": true}
+	}
+	_, err := s.CreateJob(ctx, opts)
 	return err
 }
 
@@ -1482,7 +1498,7 @@ func (s *ObjectExtractionJobsService) Backfill(ctx context.Context, projectID st
 			continue
 		}
 		d := docID
-		if err := s.TriggerForDocument(ctx, projectID, d); err != nil {
+		if err := s.TriggerForDocumentAdditive(ctx, projectID, d); err != nil {
 			s.log.Warn("backfill: failed to enqueue", slog.String("document_id", docID), logger.Error(err))
 			continue
 		}
