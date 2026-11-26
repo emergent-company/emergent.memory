@@ -1,0 +1,55 @@
+{
+  "name": "friends",
+  "description": "Friends S01E01-E05 transcripts for progressive enrichment eval: five episodes uploaded one at a time; each adds a small set of new entities (characters + locations) that must be extracted, while prior entities persist without duplicates.",
+  "episodes": [
+    {
+      "id": "s01e01",
+      "file": "episodes/s01e01.txt",
+      "entities": [
+        {"name": "Monica Geller", "type": "Person"},
+        {"name": "Ross Geller", "type": "Person"},
+        {"name": "Rachel Green", "type": "Person"},
+        {"name": "Chandler Bing", "type": "Person"},
+        {"name": "Joey Tribbiani", "type": "Person"},
+        {"name": "Phoebe Buffay", "type": "Person"},
+        {"name": "Paul the Wine Guy", "type": "Person"},
+        {"name": "Central Perk", "type": "Location"},
+        {"name": "Greenwich Village", "type": "Location"}
+      ]
+    },
+    {
+      "id": "s01e02",
+      "file": "episodes/s01e02.txt",
+      "entities": [
+        {"name": "Carol", "type": "Person"},
+        {"name": "Susan", "type": "Person"},
+        {"name": "Barry Farber", "type": "Person"},
+        {"name": "Bloomingdale", "type": "Location"}
+      ]
+    },
+    {
+      "id": "s01e03",
+      "file": "episodes/s01e03.txt",
+      "entities": [
+        {"name": "Glenda", "type": "Person"}
+      ]
+    },
+    {
+      "id": "s01e04",
+      "file": "episodes/s01e04.txt",
+      "entities": [
+        {"name": "Celeste", "type": "Person"},
+        {"name": "Madison Square Garden", "type": "Location"}
+      ]
+    },
+    {
+      "id": "s01e05",
+      "file": "episodes/s01e05.txt",
+      "entities": [
+        {"name": "Alan", "type": "Person"},
+        {"name": "Laundromat", "type": "Location"},
+        {"name": "Museum of Prehistoric History", "type": "Location"}
+      ]
+    }
+  ]
+}
