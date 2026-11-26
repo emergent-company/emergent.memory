@@ -96,6 +96,9 @@ type Service struct {
 	// policyReader enables auto-apply at completion; nil keeps the manual-only
 	// finalize path (see SetPipelinePolicyReader).
 	policyReader PipelinePolicyReader
+	// backfill triggers re-extraction after an auto-apply; nil keeps auto-apply
+	// apply-only (see SetBackfillTrigger).
+	backfill BackfillTrigger
 }
 
 // documentCap is the effective per-run document cap.

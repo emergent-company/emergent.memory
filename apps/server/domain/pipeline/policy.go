@@ -24,6 +24,14 @@ const (
 	ModeAuto    = "auto"
 )
 
+// Re-extraction modes for Extract.ReExtractOnSchemaChange: what an auto-apply
+// re-runs against documents once the effective schema changes.
+const (
+	ReExtractOff         = "off"
+	ReExtractIncremental = "incremental"
+	ReExtractFull        = "full"
+)
+
 // ValidModes lists the accepted mode labels in display order.
 var ValidModes = []string{ModeOff, ModeSuggest, ModeAuto}
 
@@ -121,7 +129,7 @@ func suggest() Policy {
 			Target:                 "auto_pack",
 		},
 		Extract: ExtractPolicy{
-			ReExtractOnSchemaChange: "off",
+			ReExtractOnSchemaChange: ReExtractOff,
 			BackfillLimitPerRun:     50,
 			StrictTypes:             true,
 		},
@@ -137,7 +145,7 @@ func suggest() Policy {
 func auto() Policy {
 	p := suggest()
 	p.Mode = ModeAuto
-	p.Extract.ReExtractOnSchemaChange = "incremental"
+	p.Extract.ReExtractOnSchemaChange = ReExtractIncremental
 	return p
 }
 
@@ -194,7 +202,7 @@ func Validate(p Policy) error {
 		return fmt.Errorf("apply.target must be \"auto_pack\"")
 	}
 	switch p.Extract.ReExtractOnSchemaChange {
-	case "off", "incremental", "full":
+	case ReExtractOff, ReExtractIncremental, ReExtractFull:
 	default:
 		return fmt.Errorf("extract.re_extract_on_schema_change must be off, incremental or full")
 	}

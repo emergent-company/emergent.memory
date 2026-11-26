@@ -157,7 +157,7 @@ func (h *AdminHandler) Backfill(c echo.Context) error {
 
 	filter := BackfillFilter(req.Filter)
 	switch filter {
-	case BackfillStaleSchema, BackfillNever, BackfillFailed:
+	case BackfillStaleSchema, BackfillNever, BackfillFailed, BackfillAll:
 	default:
 		filter = BackfillStaleSchema
 	}

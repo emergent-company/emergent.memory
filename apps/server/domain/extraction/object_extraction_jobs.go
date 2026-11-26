@@ -1418,6 +1418,9 @@ const (
 	// BackfillFailed selects documents whose latest extraction job ended in a
 	// failed/dead-letter terminal state (a later success clears it).
 	BackfillFailed BackfillFilter = "failed"
+	// BackfillAll selects every document in the project, regardless of current
+	// extraction state — the "full" re-extraction mode.
+	BackfillAll BackfillFilter = "all"
 )
 
 // BackfillResult reports a backfill run.
@@ -1521,6 +1524,11 @@ func (s *ObjectExtractionJobsService) backfillCandidates(ctx context.Context, db
 			    LIMIT 1
 			  ) IS NOT FALSE
 			ORDER BY d.created_at LIMIT ?`, projectID, currentGen, limit).Scan(ctx, &docs)
+	case BackfillAll:
+		err = db.NewRaw(`
+			SELECT d.id FROM kb.documents d
+			WHERE d.project_id = ?
+			ORDER BY d.created_at LIMIT ?`, projectID, limit).Scan(ctx, &docs)
 	}
 	return docs, err
 }

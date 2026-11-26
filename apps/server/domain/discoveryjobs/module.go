@@ -11,6 +11,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/emergent-company/emergent.memory/domain/documents"
+	"github.com/emergent-company/emergent.memory/domain/extraction"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/internal/config"
@@ -27,6 +28,7 @@ var Module = fx.Module("discoveryjobs",
 	fx.Invoke(
 		RegisterRoutes,
 		wireAutoApply,
+		wireAutoBackfill,
 		startQueueRunner,
 	),
 )
@@ -59,6 +61,18 @@ func wireAutoApply(svc *Service, proj *projects.Service) {
 		return
 	}
 	svc.SetPipelinePolicyReader(proj)
+}
+
+// wireAutoBackfill injects the extraction backfill trigger into the discovery
+// service so a schema applied by auto-apply can re-extract documents when the
+// policy asks for it. discoveryjobs imports extraction (extraction never imports
+// discoveryjobs), so there is no cycle; fx resolves the jobs service as part of
+// the same application.
+func wireAutoBackfill(svc *Service, jobs *extraction.ObjectExtractionJobsService) {
+	if svc == nil || jobs == nil {
+		return
+	}
+	svc.SetBackfillTrigger(jobs)
 }
 
 // NewService creates a new discovery jobs service.
