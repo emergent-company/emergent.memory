@@ -5,7 +5,6 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io/fs"
 	"log/slog"
 	"path"
@@ -34,8 +33,18 @@ var builtinPacksFS embed.FS
 // Only packs marked `taxonomy: true` are included: the other bundled packs
 // (task-board, agent-notes, session-message-types, dreaming-agent) define
 // platform-internal object types that must not be offered as alignment targets.
+//
+// A pack that fails to load is skipped with a warning rather than failing the
+// whole load: one malformed pack must not silently disable taxonomy alignment
+// for every other pack.
 func ListBuiltinObjectTypes() ([]ObjectTypeDef, error) {
-	entries, err := fs.ReadDir(builtinPacksFS, "builtin_packs")
+	return listBuiltinObjectTypes(builtinPacksFS, "builtin_packs")
+}
+
+// listBuiltinObjectTypes is the fs.FS-injectable core of ListBuiltinObjectTypes,
+// so per-pack error isolation can be tested without a malformed embedded pack.
+func listBuiltinObjectTypes(fsys fs.FS, root string) ([]ObjectTypeDef, error) {
+	entries, err := fs.ReadDir(fsys, root)
 	if err != nil {
 		return nil, err
 	}
@@ -45,9 +54,11 @@ func ListBuiltinObjectTypes() ([]ObjectTypeDef, error) {
 			continue
 		}
 		name := e.Name()
-		desc, err := loadBlueprintDir(builtinPacksFS, path.Join("builtin_packs", name), name)
+		desc, err := loadBlueprintDir(fsys, path.Join(root, name), name)
 		if err != nil {
-			return nil, fmt.Errorf("load builtin pack %s: %w", name, err)
+			slog.Warn("skipping unloadable builtin blueprint pack",
+				slog.String("pack", name), logger.Error(err))
+			continue
 		}
 		for _, p := range desc.Packs {
 			if !p.Taxonomy {
