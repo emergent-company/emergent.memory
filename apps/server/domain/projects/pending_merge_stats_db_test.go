@@ -86,6 +86,19 @@ func TestGetByIDStatsReportsPendingExtractionMerge(t *testing.T) {
 	insertMergeEvent(pendingBranch, 3, "1 hour")
 	insertMergeEvent(mergedBranch, 99, "30 minutes")
 
+	// Two merge rows written in one transaction share created_at (NOW() is
+	// transaction-stable), so only the id tiebreak can make the pick
+	// deterministic; the greater id must win (#1123).
+	insertMergeEventWithID := func(branchID uuid.UUID, journalID string, leftForReview int) {
+		_, err := db.ExecContext(ctx, `
+			INSERT INTO kb.project_journal (id, project_id, branch_id, event_type, metadata, created_at)
+			VALUES (?, ?, ?, 'merge', jsonb_build_object('left_for_review_count', ?), NOW() - '30 minutes'::interval)
+		`, journalID, pid, branchID, leftForReview)
+		require.NoError(t, err)
+	}
+	insertMergeEventWithID(pendingBranch, "00000000-0000-0000-0000-000000000001", 4)
+	insertMergeEventWithID(pendingBranch, "00000000-0000-0000-0000-000000000002", 6)
+
 	repo := projects.NewRepository(db, slog.Default())
 	project, err := repo.GetByID(ctx, projectID, true)
 	require.NoError(t, err)
@@ -96,7 +109,7 @@ func TestGetByIDStatsReportsPendingExtractionMerge(t *testing.T) {
 	require.Equal(t, 1, got.BranchCount, "only the unmerged extraction branch counts")
 	require.Equal(t, 2, got.ObjectCount, "only live objects on the pending branch count")
 	require.Equal(t, 1, got.MainGraphObjectCount, "main-graph objects are what default reads see")
-	require.Equal(t, 3, got.LeftForReviewCount, "latest auto-merge leftovers on the unmerged branch")
+	require.Equal(t, 6, got.LeftForReviewCount, "latest auto-merge leftovers on the unmerged branch, tiebroken by id")
 	require.False(t, got.Stranded)
 
 	// The list query uses a different SELECT shape (a membership join); it must
@@ -118,5 +131,5 @@ func TestGetByIDStatsReportsPendingExtractionMerge(t *testing.T) {
 	require.NotNil(t, list[0].Stats)
 	require.NotNil(t, list[0].Stats.PendingExtractionMerge)
 	require.Equal(t, 2, list[0].Stats.PendingExtractionMerge.ObjectCount)
-	require.Equal(t, 3, list[0].Stats.PendingExtractionMerge.LeftForReviewCount)
+	require.Equal(t, 6, list[0].Stats.PendingExtractionMerge.LeftForReviewCount)
 }

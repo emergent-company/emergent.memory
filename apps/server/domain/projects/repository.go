@@ -93,7 +93,11 @@ const pendingExtractionMergeStatsColumns = `
 	               THEN (j.metadata->>'left_for_review_count')::int ELSE 0 END AS left_for_review
 	   FROM kb.project_journal j
 	   WHERE j.project_id = p.id AND j.branch_id = b.id AND j.event_type = 'merge'
-	   ORDER BY j.created_at DESC
+	   -- created_at is NOW(), transaction-stable: two merge rows written in one
+	   -- transaction tie, and LIMIT 1 would otherwise pick either, making the
+	   -- same data report a different left_for_review_count between reads. The id
+	   -- tiebreak makes the choice deterministic (#1123).
+	   ORDER BY j.created_at DESC, j.id DESC
 	   LIMIT 1
 	 ) latest ON true
 	 WHERE b.project_id = p.id AND b.origin = 'extraction' AND b.merged_at IS NULL

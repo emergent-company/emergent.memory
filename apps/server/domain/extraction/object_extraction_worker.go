@@ -97,11 +97,21 @@ type previousRunFinder interface {
 	PreviousCompletedRunForDocument(ctx context.Context, job *ObjectExtractionJob) (*RunCountSnapshot, error)
 }
 
+// objectWriteStore is the graph write surface persistResults needs. *graph.Service
+// implements it; tests inject a fake so the identity-resolution wiring through
+// persistence can be pinned without a database (#1123).
+type objectWriteStore interface {
+	Create(ctx context.Context, projectID uuid.UUID, req *graph.CreateGraphObjectRequest, actorID *uuid.UUID) (*graph.GraphObjectResponse, error)
+	CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *graph.CreateGraphObjectRequest, actorID *uuid.UUID) (*graph.GraphObjectResponse, bool, error)
+	CreateRelationship(ctx context.Context, projectID uuid.UUID, req *graph.CreateGraphRelationshipRequest, actorID *uuid.UUID) (*graph.GraphRelationshipResponse, error)
+}
+
 // ObjectExtractionWorker processes object extraction jobs.
 type ObjectExtractionWorker struct {
 	jobsService           *ObjectExtractionJobsService
 	previousRuns          previousRunFinder
 	graphService          *graph.Service
+	graphWriter           objectWriteStore // graphService, or a test fake for persistResults
 	branchService         *branches.Service
 	docService            *documents.Service
 	projectsRepo          *projects.Repository
@@ -143,6 +153,7 @@ func NewObjectExtractionWorker(
 		jobsService:    jobsService,
 		previousRuns:   jobsService,
 		graphService:   graphService,
+		graphWriter:    graphService,
 		branchService:  branchService,
 		docService:     docService,
 		projectsRepo:   projectsRepo,
@@ -739,8 +750,13 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 		// Identity-resolution index: the graph-native context filled above is
 		// keyed by canonical ID so persistence stores a re-mention under the
 		// existing object's identity instead of relying on cosine similarity
-		// alone (#1074).
-		existingByIdentityID := indexExistingEntities(existingEntities)
+		// alone (#1074). Trim it to what the prompt renders, so an id the model
+		// was never shown is not honoured either (#1123).
+		promptTypes := job.EnabledTypes
+		if len(promptTypes) == 0 {
+			promptTypes = sortedObjectSchemaNames(schemas.ObjectSchemas)
+		}
+		existingByIdentityID := indexExistingEntities(agents.TrimExistingEntitiesForPrompt(existingEntities, promptTypes))
 
 		// Create extraction pipeline (shared across all batches).
 		pipeline, err := agents.NewExtractionPipeline(agents.ExtractionPipelineConfig{
@@ -841,8 +857,11 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 // total. It must add ObjectsMerged: persistResults upserts by (project, type,
 // name), so a later batch can merge what an earlier one created, and the
 // zero-object warning judges "produced" on created+merged (#233).
-// existingEntitiesMax caps how many existing entities are passed to the model
-// as identity-resolution context, so a large graph cannot bloat the prompt.
+// existingEntitiesMax caps how many existing entities are fetched as
+// identity-resolution context. The prompt renders at most
+// agents.ExistingEntityPromptMaxTotal of them, and the persistence index is
+// trimmed to that same rendered set (#1123); the wider fetch keeps a usable
+// candidate pool without letting a large graph bloat the prompt.
 const existingEntitiesMax = 200
 
 // sortedObjectSchemaNames returns the schema's object type names in a stable
@@ -1397,7 +1416,10 @@ func (w *ObjectExtractionWorker) loadSchemas(ctx context.Context, job *ObjectExt
 // existing object, the stored key wins so a differently-spelled re-mention lands
 // on the same identity; the existing display name is kept so a variant spelling
 // does not rename the object. A reference whose type disagrees is ignored — the
-// model pointed at the wrong kind of object.
+// model pointed at the wrong kind of object. Type names are schema identifiers,
+// so the comparison is exact: the merge's own identity key is case-sensitive,
+// and accepting "person" for "Person" would persist under a type that does not
+// exist in the schema (#1123).
 func resolveExtractionIdentity(entity agents.InternalEntity, existingByIdentityID map[string]agents.ExistingEntityContext) (key, name string) {
 	key = strings.TrimSpace(entity.Name)
 	name = key
@@ -1408,7 +1430,7 @@ func resolveExtractionIdentity(entity agents.InternalEntity, existingByIdentityI
 	if !ok {
 		return key, name
 	}
-	if existing.TypeName != "" && entity.Type != "" && !strings.EqualFold(existing.TypeName, entity.Type) {
+	if existing.TypeName != "" && entity.Type != "" && existing.TypeName != entity.Type {
 		return key, name
 	}
 	existingKey := strings.TrimSpace(existing.Key)
@@ -1567,6 +1589,13 @@ func (w *ObjectExtractionWorker) persistResults(
 		for k, v := range entity.Properties {
 			properties[k] = v
 		}
+		// A binding replaces the mention's spelling with the existing object's
+		// stored name. Keep the model's spelling on the staging object so a
+		// wrong binding is visible in review (and in the left-for-review
+		// journal entry) instead of only in the run trace (#1075, #1123).
+		if mention := strings.TrimSpace(entity.Name); mention != "" && mention != name {
+			properties["_extraction_mention"] = mention
+		}
 
 		// Add extraction metadata
 		properties["_extraction_job_id"] = job.ID
@@ -1590,7 +1619,7 @@ func (w *ObjectExtractionWorker) persistResults(
 
 		if key != "" {
 			// Upsert: merge into existing object when (project_id, type, key) matches.
-			graphObj, created, err := w.graphService.CreateOrUpdate(ctx, projectID, &graph.CreateGraphObjectRequest{
+			graphObj, created, err := w.graphWriter.CreateOrUpdate(ctx, projectID, &graph.CreateGraphObjectRequest{
 				Type:            entity.Type,
 				Key:             &key,
 				Name:            &name,
@@ -1615,7 +1644,7 @@ func (w *ObjectExtractionWorker) persistResults(
 			}
 		} else {
 			// No name → cannot key for dedup, fall back to plain Create.
-			graphObj, err := w.graphService.Create(ctx, projectID, &graph.CreateGraphObjectRequest{
+			graphObj, err := w.graphWriter.Create(ctx, projectID, &graph.CreateGraphObjectRequest{
 				Type:            entity.Type,
 				Properties:      properties,
 				Status:          stringPtr("suggested"),
@@ -1669,7 +1698,7 @@ func (w *ObjectExtractionWorker) persistResults(
 
 		properties := relationshipPersistProperties(rel, job.ID)
 
-		_, err := w.graphService.CreateRelationship(ctx, projectID, &graph.CreateGraphRelationshipRequest{
+		_, err := w.graphWriter.CreateRelationship(ctx, projectID, &graph.CreateGraphRelationshipRequest{
 			Type:       rel.Type,
 			SrcID:      srcID,
 			DstID:      dstID,
