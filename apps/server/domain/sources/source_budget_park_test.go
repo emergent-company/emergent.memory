@@ -42,6 +42,25 @@ func TestReviewLaneBudgetTargetFromHead(t *testing.T) {
 	}
 }
 
+// TestReviewLaneBudgetCheckIsNotAPassingConclusion pins the merge-gate
+// contract: `reviewed` is a required status check on dev, and GitHub treats a
+// neutral required check as a success. Publishing neutral here would make an
+// unreviewed head mergeable on `ci` alone, so the budget-unavailable check must
+// fail, and its repo-visible summary must not leak the project UUID from
+// ev.Reason (#1032 review).
+func TestReviewLaneBudgetCheckIsNotAPassingConclusion(t *testing.T) {
+	conclusion, title, summary := reviewLaneBudgetCheck("review-agent")
+
+	require.Equal(t, "failure", conclusion)
+	for _, passing := range []string{"neutral", "success", "skipped"} {
+		require.NotEqual(t, passing, conclusion, "a required check must not read as a pass")
+	}
+	require.Contains(t, title, "budget")
+	require.Contains(t, summary, "budget_usd", "the summary must name the escape hatch")
+	require.NotRegexp(t, `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-`, summary,
+		"the check summary is repo-visible; it must not carry the project UUID")
+}
+
 // TestOnWorkBudgetParkedIgnoresUnrelatedWork keeps the listener inert for work
 // that has no GitHub check to publish, and nil-safe when the dispatcher is
 // only partially wired.

@@ -50,13 +50,34 @@ func reviewLaneBudgetTargetFromHead(head *graph.WorkObjectHead) (reviewLaneBudge
 	return target, true
 }
 
-// OnWorkBudgetParked publishes a non-blocking, head-bound `reviewed` check when
-// the spending gate refuses to schedule a review lane. Without it the required
+// reviewLaneBudgetCheck builds the check payload for a review lane the spending
+// gate refused to schedule. The conclusion is "failure", never "neutral":
+// `reviewed` is a required context on dev and GitHub treats a neutral required
+// check as a success, so publishing neutral here would let an unreviewed head
+// merge on `ci` alone. A failure is terminal-with-a-reason, matching the
+// `reviewed: unapprovable` precedent (#1022) — the head has not been judged.
+//
+// The summary is built from the agent name only. ev.Reason carries the project
+// UUID and the cap state, and a GitHub check summary is visible to every reader
+// of the repo, so it is not copied here; the durable work item keeps the full
+// reason.
+func reviewLaneBudgetCheck(agentName string) (string, string, string) {
+	summary := fmt.Sprintf(
+		"Review agent %q was not scheduled because the project is over its spending budget. "+
+			"Raise budget_usd in the project's budget settings or reset the budget window; "+
+			"the lane resumes automatically once the cap allows.",
+		agentName,
+	)
+	return "failure", "reviewed: unavailable — budget", summary
+}
+
+// OnWorkBudgetParked publishes a head-bound, failing `reviewed` check when the
+// spending gate refuses to schedule a review lane. Without it the required
 // check stays in_progress forever and the PR looks blocked for no visible
-// reason: the reviewer run was never created (#1032). The conclusion is
-// neutral, not failure, because the head itself has not been judged — the
-// review is unavailable until the operator raises budget_usd or resets the
-// project's budget window.
+// reason: the reviewer run was never created (#1032). The conclusion is failure
+// rather than neutral because a neutral required check counts as passing, which
+// would make an unreviewed head mergeable; the failure names the budget reason
+// and clears as soon as a real review runs on a new head.
 func (d *SourceEventDispatcher) OnWorkBudgetParked(ctx context.Context, ev agents.WorkBudgetParkedEvent) {
 	if d == nil {
 		return
@@ -79,8 +100,8 @@ func (d *SourceEventDispatcher) OnWorkBudgetParked(ctx context.Context, ev agent
 }
 
 // publishReviewLaneBudgetUnavailable resolves the lane's source App, mints a
-// repo-scoped installation token, and posts the non-blocking check. Every
-// failure is best-effort: the durable work-item park is the primary truth.
+// repo-scoped installation token, and posts the check. Every failure is
+// best-effort: the durable work-item park is the primary truth.
 func (d *SourceEventDispatcher) publishReviewLaneBudgetUnavailable(ctx context.Context, ev agents.WorkBudgetParkedEvent, target reviewLaneBudgetTarget) {
 	sourceID, err := uuid.Parse(target.SourceID)
 	if err != nil {
@@ -120,12 +141,9 @@ func (d *SourceEventDispatcher) publishReviewLaneBudgetUnavailable(ctx context.C
 			"repo", target.Repo, "head_sha", target.HeadSHA, "error", err)
 		return
 	}
-	summary := fmt.Sprintf(
-		"Review agent %q was not scheduled: %s. Raise budget_usd in the project's budget settings or reset the budget window; the lane resumes automatically once the cap allows.",
-		ev.AgentName, ev.Reason,
-	)
+	conclusion, title, summary := reviewLaneBudgetCheck(ev.AgentName)
 	if err := d.newClient(d.apiBaseURL, token).CreateReviewedCheck(ctx, target.Repo, target.HeadSHA,
-		"neutral", "reviewed: unavailable — budget", summary); err != nil {
+		conclusion, title, summary); err != nil {
 		d.logWarn("failed to publish the budget-parked reviewed check",
 			"repo", target.Repo, "head_sha", target.HeadSHA, "error", err)
 	}

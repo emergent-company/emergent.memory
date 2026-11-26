@@ -34,11 +34,22 @@ type WorkBlock struct {
 
 // UpsertWorkBlock records (or refreshes) a block row.
 func (r *Repository) UpsertWorkBlock(ctx context.Context, b *WorkBlock) error {
+	_, err := r.upsertWorkBlockReportInserted(ctx, b)
+	return err
+}
+
+// upsertWorkBlockReportInserted performs the work-block upsert and reports
+// whether this call created the row (true) or refreshed an existing one
+// (false). Callers that own a one-shot side effect (the budget park's
+// escalation task) use the flag instead of reading first and writing second,
+// so two concurrent deliveries for one item cannot both mint the side effect.
+func (r *Repository) upsertWorkBlockReportInserted(ctx context.Context, b *WorkBlock) (bool, error) {
 	now := time.Now()
 	if b.BlockedAt.IsZero() {
 		b.BlockedAt = now
 	}
-	_, err := r.db.NewRaw(`
+	var inserted bool
+	err := r.db.NewRaw(`
 		INSERT INTO kb.work_blocks
 			(canonical_id, project_id, reason, failure_class, blocked_at, blocked_by, note, run_id, created_at, updated_at)
 		VALUES (?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?::uuid, ?, ?)
@@ -50,10 +61,11 @@ func (r *Repository) UpsertWorkBlock(ctx context.Context, b *WorkBlock) error {
 			blocked_by = EXCLUDED.blocked_by,
 			note = EXCLUDED.note,
 			run_id = EXCLUDED.run_id,
-			updated_at = EXCLUDED.updated_at`,
+			updated_at = EXCLUDED.updated_at
+		RETURNING (xmax = 0)`,
 		b.CanonicalID, b.ProjectID, b.Reason, b.FailureClass, b.BlockedAt, b.BlockedBy, b.Note, b.RunID, now, now,
-	).Exec(ctx)
-	return err
+	).Scan(ctx, &inserted)
+	return inserted, err
 }
 
 // ClearWorkBlock removes the block row. It returns whether a row existed.
@@ -161,22 +173,22 @@ func (r *Repository) ParkWorkItemForBudget(ctx context.Context, projectID, canon
 	if r == nil || canonicalID == "" {
 		return nil
 	}
-	existing, err := r.GetWorkBlock(ctx, canonicalID)
-	if err != nil {
-		return err
-	}
 	class := string(FailureClassBudget)
 	blockedBy := budgetParkBlockedBy
-	if err := r.UpsertWorkBlock(ctx, &WorkBlock{
+	// The insert reports whether this call created the block. Only the creator
+	// escalates, so a duplicate or concurrent delivery for the same item cannot
+	// pile up duplicate work-escalation tasks.
+	inserted, err := r.upsertWorkBlockReportInserted(ctx, &WorkBlock{
 		CanonicalID:  canonicalID,
 		ProjectID:    projectID,
 		Reason:       reason,
 		FailureClass: &class,
 		BlockedBy:    &blockedBy,
-	}); err != nil {
+	})
+	if err != nil {
 		return err
 	}
-	if existing != nil {
+	if !inserted {
 		return nil
 	}
 	desc := fmt.Sprintf("class=%s: %s", FailureClassBudget, reason)
