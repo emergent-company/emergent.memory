@@ -203,3 +203,15 @@ func TestPlanCatalogUnion(t *testing.T) {
 		require.Equal(t, c.wantDrop, removed, "%s: removed", c.name)
 	}
 }
+
+// TestCatalogPackConflict pins the guard that prevents catalog install from
+// rewriting an unrelated pack whose name collides with the catalog pack name.
+func TestCatalogPackConflict(t *testing.T) {
+	catalogTypes := map[string]bool{"Movie": true, "Person": true}
+	_, ok := catalogPackConflict(catalogTypes, []string{"Movie", "Person"})
+	require.False(t, ok)
+
+	conflict, ok := catalogPackConflict(catalogTypes, []string{"Movie", "Task"})
+	require.True(t, ok)
+	require.Equal(t, "Task", conflict)
+}

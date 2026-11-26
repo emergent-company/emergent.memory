@@ -21,10 +21,11 @@ type CatalogInstallResult struct {
 }
 
 // InstallCatalog materializes the endpoint-gated projection of the bundled
-// taxonomy catalog into a project schema and assigns it. It is additive and
-// idempotent: re-running reconciles, so installing a type later activates the
-// deferred relationships whose other endpoint just arrived. Removal of a type
-// is deliberately not supported here — uninstall is a separate operation.
+// taxonomy catalog into a project schema and assigns it. It is idempotent:
+// re-running reconciles, so installing a type later activates the deferred
+// relationships whose other endpoint just arrived. With replace=true the
+// request is authoritative and omitted catalog types are removed from the pack
+// (deactivating their relationships); graph objects are untouched.
 //
 // requested names must exist in the catalog; unknown names are reported in the
 // result, not installed. already-installed catalog types are unioned with the
@@ -47,12 +48,25 @@ func (s *Service) InstallCatalog(ctx context.Context, projectID, userID string, 
 	if len(cat.Types) == 0 {
 		return nil, apperror.NewBadRequest("built-in taxonomy catalog is empty")
 	}
+	catalogTypes := make(map[string]bool, len(cat.Types))
+	for _, t := range cat.Types {
+		catalogTypes[t.Name] = true
+	}
 
 	compiled, err := s.schemasSvc.GetCompiledTypes(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
 	installed := catalogInstalledTypes(compiled, opts.Name)
+	// Refuse to rewrite a pack that is not a catalog pack. The pack name is
+	// caller-controlled; without this check a name collision would let an
+	// additive install (which unions installed types and then drops catalog
+	// misses) or a replace install delete an unrelated project pack's types.
+	if conflict, ok := catalogPackConflict(catalogTypes, installed); ok {
+		return nil, apperror.NewBadRequest(fmt.Sprintf(
+			"pack %q already contains non-catalog type %q; catalog install will not rewrite an unrelated pack — choose a different pack name",
+			opts.Name, conflict))
+	}
 
 	union, removed := planCatalogUnion(installed, requested, replace)
 	if len(union) == 0 {
@@ -134,4 +148,16 @@ type CatalogInstallRequest struct {
 	// removed from the pack, deactivating their relationships. Default false is
 	// additive (installed types are kept).
 	Replace bool `json:"replace,omitempty"`
+}
+
+// catalogPackConflict reports the first installed type that is not part of the
+// catalog, i.e. evidence the named pack is not a catalog pack and must not be
+// rewritten by install/replace.
+func catalogPackConflict(catalogTypes map[string]bool, installed []string) (string, bool) {
+	for _, name := range installed {
+		if !catalogTypes[name] {
+			return name, true
+		}
+	}
+	return "", false
 }

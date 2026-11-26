@@ -70,6 +70,11 @@ func (s *Service) ResolveCatalogSemantic(ctx context.Context, query string, limi
 	if err != nil {
 		return nil, err
 	}
+	for i := range docVecs {
+		if len(docVecs[i]) != len(qVec) {
+			return nil, errors.New("catalog embeddings: query and document dimensions differ; the embedding model changed between calls")
+		}
+	}
 
 	matches := make([]CatalogTypeMatch, 0, len(cat.Types))
 	for i, t := range cat.Types {
