@@ -16,7 +16,6 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
-	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 )
 
 var Module = fx.Module("discoveryjobs",
@@ -77,15 +76,15 @@ func wireAutoBackfill(svc *Service, jobs *extraction.ObjectExtractionJobsService
 	svc.SetBackfillTrigger(jobs)
 }
 
-// wireTypeSimilarity injects the embedding-based semantic type merger into the
-// discovery service, so discovery converges semantically-similar types without a
-// hardcoded synonym table. discoveryjobs imports embeddings (never the reverse),
-// so there is no cycle.
-func wireTypeSimilarity(svc *Service, embeds *embeddings.Service) {
-	if svc == nil || embeds == nil {
+// wireTypeSimilarity injects the classifier-based semantic type merger into the
+// discovery service, so discovery converges semantically-similar types by
+// asking the model "same concept?" with confidence instead of a hardcoded
+// synonym table. It reuses the discovery model, so there is no new dependency.
+func wireTypeSimilarity(svc *Service) {
+	if svc == nil {
 		return
 	}
-	svc.SetTypeSimilarity(NewEmbeddingTypeSimilarity(embeds, typeSimilarityThresholdFromEnv(), svc.log))
+	svc.SetTypeSimilarity(NewClassifierTypeSimilarity(svc.completeWithLLM, typeSimilarityThresholdFromEnv(), svc.log))
 }
 
 // typeSimilarityThresholdFromEnv reads the cosine cutoff for the semantic type

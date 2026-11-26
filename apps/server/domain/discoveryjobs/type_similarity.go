@@ -4,41 +4,88 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"math"
+	"sort"
+	"strings"
 
+	"github.com/emergent-company/emergent.memory/pkg/llmjson"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/typehygiene"
 )
 
-// defaultTypeSimilarityThreshold is the cosine cutoff above which a discovered
-// type's name+description is treated as the same entity as an existing type.
-// It is intentionally conservative: a wrong merge silently collapses two real
-// types, so the resolver only acts on a strong match.
-const defaultTypeSimilarityThreshold = 0.85
+// defaultTypeSimilarityThreshold is the confidence cutoff above which a
+// discovered type is treated as the same concept as an existing type. It is
+// deliberately conservative: a wrong merge silently collapses two real types,
+// so only a confident classification acts and the rest is left to a human.
+const defaultTypeSimilarityThreshold = 0.90
 
-// TypeSimilarity resolves whether a discovered type is semantically the same as
-// an already-installed project type, so discovery converges across runs without
-// a hardcoded synonym table. Implemented by *embeddingTypeSimilarity; nil (or a
-// resolver that returns "") keeps the spelling-only reconcile path.
+// TypeSimilarity resolves, for a set of discovered types, which existing
+// project types they are semantically the same as. Implemented by
+// *classifierTypeSimilarity; nil (or an empty result) keeps the spelling-only
+// reconcile path. The result maps a discovered type's name to the existing type
+// name it should adopt ("" entries are absent).
 type TypeSimilarity interface {
-	Resolve(ctx context.Context, discovered DiscoveredType, existing []ExistingType) (string, error)
+	Resolve(ctx context.Context, discovered []DiscoveredType, existing []ExistingType) (map[string]string, error)
 }
 
-// SetTypeSimilarity injects the semantic type merger. Nil-safe: without it,
+// ExistingType is one already-installed type offered for comparison.
+type ExistingType struct {
+	Name        string
+	Description string
+}
+
+// SetTypeSimilarity injects the semantic type classifier. Nil-safe: without it,
 // discovery converges only on exact spelling/plural/synonym matches.
 func (s *Service) SetTypeSimilarity(t TypeSimilarity) {
 	s.typeSimilarity = t
 }
 
 // mergeSemanticallySimilarTypes renames discovered types onto existing project
-// types when the similarity resolver finds a strong match. It only runs for
-// types the spelling resolver does not already cover, and is a no-op when no
-// TypeSimilarity is injected or there is nothing to compare against.
+// types when the classifier is confident they are the same concept. It only
+// runs for types the spelling resolver does not already cover, and is a no-op
+// when no TypeSimilarity is injected or there is nothing to compare against.
 func (s *Service) mergeSemanticallySimilarTypes(ctx context.Context, types []DiscoveredType, registered []string, current *DiscoveredSchemaSnapshot) []DiscoveredType {
 	if s.typeSimilarity == nil || len(types) == 0 {
 		return types
 	}
 
+	existing := buildExistingTypes(registered, current)
+	if len(existing) == 0 {
+		return types
+	}
+
+	resolver := typehygiene.NewResolver(registered...)
+	var toResolve, keep []DiscoveredType
+	for _, t := range types {
+		if _, ok := resolver.Resolve(t.TypeName); ok {
+			keep = append(keep, t) // spelling match — the reconcile resolver owns it
+		} else {
+			toResolve = append(toResolve, t)
+		}
+	}
+	if len(toResolve) == 0 {
+		return types
+	}
+
+	matches, err := s.typeSimilarity.Resolve(ctx, toResolve, existing)
+	if err != nil {
+		s.log.Warn("type similarity classification failed; keeping discovered names", logger.Error(err))
+		return types
+	}
+
+	out := make([]DiscoveredType, 0, len(types))
+	out = append(out, keep...)
+	for _, t := range toResolve {
+		if match, ok := matches[t.TypeName]; ok && match != "" {
+			t.TypeName = match
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// buildExistingTypes assembles the comparison set: registered names first, then
+// the current discovered pack's names plus their descriptions.
+func buildExistingTypes(registered []string, current *DiscoveredSchemaSnapshot) []ExistingType {
 	existing := make([]ExistingType, 0, len(registered))
 	seen := make(map[string]bool, len(registered))
 	for _, name := range registered {
@@ -60,130 +107,101 @@ func (s *Service) mergeSemanticallySimilarTypes(ctx context.Context, types []Dis
 			seen[name] = true
 		}
 	}
-	if len(existing) == 0 {
-		return types
-	}
-
-	resolver := typehygiene.NewResolver(registered...)
-	out := make([]DiscoveredType, 0, len(types))
-	for _, t := range types {
-		// Spelling matches belong to the reconcile resolver — leave them alone.
-		if _, ok := resolver.Resolve(t.TypeName); ok {
-			out = append(out, t)
-			continue
-		}
-		match, err := s.typeSimilarity.Resolve(ctx, t, existing)
-		if err != nil {
-			s.log.Warn("type similarity check failed; keeping discovered name",
-				slog.String("type", t.TypeName), logger.Error(err))
-			out = append(out, t)
-			continue
-		}
-		if match != "" {
-			t.TypeName = match
-		}
-		out = append(out, t)
-	}
-	return out
+	return existing
 }
 
-// ExistingType is one already-installed type offered for comparison.
-type ExistingType struct {
-	Name        string
-	Description string
-}
-
-// Embedder is the slice of the embedding service the semantic merge needs. All
-// texts are embedded with the document task so the vectors are comparable.
-type Embedder interface {
-	EmbedDocuments(ctx context.Context, documents []string) ([][]float32, error)
-}
-
-// embeddingTypeSimilarity merges types whose name+description embed near each
-// other in the document space.
-type embeddingTypeSimilarity struct {
-	embeds    Embedder
+// classifierTypeSimilarity judges type equivalence with a generative model: one
+// batched classification per discovery run, returning a calibrated confidence
+// the merge gate uses. It is the "same concept?" decision a pure embedding
+// cosine cannot make reliably ("Character" vs "Person" vs "Episode").
+type classifierTypeSimilarity struct {
+	complete  func(ctx context.Context, prompt string) (string, error)
 	threshold float32
 	log       *slog.Logger
 }
 
-// NewEmbeddingTypeSimilarity builds the semantic type merger. A nil embeds
-// yields a resolver that never matches (spelling-only converge).
-func NewEmbeddingTypeSimilarity(embeds Embedder, threshold float32, log *slog.Logger) *embeddingTypeSimilarity {
+// NewClassifierTypeSimilarity builds the semantic type classifier. A nil
+// complete yields a classifier that never matches (spelling-only converge).
+func NewClassifierTypeSimilarity(complete func(ctx context.Context, prompt string) (string, error), threshold float32, log *slog.Logger) *classifierTypeSimilarity {
 	if threshold <= 0 || threshold > 1 {
 		threshold = defaultTypeSimilarityThreshold
 	}
-	return &embeddingTypeSimilarity{embeds: embeds, threshold: threshold, log: log.With(logger.Scope("type-similarity"))}
+	return &classifierTypeSimilarity{complete: complete, threshold: threshold, log: log.With(logger.Scope("type-similarity"))}
 }
 
-// Resolve returns the existing type name most similar to the discovered type,
-// or "" when none clears the threshold. All texts are embedded in one batch so
-// they share the embedding space.
-func (m *embeddingTypeSimilarity) Resolve(ctx context.Context, discovered DiscoveredType, existing []ExistingType) (string, error) {
-	if m.embeds == nil || len(existing) == 0 {
-		return "", nil
+// Resolve classifies every discovered type against the existing types in one
+// call and returns the confident matches.
+func (m *classifierTypeSimilarity) Resolve(ctx context.Context, discovered []DiscoveredType, existing []ExistingType) (map[string]string, error) {
+	if m.complete == nil || len(discovered) == 0 || len(existing) == 0 {
+		return map[string]string{}, nil
 	}
 
-	texts := make([]string, 1+len(existing))
-	texts[0] = typeEmbeddingText(discovered.TypeName, discovered.Description)
-	for i, e := range existing {
-		texts[1+i] = typeEmbeddingText(e.Name, e.Description)
-	}
-
-	vecs, err := m.embeds.EmbedDocuments(ctx, texts)
+	response, err := m.complete(ctx, buildTypeClassificationPrompt(discovered, existing))
 	if err != nil {
-		return "", fmt.Errorf("embed types: %w", err)
-	}
-	if len(vecs) != len(texts) {
-		return "", fmt.Errorf("embed types: got %d vectors for %d texts", len(vecs), len(texts))
+		return nil, fmt.Errorf("classify types: %w", err)
 	}
 
-	query := vecs[0]
-	best := -1.0
-	bestIdx := -1
-	for i := 1; i < len(vecs); i++ {
-		if s := cosineSimilarity(query, vecs[i]); s > best {
-			best = s
-			bestIdx = i - 1
+	clean := extractJSON(response, "matches")
+	var result struct {
+		Matches []struct {
+			Type       string  `json:"type"`
+			SameAs     *string `json:"same_as"`
+			Confidence float32 `json:"confidence"`
+		} `json:"matches"`
+	}
+	if err := llmjson.Decode(clean, &result); err != nil {
+		return nil, fmt.Errorf("parse type classification: %w", err)
+	}
+
+	existingNames := make(map[string]bool, len(existing))
+	for _, e := range existing {
+		existingNames[e.Name] = true
+	}
+
+	out := map[string]string{}
+	for _, mrow := range result.Matches {
+		if mrow.SameAs == nil || *mrow.SameAs == "" || mrow.Confidence < m.threshold {
+			continue
+		}
+		if !existingNames[*mrow.SameAs] {
+			continue // model hallucinated an existing type name; ignore
+		}
+		out[mrow.Type] = *mrow.SameAs
+		if mrow.Type != *mrow.SameAs {
+			m.log.Debug("merged discovered type onto existing type by classification",
+				slog.String("discovered", mrow.Type),
+				slog.String("existing", *mrow.SameAs),
+				slog.Float64("confidence", float64(mrow.Confidence)))
 		}
 	}
-	if bestIdx >= 0 && best >= float64(m.threshold) {
-		m.log.Debug("merged discovered type onto existing type by similarity",
-			slog.String("discovered", discovered.TypeName),
-			slog.String("existing", existing[bestIdx].Name),
-			slog.Float64("similarity", best))
-		return existing[bestIdx].Name, nil
-	}
-	return "", nil
+	return out, nil
 }
 
-// typeEmbeddingText renders the text embedded for a type: its name plus, when
-// present, its description. The description is what carries the semantic signal
-// that a bare name ("Character" vs "Person") does not.
-func typeEmbeddingText(name, description string) string {
-	if description == "" {
-		return name
-	}
-	return name + ": " + description
-}
+// buildTypeClassificationPrompt renders the deterministic classification
+// prompt: discovered types (with descriptions) against existing types, both
+// sorted by name so the same inputs produce the same prompt.
+func buildTypeClassificationPrompt(discovered []DiscoveredType, existing []ExistingType) string {
+	ds := append([]DiscoveredType(nil), discovered...)
+	sort.Slice(ds, func(i, j int) bool { return ds[i].TypeName < ds[j].TypeName })
+	es := append([]ExistingType(nil), existing...)
+	sort.Slice(es, func(i, j int) bool { return es[i].Name < es[j].Name })
 
-// cosineSimilarity returns the cosine similarity of two equal-length vectors.
-func cosineSimilarity(a, b []float32) float64 {
-	if len(a) == 0 || len(b) == 0 {
-		return 0
+	var b strings.Builder
+	b.WriteString(`You are classifying whether discovered knowledge-graph types are the same concept as existing types. A "same concept" means the two types describe the same kind of entity (e.g. "Character" and "Person" for a human in a story; "Company" and "Organization"). They are NOT the same when they describe different kinds (e.g. a person vs a location, a show vs an episode).
+
+Discovered types:
+`)
+	for _, t := range ds {
+		fmt.Fprintf(&b, "- %s: %s\n", t.TypeName, t.Description)
 	}
-	var dot, na, nb float64
-	n := len(a)
-	if len(b) < n {
-		n = len(b)
+	b.WriteString("\nExisting types:\n")
+	for _, e := range es {
+		fmt.Fprintf(&b, "- %s: %s\n", e.Name, e.Description)
 	}
-	for i := 0; i < n; i++ {
-		dot += float64(a[i]) * float64(b[i])
-		na += float64(a[i]) * float64(a[i])
-		nb += float64(b[i]) * float64(b[i])
-	}
-	if na == 0 || nb == 0 {
-		return 0
-	}
-	return dot / (math.Sqrt(na) * math.Sqrt(nb))
+	b.WriteString(`
+For each discovered type, decide whether it is the same concept as an existing type. If none matches, same_as must be null. Return ONLY JSON:
+{"matches": [{"type": "<discovered name>", "same_as": "<existing name or null>", "confidence": 0.0}]}
+
+confidence is your confidence in the decision, from 0 to 1.`)
+	return b.String()
 }
