@@ -444,6 +444,8 @@ func (s *Service) GetJobStatus(ctx context.Context, jobID uuid.UUID) (*JobStatus
 		DiscoveredRelationships: job.DiscoveredRelationships,
 		SchemaID:                job.SchemaID,
 		TraceID:                 job.TraceID,
+		AutoApplied:             job.AutoApplied,
+		AppliedReport:           job.AppliedReport,
 	}, nil
 }
 
@@ -467,6 +469,8 @@ func (s *Service) ListJobsForProject(ctx context.Context, projectID uuid.UUID) (
 			DiscoveredTypes:         job.DiscoveredTypes,
 			DiscoveredRelationships: job.DiscoveredRelationships,
 			SchemaID:                job.SchemaID,
+			AutoApplied:             job.AutoApplied,
+			AppliedReport:           job.AppliedReport,
 			Trigger:                 cfg.Trigger,
 			DocumentCount:           cfg.DocumentCount,
 			TotalDocuments:          cfg.TotalDocuments,
@@ -1174,6 +1178,11 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		if err != nil {
 			s.log.Warn("relationship discovery failed, continuing without relationships", logger.Error(err))
 			relationships = []DiscoveredRelationship{}
+		} else {
+			// Symmetric with refineAndMergeTypes: a relationship the model is not
+			// confident about is not grounded enough to auto-apply, so it is left
+			// out of the refined output rather than installed as fact.
+			relationships = filterRelationshipsByConfidence(relationships, config.MinConfidence)
 		}
 	}
 
@@ -2573,6 +2582,20 @@ func mergeDiscoveredTypes(types []DiscoveredType) []DiscoveredType {
 	}
 	sort.Slice(merged, func(i, j int) bool { return merged[i].TypeName < merged[j].TypeName })
 	return merged
+}
+
+// filterRelationshipsByConfidence drops relationships whose confidence is below
+// the discovery threshold, mirroring refineAndMergeTypes for types. A
+// relationship the model is not confident about is not grounded enough to treat
+// as fact, so it is left out of the refined pack rather than auto-applied.
+func filterRelationshipsByConfidence(relationships []DiscoveredRelationship, minConfidence float32) []DiscoveredRelationship {
+	out := make([]DiscoveredRelationship, 0, len(relationships))
+	for _, r := range relationships {
+		if r.Confidence >= minConfidence {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // dedupeDiscoveredRelationships keeps one relationship per source/relation/
