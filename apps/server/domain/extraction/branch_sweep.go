@@ -24,17 +24,22 @@ type BranchSweepConfig struct {
 }
 
 // DefaultBranchSweepConfig returns the default sweep configuration, overridable
-// with BRANCH_SWEEP_INTERVAL_MINUTES / BRANCH_SWEEP_RETENTION_DAYS.
+// with BRANCH_SWEEP_INTERVAL_MINUTES / BRANCH_SWEEP_RETENTION_DAYS. A non-positive
+// or absurdly large value falls back to the default, so a bad env var can never
+// produce a zero (ticker panic) or negative (overflow) interval. Retention 0 is
+// a valid "disabled" value.
 func DefaultBranchSweepConfig() *BranchSweepConfig {
 	return &BranchSweepConfig{
-		Interval:  time.Duration(envInt("BRANCH_SWEEP_INTERVAL_MINUTES", 30)) * time.Minute,
-		Retention: time.Duration(envInt("BRANCH_SWEEP_RETENTION_DAYS", 7)) * 24 * time.Hour,
+		Interval:  time.Duration(envInt("BRANCH_SWEEP_INTERVAL_MINUTES", 30, 1, 100000)) * time.Minute,
+		Retention: time.Duration(envInt("BRANCH_SWEEP_RETENTION_DAYS", 7, 0, 10000)) * 24 * time.Hour,
 	}
 }
 
-func envInt(name string, def int) int {
+// envInt reads a non-negative integer env var, falling back to def when unset,
+// unparsable, or outside [min, max].
+func envInt(name string, def, min, max int) int {
 	if v := os.Getenv(name); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+		if n, err := strconv.Atoi(v); err == nil && n >= min && n <= max {
 			return n
 		}
 	}
@@ -79,19 +84,20 @@ func NewBranchSweepWorker(db bun.IDB, log *slog.Logger, cfg *BranchSweepConfig) 
 // Start begins the sweep loop. It is idempotent.
 func (w *BranchSweepWorker) Start(ctx context.Context) error {
 	w.mu.Lock()
+	defer w.mu.Unlock()
 	if w.running {
-		w.mu.Unlock()
 		return nil
 	}
 	w.running = true
-	w.stopCh = make(chan struct{})
-	w.stoppedCh = make(chan struct{})
-	w.mu.Unlock()
+	stopCh := make(chan struct{})
+	stoppedCh := make(chan struct{})
+	w.stopCh = stopCh
+	w.stoppedCh = stoppedCh
 
 	w.log.Info("branch sweep worker starting",
 		slog.Duration("interval", w.cfg.Interval),
 		slog.Duration("retention", w.cfg.Retention))
-	go w.run(ctx)
+	go w.run(ctx, stopCh, stoppedCh)
 	return nil
 }
 
@@ -103,27 +109,37 @@ func (w *BranchSweepWorker) Stop(ctx context.Context) error {
 		return nil
 	}
 	w.running = false
-	close(w.stopCh)
+	stopCh := w.stopCh
+	stoppedCh := w.stoppedCh
+	close(stopCh)
 	w.mu.Unlock()
 
 	select {
-	case <-w.stoppedCh:
+	case <-stoppedCh:
 	case <-ctx.Done():
 	}
 	return nil
 }
 
-func (w *BranchSweepWorker) run(ctx context.Context) {
-	defer close(w.stoppedCh)
+// run is the sweep loop. stopCh/stoppedCh are passed in as locals so the loop
+// never reads the struct fields (which Start reassigns) without the mutex.
+func (w *BranchSweepWorker) run(ctx context.Context, stopCh, stoppedCh chan struct{}) {
+	defer close(stoppedCh)
 	// One immediate pass so a restart does not wait a full interval before the
 	// first reap.
 	w.sweepOnce(ctx)
+
+	// A non-positive interval means "sweep once then stop" — never a ticker,
+	// which panics for d <= 0.
+	if w.cfg.Interval <= 0 {
+		return
+	}
 
 	ticker := time.NewTicker(w.cfg.Interval)
 	defer ticker.Stop()
 	for {
 		select {
-		case <-w.stopCh:
+		case <-stopCh:
 			return
 		case <-ctx.Done():
 			return
