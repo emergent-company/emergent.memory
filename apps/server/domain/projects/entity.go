@@ -176,6 +176,13 @@ type PendingExtractionMergeStats struct {
 	ObjectCount          int `json:"objectCount"`
 	RelationshipCount    int `json:"relationshipCount"`
 	MainGraphObjectCount int `json:"mainGraphObjectCount"`
+	// LeftForReviewCount is how many objects the most recent auto-merge left on
+	// the project's unmerged extraction branches (the merge journal's
+	// left_for_review_count, summed over branches). A non-zero value means
+	// auto-merge ran but deliberately parked work for a human; surfacing it here
+	// makes a stalled unattended ingest visible without reading merge logs
+	// (#1074).
+	LeftForReviewCount int `json:"leftForReviewCount"`
 	// Stranded is true when extraction produced objects but the main graph is
 	// empty, so every default read reports nothing.
 	Stranded bool `json:"stranded"`

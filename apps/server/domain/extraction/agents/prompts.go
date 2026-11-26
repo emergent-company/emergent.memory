@@ -256,9 +256,14 @@ type RelationshipSchema struct {
 
 // ExistingEntityContext provides context about an existing entity for identity resolution.
 type ExistingEntityContext struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name"`
-	TypeName    string  `json:"type_name"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	TypeName string `json:"type_name"`
+	// Key is the object's stored dedup identity. The prompt renders names and
+	// IDs, but the extraction worker uses Key to persist a re-mention under the
+	// existing identity even when the model repeats a differently-spelled name
+	// (#1074).
+	Key         string  `json:"key,omitempty"`
 	Description string  `json:"description,omitempty"`
 	Similarity  float64 `json:"similarity,omitempty"`
 }
@@ -502,6 +507,7 @@ const contextAwareExtractionRules = `
 CONTEXT-AWARE EXTRACTION RULES:
 - Below is a list of existing entities already in the knowledge graph
 - When you find an entity that MATCHES an existing one, use the SAME NAME and set action="enrich"
+- Treat spelling variants, transliterations and abbreviations as the same entity when they name the same real-world object: reuse the existing name and provide its existing_entity_id
 - When you find NEW information about an existing entity, include it in the description
 - Only extract entities that are mentioned or referenced in THIS document
 - Do NOT simply copy existing entities - only include them if the document mentions them
