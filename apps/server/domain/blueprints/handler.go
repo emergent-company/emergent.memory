@@ -2,6 +2,7 @@ package blueprints
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/labstack/echo/v4"
@@ -427,6 +428,114 @@ func (h *Handler) ApplyBlueprint(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, result)
+}
+
+// InstallCatalog handles POST /api/blueprints/catalog/install.
+// @Summary      Install catalog types into the project
+// @Description  Projects the bundled schema.org taxonomy catalog onto the caller's project: materializes only the requested types plus relationships whose BOTH endpoints are installed. Re-running with more types reconciles and activates previously deferred relationships.
+// @Tags         blueprints
+// @Accept       json
+// @Produce      json
+// @Param        body body CatalogInstallRequest true "Types to install"
+// @Success      200 {object} CatalogInstallResult "Install result"
+// @Failure      400 {object} apperror.Error "Bad request / project context required"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/blueprints/catalog/install [post]
+// @Security     bearerAuth
+func (h *Handler) InstallCatalog(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	projectID := user.ProjectID
+	if projectID == "" {
+		return apperror.NewBadRequest("project context required (X-Project-ID header or API token)")
+	}
+
+	var req CatalogInstallRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+
+	result, err := h.svc.InstallCatalog(c.Request().Context(), projectID, user.ID, req.Types, CatalogPackOptions{
+		Name:        req.Name,
+		Version:     req.Version,
+		Description: req.Description,
+		Author:      req.Author,
+	}, req.Replace)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// ResolveCatalog handles GET /api/blueprints/catalog/resolve.
+// @Summary      Resolve catalog types for a query
+// @Description  Ranks the built-in schema.org catalog types for a free-text query using lexical signals (name, label, alias, category, parent, description). Read-only; use the returned names with catalog/install.
+// @Tags         blueprints
+// @Produce      json
+// @Param        q query string true "Free-text concept"
+// @Param        limit query int false "Maximum matches (default 10, max 50)"
+// @Param        mode query string false "lexical | semantic | hybrid (default hybrid)"
+// @Success      200 {array} CatalogTypeMatch "Ranked matches"
+// @Failure      400 {object} apperror.Error "Missing query"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/blueprints/catalog/resolve [get]
+// @Security     bearerAuth
+func (h *Handler) ResolveCatalog(c echo.Context) error {
+	q := strings.TrimSpace(c.QueryParam("q"))
+	if q == "" {
+		return apperror.NewBadRequest("q is required")
+	}
+	limit := 0
+	if raw := strings.TrimSpace(c.QueryParam("limit")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			limit = n
+		}
+	}
+
+	var (
+		matches []CatalogTypeMatch
+		err     error
+	)
+	switch strings.ToLower(strings.TrimSpace(c.QueryParam("mode"))) {
+	case "lexical":
+		matches, err = h.svc.ResolveCatalogTypes(q, limit)
+	case "semantic":
+		matches, err = h.svc.ResolveCatalogSemantic(c.Request().Context(), q, limit)
+	default: // "hybrid" and unknown
+		matches, err = h.svc.ResolveCatalogHybrid(c.Request().Context(), q, limit)
+	}
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, matches)
+}
+
+// GetCatalogType handles GET /api/blueprints/catalog/type.
+// @Summary      Get one catalog type
+// @Description  Returns a catalog type with its ancestors, direct subtypes and the candidate relationships that touch it. Read-only taxonomy browsing.
+// @Tags         blueprints
+// @Produce      json
+// @Param        name query string true "Catalog type name (e.g. Movie)"
+// @Success      200 {object} CatalogTypeDetail "Type detail"
+// @Failure      400 {object} apperror.Error "Missing name"
+// @Failure      404 {object} apperror.Error "Unknown catalog type"
+// @Router       /api/blueprints/catalog/type [get]
+// @Security     bearerAuth
+func (h *Handler) GetCatalogType(c echo.Context) error {
+	name := strings.TrimSpace(c.QueryParam("name"))
+	if name == "" {
+		return apperror.NewBadRequest("name is required")
+	}
+	detail, err := h.svc.CatalogDetail(name)
+	if err != nil {
+		return err
+	}
+	if detail == nil {
+		return apperror.NewNotFound("catalog type", name)
+	}
+	return c.JSON(http.StatusOK, detail)
 }
 
 // PreviewApplyBlueprint handles POST /api/blueprints/:id/apply/preview

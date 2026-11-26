@@ -71,3 +71,77 @@ objectTypeSchemas:
 	require.Len(t, types, 1)
 	require.Equal(t, "Widget", types[0].Name)
 }
+
+// TestListBuiltinObjectTypesSchemaOrg pins the schema.org base taxonomy: it is
+// bundled, carries the browse category and Tabler icons the UI renders, and its
+// shared types win over a domain pack's same-named type (dedupe, first pack in
+// lexical order wins).
+func TestListBuiltinObjectTypesSchemaOrg(t *testing.T) {
+	types, err := ListBuiltinObjectTypes()
+	require.NoError(t, err)
+
+	byName := map[string]ObjectTypeDef{}
+	seen := map[string]bool{}
+	for _, d := range types {
+		require.False(t, seen[d.Name], "duplicate taxonomy type %q leaked through dedupe", d.Name)
+		seen[d.Name] = true
+		byName[d.Name] = d
+	}
+
+	for _, want := range []string{
+		"Thing", "Person", "Organization", "Place", "Event", "CreativeWork",
+		"Article", "Book", "Movie", "TVSeries", "VideoObject", "ImageObject",
+		"WebPage", "WebSite",
+		"Product", "Offer", "Brand", "Review", "AggregateRating", "Recipe",
+		"LocalBusiness", "SoftwareApplication", "SoftwareSourceCode",
+		"JobPosting", "Course", "HowTo", "MedicalEntity", "Drug",
+	} {
+		require.Contains(t, byName, want, "schemaorg taxonomy must include %s", want)
+	}
+
+	movie := byName["Movie"]
+	require.Equal(t, "media", movie.Category, "Movie must carry its browse category")
+	require.Equal(t, "CreativeWork", movie.Parent, "Movie must carry its schema.org supertype")
+	require.Equal(t, "tabler--movie", movie.UI["icon"], "Movie must use the Tabler icon family")
+	require.Contains(t, movie.Labels, "film", "Movie must carry resolution aliases")
+	require.NotEmpty(t, movie.Description, "Movie must be well-described for alignment")
+
+	product := byName["Product"]
+	require.Equal(t, "commerce", product.Category)
+	require.Equal(t, "tabler--package", product.UI["icon"])
+
+	// Person is defined by both schemaorg and tv-movies; schemaorg sorts first
+	// and must win, carrying the base category rather than the domain pack's.
+	require.Equal(t, "identity", byName["Person"].Category)
+}
+
+// TestListBuiltinObjectTypesDedupesByName pins that two taxonomy packs defining
+// the same type keep the lexically first pack's definition.
+func TestListBuiltinObjectTypesDedupesByName(t *testing.T) {
+	fsys := fstest.MapFS{
+		"builtin_packs/aaa/schemas/aaa.yaml": &fstest.MapFile{Data: []byte(`
+name: aaa
+version: 1.0.0
+taxonomy: true
+objectTypeSchemas:
+  - name: Person
+    description: canonical person
+    category: identity
+`)},
+		"builtin_packs/zzz/schemas/zzz.yaml": &fstest.MapFile{Data: []byte(`
+name: zzz
+version: 1.0.0
+taxonomy: true
+objectTypeSchemas:
+  - name: Person
+    description: domain person
+    category: domain
+`)},
+	}
+
+	types, err := listBuiltinObjectTypes(fsys, "builtin_packs")
+	require.NoError(t, err)
+	require.Len(t, types, 1)
+	require.Equal(t, "canonical person", types[0].Description)
+	require.Equal(t, "identity", types[0].Category)
+}

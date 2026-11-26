@@ -163,6 +163,31 @@ struct ObjectTypeAppearanceTests {
         "user", "users", "wrench", "x",
     ]
 
+    /// The Tabler names the gateway's `supportedTablerIconClasses` compiles.
+    /// Keep in sync; both device tables must resolve every one.
+    static let webTablerIcons = [
+        "box", "user", "building", "map-pin", "calendar-event", "calendar",
+        "file-text", "article", "book", "movie", "device-tv", "video", "photo",
+        "browser", "world-www", "globe", "package", "tag", "trademark",
+        "message-star", "star-half", "chef-hat", "building-store", "app-window",
+        "code", "briefcase", "id-badge", "school", "list-check", "category",
+        "stethoscope", "pill", "map",
+    ]
+
+    @Test func everyTablerIconHasASymbol() {
+        let missing = Self.webTablerIcons.filter {
+            ObjectTypeAppearance.lucideSymbols[$0] == nil && ObjectTypeAppearance.tablerSymbols[$0] == nil
+        }
+        #expect(missing.isEmpty, "unmapped tabler icons: \(missing)")
+    }
+
+    @Test func tablerIconsResolveWithPrefix() {
+        #expect(ObjectTypeAppearance.symbol(forLucide: "tabler--movie") == "film")
+        #expect(ObjectTypeAppearance.symbol(forLucide: "tabler:building") == "building.2")
+        #expect(ObjectTypeAppearance.symbol(forLucide: "movie") == "film")
+        #expect(ObjectTypeAppearance.symbol(forLucide: "tabler--not-real") == ObjectTypeAppearance.fallbackSymbol)
+    }
+
     @Test func everyWebIconHasASymbol() {
         let missing = Self.webIcons.filter { ObjectTypeAppearance.lucideSymbols[$0] == nil }
         #expect(missing.isEmpty, "unmapped web icons: \(missing)")

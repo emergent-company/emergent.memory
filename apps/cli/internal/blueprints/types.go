@@ -194,11 +194,16 @@ func (p *PackFile) normalizeSchemaAliases() {
 
 // ObjectTypeDef represents a single object type definition inside a pack file.
 type ObjectTypeDef struct {
-	Name        string         `json:"name"        yaml:"name"`
-	Label       string         `json:"label"       yaml:"label"`
-	Labels      []string       `json:"labels,omitempty" yaml:"labels,omitempty"`
-	Description string         `json:"description" yaml:"description"`
-	Properties  map[string]any `json:"properties"  yaml:"properties"`
+	Name        string   `json:"name"        yaml:"name"`
+	Label       string   `json:"label"       yaml:"label"`
+	Labels      []string `json:"labels,omitempty" yaml:"labels,omitempty"`
+	Description string   `json:"description" yaml:"description"`
+	// Category and Parent carry the taxonomy browse lens and schema.org
+	// subClassOf supertype so they round-trip through validate/dump/apply
+	// instead of being dropped by the CLI.
+	Category   string         `json:"category,omitempty" yaml:"category,omitempty"`
+	Parent     string         `json:"parent,omitempty" yaml:"parent,omitempty"`
+	Properties map[string]any `json:"properties"  yaml:"properties"`
 	// Required lists the property names the type marks required. Preserved
 	// through install/update so a pack authored with a required list reaches
 	// the schema registry unchanged.

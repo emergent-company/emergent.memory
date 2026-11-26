@@ -19,6 +19,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/crypto"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -72,6 +73,10 @@ type Service struct {
 	// persist a schedule the trigger service refuses (#354).
 	minCronIntervalMinutes int
 
+	// catalogEmbedder powers semantic catalog type resolution. Nil means
+	// lexical-only; wired by the fx module when the embeddings service is on.
+	catalogEmbedder TextEmbedder
+
 	log *slog.Logger
 }
 
@@ -94,6 +99,10 @@ type ServiceParams struct {
 	// permission).
 	Superadmin *superadmin.Repository `optional:"true"`
 
+	// Embeddings powers semantic catalog type resolution (optional; nil means
+	// lexical-only).
+	Embeddings *embeddings.Service `optional:"true"`
+
 	// Cfg provides the GitHub PAT encryption key (with fallback to the LLM
 	// provider key) and the update-check scheduler schedules.
 	Cfg *config.Config
@@ -102,15 +111,16 @@ type ServiceParams struct {
 // NewService creates a new blueprints service
 func NewService(p ServiceParams) *Service {
 	s := &Service{
-		repo:        p.Repo,
-		schemasSvc:  p.SchemasSvc,
-		schemasRepo: p.SchemasRepo,
-		skillsRepo:  p.SkillsRepo,
-		graphSvc:    p.GraphSvc,
-		agentRepo:   p.AgentRepo,
-		superadmin:  p.Superadmin,
-		fetcher:     newGitHubFetcher(),
-		log:         p.Log.With(logger.Scope("blueprints.svc")),
+		repo:            p.Repo,
+		schemasSvc:      p.SchemasSvc,
+		schemasRepo:     p.SchemasRepo,
+		skillsRepo:      p.SkillsRepo,
+		graphSvc:        p.GraphSvc,
+		agentRepo:       p.AgentRepo,
+		superadmin:      p.Superadmin,
+		catalogEmbedder: p.Embeddings,
+		fetcher:         newGitHubFetcher(),
+		log:             p.Log.With(logger.Scope("blueprints.svc")),
 	}
 	s.initEncryptor(p.Cfg)
 	if p.Cfg != nil && p.Cfg.AgentSafeguards.MinCronIntervalMinutes > 0 {

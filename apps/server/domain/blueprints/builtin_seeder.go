@@ -43,31 +43,14 @@ func ListBuiltinObjectTypes() ([]ObjectTypeDef, error) {
 
 // listBuiltinObjectTypes is the fs.FS-injectable core of ListBuiltinObjectTypes,
 // so per-pack error isolation can be tested without a malformed embedded pack.
+// It reads the same taxonomy catalog as ListBuiltinTaxonomy and returns just the
+// deduplicated object types.
 func listBuiltinObjectTypes(fsys fs.FS, root string) ([]ObjectTypeDef, error) {
-	entries, err := fs.ReadDir(fsys, root)
+	cat, err := listBuiltinTaxonomy(fsys, root)
 	if err != nil {
 		return nil, err
 	}
-	var out []ObjectTypeDef
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		desc, err := loadBlueprintDir(fsys, path.Join(root, name), name)
-		if err != nil {
-			slog.Warn("skipping unloadable builtin blueprint pack",
-				slog.String("pack", name), logger.Error(err))
-			continue
-		}
-		for _, p := range desc.Packs {
-			if !p.Taxonomy {
-				continue
-			}
-			out = append(out, p.ObjectTypes...)
-		}
-	}
-	return out, nil
+	return cat.Types, nil
 }
 
 // BuiltinSeeder seeds the platform's built-in blueprints at server startup: each

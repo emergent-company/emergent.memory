@@ -6,6 +6,7 @@
     "@tailwindcss/cli": "4.2.2",
     "@iconify/tailwind4": "1.2.3",
     "@iconify-json/lucide": "1.2.101",
+    "@iconify-json/tabler": "1.2.47",
     "daisyui": "5.5.19"
   }
 }

@@ -53,10 +53,11 @@
  * .dock-count, .memory-rail-badge, .memory-rail-count) are deliberate circles
  * and are exempt like `rounded-full`. */
 
-/* Iconify — Lucide icons as utility classes (used by go-daisy IconSpan and
-   the client JS). */
+/* Iconify — Lucide + Tabler icons as utility classes (used by go-daisy
+   IconSpan, the client JS, and schema-declared type icons). Tabler is the
+   breadth family for schema.org-derived taxonomy types. */
 @plugin "@iconify/tailwind4" {
-  prefixes: lucide;
+  prefixes: lucide, tabler;
 }
 
 /* ---------------------------------------------------------------------------

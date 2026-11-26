@@ -3114,7 +3114,7 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 		"blueprint-updates-status", "blueprint-import-preview", "blueprint-model-overrides-get",
 		"blueprint-delete", "blueprint-deprecate", "blueprint-import",
 		"blueprint-updates-check", "blueprint-updates-apply", "blueprint-model-overrides-put",
-		"blueprint-github-credentials-put":
+		"blueprint-github-credentials-put", "blueprint-catalog-install", "blueprint-catalog-resolve", "blueprint-catalog-get":
 		return s.delegateBlueprintTool(ctx, projectID, toolName, args)
 
 	default:
@@ -8020,6 +8020,12 @@ func (s *Service) delegateBlueprintTool(ctx context.Context, projectID, toolName
 		return s.blueprintToolHandler.ExecuteBlueprintModelOverridesPut(ctx, projectID, args)
 	case "blueprint-github-credentials-put":
 		return s.blueprintToolHandler.ExecuteBlueprintGithubCredentialsPut(ctx, projectID, args)
+	case "blueprint-catalog-install":
+		return s.blueprintToolHandler.ExecuteBlueprintCatalogInstall(ctx, projectID, args)
+	case "blueprint-catalog-resolve":
+		return s.blueprintToolHandler.ExecuteBlueprintCatalogResolve(ctx, projectID, args)
+	case "blueprint-catalog-get":
+		return s.blueprintToolHandler.ExecuteBlueprintCatalogGet(ctx, projectID, args)
 	default:
 		return nil, toolArgErrorf("unknown blueprint tool: %s", toolName)
 	}
