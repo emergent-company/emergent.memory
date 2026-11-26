@@ -116,3 +116,35 @@ func TestMergeSemanticallySimilarTypesNilResolver(t *testing.T) {
 		t.Fatalf("nil resolver must be a no-op, got %q", out[0].TypeName)
 	}
 }
+
+func TestMergeSemanticallySimilarTypesAdoptsTaxonomySchema(t *testing.T) {
+	svc := &Service{
+		typeSimilarity: &fakeTypeSimilarity{mapping: map[string]string{"Person": "Character"}},
+		taxonomy: []ExistingType{{
+			Name:        "Character",
+			Description: "A fictional character in a TV show",
+			Tags:        []string{"character", "persona"},
+			Properties:  map[string]any{"name": map[string]any{"type": "string"}},
+			Required:    []string{"name"},
+		}},
+		log: quietLogger(),
+	}
+
+	out := svc.mergeSemanticallySimilarTypes(context.Background(),
+		[]DiscoveredType{{TypeName: "Person", Description: "a person", Properties: map[string]any{"foo": "bar"}}},
+		nil, nil)
+
+	got := out[0]
+	if got.TypeName != "Character" {
+		t.Fatalf("renamed to %q, want Character", got.TypeName)
+	}
+	if got.Description != "A fictional character in a TV show" {
+		t.Fatalf("description not adopted: %q", got.Description)
+	}
+	if _, ok := got.Properties["name"]; !ok {
+		t.Fatalf("properties not adopted: %v", got.Properties)
+	}
+	if len(got.RequiredProperties) != 1 || got.RequiredProperties[0] != "name" {
+		t.Fatalf("required not adopted: %v", got.RequiredProperties)
+	}
+}
