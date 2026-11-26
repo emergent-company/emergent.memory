@@ -1060,6 +1060,13 @@ func (w *ObjectExtractionWorker) supersedeStaleExtractionOutput(ctx context.Cont
 	if job.DocumentID == nil {
 		return
 	}
+	// Additive re-extraction (the schema-change backfill path) must never
+	// supersede: its job is to find new entities of newly-installed types, not
+	// to replace what a previous run produced. Superseding here is what turns
+	// ordinary LLM variance into recall wobble.
+	if additive, ok := job.SourceMetadata["additive"].(bool); ok && additive {
+		return
+	}
 	// Only a complete run may supersede: a job that failed to persist some
 	// entities, or produced nothing at all, has not replaced the document's
 	// previous output. Deleting the old rows in that state would remove content
