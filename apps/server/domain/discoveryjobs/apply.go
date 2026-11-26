@@ -48,6 +48,12 @@ func gateApplyTypes(pol pipeline.Policy, types []DiscoveredType) (accepted []str
 			decisions = append(decisions, appliedTypeDecision{Type: t.TypeName, Reason: "invalid type name"})
 		case t.Confidence < pol.Discovery.MinConfidence:
 			decisions = append(decisions, appliedTypeDecision{Type: t.TypeName, Reason: "below min_confidence"})
+		case t.Frequency < 1:
+			// A type the model named but for which it produced no example
+			// instance is not grounded in the documents: it is a hallucination
+			// the confidence number alone would not catch, so it is declined
+			// rather than installed as fact.
+			decisions = append(decisions, appliedTypeDecision{Type: t.TypeName, Reason: "ungrounded (no example instances)"})
 		default:
 			accepted = append(accepted, t.TypeName)
 			decisions = append(decisions, appliedTypeDecision{Type: t.TypeName, Applied: true})
