@@ -81,3 +81,27 @@ func TestResolveExtractionIdentityUnknownIDFallsBack(t *testing.T) {
 		t.Errorf("key/name = %q/%q, want the extracted name", key, name)
 	}
 }
+
+// TestResolveExtractionIdentityRequiresExactType covers case-differing type
+// names: schema type names are identifiers ("Person" and "person" are different
+// types) and the merge's identity key compares them exactly, so a case-only
+// match must fall back instead of persisting under a type the schema does not
+// have (#1123).
+func TestResolveExtractionIdentityRequiresExactType(t *testing.T) {
+	index := indexExistingEntities([]agents.ExistingEntityContext{{
+		ID:       "canonical-1",
+		Name:     "Katarzyna Nowak",
+		TypeName: "Person",
+		Key:      "katarzyna-nowak",
+	}})
+
+	key, name := resolveExtractionIdentity(agents.InternalEntity{
+		Name:             "Katarzyna Nowack",
+		Type:             "person",
+		ExistingEntityID: "canonical-1",
+	}, index)
+
+	if key != "Katarzyna Nowack" || name != "Katarzyna Nowack" {
+		t.Errorf("key/name = %q/%q, want the extracted name on a case-differing type", key, name)
+	}
+}
