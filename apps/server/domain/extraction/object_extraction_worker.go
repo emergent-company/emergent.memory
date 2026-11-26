@@ -846,7 +846,9 @@ func accumulateBatchResults(total, batch *ObjectExtractionResults) {
 	}
 }
 
-// autoMergeEnabled reports whether the project has auto-merge enabled.
+// autoMergeEnabled reports whether the project has auto-merge enabled: the
+// legacy per-project toggle, or a knowledge-pipeline running in auto mode (which
+// implies auto-merge under its configured merge policy).
 func (w *ObjectExtractionWorker) autoMergeEnabled(ctx context.Context, projectID string) bool {
 	if w.projectsRepo == nil {
 		return false
@@ -856,7 +858,17 @@ func (w *ObjectExtractionWorker) autoMergeEnabled(ctx context.Context, projectID
 		w.log.Warn("could not read project auto-merge setting", logger.Error(err))
 		return false
 	}
-	return project != nil && project.AutoMergeExtractionBranches
+	if project == nil {
+		return false
+	}
+	if project.AutoMergeExtractionBranches {
+		return true
+	}
+	pol, err := pipeline.Resolve(project.PipelineMode, project.PipelinePolicy)
+	if err != nil {
+		return false
+	}
+	return pol.Mode == pipeline.ModeAuto
 }
 
 // autoMergePolicy resolves the branch-merge policy for extraction branches from
@@ -889,6 +901,33 @@ func resolveAutoMergePolicy(policy string) string {
 	}
 }
 
+// resolveAutoMergeThreshold returns the pipeline's similarity cutoff for the
+// auto-merge, or 0 when the policy leaves it unset (0 = the graph preset's
+// default). It is a pure function so the mapping is testable without a database.
+func resolveAutoMergeThreshold(threshold float32) float32 {
+	if threshold > 0 && threshold <= 1 {
+		return threshold
+	}
+	return 0
+}
+
+// autoMergeSimilarityThreshold resolves the project's pipeline similarity
+// cutoff for the auto-merge. 0 means "use the graph preset default".
+func (w *ObjectExtractionWorker) autoMergeSimilarityThreshold(ctx context.Context, projectID uuid.UUID) float32 {
+	if w.projectsRepo == nil {
+		return 0
+	}
+	project, err := w.projectsRepo.GetByID(ctx, projectID.String(), false)
+	if err != nil || project == nil {
+		return 0
+	}
+	pol, err := pipeline.Resolve(project.PipelineMode, project.PipelinePolicy)
+	if err != nil {
+		return 0
+	}
+	return resolveAutoMergeThreshold(pol.Merge.SimilarityThreshold)
+}
+
 // autoMergeExtractionBranch waits for the staging branch to be fully embedded,
 // then performs a partial merge into the main graph: clean additions and
 // fast-forwards are applied, while conflicting/similar objects are left on the
@@ -910,10 +949,11 @@ func (w *ObjectExtractionWorker) autoMergeExtractionBranch(ctx context.Context, 
 	}
 
 	req := &graph.BranchMergeRequest{
-		SourceBranchID:    branchID,
-		Execute:           true,
-		Policy:            w.autoMergePolicy(ctx, projectID),
-		WaitForEmbeddings: true,
+		SourceBranchID:      branchID,
+		Execute:             true,
+		Policy:              w.autoMergePolicy(ctx, projectID),
+		WaitForEmbeddings:   true,
+		SimilarityThreshold: w.autoMergeSimilarityThreshold(ctx, projectID),
 	}
 	result, err := w.graphService.MergeBranch(ctx, projectID, nil, req)
 	if err != nil {
