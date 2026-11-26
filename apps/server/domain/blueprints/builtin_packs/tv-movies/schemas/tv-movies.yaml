@@ -1,5 +1,6 @@
 name: tv-movies
 version: 1.0.0
+taxonomy: true
 description: >
   Canonical entity taxonomy for television and film: the common entity kinds a
   transcript, review or production note describes. Auto-discovery aligns proposed

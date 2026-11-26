@@ -62,7 +62,20 @@ func (s *Service) mergeSemanticallySimilarTypes(ctx context.Context, types []Dis
 
 	existing := buildExistingTypes(registered, current)
 	candidates := append([]ExistingType(nil), existing...)
-	candidates = append(candidates, s.taxonomy...)
+	seen := make(map[string]bool, len(existing))
+	for _, e := range existing {
+		seen[e.Name] = true
+	}
+	// A taxonomy type that is also already installed must not be offered twice;
+	// the richer taxonomy entry (description/tags) still wins schema adoption
+	// through taxonomyByName below.
+	for _, tx := range s.taxonomy {
+		if seen[tx.Name] {
+			continue
+		}
+		seen[tx.Name] = true
+		candidates = append(candidates, tx)
+	}
 	if len(candidates) == 0 {
 		return types
 	}

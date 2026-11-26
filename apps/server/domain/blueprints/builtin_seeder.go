@@ -25,12 +25,15 @@ import (
 //go:embed builtin_packs
 var builtinPacksFS embed.FS
 
-// ListBuiltinObjectTypes returns the object types defined by every bundled
-// built-in blueprint pack — the platform's common-entity taxonomy — as manifest
+// ListBuiltinObjectTypes returns the object types defined by the bundled
+// taxonomy packs — the platform's common-entity taxonomy — as manifest
 // definitions (name, label, description, labels, properties). Discovery uses it
 // to align a proposed type against a canonical, well-described set before
 // inventing a new one, so the same concept keeps one name and schema across runs.
 // It reads the embedded manifests directly (no DB, no blueprint apply needed).
+// Only packs marked `taxonomy: true` are included: the other bundled packs
+// (task-board, agent-notes, session-message-types, dreaming-agent) define
+// platform-internal object types that must not be offered as alignment targets.
 func ListBuiltinObjectTypes() ([]ObjectTypeDef, error) {
 	entries, err := fs.ReadDir(builtinPacksFS, "builtin_packs")
 	if err != nil {
@@ -47,6 +50,9 @@ func ListBuiltinObjectTypes() ([]ObjectTypeDef, error) {
 			return nil, fmt.Errorf("load builtin pack %s: %w", name, err)
 		}
 		for _, p := range desc.Packs {
+			if !p.Taxonomy {
+				continue
+			}
 			out = append(out, p.ObjectTypes...)
 		}
 	}

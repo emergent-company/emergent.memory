@@ -29,6 +29,12 @@ type PackManifest struct {
 	Version           string                        `json:"version"`
 	Description       string                        `json:"description"`
 	Author            string                        `json:"author"`
+	// Taxonomy marks the pack as a common-entity taxonomy whose object types
+	// are offered to discovery as canonical alignment targets. Only taxonomy
+	// packs feed ListBuiltinObjectTypes; feature packs (task-board, agent-notes,
+	// session-message-types, dreaming-agent) also define object types but are
+	// platform-internal and must not be aligned against.
+	Taxonomy          bool                          `json:"taxonomy,omitempty"`
 	Migrations        *schemas.SchemaMigrationHints `json:"migrations,omitempty"`
 	ObjectTypes       []ObjectTypeDef               `json:"objectTypes,omitempty"`
 	RelationshipTypes []RelationshipTypeDef         `json:"relationshipTypes,omitempty"`

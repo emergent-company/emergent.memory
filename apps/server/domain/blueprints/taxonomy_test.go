@@ -30,4 +30,12 @@ func TestListBuiltinObjectTypesTvMovies(t *testing.T) {
 
 	person := byName["Person"]
 	require.Contains(t, person.Labels, "person")
+
+	// Platform-internal packs define object types too, but they are not a
+	// common-entity taxonomy and must never be offered as alignment targets.
+	for _, notWant := range []string{
+		"Note", "NoteCluster", "Task", "Session", "Message", "Dream",
+	} {
+		require.NotContains(t, byName, notWant, "builtin taxonomy must NOT include %s", notWant)
+	}
 }
