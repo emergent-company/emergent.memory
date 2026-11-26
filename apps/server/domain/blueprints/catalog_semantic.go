@@ -22,12 +22,6 @@ type TextEmbedder interface {
 	EmbedDocuments(ctx context.Context, documents []string) ([][]float32, error)
 }
 
-// SetCatalogEmbedder injects the embedder used by the semantic/hybrid resolver.
-// Nil-safe: without it, resolution stays lexical.
-func (s *Service) SetCatalogEmbedder(e TextEmbedder) {
-	s.catalogEmbedder = e
-}
-
 // ResolveCatalogSemantic ranks catalog types by embedding cosine similarity.
 // The catalog is small (~28 types), so it embeds every type's descriptor and
 // the query per call and scores linearly; an ANN index is deliberately deferred
