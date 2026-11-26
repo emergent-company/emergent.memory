@@ -5,54 +5,83 @@ import (
 	"testing"
 )
 
-type fakeEmbedder struct {
-	vecs [][]float32
+func fakeComplete(resp string) func(context.Context, string) (string, error) {
+	return func(context.Context, string) (string, error) { return resp, nil }
 }
 
-func (f *fakeEmbedder) EmbedDocuments(_ context.Context, _ []string) ([][]float32, error) {
-	return f.vecs, nil
-}
+func TestClassifierTypeSimilarityResolve(t *testing.T) {
+	m := NewClassifierTypeSimilarity(fakeComplete(
+		`{"matches":[{"type":"Character","same_as":"Person","confidence":0.95},{"type":"Location","same_as":null,"confidence":1.0}]}`),
+		0.90, quietLogger())
 
-func TestCosineSimilarity(t *testing.T) {
-	if s := cosineSimilarity([]float32{1, 0}, []float32{1, 0}); s != 1.0 {
-		t.Fatalf("identical = %v, want 1.0", s)
-	}
-	if s := cosineSimilarity([]float32{1, 0}, []float32{0, 1}); s != 0.0 {
-		t.Fatalf("orthogonal = %v, want 0.0", s)
-	}
-	if s := cosineSimilarity(nil, []float32{1, 0}); s != 0.0 {
-		t.Fatalf("empty = %v, want 0.0", s)
-	}
-}
-
-func TestEmbeddingTypeSimilarityResolve(t *testing.T) {
-	// query [1,0]; existing A [0,1] (sim 0), existing B [1,0] (sim 1) -> B wins.
-	m := NewEmbeddingTypeSimilarity(&fakeEmbedder{vecs: [][]float32{{1, 0}, {0, 1}, {1, 0}}}, 0.85, quietLogger())
-	match, err := m.Resolve(context.Background(), DiscoveredType{TypeName: "X"}, []ExistingType{{Name: "A"}, {Name: "B"}})
+	matches, err := m.Resolve(context.Background(),
+		[]DiscoveredType{{TypeName: "Character"}, {TypeName: "Location"}},
+		[]ExistingType{{Name: "Person"}})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if match != "B" {
-		t.Fatalf("match = %q, want B", match)
+	if matches["Character"] != "Person" {
+		t.Fatalf("Character match = %q, want Person", matches["Character"])
+	}
+	if _, ok := matches["Location"]; ok {
+		t.Fatalf("Location must not match (same_as null)")
 	}
 }
 
-func TestEmbeddingTypeSimilarityBelowThreshold(t *testing.T) {
-	// query [1,0]; existing [0,1] (sim 0) -> no match.
-	m := NewEmbeddingTypeSimilarity(&fakeEmbedder{vecs: [][]float32{{1, 0}, {0, 1}}}, 0.85, quietLogger())
-	match, err := m.Resolve(context.Background(), DiscoveredType{TypeName: "X"}, []ExistingType{{Name: "A"}})
+func TestClassifierTypeSimilarityBelowThreshold(t *testing.T) {
+	m := NewClassifierTypeSimilarity(fakeComplete(
+		`{"matches":[{"type":"Character","same_as":"Person","confidence":0.7}]}`),
+		0.90, quietLogger())
+
+	matches, err := m.Resolve(context.Background(),
+		[]DiscoveredType{{TypeName: "Character"}}, []ExistingType{{Name: "Person"}})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if match != "" {
-		t.Fatalf("match = %q, want empty", match)
+	if len(matches) != 0 {
+		t.Fatalf("low confidence must not match, got %v", matches)
+	}
+}
+
+func TestClassifierTypeSimilarityRejectsHallucinatedExisting(t *testing.T) {
+	// The model returns an existing name that is not in the comparison set.
+	m := NewClassifierTypeSimilarity(fakeComplete(
+		`{"matches":[{"type":"Character","same_as":"Zorg","confidence":0.99}]}`),
+		0.90, quietLogger())
+
+	matches, err := m.Resolve(context.Background(),
+		[]DiscoveredType{{TypeName: "Character"}}, []ExistingType{{Name: "Person"}})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("hallucinated existing name must be ignored, got %v", matches)
+	}
+}
+
+func TestBuildTypeClassificationPromptDeterministic(t *testing.T) {
+	discovered := []DiscoveredType{
+		{TypeName: "Location", Description: "a place"},
+		{TypeName: "Character", Description: "a character"},
+	}
+	existing := []ExistingType{{Name: "Person", Description: "a person"}}
+	a := buildTypeClassificationPrompt(discovered, existing)
+	b := buildTypeClassificationPrompt(discovered, existing)
+	if a != b {
+		t.Fatal("prompt must be deterministic for the same inputs")
 	}
 }
 
 type fakeTypeSimilarity struct{ mapping map[string]string }
 
-func (f *fakeTypeSimilarity) Resolve(_ context.Context, d DiscoveredType, _ []ExistingType) (string, error) {
-	return f.mapping[d.TypeName], nil
+func (f *fakeTypeSimilarity) Resolve(_ context.Context, discovered []DiscoveredType, _ []ExistingType) (map[string]string, error) {
+	out := map[string]string{}
+	for _, d := range discovered {
+		if m, ok := f.mapping[d.TypeName]; ok {
+			out[d.TypeName] = m
+		}
+	}
+	return out, nil
 }
 
 func TestMergeSemanticallySimilarTypes(t *testing.T) {
@@ -71,8 +100,6 @@ func TestMergeSemanticallySimilarTypes(t *testing.T) {
 }
 
 func TestMergeSemanticallySimilarTypesSpellingWins(t *testing.T) {
-	// "Person" already matches a registered type by spelling; the resolver must
-	// not be consulted (and would return "" anyway).
 	svc := &Service{typeSimilarity: &fakeTypeSimilarity{mapping: map[string]string{"Person": "Organization"}}, log: quietLogger()}
 	out := svc.mergeSemanticallySimilarTypes(context.Background(),
 		[]DiscoveredType{{TypeName: "Person"}}, []string{"Person"}, nil)
