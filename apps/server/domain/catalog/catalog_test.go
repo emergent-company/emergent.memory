@@ -311,8 +311,57 @@ relationshipTypeSchemas:
 func TestLoadManifestAndSplitCount(t *testing.T) {
 	cat, err := Load()
 	require.NoError(t, err)
-	require.Equal(t, "1.0.0", cat.Version)
-	require.Len(t, cat.Types, 28)
+	require.Equal(t, "1.1.0", cat.Version)
+	require.Len(t, cat.Types, 65)
 	require.True(t, hasPair(cat.Relationships, "authored_by", "Movie", "Person"),
 		"ancestry expansion must apply authored_by (CreativeWork) to Movie")
+}
+
+func TestBatch2TypesAndFacets(t *testing.T) {
+	cat := loadCat(t)
+	require.Len(t, cat.Types, 65)
+	for _, want := range []string{"Vehicle", "InsurancePolicy", "Restaurant", "Meeting", "Flight", "Hospital", "VideoGame", "Order"} {
+		require.True(t, hasType(cat.Types, want), "missing batch-2 type %s", want)
+	}
+	// Every declared parent must resolve to a catalog type.
+	names := map[string]bool{}
+	for _, ty := range cat.Types {
+		names[ty.Name] = true
+	}
+	for _, ty := range cat.Types {
+		if ty.Parent != "" {
+			require.True(t, names[ty.Parent], "type %s has unresolved parent %s", ty.Name, ty.Parent)
+		}
+	}
+	// tv-movies owns these names; the catalog must not collide.
+	for _, forbidden := range []string{"Show", "Season", "Episode", "Character", "Actor", "Occupation", "Location"} {
+		require.False(t, names[forbidden], "catalog must not define tv-movies type %s", forbidden)
+	}
+	got := List(cat, ListFilter{Limit: maxListLimit})
+	cats := map[string]bool{}
+	for _, c := range got.Categories {
+		cats[c.Key] = true
+	}
+	for _, want := range []string{"government", "finance", "travel", "transport"} {
+		require.True(t, cats[want], "missing category facet %s", want)
+	}
+}
+
+func TestVehicleInsuranceDeferredReconcile(t *testing.T) {
+	cat := loadCat(t)
+	only := Project(cat, []string{"Vehicle"})
+	require.True(t, hasPair(only.Deferred, "insured_by", "Vehicle", "InsurancePolicy"))
+	require.False(t, hasPair(only.Relationships, "insured_by", "Vehicle", "InsurancePolicy"))
+
+	both := Project(cat, []string{"Vehicle", "InsurancePolicy"})
+	require.True(t, hasPair(both.Relationships, "insured_by", "Vehicle", "InsurancePolicy"))
+}
+
+func TestAncestryBatch2(t *testing.T) {
+	cat := loadCat(t)
+	require.True(t, hasPair(cat.Relationships, "authored_by", "Movie", "Person"))
+	require.True(t, hasPair(cat.Relationships, "located_at", "Restaurant", "Place"))
+	require.True(t, hasPair(cat.Relationships, "reviews", "Review", "Vehicle"))
+	require.True(t, hasPair(cat.Relationships, "made_by", "Vehicle", "Organization"))
+	require.True(t, hasPair(cat.Relationships, "performed_by", "MusicEvent", "Person"))
 }

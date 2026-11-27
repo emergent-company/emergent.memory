@@ -127,3 +127,83 @@ relationshipTypeSchemas:
   - SoftwareApplication
   targetTypes:
   - Organization
+- name: has_condition
+  description: The patient has this medical condition.
+  sourceType: Patient
+  targetType: MedicalCondition
+- name: treats
+  description: The physician treats this patient.
+  sourceType: Physician
+  targetType: Patient
+- name: prescribed
+  description: The physician prescribed this drug.
+  sourceType: Physician
+  targetType: Drug
+- name: instance_of
+  description: The scheduled instance is an offering of the course.
+  sourceType: CourseInstance
+  targetType: Course
+- name: operated_by
+  description: The flight is operated by the airline.
+  sourceType: Flight
+  targetType: Airline
+- name: departs_from
+  description: The flight departs from this airport.
+  sourceType: Flight
+  targetType: Airport
+- name: arrives_at
+  description: The flight arrives at this airport.
+  sourceType: Flight
+  targetType: Airport
+- name: owned_by
+  description: The vehicle is owned by this person.
+  sourceType: Vehicle
+  targetType: Person
+- name: insured_by
+  description: The vehicle is covered by this insurance policy.
+  sourceType: Vehicle
+  targetType: InsurancePolicy
+- name: holds_policy
+  description: The person holds this insurance policy.
+  sourceType: Person
+  targetType: InsurancePolicy
+- name: placed_by
+  description: The order was placed by this person or organization.
+  sourceType: Order
+  targetTypes:
+  - Person
+  - Organization
+- name: contains
+  description: The order contains this line item.
+  sourceType: Order
+  targetType: OrderItem
+- name: for_item
+  description: The line item is for this product.
+  sourceType: OrderItem
+  targetType: Product
+- name: invoices
+  description: The invoice bills this order.
+  sourceType: Invoice
+  targetType: Order
+- name: serves
+  description: The restaurant serves this menu item.
+  sourceType: Restaurant
+  targetType: MenuItem
+- name: provided_by
+  description: The service is provided by this person or organization.
+  sourceType: Service
+  targetTypes:
+  - Person
+  - Organization
+- name: on_album
+  description: The recording appears on this album.
+  sourceType: MusicRecording
+  targetType: MusicAlbum
+- name: performed_by
+  description: The work or event is performed by this person or organization.
+  sourceTypes:
+  - MusicRecording
+  - MusicEvent
+  targetTypes:
+  - Person
+  - Organization

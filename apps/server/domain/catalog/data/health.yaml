@@ -51,3 +51,158 @@ objectTypeSchemas:
       description: Form, e.g. tablet, capsule, liquid.
   required:
   - name
+- name: Patient
+  label: Patient
+  description: A person receiving or registered for medical care.
+  category: health
+  parent: Person
+  labels:
+  - patient
+  ui:
+    icon: tabler--user-heart
+    color: '#DB2777'
+  properties:
+    name:
+      type: string
+      description: The patient's name.
+    patient_id:
+      type: string
+      description: Stable patient identifier.
+      title: Patient Id
+    blood_type:
+      type: string
+      description: Blood type.
+      enum:
+      - A
+      - B
+      - AB
+      - O
+      title: Blood Type
+    birth_date:
+      type: date
+      description: Date of birth (YYYY-MM-DD).
+      title: Birth Date
+  required:
+  - name
+- name: Physician
+  label: Physician
+  description: A doctor or clinician who treats patients.
+  category: health
+  parent: Person
+  labels:
+  - doctor
+  - physician
+  - clinician
+  ui:
+    icon: tabler--stethoscope
+    color: '#BE123C'
+  properties:
+    name:
+      type: string
+      description: The physician's name.
+    specialty:
+      type: string
+      description: Medical specialty.
+    license_number:
+      type: string
+      description: Professional license number.
+      title: License Number
+    years_experience:
+      type: integer
+      description: Years of experience.
+      minimum: 0
+      title: Years Experience
+  required:
+  - name
+- name: MedicalCondition
+  label: Medical Condition
+  description: A disease, disorder or diagnosis.
+  category: health
+  parent: MedicalEntity
+  labels:
+  - condition
+  - disease
+  - diagnosis
+  ui:
+    icon: tabler--stethoscope
+    color: '#E11D48'
+  properties:
+    name:
+      type: string
+      description: The condition's name.
+    icd10:
+      type: string
+      description: ICD-10 code, if known.
+    severity:
+      type: string
+      description: Severity.
+      enum:
+      - mild
+      - moderate
+      - severe
+    description:
+      type: string
+      description: Short description.
+  required:
+  - name
+- name: MedicalProcedure
+  label: Medical Procedure
+  description: A diagnostic, surgical, therapeutic or preventive procedure.
+  category: health
+  parent: MedicalEntity
+  labels:
+  - procedure
+  - treatment
+  - surgery
+  ui:
+    icon: tabler--first-aid-kit
+    color: '#BE123C'
+  properties:
+    name:
+      type: string
+      description: The procedure's name.
+    procedure_type:
+      type: string
+      description: Kind of procedure.
+      enum:
+      - diagnostic
+      - surgical
+      - therapy
+      - preventive
+      title: Procedure Type
+    body_site:
+      type: string
+      description: Body site involved.
+      title: Body Site
+  required:
+  - name
+- name: Hospital
+  label: Hospital
+  description: A hospital or medical facility.
+  category: health
+  parent: MedicalOrganization
+  labels:
+  - hospital
+  - clinic
+  - emergency
+  ui:
+    icon: tabler--building-hospital
+    color: '#E11D48'
+  properties:
+    name:
+      type: string
+      description: The hospital's name.
+    emergency_services:
+      type: boolean
+      description: Whether emergency care is available.
+      title: Emergency Services
+    bed_count:
+      type: integer
+      description: Number of beds.
+      minimum: 0
+      title: Bed Count
+    phone:
+      type: phone
+      description: Contact phone number.
+  required:
+  - name

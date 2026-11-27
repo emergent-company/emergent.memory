@@ -1,0 +1,46 @@
+name: schemaorg
+objectTypeSchemas:
+- name: InsurancePolicy
+  label: Insurance Policy
+  description: An insurance policy covering a person, vehicle, home or other risk.
+  category: finance
+  parent: Thing
+  labels:
+  - insurance
+  - policy
+  ui:
+    icon: tabler--shield
+    color: '#0F766E'
+  properties:
+    policy_number:
+      type: string
+      description: Policy number.
+      title: Policy Number
+    coverage_type:
+      type: string
+      description: Kind of coverage.
+      enum:
+      - health
+      - auto
+      - home
+      - life
+      - travel
+      - business
+      title: Coverage Type
+    premium:
+      type: number
+      description: Premium amount.
+      minimum: 0
+    currency:
+      type: currency
+      description: ISO 4217 currency code.
+    valid_from:
+      type: date
+      description: Coverage start date (YYYY-MM-DD).
+      title: Valid From
+    valid_through:
+      type: date
+      description: Coverage end date (YYYY-MM-DD).
+      title: Valid Through
+  required:
+  - policy_number
