@@ -195,8 +195,7 @@ func TestObjectDisplayRef(t *testing.T) {
 // surface can drift into its own private head again.
 func TestObjectHeaderIsReusedAcrossObjectSurfaces(t *testing.T) {
 	wiki := renderHTMLDev(t, objectWikiPage(objectWikiPageData{
-		Obj:  &GraphObject{ID: "o1", Type: "note", Key: "Deed", Properties: map[string]any{"summary": "A short lead."}},
-		View: objectWikiViewPage,
+		Obj: &GraphObject{ID: "o1", Type: "note", Key: "Deed", Properties: map[string]any{"summary": "A short lead."}},
 		Sections: []objectViewSection{{
 			Title: "Tasks",
 			Rows:  []objectViewItem{{RelID: "r1", RelType: "relates_to", Neighbour: GraphObject{ID: "n1", Type: "task", Key: "Fix the roof"}, Resolved: true}},
@@ -224,12 +223,15 @@ func TestObjectHeaderIsReusedAcrossObjectSurfaces(t *testing.T) {
 		t.Error("the object page head must keep its own test hook")
 	}
 	// The header names the type and ref, so the chip row must not repeat them:
-	// one occurrence each, from the identity line.
-	if got := strings.Count(classic, ">note<"); got != 1 {
-		t.Errorf("type named %d times on the object page, want 1 (the header's identity line)", got)
+	// one occurrence each, from the identity line. Scope the count to the header
+	// region — the rail's Metadata group names the type again, on purpose, because
+	// the rail is the wiki's own component and the wiki's rail lists it too.
+	head, _, _ := strings.Cut(classic, `data-testid="object-detail-page"`)
+	if got := strings.Count(head, ">note<"); got != 1 {
+		t.Errorf("type named %d times in the object page header, want 1 (the identity line)", got)
 	}
-	if got := strings.Count(classic, ">note-1<"); got != 1 {
-		t.Errorf("ref rendered %d times on the object page, want 1", got)
+	if got := strings.Count(head, ">note-1<"); got != 1 {
+		t.Errorf("ref rendered %d times in the object page header, want 1", got)
 	}
 
 	neighbour := GraphObject{ID: "u1", Type: "UtilityService", Name: "Water — ZGK"}
@@ -278,7 +280,13 @@ func TestObjectHeaderIsReusedAcrossObjectSurfaces(t *testing.T) {
 	if head := cards[cardStart : cardStart+labelEnd]; strings.Contains(head, "<a ") {
 		t.Errorf("the card head must not carry its own anchor (the card has one stretched link):\n%s", head)
 	}
-	if got := strings.Count(cards, `line-clamp-3`); got == 0 {
-		t.Error("a card excerpt must ask for the taller clamp")
+	// The card is a fixed-height box, so its excerpt is clamped to two rows and
+	// asks for exactly that clamp: a third row would be clipped by the card's
+	// overflow rather than read.
+	if got := strings.Count(cards, `line-clamp-3`); got != 0 {
+		t.Errorf("card excerpts = %d three-row clamps, want 0 (the card clamps to two rows)", got)
+	}
+	if got := strings.Count(cards, `line-clamp-2`); got == 0 {
+		t.Error("a card excerpt must ask for the two-row clamp")
 	}
 }

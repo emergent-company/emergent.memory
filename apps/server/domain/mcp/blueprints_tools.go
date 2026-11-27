@@ -13,6 +13,9 @@ type BlueprintToolHandler interface {
 	ExecuteBlueprintGet(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 	ExecuteBlueprintPublish(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 	ExecuteBlueprintApply(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteBlueprintCatalogInstall(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteBlueprintCatalogResolve(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteBlueprintCatalogGet(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 	ExecuteBlueprintApplyPreview(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 	ExecuteBlueprintUnapply(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 	ExecuteBlueprintVersions(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
@@ -151,6 +154,81 @@ func blueprintsToolDefinitions() []ToolDefinition {
 					},
 				},
 				Required: []string{"id"},
+			},
+		},
+		{
+			Name:          "blueprint-catalog-install",
+			OutputSchema:  objectOutputSchema(),
+			RequiredScope: "schema:write",
+			Description:   "Install types from the built-in schema.org catalog into the current project. Only the requested types are materialized, plus relationship types whose BOTH endpoint types are installed (endpoint-gated); relationships that reference an uninstalled type are reported as deferred. Re-running with more types reconciles and activates deferred relationships. Returns installed types, active relationships, deferred relationships, and any unknown names.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"types": {
+						Type:        "array",
+						Description: "Catalog type names to install (e.g. [\"Movie\",\"Person\"]). Adding a type later activates deferred relationships to it.",
+						Items:       &PropertySchema{Type: "string"},
+					},
+					"name": {
+						Type:        "string",
+						Description: "Optional project schema pack name. Defaults to \"schemaorg-catalog\".",
+					},
+					"version": {
+						Type:        "string",
+						Description: "Optional pack version. Defaults to \"1.0.0\".",
+					},
+					"replace": {
+						Type:        "boolean",
+						Description: "When true, 'types' is authoritative: catalog types omitted from it are removed from the pack and their relationships deactivated. Default false is additive.",
+					},
+					"extend": {
+						Type:        "array",
+						Description: "Requested type names the caller accepts installing under the catalog's definition even though another pack already provides the name. A project resolves one type per name from the newest install, so such a request is refused without this: installing it replaces that pack's definition with the catalog's and moves the type to the catalog pack (the registry schema is merged, existing property definitions win). Call with the refused names after reading the error.",
+						Items:       &PropertySchema{Type: "string"},
+					},
+				},
+				Required: []string{"types"},
+			},
+		},
+		{
+			Name:          "blueprint-catalog-resolve",
+			OutputSchema:  objectOutputSchema(),
+			RequiredScope: "schema:read",
+			Description:   "Rank built-in schema.org catalog types for a free-text query (name, label, alias, category, parent and description are matched lexically). Use it to pick canonical type names before calling blueprint-catalog-install. Returns matches with a 0..1 score and the fields that matched.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"query": {
+						Type:        "string",
+						Description: "Free-text concept to resolve, e.g. \"film\" or \"tv series\".",
+					},
+					"limit": {
+						Type:        "integer",
+						Description: "Maximum matches to return (default 10, max 50).",
+					},
+					"mode": {
+						Type:        "string",
+						Enum:        []string{"lexical", "semantic", "hybrid"},
+						Description: "Matching strategy. lexical (default name/label/alias/token), semantic (embedding similarity using the project's model), or hybrid (lexical first, semantic additions). Default hybrid; degrades to lexical when no embedding model is configured.",
+					},
+				},
+				Required: []string{"query"},
+			},
+		},
+		{
+			Name:          "blueprint-catalog-get",
+			OutputSchema:  objectOutputSchema(),
+			RequiredScope: "schema:read",
+			Description:   "Get one built-in schema.org catalog type with its ancestors (supertype chain), direct subtypes, and the candidate relationships that touch it. Read-only taxonomy browsing.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"name": {
+						Type:        "string",
+						Description: "Catalog type name, e.g. \"Movie\" (resolve free text with blueprint-catalog-resolve first).",
+					},
+				},
+				Required: []string{"name"},
 			},
 		},
 		{

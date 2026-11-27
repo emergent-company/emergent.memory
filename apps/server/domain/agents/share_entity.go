@@ -303,6 +303,7 @@ var defaultDangerousShareTools = []string{
 	"skill-create", "skill-update", "skill-patch", "skill-delete",
 	"blueprint-create", "blueprint-update", "blueprint-publish",
 	"blueprint-apply", "blueprint-unapply", "blueprint-new-version",
+	"blueprint-catalog-install",
 	"embedding-config-update", "embedding-pause", "embedding-resume",
 	"queue-reextraction",
 	"finalize-discovery",

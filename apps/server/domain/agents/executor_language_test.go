@@ -79,7 +79,7 @@ func TestResolveInstructionLanguage(t *testing.T) {
 		if strings.Contains(got, "Always respond in") {
 			t.Fatalf("resolveInstruction() = %q, want no language directive", got)
 		}
-		if want := base + "\n\n" + capabilityDisclosureInstruction(req.AgentDefinition, nil); got != want {
+		if want := base + "\n\n" + capabilityDisclosureInstruction(req.AgentDefinition, nil) + "\n\n" + untrustedContentInstruction; got != want {
 			t.Fatalf("resolveInstruction() = %q, want %q", got, want)
 		}
 	})
@@ -90,8 +90,8 @@ func TestResolveInstructionLanguage(t *testing.T) {
 		if strings.Contains(got, "Always respond in") {
 			t.Fatalf("resolveInstruction() = %q, want no language directive", got)
 		}
-		if got != base {
-			t.Fatalf("resolveInstruction() = %q, want %q", got, base)
+		if want := base + "\n\n" + untrustedContentInstruction; got != want {
+			t.Fatalf("resolveInstruction() = %q, want %q", got, want)
 		}
 	})
 }

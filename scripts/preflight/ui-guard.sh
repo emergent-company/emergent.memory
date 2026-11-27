@@ -84,8 +84,8 @@ cd "$root"
 BASELINE_DUP_TESTIDS=14  # tightened from 15: #865 retired board.templ, whose two board notices were the duplicate copy this baseline carried
 BASELINE_INLINE_HANDLERS=19
 BASELINE_HEX_COLOURS=8
-BASELINE_STYLE_ATTRS=14  # +2: components.BadgeWithClass reproduces ui.Badge's two `style={ accentStyle(props.Color) }` branches (span + <a href>) so the wrapper stays parity-identical to upstream; remove both when go-daisy #150 adds BadgeProps.Class (#855)
-BASELINE_RAW_TABLES=14
+BASELINE_STYLE_ATTRS=15  # +2: components.BadgeWithClass reproduces ui.Badge's two `style={ accentStyle(props.Color) }` branches (span + <a href>) so the wrapper stays parity-identical to upstream; remove both when go-daisy #150 adds BadgeProps.Class (#855). +1: the wiki Key facts row folds with an inline `display:none` because that is the fold contract app.js's eye toggles (a class would leave the row folded once the script clears style.display, and an inline style out-specifies any daisy table rule)
+BASELINE_RAW_TABLES=15  # +1: the wiki Key facts table is a two-column field/value lookup with a `th scope="row"` label column, not a page data grid: components.TableCard owns a card, a header and horizontal scroll, and wrapping a definition table in it would add a card the page does not want
 #
 # INLINE_HANDLERS was 10 in the first cut of this script and is 19 here. That is
 # a correction, not new debt: the first regex required a literal space before the

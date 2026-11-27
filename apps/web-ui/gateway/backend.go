@@ -31,6 +31,9 @@ type MemoryBackend interface {
 	TriggerAgent(ctx context.Context, agentID, prompt string, ctxValues map[string]string) (*TriggerResult, error)
 	ListScheduledAgentRuns(ctx context.Context, id string) ([]ScheduledAgentRun, error)
 	GetRunFull(ctx context.Context, runID string) (*AgentRunFull, error)
+	// GetRunOrderers resolves who ordered each run, in one project-scoped read.
+	// Object provenance uses it to name the human behind an agent's write.
+	GetRunOrderers(ctx context.Context, runIDs []string) (map[string]string, error)
 	GetRunQuestions(ctx context.Context, runID string) ([]AgentQuestionItem, error)
 	GetAgentRun(ctx context.Context, runID string) (*AgentRun, error)
 	GetAgentSandboxConfig(ctx context.Context, id string) (*AgentSandboxConfig, error)
@@ -271,6 +274,9 @@ type MemoryBackend interface {
 	MergeBranch(ctx context.Context, sourceBranchID, policy string) (*BranchMergeResult, error)
 	PreviewMergeBranch(ctx context.Context, sourceBranchID, policy string) (*BranchMergeResult, error)
 	GetCompiledTypes(ctx context.Context) (*CompiledSchemaTypes, error)
+	ListCatalog(ctx context.Context, q, category, parent string) (*CatalogList, error)
+	GetCatalogType(ctx context.Context, name string) (*CatalogTypeDetail, error)
+	InstallCatalog(ctx context.Context, types []string, replace bool, extend []string) (*CatalogInstallResult, error)
 	// Schema discovery: the Schema page's card and the per-document trigger.
 	ListDiscoveryJobs(ctx context.Context) ([]discoveryJob, error)
 	StartProjectDiscovery(ctx context.Context) (*DiscoveryStartResult, error)

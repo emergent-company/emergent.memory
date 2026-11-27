@@ -13,6 +13,7 @@ func TestPopulateStatsReportsPendingExtractionMerge(t *testing.T) {
 		PendingExtractionObjectCount:       29104,
 		PendingExtractionRelationshipCount: 51651,
 		MainGraphObjectCount:               0,
+		AutoMergeLeftForReviewCount:        7,
 	}
 
 	row.populateStats()
@@ -24,6 +25,9 @@ func TestPopulateStatsReportsPendingExtractionMerge(t *testing.T) {
 	got := stats.PendingExtractionMerge
 	if got.BranchCount != 1 || got.ObjectCount != 29104 || got.RelationshipCount != 51651 {
 		t.Errorf("pending merge counts = %+v", got)
+	}
+	if got.LeftForReviewCount != 7 {
+		t.Errorf("LeftForReviewCount = %d, want 7 (the auto-merge backlog #1074)", got.LeftForReviewCount)
 	}
 	if got.MainGraphObjectCount != 0 {
 		t.Errorf("MainGraphObjectCount = %d, want 0", got.MainGraphObjectCount)

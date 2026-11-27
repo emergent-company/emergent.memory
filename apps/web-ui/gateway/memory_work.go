@@ -128,6 +128,8 @@ type BoardRun struct {
 	StartedAt         string         `json:"startedAt"`
 	CompletedAt       *string        `json:"completedAt"`
 	Summary           map[string]any `json:"summary"`
+	ErrorMessage      *string        `json:"errorMessage"`
+	FailureClass      *string        `json:"failureClass,omitempty"`
 	SubjectObjectID   *string        `json:"subjectObjectId,omitempty"`
 }
 

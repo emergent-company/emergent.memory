@@ -24,32 +24,98 @@ var catalog = []string{
 	"user", "users", "wrench", "x",
 }
 
-// set is built once and never mutated.
-var set = buildSet()
+// tablerCatalog is the curated set of bare Tabler kebab-case names the UI
+// renders. Tabler (MIT) is the breadth family for schema.org-derived type
+// icons; the list is deliberately curated rather than the full ~6.5k set,
+// because the gateway compiles one CSS class per literal name and the iOS
+// client needs an SF Symbol per name. Keep in sync with
+// apps/web-ui/gateway/type_icons.go supportedTablerIconClasses.
+var tablerCatalog = []string{
+	"box", "user", "building", "map-pin", "calendar-event", "calendar",
+	"file-text", "article", "book", "movie", "device-tv", "video", "photo",
+	"browser", "world-www", "globe", "package", "tag", "trademark",
+	"message-star", "star-half", "chef-hat", "building-store", "app-window",
+	"code", "briefcase", "id-badge", "school", "list-check", "category",
+	"stethoscope", "pill", "map",
+	"building-bank", "building-hospital", "plane", "user-heart", "map-2", "camera", "bed", "car", "music", "users", "album", "microphone", "palette", "database", "device-mobile", "device-gamepad", "shopping-cart", "receipt", "tools", "tools-kitchen-2", "first-aid-kit", "shield",
+}
 
-func buildSet() map[string]struct{} {
-	m := make(map[string]struct{}, len(catalog))
-	for _, name := range catalog {
+// Family identifies the icon family that owns a name. A schema author writes
+// either an explicit family prefix ("tabler--movie", "lucide--user") or a bare
+// name, which defaults to Lucide for backward compatibility.
+type Family string
+
+const (
+	FamilyLucide Family = "lucide"
+	FamilyTabler Family = "tabler"
+)
+
+// set and tablerSet are built once and never mutated.
+var (
+	set       = buildSet(catalog)
+	tablerSet = buildSet(tablerCatalog)
+)
+
+func buildSet(names []string) map[string]struct{} {
+	m := make(map[string]struct{}, len(names))
+	for _, name := range names {
 		m[name] = struct{}{}
 	}
 	return m
 }
 
-// Names returns the canonical bare kebab-case names in catalog order. The
-// returned slice is a copy, so callers cannot mutate the catalog.
+// Names returns the canonical bare Lucide kebab-case names in catalog order.
+// The returned slice is a copy, so callers cannot mutate the catalog.
 func Names() []string {
 	out := make([]string, len(catalog))
 	copy(out, catalog)
 	return out
 }
 
-// Set returns a copy of the lookup set of canonical names.
+// TablerNames returns the canonical bare Tabler kebab-case names. Author a
+// Tabler icon with the explicit family prefix ("tabler--movie"); a bare name
+// resolves to Lucide for backward compatibility.
+func TablerNames() []string {
+	out := make([]string, len(tablerCatalog))
+	copy(out, tablerCatalog)
+	return out
+}
+
+// Set returns a copy of the lookup set of canonical Lucide names.
 func Set() map[string]struct{} {
 	out := make(map[string]struct{}, len(set))
 	for name := range set {
 		out[name] = struct{}{}
 	}
 	return out
+}
+
+// TablerSet returns a copy of the lookup set of canonical Tabler names.
+func TablerSet() map[string]struct{} {
+	out := make(map[string]struct{}, len(tablerSet))
+	for name := range tablerSet {
+		out[name] = struct{}{}
+	}
+	return out
+}
+
+// parseFamily splits an icon value into its family and bare name. Bare names
+// default to Lucide (the pre-Tabler behaviour); explicit "tabler--"/"tabler:"
+// prefixes select Tabler.
+func parseFamily(s string) (Family, string) {
+	trimmed := strings.TrimSpace(s)
+	lower := strings.ToLower(trimmed)
+	for _, prefix := range []string{"tabler--", "tabler:", "tabler_"} {
+		if strings.HasPrefix(lower, prefix) {
+			return FamilyTabler, trimmed[len(prefix):]
+		}
+	}
+	for _, prefix := range []string{"lucide--", "lucide:", "lucide_"} {
+		if strings.HasPrefix(lower, prefix) {
+			return FamilyLucide, trimmed[len(prefix):]
+		}
+	}
+	return FamilyLucide, trimmed
 }
 
 // Normalize returns the canonical bare kebab-case name for s. It accepts the
@@ -69,7 +135,10 @@ func Normalize(s string) string {
 		return ""
 	}
 	lower := strings.ToLower(s)
-	for _, prefix := range []string{"lucide--", "lucide:", "lucide_"} {
+	for _, prefix := range []string{
+		"lucide--", "lucide:", "lucide_",
+		"tabler--", "tabler:", "tabler_",
+	} {
 		if strings.HasPrefix(lower, prefix) {
 			s = s[len(prefix):]
 			break
@@ -133,13 +202,19 @@ func isNonASCII(s string) bool {
 // glyph (emoji/symbol, rendered as text) or a catalog icon name after
 // normalization. Empty input is not renderable.
 func IsRenderable(s string) bool {
-	s = strings.TrimSpace(s)
-	if s == "" {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
 		return false
 	}
-	if isNonASCII(s) {
+	if isNonASCII(trimmed) {
 		return true
 	}
-	_, ok := set[Normalize(s)]
+	family, bare := parseFamily(trimmed)
+	name := Normalize(bare)
+	if family == FamilyTabler {
+		_, ok := tablerSet[name]
+		return ok
+	}
+	_, ok := set[name]
 	return ok
 }

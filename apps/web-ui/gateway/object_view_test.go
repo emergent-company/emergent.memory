@@ -155,10 +155,10 @@ func TestResolveObjectViewEdgeNotTouchingObject(t *testing.T) {
 	}
 }
 
-// TestObjectViewFacts covers the depth-1 preview budget: a type that declares
-// `inline` chooses its own facts in order, a type that does not falls back to
-// status plus the first scalar properties, prose fields are never used, and
-// every value is bounded.
+// TestObjectViewFacts covers the depth-1 preview facts: a type that declares
+// `inline` chooses its own, in declared order; a type that declares neither
+// inline fields nor a workflow shows nothing — a relationship row is a pointer,
+// not a spec sheet — and a workflow type shows its work lane.
 func TestObjectViewFacts(t *testing.T) {
 	typeUIByType := map[string]typeUI{
 		"Document": {View: &typeUIView{Inline: []string{"document_kind", "document_date", "missing"}}},
@@ -177,41 +177,36 @@ func TestObjectViewFacts(t *testing.T) {
 		t.Errorf("first fact = %+v, want the declared order", facts[0])
 	}
 
-	fallback := viewTestObject("obl-1", "Obligation", "Property tax", map[string]any{
+	// The regression this guards: a type with no view and no workflow used to
+	// get its first scalar properties dumped into the row, so every neighbour
+	// carried a truncated "Status active / Next due 2026-12-20" spec block.
+	plain := viewTestObject("obl-1", "Obligation", "Property tax", map[string]any{
 		"status":   "active",
+		"next_due": "2026-12-20",
 		"amount":   263,
 		"currency": "PLN",
 		"notes":    "long prose that must not fill a preview row",
 		"tags":     []any{"a", "b"},
 	})
-	fallback.Status = "active"
-	facts = objectViewFacts(fallback, nil)
-	if len(facts) == 0 || facts[0].Label != "Status" || facts[0].Value != "active" {
-		t.Fatalf("facts = %+v, want status first", facts)
+	plain.Status = "active"
+	if facts := objectViewFacts(plain, nil); len(facts) != 0 {
+		t.Fatalf("facts = %v, want none: a row must not dump the neighbour's properties", facts)
 	}
-	if len(facts) > viewMaxFactsPerRow {
-		t.Errorf("facts = %d, want at most %d", len(facts), viewMaxFactsPerRow)
-	}
-	statusFacts := 0
-	for _, fact := range facts {
-		if fact.Label == "Status" {
-			statusFacts++
-		}
-		if fact.Label == "Notes" {
-			t.Error("notes must not be used as a preview fact")
-		}
-		if len([]rune(fact.Value)) > viewFactMaxRunes+1 {
-			t.Errorf("fact %q = %d runes, want it truncated", fact.Label, len([]rune(fact.Value)))
-		}
-	}
-	if statusFacts != 1 {
-		t.Errorf("status rendered %d times, want exactly once", statusFacts)
+
+	// A workflow type shows its work lane, humanised, and nothing else: the
+	// declared `status` property is ordinary data and no longer appears.
+	workflow := viewTestObject("task-1", "Task", "Do it", map[string]any{"status": "proposed"})
+	workflow.Status = "in_progress"
+	facts = objectViewFacts(workflow, map[string]typeUI{"Task": {HasWorkflow: true}})
+	if len(facts) != 1 || facts[0].Label != "Workflow" || facts[0].Value != "In progress" {
+		t.Fatalf("facts = %+v, want exactly the humanised workflow fact", facts)
 	}
 
 	long := viewTestObject("x-1", "Note", "Long", map[string]any{
 		"summary_long": "aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll mmmm nnnn oooo pppp",
 	})
-	facts = objectViewFacts(long, nil)
+	longUI := map[string]typeUI{"Note": {View: &typeUIView{Inline: []string{"summary_long"}}}}
+	facts = objectViewFacts(long, longUI)
 	if len(facts) != 1 {
 		t.Fatalf("facts = %v, want one truncated fact", facts)
 	}

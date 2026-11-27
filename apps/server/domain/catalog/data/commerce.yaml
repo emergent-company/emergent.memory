@@ -1,0 +1,326 @@
+name: schemaorg
+objectTypeSchemas:
+- name: Product
+  label: Product
+  description: 'A physical or digital product that can be bought, sold, or reviewed.
+
+    '
+  category: commerce
+  parent: Thing
+  labels:
+  - product
+  - item
+  - merchandise
+  ui:
+    icon: tabler--package
+    color: '#EA580C'
+  properties:
+    name:
+      type: string
+      description: Product name.
+    sku:
+      type: string
+      description: Stock-keeping unit or internal product code.
+    gtin:
+      type: string
+      description: Global trade item number (barcode).
+    description:
+      type: string
+      description: Product description.
+    color:
+      type: string
+      description: Product color.
+    material:
+      type: string
+      description: Primary material.
+    weight:
+      type: number
+      description: Product weight in kilograms.
+      minimum: 0
+    brand_name:
+      type: string
+      title: Brand
+      description: Brand name.
+    manufacturer_name:
+      type: string
+      title: Manufacturer
+      description: Manufacturer name.
+  required:
+  - name
+- name: Offer
+  label: Offer
+  description: 'A price and availability offer for a product or service.
+
+    '
+  category: commerce
+  parent: Thing
+  labels:
+  - offer
+  - price
+  - deal
+  ui:
+    icon: tabler--tag
+    color: '#D97706'
+  properties:
+    price:
+      type: number
+      description: Offer price.
+      minimum: 0
+    price_currency:
+      type: currency
+      title: Currency
+      description: ISO 4217 currency code.
+    availability:
+      type: string
+      description: Stock availability.
+      enum:
+      - in_stock
+      - out_of_stock
+      - preorder
+      - discontinued
+    valid_from:
+      type: date
+      title: Valid from
+      description: Offer start date (YYYY-MM-DD).
+    valid_through:
+      type: date
+      title: Valid through
+      description: Offer end date (YYYY-MM-DD).
+    url:
+      type: url
+      description: Offer or checkout URL.
+  required:
+  - price
+- name: Brand
+  label: Brand
+  description: 'A brand or trademark under which products or services are sold.
+
+    '
+  category: commerce
+  parent: Thing
+  labels:
+  - brand
+  - label
+  - trademark
+  ui:
+    icon: tabler--trademark
+    color: '#B45309'
+  properties:
+    name:
+      type: string
+      description: Brand name.
+    logo_url:
+      type: url
+      title: Logo URL
+      description: URL of the brand logo.
+    url:
+      type: url
+      description: Brand website.
+  required:
+  - name
+- name: Review
+  label: Review
+  description: 'A review or critique of a product, work, or service, with an optional rating.
+
+    '
+  category: commerce
+  parent: CreativeWork
+  labels:
+  - review
+  - critique
+  - feedback
+  ui:
+    icon: tabler--message-star
+    color: '#EAB308'
+  properties:
+    review_body:
+      type: string
+      title: Review
+      description: Review text or summary.
+    review_rating:
+      type: integer
+      title: Rating
+      description: Numeric rating, typically 1-5.
+      minimum: 1
+      maximum: 10
+    date_published:
+      type: date
+      title: Published
+      description: Publication date (YYYY-MM-DD).
+    author_name:
+      type: string
+      title: Author
+      description: Reviewer name.
+    item_name:
+      type: string
+      title: Item reviewed
+      description: Name of the reviewed item.
+- name: AggregateRating
+  label: Aggregate Rating
+  description: 'A summary rating aggregated across many reviews.
+
+    '
+  category: commerce
+  parent: Thing
+  labels:
+  - aggregate_rating
+  - rating_summary
+  ui:
+    icon: tabler--star-half
+    color: '#CA8A04'
+  properties:
+    rating_value:
+      type: number
+      title: Rating value
+      description: Average rating.
+      minimum: 0
+    review_count:
+      type: integer
+      title: Reviews
+      description: Number of reviews aggregated.
+      minimum: 0
+  required:
+  - rating_value
+- name: Order
+  label: Order
+  description: A customer order for products or services.
+  category: commerce
+  parent: Thing
+  labels:
+  - order
+  - purchase
+  ui:
+    icon: tabler--shopping-cart
+    color: '#EA580C'
+  properties:
+    order_number:
+      type: string
+      description: Customer-facing order number.
+      title: Order Number
+    order_status:
+      type: string
+      description: Order lifecycle status.
+      enum:
+      - pending
+      - paid
+      - shipped
+      - delivered
+      - cancelled
+      - refunded
+      title: Order Status
+    order_date:
+      type: date
+      description: Order date (YYYY-MM-DD).
+      title: Order Date
+    total_amount:
+      type: number
+      description: Order total.
+      minimum: 0
+      title: Total Amount
+    currency:
+      type: currency
+      description: ISO 4217 currency code.
+  required:
+  - order_number
+- name: OrderItem
+  label: Order Item
+  description: One line item in an order.
+  category: commerce
+  parent: Thing
+  labels:
+  - order_item
+  - line_item
+  ui:
+    icon: tabler--receipt
+    color: '#D97706'
+  properties:
+    quantity:
+      type: integer
+      description: Quantity ordered.
+      minimum: 1
+    unit_price:
+      type: number
+      description: Price per unit.
+      minimum: 0
+      title: Unit Price
+    line_total:
+      type: number
+      description: Line total.
+      minimum: 0
+      title: Line Total
+    currency:
+      type: currency
+      description: ISO 4217 currency code.
+  required:
+  - quantity
+- name: Invoice
+  label: Invoice
+  description: A bill issued for goods or services.
+  category: finance
+  parent: Thing
+  labels:
+  - invoice
+  - bill
+  ui:
+    icon: tabler--receipt
+    color: '#B45309'
+  properties:
+    invoice_number:
+      type: string
+      description: Invoice number.
+      title: Invoice Number
+    due_date:
+      type: date
+      description: Payment due date (YYYY-MM-DD).
+      title: Due Date
+    amount:
+      type: number
+      description: Amount due.
+      minimum: 0
+    currency:
+      type: currency
+      description: ISO 4217 currency code.
+    invoice_status:
+      type: string
+      description: Invoice status.
+      enum:
+      - draft
+      - sent
+      - paid
+      - overdue
+      - void
+      title: Invoice Status
+  required:
+  - invoice_number
+- name: Service
+  label: Service
+  description: A service offered by a person or organization.
+  category: commerce
+  parent: Thing
+  labels:
+  - service
+  - offering
+  ui:
+    icon: tabler--tools
+    color: '#0D9488'
+  properties:
+    name:
+      type: string
+      description: The service's name.
+    service_type:
+      type: string
+      description: Kind of service.
+      title: Service Type
+    provider_name:
+      type: string
+      description: Provider name.
+      title: Provider Name
+    price:
+      type: number
+      description: Price.
+      minimum: 0
+    currency:
+      type: currency
+      description: ISO 4217 currency code.
+  required:
+  - name

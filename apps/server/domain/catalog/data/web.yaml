@@ -1,0 +1,48 @@
+name: schemaorg
+objectTypeSchemas:
+- name: WebPage
+  label: Web Page
+  description: 'A single web page — an article page, product page, profile page, etc.
+
+    '
+  category: web
+  parent: CreativeWork
+  labels:
+  - web_page
+  - page
+  - webpage
+  ui:
+    icon: tabler--browser
+    color: '#3B82F6'
+  properties:
+    name:
+      type: string
+      description: Page name or title.
+    url:
+      type: url
+      description: Page URL.
+  required:
+  - name
+- name: WebSite
+  label: Web Site
+  description: 'A website: a set of pages under one domain.
+
+    '
+  category: web
+  parent: CreativeWork
+  labels:
+  - website
+  - site
+  - web_presence
+  ui:
+    icon: tabler--world-www
+    color: '#2563EB'
+  properties:
+    name:
+      type: string
+      description: Site name.
+    url:
+      type: url
+      description: Site URL.
+  required:
+  - name

@@ -1,0 +1,261 @@
+name: schemaorg
+relationshipTypeSchemas:
+- name: authored_by
+  label: Authored by
+  description: The work was authored or created by a person or organization.
+  sourceTypes:
+  - CreativeWork
+  - Article
+  - Book
+  - Recipe
+  - Course
+  - HowTo
+  targetTypes:
+  - Person
+  - Organization
+- name: directed_by
+  label: Directed by
+  description: The production was directed by a person.
+  sourceTypes:
+  - Movie
+  - TVSeries
+  targetTypes:
+  - Person
+- name: featured_actor
+  label: Featured actor
+  description: A person performs in the production.
+  sourceTypes:
+  - Movie
+  - TVSeries
+  targetTypes:
+  - Person
+- name: produced_by
+  label: Produced by
+  description: The production was produced by an organization.
+  sourceTypes:
+  - Movie
+  - TVSeries
+  targetTypes:
+  - Organization
+- name: part_of_site
+  label: Part of site
+  description: The page belongs to a website.
+  sourceTypes:
+  - WebPage
+  targetTypes:
+  - WebSite
+- name: works_for
+  label: Works for
+  description: The person is employed by or works for the organization.
+  sourceTypes:
+  - Person
+  targetTypes:
+  - Organization
+- name: member_of
+  label: Member of
+  description: The person is a member of the organization.
+  sourceTypes:
+  - Person
+  targetTypes:
+  - Organization
+- name: located_at
+  label: Located at
+  description: The event or business is located at a place.
+  sourceTypes:
+  - Event
+  - LocalBusiness
+  targetTypes:
+  - Place
+- name: organized_by
+  label: Organized by
+  description: The event is organized by a person or organization.
+  sourceTypes:
+  - Event
+  targetTypes:
+  - Person
+  - Organization
+- name: parent_organization
+  label: Parent organization
+  description: The organization is a subsidiary or child of another.
+  sourceTypes:
+  - Organization
+  targetTypes:
+  - Organization
+- name: has_offer
+  label: Has offer
+  description: The product is offered under this price/availability offer.
+  sourceTypes:
+  - Product
+  targetTypes:
+  - Offer
+- name: made_by
+  label: Made by
+  description: The product is manufactured by an organization.
+  sourceTypes:
+  - Product
+  targetTypes:
+  - Organization
+- name: has_brand
+  label: Has brand
+  description: The product is sold under this brand.
+  sourceTypes:
+  - Product
+  targetTypes:
+  - Brand
+- name: reviews
+  label: Reviews
+  description: The review evaluates a product or creative work.
+  sourceTypes:
+  - Review
+  targetTypes:
+  - Product
+  - CreativeWork
+  - Recipe
+  - SoftwareApplication
+- name: employed_at
+  label: Employed at
+  description: The job posting is for a role at the organization.
+  sourceTypes:
+  - JobPosting
+  targetTypes:
+  - Organization
+- name: offered_by
+  label: Offered by
+  description: The course or software is offered by an organization.
+  sourceTypes:
+  - Course
+  - SoftwareApplication
+  targetTypes:
+  - Organization
+- name: has_condition
+  description: The patient has this medical condition.
+  sourceType: Patient
+  targetType: MedicalCondition
+- name: treats
+  description: The physician treats this patient.
+  sourceType: Physician
+  targetType: Patient
+- name: prescribed
+  description: The physician prescribed this drug.
+  sourceType: Physician
+  targetType: Drug
+- name: instance_of
+  description: The scheduled instance is an offering of the course.
+  sourceType: CourseInstance
+  targetType: Course
+- name: operated_by
+  description: The flight is operated by the airline.
+  sourceType: Flight
+  targetType: Airline
+- name: departs_from
+  description: The flight departs from this airport.
+  sourceType: Flight
+  targetType: Airport
+- name: arrives_at
+  description: The flight arrives at this airport.
+  sourceType: Flight
+  targetType: Airport
+- name: owned_by
+  description: The vehicle is owned by this person.
+  sourceType: Vehicle
+  targetType: Person
+- name: insured_by
+  description: The vehicle is covered by this insurance policy.
+  sourceType: Vehicle
+  targetType: InsurancePolicy
+- name: holds_policy
+  description: The person holds this insurance policy.
+  sourceType: Person
+  targetType: InsurancePolicy
+- name: placed_by
+  description: The order was placed by this person or organization.
+  sourceType: Order
+  targetTypes:
+  - Person
+  - Organization
+- name: contains
+  description: The order contains this line item.
+  sourceType: Order
+  targetType: OrderItem
+- name: for_item
+  description: The line item is for this product.
+  sourceType: OrderItem
+  targetType: Product
+- name: invoices
+  description: The invoice bills this order.
+  sourceType: Invoice
+  targetType: Order
+- name: serves
+  description: The restaurant serves this menu item.
+  sourceType: Restaurant
+  targetType: MenuItem
+- name: provided_by
+  description: The service is provided by this person or organization.
+  sourceType: Service
+  targetTypes:
+  - Person
+  - Organization
+- name: on_album
+  description: The recording appears on this album.
+  sourceType: MusicRecording
+  targetType: MusicAlbum
+- name: performed_by
+  description: The work or event is performed by this person or organization.
+  sourceTypes:
+  - MusicRecording
+  - MusicEvent
+  targetTypes:
+  - Person
+  - Organization
+- name: contained_in_place
+  label: Contained in place
+  description: The place is contained within a larger place.
+  sourceType: Place
+  targetType: Place
+- name: home_location
+  label: Home location
+  description: The person's primary residence or home place.
+  sourceType: Person
+  targetType: Place
+- name: content_location
+  label: Content location
+  description: The place where the creative work's content is set or takes place.
+  sourceType: CreativeWork
+  targetType: Place
+- name: spouse
+  label: Spouse
+  description: The person is married to or the spouse of another person.
+  sourceType: Person
+  targetType: Person
+- name: parent
+  label: Parent
+  description: The person is a parent of another person.
+  sourceType: Person
+  targetType: Person
+- name: sibling
+  label: Sibling
+  description: The person is a sibling of another person.
+  sourceType: Person
+  targetType: Person
+- name: knows
+  label: Knows
+  description: The person knows or is acquainted with another person.
+  sourceType: Person
+  targetType: Person
+- name: colleague
+  label: Colleague
+  description: The person works with another person.
+  sourceType: Person
+  targetType: Person
+- name: founder
+  label: Founder
+  description: The organization was founded by this person or organization.
+  sourceType: Organization
+  targetTypes:
+  - Person
+  - Organization
+- name: part_of_series
+  label: Part of series
+  description: The episode belongs to this series.
+  sourceType: Episode
+  targetType: TVSeries

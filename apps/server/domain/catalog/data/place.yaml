@@ -1,0 +1,152 @@
+name: schemaorg
+objectTypeSchemas:
+- name: AdministrativeArea
+  label: Administrative Area
+  description: A country, region, city or district.
+  category: place
+  parent: Place
+  labels:
+  - region
+  - city
+  - district
+  - area
+  ui:
+    icon: tabler--map-2
+    color: '#10B981'
+  properties:
+    name:
+      type: string
+      description: The area's name.
+    area_type:
+      type: string
+      description: Kind of area.
+      enum:
+      - country
+      - region
+      - city
+      - district
+      title: Area Type
+    iso_code:
+      type: string
+      description: ISO code, if any.
+      title: Iso Code
+  required:
+  - name
+- name: TouristAttraction
+  label: Tourist Attraction
+  description: A place of interest to visitors.
+  category: travel
+  parent: Place
+  labels:
+  - attraction
+  - landmark
+  - site
+  ui:
+    icon: tabler--camera
+    color: '#F59E0B'
+  properties:
+    name:
+      type: string
+      description: The attraction's name.
+    attraction_type:
+      type: string
+      description: Kind of attraction.
+      title: Attraction Type
+    opening_hours:
+      type: string
+      description: Opening hours.
+      title: Opening Hours
+    url:
+      type: url
+      description: Reference URL.
+  required:
+  - name
+- name: Accommodation
+  label: Accommodation
+  description: 'A place to stay: hotel, hostel, apartment or campground.'
+  category: travel
+  parent: Place
+  labels:
+  - accommodation
+  - lodging
+  ui:
+    icon: tabler--bed
+    color: '#D97706'
+  properties:
+    name:
+      type: string
+      description: The accommodation's name.
+    accommodation_type:
+      type: string
+      description: Kind of accommodation.
+      enum:
+      - hotel
+      - hostel
+      - apartment
+      - campground
+      title: Accommodation Type
+    star_rating:
+      type: integer
+      description: Star rating.
+      minimum: 1
+      maximum: 5
+      title: Star Rating
+  required:
+  - name
+- name: Hotel
+  label: Hotel
+  description: A hotel or inn.
+  category: travel
+  parent: Accommodation
+  labels:
+  - hotel
+  - inn
+  ui:
+    icon: tabler--bed
+    color: '#B45309'
+  properties:
+    name:
+      type: string
+      description: The hotel's name.
+    check_in_time:
+      type: time
+      description: Check-in time (HH:MM).
+      title: Check In Time
+    check_out_time:
+      type: time
+      description: Check-out time (HH:MM).
+      title: Check Out Time
+    room_count:
+      type: integer
+      description: Number of rooms.
+      minimum: 0
+      title: Room Count
+  required:
+  - name
+- name: Airport
+  label: Airport
+  description: An airport or airfield.
+  category: travel
+  parent: Place
+  labels:
+  - airport
+  - airfield
+  ui:
+    icon: tabler--plane
+    color: '#0284C7'
+  properties:
+    name:
+      type: string
+      description: The airport's name.
+    iata_code:
+      type: string
+      description: Three-letter IATA code.
+      title: Iata Code
+    city:
+      type: string
+      description: City served.
+    country:
+      type: country
+      description: Country (ISO 3166-1).
+  required:
+  - name

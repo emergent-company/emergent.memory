@@ -3,9 +3,13 @@ package agents
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/uptrace/bun"
+
+	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/domain/tasks"
 )
 
 // WorkBlock is the durable blocked state for a work item. It is keyed by the
@@ -30,11 +34,22 @@ type WorkBlock struct {
 
 // UpsertWorkBlock records (or refreshes) a block row.
 func (r *Repository) UpsertWorkBlock(ctx context.Context, b *WorkBlock) error {
+	_, err := r.upsertWorkBlockReportInserted(ctx, b)
+	return err
+}
+
+// upsertWorkBlockReportInserted performs the work-block upsert and reports
+// whether this call created the row (true) or refreshed an existing one
+// (false). Callers that own a one-shot side effect (the budget park's
+// escalation task) use the flag instead of reading first and writing second,
+// so two concurrent deliveries for one item cannot both mint the side effect.
+func (r *Repository) upsertWorkBlockReportInserted(ctx context.Context, b *WorkBlock) (bool, error) {
 	now := time.Now()
 	if b.BlockedAt.IsZero() {
 		b.BlockedAt = now
 	}
-	_, err := r.db.NewRaw(`
+	var inserted bool
+	err := r.db.NewRaw(`
 		INSERT INTO kb.work_blocks
 			(canonical_id, project_id, reason, failure_class, blocked_at, blocked_by, note, run_id, created_at, updated_at)
 		VALUES (?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?::uuid, ?, ?)
@@ -46,10 +61,11 @@ func (r *Repository) UpsertWorkBlock(ctx context.Context, b *WorkBlock) error {
 			blocked_by = EXCLUDED.blocked_by,
 			note = EXCLUDED.note,
 			run_id = EXCLUDED.run_id,
-			updated_at = EXCLUDED.updated_at`,
+			updated_at = EXCLUDED.updated_at
+		RETURNING (xmax = 0)`,
 		b.CanonicalID, b.ProjectID, b.Reason, b.FailureClass, b.BlockedAt, b.BlockedBy, b.Note, b.RunID, now, now,
-	).Exec(ctx)
-	return err
+	).Scan(ctx, &inserted)
+	return inserted, err
 }
 
 // ClearWorkBlock removes the block row. It returns whether a row existed.
@@ -63,6 +79,29 @@ func (r *Repository) ClearWorkBlock(ctx context.Context, canonicalID string) (bo
 	}
 	n, _ := res.RowsAffected()
 	return n > 0, nil
+}
+
+// CountStepLimitExhaustions returns how many runs on this subject have stopped
+// at their step budget. The reconciler bounds automatic resumption with it: the
+// first exhaustions are a dead or over-long run (not a failed item) and get a
+// fresh dispatch, while a repeated exhaustion is a signal for a human rather
+// than another run.
+func (r *Repository) CountStepLimitExhaustions(ctx context.Context, subjectObjectID string) (int, error) {
+	if r == nil || subjectObjectID == "" {
+		return 0, nil
+	}
+	var n int
+	err := r.db.NewRaw(`
+		SELECT count(*)
+		  FROM kb.agent_runs
+		 WHERE subject_object_id = ?
+		   AND COALESCE(suspend_context->>'reason', '') = ?`,
+		subjectObjectID, string(SuspendReasonStepLimit),
+	).Scan(ctx, &n)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // GetWorkBlock returns the block row, or nil when not blocked.
@@ -91,4 +130,147 @@ func (r *Repository) IsWorkBlocked(ctx context.Context, canonicalID string) (boo
 		return false, err
 	}
 	return exists, nil
+}
+
+// budgetParkBlockedBy is the blocked_by marker for a durable park recorded by
+// the enqueue-time spending gate.
+const budgetParkBlockedBy = "budget-gate"
+
+// WorkBudgetParkedEvent describes a work dispatch the project spending gate
+// refused before a run or job row could be created. Listeners use it to publish
+// a caller-visible state (for example a head-bound review check) instead of
+// leaving an in-progress check waiting for a run that was never scheduled.
+type WorkBudgetParkedEvent struct {
+	ProjectID   string
+	CanonicalID string
+	ObjectType  string
+	AgentID     string
+	AgentName   string
+	Reason      string
+	Head        *graph.WorkObjectHead
+}
+
+// WorkBudgetParkListener observes an enqueue-time budget refusal. It runs on the
+// dispatch path, so implementations must be quick and must not fail the park.
+type WorkBudgetParkListener func(ctx context.Context, ev WorkBudgetParkedEvent)
+
+// AddWorkBudgetParkListener registers a listener for budget-parked dispatches.
+// Registered once at construction by the sources module; nil-safe.
+func (r *Repository) AddWorkBudgetParkListener(fn WorkBudgetParkListener) {
+	if r == nil || fn == nil {
+		return
+	}
+	r.workBudgetParkMu.Lock()
+	defer r.workBudgetParkMu.Unlock()
+	r.workBudgetParkListeners = append(r.workBudgetParkListeners, fn)
+}
+
+// NotifyWorkBudgetParked fans a budget-park event out to every listener. A
+// listener panic must not take down the triggering dispatch goroutine, and a
+// listener error is that listener's responsibility to log.
+func (r *Repository) NotifyWorkBudgetParked(ctx context.Context, ev WorkBudgetParkedEvent) {
+	if r == nil {
+		return
+	}
+	r.workBudgetParkMu.RLock()
+	listeners := append([]WorkBudgetParkListener(nil), r.workBudgetParkListeners...)
+	r.workBudgetParkMu.RUnlock()
+	for _, fn := range listeners {
+		func() {
+			defer func() { _ = recover() }()
+			fn(ctx, ev)
+		}()
+	}
+}
+
+// ParkWorkItemForBudget records the durable parked state for an item whose
+// dispatch the spending gate refused. The block is the stop condition for the
+// reconciler: while it is present the item is neither claimed nor re-enqueued,
+// so a capped project stops logging a refusal per tick. The state is
+// recoverable: when the cap is raised or the window reset the reconciler
+// clears a budget block, and a human can always unblock or retry the item.
+//
+// A dead-letter task is created only for the first park; refreshing an existing
+// block (a duplicate delivery) must not pile up duplicate escalations.
+func (r *Repository) ParkWorkItemForBudget(ctx context.Context, projectID, canonicalID, reason string) error {
+	if r == nil || canonicalID == "" {
+		return nil
+	}
+	class := string(FailureClassBudget)
+	blockedBy := budgetParkBlockedBy
+	// The insert reports whether this call created the block. Only the creator
+	// escalates, so a duplicate or concurrent delivery for the same item cannot
+	// pile up duplicate work-escalation tasks.
+	inserted, err := r.upsertWorkBlockReportInserted(ctx, &WorkBlock{
+		CanonicalID:  canonicalID,
+		ProjectID:    projectID,
+		Reason:       reason,
+		FailureClass: &class,
+		BlockedBy:    &blockedBy,
+	})
+	if err != nil {
+		return err
+	}
+	if !inserted {
+		return nil
+	}
+	desc := fmt.Sprintf("class=%s: %s", FailureClassBudget, reason)
+	sourceType := "work_object"
+	_, err = r.CreateWorkTask(ctx, &tasks.Task{
+		ProjectID:   projectID,
+		Title:       "Work item parked (budget)",
+		Description: &desc,
+		Type:        "work-escalation",
+		Status:      "pending",
+		SourceType:  &sourceType,
+		SourceID:    &canonicalID,
+	})
+	return err
+}
+
+// EscalateStepLimitExhausted makes an exhausted step-limit park terminal for
+// the reconciler and mints exactly one human escalation task. Past
+// stepLimitAutoResumeLimit the item must be discoverable without someone
+// watching the board, exactly like a budget park (#1189 follow-up).
+//
+// The marker update is the single-writer gate: concurrent reconcilers race on
+// it and only the one whose UPDATE changes the row creates the task. A later
+// pass sees the marker and skips both the count query and the escalation, so a
+// permanently parked item costs nothing per minute.
+func (r *Repository) EscalateStepLimitExhausted(ctx context.Context, projectID, canonicalID string, exhaustions int) error {
+	if r == nil || canonicalID == "" {
+		return nil
+	}
+	marker := stepLimitExhaustedBlockedBy
+	res, err := r.db.NewRaw(`
+		UPDATE kb.work_blocks
+		   SET blocked_by = ?, updated_at = ?
+		 WHERE canonical_id = ?::uuid
+		   AND failure_class = ?
+		   AND blocked_by IS DISTINCT FROM ?`,
+		marker, time.Now(), canonicalID, string(FailureClassStepLimit), marker,
+	).Exec(ctx)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		// Another reconciler already escalated this park (or it is no longer a
+		// step-limit block): do not mint a duplicate.
+		return nil
+	}
+	desc := fmt.Sprintf(
+		"class=%s: automatic resume budget exhausted after %d step-limit stops. The item is still blocked; unblock or retry it to continue.",
+		FailureClassStepLimit, exhaustions,
+	)
+	sourceType := "work_object"
+	_, err = r.CreateWorkTask(ctx, &tasks.Task{
+		ProjectID:   projectID,
+		Title:       "Work item parked (step limit)",
+		Description: &desc,
+		Type:        "work-escalation",
+		Status:      "pending",
+		SourceType:  &sourceType,
+		SourceID:    &canonicalID,
+	})
+	return err
 }

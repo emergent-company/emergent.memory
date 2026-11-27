@@ -63,6 +63,22 @@ func TestStickyFormActionsRail(t *testing.T) {
 	assertContains(t, html, "lg:grid-cols-[11rem_minmax(0,1fr)]")
 }
 
+// Full drops the ContainerLG cap so the bar's content row lines up with a page
+// rendered in layout.ContainerFull instead of centering under a wide form.
+func TestStickyFormActionsFull(t *testing.T) {
+	html := renderHTML(t, StickyFormActions(StickyFormActionsProps{Full: true}))
+	assertContains(t, html, "max-w-none")
+	assertNotContains(t, html, "max-w-6xl")
+	// The gutter stays: full-bleed drops the cap, not the padding.
+	assertContains(t, html, "px-6", "lg:px-8")
+}
+
+func TestStickyFormActionsFullRail(t *testing.T) {
+	html := renderHTML(t, StickyFormActions(StickyFormActionsProps{Rail: true, Full: true}))
+	assertContains(t, html, "max-w-none", "lg:grid-cols-[11rem_minmax(0,1fr)]")
+	assertNotContains(t, html, "max-w-6xl")
+}
+
 func TestStickyFormActionsPassesAttrs(t *testing.T) {
 	html := renderHTML(t, StickyFormActions(StickyFormActionsProps{
 		Attrs: templ.Attributes{"data-testid": "sticky-bar"},

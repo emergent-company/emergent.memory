@@ -8,11 +8,13 @@ import (
 	"io/fs"
 	"log/slog"
 	"path"
+	"strings"
 
 	"go.uber.org/fx"
 
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/domain/catalog"
 	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -23,6 +25,98 @@ import (
 //
 //go:embed builtin_packs
 var builtinPacksFS embed.FS
+
+// ListBuiltinObjectTypes returns the platform's common-entity taxonomy as
+// manifest definitions: the built-in catalog's types first (canonical), then
+// any `taxonomy: true` blueprint packs that add domain types. Discovery aligns
+// a proposed type against this set before inventing a new one.
+//
+// The catalog is reference data (domain/catalog), not a blueprint; packs are
+// read directly from the embedded manifests. A pack cannot shadow a catalog
+// type: a pack type whose name (case-insensitive) matches a catalog type's name
+// or one of its aliases is dropped, so a pack that reuses a canonical concept
+// under a different name still aligns to the catalog type. One malformed pack
+// is skipped with a warning rather than disabling alignment for every other
+// pack.
+func ListBuiltinObjectTypes() ([]ObjectTypeDef, error) {
+	cat, err := catalog.Load()
+	if err != nil {
+		return nil, err
+	}
+	out := catalogObjectTypeDefs(cat.Types)
+	seen := make(map[string]string, len(out))
+	// claimed maps a lower-cased catalog name or alias to the catalog type that
+	// owns it, so a pack type duplicating that concept is dropped.
+	claimed := make(map[string]string, len(cat.Types)*2)
+	for _, t := range cat.Types {
+		seen[t.Name] = "catalog"
+		claimed[strings.ToLower(t.Name)] = t.Name
+		for _, l := range t.Labels {
+			if k := strings.ToLower(strings.TrimSpace(l)); k != "" {
+				claimed[k] = t.Name
+			}
+		}
+	}
+
+	packTypes, err := listBuiltinObjectTypes(builtinPacksFS, "builtin_packs")
+	if err != nil {
+		return nil, err
+	}
+	for _, ot := range packTypes {
+		if _, ok := seen[ot.Name]; ok {
+			continue
+		}
+		if owner, ok := claimed[strings.ToLower(ot.Name)]; ok {
+			slog.Debug("skipping pack type that duplicates a catalog concept",
+				slog.String("type", ot.Name), slog.String("catalog_owner", owner))
+			continue
+		}
+		seen[ot.Name] = "taxonomy-pack"
+		out = append(out, ot)
+	}
+	return out, nil
+}
+
+// listBuiltinObjectTypes is the fs.FS-injectable, packs-only core: the
+// deduplicated object types of `taxonomy: true` packs. It does not include the
+// catalog, so error-isolation tests can exercise a malformed pack in isolation.
+func listBuiltinObjectTypes(fsys fs.FS, root string) ([]ObjectTypeDef, error) {
+	entries, err := fs.ReadDir(fsys, root)
+	if err != nil {
+		return nil, err
+	}
+	var out []ObjectTypeDef
+	seen := make(map[string]string)
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		desc, err := loadBlueprintDir(fsys, path.Join(root, name), name)
+		if err != nil {
+			slog.Warn("skipping unloadable builtin blueprint pack",
+				slog.String("pack", name), logger.Error(err))
+			continue
+		}
+		for _, p := range desc.Packs {
+			if !p.Taxonomy {
+				continue
+			}
+			for _, ot := range p.ObjectTypes {
+				if prev, ok := seen[ot.Name]; ok {
+					slog.Debug("skipping duplicate taxonomy object type",
+						slog.String("type", ot.Name),
+						slog.String("kept_pack", prev),
+						slog.String("skipped_pack", p.Name))
+					continue
+				}
+				seen[ot.Name] = p.Name
+				out = append(out, ot)
+			}
+		}
+	}
+	return out, nil
+}
 
 // BuiltinSeeder seeds the platform's built-in blueprints at server startup: each
 // bundled pack becomes a global published blueprint (project_id NULL,

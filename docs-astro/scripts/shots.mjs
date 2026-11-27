@@ -14,7 +14,7 @@
  *     node scripts/shots.mjs scripts/shots/zitadel.plan.json
  *     node scripts/shots.mjs scripts/shots/zitadel.plan.json --only 10-zitadel-password
  *
- * Then, for the docs:   node scripts/port-images.mjs && npm run build
+ * Then, for the docs:   npm run shots:build && npm run build
  *
  * A plan is one browser session and an ordered list of steps, because a tutorial
  * is one path through the UI: navigating, typing, clicking and taking a picture
@@ -92,7 +92,7 @@ if (!loginMode && !planPath) {
 
 const OUT = outFlag
   ? path.resolve(outFlag)
-  : (process.env.SHOTS_OUT ?? path.join(REPO, 'docs/site/assets/tutorials/railway'));
+  : (process.env.SHOTS_OUT ?? path.join(REPO, 'docs-astro/public/assets/tutorials/railway'));
 const FAILED = path.join(OUT, 'failures');
 const LOGIN_URL = flag('--login-url', 'https://railway.com/login');
 

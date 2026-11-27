@@ -42,14 +42,10 @@ func galleryPagePreviews() []GalleryPagePreview {
 		{
 			Slug:        "objects",
 			Name:        "Objects browser",
-			Description: "Wiki-style card grid with per-card selection and grouped actions, a one-line search/filter toolbar with the sort control and the wiki view switch, a single stats strip, and \"Ask the graph\" behind a header dialog. Cards link into an object's wiki page. Sample data; selection and the bulk bar are live.",
+			Description: "Wiki-style card grid with per-card selection and grouped actions, a one-line search/filter toolbar with the sort control, a single stats strip, and \"Ask the graph\" behind a header dialog. Cards link into an object's wiki page. Sample data; selection and the bulk bar are live.",
 			Height:      "1080px",
 			Body: func(q url.Values) templ.Component {
-				data := objectsBrowserSampleData(q.Get("order"))
-				// The switch is query-only, like the sort control, so the preview
-				// can show both variants without a backend.
-				data.WikiView = q.Get("wiki_view")
-				return ObjectsPage(data)
+				return ObjectsPage(objectsBrowserSampleData(q.Get("order")))
 			},
 		},
 		{
@@ -62,10 +58,19 @@ func galleryPagePreviews() []GalleryPagePreview {
 		{
 			Slug:        "objects-wiki",
 			Name:        "Object wiki",
-			Description: "The reading surface a card opens: a content head (type tile, name, identity chips) with the variant switch and a small Edit link, no breadcrumb trail and no action row. \u201cArticle\u201d reads the object's prose with its properties beside it; \u201cObject page\u201d is the structured variant with key facts and relationship groups. Both carry History in the details rail. Sample data.",
+			Description: "The reading surface a card opens: a content head (type tile, name, identity chips) with small Chat and Edit links, no breadcrumb trail and no action row. The object's prose leads, then key facts and one section per relationship group; the details rail carries metadata, workflow, provenance, labels, the relationship breakdown and History. Sample data.",
 			Height:      "1120px",
-			Body: func(q url.Values) templ.Component {
-				return objectWikiPage(galleryObjectWikiSampleData(q.Get("wiki_view")))
+			Body: func(url.Values) templ.Component {
+				return objectWikiPage(galleryObjectWikiSampleData())
+			},
+		},
+		{
+			Slug:        "objects-wiki-workflow",
+			Name:        "Object wiki — workflow status",
+			Description: "The same wiki on a type that declares a workflow: the rail's read-only Workflow group shows the lane the object sits in and its assignee, and links the object page, where the pickers live. A type with no declared workflow has no such group — its \u201cstatus\u201d is an ordinary property. Sample data.",
+			Height:      "1120px",
+			Body: func(url.Values) templ.Component {
+				return objectWikiPage(galleryObjectWikiWorkflowSampleData())
 			},
 		},
 	}
@@ -102,7 +107,25 @@ func (s *Server) uiComponentPagePreview(c echo.Context) error {
 func objectsBrowserSearchSampleData() objectsPageData {
 	return objectsPageData{
 		Query: "acme",
-		Mode:  "unified",
+		In:    searchScopeAll,
+		Limit: defaultSearchLimit,
+		Meta:  UnifiedSearchMetadata{TotalResults: 9, TextResultCount: 2, GraphResultCount: 7},
+		Documents: []searchDocumentHit{
+			{
+				DocumentID: "6f1d2c84-3a75-4b90-8e21-7c5f9d0a4b13",
+				Name:       "Acme Robotics — platform RFC.pdf",
+				Mode:       "hybrid",
+				Score:      0.913,
+				Snippet:    "The integration layer authenticates against Acme's gateway before any warehouse event is accepted; retries are bounded and idempotent per shipment.",
+			},
+			{
+				DocumentID: "a3b8e5c2-90d4-4f16-b7c3-2e8f1a6d5c40",
+				Name:       "Q3 business review notes.md",
+				Mode:       "lexical",
+				Score:      0.644,
+				Snippet:    "Acme asked for a security questionnaire and a delivery timeline for the EMEA rollout; both are tracked on the account plan.",
+			},
+		},
 		Types: []string{"company", "document", "event", "note", "person", "project", "task"},
 		Results: []ObjectSearchResult{
 			{Score: 0.942, Object: GraphObject{
@@ -250,7 +273,6 @@ func objectsBrowserSampleData(order string) objectsPageData {
 	})
 
 	return objectsPageData{
-		Mode:       defaultObjectsSearchMode,
 		Order:      order,
 		Types:      types,
 		BranchID:   "",
@@ -285,11 +307,27 @@ func objectsBrowserSampleData(order string) objectsPageData {
 	}
 }
 
+// galleryObjectWikiWorkflowSampleData is the workflow variant of the wiki
+// sample: the same note, on a type that declares a workflow. The rail's
+// Workflow group renders only for such a type, and only from a status control
+// the loader would have resolved (Show, in a fixed vocabulary — a board with an
+// allowed-status set, not a free-text lane), so the sample supplies both. The
+// assignee is the stored display name, which is what the rail prints.
+func galleryObjectWikiWorkflowSampleData() objectWikiPageData {
+	data := galleryObjectWikiSampleData()
+	data.Obj.Status = "in_progress"
+	data.Obj.Assignee = "Dana Whitfield"
+	data.Status = &objectStatusControl{Show: true, Options: []string{"todo", "in_progress", "review", "done"}}
+	workflow := data.TypeUIByType["note"]
+	workflow.HasWorkflow = true
+	data.TypeUIByType["note"] = workflow
+	return data
+}
+
 // galleryObjectWikiSampleData is the wiki preview's sample object: a note with
-// prose, declared properties, relationships and an extraction source, so both
-// variants have something real to render. view mirrors the live page's choice
-// (cookie or ?view=), so the preview's switch actually switches.
-func galleryObjectWikiSampleData(view string) objectWikiPageData {
+// prose, declared properties, relationships and an extraction source, so the
+// page has something real to render.
+func galleryObjectWikiSampleData() objectWikiPageData {
 	rev := 4
 	obj := &GraphObject{
 		ID: "c8e2d5a1-4b96-4f30-a7d8-9e1c2b6f4a03", Type: "note", Key: "Kickoff meeting notes",
@@ -307,7 +345,6 @@ func galleryObjectWikiSampleData(view string) objectWikiPageData {
 	}
 	return objectWikiPageData{
 		Obj:       obj,
-		View:      normalizeObjectWikiView(view),
 		TypeLabel: "Note",
 		PropDefs: []objectPropertyDef{
 			{Name: "owner", Title: "Owner", Type: "string"},

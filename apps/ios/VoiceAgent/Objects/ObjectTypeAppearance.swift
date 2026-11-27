@@ -10,10 +10,76 @@ enum ObjectTypeAppearance {
     /// unknown or undeclared icon to `box`, and anything unmapped here falls
     /// back to the same box.
     static func symbol(forLucide name: String) -> String {
-        lucideSymbols[name] ?? fallbackSymbol
+        let bare = normalizeIconName(name)
+        return lucideSymbols[bare] ?? tablerSymbols[bare] ?? fallbackSymbol
     }
 
     static let fallbackSymbol = "shippingbox"
+
+    /// Strips an explicit icon-family prefix (`lucide--`, `tabler--`, and the
+    /// colon/underscore variants) so one lookup table serves both families.
+    /// The gateway already normalizes most values; this keeps a raw schema value
+    /// safe.
+    private static func normalizeIconName(_ raw: String) -> String {
+        var name = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        for prefix in ["lucide--", "lucide:", "lucide_", "tabler--", "tabler:", "tabler_"]
+            where name.hasPrefix(prefix)
+        {
+            name = String(name.dropFirst(prefix.count))
+            break
+        }
+        return name
+    }
+
+    /// SF Symbols for the curated Tabler catalog used by schema.org-derived
+    /// taxonomy types. Names that also exist in `lucideSymbols` resolve there
+    /// first (same glyph semantics), so this holds only Tabler-specific names.
+    /// Keep in sync with `schemaicon.TablerNames` / `supportedTablerIconClasses`.
+    static let tablerSymbols: [String: String] = [
+        "building": "building.2",
+        "calendar-event": "calendar",
+        "article": "newspaper",
+        "movie": "film",
+        "device-tv": "tv",
+        "video": "video",
+        "photo": "photo",
+        "browser": "safari",
+        "world-www": "globe",
+        "trademark": "seal",
+        "message-star": "star.bubble",
+        "star-half": "star.lefthalf.filled",
+        "chef-hat": "fork.knife",
+        "building-store": "building.2",
+        "app-window": "macwindow",
+        "id-badge": "person.text.rectangle",
+        "school": "graduationcap",
+        "list-check": "checklist",
+        "category": "square.grid.2x2",
+        "stethoscope": "stethoscope",
+        "pill": "pills",
+        "building-bank": "building.columns",
+        "building-hospital": "cross.case",
+        "plane": "airplane",
+        "user-heart": "person.crop.circle.badge.heart",
+        "map-2": "map",
+        "camera": "camera",
+        "bed": "bed.double",
+        "car": "car",
+        "music": "music.note",
+        "users": "person.2",
+        "album": "square.stack",
+        "microphone": "mic",
+        "palette": "paintpalette",
+        "database": "cylinder.split.1x2",
+        "device-mobile": "iphone",
+        "device-gamepad": "gamecontroller",
+        "shopping-cart": "cart",
+        "receipt": "receipt",
+        "tools": "wrench.and.screwdriver",
+        "tools-kitchen-2": "fork.knife",
+        "first-aid-kit": "cross.case",
+        "shield": "shield",
+    ]
 
     static let lucideSymbols: [String: String] = [
         "box": "shippingbox",

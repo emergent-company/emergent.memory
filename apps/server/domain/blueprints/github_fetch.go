@@ -628,10 +628,11 @@ func (f *GitHubFetcher) Fetch(ctx context.Context, org, repo, ref, token string)
 }
 
 // extractTarGzSafe extracts an archive stream under dest, rejecting path
-// traversal, absolute paths, links and non-regular entries, and enforcing
-// entry-count and total-byte caps. It accepts gzip-compressed and plain tar
-// streams (the GitHub tarball is gzipped; a marketplace canonical bundle may be
-// either).
+// traversal, absolute paths, links and every special entry (devices, fifos),
+// and enforcing entry-count and total-byte caps. PAX metadata headers are
+// skipped, not refused: a real GitHub tarball opens with one. It accepts
+// gzip-compressed and plain tar streams (the GitHub tarball is gzipped; a
+// marketplace canonical bundle may be either).
 func extractTarGzSafe(r io.Reader, dest string, maxFiles int, maxBytes int64) error {
 	return extractArchiveSafe(r, dest, maxFiles, maxBytes)
 }
@@ -666,6 +667,18 @@ func extractArchiveSafe(r io.Reader, dest string, maxFiles int, maxBytes int64) 
 		}
 		if err != nil {
 			return apperror.NewBadRequest("invalid archive: corrupt tar")
+		}
+
+		// A PAX metadata header is not a file. GitHub's codeload tarballs open
+		// with a global one — a `pax_global_header` entry carrying the commit id
+		// — and archive/tar hands it back from Next() like any other entry, so a
+		// strict type switch refused every real GitHub import as a "non-regular
+		// entry". Skipping it before the name checks keeps the file budget for
+		// files and writes nothing: a per-file (TypeXHeader) record is consumed
+		// by archive/tar itself, and this covers both shapes if that changes.
+		// Devices, fifos and every other special entry stay refused below.
+		if hdr.Typeflag == tar.TypeXGlobalHeader || hdr.Typeflag == tar.TypeXHeader {
+			continue
 		}
 
 		name := strings.TrimPrefix(filepath.Clean(hdr.Name), string(os.PathSeparator))

@@ -39,6 +39,8 @@ func (p *capturingToolPool) StripOperatorTools(ctx context.Context, tools []tool
 
 func (p *capturingToolPool) ToolScopes() map[string]string { return nil }
 
+func (p *capturingToolPool) ExternalToolNames(string) map[string]bool { return nil }
+
 func (p *capturingToolPool) CallTool(ctx context.Context, projectID, toolName string, args map[string]any) (map[string]any, error) {
 	p.mu.Lock()
 	p.callCtxs = append(p.callCtxs, ctx)

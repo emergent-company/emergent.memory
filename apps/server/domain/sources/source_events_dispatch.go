@@ -1447,6 +1447,15 @@ func (d *SourceEventDispatcher) sourceOwnsReviewGate(ctx context.Context, src *S
 }
 
 func triggersOwnReviewGate(triggers []*SourceTrigger) bool {
+	return triggersServePullRequests(triggers)
+}
+
+// triggersServePullRequests reports whether a source explicitly configures
+// pull-request tooling (a pull_request trigger, enabled or not). Unlike
+// triggersOwnReviewGate, no triggers means false: this is the "does this App
+// review pull requests at all" question a manual review run asks when it has no
+// source provenance (#1029).
+func triggersServePullRequests(triggers []*SourceTrigger) bool {
 	for _, trigger := range triggers {
 		if trigger != nil && strings.EqualFold(trigger.EventType, "pull_request") {
 			return true

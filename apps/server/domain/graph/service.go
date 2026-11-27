@@ -5112,20 +5112,19 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 
 		// Deterministic same-entity detection (exact key). A source object that
 		// would be "added" (new canonical ID) but shares a normalized type+key
-		// with an existing target head is the same entity extracted from a
-		// different document. Reclassify it as "similar" with a deterministic
-		// score so the existing similarity policy (and the provenance union)
-		// applies. This is independent of embeddings: it runs before and
+		// with an existing target head is the same entity re-extracted from a
+		// different document, not a distinct addition. Classify it against that
+		// target head exactly like a canonical-matched pair (fast_forward /
+		// conflict) and record the target canonical so the merge resolves the
+		// target head across the canonical boundary and remaps source-referencing
+		// relationships. This is independent of embeddings: it runs before and
 		// regardless of the embedding-driven similarity probe below.
 		if summary.Status == "added" {
 			if same := findSameEntityTargetInIndex(sourceHead, sameEntityIndex); same != nil {
-				summary.Status = "similar"
-				summary.SimilarityScore = 1.0
-				cid := same.CanonicalID
-				summary.SimilarTargetID = &cid
-				if same.Name != nil {
-					summary.SimilarTargetName = *same.Name
-				}
+				summary.Status, summary.Conflicts = classifySameEntity(sourceHead, same)
+				targetCID := same.CanonicalID
+				summary.SameEntityTargetID = &targetCID
+				summary.TargetHeadID = &same.ID
 			}
 		}
 
@@ -5601,10 +5600,28 @@ func (s *Service) applyMerge(
 			if src == nil {
 				continue
 			}
+			// An exact-key same-entity fast-forward targets a DIFFERENT canonical
+			// (the target's), not the source's. Resolve that canonical so the
+			// target head is read across the canonical boundary.
+			targetCanonical := cid
+			if summary.SameEntityTargetID != nil {
+				targetCanonical = *summary.SameEntityTargetID
+			}
 			// Fetch the current HEAD on the target branch to use as prevHead
-			prevHead, err := s.repo.GetHeadByCanonicalID(ctx, tx, projectID, cid, targetBranchID)
+			prevHead, err := s.repo.GetHeadByCanonicalID(ctx, tx, projectID, targetCanonical, targetBranchID)
 			if err != nil {
 				return 0, fmt.Errorf("get target head for fast-forward %s: %w", cid, err)
+			}
+			// An exact-key re-extraction that produced identical content is a pure
+			// duplicate: record the canonical mapping and mark the source merged,
+			// but do not mint a redundant version on the target.
+			if summary.SameEntityTargetID != nil &&
+				bytesEqual(src.ContentHash, prevHead.ContentHash) && namesEqual(src.Name, prevHead.Name) {
+				if err := s.stampSourceMerged(ctx, tx.Tx, src.ID, targetCanonical); err != nil {
+					return 0, fmt.Errorf("same-entity dedup object %s: %w", cid, err)
+				}
+				canonicalIDMap[cid] = targetCanonical
+				continue
 			}
 			labels := src.Labels
 			if labels == nil {
@@ -5660,18 +5677,33 @@ func (s *Service) applyMerge(
 			appliedCount++
 			// Use physical version ID — graph_embedding_jobs.object_id FK references graph_objects.id.
 			embeddingIDs = append(embeddingIDs, newVersion.ID.String())
+			if summary.SameEntityTargetID != nil {
+				if err := s.stampSourceMerged(ctx, tx.Tx, src.ID, targetCanonical); err != nil {
+					return 0, fmt.Errorf("mark same-entity source merged %s: %w", cid, err)
+				}
+				canonicalIDMap[cid] = targetCanonical
+			}
 
 		case "conflict":
 			if strategy == "preserve_target" {
-				// Skip — target object is kept as-is, nothing to write.
+				// Skip — target object is kept as-is, nothing to write. Identical to
+				// a same-canonical conflict under preserve_target: the source's
+				// conflicting changes are discarded and it is left for review, so no
+				// duplicate canonical is created on the target.
 				continue
 			}
 			src := sourceObjects[cid]
-			tgt := targetObjects[cid]
-			if src == nil || tgt == nil {
+			if src == nil {
 				continue
 			}
-			prevHead, err := s.repo.GetHeadByCanonicalID(ctx, tx, projectID, cid, targetBranchID)
+			// An exact-key same-entity conflict targets a DIFFERENT canonical
+			// (the target's), not the source's. Resolve that canonical so the
+			// target head is read across the canonical boundary.
+			targetCanonical := cid
+			if summary.SameEntityTargetID != nil {
+				targetCanonical = *summary.SameEntityTargetID
+			}
+			prevHead, err := s.repo.GetHeadByCanonicalID(ctx, tx, projectID, targetCanonical, targetBranchID)
 			if err != nil {
 				return 0, fmt.Errorf("get target head for conflict %s: %w", cid, err)
 			}
@@ -5681,15 +5713,15 @@ func (s *Service) applyMerge(
 			switch strategy {
 			case "overwrite":
 				// Source wins all conflicting keys.
-				mergedProps = mergeProps(tgt.Properties, src.Properties)
+				mergedProps = mergeProps(prevHead.Properties, src.Properties)
 				mergeResolution = "overwritten"
 			default: // "enrich"
 				// Target wins same keys; source adds new keys only.
-				mergedProps = mergeProps(src.Properties, tgt.Properties)
+				mergedProps = mergeProps(src.Properties, prevHead.Properties)
 				mergeResolution = "enriched"
-				// Collect keys that came from source (keys in src not in tgt).
+				// Collect keys that came from source (keys in src not in target).
 				for k := range src.Properties {
-					if _, exists := tgt.Properties[k]; !exists {
+					if _, exists := prevHead.Properties[k]; !exists {
 						enrichedKeys = append(enrichedKeys, k)
 					}
 				}
@@ -5697,15 +5729,15 @@ func (s *Service) applyMerge(
 			// Provenance is exempt from policy: union the target and source
 			// provenance onto the merged result so conflict resolution never
 			// drops sources from either side.
-			mergedProps = applyProvenanceUnion(mergedProps, tgt.Properties, src.Properties)
+			mergedProps = applyProvenanceUnion(mergedProps, prevHead.Properties, src.Properties)
 			// Status: preserve target unless overwrite.
-			resolvedStatus := tgt.Status
-			resolvedName := tgt.Name
+			resolvedStatus := prevHead.Status
+			resolvedName := prevHead.Name
 			if strategy == "overwrite" {
 				resolvedStatus = src.Status
 				resolvedName = src.Name
 			}
-			labels := tgt.Labels
+			labels := prevHead.Labels
 			if strategy == "overwrite" {
 				labels = src.Labels
 			}
@@ -5721,14 +5753,14 @@ func (s *Service) applyMerge(
 			if len(enrichedKeys) > 0 {
 				changeSummary["enriched_keys"] = enrichedKeys
 			}
-			mergedClass, mergedOwner, ownerErr := resolveMergedOwner(src.DataClass, src.OwnerSourceID, tgt.DataClass, tgt.OwnerSourceID)
+			mergedClass, mergedOwner, ownerErr := resolveMergedOwner(src.DataClass, src.OwnerSourceID, prevHead.DataClass, prevHead.OwnerSourceID)
 			if ownerErr != nil {
 				return 0, fmt.Errorf("conflict-resolve object %s: %w", cid, ownerErr)
 			}
 			newVersion := &GraphObject{
 				Type:          prevHead.Type,
 				Name:          resolvedName,
-				Key:           tgt.Key,
+				Key:           prevHead.Key,
 				Status:        resolvedStatus,
 				Namespace:     src.Namespace,
 				Labels:        labels,
@@ -5761,6 +5793,12 @@ func (s *Service) applyMerge(
 			appliedCount++
 			// Use physical version ID — graph_embedding_jobs.object_id FK references graph_objects.id.
 			embeddingIDs = append(embeddingIDs, newVersion.ID.String())
+			if summary.SameEntityTargetID != nil {
+				if err := s.stampSourceMerged(ctx, tx.Tx, src.ID, targetCanonical); err != nil {
+					return 0, fmt.Errorf("mark same-entity source merged %s: %w", cid, err)
+				}
+				canonicalIDMap[cid] = targetCanonical
+			}
 
 		case "deleted":
 			// Soft delete on target branch
@@ -6048,6 +6086,20 @@ func (s *Service) applyMerge(
 
 // Helper functions for branch merge
 
+// stampSourceMerged records that a source-branch object was collapsed into a
+// target canonical during a merge, so a later compare/diff sees it as merged
+// rather than "added" again.
+func (s *Service) stampSourceMerged(ctx context.Context, db bun.IDB, sourceHeadID, targetCanonicalID uuid.UUID) error {
+	if _, err := db.NewUpdate().
+		Model((*GraphObject)(nil)).
+		Set("merged_to_canonical_id = ?", targetCanonicalID).
+		Where("id = ?", sourceHeadID).
+		Exec(ctx); err != nil {
+		return fmt.Errorf("stamp merged_to on object %s: %w", sourceHeadID, err)
+	}
+	return nil
+}
+
 // mergeProps merges two property maps: base is the starting set, overlay wins on
 // same keys. Returns a new map (does not mutate inputs).
 // Use mergeProps(source, target) for enrich (target wins same keys, source adds new).
@@ -6295,6 +6347,24 @@ func classifyMergeObject(sourceHead, targetHead *BranchObjectHead) (status strin
 	}
 
 	return "unchanged", nil
+}
+
+// classifySameEntity classifies a source object that matches a target HEAD by
+// its natural (type, key) identity but carries a DIFFERENT canonical ID — a
+// re-extraction of an entity that already exists on the target. It mirrors
+// classifyMergeObject's "both present" branch with one deliberate difference:
+// identical content is "fast_forward", not "unchanged", because the merge still
+// has to record the cross-canonical mapping and collapse the source canonical
+// into the target's; "unchanged" would leave the duplicate dangling.
+func classifySameEntity(sourceHead, targetHead *BranchObjectHead) (status string, conflicts []string) {
+	if bytesEqual(sourceHead.ContentHash, targetHead.ContentHash) && namesEqual(sourceHead.Name, targetHead.Name) {
+		return "fast_forward", nil
+	}
+	conflicts = findConflictingPaths(sourceHead.Properties, targetHead.Properties)
+	if len(conflicts) > 0 {
+		return "conflict", conflicts
+	}
+	return "fast_forward", nil
 }
 
 func sortMergeObjectSummaries(summaries []*BranchMergeObjectSummary) {

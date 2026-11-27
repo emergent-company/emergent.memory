@@ -100,6 +100,10 @@ routes:
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: POST
+      path: /api/admin/extraction-jobs/projects/:projectId/backfill
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: POST
       path: /api/admin/extraction-jobs/projects/:projectId/bulk-cancel
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
@@ -109,6 +113,14 @@ routes:
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: POST
       path: /api/admin/extraction-jobs/projects/:projectId/bulk-retry
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: GET
+      path: /api/admin/extraction-jobs/projects/:projectId/quarantine
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: POST
+      path: /api/admin/extraction-jobs/projects/:projectId/quarantine/dismiss
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: GET
@@ -313,6 +325,22 @@ routes:
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireProjectID
     - method: GET
       path: /api/blueprints/applied
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireProjectID
+    - method: GET
+      path: /api/blueprints/catalog
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireProjectID
+    - method: POST
+      path: /api/blueprints/catalog/install
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireProjectID
+    - method: GET
+      path: /api/blueprints/catalog/resolve
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireProjectID
+    - method: GET
+      path: /api/blueprints/catalog/type
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireProjectID
     - method: PUT
@@ -1397,6 +1425,18 @@ routes:
       note: RequireAuth, RequireAPITokenScopes(projects:read)
     - method: PATCH
       path: /api/projects/:id/members/:userId
+      level: auth
+      note: RequireAuth, RequireAPITokenScopes(projects:read)
+    - method: GET
+      path: /api/projects/:id/pipeline
+      level: auth
+      note: RequireAuth, RequireAPITokenScopes(projects:read)
+    - method: PUT
+      path: /api/projects/:id/pipeline
+      level: auth
+      note: RequireAuth, RequireAPITokenScopes(projects:read), RequireAPITokenScopes(projects:write)
+    - method: POST
+      path: /api/projects/:id/pipeline/preview
       level: auth
       note: RequireAuth, RequireAPITokenScopes(projects:read)
     - method: POST

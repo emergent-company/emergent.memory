@@ -256,7 +256,7 @@ memory graph reindex-embeddings --force --chunks
 Parent chunks are skipped (they are structural context and never embedded), rows
 that already have an active job are not queued twice, and the response reports
 `chunks_enqueued` next to the existing counters. See
-[docs/site/user-guide/model-setup.md](docs/site/user-guide/model-setup.md#4-re-embed-after-changing-the-embedding-model).
+[docs-astro/src/content/docs/user-guide/model-setup.mdx](docs-astro/src/content/docs/user-guide/model-setup.mdx).
 
 **Project search page** (2026-11-04)
 
@@ -511,7 +511,7 @@ which has required `--project-id` since embeddings became project-only (Refs
 
 **Docs and CLI no longer point at the removed org-level provider setup** (2026-11-12)
 
-`docs/site/user-guide/model-setup.md` and the bundled `memory-onboard` /
+`docs-astro/src/content/docs/user-guide/model-setup.mdx` and the bundled `memory-onboard` /
 `memory-providers` skills told users to run `memory provider configure …` at the
 org level, which no longer exists — provider credentials and model selection are
 project-scoped. They now use `memory provider configure-project`, describe the

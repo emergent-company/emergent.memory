@@ -44,19 +44,6 @@ const viewExpandLimit = 200
 // address it by index without re-deriving a title string.
 const viewMoreTitle = "More connections"
 
-// viewDefaultFactProps are property names that make a poor preview fact because
-// the row already shows them (the label) or they are prose/links (too long to
-// scan). Everything else is a candidate.
-var viewDefaultFactProps = map[string]bool{
-	"name":        true,
-	"title":       true,
-	"label":       true,
-	"notes":       true,
-	"description": true,
-	"summary":     true,
-	"url":         true,
-}
-
 // objectViewFact is one label/value pair of a preview.
 type objectViewFact struct {
 	Label string
@@ -332,10 +319,20 @@ func sortViewRows(rows []objectViewItem, limit int) []objectViewItem {
 	return rows
 }
 
-// objectViewFacts selects the depth-1 preview facts for a neighbour. A type
-// that declares `ui.view.inline` chooses its own; everything else falls back to
-// status plus the first scalar properties in key order, which is deterministic
-// and never shows prose or a URL truncated mid-token.
+// objectViewFacts selects the depth-1 preview facts for a neighbour.
+//
+// A row is a pointer to another object, not a summary of it. It shows the
+// neighbour's identity, the relationship type, and — for a type that declares a
+// workflow — the lane the object sits in, which is what a reader scanning a hub
+// needs to pick which one to open.
+//
+// It does not print the neighbour's properties. An earlier version filled the
+// remaining slots with the first scalar properties in key order, which turned
+// every row into a truncated spec sheet ("Next due 2026-12-20", "Status active")
+// and made a page of connections unreadable: the values were cut mid-token,
+// unlabelled by any schema a reader knows, and repeated whatever the object page
+// already says in full. A type that genuinely wants chosen fields on a
+// relationship row declares them as `ui.view.inline`; nothing is inferred.
 func objectViewFacts(o GraphObject, typeUIByType map[string]typeUI) []objectViewFact {
 	out := make([]objectViewFact, 0, viewMaxFactsPerRow)
 	if view := typeUIOf(typeUIByType, o.Type).View; view != nil && len(view.Inline) > 0 {
@@ -352,36 +349,14 @@ func objectViewFacts(o GraphObject, typeUIByType map[string]typeUI) []objectView
 		return out
 	}
 
-	if status := strings.TrimSpace(o.Status); status != "" {
-		out = append(out, objectViewFact{Label: "Status", Value: truncateRunes(status, viewFactMaxRunes)})
-	}
-	// The status column is shown first when it is set; the same value often
-	// also sits in properties (it is what the editor writes), and rendering it
-	// twice wastes one of the four fact slots.
-	statusShown := strings.TrimSpace(o.Status) != ""
-	keys := make([]string, 0, len(o.Properties))
-	for key := range o.Properties {
-		if strings.HasPrefix(key, "_") || viewDefaultFactProps[key] {
-			continue
+	if typeUIOf(typeUIByType, o.Type).HasWorkflow {
+		// The workflow status is a fact about the object's work process, not
+		// about its data, and only a type that declares a workflow has one. It
+		// is labelled "Workflow" so a `status` property — ordinary schema data,
+		// which this row no longer prints at all — is never mistaken for it.
+		if status := strings.TrimSpace(o.Status); status != "" {
+			out = append(out, objectViewFact{Label: "Workflow", Value: truncateRunes(boardStatusLabel(status), viewFactMaxRunes)})
 		}
-		if key == "status" && statusShown {
-			continue
-		}
-		if !objectPreviewScalar(o.Properties[key]) {
-			continue
-		}
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		if len(out) == viewMaxFactsPerRow {
-			break
-		}
-		value := objectViewFactValue(o.Properties[key])
-		if value == "" {
-			continue
-		}
-		out = append(out, objectViewFact{Label: objectPreviewFieldLabel(key), Value: value})
 	}
 	return out
 }

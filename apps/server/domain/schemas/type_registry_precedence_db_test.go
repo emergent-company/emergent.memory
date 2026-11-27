@@ -343,6 +343,54 @@ func TestPreviewMergeDetectsSameRunCollision(t *testing.T) {
 	assert.Equal(t, []string{"legal_name"}, c.AddedProperties)
 }
 
+// TestAssignPackMergeTypesMergesOnlyNamedTypes pins MergeTypes as the per-type
+// form of Merge: the caller that accepted one collision (catalog install's
+// `extend`) merges exactly that type and every other collision still skips.
+func TestAssignPackMergeTypesMergesOnlyNamedTypes(t *testing.T) {
+	ctx, repo, db, projectID := setupTypeRegistryTest(t)
+
+	base, err := repo.CreatePack(ctx, projectID, &schemas.CreatePackRequest{
+		Name:    "ot-base",
+		Version: "1.0.0",
+		ObjectTypeSchemasSnake: json.RawMessage(`[
+			{"name":"Person","properties":{"name":{"type":"string"}}},
+			{"name":"Event","properties":{"title":{"type":"string"}}}
+		]`),
+	})
+	require.NoError(t, err)
+	_, err = repo.AssignPackWithTypes(ctx, projectID, testutil.AdminUser.ID, &schemas.AssignPackRequest{SchemaID: base.ID})
+	require.NoError(t, err)
+
+	other, err := repo.CreatePack(ctx, projectID, &schemas.CreatePackRequest{
+		Name:    "ot-other",
+		Version: "1.0.0",
+		ObjectTypeSchemasSnake: json.RawMessage(`[
+			{"name":"Person","properties":{"legal_name":{"type":"string"}}},
+			{"name":"Event","properties":{"starts_at":{"type":"string"}}}
+		]`),
+	})
+	require.NoError(t, err)
+
+	res, err := repo.AssignPackWithTypes(ctx, projectID, testutil.AdminUser.ID, &schemas.AssignPackRequest{
+		SchemaID:   other.ID,
+		MergeTypes: []string{"Person"},
+	})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"Person"}, res.MergedTypes)
+	assert.ElementsMatch(t, []string{"Event"}, res.SkippedTypes)
+
+	personOwner, person := registryRowAndOwner(t, ctx, db, projectID, "Person")
+	assert.Contains(t, propsOf(t, person), "legal_name", "the named type merges additively")
+	// Accepting a collision takes the name over: the compiled view resolves a
+	// type from the newest assignment, so the incoming pack defines it and a
+	// later replace of that pack owns the name. The docs say so; this pins it.
+	assert.Equal(t, "ot-other", personOwner)
+
+	eventOwner, event := registryRowAndOwner(t, ctx, db, projectID, "Event")
+	assert.NotContains(t, propsOf(t, event), "starts_at", "an unnamed collision still skips")
+	assert.Equal(t, "ot-base", eventOwner, "an unaccepted collision keeps its owner")
+}
+
 // TestAssignPackCrossScopeSameNameForkRequiresMerge is the #338 regression: a
 // project-scoped pack that reuses a builtin's name (a different lineage in a
 // different registry scope) must not capture the type without Merge=true. A

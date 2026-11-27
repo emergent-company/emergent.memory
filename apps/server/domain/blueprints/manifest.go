@@ -25,10 +25,16 @@ type ProjectManifest struct {
 
 // PackManifest describes a schema pack to create and assign.
 type PackManifest struct {
-	Name              string                        `json:"name"`
-	Version           string                        `json:"version"`
-	Description       string                        `json:"description"`
-	Author            string                        `json:"author"`
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+	Description string `json:"description"`
+	Author      string `json:"author"`
+	// Taxonomy marks the pack as a common-entity taxonomy whose object types
+	// are offered to discovery as canonical alignment targets. Only taxonomy
+	// packs feed ListBuiltinObjectTypes; feature packs (task-board, agent-notes,
+	// session-message-types, dreaming-agent) also define object types but are
+	// platform-internal and must not be aligned against.
+	Taxonomy          bool                          `json:"taxonomy,omitempty"`
 	Migrations        *schemas.SchemaMigrationHints `json:"migrations,omitempty"`
 	ObjectTypes       []ObjectTypeDef               `json:"objectTypes,omitempty"`
 	RelationshipTypes []RelationshipTypeDef         `json:"relationshipTypes,omitempty"`
@@ -69,10 +75,19 @@ func (p *PackManifest) UnmarshalJSON(data []byte) error {
 // (e.g. extraction.enabled:false, embedding.mode/field) survive the manifest
 // round-trip losslessly rather than being dropped by a typed struct.
 type ObjectTypeDef struct {
-	Name        string         `json:"name"`
-	Label       string         `json:"label"`
-	Description string         `json:"description"`
-	Properties  map[string]any `json:"properties"`
+	Name        string `json:"name"`
+	Label       string `json:"label"`
+	Description string `json:"description"`
+	// Category is an optional single browse/grouping lens for a taxonomy type
+	// (e.g. "media", "commerce"). It is distinct from Labels (synonyms/facets)
+	// and from the packed subClassOf hierarchy; it lets discovery and the type
+	// picker group types by domain without implying subtyping.
+	Category string `json:"category,omitempty"`
+	// Parent is the optional canonical supertype (schema.org subClassOf), e.g.
+	// Movie -> CreativeWork. It records the is-a hierarchy for resolution and
+	// navigation; compiled project types stay flat.
+	Parent     string         `json:"parent,omitempty"`
+	Properties map[string]any `json:"properties"`
 	// Required lists the property names the type marks required. Carried through
 	// the manifest round-trip so a pack authored with a `required:` list (as the
 	// schemas builtin seeder used to emit) reaches the schema registry unchanged.

@@ -347,7 +347,12 @@ Control how entities are displayed in the UI.
 
 ### Available Icons
 
-Icons are a **closed catalog** of 65 Lucide names. A name outside the catalog silently falls back to a generic box, so always pick from this list:
+Icons are a **closed catalog** in two families:
+
+- **Lucide** (default) — 66 names, written bare (kebab-case, e.g. `file-text`). PascalCase `FileText` and `lucide--file-text` are also accepted.
+- **Tabler** — a curated breadth set for schema.org-derived taxonomy types, written with the explicit `tabler--` prefix (e.g. `tabler--movie`, `tabler--building`).
+
+A name outside its family's catalog silently falls back to a generic box, so always pick from the list. Lucide names:
 
 ```text
 box, file-text, file, git-branch, git-commit, git-merge, git-pull-request,
@@ -359,7 +364,7 @@ message-circle, monitor, package, paperclip, pen, phone, play, plus, puzzle,
 search, send, server, share, sparkles, terminal, trash, user, users, wrench, x
 ```
 
-Values may be written in kebab-case (`file-text`), PascalCase (`FileText`), or iconify form (`lucide--file-text`). MCP agents can call the `schema-icon-list` tool to fetch the current list at runtime.
+Values may be written in kebab-case (`file-text`), PascalCase (`FileText`), or iconify form (`lucide--file-text`). Tabler names require the `tabler--` prefix. MCP agents can call the `schema-icon-list` tool to fetch the current list (both families) at runtime.
 
 ---
 

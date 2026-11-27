@@ -39,17 +39,21 @@ var irregularPlurals = map[string]string{
 	"appendixes": "appendix",
 }
 
-// synonyms maps known spelling/word variants to one canonical key. Only pairs
-// that describe the same entity belong here; it is intentionally conservative
-// because a wrong synonym merges two real types.
+// synonyms maps known spelling/word variants to one canonical key. Only
+// spelling variants belong here (organisation -> organization); semantic
+// equivalence ("Character" vs "Person") is resolved by the discovery domain's
+// embedding-based similarity check, never by a hardcoded list.
+//
+// place/location follows the built-in catalog's canonical type: the schema.org
+// base type is "Place", so both spellings normalize to "place".
 var synonyms = map[string]string{
 	"organisation": "organization",
-	"place":        "location",
+	"location":     "place",
 }
 
 // NormalizeKey returns the comparison key for a discovered type name.
 // "Organization", "organisations" and "Organisation" all normalize to
-// "organization"; "Place" and "Locations" normalize to "location".
+// "organization"; "Place", "Location" and "Locations" normalize to "place".
 func NormalizeKey(name string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(strings.TrimSpace(name)) {
@@ -147,6 +151,12 @@ func singularize(s string) string {
 	}
 	if singular, ok := irregularPlurals[s]; ok {
 		return singular
+	}
+	// Words whose plural equals their singular ("series", "species", and
+	// compounds like "televisionseries") end in "ies" but are NOT plural — the
+	// suffix rule below would mangle them ("series" -> "sery").
+	if strings.HasSuffix(s, "series") || strings.HasSuffix(s, "species") {
+		return s
 	}
 	switch {
 	case strings.HasSuffix(s, "ies") && len(s) > 3:

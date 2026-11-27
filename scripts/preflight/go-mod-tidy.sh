@@ -47,7 +47,7 @@ modules=(
   apps/web-ui/gateway
   apps/connector.linux
   apps/cli
-  brand
+  design-system
   e2e
   e2e/stubs/github
   e2e/stubs/mailgun

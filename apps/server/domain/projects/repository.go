@@ -55,10 +55,12 @@ type projectWithStats struct {
 	PendingExtractionObjectCount       int `bun:"pending_extraction_object_count"`
 	PendingExtractionRelationshipCount int `bun:"pending_extraction_relationship_count"`
 	MainGraphObjectCount               int `bun:"main_graph_object_count"`
+	AutoMergeLeftForReviewCount        int `bun:"auto_merge_left_for_review_count"`
 }
 
-// pendingExtractionMergeStatsColumns appends the four correlated counts that
-// describe extraction output still awaiting merge (#496). They mirror
+// pendingExtractionMergeStatsColumns appends the correlated counts that
+// describe extraction output still awaiting merge (#496) and how much of it the
+// last auto-merge deliberately left for review (#1074). They mirror
 // graph.Repository.PendingExtractionBranches: unmerged extraction branches,
 // live HEAD rows only, and merged ledger rows excluded.
 const pendingExtractionMergeStatsColumns = `
@@ -83,7 +85,29 @@ const pendingExtractionMergeStatsColumns = `
 	) AS pending_extraction_relationship_count,
 	(SELECT COUNT(*) FROM kb.graph_objects
 	 WHERE project_id = p.id AND branch_id IS NULL AND supersedes_id IS NULL AND deleted_at IS NULL
-	) AS main_graph_object_count`
+	) AS main_graph_object_count,
+	(SELECT COALESCE(SUM(COALESCE(latest.left_for_review, 0)), 0)
+	 FROM kb.branches b
+	 LEFT JOIN LATERAL (
+	   SELECT CASE WHEN j.metadata->>'left_for_review_count' ~ '^[0-9]+$'
+	               THEN (j.metadata->>'left_for_review_count')::int ELSE 0 END AS left_for_review
+	   FROM kb.project_journal j
+	   WHERE j.project_id = p.id AND j.branch_id = b.id AND j.event_type = 'merge'
+	   -- created_at is NOW(), transaction-stable: two merge rows written in one
+	   -- transaction tie, and LIMIT 1 would otherwise pick either, making the
+	   -- same data report a different left_for_review_count between reads. The id
+	   -- tiebreak makes the choice deterministic (#1123).
+	   ORDER BY j.created_at DESC, j.id DESC
+	   LIMIT 1
+	 ) latest ON true
+	 WHERE b.project_id = p.id AND b.origin = 'extraction' AND b.merged_at IS NULL
+	   AND (EXISTS (SELECT 1 FROM kb.graph_objects go
+	                WHERE go.project_id = p.id AND go.branch_id = b.id
+	                  AND go.supersedes_id IS NULL AND go.merged_to_canonical_id IS NULL AND go.deleted_at IS NULL)
+	     OR EXISTS (SELECT 1 FROM kb.graph_relationships gr
+	                WHERE gr.project_id = p.id AND gr.branch_id = b.id
+	                  AND gr.supersedes_id IS NULL AND gr.deleted_at IS NULL))
+	) AS auto_merge_left_for_review_count`
 
 func (p *projectWithStats) populateStats() {
 	if p.Project.ID == "" {
@@ -102,6 +126,7 @@ func (p *projectWithStats) populateStats() {
 			ObjectCount:          p.PendingExtractionObjectCount,
 			RelationshipCount:    p.PendingExtractionRelationshipCount,
 			MainGraphObjectCount: p.MainGraphObjectCount,
+			LeftForReviewCount:   p.AutoMergeLeftForReviewCount,
 			Stranded:             p.PendingExtractionObjectCount > 0 && p.MainGraphObjectCount == 0,
 		},
 	}
@@ -270,6 +295,21 @@ func (r *Repository) GetOrganizationID(ctx context.Context, projectID string) (s
 	}
 
 	return orgID, true, nil
+}
+
+// BumpSchemaGeneration increments a project's schema_generation counter after
+// an effective schema change. It is atomic so concurrent applies cannot collide.
+func (r *Repository) BumpSchemaGeneration(ctx context.Context, projectID string) error {
+	_, err := r.db.NewUpdate().
+		Table("kb.projects").
+		Set("schema_generation = schema_generation + 1").
+		Where("id = ?", projectID).
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to bump schema generation", logger.Error(err), slog.String("id", projectID))
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
 }
 
 // AutoExtractSourceSyncs reports the project's auto-extract-after-source-sync

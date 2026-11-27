@@ -366,6 +366,12 @@ type AssignPackRequest struct {
 	// merging across packs, existing property definitions win and the newest
 	// install becomes the owning definition.
 	Merge bool `json:"merge,omitempty"`
+	// MergeTypes names cross-pack type names to merge while Merge stays false,
+	// so a caller accepts the merge for the collisions it chose explicitly
+	// (catalog install's `extend`) without merging every same-named type. A
+	// listed name is treated exactly as Merge treats it; Merge still wins for
+	// every type when it is true.
+	MergeTypes []string `json:"mergeTypes,omitempty"`
 	// Force, when true, allows migration to proceed even when the risk level is
 	// dangerous. Has no effect if the schema has no migration hints.
 	Force bool `json:"force,omitempty"`

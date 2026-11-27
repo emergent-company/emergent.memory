@@ -87,6 +87,81 @@ var supportedTypeIconClasses = []string{
 	"lucide--x",
 }
 
+// supportedTablerIconClasses is the curated catalog of Tabler icons the gateway
+// renders for schema-declared object-type icons. Tabler (MIT) is the breadth
+// family for schema.org-derived taxonomy types; the list is curated rather than
+// the full ~6.5k set so app.css and the iOS SF Symbol map stay bounded. Order
+// mirrors schemaicon.TablerNames in the server SDK (the drift guard checks it).
+var supportedTablerIconClasses = []string{
+	"tabler--box",
+	"tabler--user",
+	"tabler--building",
+	"tabler--map-pin",
+	"tabler--calendar-event",
+	"tabler--calendar",
+	"tabler--file-text",
+	"tabler--article",
+	"tabler--book",
+	"tabler--movie",
+	"tabler--device-tv",
+	"tabler--video",
+	"tabler--photo",
+	"tabler--browser",
+	"tabler--world-www",
+	"tabler--globe",
+	"tabler--package",
+	"tabler--tag",
+	"tabler--trademark",
+	"tabler--message-star",
+	"tabler--star-half",
+	"tabler--chef-hat",
+	"tabler--building-store",
+	"tabler--app-window",
+	"tabler--code",
+	"tabler--briefcase",
+	"tabler--id-badge",
+	"tabler--school",
+	"tabler--list-check",
+	"tabler--category",
+	"tabler--stethoscope",
+	"tabler--pill",
+	"tabler--map",
+	"tabler--building-bank",
+	"tabler--building-hospital",
+	"tabler--plane",
+	"tabler--user-heart",
+	"tabler--map-2",
+	"tabler--camera",
+	"tabler--bed",
+	"tabler--car",
+	"tabler--music",
+	"tabler--users",
+	"tabler--album",
+	"tabler--microphone",
+	"tabler--palette",
+	"tabler--database",
+	"tabler--device-mobile",
+	"tabler--device-gamepad",
+	"tabler--shopping-cart",
+	"tabler--receipt",
+	"tabler--tools",
+	"tabler--tools-kitchen-2",
+	"tabler--first-aid-kit",
+	"tabler--shield",
+}
+
+// supportedTablerIcons is the set of bare Tabler kebab names derived from
+// supportedTablerIconClasses ("tabler--movie" → "movie").
+var supportedTablerIcons = buildSupportedTablerIcons()
+
+func buildSupportedTablerIcons() map[string]struct{} {
+	m := make(map[string]struct{}, len(supportedTablerIconClasses))
+	for _, class := range supportedTablerIconClasses {
+		m[strings.TrimPrefix(class, "tabler--")] = struct{}{}
+	}
+	return m
+}
+
 // supportedTypeIcons is the set of bare Lucide kebab names derived from
 // supportedTypeIconClasses ("lucide--file-text" → "file-text").
 var supportedTypeIcons = buildSupportedTypeIcons()
@@ -153,12 +228,30 @@ func typeIconClass(icon string) string {
 	if hasNonASCII(s) {
 		return ""
 	}
+	if name, isTabler := tablerIconName(s); isTabler {
+		if _, ok := supportedTablerIcons[name]; ok && name != "" {
+			return "tabler--" + name
+		}
+		return "lucide--box"
+	}
 	if name := normalizeIconName(s); name != "" {
 		if _, ok := supportedTypeIcons[name]; ok {
 			return "lucide--" + name
 		}
 	}
 	return "lucide--box"
+}
+
+// tablerIconName reports whether icon carries an explicit Tabler family prefix
+// ("tabler--movie", "tabler:movie") and returns its normalized bare name.
+func tablerIconName(icon string) (string, bool) {
+	lower := strings.ToLower(icon)
+	for _, prefix := range []string{"tabler--", "tabler:", "tabler_"} {
+		if strings.HasPrefix(lower, prefix) {
+			return normalizeIconName(icon[len(prefix):]), true
+		}
+	}
+	return "", false
 }
 
 // shareIconName resolves an agent icon from the upstream share config to a

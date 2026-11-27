@@ -684,3 +684,34 @@ func TestHubPollerDropsSessionOn401(t *testing.T) {
 		t.Error("unaffected session must stay subscribed")
 	}
 }
+
+// TestRunStateFromTimelineCapturesFailure pins the conversation rail/dock state
+// carrying the failed run's reason in the same state the fingerprint and
+// refresh payload use.
+func TestRunStateFromTimelineCapturesFailure(t *testing.T) {
+	items := []TimelineItem{{
+		Kind: "run_end", RunID: "run-1", RunStatus: "failed", ErrorMessage: "provider quota exceeded",
+	}}
+	st := runStateFromTimeline(items, nil, nil, func(ToolApprovalItem) bool { return false })
+	if st.failure != "provider quota exceeded" {
+		t.Errorf("failure = %q, want the run error", st.failure)
+	}
+	if !strings.Contains(runStateFingerprint(st), "provider quota exceeded") {
+		t.Errorf("fingerprint does not include the failure: %q", runStateFingerprint(st))
+	}
+
+	// A later completed run clears the failed reason.
+	items = append(items, TimelineItem{Kind: "run_end", RunID: "run-2", RunStatus: "completed"})
+	st = runStateFromTimeline(items, nil, nil, func(ToolApprovalItem) bool { return false })
+	if st.failure != "" {
+		t.Errorf("completed run kept a stale failure: %q", st.failure)
+	}
+}
+
+// TestDeriveRunBucketLegacyError pins the legacy "error" status onto the failed
+// bucket, matching the failure-copy status gate.
+func TestDeriveRunBucketLegacyError(t *testing.T) {
+	if got := deriveRunBucket("error", nil, nil); got != runBucketFailed {
+		t.Errorf("deriveRunBucket(error) = %q, want %q", got, runBucketFailed)
+	}
+}

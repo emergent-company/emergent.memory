@@ -19,6 +19,9 @@ func TestNormalize(t *testing.T) {
 		{"file text", "file-text"},
 		{"lucide--file-text", "file-text"},
 		{"lucide:file-text", "file-text"},
+		{"tabler--Movie", "movie"},
+		{"tabler:device-tv", "device-tv"},
+		{"tabler--GitPullRequest", "git-pull-request"},
 		{"lucide--GitPullRequest", "git-pull-request"},
 		{"GitPullRequest", "git-pull-request"},
 		{"AlertTriangle", "alert-triangle"},
@@ -42,6 +45,8 @@ func TestIsRenderable(t *testing.T) {
 		"bot",
 		"🚀",
 		"★",
+		"tabler--movie",
+		"tabler:device-tv",
 	}
 	for _, s := range renderable {
 		if !IsRenderable(s) {
@@ -54,6 +59,8 @@ func TestIsRenderable(t *testing.T) {
 		"   ",
 		"not-an-icon",
 		"LucideBox", // normalizes to "lucide-box", not in catalog
+		"tabler--not-a-real-icon",
+		"TablerBuilding", // bare name is Lucide family, not a Tabler name
 	}
 	for _, s := range notRenderable {
 		if IsRenderable(s) {
@@ -102,6 +109,41 @@ func TestNamesAndSet(t *testing.T) {
 	}
 }
 
+// TestTablerNames pins the curated Tabler catalog: non-empty, unique,
+// canonical kebab, and isolated from the Lucide set.
+func TestTablerNames(t *testing.T) {
+	names := TablerNames()
+	if len(names) == 0 {
+		t.Fatal("TablerNames() returned an empty catalog")
+	}
+	seen := map[string]bool{}
+	for _, name := range names {
+		if seen[name] {
+			t.Errorf("duplicate Tabler catalog entry %q", name)
+		}
+		seen[name] = true
+		if Normalize("tabler--"+name) != name {
+			t.Errorf("Tabler name %q is not canonical kebab", name)
+		}
+		if !IsRenderable("tabler--" + name) {
+			t.Errorf("Tabler name %q is not renderable with its prefix", name)
+		}
+	}
+	set := TablerSet()
+	if len(set) != len(names) {
+		t.Errorf("TablerSet() has %d entries, want %d", len(set), len(names))
+	}
+	// Mutating the returned copies must not affect the package catalog.
+	names[0] = "mutated"
+	set["mutated"] = struct{}{}
+	if reflect.DeepEqual(TablerNames(), names) {
+		t.Error("TablerNames() exposes the internal catalog")
+	}
+	if _, ok := TablerSet()["mutated"]; ok {
+		t.Error("TablerSet() exposes the internal lookup map")
+	}
+}
+
 // TestCatalogMatchesWebUI is a drift guard: the shared catalog must mirror the
 // gateway's supportedTypeIconClasses, because Tailwind only emits CSS for the
 // literal lucide-- classes listed there. When the SDK module is consumed
@@ -145,6 +187,35 @@ func TestCatalogMatchesWebUI(t *testing.T) {
 	for i := range names {
 		if names[i] != web[i] {
 			t.Fatalf("catalog entry %d = %q, web-ui = %q (catalogs drifted)", i, names[i], web[i])
+		}
+	}
+
+	// Tabler family: same guard against supportedTablerIconClasses.
+	const tablerMarker = "var supportedTablerIconClasses = []string{"
+	tstart := strings.Index(string(data), tablerMarker)
+	if tstart < 0 {
+		t.Fatalf("%s not found in web-ui type_icons.go", tablerMarker)
+	}
+	tblock := string(data)[tstart:]
+	if end := strings.Index(tblock, "}"); end >= 0 {
+		tblock = tblock[:end]
+	}
+	tre := regexp.MustCompile(`"tabler--([^"]+)"`)
+	tmatches := tre.FindAllStringSubmatch(tblock, -1)
+	if len(tmatches) == 0 {
+		t.Fatal("found no tabler-- literals in supportedTablerIconClasses")
+	}
+	tweb := make([]string, len(tmatches))
+	for i, m := range tmatches {
+		tweb[i] = m[1]
+	}
+	tn := TablerNames()
+	if len(tn) != len(tweb) {
+		t.Fatalf("tabler catalog has %d entries, web-ui has %d: %v vs %v", len(tn), len(tweb), tn, tweb)
+	}
+	for i := range tn {
+		if tn[i] != tweb[i] {
+			t.Fatalf("tabler catalog entry %d = %q, web-ui = %q (catalogs drifted)", i, tn[i], tweb[i])
 		}
 	}
 }

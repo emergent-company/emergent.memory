@@ -137,12 +137,13 @@ func TestObjectPreviewContentIdentity(t *testing.T) {
 }
 
 // TestObjectPreviewStatusPlacement pins where an object's status is read: a
-// type that declares a workflow shows the editable top-strip status picker and
-// does not repeat the mirrored status property in its type panel; a type with
-// no workflow shows its own declared status property in the type panel and no
-// workflow controls (the Scenario shape that prompted the fix).
+// type that declares a workflow shows the editable top-strip status picker, and
+// a `status` property is ordinary data that renders in the type panel beside it
+// — never folded away, because the two are different things. A type with no
+// workflow shows only its declared status property and no workflow controls
+// (the Scenario shape that prompted the fix).
 func TestObjectPreviewStatusPlacement(t *testing.T) {
-	t.Run("workflow type shows the status picker and hides the mirrored property", func(t *testing.T) {
+	t.Run("workflow type shows the picker beside the status property", func(t *testing.T) {
 		obj := &GraphObject{
 			Type: "Task", Key: "T-1", Status: "in_progress",
 			Properties: map[string]any{"status": "in_progress", "title": "Do it"},
@@ -164,8 +165,10 @@ func TestObjectPreviewStatusPlacement(t *testing.T) {
 		if strings.Contains(html, "Workflow status") {
 			t.Errorf("preview must not render a read-only Workflow status row:\n%s", html)
 		}
-		if strings.Contains(html, `title="status"`) {
-			t.Errorf("mirrored status property must not repeat in the type panel:\n%s", html)
+		// The status property is the object's own data, not a mirror of the work
+		// lane: it renders whatever the type declared, even beside a workflow.
+		if !strings.Contains(html, `title="status"`) {
+			t.Errorf("the declared status property must still render in the type panel:\n%s", html)
 		}
 		if !strings.Contains(html, "Do it") {
 			t.Errorf("type property missing:\n%s", html)
@@ -416,10 +419,12 @@ func TestObjectPreviewNotFound(t *testing.T) {
 	}
 }
 
-// TestObjectPreviewStatusHumanised pins the status-label contract: the preview
-// renders the humanised status (not the raw key) in the header badge, while
-// preserving the raw value for machine fidelity.
-func TestObjectPreviewStatusHumanised(t *testing.T) {
+// TestObjectPreviewNoWorkflowChrome pins the separation: an object whose type
+// declares no workflow renders no workflow chrome in the preview at all. Its
+// status is a schema property, so it can only appear as a property row — a
+// value in the work-status column can never masquerade as a workflow state
+// there.
+func TestObjectPreviewNoWorkflowChrome(t *testing.T) {
 	obj := &GraphObject{
 		ID:     "11111111-1111-1111-1111-111111111111",
 		Type:   "note",
@@ -428,14 +433,14 @@ func TestObjectPreviewStatusHumanised(t *testing.T) {
 	}
 	html := renderHTML(t, objectPreviewContent(obj, nil, "", objectPreviewSchema{}, nil))
 
-	if !strings.Contains(html, "In progress") {
-		t.Errorf("status should be humanised to 'In progress':\n%s", html)
+	if strings.Contains(html, `data-status=`) {
+		t.Errorf("a type with no workflow must not render a status badge:\n%s", html)
 	}
-	if !strings.Contains(html, `data-status="in_progress"`) {
-		t.Errorf("raw status must be preserved in data-status:\n%s", html)
+	if strings.Contains(html, "Workflow status") {
+		t.Errorf("a type with no workflow must not render a workflow row:\n%s", html)
 	}
 	if strings.Contains(html, ">in_progress<") {
-		t.Errorf("raw status key must not be rendered as a text label:\n%s", html)
+		t.Errorf("the status column must not be rendered as a label:\n%s", html)
 	}
 }
 
@@ -447,7 +452,7 @@ func TestObjectPreviewHistoryNewestFirst(t *testing.T) {
 		{ID: "2", Version: 2, Type: "note", Key: "k", Status: "in_progress", CreatedAt: "2026-01-02T00:00:00Z"},
 		{ID: "1", Version: 1, Type: "note", Key: "k", Status: "ready", CreatedAt: "2026-01-01T00:00:00Z"},
 	}
-	html := renderHTML(t, objectPreviewHistory(versions, nil))
+	html := renderHTML(t, objectPreviewHistory(versions, nil, nil))
 
 	for _, want := range []string{"v2", "v1", "In progress", `data-testid="object-preview-history"`, "k"} {
 		if !strings.Contains(html, want) {
@@ -461,7 +466,7 @@ func TestObjectPreviewHistoryNewestFirst(t *testing.T) {
 
 // TestObjectPreviewHistoryEmptyAndError pins the timeline's degenerate states.
 func TestObjectPreviewHistoryEmptyAndError(t *testing.T) {
-	if html := renderHTML(t, objectPreviewHistory(nil, nil)); !strings.Contains(html, "No change history recorded.") {
+	if html := renderHTML(t, objectPreviewHistory(nil, nil, nil)); !strings.Contains(html, "No change history recorded.") {
 		t.Errorf("empty history missing message:\n%s", html)
 	}
 	if html := renderHTML(t, objectPreviewHistoryError()); !strings.Contains(html, "History unavailable") {
@@ -478,7 +483,7 @@ func TestObjectPreviewHistoryEntryExpandable(t *testing.T) {
 		{ID: "2", Version: 2, Type: "note", Key: "k", Status: "ready",
 			ChangeSummary: map[string]any{"added": map[string]any{"/summary": "hello"}}},
 	}
-	html := renderHTML(t, objectPreviewHistory(versions, nil))
+	html := renderHTML(t, objectPreviewHistory(versions, nil, nil))
 	for _, want := range []string{
 		`<details`,
 		`<summary`,
@@ -505,7 +510,7 @@ func TestObjectPreviewHistoryChangeSummary(t *testing.T) {
 			},
 		},
 	}
-	html := renderHTML(t, objectPreviewHistory(versions, nil))
+	html := renderHTML(t, objectPreviewHistory(versions, nil, nil))
 	for _, want := range []string{
 		"+ /author",
 		"+ /summary",
@@ -535,7 +540,7 @@ func TestObjectPreviewHistoryMergeProvenance(t *testing.T) {
 			},
 		},
 	}
-	html := renderHTML(t, objectPreviewHistory(versions, nil))
+	html := renderHTML(t, objectPreviewHistory(versions, nil, nil))
 	for _, want := range []string{
 		"source: merge",
 		"strategy: three-way",
@@ -572,7 +577,7 @@ func TestObjectPreviewHistoryDerivedFallback(t *testing.T) {
 			},
 		},
 	}
-	html := renderHTML(t, objectPreviewHistory(versions, nil))
+	html := renderHTML(t, objectPreviewHistory(versions, nil, nil))
 	for _, want := range []string{
 		"status: ready → in_progress",
 		"assignee: alice → bob",
@@ -597,14 +602,14 @@ func TestObjectPreviewHistoryNoChangesNote(t *testing.T) {
 		{ID: "2", Version: 2, Type: "BoardTask", Key: "k", Status: "ready"},
 		{ID: "1", Version: 1, Type: "BoardTask", Key: "k", Status: "ready"},
 	}
-	if html := renderHTML(t, objectPreviewHistory(same, nil)); !strings.Contains(html, note) {
+	if html := renderHTML(t, objectPreviewHistory(same, nil, nil)); !strings.Contains(html, note) {
 		t.Errorf("identical versions missing no-changes note:\n%s", html)
 	}
 
 	single := []GraphObject{
 		{ID: "1", Version: 1, Type: "BoardTask", Key: "k", Status: "ready"},
 	}
-	if html := renderHTML(t, objectPreviewHistory(single, nil)); !strings.Contains(html, note) {
+	if html := renderHTML(t, objectPreviewHistory(single, nil, nil)); !strings.Contains(html, note) {
 		t.Errorf("single version missing no-changes note:\n%s", html)
 	}
 }
@@ -624,7 +629,7 @@ func TestObjectPreviewChangesToleratesUnexpectedShape(t *testing.T) {
 		},
 		{ID: "1", Version: 1, Type: "note", Key: "k", Status: "ready"},
 	}
-	html := renderHTML(t, objectPreviewHistory(versions, nil))
+	html := renderHTML(t, objectPreviewHistory(versions, nil, nil))
 	if !strings.Contains(html, "status: ready → in_progress") {
 		t.Errorf("unexpected change_summary shape should fall back to derivation:\n%s", html)
 	}

@@ -44,6 +44,7 @@ templ objectStatusPicker(target objectWorkControlTarget, current string, ctrl *o
 			<div
 				tabindex="0"
 				role="button"
+				data-gd-menu-trigger
 				class="flex cursor-pointer items-center rounded-full py-0.5 pr-2 pl-0.5 outline-none transition hover:ring-1 hover:ring-base-content/25 focus-visible:ring-1 focus-visible:ring-base-content/45"
 				aria-label="Change status"
 				aria-haspopup="menu"
@@ -99,6 +100,7 @@ templ objectAssigneeControl(target objectWorkControlTarget, current string, cand
 		<div
 			tabindex="0"
 			role="button"
+			data-gd-menu-trigger
 			class="flex cursor-pointer items-center gap-2 rounded-full py-0.5 pr-2.5 pl-0.5 outline-none transition hover:ring-1 hover:ring-base-content/25 focus-visible:ring-1 focus-visible:ring-base-content/45"
 			aria-label="Assignee"
 			aria-haspopup="menu"
@@ -196,24 +198,22 @@ templ objectWorkControlHiddenFields(target objectWorkControlTarget) {
 	}
 }
 
-// objectWorkflowPanel renders the Overview's editable workflow panel: a labelled
-// Status picker and Assignee picker. The panel is conditional — the caller only
-// renders it for a type that declares a workflow — so a no-workflow type never
-// gets a second status editor beside its typed `status` property. The preview
-// drawer keeps the compact unlabelled strip (objectWorkControls).
+// objectWorkflowPanel renders the Overview's editable Workflow group in the
+// metadata rail: a Status picker over an Assignee picker. The group is
+// conditional — the caller only renders it for a type that declares a workflow —
+// so a no-workflow type never gets a second status editor beside its typed
+// `status` property. The preview drawer keeps the compact unlabelled strip
+// (objectWorkControls).
 templ objectWorkflowPanel(obj *GraphObject, ctrl *objectStatusControl, candidates []boardAssigneeCandidate, target objectWorkControlTarget) {
 	if !objectWorkControlDisabled(ctrl) {
-		@ui.Section("Workflow", ui.SectionProps{
-			Margin:    "mt-6",
-			BodyClass: "memory-density-comfortable",
-		}) {
-			<div class="flex flex-wrap items-start gap-6" data-testid="object-workflow-panel">
+		@objectWikiRail("Workflow") {
+			<div class="flex flex-col gap-3" data-testid="object-workflow-panel">
 				<div class="flex flex-col gap-1.5">
-					<span class="text-muted text-xs font-medium">Status</span>
+					<span class="text-muted-faint text-xs font-medium">Status</span>
 					@objectStatusPicker(target, obj.Status, ctrl)
 				</div>
 				<div class="flex flex-col gap-1.5">
-					<span class="text-muted text-xs font-medium">Assignee</span>
+					<span class="text-muted-faint text-xs font-medium">Assignee</span>
 					@objectAssigneeControl(target, obj.Assignee, candidates)
 				</div>
 			</div>
@@ -234,7 +234,7 @@ templ objectWorkBlockPanel(obj *GraphObject, work *WorkItem) {
 		if class == "" { class = "unknown" }
 		clearLabel := "Clear block"
 		if stale { clearLabel = "Clear stale block" } }}
-		<section class="mt-6 rounded-box border border-error/30 bg-error/5 p-4" data-testid="object-work-block">
+		<section class="rounded-box border border-error/30 bg-error/5 p-4" data-testid="object-work-block">
 			<div class="flex flex-wrap items-center gap-2">
 				@ui.Badge(ui.BadgeProps{Label: "blocked", Variant: ui.BadgeError, Size: ui.BadgeSizeSM})
 				<span class="text-xs font-medium text-muted">{ class }</span>

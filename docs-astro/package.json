@@ -7,10 +7,8 @@
     "build": "astro build",
     "preview": "astro preview",
     "astro": "astro",
-    "shots:port": "node scripts/redact-tutorial-shots.mjs && node scripts/port-images.mjs && python3 scripts/port_mkdocs.py",
-    "shots:test": "node scripts/redact-tutorial-shots.mjs --self-test",
-    "docs:check": "python3 scripts/port_mkdocs.py --check",
-    "docs:test": "python3 scripts/port_mkdocs.py --self-test"
+    "shots:build": "node scripts/redact-tutorial-shots.mjs && node scripts/build-figures.mjs",
+    "shots:test": "node scripts/redact-tutorial-shots.mjs --self-test"
   },
   "dependencies": {
     "@astrojs/starlight": "^0.43.1",

@@ -697,7 +697,7 @@ func TestBuildTypeDiscoveryPrompt_IncludesKBPurpose(t *testing.T) {
 	docs := []DocumentContent{
 		{Content: "Alice reports to Bob. Bob is VP of Engineering."},
 	}
-	prompt := s.buildTypeDiscoveryPrompt(docs, kbPurpose, 0)
+	prompt := s.buildTypeDiscoveryPrompt(docs, kbPurpose, 0, nil)
 	if !strings.Contains(prompt, kbPurpose) {
 		t.Errorf("D1 FAIL: kbPurpose not found in prompt\nkbPurpose: %q\nprompt (first 500 chars): %.500s", kbPurpose, prompt)
 	}
@@ -710,10 +710,10 @@ func TestBuildTypeDiscoveryPrompt_TypeBudget(t *testing.T) {
 	s := testService()
 	docs := []DocumentContent{{Content: "Alice reports to Bob."}}
 
-	if p := s.buildTypeDiscoveryPrompt(docs, "hr", 0); !strings.Contains(p, "up to 20 important entity types") {
+	if p := s.buildTypeDiscoveryPrompt(docs, "hr", 0, nil); !strings.Contains(p, "up to 20 important entity types") {
 		t.Errorf("default budget not in prompt: %.200s", p)
 	}
-	if p := s.buildTypeDiscoveryPrompt(docs, "hr", discoveryReducedMaxTypes); !strings.Contains(p, "up to 5 important entity types") {
+	if p := s.buildTypeDiscoveryPrompt(docs, "hr", discoveryReducedMaxTypes, nil); !strings.Contains(p, "up to 5 important entity types") {
 		t.Errorf("reduced budget not in prompt: %.200s", p)
 	}
 }
@@ -897,7 +897,7 @@ func TestDiscoverBatchTypes_ReducedBudgetRetry(t *testing.T) {
 	}}
 	svc := newBatchTestService(llm)
 
-	groups, err := svc.discoverBatchTypes(context.Background(), testDocs(1), 1, "test purpose", 0)
+	groups, err := svc.discoverBatchTypes(context.Background(), testDocs(1), 1, "test purpose", 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -928,7 +928,7 @@ func TestDiscoverBatchTypes_ReducedBudgetStops(t *testing.T) {
 	}}
 	svc := newBatchTestService(llm)
 
-	_, err := svc.discoverBatchTypes(context.Background(), testDocs(1), 1, "test purpose", discoveryReducedMaxTypes)
+	_, err := svc.discoverBatchTypes(context.Background(), testDocs(1), 1, "test purpose", discoveryReducedMaxTypes, nil)
 	if err == nil {
 		t.Fatal("expected an error for a still-truncated reduced attempt")
 	}
@@ -949,7 +949,7 @@ func TestDiscoverBatchTypes_ReducedBudgetStopsAfterSecondTruncation(t *testing.T
 	}}
 	svc := newBatchTestService(llm)
 
-	_, err := svc.discoverBatchTypes(context.Background(), testDocs(1), 1, "test purpose", 0)
+	_, err := svc.discoverBatchTypes(context.Background(), testDocs(1), 1, "test purpose", 0, nil)
 	if err == nil {
 		t.Fatal("expected an error when both attempts truncate")
 	}
@@ -973,7 +973,7 @@ func TestDiscoverBatchTypes_MultiDocumentSplitKeepsBudget(t *testing.T) {
 	svc := newBatchTestService(llm)
 
 	docs := testDocs(2)
-	groups, err := svc.discoverBatchTypes(context.Background(), docs, 1, "test purpose", 0)
+	groups, err := svc.discoverBatchTypes(context.Background(), docs, 1, "test purpose", 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1008,7 +1008,7 @@ func TestDiscoverBatchTypes_CompleteEmptyAnswerIsNotAFailure(t *testing.T) {
 	llm := &sequenceLLM{responses: []seqResponse{{text: `{"discovered_types":[]}`}}}
 	svc := newBatchTestService(llm)
 
-	groups, err := svc.discoverBatchTypes(context.Background(), testDocs(1), 1, "test purpose", 0)
+	groups, err := svc.discoverBatchTypes(context.Background(), testDocs(1), 1, "test purpose", 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

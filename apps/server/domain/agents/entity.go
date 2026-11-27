@@ -260,6 +260,13 @@ type AgentRun struct {
 	// session linkage: optional grouping of runs under a session.
 	SessionID *string `bun:"session_id,type:uuid" json:"sessionId,omitempty"`
 
+	// OrderedByUserID is the authenticated person who ordered this run, so a
+	// write the run makes can name the human behind it rather than only the
+	// agent that performed it. NULL when no person ordered the run (a source
+	// trigger, a schedule, background extraction) — never inferred from
+	// trigger metadata, which is model-settable on spawned runs.
+	OrderedByUserID *string `bun:"ordered_by_user_id,type:uuid" json:"orderedByUserId,omitempty"`
+
 	AgentDefinitionID *string `bun:"agent_definition_id,type:uuid" json:"agentDefinitionId,omitempty"`
 
 	// TrustedInternal marks a run started through a trusted surface (session UI,
@@ -316,6 +323,15 @@ type CreateRunOptions struct {
 	// checkpoint is finalized.
 	SubjectObjectID   *string
 	SubjectObjectType *string
+	// SourceSubject is the server-trusted source identity persisted on the run.
+	// A resume must carry it from the prior run so the resumed turn keeps the
+	// same verified source binding (and implicit credential); it is never read
+	// from trigger metadata.
+	SourceSubject *SourceSubject
+	// OrderedByUserID is the authenticated person who ordered the run. Set at
+	// creation by the caller that resolved a real user (never "system"), and
+	// persisted so provenance can name the authority behind an agent's write.
+	OrderedByUserID *string
 }
 
 // SourceSubject is the verified GitHub source subject for a run.

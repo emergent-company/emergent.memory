@@ -124,14 +124,24 @@ func (s *Service) executeSchemaVersion(ctx context.Context, projectID string) (*
 	return s.wrapResult(result)
 }
 
-// executeSchemaIconList returns the closed catalog of Lucide icon names valid
-// for schema object-type UI configs. Static — requires no project context.
+// executeSchemaIconList returns the closed catalogs of Lucide and Tabler icon
+// names valid for schema object-type UI configs. Static — requires no project
+// context. Lucide names are bare; Tabler names are returned with their explicit
+// "tabler--" family prefix so a caller cannot mistake one family for the other.
 func (s *Service) executeSchemaIconList(_ context.Context, _ string) (*ToolResult, error) {
+	lucide := schemaicon.Names()
+	tabler := schemaicon.TablerNames()
+	icons := make([]string, 0, len(lucide)+len(tabler))
+	icons = append(icons, lucide...)
+	for _, name := range tabler {
+		icons = append(icons, "tabler--"+name)
+	}
 	return s.wrapResult(SchemaIconListResult{
-		Icons: schemaicon.Names(),
-		Count: len(schemaicon.Names()),
-		Format: "Use the bare Lucide kebab-case name as the value of ui_configs.<type>.icon " +
-			"(e.g. \"file-text\"). PascalCase (\"FileText\") and \"lucide--file-text\" are also accepted.",
+		Icons: icons,
+		Count: len(icons),
+		Format: "Lucide icons use the bare kebab-case name as ui_configs.<type>.icon " +
+			"(e.g. \"file-text\"; \"lucide--file-text\" also accepted). Tabler icons use the " +
+			"explicit \"tabler--\" prefix (e.g. \"tabler--movie\").",
 		ColorNote: "ui_configs.<type>.color accepts any hex color, e.g. \"#3B82F6\".",
 	})
 }

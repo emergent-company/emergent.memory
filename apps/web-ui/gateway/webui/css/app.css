@@ -53,10 +53,11 @@
  * .dock-count, .memory-rail-badge, .memory-rail-count) are deliberate circles
  * and are exempt like `rounded-full`. */
 
-/* Iconify — Lucide icons as utility classes (used by go-daisy IconSpan and
-   the client JS). */
+/* Iconify — Lucide + Tabler icons as utility classes (used by go-daisy
+   IconSpan, the client JS, and schema-declared type icons). Tabler is the
+   breadth family for schema.org-derived taxonomy types. */
 @plugin "@iconify/tailwind4" {
-  prefixes: lucide;
+  prefixes: lucide, tabler;
 }
 
 /* ---------------------------------------------------------------------------
@@ -330,11 +331,19 @@ main#main-content {
     max-height: var(--app-vh, 100vh);
   }
 }
-/* The nav menu is the drawer's scroll container; pad its scroll end so the
-   last item clears the home indicator (iPad/landscape) instead of hiding
-   behind it. */
-#_layout-sidebar .sidebar-menu {
+/* The nav menu (the .grow child) is the drawer's scroll container; pad its
+   scroll end so the last item clears the home indicator (iPad/landscape)
+   instead of hiding behind it. Scoped to .grow because the pinned external
+   block also carries .sidebar-menu for the menu-item styling but is no longer
+   the drawer's last element — the build-version footer is. */
+#_layout-sidebar .sidebar-menu.grow {
   padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+/* The build-version footer is the drawer's last element (sidebar_user.templ), so
+   it carries the home-indicator clearance on its own. Its py-3 padding is the
+   floor the inset adds to. */
+#_layout-sidebar .sidebar-footer {
+  padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
 }
 /* Sidebar nav attention badges (the Documents problem count and the Usage
    budget level) belong flush with the row's trailing edge. go-daisy's

@@ -101,6 +101,27 @@ func (f *reviewToolsFixture) addSource(t *testing.T, projectID uuid.UUID, app *S
 	return id
 }
 
+// addAgent inserts the runtime agent a source trigger must reference.
+func (f *reviewToolsFixture) addAgent(t *testing.T, name string) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	_, err := f.db.DB.ExecContext(f.ctx,
+		`INSERT INTO kb.agents (id, name, strategy_type, cron_schedule, project_id) VALUES (?, ?, 'definition', '', ?)`,
+		id, name, f.project)
+	require.NoError(t, err)
+	return id
+}
+
+// addTrigger binds an event type to a source, the server-side signal of which
+// tooling that source serves.
+func (f *reviewToolsFixture) addTrigger(t *testing.T, sourceID, agentID uuid.UUID, eventType string) {
+	t.Helper()
+	require.NoError(t, f.repo.CreateSourceTrigger(f.ctx, &SourceTrigger{
+		ProjectID: f.project, SourceID: sourceID, EventType: eventType, AgentID: agentID,
+		Queue: "default", EventFilter: map[string]any{}, Enabled: true,
+	}))
+}
+
 // buildHandler wires the real handler to a fake GitHub API. Both the minter and
 // the client are pointed at the fake; the source read still runs on the probe
 // role.
@@ -249,6 +270,8 @@ func TestReviewToolsResolveSourceAndSubmit(t *testing.T) {
 	require.Contains(t, diff.Content[0].Text, "@@ -1 +1 @@")
 	require.Equal(t, 1, api.mintCount(42), "the source's installation must mint the token")
 	require.Equal(t, head, diff.StructuredContent["sha"])
+	require.Equal(t, string(sourceSelectionAllowlist), diff.StructuredContent["sourceSelection"],
+		"a sole allowlist match is attributed as such")
 
 	// The merge-gate marker and check title are byte-exact: post-verdict.sh and
 	// the merge guard parse them.
@@ -480,6 +503,76 @@ func TestReviewToolsAmbiguousSourceFailsClosed(t *testing.T) {
 	require.Contains(t, err.Error(), "bot-b")
 	require.Zero(t, api.mintCount(42))
 	require.Zero(t, api.mintCount(43))
+}
+
+// TestReviewToolsManualRunPrefersPullRequestSource pins #1029: the manual/queue
+// review path carries no source provenance, so a repo allowlisted by both a
+// coding and a review App used to fail closed on every operator-initiated
+// review. Exactly one source carries a pull_request trigger, i.e. is the App
+// that reviews pull requests; the tool must act through it, say so in the
+// response, and still fail closed when several sources review the repo.
+func TestReviewToolsManualRunPrefersPullRequestSource(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	f := newReviewToolsFixture(t, "review_tools_manual_review")
+	agentID := f.addAgent(t, "review")
+	appCoding := f.addApp(t, 601, "coding-app")
+	appReview := f.addApp(t, 602, "review-app")
+	srcCoding := f.addSource(t, f.project, appCoding, "GitHub Coding", "61", []string{"owner/repo"}, SourceStatusActive)
+	srcReview := f.addSource(t, f.project, appReview, "GitHub Review", "62", []string{"owner/repo"}, SourceStatusActive)
+	f.addTrigger(t, srcCoding, agentID, "issues")
+	f.addTrigger(t, srcReview, agentID, "pull_request")
+
+	api := newReviewToolsAPI(t)
+	f.buildHandler(t, api)
+	head := strings.Repeat("a", 40)
+	diffArgs := map[string]any{"repo": "owner/repo", "number": float64(7), "head_sha": head}
+	call := func() (*mcp.ToolResult, error) {
+		return f.handler.ExecuteGitHubAppTool(f.ctx, f.project.String(), toolPRDiff, diffArgs)
+	}
+
+	diff, err := call()
+	require.NoError(t, err)
+	require.Equal(t, 1, api.mintCount(62), "a manual review must mint through the pull_request source")
+	require.Zero(t, api.mintCount(61), "the coding source must never serve a review")
+	require.Equal(t, srcReview.String(), diff.StructuredContent["sourceId"])
+	require.Equal(t, "GitHub Review", diff.StructuredContent["sourceName"])
+	require.Equal(t, string(sourceSelectionReviewTrigger), diff.StructuredContent["sourceSelection"])
+	require.Contains(t, diff.Content[0].Text, "a.go")
+	require.Contains(t, diff.Content[0].Text,
+		"source: GitHub Review ("+srcReview.String()+"), selected by review-trigger")
+
+	// The verdict rides the same resolution, so it posts through the review App.
+	res, err := f.handler.ExecuteGitHubAppTool(f.ctx, f.project.String(), toolReviewSubmit,
+		reviewSubmitArgs(head, "MERGE", "looks good"))
+	require.NoError(t, err)
+	require.Equal(t, srcReview.String(), res.StructuredContent["sourceId"])
+	require.Equal(t, string(sourceSelectionReviewTrigger), res.StructuredContent["sourceSelection"])
+	require.Equal(t, 1, api.mintCount(62), "the verdict reuses the cached token of the same review source")
+	require.Zero(t, api.mintCount(61))
+
+	// A second review source makes the repo genuinely ambiguous again. The tool
+	// refuses, names the tie and points at the explicit metadata.sourceId escape
+	// hatch instead of guessing.
+	srcReview2 := f.addSource(t, f.project, appReview, "GitHub Review 2", "63", []string{"owner/repo"}, SourceStatusActive)
+	f.addTrigger(t, srcReview2, agentID, "pull_request")
+	_, err = call()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "refusing to guess")
+	require.Contains(t, err.Error(), "2 of them have a pull_request trigger")
+	require.Contains(t, err.Error(), "metadata sourceId")
+	require.Zero(t, api.mintCount(63))
+
+	// ...and naming one in the run metadata still works, which is what the error
+	// tells the operator to do.
+	pinned := mcp.ContextWithRunSourceID(f.ctx, srcReview2.String())
+	diff, err = f.handler.ExecuteGitHubAppTool(pinned, f.project.String(), toolPRDiff, diffArgs)
+	require.NoError(t, err)
+	require.Equal(t, srcReview2.String(), diff.StructuredContent["sourceId"])
+	require.Equal(t, string(sourceSelectionRunMetadata), diff.StructuredContent["sourceSelection"])
+	require.Equal(t, 1, api.mintCount(63))
+	require.Equal(t, 1, api.mintCount(62), "a pinned source must not fall back to another review App")
 }
 
 // TestReviewToolsEmptyPullRequestTerminatesGate pins #1022's third requirement:

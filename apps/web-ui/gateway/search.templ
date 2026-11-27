@@ -4,225 +4,92 @@ import (
 	"net/url"
 	"strconv"
 
-	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
-	fm "github.com/emergent-company/go-daisy/components/form"
-	"github.com/emergent-company/go-daisy/components/layout"
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
 
-// --- Project search ---
-
-// SearchPage renders the project-wide search surface: one query over document
-// text (full-text + vector, fused server-side) and graph objects, split into a
-// Documents and an Objects section.
+// --- Project search (the /search page's results) ---
 //
-// The page is deliberately graph-optional. Document chunks live in their own
-// table and are matched by their own legs, so a project that has ingested
-// documents but extracted no objects still returns results — the Objects
-// section is simply empty.
-templ SearchPage(data searchPageData) {
-	@layout.Container(layout.ContainerLG, nil) {
-		@searchHeader()
-		if data.LoadErr != nil {
-			@pageErrorNotice("Search failed", data.LoadErr)
-		} else {
-			@searchToolbar(data)
-			@searchResultsPanel(data)
+// The page shell is ObjectsPage: the same header, toolbar, cards and bulk
+// actions whether the reader is browsing or searching. This file owns the one
+// thing browsing does not have — the text-leg document section and the query
+// summary above it.
+
+// searchResultsBody is the results region's content, rendered by
+// objectsBrowserResults inside #search-results:
+//
+//   - a failed request replaces the results with a notice (the header stays);
+//   - an empty query is the browse list, cards or the browse empty state;
+//   - a query is the summary line, the document section when the scope includes
+//     documents, and the object cards.
+//
+// The object cards own their empty state, so the document section defers to them
+// instead of rendering a second "nothing matched": a query that matched only
+// documents shows the documents and no empty object card, and a query that
+// matched nothing shows exactly one empty state.
+templ searchResultsBody(data objectsPageData) {
+	if data.LoadErr != nil {
+		// A filter/limit change that failed keeps the page: the error replaces
+		// the results instead of the whole surface. ObjectsPage renders its
+		// header unconditionally, so this stays a notice.
+		@pageErrorNotice("Search failed", data.LoadErr)
+	} else if data.Query == "" {
+		@objectsBrowserCards(data, true)
+	} else {
+		{{ scope := searchScopeOf(data) }}
+		@searchResultsNote(data)
+		if scope != searchScopeObjects {
+			if len(data.Documents) > 0 || scope == searchScopeDocuments {
+				@searchDocumentsSection(data)
+			} else if len(data.Results) > 0 {
+				@searchDocumentsPrompt(data)
+			}
 		}
+		@objectsBrowserCards(data, len(data.Documents) == 0 || scope == searchScopeObjects)
 	}
 }
 
-// searchResultsPanel is the swap region every search control refreshes: the
-// intro before a query and the result sections after one. It always renders (the
-// intro is inside it) so a request made from the pre-query state still has a
-// target to swap.
-templ searchResultsPanel(data searchPageData) {
-	<div id="search-results" data-testid="search-results">
-		if data.LoadErr != nil {
-			// A filter/limit change that failed keeps the page: the error
-			// replaces the results instead of the whole surface. SearchPage
-			// renders its header unconditionally, so this stays a notice.
-			@pageErrorNotice("Search failed", data.LoadErr)
-		} else if data.Query == "" {
-			@searchIntro()
-		} else {
-			@searchResults(data)
-		}
-	</div>
-}
-
-// searchResultCount is the number of hits the query returned, rendered at the
-// head of the results summary. It lives inside the swapped results region, so it
-// always describes the search currently on screen.
-templ searchResultCount(data searchPageData) {
-	<span data-testid="search-result-count">{ countLabel(len(data.Documents)+len(data.Objects), "result", "results") }</span>
-}
-
-// searchHeader is the standard list-page header. The result count belongs to the
-// results, not the page chrome: it renders in the results summary line, inside
-// the region a search swaps.
-templ searchHeader() {
-	@pageHeader("", "Search", "Search inside ingested documents and across the knowledge graph in one place.") {
-	}
-}
-
-// searchToolbar is the query row: the search box plus the filter and limit
-// controls, in one card and one form, so a search keeps the scope it was
-// started with. The controls are ordinary GET form fields — no script.
-//
-// The form refreshes #search-results in place and pushes the URL: running a
-// search, or narrowing one, replaces the result sections rather than reloading
-// the page. Only a <select>'s change applies immediately — the query field
-// searches on submit, so typing then tabbing away does not fire a search the
-// user did not ask for (selectFilterFormAttrs).
-templ searchToolbar(data searchPageData) {
-	<div class="mb-4">
-		@components.PanelCard("", nil, components.PanelCardOpt{BodyClass: "p-3 sm:p-4"}) {
-			<form method="get" action="/search" class="flex flex-col gap-3" data-testid="search-form" { selectFilterFormAttrs("/search", searchResultsRegion)... }>
-				<div class="flex flex-col gap-2 sm:flex-row sm:items-center">
-					<label class="input flex w-full min-w-0 flex-1 items-center gap-2">
-						@ui.IconSpan("lucide--search", "size-4 shrink-0 text-muted")
-						<input
-							type="search"
-							name="q"
-							value={ data.Query }
-							placeholder="Search documents and objects…"
-							class="grow"
-							autocomplete="off"
-							maxlength="800"
-							aria-label="Search documents and objects"
-							data-testid="search-query"
-						/>
-					</label>
-					<div class="flex shrink-0 items-center gap-2">
-						@ui.Button(ui.ButtonProps{
-							Type:    ui.ButtonTypeSubmit,
-							Variant: ui.ButtonPrimary,
-							Size:    ui.ButtonSM,
-							Icon:    "lucide--search",
-						}) {
-							Search
-						}
-						if data.Query != "" {
-							@ui.Button(ui.ButtonProps{
-								Type:    ui.ButtonTypeLink,
-								Href:    "/search",
-								Variant: ui.ButtonGhost,
-								Size:    ui.ButtonSM,
-								Icon:    "lucide--x",
-							}) {
-								Clear
-							}
-						}
-					</div>
-				</div>
-				<div class="border-base-content/10 flex flex-wrap items-end gap-x-3 gap-y-2 border-t pt-3">
-					@fm.FormControl("search-filter-type", "Search in", fm.LabelAbove, "", "", nil) {
-						<select id="search-filter-type" name="type" class="select select-sm" aria-label="Search in" data-testid="search-type-filter">
-							for _, opt := range searchTypeOptions() {
-								<option value={ opt.Value } selected?={ opt.Value == data.Type }>{ opt.Label }</option>
-							}
-						</select>
-					}
-					@fm.FormControl("search-filter-limit", "Results", fm.LabelAbove, "", "", nil) {
-						<select id="search-filter-limit" name="limit" class="select select-sm" aria-label="Number of results" data-testid="search-limit-filter">
-							for _, opt := range searchLimitOptions() {
-								<option value={ strconv.Itoa(opt.Value) } selected?={ opt.Value == data.Limit }>{ opt.Label }</option>
-							}
-						</select>
-					}
-					<noscript>
-						@ui.Button(ui.ButtonProps{
-							Type:    ui.ButtonTypeSubmit,
-							Variant: ui.ButtonGhost,
-							Size:    ui.ButtonSM,
-						}) {
-							Apply
-						}
-					</noscript>
-					<span id="search-results-loading" class="htmx-indicator loading loading-spinner loading-xs mb-2" aria-hidden="true"></span>
-				</div>
-			</form>
-		}
-	</div>
-}
-
-// searchResultsFragment is the response body for a search/filter request: the
-// results region, which carries its own summary line and therefore its own
-// result count.
-templ searchResultsFragment(data searchPageData) {
-	@searchResultsPanel(data)
-}
-
-// searchIntro is the pre-query state: what this surface searches and how to use
-// it. It renders no backend call, so an empty /search is free.
-templ searchIntro() {
-	@components.PanelCard("", nil, components.PanelCardOpt{BodyClass: "p-5"}) {
-		<div class="flex flex-col gap-3" data-testid="search-intro">
-			<p class="text-sm leading-relaxed">
-				Search matches documents by their <strong>text</strong> and objects by their <strong>fields</strong>.
-				Document text is matched two ways and the results are fused: keyword (full-text) matching, and
-				semantic (vector) matching when the project has an embedding model configured.
-			</p>
-			<ul class="text-muted flex flex-col gap-1.5 text-sm leading-relaxed">
-				<li class="flex items-start gap-2">
-					@ui.IconSpan("lucide--file-text", "mt-0.5 size-4 shrink-0 text-primary")
-					<span><strong>Documents</strong> — chunks of ingested files, with the matching passage shown.</span>
-				</li>
-				<li class="flex items-start gap-2">
-					@ui.IconSpan("lucide--box", "mt-0.5 size-4 shrink-0 text-primary")
-					<span><strong>Objects</strong> — entities in the knowledge graph; empty when none have been extracted or created.</span>
-				</li>
-			</ul>
-			<div class="flex flex-wrap items-center gap-2 pt-1">
-				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/documents", Variant: ui.ButtonGhost, Size: ui.ButtonSM, Icon: "lucide--file-text"}) {
-					Documents
+// searchResultsNote is the one-line summary above the sections: what matched,
+// how long the server took, how the hits are ranked, and how many held-back
+// object hits the relevance floor removed. An exact id lookup says so instead:
+// one resolved object is not a result count and is not ranked.
+templ searchResultsNote(data objectsPageData) {
+	if data.Lookup != nil && data.Lookup.Reason == "" {
+		<div class="mb-3 flex flex-wrap items-center justify-between gap-2 px-1" data-testid="search-results-summary">
+			<span class="text-muted-faint min-w-0 truncate text-xs">
+				Exact id match <span class="font-mono">{ data.Lookup.ID }</span>
+				if data.Lookup.Detail != "" {
+					<span class="ml-2" data-testid="search-lookup-detail">{ data.Lookup.Detail }</span>
 				}
-				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/objects", Variant: ui.ButtonGhost, Size: ui.ButtonSM, Icon: "lucide--box"}) {
-					Objects
+			</span>
+			<span class="text-muted-faint shrink-0 text-xs">Not ranked</span>
+		</div>
+	} else {
+		<div class="mb-3 flex flex-wrap items-center justify-between gap-2 px-1">
+			<span class="text-muted-faint min-w-0 truncate text-xs" data-testid="search-results-summary">
+				{ countLabel(len(data.Documents)+len(data.Results), "result", "results") } matching "{ data.Query }"
+				if data.HiddenCount > 0 {
+					<a class="link link-hover" href={ templ.URL(objectsSearchShowAllHref(data)) } data-testid="search-hidden-count">
+						{ " · " + countLabel(data.HiddenCount, "lower-scoring match", "lower-scoring matches") + " hidden" }
+					</a>
 				}
+			</span>
+			<div class="text-muted-faint flex shrink-0 items-center gap-3 text-xs">
+				if data.Meta.ExecutionTime.TotalMs > 0 {
+					<span class="tabular-nums" data-testid="search-timing">{ strconv.Itoa(data.Meta.ExecutionTime.TotalMs) } ms</span>
+				}
+				<span>Ranked by relevance</span>
 			</div>
 		</div>
 	}
 }
 
-// searchResults is the post-query surface: one summary line, then one section
-// per result type the filter allows.
-templ searchResults(data searchPageData) {
-	@searchResultsNote(data)
-	if len(data.Documents) == 0 && len(data.Objects) == 0 {
-		@searchEmptyState(data)
-	} else {
-		if data.Type != searchTypeObjects {
-			@searchDocumentsSection(data)
-		}
-		if data.Type != searchTypeDocuments {
-			@searchObjectsSection(data)
-		}
-	}
-}
-
-// searchResultsNote is the one-line summary above the sections: what matched,
-// how long the server took, and how the hits are ranked.
-templ searchResultsNote(data searchPageData) {
-	<div class="mb-3 flex flex-wrap items-center justify-between gap-2 px-1">
-		<span class="text-muted-faint min-w-0 truncate text-xs" data-testid="search-results-summary">
-			@searchResultCount(data) matching "{ data.Query }"
-		</span>
-		<div class="text-muted-faint flex shrink-0 items-center gap-3 text-xs">
-			if data.Meta.ExecutionTime.TotalMs > 0 {
-				<span class="tabular-nums" data-testid="search-timing">{ strconv.Itoa(data.Meta.ExecutionTime.TotalMs) } ms</span>
-			}
-			<span>Ranked by relevance</span>
-		</div>
-	</div>
-}
-
 // searchDocumentsSection is the document-chunk section. Its empty state is a
-// real answer — "no document text matched" — not an error.
-templ searchDocumentsSection(data searchPageData) {
+// real answer — "no document text matched" — but it renders only when the scope
+// asked for documents alone; everywhere else an empty text leg is a prompt line,
+// not a full card competing with the objects below it.
+templ searchDocumentsSection(data objectsPageData) {
 	@cardList("Documents", cardListProps{
-		Margin:    "mb-6",
+		Margin:    "mb-4",
 		Empty:     len(data.Documents) == 0,
 		EmptyIcon: "lucide--file-text", EmptyTitle: "No document text matched",
 		EmptyDesc: "No chunk of an ingested document matches this query. Documents become searchable once they are converted and chunked.",
@@ -231,6 +98,25 @@ templ searchDocumentsSection(data searchPageData) {
 			@searchDocumentRow(hit)
 		}
 	}
+}
+
+// searchDocumentsPrompt is the quiet stand-in for the document section when the
+// text leg found nothing but the object leg did: one line and the escape to a
+// documents-only search, instead of a full empty card that would read as a
+// second, contradictory empty state next to results that exist.
+templ searchDocumentsPrompt(data objectsPageData) {
+	<div class="border-base-content/10 mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-box border px-4 py-2.5" data-testid="search-documents-prompt">
+		@ui.IconSpan("lucide--file-text", "size-4 shrink-0 text-muted")
+		<span class="text-muted-faint min-w-0 flex-1 text-xs">No document text matched this query — showing objects only.</span>
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeLink,
+			Href:    searchDocumentsOnlyHref(data),
+			Variant: ui.ButtonGhost,
+			Size:    ui.ButtonXS,
+		}) {
+			Search documents
+		}
+	</div>
 }
 
 // searchDocumentRow is one chunk hit: the document it belongs to, how it
@@ -257,66 +143,4 @@ templ searchDocumentRow(hit searchDocumentHit) {
 			{ hit.Snippet }
 		}
 	</div>
-}
-
-// searchObjectsSection is the graph-object section. Its empty state names the
-// two ways objects appear, so a document-only project reads as "nothing
-// extracted yet" rather than as a broken search.
-templ searchObjectsSection(data searchPageData) {
-	@cardList("Objects", cardListProps{
-		Empty:     len(data.Objects) == 0,
-		EmptyIcon: "lucide--box", EmptyTitle: "No objects matched",
-		EmptyDesc: "No knowledge-graph entity matches this query. Objects come from extraction or from adding them by hand.",
-	}) {
-		for _, hit := range data.Objects {
-			@searchObjectRow(hit)
-		}
-	}
-}
-
-// searchObjectRow is one object hit: its key (the human-facing identifier), its
-// type, and its score.
-templ searchObjectRow(hit searchObjectHit) {
-	<div class="px-4 py-3" data-testid="search-hit-object">
-		<div class="flex flex-wrap items-center gap-2">
-			<a
-				class="link link-hover min-w-0 truncate text-sm font-medium"
-				href={ templ.URL(objectWikiHref(hit.ID, "")) }
-				data-testid="search-hit-object-link"
-			>
-				{ searchObjectLabel(hit) }
-			</a>
-			if hit.Type != "" {
-				@ui.Badge(ui.BadgeProps{Label: hit.Type, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeSM})
-			}
-			<span class="text-muted ml-auto text-xs font-medium tabular-nums" data-testid="search-hit-score">{ searchScoreLabel(hit.Score) }</span>
-		</div>
-	</div>
-}
-
-// searchEmptyState is the whole-query empty state. When the project has no
-// embedding model configured it says so, because that is the one reason a
-// semantic match would have been possible and was not.
-templ searchEmptyState(data searchPageData) {
-	@ui.EmptyState(ui.EmptyStateProps{
-		Icon:        "lucide--search-x",
-		Title:       "No matches for \"" + data.Query + "\"",
-		Description: searchEmptyDescription(data),
-		Bordered:    true,
-		Class:       "py-12",
-	}) {
-		<div class="flex flex-wrap items-center justify-center gap-2">
-			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/search", Variant: ui.ButtonGhost, Size: ui.ButtonSM, Icon: "lucide--x"}) {
-				Clear search
-			}
-			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/documents", Variant: ui.ButtonGhost, Size: ui.ButtonSM, Icon: "lucide--file-text"}) {
-				Documents
-			}
-			if data.EmbeddingModelMissing {
-				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/embeddings", Variant: ui.ButtonGhost, Size: ui.ButtonSM, Icon: "lucide--scan-line"}) {
-					Embeddings
-				}
-			}
-		</div>
-	}
 }

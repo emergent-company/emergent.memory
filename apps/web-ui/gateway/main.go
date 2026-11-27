@@ -501,6 +501,9 @@ func main() {
 	e.POST("/data-sources/:id/triggers/:triggerId/toggle", s.uiDataSourceTriggerToggle)
 	e.POST("/data-sources/:id/triggers/:triggerId/delete", s.uiDataSourceTriggerDelete)
 	e.GET("/objects", s.uiObjects)
+	// /objects is retired as a destination and 301s to /search (see uiObjects);
+	// the partial, stats and knowledge routes below still serve that page's
+	// fragments, and every /objects/<id> route is the object itself.
 	e.GET("/objects/partial", s.uiObjectsPartial)
 	e.GET("/objects/stats", s.uiObjectsStatsPartial)
 	e.GET("/objects/search", s.uiObjectSearch)
@@ -527,9 +530,9 @@ func main() {
 	e.POST("/objects/:id/status", s.uiObjectStatus)
 	e.POST("/objects/:id/assignee", s.uiObjectAssignee)
 	e.POST("/objects/:id/relationships", s.uiObjectRelationshipCreate)
-	// Project-wide search: document chunks + graph objects in one query. Distinct
-	// from /objects/search (the connect dialog's JSON autocomplete) and from
-	// /objects?mode=… (graph objects only).
+	// The one list page: browse every object, or run one query over document
+	// chunks and graph objects. Distinct from /objects/search, which is the
+	// connect dialog's JSON autocomplete.
 	e.GET("/search", s.uiSearch)
 	e.GET("/embeddings", s.uiEmbeddings)
 	e.POST("/embeddings/retrigger", s.uiRetriggerEmbeddings)
@@ -541,6 +544,9 @@ func main() {
 	e.GET("/schema/add", s.uiSchemaAdd)
 	e.POST("/schema/add", s.uiSchemaInstall, s.requireSchemaWrite)
 	e.GET("/schema/packs", s.uiSchemaPacks)
+	e.GET("/schema/catalog", s.uiSchemaCatalog)
+	e.GET("/schema/catalog/:name", s.uiSchemaCatalogType)
+	e.POST("/schema/catalog/install", s.uiSchemaCatalogInstall, s.requireSchemaWrite)
 	e.GET("/schema/packs/:id", s.uiSchemaPack)
 	e.POST("/schema/packs/:id/install", s.uiSchemaPackInstall, s.requireSchemaWrite)
 	e.GET("/schema/object-types/:name", s.uiSchemaObjectType)

@@ -20,7 +20,8 @@ func (p *scopeOnlyToolPool) ResolveTools(string, *AgentDefinition, int, int) ([]
 func (p *scopeOnlyToolPool) StripOperatorTools(_ context.Context, tools []tool.Tool) []tool.Tool {
 	return tools
 }
-func (p *scopeOnlyToolPool) ToolScopes() map[string]string { return p.scopes }
+func (p *scopeOnlyToolPool) ToolScopes() map[string]string            { return p.scopes }
+func (p *scopeOnlyToolPool) ExternalToolNames(string) map[string]bool { return nil }
 func (p *scopeOnlyToolPool) CallTool(context.Context, string, string, map[string]any) (map[string]any, error) {
 	return nil, nil
 }

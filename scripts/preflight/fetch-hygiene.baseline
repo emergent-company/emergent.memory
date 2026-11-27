@@ -1,0 +1,22 @@
+# Known-unfixed bare-name `git fetch` sites, for scripts/preflight/fetch-hygiene.sh.
+#
+# Format: <path><TAB><normalized command>
+#
+# This is a SHRINKING list, not an allowlist to add to. Every entry is a bug:
+# the fetch resolves a refname git has to disambiguate, and this repo publishes
+# `refs/tags/dev`, so `git fetch origin dev` would fetch the TAG and leave
+# origin/dev stale (#956, #1158). Add no new entries -- fix the site.
+#
+# The four below are #1158's workflow half. They cannot be fixed from a lane
+# here: the coding agent's installation token has no `workflows` permission, so
+# any push touching .github/workflows/** is refused. Delete an entry in the same
+# PR that replaces the line with
+#   git fetch --no-tags --prune origin \
+#     "+refs/heads/<branch>:refs/remotes/origin/<branch>"
+# (the guard fails on a stale entry, which is what keeps this list honest).
+# When all four are gone, delete this file and the guard's `--baseline` default
+# keeps working with an empty list.
+.github/workflows/cli.yml	git fetch --no-tags origin "${GITHUB_BASE_REF}" 2>/dev/null || true
+.github/workflows/publish-gh-pages-raw.yml	git fetch origin gh-pages
+.github/workflows/server.yml	git fetch --no-tags origin "${GITHUB_BASE_REF}" 2>/dev/null || true
+.github/workflows/server.yml	git fetch --no-tags origin "${GITHUB_BASE_REF}"

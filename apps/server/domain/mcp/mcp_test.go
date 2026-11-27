@@ -618,11 +618,9 @@ func TestSchemaIconListTool(t *testing.T) {
 	if err := json.Unmarshal([]byte(result.Content[0].Text), &parsed); err != nil {
 		t.Fatalf("unmarshal SchemaIconListResult: %v", err)
 	}
-	if parsed.Count != len(schemaicon.Names()) {
-		t.Errorf("Count = %d, want %d", parsed.Count, len(schemaicon.Names()))
-	}
-	if parsed.Count != 66 {
-		t.Errorf("Count = %d, want 66", parsed.Count)
+	wantCount := len(schemaicon.Names()) + len(schemaicon.TablerNames())
+	if parsed.Count != wantCount {
+		t.Errorf("Count = %d, want %d", parsed.Count, wantCount)
 	}
 	found := map[string]bool{}
 	for _, icon := range parsed.Icons {
@@ -633,6 +631,9 @@ func TestSchemaIconListTool(t *testing.T) {
 	}
 	if !found["user"] {
 		t.Error("Icons does not contain \"user\"")
+	}
+	if !found["tabler--movie"] {
+		t.Error("Icons does not contain \"tabler--movie\"")
 	}
 }
 
