@@ -119,6 +119,11 @@ func (ae *AgentExecutor) compressSession(
 
 	// --- Call summariser LLM ---
 	// Prefer the agent's own model; otherwise resolve from DB project config.
+	//
+	// This request is built here rather than by the agent loop, so it never
+	// passes through the executor's before-model callback and is not fenced by
+	// fenceModelRequestToolResults (#1142). The dropped window can hold
+	// third-party tool results; fencing this input is issue #1143.
 	var llm model.LLM
 	var err error
 	if modelName != "" {
