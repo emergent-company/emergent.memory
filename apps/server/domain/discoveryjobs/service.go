@@ -1229,9 +1229,8 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 			// confident about is not grounded enough to auto-apply, so it is left
 			// out of the refined output rather than installed as fact.
 			relationships = filterRelationshipsByConfidence(relationships, config.MinConfidence)
-			// Snap invented edge names onto the catalog relationship vocabulary
-			// when the classifier is confident they are the same edge.
-			relationships = s.alignRelationshipTypes(ctx, relationships)
+			// Snap invented edge names onto the catalog relationship vocabulary.
+			relationships = s.normalizeRelationshipTypes(relationships)
 		}
 	}
 
@@ -2332,40 +2331,47 @@ func (s *Service) discoverRelationships(ctx context.Context, jobID uuid.UUID, ty
 	return relationships, nil
 }
 
-// alignRelationshipTypes renames discovered relationship types onto the catalog's
-// relationship vocabulary when the same-concept classifier is confident they are
-// the same edge (e.g. "employed by" → "works_for", "resides at" →
-// "home_location"). The prompt already asks the model to reuse canonical names;
-// this is the safety net for the edges it still invents. No-op without an
-// injected classifier or relationship vocabulary.
-func (s *Service) alignRelationshipTypes(ctx context.Context, rels []DiscoveredRelationship) []DiscoveredRelationship {
-	if s.typeSimilarity == nil || len(rels) == 0 || len(s.relationshipTaxonomy) == 0 {
+// relationshipTypeAliases maps common invented/legacy edge names onto the
+// catalog's canonical relationship vocabulary. The relationship prompt already
+// asks the model to reuse canonical names; this deterministic pass is the safety
+// net for the synonyms it still emits. Aliases are only applied when the target
+// exists in the loaded vocabulary, so this never invents an unknown edge.
+//
+// (The object-type "same concept" classifier is deliberately not reused here: it
+// is tuned for entity kinds and does not reliably judge edge synonyms.)
+var relationshipTypeAliases = map[string]string{
+	"employed_by":       "works_for",
+	"works_at":          "works_for",
+	"located_in":        "located_at",
+	"resides_at":        "home_location",
+	"residence_at":      "home_location",
+	"set_in":            "content_location",
+	"features_location": "content_location",
+	"appears_in":        "featured_actor",
+	"features_person":   "featured_actor",
+	"acted_in":          "featured_actor",
+	"parent_location":   "contained_in_place",
+	"part_of":           "part_of_series",
+}
+
+// normalizeRelationshipTypes deterministically renames invented edge names onto
+// the catalog vocabulary (located_in → located_at, employed_by → works_for, …).
+// No-op without the vocabulary.
+func (s *Service) normalizeRelationshipTypes(rels []DiscoveredRelationship) []DiscoveredRelationship {
+	if len(rels) == 0 || len(s.relationshipTaxonomy) == 0 {
 		return rels
 	}
-	existing := make([]ExistingType, 0, len(s.relationshipTaxonomy))
+	known := make(map[string]bool, len(s.relationshipTaxonomy))
 	for _, r := range s.relationshipTaxonomy {
-		existing = append(existing, ExistingType{Name: r.Name, Description: r.Description})
-	}
-	seen := make(map[string]bool, len(rels))
-	discovered := make([]DiscoveredType, 0, len(rels))
-	for _, r := range rels {
-		if r.RelationType == "" || seen[r.RelationType] {
-			continue
-		}
-		seen[r.RelationType] = true
-		discovered = append(discovered, DiscoveredType{TypeName: r.RelationType, Description: r.Description})
-	}
-	if len(discovered) == 0 {
-		return rels
-	}
-	matches, err := s.typeSimilarity.Resolve(ctx, discovered, existing)
-	if err != nil {
-		s.log.Warn("relationship type alignment failed; keeping discovered names", logger.Error(err))
-		return rels
+		known[r.Name] = true
 	}
 	for i := range rels {
-		if m, ok := matches[rels[i].RelationType]; ok && m != "" && m != rels[i].RelationType {
-			rels[i].RelationType = m
+		name := strings.TrimSpace(rels[i].RelationType)
+		if name == "" || known[name] {
+			continue
+		}
+		if canonical, ok := relationshipTypeAliases[strings.ToLower(name)]; ok && known[canonical] {
+			rels[i].RelationType = canonical
 		}
 	}
 	return rels
