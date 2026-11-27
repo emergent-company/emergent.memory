@@ -251,6 +251,48 @@ git config --global credential.helper store
 	return nil
 }
 
+// gitHooksInstallCommand installs the repository's lefthook config into the
+// clone's .git/hooks. It reports a missing binary explicitly (exit 127) instead
+// of letting `lefthook: not found` scroll past as a generic failure, because the
+// two cases need different fixes: a missing binary is an image problem, a
+// non-zero from `lefthook install` is a repository problem.
+const gitHooksInstallCommand = `command -v lefthook >/dev/null 2>&1 || {
+  echo "lefthook is not installed in the workspace image; commits in this sandbox run no pre-commit hooks" >&2
+  exit 127
+}
+lefthook install 2>&1`
+
+// InstallGitHooks installs the repository's committed git hooks (lefthook.yml)
+// into a freshly cloned workspace.
+//
+// Git hooks live in .git/hooks of each clone, so a clone is born without them:
+// `git clone` never installs hooks and nothing in the repository sets
+// core.hooksPath. Without this call an agent's commit runs no local gate at all,
+// which is how an unformatted file or a lint-ratchet increase reaches CI as a red
+// PR with nobody to fix it (product #1164, #1166, #1191).
+//
+// Best effort by design: a repository without a lefthook config, or an older
+// workspace image without the binary, must still produce a usable workspace.
+// The caller logs the error; this reports it so the caller can.
+func (cs *CheckoutService) InstallGitHooks(ctx context.Context, provider Provider, providerID, destPath string) error {
+	if destPath == "" {
+		destPath = "/workspace"
+	}
+	result, err := provider.Exec(ctx, providerID, &ExecRequest{
+		Command:   gitHooksInstallCommand,
+		Workdir:   destPath,
+		TimeoutMs: 60000,
+	})
+	if err != nil {
+		return fmt.Errorf("install git hooks: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("install git hooks: exit %d: %s", result.ExitCode, sanitizeGitOutput(result.Stderr))
+	}
+	cs.log.Info("sandbox git hooks installed", "path", destPath)
+	return nil
+}
+
 // configureGitIdentity sets the git user.name and user.email in the workspace.
 func (cs *CheckoutService) configureGitIdentity(ctx context.Context, provider Provider, providerID string) {
 	var name, email string
