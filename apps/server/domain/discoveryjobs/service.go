@@ -119,7 +119,7 @@ type Service struct {
 	// relationshipTaxonomy is the built-in catalog's relationship vocabulary,
 	// offered to the relationship phase so a proposed edge reuses a canonical
 	// name (works_for, located_at, home_location, …) instead of inventing a
-	// synonym (see SetRelationshipTaxonomy).
+	// synonym (see SetTaxonomy).
 	relationshipTaxonomy []blueprints.RelationshipTypeDef
 }
 
@@ -2389,15 +2389,9 @@ func (s *Service) normalizeRelationshipTypes(rels []DiscoveredRelationship) []Di
 // that links two types: the document text is not part of this prompt, so a
 // table whose Episode rows carry a Guest column only reads as "a guest appears
 // in an episode" when the column is visible here (#234).
-// SetRelationshipTaxonomy injects the built-in catalog's relationship vocabulary
-// that the relationship phase prefers, so a proposed edge converges on a
-// canonical catalog name instead of an invented synonym. Nil-safe.
-func (s *Service) SetRelationshipTaxonomy(t []blueprints.RelationshipTypeDef) {
-	s.relationshipTaxonomy = t
-}
-
-// buildRelationshipVocabulary renders the canonical relationship names offered
-// to the prompt, or "" when none are wired.
+// SetTaxonomy injects the built-in catalog's relationship vocabulary that the
+// relationship phase prefers, so a proposed edge converges on a canonical
+// catalog name instead of an invented synonym. Nil-safe.
 func (s *Service) buildRelationshipVocabulary() string {
 	if len(s.relationshipTaxonomy) == 0 {
 		return ""

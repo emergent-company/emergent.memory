@@ -9,7 +9,7 @@ import (
 
 func TestRelationshipPromptIncludesCatalogVocabulary(t *testing.T) {
 	svc := &Service{log: quietLogger()}
-	svc.SetRelationshipTaxonomy([]blueprints.RelationshipTypeDef{
+	svc.SetTaxonomy(nil, []blueprints.RelationshipTypeDef{
 		{Name: "works_for", Label: "Works for", SourceType: "Person", TargetType: "Organization"},
 		{Name: "home_location", Label: "Home location", SourceType: "Person", TargetType: "Place"},
 	})
@@ -33,7 +33,7 @@ func TestRelationshipVocabularyEmptyWithoutTaxonomy(t *testing.T) {
 // alone, and an unknown name is untouched.
 func TestNormalizeRelationshipTypes(t *testing.T) {
 	svc := &Service{log: quietLogger()}
-	svc.SetRelationshipTaxonomy([]blueprints.RelationshipTypeDef{
+	svc.SetTaxonomy(nil, []blueprints.RelationshipTypeDef{
 		{Name: "works_for"}, {Name: "located_at"}, {Name: "home_location"}, {Name: "featured_actor"},
 	})
 	rels := []DiscoveredRelationship{
@@ -57,7 +57,7 @@ func TestNormalizeRelationshipTypes(t *testing.T) {
 // canonical target is not in the loaded vocabulary is never applied.
 func TestNormalizeRelationshipTypesSkipsUnknownTarget(t *testing.T) {
 	svc := &Service{log: quietLogger()}
-	svc.SetRelationshipTaxonomy([]blueprints.RelationshipTypeDef{{Name: "works_for"}})
+	svc.SetTaxonomy(nil, []blueprints.RelationshipTypeDef{{Name: "works_for"}})
 	out := svc.normalizeRelationshipTypes([]DiscoveredRelationship{{RelationType: "located_in"}})
 	if out[0].RelationType != "located_in" {
 		t.Fatalf("alias to a missing canonical target must not apply, got %q", out[0].RelationType)

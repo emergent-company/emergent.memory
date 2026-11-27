@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/emergent-company/emergent.memory/domain/blueprints"
 	"github.com/emergent-company/emergent.memory/domain/catalog"
 	"github.com/emergent-company/emergent.memory/pkg/llmjson"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
@@ -65,12 +66,15 @@ func (s *Service) SetTypeSimilarity(t TypeSimilarity) {
 // contributes to the classifier's comparison set during narrowing.
 const catalogResolveLimit = 8
 
-// SetTaxonomy injects the built-in common-entity taxonomy types that discovery
-// aligns proposed types against before inventing new ones. Nil-safe: without it,
-// the classifier matches only the project's installed types. It also derives the
-// catalog.Type view the lexical resolver narrows candidates against.
-func (s *Service) SetTaxonomy(t []ExistingType) {
+// SetTaxonomy injects the built-in common-entity taxonomy that discovery aligns
+// proposed types against before inventing new ones (t), and the built-in
+// catalog's relationship vocabulary the relationship phase prefers (rels).
+// Nil-safe: without t, the classifier matches only the project's installed
+// types; without rels, the relationship phase invents names freely. It also
+// derives the catalog.Type view the lexical resolver narrows candidates against.
+func (s *Service) SetTaxonomy(t []ExistingType, rels []blueprints.RelationshipTypeDef) {
 	s.taxonomy = t
+	s.relationshipTaxonomy = rels
 	s.taxonomyTypes = make([]catalog.Type, 0, len(t))
 	for _, e := range t {
 		label := e.Label
