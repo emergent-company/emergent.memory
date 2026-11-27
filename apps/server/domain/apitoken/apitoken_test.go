@@ -319,6 +319,8 @@ func TestValidApiTokenScopes(t *testing.T) {
 		"graph:search:read",
 		"extraction:read",
 		"extraction:write",
+		"discovery:read",
+		"discovery:write",
 		"tasks:read",
 		"tasks:write",
 		"user-activity:read",

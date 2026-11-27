@@ -126,6 +126,7 @@ var apiTokenScopeAreas = map[string]string{
 	"documents:delete": apiTokenAreaDocuments, "email:read": apiTokenAreaDocuments, "email:write": apiTokenAreaDocuments, "sources:write": apiTokenAreaDocuments, "ingest:write": apiTokenAreaDocuments,
 	"chunks:read": apiTokenAreaDocuments, "chunks:write": apiTokenAreaDocuments,
 	"extraction:read": apiTokenAreaExtraction, "extraction:write": apiTokenAreaExtraction,
+	"discovery:read": apiTokenAreaSchemas, "discovery:write": apiTokenAreaSchemas,
 	"graph:read": apiTokenAreaGraph, "graph:write": apiTokenAreaGraph, "search": apiTokenAreaGraph,
 	"search:read": apiTokenAreaGraph, "graph:search:read": apiTokenAreaGraph,
 	"branches:read": apiTokenAreaBranches, "branches:write": apiTokenAreaBranches,
@@ -208,10 +209,11 @@ func apiTokenAreaBadges(scopes []string) []apiTokenAreaBadge {
 // Checkbox values stay the raw scope strings.
 var scopePickerGroups = []apiTokenScopeGroup{
 	{
-		Label: apiTokenAreaSchemas, Hint: "Schema definitions and migrations.",
+		Label: apiTokenAreaSchemas, Hint: "Schema definitions, migrations and schema discovery.",
 		Options: []apiTokenScopeOption{
 			{"schema:read", "Read schemas"}, {"schema:write", "Edit schemas"},
 			{"schema:migrate", "Run schema migrations"},
+			{"discovery:read", "View discovery jobs"}, {"discovery:write", "Run discovery"},
 		},
 	},
 	{
