@@ -1,0 +1,37 @@
+name: schemaorg
+objectTypeSchemas:
+- name: Flight
+  label: Flight
+  description: A scheduled flight between two airports.
+  category: travel
+  parent: Thing
+  labels:
+  - flight
+  - air_travel
+  ui:
+    icon: tabler--plane
+    color: '#0284C7'
+  properties:
+    flight_number:
+      type: string
+      description: Flight number.
+      title: Flight Number
+    departure_time:
+      type: date
+      description: Departure date (YYYY-MM-DD).
+      title: Departure Time
+    arrival_time:
+      type: date
+      description: Arrival date (YYYY-MM-DD).
+      title: Arrival Time
+    seat_class:
+      type: string
+      description: Seat class.
+      enum:
+      - economy
+      - premium
+      - business
+      - first
+      title: Seat Class
+  required:
+  - flight_number

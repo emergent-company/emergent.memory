@@ -49,3 +49,68 @@ objectTypeSchemas:
       description: Preparation instructions.
   required:
   - name
+- name: Restaurant
+  label: Restaurant
+  description: A restaurant or eatery.
+  category: food
+  parent: LocalBusiness
+  labels:
+  - restaurant
+  - eatery
+  - dining
+  ui:
+    icon: tabler--tools-kitchen-2
+    color: '#16A34A'
+  properties:
+    name:
+      type: string
+      description: The restaurant's name.
+    cuisine:
+      type: array
+      description: Cuisines served.
+      items:
+        type: string
+    price_range:
+      type: string
+      description: Relative price range, e.g. '$$'.
+      title: Price Range
+    phone:
+      type: phone
+      description: Contact phone number.
+    address:
+      type: string
+      description: Street address.
+  required:
+  - name
+- name: MenuItem
+  label: Menu Item
+  description: One dish or item on a menu.
+  category: food
+  parent: Thing
+  labels:
+  - menu_item
+  - dish
+  ui:
+    icon: tabler--tools-kitchen-2
+    color: '#CA8A04'
+  properties:
+    name:
+      type: string
+      description: The item's name.
+    price:
+      type: number
+      description: Price.
+      minimum: 0
+    currency:
+      type: currency
+      description: ISO 4217 currency code.
+    dietary:
+      type: array
+      description: Dietary labels (vegetarian, vegan, gluten-free).
+      items:
+        type: string
+    description:
+      type: string
+      description: Short description.
+  required:
+  - name

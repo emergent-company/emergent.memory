@@ -1,0 +1,46 @@
+name: schemaorg
+objectTypeSchemas:
+- name: Vehicle
+  label: Vehicle
+  description: A road vehicle such as a car, van or motorcycle.
+  category: transport
+  parent: Product
+  labels:
+  - vehicle
+  - car
+  - automobile
+  ui:
+    icon: tabler--car
+    color: '#EA580C'
+  properties:
+    name:
+      type: string
+      description: The vehicle's name or model name.
+    vin:
+      type: string
+      description: Vehicle identification number.
+    model:
+      type: string
+      description: Model name.
+    model_year:
+      type: integer
+      description: Model year.
+      minimum: 1886
+      maximum: 2100
+      title: Model Year
+    mileage:
+      type: number
+      description: Odometer reading in kilometres.
+      minimum: 0
+    fuel_type:
+      type: string
+      description: Fuel type.
+      enum:
+      - petrol
+      - diesel
+      - electric
+      - hybrid
+      - lpg
+      title: Fuel Type
+  required:
+  - name

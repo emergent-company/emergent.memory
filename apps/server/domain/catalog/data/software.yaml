@@ -67,3 +67,95 @@ objectTypeSchemas:
       description: A representative code snippet.
   required:
   - name
+- name: WebApplication
+  label: Web Application
+  description: A browser-based software application.
+  category: software
+  parent: SoftwareApplication
+  labels:
+  - web_app
+  - saas
+  ui:
+    icon: tabler--world-www
+    color: '#3B82F6'
+  properties:
+    name:
+      type: string
+      description: The application's name.
+    url:
+      type: url
+      description: Application URL.
+    application_category:
+      type: string
+      description: Category.
+      title: Application Category
+    browser_support:
+      type: string
+      description: Supported browsers.
+      title: Browser Support
+  required:
+  - name
+- name: MobileApplication
+  label: Mobile Application
+  description: An app for iOS, Android or another mobile platform.
+  category: software
+  parent: SoftwareApplication
+  labels:
+  - mobile_app
+  - app
+  ui:
+    icon: tabler--device-mobile
+    color: '#6366F1'
+  properties:
+    name:
+      type: string
+      description: The app's name.
+    operating_system:
+      type: string
+      description: Target mobile platform.
+      enum:
+      - ios
+      - android
+      - other
+      title: Operating System
+    app_store_url:
+      type: url
+      description: Store listing URL.
+      title: App Store Url
+    software_version:
+      type: string
+      description: Version string.
+      title: Software Version
+  required:
+  - name
+- name: VideoGame
+  label: Video Game
+  description: A video game.
+  category: software
+  parent: SoftwareApplication
+  labels:
+  - game
+  - video_game
+  ui:
+    icon: tabler--device-gamepad
+    color: '#7C3AED'
+  properties:
+    name:
+      type: string
+      description: The game's title.
+    platform:
+      type: array
+      description: Supported platforms.
+      items:
+        type: string
+    genre:
+      type: array
+      description: Genres.
+      items:
+        type: string
+    content_rating:
+      type: string
+      description: Age/content rating.
+      title: Content Rating
+  required:
+  - name

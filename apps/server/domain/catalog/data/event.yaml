@@ -1,0 +1,156 @@
+name: schemaorg
+objectTypeSchemas:
+- name: BusinessEvent
+  label: Business Event
+  description: A conference, trade show or business gathering.
+  category: event
+  parent: Event
+  labels:
+  - business_event
+  - conference
+  ui:
+    icon: tabler--briefcase
+    color: '#0891B2'
+  properties:
+    name:
+      type: string
+      description: The event's name.
+    industry:
+      type: string
+      description: Industry focus.
+    attendance_mode:
+      type: string
+      description: How attendees participate.
+      enum:
+      - in_person
+      - online
+      - hybrid
+      title: Attendance Mode
+  required:
+  - name
+- name: EducationEvent
+  label: Education Event
+  description: A workshop, class or educational gathering.
+  category: education
+  parent: Event
+  labels:
+  - education_event
+  - workshop
+  - class
+  ui:
+    icon: tabler--school
+    color: '#9333EA'
+  properties:
+    name:
+      type: string
+      description: The event's name.
+    education_level:
+      type: string
+      description: Education level.
+      enum:
+      - primary
+      - secondary
+      - higher
+      - vocational
+      title: Education Level
+    subject:
+      type: string
+      description: Subject taught.
+  required:
+  - name
+- name: MusicEvent
+  label: Music Event
+  description: A concert or live music performance.
+  category: event
+  parent: Event
+  labels:
+  - music_event
+  - concert
+  ui:
+    icon: tabler--music
+    color: '#DB2777'
+  properties:
+    name:
+      type: string
+      description: The event's name.
+    genre:
+      type: array
+      description: Music genres.
+      items:
+        type: string
+    performer_name:
+      type: string
+      description: Headline performer.
+      title: Performer Name
+  required:
+  - name
+- name: Meeting
+  label: Meeting
+  description: A scheduled meeting, call or sync.
+  category: work
+  parent: Event
+  labels:
+  - meeting
+  - sync
+  - call
+  ui:
+    icon: tabler--users
+    color: '#4F46E5'
+  properties:
+    name:
+      type: string
+      description: The meeting's name.
+    agenda:
+      type: string
+      description: Agenda or topics.
+    meeting_url:
+      type: url
+      description: Join link.
+      title: Meeting Url
+    status:
+      type: string
+      description: Lifecycle status.
+      enum:
+      - scheduled
+      - cancelled
+      - completed
+    duration:
+      type: integer
+      description: Planned duration in minutes.
+      minimum: 0
+  required:
+  - name
+- name: CourseInstance
+  label: Course Instance
+  description: One scheduled offering of a course.
+  category: education
+  parent: Event
+  labels:
+  - course_instance
+  - class_session
+  ui:
+    icon: tabler--school
+    color: '#7C3AED'
+  properties:
+    course_mode:
+      type: string
+      description: Delivery mode.
+      enum:
+      - online
+      - in_person
+      - hybrid
+      title: Course Mode
+    start_date:
+      type: date
+      description: Start date (YYYY-MM-DD).
+      title: Start Date
+    end_date:
+      type: date
+      description: End date (YYYY-MM-DD).
+      title: End Date
+    location_name:
+      type: string
+      description: Place name, when in person.
+      title: Location Name
+  required:
+  - course_mode

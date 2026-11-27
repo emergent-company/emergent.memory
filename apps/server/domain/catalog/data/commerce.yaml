@@ -181,3 +181,146 @@ objectTypeSchemas:
       minimum: 0
   required:
   - rating_value
+- name: Order
+  label: Order
+  description: A customer order for products or services.
+  category: commerce
+  parent: Thing
+  labels:
+  - order
+  - purchase
+  ui:
+    icon: tabler--shopping-cart
+    color: '#EA580C'
+  properties:
+    order_number:
+      type: string
+      description: Customer-facing order number.
+      title: Order Number
+    order_status:
+      type: string
+      description: Order lifecycle status.
+      enum:
+      - pending
+      - paid
+      - shipped
+      - delivered
+      - cancelled
+      - refunded
+      title: Order Status
+    order_date:
+      type: date
+      description: Order date (YYYY-MM-DD).
+      title: Order Date
+    total_amount:
+      type: number
+      description: Order total.
+      minimum: 0
+      title: Total Amount
+    currency:
+      type: currency
+      description: ISO 4217 currency code.
+  required:
+  - order_number
+- name: OrderItem
+  label: Order Item
+  description: One line item in an order.
+  category: commerce
+  parent: Thing
+  labels:
+  - order_item
+  - line_item
+  ui:
+    icon: tabler--receipt
+    color: '#D97706'
+  properties:
+    quantity:
+      type: integer
+      description: Quantity ordered.
+      minimum: 1
+    unit_price:
+      type: number
+      description: Price per unit.
+      minimum: 0
+      title: Unit Price
+    line_total:
+      type: number
+      description: Line total.
+      minimum: 0
+      title: Line Total
+    currency:
+      type: currency
+      description: ISO 4217 currency code.
+  required:
+  - quantity
+- name: Invoice
+  label: Invoice
+  description: A bill issued for goods or services.
+  category: finance
+  parent: Thing
+  labels:
+  - invoice
+  - bill
+  ui:
+    icon: tabler--receipt
+    color: '#B45309'
+  properties:
+    invoice_number:
+      type: string
+      description: Invoice number.
+      title: Invoice Number
+    due_date:
+      type: date
+      description: Payment due date (YYYY-MM-DD).
+      title: Due Date
+    amount:
+      type: number
+      description: Amount due.
+      minimum: 0
+    currency:
+      type: currency
+      description: ISO 4217 currency code.
+    invoice_status:
+      type: string
+      description: Invoice status.
+      enum:
+      - draft
+      - sent
+      - paid
+      - overdue
+      - void
+      title: Invoice Status
+  required:
+  - invoice_number
+- name: Service
+  label: Service
+  description: A service offered by a person or organization.
+  category: commerce
+  parent: Thing
+  labels:
+  - service
+  - offering
+  ui:
+    icon: tabler--tools
+    color: '#0D9488'
+  properties:
+    name:
+      type: string
+      description: The service's name.
+    service_type:
+      type: string
+      description: Kind of service.
+      title: Service Type
+    provider_name:
+      type: string
+      description: Provider name.
+      title: Provider Name
+    price:
+      type: number
+      description: Price.
+      minimum: 0
+    currency:
+      type: currency
+      description: ISO 4217 currency code.
+  required:
+  - name

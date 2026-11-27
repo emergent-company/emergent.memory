@@ -138,3 +138,127 @@ objectTypeSchemas:
       minimum: 0
   required:
   - name
+- name: MusicRecording
+  label: Music Recording
+  description: A song or recorded track.
+  category: media
+  parent: CreativeWork
+  labels:
+  - song
+  - track
+  - recording
+  ui:
+    icon: tabler--music
+    color: '#DB2777'
+  properties:
+    name:
+      type: string
+      description: The track's title.
+    duration:
+      type: integer
+      description: Runtime in minutes.
+      minimum: 0
+    isrc:
+      type: string
+      description: ISRC code.
+    genre:
+      type: array
+      description: Genres.
+      items:
+        type: string
+  required:
+  - name
+- name: MusicAlbum
+  label: Music Album
+  description: 'An album or record: a collection of tracks.'
+  category: media
+  parent: CreativeWork
+  labels:
+  - album
+  - record
+  ui:
+    icon: tabler--album
+    color: '#BE185D'
+  properties:
+    name:
+      type: string
+      description: The album's title.
+    release_date:
+      type: date
+      description: Release date (YYYY-MM-DD).
+      title: Release Date
+    track_count:
+      type: integer
+      description: Number of tracks.
+      minimum: 0
+      title: Track Count
+    genre:
+      type: array
+      description: Genres.
+      items:
+        type: string
+  required:
+  - name
+- name: PodcastSeries
+  label: Podcast Series
+  description: 'A podcast show: an ordered set of episodes.'
+  category: media
+  parent: CreativeWork
+  labels:
+  - podcast
+  - show
+  ui:
+    icon: tabler--microphone
+    color: '#8B5CF6'
+  properties:
+    name:
+      type: string
+      description: The podcast's title.
+    author_name:
+      type: string
+      description: Host or author.
+      title: Author Name
+    episode_count:
+      type: integer
+      description: Number of episodes.
+      minimum: 0
+      title: Episode Count
+    url:
+      type: url
+      description: Show URL.
+  required:
+  - name
+- name: VisualArtwork
+  label: Visual Artwork
+  description: A painting, drawing, sculpture or other visual art piece.
+  category: creative
+  parent: CreativeWork
+  labels:
+  - art
+  - artwork
+  - painting
+  ui:
+    icon: tabler--palette
+    color: '#F97316'
+  properties:
+    name:
+      type: string
+      description: The work's title.
+    artform:
+      type: string
+      description: Kind of artwork.
+      enum:
+      - painting
+      - drawing
+      - sculpture
+      - digital
+      - photography
+    medium:
+      type: string
+      description: Materials or medium.
+    date_created:
+      type: date
+      description: Creation date (YYYY-MM-DD).
+      title: Date Created
+  required:
+  - name
