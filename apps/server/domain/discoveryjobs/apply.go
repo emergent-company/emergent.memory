@@ -164,8 +164,10 @@ func (s *Service) maybeAutoApply(ctx context.Context, projectID, jobID, schemaID
 
 	// Filter the reconciled pack down to the accepted types (dropping
 	// relationship-like / low-confidence / invalid-name types) so a declined
-	// type is never installed.
-	if err := s.filterDiscoveredPack(ctx, schemaID, accepted); err != nil {
+	// type is never installed. The installed pack's definitions are carried
+	// forward so an incremental extend stays additive: deactivating the prior
+	// pack must never drop a type that still has objects on main.
+	if err := s.filterDiscoveredPack(ctx, schemaID, accepted, installed); err != nil {
 		s.log.Warn("auto-apply: filter pack failed", logger.Error(err))
 		return
 	}
@@ -205,8 +207,12 @@ func (s *Service) maybeAutoApply(ctx context.Context, projectID, jobID, schemaID
 
 // filterDiscoveredPack rewrites the pending discovered pack's object and
 // relationship schemas so only the accepted type names remain, so a type the
-// gate declined is never installed.
-func (s *Service) filterDiscoveredPack(ctx context.Context, packID uuid.UUID, accepted []string) error {
+// gate declined is never installed. When carryOver is non-nil (an incremental
+// extend), the installed pack's definitions are merged in first, so deactivating
+// the prior pack never drops a type that still has objects on main — the
+// additive-only invariant (apply.go). This run's accepted types overlay, and win
+// on, any same-named definition.
+func (s *Service) filterDiscoveredPack(ctx context.Context, packID uuid.UUID, accepted []string, carryOver *MemorySchema) error {
 	pack, err := s.repo.GetMemorySchema(ctx, packID)
 	if err != nil {
 		return err
@@ -215,15 +221,35 @@ func (s *Service) filterDiscoveredPack(ctx context.Context, packID uuid.UUID, ac
 	for _, name := range accepted {
 		keep[name] = true
 	}
+	// Carried-over types are part of the installed set too, so a relationship
+	// this run discovered that references one is kept rather than dropped.
+	if carryOver != nil {
+		for name := range carryOver.ObjectTypeSchemas {
+			keep[name] = true
+		}
+	}
 
-	obj := make(JSONMap, len(accepted))
+	obj := make(JSONMap, len(keep))
+	rel := make(JSONMap)
+	ui := make(JSONMap)
+	if carryOver != nil {
+		for name, schema := range carryOver.ObjectTypeSchemas {
+			obj[name] = schema
+		}
+		for name, raw := range carryOver.RelationshipTypeSchemas {
+			rel[name] = raw
+		}
+		for name, cfg := range carryOver.UIConfigs {
+			ui[name] = cfg
+		}
+	}
+
 	for name, schema := range pack.ObjectTypeSchemas {
 		if keep[name] {
 			obj[name] = schema
 		}
 	}
 
-	rel := make(JSONMap)
 	for name, raw := range pack.RelationshipTypeSchemas {
 		if !relationshipUsesOnly(raw, keep) {
 			continue
@@ -231,7 +257,6 @@ func (s *Service) filterDiscoveredPack(ctx context.Context, packID uuid.UUID, ac
 		rel[name] = raw
 	}
 
-	ui := make(JSONMap, len(accepted))
 	for name, cfg := range pack.UIConfigs {
 		if keep[name] {
 			ui[name] = cfg
