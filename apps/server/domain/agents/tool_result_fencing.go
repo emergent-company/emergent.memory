@@ -45,11 +45,42 @@ const (
 
 // untrustedDelimiterPattern matches the sequences a payload could use to break
 // out of the envelope or impersonate the harness: the envelope's own tags, a
-// system-message tag, a chat control token (<|im_start|>, <|endoftext|>, …), and
-// the entity-encoded forms of the envelope and system tags. The bracket role
-// markers of other chat templates ([INST], <<SYS>>) are deliberately not
-// matched: the models this runtime serves use Gemini's template, which has none.
-var untrustedDelimiterPattern = regexp.MustCompile(`(?i)&lt;(/?untrusted-content|/?system\b)|<(/?untrusted-content|/?system\b|\|[a-z_]{1,32}\|>)`)
+// system-message tag, a chat control token (<|im_start|>, <|endoftext|>, …), the
+// decimal/hex entity-encoded forms of the envelope and system tags, and the
+// bracket role markers an instruction-tuned open-weight model honours ([INST],
+// <<SYS>>). The bracket set is covered because the fence cannot know the target
+// model: this runtime reaches several providers through LiteLLM, and a provider
+// that re-renders the conversation through a chat template would otherwise read a
+// payload's [INST] as harness control syntax rather than as text.
+var untrustedDelimiterPattern = regexp.MustCompile(`(?i)&(?:lt;|#0*60;|#[xX]0*3[cC];)(/?untrusted-content|/?system\b)|<(/?untrusted-content|/?system\b|\|[a-z_]{1,32}\|>)|\[\/?INST\]|<<\/?SYS>>`)
+
+// reservedPolicyKey is the top-level field the executor writes on a
+// reject/cancel tool response (confirmResponseBody). It is a reserved name: a
+// tool result may never carry it, so its presence means the executor authored
+// the response rather than a tool.
+//
+// Provenance is enforced at ingestion, not guessed here: convertToolResult strips
+// this key from every tool result (see scrubReservedPolicyKeys), so a configured
+// MCP server or relay client cannot forge it. That matters twice over — the fence
+// leaves a response carrying the key unfenced (the model must read
+// "policy_decision": "rejected" literally, per toolPolicyResultInstruction), and
+// an un-forgeable key means an untrusted party cannot select that exemption.
+//
+// The cost is payload fidelity: a tool that returns a field with this name loses
+// it, in the model request and in the persisted row.
+const reservedPolicyKey = "policy_decision"
+
+// scrubReservedPolicyKeys removes the reserved policy vocabulary from a tool
+// result. convertToolResult applies it to every external MCP and relay result,
+// which is every path where third-party JSON becomes a tool response map; the
+// executor's own decision body is built directly and never passes through here.
+func scrubReservedPolicyKeys(m map[string]any) map[string]any {
+	if m == nil {
+		return m
+	}
+	delete(m, reservedPolicyKey)
+	return m
+}
 
 // externalContentBuiltinTools are tools in the internal catalog whose payload is
 // third-party content despite being served by this product: a fetched web page,
@@ -103,12 +134,10 @@ func trustedToolResultSource(internalScopes map[string]string) func(string) bool
 type ToolResultFenceStats struct {
 	// FencedParts counts result parts wrapped in an untrusted-content envelope.
 	FencedParts int
-	// TrustedParts counts result parts left untouched because their tool is
-	// this product's own store.
+	// TrustedParts counts result parts left untouched: their tool is this
+	// product's own store, or the response is an executor-authored policy
+	// decision (unforgeable — see reservedPolicyKey).
 	TrustedParts int
-	// PolicyParts counts tool-policy outcomes (a rejected or cancelled human
-	// approval), which the executor authors and the model must read literally.
-	PolicyParts int
 	// NormalizeFailed counts fenced parts handed back untouched because their
 	// value could not be normalised. Unreachable for a value the ADK can send;
 	// counted so a silent fail-open would be visible in the log.
@@ -152,14 +181,13 @@ func fenceModelRequestToolResults(req *model.LLMRequest, trusted func(string) bo
 					continue
 				}
 				// A tool-policy outcome is the executor's own record of a human
-				// decision, injected under the governed tool's name. The model
-				// has to read "policy_decision": "rejected" literally (see
-				// toolPolicyResultInstruction), so wrapping it would turn a
-				// refused action into untrusted data that looks retryable. Only
-				// the reject/cancel branches carry this key; an approved call
-				// carries the tool's real result, which is fenced as usual.
-				if _, ok := resp["policy_decision"]; ok {
-					stats.PolicyParts++
+				// decision, injected under the governed tool's name. It has to
+				// arrive verbatim (toolPolicyResultInstruction keys on the exact
+				// strings), and its provenance is enforced at ingestion:
+				// convertToolResult strips reservedPolicyKey from every tool
+				// result, so a payload cannot reach this branch carrying it.
+				if _, executorAuthored := resp[reservedPolicyKey]; executorAuthored {
+					stats.TrustedParts++
 					continue
 				}
 				if trusted != nil && trusted(name) {
@@ -225,11 +253,21 @@ func fenceUntrustedResult(source string, resp map[string]any) (fenced map[string
 		// untouched rather than dropping the result.
 		return resp, false
 	}
-	fenced, ok = fenceUntrustedValue(source, norm).(map[string]any)
+	normMap, ok := norm.(map[string]any)
 	if !ok {
 		return resp, false
 	}
-	return fenced, true
+	return fenceUntrustedMap(source, normMap), true
+}
+
+// fenceUntrustedMap fences every value in m. Map keys are defanged but not
+// wrapped — see fenceUntrustedValue.
+func fenceUntrustedMap(source string, m map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[defangUntrustedText(k)] = fenceUntrustedValue(source, v)
+	}
+	return out
 }
 
 // fenceUntrustedValue wraps every non-blank string in v, descending into maps
@@ -248,11 +286,7 @@ func fenceUntrustedValue(source string, v any) any {
 		}
 		return wrapUntrusted(source, t)
 	case map[string]any:
-		out := make(map[string]any, len(t))
-		for k, val := range t {
-			out[defangUntrustedText(k)] = fenceUntrustedValue(source, val)
-		}
-		return out
+		return fenceUntrustedMap(source, t)
 	case []any:
 		out := make([]any, len(t))
 		for i, val := range t {
@@ -270,21 +304,26 @@ func wrapUntrusted(source, text string) string {
 	return fmt.Sprintf(untrustedContentOpenFmt, source) + defangUntrustedText(text) + untrustedContentCloseTag
 }
 
-// defangUntrustedText rewrites the opening "<" of every sequence the payload
-// could use to close the envelope early or impersonate a system message as the
-// literal text "&lt;". An entity-encoded tag is rewritten too ("&lt;" →
-// "&amp;lt;"), so a consumer that unescapes HTML entities before reading the
-// text still finds no tag. The escape is visible and reversible by a reader, but
-// the payload can no longer present a delimiter as markup.
+// defangUntrustedText rewrites the opening character of every sequence the
+// payload could use to close the envelope, impersonate a system message or open a
+// model's role marker as an HTML entity ("<" → "&lt;", "[" → "&#91;"). An
+// entity-encoded tag is rewritten too ("&lt;" → "&amp;lt;"), so a consumer that
+// unescapes HTML entities before reading the text still finds no tag. The escape
+// is visible and reversible by a reader, but the payload can no longer present a
+// delimiter as markup or as harness control syntax.
 func defangUntrustedText(s string) string {
 	if !untrustedDelimiterPattern.MatchString(s) {
 		return s
 	}
 	return untrustedDelimiterPattern.ReplaceAllStringFunc(s, func(match string) string {
-		if match[0] == '&' {
+		switch match[0] {
+		case '&':
 			return "&amp;" + match[1:]
+		case '[':
+			return "&#91;" + match[1:]
+		default:
+			return "&lt;" + match[1:]
 		}
-		return "&lt;" + match[1:]
 	})
 }
 

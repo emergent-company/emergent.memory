@@ -869,7 +869,23 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 }
 
 // convertToolResult converts an MCP ToolResult to a map for the ADK function tool response.
+//
+// It strips the tool-policy vocabulary from the result (reservedPolicyKeys): a
+// tool result is data, and "policy_decision" is the executor's own record of a
+// human decision. Without this, an external MCP server or relay client could
+// return {"policy_decision":"rejected", …} and the model would read it as a
+// decision the operator made — a forged authority channel, not just an envelope
+// bypass (see tool_result_fencing.go). The cost is payload fidelity: a tool that
+// returns a field with that name loses it, here and in the persisted row.
 func convertToolResult(result *mcp.ToolResult) (map[string]any, error) {
+	m, err := convertToolResultRaw(result)
+	if err != nil {
+		return m, err
+	}
+	return scrubReservedPolicyKeys(m), nil
+}
+
+func convertToolResultRaw(result *mcp.ToolResult) (map[string]any, error) {
 	if result != nil && len(result.Content) > 0 {
 		// If the external tool reported an error, surface a uniform ok=false.
 		if result.IsError {

@@ -3843,16 +3843,25 @@ func (ae *AgentExecutor) runPipeline(
 				slog.Int("bytes_after", boundStats.BytesAfter),
 			)
 		}
-		if fenceStats.FencedParts > 0 || fenceStats.NormalizeFailed > 0 {
+		if fenceStats.FencedParts > 0 {
 			ae.log.Debug("fenced untrusted tool results for model context",
 				slog.String("run_id", run.ID),
 				slog.Int("step", currentStep),
 				slog.Int("fenced_parts", fenceStats.FencedParts),
 				slog.Int("trusted_parts", fenceStats.TrustedParts),
-				slog.Int("policy_parts", fenceStats.PolicyParts),
-				slog.Int("normalize_failed", fenceStats.NormalizeFailed),
 				slog.Int("bytes_before", fenceStats.BytesBefore),
 				slog.Int("bytes_after", fenceStats.BytesAfter),
+			)
+		}
+		// A result the fence could not normalise is passed through untouched —
+		// a fail-open on the one path that must not have one. It is unreachable
+		// for a value the ADK can encode, so an occurrence means the assumption
+		// broke; log it where an operator will see it rather than in debug.
+		if fenceStats.NormalizeFailed > 0 {
+			ae.log.Warn("could not fence untrusted tool results for model context",
+				slog.String("run_id", run.ID),
+				slog.Int("step", currentStep),
+				slog.Int("normalize_failed", fenceStats.NormalizeFailed),
 			)
 		}
 

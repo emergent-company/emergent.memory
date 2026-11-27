@@ -35,6 +35,16 @@ import (
 //
 // The bound is deliberately honest: a truncated result carries an explicit,
 // actionable marker the model can act on, never a silent drop.
+//
+// The order has one visible trade, accepted deliberately: because an untrusted
+// result is measured *with* its envelope, a large third-party payload (a big web
+// page, a long command output) now truncates a few hundred bytes earlier than it
+// did before fencing existed, and a payload made of many short strings — the
+// shape an external server controls — can inflate several-fold and then be cut
+// to the cap, so the model reads materially less of it than it read raw. That is
+// the right direction: the alternative is a bound that does not count what the
+// model actually reads, which the same payload inflates past the budget, and the
+// part cut is the tail of content the model was going to be told to narrow.
 const (
 	// defaultToolResultMaxBytes bounds one tool result as seen by the model.
 	// 128 KiB is generous: normal read/search results observed in production
