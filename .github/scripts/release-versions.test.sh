@@ -257,10 +257,11 @@ expect_stderr "clean: a map without an image says why it cannot compare" \
 # Retried publisher (#1203). A publisher retry rebuilds and re-pushes the same
 # tags; a rebuild is not digest-stable (buildx stamps `created` and appends an
 # attestation manifest), so the tag's digest moves after the map recorded the
-# earlier attempt. The image a container receives is unchanged, so the next
-# release's alias is legitimate and must not be refused as a moved tag. The
-# tolerance is narrow: the runtime configurations must match, and an
-# unreadable digest still fails closed.
+# earlier attempt. The image itself is unchanged, so the next release's alias is
+# legitimate and must not be refused as a moved tag. The tolerance is narrow:
+# the whole config document *and* the layer diff_ids must match — only the build
+# timestamp, history and attestations may differ — and an unreadable digest
+# still fails closed.
 # ---------------------------------------------------------------------------
 retry_map="$tmp/retry-map.json"
 cat >"$retry_map" <<'JSON'
@@ -279,9 +280,7 @@ cat >"$retry_map" <<'JSON'
 JSON
 
 # A stub for `buildx imagetools inspect --format '{{json .Image}}'`: each ref
-# maps to the image config document the registry would return. The two attempts
-# differ only in `created` and in Env order, the way a rebuild of identical
-# inputs does; a third ref is a genuinely different image.
+# maps to the image config document the registry would return.
 mkdir -p "$tmp/config-bin"
 cat >"$tmp/config-bin/docker" <<'STUB'
 #!/usr/bin/env bash
@@ -295,12 +294,19 @@ printf '%s\n' "$doc"
 STUB
 chmod +x "$tmp/config-bin/docker"
 
+# attempt-1 and attempt-2 are the same build: identical config and layer
+# diff_ids, differing only in `created` and `history` (which a rebuild stamps)
+# — exactly the v0.104.3 case. The remaining docs each differ in one thing the
+# gate must still catch: a different layer payload, a different HEALTHCHECK
+# (runtime-executed), and Env order (last entry wins, so it is semantic).
 configs="$tmp/configs.txt"
 : >"$tmp/empty-configs.txt"
 cat >"$configs" <<'EOF'
-ghcr.io/acme/memory-web-ui@sha256:attempt-1 {"created":"2026-11-01T18:50:01Z","config":{"User":"","Env":["PATH=/usr/local/bin","NODE_ENV=production"],"Entrypoint":["/docker-entrypoint.sh"],"Cmd":["node","server.js"],"WorkingDir":"/app","Labels":{"org.opencontainers.image.version":"0.104.3"}}}
-ghcr.io/acme/memory-web-ui@sha256:attempt-2 {"created":"2026-11-01T18:52:11Z","config":{"User":"","Env":["NODE_ENV=production","PATH=/usr/local/bin"],"Entrypoint":["/docker-entrypoint.sh"],"Cmd":["node","server.js"],"WorkingDir":"/app","Labels":{"org.opencontainers.image.version":"0.104.3"}}}
-ghcr.io/acme/memory-web-ui@sha256:other-build {"created":"2026-11-01T18:52:11Z","config":{"User":"","Env":["PATH=/usr/local/bin"],"Entrypoint":["/docker-entrypoint.sh"],"Cmd":["node","server.js"],"WorkingDir":"/app","Labels":{}}}
+ghcr.io/acme/memory-web-ui@sha256:attempt-1 {"created":"2026-11-01T18:50:01Z","architecture":"amd64","os":"linux","config":{"User":"","Env":["PATH=/usr/local/bin","NODE_ENV=production"],"Entrypoint":["/docker-entrypoint.sh"],"Cmd":["node","server.js"],"WorkingDir":"/app","Labels":{"org.opencontainers.image.version":"0.104.3"}},"rootfs":{"type":"layers","diff_ids":["sha256:layer-a","sha256:layer-b"]},"history":[{"created":"2026-11-01T18:50:01Z","created_by":"COPY /app"}]}
+ghcr.io/acme/memory-web-ui@sha256:attempt-2 {"created":"2026-11-01T18:52:11Z","architecture":"amd64","os":"linux","config":{"User":"","Env":["PATH=/usr/local/bin","NODE_ENV=production"],"Entrypoint":["/docker-entrypoint.sh"],"Cmd":["node","server.js"],"WorkingDir":"/app","Labels":{"org.opencontainers.image.version":"0.104.3"}},"rootfs":{"type":"layers","diff_ids":["sha256:layer-a","sha256:layer-b"]},"history":[{"created":"2026-11-01T18:52:11Z","created_by":"COPY /app"}]}
+ghcr.io/acme/memory-web-ui@sha256:payload-differs {"created":"2026-11-01T18:52:11Z","architecture":"amd64","os":"linux","config":{"User":"","Env":["PATH=/usr/local/bin","NODE_ENV=production"],"Entrypoint":["/docker-entrypoint.sh"],"Cmd":["node","server.js"],"WorkingDir":"/app","Labels":{"org.opencontainers.image.version":"0.104.3"}},"rootfs":{"type":"layers","diff_ids":["sha256:layer-a","sha256:evil"]},"history":[]}
+ghcr.io/acme/memory-web-ui@sha256:healthcheck-differs {"created":"2026-11-01T18:52:11Z","architecture":"amd64","os":"linux","config":{"User":"","Env":["PATH=/usr/local/bin","NODE_ENV=production"],"Entrypoint":["/docker-entrypoint.sh"],"Cmd":["node","server.js"],"WorkingDir":"/app","Labels":{"org.opencontainers.image.version":"0.104.3"},"Healthcheck":{"Test":["CMD-SHELL","curl -f http://localhost/ || exit 1"]}},"rootfs":{"type":"layers","diff_ids":["sha256:layer-a","sha256:layer-b"]},"history":[]}
+ghcr.io/acme/memory-web-ui@sha256:env-order-differs {"created":"2026-11-01T18:52:11Z","architecture":"amd64","os":"linux","config":{"User":"","Env":["NODE_ENV=production","PATH=/usr/local/bin"],"Entrypoint":["/docker-entrypoint.sh"],"Cmd":["node","server.js"],"WorkingDir":"/app","Labels":{"org.opencontainers.image.version":"0.104.3"}},"rootfs":{"type":"layers","diff_ids":["sha256:layer-a","sha256:layer-b"]},"history":[]}
 EOF
 
 expect_rc "retry: a re-stamped identical image allows the alias" 0 \
@@ -315,16 +321,36 @@ expect_stderr "retry: the tolerance names the retried publisher" \
 expect_stderr "retry: the stale record's repair is printed" \
   "gh workflow run release-versions.yml --field tag=v0.87.4"
 
-expect_rc "retry: a digest whose configuration differs still fails" 1 \
+# The gate must not bless a different payload just because the runtime config
+# projection happens to match: layer diff_ids are compared too.
+expect_rc "retry: a different payload with an identical config fails" 1 \
   env CHECK_REPO="$clean" CHECK_SERVICE=web-ui CHECK_PATH=apps/web-ui \
   CHECK_CHANGED=false CHECK_PREV_TAG=v0.87.4 CHECK_CURRENT_TAG=v0.88.0 \
-  CHECK_PREV_MAP="$retry_map" CHECK_PREV_DIGEST=sha256:other-build \
+  CHECK_PREV_MAP="$retry_map" CHECK_PREV_DIGEST=sha256:payload-differs \
   CHECK_DOCKER="$tmp/config-bin/docker" FAKE_CONFIGS="$configs" \
   "$script" check
-expect_stderr "retry: a different image is still blamed on a moved tag" \
+expect_stderr "retry: the payload difference is blamed on a moved tag" \
   "the previous release tag moved after publication"
-expect_stderr "retry: the failure names the other possible cause" \
+
+# A field outside the old runtime projection — HEALTHCHECK is executed by the
+# container runtime — is still part of the identity.
+expect_rc "retry: a differing healthcheck fails" 1 \
+  env CHECK_REPO="$clean" CHECK_SERVICE=web-ui CHECK_PATH=apps/web-ui \
+  CHECK_CHANGED=false CHECK_PREV_TAG=v0.87.4 CHECK_CURRENT_TAG=v0.88.0 \
+  CHECK_PREV_MAP="$retry_map" CHECK_PREV_DIGEST=sha256:healthcheck-differs \
+  CHECK_DOCKER="$tmp/config-bin/docker" FAKE_CONFIGS="$configs" \
+  "$script" check
+expect_stderr "retry: the healthcheck failure names the other possible cause" \
   "retried and re-pushed it from a rebuild whose image is not the same"
+
+# Env order is semantic (the last entry wins at runtime), so it is compared
+# as-is rather than sorted.
+expect_rc "retry: a reordered Env is not treated as the same image" 1 \
+  env CHECK_REPO="$clean" CHECK_SERVICE=web-ui CHECK_PATH=apps/web-ui \
+  CHECK_CHANGED=false CHECK_PREV_TAG=v0.87.4 CHECK_CURRENT_TAG=v0.88.0 \
+  CHECK_PREV_MAP="$retry_map" CHECK_PREV_DIGEST=sha256:env-order-differs \
+  CHECK_DOCKER="$tmp/config-bin/docker" FAKE_CONFIGS="$configs" \
+  "$script" check
 
 # A digest the registry no longer answers for cannot be compared, so the
 # mismatch must keep failing closed rather than being assumed benign.
@@ -339,7 +365,7 @@ expect_stderr "retry: the unreadable comparison is reported" \
 
 # The server image is multi-platform, so `imagetools inspect` reports one config
 # document per platform rather than one document. A re-stamped build must pass
-# there too, and a difference on a single architecture must still fail.
+# there too, and a different payload on a single architecture must still fail.
 server_retry_map="$tmp/server-retry-map.json"
 cat >"$server_retry_map" <<'JSON'
 {
@@ -357,9 +383,9 @@ cat >"$server_retry_map" <<'JSON'
 JSON
 server_configs="$tmp/server-configs.txt"
 cat >"$server_configs" <<'EOF'
-ghcr.io/acme/memory-server@sha256:server-attempt-1 {"linux/amd64":{"created":"2026-11-01T18:50:01Z","config":{"User":"","Env":["PATH=/usr/local/bin","MEMORY_ENV=production"],"Entrypoint":["/usr/local/bin/memory-server"]}},"linux/arm64":{"created":"2026-11-01T18:50:01Z","config":{"User":"","Env":["PATH=/usr/local/bin","MEMORY_ENV=production"],"Entrypoint":["/usr/local/bin/memory-server"]}}}
-ghcr.io/acme/memory-server@sha256:server-attempt-2 {"linux/amd64":{"created":"2026-11-01T18:52:11Z","config":{"User":"","Env":["MEMORY_ENV=production","PATH=/usr/local/bin"],"Entrypoint":["/usr/local/bin/memory-server"]}},"linux/arm64":{"created":"2026-11-01T18:52:11Z","config":{"User":"","Env":["MEMORY_ENV=production","PATH=/usr/local/bin"],"Entrypoint":["/usr/local/bin/memory-server"]}}}
-ghcr.io/acme/memory-server@sha256:server-arm-differs {"linux/amd64":{"created":"2026-11-01T18:52:11Z","config":{"User":"","Env":["PATH=/usr/local/bin","MEMORY_ENV=production"],"Entrypoint":["/usr/local/bin/memory-server"]}},"linux/arm64":{"created":"2026-11-01T18:52:11Z","config":{"User":"","Env":["PATH=/usr/local/bin"],"Entrypoint":["/usr/local/bin/memory-server"]}}}
+ghcr.io/acme/memory-server@sha256:server-attempt-1 {"linux/amd64":{"created":"2026-11-01T18:50:01Z","architecture":"amd64","os":"linux","config":{"User":"","Env":["PATH=/usr/local/bin","MEMORY_ENV=production"],"Entrypoint":["/usr/local/bin/memory-server"]},"rootfs":{"type":"layers","diff_ids":["sha256:server-a"]},"history":[]},"linux/arm64":{"created":"2026-11-01T18:50:01Z","architecture":"arm64","os":"linux","config":{"User":"","Env":["PATH=/usr/local/bin","MEMORY_ENV=production"],"Entrypoint":["/usr/local/bin/memory-server"]},"rootfs":{"type":"layers","diff_ids":["sha256:server-arm-a"]},"history":[]}}
+ghcr.io/acme/memory-server@sha256:server-attempt-2 {"linux/amd64":{"created":"2026-11-01T18:52:11Z","architecture":"amd64","os":"linux","config":{"User":"","Env":["PATH=/usr/local/bin","MEMORY_ENV=production"],"Entrypoint":["/usr/local/bin/memory-server"]},"rootfs":{"type":"layers","diff_ids":["sha256:server-a"]},"history":[]},"linux/arm64":{"created":"2026-11-01T18:52:11Z","architecture":"arm64","os":"linux","config":{"User":"","Env":["PATH=/usr/local/bin","MEMORY_ENV=production"],"Entrypoint":["/usr/local/bin/memory-server"]},"rootfs":{"type":"layers","diff_ids":["sha256:server-arm-a"]},"history":[]}}
+ghcr.io/acme/memory-server@sha256:server-arm-differs {"linux/amd64":{"created":"2026-11-01T18:52:11Z","architecture":"amd64","os":"linux","config":{"User":"","Env":["PATH=/usr/local/bin","MEMORY_ENV=production"],"Entrypoint":["/usr/local/bin/memory-server"]},"rootfs":{"type":"layers","diff_ids":["sha256:server-a"]},"history":[]},"linux/arm64":{"created":"2026-11-01T18:52:11Z","architecture":"arm64","os":"linux","config":{"User":"","Env":["PATH=/usr/local/bin","MEMORY_ENV=production"],"Entrypoint":["/usr/local/bin/memory-server"]},"rootfs":{"type":"layers","diff_ids":["sha256:server-arm-evil"]},"history":[]}}
 EOF
 
 expect_rc "retry: a multi-platform image re-stamped per platform allows the alias" 0 \

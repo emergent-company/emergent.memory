@@ -55,12 +55,13 @@ digest-stable — buildx stamps `created` and appends an attestation manifest �
 retried publisher moves the release tag's digest while a container receives the
 identical image, and the next release's alias assertion refused a legitimate alias
 with a message that blamed a force-moved tag. `check_previous_map` now compares
-the two manifests' runtime configuration (`Env`, `Labels`, `Entrypoint`, `Cmd`,
-`WorkingDir`, …) before failing: equal configurations pass with a warning that
+the two manifests' *whole* image config document and layer `diff_ids` before
+failing, ignoring only the top-level `created` stamp and `history` that a rebuild
+necessarily re-stamps: a re-published identical build passes with a warning that
 names the retry and the `gh workflow run release-versions.yml --field tag=<release>`
-repair, while different configurations — or a digest the registry no longer
-serves — still fail closed (#1203). The map and both publishers now document the
-hazard.
+repair, while a different payload, runtime field (`HEALTHCHECK`, `OnBuild`, …),
+`Env` order or architecture set — or a digest the registry no longer serves —
+still fails closed (#1203).
 
 **The queued-run sweep now covers fan-out and session runs** (2026-11-16)
 

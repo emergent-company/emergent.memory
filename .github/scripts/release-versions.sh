@@ -45,8 +45,8 @@
 #         CHECK_REPO          git checkout (default: .)
 #         CHECK_HEAD          commit to compare against (default: CHECK_CURRENT_TAG
 #                             when it resolves, else HEAD)
-#         CHECK_DOCKER        docker binary used to read the two images'
-#                             configs (default: docker); tests inject a stub
+#         CHECK_DOCKER        docker binary used to read the two images
+#                             (default: docker); tests inject a stub
 #       Signals for changed=false:
 #         1. CHECK_PREV_TAG must BE the previous release tag. A force-moved
 #            rolling tag (`cli-dev`, `connector-dev`, `mac-dev`, ...) is the #2087/0.88.0
@@ -65,13 +65,17 @@
 #            The two digests are read through the map's per-service `image`,
 #            which is therefore part of what this signal needs; a map without
 #            one fails this signal rather than guessing the repository.
-#            A digest change is tolerated only when both manifests carry the
-#            same runtime configuration (Env, Labels, Entrypoint, Cmd,
-#            WorkingDir, ...): that is the same image re-stamped by a retried
-#            publisher, not a moved tag (#1203). A rebuild is not
-#            digest-stable — buildx stamps `created` and appends an attestation
-#            manifest — so after a publisher retry the tag legitimately points
-#            at a new digest while a container receives the identical image.
+#            A digest change is tolerated only when both manifests describe the
+#            same image: the whole config document (Env, Labels, Entrypoint,
+#            Cmd, Healthcheck, OnBuild, Shell, ...) and the rootfs layer
+#            diff_ids, i.e. the payload, must match, differing only in the
+#            top-level `created` stamp and `history` that a rebuild necessarily
+#            re-stamps. That is a retried publisher's re-published build, not a
+#            moved tag (#1203): a rebuild of identical inputs is not
+#            digest-stable (buildx stamps `created` and appends an attestation
+#            manifest), so the tag legitimately points at a new digest while a
+#            container receives the identical image. A tag moved to another
+#            payload still fails, and so does a comparison that cannot be made.
 #       A missing previous release/map degrades to the tree comparison and never
 #       fails the release; a disagreement never degrades.
 #
@@ -272,11 +276,11 @@ check_previous_map() {
     local compared=2
     if [ -n "$image" ]; then
       compared=0
-      same_image_config "$docker" "${image}@${recorded}" "${image}@${prev_digest}" \
+      same_image "$docker" "${image}@${recorded}" "${image}@${prev_digest}" \
         || compared=$?
     fi
     if [ "$compared" -eq 0 ]; then
-      warn "alias source digest ${prev_digest} differs from the ${recorded} recorded for ${service} in ${map_tag:-the previous release}, but both images have the same runtime configuration: a retried publisher re-stamped the same build (#1203). Proceeding with the alias; regenerate the record with: gh workflow run release-versions.yml --field tag=${map_tag:-<previous-tag>}"
+      warn "alias source digest ${prev_digest} differs from the ${recorded} recorded for ${service} in ${map_tag:-the previous release}, but both manifests describe the same image — identical config and layer diff_ids, differing only in the build timestamp and attestations — so a retried publisher re-stamped the same build (#1203). Proceeding with the alias; regenerate the record with: gh workflow run release-versions.yml --field tag=${map_tag:-<previous-tag>}"
       return 0
     fi
     if [ "$compared" -eq 2 ]; then
@@ -628,55 +632,55 @@ inspect_digest() {
   jq -er '.digest // empty' <<<"$out" 2>/dev/null
 }
 
-# inspect_config <docker> <ref>: print a canonical JSON object of the runtime
-# configuration of <ref>, or fail when it cannot be read.
+# inspect_image <docker> <ref>: print a canonical JSON object identifying the
+# image <ref>, or fail when it cannot be read.
 #
-# Only the fields a container actually receives are kept, with Env order
-# normalised (order is not meaningful, so a rebuild may reorder it). `created`,
-# `history`, `author` and the manifest's attestations are deliberately excluded:
-# a rebuild of identical inputs gets a new `created` stamp and a new manifest
-# digest, which is exactly the difference the retried-publisher tolerance must
-# see through (#1203). Anything else that differs (Env, Labels, Entrypoint,
-# Cmd, WorkingDir, ...) is a genuinely different image and still fails.
+# The comparison is the WHOLE image config document — the config object (Env,
+# Labels, Entrypoint, Cmd, Healthcheck, OnBuild, Shell, User, WorkingDir,
+# Volumes, ExposedPorts, StopSignal, ...) plus the rootfs layer diff_ids, i.e.
+# the payload — not a projection of it. A moved tag must never be blessed just
+# because a chosen subset happens to match: the gate's question is whether the
+# image is the same one the record describes. The only fields dropped are the
+# ones a rebuild of identical inputs necessarily changes: the top-level
+# `created` stamp and `history` (whose entries carry per-build timestamps).
+# Manifest annotations and attestations never reach this document, so the extra
+# attestation manifest a retry publishes does not change the identity (#1203).
 #
 # `imagetools inspect --format '{{json .Image}}'` renders one config document
 # for a single-platform image and a map of platform -> document for a
 # multi-platform one (the server publishes amd64 + arm64), so both shapes are
-# normalised. A multi-platform image compares every platform's configuration,
-# keyed by platform: a digest change that re-stamped only one architecture is
-# still a different image. An unrecognised document is a failure, never an
-# empty object that would compare equal to another unrecognised one.
-inspect_config() {
+# normalised. A multi-platform image compares every platform, keyed by
+# platform: a re-stamp of one architecture, a dropped platform or a different
+# payload on one of them is a different image. An unrecognised document is a
+# failure, never an empty object that would compare equal to another
+# unrecognised one.
+inspect_image() {
   local docker="$1" ref="$2" out
   out="$("$docker" buildx imagetools inspect --format '{{json .Image}}' "$ref" 2>/dev/null)" || return 1
   jq -S -c '
-    def runtime:
-      {user: .User,
-       exposed_ports: .ExposedPorts,
-       env: ((.Env // []) | sort),
-       entrypoint: .Entrypoint,
-       cmd: .Cmd,
-       volumes: .Volumes,
-       working_dir: .WorkingDir,
-       labels: .Labels,
-       stop_signal: .StopSignal};
+    def image_identity:
+      if (.config | type) == "object" and (.rootfs | type) == "object" then
+        del(.created, .history)
+      else
+        error("not an image config document")
+      end;
     if (.config | type) == "object" then
-      .config | runtime
+      image_identity
     elif type == "object" and length > 0 and all(.[]; (.config | type) == "object") then
-      map_values(.config | runtime) | to_entries | sort_by(.key) | from_entries
+      map_values(image_identity) | to_entries | sort_by(.key) | from_entries
     else
       error("not an image config document")
     end' <<<"$out" 2>/dev/null
 }
 
-# same_image_config <docker> <ref-a> <ref-b>
-#   0  both resolve and carry the same runtime configuration
+# same_image <docker> <ref-a> <ref-b>
+#   0  both resolve and are the same image (config + layer diff_ids)
 #   1  both resolve and differ (a genuinely different image)
 #   2  one of the refs could not be read, so nothing can be concluded
-same_image_config() {
+same_image() {
   local docker="$1" a b
-  a="$(inspect_config "$docker" "$2")" || return 2
-  b="$(inspect_config "$docker" "$3")" || return 2
+  a="$(inspect_image "$docker" "$2")" || return 2
+  b="$(inspect_image "$docker" "$3")" || return 2
   [ -n "$a" ] && [ -n "$b" ] || return 2
   [ "$a" = "$b" ] || return 1
   return 0
