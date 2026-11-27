@@ -29,6 +29,13 @@ const (
 	// agent's fault nor the item's: it must not increment the agent failure
 	// counter (which auto-disables agents) nor consume the item failure budget.
 	FailureClassBudget FailureClass = "budget"
+	// FailureClassStepLimit marks a durable block written when a run paused at
+	// its step budget and nothing resumed it. It is auto-recoverable like a
+	// budget park: the run stopped, the item did not fail. The reconciler
+	// clears it and dispatches a fresh run with a continuation note, up to
+	// stepLimitAutoResumeLimit exhaustions; only then does it stay parked for a
+	// human (issue #993 follow-up).
+	FailureClassStepLimit FailureClass = "step_limit"
 )
 
 // isBudgetFailure reports whether err is a project budget-window block.

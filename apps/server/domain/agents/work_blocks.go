@@ -81,6 +81,29 @@ func (r *Repository) ClearWorkBlock(ctx context.Context, canonicalID string) (bo
 	return n > 0, nil
 }
 
+// CountStepLimitExhaustions returns how many runs on this subject have stopped
+// at their step budget. The reconciler bounds automatic resumption with it: the
+// first exhaustions are a dead or over-long run (not a failed item) and get a
+// fresh dispatch, while a repeated exhaustion is a signal for a human rather
+// than another run.
+func (r *Repository) CountStepLimitExhaustions(ctx context.Context, subjectObjectID string) (int, error) {
+	if r == nil || subjectObjectID == "" {
+		return 0, nil
+	}
+	var n int
+	err := r.db.NewRaw(`
+		SELECT count(*)
+		  FROM kb.agent_runs
+		 WHERE subject_object_id = ?
+		   AND COALESCE(suspend_context->>'reason', '') = ?`,
+		subjectObjectID, string(SuspendReasonStepLimit),
+	).Scan(ctx, &n)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 // GetWorkBlock returns the block row, or nil when not blocked.
 func (r *Repository) GetWorkBlock(ctx context.Context, canonicalID string) (*WorkBlock, error) {
 	var b WorkBlock
