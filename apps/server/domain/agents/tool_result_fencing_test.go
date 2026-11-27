@@ -2,6 +2,7 @@ package agents
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -456,4 +457,43 @@ func TestApplyModelContextBoundary_FencesThenBounds(t *testing.T) {
 	marker, _ := got["truncation"].(string)
 	require.NotEmpty(t, marker)
 	assert.NotContains(t, marker, "<untrusted-content", "the bound's own guidance must stay literal")
+}
+
+// externalContentBuiltinTools is an allow-list over "in the catalog ⇒ trusted",
+// so a new catalog tool that returns third-party content would fail open
+// silently (review of #1144, item 5). Pin the decision for every catalog name
+// whose shape says it reaches outside this product: it must be in the fence's
+// exception list, or listed below with the reason it is still our own store.
+//
+// A failure here is not a bug in the test: it is a new tool that needs a
+// decision. Add the name to externalContentBuiltinTools if its payload is
+// third-party, otherwise to the trusted set with a reason.
+func TestExternalContentBuiltinToolsCoversFetchingCatalogTools(t *testing.T) {
+	trustedCatalogContent := map[string]string{
+		"entity-search":                    "search over the project's own graph",
+		"search-hybrid":                    "search over the project's own graph",
+		"search-semantic":                  "search over the project's own graph",
+		"search-similar":                   "search over the project's own graph",
+		"search-knowledge":                 "search over the project's own graph",
+		"github-review-submit":             "submits our verdict; the response is our own state",
+		"blueprint-github-credentials-put": "writes a credential; the response is our own state",
+	}
+
+	shape := regexp.MustCompile(`(^|[-_])(web|github|http|https|url|crawl|browse|fetch|search)([-_]|$)`)
+
+	defs := (&mcp.Service{}).GetInternalToolDefinitions()
+	require.NotEmpty(t, defs, "the internal catalog must be enumerable for this pin to mean anything")
+
+	for _, d := range defs {
+		if !shape.MatchString(d.Name) {
+			continue
+		}
+		if externalContentBuiltinTools[d.Name] {
+			continue
+		}
+		if _, ok := trustedCatalogContent[d.Name]; ok {
+			continue
+		}
+		t.Errorf("catalog tool %q looks like it reads third-party content but is neither in externalContentBuiltinTools nor declared trusted — decide which it is", d.Name)
+	}
 }
