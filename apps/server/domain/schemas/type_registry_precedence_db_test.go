@@ -343,6 +343,49 @@ func TestPreviewMergeDetectsSameRunCollision(t *testing.T) {
 	assert.Equal(t, []string{"legal_name"}, c.AddedProperties)
 }
 
+// TestAssignPackMergeTypesMergesOnlyNamedTypes pins MergeTypes as the per-type
+// form of Merge: the caller that accepted one collision (catalog install's
+// `extend`) merges exactly that type and every other collision still skips.
+func TestAssignPackMergeTypesMergesOnlyNamedTypes(t *testing.T) {
+	ctx, repo, db, projectID := setupTypeRegistryTest(t)
+
+	base, err := repo.CreatePack(ctx, projectID, &schemas.CreatePackRequest{
+		Name:    "ot-base",
+		Version: "1.0.0",
+		ObjectTypeSchemasSnake: json.RawMessage(`[
+			{"name":"Person","properties":{"name":{"type":"string"}}},
+			{"name":"Event","properties":{"title":{"type":"string"}}}
+		]`),
+	})
+	require.NoError(t, err)
+	_, err = repo.AssignPackWithTypes(ctx, projectID, testutil.AdminUser.ID, &schemas.AssignPackRequest{SchemaID: base.ID})
+	require.NoError(t, err)
+
+	other, err := repo.CreatePack(ctx, projectID, &schemas.CreatePackRequest{
+		Name:    "ot-other",
+		Version: "1.0.0",
+		ObjectTypeSchemasSnake: json.RawMessage(`[
+			{"name":"Person","properties":{"legal_name":{"type":"string"}}},
+			{"name":"Event","properties":{"starts_at":{"type":"string"}}}
+		]`),
+	})
+	require.NoError(t, err)
+
+	res, err := repo.AssignPackWithTypes(ctx, projectID, testutil.AdminUser.ID, &schemas.AssignPackRequest{
+		SchemaID:   other.ID,
+		MergeTypes: []string{"Person"},
+	})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"Person"}, res.MergedTypes)
+	assert.ElementsMatch(t, []string{"Event"}, res.SkippedTypes)
+
+	_, person := registryRowAndOwner(t, ctx, db, projectID, "Person")
+	assert.Contains(t, propsOf(t, person), "legal_name", "the named type merges additively")
+
+	_, event := registryRowAndOwner(t, ctx, db, projectID, "Event")
+	assert.NotContains(t, propsOf(t, event), "starts_at", "an unnamed collision still skips")
+}
+
 // TestAssignPackCrossScopeSameNameForkRequiresMerge is the #338 regression: a
 // project-scoped pack that reuses a builtin's name (a different lineage in a
 // different registry scope) must not capture the type without Merge=true. A

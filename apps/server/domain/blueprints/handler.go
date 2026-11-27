@@ -433,7 +433,7 @@ func (h *Handler) ApplyBlueprint(c echo.Context) error {
 
 // InstallCatalog handles POST /api/blueprints/catalog/install.
 // @Summary      Install catalog types into the project
-// @Description  Projects the bundled schema.org taxonomy catalog onto the caller's project: materializes only the requested types plus relationships whose BOTH endpoints are installed. Re-running with more types reconciles and activates previously deferred relationships.
+// @Description  Projects the bundled schema.org taxonomy catalog onto the caller's project: materializes only the requested types plus relationships whose BOTH endpoints are installed. Re-running with more types reconciles and activates previously deferred relationships. A requested type whose name another pack already provides is refused (400) unless it is listed in "extend", because the project keeps one type per name and installing it would merge the catalog's properties into that pack's type.
 // @Tags         blueprints
 // @Accept       json
 // @Produce      json
@@ -462,7 +462,7 @@ func (h *Handler) InstallCatalog(c echo.Context) error {
 		Version:     req.Version,
 		Description: req.Description,
 		Author:      req.Author,
-	}, req.Replace)
+	}, req.Replace, req.Extend)
 	if err != nil {
 		return err
 	}

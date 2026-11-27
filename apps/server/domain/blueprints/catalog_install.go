@@ -3,6 +3,7 @@ package blueprints
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/emergent-company/emergent.memory/domain/catalog"
 	"github.com/emergent-company/emergent.memory/domain/schemas"
@@ -26,8 +27,19 @@ type CatalogInstallResult struct {
 	Relationships []string `json:"relationships"`
 	Deferred      []string `json:"deferred"`
 	Removed       []string `json:"removed,omitempty"`
-	Unknown       []string `json:"unknown,omitempty"`
-	Problems      []string `json:"problems,omitempty"`
+	// Merged are the requested types whose catalog properties were added to a
+	// type another pack owns because the caller named them in Extend.
+	Merged   []string `json:"merged,omitempty"`
+	Unknown  []string `json:"unknown,omitempty"`
+	Problems []string `json:"problems,omitempty"`
+}
+
+// CatalogTypeConflict names a requested catalog type whose name is already
+// provided by a different pack, so installing it would merge into that pack's
+// type rather than install a catalog-owned one.
+type CatalogTypeConflict struct {
+	Name      string `json:"name"`
+	OwnerPack string `json:"ownerPack"`
 }
 
 // InstallCatalog materializes the endpoint-gated projection of the built-in
@@ -36,7 +48,13 @@ type CatalogInstallResult struct {
 // whose other endpoint just arrived. With replace=true the request is
 // authoritative and omitted catalog types are removed from the pack
 // (deactivating their relationships); graph objects are untouched.
-func (s *Service) InstallCatalog(ctx context.Context, projectID, userID string, requested []string, opts CatalogPackOptions, replace bool) (*CatalogInstallResult, error) {
+//
+// A requested type whose name another pack already provides is refused unless
+// it is named in extend: the platform keeps one type per name, so "installing"
+// it would additively merge the catalog's properties into the other pack's type
+// (existing definitions win) while ownership stays with that pack. extend makes
+// that merge an explicit, per-type request instead of an implicit side effect.
+func (s *Service) InstallCatalog(ctx context.Context, projectID, userID string, requested []string, opts CatalogPackOptions, replace bool, extend []string) (*CatalogInstallResult, error) {
 	if projectID == "" {
 		return nil, apperror.NewBadRequest("project id is required")
 	}
@@ -79,6 +97,21 @@ func (s *Service) InstallCatalog(ctx context.Context, projectID, userID string, 
 		return nil, apperror.NewBadRequest("no catalog types requested; name at least one type")
 	}
 
+	// A name that another pack provides is the same type, not a second one, so
+	// the catalog's definition would merge into it. Refuse unless the caller
+	// named it in extend; nothing about that merge is implicit.
+	extendSet := make(map[string]bool, len(extend))
+	for _, name := range extend {
+		extendSet[name] = true
+	}
+	if conflicts := catalogTypeConflicts(compiled, catalogTypes, requested, opts.Name, extendSet); len(conflicts) > 0 {
+		return nil, apperror.NewBadRequest(catalogConflictMessage(conflicts))
+	}
+	if unknown := catalogExtendUnknown(extend, requested); len(unknown) > 0 {
+		return nil, apperror.NewBadRequest(fmt.Sprintf(
+			"extend names types that were not requested: %s", strings.Join(unknown, ", ")))
+	}
+
 	proj := catalog.Project(cat, union)
 	if len(proj.Types) == 0 {
 		return nil, apperror.NewBadRequest("no catalog types requested or installed; name at least one type")
@@ -88,15 +121,20 @@ func (s *Service) InstallCatalog(ctx context.Context, projectID, userID string, 
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.schemasSvc.AssignPack(ctx, projectID, userID, &schemas.AssignPackRequest{
+	assign, err := s.schemasSvc.AssignPack(ctx, projectID, userID, &schemas.AssignPackRequest{
 		SchemaID:      pack.ID,
-		Merge:         true,
+		MergeTypes:    extend,
 		AutoUninstall: true,
-	}); err != nil {
+	})
+	if err != nil {
 		return nil, err
 	}
 
-	return describeCatalogInstall(pack.ID, created, proj, removed), nil
+	res := describeCatalogInstall(pack.ID, created, proj, removed)
+	if assign != nil {
+		res.Merged = assign.MergedTypes
+	}
+	return res, nil
 }
 
 // catalogPack converts a projection into the schema pack the apply path
@@ -154,6 +192,72 @@ func catalogRelationshipDefs(rels []catalog.Relationship) []RelationshipTypeDef 
 		})
 	}
 	return out
+}
+
+// catalogTypeOwners maps each effective compiled object type to the pack that
+// provides it. Compiled types are ordered by assignment and every losing
+// same-name declaration is flagged Shadowed, so the unshadowed row is the
+// definition the project actually resolves.
+func catalogTypeOwners(compiled *schemas.CompiledTypesResponse) map[string]string {
+	owners := make(map[string]string)
+	if compiled == nil {
+		return owners
+	}
+	for _, t := range compiled.ObjectTypes {
+		if t.Shadowed || t.SchemaName == "" {
+			continue
+		}
+		owners[t.Name] = t.SchemaName
+	}
+	return owners
+}
+
+// catalogTypeConflicts reports the requested catalog types whose name another
+// pack already provides and whose merge the caller did not accept via extend.
+func catalogTypeConflicts(compiled *schemas.CompiledTypesResponse, catalogTypes map[string]bool, requested []string, packName string, extend map[string]bool) []CatalogTypeConflict {
+	owners := catalogTypeOwners(compiled)
+	var out []CatalogTypeConflict
+	seen := make(map[string]bool, len(requested))
+	for _, name := range requested {
+		if seen[name] || extend[name] || !catalogTypes[name] {
+			// Unknown names are reported by catalog.Project; a name the caller
+			// accepted is merged on purpose.
+			continue
+		}
+		seen[name] = true
+		if owner, ok := owners[name]; ok && owner != packName {
+			out = append(out, CatalogTypeConflict{Name: name, OwnerPack: owner})
+		}
+	}
+	return out
+}
+
+// catalogExtendUnknown returns the extend names that were not requested; they
+// would be silently ignored otherwise.
+func catalogExtendUnknown(extend, requested []string) []string {
+	inRequest := make(map[string]bool, len(requested))
+	for _, name := range requested {
+		inRequest[name] = true
+	}
+	var out []string
+	for _, name := range extend {
+		if !inRequest[name] {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// catalogConflictMessage names every refused type and its owning pack, and the
+// flag that accepts the merge.
+func catalogConflictMessage(conflicts []CatalogTypeConflict) string {
+	parts := make([]string, 0, len(conflicts))
+	for _, c := range conflicts {
+		parts = append(parts, fmt.Sprintf("%s (already provided by pack %q)", c.Name, c.OwnerPack))
+	}
+	return fmt.Sprintf(
+		"catalog types not installed: %s — a project keeps one type per name, so the catalog definition would merge its properties into the existing type; list the names in \"extend\" to merge deliberately",
+		strings.Join(parts, ", "))
 }
 
 // catalogInstalledTypes returns the object-type names already contributed by the
@@ -249,4 +353,10 @@ type CatalogInstallRequest struct {
 	// Replace makes Types authoritative: catalog types omitted from Types are
 	// removed from the pack, deactivating their relationships.
 	Replace bool `json:"replace,omitempty"`
+	// Extend names requested types the caller accepts merging into a type
+	// another pack already provides. Without it such a request is refused: the
+	// project keeps one type per name, so the catalog's properties would be
+	// added to the existing type (existing definitions win) rather than
+	// installing a catalog-owned one.
+	Extend []string `json:"extend,omitempty"`
 }
