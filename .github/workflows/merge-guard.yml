@@ -40,8 +40,11 @@ run-name: merge-guard PR ${{ github.event.inputs.pr || github.event.pull_request
 # A marker is trusted only when its author is OWNER/COLLABORATOR or their
 # immutable user id is in the MERGE_GUARD_TRUSTED_USER_IDS repository variable
 # (MEMBER alone is org membership, not write access). Fork contributors and bots
-# cannot mint one: a bot is rejected by its `user.type`, whatever its association
-# and whatever the allowlist says (#1290, #1310). That rejection is explicit
+# cannot mint one: a bot is rejected by its identity, whatever its association
+# and whatever the allowlist says (#1290, #1310) — `user.type` is the documented
+# signal and an App's `user.login` ending in `[bot]` is the second, so a payload
+# that omits or renames `type` cannot be read as a person (#1325). That rejection
+# is explicit
 # rather than a consequence of the allowlist staying clean, because a bot id *can*
 # get into the variable — this repo still listed one when #1290 closed, and it was
 # re-added hours later — and an id-trusting predicate would re-open the hole
@@ -142,15 +145,23 @@ jobs:
           # `author_association: MEMBER` is org membership, not write access, so
           # MEMBER is trusted only when the immutable user id is in the
           # MERGE_GUARD_TRUSTED_USER_IDS repo variable. OWNER and COLLABORATOR
-          # imply an explicit grant. A bot is rejected by `user.type` whatever the
-          # allowlist says (#1290, #1310). The latest marker's current body counts;
+          # imply an explicit grant. A bot is rejected by its identity -- the
+          # `user.type` enum or an App's `[bot]` login -- whatever the allowlist
+          # says (#1290, #1310, #1325). The latest marker's current body counts;
           # post a new comment rather than editing.
           read -r -d '' MARKER_JQ <<'JQ' || true
           ($trusted_ids // "" | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != ""))) as $allow
           | [
             .[]
-            # A bot is advisory, never a reviewer (#1290, #1310).
-            | select(.user.type != "Bot")
+            # A bot is advisory, never a reviewer (#1290, #1310). Two signals,
+            # because either field can be absent and only one of them is the
+            # API's guarantee: `user.type` is the documented enum, and an App's
+            # `user.login` ends in `[bot]` (#1325). Both case-insensitive -- a
+            # predicate that matches one spelling is a spelling away from
+            # trusting it. The allowlist is layered on top and cannot outvote
+            # this clause.
+            | select(((.user.type // "") | ascii_downcase) != "bot")
+            | select((((.user.login // "") | ascii_downcase) | test("\\[bot\\]$")) | not)
             | select(
                 .author_association == "OWNER"
                 or .author_association == "COLLABORATOR"
@@ -189,8 +200,11 @@ jobs:
           | [
             .[]
             # A bot's verdict is advisory in both directions: it never approves
-            # and never blocks (#1290, #1310).
-            | select(.user.type != "Bot")
+            # and never blocks (#1290, #1310). Same two signals and same
+            # case-insensitivity as the marker projection, so the halves cannot
+            # disagree about who is a bot (#1325).
+            | select(((.user.type // "") | ascii_downcase) != "bot")
+            | select((((.user.login // "") | ascii_downcase) | test("\\[bot\\]$")) | not)
             | select(
                 .author_association == "OWNER"
                 or .author_association == "COLLABORATOR"
