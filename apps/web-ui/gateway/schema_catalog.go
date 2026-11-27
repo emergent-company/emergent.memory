@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -16,9 +17,10 @@ type CatalogGroup struct {
 	Types []CatalogSummary
 }
 
-// catalogPackName is the project schema pack the catalog materializes into. It
-// mirrors blueprints.CatalogPackOptions' default; a type under any other pack is
-// a different definition that happens to share the name.
+// catalogPackName is the default project schema pack the catalog materializes
+// into. It mirrors blueprints.CatalogPackOptions' default; a project may install
+// the catalog under a custom --name, so badge decisions use catalogPackFor,
+// which follows the pack the project actually owns its catalog types under.
 const catalogPackName = "schemaorg-catalog"
 
 // catalogInstallState is what the project already has under a catalog type's
@@ -42,20 +44,114 @@ func (s catalogInstallState) ProvidedLabel() string {
 	return s.ProvidedBy
 }
 
+// catalogTypeNames is the set of object-type names the built-in catalog
+// declares. It identifies a project's catalog pack (see catalogPackFor), so it
+// must be the whole manifest — a filtered browse page is not enough.
+func catalogTypeNames(list *CatalogList) map[string]bool {
+	names := map[string]bool{}
+	if list == nil {
+		return names
+	}
+	for _, t := range list.Types {
+		if t.Name != "" {
+			names[t.Name] = true
+		}
+	}
+	return names
+}
+
+// catalogTypeNameSet fetches the unfiltered catalog so the manifest's whole
+// name set is available on pages whose own listing is filtered or absent. A
+// failed fetch yields an empty set, which makes catalogPackFor fall back to the
+// default pack name rather than guess.
+func (s *Server) catalogTypeNameSet(ctx context.Context) map[string]bool {
+	list, err := s.memory.ListCatalog(ctx, "", "", "")
+	if err != nil {
+		captureError(err)
+		return map[string]bool{}
+	}
+	return catalogTypeNames(list)
+}
+
+// catalogPackFor names the project pack the built-in catalog was installed
+// under. Install uses the default name unless the installer passed a custom
+// --name, so:
+//
+//   - a project that owns types under the default name installed the catalog
+//     there — that pack is the catalog pack, whatever else is present;
+//   - otherwise the catalog pack is the pack whose whole set of owned object
+//     types are catalog types (InstallCatalog refuses to write into a pack
+//     holding any other type), preferring the pack owning the most catalog
+//     types so the largest catalog install wins;
+//   - a project with no catalog types installed falls back to the default name.
+//
+// Nothing records the effective pack name (see #1149), so the compiled view is
+// the only project-scoped signal the browser has; a pack that happens to own
+// nothing but catalog-named types is the catalog pack as far as this heuristic
+// can tell.
+func catalogPackFor(compiled *CompiledSchemaTypes, catalogNames map[string]bool) string {
+	if compiled == nil || len(catalogNames) == 0 {
+		return catalogPackName
+	}
+	owned := make(map[string][]string)
+	for _, t := range compiled.ObjectTypes {
+		if t.Shadowed || t.Name == "" || t.SchemaName == "" {
+			continue
+		}
+		owned[t.SchemaName] = append(owned[t.SchemaName], t.Name)
+	}
+	if len(owned[catalogPackName]) > 0 {
+		return catalogPackName
+	}
+	best, bestCount := "", 0
+	for pack, names := range owned {
+		if !allCatalogTypes(names, catalogNames) {
+			continue
+		}
+		better := len(names) > bestCount || (len(names) == bestCount && pack < best)
+		if better {
+			best, bestCount = pack, len(names)
+		}
+	}
+	if best == "" {
+		return catalogPackName
+	}
+	return best
+}
+
+// allCatalogTypes reports whether every named type is a catalog type and there
+// is at least one. A pack with any non-catalog type is not a catalog pack.
+func allCatalogTypes(names []string, catalogNames map[string]bool) bool {
+	seen := make(map[string]bool, len(names))
+	for _, n := range names {
+		if seen[n] {
+			continue
+		}
+		seen[n] = true
+		if !catalogNames[n] {
+			return false
+		}
+	}
+	return len(seen) > 0
+}
+
 // catalogStates maps each compiled object type name to what provides it. The
 // compiled view orders declarations by assignment and flags the losing
 // same-name rows Shadowed, so only unshadowed rows are considered: the winner is
-// the definition the project actually resolves.
-func catalogStates(compiled *CompiledSchemaTypes) map[string]catalogInstallState {
+// the definition the project actually resolves. A row with no schema name has no
+// providing pack — it is skipped like the server skips it, so it stays unowned
+// rather than being recorded as installable-catalog state.
+func catalogStates(compiled *CompiledSchemaTypes, catalogNames map[string]bool) map[string]catalogInstallState {
 	states := map[string]catalogInstallState{}
 	if compiled == nil {
 		return states
 	}
+	packName := catalogPackFor(compiled, catalogNames)
 	for _, t := range compiled.ObjectTypes {
-		if t.Shadowed || t.Name == "" {
+		if t.Shadowed || t.Name == "" || t.SchemaName == "" {
 			continue
 		}
-		if t.SchemaName == catalogPackName {
+		if t.SchemaName == packName {
 			states[t.Name] = catalogInstallState{Installed: true, ProvidedBy: t.SchemaName, ProvidedVer: t.SchemaVersion}
 			continue
 		}
@@ -95,6 +191,12 @@ func (s *Server) uiSchemaCatalog(c echo.Context) error {
 	if err != nil {
 		return s.page(c, pageTitle("Catalog"), SchemaCatalogPage(nil, userFacingError(err)))
 	}
+	// The catalog pack is identified from the manifest's whole name set, which a
+	// filtered page does not carry, so ask for the unfiltered list when needed.
+	catalogNames := catalogTypeNames(list)
+	if q != "" || category != "" {
+		catalogNames = s.catalogTypeNameSet(ctx)
+	}
 	compiled, cerr := s.memory.GetCompiledTypes(ctx)
 	if cerr != nil {
 		compiled = nil
@@ -103,7 +205,7 @@ func (s *Server) uiSchemaCatalog(c echo.Context) error {
 		Catalog:  list,
 		Query:    q,
 		Category: category,
-		States:   catalogStates(compiled),
+		States:   catalogStates(compiled, catalogNames),
 		Groups:   groupCatalogTypes(list),
 	}
 	if c.QueryParam("installed") != "" {
@@ -126,9 +228,10 @@ func (s *Server) uiSchemaCatalogType(c echo.Context) error {
 	if cerr != nil {
 		compiled = nil
 	}
+	catalogNames := s.catalogTypeNameSet(ctx)
 	view := &SchemaCatalogTypeView{
 		Detail: detail,
-		State:  catalogStates(compiled)[detail.Type.Name],
+		State:  catalogStates(compiled, catalogNames)[detail.Type.Name],
 	}
 	if c.QueryParam("installed") != "" {
 		view.FlashMsg = "Type installed."
