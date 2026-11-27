@@ -1,0 +1,183 @@
+name: schemaorg
+objectTypeSchemas:
+- name: Product
+  label: Product
+  description: 'A physical or digital product that can be bought, sold, or reviewed.
+
+    '
+  category: commerce
+  parent: Thing
+  labels:
+  - product
+  - item
+  - merchandise
+  ui:
+    icon: tabler--package
+    color: '#EA580C'
+  properties:
+    name:
+      type: string
+      description: Product name.
+    sku:
+      type: string
+      description: Stock-keeping unit or internal product code.
+    gtin:
+      type: string
+      description: Global trade item number (barcode).
+    description:
+      type: string
+      description: Product description.
+    color:
+      type: string
+      description: Product color.
+    material:
+      type: string
+      description: Primary material.
+    weight:
+      type: number
+      description: Product weight in kilograms.
+      minimum: 0
+    brand_name:
+      type: string
+      title: Brand
+      description: Brand name.
+    manufacturer_name:
+      type: string
+      title: Manufacturer
+      description: Manufacturer name.
+  required:
+  - name
+- name: Offer
+  label: Offer
+  description: 'A price and availability offer for a product or service.
+
+    '
+  category: commerce
+  parent: Thing
+  labels:
+  - offer
+  - price
+  - deal
+  ui:
+    icon: tabler--tag
+    color: '#D97706'
+  properties:
+    price:
+      type: number
+      description: Offer price.
+      minimum: 0
+    price_currency:
+      type: currency
+      title: Currency
+      description: ISO 4217 currency code.
+    availability:
+      type: string
+      description: Stock availability.
+      enum:
+      - in_stock
+      - out_of_stock
+      - preorder
+      - discontinued
+    valid_from:
+      type: date
+      title: Valid from
+      description: Offer start date (YYYY-MM-DD).
+    valid_through:
+      type: date
+      title: Valid through
+      description: Offer end date (YYYY-MM-DD).
+    url:
+      type: url
+      description: Offer or checkout URL.
+  required:
+  - price
+- name: Brand
+  label: Brand
+  description: 'A brand or trademark under which products or services are sold.
+
+    '
+  category: commerce
+  parent: Thing
+  labels:
+  - brand
+  - label
+  - trademark
+  ui:
+    icon: tabler--trademark
+    color: '#B45309'
+  properties:
+    name:
+      type: string
+      description: Brand name.
+    logo_url:
+      type: url
+      title: Logo URL
+      description: URL of the brand logo.
+    url:
+      type: url
+      description: Brand website.
+  required:
+  - name
+- name: Review
+  label: Review
+  description: 'A review or critique of a product, work, or service, with an optional rating.
+
+    '
+  category: commerce
+  parent: CreativeWork
+  labels:
+  - review
+  - critique
+  - feedback
+  ui:
+    icon: tabler--message-star
+    color: '#EAB308'
+  properties:
+    review_body:
+      type: string
+      title: Review
+      description: Review text or summary.
+    review_rating:
+      type: integer
+      title: Rating
+      description: Numeric rating, typically 1-5.
+      minimum: 1
+      maximum: 10
+    date_published:
+      type: date
+      title: Published
+      description: Publication date (YYYY-MM-DD).
+    author_name:
+      type: string
+      title: Author
+      description: Reviewer name.
+    item_name:
+      type: string
+      title: Item reviewed
+      description: Name of the reviewed item.
+- name: AggregateRating
+  label: Aggregate Rating
+  description: 'A summary rating aggregated across many reviews.
+
+    '
+  category: commerce
+  parent: Thing
+  labels:
+  - aggregate_rating
+  - rating_summary
+  ui:
+    icon: tabler--star-half
+    color: '#CA8A04'
+  properties:
+    rating_value:
+      type: number
+      title: Rating value
+      description: Average rating.
+      minimum: 0
+    review_count:
+      type: integer
+      title: Reviews
+      description: Number of reviews aggregated.
+      minimum: 0
+  required:
+  - rating_value

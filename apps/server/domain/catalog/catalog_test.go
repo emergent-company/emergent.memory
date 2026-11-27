@@ -263,3 +263,56 @@ func hasSummary(list []Summary, name string) bool {
 	}
 	return false
 }
+
+func TestLoadAncestryExpandsEdges(t *testing.T) {
+	fsys := fstest.MapFS{
+		"data/x.yaml": &fstest.MapFile{Data: []byte(`
+name: x
+version: 1.0.0
+objectTypeSchemas:
+  - name: Parent
+  - name: Child
+    parent: Parent
+  - name: Sibling
+relationshipTypeSchemas:
+  - name: links
+    sourceType: Parent
+    targetType: Sibling
+`)},
+	}
+	cat, err := load(fsys, "data")
+	require.NoError(t, err)
+	require.True(t, hasPair(cat.Relationships, "links", "Parent", "Sibling"))
+	require.True(t, hasPair(cat.Relationships, "links", "Child", "Sibling"),
+		"a declared edge on the parent must apply to its subtype")
+}
+
+func TestLoadAncestryCycleSafe(t *testing.T) {
+	fsys := fstest.MapFS{
+		"data/x.yaml": &fstest.MapFile{Data: []byte(`
+name: x
+version: 1.0.0
+objectTypeSchemas:
+  - name: A
+    parent: B
+  - name: B
+    parent: A
+relationshipTypeSchemas:
+  - name: links
+    sourceType: A
+    targetType: A
+`)},
+	}
+	cat, err := load(fsys, "data")
+	require.NoError(t, err)
+	require.NotEmpty(t, cat.Relationships)
+}
+
+func TestLoadManifestAndSplitCount(t *testing.T) {
+	cat, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, "1.0.0", cat.Version)
+	require.Len(t, cat.Types, 28)
+	require.True(t, hasPair(cat.Relationships, "authored_by", "Movie", "Person"),
+		"ancestry expansion must apply authored_by (CreativeWork) to Movie")
+}

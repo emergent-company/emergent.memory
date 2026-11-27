@@ -1,0 +1,35 @@
+name: schemaorg
+objectTypeSchemas:
+- name: LocalBusiness
+  label: Local Business
+  description: 'A specific business at a physical location — shop, restaurant, clinic, studio.
+
+    '
+  category: organization
+  parent: Organization
+  labels:
+  - local_business
+  - business
+  - store
+  ui:
+    icon: tabler--building-store
+    color: '#059669'
+  properties:
+    name:
+      type: string
+      description: Business name.
+    price_range:
+      type: string
+      title: Price range
+      description: Relative price range, e.g. '$$'.
+    phone:
+      type: phone
+      description: Contact phone number.
+    address:
+      type: string
+      description: Street address.
+    url:
+      type: url
+      description: Business website.
+  required:
+  - name

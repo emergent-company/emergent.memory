@@ -1,0 +1,51 @@
+name: schemaorg
+objectTypeSchemas:
+- name: Recipe
+  label: Recipe
+  description: 'A recipe: ingredients, steps, and timings for preparing a dish.
+
+    '
+  category: food
+  parent: CreativeWork
+  labels:
+  - recipe
+  - dish
+  - cooking
+  ui:
+    icon: tabler--chef-hat
+    color: '#16A34A'
+  properties:
+    name:
+      type: string
+      description: Recipe name.
+    recipe_ingredient:
+      type: array
+      title: Ingredients
+      description: Ingredient lines.
+      items:
+        type: string
+    cook_time:
+      type: integer
+      title: Cook time (min)
+      description: Cooking time in whole minutes.
+      minimum: 0
+    prep_time:
+      type: integer
+      title: Prep time (min)
+      description: Preparation time in whole minutes.
+      minimum: 0
+    recipe_yield:
+      type: string
+      title: Yield
+      description: Number of servings or quantity produced.
+    recipe_category:
+      type: array
+      title: Categories
+      description: Recipe categories, e.g. dessert, main course.
+      items:
+        type: string
+    instructions:
+      type: string
+      description: Preparation instructions.
+  required:
+  - name
