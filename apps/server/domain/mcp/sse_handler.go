@@ -74,13 +74,19 @@ func NewSSEHandler(svc *Service, handler *Handler, log *slog.Logger) *SSEHandler
 
 // lookupSSESession returns the durable state and the live stream for a session
 // ID. Either may be nil (a session may have state but no open stream, or a
-// stream that has not initialized yet).
+// stream that has not initialized yet). The state is returned as a copy read
+// under the lock: the caller must judge the session's binding, and must not
+// observe fields changing underneath it.
 func (h *SSEHandler) lookupSSESession(sessionID string) (*sessionInitState, *SSESession) {
 	if sessionID == "" {
 		return nil, nil
 	}
 	h.sessionStateMu.RLock()
-	state := h.sessionState[sessionID]
+	var state *sessionInitState
+	if stored := h.sessionState[sessionID]; stored != nil {
+		snapshot := *stored
+		state = &snapshot
+	}
 	h.sessionStateMu.RUnlock()
 
 	h.sseSessionsMu.RLock()

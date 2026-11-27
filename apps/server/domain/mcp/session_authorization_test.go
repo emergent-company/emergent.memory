@@ -10,6 +10,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
@@ -116,13 +117,20 @@ func TestAuthorizeSession(t *testing.T) {
 		},
 		{
 			name:    "operator transport skips the project rule",
-			session: func() *MCPSession { s := base(); s.ProjectID = ""; return s }(),
-			user:    tokenUser(),
+			session: base(), // session bound to project-a
+			user:    &auth.AuthUser{ID: "user-1", APITokenID: "token-1", ProjectID: "project-b"},
 			admin:   true,
 		},
 		{
+			name:    "operator transport still checks the credential",
+			session: base(),
+			user:    &auth.AuthUser{ID: "user-1", APITokenID: "token-2", ProjectID: "project-a"},
+			admin:   true,
+			wantErr: true,
+		},
+		{
 			name:    "operator transport still checks identity",
-			session: func() *MCPSession { s := base(); s.ProjectID = ""; return s }(),
+			session: base(),
 			user:    &auth.AuthUser{ID: "user-2", APITokenID: "token-1"},
 			admin:   true,
 			wantErr: true,
@@ -226,4 +234,98 @@ func TestAuthorizeSSESession(t *testing.T) {
 		&auth.AuthUser{ID: "user-2", APITokenID: "token-2"}, state, stream))
 	require.Error(t, authorizeSSESession("project-a",
 		&auth.AuthUser{ID: "user-1", APITokenID: "token-2"}, state, nil))
+}
+
+// TestHandleSSEMessageRejectsForeignSession pins that the SSE message path
+// actually calls the authorization it documents: a session id minted by one
+// caller must be refused for another user or another credential, before the
+// request is parsed or its response is pushed onto the owner's stream.
+func TestHandleSSEMessageRejectsForeignSession(t *testing.T) {
+	const projectA = "11111111-1111-4111-8111-111111111111"
+	newHandler := func() *SSEHandler {
+		h := NewSSEHandler(nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		h.sseSessions["sse-1"] = &SSESession{
+			ID: "sse-1", ProjectID: projectA, UserID: "user-1", APITokenID: "token-1",
+			Done: make(chan struct{}),
+		}
+		h.sessionState["sse-1"] = &sessionInitState{
+			ProjectID: projectA, UserID: "user-1", APITokenID: "token-1", Initialized: true,
+		}
+		return h
+	}
+	post := func(h *SSEHandler, user *auth.AuthUser) error {
+		e := echo.New()
+		req := httptest.NewRequest(http.MethodPost, "/mcp/sse/"+projectA+"/message?sessionId=sse-1", nil)
+		c := e.NewContext(req, httptest.NewRecorder())
+		c.SetParamNames("projectId")
+		c.SetParamValues(projectA)
+		c.Set(string(auth.UserContextKey), user)
+		return h.HandleSSEMessage(c)
+	}
+
+	for _, tc := range []struct {
+		name string
+		user *auth.AuthUser
+	}{
+		{"another user", &auth.AuthUser{ID: "user-2", APITokenID: "token-2", ProjectID: projectA}},
+		{"another credential", &auth.AuthUser{ID: "user-1", APITokenID: "token-2", ProjectID: projectA}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := post(newHandler(), tc.user)
+			var appErr *apperror.Error
+			require.ErrorAs(t, err, &appErr)
+			require.Equal(t, http.StatusForbidden, appErr.HTTPStatus)
+		})
+	}
+}
+
+// TestPutSessionDoesNotResurrectDeletedSession covers the write-back rule: a
+// request that read a session before a concurrent DELETE must not insert it
+// back, and the notifications/initialized update must not either.
+func TestPutSessionDoesNotResurrectDeletedSession(t *testing.T) {
+	h := newSessionAuthzHandler()
+	user := &auth.AuthUser{ID: "user-1", APITokenID: "token-1", ProjectID: "project-a"}
+	h.putSession(&MCPSession{
+		ID: "s1", UserID: user.ID, APITokenID: user.APITokenID, ProjectID: user.ProjectID,
+	})
+	snapshot, err := h.getOrCreateSession("s1", user, LatestProtocolVersion)
+	require.NoError(t, err)
+
+	// A concurrent DELETE terminates the session after the snapshot was taken.
+	h.sessionsMu.Lock()
+	delete(h.sessions, "s1")
+	h.sessionsMu.Unlock()
+
+	h.putSession(snapshot)
+	require.Nil(t, h.getSession("s1"), "an in-flight write must not resurrect a terminated session")
+
+	h.markSessionInitialized("s1")
+	require.Nil(t, h.getSession("s1"), "initialized must not insert a terminated session")
+}
+
+// TestMarkSessionInitializedKeepsReboundProject pins the field-scoped update: a
+// stale notifications/initialized must not restore the project id that a
+// re-initialize changed.
+func TestMarkSessionInitializedKeepsReboundProject(t *testing.T) {
+	h := newSessionAuthzHandler()
+	user := &auth.AuthUser{ID: "user-1", APITokenID: "token-1", ProjectID: "project-a"}
+	h.putSession(&MCPSession{
+		ID: "s1", UserID: user.ID, APITokenID: user.APITokenID, ProjectID: "project-a",
+	})
+
+	stale, err := h.getOrCreateSession("s1", user, LatestProtocolVersion)
+	require.NoError(t, err)
+	require.Equal(t, "project-a", stale.ProjectID)
+
+	// A re-initialize by the same user and credential rebinds the session.
+	rebound := *stale
+	rebound.ProjectID = "project-b"
+	rebound.Initialized = true
+	h.putSession(&rebound)
+
+	h.markSessionInitialized(stale.ID) // carries the pre-rebind project id
+	stored := h.getSession("s1")
+	require.NotNil(t, stored)
+	require.Equal(t, "project-b", stored.ProjectID, "the stale notification must not revert the project")
+	require.True(t, stored.Initialized)
 }
