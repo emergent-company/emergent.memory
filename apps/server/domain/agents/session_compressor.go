@@ -99,6 +99,8 @@ const (
 //   - contextWindow — max_input_tokens for the model (0 = unknown; skips the
 //     anti-thrash guard because there is no budget to compare against).
 //   - modelName     — used to resolve the summariser (falls back to default).
+//   - trigger       — which path rebuilt the session (CompactionTriggerLoad or
+//     CompactionTriggerOverflow); recorded on the ancestry row.
 //
 // A nil session with a nil error means "no change": either there was nothing
 // worth summarising, the summariser failed, or the anti-thrash guard tripped.
@@ -111,6 +113,7 @@ func (ae *AgentExecutor) compressSession(
 	sessionID string,
 	contextWindow int,
 	modelName string,
+	trigger string,
 ) (session.Session, error) {
 	promptText, ok := buildCompressionPrompt(dropped)
 	if !ok {
@@ -273,6 +276,7 @@ func (ae *AgentExecutor) compressSession(
 			Summary:        summaryText,
 			SummaryTokens:  int(summaryTokens),
 			Model:          modelName,
+			Trigger:        trigger,
 		}
 		if len(dropped) > 0 && dropped[0] != nil {
 			row.FirstDroppedID = dropped[0].ID

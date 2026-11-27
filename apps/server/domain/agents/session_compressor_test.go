@@ -236,7 +236,7 @@ func TestBuildCompressionPromptEmptyDropped(t *testing.T) {
 // factory (which is nil here — a panic would fail the test).
 func TestCompressSessionNoDropped(t *testing.T) {
 	ae := &AgentExecutor{}
-	got, err := ae.compressSession(context.Background(), nil, nil, "sess", 0, "")
+	got, err := ae.compressSession(context.Background(), nil, nil, "sess", 0, "", CompactionTriggerLoad)
 	require.NoError(t, err)
 	require.Nil(t, got)
 }
@@ -269,7 +269,7 @@ func TestCompressSessionRebuildsRetainedTailVerbatim(t *testing.T) {
 
 	dropped := events[:3]
 	retained := events[3:]
-	got, err := ae.compressSession(ctx, dropped, retained, "sess-compress", 0, "")
+	got, err := ae.compressSession(ctx, dropped, retained, "sess-compress", 0, "", CompactionTriggerLoad)
 	require.NoError(t, err)
 	require.NotNil(t, got)
 
@@ -330,7 +330,7 @@ func TestCompressSessionEmptySummaryLeavesSessionIntact(t *testing.T) {
 		require.NoError(t, svc.AppendEvent(ctx, sess, ev))
 	}
 
-	got, err := ae.compressSession(ctx, events[:1], events[1:], "sess-empty", 0, "")
+	got, err := ae.compressSession(ctx, events[:1], events[1:], "sess-empty", 0, "", CompactionTriggerLoad)
 	require.NoError(t, err)
 	require.Nil(t, got, "an unusable summary must report no change")
 
@@ -398,6 +398,8 @@ func TestRecordSessionCompaction_AssignsSeqPerSession(t *testing.T) {
 	require.Equal(t, 1, first.Seq)
 	require.NotEmpty(t, first.ID)
 	require.False(t, first.CreatedAt.IsZero())
+	require.Equal(t, CompactionTriggerLoad, first.Trigger,
+		"an unset trigger defaults to the load path")
 
 	second := &SessionCompaction{SessionID: "sess-ancestry-a", DroppedEvents: 5, RetainedEvents: 8, Summary: "second"}
 	require.NoError(t, repo.RecordSessionCompaction(ctx, second))
@@ -418,6 +420,7 @@ func TestRecordSessionCompaction_AssignsSeqPerSession(t *testing.T) {
 	require.Equal(t, "first summary", stored.Summary)
 	require.Equal(t, 42, stored.SummaryTokens)
 	require.Equal(t, "test/model", stored.Model)
+	require.Equal(t, CompactionTriggerLoad, stored.Trigger)
 
 	// Nil-safe early returns.
 	require.NoError(t, repo.RecordSessionCompaction(ctx, nil))
