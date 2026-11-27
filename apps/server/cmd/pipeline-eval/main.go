@@ -156,21 +156,6 @@ func scoreTypes(golden, discovered []string) typeScore {
 
 // ─── HTTP helpers ───────────────────────────────────────────────────────────
 
-func apiRequest(method, url, apiKey, projectID string, body io.Reader, contentType string) (*http.Response, error) {
-	req, err := http.NewRequest(method, url, body)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	if projectID != "" {
-		req.Header.Set("X-Project-ID", projectID)
-	}
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
-	}
-	return http.DefaultClient.Do(req)
-}
-
 func decodeData(resp *http.Response, into any) error {
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
