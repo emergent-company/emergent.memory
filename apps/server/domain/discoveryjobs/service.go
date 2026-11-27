@@ -1229,6 +1229,9 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 			// confident about is not grounded enough to auto-apply, so it is left
 			// out of the refined output rather than installed as fact.
 			relationships = filterRelationshipsByConfidence(relationships, config.MinConfidence)
+			// Snap invented edge names onto the catalog relationship vocabulary
+			// when the classifier is confident they are the same edge.
+			relationships = s.alignRelationshipTypes(ctx, relationships)
 		}
 	}
 
@@ -2327,6 +2330,45 @@ func (s *Service) discoverRelationships(ctx context.Context, jobID uuid.UUID, ty
 
 	s.log.Info("discovered relationships", slog.Int("count", len(relationships)))
 	return relationships, nil
+}
+
+// alignRelationshipTypes renames discovered relationship types onto the catalog's
+// relationship vocabulary when the same-concept classifier is confident they are
+// the same edge (e.g. "employed by" → "works_for", "resides at" →
+// "home_location"). The prompt already asks the model to reuse canonical names;
+// this is the safety net for the edges it still invents. No-op without an
+// injected classifier or relationship vocabulary.
+func (s *Service) alignRelationshipTypes(ctx context.Context, rels []DiscoveredRelationship) []DiscoveredRelationship {
+	if s.typeSimilarity == nil || len(rels) == 0 || len(s.relationshipTaxonomy) == 0 {
+		return rels
+	}
+	existing := make([]ExistingType, 0, len(s.relationshipTaxonomy))
+	for _, r := range s.relationshipTaxonomy {
+		existing = append(existing, ExistingType{Name: r.Name, Description: r.Description})
+	}
+	seen := make(map[string]bool, len(rels))
+	discovered := make([]DiscoveredType, 0, len(rels))
+	for _, r := range rels {
+		if r.RelationType == "" || seen[r.RelationType] {
+			continue
+		}
+		seen[r.RelationType] = true
+		discovered = append(discovered, DiscoveredType{TypeName: r.RelationType, Description: r.Description})
+	}
+	if len(discovered) == 0 {
+		return rels
+	}
+	matches, err := s.typeSimilarity.Resolve(ctx, discovered, existing)
+	if err != nil {
+		s.log.Warn("relationship type alignment failed; keeping discovered names", logger.Error(err))
+		return rels
+	}
+	for i := range rels {
+		if m, ok := matches[rels[i].RelationType]; ok && m != "" && m != rels[i].RelationType {
+			rels[i].RelationType = m
+		}
+	}
+	return rels
 }
 
 // buildRelationshipDiscoveryPrompt asks the model to relate the discovered
