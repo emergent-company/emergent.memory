@@ -226,7 +226,14 @@ judge_line() {
 # Shell scripts and YAML are the only places that run a fetch (workflows,
 # composite actions, task files). The `-l` pass keeps the sweep off every file
 # that never mentions a fetch, generated YAML included.
-mapfile -t files < <(git grep -l -F -- "git fetch" -- '*.sh' '*.bash' '*.yml' '*.yaml' || true)
+#
+# One file is exempt: this gate's own suite. Its heredocs are throwaway fixture
+# repositories -- bad fetches written on purpose, never executed here -- so
+# scanning it would report the fixtures as if they were this repo's commands.
+# Every other tracked script is scanned, the sibling *.test.sh suites included.
+mapfile -t files < <(git grep -l -F -- "git fetch" -- \
+  '*.sh' '*.bash' '*.yml' '*.yaml' \
+  ':(exclude)scripts/preflight/fetch-hygiene.test.sh' || true)
 for file in "${files[@]}"; do
   lineno=0
   start=0

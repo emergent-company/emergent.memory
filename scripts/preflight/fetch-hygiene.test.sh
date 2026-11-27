@@ -237,6 +237,24 @@ expect_status 0 "an unknown-arity expansion is skipped, not flagged"
 expect_contains "the line is not listed" "no bare-name fetch sites"
 
 # ---------------------------------------------------------------------------
+# 7b. The exemption is exactly one file: the guard's own suite (whose heredocs
+#     are fixture repositories, not commands). A sibling *.test.sh that runs a
+#     bare fetch for real is still reported, so the exemption cannot be read as
+#     "skip tests".
+# ---------------------------------------------------------------------------
+new_repo sibling-tests
+put scripts/helper.test.sh <<'EOF'
+git fetch origin dev
+EOF
+put scripts/preflight/fetch-hygiene.test.sh <<'EOF'
+git fetch origin dev
+EOF
+commit_all
+run_guard
+expect_status 1 "a bare fetch in a sibling test suite still fails"
+expect_contains "the sibling suite is named" "scripts/helper.test.sh:1:"
+
+# ---------------------------------------------------------------------------
 # 8. Bad usage is a usage error, not a silent pass.
 # ---------------------------------------------------------------------------
 new_repo usage
