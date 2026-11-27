@@ -80,8 +80,7 @@ func IsContextOverflow(err error) bool {
 	if err == nil {
 		return false
 	}
-	var overflow *ContextOverflowError
-	if errors.As(err, &overflow) {
+	if _, ok := errors.AsType[*ContextOverflowError](err); ok {
 		return true
 	}
 	msg := strings.ToLower(err.Error())
@@ -101,8 +100,7 @@ func WrapContextOverflow(modelName string, err error) error {
 	if err == nil || !IsContextOverflow(err) {
 		return err
 	}
-	var already *ContextOverflowError
-	if errors.As(err, &already) {
+	if _, ok := errors.AsType[*ContextOverflowError](err); ok {
 		return err
 	}
 	return &ContextOverflowError{Model: modelName, Err: err}
