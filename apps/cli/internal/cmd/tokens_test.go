@@ -32,7 +32,7 @@ func TestNormalizeTokenScopes(t *testing.T) {
 				"graph:read", "graph:search:read", "journal:read",
 				"schema:read", "agents:read", "projects:read",
 				"extraction:read", "tasks:read", "user-activity:read",
-				"notifications:read",
+				"notifications:read", "discovery:read",
 			},
 		},
 		{
@@ -43,7 +43,7 @@ func TestNormalizeTokenScopes(t *testing.T) {
 				"graph:read", "graph:search:read", "journal:read",
 				"schema:read", "agents:read", "projects:read",
 				"extraction:read", "tasks:read", "user-activity:read",
-				"notifications:read", "branches:read",
+				"notifications:read", "discovery:read", "branches:read",
 			},
 		},
 		{
@@ -54,11 +54,11 @@ func TestNormalizeTokenScopes(t *testing.T) {
 				"graph:read", "graph:search:read", "journal:read",
 				"schema:read", "agents:read", "projects:read",
 				"extraction:read", "tasks:read", "user-activity:read",
-				"notifications:read",
+				"notifications:read", "discovery:read",
 				"documents:write", "documents:delete", "chunks:write",
 				"ingest:write", "graph:write", "extraction:write",
 				"tasks:write", "user-activity:write", "notifications:write",
-				"schema:write", "agents:write", "projects:write",
+				"schema:write", "agents:write", "projects:write", "discovery:write",
 			},
 		},
 		{
@@ -175,6 +175,7 @@ func TestTokenScopeGroups(t *testing.T) {
 		"documents:read", "documents:write", "project:admin", "admin", "admin:all",
 		"documents:delete", "ingest:write", "chunks:read", "chunks:write",
 		"search:read", "graph:search:read", "extraction:read", "extraction:write",
+		"discovery:read", "discovery:write",
 		"tasks:read", "tasks:write", "user-activity:read", "user-activity:write",
 		"notifications:read", "notifications:write",
 	} {
@@ -184,5 +185,5 @@ func TestTokenScopeGroups(t *testing.T) {
 	for _, retired := range []string{"data:read", "data:write"} {
 		assert.False(t, names[retired], "retired scope %q must not appear in tokenScopeGroups", retired)
 	}
-	assert.Equal(t, 36, count)
+	assert.Equal(t, 38, count)
 }

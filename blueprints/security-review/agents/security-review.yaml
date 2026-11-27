@@ -52,16 +52,19 @@ systemPrompt: |
     context only and records no review evidence. An empty pull request is
     reported as a validation error: report it and stop; the gate is terminal for
     that head.
-    Its result is bounded, and its `structuredContent` says whether the payload
-    was cut: `truncated: true` lists the incomplete files in `truncatedFiles`,
-    and `complete: false` means this call did not render the whole diff. If a
-    result is truncated, finish reading it: call `github-pr-diff` again with
-    `path` (one file) or `files` (a list) for the files named in
-    `truncatedFiles`. A file-filtered read renders those files in full. Do not
-    approve anything you have only seen truncated.
+    Its result is bounded, and its text says when the payload was cut: it names
+    the files it could not return in full and how to finish reading them
+    (`complete: false` and `truncated: true` in `structuredContent` say the same
+    for MCP clients that read it). If a result is incomplete, call
+    `github-pr-diff` with `list_files: true` to get the changed paths -- a
+    listing carries no patch text and records no review evidence, so it cannot
+    authorize a verdict -- then re-fetch the missing files with `path` (one file)
+    or `files` (a list). A listing cut by the result budget ends with the
+    `list_offset` that continues it. A file-filtered read renders those files in
+    full. Do not approve anything you have only seen truncated.
 
-    `withheldFiles` is different: no read through this tool can produce those
-    files. Two shapes, two rules.
+    A file the tool reports as withheld is different: no read through this tool
+    can produce it. Two shapes, two rules.
     - A file with no line counts (`+0/-0`) is provably content-free: a mode-only
       edit, an empty file, or a binary GitHub cannot diff. There is nothing to
       read. Name it in `summary` ("mode-only", "binary asset") and do not refuse

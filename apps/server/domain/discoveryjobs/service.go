@@ -1370,6 +1370,11 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 	// record why it was declined. Best-effort; never fails the completed job.
 	s.maybeAutoApply(ctx, projectID, jobID, schemaID, refinedTypes, registeredTypes)
 
+	// Auto-ingest (pipeline_mode=auto): extract any never-extracted documents so
+	// a new document whose types all already exist still reaches the graph even
+	// though auto-apply declines (no schema change → no backfill).
+	s.maybeAutoIngest(ctx, projectID)
+
 	s.log.Info("discovery job completed",
 		slog.String("job_id", jobID.String()),
 		slog.String("pack_id", schemaID.String()),
@@ -1639,8 +1644,10 @@ Based on the documents provided, discover up to %d important entity types that s
 
 Rules for type discovery:
 - Only create entity types for THINGS (nouns that have identity), not for actions, events, or relationships between things. For example, "ReportingRelationship" or "FoundingEvent" are NOT entity types — they are relationships and should be captured in the relationship discovery phase instead.
-- If a value appears as a distinct classifiable concept with multiple instances (e.g., a category like "Electronics", "Accessories", "Hardware"), treat it as a separate entity type — do NOT flatten it into a string property of another type.
+- An attribute or descriptor OF another entity is a PROPERTY on that entity, not its own type — even when it has many values. A person's occupation/job title, gender, age, nationality and status are properties of the Person, NOT separate "Occupation"/"Gender"/"Age" entity types. Put them in the owning type's inferred_schema properties instead.
+- Only create a separate type for a concept that has its own identity and properties (e.g. a Department, or a Product category that itself carries attributes). When in doubt, prefer a property on the owning entity.
 - Prefer fewer, cleaner types over many overlapping types. Merge similar types (e.g., "Employee" and "Person" → just "Person").
+- Do NOT create vague umbrella types such as "Object", "Item", "Group", "Entity", "Element", or "Misc" — they lump unrelated entities under one label and add no information. The catalog's "Thing" is the only acceptable generic; otherwise pick the most specific type the documents support.
 - %s
 
 For each type, provide:
