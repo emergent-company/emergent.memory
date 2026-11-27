@@ -254,16 +254,12 @@ type externalToolFixture struct {
 }
 
 // externalPoolCache builds a projectToolCache that mirrors a real pool layout:
-// builtin tools keyed by bare name; external MCP tools keyed by the same
-// externalToolKey(serverName, toolName) formula buildCache uses, with
-// bareNameToKeys aliasing the raw bare tool name to the pooled key.
+// builtin tools keyed by bare name; external MCP tools registered through the
+// same registerExternalTool path buildCache uses (which aliases a colliding
+// key instead of replacing the existing definition), with bareNameToKeys
+// aliasing the raw bare tool name to the pooled key.
 func externalPoolCache(builtinNames []string, extTools []externalToolFixture) *projectToolCache {
-	cache := &projectToolCache{
-		toolDefs:          make(map[string]mcp.ToolDefinition),
-		builtinTools:      make(map[string]bool),
-		relayToolInstance: make(map[string]string),
-		bareNameToKeys:    make(map[string][]string),
-	}
+	cache := newProjectToolCache()
 	for _, name := range builtinNames {
 		cache.toolDefs[name] = mcp.ToolDefinition{Name: name, InputSchema: mcp.InputSchema{Type: "object"}}
 		cache.toolNames = append(cache.toolNames, name)
@@ -271,9 +267,8 @@ func externalPoolCache(builtinNames []string, extTools []externalToolFixture) *p
 	}
 	for _, ext := range extTools {
 		key := externalToolKey(ext.serverName, ext.toolName)
-		cache.toolDefs[key] = mcp.ToolDefinition{Name: key, InputSchema: mcp.InputSchema{Type: "object"}}
-		cache.toolNames = append(cache.toolNames, key)
-		cache.bareNameToKeys[ext.toolName] = append(cache.bareNameToKeys[ext.toolName], key)
+		pooledName := cache.registerExternalTool(key, mcp.ToolDefinition{Name: key, InputSchema: mcp.InputSchema{Type: "object"}})
+		cache.bareNameToKeys[ext.toolName] = append(cache.bareNameToKeys[ext.toolName], pooledName)
 	}
 	return cache
 }
@@ -715,6 +710,11 @@ func TestToolPoolExternalToolNamesExcludesBuiltins(t *testing.T) {
 		toolNames: []string{"entity-get", "acme_search", "relay1_read"},
 		builtinTools: map[string]bool{
 			"entity-get": true,
+		},
+		// Provenance is recorded at registration, not inferred from the name.
+		externalTools: map[string]bool{
+			"acme_search": true,
+			"relay1_read": true,
 		},
 	}
 
