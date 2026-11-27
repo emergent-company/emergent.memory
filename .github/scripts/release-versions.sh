@@ -76,6 +76,11 @@
 #            manifest), so the tag legitimately points at a new digest while a
 #            container receives the identical image. A tag moved to another
 #            payload still fails, and so does a comparison that cannot be made.
+#            An image that stamps a wall-clock value into its own output changes
+#            its payload on every retry — the server bakes BUILD_TIME from the
+#            job start into the binary — so it stays fail-closed; the record is
+#            regenerated after the publisher settles instead, which the failure
+#            message names.
 #       A missing previous release/map degrades to the tree comparison and never
 #       fails the release; a disagreement never degrades.
 #

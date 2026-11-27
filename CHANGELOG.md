@@ -61,7 +61,10 @@ necessarily re-stamps: a re-published identical build passes with a warning that
 names the retry and the `gh workflow run release-versions.yml --field tag=<release>`
 repair, while a different payload, runtime field (`HEALTHCHECK`, `OnBuild`, …),
 `Env` order or architecture set — or a digest the registry no longer serves —
-still fails closed (#1203).
+still fails closed (#1203). An image that stamps a wall-clock value into its own
+output (the server bakes `BUILD_TIME` from the job start into the binary)
+changes its payload on every retry, so it stays fail-closed and the record is
+regenerated after the publisher settles.
 
 **The queued-run sweep now covers fan-out and session runs** (2026-11-16)
 
