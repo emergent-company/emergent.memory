@@ -4294,10 +4294,11 @@ func (ae *AgentExecutor) runPipeline(
 			//
 			// Pass 2a: sliding-window trim — discard the oldest events so
 			//   the session fits within 75 % of the model's context window.
-			// Pass 2b: LLM compression — if the session is still over the
-			//   threshold (or the context window is unknown and event count
-			//   is large), summarise the oldest half of events via an LLM
-			//   and replace them with a compact placeholder.
+			// Pass 2b: LLM compression — summarise exactly the events Pass 2a
+			//   dropped (not the survivors) and rebuild the session with the
+			//   summary plus the retained tail. Only runs when a significant
+			//   portion of history was dropped, i.e. we are genuinely near the
+			//   limit rather than trimming precautionarily.
 			var contextWindow int
 			trimmed := false
 			if ae.modelLimits != nil && modelName != "" {
@@ -4366,16 +4367,20 @@ func (ae *AgentExecutor) runPipeline(
 						)
 					}
 
-					// Pass 2b: LLM compression — summarise the dropped head.
-					// Only runs when the trim was successful and a significant
+					// Pass 2b: LLM compression — summarise the events Pass 2a
+					// dropped (the oldest n-numKeep), not the survivors. Only
+					// runs when the trim was successful and a significant
 					// portion of history was dropped (i.e. we're genuinely
 					// near the limit, not just a precautionary trim).
 					if trimmed && numKeep < n/2 {
-						compressed, compErr := ae.compressSession(ctx, sess, sessionID, contextWindow, modelName)
+						dropped := eventSlice(events, 0, n-numKeep)
+						retainedEvents := sess.Events()
+						retained := eventSlice(retainedEvents, 0, retainedEvents.Len())
+						compressed, compErr := ae.compressSession(ctx, dropped, retained, sessionID, contextWindow, modelName)
 						if compErr != nil {
 							ae.log.Warn("session compression failed, proceeding with trimmed session",
 								slog.String("session_id", sessionID), logger.Error(compErr))
-						} else {
+						} else if compressed != nil {
 							sess = compressed
 						}
 					}
@@ -4383,14 +4388,20 @@ func (ae *AgentExecutor) runPipeline(
 			} else {
 				// Context window unknown — fall back to event-count guard.
 				// Compress if session is very long (>200 events) to prevent
-				// unbounded growth even without token data.
+				// unbounded growth even without token data. The oldest half is
+				// dropped and summarised; the newest half is kept verbatim.
 				const largeSessionThreshold = 200
-				if sess.Events().Len() > largeSessionThreshold {
-					compressed, compErr := ae.compressSession(ctx, sess, sessionID, 0, modelName)
+				events := sess.Events()
+				n := events.Len()
+				if n > largeSessionThreshold {
+					mid := n / 2
+					dropped := eventSlice(events, 0, mid)
+					retained := eventSlice(events, mid, n)
+					compressed, compErr := ae.compressSession(ctx, dropped, retained, sessionID, 0, modelName)
 					if compErr != nil {
 						ae.log.Warn("session compression (no context window) failed, proceeding",
 							slog.String("session_id", sessionID), logger.Error(compErr))
-					} else {
+					} else if compressed != nil {
 						sess = compressed
 						trimmed = true
 					}
