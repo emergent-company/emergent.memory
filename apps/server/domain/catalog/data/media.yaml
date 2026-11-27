@@ -51,6 +51,7 @@ objectTypeSchemas:
   - tv_series
   - television_series
   - tv_show
+  - show
   ui:
     icon: tabler--device-tv
     color: '#EC4899'
@@ -206,7 +207,6 @@ objectTypeSchemas:
   parent: CreativeWork
   labels:
   - podcast
-  - show
   ui:
     icon: tabler--microphone
     color: '#8B5CF6'
