@@ -1884,12 +1884,19 @@ types reconciles and activates deferred relationships.
 
 Type names may be passed positionally or with repeated --type flags.
 
+A project keeps one type per name, so a catalog type whose name another pack
+already provides is refused: installing it would merge the catalog's properties
+into that pack's type instead of creating a second one. The error names the
+conflicting types and their packs; pass those names with --extend to accept the
+merge deliberately (only the named types merge, nothing else).
+
 Examples:
 
   memory blueprints catalog-install Movie Person
   memory blueprints catalog-install --type Movie --type Person
   memory blueprints catalog-install Product Offer Brand
   memory blueprints catalog-install Movie --name my-catalog --project my-project
+  memory blueprints catalog-install Organization --extend Organization
   memory blueprints catalog-install Movie --replace   # remove other catalog types
 
 ```
@@ -1899,11 +1906,12 @@ memory blueprints catalog-install [type ...] [flags]
 ### Options
 
 ```
-  -h, --help               help for catalog-install
-      --name string        Project schema pack name (default schemaorg-catalog)
-      --replace            Make the named types authoritative; remove catalog types not listed (deactivates their relationships)
-      --type stringArray   Catalog type to install (repeatable, e.g. --type Movie)
-      --version string     Project schema pack version (default 1.0.0)
+      --extend stringArray   Requested type to merge into a same-named type another pack already provides (repeatable; the install is refused without it, and only the named types merge)
+  -h, --help                 help for catalog-install
+      --name string          Project schema pack name (default schemaorg-catalog)
+      --replace              Make the named types authoritative; remove catalog types not listed (deactivates their relationships)
+      --type stringArray     Catalog type to install (repeatable, e.g. --type Movie)
+      --version string       Project schema pack version (default 1.0.0)
 ```
 
 ## memory blueprints catalog-resolve
