@@ -682,3 +682,132 @@ func TestCommitModeCapsTheAttackerControlledMessage(t *testing.T) {
 	// Commit mode is context only: it never records review evidence.
 	require.False(t, mcp.RunHasEvidence(ctx, diffEvidenceKey("owner/repo", 7, head)))
 }
+
+// TestTruncatedDiffTrailerNamesTheListingMove pins the reader's way out of a cut
+// payload. The agent harness forwards a tool result's text content only, so the
+// structured truncatedFiles list never reaches the reviewer model; a live review
+// looped on invented path arguments because the text said only "diff truncated".
+// The trailer must therefore say, in the text, which files are missing and how to
+// enumerate them.
+func TestTruncatedDiffTrailerNamesTheListingMove(t *testing.T) {
+	head := truncationHead
+	api := newDiffReviewAPI(t, head, []map[string]any{
+		{"filename": "small.go", "status": "modified", "additions": 1, "deletions": 1, "patch": "@@ -1 +1 @@\n-old\n+new"},
+		{"filename": "big_test.go", "status": "modified", "additions": 300, "deletions": 0, "patch": bigPatch() + bigPatchTail},
+	})
+	client := api.client()
+	h := &ReviewToolHandler{}
+	ctx := mcp.ContextWithNewToolResultCache(context.Background())
+
+	res, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, nil))
+	require.NoError(t, err)
+	text := res.Content[0].Text
+	require.Contains(t, text, "the payload above is incomplete")
+	require.Contains(t, text, "big_test.go", "the trailer must name the file that was cut")
+	require.Contains(t, text, "list_files=true", "the trailer must name the listing move")
+	require.Contains(t, text, `path="<file>"`, "the trailer must name the finishing move")
+	require.NotContains(t, text, bigPatchTail)
+	require.LessOrEqual(t, len(text), maxDiffBytes, "the reserved trailer must not push the payload over the diff cap")
+}
+
+// TestFileListEnumeratesEveryChangedFileWithoutEvidence pins the listing mode: it
+// names every changed path of the reviewed head (across GitHub's page size),
+// carries no patch text, and records nothing a verdict can stand on.
+func TestFileListEnumeratesEveryChangedFileWithoutEvidence(t *testing.T) {
+	head := truncationHead
+	const count = 150 // more than one page (100), so the listing must span pages
+	files := make([]map[string]any, 0, count)
+	for i := 0; i < count; i++ {
+		files = append(files, map[string]any{
+			"filename":  fmt.Sprintf("pkg/file_%03d.go", i),
+			"status":    "modified",
+			"additions": 2,
+			"deletions": 1,
+			"patch":     "@@ -1 +1 @@\n-old\n+new",
+		})
+	}
+	api := newDiffReviewAPI(t, head, files)
+	client := api.client()
+	h := &ReviewToolHandler{}
+	ctx := mcp.ContextWithNewToolResultCache(context.Background())
+
+	res, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, map[string]any{"list_files": true}))
+	require.NoError(t, err)
+	text := res.Content[0].Text
+	for i := 0; i < count; i++ {
+		require.Contains(t, text, fmt.Sprintf("pkg/file_%03d.go", i))
+	}
+	require.Contains(t, text, "changed files of "+head)
+	require.NotContains(t, text, "@@ -1 +1 @@", "a listing carries no patch text")
+	require.Equal(t, true, res.StructuredContent["listing"])
+	require.Equal(t, count, res.StructuredContent["files"])
+
+	// Metadata only: no per-file evidence, no whole-diff evidence, so a verdict
+	// still cannot be submitted from a listing alone.
+	require.False(t, mcp.RunHasEvidence(ctx, diffFileEvidenceKey("owner/repo", 7, head, "pkg/file_000.go")))
+	require.False(t, mcp.RunHasEvidence(ctx, diffEvidenceKey("owner/repo", 7, head)))
+	_, err = h.executeReviewSubmit(ctx, client, "project-1", "owner/repo", reviewSubmitArgs(head, "MERGE", "looks good"))
+	require.Error(t, err)
+}
+
+// TestFileListStaysWithinTheResultBound pins that the listing is bounded like
+// every other payload, and says so instead of being silently cut.
+func TestFileListStaysWithinTheResultBound(t *testing.T) {
+	head := truncationHead
+	files := make([]map[string]any, 0, 400)
+	for i := 0; i < 400; i++ {
+		files = append(files, map[string]any{
+			"filename": fmt.Sprintf("pkg/a_rather_long_directory_name_used_to_spend_the_budget/file_%03d.go", i),
+			"status":   "modified", "additions": 1, "deletions": 0,
+			"patch": "@@ -1 +1 @@\n-old\n+new",
+		})
+	}
+	api := newDiffReviewAPI(t, head, files)
+	client := api.client()
+	h := &ReviewToolHandler{maxResultBytes: 4096}
+	ctx := mcp.ContextWithNewToolResultCache(context.Background())
+
+	res, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, map[string]any{"list_files": true}))
+	require.NoError(t, err)
+	require.Contains(t, res.Content[0].Text, "listing truncated")
+	raw, err := json.Marshal(res)
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(raw), 4096)
+}
+
+// TestFileListCannotBeCombinedWithASelection refuses an ambiguous call instead of
+// silently ignoring one of its arguments.
+func TestFileListCannotBeCombinedWithASelection(t *testing.T) {
+	head := truncationHead
+	api := newDiffReviewAPI(t, head, []map[string]any{
+		{"filename": "small.go", "status": "modified", "additions": 1, "deletions": 1, "patch": "@@ -1 +1 @@\n-a\n+b"},
+	})
+	client := api.client()
+	h := &ReviewToolHandler{}
+	ctx := mcp.ContextWithNewToolResultCache(context.Background())
+
+	_, err := h.executePRDiff(ctx, client, "project-1", "owner/repo",
+		prDiffArgs(head, map[string]any{"list_files": true, "path": "small.go"}))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "list_files cannot be combined")
+}
+
+// TestCommitModeListsFiles covers the context read (no pull request number): the
+// listing works there too, and still records no evidence.
+func TestCommitModeListsFiles(t *testing.T) {
+	head := truncationHead
+	api := newDiffReviewAPI(t, head, []map[string]any{
+		{"filename": "small.go", "status": "modified", "additions": 1, "deletions": 1, "patch": "@@ -1 +1 @@\n-a\n+b"},
+		{"filename": "other.go", "status": "added", "additions": 3, "deletions": 0, "patch": "@@ -0,0 +1,3 @@\n+a\n+b\n+c"},
+	})
+	client := api.client()
+	h := &ReviewToolHandler{}
+	ctx := mcp.ContextWithNewToolResultCache(context.Background())
+
+	res, err := h.executePRDiff(ctx, client, "project-1", "owner/repo",
+		map[string]any{"repo": "owner/repo", "head_sha": head, "list_files": true})
+	require.NoError(t, err)
+	require.Contains(t, res.Content[0].Text, "small.go")
+	require.Contains(t, res.Content[0].Text, "other.go")
+	require.False(t, mcp.RunHasEvidence(ctx, diffEvidenceKey("owner/repo", 7, head)))
+}

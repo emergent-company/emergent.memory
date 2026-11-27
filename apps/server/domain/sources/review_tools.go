@@ -31,10 +31,21 @@ const (
 	toolPRDiff       = "github-pr-diff"
 	toolReviewSubmit = "github-review-submit"
 
-	// maxPatchBytes bounds each file patch and the whole diff result so a large
-	// commit cannot blow up the agent context.
+	// maxPatchBytes bounds each file patch; maxDiffBytes bounds the whole diff
+	// result so a large commit cannot blow up the agent context.
 	maxPatchBytes = 6000
 	maxDiffBytes  = 200000
+
+	// maxResultEnvelopeBytes is the slack kept free for the JSON envelope (sha,
+	// file count, truncation flags) around the rendered text, so measuring the
+	// text alone cannot overshoot the executor's per-result bound.
+	maxResultEnvelopeBytes = 512
+
+	// diffTruncationHintReserve is the byte budget held back for the in-band
+	// truncation trailer (see diffTruncationHint). It is deducted before a diff is
+	// rendered so appending the trailer cannot push the payload past
+	// maxDiffBytes; it bounds the names echoed from a PR-controlled filename.
+	diffTruncationHintReserve = 1600
 
 	// maxDiffMessageBytes bounds the commit message that commit mode carries in
 	// its result header. The message is attacker-controlled on a fork pull
@@ -447,6 +458,14 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 	if err != nil {
 		return nil, err
 	}
+	// list_files is the reader's way out of a truncated payload: truncation
+	// reaches the model only as text (the agent harness drops structuredContent),
+	// so a cut read must be able to enumerate the changed files it never saw. A
+	// listing is metadata, not content, so it is never evidence.
+	listFiles := boolArg(args, "list_files")
+	if listFiles && selection != nil {
+		return nil, apperror.NewValidation("github app tool: list_files cannot be combined with path or files; list the files first, then fetch one or more of them")
+	}
 	number, ok := intArg(args, "number")
 	if !ok || number <= 0 {
 		if subject, hasSubject := mcp.RunSubjectFromContext(ctx); hasSubject &&
@@ -455,9 +474,9 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 		}
 	}
 	if ok && number > 0 {
-		return h.executePullRequestDiff(ctx, client, projectID, repo, number, headSHA, selection)
+		return h.executePullRequestDiff(ctx, client, projectID, repo, number, headSHA, selection, listFiles)
 	}
-	return h.executeCommitDiff(ctx, client, repo, headSHA, selection)
+	return h.executeCommitDiff(ctx, client, repo, headSHA, selection, listFiles)
 }
 
 // executePullRequestDiff reads GET /pulls/{number}/files, the diff of the
@@ -471,7 +490,7 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 // evidence, so it cannot authorize github-review-submit (#1006); the agent
 // finishes a large change with the path/files selection, which records per-file
 // evidence, and submit accepts the union once every changed file is read in full.
-func (h *ReviewToolHandler) executePullRequestDiff(ctx context.Context, client *githubapp.Client, projectID, repo string, number int, headSHA string, selection map[string]struct{}) (*mcp.ToolResult, error) {
+func (h *ReviewToolHandler) executePullRequestDiff(ctx context.Context, client *githubapp.Client, projectID, repo string, number int, headSHA string, selection map[string]struct{}, listFiles bool) (*mcp.ToolResult, error) {
 	state, err := client.GetPullRequest(ctx, repo, number)
 	if err != nil {
 		return nil, err
@@ -489,6 +508,9 @@ func (h *ReviewToolHandler) executePullRequestDiff(ctx context.Context, client *
 			repo, number, headSHA)
 		h.markHeadUnapprovable(ctx, client, projectID, repo, number, headSHA, reason)
 		return nil, apperror.NewValidationf("github app tool: %s", reason)
+	}
+	if listFiles {
+		return h.fileListResult(headSHA, files, len(files) >= githubPRFileListCap), nil
 	}
 
 	title := strings.TrimSpace(state.Title)
@@ -520,7 +542,7 @@ func (h *ReviewToolHandler) executePullRequestDiff(ctx context.Context, client *
 // records review evidence: the verified object is the pull request, and a merge
 // commit's first-parent diff can be empty while the PR is large. An empty
 // commit diff is a validation error, not a successful empty tool result.
-func (h *ReviewToolHandler) executeCommitDiff(ctx context.Context, client *githubapp.Client, repo, headSHA string, selection map[string]struct{}) (*mcp.ToolResult, error) {
+func (h *ReviewToolHandler) executeCommitDiff(ctx context.Context, client *githubapp.Client, repo, headSHA string, selection map[string]struct{}, listFiles bool) (*mcp.ToolResult, error) {
 	diff, err := client.GetCommit(ctx, repo, headSHA)
 	if err != nil {
 		return nil, err
@@ -529,12 +551,57 @@ func (h *ReviewToolHandler) executeCommitDiff(ctx context.Context, client *githu
 		return nil, apperror.NewValidationf("github app tool: commit %s has an empty diff (its tree matches its first parent); pass the pull request number to read the reviewed pull request's diff",
 			headSHA)
 	}
+	if listFiles {
+		return h.fileListResult(diff.SHA, diff.Files, len(diff.Files) >= githubCommitFileListCap), nil
+	}
 	header := fmt.Sprintf("commit %s\n%s", diff.SHA, truncateUTF8(strings.TrimSpace(diff.Message), maxDiffMessageBytes))
 	_, result, err := h.renderBounded(ctx, diff.SHA, header, diff.Files, selection, len(diff.Files) >= githubCommitFileListCap)
 	if err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+// fileListResult renders the changed paths of the reviewed object with no patch
+// text. The agent harness hands the model only a tool result's text content
+// (structuredContent is dropped), so a reviewer given a cut payload cannot learn
+// from truncatedFiles which files it never saw. This is the in-band way out: list
+// every changed path, then re-fetch the missing ones by name. A listing is
+// metadata, so it records no evidence and cannot authorize a verdict.
+func (h *ReviewToolHandler) fileListResult(sha string, files []githubapp.CommitFile, listingCapped bool) *mcp.ToolResult {
+	var b strings.Builder
+	fmt.Fprintf(&b, "changed files of %s (%d)\n", sha, len(files))
+	for _, file := range files {
+		fmt.Fprintf(&b, "%s (%s, +%d/-%d)\n", sanitizeDiffPath(file.Filename), file.Status, file.Additions, file.Deletions)
+	}
+	if listingCapped {
+		fmt.Fprintf(&b, "… warning: the change lists %d changed files (GitHub's listing cap); files beyond it were not returned.\n", len(files))
+	}
+	text := b.String()
+	budget := h.diffTextBudget()
+	if h.maxResultBytes > 0 && budget > maxResultEnvelopeBytes {
+		budget -= maxResultEnvelopeBytes
+	}
+	if len(text) > budget {
+		const cut = "\n… listing truncated; pass path or files to read a subset of the changed files\n"
+		room := budget - len(cut)
+		if room < 1 {
+			room = 1
+		}
+		text = truncateUTF8(text, room) + cut
+	}
+	// The paths live in the text only: a parallel structured copy would double the
+	// payload for a field the reviewer model never sees (the harness forwards text
+	// content only) and could push the result past the executor's bound.
+	return &mcp.ToolResult{
+		Content: []mcp.ContentBlock{{Type: "text", Text: text}},
+		StructuredContent: map[string]any{
+			"sha":           sha,
+			"files":         len(files),
+			"listing":       true,
+			"listingCapped": listingCapped,
+		},
+	}
 }
 
 // renderBounded renders files under this tool's caps and, when the executor's
@@ -546,8 +613,13 @@ func (h *ReviewToolHandler) executeCommitDiff(ctx context.Context, client *githu
 // recomputes which files are complete, so evidence is only recorded for content
 // the model received in full.
 func (h *ReviewToolHandler) renderBounded(ctx context.Context, sha, header string, files []githubapp.CommitFile, selection map[string]struct{}, listingCapped bool) (*diffRender, *mcp.ToolResult, error) {
-	textBudget := h.diffTextBudget()
-	wholeBudget := textBudget
+	// Reserve the trailer's bytes up front: it is appended only once truncation
+	// is known, so it cannot be measured before the render without this.
+	wholeBudget := h.diffTextBudget()
+	textBudget := wholeBudget - diffTruncationHintReserve
+	if textBudget < 512 {
+		textBudget = 512
+	}
 	rendered, err := renderDiffFiles(sha, header, files, selection, textBudget, wholeBudget, listingCapped)
 	if err != nil {
 		return nil, nil, err
@@ -561,7 +633,7 @@ func (h *ReviewToolHandler) renderBounded(ctx context.Context, sha, header strin
 		if marshalErr != nil || len(raw) <= h.maxResultBytes {
 			break
 		}
-		textBudget -= len(raw) - h.maxResultBytes + 512
+		textBudget -= len(raw) - h.maxResultBytes + maxResultEnvelopeBytes
 		if textBudget < 512 {
 			textBudget = 512
 		}
@@ -597,6 +669,9 @@ func (h *ReviewToolHandler) diffTextBudget() int {
 
 // diffToolResult builds the agent-facing result from one render. truncatedFiles
 // is always a slice so the schema type stays stable (an empty list, not null).
+// A truncated render also carries the trailer in its text, because the agent
+// harness forwards text content only: the structured truncation flags are a
+// machine-readable convenience for MCP clients, not what the reviewer model sees.
 func diffToolResult(sha string, fileCount int, selection map[string]struct{}, rendered *diffRender) *mcp.ToolResult {
 	truncatedFiles := rendered.truncatedFiles
 	if truncatedFiles == nil {
@@ -606,8 +681,12 @@ func diffToolResult(sha string, fileCount int, selection map[string]struct{}, re
 	if withheldFiles == nil {
 		withheldFiles = []string{}
 	}
+	text := rendered.text
+	if rendered.truncated {
+		text += diffTruncationHint(rendered)
+	}
 	return &mcp.ToolResult{
-		Content: []mcp.ContentBlock{{Type: "text", Text: rendered.text}},
+		Content: []mcp.ContentBlock{{Type: "text", Text: text}},
 		StructuredContent: map[string]any{
 			"sha":            sha,
 			"files":          fileCount,
@@ -619,6 +698,47 @@ func diffToolResult(sha string, fileCount int, selection map[string]struct{}, re
 			"partial":        selection != nil,
 		},
 	}
+}
+
+// diffTruncationHint is the actionable trailer a cut payload carries in its
+// text. It exists because the agent harness forwards a tool result's text
+// content only (structuredContent is dropped), so `truncated` and
+// `truncatedFiles` never reach the reviewer model: without this line a cut diff
+// says only "diff truncated" and offers no way to find out what was left out
+// (a live review failed exactly this way, looping on invented path arguments).
+func diffTruncationHint(rendered *diffRender) string {
+	var b strings.Builder
+	b.WriteString("\n… the payload above is incomplete. ")
+	if names := hintFileNames(rendered.truncatedFiles); names != "" {
+		b.WriteString("Changed files not returned in full: ")
+		b.WriteString(names)
+		b.WriteString(". ")
+	}
+	b.WriteString("Call github-pr-diff with list_files=true to list every changed path, then re-fetch the missing ones with path=\"<file>\" or files=[...].\n")
+	return b.String()
+}
+
+// hintFileNames bounds the names echoed into the truncation hint: a filename is
+// PR-controlled, so a crafted one must not turn the hint into a payload of its
+// own.
+func hintFileNames(names []string) string {
+	const (
+		limit    = 8
+		nameSize = 120
+	)
+	shown, more := names, 0
+	if len(shown) > limit {
+		shown, more = shown[:limit], len(shown)-limit
+	}
+	parts := make([]string, 0, len(shown))
+	for _, name := range shown {
+		parts = append(parts, truncateUTF8(sanitizeDiffPath(name), nameSize))
+	}
+	out := strings.Join(parts, ", ")
+	if more > 0 {
+		out += fmt.Sprintf(", … %d more", more)
+	}
+	return out
 }
 
 // diffSelection parses the optional path/files arguments. A selection makes the
@@ -1272,6 +1392,19 @@ func reviewGateUnapprovableSummary(gate *ReviewGate) string {
 		}
 	}
 	return "No verdict can be recorded for this head."
+}
+
+// boolArg reads a boolean tool argument. Models sometimes send "true" as a
+// string, so that shape is accepted too.
+func boolArg(args map[string]any, key string) bool {
+	switch v := args[key].(type) {
+	case bool:
+		return v
+	case string:
+		return strings.EqualFold(strings.TrimSpace(v), "true")
+	default:
+		return false
+	}
 }
 
 func intArg(args map[string]any, key string) (int, bool) {
