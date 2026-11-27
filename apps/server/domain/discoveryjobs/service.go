@@ -1639,6 +1639,7 @@ Rules for type discovery:
 - An attribute or descriptor OF another entity is a PROPERTY on that entity, not its own type — even when it has many values. A person's occupation/job title, gender, age, nationality and status are properties of the Person, NOT separate "Occupation"/"Gender"/"Age" entity types. Put them in the owning type's inferred_schema properties instead.
 - Only create a separate type for a concept that has its own identity and properties (e.g. a Department, or a Product category that itself carries attributes). When in doubt, prefer a property on the owning entity.
 - Prefer fewer, cleaner types over many overlapping types. Merge similar types (e.g., "Employee" and "Person" → just "Person").
+- Do NOT create vague umbrella types such as "Object", "Item", "Group", "Entity", "Element", or "Misc" — they lump unrelated entities under one label and add no information. The catalog's "Thing" is the only acceptable generic; otherwise pick the most specific type the documents support.
 - %s
 
 For each type, provide:
