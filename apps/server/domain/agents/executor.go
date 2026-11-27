@@ -3676,24 +3676,22 @@ func (ae *AgentExecutor) runPipeline(
 	thinkTrack := newThinkingTracker(req.StreamCallback)
 	defer thinkTrack.close()
 
-	// textFilter keeps a streaming ```a2ui surface out of the answer text. A
-	// surface is only extracted from the finished response, so without it the
-	// raw JSONL of a card (valid or not) is painted into the bubble mid-stream.
+	// a2uiStage keeps the per-step answer-text filter (which keeps a streaming
+	// ```a2ui surface out of the answer text, since a surface is only extracted
+	// from the finished response) together with the progressive surface stream.
 	// It is per step: a step that opens a surface and never closes it must not
 	// swallow the next step's answer.
-	textFilter := a2ui.NewTextFilter()
-	filterStep := -1
-
-	// a2uiStream parses a streaming ```a2ui block progressively so a card can
-	// appear as its messages stream in, not only once the run finishes. It is
-	// reset alongside textFilter each step; the finished response re-sends the
-	// complete surface as the authoritative frame, and a block that does not
-	// validate after progressive frames were shown is torn down.
-	a2uiStream := a2ui.NewSurfaceStream()
+	a2uiStage := newA2UIStepStreams(run.ID)
 	// a2uiThrottle bounds how often progressive frames are emitted per surface.
 	// It is per run (not per step) so a surface updated across steps stays
 	// rate-limited.
 	a2uiThrottle := newA2UIFrameThrottle(a2uiFrameInterval)
+
+	// Every exit from the run withdraws a surface the staged step showed and
+	// left unfinalised: a step that ended in a tool call never emits a final
+	// response, so its card would otherwise stay on screen for the rest of the
+	// run. The same holds for a cancelled run or a provider error (#621).
+	defer func() { emitStreamEvents(req.StreamCallback, a2uiStage.withdraw()) }()
 
 	// a2uiRepair owns the single bounded repair turn (#417): when a final answer
 	// is only an invalid surface, the validator issues are sent back once.
@@ -4762,14 +4760,12 @@ func (ae *AgentExecutor) runPipeline(
 			// provider that streams chain-of-thought incrementally never leaks
 			// reasoning into the final answer stream.
 			if event.Partial && event.Content != nil && req.StreamCallback != nil {
-				if step := tracker.current(); step != filterStep {
-					textFilter = a2ui.NewTextFilter()
-					// Scope the surface to the run and step: the model names
-					// every surface "s1", so two answers would otherwise reach
-					// the renderer as the same surface (issue #592).
-					a2uiStream = a2ui.NewNamespacedSurfaceStream(a2uiNamespace(run.ID, step))
-					filterStep = step
-				}
+				// Scope the surface to the run and step: the model names every
+				// surface "s1", so two answers would otherwise reach the
+				// renderer as the same surface (issue #592). Leaving a step
+				// also withdraws any surface it showed and never finalised —
+				// the step may have ended in a tool call (#621).
+				emitStreamEvents(req.StreamCallback, a2uiStage.beginStep(tracker.current()))
 				for _, part := range event.Content.Parts {
 					if part == nil || part.Text == "" {
 						continue
@@ -4779,13 +4775,13 @@ func (ae *AgentExecutor) runPipeline(
 						thinkTrack.markReasoningPartial(step)
 						thinkTrack.emit(step, "reasoning", part.Text)
 					} else {
-						for _, ev := range answerTextEvents(textFilter, part.Text) {
+						for _, ev := range answerTextEvents(a2uiStage.filter, part.Text) {
 							req.StreamCallback(ev)
 						}
 						// Progressive surface frames: a card appears as its
 						// messages stream in, throttled to at most one frame per
 						// interval per surface.
-						for _, ev := range a2uiProgressiveEvents(a2uiStream, a2uiThrottle, part.Text) {
+						for _, ev := range a2uiProgressiveEvents(a2uiStage.stream, a2uiThrottle, part.Text) {
 							req.StreamCallback(ev)
 						}
 					}
@@ -4823,6 +4819,11 @@ func (ae *AgentExecutor) runPipeline(
 
 			if event.IsFinalResponse() {
 				lastEvent = event
+				// A surface streamed by an earlier step that never finalised it
+				// (a step ending in a tool call) must be withdrawn before this
+				// step's answer: it is scoped to the older step, so the new card
+				// does not replace it and it would linger (#621).
+				emitStreamEvents(req.StreamCallback, a2uiStage.beginStep(tracker.current()))
 				// The final answer begins: close any open thinking segment from a
 				// prior step (the planning/reasoning phase has ended). A reasoning
 				// segment at this same step continues below.
@@ -4854,7 +4855,7 @@ func (ae *AgentExecutor) runPipeline(
 					// A surface shown progressively but absent from (or invalid in)
 					// the finished response must be torn down, or a half-rendered
 					// card outlives the run.
-					for _, ev := range a2uiTeardownEvents(a2uiStream, finalEvents) {
+					for _, ev := range a2uiTeardownEvents(a2uiStage.stream, finalEvents) {
 						req.StreamCallback(ev)
 					}
 				}
@@ -4862,8 +4863,7 @@ func (ae *AgentExecutor) runPipeline(
 				// still holds (a tail from THIS step's fence) so a step that
 				// began a surface without closing it cannot swallow the next
 				// step's answer, and reset the progressive stream with it.
-				textFilter = a2ui.NewTextFilter()
-				a2uiStream = a2ui.NewNamespacedSurfaceStream(a2uiNamespace(run.ID, tracker.current()))
+				a2uiStage.resetStep()
 			}
 
 			// Track the last non-partial event that carries text — used as fallback
@@ -4903,11 +4903,7 @@ func (ae *AgentExecutor) runPipeline(
 		// dropped; an ordinary tail (e.g. a markdown fence's closing ``` with no
 		// trailing newline) is emitted. Safe to repeat across a retry: a flush
 		// leaves the filter empty.
-		if req.StreamCallback != nil {
-			for _, ev := range flushAnswerText(textFilter) {
-				req.StreamCallback(ev)
-			}
-		}
+		emitStreamEvents(req.StreamCallback, flushAnswerText(a2uiStage.filter))
 
 		// A cancelled context is terminal: exit the outer retry loop so the
 		// post-loop cancellation block records the terminal status/reason.
