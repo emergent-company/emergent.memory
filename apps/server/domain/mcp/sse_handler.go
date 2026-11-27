@@ -37,8 +37,12 @@ type SSEHandler struct {
 
 // sessionInitState holds durable per-session state that survives SSE reconnects.
 type sessionInitState struct {
-	ProjectID   string
-	UserID      string
+	ProjectID string
+	UserID    string
+	// APITokenID is the credential that created the session ("" for
+	// OIDC/session auth). The session ID is a lookup key, so the state is
+	// authorized against the current caller on every use.
+	APITokenID  string
 	Initialized bool
 	// ClientName is the sanitized clientInfo.name from initialize, carried into
 	// tools/call so tools can name the real client (issue #472).
@@ -48,12 +52,13 @@ type sessionInitState struct {
 
 // SSESession represents an active SSE streaming connection
 type SSESession struct {
-	ID        string
-	ProjectID string
-	UserID    string
-	Done      chan struct{}
-	Writer    http.ResponseWriter
-	Flusher   http.Flusher
+	ID         string
+	ProjectID  string
+	UserID     string
+	APITokenID string
+	Done       chan struct{}
+	Writer     http.ResponseWriter
+	Flusher    http.Flusher
 }
 
 // NewSSEHandler creates a new SSE handler
@@ -65,6 +70,66 @@ func NewSSEHandler(svc *Service, handler *Handler, log *slog.Logger) *SSEHandler
 		sseSessions:  make(map[string]*SSESession),
 		sessionState: make(map[string]*sessionInitState),
 	}
+}
+
+// lookupSSESession returns the durable state and the live stream for a session
+// ID. Either may be nil (a session may have state but no open stream, or a
+// stream that has not initialized yet).
+func (h *SSEHandler) lookupSSESession(sessionID string) (*sessionInitState, *SSESession) {
+	if sessionID == "" {
+		return nil, nil
+	}
+	h.sessionStateMu.RLock()
+	state := h.sessionState[sessionID]
+	h.sessionStateMu.RUnlock()
+
+	h.sseSessionsMu.RLock()
+	stream := h.sseSessions[sessionID]
+	h.sseSessionsMu.RUnlock()
+	return state, stream
+}
+
+// authorizeSSESession reports whether the authenticated caller may use a
+// session ID minted by this transport. The ID is a lookup key, never a
+// credential: the creating user, the creating credential (when either side is
+// API-token authenticated) and the addressed project must all match. A session
+// ID that has neither state nor a stream is not owned by anyone yet and is
+// allowed — the initialize flow binds it to the caller.
+func authorizeSSESession(projectID string, user *auth.AuthUser, state *sessionInitState, stream *SSESession) error {
+	// An absent caller has no identity to bind a session to. auth.RequireUser
+	// treats an empty id the same way, and both call sites come through
+	// MustGetUser, so this is a fail-closed contract rather than a live path.
+	callerID, callerToken := "", ""
+	if user != nil {
+		callerID, callerToken = user.ID, user.APITokenID
+	}
+	if callerID == "" {
+		return apperror.ErrUnauthorized
+	}
+
+	check := func(sessionProject, sessionUser, sessionToken string) error {
+		if sessionProject != "" && sessionProject != projectID {
+			return apperror.NewForbidden("MCP session does not belong to this project")
+		}
+		if sessionUser != callerID {
+			return apperror.NewForbidden("MCP session does not belong to this caller")
+		}
+		if sessionToken != callerToken && (sessionToken != "" || callerToken != "") {
+			return apperror.NewForbidden("MCP session does not belong to this caller")
+		}
+		return nil
+	}
+	if state != nil {
+		if err := check(state.ProjectID, state.UserID, state.APITokenID); err != nil {
+			return err
+		}
+	}
+	if stream != nil {
+		if err := check(stream.ProjectID, stream.UserID, stream.APITokenID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // HandleSSEConnect handles GET /mcp/sse/:projectId - SSE connection endpoint
@@ -99,12 +164,13 @@ func (h *SSEHandler) HandleSSEConnect(c echo.Context) error {
 
 	// Create session
 	session := &SSESession{
-		ID:        sessionID,
-		ProjectID: projectID,
-		UserID:    user.ID,
-		Done:      make(chan struct{}),
-		Writer:    w,
-		Flusher:   flusher,
+		ID:         sessionID,
+		ProjectID:  projectID,
+		UserID:     user.ID,
+		APITokenID: user.APITokenID,
+		Done:       make(chan struct{}),
+		Writer:     w,
+		Flusher:    flusher,
 	}
 
 	h.sseSessionsMu.Lock()
@@ -163,6 +229,20 @@ func (h *SSEHandler) HandleSSEMessage(c echo.Context) error {
 
 	sessionID := c.QueryParam("sessionId")
 
+	// A session ID is a lookup key, not a credential. Authorize it against the
+	// authenticated caller before its durable state is used or a response is
+	// pushed onto its stream: the ID alone must never let another user, token or
+	// project act on (or read) the session.
+	state, stream := h.lookupSSESession(sessionID)
+	if err := authorizeSSESession(projectID, user, state, stream); err != nil {
+		h.log.Warn("rejected MCP SSE session access",
+			slog.String("session_id", sessionID),
+			slog.String("project_id", projectID),
+			slog.String("user_id", user.ID),
+		)
+		return err
+	}
+
 	// Parse JSON-RPC request
 	var req Request
 	if err := c.Bind(&req); err != nil {
@@ -172,7 +252,7 @@ func (h *SSEHandler) HandleSSEMessage(c echo.Context) error {
 	// Validate JSON-RPC version
 	if req.JSONRPC != "2.0" {
 		resp := NewErrorResponse(req.ID, ErrCodeInvalidRequest, "Invalid JSON-RPC version", nil)
-		return h.sendResponseToSession(c, sessionID, resp)
+		return h.sendResponseToSession(c, stream, resp)
 	}
 
 	// Process request
@@ -185,15 +265,9 @@ func (h *SSEHandler) HandleSSEMessage(c echo.Context) error {
 
 	// Also push response via SSE stream if the client has an active connection.
 	// This is optional — clients that only use the HTTP response body don't need it.
-	if sessionID != "" {
-		h.sseSessionsMu.RLock()
-		session, ok := h.sseSessions[sessionID]
-		h.sseSessionsMu.RUnlock()
-
-		if ok && session != nil {
-			jsonBytes, _ := json.Marshal(response)
-			h.sendSSEEvent(session, "message", string(jsonBytes))
-		}
+	if stream != nil {
+		jsonBytes, _ := json.Marshal(response)
+		h.sendSSEEvent(stream, "message", string(jsonBytes))
 	}
 
 	// Return the JSON-RPC response directly in the HTTP body with 200 OK.
@@ -221,9 +295,10 @@ func (h *SSEHandler) processRequest(c echo.Context, req *Request, projectID stri
 			h.sessionStateMu.Lock()
 			if h.sessionState[sessionID] == nil {
 				h.sessionState[sessionID] = &sessionInitState{
-					ProjectID: projectID,
-					UserID:    user.ID,
-					CreatedAt: time.Now().UTC(),
+					ProjectID:  projectID,
+					UserID:     user.ID,
+					APITokenID: user.APITokenID,
+					CreatedAt:  time.Now().UTC(),
 				}
 			}
 			h.sessionState[sessionID].Initialized = true
@@ -239,9 +314,10 @@ func (h *SSEHandler) processRequest(c echo.Context, req *Request, projectID stri
 			h.sessionStateMu.Lock()
 			if h.sessionState[sessionID] == nil {
 				h.sessionState[sessionID] = &sessionInitState{
-					ProjectID: projectID,
-					UserID:    user.ID,
-					CreatedAt: time.Now().UTC(),
+					ProjectID:  projectID,
+					UserID:     user.ID,
+					APITokenID: user.APITokenID,
+					CreatedAt:  time.Now().UTC(),
 				}
 			}
 			h.sessionState[sessionID].Initialized = true
@@ -412,17 +488,12 @@ func (h *SSEHandler) sendSSEEvent(session *SSESession, event, data string) {
 	session.Flusher.Flush()
 }
 
-// sendResponseToSession sends a response via SSE or HTTP
-func (h *SSEHandler) sendResponseToSession(c echo.Context, sessionID string, resp *Response) error {
-	if sessionID != "" {
-		h.sseSessionsMu.RLock()
-		session, ok := h.sseSessions[sessionID]
-		h.sseSessionsMu.RUnlock()
-
-		if ok && session != nil {
-			jsonBytes, _ := json.Marshal(resp)
-			h.sendSSEEvent(session, "message", string(jsonBytes))
-		}
+// sendResponseToSession sends a response via SSE (when the caller has an
+// authorized live stream) and always returns it in the HTTP body.
+func (h *SSEHandler) sendResponseToSession(c echo.Context, session *SSESession, resp *Response) error {
+	if session != nil {
+		jsonBytes, _ := json.Marshal(resp)
+		h.sendSSEEvent(session, "message", string(jsonBytes))
 	}
 	return c.JSON(http.StatusOK, resp)
 }
