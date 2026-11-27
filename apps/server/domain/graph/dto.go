@@ -1139,6 +1139,13 @@ type BranchMergeObjectSummary struct {
 	SimilarityScore   float32    `json:"similarity_score,omitempty"`    // 0–1, higher = more similar
 	SimilarTargetID   *uuid.UUID `json:"similar_target_id,omitempty"`   // canonical_id of matched target
 	SimilarTargetName string     `json:"similar_target_name,omitempty"` // display name of matched target
+	// SameEntityTargetID is the target-branch canonical_id an exact (type,key)
+	// same-entity source collapses into. Non-nil when Status is "fast_forward" or
+	// "conflict" but the source carried a different canonical ID (a re-extraction
+	// of an entity that already exists on the target). The merge resolves the
+	// target head across this canonical boundary and remaps source-referencing
+	// relationships onto it.
+	SameEntityTargetID *uuid.UUID `json:"same_entity_target_id,omitempty"`
 }
 
 // BranchMergeRelationshipSummary represents merge status for a single relationship.
