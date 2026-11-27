@@ -123,6 +123,27 @@ RUN case "${TARGETARCH:-amd64}" in \
     rm -f /tmp/lefthook.gz && \
     lefthook version
 
+# gitleaks — the pre-commit `secrets` job in lefthook.yml. Without the binary
+# that job exits 1 on every commit (it refuses to pretend a scan happened), so
+# it is a hard requirement of installing the hooks, not an optional extra. The
+# version and the x64 digest are the ones `.github/scripts/install-gitleaks.sh`
+# pins for the required `ci` job — keep the three in step; the cheat sheet is
+# that script, and this layer is the image's copy of it (the image is built with
+# no build context, so the script itself cannot be COPYd in).
+ARG GITLEAKS_VERSION=8.30.1
+RUN case "${TARGETARCH:-amd64}" in \
+        amd64) gl_arch=x64;   gl_sha=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb ;; \
+        arm64) gl_arch=arm64; gl_sha=e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080 ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac && \
+    curl -fsSL -o /tmp/gitleaks.tgz \
+        "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_${gl_arch}.tar.gz" && \
+    echo "${gl_sha}  /tmp/gitleaks.tgz" | sha256sum -c - && \
+    tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks && \
+    chmod 0755 /usr/local/bin/gitleaks && \
+    rm -f /tmp/gitleaks.tgz && \
+    gitleaks version
+
 # Install the emergent-memory Python SDK from the memory repo.
 # --break-system-packages is required on Debian bookworm (PEP 668 externally
 # managed environment). requests/pydantic/python-dateutil are common deps.
