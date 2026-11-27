@@ -91,12 +91,21 @@ fi
 # `Verdict:` lines, with any non-MERGE verdict rejecting. `grep`/`sed` rather
 # than `awk` intervals: mawk (the default `awk` on some runners) has no `{40}`,
 # which silently turns every marker into "unmarked".
+#
+# The trailing whitespace is trimmed *after* the capture, not inside it: the
+# verdict class allows internal spaces (`CHANGES_REQUESTED` is one word today,
+# but the old awk allowed a multi-word verdict and trimmed its tail), and a
+# greedy capture would absorb the tail -- `Verdict: MERGE ` would parse as
+# `MERGE `, fail the `^MERGE$` test, and classify a bot *approval* as a
+# rejection. That is fail-closed, but it silently disarms the approval path this
+# script exists for (#1206 review).
 sha=$(printf '%s\n' "$BODY" \
   | grep -E '^Reviewed-SHA: [0-9a-f]{40}[[:space:]]*$' \
   | tail -n 1 \
   | sed -E 's/^Reviewed-SHA: ([0-9a-f]{40}).*$/\1/') || true
 verdicts=$(printf '%s\n' "$BODY" \
-  | sed -nE 's/^Verdict: ([A-Za-z_][A-Za-z_ ]*)[[:space:]]*$/\1/p') || true
+  | sed -nE 's/^Verdict: ([A-Za-z_][A-Za-z_ ]*)[[:space:]]*$/\1/p' \
+  | sed -E 's/[[:space:]]+$//') || true
 if [[ -z "$sha" || -z "$verdicts" ]]; then
   echo "comment carries no Reviewed-SHA/Verdict marker; ignoring"
   exit 0
