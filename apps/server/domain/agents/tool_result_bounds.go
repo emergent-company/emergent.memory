@@ -13,7 +13,14 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/config"
 )
 
-// Bounded tool-result policy (issue #1205).
+// Tool-result model-context boundary (issues #1205, #1142).
+//
+// Two transformations apply to tool results on their way to the model, in one
+// place and in one order (applyModelContextBoundary):
+//
+//  1. untrusted-content fencing (tool_result_fencing.go) marks third-party
+//     results as data the model must not follow as instructions;
+//  2. bounding (this file) caps how much of any result the model reads.
 //
 // Tool results are fed back into the model context verbatim, so an unbounded
 // result (a 361 KB entity-query/entity-edges-get payload was observed) inflates
@@ -28,6 +35,16 @@ import (
 //
 // The bound is deliberately honest: a truncated result carries an explicit,
 // actionable marker the model can act on, never a silent drop.
+//
+// The order has one visible trade, accepted deliberately: because an untrusted
+// result is measured *with* its envelope, a large third-party payload (a big web
+// page, a long command output) now truncates a few hundred bytes earlier than it
+// did before fencing existed, and a payload made of many short strings — the
+// shape an external server controls — can inflate several-fold and then be cut
+// to the cap, so the model reads materially less of it than it read raw. That is
+// the right direction: the alternative is a bound that does not count what the
+// model actually reads, which the same payload inflates past the budget, and the
+// part cut is the tail of content the model was going to be told to narrow.
 const (
 	// defaultToolResultMaxBytes bounds one tool result as seen by the model.
 	// 128 KiB is generous: normal read/search results observed in production
@@ -130,6 +147,21 @@ type ToolResultBoundStats struct {
 	ElidedResults    int
 	BytesBefore      int
 	BytesAfter       int
+}
+
+// applyModelContextBoundary applies both model-context transformations to req in
+// place, in the only order that keeps them honest: fence first, bound second.
+//
+// Fencing is part of what the model reads, so the bound has to measure the
+// fenced form. Bounding first would let a payload made of many short strings —
+// the shape an external server controls — multiply a capped result several-fold
+// with envelope overhead that nothing re-checks, blowing the total budget. It
+// would also wrap the bound's own truncation/elision guidance, which the model
+// must read literally, in an untrusted envelope.
+func applyModelContextBoundary(req *model.LLMRequest, bounds ToolResultBounds, trusted func(string) bool) (bound ToolResultBoundStats, fence ToolResultFenceStats) {
+	fence = fenceModelRequestToolResults(req, trusted)
+	bound = boundModelRequestToolResults(req, bounds)
+	return bound, fence
 }
 
 // boundModelRequestToolResults mutates req in place, bounding the

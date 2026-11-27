@@ -46,6 +46,8 @@ func (p *gateToolPool) StripOperatorTools(ctx context.Context, tools []tool.Tool
 
 func (p *gateToolPool) ToolScopes() map[string]string { return nil }
 
+func (p *gateToolPool) ExternalToolNames(string) map[string]bool { return nil }
+
 func (p *gateToolPool) CallTool(context.Context, string, string, map[string]any) (map[string]any, error) {
 	return map[string]any{"ok": true}, nil
 }
