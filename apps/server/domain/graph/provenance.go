@@ -274,17 +274,25 @@ func normalizeObjectKey(key *string) string {
 }
 
 // sameEntityIndexKey builds the lookup key for the exact-key same-entity index.
-// A NUL separator keeps a type that ends with the key's first character from
-// colliding with a different type/key split.
-func sameEntityIndexKey(typ, normalizedKey string) string {
-	return typ + "\x00" + normalizedKey
+// The namespace is part of an object's identity (FindHeadByTypeAndKeyNS filters
+// it), so two heads that share a type and key in different namespaces are
+// different entities and must not match. A NUL separator keeps a type or
+// namespace that ends with the next field's first character from colliding with
+// a different split; a nil namespace is the same identity as "".
+func sameEntityIndexKey(typ string, namespace *string, normalizedKey string) string {
+	ns := ""
+	if namespace != nil {
+		ns = *namespace
+	}
+	return typ + "\x00" + ns + "\x00" + normalizedKey
 }
 
-// buildSameEntityTargetIndex builds a normalized `type|key → head` index from
-// the target-branch HEADs. Soft-deleted heads (DeletedAt != nil) and heads
-// without a key are excluded so they can never win an exact-key match. When
-// several targets share a type+key, the one with the smallest canonical ID
-// wins so the result is deterministic regardless of map iteration order.
+// buildSameEntityTargetIndex builds a normalized `type|namespace|key → head`
+// index from the target-branch HEADs. Soft-deleted heads (DeletedAt != nil) and
+// heads without a key are excluded so they can never win an exact-key match.
+// When several targets share a type+namespace+key, the one with the smallest
+// canonical ID wins so the result is deterministic regardless of map iteration
+// order.
 //
 // Built once per merge so keys are normalized once rather than once per source
 // pair.
@@ -298,7 +306,7 @@ func buildSameEntityTargetIndex(targetObjects map[uuid.UUID]*BranchObjectHead) m
 		if key == "" {
 			continue
 		}
-		idxKey := sameEntityIndexKey(tgt.Type, key)
+		idxKey := sameEntityIndexKey(tgt.Type, tgt.Namespace, key)
 		if existing, ok := index[idxKey]; !ok || slices.Compare(tgt.CanonicalID[:], existing.CanonicalID[:]) < 0 {
 			index[idxKey] = tgt
 		}
@@ -306,10 +314,10 @@ func buildSameEntityTargetIndex(targetObjects map[uuid.UUID]*BranchObjectHead) m
 	return index
 }
 
-// findSameEntityTargetInIndex returns the target-branch HEAD whose `type` and
-// normalized key match the source object's, or nil when none matches. It looks
-// up a pre-built index so the caller can amortize key normalization across all
-// source objects in a merge.
+// findSameEntityTargetInIndex returns the target-branch HEAD whose `type`,
+// namespace and normalized key match the source object's, or nil when none
+// matches. It looks up a pre-built index so the caller can amortize key
+// normalization across all source objects in a merge.
 func findSameEntityTargetInIndex(src *BranchObjectHead, index map[string]*BranchObjectHead) *BranchObjectHead {
 	if src == nil {
 		return nil
@@ -318,7 +326,7 @@ func findSameEntityTargetInIndex(src *BranchObjectHead, index map[string]*Branch
 	if want == "" {
 		return nil
 	}
-	return index[sameEntityIndexKey(src.Type, want)]
+	return index[sameEntityIndexKey(src.Type, src.Namespace, want)]
 }
 
 // findSameEntityTarget returns the target-branch HEAD whose `type` and
@@ -326,8 +334,9 @@ func findSameEntityTargetInIndex(src *BranchObjectHead, index map[string]*Branch
 //
 // This is the exact-key path of same-entity detection: it runs before (and
 // independently of) the embedding-driven similarity probe, so an object
-// extracted from document B that shares a key with an object already merged
-// from document A is recognized as the same entity without embeddings.
+// extracted from document B that shares a type, namespace and key with an
+// object already merged from document A is recognized as the same entity
+// without embeddings.
 func findSameEntityTarget(src *BranchObjectHead, targetObjects map[uuid.UUID]*BranchObjectHead) *BranchObjectHead {
 	return findSameEntityTargetInIndex(src, buildSameEntityTargetIndex(targetObjects))
 }

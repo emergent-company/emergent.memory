@@ -1,0 +1,65 @@
+name: Release tag watchdog
+
+# The observer for a release bump whose tag never appeared (#1047, #1363).
+#
+# `auto-tag.yml` creates the `vX.Y.Z` tag and starts the whole release fan-out.
+# Its normal trigger is `push` to `main` touching `VERSION` -- but a release PR
+# merged by `app/github-actions` (the reviewed path: `github-review-gate.yml`
+# arms auto-merge and GitHub lands the PR as the Actions app) raises a push from
+# `GITHUB_TOKEN`, and GitHub starts **no workflow runs** for those. On v0.104.0
+# the tag was missing afterwards and had to be pushed by hand; on v0.102.3 the
+# same thing happened (#1363).
+#
+# `github-review-gate.yml` dispatches `auto-tag.yml` inline once its armed merge
+# lands, which covers the ordinary case. That wait is bounded (the gate job has
+# a 10-minute timeout), so a merge held longer by a queued check would still land
+# untagged. This schedule is the second attempt, and `schedule` -- like
+# `workflow_dispatch` -- is a documented exception to the suppression.
+#
+# The decision table is `.github/scripts/reconcile-release-tag.py`, and the
+# important half of it is what it refuses to do: a bump whose `auto-tag` run
+# already finished without a tag makes this run FAIL, naming the run. Re-
+# dispatching every tick would turn one broken release into an endless dispatch
+# loop behind a green schedule -- the "observed by nobody" shape #1047 is about.
+#
+# A red run here is the signal: the release pipeline is broken and needs a human.
+
+on:
+  schedule:
+    # Offset past the hour and the half hour so it does not contend with the
+    # other scheduled jobs for a runner at the same instant.
+    - cron: '17,47 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read    # tag ref, commits, VERSION at the merge
+  actions: write    # `gh run list` and the dispatch when a bump landed untagged
+
+concurrency:
+  # A watchdog run never overlaps another: two would read the same missing tag
+  # and dispatch twice.
+  group: release-tag-watchdog
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    name: Reconcile VERSION with its tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Reconcile
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        # Exit 0 = consistent, deliberately untagged, still running, or dispatched.
+        # Exit 1 = the tag should exist and does not, and no run is coming: fail
+        # the schedule so it shows red instead of being retried forever.
+        # Exit 2 = the API could not be read; retrying next tick is correct, and
+        # the run still fails so a persistent permission problem is visible.
+        run: python3 .github/scripts/reconcile-release-tag.py --repo "$REPO"

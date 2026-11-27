@@ -25,7 +25,7 @@ func githubAppToolDefinitions() []ToolDefinition {
 					},
 					"list_files": {
 						Type:        "boolean",
-						Description: "Return only the changed file paths of that SHA, numbered, with status and line counts and no patch text. Use it when the diff payload was truncated and you need the complete list of files to re-fetch. It records no review evidence, so it cannot authorize a verdict on its own. Cannot be combined with path or files.",
+						Description: "Return only the changed file paths of that SHA, numbered, with status and line counts and no patch text. Use it when the diff payload was truncated and you need the complete list of files to re-fetch. It records no review evidence, so it cannot authorize a verdict on its own. Cannot be combined with path or files. A path too long for its line is marked with … and its exact name is carried in structuredContent.exactPaths.",
 					},
 					"list_offset": {
 						Type:        "number",

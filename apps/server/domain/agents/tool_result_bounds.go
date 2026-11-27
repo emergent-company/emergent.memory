@@ -45,6 +45,15 @@ import (
 // the right direction: the alternative is a bound that does not count what the
 // model actually reads, which the same payload inflates past the budget, and the
 // part cut is the tail of content the model was going to be told to narrow.
+//
+// Fencing first must not mean fencing *unbounded*, though (issue #1151): the
+// fenced copy is materialised in memory, so a multi-megabyte payload of short
+// strings would drive allocation and GC proportional to its fenced form even
+// though the model only ever reads the cap. An untrusted result whose raw JSON
+// already exceeds its per-result cap is therefore truncated to that cap *before*
+// it is fenced (see fenceModelRequestToolResultsWithPrecap): the bound would cut
+// it anyway, so the truncated form is what gets enveloped and allocation follows
+// the cap rather than the payload.
 const (
 	// defaultToolResultMaxBytes bounds one tool result as seen by the model.
 	// 128 KiB is generous: normal read/search results observed in production
@@ -150,7 +159,7 @@ type ToolResultBoundStats struct {
 }
 
 // applyModelContextBoundary applies both model-context transformations to req in
-// place, in the only order that keeps them honest: fence first, bound second.
+// place, in the order that keeps them honest: fence first, bound second.
 //
 // Fencing is part of what the model reads, so the bound has to measure the
 // fenced form. Bounding first would let a payload made of many short strings —
@@ -158,8 +167,20 @@ type ToolResultBoundStats struct {
 // with envelope overhead that nothing re-checks, blowing the total budget. It
 // would also wrap the bound's own truncation/elision guidance, which the model
 // must read literally, in an untrusted envelope.
+//
+// The fence is given the per-result cap as a *pre-cap* (issue #1151): a result
+// too large to fence whole is truncated first and only the truncated form is
+// enveloped. That keeps the fenced intermediate proportional to the cap instead
+// of to the payload, while the ordinary bound below still measures the envelope
+// the model actually reads. When the per-result layer is disabled (negative
+// MaxBytes) there is no pre-cap: nothing would truncate the fenced form either,
+// so fencing whole is the only faithful behaviour.
 func applyModelContextBoundary(req *model.LLMRequest, bounds ToolResultBounds, trusted func(string) bool) (bound ToolResultBoundStats, fence ToolResultFenceStats) {
-	fence = fenceModelRequestToolResults(req, trusted)
+	var precap func(tool string) int
+	if bounds.MaxBytes >= 0 {
+		precap = bounds.maxBytesFor
+	}
+	fence = fenceModelRequestToolResultsWithPrecap(req, precap, trusted)
 	bound = boundModelRequestToolResults(req, bounds)
 	return bound, fence
 }
@@ -256,6 +277,25 @@ func boundModelRequestToolResults(req *model.LLMRequest, bounds ToolResultBounds
 	return stats
 }
 
+// toolResultOK returns a result's success flag, if and only if the payload
+// carries it as a bool.
+//
+// ok is the one payload-derived field the bounding envelopes emit outside the
+// untrusted-content envelope, and the harness reads it for success/failure
+// classification. A string, object or array there is payload text, not a
+// classification: relaying it raw would put attacker-controlled content beside
+// truncated/truncation where the model reads harness-authored fields, and it
+// would also make the result's size depend on the payload. Non-boolean values
+// are therefore dropped; a missing ok stays missing rather than defaulting to
+// true (issue #1151).
+func toolResultOK(resp map[string]any) (value any, ok bool) {
+	if resp == nil {
+		return nil, false
+	}
+	b, isBool := resp["ok"].(bool)
+	return b, isBool
+}
+
 // boundToolResultResponse returns resp unchanged when its JSON encoding fits
 // maxBytes. Otherwise it returns a bounded envelope carrying the actionable
 // truncation marker and a preview prefix. It never mutates resp. A negative
@@ -271,18 +311,17 @@ func boundToolResultResponse(toolName string, resp map[string]any, maxBytes int)
 	_ = toolName // reserved for future per-tool marker wording
 
 	total := len(encoded)
-	okVal := any(true)
-	if v, ok := resp["ok"]; ok {
-		okVal = v
-	}
+	okVal, hasOK := toolResultOK(resp)
 
 	preview := safeUTF8Prefix(encoded, maxBytes)
 	for {
 		env := map[string]any{
-			"ok":         okVal,
 			"truncated":  true,
 			"truncation": fmt.Sprintf(truncationMarkerFmt, len(preview), total),
 			"preview":    preview,
+		}
+		if hasOK {
+			env["ok"] = okVal
 		}
 		b, err := json.Marshal(env)
 		if err != nil {
@@ -308,32 +347,36 @@ func boundToolResultResponse(toolName string, resp map[string]any, maxBytes int)
 			// Envelope fixed overhead alone exceeds the cap (an absurdly small
 			// configured cap). Return the marker envelope; it is bounded by the
 			// fixed overhead.
-			return map[string]any{
-				"ok":         okVal,
+			env := map[string]any{
 				"truncated":  true,
 				"truncation": fmt.Sprintf(truncationMarkerFmt, 0, total),
 				"preview":    "",
-			}, true
+			}
+			if hasOK {
+				env["ok"] = okVal
+			}
+			return env, true
 		}
 	}
 }
 
 // elidedToolResultResponse replaces an older tool result with a short, marked
-// placeholder. It preserves ok so success/failure classification survives.
+// placeholder. It preserves ok so success/failure classification survives, but
+// only a boolean — see toolResultOK.
 func elidedToolResultResponse(resp map[string]any) map[string]any {
-	okVal := any(true)
+	okVal, hasOK := toolResultOK(resp)
 	size := 0
 	if resp != nil {
-		if v, ok := resp["ok"]; ok {
-			okVal = v
-		}
 		size = jsonSize(resp)
 	}
-	return map[string]any{
-		"ok":         okVal,
+	elided := map[string]any{
 		"elided":     true,
 		"truncation": fmt.Sprintf(elisionMarkerFmt, size),
 	}
+	if hasOK {
+		elided["ok"] = okVal
+	}
+	return elided
 }
 
 // safeUTF8Prefix returns the longest valid UTF-8 prefix of b no longer than n

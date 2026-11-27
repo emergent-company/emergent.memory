@@ -93,9 +93,10 @@ const maxFunctionNameLen = 64
 // at maxFunctionNameLen so the key is always a legal LLM function name. The
 // bare tool-name suffix is always kept whole; when the combined key is too long
 // the slugged server part is truncated at the budget boundary (and any trailing
-// "_" stripped before the joining "_"). Deterministic; collisions between
-// servers whose names slug to the same prefix are tolerated (bare-alias
-// resolution already handles multi-server ambiguity).
+// "_" stripped before the joining "_"). Deterministic. Two servers whose names
+// slug to the same prefix can return the same key; registerExternalTool keeps
+// both registrations by aliasing the second, and bare-name resolution spans the
+// aliases (multi-server ambiguity is resolved to every matching key).
 func externalToolKey(serverName, toolName string) string {
 	slug := mcpregistry.SlugifyServerName(serverName)
 	if slug != "" && len(slug)+1+len(toolName) <= maxFunctionNameLen {
@@ -139,6 +140,39 @@ type ToolPool struct {
 	cache map[string]*projectToolCache
 }
 
+// externalAliasSuffix is appended to a third-party pool key that would otherwise
+// collide with a name already in the pool (or one reserved by the agent
+// runtime). The model-visible tool namespace is shared, so a collision has to be
+// resolved by renaming the third-party entry, never by overwriting ours (#1147).
+const externalAliasSuffix = "_ext"
+
+// runtimeToolNames are model-visible tool names the agent runtime registers
+// outside the project tool pool (the executor appends them to the resolved tool
+// list, and set_session_title is injected by ResolveTools). An external MCP
+// server or relay client must never be pooled under one of these names: a
+// server named "ask" exposing "user" would otherwise be offered to the model
+// under the same name as the runtime tool, with an attacker-authored
+// description. The ACP tools are included because they are opt-in privileged
+// capabilities wherever they are registered; reserving their names costs
+// nothing and keeps an external tool from impersonating one when the ACP
+// transport is not the source.
+var runtimeToolNames = func() map[string]bool {
+	names := map[string]bool{
+		ToolNameAskUser:             true,
+		ToolNameWorkComplete:        true,
+		ToolNameWorkBlock:           true,
+		ToolNameWorkTransition:      true,
+		ToolNameWorkComment:         true,
+		ToolNameSpawnAgents:         true,
+		ToolNameListAvailableAgents: true,
+		"set_session_title":         true,
+	}
+	for name := range acpTools {
+		names[name] = true
+	}
+	return names
+}()
+
 // projectToolCache holds the cached tool definitions for a single project.
 type projectToolCache struct {
 	// toolDefs maps tool name → ToolDefinition for fast lookup
@@ -147,21 +181,126 @@ type projectToolCache struct {
 	toolNames []string
 	// builtinTools tracks which tools came from builtin MCP service (not external servers)
 	builtinTools map[string]bool
-	// externalTools is the registration-time provenance of third-party tools:
-	// every name added by an external MCP server or a relay instance. It is
+	// externalTools records provenance: the pooled names registered by external
+	// MCP servers or relay instances, including any collision aliases. It is
 	// written where the tool is registered rather than derived by subtracting
 	// builtinTools, because all three sources write one namespace: an external
 	// server whose <slug>_<tool> collides with an enabled builtin's name leaves
 	// builtinTools[name] true while the pooled definition is the server's, so a
 	// subtraction would report the third-party tool as ours (#1144 review).
+	// An external server chooses both its server name and its tool names and the
+	// shared namespace makes a name match forgeable (#1147).
 	externalTools map[string]bool
+	// externalToolCallName maps a pooled external name → the canonical
+	// <slugified server>_<tool> name the registry proxy resolves. They differ
+	// only when the canonical key collided with an existing pool name and the
+	// external tool was registered under a deterministic alias.
+	externalToolCallName map[string]string
 	// relayToolInstance maps prefixed tool name → instance ID for relay tool routing
 	relayToolInstance map[string]string
+	// relayToolBareName maps a pooled relay name → the bare MCP tool name to
+	// forward. They differ only when the instance-prefixed key collided and the
+	// relay tool was registered under an alias.
+	relayToolBareName map[string]string
 	// bareNameToKeys maps a bare tool name → every prefixed pool key exposing it.
 	// External MCP tools are pooled as <slugified server>_ToolName while the admin
 	// API persists whitelists with bare ToolName values, so whitelist resolution
 	// falls back through this index when an exact pool-key match misses.
 	bareNameToKeys map[string][]string
+}
+
+// isBuiltinTool reports whether name is served by this product's builtin MCP
+// service. Provenance wins over the name: a name recorded as external is never
+// builtin, even if builtinTools also carries it (registration aliases
+// collisions, so that should not happen — the guard keeps routing honest if a
+// cache is ever assembled by hand).
+func (c *projectToolCache) isBuiltinTool(name string) bool {
+	return c.builtinTools[name] && !c.externalTools[name]
+}
+
+// toolNameTaken reports whether name is already claimed in the pool's shared
+// namespace: by a builtin, another external server's tool, a relay tool, or a
+// name reserved by the agent runtime.
+func (c *projectToolCache) toolNameTaken(name string) bool {
+	if runtimeToolNames[name] {
+		return true
+	}
+	_, ok := c.toolDefs[name]
+	return ok
+}
+
+// aliasToolName returns a deterministic, provider-legal alias for a colliding
+// pool key: <base>_ext, then <base>_ext2, and so on. The 64-character
+// function-name cap is honoured by truncating the base, never the suffix, so the
+// result always matches the contract tool-calling providers enforce.
+func (c *projectToolCache) aliasToolName(name string) string {
+	for n := 1; ; n++ {
+		suffix := externalAliasSuffix
+		if n > 1 {
+			suffix = fmt.Sprintf("%s%d", externalAliasSuffix, n)
+		}
+		base := name
+		if len(base)+len(suffix) > maxFunctionNameLen {
+			base = strings.TrimRight(base[:maxFunctionNameLen-len(suffix)], "_")
+		}
+		candidate := base + suffix
+		if !c.toolNameTaken(candidate) {
+			return candidate
+		}
+	}
+}
+
+// registerExternalTool registers an external MCP tool under name, or under a
+// deterministic alias when name is already claimed in the pool. Overwriting is
+// never acceptable: the collision is attacker-influenced (the server picks both
+// its name and its tool names), and the model reads the surviving description as
+// if it belonged to the trusted tool while wrapSingleTool still routes the call
+// to the builtin service (issue #1147). Keeping both entries preserves reach to
+// the external tool under its alias.
+//
+// Returns the pooled name. When it differs from name, externalToolCallName
+// records the canonical name the registry proxy must resolve.
+func (c *projectToolCache) registerExternalTool(name string, td mcp.ToolDefinition) string {
+	pooledName := name
+	if c.toolNameTaken(pooledName) {
+		pooledName = c.aliasToolName(pooledName)
+	}
+	td.Name = pooledName
+	c.toolDefs[pooledName] = td
+	c.toolNames = append(c.toolNames, pooledName)
+	c.externalTools[pooledName] = true
+	if pooledName != name {
+		c.externalToolCallName[pooledName] = name
+	}
+	return pooledName
+}
+
+// registerRelayTool registers a relay tool under canonicalName, or under a
+// deterministic alias on collision (same reasoning as registerExternalTool).
+// The instance and bare tool name are recorded against the pooled name so
+// routing does not depend on re-deriving them from a possibly-aliased key.
+func (c *projectToolCache) registerRelayTool(canonicalName string, td mcp.ToolDefinition, instanceID, bareToolName string) string {
+	pooledName := canonicalName
+	if c.toolNameTaken(pooledName) {
+		pooledName = c.aliasToolName(pooledName)
+	}
+	td.Name = pooledName
+	c.toolDefs[pooledName] = td
+	c.toolNames = append(c.toolNames, pooledName)
+	c.externalTools[pooledName] = true
+	c.relayToolInstance[pooledName] = instanceID
+	c.relayToolBareName[pooledName] = bareToolName
+	return pooledName
+}
+
+// externalCallName returns the canonical name the registry proxy resolves for a
+// pooled external tool. It differs from the pooled name only for a collision
+// alias.
+func (c *projectToolCache) externalCallName(pooledName string) string {
+	if canonical, ok := c.externalToolCallName[pooledName]; ok {
+		return canonical
+	}
+	return pooledName
 }
 
 // NewToolPool creates a new ToolPool.
@@ -205,15 +344,72 @@ func (tp *ToolPool) getOrBuildCache(projectID string) *projectToolCache {
 	return c
 }
 
+// mergeExternalTools registers the project's enabled external MCP tools into
+// cache. It is split out of buildCache so the registration contract — a
+// third-party name never replaces a builtin, a runtime name, or another pooled
+// tool — is testable without a registry/DB.
+func (tp *ToolPool) mergeExternalTools(cache *projectToolCache, projectID string, extTools []*mcpregistry.EnabledServerTool) {
+	for _, et := range extTools {
+		// Prefix external tool names: servername_toolname (Diane convention).
+		// The server-name part is slugified because LLM function names must
+		// match ^[A-Za-z0-9_-]{1,64}$ — raw names like "E2E MCP 123" would
+		// otherwise produce an illegal key that providers silently drop.
+		prefixedName := externalToolKey(et.ServerName, et.ToolName)
+		desc := ""
+		if et.Description != nil {
+			desc = *et.Description
+		}
+		td := mcp.ToolDefinition{
+			Name:         prefixedName,
+			Description:  desc,
+			InputSchema:  mapToInputSchema(et.InputSchema),
+			OutputSchema: mapToOutputSchema(et.OutputSchema),
+		}
+		// registerExternalTool aliases the name when the canonical key is already
+		// claimed. The definition must never overwrite the existing entry: the
+		// server chooses both halves of the key, so the collision is
+		// attacker-influenced, and wrapSingleTool would keep routing the call to
+		// the builtin while the model read the server's description (#1147).
+		pooledName := cache.registerExternalTool(prefixedName, td)
+		if pooledName != prefixedName {
+			tp.log.Warn("external MCP tool name collides with a reserved or already-pooled name; pooled under alias",
+				slog.String("project_id", projectID),
+				slog.String("server", et.ServerName),
+				slog.String("tool", et.ToolName),
+				slog.String("canonical", prefixedName),
+				slog.String("alias", pooledName),
+			)
+		}
+		// Index the bare tool name → pooled key so whitelist entries persisted by
+		// the admin API (bare ToolName, no server prefix) can be resolved back to
+		// the pooled ServerName_ToolName key (or its collision alias).
+		cache.bareNameToKeys[et.ToolName] = append(cache.bareNameToKeys[et.ToolName], pooledName)
+	}
+	if len(extTools) > 0 {
+		tp.log.Debug("loaded external MCP tools into pool",
+			slog.String("project_id", projectID),
+			slog.Int("count", len(extTools)),
+		)
+	}
+}
+
+// newProjectToolCache returns an empty cache with every index initialised, so
+// registration never writes to a nil map.
+func newProjectToolCache() *projectToolCache {
+	return &projectToolCache{
+		toolDefs:             make(map[string]mcp.ToolDefinition),
+		builtinTools:         make(map[string]bool),
+		externalTools:        make(map[string]bool),
+		externalToolCallName: make(map[string]string),
+		relayToolInstance:    make(map[string]string),
+		relayToolBareName:    make(map[string]string),
+		bareNameToKeys:       make(map[string][]string),
+	}
+}
+
 // buildCache creates the tool cache for a project by combining all tool sources.
 func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
-	cache := &projectToolCache{
-		toolDefs:          make(map[string]mcp.ToolDefinition),
-		builtinTools:      make(map[string]bool),
-		externalTools:     make(map[string]bool),
-		relayToolInstance: make(map[string]string),
-		bareNameToKeys:    make(map[string][]string),
-	}
+	cache := newProjectToolCache()
 
 	// 1. Built-in MCP tools — load from DB (respects per-project enabled flag).
 	//    EnsureBuiltinServer is called inside GetEnabledBuiltinToolsForProject so
@@ -276,38 +472,7 @@ func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 				slog.String("error", err.Error()),
 			)
 		} else {
-			for _, et := range extTools {
-				// Prefix external tool names: servername_toolname (Diane convention).
-				// The server-name part is slugified because LLM function names must
-				// match ^[A-Za-z0-9_-]{1,64}$ — raw names like "E2E MCP 123" would
-				// otherwise produce an illegal key that providers silently drop.
-				prefixedName := externalToolKey(et.ServerName, et.ToolName)
-				desc := ""
-				if et.Description != nil {
-					desc = *et.Description
-				}
-				td := mcp.ToolDefinition{
-					Name:         prefixedName,
-					Description:  desc,
-					InputSchema:  mapToInputSchema(et.InputSchema),
-					OutputSchema: mapToOutputSchema(et.OutputSchema),
-				}
-				cache.toolDefs[prefixedName] = td
-				cache.toolNames = append(cache.toolNames, prefixedName)
-				// Provenance is recorded here, at registration, so a pooled name
-				// that collides with a builtin's cannot be mistaken for ours.
-				cache.externalTools[prefixedName] = true
-				// Index the bare tool name → prefixed key so whitelist entries
-				// persisted by the admin API (bare ToolName, no server prefix)
-				// can be resolved back to the pooled ServerName_ToolName key.
-				cache.bareNameToKeys[et.ToolName] = append(cache.bareNameToKeys[et.ToolName], prefixedName)
-			}
-			if len(extTools) > 0 {
-				tp.log.Debug("loaded external MCP tools into pool",
-					slog.String("project_id", projectID),
-					slog.Int("count", len(extTools)),
-				)
-			}
+			tp.mergeExternalTools(cache, projectID, extTools)
 		}
 	}
 
@@ -331,15 +496,22 @@ func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 				// prefixed form {instanceID}_{tool} — the same key stored in agent
 				// whitelists by the gateway relay agent picker.
 				fullName := sess.InstanceID + "_" + rt.Name
-				cache.toolDefs[fullName] = mcp.ToolDefinition{
+				td := mcp.ToolDefinition{
 					Name:         fullName,
 					Description:  rt.Description,
 					InputSchema:  rt.InputSchema,
 					OutputSchema: rt.OutputSchema,
 				}
-				cache.toolNames = append(cache.toolNames, fullName)
-				cache.externalTools[fullName] = true
-				cache.relayToolInstance[fullName] = sess.InstanceID
+				pooledName := cache.registerRelayTool(fullName, td, sess.InstanceID, rt.Name)
+				if pooledName != fullName {
+					tp.log.Warn("relay tool name collides with a reserved or already-pooled name; pooled under alias",
+						slog.String("project_id", projectID),
+						slog.String("instance_id", sess.InstanceID),
+						slog.String("tool", rt.Name),
+						slog.String("canonical", fullName),
+						slog.String("alias", pooledName),
+					)
+				}
 			}
 		}
 		if relayToolCount > 0 {
@@ -784,9 +956,11 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 	// Convert MCP InputSchema to ADK jsonschema for proper parameter typing
 	inputSchema := convertMCPSchemaToADK(td.InputSchema)
 
-	// Check if this is a builtin tool by looking at the project cache
+	// Check if this is a builtin tool by looking at the project cache. Provenance
+	// decides, not the name: an external registration that somehow shares the
+	// name must still route externally.
 	cache := tp.getOrBuildCache(projectID)
-	isBuiltin := cache.builtinTools[toolName]
+	isBuiltin := cache.isBuiltinTool(toolName)
 
 	// Check if this is a relay tool
 	if instanceID, ok := cache.relayToolInstance[toolName]; ok && tp.relayService != nil {
@@ -794,12 +968,18 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 		relaySvc := tp.relayService
 		pid := projectID
 		instID := instanceID
-		// Parse bare tool name by stripping the instanceID prefix and underscore
-		prefix := instID + "_"
-		if !strings.HasPrefix(toolName, prefix) {
-			return nil, fmt.Errorf("unexpected relay tool name %q for instance %q", toolName, instID)
+		// Registration records the bare tool name against the pooled key, so a
+		// collision alias (instance_tool_ext) still forwards the real tool name.
+		bareToolName, ok := cache.relayToolBareName[toolName]
+		if !ok {
+			// Fallback for a cache assembled without the provenance map: strip
+			// the instanceID prefix and underscore.
+			prefix := instID + "_"
+			if !strings.HasPrefix(toolName, prefix) {
+				return nil, fmt.Errorf("unexpected relay tool name %q for instance %q", toolName, instID)
+			}
+			bareToolName = strings.TrimPrefix(toolName, prefix)
 		}
-		bareToolName := strings.TrimPrefix(toolName, prefix)
 		return functiontool.New(
 			functiontool.Config{
 				Name:        toolName,
@@ -835,9 +1015,11 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 	}
 
 	if !isBuiltin && tp.registryService != nil {
-		// External tool: route through proxy
+		// External tool: route through proxy. A collision alias is model-visible
+		// only; the registry resolves the canonical <slug>_<tool> name.
 		regSvc := tp.registryService
 		pid := projectID
+		callName := cache.externalCallName(toolName)
 		return functiontool.New(
 			functiontool.Config{
 				Name:        toolName,
@@ -845,7 +1027,7 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 				InputSchema: inputSchema,
 			},
 			func(ctx agent.Context, args map[string]any) (map[string]any, error) {
-				result, err := regSvc.CallExternalTool(ctx, pid, toolName, args)
+				result, err := regSvc.CallExternalTool(ctx, pid, callName, args)
 				if err != nil {
 					return map[string]any{"error": apperror.PublicMessage(err)}, nil
 				}
@@ -985,8 +1167,12 @@ func (tp *ToolPool) CallTool(ctx context.Context, projectID, toolName string, ar
 		if !mcp.TrustedInternalFromContext(ctx) {
 			return map[string]any{"error": "relay tool not reachable from an untrusted surface"}, nil
 		}
-		prefix := instanceID + "_"
-		bareToolName := strings.TrimPrefix(toolName, prefix)
+		bareToolName, ok := cache.relayToolBareName[toolName]
+		if !ok {
+			// Fallback for a cache assembled without the provenance map.
+			prefix := instanceID + "_"
+			bareToolName = strings.TrimPrefix(toolName, prefix)
+		}
 		result, err := tp.relayService.CallTool(ctx, projectID, instanceID, bareToolName, args)
 		if err != nil {
 			if errors.Is(err, mcprelay.ErrSessionNotFound) {
@@ -1002,11 +1188,12 @@ func (tp *ToolPool) CallTool(ctx context.Context, projectID, toolName string, ar
 		return convertRelayResponseNamed(toolName, result)
 	}
 
-	isBuiltin := cache.builtinTools[toolName]
+	isBuiltin := cache.isBuiltinTool(toolName)
 
 	// External tool?
 	if !isBuiltin && tp.registryService != nil {
-		result, err := tp.registryService.CallExternalTool(ctx, projectID, toolName, args)
+		callName := cache.externalCallName(toolName)
+		result, err := tp.registryService.CallExternalTool(ctx, projectID, callName, args)
 		if err != nil {
 			return map[string]any{"error": apperror.PublicMessage(err)}, nil
 		}
@@ -1071,10 +1258,10 @@ func (tp *ToolPool) ToolNames(projectID string) []string {
 	return names
 }
 
-// ExternalToolNames returns the names this project's pool registered from
-// outside the builtin catalog: external MCP servers (pooled as
-// <slugified server>_<tool>) and MCP relay instances. Their results are
-// third-party content.
+// ExternalToolNames returns the names in the project's pool that came from
+// third-party registrations: external MCP servers (pooled as
+// <slugified server>_<tool>, or a collision alias) and MCP relay instances.
+// Their results are third-party content.
 //
 // Callers use this as fencing provenance (issue #1142, review of #1144). It is
 // the set recorded at registration rather than a subtraction over the pooled
@@ -1083,7 +1270,10 @@ func (tp *ToolPool) ToolNames(projectID string) []string {
 // "complete" produces "work_complete", the name of a trusted runtime tool.
 // Provenance cannot be spoofed by a server picking its tool names; a name
 // comparison can, and so can a subtraction, which reads an external tool whose
-// name collides with an enabled builtin as ours.
+// name collides with an enabled builtin as ours. The registration half of the
+// same collision is closed in registerExternalTool / registerRelayTool, which
+// alias the third-party name instead of overwriting the existing definition
+// (issue #1147).
 //
 // Returns nil when the project has no external tools, which leaves the fence's
 // predicate on the catalog and therefore failing closed for anything it does not

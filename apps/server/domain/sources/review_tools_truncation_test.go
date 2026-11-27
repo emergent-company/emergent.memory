@@ -951,3 +951,119 @@ func TestListOffsetIsValidated(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "past the last of 1 changed files")
 }
+
+// TestFileListMarksCutPathAndCarriesExactName pins the oversized-path escape: a
+// path is cut at maxListedPathBytes for the text, but the line says so with … and
+// the exact name is still carried in structuredContent instead of being lost.
+func TestFileListMarksCutPathAndCarriesExactName(t *testing.T) {
+	head := truncationHead
+	longName := strings.Repeat("deep-directory/", 60) + "file.go" // well over 512 bytes
+	api := newDiffReviewAPI(t, head, []map[string]any{
+		{"filename": longName, "status": "modified", "additions": 1, "deletions": 0, "patch": "@@ -1 +1 @@\n-a\n+b"},
+		{"filename": "small.go", "status": "modified", "additions": 1, "deletions": 0, "patch": "@@ -1 +1 @@\n-a\n+b"},
+	})
+	client := api.client()
+	h := &ReviewToolHandler{}
+	ctx := mcp.ContextWithNewToolResultCache(context.Background())
+
+	res, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", nil, prDiffArgs(head, map[string]any{"list_files": true}))
+	require.NoError(t, err)
+	text := res.Content[0].Text
+	require.Contains(t, text, "…", "a path cut for the listing must be marked")
+	require.NotContains(t, text, longName, "the text line is bounded, not the whole path")
+
+	exact, ok := res.StructuredContent["exactPaths"].(map[string]string)
+	require.True(t, ok, "the exact name of a cut entry must survive somewhere: %#v", res.StructuredContent["exactPaths"])
+	require.Equal(t, longName, exact["1"])
+}
+
+// TestFileListRejectsEmptyFilesList pins that files: [] does not silently mean
+// "no selection" when the caller also asked for a listing.
+func TestFileListRejectsEmptyFilesList(t *testing.T) {
+	head := truncationHead
+	api := newDiffReviewAPI(t, head, []map[string]any{
+		{"filename": "small.go", "status": "modified", "additions": 1, "deletions": 1, "patch": "@@ -1 +1 @@\n-a\n+b"},
+	})
+	client := api.client()
+	h := &ReviewToolHandler{}
+	ctx := mcp.ContextWithNewToolResultCache(context.Background())
+
+	for _, files := range []any{[]any{}, []string{}} {
+		_, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", nil,
+			prDiffArgs(head, map[string]any{"list_files": true, "files": files}))
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "list_files cannot be combined")
+	}
+}
+
+// TestHintNamesOnlyBlameShorteningForCutNames pins the trailer wording: omitting
+// names past the display limit is not the same as shortening one, so the trailer
+// must not claim that a shown name is cut when none was.
+func TestHintNamesOnlyBlameShorteningForCutNames(t *testing.T) {
+	names := make([]string, 0, 9)
+	for i := 0; i < 9; i++ {
+		names = append(names, fmt.Sprintf("pkg/file_%d.go", i))
+	}
+	out, shortened := hintFileNames(names)
+	require.False(t, shortened, "omitted names are counted, not shortened")
+	require.Contains(t, out, "… 1 more")
+
+	rendered := diffTruncationHint(&diffRender{truncated: true, truncatedFiles: names})
+	require.NotContains(t, rendered, "A name above is shortened")
+
+	out, shortened = hintFileNames([]string{strings.Repeat("a", 200) + ".go"})
+	require.True(t, shortened)
+	require.Contains(t, out, "…")
+	rendered = diffTruncationHint(&diffRender{truncated: true, truncatedFiles: []string{strings.Repeat("a", 200) + ".go"}})
+	require.Contains(t, rendered, "A name above is shortened")
+	require.Contains(t, rendered, "structuredContent.exactPaths")
+	require.NotContains(t, rendered, "the listing returns it exactly")
+}
+
+// TestListingUnderATinyBoundRefusesInsteadOfLooping pins the no-progress guard:
+// when the configured bound cannot fit one entry, the resume line must not name
+// the offset the page started from.
+func TestListingUnderATinyBoundRefusesInsteadOfLooping(t *testing.T) {
+	head := truncationHead
+	api := newDiffReviewAPI(t, head, []map[string]any{
+		{"filename": "small.go", "status": "modified", "additions": 1, "deletions": 1, "patch": "@@ -1 +1 @@\n-a\n+b"},
+		{"filename": "other.go", "status": "modified", "additions": 1, "deletions": 1, "patch": "@@ -1 +1 @@\n-a\n+b"},
+	})
+	client := api.client()
+	h := &ReviewToolHandler{maxResultBytes: 200}
+	ctx := mcp.ContextWithNewToolResultCache(context.Background())
+
+	_, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", nil, prDiffArgs(head, map[string]any{"list_files": true}))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cannot fit one changed-file listing entry")
+}
+
+// TestTrailerRespectsTheDiffCapWhenTheBoundIsWider pins that a configured
+// per-result bound above maxDiffBytes does not let the truncation trailer push
+// the diff text past maxDiffBytes.
+func TestTrailerRespectsTheDiffCapWhenTheBoundIsWider(t *testing.T) {
+	head := truncationHead
+	big := strings.Repeat("+line of the large fixture used to fill the payload\n", 300)
+	files := make([]map[string]any, 0, 40)
+	for i := 0; i < 40; i++ {
+		files = append(files, map[string]any{
+			"filename": fmt.Sprintf("pkg/big_%02d.go", i),
+			"status":   "modified", "additions": 300, "deletions": 0,
+			"patch": big,
+		})
+	}
+	api := newDiffReviewAPI(t, head, files)
+	client := api.client()
+	h := &ReviewToolHandler{maxResultBytes: maxDiffBytes + 1000}
+	ctx := mcp.ContextWithNewToolResultCache(context.Background())
+
+	res, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", nil, prDiffArgs(head, nil))
+	require.NoError(t, err)
+	text := res.Content[0].Text
+	require.Contains(t, text, "the payload above is incomplete")
+	require.LessOrEqual(t, len(text), maxDiffBytes, "the trailer must be reserved under the diff cap even when the executor bound is wider")
+
+	raw, err := json.Marshal(res)
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(raw), maxDiffBytes+1000)
+}

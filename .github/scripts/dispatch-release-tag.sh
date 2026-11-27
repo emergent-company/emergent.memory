@@ -104,8 +104,10 @@ while :; do
   fi
   if (( $(date +%s) >= deadline )); then
     # The merge is still in flight. It is already armed, so it will land; the
-    # scheduled release-tag-watchdog reconciles the tag after that. Failing here
-    # would report a problem with a merge that has not happened yet.
+    # scheduled `release-tag-watchdog.yml` reconciles the tag afterwards (it
+    # decides from the tag, `[skip release]` markers and the `auto-tag` run
+    # history, and fails loudly rather than re-dispatching forever). Failing
+    # here would report a problem with a merge that has not happened yet.
     notice "PR #${PR} was still ${state} after ${WAIT}s; the merge is armed, so the scheduled release-tag-watchdog will reconcile the tag."
     exit 0
   fi

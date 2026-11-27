@@ -892,3 +892,263 @@ func TestMergeBranchSameEntityReExtractionCollapsesCanonical(t *testing.T) {
 	require.NotNil(t, mergedTo, "branch source must be stamped merged_to")
 	require.Equal(t, mainCanonical, *mergedTo, "branch source must point at main's canonical")
 }
+
+// TestMergeBranchExactKeyIdenticalDuplicateMintsNoVersion pins the cheapest
+// exact-key same-entity case: the re-extraction produced identical content and
+// name. classifySameEntity reports fast_forward (the cross-canonical mapping
+// still has to be recorded), but applyMerge must absorb the duplicate without
+// minting a redundant version on the target — and the branch must still close.
+func TestMergeBranchExactKeyIdenticalDuplicateMintsNoVersion(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "integration test requires database")
+	}
+	ctx := context.Background()
+
+	tdb := testdb.SetupTestDBOrFail(t, ctx, "graph_exact_key_identical")
+	t.Cleanup(tdb.Close)
+	db := tdb.GetDB()
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg := &config.Config{}
+	cfg.Graph.MaxListLimit = 100_000
+	repo := graph.NewRepository(db, log, cfg)
+	svc := graph.NewService(repo, log, nil, nil, nil, nil, nil, graph.NoopEventSink{}, branches.NewStore(db), nil)
+
+	orgID := uuid.NewString()
+	require.NoError(t, testutil.CreateTestOrganization(ctx, db, orgID, "Exact Identical Org"))
+	projectID := uuid.NewString()
+	require.NoError(t, testutil.CreateTestProject(ctx, db, testutil.TestProject{
+		ID: projectID, OrgID: orgID, Name: "Exact Identical Project",
+	}, testutil.AdminUser.ID))
+	pid := uuid.MustParse(projectID)
+
+	name := "Central Perk"
+	props := map[string]any{"name": "Central Perk"}
+	target, err := svc.Create(ctx, pid, &graph.CreateGraphObjectRequest{
+		Type: "Place", Key: strPtr("central-perk"), Name: &name, Properties: props,
+	}, nil)
+	require.NoError(t, err)
+
+	sourceBranch := &graph.Branch{ID: uuid.New(), ProjectID: pid, Name: "identical-src"}
+	require.NoError(t, repo.CreateBranch(ctx, sourceBranch))
+	src, err := svc.Create(ctx, pid, &graph.CreateGraphObjectRequest{
+		Type: "Place", Key: strPtr("central-perk"), Name: &name,
+		BranchID: &sourceBranch.ID, Properties: props,
+	}, nil)
+	require.NoError(t, err)
+
+	resp, err := svc.MergeBranch(ctx, pid, nil, &graph.BranchMergeRequest{
+		SourceBranchID: sourceBranch.ID, Execute: true, Policy: "partial",
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, 0, resp.AddedCount, "an exact-key duplicate must not be added as a new entity")
+	require.Equal(t, 0, resp.SimilarCount, "exact-key identity must not be deferred to similarity")
+	require.Equal(t, 1, resp.FastForwardCount, "an exact-key duplicate is classified fast_forward")
+	require.Equal(t, 0, resp.LeftForReviewCount, "an identical duplicate must not wait for review")
+	require.NotNil(t, resp.AppliedObjects)
+	require.Equal(t, 0, *resp.AppliedObjects, "an identical duplicate writes no new version")
+
+	var status string
+	for _, o := range resp.Objects {
+		if o.CanonicalID == src.CanonicalID {
+			status = o.Status
+		}
+	}
+	require.Equal(t, "fast_forward", status, "the duplicate must be classified against the existing entity")
+
+	// The main graph still has exactly one head for the entity, on the ORIGINAL
+	// canonical and at version 1: no redundant version was minted.
+	var mainVersion int
+	var mainCanonical uuid.UUID
+	require.NoError(t, db.NewRaw(`
+		SELECT version, canonical_id FROM kb.graph_objects
+		WHERE project_id = ? AND key = 'central-perk' AND branch_id IS NULL AND supersedes_id IS NULL`,
+		pid).Scan(ctx, &mainVersion, &mainCanonical))
+	require.Equal(t, target.CanonicalID, mainCanonical)
+	require.Equal(t, 1, mainVersion, "an identical duplicate must not write another version")
+
+	// The source row is still recorded in the merge ledger, and the branch closes.
+	var mergedTo *uuid.UUID
+	require.NoError(t, db.NewRaw(`
+		SELECT merged_to_canonical_id FROM kb.graph_objects
+		WHERE project_id = ? AND branch_id = ? AND canonical_id = ? AND supersedes_id IS NULL`,
+		pid, sourceBranch.ID, src.CanonicalID).Scan(ctx, &mergedTo))
+	require.NotNil(t, mergedTo, "the duplicate source must be stamped merged_to")
+	require.Equal(t, target.CanonicalID, *mergedTo)
+
+	var mergedAt *time.Time
+	require.NoError(t, db.NewRaw(`SELECT merged_at FROM kb.branches WHERE id = ?`, sourceBranch.ID).Scan(ctx, &mergedAt))
+	require.NotNil(t, mergedAt, "absorbing an identical duplicate must close the branch")
+}
+
+// TestMergeBranchExactKeyFastForwardUnionsLabels pins the fast-forward label
+// contract for a same-entity re-extraction: the merge writes onto the existing
+// target entity, so it must keep the target's curated labels while adding the
+// source's — a re-extraction must never drop a human-curated label. (An
+// ordinary same-canonical fast-forward keeps replace semantics so explicit
+// branch label edits still apply.)
+func TestMergeBranchExactKeyFastForwardUnionsLabels(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "integration test requires database")
+	}
+	ctx := context.Background()
+
+	tdb := testdb.SetupTestDBOrFail(t, ctx, "graph_exact_key_labels")
+	t.Cleanup(tdb.Close)
+	db := tdb.GetDB()
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg := &config.Config{}
+	cfg.Graph.MaxListLimit = 100_000
+	repo := graph.NewRepository(db, log, cfg)
+	svc := graph.NewService(repo, log, nil, nil, nil, nil, nil, graph.NoopEventSink{}, branches.NewStore(db), nil)
+
+	orgID := uuid.NewString()
+	require.NoError(t, testutil.CreateTestOrganization(ctx, db, orgID, "Exact Labels Org"))
+	projectID := uuid.NewString()
+	require.NoError(t, testutil.CreateTestProject(ctx, db, testutil.TestProject{
+		ID: projectID, OrgID: orgID, Name: "Exact Labels Project",
+	}, testutil.AdminUser.ID))
+	pid := uuid.MustParse(projectID)
+
+	name := "Barry Farber"
+	target, err := svc.Create(ctx, pid, &graph.CreateGraphObjectRequest{
+		Type: "Person", Key: strPtr("barry-farber"), Name: &name,
+		Labels:     []string{"main-label"},
+		Properties: map[string]any{"name": "Barry Farber"},
+	}, nil)
+	require.NoError(t, err)
+
+	// The re-extraction carries a distinct label and an additive property, so it
+	// is a genuine fast-forward — not the identical-duplicate absorb path.
+	sourceBranch := &graph.Branch{ID: uuid.New(), ProjectID: pid, Name: "labels-src"}
+	require.NoError(t, repo.CreateBranch(ctx, sourceBranch))
+	src, err := svc.Create(ctx, pid, &graph.CreateGraphObjectRequest{
+		Type: "Person", Key: strPtr("barry-farber"), Name: &name,
+		BranchID:   &sourceBranch.ID,
+		Labels:     []string{"source-label"},
+		Properties: map[string]any{"name": "Barry Farber", "occupation": "radio host"},
+	}, nil)
+	require.NoError(t, err)
+
+	resp, err := svc.MergeBranch(ctx, pid, nil, &graph.BranchMergeRequest{
+		SourceBranchID: sourceBranch.ID, Execute: true, Policy: "partial",
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, 1, resp.FastForwardCount)
+	require.Equal(t, 0, resp.LeftForReviewCount)
+	require.Equal(t, 0, resp.AddedCount)
+	require.Equal(t, 0, resp.SimilarCount)
+
+	var mainVersion int
+	var mainCanonical uuid.UUID
+	var mainLabels string
+	var mainProps map[string]any
+	require.NoError(t, db.NewRaw(`
+		SELECT version, canonical_id, labels::text AS labels, properties
+		FROM kb.graph_objects
+		WHERE project_id = ? AND key = 'barry-farber' AND branch_id IS NULL AND supersedes_id IS NULL`,
+		pid).Scan(ctx, &mainVersion, &mainCanonical, &mainLabels, &mainProps))
+	require.Equal(t, target.CanonicalID, mainCanonical, "the existing main entity must be updated, not replaced")
+	require.Equal(t, 2, mainVersion, "a genuine fast-forward mints a new version")
+	require.Equal(t, "radio host", mainProps["occupation"])
+	require.Contains(t, mainLabels, "main-label", "the target's curated label must survive a re-extraction")
+	require.Contains(t, mainLabels, "source-label", "the source's label must be unioned in")
+
+	var mergedTo *uuid.UUID
+	require.NoError(t, db.NewRaw(`
+		SELECT merged_to_canonical_id FROM kb.graph_objects
+		WHERE project_id = ? AND branch_id = ? AND canonical_id = ? AND supersedes_id IS NULL`,
+		pid, sourceBranch.ID, src.CanonicalID).Scan(ctx, &mergedTo))
+	require.NotNil(t, mergedTo)
+	require.Equal(t, target.CanonicalID, *mergedTo)
+}
+
+// TestMergeBranchExactKeyConflictNotRecordedMerged keeps the safety valve: an
+// exact-key re-extraction whose shared property values genuinely disagree is a
+// conflict. Under "partial" it must stay on the branch for a human, the target
+// must keep its single version, and the source row must NOT be recorded as
+// merged.
+func TestMergeBranchExactKeyConflictNotRecordedMerged(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "integration test requires database")
+	}
+	ctx := context.Background()
+
+	tdb := testdb.SetupTestDBOrFail(t, ctx, "graph_exact_key_conflict_unmerged")
+	t.Cleanup(tdb.Close)
+	db := tdb.GetDB()
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg := &config.Config{}
+	cfg.Graph.MaxListLimit = 100_000
+	repo := graph.NewRepository(db, log, cfg)
+	svc := graph.NewService(repo, log, nil, nil, nil, nil, nil, graph.NoopEventSink{}, branches.NewStore(db), nil)
+
+	orgID := uuid.NewString()
+	require.NoError(t, testutil.CreateTestOrganization(ctx, db, orgID, "Exact Conflict Org"))
+	projectID := uuid.NewString()
+	require.NoError(t, testutil.CreateTestProject(ctx, db, testutil.TestProject{
+		ID: projectID, OrgID: orgID, Name: "Exact Conflict Project",
+	}, testutil.AdminUser.ID))
+	pid := uuid.MustParse(projectID)
+
+	name := "Chandler Bing"
+	target, err := svc.Create(ctx, pid, &graph.CreateGraphObjectRequest{
+		Type: "Person", Key: strPtr("chandler-bing"), Name: &name,
+		Properties: map[string]any{"name": "Chandler Bing", "job": "statistician"},
+	}, nil)
+	require.NoError(t, err)
+
+	sourceBranch := &graph.Branch{ID: uuid.New(), ProjectID: pid, Name: "conflict-src"}
+	require.NoError(t, repo.CreateBranch(ctx, sourceBranch))
+	src, err := svc.Create(ctx, pid, &graph.CreateGraphObjectRequest{
+		Type: "Person", Key: strPtr("chandler-bing"), Name: &name,
+		BranchID:   &sourceBranch.ID,
+		Properties: map[string]any{"name": "Chandler Bing", "job": "advertising copywriter"},
+	}, nil)
+	require.NoError(t, err)
+
+	resp, err := svc.MergeBranch(ctx, pid, nil, &graph.BranchMergeRequest{
+		SourceBranchID: sourceBranch.ID, Execute: true, Policy: "partial",
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, 1, resp.ConflictCount)
+	require.Equal(t, 1, resp.LeftForReviewCount)
+	require.NotNil(t, resp.AppliedObjects)
+	require.Equal(t, 0, *resp.AppliedObjects)
+
+	var status, resolution string
+	for _, o := range resp.Objects {
+		if o.CanonicalID == src.CanonicalID {
+			status, resolution = o.Status, o.Resolution
+		}
+	}
+	require.Equal(t, "conflict", status)
+	require.Equal(t, "skipped", resolution)
+
+	// The target keeps its single version.
+	var mainVersion int
+	var mainCanonical uuid.UUID
+	require.NoError(t, db.NewRaw(`
+		SELECT version, canonical_id FROM kb.graph_objects
+		WHERE project_id = ? AND key = 'chandler-bing' AND branch_id IS NULL AND supersedes_id IS NULL`,
+		pid).Scan(ctx, &mainVersion, &mainCanonical))
+	require.Equal(t, target.CanonicalID, mainCanonical)
+	require.Equal(t, 1, mainVersion, "an unresolved conflict must not write a version")
+
+	// The source row is NOT recorded as merged, and the branch stays open.
+	var mergedTo *uuid.UUID
+	require.NoError(t, db.NewRaw(`
+		SELECT merged_to_canonical_id FROM kb.graph_objects
+		WHERE project_id = ? AND branch_id = ? AND canonical_id = ? AND supersedes_id IS NULL`,
+		pid, sourceBranch.ID, src.CanonicalID).Scan(ctx, &mergedTo))
+	require.Nil(t, mergedTo, "an unresolved conflict must not be recorded as merged")
+
+	var mergedAt *time.Time
+	require.NoError(t, db.NewRaw(`SELECT merged_at FROM kb.branches WHERE id = ?`, sourceBranch.ID).Scan(ctx, &mergedAt))
+	require.Nil(t, mergedAt, "an unresolved conflict must keep the branch open")
+}
