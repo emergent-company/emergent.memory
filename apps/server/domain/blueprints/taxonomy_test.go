@@ -23,12 +23,12 @@ func TestListBuiltinObjectTypesCatalogOnly(t *testing.T) {
 	}
 	// Canonical catalog concepts are present.
 	for _, want := range []string{
-		"Thing", "Person", "Organization", "Place", "Event", "CreativeWork", "TVSeries", "Movie",
+		"Thing", "Person", "Organization", "Place", "Event", "CreativeWork", "TVSeries", "Movie", "Episode",
 	} {
 		require.Contains(t, byName, want, "catalog taxonomy must include %s", want)
 	}
 	// The retired tv-movies pack contributed these; they must no longer appear.
-	for _, gone := range []string{"Show", "Season", "Episode", "Character", "Actor", "Occupation", "Location"} {
+	for _, gone := range []string{"Show", "Season", "Character", "Actor", "Occupation", "Location"} {
 		require.NotContains(t, byName, gone, "retired tv-movies type %s must not be in the taxonomy", gone)
 	}
 	// Platform-internal packs define object types too, but they are not a
