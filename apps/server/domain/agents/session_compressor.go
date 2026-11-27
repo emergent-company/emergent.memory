@@ -82,8 +82,9 @@ const (
 	// pathological session cannot push the summariser request past its own
 	// context window — which would make compaction fail and silently keep the
 	// oversized session. The body is filled oldest-first so goals and original
-	// instructions survive; anything elided is still in the artefact index and
-	// in the durable run transcript.
+	// instructions survive. Elided text is not recovered elsewhere in this
+	// prompt; the durable run transcript (kb.agent_run_messages /
+	// kb.agent_run_tool_calls) still holds it.
 	compressorConversationMaxBytes = 48 << 10
 )
 
@@ -478,8 +479,9 @@ func conversationRole(ev *session.Event) string {
 
 // partitionForCompaction splits one event snapshot into the events to drop and
 // the tail to retain. numKeep is the number of trailing events the token trim
-// wants to keep; a numKeep of zero, negative, or larger than the list keeps
-// everything and drops nothing, which compressSession treats as "no change".
+// wants to keep. numKeep <= 0 drops everything and retains nothing; numKeep >=
+// len(events) drops nothing and retains everything (compressSession then treats
+// the empty dropped set as "no change").
 //
 // Both halves come from the same snapshot on purpose: deriving the retained
 // half from a second read could put a boundary event (same timestamp, no
