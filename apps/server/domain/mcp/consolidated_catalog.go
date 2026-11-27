@@ -59,11 +59,15 @@ var consolidatedFamilies = []consolidatedFamily{
 	{
 		Name:  "project",
 		Scope: "graph:read",
-		Description: "Read the current project. action=get returns the project info document (purpose, goals, audience); " +
-			"action=briefing returns a task briefing with core memories, semantically matched memories and discovered conventions.",
+		Description: "Read the current project and choose which project this MCP session targets. action=get returns the project info document (purpose, goals, audience); " +
+			"action=briefing returns a task briefing with core memories, semantically matched memories and discovered conventions; " +
+			"action=list lists the projects the signed-in user belongs to and marks the active one; " +
+			"action=use switches this session's active project to project_id (membership is checked on every switch and re-checked on every later call).",
 		Actions: []consolidatedAction{
 			{Action: "get", Handler: "project-get", Description: "project info document"},
 			{Action: "briefing", Handler: "project-briefing", Description: "task briefing with relevant memories"},
+			{Action: "list", Handler: "project-list", Description: "projects the signed-in user belongs to"},
+			{Action: "use", Handler: "project-use", Description: "switch this session's active project"},
 		},
 	},
 	{

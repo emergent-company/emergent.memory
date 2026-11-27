@@ -66,6 +66,11 @@ type MCPSession struct {
 	CreatedAt    time.Time
 	LastAccessAt time.Time
 
+	// ProjectSwitched is true once the client explicitly selected the session's
+	// project — via initialize project_id or `project` action=use. It gates write
+	// tools when MCP_REQUIRE_PROJECT_SWITCH is enabled (issue #1163).
+	ProjectSwitched bool
+
 	// persisted reports whether this value came from (or has been written to)
 	// the session map. A snapshot read from the map carries persisted=true, so
 	// putSession can refuse to resurrect a session a concurrent DELETE removed;
@@ -531,8 +536,14 @@ func (h *StreamableHTTPHandler) sessionForCaller(sessionID string, user *auth.Au
 //     never resume another's session (or a narrower token inherit a broader
 //     session);
 //   - project: a session initialized for a project may only be used while
-//     addressing that project. A session with no project keeps resolving the
-//     project from the caller, as before.
+//     addressing that project, unless the client explicitly switched it
+//     (issue #1163). A switch is authorized against org membership by
+//     authorizeProjectClaim and persisted, and every executing request
+//     (tools/call, resources/read, prompts/get) re-runs that same membership
+//     check for the session's project — so a switched session intentionally
+//     differs from the caller's default project without weakening the gate. A
+//     session with no project keeps resolving the project from the caller, as
+//     before.
 //
 // The operator transport resolves no project context, so it enforces identity
 // and credential only. A nil session or user fails closed.
@@ -546,7 +557,7 @@ func (h *StreamableHTTPHandler) authorizeSession(session *MCPSession, user *auth
 	if session.APITokenID != user.APITokenID && (session.APITokenID != "" || user.APITokenID != "") {
 		return errSessionForbidden
 	}
-	if !h.admin && session.ProjectID != "" && user.ProjectID != "" && session.ProjectID != user.ProjectID {
+	if !h.admin && !session.ProjectSwitched && session.ProjectID != "" && user.ProjectID != "" && session.ProjectID != user.ProjectID {
 		return errSessionForbidden
 	}
 	return nil
@@ -689,6 +700,11 @@ func (h *StreamableHTTPHandler) handleInitialize(c echo.Context, req *Request, s
 	session.Initialized = true
 	session.ProtocolVersion = params.ProtocolVersion
 	session.ProjectID = candidate
+	if params.ProjectID != "" {
+		// An explicit initialize claim counts as an explicit project selection for
+		// the require-switch write gate; a header/personal default does not.
+		session.ProjectSwitched = true
+	}
 	session.ClientName = sanitizeClientName(params.ClientInfo.Name)
 
 	h.putSession(session)
@@ -840,9 +856,29 @@ func (h *StreamableHTTPHandler) handleToolsCall(c echo.Context, req *Request, se
 			"Tool not allowed: "+params.Name, nil)
 	}
 
+	// Session project control (issue #1163): list/use mutate the session, so the
+	// transport handles them before dispatch. The switch is authorized by the
+	// same check initialize performs.
+	if action, ok := projectSessionAction(params.Name, params.Arguments); ok {
+		return h.handleProjectSessionAction(c, req, session, user, action, params.Arguments)
+	}
+
 	projectID := session.ProjectID
 	if projectID == "" {
 		projectID = user.ProjectID
+	}
+
+	// Re-check the session's project on every call, not just at initialize
+	// (issue #1163): a user removed from the project's organization must lose
+	// access to an already-configured session immediately.
+	if err := h.svc.authorizeProjectClaim(c.Request().Context(), user, projectID); err != nil {
+		return NewErrorResponse(req.ID, ErrCodeForbidden, "Project access denied", nil)
+	}
+
+	// Optional explicit-switch requirement: refuse write tools until the client
+	// has selected the session's project with `project` action=use.
+	if h.svc.ProjectSwitchRequired(c.Request().Context(), projectID, session.ProjectSwitched, params.Name, params.Arguments) {
+		return NewErrorResponse(req.ID, ErrCodeForbidden, ProjectSwitchRequiredMessage(), nil)
 	}
 
 	if projectID == "" && requiresProject(params.Name, params.Arguments) {
@@ -872,6 +908,58 @@ func (h *StreamableHTTPHandler) handleToolsCall(c echo.Context, req *Request, se
 	}
 
 	return NewSuccessResponse(req.ID, result)
+}
+
+// handleProjectSessionAction performs `project` action=list or action=use on
+// this session. It returns the JSON-RPC response; the caller always returns it.
+func (h *StreamableHTTPHandler) handleProjectSessionAction(c echo.Context, req *Request, session *MCPSession, user *auth.AuthUser, action string, args map[string]any) *Response {
+	// The service resolves the caller from the standard context (the echo context
+	// carries it for auth.MustGetUser only), so stamp it for the project-list query.
+	ctx := auth.ContextWithUser(c.Request().Context(), user)
+	switch action {
+	case projectActionList:
+		// session is this request's snapshot, so its project is the active one
+		// (a switch persisted by an earlier request is already in it).
+		activeProjectID := session.ProjectID
+		result, err := h.svc.executeListMemberProjects(ctx, activeProjectID)
+		if err != nil {
+			return toolExecutionErrorResponse(req.ID, err)
+		}
+		return NewSuccessResponse(req.ID, result)
+	case projectActionUse:
+		projectID, err := projectUseProjectID(args)
+		if err != nil {
+			return toolExecutionErrorResponse(req.ID, err)
+		}
+		// Same authorization contract as initialize: project-bound tokens stay
+		// bound (except user-scoped OAuth connectors) and session callers must be
+		// org members of the claimed project.
+		if err := h.svc.authorizeProjectClaim(ctx, user, projectID); err != nil {
+			h.log.Info("MCP project switch denied",
+				slog.String("session_id", session.ID),
+				slog.String("project_id", projectID),
+				logger.Error(err),
+			)
+			return NewErrorResponse(req.ID, ErrCodeForbidden, "Project access denied", nil)
+		}
+		// The session handed to this request is a snapshot; persist the switch so
+		// later requests on this session id read it (see putSession). The
+		// authorization above already ran, so nothing is mutated on a refusal.
+		session.ProjectID = projectID
+		session.ProjectSwitched = true
+		h.putSession(session)
+		h.log.Info("MCP project switched",
+			slog.String("session_id", session.ID),
+			slog.String("project_id", projectID),
+			slog.String("user_id", user.ID),
+		)
+		result, err := h.svc.projectUseResult(ctx, projectID)
+		if err != nil {
+			return toolExecutionErrorResponse(req.ID, err)
+		}
+		return NewSuccessResponse(req.ID, result)
+	}
+	return NewErrorResponse(req.ID, ErrCodeInvalidParams, "Unknown project action: "+action, nil)
 }
 
 // handleAdminToolsCall executes an operator tool on the admin endpoint. The
@@ -999,6 +1087,9 @@ func (h *StreamableHTTPHandler) handleResourcesRead(c echo.Context, req *Request
 	if projectID == "" {
 		projectID = user.ProjectID
 	}
+	if err := h.svc.authorizeProjectClaim(c.Request().Context(), user, projectID); err != nil {
+		return NewErrorResponse(req.ID, ErrCodeForbidden, "Project access denied", nil)
+	}
 	result, err := h.svc.ReadResource(c.Request().Context(), projectID, params.URI)
 	if err != nil {
 		h.log.Error("resource read failed",
@@ -1055,6 +1146,9 @@ func (h *StreamableHTTPHandler) handlePromptsGet(c echo.Context, req *Request, s
 	projectID := session.ProjectID
 	if projectID == "" {
 		projectID = user.ProjectID
+	}
+	if err := h.svc.authorizeProjectClaim(c.Request().Context(), user, projectID); err != nil {
+		return NewErrorResponse(req.ID, ErrCodeForbidden, "Project access denied", nil)
 	}
 	result, err := h.svc.GetPrompt(c.Request().Context(), projectID, params.Name, params.Arguments)
 	if err != nil {

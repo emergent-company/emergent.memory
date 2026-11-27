@@ -25,6 +25,8 @@ var internalToolNames = map[string]struct{}{
 
 	// ── Graph / entity ─────────────────────────────────────────────────────
 	"project-get":          {},
+	"project-list":         {},
+	"project-use":          {},
 	"project-create":       {},
 	"project-update":       {},
 	"project-briefing":     {},

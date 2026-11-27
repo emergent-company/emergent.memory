@@ -98,6 +98,10 @@ type GrantDTO struct {
 	CreatedAt   time.Time  `json:"created_at"`
 	LastUsedAt  *time.Time `json:"last_used_at"`
 	RevokedAt   *time.Time `json:"revoked_at"`
+	// ProjectScope is the consent model the grant was approved under (#1163):
+	// "project" (bound to project_id) or "account" (the app may switch to any
+	// project the user belongs to). Older grants report "project".
+	ProjectScope string `json:"project_scope"`
 }
 
 // OAuthErrorResponse is the RFC 6749 §5.2 (and RFC 7591) error body.

@@ -204,7 +204,7 @@ func (r *Repository) ListGrantsByUser(ctx context.Context, userID string) ([]gra
 	var rows []grantRow
 	err := r.db.NewSelect().
 		TableExpr("core.oauth_grants AS g").
-		ColumnExpr("g.id, g.client_id, g.user_id, g.project_id, g.scopes, g.token_id, g.created_at").
+		ColumnExpr("g.id, g.client_id, g.user_id, g.project_id, g.scopes, g.token_id, g.created_at, g.project_scope").
 		ColumnExpr("COALESCE(tok.last_used_at, g.last_used_at) AS last_used_at").
 		ColumnExpr("g.revoked_at").
 		ColumnExpr("COALESCE(c.client_name, '') AS client_name").

@@ -92,7 +92,41 @@ at the origin (`/.well-known/oauth-protected-resource`). Two details matter to
 strict clients: `resource` always equals the URL the client addressed (RFC 9728
 §3.3), and `scopes_supported` lists the scopes the authorization server
 understands. Registered clients are public (PKCE, no client secret), and an
-OAuth-issued token is an ordinary non-expiring project API token.
+OAuth-issued token is an ordinary non-expiring project API token. Its grant
+records the signed-in user and the consent model the user approved; an
+account-wide grant is what lets an MCP session switch projects (see below).
+
+### Session project selection
+
+One connector can serve every project a user belongs to. The `project` tool
+carries two session actions besides the project-info reads:
+
+| Call | Effect |
+|---|---|
+| `project` `{ "action": "list" }` | Lists the projects the signed-in user belongs to, marking the session's active project. |
+| `project` `{ "action": "use", "project_id": "<uuid>" }` | Makes that project active for the rest of the session. |
+
+A switch is authorized exactly like `initialize`: the project's owning
+organization is resolved server-side and checked against the caller's
+`kb.organization_memberships`; a non-member is refused with `-32002`. The check
+runs again on every later tool call, so removing a user from an organization
+also revokes an already-switched session. A denied switch leaves the previous
+project in place.
+
+Project-bound API tokens stay bound to their project. A token minted by the
+built-in OAuth authorization server is a user-scoped connector credential only
+when its grant was approved under account-wide consent
+(`core.oauth_grants.project_scope = 'account'`): the consent flow picks the
+starting project, and the session may then switch to any project the signed-in
+user belongs to. Grants created before that consent model existed are
+`project`-scoped and stay bound to their project until the user re-consents.
+
+Set `MCP_REQUIRE_PROJECT_SWITCH=true` to make the transports refuse write tools
+until the client has explicitly selected the project with `project`
+`action=use` (or an initialize `project_id`). Reads and the two project actions
+stay available, so an agent can inspect and switch before its first write. This
+closes the "agent silently wrote into whatever project the session defaulted
+to" failure mode; it is off by default.
 
 ## Protocol Methods
 

@@ -23,11 +23,16 @@ type oauthConsentData struct {
 }
 
 // OAuthConsentPage is the gateway-rendered consent screen for a third-party
-// app asking to write to one Memory project. It is intentionally a normal
-// signed-in page: the user can inspect the client, scopes, and project before
-// approving.
+// app asking to act on the signed-in user's Memory projects. It is
+// intentionally a normal signed-in page: the user can inspect the client,
+// scopes and starting project before approving.
+//
+// The token is user-scoped (#1163): the project picked here is the session's
+// starting project, and the app may switch the MCP session to any other project
+// the user belongs to. The copy says so — a consent screen that promised "this
+// project only" would understate the grant.
 templ OAuthConsentPage(data oauthConsentData) {
-	{{ description := data.ClientName + " wants to connect to a Memory project on your behalf." }}
+	{{ description := data.ClientName + " wants to access your Memory projects on your behalf." }}
 	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Authorize application", data.ClientName)), "", data.ClientName, description, detailHeaderOpts{Margin: "mb-6"})
 
@@ -58,7 +63,7 @@ templ OAuthConsentPage(data oauthConsentData) {
 					<input type="hidden" name="scope" value={ data.Scope }/>
 
 					<label class="form-control w-full">
-						<span class="label-text mb-1 text-sm font-medium">Project</span>
+						<span class="label-text mb-1 text-sm font-medium">Starting project</span>
 						<select name="project_id" class="select w-full" required>
 							if len(data.Projects) == 0 {
 								<option value="">No projects you can write to</option>
@@ -68,7 +73,7 @@ templ OAuthConsentPage(data oauthConsentData) {
 							}
 						</select>
 						<span class="label-text-alt mt-1 text-base-content/50">
-							The app will be able to read and write objects in this project only.
+							The app starts in this project. It can switch to any other project you belong to during the connection, and its granted scopes apply there too.
 						</span>
 					</label>
 
@@ -100,17 +105,19 @@ templ OAuthConsentPage(data oauthConsentData) {
 	}
 }
 
-// scopeDescription turns an OAuth scope into a human sentence.
+// scopeDescription turns an OAuth scope into a human sentence. Scopes are
+// account-wide on a user-scoped token (#1163), so each one names the user's
+// projects rather than a single project.
 func scopeDescription(scope string) string {
 	switch scope {
 	case "graph:read":
-		return "Read objects in the project"
+		return "Read objects in your projects"
 	case "graph:write":
-		return "Create and update objects in the project"
+		return "Create and update objects in your projects"
 	case "schema:read":
-		return "Read the project's object types"
+		return "Read the object types of your projects"
 	case "projects:read":
-		return "See the project's name and metadata"
+		return "See the names and metadata of your projects"
 	case "chat:use":
 		return "Ask questions with Memory chat"
 	default:
@@ -143,10 +150,12 @@ templ connectedAppRevokeAction(id string) {
 }
 
 // ConnectedAppsPage lists the third-party applications the signed-in user has
-// authorized, with the project and scopes, and a revoke action.
+// authorized, with its starting project and scopes, and a revoke action. The
+// project is the *starting* project for an account-wide grant (#1163), so the
+// header must not call it the grant's boundary.
 templ ConnectedAppsPage(data connectedAppsData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Connected apps")), "", "Connected apps", "Applications you have authorized to access Memory. Each grant is limited to one project and the scopes shown; revoking it immediately invalidates its token.", detailHeaderOpts{Margin: "mb-6"})
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Connected apps")), "", "Connected apps", "Applications you have authorized to access Memory. A grant acts in its starting project, and may reach other projects you belong to if you approved account-wide access; revoking it immediately invalidates its token.", detailHeaderOpts{Margin: "mb-6"})
 
 		if data.Flash != "" {
 			@ui.Alert(ui.AlertProps{Type: ui.AlertSuccess, Style: ui.AlertStyleSoft, Message: data.Flash})
@@ -175,7 +184,11 @@ templ ConnectedAppsPage(data connectedAppsData) {
 								<div class="min-w-0">
 									<p class="font-medium">{ g.ClientName }</p>
 									@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5"}) {
-										{ g.ProjectName }
+										if g.ProjectScope == OAuthGrantScopeAccount {
+											Starting project: { g.ProjectName }
+										} else {
+											Project: { g.ProjectName }
+										}
 									}
 									@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5"}) {
 										Authorized { relTime(g.CreatedAt.Format("2006-01-02T15:04:05Z07:00")) }

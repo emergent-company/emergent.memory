@@ -170,6 +170,11 @@ func TestRepositoryOAuthStore(t *testing.T) {
 	require.Equal(t, "Integration Client", rows[0].ClientName)
 	require.Equal(t, "Test Project", rows[0].ProjectName)
 	require.Equal(t, []string{"graph:read", "projects:read"}, rows[0].Scopes)
+	// A grant created without an explicit consent model — every grant minted
+	// before account-wide consent existed — lands on the column default, which
+	// is the NON-widening model. This is the assertion that keeps #1163 from
+	// silently widening an already-issued grant.
+	require.Equal(t, OAuthGrantScopeProject, rows[0].ProjectScope)
 
 	byToken, err := repo.GetGrantByTokenIDAndClient(ctx, grant.TokenID, client.ClientID)
 	require.NoError(t, err)
@@ -254,6 +259,8 @@ func TestServiceExchangeWithRealToken(t *testing.T) {
 	require.Len(t, grants, 1)
 	require.Equal(t, client.ClientID, grants[0].ClientID)
 	require.Equal(t, []string{"graph:read", "projects:read"}, grants[0].Scopes)
+	require.Equal(t, OAuthGrantScopeAccount, grants[0].ProjectScope,
+		"the consent screen names the project as the starting project, so a new grant records account-wide consent")
 
 	// Replay is rejected against the real atomic consume.
 	_, err = svc.ExchangeCode(ctx, TokenRequest{
