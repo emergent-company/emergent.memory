@@ -87,7 +87,7 @@ func TestBuiltinSeeder_CreatesGlobals_Idempotent(t *testing.T) {
 	require.NoError(t, seeder.Seed(ctx))
 
 	// 5 bundled packs; no schema packs are seeded (they materialize on apply).
-	assertBlueprintCount(t, db, 6)
+	assertBlueprintCount(t, db, 5)
 	assertSchemaPackCount(t, db, 0)
 
 	// Every seeded blueprint is a global published builtin with a checksum.
@@ -106,7 +106,7 @@ func TestBuiltinSeeder_CreatesGlobals_Idempotent(t *testing.T) {
 		ORDER BY name
 	`).Scan(ctx, &rows)
 	require.NoError(t, err)
-	assert.Len(t, rows, 6)
+	assert.Len(t, rows, 5)
 	for _, r := range rows {
 		assert.Equal(t, StatusPublished, r.Status, "builtin blueprint %s must be published", r.Name)
 		assert.Equal(t, OriginBuiltin, r.Origin)
@@ -122,7 +122,7 @@ func TestBuiltinSeeder_CreatesGlobals_Idempotent(t *testing.T) {
 
 	// Re-run: idempotent.
 	require.NoError(t, seeder.Seed(ctx))
-	assertBlueprintCount(t, db, 6)
+	assertBlueprintCount(t, db, 5)
 	assertSchemaPackCount(t, db, 0)
 }
 

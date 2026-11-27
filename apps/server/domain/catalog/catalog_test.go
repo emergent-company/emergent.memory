@@ -333,9 +333,10 @@ func TestBatch2TypesAndFacets(t *testing.T) {
 			require.True(t, names[ty.Parent], "type %s has unresolved parent %s", ty.Name, ty.Parent)
 		}
 	}
-	// tv-movies owns these names; the catalog must not collide.
-	for _, forbidden := range []string{"Show", "Season", "Episode", "Character", "Actor", "Occupation", "Location"} {
-		require.False(t, names[forbidden], "catalog must not define tv-movies type %s", forbidden)
+	// The catalog is the sole common-entity taxonomy now that the tv-movies
+	// blueprint is retired, so it must define the canonical concepts itself.
+	for _, want := range []string{"Person", "Organization", "Place", "TVSeries", "CreativeWork"} {
+		require.True(t, names[want], "catalog must define canonical type %s", want)
 	}
 	got := List(cat, ListFilter{Limit: maxListLimit})
 	cats := map[string]bool{}

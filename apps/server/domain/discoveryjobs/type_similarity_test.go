@@ -73,11 +73,11 @@ func TestBuildTypeClassificationPromptDeterministic(t *testing.T) {
 	}
 }
 
-// TestBuildTypeClassificationPromptKeepsCharacterAndPersonDistinct pins the
-// prompt to the tv-movies taxonomy: Character (fictional) and Person (real) are
-// deliberately distinct, so the same-concept example must not cite them and the
-// prompt must call the distinction out. A match adopts the canonical schema, so
-// a bad example would collapse real people into fictional characters.
+// TestBuildTypeClassificationPromptKeepsCharacterAndPersonDistinct pins that
+// the prompt keeps Character (fictional) and Person (real) distinct: the
+// same-concept example must not cite them and the prompt must call the
+// distinction out. A match adopts the canonical schema, so a bad example would
+// collapse real people into fictional characters.
 func TestBuildTypeClassificationPromptKeepsCharacterAndPersonDistinct(t *testing.T) {
 	prompt := buildTypeClassificationPrompt(
 		[]DiscoveredType{{TypeName: "Character", Description: "a fictional persona"}},
