@@ -1,6 +1,8 @@
 package main
 
 import (
+	"strconv"
+
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
 	ui "github.com/emergent-company/go-daisy/components/ui"
@@ -43,10 +45,18 @@ templ SchemaCatalogPage(view *SchemaCatalogView, loadErr error) {
 				</form>
 
 				<div class="mb-5 flex flex-wrap items-center gap-2" data-testid="catalog-category-filter">
-					<a href={ templ.URL(catalogCategoryHref("", v.Query)) } class={ "badge badge-sm", templ.KV("badge-primary", v.Category == "") }>All</a>
+					{{ allVariant := ui.BadgeGhost
+					if v.Category == "" {
+						allVariant = ui.BadgePrimary
+					} }}
+					@ui.Badge(ui.BadgeProps{Label: "All", Href: catalogCategoryHref("", v.Query), Variant: allVariant, Size: ui.BadgeSizeSM})
 					if v.Catalog != nil {
 						for _, c := range v.Catalog.Categories {
-							<a href={ templ.URL(catalogCategoryHref(c.Key, v.Query)) } class={ "badge badge-sm", templ.KV("badge-primary", v.Category == c.Key) }>{ c.Key } <span class="opacity-60">({ c.Count })</span></a>
+							{{ variant := ui.BadgeGhost
+							if v.Category == c.Key {
+								variant = ui.BadgePrimary
+							} }}
+							@ui.Badge(ui.BadgeProps{Label: c.Key + " (" + strconv.Itoa(c.Count) + ")", Href: catalogCategoryHref(c.Key, v.Query), Variant: variant, Size: ui.BadgeSizeSM})
 						}
 					}
 				</div>
@@ -59,7 +69,7 @@ templ SchemaCatalogPage(view *SchemaCatalogView, loadErr error) {
 						Bordered:    true,
 					})
 				} else {
-					<p class="text-muted-faint mb-4 text-xs">{ countLabel(total, "type", "types") }</p>
+					<div class="mb-4">@ui.Badge(ui.BadgeProps{Label: countLabel(total, "type", "types"), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})</div>
 					<div class="flex flex-col gap-8" data-testid="catalog-groups">
 						for _, g := range v.Groups {
 							<section class="flex flex-col gap-3" data-testid="catalog-group" data-catalog-category={ g.Key }>
@@ -111,7 +121,9 @@ templ catalogTypeCard(t CatalogSummary, installed bool) {
 		if !installed {
 			<form method="post" action="/schema/catalog/install" class="shrink-0 self-start">
 				<input type="hidden" name="type" value={ t.Name }/>
-				<button type="submit" class="btn btn-primary btn-xs" data-testid="catalog-install">Install</button>
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonXS, Attrs: templ.Attributes{"data-testid": "catalog-install"}}) {
+					Install
+				}
 			</form>
 		}
 	</div>
@@ -187,7 +199,7 @@ templ SchemaCatalogTypePage(view *SchemaCatalogTypeView, loadErr error) {
 						<div class="flex flex-wrap items-center gap-1" data-testid="catalog-children">
 							<span class="text-muted-faint text-xs">Subtypes:</span>
 							for _, c := range d.Children {
-								<a class="badge badge-sm" href={ templ.URL(catalogTypeHref(c)) }>{ c }</a>
+								@ui.Badge(ui.BadgeProps{Label: c, Href: catalogTypeHref(c), Variant: ui.BadgeGhost, Size: ui.BadgeSizeSM})
 							}
 						</div>
 					}
@@ -198,7 +210,7 @@ templ SchemaCatalogTypePage(view *SchemaCatalogTypeView, loadErr error) {
 								{{ p := t.Properties[k] }}
 								<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-base-content/10 border-b py-1.5 last:border-0">
 									<span class="min-w-40 font-mono text-xs font-medium">{ k }</span>
-									<span class="badge badge-ghost badge-xs">{ p.Type }</span>
+									@ui.Badge(ui.BadgeProps{Label: p.Type, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
 									<span class="text-muted flex-1 text-xs">{ catalogPropertyDescription(p) }</span>
 								</div>
 							}
@@ -210,7 +222,7 @@ templ SchemaCatalogTypePage(view *SchemaCatalogTypeView, loadErr error) {
 							for _, r := range d.RelatedRelationships {
 								<li class="flex flex-wrap items-center gap-2 rounded-box border border-base-content/10 bg-base-100 px-3 py-2" data-testid="catalog-relationship">
 									<span class="text-sm font-medium">{ r.Name }</span>
-									<span class="badge badge-ghost badge-xs font-mono">{ r.SourceType } → { r.TargetType }</span>
+									@ui.Badge(ui.BadgeProps{Label: r.SourceType + " → " + r.TargetType, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
 									if r.Description != "" {
 										<span class="text-muted text-xs">{ r.Description }</span>
 									}
