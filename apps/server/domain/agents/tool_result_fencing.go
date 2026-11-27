@@ -222,14 +222,15 @@ func fenceModelRequestToolResults(req *model.LLMRequest, trusted func(string) bo
 // pre-cap. A non-nil precap returning a positive cap says: a result whose raw
 // JSON exceeds that cap is going to be truncated to it by
 // boundModelRequestToolResults anyway, so fence the *truncated* form instead of
-// materialising the envelope over the unbounded payload. That is what keeps
-// allocation proportional to the cap instead of to the payload — fencing
-// multiplies a payload of many short strings several-fold, and the
-// multiplication must not happen on megabytes the model never reads. The
-// pre-capped part is emitted as one envelope with a literal (harness-authored)
-// truncation marker, so the model still reads the harness's guidance as
-// guidance; the ordinary bound that runs afterwards sees a part already within
-// the cap and leaves it alone.
+// materialising the envelope over the unbounded payload. That avoids the
+// multiplicative blow-up of fencing — every non-blank string leaf gaining a tag
+// pair, which a payload of many short strings is exactly designed to maximise —
+// on megabytes the model never reads. Peak allocation is still O(payload)
+// because the payload is encoded and sized once to discover its extent; what is
+// emitted is bounded by the cap. The pre-capped part is emitted as one envelope
+// with a literal (harness-authored) truncation marker, so the model still reads
+// the harness's guidance as guidance; the ordinary bound that runs afterwards
+// sees a part already within the cap and leaves it alone.
 //
 // A trusted result is never pre-capped: it is not fenced at all, and the
 // ordinary bound already caps it. The same is true of ToolResponse and
@@ -274,10 +275,14 @@ func fenceModelRequestToolResultsWithPrecap(req *model.LLMRequest, precap func(s
 					if maxBytes := precap(name); maxBytes > 0 && rawSize > maxBytes {
 						fenced, ok := fenceAndBoundUntrustedResult(name, resp, maxBytes)
 						if !ok {
+							// Mirrors the whole-fence branch below: leave the part
+							// alone rather than labelling an unfenced result as
+							// fenced. boundModelRequestToolResults, which runs
+							// after this pass, still caps it.
 							stats.NormalizeFailed++
-						} else {
-							stats.PreCappedParts++
+							continue
 						}
+						stats.PreCappedParts++
 						part.FunctionResponse.Response = fenced
 						stats.BytesAfter += jsonSize(fenced)
 						stats.FencedParts++
@@ -361,8 +366,12 @@ func fenceUntrustedResult(source string, resp map[string]any) (fenced map[string
 // applied. Here the envelope is built from a bounded prefix, so the largest
 // allocation beyond the input itself is maxBytes.
 //
-// resp is never mutated. ok is false when resp cannot be encoded; the caller
-// hands it back untouched (the ADK could not send it either).
+// resp is never mutated. ok is false when resp cannot be encoded, or when even
+// the fixed envelope would exceed maxBytes; the caller then leaves the part
+// untouched (the ordinary bound still applies). A caller that records sizes
+// should note that BytesBefore for such a part is the raw JSON size (that is
+// what decides the pre-cap) while BytesAfter is the emitted envelope's size, so
+// the two are not a like-for-like compression ratio.
 func fenceAndBoundUntrustedResult(source string, resp map[string]any, maxBytes int) (map[string]any, bool) {
 	if resp == nil || maxBytes <= 0 {
 		return resp, false
@@ -378,20 +387,36 @@ func fenceAndBoundUntrustedResult(source string, resp map[string]any, maxBytes i
 	encoded := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
 	total := len(encoded)
 
-	okVal := any(true)
-	if v, ok := resp["ok"]; ok {
-		okVal = v
+	// ok is the one payload-derived field that sits outside the envelope: it
+	// carries the success/failure classification the harness reads. Only a
+	// boolean is preserved. A string, object or array there is payload text, and
+	// emitting it raw would let an external server place attacker-controlled
+	// content as a harness-looking sibling of truncated/truncation — the exact
+	// exposure the envelope exists to prevent. A missing ok stays missing rather
+	// than defaulting to true, which would turn a result with no success marker
+	// into an apparent success.
+	var okVal any
+	hasOK := false
+	if b, isBool := resp["ok"].(bool); isBool {
+		okVal = b
+		hasOK = true
+	}
+	buildEnv := func(numPreviewBytes int, preview string) map[string]any {
+		env := map[string]any{
+			"truncated":  true,
+			"truncation": fmt.Sprintf(truncationMarkerFmt, numPreviewBytes, total),
+			"preview":    wrapUntrusted(source, preview),
+		}
+		if hasOK {
+			env["ok"] = okVal
+		}
+		return env
 	}
 
 	limit := maxBytes
 	for {
 		preview := safeUTF8Prefix(encoded, limit)
-		env := map[string]any{
-			"ok":         okVal,
-			"truncated":  true,
-			"truncation": fmt.Sprintf(truncationMarkerFmt, len(preview), total),
-			"preview":    wrapUntrusted(source, preview),
-		}
+		env := buildEnv(len(preview), preview)
 		b, err := json.Marshal(env)
 		if err != nil {
 			return resp, false
@@ -403,14 +428,15 @@ func fenceAndBoundUntrustedResult(source string, resp map[string]any, maxBytes i
 		excess := len(b) - maxBytes
 		if len(preview) <= excess {
 			// No payload room left under the cap: keep the marker only. The
-			// envelope is fixed overhead and may itself exceed an absurdly small
-			// configured cap, exactly as boundToolResultResponse documents.
-			return map[string]any{
-				"ok":         okVal,
-				"truncated":  true,
-				"truncation": fmt.Sprintf(truncationMarkerFmt, 0, total),
-				"preview":    wrapUntrusted(source, ""),
-			}, true
+			// envelope is fixed overhead; if even that exceeds the configured
+			// cap, report failure so the caller leaves the part untouched and
+			// the ordinary bound applies, rather than returning an over-cap map.
+			env = buildEnv(0, "")
+			b, err = json.Marshal(env)
+			if err != nil || len(b) > maxBytes {
+				return resp, false
+			}
+			return env, true
 		}
 		limit = len(preview) - excess
 	}
