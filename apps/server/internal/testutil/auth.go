@@ -176,8 +176,15 @@ func CreateTestUser(ctx context.Context, db bun.IDB, user TestUser) error {
 	return nil
 }
 
-// CreateTestAPIToken creates an API token for a test user
+// CreateTestAPIToken creates an API token for a test user.
 func CreateTestAPIToken(ctx context.Context, db bun.IDB, userID string, token string, scopes []string, projectID string) error {
+	return CreateTestAPITokenNamed(ctx, db, userID, "test-token", token, scopes, projectID)
+}
+
+// CreateTestAPITokenNamed creates a project-bound API token with an explicit
+// name. Names are unique per user (api_tokens_user_name_unique), so a test that
+// needs more than one token for the same user must pass distinct names.
+func CreateTestAPITokenNamed(ctx context.Context, db bun.IDB, userID, name, token string, scopes []string, projectID string) error {
 	// Hash the token with SHA256 (64 hex chars fits varchar(64))
 	hash := sha256.Sum256([]byte(token))
 	tokenHash := hex.EncodeToString(hash[:])
@@ -188,8 +195,8 @@ func CreateTestAPIToken(ctx context.Context, db bun.IDB, userID string, token st
 
 	_, err := db.NewRaw(`
 		INSERT INTO core.api_tokens (user_id, project_id, name, token_hash, token_prefix, scopes, created_at)
-		VALUES (?, ?, 'test-token', ?, ?, ?::text[], NOW())
-	`, userID, projectID, tokenHash, tokenPrefix, pgArray).Exec(ctx)
+		VALUES (?, ?, ?, ?, ?, ?::text[], NOW())
+	`, userID, projectID, name, tokenHash, tokenPrefix, pgArray).Exec(ctx)
 
 	return err
 }
