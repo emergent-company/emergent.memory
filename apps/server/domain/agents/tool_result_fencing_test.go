@@ -688,15 +688,19 @@ func TestFenceAndBoundUntrustedResult_DefangsForgedDelimiter(t *testing.T) {
 	assert.NotContains(t, marker, "<untrusted-content")
 }
 
-// A cap too small to hold even the fixed envelope must not fail open: the
-// function reports failure, the caller leaves the part untouched, and the
-// ordinary bound still caps it.
-func TestFenceAndBoundUntrustedResult_TinyCapLeavesPartUntouched(t *testing.T) {
+// A cap too small to hold even the fixed envelope must still not leak payload
+// text: the marker-only envelope is returned, bounded by the (constant) envelope
+// overhead rather than by the payload.
+func TestFenceAndBoundUntrustedResult_TinyCapReturnsMarkerOnlyEnvelope(t *testing.T) {
 	const cap = 16
 	resp := map[string]any{"ok": true, "blob": strings.Repeat("x", 1024)}
 	got, ok := fenceAndBoundUntrustedResult("acme", resp, cap)
-	require.False(t, ok)
-	assert.Equal(t, resp, got, "a failed pre-cap returns the payload untouched, not an over-cap map")
+	require.True(t, ok)
+	assert.Equal(t, true, got["truncated"])
+	assert.Equal(t, true, got["ok"])
+	assert.Equal(t, `<untrusted-content source="acme"></untrusted-content>`, got["preview"],
+		"the payload must not appear outside the envelope")
+	assert.Less(t, jsonSize(got), 512, "the marker-only envelope is a fixed overhead, not payload-sized")
 }
 
 // A cap that fits the envelope but not the payload keeps the marker only, and
@@ -742,20 +746,32 @@ func TestFenceAndBoundUntrustedResult_NoOKStaysAbsent(t *testing.T) {
 	assert.NotContains(t, got, "ok")
 }
 
-// The stats for a failed pre-cap must not claim the part was fenced.
-func TestApplyModelContextBoundary_PreCapFailureIsNotFenced(t *testing.T) {
+// A pre-cap that cannot fit its envelope still fences: the part must never
+// reach the model as raw payload text.
+func TestFenceModelRequestToolResultsWithPrecap_TinyCapStillFences(t *testing.T) {
 	items := make([]any, 0, 40000)
 	for i := 0; i < 40000; i++ {
 		items = append(items, "ab")
 	}
 	req := partRequest(functionResponsePart("acme_call", map[string]any{"ok": true, "items": items}))
 
-	boundStats, fenceStats := applyModelContextBoundary(req,
-		ToolResultBounds{MaxBytes: 16, TotalBudgetBytes: -1},
-		trustedToolResultSource(nil, nil))
+	stats := fenceModelRequestToolResultsWithPrecap(req, func(string) int { return 16 }, nil)
 
-	assert.Zero(t, fenceStats.PreCappedParts)
-	assert.Zero(t, fenceStats.FencedParts)
-	assert.Equal(t, 1, fenceStats.NormalizeFailed)
-	assert.Equal(t, 1, boundStats.TruncatedResults, "the ordinary bound still caps the untouched part")
+	assert.Equal(t, 1, stats.PreCappedParts)
+	assert.Equal(t, 1, stats.FencedParts)
+	assert.Zero(t, stats.NormalizeFailed)
+
+	got := req.Contents[0].Parts[0].FunctionResponse.Response
+	assert.Equal(t, true, got["truncated"])
+	assert.Equal(t, `<untrusted-content source="acme_call"></untrusted-content>`, got["preview"])
+	assert.NotContains(t, got["preview"], "abababab", "no raw payload text outside the envelope")
+
+	// Through the full boundary the ordinary bound may re-cut the envelope (the
+	// configured cap is below its overhead), but payload text still must not
+	// reach the model raw.
+	req2 := partRequest(functionResponsePart("acme_call", map[string]any{"ok": true, "items": items}))
+	applyModelContextBoundary(req2, ToolResultBounds{MaxBytes: 16, TotalBudgetBytes: -1},
+		trustedToolResultSource(nil, nil))
+	preview, _ := req2.Contents[0].Parts[0].FunctionResponse.Response["preview"].(string)
+	assert.NotContains(t, preview, "abababab")
 }

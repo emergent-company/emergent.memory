@@ -277,6 +277,25 @@ func boundModelRequestToolResults(req *model.LLMRequest, bounds ToolResultBounds
 	return stats
 }
 
+// toolResultOK returns a result's success flag, if and only if the payload
+// carries it as a bool.
+//
+// ok is the one payload-derived field the bounding envelopes emit outside the
+// untrusted-content envelope, and the harness reads it for success/failure
+// classification. A string, object or array there is payload text, not a
+// classification: relaying it raw would put attacker-controlled content beside
+// truncated/truncation where the model reads harness-authored fields, and it
+// would also make the result's size depend on the payload. Non-boolean values
+// are therefore dropped; a missing ok stays missing rather than defaulting to
+// true (issue #1151).
+func toolResultOK(resp map[string]any) (value any, ok bool) {
+	if resp == nil {
+		return nil, false
+	}
+	b, isBool := resp["ok"].(bool)
+	return b, isBool
+}
+
 // boundToolResultResponse returns resp unchanged when its JSON encoding fits
 // maxBytes. Otherwise it returns a bounded envelope carrying the actionable
 // truncation marker and a preview prefix. It never mutates resp. A negative
@@ -292,18 +311,17 @@ func boundToolResultResponse(toolName string, resp map[string]any, maxBytes int)
 	_ = toolName // reserved for future per-tool marker wording
 
 	total := len(encoded)
-	okVal := any(true)
-	if v, ok := resp["ok"]; ok {
-		okVal = v
-	}
+	okVal, hasOK := toolResultOK(resp)
 
 	preview := safeUTF8Prefix(encoded, maxBytes)
 	for {
 		env := map[string]any{
-			"ok":         okVal,
 			"truncated":  true,
 			"truncation": fmt.Sprintf(truncationMarkerFmt, len(preview), total),
 			"preview":    preview,
+		}
+		if hasOK {
+			env["ok"] = okVal
 		}
 		b, err := json.Marshal(env)
 		if err != nil {
@@ -329,32 +347,36 @@ func boundToolResultResponse(toolName string, resp map[string]any, maxBytes int)
 			// Envelope fixed overhead alone exceeds the cap (an absurdly small
 			// configured cap). Return the marker envelope; it is bounded by the
 			// fixed overhead.
-			return map[string]any{
-				"ok":         okVal,
+			env := map[string]any{
 				"truncated":  true,
 				"truncation": fmt.Sprintf(truncationMarkerFmt, 0, total),
 				"preview":    "",
-			}, true
+			}
+			if hasOK {
+				env["ok"] = okVal
+			}
+			return env, true
 		}
 	}
 }
 
 // elidedToolResultResponse replaces an older tool result with a short, marked
-// placeholder. It preserves ok so success/failure classification survives.
+// placeholder. It preserves ok so success/failure classification survives, but
+// only a boolean — see toolResultOK.
 func elidedToolResultResponse(resp map[string]any) map[string]any {
-	okVal := any(true)
+	okVal, hasOK := toolResultOK(resp)
 	size := 0
 	if resp != nil {
-		if v, ok := resp["ok"]; ok {
-			okVal = v
-		}
 		size = jsonSize(resp)
 	}
-	return map[string]any{
-		"ok":         okVal,
+	elided := map[string]any{
 		"elided":     true,
 		"truncation": fmt.Sprintf(elisionMarkerFmt, size),
 	}
+	if hasOK {
+		elided["ok"] = okVal
+	}
+	return elided
 }
 
 // safeUTF8Prefix returns the longest valid UTF-8 prefix of b no longer than n

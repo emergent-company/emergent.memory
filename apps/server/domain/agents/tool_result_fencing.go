@@ -366,12 +366,15 @@ func fenceUntrustedResult(source string, resp map[string]any) (fenced map[string
 // applied. Here the envelope is built from a bounded prefix, so the largest
 // allocation beyond the input itself is maxBytes.
 //
-// resp is never mutated. ok is false when resp cannot be encoded, or when even
-// the fixed envelope would exceed maxBytes; the caller then leaves the part
-// untouched (the ordinary bound still applies). A caller that records sizes
-// should note that BytesBefore for such a part is the raw JSON size (that is
-// what decides the pre-cap) while BytesAfter is the emitted envelope's size, so
-// the two are not a like-for-like compression ratio.
+// resp is never mutated. ok is false when resp cannot be encoded (the ADK could
+// not send it either); the caller then leaves the part untouched and the
+// ordinary bound applies. The emitted envelope is bounded by maxBytes, except
+// when a configured cap is smaller than the fixed envelope overhead, where the
+// marker-only envelope is returned anyway — a constant-size result beats handing
+// the model unfenced payload text. A caller that records sizes should note that
+// BytesBefore for such a part is the raw JSON size (that is what decides the
+// pre-cap) while BytesAfter is the emitted envelope's size, so the two are not a
+// like-for-like compression ratio.
 func fenceAndBoundUntrustedResult(source string, resp map[string]any, maxBytes int) (map[string]any, bool) {
 	if resp == nil || maxBytes <= 0 {
 		return resp, false
@@ -389,18 +392,13 @@ func fenceAndBoundUntrustedResult(source string, resp map[string]any, maxBytes i
 
 	// ok is the one payload-derived field that sits outside the envelope: it
 	// carries the success/failure classification the harness reads. Only a
-	// boolean is preserved. A string, object or array there is payload text, and
-	// emitting it raw would let an external server place attacker-controlled
-	// content as a harness-looking sibling of truncated/truncation — the exact
-	// exposure the envelope exists to prevent. A missing ok stays missing rather
-	// than defaulting to true, which would turn a result with no success marker
-	// into an apparent success.
-	var okVal any
-	hasOK := false
-	if b, isBool := resp["ok"].(bool); isBool {
-		okVal = b
-		hasOK = true
-	}
+	// boolean is preserved (see toolResultOK), because a string, object or array
+	// there is payload text and emitting it raw would let an external server
+	// place attacker-controlled content as a harness-looking sibling of
+	// truncated/truncation — the exact exposure the envelope prevents. A missing
+	// ok stays missing rather than defaulting to true, which would turn a result
+	// with no success marker into an apparent success.
+	okVal, hasOK := toolResultOK(resp)
 	buildEnv := func(numPreviewBytes int, preview string) map[string]any {
 		env := map[string]any{
 			"truncated":  true,
@@ -427,13 +425,16 @@ func fenceAndBoundUntrustedResult(source string, resp map[string]any, maxBytes i
 		// Shrink the preview to make room for the envelope and marker overhead.
 		excess := len(b) - maxBytes
 		if len(preview) <= excess {
-			// No payload room left under the cap: keep the marker only. The
-			// envelope is fixed overhead; if even that exceeds the configured
-			// cap, report failure so the caller leaves the part untouched and
-			// the ordinary bound applies, rather than returning an over-cap map.
+			// No payload room left under the cap: keep the harness marker only.
+			// The envelope is fixed overhead — independent of the payload and of
+			// the payload-derived ok — so it is bounded by a constant even when
+			// an absurdly small configured cap is smaller than that overhead,
+			// which is the policy boundToolResultResponse documents. Returning
+			// the raw payload instead would hand the model unfenced third-party
+			// text, so an over-cap-by-a-constant envelope is the safer outcome.
 			env = buildEnv(0, "")
 			b, err = json.Marshal(env)
-			if err != nil || len(b) > maxBytes {
+			if err != nil {
 				return resp, false
 			}
 			return env, true
