@@ -71,10 +71,11 @@ templ sidePanel(agents []AgentDefinitionSummary, assistantAgent string, scope si
 							AriaLabel:  "Sessions",
 							ExtraClass: "h-6 min-h-6 gap-1 px-1.5 text-[11px] font-normal normal-case",
 							Attrs: templ.Attributes{
-								"tabindex":      "0",
-								"role":          "button",
-								"id":            "sidepanel-session-picker",
-								"aria-haspopup": "menu",
+								"tabindex":            "0",
+								"role":                "button",
+								"id":                  "sidepanel-session-picker",
+								"aria-haspopup":       "menu",
+								"data-gd-menu-trigger": "",
 							},
 						}) {
 							<span class="iconify lucide--messages-square size-3.5 text-muted-faint" aria-hidden="true"></span>

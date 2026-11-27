@@ -1,0 +1,45 @@
+package main
+
+import ui "github.com/emergent-company/go-daisy/components/ui"
+
+// object_provenance.templ — the identity mark beside a write stamp.
+//
+// A provenance line names a person ("Maciek Dev · via web session · 2h ago"),
+// and a name alone asks the reader to remember who that is. The app already has
+// one avatar component for people (ui.AvatarFull, the assignee picker and the
+// account menu use it); this wraps it at the one size a provenance line has
+// room for, so the card footer and the history timeline draw the same mark.
+//
+// The photo is only served for the signed-in user: /api/user/avatar is
+// session-scoped, and the server exposes no per-user avatar route, so every
+// other writer falls back to initials — which is why the mark exists even when
+// there is no image to show.
+
+// objectActorAvatarProps is one resolved actor's avatar input. Initials empty
+// means the actor did not resolve to a person, and nothing is drawn: a circle
+// reading "U" would decorate the "<Type> · <short id>" placeholder.
+type objectActorAvatarProps struct {
+	Name     string
+	Initials string
+	Avatar   string
+}
+
+// objectActorAvatar renders the writer's identity mark for a provenance line.
+// Decorative: the actor's name is the next node in every caller, so the mark is
+// hidden from assistive tech rather than duplicating it.
+templ objectActorAvatar(p objectActorAvatarProps) {
+	if p.Initials != "" || p.Avatar != "" {
+		<span class="shrink-0" aria-hidden="true" data-testid="object-actor-avatar">
+			@ui.AvatarFull(ui.AvatarProps{
+				Name:      p.Name,
+				Initials:  p.Initials,
+				Src:       p.Avatar,
+				Icon:      "lucide--user",
+				Size:      ui.AvatarSize6,
+				Fallback:  ui.AvatarFallbackInitials,
+				Tone:      ui.AvatarToneMuted,
+				TextClass: "text-[10px]",
+			})
+		</span>
+	}
+}

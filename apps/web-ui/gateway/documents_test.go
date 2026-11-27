@@ -1700,7 +1700,7 @@ func TestRenderExtractionJobDetailObjects(t *testing.T) {
 
 // TestRenderExtractionJobDetailOpenBrowser asserts the "Open in object
 // browser" affordance renders only when the staging branch is resolved, and
-// links to /objects?branch=<BranchID>.
+// links to /search?branch=<BranchID> — the object list's one page.
 func TestRenderExtractionJobDetailOpenBrowser(t *testing.T) {
 	withBranch := extractionJobDetail{
 		Job:      ExtractionJob{ID: "job1", Status: "completed"},
@@ -1712,8 +1712,8 @@ func TestRenderExtractionJobDetailOpenBrowser(t *testing.T) {
 	if !strings.Contains(html, `data-testid="extraction-open-browser"`) {
 		t.Error("resolved branch must render the object-browser link")
 	}
-	if !strings.Contains(html, `href="/objects?branch=br1"`) {
-		t.Errorf("object-browser link must target /objects?branch=<BranchID>:\n%s", html)
+	if !strings.Contains(html, `href="/search?branch=br1"`) {
+		t.Errorf("object-list link must target /search?branch=<BranchID>:\n%s", html)
 	}
 
 	branchless := extractionJobDetail{
@@ -1899,7 +1899,7 @@ func TestLoadExtractionJobDetailStagingBranch(t *testing.T) {
 		"2 objects",
 		`data-testid="extraction-merge"`,
 		`data-testid="extraction-open-browser"`,
-		`href="/objects?branch=br1"`,
+		`href="/search?branch=br1"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("staging-branch detail missing %q:\n%s", want, html)
@@ -2955,7 +2955,7 @@ func TestRenderExtractionMergeRowLayout(t *testing.T) {
 func TestRenderExtractionMergeLeftLinksToBrowser(t *testing.T) {
 	html := renderHTML(t, extractionMergeAction("doc-1", "job-1", "branch-7", 3, nil))
 	for _, want := range []string{
-		`href="/objects?branch=branch-7"`,
+		`href="/search?branch=branch-7"`,
 		"3 left for review",
 		`data-testid="extraction-merge-left"`,
 	} {
@@ -2965,7 +2965,7 @@ func TestRenderExtractionMergeLeftLinksToBrowser(t *testing.T) {
 	}
 
 	zero := renderHTML(t, extractionMergeAction("doc-1", "job-1", "branch-7", 0, nil))
-	if strings.Contains(zero, "/objects?branch=") {
+	if strings.Contains(zero, "/search?branch=") {
 		t.Errorf("no review badge should render at zero leftovers:\n%s", zero)
 	}
 }

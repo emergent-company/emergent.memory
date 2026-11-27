@@ -119,20 +119,20 @@ func TestSidebarScopedHrefsAndProviderWarn(t *testing.T) {
 				if strings.Contains(body, `id="_layout-sidebar"`) {
 					t.Error("render emitted a project sidebar with no scope base (its hrefs would 404)")
 				}
-				if strings.Contains(body, `href="/objects"`) {
+				if strings.Contains(body, `href="/search"`) {
 					t.Error("render emitted an unscoped project href")
 				}
 				return
 			}
 
 			// (a) every project nav entry carries the page's link base.
-			for _, entry := range []string{"/objects", "/chat", "/settings", "/settings/approvals", "/work/board"} {
+			for _, entry := range []string{"/search", "/chat", "/settings", "/settings/approvals", "/work/board"} {
 				if want := `href="` + tc.wantBase + entry + `"`; !strings.Contains(body, want) {
 					t.Errorf("sidebar missing %s", want)
 				}
 			}
 			if tc.wantBase != "" {
-				if strings.Contains(body, `href="/objects"`) {
+				if strings.Contains(body, `href="/search"`) {
 					t.Error("sidebar leaked an unscoped href alongside its scoped base")
 				}
 			}

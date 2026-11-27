@@ -547,6 +547,9 @@ func (rc *WorkReconciler) reconcile(ctx context.Context) {
 		rc.log.Warn("failed to resolve ready statuses", slog.String("error", err.Error()))
 		return
 	}
+	// One budget verdict per project per reconcile pass: a capped project may
+	// have many parked items and the gate query must not be repeated per item.
+	budgetErrs := map[string]error{}
 	for _, status := range readyStatuses {
 		heads, err := rc.workObjects.ListWorkObjectsByStatus(ctx, "", status, time.Time{}, 500)
 		if err != nil {
@@ -570,15 +573,59 @@ func (rc *WorkReconciler) reconcile(ctx context.Context) {
 			if liveJob {
 				continue // pending/processing job already covers it
 			}
-			rc.enqueue(ctx, h)
+			rc.enqueue(ctx, h, budgetErrs)
 		}
 	}
 }
 
 // enqueue wakes the listening agent(s) for a ready object.
-func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead) {
-	if blocked, err := rc.repo.IsWorkBlocked(ctx, h.CanonicalID); err == nil && blocked {
-		return
+func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead, budgetErrs map[string]error) {
+	// resumedRun reports that this pass cleared a step-limit park and is
+	// dispatching the continuation run; the count feeds its note.
+	resumedRun := false
+	stepLimitExhaustions := 0
+	if block, err := rc.repo.GetWorkBlock(ctx, h.CanonicalID); err == nil && block != nil {
+		switch {
+		case isBudgetBlock(block):
+			// A budget park is auto-recoverable: clearing it is what makes a raised
+			// cap or reset window resume the item without a human unblock. While
+			// the project is still over cap, returning here is the reconciler's
+			// stop condition — no run is attempted, so no refusal is logged per
+			// tick.
+			budgetErr, ok := budgetErrs[h.ProjectID]
+			if !ok {
+				budgetErr = rc.repo.checkBudgetGate(ctx, h.ProjectID)
+				budgetErrs[h.ProjectID] = budgetErr
+			}
+			if budgetErr != nil {
+				return
+			}
+			if _, cerr := rc.repo.ClearWorkBlock(ctx, h.CanonicalID); cerr != nil {
+				rc.log.Warn("failed to clear budget work block",
+					slog.String("canonical_id", h.CanonicalID),
+					slog.String("error", cerr.Error()),
+				)
+				return
+			}
+			rc.log.Info("budget block cleared; work item is dispatchable again",
+				slog.String("canonical_id", h.CanonicalID),
+			)
+		case isStepLimitBlock(block):
+			// A run that stopped at its step budget is a dead or over-long run,
+			// not a failed item: clear the park and dispatch a fresh run that
+			// continues from the repository/PR state. Bounded, because a repeat
+			// exhaustion is a signal for a human (issue #993 follow-up).
+			exhaustions, ok := rc.resumeStepLimitPark(ctx, h, block)
+			if !ok {
+				return
+			}
+			resumedRun = true
+			stepLimitExhaustions = exhaustions
+		default:
+			// Any other block is a deliberate stop (human, deterministic
+			// failure, poison item): only an unblock or retry clears it.
+			return
+		}
 	}
 	if skipUnassignedIssue(h.Type, h.Assignee) {
 		return
@@ -637,10 +684,17 @@ func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead) 
 		}
 		if trigger != nil && trigger.Prompt != "" {
 			prompt := trigger.Prompt
+			if resumedRun {
+				prompt = stepLimitResumeMessage(stepLimitExhaustions) + "\n\n" + prompt
+			}
 			opts.TriggerMessage = &prompt
 		}
 		if _, err := rc.repo.CreateRunQueued(ctx, agent.ID, 1, opts); err != nil {
 			if errors.Is(err, ErrWorkItemBusy) {
+				continue
+			}
+			if isBudgetFailure(err) {
+				rc.parkBudgetRefused(ctx, h, agent, err)
 				continue
 			}
 			rc.log.Warn("failed to enqueue reconciled work run", slog.String("canonical_id", h.CanonicalID), slog.String("agent_id", agent.ID), slog.String("error", err.Error()))
@@ -648,6 +702,145 @@ func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead) 
 		}
 		rc.log.Info("reconciled work object enqueued", slog.String("canonical_id", h.CanonicalID), slog.String("agent", agent.Name))
 	}
+}
+
+// isBudgetBlock reports whether a durable block was recorded by the spending
+// gate (as opposed to a poison item or a human cancel).
+func isBudgetBlock(block *WorkBlock) bool {
+	return block != nil && block.FailureClass != nil && *block.FailureClass == string(FailureClassBudget)
+}
+
+// stepLimitAutoResumeLimit bounds automatic resumption of a run that stopped at
+// its step budget. The first exhaustions are a dead or over-long run and get a
+// fresh dispatch; past this count the exhaustion is a human's call, not another
+// run. Counting is over the subject's runs, so it survives a block being
+// cleared and re-created (issue #993 follow-up).
+const stepLimitAutoResumeLimit = 2
+
+// isStepLimitBlock reports whether a durable block was written because a run
+// stopped at its step budget rather than because the item failed.
+func isStepLimitBlock(block *WorkBlock) bool {
+	return block != nil && block.FailureClass != nil && *block.FailureClass == string(FailureClassStepLimit)
+}
+
+// stepLimitExhaustedBlockedBy marks a step-limit block whose automatic-resume
+// budget is spent. It is a terminal state: one escalation task is open and the
+// item waits for a human unblock or retry.
+const stepLimitExhaustedBlockedBy = "step-limit-exhausted"
+
+// blockIsStepLimitEscalated reports whether the step-limit park has already
+// been escalated, so the reconciler stops counting exhaustions (and stops
+// re-notifying) on every pass.
+func blockIsStepLimitEscalated(block *WorkBlock) bool {
+	return block != nil && block.BlockedBy != nil && *block.BlockedBy == stepLimitExhaustedBlockedBy
+}
+
+// shouldResumeStepLimit reports whether an exhaustion count is still inside the
+// automatic-resume budget. A count of 1 is the park being handled now; each
+// further exhaustion is one automatic continuation already spent.
+func shouldResumeStepLimit(exhaustions int) bool {
+	return exhaustions > 0 && exhaustions <= stepLimitAutoResumeLimit
+}
+
+// resumeStepLimitPark clears a step-limit block and the item's claim state so
+// the next dispatch is a fresh run, and reports how many times this subject has
+// already stopped at its step budget. It refuses (ok=false) once that count
+// passes stepLimitAutoResumeLimit, leaving the block in place for a human and
+// escalating once so the parked item is discoverable off the board.
+//
+// Clearing the claim state is not optional: the dispatch CASes from it, so a
+// cleared block alone leaves the item unparked but permanently busy.
+func (rc *WorkReconciler) resumeStepLimitPark(ctx context.Context, h *graph.WorkObjectHead, block *WorkBlock) (int, bool) {
+	// The exhausted marker makes a step-limit park terminal: the escalation is
+	// already open, so later passes neither re-count nor re-notify every tick.
+	if blockIsStepLimitEscalated(block) {
+		return 0, false
+	}
+	exhaustions, err := rc.repo.CountStepLimitExhaustions(ctx, h.CanonicalID)
+	if err != nil {
+		rc.log.Warn("failed to count step-limit exhaustions",
+			slog.String("canonical_id", h.CanonicalID),
+			slog.String("error", err.Error()),
+		)
+		return 0, false
+	}
+	if !shouldResumeStepLimit(exhaustions) {
+		if exhaustions > stepLimitAutoResumeLimit {
+			if eerr := rc.repo.EscalateStepLimitExhausted(ctx, h.ProjectID, h.CanonicalID, exhaustions); eerr != nil {
+				rc.log.Warn("failed to escalate exhausted step-limit park",
+					slog.String("canonical_id", h.CanonicalID),
+					slog.String("error", eerr.Error()),
+				)
+			} else {
+				rc.log.Warn("step-limit resume budget exhausted; escalated the work item to a human",
+					slog.String("canonical_id", h.CanonicalID),
+					slog.Int("exhaustions", exhaustions),
+				)
+			}
+		}
+		return exhaustions, false
+	}
+	if _, cerr := rc.repo.ClearWorkBlock(ctx, h.CanonicalID); cerr != nil {
+		rc.log.Warn("failed to clear step-limit work block",
+			slog.String("canonical_id", h.CanonicalID),
+			slog.String("error", cerr.Error()),
+		)
+		return 0, false
+	}
+	if cerr := rc.repo.ClearWorkItemState(ctx, h.ProjectID, h.CanonicalID); cerr != nil {
+		rc.log.Warn("failed to clear work item state for step-limit resume",
+			slog.String("canonical_id", h.CanonicalID),
+			slog.String("error", cerr.Error()),
+		)
+		return 0, false
+	}
+	rc.log.Info("step-limit block cleared; dispatching a continuation run",
+		slog.String("canonical_id", h.CanonicalID),
+		slog.Int("exhaustions", exhaustions),
+	)
+	return exhaustions, true
+}
+
+// stepLimitResumeMessage is the continuation note prepended to the agent's
+// trigger prompt. A resumed run must re-orient from the repository and PR state
+// and carry on, rather than restart the work (which is what burns the budget
+// again).
+func stepLimitResumeMessage(exhaustions int) string {
+	return fmt.Sprintf(
+		"Your previous run on this item stopped at its step budget; this is continuation attempt %d of %d. "+
+			"Check the current state first (the branch, any open PR and its checks) and continue from there — do not start the work over.",
+		exhaustions, stepLimitAutoResumeLimit,
+	)
+}
+
+// parkBudgetRefused records the same visible, durable park the trigger path
+// uses, and notifies listeners so a dependent required check can publish an
+// unavailable reason (#1032).
+func (rc *WorkReconciler) parkBudgetRefused(ctx context.Context, h *graph.WorkObjectHead, agent *Agent, cause error) {
+	reason := fmt.Sprintf("dispatch refused: %s", cause.Error())
+	if perr := rc.repo.ParkWorkItemForBudget(ctx, h.ProjectID, h.CanonicalID, reason); perr != nil {
+		rc.log.Warn("failed to park work item after budget refusal",
+			slog.String("canonical_id", h.CanonicalID),
+			slog.String("agent_id", agent.ID),
+			slog.String("error", perr.Error()),
+		)
+	}
+	rc.repo.NotifyWorkBudgetParked(ctx, WorkBudgetParkedEvent{
+		ProjectID:   h.ProjectID,
+		CanonicalID: h.CanonicalID,
+		ObjectType:  h.Type,
+		AgentID:     agent.ID,
+		AgentName:   agent.Name,
+		Reason:      reason,
+		Head:        h,
+	})
+	rc.log.Warn("reconciled work dispatch refused by project budget; item parked",
+		slog.String("canonical_id", h.CanonicalID),
+		slog.String("object_type", h.Type),
+		slog.String("agent_id", agent.ID),
+		slog.String("project_id", h.ProjectID),
+		slog.String("error", cause.Error()),
+	)
 }
 
 // resolveOwningAgentForHead resolves the agent (and its definition) that owns a
@@ -748,27 +941,38 @@ func mergeWorkObjectMetadata(meta map[string]any, h *graph.WorkObjectHead) {
 }
 
 // workSourceSubject returns the verified source subject a source-derived work
-// object carries, so a work-dispatched run (a review lane or a claimed review
-// subject) binds its review tools to the pull request the dispatcher recorded.
-// Only server-written properties are read; a model cannot set them. Review
-// evidence and verdicts must key on the pull request (repo#number@headSha), so
-// the run needs that subject even though it was not enqueued by the webhook
-// ingress directly (#1022).
+// object carries, so a work-dispatched run binds its tools and its implicit
+// credential to the source the dispatcher recorded. Only server-written
+// properties are read; a model cannot set them. A review lane needs the pull
+// request (repo#number@headSha) so review evidence and verdicts key on it even
+// though the run was not enqueued by the webhook ingress directly (#1022). An
+// issue coding lane needs the trusted issue subject for the same reason: review
+// tools still use RepositoryValid, while the implicit source credential path
+// requires IssueValid.
 func workSourceSubject(h *graph.WorkObjectHead) *SourceSubject {
 	if h == nil || h.Properties == nil {
 		return nil
 	}
 	sourceID, _ := h.Properties["source_id"].(string)
 	repo, _ := h.Properties["repo"].(string)
-	prNumber := intProperty(h.Properties["pr_number"])
-	headSHA, _ := h.Properties["head_sha"].(string)
-	if strings.TrimSpace(sourceID) == "" || strings.TrimSpace(repo) == "" || prNumber <= 0 || strings.TrimSpace(headSHA) == "" {
+	if strings.TrimSpace(sourceID) == "" || strings.TrimSpace(repo) == "" {
 		return nil
 	}
-	return &SourceSubject{
-		SourceID: sourceID, Repo: repo, Kind: "pull_request",
-		PRNumber: prNumber, HeadSHA: headSHA,
+	prNumber := intProperty(h.Properties["pr_number"])
+	headSHA, _ := h.Properties["head_sha"].(string)
+	if prNumber > 0 && strings.TrimSpace(headSHA) != "" {
+		return &SourceSubject{
+			SourceID: sourceID, Repo: repo, Kind: "pull_request",
+			PRNumber: prNumber, HeadSHA: headSHA,
+		}
 	}
+	if issueNumber := intProperty(h.Properties["issue_number"]); issueNumber > 0 {
+		return &SourceSubject{
+			SourceID: sourceID, Repo: repo, Kind: "issue",
+			IssueNumber: issueNumber,
+		}
+	}
+	return nil
 }
 
 func workTriggerMetadata(h *graph.WorkObjectHead) map[string]any {
@@ -791,9 +995,26 @@ func workTriggerMetadata(h *graph.WorkObjectHead) map[string]any {
 	}
 	if prNumber > 0 {
 		meta["prNumber"] = int(prNumber)
-		meta["headSha"] = h.Properties["head_sha"]
 		meta["subjectType"] = "pull_request"
 		meta["subjectRef"] = fmt.Sprintf("%s#%d", repo, int(prNumber))
+		// A review lane carries head_sha directly. A coding issue linked to a
+		// pull request carries the reviewed head as pr_head_sha and the branch
+		// as pr_branch, so a rework run dispatched from a blocking verdict knows
+		// which commit/branch the finding applies to (#1091).
+		headSHA, _ := h.Properties["head_sha"].(string)
+		if strings.TrimSpace(headSHA) == "" {
+			headSHA, _ = h.Properties["pr_head_sha"].(string)
+		}
+		if strings.TrimSpace(headSHA) != "" {
+			meta["headSha"] = headSHA
+		}
+		branch, _ := h.Properties["pr_branch"].(string)
+		if strings.TrimSpace(branch) == "" {
+			branch, _ = h.Properties["head_ref"].(string)
+		}
+		if strings.TrimSpace(branch) != "" {
+			meta["branch"] = branch
+		}
 		return meta
 	}
 	meta["issueNumber"] = int(issueNumber)

@@ -1,0 +1,60 @@
+name: schemaorg
+objectTypeSchemas:
+- name: JobPosting
+  label: Job Posting
+  description: 'A job vacancy or employment opportunity.
+
+    '
+  category: work
+  parent: Thing
+  labels:
+  - job_posting
+  - vacancy
+  - position
+  - opening
+  ui:
+    icon: tabler--id-badge
+    color: '#0891B2'
+  properties:
+    title:
+      type: string
+      description: Job title.
+    description:
+      type: string
+      description: Job description.
+    date_posted:
+      type: date
+      title: Posted
+      description: Date posted (YYYY-MM-DD).
+    employment_type:
+      type: string
+      title: Employment type
+      description: Employment type.
+      enum:
+      - full_time
+      - part_time
+      - contract
+      - temporary
+      - internship
+    base_salary:
+      type: number
+      title: Base salary
+      description: Annual base salary.
+      minimum: 0
+    salary_currency:
+      type: currency
+      title: Currency
+      description: ISO 4217 currency code.
+    url:
+      type: url
+      description: Application URL.
+    hiring_organization_name:
+      type: string
+      title: Hiring organization
+      description: Name of the hiring organization.
+    job_location_name:
+      type: string
+      title: Job location
+      description: Human-readable job location.
+  required:
+  - title

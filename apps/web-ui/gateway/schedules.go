@@ -278,7 +278,7 @@ func scheduleStatusIntent(status *string) ui.BadgeIntent {
 	switch strings.ToLower(*status) {
 	case "completed":
 		return ui.BadgeSuccess
-	case "failed":
+	case "failed", "error":
 		return ui.BadgeError
 	case "working", "submitted":
 		return ui.BadgeInfo
@@ -293,7 +293,7 @@ func scheduleStatusLabel(a ScheduledAgent) string {
 	if a.LastRunStatus == nil || *a.LastRunStatus == "" {
 		return "Never run"
 	}
-	return *a.LastRunStatus
+	return workRunStatusLabel(*a.LastRunStatus)
 }
 
 // schedulePromptValue returns the raw prompt text for form prefill ("" when
@@ -310,7 +310,7 @@ func schedulePromptValue(a *ScheduledAgent) string {
 func scheduleRunTitle(r ScheduledAgentRun) string {
 	t := "Run " + shortID(r.ID)
 	if r.Status != "" {
-		t += " · " + r.Status
+		t += " · " + workRunStatusLabel(r.Status)
 	}
 	return t
 }
@@ -322,7 +322,9 @@ func scheduleRunSubtitle(r ScheduledAgentRun) string {
 	if r.CompletedAt != nil && *r.CompletedAt != "" {
 		s += " · finished " + relTime(*r.CompletedAt)
 	}
-	if p := scheduleRunSummary(r); p != "" {
+	if failure := runFailureText(r.Status, r.ErrorMessage, r.FailureClass, r.Summary); failure != "" {
+		s += " · " + truncateRunes(failure, 60)
+	} else if p := scheduleRunSummary(r); p != "" {
 		s += " · " + p
 	}
 	return s

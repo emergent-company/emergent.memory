@@ -509,4 +509,4 @@ Use `canonicalID` when storing references. Use `id` (version ID) only when you n
 
 ## Docs site
 
-Full reference and guides: https://emergent-company.github.io/emergent.memory/
+Full reference and guides: https://docs.memory.emergent-company.ai/

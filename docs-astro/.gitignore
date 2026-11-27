@@ -6,4 +6,6 @@ public/openapi.json
 # browser profile a human signed into. None of it belongs in the repo — the
 # profile is a live session.
 captures/
-.profile/
+# any profile name, not just the documented `.profile/`: a live session must not
+# be one typed habit away from `git add -A`
+.profile*/

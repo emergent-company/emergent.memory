@@ -237,7 +237,7 @@ func requireServerReady(t *testing.T, home string, rl ...*framework.RunLog) {
 // reached (e.g. no internet in CI or air-gapped environment).
 func skipIfDocsUnreachable(t *testing.T, rl *framework.RunLog) {
 	t.Helper()
-	const docsBaseURL = "https://emergent-company.github.io/emergent.memory/latest/"
+	const docsBaseURL = "https://docs.memory.emergent-company.ai/"
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(docsBaseURL)
 	if err != nil {

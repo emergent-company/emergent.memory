@@ -89,7 +89,10 @@ type WorkItem struct {
 	// Blocked is a durable execution state; the workflow status is preserved.
 	Blocked     bool
 	BlockReason string
-	BlockedAt   *time.Time
+	// BlockFailureClass classifies why the item is parked (for example
+	// "budget"), so a card can tell a spending-cap park from a poisoned item.
+	BlockFailureClass string
+	BlockedAt         *time.Time
 
 	Unroutable bool
 }
@@ -711,6 +714,9 @@ func (s *Service) ListWorkItems(ctx context.Context, projectID, status, typeName
 		if block := blocks[o.CanonicalID]; block != nil {
 			item.Blocked = true
 			item.BlockReason = block.Reason
+			if block.FailureClass != nil {
+				item.BlockFailureClass = *block.FailureClass
+			}
 			item.BlockedAt = block.BlockedAt
 		}
 		items = append(items, item)

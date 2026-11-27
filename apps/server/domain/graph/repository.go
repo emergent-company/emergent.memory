@@ -1898,9 +1898,10 @@ func (r *Repository) listLatestRunsForSubjects(ctx context.Context, canonicalIDs
 
 // workBlockProjection is the durable blocked state for a work item.
 type workBlockProjection struct {
-	CanonicalID uuid.UUID  `bun:"canonical_id"`
-	Reason      string     `bun:"reason"`
-	BlockedAt   *time.Time `bun:"blocked_at"`
+	CanonicalID  uuid.UUID  `bun:"canonical_id"`
+	Reason       string     `bun:"reason"`
+	FailureClass *string    `bun:"failure_class"`
+	BlockedAt    *time.Time `bun:"blocked_at"`
 }
 
 // listWorkBlocksForSubjects returns block rows keyed by subject canonical id.
@@ -1911,7 +1912,7 @@ func (r *Repository) listWorkBlocksForSubjects(ctx context.Context, canonicalIDs
 	}
 	var rows []*workBlockProjection
 	if err := r.db.NewRaw(`
-		SELECT canonical_id, reason, blocked_at
+		SELECT canonical_id, reason, failure_class, blocked_at
 		FROM kb.work_blocks
 		WHERE canonical_id IN (?)`,
 		bun.In(canonicalIDs),

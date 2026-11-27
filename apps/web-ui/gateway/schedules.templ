@@ -293,7 +293,7 @@ templ scheduleRunsSection(runs []ScheduledAgentRun) {
 							<div class="font-medium text-sm">{ scheduleRunTitle(r) }</div>
 							<div class="text-muted text-xs">{ scheduleRunSubtitle(r) }</div>
 						</div>
-						@ui.Badge(ui.BadgeProps{Label: r.Status, Variant: scheduleStatusIntent(&r.Status), Size: ui.BadgeSizeXS, Dot: true})
+						@ui.Badge(ui.BadgeProps{Label: workRunStatusLabel(r.Status), Variant: scheduleStatusIntent(&r.Status), Size: ui.BadgeSizeXS, Dot: true})
 						@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
 					</a>
 				}

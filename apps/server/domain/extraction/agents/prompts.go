@@ -256,11 +256,55 @@ type RelationshipSchema struct {
 
 // ExistingEntityContext provides context about an existing entity for identity resolution.
 type ExistingEntityContext struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name"`
-	TypeName    string  `json:"type_name"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	TypeName string `json:"type_name"`
+	// Key is the object's stored dedup identity. The prompt renders names and
+	// IDs, but the extraction worker uses Key to persist a re-mention under the
+	// existing identity even when the model repeats a differently-spelled name
+	// (#1074).
+	Key         string  `json:"key,omitempty"`
 	Description string  `json:"description,omitempty"`
 	Similarity  float64 `json:"similarity,omitempty"`
+}
+
+// Existing-entity context bounds. They cap what the extraction prompt renders:
+// at most ExistingEntityPromptMaxPerType rows per type and
+// ExistingEntityPromptMaxTotal rows overall, because a large graph would
+// otherwise bloat every prompt. Callers that build an identity-resolution index
+// from the same context must trim it with TrimExistingEntitiesForPrompt so the
+// ids accepted at persistence are exactly the ones the model was shown (#1123).
+const (
+	ExistingEntityPromptMaxPerType = 10
+	ExistingEntityPromptMaxTotal   = 50
+)
+
+// TrimExistingEntitiesForPrompt returns the subset of existing entities that
+// BuildEntityExtractionPrompt renders for typesToExtract, in the same type order
+// and under the same per-type/total caps. Type names are identifiers, so the
+// grouping and comparison are exact.
+func TrimExistingEntitiesForPrompt(existing []ExistingEntityContext, typesToExtract []string) []ExistingEntityContext {
+	if len(existing) == 0 || len(typesToExtract) == 0 {
+		return nil
+	}
+	byType := make(map[string][]ExistingEntityContext, len(typesToExtract))
+	for _, entity := range existing {
+		byType[entity.TypeName] = append(byType[entity.TypeName], entity)
+	}
+	shown := make([]ExistingEntityContext, 0, ExistingEntityPromptMaxTotal)
+	for _, typeName := range typesToExtract {
+		entities := byType[typeName]
+		if len(entities) > ExistingEntityPromptMaxPerType {
+			entities = entities[:ExistingEntityPromptMaxPerType]
+		}
+		for _, entity := range entities {
+			if len(shown) >= ExistingEntityPromptMaxTotal {
+				return shown
+			}
+			shown = append(shown, entity)
+		}
+	}
+	return shown
 }
 
 // InternalEntity represents an entity with a temp_id for internal processing.
@@ -338,12 +382,10 @@ func BuildEntityExtractionPrompt(
 			byType[entity.TypeName] = append(byType[entity.TypeName], entity)
 		}
 
-		const maxPerType = 10
-		const maxTotal = 50
 		totalShown := 0
 
 		for _, typeName := range typesToExtract {
-			if totalShown >= maxTotal {
+			if totalShown >= ExistingEntityPromptMaxTotal {
 				break
 			}
 			entities, ok := byType[typeName]
@@ -353,12 +395,12 @@ func BuildEntityExtractionPrompt(
 
 			sb.WriteString(fmt.Sprintf("### %s\n", typeName))
 			toShow := entities
-			if len(toShow) > maxPerType {
-				toShow = toShow[:maxPerType]
+			if len(toShow) > ExistingEntityPromptMaxPerType {
+				toShow = toShow[:ExistingEntityPromptMaxPerType]
 			}
 
 			for _, entity := range toShow {
-				if totalShown >= maxTotal {
+				if totalShown >= ExistingEntityPromptMaxTotal {
 					break
 				}
 				similarity := ""
@@ -377,8 +419,8 @@ func BuildEntityExtractionPrompt(
 				totalShown++
 			}
 
-			if len(entities) > maxPerType {
-				sb.WriteString(fmt.Sprintf("  _(and %d more)_\n", len(entities)-maxPerType))
+			if len(entities) > ExistingEntityPromptMaxPerType {
+				fmt.Fprintf(&sb, "  _(and %d more)_\n", len(entities)-ExistingEntityPromptMaxPerType)
 			}
 		}
 		sb.WriteString("\n")
@@ -502,6 +544,7 @@ const contextAwareExtractionRules = `
 CONTEXT-AWARE EXTRACTION RULES:
 - Below is a list of existing entities already in the knowledge graph
 - When you find an entity that MATCHES an existing one, use the SAME NAME and set action="enrich"
+- Treat spelling variants, transliterations and abbreviations as the same entity when they name the same real-world object: reuse the existing name and provide its existing_entity_id
 - When you find NEW information about an existing entity, include it in the description
 - Only extract entities that are mentioned or referenced in THIS document
 - Do NOT simply copy existing entities - only include them if the document mentions them

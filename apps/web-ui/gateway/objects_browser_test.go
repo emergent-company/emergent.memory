@@ -62,10 +62,11 @@ func TestObjectsBrowserCardGridRendersSelectionSurface(t *testing.T) {
 	}
 
 	// Cards keep the browse facts: the type and ref ride above the name as one
-	// identity line, and the workflow state, embedding state, writer and version
-	// count each render as their own signal.
+	// identity line, and the embedding state, writer and version count each
+	// render as their own signal. The workflow state and the data class do not
+	// ride on a card — they repeat the same value across a grid and belong to
+	// the object page's header chips.
 	for _, want := range []string{
-		`data-status="in_progress"`,
 		`>task<`,
 		`#9f1c0a2e`,
 		`>4 versions<`,
@@ -73,6 +74,11 @@ func TestObjectsBrowserCardGridRendersSelectionSurface(t *testing.T) {
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("browse card missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{`data-status="in_progress"`, ">Synthesized<"} {
+		if strings.Contains(html, unwanted) {
+			t.Errorf("browse card must not carry the state/data-class chip %q", unwanted)
 		}
 	}
 	if strings.Index(html, "#9f1c0a2e") > strings.Index(html, ">Ship the objects browser table<") {
@@ -559,8 +565,8 @@ func TestObjectsFiltersApplyInPlace(t *testing.T) {
 		t.Error("the actor picker must submit its actor as one value")
 	}
 	for _, want := range []string{
-		`hx-get="/objects"`,
-		`hx-target="#objects-results"`,
+		`hx-get="/search"`,
+		`hx-target="#search-results"`,
 		`hx-swap="outerHTML"`,
 		`hx-push-url="true"`,
 		`hx-trigger="change, submit"`,
@@ -722,7 +728,7 @@ func TestObjectShortID(t *testing.T) {
 func TestObjectsBrowserSearchResultsAreRelevanceRanked(t *testing.T) {
 	data := objectsBrowserSampleData("")
 	data.Query = "acme"
-	data.Mode = "hybrid"
+	data.In = searchScopeAll
 	for _, o := range data.Objects {
 		data.Results = append(data.Results, ObjectSearchResult{Score: 0.5, Object: o})
 	}
@@ -803,7 +809,7 @@ func TestObjectsPageBulkFormsCarryReturnPath(t *testing.T) {
 	if got := strings.Count(html, `name="back"`); got != 4 {
 		t.Fatalf("back inputs = %d, want one per bulk dialog (4)", got)
 	}
-	if !strings.Contains(html, `value="/objects?branch=b-objs&amp;order=asc&amp;type=task"`) {
+	if !strings.Contains(html, `value="/search?branch=b-objs&amp;order=asc&amp;type=task"`) {
 		t.Errorf("back input must carry the current filters, got:\n%s", html)
 	}
 	// Delete resolves the object on the page's branch; without this field it
@@ -843,6 +849,110 @@ func TestObjectsBrowserRowsPartialAppendsToTheGrid(t *testing.T) {
 		if strings.Contains(html, unwanted) {
 			t.Errorf("rows partial must not carry the retired table/mobile markup %q", unwanted)
 		}
+	}
+}
+
+// TestObjectsBrowserCardAlignment pins the card's layout contract: one fixed
+// height for every card, the type tile at the top of the text block, a two-row
+// description, and the bottom block (labels + footer) anchored to the floor.
+//
+// Each rule answers a way a grid of cards degrades: a centred tile floats down
+// beside the excerpt instead of marking the identity line; a description of
+// whatever length makes every card a different height (the grid only equalises
+// within a row); and a bottom block that is not anchored leaves the footer
+// hanging under the header on a card with little content.
+func TestObjectsBrowserCardAlignment(t *testing.T) {
+	row := objectsBrowserRowView{
+		ID:      "o1",
+		Ref:     "#o1",
+		Label:   "Boiler service — confirm parts availability",
+		Type:    "Task",
+		Excerpt: "The engineer flagged a failing diverter valve last year; check stock before the visit.",
+		Labels:  []string{"example", "workflow"},
+	}
+	html := renderHTML(t, objectsBrowserCard(row, false, false))
+
+	// Root: one fixed height for every card, and clipped so a longer label set
+	// cannot push the floor out. h-full is the failure mode — it equalises only
+	// within a row, so short cards stay short.
+	rootStart := strings.Index(html, `data-testid="object-card"`)
+	if rootStart < 0 {
+		t.Fatalf("missing the card root:\n%s", html)
+	}
+	rootTag := html[:rootStart]
+	if !strings.Contains(rootTag, objectsCardHeightClass) {
+		t.Errorf("the card root must carry the fixed height %q:\n%s", objectsCardHeightClass, rootTag)
+	}
+	if strings.Contains(rootTag, "h-full") {
+		t.Errorf("the card root must not size itself from the grid row (h-full):\n%s", rootTag)
+	}
+	if !strings.Contains(rootTag, "overflow-hidden") {
+		t.Errorf("the card root must clip content past its fixed height:\n%s", rootTag)
+	}
+
+	// The description is a teaser: two rows, then the fixed height's slack.
+	if !strings.Contains(html, "line-clamp-2") {
+		t.Errorf("the card description must be clamped to two rows:\n%s", html)
+	}
+	if strings.Contains(html, "line-clamp-3") {
+		t.Errorf("the card description must not clamp to three rows:\n%s", html)
+	}
+
+	// The identity wrapper is the one objectHeader renders around the tile and the
+	// text column: items-start pins the tile, items-center floats it.
+	if !strings.Contains(html, `class="flex min-w-0 items-start gap-3"`) {
+		t.Errorf("the type tile must be top-aligned with the text block:\n%s", html)
+	}
+	// p-3 (12px) + the size-9 tile (36px) + gap-3 (12px) is where the header's text
+	// starts; the chips use the same inset so they read as that text's labels.
+	chips := strings.Index(html, `data-testid="object-card-chips"`)
+	if chips < 0 {
+		t.Fatal("missing the card's chips row")
+	}
+	start := strings.LastIndex(html[:chips], "<div")
+	if start < 0 {
+		t.Fatal("cannot locate the chips row's opening tag")
+	}
+	chipsTag := html[start:chips]
+	if !strings.Contains(chipsTag, "pl-[3.75rem] pr-3") {
+		t.Errorf("the chips row must be indented to the card's text column, not the card padding:\n%s", chipsTag)
+	}
+	// The header block is the card's one growing region, so the fixed height's
+	// slack lands below the description instead of between the rows underneath.
+	if !strings.Contains(html, `class="flex min-h-0 flex-1 items-start justify-between gap-2 p-3 pb-0"`) {
+		t.Errorf("the card header must be the growing block (flex-1):\n%s", html)
+	}
+
+	// Labels keep a rule-sized minimum gap from the text above them. The row does
+	// not anchor the card's bottom: the slack is spent in the header, and this row
+	// disappears on a card with no labels.
+	if !strings.Contains(chipsTag, "pt-2") {
+		t.Errorf("the chips row must keep a top gap from the text:\n%s", chipsTag)
+	}
+	if strings.Contains(chipsTag, "mt-auto") {
+		t.Errorf("the chips row must not carry a bottom anchor (two auto margins split the slack):\n%s", chipsTag)
+	}
+
+	// The footer is the card's floor: last row of the fixed-height column, one
+	// fixed height, so two cards share a baseline whatever they carry. It must not
+	// anchor itself — an auto margin here plus the header's growth would split the
+	// slack across both gaps.
+	footer := strings.LastIndex(html, "border-t px-3 text-[11px]")
+	if footer < 0 {
+		t.Fatalf("missing the card footer:\n%s", html)
+	}
+	footerStart := strings.LastIndex(html[:footer], "<div")
+	footerTag := html[footerStart:footer]
+	for _, want := range []string{"h-8", "shrink-0", "overflow-hidden"} {
+		if !strings.Contains(footerTag, want) {
+			t.Errorf("card footer must carry %q:\n%s", want, footerTag)
+		}
+	}
+	if strings.Contains(footerTag, "flex-wrap") || strings.Contains(footerTag, "py-2") {
+		t.Errorf("the footer is a fixed-height bar and must not wrap or size itself from padding:\n%s", footerTag)
+	}
+	if strings.Contains(footerTag, "mt-auto") {
+		t.Errorf("the footer must not carry a bottom anchor (the header grows to fill):\n%s", footerTag)
 	}
 }
 
@@ -916,58 +1026,48 @@ func TestObjectsBulkStatusDialogUsesPerTypeOptions(t *testing.T) {
 	}
 }
 
-// TestObjectsBrowserWikiViewSwitch pins the browse-side variant switch: the card
-// grid opens an object's wiki in the chosen variant, the switch carries that
-// choice into the query (so a shared or reloaded URL keeps it), and it survives
-// the active filters.
-func TestObjectsBrowserWikiViewSwitch(t *testing.T) {
-	// The default variant is the article, and the default card link stays short:
-	// no view parameter when nothing but the article is meant.
+// TestObjectsBrowserCardsLinkToWiki pins the card link: browsing opens the
+// object's wiki, there is no variant to choose, and a gallery preview card stays
+// inert so it cannot navigate the preview iframe away from the sample page.
+func TestObjectsBrowserCardsLinkToWiki(t *testing.T) {
 	data := objectsBrowserSampleData("")
 	data.Preview = false
 	html := renderHTML(t, ObjectsPage(data))
-	bar := resultsBar(t, html)
-	if !strings.Contains(bar, `data-testid="objects-wiki-view-article"`) ||
-		!strings.Contains(bar, `data-testid="objects-wiki-view-page"`) {
-		t.Fatal("the results bar must offer both wiki variants")
-	}
-	if !strings.Contains(bar, `aria-current="page"`) {
-		t.Error("the active variant must be marked for assistive tech")
-	}
-	if !regexp.MustCompile(`href="\?[^"]*wiki_view=page`).MatchString(bar) {
-		t.Error("the switch must link to the object-page variant as a query-only href")
-	}
-	// A card opens the wiki, and only a non-default variant is spelled out.
+
 	if !regexp.MustCompile(`href="/objects/[^"]+/wiki"`).MatchString(html) {
 		t.Error("a card must link into the object's wiki")
 	}
-	if strings.Contains(html, "/wiki?view=article") {
-		t.Error("the default article variant must not be spelled into card URLs")
+	if strings.Contains(html, "/wiki?") {
+		t.Error("card links must not carry a variant query")
+	}
+	if strings.Contains(html, "objects-wiki-view-") || strings.Contains(html, "wiki_view=") {
+		t.Error("the retired wiki view switch must not render")
 	}
 
-	// Chosen object-page variant: the cards carry it, so opening one does not
-	// fall back to the article.
-	page := objectsBrowserSampleData("")
-	page.Preview = false
-	page.WikiView = objectWikiViewPage
-	page.TypeFilter = "task"
-	pageHTML := renderHTML(t, ObjectsPage(page))
-	if !regexp.MustCompile(`href="/objects/[^"]+/wiki\?view=page"`).MatchString(pageHTML) {
-		t.Error("cards must open the wiki in the variant the reader chose")
-	}
-	pageBar := resultsBar(t, pageHTML)
-	if !regexp.MustCompile(`href="\?[^"]*wiki_view=article`).MatchString(pageBar) {
-		t.Error("the switch back to the article must be offered once page is active")
-	}
-	// Switching the variant keeps the active filter, so it cannot widen the list.
-	if !strings.Contains(pageBar, "wiki_view=article") || !strings.Contains(pageBar, "type=task") {
-		t.Errorf("the switch href dropped the active filter: %s", pageBar)
-	}
-
-	// The gallery preview stays inert: its cards and switch cannot navigate the
-	// preview iframe away from the sample page.
+	// The gallery preview stays inert: its cards cannot navigate the preview
+	// iframe away from the sample page.
 	preview := renderHTML(t, ObjectsPage(objectsBrowserSampleData("")))
 	if strings.Contains(preview, "/wiki") {
 		t.Error("a preview card must not link to a real object")
+	}
+}
+
+func TestObjectsBrowserRowVersionCount(t *testing.T) {
+	five := 5
+	for name, tc := range map[string]struct {
+		obj       GraphObject
+		wantCount int
+		wantKnown bool
+	}{
+		"version number alone": {GraphObject{ID: "o1", Type: "note", Version: 3}, 3, true},
+		"revision count wins":  {GraphObject{ID: "o2", Type: "note", Version: 3, RevisionCount: &five}, 5, true},
+		"neither reported":     {GraphObject{ID: "o3", Type: "note"}, 0, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			row := newObjectsBrowserRow(tc.obj, nil, nil, nil, 0)
+			if row.HasRevisionCount != tc.wantKnown || row.RevisionCount != tc.wantCount {
+				t.Errorf("count = %d/%v, want %d/%v", row.RevisionCount, row.HasRevisionCount, tc.wantCount, tc.wantKnown)
+			}
+		})
 	}
 }

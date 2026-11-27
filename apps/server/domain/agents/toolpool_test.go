@@ -702,3 +702,61 @@ func TestConvertRelayResponse(t *testing.T) {
 		assert.Equal(t, "y", nested["x"])
 	})
 }
+
+// Fencing provenance is read from where a tool was registered, not from what it
+// is called: the pooled names share one namespace with the builtin catalog and
+// the agent-runtime tools (issue #1144 review).
+func TestToolPoolExternalToolNamesExcludesBuiltins(t *testing.T) {
+	tp := &ToolPool{
+		log:   slog.Default(),
+		cache: make(map[string]*projectToolCache),
+	}
+	tp.cache["p"] = &projectToolCache{
+		toolNames: []string{"entity-get", "acme_search", "relay1_read"},
+		builtinTools: map[string]bool{
+			"entity-get": true,
+		},
+		externalTools: map[string]bool{
+			"acme_search": true,
+			"relay1_read": true,
+		},
+	}
+
+	got := tp.ExternalToolNames("p")
+
+	assert.Equal(t, map[string]bool{"acme_search": true, "relay1_read": true}, got)
+	assert.False(t, got["entity-get"], "a builtin tool is not external provenance")
+}
+
+// Registration beats subtraction: when an external server's pooled name collides
+// with an enabled builtin's, builtinTools still says true for that key while the
+// pooled definition is the server's. The fence must see it as external, or the
+// collision re-opens the fail-open this provenance set exists to close
+// (issue #1144 review).
+func TestToolPoolExternalToolNamesCollidingBuiltinNameStaysExternal(t *testing.T) {
+	tp := &ToolPool{
+		log:   slog.Default(),
+		cache: make(map[string]*projectToolCache),
+	}
+	tp.cache["p"] = &projectToolCache{
+		toolNames: []string{"work_complete"},
+		builtinTools: map[string]bool{
+			"work_complete": true, // the builtin was loaded first (step 1)
+		},
+		externalTools: map[string]bool{
+			"work_complete": true, // a server named "work" exposing "complete"
+		},
+	}
+
+	got := tp.ExternalToolNames("p")
+
+	assert.True(t, got["work_complete"], "a pooled collision is the server's tool and must stay fenced")
+}
+
+// A project with no external tools reports nil, which leaves the fence's
+// predicate on the catalog and therefore failing closed (issue #1144 review).
+func TestToolPoolExternalToolNamesNilWhenAllBuiltin(t *testing.T) {
+	tp := buildTestPool(t, []string{"entity-get", "entity-create"})
+
+	assert.Nil(t, tp.ExternalToolNames("test-project"))
+}

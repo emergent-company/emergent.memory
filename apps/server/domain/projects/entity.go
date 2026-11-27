@@ -1,6 +1,7 @@
 package projects
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -58,6 +59,20 @@ type Project struct {
 	// documents. Defaults to false: synced items still chunk and embed, but
 	// extraction is opt-in so a sync never spends tokens unasked.
 	AutoExtractSourceSyncs bool `bun:"auto_extract_source_syncs,notnull,default:false" json:"auto_extract_source_syncs"`
+
+	// PipelineMode is the human-facing selector for the knowledge-pipeline
+	// policy (off | suggest | auto). The resolved knobs live in PipelinePolicy.
+	// Added in migration 00319.
+	PipelineMode string `bun:"pipeline_mode,notnull,default:'suggest'" json:"pipeline_mode"`
+
+	// PipelinePolicy is the fully-resolved knowledge-pipeline policy JSON
+	// (domain/pipeline.Policy). Added in migration 00319.
+	PipelinePolicy json.RawMessage `bun:"pipeline_policy,type:jsonb,notnull,default:'{}'" json:"pipeline_policy,omitempty"`
+
+	// SchemaGeneration is a monotonic counter bumped whenever the project's
+	// effective installed schema set changes; it fingerprints extraction jobs
+	// for incremental backfill. Added in migration 00319.
+	SchemaGeneration int `bun:"schema_generation,notnull,default:0" json:"schema_generation"`
 
 	// SkillCapture is the project-level automatic skill-capture policy (added in
 	// migration 00270_add_agent_skill_capture.sql). The zero value means "off",
@@ -161,6 +176,13 @@ type PendingExtractionMergeStats struct {
 	ObjectCount          int `json:"objectCount"`
 	RelationshipCount    int `json:"relationshipCount"`
 	MainGraphObjectCount int `json:"mainGraphObjectCount"`
+	// LeftForReviewCount is how many objects the most recent auto-merge left on
+	// the project's unmerged extraction branches (the merge journal's
+	// left_for_review_count, summed over branches). A non-zero value means
+	// auto-merge ran but deliberately parked work for a human; surfacing it here
+	// makes a stalled unattended ingest visible without reading merge logs
+	// (#1074).
+	LeftForReviewCount int `json:"leftForReviewCount"`
 	// Stranded is true when extraction produced objects but the main graph is
 	// empty, so every default read reports nothing.
 	Stranded bool `json:"stranded"`
@@ -190,6 +212,12 @@ type ProjectDTO struct {
 	// AutoExtractSourceSyncs is emitted only when true: the column defaults to
 	// false, so an absent field correctly reads as "off".
 	AutoExtractSourceSyncs *bool `json:"auto_extract_source_syncs,omitempty"`
+	// PipelineMode is the stored preset selector, always emitted.
+	PipelineMode string `json:"pipeline_mode"`
+	// PipelinePolicy is the stored resolved policy, emitted verbatim.
+	PipelinePolicy json.RawMessage `json:"pipeline_policy,omitempty"`
+	// SchemaGeneration is the schema fingerprint generation, always emitted.
+	SchemaGeneration int `json:"schema_generation"`
 	// MainBranchID is the UUID of the project's root branch (parent_branch_id IS NULL).
 	// Callers can use this as targetBranchID when merging without knowing the branch UUID,
 	// or pass the magic string "main" to the merge endpoint directly.
@@ -280,6 +308,12 @@ type UpdateProjectRequest struct {
 	AutoMergeExtractionBranches *bool          `json:"auto_merge_extraction_branches,omitempty"`
 	AutoDiscoveryEnabled        *bool          `json:"auto_discovery_enabled,omitempty"`
 	AutoExtractSourceSyncs      *bool          `json:"auto_extract_source_syncs,omitempty"`
+	// PipelineMode switches the knowledge-pipeline preset. When set without a
+	// policy, the stored policy resets to that mode's defaults.
+	PipelineMode *string `json:"pipeline_mode,omitempty"`
+	// PipelinePolicy replaces the fully-resolved policy JSON. Validated by
+	// domain/pipeline.Validate before it is stored.
+	PipelinePolicy *json.RawMessage `json:"pipeline_policy,omitempty"`
 	// SkillCapture replaces the project capture policy when present. An object
 	// with mode "off" disables capture; omitting the field leaves it untouched.
 	SkillCapture *skills.ProjectSkillCaptureConfig `json:"skill_capture,omitempty"`
@@ -304,6 +338,9 @@ func (p *Project) ToDTO() ProjectDTO {
 		BudgetAlertThreshold: &p.BudgetAlertThreshold,
 		Stats:                p.Stats,
 		SkillCapture:         p.SkillCapture,
+		PipelineMode:         p.PipelineMode,
+		PipelinePolicy:       p.PipelinePolicy,
+		SchemaGeneration:     p.SchemaGeneration,
 	}
 
 	if p.BudgetWeeklyUSD != nil {

@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 # Keep only the newest N versioned docs trees in a gh-pages checkout.
 #
-# Why: gh-pages is one size budget shared by the docs site and the Mac Sparkle
-# appcast (check-pages-tree-size.sh enforces it from publish-appcast.sh). Every
-# release tag makes `mike deploy` add a full copy of the built site -- ~13 MiB,
-# ~130 files -- and nothing ever removed the old ones. 24 versioned trees plus
-# the appcast reached 523 MiB against the 500 MiB aggregate guard, so the next
-# `Mac Release` publish failed (#976, recurrence of #7). Raising the guard is
-# not the fix: it only defers the failure, and GitHub stops publishing a Pages
-# site over 1 GB. Bounding the publisher is.
+# Why this exists at all: gh-pages is one size budget shared by every publisher
+# (check-pages-tree-size.sh enforces it from publish-appcast.sh). While the MkDocs
+# site was live, every release tag made `mike deploy` add a full copy of the
+# built site -- ~13 MiB, ~130 files -- and nothing ever removed the old ones. 24
+# versioned trees plus the appcast reached 523 MiB against the 500 MiB aggregate
+# guard, so the next `Mac Release` publish failed (#976, recurrence of #7).
+# Raising the guard was not the fix: it only defers the failure, and GitHub stops
+# publishing a Pages site over 1 GB.
+#
+# The MkDocs site is retired and its trees were cleared from the branch, so
+# nothing publishes one now and this is legacy cleanup: it keeps a branch that
+# still carries versioned trees within budget, and no-ops on one that does not.
+# It is retained rather than deleted because a prune that no longer runs is
+# indistinguishable from one that never worked, and the retention policy is
+# still the answer if such a tree reappears.
 #
 # Retention, not reachability: versioned docs are user-visible, so this is a
 # deliberate policy -- keep the newest N releases and drop the rest. Anything

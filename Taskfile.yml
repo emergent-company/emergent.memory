@@ -47,19 +47,19 @@ tasks:
       - lefthook run lint
 
   brand:build:
-    desc: Regenerate every brand artefact from brand/tokens/memory.tokens.json
+    desc: Regenerate every brand artefact from design-system/tokens/memory.tokens.json
     cmds:
-      - python3 brand/build.py
+      - python3 design-system/build.py
 
   brand:check:
     desc: Verify brand artefacts, contrast pairs and the logo grid contract
     cmds:
-      - bash scripts/preflight/brand.sh
+      - bash scripts/preflight/design-system.sh
 
   brand:preview:
-    desc: Open the logo preview page in the default browser
+    desc: Open the generated brand + design-system catalogue
     cmds:
-      - xdg-open brand/logo/preview.html || open brand/logo/preview.html
+      - xdg-open design-system/catalog/index.html || open design-system/catalog/index.html
 
   migrate:up:
     desc: Run database migrations up

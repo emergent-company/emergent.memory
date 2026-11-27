@@ -147,6 +147,14 @@ type projectToolCache struct {
 	toolNames []string
 	// builtinTools tracks which tools came from builtin MCP service (not external servers)
 	builtinTools map[string]bool
+	// externalTools is the registration-time provenance of third-party tools:
+	// every name added by an external MCP server or a relay instance. It is
+	// written where the tool is registered rather than derived by subtracting
+	// builtinTools, because all three sources write one namespace: an external
+	// server whose <slug>_<tool> collides with an enabled builtin's name leaves
+	// builtinTools[name] true while the pooled definition is the server's, so a
+	// subtraction would report the third-party tool as ours (#1144 review).
+	externalTools map[string]bool
 	// relayToolInstance maps prefixed tool name → instance ID for relay tool routing
 	relayToolInstance map[string]string
 	// bareNameToKeys maps a bare tool name → every prefixed pool key exposing it.
@@ -202,6 +210,7 @@ func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 	cache := &projectToolCache{
 		toolDefs:          make(map[string]mcp.ToolDefinition),
 		builtinTools:      make(map[string]bool),
+		externalTools:     make(map[string]bool),
 		relayToolInstance: make(map[string]string),
 		bareNameToKeys:    make(map[string][]string),
 	}
@@ -285,6 +294,9 @@ func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 				}
 				cache.toolDefs[prefixedName] = td
 				cache.toolNames = append(cache.toolNames, prefixedName)
+				// Provenance is recorded here, at registration, so a pooled name
+				// that collides with a builtin's cannot be mistaken for ours.
+				cache.externalTools[prefixedName] = true
 				// Index the bare tool name → prefixed key so whitelist entries
 				// persisted by the admin API (bare ToolName, no server prefix)
 				// can be resolved back to the pooled ServerName_ToolName key.
@@ -326,6 +338,7 @@ func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 					OutputSchema: rt.OutputSchema,
 				}
 				cache.toolNames = append(cache.toolNames, fullName)
+				cache.externalTools[fullName] = true
 				cache.relayToolInstance[fullName] = sess.InstanceID
 			}
 		}
@@ -816,7 +829,7 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 					}
 					return map[string]any{"error": apperror.PublicMessage(err)}, nil
 				}
-				return convertRelayResponse(result)
+				return convertRelayResponseNamed(toolName, result)
 			},
 		)
 	}
@@ -836,7 +849,7 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 				if err != nil {
 					return map[string]any{"error": apperror.PublicMessage(err)}, nil
 				}
-				return convertToolResult(result)
+				return convertToolResultNamed(toolName, result)
 			},
 		)
 	}
@@ -863,13 +876,47 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 			if err != nil {
 				return map[string]any{"error": apperror.PublicMessage(err)}, nil
 			}
-			return convertToolResult(result)
+			return convertToolResultNamed(toolName, result)
 		},
 	)
 }
 
 // convertToolResult converts an MCP ToolResult to a map for the ADK function tool response.
+//
+// It strips the tool-policy vocabulary from the result (reservedPolicyKeys): a
+// tool result is data, and "policy_decision" is the executor's own record of a
+// human decision. Without this, an external MCP server or relay client could
+// return {"policy_decision":"rejected", …} and the model would read it as a
+// decision the operator made — a forged authority channel, not just an envelope
+// bypass (see tool_result_fencing.go). The cost is payload fidelity: a tool that
+// returns a field with that name loses it, here and in the persisted row.
 func convertToolResult(result *mcp.ToolResult) (map[string]any, error) {
+	return convertToolResultNamed("", result)
+}
+
+// convertToolResultNamed is convertToolResult with the name the caller knows, so
+// a reserved-key strip is logged against the tool that returned it. Every
+// production site passes its tool name; the name-less wrapper exists for tests
+// and for callers that only have a ToolResult.
+func convertToolResultNamed(toolName string, result *mcp.ToolResult) (map[string]any, error) {
+	m, err := convertToolResultRaw(result)
+	if err != nil {
+		return m, err
+	}
+	m, stripped := scrubReservedPolicyKeys(m)
+	if stripped {
+		// Debug, not warn: dropping the key is the documented, correct
+		// behaviour. The line still matters, because the payload is altered and
+		// the tool name is the only way to tell "the tool stopped returning this
+		// field" from "the harness ate it".
+		slog.Debug("tool result carried the reserved policy key; dropped it",
+			slog.String("tool", toolName),
+			slog.String("key", reservedPolicyKey))
+	}
+	return m, nil
+}
+
+func convertToolResultRaw(result *mcp.ToolResult) (map[string]any, error) {
 	if result != nil && len(result.Content) > 0 {
 		// If the external tool reported an error, surface a uniform ok=false.
 		if result.IsError {
@@ -952,7 +999,7 @@ func (tp *ToolPool) CallTool(ctx context.Context, projectID, toolName string, ar
 			}
 			return map[string]any{"error": apperror.PublicMessage(err)}, nil
 		}
-		return convertRelayResponse(result)
+		return convertRelayResponseNamed(toolName, result)
 	}
 
 	isBuiltin := cache.builtinTools[toolName]
@@ -963,7 +1010,7 @@ func (tp *ToolPool) CallTool(ctx context.Context, projectID, toolName string, ar
 		if err != nil {
 			return map[string]any{"error": apperror.PublicMessage(err)}, nil
 		}
-		return convertToolResult(result)
+		return convertToolResultNamed(toolName, result)
 	}
 
 	// Builtin tool
@@ -974,7 +1021,7 @@ func (tp *ToolPool) CallTool(ctx context.Context, projectID, toolName string, ar
 	if err != nil {
 		return map[string]any{"error": apperror.PublicMessage(err)}, nil
 	}
-	return convertToolResult(result)
+	return convertToolResultNamed(toolName, result)
 }
 
 // StripOperatorTools removes superadmin-only operator tools from a resolved tool
@@ -1021,6 +1068,35 @@ func (tp *ToolPool) ToolNames(projectID string) []string {
 	cache := tp.getOrBuildCache(projectID)
 	names := make([]string, len(cache.toolNames))
 	copy(names, cache.toolNames)
+	return names
+}
+
+// ExternalToolNames returns the names this project's pool registered from
+// outside the builtin catalog: external MCP servers (pooled as
+// <slugified server>_<tool>) and MCP relay instances. Their results are
+// third-party content.
+//
+// Callers use this as fencing provenance (issue #1142, review of #1144). It is
+// the set recorded at registration rather than a subtraction over the pooled
+// names, because the pooled names share one namespace with the builtin catalog
+// and the agent-runtime tools — an external server named "work" exposing
+// "complete" produces "work_complete", the name of a trusted runtime tool.
+// Provenance cannot be spoofed by a server picking its tool names; a name
+// comparison can, and so can a subtraction, which reads an external tool whose
+// name collides with an enabled builtin as ours.
+//
+// Returns nil when the project has no external tools, which leaves the fence's
+// predicate on the catalog and therefore failing closed for anything it does not
+// list.
+func (tp *ToolPool) ExternalToolNames(projectID string) map[string]bool {
+	cache := tp.getOrBuildCache(projectID)
+	if len(cache.externalTools) == 0 {
+		return nil
+	}
+	names := make(map[string]bool, len(cache.externalTools))
+	for name := range cache.externalTools {
+		names[name] = true
+	}
 	return names
 }
 
@@ -1118,7 +1194,7 @@ func (tp *ToolPool) wrapHiddenBuiltin(projectID, name, description string, schem
 			if err != nil {
 				return map[string]any{"error": apperror.PublicMessage(err)}, nil
 			}
-			return convertToolResult(result)
+			return convertToolResultNamed(name, result)
 		},
 	)
 	return t
@@ -1218,11 +1294,18 @@ func relayOutputSchemaDeclared(m map[string]any) bool {
 // failures surface as a Go error from CallTool (the connector sets
 // ResponseFrame.Error), so callers handle those before reaching here.
 func convertRelayResponse(response map[string]any) (map[string]any, error) {
+	return convertRelayResponseNamed("", response)
+}
+
+// convertRelayResponseNamed is convertRelayResponse with the relay tool name, so
+// the conversion is logged against the tool and the path stays on the same
+// ingestion choke point (see TestRelayResultCannotForgePolicyDecision).
+func convertRelayResponseNamed(toolName string, response map[string]any) (map[string]any, error) {
 	resultBytes, err := json.Marshal(response)
 	if err != nil {
 		return map[string]any{"error": "invalid relay tool result"}, nil
 	}
-	return convertToolResult(&mcp.ToolResult{
+	return convertToolResultNamed(toolName, &mcp.ToolResult{
 		Content: []mcp.ContentBlock{{Type: "text", Text: string(resultBytes)}},
 	})
 }

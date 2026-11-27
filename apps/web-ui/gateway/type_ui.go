@@ -20,23 +20,31 @@ type typeUI struct {
 	// nil when the type declares none. Only the renderer reads it; a type with
 	// a view but no icon/colour is still worth indexing.
 	View *typeUIView
+	// HasWorkflow says the type declares a work process — an allowed-status
+	// vocabulary or the boardEnabled flag. It lives here because presentation
+	// needs it beside the type's other declared traits: the workflow status is
+	// shown as a workflow fact only for these types, while a `status` property
+	// on any other type is ordinary data. A type with only a workflow and no
+	// icon/colour/view is still indexed, so the flag is never lost.
+	HasWorkflow bool
 }
 
 // objectTypeUIMap indexes compiled object types by name, keeping only those
-// that declare a ui icon, colour and/or view. Missing names (or a nil input)
-// yield a nil map, so lookups fall back to the generic box accent. Shadowed
-// (losing) duplicates are skipped — the same rule every other compiled-type
-// consumer follows — so an overridden type cannot lend its accent to the
-// winner.
+// that declare a ui icon, colour, view and/or workflow. Missing names (or a nil
+// input) yield a nil map, so lookups fall back to the generic box accent.
+// Shadowed (losing) duplicates are skipped — the same rule every other
+// compiled-type consumer follows — so an overridden type cannot lend its accent
+// to the winner.
 func objectTypeUIMap(objectTypes []CompiledType) map[string]typeUI {
 	var m map[string]typeUI
 	for _, t := range visibleCompiledTypes(objectTypes) {
 		ui := typeUI{
-			Icon:  compiledTypeIcon(t),
-			Color: compiledTypeColor(t),
-			View:  typeUIViewOf(t.UI),
+			Icon:        compiledTypeIcon(t),
+			Color:       compiledTypeColor(t),
+			View:        typeUIViewOf(t.UI),
+			HasWorkflow: t.BoardEnabled || len(t.AllowedStatuses) > 0,
 		}
-		if ui.Icon == "" && ui.Color == "" && ui.View == nil {
+		if ui.Icon == "" && ui.Color == "" && ui.View == nil && !ui.HasWorkflow {
 			continue
 		}
 		if m == nil {
@@ -209,15 +217,4 @@ func typeColorStyle(color string) string {
 	return "color:" + c +
 		";background-color:color-mix(in oklch," + c + " 10%,transparent)" +
 		";border-color:color-mix(in oklch," + c + " 15%,transparent)"
-}
-
-// typeDotStyle returns the inline style for the small separator dot that sits
-// between an object's type and its id: the type's declared color as a solid
-// fill. Empty when the type declares nothing, so the caller's muted default
-// class still reads as a dot rather than disappearing.
-func typeDotStyle(color string) string {
-	if c := strings.TrimSpace(color); c != "" {
-		return "background-color:" + c
-	}
-	return ""
 }

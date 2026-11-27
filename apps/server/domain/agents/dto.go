@@ -51,6 +51,7 @@ type AgentRunDTO struct {
 	Summary      map[string]any `json:"summary"`
 	ErrorMessage *string        `json:"errorMessage"`
 	SkipReason   *string        `json:"skipReason"`
+	FailureClass *string        `json:"failureClass,omitempty"`
 
 	// Multi-agent coordination fields
 	ParentRunID *string `json:"parentRunId,omitempty"`
@@ -61,6 +62,10 @@ type AgentRunDTO struct {
 	// Observability linkage
 	TraceID   *string `json:"traceId,omitempty"`
 	RootRunID *string `json:"rootRunId,omitempty"`
+
+	// OrderedByUserID names the person who ordered this run, so a caller can
+	// show the human behind an agent's work. Absent when nobody did.
+	OrderedByUserID *string `json:"orderedByUserId,omitempty"`
 
 	// Model used for this run (resolved at execution time)
 	Model string `json:"model,omitempty"`
@@ -276,12 +281,14 @@ func (r *AgentRun) ToDTO() *AgentRunDTO {
 		Summary:           r.Summary,
 		ErrorMessage:      r.ErrorMessage,
 		SkipReason:        r.SkipReason,
+		FailureClass:      r.FailureClass,
 		ParentRunID:       r.ParentRunID,
 		StepCount:         r.StepCount,
 		MaxSteps:          r.MaxSteps,
 		ResumedFrom:       r.ResumedFrom,
 		TraceID:           r.TraceID,
 		RootRunID:         r.RootRunID,
+		OrderedByUserID:   r.OrderedByUserID,
 		AgentDefinitionID: r.AgentDefinitionID,
 		SessionID:         r.SessionID,
 		SubjectObjectID:   r.SubjectObjectID,

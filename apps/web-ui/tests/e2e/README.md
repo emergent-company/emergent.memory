@@ -422,6 +422,15 @@ npx playwright test --config=js-dom.config.ts   # or: task e2e:js
 ```
 
 - `js-dom.config.ts` targets only `specs/js/`; it starts **no** server.
+- Server-rendered markup a spec drives is **generated**, never hand-copied:
+  `apps/web-ui/gateway/object_preview_e2e_fixtures_test.go` renders the shipping
+  `objectPreviewHistory` templ into `specs/js/fixtures/object-preview-history-*.html`
+  on every `go test` run and fails when the committed fixture drifts (#1083).
+  Regenerate after an intentional template change with
+  `go test ./gateway -run TestE2EObjectPreviewFixturesRatchet -update-fixtures`, so the
+  fixture diff lands in the same PR. A spec whose markup is a bare skeleton for
+  JS wiring may mirror ids/data-attributes, but its header must not claim to
+  verify the template: reverting the template cannot break it.
 - `specs/js/a2ui-wiring.spec.ts` loads the shipped
   `gateway/webui/static/js/chat-components.js` verbatim into a bare page
   (`page.addScriptTag`) and drives `renderA2UISurface` — the exact path the

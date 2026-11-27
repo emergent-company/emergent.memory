@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"github.com/emergent-company/emergent.memory/domain/graph"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -83,11 +84,16 @@ func TestWorkTriggerMetadataIncludesSourceSubjectOnlyForLaneObjects(t *testing.T
 	if got := workSourceSubject(&graph.WorkObjectHead{Status: "ready", Properties: map[string]any{"title": "x"}}); got != nil {
 		t.Fatalf("plain work object got a source subject: %#v", got)
 	}
-	// An issue object has no head SHA and is not a pull request subject.
-	if got := workSourceSubject(&graph.WorkObjectHead{Status: "ready", Properties: map[string]any{
+	// An issue object carries no head SHA but is still a trusted coding subject:
+	// the issue lane needs it for its implicit source credential.
+	issue := workSourceSubject(&graph.WorkObjectHead{Status: "ready", Properties: map[string]any{
 		"repo": "acme/repo", "issue_number": float64(9), "source_id": "src-1",
-	}}); got != nil {
-		t.Fatalf("issue object got a pull request subject: %#v", got)
+	}})
+	if issue == nil || issue.Kind != "issue" || issue.IssueNumber != 9 || issue.SourceID != "src-1" || issue.Repo != "acme/repo" {
+		t.Fatalf("issue source subject = %#v", issue)
+	}
+	if issue.RepositoryValid() {
+		t.Fatalf("an issue subject must not validate as a pull request subject: %#v", issue)
 	}
 }
 
@@ -116,6 +122,26 @@ func TestWorkTriggerMetadataAcceptsIntegerIssueNumber(t *testing.T) {
 	}
 }
 
+// TestWorkTriggerMetadataBindsLinkedIssueToPullRequestHead pins #1091: a coding
+// issue linked to a pull request carries pr_number/pr_head_sha/pr_branch (not
+// head_sha), so a rework run dispatched from a blocking review verdict must
+// still receive the pull request number, the reviewed head SHA and the branch
+// it has to update.
+func TestWorkTriggerMetadataBindsLinkedIssueToPullRequestHead(t *testing.T) {
+	meta := workTriggerMetadata(&graph.WorkObjectHead{Status: "revision", Type: "GitHubIssue", Properties: map[string]any{
+		"repo":         "acme/repo",
+		"issue_number": float64(42),
+		"pr_number":    float64(7),
+		"pr_head_sha":  "abc123",
+		"pr_branch":    "fix/42-review-finding",
+		"source_id":    "src-1",
+	}})
+	require.Equal(t, 7, meta["prNumber"])
+	require.Equal(t, "abc123", meta["headSha"])
+	require.Equal(t, "fix/42-review-finding", meta["branch"])
+	require.Equal(t, "acme/repo#7", meta["subjectRef"])
+}
+
 func TestMergeWorkObjectMetadataPreservesEventAndAddsSource(t *testing.T) {
 	meta := map[string]any{"work_trigger_event": "created", "work_claim_status": "ready"}
 	mergeWorkObjectMetadata(meta, &graph.WorkObjectHead{Type: "GitHubIssue", Status: "ready", Properties: map[string]any{
@@ -137,5 +163,71 @@ func TestIsIssueReviewFinal(t *testing.T) {
 	}
 	if isIssueReviewFinal(&graph.WorkObjectHead{Type: "GitHubReviewLane", Status: "review"}) {
 		t.Fatal("review lane must use its own finalizer")
+	}
+}
+
+func strptr(s string) *string { return &s }
+
+// A step-budget park is the only durable block the reconciler may clear on its
+// own: a budget park has its own recovery, and every other block (a human stop,
+// a deterministic failure, a poison item) must stay until a human unblocks it.
+func TestIsStepLimitBlock(t *testing.T) {
+	cases := []struct {
+		name  string
+		block *WorkBlock
+		want  bool
+	}{
+		{"nil block", nil, false},
+		{"unclassified block", &WorkBlock{Reason: "cancelled by a human"}, false},
+		{"step limit", &WorkBlock{FailureClass: strptr(string(FailureClassStepLimit))}, true},
+		{"budget is not a step limit", &WorkBlock{FailureClass: strptr(string(FailureClassBudget))}, false},
+		{"retryable is not a step limit", &WorkBlock{FailureClass: strptr(string(FailureClassRetryable))}, false},
+	}
+	for _, tc := range cases {
+		if got := isStepLimitBlock(tc.block); got != tc.want {
+			t.Errorf("%s: isStepLimitBlock = %v, want %v", tc.name, got, tc.want)
+		}
+		if tc.block != nil && isStepLimitBlock(tc.block) && isBudgetBlock(tc.block) {
+			t.Errorf("%s: a block cannot be both a budget park and a step-limit park", tc.name)
+		}
+	}
+}
+
+// An exhausted step-limit park is terminal exactly when the reconciler has
+// marked it: that marker is what stops the per-minute count query and the
+// duplicate escalation.
+func TestBlockIsStepLimitEscalated(t *testing.T) {
+	class := string(FailureClassStepLimit)
+	marker := stepLimitExhaustedBlockedBy
+	other := budgetParkBlockedBy
+	require.False(t, blockIsStepLimitEscalated(nil))
+	require.False(t, blockIsStepLimitEscalated(&WorkBlock{FailureClass: &class}),
+		"an unmarked step-limit park is still resume work")
+	require.False(t, blockIsStepLimitEscalated(&WorkBlock{FailureClass: &class, BlockedBy: &other}))
+	require.True(t, blockIsStepLimitEscalated(&WorkBlock{FailureClass: &class, BlockedBy: &marker}))
+}
+
+// The automatic-resume budget is what stops a run that can never converge from
+// looping for ever: the first exhaustion is resumed, the last one is a human's.
+func TestShouldResumeStepLimit(t *testing.T) {
+	if shouldResumeStepLimit(0) {
+		t.Error("a zero exhaustion count is not a park to resume")
+	}
+	for n := 1; n <= stepLimitAutoResumeLimit; n++ {
+		if !shouldResumeStepLimit(n) {
+			t.Errorf("exhaustion %d should still resume", n)
+		}
+	}
+	if shouldResumeStepLimit(stepLimitAutoResumeLimit + 1) {
+		t.Errorf("exhaustion %d must stop and wait for a human", stepLimitAutoResumeLimit+1)
+	}
+}
+
+func TestStepLimitResumeMessageCarriesTheAttemptAndTheInstruction(t *testing.T) {
+	msg := stepLimitResumeMessage(1)
+	for _, want := range []string{"continuation attempt 1 of 2", "Check the current state first", "do not start the work over"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("resume message %q missing %q", msg, want)
+		}
 	}
 }

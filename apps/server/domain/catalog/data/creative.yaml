@@ -1,0 +1,170 @@
+name: schemaorg
+objectTypeSchemas:
+- name: Article
+  label: Article
+  description: 'A written article, news story, blog post, or other prose piece.
+
+    '
+  category: creative
+  parent: CreativeWork
+  labels:
+  - article
+  - news
+  - post
+  - story
+  ui:
+    icon: tabler--article
+    color: '#8B5CF6'
+  properties:
+    headline:
+      type: string
+      description: Article headline.
+    article_body:
+      type: string
+      title: Body
+      description: Article text or summary.
+    date_published:
+      type: date
+      title: Published
+      description: Publication date (YYYY-MM-DD).
+    section:
+      type: string
+      description: Section or category, e.g. 'Technology'.
+    author_name:
+      type: string
+      title: Author
+      description: Byline author name.
+  required:
+  - headline
+- name: Book
+  label: Book
+  description: 'A book, novel, or other bound publication.
+
+    '
+  category: creative
+  parent: CreativeWork
+  labels:
+  - book
+  - novel
+  - publication
+  ui:
+    icon: tabler--book
+    color: '#7C3AED'
+  properties:
+    name:
+      type: string
+      title: Title
+      description: Book title.
+    isbn:
+      type: string
+      description: ISBN-10 or ISBN-13.
+    number_of_pages:
+      type: integer
+      title: Pages
+      description: Page count.
+      minimum: 0
+    book_format:
+      type: string
+      title: Format
+      description: Binding/format.
+      enum:
+      - hardcover
+      - paperback
+      - ebook
+      - audiobook
+  required:
+  - name
+- name: HowTo
+  label: How To
+  description: 'A set of instructions for accomplishing a task.
+
+    '
+  category: knowledge
+  parent: CreativeWork
+  labels:
+  - how_to
+  - guide
+  - tutorial
+  ui:
+    icon: tabler--list-check
+    color: '#64748B'
+  properties:
+    name:
+      type: string
+      description: Title of the guide.
+    step:
+      type: array
+      title: Steps
+      description: Ordered instruction steps.
+      items:
+        type: string
+    total_time:
+      type: integer
+      title: Total time (min)
+      description: Total time required in whole minutes.
+      minimum: 0
+  required:
+  - name
+- name: Dataset
+  label: Dataset
+  description: A structured collection of data.
+  category: knowledge
+  parent: CreativeWork
+  labels:
+  - dataset
+  - data_set
+  ui:
+    icon: tabler--database
+    color: '#14B8A6'
+  properties:
+    name:
+      type: string
+      description: The dataset's name.
+    format:
+      type: string
+      description: File format.
+    license:
+      type: url
+      description: License URL.
+    size_bytes:
+      type: integer
+      description: Size in bytes.
+      minimum: 0
+      title: Size Bytes
+    date_modified:
+      type: date
+      description: Last modification date (YYYY-MM-DD).
+      title: Date Modified
+  required:
+  - name
+- name: ScholarlyArticle
+  label: Scholarly Article
+  description: A research paper or academic article.
+  category: creative
+  parent: Article
+  labels:
+  - paper
+  - research_article
+  ui:
+    icon: tabler--file-text
+    color: '#0891B2'
+  properties:
+    headline:
+      type: string
+      description: Paper title.
+    doi:
+      type: string
+      description: DOI, if assigned.
+    journal:
+      type: string
+      description: Journal or venue.
+    date_published:
+      type: date
+      description: Publication date (YYYY-MM-DD).
+      title: Date Published
+    author_name:
+      type: string
+      description: Lead author.
+      title: Author Name
+  required:
+  - headline

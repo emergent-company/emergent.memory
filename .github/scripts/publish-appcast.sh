@@ -67,14 +67,14 @@ deltas=( "${source_dir}"/*.delta )
 # file the feed *does* reference is always kept.
 bash "${script_dir}/prune-appcast-orphans.sh" "${channel}"
 
-# The branch is one budget shared with the docs site, and the docs side is what
-# breaks it: every release tag makes `mike deploy` add a full ~13 MiB versioned
-# docs tree, nothing removed the superseded ones, and 24 of them plus the
-# appcast reached 523 MiB against the aggregate guard below -- so this publish
-# failed on tag v0.101.0 (#976, recurrence of #7). Reclaim that here, before the
-# guard measures the tree: the retention window keeps the newest trees and drops
-# the rest, rewriting versions.json in the same commit. Best-effort, because a
-# prune that cannot run must not fail a publish on its own -- the guard below
+# The branch is one size budget. It used to be broken by the docs site -- every
+# release tag made `mike deploy` add a full ~13 MiB versioned tree, and 24 of
+# them plus the appcast reached 523 MiB against the aggregate guard below, so
+# this publish failed on tag v0.101.0 (#976, recurrence of #7). The docs site is
+# retired (Astro, published elsewhere) and its trees were cleared, so nothing
+# adds one now; the prune stays as legacy cleanup for a branch that still
+# carries any, and runs before the guard measures the tree. Best-effort, because
+# a prune that cannot run must not fail a publish on its own -- the guard below
 # still refuses to push an over-budget tree.
 bash "${script_dir}/prune-doc-versions.sh" --root . \
   || echo "warning: could not prune superseded docs versions" >&2

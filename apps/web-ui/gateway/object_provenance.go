@@ -34,6 +34,16 @@ type objectVersionProvenance struct {
 	// ActorTitle is the audit tooltip: the recorded (actor_type, actor_id) pair,
 	// never a name the server did not send.
 	ActorTitle string
+	// ActorInitials is the avatar fallback for a resolved user actor: the first
+	// letters of the resolved name. "" when the label is the unresolved
+	// "<Type> · <short id>" fallback — a circle reading "U" for "User · f0364…"
+	// would decorate the placeholder instead of the person.
+	ActorInitials string
+	// ActorAvatar is a servable avatar URL for the resolved actor, when one can
+	// be served at all: only the signed-in user's photo is (the gateway's avatar
+	// proxy is session-scoped), so this is "" for anyone else and the initials
+	// carry the identity instead.
+	ActorAvatar string
 	// How names the credential the write used ("API key", "agent MCP link",
 	// "web session"); "" when the stamp carries none (background writes).
 	How string
@@ -42,6 +52,20 @@ type objectVersionProvenance struct {
 	Run string
 	// RunTitle carries the full run and root-run ids for the tooltip.
 	RunTitle string
+	// RunHref links the run chip to that run's transcript page (the gateway's
+	// /runs/:runId). "" when the version carries no run, so the chip stays plain
+	// text rather than a dead link.
+	RunHref string
+	// OrderedBy is the person who ordered the run that wrote this version — the
+	// human authority behind an agent's write, rendered as "on <name>'s order".
+	// "" unless the actor is an agent, the run recorded an ordering user, and
+	// that user resolved to a member of the project's org. Never inferred from
+	// the actor or from trigger metadata.
+	OrderedBy         string
+	OrderedByInitials string
+	OrderedByAvatar   string
+	// OrderedByTitle is the audit tooltip: the recorded ordering user id.
+	OrderedByTitle string
 	// When is the absolute local timestamp; WhenTitle adds the relative age and
 	// the raw server value.
 	When      string
@@ -52,7 +76,7 @@ type objectVersionProvenance struct {
 // project's resolved actor identities (see objectActorIdentities); an
 // unresolved actor still renders — as "<Type> · <short id>" — rather than
 // disappearing, because an unknown writer is still a writer.
-func objectProvenanceOf(v GraphObject, identities []objectActorOption) objectVersionProvenance {
+func objectProvenanceOf(v GraphObject, identities []objectActorOption, orderers map[string]string) objectVersionProvenance {
 	var p objectVersionProvenance
 	if v.ActorType != "" {
 		// The actor type is a closed set (user | agent | system). An unknown
@@ -70,8 +94,18 @@ func objectProvenanceOf(v GraphObject, identities []objectActorOption) objectVer
 			// concept, not a writer), so it is bypassed for that case.
 			if v.ActorID == "" {
 				p.Actor = actorTypeLabel(v.ActorType)
+			} else if opt, ok := actorOptionOf(identities, v.ActorType, v.ActorID); ok {
+				// Resolved: the person's (or agent's) own name, plus the avatar a
+				// user actor is drawn as. Both only travel with a real identity —
+				// the fallback label below is a placeholder, not somebody to
+				// paint a face on.
+				p.Actor = opt.Label
+				if p.ActorKind == "user" {
+					p.ActorInitials = initials(opt.Label)
+					p.ActorAvatar = opt.AvatarURL
+				}
 			} else {
-				p.Actor = actorOptionLabel(identities, v.ActorType, v.ActorID)
+				p.Actor = actorTypeLabel(v.ActorType) + " · " + shortActorID(v.ActorID)
 			}
 		}
 		if p.ActorKind == "agent" && v.ActorID != "" {
@@ -82,9 +116,24 @@ func objectProvenanceOf(v GraphObject, identities []objectActorOption) objectVer
 	p.How = credentialKindLabel(v.CredentialKind)
 	if v.RunID != "" {
 		p.Run = "run " + shortRunID(v.RunID)
+		p.RunHref = "/runs/" + url.PathEscape(v.RunID)
 		p.RunTitle = "agent run " + v.RunID
 		if v.RootRunID != "" && v.RootRunID != v.RunID {
 			p.RunTitle += " · root run " + v.RootRunID
+		}
+	}
+	// An agent's write is the orderer's write: the agent carried out work a
+	// person asked for. Name that person when the run recorded one — the row
+	// column is the authority, and it is only ever written from an
+	// authenticated user at run creation.
+	if p.ActorKind == "agent" && v.RunID != "" {
+		if uid := strings.TrimSpace(orderers[v.RunID]); uid != "" {
+			if opt, ok := actorOptionOf(identities, "user", uid); ok {
+				p.OrderedBy = opt.Label
+				p.OrderedByInitials = initials(opt.Label)
+				p.OrderedByAvatar = opt.AvatarURL
+				p.OrderedByTitle = "Ordered by " + opt.Label + " (" + uid + ")"
+			}
 		}
 	}
 	p.When, p.WhenTitle = objectVersionWhen(v.CreatedAt)
@@ -122,6 +171,11 @@ func actorProvenanceTitle(actorType, actorID string) string {
 	}
 }
 
+// objectVersionLocation is the zone the absolute history stamp is rendered in.
+// Production follows the viewer's zone; a test that pins rendered HTML may swap
+// in a fixed zone so the same markup renders on every machine (#1083).
+var objectVersionLocation = func() *time.Location { return time.Local }
+
 // objectVersionWhen formats a version's creation time for the timeline: an
 // absolute local stamp (a history spans months, so "3 days ago" stops being
 // precise) with the relative age and the raw server value as the tooltip. An
@@ -134,7 +188,7 @@ func objectVersionWhen(iso string) (text, title string) {
 	if err != nil {
 		return iso, ""
 	}
-	text = t.Local().Format("2 Jan 2006, 15:04")
+	text = t.In(objectVersionLocation()).Format("2 Jan 2006, 15:04")
 	// relTime falls back to a bare date for anything older than a week, which
 	// the absolute text already carries — don't repeat it in the tooltip.
 	if rel := relTime(iso); rel != "" && rel != "—" && rel != t.Format("2006-01-02") {
@@ -143,12 +197,68 @@ func objectVersionWhen(iso string) (text, title string) {
 	return text, "Recorded " + iso
 }
 
-// objectActorIdentitiesFor resolves the identities a timeline names, fetching
-// only the groups the versions actually reference: a project's members for
-// "user" actors and its agent definitions for "agent" actors. A timeline with no
-// stamped actor costs nothing.
-func (s *Server) objectActorIdentitiesFor(ctx context.Context, versions []GraphObject) []objectActorOption {
-	wantUsers, wantAgents := false, false
+// objectPossessive forms a display name's possessive for a provenance line
+// ("on Maciek Kucharz's order"). A name already ending in s takes a bare
+// apostrophe, which is the form readers expect of a surname like Davies.
+func objectPossessive(name string) string {
+	if name == "" {
+		return ""
+	}
+	if strings.HasSuffix(name, "s") || strings.HasSuffix(name, "S") {
+		return name + "'"
+	}
+	return name + "'s"
+}
+
+// objectRunOrderers resolves who ordered each distinct run among versions, in
+// one project-scoped read, so a page of history costs one extra request rather
+// than one per entry. Best-effort by design: a failure yields nil, and every line
+// then renders exactly as it did before ordering attribution existed. A missing
+// read must never invent an orderer, and must never blank the provenance line.
+func (s *Server) objectRunOrderers(ctx context.Context, versions []GraphObject) map[string]string {
+	ids := make([]string, 0, len(versions))
+	seen := make(map[string]struct{}, len(versions))
+	for _, v := range versions {
+		if v.ActorType != "agent" || v.RunID == "" {
+			continue
+		}
+		if _, dup := seen[v.RunID]; dup {
+			continue
+		}
+		seen[v.RunID] = struct{}{}
+		ids = append(ids, v.RunID)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	orderers, err := s.memory.GetRunOrderers(ctx, ids)
+	if err != nil {
+		captureError(err)
+		return nil
+	}
+	return orderers
+}
+
+// objectProvenanceInputs resolves everything a provenance line needs for a set of
+// versions: the actor identities, and who ordered each run. The two lookups are
+// coupled because an orderer is a person who need not be an actor on any of these
+// versions — asking only for the actor kinds would leave every "on <name>'s
+// order" unresolved.
+func (s *Server) objectProvenanceInputs(ctx context.Context, versions []GraphObject) ([]objectActorOption, map[string]string) {
+	orderers := s.objectRunOrderers(ctx, versions)
+	wantUsers, wantAgents := objectActorKinds(versions)
+	if len(orderers) > 0 {
+		wantUsers = true
+	}
+	if !wantUsers && !wantAgents {
+		return nil, orderers
+	}
+	return s.objectActorIdentities(ctx, wantUsers, wantAgents), orderers
+}
+
+// objectActorKinds reports which identity groups a provenance line needs to
+// resolve the version actors themselves.
+func objectActorKinds(versions []GraphObject) (wantUsers, wantAgents bool) {
 	for _, v := range versions {
 		switch v.ActorType {
 		case "user":
@@ -157,27 +267,66 @@ func (s *Server) objectActorIdentitiesFor(ctx context.Context, versions []GraphO
 			wantAgents = true
 		}
 	}
-	if !wantUsers && !wantAgents {
-		return nil
-	}
-	return s.objectActorIdentities(ctx, wantUsers, wantAgents)
+	return wantUsers, wantAgents
 }
 
 // objectActorIdentities fetches the project's selectable actors, optionally
-// scoped to one group: members as actor_type "user", agent definitions as
+// scoped to one group: people as actor_type "user", agent definitions as
 // actor_type "agent". Both fetches are best-effort and run concurrently — a
 // failure drops that group rather than blanking the surface, and the caller's
 // label falls back to "<Type> · <short id>".
+//
+// People come from the ORGANIZATION's member list, not the project's, because
+// org membership is what grants access to a project's objects: the server's
+// write guard admits any member of the project's owning org
+// (`pkg/auth/project_membership.go`), and a writer need not hold a
+// `kb.project_memberships` row. Resolving from project members alone therefore
+// left ordinary writes attributed to "<Type> · <short id>" — the writer is a
+// real, named colleague who simply is not on the project roster. A request
+// without a session org (an API-key path) keeps the project-member list, which
+// is the only roster that token can see.
 func (s *Server) objectActorIdentities(ctx context.Context, wantUsers, wantAgents bool) []objectActorOption {
 	var (
-		members   []ProjectMemberDto
-		agents    []AgentDefinitionSummary
-		memberErr error
-		agentErr  error
+		orgMembers []OrgMemberDto
+		members    []ProjectMemberDto
+		agents     []AgentDefinitionSummary
+		memberErr  error
+		agentErr   error
 	)
+	// The signed-in user's own photo is the one avatar a page can actually
+	// serve: /api/user/avatar is session-scoped, so it is attached only to that
+	// user's option and everyone else falls back to initials.
+	orgID, selfID, selfLabel, selfAvatar := "", "", "", ""
+	if sc, ok := sessionContextFrom(ctx); ok {
+		orgID, selfID = sc.OrgID, sc.Sub
+		selfAvatar = resolveSelfAvatar(sc.AvatarOverrideURL, sc.Picture)
+		// The claims are the one place the signed-in user's name is guaranteed:
+		// a roster row can exist with no display name and no email (an
+		// autoprovisioned profile), and then the write stamp has nothing to
+		// resolve to but an id.
+		if name := strings.TrimSpace(sc.Name); name != "" {
+			selfLabel = name
+		} else {
+			selfLabel = strings.TrimSpace(sc.Email)
+		}
+	}
 	var g errgroup.Group
 	if wantUsers {
-		g.Go(func() error { members, memberErr = s.memory.ListMembers(ctx); return nil })
+		g.Go(func() error {
+			if orgID == "" {
+				members, memberErr = s.memory.ListMembers(ctx)
+				return nil
+			}
+			orgMembers, memberErr = s.memory.ListOrgMembers(ctx, orgID)
+			if memberErr != nil {
+				// An org directory that answers nothing still leaves the project
+				// roster to name people by, so fall back rather than losing the
+				// filter's user options entirely.
+				orgMembers = nil
+				members, memberErr = s.memory.ListMembers(ctx)
+			}
+			return nil
+		})
 	}
 	if wantAgents {
 		g.Go(func() error { agents, agentErr = s.memory.ListAgentDefinitions(ctx); return nil })
@@ -186,13 +335,29 @@ func (s *Server) objectActorIdentities(ctx context.Context, wantUsers, wantAgent
 	captureError(memberErr)
 	captureError(agentErr)
 
-	options := make([]objectActorOption, 0, len(members)+len(agents))
+	options := make([]objectActorOption, 0, len(orgMembers)+len(members)+len(agents))
+	for _, m := range orgMembers {
+		avatar := ""
+		if m.ID == selfID {
+			avatar = selfAvatar
+		}
+		options = append(options, objectActorOption{
+			Type:      "user",
+			ID:        m.ID,
+			Label:     orgMemberDisplayName(m),
+			AvatarURL: avatar,
+		})
+	}
 	for _, m := range members {
+		avatar := m.AvatarURL
+		if m.ID == selfID && avatar == "" {
+			avatar = selfAvatar
+		}
 		options = append(options, objectActorOption{
 			Type:      "user",
 			ID:        m.ID,
 			Label:     memberActorLabel(m),
-			AvatarURL: strings.TrimSpace(m.AvatarURL),
+			AvatarURL: avatar,
 		})
 	}
 	for _, a := range agents {
@@ -204,5 +369,35 @@ func (s *Server) objectActorIdentities(ctx context.Context, wantUsers, wantAgent
 			Color: agentColor(a.UIConfig),
 		})
 	}
-	return options
+	return selfActorOption(options, selfID, selfLabel, selfAvatar)
+}
+
+// selfActorOption makes sure the signed-in user is nameable. A roster entry can
+// exist with nothing in it — an autoprovisioned profile with no display name, no
+// name parts and no email — and then every one of that user's own writes reads
+// as "<Type> · <short id>": the least scrutable possible attribution, on the
+// one writer whose name the page knows for certain, because it is on the ID
+// token. So an option for the caller with an empty or id-shaped label is
+// replaced by the claims' name, and a roster that does not list the caller at
+// all still gets one row.
+func selfActorOption(options []objectActorOption, selfID, selfLabel, selfAvatar string) []objectActorOption {
+	if selfID == "" {
+		return options
+	}
+	for i, o := range options {
+		if o.Type != "user" || o.ID != selfID {
+			continue
+		}
+		if selfLabel != "" && (strings.TrimSpace(o.Label) == "" || o.Label == o.ID) {
+			options[i].Label = selfLabel
+		}
+		if options[i].AvatarURL == "" {
+			options[i].AvatarURL = selfAvatar
+		}
+		return options
+	}
+	if selfLabel == "" {
+		return options
+	}
+	return append(options, objectActorOption{Type: "user", ID: selfID, Label: selfLabel, AvatarURL: selfAvatar})
 }

@@ -163,6 +163,36 @@ struct ObjectTypeAppearanceTests {
         "user", "users", "wrench", "x",
     ]
 
+    /// The Tabler names the gateway's `supportedTablerIconClasses` compiles.
+    /// Keep in sync; both device tables must resolve every one.
+    static let webTablerIcons = [
+        "box", "user", "building", "map-pin", "calendar-event", "calendar",
+        "file-text", "article", "book", "movie", "device-tv", "video", "photo",
+        "browser", "world-www", "globe", "package", "tag", "trademark",
+        "message-star", "star-half", "chef-hat", "building-store", "app-window",
+        "code", "briefcase", "id-badge", "school", "list-check", "category",
+        "stethoscope", "pill", "map",
+        "building-bank", "building-hospital", "plane", "user-heart", "map-2",
+        "camera", "bed", "car", "music", "users", "album", "microphone",
+        "palette", "database", "device-mobile", "device-gamepad",
+        "shopping-cart", "receipt", "tools", "tools-kitchen-2",
+        "first-aid-kit", "shield",
+    ]
+
+    @Test func everyTablerIconHasASymbol() {
+        let missing = Self.webTablerIcons.filter {
+            ObjectTypeAppearance.lucideSymbols[$0] == nil && ObjectTypeAppearance.tablerSymbols[$0] == nil
+        }
+        #expect(missing.isEmpty, "unmapped tabler icons: \(missing)")
+    }
+
+    @Test func tablerIconsResolveWithPrefix() {
+        #expect(ObjectTypeAppearance.symbol(forLucide: "tabler--movie") == "film")
+        #expect(ObjectTypeAppearance.symbol(forLucide: "tabler:building") == "building.2")
+        #expect(ObjectTypeAppearance.symbol(forLucide: "movie") == "film")
+        #expect(ObjectTypeAppearance.symbol(forLucide: "tabler--not-real") == ObjectTypeAppearance.fallbackSymbol)
+    }
+
     @Test func everyWebIconHasASymbol() {
         let missing = Self.webIcons.filter { ObjectTypeAppearance.lucideSymbols[$0] == nil }
         #expect(missing.isEmpty, "unmapped web icons: \(missing)")
@@ -342,32 +372,5 @@ struct ObjectCardStoreTests {
                 assignees: [ObjectCardAssignee(value: "agent-a")]
             )
         )
-    }
-}
-
-/// Recorded turns carry their citations into the transcript, and a merged
-/// reply cites what each of its turns cited, once.
-@MainActor
-struct TranscriptCitationTests {
-    @Test func historyRepliesCarryMergedCitations() {
-        let sam = ChatCitation(kind: "object", id: "o1", label: "Sam", url: "/objects/o1")
-        let acme = ChatCitation(kind: "object", id: "o2", label: "Acme", url: "/objects/o2")
-        let transcript = ChatSessionTranscriptStore()
-        transcript.loadHistory(from: SessionDetail(room: "c1", records: [
-            SessionRecord(kind: "turn", role: "user", text: "Who is Sam?", citations: [sam]),
-            SessionRecord(kind: "turn", role: "diane", text: "Sam is a colleague.", citations: [sam]),
-            SessionRecord(kind: "turn", role: "diane", text: "Sam works at Acme.", citations: [sam, acme]),
-        ]))
-
-        let messages = transcript.history.compactMap { entry -> ChatMessage? in
-            if case let .message(message) = entry {
-                return message
-            }
-            return nil
-        }
-        #expect(messages.count == 2)
-        // A user turn never shows a Sources footer.
-        #expect(messages[0].citations.isEmpty)
-        #expect(messages[1].citations == [sam, acme])
     }
 }

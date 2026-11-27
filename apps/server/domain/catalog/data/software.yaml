@@ -1,0 +1,161 @@
+name: schemaorg
+objectTypeSchemas:
+- name: SoftwareApplication
+  label: Software Application
+  description: 'A software program or app — desktop, mobile, web, or service.
+
+    '
+  category: software
+  parent: CreativeWork
+  labels:
+  - software_application
+  - app
+  - program
+  ui:
+    icon: tabler--app-window
+    color: '#14B8A6'
+  properties:
+    name:
+      type: string
+      description: Application name.
+    application_category:
+      type: string
+      title: Application category
+      description: Category, e.g. productivity, game, developer tool.
+    operating_system:
+      type: string
+      title: Operating system
+      description: Supported operating systems.
+    software_version:
+      type: string
+      title: Version
+      description: Version string.
+    url:
+      type: url
+      description: Download or homepage URL.
+  required:
+  - name
+- name: SoftwareSourceCode
+  label: Source Code
+  description: 'A source-code artifact — repository, package, or code snippet.
+
+    '
+  category: software
+  parent: CreativeWork
+  labels:
+  - source_code
+  - code
+  - repository
+  ui:
+    icon: tabler--code
+    color: '#0D9488'
+  properties:
+    name:
+      type: string
+      description: Project or artifact name.
+    programming_language:
+      type: string
+      title: Programming language
+      description: Primary language.
+    code_repository:
+      type: url
+      title: Repository
+      description: Repository URL.
+    code_sample:
+      type: string
+      title: Code sample
+      description: A representative code snippet.
+  required:
+  - name
+- name: WebApplication
+  label: Web Application
+  description: A browser-based software application.
+  category: software
+  parent: SoftwareApplication
+  labels:
+  - web_app
+  - saas
+  ui:
+    icon: tabler--world-www
+    color: '#3B82F6'
+  properties:
+    name:
+      type: string
+      description: The application's name.
+    url:
+      type: url
+      description: Application URL.
+    application_category:
+      type: string
+      description: Category.
+      title: Application Category
+    browser_support:
+      type: string
+      description: Supported browsers.
+      title: Browser Support
+  required:
+  - name
+- name: MobileApplication
+  label: Mobile Application
+  description: An app for iOS, Android or another mobile platform.
+  category: software
+  parent: SoftwareApplication
+  labels:
+  - mobile_app
+  - app
+  ui:
+    icon: tabler--device-mobile
+    color: '#6366F1'
+  properties:
+    name:
+      type: string
+      description: The app's name.
+    operating_system:
+      type: string
+      description: Target mobile platform.
+      enum:
+      - ios
+      - android
+      - other
+      title: Operating System
+    app_store_url:
+      type: url
+      description: Store listing URL.
+      title: App Store Url
+    software_version:
+      type: string
+      description: Version string.
+      title: Software Version
+  required:
+  - name
+- name: VideoGame
+  label: Video Game
+  description: A video game.
+  category: software
+  parent: SoftwareApplication
+  labels:
+  - game
+  - video_game
+  ui:
+    icon: tabler--device-gamepad
+    color: '#7C3AED'
+  properties:
+    name:
+      type: string
+      description: The game's title.
+    platform:
+      type: array
+      description: Supported platforms.
+      items:
+        type: string
+    genre:
+      type: array
+      description: Genres.
+      items:
+        type: string
+    content_rating:
+      type: string
+      description: Age/content rating.
+      title: Content Rating
+  required:
+  - name

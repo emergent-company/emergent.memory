@@ -1838,6 +1838,9 @@ Subcommands:
   memory blueprints install <source>    Apply blueprints from a directory or GitHub URL
   memory blueprints inspect <source>    List contents of a blueprint without installing
   memory blueprints validate <source>   Validate a blueprint offline (no API calls)
+  memory blueprints catalog-install     Install endpoint-gated schema.org catalog types
+  memory blueprints catalog-resolve     Rank catalog types for a free-text query
+  memory blueprints catalog-show        Show one catalog type (parents, children, relationships)
   memory blueprints dump <output-dir>   Export project graph data as JSONL seed files
 
 Examples:
@@ -1864,6 +1867,104 @@ memory blueprints [flags]
       --project string          Project ID or name (overrides config/env)
       --token string            GitHub personal access token (for private repos); also read from MEMORY_GITHUB_TOKEN
       --upgrade                 Update existing resources instead of skipping them
+```
+
+## memory blueprints catalog-install
+
+Install endpoint-gated types from the built-in schema.org catalog
+
+### Synopsis
+
+Install types from the built-in schema.org catalog into the current project.
+
+Only the requested types are materialized. Relationship types are installed only
+when BOTH endpoint types are installed (endpoint-gated); a relationship whose
+other endpoint is not installed is reported as deferred. Re-running with more
+types reconciles and activates deferred relationships.
+
+Type names may be passed positionally or with repeated --type flags.
+
+A project keeps one type per name, so a catalog type whose name another pack
+already provides is refused: a project resolves one type per name from the
+newest install, so installing it would replace that pack's definition with the
+catalog's and move the type to the catalog pack. The error names the conflicting
+types and their packs; pass those names with --extend to accept that deliberately
+(only the named types are taken over, nothing else).
+
+Examples:
+
+  memory blueprints catalog-install Movie Person
+  memory blueprints catalog-install --type Movie --type Person
+  memory blueprints catalog-install Product Offer Brand
+  memory blueprints catalog-install Movie --name my-catalog --project my-project
+  memory blueprints catalog-install Organization --extend Organization
+  memory blueprints catalog-install Movie --replace   # remove other catalog types
+
+```
+memory blueprints catalog-install [type ...] [flags]
+```
+
+### Options
+
+```
+      --extend stringArray   Requested type to install under the catalog's definition even though another pack provides the name (repeatable; refused without it, and the catalog pack then owns the named types)
+  -h, --help                 help for catalog-install
+      --name string          Project schema pack name (default schemaorg-catalog)
+      --replace              Make the named types authoritative; remove catalog types not listed (deactivates their relationships)
+      --type stringArray     Catalog type to install (repeatable, e.g. --type Movie)
+      --version string       Project schema pack version (default 1.0.0)
+```
+
+## memory blueprints catalog-resolve
+
+Rank built-in schema.org catalog types for a free-text query
+
+### Synopsis
+
+Rank catalog types for a free-text concept, so you can pick canonical names
+before installing them with catalog-install. Matches names, labels, aliases,
+categories, parents and descriptions lexically.
+
+Examples:
+
+  memory blueprints catalog-resolve film
+  memory blueprints catalog-resolve "tv series"
+  memory blueprints catalog-resolve commerce --limit 5
+
+```
+memory blueprints catalog-resolve <query> [flags]
+```
+
+### Options
+
+```
+  -h, --help          help for catalog-resolve
+      --limit int     Maximum matches to return (default 10, max 50)
+      --mode string   Matching strategy: lexical, semantic, or hybrid (default hybrid; semantic needs a project embedding model)
+```
+
+## memory blueprints catalog-show
+
+Show one schema.org catalog type (parents, children, relationships)
+
+### Synopsis
+
+Show one catalog type's hierarchy and the candidate relationships that touch
+it. Read-only; use catalog-resolve first if you do not know the exact name.
+
+Examples:
+
+  memory blueprints catalog-show Movie
+  memory blueprints catalog-show CreativeWork
+
+```
+memory blueprints catalog-show <name> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for catalog-show
 ```
 
 ## memory blueprints check-updates
@@ -4344,6 +4445,83 @@ memory orgs list [flags]
 ```
   -h, --help      help for list
       --members   Include members with roles
+```
+
+## memory pipeline
+
+Manage the knowledge pipeline policy
+
+### Synopsis
+
+Get, set and preview a project's knowledge-pipeline policy.
+
+The pipeline governs how schema discovery, auto-apply, backfill and extraction
+run without a human in the loop. It has three presets:
+
+  off      discovery does not run automatically; nothing is applied
+  suggest  discovery proposes a candidate schema; nothing is applied (default)
+  auto     discovery runs, the discovered schema is applied, and documents are
+           re-extracted against the new schema
+
+The policy is per-project. Every knob is exposed, but the presets are the
+intended starting point; see 'memory pipeline set --help'.
+
+### Options
+
+```
+  -h, --help             help for pipeline
+      --project string   Project name or ID (uses the configured project if omitted)
+```
+
+## memory pipeline get
+
+Show the resolved pipeline policy
+
+```
+memory pipeline get [name-or-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for get
+```
+
+## memory pipeline preview
+
+Preview the resolved pipeline policy
+
+```
+memory pipeline preview [name-or-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for preview
+```
+
+## memory pipeline set
+
+Set the pipeline mode
+
+### Synopsis
+
+Set a project's pipeline mode to one of off, suggest or auto.
+
+Setting a mode resets the full policy to that preset's defaults. To set an
+individual knob instead, pass --policy-file with a complete resolved policy
+JSON (the shape returned by 'memory pipeline get --json').
+
+```
+memory pipeline set <off|suggest|auto> [name-or-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help                 help for set
+      --policy-file string   Path to a complete resolved policy JSON (use '-' for stdin; overrides the mode)
 ```
 
 ## memory projects

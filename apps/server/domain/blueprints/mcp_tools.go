@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/emergent-company/emergent.memory/domain/catalog"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 )
 
@@ -587,4 +588,103 @@ func (h *MCPBlueprintToolHandler) ExecuteBlueprintGithubCredentialsPut(ctx conte
 		return errResult("failed to store GitHub credentials: " + err.Error())
 	}
 	return h.wrapResult(map[string]any{"stored": true})
+}
+
+// ExecuteBlueprintCatalogInstall installs catalog types into the project via the
+// endpoint-gated projector, reconciling previously deferred relationships.
+func (h *MCPBlueprintToolHandler) ExecuteBlueprintCatalogInstall(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	types := stringListArg(args["types"])
+	if len(types) == 0 {
+		return errResult("types is required and must be a non-empty array of catalog type names")
+	}
+	name, _ := args["name"].(string)
+	version, _ := args["version"].(string)
+	replace, _ := args["replace"].(bool)
+	extend := stringListArg(args["extend"])
+
+	res, err := h.svc.InstallCatalog(ctx, projectID, "", types, CatalogPackOptions{
+		Name:    name,
+		Version: version,
+	}, replace, extend)
+	if err != nil {
+		return errResult("failed to install catalog types: " + err.Error())
+	}
+	return h.wrapResult(res)
+}
+
+// stringListArg accepts the shapes a JSON array arrives in after decoding
+// ([]any) as well as a Go []string, and a single string for convenience.
+func stringListArg(v any) []string {
+	switch t := v.(type) {
+	case []string:
+		return append([]string(nil), t...)
+	case []any:
+		out := make([]string, 0, len(t))
+		for _, item := range t {
+			if s, ok := item.(string); ok {
+				if s = strings.TrimSpace(s); s != "" {
+					out = append(out, s)
+				}
+			}
+		}
+		return out
+	case string:
+		if s := strings.TrimSpace(t); s != "" {
+			return []string{s}
+		}
+	}
+	return nil
+}
+
+// ExecuteBlueprintCatalogResolve ranks catalog types for a free-text query.
+func (h *MCPBlueprintToolHandler) ExecuteBlueprintCatalogResolve(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	query, _ := args["query"].(string)
+	if strings.TrimSpace(query) == "" {
+		return errResult("query is required")
+	}
+	limit := 0
+	switch v := args["limit"].(type) {
+	case float64:
+		limit = int(v)
+	case int:
+		limit = v
+	case int64:
+		limit = int(v)
+	}
+
+	mode, _ := args["mode"].(string)
+	mode = strings.ToLower(strings.TrimSpace(mode))
+
+	var (
+		matches []catalog.TypeMatch
+		err     error
+	)
+	switch mode {
+	case "lexical":
+		matches, err = h.svc.ResolveCatalogTypes(query, limit)
+	case "semantic":
+		matches, err = h.svc.ResolveCatalogSemantic(ctx, query, limit)
+	default: // "hybrid" (and any unknown value)
+		matches, err = h.svc.ResolveCatalogHybrid(ctx, query, limit)
+	}
+	if err != nil {
+		return errResult("failed to resolve catalog types: " + err.Error())
+	}
+	return h.wrapResult(matches)
+}
+
+// ExecuteBlueprintCatalogGet returns one catalog type's detail.
+func (h *MCPBlueprintToolHandler) ExecuteBlueprintCatalogGet(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	name, _ := args["name"].(string)
+	if strings.TrimSpace(name) == "" {
+		return errResult("name is required")
+	}
+	detail, err := h.svc.CatalogDetail(name)
+	if err != nil {
+		return errResult("failed to get catalog type: " + err.Error())
+	}
+	if detail == nil {
+		return errResult("no catalog type named " + name)
+	}
+	return h.wrapResult(detail)
 }

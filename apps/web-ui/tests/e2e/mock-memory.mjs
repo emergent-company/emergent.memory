@@ -2374,6 +2374,30 @@ const server = http.createServer((req, res) => {
     return json(res, doc);
   }
 
+  // --- objects browser (the search page's browse list) -----------------------
+  //
+  // /search with no query is the object browser (#1076), so the page asks for
+  // one cursor page of objects and renders it as the same cards a query
+  // produces. The mock answers one deterministic card; a query replaces it with
+  // the unified hits below. Without this route the browse view rendered its
+  // load-error notice, which was a gap in the harness rather than the page's
+  // contract. `ids` is honoured so the search page's post-query enrichment reads
+  // an honest empty set instead of a card the query never returned.
+  if (path === "/api/graph/objects/search" && req.method === "GET") {
+    const ids = (url.searchParams.get("ids") || "").split(",").filter(Boolean);
+    const items = [
+      {
+        id: "11111111-1111-4111-8111-111111111111",
+        type: "Note",
+        key: "browsed-note",
+        labels: ["demo"],
+        created_at: "2026-09-01T10:00:00Z",
+        embedding_status: "embedded",
+      },
+    ].filter((o) => ids.length === 0 || ids.includes(o.id));
+    return json(res, { items, next_cursor: "" });
+  }
+
   // --- project search (gateway /search) ---------------------------------------
   //
   // The gateway posts one unified query and names the result types it wants;

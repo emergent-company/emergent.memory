@@ -21,7 +21,7 @@ jq '{name, version, minEngineVersion, objectTypes: (.objectTypes|length)}' \
 ```
 
 The blueprint format it follows is documented in
-[`docs/site/developer-guide/schema.md`](../docs/site/developer-guide/schema.md)
+[`docs-astro/src/content/docs/developer-guide/schema.mdx`](../docs-astro/src/content/docs/developer-guide/schema.mdx)
 and in the `code-memory` example pack under
 [`blueprints/`](../blueprints/code-memory-blueprint/).
 

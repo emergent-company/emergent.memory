@@ -1233,7 +1233,7 @@ templ ExtractionJobDetail(documentID string, d extractionJobDetail) {
 				if d.BranchID != "" {
 					@ui.Button(ui.ButtonProps{
 						Type:    ui.ButtonTypeLink,
-						Href:    "/objects?branch=" + url.QueryEscape(d.BranchID),
+						Href:    "/search?branch=" + url.QueryEscape(d.BranchID),
 						Variant: ui.ButtonGhost,
 						Size:    ui.ButtonSM,
 						Icon:    "lucide--external-link",
@@ -1303,7 +1303,7 @@ templ extractionMergeAction(documentID, jobID, branchID string, leftForReview in
 			if leftForReview > 0 {
 				{{ // The count without a way to see the items was the complaint in
 				   // #242: make the badge open the branch in the object browser.
-				   href := "/objects?branch=" + url.QueryEscape(branchID) }}
+				   href := "/search?branch=" + url.QueryEscape(branchID) }}
 				<a href={ templ.SafeURL(href) } class="shrink-0" title="Review the objects left on this branch">
 					@ui.Badge(ui.BadgeProps{
 						Label:   strconv.Itoa(leftForReview) + " left for review",
@@ -1458,7 +1458,7 @@ templ mergeReviewList(items []mergeReviewItem) {
 						<span class="text-warning text-xs">conflict: { it.Conflicts }</span>
 					}
 					if it.ObjectID != "" {
-						<a class="link link-primary shrink-0 text-xs" href={ templ.URL(objectWikiHref(it.ObjectID, "")) }>View →</a>
+						<a class="link link-primary shrink-0 text-xs" href={ templ.URL(objectWikiHref(it.ObjectID)) }>View →</a>
 					}
 				</div>
 			}
@@ -1488,7 +1488,7 @@ templ extractedObjects(objects []GraphObject) {
 templ extractedObjectRow(o GraphObject) {
 	<a
 		class="flex items-center gap-2 px-4 py-3 transition-colors hover:bg-base-200/40"
-		href={ templ.URL(objectWikiHref(o.ID, "")) }
+		href={ templ.URL(objectWikiHref(o.ID)) }
 	>
 		@ui.Badge(ui.BadgeProps{
 			Label:   o.Type,

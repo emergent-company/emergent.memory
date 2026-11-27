@@ -683,6 +683,7 @@ func (ts *TriggerService) enqueueWorkRun(ctx context.Context, agent *Agent, agen
 		TriggerMetadata:   meta,
 		Invocation:        inv,
 		SourceTriggerID:   workSourceTriggerID(head),
+		SourceSubject:     workSourceSubject(head),
 	}
 	if inv != nil {
 		opts.Priority = inv.Priority
@@ -693,6 +694,10 @@ func (ts *TriggerService) enqueueWorkRun(ctx context.Context, agent *Agent, agen
 	}
 	run, claimed, err := ts.repo.EnqueueWorkRunDeduped(ctx, logEntry, agent.ID, maxAttempts, opts)
 	if err != nil {
+		if isBudgetFailure(err) {
+			ts.parkBudgetRefusedWork(ctx, agent, objectType, canonicalID, projectID, head, err)
+			return
+		}
 		ts.log.Warn("failed to enqueue work run",
 			slog.String("agent_id", agent.ID),
 			slog.String("canonical_id", canonicalID),
@@ -713,6 +718,41 @@ func (ts *TriggerService) enqueueWorkRun(ctx context.Context, agent *Agent, agen
 		slog.String("canonical_id", canonicalID),
 		slog.Int("object_version", version),
 		slog.String("run_id", run.ID),
+	)
+}
+
+// parkBudgetRefusedWork makes an enqueue-time spending refusal a visible,
+// durable state instead of a lone WARN. The item is parked (failure_class
+// budget) so the reconciler stops re-attempting it every tick, and every
+// registered listener is told so a dependent required check can publish an
+// unavailable reason rather than wait for a run that was never scheduled.
+func (ts *TriggerService) parkBudgetRefusedWork(ctx context.Context, agent *Agent, objectType, canonicalID, projectID string, head *graph.WorkObjectHead, cause error) {
+	reason := fmt.Sprintf("dispatch refused: %s", cause.Error())
+	if ts.repo != nil {
+		if err := ts.repo.ParkWorkItemForBudget(ctx, projectID, canonicalID, reason); err != nil {
+			ts.log.Warn("failed to park work item after budget refusal",
+				slog.String("canonical_id", canonicalID),
+				slog.String("agent_id", agent.ID),
+				slog.String("error", err.Error()),
+			)
+		}
+		ts.repo.NotifyWorkBudgetParked(ctx, WorkBudgetParkedEvent{
+			ProjectID:   projectID,
+			CanonicalID: canonicalID,
+			ObjectType:  objectType,
+			AgentID:     agent.ID,
+			AgentName:   agent.Name,
+			Reason:      reason,
+			Head:        head,
+		})
+	}
+	ts.log.Warn("work dispatch refused by project budget; item parked",
+		slog.String("object_type", objectType),
+		slog.String("agent", agent.Name),
+		slog.String("agent_id", agent.ID),
+		slog.String("project_id", projectID),
+		slog.String("canonical_id", canonicalID),
+		slog.String("error", cause.Error()),
 	)
 }
 
@@ -939,6 +979,23 @@ func (ts *TriggerService) skipForConcurrency(ctx context.Context, agent *Agent, 
 	return active
 }
 
+// inlineWorkBinding resolves the trusted source subject and work-object identity
+// metadata for an inline reaction run. The source subject is the only field the
+// implicit credential path may use; the metadata is context for the model. A
+// missing object/store/head yields (nil, nil) and leaves the run unchanged.
+func (ts *TriggerService) inlineWorkBinding(ctx context.Context, projectID, objectID string) (*SourceSubject, map[string]any) {
+	if objectID == "" || ts.workObjects == nil {
+		return nil, nil
+	}
+	head, err := ts.workObjects.GetHeadObject(ctx, projectID, objectID)
+	if err != nil || head == nil {
+		return nil, nil
+	}
+	meta := map[string]any{}
+	mergeWorkObjectMetadata(meta, head)
+	return workSourceSubject(head), meta
+}
+
 // executeTriggeredAgent looks up the agent and its corresponding AgentDefinition,
 // then executes it via the AgentExecutor.
 //
@@ -1018,6 +1075,21 @@ func (ts *TriggerService) executeTriggeredAgent(ctx context.Context, agentID str
 		subjectObjectType = &objectType
 	}
 
+	// Inline reaction runs need the same trusted source binding as queued work
+	// runs: a source-derived object carries repo/issue identity in the
+	// dispatcher-written HEAD, and the implicit source credential requires that
+	// column (never the model-settable trigger metadata). Enrich the metadata for
+	// context too, but mint only from SourceSubject.
+	sourceSubject, workMetadata := ts.inlineWorkBinding(ctx, projectID, objectID)
+	if len(workMetadata) > 0 {
+		if triggerMetadata == nil {
+			triggerMetadata = map[string]any{}
+		}
+		for k, v := range workMetadata {
+			triggerMetadata[k] = v
+		}
+	}
+
 	// Execute the agent
 	result, err := ts.executor.Execute(ctx, ExecuteRequest{
 		Agent:             agent,
@@ -1029,6 +1101,7 @@ func (ts *TriggerService) executeTriggeredAgent(ctx context.Context, agentID str
 		TriggerMetadata:   triggerMetadata,
 		SubjectObjectID:   subjectObjectID,
 		SubjectObjectType: subjectObjectType,
+		SourceSubject:     sourceSubject,
 		TrustedInternal:   true, // scheduled runs are a trusted surface (full internal coordination)
 	})
 	if result != nil && result.Cleanup != nil {

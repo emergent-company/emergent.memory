@@ -125,9 +125,10 @@ func TestLoadDocsURL(t *testing.T) {
 	}
 }
 
-// The block must stay the sidebar's last element with Docs in it — the version
-// footer test covers the marketplace alone, and this is the same assertion for
-// the two-entry case.
+// The block must stay pinned above the build-version footer with Docs in it —
+// the marketplace test covers the marketplace alone, and this is the same
+// assertion for the two-entry case. The version footer closes the sidebar
+// below both entries (#1133).
 func TestDocsEntryStaysInsideThePinnedBottomBlock(t *testing.T) {
 	items := []layout.SidebarItem{
 		{Label: "Marketplace", Href: "https://market.example", Icon: "lucide--store"},
@@ -135,13 +136,13 @@ func TestDocsEntryStaysInsideThePinnedBottomBlock(t *testing.T) {
 	}
 	html := renderHTML(t, appSidebar(sidebarGroupsWithWarn("", false, sidebarWarns{}), items, false))
 	nav := strings.Index(html, `class="sidebar-menu grow overflow-y-auto"`)
-	version := strings.Index(html, `data-testid="app-version"`)
 	block := strings.Index(html, `data-testid="sidebar-external"`)
-	if nav < 0 || version < 0 || block < 0 {
-		t.Fatalf("anchors missing (nav=%d version=%d block=%d)", nav, version, block)
+	version := strings.Index(html, `data-testid="app-version"`)
+	if nav < 0 || block < 0 || version < 0 {
+		t.Fatalf("anchors missing (nav=%d block=%d version=%d)", nav, block, version)
 	}
-	if nav >= version || version >= block {
-		t.Fatalf("bottom block is not after the version footer: nav=%d version=%d block=%d", nav, version, block)
+	if nav >= block || block >= version {
+		t.Fatalf("bottom order is not nav < external block < version: nav=%d block=%d version=%d", nav, block, version)
 	}
 	docs := strings.Index(html, `href="https://docs.example"`)
 	if docs < block {

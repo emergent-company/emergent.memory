@@ -5,13 +5,13 @@
  *
  * The captures come from a real install, so they carry the installer's Railway
  * account address and workspace name. Docs publish to a public site, so the
- * pictures are redacted here, then `port-images.mjs` derives the WebP both sites
+ * pictures are redacted here, then `build-figures.mjs` derives the WebP the site
  * serve. Run from `docs-astro/`:
  *
  *   node scripts/shots.mjs            # (re)capture the 4x PNGs
  *   node scripts/redact-tutorial-shots.mjs
  *   node scripts/redact-tutorial-shots.mjs --self-test   # prove the guards bite
- *   node scripts/port-images.mjs
+ *   node scripts/build-figures.mjs
  *
  * Redaction is deliberately dumb: cover the region with the background colour
  * measured from a clear strip of the same surface. No fake text is drawn, so
@@ -43,7 +43,7 @@ import { tmpdir } from 'node:os';
 const REPO = path.resolve(import.meta.dirname, '../..');
 const DIR =
   process.argv.slice(2).find((arg) => !arg.startsWith('--')) ??
-  path.join(REPO, 'docs/site/assets/tutorials/railway');
+  path.join(REPO, 'docs-astro/public/assets/tutorials/railway');
 
 /**
  * How far (per channel) a pixel must sit from the mask's fill colour to count as
@@ -58,8 +58,8 @@ const INK_DELTA = 32;
  * and the sha256 of that file. When both still match, the empty box is this
  * script's own fill rather than a mask over the wrong pixels, and the ink check
  * is skipped; anything else (a recapture, a hand edit, a shifted box) must prove
- * its boxes cover ink again. Without this, the second `shots:port` run would
- * abort on the first run's output and `npm run shots:port` would stop being
+ * its boxes cover ink again. Without this, the second `shots:build` run would
+ * abort on the first run's output and `npm run shots:build` would stop being
  * repeatable.
  */
 const STATE = '.redaction-state.json';
@@ -546,6 +546,6 @@ if (isMain) {
     await selfTest();
   } else {
     await redactFigures({ dir: DIR, ops: OPS, clean: CLEAN });
-    console.log('next: node scripts/port-images.mjs');
+    console.log('next: node scripts/build-figures.mjs');
   }
 }

@@ -15,6 +15,10 @@ import (
 // #_layout-sidebar — keeps working unchanged. Signed-in identity now lives in
 // the topbar account menu, not in a sidebar footer.
 //
+// The bottom edge reads top-to-bottom as: pinned external destinations
+// (Marketplace, Docs), then the build-version footer as the sidebar's last
+// element, so the version box sits at the very bottom of the sidebar.
+//
 // The script mirrors go-daisy's layout.Sidebar behavior (close the drawer
 // after tapping a link on small screens; keep the active nav item in sync
 // across htmx navigations). It is idempotent via window._sidebarInit.
@@ -42,15 +46,9 @@ templ appSidebar(groups []layout.SidebarGroup, externalItems []layout.SidebarIte
 				}
 			</div>
 		</div>
-		<!-- Footer: build version. Durable and always reachable so a reporter can
-		     copy the running build into an issue (the same value /api/health
-		     exposes) instead of answering "version not shown in the UI". -->
-		<div class="border-base-content/10 shrink-0 border-t px-5 py-3">
-			<p class="text-muted-faint font-mono text-[11px] select-all" data-testid="app-version" title="Build version">{ buildVersionLabel() }</p>
-		</div>
-		<!-- The sidebar's last element: external destinations (Marketplace, Docs),
-		     after the build-version footer. The nav above grows, so this block is
-		     pinned to the bottom edge and everything else stays at the top. -->
+		<!-- Pinned bottom: external destinations (Marketplace, Docs), then the
+		     build version. The nav above grows, so these blocks stay at the bottom
+		     edge and everything else stays at the top. -->
 		if len(externalItems) > 0 {
 			<div class="sidebar-menu border-base-content/10 shrink-0 border-t px-2.5 py-3" data-testid="sidebar-external">
 				<div class="space-y-0.5">
@@ -76,6 +74,14 @@ templ appSidebar(groups []layout.SidebarGroup, externalItems []layout.SidebarIte
 				</div>
 			</div>
 		}
+		<!-- Footer: build version. The sidebar's last element, durable and always
+		     reachable so a reporter can copy the running build into an issue (the
+		     same value /api/health exposes) instead of answering "version not shown
+		     in the UI". It draws its own top border only when the external block
+		     above does not already separate it from the nav. -->
+		<div class={ "sidebar-footer border-base-content/10 shrink-0 px-5 py-3", templ.KV("border-t", len(externalItems) == 0) }>
+			<p class="text-muted-faint font-mono text-[11px] select-all" data-testid="app-version" title="Build version">{ buildVersionLabel() }</p>
+		</div>
 	</div>
 	<script>
 	(function() {

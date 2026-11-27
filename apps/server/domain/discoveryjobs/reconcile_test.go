@@ -47,8 +47,8 @@ func TestReconcileDiscoveredSchemaCollapsesCasePluralAndSynonyms(t *testing.T) {
 
 	got := svc.reconcileDiscoveredSchema([]string{"Organization"}, current, types, nil)
 
-	require.Equal(t, []string{"Location", "Organization"}, typeNames(got.Types))
-	require.Equal(t, []string{"Location", "Organization"}, schemaKeys(got.ObjectTypeSchemas))
+	require.Equal(t, []string{"Organization", "Place"}, typeNames(got.Types))
+	require.Equal(t, []string{"Organization", "Place"}, schemaKeys(got.ObjectTypeSchemas))
 
 	org := got.ObjectTypeSchemas["Organization"].(map[string]any)
 	properties := org["properties"].(map[string]any)
@@ -56,10 +56,10 @@ func TestReconcileDiscoveredSchemaCollapsesCasePluralAndSynonyms(t *testing.T) {
 		require.Containsf(t, properties, property, "merged Organization must keep %s", property)
 	}
 
-	location := got.ObjectTypeSchemas["Location"].(map[string]any)
-	locationProperties := location["properties"].(map[string]any)
-	require.Contains(t, locationProperties, "address")
-	require.Contains(t, locationProperties, "latitude")
+	place := got.ObjectTypeSchemas["Place"].(map[string]any)
+	placeProperties := place["properties"].(map[string]any)
+	require.Contains(t, placeProperties, "address")
+	require.Contains(t, placeProperties, "latitude")
 }
 
 func TestReconcileDiscoveredSchemaConvergesAcrossRuns(t *testing.T) {

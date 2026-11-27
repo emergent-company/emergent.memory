@@ -431,7 +431,7 @@ func TestObjectWikiUndeclaredEdgeSections(t *testing.T) {
 	get := func() string {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/o1/wiki?view=page", nil))
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/o1/wiki", nil))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("wiki status = %d, want 200", rec.Code)
 		}

@@ -11,130 +11,26 @@ import (
 
 // --- object wiki --------------------------------------------------------------
 //
-// The wiki is reading-only surface, separate from the object's editable page.
-// Browsing (the card grid and its search results) links here, and the page
-// renders in one of two variants:
+// The wiki is the reading surface, separate from the object's editable page.
+// Browsing (the card grid and its search results) links here. There is exactly
+// one layout — the object page: key facts, an overview, and one section per
+// relationship group — and the editable page keeps its own route (/objects/:id),
+// which is what the wiki's Edit action opens.
+
+// objectWikiHref is the wiki URL for one object.
 //
-//   - article — the prose-led layout: a lead paragraph, the markdown body, and a
-//     details rail.
-//   - page — the object-page layout: key facts, an overview, and one section per
-//     relationship group.
-//
-// The variant is a reader preference, not a property of the object: it is a
-// cookie so it follows the reader from one object to the next, and a `?view=`
-// query parameter so a shared link opens in the variant the sender was reading.
-// The editable page keeps its own route (/objects/:id) and is what the wiki's
-// Edit action opens.
-
-const (
-	objectWikiViewArticle = "article"
-	objectWikiViewPage    = "page"
-
-	// objectWikiViewCookie stores the reader's variant. It is HttpOnly: only the
-	// server reads it, and every control that changes it is a link.
-	objectWikiViewCookie = "memory_object_wiki_view"
-	// objectWikiViewCookieMaxAge is one year, in seconds.
-	objectWikiViewCookieMaxAge = 365 * 24 * 60 * 60
-)
-
-// objectWikiViewOption is one entry of the variant switch, in render order.
-type objectWikiViewOption struct {
-	Value string
-	Label string
-	Icon  string
+// It is the one link helper every surface uses (browse cards, search hits,
+// relation rows, document and work rows), so a card and the page it opens can
+// never disagree about the URL.
+func objectWikiHref(id string) string {
+	return "/objects/" + url.PathEscape(id) + "/wiki"
 }
 
-// objectWikiViewOptions is the switch's entries. The default variant is first.
-func objectWikiViewOptions() []objectWikiViewOption {
-	return []objectWikiViewOption{
-		{Value: objectWikiViewArticle, Label: "Article", Icon: "lucide--file-text"},
-		{Value: objectWikiViewPage, Label: "Object page", Icon: "lucide--layout-grid"},
-	}
-}
-
-// normalizeObjectWikiView maps any input to a known variant, defaulting to the
-// article. An unrecognised value must never render an empty page.
-func normalizeObjectWikiView(v string) string {
-	if strings.EqualFold(strings.TrimSpace(v), objectWikiViewPage) {
-		return objectWikiViewPage
-	}
-	return objectWikiViewArticle
-}
-
-// objectWikiViewPreference resolves the reader's variant: an explicit value on
-// the query wins, then the cookie, then the default. explicit reports whether the
-// request named a variant, which is when the handler should persist it.
-func objectWikiViewPreference(c echo.Context) (view string, explicit bool) {
-	for _, param := range []string{"view", "wiki_view"} {
-		if v := strings.TrimSpace(c.QueryParam(param)); v != "" {
-			return normalizeObjectWikiView(v), true
-		}
-	}
-	if cookie, err := c.Cookie(objectWikiViewCookie); err == nil && cookie.Value != "" {
-		return normalizeObjectWikiView(cookie.Value), false
-	}
-	return objectWikiViewArticle, false
-}
-
-// setObjectWikiViewPreference persists the variant for later pages. The write is
-// best-effort: a refused cookie (a browser with cookies off) still renders the
-// requested variant for this request.
-func setObjectWikiViewPreference(c echo.Context, view string) {
-	c.SetCookie(&http.Cookie{
-		Name:     objectWikiViewCookie,
-		Value:    normalizeObjectWikiView(view),
-		Path:     "/",
-		MaxAge:   objectWikiViewCookieMaxAge,
-		HttpOnly: true,
-		// Secure over TLS only: a browser silently drops a Secure cookie set over
-		// plain HTTP, which is how the dev host is reached, so the preference would
-		// stop persisting there. Same rule as the session cookies.
-		Secure:   c.Scheme() == "https",
-		SameSite: http.SameSiteLaxMode,
-	})
-}
-
-// objectWikiHref is the wiki URL for one object in one variant.
-//
-// The variant is omitted when it is the default article (the article is what
-// /wiki renders when nothing says otherwise), so a plain link stays short and a
-// link that has no opinion opens whatever the reader last chose. Pass "" for
-// exactly that: no opinion, the reader's persisted variant decides.
-func objectWikiHref(id, view string) string {
-	q := url.Values{}
-	if v := normalizeObjectWikiView(view); v != objectWikiViewArticle {
-		q.Set("view", v)
-	}
-	if len(q) == 0 {
-		return "/objects/" + url.PathEscape(id) + "/wiki"
-	}
-	return "/objects/" + url.PathEscape(id) + "/wiki?" + q.Encode()
-}
-
-// objectWikiControlHref is objectWikiHref for a variant control (the switch, a
-// relationship link): it always spells the variant out, even the default one.
-//
-// An omitted default would be read back from the reader's cookie, so a reader
-// whose stored variant is "page" could never switch back to the article — the
-// link would look identical to the page they are already on. Card links keep the
-// short form (objectWikiHref) because they are not controls: they open whatever
-// the reader last chose.
-func objectWikiControlHref(id, view string) string {
-	q := url.Values{}
-	q.Set("view", normalizeObjectWikiView(view))
-	return "/objects/" + url.PathEscape(id) + "/wiki?" + q.Encode()
-}
-
-// objectsWikiViewHref is the browse page's switch target: the current filter
-// query with the chosen variant added. It is query-only (no path), which keeps it
-// correct on /objects, on the agent-scoped route, and in the gallery preview —
-// the same rule objectsSortHref follows. The handler persists the variant as a
-// cookie, so the choice survives the next visit to a bare /objects.
-func objectsWikiViewHref(data objectsPageData, view string) string {
-	q, _ := url.ParseQuery(strings.TrimPrefix(objectsSortHref(data, data.Order), "?"))
-	q.Set("wiki_view", normalizeObjectWikiView(view))
-	return "?" + q.Encode()
-}
+// objectWikiLegacyViewParams are the retired variant selectors. A request that
+// still carries one is redirected to the bare URL rather than silently served
+// the page view: `?view=article` used to mean something, and answering it with
+// different content than the sender expects is worse than a clean 301.
+var objectWikiLegacyViewParams = []string{"view", "wiki_view"}
 
 // objectWikiRelationCount is one row of the rail's "Relationships by type"
 // summary: the relationship type, its human label, and how many edges carry it.
@@ -143,6 +39,10 @@ type objectWikiRelationCount struct {
 	Label string
 	Count int
 }
+
+// objectWikiRailOptions is retired: with a single wiki layout the rail's blocks
+// are fixed (no property dump — the body's key-facts table lists them — and the
+// per-type relationship breakdown, because this is the whole-object view).
 
 // objectWikiRelationCounts counts edges by relationship type, most frequent
 // first, ties broken by label so the rail is stable between renders.
@@ -229,22 +129,33 @@ type objectWikiPageData struct {
 	// RelationCounts summarises every edge by type for the rail.
 	RelationCounts []objectWikiRelationCount
 	EdgeCount      int
-	// View is the variant being rendered ("article" | "page").
-	View    string
-	LoadErr error
+	// Provenance is the write stamp of the version on screen — who wrote it, how
+	// they were authenticated, and when — resolved against Identities. It is the
+	// last entry of the rail's provenance list; every field degrades to "".
+	Provenance objectVersionProvenance
+	// Identities resolves actor ids to names for Provenance. Best-effort: a
+	// failed lookup leaves the entry naming the actor by type and short id.
+	Identities []objectActorOption
+	LoadErr    error
 }
 
-// uiObjectWiki renders the wiki page in the reader's chosen variant.
+// uiObjectWiki renders the wiki page. It is the reading surface, so it takes no
+// query: a request that still carries a retired variant selector (view=,
+// wiki_view=) is redirected to the bare URL instead of being served a layout it
+// did not ask for.
 func (s *Server) uiObjectWiki(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
-	view, explicit := objectWikiViewPreference(c)
-	if explicit {
-		setObjectWikiViewPreference(c, view)
+	for _, param := range objectWikiLegacyViewParams {
+		if strings.TrimSpace(c.QueryParam(param)) != "" {
+			return c.Redirect(http.StatusMovedPermanently, objectWikiHref(id))
+		}
 	}
 
-	data := objectWikiPageData{View: view}
-	// The wiki reads: no workflow panel, so no assignee-candidate fetch.
+	var data objectWikiPageData
+	// The wiki reads: its Workflow rail group is read-only and shows the stored
+	// assignee name, so there is no workflow panel and no assignee-candidate
+	// fetch (the pickers live on the object page it links to).
 	shell := s.loadObjectDetailShell(ctx, id, "", objectDetailSurfaceReader)
 	if shell.LoadErr != nil {
 		data.LoadErr = shell.LoadErr
@@ -259,6 +170,12 @@ func (s *Server) uiObjectWiki(c echo.Context) error {
 	data.Sources = shell.Sources
 	data.EdgeCount = shell.EdgeCount
 	data.RelationCounts = objectWikiRelationCounts(shell.Edges)
+	// The rail names the version's writer, so resolve the actor names the read
+	// path cannot: one best-effort lookup, and only when the version carries a
+	// user or agent actor (a system write needs no lookup).
+	identities, orderers := s.objectProvenanceInputs(ctx, []GraphObject{*shell.Obj})
+	data.Identities = identities
+	data.Provenance = objectProvenanceOf(*shell.Obj, identities, orderers)
 	if shell.Compiled != nil {
 		data.PropDefs = compiledTypePropertyDefs(shell.Compiled.ObjectTypes, shell.Obj.Type)
 	}
@@ -306,27 +223,6 @@ func objectRailPropertyRows(o GraphObject, propDefs []objectPropertyDef, prose o
 	return out
 }
 
-// objectRailRowMarkdown reports whether a details-rail row renders as markdown.
-// A declared property follows the same rule as every other surface (an explicit
-// `format: markdown` or the long-form heuristics); an undeclared stored key can
-// only use the key heuristic, since it has no schema definition.
-func objectRailRowMarkdown(r objectTypePropertyRow) bool {
-	if r.Declared {
-		return objectPropertyDefMarkdown(r.Def)
-	}
-	return objectPreviewFieldMarkdown(r.Name, "")
-}
-
-// objectRailMarkdownSource returns a rail row's raw markdown source, trimmed, or
-// "" when the row is not markdown or has no value. The values are joined with a
-// blank line so an agent-written multi-value property still parses.
-func objectRailMarkdownSource(r objectTypePropertyRow) string {
-	if !objectRailRowMarkdown(r) || len(r.Values) == 0 {
-		return ""
-	}
-	return strings.TrimSpace(strings.Join(r.Values, "\n\n"))
-}
-
 // objectPropertyDisplay renders a property row's value on one line for a
 // details rail: a scalar as written, an array as a comma-separated list, capped
 // so a long value cannot dominate the rail. The full value stays reachable on
@@ -345,4 +241,22 @@ func objectPropertyDisplay(r objectTypePropertyRow) string {
 		return ""
 	}
 	return truncateProseRunes(proseSpaces.ReplaceAllString(strings.Join(parts, ", "), " "), 300)
+}
+
+// objectPropertyRowsSplit partitions property rows by whether they render a
+// value. Both property surfaces on the wiki page (the Key facts table and the
+// rail) fold the second group behind the eye: a field the type declares and
+// nobody filled is worth knowing about, but as a wall of em dashes it buries the
+// fields that do carry a value.
+func objectPropertyRowsSplit(rows []objectTypePropertyRow) (valued, unset []objectTypePropertyRow) {
+	valued = make([]objectTypePropertyRow, 0, len(rows))
+	unset = make([]objectTypePropertyRow, 0, len(rows))
+	for _, r := range rows {
+		if objectPropertyDisplay(r) == "" {
+			unset = append(unset, r)
+			continue
+		}
+		valued = append(valued, r)
+	}
+	return valued, unset
 }

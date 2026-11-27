@@ -135,6 +135,45 @@ func embeddingStatusBadge(status string) (string, ui.BadgeIntent) {
 	}
 }
 
+// embeddingStatusOutline is embeddingStatusBadge with a transparent intent for
+// the outlined presentation: badge-ghost sets its own fill, which fights the
+// outline style the object rail uses (border and text carry the state colour,
+// background stays clear). "missing" is a quiet state, so it reads neutral.
+func embeddingStatusOutline(status string) (string, ui.BadgeIntent) {
+	label, intent := embeddingStatusBadge(status)
+	if intent == ui.BadgeGhost {
+		intent = ui.BadgeNeutral
+	}
+	return label, intent
+}
+
+// objectEmbeddingTitle is the tooltip for an object's embedding badge: the
+// timestamp the vector was last written, because the status alone cannot say how
+// fresh the embedding is. States without a vector explain themselves instead of
+// showing a time.
+func objectEmbeddingTitle(o *GraphObject) string {
+	if o == nil {
+		return ""
+	}
+	if when, _ := objectVersionWhen(o.EmbeddingUpdatedAt); when != "" {
+		return "Vector last written " + when
+	}
+	switch o.EmbeddingStatus {
+	case "pending":
+		return "Queued for embedding; no vector has been written yet."
+	case "processing":
+		return "Embedding in progress."
+	case "failed", "dead_letter":
+		return "Embedding failed; this object has no current vector."
+	case "missing":
+		return "No vector is recorded for this object."
+	case "embedded":
+		return "Embedded."
+	default:
+		return ""
+	}
+}
+
 // embeddingStatusIcon maps an embedding lifecycle state onto a single glyph and
 // its colour, for tables that show the state as an icon plus a CSS tooltip
 // instead of a text badge. Unknown/empty states return "", "" so the caller can

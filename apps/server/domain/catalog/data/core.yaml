@@ -1,0 +1,269 @@
+name: schemaorg
+objectTypeSchemas:
+- name: Thing
+  label: Thing
+  description: 'The most general entity kind: anything that can be named or described. Use only when no more specific type applies.
+
+    '
+  category: knowledge
+  labels:
+  - thing
+  - entity
+  - concept
+  ui:
+    icon: tabler--box
+    color: '#64748B'
+  properties:
+    name:
+      type: string
+      description: A short human-readable name.
+    description:
+      type: string
+      description: A one-paragraph description.
+    url:
+      type: url
+      description: Canonical URL for the entity.
+    same_as:
+      type: array
+      title: Same as
+      description: URLs identifying the same entity elsewhere (cross-reference).
+      items:
+        type: url
+    identifier:
+      type: string
+      description: An external stable identifier, if one is known.
+  required:
+  - name
+- name: Person
+  label: Person
+  description: 'A real, specific human being named in the content — not a fictional character and not an organization.
+
+    '
+  category: identity
+  parent: Thing
+  labels:
+  - person
+  - human
+  - individual
+  ui:
+    icon: tabler--user
+    color: '#4F46E5'
+  properties:
+    name:
+      type: string
+      description: The person's full name.
+    given_name:
+      type: string
+      title: Given name
+      description: First name.
+    family_name:
+      type: string
+      title: Family name
+      description: Last name.
+    email:
+      type: email
+      description: Contact email address.
+    phone:
+      type: phone
+      description: Contact phone number.
+    job_title:
+      type: string
+      title: Job title
+      description: Role or occupation, e.g. 'Director'.
+    url:
+      type: url
+      description: Profile or homepage URL.
+    birth_date:
+      type: date
+      title: Birth date
+      description: Date of birth (YYYY-MM-DD).
+    death_date:
+      type: date
+      title: Death date
+      description: Date of death (YYYY-MM-DD), if applicable.
+  required:
+  - name
+- name: Organization
+  label: Organization
+  description: 'A company, institution, or other organized group named in the content — studio, network, university, non-profit, government body.
+
+    '
+  category: organization
+  parent: Thing
+  labels:
+  - organization
+  - company
+  - institution
+  - business
+  ui:
+    icon: tabler--building
+    color: '#0EA5E9'
+  properties:
+    name:
+      type: string
+      description: The organization's name.
+    legal_name:
+      type: string
+      title: Legal name
+      description: Registered legal name, if different.
+    url:
+      type: url
+      description: Official website.
+    email:
+      type: email
+      description: Contact email address.
+    phone:
+      type: phone
+      description: Contact phone number.
+    founding_date:
+      type: date
+      title: Founding date
+      description: Date founded (YYYY-MM-DD).
+    number_of_employees:
+      type: integer
+      title: Employees
+      description: Approximate employee count.
+      minimum: 0
+    description:
+      type: string
+      description: What the organization does.
+  required:
+  - name
+- name: Place
+  label: Place
+  description: 'A physical place or venue — city, building, museum, coffeehouse, region.
+
+    '
+  category: place
+  parent: Thing
+  labels:
+  - place
+  - location
+  - venue
+  ui:
+    icon: tabler--map-pin
+    color: '#10B981'
+  properties:
+    name:
+      type: string
+      description: The place's name.
+    address:
+      type: string
+      description: Street address or human-readable location.
+    latitude:
+      type: number
+      description: WGS84 latitude.
+      minimum: -90
+      maximum: 90
+    longitude:
+      type: number
+      description: WGS84 longitude.
+      minimum: -180
+      maximum: 180
+    url:
+      type: url
+      description: Reference URL.
+  required:
+  - name
+- name: Event
+  label: Event
+  description: 'Something that happens at a time and place — conference, concert, meeting, launch, ceremony.
+
+    '
+  category: event
+  parent: Thing
+  labels:
+  - event
+  - happening
+  - occurrence
+  ui:
+    icon: tabler--calendar-event
+    color: '#F59E0B'
+  properties:
+    name:
+      type: string
+      description: The event's name.
+    start_date:
+      type: date
+      title: Start date
+      description: Start date (YYYY-MM-DD).
+    end_date:
+      type: date
+      title: End date
+      description: End date (YYYY-MM-DD).
+    event_status:
+      type: string
+      title: Status
+      description: Lifecycle status.
+      enum:
+      - scheduled
+      - cancelled
+      - postponed
+      - moved_online
+    attendance_mode:
+      type: string
+      title: Attendance mode
+      description: How attendees participate.
+      enum:
+      - in_person
+      - online
+      - hybrid
+    location_name:
+      type: string
+      title: Location
+      description: Human-readable place name for the event.
+    url:
+      type: url
+      description: Event page or registration URL.
+  required:
+  - name
+- name: CreativeWork
+  label: Creative Work
+  description: 'A creative or informational work — article, book, film, video, image, web page. The general parent for media and documents.
+
+    '
+  category: creative
+  parent: Thing
+  labels:
+  - creative_work
+  - work
+  - content
+  - document
+  ui:
+    icon: tabler--file-text
+    color: '#6366F1'
+  properties:
+    name:
+      type: string
+      description: Title of the work.
+    headline:
+      type: string
+      description: Short headline or one-line title.
+    description:
+      type: string
+      description: Summary of the work.
+    url:
+      type: url
+      description: Canonical URL for the work.
+    date_created:
+      type: date
+      title: Created
+      description: Creation date (YYYY-MM-DD).
+    date_modified:
+      type: date
+      title: Modified
+      description: Last modification date (YYYY-MM-DD).
+    keywords:
+      type: array
+      description: Topic keywords or tags.
+      items:
+        type: string
+    license:
+      type: url
+      description: License URL, if declared.
+    author_name:
+      type: string
+      title: Author
+      description: Name of the creator or author.
+  required:
+  - name

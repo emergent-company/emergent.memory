@@ -50,6 +50,14 @@ func TestValidateCreateConversationRequest(t *testing.T) {
 			errMsg:  "message is required",
 		},
 		{
+			name: "empty message with canonicalId (object chat opens empty)",
+			req: &CreateConversationRequest{
+				Title:       "Boiler service — confirm parts availability",
+				CanonicalID: strPtr("550e8400-e29b-41d4-a716-446655440000"),
+			},
+			wantErr: false,
+		},
+		{
 			name: "message too long",
 			req: &CreateConversationRequest{
 				Title:   "Test",

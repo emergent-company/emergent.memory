@@ -169,7 +169,7 @@ const A2AAuthorName = "Emergent Company"
 const A2AContactEmail = "support@emergent-company.ai"
 
 // A2ADocumentationURL is advertised as `documentationUrl` on every card.
-const A2ADocumentationURL = "https://emergent-company.github.io/emergent.memory/latest/developer-guide/a2a-protocol/"
+const A2ADocumentationURL = "https://docs.memory.emergent-company.ai/developer-guide/a2a-protocol/"
 
 // a2aIconPath is the gateway-served icon advertised as `iconUrl`. It is a path
 // rather than a full URL so the advertised origin keeps following the

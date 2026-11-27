@@ -1,0 +1,158 @@
+name: schemaorg
+objectTypeSchemas:
+- name: LocalBusiness
+  label: Local Business
+  description: 'A specific business at a physical location — shop, restaurant, clinic, studio.
+
+    '
+  category: organization
+  parent: Organization
+  labels:
+  - local_business
+  - business
+  - store
+  ui:
+    icon: tabler--building-store
+    color: '#059669'
+  properties:
+    name:
+      type: string
+      description: Business name.
+    price_range:
+      type: string
+      title: Price range
+      description: Relative price range, e.g. '$$'.
+    phone:
+      type: phone
+      description: Contact phone number.
+    address:
+      type: string
+      description: Street address.
+    url:
+      type: url
+      description: Business website.
+  required:
+  - name
+- name: GovernmentOrganization
+  label: Government Organization
+  description: A government body, agency, department, council or embassy.
+  category: government
+  parent: Organization
+  labels:
+  - government
+  - agency
+  - department
+  - council
+  ui:
+    icon: tabler--building-bank
+    color: '#64748B'
+  properties:
+    name:
+      type: string
+      description: The organization's name.
+    org_type:
+      type: string
+      description: Kind of government body.
+      enum:
+      - agency
+      - department
+      - council
+      - embassy
+      title: Org Type
+    jurisdiction:
+      type: string
+      description: Geographic or policy jurisdiction.
+    url:
+      type: url
+      description: Official website.
+  required:
+  - name
+- name: EducationalOrganization
+  label: Educational Organization
+  description: A school, college or university.
+  category: education
+  parent: Organization
+  labels:
+  - school
+  - college
+  - university
+  - education
+  ui:
+    icon: tabler--school
+    color: '#9333EA'
+  properties:
+    name:
+      type: string
+      description: The institution's name.
+    org_type:
+      type: string
+      description: Kind of institution.
+      enum:
+      - school
+      - college
+      - university
+      title: Org Type
+    accreditation:
+      type: string
+      description: Accrediting body or status.
+  required:
+  - name
+- name: MedicalOrganization
+  label: Medical Organization
+  description: A hospital, clinic or medical laboratory.
+  category: health
+  parent: Organization
+  labels:
+  - hospital
+  - clinic
+  - laboratory
+  - medical
+  ui:
+    icon: tabler--building-hospital
+    color: '#E11D48'
+  properties:
+    name:
+      type: string
+      description: The organization's name.
+    org_type:
+      type: string
+      description: Kind of medical organization.
+      enum:
+      - hospital
+      - clinic
+      - laboratory
+      title: Org Type
+    emergency_services:
+      type: boolean
+      description: Whether emergency care is available.
+      title: Emergency Services
+  required:
+  - name
+- name: Airline
+  label: Airline
+  description: An airline or air carrier.
+  category: travel
+  parent: Organization
+  labels:
+  - airline
+  - carrier
+  - aviation
+  ui:
+    icon: tabler--plane
+    color: '#0284C7'
+  properties:
+    name:
+      type: string
+      description: The airline's name.
+    iata_code:
+      type: string
+      description: Two-letter IATA code.
+      title: Iata Code
+    alliance:
+      type: string
+      description: Airline alliance, if any.
+    url:
+      type: url
+      description: Official website.
+  required:
+  - name
