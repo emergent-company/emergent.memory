@@ -49,6 +49,7 @@ var (
 
 	// catalog-install flags
 	blueprintsCatalogTypesFlag   []string
+	blueprintsCatalogExtendFlag  []string
 	blueprintsCatalogNameFlag    string
 	blueprintsCatalogVersionFlag string
 	blueprintsCatalogReplaceFlag bool
@@ -1073,12 +1074,20 @@ types reconciles and activates deferred relationships.
 
 Type names may be passed positionally or with repeated --type flags.
 
+A project keeps one type per name, so a catalog type whose name another pack
+already provides is refused: a project resolves one type per name from the
+newest install, so installing it would replace that pack's definition with the
+catalog's and move the type to the catalog pack. The error names the conflicting
+types and their packs; pass those names with --extend to accept that deliberately
+(only the named types are taken over, nothing else).
+
 Examples:
 
   memory blueprints catalog-install Movie Person
   memory blueprints catalog-install --type Movie --type Person
   memory blueprints catalog-install Product Offer Brand
   memory blueprints catalog-install Movie --name my-catalog --project my-project
+  memory blueprints catalog-install Organization --extend Organization
   memory blueprints catalog-install Movie --replace   # remove other catalog types`,
 	Args: cobra.ArbitraryArgs,
 	RunE: runBlueprintsCatalogInstall,
@@ -1091,6 +1100,7 @@ type catalogInstallResult struct {
 	Relationships []string `json:"relationships"`
 	Deferred      []string `json:"deferred"`
 	Removed       []string `json:"removed"`
+	Merged        []string `json:"merged"`
 	Unknown       []string `json:"unknown"`
 	Problems      []string `json:"problems"`
 }
@@ -1112,17 +1122,21 @@ func runBlueprintsCatalogInstall(cmd *cobra.Command, args []string) error {
 	}
 	c.SetContext("", projectID)
 
-	body, err := json.Marshal(map[string]any{
+	body := map[string]any{
 		"types":   types,
 		"name":    blueprintsCatalogNameFlag,
 		"version": blueprintsCatalogVersionFlag,
 		"replace": blueprintsCatalogReplaceFlag,
-	})
+	}
+	if len(blueprintsCatalogExtendFlag) > 0 {
+		body["extend"] = blueprintsCatalogExtendFlag
+	}
+	raw, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
 
-	data, err := blueprintRequest(c, http.MethodPost, c.BaseURL()+"/api/blueprints/catalog/install", body)
+	data, err := blueprintRequest(c, http.MethodPost, c.BaseURL()+"/api/blueprints/catalog/install", raw)
 	if err != nil {
 		return err
 	}
@@ -1137,22 +1151,25 @@ func runBlueprintsCatalogInstall(cmd *cobra.Command, args []string) error {
 	if res.Created {
 		action = "created"
 	}
-	fmt.Fprintf(out, "Catalog pack %s.\n", action)
-	fmt.Fprintf(out, "Types (%d): %s\n", len(res.Types), strings.Join(res.Types, ", "))
+	_, _ = fmt.Fprintf(out, "Catalog pack %s.\n", action)
+	_, _ = fmt.Fprintf(out, "Types (%d): %s\n", len(res.Types), strings.Join(res.Types, ", "))
 	if len(res.Relationships) > 0 {
-		fmt.Fprintf(out, "Active relationships (%d): %s\n", len(res.Relationships), strings.Join(res.Relationships, ", "))
+		_, _ = fmt.Fprintf(out, "Active relationships (%d): %s\n", len(res.Relationships), strings.Join(res.Relationships, ", "))
 	}
 	if len(res.Removed) > 0 {
-		fmt.Fprintf(out, "Removed (%d, relationships to these deactivated): %s\n", len(res.Removed), strings.Join(res.Removed, ", "))
+		_, _ = fmt.Fprintf(out, "Removed (%d, relationships to these deactivated): %s\n", len(res.Removed), strings.Join(res.Removed, ", "))
+	}
+	if len(res.Merged) > 0 {
+		_, _ = fmt.Fprintf(out, "Taken over from another pack (the catalog's definition is now live and the catalog pack owns them): %s\n", strings.Join(res.Merged, ", "))
 	}
 	if len(res.Deferred) > 0 {
-		fmt.Fprintf(out, "Deferred (%d, install the missing endpoint to activate): %s\n", len(res.Deferred), strings.Join(res.Deferred, ", "))
+		_, _ = fmt.Fprintf(out, "Deferred (%d, install the missing endpoint to activate): %s\n", len(res.Deferred), strings.Join(res.Deferred, ", "))
 	}
 	if len(res.Unknown) > 0 {
-		fmt.Fprintf(out, "Unknown types (not in catalog): %s\n", strings.Join(res.Unknown, ", "))
+		_, _ = fmt.Fprintf(out, "Unknown types (not in catalog): %s\n", strings.Join(res.Unknown, ", "))
 	}
 	if len(res.Problems) > 0 {
-		fmt.Fprintf(out, "Catalog problems: %s\n", strings.Join(res.Problems, "; "))
+		_, _ = fmt.Fprintf(out, "Catalog problems: %s\n", strings.Join(res.Problems, "; "))
 	}
 	return nil
 }
@@ -1219,20 +1236,20 @@ func runBlueprintsCatalogResolve(cmd *cobra.Command, args []string) error {
 
 	out := cmd.OutOrStdout()
 	if len(matches) == 0 {
-		fmt.Fprintf(out, "No catalog types matched %q.\n", query)
+		_, _ = fmt.Fprintf(out, "No catalog types matched %q.\n", query)
 		return nil
 	}
-	fmt.Fprintf(out, "Catalog matches for %q:\n", query)
+	_, _ = fmt.Fprintf(out, "Catalog matches for %q:\n", query)
 	for i, m := range matches {
 		detail := m.Category
 		if m.Parent != "" {
 			detail += ", parent " + m.Parent
 		}
-		fmt.Fprintf(out, "  %2d. %-22s %.3f  (%s)", i+1, m.Name, m.Score, detail)
+		_, _ = fmt.Fprintf(out, "  %2d. %-22s %.3f  (%s)", i+1, m.Name, m.Score, detail)
 		if len(m.Matched) > 0 {
-			fmt.Fprintf(out, "  [%s]", strings.Join(m.Matched, ","))
+			_, _ = fmt.Fprintf(out, "  [%s]", strings.Join(m.Matched, ","))
 		}
-		fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out)
 	}
 	return nil
 }
@@ -1304,18 +1321,18 @@ func runBlueprintsCatalogShow(cmd *cobra.Command, args []string) error {
 	}
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "%s (%s)\n", d.Type.Name, d.Type.Label)
+	_, _ = fmt.Fprintf(out, "%s (%s)\n", d.Type.Name, d.Type.Label)
 	if d.Type.Category != "" {
-		fmt.Fprintf(out, "Category: %s\n", d.Type.Category)
+		_, _ = fmt.Fprintf(out, "Category: %s\n", d.Type.Category)
 	}
 	if len(d.Ancestors) > 0 {
-		fmt.Fprintf(out, "Ancestors: %s\n", strings.Join(d.Ancestors, " > "))
+		_, _ = fmt.Fprintf(out, "Ancestors: %s\n", strings.Join(d.Ancestors, " > "))
 	}
 	if len(d.Children) > 0 {
-		fmt.Fprintf(out, "Subtypes: %s\n", strings.Join(d.Children, ", "))
+		_, _ = fmt.Fprintf(out, "Subtypes: %s\n", strings.Join(d.Children, ", "))
 	}
 	if len(d.Type.Labels) > 0 {
-		fmt.Fprintf(out, "Aliases: %s\n", strings.Join(d.Type.Labels, ", "))
+		_, _ = fmt.Fprintf(out, "Aliases: %s\n", strings.Join(d.Type.Labels, ", "))
 	}
 	if len(d.Type.Properties) > 0 {
 		keys := make([]string, 0, len(d.Type.Properties))
@@ -1323,12 +1340,12 @@ func runBlueprintsCatalogShow(cmd *cobra.Command, args []string) error {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
-		fmt.Fprintf(out, "Properties (%d): %s\n", len(keys), strings.Join(keys, ", "))
+		_, _ = fmt.Fprintf(out, "Properties (%d): %s\n", len(keys), strings.Join(keys, ", "))
 	}
 	if len(d.RelatedRelationships) > 0 {
-		fmt.Fprintf(out, "Relationships (%d):\n", len(d.RelatedRelationships))
+		_, _ = fmt.Fprintf(out, "Relationships (%d):\n", len(d.RelatedRelationships))
 		for _, r := range d.RelatedRelationships {
-			fmt.Fprintf(out, "  - %s: %s -> %s\n", r.Name, r.SourceType, r.TargetType)
+			_, _ = fmt.Fprintf(out, "  - %s: %s -> %s\n", r.Name, r.SourceType, r.TargetType)
 		}
 	}
 	return nil
@@ -1376,6 +1393,7 @@ func init() {
 
 	// catalog-install flags
 	blueprintsCatalogInstallCmd.Flags().StringArrayVar(&blueprintsCatalogTypesFlag, "type", nil, "Catalog type to install (repeatable, e.g. --type Movie)")
+	blueprintsCatalogInstallCmd.Flags().StringArrayVar(&blueprintsCatalogExtendFlag, "extend", nil, "Requested type to install under the catalog's definition even though another pack provides the name (repeatable; refused without it, and the catalog pack then owns the named types)")
 	blueprintsCatalogInstallCmd.Flags().StringVar(&blueprintsCatalogNameFlag, "name", "", "Project schema pack name (default schemaorg-catalog)")
 	blueprintsCatalogInstallCmd.Flags().StringVar(&blueprintsCatalogVersionFlag, "version", "", "Project schema pack version (default 1.0.0)")
 	blueprintsCatalogInstallCmd.Flags().BoolVar(&blueprintsCatalogReplaceFlag, "replace", false, "Make the named types authoritative; remove catalog types not listed (deactivates their relationships)")

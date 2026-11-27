@@ -230,7 +230,8 @@ func TestResumeAfterCompactionKeepsSummary(t *testing.T) {
 	base := time.Now().Add(-time.Hour)
 	full := seedTrimSession(t, ae.sessionService, sessionID, conversationBeforeCompaction(base))
 
-	compressed, err := ae.compressSession(ctx, full, sessionID, 100_000, "test-model")
+	dropped, retained := partitionForCompaction(full.Events(), 5)
+	compressed, err := ae.compressSession(ctx, dropped, retained, sessionID, 100_000, "test-model", CompactionTriggerLoad)
 	require.NoError(t, err)
 	require.Less(t, compressed.Events().Len(), full.Events().Len(), "compaction must have replaced the head")
 	require.Contains(t, trimTestEventText(compressed.Events().At(0)), compressorSummaryTag)
@@ -260,7 +261,8 @@ func TestResumeAfterCompactionReSummarisesWhenGrowing(t *testing.T) {
 	base := time.Now().Add(-time.Hour)
 	full := seedTrimSession(t, ae.sessionService, sessionID, conversationBeforeCompaction(base))
 
-	compacted, err := ae.compressSession(ctx, full, sessionID, 100_000, "test-model")
+	dropped, retained := partitionForCompaction(full.Events(), 5)
+	compacted, err := ae.compressSession(ctx, dropped, retained, sessionID, 100_000, "test-model", CompactionTriggerLoad)
 	require.NoError(t, err)
 	require.Less(t, compacted.Events().Len(), full.Events().Len())
 

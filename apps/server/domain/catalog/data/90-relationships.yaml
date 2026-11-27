@@ -207,3 +207,55 @@ relationshipTypeSchemas:
   targetTypes:
   - Person
   - Organization
+- name: contained_in_place
+  label: Contained in place
+  description: The place is contained within a larger place.
+  sourceType: Place
+  targetType: Place
+- name: home_location
+  label: Home location
+  description: The person's primary residence or home place.
+  sourceType: Person
+  targetType: Place
+- name: content_location
+  label: Content location
+  description: The place where the creative work's content is set or takes place.
+  sourceType: CreativeWork
+  targetType: Place
+- name: spouse
+  label: Spouse
+  description: The person is married to or the spouse of another person.
+  sourceType: Person
+  targetType: Person
+- name: parent
+  label: Parent
+  description: The person is a parent of another person.
+  sourceType: Person
+  targetType: Person
+- name: sibling
+  label: Sibling
+  description: The person is a sibling of another person.
+  sourceType: Person
+  targetType: Person
+- name: knows
+  label: Knows
+  description: The person knows or is acquainted with another person.
+  sourceType: Person
+  targetType: Person
+- name: colleague
+  label: Colleague
+  description: The person works with another person.
+  sourceType: Person
+  targetType: Person
+- name: founder
+  label: Founder
+  description: The organization was founded by this person or organization.
+  sourceType: Organization
+  targetTypes:
+  - Person
+  - Organization
+- name: part_of_series
+  label: Part of series
+  description: The episode belongs to this series.
+  sourceType: Episode
+  targetType: TVSeries

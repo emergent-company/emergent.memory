@@ -9,6 +9,7 @@ import (
 	adkmodel "google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
+	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -102,6 +103,13 @@ func (m *TrackingModel) GenerateContent(
 ) iter.Seq2[*adkmodel.LLMResponse, error] {
 	return func(yield func(*adkmodel.LLMResponse, error) bool) {
 		for resp, err := range m.inner.GenerateContent(ctx, req, stream) {
+			// Tag a provider context-window rejection at the model-call
+			// boundary so the executor can react (summarise the oldest
+			// history and retry the step) without parsing provider strings
+			// itself (#1138).
+			if err != nil {
+				err = adk.WrapContextOverflow(m.inner.Name(), err)
+			}
 			// Record before yielding: the consumer may stop the iteration while
 			// handling this response (a run-finalizing tool such as submit makes
 			// ADK return false), and an early return here must not drop the

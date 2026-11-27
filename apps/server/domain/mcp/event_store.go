@@ -32,38 +32,14 @@ func NewEventStore(maxEvents int) *EventStore {
 	}
 }
 
-// AddEvent stores an event for the given session and returns its assigned ID
-// Events are pruned to keep only the last maxEvents per session
-func (es *EventStore) AddEvent(sessionID string, data json.RawMessage) int64 {
-	es.mu.Lock()
-	defer es.mu.Unlock()
-
-	// Get next sequential ID for this session
-	id := es.nextID[sessionID]
-	es.nextID[sessionID]++
-
-	// Create event
-	event := &SSEEvent{
-		ID:        id,
-		EventType: "message",
-		Data:      data,
-		Timestamp: time.Now(),
-	}
-
-	// Append event to session's event list
-	es.events[sessionID] = append(es.events[sessionID], event)
-
-	// Prune old events to prevent unbounded memory growth
-	if len(es.events[sessionID]) > es.maxEvents {
-		es.events[sessionID] = es.events[sessionID][1:]
-	}
-
-	return id
-}
-
 // GetEventsSince returns all events after the given ID for resumability support
 // Per spec: "If the Last-Event-ID header is present, the server SHOULD send all events
 // that occurred after the specified event ID."
+//
+// NOTE: nothing currently records events into this store (the only producer,
+// AddEvent, was removed with SendServerMessage, which had no callers), so this
+// returns an empty slice and a resuming client replays nothing. Tracked as a
+// follow-up: either wire a producer or drop the Last-Event-ID path.
 func (es *EventStore) GetEventsSince(sessionID string, lastEventID int64) []*SSEEvent {
 	es.mu.RLock()
 	defer es.mu.RUnlock()

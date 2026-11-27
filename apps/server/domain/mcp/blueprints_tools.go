@@ -181,6 +181,11 @@ func blueprintsToolDefinitions() []ToolDefinition {
 						Type:        "boolean",
 						Description: "When true, 'types' is authoritative: catalog types omitted from it are removed from the pack and their relationships deactivated. Default false is additive.",
 					},
+					"extend": {
+						Type:        "array",
+						Description: "Requested type names the caller accepts installing under the catalog's definition even though another pack already provides the name. A project resolves one type per name from the newest install, so such a request is refused without this: installing it replaces that pack's definition with the catalog's and moves the type to the catalog pack (the registry schema is merged, existing property definitions win). Call with the refused names after reading the error.",
+						Items:       &PropertySchema{Type: "string"},
+					},
 				},
 				Required: []string{"types"},
 			},

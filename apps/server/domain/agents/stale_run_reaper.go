@@ -245,12 +245,21 @@ func (r *StaleRunReaper) reapAbandonedPausedWorkRuns(ctx context.Context) {
 		}
 
 		reason := abandonedPausedWorkRunBlockReason(c, pausedWorkRunParkThreshold)
-		if err := r.repo.UpsertWorkBlock(ctx, &WorkBlock{
+		block := &WorkBlock{
 			CanonicalID: c.SubjectObjectID,
 			ProjectID:   c.ProjectID,
 			Reason:      reason,
 			RunID:       &c.RunID,
-		}); err != nil {
+		}
+		// Classify a step-budget park so the reconciler can tell it apart from a
+		// poison item: a run that stopped at its step budget is auto-recoverable
+		// (a fresh run with a new budget and a continuation note), while a human
+		// or deterministic block is not (issue #993 follow-up).
+		if c.PauseReason == string(SuspendReasonStepLimit) {
+			class := string(FailureClassStepLimit)
+			block.FailureClass = &class
+		}
+		if err := r.repo.UpsertWorkBlock(ctx, block); err != nil {
 			r.log.Warn("failed to block work item after reaping paused run",
 				slog.String("run_id", c.RunID),
 				slog.String("canonical_id", c.SubjectObjectID),

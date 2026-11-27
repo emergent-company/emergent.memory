@@ -5781,7 +5781,7 @@ func (f *fakeMemory) GetCatalogType(_ context.Context, _ string) (*CatalogTypeDe
 	return &CatalogTypeDetail{}, nil
 }
 
-func (f *fakeMemory) InstallCatalog(_ context.Context, types []string, _ bool) (*CatalogInstallResult, error) {
+func (f *fakeMemory) InstallCatalog(_ context.Context, types []string, _ bool, _ []string) (*CatalogInstallResult, error) {
 	f.recordCatalog("InstallCatalog")
 	if f.catalogErr != nil {
 		return nil, f.catalogErr

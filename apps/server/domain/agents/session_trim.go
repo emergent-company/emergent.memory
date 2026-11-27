@@ -31,7 +31,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
+	"time"
 
 	"google.golang.org/adk/v2/session"
 
@@ -77,11 +79,15 @@ func summaryPlaceholderIndex(events session.Events) int {
 // predatesSummary reports whether events[i] was recorded before the compaction
 // summarised by the placeholder at summaryIdx.
 //
-// The check is timestamp-based on purpose: compressSession deletes the old
-// session and re-appends the retained tail, so a retained event sits *after*
-// the placeholder in the event order while having been produced before it. Its
-// UsageMetadata.PromptTokenCount therefore describes the pre-compaction prompt
-// and must not be read as the current prompt size.
+// The comparison is against the compaction's wall-clock time, not the summary
+// event's own timestamp: compressSession backdates the synthetic summary to
+// retained[0]-1ms so a session service that orders by timestamp reads
+// summary → ack → retained. That stamp therefore sits *before* the retained
+// tail, while every retained event was recorded before the compaction — so
+// comparing to it would classify only the oldest retained event as stale and
+// read the rest of the tail's pre-compaction counts as the current prompt size.
+// summaryCompactionTime recovers the real instant; the event timestamp is the
+// fallback when it cannot be parsed.
 func predatesSummary(events session.Events, i, summaryIdx int) bool {
 	if summaryIdx < 0 || i == summaryIdx {
 		return false
@@ -91,7 +97,34 @@ func predatesSummary(events session.Events, i, summaryIdx int) bool {
 	if summary == nil || ev == nil {
 		return false
 	}
+	if at, ok := summaryCompactionTime(summary); ok {
+		return !ev.Timestamp.After(at)
+	}
 	return ev.Timestamp.Before(summary.Timestamp)
+}
+
+// summaryCompactionTime recovers the wall-clock instant at which the compaction
+// that produced a synthetic summary event ran. compressSession mints the
+// summary/ack IDs from time.Now() at the moment of the rebuild
+// (compress-<unixnano>-user / compress-<unixnano>-model), which is the only
+// durable record of it: the event timestamps are deliberately backdated.
+func summaryCompactionTime(ev *session.Event) (time.Time, bool) {
+	if ev == nil {
+		return time.Time{}, false
+	}
+	rest, ok := strings.CutPrefix(ev.ID, "compress-")
+	if !ok {
+		return time.Time{}, false
+	}
+	nanos, _, ok := strings.Cut(rest, "-")
+	if !ok {
+		return time.Time{}, false
+	}
+	n, err := strconv.ParseInt(nanos, 10, 64)
+	if err != nil || n <= 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(0, n), true
 }
 
 // sessionTrimPlan is the Pass 2a decision for a resumed session.
@@ -227,12 +260,16 @@ func (ae *AgentExecutor) windowResumedSession(
 ) (session.Session, bool) {
 	if contextWindow <= 0 {
 		// Context window unknown — fall back to the event-count guard so a
-		// long session cannot grow unbounded without token data.
-		if sess.Events().Len() <= largeSessionThreshold {
+		// long session cannot grow unbounded without token data. The oldest
+		// half is summarised and the newest half is kept verbatim.
+		events := sess.Events()
+		n := events.Len()
+		if n <= largeSessionThreshold {
 			return sess, false
 		}
-		compressed, compErr := ae.compressSession(ctx, sess, sessionID, 0, modelName)
-		if compErr != nil {
+		dropped, retained := partitionForCompaction(events, n/2)
+		compressed, compErr := ae.compressSession(ctx, dropped, retained, sessionID, 0, modelName, CompactionTriggerLoad)
+		if compErr != nil || compressed == nil {
 			ae.log.Warn("session compression (no context window) failed, proceeding",
 				slog.String("session_id", sessionID), logger.Error(compErr))
 			return sess, false
@@ -248,11 +285,24 @@ func (ae *AgentExecutor) windowResumedSession(
 	if plan.SummaryIndex >= 0 {
 		// The head is already a compaction summary. Pass 2a drops the oldest
 		// events, which would take the summary (and every fact it stands for)
-		// with it, so re-summarise the head instead: compressSession folds the
-		// existing summary into the new one and keeps the tail.
-		before := sess.Events().Len()
-		compressed, compErr := ae.compressSession(ctx, sess, sessionID, contextWindow, modelName)
-		if compErr != nil {
+		// with it, so re-summarise instead: the dropped head — including the
+		// existing summary, which compressSession carries through its anchored
+		// EXISTING SUMMARY block — is folded into a new summary and the newest
+		// half of the history is kept verbatim. Sizing the kept tail by token
+		// counts is exactly what the stale pre-compaction counts make unsafe
+		// here, so the event-count split is deliberate.
+		events := sess.Events()
+		before := events.Len()
+		keep := before / 2
+		if keep < 2 {
+			keep = 2
+		}
+		if keep >= before {
+			return sess, false
+		}
+		dropped, retained := partitionForCompaction(events, keep)
+		compressed, compErr := ae.compressSession(ctx, dropped, retained, sessionID, contextWindow, modelName, CompactionTriggerLoad)
+		if compErr != nil || compressed == nil {
 			ae.log.Warn("session re-compression at high watermark failed, keeping session as loaded",
 				slog.String("session_id", sessionID), logger.Error(compErr))
 			return sess, false
@@ -307,8 +357,9 @@ func (ae *AgentExecutor) windowResumedSession(
 	// significant portion of the history was dropped (i.e. we are genuinely
 	// near the limit, not just a precautionary trim).
 	if numKeep < n/2 {
-		compressed, compErr := ae.compressSession(ctx, sess, sessionID, contextWindow, modelName)
-		if compErr != nil {
+		dropped, retained := partitionForCompaction(events, numKeep)
+		compressed, compErr := ae.compressSession(ctx, dropped, retained, sessionID, contextWindow, modelName, CompactionTriggerLoad)
+		if compErr != nil || compressed == nil {
 			ae.log.Warn("session compression failed, proceeding with trimmed session",
 				slog.String("session_id", sessionID), logger.Error(compErr))
 		} else {

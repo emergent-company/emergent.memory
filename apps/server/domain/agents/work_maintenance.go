@@ -580,33 +580,52 @@ func (rc *WorkReconciler) reconcile(ctx context.Context) {
 
 // enqueue wakes the listening agent(s) for a ready object.
 func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead, budgetErrs map[string]error) {
+	// resumedRun reports that this pass cleared a step-limit park and is
+	// dispatching the continuation run; the count feeds its note.
+	resumedRun := false
+	stepLimitExhaustions := 0
 	if block, err := rc.repo.GetWorkBlock(ctx, h.CanonicalID); err == nil && block != nil {
-		if !isBudgetBlock(block) {
-			return
-		}
-		// A budget park is auto-recoverable: clearing it is what makes a raised
-		// cap or reset window resume the item without a human unblock. While
-		// the project is still over cap, returning here is the reconciler's
-		// stop condition — no run is attempted, so no refusal is logged per
-		// tick.
-		budgetErr, ok := budgetErrs[h.ProjectID]
-		if !ok {
-			budgetErr = rc.repo.checkBudgetGate(ctx, h.ProjectID)
-			budgetErrs[h.ProjectID] = budgetErr
-		}
-		if budgetErr != nil {
-			return
-		}
-		if _, cerr := rc.repo.ClearWorkBlock(ctx, h.CanonicalID); cerr != nil {
-			rc.log.Warn("failed to clear budget work block",
+		switch {
+		case isBudgetBlock(block):
+			// A budget park is auto-recoverable: clearing it is what makes a raised
+			// cap or reset window resume the item without a human unblock. While
+			// the project is still over cap, returning here is the reconciler's
+			// stop condition — no run is attempted, so no refusal is logged per
+			// tick.
+			budgetErr, ok := budgetErrs[h.ProjectID]
+			if !ok {
+				budgetErr = rc.repo.checkBudgetGate(ctx, h.ProjectID)
+				budgetErrs[h.ProjectID] = budgetErr
+			}
+			if budgetErr != nil {
+				return
+			}
+			if _, cerr := rc.repo.ClearWorkBlock(ctx, h.CanonicalID); cerr != nil {
+				rc.log.Warn("failed to clear budget work block",
+					slog.String("canonical_id", h.CanonicalID),
+					slog.String("error", cerr.Error()),
+				)
+				return
+			}
+			rc.log.Info("budget block cleared; work item is dispatchable again",
 				slog.String("canonical_id", h.CanonicalID),
-				slog.String("error", cerr.Error()),
 			)
+		case isStepLimitBlock(block):
+			// A run that stopped at its step budget is a dead or over-long run,
+			// not a failed item: clear the park and dispatch a fresh run that
+			// continues from the repository/PR state. Bounded, because a repeat
+			// exhaustion is a signal for a human (issue #993 follow-up).
+			exhaustions, ok := rc.resumeStepLimitPark(ctx, h, block)
+			if !ok {
+				return
+			}
+			resumedRun = true
+			stepLimitExhaustions = exhaustions
+		default:
+			// Any other block is a deliberate stop (human, deterministic
+			// failure, poison item): only an unblock or retry clears it.
 			return
 		}
-		rc.log.Info("budget block cleared; work item is dispatchable again",
-			slog.String("canonical_id", h.CanonicalID),
-		)
 	}
 	if skipUnassignedIssue(h.Type, h.Assignee) {
 		return
@@ -665,6 +684,9 @@ func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead, 
 		}
 		if trigger != nil && trigger.Prompt != "" {
 			prompt := trigger.Prompt
+			if resumedRun {
+				prompt = stepLimitResumeMessage(stepLimitExhaustions) + "\n\n" + prompt
+			}
 			opts.TriggerMessage = &prompt
 		}
 		if _, err := rc.repo.CreateRunQueued(ctx, agent.ID, 1, opts); err != nil {
@@ -686,6 +708,109 @@ func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead, 
 // gate (as opposed to a poison item or a human cancel).
 func isBudgetBlock(block *WorkBlock) bool {
 	return block != nil && block.FailureClass != nil && *block.FailureClass == string(FailureClassBudget)
+}
+
+// stepLimitAutoResumeLimit bounds automatic resumption of a run that stopped at
+// its step budget. The first exhaustions are a dead or over-long run and get a
+// fresh dispatch; past this count the exhaustion is a human's call, not another
+// run. Counting is over the subject's runs, so it survives a block being
+// cleared and re-created (issue #993 follow-up).
+const stepLimitAutoResumeLimit = 2
+
+// isStepLimitBlock reports whether a durable block was written because a run
+// stopped at its step budget rather than because the item failed.
+func isStepLimitBlock(block *WorkBlock) bool {
+	return block != nil && block.FailureClass != nil && *block.FailureClass == string(FailureClassStepLimit)
+}
+
+// stepLimitExhaustedBlockedBy marks a step-limit block whose automatic-resume
+// budget is spent. It is a terminal state: one escalation task is open and the
+// item waits for a human unblock or retry.
+const stepLimitExhaustedBlockedBy = "step-limit-exhausted"
+
+// blockIsStepLimitEscalated reports whether the step-limit park has already
+// been escalated, so the reconciler stops counting exhaustions (and stops
+// re-notifying) on every pass.
+func blockIsStepLimitEscalated(block *WorkBlock) bool {
+	return block != nil && block.BlockedBy != nil && *block.BlockedBy == stepLimitExhaustedBlockedBy
+}
+
+// shouldResumeStepLimit reports whether an exhaustion count is still inside the
+// automatic-resume budget. A count of 1 is the park being handled now; each
+// further exhaustion is one automatic continuation already spent.
+func shouldResumeStepLimit(exhaustions int) bool {
+	return exhaustions > 0 && exhaustions <= stepLimitAutoResumeLimit
+}
+
+// resumeStepLimitPark clears a step-limit block and the item's claim state so
+// the next dispatch is a fresh run, and reports how many times this subject has
+// already stopped at its step budget. It refuses (ok=false) once that count
+// passes stepLimitAutoResumeLimit, leaving the block in place for a human and
+// escalating once so the parked item is discoverable off the board.
+//
+// Clearing the claim state is not optional: the dispatch CASes from it, so a
+// cleared block alone leaves the item unparked but permanently busy.
+func (rc *WorkReconciler) resumeStepLimitPark(ctx context.Context, h *graph.WorkObjectHead, block *WorkBlock) (int, bool) {
+	// The exhausted marker makes a step-limit park terminal: the escalation is
+	// already open, so later passes neither re-count nor re-notify every tick.
+	if blockIsStepLimitEscalated(block) {
+		return 0, false
+	}
+	exhaustions, err := rc.repo.CountStepLimitExhaustions(ctx, h.CanonicalID)
+	if err != nil {
+		rc.log.Warn("failed to count step-limit exhaustions",
+			slog.String("canonical_id", h.CanonicalID),
+			slog.String("error", err.Error()),
+		)
+		return 0, false
+	}
+	if !shouldResumeStepLimit(exhaustions) {
+		if exhaustions > stepLimitAutoResumeLimit {
+			if eerr := rc.repo.EscalateStepLimitExhausted(ctx, h.ProjectID, h.CanonicalID, exhaustions); eerr != nil {
+				rc.log.Warn("failed to escalate exhausted step-limit park",
+					slog.String("canonical_id", h.CanonicalID),
+					slog.String("error", eerr.Error()),
+				)
+			} else {
+				rc.log.Warn("step-limit resume budget exhausted; escalated the work item to a human",
+					slog.String("canonical_id", h.CanonicalID),
+					slog.Int("exhaustions", exhaustions),
+				)
+			}
+		}
+		return exhaustions, false
+	}
+	if _, cerr := rc.repo.ClearWorkBlock(ctx, h.CanonicalID); cerr != nil {
+		rc.log.Warn("failed to clear step-limit work block",
+			slog.String("canonical_id", h.CanonicalID),
+			slog.String("error", cerr.Error()),
+		)
+		return 0, false
+	}
+	if cerr := rc.repo.ClearWorkItemState(ctx, h.ProjectID, h.CanonicalID); cerr != nil {
+		rc.log.Warn("failed to clear work item state for step-limit resume",
+			slog.String("canonical_id", h.CanonicalID),
+			slog.String("error", cerr.Error()),
+		)
+		return 0, false
+	}
+	rc.log.Info("step-limit block cleared; dispatching a continuation run",
+		slog.String("canonical_id", h.CanonicalID),
+		slog.Int("exhaustions", exhaustions),
+	)
+	return exhaustions, true
+}
+
+// stepLimitResumeMessage is the continuation note prepended to the agent's
+// trigger prompt. A resumed run must re-orient from the repository and PR state
+// and carry on, rather than restart the work (which is what burns the budget
+// again).
+func stepLimitResumeMessage(exhaustions int) string {
+	return fmt.Sprintf(
+		"Your previous run on this item stopped at its step budget; this is continuation attempt %d of %d. "+
+			"Check the current state first (the branch, any open PR and its checks) and continue from there — do not start the work over.",
+		exhaustions, stepLimitAutoResumeLimit,
+	)
 }
 
 // parkBudgetRefused records the same visible, durable park the trigger path

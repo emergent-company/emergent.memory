@@ -101,6 +101,7 @@ type CatalogInstallResult struct {
 	Relationships []string `json:"relationships"`
 	Deferred      []string `json:"deferred"`
 	Removed       []string `json:"removed"`
+	Merged        []string `json:"merged"`
 	Unknown       []string `json:"unknown"`
 	Problems      []string `json:"problems"`
 }
@@ -138,10 +139,15 @@ func (m *MemoryClient) GetCatalogType(ctx context.Context, name string) (*Catalo
 	return &out, nil
 }
 
-// InstallCatalog installs catalog types into the current project.
-func (m *MemoryClient) InstallCatalog(ctx context.Context, types []string, replace bool) (*CatalogInstallResult, error) {
+// InstallCatalog installs catalog types into the current project. extend names
+// requested types the caller accepts merging into a type another pack already
+// provides; the server refuses such a name otherwise.
+func (m *MemoryClient) InstallCatalog(ctx context.Context, types []string, replace bool, extend []string) (*CatalogInstallResult, error) {
 	var out CatalogInstallResult
 	body := map[string]any{"types": types, "replace": replace}
+	if len(extend) > 0 {
+		body["extend"] = extend
+	}
 	if err := m.do(ctx, http.MethodPost, "/api/blueprints/catalog/install", body, &out); err != nil {
 		return nil, err
 	}

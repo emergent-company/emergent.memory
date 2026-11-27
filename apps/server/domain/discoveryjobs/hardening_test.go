@@ -23,7 +23,7 @@ func TestFilterRelationshipsByConfidence(t *testing.T) {
 }
 
 func TestFilterRelationshipsByConfidenceEmpty(t *testing.T) {
-	if got := filterRelationshipsByConfidence(nil, 0.75); got != nil && len(got) != 0 {
+	if got := filterRelationshipsByConfidence(nil, 0.75); len(got) != 0 {
 		t.Fatalf("nil input should yield empty, got %v", got)
 	}
 }

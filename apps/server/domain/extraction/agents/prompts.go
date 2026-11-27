@@ -420,7 +420,7 @@ func BuildEntityExtractionPrompt(
 			}
 
 			if len(entities) > ExistingEntityPromptMaxPerType {
-				sb.WriteString(fmt.Sprintf("  _(and %d more)_\n", len(entities)-ExistingEntityPromptMaxPerType))
+				fmt.Fprintf(&sb, "  _(and %d more)_\n", len(entities)-ExistingEntityPromptMaxPerType)
 			}
 		}
 		sb.WriteString("\n")

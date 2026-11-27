@@ -8,9 +8,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestListBuiltinObjectTypesTvMovies pins that the tv-movies taxonomy is bundled
-// and carries the well-described, tagged types auto-discovery aligns against.
-func TestListBuiltinObjectTypesTvMovies(t *testing.T) {
+// TestListBuiltinObjectTypesCatalogOnly pins that discovery's taxonomy is the
+// built-in catalog only: the tv-movies blueprint is retired, so pack-specific
+// types are gone and the catalog owns every common entity (Place, Person,
+// Organization, TVSeries, ...). Platform-internal packs never leak in.
+func TestListBuiltinObjectTypesCatalogOnly(t *testing.T) {
 	types, err := ListBuiltinObjectTypes()
 	require.NoError(t, err)
 	require.NotEmpty(t, types)
@@ -19,20 +21,16 @@ func TestListBuiltinObjectTypesTvMovies(t *testing.T) {
 	for _, d := range types {
 		byName[d.Name] = d
 	}
+	// Canonical catalog concepts are present.
 	for _, want := range []string{
-		"Show", "Season", "Episode", "Character", "Actor",
-		"Person", "Location", "Organization", "Occupation",
+		"Thing", "Person", "Organization", "Place", "Event", "CreativeWork", "TVSeries", "Movie", "Episode",
 	} {
-		require.Contains(t, byName, want, "builtin taxonomy must include %s", want)
+		require.Contains(t, byName, want, "catalog taxonomy must include %s", want)
 	}
-
-	ch := byName["Character"]
-	require.NotEmpty(t, ch.Description, "Character must be well-described")
-	require.Contains(t, ch.Labels, "fictional_character", "Character must carry the disambiguation tag")
-
-	person := byName["Person"]
-	require.Contains(t, person.Labels, "person")
-
+	// The retired tv-movies pack contributed these; they must no longer appear.
+	for _, gone := range []string{"Show", "Season", "Character", "Actor", "Occupation", "Location"} {
+		require.NotContains(t, byName, gone, "retired tv-movies type %s must not be in the taxonomy", gone)
+	}
 	// Platform-internal packs define object types too, but they are not a
 	// common-entity taxonomy and must never be offered as alignment targets.
 	for _, notWant := range []string{
@@ -40,6 +38,9 @@ func TestListBuiltinObjectTypesTvMovies(t *testing.T) {
 	} {
 		require.NotContains(t, byName, notWant, "builtin taxonomy must NOT include %s", notWant)
 	}
+
+	person := byName["Person"]
+	require.Contains(t, person.Labels, "person")
 }
 
 // TestListBuiltinObjectTypesSkipsMalformedPack pins that one unloadable pack is
@@ -111,8 +112,7 @@ func TestListBuiltinObjectTypesSchemaOrg(t *testing.T) {
 	require.Equal(t, "commerce", product.Category)
 	require.Equal(t, "tabler--package", product.UI["icon"])
 
-	// Person is defined by both schemaorg and tv-movies; schemaorg sorts first
-	// and must win, carrying the base category rather than the domain pack's.
+	// Person carries the catalog's identity category.
 	require.Equal(t, "identity", byName["Person"].Category)
 }
 
@@ -157,5 +157,23 @@ func TestSchemaOrgIsNotABuiltinBlueprintPack(t *testing.T) {
 	for _, e := range entries {
 		require.NotEqual(t, "schemaorg", e.Name(),
 			"schema.org must live in domain/catalog data, not builtin_packs")
+	}
+}
+
+// TestListBuiltinRelationshipTypes pins that discovery's relationship phase is
+// offered the catalog's canonical relationship vocabulary, unique by name.
+func TestListBuiltinRelationshipTypes(t *testing.T) {
+	rels, err := ListBuiltinRelationshipTypes()
+	require.NoError(t, err)
+	require.NotEmpty(t, rels)
+
+	byName := map[string]bool{}
+	for _, r := range rels {
+		require.NotEmpty(t, r.Name)
+		require.False(t, byName[r.Name], "duplicate relationship %q", r.Name)
+		byName[r.Name] = true
+	}
+	for _, want := range []string{"works_for", "member_of", "located_at", "contained_in_place", "home_location", "content_location", "spouse", "part_of_series"} {
+		require.True(t, byName[want], "catalog relationship vocabulary must include %s", want)
 	}
 }

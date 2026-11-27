@@ -541,6 +541,25 @@ Table "kb"."agent_sandboxes" {
 }
 // kb.agent_sandboxes: Tracks isolated agent workspaces and persistent MCP server containers
 
+Table "kb"."agent_session_compactions" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "session_id" text [not null]
+  "seq" integer [not null]
+  "dropped_events" integer [not null]
+  "retained_events" integer [not null]
+  "first_dropped_event_id" text
+  "last_dropped_event_id" text
+  "summary" text [not null]
+  "summary_tokens" integer [not null, default: 0]
+  "model" text [not null, default: '']
+  "created_at" timestamptz [not null, default: `now()`]
+  "trigger" text [not null, default: 'load']
+
+  Indexes {
+    (session_id, seq) [name: "uq_agent_session_compactions_session_seq", unique]
+  }
+}
+
 Table "kb"."agent_share_access_log" {
   "id" uuid [pk, default: `gen_random_uuid()`]
   "share_link_id" uuid [not null]

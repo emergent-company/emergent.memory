@@ -22,6 +22,15 @@ status=0
 # genuine drift, the clearSpace rule the token file publishes, and a page that
 # points at an asset which moved. It needs no Go toolchain: every case exits
 # before the wrapper's `go vet`.
+# fetch-hygiene.sh is the static half of #1158 (follow-up to #956): it rejects
+# `git fetch <remote> <bare-ref>`, where git resolves the name against
+# refs/tags/<name> before refs/heads/<name> and this repo publishes
+# refs/tags/dev, so the fetch reads the tag and leaves origin/dev stale. Its
+# baseline lists the four workflow sites of #1158 that still need
+# `workflows: write` to change; when one is fixed the gate fails and names the
+# stale entry, so the list can only shrink. It lands here, and not in a
+# workflow step, because the required `ci` job runs this file -- the same reason
+# base-check.test.sh and the release-tag suites below do.
 # release-tag.sh is the observer for #1047: a release PR merged by
 # `app/github-actions` raises its push from GITHUB_TOKEN, GitHub starts no
 # workflow runs for it, and auto-tag's push trigger never fires -- so the tag,
@@ -30,7 +39,7 @@ status=0
 # tag is absent, which turns that silent miss into a red required check on the
 # next PR. It needs no workflow file; release-tag.test.sh is its hermetic suite
 # (a temporary bare origin, no network).
-for script in base-check.sh base-check.test.sh version-drift.test.sh release-tag.sh release-tag.test.sh migration-number.sh go-decl-collision.sh gofmt-tracked.sh cli-skill-pin.sh docs-stale-paths.sh skip-census.sh mcp-authz.sh modelref-split.sh runrole-guard.sh schemadrift-guard.sh gitleaks-waivers.sh gitleaks-env-files.sh connector-lint-self-test.sh ui-guard.sh design-system.test.sh design-system.sh gh-pages-budget.sh; do
+for script in base-check.sh base-check.test.sh fetch-hygiene.sh fetch-hygiene.test.sh version-drift.test.sh release-tag.sh release-tag.test.sh migration-number.sh go-decl-collision.sh gofmt-tracked.sh cli-skill-pin.sh docs-stale-paths.sh skip-census.sh mcp-authz.sh modelref-split.sh runrole-guard.sh schemadrift-guard.sh gitleaks-waivers.sh gitleaks-env-files.sh connector-lint-self-test.sh ui-guard.sh design-system.test.sh design-system.sh gh-pages-budget.sh; do
   echo "==> $script"
   if bash "$dir/$script"; then
     echo "==> $script PASSED"
@@ -92,4 +101,4 @@ if [ "$status" -ne 0 ]; then
   exit 1
 fi
 
-echo "preflight: OK (base, base-check tests, version-drift tests, migration numbering, cross-branch Go declaration collisions, gofmt, CLI skill pin, stale docs, Astro docs port, skip census, mcp authz, modelref split, runrole guard, schemadrift, gitleaks waivers, gitleaks env files, connector lint self-test, ui guardrails, brand gate tests, brand tokens, gh-pages budget self-tests, server architectural-debt ratchet, connector install channel, release tag reconcile/dispatch, release tag drift)"
+echo "preflight: OK (base, base-check tests, version-drift tests, migration numbering, cross-branch Go declaration collisions, gofmt, CLI skill pin, stale docs, Astro docs port, skip census, mcp authz, modelref split, runrole guard, schemadrift, gitleaks waivers, gitleaks env files, connector lint self-test, ui guardrails, brand gate tests, brand tokens, gh-pages budget self-tests, server architectural-debt ratchet, connector install channel, release tag reconcile/dispatch, release tag drift, fetch hygiene)"

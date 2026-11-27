@@ -827,7 +827,7 @@ func (r *Repository) ApplyDiscoveredSchema(ctx context.Context, projectID, packI
 		r.log.Error("auto-apply: begin transaction", logger.Error(err))
 		return false, apperror.ErrInternal.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtext(?))", "discovery-apply:"+projectID.String()).Exec(ctx); err != nil {
 		r.log.Error("auto-apply: acquire advisory lock", logger.Error(err))
