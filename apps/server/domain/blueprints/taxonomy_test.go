@@ -9,7 +9,10 @@ import (
 )
 
 // TestListBuiltinObjectTypesTvMovies pins that the tv-movies taxonomy is bundled
-// and carries the well-described, tagged types auto-discovery aligns against.
+// and carries the well-described, tagged types auto-discovery aligns against —
+// but only the types the catalog does not already own. "Show" yields to the
+// catalog's TVSeries (via the "show" alias) and "Location" to Place (via
+// "location"), so the pack can't shadow the canonical concept under another name.
 func TestListBuiltinObjectTypesTvMovies(t *testing.T) {
 	types, err := ListBuiltinObjectTypes()
 	require.NoError(t, err)
@@ -19,12 +22,20 @@ func TestListBuiltinObjectTypesTvMovies(t *testing.T) {
 	for _, d := range types {
 		byName[d.Name] = d
 	}
+	// Panels only the tv-movies pack defines survive.
 	for _, want := range []string{
-		"Show", "Season", "Episode", "Character", "Actor",
-		"Person", "Location", "Organization", "Occupation",
+		"Season", "Episode", "Character", "Actor", "Person", "Organization", "Occupation",
 	} {
 		require.Contains(t, byName, want, "builtin taxonomy must include %s", want)
 	}
+	// The catalog owns the concepts tv-movies named differently, so the pack
+	// names are dropped in favour of the canonical catalog types.
+	for _, dropped := range []string{"Show", "Location"} {
+		require.NotContains(t, byName, dropped,
+			"pack type %s must yield to the catalog concept", dropped)
+	}
+	require.Contains(t, byName, "TVSeries", "TVSeries owns the tv-movies Show concept")
+	require.Contains(t, byName, "Place", "Place owns the tv-movies Location concept")
 
 	ch := byName["Character"]
 	require.NotEmpty(t, ch.Description, "Character must be well-described")

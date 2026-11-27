@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"path"
+	"strings"
 
 	"go.uber.org/fx"
 
@@ -31,9 +32,12 @@ var builtinPacksFS embed.FS
 // Discovery aligns a proposed type against this set before inventing a new one.
 //
 // The catalog is reference data (domain/catalog), not a blueprint; packs are
-// read directly from the embedded manifests. Types are deduplicated by name, so
-// a pack cannot shadow a catalog type, and one malformed pack is skipped with a
-// warning rather than disabling alignment for every other pack.
+// read directly from the embedded manifests. A pack cannot shadow a catalog
+// type: a pack type whose name (case-insensitive) matches a catalog type's name
+// or one of its aliases is dropped, so a pack that reuses a canonical concept
+// under a different name (tv-movies "Location" vs catalog "Place" via the
+// "location" alias) still aligns to the catalog type. One malformed pack is
+// skipped with a warning rather than disabling alignment for every other pack.
 func ListBuiltinObjectTypes() ([]ObjectTypeDef, error) {
 	cat, err := catalog.Load()
 	if err != nil {
@@ -41,8 +45,17 @@ func ListBuiltinObjectTypes() ([]ObjectTypeDef, error) {
 	}
 	out := catalogObjectTypeDefs(cat.Types)
 	seen := make(map[string]string, len(out))
+	// claimed maps a lower-cased catalog name or alias to the catalog type that
+	// owns it, so a pack type duplicating that concept is dropped.
+	claimed := make(map[string]string, len(cat.Types)*2)
 	for _, t := range cat.Types {
 		seen[t.Name] = "catalog"
+		claimed[strings.ToLower(t.Name)] = t.Name
+		for _, l := range t.Labels {
+			if k := strings.ToLower(strings.TrimSpace(l)); k != "" {
+				claimed[k] = t.Name
+			}
+		}
 	}
 
 	packTypes, err := listBuiltinObjectTypes(builtinPacksFS, "builtin_packs")
@@ -51,6 +64,11 @@ func ListBuiltinObjectTypes() ([]ObjectTypeDef, error) {
 	}
 	for _, ot := range packTypes {
 		if _, ok := seen[ot.Name]; ok {
+			continue
+		}
+		if owner, ok := claimed[strings.ToLower(ot.Name)]; ok {
+			slog.Debug("skipping pack type that duplicates a catalog concept",
+				slog.String("type", ot.Name), slog.String("catalog_owner", owner))
 			continue
 		}
 		seen[ot.Name] = "taxonomy-pack"

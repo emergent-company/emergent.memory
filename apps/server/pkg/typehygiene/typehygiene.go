@@ -43,14 +43,17 @@ var irregularPlurals = map[string]string{
 // spelling variants belong here (organisation -> organization); semantic
 // equivalence ("Character" vs "Person") is resolved by the discovery domain's
 // embedding-based similarity check, never by a hardcoded list.
+//
+// place/location follows the built-in catalog's canonical type: the schema.org
+// base type is "Place", so both spellings normalize to "place".
 var synonyms = map[string]string{
 	"organisation": "organization",
-	"place":        "location",
+	"location":     "place",
 }
 
 // NormalizeKey returns the comparison key for a discovered type name.
 // "Organization", "organisations" and "Organisation" all normalize to
-// "organization"; "Place" and "Locations" normalize to "location".
+// "organization"; "Place", "Location" and "Locations" normalize to "place".
 func NormalizeKey(name string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(strings.TrimSpace(name)) {
