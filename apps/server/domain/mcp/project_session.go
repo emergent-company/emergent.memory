@@ -152,6 +152,19 @@ func ProjectSwitchRequiredMessage() string {
 	return "Project switch required: call project action=use with a project_id before running write tools on this session. Use project action=list to see the projects you belong to."
 }
 
+// identifiesUser reports whether the credential carries a user identity at all:
+// a profile id (a signed-in user or an OAuth grant) or a bound API-token project
+// (a project-bound integration). A nil user and an empty AuthUser are both
+// unidentified, and ListMemberProjects treats that as unauthorized.
+//
+// It is a named predicate rather than an inline nil check because the identity
+// contract is shared by every transport: a project-bound token has no profile id
+// but is still a legitimate caller, so "no identity" is the pair, not either
+// field alone.
+func identifiesUser(user *auth.AuthUser) bool {
+	return user != nil && (user.ID != "" || user.APITokenProjectID != "")
+}
+
 // ListMemberProjects returns the projects the caller's user may address through
 // this MCP credential.
 //
@@ -162,7 +175,7 @@ func ProjectSwitchRequiredMessage() string {
 // authorization server, whose grants represent the signed-in user rather than a
 // single integration project.
 func (s *Service) ListMemberProjects(ctx context.Context, user *auth.AuthUser, activeProjectID string) ([]ProjectSummary, error) {
-	if user == nil {
+	if !identifiesUser(user) {
 		return nil, apperror.ErrUnauthorized
 	}
 	// A project-bound token without an OAuth grant can only ever address its own

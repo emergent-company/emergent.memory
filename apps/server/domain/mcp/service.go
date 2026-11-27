@@ -429,7 +429,7 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 		{
 			Name:         "project-list",
 			OutputSchema: envelopeOutputSchema(),
-			Description: "List the projects the signed-in user belongs to over this MCP session. Returns each project's id, name, organization and role, and marks the session's active project. Use this before project action=use when you do not know which project_id to target.",
+			Description:  "List the projects the signed-in user belongs to over this MCP session. Returns each project's id, name, organization and role, and marks the session's active project. Use this before project action=use when you do not know which project_id to target.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
@@ -439,7 +439,7 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 		{
 			Name:         "project-use",
 			OutputSchema: envelopeOutputSchema(),
-			Description: "Switch this MCP session's active project. project_id must be a project the signed-in user belongs to; membership is checked on every switch and re-checked on every later call. All later tool calls in this session use the selected project.",
+			Description:  "Switch this MCP session's active project. project_id must be a project the signed-in user belongs to; membership is checked on every switch and re-checked on every later call. All later tool calls in this session use the selected project.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
