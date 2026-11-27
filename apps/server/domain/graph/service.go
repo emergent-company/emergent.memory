@@ -5111,14 +5111,15 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 		summary.Status, summary.Conflicts = classifyMergeObject(sourceHead, targetHead)
 
 		// Deterministic same-entity detection (exact key). A source object that
-		// would be "added" (new canonical ID) but shares a normalized type+key
-		// with an existing target head is the same entity re-extracted from a
-		// different document, not a distinct addition. Classify it against that
-		// target head exactly like a canonical-matched pair (fast_forward /
-		// conflict) and record the target canonical so the merge resolves the
-		// target head across the canonical boundary and remaps source-referencing
-		// relationships. This is independent of embeddings: it runs before and
-		// regardless of the embedding-driven similarity probe below.
+		// would be "added" (new canonical ID) but shares a normalized
+		// type+namespace+key with an existing target head is the same entity
+		// re-extracted from a different document, not a distinct addition.
+		// Classify it against that target head exactly like a canonical-matched
+		// pair (fast_forward / conflict) and record the target canonical so the
+		// merge resolves the target head across the canonical boundary and
+		// remaps source-referencing relationships. This is independent of
+		// embeddings: it runs before and regardless of the embedding-driven
+		// similarity probe below.
 		if summary.Status == "added" {
 			if same := findSameEntityTargetInIndex(sourceHead, sameEntityIndex); same != nil {
 				summary.Status, summary.Conflicts = classifySameEntity(sourceHead, same)
@@ -5624,6 +5625,13 @@ func (s *Service) applyMerge(
 				continue
 			}
 			labels := src.Labels
+			if summary.SameEntityTargetID != nil {
+				// A re-extraction that matches an existing entity must not drop a
+				// human-curated label: union the target's curated labels with the
+				// source's. Ordinary fast-forwards keep replace semantics so a
+				// branch's explicit label edits still apply.
+				labels = unionLabels(prevHead.Labels, src.Labels)
+			}
 			if labels == nil {
 				labels = []string{}
 			}
@@ -6365,6 +6373,28 @@ func classifySameEntity(sourceHead, targetHead *BranchObjectHead) (status string
 		return "conflict", conflicts
 	}
 	return "fast_forward", nil
+}
+
+// unionLabels returns the labels from both sides with duplicates removed,
+// preserving first-seen order. A same-entity merge keeps the target's curated
+// labels and adds the source's new ones; an ordinary fast-forward keeps its
+// existing replace semantics.
+func unionLabels(a, b []string) []string {
+	seen := make(map[string]struct{}, len(a)+len(b))
+	out := make([]string, 0, len(a)+len(b))
+	for _, list := range [][]string{a, b} {
+		for _, label := range list {
+			if _, ok := seen[label]; ok {
+				continue
+			}
+			seen[label] = struct{}{}
+			out = append(out, label)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func sortMergeObjectSummaries(summaries []*BranchMergeObjectSummary) {
