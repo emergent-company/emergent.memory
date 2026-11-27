@@ -11,12 +11,11 @@ import { DOCUMENTS_SEARCH_INPUT } from '../../helpers/documents';
 // and the browser performed a full document load. Every Go-side render test
 // still passed — only a real engine can observe "the document did not reload".
 //
-// The mock harness (run-e2e.sh) has no graph backend, so /objects renders its
-// error state there; its region dispatch is covered by the request-level test
-// below instead of by clicking.
+// /objects is retired (#1076): it 301s to /search, which renders the same cards
+// and the same `search-results` region, so it no longer has a region of its own
+// to assert here. The redirect itself is pinned by its own test below.
 
 const REGIONS = [
-  { path: '/objects', region: 'objects-results' },
   { path: '/documents', region: 'documents-results' },
   { path: '/search', region: 'search-results' },
   { path: '/inbox', region: 'inbox-list' },
@@ -44,6 +43,32 @@ test.describe('list filters refresh only the results region', () => {
       expect(await pageRes.text()).toContain('id="_layout-sidebar"');
     });
   }
+
+  test('/objects is retired and redirects to /search, keeping the query string', async ({
+    request,
+  }) => {
+    // #1076 merged the objects browser into /search: same cards, same filters,
+    // plus the document-text leg. A bookmarked filter, or a type-scoped link,
+    // must land on the same list — so the redirect carries the query string —
+    // while `mode` (the search-mode chooser the merged page no longer has) is
+    // dropped rather than forwarded as a dead parameter.
+    const redirect = await request.get('/objects?type=Note&q=revenue&mode=cards', {
+      maxRedirects: 0,
+    });
+    expect(redirect.status()).toBe(301);
+    const location = redirect.headers()['location'];
+    expect(location).toBeTruthy();
+    const target = new URL(location, 'http://localhost');
+    expect(target.pathname).toBe('/search');
+    expect(target.searchParams.get('q')).toBe('revenue');
+    expect(target.searchParams.get('type')).toBe('Note');
+    expect(target.searchParams.has('mode')).toBe(false);
+
+    // Following it lands on the merged surface itself, not on an error page.
+    const pageRes = await request.get('/objects');
+    expect(pageRes.status()).toBe(200);
+    expect(await pageRes.text()).toContain('id="search-results"');
+  });
 
   test('the documents toolbar has a single search control, with the applied query mirrored as a hidden input', async ({
     page,
@@ -123,18 +148,23 @@ test.describe('list filters refresh only the results region', () => {
   }) => {
     await page.goto('/search?q=revenue');
     await expect(page.getByTestId('search-hit-document')).toHaveCount(1);
+    // Object hits are cards on the same grid the browse list uses (#1076).
+    await expect(page.getByTestId('object-card')).toHaveCount(1);
     await page.evaluate(() => {
       (window as unknown as { __sameDocument: boolean }).__sameDocument = true;
     });
 
-    await page.getByTestId('search-type-filter').selectOption('documents');
+    // The scope control (`in`) replaces the retired search page's `type` select:
+    // same question — documents, objects, or both — and the same server-side
+    // narrowing.
+    await page.getByTestId('search-in-filter').selectOption('documents');
 
-    await expect(page).toHaveURL(/[?&]type=documents\b/);
-    await expect(page.getByTestId('search-hit-object')).toHaveCount(0);
+    await expect(page).toHaveURL(/[?&]in=documents\b/);
+    await expect(page.getByTestId('object-card')).toHaveCount(0);
     await expect(page.getByTestId('search-hit-document')).toHaveCount(1);
     // The count is part of the results summary, inside the swapped region, so
     // it always describes the results currently on screen.
-    await expect(page.getByTestId('search-result-count')).toContainText(
+    await expect(page.getByTestId('search-results-summary')).toContainText(
       '1 result',
     );
     expect(

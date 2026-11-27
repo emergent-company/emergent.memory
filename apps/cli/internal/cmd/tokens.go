@@ -58,6 +58,8 @@ var tokenScopeGroups = []struct {
 			{"ingest:write", "Trigger document ingestion/parsing"},
 			{"extraction:read", "View extraction jobs, logs and statistics"},
 			{"extraction:write", "Create, cancel and retry extraction jobs"},
+			{"discovery:read", "View schema discovery jobs and their results"},
+			{"discovery:write", "Start, retry, cancel and finalize schema discovery jobs"},
 			{"tasks:read", "List and read tasks"},
 			{"tasks:write", "Resolve and cancel tasks"},
 			{"notifications:read", "List and read notifications"},
@@ -521,13 +523,14 @@ var tokenScopePresets = map[string][]string{
 		"graph:read", "graph:search:read", "journal:read",
 		"schema:read", "agents:read", "projects:read",
 		"extraction:read", "tasks:read", "user-activity:read",
-		"notifications:read",
+		"notifications:read", "discovery:read",
 	},
 	"write": {
 		"documents:write", "documents:delete", "chunks:write",
 		"ingest:write", "graph:write", "extraction:write",
 		"tasks:write", "user-activity:write", "notifications:write",
 		"schema:write", "agents:write", "projects:write",
+		"discovery:write",
 	},
 }
 

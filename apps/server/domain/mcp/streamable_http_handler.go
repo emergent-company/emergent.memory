@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -41,24 +42,40 @@ type StreamableHTTPHandler struct {
 	eventStore *EventStore
 }
 
-// MCPSession represents an MCP session state
+// MCPSession represents an MCP session state.
+//
+// A session is bound to the identity and credential that created it and to the
+// project it was initialized for. The session ID is a lookup key, never a
+// credential: every request that presents one is authorized against the
+// authenticated caller before the session's identity or project is used (see
+// authorizeSession).
 type MCPSession struct {
-	ID              string
-	ProjectID       string
-	UserID          string
+	ID        string
+	ProjectID string
+	UserID    string
+	// APITokenID is the API token that created the session ("" for
+	// OIDC/session auth). It is never rewritten after creation, so a session
+	// cannot be rebound to a different credential.
+	APITokenID      string
 	OrgID           string
-	Scopes          []string
 	Initialized     bool
 	ProtocolVersion string
 	// ClientName is the sanitized clientInfo.name from initialize, carried into
 	// tools/call so tools can name the real client (issue #472).
-	ClientName string
+	ClientName   string
+	CreatedAt    time.Time
+	LastAccessAt time.Time
+
 	// ProjectSwitched is true once the client explicitly selected the session's
 	// project — via initialize project_id or `project` action=use. It gates write
 	// tools when MCP_REQUIRE_PROJECT_SWITCH is enabled (issue #1163).
 	ProjectSwitched bool
-	CreatedAt       time.Time
-	LastAccessAt    time.Time
+
+	// persisted reports whether this value came from (or has been written to)
+	// the session map. A snapshot read from the map carries persisted=true, so
+	// putSession can refuse to resurrect a session a concurrent DELETE removed;
+	// a session created by getOrCreateSession has not been stored yet.
+	persisted bool
 }
 
 // SSEStream represents an active SSE connection
@@ -206,7 +223,10 @@ func (h *StreamableHTTPHandler) handlePOST(c echo.Context, protocolVersion strin
 	sessionID := c.Request().Header.Get("Mcp-Session-Id")
 	session, err := h.getOrCreateSession(sessionID, user, protocolVersion)
 	if err != nil {
-		if err.Error() == "session_not_found" {
+		// A session the caller may not use is indistinguishable on the wire from
+		// an expired one: the client learns only that it must re-initialize, and
+		// a caller probing a leaked session ID learns nothing about its owner.
+		if errors.Is(err, errSessionNotFound) || errors.Is(err, errSessionForbidden) {
 			return c.JSON(http.StatusNotFound, map[string]any{
 				"error": map[string]string{
 					"code":    "session_not_found",
@@ -261,7 +281,9 @@ func (h *StreamableHTTPHandler) handleGET(c echo.Context, protocolVersion string
 		})
 	}
 
-	// Get session
+	// Get session. The session ID is not a credential: the caller must be the
+	// user and credential that created the session, and must address the
+	// session's project.
 	sessionID := c.Request().Header.Get("Mcp-Session-Id")
 	if sessionID == "" {
 		return c.JSON(http.StatusBadRequest, map[string]any{
@@ -272,8 +294,7 @@ func (h *StreamableHTTPHandler) handleGET(c echo.Context, protocolVersion string
 		})
 	}
 
-	session := h.getSession(sessionID)
-	if session == nil {
+	if _, err := h.sessionForCaller(sessionID, auth.MustGetUser(c)); err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{
 			"error": map[string]string{
 				"code":    "session_not_found",
@@ -406,6 +427,17 @@ func (h *StreamableHTTPHandler) handleDELETE(c echo.Context) error {
 		})
 	}
 
+	// Terminating a session is session-bound too: a leaked ID must not let
+	// another caller kill the owner's session.
+	if _, err := h.sessionForCaller(sessionID, auth.MustGetUser(c)); err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{
+			"error": map[string]string{
+				"code":    "session_not_found",
+				"message": "Session not found or expired",
+			},
+		})
+	}
+
 	h.sessionsMu.Lock()
 	delete(h.sessions, sessionID)
 	h.sessionsMu.Unlock()
@@ -425,24 +457,18 @@ func (h *StreamableHTTPHandler) handleDELETE(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
-// getOrCreateSession gets existing session or creates new one
+// Sentinel session errors. A session the caller may not use is reported
+// identically to a missing one on the wire (both map to 404 session_not_found);
+// they are distinct internally so the attempt can be logged.
+var (
+	errSessionNotFound  = errors.New("session_not_found")
+	errSessionForbidden = errors.New("session_forbidden")
+)
+
+// getOrCreateSession gets an existing session or creates a new one.
 func (h *StreamableHTTPHandler) getOrCreateSession(sessionID string, user *auth.AuthUser, protocolVersion string) (*MCPSession, error) {
 	if sessionID != "" {
-		// Validate existing session
-		h.sessionsMu.RLock()
-		session, exists := h.sessions[sessionID]
-		h.sessionsMu.RUnlock()
-
-		if !exists {
-			return nil, fmt.Errorf("session_not_found")
-		}
-
-		// Update last access time
-		h.sessionsMu.Lock()
-		session.LastAccessAt = time.Now()
-		h.sessionsMu.Unlock()
-
-		return session, nil
+		return h.sessionForCaller(sessionID, user)
 	}
 
 	// Create new session (will be assigned ID during initialize)
@@ -457,8 +483,8 @@ func (h *StreamableHTTPHandler) getOrCreateSession(sessionID string, user *auth.
 		ID:              uuid.New().String(),
 		ProjectID:       projectID,
 		UserID:          user.ID,
+		APITokenID:      user.APITokenID,
 		OrgID:           orgID,
-		Scopes:          user.Scopes,
 		Initialized:     false,
 		ProtocolVersion: protocolVersion,
 		CreatedAt:       time.Now(),
@@ -468,11 +494,121 @@ func (h *StreamableHTTPHandler) getOrCreateSession(sessionID string, user *auth.
 	return session, nil
 }
 
-// getSession retrieves an existing session
+// sessionForCaller looks a session up and authorizes the authenticated caller
+// before returning it. The returned value is a snapshot: handlers mutate the
+// snapshot and persist it with putSession, so the fields authorized here cannot
+// change under a request that is already executing (a concurrent re-initialize
+// writes a new snapshot instead).
+func (h *StreamableHTTPHandler) sessionForCaller(sessionID string, user *auth.AuthUser) (*MCPSession, error) {
+	h.sessionsMu.Lock()
+	defer h.sessionsMu.Unlock()
+
+	stored, exists := h.sessions[sessionID]
+	if !exists {
+		return nil, errSessionNotFound
+	}
+	if err := h.authorizeSession(stored, user); err != nil {
+		callerID, callerProjectID := "", ""
+		if user != nil {
+			callerID, callerProjectID = user.ID, user.ProjectID
+		}
+		h.log.Warn("rejected MCP session access",
+			slog.String("session_id", sessionID),
+			slog.String("session_project_id", stored.ProjectID),
+			slog.String("caller_project_id", callerProjectID),
+			slog.String("session_user_id", stored.UserID),
+			slog.String("caller_user_id", callerID),
+			slog.Bool("session_credential_bound", stored.APITokenID != ""),
+		)
+		return nil, err
+	}
+	stored.LastAccessAt = time.Now()
+	return cloneMCPSession(stored), nil
+}
+
+// authorizeSession reports whether the authenticated caller may use an existing
+// MCP session. A session is bound to the identity and credential that created
+// it, and to the project it was initialized for:
+//
+//   - identity: the creating user must be the caller;
+//   - credential: if either the session or the caller is API-token
+//     authenticated, the token IDs must match, so one project credential can
+//     never resume another's session (or a narrower token inherit a broader
+//     session);
+//   - project: a session initialized for a project may only be used while
+//     addressing that project. A session with no project keeps resolving the
+//     project from the caller, as before.
+//
+// The operator transport resolves no project context, so it enforces identity
+// and credential only. A nil session or user fails closed.
+func (h *StreamableHTTPHandler) authorizeSession(session *MCPSession, user *auth.AuthUser) error {
+	if session == nil || user == nil {
+		return errSessionForbidden
+	}
+	if session.UserID != user.ID {
+		return errSessionForbidden
+	}
+	if session.APITokenID != user.APITokenID && (session.APITokenID != "" || user.APITokenID != "") {
+		return errSessionForbidden
+	}
+	if !h.admin && session.ProjectID != "" && user.ProjectID != "" && session.ProjectID != user.ProjectID {
+		return errSessionForbidden
+	}
+	return nil
+}
+
+// cloneMCPSession copies a session so request paths operate on a snapshot.
+func cloneMCPSession(session *MCPSession) *MCPSession {
+	if session == nil {
+		return nil
+	}
+	clone := *session
+	return &clone
+}
+
+// putSession stores a session snapshot. Writes replace the map entry under the
+// lock rather than mutating the stored value, which keeps snapshots handed to
+// in-flight requests immutable.
+//
+// A snapshot that came from the map only updates an entry that still exists: a
+// request whose session was terminated while it was in flight (a DELETE, or a
+// refusal path) must not insert it back. A session being stored for the first
+// time (the initialize of a fresh session) is inserted normally.
+func (h *StreamableHTTPHandler) putSession(session *MCPSession) {
+	if session == nil {
+		return
+	}
+	h.sessionsMu.Lock()
+	defer h.sessionsMu.Unlock()
+	if session.persisted {
+		if _, exists := h.sessions[session.ID]; !exists {
+			return
+		}
+	}
+	session.persisted = true
+	h.sessions[session.ID] = cloneMCPSession(session)
+}
+
+// markSessionInitialized sets the initialized flag on the stored session, if it
+// still exists. It is a field-scoped update rather than a whole-snapshot write,
+// so a notifications/initialized racing a re-initialize cannot restore the
+// project id the re-initialize just changed, and cannot resurrect a session that
+// was terminated.
+func (h *StreamableHTTPHandler) markSessionInitialized(sessionID string) {
+	h.sessionsMu.Lock()
+	defer h.sessionsMu.Unlock()
+	if stored, exists := h.sessions[sessionID]; exists {
+		stored.Initialized = true
+	}
+}
+
+// getSession retrieves a snapshot of an existing session without authorizing the
+// caller. Request paths must use sessionForCaller; this is for tests and
+// internal inspection only.
 func (h *StreamableHTTPHandler) getSession(sessionID string) *MCPSession {
 	h.sessionsMu.RLock()
 	defer h.sessionsMu.RUnlock()
-	return h.sessions[sessionID]
+	return cloneMCPSession(h.sessions[sessionID])
 }
 
 // processRequest processes JSON-RPC requests
@@ -565,9 +701,7 @@ func (h *StreamableHTTPHandler) handleInitialize(c echo.Context, req *Request, s
 	}
 	session.ClientName = sanitizeClientName(params.ClientInfo.Name)
 
-	h.sessionsMu.Lock()
-	h.sessions[session.ID] = session
-	h.sessionsMu.Unlock()
+	h.putSession(session)
 
 	// Build response
 	result := InitializeResult{
@@ -624,7 +758,9 @@ func (h *StreamableHTTPHandler) handleToolsList(c echo.Context, req *Request, se
 	}
 
 	tools := h.svc.GetToolDefinitionsForProject(c.Request().Context(), session.ProjectID)
-	tools = FilterToolsForScopes(tools, session.Scopes)
+	// Filter on the caller's current scopes, not creation-time session state: a
+	// reduced token scope must be reflected immediately, not at re-initialize.
+	tools = FilterToolsForScopes(tools, user.Scopes)
 	// Hard split: operator tools are never listed on the project endpoint,
 	// regardless of the caller's superadmin status.
 	tools = FilterToolsForSuperadmin(tools, false)
@@ -776,9 +912,9 @@ func (h *StreamableHTTPHandler) handleProjectSessionAction(c echo.Context, req *
 	ctx := auth.ContextWithUser(c.Request().Context(), user)
 	switch action {
 	case projectActionList:
-		h.sessionsMu.RLock()
+		// session is this request's snapshot, so its project is the active one
+		// (a switch persisted by an earlier request is already in it).
 		activeProjectID := session.ProjectID
-		h.sessionsMu.RUnlock()
 		result, err := h.svc.executeListMemberProjects(ctx, activeProjectID)
 		if err != nil {
 			return toolExecutionErrorResponse(req.ID, err)
@@ -800,10 +936,12 @@ func (h *StreamableHTTPHandler) handleProjectSessionAction(c echo.Context, req *
 			)
 			return NewErrorResponse(req.ID, ErrCodeForbidden, "Project access denied", nil)
 		}
-		h.sessionsMu.Lock()
+		// The session handed to this request is a snapshot; persist the switch so
+		// later requests on this session id read it (see putSession). The
+		// authorization above already ran, so nothing is mutated on a refusal.
 		session.ProjectID = projectID
 		session.ProjectSwitched = true
-		h.sessionsMu.Unlock()
+		h.putSession(session)
 		h.log.Info("MCP project switched",
 			slog.String("session_id", session.ID),
 			slog.String("project_id", projectID),
@@ -1015,10 +1153,11 @@ func (h *StreamableHTTPHandler) handlePromptsGet(c echo.Context, req *Request, s
 	}
 	return NewSuccessResponse(req.ID, result)
 }
+
 func (h *StreamableHTTPHandler) handleNotification(c echo.Context, req *Request, session *MCPSession) {
 	switch req.Method {
 	case "notifications/initialized":
-		session.Initialized = true
+		h.markSessionInitialized(session.ID)
 		h.log.Debug("client sent initialized notification", slog.String("session_id", session.ID))
 	default:
 		h.log.Debug("unknown notification", slog.String("method", req.Method))
@@ -1033,32 +1172,4 @@ func (h *StreamableHTTPHandler) isValidProtocolVersion(version string) bool {
 		}
 	}
 	return false
-}
-
-// SendServerMessage sends a JSON-RPC message to all active SSE streams for a session
-func (h *StreamableHTTPHandler) SendServerMessage(sessionID string, message *Response) error {
-	data, err := json.Marshal(message)
-	if err != nil {
-		return fmt.Errorf("marshal message: %w", err)
-	}
-
-	eventID := h.eventStore.AddEvent(sessionID, data)
-
-	h.streamsMu.RLock()
-	streams := h.streams[sessionID]
-	h.streamsMu.RUnlock()
-
-	for _, stream := range streams {
-		fmt.Fprintf(stream.Writer, "event: message\nid: %d\ndata: %s\n\n", eventID, data)
-		stream.Flusher.Flush()
-		stream.LastEventID = eventID
-	}
-
-	h.log.Debug("server message sent",
-		slog.String("session_id", sessionID),
-		slog.Int64("event_id", eventID),
-		slog.Int("stream_count", len(streams)),
-	)
-
-	return nil
 }

@@ -23,12 +23,12 @@ func TestListBuiltinObjectTypesCatalogOnly(t *testing.T) {
 	}
 	// Canonical catalog concepts are present.
 	for _, want := range []string{
-		"Thing", "Person", "Organization", "Place", "Event", "CreativeWork", "TVSeries", "Movie",
+		"Thing", "Person", "Organization", "Place", "Event", "CreativeWork", "TVSeries", "Movie", "Episode",
 	} {
 		require.Contains(t, byName, want, "catalog taxonomy must include %s", want)
 	}
 	// The retired tv-movies pack contributed these; they must no longer appear.
-	for _, gone := range []string{"Show", "Season", "Episode", "Character", "Actor", "Occupation", "Location"} {
+	for _, gone := range []string{"Show", "Season", "Character", "Actor", "Occupation", "Location"} {
 		require.NotContains(t, byName, gone, "retired tv-movies type %s must not be in the taxonomy", gone)
 	}
 	// Platform-internal packs define object types too, but they are not a
@@ -157,5 +157,23 @@ func TestSchemaOrgIsNotABuiltinBlueprintPack(t *testing.T) {
 	for _, e := range entries {
 		require.NotEqual(t, "schemaorg", e.Name(),
 			"schema.org must live in domain/catalog data, not builtin_packs")
+	}
+}
+
+// TestListBuiltinRelationshipTypes pins that discovery's relationship phase is
+// offered the catalog's canonical relationship vocabulary, unique by name.
+func TestListBuiltinRelationshipTypes(t *testing.T) {
+	rels, err := ListBuiltinRelationshipTypes()
+	require.NoError(t, err)
+	require.NotEmpty(t, rels)
+
+	byName := map[string]bool{}
+	for _, r := range rels {
+		require.NotEmpty(t, r.Name)
+		require.False(t, byName[r.Name], "duplicate relationship %q", r.Name)
+		byName[r.Name] = true
+	}
+	for _, want := range []string{"works_for", "member_of", "located_at", "contained_in_place", "home_location", "content_location", "spouse", "part_of_series"} {
+		require.True(t, byName[want], "catalog relationship vocabulary must include %s", want)
 	}
 }
