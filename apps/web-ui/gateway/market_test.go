@@ -113,11 +113,11 @@ func TestMarketSidebarItemsHiddenWhenUnconfigured(t *testing.T) {
 	}
 }
 
-func TestMarketplaceRendersAtSidebarBottom(t *testing.T) {
+func TestMarketplaceRendersInPinnedBottomBlock(t *testing.T) {
 	items := []layout.SidebarItem{{Label: "Marketplace", Href: "https://market.example", Icon: "lucide--store"}}
 	html := renderHTML(t, appSidebar(sidebarGroupsWithWarn("", false, sidebarWarns{}), items, false))
-	footer := strings.Index(html, `data-testid="sidebar-external"`)
-	if footer < 0 {
+	block := strings.Index(html, `data-testid="sidebar-external"`)
+	if block < 0 {
 		t.Fatal("marketplace block missing from the sidebar")
 	}
 	nav := strings.Index(html, `class="sidebar-menu grow overflow-y-auto"`)
@@ -125,31 +125,33 @@ func TestMarketplaceRendersAtSidebarBottom(t *testing.T) {
 	if nav < 0 || version < 0 {
 		t.Fatalf("sidebar anchors missing (nav=%d version=%d)", nav, version)
 	}
-	if nav >= version || version >= footer {
-		t.Fatalf("marketplace is not the sidebar's last element: nav=%d version=%d market=%d", nav, version, footer)
+	// The marketplace sits in the pinned bottom area: below the scrolling nav
+	// and above the build-version footer that closes the sidebar (#1133).
+	if nav >= block || block >= version {
+		t.Fatalf("marketplace is not between the nav and the version footer: nav=%d market=%d version=%d", nav, block, version)
 	}
 	navOpen := strings.LastIndex(html[:nav], "<div")
 	navClose := divCloseIndex(html, navOpen)
-	if navClose < 0 || footer < navClose {
-		t.Fatalf("marketplace block is inside the scrollable nav (nav close=%d market=%d), not pinned", navClose, footer)
+	if navClose < 0 || block < navClose {
+		t.Fatalf("marketplace block is inside the scrollable nav (nav close=%d market=%d), not pinned", navClose, block)
 	}
-	blockStart := strings.LastIndex(html[:footer], "<div")
-	if blockStart < 0 || !strings.Contains(html[blockStart:footer], "shrink-0") {
-		t.Fatalf("marketplace block is not a shrink-0 sibling: %s", html[blockStart:footer])
+	blockStart := strings.LastIndex(html[:block], "<div")
+	if blockStart < 0 || !strings.Contains(html[blockStart:block], "shrink-0") {
+		t.Fatalf("marketplace block is not a shrink-0 sibling: %s", html[blockStart:block])
 	}
-	if !strings.Contains(html[footer:], "Marketplace") {
+	if !strings.Contains(html[block:], "Marketplace") {
 		t.Fatal("marketplace label missing from its footer block")
 	}
-	block := html[footer:]
-	marker := strings.Index(block, `data-testid="sidebar-external-link"`)
+	tail := html[block:]
+	marker := strings.Index(tail, `data-testid="sidebar-external-link"`)
 	if marker < 0 {
 		t.Fatal("marketplace link missing from its footer block")
 	}
-	linkStart := strings.LastIndex(block[:marker], "<a")
+	linkStart := strings.LastIndex(tail[:marker], "<a")
 	if linkStart < 0 {
 		t.Fatal("marketplace anchor start missing")
 	}
-	link := block[linkStart:]
+	link := tail[linkStart:]
 	if end := strings.Index(link, "</a>"); end >= 0 {
 		link = link[:end]
 	}
