@@ -183,9 +183,13 @@ type projectToolCache struct {
 	builtinTools map[string]bool
 	// externalTools records provenance: the pooled names registered by external
 	// MCP servers or relay instances, including any collision aliases. It is
-	// read instead of inferring provenance from the name, because an external
-	// server chooses both its server name and its tool names and the shared
-	// namespace makes a name match forgeable (#1147).
+	// written where the tool is registered rather than derived by subtracting
+	// builtinTools, because all three sources write one namespace: an external
+	// server whose <slug>_<tool> collides with an enabled builtin's name leaves
+	// builtinTools[name] true while the pooled definition is the server's, so a
+	// subtraction would report the third-party tool as ours (#1144 review).
+	// An external server chooses both its server name and its tool names and the
+	// shared namespace makes a name match forgeable (#1147).
 	externalTools map[string]bool
 	// externalToolCallName maps a pooled external name → the canonical
 	// <slugified server>_<tool> name the registry proxy resolves. They differ
@@ -1259,29 +1263,28 @@ func (tp *ToolPool) ToolNames(projectID string) []string {
 // <slugified server>_<tool>, or a collision alias) and MCP relay instances.
 // Their results are third-party content.
 //
-// Callers use this as fencing provenance (issue #1142, review of #1144). It is a
-// set of registered names rather than a lookup by name shape because the pooled
-// names share one namespace with the builtin catalog and the agent-runtime
-// tools — an external server named "work" exposing "complete" produces
-// "work_complete", the name of a trusted runtime tool. Provenance cannot be
-// spoofed by a server picking its tool names; a name comparison can. The
-// registration half of the same collision is closed in registerExternalTool /
-// registerRelayTool, which alias the third-party name instead of overwriting
-// the existing definition (issue #1147).
+// Callers use this as fencing provenance (issue #1142, review of #1144). It is
+// the set recorded at registration rather than a subtraction over the pooled
+// names, because the pooled names share one namespace with the builtin catalog
+// and the agent-runtime tools — an external server named "work" exposing
+// "complete" produces "work_complete", the name of a trusted runtime tool.
+// Provenance cannot be spoofed by a server picking its tool names; a name
+// comparison can, and so can a subtraction, which reads an external tool whose
+// name collides with an enabled builtin as ours. The registration half of the
+// same collision is closed in registerExternalTool / registerRelayTool, which
+// alias the third-party name instead of overwriting the existing definition
+// (issue #1147).
 //
 // Returns nil when the project has no external tools, which leaves the fence's
 // predicate on the catalog and therefore failing closed for anything it does not
 // list.
 func (tp *ToolPool) ExternalToolNames(projectID string) map[string]bool {
 	cache := tp.getOrBuildCache(projectID)
-	var names map[string]bool
-	for _, name := range cache.toolNames {
-		if !cache.externalTools[name] {
-			continue
-		}
-		if names == nil {
-			names = make(map[string]bool)
-		}
+	if len(cache.externalTools) == 0 {
+		return nil
+	}
+	names := make(map[string]bool, len(cache.externalTools))
+	for name := range cache.externalTools {
 		names[name] = true
 	}
 	return names

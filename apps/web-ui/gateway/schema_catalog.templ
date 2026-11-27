@@ -101,7 +101,7 @@ templ catalogTypeCard(t CatalogSummary, state catalogInstallState) {
 				if state.Installed {
 					@ui.Badge(ui.BadgeProps{Label: "Installed", Variant: ui.BadgeSecondary, Size: ui.BadgeSizeXS, Icon: "lucide--check"})
 				} else if state.ProvidedBy != "" {
-					@ui.Badge(ui.BadgeProps{Label: "Provided by " + state.ProvidedBy, Href: objectTypeHref(t.Name), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--arrow-up-right"})
+					@ui.Badge(ui.BadgeProps{Label: "Provided by " + state.ProvidedLabel(), Href: objectTypeHref(t.Name), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--arrow-up-right"})
 				}
 			</div>
 			if t.Description != "" {
@@ -166,7 +166,7 @@ templ SchemaCatalogTypePage(view *SchemaCatalogTypeView, loadErr error) {
 								if v.State.Installed {
 									@ui.Badge(ui.BadgeProps{Label: "Installed", Variant: ui.BadgeSecondary, Size: ui.BadgeSizeSM, Icon: "lucide--check"})
 								} else if v.State.ProvidedBy != "" {
-									@ui.Badge(ui.BadgeProps{Label: "Provided by " + v.State.ProvidedBy, Href: objectTypeHref(t.Name), Variant: ui.BadgeGhost, Size: ui.BadgeSizeSM, Icon: "lucide--arrow-up-right"})
+									@ui.Badge(ui.BadgeProps{Label: "Provided by " + v.State.ProvidedLabel(), Href: objectTypeHref(t.Name), Variant: ui.BadgeGhost, Size: ui.BadgeSizeSM, Icon: "lucide--arrow-up-right"})
 								}
 							</div>
 							<div class="mt-2 flex flex-wrap items-center gap-1">

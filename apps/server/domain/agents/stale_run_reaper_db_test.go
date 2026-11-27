@@ -326,6 +326,14 @@ func TestStaleRunReaper_ReapsAbandonedPausedWorkRun(t *testing.T) {
 		).Scan(ctx, &reason))
 		return count, reason
 	}
+	blockFailureClassOf := func(subject string) string {
+		t.Helper()
+		var class string
+		require.NoError(t, db.NewRaw(
+			`SELECT COALESCE(failure_class, '') FROM kb.work_blocks WHERE canonical_id = ?`, subject,
+		).Scan(ctx, &class))
+		return class
+	}
 
 	require.Equal(t, string(RunStatusCancelled), statusOf(stepLimitID),
 		"an abandoned step-limit pause must be cancelled to release the claim")
@@ -333,6 +341,8 @@ func TestStaleRunReaper_ReapsAbandonedPausedWorkRun(t *testing.T) {
 	require.Equal(t, 1, count, "the item must be blocked so the reconciler does not immediately re-dispatch it")
 	require.Contains(t, reason, "step limit")
 	require.Contains(t, reason, "120/120", "the block reason must report the budget condition")
+	require.Equal(t, string(FailureClassStepLimit), blockFailureClassOf(*stepLimitSubject),
+		"the reaper is the only writer of FailureClassStepLimit; a revert must not stay green")
 	live, err := repo.HasLiveRunForSubject(ctx, *stepLimitSubject)
 	require.NoError(t, err)
 	require.False(t, live, "the reaped run must no longer count as live")
@@ -366,6 +376,8 @@ func TestStaleRunReaper_ReapsAbandonedPausedWorkRun(t *testing.T) {
 	if n, reason := blockReasonOf(*noMarkerSubject); n != 1 || !strings.Contains(reason, "nothing pending") {
 		t.Fatalf("a markerless abandoned pause must be blocked with a reason, got count=%d reason=%q", n, reason)
 	}
+	require.Empty(t, blockFailureClassOf(*noMarkerSubject),
+		"only a step-limit pause is auto-recoverable; a markerless abandon must stay unclassified")
 
 	require.Equal(t, string(RunStatusPaused), statusOf(nonWorkID),
 		"a paused run with no work subject is not owned by this reaper")

@@ -73,11 +73,11 @@ func TestBuildTypeClassificationPromptDeterministic(t *testing.T) {
 	}
 }
 
-// TestBuildTypeClassificationPromptKeepsCharacterAndPersonDistinct pins the
-// prompt to the tv-movies taxonomy: Character (fictional) and Person (real) are
-// deliberately distinct, so the same-concept example must not cite them and the
-// prompt must call the distinction out. A match adopts the canonical schema, so
-// a bad example would collapse real people into fictional characters.
+// TestBuildTypeClassificationPromptKeepsCharacterAndPersonDistinct pins that
+// the prompt keeps Character (fictional) and Person (real) distinct: the
+// same-concept example must not cite them and the prompt must call the
+// distinction out. A match adopts the canonical schema, so a bad example would
+// collapse real people into fictional characters.
 func TestBuildTypeClassificationPromptKeepsCharacterAndPersonDistinct(t *testing.T) {
 	prompt := buildTypeClassificationPrompt(
 		[]DiscoveredType{{TypeName: "Character", Description: "a fictional persona"}},
@@ -265,5 +265,70 @@ func TestTaxonomyUIStyle(t *testing.T) {
 	}
 	if _, _, ok := s.taxonomyUIStyle("Nope"); ok {
 		t.Fatal("taxonomyUIStyle(Nope) = ok, want not ok")
+	}
+}
+
+// recordingTypeSimilarity records the candidate set the classifier is offered,
+// so a test can assert the catalog resolution narrowed it.
+type recordingTypeSimilarity struct {
+	mapping     map[string]string
+	gotExisting []string
+}
+
+func (f *recordingTypeSimilarity) Resolve(_ context.Context, discovered []DiscoveredType, existing []ExistingType) (map[string]string, error) {
+	f.gotExisting = f.gotExisting[:0]
+	for _, e := range existing {
+		f.gotExisting = append(f.gotExisting, e.Name)
+	}
+	out := map[string]string{}
+	for _, d := range discovered {
+		if m, ok := f.mapping[d.TypeName]; ok {
+			out[d.TypeName] = m
+		}
+	}
+	return out, nil
+}
+
+// TestMergeSemanticallySimilarTypesNarrowsCatalogCandidates pins that the
+// catalog's lexical resolution narrows the taxonomy offered to the classifier to
+// the types that actually resemble a discovered name, instead of the whole
+// catalog.
+func TestMergeSemanticallySimilarTypesNarrowsCatalogCandidates(t *testing.T) {
+	rec := &recordingTypeSimilarity{mapping: map[string]string{"Company": "Organization"}}
+	svc := &Service{typeSimilarity: rec, log: quietLogger()}
+	svc.SetTaxonomy([]ExistingType{
+		{Name: "Organization", Tags: []string{"company", "business"}},
+		{Name: "Person", Tags: []string{"human"}},
+		{Name: "Recipe", Tags: []string{"food"}},
+	}, nil)
+
+	out := svc.mergeSemanticallySimilarTypes(context.Background(),
+		[]DiscoveredType{{TypeName: "Company"}}, nil, nil)
+
+	if out[0].TypeName != "Organization" {
+		t.Fatalf("Company -> %q, want Organization", out[0].TypeName)
+	}
+	if len(rec.gotExisting) != 1 || rec.gotExisting[0] != "Organization" {
+		t.Fatalf("classifier candidates = %v, want only [Organization]", rec.gotExisting)
+	}
+}
+
+// TestMergeSemanticallySimilarTypesFallsBackToFullTaxonomy pins that a discovered
+// type with no lexical catalog match still sees the full taxonomy, so narrowing
+// never costs recall for names the lexical resolver cannot place.
+func TestMergeSemanticallySimilarTypesFallsBackToFullTaxonomy(t *testing.T) {
+	rec := &recordingTypeSimilarity{}
+	svc := &Service{typeSimilarity: rec, log: quietLogger()}
+	svc.SetTaxonomy([]ExistingType{
+		{Name: "Organization", Tags: []string{"company"}},
+		{Name: "Person", Tags: []string{"human"}},
+		{Name: "Recipe", Tags: []string{"food"}},
+	}, nil)
+
+	svc.mergeSemanticallySimilarTypes(context.Background(),
+		[]DiscoveredType{{TypeName: "Zzz"}}, nil, nil)
+
+	if len(rec.gotExisting) != 3 {
+		t.Fatalf("classifier candidates = %v, want all 3 taxonomy types (fallback)", rec.gotExisting)
 	}
 }

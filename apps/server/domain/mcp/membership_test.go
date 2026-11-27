@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/emergent-company/emergent.memory/internal/testutil"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // MCPMembershipSuite exercises the /api/mcp group through the full in-process
@@ -223,4 +224,106 @@ func (s *MCPMembershipSuite) TestReinitForeignProjectDoesNotPoisonSession() {
 	s.Require().NotEmpty(result.Result.Content, "tools/call project-get must return content")
 	s.Require().Equal("OWN-PROJECT-A", result.Result.Content[0].Text,
 		"session must remain bound to project A after a denied re-init; leaked: %s", result.Result.Content[0].Text)
+}
+
+// sessionToolsCall invokes project-get on an existing unified /api/mcp session
+// with an explicit bearer token and optional X-Project-ID.
+func (s *MCPMembershipSuite) sessionToolsCall(token, sessionID, projectHeader string) *testutil.HTTPResponse {
+	opts := []testutil.RequestOption{
+		testutil.WithAuth(token),
+		testutil.WithHeader("MCP-Protocol-Version", "2025-11-25"),
+		testutil.WithHeader("Accept", "application/json"),
+		testutil.WithHeader("Mcp-Session-Id", sessionID),
+		testutil.WithJSONBody(map[string]any{
+			"jsonrpc": "2.0",
+			"method":  "tools/call",
+			"id":      2,
+			"params": map[string]any{
+				"name":      "project-get",
+				"arguments": map[string]any{},
+			},
+		}),
+	}
+	if projectHeader != "" {
+		opts = append(opts, testutil.WithProjectID(projectHeader))
+	}
+	return s.Client.POST("/api/mcp", opts...)
+}
+
+// TestCrossCredentialSessionReuseForbidden is the regression reproducer for the
+// MCP session tenant-isolation bug: getSession used to look a session up by id
+// alone and tools/call resolved the project from the session, so a project-B
+// token presenting a project-A session id executed against project A and
+// returned A's content.
+func (s *MCPMembershipSuite) TestCrossCredentialSessionReuseForbidden() {
+	_, err := s.DB().NewRaw("UPDATE kb.projects SET project_info = ? WHERE id = ?", "OWN-PROJECT-A", s.ProjectID).Exec(s.Ctx)
+	s.Require().NoError(err)
+	projectB := s.newForeignProject()
+	_, err = s.DB().NewRaw("UPDATE kb.projects SET project_info = ? WHERE id = ?", "SECRET-FOREIGN-PROJECT-B", projectB).Exec(s.Ctx)
+	s.Require().NoError(err)
+
+	tokenA := "emt_session_binding_project_a"
+	tokenB := "emt_session_binding_project_b"
+	s.Require().NoError(testutil.CreateTestAPITokenNamed(s.Ctx, s.DB(),
+		testutil.AdminUser.ID, "session-binding-a", tokenA, auth.GetAllScopes(), s.ProjectID))
+	s.Require().NoError(testutil.CreateTestAPITokenNamed(s.Ctx, s.DB(),
+		testutil.AdminUser.ID, "session-binding-b", tokenB, auth.GetAllScopes(), projectB))
+
+	// 1. Open a session on project A. No X-Project-ID: the project-bound token
+	//    carries the project, which is how the leak was reached.
+	resp := s.Client.POST("/api/mcp",
+		testutil.WithAuth(tokenA),
+		testutil.WithHeader("MCP-Protocol-Version", "2025-11-25"),
+		testutil.WithHeader("Accept", "application/json"),
+		testutil.WithJSONBody(initBody("")))
+	s.Require().Equal(http.StatusOK, resp.StatusCode, "initialize must succeed: %s", resp.String())
+	sessionID := resp.Headers.Get("Mcp-Session-Id")
+	s.Require().NotEmpty(sessionID, "initialize must return a session id")
+
+	// 2. Replay the reported sequence: project-B token, project-A session id,
+	//    with and without project B addressed explicitly.
+	for _, projectHeader := range []string{"", projectB} {
+		call := s.sessionToolsCall(tokenB, sessionID, projectHeader)
+		s.Require().Equal(http.StatusNotFound, call.StatusCode,
+			"cross-credential session reuse must be refused (header=%q), got %d: %s",
+			projectHeader, call.StatusCode, call.String())
+		s.Require().NotContains(call.String(), "OWN-PROJECT-A",
+			"a refused call must not return the session's project content")
+	}
+
+	// 3. GET (SSE stream) and DELETE address the same session-bound surface.
+	get := s.Client.GET("/api/mcp",
+		testutil.WithAuth(tokenB),
+		testutil.WithHeader("Accept", "text/event-stream"),
+		testutil.WithHeader("Mcp-Session-Id", sessionID))
+	s.Require().Equal(http.StatusNotFound, get.StatusCode, "foreign GET must be refused: %s", get.String())
+
+	del := s.Client.DELETE("/api/mcp",
+		testutil.WithAuth(tokenB),
+		testutil.WithHeader("Mcp-Session-Id", sessionID))
+	s.Require().Equal(http.StatusNotFound, del.StatusCode, "foreign DELETE must be refused: %s", del.String())
+
+	// 4. The owner's session survived and still serves its own project.
+	call := s.sessionToolsCall(tokenA, sessionID, "")
+	s.Require().Equal(http.StatusOK, call.StatusCode, "owner call must still work: %s", call.String())
+	var result struct {
+		Result struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+		Error *struct {
+			Code int `json:"code"`
+		} `json:"error"`
+	}
+	s.Require().NoError(json.Unmarshal(call.Body, &result))
+	s.Require().Nil(result.Error, "owner tools/call must succeed: %s", call.String())
+	s.Require().NotEmpty(result.Result.Content)
+	s.Require().Equal("OWN-PROJECT-A", result.Result.Content[0].Text)
+
+	// 5. The owner can still terminate the session.
+	del = s.Client.DELETE("/api/mcp",
+		testutil.WithAuth(tokenA),
+		testutil.WithHeader("Mcp-Session-Id", sessionID))
+	s.Require().Equal(http.StatusNoContent, del.StatusCode, "owner DELETE must succeed: %s", del.String())
 }

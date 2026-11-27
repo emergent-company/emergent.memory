@@ -6827,7 +6827,7 @@ On success, prints the full plaintext Token value prominently (this is the only
 time the full token is shown — save it immediately), followed by ID, Name, Type,
 Prefix, Scopes, and Created timestamp.
 
-Valid scopes: schema:read, schema:write, agents:read, agents:write, projects:read, projects:write, chat:use, graph:read, graph:write, schema:migrate, branches:read, branches:write, search, journal:read, journal:write, skills:read, skills:write, documents:read, documents:write, documents:delete, chunks:read, chunks:write, ingest:write, extraction:read, extraction:write, tasks:read, tasks:write, notifications:read, notifications:write, user-activity:read, user-activity:write, search:read, graph:search:read, project:admin, admin, admin:all.
+Valid scopes: schema:read, schema:write, agents:read, agents:write, projects:read, projects:write, chat:use, graph:read, graph:write, schema:migrate, branches:read, branches:write, search, journal:read, journal:write, skills:read, skills:write, documents:read, documents:write, documents:delete, chunks:read, chunks:write, ingest:write, extraction:read, extraction:write, discovery:read, discovery:write, tasks:read, tasks:write, notifications:read, notifications:write, user-activity:read, user-activity:write, search:read, graph:search:read, project:admin, admin, admin:all.
 Scopes are comma-separated. Use --scopes all to grant full admin access (admin:all).
 Run 'memory tokens scopes' for a description of each scope.
 

@@ -51,6 +51,7 @@ objectTypeSchemas:
   - tv_series
   - television_series
   - tv_show
+  - show
   ui:
     icon: tabler--device-tv
     color: '#EC4899'
@@ -69,6 +70,34 @@ objectTypeSchemas:
       title: Episodes
       description: Number of episodes.
       minimum: 0
+  required:
+  - name
+- name: Episode
+  label: Episode
+  description: 'A single episode of a series — a TV, radio, or podcast episode.'
+  category: media
+  parent: CreativeWork
+  labels:
+  - episode
+  - tv_episode
+  ui:
+    icon: tabler--player-play
+    color: '#0EA5E9'
+  properties:
+    name:
+      type: string
+      title: Title
+      description: Episode title.
+    episode_number:
+      type: integer
+      title: Episode number
+      description: Position within its season.
+      minimum: 1
+    season_number:
+      type: integer
+      title: Season number
+      description: Season the episode belongs to.
+      minimum: 1
   required:
   - name
 - name: VideoObject
@@ -206,7 +235,6 @@ objectTypeSchemas:
   parent: CreativeWork
   labels:
   - podcast
-  - show
   ui:
     icon: tabler--microphone
     color: '#8B5CF6'

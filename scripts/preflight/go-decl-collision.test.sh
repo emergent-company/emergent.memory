@@ -443,6 +443,60 @@ expect_status 0 "a branch ahead of an unchanged base is OK"
 expect_contains "the empty base diff is handled" "no Go package changed on both sides"
 
 # ---------------------------------------------------------------------------
+# 10c. The default base ref is refreshed past a tag that shadows the branch
+#      name. `git fetch origin dev` resolves refs/tags/dev, prints
+#      `* tag dev -> FETCH_HEAD` and exits 0 (even with --no-tags), leaving
+#      origin/dev stale -- so the guard would compare against the old tip and
+#      miss the collision it exists for (#1158). The explicit refspec must
+#      refresh origin/dev to the live tip.
+# ---------------------------------------------------------------------------
+tag_root="$tmp/tag-shadow"
+tag_origin="$tag_root/origin.git"
+tag_seed="$tag_root/seed"
+tag_repo="$tag_root/repo"
+git init -q --bare "$tag_origin"
+git init -q -b dev "$tag_seed"
+git -C "$tag_seed" config user.email test@example.com
+git -C "$tag_seed" config user.name test
+git -C "$tag_seed" config commit.gpgsign false
+work="$tag_seed"
+put pkg/base.go <<'GO'
+package pkg
+GO
+commit "initial"
+git_ remote add origin "$tag_origin"
+git_ push -q origin refs/heads/dev
+# The shadowing tag: `dev` also names the branch, pointing at the old tip.
+git_ tag dev "$(git_ rev-parse HEAD)"
+git_ push -q origin refs/tags/dev
+# The lane clones before the base advances, so its origin/dev starts stale.
+git clone -q --single-branch --branch dev "$tag_origin" "$tag_repo"
+git -C "$tag_repo" config user.email test@example.com
+git -C "$tag_repo" config user.name test
+git -C "$tag_repo" config commit.gpgsign false
+# The live base advances with the declaration this branch also adds.
+put pkg/live.go <<'GO'
+package pkg
+
+func Collide() {}
+GO
+commit "live adds Collide"
+git_ push -q origin refs/heads/dev
+work="$tag_repo"
+git_ checkout -q -b head
+put pkg/head.go <<'GO'
+package pkg
+
+func Collide() {}
+GO
+commit "head adds Collide"
+run_guard
+expect_status 1 "the default base ref is refreshed past a shadowing tag"
+expect_contains "the refreshed base is used for the collision" "Collide is added by both"
+# Restore the shared fixture repository for the cases below.
+work="$tmp/repo"
+
+# ---------------------------------------------------------------------------
 # 11. Defaults: no origin and no cached base means warn-and-skip, not failure
 #     (the network must never turn a PR red).
 # ---------------------------------------------------------------------------

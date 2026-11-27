@@ -19,6 +19,8 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
+	"github.com/emergent-company/emergent.memory/domain/blueprints"
+	"github.com/emergent-company/emergent.memory/domain/catalog"
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/extraction"
 	"github.com/emergent-company/emergent.memory/internal/config"
@@ -109,6 +111,16 @@ type Service struct {
 	// taxonomy is the built-in common-entity taxonomy discovery aligns proposed
 	// types against before inventing new ones (see SetTaxonomy).
 	taxonomy []ExistingType
+	// taxonomyTypes is the same taxonomy expressed as catalog.Type values, so
+	// the catalog's deterministic lexical resolver can narrow the classifier's
+	// candidate set before a run calls the model (see narrowTaxonomy). Populated
+	// alongside taxonomy in SetTaxonomy.
+	taxonomyTypes []catalog.Type
+	// relationshipTaxonomy is the built-in catalog's relationship vocabulary,
+	// offered to the relationship phase so a proposed edge reuses a canonical
+	// name (works_for, located_at, home_location, …) instead of inventing a
+	// synonym (see SetTaxonomy).
+	relationshipTaxonomy []blueprints.RelationshipTypeDef
 }
 
 // documentCap is the effective per-run document cap.
@@ -1217,6 +1229,8 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 			// confident about is not grounded enough to auto-apply, so it is left
 			// out of the refined output rather than installed as fact.
 			relationships = filterRelationshipsByConfidence(relationships, config.MinConfidence)
+			// Snap invented edge names onto the catalog relationship vocabulary.
+			relationships = s.normalizeRelationshipTypes(relationships)
 		}
 	}
 
@@ -1355,6 +1369,11 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 	// Auto-apply (pipeline_mode=auto): gate and install the reconciled pack, or
 	// record why it was declined. Best-effort; never fails the completed job.
 	s.maybeAutoApply(ctx, projectID, jobID, schemaID, refinedTypes, registeredTypes)
+
+	// Auto-ingest (pipeline_mode=auto): extract any never-extracted documents so
+	// a new document whose types all already exist still reaches the graph even
+	// though auto-apply declines (no schema change → no backfill).
+	s.maybeAutoIngest(ctx, projectID)
 
 	s.log.Info("discovery job completed",
 		slog.String("job_id", jobID.String()),
@@ -1625,8 +1644,10 @@ Based on the documents provided, discover up to %d important entity types that s
 
 Rules for type discovery:
 - Only create entity types for THINGS (nouns that have identity), not for actions, events, or relationships between things. For example, "ReportingRelationship" or "FoundingEvent" are NOT entity types — they are relationships and should be captured in the relationship discovery phase instead.
-- If a value appears as a distinct classifiable concept with multiple instances (e.g., a category like "Electronics", "Accessories", "Hardware"), treat it as a separate entity type — do NOT flatten it into a string property of another type.
+- An attribute or descriptor OF another entity is a PROPERTY on that entity, not its own type — even when it has many values. A person's occupation/job title, gender, age, nationality and status are properties of the Person, NOT separate "Occupation"/"Gender"/"Age" entity types. Put them in the owning type's inferred_schema properties instead.
+- Only create a separate type for a concept that has its own identity and properties (e.g. a Department, or a Product category that itself carries attributes). When in doubt, prefer a property on the owning entity.
 - Prefer fewer, cleaner types over many overlapping types. Merge similar types (e.g., "Employee" and "Person" → just "Person").
+- Do NOT create vague umbrella types such as "Object", "Item", "Group", "Entity", "Element", or "Misc" — they lump unrelated entities under one label and add no information. The catalog's "Thing" is the only acceptable generic; otherwise pick the most specific type the documents support.
 - %s
 
 For each type, provide:
@@ -2317,11 +2338,81 @@ func (s *Service) discoverRelationships(ctx context.Context, jobID uuid.UUID, ty
 	return relationships, nil
 }
 
+// relationshipTypeAliases maps common invented/legacy edge names onto the
+// catalog's canonical relationship vocabulary. The relationship prompt already
+// asks the model to reuse canonical names; this deterministic pass is the safety
+// net for the synonyms it still emits. Aliases are only applied when the target
+// exists in the loaded vocabulary, so this never invents an unknown edge.
+//
+// (The object-type "same concept" classifier is deliberately not reused here: it
+// is tuned for entity kinds and does not reliably judge edge synonyms.)
+var relationshipTypeAliases = map[string]string{
+	"employed_by":       "works_for",
+	"works_at":          "works_for",
+	"located_in":        "located_at",
+	"resides_at":        "home_location",
+	"residence_at":      "home_location",
+	"set_in":            "content_location",
+	"features_location": "content_location",
+	"appears_in":        "featured_actor",
+	"features_person":   "featured_actor",
+	"acted_in":          "featured_actor",
+	"parent_location":   "contained_in_place",
+	"part_of":           "part_of_series",
+}
+
+// normalizeRelationshipTypes deterministically renames invented edge names onto
+// the catalog vocabulary (located_in → located_at, employed_by → works_for, …).
+// No-op without the vocabulary.
+func (s *Service) normalizeRelationshipTypes(rels []DiscoveredRelationship) []DiscoveredRelationship {
+	if len(rels) == 0 || len(s.relationshipTaxonomy) == 0 {
+		return rels
+	}
+	known := make(map[string]bool, len(s.relationshipTaxonomy))
+	for _, r := range s.relationshipTaxonomy {
+		known[r.Name] = true
+	}
+	for i := range rels {
+		name := strings.TrimSpace(rels[i].RelationType)
+		if name == "" || known[name] {
+			continue
+		}
+		if canonical, ok := relationshipTypeAliases[strings.ToLower(name)]; ok && known[canonical] {
+			rels[i].RelationType = canonical
+		}
+	}
+	return rels
+}
+
 // buildRelationshipDiscoveryPrompt asks the model to relate the discovered
 // types. The type list includes property names because they are the evidence
 // that links two types: the document text is not part of this prompt, so a
 // table whose Episode rows carry a Guest column only reads as "a guest appears
 // in an episode" when the column is visible here (#234).
+// SetTaxonomy injects the built-in catalog's relationship vocabulary that the
+// relationship phase prefers, so a proposed edge converges on a canonical
+// catalog name instead of an invented synonym. Nil-safe.
+func (s *Service) buildRelationshipVocabulary() string {
+	if len(s.relationshipTaxonomy) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nPrefer these canonical relationship names when they fit the source and target types — reuse the exact name instead of inventing a synonym:\n")
+	for _, r := range s.relationshipTaxonomy {
+		b.WriteString("- ")
+		b.WriteString(r.Name)
+		if r.SourceType != "" && r.TargetType != "" {
+			b.WriteString(" (")
+			b.WriteString(r.SourceType)
+			b.WriteString(" -> ")
+			b.WriteString(r.TargetType)
+			b.WriteString(")")
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 func (s *Service) buildRelationshipDiscoveryPrompt(types []DiscoveredType, kbPurpose string) string {
 	return fmt.Sprintf(`You are analyzing a knowledge base with the following purpose:
 
@@ -2329,7 +2420,7 @@ func (s *Service) buildRelationshipDiscoveryPrompt(types []DiscoveredType, kbPur
 
 We have discovered the following entity types:
 %s
-
+%s
 Discover important relationships between these types. Treat a property that
 names another discovered type (for example an Episode's "guest" property) as
 evidence of a relationship rather than a plain attribute.
@@ -2337,7 +2428,7 @@ evidence of a relationship rather than a plain attribute.
 For each relationship, provide ONLY:
 - from_type: The source type (must be one of the types above)
 - to_type: The target type (must be one of the types above)
-- relationship_name: A clear name for the relationship
+- relationship_name: A clear name for the relationship (reuse a canonical relationship name above when one fits)
 - description: At most 8 words describing the relationship
 - confidence: How confident you are about this relationship (0-1)
 
@@ -2355,7 +2446,7 @@ Return ONLY a JSON object with this structure (no markdown, no code blocks):
 }
 
 Do not include cardinality. Keep each description to at most 8 words.
-Focus on the most important relationships.`, kbPurpose, s.buildRelationshipDiscoveryTypes(types))
+Focus on the most important relationships.`, kbPurpose, s.buildRelationshipDiscoveryTypes(types), s.buildRelationshipVocabulary())
 }
 
 // buildRelationshipDiscoveryTypes renders one bullet per type: its name, its

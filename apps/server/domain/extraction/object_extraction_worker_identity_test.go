@@ -21,7 +21,7 @@ func TestSortedObjectSchemaNames(t *testing.T) {
 			t.Fatalf("sortedObjectSchemaNames = %v, want %v", got, want)
 		}
 	}
-	if got := sortedObjectSchemaNames(nil); got != nil && len(got) != 0 {
+	if got := sortedObjectSchemaNames(nil); len(got) != 0 {
 		t.Fatalf("sortedObjectSchemaNames(nil) = %v, want empty", got)
 	}
 }
