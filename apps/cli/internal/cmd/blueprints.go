@@ -1151,10 +1151,10 @@ func runBlueprintsCatalogInstall(cmd *cobra.Command, args []string) error {
 	if res.Created {
 		action = "created"
 	}
-	fmt.Fprintf(out, "Catalog pack %s.\n", action)
-	fmt.Fprintf(out, "Types (%d): %s\n", len(res.Types), strings.Join(res.Types, ", "))
+	_, _ = fmt.Fprintf(out, "Catalog pack %s.\n", action)
+	_, _ = fmt.Fprintf(out, "Types (%d): %s\n", len(res.Types), strings.Join(res.Types, ", "))
 	if len(res.Relationships) > 0 {
-		fmt.Fprintf(out, "Active relationships (%d): %s\n", len(res.Relationships), strings.Join(res.Relationships, ", "))
+		_, _ = fmt.Fprintf(out, "Active relationships (%d): %s\n", len(res.Relationships), strings.Join(res.Relationships, ", "))
 	}
 	if len(res.Removed) > 0 {
 		fmt.Fprintf(out, "Removed (%d, relationships to these deactivated): %s\n", len(res.Removed), strings.Join(res.Removed, ", "))
@@ -1249,7 +1249,7 @@ func runBlueprintsCatalogResolve(cmd *cobra.Command, args []string) error {
 		if len(m.Matched) > 0 {
 			fmt.Fprintf(out, "  [%s]", strings.Join(m.Matched, ","))
 		}
-		fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out)
 	}
 	return nil
 }
