@@ -65,6 +65,12 @@ type MCPSession struct {
 	ClientName   string
 	CreatedAt    time.Time
 	LastAccessAt time.Time
+
+	// persisted reports whether this value came from (or has been written to)
+	// the session map. A snapshot read from the map carries persisted=true, so
+	// putSession can refuse to resurrect a session a concurrent DELETE removed;
+	// a session created by getOrCreateSession has not been stored yet.
+	persisted bool
 }
 
 // SSEStream represents an active SSE connection
@@ -497,12 +503,16 @@ func (h *StreamableHTTPHandler) sessionForCaller(sessionID string, user *auth.Au
 		return nil, errSessionNotFound
 	}
 	if err := h.authorizeSession(stored, user); err != nil {
+		callerID, callerProjectID := "", ""
+		if user != nil {
+			callerID, callerProjectID = user.ID, user.ProjectID
+		}
 		h.log.Warn("rejected MCP session access",
 			slog.String("session_id", sessionID),
 			slog.String("session_project_id", stored.ProjectID),
-			slog.String("caller_project_id", user.ProjectID),
+			slog.String("caller_project_id", callerProjectID),
 			slog.String("session_user_id", stored.UserID),
-			slog.String("caller_user_id", user.ID),
+			slog.String("caller_user_id", callerID),
 			slog.Bool("session_credential_bound", stored.APITokenID != ""),
 		)
 		return nil, err
@@ -525,7 +535,7 @@ func (h *StreamableHTTPHandler) sessionForCaller(sessionID string, user *auth.Au
 //     project from the caller, as before.
 //
 // The operator transport resolves no project context, so it enforces identity
-// only. A nil session or user fails closed.
+// and credential only. A nil session or user fails closed.
 func (h *StreamableHTTPHandler) authorizeSession(session *MCPSession, user *auth.AuthUser) error {
 	if session == nil || user == nil {
 		return errSessionForbidden
@@ -554,13 +564,37 @@ func cloneMCPSession(session *MCPSession) *MCPSession {
 // putSession stores a session snapshot. Writes replace the map entry under the
 // lock rather than mutating the stored value, which keeps snapshots handed to
 // in-flight requests immutable.
+//
+// A snapshot that came from the map only updates an entry that still exists: a
+// request whose session was terminated while it was in flight (a DELETE, or a
+// refusal path) must not insert it back. A session being stored for the first
+// time (the initialize of a fresh session) is inserted normally.
 func (h *StreamableHTTPHandler) putSession(session *MCPSession) {
 	if session == nil {
 		return
 	}
 	h.sessionsMu.Lock()
+	defer h.sessionsMu.Unlock()
+	if session.persisted {
+		if _, exists := h.sessions[session.ID]; !exists {
+			return
+		}
+	}
+	session.persisted = true
 	h.sessions[session.ID] = cloneMCPSession(session)
-	h.sessionsMu.Unlock()
+}
+
+// markSessionInitialized sets the initialized flag on the stored session, if it
+// still exists. It is a field-scoped update rather than a whole-snapshot write,
+// so a notifications/initialized racing a re-initialize cannot restore the
+// project id the re-initialize just changed, and cannot resurrect a session that
+// was terminated.
+func (h *StreamableHTTPHandler) markSessionInitialized(sessionID string) {
+	h.sessionsMu.Lock()
+	defer h.sessionsMu.Unlock()
+	if stored, exists := h.sessions[sessionID]; exists {
+		stored.Initialized = true
+	}
 }
 
 // getSession retrieves a snapshot of an existing session without authorizing the
@@ -964,11 +998,11 @@ func (h *StreamableHTTPHandler) handlePromptsGet(c echo.Context, req *Request, s
 	}
 	return NewSuccessResponse(req.ID, result)
 }
+
 func (h *StreamableHTTPHandler) handleNotification(c echo.Context, req *Request, session *MCPSession) {
 	switch req.Method {
 	case "notifications/initialized":
-		session.Initialized = true
-		h.putSession(session)
+		h.markSessionInitialized(session.ID)
 		h.log.Debug("client sent initialized notification", slog.String("session_id", session.ID))
 	default:
 		h.log.Debug("unknown notification", slog.String("method", req.Method))
@@ -983,32 +1017,4 @@ func (h *StreamableHTTPHandler) isValidProtocolVersion(version string) bool {
 		}
 	}
 	return false
-}
-
-// SendServerMessage sends a JSON-RPC message to all active SSE streams for a session
-func (h *StreamableHTTPHandler) SendServerMessage(sessionID string, message *Response) error {
-	data, err := json.Marshal(message)
-	if err != nil {
-		return fmt.Errorf("marshal message: %w", err)
-	}
-
-	eventID := h.eventStore.AddEvent(sessionID, data)
-
-	h.streamsMu.RLock()
-	streams := h.streams[sessionID]
-	h.streamsMu.RUnlock()
-
-	for _, stream := range streams {
-		fmt.Fprintf(stream.Writer, "event: message\nid: %d\ndata: %s\n\n", eventID, data)
-		stream.Flusher.Flush()
-		stream.LastEventID = eventID
-	}
-
-	h.log.Debug("server message sent",
-		slog.String("session_id", sessionID),
-		slog.Int64("event_id", eventID),
-		slog.Int("stream_count", len(streams)),
-	)
-
-	return nil
 }
