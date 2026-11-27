@@ -72,18 +72,17 @@ type modelConfigClears struct {
 // fakeMemory is an in-memory MemoryBackend for tests.
 type fakeMemory struct {
 	// built-in catalog browse/install
-	catalogList           *CatalogList
-	catalogDetail         *CatalogTypeDetail
-	catalogInstall        *CatalogInstallResult
-	catalogErr            error
-	catalogInstalledTypes []string
-	orgPresence           *PresenceDto
-	projectPresence       *PresenceDto
-	agents                []AgentDefinitionSummary
-	defs                  map[string]*AgentDefinition // full definitions keyed by id
-	runtimeAgents         []RuntimeAgent
-	createdQueue          string
-	enabledRuntimeAgent   string
+	catalogList         *CatalogList
+	catalogDetail       *CatalogTypeDetail
+	catalogInstall      *CatalogInstallResult
+	catalogErr          error
+	orgPresence         *PresenceDto
+	projectPresence     *PresenceDto
+	agents              []AgentDefinitionSummary
+	defs                map[string]*AgentDefinition // full definitions keyed by id
+	runtimeAgents       []RuntimeAgent
+	createdQueue        string
+	enabledRuntimeAgent string
 	// defFetches records ids passed to GetAgentDefinition, in order, so tests
 	// can pin how many definition requests a render costs (#2181). Guarded by
 	// defMu: chatModelWarnings fetches definitions from concurrent goroutines.
