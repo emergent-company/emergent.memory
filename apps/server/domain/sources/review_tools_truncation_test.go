@@ -811,3 +811,56 @@ func TestCommitModeListsFiles(t *testing.T) {
 	require.Contains(t, res.Content[0].Text, "other.go")
 	require.False(t, mcp.RunHasEvidence(ctx, diffEvidenceKey("owner/repo", 7, head)))
 }
+
+// TestFileListIsResumableWithOffset pins that a cut listing is not a dead end: the
+// page names the offset that continues it, and list_offset resumes exactly there.
+func TestFileListIsResumableWithOffset(t *testing.T) {
+	head := truncationHead
+	const count = 400
+	files := make([]map[string]any, 0, count)
+	for i := 0; i < count; i++ {
+		files = append(files, map[string]any{
+			"filename": fmt.Sprintf("pkg/a_rather_long_directory_name_used_to_spend_the_budget/file_%03d.go", i),
+			"status":   "modified", "additions": 1, "deletions": 0,
+			"patch": "@@ -1 +1 @@\n-old\n+new",
+		})
+	}
+	api := newDiffReviewAPI(t, head, files)
+	client := api.client()
+	h := &ReviewToolHandler{maxResultBytes: 4096}
+	ctx := mcp.ContextWithNewToolResultCache(context.Background())
+
+	first, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, map[string]any{"list_files": true}))
+	require.NoError(t, err)
+	last, ok := first.StructuredContent["lastOffset"].(int)
+	require.True(t, ok)
+	require.Less(t, last, count, "the fixture must be large enough to cut the listing")
+	require.Contains(t, first.Content[0].Text, fmt.Sprintf("list_offset=%d", last))
+
+	second, err := h.executePRDiff(ctx, client, "project-1", "owner/repo",
+		prDiffArgs(head, map[string]any{"list_files": true, "list_offset": float64(last)}))
+	require.NoError(t, err)
+	require.Contains(t, second.Content[0].Text, fmt.Sprintf("\n%d\t", last+1), "the next page resumes at the named offset")
+	require.NotContains(t, second.Content[0].Text, "\n1\t", "the next page must not repeat the first entry")
+	require.False(t, mcp.RunHasEvidence(ctx, diffFileEvidenceKey("owner/repo", 7, head, "pkg/a_rather_long_directory_name_used_to_spend_the_budget/file_000.go")))
+}
+
+// TestListOffsetIsValidated refuses a resume offset that cannot mean anything,
+// instead of silently listing the whole change again.
+func TestListOffsetIsValidated(t *testing.T) {
+	head := truncationHead
+	api := newDiffReviewAPI(t, head, []map[string]any{
+		{"filename": "small.go", "status": "modified", "additions": 1, "deletions": 1, "patch": "@@ -1 +1 @@\n-a\n+b"},
+	})
+	client := api.client()
+	h := &ReviewToolHandler{}
+	ctx := mcp.ContextWithNewToolResultCache(context.Background())
+
+	_, err := h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, map[string]any{"list_offset": float64(1)}))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "list_offset requires list_files=true")
+
+	_, err = h.executePRDiff(ctx, client, "project-1", "owner/repo", prDiffArgs(head, map[string]any{"list_files": true, "list_offset": float64(9)}))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "past the last of 1 changed files")
+}

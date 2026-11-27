@@ -42,10 +42,20 @@ const (
 	maxResultEnvelopeBytes = 512
 
 	// diffTruncationHintReserve is the byte budget held back for the in-band
-	// truncation trailer (see diffTruncationHint). It is deducted before a diff is
-	// rendered so appending the trailer cannot push the payload past
-	// maxDiffBytes; it bounds the names echoed from a PR-controlled filename.
+	// truncation trailer (see diffTruncationHint) when no executor bound is known
+	// to measure against: it is deducted before a diff is rendered so appending
+	// the trailer cannot push the payload past maxDiffBytes. It bounds the names
+	// echoed from a PR-controlled filename.
 	diffTruncationHintReserve = 1600
+
+	// maxListedPathBytes bounds one path in a changed-file listing. A path is
+	// PR-controlled and can be thousands of bytes; the listing has to fit many of
+	// them plus the resume line in one result.
+	maxListedPathBytes = 512
+
+	// maxListResumeBytes is the room a listing page keeps for its resume line, so
+	// the offset that continues a cut page is never itself cut.
+	maxListResumeBytes = 192
 
 	// maxDiffMessageBytes bounds the commit message that commit mode carries in
 	// its result header. The message is attacker-controlled on a fork pull
@@ -466,6 +476,13 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 	if listFiles && selection != nil {
 		return nil, apperror.NewValidation("github app tool: list_files cannot be combined with path or files; list the files first, then fetch one or more of them")
 	}
+	listOffset, _ := intArg(args, "list_offset")
+	if listOffset != 0 && !listFiles {
+		return nil, apperror.NewValidation("github app tool: list_offset requires list_files=true")
+	}
+	if listOffset < 0 {
+		return nil, apperror.NewValidationf("github app tool: list_offset %d is negative", listOffset)
+	}
 	number, ok := intArg(args, "number")
 	if !ok || number <= 0 {
 		if subject, hasSubject := mcp.RunSubjectFromContext(ctx); hasSubject &&
@@ -474,9 +491,9 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 		}
 	}
 	if ok && number > 0 {
-		return h.executePullRequestDiff(ctx, client, projectID, repo, number, headSHA, selection, listFiles)
+		return h.executePullRequestDiff(ctx, client, projectID, repo, number, headSHA, selection, listFiles, listOffset)
 	}
-	return h.executeCommitDiff(ctx, client, repo, headSHA, selection, listFiles)
+	return h.executeCommitDiff(ctx, client, repo, headSHA, selection, listFiles, listOffset)
 }
 
 // executePullRequestDiff reads GET /pulls/{number}/files, the diff of the
@@ -490,7 +507,7 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 // evidence, so it cannot authorize github-review-submit (#1006); the agent
 // finishes a large change with the path/files selection, which records per-file
 // evidence, and submit accepts the union once every changed file is read in full.
-func (h *ReviewToolHandler) executePullRequestDiff(ctx context.Context, client *githubapp.Client, projectID, repo string, number int, headSHA string, selection map[string]struct{}, listFiles bool) (*mcp.ToolResult, error) {
+func (h *ReviewToolHandler) executePullRequestDiff(ctx context.Context, client *githubapp.Client, projectID, repo string, number int, headSHA string, selection map[string]struct{}, listFiles bool, listOffset int) (*mcp.ToolResult, error) {
 	state, err := client.GetPullRequest(ctx, repo, number)
 	if err != nil {
 		return nil, err
@@ -510,7 +527,10 @@ func (h *ReviewToolHandler) executePullRequestDiff(ctx context.Context, client *
 		return nil, apperror.NewValidationf("github app tool: %s", reason)
 	}
 	if listFiles {
-		return h.fileListResult(headSHA, files, len(files) >= githubPRFileListCap), nil
+		if listOffset >= len(files) {
+			return nil, apperror.NewValidationf("github app tool: list_offset %d is past the last of %d changed files", listOffset, len(files))
+		}
+		return h.fileListResult(headSHA, files, len(files) >= githubPRFileListCap, listOffset), nil
 	}
 
 	title := strings.TrimSpace(state.Title)
@@ -542,7 +562,7 @@ func (h *ReviewToolHandler) executePullRequestDiff(ctx context.Context, client *
 // records review evidence: the verified object is the pull request, and a merge
 // commit's first-parent diff can be empty while the PR is large. An empty
 // commit diff is a validation error, not a successful empty tool result.
-func (h *ReviewToolHandler) executeCommitDiff(ctx context.Context, client *githubapp.Client, repo, headSHA string, selection map[string]struct{}, listFiles bool) (*mcp.ToolResult, error) {
+func (h *ReviewToolHandler) executeCommitDiff(ctx context.Context, client *githubapp.Client, repo, headSHA string, selection map[string]struct{}, listFiles bool, listOffset int) (*mcp.ToolResult, error) {
 	diff, err := client.GetCommit(ctx, repo, headSHA)
 	if err != nil {
 		return nil, err
@@ -552,7 +572,10 @@ func (h *ReviewToolHandler) executeCommitDiff(ctx context.Context, client *githu
 			headSHA)
 	}
 	if listFiles {
-		return h.fileListResult(diff.SHA, diff.Files, len(diff.Files) >= githubCommitFileListCap), nil
+		if listOffset >= len(diff.Files) {
+			return nil, apperror.NewValidationf("github app tool: list_offset %d is past the last of %d changed files", listOffset, len(diff.Files))
+		}
+		return h.fileListResult(diff.SHA, diff.Files, len(diff.Files) >= githubCommitFileListCap, listOffset), nil
 	}
 	header := fmt.Sprintf("commit %s\n%s", diff.SHA, truncateUTF8(strings.TrimSpace(diff.Message), maxDiffMessageBytes))
 	_, result, err := h.renderBounded(ctx, diff.SHA, header, diff.Files, selection, len(diff.Files) >= githubCommitFileListCap)
@@ -568,40 +591,77 @@ func (h *ReviewToolHandler) executeCommitDiff(ctx context.Context, client *githu
 // from truncatedFiles which files it never saw. This is the in-band way out: list
 // every changed path, then re-fetch the missing ones by name. A listing is
 // metadata, so it records no evidence and cannot authorize a verdict.
-func (h *ReviewToolHandler) fileListResult(sha string, files []githubapp.CommitFile, listingCapped bool) *mcp.ToolResult {
-	var b strings.Builder
-	fmt.Fprintf(&b, "changed files of %s (%d)\n", sha, len(files))
-	for _, file := range files {
-		fmt.Fprintf(&b, "%s (%s, +%d/-%d)\n", sanitizeDiffPath(file.Filename), file.Status, file.Additions, file.Deletions)
+//
+// The listing is numbered and resumable with list_offset: GitHub caps a pull
+// request at 3000 files and a deep path can be long, so a cut listing must not be
+// a dead end -- the page ends with the offset that continues it.
+func (h *ReviewToolHandler) fileListResult(sha string, files []githubapp.CommitFile, listingCapped bool, offset int) *mcp.ToolResult {
+	build := func(budget int) *mcp.ToolResult {
+		var b strings.Builder
+		fmt.Fprintf(&b, "changed files of %s (%d total", sha, len(files))
+		if offset > 0 {
+			fmt.Fprintf(&b, ", from #%d", offset+1)
+		}
+		b.WriteString(")\n")
+		last := offset
+		for i := offset; i < len(files); i++ {
+			name := truncateUTF8(sanitizeDiffPath(files[i].Filename), maxListedPathBytes)
+			line := fmt.Sprintf("%d\t%s (%s, +%d/-%d)\n", i+1, name, files[i].Status, files[i].Additions, files[i].Deletions)
+			// Keep room for the resume line: a page that fills the budget exactly
+			// would otherwise cut the offset that continues it.
+			if budget > 0 && b.Len()+len(line)+maxListResumeBytes > budget {
+				break
+			}
+			b.WriteString(line)
+			last = i + 1
+		}
+		if listingCapped {
+			fmt.Fprintf(&b, "… warning: the change lists %d changed files (GitHub's listing cap); files beyond it were not returned.\n", len(files))
+		}
+		if last < len(files) {
+			fmt.Fprintf(&b, "… listing truncated at #%d of %d; call github-pr-diff again with list_offset=%d to continue\n", last, len(files), last)
+		}
+		// The paths live in the text only: a parallel structured copy would double
+		// the payload for a field the reviewer model never sees (the harness
+		// forwards text content only).
+		return &mcp.ToolResult{
+			Content: []mcp.ContentBlock{{Type: "text", Text: b.String()}},
+			StructuredContent: map[string]any{
+				"sha":           sha,
+				"files":         len(files),
+				"listing":       true,
+				"listingCapped": listingCapped,
+				"offset":        offset,
+				"lastOffset":    last,
+			},
+		}
 	}
-	if listingCapped {
-		fmt.Fprintf(&b, "… warning: the change lists %d changed files (GitHub's listing cap); files beyond it were not returned.\n", len(files))
-	}
-	text := b.String()
 	budget := h.diffTextBudget()
-	if h.maxResultBytes > 0 && budget > maxResultEnvelopeBytes {
+	if h.maxResultBytes > 0 {
 		budget -= maxResultEnvelopeBytes
 	}
-	if len(text) > budget {
-		const cut = "\n… listing truncated; pass path or files to read a subset of the changed files\n"
-		room := budget - len(cut)
-		if room < 1 {
-			room = 1
+	if budget < 1 {
+		budget = 1
+	}
+	result := build(budget)
+	if h.maxResultBytes <= 0 {
+		return result
+	}
+	// Measure the marshalled result, exactly as renderBounded does for a diff: a
+	// listing is the one payload whose size is proportional to the number of
+	// changed files, so trimming by an estimated envelope is not enough.
+	for attempt := 0; attempt < 4; attempt++ {
+		raw, err := json.Marshal(result)
+		if err != nil || len(raw) <= h.maxResultBytes {
+			break
 		}
-		text = truncateUTF8(text, room) + cut
+		budget -= len(raw) - h.maxResultBytes + 64
+		if budget < 1 {
+			budget = 1
+		}
+		result = build(budget)
 	}
-	// The paths live in the text only: a parallel structured copy would double the
-	// payload for a field the reviewer model never sees (the harness forwards text
-	// content only) and could push the result past the executor's bound.
-	return &mcp.ToolResult{
-		Content: []mcp.ContentBlock{{Type: "text", Text: text}},
-		StructuredContent: map[string]any{
-			"sha":           sha,
-			"files":         len(files),
-			"listing":       true,
-			"listingCapped": listingCapped,
-		},
-	}
+	return result
 }
 
 // renderBounded renders files under this tool's caps and, when the executor's
@@ -613,12 +673,17 @@ func (h *ReviewToolHandler) fileListResult(sha string, files []githubapp.CommitF
 // recomputes which files are complete, so evidence is only recorded for content
 // the model received in full.
 func (h *ReviewToolHandler) renderBounded(ctx context.Context, sha, header string, files []githubapp.CommitFile, selection map[string]struct{}, listingCapped bool) (*diffRender, *mcp.ToolResult, error) {
-	// Reserve the trailer's bytes up front: it is appended only once truncation
-	// is known, so it cannot be measured before the render without this.
+	// Without an executor bound to measure against, hold the trailer's bytes back
+	// from the diff cap so appending it cannot push the text past maxDiffBytes. A
+	// configured bound needs no reservation: the result is marshalled and shrunk
+	// with the trailer already in it, so the loop measures the trailer exactly.
 	wholeBudget := h.diffTextBudget()
-	textBudget := wholeBudget - diffTruncationHintReserve
-	if textBudget < 512 {
-		textBudget = 512
+	textBudget := wholeBudget
+	if h.maxResultBytes <= 0 {
+		textBudget = wholeBudget - diffTruncationHintReserve
+		if textBudget < 512 {
+			textBudget = 512
+		}
 	}
 	rendered, err := renderDiffFiles(sha, header, files, selection, textBudget, wholeBudget, listingCapped)
 	if err != nil {
@@ -709,19 +774,27 @@ func diffToolResult(sha string, fileCount int, selection map[string]struct{}, re
 func diffTruncationHint(rendered *diffRender) string {
 	var b strings.Builder
 	b.WriteString("\n… the payload above is incomplete. ")
-	if names := hintFileNames(rendered.truncatedFiles); names != "" {
+	names, shortened := hintFileNames(rendered.truncatedFiles)
+	if names != "" {
 		b.WriteString("Changed files not returned in full: ")
 		b.WriteString(names)
 		b.WriteString(". ")
 	}
-	b.WriteString("Call github-pr-diff with list_files=true to list every changed path, then re-fetch the missing ones with path=\"<file>\" or files=[...].\n")
+	b.WriteString("Call github-pr-diff with list_files=true to list every changed path, then re-fetch the missing ones with path=\"<file>\" or files=[...].")
+	if shortened {
+		// Echoing a cut path here would send the reader to an argument the tool
+		// rejects; point at the listing, which always carries the exact name.
+		b.WriteString(" A name above is shortened: the listing returns it exactly.")
+	}
+	b.WriteString("\n")
 	return b.String()
 }
 
 // hintFileNames bounds the names echoed into the truncation hint: a filename is
 // PR-controlled, so a crafted one must not turn the hint into a payload of its
-// own.
-func hintFileNames(names []string) string {
+// own. shortened reports that a name was cut, so the caller does not present it
+// as a usable path.
+func hintFileNames(names []string) (out string, shortened bool) {
 	const (
 		limit    = 8
 		nameSize = 120
@@ -729,16 +802,22 @@ func hintFileNames(names []string) string {
 	shown, more := names, 0
 	if len(shown) > limit {
 		shown, more = shown[:limit], len(shown)-limit
+		shortened = true
 	}
 	parts := make([]string, 0, len(shown))
 	for _, name := range shown {
-		parts = append(parts, truncateUTF8(sanitizeDiffPath(name), nameSize))
+		clean := sanitizeDiffPath(name)
+		if len(clean) > nameSize {
+			shortened = true
+			clean = truncateUTF8(clean, nameSize) + "…"
+		}
+		parts = append(parts, clean)
 	}
-	out := strings.Join(parts, ", ")
+	out = strings.Join(parts, ", ")
 	if more > 0 {
 		out += fmt.Sprintf(", … %d more", more)
 	}
-	return out
+	return out, shortened
 }
 
 // diffSelection parses the optional path/files arguments. A selection makes the

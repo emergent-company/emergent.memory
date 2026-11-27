@@ -25,7 +25,11 @@ func githubAppToolDefinitions() []ToolDefinition {
 					},
 					"list_files": {
 						Type:        "boolean",
-						Description: "Return only the changed file paths of that SHA, with line counts and no patch text. Use it when the diff payload was truncated and you need the complete list of files to re-fetch. It records no review evidence, so it cannot authorize a verdict on its own. Cannot be combined with path or files.",
+						Description: "Return only the changed file paths of that SHA, numbered, with status and line counts and no patch text. Use it when the diff payload was truncated and you need the complete list of files to re-fetch. It records no review evidence, so it cannot authorize a verdict on its own. Cannot be combined with path or files.",
+					},
+					"list_offset": {
+						Type:        "number",
+						Description: "With list_files: skip this many entries. A listing that was cut ends by naming the list_offset that continues it.",
 					},
 				},
 				Required: []string{"repo", "head_sha"},
