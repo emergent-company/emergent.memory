@@ -311,15 +311,15 @@ relationshipTypeSchemas:
 func TestLoadManifestAndSplitCount(t *testing.T) {
 	cat, err := Load()
 	require.NoError(t, err)
-	require.Equal(t, "1.2.0", cat.Version)
-	require.Len(t, cat.Types, 66)
+	require.Equal(t, "1.3.0", cat.Version)
+	require.Len(t, cat.Types, 71)
 	require.True(t, hasPair(cat.Relationships, "authored_by", "Movie", "Person"),
 		"ancestry expansion must apply authored_by (CreativeWork) to Movie")
 }
 
 func TestBatch2TypesAndFacets(t *testing.T) {
 	cat := loadCat(t)
-	require.Len(t, cat.Types, 66)
+	require.Len(t, cat.Types, 71)
 	for _, want := range []string{"Vehicle", "InsurancePolicy", "Restaurant", "Meeting", "Flight", "Hospital", "VideoGame", "Order"} {
 		require.True(t, hasType(cat.Types, want), "missing batch-2 type %s", want)
 	}

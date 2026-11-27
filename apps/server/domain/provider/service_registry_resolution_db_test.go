@@ -87,3 +87,78 @@ func TestResolveAny_NewVendorOnly_Resolves(t *testing.T) {
 		t.Errorf("DefaultGenerativeModel() = %q, want %q", model, "anthropic/claude-sonnet-4-5")
 	}
 }
+
+// TestDefaultEmbeddingModel_NewVendorOnly_Resolves is a regression test for
+// embedding auto-selection ignoring every vendor outside the legacy four: a
+// project configured solely with the OpenAI-compatible litellm vendor must
+// still resolve a default embedding model, and the embedding credential used by
+// an actual embedding call (ResolveAnyEmbedding) must agree with it.
+func TestDefaultEmbeddingModel_NewVendorOnly_Resolves(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	ctx := context.Background()
+	tdb := testdb.SetupTestDBOrFail(t, ctx, "provemblitellm")
+	t.Cleanup(tdb.Close)
+	db := tdb.DB
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	orgID := uuid.NewString()
+	projectID := uuid.NewString()
+	if _, err := db.ExecContext(ctx, `INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgID, "org-"+orgID); err != nil {
+		t.Fatalf("seed org: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`,
+		projectID, orgID, "proj-"+projectID); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	hexKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	cfg := &config.Config{LLMProvider: config.LLMProviderConfig{EncryptionKey: hexKey}}
+	repo := NewRepository(db, log)
+	svc := NewCredentialService(repo, NewRegistry(), nil, cfg, log)
+
+	const secret = "sk-litellm-resolve"
+	ciphertext, nonce, err := svc.EncryptCredential([]byte(secret))
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	if err := repo.UpsertProjectProviderConfig(ctx, &ProjectProviderConfig{
+		ProjectID:           projectID,
+		Provider:            ProviderLiteLLM,
+		Slug:                ProviderSlug(ProviderLiteLLM),
+		EncryptedCredential: ciphertext,
+		EncryptionNonce:     nonce,
+		EmbeddingModel:      "gemini-embedding-001",
+	}); err != nil {
+		t.Fatalf("upsert config: %v", err)
+	}
+
+	rctx := auth.ContextWithProjectID(ctx, projectID)
+
+	model, err := svc.DefaultEmbeddingModel(rctx, projectID)
+	if err != nil {
+		t.Fatalf("DefaultEmbeddingModel() error = %v", err)
+	}
+	if model != "litellm/gemini-embedding-001" {
+		t.Errorf("DefaultEmbeddingModel() = %q, want %q", model, "litellm/gemini-embedding-001")
+	}
+
+	cred, err := svc.ResolveAnyEmbedding(rctx)
+	if err != nil {
+		t.Fatalf("ResolveAnyEmbedding() error = %v", err)
+	}
+	if cred == nil {
+		t.Fatal("ResolveAnyEmbedding() = nil, want a resolved credential for litellm")
+	}
+	if cred.Provider != ProviderLiteLLM {
+		t.Errorf("resolved provider = %q, want %q", cred.Provider, ProviderLiteLLM)
+	}
+	if cred.EmbeddingModel != "gemini-embedding-001" {
+		t.Errorf("resolved embedding model = %q, want %q", cred.EmbeddingModel, "gemini-embedding-001")
+	}
+}

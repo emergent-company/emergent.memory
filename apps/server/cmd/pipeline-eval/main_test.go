@@ -43,6 +43,39 @@ func TestScoreTypesDedupsAndTrims(t *testing.T) {
 	}
 }
 
+func TestScoreTypesAliases(t *testing.T) {
+	cases := []struct {
+		name       string
+		golden     []string
+		discovered []string
+		wantTP     int
+		wantPrec   float64
+		wantRec    float64
+	}{
+		{"decision synonym", []string{"DecisionRecord"}, []string{"Decision"}, 1, 1.0, 1.0},
+		{"energy storage synonym", []string{"StorageSystem"}, []string{"EnergyStorageTechnology"}, 1, 1.0, 1.0},
+		{"action item synonym", []string{"Task"}, []string{"ActionItem"}, 1, 1.0, 1.0},
+		{"synonym plus exact mix", []string{"DecisionRecord", "Person"}, []string{"Decision", "Person"}, 2, 1.0, 1.0},
+		{"spaced normalization", []string{"DecisionRecord"}, []string{"decision record"}, 1, 1.0, 1.0},
+		{"unknown stays false positive", []string{"Person"}, []string{"Widget"}, 0, 0.0, 0.0},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := scoreTypes(tc.golden, tc.discovered)
+			if s.TruePos != tc.wantTP {
+				t.Fatalf("tp = %d, want %d", s.TruePos, tc.wantTP)
+			}
+			if !almostEqual(s.Precision, tc.wantPrec) {
+				t.Fatalf("precision = %v, want %v", s.Precision, tc.wantPrec)
+			}
+			if !almostEqual(s.Recall, tc.wantRec) {
+				t.Fatalf("recall = %v, want %v", s.Recall, tc.wantRec)
+			}
+		})
+	}
+}
+
 func TestLoadCorpus(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o755); err != nil {

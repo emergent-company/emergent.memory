@@ -706,8 +706,10 @@ func (s *CredentialService) ResolveAnyEmbedding(ctx context.Context) (*ResolvedC
 }
 
 // DefaultEmbeddingModel returns a prefixed "provider/model" name for the given
-// project's first provider credential (Google AI → Vertex AI → OpenAI → DeepSeek)
-// that carries an embedding model, or "" when none does. It mirrors
+// project's first provider credential in embedding auto-selection order (the
+// legacy preference first — Google AI → Vertex AI → OpenAI → DeepSeek — then
+// every other registry vendor that serves embeddings, ordered by Order) that
+// carries an embedding model, or "" when none does. It mirrors
 // DefaultGenerativeModel for embedding: the project is passed explicitly (not
 // read from the request context) so callers can resolve for a project that may
 // differ from the session's active one.

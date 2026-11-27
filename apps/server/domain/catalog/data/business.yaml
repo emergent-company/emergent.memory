@@ -1,0 +1,104 @@
+name: business
+objectTypeSchemas:
+- name: DecisionRecord
+  label: Decision Record
+  description: A record of a decision made by a person, team, or organization, including its context and rationale.
+  category: work
+  parent: CreativeWork
+  labels:
+  - decision
+  - decision record
+  - adr
+  - decision log
+  ui:
+    icon: tabler--file-check
+    color: '#0EA5E9'
+  properties:
+    name:
+      type: string
+      description: Short title of the decision.
+    description:
+      type: string
+      description: What was decided and its context.
+    decided_on:
+      type: date
+      title: Decided on
+      description: Date the decision was made (YYYY-MM-DD).
+    status:
+      type: string
+      title: Status
+      description: Current status of the decision.
+      enum:
+      - proposed
+      - accepted
+      - rejected
+      - superseded
+    rationale:
+      type: string
+      description: Reasoning and trade-offs behind the decision.
+  required:
+  - name
+- name: Equipment
+  label: Equipment
+  description: A physical piece of machinery or apparatus used to perform a function.
+  category: hardware
+  parent: Device
+  labels:
+  - equipment
+  - machine
+  - hardware
+  ui:
+    icon: tabler--tool
+    color: '#F59E0B'
+  properties:
+    name:
+      type: string
+      description: Equipment name.
+    description:
+      type: string
+      description: Equipment description.
+    manufacturer:
+      type: string
+      title: Manufacturer
+      description: Manufacturer name.
+    model:
+      type: string
+      title: Model
+      description: Model name or number.
+    serial_number:
+      type: string
+      title: Serial number
+      description: Manufacturer serial number.
+  required:
+  - name
+- name: StorageSystem
+  label: Storage System
+  description: A system that stores energy, such as a battery, thermal, or other storage technology.
+  category: hardware
+  parent: Device
+  labels:
+  - storage system
+  - storage
+  - energy storage
+  - battery system
+  - energy storage technology
+  ui:
+    icon: tabler--battery
+    color: '#10B981'
+  properties:
+    name:
+      type: string
+      description: Storage system name.
+    description:
+      type: string
+      description: Storage system description.
+    capacity:
+      type: string
+      title: Capacity
+      description: Storage capacity, e.g. '100 MWh'.
+    technology:
+      type: string
+      title: Technology
+      description: Storage technology, e.g. 'molten iron' or 'lithium-ion'.
+  required:
+  - name
